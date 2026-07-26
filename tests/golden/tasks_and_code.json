@@ -1,0 +1,20 @@
+[
+  {"kind": "heading", "headingLevel": 2, "text": "Чекбоксы и код"},
+  {"kind": "task-unchecked", "level": 0, "text": "не сделано"},
+  {"kind": "task-checked", "level": 0, "text": "сделано"},
+  {"kind": "task-unchecked", "level": 1, "text": "вложенная задача"},
+  {"kind": "task-checked", "level": 1, "text": "и ещё одна"},
+  {"kind": "bullet", "level": 0, "text": "обычный пункт рядом"},
+  {"kind": "paragraph", "text": "Нумерованный список чекбоксов не образует — там это буквальный текст:"},
+  {"kind": "ordered", "level": 0, "text": "[x] текст"},
+  {"kind": "ordered", "level": 0, "text": "[X] в верхнем регистре"},
+  {"kind": "ordered", "level": 0, "text": "[ ]  с двойным пробелом и разметкой следом", "inlines": [{"offset": 43, "length": 18, "bold": true}]},
+  {"kind": "paragraph", "text": "Блок кода выражается моделью:"},
+  {"kind": "code", "text": "просто код\n\nс пустой строкой и # решёткой в начале\n"},
+  {"kind": "code", "text": ""},
+  {"kind": "paragraph", "text": "Экранирование ставится только там, где без него разбор изменится:"},
+  {"kind": "paragraph", "text": "буквальная *звёздочка*, а решётка и цитата в середине строки — # и > — нет."},
+  {"kind": "paragraph", "text": "# зато в начале строки решётку экранировать надо\n> и угловую скобку тоже\n1. и номер с точкой"},
+  {"kind": "paragraph", "text": "Обратный слэш C:\\tmp удваивается всегда."},
+  {"kind": "paragraph", "text": "Идентификаторы вроде snake_case_name слэшами не обрастают."}
+]

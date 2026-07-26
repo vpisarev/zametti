@@ -1,0 +1,8 @@
+[
+  {"kind": "heading", "headingLevel": 1, "text": "Заголовок первого уровня"},
+  {"kind": "paragraph", "text": "Обычный абзац с жирным, курсивом, зачёркнутым и всем сразу.", "inlines": [{"offset": 29, "length": 12, "bold": true}, {"offset": 43, "length": 16, "italic": true}, {"offset": 61, "length": 22, "strike": true}, {"offset": 87, "length": 19, "bold": true, "italic": true}]},
+  {"kind": "heading", "headingLevel": 2, "text": "Второй уровень"},
+  {"kind": "paragraph", "text": "Абзац, занимающий\nнесколько строк подряд."},
+  {"kind": "heading", "headingLevel": 3, "text": "Третий уровень"},
+  {"kind": "paragraph", "text": "Ссылка на что-нибудь и автоссылка\nhttps://example.org/ прямо в тексте.", "inlines": [{"offset": 13, "length": 24, "href": "https://example.org/путь"}, {"offset": 62, "length": 20, "href": "https://example.org/"}]}
+]
