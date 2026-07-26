@@ -14,6 +14,8 @@ add_executable(zametti
     main.cpp
     document_builder.h
     document_builder.cpp
+    checkbox_object.h
+    checkbox_object.cpp
 )
 
 target_link_libraries(zametti PRIVATE zametti-core Qt6::Widgets zametti-warnings)

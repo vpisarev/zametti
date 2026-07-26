@@ -14,6 +14,9 @@
 
 #include "document_builder.h"
 
+#include "checkbox_object.h"
+
+#include <QAbstractTextDocumentLayout>
 #include <QColor>
 #include <QFont>
 #include <QFontMetricsF>
@@ -36,9 +39,22 @@ constexpr char kSymbolFamily[] = "DejaVu Sans Mono";
 
 constexpr qreal kBaseFontPoint = 11.0;
 constexpr qreal kHeadingScale[6] = {1.7, 1.45, 1.25, 1.1, 1.0, 0.95};
-constexpr qreal kLineHeightFactor = 1.45;
-constexpr qreal kBlockSpacing = 10.0;
-constexpr qreal kCheckboxScale = 1.4;
+// У IBM Plex Mono собственный межстрочный просвет уже приличный, поэтому
+// множитель нужен маленький. Пункты списка ставим плотно: список читается как
+// один объект. Расстояние между абзацами держат поля блока, а не интерлиньяж —
+// иначе, ужимая строки, мы бы заодно сплющили и абзацы.
+constexpr qreal kLineHeightFactor = 1.15;
+constexpr qreal kListLineHeightFactor = 1.05;
+constexpr qreal kBlockSpacing = 13.0;
+// Чем рисовать чекбокс. Шрифтовые варианты просты, но размер, толщина линий и
+// положение по базовой линии в них заданы шрифтом и не настраиваются.
+enum class CheckboxStyle {
+    Glyph,   // ☐ / ☑ из DejaVu Sans Mono
+    Ascii,   // [ ] / [x] основной гарнитурой
+    Drawn,   // рисуем сами, см. checkbox_object.cpp
+};
+constexpr CheckboxStyle kCheckboxStyle = CheckboxStyle::Drawn;
+constexpr qreal kCheckboxScale = 1.8;
 
 const QColor kMarkerColor(0x7a, 0x82, 0x8c);
 const QColor kCheckedColor(0x1f, 0x8b, 0x3d);
@@ -144,22 +160,41 @@ struct ListState {
     }
 };
 
+bool isTask(Kind kind) {
+    return kind == Kind::TaskUnchecked || kind == Kind::TaskChecked;
+}
+
 // Сам знак маркера, без отбивки: текст ставится по табуляции, а не встык.
+// У нарисованного чекбокса знака нет — вместо него в текст идёт заполнитель,
+// который лэйаут отдаёт нашему обработчику.
 QString markerGlyph(Kind kind, int ordinal) {
     switch (kind) {
-        case Kind::Bullet:        return QStringLiteral("•");
-        case Kind::TaskUnchecked: return QStringLiteral("☐");
-        case Kind::TaskChecked:   return QStringLiteral("☑");
-        case Kind::Ordered:       return QString::number(ordinal) + QStringLiteral(".");
-        default:                  return {};
+        case Kind::Bullet:  return QStringLiteral("•");
+        case Kind::Ordered: return QString::number(ordinal) + QStringLiteral(".");
+        case Kind::TaskUnchecked:
+        case Kind::TaskChecked:
+            switch (kCheckboxStyle) {
+                case CheckboxStyle::Glyph:
+                    return kind == Kind::TaskChecked ? QStringLiteral("☑")
+                                                     : QStringLiteral("☐");
+                case CheckboxStyle::Ascii:
+                    return kind == Kind::TaskChecked ? QStringLiteral("[x]")
+                                                     : QStringLiteral("[ ]");
+                case CheckboxStyle::Drawn:
+                    return QString(QChar::ObjectReplacementCharacter);
+            }
+            return {};
+        default: return {};
     }
 }
 
 // Ширина колонки маркера — в знакоместах базового шрифта, как в самом файле:
-// под "- " содержимое идёт со второй колонки, под "1. " — с третьей.
+// под "- " содержимое идёт со второй колонки, под "1. " — с третьей. Чекбокс
+// шире буквы, поэтому ему нужна своя колонка.
 int markerCells(Kind kind, int ordinal) {
-    if (kind != Kind::Ordered) return 2;
-    return QString::number(ordinal).size() + 2;
+    if (kind == Kind::Ordered) return QString::number(ordinal).size() + 2;
+    if (isTask(kind)) return kCheckboxStyle == CheckboxStyle::Ascii ? 4 : 3;
+    return 2;
 }
 
 }  // namespace
@@ -175,6 +210,12 @@ void buildDocument(const Document& doc, QTextDocument& target) {
     target.setDefaultFont(base);
 
     const QFontMetricsF metrics(base);
+
+    if (kCheckboxStyle == CheckboxStyle::Drawn &&
+        target.documentLayout()->handlerForObject(CheckboxObject::Type) == nullptr) {
+        target.documentLayout()->registerHandler(CheckboxObject::Type,
+                                                 new CheckboxObject(&target));
+    }
 
     QTextCursor cursor(&target);
     cursor.beginEditBlock();
@@ -242,12 +283,22 @@ void buildDocument(const Document& doc, QTextDocument& target) {
             marker = markerGlyph(b.kind, ordinal) + QLatin1Char('\t');
 
             markerFmt = charFmt;
-            if (b.kind == Kind::TaskUnchecked || b.kind == Kind::TaskChecked) {
-                markerFmt.setFontFamilies({QString::fromLatin1(kSymbolFamily),
-                                           QString::fromLatin1(kFontFamily)});
-                markerFmt.setFontPointSize(kBaseFontPoint * kCheckboxScale);
-                markerFmt.setForeground(b.kind == Kind::TaskChecked ? kCheckedColor
-                                                                    : kUncheckedColor);
+            if (isTask(b.kind)) {
+                const bool checked = b.kind == Kind::TaskChecked;
+                markerFmt.setForeground(checked ? kCheckedColor : kUncheckedColor);
+                switch (kCheckboxStyle) {
+                    case CheckboxStyle::Glyph:
+                        markerFmt.setFontFamilies({QString::fromLatin1(kSymbolFamily),
+                                                   QString::fromLatin1(kFontFamily)});
+                        markerFmt.setFontPointSize(kBaseFontPoint * kCheckboxScale);
+                        break;
+                    case CheckboxStyle::Ascii:
+                        break;
+                    case CheckboxStyle::Drawn:
+                        markerFmt.setObjectType(CheckboxObject::Type);
+                        markerFmt.setProperty(CheckboxObject::CheckedProperty, checked);
+                        break;
+                }
             } else {
                 markerFmt.setForeground(kMarkerColor);
             }
@@ -272,7 +323,8 @@ void buildDocument(const Document& doc, QTextDocument& target) {
 
         QFont lineFont = base;
         lineFont.setPointSizeF(linePoint);
-        blockFmt.setLineHeight(QFontMetricsF(lineFont).height() * kLineHeightFactor,
+        const qreal lineFactor = list ? kListLineHeightFactor : kLineHeightFactor;
+        blockFmt.setLineHeight(QFontMetricsF(lineFont).height() * lineFactor,
                                QTextBlockFormat::FixedHeight);
 
         if (first) {
