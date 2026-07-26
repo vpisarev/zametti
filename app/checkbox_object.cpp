@@ -24,6 +24,10 @@ QRectF inkExtent(const QTextFormat& format) {
 
 }  // namespace
 
+qreal CheckboxObject::sideFor(const QFont& font) {
+    return QFontMetricsF(font).tightBoundingRect(QStringLiteral("iy")).height();
+}
+
 QSizeF CheckboxObject::intrinsicSize(QTextDocument* doc, int posInDocument,
                                      const QTextFormat& format) {
     (void)doc;

@@ -7,12 +7,18 @@
 #include "parser.h"
 #include "serializer.h"
 
+#include "appearance.h"
+
 #include <QApplication>
 #include <QFileInfo>
+#include <QKeySequence>
 #include <QScrollBar>
+#include <QShortcut>
 #include <QTextBrowser>
 #include <QTextCursor>
 #include <QTextDocument>
+
+#include <algorithm>
 
 #include <cstdio>
 #include <fstream>
@@ -104,16 +110,49 @@ int main(int argc, char** argv) {
 
     QApplication app(argc, argv);
 
+    const zametti::Document doc = zametti::parse(src);
+
     QTextBrowser view;
     view.setOpenExternalLinks(true);
     zametti::applyPalette(view);
-    zametti::buildDocument(zametti::parse(src), *view.document());
     view.setWindowTitle(QFileInfo(QString::fromStdString(path)).fileName() +
                         QStringLiteral(" — zametti"));
-    // После сборки документа курсор стоит в конце, и QTextBrowser открылся бы
-    // прокрученным вниз. Заметку надо показывать с начала.
-    view.moveCursor(QTextCursor::Start);
-    view.verticalScrollBar()->setValue(0);
+
+    // Кегль задан явно в каждом формате, поэтому штатный зум QTextEdit до него
+    // не дотягивается: при смене масштаба документ собирается заново. Место в
+    // тексте держим по доле прокрутки — в пикселях оно после пересборки другое.
+    qreal zoom = 1.0;
+    auto rebuild = [&view, &doc](qreal z, bool keepPosition) {
+        QScrollBar* bar = view.verticalScrollBar();
+        const double ratio = (keepPosition && bar->maximum() > 0)
+                                 ? double(bar->value()) / bar->maximum()
+                                 : 0.0;
+        zametti::buildDocument(doc, *view.document(), z);
+        view.moveCursor(QTextCursor::Start);
+        bar->setValue(int(ratio * bar->maximum()));
+    };
+    rebuild(zoom, /*keepPosition=*/false);
+
+    auto applyZoom = [&](qreal factor) {
+        const qreal next = std::clamp(zoom * factor, zametti::appearance::kZoomMin,
+                                      zametti::appearance::kZoomMax);
+        if (next == zoom) return;
+        zoom = next;
+        rebuild(zoom, /*keepPosition=*/true);
+    };
+
+    const auto shortcut = [&view](const QKeySequence& keys, auto&& slot) {
+        QObject::connect(new QShortcut(keys, &view), &QShortcut::activated, &view, slot);
+    };
+    // Ctrl+= рядом с Ctrl++: увеличивают одной и той же клавишей, с шифтом и без.
+    shortcut(QKeySequence(QStringLiteral("Ctrl+=")), [&] { applyZoom(zametti::appearance::kZoomStep); });
+    shortcut(QKeySequence(QStringLiteral("Ctrl++")), [&] { applyZoom(zametti::appearance::kZoomStep); });
+    shortcut(QKeySequence(QStringLiteral("Ctrl+-")), [&] { applyZoom(1.0 / zametti::appearance::kZoomStep); });
+    shortcut(QKeySequence(QStringLiteral("Ctrl+0")), [&] {
+        if (zoom == 1.0) return;
+        zoom = 1.0;
+        rebuild(zoom, /*keepPosition=*/true);
+    });
 
     view.resize(900, 700);
     view.show();

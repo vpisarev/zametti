@@ -23,6 +23,7 @@
 #include <QWidget>
 #include <QFont>
 #include <QFontMetricsF>
+#include <QRawFont>
 #include <QString>
 #include <QTextBlockFormat>
 #include <QTextCharFormat>
@@ -92,8 +93,12 @@ private:
 // Символы, которых нет в основной гарнитуре, рисуются запасным шрифтом — это
 // прежде всего эмодзи. Опознаём их не по диапазонам кодов, а по факту:
 // «нет глифа в основном шрифте». Так правило не устареет вместе с Unicode.
+//
+// Спрашивать надо именно QRawFont: он описывает одну физическую гарнитуру.
+// QFontMetrics отвечает за целую цепочку с запасными шрифтами и на эмодзи
+// говорит «есть», отчего увеличение не срабатывало вовсе.
 void enlargeFallbackGlyphs(QTextDocument& doc, int textStart, const QString& text,
-                           qreal pointSize, const QFontMetricsF& metrics) {
+                           qreal pointSize, const QRawFont& primary) {
     QTextCursor cursor(&doc);
     int i = 0;
     while (i < text.size()) {
@@ -101,7 +106,7 @@ void enlargeFallbackGlyphs(QTextDocument& doc, int textStart, const QString& tex
                           text[i + 1].isLowSurrogate();
         const char32_t cp = pair ? QChar::surrogateToUcs4(text[i], text[i + 1])
                                  : char32_t(text[i].unicode());
-        if (metrics.inFontUcs4(cp)) {
+        if (primary.supportsCharacter(cp)) {
             i += pair ? 2 : 1;
             continue;
         }
@@ -114,7 +119,7 @@ void enlargeFallbackGlyphs(QTextDocument& doc, int textStart, const QString& tex
                            text[i + 1].isLowSurrogate();
             const char32_t c = p ? QChar::surrogateToUcs4(text[i], text[i + 1])
                                  : char32_t(text[i].unicode());
-            if (metrics.inFontUcs4(c)) break;
+            if (primary.supportsCharacter(c)) break;
             i += p ? 2 : 1;
         }
 
@@ -209,13 +214,21 @@ QString markerGlyph(Kind kind, int ordinal) {
     }
 }
 
-// Ширина колонки маркера — в знакоместах базового шрифта, как в самом файле:
-// под "- " содержимое идёт со второй колонки, под "1. " — с третьей. Чекбокс
-// шире буквы, поэтому ему нужна своя колонка.
-int markerCells(Kind kind, int ordinal) {
-    if (kind == Kind::Ordered) return QString::number(ordinal).size() + 2;
-    if (isTask(kind)) return kCheckboxStyle == CheckboxStyle::Ascii ? 4 : 3;
-    return 2;
+// Ширина колонки маркера. У списков она меряется знакоместами, как в самом
+// файле: под "- " содержимое идёт со второй колонки, под "1. " — с третьей.
+// У задачи с нарисованной рамкой знакоместа ни при чём — колонка складывается
+// из ширины самой рамки и зазора до текста.
+qreal markerColumn(Kind kind, int ordinal, const QFont& font, const QFontMetricsF& metrics) {
+    const qreal cell = metrics.horizontalAdvance(QLatin1Char(' '));
+    if (kind == Kind::Ordered) return cell * (QString::number(ordinal).size() + 2);
+    if (isTask(kind)) {
+        if (kCheckboxStyle == CheckboxStyle::Drawn) {
+            return CheckboxObject::sideFor(font) +
+                   kCheckboxTextGap * metrics.horizontalAdvance(QLatin1Char('A'));
+        }
+        return cell * (kCheckboxStyle == CheckboxStyle::Ascii ? 4 : 3);
+    }
+    return cell * 2;
 }
 
 }  // namespace
@@ -230,19 +243,22 @@ void applyPalette(QWidget& view) {
     view.setPalette(palette);
 }
 
-void buildDocument(const Document& doc, QTextDocument& target) {
+void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
     target.setUndoRedoEnabled(false);
     target.clear();
     // Поля задаются рамкой корневого фрейма, а не documentMargin: тот кладёт
     // одинаковый отступ со всех сторон, а по бокам нужно заметно больше.
     target.setDocumentMargin(0);
 
+    const qreal basePoint = kBaseFontPoint * zoom;
+
     QFont base{QString(kFontFamily)};
-    base.setPointSizeF(kBaseFontPoint);
+    base.setPointSizeF(basePoint);
     base.setStyleHint(QFont::Monospace);
     target.setDefaultFont(base);
 
     const QFontMetricsF metrics(base);
+    const QRawFont primaryFont = QRawFont::fromFont(base);
 
     if (kCheckboxStyle == CheckboxStyle::Drawn &&
         target.documentLayout()->handlerForObject(CheckboxObject::Type) == nullptr) {
@@ -251,10 +267,10 @@ void buildDocument(const Document& doc, QTextDocument& target) {
     }
 
     QTextFrameFormat rootFormat = target.rootFrame()->frameFormat();
-    rootFormat.setLeftMargin(kSideMargin);
-    rootFormat.setRightMargin(kSideMargin);
-    rootFormat.setTopMargin(kVerticalMargin);
-    rootFormat.setBottomMargin(kVerticalMargin);
+    rootFormat.setLeftMargin(kSideMargin * zoom);
+    rootFormat.setRightMargin(kSideMargin * zoom);
+    rootFormat.setTopMargin(kVerticalMargin * zoom);
+    rootFormat.setBottomMargin(kVerticalMargin * zoom);
     target.rootFrame()->setFrameFormat(rootFormat);
 
     QTextCursor cursor(&target);
@@ -270,16 +286,16 @@ void buildDocument(const Document& doc, QTextDocument& target) {
         const bool list = !raw && isList(b.kind);
 
         QTextBlockFormat blockFmt;
-        blockFmt.setTopMargin(kBlockSpacing);
-        blockFmt.setBottomMargin(kBlockSpacing);
+        blockFmt.setTopMargin(kBlockSpacing * zoom);
+        blockFmt.setBottomMargin(kBlockSpacing * zoom);
 
         // Высота строки задаётся явно, а не долей от самого высокого знака в
         // ней: иначе увеличенный чекбокс растягивал бы строку задачи, и пункты
         // одного списка стояли бы с разным шагом.
-        qreal linePoint = kBaseFontPoint;
+        qreal linePoint = basePoint;
 
         QTextCharFormat charFmt;
-        charFmt.setFontPointSize(kBaseFontPoint);
+        charFmt.setFontPointSize(basePoint);
 
         QString marker;
         QTextCharFormat markerFmt;
@@ -292,9 +308,9 @@ void buildDocument(const Document& doc, QTextDocument& target) {
             switch (b.kind) {
                 case Kind::Heading:
                     blockFmt.setHeadingLevel(b.headingLevel);
-                    blockFmt.setTopMargin(kBlockSpacing * 2.2);
+                    blockFmt.setTopMargin(kBlockSpacing * 2.2 * zoom);
                     charFmt.setFontWeight(QFont::Bold);
-                    linePoint = kBaseFontPoint * kHeadingScale[b.headingLevel - 1];
+                    linePoint = basePoint * kHeadingScale[b.headingLevel - 1];
                     charFmt.setFontPointSize(linePoint);
                     break;
 
@@ -330,7 +346,7 @@ void buildDocument(const Document& doc, QTextDocument& target) {
                     case CheckboxStyle::Glyph:
                         markerFmt.setFontFamilies({QString(kSymbolFamily),
                                                    QString(kFontFamily)});
-                        markerFmt.setFontPointSize(kBaseFontPoint * kCheckboxGlyphScale);
+                        markerFmt.setFontPointSize(basePoint * kCheckboxGlyphScale);
                         break;
                     case CheckboxStyle::Ascii:
                         break;
@@ -355,8 +371,7 @@ void buildDocument(const Document& doc, QTextDocument& target) {
             // шириной самого знака: чекбокс крупнее остальных маркеров, и без
             // этого текст задач съезжал бы вправо относительно обычных пунктов.
             const qreal indent = lists.levels[level].contentCol;
-            const qreal cell = metrics.horizontalAdvance(QLatin1Char(' ')) *
-                               markerCells(b.kind, ordinal);
+            const qreal cell = markerColumn(b.kind, ordinal, base, metrics);
             lists.levels[level + 1].contentCol = indent + cell;
 
             blockFmt.setLeftMargin(indent + cell);
@@ -387,7 +402,7 @@ void buildDocument(const Document& doc, QTextDocument& target) {
         const int textStart = cursor.position();
         cursor.insertText(text, charFmt);
         if (!raw && !b.inlines.empty()) applySpans(target, textStart, b);
-        enlargeFallbackGlyphs(target, textStart, text, linePoint, metrics);
+        enlargeFallbackGlyphs(target, textStart, text, linePoint, primaryFont);
     }
 
     cursor.endEditBlock();

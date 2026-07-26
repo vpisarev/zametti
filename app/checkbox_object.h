@@ -1,6 +1,7 @@
 #ifndef ZAMETTI_CHECKBOX_OBJECT_H
 #define ZAMETTI_CHECKBOX_OBJECT_H
 
+#include <QFont>
 #include <QObject>
 #include <QTextFormat>
 #include <QTextObjectInterface>
@@ -20,6 +21,9 @@ class CheckboxObject : public QObject, public QTextObjectInterface {
 public:
     enum { Type = QTextFormat::UserObject + 1 };
     enum { CheckedProperty = QTextFormat::UserProperty + 1 };
+
+    // Сторона рамки. Нужна и снаружи: от неё считается колонка текста задачи.
+    static qreal sideFor(const QFont& font);
 
     using QObject::QObject;
 

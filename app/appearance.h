@@ -27,7 +27,7 @@ inline constexpr qreal kHeadingScale[6] = {1.7, 1.45, 1.25, 1.1, 1.0, 0.95};
 // Эмодзи приходят из запасного шрифта и рядом с моноширинным текстом смотрятся
 // мелко: у них другая нормаль по кеглю. Множитель применяется к любому знаку,
 // которого нет в основной гарнитуре.
-inline constexpr qreal kFallbackScale = 1.15;
+inline constexpr qreal kFallbackScale = 2.;
 
 // --- ритм страницы ----------------------------------------------------------
 
@@ -59,7 +59,7 @@ inline const QColor kCodeBackground(0, 0, 0, 14);
 // Отмеченный: заливка этим цветом и галочка поверх неё.
 inline const QColor kCheckboxCheckedColor(0x32, 0x5c, 0xc0);
 // Пустой: только рамка, без заливки.
-inline const QColor kCheckboxUncheckedColor(0x32, 0x5c, 0xc0);
+inline const QColor kCheckboxUncheckedColor(0xac, 0xac, 0xac);
 inline const QColor kCheckboxTickColor(0xff, 0xff, 0xff);
 
 inline constexpr qreal kCheckboxPenWidth = 1.4;
@@ -73,6 +73,16 @@ inline constexpr qreal kCheckboxOpticalRise = 0.03;
 
 // Кегль шрифтовых вариантов чекбокса. К нарисованному отношения не имеет.
 inline constexpr qreal kCheckboxGlyphScale = 1.8;
+
+// Зазор между рамкой и текстом задачи, в ширинах буквы "A".
+inline constexpr qreal kCheckboxTextGap = 1.3;
+
+// --- масштаб ----------------------------------------------------------------
+
+// Шаг Ctrl+= / Ctrl+- и границы, за которые зум не выходит.
+inline constexpr qreal kZoomStep = 1.1;
+inline constexpr qreal kZoomMin = 0.5;
+inline constexpr qreal kZoomMax = 4.0;
 
 }  // namespace zametti::appearance
 
