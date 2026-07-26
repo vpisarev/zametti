@@ -15,7 +15,7 @@ zametti-core/      разбор, сериализация, JSON-дамп IR — 
 app/               просмотрщик: дерево заметок и отрисовка документа
 tests/             тесты ядра
 packaging/         .desktop для меню и дока
-docs/              бриф этапа и записка по решениям
+docs/              бриф этапа, отчёт и записка по решениям
 ```
 
 Ядро умеет `markdown → IR → markdown`. Главное его свойство — идемпотентность:
@@ -96,9 +96,12 @@ build/tests/corpus_test <каталог с .md> 64
 ```
 
 Корпуса в репозиторий не кладутся. Примеры из спецификаций CommonMark и GFM
-разбираются скриптом `tests/extract_spec.py`, подробности —
-в [docs/zametti-core-notes.md](docs/zametti-core-notes.md). Там же принятые по
-ходу решения, расхождения с брифом и известные ограничения.
+разбираются скриптом `tests/extract_spec.py`.
+
+- [docs/zametti-m1-report.md](docs/zametti-m1-report.md) — итог этапа: что
+  сделано, чем проверено, что сломалось по дороге.
+- [docs/zametti-core-notes.md](docs/zametti-core-notes.md) — принятые решения,
+  расхождения с брифом, известные ограничения.
 
 ## Лицензия
 
