@@ -23,3 +23,8 @@ add_executable(zametti
 )
 
 target_link_libraries(zametti PRIVATE zametti-core Qt6::Widgets zametti-warnings)
+
+add_test(NAME default-config
+         COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:zametti>
+                 -DEXPECTED=${CMAKE_SOURCE_DIR}/default-config.json
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/default_config_check.cmake)

@@ -1,0 +1,48 @@
+{
+    "checkbox": {
+        "checkedColor": "#325cc0",
+        "cornerRadius": 2.5,
+        "glyphScale": 1.8,
+        "opticalRise": 0.03,
+        "penWidth": 1.4,
+        "style": "drawn",
+        "textGap": 1.3,
+        "tickColor": "#ffffff",
+        "uncheckedColor": "#325cc0"
+    },
+    "colors": {
+        "codeBackground": "#0e000000",
+        "link": "#325cc0",
+        "listMarker": "#7a828c",
+        "pageBackground": "#fefefb",
+        "quote": "#5a626a",
+        "rawSource": "#999fa6",
+        "selectionBackground": "#bfdbfe"
+    },
+    "font": {
+        "fallbackScale": 1.15,
+        "family": "IBM Plex Mono",
+        "headingScale": [
+            1.7,
+            1.45,
+            1.25,
+            1.1,
+            1,
+            0.95
+        ],
+        "pointSize": 11,
+        "symbolFamily": "DejaVu Sans Mono"
+    },
+    "layout": {
+        "blockSpacing": 13,
+        "lineHeightFactor": 1.15,
+        "listLineHeightFactor": 1.05,
+        "sideMargin": 56,
+        "verticalMargin": 24
+    },
+    "zoom": {
+        "max": 4,
+        "min": 0.5,
+        "step": 1.1
+    }
+}

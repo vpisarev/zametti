@@ -83,9 +83,13 @@ int runCheck(const std::string& path) {
 int main(int argc, char** argv) {
     std::string path;
     bool check = false;
+    bool dumpConfig = false;
+    bool noConfig = false;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--check") check = true;
+        else if (arg == "--dump-config") dumpConfig = true;
+        else if (arg == "--noconfig") noConfig = true;
         else if (arg.rfind("--", 0) == 0) {
             std::fprintf(stderr, "неизвестный ключ: %s\n", arg.c_str());
             return 2;
@@ -94,7 +98,14 @@ int main(int argc, char** argv) {
         }
     }
 
-    // --check не должен требовать дисплея: он работает в конвейерах и в CI.
+    // Ни --dump-config, ни --check не должны требовать дисплея: они работают в
+    // конвейерах и в CI.
+    if (dumpConfig) {
+        const QByteArray json = zametti::defaultAppearanceJson();
+        std::fwrite(json.constData(), 1, size_t(json.size()), stdout);
+        return 0;
+    }
+
     if (check) {
         if (path.empty()) {
             std::fprintf(stderr, "использование: zametti --check файл.md\n");
@@ -107,8 +118,11 @@ int main(int argc, char** argv) {
     QCoreApplication::setApplicationName(QStringLiteral("zametti"));
     QGuiApplication::setWindowIcon(QIcon(QStringLiteral(":/zametti.png")));
 
+    // --noconfig нужен, чтобы посмотреть на вид по умолчанию, не убирая свой
+    // конфиг: удобно и при правке конфига, и при разговоре о том, «как оно
+    // выглядит из коробки».
     QString configError;
-    if (!zametti::loadAppearance(&configError)) {
+    if (!noConfig && !zametti::loadAppearance(&configError)) {
         // Молча подставить умолчания нельзя: опечатка в конфиге выглядела бы
         // как «настройка не работает».
         std::fprintf(stderr, "конфиг не разобран, взяты значения по умолчанию:\n  %s\n",
@@ -120,7 +134,10 @@ int main(int argc, char** argv) {
     // Без аргумента открываем то, что читали в прошлый раз.
     if (path.empty() && !session.lastFile.isEmpty()) path = session.lastFile.toStdString();
     if (path.empty()) {
-        std::fprintf(stderr, "использование: zametti [--check] файл.md\n");
+        std::fprintf(stderr,
+                     "использование: zametti [--noconfig] файл.md\n"
+                     "               zametti --check файл.md\n"
+                     "               zametti --dump-config\n");
         return 2;
     }
 
