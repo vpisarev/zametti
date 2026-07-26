@@ -1,0 +1,6 @@
+<!-- Иконка вшивается в бинарник: путь до art/ на машине пользователя неизвестен. -->
+<RCC>
+    <qresource prefix="/">
+        <file alias="zametti.png">../art/zametti.png</file>
+    </qresource>
+</RCC>

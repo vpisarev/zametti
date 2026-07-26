@@ -14,7 +14,7 @@
 
 #include "document_builder.h"
 
-#include "appearance.h"
+#include "settings.h"
 #include "checkbox_object.h"
 
 #include <QAbstractTextDocumentLayout>
@@ -37,17 +37,6 @@
 
 namespace zametti {
 namespace {
-
-using namespace zametti::appearance;
-
-// Чем рисовать чекбокс. Шрифтовые варианты просты, но размер, толщина линий и
-// положение по базовой линии в них заданы шрифтом и не настраиваются.
-enum class CheckboxStyle {
-    Glyph,   // ☐ / ☑ из DejaVu Sans Mono
-    Ascii,   // [ ] / [x] основной гарнитурой
-    Drawn,   // рисуем сами, см. checkbox_object.cpp
-};
-constexpr CheckboxStyle kCheckboxStyle = CheckboxStyle::Drawn;
 
 // Перевод строки внутри блока IR — это перенос внутри того же абзаца, а не
 // новый абзац. QChar::LineSeparator даёт ровно это и, в отличие от '\n', не
@@ -124,7 +113,7 @@ void enlargeFallbackGlyphs(QTextDocument& doc, int textStart, const QString& tex
         }
 
         QTextCharFormat fmt;
-        fmt.setFontPointSize(pointSize * kFallbackScale);
+        fmt.setFontPointSize(pointSize * appearance().fallbackScale);
         cursor.setPosition(textStart + begin);
         cursor.setPosition(textStart + i, QTextCursor::KeepAnchor);
         cursor.mergeCharFormat(fmt);
@@ -144,12 +133,12 @@ void applySpans(QTextDocument& doc, int textStart, const Block& b) {
         if (s.bold) fmt.setFontWeight(QFont::Bold);
         if (s.italic) fmt.setFontItalic(true);
         if (s.strike) fmt.setFontStrikeOut(true);
-        if (s.code) fmt.setBackground(kCodeBackground);
+        if (s.code) fmt.setBackground(appearance().codeBackground);
         if (!s.href.empty()) {
             fmt.setAnchor(true);
             fmt.setAnchorHref(
                 QString::fromUtf8(s.href.data(), static_cast<qsizetype>(s.href.size())));
-            fmt.setForeground(kLinkColor);
+            fmt.setForeground(appearance().linkColor);
             fmt.setFontUnderline(true);
         }
         cursor.setPosition(textStart + from);
@@ -199,7 +188,7 @@ QString markerGlyph(Kind kind, int ordinal) {
         case Kind::Ordered: return QString::number(ordinal) + QStringLiteral(".");
         case Kind::TaskUnchecked:
         case Kind::TaskChecked:
-            switch (kCheckboxStyle) {
+            switch (appearance().checkboxStyle) {
                 case CheckboxStyle::Glyph:
                     return kind == Kind::TaskChecked ? QStringLiteral("☑")
                                                      : QStringLiteral("☐");
@@ -222,11 +211,11 @@ qreal markerColumn(Kind kind, int ordinal, const QFont& font, const QFontMetrics
     const qreal cell = metrics.horizontalAdvance(QLatin1Char(' '));
     if (kind == Kind::Ordered) return cell * (QString::number(ordinal).size() + 2);
     if (isTask(kind)) {
-        if (kCheckboxStyle == CheckboxStyle::Drawn) {
+        if (appearance().checkboxStyle == CheckboxStyle::Drawn) {
             return CheckboxObject::sideFor(font) +
-                   kCheckboxTextGap * metrics.horizontalAdvance(QLatin1Char('A'));
+                   appearance().checkboxTextGap * metrics.horizontalAdvance(QLatin1Char('A'));
         }
-        return cell * (kCheckboxStyle == CheckboxStyle::Ascii ? 4 : 3);
+        return cell * (appearance().checkboxStyle == CheckboxStyle::Ascii ? 4 : 3);
     }
     return cell * 2;
 }
@@ -235,8 +224,8 @@ qreal markerColumn(Kind kind, int ordinal, const QFont& font, const QFontMetrics
 
 void applyPalette(QWidget& view) {
     QPalette palette = view.palette();
-    palette.setColor(QPalette::Base, kPageBackground);
-    palette.setColor(QPalette::Highlight, kSelectionBackground);
+    palette.setColor(QPalette::Base, appearance().pageBackground);
+    palette.setColor(QPalette::Highlight, appearance().selectionBackground);
     // Выделение светлое, поэтому текст в нём остаётся тёмным: белый по
     // умолчанию на таком фоне просто пропал бы.
     palette.setColor(QPalette::HighlightedText, palette.color(QPalette::Text));
@@ -250,9 +239,9 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
     // одинаковый отступ со всех сторон, а по бокам нужно заметно больше.
     target.setDocumentMargin(0);
 
-    const qreal basePoint = kBaseFontPoint * zoom;
+    const qreal basePoint = appearance().baseFontPoint * zoom;
 
-    QFont base{QString(kFontFamily)};
+    QFont base{QString(appearance().fontFamily)};
     base.setPointSizeF(basePoint);
     base.setStyleHint(QFont::Monospace);
     target.setDefaultFont(base);
@@ -260,17 +249,17 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
     const QFontMetricsF metrics(base);
     const QRawFont primaryFont = QRawFont::fromFont(base);
 
-    if (kCheckboxStyle == CheckboxStyle::Drawn &&
+    if (appearance().checkboxStyle == CheckboxStyle::Drawn &&
         target.documentLayout()->handlerForObject(CheckboxObject::Type) == nullptr) {
         target.documentLayout()->registerHandler(CheckboxObject::Type,
                                                  new CheckboxObject(&target));
     }
 
     QTextFrameFormat rootFormat = target.rootFrame()->frameFormat();
-    rootFormat.setLeftMargin(kSideMargin * zoom);
-    rootFormat.setRightMargin(kSideMargin * zoom);
-    rootFormat.setTopMargin(kVerticalMargin * zoom);
-    rootFormat.setBottomMargin(kVerticalMargin * zoom);
+    rootFormat.setLeftMargin(appearance().sideMargin * zoom);
+    rootFormat.setRightMargin(appearance().sideMargin * zoom);
+    rootFormat.setTopMargin(appearance().verticalMargin * zoom);
+    rootFormat.setBottomMargin(appearance().verticalMargin * zoom);
     target.rootFrame()->setFrameFormat(rootFormat);
 
     QTextCursor cursor(&target);
@@ -286,8 +275,8 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
         const bool list = !raw && isList(b.kind);
 
         QTextBlockFormat blockFmt;
-        blockFmt.setTopMargin(kBlockSpacing * zoom);
-        blockFmt.setBottomMargin(kBlockSpacing * zoom);
+        blockFmt.setTopMargin(appearance().blockSpacing * zoom);
+        blockFmt.setBottomMargin(appearance().blockSpacing * zoom);
 
         // Высота строки задаётся явно, а не долей от самого высокого знака в
         // ней: иначе увеличенный чекбокс растягивал бы строку задачи, и пункты
@@ -303,20 +292,20 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
         QString text;
         if (raw) {
             text = withoutTrailingNewline(b.rawSource);
-            charFmt.setForeground(kRawColor);
+            charFmt.setForeground(appearance().rawColor);
         } else {
             switch (b.kind) {
                 case Kind::Heading:
                     blockFmt.setHeadingLevel(b.headingLevel);
-                    blockFmt.setTopMargin(kBlockSpacing * 2.2 * zoom);
+                    blockFmt.setTopMargin(appearance().blockSpacing * 2.2 * zoom);
                     charFmt.setFontWeight(QFont::Bold);
-                    linePoint = basePoint * kHeadingScale[b.headingLevel - 1];
+                    linePoint = basePoint * appearance().headingScale[b.headingLevel - 1];
                     charFmt.setFontPointSize(linePoint);
                     break;
 
                 case Kind::Code:
                     text = withoutTrailingNewline(b.text);
-                    blockFmt.setBackground(kCodeBackground);
+                    blockFmt.setBackground(appearance().codeBackground);
                     blockFmt.setLeftMargin(metrics.horizontalAdvance(QLatin1Char(' ')) * 2);
                     break;
 
@@ -324,7 +313,7 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
                     // Курсивом цитату не выделяем: тогда настоящий _курсив_
                     // внутри неё стал бы неотличим от остального текста.
                     blockFmt.setLeftMargin(metrics.horizontalAdvance(QLatin1Char(' ')) * 3);
-                    charFmt.setForeground(kQuoteColor);
+                    charFmt.setForeground(appearance().quoteColor);
                     break;
 
                 default:
@@ -341,12 +330,12 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
             markerFmt = charFmt;
             if (isTask(b.kind)) {
                 const bool checked = b.kind == Kind::TaskChecked;
-                markerFmt.setForeground(checked ? kCheckboxCheckedColor : kCheckboxUncheckedColor);
-                switch (kCheckboxStyle) {
+                markerFmt.setForeground(checked ? appearance().checkboxCheckedColor : appearance().checkboxUncheckedColor);
+                switch (appearance().checkboxStyle) {
                     case CheckboxStyle::Glyph:
-                        markerFmt.setFontFamilies({QString(kSymbolFamily),
-                                                   QString(kFontFamily)});
-                        markerFmt.setFontPointSize(basePoint * kCheckboxGlyphScale);
+                        markerFmt.setFontFamilies({QString(appearance().symbolFamily),
+                                                   QString(appearance().fontFamily)});
+                        markerFmt.setFontPointSize(basePoint * appearance().checkboxGlyphScale);
                         break;
                     case CheckboxStyle::Ascii:
                         break;
@@ -363,7 +352,7 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
                         break;
                 }
             } else {
-                markerFmt.setForeground(kMarkerColor);
+                markerFmt.setForeground(appearance().markerColor);
             }
 
             // Висячий отступ: первая строка начинается с маркера, продолжения
@@ -385,7 +374,7 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
 
         QFont lineFont = base;
         lineFont.setPointSizeF(linePoint);
-        const qreal lineFactor = list ? kListLineHeightFactor : kLineHeightFactor;
+        const qreal lineFactor = list ? appearance().listLineHeightFactor : appearance().lineHeightFactor;
         blockFmt.setLineHeight(QFontMetricsF(lineFont).height() * lineFactor,
                                QTextBlockFormat::FixedHeight);
 

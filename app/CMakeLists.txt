@@ -9,14 +9,17 @@ if(NOT Qt6_FOUND)
 endif()
 
 set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
 
 add_executable(zametti
-    appearance.h
     main.cpp
     document_builder.h
     document_builder.cpp
     checkbox_object.h
     checkbox_object.cpp
+    settings.h
+    settings.cpp
+    resources.qrc
 )
 
 target_link_libraries(zametti PRIVATE zametti-core Qt6::Widgets zametti-warnings)
