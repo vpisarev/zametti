@@ -41,12 +41,12 @@
     },
     "list": {
         "bullet": "•",
-        "bulletColor": "#7a828c",
+        "bulletColor": "#303030",
         "bulletDiameter": 0.8,
         "bulletRise": 0,
         "bulletScale": 1.35,
         "bulletStyle": "drawn",
-        "orderedColor": "#7a828c"
+        "orderedColor": "#303030"
     },
     "notes": {
         "root": ""

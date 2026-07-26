@@ -76,8 +76,8 @@ struct Appearance {
     // --- маркированный список ---
     // Цвета маркеров раздельные: буллет — фигура, цифра — знак, и уравнивать их
     // в цвете не обязательно.
-    QColor bulletColor{0x0, 0x0, 0x30};
-    QColor orderedColor{0x7a, 0x82, 0x8c};
+    QColor bulletColor{0x30, 0x30, 0x30};
+    QColor orderedColor{0x30, 0x30, 0x30};
 
     BulletStyle bulletStyle = BulletStyle::Drawn;
     // Для нарисованного: диаметр и поправка по вертикали, обе — доли от высоты
