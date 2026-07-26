@@ -184,7 +184,7 @@ bool isTask(Kind kind) {
 // который лэйаут отдаёт нашему обработчику.
 QString markerGlyph(Kind kind, int ordinal) {
     switch (kind) {
-        case Kind::Bullet:  return QStringLiteral("•");
+        case Kind::Bullet:  return appearance().bulletGlyph;
         case Kind::Ordered: return QString::number(ordinal) + QStringLiteral(".");
         case Kind::TaskUnchecked:
         case Kind::TaskChecked:
@@ -353,6 +353,10 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
                 }
             } else {
                 markerFmt.setForeground(appearance().markerColor);
+                // Буллет крупнее текста: в кегле основного шрифта "•" теряется.
+                // Ширину колонки это не трогает — текст ставится по табуляции.
+                if (b.kind == Kind::Bullet)
+                    markerFmt.setFontPointSize(basePoint * appearance().bulletScale);
             }
 
             // Висячий отступ: первая строка начинается с маркера, продолжения

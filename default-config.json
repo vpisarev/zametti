@@ -40,6 +40,10 @@
         "sideMargin": 56,
         "verticalMargin": 24
     },
+    "list": {
+        "bullet": "•",
+        "bulletScale": 1.35
+    },
     "notes": {
         "root": ""
     },
@@ -48,8 +52,8 @@
         "folderFamily": "Noto Emoji",
         "folderOpen": "📂︎",
         "folderScale": 1.05,
-        "fontFamily": "",
-        "fontSize": 10,
+        "fontFamily": "IBM Plex Sans SemiCondensed",
+        "fontSize": 11,
         "lineHeightFactor": 1.6,
         "width": 260
     },

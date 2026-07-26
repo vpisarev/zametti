@@ -66,6 +66,12 @@ struct Appearance {
     QColor rawColor{0x99, 0x9f, 0xa6};      // непонятое, дословный кусок
     QColor codeBackground{0, 0, 0, 14};
 
+    // --- маркированный список ---
+    // Знак буллета и его кегль относительно базового. В большинстве гарнитур
+    // "•" мелковат для основного текста, поэтому по умолчанию он увеличен.
+    QString bulletGlyph = QStringLiteral("\u2022");
+    qreal bulletScale = 1.35;
+
     // --- чекбокс ---
     CheckboxStyle checkboxStyle = CheckboxStyle::Drawn;
     QColor checkboxCheckedColor{0x32, 0x5c, 0xc0};    // заливка и цвет рамки
@@ -90,8 +96,8 @@ struct Appearance {
 
     // --- боковая панель ---
     // Гарнитура панели; пусто — та же, что у текста.
-    QString sidebarFontFamily;
-    qreal sidebarFontPoint = 10.0;
+    QString sidebarFontFamily = QStringLiteral("IBM Plex Sans SemiCondensed");
+    qreal sidebarFontPoint = 11.0;
     // Высота строки списка, долей от высоты шрифта панели.
     qreal sidebarLineHeightFactor = 1.6;
     // Значки папок вместо треугольников. Гарнитура нужна отдельная: в обычных

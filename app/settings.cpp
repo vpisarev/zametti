@@ -86,6 +86,11 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("codeBackground"), colorToString(a.codeBackground)},
     };
 
+    QJsonObject list{
+        {QStringLiteral("bullet"), a.bulletGlyph},
+        {QStringLiteral("bulletScale"), a.bulletScale},
+    };
+
     QJsonObject checkbox{
         {QStringLiteral("style"), styleToString(a.checkboxStyle)},
         {QStringLiteral("checkedColor"), colorToString(a.checkboxCheckedColor)},
@@ -123,6 +128,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("font"), font},
         {QStringLiteral("layout"), layout},
         {QStringLiteral("colors"), colors},
+        {QStringLiteral("list"), list},
         {QStringLiteral("checkbox"), checkbox},
         {QStringLiteral("notes"), notes},
         {QStringLiteral("sidebar"), sidebar},
@@ -155,6 +161,10 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readColor(colors, "quote", a.quoteColor);
     readColor(colors, "rawSource", a.rawColor);
     readColor(colors, "codeBackground", a.codeBackground);
+
+    const QJsonObject list = root.value(QStringLiteral("list")).toObject();
+    readString(list, "bullet", a.bulletGlyph);
+    readReal(list, "bulletScale", a.bulletScale);
 
     const QJsonObject checkbox = root.value(QStringLiteral("checkbox")).toObject();
     readStyle(checkbox, "style", a.checkboxStyle);
