@@ -231,10 +231,15 @@ Session loadSession() {
         root.value(QStringLiteral("windowGeometry")).toString().toLatin1());
     session.splitterState = QByteArray::fromBase64(
         root.value(QStringLiteral("splitterState")).toString().toLatin1());
+    for (const QJsonValue& v : root.value(QStringLiteral("expandedDirs")).toArray())
+        if (v.isString()) session.expandedDirs.append(v.toString());
     return session;
 }
 
 void saveSession(const Session& session) {
+    QJsonArray expanded;
+    for (const QString& dir : session.expandedDirs) expanded.append(dir);
+
     writeJson(statePath(),
               QJsonObject{
                   {QStringLiteral("lastFile"), session.lastFile},
@@ -244,6 +249,7 @@ void saveSession(const Session& session) {
                    QString::fromLatin1(session.windowGeometry.toBase64())},
                   {QStringLiteral("splitterState"),
                    QString::fromLatin1(session.splitterState.toBase64())},
+                  {QStringLiteral("expandedDirs"), expanded},
               });
 }
 

@@ -10,11 +10,12 @@ namespace zametti {
 
 struct NoteTreeModel::Node {
     QString title;   // подпись: имя заметки без ".md" или имя каталога
-    QString path;    // для файла — полный путь, для каталога пусто
+    QString path;    // полный путь, и у файла, и у каталога
+    bool dir = false;
     Node* parent = nullptr;
     std::vector<std::unique_ptr<Node>> children;
 
-    bool isDir() const { return path.isEmpty(); }
+    bool isDir() const { return dir; }
     int rowInParent() const {
         if (parent == nullptr) return 0;
         for (size_t i = 0; i < parent->children.size(); ++i)
@@ -42,6 +43,8 @@ std::unique_ptr<NoteTreeModel::Node> buildDir(const QString& dirPath, const QStr
                                               const QCollator& collator) {
     auto node = std::make_unique<NoteTreeModel::Node>();
     node->title = title;
+    node->path = QFileInfo(dirPath).absoluteFilePath();
+    node->dir = true;
 
     QDir dir(dirPath);
     const QFileInfoList entries =
@@ -88,6 +91,8 @@ NoteTreeModel::NoteTreeModel(const QString& root, QObject* parent)
     if (root_ == nullptr) {
         root_ = std::make_unique<Node>();
         root_->title = QFileInfo(root).fileName();
+        root_->path = QFileInfo(root).absoluteFilePath();
+        root_->dir = true;
     }
 }
 
@@ -124,10 +129,21 @@ QVariant NoteTreeModel::data(const QModelIndex& index, int role) const {
 
 QString NoteTreeModel::filePath(const QModelIndex& index) const {
     if (!index.isValid()) return {};
+    const Node* node = static_cast<const Node*>(index.internalPointer());
+    return node->isDir() ? QString() : node->path;
+}
+
+QString NoteTreeModel::nodePath(const QModelIndex& index) const {
+    if (!index.isValid()) return root_->path;
     return static_cast<const Node*>(index.internalPointer())->path;
 }
 
-QModelIndex NoteTreeModel::indexForFile(const QString& path) const {
+bool NoteTreeModel::isDirectory(const QModelIndex& index) const {
+    if (!index.isValid()) return true;
+    return static_cast<const Node*>(index.internalPointer())->isDir();
+}
+
+QModelIndex NoteTreeModel::indexForPath(const QString& path) const {
     // Обходим дерево целиком: заметок сотни, искать быстрее, чем держать
     // отдельный указатель на каждую.
     struct Search {
@@ -136,7 +152,7 @@ QModelIndex NoteTreeModel::indexForFile(const QString& path) const {
             const int rows = model->rowCount(parent);
             for (int i = 0; i < rows; ++i) {
                 const QModelIndex child = model->index(i, 0, parent);
-                if (model->filePath(child) == path) return child;
+                if (model->nodePath(child) == path) return child;
                 const QModelIndex found = run(model, child, path);
                 if (found.isValid()) return found;
             }

@@ -37,8 +37,11 @@ public:
 
     // Путь к файлу или пустая строка, если это каталог.
     QString filePath(const QModelIndex& index) const;
-    // Индекс заметки по пути; недействителен, если её нет в дереве.
-    QModelIndex indexForFile(const QString& path) const;
+    // Путь узла, каталога или файла. Нужен, чтобы запоминать раскрытые ветки.
+    QString nodePath(const QModelIndex& index) const;
+    bool isDirectory(const QModelIndex& index) const;
+    // Индекс узла по пути; недействителен, если его нет в дереве.
+    QModelIndex indexForPath(const QString& path) const;
 
     bool isEmpty() const;
 

@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <functional>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -219,6 +220,24 @@ int main(int argc, char** argv) {
                          if (!file.isEmpty() && file != current) openNote(file);
                      });
 
+    // Раскрытые ветки собираем обходом дерева: у QTreeView нет готового списка,
+    // а хранить путь каждой ветки отдельно незачем — их десятки.
+    std::function<void(const QModelIndex&, QStringList&)> collectExpanded =
+        [&](const QModelIndex& parent, QStringList& out) {
+            const int rows = model.rowCount(parent);
+            for (int i = 0; i < rows; ++i) {
+                const QModelIndex child = model.index(i, 0, parent);
+                if (!model.isDirectory(child)) continue;
+                if (tree.isExpanded(child)) out.append(model.nodePath(child));
+                collectExpanded(child, out);
+            }
+        };
+    auto expandedDirs = [&]() {
+        QStringList out;
+        collectExpanded(QModelIndex(), out);
+        return out;
+    };
+
     auto applyZoom = [&](qreal factor) {
         const qreal next = std::clamp(zoom * factor, zametti::appearance().zoomMin,
                                       zametti::appearance().zoomMax);
@@ -257,9 +276,18 @@ int main(int argc, char** argv) {
     // Показать текущую заметку в дереве надо после show(): раскрытие веток
     // требует уже созданных представлений. Сигнал глушим, иначе выделение
     // немедленно вызвало бы повторную загрузку того же файла.
-    const QModelIndex currentIndex = model.indexForFile(current);
+    // Раскрытые ветки восстанавливаем до того, как показать текущую заметку:
+    // иначе её раскрытие затерялось бы среди прочих.
+    for (const QString& dir : session.expandedDirs) {
+        const QModelIndex index = model.indexForPath(dir);
+        if (index.isValid() && model.isDirectory(index)) tree.expand(index);
+    }
+
+    const QModelIndex currentIndex = model.indexForPath(current);
     if (currentIndex.isValid()) {
         const QSignalBlocker blocked(tree.selectionModel());
+        for (QModelIndex up = currentIndex.parent(); up.isValid(); up = up.parent())
+            tree.expand(up);
         tree.setCurrentIndex(currentIndex);
         tree.scrollTo(currentIndex, QAbstractItemView::PositionAtCenter);
     }
@@ -281,6 +309,7 @@ int main(int argc, char** argv) {
         out.zoom = zoom;
         out.windowGeometry = window.saveGeometry();
         out.splitterState = window.saveState();
+        out.expandedDirs = expandedDirs();
         zametti::saveSession(out);
     });
 

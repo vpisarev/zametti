@@ -16,6 +16,7 @@
 #include <QByteArray>
 #include <QColor>
 #include <QString>
+#include <QStringList>
 #include <QtGlobal>
 
 #include <array>
@@ -115,6 +116,7 @@ QByteArray defaultAppearanceJson();
 struct Session {
     QString lastFile;
     QByteArray splitterState;
+    QStringList expandedDirs;
     double scrollRatio = 0.0;   // доля прокрутки: в пикселях она зависит от зума
     qreal zoom = 1.0;
     QByteArray windowGeometry;
