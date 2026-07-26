@@ -11,6 +11,7 @@
 
 #include <QApplication>
 #include <QFileInfo>
+#include <QFont>
 #include <QIcon>
 #include <QItemSelectionModel>
 #include <QKeySequence>
@@ -161,7 +162,7 @@ int main(int argc, char** argv) {
     }
 
     QSplitter window(Qt::Horizontal);
-    QTreeView tree;
+    zametti::NoteTreeView tree;
     QTextBrowser view;
 
     zametti::NoteTreeModel model(
@@ -170,6 +171,20 @@ int main(int argc, char** argv) {
     tree.setHeaderHidden(true);
     tree.setEditTriggers(QAbstractItemView::NoEditTriggers);
     tree.setUniformRowHeights(true);
+
+    QFont sidebarFont(zametti::appearance().sidebarFontFamily.isEmpty()
+                          ? zametti::appearance().fontFamily
+                          : zametti::appearance().sidebarFontFamily);
+    sidebarFont.setPointSizeF(zametti::appearance().sidebarFontPoint);
+    tree.setFont(sidebarFont);
+
+    zametti::NoteTreeDelegate delegate;
+    tree.setItemDelegate(&delegate);
+
+    QObject::connect(&tree, &QTreeView::expanded, &tree,
+                     [&model](const QModelIndex& i) { model.setExpanded(i, true); });
+    QObject::connect(&tree, &QTreeView::collapsed, &tree,
+                     [&model](const QModelIndex& i) { model.setExpanded(i, false); });
 
     view.setOpenExternalLinks(true);
     zametti::applyPalette(view);

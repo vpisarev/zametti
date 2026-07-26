@@ -100,7 +100,17 @@ QJsonObject appearanceToJson(const Appearance& a) {
 
     QJsonObject notes{
         {QStringLiteral("root"), a.notesRoot},
-        {QStringLiteral("sidebarWidth"), a.sidebarWidth},
+    };
+
+    QJsonObject sidebar{
+        {QStringLiteral("fontFamily"), a.sidebarFontFamily},
+        {QStringLiteral("fontSize"), a.sidebarFontPoint},
+        {QStringLiteral("lineHeightFactor"), a.sidebarLineHeightFactor},
+        {QStringLiteral("width"), a.sidebarWidth},
+        {QStringLiteral("folderFamily"), a.sidebarFolderFamily},
+        {QStringLiteral("folderClosed"), a.sidebarFolderClosed},
+        {QStringLiteral("folderOpen"), a.sidebarFolderOpen},
+        {QStringLiteral("folderScale"), a.sidebarFolderScale},
     };
 
     QJsonObject zoom{
@@ -115,6 +125,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("colors"), colors},
         {QStringLiteral("checkbox"), checkbox},
         {QStringLiteral("notes"), notes},
+        {QStringLiteral("sidebar"), sidebar},
         {QStringLiteral("zoom"), zoom},
     };
 }
@@ -158,7 +169,16 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
 
     const QJsonObject notes = root.value(QStringLiteral("notes")).toObject();
     readString(notes, "root", a.notesRoot);
-    const QJsonValue width = notes.value(QStringLiteral("sidebarWidth"));
+
+    const QJsonObject sidebar = root.value(QStringLiteral("sidebar")).toObject();
+    readString(sidebar, "fontFamily", a.sidebarFontFamily);
+    readReal(sidebar, "fontSize", a.sidebarFontPoint);
+    readReal(sidebar, "lineHeightFactor", a.sidebarLineHeightFactor);
+    readString(sidebar, "folderFamily", a.sidebarFolderFamily);
+    readString(sidebar, "folderClosed", a.sidebarFolderClosed);
+    readString(sidebar, "folderOpen", a.sidebarFolderOpen);
+    readReal(sidebar, "folderScale", a.sidebarFolderScale);
+    const QJsonValue width = sidebar.value(QStringLiteral("width"));
     if (width.isDouble()) a.sidebarWidth = width.toInt();
 
     const QJsonObject zoom = root.value(QStringLiteral("zoom")).toObject();

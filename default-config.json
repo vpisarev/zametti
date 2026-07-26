@@ -41,8 +41,17 @@
         "verticalMargin": 24
     },
     "notes": {
-        "root": "",
-        "sidebarWidth": 260
+        "root": ""
+    },
+    "sidebar": {
+        "folderClosed": "📁︎",
+        "folderFamily": "Noto Emoji",
+        "folderOpen": "📂︎",
+        "folderScale": 1.05,
+        "fontFamily": "",
+        "fontSize": 10,
+        "lineHeightFactor": 1.6,
+        "width": 260
     },
     "zoom": {
         "max": 4,

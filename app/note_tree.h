@@ -12,6 +12,9 @@
 #include <QAbstractItemModel>
 #include <QModelIndex>
 #include <QString>
+#include <QSet>
+#include <QStyledItemDelegate>
+#include <QTreeView>
 
 #include <memory>
 #include <vector>
@@ -45,6 +48,10 @@ public:
 
     bool isEmpty() const;
 
+    // Раскрытость ветки знает представление, а рисовать значок должна модель —
+    // поэтому она сообщает о ней сюда.
+    void setExpanded(const QModelIndex& index, bool expanded);
+
     // Где считать корнем дерева. Порядок: заданное в конфиге; иначе ближайший
     // каталог вверх от заметки, помеченный как хранилище (.obsidian или .git) —
     // так открытая из глубины заметка всё равно показывает всё дерево; иначе
@@ -53,6 +60,32 @@ public:
 
 private:
     std::unique_ptr<Node> root_;
+    QSet<QString> expanded_;
+};
+
+// Высота строки в дереве. Отдельного способа задать её у QTreeView нет: он
+// спрашивает размер у делегата, поэтому множитель применяется здесь.
+class NoteTreeDelegate : public QStyledItemDelegate {
+    Q_OBJECT
+
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+    QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override;
+};
+
+// Дерево без треугольников ветвления: раскрытость видна по значку папки, а два
+// указателя на одно и то же только шумят. Убрать их иначе нельзя — QTreeView
+// рисует их сам, отдельной настройки нет.
+class NoteTreeView : public QTreeView {
+    Q_OBJECT
+
+public:
+    explicit NoteTreeView(QWidget* parent = nullptr);
+
+protected:
+    void drawBranches(QPainter* painter, const QRect& rect,
+                      const QModelIndex& index) const override;
 };
 
 }  // namespace zametti

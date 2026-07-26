@@ -1,8 +1,16 @@
 #include "note_tree.h"
 
+#include "settings.h"
+
 #include <QCollator>
 #include <QDir>
 #include <QFileInfo>
+#include <QFontDatabase>
+#include <QFontMetricsF>
+#include <QGuiApplication>
+#include <QHash>
+#include <QPainter>
+#include <QPixmap>
 
 #include <algorithm>
 
@@ -74,6 +82,50 @@ std::unique_ptr<NoteTreeModel::Node> buildDir(const QString& dirPath, const QStr
     return node;
 }
 
+// Значок папки рисуется знаком из шрифта: готовых чёрно-белых иконок в Qt нет,
+// а эмодзи-шрифты дают цветные. Результат кэшируется — иначе он перерисовывался
+// бы на каждую отрисовку строки.
+// Запасная пара на случай, если настроенной гарнитуры в системе нет: эти знаки
+// есть в Noto Sans Symbols2, который ставится вместе с дистрибутивом.
+constexpr char16_t kFallbackFamily[] = u"Noto Sans Symbols2";
+constexpr char32_t kFallbackClosed = U'\U0001F5C0';
+constexpr char32_t kFallbackOpen = U'\U0001F5C1';
+
+QPixmap folderPixmap(bool open) {
+    const Appearance& a = appearance();
+    const qreal dpr = qGuiApp != nullptr ? qGuiApp->devicePixelRatio() : 1.0;
+    const QString key = QStringLiteral("%1|%2|%3").arg(int(open)).arg(a.sidebarFontPoint).arg(dpr);
+
+    static QHash<QString, QPixmap> cache;
+    const auto found = cache.constFind(key);
+    if (found != cache.constEnd()) return *found;
+
+    QString family = a.sidebarFolderFamily;
+    QString glyph = open ? a.sidebarFolderOpen : a.sidebarFolderClosed;
+    if (!QFontDatabase::families().contains(family)) {
+        family = QString::fromUtf16(kFallbackFamily);
+        glyph = QString::fromUcs4(open ? &kFallbackOpen : &kFallbackClosed, 1);
+    }
+
+    QFont font(family);
+    font.setPointSizeF(a.sidebarFontPoint * a.sidebarFolderScale);
+    const QFontMetrics metrics(font);
+    const int side = metrics.height();
+
+    QPixmap pixmap(QSize(side, side) * dpr);
+    pixmap.setDevicePixelRatio(dpr);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setFont(font);
+    painter.setPen(a.markerColor);
+    painter.drawText(QRect(0, 0, side, side), Qt::AlignCenter, glyph);
+    painter.end();
+
+    cache.insert(key, pixmap);
+    return pixmap;
+}
+
 const NoteTreeModel::Node* nodeOf(const QModelIndex& index, const NoteTreeModel::Node* root) {
     return index.isValid() ? static_cast<const NoteTreeModel::Node*>(index.internalPointer())
                            : root;
@@ -124,6 +176,8 @@ QVariant NoteTreeModel::data(const QModelIndex& index, int role) const {
     const Node* node = static_cast<const Node*>(index.internalPointer());
     if (role == Qt::DisplayRole) return node->title;
     if (role == Qt::ToolTipRole && !node->isDir()) return node->path;
+    if (role == Qt::DecorationRole && node->isDir())
+        return folderPixmap(expanded_.contains(node->path));
     return {};
 }
 
@@ -162,6 +216,14 @@ QModelIndex NoteTreeModel::indexForPath(const QString& path) const {
     return Search::run(this, QModelIndex(), path);
 }
 
+void NoteTreeModel::setExpanded(const QModelIndex& index, bool expanded) {
+    const QString path = nodePath(index);
+    if (path.isEmpty()) return;
+    if (expanded) expanded_.insert(path);
+    else expanded_.remove(path);
+    if (index.isValid()) emit dataChanged(index, index, {Qt::DecorationRole});
+}
+
 bool NoteTreeModel::isEmpty() const { return root_->children.empty(); }
 
 QString NoteTreeModel::rootFor(const QString& filePath, const QString& configuredRoot) {
@@ -184,6 +246,26 @@ QString NoteTreeModel::rootFor(const QString& filePath, const QString& configure
         if (!probe.cdUp()) break;
     }
     return best;
+}
+
+NoteTreeView::NoteTreeView(QWidget* parent) : QTreeView(parent) {
+    // Раз треугольников нет, папка должна раскрываться по обычному щелчку:
+    // иначе цели для нажатия не остаётся вовсе.
+    connect(this, &QTreeView::clicked, this, [this](const QModelIndex& index) {
+        if (model() != nullptr && model()->hasChildren(index))
+            setExpanded(index, !isExpanded(index));
+    });
+}
+
+void NoteTreeView::drawBranches(QPainter*, const QRect&, const QModelIndex&) const {}
+
+QSize NoteTreeDelegate::sizeHint(const QStyleOptionViewItem& option,
+                                 const QModelIndex& index) const {
+    QSize size = QStyledItemDelegate::sizeHint(option, index);
+    const qreal height =
+        QFontMetricsF(option.font).height() * appearance().sidebarLineHeightFactor;
+    size.setHeight(int(height + 0.5));
+    return size;
 }
 
 }  // namespace zametti

@@ -87,7 +87,23 @@ struct Appearance {
     // Корень дерева. Путь относительно домашнего каталога; пусто — определять
     // по открытой заметке (см. NoteTreeModel::rootFor).
     QString notesRoot;
-    // Ширина боковой панели при первом запуске, дальше её помнит state.json.
+
+    // --- боковая панель ---
+    // Гарнитура панели; пусто — та же, что у текста.
+    QString sidebarFontFamily;
+    qreal sidebarFontPoint = 10.0;
+    // Высота строки списка, долей от высоты шрифта панели.
+    qreal sidebarLineHeightFactor = 1.6;
+    // Значки папок вместо треугольников. Гарнитура нужна отдельная: в обычных
+    // моноширинных этих знаков нет. К знаку приписан U+FE0E — просьба взять
+    // текстовое, а не эмодзийное начертание; без неё Qt берёт цветной шрифт и
+    // папки выходят жёлтыми. Если гарнитуры в системе нет, применяется запасная
+    // пара из Noto Sans Symbols2 (см. note_tree.cpp).
+    QString sidebarFolderFamily = QStringLiteral("Noto Emoji");
+    QString sidebarFolderClosed = QStringLiteral("\U0001F4C1\uFE0E");
+    QString sidebarFolderOpen = QStringLiteral("\U0001F4C2\uFE0E");
+    qreal sidebarFolderScale = 1.05;
+    // Ширина при первом запуске, дальше её помнит state.json.
     int sidebarWidth = 260;
 
     // --- масштаб ---
