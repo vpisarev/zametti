@@ -14,6 +14,8 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
+#include <cctype>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -318,32 +320,92 @@ bool hrefNeedsBrackets(const std::string& h) {
     return h.empty();
 }
 
-// Автоссылка вида <https://...> или <user@host>: href совпадает с текстом.
-// Так она и должна вернуться в вывод, иначе побайтового равенства не будет.
-bool isAutolinkShape(const std::string& text, const std::string& href) {
+bool looksLikeEmail(const std::string& text) {
+    size_t at = text.find('@');
+    return at != std::string::npos && at > 0 && at + 1 < text.size() &&
+           text.find('@', at + 1) == std::string::npos && text.find('.', at) != std::string::npos;
+}
+
+bool hasScheme(const std::string& text, bool requireSlashes) {
+    size_t colon = text.find(':');
+    if (colon == std::string::npos || colon == 0) return false;
+    for (size_t i = 0; i < colon; ++i) {
+        char c = text[i];
+        bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || isDigit(c) || c == '+' ||
+                  c == '-' || c == '.';
+        if (!ok) return false;
+    }
+    return !requireSlashes || text.compare(colon, 3, "://") == 0;
+}
+
+// Как выводить ссылку, у которой текст и есть адрес.
+enum class LinkShape {
+    Inline,   // [текст](адрес)
+    Angle,    // <адрес>
+    Bare,     // адрес как есть — разбор опознает его сам
+};
+
+// Годится ли адрес для вывода без разметки. Разбор подхватывает голую ссылку
+// только пока в ней нет знаков, которые её оборвут или которые пришлось бы
+// экранировать, — а экранировать внутри адреса нельзя, он от этого развалится.
+bool bareSafe(const std::string& text) {
     if (text.empty()) return false;
+    for (unsigned char c : text) {
+        // Не-ASCII в голой ссылке разбор не принимает: "https://x/путь" без
+        // угловых скобок остаётся обычным текстом.
+        if (c <= ' ' || c >= 0x80) return false;
+        if (std::strchr("`*_~\\[]<>&()\"'", c) != nullptr) return false;
+    }
+    // Хвостовую пунктуацию разбор в ссылку не включает, и голый вывод потерял бы
+    // её из адреса.
+    return std::strchr(".,;:!?", text.back()) == nullptr;
+}
+
+// Голой ссылкой разбор считает только адрес с настоящим доменом: "https://../"
+// в угловых скобках ссылка, а без них — обычный текст.
+bool hasRealHost(const std::string& text) {
+    size_t begin = text.find("://");
+    if (begin == std::string::npos) return false;
+    begin += 3;
+    size_t end = text.find_first_of("/?#", begin);
+    if (end == std::string::npos) end = text.size();
+    if (begin >= end) return false;
+    if (!std::isalnum(static_cast<unsigned char>(text[begin]))) return false;
+    for (size_t i = begin; i + 1 < end; ++i)
+        if (text[i] == '.' && std::isalnum(static_cast<unsigned char>(text[i + 1]))) return true;
+    return false;
+}
+
+// Голые ссылки разбор опознаёт и без разметки, поэтому и выводить их надо
+// голыми: обернув "https://x" в угловые скобки, мы переписали бы каждую заметку,
+// где ссылка просто набрана в строку. Но опознаёт он не всё подряд — только три
+// схемы, "www." и почту, поэтому список здесь закрытый, а не "любая схема".
+LinkShape linkShape(const std::string& text, const std::string& href) {
+    if (text.empty()) return LinkShape::Inline;
     for (char c : text)
-        if (isAsciiSpace(c) || c == '<' || c == '>') return false;
+        if (isAsciiSpace(c) || c == '<' || c == '>') return LinkShape::Inline;
 
     if (href == text) {
-        size_t colon = text.find(':');
-        if (colon == std::string::npos || colon == 0) return false;
-        for (size_t i = 0; i < colon; ++i) {
-            char c = text[i];
-            bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || isDigit(c) || c == '+' ||
-                      c == '-' || c == '.';
-            if (!ok) return false;
-        }
-        return true;
+        const bool bareScheme = text.compare(0, 7, "http://") == 0 ||
+                                text.compare(0, 8, "https://") == 0 ||
+                                text.compare(0, 6, "ftp://") == 0;
+        if (bareScheme && bareSafe(text) && hasRealHost(text)) return LinkShape::Bare;
+        if (hasScheme(text, /*requireSlashes=*/false)) return LinkShape::Angle;
+        return LinkShape::Inline;
     }
 
     if (href.size() == text.size() + 7 && href.compare(0, 7, "mailto:") == 0 &&
-        href.compare(7, std::string::npos, text) == 0) {
-        size_t at = text.find('@');
-        return at != std::string::npos && at > 0 && at + 1 < text.size() &&
-               text.find('@', at + 1) == std::string::npos;
+        href.compare(7, std::string::npos, text) == 0 && looksLikeEmail(text) &&
+        bareSafe(text)) {
+        return LinkShape::Bare;
     }
-    return false;
+
+    if (href.size() == text.size() + 7 && href.compare(0, 7, "http://") == 0 &&
+        href.compare(7, std::string::npos, text) == 0 && text.compare(0, 4, "www.") == 0 &&
+        bareSafe(text)) {
+        return LinkShape::Bare;
+    }
+    return LinkShape::Inline;
 }
 
 void appendHref(std::string& out, const std::string& href) {
@@ -470,14 +532,18 @@ void emitSegments(TextSink& sink, const std::string& text, const std::vector<Seg
             continue;
         }
 
-        if (attr == kHref && openMask == 0 && j == i + 1 &&
-            isAutolinkShape(text.substr(gb, ge - gb), href)) {
-            sink.out.push_back('<');
-            sink.out.append(text, gb, ge - gb);
-            sink.out.push_back('>');
-            sink.bol = false;
-            i = j;
-            continue;
+        // Адрес выводится дословно, без экранирования: подчёркивания и тильды
+        // внутри URL экранировать нельзя, иначе ссылка развалится.
+        if (attr == kHref && openMask == 0 && j == i + 1) {
+            const LinkShape shape = linkShape(text.substr(gb, ge - gb), href);
+            if (shape != LinkShape::Inline) {
+                if (shape == LinkShape::Angle) sink.out.push_back('<');
+                sink.out.append(text, gb, ge - gb);
+                if (shape == LinkShape::Angle) sink.out.push_back('>');
+                sink.bol = false;
+                i = j;
+                continue;
+            }
         }
 
         // Пометить края: символ-ограничитель, оказавшийся у самой границы

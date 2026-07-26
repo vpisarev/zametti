@@ -4,5 +4,6 @@
   {"kind": "heading", "headingLevel": 2, "text": "Второй уровень"},
   {"kind": "paragraph", "text": "Абзац, занимающий\nнесколько строк подряд."},
   {"kind": "heading", "headingLevel": 3, "text": "Третий уровень"},
-  {"kind": "paragraph", "text": "Ссылка на что-нибудь и автоссылка\nhttps://example.org/ прямо в тексте.", "inlines": [{"offset": 13, "length": 24, "href": "https://example.org/путь"}, {"offset": 62, "length": 20, "href": "https://example.org/"}]}
+  {"kind": "paragraph", "text": "Ссылка на что-нибудь и голая ссылка\nhttps://example.org/ прямо в тексте, и почта user@example.org.", "inlines": [{"offset": 13, "length": 24, "href": "https://example.org/путь"}, {"offset": 65, "length": 20, "href": "https://example.org/"}, {"offset": 128, "length": 16, "href": "mailto:user@example.org"}]},
+  {"kind": "paragraph", "text": "Адрес с кириллицей разбор берёт только в скобках: https://example.org/путь.", "inlines": [{"offset": 91, "length": 28, "href": "https://example.org/путь"}]}
 ]

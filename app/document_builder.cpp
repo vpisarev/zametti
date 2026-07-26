@@ -57,9 +57,12 @@ enum class CheckboxStyle {
 };
 constexpr CheckboxStyle kCheckboxStyle = CheckboxStyle::Drawn;
 constexpr qreal kCheckboxScale = 1.8;
+// Эмодзи приходят из запасного шрифта и рядом с моноширинным текстом смотрятся
+// мелко: у них другая нормаль по кеглю.
+constexpr qreal kFallbackScale = 1.15;
 
 const QColor kMarkerColor(0x7a, 0x82, 0x8c);
-const QColor kLinkColor(0x1a, 0x5f, 0xb4);
+const QColor kLinkColor(0x32, 0x5c, 0xc0);
 const QColor kPageBackground(0xfe, 0xfe, 0xfb);
 const QColor kSelectionBackground(0xbf, 0xdb, 0xfe);
 const QColor kQuoteColor(0x5a, 0x62, 0x6a);
@@ -106,6 +109,43 @@ private:
     size_t byte_ = 0;
     int utf16_ = 0;
 };
+
+// Символы, которых нет в основной гарнитуре, рисуются запасным шрифтом — это
+// прежде всего эмодзи. Опознаём их не по диапазонам кодов, а по факту:
+// «нет глифа в основном шрифте». Так правило не устареет вместе с Unicode.
+void enlargeFallbackGlyphs(QTextDocument& doc, int textStart, const QString& text,
+                           qreal pointSize, const QFontMetricsF& metrics) {
+    QTextCursor cursor(&doc);
+    int i = 0;
+    while (i < text.size()) {
+        const bool pair = text[i].isHighSurrogate() && i + 1 < text.size() &&
+                          text[i + 1].isLowSurrogate();
+        const char32_t cp = pair ? QChar::surrogateToUcs4(text[i], text[i + 1])
+                                 : char32_t(text[i].unicode());
+        if (metrics.inFontUcs4(cp)) {
+            i += pair ? 2 : 1;
+            continue;
+        }
+
+        // Составные эмодзи (модификаторы тона, склейка через ZWJ) берём одним
+        // куском: разный кегль внутри последовательности её бы разорвал.
+        const int begin = i;
+        while (i < text.size()) {
+            const bool p = text[i].isHighSurrogate() && i + 1 < text.size() &&
+                           text[i + 1].isLowSurrogate();
+            const char32_t c = p ? QChar::surrogateToUcs4(text[i], text[i + 1])
+                                 : char32_t(text[i].unicode());
+            if (metrics.inFontUcs4(c)) break;
+            i += p ? 2 : 1;
+        }
+
+        QTextCharFormat fmt;
+        fmt.setFontPointSize(pointSize * kFallbackScale);
+        cursor.setPosition(textStart + begin);
+        cursor.setPosition(textStart + i, QTextCursor::KeepAnchor);
+        cursor.mergeCharFormat(fmt);
+    }
+}
 
 void applySpans(QTextDocument& doc, int textStart, const Block& b) {
     OffsetMap map(b.text);
@@ -359,6 +399,7 @@ void buildDocument(const Document& doc, QTextDocument& target) {
         const int textStart = cursor.position();
         cursor.insertText(text, charFmt);
         if (!raw && !b.inlines.empty()) applySpans(target, textStart, b);
+        enlargeFallbackGlyphs(target, textStart, text, linePoint, metrics);
     }
 
     cursor.endEditBlock();

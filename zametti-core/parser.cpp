@@ -985,7 +985,10 @@ Document parse(std::string_view markdown) {
 
     MD_PARSER parser{};
     parser.abi_version = 0;
-    parser.flags = MD_FLAG_TABLES | MD_FLAG_STRIKETHROUGH | MD_FLAG_TASKLISTS;
+    // Голые ссылки (https://…, www.…, почта) — часть диалекта GitHub, и в
+    // заметках они встречаются куда чаще, чем размеченные вручную.
+    parser.flags = MD_FLAG_TABLES | MD_FLAG_STRIKETHROUGH | MD_FLAG_TASKLISTS |
+                   MD_FLAG_PERMISSIVEAUTOLINKS;
     parser.enter_block = enterBlock;
     parser.leave_block = leaveBlock;
     parser.enter_span = enterSpan;
