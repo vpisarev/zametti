@@ -636,7 +636,8 @@ std::string serialize(const Document& doc) {
 
     bool prevWasList = false;
     bool prevWasQuote = false;
-    int prevLevel = -1;
+    // Нужен только ассерту ниже: в сборке с NDEBUG он исчезает вместе с ним.
+    [[maybe_unused]] int prevLevel = -1;
 
     for (size_t i = 0; i < doc.size(); ++i) {
         const Block& b = doc[i];

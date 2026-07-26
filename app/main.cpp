@@ -9,7 +9,9 @@
 
 #include <QApplication>
 #include <QFileInfo>
+#include <QScrollBar>
 #include <QTextBrowser>
+#include <QTextCursor>
 #include <QTextDocument>
 
 #include <cstdio>
@@ -107,6 +109,11 @@ int main(int argc, char** argv) {
     zametti::buildDocument(zametti::parse(src), *view.document());
     view.setWindowTitle(QFileInfo(QString::fromStdString(path)).fileName() +
                         QStringLiteral(" — zametti"));
+    // После сборки документа курсор стоит в конце, и QTextBrowser открылся бы
+    // прокрученным вниз. Заметку надо показывать с начала.
+    view.moveCursor(QTextCursor::Start);
+    view.verticalScrollBar()->setValue(0);
+
     view.resize(900, 700);
     view.show();
 
