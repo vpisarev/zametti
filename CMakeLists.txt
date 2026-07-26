@@ -31,4 +31,5 @@ enable_testing()
 
 add_subdirectory(3rdparty/md4c)
 add_subdirectory(zametti-core)
+add_subdirectory(app)
 add_subdirectory(tests)
