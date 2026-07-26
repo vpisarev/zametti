@@ -11,6 +11,7 @@ endif()
 set(CMAKE_AUTOMOC ON)
 
 add_executable(zametti
+    appearance.h
     main.cpp
     document_builder.h
     document_builder.cpp

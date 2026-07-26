@@ -1,7 +1,6 @@
 #ifndef ZAMETTI_CHECKBOX_OBJECT_H
 #define ZAMETTI_CHECKBOX_OBJECT_H
 
-#include <QColor>
 #include <QObject>
 #include <QTextFormat>
 #include <QTextObjectInterface>
@@ -21,10 +20,6 @@ class CheckboxObject : public QObject, public QTextObjectInterface {
 public:
     enum { Type = QTextFormat::UserObject + 1 };
     enum { CheckedProperty = QTextFormat::UserProperty + 1 };
-
-    // Цвет фиксирован, а не берётся из формата: внутри выделения Qt подменяет
-    // цвет текста, и чекбокс перекрашивался бы вместе с ним.
-    static const QColor& color();
 
     using QObject::QObject;
 

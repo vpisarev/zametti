@@ -14,6 +14,7 @@
 
 #include "document_builder.h"
 
+#include "appearance.h"
 #include "checkbox_object.h"
 
 #include <QAbstractTextDocumentLayout>
@@ -27,6 +28,8 @@
 #include <QTextCharFormat>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QTextFrame>
+#include <QTextFrameFormat>
 #include <QTextOption>
 
 #include <vector>
@@ -34,20 +37,8 @@
 namespace zametti {
 namespace {
 
-constexpr char kFontFamily[] = "IBM Plex Mono";
-// В IBM Plex Mono нет ни U+2610, ни U+2611 — чекбоксы берём из DejaVu Sans Mono,
-// он тоже моноширинный и стоит в системе по умолчанию.
-constexpr char kSymbolFamily[] = "DejaVu Sans Mono";
+using namespace zametti::appearance;
 
-constexpr qreal kBaseFontPoint = 11.0;
-constexpr qreal kHeadingScale[6] = {1.7, 1.45, 1.25, 1.1, 1.0, 0.95};
-// У IBM Plex Mono собственный межстрочный просвет уже приличный, поэтому
-// множитель нужен маленький. Пункты списка ставим плотно: список читается как
-// один объект. Расстояние между абзацами держат поля блока, а не интерлиньяж —
-// иначе, ужимая строки, мы бы заодно сплющили и абзацы.
-constexpr qreal kLineHeightFactor = 1.15;
-constexpr qreal kListLineHeightFactor = 1.05;
-constexpr qreal kBlockSpacing = 13.0;
 // Чем рисовать чекбокс. Шрифтовые варианты просты, но размер, толщина линий и
 // положение по базовой линии в них заданы шрифтом и не настраиваются.
 enum class CheckboxStyle {
@@ -56,18 +47,6 @@ enum class CheckboxStyle {
     Drawn,   // рисуем сами, см. checkbox_object.cpp
 };
 constexpr CheckboxStyle kCheckboxStyle = CheckboxStyle::Drawn;
-constexpr qreal kCheckboxScale = 1.8;
-// Эмодзи приходят из запасного шрифта и рядом с моноширинным текстом смотрятся
-// мелко: у них другая нормаль по кеглю.
-constexpr qreal kFallbackScale = 1.15;
-
-const QColor kMarkerColor(0x7a, 0x82, 0x8c);
-const QColor kLinkColor(0x32, 0x5c, 0xc0);
-const QColor kPageBackground(0xfe, 0xfe, 0xfb);
-const QColor kSelectionBackground(0xbf, 0xdb, 0xfe);
-const QColor kQuoteColor(0x5a, 0x62, 0x6a);
-const QColor kRawColor(0x99, 0x9f, 0xa6);
-const QColor kCodeBackground(0, 0, 0, 14);
 
 // Перевод строки внутри блока IR — это перенос внутри того же абзаца, а не
 // новый абзац. QChar::LineSeparator даёт ровно это и, в отличие от '\n', не
@@ -254,9 +233,11 @@ void applyPalette(QWidget& view) {
 void buildDocument(const Document& doc, QTextDocument& target) {
     target.setUndoRedoEnabled(false);
     target.clear();
-    target.setDocumentMargin(28);
+    // Поля задаются рамкой корневого фрейма, а не documentMargin: тот кладёт
+    // одинаковый отступ со всех сторон, а по бокам нужно заметно больше.
+    target.setDocumentMargin(0);
 
-    QFont base(QString::fromLatin1(kFontFamily));
+    QFont base{QString(kFontFamily)};
     base.setPointSizeF(kBaseFontPoint);
     base.setStyleHint(QFont::Monospace);
     target.setDefaultFont(base);
@@ -268,6 +249,13 @@ void buildDocument(const Document& doc, QTextDocument& target) {
         target.documentLayout()->registerHandler(CheckboxObject::Type,
                                                  new CheckboxObject(&target));
     }
+
+    QTextFrameFormat rootFormat = target.rootFrame()->frameFormat();
+    rootFormat.setLeftMargin(kSideMargin);
+    rootFormat.setRightMargin(kSideMargin);
+    rootFormat.setTopMargin(kVerticalMargin);
+    rootFormat.setBottomMargin(kVerticalMargin);
+    target.rootFrame()->setFrameFormat(rootFormat);
 
     QTextCursor cursor(&target);
     cursor.beginEditBlock();
@@ -337,12 +325,12 @@ void buildDocument(const Document& doc, QTextDocument& target) {
             markerFmt = charFmt;
             if (isTask(b.kind)) {
                 const bool checked = b.kind == Kind::TaskChecked;
-                markerFmt.setForeground(CheckboxObject::color());
+                markerFmt.setForeground(checked ? kCheckboxCheckedColor : kCheckboxUncheckedColor);
                 switch (kCheckboxStyle) {
                     case CheckboxStyle::Glyph:
-                        markerFmt.setFontFamilies({QString::fromLatin1(kSymbolFamily),
-                                                   QString::fromLatin1(kFontFamily)});
-                        markerFmt.setFontPointSize(kBaseFontPoint * kCheckboxScale);
+                        markerFmt.setFontFamilies({QString(kSymbolFamily),
+                                                   QString(kFontFamily)});
+                        markerFmt.setFontPointSize(kBaseFontPoint * kCheckboxGlyphScale);
                         break;
                     case CheckboxStyle::Ascii:
                         break;
