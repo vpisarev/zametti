@@ -85,22 +85,63 @@ int runCheck(const QString& path) {
     return 1;
 }
 
-void printUsage() {
-    std::fprintf(stderr,
-                 "использование: zametti [--noconfig] [файл.md]\n"
-                 "               zametti --check файл.md\n"
-                 "               zametti --dump-config\n");
+const char* kUsage =
+    "использование: zametti [--noconfig] [файл.md]\n"
+    "               zametti --check файл.md\n"
+    "               zametti --dump-config\n";
+
+void printUsage() { std::fputs(kUsage, stderr); }
+
+// Справка идёт в stdout и с нулевым кодом: её просят намеренно, это не ошибка.
+void printHelp() {
+    std::fputs(kUsage, stdout);
+    std::printf(
+        "\n"
+        "Просмотрщик заметок в markdown. Слева дерево заметок, справа документ.\n"
+        "Без имени файла открывается тот, что читали в прошлый раз.\n"
+        "\n"
+        "Ключи:\n"
+        "  --check файл.md   прогнать разбор и обратную запись, показать расхождение\n"
+        "                    с оригиналом; ненулевой код возврата при расхождении.\n"
+        "                    Дисплей не нужен\n"
+        "  --dump-config     напечатать все параметры оформления со значениями\n"
+        "                    по умолчанию, в том же виде, в каком их ждёт конфиг\n"
+        "  --noconfig        не читать конфиг, взять умолчания\n"
+        "  --help, -h        эта справка\n"
+        "\n"
+        "Клавиши:\n"
+        "  Ctrl+=, Ctrl+-    крупнее, мельче\n"
+        "  Ctrl+0            исходный масштаб\n"
+        "\n"
+        "Файлы:\n"
+        "  %s\n"
+        "      оформление; приложение его только читает, править вручную.\n"
+        "      Полный список параметров — в default-config.json рядом с исходниками\n"
+        "      или по ключу --dump-config\n"
+        "  %s\n"
+        "      последняя заметка, прокрутка, зум, геометрия окна, раскрытые ветки;\n"
+        "      переписывается при выходе\n",
+        zametti::configPath().toUtf8().constData(),
+        zametti::statePath().toUtf8().constData());
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
+    // Имя приложения задаём до разбора ключей: от него зависят пути к конфигу и
+    // состоянию, а их печатает --help, не создавая ни окна, ни QApplication.
+    QCoreApplication::setApplicationName(QStringLiteral("zametti"));
+
     QString path;
     bool check = false;
     bool dumpConfig = false;
     bool noConfig = false;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
+        if (arg == "--help" || arg == "-h") {
+            printHelp();
+            return 0;
+        }
         if (arg == "--check") check = true;
         else if (arg == "--dump-config") dumpConfig = true;
         else if (arg == "--noconfig") noConfig = true;
@@ -128,7 +169,6 @@ int main(int argc, char** argv) {
     }
 
     QApplication app(argc, argv);
-    QCoreApplication::setApplicationName(QStringLiteral("zametti"));
     // Оболочки рабочего стола (в том числе док GNOME) берут иконку не у окна, а
     // из .desktop-файла с этим именем — см. packaging/zametti.desktop.
     QGuiApplication::setDesktopFileName(QStringLiteral("zametti"));
