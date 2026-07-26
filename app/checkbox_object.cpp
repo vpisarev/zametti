@@ -8,15 +8,17 @@
 namespace zametti {
 namespace {
 
-// Доля от высоты прописной буквы. Чуть больше единицы: рамка должна читаться
-// как самостоятельный элемент, а не как ещё одна буква в строке.
-constexpr qreal kBoxOfCapHeight = 1.42;
 constexpr qreal kPenWidth = 1.4;
 constexpr qreal kCornerRadius = 2.5;
 
-qreal boxSide(const QTextFormat& format) {
+// Рамка занимает по высоте ровно то же, что и строчные буквы с выносными
+// элементами: от хвоста "y" до верхушки "i". Абстрактные метрики шрифта
+// (ascent/descent) для этого не годятся — они описывают кегельную площадку с
+// запасом, и рамка по ним встаёт заметно выше текста. Берём фактические
+// чернила букв.
+QRectF inkExtent(const QTextFormat& format) {
     const QFontMetricsF metrics(format.toCharFormat().font());
-    return metrics.capHeight() * kBoxOfCapHeight;
+    return metrics.tightBoundingRect(QStringLiteral("iy"));
 }
 
 }  // namespace
@@ -25,10 +27,8 @@ QSizeF CheckboxObject::intrinsicSize(QTextDocument* doc, int posInDocument,
                                      const QTextFormat& format) {
     (void)doc;
     (void)posInDocument;
-    const qreal side = boxSide(format);
-    // Qt ставит объект основанием на базовую линию. Небольшой запас снизу
-    // опускает рамку так, чтобы её середина совпала с оптическим центром строки.
-    return QSizeF(side, side + kPenWidth);
+    const qreal side = inkExtent(format).height();
+    return QSizeF(side, side);
 }
 
 void CheckboxObject::drawObject(QPainter* painter, const QRectF& rect, QTextDocument* doc,
@@ -41,8 +41,10 @@ void CheckboxObject::drawObject(QPainter* painter, const QRectF& rect, QTextDocu
                              ? format.foreground().color()
                              : painter->pen().color();
 
-    const qreal side = boxSide(format);
-    QRectF box(rect.left(), rect.top(), side, side);
+    // Qt ставит основание объекта на базовую линию, а хвост "y" уходит ниже неё.
+    // Поэтому рамку сдвигаем вниз ровно на глубину этого хвоста.
+    const QRectF ink = inkExtent(format);
+    QRectF box(rect.left(), rect.top() + ink.bottom(), ink.height(), ink.height());
     box.adjust(kPenWidth / 2, kPenWidth / 2, -kPenWidth / 2, -kPenWidth / 2);
 
     painter->save();
