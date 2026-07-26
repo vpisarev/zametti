@@ -80,13 +80,14 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("pageBackground"), colorToString(a.pageBackground)},
         {QStringLiteral("selectionBackground"), colorToString(a.selectionBackground)},
         {QStringLiteral("link"), colorToString(a.linkColor)},
-        {QStringLiteral("listMarker"), colorToString(a.markerColor)},
         {QStringLiteral("quote"), colorToString(a.quoteColor)},
         {QStringLiteral("rawSource"), colorToString(a.rawColor)},
         {QStringLiteral("codeBackground"), colorToString(a.codeBackground)},
     };
 
     QJsonObject list{
+        {QStringLiteral("bulletColor"), colorToString(a.bulletColor)},
+        {QStringLiteral("orderedColor"), colorToString(a.orderedColor)},
         {QStringLiteral("bulletStyle"),
          a.bulletStyle == BulletStyle::Glyph ? QStringLiteral("glyph")
                                              : QStringLiteral("drawn")},
@@ -117,6 +118,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("fontSize"), a.sidebarFontPoint},
         {QStringLiteral("lineHeightFactor"), a.sidebarLineHeightFactor},
         {QStringLiteral("width"), a.sidebarWidth},
+        {QStringLiteral("folderColor"), colorToString(a.sidebarFolderColor)},
         {QStringLiteral("folderFamily"), a.sidebarFolderFamily},
         {QStringLiteral("folderClosed"), a.sidebarFolderClosed},
         {QStringLiteral("folderOpen"), a.sidebarFolderOpen},
@@ -162,12 +164,13 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readColor(colors, "pageBackground", a.pageBackground);
     readColor(colors, "selectionBackground", a.selectionBackground);
     readColor(colors, "link", a.linkColor);
-    readColor(colors, "listMarker", a.markerColor);
     readColor(colors, "quote", a.quoteColor);
     readColor(colors, "rawSource", a.rawColor);
     readColor(colors, "codeBackground", a.codeBackground);
 
     const QJsonObject list = root.value(QStringLiteral("list")).toObject();
+    readColor(list, "bulletColor", a.bulletColor);
+    readColor(list, "orderedColor", a.orderedColor);
     const QJsonValue bulletStyle = list.value(QStringLiteral("bulletStyle"));
     if (bulletStyle.isString()) {
         a.bulletStyle = bulletStyle.toString() == QLatin1String("glyph") ? BulletStyle::Glyph
@@ -196,6 +199,7 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readString(sidebar, "fontFamily", a.sidebarFontFamily);
     readReal(sidebar, "fontSize", a.sidebarFontPoint);
     readReal(sidebar, "lineHeightFactor", a.sidebarLineHeightFactor);
+    readColor(sidebar, "folderColor", a.sidebarFolderColor);
     readString(sidebar, "folderFamily", a.sidebarFolderFamily);
     readString(sidebar, "folderClosed", a.sidebarFolderClosed);
     readString(sidebar, "folderOpen", a.sidebarFolderOpen);

@@ -118,7 +118,7 @@ QPixmap folderPixmap(bool open) {
 
     QPainter painter(&pixmap);
     painter.setFont(font);
-    painter.setPen(a.markerColor);
+    painter.setPen(a.sidebarFolderColor);
     painter.drawText(QRect(0, 0, side, side), Qt::AlignCenter, glyph);
     painter.end();
 

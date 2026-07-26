@@ -13,7 +13,6 @@
     "colors": {
         "codeBackground": "#0e000000",
         "link": "#325cc0",
-        "listMarker": "#7a828c",
         "pageBackground": "#fefefb",
         "quote": "#5a626a",
         "rawSource": "#999fa6",
@@ -42,16 +41,19 @@
     },
     "list": {
         "bullet": "•",
-        "bulletDiameter": 0.6,
+        "bulletColor": "#7a828c",
+        "bulletDiameter": 0.8,
         "bulletRise": 0,
         "bulletScale": 1.35,
-        "bulletStyle": "drawn"
+        "bulletStyle": "drawn",
+        "orderedColor": "#7a828c"
     },
     "notes": {
         "root": ""
     },
     "sidebar": {
         "folderClosed": "📁︎",
+        "folderColor": "#7a828c",
         "folderFamily": "Noto Emoji",
         "folderOpen": "📂︎",
         "folderScale": 1.05,

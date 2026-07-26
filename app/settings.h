@@ -69,16 +69,20 @@ struct Appearance {
     QColor pageBackground{0xfe, 0xfe, 0xfb};
     QColor selectionBackground{0xbf, 0xdb, 0xfe};
     QColor linkColor{0x32, 0x5c, 0xc0};
-    QColor markerColor{0x7a, 0x82, 0x8c};   // "•" и "1." у списков
     QColor quoteColor{0x5a, 0x62, 0x6a};
     QColor rawColor{0x99, 0x9f, 0xa6};      // непонятое, дословный кусок
     QColor codeBackground{0, 0, 0, 14};
 
     // --- маркированный список ---
+    // Цвета маркеров раздельные: буллет — фигура, цифра — знак, и уравнивать их
+    // в цвете не обязательно.
+    QColor bulletColor{0x0, 0x0, 0x30};
+    QColor orderedColor{0x7a, 0x82, 0x8c};
+
     BulletStyle bulletStyle = BulletStyle::Drawn;
     // Для нарисованного: диаметр и поправка по вертикали, обе — доли от высоты
     // строчных. Поправка со знаком: больше нуля поднимает, меньше опускает.
-    qreal bulletDiameter = 0.6;
+    qreal bulletDiameter = 0.8;
     qreal bulletRise = 0.0;
     // Для знакового: сам знак и его кегль относительно базового.
     QString bulletGlyph = QStringLiteral("\u2022");
@@ -118,6 +122,7 @@ struct Appearance {
     // папки выходят жёлтыми. Если гарнитуры в системе нет, применяется запасная
     // пара из Noto Sans Symbols2 (см. note_tree.cpp).
     QString sidebarFolderFamily = QStringLiteral("Noto Emoji");
+    QColor sidebarFolderColor{0x7a, 0x82, 0x8c};
     QString sidebarFolderClosed = QStringLiteral("\U0001F4C1\uFE0E");
     QString sidebarFolderOpen = QStringLiteral("\U0001F4C2\uFE0E");
     qreal sidebarFolderScale = 1.05;

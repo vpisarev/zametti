@@ -360,7 +360,8 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
                         break;
                 }
             } else {
-                markerFmt.setForeground(appearance().markerColor);
+                markerFmt.setForeground(b.kind == Kind::Bullet ? appearance().bulletColor
+                                                               : appearance().orderedColor);
                 // Ширину колонки это не трогает: текст ставится по табуляции.
                 if (b.kind == Kind::Bullet) {
                     if (appearance().bulletStyle == BulletStyle::Drawn)

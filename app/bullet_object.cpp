@@ -51,7 +51,7 @@ void BulletObject::drawObject(QPainter* painter, const QRectF& rect, QTextDocume
     painter->save();
     painter->setRenderHint(QPainter::Antialiasing, true);
     painter->setPen(Qt::NoPen);
-    painter->setBrush(appearance().markerColor);
+    painter->setBrush(appearance().bulletColor);
     painter->drawEllipse(center, diameter / 2, diameter / 2);
     painter->restore();
 }
