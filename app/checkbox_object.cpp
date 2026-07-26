@@ -11,6 +11,12 @@ namespace {
 constexpr qreal kPenWidth = 1.4;
 constexpr qreal kCornerRadius = 2.5;
 
+// Оптическая поправка. Геометрически рамка уже совпадает с чернилами букв, но
+// читается чуть низкой: у сплошного прямоугольника вся масса распределена
+// равномерно, а у строчных букв она собрана выше — хвост "y" тонкий и лёгкий.
+// Доля от высоты, а не пиксели: должна пережить смену кегля.
+constexpr qreal kOpticalRise = 0.11;
+
 // Рамка занимает по высоте ровно то же, что и строчные буквы с выносными
 // элементами: от хвоста "y" до верхушки "i". Абстрактные метрики шрифта
 // (ascent/descent) для этого не годятся — они описывают кегельную площадку с
@@ -44,7 +50,8 @@ void CheckboxObject::drawObject(QPainter* painter, const QRectF& rect, QTextDocu
     // Qt ставит основание объекта на базовую линию, а хвост "y" уходит ниже неё.
     // Поэтому рамку сдвигаем вниз ровно на глубину этого хвоста.
     const QRectF ink = inkExtent(format);
-    QRectF box(rect.left(), rect.top() + ink.bottom(), ink.height(), ink.height());
+    QRectF box(rect.left(), rect.top() + ink.bottom() - ink.height() * kOpticalRise,
+               ink.height(), ink.height());
     box.adjust(kPenWidth / 2, kPenWidth / 2, -kPenWidth / 2, -kPenWidth / 2);
 
     painter->save();
