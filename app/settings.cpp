@@ -173,6 +173,11 @@ QString configPath() {
            QStringLiteral("/config.json");
 }
 
+QString defaultsPath() {
+    return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) +
+           QStringLiteral("/config.defaults.json");
+}
+
 QString statePath() {
     return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) +
            QStringLiteral("/state.json");
@@ -198,9 +203,19 @@ bool loadAppearance(QString* error) {
         appearanceFromJson(doc.object(), g_appearance);
     }
 
-    // Файл переписывается всегда: так в нём появляются параметры, добавленные в
-    // новой версии, а править его дальше можно с полным списком перед глазами.
-    writeJson(path, appearanceToJson(g_appearance));
+    // Справочник умолчаний обновляем всегда: по нему видно, что вообще можно
+    // покрутить, включая параметры, добавленные в новой версии.
+    QJsonObject defaults = appearanceToJson(Appearance{});
+    defaults.insert(QStringLiteral("_"),
+                    QStringLiteral("Справочник: полный список параметров со значениями по "
+                                   "умолчанию. Приложение его переписывает при каждом "
+                                   "запуске и никогда не читает. Правьте config.json."));
+    writeJson(defaultsPath(), defaults);
+
+    // Сам конфиг создаём только если его нет, и дальше не трогаем никогда: это
+    // файл пользователя. Перезапись стирала бы и его собственные ключи, и
+    // опечатки — а опечатку надо видеть, чтобы её найти.
+    if (!file.exists()) writeJson(path, appearanceToJson(g_appearance));
     return true;
 }
 
