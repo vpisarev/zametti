@@ -15,7 +15,10 @@ constexpr qreal kCornerRadius = 2.5;
 // читается чуть низкой: у сплошного прямоугольника вся масса распределена
 // равномерно, а у строчных букв она собрана выше — хвост "y" тонкий и лёгкий.
 // Доля от высоты, а не пиксели: должна пережить смену кегля.
-constexpr qreal kOpticalRise = 0.11;
+constexpr qreal kOpticalRise = 0.03;
+
+const QColor kCheckboxColor(0x32, 0x5c, 0xc0);
+const QColor kTickColor(0xff, 0xff, 0xff);
 
 // Рамка занимает по высоте ровно то же, что и строчные буквы с выносными
 // элементами: от хвоста "y" до верхушки "i". Абстрактные метрики шрифта
@@ -29,12 +32,16 @@ QRectF inkExtent(const QTextFormat& format) {
 
 }  // namespace
 
+const QColor& CheckboxObject::color() { return kCheckboxColor; }
+
 QSizeF CheckboxObject::intrinsicSize(QTextDocument* doc, int posInDocument,
                                      const QTextFormat& format) {
     (void)doc;
     (void)posInDocument;
+    // Запас снизу: с AlignMiddle Qt центрирует прямоугольник по строке, и запас
+    // опускает рамку к базовой линии, оставляя её внутри прямоугольника.
     const qreal side = inkExtent(format).height();
-    return QSizeF(side, side);
+    return QSizeF(side, side * (1.0 + kOpticalRise));
 }
 
 void CheckboxObject::drawObject(QPainter* painter, const QRectF& rect, QTextDocument* doc,
@@ -43,15 +50,12 @@ void CheckboxObject::drawObject(QPainter* painter, const QRectF& rect, QTextDocu
     (void)posInDocument;
 
     const bool checked = format.property(CheckedProperty).toBool();
-    const QColor color = format.foreground().style() != Qt::NoBrush
-                             ? format.foreground().color()
-                             : painter->pen().color();
+    const QColor color = kCheckboxColor;
 
-    // Qt ставит основание объекта на базовую линию, а хвост "y" уходит ниже неё.
-    // Поэтому рамку сдвигаем вниз ровно на глубину этого хвоста.
-    const QRectF ink = inkExtent(format);
-    QRectF box(rect.left(), rect.top() + ink.bottom() - ink.height() * kOpticalRise,
-               ink.height(), ink.height());
+    // Рисуем строго внутри выданного прямоугольника: всё, что выйдет за его
+    // пределы, выделение не закрасит, и снизу останется яркая полоса.
+    const qreal side = inkExtent(format).height();
+    QRectF box(rect.left(), rect.top() + rect.height() - side, side, side);
     box.adjust(kPenWidth / 2, kPenWidth / 2, -kPenWidth / 2, -kPenWidth / 2);
 
     painter->save();
@@ -65,8 +69,9 @@ void CheckboxObject::drawObject(QPainter* painter, const QRectF& rect, QTextDocu
         painter->setBrush(color);
         painter->drawRoundedRect(box, kCornerRadius, kCornerRadius);
 
-        // Галочка рисуется на заливке, поэтому цветом фона страницы.
-        QPen tick(Qt::white, kPenWidth * 1.15);
+        // Галочка лежит на заливке, поэтому она белая, а не цвета страницы:
+        // под выделением фон страницы меняется, а заливка рамки — нет.
+        QPen tick(kTickColor, kPenWidth * 1.15);
         tick.setCapStyle(Qt::RoundCap);
         tick.setJoinStyle(Qt::RoundJoin);
         painter->setPen(tick);

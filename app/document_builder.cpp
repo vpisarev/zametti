@@ -18,6 +18,8 @@
 
 #include <QAbstractTextDocumentLayout>
 #include <QColor>
+#include <QPalette>
+#include <QWidget>
 #include <QFont>
 #include <QFontMetricsF>
 #include <QString>
@@ -57,9 +59,9 @@ constexpr CheckboxStyle kCheckboxStyle = CheckboxStyle::Drawn;
 constexpr qreal kCheckboxScale = 1.8;
 
 const QColor kMarkerColor(0x7a, 0x82, 0x8c);
-const QColor kCheckedColor(0x1f, 0x8b, 0x3d);
-const QColor kUncheckedColor(0x6b, 0x77, 0x85);
 const QColor kLinkColor(0x1a, 0x5f, 0xb4);
+const QColor kPageBackground(0xfe, 0xfe, 0xfb);
+const QColor kSelectionBackground(0xbf, 0xdb, 0xfe);
 const QColor kQuoteColor(0x5a, 0x62, 0x6a);
 const QColor kRawColor(0x99, 0x9f, 0xa6);
 const QColor kCodeBackground(0, 0, 0, 14);
@@ -199,6 +201,16 @@ int markerCells(Kind kind, int ordinal) {
 
 }  // namespace
 
+void applyPalette(QWidget& view) {
+    QPalette palette = view.palette();
+    palette.setColor(QPalette::Base, kPageBackground);
+    palette.setColor(QPalette::Highlight, kSelectionBackground);
+    // Выделение светлое, поэтому текст в нём остаётся тёмным: белый по
+    // умолчанию на таком фоне просто пропал бы.
+    palette.setColor(QPalette::HighlightedText, palette.color(QPalette::Text));
+    view.setPalette(palette);
+}
+
 void buildDocument(const Document& doc, QTextDocument& target) {
     target.setUndoRedoEnabled(false);
     target.clear();
@@ -285,7 +297,7 @@ void buildDocument(const Document& doc, QTextDocument& target) {
             markerFmt = charFmt;
             if (isTask(b.kind)) {
                 const bool checked = b.kind == Kind::TaskChecked;
-                markerFmt.setForeground(checked ? kCheckedColor : kUncheckedColor);
+                markerFmt.setForeground(CheckboxObject::color());
                 switch (kCheckboxStyle) {
                     case CheckboxStyle::Glyph:
                         markerFmt.setFontFamilies({QString::fromLatin1(kSymbolFamily),
@@ -297,6 +309,13 @@ void buildDocument(const Document& doc, QTextDocument& target) {
                     case CheckboxStyle::Drawn:
                         markerFmt.setObjectType(CheckboxObject::Type);
                         markerFmt.setProperty(CheckboxObject::CheckedProperty, checked);
+                        // Объект по умолчанию встаёт основанием на базовую линию,
+                        // и рамку приходилось бы опускать ниже выданного Qt
+                        // прямоугольника. Выступ за его пределы Qt не закрашивает
+                        // выделением — под выделением снизу оставалась яркая
+                        // полоса. AlignMiddle сдвигает сам прямоугольник, и
+                        // рисование целиком остаётся внутри него.
+                        markerFmt.setVerticalAlignment(QTextCharFormat::AlignMiddle);
                         break;
                 }
             } else {

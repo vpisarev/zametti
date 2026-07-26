@@ -106,6 +106,7 @@ int main(int argc, char** argv) {
 
     QTextBrowser view;
     view.setOpenExternalLinks(true);
+    zametti::applyPalette(view);
     zametti::buildDocument(zametti::parse(src), *view.document());
     view.setWindowTitle(QFileInfo(QString::fromStdString(path)).fileName() +
                         QStringLiteral(" — zametti"));
