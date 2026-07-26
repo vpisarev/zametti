@@ -42,7 +42,10 @@
     },
     "list": {
         "bullet": "•",
-        "bulletScale": 1.35
+        "bulletDiameter": 0.6,
+        "bulletRise": 0,
+        "bulletScale": 1.35,
+        "bulletStyle": "drawn"
     },
     "notes": {
         "root": ""

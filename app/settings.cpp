@@ -87,6 +87,11 @@ QJsonObject appearanceToJson(const Appearance& a) {
     };
 
     QJsonObject list{
+        {QStringLiteral("bulletStyle"),
+         a.bulletStyle == BulletStyle::Glyph ? QStringLiteral("glyph")
+                                             : QStringLiteral("drawn")},
+        {QStringLiteral("bulletDiameter"), a.bulletDiameter},
+        {QStringLiteral("bulletRise"), a.bulletRise},
         {QStringLiteral("bullet"), a.bulletGlyph},
         {QStringLiteral("bulletScale"), a.bulletScale},
     };
@@ -163,6 +168,13 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readColor(colors, "codeBackground", a.codeBackground);
 
     const QJsonObject list = root.value(QStringLiteral("list")).toObject();
+    const QJsonValue bulletStyle = list.value(QStringLiteral("bulletStyle"));
+    if (bulletStyle.isString()) {
+        a.bulletStyle = bulletStyle.toString() == QLatin1String("glyph") ? BulletStyle::Glyph
+                                                                        : BulletStyle::Drawn;
+    }
+    readReal(list, "bulletDiameter", a.bulletDiameter);
+    readReal(list, "bulletRise", a.bulletRise);
     readString(list, "bullet", a.bulletGlyph);
     readReal(list, "bulletScale", a.bulletScale);
 

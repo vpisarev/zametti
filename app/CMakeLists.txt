@@ -15,6 +15,8 @@ add_executable(zametti
     main.cpp
     document_builder.h
     document_builder.cpp
+    bullet_object.h
+    bullet_object.cpp
     checkbox_object.h
     checkbox_object.cpp
     note_tree.h

@@ -15,6 +15,7 @@
 #include "document_builder.h"
 
 #include "settings.h"
+#include "bullet_object.h"
 #include "checkbox_object.h"
 
 #include <QAbstractTextDocumentLayout>
@@ -184,7 +185,10 @@ bool isTask(Kind kind) {
 // который лэйаут отдаёт нашему обработчику.
 QString markerGlyph(Kind kind, int ordinal) {
     switch (kind) {
-        case Kind::Bullet:  return appearance().bulletGlyph;
+        case Kind::Bullet:
+            return appearance().bulletStyle == BulletStyle::Drawn
+                       ? QString(QChar::ObjectReplacementCharacter)
+                       : appearance().bulletGlyph;
         case Kind::Ordered: return QString::number(ordinal) + QStringLiteral(".");
         case Kind::TaskUnchecked:
         case Kind::TaskChecked:
@@ -253,6 +257,10 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
         target.documentLayout()->handlerForObject(CheckboxObject::Type) == nullptr) {
         target.documentLayout()->registerHandler(CheckboxObject::Type,
                                                  new CheckboxObject(&target));
+    }
+    if (appearance().bulletStyle == BulletStyle::Drawn &&
+        target.documentLayout()->handlerForObject(BulletObject::Type) == nullptr) {
+        target.documentLayout()->registerHandler(BulletObject::Type, new BulletObject(&target));
     }
 
     QTextFrameFormat rootFormat = target.rootFrame()->frameFormat();
@@ -353,10 +361,13 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
                 }
             } else {
                 markerFmt.setForeground(appearance().markerColor);
-                // Буллет крупнее текста: в кегле основного шрифта "•" теряется.
-                // Ширину колонки это не трогает — текст ставится по табуляции.
-                if (b.kind == Kind::Bullet)
-                    markerFmt.setFontPointSize(basePoint * appearance().bulletScale);
+                // Ширину колонки это не трогает: текст ставится по табуляции.
+                if (b.kind == Kind::Bullet) {
+                    if (appearance().bulletStyle == BulletStyle::Drawn)
+                        markerFmt.setObjectType(BulletObject::Type);
+                    else
+                        markerFmt.setFontPointSize(basePoint * appearance().bulletScale);
+                }
             }
 
             // Висячий отступ: первая строка начинается с маркера, продолжения
