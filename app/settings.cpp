@@ -98,6 +98,11 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("textGap"), a.checkboxTextGap},
     };
 
+    QJsonObject notes{
+        {QStringLiteral("root"), a.notesRoot},
+        {QStringLiteral("sidebarWidth"), a.sidebarWidth},
+    };
+
     QJsonObject zoom{
         {QStringLiteral("step"), a.zoomStep},
         {QStringLiteral("min"), a.zoomMin},
@@ -109,6 +114,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("layout"), layout},
         {QStringLiteral("colors"), colors},
         {QStringLiteral("checkbox"), checkbox},
+        {QStringLiteral("notes"), notes},
         {QStringLiteral("zoom"), zoom},
     };
 }
@@ -149,6 +155,11 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readReal(checkbox, "opticalRise", a.checkboxOpticalRise);
     readReal(checkbox, "glyphScale", a.checkboxGlyphScale);
     readReal(checkbox, "textGap", a.checkboxTextGap);
+
+    const QJsonObject notes = root.value(QStringLiteral("notes")).toObject();
+    readString(notes, "root", a.notesRoot);
+    const QJsonValue width = notes.value(QStringLiteral("sidebarWidth"));
+    if (width.isDouble()) a.sidebarWidth = width.toInt();
 
     const QJsonObject zoom = root.value(QStringLiteral("zoom")).toObject();
     readReal(zoom, "step", a.zoomStep);
@@ -218,6 +229,8 @@ Session loadSession() {
     session.zoom = root.value(QStringLiteral("zoom")).toDouble(1.0);
     session.windowGeometry = QByteArray::fromBase64(
         root.value(QStringLiteral("windowGeometry")).toString().toLatin1());
+    session.splitterState = QByteArray::fromBase64(
+        root.value(QStringLiteral("splitterState")).toString().toLatin1());
     return session;
 }
 
@@ -229,6 +242,8 @@ void saveSession(const Session& session) {
                   {QStringLiteral("zoom"), session.zoom},
                   {QStringLiteral("windowGeometry"),
                    QString::fromLatin1(session.windowGeometry.toBase64())},
+                  {QStringLiteral("splitterState"),
+                   QString::fromLatin1(session.splitterState.toBase64())},
               });
 }
 

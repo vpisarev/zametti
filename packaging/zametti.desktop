@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Zametti
+Comment=Заметки на markdown
+Exec=zametti %f
+Icon=zametti
+Terminal=false
+Categories=Office;TextEditor;
+MimeType=text/markdown;
+StartupWMClass=zametti

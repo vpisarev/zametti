@@ -41,7 +41,7 @@ struct Appearance {
     // Эмодзи приходят из запасного шрифта и рядом с моноширинным текстом
     // смотрятся мелко. Множитель применяется к любому знаку, которого нет в
     // основной гарнитуре.
-    qreal fallbackScale = 1.15;
+    qreal fallbackScale = 1.3;
 
     // --- ритм страницы ---
     // У моноширинных гарнитур собственный межстрочный просвет уже приличный,
@@ -68,7 +68,7 @@ struct Appearance {
     // --- чекбокс ---
     CheckboxStyle checkboxStyle = CheckboxStyle::Drawn;
     QColor checkboxCheckedColor{0x32, 0x5c, 0xc0};    // заливка и цвет рамки
-    QColor checkboxUncheckedColor{0x32, 0x5c, 0xc0};  // только рамка, без заливки
+    QColor checkboxUncheckedColor{0xac, 0xac, 0xac};  // только рамка, без заливки
     QColor checkboxTickColor{0xff, 0xff, 0xff};
     qreal checkboxPenWidth = 1.4;
     qreal checkboxCornerRadius = 2.5;
@@ -80,7 +80,14 @@ struct Appearance {
     // Кегль шрифтовых вариантов. К нарисованному отношения не имеет.
     qreal checkboxGlyphScale = 1.8;
     // Зазор между рамкой и текстом задачи, в ширинах буквы "A".
-    qreal checkboxTextGap = 1.3;
+    qreal checkboxTextGap = 1.1;
+
+    // --- дерево заметок ---
+    // Корень дерева. Путь относительно домашнего каталога; пусто — определять
+    // по открытой заметке (см. NoteTreeModel::rootFor).
+    QString notesRoot;
+    // Ширина боковой панели при первом запуске, дальше её помнит state.json.
+    int sidebarWidth = 260;
 
     // --- масштаб ---
     qreal zoomStep = 1.1;
@@ -107,6 +114,7 @@ QByteArray defaultAppearanceJson();
 // Что запоминается между запусками.
 struct Session {
     QString lastFile;
+    QByteArray splitterState;
     double scrollRatio = 0.0;   // доля прокрутки: в пикселях она зависит от зума
     qreal zoom = 1.0;
     QByteArray windowGeometry;

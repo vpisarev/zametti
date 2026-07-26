@@ -1,9 +1,10 @@
-// Просмотрщик: один .md на входе, окно с отрендеренным документом.
+// Просмотрщик: дерево заметок слева, отрендеренный документ справа.
 //
 // Это не самоцель, а первый стенд для проверки ядра. Отсюда же работает режим
 // --check: прогнать parse → serialize и показать расхождение с оригиналом.
 
 #include "document_builder.h"
+#include "note_tree.h"
 #include "parser.h"
 #include "serializer.h"
 #include "settings.h"
@@ -11,13 +12,17 @@
 #include <QApplication>
 #include <QFileInfo>
 #include <QIcon>
+#include <QItemSelectionModel>
 #include <QKeySequence>
 #include <QScrollBar>
 #include <QShortcut>
+#include <QSignalBlocker>
+#include <QSplitter>
 #include <QTextBrowser>
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QTimer>
+#include <QTreeView>
 
 #include <algorithm>
 #include <cstdio>
@@ -28,8 +33,8 @@
 
 namespace {
 
-bool readFile(const std::string& path, std::string& out) {
-    std::ifstream in(path, std::ios::binary);
+bool readFile(const QString& path, std::string& out) {
+    std::ifstream in(path.toStdString(), std::ios::binary);
     if (!in) return false;
     std::ostringstream ss;
     ss << in.rdbuf();
@@ -55,10 +60,10 @@ std::vector<std::string> splitLines(const std::string& s) {
 
 // Построчный дифф. Не «первый различающийся байт»: расхождение надо читать
 // глазами, а не вычислять.
-int runCheck(const std::string& path) {
+int runCheck(const QString& path) {
     std::string src;
     if (!readFile(path, src)) {
-        std::fprintf(stderr, "не читается: %s\n", path.c_str());
+        std::fprintf(stderr, "не читается: %s\n", path.toUtf8().constData());
         return 2;
     }
 
@@ -78,15 +83,22 @@ int runCheck(const std::string& path) {
     return 1;
 }
 
+void printUsage() {
+    std::fprintf(stderr,
+                 "использование: zametti [--noconfig] [файл.md]\n"
+                 "               zametti --check файл.md\n"
+                 "               zametti --dump-config\n");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
-    std::string path;
+    QString path;
     bool check = false;
     bool dumpConfig = false;
     bool noConfig = false;
     for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
+        const std::string arg = argv[i];
         if (arg == "--check") check = true;
         else if (arg == "--dump-config") dumpConfig = true;
         else if (arg == "--noconfig") noConfig = true;
@@ -94,7 +106,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "неизвестный ключ: %s\n", arg.c_str());
             return 2;
         } else {
-            path = arg;
+            path = QString::fromLocal8Bit(argv[i]);
         }
     }
 
@@ -105,10 +117,9 @@ int main(int argc, char** argv) {
         std::fwrite(json.constData(), 1, size_t(json.size()), stdout);
         return 0;
     }
-
     if (check) {
-        if (path.empty()) {
-            std::fprintf(stderr, "использование: zametti --check файл.md\n");
+        if (path.isEmpty()) {
+            printUsage();
             return 2;
         }
         return runCheck(path);
@@ -116,6 +127,9 @@ int main(int argc, char** argv) {
 
     QApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("zametti"));
+    // Оболочки рабочего стола (в том числе док GNOME) берут иконку не у окна, а
+    // из .desktop-файла с этим именем — см. packaging/zametti.desktop.
+    QGuiApplication::setDesktopFileName(QStringLiteral("zametti"));
     QGuiApplication::setWindowIcon(QIcon(QStringLiteral(":/zametti.png")));
 
     // --noconfig нужен, чтобы посмотреть на вид по умолчанию, не убирая свой
@@ -132,46 +146,78 @@ int main(int argc, char** argv) {
     const zametti::Session session = zametti::loadSession();
 
     // Без аргумента открываем то, что читали в прошлый раз.
-    if (path.empty() && !session.lastFile.isEmpty()) path = session.lastFile.toStdString();
-    if (path.empty()) {
-        std::fprintf(stderr,
-                     "использование: zametti [--noconfig] файл.md\n"
-                     "               zametti --check файл.md\n"
-                     "               zametti --dump-config\n");
+    if (path.isEmpty()) path = session.lastFile;
+    if (path.isEmpty()) {
+        printUsage();
         return 2;
     }
 
+    QString current = QFileInfo(path).absoluteFilePath();
     std::string src;
-    if (!readFile(path, src)) {
-        std::fprintf(stderr, "не читается: %s\n", path.c_str());
+    if (!readFile(current, src)) {
+        std::fprintf(stderr, "не читается: %s\n", current.toUtf8().constData());
         return 2;
     }
 
-    const QString absolutePath = QFileInfo(QString::fromStdString(path)).absoluteFilePath();
-    const bool sameFileAsLastTime = session.lastFile == absolutePath;
-    const zametti::Document doc = zametti::parse(src);
-
+    QSplitter window(Qt::Horizontal);
+    QTreeView tree;
     QTextBrowser view;
+
+    zametti::NoteTreeModel model(
+        zametti::NoteTreeModel::rootFor(current, zametti::appearance().notesRoot));
+    tree.setModel(&model);
+    tree.setHeaderHidden(true);
+    tree.setEditTriggers(QAbstractItemView::NoEditTriggers);
+    tree.setUniformRowHeights(true);
+
     view.setOpenExternalLinks(true);
     zametti::applyPalette(view);
-    view.setWindowTitle(QFileInfo(absolutePath).fileName() + QStringLiteral(" — zametti"));
+    zametti::applyPalette(tree);
+
+    window.addWidget(&tree);
+    window.addWidget(&view);
+    window.setStretchFactor(1, 1);   // при растяжении окна растёт текст, а не панель
+    window.setChildrenCollapsible(false);
 
     // Кегль задан явно в каждом формате, поэтому штатный зум QTextEdit до него
     // не дотягивается: при смене масштаба документ собирается заново. Место в
     // тексте держим по доле прокрутки — в пикселях оно после пересборки другое.
-    qreal zoom = std::clamp(sameFileAsLastTime ? session.zoom : qreal(1.0),
-                            zametti::appearance().zoomMin, zametti::appearance().zoomMax);
+    qreal zoom = std::clamp(session.zoom, zametti::appearance().zoomMin,
+                            zametti::appearance().zoomMax);
+    zametti::Document doc = zametti::parse(src);
 
     auto scrollRatio = [&view]() -> double {
         const QScrollBar* bar = view.verticalScrollBar();
         return bar->maximum() > 0 ? double(bar->value()) / bar->maximum() : 0.0;
     };
-    auto rebuild = [&view, &doc](qreal z, double ratio) {
-        zametti::buildDocument(doc, *view.document(), z);
+    auto rebuild = [&view, &doc, &zoom](double ratio) {
+        zametti::buildDocument(doc, *view.document(), zoom);
         view.moveCursor(QTextCursor::Start);
         QScrollBar* bar = view.verticalScrollBar();
         bar->setValue(int(ratio * bar->maximum()));
     };
+    auto setTitle = [&window](const QString& file) {
+        window.setWindowTitle(QFileInfo(file).completeBaseName() + QStringLiteral(" — zametti"));
+    };
+
+    auto openNote = [&](const QString& file) {
+        std::string text;
+        if (!readFile(file, text)) {
+            std::fprintf(stderr, "не читается: %s\n", file.toUtf8().constData());
+            return;
+        }
+        current = file;
+        doc = zametti::parse(text);
+        setTitle(file);
+        rebuild(0.0);
+    };
+
+    QObject::connect(tree.selectionModel(), &QItemSelectionModel::currentChanged, &tree,
+                     [&](const QModelIndex& index, const QModelIndex&) {
+                         // На каталоге ничего не открываем: он только раскрывается.
+                         const QString file = model.filePath(index);
+                         if (!file.isEmpty() && file != current) openNote(file);
+                     });
 
     auto applyZoom = [&](qreal factor) {
         const qreal next = std::clamp(zoom * factor, zametti::appearance().zoomMin,
@@ -179,11 +225,11 @@ int main(int argc, char** argv) {
         if (next == zoom) return;
         const double ratio = scrollRatio();
         zoom = next;
-        rebuild(zoom, ratio);
+        rebuild(ratio);
     };
 
-    const auto shortcut = [&view](const QKeySequence& keys, auto&& slot) {
-        QObject::connect(new QShortcut(keys, &view), &QShortcut::activated, &view, slot);
+    const auto shortcut = [&window](const QKeySequence& keys, auto&& slot) {
+        QObject::connect(new QShortcut(keys, &window), &QShortcut::activated, &window, slot);
     };
     // Ctrl+= рядом с Ctrl++: увеличивают одной и той же клавишей, с шифтом и без.
     shortcut(QKeySequence(QStringLiteral("Ctrl+=")),
@@ -196,18 +242,31 @@ int main(int argc, char** argv) {
         if (zoom == qreal(1.0)) return;
         const double ratio = scrollRatio();
         zoom = 1.0;
-        rebuild(zoom, ratio);
+        rebuild(ratio);
     });
 
-    if (!session.windowGeometry.isEmpty()) view.restoreGeometry(session.windowGeometry);
-    else view.resize(900, 700);
-    view.show();
+    setTitle(current);
+    if (!session.windowGeometry.isEmpty()) window.restoreGeometry(session.windowGeometry);
+    else window.resize(1150, 780);
+    if (!session.splitterState.isEmpty()) window.restoreState(session.splitterState);
+    else window.setSizes({zametti::appearance().sidebarWidth, 800});
+    window.show();
 
-    rebuild(zoom, 0.0);
+    rebuild(0.0);
+
+    // Показать текущую заметку в дереве надо после show(): раскрытие веток
+    // требует уже созданных представлений. Сигнал глушим, иначе выделение
+    // немедленно вызвало бы повторную загрузку того же файла.
+    const QModelIndex currentIndex = model.indexForFile(current);
+    if (currentIndex.isValid()) {
+        const QSignalBlocker blocked(tree.selectionModel());
+        tree.setCurrentIndex(currentIndex);
+        tree.scrollTo(currentIndex, QAbstractItemView::PositionAtCenter);
+    }
 
     // Прокрутку можно ставить только когда документ уже разложен по размерам
     // окна, а это происходит после show(), в следующем проходе цикла событий.
-    const double startRatio = sameFileAsLastTime ? session.scrollRatio : 0.0;
+    const double startRatio = session.lastFile == current ? session.scrollRatio : 0.0;
     if (startRatio > 0.0) {
         QTimer::singleShot(0, &view, [&view, startRatio] {
             QScrollBar* bar = view.verticalScrollBar();
@@ -215,12 +274,13 @@ int main(int argc, char** argv) {
         });
     }
 
-    QObject::connect(&app, &QCoreApplication::aboutToQuit, &view, [&] {
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, &window, [&] {
         zametti::Session out;
-        out.lastFile = absolutePath;
+        out.lastFile = current;
         out.scrollRatio = scrollRatio();
         out.zoom = zoom;
-        out.windowGeometry = view.saveGeometry();
+        out.windowGeometry = window.saveGeometry();
+        out.splitterState = window.saveState();
         zametti::saveSession(out);
     });
 
