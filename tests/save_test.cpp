@@ -363,6 +363,68 @@ void checkEdgeSpaces() {
                    "код через перенос режется построчно");
     }
 
+    // Пустой вложенный пункт markdown не выражает: одинокий "-" под текстом
+    // родителя читается подчёркиванием заголовка, и весь список уезжает в
+    // дословный кусок. В документе такой пункт заводится каждым Enter.
+    {
+        struct NestedCase {
+            const char* source;
+            const char* expected;
+            const char* what;
+        };
+        const NestedCase cases[] = {
+            {"- раз\n  - вложенный\n", "- раз\n  - вложенный\n",
+             "пустой вложенный пункт в файл не идёт"},
+            {"- раз\n", "- раз\n-\n", "а пустой пункт верхнего уровня записывается"},
+        };
+        int n = 0;
+        for (const NestedCase& c : cases) {
+            const QString path = pathFor(
+                (std::string("пустой-вложенный") + std::to_string(n) + ".md").c_str());
+            check(writeFile(path, c.source), "не записать исходник");
+
+            QTextDocument doc;
+            buildFrom(c.source, doc);
+            // Enter в конце последнего пункта заводит пустой пункт того же
+            // уровня — так это и выходит при живом наборе.
+            QTextCursor cursor(&doc);
+            cursor.movePosition(QTextCursor::End);
+            zametti::splitBlockAtCursor(doc, cursor);
+
+            const zametti::SaveOutcome outcome =
+                zametti::saveDocument(doc, path, QStringLiteral("test"));
+            check(outcome.result != zametti::SaveResult::Rescued,
+                  std::string(c.what) + ": не должно уводить в аварийный файл");
+            checkEqual(c.expected, readFile(path), c.what);
+            ++n;
+        }
+    }
+
+    // Потомки выброшенного пункта поднимаются на уровень: без родителя им
+    // остаться нельзя.
+    {
+        const QString path = pathFor("потомки-пустого.md");
+        check(writeFile(path, "заглушка\n"), "не записать исходник");
+        auto item = [](zametti::Kind kind, int level, const char* text) {
+            zametti::Block block;
+            block.kind = kind;
+            block.level = level;
+            block.text = text;
+            return block;
+        };
+        QTextDocument doc;
+        zametti::buildDocument({item(zametti::Kind::Bullet, 0, "раз"),
+                                item(zametti::Kind::Bullet, 1, ""),
+                                item(zametti::Kind::Bullet, 2, "внук")},
+                               doc);
+        const zametti::SaveOutcome outcome =
+            zametti::saveDocument(doc, path, QStringLiteral("test"));
+        check(outcome.result != zametti::SaveResult::Rescued,
+              "пустой пункт с потомком не должен уводить в аварийный файл");
+        checkEqual("- раз\n  - внук\n", readFile(path),
+                   "потомок поднялся на уровень выброшенного");
+    }
+
     // Записанное с неразрывными отступами устойчиво: второй проход ничего не
     // меняет, иначе файл переписывался бы при каждом сохранении.
     {

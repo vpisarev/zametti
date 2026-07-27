@@ -250,11 +250,46 @@ Block withEdgesNormalised(Block block) {
     return block;
 }
 
+// Пустой вложенный пункт markdown не выражает вовсе. Одинокий "-" под текстом
+// родителя читается подчёркиванием заголовка, и весь список уезжает в дословный
+// кусок — ровно от этого сорвалось сохранение на живой заметке.
+//
+// Замер на ядре: ни звёздочка, ни плюс, ни цифра не спасают — пункт либо ломает
+// список, либо просто исчезает при разборе. На верхнем уровне такой пункт
+// прекрасно записывается, а пустая вложенная ЗАДАЧА проходит и подавно: "- [ ]"
+// одиноким дефисом уже не выглядит.
+//
+// Поэтому выбрасываем только пустой вложенный буллет или номер, а его потомков
+// поднимаем на уровень — иначе они остались бы без родителя.
+Document withoutEmptyNested(Document doc) {
+    Document out;
+    out.reserve(doc.size());
+    for (size_t i = 0; i < doc.size(); ++i) {
+        const Block& block = doc[i];
+        const bool drop = block.rawSource.empty() && block.text.empty() &&
+                          block.level > 0 &&
+                          (block.kind == Kind::Bullet || block.kind == Kind::Ordered);
+        if (!drop) {
+            out.push_back(block);
+            continue;
+        }
+        // Потомки — всё, что глубже, до первого блока своего уровня или выше.
+        for (size_t k = i + 1; k < doc.size(); ++k) {
+            Block& next = doc[k];
+            if (!next.rawSource.empty() || !isList(next.kind) || next.level <= block.level)
+                break;
+            --next.level;
+        }
+    }
+    return out;
+}
+
 // Пустой абзац markdown выразить нечем: пустая строка в файле — разделитель
 // блоков, а не блок. В документе он заводится каждым Enter, и без этой уборки
 // самопроверка честно ловила бы расхождение при каждом сохранении.
 //
-// Пустой пункт списка при этом остаётся: "-" в файле записывается прекрасно.
+// Пустой пункт списка верхнего уровня при этом остаётся: "-" в файле
+// записывается прекрасно.
 Document forFile(Document doc) {
     Document out;
     out.reserve(doc.size());
@@ -266,7 +301,7 @@ Document forFile(Document doc) {
             continue;
         out.push_back(std::move(trimmed));
     }
-    return out;
+    return withoutEmptyNested(std::move(out));
 }
 
 }  // namespace
