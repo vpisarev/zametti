@@ -82,7 +82,15 @@ const char* const kNbsp = "\xC2\xA0";
 //
 // Литеральные блоки не трогаем: в коде и дословных кусках пробел и так значим.
 Block withEdgesNormalised(Block block) {
-    if (!block.rawSource.empty() || block.kind == Kind::Code) return block;
+    // В коде пробел значим — его копируют и вставляют в терминал, и хитрым
+    // знакам там взяться неоткуда. Трогаем только завершающий перевод строки:
+    // забор всё равно ставится с новой строки, и без него разбор вернул бы
+    // текст с переводом, а самопроверка честно не дала бы записать.
+    if (block.kind == Kind::Code && block.rawSource.empty()) {
+        if (!block.text.empty() && block.text.back() != '\n') block.text.push_back('\n');
+        return block;
+    }
+    if (!block.rawSource.empty()) return block;
 
     // Висящий перенос в конце — след только что нажатого Enter. В файле он даёт
     // пустую строку, а пустая строка абзац заканчивает.

@@ -629,8 +629,85 @@ bool splitBlockOtherwiseAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     return splitBlockAtCursor(doc, cursor);
 }
 
+namespace {
+
+// Забор блока кода: три кавычки или три тильды и, возможно, язык за ними.
+// Пусто — не забор.
+bool fenceLanguage(const QString& text, QString& language) {
+    if (text.size() < 3) return false;
+    const QChar mark = text.at(0);
+    if (mark != QLatin1Char('`') && mark != QLatin1Char('~')) return false;
+    int marks = 0;
+    while (marks < text.size() && text.at(marks) == mark) ++marks;
+    if (marks < 3) return false;
+    language = text.mid(marks).trimmed();
+    // В заборе из кавычек кавычке в языке взяться неоткуда.
+    return !language.contains(QLatin1Char('`'));
+}
+
+// Последняя ли это строка своего литерального блока.
+bool lastLineOfLiteral(const QTextBlock& block) {
+    const QTextBlock next = block.next();
+    return !next.isValid() || !isContinuationBlock(next);
+}
+
+}  // namespace
+
 bool splitBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const QTextBlock block = cursor.block();
+
+    // Три кавычки и Enter заводят блок кода — так его и пишут в файле. Язык за
+    // забором переезжает в свойство блока.
+    QString language;
+    if (!isRawBlock(block) && kindOf(block) == Kind::Paragraph &&
+        fenceLanguage(block.text(), language)) {
+        QTextBlockFormat format = block.blockFormat();
+        format.setProperty(KindProperty, int(Kind::Code));
+        format.setProperty(InfoProperty, language);
+        format.clearProperty(LevelProperty);
+        format.setHeadingLevel(0);
+
+        cursor.beginEditBlock();
+        cursor.setPosition(block.position());
+        cursor.setBlockFormat(format);
+        cursor.setPosition(block.position());
+        cursor.setPosition(block.position() + block.length() - 1, QTextCursor::KeepAnchor);
+        cursor.removeSelectedText();
+        normalise(doc, around(block.blockNumber()));
+        cursor.endEditBlock();
+        return true;
+    }
+
+    // Из блока кода выходят двумя способами: пустой строкой и Enter — как из
+    // списка, — либо забором в последней строке, как это пишут в файле. Забор
+    // посреди блока при этом остаётся содержимым: показывать в коде разметку
+    // никто не запрещал.
+    QString closing;
+    const bool closedByFence = !isRawBlock(block) && kindOf(block) == Kind::Code &&
+                               lastLineOfLiteral(block) && isContinuationBlock(block) &&
+                               fenceLanguage(block.text(), closing) && closing.isEmpty();
+    if (!isRawBlock(block) && kindOf(block) == Kind::Code &&
+        (block.text().isEmpty() || closedByFence) && lastLineOfLiteral(block) &&
+        isContinuationBlock(block)) {
+        QTextBlockFormat plain;
+        plain.setLineHeight(block.blockFormat().lineHeight(),
+                            block.blockFormat().lineHeightType());
+
+        cursor.beginEditBlock();
+        cursor.setPosition(block.position());
+        cursor.setBlockFormat(plain);
+        // Забор в текст не переносим: он был командой закрыть блок, а не
+        // содержимым.
+        if (closedByFence) {
+            cursor.setPosition(block.position());
+            cursor.setPosition(block.position() + block.length() - 1,
+                               QTextCursor::KeepAnchor);
+            cursor.removeSelectedText();
+        }
+        normalise(doc, around(block.blockNumber()));
+        cursor.endEditBlock();
+        return true;
+    }
 
     // Обычный текст и цитата: Enter переносит строку внутри абзаца. Второй
     // подряд, на пустой строке, абзац всё-таки разрезает — пустую строку внутри
@@ -677,11 +754,19 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
     const bool literal = isRawBlock(block) || kindOf(block) == Kind::Code;
     QTextBlockFormat next = format;
 
+    const bool wasLast = literal && lastLineOfLiteral(block);
     if (literal) {
         // Строка литерального блока: новая строка того же блока, а не новый
         // блок кода. Признак завершающего перевода переезжает на неё — она
         // теперь последняя.
+        //
+        // И ставится, даже если у прежней его не было: без него текст блока
+        // кончался бы одним переводом строки, а такой текст при сборке даёт
+        // одну строку, и только что заведённая пустая строка исчезала бы на
+        // глазах.
         next.setProperty(ContinuationProperty, true);
+        if (wasLast) next.setProperty(TrailingNewlineProperty, true);
+        else next.clearProperty(TrailingNewlineProperty);
     } else {
         next.clearProperty(ContinuationProperty);
         next.clearProperty(TrailingNewlineProperty);
