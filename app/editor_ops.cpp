@@ -1000,30 +1000,42 @@ void applyListGeometry(QTextDocument& doc, BlockRange range) {
     const qreal charUnit = QFontMetricsF(base).horizontalAdvance(QLatin1Char('A'));
     const qreal indent = appearance().listIndent * charUnit;
 
-    // Первый проход: к какому прогону принадлежит каждый блок и какой маркер в
-    // этом прогоне самый широкий. Колонку текста задаёт именно он: иначе под
-    // "10." текст начинался бы правее, чем под "1.", и левый край списка
-    // выходил бы рваным. Прогон опознаём по номеру: единица значит, что на этом
-    // уровне начался новый список.
+    // Первый проход: к какой колонке принадлежит каждый блок и какой маркер в
+    // ней самый широкий. Задаёт колонку именно он: иначе под "10." текст
+    // начинался бы правее, чем под "1.", и левый край списка выходил бы рваным.
+    //
+    // Колонка кончается там же, где список (номер снова единица), — и ещё там,
+    // где меняется сам маркер. Буллеты и задачи для нумерации одна семья, и
+    // раньше они делили колонку: кружки равнялись по ширине чекбокса, а стоило
+    // отцепить их от задач — прыгали влево. Ширина кружка от соседей зависеть
+    // не должна.
     std::vector<int> runOf;
     std::vector<qreal> widest;
     {
         ListRuns runs;
         std::vector<int> currentRun;
+        std::vector<int> currentFamily;
         QTextBlock block = doc.findBlockByNumber(full.first);
         for (int i = full.first; i <= full.last && block.isValid(); ++i, block = block.next()) {
             if (!isListBlock(block)) {
                 runs.reset();
                 currentRun.clear();
+                currentFamily.clear();
                 runOf.push_back(-1);
                 continue;
             }
             const Kind kind = kindOf(block);
             const int level = qMax(0, levelOf(block));
             const int ordinal = runs.next(level, isOrdered(kind));
-            if (int(currentRun.size()) <= level) currentRun.resize(size_t(level) + 1, -1);
-            if (ordinal == 1 || currentRun[size_t(level)] < 0) {
+            const int family = isOrdered(kind) ? 2 : (isTaskBlock(block) ? 1 : 0);
+            if (int(currentRun.size()) <= level) {
+                currentRun.resize(size_t(level) + 1, -1);
+                currentFamily.resize(size_t(level) + 1, -1);
+            }
+            if (ordinal == 1 || currentRun[size_t(level)] < 0 ||
+                currentFamily[size_t(level)] != family) {
                 currentRun[size_t(level)] = int(widest.size());
+                currentFamily[size_t(level)] = family;
                 widest.push_back(0.0);
             }
             const int run = currentRun[size_t(level)];

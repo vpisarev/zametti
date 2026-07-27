@@ -144,15 +144,25 @@ void checkGeometry() {
     zametti::applyListGeometry(text, {0, text.blockCount() - 1});
     check(marginOf(text, 12) == nested, "повторный пересчёт геометрии ничего не меняет");
 
-    // Буллеты и задачи — одно семейство, значит и один прогон: их текст стоит в
-    // общей колонке, хотя рамка задачи шире кружка.
+    // Буллеты и задачи для нумерации одно семейство, а вот колонка у каждого
+    // своя. Общая колонка означала бы, что кружок стоит по ширине чекбокса — и
+    // прыгает, стоит отцепить буллеты от задач. Ширина кружка от соседей
+    // зависеть не должна.
     QTextDocument mixed;
     zametti::buildDocument({listItem(Kind::Bullet, 0, "буллет"),
                             listItem(Kind::TaskUnchecked, 0, "задача"),
                             listItem(Kind::Bullet, 0, "снова буллет")},
                            mixed);
-    check(marginOf(mixed, 0) == marginOf(mixed, 1) && marginOf(mixed, 1) == marginOf(mixed, 2),
-          "буллеты и задачи одного прогона стоят в одной колонке");
+    check(marginOf(mixed, 0) < marginOf(mixed, 1),
+          "кружок не равняется по ширине чекбокса");
+    check(marginOf(mixed, 0) == marginOf(mixed, 2),
+          "оба кружка стоят одинаково, задача между ними им не мешает");
+
+    // И тот же кружок сам по себе стоит там же, где рядом с задачами.
+    QTextDocument alone;
+    zametti::buildDocument({listItem(Kind::Bullet, 0, "буллет")}, alone);
+    check(marginOf(alone, 0) == marginOf(mixed, 0),
+          "отцепив буллет от задач, кружок никуда не прыгает");
 
     // Пересчёт по куску диапазона обязан дать то же, что по всему документу:
     // иначе правка одного пункта сдвигала бы колонку остальных.
