@@ -1098,8 +1098,23 @@ void checkBlankLinesSurviveSaving() {
         QTest::keyClick(&editor, Qt::Key_Return);
         QTest::qWait(5);
     }
-    const int before = editor.document()->blockCount();
-    check(before > 5, "пустые строки должны появиться в документе");
+    // Считаем пустые СТРОКИ, а не блоки: десять Enter дают десять пустых строк
+    // внутри одного абзаца, а не десять абзацев. Разрезает абзац только Enter на
+    // пустой строке.
+    auto blankLines = [&editor] {
+        int count = 0;
+        for (QTextBlock block = editor.document()->begin(); block.isValid();
+             block = block.next()) {
+            const QStringList lines =
+                block.text().split(QChar::LineSeparator);
+            for (const QString& line : lines)
+                if (line.trimmed().isEmpty()) ++count;
+        }
+        return count;
+    };
+    const int before = blankLines();
+    checkEqual(QStringLiteral("10"), QString::number(before),
+               "десять Enter дают десять пустых строк");
 
     editor.save(false);
     QTest::qWait(20);
@@ -1108,7 +1123,7 @@ void checkBlankLinesSurviveSaving() {
     editor.openFile(path);
     QTest::qWait(20);
 
-    checkEqual(QString::number(before), QString::number(editor.document()->blockCount()),
+    checkEqual(QString::number(before), QString::number(blankLines()),
                "пустые строки пережили запись и перечитывание");
 
     // А хвост пустых строк в конце заметки сохраняться не должен: он набирается
@@ -1116,7 +1131,7 @@ void checkBlankLinesSurviveSaving() {
     QTextCursor tail = editor.textCursor();
     tail.movePosition(QTextCursor::End);
     editor.setTextCursor(tail);
-    const int blocks = editor.document()->blockCount();
+    const int blocks = blankLines();
     for (int i = 0; i < 6; ++i) {
         QTest::keyClick(&editor, Qt::Key_Return);
         QTest::qWait(5);
@@ -1127,7 +1142,7 @@ void checkBlankLinesSurviveSaving() {
     QTest::qWait(20);
     editor.openFile(path);
     QTest::qWait(20);
-    checkEqual(QString::number(blocks), QString::number(editor.document()->blockCount()),
+    checkEqual(QString::number(blocks), QString::number(blankLines()),
                "хвост пустых строк в конце не сохраняется");
 }
 

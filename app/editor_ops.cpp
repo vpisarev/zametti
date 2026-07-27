@@ -813,14 +813,29 @@ void insertSoftBreak(QTextCursor& cursor, const QTextBlock& block) {
 // проваливать самопроверку.
 int emptyLineTail(const QTextCursor& cursor, const QTextBlock& block) {
     const QString text = block.text();
+    auto blank = [](QChar c) {
+        return c == QLatin1Char(' ') || c == QLatin1Char('\t') || c == QChar::Nbsp;
+    };
+
+    // Влево — до начала строки. Если по дороге попался не пробел, строка не
+    // пуста, и разрезать нечего.
     int i = cursor.positionInBlock();
     int spaces = 0;
-    while (i > 0 && (text.at(i - 1) == QLatin1Char(' ') || text.at(i - 1) == QLatin1Char('\t') ||
-                     text.at(i - 1) == QChar::Nbsp)) {
+    while (i > 0 && blank(text.at(i - 1))) {
         --i;
         ++spaces;
     }
-    return i > 0 && text.at(i - 1) == QChar::LineSeparator ? spaces + 1 : 0;
+    if (i == 0 || text.at(i - 1) != QChar::LineSeparator) return 0;
+
+    // И вправо, до конца строки: строка пуста, только если после курсора тоже
+    // ничего нет. Без этой половины проверки Enter в начале СТРОКИ С ТЕКСТОМ
+    // считался вторым нажатием подряд и разрезал абзац — десять нажатий давали
+    // пять пустых строк вместо десяти.
+    for (int k = cursor.positionInBlock(); k < text.size(); ++k) {
+        if (text.at(k) == QChar::LineSeparator) break;
+        if (!blank(text.at(k))) return 0;
+    }
+    return spaces + 1;
 }
 
 // Переносится ли строка внутри этого блока без потерь. Проверено на ядре:
