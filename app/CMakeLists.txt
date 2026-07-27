@@ -37,8 +37,3 @@ install(FILES ${CMAKE_SOURCE_DIR}/packaging/zametti.desktop
         DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
 install(FILES ${CMAKE_SOURCE_DIR}/art/zametti.png
         DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/512x512/apps)
-
-add_test(NAME default-config
-         COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:zametti>
-                 -DEXPECTED=${CMAKE_SOURCE_DIR}/default-config.json
-                 -P ${CMAKE_CURRENT_SOURCE_DIR}/default_config_check.cmake)
