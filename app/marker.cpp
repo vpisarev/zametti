@@ -105,6 +105,38 @@ Anchor anchorOf(const QTextBlock& block, Kind kind, const QFont& base) {
     return {textLeft - gapFor(kind, base), origin.y() + line.y() + line.ascent(), true};
 }
 
+// Буллет рисуется в круге заданного диаметра — какой бы ни была фигура. Место
+// под маркер от фигуры не зависит, иначе текст на разных уровнях вставал бы по
+// разным колонкам без всякой на то причины.
+void paintBullet(QPainter& painter, const QPointF& center, qreal diameter,
+                 BulletShape shape) {
+    const QColor color = appearance().bulletColor;
+    switch (shape) {
+        case BulletShape::Disc:
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(color);
+            painter.drawEllipse(center, diameter / 2, diameter / 2);
+            return;
+        case BulletShape::Circle: {
+            // Обводка идёт по средней линии, поэтому радиус берём на полтолщины
+            // меньше: внешний край кружка совпадает со сплошным того же размера.
+            const qreal pen = qMax(0.5, diameter * appearance().bulletStrokeWidth);
+            const qreal radius = (diameter - pen) / 2;
+            painter.setPen(QPen(color, pen));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawEllipse(center, radius, radius);
+            return;
+        }
+        case BulletShape::Square: {
+            const qreal side = diameter * appearance().bulletSquareSide;
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(color);
+            painter.drawRect(QRectF(center.x() - side / 2, center.y() - side / 2, side, side));
+            return;
+        }
+    }
+}
+
 void paintCheckbox(QPainter& painter, const QRectF& rect, bool checked) {
     const QColor color =
         checked ? appearance().checkboxCheckedColor : appearance().checkboxUncheckedColor;
@@ -134,6 +166,12 @@ void paintCheckbox(QPainter& painter, const QRectF& rect, bool checked) {
 }
 
 }  // namespace
+
+BulletShape bulletShapeFor(int level) {
+    const std::vector<BulletShape>& shapes = appearance().bulletShapes;
+    if (shapes.empty()) return BulletShape::Disc;
+    return shapes[size_t(qBound(0, level, int(shapes.size()) - 1))];
+}
 
 qreal markerColumn(Kind kind, int ordinal, const QFont& base) {
     return glyphWidth(kind, ordinal, base) + gapFor(kind, base);
@@ -193,9 +231,7 @@ void paintMarker(QPainter& painter, const QTextBlock& block, const QFont& base) 
         const QPointF center(anchor.right - diameter / 2,
                              anchor.baseline - xHeight / 2 -
                                  appearance().bulletRise * xHeight);
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(appearance().bulletColor);
-        painter.drawEllipse(center, diameter / 2, diameter / 2);
+        paintBullet(painter, center, diameter, bulletShapeFor(levelOf(block)));
     } else {
         const QFont font = markerFont(kind, base);
         const QString text = markerText(kind, ordinalOf(block));

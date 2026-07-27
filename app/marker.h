@@ -18,6 +18,7 @@
 #define ZAMETTI_MARKER_H
 
 #include "doc_model.h"
+#include "settings.h"
 
 #include <QFont>
 #include <QRectF>
@@ -37,6 +38,11 @@ qreal markerColumn(Kind kind, int ordinal, const QFont& base);
 // функция и на отрисовку, и на попадание мышью — двух копий геометрии быть не
 // должно.
 QRectF checkboxRect(const QTextBlock& block, const QFont& base);
+
+// Фигура буллета по уровню вложенности: так вложенность видна сразу, без счёта
+// отступов глазом. Последняя из настроенных фигур достаётся всем уровням
+// глубже — перечислять их до бесконечности незачем.
+BulletShape bulletShapeFor(int level);
 
 // Блок, чей чекбокс накрывает эту точку документа. Недействительный блок —
 // мимо. Геометрия берётся из checkboxRect, то есть та же самая, по которой

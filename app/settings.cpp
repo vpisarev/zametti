@@ -57,6 +57,12 @@ void readStyle(const QJsonObject& o, const char* key, CheckboxStyle& out) {
 }
 
 QJsonObject appearanceToJson(const Appearance& a) {
+    QJsonArray shapes;
+    for (BulletShape shape : a.bulletShapes)
+        shapes.append(shape == BulletShape::Circle   ? QStringLiteral("circle")
+                      : shape == BulletShape::Square ? QStringLiteral("square")
+                                                     : QStringLiteral("disc"));
+
     QJsonArray headings;
     for (qreal v : a.headingScale) headings.append(v);
 
@@ -101,6 +107,9 @@ QJsonObject appearanceToJson(const Appearance& a) {
          a.bulletStyle == BulletStyle::Glyph ? QStringLiteral("glyph")
                                              : QStringLiteral("drawn")},
         {QStringLiteral("bulletDiameter"), a.bulletDiameter},
+        {QStringLiteral("bulletStrokeWidth"), a.bulletStrokeWidth},
+        {QStringLiteral("bulletSquareSide"), a.bulletSquareSide},
+        {QStringLiteral("bulletShapes"), shapes},
         {QStringLiteral("bulletRise"), a.bulletRise},
         {QStringLiteral("orderedRise"), a.orderedRise},
         {QStringLiteral("bullet"), a.bulletGlyph},
@@ -213,6 +222,22 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     }
     readReal(list, "bulletDiameter", a.bulletDiameter);
     readReal(list, "bulletRise", a.bulletRise);
+    readReal(list, "bulletStrokeWidth", a.bulletStrokeWidth);
+    readReal(list, "bulletSquareSide", a.bulletSquareSide);
+
+    // Фигуры по уровням — списком строк. Пустой список пропускаем: остаться
+    // вовсе без фигур значит остаться без буллетов.
+    const QJsonValue shapes = list.value(QStringLiteral("bulletShapes"));
+    if (shapes.isArray()) {
+        std::vector<BulletShape> parsed;
+        for (const QJsonValue& value : shapes.toArray()) {
+            const QString name = value.toString();
+            if (name == QLatin1String("circle")) parsed.push_back(BulletShape::Circle);
+            else if (name == QLatin1String("square")) parsed.push_back(BulletShape::Square);
+            else if (name == QLatin1String("disc")) parsed.push_back(BulletShape::Disc);
+        }
+        if (!parsed.empty()) a.bulletShapes = std::move(parsed);
+    }
     readReal(list, "orderedRise", a.orderedRise);
     readString(list, "bullet", a.bulletGlyph);
     readReal(list, "bulletScale", a.bulletScale);

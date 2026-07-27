@@ -540,6 +540,33 @@ const CodeBlockCase kCodeBlockCases[] = {
     {"- пункт\n", 0, 0, "```\nпункт\n```\n", "пункт списка тоже можно"},
 };
 
+// Фигура буллета зависит от уровня вложенности: так вложенность видна сразу.
+// Последняя фигура достаётся всем уровням глубже — иначе на пятом уровне буллет
+// пропал бы вовсе.
+void checkBulletShapes() {
+    const std::vector<zametti::BulletShape> saved = zametti::appearance().bulletShapes;
+
+    zametti::appearance().bulletShapes = {zametti::BulletShape::Disc,
+                                                 zametti::BulletShape::Circle,
+                                                 zametti::BulletShape::Square};
+    check(zametti::bulletShapeFor(0) == zametti::BulletShape::Disc,
+          "первый уровень — сплошной кружок");
+    check(zametti::bulletShapeFor(1) == zametti::BulletShape::Circle,
+          "второй — незаполненный");
+    check(zametti::bulletShapeFor(2) == zametti::BulletShape::Square, "третий — квадратик");
+    check(zametti::bulletShapeFor(7) == zametti::BulletShape::Square,
+          "глубже — та же последняя фигура");
+    check(zametti::bulletShapeFor(-1) == zametti::BulletShape::Disc,
+          "уровень ниже нуля не роняет выбор");
+
+    // Пустой список фигур оставаться без буллетов не должен.
+    zametti::appearance().bulletShapes.clear();
+    check(zametti::bulletShapeFor(0) == zametti::BulletShape::Disc,
+          "без настроенных фигур остаётся сплошной кружок");
+
+    zametti::appearance().bulletShapes = saved;
+}
+
 // Номер блока IR и обратный переход. Соответствие не один к одному: литеральный
 // блок лежит построчно, и каждая его строка обязана указывать на СВОЙ блок IR.
 // Пока это считалось по предыдущим блокам, строка-продолжение получала номер
@@ -794,6 +821,7 @@ int main(int argc, char** argv) {
     for (const char* source : {"абзац\n", "```\nраз\nдва\nтри\n```\n",
                                "абзац\n\n```\nкод\nещё\n```\n\n- пункт\n"})
         checkIrIndex(source);
+    checkBulletShapes();
     for (const MoveCase& c : kMoveCases) checkMove(c);
     checkCursorAfterSplit();
     for (const char* source : kOrdinalCases)
