@@ -20,9 +20,9 @@
     },
     "font": {
         "codeFamily": "IBM Plex Mono",
-        "codePointSize": 0,
+        "codePointSize": 10,
         "fallbackScale": 1.3,
-        "family": "IBM Plex Sans",
+        "family": "IBM Plex Mono",
         "headingScale": [
             1.7,
             1.45,
@@ -31,19 +31,19 @@
             1,
             0.95
         ],
-        "pointSize": 9,
+        "pointSize": 11,
         "symbolFamily": "DejaVu Sans Mono"
     },
     "layout": {
-        "blockSpacing": 13,
+        "blockSpacing": 0.667,
         "headingSpacingFactor": 2.2,
         "lineHeightFactor": 1.15,
         "listLineHeightFactor": 1.05,
-        "listSpacingAfter": 13,
-        "listSpacingBefore": 6,
+        "listSpacingAfter": 0.923,
+        "listSpacingBefore": 0.154,
         "maxContentWidth": 90,
-        "sideMargin": 56,
-        "verticalMargin": 24
+        "sideMargin": 6.222,
+        "verticalMargin": 1.231
     },
     "list": {
         "bullet": "•",
@@ -54,7 +54,7 @@
         "bulletStyle": "drawn",
         "bulletTextGap": 1,
         "orderedColor": "#303030",
-        "orderedRise": 0,
+        "orderedRise": -0.01,
         "orderedTextGap": 1
     },
     "notes": {

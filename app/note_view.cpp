@@ -33,12 +33,15 @@ void NoteView::setZoom(qreal zoom) {
 }
 
 void NoteView::applyContentWidth() {
-    const qreal side = appearance().sideMargin * zoom_;
+    // Поля и предел ширины заданы в ширинах "A" — той же мерой, что и в
+    // сборщике документа, иначе при смене гарнитуры они разъехались бы.
+    const qreal charUnit =
+        QFontMetricsF(baseFontFor(zoom_)).horizontalAdvance(QLatin1Char('A'));
+    const qreal side = appearance().sideMargin * charUnit;
     qreal margin = side;
 
     if (appearance().maxContentWidth > 0.0) {
-        const qreal limit = appearance().maxContentWidth *
-                            QFontMetricsF(baseFontFor(zoom_)).horizontalAdvance(QLatin1Char('A'));
+        const qreal limit = appearance().maxContentWidth * charUnit;
         const qreal extra = (viewport()->width() - 2 * side - limit) / 2;
         if (extra > 0.0) margin = side + extra;
     }

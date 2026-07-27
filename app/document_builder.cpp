@@ -178,6 +178,13 @@ struct ListState {
         for (Level& l : levels) l.alive = false;
     }
 
+    // Начинается ли на этом уровне новый список. Уровень глубже прежнего — это
+    // подсписок того же дерева, а вот другая нумерация на уже открытом уровне
+    // означает, что предыдущий список кончился и начался следующий.
+    bool startsNewRun(size_t level, bool ordered) const {
+        return level < levels.size() && levels[level].alive && levels[level].ordered != ordered;
+    }
+
     int nextOrdinal(size_t level, bool ordered) {
         if (levels.size() <= level + 1) levels.resize(level + 2);
         Level& l = levels[level];
@@ -218,11 +225,17 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
     const QFontMetricsF metrics(base);
     const QRawFont primaryFont = QRawFont::fromFont(base);
 
+    // Единицы ритма страницы: высота строки по вертикали, ширина "A" по
+    // горизонтали. Метрики сняты с уже отмасштабированного шрифта, поэтому зум
+    // сюда входит сам собой.
+    const qreal lineUnit = metrics.height();
+    const qreal charUnit = metrics.horizontalAdvance(QLatin1Char('A'));
+
     QTextFrameFormat rootFormat = target.rootFrame()->frameFormat();
-    rootFormat.setLeftMargin(appearance().sideMargin * zoom);
-    rootFormat.setRightMargin(appearance().sideMargin * zoom);
-    rootFormat.setTopMargin(appearance().verticalMargin * zoom);
-    rootFormat.setBottomMargin(appearance().verticalMargin * zoom);
+    rootFormat.setLeftMargin(appearance().sideMargin * charUnit);
+    rootFormat.setRightMargin(appearance().sideMargin * charUnit);
+    rootFormat.setTopMargin(appearance().verticalMargin * lineUnit);
+    rootFormat.setBottomMargin(appearance().verticalMargin * lineUnit);
     target.rootFrame()->setFrameFormat(rootFormat);
 
     QTextCursor cursor(&target);
@@ -232,8 +245,6 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
     // формат ставится на него, иначе сверху появится пустой абзац.
     bool first = true;
     bool prevList = false;
-    bool prevOrdered = false;
-    int prevLevel = 0;
     ListState lists;
 
     for (const Block& b : doc) {
@@ -250,11 +261,14 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
         // соседями берёт максимум из двух полей, и при полях с обеих сторон
         // зазор нельзя сделать разным для разных пар блоков: список, идущий за
         // абзацем, отбивался бы от него ровно как второй абзац.
-        // Пункты одного списка стоят вплотную; разной нумерации на одном уровне
-        // — это уже два списка подряд, и они должны разделяться, иначе
-        // "- буллет" и "1. пункт" сливаются в одну лесенку.
-        const bool sameList = list && prevList &&
-                              (b.level != prevLevel || isOrdered(b.kind) == prevOrdered);
+        // Пункты одного списка стоят вплотную; два списка подряд разделяются,
+        // иначе "- буллет" и "1. пункт" сливаются в одну лесенку. Сравнивать с
+        // родом предыдущего блока нельзя: после вложенного подсписка предыдущий
+        // блок лежит на другом уровне, и о списке текущего уровня не говорит
+        // ничего. Спрашиваем состояние прогонов.
+        const bool sameList =
+            list && prevList &&
+            !lists.startsNewRun(static_cast<size_t>(b.level), isOrdered(b.kind));
         qreal topMargin = appearance().blockSpacing;
         if (sameList) topMargin = 0;
         else if (list && prevList)
@@ -308,7 +322,7 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
             if (b.kind != Kind::Code) text = toQt(b.text);
         }
 
-        blockFmt.setTopMargin(first ? 0 : topMargin * zoom);
+        blockFmt.setTopMargin(first ? 0 : topMargin * lineUnit);
         blockFmt.setBottomMargin(0);
 
         if (list) {
@@ -345,8 +359,6 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
         if (!raw && !b.inlines.empty()) applySpans(target, textStart, b, linePoint, zoom);
         enlargeFallbackGlyphs(target, textStart, text, linePoint, primaryFont);
         prevList = list;
-        prevOrdered = list && isOrdered(b.kind);
-        prevLevel = list ? b.level : 0;
     }
 
     cursor.endEditBlock();
