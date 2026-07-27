@@ -112,14 +112,17 @@ const char* const kNonCanonical[] = {
     "текст\n\n\n\nчерез три пустых строки\n",
 };
 
-// Испорченный читатель: отдаёт заголовок с переводом строки внутри. Такой IR
-// сериализуется в две строки, а разбирается обратно в два блока — самопроверка
-// обязана это поймать.
+// Испорченный читатель: отдаёт заголовок девятого уровня. Столько решёток
+// markdown заголовком не считает — разбор возвращает обычный абзац, и
+// самопроверка обязана это поймать.
+//
+// Раньше поломкой был заголовок с переводом строки внутри, но такой заголовок
+// теперь сводится в одну строку перед записью, и ловить стало нечего.
 zametti::Document brokenReader(const QTextDocument&) {
     zametti::Block b;
     b.kind = zametti::Kind::Heading;
-    b.headingLevel = 1;
-    b.text = "первая\nвторая";
+    b.headingLevel = 9;
+    b.text = "мнимый заголовок";
     return {b};
 }
 
@@ -140,7 +143,8 @@ void checkRescue() {
 
     const QString rescuePath = path + QStringLiteral(".rescue-stamp");
     check(QFile::exists(rescuePath), "аварийный файл не создан");
-    checkEqual("# первая\nвторая\n", readFile(rescuePath), "содержимое аварийного файла");
+    checkEqual("######### мнимый заголовок\n", readFile(rescuePath),
+               "содержимое аварийного файла");
 }
 
 // Пустой абзац markdown выразить нечем, а Enter его заводит. Без уборки
@@ -318,6 +322,45 @@ void checkEdgeSpaces() {
                   std::string(c.what) + ": не должно уводить в аварийный файл");
             checkEqual(c.expected, readFile(path), c.what);
         }
+    }
+
+    // Перенос строки внутри заголовка и внутри встроенного кода markdown не
+    // выражает. Оба случая достижимы: заголовок — вставкой, код — Ctrl+E,
+    // дотянутым до соседней строки.
+    {
+        const QString heading = pathFor("заголовок-в-две-строки.md");
+        check(writeFile(heading, "заглушка\n"), "не записать исходник");
+        zametti::Block block;
+        block.kind = zametti::Kind::Heading;
+        block.headingLevel = 2;
+        block.text = "первая\nвторая";
+        QTextDocument doc;
+        zametti::buildDocument({block}, doc);
+        const zametti::SaveOutcome outcome =
+            zametti::saveDocument(doc, heading, QStringLiteral("test"));
+        check(outcome.result != zametti::SaveResult::Rescued,
+              "заголовок в две строки не должен уводить в аварийный файл");
+        checkEqual("## первая вторая\n", readFile(heading),
+                   "заголовок сводится в одну строку");
+    }
+    {
+        const QString path = pathFor("код-через-строку.md");
+        check(writeFile(path, "заглушка\n"), "не записать исходник");
+        zametti::Block block;
+        block.text = "раз\nдва";
+        zametti::Span span;
+        span.offset = 0;
+        span.length = int(block.text.size());
+        span.code = true;
+        block.inlines.push_back(span);
+        QTextDocument doc;
+        zametti::buildDocument({block}, doc);
+        const zametti::SaveOutcome outcome =
+            zametti::saveDocument(doc, path, QStringLiteral("test"));
+        check(outcome.result != zametti::SaveResult::Rescued,
+              "код через перенос не должен уводить в аварийный файл");
+        checkEqual("`раз`\n`два`\n", readFile(path),
+                   "код через перенос режется построчно");
     }
 
     // Записанное с неразрывными отступами устойчиво: второй проход ничего не

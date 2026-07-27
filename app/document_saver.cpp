@@ -108,6 +108,49 @@ Block withTrimmedSpans(Block block) {
     return block;
 }
 
+// Заголовок в одну строку. Перенос строки в заголовке markdown не выражает:
+// разбор возвращает заголовок и отдельный абзац за ним. Заголовок по природе
+// однострочен, поэтому перенос становится пробелом — байт в байт, и смещения
+// разметки не съезжают.
+Block withHeadingOnOneLine(Block block) {
+    if (!block.rawSource.empty() || block.kind != Kind::Heading) return block;
+    for (char& c : block.text)
+        if (c == '\n') c = ' ';
+    return block;
+}
+
+// Встроенный код через перенос строки markdown тоже не выражает: разбор
+// превращает перенос в пробел, и текст расходится с документом. Дотянуть Ctrl+E
+// до соседней строки человек может запросто, поэтому такой кусок режется
+// построчно — по куску кода на строку.
+Block withCodeSpansPerLine(Block block) {
+    if (!block.rawSource.empty() || block.kind == Kind::Code) return block;
+
+    std::vector<Span> pieces;
+    for (const Span& span : block.inlines) {
+        if (!span.code) {
+            pieces.push_back(span);
+            continue;
+        }
+        const size_t end = size_t(qBound(0, span.offset + span.length,
+                                         int(block.text.size())));
+        size_t from = size_t(qBound(0, span.offset, int(end)));
+        while (from < end) {
+            const size_t found = block.text.find('\n', from);
+            const size_t stop = (found == std::string::npos || found > end) ? end : found;
+            if (stop > from) {
+                Span piece = span;
+                piece.offset = int(from);
+                piece.length = int(stop - from);
+                pieces.push_back(piece);
+            }
+            from = stop >= end ? end : stop + 1;
+        }
+    }
+    block.inlines = std::move(pieces);
+    return block;
+}
+
 // Совпадают ли строение и текст. Разметка внутри строки не сравнивается: см.
 // пояснение в самопроверке.
 bool sameSkeleton(const Document& a, const Document& b) {
@@ -216,7 +259,8 @@ Document forFile(Document doc) {
     Document out;
     out.reserve(doc.size());
     for (Block& block : doc) {
-        Block trimmed = withTrimmedSpans(withEdgesNormalised(std::move(block)));
+        Block trimmed = withTrimmedSpans(
+            withCodeSpansPerLine(withHeadingOnOneLine(withEdgesNormalised(std::move(block)))));
         if (trimmed.rawSource.empty() && trimmed.kind == Kind::Paragraph &&
             trimmed.text.empty())
             continue;
