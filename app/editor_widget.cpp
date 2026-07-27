@@ -11,7 +11,10 @@
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QMimeData>
+#include <QAction>
 #include <QClipboard>
+#include <QContextMenuEvent>
+#include <QMenu>
 #include <QGuiApplication>
 #include <QMessageBox>
 #include <QScrollBar>
@@ -265,6 +268,7 @@ bool NoteEditor::runOperation(bool (*op)(QTextDocument&, QTextCursor&)) {
     // них следует, пересчитывает сборщик — так ни одно свойство не отстанет.
     // Разбивка на блоки после нормализации уже каноническая, поэтому место
     // курсора переживает пересборку.
+    const int anchor = cursor.anchor();
     const int position = cursor.position();
     Document ir = readDocument(*document());
     history_.push(ir, position);
@@ -272,10 +276,66 @@ bool NoteEditor::runOperation(bool (*op)(QTextDocument&, QTextCursor&)) {
     sinceLastEdit_.invalidate();
 
     rebuild(ir, position, scrollRatio());
+    // Выделение возвращаем: операция могла тронуть десяток пунктов сразу, и
+    // терять его после этого — значит заставлять выделять заново. Текст от
+    // смены рода не меняется, поэтому обе границы остаются на своих местах.
+    if (anchor != position) {
+        const int last = document()->characterCount() - 1;
+        QTextCursor restored(document());
+        restored.setPosition(qBound(0, anchor, last));
+        restored.setPosition(qBound(0, position, last), QTextCursor::KeepAnchor);
+        setTextCursor(restored);
+    }
     document()->setModified(true);
     ensureCursorVisible();
     autosave_.start(appearance().autosaveDelayMs);
     return true;
+}
+
+void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
+    // Щелчок правой кнопкой вне выделения переносит курсор туда: иначе команда
+    // применилась бы не к тому месту, на которое человек показал.
+    if (!textCursor().hasSelection()) setTextCursor(cursorForPosition(event->pos()));
+
+    QMenu* menu = createStandardContextMenu(event->pos());
+    if (menu == nullptr) return;
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+
+    const auto add = [this, menu](const QString& title, const QString& keys,
+                                  bool (*op)(QTextDocument&, QTextCursor&)) {
+        QAction* action = menu->addAction(title, this, [this, op] { runOperation(op); });
+        if (!keys.isEmpty())
+            action->setShortcut(QKeySequence(keys, QKeySequence::PortableText));
+    };
+
+    menu->addSeparator();
+    add(QStringLiteral("Переключить задачу"), appearance().toggleTaskKey,
+        toggleTaskAtCursor);
+
+    QMenu* kinds = menu->addMenu(QStringLiteral("Сделать"));
+    const auto addKind = [this, kinds](const QString& title, const QString& keys,
+                                       bool (*op)(QTextDocument&, QTextCursor&)) {
+        QAction* action = kinds->addAction(title, this, [this, op] { runOperation(op); });
+        if (!keys.isEmpty())
+            action->setShortcut(QKeySequence(keys, QKeySequence::PortableText));
+    };
+    addKind(QStringLiteral("Маркированным списком"), appearance().makeBulletKey, makeBullet);
+    addKind(QStringLiteral("Нумерованным списком"), appearance().makeOrderedKey, makeOrdered);
+    addKind(QStringLiteral("Списком задач"), appearance().makeTaskKey, makeTask);
+    addKind(QStringLiteral("Обычным текстом"), appearance().makeParagraphKey, makeParagraph);
+
+    menu->addSeparator();
+    add(QStringLiteral("Сдвинуть вправо"), QStringLiteral("Tab"), indentListItems);
+    add(QStringLiteral("Сдвинуть влево"), QStringLiteral("Shift+Tab"), outdentListItems);
+
+    QAction* up = menu->addAction(QStringLiteral("Переставить вверх"), this,
+                                  [this] { moveItem(-1); });
+    up->setShortcut(QKeySequence(appearance().moveUpKey, QKeySequence::PortableText));
+    QAction* down = menu->addAction(QStringLiteral("Переставить вниз"), this,
+                                    [this] { moveItem(1); });
+    down->setShortcut(QKeySequence(appearance().moveDownKey, QKeySequence::PortableText));
+
+    menu->popup(event->globalPos());
 }
 
 QMimeData* NoteEditor::createMimeDataFromSelection() const {

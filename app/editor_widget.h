@@ -67,6 +67,10 @@ protected:
     // Обменный формат — сам markdown. Переопределять обязательно: иначе Qt
     // кладёт в буфер собственный HTML и вставляет чужой HTML прямо в документ,
     // минуя модель.
+    // Команды правки видны в меню, а не только в сочетаниях клавиш: сочетаний
+    // много, и запоминать их никто не обязан.
+    void contextMenuEvent(QContextMenuEvent* event) override;
+
     QMimeData* createMimeDataFromSelection() const override;
     bool canInsertFromMimeData(const QMimeData* source) const override;
     void insertFromMimeData(const QMimeData* source) override;

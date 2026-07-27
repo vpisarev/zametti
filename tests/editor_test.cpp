@@ -422,6 +422,50 @@ void checkInputRules() {
     checkEqual(QStringLiteral("текст\n"), text(), "второй undo снимает набор");
 }
 
+// Выделение обязано пережить операцию: она могла тронуть десяток пунктов, и
+// терять его после этого — значит заставлять выделять заново.
+void checkSelectionSurvivesOperation() {
+    const QString path = writeNote(
+        "выделение.md", QStringLiteral("- [ ] раз\n- [ ] два\n- [ ] три\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(path);
+
+    auto text = [&editor] {
+        return QString::fromStdString(
+            zametti::serialize(zametti::readDocument(*editor.document())));
+    };
+
+    QTextCursor cursor = editor.textCursor();
+    cursor.setPosition(editor.document()->findBlockByNumber(0).position());
+    const QTextBlock last = editor.document()->findBlockByNumber(2);
+    cursor.setPosition(last.position() + last.length() - 1, QTextCursor::KeepAnchor);
+    editor.setTextCursor(cursor);
+    const int anchor = editor.textCursor().anchor();
+    const int position = editor.textCursor().position();
+
+    const QKeySequence toggle(zametti::appearance().toggleTaskKey,
+                              QKeySequence::PortableText);
+    QTest::keyClick(&editor, Qt::Key(toggle[0].key()), toggle[0].keyboardModifiers());
+    QTest::qWait(10);
+
+    checkEqual(QStringLiteral("- [x] раз\n- [x] два\n- [x] три\n"), text(),
+               "переключились все три задачи");
+    check(editor.textCursor().hasSelection(), "выделение обязано остаться");
+    check(editor.textCursor().anchor() == anchor && editor.textCursor().position() == position,
+          "и остаться на прежних границах");
+
+    // Второе нажатие подряд должно снять отметки со всех — то есть выделение
+    // действительно живо, а не просто «что-то выделено».
+    QTest::keyClick(&editor, Qt::Key(toggle[0].key()), toggle[0].keyboardModifiers());
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("- [ ] раз\n- [ ] два\n- [ ] три\n"), text(),
+               "второе нажатие снимает отметки со всех");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -451,6 +495,7 @@ int main(int argc, char** argv) {
     checkMoveKeys();
     checkInlineStyle();
     checkInputRules();
+    checkSelectionSurvivesOperation();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;
