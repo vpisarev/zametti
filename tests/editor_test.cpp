@@ -747,6 +747,54 @@ void checkScrollHoldsWhenBlockChangesHeight() {
                "и при выходе из списка тоже");
 }
 
+// Ссылка не должна расти от набора за её правым краем. Qt берёт оформление знака
+// перед курсором, а у ссылки оно с адресом — пробел и запятая после ссылки
+// уезжали внутрь неё, и в файл шло "[текст ,](адрес)".
+void checkLinkDoesNotGrow() {
+    const QString path =
+        writeNote("ссылка.md", QStringLiteral("вот [ссылка](https://example.com)\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    auto text = [&editor] {
+        return QString::fromStdString(
+            zametti::serialize(zametti::readDocument(*editor.document())));
+    };
+
+    QTextCursor cursor = editor.textCursor();
+    cursor.movePosition(QTextCursor::End);
+    editor.setTextCursor(cursor);
+    QTest::keyClick(&editor, Qt::Key_Space);
+    editor.insertPlainText(QStringLiteral("хвост"));
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("вот [ссылка](https://example.com) хвост\n"), text(),
+               "набранное за ссылкой в неё не уезжает");
+
+    // Запятая — тот же случай, и на ней это заметили.
+    QTest::keyClick(&editor, Qt::Key_Comma);
+    QTest::qWait(10);
+    check(!text().contains(QStringLiteral(",](")), "запятая тоже остаётся снаружи");
+
+    // А набор ВНУТРИ ссылки её по-прежнему продолжает: там это и нужно.
+    const QString inside =
+        writeNote("внутри-ссылки.md", QStringLiteral("[ссылка](https://example.com)\n"));
+    editor.openFile(inside);
+    QTest::qWait(20);
+    QTextCursor middle = editor.textCursor();
+    middle.setPosition(editor.document()->firstBlock().position() + 3);
+    editor.setTextCursor(middle);
+    editor.insertPlainText(QStringLiteral("XX"));
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("[ссыXXлка](https://example.com)\n"), text(),
+               "внутри ссылки набор её продолжает");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -783,6 +831,7 @@ int main(int argc, char** argv) {
     checkCheckboxClick();
     checkScrollHolds();
     checkScrollHoldsWhenBlockChangesHeight();
+    checkLinkDoesNotGrow();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;

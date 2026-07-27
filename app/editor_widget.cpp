@@ -243,6 +243,27 @@ void NoteEditor::mousePressEvent(QMouseEvent* event) {
     NoteView::mousePressEvent(event);
 }
 
+void NoteEditor::dropLinkAtRightEdge() {
+    const QTextCursor cursor = textCursor();
+    if (cursor.hasSelection() || !currentCharFormat().isAnchor()) return;
+
+    // Внутри ссылки набор её продолжает — так и надо. Речь только о правом крае:
+    // там, где следующий знак ссылке уже не принадлежит.
+    const QString href = currentCharFormat().anchorHref();
+    QTextCursor next = cursor;
+    if (next.movePosition(QTextCursor::Right)) {
+        const QTextCharFormat ahead = next.charFormat();
+        if (ahead.isAnchor() && ahead.anchorHref() == href) return;
+    }
+
+    QTextCharFormat plain = currentCharFormat();
+    plain.setAnchor(false);
+    plain.clearProperty(QTextFormat::AnchorHref);
+    plain.setFontUnderline(cursor.block().charFormat().fontUnderline());
+    plain.setForeground(cursor.block().charFormat().foreground());
+    setCurrentCharFormat(plain);
+}
+
 void NoteEditor::keyPressEvent(QKeyEvent* event) {
     // Отмену обрабатываем здесь, а не ярлыком окна: QTextEdit объявляет Ctrl+Z
     // своим и глотает его — ярлык не срабатывает ни разу. Собственная история у
@@ -307,6 +328,10 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
 
     for (const auto& [keys, op] : bindings_)
         if (pressed(keys) && runOperation(op)) return;
+
+    // Перед самим набором: у правого края ссылки набранное не должно уезжать
+    // внутрь неё.
+    if (!event->text().isEmpty() && event->text().at(0).isPrint()) dropLinkAtRightEdge();
 
     NoteView::keyPressEvent(event);
 

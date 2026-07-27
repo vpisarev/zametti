@@ -102,6 +102,14 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
 
 private:
+    // У правого края ссылки набор её продолжал: Qt берёт оформление знака перед
+    // курсором, а у ссылки оно с адресом. Пробел и запятая после ссылки уезжали
+    // внутрь неё, и в файл шло "[текст ,](адрес)".
+    void dropLinkAtRightEdge();
+
+protected:
+
+private:
     // Выполняет операцию, доводит документ до вида, который построил бы
     // сборщик, и заводит отдельный шаг истории. Возвращает то же, что операция.
     bool runOperation(bool (*op)(QTextDocument&, QTextCursor&));
