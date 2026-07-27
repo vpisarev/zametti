@@ -49,6 +49,13 @@ if(TARGET zametti-view)
                              "QT_QPA_PLATFORM=offscreen")
     endforeach()
 
+    add_executable(save_test save_test.cpp)
+    target_link_libraries(save_test PRIVATE zametti-view zametti-warnings)
+    target_include_directories(save_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_test(NAME save COMMAND save_test ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(save PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     add_test(NAME view-without-widgets
              COMMAND ${CMAKE_COMMAND} -DBINARY=$<TARGET_FILE:reader_test>
                      -P ${CMAKE_CURRENT_SOURCE_DIR}/no_widgets_check.cmake)

@@ -4,6 +4,7 @@
 // --check: прогнать parse → serialize и показать расхождение с оригиналом.
 
 #include "document_builder.h"
+#include "document_saver.h"
 #include "note_tree.h"
 #include "note_view.h"
 #include "parser.h"
@@ -16,6 +17,7 @@
 #include <QIcon>
 #include <QItemSelectionModel>
 #include <QKeySequence>
+#include <QMessageBox>
 #include <QScrollBar>
 #include <QShortcut>
 #include <QSignalBlocker>
@@ -113,6 +115,7 @@ void printHelp() {
         "Клавиши:\n"
         "  Ctrl+=, Ctrl+-    крупнее, мельче\n"
         "  Ctrl+0            исходный масштаб\n"
+        "  Ctrl+S            сохранить сейчас\n"
         "\n"
         "Файлы:\n"
         "  %s\n"
@@ -249,17 +252,43 @@ int main(int argc, char** argv) {
     auto rebuild = [&view, &doc, &zoom](double ratio) {
         view.setZoom(zoom);
         zametti::buildDocument(doc, *view.document(), zoom);
+        // Сборка — не правка пользователя: флаг снимаем, иначе первое же
+        // автосохранение переписало бы только что открытый файл.
+        view.document()->setModified(false);
         // Сборщик ставит поля по умолчанию, о ширине окна он не знает.
         view.applyContentWidth();
         view.moveCursor(QTextCursor::Start);
         QScrollBar* bar = view.verticalScrollBar();
         bar->setValue(int(ratio * bar->maximum()));
     };
+    // Сохранение идёт только у изменённого документа. Иначе одно открытие
+    // неканонической заметки переписывало бы её на диске — а мы её всего лишь
+    // показали. Пересборка документа флаг снимает, см. rebuild.
+    QString lastComplaint;
+    auto save = [&](bool interactive) {
+        if (!view.document()->isModified()) return;
+        const zametti::SaveOutcome outcome =
+            zametti::saveDocument(*view.document(), current, zametti::rescueTimestamp());
+        if (outcome.result == zametti::SaveResult::Written ||
+            outcome.result == zametti::SaveResult::Unchanged) {
+            view.document()->setModified(false);
+            lastComplaint.clear();
+            return;
+        }
+        std::fprintf(stderr, "%s\n", outcome.message.toUtf8().constData());
+        // Одну и ту же беду показываем один раз: автосохранение повторяется по
+        // таймеру, и окно с ошибкой раз в полторы секунды — это пытка.
+        if (!interactive || outcome.message == lastComplaint) return;
+        lastComplaint = outcome.message;
+        QMessageBox::warning(&window, QStringLiteral("zametti"), outcome.message);
+    };
+
     auto setTitle = [&window](const QString& file) {
         window.setWindowTitle(QFileInfo(file).completeBaseName() + QStringLiteral(" — zametti"));
     };
 
     auto openNote = [&](const QString& file) {
+        save(true);
         std::string text;
         if (!readFile(file, text)) {
             std::fprintf(stderr, "не читается: %s\n", file.toUtf8().constData());
@@ -305,6 +334,21 @@ int main(int argc, char** argv) {
         rebuild(ratio);
     };
 
+    // Автосохранение с задержкой: пока человек печатает, файл не трогаем.
+    QTimer autosave;
+    autosave.setSingleShot(true);
+    QObject::connect(&autosave, &QTimer::timeout, &window, [&] { save(true); });
+    QObject::connect(view.document(), &QTextDocument::contentsChanged, &window, [&] {
+        if (view.document()->isModified())
+            autosave.start(zametti::appearance().autosaveDelayMs);
+    });
+    // Фокус ушёл из приложения — момент, когда человек переключился на что-то
+    // другое и меньше всего ждёт потери правок.
+    QObject::connect(&app, &QGuiApplication::focusWindowChanged, &window,
+                     [&](QWindow* focused) {
+                         if (focused == nullptr) save(false);
+                     });
+
     const auto shortcut = [&window](const QKeySequence& keys, auto&& slot) {
         QObject::connect(new QShortcut(keys, &window), &QShortcut::activated, &window, slot);
     };
@@ -315,6 +359,7 @@ int main(int argc, char** argv) {
              [&] { applyZoom(zametti::appearance().zoomStep); });
     shortcut(QKeySequence(QStringLiteral("Ctrl+-")),
              [&] { applyZoom(1.0 / zametti::appearance().zoomStep); });
+    shortcut(QKeySequence::Save, [&] { save(true); });
     shortcut(QKeySequence(QStringLiteral("Ctrl+0")), [&] {
         if (zoom == qreal(1.0)) return;
         const double ratio = scrollRatio();
@@ -361,6 +406,9 @@ int main(int argc, char** argv) {
     }
 
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &window, [&] {
+        // На выходе окно с ошибкой показывать поздно: жалуемся в stderr.
+        save(false);
+
         zametti::Session out;
         out.lastFile = current;
         out.scrollRatio = scrollRatio();

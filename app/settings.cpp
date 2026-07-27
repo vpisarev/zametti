@@ -137,6 +137,10 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("folderScale"), a.sidebarFolderScale},
     };
 
+    QJsonObject editor{
+        {QStringLiteral("autosaveDelayMs"), a.autosaveDelayMs},
+    };
+
     QJsonObject zoom{
         {QStringLiteral("step"), a.zoomStep},
         {QStringLiteral("min"), a.zoomMin},
@@ -151,6 +155,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("checkbox"), checkbox},
         {QStringLiteral("notes"), notes},
         {QStringLiteral("sidebar"), sidebar},
+        {QStringLiteral("editor"), editor},
         {QStringLiteral("zoom"), zoom},
     };
 }
@@ -230,6 +235,10 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readReal(sidebar, "folderScale", a.sidebarFolderScale);
     const QJsonValue width = sidebar.value(QStringLiteral("width"));
     if (width.isDouble()) a.sidebarWidth = width.toInt();
+
+    const QJsonObject editor = root.value(QStringLiteral("editor")).toObject();
+    const QJsonValue delay = editor.value(QStringLiteral("autosaveDelayMs"));
+    if (delay.isDouble()) a.autosaveDelayMs = delay.toInt();
 
     const QJsonObject zoom = root.value(QStringLiteral("zoom")).toObject();
     readReal(zoom, "step", a.zoomStep);
