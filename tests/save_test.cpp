@@ -17,6 +17,7 @@
 #include <QDir>
 #include <QFile>
 #include <QGuiApplication>
+#include <QTextBlock>
 #include <QTextCursor>
 #include <QTextDocument>
 
@@ -211,6 +212,63 @@ void checkEdgeSpaces() {
         check(outcome.result != zametti::SaveResult::Rescued,
               std::string(c.what) + ": сохранение не должно уходить в аварийный файл");
         checkEqual(c.expected, readFile(path), c.what);
+    }
+
+    // Ведущие пробелы сохраняются неразрывными: отступ значим, им рисуют схемы
+    // и лесенки. Обычный пробел в начале строки markdown съедает, неразрывный —
+    // нет.
+    //
+    // Отступ приходит от набора, а не из файла: в файле его съедает уже разбор,
+    // и вернуть оттуда нечего.
+    struct Indent {
+        const char* source;
+        int block;
+        int offset;
+        const char* typed;
+        const char* expected;
+        const char* what;
+    };
+    const Indent indents[] = {
+        {"отступ\n", 0, 0, "  ", "\xC2\xA0\xC2\xA0отступ\n",
+         "два набранных ведущих пробела сохранены"},
+        {"первая\nвторая\n", 0, 7, "  ", "первая\n\xC2\xA0\xC2\xA0вторая\n",
+         "отступ второй строки абзаца"},
+        {"- пункт\n", 0, 0, "  ", "- \xC2\xA0\xC2\xA0пункт\n",
+         "отступ внутри пункта списка"},
+        {"текст\n", 0, 5, "   ", "текст\n", "концевые пробелы по-прежнему выброшены"},
+    };
+    int k = 0;
+    for (const Indent& c : indents) {
+        const QString path = pathFor((std::string("отступ") + std::to_string(k++) +
+                                      ".md").c_str());
+        check(writeFile(path, c.source), "не записать исходник");
+        QTextDocument doc;
+        buildFrom(c.source, doc);
+        QTextCursor cursor(&doc);
+        cursor.setPosition(doc.findBlockByNumber(c.block).position() + c.offset);
+        cursor.insertText(QString::fromUtf8(c.typed));
+
+        const zametti::SaveOutcome outcome =
+            zametti::saveDocument(doc, path, QStringLiteral("test"));
+        check(outcome.result != zametti::SaveResult::Rescued,
+              std::string(c.what) + ": не должно уводить в аварийный файл");
+        checkEqual(c.expected, readFile(path), c.what);
+    }
+
+    // Записанное с неразрывными отступами устойчиво: второй проход ничего не
+    // меняет, иначе файл переписывался бы при каждом сохранении.
+    {
+        const QString path = pathFor("схема.md");
+        const std::string source =
+            "\xC2\xA0\xC2\xA0ромб\n\xC2\xA0/    \\\n<      >\n";
+        check(writeFile(path, source), "не записать исходник схемы");
+        QTextDocument doc;
+        buildFrom(source, doc);
+        const zametti::SaveOutcome outcome =
+            zametti::saveDocument(doc, path, QStringLiteral("test"));
+        check(outcome.result == zametti::SaveResult::Unchanged,
+              "схема с неразрывными отступами устойчива");
+        checkEqual(source, readFile(path), "и не переписывается");
     }
 
     // В коде пробел значим, и трогать его нельзя.

@@ -65,19 +65,27 @@ bool sameSkeleton(const Document& a, const Document& b) {
     return true;
 }
 
-// Пробелы по краям строк markdown не выражает: при разборе он их съедает. Текст
-// "rthr " возвращается как "rthr", и самопроверка перед записью честно ловит
-// расхождение — на живой заметке от этого накопился десяток аварийных файлов.
+// Неразрывный пробел в UTF-8. Именно им сохраняются отступы: обычный пробел в
+// начале строки markdown съедает, а этот — нет.
 //
-// Литеральные блоки не трогаем: в коде и дословных кусках пробел значим.
-// Смещения спанов пересчитываются по карте старых позиций в новые.
-Block withoutEdgeSpaces(Block block) {
+// Совет писать сущность "&nbsp;" не годится: ядро отдаёт её буквальным текстом,
+// и в заметке было бы видно "&nbsp;" вместо отступа. Прямой знак проходит круг
+// целиком — проверено, включая схему из трёх строк.
+const char* const kNbsp = "\xC2\xA0";
+
+// Края строк. Ведущие пробелы становятся неразрывными — отступ значим, им
+// рисуют схемы и лесенки. Концевые выбрасываются: они как ведущие нули,
+// незначащие, а markdown их всё равно съедает.
+//
+// Строка из одних пробелов считается пустой: несколько раз нажатый пробел на
+// пустой строке — не отступ, и оставлять от него неразрывные знаки незачем.
+//
+// Литеральные блоки не трогаем: в коде и дословных кусках пробел и так значим.
+Block withEdgesNormalised(Block block) {
     if (!block.rawSource.empty() || block.kind == Kind::Code) return block;
 
     // Висящий перенос в конце — след только что нажатого Enter. В файле он даёт
-    // пустую строку, а пустая строка абзац заканчивает: разбор вернул бы текст
-    // без неё, и самопроверка честно не дала бы записать. Спаны за пределы
-    // текста не заходят, пересчитывать их не нужно.
+    // пустую строку, а пустая строка абзац заканчивает.
     while (!block.text.empty() && block.text.back() == '\n') block.text.pop_back();
 
     const std::string& text = block.text;
@@ -95,17 +103,23 @@ Block withoutEdgeSpaces(Block block) {
         size_t stop = end;
         while (stop > start && isSpace(text[stop - 1])) --stop;
 
-        for (size_t k = line; k < start; ++k) map[k] = int(out.size());
+        // Ведущие пробелы: каждый становится неразрывным. Если после них ничего
+        // нет, строка пустая, и сохранять нечего.
+        for (size_t k = line; k < start; ++k) {
+            map[k] = int(out.size());
+            if (start < end) out += kNbsp;
+        }
         for (size_t k = start; k < stop; ++k) {
             map[k] = int(out.size());
             out.push_back(text[k]);
         }
-        for (size_t k = stop; k <= end && k < text.size(); ++k) map[k] = int(out.size());
+        for (size_t k = stop; k < end; ++k) map[k] = int(out.size());
 
         if (last) {
             map[text.size()] = int(out.size());
             break;
         }
+        map[end] = int(out.size());
         out.push_back('\n');
         line = end + 1;
     }
@@ -132,7 +146,7 @@ Document forFile(Document doc) {
     Document out;
     out.reserve(doc.size());
     for (Block& block : doc) {
-        Block trimmed = withoutEdgeSpaces(std::move(block));
+        Block trimmed = withEdgesNormalised(std::move(block));
         if (trimmed.rawSource.empty() && trimmed.kind == Kind::Paragraph &&
             trimmed.text.empty())
             continue;
