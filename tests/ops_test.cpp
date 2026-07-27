@@ -315,6 +315,80 @@ const KeyCase kBackspaceCases[] = {
     {"```\nкод\n```\n", 0, 0, "<операция отказалась>", "в коде — штатное поведение"},
 };
 
+const KeyCase kIndentCases[] = {
+    {"- раз\n- два\n", 1, 0, "- раз\n  - два\n", "второй пункт уходит под первый"},
+    {"- раз\n- два\n", 0, 0, "<операция отказалась>", "первый пункт отступать некуда"},
+    {"- раз\n  - два\n", 1, 0, "<операция отказалась>",
+     "глубже родителя на единицу — уже некуда"},
+    {"- раз\n  - два\n- три\n", 2, 0, "- раз\n  - два\n  - три\n",
+     "под глубокого соседа можно на один уровень"},
+    {"абзац\n", 0, 0, "<операция отказалась>", "вне списка Tab не при чём"},
+    {"1. раз\n2. два\n", 1, 0, "1. раз\n   1. два\n", "нумерованный тоже"},
+    {"- раз\n- два\n  - вложенный\n", 1, 0, "- раз\n  - два\n    - вложенный\n",
+     "поддерево едет вместе с пунктом"},
+};
+
+const KeyCase kOutdentCases[] = {
+    {"- раз\n  - два\n", 1, 0, "- раз\n- два\n", "пункт выходит на уровень выше"},
+    {"- раз\n- два\n", 1, 0, "<операция отказалась>", "с верхнего уровня выходить некуда"},
+    {"- раз\n  - два\n    - три\n", 1, 0, "- раз\n- два\n  - три\n",
+     "поддерево выходит вместе с пунктом"},
+    {"абзац\n", 0, 0, "<операция отказалась>", "вне списка Shift+Tab не при чём"},
+};
+
+const KeyCase kToggleCases[] = {
+    {"- [ ] дело\n", 0, 0, "- [x] дело\n", "невыполненная становится выполненной"},
+    {"- [x] дело\n", 0, 0, "- [ ] дело\n", "и обратно"},
+    {"- буллет\n", 0, 0, "<операция отказалась>", "буллет не задача"},
+    {"абзац\n", 0, 0, "<операция отказалась>", "абзац тем более"},
+    {"1. раз\n", 0, 0, "<операция отказалась>", "нумерованный тоже не задача"},
+};
+
+// Выделение: несколько пунктов сразу.
+struct RangeCase {
+    const char* before;
+    int firstBlock;
+    int lastBlock;
+    const char* after;
+    const char* what;
+};
+
+void checkRange(bool (*op)(QTextDocument&, QTextCursor&), const RangeCase& c) {
+    QTextDocument doc;
+    zametti::buildDocument(zametti::parse(c.before), doc);
+
+    QTextCursor cursor(&doc);
+    cursor.setPosition(doc.findBlockByNumber(c.firstBlock).position());
+    const QTextBlock last = doc.findBlockByNumber(c.lastBlock);
+    cursor.setPosition(last.position() + last.length() - 1, QTextCursor::KeepAnchor);
+
+    const bool handled = op(doc, cursor);
+    const std::string actual = handled ? zametti::serialize(zametti::readDocument(doc))
+                                       : std::string("<операция отказалась>");
+    checkEqual(c.after, actual, c.what);
+
+    if (!handled) return;
+    QString problem;
+    check(zametti::listInvariantHolds(doc, &problem),
+          std::string(c.what) + ": инвариант списков — " + problem.toStdString());
+}
+
+const RangeCase kIndentRanges[] = {
+    {"- раз\n- два\n- три\n", 1, 2, "- раз\n  - два\n  - три\n",
+     "два выделенных пункта уходят вместе"},
+    {"- раз\n- два\n- три\n", 0, 2, "<операция отказалась>",
+     "с первым пунктом в выделении отступать некуда"},
+};
+
+const RangeCase kToggleRanges[] = {
+    {"- [ ] раз\n- [ ] два\n", 0, 1, "- [x] раз\n- [x] два\n",
+     "обе задачи отмечаются"},
+    {"- [x] раз\n- [ ] два\n", 0, 1, "- [ ] раз\n- [ ] два\n",
+     "смешанное выделение идёт за первой задачей"},
+    {"- [ ] раз\n- буллет\n- [ ] два\n", 0, 2, "- [x] раз\n- буллет\n- [x] два\n",
+     "буллет между задачами не трогается"},
+};
+
 // Курсор после разреза обязан оказаться в новом блоке: иначе набор продолжится
 // не там, где человек его видит.
 void checkCursorAfterSplit() {
@@ -337,6 +411,11 @@ int main(int argc, char** argv) {
     checkLiteralInvariant();
     for (const KeyCase& c : kEnterCases) checkKey(zametti::splitBlockAtCursor, c);
     for (const KeyCase& c : kBackspaceCases) checkKey(zametti::unwrapListItemAtCursor, c);
+    for (const KeyCase& c : kIndentCases) checkKey(zametti::indentListItems, c);
+    for (const KeyCase& c : kOutdentCases) checkKey(zametti::outdentListItems, c);
+    for (const KeyCase& c : kToggleCases) checkKey(zametti::toggleTaskAtCursor, c);
+    for (const RangeCase& c : kIndentRanges) checkRange(zametti::indentListItems, c);
+    for (const RangeCase& c : kToggleRanges) checkRange(zametti::toggleTaskAtCursor, c);
     checkCursorAfterSplit();
     for (const char* source : kOrdinalCases)
         checkOrdinalAgreement(source, std::string("номера: ") + source);

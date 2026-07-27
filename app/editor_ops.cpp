@@ -56,7 +56,102 @@ void normalise(QTextDocument& doc, BlockRange range) {
     syncLists(doc, range);
 }
 
+// Блоки, которых касается курсор, вместе с поддеревьями. Конец выделения,
+// стоящий ровно на начале блока, этот блок не захватывает: человек его не
+// выделял, только довёл до него курсор.
+BlockRange selectedBlocks(const QTextDocument& doc, const QTextCursor& cursor) {
+    const int start = qMin(cursor.anchor(), cursor.position());
+    const int end = qMax(cursor.anchor(), cursor.position());
+
+    BlockRange range{doc.findBlock(start).blockNumber(), doc.findBlock(end).blockNumber()};
+    if (end > start && doc.findBlock(end).position() == end && range.last > range.first)
+        --range.last;
+
+    // Поддерево последнего пункта: всё, что глубже него, принадлежит ему.
+    const QTextBlock last = doc.findBlockByNumber(range.last);
+    if (isListBlock(last)) {
+        const int base = levelOf(last);
+        while (range.last + 1 < doc.blockCount()) {
+            const QTextBlock next = doc.findBlockByNumber(range.last + 1);
+            if (!isListBlock(next) || levelOf(next) <= base) break;
+            ++range.last;
+        }
+    }
+    return range;
+}
+
+// Сдвигает уровень списочных блоков диапазона. Несписочные не трогает: выделение
+// могло зацепить и абзац, и его отступ тут ни при чём.
+void shiftLevels(QTextDocument& doc, BlockRange range, int delta) {
+    QTextCursor cursor(&doc);
+    cursor.beginEditBlock();
+    QTextBlock block = doc.findBlockByNumber(range.first);
+    for (int i = range.first; i <= range.last && block.isValid(); ++i, block = block.next()) {
+        if (!isListBlock(block)) continue;
+        QTextBlockFormat format = block.blockFormat();
+        format.setProperty(LevelProperty, qMax(0, levelOf(block) + delta));
+        setBlockFormat(cursor, block, format);
+    }
+    normalise(doc, range);
+    cursor.endEditBlock();
+}
+
 }  // namespace
+
+bool indentListItems(QTextDocument& doc, QTextCursor& cursor) {
+    const BlockRange range = selectedBlocks(doc, cursor);
+    const QTextBlock first = doc.findBlockByNumber(range.first);
+    if (!isListBlock(first)) return false;
+
+    // Отступать можно только под уже существующий пункт: иначе получился бы
+    // прыжок через уровень, которого в файле не бывает.
+    const QTextBlock prev = first.previous();
+    if (!prev.isValid() || !isListBlock(prev) || levelOf(prev) < levelOf(first)) return false;
+
+    shiftLevels(doc, range, 1);
+    return true;
+}
+
+bool outdentListItems(QTextDocument& doc, QTextCursor& cursor) {
+    const BlockRange range = selectedBlocks(doc, cursor);
+    const QTextBlock first = doc.findBlockByNumber(range.first);
+    if (!isListBlock(first) || levelOf(first) == 0) return false;
+
+    shiftLevels(doc, range, -1);
+    return true;
+}
+
+bool toggleTaskAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+    const BlockRange range = selectedBlocks(doc, cursor);
+
+    // Направление задаёт первая задача выделения: остальные идут за ней.
+    bool found = false;
+    Kind target = Kind::TaskUnchecked;
+    QTextBlock block = doc.findBlockByNumber(range.first);
+    for (int i = range.first; i <= range.last && block.isValid(); ++i, block = block.next()) {
+        if (isRawBlock(block) || !isTaskBlock(block)) continue;
+        target = kindOf(block) == Kind::TaskChecked ? Kind::TaskUnchecked : Kind::TaskChecked;
+        found = true;
+        break;
+    }
+    if (!found) return false;
+
+    QTextCursor edit(&doc);
+    edit.beginEditBlock();
+    block = doc.findBlockByNumber(range.first);
+    for (int i = range.first; i <= range.last && block.isValid(); ++i, block = block.next()) {
+        if (isRawBlock(block) || !isTaskBlock(block)) continue;
+        if (kindOf(block) == target) continue;
+        QTextBlockFormat format = block.blockFormat();
+        format.setProperty(KindProperty, int(target));
+        setBlockFormat(edit, block, format);
+    }
+    // Ширина рамки у обеих задач одна, но выделение могло зацепить и соседей:
+    // геометрию пересчитываем на всякий случай, стоит она копейки.
+    normalise(doc, range);
+    edit.endEditBlock();
+    return true;
+}
 
 bool splitBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const QTextBlock block = cursor.block();

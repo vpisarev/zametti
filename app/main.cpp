@@ -110,6 +110,11 @@ void printHelp() {
         "  Ctrl+=, Ctrl+-    крупнее, мельче\n"
         "  Ctrl+0            исходный масштаб\n"
         "  Ctrl+S            сохранить сейчас\n"
+        "  Ctrl+Z, Ctrl+Y    отменить, вернуть\n"
+        "  Enter             новый пункт списка; на пустом пункте — выйти из него\n"
+        "  Backspace         в начале пункта — сделать его абзацем\n"
+        "  Tab, Shift+Tab    двигать пункт по уровням вложенности\n"
+        "  %s%s  переключить задачу: сделана или нет\n"
         "\n"
         "Файлы:\n"
         "  %s\n"
@@ -118,6 +123,8 @@ void printHelp() {
         "  %s\n"
         "      последняя заметка, прокрутка, зум, геометрия окна, раскрытые ветки;\n"
         "      переписывается при выходе\n",
+        zametti::appearance().toggleTaskKey.toUtf8().constData(),
+        QByteArray(qMax(0, 16 - zametti::appearance().toggleTaskKey.size()), ' ').constData(),
         zametti::configPath().toUtf8().constData(),
         zametti::statePath().toUtf8().constData());
 }

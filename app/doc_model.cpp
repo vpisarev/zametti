@@ -26,6 +26,12 @@ bool isListBlock(const QTextBlock& block) {
     return !isRawBlock(block) && isList(kindOf(block));
 }
 
+bool isTaskBlock(const QTextBlock& block) {
+    if (!isListBlock(block)) return false;
+    const Kind kind = kindOf(block);
+    return kind == Kind::TaskUnchecked || kind == Kind::TaskChecked;
+}
+
 int ordinalOf(const QTextBlock& block) {
     if (!isListBlock(block)) return 0;
     const int level = levelOf(block);

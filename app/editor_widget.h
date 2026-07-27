@@ -15,6 +15,7 @@
 #include "note_view.h"
 
 #include <QElapsedTimer>
+#include <QKeySequence>
 #include <QString>
 #include <QTimer>
 
@@ -73,6 +74,7 @@ private:
     // один свой.
     bool recordingSuspended_ = false;
 
+    QKeySequence toggleTaskKey_;
     QTimer autosave_;
     QElapsedTimer sinceLastEdit_;
     QString lastComplaint_;

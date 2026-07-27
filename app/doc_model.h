@@ -77,6 +77,7 @@ bool isContinuationBlock(const QTextBlock& block);
 Kind kindOf(const QTextBlock& block);
 int levelOf(const QTextBlock& block);
 bool isListBlock(const QTextBlock& block);
+bool isTaskBlock(const QTextBlock& block);
 
 // Номер пункта в прогоне. Считается обходом назад по тому же правилу, что и в
 // сериализаторе: вложенный подсписок прогон не рвёт. Хранить номер в формате

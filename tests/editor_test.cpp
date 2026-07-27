@@ -245,6 +245,60 @@ void checkKeysAreOperations() {
           "undo вернул пункт списком");
 }
 
+// Tab, Shift+Tab и переключатель задачи доходят до операций через клавиатуру.
+void checkListKeys() {
+    const QString path =
+        writeNote("списки.md", QStringLiteral("- раз\n- два\n- [ ] дело\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(path);
+
+    auto putCursorIn = [&editor](int block) {
+        QTextCursor cursor = editor.textCursor();
+        cursor.setPosition(editor.document()->findBlockByNumber(block).position());
+        editor.setTextCursor(cursor);
+    };
+    auto text = [&editor] {
+        return QString::fromStdString(
+            zametti::serialize(zametti::readDocument(*editor.document())));
+    };
+
+    putCursorIn(1);
+    QTest::keyClick(&editor, Qt::Key_Tab);
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("- раз\n  - два\n- [ ] дело\n"), text(),
+               "Tab увёл пункт на уровень внутрь");
+
+    QTest::keyClick(&editor, Qt::Key_Backtab);
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("- раз\n- два\n- [ ] дело\n"), text(),
+               "Shift+Tab вернул его обратно");
+
+    // Переключатель задачи — сочетание из конфига.
+    const QKeySequence toggle(zametti::appearance().toggleTaskKey,
+                              QKeySequence::PortableText);
+    check(toggle.count() == 1, "хоткей переключателя разобран");
+    putCursorIn(2);
+    QTest::keyClick(&editor, Qt::Key(toggle[0].key()), toggle[0].keyboardModifiers());
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("- раз\n- два\n- [x] дело\n"), text(),
+               "задача отмечена");
+
+    QTest::keyClick(&editor, Qt::Key(toggle[0].key()), toggle[0].keyboardModifiers());
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("- раз\n- два\n- [ ] дело\n"), text(),
+               "и снята");
+
+    // Каждое нажатие — свой шаг истории.
+    editor.undo();
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("- раз\n- два\n- [x] дело\n"), text(),
+               "undo снимает ровно последнее переключение");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -270,6 +324,7 @@ int main(int argc, char** argv) {
     checkAppearanceMakesNoHistoryStep();
     checkFirstEditAfterOpenIsUndoable();
     checkKeysAreOperations();
+    checkListKeys();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;

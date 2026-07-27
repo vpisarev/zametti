@@ -8,6 +8,7 @@
 #include "settings.h"
 
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QMessageBox>
 #include <QScrollBar>
 #include <QTextCursor>
@@ -35,6 +36,10 @@ NoteEditor::NoteEditor(QWidget* parent)
     : NoteView(parent), history_(appearance().undoLimit) {
     setReadOnly(false);
     setUndoRedoEnabled(false);   // историю ведём сами, см. edit_history.h
+
+    // Хоткей разбираем один раз: на каждое нажатие клавиши это было бы разбором
+    // строки впустую.
+    toggleTaskKey_ = QKeySequence(appearance().toggleTaskKey, QKeySequence::PortableText);
 
     autosave_.setSingleShot(true);
     connect(&autosave_, &QTimer::timeout, this, [this] { save(true); });
@@ -117,6 +122,24 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     if (event->key() == Qt::Key_Backspace && event->modifiers() == Qt::NoModifier &&
         runOperation(unwrapListItemAtCursor))
         return;
+
+    // Tab и Shift+Tab внутри списка двигают пункт по уровням; вне списка
+    // операция отказывается, и Tab остаётся обычным знаком табуляции.
+    if (event->key() == Qt::Key_Tab && event->modifiers() == Qt::NoModifier &&
+        runOperation(indentListItems))
+        return;
+    if (event->key() == Qt::Key_Backtab ||
+        (event->key() == Qt::Key_Tab && event->modifiers() == Qt::ShiftModifier)) {
+        if (runOperation(outdentListItems)) return;
+        return;   // наружу Shift+Tab не отдаём: он увёл бы фокус из окна
+    }
+
+    if (!toggleTaskKey_.isEmpty() &&
+        QKeySequence(event->keyCombination()).matches(toggleTaskKey_) ==
+            QKeySequence::ExactMatch &&
+        runOperation(toggleTaskAtCursor))
+        return;
+
     NoteView::keyPressEvent(event);
 }
 
