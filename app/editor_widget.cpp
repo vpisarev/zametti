@@ -172,9 +172,14 @@ void NoteEditor::refreshAppearance() {
 }
 
 void NoteEditor::undo() {
+    // Курсор ставим туда, где была отменяемая правка, а не туда, где он стоял в
+    // возвращаемом состоянии. Разница видна сразу: у только что открытого файла
+    // в первом шаге записан ноль, и первая же отмена швыряла курсор в начало
+    // заметки.
+    const int where = history_.current().cursor;
     const HistoryStep* step = history_.undo();
     if (step == nullptr) return;
-    rebuild(step->doc, step->cursor, viewAnchor());
+    rebuild(step->doc, where, viewAnchor());
     document()->setModified(true);
     autosave_.start(appearance().autosaveDelayMs);
 }

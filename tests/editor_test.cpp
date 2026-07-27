@@ -854,6 +854,43 @@ void checkCheckboxClickWithSelection() {
           "двойной щелчок по рамке строку не выделяет");
 }
 
+// Отмена ставит курсор туда, где была отменяемая правка. Раньше он вставал
+// туда, где стоял в возвращаемом состоянии, — а у только что открытого файла в
+// первом шаге записан ноль, и первая же отмена швыряла курсор в начало заметки.
+void checkUndoKeepsCursor() {
+    const QString path = writeNote(
+        "курсор-отмены.md",
+        QStringLiteral("вступление\n\n- раз\n  - вложенный\n  - ещё вложенный\n- два\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(30);
+    editor.setFocus();
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    QTextCursor cursor = editor.textCursor();
+    cursor.setPosition(editor.document()->findBlockByNumber(2).position());
+    const QTextBlock last = editor.document()->findBlockByNumber(3);
+    cursor.setPosition(last.position() + last.length() - 1, QTextCursor::KeepAnchor);
+    editor.setTextCursor(cursor);
+    const int before = editor.textCursor().position();
+    check(before > 0, "курсор должен стоять не в начале");
+
+    QTest::keyClick(&editor, Qt::Key_3, Qt::ControlModifier);
+    QTest::qWait(10);
+    QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+    QTest::qWait(10);
+
+    checkEqual(QStringLiteral("вступление\n\n- раз\n  - вложенный\n  - ещё вложенный\n- два\n"),
+               QString::fromStdString(
+                   zametti::serialize(zametti::readDocument(*editor.document()))),
+               "отмена вернула прежний вид списка");
+    checkEqual(QString::number(before), QString::number(editor.textCursor().position()),
+               "курсор после отмены остался у правки");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -892,6 +929,7 @@ int main(int argc, char** argv) {
     checkScrollHoldsWhenBlockChangesHeight();
     checkLinkDoesNotGrow();
     checkCheckboxClickWithSelection();
+    checkUndoKeepsCursor();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;
