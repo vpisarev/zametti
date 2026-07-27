@@ -420,6 +420,17 @@ void checkUndo() {
 // все стыки убирала прыжок пункта, ставшего абзацем, но вид от этого стал явно
 // хуже — огромный зазор между вводной строкой и первым пунктом.
 void checkListRhythm() {
+    // Значения задаём явно: набор проверяет правило, а не то, как настроен вид
+    // у того, кто его запускает.
+    const zametti::Appearance saved = zametti::appearance();
+    zametti::appearance().blockSpacing = 0.667;
+    zametti::appearance().listSpacingBefore = 0.0;
+    zametti::appearance().listSpacingAfter = 1.1;
+    struct Restore {
+        const zametti::Appearance& from;
+        ~Restore() { zametti::appearance() = from; }
+    } restore{saved};
+
     const QString path = writeNote(
         "ритм.md",
         QStringLiteral("вводная строка:\n\n- первый\n- второй\n\nабзац после\n\n"
@@ -450,6 +461,15 @@ void checkListRhythm() {
 // выше — у пункта отбивки нет, — а перестав им быть, отходит обратно. Ошибкой
 // был бы несимметричный круг: уехал и не вернулся.
 void checkKindRoundTripKeepsPlace() {
+    const zametti::Appearance saved = zametti::appearance();
+    zametti::appearance().blockSpacing = 0.667;
+    zametti::appearance().listSpacingBefore = 0.0;
+    zametti::appearance().listSpacingAfter = 1.1;
+    struct Restore {
+        const zametti::Appearance& from;
+        ~Restore() { zametti::appearance() = from; }
+    } restore{saved};
+
     const QString path = writeNote(
         "круг-вида.md",
         QStringLiteral("- [ ] верхняя\n  - [ ] вложенная\n\nдо 19 июля:\n\n- [x] дело\n"));
