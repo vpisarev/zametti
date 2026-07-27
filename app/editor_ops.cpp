@@ -45,6 +45,96 @@ void setBlockFormat(QTextCursor& cursor, const QTextBlock& block,
 
 }  // namespace
 
+namespace {
+
+// Диапазон, который надо привести в порядок после правки одного блока: сам блок
+// и его соседи. Дальше расширят сами нормализующие проходы.
+BlockRange around(int number) { return {number - 1, number + 1}; }
+
+void normalise(QTextDocument& doc, BlockRange range) {
+    syncLiteralBlocks(doc, range);
+    syncLists(doc, range);
+}
+
+}  // namespace
+
+bool splitBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+    const QTextBlock block = cursor.block();
+    const QTextBlockFormat format = block.blockFormat();
+    const int number = block.blockNumber();
+
+    // Пустой пункт списка: Enter снимает список, а не заводит ещё один пустой
+    // пункт. Иначе выйти из списка можно было бы только двумя нажатиями.
+    if (isListBlock(block) && block.text().isEmpty()) {
+        QTextBlockFormat plain = format;
+        plain.clearProperty(KindProperty);
+        plain.clearProperty(LevelProperty);
+        plain.setLeftMargin(0);
+
+        cursor.beginEditBlock();
+        cursor.setBlockFormat(plain);
+        normalise(doc, around(number));
+        cursor.endEditBlock();
+        return true;
+    }
+
+    const bool literal = isRawBlock(block) || kindOf(block) == Kind::Code;
+    QTextBlockFormat next = format;
+
+    if (literal) {
+        // Строка литерального блока: новая строка того же блока, а не новый
+        // блок кода. Признак завершающего перевода переезжает на неё — она
+        // теперь последняя.
+        next.setProperty(ContinuationProperty, true);
+    } else {
+        next.clearProperty(ContinuationProperty);
+        next.clearProperty(TrailingNewlineProperty);
+        switch (kindOf(block)) {
+            case Kind::TaskChecked:
+                // Новый пункт всегда невыполненный: отмечать за человека нечего.
+                next.setProperty(KindProperty, int(Kind::TaskUnchecked));
+                break;
+            case Kind::Heading:
+                // За заголовком идёт обычный текст, а не второй заголовок.
+                next.clearProperty(KindProperty);
+                next.setHeadingLevel(0);
+                break;
+            default:
+                break;
+        }
+    }
+
+    cursor.beginEditBlock();
+    cursor.insertBlock(next, block.charFormat());
+    if (literal && format.boolProperty(TrailingNewlineProperty)) {
+        QTextBlockFormat head = format;
+        head.clearProperty(TrailingNewlineProperty);
+        QTextCursor headCursor(&doc);
+        headCursor.setPosition(doc.findBlockByNumber(number).position());
+        headCursor.setBlockFormat(head);
+    }
+    normalise(doc, {number, number + 1});
+    cursor.endEditBlock();
+    return true;
+}
+
+bool unwrapListItemAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+    if (cursor.hasSelection() || !cursor.atBlockStart()) return false;
+    const QTextBlock block = cursor.block();
+    if (!isListBlock(block)) return false;
+
+    QTextBlockFormat plain = block.blockFormat();
+    plain.clearProperty(KindProperty);
+    plain.clearProperty(LevelProperty);
+    plain.setLeftMargin(0);
+
+    cursor.beginEditBlock();
+    cursor.setBlockFormat(plain);
+    normalise(doc, around(block.blockNumber()));
+    cursor.endEditBlock();
+    return true;
+}
+
 void applyListGeometry(QTextDocument& doc, BlockRange range) {
     const BlockRange full = expandToRuns(doc, range);
     const QFont base = baseFontOf(doc);

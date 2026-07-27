@@ -3,9 +3,11 @@
 #include "document_builder.h"
 #include "document_reader.h"
 #include "document_saver.h"
+#include "editor_ops.h"
 #include "parser.h"
 #include "settings.h"
 
+#include <QKeyEvent>
 #include <QMessageBox>
 #include <QScrollBar>
 #include <QTextCursor>
@@ -91,7 +93,8 @@ void NoteEditor::redo() {
 }
 
 void NoteEditor::rebuild(const Document& doc, int cursor, double ratio) {
-    rebuilding_ = true;
+    const bool wasSuspended = recordingSuspended_;
+    recordingSuspended_ = true;
     buildDocument(doc, *document(), zoom());
     applyContentWidth();
 
@@ -104,14 +107,50 @@ void NoteEditor::rebuild(const Document& doc, int cursor, double ratio) {
     // считалась бы изменённой и переписывалась бы на диске при выходе, хотя мы
     // её всего лишь показали. Кто пересобрал ради отмены — поднимет флаг сам.
     document()->setModified(false);
-    rebuilding_ = false;
+    recordingSuspended_ = wasSuspended;
+}
+
+void NoteEditor::keyPressEvent(QKeyEvent* event) {
+    const bool plainEnter = (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
+                            (event->modifiers() & ~Qt::KeypadModifier) == Qt::NoModifier;
+    if (plainEnter && runOperation(splitBlockAtCursor)) return;
+    if (event->key() == Qt::Key_Backspace && event->modifiers() == Qt::NoModifier &&
+        runOperation(unwrapListItemAtCursor))
+        return;
+    NoteView::keyPressEvent(event);
+}
+
+bool NoteEditor::runOperation(bool (*op)(QTextDocument&, QTextCursor&)) {
+    QTextCursor cursor = textCursor();
+    // Шаг истории у операции свой; правки, которые она делает по дороге, в
+    // историю попадать не должны — иначе одно нажатие даст два шага.
+    recordingSuspended_ = true;
+    const bool handled = op(*document(), cursor);
+    recordingSuspended_ = false;
+    if (!handled) return false;
+
+    // Операция трогает содержимое, род и уровень; всё оформление, которое из
+    // них следует, пересчитывает сборщик — так ни одно свойство не отстанет.
+    // Разбивка на блоки после нормализации уже каноническая, поэтому место
+    // курсора переживает пересборку.
+    const int position = cursor.position();
+    Document ir = readDocument(*document());
+    history_.push(ir, position);
+    // Операция — отдельный шаг: следующая набранная буква к ней не приклеится.
+    sinceLastEdit_.invalidate();
+
+    rebuild(ir, position, scrollRatio());
+    document()->setModified(true);
+    ensureCursorVisible();
+    autosave_.start(appearance().autosaveDelayMs);
+    return true;
 }
 
 void NoteEditor::onContentsChanged() {
     // Пересборка и перекладка полей под ширину окна — это облик. Документу они
     // неотличимы от правки текста, и без этих двух признаков ширина окна
     // заводила бы шаг истории.
-    if (rebuilding_ || changingLayout()) return;
+    if (recordingSuspended_ || changingLayout()) return;
     recordEdit();
     autosave_.start(appearance().autosaveDelayMs);
 }

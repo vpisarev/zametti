@@ -241,6 +241,92 @@ void checkLiteralInvariant() {
     check(zametti::literalInvariantHolds(lone), "нормализация чинит и этот случай");
 }
 
+// Enter и Backspace: markdown до, место курсора, markdown после.
+//
+// Курсор задаётся номером блока документа и смещением в нём — так случай
+// читается глазами, а не считается в уме от начала файла.
+struct KeyCase {
+    const char* before;
+    int block;
+    int offset;
+    const char* after;
+    const char* what;
+};
+
+void checkKey(bool (*op)(QTextDocument&, QTextCursor&), const KeyCase& c) {
+    QTextDocument doc;
+    zametti::buildDocument(zametti::parse(c.before), doc);
+
+    QTextCursor cursor(&doc);
+    const QTextBlock block = doc.findBlockByNumber(c.block);
+    check(block.isValid(), std::string(c.what) + ": нет такого блока");
+    if (!block.isValid()) return;
+    cursor.setPosition(block.position() + c.offset);
+
+    const bool handled = op(doc, cursor);
+    const std::string actual = handled ? zametti::serialize(zametti::readDocument(doc))
+                                       : std::string("<операция отказалась>");
+    checkEqual(c.after, actual, c.what);
+
+    if (!handled) return;
+    QString problem;
+    check(zametti::listInvariantHolds(doc, &problem),
+          std::string(c.what) + ": инвариант списков — " + problem.toStdString());
+    check(zametti::literalInvariantHolds(doc, &problem),
+          std::string(c.what) + ": инвариант продолжений — " + problem.toStdString());
+}
+
+const KeyCase kEnterCases[] = {
+    {"абзацхвост\n", 0, 5, "абзац\n\nхвост\n", "разрез в середине абзаца"},
+    {"абзац\n", 0, 5, "абзац\n\n\n", "разрез в конце абзаца"},
+
+    {"- пункт\n", 0, 5, "- пункт\n-\n", "новый пункт того же рода"},
+    {"- пунктхвост\n", 0, 5, "- пункт\n- хвост\n", "разрез пункта посередине"},
+    {"1. раз\n2. два\n", 1, 3, "1. раз\n2. два\n3.\n", "новый пункт нумерованного"},
+    {"- верх\n  - вложенный\n", 1, 9, "- верх\n  - вложенный\n  -\n",
+     "новый пункт того же уровня"},
+
+    {"- [x] сделано\n", 0, 7, "- [x] сделано\n- [ ]\n", "новая задача невыполненная"},
+    {"- [ ] дело\n", 0, 4, "- [ ] дело\n- [ ]\n", "невыполненная остаётся такой"},
+
+    {"- пункт\n- \n", 1, 0, "- пункт\n\n\n", "пустой пункт снимает список"},
+    {"- верх\n  - вложенный\n  - \n", 2, 0, "- верх\n  - вложенный\n\n\n",
+     "пустой вложенный тоже"},
+
+    {"# заголовокхвост\n", 0, 9, "# заголовок\n\nхвост\n", "разрез заголовка даёт абзац"},
+    {"# заголовок\n", 0, 9, "# заголовок\n\n\n", "за заголовком идёт абзац"},
+
+    {"```py\nодна\n```\n", 0, 4, "```py\nодна\n\n```\n", "Enter в коде даёт строку кода"},
+    {"```py\nоднадве\n```\n", 0, 4, "```py\nодна\nдве\n```\n", "разрез строки кода"},
+    {"```py\nодна\nдве\n```\n", 0, 4, "```py\nодна\n\nдве\n```\n",
+     "разрез первой строки кода не рвёт блок"},
+
+    {"> цитатахвост\n", 0, 6, "> цитата\n>\n> хвост\n", "разрез цитаты"},
+};
+
+const KeyCase kBackspaceCases[] = {
+    {"- пункт\n", 0, 0, "пункт\n", "в начале пункта снимает список"},
+    {"- верх\n  - вложенный\n", 1, 0, "- верх\n\nвложенный\n",
+     "вложенный тоже становится абзацем"},
+    {"- [x] дело\n", 0, 0, "дело\n", "задача становится абзацем"},
+    {"1. раз\n2. два\n", 1, 0, "1. раз\n\nдва\n", "нумерованный пункт"},
+    {"- пункт\n", 0, 3, "<операция отказалась>", "внутри текста — штатное поведение"},
+    {"абзац\n", 0, 0, "<операция отказалась>", "в абзаце — штатное поведение"},
+    {"```\nкод\n```\n", 0, 0, "<операция отказалась>", "в коде — штатное поведение"},
+};
+
+// Курсор после разреза обязан оказаться в новом блоке: иначе набор продолжится
+// не там, где человек его видит.
+void checkCursorAfterSplit() {
+    QTextDocument doc;
+    zametti::buildDocument(zametti::parse("- пунктхвост\n"), doc);
+    QTextCursor cursor(&doc);
+    cursor.setPosition(doc.findBlockByNumber(0).position() + 5);
+    zametti::splitBlockAtCursor(doc, cursor);
+    check(cursor.blockNumber() == 1 && cursor.positionInBlock() == 0,
+          "курсор после разреза стоит в начале нового блока");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -249,6 +335,9 @@ int main(int argc, char** argv) {
     checkLevelNormalisation();
     checkGeometry();
     checkLiteralInvariant();
+    for (const KeyCase& c : kEnterCases) checkKey(zametti::splitBlockAtCursor, c);
+    for (const KeyCase& c : kBackspaceCases) checkKey(zametti::unwrapListItemAtCursor, c);
+    checkCursorAfterSplit();
     for (const char* source : kOrdinalCases)
         checkOrdinalAgreement(source, std::string("номера: ") + source);
 

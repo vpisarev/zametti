@@ -7,7 +7,10 @@
 // записывалась в историю как правка, а первая правка в только что открытой
 // заметке подмешивалась к её исходному состоянию и не отменялась.
 
+#include "doc_model.h"
+#include "document_reader.h"
 #include "editor_widget.h"
+#include "serializer.h"
 #include "settings.h"
 #include "test_util.h"
 
@@ -187,6 +190,61 @@ void checkFirstEditAfterOpenIsUndoable() {
                "первая заметка сохранена при переходе ко второй");
 }
 
+// Клавиши доходят до операций, и каждая операция — ровно один шаг отмены.
+void checkKeysAreOperations() {
+    const QString path = writeNote("клавиши.md", QStringLiteral("- пункт\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(path);
+
+    QTextCursor cursor = editor.textCursor();
+    cursor.movePosition(QTextCursor::End);
+    editor.setTextCursor(cursor);
+
+    QTest::keyClick(&editor, Qt::Key_Return);
+    QTest::qWait(10);
+    check(editor.document()->blockCount() == 2, "Enter завёл новый пункт");
+    check(zametti::isListBlock(editor.document()->findBlockByNumber(1)),
+          "новый блок — пункт списка");
+
+    // Набираем в новом пункте и убеждаемся, что это отдельный шаг.
+    editor.insertPlainText(QStringLiteral("второй"));
+    QTest::qWait(10);
+
+    editor.undo();
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("- пункт\n-\n"),
+               QString::fromStdString(zametti::serialize(
+                   zametti::readDocument(*editor.document()))),
+               "первый undo снимает набор, но не Enter");
+
+    editor.undo();
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("- пункт\n"),
+               QString::fromStdString(zametti::serialize(
+                   zametti::readDocument(*editor.document()))),
+               "второй undo снимает Enter");
+
+    // Backspace в начале пункта снимает список — тоже одним шагом.
+    editor.redo();
+    QTest::qWait(10);
+    cursor = editor.textCursor();
+    cursor.setPosition(editor.document()->findBlockByNumber(1).position());
+    editor.setTextCursor(cursor);
+    QTest::keyClick(&editor, Qt::Key_Backspace);
+    QTest::qWait(10);
+    check(!zametti::isListBlock(editor.document()->findBlockByNumber(1)),
+          "Backspace в начале пункта снял список");
+
+    editor.undo();
+    QTest::qWait(10);
+    check(zametti::isListBlock(editor.document()->findBlockByNumber(1)),
+          "undo вернул пункт списком");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -211,6 +269,7 @@ int main(int argc, char** argv) {
     checkUndoKeepsAppearance();
     checkAppearanceMakesNoHistoryStep();
     checkFirstEditAfterOpenIsUndoable();
+    checkKeysAreOperations();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;

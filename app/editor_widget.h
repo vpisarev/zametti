@@ -49,7 +49,17 @@ public:
 signals:
     void fileChanged(const QString& path);
 
+protected:
+    // Только перевод ввода в вызовы операций. Ни одной правки документа отсюда:
+    // иначе правило «одна операция — один шаг истории» держать нечем, а
+    // инварианты расползаются по обработчикам событий.
+    void keyPressEvent(QKeyEvent* event) override;
+
 private:
+    // Выполняет операцию, доводит документ до вида, который построил бы
+    // сборщик, и заводит отдельный шаг истории. Возвращает то же, что операция.
+    bool runOperation(bool (*op)(QTextDocument&, QTextCursor&));
+
     void rebuild(const Document& doc, int cursor, double ratio);
     void recordEdit();
     void onContentsChanged();
@@ -57,9 +67,11 @@ private:
     EditHistory history_;
     QString path_;
 
-    // Пересборка документа меняет его содержимое и потому неотличима от правки
-    // — если не поднять флаг. Без него undo записывал бы сам себя в историю.
-    bool rebuilding_ = false;
+    // Пересборка документа и операции меняют его содержимое и потому неотличимы
+    // от набора — если не поднять флаг. Без него undo записывал бы сам себя, а
+    // операция заводила бы два шага вместо одного: один от contentsChanged и
+    // один свой.
+    bool recordingSuspended_ = false;
 
     QTimer autosave_;
     QElapsedTimer sinceLastEdit_;
