@@ -9,6 +9,9 @@
 #include <QFile>
 #include <QSaveFile>
 
+#include <algorithm>
+#include <vector>
+
 namespace zametti {
 namespace {
 
@@ -45,18 +48,74 @@ QString rescueTimestamp() {
 
 namespace {
 
+bool isSpace(char c) { return c == ' ' || c == '\t'; }
+
+// Пробелы по краям строк markdown не выражает: при разборе он их съедает. Текст
+// "rthr " возвращается как "rthr", и самопроверка перед записью честно ловит
+// расхождение — на живой заметке от этого накопился десяток аварийных файлов.
+//
+// Литеральные блоки не трогаем: в коде и дословных кусках пробел значим.
+// Смещения спанов пересчитываются по карте старых позиций в новые.
+Block withoutEdgeSpaces(Block block) {
+    if (!block.rawSource.empty() || block.kind == Kind::Code) return block;
+
+    const std::string& text = block.text;
+    std::vector<int> map(text.size() + 1, 0);
+    std::string out;
+
+    size_t line = 0;
+    for (;;) {
+        size_t end = text.find('\n', line);
+        const bool last = end == std::string::npos;
+        if (last) end = text.size();
+
+        size_t start = line;
+        while (start < end && isSpace(text[start])) ++start;
+        size_t stop = end;
+        while (stop > start && isSpace(text[stop - 1])) --stop;
+
+        for (size_t k = line; k < start; ++k) map[k] = int(out.size());
+        for (size_t k = start; k < stop; ++k) {
+            map[k] = int(out.size());
+            out.push_back(text[k]);
+        }
+        for (size_t k = stop; k <= end && k < text.size(); ++k) map[k] = int(out.size());
+
+        if (last) {
+            map[text.size()] = int(out.size());
+            break;
+        }
+        out.push_back('\n');
+        line = end + 1;
+    }
+
+    for (Span& span : block.inlines) {
+        const size_t from = size_t(qBound(0, span.offset, int(text.size())));
+        const size_t to = size_t(qBound(0, span.offset + span.length, int(text.size())));
+        span.offset = map[from];
+        span.length = map[to] - map[from];
+    }
+    block.inlines.erase(std::remove_if(block.inlines.begin(), block.inlines.end(),
+                                       [](const Span& s) { return s.length <= 0; }),
+                        block.inlines.end());
+    block.text = std::move(out);
+    return block;
+}
+
 // Пустой абзац markdown выразить нечем: пустая строка в файле — разделитель
 // блоков, а не блок. В документе он заводится каждым Enter, и без этой уборки
 // самопроверка честно ловила бы расхождение при каждом сохранении.
 //
 // Пустой пункт списка при этом остаётся: "-" в файле записывается прекрасно.
-Document withoutEmptyParagraphs(Document doc) {
+Document forFile(Document doc) {
     Document out;
     out.reserve(doc.size());
     for (Block& block : doc) {
-        if (block.rawSource.empty() && block.kind == Kind::Paragraph && block.text.empty())
+        Block trimmed = withoutEdgeSpaces(std::move(block));
+        if (trimmed.rawSource.empty() && trimmed.kind == Kind::Paragraph &&
+            trimmed.text.empty())
             continue;
-        out.push_back(std::move(block));
+        out.push_back(std::move(trimmed));
     }
     return out;
 }
@@ -66,7 +125,7 @@ Document withoutEmptyParagraphs(Document doc) {
 SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
                          const QString& timestamp, DocumentReaderFn reader) {
     const Document ir =
-        withoutEmptyParagraphs(reader ? reader(doc) : readDocument(doc));
+        forFile(reader ? reader(doc) : readDocument(doc));
     const QByteArray text = toBytes(serialize(ir));
 
     if (QFile::exists(path) && fileContents(path) == text)

@@ -173,6 +173,55 @@ void checkEmptyParagraphs() {
     checkEqual("- пункт\n-\n", readFile(listPath), "пустой пункт списка сохраняется");
 }
 
+// Пробелы по краям строк markdown съедает при разборе. Оставить их — значит
+// проваливать самопроверку при каждом сохранении: ровно от этого на живой
+// заметке накопился десяток аварийных файлов.
+void checkEdgeSpaces() {
+    struct Case {
+        const char* source;      // что лежит в заметке
+        const char* typed;       // что дописали в конец первого блока
+        const char* expected;    // что должно оказаться в файле
+        const char* what;
+    };
+    const Case cases[] = {
+        {"- пункт\n", " ", "- пункт\n", "концевой пробел в пункте"},
+        {"текст\n", "  ", "текст\n", "два концевых пробела в абзаце"},
+        {"текст\n", "\t", "текст\n", "концевая табуляция"},
+        {"# заголовок\n", " ", "# заголовок\n", "концевой пробел в заголовке"},
+        {"> цитата\n", " ", "> цитата\n", "концевой пробел в цитате"},
+        {"абзац с **жирным**\n", "  ", "абзац с **жирным**\n",
+         "пробелы не сдвигают начертание"},
+    };
+
+    int index = 0;
+    for (const Case& c : cases) {
+        const QString path = pathFor((std::string("пробелы") + std::to_string(index++) +
+                                      ".md").c_str());
+        check(writeFile(path, c.source), "не записать исходник");
+
+        QTextDocument doc;
+        buildFrom(c.source, doc);
+        QTextCursor cursor(&doc);
+        cursor.movePosition(QTextCursor::EndOfBlock);
+        cursor.insertText(QString::fromUtf8(c.typed));
+
+        const zametti::SaveOutcome outcome =
+            zametti::saveDocument(doc, path, QStringLiteral("test"));
+        check(outcome.result != zametti::SaveResult::Rescued,
+              std::string(c.what) + ": сохранение не должно уходить в аварийный файл");
+        checkEqual(c.expected, readFile(path), c.what);
+    }
+
+    // В коде пробел значим, и трогать его нельзя.
+    const QString path = pathFor("код-с-отступом.md");
+    const std::string source = "```\n    отступ\n```\n";
+    check(writeFile(path, source), "не записать исходник кода");
+    QTextDocument doc;
+    buildFrom(source, doc);
+    zametti::saveDocument(doc, path, QStringLiteral("test"));
+    checkEqual(source, readFile(path), "отступы в коде сохраняются как есть");
+}
+
 // Записать некуда — старый файл всё равно цел.
 void checkFailure() {
     const QString path = g_dir + QStringLiteral("/нет-такого-каталога/файл.md");
@@ -209,6 +258,7 @@ int main(int argc, char** argv) {
         checkSave(source, (std::string("nc") + std::to_string(n++) + ".md").c_str());
 
     checkEmptyParagraphs();
+    checkEdgeSpaces();
     checkRescue();
     checkFailure();
 

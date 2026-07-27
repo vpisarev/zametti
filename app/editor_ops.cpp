@@ -413,11 +413,15 @@ Document selectionToIr(const QTextCursor& cursor) {
     const QTextBlock first = cursor.document()->findBlock(from);
     const QTextBlock last = cursor.document()->findBlock(to);
 
-    // Внутри одного блока формат до фрагмента не доезжает — Qt отдаёт такое
-    // выделение как чистый текст. Род возвращаем, только если блок выделен
-    // целиком: кусок строки это просто слова, а не пункт списка.
-    if (first.blockNumber() == last.blockNumber() && from == first.position() &&
-        to >= first.position() + first.length() - 1) {
+    // Формат первого блока до фрагмента не доезжает, если выделение начинается
+    // не с его начала, — Qt отдаёт такой кусок как чистый текст. Возвращаем его
+    // сами: частично выделенный пункт обязан остаться пунктом.
+    //
+    // Исключение — выделение внутри одного блока, покрывающее его не целиком:
+    // кусок строки это просто слова, а не пункт списка.
+    const bool wholeBlock = from == first.position() &&
+                            to >= first.position() + first.length() - 1;
+    if (first.blockNumber() != last.blockNumber() || wholeBlock) {
         QTextCursor fix(&temp);
         fix.setPosition(0);
         fix.setBlockFormat(first.blockFormat());

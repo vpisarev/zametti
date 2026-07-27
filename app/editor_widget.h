@@ -54,6 +54,13 @@ signals:
     void fileChanged(const QString& path);
 
 protected:
+    // Обменный формат — сам markdown. Переопределять обязательно: иначе Qt
+    // кладёт в буфер собственный HTML и вставляет чужой HTML прямо в документ,
+    // минуя модель.
+    QMimeData* createMimeDataFromSelection() const override;
+    bool canInsertFromMimeData(const QMimeData* source) const override;
+    void insertFromMimeData(const QMimeData* source) override;
+
     // Только перевод ввода в вызовы операций. Ни одной правки документа отсюда:
     // иначе правило «одна операция — один шаг истории» держать нечем, а
     // инварианты расползаются по обработчикам событий.
@@ -67,6 +74,10 @@ private:
     // Перестановка пунктов идёт не над курсором, а над IR: операция возвращает
     // готовый документ, и собрать его — уже наше дело.
     bool moveItem(int direction);
+
+    // literal — вставить как есть, без разбора: Ctrl+Shift+V и всё, что попадает
+    // в литеральный блок, где markdown не действует.
+    void pasteMarkdown(const QString& text, bool literal);
 
     void rebuild(const Document& doc, int cursor, double ratio);
     void recordEdit();

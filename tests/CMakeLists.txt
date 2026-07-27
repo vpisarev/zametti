@@ -81,6 +81,13 @@ if(TARGET zametti-view)
 
         add_test(NAME editor COMMAND editor_test ${CMAKE_CURRENT_BINARY_DIR})
         set_tests_properties(editor PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+        add_executable(clipboard_test clipboard_test.cpp)
+        target_link_libraries(clipboard_test PRIVATE zametti-widgets Qt6::Test zametti-warnings)
+        target_include_directories(clipboard_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+        add_test(NAME clipboard COMMAND clipboard_test ${CMAKE_CURRENT_BINARY_DIR})
+        set_tests_properties(clipboard PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     endif()
 
     add_test(NAME view-without-widgets

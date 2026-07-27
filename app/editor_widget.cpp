@@ -10,11 +10,15 @@
 
 #include <QKeyEvent>
 #include <QKeySequence>
+#include <QMimeData>
+#include <QClipboard>
+#include <QGuiApplication>
 #include <QMessageBox>
 #include <QScrollBar>
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QTextDocumentFragment>
 
 #include <cstdio>
 #include <fstream>
@@ -179,6 +183,17 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
 
     NoteView::keyPressEvent(event);
 
+    // Ctrl+Shift+V — вставка без разбора: иногда markdown в буфере нужен именно
+    // как текст.
+    // Проверяем сочетание напрямую: matches(Paste) на Ctrl+Shift+V не
+    // срабатывает — для Qt это уже другое сочетание.
+    if (event->key() == Qt::Key_V &&
+        event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier)) {
+        const QClipboard* clipboard = QGuiApplication::clipboard();
+        if (clipboard != nullptr) pasteMarkdown(clipboard->text(), true);
+        return;
+    }
+
     // Автозамена срабатывает по пробелу и уже после того, как он набран: правило
     // смотрит на то, что человек написал. Отдельным шагом истории — первый
     // Ctrl+Z обязан вернуть набранные знаки, а не отменить предыдущую правку.
@@ -209,6 +224,69 @@ bool NoteEditor::runOperation(bool (*op)(QTextDocument&, QTextCursor&)) {
     ensureCursorVisible();
     autosave_.start(appearance().autosaveDelayMs);
     return true;
+}
+
+QMimeData* NoteEditor::createMimeDataFromSelection() const {
+    QMimeData* data = new QMimeData;
+    data->setText(selectionToMarkdown(textCursor()));
+    return data;
+}
+
+bool NoteEditor::canInsertFromMimeData(const QMimeData* source) const {
+    return source != nullptr && source->hasText();
+}
+
+void NoteEditor::insertFromMimeData(const QMimeData* source) {
+    if (source == nullptr || !source->hasText()) return;
+    // В литеральный блок markdown не вставляется: там текст буквальный, и разбор
+    // превратил бы вставленное в разметку, которой в коде взяться неоткуда.
+    const QTextBlock block = textCursor().block();
+    pasteMarkdown(source->text(), isRawBlock(block) || kindOf(block) == Kind::Code);
+}
+
+void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
+    if (text.isEmpty()) return;
+    const QByteArray utf8 = text.toUtf8();
+    const std::string source(utf8.constData(), size_t(utf8.size()));
+
+    Document fragment;
+    if (literal) {
+        // Один абзац с текстом как есть: переводы строк внутри блока сборщик
+        // разметит сам, и они вернутся переводами, а не разметкой.
+        Block block;
+        block.text = source;
+        while (!block.text.empty() && block.text.back() == '\n') block.text.pop_back();
+        fragment.push_back(std::move(block));
+    } else {
+        // Полным парсером ядра, а не вторым упрощённым разбором: их
+        // идемпотентность и гарантирует, что скопированное вставится без потерь.
+        fragment = parse(source);
+    }
+    if (fragment.empty()) return;
+
+    QTextDocument staging;
+    buildDocument(fragment, staging, zoom());
+
+    recordingSuspended_ = true;
+    QTextCursor cursor = textCursor();
+    cursor.beginEditBlock();
+    if (cursor.hasSelection()) cursor.removeSelectedText();
+    cursor.insertFragment(QTextDocumentFragment(&staging));
+    const int landed = cursor.position();
+    // Вставленное могло приехать из другого места дерева: шов приводим в
+    // порядок целиком, документ для этого достаточно мал.
+    syncLiteralBlocks(*document(), {0, document()->blockCount() - 1});
+    syncLists(*document(), {0, document()->blockCount() - 1});
+    cursor.endEditBlock();
+    recordingSuspended_ = false;
+
+    Document ir = readDocument(*document());
+    history_.push(ir, landed);
+    sinceLastEdit_.invalidate();
+    rebuild(ir, landed, scrollRatio());
+    document()->setModified(true);
+    ensureCursorVisible();
+    autosave_.start(appearance().autosaveDelayMs);
 }
 
 bool NoteEditor::moveItem(int direction) {
