@@ -19,6 +19,7 @@
 
 #include "test_util.h"
 
+#include <QAbstractTextDocumentLayout>
 #include <QApplication>
 #include <QKeySequence>
 #include <QScrollBar>
@@ -177,6 +178,32 @@ const Case kBackspaceCases[] = {
      "- раз\n- \n",
      1, 0, {key("Backspace")},
      "- раз\n", 0},
+
+    // Сливаемся только со своим списком: тот же вид маркера и тот же уровень.
+    // С чужим — снимаем маркер, а строение не рушим. Слияние буллета с задачей
+    // давало "- [ ] задачабуллет", и человек получал это, всего лишь пытаясь
+    // отменить только что поставленный маркер.
+    {"задача не сливается с буллетом",
+     "- буллет\n- [ ] задача\n",
+     1, 0, {key("Backspace")},
+     "- буллет\n\nзадача\n", 1},
+
+    {"вложенный не сливается с родителем",
+     "- верх\n  - вложенный\n",
+     1, 0, {key("Backspace")},
+     "- верх\n\nвложенный\n", 1},
+
+    {"нумерованный не сливается с буллетом",
+     "- буллет\n1. номер\n",
+     1, 0, {key("Backspace")},
+     "- буллет\n\nномер\n", 1},
+
+    // Круг «поставил маркер — снял маркер» ничего не портит: это и есть та
+    // отмена, ради которой Backspace жмут сразу после автозамены.
+    {"маркер поставили и сняли",
+     "- [ ] задача\n\nдо 19 июля:\n",
+     1, 0, {type("*"), key("Space"), key("Backspace")},
+     "- [ ] задача\n\nдо 19 июля:\n", 1},
 };
 
 // Уровни. Поддерево едет вместе с родителем — это правило легко сломать.
@@ -403,6 +430,52 @@ void checkListRhythm() {
     ZT_TRUE("между абзацами отбивка есть", marginOf(4) > 0.01);
 }
 
+// Круг «абзац → пункт → абзац» обязан вернуть блок ровно на прежнее место.
+// Сдвиг при этом есть, и он верный: став пунктом, блок подтягивается к списку
+// выше — у пункта отбивки нет, — а перестав им быть, отходит обратно. Ошибкой
+// был бы несимметричный круг: уехал и не вернулся.
+void checkKindRoundTripKeepsPlace() {
+    const QString path = writeNote(
+        "круг-вида.md",
+        QStringLiteral("- [ ] верхняя\n  - [ ] вложенная\n\nдо 19 июля:\n\n- [x] дело\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 400);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    int target = -1;
+    for (QTextBlock block = editor.document()->begin(); block.isValid();
+         block = block.next())
+        if (block.text().startsWith(QStringLiteral("до 19"))) {
+            target = block.blockNumber();
+            break;
+        }
+    ZT_TRUE("строка \"до 19\" должна найтись", target > 0);
+
+    auto topOf = [&editor, target] {
+        return editor.document()->documentLayout()->blockBoundingRect(
+            editor.document()->findBlockByNumber(target)).top();
+    };
+    const qreal asParagraph = topOf();
+
+    QTextCursor cursor = editor.textCursor();
+    cursor.setPosition(editor.document()->findBlockByNumber(target).position());
+    editor.setTextCursor(cursor);
+    QTest::keyClick(&editor, Qt::Key_8, Qt::ControlModifier);
+    QTest::qWait(10);
+    const qreal asItem = topOf();
+    ZT_TRUE("став пунктом, блок подтянулся к списку выше", asItem < asParagraph);
+
+    QTest::keyClick(&editor, Qt::Key_0, Qt::ControlModifier | Qt::ShiftModifier);
+    QTest::qWait(10);
+    ZT_EQ("вернувшись в абзац, блок встал на прежнее место",
+          std::to_string(int(asParagraph)), std::to_string(int(topOf())));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -420,6 +493,7 @@ int main(int argc, char** argv) {
     for (const Case& c : kTaskCases) run(c);
     checkUndo();
     checkListRhythm();
+    checkKindRoundTripKeepsPlace();
 
     fs::remove_all(g_dir);
     return zt::report("списки");

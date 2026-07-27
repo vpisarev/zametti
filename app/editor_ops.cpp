@@ -1075,10 +1075,19 @@ bool unwrapListItemAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const QTextBlock block = cursor.block();
     if (!isListBlock(block)) return false;
 
-    // Есть предыдущий пункт — сливаемся с ним: так Backspace ведёт себя всюду,
-    // и это привычнее, чем превращение пункта в абзац на месте.
+    // Сливаемся с предыдущим пунктом, если он из ТОГО ЖЕ списка: тот же вид
+    // маркера и тот же уровень. Так Backspace ведёт себя всюду, и это привычнее,
+    // чем превращение пункта в абзац на месте.
+    //
+    // Из чужого списка — не сливаемся. Буллет, притянутый к вложенной задаче,
+    // давал "- [ ] вложенная задачаБуллет": строение при этом рушится молча, а
+    // человек всего лишь хотел снять маркер. В таком случае маркер и снимаем.
     const QTextBlock previous = block.previous();
-    if (previous.isValid() && isListBlock(previous) && !isContinuationBlock(block)) {
+    const bool sameList = previous.isValid() && isListBlock(previous) &&
+                          levelOf(previous) == levelOf(block) &&
+                          isOrdered(kindOf(previous)) == isOrdered(kindOf(block)) &&
+                          isTaskBlock(previous) == isTaskBlock(block);
+    if (sameList && !isContinuationBlock(block)) {
         const int join = previous.position() + previous.length() - 1;
         QTextCursor edit(&doc);
         edit.beginEditBlock();
