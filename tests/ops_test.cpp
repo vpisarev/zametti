@@ -434,6 +434,56 @@ const RangeCase kConvertRanges[] = {
 
 };
 
+// Начертание на выделение: markdown до, границы выделения в блоке, markdown после.
+struct StyleCase {
+    const char* before;
+    int block;
+    int from;
+    int to;
+    const char* after;
+    const char* what;
+};
+
+void checkStyle(bool (*op)(QTextDocument&, QTextCursor&), const StyleCase& c) {
+    QTextDocument doc;
+    zametti::buildDocument(zametti::parse(c.before), doc);
+
+    QTextCursor cursor(&doc);
+    const QTextBlock block = doc.findBlockByNumber(c.block);
+    cursor.setPosition(block.position() + c.from);
+    if (c.to > c.from)
+        cursor.setPosition(block.position() + c.to, QTextCursor::KeepAnchor);
+
+    const bool handled = op(doc, cursor);
+    const std::string actual = handled ? zametti::serialize(zametti::readDocument(doc))
+                                       : std::string("<операция отказалась>");
+    checkEqual(c.after, actual, c.what);
+}
+
+const StyleCase kBoldCases[] = {
+    {"обычный текст\n", 0, 0, 7, "**обычный** текст\n", "жирным становится выделенное"},
+    {"**жирный** текст\n", 0, 0, 6, "жирный текст\n", "повторное нажатие снимает"},
+    {"жирный **текст**\n", 0, 0, 12, "**жирный текст**\n",
+     "наполовину жирное выделение становится жирным целиком"},
+    {"обычный текст\n", 0, 3, 3, "<операция отказалась>", "без выделения документ не трогаем"},
+    {"`код` и текст\n", 0, 0, 3, "<операция отказалась>",
+     "внутри встроенного кода разметки не бывает"},
+    {"```\nкод\n```\n", 0, 0, 3, "<операция отказалась>", "в блоке кода тоже"},
+    {"| a |\n|---|\n| 1 |\n", 0, 0, 3, "<операция отказалась>",
+     "и в дословном куске"},
+};
+
+const StyleCase kItalicCases[] = {
+    {"обычный текст\n", 0, 0, 7, "_обычный_ текст\n", "курсивом становится выделенное"},
+    {"**жирный** текст\n", 0, 0, 6, "**_жирный_** текст\n",
+     "курсив ложится поверх жирного"},
+};
+
+const StyleCase kStrikeCases[] = {
+    {"обычный текст\n", 0, 0, 7, "~~обычный~~ текст\n", "зачёркнутым становится выделенное"},
+    {"~~зачёркнутый~~ текст\n", 0, 0, 11, "зачёркнутый текст\n", "и снимается обратно"},
+};
+
 // Перемещение пункта: markdown до, номер блока под курсором, куда двигаем.
 struct MoveCase {
     const char* before;
@@ -530,6 +580,9 @@ int main(int argc, char** argv) {
     for (const KeyCase& c : kParagraphCases) checkKey(zametti::makeParagraph, c);
     for (const RangeCase& c : kConvertRanges) checkRange(zametti::makeBullet, c);
     for (const RangeCase& c : kOrderedRanges) checkRange(zametti::makeOrdered, c);
+    for (const StyleCase& c : kBoldCases) checkStyle(zametti::toggleBold, c);
+    for (const StyleCase& c : kItalicCases) checkStyle(zametti::toggleItalic, c);
+    for (const StyleCase& c : kStrikeCases) checkStyle(zametti::toggleStrike, c);
     for (const MoveCase& c : kMoveCases) checkMove(c);
     checkCursorAfterSplit();
     for (const char* source : kOrdinalCases)

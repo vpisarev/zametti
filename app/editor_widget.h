@@ -87,6 +87,14 @@ private:
     // становится много, и перечислять каждое в keyPressEvent — верный способ
     // однажды забыть одно.
     std::vector<std::pair<QKeySequence, bool (*)(QTextDocument&, QTextCursor&)>> bindings_;
+
+    // Начертания живут отдельно: без выделения они меняют не документ, а формат
+    // следующей буквы.
+    struct InlineStyle {
+        int bits = 0;
+        bool (*op)(QTextDocument&, QTextCursor&) = nullptr;
+    };
+    std::vector<std::pair<QKeySequence, InlineStyle>> inlineBindings_;
     QTimer autosave_;
     QElapsedTimer sinceLastEdit_;
     QString lastComplaint_;

@@ -344,6 +344,48 @@ void checkMoveKeys() {
                "undo отменяет ровно последнее перемещение");
 }
 
+// Начертание: на выделение — правка документа, без выделения — формат для
+// следующей буквы.
+void checkInlineStyle() {
+    const QString path = writeNote("начертание.md", QStringLiteral("обычный текст\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(path);
+
+    auto text = [&editor] {
+        return QString::fromStdString(
+            zametti::serialize(zametti::readDocument(*editor.document())));
+    };
+
+    // На выделение.
+    QTextCursor cursor = editor.textCursor();
+    cursor.setPosition(editor.document()->firstBlock().position());
+    cursor.setPosition(editor.document()->firstBlock().position() + 7,
+                       QTextCursor::KeepAnchor);
+    editor.setTextCursor(cursor);
+    QTest::keyClick(&editor, Qt::Key_B, Qt::ControlModifier);
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("**обычный** текст\n"), text(), "Ctrl+B на выделении");
+
+    editor.undo();
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("обычный текст\n"), text(), "и отменяется одним шагом");
+
+    // Без выделения: следующая набранная буква идёт жирной.
+    cursor = editor.textCursor();
+    cursor.movePosition(QTextCursor::End);
+    editor.setTextCursor(cursor);
+    QTest::keyClick(&editor, Qt::Key_B, Qt::ControlModifier);
+    QTest::qWait(10);
+    editor.insertPlainText(QStringLiteral(" жирное"));
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("обычный текст** жирное**\n"), text(),
+               "набор после Ctrl+B идёт жирным");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -371,6 +413,7 @@ int main(int argc, char** argv) {
     checkKeysAreOperations();
     checkListKeys();
     checkMoveKeys();
+    checkInlineStyle();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;

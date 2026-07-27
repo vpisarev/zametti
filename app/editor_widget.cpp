@@ -47,6 +47,17 @@ NoteEditor::NoteEditor(QWidget* parent)
         const QKeySequence sequence(keys, QKeySequence::PortableText);
         if (!sequence.isEmpty()) bindings_.push_back({sequence, op});
     };
+    const auto bindInline = [this](QKeySequence::StandardKey standard, int bits,
+                                   bool (*op)(QTextDocument&, QTextCursor&)) {
+        for (const QKeySequence& keys : QKeySequence::keyBindings(standard))
+            inlineBindings_.push_back({keys, {bits, op}});
+    };
+    bindInline(QKeySequence::Bold, SpanBold, toggleBold);
+    bindInline(QKeySequence::Italic, SpanItalic, toggleItalic);
+    // Зачёркивание своего стандартного сочетания не имеет; Ctrl+K взят из брифа.
+    inlineBindings_.push_back(
+        {QKeySequence(QStringLiteral("Ctrl+K")), {SpanStrike, toggleStrike}});
+
     bind(appearance().toggleTaskKey, toggleTaskAtCursor);
     bind(appearance().makeBulletKey, makeBullet);
     bind(appearance().makeOrderedKey, makeOrdered);
@@ -152,6 +163,16 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     };
     if (pressed(moveUpKey_) && moveItem(-1)) return;
     if (pressed(moveDownKey_) && moveItem(1)) return;
+
+    // Начертание без выделения — не правка документа, а формат для следующей
+    // буквы. Отдельный путь: шага истории здесь нет и быть не должно.
+    for (const auto& [keys, style] : inlineBindings_) {
+        if (!pressed(keys)) continue;
+        if (runOperation(style.op)) return;
+        if (!textCursor().hasSelection())
+            mergeCurrentCharFormat(inlineStyleForTyping(currentCharFormat(), style.bits));
+        return;
+    }
 
     for (const auto& [keys, op] : bindings_)
         if (pressed(keys) && runOperation(op)) return;

@@ -201,6 +201,71 @@ MoveResult moveListItem(const QTextDocument& doc, const QTextCursor& cursor, int
 
 namespace {
 
+// Кусок выделения с одинаковым начертанием. Собираем их заранее: правка формата
+// на лету портит обход кусков блока.
+struct StyleRun {
+    int from = 0;
+    int to = 0;
+    int style = 0;
+};
+
+// Внутри встроенного кода разметки не бывает, а литеральные блоки буквальны
+// целиком — такие куски в выделение не берём вовсе.
+std::vector<StyleRun> styleRuns(const QTextDocument& doc, int from, int to) {
+    std::vector<StyleRun> runs;
+    for (QTextBlock block = doc.findBlock(from); block.isValid(); block = block.next()) {
+        if (block.position() >= to) break;
+        if (isRawBlock(block) || kindOf(block) == Kind::Code) continue;
+        for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            if (!fragment.isValid()) continue;
+            const int start = qMax(from, fragment.position());
+            const int end = qMin(to, fragment.position() + fragment.length());
+            if (end <= start) continue;
+            const int style = fragment.charFormat().intProperty(SpanStyleProperty);
+            if ((style & SpanCode) != 0) continue;
+            runs.push_back({start, end, style});
+        }
+    }
+    return runs;
+}
+
+// Оформление, отвечающее набору признаков. Ставим все три явно: снимать
+// начертание — это тоже назначить его, только обычным.
+QTextCharFormat formatForStyle(int style) {
+    QTextCharFormat format;
+    format.setProperty(SpanStyleProperty, style);
+    format.setFontWeight((style & SpanBold) != 0 ? QFont::Bold : QFont::Normal);
+    format.setFontItalic((style & SpanItalic) != 0);
+    format.setFontStrikeOut((style & SpanStrike) != 0);
+    return format;
+}
+
+bool toggleInlineStyle(QTextDocument& doc, QTextCursor& cursor, int style) {
+    if (!cursor.hasSelection()) return false;
+    const int from = qMin(cursor.anchor(), cursor.position());
+    const int to = qMax(cursor.anchor(), cursor.position());
+
+    const std::vector<StyleRun> runs = styleRuns(doc, from, to);
+    if (runs.empty()) return false;
+
+    // Снимаем, только если начертание есть везде: иначе одно нажатие на
+    // наполовину жирном тексте делало бы его наполовину обычным.
+    bool everywhere = true;
+    for (const StyleRun& run : runs) everywhere = everywhere && (run.style & style) != 0;
+
+    QTextCursor edit(&doc);
+    edit.beginEditBlock();
+    for (const StyleRun& run : runs) {
+        const int updated = everywhere ? (run.style & ~style) : (run.style | style);
+        edit.setPosition(run.from);
+        edit.setPosition(run.to, QTextCursor::KeepAnchor);
+        edit.mergeCharFormat(formatForStyle(updated));
+    }
+    edit.endEditBlock();
+    return true;
+}
+
 // Метка задачи, которой она становится в тексте при переходе в род, где
 // чекбокса не бывает. В нумерованном пункте "[x] " — обычный текст, это
 // проверено на ядре, поэтому отметка переживает такой переход.
@@ -280,6 +345,23 @@ bool setBlockKind(QTextDocument& doc, QTextCursor& cursor, Kind target) {
 }
 
 }  // namespace
+
+bool toggleBold(QTextDocument& doc, QTextCursor& cursor) {
+    return toggleInlineStyle(doc, cursor, SpanBold);
+}
+
+bool toggleItalic(QTextDocument& doc, QTextCursor& cursor) {
+    return toggleInlineStyle(doc, cursor, SpanItalic);
+}
+
+bool toggleStrike(QTextDocument& doc, QTextCursor& cursor) {
+    return toggleInlineStyle(doc, cursor, SpanStrike);
+}
+
+QTextCharFormat inlineStyleForTyping(const QTextCharFormat& current, int style) {
+    const int now = current.intProperty(SpanStyleProperty);
+    return formatForStyle((now & style) != 0 ? (now & ~style) : (now | style));
+}
 
 bool makeBullet(QTextDocument& doc, QTextCursor& cursor) {
     return setBlockKind(doc, cursor, Kind::Bullet);

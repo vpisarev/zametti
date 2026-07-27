@@ -15,6 +15,8 @@
 
 #include <QString>
 
+#include <QTextCharFormat>
+
 class QTextCursor;
 class QTextDocument;
 
@@ -75,6 +77,22 @@ MoveResult moveListItem(const QTextDocument& doc, const QTextCursor& cursor, int
 // поэтому позиции остаются прежними.
 bool indentListItems(QTextDocument& doc, QTextCursor& cursor);
 bool outdentListItems(QTextDocument& doc, QTextCursor& cursor);
+
+// Начертание на выделение: жирный, курсив, зачёркнутый. Переключает — если весь
+// выделенный текст уже такой, начертание снимается, иначе ставится.
+//
+// Не действует внутри встроенного кода и в литеральных блоках: там текст
+// буквальный, и разметке внутри него взяться неоткуда.
+//
+// Без выделения делать нечего и операция отказывается: набор с новым
+// начертанием — дело виджета, документ при этом не меняется.
+bool toggleBold(QTextDocument& doc, QTextCursor& cursor);
+bool toggleItalic(QTextDocument& doc, QTextCursor& cursor);
+bool toggleStrike(QTextDocument& doc, QTextCursor& cursor);
+
+// Начертание для набора в точке ввода: тот же переключатель, но применительно к
+// формату, с которым пойдёт следующая буква.
+QTextCharFormat inlineStyleForTyping(const QTextCharFormat& current, int style);
 
 // Смена рода блоков в выделении. Семантика «установить», а не «переключить»:
 // смешанное выделение целиком приводится к запрошенному роду.
