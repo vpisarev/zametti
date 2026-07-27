@@ -80,8 +80,6 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("lineHeightFactor"), a.lineHeightFactor},
         {QStringLiteral("listLineHeightFactor"), a.listLineHeightFactor},
         {QStringLiteral("blockSpacing"), a.blockSpacing},
-        {QStringLiteral("listSpacingBefore"), a.listSpacingBefore},
-        {QStringLiteral("listSpacingAfter"), a.listSpacingAfter},
         {QStringLiteral("headingSpacingFactor"), a.headingSpacingFactor},
         {QStringLiteral("listIndent"), a.listIndent},
         {QStringLiteral("codeIndent"), a.codeIndent},
@@ -194,8 +192,6 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readReal(layout, "lineHeightFactor", a.lineHeightFactor);
     readReal(layout, "listLineHeightFactor", a.listLineHeightFactor);
     readReal(layout, "blockSpacing", a.blockSpacing);
-    readReal(layout, "listSpacingBefore", a.listSpacingBefore);
-    readReal(layout, "listSpacingAfter", a.listSpacingAfter);
     readReal(layout, "headingSpacingFactor", a.headingSpacingFactor);
     readReal(layout, "listIndent", a.listIndent);
     readReal(layout, "codeIndent", a.codeIndent);

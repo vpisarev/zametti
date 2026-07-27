@@ -309,7 +309,18 @@ MoveResult moveListItem(const QTextDocument& doc, const QTextCursor& cursor, int
     const auto begin = result.doc.begin() + firstIr;
     const auto middle = begin + (direction < 0 ? otherSize : selfSize);
     const auto end = begin + selfSize + otherSize;
+    // Плотность стыка принадлежит месту, а не блоку: между теми же соседями
+    // пустая строка не появилась и не исчезла оттого, что пункты поменялись
+    // местами. Переставляем содержимое, а признаки оставляем на местах — иначе
+    // переехавший пункт утаскивал бы с собой чужой стык, и в списке возникала
+    // пустая строка.
+    std::vector<bool> tightByPlace;
+    tightByPlace.reserve(result.doc.size());
+    for (const Block& b : result.doc) tightByPlace.push_back(b.tight);
+
     std::rotate(begin, middle, end);
+
+    for (size_t k = 0; k < result.doc.size(); ++k) result.doc[k].tight = tightByPlace[k];
 
     // Пункт переехал на размер соседа: вверх — назад, вниз — вперёд.
     const int selfIr = irIndexOfBlock(block);
@@ -440,6 +451,10 @@ bool convertBlock(QTextDocument& doc, int number, Kind target) {
         format.setProperty(KindProperty, int(actual));
         format.setProperty(LevelProperty, isListBlock(block) ? levelOf(block) : 0);
         format.setHeadingLevel(0);
+        // Блок, вставший в существующий список, стоит к нему вплотную: пустой
+        // строке между пунктами взяться неоткуда. А одинокий абзац, ставший
+        // пунктом, плотности не получает — и потому не прыгает на месте.
+        if (isListBlock(block.previous())) format.setProperty(TightProperty, true);
     }
 
     QTextCursor edit(&doc);
@@ -1021,6 +1036,10 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
     } else {
         next.clearProperty(ContinuationProperty);
         next.clearProperty(TrailingNewlineProperty);
+        // Новый пункт принадлежит тому же списку, что и текущий, — значит стоит
+        // к нему вплотную. Без этого между пунктами появлялась бы пустая строка:
+        // список выходил бы просторным на ровном месте.
+        if (isListBlock(block)) next.setProperty(TightProperty, true);
         switch (kindOf(block)) {
             case Kind::TaskChecked:
                 // Новый пункт всегда невыполненный: отмечать за человека нечего.

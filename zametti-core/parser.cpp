@@ -956,22 +956,40 @@ void finishExtents(Ctx& c) {
     Document out;
     out.reserve(n + 2);
     size_t line = 0;
+
+    // Плотный стык: между блоками не осталось ни одной пустой строки. Считаем
+    // по номерам строк — они здесь уже уточнены до целых.
+    size_t prevLast = 0;
+    bool havePrev = false;
+    auto emit = [&](Block blk, size_t from, size_t to) {
+        // Признак ставим только спискам. Там пустая строка содержательна: список
+        // сразу под вводной фразой читается как её продолжение, а через строку —
+        // как отдельный кусок. У прочих блоков пустая строка между ними —
+        // обязательный синтаксис, выбора автору она не оставляет, и хранить о
+        // ней нечего.
+        blk.tight = havePrev && from == prevLast + 1 && blk.rawSource.empty() &&
+                    isList(blk.kind);
+        out.push_back(std::move(blk));
+        prevLast = to;
+        havePrev = true;
+    };
+
     for (size_t i = 0; i < n; ++i) {
         if (absorbed[i]) continue;
         while (line < first[i]) {
             if (blankLine(c.buf, lines, line)) { ++line; continue; }
             size_t b = line;
             while (line < first[i] && !blankLine(c.buf, lines, line)) ++line;
-            out.push_back(rawFromLines(b, line - 1));
+            emit(rawFromLines(b, line - 1), b, line - 1);
         }
-        out.push_back(std::move(c.doc[i]));
+        emit(std::move(c.doc[i]), first[i], last[i]);
         if (last[i] + 1 > line) line = last[i] + 1;
     }
     while (line < lines.count()) {
         if (blankLine(c.buf, lines, line)) { ++line; continue; }
         size_t b = line;
         while (line < lines.count() && !blankLine(c.buf, lines, line)) ++line;
-        out.push_back(rawFromLines(b, line - 1));
+        emit(rawFromLines(b, line - 1), b, line - 1);
     }
     c.doc = std::move(out);
 }

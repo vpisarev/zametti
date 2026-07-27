@@ -259,7 +259,6 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
     // Свежий QTextDocument уже содержит один пустой блок: для первого блока
     // формат ставится на него, иначе сверху появится пустой абзац.
     bool first = true;
-    bool prevList = false;
     bool prevSeparator = false;
     ListRuns runs;
 
@@ -284,22 +283,30 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
         // родом предыдущего блока нельзя: после вложенного подсписка предыдущий
         // блок лежит на другом уровне, и о списке текущего уровня не говорит
         // ничего. Спрашиваем состояние прогонов.
-        const bool sameList =
-            list && prevList &&
-            !runs.startsNewRun(b.level, isOrdered(b.kind));
         // Разделитель — кусок из пустых строк, поставленный руками. Поля у него
         // свои: высота обязана быть предсказуемой — поле сверху, n высот строки,
         // поле снизу, — и от того, что стоит по соседству, не зависеть.
         const bool separator = isSeparatorBlock(b);
 
+        // Плотный стык — тот, где в файле пустой строки не было. Показываем его
+        // вплотную, а стык через пустую строку — как пустую строку: иначе
+        // авторская отбивка в редакторе не видна вовсе.
+        // Только у списка: плотный абзац markdown не выражает — прочтёт
+        // продолжением предыдущего блока.
+        const bool tight = b.tight && list;
+        if (tight) blockFmt.setProperty(TightProperty, true);
+
+        // Отбивку решает стык, а не род блоков. Плотный — тот, где в файле не
+        // было пустой строки; всё прочее её имело, и показать её надо.
+        //
+        // Отдельных значений для границ списка больше нет: они перебивали
+        // плотность, и пустая строка перед списком в редакторе не была видна
+        // вовсе. Список прижимается к вводной фразе тогда и только тогда, когда
+        // так написано в файле.
         qreal topMargin = appearance().blockSpacing;
-        if (separator) topMargin = appearance().separatorSpacingBefore;
+        if (tight) topMargin = 0;
+        else if (separator) topMargin = appearance().separatorSpacingBefore;
         else if (prevSeparator) topMargin = appearance().separatorSpacingAfter;
-        else if (sameList) topMargin = 0;
-        else if (list && prevList)
-            topMargin = std::max(appearance().listSpacingBefore, appearance().listSpacingAfter);
-        else if (list) topMargin = appearance().listSpacingBefore;
-        else if (prevList) topMargin = appearance().listSpacingAfter;
 
         // Высота строки задаётся явно, а не долей от самого высокого знака в
         // ней: иначе знак из запасного шрифта растягивал бы свою строку, и
@@ -421,7 +428,6 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
                 applySpans(target, textStart, b, linePoint, zoom);
             enlargeFallbackGlyphs(target, textStart, text, linePoint, primaryFont);
         }
-        prevList = list;
         prevSeparator = separator;
     }
 

@@ -43,6 +43,10 @@ bool isContinuationBlock(const QTextBlock& block) {
     return block.blockFormat().boolProperty(ContinuationProperty);
 }
 
+bool isTightBlock(const QTextBlock& block) {
+    return block.blockFormat().boolProperty(TightProperty);
+}
+
 Kind kindOf(const QTextBlock& block) {
     // Блок без свойства — не дословный кусок, а обычный абзац: так выглядят
     // блоки, которые Qt завёл сам, помимо сборщика.

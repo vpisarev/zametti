@@ -93,8 +93,6 @@ struct Appearance {
     qreal separatorSpacingBefore = 0.0;
     qreal separatorSpacingAfter = 0.0;
 
-    qreal listSpacingBefore = 0.0;
-    qreal listSpacingAfter = 0.0;
     // Над заголовком воздуха больше, чем между абзацами: заголовок отделяет
     // куски текста, а не продолжает предыдущий.
     qreal headingSpacingFactor = 2.2;

@@ -55,6 +55,9 @@ std::string toJson(const Document& doc) {
     for (size_t i = 0; i < doc.size(); ++i) {
         const Block& b = doc[i];
         out += "  {";
+        // Плотность стыка — свойство границы с предыдущим блоком; у первого её
+        // быть не может.
+        if (b.tight && i > 0) out += "\"tight\": true, ";
         if (!b.rawSource.empty()) {
             out += "\"raw\": ";
             appendJsonString(out, b.rawSource);

@@ -34,6 +34,10 @@ enum DocProperty {
     // Пустой блок кода и блок из одной пустой строки выглядят одинаково, а в
     // файл выводятся по-разному.
     TrailingNewlineProperty,
+    // bool: блок стоит вплотную к предыдущему, пустой строки между ними в файле
+    // нет. Хранить обязательно: без него пустые строки из файла не видны в
+    // редакторе, а сохранение их бы и вовсе потеряло.
+    TightProperty,
     // bool: этот блок продолжает предыдущий, а не начинает новый.
     //
     // Литеральные блоки — код и дословные куски — режутся построчно, по одному
@@ -87,6 +91,9 @@ bool isRawBlock(const QTextBlock& block);
 
 // Продолжение предыдущего блока: строка внутри блока кода или дословного куска.
 bool isContinuationBlock(const QTextBlock& block);
+
+// Стоит ли блок вплотную к предыдущему — см. TightProperty.
+bool isTightBlock(const QTextBlock& block);
 Kind kindOf(const QTextBlock& block);
 int levelOf(const QTextBlock& block);
 bool isListBlock(const QTextBlock& block);

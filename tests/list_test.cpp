@@ -156,15 +156,18 @@ const Case kEnterCases[] = {
     // становится абзацем, а абзац списки и разделяет. Пустой абзац для этого не
     // годится — пустая строка между пунктами не разделяет ничего, и разрыв
     // пропадал бы при первом же сохранении.
+    // Плотность стыка переживает разрыв: пустой строки между "два" и "три" не
+    // появилось, значит и в файле её нет. Список при этом уже другой — прежний
+    // кончился на "раз".
     {"разрыв списка посередине",
      "- раз\n- два\n- три\n",
      1, 0, {key("Return"), key("Return")},
-     "- раз\n\nдва\n\n- три\n", 1},
+     "- раз\n\nдва\n- три\n", 1},
 
     {"разрыв держится после записи",
      "- раз\n- задачки:\n- [ ] дело\n",
      1, 0, {key("Return"), key("Return"), key("Ctrl+S")},
-     "- раз\n\nзадачки:\n\n- [ ] дело\n", 1},
+     "- раз\n\nзадачки:\n- [ ] дело\n", 1},
 
     {"новая задача невыполненная",
      "- [x] сделано\n",
@@ -187,7 +190,7 @@ const Case kBackspaceCases[] = {
     {"первый пункт перестаёт быть пунктом",
      "- раз\n- два\n",
      0, 0, {key("Backspace")},
-     "раз\n\n- два\n", 0},
+     "раз\n- два\n", 0},
 
     {"пустой пункт исчезает",
      "- раз\n- \n",
@@ -272,10 +275,12 @@ const Case kKindCases[] = {
      0, 0, {key("Ctrl+A"), key("Ctrl+8")},
      "- раз\n- два\n", -1},
 
+    // Абзац между списками их и разделяет. Пустая строка после него в файле не
+    // появляется: стык "задачки:" и "- [ ] дело" был плотным и таким остался.
     {"пункт в абзац разлепляет списки",
      "- раз\n- задачки:\n- [ ] дело\n",
      1, 0, {key("Ctrl+Shift+0")},
-     "- раз\n\nзадачки:\n\n- [ ] дело\n", 1},
+     "- раз\n\nзадачки:\n- [ ] дело\n", 1},
 };
 
 // Перестановка. Пункт едет со своим поддеревом, нумерация пересчитывается.
@@ -420,40 +425,46 @@ void checkUndo() {
 // все стыки убирала прыжок пункта, ставшего абзацем, но вид от этого стал явно
 // хуже — огромный зазор между вводной строкой и первым пунктом.
 void checkListRhythm() {
-    // Значения задаём явно: набор проверяет правило, а не то, как настроен вид
-    // у того, кто его запускает.
     const zametti::Appearance saved = zametti::appearance();
     zametti::appearance().blockSpacing = 0.667;
-    zametti::appearance().listSpacingBefore = 0.0;
-    zametti::appearance().listSpacingAfter = 1.1;
     struct Restore {
         const zametti::Appearance& from;
         ~Restore() { zametti::appearance() = from; }
     } restore{saved};
 
-    const QString path = writeNote(
-        "ритм.md",
-        QStringLiteral("вводная строка:\n\n- первый\n- второй\n\nабзац после\n\n"
-                       "ещё абзац\n"));
+    // Отбивку решает файл, а не род блоков. Список, написанный вплотную под
+    // вводной строкой, так и стоит; написанный через пустую строку — через
+    // отбивку. Раньше у границ списка были свои значения, и пустая строка из
+    // файла не была видна вовсе.
+    const QString tight = writeNote(
+        "ритм-вплотную.md",
+        QStringLiteral("вводная строка:\n- первый\n- второй\n\nабзац после\n"));
 
     zametti::NoteEditor editor;
     editor.resize(700, 400);
     editor.show();
     QTest::qWait(20);
     editor.setFocus();
-    editor.openFile(path);
+    editor.openFile(tight);
     QTest::qWait(20);
 
     auto marginOf = [&editor](int number) {
         return editor.document()->findBlockByNumber(number).blockFormat().topMargin();
     };
 
-    ZT_TRUE("список идёт вплотную под вводной строкой",
-            marginOf(1) < marginOf(4));
-    ZT_TRUE("внутри списка отбивки нет", marginOf(2) <= 0.01);
-    ZT_TRUE("после списка воздуха больше, чем между абзацами",
-            marginOf(3) > marginOf(4));
-    ZT_TRUE("между абзацами отбивка есть", marginOf(4) > 0.01);
+    ZT_TRUE("список вплотную под вводной строкой стоит вплотную",
+            marginOf(1) <= 0.01);
+    ZT_TRUE("и пункты между собой тоже", marginOf(2) <= 0.01);
+    ZT_TRUE("а абзац после списка отделён", marginOf(3) > 1.0);
+
+    // Тот же список, но написанный через пустую строку.
+    const QString loose = writeNote(
+        "ритм-через-строку.md",
+        QStringLiteral("вводная строка:\n\n- первый\n- второй\n"));
+    editor.openFile(loose);
+    QTest::qWait(20);
+    ZT_TRUE("список через пустую строку отделён от вводной", marginOf(1) > 1.0);
+    ZT_TRUE("а пункты между собой всё равно вплотную", marginOf(2) <= 0.01);
 }
 
 // Круг «абзац → пункт → абзац» обязан вернуть блок ровно на прежнее место.
@@ -463,8 +474,6 @@ void checkListRhythm() {
 void checkKindRoundTripKeepsPlace() {
     const zametti::Appearance saved = zametti::appearance();
     zametti::appearance().blockSpacing = 0.667;
-    zametti::appearance().listSpacingBefore = 0.0;
-    zametti::appearance().listSpacingAfter = 1.1;
     struct Restore {
         const zametti::Appearance& from;
         ~Restore() { zametti::appearance() = from; }

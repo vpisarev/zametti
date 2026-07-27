@@ -128,6 +128,9 @@ Document readDocument(const QTextDocument& doc) {
             flush();
             hasPending = true;
             pendingRaw = raw;
+            // Плотность стыка — свойство границы, и живёт она на первом блоке
+            // логического: строки-продолжения к своему соседу и так вплотную.
+            pending.tight = isTightBlock(block);
             if (!raw) {
                 pending.kind = kindOf(block);
                 if (pending.kind == Kind::Heading) pending.headingLevel = format.headingLevel();
