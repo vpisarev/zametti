@@ -65,7 +65,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("pointSize"), a.baseFontPoint},
         {QStringLiteral("symbolFamily"), a.symbolFamily},
         {QStringLiteral("codeFamily"), a.codeFamily},
-        {QStringLiteral("codeScale"), a.codeScale},
+        {QStringLiteral("codePointSize"), a.codePointSize},
         {QStringLiteral("headingScale"), headings},
         {QStringLiteral("fallbackScale"), a.fallbackScale},
     };
@@ -74,7 +74,8 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("lineHeightFactor"), a.lineHeightFactor},
         {QStringLiteral("listLineHeightFactor"), a.listLineHeightFactor},
         {QStringLiteral("blockSpacing"), a.blockSpacing},
-        {QStringLiteral("listSpacing"), a.listSpacing},
+        {QStringLiteral("listSpacingBefore"), a.listSpacingBefore},
+        {QStringLiteral("listSpacingAfter"), a.listSpacingAfter},
         {QStringLiteral("headingSpacingFactor"), a.headingSpacingFactor},
         {QStringLiteral("sideMargin"), a.sideMargin},
         {QStringLiteral("verticalMargin"), a.verticalMargin},
@@ -98,6 +99,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
                                              : QStringLiteral("drawn")},
         {QStringLiteral("bulletDiameter"), a.bulletDiameter},
         {QStringLiteral("bulletRise"), a.bulletRise},
+        {QStringLiteral("orderedRise"), a.orderedRise},
         {QStringLiteral("bullet"), a.bulletGlyph},
         {QStringLiteral("bulletScale"), a.bulletScale},
         {QStringLiteral("bulletTextGap"), a.bulletTextGap},
@@ -156,7 +158,7 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readReal(font, "pointSize", a.baseFontPoint);
     readString(font, "symbolFamily", a.symbolFamily);
     readString(font, "codeFamily", a.codeFamily);
-    readReal(font, "codeScale", a.codeScale);
+    readReal(font, "codePointSize", a.codePointSize);
     readReal(font, "fallbackScale", a.fallbackScale);
     const QJsonArray headings = font.value(QStringLiteral("headingScale")).toArray();
     for (int i = 0; i < headings.size() && i < int(a.headingScale.size()); ++i)
@@ -166,7 +168,8 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readReal(layout, "lineHeightFactor", a.lineHeightFactor);
     readReal(layout, "listLineHeightFactor", a.listLineHeightFactor);
     readReal(layout, "blockSpacing", a.blockSpacing);
-    readReal(layout, "listSpacing", a.listSpacing);
+    readReal(layout, "listSpacingBefore", a.listSpacingBefore);
+    readReal(layout, "listSpacingAfter", a.listSpacingAfter);
     readReal(layout, "headingSpacingFactor", a.headingSpacingFactor);
     readReal(layout, "sideMargin", a.sideMargin);
     readReal(layout, "verticalMargin", a.verticalMargin);
@@ -190,6 +193,7 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     }
     readReal(list, "bulletDiameter", a.bulletDiameter);
     readReal(list, "bulletRise", a.bulletRise);
+    readReal(list, "orderedRise", a.orderedRise);
     readString(list, "bullet", a.bulletGlyph);
     readReal(list, "bulletScale", a.bulletScale);
     readReal(list, "bulletTextGap", a.bulletTextGap);

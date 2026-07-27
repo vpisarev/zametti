@@ -212,11 +212,16 @@ void paintMarker(QPainter& painter, const QTextBlock& block, const QFont& base) 
                                                  : appearance().checkboxUncheckedColor)
                              : kind == Kind::Ordered ? appearance().orderedColor
                                                      : appearance().bulletColor;
+        // Поправка по вертикали — от высоты строчных основного шрифта, а не
+        // маркерного: маркер должен двигаться относительно текста строки.
+        qreal rise = 0;
+        if (kind == Kind::Ordered) rise = appearance().orderedRise;
+        else if (kind == Kind::Bullet) rise = appearance().bulletRise;
         painter.setFont(font);
         painter.setPen(color);
-        painter.drawText(
-            QPointF(anchor.right - QFontMetricsF(font).horizontalAdvance(text), anchor.baseline),
-            text);
+        painter.drawText(QPointF(anchor.right - QFontMetricsF(font).horizontalAdvance(text),
+                                 anchor.baseline - rise * QFontMetricsF(base).xHeight()),
+                         text);
     }
 
     painter.restore();

@@ -33,6 +33,7 @@
 #include <QTextFrame>
 #include <QTextFrameFormat>
 
+#include <algorithm>
 #include <vector>
 
 namespace zametti {
@@ -120,7 +121,15 @@ void enlargeFallbackGlyphs(QTextDocument& doc, int textStart, const QString& tex
     }
 }
 
-void applySpans(QTextDocument& doc, int textStart, const Block& b, qreal linePoint) {
+// Кегль кода: величина абсолютная, в пунктах, и от кегля окружающего текста не
+// зависит — только от масштаба окна. Ноль — кода не отличать от текста.
+qreal codePoint(qreal surrounding, qreal zoom) {
+    if (appearance().codePointSize <= 0.0) return surrounding;
+    return appearance().codePointSize * zoom;
+}
+
+void applySpans(QTextDocument& doc, int textStart, const Block& b, qreal linePoint,
+                qreal zoom) {
     OffsetMap map(b.text);
     QTextCursor cursor(&doc);
     for (const Span& s : b.inlines) {
@@ -135,9 +144,7 @@ void applySpans(QTextDocument& doc, int textStart, const Block& b, qreal linePoi
         if (s.strike) fmt.setFontStrikeOut(true);
         if (s.code) {
             fmt.setBackground(appearance().codeBackground);
-            // Кегль долей от окружающего, а не от базового: код внутри
-            // заголовка должен остаться заголовочного размера.
-            fmt.setFontPointSize(linePoint * appearance().codeScale);
+            fmt.setFontPointSize(codePoint(linePoint, zoom));
             if (!appearance().codeFamily.isEmpty())
                 fmt.setFontFamilies({QString(appearance().codeFamily)});
         }
@@ -250,7 +257,10 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
                               (b.level != prevLevel || isOrdered(b.kind) == prevOrdered);
         qreal topMargin = appearance().blockSpacing;
         if (sameList) topMargin = 0;
-        else if (list || prevList) topMargin = appearance().listSpacing;
+        else if (list && prevList)
+            topMargin = std::max(appearance().listSpacingBefore, appearance().listSpacingAfter);
+        else if (list) topMargin = appearance().listSpacingBefore;
+        else if (prevList) topMargin = appearance().listSpacingAfter;
 
         // Высота строки задаётся явно, а не долей от самого высокого знака в
         // ней: иначе знак из запасного шрифта растягивал бы свою строку, и
@@ -279,7 +289,7 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
                     // как в остальных программах для заметок.
                     text = withoutTrailingNewline(b.text);
                     blockFmt.setBackground(appearance().codeBackground);
-                    linePoint = basePoint * appearance().codeScale;
+                    linePoint = codePoint(basePoint, zoom);
                     charFmt.setFontPointSize(linePoint);
                     if (!appearance().codeFamily.isEmpty())
                         charFmt.setFontFamilies({QString(appearance().codeFamily)});
@@ -332,7 +342,7 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
 
         const int textStart = cursor.position();
         cursor.insertText(text, charFmt);
-        if (!raw && !b.inlines.empty()) applySpans(target, textStart, b, linePoint);
+        if (!raw && !b.inlines.empty()) applySpans(target, textStart, b, linePoint, zoom);
         enlargeFallbackGlyphs(target, textStart, text, linePoint, primaryFont);
         prevList = list;
         prevOrdered = list && isOrdered(b.kind);
