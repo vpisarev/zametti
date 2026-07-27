@@ -24,6 +24,10 @@ set(ZAMETTI_CORPUS "" CACHE STRING "Каталоги с .md для фаззин�
 # глубокий фаззинг — отдельный длинный прогон, его запускают руками
 # (см. docs/zametti-core-notes.md, раздел про известные ограничения).
 set(ZAMETTI_CORPUS_MUTATIONS 0 CACHE STRING "Сколько мутаций делать из каждого файла")
+# Фаззинг операций: сколько правок делать в каждой заметке и с каким зерном.
+# Зерно задаётся явно, чтобы упавший прогон повторялся дословно.
+set(ZAMETTI_FUZZ_ROUNDS 40 CACHE STRING "Сколько случайных правок делать в каждой заметке")
+set(ZAMETTI_FUZZ_SEED 20260727 CACHE STRING "Зерно фаззинга операций")
 foreach(dir ${ZAMETTI_CORPUS})
     get_filename_component(name "${dir}" NAME)
     get_filename_component(abs "${dir}" ABSOLUTE BASE_DIR ${CMAKE_SOURCE_DIR})
@@ -62,6 +66,20 @@ if(TARGET zametti-view)
 
     add_test(NAME ops COMMAND ops_test)
     set_tests_properties(ops PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # Фаззинг операций. Каталоги с заметками — те же, что и у фаззинга ядра:
+    # содержимое в репозиторий не кладётся, и без них тест просто не заводится.
+    add_executable(fuzz_ops_test fuzz_ops_test.cpp)
+    target_link_libraries(fuzz_ops_test PRIVATE zametti-view zametti-warnings)
+    target_include_directories(fuzz_ops_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    foreach(dir ${ZAMETTI_CORPUS})
+        get_filename_component(name "${dir}" NAME)
+        get_filename_component(abs "${dir}" ABSOLUTE BASE_DIR ${CMAKE_SOURCE_DIR})
+        add_test(NAME fuzz-ops-${name}
+                 COMMAND fuzz_ops_test "${abs}" ${ZAMETTI_FUZZ_ROUNDS} ${ZAMETTI_FUZZ_SEED})
+        set_tests_properties(fuzz-ops-${name}
+                             PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    endforeach()
 
     add_executable(undo_test undo_test.cpp)
     target_link_libraries(undo_test PRIVATE zametti-view zametti-warnings)

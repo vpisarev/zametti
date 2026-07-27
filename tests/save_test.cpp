@@ -425,6 +425,50 @@ void checkEdgeSpaces() {
                    "потомок поднялся на уровень выброшенного");
     }
 
+    // Зачёркивание живёт только на целых словах: тильды внутри слова markdown
+    // разбирает буквально. Кусок раздаётся наружу до границ слова — обрезать
+    // внутрь хуже, человек остался бы вовсе без зачёркивания.
+    {
+        const QString path = pathFor("зачёркнуто-полслова.md");
+        check(writeFile(path, "заглушка\n"), "не записать исходник");
+        zametti::Block block;
+        block.text = "фрукты";
+        zametti::Span span;
+        span.offset = 6;   // "кты" — вторая половина слова
+        span.length = 6;
+        span.strike = true;
+        block.inlines.push_back(span);
+        QTextDocument doc;
+        zametti::buildDocument({block}, doc);
+        const zametti::SaveOutcome outcome =
+            zametti::saveDocument(doc, path, QStringLiteral("test"));
+        check(outcome.result != zametti::SaveResult::Rescued,
+              "зачёркнутая половина слова не должна уводить в аварийный файл");
+        checkEqual("~~фрукты~~\n", readFile(path), "зачёркивание раздалось до целого слова");
+    }
+
+    // Текст свят, разметка — по возможности. Правил о том, где знаки начертания
+    // открывают кусок, много; если блок с разметкой обратно не читается,
+    // разметка снимается, а текст остаётся до знака.
+    {
+        const QString path = pathFor("неживучая-разметка.md");
+        check(writeFile(path, "заглушка\n"), "не записать исходник");
+        zametti::Block block;
+        block.text = "штуки 2-5.";
+        zametti::Span span;
+        span.offset = 9;   // одна точка, и та в конце
+        span.length = 1;
+        span.bold = true;
+        block.inlines.push_back(span);
+        QTextDocument doc;
+        zametti::buildDocument({block}, doc);
+        const zametti::SaveOutcome outcome =
+            zametti::saveDocument(doc, path, QStringLiteral("test"));
+        check(outcome.result != zametti::SaveResult::Rescued,
+              "невыразимая разметка не должна уводить в аварийный файл");
+        checkEqual("штуки 2-5.\n", readFile(path), "текст остался, разметка снята");
+    }
+
     // Записанное с неразрывными отступами устойчиво: второй проход ничего не
     // меняет, иначе файл переписывался бы при каждом сохранении.
     {

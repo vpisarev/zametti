@@ -43,6 +43,15 @@ struct SaveOutcome {
 // нечем, а проверять последний рубеж обязательно.
 using DocumentReaderFn = std::function<Document(const QTextDocument&)>;
 
+// Что из документа уйдёт в файл: приведение к тому, что markdown умеет
+// выразить. Наружу — ради фаззинга операций: он обязан проверять ровно ту же
+// сверку, что и запись, иначе проверял бы не то.
+Document documentForFile(Document doc);
+
+// Совпадают ли строение и текст. Разметка внутри строки не сравнивается: голую
+// ссылку человек набирает текстом, а файл читает её ссылкой.
+bool sameSkeleton(const Document& a, const Document& b);
+
 SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
                          const QString& timestamp, DocumentReaderFn reader = nullptr);
 

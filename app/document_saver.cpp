@@ -71,6 +71,39 @@ int whitespaceBefore(const std::string& text, size_t at) {
     return 0;
 }
 
+// Буква или цифра. Многобайтовые знаки считаем буквами целиком: для нашей
+// задачи важно лишь, слово это или граница слова.
+bool wordByte(unsigned char c) {
+    return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+           c >= 0x80;
+}
+
+// Зачёркивание живёт только на целых словах. Проверено на ядре: "фру~~кты~~"
+// разбирается обратно буквальными тильдами, а "фру ~~кты~~" и "abc,~~def~~"
+// проходят — рвётся оно ровно тогда, когда сосед снаружи буква или цифра.
+// Жирный и курсив внутри слова работают прекрасно, это особенность именно
+// тильд.
+//
+// Поэтому кусок раздаётся наружу до границ слова. Обрезать его внутрь было бы
+// хуже: выделив половину слова, человек остался бы вовсе без зачёркивания.
+Block withStrikeOnWholeWords(Block block) {
+    if (!block.rawSource.empty() || block.kind == Kind::Code) return block;
+
+    for (Span& span : block.inlines) {
+        if (!span.strike) continue;
+        size_t from = size_t(qBound(0, span.offset, int(block.text.size())));
+        size_t to = size_t(qBound(int(from), span.offset + span.length,
+                                  int(block.text.size())));
+        while (from > 0 && wordByte(static_cast<unsigned char>(block.text[from - 1]))) --from;
+        while (to < block.text.size() &&
+               wordByte(static_cast<unsigned char>(block.text[to])))
+            ++to;
+        span.offset = int(from);
+        span.length = int(to - from);
+    }
+    return block;
+}
+
 // Разметка не может начинаться или кончаться пробелом: markdown такое просто не
 // выражает. Знак подчёркивания или звёздочка перед пробелом не открывают
 // начертание, и разобранное обратно расходится с документом.
@@ -151,8 +184,8 @@ Block withCodeSpansPerLine(Block block) {
     return block;
 }
 
-// Совпадают ли строение и текст. Разметка внутри строки не сравнивается: см.
-// пояснение в самопроверке.
+}  // namespace
+
 bool sameSkeleton(const Document& a, const Document& b) {
     if (a.size() != b.size()) return false;
     for (size_t i = 0; i < a.size(); ++i) {
@@ -250,6 +283,36 @@ Block withEdgesNormalised(Block block) {
     return block;
 }
 
+// Последняя оговорка про разметку — и самая важная. Правил о том, где знаки
+// начертания открывают и закрывают кусок, в markdown много: тильды не работают
+// внутри слова, звёздочки вокруг одной точки не работают вовсе, а знаки,
+// стоящие в самом тексте, путаются с разметкой. Повторять их все у себя —
+// значит переписать половину спецификации и всё равно ошибиться.
+//
+// Поэтому правило простое: текст свят, разметка — по возможности. Если блок с
+// разметкой обратно не читается, разметка снимается, а текст остаётся до знака.
+// Потерять начертание неприятно; потерять слово нельзя.
+Block withMarkupThatSurvives(Block block) {
+    if (!block.rawSource.empty() || block.inlines.empty()) return block;
+
+    const Document one{block};
+    const Document back = parse(serialize(one));
+    if (back.size() == 1 && back[0].rawSource.empty() && back[0].text == block.text)
+        return block;
+
+    block.inlines.clear();
+    return block;
+}
+
+// Дословный кусок выводится как есть, и завершающий перевод строки для него —
+// часть текста. Правка внутри такого блока его снимает, и разбор возвращает
+// текст с переводом, которого в документе нет.
+Block withRawNewline(Block block) {
+    if (block.rawSource.empty()) return block;
+    if (block.rawSource.back() != '\n') block.rawSource.push_back('\n');
+    return block;
+}
+
 // Пустой вложенный пункт markdown не выражает вовсе. Одинокий "-" под текстом
 // родителя читается подчёркиванием заголовка, и весь список уезжает в дословный
 // кусок — ровно от этого сорвалось сохранение на живой заметке.
@@ -290,12 +353,13 @@ Document withoutEmptyNested(Document doc) {
 //
 // Пустой пункт списка верхнего уровня при этом остаётся: "-" в файле
 // записывается прекрасно.
-Document forFile(Document doc) {
+Document documentForFile(Document doc) {
     Document out;
     out.reserve(doc.size());
     for (Block& block : doc) {
-        Block trimmed = withTrimmedSpans(
-            withCodeSpansPerLine(withHeadingOnOneLine(withEdgesNormalised(std::move(block)))));
+        Block trimmed = withMarkupThatSurvives(withStrikeOnWholeWords(withTrimmedSpans(
+            withCodeSpansPerLine(withHeadingOnOneLine(
+                withRawNewline(withEdgesNormalised(std::move(block))))))));
         if (trimmed.rawSource.empty() && trimmed.kind == Kind::Paragraph &&
             trimmed.text.empty())
             continue;
@@ -304,12 +368,10 @@ Document forFile(Document doc) {
     return withoutEmptyNested(std::move(out));
 }
 
-}  // namespace
-
 SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
                          const QString& timestamp, DocumentReaderFn reader) {
     const Document ir =
-        forFile(reader ? reader(doc) : readDocument(doc));
+        documentForFile(reader ? reader(doc) : readDocument(doc));
     const QByteArray text = toBytes(serialize(ir));
 
     if (QFile::exists(path) && fileContents(path) == text)
