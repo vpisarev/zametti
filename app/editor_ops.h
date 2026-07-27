@@ -87,7 +87,7 @@ MoveResult moveListItem(const QTextDocument& doc, const QTextCursor& cursor, int
 //
 // Отступы при обратном ходе сохраняются: в файл они уйдут неразрывными
 // пробелами, как и всякий отступ вне кода.
-MoveResult toggleCodeBlock(const QTextDocument& doc, const QTextCursor& cursor);
+MoveResult toggleCodeBlock(QTextDocument& doc, const QTextCursor& cursor);
 
 // Tab и Shift+Tab: сдвиг пунктов списка на уровень внутрь и наружу.
 //

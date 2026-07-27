@@ -526,6 +526,47 @@ void checkCodeBlock(const CodeBlockCase& c) {
                c.what);
 }
 
+// Выделение частью блока: абзац с мягкими переносами — один блок, а строк в
+// нём много. В блок кода должно уйти только выделенное.
+struct PartialCodeCase {
+    const char* source;
+    int from;
+    int to;
+    const char* after;
+    const char* what;
+};
+
+void checkPartialCodeBlock(const PartialCodeCase& c) {
+    QTextDocument doc;
+    zametti::buildDocument(zametti::parse(c.source), doc);
+
+    QTextCursor cursor(&doc);
+    cursor.setPosition(doc.firstBlock().position() + c.from);
+    cursor.setPosition(doc.firstBlock().position() + c.to, QTextCursor::KeepAnchor);
+
+    const zametti::MoveResult result = zametti::toggleCodeBlock(doc, cursor);
+    checkEqual(c.after,
+               result.done ? zametti::serialize(result.doc)
+                           : std::string("<операция отказалась>"),
+               c.what);
+}
+
+// "первая\nвторая\nтретья" — по семь знаков на строку с разделителем.
+const PartialCodeCase kPartialCodeCases[] = {
+    {"первая\nвторая\nтретья\n", 7, 13, "первая\n\n```\nвторая\n```\n\nтретья\n",
+     "средняя строка уходит в код одна"},
+    {"первая\nвторая\nтретья\n", 0, 6, "```\nпервая\n```\n\nвторая\nтретья\n",
+     "первая строка — и остальные остаются абзацем"},
+    {"первая\nвторая\nтретья\n", 14, 20, "первая\nвторая\n\n```\nтретья\n```\n",
+     "последняя строка"},
+    // Конец выделения ровно на начале строки: её человек не выделял.
+    {"первая\nвторая\nтретья\n", 7, 14, "первая\n\n```\nвторая\n```\n\nтретья\n",
+     "строка, начатая на границе, в код не идёт"},
+    // Полстроки нельзя: границы притягиваются к краям строк.
+    {"первая\nвторая\nтретья\n", 9, 11, "первая\n\n```\nвторая\n```\n\nтретья\n",
+     "выделение внутри строки берёт строку целиком"},
+};
+
 const CodeBlockCase kCodeBlockCases[] = {
     {"абзац\n", 0, 0, "```\nабзац\n```\n", "абзац становится блоком кода"},
     {"раз\n\nдва\n", 0, 1, "```\nраз\nдва\n```\n",
@@ -818,6 +859,7 @@ int main(int argc, char** argv) {
     for (const StyleCase& c : kCodeCases) checkStyle(zametti::toggleCode, c);
     for (const CodeSpanCase& c : kCodeSpanCases) checkCodeSpan(c);
     for (const CodeBlockCase& c : kCodeBlockCases) checkCodeBlock(c);
+    for (const PartialCodeCase& c : kPartialCodeCases) checkPartialCodeBlock(c);
     for (const char* source : {"абзац\n", "```\nраз\nдва\nтри\n```\n",
                                "абзац\n\n```\nкод\nещё\n```\n\n- пункт\n"})
         checkIrIndex(source);

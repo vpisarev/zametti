@@ -226,21 +226,42 @@ void NoteEditor::rebuild(const Document& doc, int cursor, const ViewAnchor& anch
     recordingSuspended_ = wasSuspended;
 }
 
+QTextBlock NoteEditor::checkboxUnder(const QMouseEvent& event) const {
+    if (event.button() != Qt::LeftButton) return QTextBlock();
+    // Точка в координатах документа: вьюпорт прокручен, а раскладка — нет.
+    const QPointF point(event.position().x() + horizontalScrollBar()->value(),
+                        event.position().y() + verticalScrollBar()->value());
+    return blockAtCheckbox(*document(), point, baseFont());
+}
+
 void NoteEditor::mousePressEvent(QMouseEvent* event) {
-    if (event->button() == Qt::LeftButton) {
-        // Точка в координатах документа: вьюпорт прокручен, а раскладка — нет.
-        const QPointF point(event->position().x() + horizontalScrollBar()->value(),
-                            event->position().y() + verticalScrollBar()->value());
-        const QTextBlock hit = blockAtCheckbox(*document(), point, baseFont());
-        if (hit.isValid()) {
-            QTextCursor cursor = textCursor();
-            cursor.setPosition(hit.position());
-            setTextCursor(cursor);
-            runOperation(toggleTaskAtCursor);
-            return;
-        }
+    const QTextBlock hit = checkboxUnder(*event);
+    if (!hit.isValid()) {
+        NoteView::mousePressEvent(event);
+        return;
     }
-    NoteView::mousePressEvent(event);
+
+    // Щелчок внутри выделения переключает всё выделенное разом и выделение
+    // сохраняет — ровно как Ctrl+Space. Иначе выделить десяток задач и отметить
+    // их одним движением было бы нельзя.
+    const QTextCursor cursor = textCursor();
+    const int from = qMin(cursor.anchor(), cursor.position());
+    const int to = qMax(cursor.anchor(), cursor.position());
+    const bool insideSelection = cursor.hasSelection() && hit.position() < to &&
+                                 hit.position() + hit.length() > from;
+    if (!insideSelection) {
+        QTextCursor place = cursor;
+        place.setPosition(hit.position());
+        setTextCursor(place);
+    }
+    runOperation(toggleTaskAtCursor);
+}
+
+void NoteEditor::mouseDoubleClickEvent(QMouseEvent* event) {
+    // По рамке — молча: первый щелчок уже переключил задачу, а выделять слово
+    // под рамкой человек не собирался.
+    if (checkboxUnder(*event).isValid()) return;
+    NoteView::mouseDoubleClickEvent(event);
 }
 
 void NoteEditor::dropLinkAtRightEdge() {

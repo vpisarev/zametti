@@ -164,7 +164,39 @@ int nextSibling(const QTextDocument& doc, int number) {
 
 }  // namespace
 
-MoveResult toggleCodeBlock(const QTextDocument& doc, const QTextCursor& cursor) {
+namespace {
+
+// Начало и конец строки, на которой стоит эта позиция, в пределах своего блока.
+// Блок кода строится из целых строк: полстроки в него не положишь.
+int lineStartAt(const QTextDocument& doc, int position) {
+    const QTextBlock block = doc.findBlock(position);
+    const QString text = block.text();
+    for (int i = position - block.position() - 1; i >= 0; --i)
+        if (text.at(i) == QChar::LineSeparator) return block.position() + i + 1;
+    return block.position();
+}
+
+int lineEndAt(const QTextDocument& doc, int position) {
+    const QTextBlock block = doc.findBlock(position);
+    const QString text = block.text();
+    for (int i = position - block.position(); i < text.size(); ++i)
+        if (text.at(i) == QChar::LineSeparator) return block.position() + i;
+    return block.position() + block.length() - 1;
+}
+
+// IR куска документа. Тем же приёмом, что и копирование в буфер: кусок кладётся
+// во временный документ, и смещения считать не приходится вовсе.
+Document irOfRange(QTextDocument& doc, int from, int to) {
+    if (from >= to) return {};
+    QTextCursor range(&doc);
+    range.setPosition(from);
+    range.setPosition(to, QTextCursor::KeepAnchor);
+    return selectionToIr(range);
+}
+
+}  // namespace
+
+MoveResult toggleCodeBlock(QTextDocument& doc, const QTextCursor& cursor) {
     Document ir = readDocument(doc);
     if (ir.empty()) return {};
 
@@ -175,6 +207,46 @@ MoveResult toggleCodeBlock(const QTextDocument& doc, const QTextCursor& cursor) 
     const int first = irIndexOfBlock(doc.findBlock(start));
     const int last = irIndexOfBlock(doc.findBlock(end));
     if (first < 0 || last >= int(ir.size()) || first > last) return {};
+
+    // Абзац с мягкими переносами — один блок, а выделить в нём человек может
+    // несколько строк из многих. Тогда блок надо разнять: что осталось снаружи,
+    // остаётся как было. Границы притягиваются к краям строк.
+    const QTextBlock firstBlock = doc.findBlock(start);
+    const QTextBlock lastBlock = doc.findBlock(end);
+    const int lineStart = lineStartAt(doc, start);
+    // Конец выделения ровно на начале строки: эту строку человек не выделял, и
+    // тянуть её в блок кода незачем.
+    const int lineEnd = (end > start && end == lineStartAt(doc, end))
+                            ? end - 1
+                            : lineEndAt(doc, end);
+    const int blockEnd = lastBlock.position() + lastBlock.length() - 1;
+
+    // Разделители строк на срезах в куски не берём: иначе оставшийся кусок
+    // кончался бы пустой строкой, а она блок заканчивает.
+    const Document head = irOfRange(
+        doc, firstBlock.position(), lineStart > firstBlock.position() ? lineStart - 1 : lineStart);
+    const Document tail =
+        irOfRange(doc, lineEnd < blockEnd ? lineEnd + 1 : lineEnd, blockEnd);
+    const Document chosen = irOfRange(doc, lineStart, lineEnd);
+    if (!head.empty() || !tail.empty()) {
+        if (chosen.empty()) return {};
+        Document result(ir.begin(), ir.begin() + first);
+        result.insert(result.end(), head.begin(), head.end());
+
+        Block code;
+        code.kind = Kind::Code;
+        for (const Block& piece : chosen) {
+            if (!code.text.empty()) code.text.push_back('\n');
+            code.text += piece.text;
+        }
+        if (!code.text.empty() && code.text.back() != '\n') code.text.push_back('\n');
+        result.push_back(code);
+
+        const int landed = int(result.size()) - 1;
+        result.insert(result.end(), tail.begin(), tail.end());
+        result.insert(result.end(), ir.begin() + last + 1, ir.end());
+        return {true, result, landed, 0};
+    }
 
     // Дословные куски не трогаем вовсе: их текст выводится как есть.
     for (int i = first; i <= last; ++i)

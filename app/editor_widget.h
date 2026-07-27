@@ -16,6 +16,7 @@
 #include "note_view.h"
 
 #include <QElapsedTimer>
+#include <QTextBlock>
 #include <QFileSystemWatcher>
 #include <QKeySequence>
 #include <QString>
@@ -100,12 +101,18 @@ protected:
     // Щелчок по чекбоксу — самый ходовой способ отметить задачу, и мимо
     // клавиатуры он идти не должен.
     void mousePressEvent(QMouseEvent* event) override;
+    // Двойной щелчок по рамке не должен выделять строку: человек метил в
+    // чекбокс, а не в слово под ним.
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
 
 private:
     // У правого края ссылки набор её продолжал: Qt берёт оформление знака перед
     // курсором, а у ссылки оно с адресом. Пробел и запятая после ссылки уезжали
     // внутрь неё, и в файл шло "[текст ,](адрес)".
     void dropLinkAtRightEdge();
+
+    // Блок, чью рамку задачи накрыл щелчок. Недействительный — мимо.
+    QTextBlock checkboxUnder(const QMouseEvent& event) const;
 
 protected:
 

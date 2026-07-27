@@ -795,6 +795,65 @@ void checkLinkDoesNotGrow() {
                "внутри ссылки набор её продолжает");
 }
 
+// Щелчок по рамке при выделении: переключает всё выделенное разом и выделение
+// сохраняет — ровно как Ctrl+Space. А двойной щелчок не должен выделять строку:
+// человек метил в чекбокс, а не в слово под ним.
+void checkCheckboxClickWithSelection() {
+    const QString path = writeNote(
+        "щелчок-выделение.md", QStringLiteral("- [ ] раз\n- [ ] два\n- [ ] три\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(30);
+    editor.setFocus();
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    auto text = [&editor] {
+        return QString::fromStdString(
+            zametti::serialize(zametti::readDocument(*editor.document())));
+    };
+    auto clickBox = [&editor](int number, bool twice) {
+        const QRectF box = zametti::checkboxRect(
+            editor.document()->findBlockByNumber(number), editor.baseFont());
+        const QPoint at(int(box.center().x()) - editor.horizontalScrollBar()->value(),
+                        int(box.center().y()) - editor.verticalScrollBar()->value());
+        QTest::mouseClick(editor.viewport(), Qt::LeftButton, Qt::NoModifier, at);
+        if (twice)
+            QTest::mouseDClick(editor.viewport(), Qt::LeftButton, Qt::NoModifier, at);
+        QTest::qWait(10);
+    };
+
+    QTextCursor all = editor.textCursor();
+    all.movePosition(QTextCursor::Start);
+    all.movePosition(QTextCursor::End, QTextCursor::KeepAnchor);
+    editor.setTextCursor(all);
+    const int selected = all.selectionEnd() - all.selectionStart();
+
+    clickBox(1, false);
+    checkEqual(QStringLiteral("- [x] раз\n- [x] два\n- [x] три\n"), text(),
+               "щелчок при выделении отмечает все задачи разом");
+    checkEqual(QString::number(selected),
+               QString::number(editor.textCursor().selectionEnd() -
+                               editor.textCursor().selectionStart()),
+               "выделение при этом остаётся");
+
+    clickBox(1, false);
+    checkEqual(QStringLiteral("- [ ] раз\n- [ ] два\n- [ ] три\n"), text(),
+               "второй щелчок снимает отметки со всех");
+
+    // Двойной щелчок по рамке: одно переключение и никакого выделения.
+    const QString single = writeNote("двойной-щелчок.md", QStringLiteral("- [ ] дело\n"));
+    editor.openFile(single);
+    QTest::qWait(20);
+    clickBox(0, true);
+    checkEqual(QStringLiteral("- [x] дело\n"), text(),
+               "двойной щелчок по рамке переключает задачу один раз");
+    check(!editor.textCursor().hasSelection(),
+          "двойной щелчок по рамке строку не выделяет");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -832,6 +891,7 @@ int main(int argc, char** argv) {
     checkScrollHolds();
     checkScrollHoldsWhenBlockChangesHeight();
     checkLinkDoesNotGrow();
+    checkCheckboxClickWithSelection();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;
