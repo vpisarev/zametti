@@ -19,6 +19,7 @@
 
 #include "test_util.h"
 
+#include <QAbstractTextDocumentLayout>
 #include <QApplication>
 #include <QKeySequence>
 #include <QScrollBar>
@@ -370,6 +371,59 @@ void checkUndo() {
     }
 }
 
+// Пункт, ставший абзацем, не должен сдвигаться на месте. Отбивка одна на любой
+// стык блоков, поэтому его верх остаётся там же, где был. Раньше у границ списка
+// были свои значения — замер: 0 у пункта против 13.01 у абзаца, — и снятый
+// маркер утаскивал строку вниз.
+void checkSpacingDoesNotJump() {
+    const QString path = writeNote(
+        "отбивка.md", QStringLiteral("задачки:\n\n- e\n- второй пункт\n\nхвост\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 400);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    auto topOf = [&editor](int number) {
+        return editor.document()->documentLayout()->blockBoundingRect(
+            editor.document()->findBlockByNumber(number)).top();
+    };
+    const qreal before = topOf(1);
+
+    QTextCursor cursor = editor.textCursor();
+    cursor.setPosition(editor.document()->findBlockByNumber(1).position());
+    editor.setTextCursor(cursor);
+    QTest::keyClick(&editor, Qt::Key_Backspace);
+    QTest::qWait(10);
+
+    ZT_EQ("пункт, ставший абзацем, остался на месте", std::to_string(int(before)),
+          std::to_string(int(topOf(1))));
+
+    // И отбивка на всех стыках одинакова: абзац к списку, список к абзацу,
+    // абзац к абзацу.
+    const QString rhythm = writeNote(
+        "ритм.md",
+        QStringLiteral("абзац\n\n- пункт\n- пункт\n\nабзац\n\nабзац\n"));
+    editor.openFile(rhythm);
+    QTest::qWait(20);
+
+    std::string margins;
+    for (QTextBlock block = editor.document()->begin(); block.isValid();
+         block = block.next()) {
+        if (block.blockNumber() == 0) continue;
+        // Внутри списка отбивки нет вовсе — её и не сравниваем.
+        if (zametti::isListBlock(block) &&
+            zametti::isListBlock(block.previous()))
+            continue;
+        if (!margins.empty()) margins += " ";
+        margins += std::to_string(int(block.blockFormat().topMargin()));
+    }
+    ZT_EQ("отбивка одинакова на всех стыках", std::string("13 13 13"), margins);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -386,6 +440,7 @@ int main(int argc, char** argv) {
     for (const Case& c : kInputCases) run(c);
     for (const Case& c : kTaskCases) run(c);
     checkUndo();
+    checkSpacingDoesNotJump();
 
     fs::remove_all(g_dir);
     return zt::report("списки");

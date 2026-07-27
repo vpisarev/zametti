@@ -286,12 +286,13 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
         const bool sameList =
             list && prevList &&
             !runs.startsNewRun(b.level, isOrdered(b.kind));
-        qreal topMargin = appearance().blockSpacing;
-        if (sameList) topMargin = 0;
-        else if (list && prevList)
-            topMargin = std::max(appearance().listSpacingBefore, appearance().listSpacingAfter);
-        else if (list) topMargin = appearance().listSpacingBefore;
-        else if (prevList) topMargin = appearance().listSpacingAfter;
+        // Отбивка одна на любой стык блоков и ноль внутри одного списка.
+        //
+        // Раньше у границ списка были свои значения, и от этого пункт, ставший
+        // абзацем, прыгал на месте: замер — отбивка 0 у пункта против 13.01 у
+        // абзаца. Ритм страницы не должен зависеть от того, чем блок был минуту
+        // назад; список отделяют от текста маркер и отступ, а не зазор.
+        qreal topMargin = sameList ? 0.0 : appearance().blockSpacing;
 
         // Высота строки задаётся явно, а не долей от самого высокого знака в
         // ней: иначе знак из запасного шрифта растягивал бы свою строку, и
