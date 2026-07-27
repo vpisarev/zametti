@@ -128,6 +128,15 @@ private:
 // Спрашивать надо именно QRawFont: он описывает одну физическую гарнитуру.
 // QFontMetrics отвечает за целую цепочку с запасными шрифтами и на эмодзи
 // говорит «есть», отчего увеличение не срабатывало вовсе.
+// Разделители строк и абзацев глифа не имеют вовсе, и увеличивать их незачем.
+// Шрифт про них не знает, поэтому без этой оговорки они попадали под правило для
+// эмодзи — а текст, набранный сразу после переноса, наследовал увеличенный
+// формат и выходил крупнее соседей.
+bool needsFallback(char32_t cp, const QRawFont& primary) {
+    if (cp == 0x2028 || cp == 0x2029) return false;
+    return !primary.supportsCharacter(cp);
+}
+
 void enlargeFallbackGlyphs(QTextDocument& doc, int textStart, const QString& text,
                            qreal pointSize, const QRawFont& primary) {
     QTextCursor cursor(&doc);
@@ -137,7 +146,7 @@ void enlargeFallbackGlyphs(QTextDocument& doc, int textStart, const QString& tex
                           text[i + 1].isLowSurrogate();
         const char32_t cp = pair ? QChar::surrogateToUcs4(text[i], text[i + 1])
                                  : char32_t(text[i].unicode());
-        if (primary.supportsCharacter(cp)) {
+        if (!needsFallback(cp, primary)) {
             i += pair ? 2 : 1;
             continue;
         }
@@ -150,7 +159,7 @@ void enlargeFallbackGlyphs(QTextDocument& doc, int textStart, const QString& tex
                            text[i + 1].isLowSurrogate();
             const char32_t c = p ? QChar::surrogateToUcs4(text[i], text[i + 1])
                                  : char32_t(text[i].unicode());
-            if (primary.supportsCharacter(c)) break;
+            if (!needsFallback(c, primary)) break;
             i += p ? 2 : 1;
         }
 

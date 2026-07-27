@@ -20,6 +20,7 @@
 #include <QTest>
 #include <QTextBlock>
 #include <QTextCursor>
+#include <QTextFragment>
 #include <QTextDocument>
 
 #include <string>
@@ -507,6 +508,42 @@ void checkUndoFromKeyboard() {
     checkEqual(QStringLiteral("текст правка\n"), text(), "Ctrl+Shift+Z возвращает");
 }
 
+// Текст после переноса строки обязан набираться тем же кеглем. Разделитель
+// строк шрифту неизвестен, и без оговорки он попадал под правило увеличения
+// эмодзи — а набранное сразу после него наследовало крупный формат.
+void checkSizeAfterSoftBreak() {
+    const QString path = writeNote("кегль.md", QString());
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+    editor.openFile(path);
+
+    editor.insertPlainText(QStringLiteral("первая"));
+    QTest::qWait(10);
+    QTest::keyClick(&editor, Qt::Key_Return);
+    QTest::qWait(10);
+    editor.insertPlainText(QStringLiteral("вторая"));
+    QTest::qWait(10);
+
+    qreal smallest = 0;
+    qreal largest = 0;
+    for (QTextBlock block = editor.document()->begin(); block.isValid();
+         block = block.next()) {
+        for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            if (!fragment.isValid() || fragment.text().isEmpty()) continue;
+            const qreal size = fragment.charFormat().fontPointSize();
+            if (smallest == 0 || size < smallest) smallest = size;
+            if (size > largest) largest = size;
+        }
+    }
+    check(smallest > 0 && smallest == largest,
+          "кегль после переноса строки не должен меняться");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -538,6 +575,7 @@ int main(int argc, char** argv) {
     checkInputRules();
     checkSelectionSurvivesOperation();
     checkUndoFromKeyboard();
+    checkSizeAfterSoftBreak();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;
