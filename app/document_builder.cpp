@@ -402,6 +402,20 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
         prevList = list;
     }
 
+    // Пустой документ: блоков не было, и единственный блок остался без формата
+    // вовсе. Каретка в нём выходила кеглем по умолчанию и в самом углу окна —
+    // человек её попросту не находил. Род блоку не назначаем: по его отсутствию
+    // читатель и отличает пустой документ от пустого абзаца.
+    if (first) {
+        QTextCharFormat charFmt;
+        charFmt.setFontPointSize(basePoint);
+        QTextBlockFormat blockFmt;
+        blockFmt.setLineHeight(metrics.height() * appearance().lineHeightFactor,
+                               QTextBlockFormat::FixedHeight);
+        cursor.setBlockFormat(blockFmt);
+        cursor.setBlockCharFormat(charFmt);
+    }
+
     // Под маркер отводится поле слева; сам он в текст не попадает и рисуется по
     // геометрии строки (см. marker.h). Поэтому продолжения пункта выравниваются
     // по его тексту сами, без висячего отступа.

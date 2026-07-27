@@ -16,6 +16,7 @@
 #include <QDir>
 #include <QFile>
 #include <QGuiApplication>
+#include <QTextCursor>
 #include <QTextDocument>
 
 #include <string>
@@ -140,6 +141,38 @@ void checkRescue() {
     checkEqual("# первая\nвторая\n", readFile(rescuePath), "содержимое аварийного файла");
 }
 
+// Пустой абзац markdown выразить нечем, а Enter его заводит. Без уборки
+// самопроверка ловила бы расхождение при каждом сохранении, и вместо записи
+// появлялся бы аварийный файл — ровно это и случилось на живой заметке.
+void checkEmptyParagraphs() {
+    const QString path = pathFor("пустые.md");
+    check(writeFile(path, "текст\n"), "не записать исходник");
+
+    QTextDocument doc;
+    buildFrom("текст\n", doc);
+
+    // Enter в конце: в документе появляется пустой абзац.
+    QTextCursor cursor(&doc);
+    cursor.movePosition(QTextCursor::End);
+    cursor.insertBlock();
+
+    const zametti::SaveOutcome outcome =
+        zametti::saveDocument(doc, path, QStringLiteral("test"));
+    check(outcome.result == zametti::SaveResult::Unchanged ||
+              outcome.result == zametti::SaveResult::Written,
+          "сохранение с пустым абзацем не должно уходить в аварийный файл");
+    checkEqual("текст\n", readFile(path), "пустой абзац в файл не попадает");
+    check(!QFile::exists(path + QStringLiteral(".rescue-test")), "аварийный файл не создан");
+
+    // Пустой пункт списка, наоборот, записывается: "-" файл выражает прекрасно.
+    const QString listPath = pathFor("пустой-пункт.md");
+    check(writeFile(listPath, "- пункт\n"), "не записать исходник списка");
+    QTextDocument list;
+    buildFrom("- пункт\n- \n", list);
+    zametti::saveDocument(list, listPath, QStringLiteral("test"));
+    checkEqual("- пункт\n-\n", readFile(listPath), "пустой пункт списка сохраняется");
+}
+
 // Записать некуда — старый файл всё равно цел.
 void checkFailure() {
     const QString path = g_dir + QStringLiteral("/нет-такого-каталога/файл.md");
@@ -175,6 +208,7 @@ int main(int argc, char** argv) {
     for (const char* source : kNonCanonical)
         checkSave(source, (std::string("nc") + std::to_string(n++) + ".md").c_str());
 
+    checkEmptyParagraphs();
     checkRescue();
     checkFailure();
 

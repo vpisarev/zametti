@@ -2,6 +2,7 @@
 
 #include "doc_model.h"
 #include "document_reader.h"
+#include "serializer.h"
 #include "marker.h"
 #include "settings.h"
 
@@ -10,6 +11,7 @@
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QTextDocumentFragment>
 
 #include <algorithm>
 #include <cmath>
@@ -398,6 +400,52 @@ InputRule matchInputRule(const QTextBlock& block, const QString& typed) {
 }
 
 }  // namespace
+
+Document selectionToIr(const QTextCursor& cursor) {
+    if (!cursor.hasSelection() || cursor.document() == nullptr) return {};
+
+    QTextDocument temp;
+    QTextCursor paste(&temp);
+    paste.insertFragment(cursor.selection());
+
+    const int from = qMin(cursor.anchor(), cursor.position());
+    const int to = qMax(cursor.anchor(), cursor.position());
+    const QTextBlock first = cursor.document()->findBlock(from);
+    const QTextBlock last = cursor.document()->findBlock(to);
+
+    // Внутри одного блока формат до фрагмента не доезжает — Qt отдаёт такое
+    // выделение как чистый текст. Род возвращаем, только если блок выделен
+    // целиком: кусок строки это просто слова, а не пункт списка.
+    if (first.blockNumber() == last.blockNumber() && from == first.position() &&
+        to >= first.position() + first.length() - 1) {
+        QTextCursor fix(&temp);
+        fix.setPosition(0);
+        fix.setBlockFormat(first.blockFormat());
+    }
+
+    Document ir = readDocument(temp);
+
+    int deepest = -1;
+    for (const Block& block : ir)
+        if (block.rawSource.empty() && isList(block.kind))
+            deepest = deepest < 0 ? block.level : qMin(deepest, block.level);
+    if (deepest > 0)
+        for (Block& block : ir)
+            if (block.rawSource.empty() && isList(block.kind)) block.level -= deepest;
+
+    return ir;
+}
+
+QString selectionToMarkdown(const QTextCursor& cursor) {
+    const Document ir = selectionToIr(cursor);
+    if (ir.empty()) return {};
+
+    std::string text = serialize(ir);
+    const bool inlineOnly = ir.size() == 1 && ir.front().rawSource.empty() &&
+                            ir.front().kind == Kind::Paragraph;
+    if (inlineOnly && !text.empty() && text.back() == '\n') text.pop_back();
+    return QString::fromUtf8(text.data(), qsizetype(text.size()));
+}
 
 bool applyInputRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const QTextBlock block = cursor.block();

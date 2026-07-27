@@ -43,9 +43,30 @@ QString rescueTimestamp() {
     return QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss"));
 }
 
+namespace {
+
+// Пустой абзац markdown выразить нечем: пустая строка в файле — разделитель
+// блоков, а не блок. В документе он заводится каждым Enter, и без этой уборки
+// самопроверка честно ловила бы расхождение при каждом сохранении.
+//
+// Пустой пункт списка при этом остаётся: "-" в файле записывается прекрасно.
+Document withoutEmptyParagraphs(Document doc) {
+    Document out;
+    out.reserve(doc.size());
+    for (Block& block : doc) {
+        if (block.rawSource.empty() && block.kind == Kind::Paragraph && block.text.empty())
+            continue;
+        out.push_back(std::move(block));
+    }
+    return out;
+}
+
+}  // namespace
+
 SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
                          const QString& timestamp, DocumentReaderFn reader) {
-    const Document ir = reader ? reader(doc) : readDocument(doc);
+    const Document ir =
+        withoutEmptyParagraphs(reader ? reader(doc) : readDocument(doc));
     const QByteArray text = toBytes(serialize(ir));
 
     if (QFile::exists(path) && fileContents(path) == text)
