@@ -466,6 +466,47 @@ void checkSelectionSurvivesOperation() {
                "второе нажатие снимает отметки со всех");
 }
 
+// Отмена с клавиатуры, а не вызовом метода. Разница не умозрительная: QTextEdit
+// объявляет Ctrl+Z своим и глотает его, так что ярлык окна не срабатывает ни
+// разу — а тест, зовущий undo() напрямую, этого не замечает. Именно так ошибка
+// и прожила незамеченной.
+void checkUndoFromKeyboard() {
+    const QString path = writeNote("отмена-клавишей.md", QStringLiteral("текст\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+    editor.openFile(path);
+
+    auto text = [&editor] {
+        return QString::fromStdString(
+            zametti::serialize(zametti::readDocument(*editor.document())));
+    };
+
+    QTextCursor cursor = editor.textCursor();
+    cursor.movePosition(QTextCursor::End);
+    editor.setTextCursor(cursor);
+    editor.insertPlainText(QStringLiteral(" правка"));
+    QTest::qWait(10);
+
+    QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("текст\n"), text(), "Ctrl+Z с клавиатуры отменяет");
+
+    QTest::keyClick(&editor, Qt::Key_Y, Qt::ControlModifier);
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("текст правка\n"), text(), "Ctrl+Y возвращает");
+
+    QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+    QTest::qWait(10);
+    QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
+    QTest::qWait(10);
+    // Ctrl+Shift+Z здесь — повтор, а не отмена: так его понимает система.
+    checkEqual(QStringLiteral("текст правка\n"), text(), "Ctrl+Shift+Z возвращает");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -496,6 +537,7 @@ int main(int argc, char** argv) {
     checkInlineStyle();
     checkInputRules();
     checkSelectionSurvivesOperation();
+    checkUndoFromKeyboard();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;

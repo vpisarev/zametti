@@ -200,9 +200,27 @@ void NoteEditor::rebuild(const Document& doc, int cursor, double ratio) {
 }
 
 void NoteEditor::keyPressEvent(QKeyEvent* event) {
+    // Отмену обрабатываем здесь, а не ярлыком окна: QTextEdit объявляет Ctrl+Z
+    // своим и глотает его — ярлык не срабатывает ни разу. Собственная история у
+    // нас всё равно своя, так что и клавиша должна быть нашей.
+    if (event->matches(QKeySequence::Undo)) {
+        undo();
+        return;
+    }
+    if (event->matches(QKeySequence::Redo)) {
+        redo();
+        return;
+    }
+
     const bool plainEnter = (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
                             (event->modifiers() & ~Qt::KeypadModifier) == Qt::NoModifier;
     if (plainEnter && runOperation(splitBlockAtCursor)) return;
+
+    // Shift+Enter — «другое»: в абзаце разрезает, в списке переносит строку
+    // внутри пункта.
+    const bool shiftEnter = (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
+                            (event->modifiers() & ~Qt::KeypadModifier) == Qt::ShiftModifier;
+    if (shiftEnter && runOperation(splitBlockOtherwiseAtCursor)) return;
     if (event->key() == Qt::Key_Backspace && event->modifiers() == Qt::NoModifier &&
         runOperation(unwrapListItemAtCursor))
         return;

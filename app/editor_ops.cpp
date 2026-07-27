@@ -583,7 +583,78 @@ bool toggleTaskAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     return true;
 }
 
+namespace {
+
+// Разрез блока по курсору — то, что делает Enter там, где перенос строки не
+// подходит. Объявлена заранее: ею пользуются оба входа.
+bool hardSplit(QTextDocument& doc, QTextCursor& cursor);
+
+// Мягкий перенос: строка внутри того же блока. В документе это разделитель
+// строк, а признак говорит читателю, что вернуть надо перевод строки, а не
+// чужой U+2028 из самого текста заметки.
+void insertSoftBreak(QTextCursor& cursor, const QTextBlock& block) {
+    QTextCharFormat format = block.charFormat();
+    format.setProperty(BreakSourceProperty, int(BreakNewline));
+    cursor.beginEditBlock();
+    cursor.insertText(QString(QChar::LineSeparator), format);
+    cursor.endEditBlock();
+}
+
+// Стоим ли на пустой строке внутри блока: сразу за мягким переносом.
+bool onEmptySoftLine(const QTextCursor& cursor, const QTextBlock& block) {
+    const int inBlock = cursor.positionInBlock();
+    return inBlock > 0 && block.text().at(inBlock - 1) == QChar::LineSeparator;
+}
+
+// Переносится ли строка внутри этого блока без потерь. Проверено на ядре:
+// абзац, цитата и пункты списка — да; заголовок — нет, многострочного
+// заголовка markdown не знает.
+bool acceptsSoftBreak(const QTextBlock& block) {
+    if (isRawBlock(block)) return false;
+    const Kind kind = kindOf(block);
+    return kind == Kind::Paragraph || kind == Kind::Quote || isList(kind);
+}
+
+}  // namespace
+
+bool splitBlockOtherwiseAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+    const QTextBlock block = cursor.block();
+    // Где Enter переносит строку — режем; где заводит блок — переносим.
+    if (!isRawBlock(block) && kindOf(block) == Kind::Paragraph) return hardSplit(doc, cursor);
+    if (!isRawBlock(block) && kindOf(block) == Kind::Quote) return hardSplit(doc, cursor);
+    if (acceptsSoftBreak(block)) {
+        insertSoftBreak(cursor, block);
+        return true;
+    }
+    return splitBlockAtCursor(doc, cursor);
+}
+
 bool splitBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+    const QTextBlock block = cursor.block();
+
+    // Обычный текст и цитата: Enter переносит строку внутри абзаца. Второй
+    // подряд, на пустой строке, абзац всё-таки разрезает — пустую строку внутри
+    // абзаца markdown не выражает, она его и заканчивает.
+    if (!isRawBlock(block) &&
+        (kindOf(block) == Kind::Paragraph || kindOf(block) == Kind::Quote)) {
+        if (!onEmptySoftLine(cursor, block)) {
+            insertSoftBreak(cursor, block);
+            return true;
+        }
+        // Висящий перенос убираем: он был началом этой пустой строки.
+        cursor.beginEditBlock();
+        cursor.deletePreviousChar();
+        const bool done = hardSplit(doc, cursor);
+        cursor.endEditBlock();
+        return done;
+    }
+
+    return hardSplit(doc, cursor);
+}
+
+namespace {
+
+bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
     const QTextBlock block = cursor.block();
     const QTextBlockFormat format = block.blockFormat();
     const int number = block.blockNumber();
@@ -642,6 +713,8 @@ bool splitBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     cursor.endEditBlock();
     return true;
 }
+
+}  // namespace
 
 bool unwrapListItemAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     if (cursor.hasSelection() || !cursor.atBlockStart()) return false;

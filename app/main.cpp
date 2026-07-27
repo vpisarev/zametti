@@ -123,7 +123,9 @@ void printHelp() {
         "  Ctrl+0            исходный масштаб\n"
         "  Ctrl+S            сохранить сейчас\n"
         "  Ctrl+Z, Ctrl+Y    отменить, вернуть\n"
-        "  Enter             новый пункт списка; на пустом пункте — выйти из него\n"
+        "  Enter             в тексте — перенос строки, второй подряд — новый абзац;\n"
+        "                    в списке — новый пункт, на пустом пункте выйти из него\n"
+        "  Shift+Enter       наоборот: в тексте новый абзац, в пункте перенос строки\n"
         "  Backspace         в начале пункта — сделать его абзацем\n"
         "  Tab, Shift+Tab    двигать пункт по уровням вложенности\n"
         "  %s%s  переключить задачу: сделана или нет\n"
@@ -344,9 +346,9 @@ int main(int argc, char** argv) {
              [&] { stepZoom(1.0 / zametti::appearance().zoomStep); });
     shortcut(QKeySequence(QStringLiteral("Ctrl+0")), [&] { editor.applyZoom(1.0); });
 
+    // Отмена и повтор живут в самом редакторе: QTextEdit объявляет их своими и
+    // до ярлыка окна они не доходят.
     shortcut(QKeySequence::Save, [&] { editor.save(true); });
-    shortcut(QKeySequence::Undo, [&] { editor.undo(); });
-    shortcut(QKeySequence::Redo, [&] { editor.redo(); });
 
     // Фокус ушёл из приложения — момент, когда человек переключился на что-то
     // другое и меньше всего ждёт потери правок.

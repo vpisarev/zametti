@@ -9,6 +9,7 @@
 #include "document_builder.h"
 #include "document_reader.h"
 #include "document_saver.h"
+#include "editor_ops.h"
 #include "parser.h"
 #include "serializer.h"
 #include "test_util.h"
@@ -252,6 +253,36 @@ void checkBareLinks() {
           "испорченный читатель ловится и с новой сверкой");
 }
 
+// Enter в конце абзаца оставляет висящий перенос. В файле он даёт пустую
+// строку, а пустая строка абзац заканчивает — без уборки самопроверка не дала
+// бы записать.
+void checkTrailingSoftBreak() {
+    const QString path = pathFor("висящий-перенос.md");
+    check(writeFile(path, "текст\n"), "не записать исходник");
+
+    QTextDocument doc;
+    buildFrom("текст\n", doc);
+    // Через саму операцию, а не вставкой разделителя: у настоящего переноса есть
+    // пометка, по которой читатель узнаёт в нём перевод строки.
+    QTextCursor cursor(&doc);
+    cursor.movePosition(QTextCursor::EndOfBlock);
+    zametti::splitBlockAtCursor(doc, cursor);
+
+    const zametti::SaveOutcome outcome =
+        zametti::saveDocument(doc, path, QStringLiteral("test"));
+    check(outcome.result != zametti::SaveResult::Rescued,
+          "висящий перенос не должен уводить в аварийный файл");
+    checkEqual("текст\n", readFile(path), "в файл висящий перенос не идёт");
+
+    // А настоящий перенос между строками остаётся.
+    const QString kept = pathFor("перенос-между.md");
+    check(writeFile(kept, "первая\nвторая\n"), "не записать исходник");
+    QTextDocument two;
+    buildFrom("первая\nвторая\n", two);
+    zametti::saveDocument(two, kept, QStringLiteral("test"));
+    checkEqual("первая\nвторая\n", readFile(kept), "перенос между строками сохраняется");
+}
+
 // Записать некуда — старый файл всё равно цел.
 void checkFailure() {
     const QString path = g_dir + QStringLiteral("/нет-такого-каталога/файл.md");
@@ -289,6 +320,7 @@ int main(int argc, char** argv) {
 
     checkEmptyParagraphs();
     checkEdgeSpaces();
+    checkTrailingSoftBreak();
     checkBareLinks();
     checkRescue();
     checkFailure();

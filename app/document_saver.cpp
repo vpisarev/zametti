@@ -74,6 +74,12 @@ bool sameSkeleton(const Document& a, const Document& b) {
 Block withoutEdgeSpaces(Block block) {
     if (!block.rawSource.empty() || block.kind == Kind::Code) return block;
 
+    // Висящий перенос в конце — след только что нажатого Enter. В файле он даёт
+    // пустую строку, а пустая строка абзац заканчивает: разбор вернул бы текст
+    // без неё, и самопроверка честно не дала бы записать. Спаны за пределы
+    // текста не заходят, пересчитывать их не нужно.
+    while (!block.text.empty() && block.text.back() == '\n') block.text.pop_back();
+
     const std::string& text = block.text;
     std::vector<int> map(text.size() + 1, 0);
     std::string out;
