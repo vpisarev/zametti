@@ -19,7 +19,6 @@
 
 #include "test_util.h"
 
-#include <QAbstractTextDocumentLayout>
 #include <QApplication>
 #include <QKeySequence>
 #include <QScrollBar>
@@ -371,13 +370,18 @@ void checkUndo() {
     }
 }
 
-// Пункт, ставший абзацем, не должен сдвигаться на месте. Отбивка одна на любой
-// стык блоков, поэтому его верх остаётся там же, где был. Раньше у границ списка
-// были свои значения — замер: 0 у пункта против 13.01 у абзаца, — и снятый
-// маркер утаскивал строку вниз.
-void checkSpacingDoesNotJump() {
+// Ритм страницы вокруг списка. Он намеренно несимметричен: список идёт вплотную
+// под вводной строкой — так его и набирают, строка, Enter, "- " — а после списка
+// стоит заметный воздух, как пустая строка в самом файле.
+//
+// Проверка нужна ровно потому, что однажды это уже «выровняли»: одна отбивка на
+// все стыки убирала прыжок пункта, ставшего абзацем, но вид от этого стал явно
+// хуже — огромный зазор между вводной строкой и первым пунктом.
+void checkListRhythm() {
     const QString path = writeNote(
-        "отбивка.md", QStringLiteral("задачки:\n\n- e\n- второй пункт\n\nхвост\n"));
+        "ритм.md",
+        QStringLiteral("вводная строка:\n\n- первый\n- второй\n\nабзац после\n\n"
+                       "ещё абзац\n"));
 
     zametti::NoteEditor editor;
     editor.resize(700, 400);
@@ -387,41 +391,16 @@ void checkSpacingDoesNotJump() {
     editor.openFile(path);
     QTest::qWait(20);
 
-    auto topOf = [&editor](int number) {
-        return editor.document()->documentLayout()->blockBoundingRect(
-            editor.document()->findBlockByNumber(number)).top();
+    auto marginOf = [&editor](int number) {
+        return editor.document()->findBlockByNumber(number).blockFormat().topMargin();
     };
-    const qreal before = topOf(1);
 
-    QTextCursor cursor = editor.textCursor();
-    cursor.setPosition(editor.document()->findBlockByNumber(1).position());
-    editor.setTextCursor(cursor);
-    QTest::keyClick(&editor, Qt::Key_Backspace);
-    QTest::qWait(10);
-
-    ZT_EQ("пункт, ставший абзацем, остался на месте", std::to_string(int(before)),
-          std::to_string(int(topOf(1))));
-
-    // И отбивка на всех стыках одинакова: абзац к списку, список к абзацу,
-    // абзац к абзацу.
-    const QString rhythm = writeNote(
-        "ритм.md",
-        QStringLiteral("абзац\n\n- пункт\n- пункт\n\nабзац\n\nабзац\n"));
-    editor.openFile(rhythm);
-    QTest::qWait(20);
-
-    std::string margins;
-    for (QTextBlock block = editor.document()->begin(); block.isValid();
-         block = block.next()) {
-        if (block.blockNumber() == 0) continue;
-        // Внутри списка отбивки нет вовсе — её и не сравниваем.
-        if (zametti::isListBlock(block) &&
-            zametti::isListBlock(block.previous()))
-            continue;
-        if (!margins.empty()) margins += " ";
-        margins += std::to_string(int(block.blockFormat().topMargin()));
-    }
-    ZT_EQ("отбивка одинакова на всех стыках", std::string("13 13 13"), margins);
+    ZT_TRUE("список идёт вплотную под вводной строкой",
+            marginOf(1) < marginOf(4));
+    ZT_TRUE("внутри списка отбивки нет", marginOf(2) <= 0.01);
+    ZT_TRUE("после списка воздуха больше, чем между абзацами",
+            marginOf(3) > marginOf(4));
+    ZT_TRUE("между абзацами отбивка есть", marginOf(4) > 0.01);
 }
 
 }  // namespace
@@ -440,7 +419,7 @@ int main(int argc, char** argv) {
     for (const Case& c : kInputCases) run(c);
     for (const Case& c : kTaskCases) run(c);
     checkUndo();
-    checkSpacingDoesNotJump();
+    checkListRhythm();
 
     fs::remove_all(g_dir);
     return zt::report("списки");
