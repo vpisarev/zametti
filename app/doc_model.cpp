@@ -39,4 +39,27 @@ int ordinalOf(const QTextBlock& block) {
     return ordinal;
 }
 
+void ListRuns::reset() {
+    for (Level& level : levels_) level.alive = false;
+}
+
+bool ListRuns::startsNewRun(int level, bool ordered) const {
+    return level >= 0 && size_t(level) < levels_.size() && levels_[size_t(level)].alive &&
+           levels_[size_t(level)].ordered != ordered;
+}
+
+int ListRuns::next(int level, bool ordered) {
+    if (level < 0) level = 0;
+    const size_t index = size_t(level);
+    if (levels_.size() <= index + 1) levels_.resize(index + 2);
+
+    Level& own = levels_[index];
+    own.ordinal = (own.alive && own.ordered == ordered) ? own.ordinal + 1 : 1;
+    own.alive = true;
+    own.ordered = ordered;
+    // Всё, что глубже, закончилось вместе с предыдущим пунктом этого уровня.
+    for (size_t k = index + 1; k < levels_.size(); ++k) levels_[k].alive = false;
+    return own.ordinal;
+}
+
 }  // namespace zametti

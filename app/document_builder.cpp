@@ -16,6 +16,7 @@
 
 #include "document_builder.h"
 
+#include "editor_ops.h"
 #include "marker.h"
 #include "settings.h"
 
@@ -196,41 +197,6 @@ void applySpans(QTextDocument& doc, int textStart, const Block& b, qreal linePoi
     }
 }
 
-// Прогон списка на каждом уровне вложенности. Ключ — не сам Kind, а его проекция
-// (level, isOrdered): Bullet, TaskUnchecked и TaskChecked принадлежат одному
-// семейству и прогон не рвут. Прогон переживает вложенный подсписок, иначе
-// нумерация начнётся заново — "1. 2. 1." вместо "1. 2. 3.".
-struct ListState {
-    struct Level {
-        int ordinal = 0;
-        bool ordered = false;
-        bool alive = false;
-        qreal contentCol = 0.0;   // где начинается текст пункта этого уровня
-    };
-    std::vector<Level> levels;
-
-    void reset() {
-        for (Level& l : levels) l.alive = false;
-    }
-
-    // Начинается ли на этом уровне новый список. Уровень глубже прежнего — это
-    // подсписок того же дерева, а вот другая нумерация на уже открытом уровне
-    // означает, что предыдущий список кончился и начался следующий.
-    bool startsNewRun(size_t level, bool ordered) const {
-        return level < levels.size() && levels[level].alive && levels[level].ordered != ordered;
-    }
-
-    int nextOrdinal(size_t level, bool ordered) {
-        if (levels.size() <= level + 1) levels.resize(level + 2);
-        Level& l = levels[level];
-        l.ordinal = (l.alive && l.ordered == ordered) ? l.ordinal + 1 : 1;
-        l.alive = true;
-        l.ordered = ordered;
-        for (size_t k = level + 1; k < levels.size(); ++k) levels[k].alive = false;
-        return l.ordinal;
-    }
-};
-
 }  // namespace
 
 void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
@@ -270,7 +236,7 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
     // формат ставится на него, иначе сверху появится пустой абзац.
     bool first = true;
     bool prevList = false;
-    ListState lists;
+    ListRuns runs;
 
     for (const Block& b : doc) {
         const bool raw = !b.rawSource.empty();
@@ -295,7 +261,7 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
         // ничего. Спрашиваем состояние прогонов.
         const bool sameList =
             list && prevList &&
-            !lists.startsNewRun(static_cast<size_t>(b.level), isOrdered(b.kind));
+            !runs.startsNewRun(b.level, isOrdered(b.kind));
         qreal topMargin = appearance().blockSpacing;
         if (sameList) topMargin = 0;
         else if (list && prevList)
@@ -366,20 +332,11 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
         blockFmt.setTopMargin(first ? 0 : topMargin * lineUnit);
         blockFmt.setBottomMargin(0);
 
-        if (list) {
-            const size_t level = static_cast<size_t>(b.level);
-            const int ordinal = lists.nextOrdinal(level, isOrdered(b.kind));
-
-            // Под маркер отводится поле слева; сам он в текст не попадает и
-            // рисуется по геометрии строки (см. marker.h). Поэтому продолжения
-            // пункта выравниваются по его тексту сами, без висячего отступа.
-            const qreal indent = lists.levels[level].contentCol;
-            const qreal cell = markerColumn(b.kind, ordinal, base);
-            lists.levels[level + 1].contentCol = indent + cell;
-            blockFmt.setLeftMargin(appearance().listIndent * charUnit + indent + cell);
-        } else {
-            lists.reset();
-        }
+        // Прогоны ведём только ради отбивки: левое поле проставит
+        // applyListGeometry одним проходом в конце — правило отступа записано
+        // там, и второй его копии здесь быть не должно.
+        if (list) runs.next(b.level, isOrdered(b.kind));
+        else runs.reset();
 
         QFont lineFont = base;
         lineFont.setPointSizeF(linePoint);
@@ -402,6 +359,11 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
         enlargeFallbackGlyphs(target, textStart, text, linePoint, primaryFont);
         prevList = list;
     }
+
+    // Под маркер отводится поле слева; сам он в текст не попадает и рисуется по
+    // геометрии строки (см. marker.h). Поэтому продолжения пункта выравниваются
+    // по его тексту сами, без висячего отступа.
+    applyListGeometry(target, {0, target.blockCount() - 1});
 
     cursor.endEditBlock();
 }

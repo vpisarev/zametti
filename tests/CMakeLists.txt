@@ -56,6 +56,13 @@ if(TARGET zametti-view)
     add_test(NAME save COMMAND save_test ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(save PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    add_executable(ops_test ops_test.cpp)
+    target_link_libraries(ops_test PRIVATE zametti-view zametti-warnings)
+    target_include_directories(ops_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_test(NAME ops COMMAND ops_test)
+    set_tests_properties(ops PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     add_test(NAME view-without-widgets
              COMMAND ${CMAKE_COMMAND} -DBINARY=$<TARGET_FILE:reader_test>
                      -P ${CMAKE_CURRENT_SOURCE_DIR}/no_widgets_check.cmake)

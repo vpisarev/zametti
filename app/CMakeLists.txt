@@ -23,6 +23,8 @@ add_library(zametti-view STATIC
     document_reader.cpp
     document_saver.h
     document_saver.cpp
+    editor_ops.h
+    editor_ops.cpp
     marker.h
     marker.cpp
     settings.h
