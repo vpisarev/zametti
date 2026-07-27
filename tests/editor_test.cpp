@@ -1066,6 +1066,71 @@ void checkSelectionHasNoGaps() {
                "внутри выделения не должно быть незакрашенных рядов");
 }
 
+// Пустые строки — содержимое заметки, а не мусор: ими отбивают куски текста.
+// Набрали, сохранили, открыли заново — они на месте. В файле пустая строка
+// пустой быть не может (там она разделяет блоки), поэтому в неё ставится
+// неразрывный пробел — тот же приём, что и с отступами.
+void checkBlankLinesSurviveSaving() {
+    const QString path = writeNote("пустые-строки.md",
+                                   QStringLiteral("- [ ] дело\n\nдо 19 июля:\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    int target = -1;
+    for (QTextBlock block = editor.document()->begin(); block.isValid();
+         block = block.next())
+        if (block.text().startsWith(QStringLiteral("до 19"))) {
+            target = block.blockNumber();
+            break;
+        }
+    check(target > 0, "строка \"до 19\" должна найтись");
+
+    QTextCursor cursor = editor.textCursor();
+    cursor.setPosition(editor.document()->findBlockByNumber(target).position());
+    editor.setTextCursor(cursor);
+    for (int i = 0; i < 10; ++i) {
+        QTest::keyClick(&editor, Qt::Key_Return);
+        QTest::qWait(5);
+    }
+    const int before = editor.document()->blockCount();
+    check(before > 5, "пустые строки должны появиться в документе");
+
+    editor.save(false);
+    QTest::qWait(20);
+    editor.openFile(writeNote("другая.md", QStringLiteral("другая\n")));
+    QTest::qWait(20);
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    checkEqual(QString::number(before), QString::number(editor.document()->blockCount()),
+               "пустые строки пережили запись и перечитывание");
+
+    // А хвост пустых строк в конце заметки сохраняться не должен: он набирается
+    // случайно и ничего не отбивает.
+    QTextCursor tail = editor.textCursor();
+    tail.movePosition(QTextCursor::End);
+    editor.setTextCursor(tail);
+    const int blocks = editor.document()->blockCount();
+    for (int i = 0; i < 6; ++i) {
+        QTest::keyClick(&editor, Qt::Key_Return);
+        QTest::qWait(5);
+    }
+    editor.save(false);
+    QTest::qWait(20);
+    editor.openFile(writeNote("третья.md", QStringLiteral("третья\n")));
+    QTest::qWait(20);
+    editor.openFile(path);
+    QTest::qWait(20);
+    checkEqual(QString::number(blocks), QString::number(editor.document()->blockCount()),
+               "хвост пустых строк в конце не сохраняется");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1108,6 +1173,7 @@ int main(int argc, char** argv) {
     checkViewHoldsForEveryOperation();
     checkColumnAcrossMargins();
     checkSelectionHasNoGaps();
+    checkBlankLinesSurviveSaving();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;

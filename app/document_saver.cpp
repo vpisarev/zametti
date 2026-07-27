@@ -226,10 +226,6 @@ Block withEdgesNormalised(Block block) {
     }
     if (!block.rawSource.empty()) return block;
 
-    // Висящий перенос в конце — след только что нажатого Enter. В файле он даёт
-    // пустую строку, а пустая строка абзац заканчивает.
-    while (!block.text.empty() && block.text.back() == '\n') block.text.pop_back();
-
     const std::string& text = block.text;
     std::vector<int> map(text.size() + 1, 0);
     std::string out;
@@ -245,11 +241,19 @@ Block withEdgesNormalised(Block block) {
         size_t stop = end;
         while (stop > start && isSpace(text[stop - 1])) --stop;
 
-        // Пустая строка внутри блока — не содержимое: в файле она блок
-        // заканчивает, и разбор вернул бы два блока вместо одного. Такую строку
-        // выбрасываем вместе с её разделителем.
+        // Пустая строка внутри блока — содержимое: в заметках ею отбивают куски
+        // текста, и терять её нельзя. В файле она пустой быть не может — пустая
+        // строка блок заканчивает, — поэтому в неё ставится неразрывный пробел.
+        // Тот же приём, что и с отступами, и по той же причине.
+        //
+        // Только в обычном тексте и цитате. Пустой пункт списка — не отбивка, а
+        // след только что нажатого Enter, и невидимый знак ему ни к чему.
+        const bool keepBlank = block.kind == Kind::Paragraph || block.kind == Kind::Quote;
         const bool blank = start >= stop;
-        if (!blank && !out.empty()) out.push_back('\n');
+        if (!blank || keepBlank) {
+            if (!out.empty()) out.push_back('\n');
+            if (blank) out += kNbsp;
+        }
 
         // Ведущие пробелы: каждый становится неразрывным. Отступ значим, им
         // рисуют схемы и лесенки.
@@ -353,6 +357,27 @@ Document withoutEmptyNested(Document doc) {
 //
 // Пустой пункт списка верхнего уровня при этом остаётся: "-" в файле
 // записывается прекрасно.
+// Пустой ли это абзац — то есть строка, которой в заметке отбивают куски текста.
+// Неразрывный пробел мы ставим в такие строки сами, поэтому он тоже считается
+// пустотой.
+bool isBlankParagraph(const Block& block) {
+    if (!block.rawSource.empty() || block.kind != Kind::Paragraph) return false;
+    for (size_t i = 0; i < block.text.size();) {
+        const unsigned char c = static_cast<unsigned char>(block.text[i]);
+        if (c == 0xC2 && i + 1 < block.text.size() &&
+            static_cast<unsigned char>(block.text[i + 1]) == 0xA0) {
+            i += 2;
+            continue;
+        }
+        if (c == ' ' || c == '\t' || c == '\n') {
+            ++i;
+            continue;
+        }
+        return false;
+    }
+    return true;
+}
+
 Document documentForFile(Document doc) {
     Document out;
     out.reserve(doc.size());
@@ -360,10 +385,34 @@ Document documentForFile(Document doc) {
         Block trimmed = withMarkupThatSurvives(withStrikeOnWholeWords(withTrimmedSpans(
             withCodeSpansPerLine(withHeadingOnOneLine(
                 withRawNewline(withEdgesNormalised(std::move(block))))))));
+        // Пустой абзац в файле пустым быть не может: пустая строка там —
+        // разделитель блоков, а не блок. Ставим в него неразрывный пробел, и
+        // отбивка сохраняется — это заметки, и пустые строки в них значимы.
         if (trimmed.rawSource.empty() && trimmed.kind == Kind::Paragraph &&
             trimmed.text.empty())
-            continue;
+            trimmed.text = kNbsp;
         out.push_back(std::move(trimmed));
+    }
+
+    // А вот в конце документа пустые строки не нужны: хвост из них набирается
+    // случайно и ничего не отбивает.
+    while (!out.empty() && isBlankParagraph(out.back())) out.pop_back();
+    if (!out.empty()) {
+        Block& last = out.back();
+        if (last.rawSource.empty() && last.kind != Kind::Code) {
+            while (!last.text.empty() && last.text.back() == '\n') last.text.pop_back();
+            // Хвостовые неразрывные строки последнего блока — тот же случай.
+            const std::string nbsp = kNbsp;
+            while (last.text.size() >= nbsp.size() + 1 &&
+                   last.text.compare(last.text.size() - nbsp.size(), nbsp.size(), nbsp) == 0 &&
+                   last.text[last.text.size() - nbsp.size() - 1] == '\n') {
+                last.text.erase(last.text.size() - nbsp.size() - 1);
+            }
+            if (last.text == nbsp) last.text.clear();
+        }
+        if (out.back().rawSource.empty() && out.back().kind == Kind::Paragraph &&
+            out.back().text.empty())
+            out.pop_back();
     }
     return withoutEmptyNested(std::move(out));
 }

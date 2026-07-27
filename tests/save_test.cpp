@@ -259,13 +259,12 @@ void checkEdgeSpaces() {
         checkEqual(c.expected, readFile(path), c.what);
     }
 
-    // Пустая строка внутри блока — не содержимое: в файле она блок заканчивает.
-    // Прийти она может вставкой, и запись не должна на ней спотыкаться.
+    // Пустая строка внутри абзаца — содержимое: в заметках ею отбивают куски
+    // текста. В файле пустой она быть не может, там пустая строка блок
+    // заканчивает, — поэтому в неё ставится неразрывный пробел.
     {
         const QString path = pathFor("пустая-внутри.md");
         check(writeFile(path, "первая\nвторая\n"), "не записать исходник");
-        // Строим прямо из IR: с клавиатуры такое больше не набрать, а вставкой
-        // прийти может.
         zametti::Block block;
         block.text = "первая\n   \nвторая";
         QTextDocument doc;
@@ -274,8 +273,26 @@ void checkEdgeSpaces() {
         const zametti::SaveOutcome outcome =
             zametti::saveDocument(doc, path, QStringLiteral("test"));
         check(outcome.result != zametti::SaveResult::Rescued,
-              "строка из пробелов внутри блока не должна уводить в аварийный файл");
-        checkEqual("первая\nвторая\n", readFile(path), "пустая строка выброшена");
+              "пустая строка внутри блока не должна уводить в аварийный файл");
+        checkEqual("первая\n\xC2\xA0\nвторая\n", readFile(path),
+                   "пустая строка сохранена неразрывным пробелом");
+    }
+
+    // А в конце документа пустые строки не нужны: хвост из них набирается
+    // случайно и ничего не отбивает.
+    {
+        const QString path = pathFor("хвост-пустых.md");
+        check(writeFile(path, "текст\n"), "не записать исходник");
+        zametti::Block block;
+        block.text = "текст\n\n\n";
+        QTextDocument doc;
+        zametti::buildDocument({block}, doc);
+
+        const zametti::SaveOutcome outcome =
+            zametti::saveDocument(doc, path, QStringLiteral("test"));
+        check(outcome.result != zametti::SaveResult::Rescued,
+              "хвост пустых строк не должен уводить в аварийный файл");
+        checkEqual("текст\n", readFile(path), "хвост пустых строк выброшен");
     }
 
     // Разметка не может начинаться или кончаться пробелом: markdown такое не
