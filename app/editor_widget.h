@@ -15,10 +15,12 @@
 #include "note_view.h"
 
 #include <QElapsedTimer>
+#include <QFileSystemWatcher>
 #include <QKeySequence>
 #include <QString>
 #include <QTimer>
 
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -44,6 +46,11 @@ public:
     void undo();
     void redo();
 
+    // Файл изменился снаружи, а у нас есть несохранённые правки: пока человек
+    // не решит, чьё содержимое брать, мы ничего не трогаем.
+    bool hasExternalConflict() const { return externalPending_; }
+    void resolveExternalConflict(bool takeExternal);
+
     // Сохранить, если есть что. interactive — показывать ли окно с ошибкой.
     void save(bool interactive);
 
@@ -52,6 +59,9 @@ public:
 
 signals:
     void fileChanged(const QString& path);
+    // Файл изменился снаружи, а у нас есть несохранённые правки. Окно с
+    // вопросом показывает тот, кто нас создал: виджет о нём знать не должен.
+    void externalChangeDetected();
 
 protected:
     // Обменный формат — сам markdown. Переопределять обязательно: иначе Qt
@@ -82,6 +92,11 @@ private:
     void rebuild(const Document& doc, int cursor, double ratio);
     void recordEdit();
     void onContentsChanged();
+    void onFileChanged(const QString& path);
+    // Применяет внешнее содержимое как обычную правку: один шаг истории, и undo
+    // возвращает то, что было до внешнего изменения.
+    void adoptExternal(const std::string& text);
+    void watchFile();
 
     EditHistory history_;
     QString path_;
@@ -106,6 +121,14 @@ private:
         bool (*op)(QTextDocument&, QTextCursor&) = nullptr;
     };
     std::vector<std::pair<QKeySequence, InlineStyle>> inlineBindings_;
+    // Следим за файлом. Хеш нам не нужен: заметки маленькие, и содержимое
+    // сравнивается побайтово — точнее и короче, чем рассуждать о коллизиях.
+    // Время правки файла — только подсказка, ему мы не верим.
+    QFileSystemWatcher watcher_;
+    QByteArray knownContent_;
+    bool externalPending_ = false;
+    std::string externalText_;
+
     QTimer autosave_;
     QElapsedTimer sinceLastEdit_;
     QString lastComplaint_;

@@ -72,6 +72,7 @@ NoteEditor::NoteEditor(QWidget* parent)
     connect(&autosave_, &QTimer::timeout, this, [this] { save(true); });
     connect(document(), &QTextDocument::contentsChanged, this,
             &NoteEditor::onContentsChanged);
+    connect(&watcher_, &QFileSystemWatcher::fileChanged, this, &NoteEditor::onFileChanged);
 }
 
 bool NoteEditor::openFile(const QString& path) {
@@ -85,6 +86,10 @@ bool NoteEditor::openFile(const QString& path) {
 
     path_ = path;
     lastComplaint_.clear();
+    externalPending_ = false;
+    externalText_.clear();
+    knownContent_ = QByteArray(text.data(), qsizetype(text.size()));
+    watchFile();
     // Серию набора обрываем: иначе первая правка в новой заметке подмешалась бы
     // к её исходному состоянию и отменить её было бы нечем.
     sinceLastEdit_.invalidate();
@@ -94,6 +99,53 @@ bool NoteEditor::openFile(const QString& path) {
     rebuild(doc, 0, 0.0);
     emit fileChanged(path_);
     return true;
+}
+
+void NoteEditor::watchFile() {
+    if (!watcher_.files().isEmpty()) watcher_.removePaths(watcher_.files());
+    if (!path_.isEmpty()) watcher_.addPath(path_);
+}
+
+void NoteEditor::onFileChanged(const QString& path) {
+    // Замена файла через переименование снимает слежение — возвращаем его.
+    // Наш собственный QSaveFile делает ровно это.
+    if (!watcher_.files().contains(path)) watcher_.addPath(path);
+
+    std::string text;
+    if (!readFile(path, text)) return;   // файл унесли: ждём, пока вернётся
+    const QByteArray content(text.data(), qsizetype(text.size()));
+    if (content == knownContent_) return;   // это мы сами и записали
+    knownContent_ = content;
+
+    // Без несохранённых правок внешнее содержимое — просто ещё один шаг
+    // истории: undo вернёт то, что было до него.
+    if (!document()->isModified()) {
+        adoptExternal(text);
+        return;
+    }
+
+    // С правками не затираем молча ничего: спрашиваем и ждём ответа.
+    externalPending_ = true;
+    externalText_ = text;
+    emit externalChangeDetected();
+}
+
+void NoteEditor::resolveExternalConflict(bool takeExternal) {
+    if (!externalPending_) return;
+    externalPending_ = false;
+    const std::string text = std::move(externalText_);
+    externalText_.clear();
+    // «Оставить моё» ничего не делает: наша версия перезапишет файл при
+    // ближайшем сохранении, и это ровно то, о чём человека спросили.
+    if (takeExternal) adoptExternal(text);
+}
+
+void NoteEditor::adoptExternal(const std::string& text) {
+    Document ir = parse(text);
+    history_.push(ir, textCursor().position());
+    sinceLastEdit_.invalidate();
+    rebuild(ir, textCursor().position(), scrollRatio());
+    document()->setModified(false);
 }
 
 void NoteEditor::applyZoom(qreal value) {
@@ -342,6 +394,12 @@ void NoteEditor::save(bool interactive) {
     if (outcome.result == SaveResult::Written || outcome.result == SaveResult::Unchanged) {
         document()->setModified(false);
         lastComplaint_.clear();
+        // Запоминаем, что теперь в файле: иначе слежение примет нашу же запись
+        // за чужую правку.
+        std::string written;
+        if (readFile(path_, written))
+            knownContent_ = QByteArray(written.data(), qsizetype(written.size()));
+        watchFile();
         return;
     }
 

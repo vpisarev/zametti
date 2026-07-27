@@ -16,6 +16,8 @@
 #include <QIcon>
 #include <QItemSelectionModel>
 #include <QKeySequence>
+#include <QMessageBox>
+#include <QPushButton>
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QSplitter>
@@ -252,6 +254,31 @@ int main(int argc, char** argv) {
     window.addWidget(&editor);
     window.setStretchFactor(1, 1);   // при растяжении окна растёт текст, а не панель
     window.setChildrenCollapsible(false);
+
+    // Файл изменился снаружи, а правки не сохранены. Окно неблокирующее: работа
+    // не встаёт, пока человек думает, и молча мы ничего не затираем.
+    QObject::connect(&editor, &zametti::NoteEditor::externalChangeDetected, &window, [&] {
+        auto* ask = new QMessageBox(&window);
+        ask->setAttribute(Qt::WA_DeleteOnClose);
+        ask->setWindowModality(Qt::NonModal);
+        ask->setIcon(QMessageBox::Question);
+        ask->setWindowTitle(QStringLiteral("zametti"));
+        ask->setText(QFileInfo(editor.filePath()).fileName() +
+                     QStringLiteral(" изменилась снаружи, а здесь есть несохранённые "
+                                    "правки."));
+        QPushButton* mine =
+            ask->addButton(QStringLiteral("Оставить мои"), QMessageBox::AcceptRole);
+        QPushButton* theirs =
+            ask->addButton(QStringLiteral("Взять внешние"), QMessageBox::DestructiveRole);
+        ask->setDefaultButton(mine);
+        ask->setInformativeText(
+            QStringLiteral("Оставить мои — внешняя версия будет перезаписана при "
+                           "сохранении. Взять внешние — правки можно вернуть отменой."));
+        QObject::connect(ask, &QMessageBox::finished, &window, [&editor, ask, theirs] {
+            editor.resolveExternalConflict(ask->clickedButton() == theirs);
+        });
+        ask->open();
+    });
 
     QObject::connect(&editor, &zametti::NoteEditor::fileChanged, &window,
                      [&window](const QString& file) {
