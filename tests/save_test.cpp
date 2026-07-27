@@ -274,6 +274,52 @@ void checkEdgeSpaces() {
         checkEqual("первая\nвторая\n", readFile(path), "пустая строка выброшена");
     }
 
+    // Разметка не может начинаться или кончаться пробелом: markdown такое не
+    // выражает. Проверено на ядре — курсив по слову круг проходит, курсив с
+    // пробелом на краю нет. Выделить курсивом стих вместе с отступами человек
+    // может, значит края надо поджимать.
+    {
+        struct SpanCase {
+            const char* text;
+            const char* expected;
+            const char* what;
+        };
+        const SpanCase cases[] = {
+            // Ведущие пробелы по дороге становятся неразрывными — это отступ.
+            {"  слово", "\xC2\xA0\xC2\xA0*слово*\n",
+             "ведущие пробелы уходят из курсива"},
+            {"слово  ", "_слово_\n", "концевые тоже"},
+            {"\xC2\xA0\xC2\xA0слово", "\xC2\xA0\xC2\xA0*слово*\n",
+             "и неразрывные, которыми держится отступ"},
+            // Знак начертания выбирает сериализатор: рядом с пробелом
+            // подчёркивание не открыло бы курсив, и он берёт звёздочку.
+            {"раз\nдва", "_раз\nдва_\n", "а перенос строки внутри разметки живёт"},
+            {"   ", "", "разметка из одних пробелов исчезает вовсе"},
+        };
+        int n = 0;
+        for (const SpanCase& c : cases) {
+            const QString path =
+                pathFor((std::string("курсив") + std::to_string(n++) + ".md").c_str());
+            check(writeFile(path, "заглушка\n"), "не записать исходник");
+
+            zametti::Block block;
+            block.text = c.text;
+            zametti::Span span;
+            span.offset = 0;
+            span.length = int(block.text.size());
+            span.italic = true;
+            block.inlines.push_back(span);
+            QTextDocument doc;
+            zametti::buildDocument({block}, doc);
+
+            const zametti::SaveOutcome outcome =
+                zametti::saveDocument(doc, path, QStringLiteral("test"));
+            check(outcome.result != zametti::SaveResult::Rescued,
+                  std::string(c.what) + ": не должно уводить в аварийный файл");
+            checkEqual(c.expected, readFile(path), c.what);
+        }
+    }
+
     // Записанное с неразрывными отступами устойчиво: второй проход ничего не
     // меняет, иначе файл переписывался бы при каждом сохранении.
     {

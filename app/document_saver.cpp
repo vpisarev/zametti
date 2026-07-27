@@ -50,6 +50,64 @@ namespace {
 
 bool isSpace(char c) { return c == ' ' || c == '\t'; }
 
+// Начинается ли в этом месте пробельный знак и сколько он занимает байт. Ноль —
+// не пробельный. Неразрывный пробел занимает два байта, и рубить его пополам
+// нельзя.
+int whitespaceAt(const std::string& text, size_t at) {
+    if (at >= text.size()) return 0;
+    const unsigned char c = static_cast<unsigned char>(text[at]);
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') return 1;
+    if (c == 0xC2 && at + 1 < text.size() &&
+        static_cast<unsigned char>(text[at + 1]) == 0xA0)
+        return 2;
+    return 0;
+}
+
+int whitespaceBefore(const std::string& text, size_t at) {
+    if (at == 0) return 0;
+    const unsigned char c = static_cast<unsigned char>(text[at - 1]);
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') return 1;
+    if (c == 0xA0 && at >= 2 && static_cast<unsigned char>(text[at - 2]) == 0xC2) return 2;
+    return 0;
+}
+
+// Разметка не может начинаться или кончаться пробелом: markdown такое просто не
+// выражает. Знак подчёркивания или звёздочка перед пробелом не открывают
+// начертание, и разобранное обратно расходится с документом.
+//
+// Проверено на ядре: курсив по слову проходит круг, курсив с пробелом на краю —
+// нет, и неразрывный пробел ничем не лучше обычного. Перенос строки внутри
+// разметки, наоборот, живёт прекрасно.
+//
+// Поэтому края разметки поджимаются внутрь. Выделить курсивом стих вместе с его
+// отступами человек может, а markdown этого не хранит — начертание достанется
+// самим строкам, без ведущих пробелов.
+Block withTrimmedSpans(Block block) {
+    if (!block.rawSource.empty() || block.kind == Kind::Code) return block;
+
+    for (Span& span : block.inlines) {
+        size_t from = size_t(qBound(0, span.offset, int(block.text.size())));
+        size_t to = size_t(qBound(int(from), span.offset + span.length,
+                                  int(block.text.size())));
+        while (from < to) {
+            const int width = whitespaceAt(block.text, from);
+            if (width == 0) break;
+            from += size_t(width);
+        }
+        while (to > from) {
+            const int width = whitespaceBefore(block.text, to);
+            if (width == 0) break;
+            to -= size_t(width);
+        }
+        span.offset = int(from);
+        span.length = int(to - from);
+    }
+    block.inlines.erase(std::remove_if(block.inlines.begin(), block.inlines.end(),
+                                       [](const Span& s) { return s.length <= 0; }),
+                        block.inlines.end());
+    return block;
+}
+
 // Совпадают ли строение и текст. Разметка внутри строки не сравнивается: см.
 // пояснение в самопроверке.
 bool sameSkeleton(const Document& a, const Document& b) {
@@ -158,7 +216,7 @@ Document forFile(Document doc) {
     Document out;
     out.reserve(doc.size());
     for (Block& block : doc) {
-        Block trimmed = withEdgesNormalised(std::move(block));
+        Block trimmed = withTrimmedSpans(withEdgesNormalised(std::move(block)));
         if (trimmed.rawSource.empty() && trimmed.kind == Kind::Paragraph &&
             trimmed.text.empty())
             continue;
