@@ -30,6 +30,30 @@ foreach(dir ${ZAMETTI_CORPUS})
     add_test(NAME corpus-${name} COMMAND corpus_test "${abs}" ${ZAMETTI_CORPUS_MUTATIONS})
 endforeach()
 
+# Слой модели документа: сборщик и читатель. Нужен QtGui, но не QtWidgets —
+# если цель не собралась (нет Qt), тесты просто не заводятся.
+if(TARGET zametti-view)
+    add_executable(reader_test reader_test.cpp)
+    target_link_libraries(reader_test PRIVATE zametti-view zametti-warnings)
+    target_include_directories(reader_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_test(NAME reader COMMAND reader_test)
+    set_tests_properties(reader PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # Те же инварианты по корпусам — каталоги те же, что у corpus_test.
+    foreach(dir ${ZAMETTI_CORPUS})
+        get_filename_component(name "${dir}" NAME)
+        get_filename_component(abs "${dir}" ABSOLUTE BASE_DIR ${CMAKE_SOURCE_DIR})
+        add_test(NAME reader-${name} COMMAND reader_test "${abs}")
+        set_tests_properties(reader-${name} PROPERTIES ENVIRONMENT
+                             "QT_QPA_PLATFORM=offscreen")
+    endforeach()
+
+    add_test(NAME view-without-widgets
+             COMMAND ${CMAKE_COMMAND} -DBINARY=$<TARGET_FILE:reader_test>
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/no_widgets_check.cmake)
+endif()
+
 add_test(NAME core-without-qt
          COMMAND ${CMAKE_COMMAND} -DCORE_DIR=${CMAKE_SOURCE_DIR}/zametti-core
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/no_qt_check.cmake)

@@ -8,7 +8,9 @@
 #include <QPainter>
 #include <QPaintEvent>
 #include <QResizeEvent>
+#include <QPalette>
 #include <QScrollBar>
+#include <QWidget>
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextFrame>
@@ -27,6 +29,16 @@ QFont baseFontFor(qreal zoom) {
 }
 
 }  // namespace
+
+void applyPalette(QWidget& view) {
+    QPalette palette = view.palette();
+    palette.setColor(QPalette::Base, appearance().pageBackground);
+    palette.setColor(QPalette::Highlight, appearance().selectionBackground);
+    // Выделение светлое, поэтому текст в нём остаётся тёмным: белый по
+    // умолчанию на таком фоне просто пропал бы.
+    palette.setColor(QPalette::HighlightedText, palette.color(QPalette::Text));
+    view.setPalette(palette);
+}
 
 void NoteView::setZoom(qreal zoom) {
     zoom_ = zoom;

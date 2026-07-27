@@ -20,8 +20,6 @@
 #include "settings.h"
 
 #include <QColor>
-#include <QPalette>
-#include <QWidget>
 #include <QFont>
 #include <QFontMetricsF>
 #include <QRawFont>
@@ -43,16 +41,43 @@ namespace {
 // новый абзац. QChar::LineSeparator даёт ровно это и, в отличие от '\n', не
 // разрывает QTextBlock. Длина в кодовых единицах та же, так что смещения спанов
 // остаются верными.
-QString toQt(const std::string& utf8) {
+// Позиция знака, заменённого разделителем строк, и то, чем он был.
+struct Break {
+    int at;
+    int source;
+};
+
+QString toQt(const std::string& utf8, std::vector<Break>& breaks) {
     QString s = QString::fromUtf8(utf8.data(), static_cast<qsizetype>(utf8.size()));
-    s.replace(QLatin1Char('\n'), QChar::LineSeparator);
+    for (qsizetype i = 0; i < s.size(); ++i) {
+        int source = 0;
+        if (s[i] == QLatin1Char('\n')) source = BreakNewline;
+        else if (s[i] == QLatin1Char('\r')) source = BreakCarriageReturn;
+        else if (s[i] == QChar::ParagraphSeparator) source = BreakParagraph;
+        if (source == 0) continue;
+        s[i] = QChar::LineSeparator;
+        breaks.push_back({static_cast<int>(i), source});
+    }
     return s;
 }
 
-QString withoutTrailingNewline(const std::string& text) {
+QString withoutTrailingNewline(const std::string& text, std::vector<Break>& breaks) {
     std::string copy = text;
     if (!copy.empty() && copy.back() == '\n') copy.pop_back();
-    return toQt(copy);
+    return toQt(copy, breaks);
+}
+
+// Помечает подменённые разделители. Пометка ложится на один знак, поэтому он
+// становится отдельным куском блока — читателю только это и нужно.
+void markBreaks(QTextDocument& doc, int textStart, const std::vector<Break>& breaks) {
+    QTextCursor cursor(&doc);
+    for (const Break& b : breaks) {
+        QTextCharFormat fmt;
+        fmt.setProperty(BreakSourceProperty, b.source);
+        cursor.setPosition(textStart + b.at);
+        cursor.setPosition(textStart + b.at + 1, QTextCursor::KeepAnchor);
+        cursor.mergeCharFormat(fmt);
+    }
 }
 
 // Байтовое смещение в UTF-8 → индекс в QString. Вызывается по возрастанию
@@ -138,7 +163,17 @@ void applySpans(QTextDocument& doc, int textStart, const Block& b, qreal linePoi
         const int to = map.at(static_cast<size_t>(s.offset) + static_cast<size_t>(s.length));
         if (to <= from) continue;
 
+        // Стиль записывается свойством, а не выводится обратно из оформления:
+        // заголовок набран жирным целиком, и «жирный» внутри него по весу
+        // шрифта было бы не отличить от самого заголовка.
+        int style = 0;
+        if (s.bold) style |= SpanBold;
+        if (s.italic) style |= SpanItalic;
+        if (s.strike) style |= SpanStrike;
+        if (s.code) style |= SpanCode;
+
         QTextCharFormat fmt;
+        if (style != 0) fmt.setProperty(SpanStyleProperty, style);
         if (s.bold) fmt.setFontWeight(QFont::Bold);
         if (s.italic) fmt.setFontItalic(true);
         if (s.strike) fmt.setFontStrikeOut(true);
@@ -198,16 +233,6 @@ struct ListState {
 
 }  // namespace
 
-void applyPalette(QWidget& view) {
-    QPalette palette = view.palette();
-    palette.setColor(QPalette::Base, appearance().pageBackground);
-    palette.setColor(QPalette::Highlight, appearance().selectionBackground);
-    // Выделение светлое, поэтому текст в нём остаётся тёмным: белый по
-    // умолчанию на таком фоне просто пропал бы.
-    palette.setColor(QPalette::HighlightedText, palette.color(QPalette::Text));
-    view.setPalette(palette);
-}
-
 void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
     target.setUndoRedoEnabled(false);
     target.clear();
@@ -252,7 +277,9 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
         const bool list = !raw && isList(b.kind);
 
         QTextBlockFormat blockFmt;
-        if (!raw) {
+        if (raw) {
+            blockFmt.setProperty(RawProperty, true);
+        } else {
             blockFmt.setProperty(KindProperty, static_cast<int>(b.kind));
             if (list) blockFmt.setProperty(LevelProperty, b.level);
         }
@@ -284,9 +311,19 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
         QTextCharFormat charFmt;
         charFmt.setFontPointSize(basePoint);
 
+        // Один завершающий перевод строки сборщик снимает: иначе у блока кода
+        // внизу висела бы лишняя пустая строка. Восстановить его по виду
+        // документа нельзя — пустой блок кода и блок из одной пустой строки
+        // выглядят одинаково, — поэтому он запоминается признаком.
+        const std::string& source = raw ? b.rawSource : b.text;
+        if (raw || b.kind == Kind::Code)
+            blockFmt.setProperty(TrailingNewlineProperty,
+                                 !source.empty() && source.back() == '\n');
+
         QString text;
+        std::vector<Break> breaks;
         if (raw) {
-            text = withoutTrailingNewline(b.rawSource);
+            text = withoutTrailingNewline(b.rawSource, breaks);
             charFmt.setForeground(appearance().rawColor);
         } else {
             switch (b.kind) {
@@ -301,9 +338,12 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
                 case Kind::Code:
                     // Отступ маленький: подложка идёт почти во всю колонку, как
                     // в остальных программах для заметок.
-                    text = withoutTrailingNewline(b.text);
+                    text = withoutTrailingNewline(b.text, breaks);
                     blockFmt.setLeftMargin(appearance().codeIndent * charUnit);
                     blockFmt.setBackground(appearance().codeBackground);
+                    blockFmt.setProperty(InfoProperty,
+                                         QString::fromUtf8(b.info.data(),
+                                                           qsizetype(b.info.size())));
                     linePoint = codePoint(basePoint, zoom);
                     charFmt.setFontPointSize(linePoint);
                     if (!appearance().codeFamily.isEmpty())
@@ -320,7 +360,7 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
                 default:
                     break;
             }
-            if (b.kind != Kind::Code) text = toQt(b.text);
+            if (b.kind != Kind::Code) text = toQt(b.text, breaks);
         }
 
         blockFmt.setTopMargin(first ? 0 : topMargin * lineUnit);
@@ -357,6 +397,7 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
 
         const int textStart = cursor.position();
         cursor.insertText(text, charFmt);
+        markBreaks(target, textStart, breaks);
         if (!raw && !b.inlines.empty()) applySpans(target, textStart, b, linePoint, zoom);
         enlargeFallbackGlyphs(target, textStart, text, linePoint, primaryFont);
         prevList = list;

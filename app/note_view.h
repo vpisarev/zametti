@@ -12,7 +12,13 @@
 #include <QTextBrowser>
 #include <QtGlobal>
 
+class QWidget;
+
 namespace zametti {
+
+// Цвета страницы и выделения. Ставятся и просмотрщику, и дереву заметок,
+// поэтому живут отдельной функцией, а не в конструкторе.
+void applyPalette(QWidget& view);
 
 class NoteView : public QTextBrowser {
     Q_OBJECT

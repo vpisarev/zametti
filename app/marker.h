@@ -11,39 +11,21 @@
 // позицию в тексте — это понадобится редактору: курсор, копирование и смещения
 // спанов больше об него не спотыкаются.
 //
-// Род и уровень блока живут в его формате: другого способа узнать, что это
-// пункт списка, у отрисовки нет.
+// Род и уровень блока живут в его формате — см. doc_model.h: другого способа
+// узнать, что это пункт списка, у отрисовки нет.
 
 #ifndef ZAMETTI_MARKER_H
 #define ZAMETTI_MARKER_H
 
-#include "ir.h"
+#include "doc_model.h"
 
 #include <QFont>
 #include <QRectF>
-#include <QTextFormat>
 
 class QPainter;
 class QTextBlock;
 
 namespace zametti {
-
-enum BlockProperty {
-    // int(Kind). Нет у дословных (rawSource) блоков: у них рода нет.
-    KindProperty = QTextFormat::UserProperty,
-    // Уровень вложенности списка, от нуля. Только у списочных блоков.
-    LevelProperty,
-};
-
-bool isListBlock(const QTextBlock& block);
-Kind kindOf(const QTextBlock& block);
-int levelOf(const QTextBlock& block);
-
-// Номер пункта в прогоне. Считается обходом назад по тому же правилу, что и в
-// сериализаторе: вложенный подсписок прогон не рвёт. Хранить номер в формате
-// нельзя — QTextFormatCollection интернирует форматы, и список на сотню пунктов
-// завёл бы сотню уникальных форматов вместо одного.
-int ordinalOf(const QTextBlock& block);
 
 // Ширина колонки маркера: сам знак плюс зазор до текста. По ней сборщик
 // документа задаёт левое поле блока.

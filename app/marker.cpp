@@ -133,37 +133,6 @@ void paintCheckbox(QPainter& painter, const QRectF& rect, bool checked) {
 
 }  // namespace
 
-bool isListBlock(const QTextBlock& block) {
-    const QTextBlockFormat format = block.blockFormat();
-    return format.hasProperty(KindProperty) &&
-           isList(static_cast<Kind>(format.intProperty(KindProperty)));
-}
-
-Kind kindOf(const QTextBlock& block) {
-    return static_cast<Kind>(block.blockFormat().intProperty(KindProperty));
-}
-
-int levelOf(const QTextBlock& block) {
-    return block.blockFormat().intProperty(LevelProperty);
-}
-
-int ordinalOf(const QTextBlock& block) {
-    if (!isListBlock(block)) return 0;
-    const int level = levelOf(block);
-    const bool ordered = isOrdered(kindOf(block));
-
-    int ordinal = 1;
-    for (QTextBlock prev = block.previous(); prev.isValid(); prev = prev.previous()) {
-        if (!isListBlock(prev)) break;               // абзац или дословный кусок рвёт прогон
-        const int prevLevel = levelOf(prev);
-        if (prevLevel > level) continue;             // вложенный подсписок прогон не рвёт
-        if (prevLevel < level) break;                // вышли из своего уровня
-        if (isOrdered(kindOf(prev)) != ordered) break;
-        ++ordinal;
-    }
-    return ordinal;
-}
-
 qreal markerColumn(Kind kind, int ordinal, const QFont& base) {
     return glyphWidth(kind, ordinal, base) + gapFor(kind, base);
 }
