@@ -260,6 +260,7 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
     // формат ставится на него, иначе сверху появится пустой абзац.
     bool first = true;
     bool prevList = false;
+    bool prevSeparator = false;
     ListRuns runs;
 
     for (const Block& b : doc) {
@@ -286,8 +287,15 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
         const bool sameList =
             list && prevList &&
             !runs.startsNewRun(b.level, isOrdered(b.kind));
+        // Разделитель — кусок из пустых строк, поставленный руками. Поля у него
+        // свои: высота обязана быть предсказуемой — поле сверху, n высот строки,
+        // поле снизу, — и от того, что стоит по соседству, не зависеть.
+        const bool separator = isSeparatorBlock(b);
+
         qreal topMargin = appearance().blockSpacing;
-        if (sameList) topMargin = 0;
+        if (separator) topMargin = appearance().separatorSpacingBefore;
+        else if (prevSeparator) topMargin = appearance().separatorSpacingAfter;
+        else if (sameList) topMargin = 0;
         else if (list && prevList)
             topMargin = std::max(appearance().listSpacingBefore, appearance().listSpacingAfter);
         else if (list) topMargin = appearance().listSpacingBefore;
@@ -363,7 +371,12 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
         QFont lineFont = base;
         lineFont.setPointSizeF(linePoint);
         const qreal lineFactor = list ? appearance().listLineHeightFactor : appearance().lineHeightFactor;
-        blockFmt.setLineHeight(QFontMetricsF(lineFont).height() * lineFactor,
+        // Высоту строки округляем до целого пикселя. Дробная копилась от строки
+        // к строке, и Qt красил выделение с разбегом: между полосами оставался
+        // незакрашенный ряд, а на укороченной строке он читался сколом на углу.
+        // С целой высотой полосы сходятся вплотную сами, и подложку выделения
+        // рисовать не надо.
+        blockFmt.setLineHeight(std::round(QFontMetricsF(lineFont).height() * lineFactor),
                                QTextBlockFormat::FixedHeight);
 
         // Один QTextBlock у обычного блока и по одному на строку у литерального.
@@ -409,6 +422,7 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
             enlargeFallbackGlyphs(target, textStart, text, linePoint, primaryFont);
         }
         prevList = list;
+        prevSeparator = separator;
     }
 
     // Пустой документ: блоков не было, и единственный блок остался без формата

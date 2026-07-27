@@ -25,6 +25,8 @@
 #include <QScrollBar>
 #include <QTextCursor>
 #include <QTextFragment>
+#include <QTextLayout>
+#include <QTextLine>
 #include <QTextDocument>
 
 #include <string>
@@ -1146,6 +1148,78 @@ void checkBlankLinesSurviveSaving() {
                "хвост пустых строк в конце не сохраняется");
 }
 
+// Разделитель — кусок из пустых строк, поставленный руками. Его высота обязана
+// быть предсказуемой: поле сверху, n высот строки, поле снизу. Курсор идёт по
+// его строкам ровным шагом, а входит и выходит на шаг плюс поле.
+void checkSeparatorGeometry() {
+    const zametti::Appearance saved = zametti::appearance();
+    zametti::appearance().separatorSpacingBefore = 0.5;
+    zametti::appearance().separatorSpacingAfter = 0.5;
+    struct Restore {
+        const zametti::Appearance& from;
+        ~Restore() { zametti::appearance() = from; }
+    } restore{saved};
+
+    const QString path =
+        writeNote("разделитель.md",
+                  QString::fromUtf8("- пункт\n\n\xC2\xA0\n\xC2\xA0\n\xC2\xA0\n\nабзац\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    // Разделитель — один блок на три строки, а не три блока.
+    checkEqual(QStringLiteral("3"), QString::number(editor.document()->blockCount()),
+               "разделитель остаётся одним блоком");
+    const QTextBlock separator = editor.document()->findBlockByNumber(1);
+    check(separator.layout() != nullptr && separator.layout()->lineCount() == 3,
+          "в разделителе три строки");
+
+    // Поля у разделителя свои: сверху и снизу они равны между собой и вдвое
+    // меньше высоты строки — ровно то, что задано настройкой 0.5.
+    const qreal line = separator.blockFormat().lineHeight();
+    const qreal above = separator.blockFormat().topMargin();
+    const qreal below = editor.document()->findBlockByNumber(2).blockFormat().topMargin();
+    check(above > 0.0 && qAbs(above - below) < 0.01,
+          "поля над и под разделителем равны между собой");
+    check(qAbs(above / line - 0.5) < 0.1, "и составляют половину высоты строки");
+
+    // Шаги курсора по строкам разделителя одинаковы.
+    QTextCursor cursor = editor.textCursor();
+    cursor.setPosition(editor.document()->firstBlock().position());
+    cursor.movePosition(QTextCursor::EndOfBlock);
+    editor.setTextCursor(cursor);
+    QTest::qWait(10);
+
+    auto lineTop = [&editor] {
+        const QTextBlock block = editor.textCursor().block();
+        const QRectF rect =
+            editor.document()->documentLayout()->blockBoundingRect(block);
+        const QTextLine at =
+            block.layout()->lineForTextPosition(editor.textCursor().positionInBlock());
+        return rect.top() + (at.isValid() ? at.y() : 0.0);
+    };
+
+    QTest::keyClick(&editor, Qt::Key_Down);
+    QTest::qWait(10);
+    const qreal first = lineTop();
+    QTest::keyClick(&editor, Qt::Key_Down);
+    QTest::qWait(10);
+    const qreal second = lineTop();
+    QTest::keyClick(&editor, Qt::Key_Down);
+    QTest::qWait(10);
+    const qreal third = lineTop();
+
+    check(qAbs((second - first) - (third - second)) < 0.01,
+          "шаги по строкам разделителя одинаковы");
+    check(qAbs((second - first) - line) < 0.01,
+          "и равны высоте строки");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1189,6 +1263,7 @@ int main(int argc, char** argv) {
     checkColumnAcrossMargins();
     checkSelectionHasNoGaps();
     checkBlankLinesSurviveSaving();
+    checkSeparatorGeometry();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;

@@ -5,6 +5,36 @@
 
 namespace zametti {
 
+bool isSeparatorText(const std::string& text) {
+    if (text.empty()) return false;
+    bool anyLine = false;
+    for (size_t i = 0; i < text.size();) {
+        const unsigned char c = static_cast<unsigned char>(text[i]);
+        if (c == 0xC2 && i + 1 < text.size() &&
+            static_cast<unsigned char>(text[i + 1]) == 0xA0) {
+            anyLine = true;
+            i += 2;
+            continue;
+        }
+        if (c == ' ' || c == '\t') {
+            ++i;
+            continue;
+        }
+        if (c == '\n') {
+            anyLine = true;
+            ++i;
+            continue;
+        }
+        return false;
+    }
+    return anyLine;
+}
+
+bool isSeparatorBlock(const Block& block) {
+    return block.rawSource.empty() && block.kind == Kind::Paragraph &&
+           isSeparatorText(block.text);
+}
+
 bool isRawBlock(const QTextBlock& block) {
     return block.blockFormat().boolProperty(RawProperty);
 }

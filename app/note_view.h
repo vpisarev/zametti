@@ -54,11 +54,6 @@ protected:
     // строками кода незакрашенные полосы (замер: 1.9 px на строку).
     void paintCodeBackground(QPainter& painter, const QRectF& visible);
 
-    // Подложка выделения. По той же причине, что и подложка кода: высота строки
-    // назначена, а Qt красит выделение по естественной высоте — между полосами
-    // остаётся незакрашенный ряд. Там, где следующая строка короче предыдущей,
-    // он читается сколом на верхнем углу.
-    void paintSelectionBackground(QPainter& painter, const QRectF& visible);
 
 private:
     qreal zoom_ = 1.0;

@@ -1,5 +1,7 @@
 #include "document_saver.h"
 
+#include "doc_model.h"
+
 #include "document_reader.h"
 #include "json_dump.h"
 #include "parser.h"
@@ -393,6 +395,21 @@ Document documentForFile(Document doc) {
             trimmed.text = kNbsp;
         out.push_back(std::move(trimmed));
     }
+
+    // Подряд идущие пустые абзацы — это один разделитель, а не десять. Так его
+    // высота и выходит предсказуемой: поле сверху, n высот строки, поле снизу.
+    // Десятью блоками между строками добавлялись бы ещё девять полей.
+    Document merged;
+    merged.reserve(out.size());
+    for (Block& block : out) {
+        if (!merged.empty() && isSeparatorBlock(merged.back()) && isSeparatorBlock(block)) {
+            merged.back().text.push_back('\n');
+            merged.back().text += block.text;
+            continue;
+        }
+        merged.push_back(std::move(block));
+    }
+    out = std::move(merged);
 
     // А вот в конце документа пустые строки не нужны: хвост из них набирается
     // случайно и ничего не отбивает.

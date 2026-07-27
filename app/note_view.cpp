@@ -104,48 +104,6 @@ void NoteView::paintCodeBackground(QPainter& painter, const QRectF& visible) {
     }
 }
 
-void NoteView::paintSelectionBackground(QPainter& painter, const QRectF& visible) {
-    const QTextCursor cursor = textCursor();
-    if (!cursor.hasSelection()) return;
-
-    const int from = cursor.selectionStart();
-    const int to = cursor.selectionEnd();
-    const QAbstractTextDocumentLayout* layout = document()->documentLayout();
-
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(palette().color(QPalette::Highlight));
-    for (QTextBlock block = document()->findBlock(from); block.isValid();
-         block = block.next()) {
-        if (block.position() > to) break;
-        const QRectF bounds = layout->blockBoundingRect(block);
-        if (bounds.top() > visible.bottom()) break;
-        if (bounds.bottom() < visible.top()) continue;
-
-        const QTextLayout* lines = block.layout();
-        if (lines == nullptr) continue;
-        const qreal assigned = block.blockFormat().lineHeight();
-
-        for (int i = 0; i < lines->lineCount(); ++i) {
-            const QTextLine line = lines->lineAt(i);
-            const int start = qMax(from - block.position(), line.textStart());
-            const int stop = qMin(to - block.position(), line.textStart() + line.textLength());
-            if (start >= stop) continue;
-
-            // Закрашиваем только недостающую полоску под строкой — от её
-            // естественного низа до назначенного. Саму строку Qt закрасит сам, и
-            // подменять его заливку незачем: ширину хвостика за концом строки он
-            // считает по своим правилам.
-            const qreal gap = assigned - line.height();
-            if (gap <= 0.0) continue;
-
-            const qreal x1 = bounds.left() + line.cursorToX(start);
-            const qreal x2 = bounds.left() + line.cursorToX(stop);
-            const qreal top = bounds.top() + line.y() + line.height();
-            painter.drawRect(QRectF(x1, top, x2 - x1, gap));
-        }
-    }
-}
-
 void NoteView::paintEvent(QPaintEvent* event) {
     {
         // Рисуем до текста: сам виджет виден только там, где Qt уже стёр фон, а
@@ -156,7 +114,6 @@ void NoteView::paintEvent(QPaintEvent* event) {
                              verticalScrollBar()->value() + event->rect().y(),
                              event->rect().width(), event->rect().height());
         paintCodeBackground(painter, visible);
-        paintSelectionBackground(painter, visible);
     }
     QTextBrowser::paintEvent(event);
 

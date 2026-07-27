@@ -16,6 +16,7 @@
 
 #include <QTextFormat>
 
+#include <string>
 #include <vector>
 
 class QTextBlock;
@@ -70,6 +71,17 @@ enum SpanStyle {
     SpanStrike = 4,
     SpanCode = 8,
 };
+
+// Разделитель — абзац, в котором нет ничего, кроме пустых строк. Так в заметке
+// выглядит отбивка, поставленная руками: сколько раз нажали Enter, столько в нём
+// и строк. В файле пустая строка пустой быть не может, там она разделяет блоки,
+// поэтому в каждой стоит неразрывный пробел.
+//
+// Высота такого блока — своё поле сверху, n высот строки и своё поле снизу.
+// Значения отдельные: у разделителя своя работа, и мерить его общей межблочной
+// отбивкой незачем.
+bool isSeparatorText(const std::string& text);
+bool isSeparatorBlock(const Block& block);
 
 bool isRawBlock(const QTextBlock& block);
 
