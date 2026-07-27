@@ -313,7 +313,7 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
                 case Kind::Quote:
                     // Курсивом цитату не выделяем: тогда настоящий _курсив_
                     // внутри неё стал бы неотличим от остального текста.
-                    blockFmt.setLeftMargin(metrics.horizontalAdvance(QLatin1Char(' ')) * 3);
+                    blockFmt.setLeftMargin(appearance().quoteIndent * charUnit);
                     charFmt.setForeground(appearance().quoteColor);
                     break;
 
