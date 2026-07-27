@@ -180,6 +180,9 @@ void NoteEditor::undo() {
     const HistoryStep* step = history_.undo();
     if (step == nullptr) return;
     rebuild(step->doc, where, viewAnchor());
+    // Вид держится сам, но отменённая правка может оказаться за окном — тогда
+    // её надо показать: человек нажал отмену, чтобы увидеть результат.
+    ensureCursorVisible();
     document()->setModified(true);
     autosave_.start(appearance().autosaveDelayMs);
 }
@@ -188,6 +191,7 @@ void NoteEditor::redo() {
     const HistoryStep* step = history_.redo();
     if (step == nullptr) return;
     rebuild(step->doc, step->cursor, viewAnchor());
+    ensureCursorVisible();
     document()->setModified(true);
     autosave_.start(appearance().autosaveDelayMs);
 }
@@ -218,11 +222,16 @@ void NoteEditor::rebuild(const Document& doc, int cursor, const ViewAnchor& anch
     // Возвращаем блок-якорь на прежнее место относительно кромки. Прокрутка при
     // пересборке сбрасывается в ноль, и без этого документ прыгал бы к началу.
     const QTextBlock landed = blockForIrIndex(*document(), anchor.irIndex);
-    if (anchor.irIndex >= 0 && landed.isValid()) {
+    const bool held = anchor.irIndex >= 0 && landed.isValid();
+    if (held) {
         const QRectF rect = document()->documentLayout()->blockBoundingRect(landed);
         verticalScrollBar()->setValue(int(rect.top()) + anchor.above);
     }
-    ensureCursorVisible();
+    // Показывать курсор — только если вид ни за что не держится. Иначе мы сами
+    // же сбивали бы наведённый вид: правки над IR ставят курсор уже после
+    // пересборки, и здесь он ещё стоит в начале документа. Прокрутка уезжала
+    // к началу, а потом обратно вниз — и переставленный пункт оказывался у
+    // самой нижней кромки окна.
 
     // Сборка — не правка человека. Без этого открытая неканоническая заметка
     // считалась бы изменённой и переписывалась бы на диске при выходе, хотя мы
@@ -555,7 +564,8 @@ bool NoteEditor::applyIrEdit(const MoveResult& moved) {
     rebuild(moved.doc, 0, viewAnchor());
 
     // Курсор ставим по месту в IR: после перестановки или слияния блоков прежняя
-    // позиция в тексте указывала бы на чужое место.
+    // позиция в тексте указывала бы на чужое место. Вид при этом уже наведён
+    // пересборкой, и трогаем его только если курсор из него выпал.
     const QTextBlock landed = blockForIrIndex(*document(), moved.irBlock);
     if (landed.isValid()) {
         QTextCursor place(document());

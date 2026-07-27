@@ -891,6 +891,80 @@ void checkUndoKeepsCursor() {
                "курсор после отмены остался у правки");
 }
 
+// Вид не должен уезжать ни от одной операции. Правка меняет строку, а не окно:
+// прокрутка обязана остаться на месте, а курсор — сдвинуться не больше чем на
+// строку.
+//
+// Обмен пунктов местами этого не соблюдал: правки над IR ставят курсор уже
+// после пересборки, и показ курсора внутри пересборки уводил вид к началу
+// документа, а потом обратно вниз — переставленный пункт оказывался у самой
+// нижней кромки окна.
+void checkViewHoldsForEveryOperation() {
+    struct Probe {
+        const char* name;
+        Qt::Key key;
+        Qt::KeyboardModifiers mods;
+    };
+    const Probe probes[] = {
+        {"Enter", Qt::Key_Return, Qt::NoModifier},
+        {"Tab", Qt::Key_Tab, Qt::NoModifier},
+        {"Ctrl+Space", Qt::Key_Space, Qt::ControlModifier},
+        {"в нумерованный", Qt::Key_3, Qt::ControlModifier},
+        {"в абзац", Qt::Key_0, Qt::ControlModifier | Qt::ShiftModifier},
+        {"жирный", Qt::Key_B, Qt::ControlModifier},
+        {"блок кода", Qt::Key_E, Qt::ControlModifier | Qt::ShiftModifier},
+        {"Ctrl+Down", Qt::Key_Down, Qt::ControlModifier},
+        {"Ctrl+Up", Qt::Key_Up, Qt::ControlModifier},
+    };
+
+    QString source;
+    for (int i = 0; i < 30; ++i)
+        source += QStringLiteral("Абзац %1 для высоты окна.\n\n").arg(i);
+    for (int i = 0; i < 12; ++i) source += QStringLiteral("- [ ] пункт %1\n").arg(i);
+
+    for (const Probe& probe : probes) {
+        const QString path = writeNote(
+            (std::string("вид-") + probe.name + ".md").c_str(), source);
+
+        zametti::NoteEditor editor;
+        editor.resize(700, 500);
+        editor.show();
+        QTest::qWait(20);
+        editor.setFocus();
+        editor.openFile(path);
+        QTest::qWait(20);
+
+        int first = -1;
+        for (QTextBlock block = editor.document()->begin(); block.isValid();
+             block = block.next())
+            if (zametti::isListBlock(block)) {
+                first = block.blockNumber();
+                break;
+            }
+        check(first > 0, "список должен найтись");
+
+        QTextCursor cursor = editor.textCursor();
+        cursor.setPosition(
+            editor.document()->findBlockByNumber(first + 4).position() + 3);
+        editor.setTextCursor(cursor);
+        editor.ensureCursorVisible();
+        editor.verticalScrollBar()->setValue(editor.verticalScrollBar()->value() + 100);
+        QTest::qWait(10);
+
+        const int scroll = editor.verticalScrollBar()->value();
+        const int y = editor.cursorRect().top();
+        QTest::keyClick(&editor, probe.key, probe.mods);
+        QTest::qWait(10);
+
+        checkEqual(QString::number(scroll),
+                   QString::number(editor.verticalScrollBar()->value()),
+                   std::string("вид не уехал: ") + probe.name);
+        // Курсор вправе сдвинуться на свою строку — но не на пол-окна.
+        check(qAbs(editor.cursorRect().top() - y) <= 40,
+              std::string("курсор сдвинулся не больше чем на строку: ") + probe.name);
+    }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -930,6 +1004,7 @@ int main(int argc, char** argv) {
     checkLinkDoesNotGrow();
     checkCheckboxClickWithSelection();
     checkUndoKeepsCursor();
+    checkViewHoldsForEveryOperation();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;
