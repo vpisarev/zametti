@@ -5,7 +5,9 @@
 #include <QFontMetricsF>
 #include <QPainter>
 #include <QPainterPath>
+#include <QAbstractTextDocumentLayout>
 #include <QTextBlock>
+#include <QTextDocument>
 #include <QTextLayout>
 #include <QTextLine>
 
@@ -149,6 +151,27 @@ QRectF checkboxRect(const QTextBlock& block, const QFont& base) {
     // знаком: больше нуля поднимает рамку.
     const qreal top = anchor.baseline + ink.top() - appearance().checkboxOpticalRise * side;
     return QRectF(anchor.right - side, top, side, side);
+}
+
+QTextBlock blockAtCheckbox(const QTextDocument& doc, const QPointF& point,
+                           const QFont& base) {
+    const QAbstractTextDocumentLayout* layout = doc.documentLayout();
+    // От первого блока, попадающего в строку с этой точкой: обходить документ с
+    // начала незачем.
+    const int at = layout->hitTest(QPointF(0, point.y()), Qt::FuzzyHit);
+    for (QTextBlock block = doc.findBlock(at); block.isValid(); block = block.next()) {
+        const QRectF rect = layout->blockBoundingRect(block);
+        if (rect.top() > point.y()) break;
+        if (rect.bottom() < point.y()) continue;
+        const QRectF box = checkboxRect(block, base);
+        // Промахнуться по рамке легко, поэтому попадание считаем с запасом в
+        // половину её стороны со всех сторон.
+        if (!box.isNull() && box.adjusted(-box.width() / 2, -box.height() / 2,
+                                          box.width() / 2, box.height() / 2)
+                                 .contains(point))
+            return block;
+    }
+    return QTextBlock();
 }
 
 void paintMarker(QPainter& painter, const QTextBlock& block, const QFont& base) {

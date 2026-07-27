@@ -9,6 +9,7 @@
 #ifndef ZAMETTI_NOTE_VIEW_H
 #define ZAMETTI_NOTE_VIEW_H
 
+#include <QFont>
 #include <QTextBrowser>
 #include <QtGlobal>
 
@@ -25,6 +26,9 @@ class NoteView : public QTextBrowser {
 
 public:
     using QTextBrowser::QTextBrowser;
+
+    // Шрифт, которым собран документ: им же меряется геометрия маркеров.
+    QFont baseFont() const;
 
     // Масштаб нужен маркерам: их шрифт строится тем же кеглем, что и текст.
     void setZoom(qreal zoom);

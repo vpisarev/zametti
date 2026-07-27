@@ -28,7 +28,10 @@ bool isListBlock(const QTextBlock& block) {
 }
 
 int irIndexOfBlock(const QTextBlock& block) {
-    int index = 0;
+    // Считаем начала логических блоков до этого места включительно, а номер —
+    // на единицу меньше. Начинать с нуля и считать только предыдущие нельзя:
+    // строка-продолжение получила бы номер следующего блока IR, а не своего.
+    int index = isContinuationBlock(block) ? -1 : 0;
     for (QTextBlock prev = block.previous(); prev.isValid(); prev = prev.previous())
         if (!isContinuationBlock(prev)) ++index;
     return index;

@@ -22,8 +22,10 @@
 #include <QFont>
 #include <QRectF>
 
+#include <QTextBlock>
+
 class QPainter;
-class QTextBlock;
+class QTextDocument;
 
 namespace zametti {
 
@@ -35,6 +37,12 @@ qreal markerColumn(Kind kind, int ordinal, const QFont& base);
 // функция и на отрисовку, и на попадание мышью — двух копий геометрии быть не
 // должно.
 QRectF checkboxRect(const QTextBlock& block, const QFont& base);
+
+// Блок, чей чекбокс накрывает эту точку документа. Недействительный блок —
+// мимо. Геометрия берётся из checkboxRect, то есть та же самая, по которой
+// чекбокс нарисован: двух её копий быть не должно.
+QTextBlock blockAtCheckbox(const QTextDocument& doc, const QPointF& point,
+                           const QFont& base);
 
 // Рисует маркер блока. Блок должен быть списочным и уже разложенным.
 void paintMarker(QPainter& painter, const QTextBlock& block, const QFont& base);

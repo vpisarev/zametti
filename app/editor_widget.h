@@ -12,6 +12,7 @@
 #define ZAMETTI_EDITOR_WIDGET_H
 
 #include "edit_history.h"
+#include "editor_ops.h"
 #include "note_view.h"
 
 #include <QElapsedTimer>
@@ -79,6 +80,9 @@ protected:
     // иначе правило «одна операция — один шаг истории» держать нечем, а
     // инварианты расползаются по обработчикам событий.
     void keyPressEvent(QKeyEvent* event) override;
+    // Щелчок по чекбоксу — самый ходовой способ отметить задачу, и мимо
+    // клавиатуры он идти не должен.
+    void mousePressEvent(QMouseEvent* event) override;
 
 private:
     // Выполняет операцию, доводит документ до вида, который построил бы
@@ -88,6 +92,10 @@ private:
     // Перестановка пунктов идёт не над курсором, а над IR: операция возвращает
     // готовый документ, и собрать его — уже наше дело.
     bool moveItem(int direction);
+
+    // Правка над IR: операция возвращает готовый документ, дальше общий путь —
+    // шаг истории, пересборка, курсор по месту в IR.
+    bool applyIrEdit(const MoveResult& edit);
 
     // literal — вставить как есть, без разбора: Ctrl+Shift+V и всё, что попадает
     // в литеральный блок, где markdown не действует.

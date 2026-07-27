@@ -164,6 +164,52 @@ int nextSibling(const QTextDocument& doc, int number) {
 
 }  // namespace
 
+MoveResult toggleCodeBlock(const QTextDocument& doc, const QTextCursor& cursor) {
+    Document ir = readDocument(doc);
+    if (ir.empty()) return {};
+
+    // Границы выделения в номерах блоков IR: в документе литеральный блок лежит
+    // построчно, и номера блоков документа с номерами IR не совпадают.
+    const int start = qMin(cursor.selectionStart(), cursor.selectionEnd());
+    const int end = qMax(cursor.selectionStart(), cursor.selectionEnd());
+    const int first = irIndexOfBlock(doc.findBlock(start));
+    const int last = irIndexOfBlock(doc.findBlock(end));
+    if (first < 0 || last >= int(ir.size()) || first > last) return {};
+
+    // Дословные куски не трогаем вовсе: их текст выводится как есть.
+    for (int i = first; i <= last; ++i)
+        if (!ir[size_t(i)].rawSource.empty()) return {};
+
+    bool allCode = true;
+    for (int i = first; i <= last; ++i)
+        if (ir[size_t(i)].kind != Kind::Code) allCode = false;
+
+    Document result(ir.begin(), ir.begin() + first);
+    if (allCode) {
+        // Обратный ход: каждая строка кода становится строкой обычного текста.
+        // Один блок кода — один абзац: переводы строк внутри абзаца жить умеют.
+        for (int i = first; i <= last; ++i) {
+            Block plain;
+            plain.text = ir[size_t(i)].text;
+            while (!plain.text.empty() && plain.text.back() == '\n') plain.text.pop_back();
+            result.push_back(plain);
+        }
+    } else {
+        Block code;
+        code.kind = Kind::Code;
+        for (int i = first; i <= last; ++i) {
+            if (!code.text.empty()) code.text.push_back('\n');
+            code.text += ir[size_t(i)].text;
+        }
+        if (!code.text.empty() && code.text.back() != '\n') code.text.push_back('\n');
+        result.push_back(code);
+    }
+    const int landed = int(result.size()) - 1;
+    result.insert(result.end(), ir.begin() + last + 1, ir.end());
+
+    return {true, result, landed, 0};
+}
+
 MoveResult moveListItem(const QTextDocument& doc, const QTextCursor& cursor, int direction) {
     const QTextBlock block = cursor.block();
     if (!isListBlock(block)) return {};
@@ -494,17 +540,44 @@ bool applyInputRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const QTextBlock block = cursor.block();
     if (isRawBlock(block) || kindOf(block) == Kind::Code) return false;
 
-    // Правило срабатывает только на пробел сразу за началом блока: набранное
-    // должно быть целиком тем, что мы опознаём.
-    const int typedLength = cursor.position() - block.position();
+    // Правило срабатывает на пробел сразу за началом СТРОКИ, а не блока. С тех
+    // пор как Enter переносит строку внутри абзаца, начало блока и начало строки
+    // перестали совпадать: список, начатый со второй строки абзаца, иначе не
+    // завёлся бы вовсе.
+    const QString text = block.text();
+    const int at = cursor.position() - block.position();
+    int lineStart = 0;
+    for (int i = at - 1; i >= 0; --i)
+        if (text.at(i) == QChar::LineSeparator) {
+            lineStart = i + 1;
+            break;
+        }
+
+    const int typedLength = at - lineStart;
     if (typedLength <= 0 || typedLength > 8) return false;
-    const QString typed = block.text().left(typedLength);
+    const QString typed = text.mid(lineStart, typedLength);
     if (!typed.endsWith(QLatin1Char(' '))) return false;
 
     const InputRule rule = matchInputRule(block, typed);
     if (!rule.matched) return false;
 
-    QTextBlockFormat format = block.blockFormat();
+    QTextCursor edit(&doc);
+    edit.beginEditBlock();
+
+    // Строка внутри абзаца отдельным блоком быть не может, а список — может
+    // только блоком: режем по началу строки, убирая её разделитель.
+    int start = block.position();
+    if (lineStart > 0) {
+        edit.setPosition(block.position() + lineStart - 1);
+        edit.setPosition(block.position() + lineStart, QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+        QTextBlockFormat carry = block.blockFormat();
+        carry.clearProperty(TrailingNewlineProperty);
+        edit.insertBlock(carry, block.charFormat());
+        start = edit.position();
+    }
+
+    QTextBlockFormat format = doc.findBlock(start).blockFormat();
     if (rule.kind == Kind::Heading) {
         format.clearProperty(LevelProperty);
         format.setProperty(KindProperty, int(Kind::Heading));
@@ -515,14 +588,12 @@ bool applyInputRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
         format.setHeadingLevel(0);
     }
 
-    QTextCursor edit(&doc);
-    edit.beginEditBlock();
-    edit.setPosition(block.position());
+    edit.setPosition(start);
     edit.setBlockFormat(format);
-    edit.setPosition(block.position());
-    edit.setPosition(block.position() + rule.prefix, QTextCursor::KeepAnchor);
+    edit.setPosition(start);
+    edit.setPosition(start + rule.prefix, QTextCursor::KeepAnchor);
     edit.removeSelectedText();
-    normalise(doc, around(block.blockNumber()));
+    normalise(doc, around(doc.findBlock(start).blockNumber()));
     edit.endEditBlock();
 
     cursor.setPosition(edit.position());
@@ -898,6 +969,23 @@ bool unwrapListItemAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     if (cursor.hasSelection() || !cursor.atBlockStart()) return false;
     const QTextBlock block = cursor.block();
     if (!isListBlock(block)) return false;
+
+    // Есть предыдущий пункт — сливаемся с ним: так Backspace ведёт себя всюду,
+    // и это привычнее, чем превращение пункта в абзац на месте.
+    const QTextBlock previous = block.previous();
+    if (previous.isValid() && isListBlock(previous) && !isContinuationBlock(block)) {
+        const int join = previous.position() + previous.length() - 1;
+        QTextCursor edit(&doc);
+        edit.beginEditBlock();
+        // Убираем границу блоков; текст пункта уезжает в конец предыдущего сам.
+        edit.setPosition(join);
+        edit.setPosition(block.position(), QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+        normalise(doc, around(previous.blockNumber()));
+        edit.endEditBlock();
+        cursor.setPosition(join);
+        return true;
+    }
 
     QTextBlockFormat plain = block.blockFormat();
     plain.clearProperty(KindProperty);

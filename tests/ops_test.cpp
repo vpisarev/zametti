@@ -322,11 +322,16 @@ const KeyCase kEnterCases[] = {
 };
 
 const KeyCase kBackspaceCases[] = {
-    {"- пункт\n", 0, 0, "пункт\n", "в начале пункта снимает список"},
-    {"- верх\n  - вложенный\n", 1, 0, "- верх\n\nвложенный\n",
-     "вложенный тоже становится абзацем"},
+    // Первый пункт сливать не с чем — он просто перестаёт быть пунктом.
+    {"- пункт\n", 0, 0, "пункт\n", "в начале первого пункта снимает список"},
     {"- [x] дело\n", 0, 0, "дело\n", "задача становится абзацем"},
-    {"1. раз\n2. два\n", 1, 0, "1. раз\n\nдва\n", "нумерованный пункт"},
+    // А если предыдущий пункт есть, Backspace сливает с ним — так он ведёт себя
+    // всюду, и это привычнее превращения пункта в абзац на месте.
+    {"- верх\n- низ\n", 1, 0, "- верхниз\n", "пункт сливается с предыдущим"},
+    {"1. раз\n2. два\n", 1, 0, "1. раздва\n", "нумерованный сливается тоже"},
+    {"- верх\n  - вложенный\n", 1, 0, "- верхвложенный\n",
+     "вложенный сливается с родителем"},
+    {"- пустой\n- \n", 1, 0, "- пустой\n", "пустой пункт просто исчезает"},
     {"- пункт\n", 0, 3, "<операция отказалась>", "внутри текста — штатное поведение"},
     {"абзац\n", 0, 0, "<операция отказалась>", "в абзаце — штатное поведение"},
     {"```\nкод\n```\n", 0, 0, "<операция отказалась>", "в коде — штатное поведение"},
@@ -483,6 +488,69 @@ const CodeSpanCase kCodeSpanCases[] = {
     {"вот\n", " код`", "<правило не сработало>", "без открывающей кавычки тоже"},
     {"```\nкод\n```\n", " `x`", "<правило не сработало>", "в блоке кода правила нет"},
 };
+
+// Выделенное в блок кода и обратно. Выделение задаётся номерами блоков.
+struct CodeBlockCase {
+    const char* source;
+    int firstBlock;
+    int lastBlock;
+    const char* after;
+    const char* what;
+};
+
+void checkCodeBlock(const CodeBlockCase& c) {
+    QTextDocument doc;
+    zametti::buildDocument(zametti::parse(c.source), doc);
+
+    QTextCursor cursor(&doc);
+    cursor.setPosition(doc.findBlockByNumber(c.firstBlock).position());
+    const QTextBlock last = doc.findBlockByNumber(c.lastBlock);
+    cursor.setPosition(last.position() + last.length() - 1, QTextCursor::KeepAnchor);
+
+    const zametti::MoveResult result = zametti::toggleCodeBlock(doc, cursor);
+    checkEqual(c.after,
+               result.done ? zametti::serialize(result.doc)
+                           : std::string("<операция отказалась>"),
+               c.what);
+}
+
+const CodeBlockCase kCodeBlockCases[] = {
+    {"абзац\n", 0, 0, "```\nабзац\n```\n", "абзац становится блоком кода"},
+    {"раз\n\nдва\n", 0, 1, "```\nраз\nдва\n```\n",
+     "два абзаца сливаются в один блок"},
+    {"```\nкод\n```\n", 0, 0, "код\n", "блок кода возвращается в текст"},
+    {"```\nраз\nдва\n```\n", 0, 1, "раз\nдва\n",
+     "многострочный код становится одним абзацем"},
+    // Отступы внутри кода при обратном ходе остаются: в файл они уйдут
+    // неразрывными пробелами, как и всякий отступ вне кода.
+    {"```\nif x:\n    y\n```\n", 0, 1, "if x:\n    y\n",
+     "отступ кода переживает возврат в текст"},
+    {"- пункт\n", 0, 0, "```\nпункт\n```\n", "пункт списка тоже можно"},
+};
+
+// Номер блока IR и обратный переход. Соответствие не один к одному: литеральный
+// блок лежит построчно, и каждая его строка обязана указывать на СВОЙ блок IR.
+// Пока это считалось по предыдущим блокам, строка-продолжение получала номер
+// следующего блока — и всякая правка над IR била мимо.
+void checkIrIndex(const char* source) {
+    QTextDocument doc;
+    const zametti::Document ir = zametti::parse(source);
+    zametti::buildDocument(ir, doc);
+
+    int expected = -1;
+    for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {
+        if (!zametti::isContinuationBlock(block)) ++expected;
+        const int actual = zametti::irIndexOfBlock(block);
+        checkEqual(std::to_string(expected), std::to_string(actual),
+                   std::string("номер блока IR для документа ") + source);
+        // И обратный переход обязан вести к началу того же логического блока.
+        const QTextBlock back = zametti::blockForIrIndex(doc, actual);
+        check(back.isValid() && back.blockNumber() <= block.blockNumber(),
+              "обратный переход ведёт к своему блоку");
+    }
+    checkEqual(std::to_string(int(ir.size()) - 1), std::to_string(expected),
+               std::string("блоков IR столько же, сколько насчитали: ") + source);
+}
 
 // Автозамена: набранное в начале блока, положение курсора после пробела.
 struct RuleCase {
@@ -710,6 +778,10 @@ int main(int argc, char** argv) {
     for (const StyleCase& c : kStrikeCases) checkStyle(zametti::toggleStrike, c);
     for (const StyleCase& c : kCodeCases) checkStyle(zametti::toggleCode, c);
     for (const CodeSpanCase& c : kCodeSpanCases) checkCodeSpan(c);
+    for (const CodeBlockCase& c : kCodeBlockCases) checkCodeBlock(c);
+    for (const char* source : {"абзац\n", "```\nраз\nдва\nтри\n```\n",
+                               "абзац\n\n```\nкод\nещё\n```\n\n- пункт\n"})
+        checkIrIndex(source);
     for (const MoveCase& c : kMoveCases) checkMove(c);
     checkCursorAfterSplit();
     for (const char* source : kOrdinalCases)

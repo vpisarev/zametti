@@ -57,6 +57,9 @@ bool splitBlockOtherwiseAtCursor(QTextDocument& doc, QTextCursor& cursor);
 //
 // Возвращает false во всех прочих случаях: обычный Backspace внутри текста
 // штатный.
+// Backspace сразу за маркером. Пункт сливается с предыдущим — курсор встаёт на
+// стык, текст пункта дописывается в конец предыдущего. Если предыдущего нет,
+// пункт просто перестаёт быть пунктом.
 bool unwrapListItemAtCursor(QTextDocument& doc, QTextCursor& cursor);
 
 // Ctrl+Up / Ctrl+Down: пункт меняется местами с соседним пунктом того же
@@ -77,6 +80,14 @@ struct MoveResult {
 };
 
 MoveResult moveListItem(const QTextDocument& doc, const QTextCursor& cursor, int direction);
+
+// Выделенное становится блоком кода, а блок кода — обратно обычным текстом.
+// Тоже над IR: блоки при этом сливаются в один и разъезжаются обратно, а
+// разметка внутри кода пропадает — в коде её не бывает.
+//
+// Отступы при обратном ходе сохраняются: в файл они уйдут неразрывными
+// пробелами, как и всякий отступ вне кода.
+MoveResult toggleCodeBlock(const QTextDocument& doc, const QTextCursor& cursor);
 
 // Tab и Shift+Tab: сдвиг пунктов списка на уровень внутрь и наружу.
 //

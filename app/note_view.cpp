@@ -42,6 +42,8 @@ void applyPalette(QWidget& view) {
     view.setPalette(palette);
 }
 
+QFont NoteView::baseFont() const { return baseFontFor(zoom_); }
+
 void NoteView::setZoom(qreal zoom) {
     zoom_ = zoom;
 }

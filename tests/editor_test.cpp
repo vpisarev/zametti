@@ -10,6 +10,7 @@
 #include "doc_model.h"
 #include "document_reader.h"
 #include "editor_widget.h"
+#include "marker.h"
 #include "serializer.h"
 #include "settings.h"
 #include "test_util.h"
@@ -19,6 +20,7 @@
 #include <QFile>
 #include <QTest>
 #include <QTextBlock>
+#include <QScrollBar>
 #include <QTextCursor>
 #include <QTextFragment>
 #include <QTextDocument>
@@ -592,6 +594,59 @@ void checkCodeTyping() {
                "Enter с отступом отменяется одним шагом");
 }
 
+// Щелчок по чекбоксу — самый ходовой способ отметить задачу. Проверяется
+// настоящим щелчком по вьюпорту, а не вызовом операции: попадание считается по
+// геометрии рамки, и ошибиться в ней проще всего именно там.
+void checkCheckboxClick() {
+    const QString path = writeNote("щелчок.md",
+                                   QStringLiteral("- [ ] первая\n- [ ] вторая\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(30);
+    editor.setFocus();
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    auto text = [&editor] {
+        return QString::fromStdString(
+            zametti::serialize(zametti::readDocument(*editor.document())));
+    };
+
+    auto clickAt = [&editor](const QPointF& point) {
+        QTest::mouseClick(
+            editor.viewport(), Qt::LeftButton, Qt::NoModifier,
+            QPoint(int(point.x()) - editor.horizontalScrollBar()->value(),
+                   int(point.y()) - editor.verticalScrollBar()->value()));
+        QTest::qWait(10);
+    };
+
+    const QRectF box =
+        zametti::checkboxRect(editor.document()->firstBlock(), editor.baseFont());
+    check(!box.isNull(), "у задачи должна быть рамка чекбокса");
+
+    clickAt(box.center());
+    checkEqual(QStringLiteral("- [x] первая\n- [ ] вторая\n"), text(),
+               "щелчок по рамке отмечает задачу");
+
+    clickAt(box.center());
+    checkEqual(QStringLiteral("- [ ] первая\n- [ ] вторая\n"), text(),
+               "второй щелчок снимает отметку");
+
+    // Мимо рамки — обычный щелчок по тексту, отметка не меняется.
+    clickAt(box.center() + QPointF(200, 0));
+    checkEqual(QStringLiteral("- [ ] первая\n- [ ] вторая\n"), text(),
+               "щелчок по тексту отметку не трогает");
+
+    // И щелчок — обычная правка: отменяется.
+    clickAt(box.center());
+    QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("- [ ] первая\n- [ ] вторая\n"), text(),
+               "щелчок отменяется как обычная правка");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -625,6 +680,7 @@ int main(int argc, char** argv) {
     checkUndoFromKeyboard();
     checkSizeAfterSoftBreak();
     checkCodeTyping();
+    checkCheckboxClick();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;

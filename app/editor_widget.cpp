@@ -5,10 +5,12 @@
 #include "document_saver.h"
 #include "doc_model.h"
 #include "editor_ops.h"
+#include "marker.h"
 #include "parser.h"
 #include "settings.h"
 
 #include <QKeyEvent>
+#include <QMouseEvent>
 #include <QKeySequence>
 #include <QMimeData>
 #include <QAction>
@@ -202,6 +204,23 @@ void NoteEditor::rebuild(const Document& doc, int cursor, double ratio) {
     recordingSuspended_ = wasSuspended;
 }
 
+void NoteEditor::mousePressEvent(QMouseEvent* event) {
+    if (event->button() == Qt::LeftButton) {
+        // Точка в координатах документа: вьюпорт прокручен, а раскладка — нет.
+        const QPointF point(event->position().x() + horizontalScrollBar()->value(),
+                            event->position().y() + verticalScrollBar()->value());
+        const QTextBlock hit = blockAtCheckbox(*document(), point, baseFont());
+        if (hit.isValid()) {
+            QTextCursor cursor = textCursor();
+            cursor.setPosition(hit.position());
+            setTextCursor(cursor);
+            runOperation(toggleTaskAtCursor);
+            return;
+        }
+    }
+    NoteView::mousePressEvent(event);
+}
+
 void NoteEditor::keyPressEvent(QKeyEvent* event) {
     // Отмену обрабатываем здесь, а не ярлыком окна: QTextEdit объявляет Ctrl+Z
     // своим и глотает его — ярлык не срабатывает ни разу. Собственная история у
@@ -224,6 +243,14 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     const bool shiftEnter = (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
                             (event->modifiers() & ~Qt::KeypadModifier) == Qt::ShiftModifier;
     if (shiftEnter && runOperation(splitBlockOtherwiseAtCursor)) return;
+
+    // Блок кода из выделенного и обратно. Ctrl+Shift+E рядом с Ctrl+E: тот
+    // делает код в строке, этот — блоком.
+    if (event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier) &&
+        event->key() == Qt::Key_E) {
+        applyIrEdit(toggleCodeBlock(*document(), textCursor()));
+        return;
+    }
     if (event->key() == Qt::Key_Backspace && event->modifiers() == Qt::NoModifier &&
         runOperation(unwrapListItemAtCursor))
         return;
@@ -342,6 +369,12 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
     add(QStringLiteral("Курсив"), QStringLiteral("Ctrl+I"), toggleItalic);
     add(QStringLiteral("Зачёркнутый"), QStringLiteral("Ctrl+K"), toggleStrike);
     add(QStringLiteral("Код в строке"), QStringLiteral("Ctrl+E"), toggleCode);
+    {
+        QAction* action = menu->addAction(QStringLiteral("Блок кода"));
+        action->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+E")));
+        connect(action, &QAction::triggered, this,
+                [this] { applyIrEdit(toggleCodeBlock(*document(), textCursor())); });
+    }
 
     menu->addSeparator();
     add(QStringLiteral("Переключить задачу"), appearance().toggleTaskKey,
@@ -438,15 +471,18 @@ void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
 }
 
 bool NoteEditor::moveItem(int direction) {
-    MoveResult moved = moveListItem(*document(), textCursor(), direction);
+    return applyIrEdit(moveListItem(*document(), textCursor(), direction));
+}
+
+bool NoteEditor::applyIrEdit(const MoveResult& moved) {
     if (!moved.done) return false;
 
     history_.push(moved.doc, textCursor().position());
     sinceLastEdit_.invalidate();
     rebuild(moved.doc, 0, scrollRatio());
 
-    // Курсор ставим по месту в IR: после перестановки прежняя позиция в тексте
-    // указывала бы на чужой пункт.
+    // Курсор ставим по месту в IR: после перестановки или слияния блоков прежняя
+    // позиция в тексте указывала бы на чужое место.
     const QTextBlock landed = blockForIrIndex(*document(), moved.irBlock);
     if (landed.isValid()) {
         QTextCursor place(document());
