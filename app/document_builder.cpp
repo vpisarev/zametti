@@ -299,9 +299,10 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
                     break;
 
                 case Kind::Code:
-                    // Отступа у блока кода нет: подложка идёт во всю колонку,
-                    // как в остальных программах для заметок.
+                    // Отступ маленький: подложка идёт почти во всю колонку, как
+                    // в остальных программах для заметок.
                     text = withoutTrailingNewline(b.text);
+                    blockFmt.setLeftMargin(appearance().codeIndent * charUnit);
                     blockFmt.setBackground(appearance().codeBackground);
                     linePoint = codePoint(basePoint, zoom);
                     charFmt.setFontPointSize(linePoint);
@@ -335,7 +336,7 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
             const qreal indent = lists.levels[level].contentCol;
             const qreal cell = markerColumn(b.kind, ordinal, base);
             lists.levels[level + 1].contentCol = indent + cell;
-            blockFmt.setLeftMargin(indent + cell);
+            blockFmt.setLeftMargin(appearance().listIndent * charUnit + indent + cell);
         } else {
             lists.reset();
         }
