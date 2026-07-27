@@ -50,6 +50,21 @@ namespace {
 
 bool isSpace(char c) { return c == ' ' || c == '\t'; }
 
+// Совпадают ли строение и текст. Разметка внутри строки не сравнивается: см.
+// пояснение в самопроверке.
+bool sameSkeleton(const Document& a, const Document& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (a[i].rawSource != b[i].rawSource) return false;
+        if (!a[i].rawSource.empty()) continue;
+        if (a[i].kind != b[i].kind || a[i].level != b[i].level ||
+            a[i].headingLevel != b[i].headingLevel || a[i].info != b[i].info ||
+            a[i].text != b[i].text)
+            return false;
+    }
+    return true;
+}
+
 // Пробелы по краям строк markdown не выражает: при разборе он их съедает. Текст
 // "rthr " возвращается как "rthr", и самопроверка перед записью честно ловит
 // расхождение — на живой заметке от этого накопился десяток аварийных файлов.
@@ -129,28 +144,32 @@ SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
     const QByteArray text = toBytes(serialize(ir));
 
     if (QFile::exists(path) && fileContents(path) == text)
-        return {SaveResult::Unchanged, {}, {}};
+        return {SaveResult::Unchanged, {}, {}, {}, false};
 
     // Последний рубеж: то, что мы собрались записать, должно читаться обратно в
-    // тот же документ. Сравнение по дампу — по всем полям, а не по тексту, и
-    // расхождение сразу видно глазами.
-    const std::string expected = toJson(ir);
-    const std::string actual = toJson(parse(std::string(text.constData(),
-                                                        static_cast<size_t>(text.size()))));
-    if (expected != actual) {
+    // тот же документ.
+    //
+    // Строго сверяются строение и текст: число блоков, род, уровень, язык,
+    // содержимое. Разметка внутри строки может оказаться богаче — голую ссылку
+    // человек набирает текстом, а файл читает её ссылкой, и не дать этого
+    // записать значило бы запретить писать ссылки. Байт при этом не теряется:
+    // текст блока обязан совпасть до знака.
+    const Document reread =
+        parse(std::string(text.constData(), static_cast<size_t>(text.size())));
+    if (!sameSkeleton(ir, reread)) {
         const QString rescuePath = path + QStringLiteral(".rescue-") + timestamp;
         QString error;
         if (!writeFile(rescuePath, text, &error)) {
             return {SaveResult::Failed,
                     QStringLiteral("самопроверка не прошла, и аварийный файл не записан: ") +
                         error,
-                    {}};
+                    {}, {}, false};
         }
         return {SaveResult::Rescued,
                 QStringLiteral("самопроверка перед записью не прошла: разобранное обратно "
                                "не совпало с документом. Файл не тронут, буфер сохранён в ") +
                     rescuePath,
-                rescuePath};
+                rescuePath, {}, false};
     }
 
     // Замена файла целиком и разом: QSaveFile пишет во временный файл рядом и
@@ -159,13 +178,14 @@ SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly)) {
         return {SaveResult::Failed,
-                QStringLiteral("не открыть на запись: ") + file.errorString(), {}};
+                QStringLiteral("не открыть на запись: ") + file.errorString(), {}, {}, false};
     }
     file.write(text);
     if (!file.commit()) {
-        return {SaveResult::Failed, QStringLiteral("не записать: ") + file.errorString(), {}};
+        return {SaveResult::Failed, QStringLiteral("не записать: ") + file.errorString(), {},
+                {}, false};
     }
-    return {SaveResult::Written, {}, {}};
+    return {SaveResult::Written, {}, {}, reread, toJson(reread) != toJson(ir)};
 }
 
 }  // namespace zametti

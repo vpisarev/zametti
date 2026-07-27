@@ -222,6 +222,36 @@ void checkEdgeSpaces() {
     checkEqual(source, readFile(path), "отступы в коде сохраняются как есть");
 }
 
+// Голую ссылку человек набирает текстом, а файл читает её ссылкой. Тексты при
+// этом совпадают до знака, и запрещать такую запись значило бы запретить писать
+// ссылки — ровно от этого на живой заметке накопились аварийные файлы.
+void checkBareLinks() {
+    const QString path = pathFor("ссылка.md");
+    const std::string source = "смотри тут\n";
+    check(writeFile(path, source), "не записать исходник");
+
+    QTextDocument doc;
+    buildFrom(source, doc);
+    QTextCursor cursor(&doc);
+    cursor.movePosition(QTextCursor::EndOfBlock);
+    cursor.insertText(QStringLiteral(": https://apple.com."));
+
+    const zametti::SaveOutcome outcome =
+        zametti::saveDocument(doc, path, QStringLiteral("test"));
+    check(outcome.result == zametti::SaveResult::Written,
+          "набранная ссылка не должна мешать сохранению");
+    checkEqual("смотри тут: https://apple.com.\n", readFile(path), "ссылка записана");
+    check(outcome.differsFromDocument,
+          "прочитанное обратно богаче документа: появилась ссылка");
+
+    // А вот подмена текста обязана ловиться по-прежнему: строение и содержимое
+    // сверяются строго.
+    check(zametti::saveDocument(doc, pathFor("сломанный.md"), QStringLiteral("stamp"),
+                                brokenReader)
+                  .result == zametti::SaveResult::Rescued,
+          "испорченный читатель ловится и с новой сверкой");
+}
+
 // Записать некуда — старый файл всё равно цел.
 void checkFailure() {
     const QString path = g_dir + QStringLiteral("/нет-такого-каталога/файл.md");
@@ -259,6 +289,7 @@ int main(int argc, char** argv) {
 
     checkEmptyParagraphs();
     checkEdgeSpaces();
+    checkBareLinks();
     checkRescue();
     checkFailure();
 

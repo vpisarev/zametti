@@ -32,6 +32,11 @@ struct SaveOutcome {
     SaveResult result = SaveResult::Failed;
     QString message;      // человеку, при Rescued и Failed
     QString rescuePath;   // непусто при Rescued
+    // Как записанное прочтётся обратно. Обычно это ровно то, что было в
+    // документе, но не всегда: голую ссылку человек набирает текстом, а файл
+    // читает её ссылкой. Виджет догоняет документ этим содержимым.
+    Document reread;
+    bool differsFromDocument = false;
 };
 
 // reader подменяется только тестом самопроверки: испортить читателя иначе

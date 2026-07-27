@@ -464,6 +464,16 @@ void NoteEditor::save(bool interactive) {
         if (readFile(path_, written))
             knownContent_ = QByteArray(written.data(), qsizetype(written.size()));
         watchFile();
+
+        // Файл может прочитаться богаче документа: голую ссылку человек набирает
+        // текстом, а разбор делает из неё ссылку. Догоняем — иначе то, что на
+        // диске, и то, что на экране, расходились бы до перезагрузки. Шага
+        // истории здесь нет: содержимое то же самое, изменилась только разметка
+        // внутри строки.
+        if (outcome.differsFromDocument) {
+            const int cursor = textCursor().position();
+            rebuild(outcome.reread, cursor, scrollRatio());
+        }
         return;
     }
 
