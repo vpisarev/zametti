@@ -953,14 +953,35 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
 
     // Пустой пункт списка: Enter снимает список, а не заводит ещё один пустой
     // пункт. Иначе выйти из списка можно было бы только двумя нажатиями.
+    //
+    // А если за пустым пунктом идёт ещё пункт, то список не кончается, а
+    // разрывается: сам пустой пункт исчезает, и список снимается со СЛЕДУЮЩЕГО
+    // пункта. Он становится абзацем — и разделяет списки.
+    //
+    // Пустой абзац для этого не годится, и это проверено на ядре: пустая строка
+    // между пунктами не разделяет ничего, "- раз\n- два" и "- раз\n\n- два"
+    // дают тот же самый IR. Писать в файл нечего, и разрыв, который человек
+    // видел на экране, пропадал при первом же сохранении. Разделяет только
+    // абзац с содержимым — а вокруг него пустые строки работают как обычно.
     if (isListBlock(block) && block.text().isEmpty()) {
-        QTextBlockFormat plain = format;
+        const QTextBlock next = block.next();
+        const bool splitsList = next.isValid() && isListBlock(next);
+        const QTextBlock target = splitsList ? next : block;
+
+        QTextBlockFormat plain = target.blockFormat();
         plain.clearProperty(KindProperty);
         plain.clearProperty(LevelProperty);
         plain.setLeftMargin(0);
 
         cursor.beginEditBlock();
+        cursor.setPosition(target.position());
         cursor.setBlockFormat(plain);
+        if (splitsList) {
+            // Пустой пункт был лишь способом сказать "разорви здесь".
+            cursor.setPosition(block.position());
+            cursor.setPosition(block.position() + block.length(), QTextCursor::KeepAnchor);
+            cursor.removeSelectedText();
+        }
         normalise(doc, around(number));
         cursor.endEditBlock();
         return true;
