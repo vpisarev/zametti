@@ -15,12 +15,12 @@ add_executable(zametti
     main.cpp
     document_builder.h
     document_builder.cpp
-    bullet_object.h
-    bullet_object.cpp
-    checkbox_object.h
-    checkbox_object.cpp
+    marker.h
+    marker.cpp
     note_tree.h
     note_tree.cpp
+    note_view.h
+    note_view.cpp
     settings.h
     settings.cpp
     resources.qrc

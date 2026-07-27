@@ -5,20 +5,20 @@
 // нельзя, ошибка проявится только на не-ASCII. Пересчёт идёт накопительно по
 // спанам, идущим по порядку.
 //
-// Маркеры списков рисуются текстом, а не через QTextList. Причина простая:
-// маркер QTextList нельзя ни покрасить, ни увеличить, ни сдвинуть по базовой
-// линии, а чекбоксу всё это нужно. Заодно уходит и навязанный Qt отступ:
-// пункт верхнего уровня встаёт вровень с абзацем, как и в самом файле.
-// Плата — нумерацию приходится вести самим, ровно тем же правилом, что и в
-// сериализаторе: прогон живёт на каждом уровне и переживает вложенный подсписок.
+// Маркеры списков не попадают в документ вовсе: здесь под них только
+// резервируется левое поле, а рисует их NoteView по геометрии строки (см.
+// marker.h). Причина та же, по которой отвергнут QTextList: его маркер нельзя
+// ни покрасить, ни увеличить, ни сдвинуть, а чекбоксу всё это нужно. Заодно
+// уходит навязанный Qt отступ — пункт верхнего уровня встаёт вровень с абзацем,
+// как и в самом файле. Плата — нумерацию приходится вести самим, ровно тем же
+// правилом, что и в сериализаторе: прогон живёт на каждом уровне и переживает
+// вложенный подсписок.
 
 #include "document_builder.h"
 
+#include "marker.h"
 #include "settings.h"
-#include "bullet_object.h"
-#include "checkbox_object.h"
 
-#include <QAbstractTextDocumentLayout>
 #include <QColor>
 #include <QPalette>
 #include <QWidget>
@@ -32,7 +32,6 @@
 #include <QTextDocument>
 #include <QTextFrame>
 #include <QTextFrameFormat>
-#include <QTextOption>
 
 #include <vector>
 
@@ -121,7 +120,7 @@ void enlargeFallbackGlyphs(QTextDocument& doc, int textStart, const QString& tex
     }
 }
 
-void applySpans(QTextDocument& doc, int textStart, const Block& b) {
+void applySpans(QTextDocument& doc, int textStart, const Block& b, qreal linePoint) {
     OffsetMap map(b.text);
     QTextCursor cursor(&doc);
     for (const Span& s : b.inlines) {
@@ -134,7 +133,14 @@ void applySpans(QTextDocument& doc, int textStart, const Block& b) {
         if (s.bold) fmt.setFontWeight(QFont::Bold);
         if (s.italic) fmt.setFontItalic(true);
         if (s.strike) fmt.setFontStrikeOut(true);
-        if (s.code) fmt.setBackground(appearance().codeBackground);
+        if (s.code) {
+            fmt.setBackground(appearance().codeBackground);
+            // Кегль долей от окружающего, а не от базового: код внутри
+            // заголовка должен остаться заголовочного размера.
+            fmt.setFontPointSize(linePoint * appearance().codeScale);
+            if (!appearance().codeFamily.isEmpty())
+                fmt.setFontFamilies({QString(appearance().codeFamily)});
+        }
         if (!s.href.empty()) {
             fmt.setAnchor(true);
             fmt.setAnchorHref(
@@ -176,54 +182,6 @@ struct ListState {
     }
 };
 
-bool isTask(Kind kind) {
-    return kind == Kind::TaskUnchecked || kind == Kind::TaskChecked;
-}
-
-// Сам знак маркера, без отбивки: текст ставится по табуляции, а не встык.
-// У нарисованного чекбокса знака нет — вместо него в текст идёт заполнитель,
-// который лэйаут отдаёт нашему обработчику.
-QString markerGlyph(Kind kind, int ordinal) {
-    switch (kind) {
-        case Kind::Bullet:
-            return appearance().bulletStyle == BulletStyle::Drawn
-                       ? QString(QChar::ObjectReplacementCharacter)
-                       : appearance().bulletGlyph;
-        case Kind::Ordered: return QString::number(ordinal) + QStringLiteral(".");
-        case Kind::TaskUnchecked:
-        case Kind::TaskChecked:
-            switch (appearance().checkboxStyle) {
-                case CheckboxStyle::Glyph:
-                    return kind == Kind::TaskChecked ? QStringLiteral("☑")
-                                                     : QStringLiteral("☐");
-                case CheckboxStyle::Ascii:
-                    return kind == Kind::TaskChecked ? QStringLiteral("[x]")
-                                                     : QStringLiteral("[ ]");
-                case CheckboxStyle::Drawn:
-                    return QString(QChar::ObjectReplacementCharacter);
-            }
-            return {};
-        default: return {};
-    }
-}
-
-// Ширина колонки маркера. У списков она меряется знакоместами, как в самом
-// файле: под "- " содержимое идёт со второй колонки, под "1. " — с третьей.
-// У задачи с нарисованной рамкой знакоместа ни при чём — колонка складывается
-// из ширины самой рамки и зазора до текста.
-qreal markerColumn(Kind kind, int ordinal, const QFont& font, const QFontMetricsF& metrics) {
-    const qreal cell = metrics.horizontalAdvance(QLatin1Char(' '));
-    if (kind == Kind::Ordered) return cell * (QString::number(ordinal).size() + 2);
-    if (isTask(kind)) {
-        if (appearance().checkboxStyle == CheckboxStyle::Drawn) {
-            return CheckboxObject::sideFor(font) +
-                   appearance().checkboxTextGap * metrics.horizontalAdvance(QLatin1Char('A'));
-        }
-        return cell * (appearance().checkboxStyle == CheckboxStyle::Ascii ? 4 : 3);
-    }
-    return cell * 2;
-}
-
 }  // namespace
 
 void applyPalette(QWidget& view) {
@@ -253,16 +211,6 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
     const QFontMetricsF metrics(base);
     const QRawFont primaryFont = QRawFont::fromFont(base);
 
-    if (appearance().checkboxStyle == CheckboxStyle::Drawn &&
-        target.documentLayout()->handlerForObject(CheckboxObject::Type) == nullptr) {
-        target.documentLayout()->registerHandler(CheckboxObject::Type,
-                                                 new CheckboxObject(&target));
-    }
-    if (appearance().bulletStyle == BulletStyle::Drawn &&
-        target.documentLayout()->handlerForObject(BulletObject::Type) == nullptr) {
-        target.documentLayout()->registerHandler(BulletObject::Type, new BulletObject(&target));
-    }
-
     QTextFrameFormat rootFormat = target.rootFrame()->frameFormat();
     rootFormat.setLeftMargin(appearance().sideMargin * zoom);
     rootFormat.setRightMargin(appearance().sideMargin * zoom);
@@ -276,6 +224,9 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
     // Свежий QTextDocument уже содержит один пустой блок: для первого блока
     // формат ставится на него, иначе сверху появится пустой абзац.
     bool first = true;
+    bool prevList = false;
+    bool prevOrdered = false;
+    int prevLevel = 0;
     ListState lists;
 
     for (const Block& b : doc) {
@@ -283,19 +234,31 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
         const bool list = !raw && isList(b.kind);
 
         QTextBlockFormat blockFmt;
-        blockFmt.setTopMargin(appearance().blockSpacing * zoom);
-        blockFmt.setBottomMargin(appearance().blockSpacing * zoom);
+        if (!raw) {
+            blockFmt.setProperty(KindProperty, static_cast<int>(b.kind));
+            if (list) blockFmt.setProperty(LevelProperty, b.level);
+        }
+
+        // Отбивку целиком держит верхнее поле, нижнее всегда нулевое. Qt между
+        // соседями берёт максимум из двух полей, и при полях с обеих сторон
+        // зазор нельзя сделать разным для разных пар блоков: список, идущий за
+        // абзацем, отбивался бы от него ровно как второй абзац.
+        // Пункты одного списка стоят вплотную; разной нумерации на одном уровне
+        // — это уже два списка подряд, и они должны разделяться, иначе
+        // "- буллет" и "1. пункт" сливаются в одну лесенку.
+        const bool sameList = list && prevList &&
+                              (b.level != prevLevel || isOrdered(b.kind) == prevOrdered);
+        qreal topMargin = appearance().blockSpacing;
+        if (sameList) topMargin = 0;
+        else if (list || prevList) topMargin = appearance().listSpacing;
 
         // Высота строки задаётся явно, а не долей от самого высокого знака в
-        // ней: иначе увеличенный чекбокс растягивал бы строку задачи, и пункты
-        // одного списка стояли бы с разным шагом.
+        // ней: иначе знак из запасного шрифта растягивал бы свою строку, и
+        // пункты одного списка стояли бы с разным шагом.
         qreal linePoint = basePoint;
 
         QTextCharFormat charFmt;
         charFmt.setFontPointSize(basePoint);
-
-        QString marker;
-        QTextCharFormat markerFmt;
 
         QString text;
         if (raw) {
@@ -305,16 +268,21 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
             switch (b.kind) {
                 case Kind::Heading:
                     blockFmt.setHeadingLevel(b.headingLevel);
-                    blockFmt.setTopMargin(appearance().blockSpacing * 2.2 * zoom);
+                    topMargin = appearance().blockSpacing * appearance().headingSpacingFactor;
                     charFmt.setFontWeight(QFont::Bold);
                     linePoint = basePoint * appearance().headingScale[b.headingLevel - 1];
                     charFmt.setFontPointSize(linePoint);
                     break;
 
                 case Kind::Code:
+                    // Отступа у блока кода нет: подложка идёт во всю колонку,
+                    // как в остальных программах для заметок.
                     text = withoutTrailingNewline(b.text);
                     blockFmt.setBackground(appearance().codeBackground);
-                    blockFmt.setLeftMargin(metrics.horizontalAdvance(QLatin1Char(' ')) * 2);
+                    linePoint = basePoint * appearance().codeScale;
+                    charFmt.setFontPointSize(linePoint);
+                    if (!appearance().codeFamily.isEmpty())
+                        charFmt.setFontFamilies({QString(appearance().codeFamily)});
                     break;
 
                 case Kind::Quote:
@@ -330,60 +298,20 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
             if (b.kind != Kind::Code) text = toQt(b.text);
         }
 
+        blockFmt.setTopMargin(first ? 0 : topMargin * zoom);
+        blockFmt.setBottomMargin(0);
+
         if (list) {
             const size_t level = static_cast<size_t>(b.level);
             const int ordinal = lists.nextOrdinal(level, isOrdered(b.kind));
-            marker = markerGlyph(b.kind, ordinal) + QLatin1Char('\t');
 
-            markerFmt = charFmt;
-            if (isTask(b.kind)) {
-                const bool checked = b.kind == Kind::TaskChecked;
-                markerFmt.setForeground(checked ? appearance().checkboxCheckedColor : appearance().checkboxUncheckedColor);
-                switch (appearance().checkboxStyle) {
-                    case CheckboxStyle::Glyph:
-                        markerFmt.setFontFamilies({QString(appearance().symbolFamily),
-                                                   QString(appearance().fontFamily)});
-                        markerFmt.setFontPointSize(basePoint * appearance().checkboxGlyphScale);
-                        break;
-                    case CheckboxStyle::Ascii:
-                        break;
-                    case CheckboxStyle::Drawn:
-                        markerFmt.setObjectType(CheckboxObject::Type);
-                        markerFmt.setProperty(CheckboxObject::CheckedProperty, checked);
-                        // Объект по умолчанию встаёт основанием на базовую линию,
-                        // и рамку приходилось бы опускать ниже выданного Qt
-                        // прямоугольника. Выступ за его пределы Qt не закрашивает
-                        // выделением — под выделением снизу оставалась яркая
-                        // полоса. AlignMiddle сдвигает сам прямоугольник, и
-                        // рисование целиком остаётся внутри него.
-                        markerFmt.setVerticalAlignment(QTextCharFormat::AlignMiddle);
-                        break;
-                }
-            } else {
-                markerFmt.setForeground(b.kind == Kind::Bullet ? appearance().bulletColor
-                                                               : appearance().orderedColor);
-                // Ширину колонки это не трогает: текст ставится по табуляции.
-                if (b.kind == Kind::Bullet) {
-                    if (appearance().bulletStyle == BulletStyle::Drawn)
-                        markerFmt.setObjectType(BulletObject::Type);
-                    else
-                        markerFmt.setFontPointSize(basePoint * appearance().bulletScale);
-                }
-            }
-
-            // Висячий отступ: первая строка начинается с маркера, продолжения
-            // выравниваются по тексту. Колонка текста задана табуляцией, а не
-            // шириной самого знака: чекбокс крупнее остальных маркеров, и без
-            // этого текст задач съезжал бы вправо относительно обычных пунктов.
+            // Под маркер отводится поле слева; сам он в текст не попадает и
+            // рисуется по геометрии строки (см. marker.h). Поэтому продолжения
+            // пункта выравниваются по его тексту сами, без висячего отступа.
             const qreal indent = lists.levels[level].contentCol;
-            const qreal cell = markerColumn(b.kind, ordinal, base, metrics);
+            const qreal cell = markerColumn(b.kind, ordinal, base);
             lists.levels[level + 1].contentCol = indent + cell;
-
             blockFmt.setLeftMargin(indent + cell);
-            blockFmt.setTextIndent(-cell);
-            blockFmt.setTabPositions({QTextOption::Tab(cell, QTextOption::LeftTab)});
-            blockFmt.setTopMargin(0);
-            blockFmt.setBottomMargin(0);
         } else {
             lists.reset();
         }
@@ -402,12 +330,13 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
             cursor.insertBlock(blockFmt, charFmt);
         }
 
-        if (!marker.isEmpty()) cursor.insertText(marker, markerFmt);
-
         const int textStart = cursor.position();
         cursor.insertText(text, charFmt);
-        if (!raw && !b.inlines.empty()) applySpans(target, textStart, b);
+        if (!raw && !b.inlines.empty()) applySpans(target, textStart, b, linePoint);
         enlargeFallbackGlyphs(target, textStart, text, linePoint, primaryFont);
+        prevList = list;
+        prevOrdered = list && isOrdered(b.kind);
+        prevLevel = list ? b.level : 0;
     }
 
     cursor.endEditBlock();

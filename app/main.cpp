@@ -5,6 +5,7 @@
 
 #include "document_builder.h"
 #include "note_tree.h"
+#include "note_view.h"
 #include "parser.h"
 #include "serializer.h"
 #include "settings.h"
@@ -203,7 +204,7 @@ int main(int argc, char** argv) {
 
     QSplitter window(Qt::Horizontal);
     zametti::NoteTreeView tree;
-    QTextBrowser view;
+    zametti::NoteView view;
 
     zametti::NoteTreeModel model(
         zametti::NoteTreeModel::rootFor(current, zametti::appearance().notesRoot));
@@ -247,7 +248,10 @@ int main(int argc, char** argv) {
         return bar->maximum() > 0 ? double(bar->value()) / bar->maximum() : 0.0;
     };
     auto rebuild = [&view, &doc, &zoom](double ratio) {
+        view.setZoom(zoom);
         zametti::buildDocument(doc, *view.document(), zoom);
+        // Сборщик ставит поля по умолчанию, о ширине окна он не знает.
+        view.applyContentWidth();
         view.moveCursor(QTextCursor::Start);
         QScrollBar* bar = view.verticalScrollBar();
         bar->setValue(int(ratio * bar->maximum()));
