@@ -21,6 +21,7 @@
 #include <QTest>
 #include <QTextBlock>
 #include <QAbstractTextDocumentLayout>
+#include <QImage>
 #include <QScrollBar>
 #include <QTextCursor>
 #include <QTextFragment>
@@ -965,6 +966,106 @@ void checkViewHoldsForEveryOperation() {
     }
 }
 
+// Шаг вниз между блоками с разными полями. Маркер списка отодвигает текст
+// пункта вправо, а движение по вертикали держит экранный X — из начала пункта
+// курсор попадал на пару знаков внутрь следующего абзаца, и выделение
+// прихватывало лишнее.
+void checkColumnAcrossMargins() {
+    const QString path = writeNote("колонка.md",
+                                   QStringLiteral("- пункт списка\n\nОбычный абзац.\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 400);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    check(editor.document()->firstBlock().blockFormat().leftMargin() >
+              editor.document()->findBlockByNumber(1).blockFormat().leftMargin(),
+          "у пункта поле шире, чем у абзаца");
+
+    QTextCursor cursor = editor.textCursor();
+    cursor.setPosition(editor.document()->firstBlock().position());
+    editor.setTextCursor(cursor);
+    QTest::keyClick(&editor, Qt::Key_Down);
+    QTest::qWait(10);
+
+    checkEqual(QStringLiteral("1"), QString::number(editor.textCursor().blockNumber()),
+               "шаг вниз привёл в следующий блок");
+    checkEqual(QStringLiteral("0"),
+               QString::number(editor.textCursor().positionInBlock()),
+               "и в ту же колонку, а не внутрь текста");
+
+    // То же с выделением: лишних знаков захватываться не должно.
+    cursor.setPosition(editor.document()->firstBlock().position());
+    editor.setTextCursor(cursor);
+    QTest::keyClick(&editor, Qt::Key_Down, Qt::ShiftModifier);
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("пункт списка"),
+               editor.textCursor().selectedText().replace(QChar::ParagraphSeparator,
+                                                          QString()),
+               "выделено ровно содержимое пункта");
+}
+
+// Выделение нескольких строк рисуется сплошным блоком. Высота строки назначена,
+// а Qt красит выделение по естественной — между полосами оставался
+// незакрашенный ряд, и на укороченной строке он читался сколом на углу.
+void checkSelectionHasNoGaps() {
+    QString source;
+    for (int i = 0; i < 4; ++i)
+        source += QStringLiteral("- пункт %1, достаточно длинный, чтобы занять ширину\n")
+                      .arg(i);
+    const QString path = writeNote("сплошное-выделение.md", source);
+
+    zametti::NoteEditor editor;
+    editor.resize(760, 260);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    QTextCursor cursor = editor.textCursor();
+    cursor.setPosition(editor.document()->firstBlock().position());
+    const QTextBlock last = editor.document()->findBlockByNumber(3);
+    cursor.setPosition(last.position() + last.length() - 1, QTextCursor::KeepAnchor);
+    editor.setTextCursor(cursor);
+    QTest::qWait(20);
+
+    QImage shot(editor.size(), QImage::Format_ARGB32);
+    editor.render(&shot);
+
+    const QColor highlight = editor.palette().color(QPalette::Highlight);
+    auto isHighlight = [&highlight](QRgb pixel) {
+        return qAbs(qRed(pixel) - highlight.red()) < 40 &&
+               qAbs(qGreen(pixel) - highlight.green()) < 40 &&
+               qAbs(qBlue(pixel) - highlight.blue()) < 40;
+    };
+
+    int firstRow = -1;
+    int lastRow = -1;
+    for (int y = 0; y < shot.height(); ++y) {
+        bool any = false;
+        for (int x = 0; x < shot.width() && !any; ++x) any = isHighlight(shot.pixel(x, y));
+        if (!any) continue;
+        if (firstRow < 0) firstRow = y;
+        lastRow = y;
+    }
+    check(firstRow >= 0 && lastRow - firstRow > 40,
+          "выделение должно занимать несколько строк");
+
+    int empty = 0;
+    for (int y = firstRow; y <= lastRow; ++y) {
+        bool any = false;
+        for (int x = 0; x < shot.width() && !any; ++x) any = isHighlight(shot.pixel(x, y));
+        if (!any) ++empty;
+    }
+    checkEqual(QStringLiteral("0"), QString::number(empty),
+               "внутри выделения не должно быть незакрашенных рядов");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1005,6 +1106,8 @@ int main(int argc, char** argv) {
     checkCheckboxClickWithSelection();
     checkUndoKeepsCursor();
     checkViewHoldsForEveryOperation();
+    checkColumnAcrossMargins();
+    checkSelectionHasNoGaps();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;

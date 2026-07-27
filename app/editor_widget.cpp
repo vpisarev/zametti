@@ -299,6 +299,34 @@ void NoteEditor::dropLinkAtRightEdge() {
     setCurrentCharFormat(plain);
 }
 
+void NoteEditor::keepColumnAcrossMargins(QKeyEvent* event) {
+    const bool vertical = event->key() == Qt::Key_Down || event->key() == Qt::Key_Up;
+    if (!vertical) return;
+
+    const QTextBlock before = textCursor().block();
+    const qreal marginBefore = before.blockFormat().leftMargin();
+    const qreal x = cursorRect().x() + horizontalScrollBar()->value();
+
+    NoteView::keyPressEvent(event);
+
+    const QTextBlock after = textCursor().block();
+    const qreal marginAfter = after.blockFormat().leftMargin();
+    if (after == before || qFuzzyCompare(marginAfter + 1.0, marginBefore + 1.0)) return;
+
+    // Текст нового блока начинается на столько же правее или левее — значит и
+    // курсор должен переехать вместе с ним.
+    const QPointF wanted(x + marginAfter - marginBefore,
+                         cursorRect().center().y() + verticalScrollBar()->value());
+    const int at = document()->documentLayout()->hitTest(wanted, Qt::FuzzyHit);
+    if (at < 0 || document()->findBlock(at) != after) return;
+
+    QTextCursor moved = textCursor();
+    moved.setPosition(at, event->modifiers().testFlag(Qt::ShiftModifier)
+                              ? QTextCursor::KeepAnchor
+                              : QTextCursor::MoveAnchor);
+    setTextCursor(moved);
+}
+
 void NoteEditor::keyPressEvent(QKeyEvent* event) {
     // Отмену обрабатываем здесь, а не ярлыком окна: QTextEdit объявляет Ctrl+Z
     // своим и глотает его — ярлык не срабатывает ни разу. Собственная история у
@@ -370,6 +398,13 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     if ((event->key() == Qt::Key_Tab || event->key() == Qt::Key_Backtab) &&
         isListBlock(textCursor().block()))
         return;
+
+    // Шаг вверх-вниз между блоками с разными полями: курсор должен остаться на
+    // той же колонке, а не уехать на ширину маркера.
+    if (event->key() == Qt::Key_Down || event->key() == Qt::Key_Up) {
+        keepColumnAcrossMargins(event);
+        return;
+    }
 
     // Перед самим набором: у правого края ссылки набранное не должно уезжать
     // внутрь неё.
