@@ -600,10 +600,23 @@ void insertSoftBreak(QTextCursor& cursor, const QTextBlock& block) {
     cursor.endEditBlock();
 }
 
-// Стоим ли на пустой строке внутри блока: сразу за мягким переносом.
-bool onEmptySoftLine(const QTextCursor& cursor, const QTextBlock& block) {
-    const int inBlock = cursor.positionInBlock();
-    return inBlock > 0 && block.text().at(inBlock - 1) == QChar::LineSeparator;
+// Пустая ли строка, на которой стоит курсор, и сколько знаков она занимает
+// вместе со своим разделителем. Ноль — строка не пуста.
+//
+// Пустой считается и строка из одних пробелов: человек нажал Enter, потыкал
+// пробел и нажал Enter снова. Строку из пробелов внутри абзаца markdown не
+// выражает — она его заканчивает, — и оставить её значило бы каждый раз
+// проваливать самопроверку.
+int emptyLineTail(const QTextCursor& cursor, const QTextBlock& block) {
+    const QString text = block.text();
+    int i = cursor.positionInBlock();
+    int spaces = 0;
+    while (i > 0 && (text.at(i - 1) == QLatin1Char(' ') || text.at(i - 1) == QLatin1Char('\t') ||
+                     text.at(i - 1) == QChar::Nbsp)) {
+        --i;
+        ++spaces;
+    }
+    return i > 0 && text.at(i - 1) == QChar::LineSeparator ? spaces + 1 : 0;
 }
 
 // Переносится ли строка внутри этого блока без потерь. Проверено на ядре:
@@ -714,13 +727,15 @@ bool splitBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     // абзаца markdown не выражает, она его и заканчивает.
     if (!isRawBlock(block) &&
         (kindOf(block) == Kind::Paragraph || kindOf(block) == Kind::Quote)) {
-        if (!onEmptySoftLine(cursor, block)) {
+        const int tail = emptyLineTail(cursor, block);
+        if (tail == 0) {
             insertSoftBreak(cursor, block);
             return true;
         }
-        // Висящий перенос убираем: он был началом этой пустой строки.
+        // Пустую строку убираем вместе с её разделителем: она была не
+        // содержимым, а вторым нажатием Enter.
         cursor.beginEditBlock();
-        cursor.deletePreviousChar();
+        for (int k = 0; k < tail; ++k) cursor.deletePreviousChar();
         const bool done = hardSplit(doc, cursor);
         cursor.endEditBlock();
         return done;

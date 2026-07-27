@@ -111,24 +111,28 @@ Block withEdgesNormalised(Block block) {
         size_t stop = end;
         while (stop > start && isSpace(text[stop - 1])) --stop;
 
-        // Ведущие пробелы: каждый становится неразрывным. Если после них ничего
-        // нет, строка пустая, и сохранять нечего.
+        // Пустая строка внутри блока — не содержимое: в файле она блок
+        // заканчивает, и разбор вернул бы два блока вместо одного. Такую строку
+        // выбрасываем вместе с её разделителем.
+        const bool blank = start >= stop;
+        if (!blank && !out.empty()) out.push_back('\n');
+
+        // Ведущие пробелы: каждый становится неразрывным. Отступ значим, им
+        // рисуют схемы и лесенки.
         for (size_t k = line; k < start; ++k) {
             map[k] = int(out.size());
-            if (start < end) out += kNbsp;
+            if (!blank) out += kNbsp;
         }
         for (size_t k = start; k < stop; ++k) {
             map[k] = int(out.size());
             out.push_back(text[k]);
         }
-        for (size_t k = stop; k < end; ++k) map[k] = int(out.size());
+        for (size_t k = stop; k <= end && k < text.size(); ++k) map[k] = int(out.size());
 
         if (last) {
             map[text.size()] = int(out.size());
             break;
         }
-        map[end] = int(out.size());
-        out.push_back('\n');
         line = end + 1;
     }
 

@@ -255,6 +255,25 @@ void checkEdgeSpaces() {
         checkEqual(c.expected, readFile(path), c.what);
     }
 
+    // Пустая строка внутри блока — не содержимое: в файле она блок заканчивает.
+    // Прийти она может вставкой, и запись не должна на ней спотыкаться.
+    {
+        const QString path = pathFor("пустая-внутри.md");
+        check(writeFile(path, "первая\nвторая\n"), "не записать исходник");
+        // Строим прямо из IR: с клавиатуры такое больше не набрать, а вставкой
+        // прийти может.
+        zametti::Block block;
+        block.text = "первая\n   \nвторая";
+        QTextDocument doc;
+        zametti::buildDocument({block}, doc);
+
+        const zametti::SaveOutcome outcome =
+            zametti::saveDocument(doc, path, QStringLiteral("test"));
+        check(outcome.result != zametti::SaveResult::Rescued,
+              "строка из пробелов внутри блока не должна уводить в аварийный файл");
+        checkEqual("первая\nвторая\n", readFile(path), "пустая строка выброшена");
+    }
+
     // Записанное с неразрывными отступами устойчиво: второй проход ничего не
     // меняет, иначе файл переписывался бы при каждом сохранении.
     {
