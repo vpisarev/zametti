@@ -3,6 +3,7 @@
 #include "document_builder.h"
 #include "document_reader.h"
 #include "document_saver.h"
+#include "doc_model.h"
 #include "editor_ops.h"
 #include "parser.h"
 #include "settings.h"
@@ -11,6 +12,7 @@
 #include <QKeySequence>
 #include <QMessageBox>
 #include <QScrollBar>
+#include <QTextBlock>
 #include <QTextCursor>
 #include <QTextDocument>
 
@@ -40,6 +42,8 @@ NoteEditor::NoteEditor(QWidget* parent)
     // Хоткей разбираем один раз: на каждое нажатие клавиши это было бы разбором
     // строки впустую.
     toggleTaskKey_ = QKeySequence(appearance().toggleTaskKey, QKeySequence::PortableText);
+    moveUpKey_ = QKeySequence(appearance().moveUpKey, QKeySequence::PortableText);
+    moveDownKey_ = QKeySequence(appearance().moveDownKey, QKeySequence::PortableText);
 
     autosave_.setSingleShot(true);
     connect(&autosave_, &QTimer::timeout, this, [this] { save(true); });
@@ -134,6 +138,13 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
         return;   // наружу Shift+Tab не отдаём: он увёл бы фокус из окна
     }
 
+    const auto pressed = [event](const QKeySequence& keys) {
+        return !keys.isEmpty() && QKeySequence(event->keyCombination()).matches(keys) ==
+                                      QKeySequence::ExactMatch;
+    };
+    if (pressed(moveUpKey_) && moveItem(-1)) return;
+    if (pressed(moveDownKey_) && moveItem(1)) return;
+
     if (!toggleTaskKey_.isEmpty() &&
         QKeySequence(event->keyCombination()).matches(toggleTaskKey_) ==
             QKeySequence::ExactMatch &&
@@ -163,6 +174,29 @@ bool NoteEditor::runOperation(bool (*op)(QTextDocument&, QTextCursor&)) {
     sinceLastEdit_.invalidate();
 
     rebuild(ir, position, scrollRatio());
+    document()->setModified(true);
+    ensureCursorVisible();
+    autosave_.start(appearance().autosaveDelayMs);
+    return true;
+}
+
+bool NoteEditor::moveItem(int direction) {
+    MoveResult moved = moveListItem(*document(), textCursor(), direction);
+    if (!moved.done) return false;
+
+    history_.push(moved.doc, textCursor().position());
+    sinceLastEdit_.invalidate();
+    rebuild(moved.doc, 0, scrollRatio());
+
+    // Курсор ставим по месту в IR: после перестановки прежняя позиция в тексте
+    // указывала бы на чужой пункт.
+    const QTextBlock landed = blockForIrIndex(*document(), moved.irBlock);
+    if (landed.isValid()) {
+        QTextCursor place(document());
+        place.setPosition(landed.position() +
+                          qMin(moved.offsetInBlock, landed.length() - 1));
+        setTextCursor(place);
+    }
     document()->setModified(true);
     ensureCursorVisible();
     autosave_.start(appearance().autosaveDelayMs);

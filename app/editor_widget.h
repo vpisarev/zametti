@@ -61,6 +61,10 @@ private:
     // сборщик, и заводит отдельный шаг истории. Возвращает то же, что операция.
     bool runOperation(bool (*op)(QTextDocument&, QTextCursor&));
 
+    // Перестановка пунктов идёт не над курсором, а над IR: операция возвращает
+    // готовый документ, и собрать его — уже наше дело.
+    bool moveItem(int direction);
+
     void rebuild(const Document& doc, int cursor, double ratio);
     void recordEdit();
     void onContentsChanged();
@@ -75,6 +79,8 @@ private:
     bool recordingSuspended_ = false;
 
     QKeySequence toggleTaskKey_;
+    QKeySequence moveUpKey_;
+    QKeySequence moveDownKey_;
     QTimer autosave_;
     QElapsedTimer sinceLastEdit_;
     QString lastComplaint_;

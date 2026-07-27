@@ -11,6 +11,8 @@
 #ifndef ZAMETTI_EDITOR_OPS_H
 #define ZAMETTI_EDITOR_OPS_H
 
+#include "ir.h"
+
 #include <QString>
 
 class QTextCursor;
@@ -42,6 +44,25 @@ bool splitBlockAtCursor(QTextDocument& doc, QTextCursor& cursor);
 // Возвращает false во всех прочих случаях: обычный Backspace внутри текста
 // штатный.
 bool unwrapListItemAtCursor(QTextDocument& doc, QTextCursor& cursor);
+
+// Ctrl+Up / Ctrl+Down: пункт меняется местами с соседним пунктом того же
+// уровня. Единица перемещения — пункт вместе со своим поддеревом; поддерево
+// соседа при обмене тоже едет целиком.
+//
+// Сосед ищется в пределах непрерывной списочной области: через абзац операция
+// не перепрыгивает. У первого пункта вверх и у последнего вниз — молча ничего.
+//
+// Работает над IR, а не над курсором: переставить два куска вектора надёжнее,
+// чем вырезать и вставлять куски документа, и свойства блоков при этом заведомо
+// сохраняются. Виджет собирает документ из возвращённого IR.
+struct MoveResult {
+    bool done = false;
+    Document doc;         // документ целиком, с переставленными пунктами
+    int irBlock = 0;      // куда переехал пункт, номером блока IR
+    int offsetInBlock = 0;   // где в нём стоял курсор, в кодовых единицах UTF-16
+};
+
+MoveResult moveListItem(const QTextDocument& doc, const QTextCursor& cursor, int direction);
 
 // Tab и Shift+Tab: сдвиг пунктов списка на уровень внутрь и наружу.
 //

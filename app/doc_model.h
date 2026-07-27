@@ -19,6 +19,7 @@
 #include <vector>
 
 class QTextBlock;
+class QTextDocument;
 
 namespace zametti {
 
@@ -87,6 +88,14 @@ bool isTaskBlock(const QTextBlock& block);
 // ListRuns — там тот же счёт, но за один проход вместо квадрата. Что оба
 // способа дают одно и то же, проверяет ops_test.
 int ordinalOf(const QTextBlock& block);
+
+// Номер блока IR, которому принадлежит блок документа. Соответствие не один к
+// одному: литеральные блоки лежат построчно (см. ContinuationProperty).
+int irIndexOfBlock(const QTextBlock& block);
+
+// Обратное: первый блок документа, принадлежащий блоку IR с этим номером.
+// Недействительный блок, если такого нет.
+QTextBlock blockForIrIndex(const QTextDocument& doc, int index);
 
 // Прогоны списка, по одному на каждый уровень вложенности. Ключ прогона — не
 // сам Kind, а его проекция (уровень, нумерованность): Bullet, TaskUnchecked и

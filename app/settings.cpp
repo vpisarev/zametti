@@ -142,6 +142,8 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("undoCoalesceMs"), a.undoCoalesceMs},
         {QStringLiteral("undoLimit"), a.undoLimit},
         {QStringLiteral("toggleTaskKey"), a.toggleTaskKey},
+        {QStringLiteral("moveUpKey"), a.moveUpKey},
+        {QStringLiteral("moveDownKey"), a.moveDownKey},
     };
 
     QJsonObject zoom{
@@ -247,6 +249,8 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     const QJsonValue limit = editor.value(QStringLiteral("undoLimit"));
     if (limit.isDouble()) a.undoLimit = limit.toInt();
     readString(editor, "toggleTaskKey", a.toggleTaskKey);
+    readString(editor, "moveUpKey", a.moveUpKey);
+    readString(editor, "moveDownKey", a.moveDownKey);
 
     const QJsonObject zoom = root.value(QStringLiteral("zoom")).toObject();
     readReal(zoom, "step", a.zoomStep);

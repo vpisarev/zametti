@@ -115,6 +115,8 @@ void printHelp() {
         "  Backspace         в начале пункта — сделать его абзацем\n"
         "  Tab, Shift+Tab    двигать пункт по уровням вложенности\n"
         "  %s%s  переключить задачу: сделана или нет\n"
+        "  %s%s  переставить пункт вверх\n"
+        "  %s%s  переставить пункт вниз\n"
         "\n"
         "Файлы:\n"
         "  %s\n"
@@ -125,6 +127,10 @@ void printHelp() {
         "      переписывается при выходе\n",
         zametti::appearance().toggleTaskKey.toUtf8().constData(),
         QByteArray(qMax(0, 16 - zametti::appearance().toggleTaskKey.size()), ' ').constData(),
+        zametti::appearance().moveUpKey.toUtf8().constData(),
+        QByteArray(qMax(0, 16 - zametti::appearance().moveUpKey.size()), ' ').constData(),
+        zametti::appearance().moveDownKey.toUtf8().constData(),
+        QByteArray(qMax(0, 16 - zametti::appearance().moveDownKey.size()), ' ').constData(),
         zametti::configPath().toUtf8().constData(),
         zametti::statePath().toUtf8().constData());
 }

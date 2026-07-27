@@ -1,6 +1,7 @@
 #include "doc_model.h"
 
 #include <QTextBlock>
+#include <QTextDocument>
 
 namespace zametti {
 
@@ -24,6 +25,23 @@ int levelOf(const QTextBlock& block) {
 
 bool isListBlock(const QTextBlock& block) {
     return !isRawBlock(block) && isList(kindOf(block));
+}
+
+int irIndexOfBlock(const QTextBlock& block) {
+    int index = 0;
+    for (QTextBlock prev = block.previous(); prev.isValid(); prev = prev.previous())
+        if (!isContinuationBlock(prev)) ++index;
+    return index;
+}
+
+QTextBlock blockForIrIndex(const QTextDocument& doc, int index) {
+    int seen = 0;
+    for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {
+        if (isContinuationBlock(block)) continue;
+        if (seen == index) return block;
+        ++seen;
+    }
+    return QTextBlock();
 }
 
 bool isTaskBlock(const QTextBlock& block) {

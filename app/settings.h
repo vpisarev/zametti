@@ -192,6 +192,8 @@ struct Appearance {
     // Хоткеи операций. Строкой, как их пишет QKeySequence: сочетание — дело
     // вкуса и раскладки, а не кода.
     QString toggleTaskKey = QStringLiteral("Ctrl+Space");
+    QString moveUpKey = QStringLiteral("Ctrl+Up");
+    QString moveDownKey = QStringLiteral("Ctrl+Down");
 
     // --- масштаб ---
     qreal zoomStep = 1.1;

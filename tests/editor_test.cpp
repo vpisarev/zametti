@@ -299,6 +299,51 @@ void checkListKeys() {
                "undo снимает ровно последнее переключение");
 }
 
+// Перемещение пунктов с клавиатуры, вместе с поддеревом и с курсором.
+void checkMoveKeys() {
+    const QString path = writeNote(
+        "перестановка.md", QStringLiteral("- раз\n  - вложенный\n- два\n- три\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(path);
+
+    auto text = [&editor] {
+        return QString::fromStdString(
+            zametti::serialize(zametti::readDocument(*editor.document())));
+    };
+    auto press = [&editor](const QString& keys) {
+        const QKeySequence sequence(keys, QKeySequence::PortableText);
+        QTest::keyClick(&editor, Qt::Key(sequence[0].key()),
+                        sequence[0].keyboardModifiers());
+        QTest::qWait(10);
+    };
+
+    // Курсор в первом пункте, у которого есть вложенный.
+    QTextCursor cursor = editor.textCursor();
+    cursor.setPosition(editor.document()->findBlockByNumber(0).position() + 2);
+    editor.setTextCursor(cursor);
+
+    press(zametti::appearance().moveDownKey);
+    checkEqual(QStringLiteral("- два\n- раз\n  - вложенный\n- три\n"), text(),
+               "пункт уехал вниз вместе с вложенным");
+    checkEqual(QStringLiteral("раз"), editor.textCursor().block().text(),
+               "курсор остался в перемещённом пункте");
+    check(editor.textCursor().positionInBlock() == 2, "и на том же месте в нём");
+
+    press(zametti::appearance().moveUpKey);
+    checkEqual(QStringLiteral("- раз\n  - вложенный\n- два\n- три\n"), text(),
+               "и вернулся обратно");
+
+    // Каждое перемещение — свой шаг истории.
+    editor.undo();
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("- два\n- раз\n  - вложенный\n- три\n"), text(),
+               "undo отменяет ровно последнее перемещение");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -325,6 +370,7 @@ int main(int argc, char** argv) {
     checkFirstEditAfterOpenIsUndoable();
     checkKeysAreOperations();
     checkListKeys();
+    checkMoveKeys();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;

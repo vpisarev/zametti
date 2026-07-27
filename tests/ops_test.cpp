@@ -389,6 +389,69 @@ const RangeCase kToggleRanges[] = {
      "буллет между задачами не трогается"},
 };
 
+// Перемещение пункта: markdown до, номер блока под курсором, куда двигаем.
+struct MoveCase {
+    const char* before;
+    int block;
+    int direction;
+    const char* after;
+    const char* what;
+};
+
+void checkMove(const MoveCase& c) {
+    QTextDocument doc;
+    zametti::buildDocument(zametti::parse(c.before), doc);
+
+    QTextCursor cursor(&doc);
+    cursor.setPosition(doc.findBlockByNumber(c.block).position());
+
+    const zametti::MoveResult moved = zametti::moveListItem(doc, cursor, c.direction);
+    const std::string actual =
+        moved.done ? zametti::serialize(moved.doc) : std::string("<операция отказалась>");
+    checkEqual(c.after, actual, c.what);
+    if (!moved.done) return;
+
+    // Пункт обязан оказаться там, куда указывает результат: иначе курсор уедет
+    // в чужой пункт.
+    QTextDocument rebuilt;
+    zametti::buildDocument(moved.doc, rebuilt);
+    const QTextBlock landed = zametti::blockForIrIndex(rebuilt, moved.irBlock);
+    check(landed.isValid(), std::string(c.what) + ": курсор указывает в никуда");
+    if (!landed.isValid()) return;
+    checkEqual(doc.findBlockByNumber(c.block).text().toStdString(),
+               landed.text().toStdString(),
+               std::string(c.what) + ": курсор остался в том же пункте");
+}
+
+const MoveCase kMoveCases[] = {
+    {"- раз\n- два\n- три\n", 1, -1, "- два\n- раз\n- три\n", "пункт вверх"},
+    {"- раз\n- два\n- три\n", 1, 1, "- раз\n- три\n- два\n", "пункт вниз"},
+    {"- раз\n- два\n", 0, -1, "<операция отказалась>", "первый вверх никуда"},
+    {"- раз\n- два\n", 1, 1, "<операция отказалась>", "последний вниз никуда"},
+
+    {"- раз\n  - вложенный\n- два\n", 0, 1, "- два\n- раз\n  - вложенный\n",
+     "пункт едет вместе с поддеревом"},
+    {"- раз\n- два\n  - вложенный\n", 0, 1, "- два\n  - вложенный\n- раз\n",
+     "поддерево соседа тоже едет целиком"},
+    {"- раз\n  - а\n  - б\n- два\n  - в\n", 0, 1,
+     "- два\n  - в\n- раз\n  - а\n  - б\n", "меняются местами два поддерева"},
+
+    {"- верх\n  - раз\n  - два\n", 2, -1, "- верх\n  - два\n  - раз\n",
+     "вложенные меняются между собой"},
+    {"- верх\n  - раз\n- другой\n", 1, 1, "<операция отказалась>",
+     "у вложенного нет соседа того же уровня"},
+
+    {"- раз\n\nабзац\n\n- два\n", 0, 1, "<операция отказалась>",
+     "через абзац не прыгаем"},
+    {"абзац\n", 0, 1, "<операция отказалась>", "вне списка не работает"},
+
+    {"1. раз\n2. два\n", 0, 1, "1. два\n2. раз\n", "нумерованные перенумеровываются"},
+    {"- [ ] дело\n- [x] сделано\n", 0, 1, "- [x] сделано\n- [ ] дело\n",
+     "задачи сохраняют отметку"},
+    {"- раз\n- два\n\n```\nкод\n```\n", 0, 1, "- два\n- раз\n\n```\nкод\n```\n",
+     "блок кода рядом не мешает"},
+};
+
 // Курсор после разреза обязан оказаться в новом блоке: иначе набор продолжится
 // не там, где человек его видит.
 void checkCursorAfterSplit() {
@@ -416,6 +479,7 @@ int main(int argc, char** argv) {
     for (const KeyCase& c : kToggleCases) checkKey(zametti::toggleTaskAtCursor, c);
     for (const RangeCase& c : kIndentRanges) checkRange(zametti::indentListItems, c);
     for (const RangeCase& c : kToggleRanges) checkRange(zametti::toggleTaskAtCursor, c);
+    for (const MoveCase& c : kMoveCases) checkMove(c);
     checkCursorAfterSplit();
     for (const char* source : kOrdinalCases)
         checkOrdinalAgreement(source, std::string("номера: ") + source);

@@ -1,6 +1,7 @@
 #include "editor_ops.h"
 
 #include "doc_model.h"
+#include "document_reader.h"
 #include "marker.h"
 #include "settings.h"
 
@@ -10,6 +11,7 @@
 #include <QTextCursor>
 #include <QTextDocument>
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -119,6 +121,82 @@ bool outdentListItems(QTextDocument& doc, QTextCursor& cursor) {
 
     shiftLevels(doc, range, -1);
     return true;
+}
+
+namespace {
+
+// Последний блок поддерева этого пункта: всё, что следом и глубже.
+int subtreeEnd(const QTextDocument& doc, int number) {
+    const int level = levelOf(doc.findBlockByNumber(number));
+    int last = number;
+    while (last + 1 < doc.blockCount()) {
+        const QTextBlock next = doc.findBlockByNumber(last + 1);
+        if (!isListBlock(next) || levelOf(next) <= level) break;
+        ++last;
+    }
+    return last;
+}
+
+// Пункт того же уровня перед этим. Отрицательное — соседа нет: либо кончился
+// список, либо мы вышли на уровень выше.
+int previousSibling(const QTextDocument& doc, int number) {
+    const int level = levelOf(doc.findBlockByNumber(number));
+    for (int i = number - 1; i >= 0; --i) {
+        const QTextBlock block = doc.findBlockByNumber(i);
+        if (!isListBlock(block)) return -1;      // через абзац не прыгаем
+        const int other = levelOf(block);
+        if (other < level) return -1;            // вышли из своего уровня
+        if (other == level) return i;
+    }
+    return -1;
+}
+
+int nextSibling(const QTextDocument& doc, int number) {
+    const int level = levelOf(doc.findBlockByNumber(number));
+    const int after = subtreeEnd(doc, number) + 1;
+    if (after >= doc.blockCount()) return -1;
+    const QTextBlock block = doc.findBlockByNumber(after);
+    if (!isListBlock(block) || levelOf(block) != level) return -1;
+    return after;
+}
+
+}  // namespace
+
+MoveResult moveListItem(const QTextDocument& doc, const QTextCursor& cursor, int direction) {
+    const QTextBlock block = cursor.block();
+    if (!isListBlock(block)) return {};
+
+    const int number = block.blockNumber();
+    const int sibling = direction < 0 ? previousSibling(doc, number) : nextSibling(doc, number);
+    if (sibling < 0) return {};
+
+    // Оба куска — пункт с поддеревом; в IR они лежат подряд, потому что
+    // списочные блоки один к одному с блоками IR.
+    const int selfFirst = number;
+    const int selfLast = subtreeEnd(doc, number);
+    const int otherFirst = sibling;
+    const int otherLast = subtreeEnd(doc, sibling);
+
+    const int firstIr = irIndexOfBlock(doc.findBlockByNumber(qMin(selfFirst, otherFirst)));
+    const int selfSize = selfLast - selfFirst + 1;
+    const int otherSize = otherLast - otherFirst + 1;
+
+    MoveResult result;
+    result.doc = readDocument(doc);
+    if (firstIr + selfSize + otherSize > int(result.doc.size())) return {};
+
+    // Перестановка двух соседних кусков — это поворот их объединения.
+    const auto begin = result.doc.begin() + firstIr;
+    const auto middle = begin + (direction < 0 ? otherSize : selfSize);
+    const auto end = begin + selfSize + otherSize;
+    std::rotate(begin, middle, end);
+
+    // Пункт переехал на размер соседа: вверх — назад, вниз — вперёд.
+    const int selfIr = irIndexOfBlock(block);
+    result.irBlock = direction < 0 ? selfIr - otherSize : selfIr + otherSize;
+    result.offsetInBlock = cursor.positionInBlock();
+    result.done = true;
+    return result;
 }
 
 bool toggleTaskAtCursor(QTextDocument& doc, QTextCursor& cursor) {
