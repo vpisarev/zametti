@@ -951,22 +951,9 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
     const QTextBlockFormat format = block.blockFormat();
     const int number = block.blockNumber();
 
-    // Enter в НАЧАЛЕ пункта снимает с него список — пункт становится абзацем.
-    // Пустой пункт под это правило подходит сам собой: в нём начало и есть всё.
-    //
-    // Так решаются обе задачи разом. Выйти из списка — нажать Enter на пустом
-    // пункте. Разлепить два слипшихся списка — встать на первый пункт второго и
-    // нажать Enter: он станет абзацем, а абзац списки и разделяет.
-    //
-    // Разделить их иначе нельзя, это проверено на ядре: два соседних списка
-    // одного семейства markdown не различает вовсе — ни пустая строка между
-    // ними, ни другой знак маркера не помогают. Нужен блок между ними, и абзац
-    // — единственный, который человек и хотел получить.
-    //
-    // Пустой пункт над собой Enter при этом не заводит. Раньше заводил, и от
-    // этого пустые пункты только множились: курсор оставался с текстом, а не в
-    // пустом пункте, и следующее нажатие добавляло ещё один.
-    if (isListBlock(block) && cursor.positionInBlock() == 0) {
+    // Пустой пункт списка: Enter снимает список, а не заводит ещё один пустой
+    // пункт. Иначе выйти из списка можно было бы только двумя нажатиями.
+    if (isListBlock(block) && block.text().isEmpty()) {
         QTextBlockFormat plain = format;
         plain.clearProperty(KindProperty);
         plain.clearProperty(LevelProperty);
@@ -1028,6 +1015,22 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
         indent = line.left(qMin(i, cursor.positionInBlock()));
     }
 
+    // Enter в начале пункта заводит пустой пункт НАД текущим, и курсор остаётся
+    // в нём. Это одно решение сразу для двух задач.
+    //
+    // Вставить пункт между двумя — встать в начало второго, нажать Enter и
+    // печатать: курсор уже там, где нужно.
+    //
+    // Разлепить два слипшихся списка — там же нажать Enter дважды: первый
+    // заводит пустой пункт, второй снимает с него список, и получается абзац.
+    // Абзац списки и разделяет — иначе никак, это проверено на ядре: два
+    // соседних списка одного семейства markdown не различает вовсе.
+    //
+    // Если бы курсор уезжал вниз с текстом, не работало бы ни то ни другое:
+    // печатать пришлось бы не там, а второй Enter заводил бы ещё один пустой
+    // пункт вместо разрыва — от этого они и множились.
+    const bool atListStart = isListBlock(block) && cursor.positionInBlock() == 0;
+
     cursor.beginEditBlock();
     cursor.insertBlock(next, block.charFormat());
     if (!indent.isEmpty()) cursor.insertText(indent, block.charFormat());
@@ -1039,6 +1042,7 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
         headCursor.setBlockFormat(head);
     }
     normalise(doc, {number, number + 1});
+    if (atListStart) cursor.setPosition(doc.findBlockByNumber(number).position());
     cursor.endEditBlock();
     return true;
 }

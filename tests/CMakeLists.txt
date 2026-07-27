@@ -67,6 +67,14 @@ if(TARGET zametti-view)
     add_test(NAME ops COMMAND ops_test)
     set_tests_properties(ops PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    # Списки правят чаще всего остального, и ошибка здесь дороже любой другой:
+    # отдельный набор, проверяющий их живым набором в настоящем редакторе.
+    add_executable(list_test list_test.cpp)
+    target_link_libraries(list_test PRIVATE zametti-widgets Qt6::Test zametti-warnings)
+    target_include_directories(list_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME lists COMMAND list_test)
+    set_tests_properties(lists PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     # Фаззинг операций. Каталоги с заметками — те же, что и у фаззинга ядра:
     # содержимое в репозиторий не кладётся, и без них тест просто не заводится.
     add_executable(fuzz_ops_test fuzz_ops_test.cpp)

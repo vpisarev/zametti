@@ -364,6 +364,13 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     for (const auto& [keys, op] : bindings_)
         if (pressed(keys) && runOperation(op)) return;
 
+    // Tab в списке молчит, даже когда отступать некуда: первый пункт отступать
+    // не к чему, но и табуляцию в его текст ставить незачем. Без этого отказ
+    // операции проваливался в QTextEdit, и в пункте появлялся знак табуляции.
+    if ((event->key() == Qt::Key_Tab || event->key() == Qt::Key_Backtab) &&
+        isListBlock(textCursor().block()))
+        return;
+
     // Перед самим набором: у правого края ссылки набранное не должно уезжать
     // внутрь неё.
     if (!event->text().isEmpty() && event->text().at(0).isPrint()) dropLinkAtRightEdge();
