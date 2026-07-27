@@ -51,27 +51,56 @@ void applyListGeometry(QTextDocument& doc, BlockRange range) {
     const qreal charUnit = QFontMetricsF(base).horizontalAdvance(QLatin1Char('A'));
     const qreal indent = appearance().listIndent * charUnit;
 
-    ListRuns runs;
-    // Колонка, с которой начинается текст пункта каждого уровня. Уровень глубже
-    // родителя не больше чем на единицу (это инвариант), поэтому к моменту
-    // чтения ячейка всегда заполнена родителем.
-    std::vector<qreal> contentCol(1, 0.0);
+    // Первый проход: к какому прогону принадлежит каждый блок и какой маркер в
+    // этом прогоне самый широкий. Колонку текста задаёт именно он: иначе под
+    // "10." текст начинался бы правее, чем под "1.", и левый край списка
+    // выходил бы рваным. Прогон опознаём по номеру: единица значит, что на этом
+    // уровне начался новый список.
+    std::vector<int> runOf;
+    std::vector<qreal> widest;
+    {
+        ListRuns runs;
+        std::vector<int> currentRun;
+        QTextBlock block = doc.findBlockByNumber(full.first);
+        for (int i = full.first; i <= full.last && block.isValid(); ++i, block = block.next()) {
+            if (!isListBlock(block)) {
+                runs.reset();
+                currentRun.clear();
+                runOf.push_back(-1);
+                continue;
+            }
+            const Kind kind = kindOf(block);
+            const int level = qMax(0, levelOf(block));
+            const int ordinal = runs.next(level, isOrdered(kind));
+            if (int(currentRun.size()) <= level) currentRun.resize(size_t(level) + 1, -1);
+            if (ordinal == 1 || currentRun[size_t(level)] < 0) {
+                currentRun[size_t(level)] = int(widest.size());
+                widest.push_back(0.0);
+            }
+            const int run = currentRun[size_t(level)];
+            runOf.push_back(run);
+            widest[size_t(run)] =
+                qMax(widest[size_t(run)], markerColumn(kind, ordinal, base));
+        }
+    }
 
+    // Второй проход: колонка текста каждого уровня. Уровень глубже родителя не
+    // больше чем на единицу (это инвариант), поэтому к моменту чтения ячейка
+    // всегда заполнена родителем.
+    std::vector<qreal> contentCol(1, 0.0);
     QTextCursor cursor(&doc);
     QTextBlock block = doc.findBlockByNumber(full.first);
     for (int i = full.first; i <= full.last && block.isValid(); ++i, block = block.next()) {
-        if (!isListBlock(block)) {
-            runs.reset();
+        const int run = runOf[size_t(i - full.first)];
+        if (run < 0) {
             contentCol.assign(1, 0.0);
             continue;
         }
 
-        const Kind kind = kindOf(block);
         const int level = qMax(0, levelOf(block));
-        const int ordinal = runs.next(level, isOrdered(kind));
         if (int(contentCol.size()) <= level + 1) contentCol.resize(size_t(level) + 2, 0.0);
 
-        const qreal cell = markerColumn(kind, ordinal, base);
+        const qreal cell = widest[size_t(run)];
         contentCol[size_t(level) + 1] = contentCol[size_t(level)] + cell;
 
         const qreal margin = indent + contentCol[size_t(level)] + cell;

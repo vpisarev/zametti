@@ -117,30 +117,49 @@ void checkLevelNormalisation() {
               "0 1 0", "верные уровни остаются как были");
 }
 
-// Геометрия: текст начинается сразу за маркером, поэтому колонка зависит от
-// ширины самого маркера. У однозначных номеров она общая, у двузначного —
-// шире: содержимое идёт за маркером, как и в самом файле.
+qreal marginOf(const QTextDocument& doc, int block) {
+    return doc.findBlockByNumber(block).blockFormat().leftMargin();
+}
+
+// Колонку текста задаёт самый широкий маркер прогона: иначе под "10." текст
+// начинался бы правее, чем под "1.", и левый край списка выходил бы рваным.
 void checkGeometry() {
     Document doc;
-    for (int i = 0; i < 11; ++i) doc.push_back(listItem(Kind::Ordered, 0, "пункт"));
+    for (int i = 0; i < 12; ++i) doc.push_back(listItem(Kind::Ordered, 0, "пункт"));
     doc.push_back(listItem(Kind::Ordered, 1, "вложенный"));
 
     QTextDocument text;
     zametti::buildDocument(doc, text);
 
-    const qreal first = text.findBlockByNumber(0).blockFormat().leftMargin();
-    const qreal ninth = text.findBlockByNumber(8).blockFormat().leftMargin();
-    const qreal tenth = text.findBlockByNumber(9).blockFormat().leftMargin();
-    const qreal nested = text.findBlockByNumber(11).blockFormat().leftMargin();
+    const qreal column = marginOf(text, 0);
+    bool aligned = true;
+    for (int i = 1; i < 12; ++i) aligned = aligned && marginOf(text, i) == column;
+    check(aligned, "весь прогон стоит в одной колонке, включая двузначные номера");
 
-    check(first == ninth, "однозначные номера стоят в одной колонке");
-    check(tenth > ninth, "двузначный номер отодвигает свой текст");
-    check(nested > tenth, "вложенный пункт стоит правее родителя");
+    const qreal nested = marginOf(text, 12);
+    check(nested > column, "вложенный пункт стоит правее родителя");
 
     // Повторный проход ничего не меняет: операция идемпотентна.
     zametti::applyListGeometry(text, {0, text.blockCount() - 1});
-    check(text.findBlockByNumber(11).blockFormat().leftMargin() == nested,
-          "повторный пересчёт геометрии ничего не меняет");
+    check(marginOf(text, 12) == nested, "повторный пересчёт геометрии ничего не меняет");
+
+    // Буллеты и задачи — одно семейство, значит и один прогон: их текст стоит в
+    // общей колонке, хотя рамка задачи шире кружка.
+    QTextDocument mixed;
+    zametti::buildDocument({listItem(Kind::Bullet, 0, "буллет"),
+                            listItem(Kind::TaskUnchecked, 0, "задача"),
+                            listItem(Kind::Bullet, 0, "снова буллет")},
+                           mixed);
+    check(marginOf(mixed, 0) == marginOf(mixed, 1) && marginOf(mixed, 1) == marginOf(mixed, 2),
+          "буллеты и задачи одного прогона стоят в одной колонке");
+
+    // Пересчёт по куску диапазона обязан дать то же, что по всему документу:
+    // иначе правка одного пункта сдвигала бы колонку остальных.
+    QTextDocument partial;
+    zametti::buildDocument(doc, partial);
+    zametti::applyListGeometry(partial, {5, 5});
+    check(marginOf(partial, 0) == column && marginOf(partial, 11) == column,
+          "пересчёт по одному блоку не сдвигает колонку прогона");
 }
 
 // Номер пункта считается двумя способами: обходом назад (для отрисовки) и
