@@ -199,6 +199,104 @@ MoveResult moveListItem(const QTextDocument& doc, const QTextCursor& cursor, int
     return result;
 }
 
+namespace {
+
+// Метка задачи, которой она становится в тексте при переходе в род, где
+// чекбокса не бывает. В нумерованном пункте "[x] " — обычный текст, это
+// проверено на ядре, поэтому отметка переживает такой переход.
+QString taskMark(Kind kind) {
+    return kind == Kind::TaskChecked ? QStringLiteral("[x] ") : QStringLiteral("[ ] ");
+}
+
+// Смена рода одного блока. Блок берётся по номеру, а не ссылкой: вставка и
+// удаление внутри цикла двигают позиции, и заранее взятый блок устарел бы.
+// Возвращает false, если блок трогать не следует.
+bool convertBlock(QTextDocument& doc, int number, Kind target) {
+    const QTextBlock block = doc.findBlockByNumber(number);
+    if (!block.isValid() || isRawBlock(block)) return false;
+    const Kind from = kindOf(block);
+    if (from == Kind::Code) return false;   // код списком быть не может
+
+    QTextBlockFormat format = block.blockFormat();
+    QString insert;
+    int strip = 0;
+
+    if (target == Kind::Paragraph) {
+        format.clearProperty(KindProperty);
+        format.clearProperty(LevelProperty);
+        format.setLeftMargin(0);
+        format.setHeadingLevel(0);
+    } else {
+        Kind actual = target;
+        // Отметка задачи не должна пропадать молча: в нумерованном пункте она
+        // становится обычным текстом в начале содержимого. Что "[x] " там
+        // именно текст, а не чекбокс, проверено на ядре.
+        if (isTaskBlock(block) && target == Kind::Ordered) insert = taskMark(from);
+        // Обратный ход: буллет, содержимое которого начинается с отметки, файл
+        // всё равно прочтёт задачей. Делаем задачу сразу и убираем отметку из
+        // текста — иначе документ разошёлся бы с тем, что окажется на диске.
+        if (target == Kind::Bullet) {
+            const QString text = block.text();
+            if (text.startsWith(QStringLiteral("[x] ")) ||
+                text.startsWith(QStringLiteral("[X] "))) {
+                actual = Kind::TaskChecked;
+                strip = 4;
+            } else if (text.startsWith(QStringLiteral("[ ] "))) {
+                actual = Kind::TaskUnchecked;
+                strip = 4;
+            }
+        }
+        format.setProperty(KindProperty, int(actual));
+        format.setProperty(LevelProperty, isListBlock(block) ? levelOf(block) : 0);
+        format.setHeadingLevel(0);
+    }
+
+    QTextCursor edit(&doc);
+    edit.setPosition(block.position());
+    edit.setBlockFormat(format);
+
+    if (strip > 0) {
+        edit.setPosition(block.position());
+        edit.setPosition(block.position() + strip, QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+    } else if (!insert.isEmpty()) {
+        edit.setPosition(block.position());
+        edit.insertText(insert, block.charFormat());
+    }
+    return true;
+}
+
+bool setBlockKind(QTextDocument& doc, QTextCursor& cursor, Kind target) {
+    const BlockRange range = selectedBlocks(doc, cursor);
+
+    QTextCursor edit(&doc);
+    edit.beginEditBlock();
+    bool any = false;
+    for (int i = range.first; i <= range.last; ++i)
+        if (convertBlock(doc, i, target)) any = true;
+    normalise(doc, range);
+    edit.endEditBlock();
+    return any;
+}
+
+}  // namespace
+
+bool makeBullet(QTextDocument& doc, QTextCursor& cursor) {
+    return setBlockKind(doc, cursor, Kind::Bullet);
+}
+
+bool makeOrdered(QTextDocument& doc, QTextCursor& cursor) {
+    return setBlockKind(doc, cursor, Kind::Ordered);
+}
+
+bool makeTask(QTextDocument& doc, QTextCursor& cursor) {
+    return setBlockKind(doc, cursor, Kind::TaskUnchecked);
+}
+
+bool makeParagraph(QTextDocument& doc, QTextCursor& cursor) {
+    return setBlockKind(doc, cursor, Kind::Paragraph);
+}
+
 bool toggleTaskAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const BlockRange range = selectedBlocks(doc, cursor);
 

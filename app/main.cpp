@@ -117,6 +117,10 @@ void printHelp() {
         "  %s%s  переключить задачу: сделана или нет\n"
         "  %s%s  переставить пункт вверх\n"
         "  %s%s  переставить пункт вниз\n"
+        "  %s%s  сделать маркированным списком\n"
+        "  %s%s  сделать нумерованным списком\n"
+        "  %s%s  сделать списком задач\n"
+        "  %s%s  сделать обычным текстом\n"
         "\n"
         "Файлы:\n"
         "  %s\n"
@@ -131,6 +135,14 @@ void printHelp() {
         QByteArray(qMax(0, 16 - zametti::appearance().moveUpKey.size()), ' ').constData(),
         zametti::appearance().moveDownKey.toUtf8().constData(),
         QByteArray(qMax(0, 16 - zametti::appearance().moveDownKey.size()), ' ').constData(),
+        zametti::appearance().makeBulletKey.toUtf8().constData(),
+        QByteArray(qMax(0, 16 - zametti::appearance().makeBulletKey.size()), ' ').constData(),
+        zametti::appearance().makeOrderedKey.toUtf8().constData(),
+        QByteArray(qMax(0, 16 - zametti::appearance().makeOrderedKey.size()), ' ').constData(),
+        zametti::appearance().makeTaskKey.toUtf8().constData(),
+        QByteArray(qMax(0, 16 - zametti::appearance().makeTaskKey.size()), ' ').constData(),
+        zametti::appearance().makeParagraphKey.toUtf8().constData(),
+        QByteArray(qMax(0, 16 - zametti::appearance().makeParagraphKey.size()), ' ').constData(),
         zametti::configPath().toUtf8().constData(),
         zametti::statePath().toUtf8().constData());
 }

@@ -389,6 +389,51 @@ const RangeCase kToggleRanges[] = {
      "буллет между задачами не трогается"},
 };
 
+const KeyCase kBulletCases[] = {
+    {"абзац\n", 0, 0, "- абзац\n", "абзац становится буллетом"},
+    {"1. раз\n", 0, 0, "- раз\n", "нумерованный становится буллетом"},
+    {"- [x] дело\n", 0, 0, "- дело\n", "задача теряет отметку, раз просили буллет"},
+    {"# заголовок\n", 0, 0, "- заголовок\n", "заголовок становится буллетом"},
+    {"- буллет\n", 0, 0, "- буллет\n", "буллет остаётся собой"},
+    {"1. [x] дело\n", 0, 0, "- [x] дело\n",
+     "содержимое с отметкой становится задачей: так его прочтёт файл"},
+    {"```\nкод\n```\n", 0, 0, "<операция отказалась>", "блок кода не трогается"},
+};
+
+const KeyCase kOrderedCases[] = {
+    {"- буллет\n", 0, 0, "1. буллет\n", "буллет становится нумерованным"},
+    {"- [x] дело\n", 0, 0, "1. [x] дело\n", "отметка задачи переезжает в текст"},
+    {"- [ ] дело\n", 0, 0, "1. [ ] дело\n", "и невыполненная тоже"},
+    {"абзац\n", 0, 0, "1. абзац\n", "абзац становится нумерованным"},
+};
+
+const KeyCase kTaskCases[] = {
+    {"- буллет\n", 0, 0, "- [ ] буллет\n", "буллет становится задачей"},
+    {"абзац\n", 0, 0, "- [ ] абзац\n", "абзац становится задачей"},
+    {"- [x] дело\n", 0, 0, "- [ ] дело\n", "выполненная сбрасывается: род задан, не переключён"},
+};
+
+const KeyCase kParagraphCases[] = {
+    {"- буллет\n", 0, 0, "буллет\n", "буллет становится абзацем"},
+    {"  - вложенный\n", 0, 0, "вложенный\n", "уровень снимается тоже"},
+    {"# заголовок\n", 0, 0, "заголовок\n", "заголовок становится абзацем"},
+    {"> цитата\n", 0, 0, "цитата\n", "цитата тоже"},
+    {"- [x] дело\n", 0, 0, "дело\n", "задача теряет отметку"},
+};
+
+const RangeCase kOrderedRanges[] = {
+    {"- раз\n  - вложенный\n", 0, 1, "1. раз\n   1. вложенный\n",
+     "уровни при смене рода сохраняются"},
+};
+
+const RangeCase kConvertRanges[] = {
+    // Пустые строки обязательны: без них "абзац" стал бы ленивым продолжением
+    // пункта, а не отдельным блоком.
+    {"- буллет\n\n1. номер\n\nабзац\n", 0, 2, "- буллет\n- номер\n- абзац\n",
+     "смешанное выделение приводится целиком"},
+
+};
+
 // Перемещение пункта: markdown до, номер блока под курсором, куда двигаем.
 struct MoveCase {
     const char* before;
@@ -479,6 +524,12 @@ int main(int argc, char** argv) {
     for (const KeyCase& c : kToggleCases) checkKey(zametti::toggleTaskAtCursor, c);
     for (const RangeCase& c : kIndentRanges) checkRange(zametti::indentListItems, c);
     for (const RangeCase& c : kToggleRanges) checkRange(zametti::toggleTaskAtCursor, c);
+    for (const KeyCase& c : kBulletCases) checkKey(zametti::makeBullet, c);
+    for (const KeyCase& c : kOrderedCases) checkKey(zametti::makeOrdered, c);
+    for (const KeyCase& c : kTaskCases) checkKey(zametti::makeTask, c);
+    for (const KeyCase& c : kParagraphCases) checkKey(zametti::makeParagraph, c);
+    for (const RangeCase& c : kConvertRanges) checkRange(zametti::makeBullet, c);
+    for (const RangeCase& c : kOrderedRanges) checkRange(zametti::makeOrdered, c);
     for (const MoveCase& c : kMoveCases) checkMove(c);
     checkCursorAfterSplit();
     for (const char* source : kOrdinalCases)

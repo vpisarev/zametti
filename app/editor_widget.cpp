@@ -39,11 +39,19 @@ NoteEditor::NoteEditor(QWidget* parent)
     setReadOnly(false);
     setUndoRedoEnabled(false);   // историю ведём сами, см. edit_history.h
 
-    // Хоткей разбираем один раз: на каждое нажатие клавиши это было бы разбором
+    // Хоткеи разбираем один раз: на каждое нажатие клавиши это было бы разбором
     // строки впустую.
-    toggleTaskKey_ = QKeySequence(appearance().toggleTaskKey, QKeySequence::PortableText);
     moveUpKey_ = QKeySequence(appearance().moveUpKey, QKeySequence::PortableText);
     moveDownKey_ = QKeySequence(appearance().moveDownKey, QKeySequence::PortableText);
+    const auto bind = [this](const QString& keys, bool (*op)(QTextDocument&, QTextCursor&)) {
+        const QKeySequence sequence(keys, QKeySequence::PortableText);
+        if (!sequence.isEmpty()) bindings_.push_back({sequence, op});
+    };
+    bind(appearance().toggleTaskKey, toggleTaskAtCursor);
+    bind(appearance().makeBulletKey, makeBullet);
+    bind(appearance().makeOrderedKey, makeOrdered);
+    bind(appearance().makeTaskKey, makeTask);
+    bind(appearance().makeParagraphKey, makeParagraph);
 
     autosave_.setSingleShot(true);
     connect(&autosave_, &QTimer::timeout, this, [this] { save(true); });
@@ -145,11 +153,8 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     if (pressed(moveUpKey_) && moveItem(-1)) return;
     if (pressed(moveDownKey_) && moveItem(1)) return;
 
-    if (!toggleTaskKey_.isEmpty() &&
-        QKeySequence(event->keyCombination()).matches(toggleTaskKey_) ==
-            QKeySequence::ExactMatch &&
-        runOperation(toggleTaskAtCursor))
-        return;
+    for (const auto& [keys, op] : bindings_)
+        if (pressed(keys) && runOperation(op)) return;
 
     NoteView::keyPressEvent(event);
 }

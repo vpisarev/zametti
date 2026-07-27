@@ -19,6 +19,9 @@
 #include <QString>
 #include <QTimer>
 
+#include <utility>
+#include <vector>
+
 namespace zametti {
 
 class NoteEditor : public NoteView {
@@ -78,9 +81,12 @@ private:
     // один свой.
     bool recordingSuspended_ = false;
 
-    QKeySequence toggleTaskKey_;
     QKeySequence moveUpKey_;
     QKeySequence moveDownKey_;
+    // Сочетание и операция, которую оно вызывает. Списком, а не полями: их
+    // становится много, и перечислять каждое в keyPressEvent — верный способ
+    // однажды забыть одно.
+    std::vector<std::pair<QKeySequence, bool (*)(QTextDocument&, QTextCursor&)>> bindings_;
     QTimer autosave_;
     QElapsedTimer sinceLastEdit_;
     QString lastComplaint_;

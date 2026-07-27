@@ -76,6 +76,16 @@ MoveResult moveListItem(const QTextDocument& doc, const QTextCursor& cursor, int
 bool indentListItems(QTextDocument& doc, QTextCursor& cursor);
 bool outdentListItems(QTextDocument& doc, QTextCursor& cursor);
 
+// Смена рода блоков в выделении. Семантика «установить», а не «переключить»:
+// смешанное выделение целиком приводится к запрошенному роду.
+//
+// Литеральные блоки — код и дословные куски — не трогаются: они лежат в
+// документе построчно и списком быть не могут.
+bool makeBullet(QTextDocument& doc, QTextCursor& cursor);
+bool makeOrdered(QTextDocument& doc, QTextCursor& cursor);
+bool makeTask(QTextDocument& doc, QTextCursor& cursor);
+bool makeParagraph(QTextDocument& doc, QTextCursor& cursor);
+
 // Переключает задачу под курсором: сделана ↔ не сделана. При выделении
 // переключаются все задачи в нём, и все — в ту же сторону, что и первая: иначе
 // одно нажатие на смешанном выделении оставляло бы его смешанным.

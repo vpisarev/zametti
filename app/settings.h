@@ -194,6 +194,12 @@ struct Appearance {
     QString toggleTaskKey = QStringLiteral("Ctrl+Space");
     QString moveUpKey = QStringLiteral("Ctrl+Up");
     QString moveDownKey = QStringLiteral("Ctrl+Down");
+    // Смена рода блоков. Цифры взяты как в текстовых редакторах, где 8 — маркер
+    // списка, а 7 — нумерация.
+    QString makeBulletKey = QStringLiteral("Ctrl+Shift+8");
+    QString makeOrderedKey = QStringLiteral("Ctrl+Shift+7");
+    QString makeTaskKey = QStringLiteral("Ctrl+Shift+9");
+    QString makeParagraphKey = QStringLiteral("Ctrl+Shift+0");
 
     // --- масштаб ---
     qreal zoomStep = 1.1;
