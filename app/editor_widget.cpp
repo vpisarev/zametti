@@ -19,6 +19,7 @@
 #include <QMenu>
 #include <QGuiApplication>
 #include <QMessageBox>
+#include <QAbstractTextDocumentLayout>
 #include <QScrollBar>
 #include <QTextBlock>
 #include <QTextCursor>
@@ -106,7 +107,7 @@ bool NoteEditor::openFile(const QString& path) {
 
     Document doc = parse(text);
     history_.reset(doc, 0);
-    rebuild(doc, 0, -1);
+    rebuild(doc, 0, {});
     emit fileChanged(path_);
     return true;
 }
@@ -154,7 +155,7 @@ void NoteEditor::adoptExternal(const std::string& text) {
     Document ir = parse(text);
     history_.push(ir, textCursor().position());
     sinceLastEdit_.invalidate();
-    rebuild(ir, textCursor().position(), cursorAnchor());
+    rebuild(ir, textCursor().position(), viewAnchor());
     document()->setModified(false);
 }
 
@@ -167,13 +168,13 @@ void NoteEditor::applyZoom(qreal value) {
 void NoteEditor::refreshAppearance() {
     // Облик меняется — содержимое нет. Берём его из истории и собираем заново;
     // ни нового шага, ни сдвига по истории при этом не происходит.
-    rebuild(history_.current().doc, textCursor().position(), cursorAnchor());
+    rebuild(history_.current().doc, textCursor().position(), viewAnchor());
 }
 
 void NoteEditor::undo() {
     const HistoryStep* step = history_.undo();
     if (step == nullptr) return;
-    rebuild(step->doc, step->cursor, cursorAnchor());
+    rebuild(step->doc, step->cursor, viewAnchor());
     document()->setModified(true);
     autosave_.start(appearance().autosaveDelayMs);
 }
@@ -181,14 +182,25 @@ void NoteEditor::undo() {
 void NoteEditor::redo() {
     const HistoryStep* step = history_.redo();
     if (step == nullptr) return;
-    rebuild(step->doc, step->cursor, cursorAnchor());
+    rebuild(step->doc, step->cursor, viewAnchor());
     document()->setModified(true);
     autosave_.start(appearance().autosaveDelayMs);
 }
 
-int NoteEditor::cursorAnchor() const { return cursorRect().top(); }
+NoteEditor::ViewAnchor NoteEditor::viewAnchor() const {
+    const QAbstractTextDocumentLayout* layout = document()->documentLayout();
+    const int top = verticalScrollBar()->value();
+    const QTextBlock at = document()->findBlock(layout->hitTest(QPointF(0, top), Qt::FuzzyHit));
+    if (!at.isValid()) return {};
 
-void NoteEditor::rebuild(const Document& doc, int cursor, int anchorY) {
+    // Держимся только за блок НАД правкой: если правка выше кромки, номера
+    // блоков IR за ней съедут, и якорь показал бы на чужой блок.
+    const int anchorIndex = irIndexOfBlock(at);
+    if (anchorIndex > irIndexOfBlock(textCursor().block())) return {};
+    return {anchorIndex, top - int(layout->blockBoundingRect(at).top())};
+}
+
+void NoteEditor::rebuild(const Document& doc, int cursor, const ViewAnchor& anchor) {
     const bool wasSuspended = recordingSuspended_;
     recordingSuspended_ = true;
     buildDocument(doc, *document(), zoom());
@@ -198,11 +210,12 @@ void NoteEditor::rebuild(const Document& doc, int cursor, int anchorY) {
     place.setPosition(qBound(0, cursor, document()->characterCount() - 1));
     setTextCursor(place);
 
-    // Возвращаем строку под курсором на прежнюю экранную высоту. Прокрутка при
+    // Возвращаем блок-якорь на прежнее место относительно кромки. Прокрутка при
     // пересборке сбрасывается в ноль, и без этого документ прыгал бы к началу.
-    if (anchorY >= 0) {
-        QScrollBar* bar = verticalScrollBar();
-        bar->setValue(bar->value() + cursorRect().top() - anchorY);
+    const QTextBlock landed = blockForIrIndex(*document(), anchor.irIndex);
+    if (anchor.irIndex >= 0 && landed.isValid()) {
+        const QRectF rect = document()->documentLayout()->blockBoundingRect(landed);
+        verticalScrollBar()->setValue(int(rect.top()) + anchor.above);
     }
     ensureCursorVisible();
 
@@ -339,7 +352,7 @@ bool NoteEditor::runOperation(bool (*op)(QTextDocument&, QTextCursor&)) {
     // Операция — отдельный шаг: следующая набранная буква к ней не приклеится.
     sinceLastEdit_.invalidate();
 
-    rebuild(ir, position, cursorAnchor());
+    rebuild(ir, position, viewAnchor());
     // Выделение возвращаем: операция могла тронуть десяток пунктов сразу, и
     // терять его после этого — значит заставлять выделять заново. Текст от
     // смены рода не меняется, поэтому обе границы остаются на своих местах.
@@ -473,7 +486,7 @@ void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
     Document ir = readDocument(*document());
     history_.push(ir, landed);
     sinceLastEdit_.invalidate();
-    rebuild(ir, landed, cursorAnchor());
+    rebuild(ir, landed, viewAnchor());
     document()->setModified(true);
     ensureCursorVisible();
     autosave_.start(appearance().autosaveDelayMs);
@@ -488,7 +501,7 @@ bool NoteEditor::applyIrEdit(const MoveResult& moved) {
 
     history_.push(moved.doc, textCursor().position());
     sinceLastEdit_.invalidate();
-    rebuild(moved.doc, 0, cursorAnchor());
+    rebuild(moved.doc, 0, viewAnchor());
 
     // Курсор ставим по месту в IR: после перестановки или слияния блоков прежняя
     // позиция в тексте указывала бы на чужое место.
@@ -549,7 +562,8 @@ void NoteEditor::save(bool interactive) {
         // внутри строки.
         if (outcome.differsFromDocument) {
             const int cursor = textCursor().position();
-            rebuild(outcome.reread, cursor, scrollRatio());
+            const ViewAnchor anchor = viewAnchor();
+            rebuild(outcome.reread, cursor, anchor);
         }
         return;
     }

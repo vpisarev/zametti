@@ -62,9 +62,18 @@ public:
     double scrollRatio() const;
     void setScrollRatio(double ratio);
 
-    // Экранная высота курсора — то, за что цепляется взгляд. Пересборка держит
-    // именно её, а не долю: строка под курсором остаётся на месте.
-    int cursorAnchor() const;
+    // За что держится вид при пересборке: блок у верхней кромки окна и его
+    // высота относительно неё.
+    //
+    // Держаться за курсор нельзя: его собственный блок при правке меняет
+    // высоту — пункт списка, ставший абзацем, получает другие отступы, — и
+    // тогда весь текст выше уезжает (замер: 23 px). Блок над правкой не
+    // меняется вовсе, и вид стоит намертво.
+    struct ViewAnchor {
+        int irIndex = -1;   // блок IR у кромки; меньше нуля — держаться не за что
+        int above = 0;      // насколько его верх выше кромки
+    };
+    ViewAnchor viewAnchor() const;
 
 signals:
     void fileChanged(const QString& path);
@@ -111,7 +120,7 @@ private:
 
     // anchorY — экранная высота, на которой должен остаться курсор. Меньше нуля
     // означает "просто покажи курсор".
-    void rebuild(const Document& doc, int cursor, int anchorY);
+    void rebuild(const Document& doc, int cursor, const ViewAnchor& anchor);
     void recordEdit();
     void onContentsChanged();
     void onFileChanged(const QString& path);

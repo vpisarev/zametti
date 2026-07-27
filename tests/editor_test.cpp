@@ -20,6 +20,7 @@
 #include <QFile>
 #include <QTest>
 #include <QTextBlock>
+#include <QAbstractTextDocumentLayout>
 #include <QScrollBar>
 #include <QTextCursor>
 #include <QTextFragment>
@@ -689,6 +690,63 @@ void checkScrollHolds() {
                "прокрутка держится, пока курсор виден");
 }
 
+// Правка, меняющая высоту собственного блока: выход из списка. Пункт становится
+// абзацем и получает другие отступы. Держаться при этом за курсор нельзя — весь
+// текст выше уехал бы (замер до починки: 23 px), поэтому вид держится за блок
+// НАД правкой.
+void checkScrollHoldsWhenBlockChangesHeight() {
+    QString source;
+    for (int i = 0; i < 30; ++i)
+        source += QStringLiteral("Абзац номер %1 для высоты.\n\n").arg(i);
+    source += QStringLiteral("Ну и номера:\n\n1. раз\n2. два\n3. три\n\nхвост\n");
+    const QString path = writeNote("выход-из-списка.md", source);
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(30);
+    editor.setFocus();
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    int last = -1;
+    for (QTextBlock block = editor.document()->begin(); block.isValid();
+         block = block.next())
+        if (zametti::isListBlock(block)) last = block.blockNumber();
+    check(last > 0, "список должен найтись");
+
+    QTextCursor cursor = editor.textCursor();
+    cursor.setPosition(editor.document()->findBlockByNumber(last).position());
+    cursor.movePosition(QTextCursor::EndOfBlock);
+    editor.setTextCursor(cursor);
+    editor.ensureCursorVisible();
+    editor.verticalScrollBar()->setValue(editor.verticalScrollBar()->value() + 120);
+    QTest::qWait(20);
+
+    // Следим за абзацем выше списка: он меняться не должен вовсе.
+    const int watched = last - 4;
+    auto watchedY = [&editor, watched] {
+        const QTextBlock block = editor.document()->findBlockByNumber(watched);
+        return int(editor.document()->documentLayout()->blockBoundingRect(block).top()) -
+               editor.verticalScrollBar()->value();
+    };
+    const int before = watchedY();
+
+    // Новый пункт, пустой пункт, выход из списка.
+    QTest::keyClick(&editor, Qt::Key_Return);
+    editor.insertPlainText(QStringLiteral("четыре"));
+    QTest::qWait(10);
+    checkEqual(QString::number(before), QString::number(watchedY()),
+               "текст выше стоит при добавлении пункта");
+
+    QTest::keyClick(&editor, Qt::Key_Return);
+    QTest::qWait(10);
+    QTest::keyClick(&editor, Qt::Key_Return);
+    QTest::qWait(10);
+    checkEqual(QString::number(before), QString::number(watchedY()),
+               "и при выходе из списка тоже");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -724,6 +782,7 @@ int main(int argc, char** argv) {
     checkCodeTyping();
     checkCheckboxClick();
     checkScrollHolds();
+    checkScrollHoldsWhenBlockChangesHeight();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;
