@@ -55,8 +55,16 @@ public:
     // Сохранить, если есть что. interactive — показывать ли окно с ошибкой.
     void save(bool interactive);
 
+    // Доля прокрутки — только для запоминания места между запусками. Внутри
+    // правок она не годится: документ пересобирается целиком, его высота от
+    // правки к правке меняется, и доля от новой высоты каждый раз попадает не
+    // туда. Замер: пункт за пунктом заметка уползала вверх на ~25 px за правку.
     double scrollRatio() const;
     void setScrollRatio(double ratio);
+
+    // Экранная высота курсора — то, за что цепляется взгляд. Пересборка держит
+    // именно её, а не долю: строка под курсором остаётся на месте.
+    int cursorAnchor() const;
 
 signals:
     void fileChanged(const QString& path);
@@ -101,7 +109,9 @@ private:
     // в литеральный блок, где markdown не действует.
     void pasteMarkdown(const QString& text, bool literal);
 
-    void rebuild(const Document& doc, int cursor, double ratio);
+    // anchorY — экранная высота, на которой должен остаться курсор. Меньше нуля
+    // означает "просто покажи курсор".
+    void rebuild(const Document& doc, int cursor, int anchorY);
     void recordEdit();
     void onContentsChanged();
     void onFileChanged(const QString& path);

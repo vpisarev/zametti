@@ -647,6 +647,48 @@ void checkCheckboxClick() {
                "щелчок отменяется как обычная правка");
 }
 
+// Прокрутка при правке. Документ пересобирается целиком, и место в нём надо
+// возвращать — но по экранной высоте курсора, а не по доле от высоты заметки:
+// высота меняется от правки к правке, и доля каждый раз попадает не туда.
+// Замер до починки: заметка уползала вверх на ~25 px за каждый добавленный пункт.
+void checkScrollHolds() {
+    QString source;
+    for (int i = 0; i < 40; ++i)
+        source += QStringLiteral("Абзац номер %1, чтобы заметка была длинной.\n\n").arg(i);
+    for (int i = 0; i < 20; ++i) source += QStringLiteral("- пункт %1\n").arg(i);
+    const QString path = writeNote("прокрутка.md", source);
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(30);
+    editor.setFocus();
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    QTextCursor cursor = editor.textCursor();
+    cursor.setPosition(editor.document()->findBlockByNumber(45).position());
+    cursor.movePosition(QTextCursor::EndOfBlock);
+    editor.setTextCursor(cursor);
+    editor.ensureCursorVisible();
+    QTest::qWait(20);
+    // Отводим курсор от нижнего края: у края прокрутка растёт законно.
+    editor.verticalScrollBar()->setValue(editor.verticalScrollBar()->value() + 150);
+    QTest::qWait(20);
+
+    const int before = editor.verticalScrollBar()->value();
+    check(before > 0, "заметка должна быть прокручена");
+
+    for (int i = 0; i < 5; ++i) {
+        QTest::keyClick(&editor, Qt::Key_Return);
+        editor.insertPlainText(QStringLiteral("новый"));
+        QTest::qWait(10);
+    }
+    checkEqual(QString::number(before),
+               QString::number(editor.verticalScrollBar()->value()),
+               "прокрутка держится, пока курсор виден");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -681,6 +723,7 @@ int main(int argc, char** argv) {
     checkSizeAfterSoftBreak();
     checkCodeTyping();
     checkCheckboxClick();
+    checkScrollHolds();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;

@@ -11,6 +11,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QFile>
+#include <QScrollBar>
 #include <QTest>
 #include <QTextCursor>
 #include <QTextDocument>
@@ -181,6 +182,46 @@ void checkOwnSaveIsNotExternal() {
     checkEqual(QStringLiteral("текст дописали\n"), textOf(editor), "документ цел");
 }
 
+// Заметку снаружи урезали до пары строк, а курсор стоял далеко внизу. Позиция
+// обязана поджаться в границы нового документа — иначе следующая же правка
+// пришлась бы мимо, а прокрутка осталась бы за пределами.
+void checkShrunkFromOutside() {
+    const QString path = g_dir + QStringLiteral("/урезали.md");
+    QString big;
+    for (int i = 0; i < 200; ++i)
+        big += QStringLiteral("Строка номер %1 длинной заметки.\n\n").arg(i);
+    writeFile(path, big);
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(30);
+    editor.setFocus();
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    QTextCursor cursor = editor.textCursor();
+    cursor.movePosition(QTextCursor::End);
+    editor.setTextCursor(cursor);
+    editor.ensureCursorVisible();
+    QTest::qWait(20);
+    check(editor.textCursor().position() > 1000, "курсор должен стоять далеко внизу");
+
+    writeFile(path, QStringLiteral("коротко\n\nи всё\n"));
+    waitForWatcher(editor, QStringLiteral("коротко\n\nи всё\n"));
+
+    check(editor.textCursor().position() < editor.document()->characterCount(),
+          "курсор поджался в границы урезанной заметки");
+    check(editor.verticalScrollBar()->value() <= editor.verticalScrollBar()->maximum(),
+          "прокрутка не осталась за пределами");
+
+    // И правка после этого должна лечь туда, где стоит курсор.
+    editor.insertPlainText(QStringLiteral(" дописано"));
+    QTest::qWait(20);
+    checkEqual(QStringLiteral("коротко\n\nи всё дописано\n"), textOf(editor),
+               "набор после урезания ложится по месту");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -201,6 +242,7 @@ int main(int argc, char** argv) {
     checkAsksWhenDirty();
     checkTakesExternal();
     checkOwnSaveIsNotExternal();
+    checkShrunkFromOutside();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;

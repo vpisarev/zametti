@@ -106,7 +106,7 @@ bool NoteEditor::openFile(const QString& path) {
 
     Document doc = parse(text);
     history_.reset(doc, 0);
-    rebuild(doc, 0, 0.0);
+    rebuild(doc, 0, -1);
     emit fileChanged(path_);
     return true;
 }
@@ -154,7 +154,7 @@ void NoteEditor::adoptExternal(const std::string& text) {
     Document ir = parse(text);
     history_.push(ir, textCursor().position());
     sinceLastEdit_.invalidate();
-    rebuild(ir, textCursor().position(), scrollRatio());
+    rebuild(ir, textCursor().position(), cursorAnchor());
     document()->setModified(false);
 }
 
@@ -167,13 +167,13 @@ void NoteEditor::applyZoom(qreal value) {
 void NoteEditor::refreshAppearance() {
     // Облик меняется — содержимое нет. Берём его из истории и собираем заново;
     // ни нового шага, ни сдвига по истории при этом не происходит.
-    rebuild(history_.current().doc, textCursor().position(), scrollRatio());
+    rebuild(history_.current().doc, textCursor().position(), cursorAnchor());
 }
 
 void NoteEditor::undo() {
     const HistoryStep* step = history_.undo();
     if (step == nullptr) return;
-    rebuild(step->doc, step->cursor, scrollRatio());
+    rebuild(step->doc, step->cursor, cursorAnchor());
     document()->setModified(true);
     autosave_.start(appearance().autosaveDelayMs);
 }
@@ -181,12 +181,14 @@ void NoteEditor::undo() {
 void NoteEditor::redo() {
     const HistoryStep* step = history_.redo();
     if (step == nullptr) return;
-    rebuild(step->doc, step->cursor, scrollRatio());
+    rebuild(step->doc, step->cursor, cursorAnchor());
     document()->setModified(true);
     autosave_.start(appearance().autosaveDelayMs);
 }
 
-void NoteEditor::rebuild(const Document& doc, int cursor, double ratio) {
+int NoteEditor::cursorAnchor() const { return cursorRect().top(); }
+
+void NoteEditor::rebuild(const Document& doc, int cursor, int anchorY) {
     const bool wasSuspended = recordingSuspended_;
     recordingSuspended_ = true;
     buildDocument(doc, *document(), zoom());
@@ -195,7 +197,14 @@ void NoteEditor::rebuild(const Document& doc, int cursor, double ratio) {
     QTextCursor place(document());
     place.setPosition(qBound(0, cursor, document()->characterCount() - 1));
     setTextCursor(place);
-    setScrollRatio(ratio);
+
+    // Возвращаем строку под курсором на прежнюю экранную высоту. Прокрутка при
+    // пересборке сбрасывается в ноль, и без этого документ прыгал бы к началу.
+    if (anchorY >= 0) {
+        QScrollBar* bar = verticalScrollBar();
+        bar->setValue(bar->value() + cursorRect().top() - anchorY);
+    }
+    ensureCursorVisible();
 
     // Сборка — не правка человека. Без этого открытая неканоническая заметка
     // считалась бы изменённой и переписывалась бы на диске при выходе, хотя мы
@@ -330,7 +339,7 @@ bool NoteEditor::runOperation(bool (*op)(QTextDocument&, QTextCursor&)) {
     // Операция — отдельный шаг: следующая набранная буква к ней не приклеится.
     sinceLastEdit_.invalidate();
 
-    rebuild(ir, position, scrollRatio());
+    rebuild(ir, position, cursorAnchor());
     // Выделение возвращаем: операция могла тронуть десяток пунктов сразу, и
     // терять его после этого — значит заставлять выделять заново. Текст от
     // смены рода не меняется, поэтому обе границы остаются на своих местах.
@@ -464,7 +473,7 @@ void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
     Document ir = readDocument(*document());
     history_.push(ir, landed);
     sinceLastEdit_.invalidate();
-    rebuild(ir, landed, scrollRatio());
+    rebuild(ir, landed, cursorAnchor());
     document()->setModified(true);
     ensureCursorVisible();
     autosave_.start(appearance().autosaveDelayMs);
@@ -479,7 +488,7 @@ bool NoteEditor::applyIrEdit(const MoveResult& moved) {
 
     history_.push(moved.doc, textCursor().position());
     sinceLastEdit_.invalidate();
-    rebuild(moved.doc, 0, scrollRatio());
+    rebuild(moved.doc, 0, cursorAnchor());
 
     // Курсор ставим по месту в IR: после перестановки или слияния блоков прежняя
     // позиция в тексте указывала бы на чужое место.
