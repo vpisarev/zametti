@@ -358,43 +358,71 @@ struct InputRule {
     bool matched = false;
 };
 
+bool isBulletMarker(QChar c) {
+    return c == QLatin1Char('-') || c == QLatin1Char('*') || c == QLatin1Char('+');
+}
+
+// Скобочная часть автозамены — то, что человек набрал вместо чекбокса; пробел в
+// конце уже отрезан.
+//
+// Недописанная "[" принимается только там, где маркер списка набран слитно
+// ("-["). В уже готовом буллете её принимать нельзя: тогда при наборе полного
+// "- [ ] " правило срабатывало бы на "[ " и закрывающая скобка оставалась бы в
+// тексте — проверено на живом редакторе, выходило "- [ ] ] дело".
+Kind matchCheckbox(const QString& body, bool allowUnclosed, bool& matched) {
+    matched = true;
+    if (body == QStringLiteral("[]") || body == QStringLiteral("[ ]"))
+        return Kind::TaskUnchecked;
+    if (body == QStringLiteral("[x]") || body == QStringLiteral("[X]"))
+        return Kind::TaskChecked;
+    if (allowUnclosed && body == QStringLiteral("[")) return Kind::TaskUnchecked;
+    matched = false;
+    return Kind::Paragraph;
+}
+
 InputRule matchInputRule(const QTextBlock& block, const QString& typed) {
     const bool list = isListBlock(block);
     const Kind kind = kindOf(block);
+    // Пробел в конце уже проверен вызывающим.
+    const QString body = typed.left(typed.size() - 1);
 
-    // "[x] " в начале буллета — задача. Только в буллете: в нумерованном пункте
-    // это обычный текст, и превращать его в чекбокс нельзя.
-    if (kind == Kind::Bullet && typed.size() == 4 && typed.startsWith(QLatin1Char('[')) &&
-        typed.at(2) == QLatin1Char(']')) {
-        const QChar mark = typed.at(1);
-        if (mark == QLatin1Char(' '))
-            return {Kind::TaskUnchecked, 0, 4, true};
-        if (mark == QLatin1Char('x') || mark == QLatin1Char('X'))
-            return {Kind::TaskChecked, 0, 4, true};
+    // Чекбокс в начале буллета. Только в буллете: в нумерованном пункте "[x]" —
+    // обычный текст, и превращать его в чекбокс нельзя.
+    if (kind == Kind::Bullet) {
+        bool matched = false;
+        const Kind task = matchCheckbox(body, false, matched);
+        if (matched) return {task, 0, int(typed.size()), true};
     }
 
     if (list) return {};   // список списком уже не сделаешь
 
+    // Задача одним махом: "-[", "-[]", "-[x]" и то же с пробелом после маркера.
+    // Набирать "- " и ждать, пока сработает первая автозамена, не обязательно.
+    if (body.size() >= 2 && isBulletMarker(body.at(0))) {
+        const int after = body.at(1) == QLatin1Char(' ') ? 2 : 1;
+        bool matched = false;
+        // Слитно с маркером — короткий путь, недописанная скобка допустима.
+        const Kind task = matchCheckbox(body.mid(after), after == 1, matched);
+        if (matched) return {task, 0, int(typed.size()), true};
+    }
+
     // Маркер буллета: любой из трёх, как и в файле. В файл уйдёт дефис — знак
     // маркера канон не хранит.
-    if (typed.size() == 2 && (typed.at(0) == QLatin1Char('-') ||
-                              typed.at(0) == QLatin1Char('*') ||
-                              typed.at(0) == QLatin1Char('+')))
+    if (body.size() == 1 && isBulletMarker(body.at(0)))
         return {Kind::Bullet, 0, 2, true};
 
     // Номер: цифры и точка или скобка.
     int digits = 0;
-    while (digits < typed.size() && typed.at(digits).isDigit()) ++digits;
-    if (digits > 0 && digits + 2 == typed.size() &&
-        (typed.at(digits) == QLatin1Char('.') || typed.at(digits) == QLatin1Char(')')))
-        return {Kind::Ordered, 0, digits + 2, true};
+    while (digits < body.size() && body.at(digits).isDigit()) ++digits;
+    if (digits > 0 && digits + 1 == body.size() &&
+        (body.at(digits) == QLatin1Char('.') || body.at(digits) == QLatin1Char(')')))
+        return {Kind::Ordered, 0, int(typed.size()), true};
 
     // Заголовок: от одной решётки до шести.
     int hashes = 0;
-    while (hashes < typed.size() && typed.at(hashes) == QLatin1Char('#')) ++hashes;
-    if (hashes >= 1 && hashes <= 6 && hashes + 1 == typed.size() &&
-        kind != Kind::Heading)
-        return {Kind::Heading, hashes, hashes + 1, true};
+    while (hashes < body.size() && body.at(hashes) == QLatin1Char('#')) ++hashes;
+    if (hashes >= 1 && hashes <= 6 && hashes == body.size() && kind != Kind::Heading)
+        return {Kind::Heading, hashes, int(typed.size()), true};
 
     return {};
 }
