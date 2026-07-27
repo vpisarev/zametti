@@ -139,6 +139,8 @@ QJsonObject appearanceToJson(const Appearance& a) {
 
     QJsonObject editor{
         {QStringLiteral("autosaveDelayMs"), a.autosaveDelayMs},
+        {QStringLiteral("undoCoalesceMs"), a.undoCoalesceMs},
+        {QStringLiteral("undoLimit"), a.undoLimit},
     };
 
     QJsonObject zoom{
@@ -239,6 +241,10 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     const QJsonObject editor = root.value(QStringLiteral("editor")).toObject();
     const QJsonValue delay = editor.value(QStringLiteral("autosaveDelayMs"));
     if (delay.isDouble()) a.autosaveDelayMs = delay.toInt();
+    const QJsonValue coalesce = editor.value(QStringLiteral("undoCoalesceMs"));
+    if (coalesce.isDouble()) a.undoCoalesceMs = coalesce.toInt();
+    const QJsonValue limit = editor.value(QStringLiteral("undoLimit"));
+    if (limit.isDouble()) a.undoLimit = limit.toInt();
 
     const QJsonObject zoom = root.value(QStringLiteral("zoom")).toObject();
     readReal(zoom, "step", a.zoomStep);

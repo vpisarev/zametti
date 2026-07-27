@@ -1,0 +1,217 @@
+// Виджет редактора на живом окне: что записывается в историю, а что нет.
+//
+// Единственный тест, которому нужен QtWidgets. Бриф просил обойтись без них, и
+// слой модели без них и обходится — за этим следит view-without-widgets. Но обе
+// ошибки, ради которых этот тест написан, живут именно в виджете и никаким
+// тестом над QTextDocument не ловятся: перекладка полей под ширину окна
+// записывалась в историю как правка, а первая правка в только что открытой
+// заметке подмешивалась к её исходному состоянию и не отменялась.
+
+#include "editor_widget.h"
+#include "settings.h"
+#include "test_util.h"
+
+#include <QApplication>
+#include <QDir>
+#include <QFile>
+#include <QTest>
+#include <QTextBlock>
+#include <QTextCursor>
+#include <QTextDocument>
+
+#include <string>
+
+namespace {
+
+QString g_dir;
+
+void check(bool ok, const std::string& what) {
+    ++zt::g_checks;
+    if (ok) return;
+    ++zt::g_failures;
+    std::printf("провал: %s\n", what.c_str());
+}
+
+void checkEqual(const QString& expected, const QString& actual, const std::string& what) {
+    ++zt::g_checks;
+    if (expected == actual) return;
+    ++zt::g_failures;
+    std::printf("провал: %s\n  ждали:  %s\n  вышло:  %s\n", what.c_str(),
+                expected.toUtf8().constData(), actual.toUtf8().constData());
+}
+
+QString readFile(const QString& path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) return QStringLiteral("<нет файла>");
+    return QString::fromUtf8(file.readAll());
+}
+
+QString writeNote(const char* name, const QString& text) {
+    const QString path = g_dir + QLatin1Char('/') + QLatin1String(name);
+    QFile file(path);
+    if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) file.write(text.toUtf8());
+    return path;
+}
+
+QString firstLine(const zametti::NoteEditor& editor) {
+    return editor.document()->firstBlock().text();
+}
+
+void typeAtEnd(zametti::NoteEditor& editor, const QString& text) {
+    QTextCursor cursor = editor.textCursor();
+    cursor.movePosition(QTextCursor::EndOfBlock);
+    editor.setTextCursor(cursor);
+    editor.insertPlainText(text);
+    QTest::qWait(10);
+}
+
+// Просто открыть заметку — не значит её изменить. Ошибка здесь означала бы, что
+// чтение чужого файла его переписывает.
+void checkOpenDoesNotTouchFile() {
+    const QString source = QStringLiteral("#   заголовок с лишними пробелами\n\n*   буллет\n");
+    const QString path = writeNote("некано.md", source);
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(path);
+    QTest::qWait(20);
+    editor.save(false);
+
+    checkEqual(source, readFile(path), "открытие заметки не должно её менять");
+}
+
+// Правило этапа: документ — содержимое, а не облик. Undo возвращает текст и не
+// трогает масштаб.
+void checkUndoKeepsAppearance() {
+    const QString path = writeNote("правка.md", QStringLiteral("первая строка\n\n- буллет\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(path);
+
+    typeAtEnd(editor, QStringLiteral(" мама мыла раму"));
+    checkEqual(QStringLiteral("первая строка мама мыла раму"), firstLine(editor),
+               "набранное должно оказаться в документе");
+
+    editor.applyZoom(2.0);
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("первая строка мама мыла раму"), firstLine(editor),
+               "масштаб не должен менять текст");
+
+    editor.undo();
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("первая строка"), firstLine(editor),
+               "undo возвращает текст");
+    check(editor.zoom() == qreal(2.0), "undo не должен откатывать масштаб");
+
+    editor.redo();
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("первая строка мама мыла раму"), firstLine(editor),
+               "redo возвращает отменённое");
+
+    editor.save(false);
+    checkEqual(QStringLiteral("первая строка мама мыла раму\n\n- буллет\n"), readFile(path),
+               "сохранённое содержимое");
+}
+
+// Смена облика шага истории не заводит: после зума и перекладки окна одного
+// undo обязано хватить, чтобы вернуться к исходному тексту.
+void checkAppearanceMakesNoHistoryStep() {
+    const QString path = writeNote("облик.md", QStringLiteral("текст\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(path);
+
+    typeAtEnd(editor, QStringLiteral(" правка"));
+    // Пауза дольше окна слипания: иначе смена облика подмешалась бы к серии
+    // набора и завела бы не новый шаг, а правку текущего — то есть проверка
+    // прошла бы и со сломанным кодом.
+    QTest::qWait(zametti::appearance().undoCoalesceMs * 2);
+
+    // Всё, что ниже, — облик: масштаб и ширина окна. Ширина особенно коварна:
+    // она двигает поля документа, а документ шлёт contentsChanged и на это.
+    // Ширины взяты по обе стороны от предела колонки (layout.maxContentWidth),
+    // иначе поля не сдвинутся вовсе и проверять будет нечего.
+    editor.applyZoom(1.5);
+    QTest::qWait(10);
+    editor.resize(600, 500);
+    QTest::qWait(30);
+    editor.resize(1600, 500);
+    QTest::qWait(30);
+    editor.resize(700, 500);
+    QTest::qWait(30);
+    editor.applyZoom(1.0);
+    QTest::qWait(10);
+
+    editor.undo();
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("текст"), firstLine(editor),
+               "одного undo хватает: облик шагов не заводит");
+}
+
+// Первая правка в только что открытой заметке обязана отменяться. Если серия
+// набора тянется из прошлой заметки, эта правка сольётся с её исходным
+// состоянием, и отменять станет нечего.
+void checkFirstEditAfterOpenIsUndoable() {
+    const QString first = writeNote("одна.md", QStringLiteral("одна\n"));
+    const QString second = writeNote("другая.md", QStringLiteral("другая\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+
+    editor.openFile(first);
+    typeAtEnd(editor, QStringLiteral(" правка"));
+
+    // Сразу, без паузы: как раз тот случай, когда серия набора могла бы
+    // перетечь в новую заметку.
+    editor.openFile(second);
+    typeAtEnd(editor, QStringLiteral(" ещё"));
+    checkEqual(QStringLiteral("другая ещё"), firstLine(editor), "правка во второй заметке");
+
+    editor.undo();
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("другая"), firstLine(editor),
+               "первая правка после открытия обязана отменяться");
+
+    editor.save(false);
+    checkEqual(QStringLiteral("одна правка\n"), readFile(first),
+               "первая заметка сохранена при переходе ко второй");
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    QApplication app(argc, argv);
+    if (argc < 2) {
+        std::printf("использование: editor_test <каталог для временных файлов>\n");
+        return 2;
+    }
+
+    // Окно слипания набора укорачиваем: иначе пауза в тесте была бы почти
+    // секундой на каждую проверку.
+    zametti::appearance().undoCoalesceMs = 40;
+
+    g_dir = QString::fromLocal8Bit(argv[1]) + QStringLiteral("/editor-data");
+    QDir(g_dir).removeRecursively();
+    if (!QDir().mkpath(g_dir)) {
+        std::printf("не создать каталог %s\n", g_dir.toUtf8().constData());
+        return 2;
+    }
+
+    checkOpenDoesNotTouchFile();
+    checkUndoKeepsAppearance();
+    checkAppearanceMakesNoHistoryStep();
+    checkFirstEditAfterOpenIsUndoable();
+
+    std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
+    return zt::g_failures == 0 ? 0 : 1;
+}

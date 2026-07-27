@@ -65,7 +65,9 @@ void NoteView::applyContentWidth() {
     if (std::fabs(format.leftMargin() - margin) < 0.01) return;
     format.setLeftMargin(margin);
     format.setRightMargin(margin);
+    changingLayout_ = true;
     root->setFrameFormat(format);
+    changingLayout_ = false;
 }
 
 void NoteView::resizeEvent(QResizeEvent* event) {

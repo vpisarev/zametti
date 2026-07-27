@@ -3,8 +3,7 @@
 // Это не самоцель, а первый стенд для проверки ядра. Отсюда же работает режим
 // --check: прогнать parse → serialize и показать расхождение с оригиналом.
 
-#include "document_builder.h"
-#include "document_saver.h"
+#include "editor_widget.h"
 #include "note_tree.h"
 #include "note_view.h"
 #include "parser.h"
@@ -17,14 +16,9 @@
 #include <QIcon>
 #include <QItemSelectionModel>
 #include <QKeySequence>
-#include <QMessageBox>
-#include <QScrollBar>
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QSplitter>
-#include <QTextBrowser>
-#include <QTextCursor>
-#include <QTextDocument>
 #include <QTimer>
 #include <QTreeView>
 
@@ -197,16 +191,11 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    QString current = QFileInfo(path).absoluteFilePath();
-    std::string src;
-    if (!readFile(current, src)) {
-        std::fprintf(stderr, "не читается: %s\n", current.toUtf8().constData());
-        return 2;
-    }
+    const QString current = QFileInfo(path).absoluteFilePath();
 
     QSplitter window(Qt::Horizontal);
     zametti::NoteTreeView tree;
-    zametti::NoteView view;
+    zametti::NoteEditor editor;
 
     zametti::NoteTreeModel model(
         zametti::NoteTreeModel::rootFor(current, zametti::appearance().notesRoot));
@@ -229,82 +218,32 @@ int main(int argc, char** argv) {
     QObject::connect(&tree, &QTreeView::collapsed, &tree,
                      [&model](const QModelIndex& i) { model.setExpanded(i, false); });
 
-    view.setOpenExternalLinks(true);
-    zametti::applyPalette(view);
+    zametti::applyPalette(editor);
     zametti::applyPalette(tree);
 
     window.addWidget(&tree);
-    window.addWidget(&view);
+    window.addWidget(&editor);
     window.setStretchFactor(1, 1);   // при растяжении окна растёт текст, а не панель
     window.setChildrenCollapsible(false);
 
+    QObject::connect(&editor, &zametti::NoteEditor::fileChanged, &window,
+                     [&window](const QString& file) {
+                         window.setWindowTitle(QFileInfo(file).completeBaseName() +
+                                               QStringLiteral(" — zametti"));
+                     });
+
     // Кегль задан явно в каждом формате, поэтому штатный зум QTextEdit до него
-    // не дотягивается: при смене масштаба документ собирается заново. Место в
-    // тексте держим по доле прокрутки — в пикселях оно после пересборки другое.
-    qreal zoom = std::clamp(session.zoom, zametti::appearance().zoomMin,
-                            zametti::appearance().zoomMax);
-    zametti::Document doc = zametti::parse(src);
-
-    auto scrollRatio = [&view]() -> double {
-        const QScrollBar* bar = view.verticalScrollBar();
-        return bar->maximum() > 0 ? double(bar->value()) / bar->maximum() : 0.0;
-    };
-    auto rebuild = [&view, &doc, &zoom](double ratio) {
-        view.setZoom(zoom);
-        zametti::buildDocument(doc, *view.document(), zoom);
-        // Сборка — не правка пользователя: флаг снимаем, иначе первое же
-        // автосохранение переписало бы только что открытый файл.
-        view.document()->setModified(false);
-        // Сборщик ставит поля по умолчанию, о ширине окна он не знает.
-        view.applyContentWidth();
-        view.moveCursor(QTextCursor::Start);
-        QScrollBar* bar = view.verticalScrollBar();
-        bar->setValue(int(ratio * bar->maximum()));
-    };
-    // Сохранение идёт только у изменённого документа. Иначе одно открытие
-    // неканонической заметки переписывало бы её на диске — а мы её всего лишь
-    // показали. Пересборка документа флаг снимает, см. rebuild.
-    QString lastComplaint;
-    auto save = [&](bool interactive) {
-        if (!view.document()->isModified()) return;
-        const zametti::SaveOutcome outcome =
-            zametti::saveDocument(*view.document(), current, zametti::rescueTimestamp());
-        if (outcome.result == zametti::SaveResult::Written ||
-            outcome.result == zametti::SaveResult::Unchanged) {
-            view.document()->setModified(false);
-            lastComplaint.clear();
-            return;
-        }
-        std::fprintf(stderr, "%s\n", outcome.message.toUtf8().constData());
-        // Одну и ту же беду показываем один раз: автосохранение повторяется по
-        // таймеру, и окно с ошибкой раз в полторы секунды — это пытка.
-        if (!interactive || outcome.message == lastComplaint) return;
-        lastComplaint = outcome.message;
-        QMessageBox::warning(&window, QStringLiteral("zametti"), outcome.message);
-    };
-
-    auto setTitle = [&window](const QString& file) {
-        window.setWindowTitle(QFileInfo(file).completeBaseName() + QStringLiteral(" — zametti"));
-    };
-
-    auto openNote = [&](const QString& file) {
-        save(true);
-        std::string text;
-        if (!readFile(file, text)) {
-            std::fprintf(stderr, "не читается: %s\n", file.toUtf8().constData());
-            return;
-        }
-        current = file;
-        doc = zametti::parse(text);
-        setTitle(file);
-        rebuild(0.0);
-    };
+    // не дотягивается: при смене масштаба документ собирается заново из того же
+    // содержимого. В историю правок это не попадает — облик не содержимое.
+    editor.setZoom(std::clamp(session.zoom, zametti::appearance().zoomMin,
+                              zametti::appearance().zoomMax));
+    if (!editor.openFile(current)) return 2;
 
     QObject::connect(tree.selectionModel(), &QItemSelectionModel::currentChanged, &tree,
                      [&](const QModelIndex& index, const QModelIndex&) {
                          // На каталоге ничего не открываем: он только раскрывается.
                          const QString file = model.filePath(index);
-                         if (!file.isEmpty() && file != current) openNote(file);
+                         if (!file.isEmpty() && file != editor.filePath()) editor.openFile(file);
                      });
 
     // Раскрытые ветки собираем обходом дерева: у QTreeView нет готового списка,
@@ -325,62 +264,44 @@ int main(int argc, char** argv) {
         return out;
     };
 
-    auto applyZoom = [&](qreal factor) {
-        const qreal next = std::clamp(zoom * factor, zametti::appearance().zoomMin,
-                                      zametti::appearance().zoomMax);
-        if (next == zoom) return;
-        const double ratio = scrollRatio();
-        zoom = next;
-        rebuild(ratio);
+    const auto shortcut = [&window](const QKeySequence& keys, auto&& slot) {
+        QObject::connect(new QShortcut(keys, &window), &QShortcut::activated, &window, slot);
     };
+    auto stepZoom = [&editor](qreal factor) {
+        editor.applyZoom(std::clamp(editor.zoom() * factor, zametti::appearance().zoomMin,
+                                    zametti::appearance().zoomMax));
+    };
+    // Ctrl+= рядом с Ctrl++: увеличивают одной и той же клавишей, с шифтом и без.
+    shortcut(QKeySequence(QStringLiteral("Ctrl+=")),
+             [&] { stepZoom(zametti::appearance().zoomStep); });
+    shortcut(QKeySequence(QStringLiteral("Ctrl++")),
+             [&] { stepZoom(zametti::appearance().zoomStep); });
+    shortcut(QKeySequence(QStringLiteral("Ctrl+-")),
+             [&] { stepZoom(1.0 / zametti::appearance().zoomStep); });
+    shortcut(QKeySequence(QStringLiteral("Ctrl+0")), [&] { editor.applyZoom(1.0); });
 
-    // Автосохранение с задержкой: пока человек печатает, файл не трогаем.
-    QTimer autosave;
-    autosave.setSingleShot(true);
-    QObject::connect(&autosave, &QTimer::timeout, &window, [&] { save(true); });
-    QObject::connect(view.document(), &QTextDocument::contentsChanged, &window, [&] {
-        if (view.document()->isModified())
-            autosave.start(zametti::appearance().autosaveDelayMs);
-    });
+    shortcut(QKeySequence::Save, [&] { editor.save(true); });
+    shortcut(QKeySequence::Undo, [&] { editor.undo(); });
+    shortcut(QKeySequence::Redo, [&] { editor.redo(); });
+
     // Фокус ушёл из приложения — момент, когда человек переключился на что-то
     // другое и меньше всего ждёт потери правок.
     QObject::connect(&app, &QGuiApplication::focusWindowChanged, &window,
                      [&](QWindow* focused) {
-                         if (focused == nullptr) save(false);
+                         if (focused == nullptr) editor.save(false);
                      });
 
-    const auto shortcut = [&window](const QKeySequence& keys, auto&& slot) {
-        QObject::connect(new QShortcut(keys, &window), &QShortcut::activated, &window, slot);
-    };
-    // Ctrl+= рядом с Ctrl++: увеличивают одной и той же клавишей, с шифтом и без.
-    shortcut(QKeySequence(QStringLiteral("Ctrl+=")),
-             [&] { applyZoom(zametti::appearance().zoomStep); });
-    shortcut(QKeySequence(QStringLiteral("Ctrl++")),
-             [&] { applyZoom(zametti::appearance().zoomStep); });
-    shortcut(QKeySequence(QStringLiteral("Ctrl+-")),
-             [&] { applyZoom(1.0 / zametti::appearance().zoomStep); });
-    shortcut(QKeySequence::Save, [&] { save(true); });
-    shortcut(QKeySequence(QStringLiteral("Ctrl+0")), [&] {
-        if (zoom == qreal(1.0)) return;
-        const double ratio = scrollRatio();
-        zoom = 1.0;
-        rebuild(ratio);
-    });
-
-    setTitle(current);
     if (!session.windowGeometry.isEmpty()) window.restoreGeometry(session.windowGeometry);
     else window.resize(1150, 780);
     if (!session.splitterState.isEmpty()) window.restoreState(session.splitterState);
     else window.setSizes({zametti::appearance().sidebarWidth, 800});
     window.show();
 
-    rebuild(0.0);
-
     // Показать текущую заметку в дереве надо после show(): раскрытие веток
-    // требует уже созданных представлений. Сигнал глушим, иначе выделение
-    // немедленно вызвало бы повторную загрузку того же файла.
-    // Раскрытые ветки восстанавливаем до того, как показать текущую заметку:
-    // иначе её раскрытие затерялось бы среди прочих.
+    // требует уже созданных представлений. Раскрытые ветки восстанавливаем до
+    // того, как показать текущую заметку, иначе её раскрытие затеряется среди
+    // прочих. Сигнал глушим — иначе выделение немедленно вызвало бы повторную
+    // загрузку того же файла.
     for (const QString& dir : session.expandedDirs) {
         const QModelIndex index = model.indexForPath(dir);
         if (index.isValid() && model.isDirectory(index)) tree.expand(index);
@@ -398,21 +319,17 @@ int main(int argc, char** argv) {
     // Прокрутку можно ставить только когда документ уже разложен по размерам
     // окна, а это происходит после show(), в следующем проходе цикла событий.
     const double startRatio = session.lastFile == current ? session.scrollRatio : 0.0;
-    if (startRatio > 0.0) {
-        QTimer::singleShot(0, &view, [&view, startRatio] {
-            QScrollBar* bar = view.verticalScrollBar();
-            bar->setValue(int(startRatio * bar->maximum()));
-        });
-    }
+    if (startRatio > 0.0)
+        QTimer::singleShot(0, &editor, [&editor, startRatio] { editor.setScrollRatio(startRatio); });
 
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &window, [&] {
         // На выходе окно с ошибкой показывать поздно: жалуемся в stderr.
-        save(false);
+        editor.save(false);
 
         zametti::Session out;
-        out.lastFile = current;
-        out.scrollRatio = scrollRatio();
-        out.zoom = zoom;
+        out.lastFile = editor.filePath();
+        out.scrollRatio = editor.scrollRatio();
+        out.zoom = editor.zoom();
         out.windowGeometry = window.saveGeometry();
         out.splitterState = window.saveState();
         out.expandedDirs = expandedDirs();

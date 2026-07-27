@@ -23,6 +23,8 @@ add_library(zametti-view STATIC
     document_reader.cpp
     document_saver.h
     document_saver.cpp
+    edit_history.h
+    edit_history.cpp
     editor_ops.h
     editor_ops.cpp
     marker.h
@@ -34,16 +36,25 @@ target_link_libraries(zametti-view PUBLIC zametti-core Qt6::Gui)
 target_link_libraries(zametti-view PRIVATE zametti-warnings)
 target_include_directories(zametti-view PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_executable(zametti
-    main.cpp
+# Слой окна. Отдельной целью, а не прямо в исполняемом файле: тесту редактора
+# нужны те же виджеты, а собирать их дважды незачем.
+add_library(zametti-widgets STATIC
     note_tree.h
     note_tree.cpp
     note_view.h
     note_view.cpp
+    editor_widget.h
+    editor_widget.cpp
+)
+target_link_libraries(zametti-widgets PUBLIC zametti-view Qt6::Widgets)
+target_link_libraries(zametti-widgets PRIVATE zametti-warnings)
+
+add_executable(zametti
+    main.cpp
     resources.qrc
 )
 
-target_link_libraries(zametti PRIVATE zametti-view Qt6::Widgets zametti-warnings)
+target_link_libraries(zametti PRIVATE zametti-widgets zametti-warnings)
 
 # Иконку в доке оболочка ищет не у окна, а по .desktop-файлу с именем, которое
 # приложение сообщает через setDesktopFileName. Без установки этих двух файлов

@@ -63,6 +63,26 @@ if(TARGET zametti-view)
     add_test(NAME ops COMMAND ops_test)
     set_tests_properties(ops PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    add_executable(undo_test undo_test.cpp)
+    target_link_libraries(undo_test PRIVATE zametti-view zametti-warnings)
+    target_include_directories(undo_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_test(NAME undo COMMAND undo_test)
+    set_tests_properties(undo PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # Единственный тест с QtWidgets: обе ошибки, ради которых он написан, живут
+    # в виджете и над голым QTextDocument не ловятся. Слой модели от виджетов
+    # по-прежнему свободен — за этим следит view-without-widgets ниже.
+    find_package(Qt6 QUIET COMPONENTS Test)
+    if(Qt6Test_FOUND AND TARGET zametti-widgets)
+        add_executable(editor_test editor_test.cpp)
+        target_link_libraries(editor_test PRIVATE zametti-widgets Qt6::Test zametti-warnings)
+        target_include_directories(editor_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+        add_test(NAME editor COMMAND editor_test ${CMAKE_CURRENT_BINARY_DIR})
+        set_tests_properties(editor PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    endif()
+
     add_test(NAME view-without-widgets
              COMMAND ${CMAKE_COMMAND} -DBINARY=$<TARGET_FILE:reader_test>
                      -P ${CMAKE_CURRENT_SOURCE_DIR}/no_widgets_check.cmake)

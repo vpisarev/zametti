@@ -28,6 +28,7 @@ public:
 
     // Масштаб нужен маркерам: их шрифт строится тем же кеглем, что и текст.
     void setZoom(qreal zoom);
+    qreal zoom() const { return zoom_; }
 
     // Пересчитывает поля под текущую ширину вьюпорта. Вызывается после каждой
     // пересборки документа: сборщик ставит поля по умолчанию, ничего не зная
@@ -38,8 +39,14 @@ protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
 
+    // Правка полей — это смена облика, но документу она неотличима от правки
+    // текста: QTextDocument шлёт contentsChanged и на неё. Наследник смотрит на
+    // этот признак, чтобы не записать перекладку окна в историю.
+    bool changingLayout() const { return changingLayout_; }
+
 private:
     qreal zoom_ = 1.0;
+    bool changingLayout_ = false;
 };
 
 }  // namespace zametti

@@ -1,0 +1,161 @@
+#include "editor_widget.h"
+
+#include "document_builder.h"
+#include "document_reader.h"
+#include "document_saver.h"
+#include "parser.h"
+#include "settings.h"
+
+#include <QMessageBox>
+#include <QScrollBar>
+#include <QTextCursor>
+#include <QTextDocument>
+
+#include <cstdio>
+#include <fstream>
+#include <sstream>
+
+namespace zametti {
+namespace {
+
+bool readFile(const QString& path, std::string& out) {
+    std::ifstream in(path.toStdString(), std::ios::binary);
+    if (!in) return false;
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    out = ss.str();
+    return true;
+}
+
+}  // namespace
+
+NoteEditor::NoteEditor(QWidget* parent)
+    : NoteView(parent), history_(appearance().undoLimit) {
+    setReadOnly(false);
+    setUndoRedoEnabled(false);   // историю ведём сами, см. edit_history.h
+
+    autosave_.setSingleShot(true);
+    connect(&autosave_, &QTimer::timeout, this, [this] { save(true); });
+    connect(document(), &QTextDocument::contentsChanged, this,
+            &NoteEditor::onContentsChanged);
+}
+
+bool NoteEditor::openFile(const QString& path) {
+    save(true);
+
+    std::string text;
+    if (!readFile(path, text)) {
+        std::fprintf(stderr, "не читается: %s\n", path.toUtf8().constData());
+        return false;
+    }
+
+    path_ = path;
+    lastComplaint_.clear();
+    // Серию набора обрываем: иначе первая правка в новой заметке подмешалась бы
+    // к её исходному состоянию и отменить её было бы нечем.
+    sinceLastEdit_.invalidate();
+
+    Document doc = parse(text);
+    history_.reset(doc, 0);
+    rebuild(doc, 0, 0.0);
+    emit fileChanged(path_);
+    return true;
+}
+
+void NoteEditor::applyZoom(qreal value) {
+    if (value == zoom()) return;
+    NoteView::setZoom(value);
+    refreshAppearance();
+}
+
+void NoteEditor::refreshAppearance() {
+    // Облик меняется — содержимое нет. Берём его из истории и собираем заново;
+    // ни нового шага, ни сдвига по истории при этом не происходит.
+    rebuild(history_.current().doc, textCursor().position(), scrollRatio());
+}
+
+void NoteEditor::undo() {
+    const HistoryStep* step = history_.undo();
+    if (step == nullptr) return;
+    rebuild(step->doc, step->cursor, scrollRatio());
+    document()->setModified(true);
+    autosave_.start(appearance().autosaveDelayMs);
+}
+
+void NoteEditor::redo() {
+    const HistoryStep* step = history_.redo();
+    if (step == nullptr) return;
+    rebuild(step->doc, step->cursor, scrollRatio());
+    document()->setModified(true);
+    autosave_.start(appearance().autosaveDelayMs);
+}
+
+void NoteEditor::rebuild(const Document& doc, int cursor, double ratio) {
+    rebuilding_ = true;
+    buildDocument(doc, *document(), zoom());
+    applyContentWidth();
+
+    QTextCursor place(document());
+    place.setPosition(qBound(0, cursor, document()->characterCount() - 1));
+    setTextCursor(place);
+    setScrollRatio(ratio);
+
+    // Сборка — не правка человека. Без этого открытая неканоническая заметка
+    // считалась бы изменённой и переписывалась бы на диске при выходе, хотя мы
+    // её всего лишь показали. Кто пересобрал ради отмены — поднимет флаг сам.
+    document()->setModified(false);
+    rebuilding_ = false;
+}
+
+void NoteEditor::onContentsChanged() {
+    // Пересборка и перекладка полей под ширину окна — это облик. Документу они
+    // неотличимы от правки текста, и без этих двух признаков ширина окна
+    // заводила бы шаг истории.
+    if (rebuilding_ || changingLayout()) return;
+    recordEdit();
+    autosave_.start(appearance().autosaveDelayMs);
+}
+
+void NoteEditor::recordEdit() {
+    Document doc = readDocument(*document());
+    const int cursor = textCursor().position();
+
+    // Набор подряд — один шаг: иначе Ctrl+Z возвращал бы по одной букве. Паузу
+    // меряем от предыдущей правки, а не от начала шага, — тогда длинная фраза
+    // без пауз остаётся одним шагом, как и ожидается.
+    const bool sameRun = sinceLastEdit_.isValid() &&
+                         sinceLastEdit_.elapsed() < appearance().undoCoalesceMs;
+    if (sameRun) history_.amend(std::move(doc), cursor);
+    else history_.push(std::move(doc), cursor);
+    sinceLastEdit_.restart();
+}
+
+void NoteEditor::save(bool interactive) {
+    if (path_.isEmpty() || !document()->isModified()) return;
+
+    const SaveOutcome outcome = saveDocument(*document(), path_, rescueTimestamp());
+    if (outcome.result == SaveResult::Written || outcome.result == SaveResult::Unchanged) {
+        document()->setModified(false);
+        lastComplaint_.clear();
+        return;
+    }
+
+    std::fprintf(stderr, "%s\n", outcome.message.toUtf8().constData());
+    // Одну и ту же беду показываем один раз: автосохранение повторяется по
+    // таймеру, и окно с ошибкой раз в полторы секунды — это пытка.
+    if (!interactive || outcome.message == lastComplaint_) return;
+    lastComplaint_ = outcome.message;
+    QMessageBox::warning(this, QStringLiteral("zametti"), outcome.message);
+}
+
+double NoteEditor::scrollRatio() const {
+    const QScrollBar* bar = verticalScrollBar();
+    return bar->maximum() > 0 ? double(bar->value()) / bar->maximum() : 0.0;
+}
+
+void NoteEditor::setScrollRatio(double ratio) {
+    QScrollBar* bar = verticalScrollBar();
+    bar->setValue(int(ratio * bar->maximum()));
+}
+
+}  // namespace zametti
