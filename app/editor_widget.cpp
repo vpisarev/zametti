@@ -63,6 +63,9 @@ NoteEditor::NoteEditor(QWidget* parent)
     };
     bindInline(QKeySequence::Bold, SpanBold, toggleBold);
     bindInline(QKeySequence::Italic, SpanItalic, toggleItalic);
+    // Встроенный код: Ctrl+E — так его помечают всюду, где вообще помечают.
+    inlineBindings_.push_back(
+        {QKeySequence(QStringLiteral("Ctrl+E")), {SpanCode, toggleCode}});
     // Зачёркивание своего стандартного сочетания не имеет; Ctrl+K взят из брифа.
     inlineBindings_.push_back(
         {QKeySequence(QStringLiteral("Ctrl+K")), {SpanStrike, toggleStrike}});
@@ -273,6 +276,11 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     // смотрит на то, что человек написал. Отдельным шагом истории — первый
     // Ctrl+Z обязан вернуть набранные знаки, а не отменить предыдущую правку.
     if (event->text() == QStringLiteral(" ")) runOperation(applyInputRuleAtCursor);
+    // Закрывающая кавычка превращает набранное в ней во встроенный код. После
+    // этого курсор стоит в конце размеченного куска, и без сброса формата набор
+    // продолжался бы кодом — вышло бы `код и всё, что дальше`.
+    if (event->text() == QStringLiteral("`") && runOperation(applyCodeSpanRuleAtCursor))
+        setCurrentCharFormat(textCursor().block().charFormat());
 }
 
 bool NoteEditor::runOperation(bool (*op)(QTextDocument&, QTextCursor&)) {
@@ -328,6 +336,12 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
             QKeySequence::listFromString(keys, QKeySequence::PortableText);
         if (!all.isEmpty()) action->setShortcut(all.first());
     };
+
+    menu->addSeparator();
+    add(QStringLiteral("Жирный"), QStringLiteral("Ctrl+B"), toggleBold);
+    add(QStringLiteral("Курсив"), QStringLiteral("Ctrl+I"), toggleItalic);
+    add(QStringLiteral("Зачёркнутый"), QStringLiteral("Ctrl+K"), toggleStrike);
+    add(QStringLiteral("Код в строке"), QStringLiteral("Ctrl+E"), toggleCode);
 
     menu->addSeparator();
     add(QStringLiteral("Переключить задачу"), appearance().toggleTaskKey,

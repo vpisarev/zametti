@@ -451,6 +451,39 @@ const RangeCase kConvertRanges[] = {
 
 };
 
+// Закрывающая кавычка делает встроенный код. Набранное подаётся целиком, а
+// курсор ставится за последней кавычкой — как после её набора.
+struct CodeSpanCase {
+    const char* before;
+    const char* typed;
+    const char* after;
+    const char* what;
+};
+
+void checkCodeSpan(const CodeSpanCase& c) {
+    QTextDocument doc;
+    zametti::buildDocument(zametti::parse(c.before), doc);
+
+    QTextCursor typing(&doc);
+    typing.movePosition(QTextCursor::End);
+    typing.insertText(QString::fromUtf8(c.typed));
+
+    QTextCursor cursor(&doc);
+    cursor.movePosition(QTextCursor::End);
+    const bool handled = zametti::applyCodeSpanRuleAtCursor(doc, cursor);
+    const std::string actual = handled ? zametti::serialize(zametti::readDocument(doc))
+                                       : std::string("<правило не сработало>");
+    checkEqual(c.after, actual, c.what);
+}
+
+const CodeSpanCase kCodeSpanCases[] = {
+    {"вот\n", " `код`", "вот `код`\n", "кавычки делают встроенный код"},
+    {"вот\n", " ``", "<правило не сработало>", "пусто между кавычками — не код"},
+    {"вот\n", " `", "<правило не сработало>", "одна кавычка ничего не делает"},
+    {"вот\n", " код`", "<правило не сработало>", "без открывающей кавычки тоже"},
+    {"```\nкод\n```\n", " `x`", "<правило не сработало>", "в блоке кода правила нет"},
+};
+
 // Автозамена: набранное в начале блока, положение курсора после пробела.
 struct RuleCase {
     const char* typed;     // что оказалось в блоке к моменту проверки
@@ -565,6 +598,11 @@ const StyleCase kItalicCases[] = {
      "курсив ложится поверх жирного"},
 };
 
+const StyleCase kCodeCases[] = {
+    {"обычный текст\n", 0, 0, 7, "`обычный` текст\n", "код в строке на выделении"},
+    {"`код` и текст\n", 0, 0, 3, "код и текст\n", "повторное нажатие снимает"},
+};
+
 const StyleCase kStrikeCases[] = {
     {"обычный текст\n", 0, 0, 7, "~~обычный~~ текст\n", "зачёркнутым становится выделенное"},
     {"~~зачёркнутый~~ текст\n", 0, 0, 11, "зачёркнутый текст\n", "и снимается обратно"},
@@ -670,6 +708,8 @@ int main(int argc, char** argv) {
     for (const StyleCase& c : kBoldCases) checkStyle(zametti::toggleBold, c);
     for (const StyleCase& c : kItalicCases) checkStyle(zametti::toggleItalic, c);
     for (const StyleCase& c : kStrikeCases) checkStyle(zametti::toggleStrike, c);
+    for (const StyleCase& c : kCodeCases) checkStyle(zametti::toggleCode, c);
+    for (const CodeSpanCase& c : kCodeSpanCases) checkCodeSpan(c);
     for (const MoveCase& c : kMoveCases) checkMove(c);
     checkCursorAfterSplit();
     for (const char* source : kOrdinalCases)

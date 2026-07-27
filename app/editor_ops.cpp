@@ -211,9 +211,11 @@ struct StyleRun {
     int style = 0;
 };
 
-// Внутри встроенного кода разметки не бывает, а литеральные блоки буквальны
-// целиком — такие куски в выделение не берём вовсе.
-std::vector<StyleRun> styleRuns(const QTextDocument& doc, int from, int to) {
+// Литеральные блоки буквальны целиком — их куски в выделение не берём вовсе.
+// Куски встроенного кода берём только тогда, когда меняют сам код: жирный
+// внутри него не действует.
+std::vector<StyleRun> styleRuns(const QTextDocument& doc, int from, int to,
+                                bool includeCode) {
     std::vector<StyleRun> runs;
     for (QTextBlock block = doc.findBlock(from); block.isValid(); block = block.next()) {
         if (block.position() >= to) break;
@@ -225,11 +227,18 @@ std::vector<StyleRun> styleRuns(const QTextDocument& doc, int from, int to) {
             const int end = qMin(to, fragment.position() + fragment.length());
             if (end <= start) continue;
             const int style = fragment.charFormat().intProperty(SpanStyleProperty);
-            if ((style & SpanCode) != 0) continue;
+            if (!includeCode && (style & SpanCode) != 0) continue;
             runs.push_back({start, end, style});
         }
     }
     return runs;
+}
+
+// Кегль встроенного кода — тот же, каким его собрал бы сборщик документа.
+qreal codePointSize(const QTextDocument& doc) {
+    const qreal base = doc.defaultFont().pointSizeF();
+    if (appearance().codePointSize <= 0.0 || appearance().baseFontPoint <= 0.0) return base;
+    return appearance().codePointSize * base / appearance().baseFontPoint;
 }
 
 // Оформление, отвечающее набору признаков. Ставим все три явно: снимать
@@ -248,7 +257,9 @@ bool toggleInlineStyle(QTextDocument& doc, QTextCursor& cursor, int style) {
     const int from = qMin(cursor.anchor(), cursor.position());
     const int to = qMax(cursor.anchor(), cursor.position());
 
-    const std::vector<StyleRun> runs = styleRuns(doc, from, to);
+    // Снимать код с куска кода надо уметь, а вот жирный внутри кода не действует:
+    // содержимое там буквальное, разметке взяться неоткуда.
+    const std::vector<StyleRun> runs = styleRuns(doc, from, to, style == SpanCode);
     if (runs.empty()) return false;
 
     // Снимаем, только если начертание есть везде: иначе одно нажатие на
@@ -518,8 +529,63 @@ bool applyInputRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     return true;
 }
 
+bool applyCodeSpanRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+    const QTextBlock block = cursor.block();
+    if (isRawBlock(block) || kindOf(block) == Kind::Code) return false;
+
+    // Курсор стоит сразу за только что набранной кавычкой.
+    const int end = cursor.positionInBlock();
+    const QString text = block.text();
+    if (end < 2 || text.at(end - 1) != QLatin1Char('`')) return false;
+
+    // Ищем открывающую — в пределах своей строки: разметка через перенос не
+    // тянется.
+    int open = -1;
+    for (int i = end - 2; i >= 0; --i) {
+        const QChar c = text.at(i);
+        if (c == QChar::LineSeparator) break;
+        if (c == QLatin1Char('`')) {
+            open = i;
+            break;
+        }
+    }
+    if (open < 0 || open + 1 == end - 1) return false;   // пусто между кавычками
+
+    // Внутри уже размеченного куска правило молчит: там текст буквальный.
+    QTextCursor probe(&doc);
+    probe.setPosition(block.position() + open + 1);
+    if ((probe.charFormat().intProperty(SpanStyleProperty) & SpanCode) != 0) return false;
+
+    QTextCursor edit(&doc);
+    edit.beginEditBlock();
+    // Сначала закрывающая, потом открывающая: так смещения не разъезжаются.
+    edit.setPosition(block.position() + end - 1);
+    edit.setPosition(block.position() + end, QTextCursor::KeepAnchor);
+    edit.removeSelectedText();
+    edit.setPosition(block.position() + open);
+    edit.setPosition(block.position() + open + 1, QTextCursor::KeepAnchor);
+    edit.removeSelectedText();
+
+    edit.setPosition(block.position() + open);
+    edit.setPosition(block.position() + end - 2, QTextCursor::KeepAnchor);
+    QTextCharFormat code = formatForStyle(SpanCode);
+    code.setFontPointSize(codePointSize(doc));
+    if (!appearance().codeFamily.isEmpty())
+        code.setFontFamilies({QString(appearance().codeFamily)});
+    code.setBackground(appearance().codeBackground);
+    edit.mergeCharFormat(code);
+    edit.endEditBlock();
+
+    cursor.setPosition(block.position() + end - 2);
+    return true;
+}
+
 bool toggleBold(QTextDocument& doc, QTextCursor& cursor) {
     return toggleInlineStyle(doc, cursor, SpanBold);
+}
+
+bool toggleCode(QTextDocument& doc, QTextCursor& cursor) {
+    return toggleInlineStyle(doc, cursor, SpanCode);
 }
 
 bool toggleItalic(QTextDocument& doc, QTextCursor& cursor) {
@@ -796,8 +862,24 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
         }
     }
 
+    // Отступ предыдущей строки — в коде он почти всегда тот же, и набирать его
+    // заново на каждой строке мучительно. Всё внутри одного edit block: Enter с
+    // отступом отменяется одним Ctrl+Z.
+    QString indent;
+    if (literal) {
+        const QString line = block.text();
+        int i = 0;
+        while (i < line.size() && (line.at(i) == QLatin1Char(' ') ||
+                                   line.at(i) == QLatin1Char('\t')))
+            ++i;
+        // Отступ берём только до курсора: если он левее отступа, копировать
+        // нечего.
+        indent = line.left(qMin(i, cursor.positionInBlock()));
+    }
+
     cursor.beginEditBlock();
     cursor.insertBlock(next, block.charFormat());
+    if (!indent.isEmpty()) cursor.insertText(indent, block.charFormat());
     if (literal && format.boolProperty(TrailingNewlineProperty)) {
         QTextBlockFormat head = format;
         head.clearProperty(TrailingNewlineProperty);

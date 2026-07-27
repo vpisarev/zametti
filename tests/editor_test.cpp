@@ -544,6 +544,54 @@ void checkSizeAfterSoftBreak() {
           "кегль после переноса строки не должен меняться");
 }
 
+// Встроенный код с клавиатуры и авто-отступ в блоке кода.
+void checkCodeTyping() {
+    const QString path = writeNote("код-набором.md", QString());
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+    editor.openFile(path);
+
+    auto text = [&editor] {
+        return QString::fromStdString(
+            zametti::serialize(zametti::readDocument(*editor.document())));
+    };
+
+    // Кавычки делают код, и набор после них идёт обычным текстом.
+    editor.insertPlainText(QStringLiteral("вот "));
+    QTest::keyClick(&editor, Qt::Key_QuoteLeft);
+    editor.insertPlainText(QStringLiteral("код"));
+    QTest::keyClick(&editor, Qt::Key_QuoteLeft);
+    editor.insertPlainText(QStringLiteral(" конец"));
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("вот `код` конец\n"), text(),
+               "кавычки делают код, а дальше идёт обычный текст");
+
+    // Авто-отступ: новая строка блока кода наследует отступ предыдущей.
+    const QString code = writeNote("отступ-кода.md", QString());
+    editor.openFile(code);
+    QTest::qWait(20);
+    for (int i = 0; i < 3; ++i) QTest::keyClick(&editor, Qt::Key_QuoteLeft);
+    QTest::keyClick(&editor, Qt::Key_Return);
+    editor.insertPlainText(QStringLiteral("    if x:"));
+    QTest::keyClick(&editor, Qt::Key_Return);
+    editor.insertPlainText(QStringLiteral("return 1"));
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("```\n    if x:\n    return 1\n```\n"), text(),
+               "новая строка кода наследует отступ предыдущей");
+
+    // Enter вместе с отступом — один шаг отмены.
+    QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+    QTest::qWait(10);
+    QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("```\n    if x:\n```\n"), text(),
+               "Enter с отступом отменяется одним шагом");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -576,6 +624,7 @@ int main(int argc, char** argv) {
     checkSelectionSurvivesOperation();
     checkUndoFromKeyboard();
     checkSizeAfterSoftBreak();
+    checkCodeTyping();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;

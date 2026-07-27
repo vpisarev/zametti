@@ -121,6 +121,10 @@ QString selectionToMarkdown(const QTextCursor& cursor);
 // знака маркера не хранит (см. zametti-core-notes.md).
 bool applyInputRuleAtCursor(QTextDocument& doc, QTextCursor& cursor);
 
+// Закрывающая обратная кавычка превращает `так` во встроенный код. Кавычки при
+// этом уходят из текста: они были разметкой, а не содержимым.
+bool applyCodeSpanRuleAtCursor(QTextDocument& doc, QTextCursor& cursor);
+
 // Начертание на выделение: жирный, курсив, зачёркнутый. Переключает — если весь
 // выделенный текст уже такой, начертание снимается, иначе ставится.
 //
@@ -130,6 +134,7 @@ bool applyInputRuleAtCursor(QTextDocument& doc, QTextCursor& cursor);
 // Без выделения делать нечего и операция отказывается: набор с новым
 // начертанием — дело виджета, документ при этом не меняется.
 bool toggleBold(QTextDocument& doc, QTextCursor& cursor);
+bool toggleCode(QTextDocument& doc, QTextCursor& cursor);
 bool toggleItalic(QTextDocument& doc, QTextCursor& cursor);
 bool toggleStrike(QTextDocument& doc, QTextCursor& cursor);
 
