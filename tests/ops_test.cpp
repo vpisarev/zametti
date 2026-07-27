@@ -434,6 +434,58 @@ const RangeCase kConvertRanges[] = {
 
 };
 
+// Автозамена: набранное в начале блока, положение курсора после пробела.
+struct RuleCase {
+    const char* typed;     // что оказалось в блоке к моменту проверки
+    const char* before;    // документ до
+    const char* after;
+    const char* what;
+};
+
+void checkRule(const RuleCase& c) {
+    QTextDocument doc;
+    zametti::buildDocument(zametti::parse(c.before), doc);
+
+    // Набираем в начало первого блока — ровно так, как это делает человек.
+    QTextCursor typing(&doc);
+    typing.setPosition(doc.firstBlock().position());
+    typing.insertText(QString::fromUtf8(c.typed));
+
+    QTextCursor cursor(&doc);
+    cursor.setPosition(doc.firstBlock().position() + int(QString::fromUtf8(c.typed).size()));
+
+    const bool handled = zametti::applyInputRuleAtCursor(doc, cursor);
+    const std::string actual = handled ? zametti::serialize(zametti::readDocument(doc))
+                                       : std::string("<правило не сработало>");
+    checkEqual(c.after, actual, c.what);
+}
+
+const RuleCase kRuleCases[] = {
+    {"- ", "текст\n", "- текст\n", "дефис делает буллет"},
+    {"* ", "текст\n", "- текст\n", "звёздочка тоже, но в файл идёт дефис"},
+    {"+ ", "текст\n", "- текст\n", "и плюс"},
+
+    {"1. ", "текст\n", "1. текст\n", "номер с точкой"},
+    {"1) ", "текст\n", "1. текст\n", "номер со скобкой"},
+    {"42. ", "текст\n", "1. текст\n", "многозначный номер"},
+
+    {"# ", "текст\n", "# текст\n", "одна решётка — заголовок"},
+    {"### ", "текст\n", "### текст\n", "три решётки — третий уровень"},
+    {"###### ", "текст\n", "###### текст\n", "шесть — шестой"},
+    {"####### ", "текст\n", "<правило не сработало>", "семь решёток заголовком не делают"},
+
+    {"[ ] ", "- пункт\n", "- [ ] пункт\n", "скобки в буллете делают задачу"},
+    {"[x] ", "- пункт\n", "- [x] пункт\n", "и отмеченную"},
+    {"[ ] ", "текст\n", "<правило не сработало>", "в абзаце скобки ничего не делают"},
+    {"[ ] ", "1. пункт\n", "<правило не сработало>",
+     "в нумерованном пункте скобки — обычный текст"},
+
+    {"- ", "- пункт\n", "<правило не сработало>", "список списком уже не сделаешь"},
+    {"-", "текст\n", "<правило не сработало>", "без пробела правило молчит"},
+    {"обычный ", "текст\n", "<правило не сработало>", "обычные слова не задевают"},
+    {"- ", "```\nкод\n```\n", "<правило не сработало>", "в блоке кода правил нет"},
+};
+
 // Начертание на выделение: markdown до, границы выделения в блоке, markdown после.
 struct StyleCase {
     const char* before;
@@ -580,6 +632,7 @@ int main(int argc, char** argv) {
     for (const KeyCase& c : kParagraphCases) checkKey(zametti::makeParagraph, c);
     for (const RangeCase& c : kConvertRanges) checkRange(zametti::makeBullet, c);
     for (const RangeCase& c : kOrderedRanges) checkRange(zametti::makeOrdered, c);
+    for (const RuleCase& c : kRuleCases) checkRule(c);
     for (const StyleCase& c : kBoldCases) checkStyle(zametti::toggleBold, c);
     for (const StyleCase& c : kItalicCases) checkStyle(zametti::toggleItalic, c);
     for (const StyleCase& c : kStrikeCases) checkStyle(zametti::toggleStrike, c);

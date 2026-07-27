@@ -78,6 +78,17 @@ MoveResult moveListItem(const QTextDocument& doc, const QTextCursor& cursor, int
 bool indentListItems(QTextDocument& doc, QTextCursor& cursor);
 bool outdentListItems(QTextDocument& doc, QTextCursor& cursor);
 
+// Автозамена в начале блока, по пробелу: "- ", "* " и "+ " делают буллет,
+// "1. " и "1) " — нумерованный пункт, "# ".."###### " — заголовок, "[ ] " и
+// "[x] " в начале буллета — задачу.
+//
+// Отдельный шаг истории: первый Ctrl+Z обязан вернуть набранные знаки, а не
+// отменить предыдущую правку.
+//
+// Звёздочка и плюс — только способ ввода: в файл маркер уходит дефисом, канон
+// знака маркера не хранит (см. zametti-core-notes.md).
+bool applyInputRuleAtCursor(QTextDocument& doc, QTextCursor& cursor);
+
 // Начертание на выделение: жирный, курсив, зачёркнутый. Переключает — если весь
 // выделенный текст уже такой, начертание снимается, иначе ставится.
 //

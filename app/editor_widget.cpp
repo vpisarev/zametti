@@ -178,6 +178,11 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
         if (pressed(keys) && runOperation(op)) return;
 
     NoteView::keyPressEvent(event);
+
+    // Автозамена срабатывает по пробелу и уже после того, как он набран: правило
+    // смотрит на то, что человек написал. Отдельным шагом истории — первый
+    // Ctrl+Z обязан вернуть набранные знаки, а не отменить предыдущую правку.
+    if (event->text() == QStringLiteral(" ")) runOperation(applyInputRuleAtCursor);
 }
 
 bool NoteEditor::runOperation(bool (*op)(QTextDocument&, QTextCursor&)) {

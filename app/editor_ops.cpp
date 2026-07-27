@@ -346,6 +346,98 @@ bool setBlockKind(QTextDocument& doc, QTextCursor& cursor, Kind target) {
 
 }  // namespace
 
+namespace {
+
+// Что за автозамену просит набранное. Пусто — ничего не просит.
+struct InputRule {
+    Kind kind = Kind::Paragraph;
+    int headingLevel = 0;
+    int prefix = 0;        // сколько знаков убрать из начала блока
+    bool matched = false;
+};
+
+InputRule matchInputRule(const QTextBlock& block, const QString& typed) {
+    const bool list = isListBlock(block);
+    const Kind kind = kindOf(block);
+
+    // "[x] " в начале буллета — задача. Только в буллете: в нумерованном пункте
+    // это обычный текст, и превращать его в чекбокс нельзя.
+    if (kind == Kind::Bullet && typed.size() == 4 && typed.startsWith(QLatin1Char('[')) &&
+        typed.at(2) == QLatin1Char(']')) {
+        const QChar mark = typed.at(1);
+        if (mark == QLatin1Char(' '))
+            return {Kind::TaskUnchecked, 0, 4, true};
+        if (mark == QLatin1Char('x') || mark == QLatin1Char('X'))
+            return {Kind::TaskChecked, 0, 4, true};
+    }
+
+    if (list) return {};   // список списком уже не сделаешь
+
+    // Маркер буллета: любой из трёх, как и в файле. В файл уйдёт дефис — знак
+    // маркера канон не хранит.
+    if (typed.size() == 2 && (typed.at(0) == QLatin1Char('-') ||
+                              typed.at(0) == QLatin1Char('*') ||
+                              typed.at(0) == QLatin1Char('+')))
+        return {Kind::Bullet, 0, 2, true};
+
+    // Номер: цифры и точка или скобка.
+    int digits = 0;
+    while (digits < typed.size() && typed.at(digits).isDigit()) ++digits;
+    if (digits > 0 && digits + 2 == typed.size() &&
+        (typed.at(digits) == QLatin1Char('.') || typed.at(digits) == QLatin1Char(')')))
+        return {Kind::Ordered, 0, digits + 2, true};
+
+    // Заголовок: от одной решётки до шести.
+    int hashes = 0;
+    while (hashes < typed.size() && typed.at(hashes) == QLatin1Char('#')) ++hashes;
+    if (hashes >= 1 && hashes <= 6 && hashes + 1 == typed.size() &&
+        kind != Kind::Heading)
+        return {Kind::Heading, hashes, hashes + 1, true};
+
+    return {};
+}
+
+}  // namespace
+
+bool applyInputRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+    const QTextBlock block = cursor.block();
+    if (isRawBlock(block) || kindOf(block) == Kind::Code) return false;
+
+    // Правило срабатывает только на пробел сразу за началом блока: набранное
+    // должно быть целиком тем, что мы опознаём.
+    const int typedLength = cursor.position() - block.position();
+    if (typedLength <= 0 || typedLength > 8) return false;
+    const QString typed = block.text().left(typedLength);
+    if (!typed.endsWith(QLatin1Char(' '))) return false;
+
+    const InputRule rule = matchInputRule(block, typed);
+    if (!rule.matched) return false;
+
+    QTextBlockFormat format = block.blockFormat();
+    if (rule.kind == Kind::Heading) {
+        format.clearProperty(LevelProperty);
+        format.setProperty(KindProperty, int(Kind::Heading));
+        format.setHeadingLevel(rule.headingLevel);
+    } else {
+        format.setProperty(KindProperty, int(rule.kind));
+        format.setProperty(LevelProperty, isListBlock(block) ? levelOf(block) : 0);
+        format.setHeadingLevel(0);
+    }
+
+    QTextCursor edit(&doc);
+    edit.beginEditBlock();
+    edit.setPosition(block.position());
+    edit.setBlockFormat(format);
+    edit.setPosition(block.position());
+    edit.setPosition(block.position() + rule.prefix, QTextCursor::KeepAnchor);
+    edit.removeSelectedText();
+    normalise(doc, around(block.blockNumber()));
+    edit.endEditBlock();
+
+    cursor.setPosition(edit.position());
+    return true;
+}
+
 bool toggleBold(QTextDocument& doc, QTextCursor& cursor) {
     return toggleInlineStyle(doc, cursor, SpanBold);
 }

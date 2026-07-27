@@ -386,6 +386,42 @@ void checkInlineStyle() {
                "набор после Ctrl+B идёт жирным");
 }
 
+// Автозамена при наборе и её отдельный шаг отмены.
+void checkInputRules() {
+    const QString path = writeNote("автозамена.md", QStringLiteral("текст\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(path);
+
+    auto text = [&editor] {
+        return QString::fromStdString(
+            zametti::serialize(zametti::readDocument(*editor.document())));
+    };
+
+    QTextCursor cursor = editor.textCursor();
+    cursor.setPosition(editor.document()->firstBlock().position());
+    editor.setTextCursor(cursor);
+
+    // Звёздочка — то, что просили: способ ввода, в файл уходит дефис.
+    QTest::keyClick(&editor, Qt::Key_Asterisk);
+    QTest::keyClick(&editor, Qt::Key_Space);
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("- текст\n"), text(), "звёздочка с пробелом дала буллет");
+
+    // Первый Ctrl+Z возвращает набранное, а не отменяет всё сразу.
+    editor.undo();
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("\\* текст\n"), text(),
+               "первый undo возвращает набранные знаки");
+
+    editor.undo();
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("текст\n"), text(), "второй undo снимает набор");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -414,6 +450,7 @@ int main(int argc, char** argv) {
     checkListKeys();
     checkMoveKeys();
     checkInlineStyle();
+    checkInputRules();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;
