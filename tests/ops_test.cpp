@@ -15,6 +15,7 @@
 
 #include <QGuiApplication>
 #include <QTextBlock>
+#include <QTextCursor>
 #include <QTextDocument>
 
 #include <string>
@@ -197,6 +198,49 @@ const char* const kOrdinalCases[] = {
     "1. раз\n   - вложенный буллет\n2. два\n",
 };
 
+// Блоки-продолжения: признак относительный, он говорит про связь с предыдущим
+// блоком. Операция способна эту связь порвать, и тогда документ обязан
+// выправляться, а не молча превращаться в другой markdown.
+void checkLiteralInvariant() {
+    QTextDocument doc;
+    zametti::buildDocument(zametti::parse("абзац\n\n```py\nодна\nдве\nтри\n```\n"), doc);
+
+    QString problem;
+    check(zametti::literalInvariantHolds(doc, &problem),
+          "свежесобранный документ обязан быть в порядке: " + problem.toStdString());
+
+    // Ломаем связь: убираем первую строку блока кода. Продолжение остаётся без
+    // родителя того же рода.
+    QTextCursor cursor(&doc);
+    cursor.setPosition(doc.findBlockByNumber(1).position());
+    cursor.movePosition(QTextCursor::NextBlock, QTextCursor::KeepAnchor);
+    cursor.removeSelectedText();
+
+    check(!zametti::literalInvariantHolds(doc),
+          "разорванная связь обязана ловиться инвариантом");
+
+    zametti::syncLiteralBlocks(doc, {0, doc.blockCount() - 1});
+    check(zametti::literalInvariantHolds(doc, &problem),
+          "после нормализации инвариант обязан держаться: " + problem.toStdString());
+
+    // Признак снят, но содержимое не пострадало: строки просто стали двумя
+    // блоками кода, а не одним. Ни байта не потеряно.
+    const Document after = zametti::readDocument(doc);
+    checkEqual("абзац\n\n```py\nдве\nтри\n```\n", zametti::serialize(after),
+               "содержимое цело, язык блока не потерян");
+
+    // Продолжение первым блоком документа быть не может.
+    QTextDocument lone;
+    zametti::buildDocument(zametti::parse("```\nодна\nдве\n```\n"), lone);
+    QTextCursor head(&lone);
+    head.setPosition(0);
+    head.movePosition(QTextCursor::NextBlock, QTextCursor::KeepAnchor);
+    head.removeSelectedText();
+    check(!zametti::literalInvariantHolds(lone), "продолжение в начале документа — нарушение");
+    zametti::syncLiteralBlocks(lone, {0, lone.blockCount() - 1});
+    check(zametti::literalInvariantHolds(lone), "нормализация чинит и этот случай");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -204,6 +248,7 @@ int main(int argc, char** argv) {
 
     checkLevelNormalisation();
     checkGeometry();
+    checkLiteralInvariant();
     for (const char* source : kOrdinalCases)
         checkOrdinalAgreement(source, std::string("номера: ") + source);
 

@@ -372,9 +372,10 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
             }
             if (line + 1 == count && trailingNewline)
                 lineFmt.setProperty(TrailingNewlineProperty, true);
-            // Язык — свойство всего блока, а не строки: читатель берёт его с
-            // первой, и хранить его на каждой значило бы плодить форматы.
-            if (line > 0) lineFmt.clearProperty(InfoProperty);
+            // Язык стоит на каждой строке, хотя читатель берёт его с первой:
+            // иначе удаление первой строки роняло бы язык всего блока. Лишних
+            // форматов это не плодит — значение у всех строк одно, а
+            // QTextFormatCollection их объединяет.
 
             // У литерального блока каждая строка своя; у обычного текст и его
             // разметка переносов посчитаны один раз выше, и трогать их нельзя.

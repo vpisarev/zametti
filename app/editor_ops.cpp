@@ -147,6 +147,50 @@ void syncLists(QTextDocument& doc, BlockRange range) {
     cursor.endEditBlock();
 }
 
+// Может ли этот блок быть продолжением предыдущего.
+static bool mayContinue(const QTextBlock& block, const QTextBlock& prev) {
+    if (!prev.isValid()) return false;
+    if (isRawBlock(block) != isRawBlock(prev)) return false;
+    if (isRawBlock(block)) return true;
+    // Строки одного блока кода. Заголовок и абзац продолжений не имеют вовсе:
+    // они лежат в документе одним блоком.
+    return kindOf(block) == Kind::Code && kindOf(prev) == Kind::Code;
+}
+
+void syncLiteralBlocks(QTextDocument& doc, BlockRange range) {
+    const int count = doc.blockCount();
+    const int first = qBound(0, range.first, count - 1);
+    const int last = qBound(first, range.last, count - 1);
+
+    QTextCursor cursor(&doc);
+    cursor.beginEditBlock();
+    QTextBlock block = doc.findBlockByNumber(first);
+    for (int i = first; i <= last && block.isValid(); ++i, block = block.next()) {
+        if (!isContinuationBlock(block)) continue;
+        if (mayContinue(block, block.previous())) continue;
+        QTextBlockFormat format = block.blockFormat();
+        format.clearProperty(ContinuationProperty);
+        setBlockFormat(cursor, block, format);
+    }
+    cursor.endEditBlock();
+}
+
+bool literalInvariantHolds(const QTextDocument& doc, QString* problem) {
+    int number = 0;
+    for (QTextBlock block = doc.begin(); block.isValid(); block = block.next(), ++number) {
+        if (!isContinuationBlock(block)) continue;
+        if (mayContinue(block, block.previous())) continue;
+        if (problem != nullptr) {
+            *problem = number == 0
+                           ? QStringLiteral("блок 0 помечен продолжением, а продолжать нечего")
+                           : QStringLiteral("блок %1: продолжение при несовместимом предыдущем")
+                                 .arg(number);
+        }
+        return false;
+    }
+    return true;
+}
+
 bool listInvariantHolds(const QTextDocument& doc, QString* problem) {
     int prevLevel = -1;
     int number = 0;
