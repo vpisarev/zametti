@@ -62,10 +62,25 @@ QString toQt(const std::string& utf8, std::vector<Break>& breaks) {
     return s;
 }
 
-QString withoutTrailingNewline(const std::string& text, std::vector<Break>& breaks) {
-    std::string copy = text;
-    if (!copy.empty() && copy.back() == '\n') copy.pop_back();
-    return toQt(copy, breaks);
+// Литеральный текст по строкам. Один завершающий перевод строки снимается —
+// он не начинает новую строку, а завершает последнюю. Пустой текст даёт одну
+// пустую строку: блок в документе есть всегда, пустых блоков не бывает.
+std::vector<std::string> splitLiteralLines(const std::string& text) {
+    std::string body = text;
+    if (!body.empty() && body.back() == '\n') body.pop_back();
+
+    std::vector<std::string> lines;
+    size_t start = 0;
+    for (;;) {
+        const size_t end = body.find('\n', start);
+        if (end == std::string::npos) {
+            lines.push_back(body.substr(start));
+            break;
+        }
+        lines.push_back(body.substr(start, end - start));
+        start = end + 1;
+    }
+    return lines;
 }
 
 // Помечает подменённые разделители. Пометка ложится на один знак, поэтому он
@@ -277,19 +292,19 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
         QTextCharFormat charFmt;
         charFmt.setFontPointSize(basePoint);
 
-        // Один завершающий перевод строки сборщик снимает: иначе у блока кода
-        // внизу висела бы лишняя пустая строка. Восстановить его по виду
-        // документа нельзя — пустой блок кода и блок из одной пустой строки
-        // выглядят одинаково, — поэтому он запоминается признаком.
+        // Литеральное содержимое режется построчно, по QTextBlock на строку:
+        // Qt переразмечает целиком тот блок, в который пишут, и длинный блок
+        // кода делал набор внутри себя ощутимо медленным.
+        const bool literal = raw || b.kind == Kind::Code;
         const std::string& source = raw ? b.rawSource : b.text;
-        if (raw || b.kind == Kind::Code)
-            blockFmt.setProperty(TrailingNewlineProperty,
-                                 !source.empty() && source.back() == '\n');
+        // Один завершающий перевод строки снимаем: иначе внизу висела бы лишняя
+        // пустая строка. По виду документа его не восстановить — пустой блок
+        // кода и блок из одной пустой строки выглядят одинаково.
+        const bool trailingNewline = literal && !source.empty() && source.back() == '\n';
 
         QString text;
         std::vector<Break> breaks;
         if (raw) {
-            text = withoutTrailingNewline(b.rawSource, breaks);
             charFmt.setForeground(appearance().rawColor);
         } else {
             switch (b.kind) {
@@ -304,9 +319,7 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
                 case Kind::Code:
                     // Отступ маленький: подложка идёт почти во всю колонку, как
                     // в остальных программах для заметок.
-                    text = withoutTrailingNewline(b.text, breaks);
                     blockFmt.setLeftMargin(appearance().codeIndent * charUnit);
-                    blockFmt.setBackground(appearance().codeBackground);
                     blockFmt.setProperty(InfoProperty,
                                          QString::fromUtf8(b.info.data(),
                                                            qsizetype(b.info.size())));
@@ -344,19 +357,47 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
         blockFmt.setLineHeight(QFontMetricsF(lineFont).height() * lineFactor,
                                QTextBlockFormat::FixedHeight);
 
-        if (first) {
-            cursor.setBlockFormat(blockFmt);
-            cursor.setBlockCharFormat(charFmt);
-            first = false;
-        } else {
-            cursor.insertBlock(blockFmt, charFmt);
-        }
+        // Один QTextBlock у обычного блока и по одному на строку у литерального.
+        // Все, кроме первого, помечены продолжением: без этого разрезанный блок
+        // кода из двух строк не отличить от двух блоков кода подряд.
+        const std::vector<std::string> lines =
+            literal ? splitLiteralLines(source) : std::vector<std::string>{};
+        const size_t count = literal ? lines.size() : 1;
 
-        const int textStart = cursor.position();
-        cursor.insertText(text, charFmt);
-        markBreaks(target, textStart, breaks);
-        if (!raw && !b.inlines.empty()) applySpans(target, textStart, b, linePoint, zoom);
-        enlargeFallbackGlyphs(target, textStart, text, linePoint, primaryFont);
+        for (size_t line = 0; line < count; ++line) {
+            QTextBlockFormat lineFmt = blockFmt;
+            if (line > 0) {
+                lineFmt.setProperty(ContinuationProperty, true);
+                lineFmt.setTopMargin(0);
+            }
+            if (line + 1 == count && trailingNewline)
+                lineFmt.setProperty(TrailingNewlineProperty, true);
+            // Язык — свойство всего блока, а не строки: читатель берёт его с
+            // первой, и хранить его на каждой значило бы плодить форматы.
+            if (line > 0) lineFmt.clearProperty(InfoProperty);
+
+            // У литерального блока каждая строка своя; у обычного текст и его
+            // разметка переносов посчитаны один раз выше, и трогать их нельзя.
+            if (literal) {
+                breaks.clear();
+                text = toQt(lines[line], breaks);
+            }
+
+            if (first) {
+                cursor.setBlockFormat(lineFmt);
+                cursor.setBlockCharFormat(charFmt);
+                first = false;
+            } else {
+                cursor.insertBlock(lineFmt, charFmt);
+            }
+
+            const int textStart = cursor.position();
+            cursor.insertText(text, charFmt);
+            markBreaks(target, textStart, breaks);
+            if (!literal && !b.inlines.empty())
+                applySpans(target, textStart, b, linePoint, zoom);
+            enlargeFallbackGlyphs(target, textStart, text, linePoint, primaryFont);
+        }
         prevList = list;
     }
 

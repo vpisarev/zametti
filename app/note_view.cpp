@@ -1,5 +1,6 @@
 #include "note_view.h"
 
+#include "doc_model.h"
 #include "marker.h"
 #include "settings.h"
 
@@ -14,6 +15,7 @@
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextFrame>
+#include <QTextLayout>
 #include <QTextFrameFormat>
 
 #include <cmath>
@@ -75,7 +77,42 @@ void NoteView::resizeEvent(QResizeEvent* event) {
     applyContentWidth();
 }
 
+void NoteView::paintCodeBackground(QPainter& painter, const QRectF& visible) {
+    const QAbstractTextDocumentLayout* layout = document()->documentLayout();
+    const int firstVisible = layout->hitTest(QPointF(0, visible.top()), Qt::FuzzyHit);
+
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(appearance().codeBackground);
+    for (QTextBlock block = document()->findBlock(firstVisible); block.isValid();
+         block = block.next()) {
+        const QRectF rect = layout->blockBoundingRect(block);
+        if (rect.top() > visible.bottom()) break;
+        if (rect.bottom() < visible.top()) continue;
+        if (isRawBlock(block) || kindOf(block) != Kind::Code) continue;
+
+        // Высоту считаем по числу строк и назначенной высоте строки, а не по
+        // прямоугольнику блока: прямоугольник отдаёт естественную высоту, а
+        // шаг идёт по назначенной, и разница между ними — та самая полоса.
+        // Строк в блоке может быть больше одной: длинная строка кода переносится.
+        const qreal assigned = block.blockFormat().lineHeight();
+        const int lines = block.layout() != nullptr ? block.layout()->lineCount() : 1;
+        const qreal height =
+            assigned > 0 ? qMax(rect.height(), lines * assigned) : rect.height();
+        painter.drawRect(QRectF(rect.left(), rect.top(), rect.width(), height));
+    }
+}
+
 void NoteView::paintEvent(QPaintEvent* event) {
+    {
+        // Рисуем до текста: сам виджет виден только там, где Qt уже стёр фон, а
+        // текст ляжет поверх нашей заливки.
+        QPainter painter(viewport());
+        painter.translate(-horizontalScrollBar()->value(), -verticalScrollBar()->value());
+        paintCodeBackground(painter,
+                            QRectF(horizontalScrollBar()->value() + event->rect().x(),
+                                   verticalScrollBar()->value() + event->rect().y(),
+                                   event->rect().width(), event->rect().height()));
+    }
     QTextBrowser::paintEvent(event);
 
     const QFont base = baseFontFor(zoom_);
@@ -86,8 +123,13 @@ void NoteView::paintEvent(QPaintEvent* event) {
                          verticalScrollBar()->value() + event->rect().y(),
                          event->rect().width(), event->rect().height());
 
+    // К первому видимому блоку идём поиском по раскладке, а не обходом от
+    // начала документа: обход стоит тем дороже, чем ниже прокрутка, и на
+    // заметке в тысячу блоков это уже заметно.
     const QAbstractTextDocumentLayout* layout = document()->documentLayout();
-    for (QTextBlock block = document()->begin(); block.isValid(); block = block.next()) {
+    const int firstVisible = layout->hitTest(QPointF(0, visible.top()), Qt::FuzzyHit);
+    for (QTextBlock block = document()->findBlock(firstVisible); block.isValid();
+         block = block.next()) {
         const QRectF rect = layout->blockBoundingRect(block);
         if (rect.top() > visible.bottom()) break;
         if (rect.bottom() < visible.top()) continue;

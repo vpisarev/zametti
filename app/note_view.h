@@ -44,6 +44,12 @@ protected:
     // этот признак, чтобы не записать перекладку окна в историю.
     bool changingLayout() const { return changingLayout_; }
 
+    // Подложка блоков кода. Рисуется здесь, а не свойством формата блока:
+    // blockBoundingRect отдаёт естественную высоту строки, а шаг между блоками
+    // идёт по назначенной, и заливка по прямоугольнику блока оставляла бы между
+    // строками кода незакрашенные полосы (замер: 1.9 px на строку).
+    void paintCodeBackground(QPainter& painter, const QRectF& visible);
+
 private:
     qreal zoom_ = 1.0;
     bool changingLayout_ = false;

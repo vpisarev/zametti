@@ -95,34 +95,53 @@ bool isPhantomBlock(const QTextDocument& doc, const QTextBlock& block) {
 
 Document readDocument(const QTextDocument& doc) {
     Document out;
+
+    // Литеральные блоки лежат в документе построчно, по QTextBlock на строку, и
+    // склеиваются здесь. Признак продолжения обязателен: без него разрезанный
+    // блок кода из двух строк не отличить от двух блоков кода подряд, а это
+    // разный markdown.
+    Block pending;
+    bool hasPending = false;
+    bool pendingRaw = false;
+
+    auto flush = [&] {
+        if (!hasPending) return;
+        if (pendingRaw) {
+            pending.rawSource = std::move(pending.text);
+            pending.text.clear();
+        }
+        out.push_back(std::move(pending));
+        pending = Block{};
+        hasPending = false;
+    };
+
     for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {
         if (isPhantomBlock(doc, block)) continue;
 
         const QTextBlockFormat format = block.blockFormat();
         const bool raw = isRawBlock(block);
 
-        Block b;
-        if (!raw) {
-            b.kind = kindOf(block);
-            if (b.kind == Kind::Heading) b.headingLevel = format.headingLevel();
-            if (isList(b.kind)) b.level = levelOf(block);
-            if (b.kind == Kind::Code)
-                b.info = toUtf8(format.stringProperty(InfoProperty));
+        if (isContinuationBlock(block) && hasPending) {
+            pending.text.push_back('\n');
+            readBlock(block, pending, false);
+        } else {
+            flush();
+            hasPending = true;
+            pendingRaw = raw;
+            if (!raw) {
+                pending.kind = kindOf(block);
+                if (pending.kind == Kind::Heading) pending.headingLevel = format.headingLevel();
+                if (isList(pending.kind)) pending.level = levelOf(block);
+                if (pending.kind == Kind::Code)
+                    pending.info = toUtf8(format.stringProperty(InfoProperty));
+            }
+            readBlock(block, pending, !raw);
         }
 
-        readBlock(block, b, !raw);
-
-        // Один завершающий перевод строки сборщик снимает — вернуть его по виду
-        // документа нельзя, поэтому он записан признаком.
-        if ((raw || b.kind == Kind::Code) && format.boolProperty(TrailingNewlineProperty))
-            b.text.push_back('\n');
-
-        if (raw) {
-            b.rawSource = std::move(b.text);
-            b.text.clear();
-        }
-        out.push_back(std::move(b));
+        // Признак стоит на последней строке блока — там, где перевод и был.
+        if (format.boolProperty(TrailingNewlineProperty)) pending.text.push_back('\n');
     }
+    flush();
     return out;
 }
 
