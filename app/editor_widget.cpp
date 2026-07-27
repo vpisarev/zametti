@@ -50,9 +50,11 @@ NoteEditor::NoteEditor(QWidget* parent)
     // строки впустую.
     moveUpKey_ = QKeySequence(appearance().moveUpKey, QKeySequence::PortableText);
     moveDownKey_ = QKeySequence(appearance().moveDownKey, QKeySequence::PortableText);
+    // Сочетаний на команду может быть несколько: через точку с запятой.
     const auto bind = [this](const QString& keys, bool (*op)(QTextDocument&, QTextCursor&)) {
-        const QKeySequence sequence(keys, QKeySequence::PortableText);
-        if (!sequence.isEmpty()) bindings_.push_back({sequence, op});
+        for (const QKeySequence& sequence :
+             QKeySequence::listFromString(keys, QKeySequence::PortableText))
+            if (!sequence.isEmpty()) bindings_.push_back({sequence, op});
     };
     const auto bindInline = [this](QKeySequence::StandardKey standard, int bits,
                                    bool (*op)(QTextDocument&, QTextCursor&)) {
@@ -304,8 +306,9 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
     const auto add = [this, menu](const QString& title, const QString& keys,
                                   bool (*op)(QTextDocument&, QTextCursor&)) {
         QAction* action = menu->addAction(title, this, [this, op] { runOperation(op); });
-        if (!keys.isEmpty())
-            action->setShortcut(QKeySequence(keys, QKeySequence::PortableText));
+        const QList<QKeySequence> all =
+            QKeySequence::listFromString(keys, QKeySequence::PortableText);
+        if (!all.isEmpty()) action->setShortcut(all.first());
     };
 
     menu->addSeparator();
@@ -316,8 +319,9 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
     const auto addKind = [this, kinds](const QString& title, const QString& keys,
                                        bool (*op)(QTextDocument&, QTextCursor&)) {
         QAction* action = kinds->addAction(title, this, [this, op] { runOperation(op); });
-        if (!keys.isEmpty())
-            action->setShortcut(QKeySequence(keys, QKeySequence::PortableText));
+        const QList<QKeySequence> all =
+            QKeySequence::listFromString(keys, QKeySequence::PortableText);
+        if (!all.isEmpty()) action->setShortcut(all.first());
     };
     addKind(QStringLiteral("Маркированным списком"), appearance().makeBulletKey, makeBullet);
     addKind(QStringLiteral("Нумерованным списком"), appearance().makeOrderedKey, makeOrdered);

@@ -190,15 +190,19 @@ struct Appearance {
     // копия IR заметки в 141 КБ занимает 250 КБ и делается за 50 мкс.
     int undoLimit = 200;
     // Хоткеи операций. Строкой, как их пишет QKeySequence: сочетание — дело
-    // вкуса и раскладки, а не кода.
+    // вкуса и раскладки, а не кода. Через точку с запятой их можно перечислить
+    // несколько — например, звёздочка на большинстве раскладок и есть Shift+8,
+    // и обе записи должны работать. Пустая строка убирает сочетание совсем,
+    // команда при этом остаётся в контекстном меню.
     QString toggleTaskKey = QStringLiteral("Ctrl+Space");
     QString moveUpKey = QStringLiteral("Ctrl+Up");
     QString moveDownKey = QStringLiteral("Ctrl+Down");
-    // Смена рода блоков. Цифры взяты как в текстовых редакторах, где 8 — маркер
-    // списка, а 7 — нумерация.
-    QString makeBulletKey = QStringLiteral("Ctrl+Shift+8");
-    QString makeOrderedKey = QStringLiteral("Ctrl+Shift+7");
-    QString makeTaskKey = QStringLiteral("Ctrl+Shift+9");
+    // Смена рода блоков — по знаку, который на клавише: звёздочка живёт на
+    // восьмёрке, решётка на тройке. T — task. Абзац остался с Shift: Ctrl+0
+    // занят сбросом масштаба, и отбирать его у привычки не стоит.
+    QString makeBulletKey = QStringLiteral("Ctrl+8; Ctrl+*");
+    QString makeOrderedKey = QStringLiteral("Ctrl+3; Ctrl+#");
+    QString makeTaskKey = QStringLiteral("Ctrl+T");
     QString makeParagraphKey = QStringLiteral("Ctrl+Shift+0");
 
     // --- масштаб ---

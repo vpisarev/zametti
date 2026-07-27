@@ -92,6 +92,16 @@ const char* kUsage =
 void printUsage() { std::fputs(kUsage, stderr); }
 
 // Справка идёт в stdout и с нулевым кодом: её просят намеренно, это не ошибка.
+// Сочетаний на команду может быть несколько; в конфиге они через точку с
+// запятой, а человеку читать удобнее через запятую.
+QByteArray keysFor(const QString& keys) {
+    return QString(keys).replace(QStringLiteral("; "), QStringLiteral(", ")).toUtf8();
+}
+
+QByteArray padFor(const QString& keys) {
+    return QByteArray(qMax(0, 16 - int(keysFor(keys).size())), ' ');
+}
+
 void printHelp() {
     std::fputs(kUsage, stdout);
     std::printf(
@@ -133,20 +143,20 @@ void printHelp() {
         "  %s\n"
         "      последняя заметка, прокрутка, зум, геометрия окна, раскрытые ветки;\n"
         "      переписывается при выходе\n",
-        zametti::appearance().toggleTaskKey.toUtf8().constData(),
-        QByteArray(qMax(0, 16 - zametti::appearance().toggleTaskKey.size()), ' ').constData(),
-        zametti::appearance().moveUpKey.toUtf8().constData(),
-        QByteArray(qMax(0, 16 - zametti::appearance().moveUpKey.size()), ' ').constData(),
-        zametti::appearance().moveDownKey.toUtf8().constData(),
-        QByteArray(qMax(0, 16 - zametti::appearance().moveDownKey.size()), ' ').constData(),
-        zametti::appearance().makeBulletKey.toUtf8().constData(),
-        QByteArray(qMax(0, 16 - zametti::appearance().makeBulletKey.size()), ' ').constData(),
-        zametti::appearance().makeOrderedKey.toUtf8().constData(),
-        QByteArray(qMax(0, 16 - zametti::appearance().makeOrderedKey.size()), ' ').constData(),
-        zametti::appearance().makeTaskKey.toUtf8().constData(),
-        QByteArray(qMax(0, 16 - zametti::appearance().makeTaskKey.size()), ' ').constData(),
-        zametti::appearance().makeParagraphKey.toUtf8().constData(),
-        QByteArray(qMax(0, 16 - zametti::appearance().makeParagraphKey.size()), ' ').constData(),
+        keysFor(zametti::appearance().toggleTaskKey).constData(),
+        padFor(zametti::appearance().toggleTaskKey).constData(),
+        keysFor(zametti::appearance().moveUpKey).constData(),
+        padFor(zametti::appearance().moveUpKey).constData(),
+        keysFor(zametti::appearance().moveDownKey).constData(),
+        padFor(zametti::appearance().moveDownKey).constData(),
+        keysFor(zametti::appearance().makeBulletKey).constData(),
+        padFor(zametti::appearance().makeBulletKey).constData(),
+        keysFor(zametti::appearance().makeOrderedKey).constData(),
+        padFor(zametti::appearance().makeOrderedKey).constData(),
+        keysFor(zametti::appearance().makeTaskKey).constData(),
+        padFor(zametti::appearance().makeTaskKey).constData(),
+        keysFor(zametti::appearance().makeParagraphKey).constData(),
+        padFor(zametti::appearance().makeParagraphKey).constData(),
         zametti::configPath().toUtf8().constData(),
         zametti::statePath().toUtf8().constData());
 }
