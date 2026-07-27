@@ -691,17 +691,16 @@ bool splitBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
         return true;
     }
 
-    // Из блока кода выходят двумя способами: пустой строкой и Enter — как из
-    // списка, — либо забором в последней строке, как это пишут в файле. Забор
-    // посреди блока при этом остаётся содержимым: показывать в коде разметку
-    // никто не запрещал.
+    // Из блока кода выходят забором в последней строке — как это и пишут в
+    // файле. Пустой строкой выйти нельзя, и это намеренно: в длинном коде
+    // пустые строки разделяют логические части, и выкидывать человека из блока
+    // на каждой из них было бы мучением. Забор посреди блока при этом остаётся
+    // содержимым: показывать в коде разметку никто не запрещал.
     QString closing;
     const bool closedByFence = !isRawBlock(block) && kindOf(block) == Kind::Code &&
                                lastLineOfLiteral(block) && isContinuationBlock(block) &&
                                fenceLanguage(block.text(), closing) && closing.isEmpty();
-    if (!isRawBlock(block) && kindOf(block) == Kind::Code &&
-        (block.text().isEmpty() || closedByFence) && lastLineOfLiteral(block) &&
-        isContinuationBlock(block)) {
+    if (closedByFence) {
         QTextBlockFormat plain;
         plain.setLineHeight(block.blockFormat().lineHeight(),
                             block.blockFormat().lineHeightType());
@@ -711,12 +710,9 @@ bool splitBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
         cursor.setBlockFormat(plain);
         // Забор в текст не переносим: он был командой закрыть блок, а не
         // содержимым.
-        if (closedByFence) {
-            cursor.setPosition(block.position());
-            cursor.setPosition(block.position() + block.length() - 1,
-                               QTextCursor::KeepAnchor);
-            cursor.removeSelectedText();
-        }
+        cursor.setPosition(block.position());
+        cursor.setPosition(block.position() + block.length() - 1, QTextCursor::KeepAnchor);
+        cursor.removeSelectedText();
         normalise(doc, around(block.blockNumber()));
         cursor.endEditBlock();
         return true;
