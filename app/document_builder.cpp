@@ -223,6 +223,37 @@ void applySpans(QTextDocument& doc, int textStart, const Block& b, qreal linePoi
 
 }  // namespace
 
+qreal blockTopMargin(Kind kind, bool raw, bool previousIsVSpace, bool first) {
+    // У первого блока отбивке сверху взяться неоткуда: над ним поле страницы.
+    if (first) return 0.0;
+
+    // Прогон пустых строк обрамляется своими полями: сверху перед первой, снизу
+    // после последней. Внутри прогона — ничего, иначе высота разделителя из n
+    // строк перестала бы быть n высотами строки.
+    if (!raw && kind == Kind::VSpace)
+        return previousIsVSpace ? 0.0 : appearance().separatorSpacingBefore;
+    if (previousIsVSpace) return appearance().separatorSpacingAfter;
+
+    // Заголовку воздух положен и там, где пустой строки над ним нет: он
+    // отделяет куски текста, а не продолжает предыдущий. Там, где пустая строка
+    // есть, воздух уже отмерен ею — складывать одно с другим незачем.
+    if (!raw && kind == Kind::Heading)
+        return appearance().blockSpacing * appearance().headingSpacingFactor;
+    return 0.0;
+}
+
+QTextBlockFormat vspaceBlockFormat(const QTextDocument& doc, bool previousIsVSpace, bool first) {
+    const QFontMetricsF metrics(doc.defaultFont());
+    QTextBlockFormat format;
+    format.setProperty(KindProperty, int(Kind::VSpace));
+    format.setTopMargin(blockTopMargin(Kind::VSpace, false, previousIsVSpace, first) *
+                        metrics.height());
+    format.setBottomMargin(0);
+    format.setLineHeight(std::round(metrics.height() * appearance().lineHeightFactor),
+                         QTextBlockFormat::FixedHeight);
+    return format;
+}
+
 void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
     target.setUndoRedoEnabled(false);
     target.clear();
@@ -259,8 +290,7 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
     // Свежий QTextDocument уже содержит один пустой блок: для первого блока
     // формат ставится на него, иначе сверху появится пустой абзац.
     bool first = true;
-    bool prevSeparator = false;
-    ListRuns runs;
+    bool prevVSpace = false;
 
     for (const Block& b : doc) {
         const bool raw = !b.rawSource.empty();
@@ -283,30 +313,12 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
         // родом предыдущего блока нельзя: после вложенного подсписка предыдущий
         // блок лежит на другом уровне, и о списке текущего уровня не говорит
         // ничего. Спрашиваем состояние прогонов.
-        // Разделитель — кусок из пустых строк, поставленный руками. Поля у него
-        // свои: высота обязана быть предсказуемой — поле сверху, n высот строки,
-        // поле снизу, — и от того, что стоит по соседству, не зависеть.
-        const bool separator = isSeparatorBlock(b);
-
-        // Плотный стык — тот, где в файле пустой строки не было. Показываем его
-        // вплотную, а стык через пустую строку — как пустую строку: иначе
-        // авторская отбивка в редакторе не видна вовсе.
-        // Только у списка: плотный абзац markdown не выражает — прочтёт
-        // продолжением предыдущего блока.
-        const bool tight = b.tight && list;
-        if (tight) blockFmt.setProperty(TightProperty, true);
-
-        // Отбивку решает стык, а не род блоков. Плотный — тот, где в файле не
-        // было пустой строки; всё прочее её имело, и показать её надо.
-        //
-        // Отдельных значений для границ списка больше нет: они перебивали
-        // плотность, и пустая строка перед списком в редакторе не была видна
-        // вовсе. Список прижимается к вводной фразе тогда и только тогда, когда
-        // так написано в файле.
-        qreal topMargin = appearance().blockSpacing;
-        if (tight) topMargin = 0;
-        else if (separator) topMargin = appearance().separatorSpacingBefore;
-        else if (prevSeparator) topMargin = appearance().separatorSpacingAfter;
+        // Пустая строка — сама блок, поэтому автоматических отбивок между
+        // блоками нет вовсе: сколько пустых строк в файле, столько и на экране.
+        // Полями обрамляется только прогон пустых строк — сверху перед первой,
+        // снизу после последней.
+        const bool vspace = !raw && b.kind == Kind::VSpace;
+        const qreal topMargin = blockTopMargin(b.kind, raw, prevVSpace, first);
 
         // Высота строки задаётся явно, а не долей от самого высокого знака в
         // ней: иначе знак из запасного шрифта растягивал бы свою строку, и
@@ -334,7 +346,6 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
             switch (b.kind) {
                 case Kind::Heading:
                     blockFmt.setHeadingLevel(b.headingLevel);
-                    topMargin = appearance().blockSpacing * appearance().headingSpacingFactor;
                     charFmt.setFontWeight(QFont::Bold);
                     linePoint = basePoint * appearance().headingScale[b.headingLevel - 1];
                     charFmt.setFontPointSize(linePoint);
@@ -368,12 +379,6 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
 
         blockFmt.setTopMargin(first ? 0 : topMargin * lineUnit);
         blockFmt.setBottomMargin(0);
-
-        // Прогоны ведём только ради отбивки: левое поле проставит
-        // applyListGeometry одним проходом в конце — правило отступа записано
-        // там, и второй его копии здесь быть не должно.
-        if (list) runs.next(b.level, isOrdered(b.kind));
-        else runs.reset();
 
         QFont lineFont = base;
         lineFont.setPointSizeF(linePoint);
@@ -428,7 +433,7 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
                 applySpans(target, textStart, b, linePoint, zoom);
             enlargeFallbackGlyphs(target, textStart, text, linePoint, primaryFont);
         }
-        prevSeparator = separator;
+        prevVSpace = vspace;
     }
 
     // Пустой документ: блоков не было, и единственный блок остался без формата

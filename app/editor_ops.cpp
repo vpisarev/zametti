@@ -1,6 +1,7 @@
 #include "editor_ops.h"
 
 #include "doc_model.h"
+#include "document_builder.h"
 #include "document_reader.h"
 #include "serializer.h"
 #include "marker.h"
@@ -24,15 +25,20 @@ namespace {
 // начала прогона. И то и другое известно только с начала списка, поэтому любой
 // диапазон растягивается до целых прогонов. Заодно захватывается сосед за
 // границей: смена рода блока меняет уровни того, что за ним.
+//
+// Пустая строка прогон не рвёт — просторный список остаётся одним списком, —
+// поэтому она проходится насквозь.
 BlockRange expandToRuns(const QTextDocument& doc, BlockRange range) {
     const int count = doc.blockCount();
     range.first = qBound(0, range.first, count - 1);
     range.last = qBound(range.first, range.last, count - 1);
 
-    while (range.first > 0 && isListBlock(doc.findBlockByNumber(range.first - 1)))
-        --range.first;
-    while (range.last + 1 < count && isListBlock(doc.findBlockByNumber(range.last + 1)))
-        ++range.last;
+    auto partOfRun = [&doc](int number) {
+        const QTextBlock block = doc.findBlockByNumber(number);
+        return isListBlock(block) || isVSpaceBlock(block);
+    };
+    while (range.first > 0 && partOfRun(range.first - 1)) --range.first;
+    while (range.last + 1 < count && partOfRun(range.last + 1)) ++range.last;
     return range;
 }
 
@@ -51,13 +57,21 @@ void setBlockFormat(QTextCursor& cursor, const QTextBlock& block,
 
 namespace {
 
+// Последний блок поддерева этого пункта: всё, что следом и глубже. Объявлена
+// заранее — ею пользуется и разбор выделения.
+int subtreeEnd(const QTextDocument& doc, int number);
+
 // Диапазон, который надо привести в порядок после правки одного блока: сам блок
 // и его соседи. Дальше расширят сами нормализующие проходы.
 BlockRange around(int number) { return {number - 1, number + 1}; }
 
 void normalise(QTextDocument& doc, BlockRange range) {
     syncLiteralBlocks(doc, range);
-    syncLists(doc, range);
+    // Заведённые пустые строки сдвигают номера блоков: диапазон для списков
+    // раздвигаем ровно на столько же, иначе последний пункт остался бы
+    // непроверенным — и осиротевший вложенный пункт так и уехал бы в файл.
+    const int added = syncGaps(doc, range);
+    syncLists(doc, {range.first, range.last + added});
 }
 
 // Блоки, которых касается курсор, вместе с поддеревьями. Конец выделения,
@@ -72,15 +86,8 @@ BlockRange selectedBlocks(const QTextDocument& doc, const QTextCursor& cursor) {
         --range.last;
 
     // Поддерево последнего пункта: всё, что глубже него, принадлежит ему.
-    const QTextBlock last = doc.findBlockByNumber(range.last);
-    if (isListBlock(last)) {
-        const int base = levelOf(last);
-        while (range.last + 1 < doc.blockCount()) {
-            const QTextBlock next = doc.findBlockByNumber(range.last + 1);
-            if (!isListBlock(next) || levelOf(next) <= base) break;
-            ++range.last;
-        }
-    }
+    if (isListBlock(doc.findBlockByNumber(range.last)))
+        range.last = subtreeEnd(doc, range.last);
     return range;
 }
 
@@ -127,14 +134,25 @@ bool outdentListItems(QTextDocument& doc, QTextCursor& cursor) {
 
 namespace {
 
-// Последний блок поддерева этого пункта: всё, что следом и глубже.
+// Первый блок за этим, который не пустая строка. Может выйти за конец
+// документа — проверяет вызывающий.
+int skipVSpace(const QTextDocument& doc, int number) {
+    while (number < doc.blockCount() && isVSpaceBlock(doc.findBlockByNumber(number))) ++number;
+    return number;
+}
+
+// Последний блок поддерева этого пункта: всё, что следом и глубже. Пустые
+// строки внутри поддерева его не заканчивают, но и хвостом не висят: их берём
+// только вместе с тем, что за ними.
 int subtreeEnd(const QTextDocument& doc, int number) {
     const int level = levelOf(doc.findBlockByNumber(number));
     int last = number;
-    while (last + 1 < doc.blockCount()) {
-        const QTextBlock next = doc.findBlockByNumber(last + 1);
-        if (!isListBlock(next) || levelOf(next) <= level) break;
-        ++last;
+    for (;;) {
+        const int next = skipVSpace(doc, last + 1);
+        if (next >= doc.blockCount()) break;
+        const QTextBlock block = doc.findBlockByNumber(next);
+        if (!isListBlock(block) || levelOf(block) <= level) break;
+        last = next;
     }
     return last;
 }
@@ -145,6 +163,7 @@ int previousSibling(const QTextDocument& doc, int number) {
     const int level = levelOf(doc.findBlockByNumber(number));
     for (int i = number - 1; i >= 0; --i) {
         const QTextBlock block = doc.findBlockByNumber(i);
+        if (isVSpaceBlock(block)) continue;      // просторный список — тот же список
         if (!isListBlock(block)) return -1;      // через абзац не прыгаем
         const int other = levelOf(block);
         if (other < level) return -1;            // вышли из своего уровня
@@ -155,7 +174,7 @@ int previousSibling(const QTextDocument& doc, int number) {
 
 int nextSibling(const QTextDocument& doc, int number) {
     const int level = levelOf(doc.findBlockByNumber(number));
-    const int after = subtreeEnd(doc, number) + 1;
+    const int after = skipVSpace(doc, subtreeEnd(doc, number) + 1);
     if (after >= doc.blockCount()) return -1;
     const QTextBlock block = doc.findBlockByNumber(after);
     if (!isListBlock(block) || levelOf(block) != level) return -1;
@@ -291,40 +310,41 @@ MoveResult moveListItem(const QTextDocument& doc, const QTextCursor& cursor, int
     if (sibling < 0) return {};
 
     // Оба куска — пункт с поддеревом; в IR они лежат подряд, потому что
-    // списочные блоки один к одному с блоками IR.
-    const int selfFirst = number;
-    const int selfLast = subtreeEnd(doc, number);
-    const int otherFirst = sibling;
-    const int otherLast = subtreeEnd(doc, sibling);
+    // списочные блоки один к одному с блоками IR. Между ними может стоять
+    // пустая строка — просторный список тоже список.
+    const bool selfIsUpper = direction > 0;
+    const int upperFirst = selfIsUpper ? number : sibling;
+    const int lowerFirst = selfIsUpper ? sibling : number;
+    const int upperLast = subtreeEnd(doc, upperFirst);
+    const int lowerLast = subtreeEnd(doc, lowerFirst);
 
-    const int firstIr = irIndexOfBlock(doc.findBlockByNumber(qMin(selfFirst, otherFirst)));
-    const int selfSize = selfLast - selfFirst + 1;
-    const int otherSize = otherLast - otherFirst + 1;
+    const int firstIr = irIndexOfBlock(doc.findBlockByNumber(upperFirst));
+    const int upperSize = upperLast - upperFirst + 1;
+    const int gapSize = lowerFirst - upperLast - 1;
+    const int lowerSize = lowerLast - lowerFirst + 1;
+    const int wholeSize = upperSize + gapSize + lowerSize;
 
     MoveResult result;
     result.doc = readDocument(doc);
-    if (firstIr + selfSize + otherSize > int(result.doc.size())) return {};
+    if (firstIr < 0 || firstIr + wholeSize > int(result.doc.size())) return {};
 
-    // Перестановка двух соседних кусков — это поворот их объединения.
+    // Пункты меняются местами, а пустая строка остаётся на месте: она
+    // принадлежит стыку, а не пункту, и уехав с ним, порвала бы список там, где
+    // человек ничего не трогал.
     const auto begin = result.doc.begin() + firstIr;
-    const auto middle = begin + (direction < 0 ? otherSize : selfSize);
-    const auto end = begin + selfSize + otherSize;
-    // Плотность стыка принадлежит месту, а не блоку: между теми же соседями
-    // пустая строка не появилась и не исчезла оттого, что пункты поменялись
-    // местами. Переставляем содержимое, а признаки оставляем на местах — иначе
-    // переехавший пункт утаскивал бы с собой чужой стык, и в списке возникала
-    // пустая строка.
-    std::vector<bool> tightByPlace;
-    tightByPlace.reserve(result.doc.size());
-    for (const Block& b : result.doc) tightByPlace.push_back(b.tight);
+    Document reordered;
+    reordered.reserve(size_t(wholeSize));
+    reordered.insert(reordered.end(), begin + upperSize + gapSize, begin + wholeSize);
+    reordered.insert(reordered.end(), begin + upperSize, begin + upperSize + gapSize);
+    reordered.insert(reordered.end(), begin, begin + upperSize);
+    std::copy(reordered.begin(), reordered.end(), begin);
 
-    std::rotate(begin, middle, end);
-
-    for (size_t k = 0; k < result.doc.size(); ++k) result.doc[k].tight = tightByPlace[k];
-
-    // Пункт переехал на размер соседа: вверх — назад, вниз — вперёд.
+    // Место, куда переехал сам пункт: верхний уходит за пустую строку и соседа,
+    // нижний встаёт в самое начало.
     const int selfIr = irIndexOfBlock(block);
-    result.irBlock = direction < 0 ? selfIr - otherSize : selfIr + otherSize;
+    const int selfStartIr = firstIr + (selfIsUpper ? 0 : upperSize + gapSize);
+    const int landedIr = selfIsUpper ? firstIr + lowerSize + gapSize : firstIr;
+    result.irBlock = landedIr + (selfIr - selfStartIr);
     result.offsetInBlock = cursor.positionInBlock();
     result.done = true;
     return result;
@@ -416,7 +436,8 @@ bool convertBlock(QTextDocument& doc, int number, Kind target) {
     const QTextBlock block = doc.findBlockByNumber(number);
     if (!block.isValid() || isRawBlock(block)) return false;
     const Kind from = kindOf(block);
-    if (from == Kind::Code) return false;   // код списком быть не может
+    if (from == Kind::Code) return false;     // код списком быть не может
+    if (from == Kind::VSpace) return false;   // пустая строка пунктом тоже не бывает
 
     QTextBlockFormat format = block.blockFormat();
     QString insert;
@@ -451,10 +472,6 @@ bool convertBlock(QTextDocument& doc, int number, Kind target) {
         format.setProperty(KindProperty, int(actual));
         format.setProperty(LevelProperty, isListBlock(block) ? levelOf(block) : 0);
         format.setHeadingLevel(0);
-        // Блок, вставший в существующий список, стоит к нему вплотную: пустой
-        // строке между пунктами взяться неоткуда. А одинокий абзац, ставший
-        // пунктом, плотности не получает — и потому не прыгает на месте.
-        if (isListBlock(block.previous())) format.setProperty(TightProperty, true);
     }
 
     QTextCursor edit(&doc);
@@ -811,11 +828,15 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor);
 // Мягкий перенос: строка внутри того же блока. В документе это разделитель
 // строк, а признак говорит читателю, что вернуть надо перевод строки, а не
 // чужой U+2028 из самого текста заметки.
-void insertSoftBreak(QTextCursor& cursor, const QTextBlock& block) {
+void insertSoftBreak(QTextDocument& doc, QTextCursor& cursor, const QTextBlock& block) {
     QTextCharFormat format = block.charFormat();
     format.setProperty(BreakSourceProperty, int(BreakNewline));
     cursor.beginEditBlock();
     cursor.insertText(QString(QChar::LineSeparator), format);
+    // Перенос кажется правкой внутри одного блока, но с выделением он их
+    // склеивает: выделенное уходит, и рядом оказываются те, кто раньше стоял
+    // порознь. Нормализуем, как после всякой правки строения.
+    normalise(doc, around(cursor.blockNumber()));
     cursor.endEditBlock();
 }
 
@@ -870,7 +891,7 @@ bool splitBlockOtherwiseAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     if (!isRawBlock(block) && kindOf(block) == Kind::Paragraph) return hardSplit(doc, cursor);
     if (!isRawBlock(block) && kindOf(block) == Kind::Quote) return hardSplit(doc, cursor);
     if (acceptsSoftBreak(block)) {
-        insertSoftBreak(cursor, block);
+        insertSoftBreak(doc, cursor, block);
         return true;
     }
     return splitBlockAtCursor(doc, cursor);
@@ -959,7 +980,7 @@ bool splitBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
         (kindOf(block) == Kind::Paragraph || kindOf(block) == Kind::Quote)) {
         const int tail = emptyLineTail(cursor, block);
         if (tail == 0) {
-            insertSoftBreak(cursor, block);
+            insertSoftBreak(doc, cursor, block);
             return true;
         }
         // Пустую строку убираем вместе с её разделителем: она была не
@@ -1036,10 +1057,6 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
     } else {
         next.clearProperty(ContinuationProperty);
         next.clearProperty(TrailingNewlineProperty);
-        // Новый пункт принадлежит тому же списку, что и текущий, — значит стоит
-        // к нему вплотную. Без этого между пунктами появлялась бы пустая строка:
-        // список выходил бы просторным на ровном месте.
-        if (isListBlock(block)) next.setProperty(TightProperty, true);
         switch (kindOf(block)) {
             case Kind::TaskChecked:
                 // Новый пункт всегда невыполненный: отмечать за человека нечего.
@@ -1087,17 +1104,29 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
     const bool atListStart = isListBlock(block) && cursor.positionInBlock() == 0;
 
     cursor.beginEditBlock();
+    // Половинки просто разъезжаются. Пустую строку между ними, если markdown её
+    // требует, поставит нормализующий проход — правило записано там одно на все
+    // операции, и второй его копии здесь быть не должно.
     cursor.insertBlock(next, block.charFormat());
     if (!indent.isEmpty()) cursor.insertText(indent, block.charFormat());
-    if (literal && format.boolProperty(TrailingNewlineProperty)) {
+
+    // Номера блоков считаем после правки, а не до. При выделении из нескольких
+    // блоков разрез его же и съедает, и номера съезжают: взятые заранее
+    // указывали бы мимо, и нормализация проходила бы не по тому месту.
+    const int landed = cursor.blockNumber();
+    if (literal && format.boolProperty(TrailingNewlineProperty) && landed > 0) {
         QTextBlockFormat head = format;
         head.clearProperty(TrailingNewlineProperty);
         QTextCursor headCursor(&doc);
-        headCursor.setPosition(doc.findBlockByNumber(number).position());
+        headCursor.setPosition(doc.findBlockByNumber(landed - 1).position());
         headCursor.setBlockFormat(head);
     }
-    normalise(doc, {number, number + 1});
-    if (atListStart) cursor.setPosition(doc.findBlockByNumber(number).position());
+    // Место, куда встать, держим курсором: нормализация может завести пустую
+    // строку выше, и номер устареет прямо посреди операции.
+    QTextCursor above(&doc);
+    if (landed > 0) above.setPosition(doc.findBlockByNumber(landed - 1).position());
+    normalise(doc, {landed - 1, landed + 1});
+    if (atListStart && landed > 0) cursor.setPosition(above.position());
     cursor.endEditBlock();
     return true;
 }
@@ -1147,6 +1176,142 @@ bool unwrapListItemAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     return true;
 }
 
+namespace {
+
+// Снимает границу между этим блоком и следующим, ставя вместо неё мягкий
+// перенос: два блока становятся одним, а на экране ничего не двигается.
+void joinWithNext(QTextDocument& doc, QTextCursor& edit, int number) {
+    const QTextBlock head = doc.findBlockByNumber(number);
+    if (!head.isValid() || !head.next().isValid()) return;
+    const int at = head.position() + head.length() - 1;
+    QTextCharFormat breakFormat = head.charFormat();
+    breakFormat.setProperty(BreakSourceProperty, int(BreakNewline));
+    edit.setPosition(at);
+    edit.deleteChar();
+    edit.insertText(QString(QChar::LineSeparator), breakFormat);
+}
+
+// Убирает блок пустой строки и, если без неё соседи в файле слиплись бы,
+// сливает их в один блок с мягким переносом.
+//
+// Слияние здесь не прихоть, а следствие инварианта: обязательную пустую строку
+// нормализующий проход тут же вернул бы на место, и клавиша выглядела бы
+// сломанной. А слитые половинки — ровно то, что человек и видит: две строки
+// подряд без пустой между ними.
+bool removeVSpaceAndMaybeJoin(QTextDocument& doc, QTextCursor& cursor, int gapNumber) {
+    const QTextBlock gap = doc.findBlockByNumber(gapNumber);
+    if (!isVSpaceBlock(gap)) return false;
+    const QTextBlock before = gap.previous();
+    const QTextBlock after = gap.next();
+    if (!before.isValid() && !after.isValid()) return false;
+    const bool join = blocksWouldMerge(before, after);
+
+    // Куда встать после правки — началом того, что стояло под пустой строкой.
+    // Курсором, а не числом: при слиянии оно само приедет на стык половинок, и
+    // считать смещения не приходится.
+    QTextCursor landing(&doc);
+    if (after.isValid()) landing.setPosition(after.position());
+    else landing.setPosition(before.position() + before.length() - 1);
+
+    QTextCursor edit(&doc);
+    edit.beginEditBlock();
+    if (before.isValid()) {
+        // Снимаем границу перед пустой строкой: содержимого в ней нет, и
+        // предыдущий блок остаётся при своём формате.
+        edit.setPosition(gap.position() - 1);
+        edit.setPosition(gap.position(), QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+    } else if (after.isValid()) {
+        // Пустая строка первая в документе: убираем границу за ней, а формат
+        // берём у соседа — иначе весь его текст остался бы пустой строкой.
+        const QTextBlockFormat keep = after.blockFormat();
+        edit.setPosition(gap.position());
+        edit.setPosition(gap.position() + 1, QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+        edit.setPosition(0);
+        edit.setBlockFormat(keep);
+    }
+
+    if (join) joinWithNext(doc, edit, gapNumber - 1);
+    normalise(doc, around(qMax(0, gapNumber - 1)));
+    edit.endEditBlock();
+    cursor.setPosition(landing.position());
+    return true;
+}
+
+}  // namespace
+
+bool repairAfterTyping(QTextDocument& doc, QTextCursor& cursor) {
+    const QTextBlock block = cursor.block();
+    const int number = block.blockNumber();
+    // Набрали прямо на пустой строке: пустой строкой она быть перестала.
+    const bool filled = isVSpaceBlock(block) && !block.text().isEmpty();
+    // Или набрали поверх выделения, съевшего границу блоков, и рядом оказались
+    // соседи, которых markdown раздельно не выражает.
+    const bool mergesAhead =
+        blocksWouldMerge(block, doc.findBlockByNumber(number + 1));
+    const bool mergesBehind =
+        number > 0 && blocksWouldMerge(doc.findBlockByNumber(number - 1), block);
+    // И осиротевший вложенный пункт: набор поверх выделения съедает границу
+    // блоков, и то, что стояло под пунктом, может остаться без родителя.
+    const QTextBlock next = doc.findBlockByNumber(number + 1);
+    const bool levelJump =
+        isListBlock(next) && levelOf(next) > (isListBlock(block) ? levelOf(block) : -1) + 1;
+    if (!filled && !mergesAhead && !mergesBehind && !levelJump) return false;
+
+    QTextCursor edit(&doc);
+    edit.beginEditBlock();
+    if (filled) {
+        QTextBlockFormat format = block.blockFormat();
+        format.clearProperty(KindProperty);
+        format.clearProperty(LevelProperty);
+        format.setLeftMargin(0);
+        setBlockFormat(edit, block, format);
+    }
+
+    // Соседей сливаем, а не раздвигаем пустой строкой: набор ничего на экране
+    // раздвигать не должен. Строки как стояли, так и стоят, меняется только
+    // строение — три строки подряд без пустой между ними markdown и называет
+    // одним абзацем.
+    if (blocksWouldMerge(doc.findBlockByNumber(number), doc.findBlockByNumber(number + 1)))
+        joinWithNext(doc, edit, number);
+    if (number > 0 &&
+        blocksWouldMerge(doc.findBlockByNumber(number - 1), doc.findBlockByNumber(number)))
+        joinWithNext(doc, edit, number - 1);
+
+    normalise(doc, around(qMax(0, number - 1)));
+    edit.endEditBlock();
+    return true;
+}
+
+bool joinAcrossVSpaceBackward(QTextDocument& doc, QTextCursor& cursor) {
+    if (cursor.hasSelection() || !cursor.atBlockStart()) return false;
+    const QTextBlock block = cursor.block();
+    // Курсор стоит на самой пустой строке: Backspace убирает её и уводит курсор
+    // в конец предыдущей — как в любом редакторе.
+    if (isVSpaceBlock(block)) {
+        if (!block.previous().isValid()) return false;   // выше ничего нет
+        return removeVSpaceAndMaybeJoin(doc, cursor, block.blockNumber());
+    }
+    const QTextBlock gap = block.previous();
+    if (!isVSpaceBlock(gap)) return false;
+    return removeVSpaceAndMaybeJoin(doc, cursor, gap.blockNumber());
+}
+
+bool joinAcrossVSpaceForward(QTextDocument& doc, QTextCursor& cursor) {
+    if (cursor.hasSelection() || !cursor.atBlockEnd()) return false;
+    const QTextBlock block = cursor.block();
+    // На самой пустой строке Delete подтягивает следующую наверх — то же
+    // самое, что убрать эту пустую строку.
+    if (isVSpaceBlock(block)) {
+        if (!block.next().isValid()) return false;
+        return removeVSpaceAndMaybeJoin(doc, cursor, block.blockNumber());
+    }
+    const QTextBlock gap = block.next();
+    if (!isVSpaceBlock(gap)) return false;
+    return removeVSpaceAndMaybeJoin(doc, cursor, gap.blockNumber());
+}
+
 void applyListGeometry(QTextDocument& doc, BlockRange range) {
     const BlockRange full = expandToRuns(doc, range);
     const QFont base = baseFontOf(doc);
@@ -1162,6 +1327,8 @@ void applyListGeometry(QTextDocument& doc, BlockRange range) {
     // раньше они делили колонку: кружки равнялись по ширине чекбокса, а стоило
     // отцепить их от задач — прыгали влево. Ширина кружка от соседей зависеть
     // не должна.
+    // Метка «этот блок пропускаем, ничего не меняя» — ею помечены пустые строки.
+    constexpr int kSkip = -2;
     std::vector<int> runOf;
     std::vector<qreal> widest;
     {
@@ -1170,6 +1337,12 @@ void applyListGeometry(QTextDocument& doc, BlockRange range) {
         std::vector<int> currentFamily;
         QTextBlock block = doc.findBlockByNumber(full.first);
         for (int i = full.first; i <= full.last && block.isValid(); ++i, block = block.next()) {
+            // Пустая строка ни к какой колонке не принадлежит и прогон не рвёт:
+            // помечаем её и идём дальше, ничего не сбрасывая.
+            if (isVSpaceBlock(block)) {
+                runOf.push_back(kSkip);
+                continue;
+            }
             if (!isListBlock(block)) {
                 runs.reset();
                 currentRun.clear();
@@ -1206,6 +1379,7 @@ void applyListGeometry(QTextDocument& doc, BlockRange range) {
     QTextBlock block = doc.findBlockByNumber(full.first);
     for (int i = full.first; i <= full.last && block.isValid(); ++i, block = block.next()) {
         const int run = runOf[size_t(i - full.first)];
+        if (run == kSkip) continue;
         if (run < 0) {
             contentCol.assign(1, 0.0);
             continue;
@@ -1241,6 +1415,7 @@ void syncLists(QTextDocument& doc, BlockRange range) {
     std::vector<int> open;
     QTextBlock block = doc.findBlockByNumber(full.first);
     for (int i = full.first; i <= full.last && block.isValid(); ++i, block = block.next()) {
+        if (isVSpaceBlock(block)) continue;   // просторный список — тот же список
         if (!isListBlock(block)) {
             open.clear();
             continue;
@@ -1269,6 +1444,111 @@ static bool mayContinue(const QTextBlock& block, const QTextBlock& prev) {
     // Строки одного блока кода. Заголовок и абзац продолжений не имеют вовсе:
     // они лежат в документе одним блоком.
     return kindOf(block) == Kind::Code && kindOf(prev) == Kind::Code;
+}
+
+namespace {
+
+// Заводит пустую строку перед этим блоком. Курсоры, стоящие на его начале,
+// Qt переносит на текст сам, поэтому вызывающему поправлять их не нужно.
+void insertVSpaceBefore(QTextDocument& doc, int number) {
+    const QTextBlock block = doc.findBlockByNumber(number);
+    if (!block.isValid()) return;
+
+    // Разрез в самом начале блока: содержимое уезжает во второй кусок вместе со
+    // своим форматом, а первый остаётся пустым — ему и достаётся пустая строка.
+    QTextCursor edit(&doc);
+    edit.setPosition(block.position());
+    edit.insertBlock(block.blockFormat(), block.charFormat());
+
+    QTextCursor fix(&doc);
+    fix.setPosition(doc.findBlockByNumber(number).position());
+    fix.setBlockFormat(vspaceBlockFormat(doc, false, number == 0));
+}
+
+}  // namespace
+
+int syncGaps(QTextDocument& doc, BlockRange range) {
+    int added = 0;
+    QTextCursor edit(&doc);
+    edit.beginEditBlock();
+
+    // Пустая строка, в которую попал текст, пустой строкой быть перестала. Так
+    // выглядит набор поверх пустой строки и слияние блоков через неё.
+    {
+        int i = qMax(0, range.first);
+        const int last = qMin(range.last, doc.blockCount() - 1);
+        for (; i <= last; ++i) {
+            const QTextBlock block = doc.findBlockByNumber(i);
+            if (!isVSpaceBlock(block) || block.text().isEmpty()) continue;
+            QTextBlockFormat format = block.blockFormat();
+            format.clearProperty(KindProperty);
+            format.clearProperty(LevelProperty);
+            format.setLeftMargin(0);
+            setBlockFormat(edit, block, format);
+        }
+    }
+
+    // Между блоками, которые в файле слиплись бы, обязана стоять пустая строка.
+    // Смотрим и на стык за концом диапазона: операция могла свести новых соседей.
+    {
+        int i = qMax(1, range.first);
+        int last = qMin(range.last + 1, doc.blockCount() - 1);
+        for (; i <= last && i < doc.blockCount(); ++i) {
+            const QTextBlock block = doc.findBlockByNumber(i);
+            // Строки одного литерального блока стоят вплотную по своей природе.
+            if (isContinuationBlock(block)) continue;
+            if (!blocksWouldMerge(block.previous(), block)) continue;
+            insertVSpaceBefore(doc, i);
+            ++added;
+            ++i;      // на месте i теперь только что заведённая пустая строка
+            ++last;
+        }
+    }
+
+    // Поля сверху: их держит соседство, и после вставки они могли устареть.
+    {
+        const qreal lineUnit = QFontMetricsF(baseFontOf(doc)).height();
+        int i = qMax(0, range.first);
+        const int last = qMin(range.last + 2, doc.blockCount() - 1);
+        for (; i <= last; ++i) {
+            const QTextBlock block = doc.findBlockByNumber(i);
+            if (!block.isValid()) break;
+            const qreal want =
+                isContinuationBlock(block)
+                    ? 0.0
+                    : blockTopMargin(kindOf(block), isRawBlock(block),
+                                     isVSpaceBlock(block.previous()), i == 0) *
+                          lineUnit;
+            QTextBlockFormat format = block.blockFormat();
+            // Не трогаем формат, если поле и так верное: любая запись помечает
+            // документ изменённым и тянет за собой автосохранение.
+            if (std::fabs(format.topMargin() - want) < 0.01) continue;
+            format.setTopMargin(want);
+            setBlockFormat(edit, block, format);
+        }
+    }
+
+    edit.endEditBlock();
+    return added;
+}
+
+bool gapInvariantHolds(const QTextDocument& doc, QString* problem) {
+    int number = 0;
+    for (QTextBlock block = doc.begin(); block.isValid(); block = block.next(), ++number) {
+        if (isContinuationBlock(block)) continue;
+        if (isVSpaceBlock(block) && !block.text().isEmpty()) {
+            if (problem != nullptr)
+                *problem = QStringLiteral("блок %1: пустая строка с текстом").arg(number);
+            return false;
+        }
+        if (!blocksWouldMerge(block.previous(), block)) continue;
+        if (problem != nullptr) {
+            *problem = QStringLiteral("блок %1: слипся бы с предыдущим, а пустой строки нет")
+                           .arg(number);
+        }
+        return false;
+    }
+    return true;
 }
 
 void syncLiteralBlocks(QTextDocument& doc, BlockRange range) {
@@ -1309,6 +1589,7 @@ bool listInvariantHolds(const QTextDocument& doc, QString* problem) {
     int prevLevel = -1;
     int number = 0;
     for (QTextBlock block = doc.begin(); block.isValid(); block = block.next(), ++number) {
+        if (isVSpaceBlock(block)) continue;   // прогон она не рвёт — см. сериализатор
         if (!isListBlock(block)) {
             prevLevel = -1;
             continue;

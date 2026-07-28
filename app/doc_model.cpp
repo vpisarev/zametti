@@ -5,36 +5,6 @@
 
 namespace zametti {
 
-bool isSeparatorText(const std::string& text) {
-    if (text.empty()) return false;
-    bool anyLine = false;
-    for (size_t i = 0; i < text.size();) {
-        const unsigned char c = static_cast<unsigned char>(text[i]);
-        if (c == 0xC2 && i + 1 < text.size() &&
-            static_cast<unsigned char>(text[i + 1]) == 0xA0) {
-            anyLine = true;
-            i += 2;
-            continue;
-        }
-        if (c == ' ' || c == '\t') {
-            ++i;
-            continue;
-        }
-        if (c == '\n') {
-            anyLine = true;
-            ++i;
-            continue;
-        }
-        return false;
-    }
-    return anyLine;
-}
-
-bool isSeparatorBlock(const Block& block) {
-    return block.rawSource.empty() && block.kind == Kind::Paragraph &&
-           isSeparatorText(block.text);
-}
-
 bool isRawBlock(const QTextBlock& block) {
     return block.blockFormat().boolProperty(RawProperty);
 }
@@ -43,8 +13,22 @@ bool isContinuationBlock(const QTextBlock& block) {
     return block.blockFormat().boolProperty(ContinuationProperty);
 }
 
-bool isTightBlock(const QTextBlock& block) {
-    return block.blockFormat().boolProperty(TightProperty);
+bool isVSpaceBlock(const QTextBlock& block) {
+    return !isRawBlock(block) && kindOf(block) == Kind::VSpace;
+}
+
+bool blocksWouldMerge(const QTextBlock& previous, const QTextBlock& next) {
+    if (!previous.isValid() || !next.isValid()) return false;
+    // wouldMerge смотрит только на род и на дословность — большего для этого
+    // вопроса и не нужно, поэтому обходимся заготовками, а не читаем блоки
+    // целиком.
+    auto stub = [](const QTextBlock& block) {
+        Block out;
+        if (isRawBlock(block)) out.rawSource = " ";
+        else out.kind = kindOf(block);
+        return out;
+    };
+    return wouldMerge(stub(previous), stub(next));
 }
 
 Kind kindOf(const QTextBlock& block) {
@@ -94,6 +78,7 @@ int ordinalOf(const QTextBlock& block) {
 
     int ordinal = 1;
     for (QTextBlock prev = block.previous(); prev.isValid(); prev = prev.previous()) {
+        if (isVSpaceBlock(prev)) continue;           // просторный список — всё тот же список
         if (!isListBlock(prev)) break;               // абзац или дословный кусок рвёт прогон
         const int prevLevel = levelOf(prev);
         if (prevLevel > level) continue;             // вложенный подсписок прогон не рвёт

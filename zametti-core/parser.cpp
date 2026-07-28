@@ -962,13 +962,16 @@ void finishExtents(Ctx& c) {
     size_t prevLast = 0;
     bool havePrev = false;
     auto emit = [&](Block blk, size_t from, size_t to) {
-        // Признак ставим только спискам. Там пустая строка содержательна: список
-        // сразу под вводной фразой читается как её продолжение, а через строку —
-        // как отдельный кусок. У прочих блоков пустая строка между ними —
-        // обязательный синтаксис, выбора автору она не оставляет, и хранить о
-        // ней нечего.
-        blk.tight = havePrev && from == prevLast + 1 && blk.rawSource.empty() &&
-                    isList(blk.kind);
+        // Каждая пустая строка на стыке — свой блок. Столько же блоков, сколько
+        // пустых строк в файле: пять подряд дадут пять блоков, и сериализатор
+        // выведет их обратно один в один.
+        if (havePrev && from > prevLast + 1) {
+            for (size_t k = prevLast + 1; k < from; ++k) {
+                Block gap;
+                gap.kind = Kind::VSpace;
+                out.push_back(std::move(gap));
+            }
+        }
         out.push_back(std::move(blk));
         prevLast = to;
         havePrev = true;
@@ -991,7 +994,25 @@ void finishExtents(Ctx& c) {
         while (line < lines.count() && !blankLine(c.buf, lines, line)) ++line;
         emit(rawFromLines(b, line - 1), b, line - 1);
     }
-    c.doc = std::move(out);
+    // Инвариант IR: между блоками, которые иначе слиплись бы, стоит VSpace.
+    // Держим его здесь, а не при выводе: вставленная при выводе пустая строка
+    // при следующем чтении стала бы блоком VSpace, которого в исходном IR не
+    // было, и круг разошёлся бы.
+    //
+    // Такое случается на стыках, где наш канон длиннее исходника: незакрытый
+    // забор дописывается закрывающим, и два блока кода, стоявшие вплотную,
+    // разъезжаются.
+    Document fixed;
+    fixed.reserve(out.size() + 2);
+    for (Block& blk : out) {
+        if (!fixed.empty() && wouldMerge(fixed.back(), blk)) {
+            Block gap;
+            gap.kind = Kind::VSpace;
+            fixed.push_back(std::move(gap));
+        }
+        fixed.push_back(std::move(blk));
+    }
+    c.doc = std::move(fixed);
 }
 
 }  // namespace

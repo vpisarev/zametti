@@ -232,6 +232,10 @@ Block withEdgesNormalised(Block block) {
     std::vector<int> map(text.size() + 1, 0);
     std::string out;
 
+    // Именно признаком, а не пустотой out: строка бывает пустой и сама, и по
+    // пустоте не отличить «первую строку» от «десятой, но пока пустой». На этом
+    // сходились в одну все ведущие пустые строки абзаца.
+    bool firstLine = true;
     size_t line = 0;
     for (;;) {
         size_t end = text.find('\n', line);
@@ -244,17 +248,22 @@ Block withEdgesNormalised(Block block) {
         while (stop > start && isSpace(text[stop - 1])) --stop;
 
         // Пустая строка внутри блока — содержимое: в заметках ею отбивают куски
-        // текста, и терять её нельзя. В файле она пустой быть не может — пустая
-        // строка блок заканчивает, — поэтому в неё ставится неразрывный пробел.
-        // Тот же приём, что и с отступами, и по той же причине.
+        // текста, и терять её нельзя.
         //
-        // Только в обычном тексте и цитате. Пустой пункт списка — не отбивка, а
-        // след только что нажатого Enter, и невидимый знак ему ни к чему.
+        // В абзаце она сохраняется как есть: абзац потом режется по таким
+        // строкам на отдельные блоки, и каждая пустая строка становится
+        // настоящей пустой строкой файла. В цитате резать нельзя — две цитаты
+        // через пустую строку это уже две цитаты, — и там пустая строка
+        // по-прежнему держится неразрывным пробелом.
+        //
+        // В пункте списка её не держим вовсе: пустой пункт — не отбивка, а след
+        // только что нажатого Enter, и невидимый знак ему ни к чему.
         const bool keepBlank = block.kind == Kind::Paragraph || block.kind == Kind::Quote;
         const bool blank = start >= stop;
         if (!blank || keepBlank) {
-            if (!out.empty()) out.push_back('\n');
-            if (blank) out += kNbsp;
+            if (!firstLine) out.push_back('\n');
+            firstLine = false;
+            if (blank && block.kind == Kind::Quote) out += kNbsp;
         }
 
         // Ведущие пробелы: каждый становится неразрывным. Отступ значим, им
@@ -301,7 +310,12 @@ Block withEdgesNormalised(Block block) {
 Block withMarkupThatSurvives(Block block) {
     if (!block.rawSource.empty() || block.inlines.empty()) return block;
 
-    const Document one{block};
+    // Уровень вложенности сбрасываем: вопрос здесь только про разметку внутри
+    // строки, а сериализатор в одиночном блоке ждёт, что уровень не прыгает
+    // через один, и на вложенном пункте падал бы проверкой.
+    Block probe = block;
+    probe.level = 0;
+    const Document one{std::move(probe)};
     const Document back = parse(serialize(one));
     if (back.size() == 1 && back[0].rawSource.empty() && back[0].text == block.text)
         return block;
@@ -353,72 +367,107 @@ Document withoutEmptyNested(Document doc) {
     return out;
 }
 
-// Пустой абзац markdown выразить нечем: пустая строка в файле — разделитель
-// блоков, а не блок. В документе он заводится каждым Enter, и без этой уборки
-// самопроверка честно ловила бы расхождение при каждом сохранении.
+// Абзац режется по пустым строкам на отдельные блоки, и каждая пустая строка
+// становится блоком VSpace — то есть настоящей пустой строкой файла. Круг при
+// этом сходится точно: "первая\n\nвторая" читается обратно ровно этими же тремя
+// блоками.
 //
-// Пустой пункт списка верхнего уровня при этом остаётся: "-" в файле
-// записывается прекрасно.
-// Пустой ли это абзац — то есть строка, которой в заметке отбивают куски текста.
-// Неразрывный пробел мы ставим в такие строки сами, поэтому он тоже считается
-// пустотой.
-bool isBlankParagraph(const Block& block) {
-    if (!block.rawSource.empty() || block.kind != Kind::Paragraph) return false;
-    for (size_t i = 0; i < block.text.size();) {
-        const unsigned char c = static_cast<unsigned char>(block.text[i]);
-        if (c == 0xC2 && i + 1 < block.text.size() &&
-            static_cast<unsigned char>(block.text[i + 1]) == 0xA0) {
-            i += 2;
-            continue;
+// Только абзац. Пункт списка так резать нельзя — у второй половины появился бы
+// маркер, которого никто не ставил; цитату тоже — две цитаты через пустую
+// строку это уже две цитаты. Там пустая строка держится неразрывным пробелом.
+void appendSplitOnBlankLines(Document& out, Block block) {
+    if (!block.rawSource.empty()) {
+        // Дословный кусок, начинающийся с пустой строки: сама она куском не
+        // является — разбор вернул бы её отдельной пустой строкой перед ним.
+        size_t at = 0;
+        while (at < block.rawSource.size() && block.rawSource[at] == '\n') {
+            Block gap;
+            gap.kind = Kind::VSpace;
+            out.push_back(std::move(gap));
+            ++at;
         }
-        if (c == ' ' || c == '\t' || c == '\n') {
-            ++i;
-            continue;
-        }
-        return false;
+        if (at > 0) block.rawSource.erase(0, at);
+        if (!block.rawSource.empty()) out.push_back(std::move(block));
+        return;
     }
-    return true;
+    if (block.kind != Kind::Paragraph) {
+        out.push_back(std::move(block));
+        return;
+    }
+
+    size_t at = 0;
+    size_t pieceFrom = std::string::npos;
+    auto flush = [&](size_t to) {
+        if (pieceFrom == std::string::npos) return;
+        Block piece;
+        piece.kind = Kind::Paragraph;
+        piece.text = block.text.substr(pieceFrom, to - pieceFrom);
+        for (const Span& span : block.inlines) {
+            const size_t from = std::max(size_t(span.offset), pieceFrom);
+            const size_t stop = std::min(size_t(span.offset + span.length), to);
+            if (stop <= from) continue;
+            Span moved = span;
+            moved.offset = int(from - pieceFrom);
+            moved.length = int(stop - from);
+            piece.inlines.push_back(moved);
+        }
+        out.push_back(std::move(piece));
+        pieceFrom = std::string::npos;
+    };
+
+    for (;;) {
+        size_t end = block.text.find('\n', at);
+        const bool last = end == std::string::npos;
+        if (last) end = block.text.size();
+
+        if (end == at) {                       // пустая строка
+            flush(at > 0 ? at - 1 : at);
+            Block gap;
+            gap.kind = Kind::VSpace;
+            out.push_back(std::move(gap));
+        } else if (pieceFrom == std::string::npos) {
+            pieceFrom = at;
+        }
+
+        if (last) {
+            flush(block.text.size());
+            break;
+        }
+        at = end + 1;
+    }
 }
 
 Document documentForFile(Document doc) {
     Document out;
     out.reserve(doc.size());
     for (Block& block : doc) {
-        Block trimmed = withMarkupThatSurvives(withStrikeOnWholeWords(withTrimmedSpans(
-            withCodeSpansPerLine(withHeadingOnOneLine(
-                withRawNewline(withEdgesNormalised(std::move(block))))))));
-        // Пустой абзац в файле пустым быть не может: пустая строка там —
-        // разделитель блоков, а не блок. Ставим в него неразрывный пробел, и
-        // отбивка сохраняется — это заметки, и пустые строки в них значимы.
-        if (trimmed.rawSource.empty() && trimmed.kind == Kind::Paragraph &&
-            trimmed.text.empty())
-            trimmed.text = kNbsp;
-        out.push_back(std::move(trimmed));
+        appendSplitOnBlankLines(
+            out, withMarkupThatSurvives(withStrikeOnWholeWords(withTrimmedSpans(
+                     withCodeSpansPerLine(withHeadingOnOneLine(
+                         withRawNewline(withEdgesNormalised(std::move(block)))))))));
     }
 
-    // Подряд идущие пустые абзацы — это один разделитель, а не десять. Так его
-    // высота и выходит предсказуемой: поле сверху, n высот строки, поле снизу.
-    // Десятью блоками между строками добавлялись бы ещё девять полей.
-    Document merged;
-    merged.reserve(out.size());
-    for (Block& block : out) {
-        if (!merged.empty() && isSeparatorBlock(merged.back()) && isSeparatorBlock(block)) {
-            merged.back().text.push_back('\n');
-            merged.back().text += block.text;
-            continue;
-        }
-        merged.push_back(std::move(block));
-    }
-    out = std::move(merged);
+    // Пустые строки в начале документа файл выразить не может: пустая строка
+    // там стоит между блоками, а до первого блока никакого стыка нет — разбор
+    // такие строки просто пропускает. Снимаем их сами, иначе круг разошёлся бы.
+    size_t head = 0;
+    while (head < out.size() && out[head].rawSource.empty() &&
+           out[head].kind == Kind::VSpace)
+        ++head;
+    if (head > 0) out.erase(out.begin(), out.begin() + qsizetype(head));
 
-    // А вот в конце документа пустые строки не нужны: хвост из них набирается
-    // случайно и ничего не отбивает.
-    while (!out.empty() && isBlankParagraph(out.back())) out.pop_back();
+    // В конце документа пустые строки не нужны по той же причине: после
+    // последнего блока стыка тоже нет.
+    while (!out.empty() && out.back().rawSource.empty() &&
+           (out.back().kind == Kind::VSpace ||
+            (out.back().kind == Kind::Paragraph && out.back().text.empty())))
+        out.pop_back();
     if (!out.empty()) {
         Block& last = out.back();
         if (last.rawSource.empty() && last.kind != Kind::Code) {
             while (!last.text.empty() && last.text.back() == '\n') last.text.pop_back();
-            // Хвостовые неразрывные строки последнего блока — тот же случай.
+            // Хвостовые неразрывные строки последнего блока — тот же случай:
+            // пустая строка, которой в файле после последнего блока не бывает.
             const std::string nbsp = kNbsp;
             while (last.text.size() >= nbsp.size() + 1 &&
                    last.text.compare(last.text.size() - nbsp.size(), nbsp.size(), nbsp) == 0 &&
@@ -431,7 +480,22 @@ Document documentForFile(Document doc) {
             out.back().text.empty())
             out.pop_back();
     }
-    return withoutEmptyNested(std::move(out));
+
+    // Последний рубеж инварианта: между блоками, которые в файле слиплись бы,
+    // обязана стоять пустая строка. Операции держат это правило сами, но здесь
+    // мы отвечаем за файл — а испорченный файл дороже лишней проверки.
+    Document spaced;
+    spaced.reserve(out.size() + 2);
+    for (Block& block : out) {
+        if (!spaced.empty() && wouldMerge(spaced.back(), block)) {
+            Block gap;
+            gap.kind = Kind::VSpace;
+            spaced.push_back(std::move(gap));
+        }
+        spaced.push_back(std::move(block));
+    }
+
+    return withoutEmptyNested(std::move(spaced));
 }
 
 SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,

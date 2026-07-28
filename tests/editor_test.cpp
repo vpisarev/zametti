@@ -670,8 +670,19 @@ void checkScrollHolds() {
     editor.openFile(path);
     QTest::qWait(20);
 
+    // Ищем пункт по тексту, а не по номеру: пустые строки между абзацами — тоже
+    // блоки, и номер зависел бы от того, сколько их в заметке.
+    int target = -1;
+    for (QTextBlock block = editor.document()->begin(); block.isValid();
+         block = block.next())
+        if (block.text() == QStringLiteral("пункт 5")) {
+            target = block.blockNumber();
+            break;
+        }
+    check(target > 0, "пункт 5 должен найтись");
+
     QTextCursor cursor = editor.textCursor();
-    cursor.setPosition(editor.document()->findBlockByNumber(45).position());
+    cursor.setPosition(editor.document()->findBlockByNumber(target).position());
     cursor.movePosition(QTextCursor::EndOfBlock);
     editor.setTextCursor(cursor);
     editor.ensureCursorVisible();
@@ -1069,9 +1080,8 @@ void checkSelectionHasNoGaps() {
 }
 
 // Пустые строки — содержимое заметки, а не мусор: ими отбивают куски текста.
-// Набрали, сохранили, открыли заново — они на месте. В файле пустая строка
-// пустой быть не может (там она разделяет блоки), поэтому в неё ставится
-// неразрывный пробел — тот же приём, что и с отступами.
+// Набрали, сохранили, открыли заново — они на месте, и ровно в том же числе.
+// В файл они уходят настоящими пустыми строками, без единого хитрого знака.
 void checkBlankLinesSurviveSaving() {
     const QString path = writeNote("пустые-строки.md",
                                    QStringLiteral("- [ ] дело\n\nдо 19 июля:\n"));
@@ -1114,9 +1124,11 @@ void checkBlankLinesSurviveSaving() {
         }
         return count;
     };
+    // Одиннадцать, а не десять: одна пустая строка была в файле с самого начала,
+    // и теперь она видна — это отдельный блок, а не невидимая отбивка.
     const int before = blankLines();
-    checkEqual(QStringLiteral("10"), QString::number(before),
-               "десять Enter дают десять пустых строк");
+    checkEqual(QStringLiteral("11"), QString::number(before),
+               "десять Enter дают десять пустых строк сверх бывшей в файле");
 
     editor.save(false);
     QTest::qWait(20);
@@ -1148,9 +1160,9 @@ void checkBlankLinesSurviveSaving() {
                "хвост пустых строк в конце не сохраняется");
 }
 
-// Разделитель — кусок из пустых строк, поставленный руками. Его высота обязана
-// быть предсказуемой: поле сверху, n высот строки, поле снизу. Курсор идёт по
-// его строкам ровным шагом, а входит и выходит на шаг плюс поле.
+// Разделитель — прогон пустых строк, поставленный руками. Каждая пустая строка
+// файла — свой блок, поэтому высота разделителя предсказуема сама собой: поле
+// сверху, n высот строки, поле снизу. Курсор идёт по его строкам ровным шагом.
 void checkSeparatorGeometry() {
     const zametti::Appearance saved = zametti::appearance();
     zametti::appearance().separatorSpacingBefore = 0.5;
@@ -1161,8 +1173,7 @@ void checkSeparatorGeometry() {
     } restore{saved};
 
     const QString path =
-        writeNote("разделитель.md",
-                  QString::fromUtf8("- пункт\n\n\xC2\xA0\n\xC2\xA0\n\xC2\xA0\n\nабзац\n"));
+        writeNote("разделитель.md", QStringLiteral("- пункт\n\n\n\nабзац\n"));
 
     zametti::NoteEditor editor;
     editor.resize(700, 500);
@@ -1172,26 +1183,30 @@ void checkSeparatorGeometry() {
     editor.openFile(path);
     QTest::qWait(20);
 
-    // Разделитель — один блок на три строки, а не три блока.
-    checkEqual(QStringLiteral("3"), QString::number(editor.document()->blockCount()),
-               "разделитель остаётся одним блоком");
-    const QTextBlock separator = editor.document()->findBlockByNumber(1);
-    check(separator.layout() != nullptr && separator.layout()->lineCount() == 3,
-          "в разделителе три строки");
+    // Три пустые строки — три блока, а не один блок в три строки.
+    checkEqual(QStringLiteral("5"), QString::number(editor.document()->blockCount()),
+               "каждая пустая строка — свой блок");
+    for (int i = 1; i <= 3; ++i)
+        check(zametti::isVSpaceBlock(editor.document()->findBlockByNumber(i)),
+              "блок " + std::to_string(i) + " — пустая строка");
 
-    // Поля у разделителя свои: сверху и снизу они равны между собой и вдвое
-    // меньше высоты строки — ровно то, что задано настройкой 0.5.
-    const qreal line = separator.blockFormat().lineHeight();
-    const qreal above = separator.blockFormat().topMargin();
-    const qreal below = editor.document()->findBlockByNumber(2).blockFormat().topMargin();
+    // Поля обрамляют прогон целиком: сверху перед первой пустой строкой, снизу
+    // после последней. Внутри прогона полей нет — иначе высота трёх строк
+    // перестала бы быть тремя высотами строки.
+    auto marginOf = [&editor](int number) {
+        return editor.document()->findBlockByNumber(number).blockFormat().topMargin();
+    };
+    const qreal line = editor.document()->findBlockByNumber(1).blockFormat().lineHeight();
+    const qreal above = marginOf(1);
+    const qreal below = marginOf(4);
     check(above > 0.0 && qAbs(above - below) < 0.01,
           "поля над и под разделителем равны между собой");
     check(qAbs(above / line - 0.5) < 0.1, "и составляют половину высоты строки");
+    check(marginOf(2) <= 0.01 && marginOf(3) <= 0.01, "внутри разделителя полей нет");
 
-    // Шаги курсора по строкам разделителя одинаковы.
+    // Шаги курсора по пустым строкам одинаковы и равны высоте строки.
     QTextCursor cursor = editor.textCursor();
-    cursor.setPosition(editor.document()->firstBlock().position());
-    cursor.movePosition(QTextCursor::EndOfBlock);
+    cursor.setPosition(editor.document()->findBlockByNumber(1).position());
     editor.setTextCursor(cursor);
     QTest::qWait(10);
 
@@ -1204,8 +1219,6 @@ void checkSeparatorGeometry() {
         return rect.top() + (at.isValid() ? at.y() : 0.0);
     };
 
-    QTest::keyClick(&editor, Qt::Key_Down);
-    QTest::qWait(10);
     const qreal first = lineTop();
     QTest::keyClick(&editor, Qt::Key_Down);
     QTest::qWait(10);

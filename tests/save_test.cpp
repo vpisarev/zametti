@@ -112,17 +112,18 @@ const char* const kNonCanonical[] = {
     "текст\n\n\n\nчерез три пустых строки\n",
 };
 
-// Испорченный читатель: отдаёт заголовок девятого уровня. Столько решёток
-// markdown заголовком не считает — разбор возвращает обычный абзац, и
-// самопроверка обязана это поймать.
+// Испорченный читатель: выдаёт за дословный кусок то, что дословным куском не
+// является. Строка с палочками без строки-разделителя — не таблица, разбор
+// вернёт обычный абзац, и самопроверка обязана это поймать.
 //
-// Раньше поломкой был заголовок с переводом строки внутри, но такой заголовок
-// теперь сводится в одну строку перед записью, и ловить стало нечего.
+// Прежние поломки перестали годиться: заголовок с переводом строки внутри
+// сводится в одну строку перед записью, заголовок девятого уровня ядро считает
+// недопустимым IR и падает на проверке, не дойдя до самопроверки, а название
+// языка с обратной кавычкой сериализатор сам выводит забором из волнистых
+// черт — и круг сходится.
 zametti::Document brokenReader(const QTextDocument&) {
     zametti::Block b;
-    b.kind = zametti::Kind::Heading;
-    b.headingLevel = 9;
-    b.text = "мнимый заголовок";
+    b.rawSource = "| это не таблица |\n";
     return {b};
 }
 
@@ -143,7 +144,7 @@ void checkRescue() {
 
     const QString rescuePath = path + QStringLiteral(".rescue-stamp");
     check(QFile::exists(rescuePath), "аварийный файл не создан");
-    checkEqual("######### мнимый заголовок\n", readFile(rescuePath),
+    checkEqual("| это не таблица |\n", readFile(rescuePath),
                "содержимое аварийного файла");
 }
 
@@ -274,8 +275,8 @@ void checkEdgeSpaces() {
             zametti::saveDocument(doc, path, QStringLiteral("test"));
         check(outcome.result != zametti::SaveResult::Rescued,
               "пустая строка внутри блока не должна уводить в аварийный файл");
-        checkEqual("первая\n\xC2\xA0\nвторая\n", readFile(path),
-                   "пустая строка сохранена неразрывным пробелом");
+        checkEqual("первая\n\nвторая\n", readFile(path),
+                   "пустая строка внутри абзаца стала настоящей пустой строкой");
     }
 
     // А в конце документа пустые строки не нужны: хвост из них набирается
@@ -422,20 +423,17 @@ void checkEdgeSpaces() {
     {
         const QString path = pathFor("потомки-пустого.md");
         check(writeFile(path, "заглушка\n"), "не записать исходник");
-        // tight ставим сами: IR здесь строится руками, а плотность стыка —
-        // такая же его часть, как род и уровень.
-        auto item = [](zametti::Kind kind, int level, const char* text, bool tight) {
+        auto item = [](zametti::Kind kind, int level, const char* text) {
             zametti::Block block;
             block.kind = kind;
             block.level = level;
             block.text = text;
-            block.tight = tight;
             return block;
         };
         QTextDocument doc;
-        zametti::buildDocument({item(zametti::Kind::Bullet, 0, "раз", false),
-                                item(zametti::Kind::Bullet, 1, "", true),
-                                item(zametti::Kind::Bullet, 2, "внук", true)},
+        zametti::buildDocument({item(zametti::Kind::Bullet, 0, "раз"),
+                                item(zametti::Kind::Bullet, 1, ""),
+                                item(zametti::Kind::Bullet, 2, "внук")},
                                doc);
         const zametti::SaveOutcome outcome =
             zametti::saveDocument(doc, path, QStringLiteral("test"));

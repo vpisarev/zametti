@@ -163,6 +163,9 @@ void fuzzFile(const fs::path& path, int rounds, uint32_t seed) {
             // висящий перенос, пробел на краю, недописанную разметку.
             const char* typed = kTyped[rng() % (sizeof(kTyped) / sizeof(kTyped[0]))];
             cursor.insertText(QString::fromUtf8(typed));
+            // Ровно как в редакторе: набор на пустой строке разбирается сразу
+            // после того, как знак введён.
+            repairAfterTyping(doc, cursor);
             what = std::string("набрать \"") + typed + "\"";
         } else {
             const Operation& op = kOperations[rng() % (sizeof(kOperations) / sizeof(kOperations[0]))];
@@ -175,10 +178,21 @@ void fuzzFile(const fs::path& path, int rounds, uint32_t seed) {
             // — пересборка из снимка, ровно как в редакторе.
             QTextDocument undone;
             buildDocument(before, undone);
-            if (toJson(readDocument(undone)) != beforeJson) {
+            const Document back = readDocument(undone);
+            if (toJson(back) != beforeJson) {
                 steps.push_back(what);
+                std::string diff;
+                for (size_t i = 0; i < before.size() || i < back.size(); ++i) {
+                    const std::string was = i < before.size() ? oneLine(before[i]) : "<нет>";
+                    const std::string now = i < back.size() ? oneLine(back[i]) : "<нет>";
+                    if (was == now) continue;
+                    diff = "\n  блок " + std::to_string(i) + " разошёлся:\n    было:  " + was +
+                           "\n    стало: " + now;
+                    break;
+                }
                 ZT_TRUE(std::string("отмена не вернула документ: ") + path.string() +
-                                 " (зерно " + std::to_string(seed) + ")" + describe(steps), false);
+                                 " (зерно " + std::to_string(seed) + ")" + describe(steps) + diff,
+                        false);
                 return;
             }
         }
@@ -194,15 +208,25 @@ void fuzzFile(const fs::path& path, int rounds, uint32_t seed) {
         }
 
         // Строение обязано остаться правильным.
-        const bool lists = listInvariantHolds(doc);
+        QString listProblem;
+        const bool lists = listInvariantHolds(doc, &listProblem);
         ZT_TRUE(std::string("строение списка: ") + path.string() + " (зерно " +
-                    std::to_string(seed) + ")" + describe(steps),
+                    std::to_string(seed) + ")" + describe(steps) + "\n  " +
+                    listProblem.toStdString() +
+                    (lists ? std::string() : "\n  документ: " + toJson(readDocument(doc))),
                 lists);
         const bool literals = literalInvariantHolds(doc);
         ZT_TRUE(std::string("разбивка литерального блока: ") + path.string() + " (зерно " +
                     std::to_string(seed) + ")" + describe(steps),
                 literals);
-        if (!lists || !literals) return;
+        QString gapProblem;
+        const bool gaps = gapInvariantHolds(doc, &gapProblem);
+        ZT_TRUE(std::string("пустые строки: ") + path.string() + " (зерно " +
+                    std::to_string(seed) + ")" + describe(steps) + "\n  " +
+                    gapProblem.toStdString() +
+                    (gaps ? std::string() : "\n  документ: " + toJson(readDocument(doc))),
+                gaps);
+        if (!lists || !literals || !gaps) return;
 
         // И документ обязан оставаться записываемым: иначе человек получил бы
         // аварийный файл вместо сохранения.

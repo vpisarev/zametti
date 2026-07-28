@@ -11,6 +11,7 @@ const char* kindName(Kind k) {
         case Kind::Heading:       return "heading";
         case Kind::Code:          return "code";
         case Kind::Quote:         return "quote";
+        case Kind::VSpace:        return "vspace";
         case Kind::Bullet:        return "bullet";
         case Kind::TaskUnchecked: return "task-unchecked";
         case Kind::TaskChecked:   return "task-checked";
@@ -55,9 +56,6 @@ std::string toJson(const Document& doc) {
     for (size_t i = 0; i < doc.size(); ++i) {
         const Block& b = doc[i];
         out += "  {";
-        // Плотность стыка — свойство границы с предыдущим блоком; у первого её
-        // быть не может.
-        if (b.tight && i > 0) out += "\"tight\": true, ";
         if (!b.rawSource.empty()) {
             out += "\"raw\": ";
             appendJsonString(out, b.rawSource);

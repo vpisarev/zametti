@@ -128,9 +128,6 @@ Document readDocument(const QTextDocument& doc) {
             flush();
             hasPending = true;
             pendingRaw = raw;
-            // Плотность стыка — свойство границы, и живёт она на первом блоке
-            // логического: строки-продолжения к своему соседу и так вплотную.
-            pending.tight = isTightBlock(block);
             if (!raw) {
                 pending.kind = kindOf(block);
                 if (pending.kind == Kind::Heading) pending.headingLevel = format.headingLevel();
@@ -138,7 +135,10 @@ Document readDocument(const QTextDocument& doc) {
                 if (pending.kind == Kind::Code)
                     pending.info = toUtf8(format.stringProperty(InfoProperty));
             }
-            readBlock(block, pending, !raw);
+            // Разметку внутри блока кода не читаем: содержимое там буквальное,
+            // и сборщик её всё равно не поставит — прочитанное разошлось бы с
+            // собранным, а на этом стоит инвариант A.
+            readBlock(block, pending, !raw && pending.kind != Kind::Code);
         }
 
         // Признак стоит на последней строке блока — там, где перевод и был.

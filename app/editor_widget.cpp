@@ -358,7 +358,12 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
         return;
     }
     if (event->key() == Qt::Key_Backspace && event->modifiers() == Qt::NoModifier &&
-        runOperation(unwrapListItemAtCursor))
+        (runOperation(unwrapListItemAtCursor) || runOperation(joinAcrossVSpaceBackward)))
+        return;
+    // Delete у пустой строки — то же самое с другой стороны: строка исчезает, а
+    // соседи, которым markdown не даёт стоять раздельно, сливаются.
+    if (event->key() == Qt::Key_Delete && event->modifiers() == Qt::NoModifier &&
+        runOperation(joinAcrossVSpaceForward))
         return;
 
     // Tab и Shift+Tab внутри списка двигают пункт по уровням; вне списка
@@ -626,6 +631,20 @@ void NoteEditor::onContentsChanged() {
     // неотличимы от правки текста, и без этих двух признаков ширина окна
     // заводила бы шаг истории.
     if (recordingSuspended_ || changingLayout()) return;
+
+    // Набор — единственная правка мимо операций, и он умеет ломать инвариант
+    // пустых строк: текстом на пустой строке и выделением, съевшим границу
+    // блоков. Чиним здесь, а не в обработчике клавиш: текст приходит и мимо
+    // него — из системы ввода, из вставки, из подстановки.
+    //
+    // Починка меняет документ и вызывает этот обработчик заново, но признак
+    // операции уже поднят, и второй заход сразу возвращается.
+    QTextCursor cursor = textCursor();
+    recordingSuspended_ = true;
+    const bool repaired = repairAfterTyping(*document(), cursor);
+    recordingSuspended_ = false;
+    if (repaired) setTextCursor(cursor);
+
     recordEdit();
     autosave_.start(appearance().autosaveDelayMs);
 }

@@ -700,7 +700,6 @@ std::string serialize(const Document& doc) {
     std::vector<char> runAlive{0};      // на этом уровне прогон ещё идёт
     std::vector<char> runOrdered{0};    // и он нумерованный
 
-    bool prevWasList = false;
     bool prevWasQuote = false;
     // Нужен только ассерту ниже: в сборке с NDEBUG он исчезает вместе с ним.
     [[maybe_unused]] int prevLevel = -1;
@@ -712,27 +711,37 @@ std::string serialize(const Document& doc) {
         bool thisIsList = b.rawSource.empty() && isList(b.kind);
         bool thisIsQuote = b.rawSource.empty() && b.kind == Kind::Quote;
 
-        if (i > 0) {
-            // Абзацы одной цитаты разделяются строкой ">": иначе цитата
-            // развалилась бы на две. Это не про плотность, а про то, чем цитата
-            // держится вместе.
-            if (prevWasQuote && thisIsQuote) out += ">\n";
-            // Плотный стык — тот, где пустой строки не было. Так markdown
-            // отличает список сразу под вводной фразой от списка через строку,
-            // и терять это различие нельзя: в редакторе оно видно глазом.
-            //
-            // Только у списка. Плотный абзац после пункта markdown прочтёт
-            // продолжением этого пункта, а плотный абзац после абзаца — одним
-            // абзацем: признак там не выразить, сколько его ни храни.
-            else if (b.tight && thisIsList) {}
-            else out += "\n";
+        // Пустая строка выводится только блоком VSpace — от себя не добавляем
+        // ничего. Иначе обязательная пустая строка при следующем чтении стала бы
+        // блоком VSpace, которого никто не набирал, и круг бы разошёлся. Что два
+        // соседних блока не слипнутся, держит инвариант IR: между такими всегда
+        // стоит VSpace (см. wouldMerge в ir.h).
+        // Текст в пустой строке инвариант запрещает, но если он там всё же
+        // оказался — печатаем его абзацем. Текст свят; потерять его нельзя ни
+        // при каких обстоятельствах.
+        if (b.rawSource.empty() && b.kind == Kind::VSpace && b.text.empty()) {
+            out += "\n";
+            // Прогон списка пустая строка не обрывает: "- раз\n\n- два" — один
+            // список, просто просторный. А вот цитату обрывает: две цитаты
+            // через пустую строку — именно две, и разделять их строкой ">"
+            // нельзя, она бы их снова склеила.
+            prevWasQuote = false;
+            continue;
         }
+
+        // Абзацы одной цитаты разделяются строкой ">": иначе цитата развалилась
+        // бы на две.
+        if (i > 0 && prevWasQuote && thisIsQuote) out += ">\n";
+        // Последний рубеж инварианта: если между блоками нет VSpace, а без
+        // пустой строки они слипнутся, — ставим её. Такое IR неправильно, но
+        // испортить файл оно не должно.
+        else if (i > 0 && wouldMerge(doc[i - 1], b))
+            out += "\n";
 
         if (!b.rawSource.empty()) {
             out += b.rawSource;
             if (out.empty() || out.back() != '\n') out.push_back('\n');
             std::fill(runAlive.begin(), runAlive.end(), 0);
-            prevWasList = false;
             prevWasQuote = false;
             prevLevel = -1;
             continue;
@@ -772,6 +781,7 @@ std::string serialize(const Document& doc) {
                 break;
             }
 
+            case Kind::VSpace:
             case Kind::Paragraph: {
                 TextSink sink;
                 sink.hasLinkDefs = hasLinkDefs;
@@ -841,7 +851,6 @@ std::string serialize(const Document& doc) {
         }
 
         if (!thisIsList) std::fill(runAlive.begin(), runAlive.end(), 0);
-        prevWasList = thisIsList;
         prevWasQuote = thisIsQuote;
         prevLevel = thisIsList ? b.level : -1;
     }
