@@ -65,16 +65,24 @@ QTextBlock blockForIrIndex(const QTextDocument& doc, int index) {
     return QTextBlock();
 }
 
+MarkerStyle markerOf(const QTextBlock& block) {
+    const QTextBlockFormat format = block.blockFormat();
+    return {static_cast<Marker>(format.intProperty(MarkerProperty)),
+            format.boolProperty(CheckedProperty)};
+}
+
 bool isTaskBlock(const QTextBlock& block) {
-    if (!isListBlock(block)) return false;
-    const Kind kind = kindOf(block);
-    return kind == Kind::TaskUnchecked || kind == Kind::TaskChecked;
+    return isListBlock(block) && markerOf(block).marker == Marker::Task;
+}
+
+bool isOrderedBlock(const QTextBlock& block) {
+    return isListBlock(block) && markerOf(block).marker == Marker::Ordered;
 }
 
 int ordinalOf(const QTextBlock& block) {
     if (!isListBlock(block)) return 0;
     const int level = levelOf(block);
-    const bool ordered = isOrdered(kindOf(block));
+    const bool ordered = isOrderedBlock(block);
 
     int ordinal = 1;
     for (QTextBlock prev = block.previous(); prev.isValid(); prev = prev.previous()) {
@@ -83,7 +91,7 @@ int ordinalOf(const QTextBlock& block) {
         const int prevLevel = levelOf(prev);
         if (prevLevel > level) continue;             // вложенный подсписок прогон не рвёт
         if (prevLevel < level) break;                // вышли из своего уровня
-        if (isOrdered(kindOf(prev)) != ordered) break;
+        if (isOrderedBlock(prev) != ordered) break;
         ++ordinal;
     }
     return ordinal;

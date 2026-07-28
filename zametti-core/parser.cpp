@@ -293,11 +293,9 @@ bool attrToString(const MD_ATTRIBUTE& a, std::string& out) {
     return true;
 }
 
-Kind kindForListItem(const Ctx& c, bool ordered, bool isTask, char taskMark) {
-    (void)c;
-    if (ordered) return Kind::Ordered;
-    if (!isTask) return Kind::Bullet;
-    return (taskMark == 'x' || taskMark == 'X') ? Kind::TaskChecked : Kind::TaskUnchecked;
+Marker markerForListItem(bool ordered, bool isTask) {
+    if (ordered) return Marker::Ordered;
+    return isTask ? Marker::Task : Marker::Bullet;
 }
 
 int enterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
@@ -380,8 +378,9 @@ int enterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
             // Плотные списки md4c в MD_BLOCK_P не заворачивает: текст приходит
             // прямо в элемент. Поэтому блок открываем здесь, а MD_BLOCK_P, если
             // он всё-таки придёт (разреженный список), просто продолжит его.
-            startLeaf(c, kindForListItem(c, ordered, f.isTask, f.taskMark), 0,
-                      listDepthOf(c) - 1);
+            startLeaf(c, Kind::ListItem, 0, listDepthOf(c) - 1);
+            c.cur.marker = markerForListItem(ordered, f.isTask);
+            c.cur.checked = f.isTask && (f.taskMark == 'x' || f.taskMark == 'X');
             break;
         }
 

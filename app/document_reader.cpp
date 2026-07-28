@@ -131,7 +131,11 @@ Document readDocument(const QTextDocument& doc) {
             if (!raw) {
                 pending.kind = kindOf(block);
                 if (pending.kind == Kind::Heading) pending.headingLevel = format.headingLevel();
-                if (isList(pending.kind)) pending.level = levelOf(block);
+                if (isList(pending.kind)) {
+                    pending.marker = markerOf(block).marker;
+                    pending.checked = markerOf(block).checked;
+                    pending.level = levelOf(block);
+                }
                 if (pending.kind == Kind::Code)
                     pending.info = toUtf8(format.stringProperty(InfoProperty));
             }

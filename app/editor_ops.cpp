@@ -429,10 +429,18 @@ bool toggleInlineStyle(QTextDocument& doc, QTextCursor& cursor, int style) {
 }
 
 
+// Во что превращаем блок: род, а у пункта — ещё и маркер с отметкой. Родом
+// маркер не выражается: род у всех пунктов один.
+struct BlockTarget {
+    Kind kind = Kind::Paragraph;
+    Marker marker = Marker::Bullet;
+    bool checked = false;
+};
+
 // Смена рода одного блока. Блок берётся по номеру, а не ссылкой: вставка и
 // удаление внутри цикла двигают позиции, и заранее взятый блок устарел бы.
 // Возвращает false, если блок трогать не следует.
-bool convertBlock(QTextDocument& doc, int number, Kind target) {
+bool convertBlock(QTextDocument& doc, int number, BlockTarget target) {
     const QTextBlock block = doc.findBlockByNumber(number);
     if (!block.isValid() || isRawBlock(block)) return false;
     const Kind from = kindOf(block);
@@ -443,13 +451,14 @@ bool convertBlock(QTextDocument& doc, int number, Kind target) {
     QString insert;
     int strip = 0;
 
-    if (target == Kind::Paragraph) {
+    if (target.kind == Kind::Paragraph) {
         format.clearProperty(KindProperty);
+        format.clearProperty(MarkerProperty);
+        format.clearProperty(CheckedProperty);
         format.clearProperty(LevelProperty);
         format.setLeftMargin(0);
         format.setHeadingLevel(0);
     } else {
-        Kind actual = target;
         // Отметка задачи при переходе в другой вид списка просто исчезает.
         // Раньше она переезжала в начало содержимого обычным текстом — чтобы не
         // пропадала молча, — но выглядело это как "1. [x] дело", то есть как
@@ -458,20 +467,26 @@ bool convertBlock(QTextDocument& doc, int number, Kind target) {
         // Обратный ход: буллет, содержимое которого начинается с отметки, файл
         // всё равно прочтёт задачей. Делаем задачу сразу и убираем отметку из
         // текста — иначе документ разошёлся бы с тем, что окажется на диске.
-        if (target == Kind::Bullet) {
+        if (target.kind == Kind::ListItem && target.marker == Marker::Bullet) {
             const QString text = block.text();
             if (text.startsWith(QStringLiteral("[x] ")) ||
                 text.startsWith(QStringLiteral("[X] "))) {
-                actual = Kind::TaskChecked;
+                target.marker = Marker::Task;
+                target.checked = true;
                 strip = 4;
             } else if (text.startsWith(QStringLiteral("[ ] "))) {
-                actual = Kind::TaskUnchecked;
+                target.marker = Marker::Task;
+                target.checked = false;
                 strip = 4;
             }
         }
-        format.setProperty(KindProperty, int(actual));
-        format.setProperty(LevelProperty, isListBlock(block) ? levelOf(block) : 0);
+        format.setProperty(KindProperty, int(target.kind));
         format.setHeadingLevel(0);
+        if (target.kind == Kind::ListItem) {
+            format.setProperty(MarkerProperty, int(target.marker));
+            format.setProperty(CheckedProperty, target.checked);
+            format.setProperty(LevelProperty, isListBlock(block) ? levelOf(block) : 0);
+        }
     }
 
     QTextCursor edit(&doc);
@@ -489,7 +504,7 @@ bool convertBlock(QTextDocument& doc, int number, Kind target) {
     return true;
 }
 
-bool setBlockKind(QTextDocument& doc, QTextCursor& cursor, Kind target) {
+bool setBlockKind(QTextDocument& doc, QTextCursor& cursor, BlockTarget target) {
     const BlockRange range = selectedBlocks(doc, cursor);
 
     QTextCursor edit(&doc);
@@ -508,7 +523,7 @@ namespace {
 
 // Что за автозамену просит набранное. Пусто — ничего не просит.
 struct InputRule {
-    Kind kind = Kind::Paragraph;
+    BlockTarget target;
     int headingLevel = 0;
     int prefix = 0;        // сколько знаков убрать из начала блока
     bool matched = false;
@@ -525,15 +540,15 @@ bool isBulletMarker(QChar c) {
 // ("-["). В уже готовом буллете её принимать нельзя: тогда при наборе полного
 // "- [ ] " правило срабатывало бы на "[ " и закрывающая скобка оставалась бы в
 // тексте — проверено на живом редакторе, выходило "- [ ] ] дело".
-Kind matchCheckbox(const QString& body, bool allowUnclosed, bool& matched) {
+BlockTarget matchCheckbox(const QString& body, bool allowUnclosed, bool& matched) {
     matched = true;
-    if (body == QStringLiteral("[]") || body == QStringLiteral("[ ]"))
-        return Kind::TaskUnchecked;
+    const BlockTarget task{Kind::ListItem, Marker::Task, false};
+    if (body == QStringLiteral("[]") || body == QStringLiteral("[ ]")) return task;
     if (body == QStringLiteral("[x]") || body == QStringLiteral("[X]"))
-        return Kind::TaskChecked;
-    if (allowUnclosed && body == QStringLiteral("[")) return Kind::TaskUnchecked;
+        return {Kind::ListItem, Marker::Task, true};
+    if (allowUnclosed && body == QStringLiteral("[")) return task;
     matched = false;
-    return Kind::Paragraph;
+    return {};
 }
 
 InputRule matchInputRule(const QTextBlock& block, const QString& typed) {
@@ -544,9 +559,9 @@ InputRule matchInputRule(const QTextBlock& block, const QString& typed) {
 
     // Чекбокс в начале буллета. Только в буллете: в нумерованном пункте "[x]" —
     // обычный текст, и превращать его в чекбокс нельзя.
-    if (kind == Kind::Bullet) {
+    if (isListBlock(block) && markerOf(block).marker == Marker::Bullet) {
         bool matched = false;
-        const Kind task = matchCheckbox(body, false, matched);
+        const BlockTarget task = matchCheckbox(body, false, matched);
         if (matched) return {task, 0, int(typed.size()), true};
     }
 
@@ -558,27 +573,27 @@ InputRule matchInputRule(const QTextBlock& block, const QString& typed) {
         const int after = body.at(1) == QLatin1Char(' ') ? 2 : 1;
         bool matched = false;
         // Слитно с маркером — короткий путь, недописанная скобка допустима.
-        const Kind task = matchCheckbox(body.mid(after), after == 1, matched);
+        const BlockTarget task = matchCheckbox(body.mid(after), after == 1, matched);
         if (matched) return {task, 0, int(typed.size()), true};
     }
 
     // Маркер буллета: любой из трёх, как и в файле. В файл уйдёт дефис — знак
     // маркера канон не хранит.
     if (body.size() == 1 && isBulletMarker(body.at(0)))
-        return {Kind::Bullet, 0, 2, true};
+        return {{Kind::ListItem, Marker::Bullet, false}, 0, 2, true};
 
     // Номер: цифры и точка или скобка.
     int digits = 0;
     while (digits < body.size() && body.at(digits).isDigit()) ++digits;
     if (digits > 0 && digits + 1 == body.size() &&
         (body.at(digits) == QLatin1Char('.') || body.at(digits) == QLatin1Char(')')))
-        return {Kind::Ordered, 0, int(typed.size()), true};
+        return {{Kind::ListItem, Marker::Ordered, false}, 0, int(typed.size()), true};
 
     // Заголовок: от одной решётки до шести.
     int hashes = 0;
     while (hashes < body.size() && body.at(hashes) == QLatin1Char('#')) ++hashes;
     if (hashes >= 1 && hashes <= 6 && hashes == body.size() && kind != Kind::Heading)
-        return {Kind::Heading, hashes, int(typed.size()), true};
+        return {{Kind::Heading, Marker::Bullet, false}, hashes, int(typed.size()), true};
 
     return {};
 }
@@ -677,12 +692,16 @@ bool applyInputRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     }
 
     QTextBlockFormat format = doc.findBlock(start).blockFormat();
-    if (rule.kind == Kind::Heading) {
+    if (rule.target.kind == Kind::Heading) {
         format.clearProperty(LevelProperty);
+        format.clearProperty(MarkerProperty);
+        format.clearProperty(CheckedProperty);
         format.setProperty(KindProperty, int(Kind::Heading));
         format.setHeadingLevel(rule.headingLevel);
     } else {
-        format.setProperty(KindProperty, int(rule.kind));
+        format.setProperty(KindProperty, int(rule.target.kind));
+        format.setProperty(MarkerProperty, int(rule.target.marker));
+        format.setProperty(CheckedProperty, rule.target.checked);
         format.setProperty(LevelProperty, isListBlock(block) ? levelOf(block) : 0);
         format.setHeadingLevel(0);
     }
@@ -772,19 +791,19 @@ QTextCharFormat inlineStyleForTyping(const QTextCharFormat& current, int style) 
 }
 
 bool makeBullet(QTextDocument& doc, QTextCursor& cursor) {
-    return setBlockKind(doc, cursor, Kind::Bullet);
+    return setBlockKind(doc, cursor, {Kind::ListItem, Marker::Bullet, false});
 }
 
 bool makeOrdered(QTextDocument& doc, QTextCursor& cursor) {
-    return setBlockKind(doc, cursor, Kind::Ordered);
+    return setBlockKind(doc, cursor, {Kind::ListItem, Marker::Ordered, false});
 }
 
 bool makeTask(QTextDocument& doc, QTextCursor& cursor) {
-    return setBlockKind(doc, cursor, Kind::TaskUnchecked);
+    return setBlockKind(doc, cursor, {Kind::ListItem, Marker::Task, false});
 }
 
 bool makeParagraph(QTextDocument& doc, QTextCursor& cursor) {
-    return setBlockKind(doc, cursor, Kind::Paragraph);
+    return setBlockKind(doc, cursor, {Kind::Paragraph, Marker::Bullet, false});
 }
 
 bool toggleTaskAtCursor(QTextDocument& doc, QTextCursor& cursor) {
@@ -792,11 +811,11 @@ bool toggleTaskAtCursor(QTextDocument& doc, QTextCursor& cursor) {
 
     // Направление задаёт первая задача выделения: остальные идут за ней.
     bool found = false;
-    Kind target = Kind::TaskUnchecked;
+    bool target = true;
     QTextBlock block = doc.findBlockByNumber(range.first);
     for (int i = range.first; i <= range.last && block.isValid(); ++i, block = block.next()) {
         if (isRawBlock(block) || !isTaskBlock(block)) continue;
-        target = kindOf(block) == Kind::TaskChecked ? Kind::TaskUnchecked : Kind::TaskChecked;
+        target = !markerOf(block).checked;
         found = true;
         break;
     }
@@ -807,9 +826,9 @@ bool toggleTaskAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     block = doc.findBlockByNumber(range.first);
     for (int i = range.first; i <= range.last && block.isValid(); ++i, block = block.next()) {
         if (isRawBlock(block) || !isTaskBlock(block)) continue;
-        if (kindOf(block) == target) continue;
+        if (markerOf(block).checked == target) continue;
         QTextBlockFormat format = block.blockFormat();
-        format.setProperty(KindProperty, int(target));
+        format.setProperty(CheckedProperty, target);
         setBlockFormat(edit, block, format);
     }
     // Ширина рамки у обеих задач одна, но выделение могло зацепить и соседей:
@@ -1057,17 +1076,19 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
     } else {
         next.clearProperty(ContinuationProperty);
         next.clearProperty(TrailingNewlineProperty);
+        // Новый пункт всегда невыполненный: отмечать за человека нечего.
+        if (isTaskBlock(block)) next.setProperty(CheckedProperty, false);
         switch (kindOf(block)) {
-            case Kind::TaskChecked:
-                // Новый пункт всегда невыполненный: отмечать за человека нечего.
-                next.setProperty(KindProperty, int(Kind::TaskUnchecked));
-                break;
             case Kind::Heading:
                 // За заголовком идёт обычный текст, а не второй заголовок.
                 next.clearProperty(KindProperty);
                 next.setHeadingLevel(0);
                 break;
-            default:
+            case Kind::Paragraph:
+            case Kind::Code:
+            case Kind::Quote:
+            case Kind::VSpace:
+            case Kind::ListItem:
                 break;
         }
     }
@@ -1148,7 +1169,7 @@ bool unwrapListItemAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const QTextBlock previous = block.previous();
     const bool sameList = previous.isValid() && isListBlock(previous) &&
                           levelOf(previous) == levelOf(block) &&
-                          isOrdered(kindOf(previous)) == isOrdered(kindOf(block)) &&
+                          isOrderedBlock(previous) == isOrderedBlock(block) &&
                           isTaskBlock(previous) == isTaskBlock(block);
     if (sameList && !isContinuationBlock(block)) {
         const int join = previous.position() + previous.length() - 1;
@@ -1350,10 +1371,11 @@ void applyListGeometry(QTextDocument& doc, BlockRange range) {
                 runOf.push_back(-1);
                 continue;
             }
-            const Kind kind = kindOf(block);
+            const MarkerStyle style = markerOf(block);
             const int level = qMax(0, levelOf(block));
-            const int ordinal = runs.next(level, isOrdered(kind));
-            const int family = isOrdered(kind) ? 2 : (isTaskBlock(block) ? 1 : 0);
+            const bool ordered = style.marker == Marker::Ordered;
+            const int ordinal = runs.next(level, ordered);
+            const int family = ordered ? 2 : (style.marker == Marker::Task ? 1 : 0);
             if (int(currentRun.size()) <= level) {
                 currentRun.resize(size_t(level) + 1, -1);
                 currentFamily.resize(size_t(level) + 1, -1);
@@ -1367,7 +1389,7 @@ void applyListGeometry(QTextDocument& doc, BlockRange range) {
             const int run = currentRun[size_t(level)];
             runOf.push_back(run);
             widest[size_t(run)] =
-                qMax(widest[size_t(run)], markerColumn(kind, ordinal, base));
+                qMax(widest[size_t(run)], markerColumn(style, ordinal, base));
         }
     }
 

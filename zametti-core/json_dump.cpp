@@ -12,10 +12,16 @@ const char* kindName(Kind k) {
         case Kind::Code:          return "code";
         case Kind::Quote:         return "quote";
         case Kind::VSpace:        return "vspace";
-        case Kind::Bullet:        return "bullet";
-        case Kind::TaskUnchecked: return "task-unchecked";
-        case Kind::TaskChecked:   return "task-checked";
-        case Kind::Ordered:       return "ordered";
+        case Kind::ListItem:      return "list-item";
+    }
+    return "?";
+}
+
+const char* markerName(Marker m) {
+    switch (m) {
+        case Marker::Bullet:  return "bullet";
+        case Marker::Ordered: return "ordered";
+        case Marker::Task:    return "task";
     }
     return "?";
 }
@@ -69,6 +75,11 @@ std::string toJson(const Document& doc) {
                 appendInt(out, b.headingLevel);
             }
             if (isList(b.kind)) {
+                out += ", \"marker\": \"";
+                out += markerName(b.marker);
+                out += '"';
+                if (b.marker == Marker::Task)
+                    out += b.checked ? ", \"checked\": true" : ", \"checked\": false";
                 out += ", \"level\": ";
                 appendInt(out, b.level);
             }

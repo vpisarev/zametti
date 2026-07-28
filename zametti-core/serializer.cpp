@@ -631,30 +631,29 @@ void validate(const Block& b) {
     assert((b.kind != Kind::Heading || (b.headingLevel >= 1 && b.headingLevel <= 6)) &&
            "уровень заголовка вне 1..6");
     assert((isList(b.kind) || b.level == 0) && "level осмыслен только у элементов списка");
+    assert((b.kind == Kind::ListItem || !b.checked) && "отметка осмысленна только у задачи");
     assert((b.kind == Kind::Code || b.info.empty()) && "info осмыслена только у блока кода");
     assert(b.level >= 0 && "отрицательный уровень вложенности");
 }
 
-std::string markerFor(Kind kind, int ordinal) {
-    switch (kind) {
-        case Kind::Bullet:        return "- ";
-        case Kind::TaskUnchecked: return "- [ ] ";
-        case Kind::TaskChecked:   return "- [x] ";
-        case Kind::Ordered: {
+std::string markerFor(const Block& b, int ordinal) {
+    switch (b.marker) {
+        case Marker::Bullet:  return "- ";
+        case Marker::Task:    return b.checked ? "- [x] " : "- [ ] ";
+        case Marker::Ordered: {
             char buf[24];
             std::snprintf(buf, sizeof(buf), "%d. ", ordinal);
             return buf;
         }
-        default:
-            return {};
     }
+    return {};
 }
 
 // Ширина собственно маркера списка. Чекбокс "[ ] " маркером не является — это
 // уже содержимое элемента, и вложенный список отсчитывается не от него:
 // "- [ ] a" + "  - b" даёт вложенность, а не продолжение текста.
-size_t markerIndentWidth(Kind kind, int ordinal) {
-    if (kind != Kind::Ordered) return 2;
+size_t markerIndentWidth(const Block& b, int ordinal) {
+    if (b.marker != Marker::Ordered) return 2;
     char buf[24];
     std::snprintf(buf, sizeof(buf), "%d. ", ordinal);
     return std::string(buf).size();
@@ -806,7 +805,7 @@ std::string serialize(const Document& doc) {
                 break;
             }
 
-            default: {   // элементы списка
+            case Kind::ListItem: {
                 assert(b.level <= prevLevel + 1 &&
                        "уровень вложенности перепрыгнут: такого разбор не порождает");
                 size_t level = static_cast<size_t>(b.level);
@@ -819,16 +818,16 @@ std::string serialize(const Document& doc) {
 
                 // Прогон на уровне продолжается и через вложенный подсписок:
                 // "1. / 1.1 / 2." — второй пункт верхнего уровня всё ещё второй.
-                bool ord = isOrdered(b.kind);
+                bool ord = isOrdered(b);
                 bool sameRun = runAlive[level] && (runOrdered[level] != 0) == ord;
                 ordinal[level] = sameRun ? ordinal[level] + 1 : 1;
                 runAlive[level] = 1;
                 runOrdered[level] = ord ? 1 : 0;
                 for (size_t k = level + 1; k < ordinal.size(); ++k) runAlive[k] = 0;
 
-                std::string marker = markerFor(b.kind, ordinal[level]);
+                std::string marker = markerFor(b, ordinal[level]);
                 size_t indent = contentCol[level];
-                size_t childIndent = indent + markerIndentWidth(b.kind, ordinal[level]);
+                size_t childIndent = indent + markerIndentWidth(b, ordinal[level]);
                 contentCol[level + 1] = childIndent;
 
                 out.append(indent, ' ');

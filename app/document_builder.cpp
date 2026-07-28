@@ -301,7 +301,11 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
             blockFmt.setProperty(RawProperty, true);
         } else {
             blockFmt.setProperty(KindProperty, static_cast<int>(b.kind));
-            if (list) blockFmt.setProperty(LevelProperty, b.level);
+            if (list) {
+                blockFmt.setProperty(MarkerProperty, static_cast<int>(b.marker));
+                blockFmt.setProperty(CheckedProperty, b.checked);
+                blockFmt.setProperty(LevelProperty, b.level);
+            }
         }
 
         // Отбивку целиком держит верхнее поле, нижнее всегда нулевое. Qt между

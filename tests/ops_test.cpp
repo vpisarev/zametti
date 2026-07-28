@@ -26,6 +26,7 @@ namespace {
 using zametti::Block;
 using zametti::Document;
 using zametti::Kind;
+using zametti::Marker;
 
 void check(bool ok, const std::string& what) {
     ++zt::g_checks;
@@ -42,9 +43,10 @@ void checkEqual(const std::string& expected, const std::string& actual,
     std::printf("провал: %s\n%s", what.c_str(), zt::diff(expected, actual).c_str());
 }
 
-Block listItem(Kind kind, int level, const char* text) {
+Block listItem(Marker marker, int level, const char* text) {
     Block b;
-    b.kind = kind;
+    b.kind = Kind::ListItem;
+    b.marker = marker;
     b.level = level;
     b.text = text;
     return b;
@@ -95,26 +97,26 @@ void checkSync(const Document& before, const char* expectedLevels, const char* w
 void checkLevelNormalisation() {
     // Прыжок через уровень: подсписок не может быть глубже родителя больше чем
     // на единицу, иначе разбор файла даст не то, что мы показали.
-    checkSync({listItem(Kind::Bullet, 0, "верх"), listItem(Kind::Bullet, 3, "провал")},
+    checkSync({listItem(Marker::Bullet, 0, "верх"), listItem(Marker::Bullet, 3, "провал")},
               "0 1", "прыжок 0→3 прижимается к 1");
 
     // Список, начинающийся с глубины: в файле такого не бывает.
-    checkSync({listItem(Kind::Bullet, 2, "первый"), listItem(Kind::Bullet, 2, "второй")},
+    checkSync({listItem(Marker::Bullet, 2, "первый"), listItem(Marker::Bullet, 2, "второй")},
               "0 0", "прогон начинается с нулевого уровня");
 
     // Абзац рвёт прогон, и следующий список снова начинается с нуля.
-    checkSync({listItem(Kind::Bullet, 0, "первый"), listItem(Kind::Bullet, 1, "вложенный"),
-               paragraph("между"), listItem(Kind::Bullet, 2, "после абзаца")},
+    checkSync({listItem(Marker::Bullet, 0, "первый"), listItem(Marker::Bullet, 1, "вложенный"),
+               paragraph("между"), listItem(Marker::Bullet, 2, "после абзаца")},
               "0 1 . 0", "абзац рвёт прогон");
 
     // Ступенька вниз разрешена любая: выйти можно сразу на верхний уровень.
-    checkSync({listItem(Kind::Bullet, 0, "верх"), listItem(Kind::Bullet, 1, "глубже"),
-               listItem(Kind::Bullet, 2, "ещё глубже"), listItem(Kind::Bullet, 0, "назад")},
+    checkSync({listItem(Marker::Bullet, 0, "верх"), listItem(Marker::Bullet, 1, "глубже"),
+               listItem(Marker::Bullet, 2, "ещё глубже"), listItem(Marker::Bullet, 0, "назад")},
               "0 1 2 0", "спуск на несколько уровней разрешён");
 
     // Уже верные уровни операция не трогает.
-    checkSync({listItem(Kind::Ordered, 0, "раз"), listItem(Kind::Ordered, 1, "вложенный"),
-               listItem(Kind::Ordered, 0, "два")},
+    checkSync({listItem(Marker::Ordered, 0, "раз"), listItem(Marker::Ordered, 1, "вложенный"),
+               listItem(Marker::Ordered, 0, "два")},
               "0 1 0", "верные уровни остаются как были");
 }
 
@@ -126,8 +128,8 @@ qreal marginOf(const QTextDocument& doc, int block) {
 // начинался бы правее, чем под "1.", и левый край списка выходил бы рваным.
 void checkGeometry() {
     Document doc;
-    for (int i = 0; i < 12; ++i) doc.push_back(listItem(Kind::Ordered, 0, "пункт"));
-    doc.push_back(listItem(Kind::Ordered, 1, "вложенный"));
+    for (int i = 0; i < 12; ++i) doc.push_back(listItem(Marker::Ordered, 0, "пункт"));
+    doc.push_back(listItem(Marker::Ordered, 1, "вложенный"));
 
     QTextDocument text;
     zametti::buildDocument(doc, text);
@@ -149,9 +151,9 @@ void checkGeometry() {
     // прыгает, стоит отцепить буллеты от задач. Ширина кружка от соседей
     // зависеть не должна.
     QTextDocument mixed;
-    zametti::buildDocument({listItem(Kind::Bullet, 0, "буллет"),
-                            listItem(Kind::TaskUnchecked, 0, "задача"),
-                            listItem(Kind::Bullet, 0, "снова буллет")},
+    zametti::buildDocument({listItem(Marker::Bullet, 0, "буллет"),
+                            listItem(Marker::Task, 0, "задача"),
+                            listItem(Marker::Bullet, 0, "снова буллет")},
                            mixed);
     check(marginOf(mixed, 0) < marginOf(mixed, 1),
           "кружок не равняется по ширине чекбокса");
@@ -160,7 +162,7 @@ void checkGeometry() {
 
     // И тот же кружок сам по себе стоит там же, где рядом с задачами.
     QTextDocument alone;
-    zametti::buildDocument({listItem(Kind::Bullet, 0, "буллет")}, alone);
+    zametti::buildDocument({listItem(Marker::Bullet, 0, "буллет")}, alone);
     check(marginOf(alone, 0) == marginOf(mixed, 0),
           "отцепив буллет от задач, кружок никуда не прыгает");
 
@@ -187,7 +189,7 @@ void checkOrdinalAgreement(const std::string& source, const std::string& label) 
             continue;
         }
         const int forward =
-            runs.next(zametti::levelOf(block), zametti::isOrdered(zametti::kindOf(block)));
+            runs.next(zametti::levelOf(block), zametti::isOrderedBlock(block));
         const int backward = zametti::ordinalOf(block);
         if (forward == backward) continue;
         ++zt::g_failures;

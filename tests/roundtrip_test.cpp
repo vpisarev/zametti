@@ -146,7 +146,8 @@ void testTasksLiteral() {
     canonical("1. [ ] остаётся текстом", "1. [ ] текст\n");
 
     Document d = parse("1. [x] текст\n");
-    ZT_TRUE("нумерованный пункт, а не чекбокс", d.size() == 1 && d[0].kind == Kind::Ordered);
+    ZT_TRUE("нумерованный пункт, а не чекбокс",
+            d.size() == 1 && d[0].kind == Kind::ListItem && d[0].marker == Marker::Ordered);
     if (d.size() == 1) ZT_EQ("маркер вернулся в текст", "[x] текст", d[0].text);
 
     // Срез берётся из исходника, а не синтезируется: иначе теряются лишние
@@ -160,7 +161,8 @@ void testTasksLiteral() {
     // А вот в маркированном списке это настоящий чекбокс.
     d = parse("- [x] текст\n");
     ZT_TRUE("маркированный пункт с [x] — чекбокс",
-            d.size() == 1 && d[0].kind == Kind::TaskChecked);
+            d.size() == 1 && d[0].kind == Kind::ListItem &&
+                d[0].marker == Marker::Task && d[0].checked);
     if (d.size() == 1) ZT_EQ("маркер чекбокса в текст не попал", "текст", d[0].text);
 
     stable("- [X] приводится к нижнему регистру", "- [X] текст\n", "- [x] текст\n");

@@ -13,6 +13,12 @@
 
 namespace zametti {
 
+// Род блока — что это за блок, и только. Чем помечен пункт и на каком уровне он
+// стоит, родом не выражается: это отдельные оси (Marker, level).
+//
+// Родов нарочно мало, и ветки default в switch по роду быть не должно. Тогда
+// -Wswitch при -Werror сам перечисляет места, где новый род не разобран, — иначе
+// код рос бы по квадрату от числа родов, а забытое место молча делало бы не то.
 enum class Kind {
     Paragraph,
     Heading,          // headingLevel = 1..6
@@ -28,14 +34,18 @@ enum class Kind {
     //
     // Имя не Separator: его лучше приберечь для горизонтальной черты '---'.
     VSpace,
-    Bullet,           // level = вложенность
-    TaskUnchecked,    // level = вложенность
-    TaskChecked,      // level = вложенность
-    Ordered,          // level = вложенность
+    ListItem,         // marker, checked, level
 };
 
-inline bool isList(Kind k) { return k >= Kind::Bullet; }
-inline bool isOrdered(Kind k) { return k == Kind::Ordered; }
+// Чем помечен пункт. Выполненность — отдельный признак, а не свой вид маркера:
+// переключение задачи это смена bool, а не подмена рода блока.
+enum class Marker {
+    Bullet,
+    Ordered,
+    Task,
+};
+
+inline bool isList(Kind k) { return k == Kind::ListItem; }
 
 struct Span {
     int  offset = 0;    // в байтах, от начала Block::text
@@ -48,15 +58,25 @@ struct Span {
 };
 
 struct Block {
-    Kind kind         = Kind::Paragraph;
-    int  headingLevel = 0;                   // осмысленно только при Kind::Heading
-    int  level        = 0;                   // осмысленно только при isList(kind)
+    Kind   kind         = Kind::Paragraph;
+    Marker marker       = Marker::Bullet;    // осмысленно только при Kind::ListItem
+    bool   checked      = false;             // осмысленно только при Marker::Task
+    int    headingLevel = 0;                 // осмысленно только при Kind::Heading
+    int    level        = 0;                 // осмысленно только при isList(kind)
     std::string text;                        // чистый текст, без маркеров
     std::string info;                        // осмысленно только при Kind::Code: "cpp", "sh", ...
     std::vector<Span> inlines;
     std::string rawSource;                   // непусто → выводить дословно, остальные поля игнорировать
-
 };
+
+// Нумерованный ли это пункт и задача ли это. Спрашивать про род тут нечего: род
+// у всех пунктов один, различает их маркер.
+inline bool isOrdered(const Block& b) {
+    return b.kind == Kind::ListItem && b.marker == Marker::Ordered;
+}
+inline bool isTask(const Block& b) {
+    return b.kind == Kind::ListItem && b.marker == Marker::Task;
+}
 
 // Слипнутся ли эти два блока, если поставить их в файле подряд без пустой
 // строки. Проверено на ядре: абзац после абзаца читается одним абзацем, абзац

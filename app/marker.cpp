@@ -14,49 +14,41 @@
 namespace zametti {
 namespace {
 
-bool isTask(Kind kind) {
-    return kind == Kind::TaskUnchecked || kind == Kind::TaskChecked;
+bool drawnCheckbox(MarkerStyle style) {
+    return style.marker == Marker::Task && appearance().checkboxStyle == CheckboxStyle::Drawn;
 }
 
-bool drawnCheckbox(Kind kind) {
-    return isTask(kind) && appearance().checkboxStyle == CheckboxStyle::Drawn;
-}
-
-bool drawnBullet(Kind kind) {
-    return kind == Kind::Bullet && appearance().bulletStyle == BulletStyle::Drawn;
+bool drawnBullet(MarkerStyle style) {
+    return style.marker == Marker::Bullet && appearance().bulletStyle == BulletStyle::Drawn;
 }
 
 // Знак маркера — для тех начертаний, где он берётся из шрифта. У нарисованных
 // (кружок, рамка) знака нет.
-QString markerText(Kind kind, int ordinal) {
-    switch (kind) {
-        case Kind::Bullet:
-            return drawnBullet(kind) ? QString() : appearance().bulletGlyph;
-        case Kind::Ordered:
+QString markerText(MarkerStyle style, int ordinal) {
+    switch (style.marker) {
+        case Marker::Bullet:
+            return drawnBullet(style) ? QString() : appearance().bulletGlyph;
+        case Marker::Ordered:
             return QString::number(ordinal) + QStringLiteral(".");
-        case Kind::TaskUnchecked:
-        case Kind::TaskChecked:
+        case Marker::Task:
             switch (appearance().checkboxStyle) {
                 case CheckboxStyle::Glyph:
-                    return kind == Kind::TaskChecked ? QStringLiteral("☑")
-                                                     : QStringLiteral("☐");
+                    return style.checked ? QStringLiteral("☑") : QStringLiteral("☐");
                 case CheckboxStyle::Ascii:
-                    return kind == Kind::TaskChecked ? QStringLiteral("[x]")
-                                                     : QStringLiteral("[ ]");
+                    return style.checked ? QStringLiteral("[x]") : QStringLiteral("[ ]");
                 case CheckboxStyle::Drawn:
                     return QString();
             }
             return QString();
-        default:
-            return QString();
     }
+    return QString();
 }
 
-QFont markerFont(Kind kind, const QFont& base) {
+QFont markerFont(MarkerStyle style, const QFont& base) {
     QFont font = base;
-    if (kind == Kind::Bullet && appearance().bulletStyle == BulletStyle::Glyph)
+    if (style.marker == Marker::Bullet && appearance().bulletStyle == BulletStyle::Glyph)
         font.setPointSizeF(base.pointSizeF() * appearance().bulletScale);
-    if (isTask(kind) && appearance().checkboxStyle == CheckboxStyle::Glyph) {
+    if (style.marker == Marker::Task && appearance().checkboxStyle == CheckboxStyle::Glyph) {
         font.setFamilies({QString(appearance().symbolFamily), QString(appearance().fontFamily)});
         font.setPointSizeF(base.pointSizeF() * appearance().checkboxGlyphScale);
     }
@@ -65,10 +57,13 @@ QFont markerFont(Kind kind, const QFont& base) {
 
 // Зазор от маркера до текста. В ширинах "A", а не в пробелах: у пропорциональных
 // гарнитур пробел вдвое уже буквы, и колонка на нём выходила бы вплотную.
-qreal gapFor(Kind kind, const QFont& base) {
+qreal gapFor(MarkerStyle style, const QFont& base) {
     const qreal unit = QFontMetricsF(base).horizontalAdvance(QLatin1Char('A'));
-    if (isTask(kind)) return appearance().checkboxTextGap * unit;
-    if (kind == Kind::Ordered) return appearance().orderedTextGap * unit;
+    switch (style.marker) {
+        case Marker::Task:    return appearance().checkboxTextGap * unit;
+        case Marker::Ordered: return appearance().orderedTextGap * unit;
+        case Marker::Bullet:  return appearance().bulletTextGap * unit;
+    }
     return appearance().bulletTextGap * unit;
 }
 
@@ -79,10 +74,11 @@ qreal checkboxSide(const QFont& base) {
     return QFontMetricsF(base).tightBoundingRect(QStringLiteral("iy")).height();
 }
 
-qreal glyphWidth(Kind kind, int ordinal, const QFont& base) {
-    if (drawnCheckbox(kind)) return checkboxSide(base);
-    if (drawnBullet(kind)) return QFontMetricsF(base).xHeight() * appearance().bulletDiameter;
-    return QFontMetricsF(markerFont(kind, base)).horizontalAdvance(markerText(kind, ordinal));
+qreal glyphWidth(MarkerStyle style, int ordinal, const QFont& base) {
+    if (drawnCheckbox(style)) return checkboxSide(base);
+    if (drawnBullet(style)) return QFontMetricsF(base).xHeight() * appearance().bulletDiameter;
+    return QFontMetricsF(markerFont(style, base))
+        .horizontalAdvance(markerText(style, ordinal));
 }
 
 // Опора маркера в координатах документа: правый край его колонки и базовая
@@ -94,7 +90,7 @@ struct Anchor {
     bool valid = false;
 };
 
-Anchor anchorOf(const QTextBlock& block, Kind kind, const QFont& base) {
+Anchor anchorOf(const QTextBlock& block, MarkerStyle style, const QFont& base) {
     const QTextLayout* layout = block.layout();
     if (layout == nullptr || layout->lineCount() == 0) return {};
     const QTextLine line = layout->lineAt(0);
@@ -102,7 +98,7 @@ Anchor anchorOf(const QTextBlock& block, Kind kind, const QFont& base) {
     // Позиция раскладки — левый край содержимого фрейма; левое поле блока в неё
     // не входит, его надо прибавить.
     const qreal textLeft = origin.x() + block.blockFormat().leftMargin();
-    return {textLeft - gapFor(kind, base), origin.y() + line.y() + line.ascent(), true};
+    return {textLeft - gapFor(style, base), origin.y() + line.y() + line.ascent(), true};
 }
 
 // Буллет рисуется в круге заданного диаметра — какой бы ни была фигура. Место
@@ -173,14 +169,14 @@ BulletShape bulletShapeFor(int level) {
     return shapes[size_t(qBound(0, level, int(shapes.size()) - 1))];
 }
 
-qreal markerColumn(Kind kind, int ordinal, const QFont& base) {
-    return glyphWidth(kind, ordinal, base) + gapFor(kind, base);
+qreal markerColumn(MarkerStyle style, int ordinal, const QFont& base) {
+    return glyphWidth(style, ordinal, base) + gapFor(style, base);
 }
 
 QRectF checkboxRect(const QTextBlock& block, const QFont& base) {
-    const Kind kind = kindOf(block);
-    if (!isListBlock(block) || !drawnCheckbox(kind)) return {};
-    const Anchor anchor = anchorOf(block, kind, base);
+    const MarkerStyle style = markerOf(block);
+    if (!isListBlock(block) || !drawnCheckbox(style)) return {};
+    const Anchor anchor = anchorOf(block, style, base);
     if (!anchor.valid) return {};
 
     const QRectF ink = QFontMetricsF(base).tightBoundingRect(QStringLiteral("iy"));
@@ -214,16 +210,16 @@ QTextBlock blockAtCheckbox(const QTextDocument& doc, const QPointF& point,
 
 void paintMarker(QPainter& painter, const QTextBlock& block, const QFont& base) {
     if (!isListBlock(block)) return;
-    const Kind kind = kindOf(block);
-    const Anchor anchor = anchorOf(block, kind, base);
+    const MarkerStyle style = markerOf(block);
+    const Anchor anchor = anchorOf(block, style, base);
     if (!anchor.valid) return;
 
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    if (drawnCheckbox(kind)) {
-        paintCheckbox(painter, checkboxRect(block, base), kind == Kind::TaskChecked);
-    } else if (drawnBullet(kind)) {
+    if (drawnCheckbox(style)) {
+        paintCheckbox(painter, checkboxRect(block, base), style.checked);
+    } else if (drawnBullet(style)) {
         const qreal xHeight = QFontMetricsF(base).xHeight();
         const qreal diameter = xHeight * appearance().bulletDiameter;
         // Кружок стоит на средней линии строчных: она у любой гарнитуры именно
@@ -233,18 +229,19 @@ void paintMarker(QPainter& painter, const QTextBlock& block, const QFont& base) 
                                  appearance().bulletRise * xHeight);
         paintBullet(painter, center, diameter, bulletShapeFor(levelOf(block)));
     } else {
-        const QFont font = markerFont(kind, base);
-        const QString text = markerText(kind, ordinalOf(block));
-        const QColor color = isTask(kind) ? (kind == Kind::TaskChecked
-                                                 ? appearance().checkboxCheckedColor
-                                                 : appearance().checkboxUncheckedColor)
-                             : kind == Kind::Ordered ? appearance().orderedColor
-                                                     : appearance().bulletColor;
+        const QFont font = markerFont(style, base);
+        const QString text = markerText(style, ordinalOf(block));
+        const QColor color =
+            style.marker == Marker::Task
+                ? (style.checked ? appearance().checkboxCheckedColor
+                                 : appearance().checkboxUncheckedColor)
+            : style.marker == Marker::Ordered ? appearance().orderedColor
+                                              : appearance().bulletColor;
         // Поправка по вертикали — от высоты строчных основного шрифта, а не
         // маркерного: маркер должен двигаться относительно текста строки.
         qreal rise = 0;
-        if (kind == Kind::Ordered) rise = appearance().orderedRise;
-        else if (kind == Kind::Bullet) rise = appearance().bulletRise;
+        if (style.marker == Marker::Ordered) rise = appearance().orderedRise;
+        else if (style.marker == Marker::Bullet) rise = appearance().bulletRise;
         painter.setFont(font);
         painter.setPen(color);
         painter.drawText(QPointF(anchor.right - QFontMetricsF(font).horizontalAdvance(text),

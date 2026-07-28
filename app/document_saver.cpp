@@ -194,6 +194,7 @@ bool sameSkeleton(const Document& a, const Document& b) {
         if (a[i].rawSource != b[i].rawSource) return false;
         if (!a[i].rawSource.empty()) continue;
         if (a[i].kind != b[i].kind || a[i].level != b[i].level ||
+            a[i].marker != b[i].marker || a[i].checked != b[i].checked ||
             a[i].headingLevel != b[i].headingLevel || a[i].info != b[i].info ||
             a[i].text != b[i].text)
             return false;
@@ -350,8 +351,8 @@ Document withoutEmptyNested(Document doc) {
     for (size_t i = 0; i < doc.size(); ++i) {
         const Block& block = doc[i];
         const bool drop = block.rawSource.empty() && block.text.empty() &&
-                          block.level > 0 &&
-                          (block.kind == Kind::Bullet || block.kind == Kind::Ordered);
+                          block.level > 0 && block.kind == Kind::ListItem &&
+                          block.marker != Marker::Task;
         if (!drop) {
             out.push_back(block);
             continue;

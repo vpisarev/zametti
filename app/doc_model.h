@@ -27,6 +27,8 @@ namespace zametti {
 enum DocProperty {
     // Свойства блока.
     KindProperty = QTextFormat::UserProperty,  // int(Kind)
+    MarkerProperty,                            // int(Marker), только у пункта списка
+    CheckedProperty,                           // bool, отметка задачи
     LevelProperty,                             // int, уровень вложенности списка
     InfoProperty,                              // QString, язык блока кода
     RawProperty,                               // bool, блок выводится дословно
@@ -92,7 +94,17 @@ bool blocksWouldMerge(const QTextBlock& previous, const QTextBlock& next);
 Kind kindOf(const QTextBlock& block);
 int levelOf(const QTextBlock& block);
 bool isListBlock(const QTextBlock& block);
+
+// Чем помечен пункт: маркер вместе с отметкой выполненности. Двумя полями, а не
+// родом блока, — род у всех пунктов один.
+struct MarkerStyle {
+    Marker marker = Marker::Bullet;
+    bool checked = false;
+};
+MarkerStyle markerOf(const QTextBlock& block);
+
 bool isTaskBlock(const QTextBlock& block);
+bool isOrderedBlock(const QTextBlock& block);
 
 // Номер пункта в прогоне. Считается обходом назад по тому же правилу, что и в
 // сериализаторе: вложенный подсписок прогон не рвёт. Хранить номер в формате

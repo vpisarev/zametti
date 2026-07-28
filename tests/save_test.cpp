@@ -423,17 +423,18 @@ void checkEdgeSpaces() {
     {
         const QString path = pathFor("потомки-пустого.md");
         check(writeFile(path, "заглушка\n"), "не записать исходник");
-        auto item = [](zametti::Kind kind, int level, const char* text) {
+        auto item = [](zametti::Marker marker, int level, const char* text) {
             zametti::Block block;
-            block.kind = kind;
+            block.kind = zametti::Kind::ListItem;
+            block.marker = marker;
             block.level = level;
             block.text = text;
             return block;
         };
         QTextDocument doc;
-        zametti::buildDocument({item(zametti::Kind::Bullet, 0, "раз"),
-                                item(zametti::Kind::Bullet, 1, ""),
-                                item(zametti::Kind::Bullet, 2, "внук")},
+        zametti::buildDocument({item(zametti::Marker::Bullet, 0, "раз"),
+                                item(zametti::Marker::Bullet, 1, ""),
+                                item(zametti::Marker::Bullet, 2, "внук")},
                                doc);
         const zametti::SaveOutcome outcome =
             zametti::saveDocument(doc, path, QStringLiteral("test"));
