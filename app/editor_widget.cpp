@@ -214,6 +214,11 @@ void NoteEditor::rebuild(const Document& doc, int cursor, const ViewAnchor& anch
     recordingSuspended_ = true;
     buildDocument(doc, *document(), zoom());
     applyContentWidth();
+    // Перекладка полей сдвигает колонку, но пустой документ от этого не
+    // переразмечается: размечать в нём нечего. Каретка тогда остаётся на старом
+    // месте и кеглем по умолчанию — в широком окне это было видно как «в пустой
+    // заметке каретки нет вовсе». Просим разметить блок явно.
+    document()->markContentsDirty(0, qMax(1, document()->characterCount()));
 
     QTextCursor place(document());
     place.setPosition(qBound(0, cursor, document()->characterCount() - 1));

@@ -306,9 +306,6 @@ int main(int argc, char** argv) {
     editor.setZoom(std::clamp(session.zoom, zametti::appearance().zoomMin,
                               zametti::appearance().zoomMax));
     if (!editor.openFile(current)) return 2;
-    // При запуске каретка сразу в тексте: дерево нужно, чтобы выбрать заметку, а
-    // не чтобы в нём находиться.
-    editor.setFocus();
 
     QObject::connect(tree.selectionModel(), &QItemSelectionModel::currentChanged, &tree,
                      [&](const QModelIndex& index, const QModelIndex&) {
@@ -396,6 +393,12 @@ int main(int argc, char** argv) {
         tree.setCurrentIndex(currentIndex);
         tree.scrollTo(currentIndex, QAbstractItemView::PositionAtCenter);
     }
+
+    // Фокус — после show() и после того, как дерево показало текущую заметку: до
+    // show() окно ещё не решило, кому его отдать, и наш выбор затёрся бы первым
+    // же виджетом в разделителе. Каретка при запуске должна быть сразу в тексте:
+    // дерево нужно, чтобы выбрать заметку, а не чтобы в нём находиться.
+    editor.setFocus();
 
     // Прокрутку можно ставить только когда документ уже разложен по размерам
     // окна, а это происходит после show(), в следующем проходе цикла событий.

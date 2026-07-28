@@ -1086,8 +1086,13 @@ void checkSelectionHasNoGaps() {
 void checkEmptyNoteCaret() {
     const QString path = writeNote("пустая.md", QString());
 
+    // Окно нарочно широкое: при такой ширине колонка центрируется, и поля
+    // документа меняются уже после сборки. Пустой документ от смены полей не
+    // переразмечался — каретка оставалась у прежнего поля и кеглем по
+    // умолчанию, то есть далеко от текста и вдвое ниже. На узком окне ошибки не
+    // видно вовсе: там колонку не двигают.
     zametti::NoteEditor editor;
-    editor.resize(700, 400);
+    editor.resize(1600, 400);
     editor.show();
     QTest::qWait(20);
     editor.setFocus();
