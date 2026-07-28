@@ -1100,6 +1100,24 @@ void checkEmptyNoteCaret() {
     QTest::qWait(20);
 
     const QRect caret = editor.cursorRect();
+
+    // И тот же случай на пути запуска: заметку открывают ещё до show(), в узком
+    // окне, а колонку двигает уже первое изменение размера — пересборки при
+    // этом нет вовсе, и подсказка о разметке нужна именно там, где меняются
+    // поля.
+    {
+        zametti::NoteEditor started;
+        started.openFile(path);
+        started.resize(1600, 400);
+        started.show();
+        QTest::qWait(20);
+        started.setFocus();
+        QTest::qWait(20);
+        check(started.cursorRect().x() > 100,
+              "при запуске каретка пустой заметки стоит в колонке текста");
+        check(started.cursorRect().height() > 15,
+              "и высотой в строку, а не кеглем по умолчанию");
+    }
     // Левое поле страницы — там же, где начинается текст обычного абзаца.
     const QString filled = writeNote("не-пустая.md", QStringLiteral("текст\n"));
     editor.openFile(filled);
