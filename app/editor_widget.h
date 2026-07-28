@@ -151,6 +151,12 @@ private:
     // страниц выше, смотреть на неё приходилось в самом низу экрана.
     void showEditPlace(int scrollBefore);
 
+    // Зазор между кареткой и кромкой окна при движении курсора. Qt прокручивает
+    // ровно до касания края, и поле страницы при этом уезжает за кромку: текст,
+    // который набираешь, оказывается вплотную к рамке окна. Держим тот же зазор,
+    // что и поле страницы, — им же он и меряется.
+    void keepCaretOffEdge();
+
     void rebuild(const Document& doc, int cursor, const ViewAnchor& anchor);
     void recordEdit();
     void onContentsChanged();

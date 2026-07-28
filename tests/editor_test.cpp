@@ -21,6 +21,7 @@
 #include <QTest>
 #include <QTextBlock>
 #include <QAbstractTextDocumentLayout>
+#include <QFontMetricsF>
 #include <QImage>
 #include <QLineEdit>
 #include <QScrollBar>
@@ -1276,8 +1277,12 @@ void checkCaretWidth() {
 // Обычный ensureCursorVisible прокручивает ровно на минимум, и отменённая правка
 // оказывалась впритык к нижнему или верхнему краю экрана.
 void checkUndoShowsEditPlace() {
+    // Заметка нарочно длинная, а правка в первой её трети: прокрутившись до
+    // конца, мы уходим от места правки дальше, чем на окно, и после отмены оно
+    // остаётся за краем. На короткой заметке отмена возвращает место обратно в
+    // окно сама, и проверять было бы нечего.
     QString source;
-    for (int i = 0; i < 200; ++i)
+    for (int i = 0; i < 600; ++i)
         source += QStringLiteral("Абзац номер %1, чтобы заметка была длинной.\n\n").arg(i);
     const QString path = writeNote("отмена-вид.md", source);
 
@@ -1298,11 +1303,21 @@ void checkUndoShowsEditPlace() {
         QTest::keyClick(&editor, Qt::Key_Delete);
         QTest::qWait(30);
 
-        if (scrollAway)
-            editor.verticalScrollBar()->setValue(editor.verticalScrollBar()->value() +
-                                                 4 * editor.viewport()->height());
+        // До самого низа: место правки посреди заметки заведомо уходит за край.
+        //
+        // Ждём, пока раскладка досчитает высоту: сразу после открытия максимум
+        // прокрутки ещё мал (замер: 4402 против настоящих 28830), и «в конец»
+        // уводит недалеко — проверка мерила бы не то, что думает. Признак
+        // готовности — максимум перестал расти.
+        // Ctrl+End: так уходят в конец руками. Заодно досчитывается раскладка —
+        // сразу после открытия высота документа ещё не известна, и прокрутка «в
+        // конец» уводила бы недалеко (замер: максимум 4402 против настоящих
+        // 28830). Курсор при этом уезжает вместе с видом, но отмене он и не
+        // нужен: место правки она берёт из истории.
+        if (scrollAway) QTest::keyClick(&editor, Qt::Key_End, Qt::ControlModifier);
         QTest::qWait(30);
         const int before = editor.verticalScrollBar()->value();
+
 
         QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
         QTest::qWait(50);
@@ -1320,6 +1335,60 @@ void checkUndoShowsEditPlace() {
     edit(false, &percent, &moved);
     checkEqual(QStringLiteral("0"), QString::number(moved),
                "а правку, которая и так на виду, вид не дёргает");
+}
+
+// Курсор не должен упираться в кромку окна. Qt прокручивает ровно до касания
+// края, и поле страницы при этом уезжает за кромку: строка, которую набираешь,
+// оказывается вплотную к рамке окна.
+void checkCaretKeepsOffEdge() {
+    const zametti::Appearance saved = zametti::appearance();
+    struct Restore {
+        const zametti::Appearance& from;
+        ~Restore() { zametti::appearance() = from; }
+    } restore{saved};
+    zametti::appearance().verticalMargin = 1.5;
+
+    QString source;
+    for (int i = 0; i < 200; ++i)
+        source += QStringLiteral("Абзац номер %1, чтобы заметка была длинной.\n\n").arg(i);
+    const QString path = writeNote("зазор.md", source);
+
+    zametti::NoteEditor editor;
+    editor.resize(900, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+    editor.openFile(path);
+    QTest::qWait(30);
+
+    const int gap = qRound(1.5 * QFontMetricsF(editor.baseFont()).height());
+    auto near = [](int a, int b) { return qAbs(a - b) <= 2; };
+
+    // Вниз до конца документа: на самом конце зазор держится полем страницы.
+    for (int i = 0; i < 400; ++i) QTest::keyClick(&editor, Qt::Key_Down);
+    QTest::qWait(30);
+    const int below = editor.viewport()->height() - editor.cursorRect().bottom();
+    check(near(below, gap), "внизу под кареткой остаётся зазор (вышло " +
+                                std::to_string(below) + " при " + std::to_string(gap) + ")");
+
+    for (int i = 0; i < 400; ++i) QTest::keyClick(&editor, Qt::Key_Up);
+    QTest::qWait(30);
+    const int above = editor.cursorRect().top();
+    check(near(above, gap), "и наверху над ней тоже (вышло " + std::to_string(above) +
+                                " при " + std::to_string(gap) + ")");
+
+    // И посреди заметки, где упереться не во что.
+    QTextCursor cursor = editor.textCursor();
+    cursor.setPosition(editor.document()->findBlockByNumber(100).position());
+    editor.setTextCursor(cursor);
+    QTest::qWait(20);
+    for (int i = 0; i < 60; ++i) QTest::keyClick(&editor, Qt::Key_Down);
+    QTest::qWait(30);
+    check(near(editor.viewport()->height() - editor.cursorRect().bottom(), gap),
+          "зазор снизу держится и посреди заметки");
+    for (int i = 0; i < 60; ++i) QTest::keyClick(&editor, Qt::Key_Up);
+    QTest::qWait(30);
+    check(near(editor.cursorRect().top(), gap), "и сверху посреди заметки");
 }
 
 // Пустые строки — содержимое заметки, а не мусор: ими отбивают куски текста.
@@ -1501,6 +1570,7 @@ int main(int argc, char** argv) {
     checkCaretPainting();
     checkCaretWidth();
     checkUndoShowsEditPlace();
+    checkCaretKeepsOffEdge();
     checkUndoKeepsAppearance();
     checkAppearanceMakesNoHistoryStep();
     checkFirstEditAfterOpenIsUndoable();

@@ -20,6 +20,7 @@
 #include <QGuiApplication>
 #include <QMessageBox>
 #include <QAbstractTextDocumentLayout>
+#include <QFontMetricsF>
 #include <QScrollBar>
 #include <QTextBlock>
 #include <QTextCursor>
@@ -169,6 +170,21 @@ void NoteEditor::refreshAppearance() {
     // Облик меняется — содержимое нет. Берём его из истории и собираем заново;
     // ни нового шага, ни сдвига по истории при этом не происходит.
     rebuild(history_.current().doc, textCursor().position(), viewAnchor());
+}
+
+void NoteEditor::keepCaretOffEdge() {
+    const QRect at = cursorRect();
+    const int height = viewport()->height();
+    if (height <= 0) return;
+
+    // Зазор — то же поле страницы, в высотах строки. Больше половины окна не
+    // берём: в узком окне зазор сверху и снизу иначе перекрылись бы.
+    const qreal lineUnit = QFontMetricsF(baseFont()).height();
+    const int gap = qBound(0, qRound(appearance().verticalMargin * lineUnit), height / 3);
+
+    QScrollBar* bar = verticalScrollBar();
+    if (at.top() < gap) bar->setValue(bar->value() - (gap - at.top()));
+    else if (at.bottom() > height - gap) bar->setValue(bar->value() + at.bottom() - height + gap);
 }
 
 void NoteEditor::showEditPlace(int scrollBefore) {
@@ -426,6 +442,7 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     // той же колонке, а не уехать на ширину маркера.
     if (event->key() == Qt::Key_Down || event->key() == Qt::Key_Up) {
         keepColumnAcrossMargins(event);
+        keepCaretOffEdge();
         return;
     }
 
@@ -434,6 +451,9 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     if (!event->text().isEmpty() && event->text().at(0).isPrint()) dropLinkAtRightEdge();
 
     NoteView::keyPressEvent(event);
+    // Курсор мог уехать к самой кромке — и набор, и перемещение по странице:
+    // держим зазор.
+    keepCaretOffEdge();
 
     // Ctrl+Shift+V — вставка без разбора: иногда markdown в буфере нужен именно
     // как текст.
