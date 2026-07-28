@@ -171,7 +171,24 @@ void NoteEditor::refreshAppearance() {
     rebuild(history_.current().doc, textCursor().position(), viewAnchor());
 }
 
+void NoteEditor::showEditPlace(int scrollBefore) {
+    const int height = viewport()->height();
+    // Место правки в координатах документа. Спрашивать «видно ли сейчас» нельзя:
+    // пересборка ставит курсор через setTextCursor, а он подкручивает вид сам —
+    // к моменту нашего вопроса место уже видно, причём ровно у кромки.
+    const int where = verticalScrollBar()->value() + cursorRect().center().y();
+
+    // Было ли оно видно до правки. Если было — возвращаем вид как стоял: человек
+    // и так смотрит на это место, дёргать картинку незачем.
+    if (where >= scrollBefore && where <= scrollBefore + height) {
+        verticalScrollBar()->setValue(scrollBefore);
+        return;
+    }
+    verticalScrollBar()->setValue(where - height / 2);
+}
+
 void NoteEditor::undo() {
+    const int scrollBefore = verticalScrollBar()->value();
     // Курсор ставим туда, где была отменяемая правка, а не туда, где он стоял в
     // возвращаемом состоянии. Разница видна сразу: у только что открытого файла
     // в первом шаге записан ноль, и первая же отмена швыряла курсор в начало
@@ -182,16 +199,17 @@ void NoteEditor::undo() {
     rebuild(step->doc, where, viewAnchor());
     // Вид держится сам, но отменённая правка может оказаться за окном — тогда
     // её надо показать: человек нажал отмену, чтобы увидеть результат.
-    ensureCursorVisible();
+    showEditPlace(scrollBefore);
     document()->setModified(true);
     autosave_.start(appearance().autosaveDelayMs);
 }
 
 void NoteEditor::redo() {
+    const int scrollBefore = verticalScrollBar()->value();
     const HistoryStep* step = history_.redo();
     if (step == nullptr) return;
     rebuild(step->doc, step->cursor, viewAnchor());
-    ensureCursorVisible();
+    showEditPlace(scrollBefore);
     document()->setModified(true);
     autosave_.start(appearance().autosaveDelayMs);
 }
@@ -441,6 +459,7 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
 
 bool NoteEditor::runOperation(bool (*op)(QTextDocument&, QTextCursor&)) {
     QTextCursor cursor = textCursor();
+    const int scrollBefore = verticalScrollBar()->value();
     // Шаг истории у операции свой; правки, которые она делает по дороге, в
     // историю попадать не должны — иначе одно нажатие даст два шага.
     recordingSuspended_ = true;
@@ -471,7 +490,7 @@ bool NoteEditor::runOperation(bool (*op)(QTextDocument&, QTextCursor&)) {
         setTextCursor(restored);
     }
     document()->setModified(true);
-    ensureCursorVisible();
+    showEditPlace(scrollBefore);
     autosave_.start(appearance().autosaveDelayMs);
     return true;
 }
@@ -555,6 +574,7 @@ void NoteEditor::insertFromMimeData(const QMimeData* source) {
 }
 
 void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
+    const int scrollBefore = verticalScrollBar()->value();
     if (text.isEmpty()) return;
     const QByteArray utf8 = text.toUtf8();
     const std::string source(utf8.constData(), size_t(utf8.size()));
@@ -595,7 +615,7 @@ void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
     sinceLastEdit_.invalidate();
     rebuild(ir, landed, viewAnchor());
     document()->setModified(true);
-    ensureCursorVisible();
+    showEditPlace(scrollBefore);
     autosave_.start(appearance().autosaveDelayMs);
 }
 
@@ -605,6 +625,7 @@ bool NoteEditor::moveItem(int direction) {
 
 bool NoteEditor::applyIrEdit(const MoveResult& moved) {
     if (!moved.done) return false;
+    const int scrollBefore = verticalScrollBar()->value();
 
     history_.push(moved.doc, textCursor().position());
     sinceLastEdit_.invalidate();
@@ -621,7 +642,7 @@ bool NoteEditor::applyIrEdit(const MoveResult& moved) {
         setTextCursor(place);
     }
     document()->setModified(true);
-    ensureCursorVisible();
+    showEditPlace(scrollBefore);
     autosave_.start(appearance().autosaveDelayMs);
     return true;
 }

@@ -1269,6 +1269,59 @@ void checkCaretWidth() {
     check(painted(thin) >= 1, "нулевая настройка не прячет каретку");
 }
 
+// Отмена правки, сделанной далеко за краем окна. Как футбольный арбитр: пока
+// действие в пределах видимости — стоит на месте и картинку не дёргает; ушло за
+// край — бежит в центр событий, а не к ближайшей кромке.
+//
+// Обычный ensureCursorVisible прокручивает ровно на минимум, и отменённая правка
+// оказывалась впритык к нижнему или верхнему краю экрана.
+void checkUndoShowsEditPlace() {
+    QString source;
+    for (int i = 0; i < 200; ++i)
+        source += QStringLiteral("Абзац номер %1, чтобы заметка была длинной.\n\n").arg(i);
+    const QString path = writeNote("отмена-вид.md", source);
+
+    auto edit = [&path](bool scrollAway, int* percent, int* moved) {
+        zametti::NoteEditor editor;
+        editor.resize(900, 600);
+        editor.show();
+        QTest::qWait(20);
+        editor.setFocus();
+        editor.openFile(path);
+        QTest::qWait(30);
+
+        // Правка посередине заметки: только там и есть куда центрировать.
+        QTextCursor cursor = editor.textCursor();
+        cursor.setPosition(editor.document()->findBlockByNumber(200).position());
+        cursor.movePosition(QTextCursor::NextBlock, QTextCursor::KeepAnchor, 3);
+        editor.setTextCursor(cursor);
+        QTest::keyClick(&editor, Qt::Key_Delete);
+        QTest::qWait(30);
+
+        if (scrollAway)
+            editor.verticalScrollBar()->setValue(editor.verticalScrollBar()->value() +
+                                                 4 * editor.viewport()->height());
+        QTest::qWait(30);
+        const int before = editor.verticalScrollBar()->value();
+
+        QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+        QTest::qWait(50);
+        *percent = editor.cursorRect().center().y() * 100 / editor.viewport()->height();
+        *moved = editor.verticalScrollBar()->value() - before;
+    };
+
+    int percent = 0;
+    int moved = 0;
+    edit(true, &percent, &moved);
+    check(percent > 35 && percent < 65,
+          "отменённая правка из-за края окна показывается по центру, а не у кромки (вышло " +
+              std::to_string(percent) + "%)");
+
+    edit(false, &percent, &moved);
+    checkEqual(QStringLiteral("0"), QString::number(moved),
+               "а правку, которая и так на виду, вид не дёргает");
+}
+
 // Пустые строки — содержимое заметки, а не мусор: ими отбивают куски текста.
 // Набрали, сохранили, открыли заново — они на месте, и ровно в том же числе.
 // В файл они уходят настоящими пустыми строками, без единого хитрого знака.
@@ -1447,6 +1500,7 @@ int main(int argc, char** argv) {
     checkEmptyNoteCaret();
     checkCaretPainting();
     checkCaretWidth();
+    checkUndoShowsEditPlace();
     checkUndoKeepsAppearance();
     checkAppearanceMakesNoHistoryStep();
     checkFirstEditAfterOpenIsUndoable();

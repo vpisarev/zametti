@@ -123,8 +123,8 @@ struct Appearance {
     // TextCursor в палитре Qt 6.10 нет.
     //
     // Ширина в пикселях при единичном масштабе; с зумом растёт.
-    QColor caretColor{0x22, 0x22, 0x22};
-    qreal caretWidth = 3.0;
+    QColor caretColor{0x1e, 0xab, 0xd6};
+    qreal caretWidth = 2.4;
     QColor selectionBackground{0xbf, 0xdb, 0xfe};
     QColor linkColor{0x32, 0x5c, 0xc0};
     QColor quoteColor{0x5a, 0x62, 0x6a};
