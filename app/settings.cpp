@@ -97,6 +97,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("quote"), colorToString(a.quoteColor)},
         {QStringLiteral("rawSource"), colorToString(a.rawColor)},
         {QStringLiteral("codeBackground"), colorToString(a.codeBackground)},
+        {QStringLiteral("caret"), colorToString(a.caretColor)},
     };
 
     QJsonObject list{
@@ -209,6 +210,7 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readColor(colors, "quote", a.quoteColor);
     readColor(colors, "rawSource", a.rawColor);
     readColor(colors, "codeBackground", a.codeBackground);
+    readColor(colors, "caret", a.caretColor);
 
     const QJsonObject list = root.value(QStringLiteral("list")).toObject();
     readColor(list, "bulletColor", a.bulletColor);

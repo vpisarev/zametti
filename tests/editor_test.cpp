@@ -22,6 +22,7 @@
 #include <QTextBlock>
 #include <QAbstractTextDocumentLayout>
 #include <QImage>
+#include <QLineEdit>
 #include <QScrollBar>
 #include <QTextCursor>
 #include <QTextFragment>
@@ -30,6 +31,7 @@
 #include <QTextDocument>
 
 #include <string>
+#include <tuple>
 
 namespace {
 
@@ -1132,41 +1134,139 @@ void checkEmptyNoteCaret() {
           "и той же высоты, что строка текста");
 }
 
-// Ширина каретки — настройка. По умолчанию Qt рисует её в один пиксель, и на
-// плотном экране её попросту не видно.
-//
-// Проверяем по значению, которое доходит до Qt: каретка мигает, и снимок
-// виджета ловит её через раз, а нарисована она будет ровно этой ширины.
+// Каретка нарисована нами, а не Qt: цвет своей Qt не отдаёт ни одним способом.
+// Раз рисуем сами — проверяем и то, что вокруг: след на прежнем месте, выделение
+// и потерю фокуса. Ровно этого от кастомной каретки и опасаются.
+void checkCaretPainting() {
+    const zametti::Appearance saved = zametti::appearance();
+    struct Restore {
+        const zametti::Appearance& from;
+        ~Restore() { zametti::appearance() = from; }
+    } restore{saved};
+    zametti::appearance().caretWidth = 4.0;
+    zametti::appearance().caretColor = QColor(220, 30, 30);
+
+    const QString path = writeNote("каретка-цвет.md", QStringLiteral("первая строка\n"));
+    QWidget host;
+    zametti::NoteEditor editor(&host);
+    QLineEdit other(&host);
+    editor.setGeometry(0, 0, 600, 200);
+    other.setGeometry(0, 210, 600, 30);
+    host.resize(600, 260);
+    host.show();
+    QTest::qWait(20);
+    editor.setFocus();
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    // Каретка горит сразу после движения курсора, поэтому снимок берём тут же:
+    // иначе кадр попал бы в погасшую фазу.
+    // Ищем ровно цвет каретки, а не «что-нибудь красноватое»: подпалённые края
+    // букв на выделении дают оранжевый, и на нём проверка ложно срабатывала.
+    auto isCaret = [](QColor c) {
+        return qAbs(c.red() - 220) < 12 && qAbs(c.green() - 30) < 12 && qAbs(c.blue() - 30) < 12;
+    };
+    auto ink = [&editor, isCaret](QPoint at) {
+        const QImage shot = editor.viewport()->grab().toImage();
+        int found = 0;
+        for (int y = at.y() + 2; y <= at.y() + 10; ++y)
+            for (int x = at.x(); x < at.x() + 6; ++x)
+                if (shot.rect().contains(x, y) && isCaret(shot.pixelColor(x, y))) ++found;
+        return found;
+    };
+
+    QTextCursor cursor = editor.textCursor();
+    cursor.movePosition(QTextCursor::EndOfBlock);
+    editor.setTextCursor(cursor);
+    QTest::qWait(10);
+    const QPoint away = editor.cursorRect().topLeft();
+    check(ink(away) > 0, "каретка нарисована заданным цветом");
+
+    cursor.setPosition(0);
+    editor.setTextCursor(cursor);
+    QTest::qWait(10);
+    check(ink(away) == 0, "на прежнем месте следа не остаётся");
+    check(ink(editor.cursorRect().topLeft()) > 0, "и она на новом месте");
+
+    cursor.setPosition(5, QTextCursor::KeepAnchor);
+    editor.setTextCursor(cursor);
+    QTest::qWait(10);
+    check(ink(editor.cursorRect().topLeft()) == 0, "при выделении каретка не рисуется");
+
+    cursor.clearSelection();
+    editor.setTextCursor(cursor);
+    QTest::qWait(10);
+    other.setFocus();
+    QTest::qWait(30);
+    check(ink(editor.cursorRect().topLeft()) == 0, "без фокуса каретки нет");
+    editor.setFocus();
+    QTest::qWait(20);
+    check(ink(editor.cursorRect().topLeft()) > 0, "с возвратом фокуса — снова есть");
+}
+
+// Ширина каретки — настройка, и меряется она по нарисованному: своей каретки у
+// Qt больше нет, её ширина всегда ноль.
 void checkCaretWidth() {
     const zametti::Appearance saved = zametti::appearance();
     struct Restore {
         const zametti::Appearance& from;
         ~Restore() { zametti::appearance() = from; }
     } restore{saved};
+    zametti::appearance().caretColor = QColor(220, 30, 30);
 
     const QString path = writeNote("каретка.md", QStringLiteral("текст\n"));
 
-    zametti::appearance().caretWidth = 3.0;
-    zametti::NoteEditor editor;
-    editor.resize(700, 300);
-    editor.show();
-    QTest::qWait(20);
-    editor.openFile(path);
-    QTest::qWait(20);
-    checkEqual(QStringLiteral("3"), QString::number(editor.cursorWidth()),
-               "ширина каретки берётся из настройки");
+    // Сколько подряд закрашенных пикселей от левого края каретки.
+    // Снимок берём у вьюпорта: cursorRect отдаёт именно его координаты, а у
+    // виджета есть рамка, и по ней всё съезжает на пиксель.
+    auto painted = [](zametti::NoteEditor& editor) {
+        const QImage shot = editor.viewport()->grab().toImage();
+        const QRect at = editor.cursorRect();
+        int run = 0;
+        for (int x = at.left(); x < at.left() + 20; ++x) {
+            const QPoint p(x, at.top() + 5);
+            if (!shot.rect().contains(p) || qAbs(shot.pixelColor(p).red() - 220) >= 12 ||
+                qAbs(shot.pixelColor(p).green() - 30) >= 12)
+                break;
+            ++run;
+        }
+        return run;
+    };
 
-    // С масштабом растёт: каретка должна быть заметна одинаково при любом кегле.
-    editor.applyZoom(2.0);
-    QTest::qWait(20);
-    checkEqual(QStringLiteral("6"), QString::number(editor.cursorWidth()),
-               "и растёт вместе с масштабом");
+    for (const auto& [width, zoom, expected] :
+         {std::tuple<qreal, qreal, int>{2.0, 1.0, 2}, {5.0, 1.0, 5}, {2.0, 2.0, 4}}) {
+        zametti::appearance().caretWidth = width;
+        zametti::NoteEditor editor;
+        editor.resize(700, 300);
+        editor.show();
+        QTest::qWait(20);
+        editor.setFocus();
+        editor.setZoom(zoom);
+        editor.openFile(path);
+        QTest::qWait(20);
+        QTextCursor cursor = editor.textCursor();
+        cursor.movePosition(QTextCursor::EndOfBlock);
+        editor.setTextCursor(cursor);
+        QTest::qWait(10);
+        checkEqual(QString::number(expected), QString::number(painted(editor)),
+                   "ширина каретки: настройка " + std::to_string(int(width)) + ", масштаб " +
+                       std::to_string(int(zoom)));
+    }
 
-    // Ноль и отрицательное значение в настройке не должны прятать каретку вовсе.
+    // Ноль в настройке каретку не прячет: меньше пикселя не бывает.
     zametti::appearance().caretWidth = 0.0;
-    editor.applyZoom(1.0);
+    zametti::NoteEditor thin;
+    thin.resize(700, 300);
+    thin.show();
     QTest::qWait(20);
-    check(editor.cursorWidth() >= 1, "нулевая настройка не прячет каретку");
+    thin.setFocus();
+    thin.openFile(path);
+    QTest::qWait(20);
+    QTextCursor cursor = thin.textCursor();
+    cursor.movePosition(QTextCursor::EndOfBlock);
+    thin.setTextCursor(cursor);
+    QTest::qWait(10);
+    check(painted(thin) >= 1, "нулевая настройка не прячет каретку");
 }
 
 // Пустые строки — содержимое заметки, а не мусор: ими отбивают куски текста.
@@ -1345,6 +1445,7 @@ int main(int argc, char** argv) {
 
     checkOpenDoesNotTouchFile();
     checkEmptyNoteCaret();
+    checkCaretPainting();
     checkCaretWidth();
     checkUndoKeepsAppearance();
     checkAppearanceMakesNoHistoryStep();

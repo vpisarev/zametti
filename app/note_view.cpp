@@ -13,6 +13,8 @@
 #include <QScrollBar>
 #include <QWidget>
 #include <QTextBlock>
+#include <QGuiApplication>
+#include <QStyleHints>
 #include <QTextDocument>
 #include <QTextFrame>
 #include <QTextLayout>
@@ -46,16 +48,48 @@ QFont NoteView::baseFont() const { return baseFontFor(zoom_); }
 
 void NoteView::setZoom(qreal zoom) {
     zoom_ = zoom;
-    applyCaretWidth();
 }
 
-// Ширина каретки. Своя у Qt по умолчанию в один пиксель — на экране с высокой
-// плотностью её попросту не видно. Цвет Qt задать не даёт, а рисовать каретку
-// самим значит взять на себя и мигание, и след за ней; ширины хватает.
-//
-// С масштабом растёт: каретка должна быть заметна одинаково при любом кегле.
-void NoteView::applyCaretWidth() {
-    setCursorWidth(qMax(1, qRound(appearance().caretWidth * zoom_)));
+NoteView::NoteView(QWidget* parent) : QTextBrowser(parent) {
+    // Штатную каретку гасим: рисуем свою.
+    setCursorWidth(0);
+    caretBlink_.setInterval(
+        qMax(250, QGuiApplication::styleHints()->cursorFlashTime() / 2));
+    connect(&caretBlink_, &QTimer::timeout, this, [this] {
+        caretOn_ = !caretOn_;
+        viewport()->update(caretRect());
+    });
+    // Пока человек печатает или ведёт курсор, каретка горит ровно.
+    connect(this, &QTextEdit::cursorPositionChanged, this, &NoteView::showCaret);
+    connect(this, &QTextEdit::textChanged, this, &NoteView::showCaret);
+}
+
+// Прямоугольник каретки с запасом: перерисовываем чуть больше, чем красим,
+// иначе от неё остаётся след.
+QRect NoteView::caretRect() const {
+    QRect at = cursorRect();
+    at.setWidth(qMax(1, qRound(appearance().caretWidth * zoom_)));
+    return at.adjusted(-2, -2, 4, 2);
+}
+
+void NoteView::showCaret() {
+    caretOn_ = true;
+    if (hasFocus() && !isReadOnly()) caretBlink_.start();
+    // Целиком, а не по прямоугольнику: курсор мог только что уехать, и на
+    // прежнем месте осталась бы нарисованная каретка.
+    viewport()->update();
+}
+
+void NoteView::focusInEvent(QFocusEvent* event) {
+    QTextBrowser::focusInEvent(event);
+    showCaret();
+}
+
+void NoteView::focusOutEvent(QFocusEvent* event) {
+    QTextBrowser::focusOutEvent(event);
+    caretBlink_.stop();
+    caretOn_ = false;
+    viewport()->update();
 }
 
 void NoteView::applyContentWidth() {
@@ -71,10 +105,6 @@ void NoteView::applyContentWidth() {
         const qreal extra = (viewport()->width() - 2 * side - limit) / 2;
         if (extra > 0.0) margin = side + extra;
     }
-
-    // Заодно и ширина каретки: сюда приходят и пересборка, и изменение размера,
-    // так что после смены настроек она обновится сама.
-    applyCaretWidth();
 
     QTextFrame* root = document()->rootFrame();
     QTextFrameFormat format = root->frameFormat();
@@ -169,6 +199,16 @@ void NoteView::paintEvent(QPaintEvent* event) {
         if (rect.top() > visible.bottom()) break;
         if (rect.bottom() < visible.top()) continue;
         paintMarker(painter, block, base);
+    }
+
+    // Каретка — последней и без сдвига на прокрутку: cursorRect уже отдаёт
+    // координаты вьюпорта. При выделении не рисуется вовсе: там видно и так, а
+    // мигающая полоска на краю выделения только мешает.
+    painter.resetTransform();
+    if (caretOn_ && hasFocus() && !isReadOnly() && !textCursor().hasSelection()) {
+        QRect at = cursorRect();
+        at.setWidth(qMax(1, qRound(appearance().caretWidth * zoom_)));
+        painter.fillRect(at, appearance().caretColor);
     }
 }
 

@@ -11,6 +11,7 @@
 
 #include <QFont>
 #include <QTextBrowser>
+#include <QTimer>
 #include <QtGlobal>
 
 class QWidget;
@@ -25,7 +26,7 @@ class NoteView : public QTextBrowser {
     Q_OBJECT
 
 public:
-    using QTextBrowser::QTextBrowser;
+    explicit NoteView(QWidget* parent = nullptr);
 
     // Шрифт, которым собран документ: им же меряется геометрия маркеров.
     QFont baseFont() const;
@@ -42,6 +43,8 @@ public:
 protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
+    void focusInEvent(QFocusEvent* event) override;
+    void focusOutEvent(QFocusEvent* event) override;
 
     // Правка полей — это смена облика, но документу она неотличима от правки
     // текста: QTextDocument шлёт contentsChanged и на неё. Наследник смотрит на
@@ -54,13 +57,19 @@ protected:
     // строками кода незакрашенные полосы (замер: 1.9 px на строку).
     void paintCodeBackground(QPainter& painter, const QRectF& visible);
 
-    // Ширина каретки по настройке и текущему масштабу.
-    void applyCaretWidth();
-
-
 private:
+    // Каретку рисуем сами: своей Qt цвета не отдаёт (см. caretColor в
+    // settings.h). Раз рисуем сами — сами и мигаем: частота та же, что у
+    // системы, а на каждой правке и на каждом движении курсора каретка
+    // зажигается заново. Мигающая под руками каретка мешает как раз там, где
+    // её важнее всего видеть.
+    QRect caretRect() const;
+    void showCaret();
+
     qreal zoom_ = 1.0;
     bool changingLayout_ = false;
+    QTimer caretBlink_;
+    bool caretOn_ = true;
 };
 
 }  // namespace zametti
