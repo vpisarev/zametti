@@ -185,6 +185,10 @@ void checkOrdinalAgreement(const std::string& source, const std::string& label) 
     int number = 0;
     for (QTextBlock block = doc.begin(); block.isValid(); block = block.next(), ++number) {
         if (!zametti::isListBlock(block)) {
+            // Ни пустая строка, ни блок внутри пункта список не заканчивают:
+            // нумерация за ними продолжается. Так же смотрят и отрисовка, и
+            // сериализатор.
+            if (zametti::isVSpaceBlock(block) || zametti::levelOf(block) >= 0) continue;
             runs.reset();
             continue;
         }
@@ -208,6 +212,11 @@ const char* const kOrdinalCases[] = {
     "- буллет\n1. номер\n- снова буллет\n",
     "- [ ] задача\n- буллет\n- [x] снова задача\n",
     "1. раз\n   - вложенный буллет\n2. два\n",
+    // Нумерацию не сбивает ничто, что стоит внутри пункта: ни второй абзац,
+    // ни блок кода. Через сериализацию это не видно — номера рисует отрисовка.
+    "1. раз\n\n   продолжение\n\n2. два\n",
+    "1. раз\n\n   ```\n   код\n   ```\n\n2. два\n",
+    "- раз\n\n  ```\n  код\n  ```\n\n- два\n",
 };
 
 // Блоки-продолжения: признак относительный, он говорит про связь с предыдущим

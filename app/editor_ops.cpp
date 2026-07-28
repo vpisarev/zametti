@@ -1487,9 +1487,21 @@ void applyListGeometry(QTextDocument& doc, BlockRange range) {
         if (run == kSkip) continue;
         if (run == kInside) {
             // Колонка своего пункта — та самая, от которой начинается его текст.
+            // К ней прибавляется собственный отступ блока: у кода и цитаты он
+            // свой, и внутри пункта он тоже нужен.
             const size_t at = size_t(qMax(0, levelOf(block))) + 1;
             if (at >= contentCol.size()) continue;
-            const qreal margin = indent + contentCol[at];
+            qreal own = 0;
+            switch (kindOf(block)) {
+                case Kind::Code:  own = appearance().codeIndent * charUnit; break;
+                case Kind::Quote: own = appearance().quoteIndent * charUnit; break;
+                case Kind::Paragraph:
+                case Kind::Heading:
+                case Kind::VSpace:
+                case Kind::ListItem:
+                    break;
+            }
+            const qreal margin = indent + contentCol[at] + own;
             QTextBlockFormat format = block.blockFormat();
             if (std::fabs(format.leftMargin() - margin) < 0.01) continue;
             format.setLeftMargin(margin);

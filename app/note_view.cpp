@@ -100,7 +100,17 @@ void NoteView::paintCodeBackground(QPainter& painter, const QRectF& visible) {
         const int lines = block.layout() != nullptr ? block.layout()->lineCount() : 1;
         const qreal height =
             assigned > 0 ? qMax(rect.height(), lines * assigned) : rect.height();
-        painter.drawRect(QRectF(rect.left(), rect.top(), rect.width(), height));
+
+        // Блок кода внутри пункта списка начинается не от края колонки, а от
+        // колонки своего пункта: иначе подложка вылезала бы левее маркера и
+        // разрезала список надвое. Собственный отступ кода при этом не в счёт —
+        // на верхнем уровне подложка как шла почти во всю колонку, так и идёт.
+        const qreal charUnit =
+            QFontMetricsF(baseFontFor(zoom_)).horizontalAdvance(QLatin1Char('A'));
+        const qreal shift = qMax(0.0, block.blockFormat().leftMargin() -
+                                          appearance().codeIndent * charUnit);
+        painter.drawRect(
+            QRectF(rect.left() + shift, rect.top(), rect.width() - shift, height));
     }
 }
 

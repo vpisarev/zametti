@@ -90,7 +90,12 @@ int ordinalOf(const QTextBlock& block) {
     int ordinal = 1;
     for (QTextBlock prev = block.previous(); prev.isValid(); prev = prev.previous()) {
         if (isVSpaceBlock(prev)) continue;           // просторный список — всё тот же список
-        if (!isListBlock(prev)) break;               // абзац или дословный кусок рвёт прогон
+        if (!isListBlock(prev)) {
+            // Блок внутри пункта — второй абзац, код — список не заканчивает:
+            // нумерация за ним продолжается. Так же смотрит и сериализатор.
+            if (levelOf(prev) >= 0) continue;
+            break;                                   // абзац или дословный кусок рвёт прогон
+        }
         const int prevLevel = levelOf(prev);
         if (prevLevel > level) continue;             // вложенный подсписок прогон не рвёт
         if (prevLevel < level) break;                // вышли из своего уровня

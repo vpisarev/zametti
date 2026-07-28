@@ -429,12 +429,27 @@ int enterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
             const auto* d = static_cast<const MD_BLOCK_CODE_DETAIL*>(detail);
             std::string info;
             bool inList = !c.stack.empty() && c.stack.back().type == MD_BLOCK_LI;
-            if (inList || insideQuote(c)) {
+            // Внутри цитаты код по-прежнему дословен: цитата держит только
+            // абзацы. А внутри пункта списка — обычный блок кода, у которого
+            // есть уровень: он и говорит, внутри какого пункта тот стоит.
+            //
+            // Кроме одного случая: забор прямо на строке маркера ("- ```").
+            // Тогда пункт и код делят одну строку, а границы блоков мы считаем
+            // строками — двум блокам на одной строке взяться неоткуда. Такое
+            // остаётся дословным, как было.
+            Frame* codeLi = inList ? &c.stack.back() : nullptr;
+            if (insideQuote(c) || (codeLi != nullptr && codeLi->childIdx == 0 && c.inLeaf)) {
                 c.stack.push_back(f);
                 demote(c);
                 return 0;
             }
-            startLeaf(c, Kind::Code, 0, -1);
+            // Пункт, внутри которого встал код, к этому времени ещё открыт:
+            // закрываем его, иначе его текст пропал бы.
+            if (codeLi != nullptr) {
+                endLeaf(c);
+                codeLi->childIdx++;
+            }
+            startLeaf(c, Kind::Code, 0, inList ? listDepthOf(c) - 1 : -1);
             c.curFenced = (d->fence_char != 0);
             // Нулевой символ в info-строке представить нечем — только тогда блок
             // уходит дословно. Разобрать его при этом всё равно надо: высота

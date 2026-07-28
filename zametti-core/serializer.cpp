@@ -782,12 +782,27 @@ std::string serialize(const Document& doc) {
             }
 
             case Kind::Code: {
-                std::string fence = fenceFor(b.text, b.info);
+                // Блок кода внутри пункта отступает до колонки его содержимого —
+                // и забор, и каждая строка. Пустые строки внутри кода при этом
+                // остаются пустыми: отступ в них дал бы концевые пробелы, а
+                // блоку кода они не нужны.
+                const std::string pad(indentInsideItem(b, contentCol), ' ');
+                const std::string fence = fenceFor(b.text, b.info);
+                out += pad;
                 out += fence;
                 out += b.info;
                 out.push_back('\n');
-                out += b.text;
-                if (!b.text.empty() && b.text.back() != '\n') out.push_back('\n');
+                for (size_t at = 0; at < b.text.size();) {
+                    size_t end = b.text.find('\n', at);
+                    if (end == std::string::npos) end = b.text.size();
+                    if (end > at) {
+                        out += pad;
+                        out.append(b.text, at, end - at);
+                    }
+                    out.push_back('\n');
+                    at = end + 1;
+                }
+                out += pad;
                 out += fence;
                 out.push_back('\n');
                 break;
