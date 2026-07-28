@@ -1132,6 +1132,43 @@ void checkEmptyNoteCaret() {
           "и той же высоты, что строка текста");
 }
 
+// Ширина каретки — настройка. По умолчанию Qt рисует её в один пиксель, и на
+// плотном экране её попросту не видно.
+//
+// Проверяем по значению, которое доходит до Qt: каретка мигает, и снимок
+// виджета ловит её через раз, а нарисована она будет ровно этой ширины.
+void checkCaretWidth() {
+    const zametti::Appearance saved = zametti::appearance();
+    struct Restore {
+        const zametti::Appearance& from;
+        ~Restore() { zametti::appearance() = from; }
+    } restore{saved};
+
+    const QString path = writeNote("каретка.md", QStringLiteral("текст\n"));
+
+    zametti::appearance().caretWidth = 3.0;
+    zametti::NoteEditor editor;
+    editor.resize(700, 300);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(path);
+    QTest::qWait(20);
+    checkEqual(QStringLiteral("3"), QString::number(editor.cursorWidth()),
+               "ширина каретки берётся из настройки");
+
+    // С масштабом растёт: каретка должна быть заметна одинаково при любом кегле.
+    editor.applyZoom(2.0);
+    QTest::qWait(20);
+    checkEqual(QStringLiteral("6"), QString::number(editor.cursorWidth()),
+               "и растёт вместе с масштабом");
+
+    // Ноль и отрицательное значение в настройке не должны прятать каретку вовсе.
+    zametti::appearance().caretWidth = 0.0;
+    editor.applyZoom(1.0);
+    QTest::qWait(20);
+    check(editor.cursorWidth() >= 1, "нулевая настройка не прячет каретку");
+}
+
 // Пустые строки — содержимое заметки, а не мусор: ими отбивают куски текста.
 // Набрали, сохранили, открыли заново — они на месте, и ровно в том же числе.
 // В файл они уходят настоящими пустыми строками, без единого хитрого знака.
@@ -1308,6 +1345,7 @@ int main(int argc, char** argv) {
 
     checkOpenDoesNotTouchFile();
     checkEmptyNoteCaret();
+    checkCaretWidth();
     checkUndoKeepsAppearance();
     checkAppearanceMakesNoHistoryStep();
     checkFirstEditAfterOpenIsUndoable();

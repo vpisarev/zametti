@@ -46,6 +46,16 @@ QFont NoteView::baseFont() const { return baseFontFor(zoom_); }
 
 void NoteView::setZoom(qreal zoom) {
     zoom_ = zoom;
+    applyCaretWidth();
+}
+
+// Ширина каретки. Своя у Qt по умолчанию в один пиксель — на экране с высокой
+// плотностью её попросту не видно. Цвет Qt задать не даёт, а рисовать каретку
+// самим значит взять на себя и мигание, и след за ней; ширины хватает.
+//
+// С масштабом растёт: каретка должна быть заметна одинаково при любом кегле.
+void NoteView::applyCaretWidth() {
+    setCursorWidth(qMax(1, qRound(appearance().caretWidth * zoom_)));
 }
 
 void NoteView::applyContentWidth() {
@@ -61,6 +71,10 @@ void NoteView::applyContentWidth() {
         const qreal extra = (viewport()->width() - 2 * side - limit) / 2;
         if (extra > 0.0) margin = side + extra;
     }
+
+    // Заодно и ширина каретки: сюда приходят и пересборка, и изменение размера,
+    // так что после смены настроек она обновится сама.
+    applyCaretWidth();
 
     QTextFrame* root = document()->rootFrame();
     QTextFrameFormat format = root->frameFormat();

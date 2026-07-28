@@ -54,6 +54,9 @@ protected:
     // строками кода незакрашенные полосы (замер: 1.9 px на строку).
     void paintCodeBackground(QPainter& painter, const QRectF& visible);
 
+    // Ширина каретки по настройке и текущему масштабу.
+    void applyCaretWidth();
+
 
 private:
     qreal zoom_ = 1.0;
