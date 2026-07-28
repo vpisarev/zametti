@@ -388,13 +388,19 @@ int enterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
             Frame* li = (!c.stack.empty() && c.stack.back().type == MD_BLOCK_LI) ? &c.stack.back()
                                                                                  : nullptr;
             if (li != nullptr) {
-                // В элементе списка допустим ровно один абзац, и только первым:
-                // всё остальное (второй абзац, код, заголовок) моделью не
-                // выражается. Блок под него уже открыт на входе в элемент.
+                // Первый абзац пункта — это сам пункт: блок под него уже открыт
+                // на входе в элемент (плотные списки md4c в MD_BLOCK_P не
+                // заворачивает, и текст приходит прямо в элемент).
+                //
+                // Второй и следующие — обычные абзацы, стоящие внутри пункта.
+                // Уровень говорит, внутри какого именно: сам пункт лежит на том
+                // же уровне выше.
                 if (li->childIdx != 0 || !c.inLeaf) {
-                    c.stack.push_back(f);
-                    demote(c);
-                    return 0;
+                    endLeaf(c);
+                    startLeaf(c, insideQuote(c) ? Kind::Quote : Kind::Paragraph, 0,
+                              listDepthOf(c) - 1);
+                    li->childIdx++;
+                    break;
                 }
                 li->childIdx++;
             } else {

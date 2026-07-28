@@ -35,7 +35,7 @@ BlockRange expandToRuns(const QTextDocument& doc, BlockRange range) {
 
     auto partOfRun = [&doc](int number) {
         const QTextBlock block = doc.findBlockByNumber(number);
-        return isListBlock(block) || isVSpaceBlock(block);
+        return isListBlock(block) || isVSpaceBlock(block) || levelOf(block) >= 0;
     };
     while (range.first > 0 && partOfRun(range.first - 1)) --range.first;
     while (range.last + 1 < count && partOfRun(range.last + 1)) ++range.last;
@@ -109,10 +109,68 @@ void shiftLevels(QTextDocument& doc, BlockRange range, int delta) {
 
 }  // namespace
 
+namespace {
+
+// Годится ли этот блок на роль содержимого пункта. Заголовок внутри пункта
+// markdown не выражает, пустая строка ничьей вложенности не имеет, дословный
+// кусок мы не трогаем вовсе.
+bool canLiveInsideItem(const QTextBlock& block) {
+    if (isRawBlock(block) || isVSpaceBlock(block)) return false;
+    const Kind kind = kindOf(block);
+    return kind == Kind::Paragraph || kind == Kind::Quote || kind == Kind::Code;
+}
+
+// Меняет уровень блоков внутри пункта: привязывает их к пункту выше или
+// отвязывает обратно в обычный текст. Возвращает false, если привязывать не к
+// чему или отвязывать нечего.
+bool setInsideLevel(QTextDocument& doc, BlockRange range, int level) {
+    QTextCursor edit(&doc);
+    edit.beginEditBlock();
+    bool any = false;
+    QTextBlock block = doc.findBlockByNumber(range.first);
+    for (int i = range.first; i <= range.last && block.isValid(); ++i, block = block.next()) {
+        if (!canLiveInsideItem(block)) continue;
+        QTextBlockFormat format = block.blockFormat();
+        if (level < 0) {
+            format.clearProperty(LevelProperty);
+            format.setLeftMargin(0);
+        } else {
+            format.setProperty(LevelProperty, level);
+        }
+        setBlockFormat(edit, block, format);
+        any = true;
+    }
+    if (any) normalise(doc, range);
+    edit.endEditBlock();
+    return any;
+}
+
+// Пункт, внутри которого оказался бы блок, если его привязать: ближайший выше,
+// у которого уровень есть. Пустые строки по дороге не в счёт.
+int levelAbove(const QTextDocument& doc, int number) {
+    for (int i = number - 1; i >= 0; --i) {
+        const QTextBlock block = doc.findBlockByNumber(i);
+        if (isVSpaceBlock(block)) continue;
+        return levelOf(block);
+    }
+    return -1;
+}
+
+}  // namespace
+
 bool indentListItems(QTextDocument& doc, QTextCursor& cursor) {
     const BlockRange range = selectedBlocks(doc, cursor);
     const QTextBlock first = doc.findBlockByNumber(range.first);
-    if (!isListBlock(first)) return false;
+
+    // Tab на абзаце сразу под списком привязывает его к пункту: получается
+    // второй абзац этого пункта. Правило Tab при этом одно на всех — «сделать
+    // блок глубже», просто у абзаца и у пункта это значит разное.
+    if (!isListBlock(first)) {
+        if (levelOf(first) >= 0 || !canLiveInsideItem(first)) return false;
+        const int level = levelAbove(doc, range.first);
+        if (level < 0) return false;
+        return setInsideLevel(doc, range, level);
+    }
 
     // Отступать можно только под уже существующий пункт: иначе получился бы
     // прыжок через уровень, которого в файле не бывает.
@@ -126,7 +184,13 @@ bool indentListItems(QTextDocument& doc, QTextCursor& cursor) {
 bool outdentListItems(QTextDocument& doc, QTextCursor& cursor) {
     const BlockRange range = selectedBlocks(doc, cursor);
     const QTextBlock first = doc.findBlockByNumber(range.first);
-    if (!isListBlock(first) || levelOf(first) == 0) return false;
+
+    // Shift+Tab на втором абзаце пункта отвязывает его обратно в обычный текст.
+    if (!isListBlock(first)) {
+        if (levelOf(first) < 0) return false;
+        return setInsideLevel(doc, range, -1);
+    }
+    if (levelOf(first) == 0) return false;
 
     shiftLevels(doc, range, -1);
     return true;
@@ -151,7 +215,11 @@ int subtreeEnd(const QTextDocument& doc, int number) {
         const int next = skipVSpace(doc, last + 1);
         if (next >= doc.blockCount()) break;
         const QTextBlock block = doc.findBlockByNumber(next);
-        if (!isListBlock(block) || levelOf(block) <= level) break;
+        const int other = levelOf(block);
+        // Вложенный пункт принадлежит этому; блок без маркера на том же уровне —
+        // это его же второй абзац, и он тоже часть пункта.
+        const bool mine = isListBlock(block) ? other > level : other >= level;
+        if (other < 0 || !mine) break;
         last = next;
     }
     return last;
@@ -164,7 +232,10 @@ int previousSibling(const QTextDocument& doc, int number) {
     for (int i = number - 1; i >= 0; --i) {
         const QTextBlock block = doc.findBlockByNumber(i);
         if (isVSpaceBlock(block)) continue;      // просторный список — тот же список
-        if (!isListBlock(block)) return -1;      // через абзац не прыгаем
+        if (!isListBlock(block)) {
+            if (levelOf(block) >= 0) continue;   // второй абзац пункта — часть списка
+            return -1;                           // через абзац не прыгаем
+        }
         const int other = levelOf(block);
         if (other < level) return -1;            // вышли из своего уровня
         if (other == level) return i;
@@ -1278,7 +1349,11 @@ bool repairAfterTyping(QTextDocument& doc, QTextCursor& cursor) {
     const QTextBlock next = doc.findBlockByNumber(number + 1);
     const bool levelJump =
         isListBlock(next) && levelOf(next) > (isListBlock(block) ? levelOf(block) : -1) + 1;
-    if (!filled && !mergesAhead && !mergesBehind && !levelJump) return false;
+    // И сам блок мог остаться с уровнем от пункта, которого больше нет: набор
+    // поверх выделения съедает и пункты.
+    const bool orphan =
+        !isListBlock(block) && levelOf(block) >= 0 && levelAbove(doc, number) < levelOf(block);
+    if (!filled && !mergesAhead && !mergesBehind && !levelJump && !orphan) return false;
 
     QTextCursor edit(&doc);
     edit.beginEditBlock();
@@ -1350,6 +1425,9 @@ void applyListGeometry(QTextDocument& doc, BlockRange range) {
     // не должна.
     // Метка «этот блок пропускаем, ничего не меняя» — ею помечены пустые строки.
     constexpr int kSkip = -2;
+    // Метка «блок стоит внутри пункта»: колонку он берёт у своего пункта, а сам
+    // ни в какой прогон не входит и ширину маркеров не задаёт.
+    constexpr int kInside = -3;
     std::vector<int> runOf;
     std::vector<qreal> widest;
     {
@@ -1365,6 +1443,11 @@ void applyListGeometry(QTextDocument& doc, BlockRange range) {
                 continue;
             }
             if (!isListBlock(block)) {
+                // Блок внутри пункта список не заканчивает: прогон живёт дальше.
+                if (levelOf(block) >= 0) {
+                    runOf.push_back(kInside);
+                    continue;
+                }
                 runs.reset();
                 currentRun.clear();
                 currentFamily.clear();
@@ -1402,6 +1485,17 @@ void applyListGeometry(QTextDocument& doc, BlockRange range) {
     for (int i = full.first; i <= full.last && block.isValid(); ++i, block = block.next()) {
         const int run = runOf[size_t(i - full.first)];
         if (run == kSkip) continue;
+        if (run == kInside) {
+            // Колонка своего пункта — та самая, от которой начинается его текст.
+            const size_t at = size_t(qMax(0, levelOf(block))) + 1;
+            if (at >= contentCol.size()) continue;
+            const qreal margin = indent + contentCol[at];
+            QTextBlockFormat format = block.blockFormat();
+            if (std::fabs(format.leftMargin() - margin) < 0.01) continue;
+            format.setLeftMargin(margin);
+            setBlockFormat(cursor, block, format);
+            continue;
+        }
         if (run < 0) {
             contentCol.assign(1, 0.0);
             continue;
@@ -1439,7 +1533,23 @@ void syncLists(QTextDocument& doc, BlockRange range) {
     for (int i = full.first; i <= full.last && block.isValid(); ++i, block = block.next()) {
         if (isVSpaceBlock(block)) continue;   // просторный список — тот же список
         if (!isListBlock(block)) {
-            open.clear();
+            const int inside = levelOf(block);
+            if (inside < 0) {
+                open.clear();
+                continue;
+            }
+            // Блок внутри пункта: глубже открытого уровня ему быть не с чего, а
+            // без списка вокруг он и вовсе обычный абзац.
+            const int deepest = int(open.size()) - 1;
+            if (inside == deepest) continue;
+            QTextBlockFormat format = block.blockFormat();
+            if (deepest < 0) {
+                format.clearProperty(LevelProperty);
+                format.setLeftMargin(0);
+            } else {
+                format.setProperty(LevelProperty, deepest);
+            }
+            setBlockFormat(cursor, block, format);
             continue;
         }
         const int was = qMax(0, levelOf(block));
@@ -1613,7 +1723,24 @@ bool listInvariantHolds(const QTextDocument& doc, QString* problem) {
     for (QTextBlock block = doc.begin(); block.isValid(); block = block.next(), ++number) {
         if (isVSpaceBlock(block)) continue;   // прогон она не рвёт — см. сериализатор
         if (!isListBlock(block)) {
-            prevLevel = -1;
+            const int inside = levelOf(block);
+            if (inside < 0) {
+                prevLevel = -1;
+                continue;
+            }
+            // Блок внутри пункта живёт на уровне уже открытого пункта: открыть
+            // список сам он не может, у него нет маркера.
+            if (inside > prevLevel) {
+                if (problem != nullptr) {
+                    *problem =
+                        QStringLiteral("блок %1: уровень %2 внутри пункта при уровне %3 выше")
+                            .arg(number)
+                            .arg(inside)
+                            .arg(prevLevel);
+                }
+                return false;
+            }
+            prevLevel = inside;
             continue;
         }
         const int level = levelOf(block);

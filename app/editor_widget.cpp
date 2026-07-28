@@ -401,7 +401,7 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     // не к чему, но и табуляцию в его текст ставить незачем. Без этого отказ
     // операции проваливался в QTextEdit, и в пункте появлялся знак табуляции.
     if ((event->key() == Qt::Key_Tab || event->key() == Qt::Key_Backtab) &&
-        isListBlock(textCursor().block()))
+        (isListBlock(textCursor().block()) || levelOf(textCursor().block()) >= 0))
         return;
 
     // Шаг вверх-вниз между блоками с разными полями: курсор должен остаться на

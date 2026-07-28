@@ -630,8 +630,12 @@ void validate(const Block& b) {
            "headingLevel осмыслен только у заголовка");
     assert((b.kind != Kind::Heading || (b.headingLevel >= 1 && b.headingLevel <= 6)) &&
            "уровень заголовка вне 1..6");
-    assert((isList(b.kind) || b.level == -1) && "вне списка уровня быть не может");
     assert((!isList(b.kind) || b.level >= 0) && "у пункта списка уровень обязателен");
+    // Внутри пункта могут стоять абзац, цитата и код — им уровень осмыслен.
+    // Заголовку и пустой строке — нет: заголовка внутри пункта markdown не
+    // выражает, а пустая строка ничьей вложенности не имеет.
+    assert(((b.kind != Kind::Heading && b.kind != Kind::VSpace) || b.level == -1) &&
+           "этому роду уровень не положен");
     assert((b.kind == Kind::ListItem || !b.checked) && "отметка осмысленна только у задачи");
     assert((b.kind == Kind::Code || b.info.empty()) && "info осмыслена только у блока кода");
     assert(b.level >= -1 && "уровень мельче, чем вне списка");
@@ -658,6 +662,15 @@ size_t markerIndentWidth(const Block& b, int ordinal) {
     char buf[24];
     std::snprintf(buf, sizeof(buf), "%d. ", ordinal);
     return std::string(buf).size();
+}
+
+// Отступ блока, стоящего внутри пункта: колонка содержимого того пункта. Вне
+// списка отступа нет. Колонки считает сам обход по пунктам, здесь мы их только
+// читаем — и осторожно: у оторвавшегося блока колонки может и не оказаться.
+size_t indentInsideItem(const Block& b, const std::vector<size_t>& contentCol) {
+    if (b.level < 0) return 0;
+    const size_t at = static_cast<size_t>(b.level) + 1;
+    return at < contentCol.size() ? contentCol[at] : 0;
 }
 
 // Определение ссылки в дословном куске: "[метка]: /url". Если такое в документе
@@ -708,7 +721,6 @@ std::string serialize(const Document& doc) {
         const Block& b = doc[i];
         validate(b);
 
-        bool thisIsList = b.rawSource.empty() && isList(b.kind);
         bool thisIsQuote = b.rawSource.empty() && b.kind == Kind::Quote;
 
         // Пустая строка выводится только блоком VSpace — от себя не добавляем
@@ -783,7 +795,13 @@ std::string serialize(const Document& doc) {
 
             case Kind::VSpace:
             case Kind::Paragraph: {
+                // Блок внутри пункта: отступ до колонки его содержимого. Ровно
+                // этим markdown и отличает второй абзац пункта от нового блока
+                // за списком — маркера у него нет, есть только отступ.
+                const size_t indent = indentInsideItem(b, contentCol);
+                out.append(indent, ' ');
                 TextSink sink;
+                sink.contIndent = std::string(indent, ' ');
                 sink.hasLinkDefs = hasLinkDefs;
                 appendInlineText(sink, b);
                 out += sink.out;
@@ -792,8 +810,10 @@ std::string serialize(const Document& doc) {
             }
 
             case Kind::Quote: {
+                const size_t indent = indentInsideItem(b, contentCol);
+                out.append(indent, ' ');
                 TextSink sink;
-                sink.contIndent = "> ";
+                sink.contIndent = std::string(indent, ' ') + "> ";
                 sink.hasLinkDefs = hasLinkDefs;
                 appendInlineText(sink, b);
                 if (sink.out.empty()) {
@@ -850,9 +870,12 @@ std::string serialize(const Document& doc) {
             }
         }
 
-        if (!thisIsList) std::fill(runAlive.begin(), runAlive.end(), 0);
+        // Прогон списка обрывает только блок, вышедший из списка. Второй абзац
+        // пункта список не заканчивает: нумерация за ним продолжается.
+        const bool insideList = b.rawSource.empty() && b.level >= 0;
+        if (!insideList) std::fill(runAlive.begin(), runAlive.end(), 0);
         prevWasQuote = thisIsQuote;
-        prevLevel = thisIsList ? b.level : -1;
+        prevLevel = insideList ? b.level : -1;
     }
 
     return out;

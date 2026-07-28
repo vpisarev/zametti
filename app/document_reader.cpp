@@ -134,8 +134,8 @@ Document readDocument(const QTextDocument& doc) {
                 if (isList(pending.kind)) {
                     pending.marker = markerOf(block).marker;
                     pending.checked = markerOf(block).checked;
-                    pending.level = levelOf(block);
                 }
+                pending.level = levelOf(block);
                 if (pending.kind == Kind::Code)
                     pending.info = toUtf8(format.stringProperty(InfoProperty));
             }

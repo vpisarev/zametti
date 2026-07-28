@@ -482,6 +482,23 @@ Document documentForFile(Document doc) {
             out.pop_back();
     }
 
+    // Блок, оторвавшийся от своего пункта, — обычный абзац. Отступ такого блока
+    // файл прочтёт продолжением пункта, которого больше нет, и круг разойдётся.
+    // Оторваться он может от чего угодно: пункт вырезали, вставили кусок из
+    // другого места, поправили файл снаружи.
+    {
+        int deepest = -1;   // уровень последнего пункта или его продолжения
+        for (Block& block : out) {
+            if (!block.rawSource.empty()) { deepest = -1; continue; }
+            if (block.kind == Kind::VSpace) continue;
+            if (isList(block.kind)) { deepest = block.level; continue; }
+            if (block.level < 0) { deepest = -1; continue; }
+            if (deepest < 0) block.level = -1;
+            else if (block.level > deepest) block.level = deepest;
+            else deepest = block.level;
+        }
+    }
+
     // Последний рубеж инварианта: между блоками, которые в файле слиплись бы,
     // обязана стоять пустая строка. Операции держат это правило сами, но здесь
     // мы отвечаем за файл — а испорченный файл дороже лишней проверки.

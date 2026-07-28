@@ -304,8 +304,10 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
             if (list) {
                 blockFmt.setProperty(MarkerProperty, static_cast<int>(b.marker));
                 blockFmt.setProperty(CheckedProperty, b.checked);
-                blockFmt.setProperty(LevelProperty, b.level);
             }
+            // Уровень — у всякого блока, стоящего внутри пункта, а не только у
+            // самого пункта: второй абзац пункта тоже на уровне.
+            if (b.level >= 0) blockFmt.setProperty(LevelProperty, b.level);
         }
 
         // Отбивку целиком держит верхнее поле, нижнее всегда нулевое. Qt между
