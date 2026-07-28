@@ -306,6 +306,9 @@ int main(int argc, char** argv) {
     editor.setZoom(std::clamp(session.zoom, zametti::appearance().zoomMin,
                               zametti::appearance().zoomMax));
     if (!editor.openFile(current)) return 2;
+    // При запуске каретка сразу в тексте: дерево нужно, чтобы выбрать заметку, а
+    // не чтобы в нём находиться.
+    editor.setFocus();
 
     QObject::connect(tree.selectionModel(), &QItemSelectionModel::currentChanged, &tree,
                      [&](const QModelIndex& index, const QModelIndex&) {
@@ -313,6 +316,16 @@ int main(int argc, char** argv) {
                          const QString file = model.filePath(index);
                          if (!file.isEmpty() && file != editor.filePath()) editor.openFile(file);
                      });
+
+    // Ткнули в заметку мышью — работать дальше человек будет в тексте, значит и
+    // каретка должна быть там. Стрелками по дереву при этом ходить можно
+    // по-прежнему: фокус переносит только щелчок, а не всякая смена выбора.
+    //
+    // Без этого в пустой заметке было и вовсе не за что зацепиться: текста нет,
+    // каретки нет, и непонятно, куда набирать.
+    QObject::connect(&tree, &QTreeView::clicked, &editor, [&](const QModelIndex& index) {
+        if (!model.filePath(index).isEmpty()) editor.setFocus();
+    });
 
     // Раскрытые ветки собираем обходом дерева: у QTreeView нет готового списка,
     // а хранить путь каждой ветки отдельно незачем — их десятки.

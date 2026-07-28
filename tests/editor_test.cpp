@@ -1079,6 +1079,36 @@ void checkSelectionHasNoGaps() {
                "внутри выделения не должно быть незакрашенных рядов");
 }
 
+// Пустая заметка. Каретка в ней должна быть видна и стоять там же, где встал бы
+// текст: у левого поля и в высоту строки. До правки блок оставался вовсе без
+// формата, каретка выходила кеглем по умолчанию в самом углу окна, и человек её
+// попросту не находил.
+void checkEmptyNoteCaret() {
+    const QString path = writeNote("пустая.md", QString());
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 400);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    const QRect caret = editor.cursorRect();
+    // Левое поле страницы — там же, где начинается текст обычного абзаца.
+    const QString filled = writeNote("не-пустая.md", QStringLiteral("текст\n"));
+    editor.openFile(filled);
+    QTest::qWait(20);
+    const QRect withText = editor.cursorRect();
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    checkEqual(QString::number(withText.x()), QString::number(editor.cursorRect().x()),
+               "каретка пустой заметки стоит у того же поля, что и текст");
+    check(caret.height() > 1 && qAbs(caret.height() - withText.height()) <= 1,
+          "и той же высоты, что строка текста");
+}
+
 // Пустые строки — содержимое заметки, а не мусор: ими отбивают куски текста.
 // Набрали, сохранили, открыли заново — они на месте, и ровно в том же числе.
 // В файл они уходят настоящими пустыми строками, без единого хитрого знака.
@@ -1254,6 +1284,7 @@ int main(int argc, char** argv) {
     }
 
     checkOpenDoesNotTouchFile();
+    checkEmptyNoteCaret();
     checkUndoKeepsAppearance();
     checkAppearanceMakesNoHistoryStep();
     checkFirstEditAfterOpenIsUndoable();
