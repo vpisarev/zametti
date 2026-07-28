@@ -117,19 +117,47 @@ Block withStrikeOnWholeWords(Block block) {
 // Поэтому края разметки поджимаются внутрь. Выделить курсивом стих вместе с его
 // отступами человек может, а markdown этого не хранит — начертание достанется
 // самим строкам, без ведущих пробелов.
+// Делят ли эти два спана хоть одно начертание. Если делят, то на их стыке
+// разметка не кончается — она продолжается дальше, и стык внутри неё.
+bool sharesStyle(const Span& a, const Span& b) {
+    return (a.bold && b.bold) || (a.italic && b.italic) || (a.strike && b.strike) ||
+           (a.code && b.code) || (!a.href.empty() && a.href == b.href);
+}
+
 Block withTrimmedSpans(Block block) {
     if (!block.rawSource.empty() || block.kind == Kind::Code) return block;
 
-    for (Span& span : block.inlines) {
+    for (size_t i = 0; i < block.inlines.size(); ++i) {
+        Span& span = block.inlines[i];
+        // Пробелов на краю не терпит только начертание: звёздочка или тильда
+        // перед пробелом кусок не открывает. Встроенный код и ссылка терпят —
+        // проверено на ядре, `[x] ` и [ так ](/url) проходят круг дословно.
+        //
+        // У куска кода край всегда обратная кавычка, а не пробел, поэтому
+        // начертание вокруг него тоже цело.
+        if (span.code || !(span.bold || span.italic || span.strike)) continue;
+        // Край, к которому вплотную примыкает спан того же начертания, краем
+        // разметки не является: жирный кусок со встроенным кодом внутри лежит у
+        // нас двумя спанами, и пробел между ними — середина жирного, а не его
+        // конец. Поджав такой край, мы разрывали жирный надвое, и открытие файла
+        // переписывало его без единой правки.
+        const bool joinedLeft =
+            i > 0 && block.inlines[i - 1].offset + block.inlines[i - 1].length == span.offset &&
+            sharesStyle(block.inlines[i - 1], span);
+        const bool joinedRight =
+            i + 1 < block.inlines.size() &&
+            span.offset + span.length == block.inlines[i + 1].offset &&
+            sharesStyle(span, block.inlines[i + 1]);
+
         size_t from = size_t(qBound(0, span.offset, int(block.text.size())));
         size_t to = size_t(qBound(int(from), span.offset + span.length,
                                   int(block.text.size())));
-        while (from < to) {
+        while (!joinedLeft && from < to) {
             const int width = whitespaceAt(block.text, from);
             if (width == 0) break;
             from += size_t(width);
         }
-        while (to > from) {
+        while (!joinedRight && to > from) {
             const int width = whitespaceBefore(block.text, to);
             if (width == 0) break;
             to -= size_t(width);
@@ -402,6 +430,9 @@ void appendSplitOnBlankLines(Document& out, Block block) {
         if (pieceFrom == std::string::npos) return;
         Block piece;
         piece.kind = Kind::Paragraph;
+        // Уровень переносим: куски остаются там же, где стоял сам абзац, — то
+        // есть внутри своего пункта, если он там стоял.
+        piece.level = block.level;
         piece.text = block.text.substr(pieceFrom, to - pieceFrom);
         for (const Span& span : block.inlines) {
             const size_t from = std::max(size_t(span.offset), pieceFrom);
@@ -489,9 +520,17 @@ Document documentForFile(Document doc) {
     {
         int deepest = -1;   // уровень последнего пункта или его продолжения
         for (Block& block : out) {
+            // Дословный кусок выводится с нулевой колонки и список этим
+            // заканчивает: всё, что за ним, стоит уже снаружи.
             if (!block.rawSource.empty()) { deepest = -1; continue; }
             if (block.kind == Kind::VSpace) continue;
-            if (isList(block.kind)) { deepest = block.level; continue; }
+            if (isList(block.kind)) {
+                // Пункт может открыть только один уровень за раз. Глубже —
+                // значит его родителя больше нет: прижимаем к возможному.
+                if (block.level > deepest + 1) block.level = deepest + 1;
+                deepest = block.level;
+                continue;
+            }
             if (block.level < 0) { deepest = -1; continue; }
             if (deepest < 0) block.level = -1;
             else if (block.level > deepest) block.level = deepest;
