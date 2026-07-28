@@ -80,6 +80,8 @@ std::string toJson(const Document& doc) {
                 out += '"';
                 if (b.marker == Marker::Task)
                     out += b.checked ? ", \"checked\": true" : ", \"checked\": false";
+            }
+            if (b.level >= 0) {
                 out += ", \"level\": ";
                 appendInt(out, b.level);
             }

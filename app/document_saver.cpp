@@ -315,7 +315,7 @@ Block withMarkupThatSurvives(Block block) {
     // строки, а сериализатор в одиночном блоке ждёт, что уровень не прыгает
     // через один, и на вложенном пункте падал бы проверкой.
     Block probe = block;
-    probe.level = 0;
+    probe.level = isList(probe.kind) ? 0 : -1;
     const Document one{std::move(probe)};
     const Document back = parse(serialize(one));
     if (back.size() == 1 && back[0].rawSource.empty() && back[0].text == block.text)

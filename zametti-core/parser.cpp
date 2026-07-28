@@ -398,7 +398,7 @@ int enterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
                 }
                 li->childIdx++;
             } else {
-                startLeaf(c, insideQuote(c) ? Kind::Quote : Kind::Paragraph, 0, 0);
+                startLeaf(c, insideQuote(c) ? Kind::Quote : Kind::Paragraph, 0, -1);
             }
             break;
         }
@@ -415,7 +415,7 @@ int enterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
                 return 0;
             }
             const auto* d = static_cast<const MD_BLOCK_H_DETAIL*>(detail);
-            startLeaf(c, Kind::Heading, static_cast<int>(d->level), 0);
+            startLeaf(c, Kind::Heading, static_cast<int>(d->level), -1);
             break;
         }
 
@@ -428,7 +428,7 @@ int enterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
                 demote(c);
                 return 0;
             }
-            startLeaf(c, Kind::Code, 0, 0);
+            startLeaf(c, Kind::Code, 0, -1);
             c.curFenced = (d->fence_char != 0);
             // Нулевой символ в info-строке представить нечем — только тогда блок
             // уходит дословно. Разобрать его при этом всё равно надо: высота

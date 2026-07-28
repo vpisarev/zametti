@@ -630,10 +630,11 @@ void validate(const Block& b) {
            "headingLevel осмыслен только у заголовка");
     assert((b.kind != Kind::Heading || (b.headingLevel >= 1 && b.headingLevel <= 6)) &&
            "уровень заголовка вне 1..6");
-    assert((isList(b.kind) || b.level == 0) && "level осмыслен только у элементов списка");
+    assert((isList(b.kind) || b.level == -1) && "вне списка уровня быть не может");
+    assert((!isList(b.kind) || b.level >= 0) && "у пункта списка уровень обязателен");
     assert((b.kind == Kind::ListItem || !b.checked) && "отметка осмысленна только у задачи");
     assert((b.kind == Kind::Code || b.info.empty()) && "info осмыслена только у блока кода");
-    assert(b.level >= 0 && "отрицательный уровень вложенности");
+    assert(b.level >= -1 && "уровень мельче, чем вне списка");
 }
 
 std::string markerFor(const Block& b, int ordinal) {

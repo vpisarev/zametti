@@ -62,7 +62,12 @@ struct Block {
     Marker marker       = Marker::Bullet;    // осмысленно только при Kind::ListItem
     bool   checked      = false;             // осмысленно только при Marker::Task
     int    headingLevel = 0;                 // осмысленно только при Kind::Heading
-    int    level        = 0;                 // осмысленно только при isList(kind)
+    // На каком уровне списка стоит блок. -1 — снаружи списка.
+    //
+    // Ось общая, а не поле пункта: пункт всегда имеет уровень, но и другие
+    // блоки могут стоять внутри пункта — второй абзац, код, цитата. Уровень и
+    // говорит, внутри какого пункта они стоят.
+    int    level        = -1;
     std::string text;                        // чистый текст, без маркеров
     std::string info;                        // осмысленно только при Kind::Code: "cpp", "sh", ...
     std::vector<Span> inlines;

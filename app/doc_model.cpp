@@ -38,7 +38,10 @@ Kind kindOf(const QTextBlock& block) {
 }
 
 int levelOf(const QTextBlock& block) {
-    return block.blockFormat().intProperty(LevelProperty);
+    // Отсутствие свойства и есть «вне списка»: нулевой уровень — настоящий,
+    // это верхний уровень списка, и путать их нельзя.
+    const QTextBlockFormat format = block.blockFormat();
+    return format.hasProperty(LevelProperty) ? format.intProperty(LevelProperty) : -1;
 }
 
 bool isListBlock(const QTextBlock& block) {
