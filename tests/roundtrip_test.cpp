@@ -433,6 +433,46 @@ void testDivider() {
            "- пункт\n\n  ---\n");
 }
 
+// Комментарии — свой род (Kind::Html, вид Comment): скобки — структура,
+// внутренность — текст. Что канон не выражает — дословно, как раньше.
+void testHtmlComments() {
+    canonical("комментарий целой строкой", "<!-- привет -->\n");
+    canonical("комментарий между абзацами", "до\n\n<!-- к -->\n\nпосле\n");
+    canonical("комментарий вплотную к тексту снизу", "<!-- к -->\nтекст\n");
+    canonical("комментарий вплотную к тексту СВЕРХУ", "текст\n<!-- к -->\n");
+    canonical("многострочный комментарий", "<!-- много\nстрок -->\n");
+    canonical("комментарий внутри пункта", "- пункт\n\n  <!-- в пункте -->\n");
+    canonical("строчный комментарий", "абзац со <!-- строчным --> внутри\n");
+    canonical("пустой комментарий", "<!-- -->\n");
+
+    stable("крайние пробелы канонизируются", "<!--    к    -->\n", "<!-- к -->\n");
+    stable("совсем без пробелов", "<!--к-->\n", "<!-- к -->\n");
+
+    Document d = parse("<!-- к -->\n");
+    ZT_TRUE("комментарий — свой род, а не дословный кусок",
+            d.blocks.size() == 1 && d.blocks[0].rawSource.empty() &&
+                d.blocks[0].kind == Kind::Html && d.blocks[0].html == HtmlKind::Comment &&
+                d.blocks[0].text == "к");
+
+    // Чего род не выражает — дословно, без потерь.
+    ZT_TRUE("незакрытый комментарий дословен",
+            !parse("<!-- не закрыт\n").blocks.empty() &&
+                !parse("<!-- не закрыт\n").blocks[0].rawSource.empty());
+    ZT_TRUE("два комментария на одной строке дословны",
+            !parse("<!-- а --> и <!-- б -->\n").blocks.empty() &&
+                !parse("<!-- а --> и <!-- б -->\n").blocks[0].rawSource.empty());
+    ZT_TRUE("HTML-тег дословен", !parse("<div>т</div>\n").blocks.empty() &&
+                                     !parse("<div>т</div>\n").blocks[0].rawSource.empty());
+    stable("незакрытый — круг устойчив", "<!-- не закрыт\n", "<!-- не закрыт\n");
+
+    // Шапка метаданных — не Kind::Html: её байты (включая неизвестные ключи)
+    // забирает liftMeta, и они неприкосновенны.
+    Document m = parse("<!-- zametti\nparent: abc\nx-неведомое:  сырое \n-->\n\nтекст\n");
+    ZT_TRUE("шапка метаданных осталась метаданными",
+            m.meta.present && m.meta.lines.size() == 2 &&
+                m.meta.lines[1] == "x-неведомое:  сырое ");
+}
+
 void testImages() {
     canonical("картинка целой строкой", "![подпись](путь.png)\n");
     canonical("картинка в середине абзаца", "до ![алт](a.png) после\n");
@@ -574,6 +614,7 @@ int main() {
     testMeta();
     testDivider();
     testImages();
+    testHtmlComments();
     testComments();
     testInItemFenceExtents();
     return zt::report("roundtrip");

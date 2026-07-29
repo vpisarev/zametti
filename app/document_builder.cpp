@@ -197,6 +197,7 @@ void applySpans(QTextDocument& doc, int textStart, const Block& b, qreal linePoi
         if (s.strike) style |= SpanStrike;
         if (s.code) style |= SpanCode;
         if (s.image) style |= SpanImage;
+        if (s.comment) style |= SpanComment;
 
         QTextCharFormat fmt;
         if (style != 0) fmt.setProperty(SpanStyleProperty, style);
@@ -216,6 +217,7 @@ void applySpans(QTextDocument& doc, int textStart, const Block& b, qreal linePoi
             fmt.setForeground(appearance().linkColor);
             fmt.setFontUnderline(true);
         }
+        if (s.comment) fmt.setForeground(appearance().rawColor);
         if (!s.title.empty())
             fmt.setProperty(SpanTitleProperty,
                             QString::fromUtf8(s.title.data(),
@@ -392,6 +394,13 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
                 case Kind::Divider:
                     // Черту рисует NoteView по геометрии блока — как маркеры.
                     // В документе это пустой блок: текста у черты не бывает.
+                    break;
+
+                case Kind::Html:
+                    // Комментарий: в тексте — внутренность без скобок, скобки
+                    // — структура. Рисуется тем же серым, что и дословные
+                    // куски, но правится как обычный текст.
+                    charFmt.setForeground(appearance().rawColor);
                     break;
             }
             if (b.kind != Kind::Code) text = toQt(b.text, breaks);

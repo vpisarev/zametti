@@ -5,7 +5,7 @@
   {"kind": "vspace", "text": ""},
   {"raw": "<div class=\"html\">\n  <span>HTML-блок дословно</span>\n</div>\n"},
   {"kind": "vspace", "text": ""},
-  {"raw": "<!-- комментарий тоже -->\n"},
+  {"raw": "<!-- два --> на одной строке <!-- дословны -->\n"},
   {"kind": "vspace", "text": ""},
   {"kind": "divider", "text": ""},
   {"kind": "vspace", "text": ""},

@@ -459,9 +459,10 @@ struct Segment {
 
 bool hasAttr(const Span* s, int a) {
     if (s == nullptr) return false;
-    // Картинка выводится целиком отдельной ветвью; в ряды соседних признаков
-    // (в том числе ссылки с тем же адресом) её втягивать нельзя.
+    // Картинка и строчный комментарий выводятся целиком отдельными ветвями;
+    // в ряды соседних признаков их втягивать нельзя.
     if (s->image) return false;
+    if (s->comment) return false;
     switch (a) {
         case kStrike: return s->strike;
         case kBold:   return s->bold;
@@ -501,6 +502,17 @@ void emitSegments(TextSink& sink, const std::string& text, const std::vector<Seg
                   std::vector<unsigned char>* marksBuf) {
     size_t i = lo;
     while (i < hi) {
+        // Строчный комментарий: внутренность буквальна, скобки — структура.
+        // Канонические крайние пробелы, как у блочного.
+        if (segs[i].span != nullptr && segs[i].span->comment) {
+            sink.out += "<!-- ";
+            sink.out.append(text, segs[i].begin, segs[i].end - segs[i].begin);
+            sink.out += " -->";
+            sink.bol = false;
+            ++i;
+            continue;
+        }
+
         // Картинка: подпись дословно-плоская по построению (разбор деградирует
         // иначе), поэтому весь спан выводится одним куском. Скобки в подписи
         // экранируются как в тексте ссылки — иначе подпись оборвётся.
@@ -670,8 +682,16 @@ void validate(const Block& b) {
     assert((b.kind == Kind::ListItem || !b.checked) && "отметка осмысленна только у задачи");
     assert((b.kind == Kind::Code || b.info.empty()) && "info осмыслена только у блока кода");
     assert(b.level >= -1 && "уровень мельче, чем вне списка");
+    assert((b.kind != Kind::Html || b.text.find("-->") == std::string::npos) &&
+           "внутренность комментария не может содержать -->");
+    assert((b.kind != Kind::Html || b.inlines.empty()) &&
+           "внутри комментария разметки не бывает");
     for (const Span& s : b.inlines) {
         assert((!s.image || !s.href.empty()) && "у картинки обязан быть путь");
+        assert((!s.comment ||
+                (!s.bold && !s.italic && !s.strike && !s.code && !s.image &&
+                 s.href.empty())) &&
+               "строчный комментарий не сочетается с другой разметкой");
         assert((s.title.empty() || s.image) && "title осмыслен только у картинки");
         assert((!s.image || !(s.bold || s.italic || s.strike || s.code)) &&
                "картинка не сочетается с другой разметкой");
@@ -889,6 +909,34 @@ std::string serialize(const Document& doc) {
                 out.push_back('\n');
                 break;
             }
+
+            case Kind::Html:
+                // Пока единственный вид — комментарий: скобки — структура,
+                // текст — внутренность. Крайние пробелы канонические, перенос
+                // строки внутри — многострочный комментарий, он законен.
+                switch (b.html) {
+                    case HtmlKind::Comment: {
+                        const size_t indent = indentInsideItem(b, contentCol);
+                        out.append(indent, ' ');
+                        if (b.text.empty()) {
+                            out += "<!-- -->\n";
+                            break;
+                        }
+                        out += "<!-- ";
+                        // Строки внутренности с отступом блока — как строки кода.
+                        for (size_t at = 0; at < b.text.size();) {
+                            size_t end = b.text.find('\n', at);
+                            if (end == std::string::npos) end = b.text.size();
+                            if (at > 0) out.append(indent, ' ');
+                            out.append(b.text, at, end - at);
+                            if (end < b.text.size()) out.push_back('\n');
+                            at = end + 1;
+                        }
+                        out += " -->\n";
+                        break;
+                    }
+                }
+                break;
 
             case Kind::Divider:
                 // Текст свят: разделителю он не положен, но если он там всё же

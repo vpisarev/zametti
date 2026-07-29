@@ -14,6 +14,7 @@ const char* kindName(Kind k) {
         case Kind::VSpace:        return "vspace";
         case Kind::ListItem:      return "list-item";
         case Kind::Divider:       return "divider";
+        case Kind::Html:          return "html";
     }
     return "?";
 }
@@ -119,6 +120,7 @@ std::string toJson(const Document& doc) {
                     if (s.strike) out += ", \"strike\": true";
                     if (s.code) out += ", \"code\": true";
                     if (s.image) out += ", \"image\": true";
+                    if (s.comment) out += ", \"comment\": true";
                     if (!s.href.empty()) {
                         out += ", \"href\": ";
                         appendJsonString(out, s.href);

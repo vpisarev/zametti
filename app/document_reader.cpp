@@ -18,7 +18,8 @@ std::string toUtf8(const QString& text) {
 
 bool sameStyle(const Span& a, const Span& b) {
     return a.bold == b.bold && a.italic == b.italic && a.strike == b.strike &&
-           a.code == b.code && a.image == b.image && a.href == b.href && a.title == b.title;
+           a.code == b.code && a.image == b.image && a.comment == b.comment &&
+           a.href == b.href && a.title == b.title;
 }
 
 // Блок читается одним проходом по кускам: и текст, и спаны. Смещение копится в
@@ -78,6 +79,17 @@ void readBlock(const QTextBlock& block, Block& out, bool withSpans) {
             span.title = toUtf8(format.property(SpanTitleProperty).toString());
         }
 
+        // Строчный комментарий плоский так же; внутренность с "-->" файл
+        // выразить не может — такой спан перестаёт быть комментарием и
+        // становится видимым текстом (сериализатор его экранирует).
+        span.comment = (style & SpanComment) != 0 && !span.image &&
+                       text.find("-->") == std::string::npos;
+        if (span.comment) {
+            span.bold = span.italic = span.strike = span.code = false;
+            span.href.clear();
+            span.title.clear();
+        }
+
         // Куски дробятся и без смены стиля: мягкий перенос помечен отдельно,
         // эмодзи набраны другим кеглем. Такие соседи склеиваются, иначе IR
         // разошёлся бы с разбором файла, где спан один.
@@ -121,6 +133,16 @@ Document readDocument(const QTextDocument& doc) {
         if (pendingRaw) {
             pending.rawSource = std::move(pending.text);
             pending.text.clear();
+        }
+        // Комментарий держит свой инвариант на границе документ→IR: разметки
+        // внутри не бывает (набранные поверх биты — мусор правок), а
+        // внутренность с "-->" файл выразить не может — такой блок перестаёт
+        // быть комментарием и становится видимым текстом.
+        if (pending.rawSource.empty() && pending.kind == Kind::Html) {
+            if (pending.text.find("-->") != std::string::npos)
+                pending.kind = Kind::Paragraph;
+            else
+                pending.inlines.clear();
         }
         out.push_back(std::move(pending));
         pending = Block{};

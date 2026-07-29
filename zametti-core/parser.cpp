@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstring>
+#include <string_view>
 
 namespace zametti {
 namespace {
@@ -260,6 +261,36 @@ size_t forwardOverTicks(const char* buf, size_t len, size_t from) {
     return k;
 }
 
+void trimAsciiSpaces(std::string& s) {
+    size_t b = 0;
+    while (b < s.size() && (s[b] == ' ' || s[b] == '\t' || s[b] == '\n' || s[b] == '\r')) ++b;
+    size_t e = s.size();
+    while (e > b && (s[e - 1] == ' ' || s[e - 1] == '\t' || s[e - 1] == '\n' || s[e - 1] == '\r'))
+        --e;
+    s = s.substr(b, e - b);
+}
+
+// Собранный HTML-блок — ровно один законченный комментарий? Тогда это
+// Kind::Html: в тексте остаётся внутренность без скобок и крайних пробелов.
+// Всё прочее (незакрытый комментарий, теги, два комментария в одном блоке —
+// такого md4c не даёт, но проверка дешёвая) — дословно, как раньше.
+bool adoptCommentLeaf(Ctx& c) {
+    // Шапка метаданных "<!-- zametti" — не Kind::Html: её забирает liftMeta из
+    // дословного блока, и её байты (включая неизвестные ключи) неприкосновенны.
+    if (c.cur.text.compare(0, 13, "<!-- zametti\n") == 0) return false;
+    std::string body = c.cur.text;
+    trimAsciiSpaces(body);
+    if (body.size() < 7) return false;
+    if (body.compare(0, 4, "<!--") != 0) return false;
+    if (body.compare(body.size() - 3, 3, "-->") != 0) return false;
+    std::string interior = body.substr(4, body.size() - 7);
+    if (interior.find("-->") != std::string::npos) return false;
+    trimAsciiSpaces(interior);
+    c.cur.text = std::move(interior);
+    c.cur.html = HtmlKind::Comment;
+    return true;
+}
+
 void endLeaf(Ctx& c) {
     if (!c.inLeaf) return;
     flushRun(c);
@@ -491,8 +522,29 @@ int enterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
             return 0;
         }
 
+        case MD_BLOCK_HTML: {
+            // Кандидат в Kind::Html: текст соберётся колбэками MD_TEXT_HTML, а
+            // на выходе из блока проверится, что это ровно один законченный
+            // комментарий, — иначе дословно, как раньше. Внутри цитаты HTML
+            // плоской моделью не выражается; внутри пункта — можно, по образцу
+            // блока кода, кроме случая «блок на строке маркера».
+            bool inList = !c.stack.empty() && c.stack.back().type == MD_BLOCK_LI;
+            Frame* htmlLi = inList ? &c.stack.back() : nullptr;
+            if (insideQuote(c) || (htmlLi != nullptr && htmlLi->childIdx == 0 && c.inLeaf)) {
+                c.stack.push_back(f);
+                demote(c);
+                return 0;
+            }
+            if (htmlLi != nullptr) {
+                endLeaf(c);
+                htmlLi->childIdx++;
+            }
+            startLeaf(c, Kind::Html, 0, inList ? listDepthOf(c) - 1 : -1);
+            break;
+        }
+
         default:
-            // HR, HTML и всё их содержимое — дословно.
+            // HR, LATEXMATH и всё их содержимое — дословно.
             c.stack.push_back(f);
             demote(c);
             return 0;
@@ -544,6 +596,30 @@ int leaveBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
         case MD_BLOCK_H:
         case MD_BLOCK_HR:
             endLeaf(c);
+            break;
+        case MD_BLOCK_HTML:
+            if (c.inLeaf && c.cur.kind == Kind::Html && adoptCommentLeaf(c)) {
+                endLeaf(c);
+                break;
+            }
+            // Не комментарий — дословно. Внутри пункта — деградация всего
+            // пункта, как раньше (demote со стеком глубже документа). На
+            // верхнем уровне стек уже схлопнут и demote бессилен — лист
+            // превращается в дословный кусок руками, по образцу блока кода
+            // с нечитаемой info-строкой.
+            if (c.stack.size() >= 2) {
+                demote(c);
+                break;
+            }
+            if (c.inLeaf) {
+                c.doc.push_back(Block{});
+                c.ext.push_back(Extent{c.curMin, c.curMax, true, false, 0, false});
+                c.cur = Block{};
+                c.inLeaf = false;
+                c.curMin = c.curMax = kNoOffset;
+                c.styles.clear();
+                c.styleStart.clear();
+            }
             break;
         case MD_BLOCK_P:
             // Внутри элемента списка абзац лишь наполняет уже открытый блок:
@@ -715,8 +791,33 @@ int onText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) 
             // Жёсткий перенос ("  \n" или "\\\n") моделью не выражается.
             demote(c);
             break;
-        case MD_TEXT_NULLCHAR:
         case MD_TEXT_HTML:
+            // Внутри HTML-блока текст просто копится: судьбу решит leaveBlock.
+            if (c.inLeaf && c.cur.kind == Kind::Html) {
+                c.cur.text.append(text, size);
+                break;
+            }
+            // Строчный комментарий в абзаце: приходит одним куском. Всё прочее
+            // — дословно, как раньше.
+            if (c.inLeaf && size >= 7 && std::strncmp(text, "<!--", 4) == 0 &&
+                std::strncmp(text + size - 3, "-->", 3) == 0 && c.styles.back().plain() &&
+                std::string_view(text + 4, size - 7).find("-->") == std::string_view::npos) {
+                flushRun(c);
+                std::string interior(text + 4, size - 7);
+                trimAsciiSpaces(interior);
+                if (interior.empty()) { demote(c); break; }
+                Span s;
+                s.offset = static_cast<int>(c.cur.text.size());
+                s.length = static_cast<int>(interior.size());
+                s.comment = true;
+                c.cur.text += interior;
+                c.cur.inlines.push_back(std::move(s));
+                c.runStart = c.cur.text.size();
+                break;
+            }
+            demote(c);
+            break;
+        case MD_TEXT_NULLCHAR:
         case MD_TEXT_LATEXMATH:
             demote(c);
             break;

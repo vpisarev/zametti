@@ -77,6 +77,9 @@ enum SpanStyle {
     // — в SpanTitleProperty. Пока картинки в виде не рисуются, подпись видна
     // как текст ссылки.
     SpanImage = 16,
+    // Строчный HTML-комментарий: текст спана — внутренность без скобок,
+    // буквальная. Скобки — структура, рисуется серым.
+    SpanComment = 32,
 };
 
 bool isRawBlock(const QTextBlock& block);

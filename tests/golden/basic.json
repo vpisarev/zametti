@@ -13,6 +13,10 @@
   {"kind": "vspace", "text": ""},
   {"kind": "paragraph", "text": "Адрес с кириллицей разбор берёт только в скобках: https://example.org/путь.", "inlines": [{"offset": 91, "length": 28, "href": "https://example.org/путь"}]},
   {"kind": "vspace", "text": ""},
+  {"kind": "html", "text": "комментарий — свой род: скобки структура, внутренность текст"},
+  {"kind": "vspace", "text": ""},
+  {"kind": "paragraph", "text": "Абзац со строчным вот таким комментарием.", "inlines": [{"offset": 33, "length": 17, "comment": true}]},
+  {"kind": "vspace", "text": ""},
   {"kind": "paragraph", "text": "Картинка подпись в тексте и целой строкой:", "inlines": [{"offset": 17, "length": 14, "image": true, "href": "фото.jpg#w=300"}]},
   {"kind": "vspace", "text": ""},
   {"kind": "paragraph", "text": "вид с холма", "inlines": [{"offset": 0, "length": 20, "image": true, "href": "картинки/холм.png", "title": "Вечер"}]}

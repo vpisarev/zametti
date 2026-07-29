@@ -1294,6 +1294,11 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
                 // ней, — обычный текст.
                 next.clearProperty(KindProperty);
                 break;
+            case Kind::Html:
+                // Комментарий не расползается: новая строка под ним — обычный
+                // текст, а многострочный комментарий делается Shift+Enter.
+                next.clearProperty(KindProperty);
+                break;
             case Kind::Paragraph:
             case Kind::Code:
             case Kind::Quote:
@@ -1843,6 +1848,7 @@ void applyListGeometry(QTextDocument& doc, BlockRange range) {
                 case Kind::VSpace:
                 case Kind::ListItem:
                 case Kind::Divider:
+                case Kind::Html:
                     break;
             }
             const qreal margin = indent + contentCol[at] + own;
