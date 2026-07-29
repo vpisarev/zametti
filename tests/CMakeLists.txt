@@ -9,6 +9,11 @@ target_link_libraries(id_test PRIVATE zametti-core zametti-warnings)
 target_include_directories(id_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME note-id COMMAND id_test)
 
+add_executable(store_test store_test.cpp)
+target_link_libraries(store_test PRIVATE zametti-store-lib zametti-warnings)
+target_include_directories(store_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME store COMMAND store_test)
+
 add_executable(roundtrip_test roundtrip_test.cpp)
 target_link_libraries(roundtrip_test PRIVATE zametti-core zametti-warnings)
 add_test(NAME roundtrip COMMAND roundtrip_test)
