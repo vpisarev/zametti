@@ -13,6 +13,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QProcess>
+#include <QTemporaryDir>
 #include <QTimeZone>
 
 #include <algorithm>
@@ -105,12 +107,91 @@ bool frontMatterTimes(const std::string& bytes, QDateTime& created, QDateTime& m
     return any;
 }
 
-QString attachmentName(const QByteArray& bytes, const QString& sourceName) {
-    const QByteArray hash =
-        QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex().left(32);
-    const QString ext = QFileInfo(sourceName).suffix().toLower();
-    return ext.isEmpty() ? QString::fromLatin1(hash)
-                         : QString::fromLatin1(hash) + QLatin1Char('.') + ext;
+// Запуск утилиты; пустой вывод не интересен, важен только код возврата.
+bool runTool(const QString& program, const QStringList& args) {
+    QProcess process;
+    process.start(program, args);
+    if (!process.waitForStarted(5000)) return false;
+    if (!process.waitForFinished(120000)) {
+        process.kill();
+        return false;
+    }
+    return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+}
+
+// Пережатие вложения по правилам владельца: png → webp без потерь, heic →
+// webp q90 (heif-convert + cwebp), jpeg и webp — байт в байт. EXIF/ICC/XMP
+// переезжают целиком: у png/jpeg-источников — cwebp -metadata all, у heic —
+// exiftool копирует из исходника прямо в webp. Без кодеков — копия как есть
+// и беда в отчёте (байты не теряются никогда).
+struct Converted {
+    QByteArray bytes;
+    QString ext;        // конечное расширение
+    bool degraded = false;   // кодека не нашлось, скопировано как есть
+};
+
+Converted convertAttachment(const QString& srcAbs, const QString& tempDir) {
+    Converted out;
+    const QString ext = QFileInfo(srcAbs).suffix().toLower();
+    out.ext = ext.isEmpty() ? QStringLiteral("bin") : ext;
+
+    const auto readBack = [&out](const QString& path) {
+        QFile f(path);
+        if (!f.open(QIODevice::ReadOnly)) return false;
+        out.bytes = f.readAll();
+        return true;
+    };
+    const auto copyAsIs = [&]() {
+        QFile f(srcAbs);
+        if (f.open(QIODevice::ReadOnly)) out.bytes = f.readAll();
+        return out;
+    };
+
+    if (ext == QStringLiteral("png")) {
+        const QString dst = tempDir + QStringLiteral("/out.webp");
+        if (runTool(QStringLiteral("cwebp"),
+                    {QStringLiteral("-lossless"), QStringLiteral("-metadata"),
+                     QStringLiteral("all"), srcAbs, QStringLiteral("-o"), dst}) &&
+            readBack(dst)) {
+            out.ext = QStringLiteral("webp");
+            return out;
+        }
+        out.degraded = true;
+        return copyAsIs();
+    }
+
+    if (ext == QStringLiteral("heic") || ext == QStringLiteral("heif")) {
+        const QString mid = tempDir + QStringLiteral("/mid.png");
+        const QString dst = tempDir + QStringLiteral("/out.webp");
+        bool ok = runTool(QStringLiteral("heif-convert"), {srcAbs, mid});
+        QString midPath = mid;
+        if (ok && !QFileInfo::exists(mid)) {
+            // Много-картиночный heic: heif-convert пишет mid-1.png и далее.
+            const QStringList parts = QDir(tempDir).entryList(
+                {QStringLiteral("mid*.png")}, QDir::Files, QDir::Name);
+            if (parts.isEmpty()) ok = false;
+            else midPath = tempDir + QLatin1Char('/') + parts.first();
+        }
+        ok = ok && runTool(QStringLiteral("cwebp"),
+                           {QStringLiteral("-q"), QStringLiteral("90"), midPath,
+                            QStringLiteral("-o"), dst});
+        if (ok) {
+            // Метаданные heic живут в контейнере — копируются из исходника.
+            // Неудача exiftool не роняет пережатие: картинка дороже тегов.
+            runTool(QStringLiteral("exiftool"),
+                    {QStringLiteral("-overwrite_original"),
+                     QStringLiteral("-TagsFromFile"), srcAbs,
+                     QStringLiteral("-all:all"), dst});
+            if (readBack(dst)) {
+                out.ext = QStringLiteral("webp");
+                return out;
+            }
+        }
+        out.degraded = true;
+        return copyAsIs();
+    }
+
+    return copyAsIs();
 }
 
 // Ссылка локальная? Схемы, абсолютные пути и якоря — нет.
@@ -161,10 +242,14 @@ bool initStore(const QString& dir, QString* error) {
         if (error != nullptr) *error = QStringLiteral("не создаётся: %1").arg(dir);
         return false;
     }
-    if (!QDir(dir).mkpath(QStringLiteral(".zametti"))) {
-        if (error != nullptr)
-            *error = QStringLiteral("не создаётся: %1/.zametti").arg(dir);
-        return false;
+    // .zametti — состояние; .rescue — побитые файлы редактора (с точкой: на
+    // сервер не синхронизируется); history — история заметок (синхронизируется).
+    for (const char* sub : {".zametti", ".rescue", "history"}) {
+        if (!QDir(dir).mkpath(QString::fromLatin1(sub))) {
+            if (error != nullptr)
+                *error = QStringLiteral("не создаётся: %1/%2").arg(dir, sub);
+            return false;
+        }
     }
     // Проверка прав — делом: пробный файл, а не флаги.
     QFile probe(dir + QStringLiteral("/.zametti/.probe"));
@@ -386,9 +471,163 @@ bool importTree(const ImportOptions& options, Report& report) {
         }
     }
 
-    std::map<QString, QString> attachmentByAbs;   // абсолютный путь → имя в attachments/
-    std::map<QString, qint64> attachmentSizes;    // имя → байты
+    QTemporaryDir temp;
+    std::map<QByteArray, QString> attachmentByHash;   // содержимое исходника → имя
+    std::map<QString, QString> attachmentByAbs;       // абсолютный путь → имя
+    std::map<QString, qint64> attachmentSizes;        // имя → байты
     int wikilinks = 0;
+
+    // Вложение → "<id>.<ext>" в том же плоском каталоге. Возвращает пустое имя
+    // при ошибке чтения; про деградацию (нет кодека) отчитывается само.
+    const auto internAttachment = [&](const QString& targetAbs) -> QString {
+        const auto cached = attachmentByAbs.find(targetAbs);
+        if (cached != attachmentByAbs.end()) return cached->second;
+
+        QFile src(targetAbs);
+        if (!src.open(QIODevice::ReadOnly)) return {};
+        const QByteArray sourceBytes = src.readAll();
+        src.close();
+        const QByteArray key =
+            QCryptographicHash::hash(sourceBytes, QCryptographicHash::Sha256);
+        const auto known = attachmentByHash.find(key);
+        if (known != attachmentByHash.end()) {
+            attachmentByAbs[targetAbs] = known->second;
+            return known->second;
+        }
+
+        const Converted converted = convertAttachment(targetAbs, temp.path());
+        if (converted.bytes.isEmpty()) return {};
+        if (converted.degraded)
+            report.problem(QStringLiteral("кодека не нашлось, скопировано как есть: %1")
+                               .arg(QDir(srcRoot).relativeFilePath(targetAbs)));
+
+        std::string id;
+        do {
+            id = makeNoteId(
+                std::uint64_t(QFileInfo(targetAbs).lastModified().toSecsSinceEpoch()),
+                randomPart());
+        } while (!takenIds.insert(id).second);
+        const QString name = fromUtf8(id) + QLatin1Char('.') + converted.ext;
+
+        if (!options.dryRun) {
+            QFile out(root + QLatin1Char('/') + name);
+            if (!out.open(QIODevice::WriteOnly) ||
+                out.write(converted.bytes) != converted.bytes.size()) {
+                report.problem(QStringLiteral("вложение не записалось: %1").arg(name));
+                return {};
+            }
+        }
+        attachmentByHash[key] = name;
+        attachmentByAbs[targetAbs] = name;
+        attachmentSizes[name] = converted.bytes.size();
+        report.note(QStringLiteral("%1 → %2")
+                        .arg(QDir(srcRoot).relativeFilePath(targetAbs), name));
+        return name;
+    };
+
+    // Вики-вложение строкой абзаца: "![[путь|W]]", "[[путь]]" и родня.
+    // Работает построчно, как Ctrl+/ в редакторе: строка-вложение
+    // выкраивается из блока в свой блок-картинку (подпись — родное имя,
+    // ширина — в "#w="), соседние строки остаются абзацем, уровень
+    // наследуется. Прочие wikilinks не трогаются, только считаются.
+    const auto wikiTarget = [&](const QString& line, const QString& noteDirRel,
+                                QString* targetAbs, QString* width,
+                                QString* alt) -> bool {
+        QString text = line.trimmed();
+        if (text.startsWith(QLatin1Char('!'))) text = text.mid(1);
+        if (!text.startsWith(QStringLiteral("[[")) || !text.endsWith(QStringLiteral("]]")))
+            return false;
+        QString inner = text.mid(2, text.size() - 4);
+        const qsizetype bar = inner.lastIndexOf(QLatin1Char('|'));
+        if (bar >= 0) {
+            bool ok = false;
+            const int w = inner.mid(bar + 1).trimmed().toInt(&ok);
+            if (ok && w > 0) *width = QString::number(w);
+            inner = inner.left(bar);
+        }
+        inner = inner.trimmed();
+        if (inner.isEmpty() || inner.endsWith(QStringLiteral(".md"))) return false;
+        const QString rel = resolveInside(srcRoot, noteDirRel, inner);
+        if (rel.isEmpty()) return false;   // не файл — обычный wikilink
+        *targetAbs = srcRoot + QLatin1Char('/') + rel;
+        *alt = QFileInfo(inner).completeBaseName();
+        return true;
+    };
+
+    const auto adoptWikiAttachments = [&](std::vector<Block>& blocks,
+                                          const QString& noteDirRel) {
+        std::vector<Block> out;
+        out.reserve(blocks.size());
+        for (Block& b : blocks) {
+            const bool candidate = b.rawSource.empty() && b.kind == Kind::Paragraph &&
+                                   b.inlines.empty() &&
+                                   b.text.find("[[") != std::string::npos;
+            if (!candidate) {
+                out.push_back(std::move(b));
+                continue;
+            }
+            const QStringList lines = fromUtf8(b.text).split(QLatin1Char('\n'));
+            std::vector<Block> pieces;
+            QStringList pending;
+            const auto flushPending = [&]() {
+                if (pending.isEmpty()) return;
+                Block piece;
+                piece.kind = Kind::Paragraph;
+                piece.level = b.level;
+                piece.text = toUtf8(pending.join(QLatin1Char('\n')));
+                pieces.push_back(std::move(piece));
+                pending.clear();
+            };
+            for (const QString& line : lines) {
+                QString targetAbs;
+                QString width;
+                QString alt;
+                if (!wikiTarget(line, noteDirRel, &targetAbs, &width, &alt)) {
+                    pending.append(line);
+                    continue;
+                }
+                const QString name = internAttachment(targetAbs);
+                if (name.isEmpty()) {
+                    report.problem(QStringLiteral("вложение не читается: %1")
+                                       .arg(QDir(srcRoot).relativeFilePath(targetAbs)));
+                    pending.append(line);
+                    continue;
+                }
+                flushPending();
+                Block image;
+                image.kind = Kind::Paragraph;
+                image.level = b.level;
+                image.text = toUtf8(alt);
+                Span span;
+                span.image = true;
+                span.href = toUtf8(
+                    width.isEmpty() ? name : name + QStringLiteral("#w=") + width);
+                span.offset = 0;
+                span.length = int(image.text.size());
+                image.inlines.push_back(std::move(span));
+                pieces.push_back(std::move(image));
+            }
+            flushPending();
+            if (pieces.size() <= 1 && pending.isEmpty() &&
+                (pieces.empty() || pieces[0].inlines.empty())) {
+                // Ничего не выкроилось — блок как был.
+                out.push_back(std::move(b));
+                continue;
+            }
+            // Куски разделяются пустой строкой: соседство абзаца с абзацем
+            // (и картинкой) без неё слиплось бы при перечитывании.
+            for (size_t i = 0; i < pieces.size(); ++i) {
+                if (i > 0) {
+                    Block gap;
+                    gap.kind = Kind::VSpace;
+                    out.push_back(std::move(gap));
+                }
+                out.push_back(std::move(pieces[i]));
+            }
+        }
+        blocks = std::move(out);
+    };
+
 
     for (SrcEntry& e : entries) {
         std::string body;
@@ -406,8 +645,10 @@ bool importTree(const ImportOptions& options, Report& report) {
             ir = parse(bytes);
         }
 
-        // Вложения и ссылки. Wikilinks не переписываются — только счёт.
+        // Вложения и ссылки. Вики-вложения усыновляются в канон, прочие
+        // wikilinks не переписываются — только счёт.
         const QString noteDirRel = e.parentRel;
+        adoptWikiAttachments(ir.blocks, noteDirRel);
         for (Block& b : ir.blocks) {
             if (!b.rawSource.empty()) {
                 if (b.rawSource.find("[[") != std::string::npos) ++wikilinks;
@@ -427,6 +668,11 @@ bool importTree(const ImportOptions& options, Report& report) {
                 if (!isLocalRelative(href)) continue;
 
                 if (s.image) {
+                    // Уже канонное плоское имя — вложение усыновлено выше.
+                    const qsizetype dot = href.lastIndexOf(QLatin1Char('.'));
+                    if (dot > 0 && !href.contains(QLatin1Char('/')) &&
+                        isValidNoteId(toUtf8(href.left(dot))))
+                        continue;
                     const QString targetRel = resolveInside(srcRoot, noteDirRel, href);
                     if (targetRel.isEmpty()) {
                         report.problem(
@@ -434,36 +680,14 @@ bool importTree(const ImportOptions& options, Report& report) {
                                 .arg(href, e.rel));
                         continue;
                     }
-                    const QString targetAbs = srcRoot + QLatin1Char('/') + targetRel;
-                    QString name = attachmentByAbs.count(targetAbs) != 0u
-                                       ? attachmentByAbs[targetAbs]
-                                       : QString();
+                    const QString name =
+                        internAttachment(srcRoot + QLatin1Char('/') + targetRel);
                     if (name.isEmpty()) {
-                        QFile f(targetAbs);
-                        if (!f.open(QIODevice::ReadOnly)) {
-                            report.problem(
-                                QStringLiteral("вложение не читается: %1").arg(targetRel));
-                            continue;
-                        }
-                        const QByteArray content = f.readAll();
-                        name = attachmentName(content, targetAbs);
-                        attachmentByAbs[targetAbs] = name;
-                        attachmentSizes[name] = content.size();
-                        if (!options.dryRun) {
-                            QDir(root).mkpath(QStringLiteral("attachments"));
-                            const QString dest = root + QStringLiteral("/attachments/") + name;
-                            if (!QFileInfo::exists(dest)) {
-                                QFile out(dest);
-                                if (!out.open(QIODevice::WriteOnly) ||
-                                    out.write(content) != content.size()) {
-                                    report.problem(
-                                        QStringLiteral("вложение не записалось: %1").arg(name));
-                                    continue;
-                                }
-                            }
-                        }
+                        report.problem(
+                            QStringLiteral("вложение не читается: %1").arg(targetRel));
+                        continue;
                     }
-                    s.href = toUtf8(QStringLiteral("attachments/") + name + fragment);
+                    s.href = toUtf8(name + fragment);
                 } else if (href.endsWith(QStringLiteral(".md"))) {
                     const QString joined = noteDirRel.isEmpty()
                                                ? href
@@ -553,20 +777,29 @@ bool verifyStore(const QString& root, Report& report) {
     }
 
     std::map<std::string, Document> notes;
-    std::set<QString> referencedAttachments;
+    std::set<QString> attachments;         // имена файлов-вложений
+    std::set<QString> referenced;
 
     for (const QFileInfo& info :
          d.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden)) {
         const QString name = info.fileName();
-        if (name == QStringLiteral(".zametti") || name == QStringLiteral("attachments"))
-            continue;
         if (info.isDir()) {
+            // Служебные каталоги прозрачны: состояние, побитые файлы
+            // редактора, история заметок.
+            if (name == QStringLiteral(".zametti") || name == QStringLiteral(".rescue") ||
+                name == QStringLiteral("history"))
+                continue;
             report.problem(QStringLiteral("чужой каталог: %1").arg(name));
             continue;
         }
-        if (!name.endsWith(QStringLiteral(".md")) ||
-            !isValidNoteId(toUtf8(name.left(name.size() - 3)))) {
+        const qsizetype dot = name.lastIndexOf(QLatin1Char('.'));
+        const QString stem = dot > 0 ? name.left(dot) : name;
+        if (dot <= 0 || !isValidNoteId(toUtf8(stem))) {
             report.problem(QStringLiteral("чужой файл: %1").arg(name));
+            continue;
+        }
+        if (!name.endsWith(QStringLiteral(".md"))) {
+            attachments.insert(name);
             continue;
         }
 
@@ -580,25 +813,32 @@ bool verifyStore(const QString& root, Report& report) {
             report.problem(QStringLiteral("нет блока метаданных: %1").arg(name));
         if (serialize(doc) != bytes)
             report.problem(QStringLiteral("дрейф: %1").arg(name));
+        notes[toUtf8(stem)] = std::move(doc);
+    }
 
+    // Цели картинок: канонное плоское имя "<id>.<ext>" и существование.
+    for (const auto& [id, doc] : notes) {
         for (const Block& b : doc.blocks)
-            for (const Span& s : b.inlines) {
-                if (!s.image) continue;
-                QString href = fromUtf8(s.href);
+            for (const Span& span : b.inlines) {
+                if (!span.image) continue;
+                QString href = fromUtf8(span.href);
                 const qsizetype hash = href.lastIndexOf(QLatin1Char('#'));
                 if (hash >= 0) href = href.left(hash);
-                if (!href.startsWith(QStringLiteral("attachments/"))) {
-                    if (isLocalRelative(href))
-                        report.note(
-                            QStringLiteral("картинка мимо attachments/: «%1» в %2")
-                                .arg(href, name));
+                if (!isLocalRelative(href)) continue;
+                const qsizetype dot = href.lastIndexOf(QLatin1Char('.'));
+                const bool canonical =
+                    dot > 0 && !href.contains(QLatin1Char('/')) &&
+                    isValidNoteId(toUtf8(href.left(dot)));
+                if (!canonical) {
+                    report.note(QStringLiteral("картинка мимо канона имён: «%1» в %2.md")
+                                    .arg(href, fromUtf8(id)));
                     continue;
                 }
-                referencedAttachments.insert(href.mid(12));
+                referenced.insert(href);
                 if (!QFileInfo::exists(root + QLatin1Char('/') + href))
-                    report.problem(QStringLiteral("нет вложения «%1» из %2").arg(href, name));
+                    report.problem(QStringLiteral("нет вложения «%1» из %2.md")
+                                       .arg(href, fromUtf8(id)));
             }
-        notes[toUtf8(name.left(name.size() - 3))] = std::move(doc);
     }
 
     // parent: существование и циклы.
@@ -623,25 +863,13 @@ bool verifyStore(const QString& root, Report& report) {
         }
     }
 
-    // Вложения: хеш-имя обязано совпадать с содержимым; сироты — в отчёт.
-    const QDir attachments(root + QStringLiteral("/attachments"));
-    if (attachments.exists()) {
-        for (const QFileInfo& info : attachments.entryInfoList(QDir::Files)) {
-            QFile f(info.filePath());
-            if (!f.open(QIODevice::ReadOnly)) {
-                report.problem(QStringLiteral("вложение не читается: %1").arg(info.fileName()));
-                continue;
-            }
-            const QString want = attachmentName(f.readAll(), info.fileName());
-            if (want != info.fileName())
-                report.problem(QStringLiteral("вложение %1 не совпадает с хешем (ждали %2)")
-                                   .arg(info.fileName(), want));
-            if (referencedAttachments.find(info.fileName()) == referencedAttachments.end())
-                report.note(QStringLiteral("осиротевшее вложение: %1").arg(info.fileName()));
-        }
-    }
+    for (const QString& name : attachments)
+        if (referenced.find(name) == referenced.end())
+            report.note(QStringLiteral("осиротевшее вложение: %1").arg(name));
 
-    report.note(QStringLiteral("заметок: %1").arg(notes.size()));
+    report.note(QStringLiteral("заметок: %1, вложений: %2")
+                    .arg(notes.size())
+                    .arg(attachments.size()));
     return report.problems == 0;
 }
 

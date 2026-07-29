@@ -62,6 +62,8 @@ int main(int argc, char** argv) {
         QString error;
         ZT_TRUE("init на свежем каталоге", store::initStore(g_base + "/пустое", &error));
         ZT_TRUE("появился .zametti", QDir(g_base + "/пустое/.zametti").exists());
+        ZT_TRUE("появился .rescue", QDir(g_base + "/пустое/.rescue").exists());
+        ZT_TRUE("появился history", QDir(g_base + "/пустое/history").exists());
         write(QStringLiteral("занятое/мусор.txt"), "x");
         ZT_TRUE("init в непустом отказывает",
                 !store::initStore(g_base + "/занятое", &error) && !error.isEmpty());
@@ -95,7 +97,10 @@ int main(int argc, char** argv) {
     //   Верх.md           — заголовок, ссылка на Дом/Внутри.md, картинка, wikilink
     //   img/пик.png       — вложение (см. дедупликацию из Внутри.md)
     //   Дом/Внутри.md     — та же картинка другим путём, битая картинка
-    const QByteArray pixel("не-совсем-png, но байты — это байты");
+    // Настоящий однопиксельный PNG: пережатие требует настоящих байтов.
+    const QByteArray pixel = QByteArray::fromBase64(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGO4"
+        "IycHAALyARlzRAvLAAAAAElFTkSuQmCC");
     write(QStringLiteral("src/img/пик.png"), pixel);
     write(QStringLiteral("src/Верх.md"),
           QByteArray("# Верх\n\nСм. [внутри](Дом/Внутри.md) и ![пик](img/пик.png).\n\n"
@@ -165,18 +170,23 @@ int main(int argc, char** argv) {
     ZT_TRUE("wikilink не переписан",
             top.find("![[wiki-вложение.png|315]]") != std::string::npos);
 
-    // Вложение одно на двоих (дедупликация), ссылки обеих заметок — на него.
-    const QDir attachments(options.root + QStringLiteral("/attachments"));
-    const QStringList files = attachments.entryList(QDir::Files);
-    ZT_TRUE("вложение в attachments/ ровно одно", files.size() == 1);
+    // Вложение одно на двоих (дедупликация), лежит плоско под своим id и —
+    // раз кодек стоит — пережато в webp без потерь.
+    QStringList files;
+    for (const QFileInfo& info : QDir(options.root).entryInfoList(QDir::Files))
+        if (!info.fileName().endsWith(QStringLiteral(".md"))) files.append(info.fileName());
+    ZT_TRUE("вложение ровно одно и плоско", files.size() == 1);
     if (files.size() == 1) {
         const std::string name = files.first().toStdString();
-        ZT_TRUE("имя — 32 hex и расширение",
-                files.first().endsWith(QStringLiteral(".png")) && name.size() == 36);
+        ZT_TRUE("имя — id и .webp после пережатия",
+                files.first().endsWith(QStringLiteral(".webp")) && name.size() == 19 &&
+                    isValidNoteId(name.substr(0, 14)));
+        ZT_TRUE("пережатое — действительно WebP",
+                readAll(options.root + "/" + files.first()).compare(0, 4, "RIFF") == 0);
         ZT_TRUE("Верх ссылается на вложение",
-                top.find("(attachments/" + name + ")") != std::string::npos);
+                top.find("(" + name + ")") != std::string::npos);
         ZT_TRUE("Внутри ссылается на то же вложение",
-                inner.find("(attachments/" + name + ")") != std::string::npos);
+                inner.find("(" + name + ")") != std::string::npos);
     }
     ZT_TRUE("битая ссылка осталась как есть",
             inner.find("(нет-такой.png)") != std::string::npos);
@@ -199,15 +209,14 @@ int main(int argc, char** argv) {
         QFile::remove(options.root + QStringLiteral("/чужак.txt"));
     }
     {
-        const QString bogus = options.root + QStringLiteral("/attachments/") +
-                              QString(32, QLatin1Char('0')) + QStringLiteral(".png");
-        write(QStringLiteral("хранилище/attachments/") + QFileInfo(bogus).fileName(),
-              "не тот байт");
+        // Сирота с валидным id-именем — замечание, не беда.
+        const QString orphan =
+            options.root + QStringLiteral("/00000000000009.webp");
+        write(QStringLiteral("хранилище/00000000000009.webp"), "RIFFxxxx");
         store::Report v;
-        ZT_TRUE("вложение не по хешу — беда", !store::verifyStore(options.root, v));
-        ZT_TRUE("и оно же сирота — в отчёте",
-                v.lines.filter(QStringLiteral("осиротев")).size() == 1);
-        QFile::remove(bogus);
+        ZT_TRUE("сирота не беда", store::verifyStore(options.root, v));
+        ZT_TRUE("но в отчёте", v.lines.filter(QStringLiteral("осиротев")).size() == 1);
+        QFile::remove(orphan);
     }
 
     QDir(g_base).removeRecursively();
