@@ -96,20 +96,37 @@ int main(int argc, char** argv) {
     ZT_TRUE("под пропавший файл места нет", marginOf(4) == 0.0);
     ZT_TRUE("под обычный текст места нет", marginOf(6) == 0.0);
 
-    // Выделение, задевшее строку, показывает её текст: фото уезжает под
-    // строку, резерв растёт до целого фото с двумя отбивками.
+    // Выделение — это выделенная фотография, а не вскрытая разметка: текст
+    // не показывается, резерв не дёргается, поверх фото ложится тонировка.
     {
+        const auto centerShade = [&] {
+            QImage frame(editor.viewport()->size(), QImage::Format_RGB32);
+            frame.fill(Qt::white);
+            QPainter painter(&frame);
+            editor.viewport()->render(&painter);
+            const QRectF photo = editor.imageRectInViewport(blockAt(2));
+            return frame.pixelColor(photo.center().toPoint());
+        };
+        const QColor plain = centerShade();
+
         QTextCursor cursor(blockAt(2));
         cursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, 3);
         editor.setTextCursor(cursor);
         QTest::qWait(10);
-        ZT_TRUE("выделение показало текст: резерв вырос",
-                std::fabs(marginOf(2) - (40.0 + 2.0 * kGap)) < 1.5);
+        ZT_TRUE("выделение не тронуло резерв",
+                std::fabs(marginOf(2) - qMax(0.0, 40.0 + kGap - lineOf(2))) < 1.5);
+        const QColor tinted = centerShade();
+        ZT_TRUE("выделенная фотография тонирована",
+                plain.red() != tinted.red() || plain.green() != tinted.green() ||
+                    plain.blue() != tinted.blue());
+
         cursor.clearSelection();
         editor.setTextCursor(cursor);
         QTest::qWait(10);
-        ZT_TRUE("выделение снято — строка снова спрятана",
-                std::fabs(marginOf(2) - qMax(0.0, 40.0 + kGap - lineOf(2))) < 1.5);
+        const QColor back = centerShade();
+        ZT_TRUE("тонировка снята вместе с выделением",
+                back.red() == plain.red() && back.green() == plain.green() &&
+                    back.blue() == plain.blue());
     }
 
     // Фотографии действительно в кадре: красных пикселей не меньше, чем в

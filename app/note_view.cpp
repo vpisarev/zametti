@@ -69,13 +69,13 @@ NoteView::NoteView(QWidget* parent) : QTextBrowser(parent) {
     connect(this, &QTextEdit::cursorPositionChanged, this, &NoteView::showCaret);
     connect(this, &QTextEdit::textChanged, this, &NoteView::showCaret);
     // Правка могла родить или убить строку с картинкой — место перемеряется
-    // после каждой. Свои же выставления полей отсекает syncingImages_. Каретка
-    // тоже в деле: выделение, задевшее строку с фотографией, показывает её
-    // текст, а это другой резерв места.
+    // после каждой. Свои же выставления полей отсекает syncingImages_.
     connect(this, &QTextEdit::textChanged, this, &NoteView::syncImageSpace);
-    connect(this, &QTextEdit::cursorPositionChanged, this, &NoteView::syncImageSpace);
-    // Снятие выделения не двигает позицию и cursorPositionChanged не даёт.
-    connect(this, &QTextEdit::selectionChanged, this, &NoteView::syncImageSpace);
+    // Тонировка выделенной фотографии — своя отрисовка, Qt про неё не знает;
+    // перерисовка на каждой смене выделения (снятие позицию не двигает и
+    // cursorPositionChanged не даёт).
+    connect(this, &QTextEdit::selectionChanged, this,
+            [this] { viewport()->update(); });
 }
 
 // Прямоугольник каретки с запасом: перерисовываем чуть больше, чем красим,
@@ -249,18 +249,9 @@ NoteView::ImageGeometry NoteView::imageGeometry(const QTextBlock& block) {
 
     ImageGeometry geometry;
     geometry.valid = true;
-    // Текст строки виден, только когда его задевает выделение: иначе строка
-    // хитро-отрисованная, как черта, — на её месте сама фотография.
-    const QTextCursor cursor = textCursor();
-    geometry.revealed = cursor.hasSelection() &&
-                        qMin(cursor.anchor(), cursor.position()) <
-                            block.position() + block.length() &&
-                        qMax(cursor.anchor(), cursor.position()) > block.position();
     geometry.line = QRectF(textTop.x(), textTop.y(),
                            qMax(size.width(), layout->boundingRect().width()), textHeight);
-    const qreal top =
-        geometry.revealed ? textTop.y() + textHeight + imageGap(zoom_) : textTop.y();
-    geometry.photo = QRectF(QPointF(textTop.x(), top), size);
+    geometry.photo = QRectF(textTop, size);
     return geometry;
 }
 
@@ -288,11 +279,8 @@ void NoteView::syncImageSpace() {
         const ImageGeometry geometry = imageGeometry(block);
         qreal want = 0.0;
         if (geometry.valid) {
-            // Фотография стоит на месте текста строки и торчит из него вниз;
-            // при показанном тексте (выделение) — целиком под строкой.
-            want = geometry.revealed
-                       ? geometry.photo.height() + 2.0 * gap
-                       : qMax(0.0, geometry.photo.height() + gap - geometry.line.height());
+            // Фотография стоит на месте текста строки и торчит из него вниз.
+            want = qMax(0.0, geometry.photo.height() + gap - geometry.line.height());
         }
         QTextBlockFormat format = block.blockFormat();
         // Нижнее поле всех прочих блоков — ноль по построению сборщика, так
@@ -316,13 +304,24 @@ void NoteView::paintImage(QPainter& painter, const QTextBlock& block) {
     if (image == nullptr) return;
 
     painter.save();
-    if (!geometry.revealed) {
-        // Строка хитро-отрисованная: текст закрашивается фоном, фотография
-        // встаёт на его место. Каретка рисуется позже и поверх — ей можно.
-        painter.fillRect(geometry.line.adjusted(-2, 0, 2, 0), appearance().pageBackground);
-    }
+    // Строка хитро-отрисованная: текст закрашивается фоном, фотография встаёт
+    // на его место. Каретка рисуется позже и поверх — ей можно.
+    painter.fillRect(geometry.line.adjusted(-2, 0, 2, 0), appearance().pageBackground);
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
     painter.drawImage(geometry.photo, *image);
+
+    // Выделение, задевшее строку, — это выделенная фотография, а не вскрытая
+    // разметка: тонировка цветом выделения поверх.
+    const QTextCursor cursor = textCursor();
+    const bool selected = cursor.hasSelection() &&
+                          qMin(cursor.anchor(), cursor.position()) <
+                              block.position() + block.length() &&
+                          qMax(cursor.anchor(), cursor.position()) > block.position();
+    if (selected) {
+        QColor tint = appearance().selectionBackground;
+        tint.setAlpha(110);
+        painter.fillRect(geometry.photo, tint);
+    }
     painter.restore();
 }
 
