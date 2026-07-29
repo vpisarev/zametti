@@ -1102,39 +1102,42 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
     const QTextBlockFormat format = block.blockFormat();
     const int number = block.blockNumber();
 
-    // Пустой пункт списка: Enter снимает список, а не заводит ещё один пустой
-    // пункт. Иначе выйти из списка можно было бы только двумя нажатиями.
+    // Пустой пункт списка: Enter выводит из него, а не заводит ещё один пустой.
     //
-    // А если за пустым пунктом идёт ещё пункт, то список не кончается, а
-    // разрывается: сам пустой пункт исчезает, и список снимается со СЛЕДУЮЩЕГО
-    // пункта. Он становится абзацем — и разделяет списки.
+    // Вложенный пункт сначала поднимается на уровень выше: закончив подпункты,
+    // человек обычно продолжает список, а не бросает его, — так же ведут себя
+    // все редакторы со вложенными списками.
     //
-    // Пустой абзац для этого не годится, и это проверено на ядре: пустая строка
-    // между пунктами не разделяет ничего, "- раз\n- два" и "- раз\n\n- два"
-    // дают тот же самый IR. Писать в файл нечего, и разрыв, который человек
-    // видел на экране, пропадал при первом же сохранении. Разделяет только
-    // абзац с содержимым — а вокруг него пустые строки работают как обычно.
+    // Соседей при этом не трогаем. Раньше пустой пункт снимал маркер со
+    // СЛЕДУЮЩЕГО — это был жест «разлепить два слипшихся списка». Отличить его
+    // от «дописал пункт и выхожу» по документу нечем, а цена ошибки высока:
+    // два Enter в середине списка снимали чекбокс у пункта, которого человек не
+    // касался. Разлепить списки можно и без этого: выйти из списка и набрать
+    // разделяющий абзац — markdown всё равно разделяет их только абзацем с
+    // содержимым, пустая строка между пунктами не разделяет ничего.
     if (isListBlock(block) && block.text().isEmpty()) {
-        const QTextBlock next = block.next();
-        const bool splitsList = next.isValid() && isListBlock(next);
-        const QTextBlock target = splitsList ? next : block;
-
-        QTextBlockFormat plain = target.blockFormat();
-        plain.clearProperty(KindProperty);
-        plain.clearProperty(LevelProperty);
-        plain.setLeftMargin(0);
+        const int level = levelOf(block);
+        QTextBlockFormat next = block.blockFormat();
+        if (level > 0) {
+            next.setProperty(LevelProperty, level - 1);
+        } else {
+            next.clearProperty(KindProperty);
+            next.clearProperty(MarkerProperty);
+            next.clearProperty(CheckedProperty);
+            next.clearProperty(LevelProperty);
+            next.setLeftMargin(0);
+        }
 
         cursor.beginEditBlock();
-        cursor.setPosition(target.position());
-        cursor.setBlockFormat(plain);
-        if (splitsList) {
-            // Пустой пункт был лишь способом сказать "разорви здесь".
-            cursor.setPosition(block.position());
-            cursor.setPosition(block.position() + block.length(), QTextCursor::KeepAnchor);
-            cursor.removeSelectedText();
-        }
+        cursor.setPosition(block.position());
+        cursor.setBlockFormat(next);
+        // Место держим курсором, а не номером блока: нормализация заводит перед
+        // абзацем пустую строку, и номер устаревает прямо посреди операции.
+        QTextCursor landing(&doc);
+        landing.setPosition(block.position());
         normalise(doc, around(number));
         cursor.endEditBlock();
+        cursor.setPosition(landing.position());
         return true;
     }
 
@@ -1330,6 +1333,33 @@ bool removeVSpaceAndMaybeJoin(QTextDocument& doc, QTextCursor& cursor, int gapNu
     const QTextBlock before = gap.previous();
     const QTextBlock after = gap.next();
     if (!before.isValid() && !after.isValid()) return false;
+
+    // Под пустой строкой пустой же абзац — то есть человек видит две пустых
+    // строки подряд. Тогда убираем не саму строку, а этот абзац: одна пустая
+    // строка остаётся, как и ждут от Backspace.
+    //
+    // Сливать здесь нельзя: между пунктом и абзацем пустая строка обязательна,
+    // и слияние утаскивало пустой абзац внутрь пункта — обе строки исчезали
+    // разом, а каретка уезжала вправо, в конец пункта.
+    if (after.isValid() && !isRawBlock(after) && after.text().isEmpty() &&
+        !isVSpaceBlock(after) && !isListBlock(after) && before.isValid()) {
+        QTextCursor edit(&doc);
+        edit.beginEditBlock();
+        edit.setPosition(after.position() - 1);
+        edit.setPosition(after.position(), QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+        // Qt при слиянии оставляет формат ВТОРОГО блока: пустая строка стала бы
+        // пустым абзацем, а инвариант тут же вернул бы пустую строку назад — и
+        // Backspace выглядел бы как ничего не делающий.
+        edit.setPosition(doc.findBlockByNumber(gapNumber).position());
+        edit.setBlockFormat(vspaceBlockFormat(doc, isVSpaceBlock(before), gapNumber == 0));
+        normalise(doc, around(gapNumber));
+        edit.endEditBlock();
+        const QTextBlock landed = doc.findBlockByNumber(qMax(0, gapNumber - 1));
+        cursor.setPosition(landed.position() + landed.length() - 1);
+        return true;
+    }
+
     const bool join = blocksWouldMerge(before, after);
 
     // Куда встать после правки — началом того, что стояло под пустой строкой.

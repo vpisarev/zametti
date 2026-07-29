@@ -234,11 +234,10 @@ qreal blockTopMargin(Kind kind, bool raw, bool previousIsVSpace, bool first) {
         return previousIsVSpace ? 0.0 : appearance().separatorSpacingBefore;
     if (previousIsVSpace) return appearance().separatorSpacingAfter;
 
-    // Заголовку воздух положен и там, где пустой строки над ним нет: он
-    // отделяет куски текста, а не продолжает предыдущий. Там, где пустая строка
-    // есть, воздух уже отмерен ею — складывать одно с другим незачем.
-    if (!raw && kind == Kind::Heading)
-        return appearance().blockSpacing * appearance().headingSpacingFactor;
+    // Своего воздуха у заголовка нет. Он был — «заголовок отделяет куски текста»,
+    // — но выглядел ровно как пустая строка, которой в файле нет, и читался как
+    // ошибка: в редакторе строка есть, в markdown её нет. Отбивку задаёт только
+    // сам файл.
     return 0.0;
 }
 
