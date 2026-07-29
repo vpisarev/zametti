@@ -18,7 +18,7 @@ std::string toUtf8(const QString& text) {
 
 bool sameStyle(const Span& a, const Span& b) {
     return a.bold == b.bold && a.italic == b.italic && a.strike == b.strike &&
-           a.code == b.code && a.href == b.href;
+           a.code == b.code && a.image == b.image && a.href == b.href && a.title == b.title;
 }
 
 // Блок читается одним проходом по кускам: и текст, и спаны. Смещение копится в
@@ -68,6 +68,15 @@ void readBlock(const QTextBlock& block, Block& out, bool withSpans) {
         span.strike = (style & SpanStrike) != 0;
         span.code = (style & SpanCode) != 0;
         span.href = toUtf8(href);
+
+        // Подпись картинки плоская по построению (см. разбор): правки могли
+        // домешать в формат другие биты — они здесь гасятся, иначе IR выразит
+        // то, что файл выразить не может. Картинка без пути — не картинка.
+        span.image = (style & SpanImage) != 0 && !span.href.empty();
+        if (span.image) {
+            span.bold = span.italic = span.strike = span.code = false;
+            span.title = toUtf8(format.property(SpanTitleProperty).toString());
+        }
 
         // Куски дробятся и без смены стиля: мягкий перенос помечен отдельно,
         // эмодзи набраны другим кеглем. Такие соседи склеиваются, иначе IR

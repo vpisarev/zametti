@@ -50,6 +50,7 @@ enum DocProperty {
     // Свойства формата знаков.
     SpanStyleProperty,   // int, биты SpanStyle
     BreakSourceProperty, // int(BreakSource) на самом разделителе строк
+    SpanTitleProperty,   // QString, заголовок картинки (осмыслен только при SpanImage)
 };
 
 // Три знака Qt в insertText трактует структурно и рвёт на них блок. Замерено
@@ -72,6 +73,10 @@ enum SpanStyle {
     SpanItalic = 2,
     SpanStrike = 4,
     SpanCode = 8,
+    // Картинка: текст спана — подпись (alt), путь лежит в anchorHref, заголовок
+    // — в SpanTitleProperty. Пока картинки в виде не рисуются, подпись видна
+    // как текст ссылки.
+    SpanImage = 16,
 };
 
 bool isRawBlock(const QTextBlock& block);

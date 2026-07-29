@@ -196,6 +196,7 @@ void applySpans(QTextDocument& doc, int textStart, const Block& b, qreal linePoi
         if (s.italic) style |= SpanItalic;
         if (s.strike) style |= SpanStrike;
         if (s.code) style |= SpanCode;
+        if (s.image) style |= SpanImage;
 
         QTextCharFormat fmt;
         if (style != 0) fmt.setProperty(SpanStyleProperty, style);
@@ -215,6 +216,10 @@ void applySpans(QTextDocument& doc, int textStart, const Block& b, qreal linePoi
             fmt.setForeground(appearance().linkColor);
             fmt.setFontUnderline(true);
         }
+        if (!s.title.empty())
+            fmt.setProperty(SpanTitleProperty,
+                            QString::fromUtf8(s.title.data(),
+                                              static_cast<qsizetype>(s.title.size())));
         cursor.setPosition(textStart + from);
         cursor.setPosition(textStart + to, QTextCursor::KeepAnchor);
         cursor.mergeCharFormat(fmt);
