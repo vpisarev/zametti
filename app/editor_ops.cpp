@@ -1006,16 +1006,20 @@ bool deleteImageLineForward(QTextDocument& doc, QTextCursor& cursor) {
 }
 
 bool toggleCommentAtCursor(QTextDocument& doc, QTextCursor& cursor) {
-    const QTextBlock block = cursor.block();
+    const int from = qMin(cursor.anchor(), cursor.position());
+    const int to = qMax(cursor.anchor(), cursor.position());
+    const QTextBlock block = doc.findBlock(from);
     if (!block.isValid() || isRawBlock(block)) return false;
+
     switch (kindOf(block)) {
         case Kind::Html:
+            // Обратно — целыми блоками: комментарий и так один блок.
             return setBlockKind(doc, cursor, {Kind::Paragraph, Marker::Bullet, false});
         case Kind::Paragraph:
         case Kind::Heading:
         case Kind::Quote:
         case Kind::ListItem:
-            return setBlockKind(doc, cursor, {Kind::Html, Marker::Bullet, false});
+            break;
         case Kind::Code:
         case Kind::VSpace:
         case Kind::Divider:
@@ -1023,7 +1027,78 @@ bool toggleCommentAtCursor(QTextDocument& doc, QTextCursor& cursor) {
             // и черте — нечего комментировать.
             return false;
     }
-    return false;
+
+    // Ctrl+/ работает по СТРОКАМ, как в редакторах кода: перенос внутри блока
+    // — не граница блока, и без выкройки комментарием становился бы весь блок
+    // («выделил вторую строку пункта — закомментировался и сам пункт»).
+    // Затронутые строки выкраиваются в свой блок, соседние строки остаются
+    // тем, чем были. Многоблочное выделение работает целыми блоками.
+    const QString text = block.text();
+    if (doc.findBlock(to) == block && text.contains(QChar::LineSeparator)) {
+        const int base = block.position();
+        const int selBegin = from - base;
+        const int selEnd = qMin(to - base, int(text.size()));
+        const int lineStart =
+            selBegin > 0
+                ? int(text.lastIndexOf(QChar::LineSeparator, selBegin - 1)) + 1
+                : 0;
+        int lineEnd = int(text.indexOf(QChar::LineSeparator, selEnd));
+        if (lineEnd < 0) lineEnd = int(text.size());
+
+        if (lineStart > 0 || lineEnd < int(text.size())) {
+            const Kind original = kindOf(block);
+            const int firstNumber = block.blockNumber();
+            QTextCursor edit(&doc);
+            edit.beginEditBlock();
+            // Разрезы: сзади, потом спереди — позиции не плывут. Разделитель
+            // строк заменяется границей блока один в один, длины сохраняются.
+            if (lineEnd < int(text.size())) {
+                edit.setPosition(base + lineEnd);
+                edit.setPosition(base + lineEnd + 1, QTextCursor::KeepAnchor);
+                edit.removeSelectedText();
+                edit.insertBlock();
+            }
+            if (lineStart > 0) {
+                edit.setPosition(base + lineStart - 1);
+                edit.setPosition(base + lineStart, QTextCursor::KeepAnchor);
+                edit.removeSelectedText();
+                edit.insertBlock();
+            }
+
+            // Выкроенная строка — комментарий; уровень наследуется, так что
+            // внутри пункта он остаётся внутри пункта.
+            QTextBlock target = doc.findBlock(base + lineStart);
+            QTextBlockFormat tf = target.blockFormat();
+            tf.setProperty(KindProperty, int(Kind::Html));
+            tf.clearProperty(MarkerProperty);
+            tf.clearProperty(CheckedProperty);
+            tf.setHeadingLevel(0);
+            edit.setPosition(target.position());
+            edit.setBlockFormat(tf);
+
+            // Хвостовые строки пункта маркера не имеют — это продолжение, а не
+            // новый пункт: род снимается, уровень остаётся.
+            if (original == Kind::ListItem && lineEnd < int(text.size())) {
+                const QTextBlock suffix = target.next();
+                if (suffix.isValid()) {
+                    QTextBlockFormat sf = suffix.blockFormat();
+                    sf.clearProperty(KindProperty);
+                    sf.clearProperty(MarkerProperty);
+                    sf.clearProperty(CheckedProperty);
+                    edit.setPosition(suffix.position());
+                    edit.setBlockFormat(sf);
+                }
+            }
+            const QTextBlock lastTouched =
+                target.next().isValid() ? target.next() : target;
+            normalise(doc, {firstNumber, lastTouched.blockNumber()});
+            edit.endEditBlock();
+            cursor.setPosition(base + lineStart);
+            return true;
+        }
+    }
+
+    return setBlockKind(doc, cursor, {Kind::Html, Marker::Bullet, false});
 }
 
 bool uncommentAtBlockStart(QTextDocument& doc, QTextCursor& cursor) {

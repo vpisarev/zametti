@@ -1204,6 +1204,59 @@ void checkCommentOps() {
             zametti::kindOf(blockAt(4)) == zametti::Kind::Paragraph &&
                 blockAt(4).text() == QStringLiteral("хвост"));
 
+    // Ctrl+/ построчный: выделение второй строки пункта комментирует только
+    // её — пункт остаётся пунктом, хвост — продолжением без маркера.
+    {
+        const QString p2 = writeNote(
+            "построчный.md", QStringLiteral("- пункт\n  вторая строка\n  третья\n"));
+        editor.document()->setModified(false);
+        editor.openFile(p2);
+        QTest::qWait(20);
+        const QTextBlock item = editor.document()->findBlockByNumber(0);
+        ZT_TRUE("пункт прочитан одной тройкой строк",
+                zametti::kindOf(item) == zametti::Kind::ListItem &&
+                    item.text().count(QChar::LineSeparator) == 2);
+
+        const QString t = item.text();
+        const int lineFrom = int(t.indexOf(QStringLiteral("вторая")));
+        QTextCursor sel(editor.document());
+        sel.setPosition(item.position() + lineFrom);
+        sel.setPosition(item.position() + lineFrom +
+                            int(QStringLiteral("вторая строка").size()),
+                        QTextCursor::KeepAnchor);
+        editor.setTextCursor(sel);
+        QTest::keyClick(&editor, Qt::Key_Slash, Qt::ControlModifier);
+        QTest::qWait(10);
+
+        const auto blockAt = [&](int n) {
+            return editor.document()->findBlockByNumber(n);
+        };
+        ZT_TRUE("пункт остался пунктом с одной строкой",
+                zametti::kindOf(blockAt(0)) == zametti::Kind::ListItem &&
+                    blockAt(0).text() == QStringLiteral("пункт"));
+        ZT_TRUE("закомментирована только выделенная строка",
+                zametti::kindOf(blockAt(1)) == zametti::Kind::Html &&
+                    blockAt(1).text() == QStringLiteral("вторая строка") &&
+                    zametti::levelOf(blockAt(1)) == 0);
+        ZT_TRUE("хвост — продолжение без маркера",
+                zametti::kindOf(blockAt(2)) == zametti::Kind::Paragraph &&
+                    blockAt(2).text().trimmed() == QStringLiteral("третья"));
+        {
+            const zametti::Document ir = zametti::readDocument(*editor.document());
+            const std::string out = zametti::serialize(ir);
+            ZT_TRUE("в файле комментарий с отступом пункта",
+                    out.find("  <!-- вторая строка -->") != std::string::npos);
+        }
+        QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+        QTest::qWait(10);
+        ZT_TRUE("Ctrl-Z собрал пункт обратно",
+                zametti::kindOf(blockAt(0)) == zametti::Kind::ListItem &&
+                    blockAt(0).text().count(QChar::LineSeparator) == 2);
+        editor.document()->setModified(false);
+        editor.openFile(path);
+        QTest::qWait(20);
+    }
+
     // Ctrl-Z раскатывает всю лесенку обратно.
     QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
     QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
