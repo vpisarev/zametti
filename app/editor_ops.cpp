@@ -1278,6 +1278,11 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
 
 }  // namespace
 
+namespace {
+// Определён ниже, у операций пустых строк; нужен и снятию маркера.
+void joinWithNext(QTextDocument& doc, QTextCursor& edit, int number);
+}  // namespace
+
 bool unwrapListItemAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     if (cursor.hasSelection() || !cursor.atBlockStart()) return false;
     const QTextBlock block = cursor.block();
@@ -1314,10 +1319,23 @@ bool unwrapListItemAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     plain.clearProperty(LevelProperty);
     plain.setLeftMargin(0);
 
+    const int number = block.blockNumber();
     cursor.beginEditBlock();
     cursor.setBlockFormat(plain);
-    normalise(doc, around(block.blockNumber()));
+    // Разжалованный абзац может слипаться с верхним соседом — тогда они
+    // сливаются в один блок мягким переносом: строки на экране как стояли,
+    // так и стоят. Иначе нормализация вставила бы обязательную пустую строку,
+    // и документ РОС бы от нажатия Backspace.
+    QTextCursor landing(&doc);
+    landing.setPosition(cursor.block().position());
+    if (number > 0 && blocksWouldMerge(doc.findBlockByNumber(number - 1),
+                                       doc.findBlockByNumber(number))) {
+        QTextCursor edit(&doc);
+        joinWithNext(doc, edit, number - 1);
+    }
+    normalise(doc, around(qMax(0, number - 1)));
     cursor.endEditBlock();
+    cursor.setPosition(landing.position());
     return true;
 }
 
