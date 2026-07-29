@@ -699,6 +699,16 @@ Document selectionToIr(const QTextCursor& cursor) {
 
     Document ir = readDocument(temp);
 
+    // Выделение, кончающееся ровно на начале блока, этого блока не захватывает:
+    // человек довёл до него курсор, но не выделял. Qt всё равно кладёт во
+    // фрагмент пустой хвостовой блок, и в буфер уходил лишний пустой пункт —
+    // "- два" копировалось как "- два\n-\n". Раньше он молча слипался при
+    // вставке, а как только вставка стала беречь строение, стал виден.
+    if (to > from && to == cursor.document()->findBlock(to).position() && !ir.empty()) {
+        const Block& tail = ir.back();
+        if (tail.rawSource.empty() && tail.text.empty()) ir.pop_back();
+    }
+
     int deepest = -1;
     for (const Block& block : ir)
         if (block.rawSource.empty() && isList(block.kind))

@@ -617,12 +617,58 @@ void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
     QTextDocument staging;
     buildDocument(fragment, staging, zoom());
 
+    // Кусок из одного обычного абзаца вставляется в строку: скопированные слова
+    // должны войти в тот блок, куда их кладут. Всё прочее — заголовок, пункт,
+    // код, цитата, да и просто несколько блоков — вставляется своими блоками:
+    // род блока это его свойство, и терять его при переносе нельзя.
+    const Block& head = fragment.front();
+    const bool blockLevel =
+        fragment.size() > 1 || !head.rawSource.empty() || head.kind != Kind::Paragraph;
+
     recordingSuspended_ = true;
     QTextCursor cursor = textCursor();
     cursor.beginEditBlock();
     if (cursor.hasSelection()) cursor.removeSelectedText();
+
+    // Qt вливает первый блок куска в текущий блок, и формат берётся у текущего:
+    // вставленный заголовок становился обычным текстом, а вставка в начало
+    // абзаца, наоборот, делала заголовком сам абзац. Поэтому под блочный кусок
+    // заводим пустой блок и потом ставим ему формат первого блока куска.
+    if (blockLevel && !cursor.block().text().isEmpty()) {
+        QTextBlockFormat plain;
+        plain.setLineHeight(cursor.blockFormat().lineHeight(),
+                            cursor.blockFormat().lineHeightType());
+        if (cursor.atBlockStart()) {
+            // Пустой блок заводим НАД текущим и встаём в него: текст блока
+            // уезжает вниз целиком и остаётся собой.
+            QTextCursor tail(document());
+            tail.setPosition(cursor.position());
+            cursor.insertBlock(cursor.blockFormat());
+            cursor.setPosition(tail.block().previous().position());
+        } else {
+            const bool wasAtEnd = cursor.atBlockEnd();
+            cursor.insertBlock(plain);
+            if (!wasAtEnd) {
+                // Резали посередине: хвост уехал вниз, а вставлять надо между
+                // половинками — заводим ещё один пустой блок и встаём в него.
+                QTextCursor tail(document());
+                tail.setPosition(cursor.position());
+                cursor.insertBlock(plain);
+                cursor.setPosition(tail.block().previous().position());
+            }
+        }
+    }
+
+    const QTextBlockFormat headFormat = staging.firstBlock().blockFormat();
+    const int start = cursor.blockNumber();
     cursor.insertFragment(QTextDocumentFragment(&staging));
     const int landed = cursor.position();
+    // Формат первого блока куска Qt не донёс — ставим сами.
+    if (blockLevel) {
+        QTextCursor fix(document());
+        fix.setPosition(document()->findBlockByNumber(start).position());
+        fix.setBlockFormat(headFormat);
+    }
     // Вставленное могло приехать из другого места дерева: шов приводим в
     // порядок целиком, документ для этого достаточно мал.
     syncLiteralBlocks(*document(), {0, document()->blockCount() - 1});

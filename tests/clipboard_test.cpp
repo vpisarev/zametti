@@ -159,6 +159,60 @@ void checkRoundTrip() {
                "вставка отменяется одним шагом");
 }
 
+// Род блока — его свойство, и при переносе через буфер теряться не должен.
+// Скопированный заголовок вставлялся обычным текстом, а в начале абзаца,
+// наоборот, делал заголовком сам абзац: Qt вливает первый блок куска в текущий
+// блок и берёт формат у текущего.
+void checkBlockPasteKeepsKind() {
+    struct Case {
+        const char* note;
+        int block;       // куда встать
+        int offset;
+        const char* buffer;
+        const char* expected;
+        const char* what;
+    };
+    const Case cases[] = {
+        {"текст\n", 0, 5, "## Редактор\n", "текст\n## Редактор\n",
+         "заголовок в конце абзаца встаёт своим блоком"},
+        {"текст\n", 0, 0, "## Редактор\n", "## Редактор\nтекст\n",
+         "и в начале абзаца — над ним, а абзац остаётся абзацем"},
+        {"текст\n", 0, 3, "## Редактор\n", "тек\n## Редактор\nст\n",
+         "и посередине — между половинками"},
+        {"текст\n", 0, 5, "- пункт\n", "текст\n- пункт\n", "пункт списка остаётся пунктом"},
+        {"текст\n", 0, 5, "```py\nx = 1\n```\n", "текст\n```py\nx = 1\n```\n",
+         "блок кода остаётся блоком кода"},
+        {"текст\n", 0, 5, "## Заголовок\n\nабзац\n", "текст\n## Заголовок\n\nабзац\n",
+         "несколько блоков переносятся целиком"},
+    };
+
+    int index = 0;
+    for (const Case& c : cases) {
+        Editor editor((std::string("вставка") + std::to_string(index++) + ".md").c_str(),
+                      QString::fromUtf8(c.note));
+        QTextCursor cursor = editor.widget.textCursor();
+        cursor.setPosition(editor.widget.document()->findBlockByNumber(c.block).position() +
+                           c.offset);
+        editor.widget.setTextCursor(cursor);
+        QGuiApplication::clipboard()->setText(QString::fromUtf8(c.buffer));
+        editor.widget.paste();
+        QTest::qWait(20);
+        checkEqual(QString::fromUtf8(c.expected), textOf(editor.widget), c.what);
+    }
+}
+
+// Выделение, кончающееся ровно на начале блока, этого блока не захватывает:
+// человек довёл до него курсор, но не выделял. Qt всё равно кладёт во фрагмент
+// пустой хвостовой блок, и в буфер уходил лишний пустой пункт.
+void checkCopyDoesNotGrabNextBlock() {
+    Editor editor("хвост.md", QStringLiteral("- раз\n- два\n- три\n"));
+    select(editor.widget, 1, 0, 2, 0);
+    editor.widget.copy();
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("- два\n"), QGuiApplication::clipboard()->text(),
+               "пустой хвостовой пункт в буфер не попадает");
+}
+
 // Вставка одиночного абзаца — инлайновая: слова входят в текущий блок, а не
 // заводят новый.
 void checkInlinePaste() {
@@ -228,6 +282,8 @@ int main(int argc, char** argv) {
     checkCopyAll();
     checkPasteEqualsOpen();
     checkRoundTrip();
+    checkBlockPasteKeepsKind();
+    checkCopyDoesNotGrabNextBlock();
     checkInlinePaste();
     checkLiteralPaste();
     checkPasteIntoCode();
