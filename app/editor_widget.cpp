@@ -410,6 +410,18 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
             }
             return;
         }
+        // И в начале блока сразу ПОД чертой: штатное слияние съело бы её —
+        // черта пропадала над кареткой, будто нажали Delete. Тоже шаг вверх,
+        // на саму черту; удаляет её Delete или выделение.
+        const QTextBlock prevBlock = atBlock.previous();
+        if (!textCursor().hasSelection() && textCursor().atBlockStart() &&
+            prevBlock.isValid() && !isRawBlock(prevBlock) &&
+            kindOf(prevBlock) == Kind::Divider) {
+            QTextCursor up = textCursor();
+            up.setPosition(prevBlock.position());
+            setTextCursor(up);
+            return;
+        }
     }
     // Delete у пустой строки — то же самое с другой стороны: строка исчезает, а
     // соседи, которым markdown не даёт стоять раздельно, сливаются.

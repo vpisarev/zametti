@@ -454,6 +454,11 @@ const Case kBackspaceUpCases[] = {
      2, 0, {key("Backspace")},
      "до\n\n---\n", 1},
 
+    {"Backspace из-под черты шагает на неё, не удаляя",
+     "---\nпосле\n",
+     1, 0, {key("Backspace")},
+     "---\nпосле\n", 0},
+
     {"Backspace на черте под заголовком ничего не удаляет",
      "# з\n---\n",
      1, 0, {key("Backspace")},
