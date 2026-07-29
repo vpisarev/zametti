@@ -18,6 +18,7 @@
 #include <QTimeZone>
 
 #include <algorithm>
+#include <iterator>
 #include <map>
 #include <random>
 #include <set>
@@ -72,6 +73,7 @@ struct SrcEntry {
     QDateTime created;
     QDateTime modified;
     QString timesFrom;  // "manifest" | "front matter" | "fs"
+    QString displayTitle;   // настоящий заголовок: из манифеста, иначе имя файла
     std::string id;
 };
 
@@ -421,11 +423,15 @@ bool importTree(const ImportOptions& options, Report& report) {
 
         QDateTime created;
         QDateTime modified;
+        e.displayTitle = e.title;
         if (matched != nullptr && matched->created.isValid()) {
             matched->used = true;
             created = matched->created;
             modified = matched->modified.isValid() ? matched->modified : matched->created;
             e.timesFrom = QStringLiteral("manifest");
+            // Заголовок из манифеста — настоящий: конвертер чистил его под
+            // имя файла ('#', ':', кавычки), манифест хранит как было.
+            e.displayTitle = matched->title;
         } else if (!e.isDir && frontMatterTimes(bytes, created, modified)) {
             if (!modified.isValid()) modified = created;
             if (!created.isValid()) created = modified;
@@ -643,6 +649,39 @@ bool importTree(const ImportOptions& options, Report& report) {
             std::string bytes;
             if (!readAll(e.abs, bytes)) continue;   // уже в отчёте
             ir = parse(bytes);
+        }
+
+        // Заголовок заметки: Apple держит его первой строкой, конвертер унёс
+        // в имя файла, а имя файла становится непрозрачным id — без возврата
+        // заголовка в тело заметка осталась бы безымянной. Заголовок получают
+        // ВСЕ заметки; не трогаем только те, где первый содержательный блок —
+        // заголовок ровно с тем же текстом (правило владельца).
+        if (!e.isDir) {
+            QString firstHeading;
+            for (const Block& b : ir.blocks) {
+                if (b.rawSource.empty() && b.kind == Kind::VSpace) continue;
+                if (b.rawSource.empty() && b.kind == Kind::Heading)
+                    firstHeading = fromUtf8(b.text).trimmed();
+                break;
+            }
+            const QString title = e.displayTitle.trimmed();
+            if (!title.isEmpty() && firstHeading != title) {
+                Block heading;
+                heading.kind = Kind::Heading;
+                heading.headingLevel = 1;
+                heading.text = toUtf8(title);
+                std::vector<Block> withTitle;
+                withTitle.push_back(std::move(heading));
+                if (!ir.blocks.empty()) {
+                    Block gap;
+                    gap.kind = Kind::VSpace;
+                    withTitle.push_back(std::move(gap));
+                }
+                withTitle.insert(withTitle.end(),
+                                 std::make_move_iterator(ir.blocks.begin()),
+                                 std::make_move_iterator(ir.blocks.end()));
+                ir.blocks = std::move(withTitle);
+            }
         }
 
         // Вложения и ссылки. Вики-вложения усыновляются в канон, прочие

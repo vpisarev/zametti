@@ -156,6 +156,13 @@ int main(int argc, char** argv) {
     const std::string inner = readAll(options.root + "/" + innerId + ".md");
     const std::string dirNote = readAll(options.root + "/" + dirId + ".md");
 
+    // Заголовки возвращаются всем; не дублируется только точное совпадение.
+    // У Верха первый блок "# Верх" и title "Верх" — совпали, дубля нет.
+    ZT_TRUE("совпавший заголовок не задублирован",
+            top.find("# Верх\n") != std::string::npos &&
+                top.find("# Верх\n\n# Верх") == std::string::npos);
+    ZT_TRUE("заголовок возвращён из имени файла",
+            inner.find("# Внутри\n") != std::string::npos);
     ZT_TRUE("метаданные Верха из манифеста",
             top.find("created: 2019-03-14T09:26:53Z") != std::string::npos &&
                 top.find("modified: 2024-11-02T08:12:40Z") != std::string::npos);
