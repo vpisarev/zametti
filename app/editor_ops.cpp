@@ -1103,10 +1103,10 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
     const int number = block.blockNumber();
 
     // Пустой пункт списка: Enter выводит из него, а не заводит ещё один пустой.
-    //
-    // Вложенный пункт сначала поднимается на уровень выше: закончив подпункты,
-    // человек обычно продолжает список, а не бросает его, — так же ведут себя
-    // все редакторы со вложенными списками.
+    // С любой глубины сразу: подниматься по уровню за раз, как это делают другие
+    // редакторы, здесь не годится — из вложенного списка приходилось бы выходить
+    // тремя нажатиями вместо двух, и это сразу заметили на живой заметке. А
+    // подняться на уровень, оставшись в списке, и так можно: Enter и Shift+Tab.
     //
     // Соседей при этом не трогаем. Раньше пустой пункт снимал маркер со
     // СЛЕДУЮЩЕГО — это был жест «разлепить два слипшихся списка». Отличить его
@@ -1116,17 +1116,12 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
     // разделяющий абзац — markdown всё равно разделяет их только абзацем с
     // содержимым, пустая строка между пунктами не разделяет ничего.
     if (isListBlock(block) && block.text().isEmpty()) {
-        const int level = levelOf(block);
         QTextBlockFormat next = block.blockFormat();
-        if (level > 0) {
-            next.setProperty(LevelProperty, level - 1);
-        } else {
-            next.clearProperty(KindProperty);
-            next.clearProperty(MarkerProperty);
-            next.clearProperty(CheckedProperty);
-            next.clearProperty(LevelProperty);
-            next.setLeftMargin(0);
-        }
+        next.clearProperty(KindProperty);
+        next.clearProperty(MarkerProperty);
+        next.clearProperty(CheckedProperty);
+        next.clearProperty(LevelProperty);
+        next.setLeftMargin(0);
 
         cursor.beginEditBlock();
         cursor.setPosition(block.position());
