@@ -140,3 +140,9 @@ target_link_libraries(caret_scale_test PRIVATE zametti-widgets Qt6::Test zametti
 target_include_directories(caret_scale_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME caret-scale COMMAND caret_scale_test)
 set_tests_properties(caret-scale PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(backspace_flat_test backspace_flat_test.cpp)
+target_link_libraries(backspace_flat_test PRIVATE zametti-widgets Qt6::Test zametti-warnings)
+target_include_directories(backspace_flat_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME backspace-flat COMMAND backspace_flat_test)
+set_tests_properties(backspace-flat PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

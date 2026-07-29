@@ -167,10 +167,6 @@ bool applyDividerRuleAtCursor(QTextDocument& doc, QTextCursor& cursor);
 // это удаление назад.
 bool deleteDividerAbove(QTextDocument& doc, QTextCursor& cursor);
 
-// Каретка на самой черте, выше — текст: Backspace удаляет ЕЁ, как удалил бы
-// пустую строку, и каретка уходит в конец текста. Черта — строка без
-// содержимого; слить её вверх и значит удалить.
-bool deleteDividerAtCursor(QTextDocument& doc, QTextCursor& cursor);
 
 // Начертание на выделение: жирный, курсив, зачёркнутый. Переключает — если весь
 // выделенный текст уже такой, начертание снимается, иначе ставится.

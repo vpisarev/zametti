@@ -1436,8 +1436,14 @@ bool removeVSpaceAndMaybeJoin(QTextDocument& doc, QTextCursor& cursor, int gapNu
     // Всё прочее — Delete и Backspace из-под стыка — оставляет каретку на
     // строке под стыком. При слиянии текстов оба адреса — одна и та же точка.
     QTextCursor landing(&doc);
-    if (backspace && fromGap && before.isValid())
+    if (backspace && fromGap && before.isValid()) {
+        // Слияние текстов вставляет мягкий перенос ровно в точку посадки «в
+        // конец строки выше» — без флага каретку проталкивало за перенос, на
+        // начало нижней строки. Посадке «на начало строки ниже» (ветки ниже)
+        // флаг, наоборот, вредил бы: ей за перенос уехать и положено.
+        landing.setKeepPositionOnInsert(true);
         landing.setPosition(before.position() + before.length() - 1);
+    }
     else if (after.isValid())
         landing.setPosition(after.position());
     else
@@ -1470,29 +1476,6 @@ bool deleteDividerAbove(QTextDocument& doc, QTextCursor& cursor) {
     QTextCursor edit(&doc);
     edit.beginEditBlock();
     removeLineBlock(edit, prev);
-    if (join) joinWithNext(doc, edit, number - 1);
-    normalise(doc, around(qMax(0, number - 1)));
-    edit.endEditBlock();
-    cursor.setPosition(landing.position());
-    return true;
-}
-
-bool deleteDividerAtCursor(QTextDocument& doc, QTextCursor& cursor) {
-    if (cursor.hasSelection()) return false;
-    const QTextBlock block = cursor.block();
-    if (isRawBlock(block) || kindOf(block) != Kind::Divider) return false;
-    const QTextBlock prev = block.previous();
-    if (!prev.isValid()) return false;   // выше ничего: и удалять нечего
-
-    const int number = block.blockNumber();
-    QTextCursor landing(&doc);
-    landing.setPosition(prev.position() + prev.length() - 1);
-    // Соседи, оставшиеся без черты между ними, могут слипнуться — тогда
-    // тексты сливаются, как при удалении пустой строки.
-    const bool join = blocksWouldMerge(prev, block.next());
-    QTextCursor edit(&doc);
-    edit.beginEditBlock();
-    removeLineBlock(edit, block);
     if (join) joinWithNext(doc, edit, number - 1);
     normalise(doc, around(qMax(0, number - 1)));
     edit.endEditBlock();
