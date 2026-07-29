@@ -52,37 +52,56 @@ int main(int argc, char** argv) {
     editor.setTextCursor(cursor);
     QTest::qWait(30);
 
-    const QRect at = editor.cursorRect();
-    const qreal dpr = editor.devicePixelRatioF();
-    const QColor caret = zametti::appearance().caretColor;
-
-    // Полный цикл мигания обеих кареток с запасом.
-    int alienFrames = 0;
-    for (int frame = 0; frame < 24; ++frame) {
-        QImage shot = editor.viewport()->grab().toImage();
-        shot.setDevicePixelRatio(1.0);
-        const int left = int((at.left() - 2) * dpr);
-        const int right = int((at.left() + 4) * dpr);
-        const int top = int(at.top() * dpr);
-        const int bottom = int(at.bottom() * dpr);
-        for (int x = left; x <= right && x < shot.width(); ++x) {
-            if (x < 0) continue;
-            int darkRun = 0;
-            int best = 0;
-            for (int y = qMax(0, top); y <= bottom && y < shot.height(); ++y) {
-                const QColor c = shot.pixelColor(x, y);
-                const bool dark = c.lightness() < 70 && c != caret;
-                darkRun = dark ? darkRun + 1 : 0;
-                best = qMax(best, darkRun);
+    // Кадры с тёмной вертикалью во весь рост строки в колонке каретки.
+    // Ножка буквы столько не занимает — это может быть только чужая каретка.
+    const auto alienFrames = [&editor] {
+        const QRect at = editor.cursorRect();
+        const qreal dpr = editor.devicePixelRatioF();
+        const QColor caret = zametti::appearance().caretColor;
+        int frames = 0;
+        for (int frame = 0; frame < 20; ++frame) {
+            QImage shot = editor.viewport()->grab().toImage();
+            shot.setDevicePixelRatio(1.0);
+            const int left = int((at.left() - 2) * dpr);
+            const int right = int((at.left() + 4) * dpr);
+            const int top = int(at.top() * dpr);
+            const int bottom = int(at.bottom() * dpr);
+            bool alien = false;
+            for (int x = qMax(0, left); x <= right && x < shot.width(); ++x) {
+                int darkRun = 0;
+                int best = 0;
+                for (int y = qMax(0, top); y <= bottom && y < shot.height(); ++y) {
+                    const QColor c = shot.pixelColor(x, y);
+                    const bool dark = c.lightness() < 70 && c != caret;
+                    darkRun = dark ? darkRun + 1 : 0;
+                    best = qMax(best, darkRun);
+                }
+                if (best > (bottom - top) * 85 / 100) alien = true;
             }
-            // Во всю высоту строки — ножка буквы столько не занимает.
-            if (best > (bottom - top) * 85 / 100) ++alienFrames;
+            if (alien) ++frames;
+            QTest::qWait(45);
         }
-        QTest::qWait(45);
-    }
-    ZT_TRUE("чужая каретка: тёмная вертикаль во весь рост строки, кадров " +
-                std::to_string(alienFrames),
-            alienFrames == 0);
+        return frames;
+    };
+
+    // Штатную каретку будят по-разному: фокус, стрелки, мышь, набор. Каждый
+    // источник проверяется отдельно — фокусом её усыпить удавалось, а клавиши
+    // будили снова.
+    ZT_TRUE("после установки курсора", alienFrames() == 0);
+
+    for (int i = 0; i < 3; ++i) QTest::keyClick(&editor, Qt::Key_Right);
+    QTest::qWait(30);
+    ZT_TRUE("после стрелок", alienFrames() == 0);
+
+    const QRect r = editor.cursorRect();
+    QTest::mouseClick(editor.viewport(), Qt::LeftButton, Qt::NoModifier,
+                      QPoint(r.left() - 30, r.center().y()));
+    QTest::qWait(30);
+    ZT_TRUE("после щелчка мыши", alienFrames() == 0);
+
+    editor.insertPlainText(QStringLiteral("x"));
+    QTest::qWait(30);
+    ZT_TRUE("после набора", alienFrames() == 0);
 
     return zt::report("каретка на дробном масштабе");
 }

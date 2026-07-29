@@ -81,20 +81,45 @@ void NoteView::showCaret() {
 }
 
 void NoteView::focusInEvent(QFocusEvent* event) {
-    // Мимо QTextEdit, прямо в предка: фокус будит штатную каретку, а её
-    // ширину 0 дробный масштаб экрана прижимает к одному физическому пикселю —
-    // и рядом с нашей кареткой мигает чужая чёрная черта. Красить её нечем:
-    // она рисуется инверсией пикселей (замерено: палитра Text перекрашивает
-    // буквы, черту — нет). Не разбуженная фокусом, она не рисуется вовсе.
-    QAbstractScrollArea::focusInEvent(event);
+    QTextBrowser::focusInEvent(event);
     showCaret();
 }
 
 void NoteView::focusOutEvent(QFocusEvent* event) {
-    QAbstractScrollArea::focusOutEvent(event);
+    QTextBrowser::focusOutEvent(event);
     caretBlink_.stop();
     caretOn_ = false;
     viewport()->update();
+}
+
+void NoteView::repaintOverNativeCaret(QPainter& painter) {
+    if (isReadOnly()) return;
+    QRect col = cursorRect();
+    col = QRect(col.left() - 3, col.top() - 2, 10, col.height() + 4);
+
+    painter.save();
+    painter.translate(-horizontalScrollBar()->value(), -verticalScrollBar()->value());
+    const QRectF clip(col.translated(horizontalScrollBar()->value(),
+                                     verticalScrollBar()->value()));
+    painter.setClipRect(clip);
+    painter.fillRect(clip, appearance().pageBackground);
+    paintCodeBackground(painter, clip);
+
+    QAbstractTextDocumentLayout::PaintContext ctx;
+    ctx.palette = palette();
+    ctx.clip = clip;
+    ctx.cursorPosition = -1;   // ради этого всё и затевалось
+    if (textCursor().hasSelection()) {
+        // Выделение — как его собрал бы сам Qt, иначе колонка выпадала бы из
+        // подсветки.
+        QAbstractTextDocumentLayout::Selection selection;
+        selection.cursor = textCursor();
+        selection.format.setBackground(palette().brush(QPalette::Highlight));
+        selection.format.setForeground(palette().brush(QPalette::HighlightedText));
+        ctx.selections.append(selection);
+    }
+    document()->documentLayout()->draw(&painter, ctx);
+    painter.restore();
 }
 
 void NoteView::applyContentWidth() {
@@ -187,6 +212,7 @@ void NoteView::paintEvent(QPaintEvent* event) {
 
     const QFont base = baseFontFor(zoom_);
     QPainter painter(viewport());
+    repaintOverNativeCaret(painter);
     painter.translate(-horizontalScrollBar()->value(), -verticalScrollBar()->value());
 
     const QRectF visible(horizontalScrollBar()->value() + event->rect().x(),
