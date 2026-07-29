@@ -10,6 +10,8 @@
 #define ZAMETTI_NOTE_VIEW_H
 
 #include <QFont>
+#include <QHash>
+#include <QImage>
 #include <QTextBrowser>
 #include <QTimer>
 #include <QtGlobal>
@@ -39,6 +41,10 @@ public:
     // пересборки документа: сборщик ставит поля по умолчанию, ничего не зная
     // о размере окна.
     void applyContentWidth();
+
+    // Каталог, от которого разрешаются относительные пути картинок, — каталог
+    // открытой заметки. Ставится при открытии файла.
+    void setImageBase(const QString& dir);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -72,10 +78,25 @@ private:
     void repaintOverNativeCaret(QPainter& painter);
     void showCaret();
 
+    // Картинки. Текстовая модель их не знает: строка с картинкой остаётся
+    // строкой (подпись image-спана или дословное вики-вложение "![[путь|ш]]"),
+    // а сама фотография рисуется в нижнем поле блока — место под неё
+    // резервирует syncImageSpace, ставя bottomMargin (у всех прочих блоков он
+    // ноль по построению сборщика). Каретке в фотографии делать нечего — как и
+    // у черты, это хитро-отрисованная строка.
+    void syncImageSpace();
+    const QImage* imageFor(const QString& path);
+    QSizeF imageDisplaySize(const QImage& image, qreal widthHint,
+                            const QTextBlock& block) const;
+    void paintImage(QPainter& painter, const QTextBlock& block, const QRectF& rect);
+
     qreal zoom_ = 1.0;
     bool changingLayout_ = false;
     QTimer caretBlink_;
     bool caretOn_ = true;
+    QString imageBase_;
+    bool syncingImages_ = false;
+    QHash<QString, QImage> imageCache_;   // абсолютный путь → картинка (null — не читается)
 };
 
 }  // namespace zametti

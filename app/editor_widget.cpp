@@ -9,6 +9,7 @@
 #include "parser.h"
 #include "settings.h"
 
+#include <QFileInfo>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QKeySequence>
@@ -242,6 +243,7 @@ bool NoteEditor::openFile(const QString& path) {
     }
 
     path_ = path;
+    setImageBase(QFileInfo(path).absolutePath());
     lastComplaint_.clear();
     externalPending_ = false;
     externalText_.clear();
