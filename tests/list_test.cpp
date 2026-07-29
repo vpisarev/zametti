@@ -13,6 +13,7 @@
 
 #include "doc_model.h"
 #include "document_reader.h"
+#include "document_saver.h"
 #include "editor_widget.h"
 #include "parser.h"
 #include "serializer.h"
@@ -462,15 +463,17 @@ const Case kBackspaceUpCases[] = {
      2, 0, {key("Backspace")},
      "до\n___\n", 1},
 
-    {"Backspace на пустой под чертой удаляет её, каретка на черту",
+    // Гибнет то, что НАД кареткой: с пустой строки под чертой Backspace
+    // убирает черту, а своя строка остаётся под кареткой.
+    {"Backspace на пустой под чертой удаляет черту",
      "___\n\n- пункт\n",
      1, 0, {key("Backspace")},
-     "___\n- пункт\n", 0},
+     "\n- пункт\n", 0},
 
-    {"Backspace на пустой между чертами удаляет её",
+    {"Backspace на пустой между чертами удаляет верхнюю черту",
      "___\n\n___\n",
      1, 0, {key("Backspace")},
-     "___\n___\n", 0},
+     "\n___\n", 0},
 
     {"Backspace на нижней черте через пустую подтягивает её",
      "___\n\n___\n",
@@ -888,8 +891,10 @@ void checkBackspaceProperties() {
                         div1 == div0 || dividerAbove || onDivider);
                 ZT_TRUE(tag + "каретка не уехала вниз", landed <= block);
 
-                const std::string once =
-                    zametti::serialize(zametti::readDocument(*editor.document()));
+                // Ровно путь записи: с нормализацией documentForFile — файл,
+                // например, не выражает пустую строку в самом начале.
+                const std::string once = zametti::serialize(
+                    zametti::documentForFile(zametti::readDocument(*editor.document())));
                 const std::string twice = zametti::serialize(zametti::parse(once));
                 ZT_TRUE(tag + "документ записываем", once == twice);
                 // Правки не сохраняем: файл на каждый случай пишется заново, а

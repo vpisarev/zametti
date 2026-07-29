@@ -420,12 +420,13 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
         return;
     }
     if (event->key() == Qt::Key_Backspace && event->modifiers() == Qt::NoModifier) {
-        if (runOperation(unwrapListItemAtCursor) || runOperation(joinAcrossVSpaceBackward))
-            return;
-        // Черта прямо над кареткой удаляется — это удаление назад, как и с
-        // пустой строкой. (Каретку на пустой строке под чертой перехватывает
-        // joinAcrossVSpaceBackward выше: там жертва — пустая строка.)
+        if (runOperation(unwrapListItemAtCursor)) return;
+        // Черта прямо над кареткой удаляется — это удаление назад: гибнет то,
+        // что НАД кареткой, а своя строка остаётся под ней. Поэтому раньше
+        // обработки пустых строк: с пустой строки под чертой Backspace убирает
+        // черту, а не пустую.
         if (runOperation(deleteDividerAbove)) return;
+        if (runOperation(joinAcrossVSpaceBackward)) return;
         // Каретка на самой черте, выше текст: черта — строка без содержимого,
         // слить её вверх и значит удалить. Без этого лесенку черт нельзя было
         // снести Backspace-ом до конца: последняя, стоящая под текстом,
