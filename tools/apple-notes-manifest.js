@@ -43,48 +43,31 @@ function run(argv) {
     const out = [];
     const seenFolders = new Set();
 
-    // Путь папки — вверх по цепочке контейнеров, а не рекурсией вниз: в
-    // некоторых версиях macOS `folders` учётки отдаёт ВСЕ папки плоско, и
-    // рекурсия обходила бы вложенные дважды.
-    const partsOf = (folder) => {
-        const parts = [folder.name()];
-        let f = folder;
-        for (;;) {
-            let container;
-            try {
-                container = f.container();
-                if (container.class() !== 'folder') break;
-            } catch (e) {
-                break;
-            }
-            f = container;
-            parts.unshift(f.name());
-        }
-        return parts;
+    // Пути строятся рекурсией вниз, а path передаётся параметром: на живом
+    // маке замерено, что container() папки НЕ отдаёт родителя (вложенные
+    // папки теряли путь), а folders учётки бывает плоским списком. Поэтому
+    // верхний уровень определяется двумя проходами: кто не встретился среди
+    // чьих-то детей — тот и корень.
+    const idOf = (folder) => {
+        try { return folder.id(); } catch (e) { return null; }
     };
 
-    const harvest = (folder) => {
-        let id;
-        try {
-            id = folder.id();
-        } catch (e) {
-            id = null;
-        }
+    const harvest = (folder, parentPath) => {
+        const id = idOf(folder);
         if (id !== null) {
             if (seenFolders.has(id)) return;
             seenFolders.add(id);
         }
-
-        const parts = partsOf(folder);
-        if (parts.some((p) => skipNames.has(p))) {
-            console.log('пропуск: ' + parts.join('/'));
+        const name = folder.name();
+        if (skipNames.has(name)) {
+            console.log('пропуск: ' + joinPath(parentPath, name));
             return;
         }
         // Папка по умолчанию — в корень: конвертеры не заводят под неё
-        // подкаталог. Только сама, не её тёзки в глубине.
-        const own = parts.length === 1 && parts[0] === defaultFolder
+        // подкаталог. Только на верхнем уровне, не её тёзки в глубине.
+        const own = parentPath === '' && name === defaultFolder
                         ? ''
-                        : parts.join('/');
+                        : joinPath(parentPath, name);
         const at = joinPath(prefix, own);
 
         // Пакетные геттеры на порядок быстрее пообъектных; редкий откат — по
@@ -123,14 +106,29 @@ function run(argv) {
         } catch (e) {
             subs = [];
         }
-        for (const sub of subs) harvest(sub);
+        for (const sub of subs) harvest(sub, own);
     };
 
     const accounts = Notes.accounts();
     for (const account of accounts) {
         console.log('учётка: ' + account.name());
-        const tops = account.folders();
-        for (const f of tops) harvest(f);
+        const all = account.folders();
+        // Проход 1: собрать id всех чьих-то детей.
+        const childIds = new Set();
+        for (const f of all) {
+            let subs;
+            try { subs = f.folders(); } catch (e) { subs = []; }
+            for (const sub of subs) {
+                const id = idOf(sub);
+                if (id !== null) childIds.add(id);
+            }
+        }
+        // Проход 2: обходить только настоящие корни — пути соберутся сами.
+        for (const f of all) {
+            const id = idOf(f);
+            if (id !== null && childIds.has(id)) continue;
+            harvest(f, '');
+        }
     }
 
     console.log('всего заметок: ' + out.length);

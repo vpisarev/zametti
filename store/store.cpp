@@ -133,6 +133,18 @@ QString resolveInside(const QString& srcRoot, const QString& noteDirRel, const Q
     return cleaned;
 }
 
+// Заголовок так, как его чистит конвертер под имя файла (замерено на
+// корпусе): '#' и ':' удаляются, '/' становится '-', неразрывный пробел —
+// обычным, края обрезаются.
+QString sanitizedTitle(QString title) {
+    title.remove(QLatin1Char('#'));
+    title.remove(QLatin1Char(':'));
+    title.remove(QLatin1Char('"'));
+    title.replace(QLatin1Char('/'), QLatin1Char('-'));
+    title.replace(QChar(0x00A0), QLatin1Char(' '));
+    return title.trimmed();
+}
+
 }  // namespace
 
 bool initStore(const QString& dir, QString* error) {
@@ -300,6 +312,14 @@ bool importTree(const ImportOptions& options, Report& report) {
                     ++matches;
                     matched = &m;
                 }
+            // Конвертер чистил заголовки под имена файлов — второй заход по
+            // очищенному ключу, только если точный не нашёлся.
+            if (matches == 0)
+                for (ManifestEntry& m : manifest)
+                    if (m.folder == e.parentRel && sanitizedTitle(m.title) == e.title) {
+                        ++matches;
+                        matched = &m;
+                    }
         }
         if (matches > 1) {
             report.problem(
