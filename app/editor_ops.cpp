@@ -1561,10 +1561,14 @@ bool repairAfterTyping(QTextDocument& doc, QTextCursor& cursor) {
     const QTextBlock block = cursor.block();
     const int number = block.blockNumber();
     // Набрали прямо на пустой строке или на черте: тем, чем были, они быть
-    // перестали — текст делает из них обычный абзац.
+    // перестали — ТЕКСТ делает из них обычный абзац. Пробелы текстом не
+    // считаются: markdown пробельную строку считает пустой, а превращение в
+    // абзац запускало слияние соседей — набранный на пустой строке пробел
+    // приклеивал текст под ней к списку над ней. Пробелы умрут сами, когда
+    // каретка уйдёт со строки (tidyLeftLine).
     const bool filled = (isVSpaceBlock(block) ||
                          (!isRawBlock(block) && kindOf(block) == Kind::Divider)) &&
-                        !block.text().isEmpty();
+                        !block.text().trimmed().isEmpty();
     // Или набрали поверх выделения, съевшего границу блоков, и рядом оказались
     // соседи, которых markdown раздельно не выражает.
     const bool mergesAhead =
@@ -1918,7 +1922,9 @@ bool gapInvariantHolds(const QTextDocument& doc, QString* problem) {
     int number = 0;
     for (QTextBlock block = doc.begin(); block.isValid(); block = block.next(), ++number) {
         if (isContinuationBlock(block)) continue;
-        if (isVSpaceBlock(block) && !block.text().isEmpty()) {
+        if (isVSpaceBlock(block) && !block.text().trimmed().isEmpty()) {
+            // Пробельное содержимое допустимо: пока каретка на строке, пробелы
+            // живут; уйдёт — их снимет tidyLeftLine.
             if (problem != nullptr)
                 *problem = QStringLiteral("блок %1: пустая строка с текстом").arg(number);
             return false;

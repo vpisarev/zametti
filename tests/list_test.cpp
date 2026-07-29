@@ -930,6 +930,78 @@ void checkDividerUndo() {
     }
 }
 
+// Строка из одних пробелов глазом неотличима от пустой, а вела себя как
+// текст — на этом ловилась «склейка при двух пустых». Правило: хвостовые
+// пробелы умирают при уходе каретки со строки; опустевшая строка становится
+// настоящей пустой. Пока каретка на строке — свобода. Кода не касается.
+void checkWhitespaceLineTidy() {
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+
+    // Пробелы на пустой строке + уход: строка снова пустая.
+    {
+        const QString path = writeNote("пробельная.md", QStringLiteral("до\n\nпосле\n"));
+        editor.openFile(path);
+        QTest::qWait(20);
+        QTextCursor c(editor.document());
+        c.setPosition(editor.document()->findBlockByNumber(1).position());
+        editor.setTextCursor(c);
+        QTest::keyClick(&editor, Qt::Key_Space);
+        QTest::keyClick(&editor, Qt::Key_Space);
+        QTest::keyClick(&editor, Qt::Key_Down);
+        QTest::qWait(10);
+        ZT_TRUE("строка из пробелов затвердела в пустую",
+                zametti::isVSpaceBlock(editor.document()->findBlockByNumber(1)));
+        ZT_EQ("файл не заметил пробелов", "до\n\nпосле\n", textOf(editor).toStdString());
+
+        // И Backspace от «после» теперь ведёт себя как с настоящей пустой.
+        c.setPosition(editor.document()->findBlockByNumber(2).position());
+        editor.setTextCursor(c);
+        QTest::keyClick(&editor, Qt::Key_Backspace);
+        QTest::qWait(10);
+        ZT_EQ("Backspace после затвердевания честный", "до\nпосле\n",
+              textOf(editor).toStdString());
+    }
+
+    // Хвостовые пробелы за словом умирают при уходе.
+    {
+        const QString path = writeNote("хвост.md", QStringLiteral("слово\n\nниз\n"));
+        editor.openFile(path);
+        QTest::qWait(20);
+        QTextCursor c = editor.textCursor();
+        c.setPosition(editor.document()->findBlockByNumber(0).position() + 5);
+        editor.setTextCursor(c);
+        QTest::keyClick(&editor, Qt::Key_Space);
+        QTest::keyClick(&editor, Qt::Key_Space);
+        QTest::keyClick(&editor, Qt::Key_Down);
+        QTest::qWait(10);
+        ZT_EQ("хвостовые пробелы умерли при уходе", "слово",
+              editor.document()->findBlockByNumber(0).text().toStdString());
+    }
+
+    // В коде хвостовые пробелы — содержимое: не трогаем.
+    {
+        const QString path =
+            writeNote("код-хвост.md", QStringLiteral("```\nx = 1\n```\n\nниз\n"));
+        editor.openFile(path);
+        QTest::qWait(20);
+        // Заборы — не блоки: строка кода лежит нулевым блоком.
+        QTextCursor c(editor.document());
+        const QTextBlock codeLine = editor.document()->findBlockByNumber(0);
+        c.setPosition(codeLine.position() + codeLine.length() - 1);
+        editor.setTextCursor(c);
+        QTest::keyClick(&editor, Qt::Key_Space);
+        QTest::keyClick(&editor, Qt::Key_Space);
+        QTest::keyClick(&editor, Qt::Key_Down);
+        QTest::qWait(10);
+        ZT_EQ("в коде хвост цел", "x = 1  ",
+              editor.document()->findBlockByNumber(0).text().toStdString());
+    }
+}
+
 // Свойства Backspace на ЛЮБОЙ лесенке из текста, пустых строк и черт — их
 // может быть и сто подряд, и правила обязаны держаться на каждой:
 //   1) черты и текст не пропадают;
@@ -1094,6 +1166,7 @@ int main(int argc, char** argv) {
     for (const Case& c : kDividerCases) run(c);
     for (const Case& c : kTypeOnBlankCases) run(c);
     for (const Case& c : kBackspaceUpCases) run(c);
+    checkWhitespaceLineTidy();
     checkDividerUndo();
     checkBackspaceProperties();
     checkUndo();

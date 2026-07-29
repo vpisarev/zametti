@@ -87,6 +87,80 @@ NoteEditor::NoteEditor(QWidget* parent)
     connect(&watcher_, &QFileSystemWatcher::fileChanged, this, &NoteEditor::onFileChanged);
     externalSettle_.setSingleShot(true);
     connect(&externalSettle_, &QTimer::timeout, this, &NoteEditor::onExternalSettled);
+    connect(this, &QTextEdit::cursorPositionChanged, this, &NoteEditor::onCaretMoved);
+}
+
+// Строка из одних пробелов неотличима глазом от пустой, а ведёт себя как
+// текст — на этом ловилась «склейка при двух пустых». Правило владельца:
+// хвостовые пробелы умирают, как только каретка уходит со строки; опустевшая
+// строка становится настоящей пустой. Пока каретка на строке — свобода:
+// человек имеет право начать с «   слово». Кода это не касается: там
+// хвостовые пробелы — содержимое.
+void NoteEditor::onCaretMoved() {
+    if (tidying_ || recordingSuspended_ || changingLayout()) {
+        lastLine_ = textCursor();
+        return;
+    }
+    const QTextCursor now = textCursor();
+    if (!lastLine_.isNull() && lastLine_.document() == document()) {
+        const QString text = lastLine_.block().text();
+        int line = 0;
+        for (int i = 0; i < lastLine_.positionInBlock() && i < text.size(); ++i)
+            if (text.at(i) == QChar::LineSeparator) ++line;
+        const QString nowText = now.block().text();
+        int nowLine = 0;
+        for (int i = 0; i < now.positionInBlock() && i < nowText.size(); ++i)
+            if (nowText.at(i) == QChar::LineSeparator) ++nowLine;
+        if (lastLine_.blockNumber() != now.blockNumber() ||
+            line != nowLine)
+            tidyLeftLine(lastLine_);
+    }
+    lastLine_ = textCursor();
+}
+
+void NoteEditor::tidyLeftLine(const QTextCursor& left) {
+    const QTextBlock block = left.block();
+    if (!block.isValid() || isRawBlock(block)) return;
+    const Kind kind = kindOf(block);
+    // Пустую строку чистим тоже: на ней могли пожить пробелы. Кода не трогаем
+    // (хвостовые пробелы там — содержимое), черте чистить нечего.
+    if (kind == Kind::Code || kind == Kind::Divider) return;
+
+    const QString text = block.text();
+    // Границы строки, на которой стояла каретка.
+    int from = 0;
+    for (int i = left.positionInBlock() - 1; i >= 0; --i)
+        if (text.at(i) == QChar::LineSeparator) { from = i + 1; break; }
+    int to = text.size();
+    for (int i = left.positionInBlock(); i < text.size(); ++i)
+        if (text.at(i) == QChar::LineSeparator) { to = i; break; }
+    int cut = to;
+    while (cut > from && (text.at(cut - 1) == QLatin1Char(' ') ||
+                          text.at(cut - 1) == QLatin1Char('\t')))
+        --cut;
+    if (cut == to) return;
+
+    tidying_ = true;
+    QTextCursor edit(document());
+    edit.beginEditBlock();
+    edit.setPosition(block.position() + cut);
+    edit.setPosition(block.position() + to, QTextCursor::KeepAnchor);
+    edit.removeSelectedText();
+    // Строка (и весь блок) опустела: это настоящая пустая строка. Уровень и
+    // прочее снимаем — пустая строка ничья.
+    const QTextBlock after = edit.block();
+    if (after.text().isEmpty() && kind == Kind::Paragraph) {
+        edit.setBlockFormat(vspaceBlockFormat(*document(),
+                                              after.previous().isValid() &&
+                                                  isVSpaceBlock(after.previous()),
+                                              after.blockNumber() == 0));
+        const BlockRange range{qMax(0, after.blockNumber() - 1), after.blockNumber() + 1};
+        syncGaps(*document(), range);
+        syncLists(*document(), range);
+        applyListGeometry(*document(), range);
+    }
+    edit.endEditBlock();
+    tidying_ = false;
 }
 
 bool NoteEditor::openFile(const QString& path) {
@@ -104,6 +178,7 @@ bool NoteEditor::openFile(const QString& path) {
     externalText_.clear();
     externalSettle_.stop();
     externalEmptyRetried_ = false;
+    lastLine_ = QTextCursor();
     knownContent_ = QByteArray(text.data(), qsizetype(text.size()));
     watchFile();
     // Серию набора обрываем: иначе первая правка в новой заметке подмешалась бы

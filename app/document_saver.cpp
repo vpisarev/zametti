@@ -480,6 +480,11 @@ Document documentForFile(Document doc) {
     std::vector<Block> out;
     out.reserve(doc.blocks.size());
     for (Block& block : doc.blocks) {
+        // Пробельная пустая строка (каретка ещё не ушла с неё) — пустая:
+        // markdown пробелы выбросил бы сам, а edges превратили бы их в nbsp.
+        if (block.rawSource.empty() && block.kind == Kind::VSpace &&
+            block.text.find_first_not_of(" \t") == std::string::npos)
+            block.text.clear();
         appendSplitOnBlankLines(
             out, withMarkupThatSurvives(withStrikeOnWholeWords(withTrimmedSpans(
                      withCodeSpansPerLine(withHeadingOnOneLine(

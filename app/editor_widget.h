@@ -160,6 +160,8 @@ private:
     void rebuild(const Document& doc, int cursor, const ViewAnchor& anchor);
     void recordEdit();
     void onContentsChanged();
+    void onCaretMoved();
+    void tidyLeftLine(const QTextCursor& left);
     void onFileChanged(const QString& path);
     void onExternalSettled();
     // Применяет внешнее содержимое как обычную правку: один шаг истории, и undo
@@ -200,6 +202,11 @@ private:
     QTimer externalSettle_;
     bool externalEmptyRetried_ = false;
     QByteArray knownContent_;
+    // Строка, на которой каретка стояла в прошлый раз: уходя со строки,
+    // редактор стирает её хвостовые пробелы, а опустевшую превращает в
+    // пустую строку. Держится курсором — переживает правки.
+    QTextCursor lastLine_;
+    bool tidying_ = false;
     // Метаданные открытой заметки. В QTextDocument их нет — редактор их не
     // видит, — поэтому от открытия до сохранения они живут здесь.
     NoteMeta meta_;
