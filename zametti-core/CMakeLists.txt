@@ -13,6 +13,8 @@ add_library(zametti-core STATIC
     serializer.cpp
     json_dump.h
     json_dump.cpp
+    note_id.h
+    note_id.cpp
 )
 
 target_include_directories(zametti-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
