@@ -19,6 +19,7 @@
 #include <QTextBlock>
 #include <QFileSystemWatcher>
 #include <QKeySequence>
+#include <QSet>
 #include <QString>
 #include <QTimer>
 
@@ -251,6 +252,9 @@ private:
     QTimer autosave_;
     QElapsedTimer sinceLastEdit_;
     QString lastComplaint_;
+    // Файлы, про которые в этой сессии больше не предупреждать: человек знает,
+    // что файл не в ладах с моделью, и правит его руками.
+    QSet<QString> mutedComplaints_;
 };
 
 }  // namespace zametti

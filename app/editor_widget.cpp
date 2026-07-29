@@ -22,6 +22,7 @@
 #include <QUrl>
 #include <QGuiApplication>
 #include <QMessageBox>
+#include <QCheckBox>
 #include <QAbstractTextDocumentLayout>
 #include <QFontMetricsF>
 #include <QScrollBar>
@@ -1294,8 +1295,18 @@ void NoteEditor::save(bool interactive) {
     // Одну и ту же беду показываем один раз: автосохранение повторяется по
     // таймеру, и окно с ошибкой раз в полторы секунды — это пытка.
     if (!interactive || outcome.message == lastComplaint_) return;
+    // Файл, про который человек попросил не напоминать, — молчим до конца
+    // сессии: беда известна, он правит её руками.
+    if (mutedComplaints_.contains(path_)) return;
     lastComplaint_ = outcome.message;
-    QMessageBox::warning(this, QStringLiteral("zametti"), outcome.message);
+
+    QMessageBox box(QMessageBox::Warning, QStringLiteral("zametti"), outcome.message,
+                    QMessageBox::Ok, this);
+    auto* mute = new QCheckBox(
+        QStringLiteral("больше не предупреждать про этот файл в этой сессии"), &box);
+    box.setCheckBox(mute);
+    box.exec();
+    if (mute->isChecked()) mutedComplaints_.insert(path_);
 }
 
 double NoteEditor::scrollRatio() const {
