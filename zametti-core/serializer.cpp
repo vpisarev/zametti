@@ -865,7 +865,7 @@ std::string serialize(const Document& doc) {
                     out.push_back('\n');
                     break;
                 }
-                out += "---\n";
+                out += "___\n";
                 break;
 
             case Kind::ListItem: {

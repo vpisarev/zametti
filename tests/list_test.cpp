@@ -14,6 +14,7 @@
 #include "doc_model.h"
 #include "document_reader.h"
 #include "editor_widget.h"
+#include "parser.h"
 #include "serializer.h"
 #include "settings.h"
 
@@ -449,48 +450,77 @@ const Case kBackspaceUpCases[] = {
      2, 0, {key("Backspace")},
      "а\n\n\nб\n", 1},
 
-    {"Backspace на черте уходит на пустую строку над ней",
-     "до\n\n---\n",
+    // Канон "___" ни с чем не слипается, поэтому пустая строка возле черты
+    // удаляется как любая другая — отказов больше нет.
+    {"Backspace на пустой над чертой удаляет её",
+     "до\n\n___\n",
+     1, 0, {key("Backspace")},
+     "до\n___\n", 0},
+
+    {"Backspace на черте удаляет пустую строку над ней",
+     "до\n\n___\n",
      2, 0, {key("Backspace")},
-     "до\n\n---\n", 1},
+     "до\n___\n", 1},
 
-    {"Backspace на пустой строке под чертой шагает на черту",
-     "---\n\n- пункт\n",
+    {"Backspace на пустой под чертой удаляет её, каретка на черту",
+     "___\n\n- пункт\n",
      1, 0, {key("Backspace")},
-     "---\n\n- пункт\n", 0},
+     "___\n- пункт\n", 0},
 
-    {"Delete на пустой строке под чертой убирает строку, не черту",
-     "---\n\n- пункт\n",
+    {"Backspace на пустой между чертами удаляет её",
+     "___\n\n___\n",
+     1, 0, {key("Backspace")},
+     "___\n___\n", 0},
+
+    {"Backspace на нижней черте через пустую подтягивает её",
+     "___\n\n___\n",
+     2, 0, {key("Backspace")},
+     "___\n___\n", 1},
+
+    // Черта прямо над кареткой удаляется — удаление назад, как со знаком.
+    {"Backspace под чертой удаляет её",
+     "___\nпосле\n",
+     1, 0, {key("Backspace")},
+     "после\n", 0},
+
+    {"Backspace на нижней из двух черт вплотную удаляет верхнюю",
+     "___\n___\n",
+     1, 0, {key("Backspace")},
+     "___\n", 0},
+
+    {"Backspace на черте под заголовком шагает в конец заголовка",
+     "# з\n___\n",
+     1, 0, {key("Backspace")},
+     "# з\n___\n", 0},
+
+    {"Delete на пустой под чертой убирает строку, не черту",
+     "___\n\n- пункт\n",
      1, 0, {key("Delete")},
-     "---\n- пункт\n", 1},
-
-    {"три дефиса и Enter делают черту",
-     "до\n",
-     0, 99, {key("Return"), type("---"), key("Return")},
-     "до\n\n---\n\n", 3},
-
-    {"Backspace из-под черты шагает на неё, не удаляя",
-     "---\nпосле\n",
-     1, 0, {key("Backspace")},
-     "---\nпосле\n", 0},
-
-    {"Backspace на черте под заголовком ничего не удаляет",
-     "# з\n---\n",
-     1, 0, {key("Backspace")},
-     "# з\n---\n", 0},
+     "___\n- пункт\n", 1},
 };
 
 const Case kDividerCases[] = {
     {"три дефиса и пробел делают черту в конце заметки",
      "до\n",
      0, 99, {key("Return"), type("---"), key("Space")},
-     // Хвостовой пустой абзац виден здесь, но в файл не печатается.
-     "до\n\n---\n\n", 3},
+     // Пустая строка между абзацем и чертой канону не нужна; хвостовой пустой
+     // абзац виден здесь, но в файл не печатается.
+     "до\n___\n\n", 2},
+
+    {"три дефиса и Enter делают черту",
+     "до\n",
+     0, 99, {key("Return"), type("---"), key("Return")},
+     "до\n___\n\n", 2},
+
+    {"подчёркивания тоже делают черту",
+     "до\n",
+     0, 99, {key("Return"), type("___"), key("Space")},
+     "до\n___\n\n", 2},
 
     {"черта между абзацами не плодит пустых строк",
      "до\n\nпосле\n",
      0, 99, {key("Return"), type("---"), key("Space")},
-     "до\n\n---\n\nпосле\n", 3},
+     "до\n___\n\nпосле\n", 2},
 
     // Enter в абзаце — перенос строки внутри блока, поэтому непринятые дефисы
     // остаются его второй строкой; экран печатает её с защитным слэшем.
@@ -507,24 +537,19 @@ const Case kDividerCases[] = {
      "- раз\n- два\n- \\--- \n", 2},
 
     {"набор на черте делает её абзацем",
-     "до\n\n---\n\nпосле\n",
+     "до\n\n___\n\nпосле\n",
      2, 0, {type("текст")},
      "до\n\nтекст\n\nпосле\n", 2},
 
     {"Enter на черте заводит текст под ней",
-     "до\n\n---\n\nпосле\n",
+     "до\n\n___\n\nпосле\n",
      2, 0, {key("Return"), type("абзац")},
-     "до\n\n---\nабзац\n\nпосле\n", 3},
-
-    {"Backspace над чертой не трогает ни строку, ни черту",
-     "до\n\n---\n",
-     1, 0, {key("Backspace")},
-     "до\n\n---\n", 0},
+     "до\n\n___\nабзац\n\nпосле\n", 3},
 
     {"Backspace над чертой при двух пустых строках убирает одну",
-     "до\n\n\n---\n",
+     "до\n\n\n___\n",
      2, 0, {key("Backspace")},
-     "до\n\n---\n", 1},
+     "до\n\n___\n", 1},
 };
 
 const Case kBlankLineAfterItemCases[] = {
@@ -780,6 +805,122 @@ void checkKindRoundTripKeepsPlace() {
 
 }  // namespace
 
+// Свойства Backspace на ЛЮБОЙ лесенке из текста, пустых строк и черт — их
+// может быть и сто подряд, и правила обязаны держаться на каждой:
+//   1) черты и текст не пропадают;
+//   2) пустых строк уходит не больше одной за нажатие;
+//   3) каретка не уезжает вниз;
+//   4) документ остаётся записываемым (круг разбором сходится).
+// Перебор всех лесенок длины до 4, каретка в каждом блоке, плюс длинный забор.
+void checkBackspaceProperties() {
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+
+    const auto snapshot = [](const QTextDocument& doc) {
+        int dividers = 0, blanks = 0;
+        QString text;
+        for (QTextBlock b = doc.begin(); b.isValid(); b = b.next()) {
+            if (zametti::isRawBlock(b)) continue;
+            const zametti::Kind k = zametti::kindOf(b);
+            if (k == zametti::Kind::Divider) ++dividers;
+            else if (k == zametti::Kind::VSpace) ++blanks;
+            else text += b.text().remove(QChar::LineSeparator).remove(QLatin1Char('\n'));
+        }
+        return std::tuple<int, int, QString>(dividers, blanks, text);
+    };
+
+    int powers[5] = {1, 3, 9, 27, 81};
+    for (int len = 1; len <= 4; ++len) {
+        for (int mask = 0; mask < powers[len]; ++mask) {
+            QString src;
+            for (int i = 0, m = mask; i < len; ++i, m /= 3) {
+                const int a = m % 3;
+                if (a == 0) src += QStringLiteral("т%1\n").arg(i);
+                else if (a == 1) src += QStringLiteral("\n");
+                else src += QStringLiteral("___\n");
+            }
+            const QString path = writeNote("свойства.md", src);
+
+            for (int block = 0;; ++block) {
+                editor.openFile(path);
+                const QTextBlock target = editor.document()->findBlockByNumber(block);
+                if (!target.isValid()) break;
+                QTextCursor cursor(editor.document());
+                cursor.setPosition(target.position());
+                editor.setTextCursor(cursor);
+
+                const auto [div0, blank0, text0] = snapshot(*editor.document());
+                const QTextBlock above = target.previous();
+                const bool dividerAbove = above.isValid() && !zametti::isRawBlock(above) &&
+                                          zametti::kindOf(above) == zametti::Kind::Divider;
+                QTest::keyClick(&editor, Qt::Key_Backspace);
+                const auto [div1, blank1, text1] = snapshot(*editor.document());
+                const int landed = editor.textCursor().blockNumber();
+
+                const std::string tag = QStringLiteral("[%1] блок %2: ")
+                                            .arg(src)
+                                            .arg(block)
+                                            .replace(QStringLiteral("\n"), QStringLiteral("|"))
+                                            .toStdString();
+                ZT_TRUE(tag + "текст цел", text1 == text0);
+                ZT_TRUE(tag + "за нажатие уходит не больше одной строки",
+                        div1 <= div0 && blank1 <= blank0 &&
+                            (div0 - div1) + (blank0 - blank1) <= 1);
+                ZT_TRUE(tag + "черта удаляется, только когда стояла над кареткой",
+                        div1 == div0 || dividerAbove);
+                ZT_TRUE(tag + "каретка не уехала вниз", landed <= block);
+
+                const std::string once =
+                    zametti::serialize(zametti::readDocument(*editor.document()));
+                const std::string twice = zametti::serialize(zametti::parse(once));
+                ZT_TRUE(tag + "документ записываем", once == twice);
+                // Правки не сохраняем: файл на каждый случай пишется заново, а
+                // сохранение при смене файла может увести в модальный диалог —
+                // на нём перебор и висел бы.
+                editor.document()->setModified(false);
+            }
+        }
+    }
+
+    // Длинный забор: сорок черт вперемешку с пустыми, их может быть хоть
+    // сотня. Backspace с самого низа до самого верха: текст обязан пережить
+    // все нажатия, каретка не смеет уехать вниз, а документ — перестать
+    // записываться. Сами черты при этом законно стираются: каждая была прямо
+    // над кареткой.
+    QString fence = QStringLiteral("верх\n");
+    for (int i = 0; i < 40; ++i)
+        fence += (i % 3 == 0) ? QStringLiteral("\n___\n") : QStringLiteral("___\n");
+    fence += QStringLiteral("\nниз\n");
+    const QString path = writeNote("забор.md", fence);
+    editor.openFile(path);
+    QTextCursor cursor(editor.document());
+    cursor.setPosition(editor.document()->lastBlock().position());   // начало "низ"
+    editor.setTextCursor(cursor);
+    const auto [div0, blank0, text0] = snapshot(*editor.document());
+    int previous = editor.textCursor().blockNumber();
+    bool monotone = true;
+    // Жмём, пока каретка не доберётся до верха: дальше Backspace начал бы
+    // честно есть буквы — это уже не про структуру.
+    for (int press = 0; press < 200 && editor.textCursor().blockNumber() > 0; ++press) {
+        QTest::keyClick(&editor, Qt::Key_Backspace);
+        const int now = editor.textCursor().blockNumber();
+        if (now > previous) monotone = false;
+        previous = now;
+    }
+    QTest::qWait(10);
+    const auto [div1, blank1, text1] = snapshot(*editor.document());
+    ZT_TRUE("забор: каретка ни разу не уехала вниз", monotone);
+    ZT_TRUE("забор: текст цел", text1 == text0);
+    ZT_TRUE("забор: строк не прибавилось", div1 + blank1 <= div0 + blank0);
+    ZT_TRUE("забор: каретка добралась до верха", editor.textCursor().blockNumber() <= 1);
+    const std::string once = zametti::serialize(zametti::readDocument(*editor.document()));
+    ZT_TRUE("забор: документ записываем", once == zametti::serialize(zametti::parse(once)));
+    editor.document()->setModified(false);
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     g_dir = fs::temp_directory_path() / "zametti-list-test";
@@ -799,6 +940,7 @@ int main(int argc, char** argv) {
     for (const Case& c : kBlankLineAfterItemCases) run(c);
     for (const Case& c : kDividerCases) run(c);
     for (const Case& c : kBackspaceUpCases) run(c);
+    checkBackspaceProperties();
     checkUndo();
     checkListRhythm();
     checkKindRoundTripKeepsPlace();

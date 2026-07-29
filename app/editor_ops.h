@@ -163,6 +163,11 @@ bool applyCodeSpanRuleAtCursor(QTextDocument& doc, QTextCursor& cursor);
 // markdown внутри пункта черту так не прочтёт.
 bool applyDividerRuleAtCursor(QTextDocument& doc, QTextCursor& cursor);
 
+// Черта прямо над кареткой (каретка в начале блока): Backspace удаляет её —
+// это удаление назад. Черту ПОД кареткой Backspace не трогает: её удаляет
+// Delete или выделение.
+bool deleteDividerAbove(QTextDocument& doc, QTextCursor& cursor);
+
 // Начертание на выделение: жирный, курсив, зачёркнутый. Переключает — если весь
 // выделенный текст уже такой, начертание снимается, иначе ставится.
 //

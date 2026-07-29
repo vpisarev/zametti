@@ -1345,6 +1345,30 @@ void joinWithNext(QTextDocument& doc, QTextCursor& edit, int number) {
 // подряд без пустой между ними.
 // backspace — зовут удалением назад: у прогона пустых строк это значит «строка
 // выше исчезает, каретка уходит вверх», а не «нижняя подтягивается на место».
+// Убрать блок-строку целиком, не тронув соседей. Qt при слиянии оставляет
+// формат не того блока, который выжил, поэтому формат выжившего ставится явно.
+void removeLineBlock(QTextCursor& edit, const QTextBlock& block) {
+    const QTextBlock after = block.next();
+    const QTextBlock keeper = after.isValid() ? after : block.previous();
+    const QTextBlockFormat keep = keeper.blockFormat();
+    // Позиции берём ДО правки: после неё хэндл блока протухает, и его
+    // position() может отдать что угодно — формат уезжал в нулевой блок.
+    const int at = block.position();
+    const int keeperAt = keeper.position();
+    if (after.isValid()) {
+        edit.setPosition(at);
+        edit.setPosition(at + 1, QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+        edit.setPosition(at);
+    } else {
+        edit.setPosition(at - 1);
+        edit.setPosition(at, QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+        edit.setPosition(keeperAt);
+    }
+    edit.setBlockFormat(keep);
+}
+
 bool removeVSpaceAndMaybeJoin(QTextDocument& doc, QTextCursor& cursor, int gapNumber,
                               bool backspace = false) {
     const QTextBlock gap = doc.findBlockByNumber(gapNumber);
@@ -1352,18 +1376,13 @@ bool removeVSpaceAndMaybeJoin(QTextDocument& doc, QTextCursor& cursor, int gapNu
     const QTextBlock before = gap.previous();
     const QTextBlock after = gap.next();
     if (!before.isValid() && !after.isValid()) return false;
-    const bool fromGapItself = cursor.blockNumber() == gapNumber;
-    const bool beforeIsBlank = before.isValid() && isVSpaceBlock(before);
+    const bool fromGap = cursor.blockNumber() == gapNumber;
 
-    // Под пустой строкой пустой же абзац — то есть человек видит две пустых
-    // строки подряд. Тогда убираем не саму строку, а этот абзац: одна пустая
-    // строка остаётся, как и ждут от Backspace.
-    //
-    // Сливать здесь нельзя: между пунктом и абзацем пустая строка обязательна,
-    // и слияние утаскивало пустой абзац внутрь пункта — обе строки исчезали
-    // разом, а каретка уезжала вправо, в конец пункта.
-    // Черта тоже блок с пустым текстом, но пустым абзацем она не является —
-    // не путать: её случай ниже.
+    // Под пустой строкой пустой же абзац — человек видит две пустых строки
+    // подряд. Убираем не строку, а этот абзац: одна пустая остаётся, как и
+    // ждут от Backspace. Сливать нельзя: между пунктом и абзацем пустая строка
+    // обязательна, и слияние съедало обе строки разом. Черта тоже пуста, но
+    // пустым абзацем не является.
     if (after.isValid() && !isRawBlock(after) && after.text().isEmpty() &&
         !isVSpaceBlock(after) && !isListBlock(after) && kindOf(after) != Kind::Divider &&
         before.isValid()) {
@@ -1372,9 +1391,6 @@ bool removeVSpaceAndMaybeJoin(QTextDocument& doc, QTextCursor& cursor, int gapNu
         edit.setPosition(after.position() - 1);
         edit.setPosition(after.position(), QTextCursor::KeepAnchor);
         edit.removeSelectedText();
-        // Qt при слиянии оставляет формат ВТОРОГО блока: пустая строка стала бы
-        // пустым абзацем, а инвариант тут же вернул бы пустую строку назад — и
-        // Backspace выглядел бы как ничего не делающий.
         edit.setPosition(doc.findBlockByNumber(gapNumber).position());
         edit.setBlockFormat(vspaceBlockFormat(doc, isVSpaceBlock(before), gapNumber == 0));
         normalise(doc, around(gapNumber));
@@ -1384,83 +1400,56 @@ bool removeVSpaceAndMaybeJoin(QTextDocument& doc, QTextCursor& cursor, int gapNu
         return true;
     }
 
-    // Пустая строка сразу под чертой. Удалять назад — значит удалять черту,
-    // а её Backspace не удаляет: просто шаг на неё. Сливать строку с чертой
-    // нельзя в обе стороны: Qt оставляет формат ВТОРОГО блока, и черта молча
-    // превращалась бы в пустую строку — ровно так она и пропадала.
-    const bool beforeIsDivider =
-        before.isValid() && !isRawBlock(before) && kindOf(before) == Kind::Divider;
-    if (backspace && fromGapItself && beforeIsDivider) {
-        cursor.setPosition(before.position());
-        return true;
-    }
-
+    // Жертва всегда одна — сама пустая строка, и слипшиеся после её ухода
+    // ТЕКСТЫ сливаются в один блок: это и есть смысл Backspace на стыке.
+    // Разделителю особый случай не нужен: канон "___" ни с чем не слипается.
     const bool join = blocksWouldMerge(before, after);
 
-    // Черте сливаться не с чем: текста в ней нет, и «слияние» удаляло бы её
-    // целиком одним Backspace. Убрать пустую строку тоже нельзя — абзац
-    // вплотную над чертой становится setext-заголовком, и инвариант вернул бы
-    // строку сразу. Остаётся честный ход: каретка уходит к предыдущему блоку,
-    // документ не меняется.
-    if (join && after.isValid() && !isRawBlock(after) && kindOf(after) == Kind::Divider) {
-        if (!before.isValid()) return false;
-        // Куда шагнуть, зависит от того, где стояли: с самой пустой строки —
-        // на конец блока выше неё, с черты — на пустую строку.
-        if (fromGapItself) cursor.setPosition(before.position() + before.length() - 1);
-        else cursor.setPosition(gap.position());
-        return true;
-    }
-
-    // Куда встать после правки — началом того, что стояло под пустой строкой.
-    // Курсором, а не числом: при слиянии оно само приедет на стык половинок, и
-    // считать смещения не приходится.
+    // Куда встать. Backspace с самой пустой строки — удаление назад: каретка
+    // уходит в конец строки выше, какой бы та ни была (текст, пустая, черта).
+    // Всё прочее — Delete и Backspace из-под стыка — оставляет каретку на
+    // строке под стыком. При слиянии текстов оба адреса — одна и та же точка.
     QTextCursor landing(&doc);
-    if (after.isValid()) landing.setPosition(after.position());
-    else landing.setPosition(before.position() + before.length() - 1);
+    if (backspace && fromGap && before.isValid())
+        landing.setPosition(before.position() + before.length() - 1);
+    else if (after.isValid())
+        landing.setPosition(after.position());
+    else
+        landing.setPosition(before.position() + before.length() - 1);
 
     QTextCursor edit(&doc);
     edit.beginEditBlock();
-    if (before.isValid() && !beforeIsDivider) {
-        // Снимаем границу перед пустой строкой: содержимого в ней нет, и
-        // предыдущий блок остаётся при своём формате.
-        edit.setPosition(gap.position() - 1);
-        edit.setPosition(gap.position(), QTextCursor::KeepAnchor);
-        edit.removeSelectedText();
-    } else if (after.isValid()) {
-        // Пустая строка первая в документе или сразу под чертой: убираем
-        // границу за ней, а формат берём у соседа — иначе его текст остался бы
-        // пустой строкой. Формат ставим по месту строки, не в нулевую позицию:
-        // под чертой нулевая позиция — сама черта, и она становилась соседом.
-        const QTextBlockFormat keep = after.blockFormat();
-        const int at = gap.position();
-        edit.setPosition(at);
-        edit.setPosition(at + 1, QTextCursor::KeepAnchor);
-        edit.removeSelectedText();
-        edit.setPosition(at);
-        edit.setBlockFormat(keep);
-    }
-
+    removeLineBlock(edit, gap);
     if (join) joinWithNext(doc, edit, gapNumber - 1);
     normalise(doc, around(qMax(0, gapNumber - 1)));
     edit.endEditBlock();
-    // Обычная посадка — на начало того, что стояло под пустой строкой. Два
-    // исключения, оба ведут вверх: черта — не текст, вставать на неё после
-    // удаления строки неоткуда; и Backspace посреди прогона пустых строк —
-    // удаление назад, каретка обязана уйти на строку выше, а не остаться на
-    // месте, как от Delete.
-    const bool landUp =
-        (after.isValid() && !isRawBlock(after) && kindOf(after) == Kind::Divider) ||
-        (backspace && fromGapItself && beforeIsBlank);
-    if (landUp && gapNumber > 0) {
-        const QTextBlock landed = doc.findBlockByNumber(gapNumber - 1);
-        cursor.setPosition(landed.position() + landed.length() - 1);
-    } else {
-        cursor.setPosition(landing.position());
-    }
+    cursor.setPosition(landing.position());
     return true;
 }
 
 }  // namespace
+
+bool deleteDividerAbove(QTextDocument& doc, QTextCursor& cursor) {
+    if (cursor.hasSelection() || !cursor.atBlockStart()) return false;
+    const QTextBlock prev = cursor.block().previous();
+    if (!prev.isValid() || isRawBlock(prev) || kindOf(prev) != Kind::Divider) return false;
+
+    const int number = prev.blockNumber();
+    QTextCursor landing(&doc);
+    landing.setPosition(cursor.block().position());
+    // Соседи, оставшиеся без черты между ними, могут слипнуться. Слипшиеся
+    // тексты сливаются в один блок — как при удалении пустой строки: убрать
+    // строку Backspace-ом и получить взамен новую пустую было бы нелепо.
+    const bool join = blocksWouldMerge(prev.previous(), cursor.block());
+    QTextCursor edit(&doc);
+    edit.beginEditBlock();
+    removeLineBlock(edit, prev);
+    if (join) joinWithNext(doc, edit, number - 1);
+    normalise(doc, around(qMax(0, number - 1)));
+    edit.endEditBlock();
+    cursor.setPosition(landing.position());
+    return true;
+}
 
 bool applyDividerRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const QTextBlock block = cursor.block();
@@ -1471,14 +1460,17 @@ bool applyDividerRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     // Enter в абзаце — перенос строки внутри блока, а не новый блок, поэтому
     // правило смотрит на последнюю СТРОКУ, а не на весь текст. Зовётся после
     // набранного пробела (строка "--- ") или на Enter (строка "---"): один
-    // концевой пробел прощаем, дальше — только дефисы.
+    // концевой пробел прощаем, дальше — только дефисы или только
+    // подчёркивания, как в каноне.
     const QString text = block.text();
     const int lineStart = int(text.lastIndexOf(QChar::LineSeparator)) + 1;
     QString line = text.mid(lineStart);
     if (line.endsWith(QLatin1Char(' '))) line.chop(1);
     if (line.size() < 3) return false;
+    const QChar mark = line.at(0);
+    if (mark != QLatin1Char('-') && mark != QLatin1Char('_')) return false;
     for (const QChar& c : line)
-        if (c != QLatin1Char('-')) return false;
+        if (c != mark) return false;
 
     const int number = block.blockNumber();
     QTextCursor edit(&doc);

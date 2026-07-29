@@ -399,9 +399,13 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     if (event->key() == Qt::Key_Backspace && event->modifiers() == Qt::NoModifier) {
         if (runOperation(unwrapListItemAtCursor) || runOperation(joinAcrossVSpaceBackward))
             return;
-        // Каретка на самой черте, а выше не пустая строка: удалять назад
-        // нечего — сливать черту с текстом нельзя, а сама она стоит ПОД
-        // кареткой, её удаляет Delete, а не Backspace. Просто шаг вверх.
+        // Черта прямо над кареткой удаляется — это удаление назад, как и с
+        // пустой строкой. (Каретку на пустой строке под чертой перехватывает
+        // joinAcrossVSpaceBackward выше: там жертва — пустая строка.)
+        if (runOperation(deleteDividerAbove)) return;
+        // Каретка на самой черте, выше текст: удалять назад нечего — сливать
+        // черту с текстом нельзя, а черту ПОД кареткой удаляет Delete, а не
+        // Backspace. Просто шаг в конец текста выше.
         const QTextBlock atBlock = textCursor().block();
         if (!textCursor().hasSelection() && !isRawBlock(atBlock) &&
             kindOf(atBlock) == Kind::Divider) {
@@ -411,18 +415,6 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
                 up.setPosition(prev.position() + prev.length() - 1);
                 setTextCursor(up);
             }
-            return;
-        }
-        // И в начале блока сразу ПОД чертой: штатное слияние съело бы её —
-        // черта пропадала над кареткой, будто нажали Delete. Тоже шаг вверх,
-        // на саму черту; удаляет её Delete или выделение.
-        const QTextBlock prevBlock = atBlock.previous();
-        if (!textCursor().hasSelection() && textCursor().atBlockStart() &&
-            prevBlock.isValid() && !isRawBlock(prevBlock) &&
-            kindOf(prevBlock) == Kind::Divider) {
-            QTextCursor up = textCursor();
-            up.setPosition(prevBlock.position());
-            setTextCursor(up);
             return;
         }
     }
