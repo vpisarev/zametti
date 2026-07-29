@@ -46,6 +46,14 @@ public:
     // открытой заметки. Ставится при открытии файла.
     void setImageBase(const QString& dir);
 
+    // Прямоугольник фотографии блока в координатах вьюпорта; пустой, если
+    // фотографии нет. По нему ресайз ловит угол, по нему же смотрят тесты.
+    QRectF imageRectInViewport(const QTextBlock& block);
+
+    // Перетаскивание угла: пока мышь не отпущена, фотография меряется этой
+    // шириной (логические пиксели) вместо записанной. width <= 0 — снять.
+    void setImageDragWidth(int blockNumber, qreal width);
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
@@ -80,15 +88,23 @@ private:
 
     // Картинки. Текстовая модель их не знает: строка с картинкой остаётся
     // строкой (подпись image-спана или дословное вики-вложение "![[путь|ш]]"),
-    // а сама фотография рисуется в нижнем поле блока — место под неё
-    // резервирует syncImageSpace, ставя bottomMargin (у всех прочих блоков он
-    // ноль по построению сборщика). Каретке в фотографии делать нечего — как и
-    // у черты, это хитро-отрисованная строка.
+    // но рисуется на её месте сама фотография — текст строки закрашивается,
+    // это хитро-отрисованная строка, как черта. Текст показывается, только
+    // когда строку задевает выделение. Место под фотографию резервирует
+    // syncImageSpace, ставя bottomMargin (у всех прочих блоков он ноль по
+    // построению сборщика).
+    struct ImageGeometry {
+        bool valid = false;
+        bool revealed = false;   // выделение задело строку: текст виден, фото под ним
+        QRectF photo;            // координаты документа
+        QRectF line;             // прямоугольник текста строки (для закраски)
+    };
+    ImageGeometry imageGeometry(const QTextBlock& block);
     void syncImageSpace();
     const QImage* imageFor(const QString& path);
     QSizeF imageDisplaySize(const QImage& image, qreal widthHint,
                             const QTextBlock& block) const;
-    void paintImage(QPainter& painter, const QTextBlock& block, const QRectF& rect);
+    void paintImage(QPainter& painter, const QTextBlock& block);
 
     qreal zoom_ = 1.0;
     bool changingLayout_ = false;
@@ -97,6 +113,8 @@ private:
     QString imageBase_;
     bool syncingImages_ = false;
     QHash<QString, QImage> imageCache_;   // абсолютный путь → картинка (null — не читается)
+    int imageDragBlock_ = -1;             // номер блока с перетаскиваемым углом
+    qreal imageDragWidth_ = 0.0;
 };
 
 }  // namespace zametti

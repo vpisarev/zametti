@@ -903,6 +903,37 @@ bool makeParagraph(QTextDocument& doc, QTextCursor& cursor) {
     return setBlockKind(doc, cursor, {Kind::Paragraph, Marker::Bullet, false});
 }
 
+bool setImageWidthAtCursor(QTextDocument& doc, QTextCursor& cursor, int width) {
+    Q_UNUSED(doc);
+    const QTextBlock block = cursor.block();
+    const BlockImageRef ref = blockImageRef(block);
+    if (!ref.valid || width <= 0) return false;
+
+    if (ref.wiki) {
+        // Ширина — часть дословного текста строки: "![[путь|ширина]]".
+        const QString text =
+            QStringLiteral("![[%1|%2]]").arg(ref.path).arg(width);
+        if (block.text() == text) return false;
+        QTextCursor edit(block);
+        edit.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+        edit.insertText(text);
+    } else {
+        // Ширина — фрагмент пути image-спана: "путь#w=ширина".
+        if (qRound(ref.widthHint) == width) return false;
+        const QString href =
+            ref.path + QStringLiteral("#w=") + QString::number(width);
+        QTextCursor edit(block);
+        edit.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+        QTextCharFormat format;
+        format.setAnchorHref(href);
+        edit.mergeCharFormat(format);
+    }
+    // Каретка — к началу строки: строка хитро-отрисованная, внутри неё каретке
+    // делать нечего.
+    cursor.setPosition(block.position());
+    return true;
+}
+
 bool toggleTaskAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const BlockRange range = selectedBlocks(doc, cursor);
 

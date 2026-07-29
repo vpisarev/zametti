@@ -478,7 +478,88 @@ QTextBlock NoteEditor::checkboxUnder(const QMouseEvent& event) const {
     return blockAtCheckbox(*document(), point, baseFont());
 }
 
+// Зона угла: квадрат на нижнем правом углу фотографии, с запасом наружу —
+// в пиксель попадать не приходится.
+QTextBlock NoteEditor::imageCornerUnder(const QPoint& pos) {
+    const int hit = document()->documentLayout()->hitTest(
+        QPointF(pos) + QPointF(horizontalScrollBar()->value(),
+                               verticalScrollBar()->value()),
+        Qt::FuzzyHit);
+    if (hit < 0) return {};
+    // Кандидаты — блок под точкой и его сосед сверху: фотография живёт в
+    // нижнем поле своего блока, и точка над углом может числиться за соседом.
+    QTextBlock candidate = document()->findBlock(hit);
+    for (int step = 0; step < 2 && candidate.isValid(); ++step) {
+        const QRectF photo = imageRectInViewport(candidate);
+        if (!photo.isEmpty()) {
+            const qreal grip = qMax(12.0, 10.0 * zoom());
+            const QRectF corner(photo.right() - grip, photo.bottom() - grip,
+                                grip + 4.0, grip + 4.0);
+            if (corner.contains(QPointF(pos))) return candidate;
+        }
+        candidate = step == 0 ? candidate.previous() : QTextBlock();
+    }
+    return {};
+}
+
+void NoteEditor::mouseMoveEvent(QMouseEvent* event) {
+    if (imageResizeBlock_ >= 0) {
+        // Живой примерочный размер; запись — на отпускании.
+        imageResizeWidth_ =
+            qMax(24.0, (event->position().x() - imageResizeLeft_) / zoom());
+        setImageDragWidth(imageResizeBlock_, imageResizeWidth_);
+        event->accept();
+        return;
+    }
+    const bool hover = imageCornerUnder(event->position().toPoint()).isValid();
+    if (hover != imageHoverCorner_) {
+        imageHoverCorner_ = hover;
+        viewport()->setCursor(hover ? Qt::SizeFDiagCursor : Qt::IBeamCursor);
+    }
+    if (hover) {
+        event->accept();
+        return;
+    }
+    NoteView::mouseMoveEvent(event);
+}
+
+void NoteEditor::mouseReleaseEvent(QMouseEvent* event) {
+    if (imageResizeBlock_ < 0) {
+        NoteView::mouseReleaseEvent(event);
+        return;
+    }
+    const QTextBlock block = document()->findBlockByNumber(imageResizeBlock_);
+    // Записывается то, что показано: ширина после предела колонки, а не голая
+    // позиция мыши за её краем.
+    const qreal shown = block.isValid() ? imageRectInViewport(block).width() / zoom() : 0.0;
+    imageResizeBlock_ = -1;
+    setImageDragWidth(-1, 0.0);
+
+    if (block.isValid() && shown > 0.0 && std::fabs(shown - imageResizeStart_) >= 1.0) {
+        QTextCursor cursor(block);
+        setTextCursor(cursor);
+        const int width = qRound(shown);
+        runOperation([width](QTextDocument& doc, QTextCursor& at) {
+            return setImageWidthAtCursor(doc, at, width);
+        });
+    }
+    event->accept();
+}
+
 void NoteEditor::mousePressEvent(QMouseEvent* event) {
+    const QTextBlock corner = event->button() == Qt::LeftButton
+                                  ? imageCornerUnder(event->position().toPoint())
+                                  : QTextBlock();
+    if (corner.isValid()) {
+        const QRectF photo = imageRectInViewport(corner);
+        imageResizeBlock_ = corner.blockNumber();
+        imageResizeLeft_ = photo.left();
+        imageResizeStart_ = photo.width() / zoom();
+        imageResizeWidth_ = imageResizeStart_;
+        event->accept();
+        return;   // каретка остаётся где была: человек взялся за угол, не за текст
+    }
+
     const QTextBlock hit = checkboxUnder(*event);
     if (!hit.isValid()) {
         NoteView::mousePressEvent(event);
@@ -708,6 +789,10 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
 }
 
 bool NoteEditor::runOperation(bool (*op)(QTextDocument&, QTextCursor&)) {
+    return runOperation(std::function<bool(QTextDocument&, QTextCursor&)>(op));
+}
+
+bool NoteEditor::runOperation(const std::function<bool(QTextDocument&, QTextCursor&)>& op) {
     QTextCursor cursor = textCursor();
     const int scrollBefore = verticalScrollBar()->value();
     // Шаг истории у операции свой; правки, которые она делает по дороге, в

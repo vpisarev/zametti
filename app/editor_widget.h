@@ -22,6 +22,7 @@
 #include <QString>
 #include <QTimer>
 
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -104,6 +105,10 @@ protected:
     // Двойной щелчок по рамке не должен выделять строку: человек метил в
     // чекбокс, а не в слово под ним.
     void mouseDoubleClickEvent(QMouseEvent* event) override;
+    // Угол фотографии тянется мышью: наведение меняет курсор, перетаскивание
+    // меряет ширину вживую, отпускание записывает её операцией (с историей).
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
 
 private:
     // У правого края ссылки набор её продолжал: Qt берёт оформление знака перед
@@ -113,6 +118,9 @@ private:
 
     // Блок, чью рамку задачи накрыл щелчок. Недействительный — мимо.
     QTextBlock checkboxUnder(const QMouseEvent& event) const;
+
+    // Блок, за угол чьей фотографии можно взяться в этой точке вьюпорта.
+    QTextBlock imageCornerUnder(const QPoint& pos);
 
     // Движение вверх-вниз держит экранный X, а поля у блоков разные: маркер
     // списка отодвигает текст пункта вправо. Из-за этого шаг вниз из начала
@@ -127,6 +135,8 @@ private:
     // Выполняет операцию, доводит документ до вида, который построил бы
     // сборщик, и заводит отдельный шаг истории. Возвращает то же, что операция.
     bool runOperation(bool (*op)(QTextDocument&, QTextCursor&));
+    // То же с замыканием: ресайзу фотографии нужна ширина.
+    bool runOperation(const std::function<bool(QTextDocument&, QTextCursor&)>& op);
 
     // Перестановка пунктов идёт не над курсором, а над IR: операция возвращает
     // готовый документ, и собрать его — уже наше дело.
@@ -172,6 +182,13 @@ private:
 
     EditHistory history_;
     QString path_;
+
+    // Перетаскивание угла фотографии.
+    int imageResizeBlock_ = -1;        // номер блока; -1 — не тянем
+    qreal imageResizeLeft_ = 0.0;      // левый край фото в координатах вьюпорта
+    qreal imageResizeStart_ = 0.0;     // ширина на старте, логические пиксели
+    qreal imageResizeWidth_ = 0.0;     // текущая ширина перетаскивания
+    bool imageHoverCorner_ = false;
 
     // Пересборка документа и операции меняют его содержимое и потому неотличимы
     // от набора — если не поднять флаг. Без него undo записывал бы сам себя, а

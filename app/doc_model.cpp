@@ -2,6 +2,7 @@
 
 #include <QTextBlock>
 #include <QTextDocument>
+#include <QTextFragment>
 
 namespace zametti {
 
@@ -144,6 +145,66 @@ int ListRuns::next(int level, bool ordered) {
     // Всё, что глубже, закончилось вместе с предыдущим пунктом этого уровня.
     for (size_t k = index + 1; k < levels_.size(); ++k) levels_[k].alive = false;
     return own.ordinal;
+}
+
+BlockImageRef blockImageRef(const QTextBlock& block) {
+    if (!block.isValid() || isRawBlock(block)) return {};
+    if (kindOf(block) != Kind::Paragraph) return {};
+
+    // Image-спан целым абзацем: каждый кусок помечен SpanImage с одним путём.
+    // Картинка в середине текста фотографией не показывается — только стилем.
+    QString href;
+    bool whole = true;
+    for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+        const QTextFragment fragment = it.fragment();
+        if (!fragment.isValid() || fragment.text().isEmpty()) continue;
+        const QTextCharFormat format = fragment.charFormat();
+        const bool image = (format.intProperty(SpanStyleProperty) & SpanImage) != 0 &&
+                           !format.anchorHref().isEmpty();
+        if (!image || (!href.isEmpty() && href != format.anchorHref())) {
+            whole = false;
+            break;
+        }
+        href = format.anchorHref();
+    }
+    if (whole && !href.isEmpty()) {
+        // Ширина — из "#w=N" в пути. Фрагмент остаётся байтами пути (ядро его
+        // не трактует), но вид и ресайз читают и пишут ровно его.
+        qreal width = 0.0;
+        QString path = href;
+        const qsizetype hash = href.lastIndexOf(QLatin1Char('#'));
+        if (hash >= 0 && href.mid(hash, 3) == QStringLiteral("#w=")) {
+            bool ok = false;
+            const double w = href.mid(hash + 3).toDouble(&ok);
+            if (ok && w > 0.0) {
+                width = w;
+                path = href.left(hash);
+            }
+        }
+        return {path, width, false, true};
+    }
+
+    // Вики-вложение Obsidian: строка целиком "![[путь]]" или "![[путь|ширина]]".
+    // Модель хранит его дословным текстом абзаца (wikilinks не переписываются),
+    // но фотографию по нему показать можно и нужно.
+    const QString text = block.text().trimmed();
+    if (!text.startsWith(QStringLiteral("![[")) || !text.endsWith(QStringLiteral("]]")))
+        return {};
+    QString inner = text.mid(3, text.size() - 5);
+    if (inner.isEmpty() || inner.contains(QStringLiteral("]]"))) return {};
+    qreal width = 0.0;
+    const qsizetype bar = inner.lastIndexOf(QLatin1Char('|'));
+    if (bar >= 0) {
+        // После черты либо ширина, либо подпись (Obsidian допускает обе);
+        // подпись фотографии не мешает — просто остаётся своя ширина.
+        bool ok = false;
+        const double w = inner.mid(bar + 1).trimmed().toDouble(&ok);
+        if (ok && w > 0.0) width = w;
+        inner = inner.left(bar);
+    }
+    inner = inner.trimmed();
+    if (inner.isEmpty()) return {};
+    return {inner, width, true, true};
 }
 
 }  // namespace zametti

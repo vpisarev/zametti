@@ -1,24 +1,33 @@
 // Показ картинок в просмотре.
 //
-// Модель текста картинок не знает: строка остаётся строкой, а фотография
-// рисуется в нижнем поле блока — место резервирует syncImageSpace. Здесь
-// проверяются обе формы (image-спан целым абзацем и вики-вложение
-// "![[путь|ширина]]"), отсутствие файла, снятие резерва правкой и то, что
-// фотография действительно попадает в кадр (по пикселям отрисовки).
+// Модель текста картинок не знает: строка остаётся строкой (подпись
+// image-спана или дословное вики-вложение "![[путь|ширина]]"), но рисуется
+// на её месте сама фотография — строка хитро-отрисованная, как черта. Текст
+// показывается, только когда строку задевает выделение. Место резервирует
+// syncImageSpace нижним полем блока: скрытая строка — фото минус высота
+// строки, показанная — фото целиком под текстом.
+//
+// Ресайз: угол фотографии тянется мышью, отпускание записывает ширину
+// операцией — вики-вложению в "|ширину", image-спану в "#w=" пути.
 
 #include "doc_model.h"
+#include "document_reader.h"
+#include "editor_ops.h"
 #include "editor_widget.h"
+#include "serializer.h"
 #include "settings.h"
 
 #include "test_util.h"
 
 #include <QApplication>
 #include <QImage>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QTest>
 #include <QTextBlock>
 #include <QTextCursor>
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 
@@ -35,6 +44,9 @@ int countReddish(const QImage& shot) {
         }
     return hits;
 }
+
+// Та же отбивка, что у вида (imageGap при масштабе 1).
+const qreal kGap = 6.0;
 
 }  // namespace
 
@@ -71,19 +83,34 @@ int main(int argc, char** argv) {
     editor.openFile(QString::fromStdString((dir / "н.md").string()));
     QTest::qWait(20);
 
-    const auto marginOf = [&](int blockNumber) {
-        return editor.document()->findBlockByNumber(blockNumber).blockFormat().bottomMargin();
-    };
+    const auto blockAt = [&](int n) { return editor.document()->findBlockByNumber(n); };
+    const auto marginOf = [&](int n) { return blockAt(n).blockFormat().bottomMargin(); };
+    const auto lineOf = [&](int n) { return blockAt(n).blockFormat().lineHeight(); };
 
-    // Спан целым абзацем: место под фото своей ширины (64 логических пикселя).
-    ZT_TRUE("под image-спан зарезервировано место", marginOf(0) > 64.0);
-    // Вики-вложение с шириной 40: квадрат — значит, и высота 40 плюс отбивки.
-    ZT_TRUE("под вики-вложение зарезервировано место", marginOf(2) > 40.0);
-    ZT_TRUE("ширина из вики-вложения уважена: место меньше своего размера",
-            marginOf(2) < marginOf(0));
+    // Скрытая строка: фото стоит на месте текста и торчит из него вниз.
+    ZT_TRUE("резерв image-спана: фото плюс отбивка минус строка",
+            std::fabs(marginOf(0) - (64.0 + kGap - lineOf(0))) < 1.5);
+    ZT_TRUE("резерв вики-вложения: ширина 40 уважена",
+            std::fabs(marginOf(2) - qMax(0.0, 40.0 + kGap - lineOf(2))) < 1.5);
     // Файла нет — и места нет.
     ZT_TRUE("под пропавший файл места нет", marginOf(4) == 0.0);
     ZT_TRUE("под обычный текст места нет", marginOf(6) == 0.0);
+
+    // Выделение, задевшее строку, показывает её текст: фото уезжает под
+    // строку, резерв растёт до целого фото с двумя отбивками.
+    {
+        QTextCursor cursor(blockAt(2));
+        cursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, 3);
+        editor.setTextCursor(cursor);
+        QTest::qWait(10);
+        ZT_TRUE("выделение показало текст: резерв вырос",
+                std::fabs(marginOf(2) - (40.0 + 2.0 * kGap)) < 1.5);
+        cursor.clearSelection();
+        editor.setTextCursor(cursor);
+        QTest::qWait(10);
+        ZT_TRUE("выделение снято — строка снова спрятана",
+                std::fabs(marginOf(2) - qMax(0.0, 40.0 + kGap - lineOf(2))) < 1.5);
+    }
 
     // Фотографии действительно в кадре: красных пикселей не меньше, чем в
     // самих картинках (64×64 + 40×40), с запасом на сглаживание краёв.
@@ -93,11 +120,53 @@ int main(int argc, char** argv) {
         QPainter painter(&shot);
         editor.viewport()->render(&painter);
     }
-    const int reds = countReddish(shot);
-    ZT_TRUE("фотографии нарисованы", reds > 64 * 64 + 40 * 40 - 600);
+    ZT_TRUE("фотографии нарисованы", countReddish(shot) > 64 * 64 + 40 * 40 - 600);
+
+    // Ресайз мышью: взяться за нижний правый угол, потянуть вправо, отпустить
+    // — ширина записывается в "|ширину" вики-вложения, отдельным шагом истории.
+    {
+        const QRectF photo = editor.imageRectInViewport(blockAt(2));
+        ZT_TRUE("фото вики-вложения имеет прямоугольник", !photo.isEmpty());
+        const QPointF grip(photo.right() - 4.0, photo.bottom() - 4.0);
+        const QPointF pulled = grip + QPointF(26.0, 9.0);
+        const int expected = qRound(pulled.x() - photo.left());
+
+        QTest::mousePress(editor.viewport(), Qt::LeftButton, {}, grip.toPoint());
+        QMouseEvent drag(QEvent::MouseMove, pulled, editor.viewport()->mapToGlobal(pulled),
+                         Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(editor.viewport(), &drag);
+        QTest::mouseRelease(editor.viewport(), Qt::LeftButton, {}, pulled.toPoint());
+        QTest::qWait(10);
+
+        ZT_EQ("ширина записана в вики-вложение",
+              QStringLiteral("![[img.png|%1]]").arg(expected).toStdString(),
+              blockAt(2).text().toStdString());
+        ZT_TRUE("резерв пересчитан под новую ширину",
+                std::fabs(marginOf(2) - qMax(0.0, expected + kGap - lineOf(2))) < 1.5);
+
+        QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+        QTest::qWait(10);
+        ZT_EQ("Ctrl-Z вернул прежнюю ширину", std::string("![[img.png|40]]"),
+              blockAt(2).text().toStdString());
+    }
+
+    // Запись ширины image-спана — во фрагмент пути "#w=". Операция напрямую:
+    // мышь уже проверена на вики-форме, путь тот же.
+    {
+        QTextCursor cursor(blockAt(0));
+        ZT_TRUE("ширина image-спана записана",
+                zametti::setImageWidthAtCursor(*editor.document(), cursor, 50));
+        QTest::qWait(10);
+        const zametti::Document ir = zametti::readDocument(*editor.document());
+        const std::string out = zametti::serialize(ir);
+        ZT_TRUE("в файл уходит путь с #w=50",
+                out.find("![фото](img.png#w=50)") != std::string::npos);
+        ZT_TRUE("резерв ужался до 50",
+                std::fabs(marginOf(0) - qMax(0.0, 50.0 + kGap - lineOf(0))) < 1.5);
+    }
 
     // Правка ломает путь вики-вложения — резерв обязан сняться.
-    QTextCursor cursor(editor.document()->findBlockByNumber(2));
+    QTextCursor cursor(blockAt(2));
     cursor.movePosition(QTextCursor::EndOfBlock);
     editor.setTextCursor(cursor);
     editor.insertPlainText(QStringLiteral("х"));
@@ -107,7 +176,8 @@ int main(int argc, char** argv) {
     // И возврат правкой же — резерв возвращается.
     QTest::keyClick(&editor, Qt::Key_Backspace);
     QTest::qWait(10);
-    ZT_TRUE("резерв вернулся после починки строки", marginOf(2) > 40.0);
+    ZT_TRUE("резерв вернулся после починки строки",
+            std::fabs(marginOf(2) - qMax(0.0, 40.0 + kGap - lineOf(2))) < 1.5);
 
     return zt::report("картинки в просмотре");
 }

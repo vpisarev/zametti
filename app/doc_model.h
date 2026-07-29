@@ -98,6 +98,20 @@ bool blocksWouldMerge(const QTextBlock& previous, const QTextBlock& next);
 
 Kind kindOf(const QTextBlock& block);
 int levelOf(const QTextBlock& block);
+
+// Картинка, которую блок просит показать. Модель текста об этом не знает:
+// блок остаётся обычным абзацем, а фотография — дело вида, как линия у
+// черты. Распознаются две формы: image-спан целым абзацем (ширина — из
+// "#w=N" в пути, если есть) и вики-вложение "![[путь]]"/"![[путь|ширина]]",
+// которое модель хранит дословным текстом.
+struct BlockImageRef {
+    QString path;
+    qreal widthHint = 0.0;   // 0 — своя ширина картинки; логические пиксели
+    bool wiki = false;       // форма записи: вики-вложение или image-спан
+    bool valid = false;
+};
+
+BlockImageRef blockImageRef(const QTextBlock& block);
 bool isListBlock(const QTextBlock& block);
 
 // Чем помечен пункт: маркер вместе с отметкой выполненности. Двумя полями, а не

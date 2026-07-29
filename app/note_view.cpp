@@ -35,61 +35,8 @@ QFont baseFontFor(qreal zoom) {
     return font;
 }
 
-// Отбивка между строкой-подписью и фотографией и после фотографии.
+// Отбивка после фотографии (и перед ней, когда виден текст строки).
 qreal imageGap(qreal zoom) { return 6.0 * zoom; }
-
-// Картинка, которую блок просит показать. Модель текста об этом не знает:
-// блок остаётся обычным абзацем, а фотография — дело вида.
-struct BlockImageRef {
-    QString path;
-    qreal widthHint = 0.0;   // 0 — своя ширина картинки
-    bool valid = false;
-};
-
-BlockImageRef blockImageRef(const QTextBlock& block) {
-    if (!block.isValid() || isRawBlock(block)) return {};
-    if (kindOf(block) != Kind::Paragraph) return {};
-
-    // Image-спан целым абзацем: каждый кусок помечен SpanImage с одним путём.
-    // Картинка в середине текста фотографией не показывается — только стилем.
-    QString href;
-    bool whole = true;
-    for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
-        const QTextFragment fragment = it.fragment();
-        if (!fragment.isValid() || fragment.text().isEmpty()) continue;
-        const QTextCharFormat format = fragment.charFormat();
-        const bool image = (format.intProperty(SpanStyleProperty) & SpanImage) != 0 &&
-                           !format.anchorHref().isEmpty();
-        if (!image || (!href.isEmpty() && href != format.anchorHref())) {
-            whole = false;
-            break;
-        }
-        href = format.anchorHref();
-    }
-    if (whole && !href.isEmpty()) return {href, 0.0, true};
-
-    // Вики-вложение Obsidian: строка целиком "![[путь]]" или "![[путь|ширина]]".
-    // Модель хранит его дословным текстом абзаца (см. бриф: wikilinks не
-    // переписываются), но фотографию по нему показать можно и нужно.
-    const QString text = block.text().trimmed();
-    if (!text.startsWith(QStringLiteral("![[")) || !text.endsWith(QStringLiteral("]]")))
-        return {};
-    QString inner = text.mid(3, text.size() - 5);
-    if (inner.isEmpty() || inner.contains(QStringLiteral("]]"))) return {};
-    qreal width = 0.0;
-    const qsizetype bar = inner.lastIndexOf(QLatin1Char('|'));
-    if (bar >= 0) {
-        // После черты либо ширина, либо подпись (Obsidian допускает обе);
-        // подпись фотографии не мешает — просто остаётся своя ширина.
-        bool ok = false;
-        const double w = inner.mid(bar + 1).trimmed().toDouble(&ok);
-        if (ok && w > 0.0) width = w;
-        inner = inner.left(bar);
-    }
-    inner = inner.trimmed();
-    if (inner.isEmpty()) return {};
-    return {inner, width, true};
-}
 
 }  // namespace
 
@@ -122,8 +69,13 @@ NoteView::NoteView(QWidget* parent) : QTextBrowser(parent) {
     connect(this, &QTextEdit::cursorPositionChanged, this, &NoteView::showCaret);
     connect(this, &QTextEdit::textChanged, this, &NoteView::showCaret);
     // Правка могла родить или убить строку с картинкой — место перемеряется
-    // после каждой. Свои же выставления полей отсекает syncingImages_.
+    // после каждой. Свои же выставления полей отсекает syncingImages_. Каретка
+    // тоже в деле: выделение, задевшее строку с фотографией, показывает её
+    // текст, а это другой резерв места.
     connect(this, &QTextEdit::textChanged, this, &NoteView::syncImageSpace);
+    connect(this, &QTextEdit::cursorPositionChanged, this, &NoteView::syncImageSpace);
+    // Снятие выделения не двигает позицию и cursorPositionChanged не даёт.
+    connect(this, &QTextEdit::selectionChanged, this, &NoteView::syncImageSpace);
 }
 
 // Прямоугольник каретки с запасом: перерисовываем чуть больше, чем красим,
@@ -271,16 +223,76 @@ QSizeF NoteView::imageDisplaySize(const QImage& image, qreal widthHint,
     return QSizeF(width, width * image.height() / image.width());
 }
 
+NoteView::ImageGeometry NoteView::imageGeometry(const QTextBlock& block) {
+    const BlockImageRef ref = blockImageRef(block);
+    if (!ref.valid) return {};
+    const QImage* image = imageFor(ref.path);
+    if (image == nullptr) return {};
+
+    qreal widthHint = ref.widthHint;
+    if (block.blockNumber() == imageDragBlock_ && imageDragWidth_ > 0.0)
+        widthHint = imageDragWidth_;
+    const QSizeF size = imageDisplaySize(*image, widthHint, block);
+    if (size.isEmpty()) return {};
+
+    const QTextLayout* layout = block.layout();
+    if (layout == nullptr) return {};
+    // layout->position() отдаёт координаты документа — те же, в которых рисует
+    // paintEvent. Высота текста — по числу строк и назначенной высоте, как у
+    // подложки кода: длинный путь вики-вложения переносится.
+    const qreal assigned = block.blockFormat().lineHeight();
+    const int lines = layout->lineCount() > 0 ? layout->lineCount() : 1;
+    const qreal textHeight = assigned > 0
+                                 ? qMax(layout->boundingRect().height(), lines * assigned)
+                                 : layout->boundingRect().height();
+    const QPointF textTop = layout->position();
+
+    ImageGeometry geometry;
+    geometry.valid = true;
+    // Текст строки виден, только когда его задевает выделение: иначе строка
+    // хитро-отрисованная, как черта, — на её месте сама фотография.
+    const QTextCursor cursor = textCursor();
+    geometry.revealed = cursor.hasSelection() &&
+                        qMin(cursor.anchor(), cursor.position()) <
+                            block.position() + block.length() &&
+                        qMax(cursor.anchor(), cursor.position()) > block.position();
+    geometry.line = QRectF(textTop.x(), textTop.y(),
+                           qMax(size.width(), layout->boundingRect().width()), textHeight);
+    const qreal top =
+        geometry.revealed ? textTop.y() + textHeight + imageGap(zoom_) : textTop.y();
+    geometry.photo = QRectF(QPointF(textTop.x(), top), size);
+    return geometry;
+}
+
+QRectF NoteView::imageRectInViewport(const QTextBlock& block) {
+    const ImageGeometry geometry = imageGeometry(block);
+    if (!geometry.valid) return {};
+    return geometry.photo.translated(-horizontalScrollBar()->value(),
+                                     -verticalScrollBar()->value());
+}
+
+void NoteView::setImageDragWidth(int blockNumber, qreal width) {
+    if (imageDragBlock_ == blockNumber && std::fabs(imageDragWidth_ - width) < 0.01)
+        return;
+    imageDragBlock_ = width > 0.0 ? blockNumber : -1;
+    imageDragWidth_ = width > 0.0 ? width : 0.0;
+    syncImageSpace();
+    viewport()->update();
+}
+
 void NoteView::syncImageSpace() {
     if (syncingImages_) return;
     syncingImages_ = true;
     const qreal gap = imageGap(zoom_);
     for (QTextBlock block = document()->begin(); block.isValid(); block = block.next()) {
-        const BlockImageRef ref = blockImageRef(block);
+        const ImageGeometry geometry = imageGeometry(block);
         qreal want = 0.0;
-        if (ref.valid) {
-            if (const QImage* image = imageFor(ref.path))
-                want = imageDisplaySize(*image, ref.widthHint, block).height() + 2.0 * gap;
+        if (geometry.valid) {
+            // Фотография стоит на месте текста строки и торчит из него вниз;
+            // при показанном тексте (выделение) — целиком под строкой.
+            want = geometry.revealed
+                       ? geometry.photo.height() + 2.0 * gap
+                       : qMax(0.0, geometry.photo.height() + gap - geometry.line.height());
         }
         QTextBlockFormat format = block.blockFormat();
         // Нижнее поле всех прочих блоков — ноль по построению сборщика, так
@@ -296,28 +308,21 @@ void NoteView::syncImageSpace() {
     syncingImages_ = false;
 }
 
-void NoteView::paintImage(QPainter& painter, const QTextBlock& block, const QRectF& rect) {
-    const qreal reserved = block.blockFormat().bottomMargin();
-    if (reserved <= 1.0) return;   // место не резервировали — и рисовать нечего
+void NoteView::paintImage(QPainter& painter, const QTextBlock& block) {
+    const ImageGeometry geometry = imageGeometry(block);
+    if (!geometry.valid) return;
     const BlockImageRef ref = blockImageRef(block);
-    if (!ref.valid) return;
     const QImage* image = imageFor(ref.path);
     if (image == nullptr) return;
 
-    const QSizeF size = imageDisplaySize(*image, ref.widthHint, block);
-    if (size.isEmpty()) return;
-
-    // Якорь — низ собственно текста: layout->position() отдаёт координаты
-    // документа, те же, в которых рисует и весь paintEvent.
-    const QTextLayout* layout = block.layout();
-    if (layout == nullptr) return;
-    const qreal top = layout->position().y() + layout->boundingRect().height() +
-                      imageGap(zoom_);
-    const qreal left = rect.left() + block.blockFormat().leftMargin();
-
     painter.save();
+    if (!geometry.revealed) {
+        // Строка хитро-отрисованная: текст закрашивается фоном, фотография
+        // встаёт на его место. Каретка рисуется позже и поверх — ей можно.
+        painter.fillRect(geometry.line.adjusted(-2, 0, 2, 0), appearance().pageBackground);
+    }
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
-    painter.drawImage(QRectF(QPointF(left, top), size), *image);
+    painter.drawImage(geometry.photo, *image);
     painter.restore();
 }
 
@@ -392,7 +397,7 @@ void NoteView::paintEvent(QPaintEvent* event) {
         if (rect.bottom() + block.blockFormat().bottomMargin() < visible.top()) continue;
         paintMarker(painter, block, base);
         paintDivider(painter, block, rect, zoom_);
-        paintImage(painter, block, rect);
+        paintImage(painter, block);
     }
 
     // Каретка — последней и без сдвига на прокрутку: cursorRect уже отдаёт
