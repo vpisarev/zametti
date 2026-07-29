@@ -1384,6 +1384,17 @@ bool removeVSpaceAndMaybeJoin(QTextDocument& doc, QTextCursor& cursor, int gapNu
         return true;
     }
 
+    // Пустая строка сразу под чертой. Удалять назад — значит удалять черту,
+    // а её Backspace не удаляет: просто шаг на неё. Сливать строку с чертой
+    // нельзя в обе стороны: Qt оставляет формат ВТОРОГО блока, и черта молча
+    // превращалась бы в пустую строку — ровно так она и пропадала.
+    const bool beforeIsDivider =
+        before.isValid() && !isRawBlock(before) && kindOf(before) == Kind::Divider;
+    if (backspace && fromGapItself && beforeIsDivider) {
+        cursor.setPosition(before.position());
+        return true;
+    }
+
     const bool join = blocksWouldMerge(before, after);
 
     // Черте сливаться не с чем: текста в ней нет, и «слияние» удаляло бы её
@@ -1409,20 +1420,23 @@ bool removeVSpaceAndMaybeJoin(QTextDocument& doc, QTextCursor& cursor, int gapNu
 
     QTextCursor edit(&doc);
     edit.beginEditBlock();
-    if (before.isValid()) {
+    if (before.isValid() && !beforeIsDivider) {
         // Снимаем границу перед пустой строкой: содержимого в ней нет, и
         // предыдущий блок остаётся при своём формате.
         edit.setPosition(gap.position() - 1);
         edit.setPosition(gap.position(), QTextCursor::KeepAnchor);
         edit.removeSelectedText();
     } else if (after.isValid()) {
-        // Пустая строка первая в документе: убираем границу за ней, а формат
-        // берём у соседа — иначе весь его текст остался бы пустой строкой.
+        // Пустая строка первая в документе или сразу под чертой: убираем
+        // границу за ней, а формат берём у соседа — иначе его текст остался бы
+        // пустой строкой. Формат ставим по месту строки, не в нулевую позицию:
+        // под чертой нулевая позиция — сама черта, и она становилась соседом.
         const QTextBlockFormat keep = after.blockFormat();
-        edit.setPosition(gap.position());
-        edit.setPosition(gap.position() + 1, QTextCursor::KeepAnchor);
+        const int at = gap.position();
+        edit.setPosition(at);
+        edit.setPosition(at + 1, QTextCursor::KeepAnchor);
         edit.removeSelectedText();
-        edit.setPosition(0);
+        edit.setPosition(at);
         edit.setBlockFormat(keep);
     }
 
@@ -1456,13 +1470,15 @@ bool applyDividerRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
 
     // Enter в абзаце — перенос строки внутри блока, а не новый блок, поэтому
     // правило смотрит на последнюю СТРОКУ, а не на весь текст. Зовётся после
-    // набранного пробела: строка кончается "--- ".
+    // набранного пробела (строка "--- ") или на Enter (строка "---"): один
+    // концевой пробел прощаем, дальше — только дефисы.
     const QString text = block.text();
     const int lineStart = int(text.lastIndexOf(QChar::LineSeparator)) + 1;
-    const QString line = text.mid(lineStart);
-    if (line.size() < 4 || !line.endsWith(QLatin1Char(' '))) return false;
-    for (int i = 0; i < line.size() - 1; ++i)
-        if (line.at(i) != QLatin1Char('-')) return false;
+    QString line = text.mid(lineStart);
+    if (line.endsWith(QLatin1Char(' '))) line.chop(1);
+    if (line.size() < 3) return false;
+    for (const QChar& c : line)
+        if (c != QLatin1Char('-')) return false;
 
     const int number = block.blockNumber();
     QTextCursor edit(&doc);

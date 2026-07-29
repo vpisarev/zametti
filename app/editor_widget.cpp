@@ -378,6 +378,9 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
 
     const bool plainEnter = (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
                             (event->modifiers() & ~Qt::KeypadModifier) == Qt::NoModifier;
+    // "---" и Enter — тоже тематическая черта, как и "---" с пробелом:
+    // правило раньше разреза, иначе Enter развёл бы дефисы и новый блок.
+    if (plainEnter && runOperation(applyDividerRuleAtCursor)) return;
     if (plainEnter && runOperation(splitBlockAtCursor)) return;
 
     // Shift+Enter — «другое»: в абзаце разрезает, в списке переносит строку

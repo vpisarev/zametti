@@ -157,7 +157,8 @@ bool applyInputRuleAtCursor(QTextDocument& doc, QTextCursor& cursor);
 // этом уходят из текста: они были разметкой, а не содержимым.
 bool applyCodeSpanRuleAtCursor(QTextDocument& doc, QTextCursor& cursor);
 
-// "---" и пробел — тематическая черта, и каретка встаёт в новый абзац под ней.
+// "---" и пробел или Enter — тематическая черта, и каретка встаёт в новый
+// абзац под ней.
 // Только в обычном абзаце вне списка: в пункте дефисы — законный текст, да и
 // markdown внутри пункта черту так не прочтёт.
 bool applyDividerRuleAtCursor(QTextDocument& doc, QTextCursor& cursor);
