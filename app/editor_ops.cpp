@@ -1451,6 +1451,29 @@ bool deleteDividerAbove(QTextDocument& doc, QTextCursor& cursor) {
     return true;
 }
 
+bool deleteDividerAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+    if (cursor.hasSelection()) return false;
+    const QTextBlock block = cursor.block();
+    if (isRawBlock(block) || kindOf(block) != Kind::Divider) return false;
+    const QTextBlock prev = block.previous();
+    if (!prev.isValid()) return false;   // выше ничего: и удалять нечего
+
+    const int number = block.blockNumber();
+    QTextCursor landing(&doc);
+    landing.setPosition(prev.position() + prev.length() - 1);
+    // Соседи, оставшиеся без черты между ними, могут слипнуться — тогда
+    // тексты сливаются, как при удалении пустой строки.
+    const bool join = blocksWouldMerge(prev, block.next());
+    QTextCursor edit(&doc);
+    edit.beginEditBlock();
+    removeLineBlock(edit, block);
+    if (join) joinWithNext(doc, edit, number - 1);
+    normalise(doc, around(qMax(0, number - 1)));
+    edit.endEditBlock();
+    cursor.setPosition(landing.position());
+    return true;
+}
+
 bool applyDividerRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const QTextBlock block = cursor.block();
     if (isRawBlock(block) || kindOf(block) != Kind::Paragraph) return false;

@@ -488,10 +488,22 @@ const Case kBackspaceUpCases[] = {
      1, 0, {key("Backspace")},
      "___\n", 0},
 
-    {"Backspace на черте под заголовком шагает в конец заголовка",
+    // Черта под кареткой — строка без содержимого: слить её вверх и значит
+    // удалить, ровно как пустую строку. Без этого лесенку черт нельзя было
+    // снести Backspace-ом до конца.
+    {"Backspace на черте под заголовком удаляет её",
      "# з\n___\n",
      1, 0, {key("Backspace")},
-     "# з\n___\n", 0},
+     "# з\n", 0},
+
+    // Старт — с пустой строки под нижней чертой; с начала пункта Backspace
+    // сперва снял бы маркер, это отдельное правило списков.
+    {"лесенка из трёх черт сносится Backspace-ом целиком",
+     "текст\n\n___\n\n___\n\n___\n\n- пункт\n",
+     7, 0,
+     {key("Backspace"), key("Backspace"), key("Backspace"), key("Backspace"),
+      key("Backspace"), key("Backspace"), key("Backspace")},
+     "текст\n- пункт\n", 0},
 
     {"Delete на пустой под чертой убирает строку, не черту",
      "___\n\n- пункт\n",
@@ -856,6 +868,9 @@ void checkBackspaceProperties() {
                 const QTextBlock above = target.previous();
                 const bool dividerAbove = above.isValid() && !zametti::isRawBlock(above) &&
                                           zametti::kindOf(above) == zametti::Kind::Divider;
+                // Считаем ДО нажатия: после правки хэндл блока протухает.
+                const bool onDivider = !zametti::isRawBlock(target) &&
+                                       zametti::kindOf(target) == zametti::Kind::Divider;
                 QTest::keyClick(&editor, Qt::Key_Backspace);
                 const auto [div1, blank1, text1] = snapshot(*editor.document());
                 const int landed = editor.textCursor().blockNumber();
@@ -869,8 +884,8 @@ void checkBackspaceProperties() {
                 ZT_TRUE(tag + "за нажатие уходит не больше одной строки",
                         div1 <= div0 && blank1 <= blank0 &&
                             (div0 - div1) + (blank0 - blank1) <= 1);
-                ZT_TRUE(tag + "черта удаляется, только когда стояла над кареткой",
-                        div1 == div0 || dividerAbove);
+                ZT_TRUE(tag + "черта удаляется, только над кареткой или под ней",
+                        div1 == div0 || dividerAbove || onDivider);
                 ZT_TRUE(tag + "каретка не уехала вниз", landed <= block);
 
                 const std::string once =

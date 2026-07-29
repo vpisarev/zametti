@@ -426,20 +426,11 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
         // пустой строкой. (Каретку на пустой строке под чертой перехватывает
         // joinAcrossVSpaceBackward выше: там жертва — пустая строка.)
         if (runOperation(deleteDividerAbove)) return;
-        // Каретка на самой черте, выше текст: удалять назад нечего — сливать
-        // черту с текстом нельзя, а черту ПОД кареткой удаляет Delete, а не
-        // Backspace. Просто шаг в конец текста выше.
-        const QTextBlock atBlock = textCursor().block();
-        if (!textCursor().hasSelection() && !isRawBlock(atBlock) &&
-            kindOf(atBlock) == Kind::Divider) {
-            const QTextBlock prev = atBlock.previous();
-            if (prev.isValid()) {
-                QTextCursor up = textCursor();
-                up.setPosition(prev.position() + prev.length() - 1);
-                setTextCursor(up);
-            }
-            return;
-        }
+        // Каретка на самой черте, выше текст: черта — строка без содержимого,
+        // слить её вверх и значит удалить. Без этого лесенку черт нельзя было
+        // снести Backspace-ом до конца: последняя, стоящая под текстом,
+        // оставалась, а каретка перешагивала её и ела текст.
+        if (runOperation(deleteDividerAtCursor)) return;
     }
     // Delete у пустой строки — то же самое с другой стороны: строка исчезает, а
     // соседи, которым markdown не даёт стоять раздельно, сливаются.
