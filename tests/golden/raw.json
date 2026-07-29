@@ -7,7 +7,7 @@
   {"kind": "vspace", "text": ""},
   {"raw": "<!-- комментарий тоже -->\n"},
   {"kind": "vspace", "text": ""},
-  {"raw": "***\n"},
+  {"kind": "divider", "text": ""},
   {"kind": "vspace", "text": ""},
   {"raw": "Абзац с ![картинкой](/img.png) целиком дословен.\n"},
   {"kind": "vspace", "text": ""},

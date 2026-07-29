@@ -126,6 +126,7 @@ struct Appearance {
     QColor linkColor{0x32, 0x5c, 0xc0};
     QColor quoteColor{0x5a, 0x62, 0x6a};
     QColor rawColor{0x99, 0x9f, 0xa6};      // непонятое, дословный кусок
+    QColor dividerColor{0xc8, 0xcd, 0xd2};  // тематическая черта '---'
     QColor codeBackground{0, 0, 0, 14};
 
     // --- маркированный список ---

@@ -13,6 +13,7 @@ const char* kindName(Kind k) {
         case Kind::Quote:         return "quote";
         case Kind::VSpace:        return "vspace";
         case Kind::ListItem:      return "list-item";
+        case Kind::Divider:       return "divider";
     }
     return "?";
 }

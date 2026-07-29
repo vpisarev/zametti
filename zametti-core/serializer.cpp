@@ -634,7 +634,8 @@ void validate(const Block& b) {
     // Внутри пункта могут стоять абзац, цитата и код — им уровень осмыслен.
     // Заголовку и пустой строке — нет: заголовка внутри пункта markdown не
     // выражает, а пустая строка ничьей вложенности не имеет.
-    assert(((b.kind != Kind::Heading && b.kind != Kind::VSpace) || b.level == -1) &&
+    assert(((b.kind != Kind::Heading && b.kind != Kind::VSpace && b.kind != Kind::Divider) ||
+            b.level == -1) &&
            "этому роду уровень не положен");
     assert((b.kind == Kind::ListItem || !b.checked) && "отметка осмысленна только у задачи");
     assert((b.kind == Kind::Code || b.info.empty()) && "info осмыслена только у блока кода");
@@ -852,6 +853,20 @@ std::string serialize(const Document& doc) {
                 out.push_back('\n');
                 break;
             }
+
+            case Kind::Divider:
+                // Текст свят: разделителю он не положен, но если он там всё же
+                // оказался — печатаем абзацем, как это делает пустая строка.
+                if (!b.text.empty()) {
+                    TextSink sink;
+                    sink.hasLinkDefs = hasLinkDefs;
+                    appendInlineText(sink, b);
+                    out += sink.out;
+                    out.push_back('\n');
+                    break;
+                }
+                out += "---\n";
+                break;
 
             case Kind::ListItem: {
                 assert(b.level <= prevLevel + 1 &&

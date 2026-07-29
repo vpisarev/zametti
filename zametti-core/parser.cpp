@@ -460,6 +460,19 @@ int enterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
             break;
         }
 
+        case MD_BLOCK_HR:
+            // Разделитель внутри цитаты или пункта плоской моделью не
+            // выражается — дословно, как раньше. На верхнем уровне это лист без
+            // единого текстового колбэка: finishExtents посадит его на первую
+            // непустую строку после предыдущего блока.
+            if (insideQuote(c) || enclosingList(c) != nullptr) {
+                c.stack.push_back(f);
+                demote(c);
+                return 0;
+            }
+            startLeaf(c, Kind::Divider, 0, -1);
+            break;
+
         case MD_BLOCK_TABLE: {
             // Единственная конструкция, у которой часть строк не даёт ни одного
             // текстового колбэка: строка-разделитель и ряды из пустых ячеек.
@@ -523,6 +536,7 @@ int leaveBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
             endLeaf(c);
             break;
         case MD_BLOCK_H:
+        case MD_BLOCK_HR:
             endLeaf(c);
             break;
         case MD_BLOCK_P:

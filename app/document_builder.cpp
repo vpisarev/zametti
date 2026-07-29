@@ -376,7 +376,17 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
                     charFmt.setForeground(appearance().quoteColor);
                     break;
 
-                default:
+                // Ветки default в switch по роду не место: новый род обязан
+                // сам всплыть здесь ошибкой сборки, а не молча собраться
+                // обычным абзацем.
+                case Kind::Paragraph:
+                case Kind::VSpace:
+                case Kind::ListItem:
+                    break;
+
+                case Kind::Divider:
+                    // Черту рисует NoteView по геометрии блока — как маркеры.
+                    // В документе это пустой блок: текста у черты не бывает.
                     break;
             }
             if (b.kind != Kind::Code) text = toQt(b.text, breaks);

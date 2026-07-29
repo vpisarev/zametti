@@ -1187,6 +1187,11 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
                     next.setHeadingLevel(0);
                 }
                 break;
+            case Kind::Divider:
+                // Черта одна, и текста в ней нет: всё, что Enter заводит под
+                // ней, — обычный текст.
+                next.clearProperty(KindProperty);
+                break;
             case Kind::Paragraph:
             case Kind::Code:
             case Kind::Quote:
@@ -1352,8 +1357,11 @@ bool removeVSpaceAndMaybeJoin(QTextDocument& doc, QTextCursor& cursor, int gapNu
     // Сливать здесь нельзя: между пунктом и абзацем пустая строка обязательна,
     // и слияние утаскивало пустой абзац внутрь пункта — обе строки исчезали
     // разом, а каретка уезжала вправо, в конец пункта.
+    // Черта тоже блок с пустым текстом, но пустым абзацем она не является —
+    // не путать: её случай ниже.
     if (after.isValid() && !isRawBlock(after) && after.text().isEmpty() &&
-        !isVSpaceBlock(after) && !isListBlock(after) && before.isValid()) {
+        !isVSpaceBlock(after) && !isListBlock(after) && kindOf(after) != Kind::Divider &&
+        before.isValid()) {
         QTextCursor edit(&doc);
         edit.beginEditBlock();
         edit.setPosition(after.position() - 1);
@@ -1372,6 +1380,17 @@ bool removeVSpaceAndMaybeJoin(QTextDocument& doc, QTextCursor& cursor, int gapNu
     }
 
     const bool join = blocksWouldMerge(before, after);
+
+    // Черте сливаться не с чем: текста в ней нет, и «слияние» удаляло бы её
+    // целиком одним Backspace. Убрать пустую строку тоже нельзя — абзац
+    // вплотную над чертой становится setext-заголовком, и инвариант вернул бы
+    // строку сразу. Остаётся честный ход: каретка уходит к предыдущему блоку,
+    // документ не меняется.
+    if (join && after.isValid() && !isRawBlock(after) && kindOf(after) == Kind::Divider) {
+        if (!before.isValid()) return false;
+        cursor.setPosition(before.position() + before.length() - 1);
+        return true;
+    }
 
     // Куда встать после правки — началом того, что стояло под пустой строкой.
     // Курсором, а не числом: при слиянии оно само приедет на стык половинок, и
@@ -1402,7 +1421,16 @@ bool removeVSpaceAndMaybeJoin(QTextDocument& doc, QTextCursor& cursor, int gapNu
     if (join) joinWithNext(doc, edit, gapNumber - 1);
     normalise(doc, around(qMax(0, gapNumber - 1)));
     edit.endEditBlock();
-    cursor.setPosition(landing.position());
+    // Обычная посадка — на начало того, что стояло под пустой строкой. Но
+    // черта — не текст, вставать на неё после удаления строки неоткуда:
+    // каретка уходит в конец предыдущей, как Backspace и обещает.
+    if (after.isValid() && !isRawBlock(after) && kindOf(after) == Kind::Divider &&
+        gapNumber > 0) {
+        const QTextBlock landed = doc.findBlockByNumber(gapNumber - 1);
+        cursor.setPosition(landed.position() + landed.length() - 1);
+    } else {
+        cursor.setPosition(landing.position());
+    }
     return true;
 }
 
@@ -1411,8 +1439,11 @@ bool removeVSpaceAndMaybeJoin(QTextDocument& doc, QTextCursor& cursor, int gapNu
 bool repairAfterTyping(QTextDocument& doc, QTextCursor& cursor) {
     const QTextBlock block = cursor.block();
     const int number = block.blockNumber();
-    // Набрали прямо на пустой строке: пустой строкой она быть перестала.
-    const bool filled = isVSpaceBlock(block) && !block.text().isEmpty();
+    // Набрали прямо на пустой строке или на черте: тем, чем были, они быть
+    // перестали — текст делает из них обычный абзац.
+    const bool filled = (isVSpaceBlock(block) ||
+                         (!isRawBlock(block) && kindOf(block) == Kind::Divider)) &&
+                        !block.text().isEmpty();
     // Или набрали поверх выделения, съевшего границу блоков, и рядом оказались
     // соседи, которых markdown раздельно не выражает.
     const bool mergesAhead =
@@ -1574,6 +1605,7 @@ void applyListGeometry(QTextDocument& doc, BlockRange range) {
                 case Kind::Heading:
                 case Kind::VSpace:
                 case Kind::ListItem:
+                case Kind::Divider:
                     break;
             }
             const qreal margin = indent + contentCol[at] + own;

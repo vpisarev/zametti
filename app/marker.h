@@ -53,6 +53,11 @@ QTextBlock blockAtCheckbox(const QTextDocument& doc, const QPointF& point,
 // Рисует маркер блока. Блок должен быть списочным и уже разложенным.
 void paintMarker(QPainter& painter, const QTextBlock& block, const QFont& base);
 
+// Тематическая черта "---": горизонтальная линия по ширине колонки текста,
+// на середине высоты своего блока. В документе блок пустой — рисуем сами,
+// тем же приёмом, что и маркеры.
+void paintDivider(QPainter& painter, const QTextBlock& block, const QRectF& rect);
+
 }  // namespace zametti
 
 #endif  // ZAMETTI_MARKER_H

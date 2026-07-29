@@ -435,6 +435,33 @@ const Case kInsideItemCases[] = {
 // Раньше он убирал обе: между пунктом и абзацем пустая строка обязательна, и
 // вместо удаления происходило слияние — пустой абзац уезжал внутрь пункта, а
 // каретка прыгала вправо, в конец его текста.
+// Тематическая черта "---" — блок без текста. Набор превращает её в абзац,
+// Enter заводит обычный текст под ней, а Backspace на обязательной пустой
+// строке над ней не съедает ни строку, ни черту (абзац вплотную над чертой —
+// это уже setext-заголовок): каретка просто уходит выше. На этом Backspace
+// черта и терялась, пока пробник не показал.
+const Case kDividerCases[] = {
+    {"набор на черте делает её абзацем",
+     "до\n\n---\n\nпосле\n",
+     2, 0, {type("текст")},
+     "до\n\nтекст\n\nпосле\n", 2},
+
+    {"Enter на черте заводит текст под ней",
+     "до\n\n---\n\nпосле\n",
+     2, 0, {key("Return"), type("абзац")},
+     "до\n\n---\nабзац\n\nпосле\n", 3},
+
+    {"Backspace над чертой не трогает ни строку, ни черту",
+     "до\n\n---\n",
+     1, 0, {key("Backspace")},
+     "до\n\n---\n", 0},
+
+    {"Backspace над чертой при двух пустых строках убирает одну",
+     "до\n\n\n---\n",
+     2, 0, {key("Backspace")},
+     "до\n\n---\n", 1},
+};
+
 const Case kBlankLineAfterItemCases[] = {
     {"Backspace убирает одну строку из двух",
      "- [ ] задача\n## Заголовок\n",
@@ -705,6 +732,7 @@ int main(int argc, char** argv) {
     for (const Case& c : kInsideItemCases) run(c);
     for (const Case& c : kHeadingCases) run(c);
     for (const Case& c : kBlankLineAfterItemCases) run(c);
+    for (const Case& c : kDividerCases) run(c);
     checkUndo();
     checkListRhythm();
     checkKindRoundTripKeepsPlace();

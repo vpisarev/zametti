@@ -252,4 +252,16 @@ void paintMarker(QPainter& painter, const QTextBlock& block, const QFont& base) 
     painter.restore();
 }
 
+void paintDivider(QPainter& painter, const QTextBlock& block, const QRectF& rect) {
+    if (isRawBlock(block) || kindOf(block) != Kind::Divider) return;
+    painter.save();
+    // Толщина — один физический пиксель: черта разграничивает, а не солирует.
+    QPen pen(appearance().dividerColor);
+    pen.setWidthF(1.0);
+    painter.setPen(pen);
+    const qreal y = rect.center().y();
+    painter.drawLine(QPointF(rect.left(), y), QPointF(rect.right(), y));
+    painter.restore();
+}
+
 }  // namespace zametti

@@ -36,6 +36,9 @@ enum class Kind {
     // Имя не Separator: его лучше приберечь для горизонтальной черты '---'.
     VSpace,
     ListItem,         // marker, checked, level
+    // Тематический разделитель "---". Канонический вывод — ровно "---";
+    // вход "***", "___" и длинные варианты приводятся к нему.
+    Divider,
 };
 
 // Чем помечен пункт. Выполненность — отдельный признак, а не свой вид маркера:
@@ -99,6 +102,11 @@ inline bool wouldMerge(const Block& previous, const Block& next) {
     const bool prevLiteral = !previous.rawSource.empty() || previous.kind == Kind::Code;
     const bool nextLiteral = !next.rawSource.empty() || next.kind == Kind::Code;
     if (prevLiteral && nextLiteral) return true;
+    // Абзац вплотную перед "---" — это setext-заголовок: "текст\n---" читается
+    // заголовком второго уровня, а не абзацем с чертой под ним. Замерено; все
+    // прочие соседства разделителя — пункт, цитата, второй разделитель —
+    // прекрасно стоят вплотную.
+    if (next.kind == Kind::Divider) return previous.kind == Kind::Paragraph;
     if (next.kind != Kind::Paragraph) return false;
     return previous.kind == Kind::Paragraph || previous.kind == Kind::Quote ||
            isList(previous.kind);
