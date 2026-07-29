@@ -218,6 +218,11 @@ bool setImageWidthAtCursor(QTextDocument& doc, QTextCursor& cursor, int width);
 // клипборд кладёт вызывающий. Отказывается, если блок не фотография.
 bool cutImageLineAtCursor(QTextDocument& doc, QTextCursor& cursor);
 
+// Фотография — атом: Backspace в начале строки под ней убирает её целиком
+// (как черту), Delete в конце строки над ней — так же. Каретка не двигается.
+bool deleteImageLineBackward(QTextDocument& doc, QTextCursor& cursor);
+bool deleteImageLineForward(QTextDocument& doc, QTextCursor& cursor);
+
 // Пересчитывает левые поля списочных блоков. Поле зависит от уровня и от ширины
 // маркеров всех родителей, поэтому считать его можно только проходом от начала
 // списка — отсюда же и расширение диапазона до целых прогонов.

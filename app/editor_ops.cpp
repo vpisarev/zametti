@@ -934,14 +934,11 @@ bool setImageWidthAtCursor(QTextDocument& doc, QTextCursor& cursor, int width) {
     return true;
 }
 
-bool cutImageLineAtCursor(QTextDocument& doc, QTextCursor& cursor) {
-    Q_UNUSED(doc);
-    const QTextBlock block = cursor.block();
-    if (!blockImageRef(block).valid) return false;
-
-    // Как в removeLineBlock: позиции и формат выжившего — ДО правки (хэндлы
-    // протухают), формат выжившего ставится явно (Qt при слиянии оставляет
-    // формат не того блока).
+// Убрать блок-строку с текстом целиком — текст и разделитель, не тронув
+// соседей. Как в removeLineBlock: позиции и формат выжившего — ДО правки
+// (хэндлы протухают), формат выжившего ставится явно (Qt при слиянии
+// оставляет формат не того блока). Каретка edit остаётся на месте строки.
+void removeTextLine(QTextCursor& edit, const QTextBlock& block) {
     const QTextBlock after = block.next();
     const QTextBlock before = block.previous();
     const QTextBlockFormat keep =
@@ -950,7 +947,6 @@ bool cutImageLineAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const int at = block.position();
     const int length = block.length();
 
-    QTextCursor edit(cursor);
     if (after.isValid()) {
         edit.setPosition(at);
         edit.setPosition(at + length, QTextCursor::KeepAnchor);
@@ -970,6 +966,41 @@ bool cutImageLineAtCursor(QTextDocument& doc, QTextCursor& cursor) {
         edit.setBlockFormat(QTextBlockFormat());
         edit.setCharFormat(QTextCharFormat());
     }
+}
+
+bool cutImageLineAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+    Q_UNUSED(doc);
+    const QTextBlock block = cursor.block();
+    if (!blockImageRef(block).valid) return false;
+    QTextCursor edit(cursor);
+    removeTextLine(edit, block);
+    cursor = edit;
+    return true;
+}
+
+bool deleteImageLineBackward(QTextDocument& doc, QTextCursor& cursor) {
+    Q_UNUSED(doc);
+    if (cursor.hasSelection() || !cursor.atBlockStart()) return false;
+    const QTextBlock photo = cursor.block().previous();
+    if (!photo.isValid() || !blockImageRef(photo).valid) return false;
+    QTextCursor edit(cursor);
+    removeTextLine(edit, photo);
+    // Каретка — в начале своей строки, поднявшейся на место фотографии.
+    cursor = edit;
+    return true;
+}
+
+bool deleteImageLineForward(QTextDocument& doc, QTextCursor& cursor) {
+    Q_UNUSED(doc);
+    if (cursor.hasSelection()) return false;
+    const QTextBlock block = cursor.block();
+    if (cursor.position() != block.position() + block.length() - 1) return false;
+    const QTextBlock photo = block.next();
+    if (!photo.isValid() || !blockImageRef(photo).valid) return false;
+    const int keepAt = cursor.position();
+    QTextCursor edit(cursor);
+    removeTextLine(edit, photo);
+    edit.setPosition(keepAt);
     cursor = edit;
     return true;
 }

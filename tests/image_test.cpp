@@ -158,7 +158,8 @@ int main(int argc, char** argv) {
         ZT_TRUE("фото вики-вложения имеет прямоугольник", !photo.isEmpty());
         const QPointF grip(photo.right() - 4.0, photo.bottom() - 4.0);
         const QPointF pulled = grip + QPointF(26.0, 9.0);
-        const int expected = qRound(pulled.x() - photo.left());
+        // Математика дельтой: насколько уехала мышь, настолько выросла ширина.
+        const int expected = qRound(photo.width() + 26.0);
 
         QTest::mousePress(editor.viewport(), Qt::LeftButton, {}, grip.toPoint());
         QMouseEvent drag(QEvent::MouseMove, pulled, editor.viewport()->mapToGlobal(pulled),
@@ -304,6 +305,128 @@ int main(int argc, char** argv) {
         }
         ZT_TRUE("хвост фотографии в кадре дорисован",
                 countReddish(frame) > int(photo.width() * photo.bottom() * 0.8));
+    }
+
+    // Левый верхний угол: тянем ВЛЕВО — фотография растёт (дельта от центра).
+    {
+        caretTo(6);
+        const QRectF photo = editor.imageRectInViewport(blockAt(2));
+        const QPointF grip(photo.left() + 3.0, photo.top() + 3.0);
+        const QPointF pulled = grip + QPointF(-15.0, -5.0);
+        const int expected = qRound(photo.width() + 15.0);
+
+        QTest::mousePress(editor.viewport(), Qt::LeftButton, {}, grip.toPoint());
+        QMouseEvent drag(QEvent::MouseMove, pulled, editor.viewport()->mapToGlobal(pulled),
+                         Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(editor.viewport(), &drag);
+        QTest::mouseRelease(editor.viewport(), Qt::LeftButton, {}, pulled.toPoint());
+        QTest::qWait(10);
+        ZT_EQ("левый угол растит ширину",
+              QStringLiteral("![[img.png|%1]]").arg(expected).toStdString(),
+              blockAt(2).text().toStdString());
+        QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+        QTest::qWait(10);
+        ZT_EQ("Ctrl-Z вернул ширину после левого угла", std::string("![[img.png|40]]"),
+              blockAt(2).text().toStdString());
+    }
+
+    // Фотография — атом: свежая заметка, чтобы соседство было предсказуемым.
+    {
+        const char* atomSource =
+            "строка\n"
+            "\n"
+            "![[img.png|40]]\n"
+            "\n"
+            "хвост\n";
+        {
+            std::ofstream out(dir / "а.md", std::ios::binary);
+            out << atomSource;
+        }
+        editor.document()->setModified(false);
+        editor.openFile(QString::fromStdString((dir / "а.md").string()));
+        QTest::qWait(20);
+
+        // Каретка залетела в середину скрытого текста — её сносит к началу.
+        {
+            QTextCursor inside(editor.document());
+            inside.setPosition(blockAt(2).position() + 5);
+            editor.setTextCursor(inside);
+            QTest::qWait(10);
+            ZT_TRUE("каретка внутри фото сведена к началу строки",
+                    editor.textCursor().position() == blockAt(2).position());
+        }
+        // Вправо с начала — прыжок через всю строку; влево обратно — к началу.
+        QTest::keyClick(&editor, Qt::Key_Right);
+        ZT_TRUE("шаг вправо перепрыгивает фото",
+                editor.textCursor().position() == blockAt(3).position());
+        QTest::keyClick(&editor, Qt::Key_Left);
+        ZT_TRUE("шаг влево возвращает к началу фото",
+                editor.textCursor().position() == blockAt(2).position());
+
+        // Backspace на самой строке: атом гибнет целиком, огрызков не остаётся.
+        QTest::keyClick(&editor, Qt::Key_Backspace);
+        QTest::qWait(10);
+        ZT_TRUE("Backspace на фото убрал строку без огрызков",
+                !editor.toPlainText().contains(QStringLiteral("img.png")) &&
+                    !editor.toPlainText().contains(QStringLiteral("[[")));
+        QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+        QTest::qWait(10);
+        ZT_EQ("Ctrl-Z вернул фото-атом", std::string("![[img.png|40]]"),
+              blockAt(2).text().toStdString());
+
+        // Backspace из-под фотографии: пустую строку под фото удалить нельзя
+        // (склеила бы текст со скрытой подписью) — отказ и шаг: каретка встаёт
+        // на фотографию, следующий Backspace убирает её целиком.
+        {
+            QTextCursor below(editor.document());
+            below.setPosition(blockAt(4).position());
+            editor.setTextCursor(below);
+        }
+        QTest::keyClick(&editor, Qt::Key_Backspace);
+        ZT_TRUE("отказ и шаг: каретка встала на фото, документ цел",
+                editor.textCursor().position() == blockAt(2).position() &&
+                    blockAt(2).text() == QStringLiteral("![[img.png|40]]"));
+        QTest::keyClick(&editor, Qt::Key_Backspace);
+        QTest::qWait(10);
+        ZT_TRUE("Backspace снизу: фото ушло атомом, соседи целы",
+                !editor.toPlainText().contains(QStringLiteral("img.png")) &&
+                    editor.toPlainText().contains(QStringLiteral("хвост")) &&
+                    editor.toPlainText().contains(QStringLiteral("строка")));
+        QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+        QTest::qWait(10);
+        ZT_EQ("история вернула фото", std::string("![[img.png|40]]"),
+              blockAt(2).text().toStdString());
+
+        // Delete сверху: то же правило зеркально — отказ и шаг, затем атом.
+        {
+            QTextCursor above(editor.document());
+            above.setPosition(blockAt(0).position() + blockAt(0).length() - 1);
+            editor.setTextCursor(above);
+        }
+        QTest::keyClick(&editor, Qt::Key_Delete);
+        ZT_TRUE("Delete сверху: отказ и шаг на фото",
+                editor.textCursor().position() == blockAt(2).position());
+        QTest::keyClick(&editor, Qt::Key_Delete);
+        QTest::qWait(10);
+        ZT_TRUE("Delete сверху: фото ушло атомом",
+                !editor.toPlainText().contains(QStringLiteral("img.png")) &&
+                    editor.toPlainText().contains(QStringLiteral("строка")));
+
+        // Щелчок по фотографии выбирает её: каретка в начале строки.
+        QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+        QTest::qWait(10);
+        // Щелчок по фотографии выбирает её: каретка в начале строки.
+        QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+        QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+        QTest::qWait(10);
+        const QRectF photo = editor.imageRectInViewport(blockAt(2));
+        ZT_TRUE("фото на месте перед щелчком", !photo.isEmpty());
+        QTest::mouseClick(editor.viewport(), Qt::LeftButton, {},
+                          photo.center().toPoint());
+        QTest::qWait(10);
+        ZT_TRUE("щелчок по фото поставил каретку в начало его строки",
+                editor.textCursor().position() == blockAt(2).position() &&
+                    !editor.textCursor().hasSelection());
     }
 
     return zt::report("картинки в просмотре");

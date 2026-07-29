@@ -18,6 +18,8 @@
 #include <QClipboard>
 #include <QContextMenuEvent>
 #include <QMenu>
+#include <QDesktopServices>
+#include <QUrl>
 #include <QGuiApplication>
 #include <QMessageBox>
 #include <QAbstractTextDocumentLayout>
@@ -89,6 +91,36 @@ NoteEditor::NoteEditor(QWidget* parent)
     externalSettle_.setSingleShot(true);
     connect(&externalSettle_, &QTimer::timeout, this, &NoteEditor::onExternalSettled);
     connect(this, &QTextEdit::cursorPositionChanged, this, &NoteEditor::onCaretMoved);
+    connect(this, &QTextEdit::cursorPositionChanged, this,
+            &NoteEditor::snapCaretOffImage);
+}
+
+// Внутри хитро-отрисованной строки-фотографии каретке делать нечего: любой
+// заход внутрь сводится к началу строки (и фотография показывается выбранной),
+// шаг вправо с её начала перепрыгивает строку целиком. Направление входа
+// различается по прошлой позиции. Действует только на показанные фото: строка
+// без файла — обычный текст.
+void NoteEditor::snapCaretOffImage() {
+    if (snappingCaret_) return;
+    const QTextCursor cursor = textCursor();
+    const int cameFrom = lastCaretPosition_;
+    lastCaretPosition_ = cursor.position();
+    if (cursor.hasSelection()) return;
+    const QTextBlock block = cursor.block();
+    if (cursor.positionInBlock() == 0) return;
+    if (imageRectInViewport(block).isEmpty()) return;
+
+    QTextCursor moved = cursor;
+    if (cameFrom == block.position() && cursor.position() == cameFrom + 1 &&
+        block.next().isValid()) {
+        moved.setPosition(block.next().position());
+    } else {
+        moved.setPosition(block.position());
+    }
+    snappingCaret_ = true;
+    setTextCursor(moved);
+    snappingCaret_ = false;
+    lastCaretPosition_ = moved.position();
 }
 
 // Строка из одних пробелов неотличима глазом от пустой, а ведёт себя как
@@ -478,9 +510,10 @@ QTextBlock NoteEditor::checkboxUnder(const QMouseEvent& event) const {
     return blockAtCheckbox(*document(), point, baseFont());
 }
 
-// Зона угла: квадрат на нижнем правом углу фотографии, с запасом наружу —
-// в пиксель попадать не приходится.
-QTextBlock NoteEditor::imageCornerUnder(const QPoint& pos) {
+// Зона угла: квадрат вокруг каждого из четырёх углов фотографии, наполовину
+// внутри, наполовину снаружи — в пиксель попадать не приходится.
+QTextBlock NoteEditor::imageCornerUnder(const QPoint& pos, bool* onRight,
+                                        bool* onBottom) {
     const int hit = document()->documentLayout()->hitTest(
         QPointF(pos) + QPointF(horizontalScrollBar()->value(),
                                verticalScrollBar()->value()),
@@ -493,9 +526,18 @@ QTextBlock NoteEditor::imageCornerUnder(const QPoint& pos) {
         const QRectF photo = imageRectInViewport(candidate);
         if (!photo.isEmpty()) {
             const qreal grip = qMax(12.0, 10.0 * zoom());
-            const QRectF corner(photo.right() - grip, photo.bottom() - grip,
-                                grip + 4.0, grip + 4.0);
-            if (corner.contains(QPointF(pos))) return candidate;
+            for (int corner = 0; corner < 4; ++corner) {
+                const bool right = (corner & 1) != 0;
+                const bool bottom = (corner & 2) != 0;
+                const QPointF at(right ? photo.right() : photo.left(),
+                                 bottom ? photo.bottom() : photo.top());
+                const QRectF zone(at.x() - grip / 2 - 2, at.y() - grip / 2 - 2,
+                                  grip + 4, grip + 4);
+                if (!zone.contains(QPointF(pos))) continue;
+                if (onRight != nullptr) *onRight = right;
+                if (onBottom != nullptr) *onBottom = bottom;
+                return candidate;
+            }
         }
         candidate = step == 0 ? candidate.previous() : QTextBlock();
     }
@@ -505,26 +547,52 @@ QTextBlock NoteEditor::imageCornerUnder(const QPoint& pos) {
 void NoteEditor::mouseMoveEvent(QMouseEvent* event) {
     if (imageResizeBlock_ >= 0) {
         // Живой примерочный размер; запись — на отпускании.
-        imageResizeWidth_ =
-            qMax(24.0, (event->position().x() - imageResizeLeft_) / zoom());
-        setImageDragWidth(imageResizeBlock_, imageResizeWidth_);
+        const qreal delta =
+            imageResizeSign_ * (event->position().x() - imageResizePressX_) / zoom();
+        setImageDragWidth(imageResizeBlock_, qMax(24.0, imageResizeStart_ + delta));
         event->accept();
         return;
     }
-    const bool hover = imageCornerUnder(event->position().toPoint()).isValid();
-    if (hover != imageHoverCorner_) {
+    bool right = false;
+    bool bottom = false;
+    const bool hover =
+        imageCornerUnder(event->position().toPoint(), &right, &bottom).isValid();
+    if (hover != imageHoverCorner_ || hover) {
         imageHoverCorner_ = hover;
-        viewport()->setCursor(hover ? Qt::SizeFDiagCursor : Qt::IBeamCursor);
+        // Диагональ курсора — по углу: ↘ у главной диагонали, ↗ у побочной.
+        viewport()->setCursor(!hover ? Qt::IBeamCursor
+                              : right == bottom ? Qt::SizeFDiagCursor
+                                                : Qt::SizeBDiagCursor);
     }
     if (hover) {
         event->accept();
         return;
+    }
+    // Ладонь над ссылкой при зажатом Ctrl: знак, что клик её откроет.
+    if (!imageHoverCorner_) {
+        const bool overLink = (event->modifiers() & Qt::ControlModifier) != 0 &&
+                              !anchorAt(event->position().toPoint()).isEmpty();
+        viewport()->setCursor(overLink ? Qt::PointingHandCursor : Qt::IBeamCursor);
     }
     NoteView::mouseMoveEvent(event);
 }
 
 void NoteEditor::mouseReleaseEvent(QMouseEvent* event) {
     if (imageResizeBlock_ < 0) {
+        // Ctrl+клик по ссылке — открыть адрес. Qt в редактируемом виджете
+        // ссылок сам не активирует (замерено пробником: anchorClicked молчит
+        // и в чистом QTextBrowser), поэтому сверка нажатия и отпускания своя.
+        if (!pressedAnchor_.isEmpty() &&
+            (event->modifiers() & Qt::ControlModifier) != 0 &&
+            anchorAt(event->position().toPoint()) == pressedAnchor_ &&
+            !textCursor().hasSelection()) {
+            const QString anchor = pressedAnchor_;
+            pressedAnchor_.clear();
+            QDesktopServices::openUrl(QUrl::fromUserInput(anchor));
+            event->accept();
+            return;
+        }
+        pressedAnchor_.clear();
         NoteView::mouseReleaseEvent(event);
         return;
     }
@@ -547,17 +615,46 @@ void NoteEditor::mouseReleaseEvent(QMouseEvent* event) {
 }
 
 void NoteEditor::mousePressEvent(QMouseEvent* event) {
-    const QTextBlock corner = event->button() == Qt::LeftButton
-                                  ? imageCornerUnder(event->position().toPoint())
-                                  : QTextBlock();
+    // Нажатие на ссылке запоминается: отпускание с Ctrl на том же адресе
+    // откроет его (см. mouseReleaseEvent).
+    pressedAnchor_ = event->button() == Qt::LeftButton
+                         ? anchorAt(event->position().toPoint())
+                         : QString();
+
+    bool onRight = false;
+    bool onBottom = false;
+    const QTextBlock corner =
+        event->button() == Qt::LeftButton
+            ? imageCornerUnder(event->position().toPoint(), &onRight, &onBottom)
+            : QTextBlock();
     if (corner.isValid()) {
         const QRectF photo = imageRectInViewport(corner);
         imageResizeBlock_ = corner.blockNumber();
-        imageResizeLeft_ = photo.left();
+        imageResizePressX_ = event->position().x();
+        imageResizeSign_ = onRight ? 1.0 : -1.0;
         imageResizeStart_ = photo.width() / zoom();
-        imageResizeWidth_ = imageResizeStart_;
         event->accept();
         return;   // каретка остаётся где была: человек взялся за угол, не за текст
+    }
+
+    // Щелчок по фотографии выбирает её: каретка в начало строки, а не в
+    // случайное место скрытого текста.
+    if (event->button() == Qt::LeftButton &&
+        (event->modifiers() & Qt::ShiftModifier) == 0) {
+        const int hitAt = document()->documentLayout()->hitTest(
+            QPointF(event->position()) + QPointF(horizontalScrollBar()->value(),
+                                                 verticalScrollBar()->value()),
+            Qt::FuzzyHit);
+        QTextBlock under = hitAt >= 0 ? document()->findBlock(hitAt) : QTextBlock();
+        for (int step = 0; step < 2 && under.isValid(); ++step) {
+            const QRectF photo = imageRectInViewport(under);
+            if (!photo.isEmpty() && photo.contains(event->position())) {
+                setTextCursor(QTextCursor(under));
+                event->accept();
+                return;
+            }
+            under = step == 0 ? under.previous() : QTextBlock();
+        }
     }
 
     const QTextBlock hit = checkboxUnder(*event);
@@ -639,6 +736,22 @@ void NoteEditor::keepColumnAcrossMargins(QKeyEvent* event) {
 }
 
 void NoteEditor::keyPressEvent(QKeyEvent* event) {
+    // Голое нажатие модификатора ничего не редактирует и каретку не двигает, а
+    // хвостовой keepCaretOffEdge прокручивал бы вид к ней: нажал Ctrl перед
+    // Ctrl+кликом — и текст упрыгал к каретке. Мимо всей обработки.
+    switch (event->key()) {
+        case Qt::Key_Control:
+        case Qt::Key_Shift:
+        case Qt::Key_Alt:
+        case Qt::Key_AltGr:
+        case Qt::Key_Meta:
+        case Qt::Key_CapsLock:
+            NoteView::keyPressEvent(event);
+            return;
+        default:
+            break;
+    }
+
     // Отмену обрабатываем здесь, а не ярлыком окна: QTextEdit объявляет Ctrl+Z
     // своим и глотает его — ярлык не срабатывает ни разу. Собственная история у
     // нас всё равно своя, так что и клавиша должна быть нашей.
@@ -686,6 +799,52 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
         applyIrEdit(toggleCodeBlock(*document(), textCursor()));
         return;
     }
+    // Фотография — атом, как черта: Backspace и Delete не грызут её скрытый
+    // текст по буквам, а убирают строку целиком. Правило действует, только
+    // когда фото показано (файл читается) — иначе строка это видимый текст и
+    // правится как текст.
+    if ((event->key() == Qt::Key_Backspace || event->key() == Qt::Key_Delete) &&
+        event->modifiers() == Qt::NoModifier && !textCursor().hasSelection()) {
+        const QTextBlock own = textCursor().block();
+        if (!imageRectInViewport(own).isEmpty()) {
+            runOperation(cutImageLineAtCursor);
+            return;
+        }
+        if (event->key() == Qt::Key_Backspace && textCursor().atBlockStart() &&
+            own.previous().isValid() &&
+            !imageRectInViewport(own.previous()).isEmpty() &&
+            runOperation(deleteImageLineBackward))
+            return;
+        if (event->key() == Qt::Key_Delete && own.next().isValid() &&
+            !imageRectInViewport(own.next()).isEmpty() &&
+            runOperation(deleteImageLineForward))
+            return;
+
+        // Пустая строка, отделяющая фотографию от непустого текста, неудаляема:
+        // её гибель склеила бы текст со скрытой подписью, и фото рассыпалось бы
+        // в огрызок разметки. Отказ и шаг, как у черты: каретка встаёт на
+        // фотографию (выбирает её), следующее нажатие убирает её целиком.
+        if (event->key() == Qt::Key_Backspace && textCursor().atBlockStart() &&
+            own.previous().isValid() && isVSpaceBlock(own.previous())) {
+            const QTextBlock photo = own.previous().previous();
+            if (photo.isValid() && !imageRectInViewport(photo).isEmpty() &&
+                blocksWouldMerge(photo, own)) {
+                setTextCursor(QTextCursor(photo));
+                return;
+            }
+        }
+        if (event->key() == Qt::Key_Delete &&
+            textCursor().position() == own.position() + own.length() - 1 &&
+            own.next().isValid() && isVSpaceBlock(own.next())) {
+            const QTextBlock photo = own.next().next();
+            if (photo.isValid() && !imageRectInViewport(photo).isEmpty() &&
+                blocksWouldMerge(own, photo)) {
+                setTextCursor(QTextCursor(photo));
+                return;
+            }
+        }
+    }
+
     if (event->key() == Qt::Key_Backspace && event->modifiers() == Qt::NoModifier) {
         if (runOperation(unwrapListItemAtCursor)) return;
         // Черта прямо над кареткой удаляется — это удаление назад: гибнет то,
