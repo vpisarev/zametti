@@ -392,8 +392,13 @@ void NoteView::paintEvent(QPaintEvent* event) {
     // заметке в тысячу блоков это уже заметно.
     const QAbstractTextDocumentLayout* layout = document()->documentLayout();
     const int firstVisible = layout->hitTest(QPointF(0, visible.top()), Qt::FuzzyHit);
-    for (QTextBlock block = document()->findBlock(firstVisible); block.isValid();
-         block = block.next()) {
+    QTextBlock start = document()->findBlock(firstVisible);
+    // Шаг назад: когда в кадр сверху въехала только фотография (нижнее поле
+    // блока), hitTest по верхней кромке отдаёт уже следующий блок — и без
+    // шага картинка пропадала бы целиком, стоило её верху выйти из кадра.
+    // Дальше одного блока поле не тянется: следующий блок начинается под ним.
+    if (start.isValid() && start.previous().isValid()) start = start.previous();
+    for (QTextBlock block = start; block.isValid(); block = block.next()) {
         const QRectF rect = layout->blockBoundingRect(block);
         if (rect.top() > visible.bottom()) break;
         // Фотография живёт в нижнем поле блока и может быть видна, когда сама

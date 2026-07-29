@@ -25,6 +25,7 @@
 #include <QImage>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QScrollBar>
 #include <QTest>
 #include <QTextBlock>
 #include <QTextCursor>
@@ -273,6 +274,36 @@ int main(int argc, char** argv) {
             ZT_TRUE("вставленный спан — фотография с шириной из #w=",
                     ref.valid && !ref.wiki && qRound(ref.widthHint) == 33);
         }
+    }
+
+    // Прокрутка: верх фотографии ушёл за кадр — остальная часть обязана
+    // остаться на экране (hitTest по верхней кромке отдаёт следующий блок,
+    // без шага назад картинка пропадала целиком).
+    {
+        QTextCursor cursor(blockAt(0));
+        editor.setTextCursor(cursor);
+        zametti::setImageWidthAtCursor(*editor.document(), cursor, 400);
+        QTest::qWait(20);
+        caretTo(6);   // тонировка от каретки не должна мешать замеру красного
+
+        QRectF photo = editor.imageRectInViewport(blockAt(0));
+        ZT_TRUE("фотография раздута до 400", photo.height() > 300.0);
+        // Прокрутить так, чтобы верх фото был выше кадра на треть высоты.
+        editor.verticalScrollBar()->setValue(
+            editor.verticalScrollBar()->value() + int(photo.top() + photo.height() / 3));
+        QTest::qWait(20);
+        photo = editor.imageRectInViewport(blockAt(0));
+        ZT_TRUE("верх фото действительно за кадром",
+                photo.top() < 0.0 && photo.bottom() > 0.0);
+
+        QImage frame(editor.viewport()->size(), QImage::Format_RGB32);
+        frame.fill(Qt::white);
+        {
+            QPainter painter(&frame);
+            editor.viewport()->render(&painter);
+        }
+        ZT_TRUE("хвост фотографии в кадре дорисован",
+                countReddish(frame) > int(photo.width() * photo.bottom() * 0.8));
     }
 
     return zt::report("картинки в просмотре");
