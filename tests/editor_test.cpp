@@ -705,6 +705,37 @@ void checkCodeAtEdge() {
           "после выхода из кода кегль возвращается заголовочный");
 }
 
+// Набор на пустой строке и отмена: каретка обязана вернуться на эту строку.
+// Записанное смещение каретки живёт в координатах отменяемого документа, и
+// без отображения через префикс/суффикс каретка прыгала на пару строк вниз —
+// ровно на длину набранного.
+void checkUndoReturnsToBlankLine() {
+    const QString path = writeNote("отмена-на-пустой.md", QStringLiteral("а\n\n\n\nб\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    QTextCursor cursor(editor.document());
+    cursor.setPosition(editor.document()->findBlockByNumber(2).position());
+    editor.setTextCursor(cursor);
+    QTest::keyClicks(&editor, QStringLiteral("xyz"));
+    QTest::qWait(10);
+    QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+    QTest::qWait(10);
+
+    checkEqual(QStringLiteral("а\n\n\n\nб\n"),
+               QString::fromStdString(
+                   zametti::serialize(zametti::readDocument(*editor.document()))),
+               "отмена вернула документ");
+    checkEqual(QStringLiteral("2"), QString::number(editor.textCursor().blockNumber()),
+               "каретка вернулась на свою пустую строку");
+}
+
 // Щелчок по чекбоксу — самый ходовой способ отметить задачу. Проверяется
 // настоящим щелчком по вьюпорту, а не вызовом операции: попадание считается по
 // геометрии рамки, и ошибиться в ней проще всего именно там.
@@ -1689,6 +1720,7 @@ int main(int argc, char** argv) {
     checkSizeAfterSoftBreak();
     checkCodeTyping();
     checkCodeAtEdge();
+    checkUndoReturnsToBlankLine();
     checkCheckboxClick();
     checkScrollHolds();
     checkScrollHoldsWhenBlockChangesHeight();

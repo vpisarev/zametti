@@ -207,14 +207,37 @@ void NoteEditor::showEditPlace(int scrollBefore) {
 
 void NoteEditor::undo() {
     const int scrollBefore = verticalScrollBar()->value();
-    // Курсор ставим туда, где была отменяемая правка, а не туда, где он стоял в
-    // возвращаемом состоянии. Разница видна сразу: у только что открытого файла
-    // в первом шаге записан ноль, и первая же отмена швыряла курсор в начало
-    // заметки.
-    const int where = history_.current().cursor;
+    // Курсор ставим туда, где была отменяемая правка, — но её позиция записана
+    // в координатах ОТМЕНЯЕМОГО документа, а вернём мы другой. Отображаем
+    // через общий префикс и суффикс плоских текстов: до префикса позиции
+    // совпадают, после суффикса сдвинуты на разницу длин, а внутри изменённой
+    // зоны каретка идёт к началу расхождения. Голое записанное смещение
+    // промахивалось: правка добавила знаки выше каретки — и в более коротком
+    // возвращённом документе каретка прыгала на пару строк вниз.
+    const int recorded = history_.current().cursor;
+    const QString undonePlain = document()->toPlainText();
     const HistoryStep* step = history_.undo();
     if (step == nullptr) return;
-    rebuild(step->doc, where, viewAnchor());
+    rebuild(step->doc, 0, viewAnchor());
+    const QString restoredPlain = document()->toPlainText();
+
+    const int shared = int(qMin(undonePlain.size(), restoredPlain.size()));
+    int prefix = 0;
+    while (prefix < shared && undonePlain.at(prefix) == restoredPlain.at(prefix)) ++prefix;
+    int suffix = 0;
+    while (suffix < shared - prefix &&
+           undonePlain.at(undonePlain.size() - 1 - suffix) ==
+               restoredPlain.at(restoredPlain.size() - 1 - suffix))
+        ++suffix;
+
+    int where = prefix;
+    if (recorded <= prefix) where = recorded;
+    else if (recorded >= int(undonePlain.size()) - suffix)
+        where = recorded + int(restoredPlain.size()) - int(undonePlain.size());
+    QTextCursor cursor(document());
+    cursor.setPosition(qBound(0, where, int(document()->characterCount()) - 1));
+    setTextCursor(cursor);
+
     // Вид держится сам, но отменённая правка может оказаться за окном — тогда
     // её надо показать: человек нажал отмену, чтобы увидеть результат.
     showEditPlace(scrollBefore);
