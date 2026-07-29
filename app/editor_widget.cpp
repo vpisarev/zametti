@@ -393,9 +393,24 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
         applyIrEdit(toggleCodeBlock(*document(), textCursor()));
         return;
     }
-    if (event->key() == Qt::Key_Backspace && event->modifiers() == Qt::NoModifier &&
-        (runOperation(unwrapListItemAtCursor) || runOperation(joinAcrossVSpaceBackward)))
-        return;
+    if (event->key() == Qt::Key_Backspace && event->modifiers() == Qt::NoModifier) {
+        if (runOperation(unwrapListItemAtCursor) || runOperation(joinAcrossVSpaceBackward))
+            return;
+        // Каретка на самой черте, а выше не пустая строка: удалять назад
+        // нечего — сливать черту с текстом нельзя, а сама она стоит ПОД
+        // кареткой, её удаляет Delete, а не Backspace. Просто шаг вверх.
+        const QTextBlock atBlock = textCursor().block();
+        if (!textCursor().hasSelection() && !isRawBlock(atBlock) &&
+            kindOf(atBlock) == Kind::Divider) {
+            const QTextBlock prev = atBlock.previous();
+            if (prev.isValid()) {
+                QTextCursor up = textCursor();
+                up.setPosition(prev.position() + prev.length() - 1);
+                setTextCursor(up);
+            }
+            return;
+        }
+    }
     // Delete у пустой строки — то же самое с другой стороны: строка исчезает, а
     // соседи, которым markdown не даёт стоять раздельно, сливаются.
     if (event->key() == Qt::Key_Delete && event->modifiers() == Qt::NoModifier &&

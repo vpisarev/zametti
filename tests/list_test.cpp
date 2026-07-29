@@ -440,6 +440,26 @@ const Case kInsideItemCases[] = {
 // строке над ней не съедает ни строку, ни черту (абзац вплотную над чертой —
 // это уже setext-заголовок): каретка просто уходит выше. На этом Backspace
 // черта и терялась, пока пробник не показал.
+// Backspace — удаление НАЗАД: посреди прогона пустых строк исчезает строка
+// выше, и каретка уходит вверх. Оставаться на месте, съедая нижнее, — это
+// Delete, и ровно так оно по ошибке и работало.
+const Case kBackspaceUpCases[] = {
+    {"Backspace на средней из трёх пустых уходит вверх",
+     "а\n\n\n\nб\n",
+     2, 0, {key("Backspace")},
+     "а\n\n\nб\n", 1},
+
+    {"Backspace на черте уходит на пустую строку над ней",
+     "до\n\n---\n",
+     2, 0, {key("Backspace")},
+     "до\n\n---\n", 1},
+
+    {"Backspace на черте под заголовком ничего не удаляет",
+     "# з\n---\n",
+     1, 0, {key("Backspace")},
+     "# з\n---\n", 0},
+};
+
 const Case kDividerCases[] = {
     {"три дефиса и пробел делают черту в конце заметки",
      "до\n",
@@ -758,6 +778,7 @@ int main(int argc, char** argv) {
     for (const Case& c : kHeadingCases) run(c);
     for (const Case& c : kBlankLineAfterItemCases) run(c);
     for (const Case& c : kDividerCases) run(c);
+    for (const Case& c : kBackspaceUpCases) run(c);
     checkUndo();
     checkListRhythm();
     checkKindRoundTripKeepsPlace();

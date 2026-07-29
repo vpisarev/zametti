@@ -1343,12 +1343,17 @@ void joinWithNext(QTextDocument& doc, QTextCursor& edit, int number) {
 // нормализующий проход тут же вернул бы на место, и клавиша выглядела бы
 // сломанной. А слитые половинки — ровно то, что человек и видит: две строки
 // подряд без пустой между ними.
-bool removeVSpaceAndMaybeJoin(QTextDocument& doc, QTextCursor& cursor, int gapNumber) {
+// backspace — зовут удалением назад: у прогона пустых строк это значит «строка
+// выше исчезает, каретка уходит вверх», а не «нижняя подтягивается на место».
+bool removeVSpaceAndMaybeJoin(QTextDocument& doc, QTextCursor& cursor, int gapNumber,
+                              bool backspace = false) {
     const QTextBlock gap = doc.findBlockByNumber(gapNumber);
     if (!isVSpaceBlock(gap)) return false;
     const QTextBlock before = gap.previous();
     const QTextBlock after = gap.next();
     if (!before.isValid() && !after.isValid()) return false;
+    const bool fromGapItself = cursor.blockNumber() == gapNumber;
+    const bool beforeIsBlank = before.isValid() && isVSpaceBlock(before);
 
     // Под пустой строкой пустой же абзац — то есть человек видит две пустых
     // строки подряд. Тогда убираем не саму строку, а этот абзац: одна пустая
@@ -1388,7 +1393,10 @@ bool removeVSpaceAndMaybeJoin(QTextDocument& doc, QTextCursor& cursor, int gapNu
     // документ не меняется.
     if (join && after.isValid() && !isRawBlock(after) && kindOf(after) == Kind::Divider) {
         if (!before.isValid()) return false;
-        cursor.setPosition(before.position() + before.length() - 1);
+        // Куда шагнуть, зависит от того, где стояли: с самой пустой строки —
+        // на конец блока выше неё, с черты — на пустую строку.
+        if (fromGapItself) cursor.setPosition(before.position() + before.length() - 1);
+        else cursor.setPosition(gap.position());
         return true;
     }
 
@@ -1421,11 +1429,15 @@ bool removeVSpaceAndMaybeJoin(QTextDocument& doc, QTextCursor& cursor, int gapNu
     if (join) joinWithNext(doc, edit, gapNumber - 1);
     normalise(doc, around(qMax(0, gapNumber - 1)));
     edit.endEditBlock();
-    // Обычная посадка — на начало того, что стояло под пустой строкой. Но
-    // черта — не текст, вставать на неё после удаления строки неоткуда:
-    // каретка уходит в конец предыдущей, как Backspace и обещает.
-    if (after.isValid() && !isRawBlock(after) && kindOf(after) == Kind::Divider &&
-        gapNumber > 0) {
+    // Обычная посадка — на начало того, что стояло под пустой строкой. Два
+    // исключения, оба ведут вверх: черта — не текст, вставать на неё после
+    // удаления строки неоткуда; и Backspace посреди прогона пустых строк —
+    // удаление назад, каретка обязана уйти на строку выше, а не остаться на
+    // месте, как от Delete.
+    const bool landUp =
+        (after.isValid() && !isRawBlock(after) && kindOf(after) == Kind::Divider) ||
+        (backspace && fromGapItself && beforeIsBlank);
+    if (landUp && gapNumber > 0) {
         const QTextBlock landed = doc.findBlockByNumber(gapNumber - 1);
         cursor.setPosition(landed.position() + landed.length() - 1);
     } else {
@@ -1562,11 +1574,11 @@ bool joinAcrossVSpaceBackward(QTextDocument& doc, QTextCursor& cursor) {
     // в конец предыдущей — как в любом редакторе.
     if (isVSpaceBlock(block)) {
         if (!block.previous().isValid()) return false;   // выше ничего нет
-        return removeVSpaceAndMaybeJoin(doc, cursor, block.blockNumber());
+        return removeVSpaceAndMaybeJoin(doc, cursor, block.blockNumber(), true);
     }
     const QTextBlock gap = block.previous();
     if (!isVSpaceBlock(gap)) return false;
-    return removeVSpaceAndMaybeJoin(doc, cursor, gap.blockNumber());
+    return removeVSpaceAndMaybeJoin(doc, cursor, gap.blockNumber(), true);
 }
 
 bool joinAcrossVSpaceForward(QTextDocument& doc, QTextCursor& cursor) {
