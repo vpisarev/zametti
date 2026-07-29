@@ -966,27 +966,45 @@ void checkBackspaceProperties() {
             }
             const QString path = writeNote("свойства.md", src);
 
+            // Режим 1: сначала стереть текст блока до ПУСТОГО АБЗАЦА — это
+            // состояние не существует в файлах и рождается только в редакторе;
+            // ровно в нём пряталась ветка, стрелявшая вне своей зоны.
+            for (int mode = 0; mode < 2; ++mode)
             for (int block = 0;; ++block) {
                 editor.openFile(path);
                 const QTextBlock target = editor.document()->findBlockByNumber(block);
                 if (!target.isValid()) break;
                 QTextCursor cursor(editor.document());
-                cursor.setPosition(target.position());
-                editor.setTextCursor(cursor);
+                if (mode == 1) {
+                    const int len = target.length() - 1;
+                    if (len == 0) continue;   // пустые и черты стирать нечего
+                    cursor.setPosition(target.position() + len);
+                    editor.setTextCursor(cursor);
+                    for (int k = 0; k < len; ++k)
+                        QTest::keyClick(&editor, Qt::Key_Backspace);
+                    // Дальше проверяется одно СТРУКТУРНОЕ нажатие с пустого
+                    // абзаца; сам блок для отчёта берём заново — старый протух.
+                } else {
+                    cursor.setPosition(target.position());
+                    editor.setTextCursor(cursor);
+                }
+                const QTextBlock at =
+                    editor.document()->findBlockByNumber(editor.textCursor().blockNumber());
 
                 const auto [div0, blank0, text0] = snapshot(*editor.document());
-                const QTextBlock above = target.previous();
+                const QTextBlock above = at.previous();
                 const bool dividerAbove = above.isValid() && !zametti::isRawBlock(above) &&
                                           zametti::kindOf(above) == zametti::Kind::Divider;
                 // Считаем ДО нажатия: после правки хэндл блока протухает.
-                const bool onDivider = !zametti::isRawBlock(target) &&
-                                       zametti::kindOf(target) == zametti::Kind::Divider;
+                const bool onDivider = !zametti::isRawBlock(at) &&
+                                       zametti::kindOf(at) == zametti::Kind::Divider;
                 QTest::keyClick(&editor, Qt::Key_Backspace);
                 const auto [div1, blank1, text1] = snapshot(*editor.document());
                 const int landed = editor.textCursor().blockNumber();
 
-                const std::string tag = QStringLiteral("[%1] блок %2: ")
+                const std::string tag = QStringLiteral("[%1] режим %2 блок %3: ")
                                             .arg(src)
+                                            .arg(mode)
                                             .arg(block)
                                             .replace(QStringLiteral("\n"), QStringLiteral("|"))
                                             .toStdString();
@@ -996,6 +1014,8 @@ void checkBackspaceProperties() {
                             (div0 - div1) + (blank0 - blank1) <= 1);
                 ZT_TRUE(tag + "черта удаляется, только над кареткой или под ней",
                         div1 == div0 || dividerAbove || onDivider);
+                // Стирание текста блок не двигает: и в режиме 1 каретка перед
+                // структурным нажатием стоит в блоке под тем же номером.
                 ZT_TRUE(tag + "каретка не уехала вниз", landed <= block);
 
                 // Ровно путь записи: с нормализацией documentForFile — файл,
