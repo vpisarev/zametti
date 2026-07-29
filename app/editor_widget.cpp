@@ -118,13 +118,63 @@ void NoteEditor::onCaretMoved() {
     lastLine_ = textCursor();
 }
 
+// Хвостовые пробелы — везде, кроме строки каретки, кода и дословных кусков.
+// Один проход по документу после каждой правки: где бы правка ни насорила,
+// подметается всё разом — искать «все места» не приходится.
+void NoteEditor::tidySweep(const QTextCursor& caret) {
+    if (tidying_) return;
+    const int caretBlock = caret.blockNumber();
+    int caretLine = 0;
+    {
+        const QString text = caret.block().text();
+        for (int i = 0; i < caret.positionInBlock() && i < text.size(); ++i)
+            if (text.at(i) == QChar::LineSeparator) ++caretLine;
+    }
+
+    // Сначала собрать, потом резать с конца: позиции не плывут.
+    std::vector<std::pair<int, int>> cuts;
+    for (QTextBlock block = document()->begin(); block.isValid(); block = block.next()) {
+        if (isRawBlock(block)) continue;
+        const Kind kind = kindOf(block);
+        if (kind == Kind::Code) continue;
+        const QString text = block.text();
+        int line = 0;
+        int lineStart = 0;
+        for (int i = 0; i <= text.size(); ++i) {
+            if (i != text.size() && text.at(i) != QChar::LineSeparator) continue;
+            if (!(block.blockNumber() == caretBlock && line == caretLine)) {
+                int cut = i;
+                while (cut > lineStart && (text.at(cut - 1) == QLatin1Char(' ') ||
+                                           text.at(cut - 1) == QLatin1Char('\t')))
+                    --cut;
+                if (cut < i) cuts.push_back({block.position() + cut, block.position() + i});
+            }
+            lineStart = i + 1;
+            ++line;
+        }
+    }
+    if (cuts.empty()) return;
+
+    tidying_ = true;
+    QTextCursor edit(document());
+    edit.beginEditBlock();
+    for (auto it = cuts.rbegin(); it != cuts.rend(); ++it) {
+        edit.setPosition(it->first);
+        edit.setPosition(it->second, QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+    }
+    edit.endEditBlock();
+    tidying_ = false;
+}
+
 void NoteEditor::tidyLeftLine(const QTextCursor& left) {
     const QTextBlock block = left.block();
     if (!block.isValid() || isRawBlock(block)) return;
     const Kind kind = kindOf(block);
-    // Пустую строку чистим тоже: на ней могли пожить пробелы. Кода не трогаем
-    // (хвостовые пробелы там — содержимое), черте чистить нечего.
-    if (kind == Kind::Code || kind == Kind::Divider) return;
+    // Пустую строку и черту чистим тоже: на них могли пожить пробелы, пока
+    // каретка там стояла. Не трогаем только код: там хвостовые пробелы —
+    // содержимое.
+    if (kind == Kind::Code) return;
 
     const QString text = block.text();
     // Границы строки, на которой стояла каретка.
@@ -138,18 +188,37 @@ void NoteEditor::tidyLeftLine(const QTextCursor& left) {
     while (cut > from && (text.at(cut - 1) == QLatin1Char(' ') ||
                           text.at(cut - 1) == QLatin1Char('\t')))
         --cut;
-    if (cut == to) return;
+    const bool emptied = cut == from;
+    // Пустая ХВОСТОВАЯ строка многострочного блока — мусор от удаления: при
+    // сохранении она затвердела бы в неразрывный пробел. Отрезаем её в
+    // настоящую пустую строку. Серединные пустые не трогаем: ими человек
+    // намеренно отбивает куски внутри блока.
+    const bool tailOfBlock = to == text.size();
+    if (cut == to && !(emptied && tailOfBlock && from > 0)) return;
 
     tidying_ = true;
     QTextCursor edit(document());
     edit.beginEditBlock();
-    edit.setPosition(block.position() + cut);
-    edit.setPosition(block.position() + to, QTextCursor::KeepAnchor);
-    edit.removeSelectedText();
-    // Строка (и весь блок) опустела: это настоящая пустая строка. Уровень и
-    // прочее снимаем — пустая строка ничья.
+    if (cut < to) {
+        edit.setPosition(block.position() + cut);
+        edit.setPosition(block.position() + to, QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+    }
     const QTextBlock after = edit.block();
-    if (after.text().isEmpty() && kind == Kind::Paragraph) {
+    if (emptied && tailOfBlock && from > 0) {
+        // Снять перенос перед опустевшей строкой и завести настоящую пустую
+        // строку после блока.
+        edit.setPosition(block.position() + from - 1);
+        edit.setPosition(block.position() + from, QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+        edit.movePosition(QTextCursor::EndOfBlock);
+        edit.insertBlock(vspaceBlockFormat(*document(), false, false));
+        const BlockRange range{qMax(0, block.blockNumber() - 1), block.blockNumber() + 2};
+        syncGaps(*document(), range);
+        syncLists(*document(), range);
+        applyListGeometry(*document(), range);
+    } else if (after.text().isEmpty() && kind == Kind::Paragraph) {
+        // Строка (и весь блок) опустела: это настоящая пустая строка.
         edit.setBlockFormat(vspaceBlockFormat(*document(),
                                               after.previous().isValid() &&
                                                   isVSpaceBlock(after.previous()),
@@ -643,8 +712,15 @@ bool NoteEditor::runOperation(bool (*op)(QTextDocument&, QTextCursor&)) {
     // историю попадать не должны — иначе одно нажатие даст два шага.
     recordingSuspended_ = true;
     const bool handled = op(*document(), cursor);
+    if (!handled) {
+        recordingSuspended_ = false;
+        return false;
+    }
+    // Подметание — внутри транзакции операции, до снимка истории: слияния
+    // внутри операций тоже оставляют хвостовые пробелы, а через
+    // contentsChanged они не проходят.
+    tidySweep(cursor);
     recordingSuspended_ = false;
-    if (!handled) return false;
 
     // Операция трогает содержимое, род и уровень; всё оформление, которое из
     // них следует, пересчитывает сборщик — так ни одно свойство не отстанет.
@@ -891,6 +967,11 @@ void NoteEditor::onContentsChanged() {
     const bool repaired = repairAfterTyping(*document(), cursor);
     recordingSuspended_ = false;
     if (repaired) setTextCursor(cursor);
+
+    // Правка любого вида могла оставить хвостовые пробелы на строках, где
+    // каретки нет, — выделение с удалением, вставка, слияние. Инвариант
+    // владельца: таких строк не существует. Чистим после каждой правки.
+    tidySweep(textCursor());
 
     recordEdit();
     autosave_.start(appearance().autosaveDelayMs);

@@ -146,3 +146,9 @@ target_link_libraries(backspace_flat_test PRIVATE zametti-widgets Qt6::Test zame
 target_include_directories(backspace_flat_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME backspace-flat COMMAND backspace_flat_test)
 set_tests_properties(backspace-flat PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+add_executable(tidy_fuzz_test tidy_fuzz_test.cpp)
+target_link_libraries(tidy_fuzz_test PRIVATE zametti-widgets Qt6::Test zametti-warnings)
+target_include_directories(tidy_fuzz_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME tidy-fuzz COMMAND tidy_fuzz_test)
+set_tests_properties(tidy-fuzz PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

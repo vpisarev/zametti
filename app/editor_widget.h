@@ -162,6 +162,7 @@ private:
     void onContentsChanged();
     void onCaretMoved();
     void tidyLeftLine(const QTextCursor& left);
+    void tidySweep(const QTextCursor& caret);
     void onFileChanged(const QString& path);
     void onExternalSettled();
     // Применяет внешнее содержимое как обычную правку: один шаг истории, и undo

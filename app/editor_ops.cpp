@@ -1785,7 +1785,18 @@ void syncLists(QTextDocument& doc, BlockRange range) {
     std::vector<int> open;
     QTextBlock block = doc.findBlockByNumber(full.first);
     for (int i = full.first; i <= full.last && block.isValid(); ++i, block = block.next()) {
-        if (isVSpaceBlock(block)) continue;   // просторный список — тот же список
+        if (isVSpaceBlock(block)) {
+            // У пустой строки уровня не бывает по построению (levelOf для неё
+            // всегда -1) — застрявшее свойство и отступ вычищаем, чтобы мусор
+            // от правок не жил в документе и не рисовал ложный отступ.
+            if (block.blockFormat().hasProperty(LevelProperty)) {
+                QTextBlockFormat format = block.blockFormat();
+                format.clearProperty(LevelProperty);
+                format.setLeftMargin(0);
+                setBlockFormat(cursor, block, format);
+            }
+            continue;   // просторный список — тот же список
+        }
         if (!isListBlock(block)) {
             const int inside = levelOf(block);
             if (inside < 0) {
@@ -1937,6 +1948,36 @@ bool gapInvariantHolds(const QTextDocument& doc, QString* problem) {
         return false;
     }
     return true;
+}
+
+QString tidyProblem(const QTextDocument& doc, const QTextCursor& caret) {
+    const int caretBlock = caret.blockNumber();
+    int caretLine = 0;
+    {
+        const QString text = caret.block().text();
+        for (int i = 0; i < caret.positionInBlock() && i < text.size(); ++i)
+            if (text.at(i) == QChar::LineSeparator) ++caretLine;
+    }
+    for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {
+        if (isRawBlock(block)) continue;
+        if (kindOf(block) == Kind::Code) continue;
+        const QString text = block.text();
+        int line = 0;
+        int from = 0;
+        for (int i = 0; i <= text.size(); ++i, ++from) {
+            if (i != text.size() && text.at(i) != QChar::LineSeparator) continue;
+            const bool caretHere =
+                block.blockNumber() == caretBlock && line == caretLine;
+            if (!caretHere && i > 0 &&
+                (text.at(i - 1) == QLatin1Char(' ') || text.at(i - 1) == QLatin1Char('\t'))) {
+                return QStringLiteral("блок %1, строка %2: хвостовые пробелы")
+                    .arg(block.blockNumber())
+                    .arg(line);
+            }
+            ++line;
+        }
+    }
+    return {};
 }
 
 void syncLiteralBlocks(QTextDocument& doc, BlockRange range) {

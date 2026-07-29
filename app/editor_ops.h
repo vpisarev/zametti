@@ -247,6 +247,12 @@ int syncGaps(QTextDocument& doc, BlockRange range);
 // Инвариант пустых строк: соседей, которые слиплись бы в файле, в документе нет.
 bool gapInvariantHolds(const QTextDocument& doc, QString* problem = nullptr);
 
+// Инвариант уборки: ни в одной строке документа нет хвостовых пробелов —
+// кроме строки, на которой стоит каретка (пока человек на строке, пробелы
+// живут). Литеральные блоки и код вне закона: там пробелы — содержимое.
+// Возвращает описание первого нарушения; пусто — нарушений нет.
+QString tidyProblem(const QTextDocument& doc, const QTextCursor& caret);
+
 // Инвариант блоков-продолжений: первым в документе продолжение быть не может, и
 // предыдущий блок обязан быть того же рода.
 bool literalInvariantHolds(const QTextDocument& doc, QString* problem = nullptr);

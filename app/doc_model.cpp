@@ -53,7 +53,12 @@ Kind kindOf(const QTextBlock& block) {
 int levelOf(const QTextBlock& block) {
     // Отсутствие свойства и есть «вне списка»: нулевой уровень — настоящий,
     // это верхний уровень списка, и путать их нельзя.
+    //
+    // У пустой строки уровня не бывает ПО ПОСТРОЕНИЮ: пустая строка ничья,
+    // и застрявшее на ней свойство — мусор от правок, а не уровень. Читатели
+    // его не видят, а нормализация вычищает.
     const QTextBlockFormat format = block.blockFormat();
+    if (!isRawBlock(block) && kindOf(block) == Kind::VSpace) return -1;
     return format.hasProperty(LevelProperty) ? format.intProperty(LevelProperty) : -1;
 }
 
