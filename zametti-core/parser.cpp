@@ -723,11 +723,14 @@ size_t firstNonSpace(const char* buf, const Lines& l, size_t i, size_t& indent) 
 }
 
 // Строка-забор: до трёх пробелов, потом три и больше '`' или '~'.
-bool fenceLine(const char* buf, const Lines& l, size_t i) {
+// maxIndent — сколько отступа забор может себе позволить. На верхнем уровне
+// это 3 (глубже — уже отступный код), а внутри пункта списка забор стоит на
+// колонке содержимого пункта плюс те же три: там предел не действует.
+bool fenceLine(const char* buf, const Lines& l, size_t i, size_t maxIndent = 3) {
     size_t indent = 0;
     size_t p = firstNonSpace(buf, l, i, indent);
     size_t e = l.end(i);
-    if (indent > 3 || p >= e) return false;
+    if (indent > maxIndent || p >= e) return false;
     char ch = buf[p];
     if (ch != '`' && ch != '~') return false;
     size_t j = p;
@@ -848,14 +851,21 @@ void finishExtents(Ctx& c) {
             // не показывает вовсе. Если содержимое есть — идём назад от него:
             // между ним и забором могут быть только пустые строки. Если нет —
             // только тогда ищем первый забор вперёд.
+            // Забор кода внутри пункта отступает до колонки содержимого
+            // пункта — предел «не глубже трёх» там не действует. Не узнав
+            // собственный забор, блок присвоил бы себе чужой ниже по файлу, и
+            // все границы поехали бы: ровно так лесенка из пунктов с кодом
+            // задваивала содержимое (ficustut).
+            const size_t fenceIndent =
+                c.doc[i].level >= 0 ? ~size_t(0) : size_t(3);
             size_t fence = kNoOffset;
             if (anchored[i] && first[i] > at) {
                 for (size_t k = first[i]; k-- > at;)
-                    if (fenceLine(c.buf, lines, k)) { fence = k; break; }
+                    if (fenceLine(c.buf, lines, k, fenceIndent)) { fence = k; break; }
             }
             if (fence == kNoOffset) {
                 for (size_t k = at; k < lines.count(); ++k)
-                    if (fenceLine(c.buf, lines, k)) { fence = k; break; }
+                    if (fenceLine(c.buf, lines, k, fenceIndent)) { fence = k; break; }
             }
             first[i] = (fence != kNoOffset) ? fence : at;
             last[i] = first[i] + 1 + contentLines;
