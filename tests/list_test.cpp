@@ -824,6 +824,38 @@ void checkKindRoundTripKeepsPlace() {
 // попадает в шаг истории, и Ctrl+Z возвращает голые дефисы с кареткой сразу
 // за ними — без хвостового пробела и без лишней строки.
 void checkDividerUndo() {
+    // На существующей пустой строке (под кареткой уже есть содержимое): после
+    // создания черты правило уводит каретку на блок ниже, но отмена всё равно
+    // обязана вернуть её к месту правки — сразу за дефисы, а не ниже.
+    {
+        zametti::NoteEditor editor;
+        editor.resize(700, 500);
+        editor.show();
+        QTest::qWait(20);
+        editor.setFocus();
+        const QString path =
+            writeNote("черта-на-пустой.md", QStringLiteral("# з\n\n___\n"));
+        editor.openFile(path);
+        QTest::qWait(20);
+
+        QTextCursor cursor(editor.document());
+        cursor.setPosition(editor.document()->findBlockByNumber(1).position());
+        editor.setTextCursor(cursor);
+        for (int i = 0; i < 3; ++i) QTest::keyClick(&editor, Qt::Key_Minus);
+        QTest::keyClick(&editor, Qt::Key_Space);
+        QTest::qWait(10);
+        ZT_EQ("черта на пустой строке появилась", "# з\n___\n___\n",
+              textOf(editor).toStdString());
+
+        QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+        QTest::qWait(10);
+        const QTextCursor after = editor.textCursor();
+        ZT_EQ("отмена вернула дефисы на пустой строке", "# з\n\\---\n___\n",
+              textOf(editor).toStdString());
+        ZT_TRUE("каретка за дефисами, а не на блоке ниже",
+                after.blockNumber() == 1 && after.atBlockEnd());
+    }
+
     for (const bool viaEnter : {false, true}) {
         zametti::NoteEditor editor;
         editor.resize(700, 500);

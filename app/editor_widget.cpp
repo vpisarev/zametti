@@ -232,8 +232,13 @@ void NoteEditor::undo() {
 
     int where = prefix;
     if (recorded <= prefix) where = recorded;
-    else if (recorded >= int(undonePlain.size()) - suffix)
-        where = recorded + int(restoredPlain.size()) - int(undonePlain.size());
+    else if (recorded >= int(undonePlain.size()) - suffix) {
+        // Хвостовая зона, но не ниже конца изменённого участка: отмена
+        // возвращает к месту правки, а не туда, куда каретка уехала после неё
+        // (правило черты, например, уводит её на блок ниже).
+        const int mapped = recorded + int(restoredPlain.size()) - int(undonePlain.size());
+        where = qMin(mapped, int(restoredPlain.size()) - suffix);
+    }
     QTextCursor cursor(document());
     cursor.setPosition(qBound(0, where, int(document()->characterCount()) - 1));
     setTextCursor(cursor);
