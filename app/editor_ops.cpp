@@ -1152,8 +1152,16 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
         switch (kindOf(block)) {
             case Kind::Heading:
                 // За заголовком идёт обычный текст, а не второй заголовок.
-                next.clearProperty(KindProperty);
-                next.setHeadingLevel(0);
+                //
+                // Но только когда режем по тексту: в начале строки текст целиком
+                // уезжает в НИЖНЮЮ половину, и заголовком перестал бы быть он
+                // сам. Так "## Редактор" превращался в пустой "##" и абзац
+                // "Редактор" — а человек всего лишь хотел отбить заголовок
+                // сверху пустой строкой.
+                if (cursor.positionInBlock() > 0) {
+                    next.clearProperty(KindProperty);
+                    next.setHeadingLevel(0);
+                }
                 break;
             case Kind::Paragraph:
             case Kind::Code:
@@ -1194,6 +1202,11 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
     // печатать пришлось бы не там, а второй Enter заводил бы ещё один пустой
     // пункт вместо разрыва — от этого они и множились.
     const bool atListStart = isListBlock(block) && cursor.positionInBlock() == 0;
+    // Enter в начале заголовка отбивает его сверху пустой строкой: заголовок
+    // уезжает вниз целиком, а над ним встаёт пустая строка. Курсор остаётся с
+    // заголовком — человек двигал именно его.
+    const bool atHeadingStart = !literal && kindOf(block) == Kind::Heading &&
+                                cursor.positionInBlock() == 0;
 
     cursor.beginEditBlock();
     // Половинки просто разъезжаются. Пустую строку между ними, если markdown её
@@ -1213,6 +1226,17 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
         headCursor.setPosition(doc.findBlockByNumber(landed - 1).position());
         headCursor.setBlockFormat(head);
     }
+    // Верхняя половина заголовка пуста и заголовком быть не должна: это та самая
+    // пустая строка, ради которой Enter и нажали.
+    if (atHeadingStart && landed > 0) {
+        QTextBlockFormat blank = doc.findBlockByNumber(landed - 1).blockFormat();
+        blank.clearProperty(KindProperty);
+        blank.setHeadingLevel(0);
+        QTextCursor above(&doc);
+        above.setPosition(doc.findBlockByNumber(landed - 1).position());
+        above.setBlockFormat(blank);
+    }
+
     // Место, куда встать, держим курсором: нормализация может завести пустую
     // строку выше, и номер устареет прямо посреди операции.
     QTextCursor above(&doc);
