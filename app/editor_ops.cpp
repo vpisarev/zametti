@@ -1379,13 +1379,15 @@ bool removeVSpaceAndMaybeJoin(QTextDocument& doc, QTextCursor& cursor, int gapNu
     const bool fromGap = cursor.blockNumber() == gapNumber;
 
     // Под пустой строкой пустой же абзац — человек видит две пустых строки
-    // подряд. Убираем не строку, а этот абзац: одна пустая остаётся, как и
-    // ждут от Backspace. Сливать нельзя: между пунктом и абзацем пустая строка
-    // обязательна, и слияние съедало обе строки разом. Черта тоже пуста, но
-    // пустым абзацем не является.
+    // подряд, и одна из них дубль. Ветка применима, ТОЛЬКО когда обычный путь
+    // сломал бы: сосед сверху слипается с пустым абзацем (пункт, абзац,
+    // цитата), и слияние утащило бы пустой абзац внутрь — обе строки исчезали
+    // разом. Если соседство законно (черта, заголовок), работает общий путь:
+    // гибнет то, что над кареткой. Черта тоже пуста, но абзацем не является.
+    const bool caretOnAfter = after.isValid() && cursor.blockNumber() == after.blockNumber();
     if (after.isValid() && !isRawBlock(after) && after.text().isEmpty() &&
         !isVSpaceBlock(after) && !isListBlock(after) && kindOf(after) != Kind::Divider &&
-        before.isValid()) {
+        before.isValid() && blocksWouldMerge(before, after) && (fromGap || caretOnAfter)) {
         QTextCursor edit(&doc);
         edit.beginEditBlock();
         edit.setPosition(after.position() - 1);
@@ -1395,8 +1397,14 @@ bool removeVSpaceAndMaybeJoin(QTextDocument& doc, QTextCursor& cursor, int gapNu
         edit.setBlockFormat(vspaceBlockFormat(doc, isVSpaceBlock(before), gapNumber == 0));
         normalise(doc, around(gapNumber));
         edit.endEditBlock();
-        const QTextBlock landed = doc.findBlockByNumber(qMax(0, gapNumber - 1));
-        cursor.setPosition(landed.position() + landed.length() - 1);
+        if (caretOnAfter && !fromGap) {
+            // Каретка стояла на пустом абзаце: остаётся на пустой строке,
+            // вставшей на его место, — а не прыгает через неё вверх.
+            cursor.setPosition(doc.findBlockByNumber(gapNumber).position());
+        } else {
+            const QTextBlock landed = doc.findBlockByNumber(qMax(0, gapNumber - 1));
+            cursor.setPosition(landed.position() + landed.length() - 1);
+        }
         return true;
     }
 
