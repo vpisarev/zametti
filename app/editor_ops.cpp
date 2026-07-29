@@ -1573,6 +1573,12 @@ bool repairAfterTyping(QTextDocument& doc, QTextCursor& cursor) {
         !isListBlock(block) && levelOf(block) >= 0 && levelAbove(doc, number) < levelOf(block);
     if (!filled && !mergesAhead && !mergesBehind && !levelJump && !orphan) return false;
 
+    // Слияние соседей меняет разделитель блока на перенос строки В ТОЧКЕ
+    // каретки; без этого флага каретка уезжала за вставленный перенос, и
+    // продолжение набора ложилось в начало нижней строки.
+    const bool kept = cursor.keepPositionOnInsert();
+    cursor.setKeepPositionOnInsert(true);
+
     QTextCursor edit(&doc);
     edit.beginEditBlock();
     if (filled) {
@@ -1595,6 +1601,10 @@ bool repairAfterTyping(QTextDocument& doc, QTextCursor& cursor) {
 
     normalise(doc, around(qMax(0, number - 1)));
     edit.endEditBlock();
+    cursor.setKeepPositionOnInsert(kept);
+    // Позицию флаг удержал, а якорь уехал за вставленный перенос — каретка
+    // обязана остаться схлопнутой, иначе следующий знак заменит перенос.
+    cursor.setPosition(cursor.position());
     return true;
 }
 

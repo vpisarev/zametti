@@ -445,6 +445,22 @@ const Case kInsideItemCases[] = {
 // Backspace — удаление НАЗАД: посреди прогона пустых строк исчезает строка
 // выше, и каретка уходит вверх. Оставаться на месте, съедая нижнее, — это
 // Delete, и ровно так оно по ошибке и работало.
+// Набор на пустой строке между абзацами: соседи сливаются в один блок (строки
+// как стояли, так и стоят), а каретка обязана остаться у набранного — она
+// уезжала за вставленный при слиянии перенос, и продолжение набора ложилось в
+// начало нижней строки.
+const Case kTypeOnBlankCases[] = {
+    {"набор на пустой между абзацами не разъезжается",
+     "до\n\nпосле\n",
+     1, 0, {type("a"), type("b"), type("c")},
+     "до\nabc\nпосле\n", 0},
+
+    {"дефисы на пустой между абзацами остаются вместе",
+     "до\n\nпосле\n",
+     1, 0, {type("-"), type("-"), type("-")},
+     "до\n\\---\nпосле\n", 0},
+};
+
 const Case kBackspaceUpCases[] = {
     {"Backspace на средней из трёх пустых уходит вверх",
      "а\n\n\n\nб\n",
@@ -1028,6 +1044,7 @@ int main(int argc, char** argv) {
     for (const Case& c : kHeadingCases) run(c);
     for (const Case& c : kBlankLineAfterItemCases) run(c);
     for (const Case& c : kDividerCases) run(c);
+    for (const Case& c : kTypeOnBlankCases) run(c);
     for (const Case& c : kBackspaceUpCases) run(c);
     checkDividerUndo();
     checkBackspaceProperties();
