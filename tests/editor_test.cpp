@@ -95,6 +95,45 @@ void checkOpenDoesNotTouchFile() {
     checkEqual(source, readFile(path), "открытие заметки не должно её менять");
 }
 
+// Метаданные заметки редактор не видит — их нет в QTextDocument, — но терять
+// при сохранении не имеет права: в parent живёт место заметки в дереве.
+void checkMetaSurvivesEditing() {
+    const QString source = QStringLiteral(
+        "<!-- zametti\n"
+        "parent: 01n6x9k2m4qp\n"
+        "неизвестный: ключ\n"
+        "-->\n"
+        "\n"
+        "# Заголовок\n");
+    const QString path = writeNote("с-метаданными.md", source);
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    check(editor.document()->firstBlock().text() == QStringLiteral("Заголовок"),
+          "метаданных в документе нет, первый блок — заголовок");
+
+    QTextCursor cursor = editor.textCursor();
+    cursor.movePosition(QTextCursor::End);
+    editor.setTextCursor(cursor);
+    editor.insertPlainText(QStringLiteral(" дописан"));
+    QTest::qWait(10);
+    editor.save(false);
+
+    checkEqual(QStringLiteral("<!-- zametti\n"
+                              "parent: 01n6x9k2m4qp\n"
+                              "неизвестный: ключ\n"
+                              "-->\n"
+                              "\n"
+                              "# Заголовок дописан\n"),
+               readFile(path), "правка текста не теряет и не двигает метаданные");
+}
+
 // Правило этапа: документ — содержимое, а не облик. Undo возвращает текст и не
 // трогает масштаб.
 void checkUndoKeepsAppearance() {
@@ -1631,6 +1670,7 @@ int main(int argc, char** argv) {
     }
 
     checkOpenDoesNotTouchFile();
+    checkMetaSurvivesEditing();
     checkEmptyNoteCaret();
     checkCaretPainting();
     checkCaretWidth();

@@ -702,8 +702,20 @@ bool looksLikeLinkDefinition(const std::string& raw) {
 std::string serialize(const Document& doc) {
     std::string out;
 
+    if (doc.meta.present) {
+        out += "<!-- zametti\n";
+        for (const std::string& line : doc.meta.lines) {
+            assert(line.find('\n') == std::string::npos && "строка метаданных — одна строка");
+            assert(line.find("-->") == std::string::npos && "'-->' закрыл бы комментарий раньше");
+            out += line;
+            out += '\n';
+        }
+        out += "-->\n";
+        if (doc.meta.blankAfter) out += '\n';
+    }
+
     bool hasLinkDefs = false;
-    for (const Block& b : doc)
+    for (const Block& b : doc.blocks)
         if (!b.rawSource.empty() && looksLikeLinkDefinition(b.rawSource)) { hasLinkDefs = true; break; }
 
     // Колонка, с которой начинается содержимое на каждом уровне вложенности,
@@ -717,8 +729,8 @@ std::string serialize(const Document& doc) {
     // Нужен только ассерту ниже: в сборке с NDEBUG он исчезает вместе с ним.
     [[maybe_unused]] int prevLevel = -1;
 
-    for (size_t i = 0; i < doc.size(); ++i) {
-        const Block& b = doc[i];
+    for (size_t i = 0; i < doc.blocks.size(); ++i) {
+        const Block& b = doc.blocks[i];
         validate(b);
 
         bool thisIsQuote = b.rawSource.empty() && b.kind == Kind::Quote;
@@ -747,7 +759,7 @@ std::string serialize(const Document& doc) {
         // Последний рубеж инварианта: если между блоками нет VSpace, а без
         // пустой строки они слипнутся, — ставим её. Такое IR неправильно, но
         // испортить файл оно не должно.
-        else if (i > 0 && wouldMerge(doc[i - 1], b))
+        else if (i > 0 && wouldMerge(doc.blocks[i - 1], b))
             out += "\n";
 
         if (!b.rawSource.empty()) {

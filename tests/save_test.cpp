@@ -128,10 +128,15 @@ const char* const kNonCanonical[] = {
 // недопустимым IR и падает на проверке, не дойдя до самопроверки, а название
 // языка с обратной кавычкой сериализатор сам выводит забором из волнистых
 // черт — и круг сходится.
+// Документ из одних блоков: тестам сохранения метаданные приносит виджет.
+zametti::Document docOf(std::vector<zametti::Block> blocks) {
+    return {{}, std::move(blocks)};
+}
+
 zametti::Document brokenReader(const QTextDocument&) {
     zametti::Block b;
     b.rawSource = "| это не таблица |\n";
-    return {b};
+    return docOf({b});
 }
 
 void checkRescue() {
@@ -276,7 +281,7 @@ void checkEdgeSpaces() {
         zametti::Block block;
         block.text = "первая\n   \nвторая";
         QTextDocument doc;
-        zametti::buildDocument({block}, doc);
+        zametti::buildDocument(docOf({block}), doc);
 
         const zametti::SaveOutcome outcome =
             zametti::saveDocument(doc, path, QStringLiteral("test"));
@@ -294,7 +299,7 @@ void checkEdgeSpaces() {
         zametti::Block block;
         block.text = "текст\n\n\n";
         QTextDocument doc;
-        zametti::buildDocument({block}, doc);
+        zametti::buildDocument(docOf({block}), doc);
 
         const zametti::SaveOutcome outcome =
             zametti::saveDocument(doc, path, QStringLiteral("test"));
@@ -339,7 +344,7 @@ void checkEdgeSpaces() {
             span.italic = true;
             block.inlines.push_back(span);
             QTextDocument doc;
-            zametti::buildDocument({block}, doc);
+            zametti::buildDocument(docOf({block}), doc);
 
             const zametti::SaveOutcome outcome =
                 zametti::saveDocument(doc, path, QStringLiteral("test"));
@@ -360,7 +365,7 @@ void checkEdgeSpaces() {
         block.headingLevel = 2;
         block.text = "первая\nвторая";
         QTextDocument doc;
-        zametti::buildDocument({block}, doc);
+        zametti::buildDocument(docOf({block}), doc);
         const zametti::SaveOutcome outcome =
             zametti::saveDocument(doc, heading, QStringLiteral("test"));
         check(outcome.result != zametti::SaveResult::Rescued,
@@ -379,7 +384,7 @@ void checkEdgeSpaces() {
         span.code = true;
         block.inlines.push_back(span);
         QTextDocument doc;
-        zametti::buildDocument({block}, doc);
+        zametti::buildDocument(docOf({block}), doc);
         const zametti::SaveOutcome outcome =
             zametti::saveDocument(doc, path, QStringLiteral("test"));
         check(outcome.result != zametti::SaveResult::Rescued,
@@ -439,9 +444,9 @@ void checkEdgeSpaces() {
             return block;
         };
         QTextDocument doc;
-        zametti::buildDocument({item(zametti::Marker::Bullet, 0, "раз"),
-                                item(zametti::Marker::Bullet, 1, ""),
-                                item(zametti::Marker::Bullet, 2, "внук")},
+        zametti::buildDocument(docOf({item(zametti::Marker::Bullet, 0, "раз"),
+                                      item(zametti::Marker::Bullet, 1, ""),
+                                      item(zametti::Marker::Bullet, 2, "внук")}),
                                doc);
         const zametti::SaveOutcome outcome =
             zametti::saveDocument(doc, path, QStringLiteral("test"));
@@ -465,7 +470,7 @@ void checkEdgeSpaces() {
         span.strike = true;
         block.inlines.push_back(span);
         QTextDocument doc;
-        zametti::buildDocument({block}, doc);
+        zametti::buildDocument(docOf({block}), doc);
         const zametti::SaveOutcome outcome =
             zametti::saveDocument(doc, path, QStringLiteral("test"));
         check(outcome.result != zametti::SaveResult::Rescued,
@@ -487,7 +492,7 @@ void checkEdgeSpaces() {
         span.bold = true;
         block.inlines.push_back(span);
         QTextDocument doc;
-        zametti::buildDocument({block}, doc);
+        zametti::buildDocument(docOf({block}), doc);
         const zametti::SaveOutcome outcome =
             zametti::saveDocument(doc, path, QStringLiteral("test"));
         check(outcome.result != zametti::SaveResult::Rescued,

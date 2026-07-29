@@ -1,0 +1,9 @@
+{"meta": {"lines": ["parent: 01n6x9k2m4qp", "created: 2019-03-14T09:26:53Z", "modified: 2026-07-29T21:40:00Z", "tags: дом, к морю", "неизвестный-ключ: сохраняется дословно"], "blankAfter": true},
+ "blocks":
+[
+  {"kind": "heading", "headingLevel": 1, "text": "Заметка с метаданными"},
+  {"kind": "vspace", "text": ""},
+  {"kind": "paragraph", "text": "Текст заметки.", "inlines": [{"offset": 11, "length": 14, "bold": true}]},
+  {"kind": "vspace", "text": ""},
+  {"kind": "list-item", "marker": "task", "checked": true, "level": 0, "text": "и задача"}
+]}

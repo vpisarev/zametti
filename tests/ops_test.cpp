@@ -25,6 +25,11 @@ namespace {
 
 using zametti::Block;
 using zametti::Document;
+
+// Документ из одних блоков: тестам ядра метаданные не нужны.
+zametti::Document docOf(std::vector<zametti::Block> blocks) {
+    return {{}, std::move(blocks)};
+}
 using zametti::Kind;
 using zametti::Marker;
 
@@ -76,9 +81,10 @@ std::string levelsToString(const std::vector<int>& levels) {
 }
 
 // syncLists правит уровни и не трогает текст.
-void checkSync(const Document& before, const char* expectedLevels, const char* what) {
+void checkSync(const std::vector<zametti::Block>& before, const char* expectedLevels,
+               const char* what) {
     QTextDocument doc;
-    zametti::buildDocument(before, doc);
+    zametti::buildDocument(docOf(before), doc);
     zametti::syncLists(doc, {0, doc.blockCount() - 1});
 
     checkEqual(expectedLevels, levelsToString(levelsOf(doc)), what);
@@ -88,7 +94,7 @@ void checkSync(const Document& before, const char* expectedLevels, const char* w
           std::string(what) + ": инвариант нарушен — " + problem.toStdString());
 
     // Текст не должен пострадать: операция про уровни.
-    Document after = zametti::readDocument(doc);
+    const std::vector<zametti::Block> after = zametti::readDocument(doc).blocks;
     check(after.size() == before.size(), std::string(what) + ": число блоков изменилось");
     for (size_t i = 0; i < after.size() && i < before.size(); ++i)
         check(after[i].text == before[i].text, std::string(what) + ": текст блока изменился");
@@ -127,9 +133,10 @@ qreal marginOf(const QTextDocument& doc, int block) {
 // Колонку текста задаёт самый широкий маркер прогона: иначе под "10." текст
 // начинался бы правее, чем под "1.", и левый край списка выходил бы рваным.
 void checkGeometry() {
-    Document doc;
-    for (int i = 0; i < 12; ++i) doc.push_back(listItem(Marker::Ordered, 0, "пункт"));
-    doc.push_back(listItem(Marker::Ordered, 1, "вложенный"));
+    std::vector<zametti::Block> blocks;
+    for (int i = 0; i < 12; ++i) blocks.push_back(listItem(Marker::Ordered, 0, "пункт"));
+    blocks.push_back(listItem(Marker::Ordered, 1, "вложенный"));
+    const Document doc = docOf(blocks);
 
     QTextDocument text;
     zametti::buildDocument(doc, text);
@@ -151,9 +158,9 @@ void checkGeometry() {
     // прыгает, стоит отцепить буллеты от задач. Ширина кружка от соседей
     // зависеть не должна.
     QTextDocument mixed;
-    zametti::buildDocument({listItem(Marker::Bullet, 0, "буллет"),
-                            listItem(Marker::Task, 0, "задача"),
-                            listItem(Marker::Bullet, 0, "снова буллет")},
+    zametti::buildDocument(docOf({listItem(Marker::Bullet, 0, "буллет"),
+                                  listItem(Marker::Task, 0, "задача"),
+                                  listItem(Marker::Bullet, 0, "снова буллет")}),
                            mixed);
     check(marginOf(mixed, 0) < marginOf(mixed, 1),
           "кружок не равняется по ширине чекбокса");
@@ -162,7 +169,7 @@ void checkGeometry() {
 
     // И тот же кружок сам по себе стоит там же, где рядом с задачами.
     QTextDocument alone;
-    zametti::buildDocument({listItem(Marker::Bullet, 0, "буллет")}, alone);
+    zametti::buildDocument(docOf({listItem(Marker::Bullet, 0, "буллет")}), alone);
     check(marginOf(alone, 0) == marginOf(mixed, 0),
           "отцепив буллет от задач, кружок никуда не прыгает");
 
@@ -661,7 +668,7 @@ void checkIrIndex(const char* source) {
         check(back.isValid() && back.blockNumber() <= block.blockNumber(),
               "обратный переход ведёт к своему блоку");
     }
-    checkEqual(std::to_string(int(ir.size()) - 1), std::to_string(expected),
+    checkEqual(std::to_string(int(ir.blocks.size()) - 1), std::to_string(expected),
                std::string("блоков IR столько же, сколько насчитали: ") + source);
 }
 

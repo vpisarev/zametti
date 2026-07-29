@@ -52,8 +52,12 @@ Document documentForFile(Document doc);
 // ссылку человек набирает текстом, а файл читает её ссылкой.
 bool sameSkeleton(const Document& a, const Document& b);
 
+// meta — метаданные заметки, прочитанные при открытии файла. В QTextDocument
+// их нет и не бывает (редактор их не видит), поэтому сюда их приносит виджет —
+// иначе первое же сохранение молча потеряло бы parent.
 SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
-                         const QString& timestamp, DocumentReaderFn reader = nullptr);
+                         const QString& timestamp, DocumentReaderFn reader = nullptr,
+                         const NoteMeta& meta = {});
 
 // Отметка времени для имени аварийного файла: вынесена наружу, чтобы тест не
 // зависел от часов.

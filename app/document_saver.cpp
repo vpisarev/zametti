@@ -217,14 +217,19 @@ Block withCodeSpansPerLine(Block block) {
 }  // namespace
 
 bool sameSkeleton(const Document& a, const Document& b) {
-    if (a.size() != b.size()) return false;
-    for (size_t i = 0; i < a.size(); ++i) {
-        if (a[i].rawSource != b[i].rawSource) return false;
-        if (!a[i].rawSource.empty()) continue;
-        if (a[i].kind != b[i].kind || a[i].level != b[i].level ||
-            a[i].marker != b[i].marker || a[i].checked != b[i].checked ||
-            a[i].headingLevel != b[i].headingLevel || a[i].info != b[i].info ||
-            a[i].text != b[i].text)
+    // Метаданные — строка в строку: потерять parent при записи так же нельзя,
+    // как потерять текст.
+    if (a.meta.present != b.meta.present || a.meta.lines != b.meta.lines) return false;
+    const std::vector<Block>& x = a.blocks;
+    const std::vector<Block>& y = b.blocks;
+    if (x.size() != y.size()) return false;
+    for (size_t i = 0; i < x.size(); ++i) {
+        if (x[i].rawSource != y[i].rawSource) return false;
+        if (!x[i].rawSource.empty()) continue;
+        if (x[i].kind != y[i].kind || x[i].level != y[i].level ||
+            x[i].marker != y[i].marker || x[i].checked != y[i].checked ||
+            x[i].headingLevel != y[i].headingLevel || x[i].info != y[i].info ||
+            x[i].text != y[i].text)
             return false;
     }
     return true;
@@ -344,9 +349,11 @@ Block withMarkupThatSurvives(Block block) {
     // через один, и на вложенном пункте падал бы проверкой.
     Block probe = block;
     probe.level = isList(probe.kind) ? 0 : -1;
-    const Document one{std::move(probe)};
+    Document one;
+    one.blocks.push_back(std::move(probe));
     const Document back = parse(serialize(one));
-    if (back.size() == 1 && back[0].rawSource.empty() && back[0].text == block.text)
+    if (back.blocks.size() == 1 && back.blocks[0].rawSource.empty() &&
+        back.blocks[0].text == block.text)
         return block;
 
     block.inlines.clear();
@@ -373,8 +380,8 @@ Block withRawNewline(Block block) {
 //
 // Поэтому выбрасываем только пустой вложенный буллет или номер, а его потомков
 // поднимаем на уровень — иначе они остались бы без родителя.
-Document withoutEmptyNested(Document doc) {
-    Document out;
+std::vector<Block> withoutEmptyNested(std::vector<Block> doc) {
+    std::vector<Block> out;
     out.reserve(doc.size());
     for (size_t i = 0; i < doc.size(); ++i) {
         const Block& block = doc[i];
@@ -404,7 +411,7 @@ Document withoutEmptyNested(Document doc) {
 // Только абзац. Пункт списка так резать нельзя — у второй половины появился бы
 // маркер, которого никто не ставил; цитату тоже — две цитаты через пустую
 // строку это уже две цитаты. Там пустая строка держится неразрывным пробелом.
-void appendSplitOnBlankLines(Document& out, Block block) {
+void appendSplitOnBlankLines(std::vector<Block>& out, Block block) {
     if (!block.rawSource.empty()) {
         // Дословный кусок, начинающийся с пустой строки: сама она куском не
         // является — разбор вернул бы её отдельной пустой строкой перед ним.
@@ -470,9 +477,9 @@ void appendSplitOnBlankLines(Document& out, Block block) {
 }
 
 Document documentForFile(Document doc) {
-    Document out;
-    out.reserve(doc.size());
-    for (Block& block : doc) {
+    std::vector<Block> out;
+    out.reserve(doc.blocks.size());
+    for (Block& block : doc.blocks) {
         appendSplitOnBlankLines(
             out, withMarkupThatSurvives(withStrikeOnWholeWords(withTrimmedSpans(
                      withCodeSpansPerLine(withHeadingOnOneLine(
@@ -541,7 +548,7 @@ Document documentForFile(Document doc) {
     // Последний рубеж инварианта: между блоками, которые в файле слиплись бы,
     // обязана стоять пустая строка. Операции держат это правило сами, но здесь
     // мы отвечаем за файл — а испорченный файл дороже лишней проверки.
-    Document spaced;
+    std::vector<Block> spaced;
     spaced.reserve(out.size() + 2);
     for (Block& block : out) {
         if (!spaced.empty() && wouldMerge(spaced.back(), block)) {
@@ -552,13 +559,17 @@ Document documentForFile(Document doc) {
         spaced.push_back(std::move(block));
     }
 
-    return withoutEmptyNested(std::move(spaced));
+    // Метаданные проезжают насквозь как есть: нормализация — про блоки.
+    doc.blocks = withoutEmptyNested(std::move(spaced));
+    return doc;
 }
 
 SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
-                         const QString& timestamp, DocumentReaderFn reader) {
-    const Document ir =
-        documentForFile(reader ? reader(doc) : readDocument(doc));
+                         const QString& timestamp, DocumentReaderFn reader,
+                         const NoteMeta& meta) {
+    Document read = reader ? reader(doc) : readDocument(doc);
+    read.meta = meta;
+    const Document ir = documentForFile(std::move(read));
     const QByteArray text = toBytes(serialize(ir));
 
     if (QFile::exists(path) && fileContents(path) == text)

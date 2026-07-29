@@ -58,9 +58,22 @@ void appendInt(std::string& out, int v) {
 }  // namespace
 
 std::string toJson(const Document& doc) {
-    std::string out = "[\n";
-    for (size_t i = 0; i < doc.size(); ++i) {
-        const Block& b = doc[i];
+    std::string out;
+    // Метаданные — своей секцией и только когда есть: дамп без них читается
+    // как раньше, простым списком блоков.
+    if (doc.meta.present) {
+        out += "{\"meta\": {\"lines\": [";
+        for (size_t i = 0; i < doc.meta.lines.size(); ++i) {
+            if (i) out += ", ";
+            appendJsonString(out, doc.meta.lines[i]);
+        }
+        out += "], \"blankAfter\": ";
+        out += doc.meta.blankAfter ? "true" : "false";
+        out += "},\n \"blocks\":\n";
+    }
+    out += "[\n";
+    for (size_t i = 0; i < doc.blocks.size(); ++i) {
+        const Block& b = doc.blocks[i];
         out += "  {";
         if (!b.rawSource.empty()) {
             out += "\"raw\": ";
@@ -114,10 +127,12 @@ std::string toJson(const Document& doc) {
             }
         }
         out += "}";
-        if (i + 1 < doc.size()) out += ",";
+        if (i + 1 < doc.blocks.size()) out += ",";
         out += "\n";
     }
-    out += "]\n";
+    out += "]";
+    if (doc.meta.present) out += "}";
+    out += "\n";
     return out;
 }
 

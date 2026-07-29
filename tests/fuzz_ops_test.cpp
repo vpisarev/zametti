@@ -102,7 +102,7 @@ std::string describe(const std::vector<std::string>& steps) {
 // Один блок в виде строки — для отчёта о расхождении.
 std::string oneLine(const Block& block) {
     std::string out;
-    for (char c : toJson(Document{block})) out += (c == '\n') ? ' ' : c;
+    for (char c : toJson(Document{{}, {block}})) out += (c == '\n') ? ' ' : c;
     return out;
 }
 
@@ -118,12 +118,12 @@ bool savable(const QTextDocument& doc, std::string& report) {
     if (sameSkeleton(ir, reread)) return true;
 
     report = "\n  вышло бы в файл:\n" + written;
-    report += "\n  блоков: документ " + std::to_string(ir.size()) + ", обратно " +
-              std::to_string(reread.size());
-    for (size_t i = 0; i < ir.size() && i < reread.size(); ++i) {
-        if (oneLine(ir[i]) == oneLine(reread[i])) continue;
+    report += "\n  блоков: документ " + std::to_string(ir.blocks.size()) + ", обратно " +
+              std::to_string(reread.blocks.size());
+    for (size_t i = 0; i < ir.blocks.size() && i < reread.blocks.size(); ++i) {
+        if (oneLine(ir.blocks[i]) == oneLine(reread.blocks[i])) continue;
         report += "\n  блок " + std::to_string(i) + " разошёлся:\n    документ: " +
-                  oneLine(ir[i]) + "\n    обратно:  " + oneLine(reread[i]);
+                  oneLine(ir.blocks[i]) + "\n    обратно:  " + oneLine(reread.blocks[i]);
         break;
     }
     return false;
@@ -182,9 +182,11 @@ void fuzzFile(const fs::path& path, int rounds, uint32_t seed) {
             if (toJson(back) != beforeJson) {
                 steps.push_back(what);
                 std::string diff;
-                for (size_t i = 0; i < before.size() || i < back.size(); ++i) {
-                    const std::string was = i < before.size() ? oneLine(before[i]) : "<нет>";
-                    const std::string now = i < back.size() ? oneLine(back[i]) : "<нет>";
+                for (size_t i = 0; i < before.blocks.size() || i < back.blocks.size(); ++i) {
+                    const std::string was =
+                        i < before.blocks.size() ? oneLine(before.blocks[i]) : "<нет>";
+                    const std::string now =
+                        i < back.blocks.size() ? oneLine(back.blocks[i]) : "<нет>";
                     if (was == now) continue;
                     diff = "\n  блок " + std::to_string(i) + " разошёлся:\n    было:  " + was +
                            "\n    стало: " + now;

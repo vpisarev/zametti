@@ -94,7 +94,10 @@ bool isPhantomBlock(const QTextDocument& doc, const QTextBlock& block) {
 }  // namespace
 
 Document readDocument(const QTextDocument& doc) {
-    Document out;
+    // Метаданных в QTextDocument нет и не бывает — редактор их не видит.
+    // Прицепить их к прочитанному — забота сохранения (см. document_saver).
+    Document result;
+    std::vector<Block>& out = result.blocks;
 
     // Литеральные блоки лежат в документе построчно, по QTextBlock на строку, и
     // склеиваются здесь. Признак продолжения обязателен: без него разрезанный
@@ -149,7 +152,7 @@ Document readDocument(const QTextDocument& doc) {
         if (format.boolProperty(TrailingNewlineProperty)) pending.text.push_back('\n');
     }
     flush();
-    return out;
+    return result;
 }
 
 }  // namespace zametti

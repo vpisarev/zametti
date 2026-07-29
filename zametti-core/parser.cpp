@@ -59,7 +59,7 @@ struct Ctx {
     const char* buf = nullptr;
     size_t len = 0;
 
-    Document doc;
+    std::vector<Block> doc;
     std::vector<Extent> ext;
 
     std::vector<Frame> stack;
@@ -973,7 +973,7 @@ void finishExtents(Ctx& c) {
         return blk;
     };
 
-    Document out;
+    std::vector<Block> out;
     out.reserve(n + 2);
     size_t line = 0;
 
@@ -1022,7 +1022,7 @@ void finishExtents(Ctx& c) {
     // Такое случается на стыках, где наш канон длиннее исходника: незакрытый
     // забор дописывается закрывающим, и два блока кода, стоявшие вплотную,
     // разъезжаются.
-    Document fixed;
+    std::vector<Block> fixed;
     fixed.reserve(out.size() + 2);
     for (Block& blk : out) {
         if (!fixed.empty() && wouldMerge(fixed.back(), blk)) {
@@ -1033,6 +1033,41 @@ void finishExtents(Ctx& c) {
         fixed.push_back(std::move(blk));
     }
     c.doc = std::move(fixed);
+}
+
+// Первый блок с маркером zametti — метаданные заметки. Поднимаем их из
+// блоков: редактор метаданные не видит вовсе, курсору встать некуда.
+//
+// Форма фиксированная: первая строка — ровно "<!-- zametti", закрывающая "-->"
+// — своей строкой. Всё прочее — хвост после "-->", маркер в одну строку,
+// комментарий не первым блоком — метаданными не является и остаётся дословным
+// блоком (замерено пробником: md4c отдаёт такой комментарий одним блоком).
+void liftMeta(Document& doc) {
+    if (doc.blocks.empty()) return;
+    const std::string& raw = doc.blocks.front().rawSource;
+    constexpr std::string_view head = "<!-- zametti\n";
+    constexpr std::string_view tail = "-->\n";
+    if (raw.size() < head.size() + tail.size()) return;
+    if (raw.compare(0, head.size(), head) != 0) return;
+    if (raw.compare(raw.size() - tail.size(), tail.size(), tail) != 0) return;
+    if (raw[raw.size() - tail.size() - 1] != '\n') return;
+
+    doc.meta.present = true;
+    size_t from = head.size();
+    const size_t end = raw.size() - tail.size();
+    while (from < end) {
+        const size_t eol = raw.find('\n', from);
+        doc.meta.lines.push_back(raw.substr(from, eol - from));
+        from = eol + 1;
+    }
+    doc.blocks.erase(doc.blocks.begin());
+    // Пустую строку после "-->" забираем с собой: в блоках ей стоять не за чем
+    // — редактор показал бы пустую первую строку у каждой заметки.
+    if (!doc.blocks.empty() && doc.blocks.front().rawSource.empty() &&
+        doc.blocks.front().kind == Kind::VSpace) {
+        doc.meta.blankAfter = true;
+        doc.blocks.erase(doc.blocks.begin());
+    }
 }
 
 }  // namespace
@@ -1062,7 +1097,10 @@ Document parse(std::string_view markdown) {
 
     endLeaf(c);
     finishExtents(c);
-    return std::move(c.doc);
+    Document result;
+    result.blocks = std::move(c.doc);
+    liftMeta(result);
+    return result;
 }
 
 }  // namespace zametti

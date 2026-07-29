@@ -69,7 +69,7 @@ void testInline() {
     canonical("не-ASCII в адресе остаётся в скобках",
               "смотри <https://example.org/путь> вот\n");
 
-    Document u = parse("см. https://example.org/x дальше\n");
+    std::vector<Block> u = parse("см. https://example.org/x дальше\n").blocks;
     ZT_TRUE("голая ссылка стала спаном",
             u.size() == 1 && u[0].inlines.size() == 1 &&
                 u[0].inlines[0].href == "https://example.org/x");
@@ -80,7 +80,7 @@ void testInline() {
     stable("emphasis снаружи strong перекладывается в канон", "_**оба**_\n", "**_оба_**\n");
 
     // Смещения спанов — в байтах, и на кириллице это видно.
-    Document d = parse("аб **вг** де\n");
+    std::vector<Block> d = parse("аб **вг** де\n").blocks;
     ZT_TRUE("один спан на кириллице", d.size() == 1 && d[0].inlines.size() == 1);
     if (d.size() == 1 && d[0].inlines.size() == 1) {
         ZT_TRUE("смещение спана в байтах, а не в символах", d[0].inlines[0].offset == 5);
@@ -145,21 +145,21 @@ void testTasksLiteral() {
     canonical("1. [X] сохраняет регистр", "1. [X] текст\n");
     canonical("1. [ ] остаётся текстом", "1. [ ] текст\n");
 
-    Document d = parse("1. [x] текст\n");
+    std::vector<Block> d = parse("1. [x] текст\n").blocks;
     ZT_TRUE("нумерованный пункт, а не чекбокс",
             d.size() == 1 && d[0].kind == Kind::ListItem && d[0].marker == Marker::Ordered);
     if (d.size() == 1) ZT_EQ("маркер вернулся в текст", "[x] текст", d[0].text);
 
     // Срез берётся из исходника, а не синтезируется: иначе теряются лишние
     // пробелы и разметка, идущая сразу за маркером.
-    d = parse("1. [x]  **жирный** текст\n");
+    d = parse("1. [x]  **жирный** текст\n").blocks;
     ZT_TRUE("жирный не проглочен срезом",
             d.size() == 1 && d[0].inlines.size() == 1 && d[0].inlines[0].bold);
     if (d.size() == 1) ZT_EQ("двойной пробел после маркера сохранён", "[x]  жирный текст", d[0].text);
     canonical("1. [x] с двойным пробелом и разметкой", "1. [x]  **жирный** текст\n");
 
     // А вот в маркированном списке это настоящий чекбокс.
-    d = parse("- [x] текст\n");
+    d = parse("- [x] текст\n").blocks;
     ZT_TRUE("маркированный пункт с [x] — чекбокс",
             d.size() == 1 && d[0].kind == Kind::ListItem &&
                 d[0].marker == Marker::Task && d[0].checked);
@@ -179,7 +179,7 @@ void testCode() {
     stable("код с отступом приводится к огороженному", "    код\n", "```\nкод\n```\n");
 
     // Язык блока кода живёт в Block::info.
-    Document d = parse("```cpp\nint main() {}\n```\n");
+    std::vector<Block> d = parse("```cpp\nint main() {}\n```\n").blocks;
     ZT_TRUE("код с языком разобран, а не сохранён дословно",
             d.size() == 1 && d[0].rawSource.empty() && d[0].kind == Kind::Code);
     if (d.size() == 1) ZT_EQ("язык попал в info", "cpp", d[0].info);
@@ -197,7 +197,7 @@ void testInsideItem() {
     canonical("три абзаца в пункте", "- раз\n\n  два\n\n  три\n");
     canonical("продолжение вложенного пункта", "- раз\n  - вложенный\n\n    продолжение\n");
 
-    Document d = parse("1. раз\n\n   продолжение\n\n2. два\n");
+    std::vector<Block> d = parse("1. раз\n\n   продолжение\n\n2. два\n").blocks;
     ZT_TRUE("пять блоков: два пункта, продолжение и две пустые строки", d.size() == 5);
     if (d.size() == 5) {
         ZT_TRUE("первый — пункт нулевого уровня",
@@ -218,19 +218,19 @@ void testInsideItem() {
     canonical("код во вложенном пункте",
               "- раз\n  - вложенный\n\n    ```\n    x\n    ```\n");
 
-    d = parse("- пункт\n\n  ```py\n  x = 1\n  ```\n");
+    d = parse("- пункт\n\n  ```py\n  x = 1\n  ```\n").blocks;
     ZT_TRUE("код в пункте — блок кода с уровнем",
             d.size() == 3 && d[2].kind == Kind::Code && d[2].level == 0);
 
     // А забор прямо на строке маркера остаётся дословным: пункт и код делят одну
     // строку, а границы блоков мы считаем строками.
-    d = parse("- ```\n  x\n  ```\n");
+    d = parse("- ```\n  x\n  ```\n").blocks;
     ZT_TRUE("забор на строке маркера уходит дословно",
             d.size() == 1 && !d[0].rawSource.empty());
 
     // Обычный абзац за списком уровня не имеет — иначе его нельзя было бы
     // отличить от продолжения пункта.
-    d = parse("- пункт\n\nабзац\n");
+    d = parse("- пункт\n\nабзац\n").blocks;
     ZT_TRUE("абзац за списком стоит снаружи",
             d.size() == 3 && d[2].kind == Kind::Paragraph && d[2].level == -1);
 }
@@ -248,13 +248,13 @@ void testRawSource() {
     canonical("жёсткий перенос делает абзац дословным", "первая  \nвторая\n");
 
 
-    Document d = parse("| a |\n|---|\n| 1 |\n");
+    std::vector<Block> d = parse("| a |\n|---|\n| 1 |\n").blocks;
     ZT_TRUE("таблица — один rawSource-блок", d.size() == 1 && !d[0].rawSource.empty());
     if (d.size() == 1) ZT_EQ("таблица целиком", "| a |\n|---|\n| 1 |\n", d[0].rawSource);
 
     // Пустые строки теперь свои блоки, поэтому между тремя кусками стоят ещё
     // два VSpace.
-    d = parse("абзац\n\n| a |\n|---|\n\nещё абзац\n");
+    d = parse("абзац\n\n| a |\n|---|\n\nещё абзац\n").blocks;
     ZT_TRUE("таблица не съела соседей", d.size() == 5);
     if (d.size() == 5) {
         ZT_EQ("текст до", "абзац", d[0].text);
@@ -302,7 +302,7 @@ void testMixed() {
 // мутациям из них. Каждый ломал что-то своё, поэтому лежат отдельно.
 void testSpecEdgeCases() {
     // Спан нулевой длины модель не выражает — иначе ссылка исчезла бы целиком.
-    Document d = parse("[](./target.md)\n");
+    std::vector<Block> d = parse("[](./target.md)\n").blocks;
     ZT_TRUE("пустая ссылка сохранена дословно", d.size() == 1 && !d[0].rawSource.empty());
     canonical("ссылка с пустым текстом", "[](./target.md)\n");
 
@@ -355,7 +355,7 @@ void testInlineCode() {
     canonical("встроенный код как текст ссылки", "[`code`](/u)\n");
     canonical("кавычки внутри встроенного кода", "``a ` b``\n");
 
-    Document d = parse("текст `code` дальше\n");
+    std::vector<Block> d = parse("текст `code` дальше\n").blocks;
     ZT_TRUE("код разобран спаном, а не сохранён дословно",
             d.size() == 1 && d[0].rawSource.empty() && d[0].inlines.size() == 1);
     if (d.size() == 1 && d[0].inlines.size() == 1) {
@@ -375,18 +375,18 @@ void testQuotes() {
     canonical("цитата с разметкой", "> текст **жирный** и [ссылка](/u)\n");
     canonical("цитата между абзацами", "до\n\n> цитата\n\nпосле\n");
 
-    Document d = parse("> цитата\n");
+    std::vector<Block> d = parse("> цитата\n").blocks;
     ZT_TRUE("цитата разобрана, а не сохранена дословно",
             d.size() == 1 && d[0].rawSource.empty() && d[0].kind == Kind::Quote);
     if (d.size() == 1) ZT_EQ("маркер цитаты в текст не попал", "цитата", d[0].text);
 
     // Внутри цитаты у блока нет ни уровня, ни содержимого сложнее абзаца,
     // поэтому всё остальное остаётся дословным.
-    d = parse("> # заголовок\n");
+    d = parse("> # заголовок\n").blocks;
     ZT_TRUE("заголовок в цитате дословен", d.size() == 1 && !d[0].rawSource.empty());
-    d = parse("> - пункт\n");
+    d = parse("> - пункт\n").blocks;
     ZT_TRUE("список в цитате дословен", d.size() == 1 && !d[0].rawSource.empty());
-    d = parse("> > вложенная\n");
+    d = parse("> > вложенная\n").blocks;
     ZT_TRUE("вложенная цитата дословна", d.size() == 1 && !d[0].rawSource.empty());
 
     // Строка ">" в начале строки текста должна экранироваться, иначе абзац
@@ -395,6 +395,61 @@ void testQuotes() {
 }
 
 }  // namespace
+
+// Метаданные заметки: первый блок "<!-- zametti ... -->" поднимается в
+// Document::meta, круг побайтовый — включая неизвестные ключи и их порядок.
+void testMeta() {
+    const std::string note =
+        "<!-- zametti\n"
+        "parent: 01n6x9k2m4qp\n"
+        "created: 2019-03-14T09:26:53Z\n"
+        "tags: дом, море\n"
+        "свой-ключ:   значение с   пробелами\n"
+        "-->\n"
+        "\n"
+        "# Заголовок\n";
+    canonical("метаданные с неизвестным ключом", note);
+
+    Document d = parse(note);
+    ZT_TRUE("метаданные подняты из блоков", d.meta.present);
+    ZT_TRUE("блок метаданных и пустая строка ушли из блоков",
+            d.blocks.size() == 1 && d.blocks[0].kind == Kind::Heading);
+    ZT_EQ("parent читается", "01n6x9k2m4qp", d.meta.get("parent"));
+    ZT_EQ("значение обрезается по краям", "значение с   пробелами", d.meta.get("свой-ключ"));
+    ZT_EQ("отсутствующий ключ — пусто", "", d.meta.get("modified"));
+
+    // Правка ключей: своя строка правится, чужие не двигаются.
+    d.meta.set("parent", "0abcdefghjkmnp");
+    d.meta.set("modified", "2026-07-29T21:40:00Z");
+    ZT_EQ("правка заменяет строку ключа", "0abcdefghjkmnp", d.meta.get("parent"));
+    ZT_TRUE("новый ключ дописан в конец",
+            d.meta.lines.size() == 5 && d.meta.lines[4] == "modified: 2026-07-29T21:40:00Z");
+    ZT_TRUE("порядок чужих строк не тронут",
+            d.meta.lines[0] == "parent: 0abcdefghjkmnp" &&
+                d.meta.lines[2] == "tags: дом, море");
+    d.meta.set("parent", "");
+    ZT_TRUE("пустое значение снимает ключ",
+            d.meta.get("parent").empty() && d.meta.lines.size() == 4);
+
+    // Метаданные на пустой заметке появляются вместе с пустой строкой после.
+    Document fresh;
+    fresh.meta.set("created", "2026-07-29T00:00:00Z");
+    ZT_EQ("свежие метаданные каноничны",
+          "<!-- zametti\ncreated: 2026-07-29T00:00:00Z\n-->\n\n", serialize(fresh));
+
+    // Что метаданными НЕ является — остаётся дословным блоком.
+    stable("хвост после закрывающей скобки — не метаданные",
+           "<!-- zametti\nk: v\n--> хвост\n\nтекст\n",
+           "<!-- zametti\nk: v\n--> хвост\n\nтекст\n");
+    stable("маркер в одну строку — не метаданные",
+           "<!-- zametti k: v -->\n\nтекст\n", "<!-- zametti k: v -->\n\nтекст\n");
+    stable("не первым блоком — не метаданные",
+           "абзац до\n\n<!-- zametti\nk: v\n-->\n", "абзац до\n\n<!-- zametti\nk: v\n-->\n");
+    ZT_TRUE("чужой комментарий не поднимается",
+            !parse("<!-- просто комментарий -->\n\nтекст\n").meta.present);
+    canonical("метаданные без пустой строки после",
+              "<!-- zametti\nk: v\n-->\n## сразу заголовок\n");
+}
 
 int main() {
     testBasics();
@@ -409,5 +464,6 @@ int main() {
     testRawSource();
     testMixed();
     testSpecEdgeCases();
+    testMeta();
     return zt::report("roundtrip");
 }

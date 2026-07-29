@@ -194,6 +194,9 @@ private:
     // Время правки файла — только подсказка, ему мы не верим.
     QFileSystemWatcher watcher_;
     QByteArray knownContent_;
+    // Метаданные открытой заметки. В QTextDocument их нет — редактор их не
+    // видит, — поэтому от открытия до сохранения они живут здесь.
+    NoteMeta meta_;
     bool externalPending_ = false;
     std::string externalText_;
 

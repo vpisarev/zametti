@@ -9,6 +9,7 @@
 #define ZAMETTI_IR_H
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace zametti {
@@ -103,7 +104,34 @@ inline bool wouldMerge(const Block& previous, const Block& next) {
            isList(previous.kind);
 }
 
-using Document = std::vector<Block>;
+// Метаданные заметки — первый блок файла фиксированной формы:
+//
+//   <!-- zametti
+//   parent: 01n6x9k2m4qp
+//   created: 2019-03-14T09:26:53Z
+//   -->
+//
+// Хранятся строками между маркером и закрывающей скобкой — дословно и в своём
+// порядке: неизвестные ключи обязаны пережить круг побайтово, это forward
+// compatibility. Известные ключи читаются и правятся поверх строк.
+struct NoteMeta {
+    bool present = false;
+    // Стояла ли после "-->" пустая строка. В каноне стоит всегда, но флаг
+    // нужен: файл без неё не должен меняться от простого открытия.
+    bool blankAfter = false;
+    std::vector<std::string> lines;   // без перевода строки
+
+    // Значение ключа, обрезанное по краям; пусто — ключа нет.
+    std::string get(std::string_view key) const;
+    // Правит существующую строку ключа или дописывает новую. Значение не должно
+    // содержать "--" (ломает HTML-комментарий) и перевод строки.
+    void set(std::string_view key, std::string_view value);
+};
+
+struct Document {
+    NoteMeta meta;
+    std::vector<Block> blocks;
+};
 
 }  // namespace zametti
 

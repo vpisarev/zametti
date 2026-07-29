@@ -107,6 +107,7 @@ bool NoteEditor::openFile(const QString& path) {
     sinceLastEdit_.invalidate();
 
     Document doc = parse(text);
+    meta_ = doc.meta;
     history_.reset(doc, 0);
     rebuild(doc, 0, {});
     emit fileChanged(path_);
@@ -154,6 +155,7 @@ void NoteEditor::resolveExternalConflict(bool takeExternal) {
 
 void NoteEditor::adoptExternal(const std::string& text) {
     Document ir = parse(text);
+    meta_ = ir.meta;
     history_.push(ir, textCursor().position());
     sinceLastEdit_.invalidate();
     rebuild(ir, textCursor().position(), viewAnchor());
@@ -604,19 +606,20 @@ void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
     const std::string source(utf8.constData(), size_t(utf8.size()));
 
     Document fragment;
+    std::vector<Block>& pieces = fragment.blocks;
     if (literal) {
         // Один абзац с текстом как есть: переводы строк внутри блока сборщик
         // разметит сам, и они вернутся переводами, а не разметкой.
         Block block;
         block.text = source;
         while (!block.text.empty() && block.text.back() == '\n') block.text.pop_back();
-        fragment.push_back(std::move(block));
+        pieces.push_back(std::move(block));
     } else {
         // Полным парсером ядра, а не вторым упрощённым разбором: их
         // идемпотентность и гарантирует, что скопированное вставится без потерь.
         fragment = parse(source);
     }
-    if (fragment.empty()) return;
+    if (pieces.empty()) return;
 
     QTextDocument staging;
     buildDocument(fragment, staging, zoom());
@@ -625,9 +628,9 @@ void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
     // должны войти в тот блок, куда их кладут. Всё прочее — заголовок, пункт,
     // код, цитата, да и просто несколько блоков — вставляется своими блоками:
     // род блока это его свойство, и терять его при переносе нельзя.
-    const Block& head = fragment.front();
+    const Block& head = pieces.front();
     const bool blockLevel =
-        fragment.size() > 1 || !head.rawSource.empty() || head.kind != Kind::Paragraph;
+        pieces.size() > 1 || !head.rawSource.empty() || head.kind != Kind::Paragraph;
 
     recordingSuspended_ = true;
     QTextCursor cursor = textCursor();
@@ -757,7 +760,8 @@ void NoteEditor::recordEdit() {
 void NoteEditor::save(bool interactive) {
     if (path_.isEmpty() || !document()->isModified()) return;
 
-    const SaveOutcome outcome = saveDocument(*document(), path_, rescueTimestamp());
+    const SaveOutcome outcome =
+        saveDocument(*document(), path_, rescueTimestamp(), nullptr, meta_);
     if (outcome.result == SaveResult::Written || outcome.result == SaveResult::Unchanged) {
         document()->setModified(false);
         lastComplaint_.clear();

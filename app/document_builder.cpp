@@ -291,7 +291,7 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
     bool first = true;
     bool prevVSpace = false;
 
-    for (const Block& b : doc) {
+    for (const Block& b : doc.blocks) {
         const bool raw = !b.rawSource.empty();
         const bool list = !raw && isList(b.kind);
 
