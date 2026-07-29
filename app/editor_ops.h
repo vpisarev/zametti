@@ -18,6 +18,7 @@
 #include <QString>
 #include <QTextCharFormat>
 
+class QTextBlock;
 class QTextCursor;
 class QTextDocument;
 
@@ -170,8 +171,12 @@ bool toggleItalic(QTextDocument& doc, QTextCursor& cursor);
 bool toggleStrike(QTextDocument& doc, QTextCursor& cursor);
 
 // Начертание для набора в точке ввода: тот же переключатель, но применительно к
-// формату, с которым пойдёт следующая буква.
-QTextCharFormat inlineStyleForTyping(const QTextCharFormat& current, int style);
+// формату, с которым пойдёт следующая буква. Формат отдаётся целиком, а не
+// наслоением: снять код — это ещё и вернуть семейство, кегль и подложку, а
+// наслоением их не снять. Отсюда и блок в доводах: он говорит, как выглядит
+// обычный текст в этом месте.
+QTextCharFormat inlineStyleForTyping(const QTextDocument& doc, const QTextBlock& block,
+                                     const QTextCharFormat& current, int style);
 
 // Смена рода блоков в выделении. Семантика «установить», а не «переключить»:
 // смешанное выделение целиком приводится к запрошенному роду.

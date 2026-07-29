@@ -461,6 +461,15 @@ qreal codePointSize(const QTextDocument& doc) {
     return appearance().codePointSize * base / appearance().baseFontPoint;
 }
 
+// Как выглядит встроенный код: семейство, кегль, подложка. Одно место на всех —
+// правило кавычек и набор с клавиатуры красят одинаково.
+void applyCodeLook(QTextCharFormat& format, const QTextDocument& doc) {
+    format.setFontPointSize(codePointSize(doc));
+    if (!appearance().codeFamily.isEmpty())
+        format.setFontFamilies({QString(appearance().codeFamily)});
+    format.setBackground(appearance().codeBackground);
+}
+
 // Оформление, отвечающее набору признаков. Ставим все три явно: снимать
 // начертание — это тоже назначить его, только обычным.
 QTextCharFormat formatForStyle(int style) {
@@ -839,10 +848,7 @@ bool applyCodeSpanRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     edit.setPosition(block.position() + open);
     edit.setPosition(block.position() + end - 2, QTextCursor::KeepAnchor);
     QTextCharFormat code = formatForStyle(SpanCode);
-    code.setFontPointSize(codePointSize(doc));
-    if (!appearance().codeFamily.isEmpty())
-        code.setFontFamilies({QString(appearance().codeFamily)});
-    code.setBackground(appearance().codeBackground);
+    applyCodeLook(code, doc);
     edit.mergeCharFormat(code);
     edit.endEditBlock();
 
@@ -866,9 +872,17 @@ bool toggleStrike(QTextDocument& doc, QTextCursor& cursor) {
     return toggleInlineStyle(doc, cursor, SpanStrike);
 }
 
-QTextCharFormat inlineStyleForTyping(const QTextCharFormat& current, int style) {
+QTextCharFormat inlineStyleForTyping(const QTextDocument& doc, const QTextBlock& block,
+                                     const QTextCharFormat& current, int style) {
     const int now = current.intProperty(SpanStyleProperty);
-    return formatForStyle((now & style) != 0 ? (now & ~style) : (now | style));
+    const int next = (now & style) != 0 ? (now & ~style) : (now | style);
+
+    // За основу берём формат блока — это и есть «обычный текст здесь»: в
+    // заголовке он крупнее, в пункте обычный. Дальше кладём на него признаки.
+    QTextCharFormat format = block.charFormat();
+    format.merge(formatForStyle(next));
+    if ((next & SpanCode) != 0) applyCodeLook(format, doc);
+    return format;
 }
 
 bool makeBullet(QTextDocument& doc, QTextCursor& cursor) {

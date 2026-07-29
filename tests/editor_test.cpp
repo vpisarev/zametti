@@ -601,6 +601,71 @@ void checkCodeTyping() {
                "Enter с отступом отменяется одним шагом");
 }
 
+// Ctrl+E без выделения — не правка документа, а формат следующей буквы. Случай,
+// ради которого проверка написана: курсор стоит вплотную к правой кромке
+// встроенного кода, и дописать оттуда обычный текст нечем — Qt берёт формат у
+// знака слева. Проверяется не только разметка в файле, но и вид: признак кода
+// снимался и раньше, а семейство с подложкой оставались, и выглядело это как
+// «Ctrl+E не работает».
+void checkCodeAtEdge() {
+    const QString path = writeNote("кромка-кода.md", QStringLiteral("- пункт `код`\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    auto text = [&editor] {
+        return QString::fromStdString(
+            zametti::serialize(zametti::readDocument(*editor.document())));
+    };
+    auto toEnd = [&editor] {
+        QTextCursor cursor = editor.textCursor();
+        cursor.movePosition(QTextCursor::End);
+        editor.setTextCursor(cursor);
+    };
+    const QString mono = zametti::appearance().codeFamily;
+
+    toEnd();
+    check((editor.currentCharFormat().intProperty(zametti::SpanStyleProperty) &
+           zametti::SpanCode) != 0,
+          "у правой кромки формат набора — код, иначе случай не тот");
+
+    QTest::keyClick(&editor, Qt::Key_E, Qt::ControlModifier);
+    editor.insertPlainText(QStringLiteral("хвост"));
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("- пункт `код`хвост\n"), text(),
+               "Ctrl+E у кромки выводит набор из кода");
+
+    QTextCursor tail(editor.document());
+    tail.setPosition(editor.textCursor().position() - 1);
+    tail.setPosition(editor.textCursor().position(), QTextCursor::KeepAnchor);
+    const QTextCharFormat after = tail.charFormat();
+    check(after.fontFamilies().toStringList().value(0) != mono,
+          "набранное после Ctrl+E не должно остаться моноширинным");
+    check(after.background().style() == Qt::NoBrush,
+          "подложка кода после Ctrl+E остаться не должна");
+
+    // Обратный ход, и в заголовке: код набирается своим кеглем, а после
+    // повторного Ctrl+E кегль возвращается заголовочный, а не кодовый.
+    const QString heading = writeNote("код-в-заголовке.md", QStringLiteral("## Тема\n"));
+    editor.openFile(heading);
+    QTest::qWait(20);
+    toEnd();
+    const qreal headingSize = editor.currentCharFormat().fontPointSize();
+    QTest::keyClick(&editor, Qt::Key_E, Qt::ControlModifier);
+    editor.insertPlainText(QStringLiteral(" код"));
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("## Тема` код`\n"), text(),
+               "Ctrl+E на чистом месте начинает встроенный код");
+    QTest::keyClick(&editor, Qt::Key_E, Qt::ControlModifier);
+    check(qAbs(editor.currentCharFormat().fontPointSize() - headingSize) < 0.01,
+          "после выхода из кода кегль возвращается заголовочный");
+}
+
 // Щелчок по чекбоксу — самый ходовой способ отметить задачу. Проверяется
 // настоящим щелчком по вьюпорту, а не вызовом операции: попадание считается по
 // геометрии рамки, и ошибиться в ней проще всего именно там.
@@ -1583,6 +1648,7 @@ int main(int argc, char** argv) {
     checkUndoFromKeyboard();
     checkSizeAfterSoftBreak();
     checkCodeTyping();
+    checkCodeAtEdge();
     checkCheckboxClick();
     checkScrollHolds();
     checkScrollHoldsWhenBlockChangesHeight();

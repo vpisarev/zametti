@@ -423,8 +423,12 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     for (const auto& [keys, style] : inlineBindings_) {
         if (!pressed(keys)) continue;
         if (runOperation(style.op)) return;
-        if (!textCursor().hasSelection())
-            mergeCurrentCharFormat(inlineStyleForTyping(currentCharFormat(), style.bits));
+        // В блоке кода и в дословном куске текст буквальный — начертанию там
+        // взяться неоткуда, как и при выделении.
+        const QTextBlock block = textCursor().block();
+        if (!textCursor().hasSelection() && !isRawBlock(block) && kindOf(block) != Kind::Code)
+            setCurrentCharFormat(
+                inlineStyleForTyping(*document(), block, currentCharFormat(), style.bits));
         return;
     }
 
