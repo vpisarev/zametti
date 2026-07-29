@@ -81,12 +81,17 @@ void NoteView::showCaret() {
 }
 
 void NoteView::focusInEvent(QFocusEvent* event) {
-    QTextBrowser::focusInEvent(event);
+    // Мимо QTextEdit, прямо в предка: фокус будит штатную каретку, а её
+    // ширину 0 дробный масштаб экрана прижимает к одному физическому пикселю —
+    // и рядом с нашей кареткой мигает чужая чёрная черта. Красить её нечем:
+    // она рисуется инверсией пикселей (замерено: палитра Text перекрашивает
+    // буквы, черту — нет). Не разбуженная фокусом, она не рисуется вовсе.
+    QAbstractScrollArea::focusInEvent(event);
     showCaret();
 }
 
 void NoteView::focusOutEvent(QFocusEvent* event) {
-    QTextBrowser::focusOutEvent(event);
+    QAbstractScrollArea::focusOutEvent(event);
     caretBlink_.stop();
     caretOn_ = false;
     viewport()->update();

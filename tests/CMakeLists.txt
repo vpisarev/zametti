@@ -134,3 +134,9 @@ endif()
 add_test(NAME core-without-qt
          COMMAND ${CMAKE_COMMAND} -DCORE_DIR=${CMAKE_SOURCE_DIR}/zametti-core
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/no_qt_check.cmake)
+
+add_executable(caret_scale_test caret_scale_test.cpp)
+target_link_libraries(caret_scale_test PRIVATE zametti-widgets Qt6::Test zametti-warnings)
+target_include_directories(caret_scale_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME caret-scale COMMAND caret_scale_test)
+set_tests_properties(caret-scale PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
