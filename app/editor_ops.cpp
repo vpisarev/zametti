@@ -1436,6 +1436,75 @@ bool removeVSpaceAndMaybeJoin(QTextDocument& doc, QTextCursor& cursor, int gapNu
 
 }  // namespace
 
+bool applyDividerRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+    const QTextBlock block = cursor.block();
+    if (isRawBlock(block) || kindOf(block) != Kind::Paragraph) return false;
+    if (levelOf(block) >= 0) return false;      // в списке дефисы — текст
+    if (!cursor.atBlockEnd()) return false;     // пробел в середине — просто пробел
+
+    // Enter в абзаце — перенос строки внутри блока, а не новый блок, поэтому
+    // правило смотрит на последнюю СТРОКУ, а не на весь текст. Зовётся после
+    // набранного пробела: строка кончается "--- ".
+    const QString text = block.text();
+    const int lineStart = int(text.lastIndexOf(QChar::LineSeparator)) + 1;
+    const QString line = text.mid(lineStart);
+    if (line.size() < 4 || !line.endsWith(QLatin1Char(' '))) return false;
+    for (int i = 0; i < line.size() - 1; ++i)
+        if (line.at(i) != QLatin1Char('-')) return false;
+
+    const int number = block.blockNumber();
+    QTextCursor edit(&doc);
+    edit.beginEditBlock();
+    QTextBlock dividerBlock;
+    if (lineStart == 0) {
+        // Вся строка и есть блок: он и становится чертой. Дефисы стираем —
+        // черта это блок без текста, её рисует вид.
+        edit.setPosition(block.position());
+        edit.setPosition(block.position() + text.size(), QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+        QTextBlockFormat divider = block.blockFormat();
+        divider.setProperty(KindProperty, int(Kind::Divider));
+        divider.clearProperty(LevelProperty);
+        divider.setLeftMargin(0);
+        edit.setBlockFormat(divider);
+        dividerBlock = block;
+    } else {
+        // Дефисы — последняя строка абзаца: строка вместе со своим переносом
+        // уходит из блока, черта встаёт отдельным блоком под ним. Пустую строку
+        // между абзацем и чертой вернёт normalise — без неё черта прочлась бы
+        // setext-заголовком.
+        edit.setPosition(block.position() + lineStart - 1);
+        edit.setPosition(block.position() + text.size(), QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+        edit.movePosition(QTextCursor::EndOfBlock);
+        edit.insertBlock();
+        QTextBlockFormat divider = edit.blockFormat();
+        divider.setProperty(KindProperty, int(Kind::Divider));
+        divider.clearProperty(LevelProperty);
+        divider.setLeftMargin(0);
+        edit.setBlockFormat(divider);
+        dividerBlock = edit.block();
+    }
+    // Каретке на черте делать нечего: набор на ней превратил бы её обратно в
+    // текст. Есть блок ниже — уходим на него; черта последняя — заводим под ней
+    // пустой абзац: при сохранении хвостовой пустой блок и так не печатается.
+    QTextCursor landing(&doc);
+    if (dividerBlock.next().isValid()) {
+        landing.setPosition(dividerBlock.next().position());
+    } else {
+        edit.setPosition(dividerBlock.position());
+        edit.insertBlock();
+        QTextBlockFormat plain = edit.blockFormat();
+        plain.clearProperty(KindProperty);
+        edit.setBlockFormat(plain);
+        landing.setPosition(edit.position());
+    }
+    normalise(doc, around(number));
+    edit.endEditBlock();
+    cursor.setPosition(landing.position());
+    return true;
+}
+
 bool repairAfterTyping(QTextDocument& doc, QTextCursor& cursor) {
     const QTextBlock block = cursor.block();
     const int number = block.blockNumber();

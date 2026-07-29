@@ -199,7 +199,7 @@ void NoteView::paintEvent(QPaintEvent* event) {
         if (rect.top() > visible.bottom()) break;
         if (rect.bottom() < visible.top()) continue;
         paintMarker(painter, block, base);
-        paintDivider(painter, block, rect);
+        paintDivider(painter, block, rect, zoom_);
     }
 
     // Каретка — последней и без сдвига на прокрутку: cursorRect уже отдаёт

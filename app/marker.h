@@ -56,7 +56,7 @@ void paintMarker(QPainter& painter, const QTextBlock& block, const QFont& base);
 // Тематическая черта "---": горизонтальная линия по ширине колонки текста,
 // на середине высоты своего блока. В документе блок пустой — рисуем сами,
 // тем же приёмом, что и маркеры.
-void paintDivider(QPainter& painter, const QTextBlock& block, const QRectF& rect);
+void paintDivider(QPainter& painter, const QTextBlock& block, const QRectF& rect, qreal zoom);
 
 }  // namespace zametti
 

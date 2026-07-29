@@ -87,6 +87,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("verticalMargin"), a.verticalMargin},
         {QStringLiteral("maxContentWidth"), a.maxContentWidth},
         {QStringLiteral("caretWidth"), a.caretWidth},
+        {QStringLiteral("dividerWidth"), a.dividerWidth},
     };
 
     QJsonObject colors{
@@ -201,6 +202,7 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readReal(layout, "verticalMargin", a.verticalMargin);
     readReal(layout, "maxContentWidth", a.maxContentWidth);
     readReal(layout, "caretWidth", a.caretWidth);
+    readReal(layout, "dividerWidth", a.dividerWidth);
 
     const QJsonObject colors = root.value(QStringLiteral("colors")).toObject();
     readColor(colors, "pageBackground", a.pageBackground);

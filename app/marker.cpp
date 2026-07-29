@@ -252,12 +252,13 @@ void paintMarker(QPainter& painter, const QTextBlock& block, const QFont& base) 
     painter.restore();
 }
 
-void paintDivider(QPainter& painter, const QTextBlock& block, const QRectF& rect) {
+void paintDivider(QPainter& painter, const QTextBlock& block, const QRectF& rect, qreal zoom) {
     if (isRawBlock(block) || kindOf(block) != Kind::Divider) return;
     painter.save();
-    // Толщина — один физический пиксель: черта разграничивает, а не солирует.
+    // Прямоугольник блока и так идёт от поля до поля колонки — не во всё окно.
     QPen pen(appearance().dividerColor);
-    pen.setWidthF(1.0);
+    pen.setWidthF(qMax(1.0, appearance().dividerWidth * zoom));
+    pen.setCapStyle(Qt::FlatCap);
     painter.setPen(pen);
     const qreal y = rect.center().y();
     painter.drawLine(QPointF(rect.left(), y), QPointF(rect.right(), y));

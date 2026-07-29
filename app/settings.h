@@ -122,6 +122,7 @@ struct Appearance {
     // Ширина в пикселях при единичном масштабе; с зумом растёт.
     QColor caretColor{0x1e, 0xab, 0xd6};
     qreal caretWidth = 2.4;
+    qreal dividerWidth = 2.0;   // толщина тематической черты, px (умножается на зум)
     QColor selectionBackground{0xbf, 0xdb, 0xfe};
     QColor linkColor{0x32, 0x5c, 0xc0};
     QColor quoteColor{0x5a, 0x62, 0x6a};
