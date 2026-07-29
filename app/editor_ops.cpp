@@ -1005,6 +1005,34 @@ bool deleteImageLineForward(QTextDocument& doc, QTextCursor& cursor) {
     return true;
 }
 
+bool toggleCommentAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+    const QTextBlock block = cursor.block();
+    if (!block.isValid() || isRawBlock(block)) return false;
+    switch (kindOf(block)) {
+        case Kind::Html:
+            return setBlockKind(doc, cursor, {Kind::Paragraph, Marker::Bullet, false});
+        case Kind::Paragraph:
+        case Kind::Heading:
+        case Kind::Quote:
+        case Kind::ListItem:
+            return setBlockKind(doc, cursor, {Kind::Html, Marker::Bullet, false});
+        case Kind::Code:
+        case Kind::VSpace:
+        case Kind::Divider:
+            // Коду комментарий не светит (там текст буквальный), пустой строке
+            // и черте — нечего комментировать.
+            return false;
+    }
+    return false;
+}
+
+bool uncommentAtBlockStart(QTextDocument& doc, QTextCursor& cursor) {
+    if (!cursor.atBlockStart() || cursor.hasSelection()) return false;
+    const QTextBlock block = cursor.block();
+    if (!block.isValid() || isRawBlock(block) || kindOf(block) != Kind::Html) return false;
+    return setBlockKind(doc, cursor, {Kind::Paragraph, Marker::Bullet, false});
+}
+
 bool toggleTaskAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const BlockRange range = selectedBlocks(doc, cursor);
 

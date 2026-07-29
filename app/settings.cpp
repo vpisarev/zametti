@@ -158,6 +158,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("makeOrderedKey"), a.makeOrderedKey},
         {QStringLiteral("makeTaskKey"), a.makeTaskKey},
         {QStringLiteral("makeParagraphKey"), a.makeParagraphKey},
+        {QStringLiteral("makeCommentKey"), a.makeCommentKey},
     };
 
     QJsonObject zoom{
@@ -286,6 +287,7 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readString(editor, "makeOrderedKey", a.makeOrderedKey);
     readString(editor, "makeTaskKey", a.makeTaskKey);
     readString(editor, "makeParagraphKey", a.makeParagraphKey);
+    readString(editor, "makeCommentKey", a.makeCommentKey);
 
     const QJsonObject zoom = root.value(QStringLiteral("zoom")).toObject();
     readReal(zoom, "step", a.zoomStep);

@@ -83,6 +83,7 @@ NoteEditor::NoteEditor(QWidget* parent)
     bind(appearance().makeOrderedKey, makeOrdered);
     bind(appearance().makeTaskKey, makeTask);
     bind(appearance().makeParagraphKey, makeParagraph);
+    bind(appearance().makeCommentKey, toggleCommentAtCursor);
 
     autosave_.setSingleShot(true);
     connect(&autosave_, &QTimer::timeout, this, [this] { save(true); });
@@ -847,6 +848,9 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     }
 
     if (event->key() == Qt::Key_Backspace && event->modifiers() == Qt::NoModifier) {
+        // Жест снятия комментарности: как у первого пункта списка — сначала
+        // блок становится абзацем, и только следующее нажатие сливает.
+        if (runOperation(uncommentAtBlockStart)) return;
         if (runOperation(unwrapListItemAtCursor)) return;
         // Черта прямо над кареткой удаляется — это удаление назад: гибнет то,
         // что НАД кареткой, а своя строка остаётся под ней. Поэтому раньше
@@ -1056,6 +1060,8 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
     addKind(QStringLiteral("Маркированным списком"), appearance().makeBulletKey, makeBullet);
     addKind(QStringLiteral("Нумерованным списком"), appearance().makeOrderedKey, makeOrdered);
     addKind(QStringLiteral("Списком задач"), appearance().makeTaskKey, makeTask);
+    addKind(QStringLiteral("Комментарием"), appearance().makeCommentKey,
+            toggleCommentAtCursor);
     addKind(QStringLiteral("Обычным текстом"), appearance().makeParagraphKey, makeParagraph);
 
     menu->addSeparator();

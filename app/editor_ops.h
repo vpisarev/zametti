@@ -207,6 +207,15 @@ bool makeParagraph(QTextDocument& doc, QTextCursor& cursor);
 // команд смены рода, а не переключателя.
 bool toggleTaskAtCursor(QTextDocument& doc, QTextCursor& cursor);
 
+// Блок ↔ комментарий (Ctrl+/, как в редакторах кода). Текст не меняется —
+// меняется род; выделение переключает все блоки по первому.
+bool toggleCommentAtCursor(QTextDocument& doc, QTextCursor& cursor);
+
+// Backspace в начале комментария — жест снятия комментарности, по образцу
+// первого пункта списка: буфер не меняется, блок становится абзацем. Слияние
+// с соседом — только следующим нажатием.
+bool uncommentAtBlockStart(QTextDocument& doc, QTextCursor& cursor);
+
 // Записывает ширину показа фотографии блока под курсором (логические пиксели):
 // вики-вложению — "|ширина" в тексте строки, image-спану — "#w=ширина" в пути
 // (фрагмент — просто байты пути, ядро его не трактует). Отказывается, если блок

@@ -233,6 +233,7 @@ struct Appearance {
     QString makeOrderedKey = QStringLiteral("Ctrl+3; Ctrl+#");
     QString makeTaskKey = QStringLiteral("Ctrl+T");
     QString makeParagraphKey = QStringLiteral("Ctrl+Shift+0");
+    QString makeCommentKey = QStringLiteral("Ctrl+/");
 
     // --- масштаб ---
     qreal zoomStep = 1.1;

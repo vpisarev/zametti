@@ -1149,6 +1149,73 @@ void checkBackspaceProperties() {
 
 // Нумерованный маркер меняет вид по вложенности, три вида по кругу:
 // 1. 2. 3. → a. b. c. → 1) 2) 3) → снова цифры. Буквы биективны: z, aa..zz, aaa.
+// Комментарии в редакторе: Ctrl+/ делает блок комментарием и обратно,
+// Backspace в начале комментария — жест снятия комментарности (буфер цел,
+// слияние — только следующим нажатием), как у первого пункта списка.
+void checkCommentOps() {
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+    const QString path = writeNote(
+        "комментарии.md", QStringLiteral("текст\n\n<!-- ком -->\n\nхвост\n"));
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    const auto blockAt = [&](int n) { return editor.document()->findBlockByNumber(n); };
+    ZT_TRUE("комментарий прочитан родом",
+            zametti::kindOf(blockAt(2)) == zametti::Kind::Html &&
+                blockAt(2).text() == QStringLiteral("ком"));
+
+    // Жест: Backspace в начале комментария снимает комментарность, текст цел,
+    // блоки не сливаются.
+    QTextCursor cursor(blockAt(2));
+    editor.setTextCursor(cursor);
+    const int blocks = editor.document()->blockCount();
+    QTest::keyClick(&editor, Qt::Key_Backspace);
+    QTest::qWait(10);
+    ZT_TRUE("жест снял комментарность, буфер цел",
+            zametti::kindOf(blockAt(2)) == zametti::Kind::Paragraph &&
+                blockAt(2).text() == QStringLiteral("ком") &&
+                editor.document()->blockCount() == blocks);
+
+    // Ctrl+/ возвращает комментарность на место.
+    QTest::keyClick(&editor, Qt::Key_Slash, Qt::ControlModifier);
+    QTest::qWait(10);
+    ZT_TRUE("Ctrl+/ сделал блок комментарием",
+            zametti::kindOf(blockAt(2)) == zametti::Kind::Html);
+    {
+        const zametti::Document ir = zametti::readDocument(*editor.document());
+        const std::string out = zametti::serialize(ir);
+        ZT_TRUE("в файл уходит <!-- ком -->",
+                out.find("<!-- ком -->") != std::string::npos);
+    }
+
+    // Ctrl+/ на обычном абзаце — комментарий, ещё раз — обратно.
+    editor.setTextCursor(QTextCursor(blockAt(4)));
+    QTest::keyClick(&editor, Qt::Key_Slash, Qt::ControlModifier);
+    QTest::qWait(10);
+    ZT_TRUE("хвост стал комментарием",
+            zametti::kindOf(blockAt(4)) == zametti::Kind::Html);
+    QTest::keyClick(&editor, Qt::Key_Slash, Qt::ControlModifier);
+    QTest::qWait(10);
+    ZT_TRUE("и обратно абзацем",
+            zametti::kindOf(blockAt(4)) == zametti::Kind::Paragraph &&
+                blockAt(4).text() == QStringLiteral("хвост"));
+
+    // Ctrl-Z раскатывает всю лесенку обратно.
+    QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+    QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+    QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+    QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+    QTest::qWait(10);
+    ZT_TRUE("история вернула исходник",
+            zametti::kindOf(blockAt(2)) == zametti::Kind::Html &&
+                blockAt(2).text() == QStringLiteral("ком") &&
+                zametti::kindOf(blockAt(4)) == zametti::Kind::Paragraph);
+}
+
 void checkOrderedMarkerFaces() {
     const zametti::MarkerStyle ordered{zametti::Marker::Ordered, false};
     const auto face = [&](int ordinal, int level) {
@@ -1192,6 +1259,7 @@ int main(int argc, char** argv) {
     checkListRhythm();
     checkKindRoundTripKeepsPlace();
     checkOrderedMarkerFaces();
+    checkCommentOps();
 
     fs::remove_all(g_dir);
     return zt::report("списки");
