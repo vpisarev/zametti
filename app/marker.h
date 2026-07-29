@@ -32,7 +32,11 @@ namespace zametti {
 
 // Ширина колонки маркера: сам знак плюс зазор до текста. По ней сборщик
 // документа задаёт левое поле блока.
-qreal markerColumn(MarkerStyle style, int ordinal, const QFont& base);
+qreal markerColumn(MarkerStyle style, int ordinal, int level, const QFont& base);
+
+// Знак маркера с учётом вложенности: нумерованный идёт по кругу
+// 1. → a. → 1) (буквы биективно: z, aa, ..., zz, aaa). Наружу — для тестов.
+QString markerText(MarkerStyle style, int ordinal, int level);
 
 // Рамка чекбокса в координатах документа; пустая, если у блока её нет. Одна
 // функция и на отрисовку, и на попадание мышью — двух копий геометрии быть не

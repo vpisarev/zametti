@@ -1815,7 +1815,7 @@ void applyListGeometry(QTextDocument& doc, BlockRange range) {
             const int run = currentRun[size_t(level)];
             runOf.push_back(run);
             widest[size_t(run)] =
-                qMax(widest[size_t(run)], markerColumn(style, ordinal, base));
+                qMax(widest[size_t(run)], markerColumn(style, ordinal, level, base));
         }
     }
 

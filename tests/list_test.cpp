@@ -15,6 +15,7 @@
 #include "document_reader.h"
 #include "document_saver.h"
 #include "editor_widget.h"
+#include "marker.h"
 #include "parser.h"
 #include "serializer.h"
 #include "settings.h"
@@ -1146,6 +1147,24 @@ void checkBackspaceProperties() {
     editor.document()->setModified(false);
 }
 
+// Нумерованный маркер меняет вид по вложенности, три вида по кругу:
+// 1. 2. 3. → a. b. c. → 1) 2) 3) → снова цифры. Буквы биективны: z, aa..zz, aaa.
+void checkOrderedMarkerFaces() {
+    const zametti::MarkerStyle ordered{zametti::Marker::Ordered, false};
+    const auto face = [&](int ordinal, int level) {
+        return zametti::markerText(ordered, ordinal, level).toStdString();
+    };
+    ZT_EQ("уровень 0 — арабские с точкой", std::string("1."), face(1, 0));
+    ZT_EQ("уровень 1 — буквы", std::string("a."), face(1, 1));
+    ZT_EQ("уровень 1, номер 26 — z", std::string("z."), face(26, 1));
+    ZT_EQ("уровень 1, номер 27 — aa", std::string("aa."), face(27, 1));
+    ZT_EQ("уровень 1, номер 702 — zz", std::string("zz."), face(702, 1));
+    ZT_EQ("уровень 1, номер 703 — aaa", std::string("aaa."), face(703, 1));
+    ZT_EQ("уровень 2 — цифры со скобкой", std::string("2)"), face(2, 2));
+    ZT_EQ("уровень 3 — круг замкнулся", std::string("3."), face(3, 3));
+    ZT_EQ("уровень 4 — снова буквы", std::string("b."), face(2, 4));
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     g_dir = fs::temp_directory_path() / "zametti-list-test";
@@ -1172,6 +1191,7 @@ int main(int argc, char** argv) {
     checkUndo();
     checkListRhythm();
     checkKindRoundTripKeepsPlace();
+    checkOrderedMarkerFaces();
 
     fs::remove_all(g_dir);
     return zt::report("списки");

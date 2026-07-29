@@ -22,14 +22,32 @@ bool drawnBullet(MarkerStyle style) {
     return style.marker == Marker::Bullet && appearance().bulletStyle == BulletStyle::Drawn;
 }
 
+// Буквенный номер: a..z, aa..zz, aaa... — биективная 26-ричная запись,
+// как колонки в таблицах.
+QString lettersFor(int ordinal) {
+    QString out;
+    for (int n = ordinal; n > 0; n /= 26) {
+        --n;
+        out.prepend(QChar(QLatin1Char(char('a' + n % 26))));
+    }
+    return out;
+}
+
+}  // namespace
+
 // Знак маркера — для тех начертаний, где он берётся из шрифта. У нарисованных
-// (кружок, рамка) знака нет.
-QString markerText(MarkerStyle style, int ordinal) {
+// (кружок, рамка) знака нет. Нумерованный меняет вид по вложенности, как
+// буллет меняет фигуру: 1. 2. 3. → a. b. c. → 1) 2) 3) — и снова по кругу.
+QString markerText(MarkerStyle style, int ordinal, int level) {
     switch (style.marker) {
         case Marker::Bullet:
             return drawnBullet(style) ? QString() : appearance().bulletGlyph;
         case Marker::Ordered:
-            return QString::number(ordinal) + QStringLiteral(".");
+            switch (qMax(0, level) % 3) {
+                case 1:  return lettersFor(ordinal) + QStringLiteral(".");
+                case 2:  return QString::number(ordinal) + QStringLiteral(")");
+                default: return QString::number(ordinal) + QStringLiteral(".");
+            }
         case Marker::Task:
             switch (appearance().checkboxStyle) {
                 case CheckboxStyle::Glyph:
@@ -43,6 +61,8 @@ QString markerText(MarkerStyle style, int ordinal) {
     }
     return QString();
 }
+
+namespace {
 
 QFont markerFont(MarkerStyle style, const QFont& base) {
     QFont font = base;
@@ -74,11 +94,11 @@ qreal checkboxSide(const QFont& base) {
     return QFontMetricsF(base).tightBoundingRect(QStringLiteral("iy")).height();
 }
 
-qreal glyphWidth(MarkerStyle style, int ordinal, const QFont& base) {
+qreal glyphWidth(MarkerStyle style, int ordinal, int level, const QFont& base) {
     if (drawnCheckbox(style)) return checkboxSide(base);
     if (drawnBullet(style)) return QFontMetricsF(base).xHeight() * appearance().bulletDiameter;
     return QFontMetricsF(markerFont(style, base))
-        .horizontalAdvance(markerText(style, ordinal));
+        .horizontalAdvance(markerText(style, ordinal, level));
 }
 
 // Опора маркера в координатах документа: правый край его колонки и базовая
@@ -169,8 +189,8 @@ BulletShape bulletShapeFor(int level) {
     return shapes[size_t(qBound(0, level, int(shapes.size()) - 1))];
 }
 
-qreal markerColumn(MarkerStyle style, int ordinal, const QFont& base) {
-    return glyphWidth(style, ordinal, base) + gapFor(style, base);
+qreal markerColumn(MarkerStyle style, int ordinal, int level, const QFont& base) {
+    return glyphWidth(style, ordinal, level, base) + gapFor(style, base);
 }
 
 QRectF checkboxRect(const QTextBlock& block, const QFont& base) {
@@ -230,7 +250,7 @@ void paintMarker(QPainter& painter, const QTextBlock& block, const QFont& base) 
         paintBullet(painter, center, diameter, bulletShapeFor(levelOf(block)));
     } else {
         const QFont font = markerFont(style, base);
-        const QString text = markerText(style, ordinalOf(block));
+        const QString text = markerText(style, ordinalOf(block), levelOf(block));
         const QColor color =
             style.marker == Marker::Task
                 ? (style.checked ? appearance().checkboxCheckedColor
