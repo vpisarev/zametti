@@ -161,6 +161,7 @@ private:
     void recordEdit();
     void onContentsChanged();
     void onFileChanged(const QString& path);
+    void onExternalSettled();
     // Применяет внешнее содержимое как обычную правку: один шаг истории, и undo
     // возвращает то, что было до внешнего изменения.
     void adoptExternal(const std::string& text);
@@ -193,6 +194,11 @@ private:
     // сравнивается побайтово — точнее и короче, чем рассуждать о коллизиях.
     // Время правки файла — только подсказка, ему мы не верим.
     QFileSystemWatcher watcher_;
+    // Отстойник внешних правок: внешние редакторы пишут «обрезать → записать»,
+    // и сторож стреляет на пустом файле посреди записи. Перечитываем только
+    // после паузы тишины, иначе в историю попадал пустой документ.
+    QTimer externalSettle_;
+    bool externalEmptyRetried_ = false;
     QByteArray knownContent_;
     // Метаданные открытой заметки. В QTextDocument их нет — редактор их не
     // видит, — поэтому от открытия до сохранения они живут здесь.

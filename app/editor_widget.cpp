@@ -85,6 +85,8 @@ NoteEditor::NoteEditor(QWidget* parent)
     connect(document(), &QTextDocument::contentsChanged, this,
             &NoteEditor::onContentsChanged);
     connect(&watcher_, &QFileSystemWatcher::fileChanged, this, &NoteEditor::onFileChanged);
+    externalSettle_.setSingleShot(true);
+    connect(&externalSettle_, &QTimer::timeout, this, &NoteEditor::onExternalSettled);
 }
 
 bool NoteEditor::openFile(const QString& path) {
@@ -100,6 +102,8 @@ bool NoteEditor::openFile(const QString& path) {
     lastComplaint_.clear();
     externalPending_ = false;
     externalText_.clear();
+    externalSettle_.stop();
+    externalEmptyRetried_ = false;
     knownContent_ = QByteArray(text.data(), qsizetype(text.size()));
     watchFile();
     // Серию набора обрываем: иначе первая правка в новой заметке подмешалась бы
@@ -124,10 +128,26 @@ void NoteEditor::onFileChanged(const QString& path) {
     // Наш собственный QSaveFile делает ровно это.
     if (!watcher_.files().contains(path)) watcher_.addPath(path);
 
+    // Не читаем сразу: внешние редакторы пишут «обрезать → записать», и первый
+    // сигнал часто застаёт файл пустым. Ждём паузу тишины; каждый новый сигнал
+    // отодвигает срок.
+    onExternalSettled();   // ПРОБА: без отстойника
+}
+
+void NoteEditor::onExternalSettled() {
     std::string text;
-    if (!readFile(path, text)) return;   // файл унесли: ждём, пока вернётся
+    if (!readFile(path_, text)) return;   // файл унесли: ждём, пока вернётся
     const QByteArray content(text.data(), qsizetype(text.size()));
     if (content == knownContent_) return;   // это мы сами и записали
+
+    // Файл опустел, а был непустым: похоже, мы всё же попали в середину чужой
+    // записи. Одна повторная попытка, прежде чем поверить в пустоту.
+    if (content.isEmpty() && !knownContent_.isEmpty() && !externalEmptyRetried_) {
+        externalEmptyRetried_ = true;
+        externalSettle_.start(300);
+        return;
+    }
+    externalEmptyRetried_ = false;
     knownContent_ = content;
 
     // Без несохранённых правок внешнее содержимое — просто ещё один шаг

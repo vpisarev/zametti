@@ -224,6 +224,36 @@ void checkShrunkFromOutside() {
 
 }  // namespace
 
+// Внешние редакторы пишут «обрезать до нуля → записать». Сторож стреляет и на
+// пустом файле посреди записи; без отстойника пустой документ попадал в
+// историю, и первый Ctrl+Z после внешней правки давал пустую заметку.
+void checkTruncateWriteRace() {
+    const QString path = g_dir + QStringLiteral("/гонка.md");
+    writeFile(path, QStringLiteral("раз\n\nдва\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    // Чужая запись в два приёма. Пауза больше отстойника (150 мс), но меньше
+    // повторной попытки для опустевшего файла (ещё 300 мс): без отстойника
+    // пустота успевает усвоиться, с ним — перечитывается уже полный файл.
+    writeFile(path, QString());
+    QTest::qWait(220);
+    writeFile(path, QStringLiteral("раз\n\nдва изменено\n"));
+    const QString expected = QStringLiteral("раз\n\nдва изменено\n");
+    for (int i = 0; i < 150 && textOf(editor) != expected; ++i) QTest::qWait(20);
+    checkEqual(expected, textOf(editor), "внешняя правка подтянулась");
+
+    QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+    QTest::qWait(20);
+    checkEqual(QStringLiteral("раз\n\nдва\n"), textOf(editor),
+               "первый Ctrl+Z возвращает состояние до внешней правки, а не пустоту");
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     if (argc < 2) {
@@ -243,6 +273,7 @@ int main(int argc, char** argv) {
     checkTakesExternal();
     checkOwnSaveIsNotExternal();
     checkShrunkFromOutside();
+    checkTruncateWriteRace();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;
