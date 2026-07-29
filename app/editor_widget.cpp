@@ -489,6 +489,12 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
         return;
     }
 
+    // "---" и пробел — черта. Правило срабатывает ДО вставки пробела: тогда
+    // пробел не попадает в шаг истории, и Ctrl+Z возвращает голые дефисы с
+    // кареткой сразу за ними, без хвоста. Enter-путь устроен так же — выше.
+    if (event->text() == QStringLiteral(" ") && runOperation(applyDividerRuleAtCursor))
+        return;
+
     // Перед самим набором: у правого края ссылки набранное не должно уезжать
     // внутрь неё.
     if (!event->text().isEmpty() && event->text().at(0).isPrint()) dropLinkAtRightEdge();
@@ -512,10 +518,7 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     // Автозамена срабатывает по пробелу и уже после того, как он набран: правило
     // смотрит на то, что человек написал. Отдельным шагом истории — первый
     // Ctrl+Z обязан вернуть набранные знаки, а не отменить предыдущую правку.
-    if (event->text() == QStringLiteral(" ")) {
-        // "---" и пробел — тематическая черта, как и остальные автозамены.
-        if (!runOperation(applyDividerRuleAtCursor)) runOperation(applyInputRuleAtCursor);
-    }
+    if (event->text() == QStringLiteral(" ")) runOperation(applyInputRuleAtCursor);
     // Закрывающая кавычка превращает набранное в ней во встроенный код. После
     // этого курсор стоит в конце размеченного куска, и без сброса формата набор
     // продолжался бы кодом — вышло бы `код и всё, что дальше`.

@@ -820,6 +820,43 @@ void checkKindRoundTripKeepsPlace() {
 
 }  // namespace
 
+// Ввод черты и отмена — один жест: пробел (или Enter), создавший черту, не
+// попадает в шаг истории, и Ctrl+Z возвращает голые дефисы с кареткой сразу
+// за ними — без хвостового пробела и без лишней строки.
+void checkDividerUndo() {
+    for (const bool viaEnter : {false, true}) {
+        zametti::NoteEditor editor;
+        editor.resize(700, 500);
+        editor.show();
+        QTest::qWait(20);
+        editor.setFocus();
+        const QString path = writeNote(viaEnter ? "черта-enter.md" : "черта-пробел.md",
+                                       QStringLiteral("до\n"));
+        editor.openFile(path);
+        QTest::qWait(20);
+
+        QTextCursor cursor = editor.textCursor();
+        cursor.movePosition(QTextCursor::End);
+        editor.setTextCursor(cursor);
+        QTest::keyClick(&editor, Qt::Key_Return);
+        editor.insertPlainText(QStringLiteral("---"));
+        QTest::keyClick(&editor, viaEnter ? Qt::Key_Return : Qt::Key_Space);
+        QTest::qWait(10);
+        ZT_EQ(std::string("черта появилась (") + (viaEnter ? "Enter" : "пробел") + ")",
+              "до\n___\n\n", textOf(editor).toStdString());
+
+        QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+        QTest::qWait(10);
+        const QTextCursor after = editor.textCursor();
+        ZT_EQ(std::string("отмена вернула дефисы без хвоста (") +
+                  (viaEnter ? "Enter" : "пробел") + ")",
+              "до\n\\---\n", textOf(editor).toStdString());
+        ZT_TRUE(std::string("каретка сразу за дефисами (") +
+                    (viaEnter ? "Enter" : "пробел") + ")",
+                after.atBlockEnd() && after.block().text().endsWith(QStringLiteral("---")));
+    }
+}
+
 // Свойства Backspace на ЛЮБОЙ лесенке из текста, пустых строк и черт — их
 // может быть и сто подряд, и правила обязаны держаться на каждой:
 //   1) черты и текст не пропадают;
@@ -960,6 +997,7 @@ int main(int argc, char** argv) {
     for (const Case& c : kBlankLineAfterItemCases) run(c);
     for (const Case& c : kDividerCases) run(c);
     for (const Case& c : kBackspaceUpCases) run(c);
+    checkDividerUndo();
     checkBackspaceProperties();
     checkUndo();
     checkListRhythm();
