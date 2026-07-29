@@ -118,9 +118,14 @@ std::string toJson(const Document& doc) {
                     if (s.italic) out += ", \"italic\": true";
                     if (s.strike) out += ", \"strike\": true";
                     if (s.code) out += ", \"code\": true";
+                    if (s.image) out += ", \"image\": true";
                     if (!s.href.empty()) {
                         out += ", \"href\": ";
                         appendJsonString(out, s.href);
+                    }
+                    if (!s.title.empty()) {
+                        out += ", \"title\": ";
+                        appendJsonString(out, s.title);
                     }
                     out += "}";
                 }

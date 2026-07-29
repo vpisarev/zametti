@@ -459,6 +459,9 @@ struct Segment {
 
 bool hasAttr(const Span* s, int a) {
     if (s == nullptr) return false;
+    // Картинка выводится целиком отдельной ветвью; в ряды соседних признаков
+    // (в том числе ссылки с тем же адресом) её втягивать нельзя.
+    if (s->image) return false;
     switch (a) {
         case kStrike: return s->strike;
         case kBold:   return s->bold;
@@ -498,6 +501,33 @@ void emitSegments(TextSink& sink, const std::string& text, const std::vector<Seg
                   std::vector<unsigned char>* marksBuf) {
     size_t i = lo;
     while (i < hi) {
+        // Картинка: подпись дословно-плоская по построению (разбор деградирует
+        // иначе), поэтому весь спан выводится одним куском. Скобки в подписи
+        // экранируются как в тексте ссылки — иначе подпись оборвётся.
+        if (segs[i].span != nullptr && segs[i].span->image) {
+            const Span& img = *segs[i].span;
+            if (marksBuf != nullptr)
+                for (size_t k = segs[i].begin; k < segs[i].end; ++k)
+                    (*marksBuf)[k] |= kMarkInLink;
+            sink.out += "![";
+            sink.bol = false;
+            appendEscaped(sink, text, segs[i].begin, segs[i].end);
+            sink.out += "](";
+            appendHref(sink.out, img.href);
+            if (!img.title.empty()) {
+                // Кавычку и перевод строки разбор в title не пускает; обратная
+                // косая экранируется, чтобы не съела закрывающую кавычку.
+                sink.out += " \"";
+                for (char tc : img.title) {
+                    if (tc == '\\') sink.out.push_back('\\');
+                    sink.out.push_back(tc);
+                }
+                sink.out.push_back('"');
+            }
+            sink.out.push_back(')');
+            ++i;
+            continue;
+        }
         // Наружу выносится признак, покрывающий самый длинный ряд: "***foo** bar*"
         // — это курсив, внутри которого жирный кусок, а не наоборот. При равной
         // длине выигрывает канонический порядок: ~~ снаружи, затем **, затем _.
@@ -640,6 +670,12 @@ void validate(const Block& b) {
     assert((b.kind == Kind::ListItem || !b.checked) && "отметка осмысленна только у задачи");
     assert((b.kind == Kind::Code || b.info.empty()) && "info осмыслена только у блока кода");
     assert(b.level >= -1 && "уровень мельче, чем вне списка");
+    for (const Span& s : b.inlines) {
+        assert((!s.image || !s.href.empty()) && "у картинки обязан быть путь");
+        assert((s.title.empty() || s.image) && "title осмыслен только у картинки");
+        assert((!s.image || !(s.bold || s.italic || s.strike || s.code)) &&
+               "картинка не сочетается с другой разметкой");
+    }
 }
 
 std::string markerFor(const Block& b, int ordinal) {

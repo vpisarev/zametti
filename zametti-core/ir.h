@@ -61,7 +61,9 @@ struct Span {
     bool italic = false;
     bool strike = false;
     bool code   = false;   // встроенный код; содержимое буквальное, разметки внутри нет
-    std::string href;      // непусто → ссылка
+    bool image  = false;   // картинка: текст спана — подпись (alt), href — путь
+    std::string href;      // непусто → ссылка (или путь картинки при image)
+    std::string title;     // осмысленно только при image: ![alt](путь "title")
 };
 
 struct Block {

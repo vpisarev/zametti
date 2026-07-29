@@ -29,9 +29,13 @@ struct Style {
     bool italic = false;
     bool strike = false;
     bool code = false;
+    bool image = false;
     std::string href;
+    std::string title;
 
-    bool plain() const { return !bold && !italic && !strike && !code && href.empty(); }
+    bool plain() const {
+        return !bold && !italic && !strike && !code && !image && href.empty();
+    }
 };
 
 // Диапазон исходника, занятый блоком. Хранится параллельно Document, потому что
@@ -170,7 +174,9 @@ void flushRun(Ctx& c) {
         s.italic = st.italic;
         s.strike = st.strike;
         s.code = st.code;
+        s.image = st.image;
         s.href = st.href;
+        s.title = st.title;
         c.cur.inlines.push_back(std::move(s));
     }
     c.runStart = end;
@@ -566,6 +572,11 @@ int enterSpan(MD_SPANTYPE type, void* detail, void* userdata) {
 
     flushRun(c);
     Style st = c.styles.back();
+    if (st.image) {
+        // Разметка внутри подписи картинки: плоскими спанами не выражается.
+        demote(c);
+        return 0;
+    }
 
     switch (type) {
         case MD_SPAN_EM:
@@ -581,6 +592,28 @@ int enterSpan(MD_SPANTYPE type, void* detail, void* userdata) {
             st.code = true;
             c.codeSpanAwaitsText = true;
             break;
+        case MD_SPAN_IMG: {
+            // Картинка: подпись — текст спана, путь — href, заголовок — title.
+            // Фрагмент в пути ("#w=300") — просто байты пути, их не трогаем.
+            // Внутри подписи вложенной разметке взяться неоткуда: подпись у
+            // картинки — обычный текст, а картинка внутри ссылки или разметки
+            // плоским спаном не выражается — дословно.
+            const auto* d = static_cast<const MD_SPAN_IMG_DETAIL*>(detail);
+            std::string src;
+            std::string title;
+            if (!attrToString(d->src, src) || !attrToString(d->title, title) ||
+                src.empty() || !st.plain() ||
+                title.find('"') != std::string::npos ||
+                title.find('\n') != std::string::npos) {
+                demote(c);
+                return 0;
+            }
+            st.image = true;
+            st.href = std::move(src);
+            st.title = std::move(title);
+            break;
+        }
+
         case MD_SPAN_A: {
             const auto* d = static_cast<const MD_SPAN_A_DETAIL*>(detail);
             std::string href;
@@ -596,7 +629,7 @@ int enterSpan(MD_SPANTYPE type, void* detail, void* userdata) {
             break;
         }
         default:
-            // IMG, LATEXMATH, WIKILINK, U — модели неизвестны.
+            // LATEXMATH, WIKILINK, U — модели неизвестны.
             demote(c);
             return 0;
     }
