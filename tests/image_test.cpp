@@ -20,6 +20,8 @@
 #include "test_util.h"
 
 #include <QApplication>
+#include <QClipboard>
+#include <QGuiApplication>
 #include <QImage>
 #include <QMouseEvent>
 #include <QPainter>
@@ -96,18 +98,28 @@ int main(int argc, char** argv) {
     ZT_TRUE("под пропавший файл места нет", marginOf(4) == 0.0);
     ZT_TRUE("под обычный текст места нет", marginOf(6) == 0.0);
 
+    // Цвет в центре фотографии блока — тонировку видно по нему.
+    const auto shadeOf = [&](int n) {
+        QImage frame(editor.viewport()->size(), QImage::Format_RGB32);
+        frame.fill(Qt::white);
+        QPainter painter(&frame);
+        editor.viewport()->render(&painter);
+        const QRectF photo = editor.imageRectInViewport(blockAt(n));
+        return frame.pixelColor(photo.center().toPoint());
+    };
+    const auto sameShade = [](const QColor& a, const QColor& b) {
+        return a.red() == b.red() && a.green() == b.green() && a.blue() == b.blue();
+    };
+    const auto caretTo = [&](int n) {
+        editor.setTextCursor(QTextCursor(blockAt(n)));
+        QTest::qWait(10);
+    };
+
     // Выделение — это выделенная фотография, а не вскрытая разметка: текст
     // не показывается, резерв не дёргается, поверх фото ложится тонировка.
     {
-        const auto centerShade = [&] {
-            QImage frame(editor.viewport()->size(), QImage::Format_RGB32);
-            frame.fill(Qt::white);
-            QPainter painter(&frame);
-            editor.viewport()->render(&painter);
-            const QRectF photo = editor.imageRectInViewport(blockAt(2));
-            return frame.pixelColor(photo.center().toPoint());
-        };
-        const QColor plain = centerShade();
+        caretTo(6);   // каретка в стороне: она тонирует фото сама по себе
+        const QColor plain = shadeOf(2);
 
         QTextCursor cursor(blockAt(2));
         cursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, 3);
@@ -115,18 +127,17 @@ int main(int argc, char** argv) {
         QTest::qWait(10);
         ZT_TRUE("выделение не тронуло резерв",
                 std::fabs(marginOf(2) - qMax(0.0, 40.0 + kGap - lineOf(2))) < 1.5);
-        const QColor tinted = centerShade();
-        ZT_TRUE("выделенная фотография тонирована",
-                plain.red() != tinted.red() || plain.green() != tinted.green() ||
-                    plain.blue() != tinted.blue());
+        ZT_TRUE("выделенная фотография тонирована", !sameShade(plain, shadeOf(2)));
 
-        cursor.clearSelection();
-        editor.setTextCursor(cursor);
-        QTest::qWait(10);
-        const QColor back = centerShade();
-        ZT_TRUE("тонировка снята вместе с выделением",
-                back.red() == plain.red() && back.green() == plain.green() &&
-                    back.blue() == plain.blue());
+        caretTo(6);
+        ZT_TRUE("тонировка снята вместе с выделением", sameShade(plain, shadeOf(2)));
+
+        // Каретка, вставшая на строку-фотографию, — та же выбранная
+        // фотография: тонировка без всякого выделения.
+        caretTo(2);
+        ZT_TRUE("каретка на фотографии тонирует её", !sameShade(plain, shadeOf(2)));
+        caretTo(6);
+        ZT_TRUE("каретка ушла — тонировка снята", sameShade(plain, shadeOf(2)));
     }
 
     // Фотографии действительно в кадре: красных пикселей не меньше, чем в
@@ -195,6 +206,74 @@ int main(int argc, char** argv) {
     QTest::qWait(10);
     ZT_TRUE("резерв вернулся после починки строки",
             std::fabs(marginOf(2) - qMax(0.0, 40.0 + kGap - lineOf(2))) < 1.5);
+
+    // Ctrl+C/Ctrl+X/Ctrl+V: каретка на картинке — выбранная картинка. В
+    // клипборд идёт текстовое представление строки, вставка идёт через полный
+    // парсер ядра и встаёт своей строкой.
+    {
+        QClipboard* clipboard = QGuiApplication::clipboard();
+        caretTo(2);
+        QTest::keyClick(&editor, Qt::Key_C, Qt::ControlModifier);
+        ZT_EQ("Ctrl+C кладёт текст вложения", std::string("![[img.png|40]]"),
+              clipboard->text().toStdString());
+
+        const int blocksBefore = editor.document()->blockCount();
+        QTest::keyClick(&editor, Qt::Key_X, Qt::ControlModifier);
+        QTest::qWait(10);
+        ZT_TRUE("Ctrl+X убрал строку целиком",
+                editor.document()->blockCount() == blocksBefore - 1 &&
+                    !editor.toPlainText().contains(QStringLiteral("img.png|40")));
+        ZT_EQ("клипборд после Ctrl+X цел", std::string("![[img.png|40]]"),
+              clipboard->text().toStdString());
+
+        // Вставка в конец: фотография встаёт своей строкой, не вклеивается.
+        QTextCursor end(editor.document());
+        end.movePosition(QTextCursor::End);
+        editor.setTextCursor(end);
+        QTest::keyClick(&editor, Qt::Key_V, Qt::ControlModifier);
+        QTest::qWait(10);
+        int pasted = -1;
+        for (QTextBlock b = editor.document()->begin(); b.isValid(); b = b.next())
+            if (b.text() == QStringLiteral("![[img.png|40]]")) pasted = b.blockNumber();
+        ZT_TRUE("Ctrl+V вернул строку-фотографию", pasted >= 0);
+        if (pasted >= 0) {
+            ZT_TRUE("вставленная строка — своя, не вклейка",
+                    blockAt(pasted).text() == QStringLiteral("![[img.png|40]]"));
+            ZT_TRUE("резерв места у вставленной есть",
+                    std::fabs(marginOf(pasted) -
+                              qMax(0.0, 40.0 + kGap - lineOf(pasted))) < 1.5);
+        }
+
+        // Откат: вставка и вырезание — по своему шагу истории.
+        QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+        QTest::qWait(10);
+        ZT_TRUE("Ctrl-Z убрал вставленную",
+                !editor.toPlainText().contains(QStringLiteral("img.png|40")));
+        QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+        QTest::qWait(10);
+        ZT_EQ("Ctrl-Z вернул вырезанную на место", std::string("![[img.png|40]]"),
+              blockAt(2).text().toStdString());
+    }
+
+    // Канон image-спана из клипборда тоже встаёт фотографией: полный парсер
+    // ядра превращает текст в спан, ширина — из "#w=".
+    {
+        QGuiApplication::clipboard()->setText(QStringLiteral("![пейзаж](img.png#w=33)"));
+        QTextCursor end(editor.document());
+        end.movePosition(QTextCursor::End);
+        editor.setTextCursor(end);
+        QTest::keyClick(&editor, Qt::Key_V, Qt::ControlModifier);
+        QTest::qWait(10);
+        int pasted = -1;
+        for (QTextBlock b = editor.document()->begin(); b.isValid(); b = b.next())
+            if (b.text() == QStringLiteral("пейзаж")) pasted = b.blockNumber();
+        ZT_TRUE("канон вставился image-спаном", pasted >= 0);
+        if (pasted >= 0) {
+            const zametti::BlockImageRef ref = zametti::blockImageRef(blockAt(pasted));
+            ZT_TRUE("вставленный спан — фотография с шириной из #w=",
+                    ref.valid && !ref.wiki && qRound(ref.widthHint) == 33);
+        }
+    }
 
     return zt::report("картинки в просмотре");
 }

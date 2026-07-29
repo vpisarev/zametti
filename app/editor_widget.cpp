@@ -651,6 +651,21 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
         return;
     }
 
+    // Ctrl+C/Ctrl+X на строке-фотографии без выделения: каретка на картинке —
+    // это выбранная картинка. В клипборд идёт текстовое представление строки
+    // (вики-вложение или канон image-спана) — Ctrl+V вставит его обратно через
+    // полный парсер ядра, тем же путём, что и любой markdown.
+    if (!textCursor().hasSelection() &&
+        (event->matches(QKeySequence::Copy) || event->matches(QKeySequence::Cut)) &&
+        blockImageRef(textCursor().block()).valid) {
+        QTextCursor line = textCursor();
+        line.setPosition(line.block().position());
+        line.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+        QGuiApplication::clipboard()->setText(selectionToMarkdown(line));
+        if (event->matches(QKeySequence::Cut)) runOperation(cutImageLineAtCursor);
+        return;
+    }
+
     const bool plainEnter = (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
                             (event->modifiers() & ~Qt::KeypadModifier) == Qt::NoModifier;
     // "---" и Enter — тоже тематическая черта, как и "---" с пробелом:
@@ -945,8 +960,18 @@ void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
     // код, цитата, да и просто несколько блоков — вставляется своими блоками:
     // род блока это его свойство, и терять его при переносе нельзя.
     const Block& head = pieces.front();
-    const bool blockLevel =
-        pieces.size() > 1 || !head.rawSource.empty() || head.kind != Kind::Paragraph;
+    // Фотография — тоже блочная вещь: абзац из одного image-спана целиком и
+    // вики-вложение "![[...]]" встают своей строкой, а не вклеиваются в текст
+    // (в середине текста фотография не показывается — вклейка её потеряла бы).
+    const bool wholeImage =
+        head.rawSource.empty() && head.kind == Kind::Paragraph &&
+        ((head.inlines.size() == 1 && head.inlines[0].image &&
+          head.inlines[0].offset == 0 &&
+          size_t(head.inlines[0].length) == head.text.size()) ||
+         (head.text.rfind("![[", 0) == 0 && head.text.size() > 5 &&
+          head.text.compare(head.text.size() - 2, 2, "]]") == 0));
+    const bool blockLevel = pieces.size() > 1 || !head.rawSource.empty() ||
+                            head.kind != Kind::Paragraph || wholeImage;
 
     recordingSuspended_ = true;
     QTextCursor cursor = textCursor();

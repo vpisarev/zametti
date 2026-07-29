@@ -934,6 +934,46 @@ bool setImageWidthAtCursor(QTextDocument& doc, QTextCursor& cursor, int width) {
     return true;
 }
 
+bool cutImageLineAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+    Q_UNUSED(doc);
+    const QTextBlock block = cursor.block();
+    if (!blockImageRef(block).valid) return false;
+
+    // Как в removeLineBlock: позиции и формат выжившего — ДО правки (хэндлы
+    // протухают), формат выжившего ставится явно (Qt при слиянии оставляет
+    // формат не того блока).
+    const QTextBlock after = block.next();
+    const QTextBlock before = block.previous();
+    const QTextBlockFormat keep =
+        after.isValid() ? after.blockFormat()
+                        : (before.isValid() ? before.blockFormat() : QTextBlockFormat());
+    const int at = block.position();
+    const int length = block.length();
+
+    QTextCursor edit(cursor);
+    if (after.isValid()) {
+        edit.setPosition(at);
+        edit.setPosition(at + length, QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+        edit.setPosition(at);
+        edit.setBlockFormat(keep);
+    } else if (before.isValid()) {
+        edit.setPosition(at - 1);
+        edit.movePosition(QTextCursor::End, QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+        edit.setBlockFormat(keep);
+    } else {
+        // Единственный блок документа: остаётся пустой абзац.
+        edit.setPosition(0);
+        edit.movePosition(QTextCursor::End, QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+        edit.setBlockFormat(QTextBlockFormat());
+        edit.setCharFormat(QTextCharFormat());
+    }
+    cursor = edit;
+    return true;
+}
+
 bool toggleTaskAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const BlockRange range = selectedBlocks(doc, cursor);
 

@@ -311,15 +311,20 @@ void NoteView::paintImage(QPainter& painter, const QTextBlock& block) {
     painter.drawImage(geometry.photo, *image);
 
     // Выделение, задевшее строку, — это выделенная фотография, а не вскрытая
-    // разметка: тонировка цветом выделения поверх.
+    // разметка: тонировка цветом выделения поверх, примерно 50/50. Каретка,
+    // вставшая на строку, — то же самое: мигающая полоска в углу фотографии
+    // человеку ничего не говорит, выбранная фотография — говорит (сама
+    // полоска гасится в paintEvent).
     const QTextCursor cursor = textCursor();
-    const bool selected = cursor.hasSelection() &&
-                          qMin(cursor.anchor(), cursor.position()) <
-                              block.position() + block.length() &&
-                          qMax(cursor.anchor(), cursor.position()) > block.position();
+    const bool selected =
+        cursor.hasSelection()
+            ? qMin(cursor.anchor(), cursor.position()) <
+                      block.position() + block.length() &&
+                  qMax(cursor.anchor(), cursor.position()) > block.position()
+            : cursor.block() == block;
     if (selected) {
         QColor tint = appearance().selectionBackground;
-        tint.setAlpha(110);
+        tint.setAlpha(128);
         painter.fillRect(geometry.photo, tint);
     }
     painter.restore();
@@ -401,9 +406,11 @@ void NoteView::paintEvent(QPaintEvent* event) {
 
     // Каретка — последней и без сдвига на прокрутку: cursorRect уже отдаёт
     // координаты вьюпорта. При выделении не рисуется вовсе: там видно и так, а
-    // мигающая полоска на краю выделения только мешает.
+    // мигающая полоска на краю выделения только мешает. На строке-фотографии
+    // тоже: там выбор показывает тонировка, а не полоска в углу картинки.
     painter.resetTransform();
-    if (caretOn_ && hasFocus() && !isReadOnly() && !textCursor().hasSelection()) {
+    if (caretOn_ && hasFocus() && !isReadOnly() && !textCursor().hasSelection() &&
+        !imageGeometry(textCursor().block()).valid) {
         QRect at = cursorRect();
         at.setWidth(qMax(1, qRound(appearance().caretWidth * zoom_)));
         painter.fillRect(at, appearance().caretColor);
