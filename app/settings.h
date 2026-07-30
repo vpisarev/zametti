@@ -20,6 +20,7 @@
 #include <QtGlobal>
 
 #include <array>
+#include <utility>
 #include <vector>
 
 namespace zametti {
@@ -259,10 +260,18 @@ struct Appearance {
     QString makeTaskKey = QStringLiteral("Ctrl+T");
     QString makeParagraphKey = QStringLiteral("Ctrl+Shift+0");
     QString makeCommentKey = QStringLiteral("Ctrl+/");
-    // Длинное тире: знака на клавиатуре нет, а в тексте оно нужно постоянно.
-    // Сам знак тоже настраивается — кому-то привычнее среднее тире.
-    QString emDashKey = QStringLiteral("Alt+-");
-    QString emDash = QStringLiteral("—");
+
+    // Автозамены по сочетанию: знаки, которых нет на клавиатуре. Пара —
+    // сочетание и то, что вставить; вставка идёт обычным набором, то есть
+    // слипается в один шаг истории с соседними буквами.
+    //
+    // Вообще-то это работа среды (в GNOME — таблица составных знаков), но
+    // пока она не настроена, знак проще завести здесь. Буквы в сочетаниях
+    // пишутся латиницей, как их пишет сам Qt: на любой раскладке клавиша
+    // остаётся той же клавишей.
+    std::vector<std::pair<QString, QString>> specialKeys{
+        {QStringLiteral("Alt+-"), QStringLiteral("—")},
+    };
     // Команда «Открыть во внешнем редакторе»: %f — путь к файлу заметки
     // (например "gedit %f" или "code -g %f"). Пусто — xdg-open. Открывается
     // настоящий файл хранилища целиком, вместе с блоком метаданных: инвариант

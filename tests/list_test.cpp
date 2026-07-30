@@ -1399,8 +1399,17 @@ void checkNumberSignHeadings() {
     }
 }
 
-// Длинное тире по сочетанию: знака нет на клавиатуре, а в тексте он нужен.
-void checkEmDashKey() {
+// Автозамены по сочетанию: знаков нет на клавиатуре, а в тексте они нужны.
+// Список задаётся конфигом; по умолчанию в нём одно длинное тире.
+void checkSpecialKeys() {
+    // Список читается редактором при создании — правим оформление ДО него.
+    const auto saved = zametti::appearance().specialKeys;
+    zametti::appearance().specialKeys = {
+        {QStringLiteral("Alt+-"), QStringLiteral("—")},
+        {QStringLiteral("Ctrl+Alt+G"), QStringLiteral("→")},
+        {QStringLiteral("Ctrl+Alt+T"), QStringLiteral("тчк")},   // замена может быть строкой
+    };
+
     zametti::NoteEditor editor;
     editor.resize(700, 500);
     editor.show();
@@ -1416,18 +1425,32 @@ void checkEmDashKey() {
     editor.setTextCursor(end);
     typeText(editor, QStringLiteral(" "));
     QTest::keyClick(&editor, Qt::Key_Minus, Qt::AltModifier);
-    typeText(editor, QStringLiteral(" два"));
+    typeText(editor, QStringLiteral(" два "));
+    QTest::keyClick(&editor, Qt::Key_G, Qt::ControlModifier | Qt::AltModifier);
+    typeText(editor, QStringLiteral(" три "));
+    QTest::keyClick(&editor, Qt::Key_T, Qt::ControlModifier | Qt::AltModifier);
     QTest::qWait(10);
 
-    ZT_TRUE("тире вставилось в текст",
+    ZT_TRUE("замены встали в текст",
             editor.document()->firstBlock().text() ==
-                QStringLiteral("раз — два"));
+                QStringLiteral("раз — два → три тчк"));
 
-    // Это обычный набор, а не операция: одна отмена убирает всю серию, включая
-    // тире, и в файл оно уходит как есть.
+    // Это обычный набор, а не операция: в файл всё уходит как есть.
     editor.save(false);
     QTest::qWait(20);
-    ZT_TRUE("в файле длинное тире", textOf(editor).contains(QStringLiteral("раз — два")));
+    ZT_TRUE("в файле то же самое",
+            textOf(editor).contains(QStringLiteral("раз — два → три тчк")));
+
+    // Сочетание, которого в списке нет, ничего не вставляет. Клавиша нужна
+    // такая, у которой нет собственного знака: Ctrl+Alt+J, например, Qt
+    // сопровождает переводом строки, и проверка ловила бы его, а не замену.
+    QTest::keyClick(&editor, Qt::Key_F7, Qt::ControlModifier | Qt::AltModifier);
+    QTest::qWait(10);
+    ZT_TRUE("чужое сочетание молчит",
+            editor.document()->firstBlock().text() ==
+                QStringLiteral("раз — два → три тчк"));
+
+    zametti::appearance().specialKeys = saved;
 }
 
 // Ctrl+Shift+E: крайние пустые строки выделения не входят в блок кода —
@@ -1514,7 +1537,7 @@ int main(int argc, char** argv) {
     checkCommentOps();
     checkInputRuleSplitsLine();
     checkNumberSignHeadings();
-    checkEmDashKey();
+    checkSpecialKeys();
     checkCodeToggleTrimsBlankEdges();
 
     fs::remove_all(g_dir);

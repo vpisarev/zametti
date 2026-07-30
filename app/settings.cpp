@@ -163,6 +163,14 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("historyLimit"), a.findHistoryLimit},
     };
 
+    QJsonArray special;
+    for (const auto& [keys, text] : a.specialKeys) {
+        QJsonArray pair;
+        pair.append(keys);
+        pair.append(text);
+        special.append(pair);
+    }
+
     QJsonObject editor{
         {QStringLiteral("autosaveDelayMs"), a.autosaveDelayMs},
         {QStringLiteral("undoCoalesceMs"), a.undoCoalesceMs},
@@ -175,8 +183,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("makeTaskKey"), a.makeTaskKey},
         {QStringLiteral("makeParagraphKey"), a.makeParagraphKey},
         {QStringLiteral("makeCommentKey"), a.makeCommentKey},
-        {QStringLiteral("emDashKey"), a.emDashKey},
-        {QStringLiteral("emDash"), a.emDash},
+        {QStringLiteral("special"), special},
         {QStringLiteral("externalEditor"), a.externalEditor},
     };
 
@@ -326,8 +333,20 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readString(editor, "makeTaskKey", a.makeTaskKey);
     readString(editor, "makeParagraphKey", a.makeParagraphKey);
     readString(editor, "makeCommentKey", a.makeCommentKey);
-    readString(editor, "emDashKey", a.emDashKey);
-    readString(editor, "emDash", a.emDash);
+    // Автозамены: список пар [сочетание, что вставить]. Заданный список
+    // заменяет умолчания целиком — иначе от умолчания было бы не избавиться.
+    const QJsonValue special = editor.value(QStringLiteral("special"));
+    if (special.isArray()) {
+        a.specialKeys.clear();
+        for (const QJsonValue& entry : special.toArray()) {
+            const QJsonArray pair = entry.toArray();
+            if (pair.size() != 2 || !pair.at(0).isString() || !pair.at(1).isString())
+                continue;   // битую запись пропускаем, соседние живут
+            const QString keys = pair.at(0).toString();
+            if (keys.isEmpty()) continue;
+            a.specialKeys.push_back({keys, pair.at(1).toString()});
+        }
+    }
     readString(editor, "externalEditor", a.externalEditor);
 
     const QJsonObject zoom = root.value(QStringLiteral("zoom")).toObject();

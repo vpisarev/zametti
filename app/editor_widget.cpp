@@ -79,9 +79,15 @@ NoteEditor::NoteEditor(QWidget* parent)
     inlineBindings_.push_back(
         {QKeySequence(QStringLiteral("Ctrl+K")), {SpanStrike, toggleStrike}});
 
-    for (const QKeySequence& keys :
-         QKeySequence::listFromString(appearance().emDashKey, QKeySequence::PortableText))
-        if (!keys.isEmpty()) dashKeys_.push_back(keys);
+    // Автозамены из конфига: сочетание и знак, который оно вставляет.
+    // Сочетаний на одну замену может быть несколько, через точку с запятой —
+    // как и у любой другой команды.
+    for (const auto& [keys, text] : appearance().specialKeys) {
+        if (text.isEmpty()) continue;
+        for (const QKeySequence& sequence :
+             QKeySequence::listFromString(keys, QKeySequence::PortableText))
+            if (!sequence.isEmpty()) specialKeys_.push_back({sequence, text});
+    }
 
     bind(appearance().toggleTaskKey, toggleTaskAtCursor);
     bind(appearance().makeBulletKey, makeBullet);
@@ -1088,13 +1094,13 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     if (pressed(moveUpKey_) && moveItem(-1)) return;
     if (pressed(moveDownKey_) && moveItem(1)) return;
 
-    // Длинное тире. Это не операция над блоками, а тот же набор, только знаком,
+    // Автозамены. Это не операция над блоками, а тот же набор, только знаком,
     // которого нет на клавиатуре: идёт обычной вставкой, слипается в один шаг
     // истории с соседними буквами и работает в дословных кусках наравне с
     // остальным текстом.
-    for (const QKeySequence& keys : dashKeys_) {
+    for (const auto& [keys, text] : specialKeys_) {
         if (!pressed(keys)) continue;
-        textCursor().insertText(appearance().emDash);
+        textCursor().insertText(text);
         keepCaretOffEdge();
         return;
     }
