@@ -141,7 +141,7 @@ struct Appearance {
     // Для нарисованного: диаметр и поправка по вертикали, обе — доли от высоты
     // строчных. Поправка со знаком: больше нуля поднимает, меньше опускает.
     qreal bulletDiameter = 0.8;
-    qreal bulletRise = 0.0;
+    qreal bulletRise = 0.1;
     // Фигура по уровням вложенности. Последняя достаётся всем уровням глубже
     // списка: перечислять их до бесконечности незачем.
     std::vector<BulletShape> bulletShapes{BulletShape::Disc, BulletShape::Circle,
