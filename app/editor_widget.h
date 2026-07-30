@@ -16,6 +16,7 @@
 #include "note_view.h"
 
 #include <QElapsedTimer>
+#include <QHash>
 #include <QTextBlock>
 #include <QFileSystemWatcher>
 #include <QKeySequence>
@@ -314,6 +315,9 @@ private:
     QTimer autosave_;
     QElapsedTimer sinceLastEdit_;
     QString lastComplaint_;
+    // Где стояла каретка в каждой заметке этой сессии: переключение туда-сюда
+    // не должно каждый раз возвращать к началу.
+    QHash<QString, int> caretMemory_;
     // Ложь на время editMeta без правок текста: мета-правка не трогает
     // modified.
     bool stampModifiedOnSave_ = true;

@@ -21,6 +21,7 @@
 #include <QShortcut>
 #include <QSignalSpy>
 #include <QTest>
+#include <QTextCursor>
 #include <QTextDocument>
 #include <QVBoxLayout>
 
@@ -229,6 +230,35 @@ void checkEditorSearch() {
     ZT_TRUE("в файле нет искомого", !written.contains(QStringLiteral("сено")));
 }
 
+// Возврат в заметку показывает то место, где читали: средняя колонка
+// переключает заметки часто, и каждый раз прыгать в начало — мучение.
+void checkCaretMemory() {
+    const QString first = g_root + QStringLiteral("/00000000000001.md");
+    const QString second = g_root + QStringLiteral("/00000000000002.md");
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(first);
+    QTest::qWait(20);
+
+    QTextCursor cursor = editor.textCursor();
+    cursor.movePosition(QTextCursor::End);
+    editor.setTextCursor(cursor);
+    const int remembered = editor.textCursor().position();
+    ZT_TRUE("каретка сдвинута с начала", remembered > 0);
+
+    editor.openFile(second);
+    QTest::qWait(20);
+    ZT_TRUE("в новой заметке каретка в начале", editor.textCursor().position() == 0);
+
+    editor.openFile(first);
+    QTest::qWait(20);
+    ZT_TRUE("вернулись — каретка на прежнем месте",
+            editor.textCursor().position() == remembered);
+}
+
 // Сочетания должны доходить до окна, а не застревать в редакторе: QTextEdit
 // объявляет своими куда больше сочетаний, чем кажется, и через ShortcutOverride
 // съедает их молча. На этом уже дважды ловились (Ctrl+Z и Ctrl+N), поэтому
@@ -292,6 +322,7 @@ int main(int argc, char** argv) {
     checkHitLine();
     checkStoreSearch();
     checkEditorSearch();
+    checkCaretMemory();
     checkShortcutsReachWindow();
 
     QDir(g_root).removeRecursively();

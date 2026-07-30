@@ -277,6 +277,12 @@ bool NoteEditor::openFile(const QString& path) {
         return false;
     }
 
+    // Уходя, запоминаем место каретки: вернувшись в заметку, человек ждёт
+    // увидеть то место, где читал, а не её начало. Память живёт до выхода из
+    // приложения — между запусками место помнит только последняя заметка
+    // (state.json), и заводить ради этого файл на каждую заметку незачем.
+    if (!path_.isEmpty() && path_ != path) caretMemory_[path_] = textCursor().position();
+
     path_ = path;
     setImageBase(QFileInfo(path).absolutePath());
     lastComplaint_.clear();
@@ -293,8 +299,12 @@ bool NoteEditor::openFile(const QString& path) {
 
     Document doc = parse(text);
     meta_ = doc.meta;
-    history_.reset(doc, 0);
-    rebuild(doc, 0, {});
+    const int caret = caretMemory_.value(path_, 0);
+    history_.reset(doc, caret);
+    rebuild(doc, caret, {});
+    // Показать место каретки, а не начало документа: иначе «вернуться туда,
+    // где читал» означало бы прокрутить заново.
+    if (caret > 0) ensureCursorVisible();
     emit fileChanged(path_);
     return true;
 }
