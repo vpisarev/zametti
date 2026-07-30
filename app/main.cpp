@@ -287,6 +287,14 @@ int main(int argc, char** argv) {
     QString current = path.isEmpty() ? QString() : QFileInfo(path).absoluteFilePath();
 
     QSplitter window(Qt::Horizontal);
+    // Контейнеры объявлены ПЕРЕД теми виджетами, которых они усыновят через
+    // layout: добавление в раскладку делает виджет ребёнком, а объекты на
+    // стеке разрушаются в обратном порядке объявления. Контейнер, объявленный
+    // позже ребёнка, умирал первым и удалял его вторым разом — приложение
+    // падало при закрытии окна крестиком (замечено владельцем).
+    QWidget middle;
+    QWidget rightSide;
+
     zametti::NoteTreeView tree;
     zametti::NoteEditor editor;
     zametti::NoteListModel list;
@@ -356,7 +364,6 @@ int main(int argc, char** argv) {
     // Средняя колонка: переключатель сортировки сверху, плоский список заметок
     // под ним. Сортировка одна на обе панели, поэтому контрол стоит здесь, а
     // не в каждой панели по разу.
-    QWidget middle;
     QComboBox sortBox;
     zametti::NoteListDelegate listDelegate;
     {
@@ -386,7 +393,6 @@ int main(int argc, char** argv) {
 
     // Правая сторона — заметка, под ней список найденного (появляется только у
     // поиска по всему хранилищу) и панель поиска у самого низа, как в Sublime.
-    QWidget rightSide;
     zametti::FindBar findBar;
     zametti::SearchResultsModel results;
     zametti::SearchResultsDelegate resultsDelegate;
