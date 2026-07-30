@@ -405,15 +405,10 @@ int main(int argc, char** argv) {
                          if (!file.isEmpty() && file != editor.filePath()) editor.openFile(file);
                      });
 
-    // Ткнули в заметку мышью — работать дальше человек будет в тексте, значит и
-    // каретка должна быть там. Стрелками по дереву при этом ходить можно
-    // по-прежнему: фокус переносит только щелчок, а не всякая смена выбора.
-    //
-    // Без этого в пустой заметке было и вовсе не за что зацепиться: текста нет,
-    // каретки нет, и непонятно, куда набирать.
-    QObject::connect(&tree, &QTreeView::clicked, &editor, [&](const QModelIndex& index) {
-        if (!model.filePath(index).isEmpty()) editor.setFocus();
-    });
+    // Щелчок по заметке в дереве фокуса НЕ переводит: человек работает с
+    // деревом (Del удаляет заметку, а не буквы её заголовка — на этом
+    // поймано). В текст фокус попадает щелчком по самому тексту или после
+    // Ctrl+N.
 
     // Раскрытые ветки собираем обходом дерева: у QTreeView нет готового списка,
     // а хранить путь каждой ветки отдельно незачем — их десятки.
@@ -671,12 +666,118 @@ int main(int argc, char** argv) {
             trash = model.trashId();
         }
         if (trash.isEmpty()) return;
-        moveNote(noteId, trash, fallback);
+
+        // Происхождение — в мету: прежний родитель по id и путь из имён папок
+        // от корня. По ним «Восстановить» вернёт заметку на место, а если
+        // папки уже нет — пересоздаст цепочку по именам. Неизвестные ключи
+        // переживают круг записи, редактору они не видны.
+        const QString originParent = model.idOf(index.parent());
+        QStringList pathNames;
+        for (QModelIndex up = index.parent(); up.isValid(); up = up.parent())
+            pathNames.prepend(model.titleOf(up));
+        QString titlePath = pathNames.join(QLatin1Char('/'));
+        titlePath.replace(QStringLiteral("--"), QStringLiteral("-"));   // мета не терпит "--"
+
+        const auto stampTrash = [&](zametti::NoteMeta& meta) {
+            meta.set("parent", trash.toStdString());
+            if (originParent.isEmpty()) meta.unset("trash-parent");
+            else meta.set("trash-parent", originParent.toStdString());
+            if (titlePath.isEmpty()) meta.unset("trash-path");
+            else meta.set("trash-path", titlePath.toUtf8().toStdString());
+        };
         if (wasOpen) {
-            QString open = fallback;
-            if (open.isEmpty()) open = model.filePath(firstNote(QModelIndex()));
-            if (!open.isEmpty()) editor.openFile(open);
+            editor.editMeta(stampTrash);
+        } else {
+            rewriteNote(file, [&](zametti::Document& doc) {
+                doc.meta.present = true;
+                stampTrash(doc.meta);
+            });
         }
+        settleAfter();
+    };
+
+    // «Восстановить» из корзины: прежний родитель жив — туда; нет — цепочка
+    // папок пересоздаётся по именам с корня; совсем ничего — в корень.
+    const auto restoreIndex = [&](const QModelIndex& index) {
+        if (!model.isStore() || !index.isValid() || !model.inTrash(index)) return;
+        const QString noteId = model.idOf(index);
+        if (noteId.isEmpty() || noteId == model.trashId()) return;
+        const QString root = model.nodePath(QModelIndex());
+        const QString file = root + QLatin1Char('/') + noteId + QStringLiteral(".md");
+
+        std::string bytes;
+        if (!readFile(file, bytes)) return;
+        zametti::Document doc = zametti::parse(bytes);
+        const QString savedParent =
+            QString::fromStdString(doc.meta.get("trash-parent"));
+        const QString savedPath =
+            QString::fromUtf8(doc.meta.get("trash-path").c_str());
+
+        QString target;   // id папки назначения; пусто — корень
+        if (!savedParent.isEmpty()) {
+            const QModelIndex alive = model.indexForPath(
+                root + QLatin1Char('/') + savedParent + QStringLiteral(".md"));
+            if (alive.isValid() && model.isDirectory(alive) && !model.inTrash(alive))
+                target = savedParent;
+        }
+        if (target.isEmpty() && !savedPath.isEmpty()) {
+            QString parentId;   // идём по цепочке имён, пересоздавая недостающее
+            for (const QString& name :
+                 savedPath.split(QLatin1Char('/'), Qt::SkipEmptyParts)) {
+                const QModelIndex parentIndex =
+                    parentId.isEmpty()
+                        ? QModelIndex()
+                        : model.indexForPath(root + QLatin1Char('/') + parentId +
+                                             QStringLiteral(".md"));
+                QString foundId;
+                for (int row = 0; row < model.rowCount(parentIndex); ++row) {
+                    const QModelIndex child = model.index(row, 0, parentIndex);
+                    if (model.isDirectory(child) && !model.inTrash(child) &&
+                        model.titleOf(child) == name) {
+                        foundId = model.idOf(child);
+                        break;
+                    }
+                }
+                if (foundId.isEmpty()) {
+                    QString newError;
+                    const QString made =
+                        zametti::store::newNote(root, parentId, &newError);
+                    if (made.isEmpty()) {
+                        QMessageBox::warning(&window, QStringLiteral("zametti"),
+                                             newError);
+                        return;
+                    }
+                    rewriteNote(made, [&](zametti::Document& folderDoc) {
+                        folderDoc.meta.set("role", "folder");
+                        zametti::Block heading;
+                        heading.kind = zametti::Kind::Heading;
+                        heading.headingLevel = 1;
+                        heading.text = name.toUtf8().toStdString();
+                        folderDoc.blocks.push_back(std::move(heading));
+                    });
+                    model.refresh();
+                    foundId = QFileInfo(made).completeBaseName();
+                }
+                parentId = foundId;
+            }
+            target = parentId;
+        }
+
+        const auto restoreMeta = [&](zametti::NoteMeta& meta) {
+            if (target.isEmpty()) meta.unset("parent");
+            else meta.set("parent", target.toStdString());
+            meta.unset("trash-parent");
+            meta.unset("trash-path");
+        };
+        if (file == editor.filePath()) {
+            editor.editMeta(restoreMeta);
+        } else {
+            rewriteNote(file, [&](zametti::Document& noteDoc) {
+                noteDoc.meta.present = true;
+                restoreMeta(noteDoc.meta);
+            });
+        }
+        refreshTree(file);   // показать, куда вернулась
     };
     {
         auto* del = new QShortcut(QKeySequence::Delete, &tree);
@@ -687,9 +788,19 @@ int main(int argc, char** argv) {
 
     // Новая заметка или папка. Папка — та же заметка, но с role: folder в
     // мете: опустевшая папка не превращается обратно в заметку.
-    const auto createNote = [&](const QString& parentId, bool folder) {
+    const auto createNote = [&](const QString& requestedParent, bool folder) {
         if (!model.isStore()) return;
         editor.save(false);
+        // В корзине ничего не создаётся: Ctrl+N из корзины — на глобальный
+        // уровень (правило владельца).
+        QString parentId = requestedParent;
+        if (!parentId.isEmpty()) {
+            const QModelIndex parentIndex = model.indexForPath(
+                model.nodePath(QModelIndex()) + QLatin1Char('/') + parentId +
+                QStringLiteral(".md"));
+            if (!parentIndex.isValid() || model.inTrash(parentIndex))
+                parentId.clear();
+        }
         QString newError;
         const QString made = zametti::store::newNote(
             model.nodePath(QModelIndex()), parentId, &newError);
@@ -758,6 +869,9 @@ int main(int argc, char** argv) {
                        [&] { createNote(model.folderIdFor(at), true); });
         if (at.isValid()) {
             menu.addAction(QStringLiteral("Переименовать"), [&] { tree.edit(at); });
+            if (model.inTrash(at) && model.idOf(at) != model.trashId())
+                menu.addAction(QStringLiteral("Восстановить"),
+                               [&] { restoreIndex(at); });
             menu.addAction(model.inTrash(at) ? QStringLiteral("Удалить насовсем")
                                              : QStringLiteral("В корзину"),
                            [&] { deleteIndex(at); });

@@ -596,6 +596,17 @@ void testMeta() {
             !parse("<!-- просто комментарий -->\n\nтекст\n").meta.present);
     canonical("метаданные без пустой строки после",
               "<!-- zametti\nk: v\n-->\n## сразу заголовок\n");
+    // unset: строка ключа исчезает, соседи и порядок целы.
+    {
+        NoteMeta meta;
+        meta.lines = {"parent: 01", "trash-path: Дом/Стройка", "x: y"};
+        meta.unset("trash-path");
+        ZT_TRUE("unset убрал ровно свой ключ",
+                meta.lines.size() == 2 && meta.lines[0] == "parent: 01" &&
+                    meta.lines[1] == "x: y");
+        meta.unset("нет-такого");
+        ZT_TRUE("unset несуществующего — тишина", meta.lines.size() == 2);
+    }
 }
 
 int main() {

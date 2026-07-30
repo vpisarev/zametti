@@ -1270,12 +1270,18 @@ void NoteEditor::recordEdit() {
     sinceLastEdit_.restart();
 }
 
-void NoteEditor::setMetaParent(const QString& parentId) {
+void NoteEditor::editMeta(const std::function<void(NoteMeta&)>& change) {
     meta_.present = true;
-    if (parentId.isEmpty()) meta_.unset("parent");
-    else meta_.set("parent", parentId.toStdString());
+    change(meta_);
     document()->setModified(true);
     save(false);
+}
+
+void NoteEditor::setMetaParent(const QString& parentId) {
+    editMeta([&parentId](NoteMeta& meta) {
+        if (parentId.isEmpty()) meta.unset("parent");
+        else meta.set("parent", parentId.toStdString());
+    });
 }
 
 void NoteEditor::save(bool interactive) {

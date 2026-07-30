@@ -450,6 +450,11 @@ QString NoteTreeModel::folderIdFor(const QModelIndex& index) const {
     return {};
 }
 
+QString NoteTreeModel::titleOf(const QModelIndex& index) const {
+    if (!index.isValid()) return {};
+    return static_cast<const Node*>(index.internalPointer())->title;
+}
+
 QString NoteTreeModel::trashId() const {
     for (const auto& child : root_->children)
         if (child->trash) return child->id;
