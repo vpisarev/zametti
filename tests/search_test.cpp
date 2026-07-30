@@ -305,6 +305,31 @@ void checkQueryHistory() {
     ZT_TRUE("список не растёт бесконечно", many.history().size() == limit);
     ZT_TRUE("самый свежий остался первым",
             many.history().first() == QStringLiteral("запрос%1").arg(limit + 9));
+
+    // Ходить по истории надо в ОБЕ стороны: вверх — к старым, вниз — обратно
+    // к новым и дальше к своему, недоискавшемуся запросу. На этом поймался:
+    // сначала шаг считался поиском текущего текста по списку, и из повтора
+    // вниз возвращало в ту же строку — казалось, что ходит только вверх.
+    zametti::FindBar walk;
+    walk.setHistory({QStringLiteral("первый"), QStringLiteral("второй"),
+                     QStringLiteral("третий")});
+    walk.open(zametti::FindBar::Mode::InNote, QStringLiteral("своё"));
+    walk.stepHistory(-1);
+    ZT_TRUE("вверх — самый свежий", walk.query() == QStringLiteral("первый"));
+    walk.stepHistory(-1);
+    ZT_TRUE("ещё вверх — следующий", walk.query() == QStringLiteral("второй"));
+    walk.stepHistory(1);
+    ZT_TRUE("вниз возвращает к свежему", walk.query() == QStringLiteral("первый"));
+    walk.stepHistory(1);
+    ZT_TRUE("ниже истории — свой недонабранный запрос",
+            walk.query() == QStringLiteral("своё"));
+    walk.stepHistory(1);
+    ZT_TRUE("ниже своего запроса ничего нет", walk.query() == QStringLiteral("своё"));
+    walk.stepHistory(-1);
+    walk.stepHistory(-1);
+    walk.stepHistory(-1);
+    walk.stepHistory(-1);
+    ZT_TRUE("выше самого старого не уходим", walk.query() == QStringLiteral("третий"));
 }
 
 // Сочетания должны доходить до окна, а не застревать в редакторе: QTextEdit

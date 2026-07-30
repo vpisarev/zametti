@@ -57,6 +57,9 @@ FindBar::FindBar(QWidget* parent) : QWidget(parent) {
     layout->addWidget(close);
 
     connect(find_, &QLineEdit::textChanged, this, &FindBar::queryChanged);
+    // Набрали что-то сами — мы больше не в истории, а правим свой запрос.
+    // Именно textEdited: textChanged сработал бы и на нашу же подстановку.
+    connect(find_, &QLineEdit::textEdited, this, [this] { historyAt_ = -1; });
     // Запрос попадает в историю, когда им воспользовались: перешли к
     // совпадению или заменили. Набор в поле — ещё не запрос.
     connect(previous, &QToolButton::clicked, this, [this] {
@@ -102,6 +105,7 @@ void FindBar::open(Mode mode, const QString& preset) {
                                   ? QStringLiteral("Найти во всех заметках")
                                   : QStringLiteral("Найти в заметке"));
     if (!preset.isEmpty()) find_->setText(preset);
+    historyAt_ = -1;   // каждый заход в панель начинается со своего запроса
     show();
     find_->setFocus();
     find_->selectAll();
@@ -132,6 +136,25 @@ void FindBar::rememberQuery() {
     while (history_.size() > appearance().findHistoryLimit) history_.removeLast();
 }
 
+void FindBar::stepHistory(int direction) {
+    if (history_.isEmpty()) return;
+    const int last = int(history_.size()) - 1;
+    if (direction < 0) {
+        if (historyAt_ < 0) {
+            typed_ = find_->text();   // вернём, когда спустимся обратно
+            historyAt_ = 0;
+        } else if (historyAt_ < last) {
+            ++historyAt_;
+        }
+        find_->setText(history_.at(historyAt_));
+    } else {
+        if (historyAt_ < 0) return;   // ниже свежего запроса ничего нет
+        --historyAt_;
+        find_->setText(historyAt_ < 0 ? typed_ : history_.at(historyAt_));
+    }
+    find_->selectAll();
+}
+
 void FindBar::showHistory() {
     QMenu menu(this);
     if (history_.isEmpty()) {
@@ -139,7 +162,9 @@ void FindBar::showHistory() {
     } else {
         for (const QString& item : history_) {
             const QString text = item;
-            menu.addAction(text, this, [this, text] {
+            const int at = int(history_.indexOf(text));
+            menu.addAction(text, this, [this, text, at] {
+                historyAt_ = at;
                 find_->setText(text);
                 find_->setFocus();
                 find_->selectAll();
@@ -167,13 +192,14 @@ void FindBar::keyPressEvent(QKeyEvent* event) {
         else emit findNext();
         return;
     }
-    // Стрелка вверх в поле — самый быстрый способ достать прошлый запрос, как
-    // в оболочке командной строки.
-    if (event->key() == Qt::Key_Up && !history_.isEmpty() && find_->hasFocus()) {
-        const int at = history_.indexOf(find_->text().trimmed());
-        const int next = at < 0 ? 0 : qMin(at + 1, int(history_.size()) - 1);
-        find_->setText(history_.at(next));
-        find_->selectAll();
+    // Стрелки в поле листают прежние запросы, как в оболочке командной строки:
+    // вверх — к старым, вниз — обратно к новым и дальше к тому, что набирали
+    // сами. Место в списке держим счётчиком, а не поиском текущего текста по
+    // истории: иначе из повторяющегося запроса шаг вниз возвращал бы в ту же
+    // строку, и казалось бы, что ходить можно только вверх.
+    const bool inField = find_->hasFocus();
+    if (inField && (event->key() == Qt::Key_Up || event->key() == Qt::Key_Down)) {
+        stepHistory(event->key() == Qt::Key_Up ? -1 : 1);
         return;
     }
     QWidget::keyPressEvent(event);

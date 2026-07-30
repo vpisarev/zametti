@@ -44,6 +44,10 @@ public:
     // Запомнить нынешний запрос. Зовётся, когда им ВОСПОЛЬЗОВАЛИСЬ, а не на
     // каждую букву: иначе история заполнится обрывками недонабранного.
     void rememberQuery();
+    // Шаг по истории: -1 — к старым запросам, +1 — обратно к новым и дальше к
+    // тому, что набирали сами. Открыто наружу и ради теста: клавиатуру в
+    // тесте виджету не подашь, а ходить надо в обе стороны.
+    void stepHistory(int direction);
 
 signals:
     void queryChanged(const QString& text);
@@ -64,6 +68,9 @@ private:
 
     Mode mode_ = Mode::InNote;
     QStringList history_;
+    // Где стоим в списке: -1 — не в истории, правим своё.
+    int historyAt_ = -1;
+    QString typed_;
     QToolButton* historyButton_ = nullptr;
     QLineEdit* find_ = nullptr;
     QLineEdit* replace_ = nullptr;
