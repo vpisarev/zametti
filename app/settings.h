@@ -260,6 +260,10 @@ QByteArray defaultAppearanceJson();
 // Что запоминается между запусками.
 struct Session {
     QString lastFile;
+    // Хранилище прошлого запуска: без параметров возвращаемся в него.
+    QString storeRoot;
+    // Сортировка дерева: "modified" (свежие сверху) или "name".
+    QString treeSort;
     QByteArray splitterState;
     QStringList expandedDirs;
     double scrollRatio = 0.0;   // доля прокрутки: в пикселях она зависит от зума

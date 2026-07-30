@@ -353,6 +353,8 @@ Session loadSession() {
     const QJsonObject root = doc.object();
 
     session.lastFile = root.value(QStringLiteral("lastFile")).toString();
+    session.storeRoot = root.value(QStringLiteral("storeRoot")).toString();
+    session.treeSort = root.value(QStringLiteral("treeSort")).toString();
     session.scrollRatio = root.value(QStringLiteral("scrollRatio")).toDouble(0.0);
     session.zoom = root.value(QStringLiteral("zoom")).toDouble(1.0);
     session.windowGeometry = QByteArray::fromBase64(
@@ -371,6 +373,8 @@ void saveSession(const Session& session) {
     writeJson(statePath(),
               QJsonObject{
                   {QStringLiteral("lastFile"), session.lastFile},
+                  {QStringLiteral("storeRoot"), session.storeRoot},
+                  {QStringLiteral("treeSort"), session.treeSort},
                   {QStringLiteral("scrollRatio"), session.scrollRatio},
                   {QStringLiteral("zoom"), session.zoom},
                   {QStringLiteral("windowGeometry"),

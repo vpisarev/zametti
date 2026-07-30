@@ -25,7 +25,9 @@ struct NoteTreeModel::Node {
     QString id;      // id заметки в хранилище; вне хранилища пусто
     QString badge;   // пометка починки («сирота», «цикл») — подпись и подсказка
     QString modified;   // ISO из меты — для сортировки свежие сверху
+    QString effectiveModified;   // максимум по поддереву: живые каталоги вперёд
     bool trash = false; // корзина: в самом низу корня
+    bool folder = false;   // role: folder — директория и без детей
     bool dir = false;
     Node* parent = nullptr;
     std::vector<std::unique_ptr<Node>> children;
@@ -106,6 +108,7 @@ struct StoreNote {
     QString title;
     QString modified;
     bool trash = false;
+    bool folder = false;
 };
 
 bool readStoreNote(const QString& path, StoreNote& out) {
@@ -123,8 +126,10 @@ bool readStoreNote(const QString& path, StoreNote& out) {
             const QString value = lines[i].mid(colon + 1).trimmed();
             if (key == QStringLiteral("parent")) out.parent = value;
             else if (key == QStringLiteral("modified")) out.modified = value;
-            else if (key == QStringLiteral("role") && value == QStringLiteral("trash"))
-                out.trash = true;
+            else if (key == QStringLiteral("role")) {
+                if (value == QStringLiteral("trash")) out.trash = true;
+                if (value == QStringLiteral("folder")) out.folder = true;
+            }
         }
         if (i < lines.size()) ++i;   // сама "-->"
     }
@@ -169,6 +174,7 @@ std::unique_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath) {
                 ? info.lastModified().toUTC().toString(Qt::ISODate)
                 : meta.modified;
         node->trash = meta.trash;
+        node->folder = meta.folder;
         byId.insert(stem, node.get());
         parentOf.insert(stem, meta.parent);
         nodes.push_back(std::move(node));
@@ -204,19 +210,39 @@ std::unique_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath) {
         home->children.push_back(std::move(node));
     }
 
-    // Свежие сверху; корзина — в самом низу корня.
-    struct Sorter {
-        static void run(NoteTreeModel::Node* node) {
-            std::sort(node->children.begin(), node->children.end(),
-                      [](const auto& a, const auto& b) {
-                          if (a->trash != b->trash) return b->trash;
-                          return a->modified > b->modified;
-                      });
-            for (auto& child : node->children) run(child.get());
+    // Директория — по явному role: folder, по детям (на неё ссылаются как на
+    // родителя) или корзина. Директория не открывается — это чисто структура.
+    // Эффективный modified — максимум по поддереву: каталог, где правили
+    // позже всех, всплывает вперёд.
+    struct Finish {
+        static QString run(NoteTreeModel::Node* node) {
+            node->dir = node->dir || node->folder || node->trash ||
+                        !node->children.empty();
+            node->effectiveModified = node->modified;
+            for (auto& child : node->children) {
+                const QString sub = run(child.get());
+                if (sub > node->effectiveModified) node->effectiveModified = sub;
+            }
+            return node->effectiveModified;
         }
     };
-    Sorter::run(root.get());
+    for (auto& child : root->children) Finish::run(child.get());
     return root;
+}
+
+// Братья: корзина всегда внизу; дальше по режиму.
+void sortStore(NoteTreeModel::Node* node, NoteTreeModel::SortMode mode,
+               const QCollator& collator) {
+    std::sort(node->children.begin(), node->children.end(),
+              [mode, &collator](const auto& a, const auto& b) {
+                  if (a->trash != b->trash) return b->trash;
+                  if (mode == NoteTreeModel::SortMode::ByName) {
+                      if (a->dir != b->dir) return a->dir;
+                      return collator.compare(a->title, b->title) < 0;
+                  }
+                  return a->effectiveModified > b->effectiveModified;
+              });
+    for (auto& child : node->children) sortStore(child.get(), mode, collator);
 }
 
 // Значок папки рисуется знаком из шрифта: готовых чёрно-белых иконок в Qt нет,
@@ -282,6 +308,10 @@ bool NoteTreeModel::isStoreRoot(const QString& dir) {
 void NoteTreeModel::build() {
     if (store_) {
         root_ = buildStore(rootPath_);
+        QCollator collator;
+        collator.setNumericMode(true);
+        collator.setCaseSensitivity(Qt::CaseInsensitive);
+        sortStore(root_.get(), sortMode_, collator);
         return;
     }
     QCollator collator;
@@ -294,6 +324,12 @@ void NoteTreeModel::build() {
         root_->path = QFileInfo(rootPath_).absoluteFilePath();
         root_->dir = true;
     }
+}
+
+void NoteTreeModel::setSortMode(SortMode mode) {
+    if (mode == sortMode_) return;
+    sortMode_ = mode;
+    refresh();
 }
 
 void NoteTreeModel::refresh() {
@@ -353,9 +389,7 @@ QVariant NoteTreeModel::data(const QModelIndex& index, int role) const {
             return QStringLiteral("цикл родителей разорван: ") + node->path;
         return node->path;
     }
-    // В хранилище «каталог» — любая заметка с детьми: значок папки и есть
-    // указатель раскрываемости.
-    if (role == Qt::DecorationRole && (node->isDir() || !node->children.empty()))
+    if (role == Qt::DecorationRole && node->isDir())
         return folderPixmap(expanded_.contains(node->path));
     return {};
 }
@@ -363,7 +397,7 @@ QVariant NoteTreeModel::data(const QModelIndex& index, int role) const {
 QString NoteTreeModel::filePath(const QModelIndex& index) const {
     if (!index.isValid()) return {};
     const Node* node = static_cast<const Node*>(index.internalPointer());
-    // В хранилище заметка с детьми — всё равно заметка: открывается.
+    // Директория не открывается — это чисто структура (решение владельца).
     return node->isDir() ? QString() : node->path;
 }
 

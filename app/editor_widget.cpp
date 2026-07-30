@@ -1278,6 +1278,14 @@ void NoteEditor::setMetaParent(const QString& parentId) {
     save(false);
 }
 
+void NoteEditor::markMetaFolder() {
+    if (!meta_.get("role").empty()) return;
+    meta_.present = true;
+    meta_.set("role", "folder");
+    document()->setModified(true);
+    save(false);
+}
+
 void NoteEditor::save(bool interactive) {
     if (path_.isEmpty() || !document()->isModified()) return;
 

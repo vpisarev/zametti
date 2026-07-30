@@ -639,12 +639,14 @@ bool importTree(const ImportOptions& options, Report& report) {
         std::string body;
         Document ir;
         if (e.isDir) {
-            // Заметка-каталог: заголовок — имя каталога.
+            // Заметка-каталог: заголовок — имя каталога, признак — в мете
+            // (правило владельца: у любой директории, пустой или нет).
             Block h;
             h.kind = Kind::Heading;
             h.headingLevel = 1;
             h.text = toUtf8(e.title);
             ir.blocks.push_back(std::move(h));
+            ir.meta.set("role", "folder");
         } else {
             std::string bytes;
             if (!readAll(e.abs, bytes)) continue;   // уже в отчёте

@@ -50,6 +50,13 @@ public:
     // дожидаясь ни сохранения, ни пересборки.
     void updateTitle(const QString& filePath, const QString& title);
 
+    // Сортировка братьев: по последней правке (свежие сверху; у каталога —
+    // самая свежая правка в поддереве) или по имени (каталоги первыми).
+    // Корзина всегда в самом низу корня.
+    enum class SortMode { ByModified, ByName };
+    void setSortMode(SortMode mode);
+    SortMode sortMode() const { return sortMode_; }
+
     // Id заметки-корзины (мета-ключ role: trash); пусто, если её ещё нет.
     QString trashId() const;
     // Лежит ли узел в поддереве корзины.
@@ -110,6 +117,7 @@ private:
 
     QString rootPath_;
     bool store_ = false;
+    SortMode sortMode_ = SortMode::ByModified;
     std::unique_ptr<Node> root_;
     QSet<QString> expanded_;
 };

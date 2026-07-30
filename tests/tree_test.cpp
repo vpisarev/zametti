@@ -66,6 +66,8 @@ int main(int argc, char** argv) {
     note("0000000000000v",
          "parent: 0000000000000t\nmodified: 2020-02-02T00:00:00Z\n",
          "# Выброшенная\n");
+    note("0000000000000f", "role: folder\nmodified: 2018-01-01T00:00:00Z\n",
+         "# Пустая папка\n");
 
     ZT_TRUE("хранилище распознано", NoteTreeModel::isStoreRoot(g_root));
     NoteTreeModel model(g_root);
@@ -73,8 +75,31 @@ int main(int argc, char** argv) {
 
     const int rootRows = model.rowCount(QModelIndex());
     // Корень: папка, сирота, виновник цикла (заложник остаётся его ребёнком —
-    // рвётся одно ребро, а не всё), пустая, без заголовка, корзина = 6.
-    ZT_TRUE("в корне шесть узлов", rootRows == 6);
+    // рвётся одно ребро, а не всё), пустая, без заголовка, пустая папка,
+    // корзина = 7.
+    ZT_TRUE("в корне семь узлов", rootRows == 7);
+
+    // Живой каталог всплывает: у «Папки» ребёнок правлен в 2024 — она выше
+    // сироты 2022 года, хотя своя правка 2020-го.
+    ZT_TRUE("каталог с недавней правкой внутри — впереди",
+            titleAt(model, {}, 1) == QStringLiteral("Папка"));
+
+    // Пустая папка — директория по мете: не открывается, со значком.
+    {
+        const QModelIndex folder = model.indexForPath(
+            g_root + QStringLiteral("/0000000000000f.md"));
+        ZT_TRUE("пустая папка — директория", model.isDirectory(folder));
+        ZT_TRUE("директория не открывается", model.filePath(folder).isEmpty());
+    }
+
+    // Сортировка по имени: директории первыми, корзина всё равно внизу.
+    model.setSortMode(NoteTreeModel::SortMode::ByName);
+    ZT_TRUE("по имени: первая — директория",
+            model.isDirectory(model.index(0, 0, QModelIndex())));
+    ZT_TRUE("по имени: корзина внизу",
+            titleAt(model, {}, model.rowCount(QModelIndex()) - 1) ==
+                QStringLiteral("Корзина"));
+    model.setSortMode(NoteTreeModel::SortMode::ByModified);
 
     // Свежие сверху, корзина — последней, несмотря на свежий modified.
     ZT_TRUE("первый — без заголовка (2025)",
@@ -114,8 +139,9 @@ int main(int argc, char** argv) {
     // Дети папки: свежий выше старого; сама папка открывается как заметка.
     const QModelIndex folder = model.indexForPath(
         g_root + QStringLiteral("/00000000000001.md"));
-    ZT_TRUE("папка найдена и это заметка",
-            folder.isValid() && !model.filePath(folder).isEmpty());
+    ZT_TRUE("папка найдена и это директория: не открывается",
+            folder.isValid() && model.isDirectory(folder) &&
+                model.filePath(folder).isEmpty());
     ZT_TRUE("у папки двое детей", model.rowCount(folder) == 2);
     ZT_TRUE("свежий ребёнок выше",
             titleAt(model, folder, 0) == QStringLiteral("Свежий ребёнок"));
