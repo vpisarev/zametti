@@ -554,7 +554,10 @@ int main(int argc, char** argv) {
     });
 
     // Перенос: правка parent. Открытая — через редактор, закрытая — по файлу.
-    const auto moveNote = [&](const QString& noteId, const QString& parentId) {
+    // keepPath: кого выделить после (перетаскиванию — саму заметку; корзине —
+    // соседа: раскрывать корзину и «показывать» удалённое не надо).
+    const auto moveNote = [&](const QString& noteId, const QString& parentId,
+                              const QString& keepPath) {
         const QString file =
             model.nodePath(QModelIndex()) + QLatin1Char('/') + noteId +
             QStringLiteral(".md");
@@ -567,35 +570,83 @@ int main(int argc, char** argv) {
                 else doc.meta.set("parent", parentId.toStdString());
             });
         }
-        refreshTree(file);
+        refreshTree(keepPath);
     };
     QObject::connect(&model, &zametti::NoteTreeModel::moveRequested, &window,
                      [&](const QString& noteId, const QString& parentId) {
-                         moveNote(noteId, parentId);
+                         moveNote(noteId, parentId,
+                                  model.nodePath(QModelIndex()) + QLatin1Char('/') +
+                                      noteId + QStringLiteral(".md"));
                      });
 
     // Del: заметка едет в корзину; в корзине — насовсем, с подтверждением.
     // Корзина — заметка с role: trash, заводится при первом удалении.
+    // Del / «В корзину». Пустая заметка и пустая папка удаляются сразу — в
+    // ФАЙЛОВУЮ корзину ОС (при тестировании их плодится много, гонять их
+    // через заметочную корзину — трата времени). Непустая заметка едет в
+    // заметочную корзину (role: trash; заводится при первом удалении); из
+    // корзины — насовсем, с подтверждением, но тоже через корзину ОС.
+    // Выделение после удаления уходит к соседу: раскрывать корзину и
+    // «показывать» удалённое не надо.
     const auto deleteIndex = [&](const QModelIndex& index) {
         if (!model.isStore() || !index.isValid()) return;
         const QString noteId = model.idOf(index);
         if (noteId.isEmpty() || noteId == model.trashId()) return;
         const QString file = model.nodePath(index);
+        const bool wasOpen = file == editor.filePath();
 
-        if (model.inTrash(index)) {
-            const auto answer = QMessageBox::question(
-                &window, QStringLiteral("zametti"),
-                QStringLiteral("Удалить насовсем «%1»?")
-                    .arg(model.data(index, Qt::DisplayRole).toString()));
-            if (answer != QMessageBox::Yes) return;
-            const bool wasOpen = file == editor.filePath();
-            QFile::remove(file);
-            refreshTree(wasOpen ? QString() : editor.filePath());
-            if (wasOpen) {
-                const QModelIndex first = model.index(0, 0, QModelIndex());
-                if (first.isValid() && !model.filePath(first).isEmpty())
-                    editor.openFile(model.filePath(first));
+        // Сосед по папке — будущий выделенный: сначала вниз, потом вверх.
+        QString fallback;
+        const QModelIndex parent = index.parent();
+        for (int row = index.row() + 1; row < model.rowCount(parent); ++row) {
+            fallback = model.filePath(model.index(row, 0, parent));
+            if (!fallback.isEmpty()) break;
+        }
+        if (fallback.isEmpty())
+            for (int row = index.row() - 1; row >= 0; --row) {
+                fallback = model.filePath(model.index(row, 0, parent));
+                if (!fallback.isEmpty()) break;
             }
+
+        const auto settleAfter = [&] {
+            refreshTree(fallback.isEmpty() ? QString() : fallback);
+            if (!wasOpen) return;
+            QString open = fallback;
+            if (open.isEmpty()) open = model.filePath(firstNote(QModelIndex()));
+            if (!open.isEmpty()) editor.openFile(open);
+        };
+
+        // Пустое — в корзину ОС без разговоров. Пустая папка — без детей;
+        // пустая заметка — без содержательного текста (открытая меряется по
+        // документу: набранное могло ещё не сохраниться).
+        bool empty = false;
+        if (model.isDirectory(index)) {
+            empty = model.rowCount(index) == 0;
+        } else if (wasOpen) {
+            empty = editor.toPlainText().trimmed().isEmpty();
+        } else {
+            std::string bytes;
+            if (readFile(file, bytes)) {
+                const zametti::Document doc = zametti::parse(bytes);
+                empty = true;
+                for (const auto& b : doc.blocks)
+                    if (!b.rawSource.empty() || b.kind != zametti::Kind::VSpace) {
+                        empty = false;
+                        break;
+                    }
+            }
+        }
+        if (empty || model.inTrash(index)) {
+            if (!empty) {
+                const auto answer = QMessageBox::question(
+                    &window, QStringLiteral("zametti"),
+                    QStringLiteral("Удалить насовсем «%1»?")
+                        .arg(model.data(index, Qt::DisplayRole).toString()));
+                if (answer != QMessageBox::Yes) return;
+            }
+            // Файловая корзина ОС; нет её (сеть, голый сервер) — удалить.
+            if (!QFile::moveToTrash(file)) QFile::remove(file);
+            settleAfter();
             return;
         }
 
@@ -619,7 +670,13 @@ int main(int argc, char** argv) {
             model.refresh();
             trash = model.trashId();
         }
-        if (!trash.isEmpty()) moveNote(noteId, trash);
+        if (trash.isEmpty()) return;
+        moveNote(noteId, trash, fallback);
+        if (wasOpen) {
+            QString open = fallback;
+            if (open.isEmpty()) open = model.filePath(firstNote(QModelIndex()));
+            if (!open.isEmpty()) editor.openFile(open);
+        }
     };
     {
         auto* del = new QShortcut(QKeySequence::Delete, &tree);
@@ -655,6 +712,10 @@ int main(int argc, char** argv) {
         if (folder) {
             if (fresh.isValid()) tree.edit(fresh);   // сразу дать имя
         } else {
+            // Открыть явно: refreshTree выделяет с заглушенными сигналами
+            // (иначе каждое обновление перезагружало бы заметку), так что
+            // на открытие через выделение полагаться нельзя.
+            editor.openFile(made);
             editor.setFocus();
         }
     };
