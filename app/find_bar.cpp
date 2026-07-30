@@ -19,10 +19,10 @@ FindBar::FindBar(QWidget* parent) : QWidget(parent) {
     status_->setMinimumWidth(70);
 
     auto* previous = new QToolButton(this);
-    previous->setText(QStringLiteral("▲"));
+    previous->setText(appearance().findPreviousGlyph);
     previous->setToolTip(QStringLiteral("Предыдущее (Shift+F3)"));
     auto* next = new QToolButton(this);
-    next->setText(QStringLiteral("▼"));
+    next->setText(appearance().findNextGlyph);
     next->setToolTip(QStringLiteral("Следующее (F3)"));
 
     replaceLabel_ = new QLabel(QStringLiteral("на"), this);
@@ -57,10 +57,12 @@ FindBar::FindBar(QWidget* parent) : QWidget(parent) {
         emit closed();
     });
 
+    // Кегль чуть крупнее панельного: в поле поиска печатают, а не смотрят на
+    // него, и мелкий шрифт здесь читается хуже. Прибавка — в конфиге.
     QFont panelFont(appearance().sidebarFontFamily.isEmpty()
                         ? appearance().fontFamily
                         : appearance().sidebarFontFamily);
-    panelFont.setPointSizeF(appearance().sidebarFontPoint);
+    panelFont.setPointSizeF(appearance().sidebarFontPoint + appearance().findFontDelta);
     setFont(panelFont);
     hide();
 }

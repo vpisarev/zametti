@@ -155,6 +155,12 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("folderScale"), a.sidebarFolderScale},
     };
 
+    QJsonObject find{
+        {QStringLiteral("fontDelta"), a.findFontDelta},
+        {QStringLiteral("previousGlyph"), a.findPreviousGlyph},
+        {QStringLiteral("nextGlyph"), a.findNextGlyph},
+    };
+
     QJsonObject editor{
         {QStringLiteral("autosaveDelayMs"), a.autosaveDelayMs},
         {QStringLiteral("undoCoalesceMs"), a.undoCoalesceMs},
@@ -185,6 +191,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("notes"), notes},
         {QStringLiteral("sidebar"), sidebar},
         {QStringLiteral("noteList"), noteList},
+        {QStringLiteral("find"), find},
         {QStringLiteral("editor"), editor},
         {QStringLiteral("zoom"), zoom},
     };
@@ -291,6 +298,11 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readReal(sidebar, "folderScale", a.sidebarFolderScale);
     const QJsonValue width = sidebar.value(QStringLiteral("width"));
     if (width.isDouble()) a.sidebarWidth = width.toInt();
+
+    const QJsonObject find = root.value(QStringLiteral("find")).toObject();
+    readReal(find, "fontDelta", a.findFontDelta);
+    readString(find, "previousGlyph", a.findPreviousGlyph);
+    readString(find, "nextGlyph", a.findNextGlyph);
 
     const QJsonObject editor = root.value(QStringLiteral("editor")).toObject();
     const QJsonValue delay = editor.value(QStringLiteral("autosaveDelayMs"));
