@@ -553,22 +553,6 @@ int main(int argc, char** argv) {
         refreshTree(file);
     });
 
-    // Родитель обзавёлся ребёнком — он папка, и признак пишется в мету
-    // (правило владельца: у любой директории, пустой или нет). role: trash
-    // не перетирается.
-    const auto stampFolder = [&](const QString& parentId) {
-        if (parentId.isEmpty()) return;
-        const QString file = model.nodePath(QModelIndex()) + QLatin1Char('/') +
-                             parentId + QStringLiteral(".md");
-        if (file == editor.filePath()) {
-            editor.markMetaFolder();
-            return;
-        }
-        rewriteNote(file, [](zametti::Document& doc) {
-            if (doc.meta.get("role").empty()) doc.meta.set("role", "folder");
-        });
-    };
-
     // Перенос: правка parent. Открытая — через редактор, закрытая — по файлу.
     const auto moveNote = [&](const QString& noteId, const QString& parentId) {
         const QString file =
@@ -583,7 +567,6 @@ int main(int argc, char** argv) {
                 else doc.meta.set("parent", parentId.toStdString());
             });
         }
-        stampFolder(parentId);
         refreshTree(file);
     };
     QObject::connect(&model, &zametti::NoteTreeModel::moveRequested, &window,
@@ -669,7 +652,6 @@ int main(int argc, char** argv) {
         }
         refreshTree(made);
         const QModelIndex fresh = model.indexForPath(made);
-        stampFolder(parentId);
         if (folder) {
             if (fresh.isValid()) tree.edit(fresh);   // сразу дать имя
         } else {
@@ -694,10 +676,10 @@ int main(int argc, char** argv) {
     };
     auto* grab = new NewNoteGrab;
     grab->setParent(&window);
-    grab->onNew = [&] { createNote(model.idOf(tree.currentIndex()), false); };
+    grab->onNew = [&] { createNote(model.folderIdFor(tree.currentIndex()), false); };
     editor.installEventFilter(grab);
     shortcut(QKeySequence::New,
-             [&] { createNote(model.idOf(tree.currentIndex()), false); });
+             [&] { createNote(model.folderIdFor(tree.currentIndex()), false); });
 
     // Контекстное меню дерева: создание, переименование, корзина, сортировка.
     tree.setContextMenuPolicy(Qt::CustomContextMenu);
@@ -707,9 +689,9 @@ int main(int argc, char** argv) {
         const QModelIndex at = tree.indexAt(pos);
         QMenu menu(&tree);
         menu.addAction(QStringLiteral("Новая заметка"),
-                       [&] { createNote(model.idOf(at), false); });
+                       [&] { createNote(model.folderIdFor(at), false); });
         menu.addAction(QStringLiteral("Новая папка"),
-                       [&] { createNote(model.idOf(at), true); });
+                       [&] { createNote(model.folderIdFor(at), true); });
         if (at.isValid()) {
             menu.addAction(QStringLiteral("Переименовать"), [&] { tree.edit(at); });
             menu.addAction(model.inTrash(at) ? QStringLiteral("Удалить насовсем")

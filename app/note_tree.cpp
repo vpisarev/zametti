@@ -440,6 +440,16 @@ void NoteTreeModel::setExpanded(const QModelIndex& index, bool expanded) {
 
 bool NoteTreeModel::isEmpty() const { return root_->children.empty(); }
 
+QString NoteTreeModel::folderIdFor(const QModelIndex& index) const {
+    const Node* node =
+        index.isValid() ? static_cast<const Node*>(index.internalPointer()) : nullptr;
+    while (node != nullptr && node != root_.get()) {
+        if (node->isDir()) return node->id;
+        node = node->parent;
+    }
+    return {};
+}
+
 QString NoteTreeModel::trashId() const {
     for (const auto& child : root_->children)
         if (child->trash) return child->id;
@@ -506,9 +516,14 @@ bool NoteTreeModel::canDropMimeData(const QMimeData* data, Qt::DropAction, int, 
     const QString id =
         QString::fromUtf8(data->data(QStringLiteral("application/x-zametti-note-id")));
     if (id.isEmpty()) return false;
+    // Сбрасывать можно только в папку или в корень: заметка папкой не
+    // становится никогда (правило владельца).
+    if (parent.isValid() &&
+        !static_cast<const Node*>(parent.internalPointer())->isDir())
+        return false;
     const QString target = idOf(parent);
     if (target == id) return false;
-    // В собственное поддерево нельзя: заметка стала бы своим же предком.
+    // В собственное поддерево нельзя: папка стала бы своим же предком.
     return !isDescendantOf(target, id);
 }
 

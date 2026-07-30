@@ -10,6 +10,10 @@
 #include <QApplication>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
+#include <QMimeData>
+
+#include <memory>
 
 #include <string>
 
@@ -161,6 +165,59 @@ int main(int argc, char** argv) {
             !model.isDescendantOf(QStringLiteral("00000000000001"),
                                   QStringLiteral("00000000000002")));
 
+    // Роли неизменны: заметка никогда не становится папкой, папка —
+    // заметкой. Создание целится в ближайшую ПАПКУ, сброс на заметку
+    // запрещён на уровне модели.
+    {
+        const QModelIndex noteInFolder = model.indexForPath(
+            g_root + QStringLiteral("/00000000000002.md"));
+        // Ближайшая папка: для заметки — её родитель, для папки — она сама,
+        // для корня — пусто.
+        ZT_TRUE("создание от заметки целится в её папку",
+                model.folderIdFor(noteInFolder) == QStringLiteral("00000000000001"));
+        ZT_TRUE("создание от папки целится в неё саму",
+                model.folderIdFor(folder) == QStringLiteral("00000000000001"));
+        ZT_TRUE("создание без выбора — в корень",
+                model.folderIdFor(QModelIndex()).isEmpty());
+
+        // Матрица сброса: на заметку нельзя, в папку и корень можно, папку в
+        // папку можно, в своё поддерево нельзя.
+        const QModelIndex emptyFolder = model.indexForPath(
+            g_root + QStringLiteral("/0000000000000f.md"));
+        const QModelIndex orphan = model.indexForPath(
+            g_root + QStringLiteral("/00000000000004.md"));
+        std::unique_ptr<QMimeData> dragNote(model.mimeData({orphan}));
+        ZT_TRUE("сброс заметки НА ЗАМЕТКУ запрещён",
+                !model.canDropMimeData(dragNote.get(), Qt::MoveAction, -1, -1,
+                                       noteInFolder));
+        ZT_TRUE("сброс заметки в папку разрешён",
+                model.canDropMimeData(dragNote.get(), Qt::MoveAction, -1, -1,
+                                      emptyFolder));
+        ZT_TRUE("сброс заметки в корень разрешён",
+                model.canDropMimeData(dragNote.get(), Qt::MoveAction, -1, -1,
+                                      QModelIndex()));
+        std::unique_ptr<QMimeData> dragFolder(model.mimeData({folder}));
+        ZT_TRUE("папку в папку можно",
+                model.canDropMimeData(dragFolder.get(), Qt::MoveAction, -1, -1,
+                                      emptyFolder));
+        ZT_TRUE("папку в её же заметку нельзя",
+                !model.canDropMimeData(dragFolder.get(), Qt::MoveAction, -1, -1,
+                                       noteInFolder));
+        std::unique_ptr<QMimeData> dragEmpty(model.mimeData({emptyFolder}));
+        ZT_TRUE("пустую папку в другую папку можно",
+                model.canDropMimeData(dragEmpty.get(), Qt::MoveAction, -1, -1, folder));
+    }
+
+    // Никакая работа модели не трогает файлы: байты до и после всех
+    // манипуляций (обновления подписи, смены сортировок, перечитывания)
+    // совпадают — роли в том числе.
+    QStringList before;
+    for (const QFileInfo& info :
+         QDir(g_root).entryInfoList({QStringLiteral("*.md")}, QDir::Files)) {
+        QFile f(info.filePath());
+        if (f.open(QIODevice::ReadOnly)) before.append(QString::fromUtf8(f.readAll()));
+    }
+
     // Живой заголовок.
     model.updateTitle(g_root + QStringLiteral("/00000000000003.md"),
                       QStringLiteral("Совсем свежий"));
@@ -175,6 +232,17 @@ int main(int argc, char** argv) {
                 QString::fromUtf8(f.readAll())
                     .contains(QStringLiteral("parent: 000000000000zz")));
     }
+
+    model.setSortMode(NoteTreeModel::SortMode::ByName);
+    model.setSortMode(NoteTreeModel::SortMode::ByModified);
+    model.refresh();
+    QStringList after;
+    for (const QFileInfo& info :
+         QDir(g_root).entryInfoList({QStringLiteral("*.md")}, QDir::Files)) {
+        QFile f(info.filePath());
+        if (f.open(QIODevice::ReadOnly)) after.append(QString::fromUtf8(f.readAll()));
+    }
+    ZT_TRUE("модель не изменила ни байта ни в одном файле", before == after);
 
     QDir(g_root).removeRecursively();
     return zt::report("дерево хранилища");
