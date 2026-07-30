@@ -686,7 +686,10 @@ int main(int argc, char** argv) {
     QObject::connect(&tree, &QWidget::customContextMenuRequested, &window,
                      [&](const QPoint& pos) {
         if (!model.isStore()) return;
-        const QModelIndex at = tree.indexAt(pos);
+        // Клик мимо строк — меню действует на выделенную заметку: пункт
+        // «В корзину» не должен пропадать из-за промаха мышью.
+        QModelIndex at = tree.indexAt(pos);
+        if (!at.isValid()) at = tree.currentIndex();
         QMenu menu(&tree);
         menu.addAction(QStringLiteral("Новая заметка"),
                        [&] { createNote(model.folderIdFor(at), false); });
