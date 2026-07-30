@@ -770,6 +770,24 @@ bool applyInputRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     QTextCursor edit(&doc);
     edit.beginEditBlock();
 
+    // Хвост многострочного блока — прежним блоком: правило меняет только
+    // строку каретки. «Июль» становится заголовком, а «просто текст» строкой
+    // ниже остаётся текстом (поймано владельцем). Резать сзади — до переднего
+    // разреза: позиции не плывут.
+    int lineEnd = int(text.size());
+    for (int i = at; i < int(text.size()); ++i)
+        if (text.at(i) == QChar::LineSeparator) {
+            lineEnd = i;
+            break;
+        }
+    if (lineEnd < int(text.size())) {
+        edit.setPosition(block.position() + lineEnd);
+        edit.setPosition(block.position() + lineEnd + 1, QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+        QTextBlockFormat carry = block.blockFormat();
+        edit.insertBlock(carry, block.charFormat());
+    }
+
     // Строка внутри абзаца отдельным блоком быть не может, а список — может
     // только блоком: режем по началу строки, убирая её разделитель.
     int start = block.position();

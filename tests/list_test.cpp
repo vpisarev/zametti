@@ -1269,6 +1269,67 @@ void checkCommentOps() {
                 zametti::kindOf(blockAt(4)) == zametti::Kind::Paragraph);
 }
 
+// «## » на первой строке многострочного абзаца делает заголовком только её:
+// хвост остаётся текстом (сценарий владельца: «июль» + «просто текст»).
+void checkInputRuleSplitsLine() {
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+    const QString path = writeNote(
+        "июль.md", QStringLiteral("# 2026\n\nиюль\nпросто текст\n"));
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    const auto blockAt = [&](int n) { return editor.document()->findBlockByNumber(n); };
+    ZT_TRUE("июль и просто текст — один блок из двух строк",
+            blockAt(2).text().count(QChar::LineSeparator) == 1);
+
+    QTextCursor cursor(blockAt(2));
+    editor.setTextCursor(cursor);
+    QTest::keyClicks(&editor, QStringLiteral("## "));
+    QTest::qWait(10);
+
+    ZT_TRUE("июль стал подзаголовком",
+            zametti::kindOf(blockAt(2)) == zametti::Kind::Heading &&
+                blockAt(2).text() == QStringLiteral("июль"));
+    bool tailIntact = false;
+    for (QTextBlock b = editor.document()->begin(); b.isValid(); b = b.next())
+        if (zametti::kindOf(b) == zametti::Kind::Paragraph &&
+            b.text() == QStringLiteral("просто текст"))
+            tailIntact = true;
+    ZT_TRUE("просто текст остался текстом", tailIntact);
+
+    // И середина блока: правило режет с обеих сторон.
+    editor.document()->setModified(false);
+    const QString path2 = writeNote(
+        "середина.md", QStringLiteral("раз\nдва\nтри\n"));
+    editor.openFile(path2);
+    QTest::qWait(20);
+    QTextCursor mid(editor.document());
+    const QString all = editor.document()->firstBlock().text();
+    mid.setPosition(editor.document()->firstBlock().position() +
+                    int(all.indexOf(QStringLiteral("два"))));
+    editor.setTextCursor(mid);
+    QTest::keyClicks(&editor, QStringLiteral("# "));
+    QTest::qWait(10);
+    int headings = 0;
+    bool one = false;
+    bool three = false;
+    for (QTextBlock b = editor.document()->begin(); b.isValid(); b = b.next()) {
+        if (zametti::kindOf(b) == zametti::Kind::Heading) {
+            ++headings;
+            ZT_TRUE("заголовком стала только «два»",
+                    b.text() == QStringLiteral("два"));
+        }
+        if (b.text().startsWith(QStringLiteral("раз"))) one = true;
+        if (b.text().contains(QStringLiteral("три"))) three = true;
+    }
+    ZT_TRUE("заголовок ровно один", headings == 1);
+    ZT_TRUE("соседние строки уцелели текстом", one && three);
+}
+
 void checkOrderedMarkerFaces() {
     const zametti::MarkerStyle ordered{zametti::Marker::Ordered, false};
     const auto face = [&](int ordinal, int level) {
@@ -1313,6 +1374,7 @@ int main(int argc, char** argv) {
     checkKindRoundTripKeepsPlace();
     checkOrderedMarkerFaces();
     checkCommentOps();
+    checkInputRuleSplitsLine();
 
     fs::remove_all(g_dir);
     return zt::report("списки");
