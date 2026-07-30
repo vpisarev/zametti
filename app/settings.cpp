@@ -133,6 +133,14 @@ QJsonObject appearanceToJson(const Appearance& a) {
 
     QJsonObject notes{
         {QStringLiteral("root"), a.notesRoot},
+        {QStringLiteral("title"), a.storeTitle},
+    };
+
+    QJsonObject noteList{
+        {QStringLiteral("width"), a.noteListWidth},
+        {QStringLiteral("snippetLines"), a.noteListSnippetLines},
+        {QStringLiteral("snippetColor"), colorToString(a.noteListSnippetColor)},
+        {QStringLiteral("dateColor"), colorToString(a.noteListDateColor)},
     };
 
     QJsonObject sidebar{
@@ -175,6 +183,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("checkbox"), checkbox},
         {QStringLiteral("notes"), notes},
         {QStringLiteral("sidebar"), sidebar},
+        {QStringLiteral("noteList"), noteList},
         {QStringLiteral("editor"), editor},
         {QStringLiteral("zoom"), zoom},
     };
@@ -260,6 +269,15 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
 
     const QJsonObject notes = root.value(QStringLiteral("notes")).toObject();
     readString(notes, "root", a.notesRoot);
+    readString(notes, "title", a.storeTitle);
+
+    const QJsonObject noteList = root.value(QStringLiteral("noteList")).toObject();
+    const QJsonValue listWidth = noteList.value(QStringLiteral("width"));
+    if (listWidth.isDouble()) a.noteListWidth = listWidth.toInt();
+    const QJsonValue snippetLines = noteList.value(QStringLiteral("snippetLines"));
+    if (snippetLines.isDouble()) a.noteListSnippetLines = qMax(0, snippetLines.toInt());
+    readColor(noteList, "snippetColor", a.noteListSnippetColor);
+    readColor(noteList, "dateColor", a.noteListDateColor);
 
     const QJsonObject sidebar = root.value(QStringLiteral("sidebar")).toObject();
     readString(sidebar, "fontFamily", a.sidebarFontFamily);

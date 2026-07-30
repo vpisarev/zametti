@@ -41,6 +41,8 @@ target_include_directories(zametti-view PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 add_library(zametti-widgets STATIC
     note_tree.h
     note_tree.cpp
+    note_list.h
+    note_list.cpp
     note_view.h
     note_view.cpp
     editor_widget.h

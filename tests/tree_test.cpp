@@ -77,8 +77,19 @@ int main(int argc, char** argv) {
     NoteTreeModel model(g_root);
     ZT_TRUE("режим хранилища", model.isStore());
 
-    const int rootRows = model.rowCount(QModelIndex());
-    // Корень: папка, сирота, виновник цикла (заложник остаётся его ребёнком —
+    // Первая и единственная строка верхнего уровня — «All notes» (этап 4):
+    // корень хранилища виден всегда, содержимое лежит под ним.
+    ZT_TRUE("верхний уровень — одна строка «все заметки»",
+            model.rowCount(QModelIndex()) == 1);
+    // Не const: смена сортировки пересобирает модель, и все прежние индексы
+    // становятся недействительными — их надо брать заново (на этом пойман
+    // сегфолт при первом прогоне).
+    QModelIndex all = model.index(0, 0, QModelIndex());
+    ZT_TRUE("корневая строка — директория", model.isDirectory(all));
+    ZT_TRUE("корневая строка не открывается", model.filePath(all).isEmpty());
+
+    const int rootRows = model.rowCount(all);
+    // Под корнем: папка, сирота, виновник цикла (заложник остаётся его ребёнком —
     // рвётся одно ребро, а не всё), пустая, без заголовка, пустая папка,
     // корзина = 7.
     ZT_TRUE("в корне семь узлов", rootRows == 7);
@@ -86,7 +97,7 @@ int main(int argc, char** argv) {
     // Живой каталог всплывает: у «Папки» ребёнок правлен в 2024 — она выше
     // сироты 2022 года, хотя своя правка 2020-го.
     ZT_TRUE("каталог с недавней правкой внутри — впереди",
-            titleAt(model, {}, 1) == QStringLiteral("Папка"));
+            titleAt(model, all, 1) == QStringLiteral("Папка"));
 
     // Пустая папка — директория по мете: не открывается, со значком.
     {
@@ -98,22 +109,24 @@ int main(int argc, char** argv) {
 
     // Сортировка по имени: директории первыми, корзина всё равно внизу.
     model.setSortMode(NoteTreeModel::SortMode::ByName);
+    all = model.index(0, 0, QModelIndex());
     ZT_TRUE("по имени: первая — директория",
-            model.isDirectory(model.index(0, 0, QModelIndex())));
+            model.isDirectory(model.index(0, 0, all)));
     ZT_TRUE("по имени: корзина внизу",
-            titleAt(model, {}, model.rowCount(QModelIndex()) - 1) ==
+            titleAt(model, all, model.rowCount(all) - 1) ==
                 QStringLiteral("Корзина"));
     model.setSortMode(NoteTreeModel::SortMode::ByModified);
+    all = model.index(0, 0, QModelIndex());
 
     // Свежие сверху, корзина — последней, несмотря на свежий modified.
     ZT_TRUE("первый — без заголовка (2025)",
-            titleAt(model, {}, 0).startsWith(QStringLiteral("просто первая строка")));
+            titleAt(model, all, 0).startsWith(QStringLiteral("просто первая строка")));
     ZT_TRUE("корзина в самом низу",
-            titleAt(model, {}, rootRows - 1) == QStringLiteral("Корзина"));
+            titleAt(model, all, rootRows - 1) == QStringLiteral("Корзина"));
     ZT_TRUE("пустая — «Без названия»",
             [&] {
                 for (int i = 0; i < rootRows; ++i)
-                    if (titleAt(model, {}, i) == QStringLiteral("Без названия")) return true;
+                    if (titleAt(model, all, i) == QStringLiteral("Без названия")) return true;
                 return false;
             }());
 
@@ -122,7 +135,7 @@ int main(int argc, char** argv) {
     bool orphan = false;
     bool cycle = false;
     for (int i = 0; i < rootRows; ++i) {
-        const QString t = titleAt(model, {}, i);
+        const QString t = titleAt(model, all, i);
         if (t.contains(QStringLiteral("[сирота]"))) { orphan = true; ++badges; }
         if (t.contains(QStringLiteral("[цикл]"))) { cycle = true; ++badges; }
     }
@@ -243,6 +256,113 @@ int main(int argc, char** argv) {
         if (f.open(QIODevice::ReadOnly)) after.append(QString::fromUtf8(f.readAll()));
     }
     ZT_TRUE("модель не изменила ни байта ни в одном файле", before == after);
+
+    // --- средняя колонка: плоский список поддерева (этап 4) ----------------
+    //
+    // Вложенность на два уровня: заметка из под-под-папки обязана быть видна в
+    // списке корня — в этом весь смысл плоскости.
+    note("0000000000000a", "role: folder\nparent: 00000000000001\n"
+                           "modified: 2024-02-02T00:00:00Z\n",
+         "# Подпапка\n");
+    note("0000000000000b",
+         "parent: 0000000000000a\nmodified: 2024-03-03T00:00:00Z\n",
+         "# Глубокая\n\nПервый **жирный** абзац с `кодом`.\n\nВторой абзац.\n");
+    model.refresh();
+    all = model.index(0, 0, QModelIndex());
+
+    {
+        const std::vector<zametti::NoteRow> rows = model.notesInSubtree(all);
+        const auto has = [&rows](const QString& title) {
+            for (const auto& r : rows)
+                if (r.title == title) return true;
+            return false;
+        };
+        ZT_TRUE("заметка из под-под-папки видна в списке корня", has(QStringLiteral("Глубокая")));
+        ZT_TRUE("папки в списке не показываются",
+                !has(QStringLiteral("Подпапка")) && !has(QStringLiteral("Папка")) &&
+                    !has(QStringLiteral("Пустая папка")));
+        ZT_TRUE("корзина в общий список не попадает",
+                !has(QStringLiteral("Корзина")) && !has(QStringLiteral("Выброшенная")));
+
+        // Сниппет — текст блоков после заголовка, без маркеров разметки и без
+        // метаданных.
+        QString snippet;
+        for (const auto& r : rows)
+            if (r.title == QStringLiteral("Глубокая")) snippet = r.snippet;
+        ZT_TRUE("сниппет взят из тела", snippet.startsWith(QStringLiteral("Первый жирный")));
+        ZT_TRUE("в сниппете нет маркеров разметки",
+                !snippet.contains(QLatin1Char('*')) && !snippet.contains(QLatin1Char('`')));
+        ZT_TRUE("в сниппете нет метаданных",
+                !snippet.contains(QStringLiteral("modified")) &&
+                    !snippet.contains(QStringLiteral("parent")));
+        ZT_TRUE("сниппет продолжается вторым абзацем",
+                snippet.contains(QStringLiteral("Второй абзац")));
+        ZT_TRUE("заголовок в сниппет не попал",
+                !snippet.contains(QStringLiteral("Глубокая")));
+    }
+
+    // Список папки — только её поддерево; изнутри корзины видно выброшенное.
+    {
+        const QModelIndex sub = model.indexForPath(
+            g_root + QStringLiteral("/0000000000000a.md"));
+        const std::vector<zametti::NoteRow> rows = model.notesInSubtree(sub);
+        ZT_TRUE("в подпапке ровно одна заметка", rows.size() == 1);
+        ZT_TRUE("и это она", rows.empty() || rows[0].title == QStringLiteral("Глубокая"));
+
+        const QModelIndex trash = model.indexForPath(
+            g_root + QStringLiteral("/0000000000000t.md"));
+        const std::vector<zametti::NoteRow> thrown = model.notesInSubtree(trash);
+        ZT_TRUE("внутри корзины её содержимое видно",
+                thrown.size() == 1 && thrown[0].title == QStringLiteral("Выброшенная"));
+    }
+
+    // Режим «только папки»: заметок в модели нет, папки на месте, а список
+    // средней колонки от этого не меняется — он берёт данные из дерева целиком.
+    model.setFoldersOnly(true);
+    all = model.index(0, 0, QModelIndex());
+    {
+        bool onlyDirs = true;
+        for (int row = 0; row < model.rowCount(all); ++row)
+            if (!model.isDirectory(model.index(row, 0, all))) onlyDirs = false;
+        ZT_TRUE("в левой панели остались только папки", onlyDirs);
+        ZT_TRUE("папка на месте",
+                model.indexForPath(g_root + QStringLiteral("/00000000000001.md")).isValid());
+        ZT_TRUE("заметка из левой панели пропала",
+                !model.indexForPath(g_root + QStringLiteral("/00000000000003.md")).isValid());
+        ZT_TRUE("но списку она видна",
+                model.notesInSubtree(QModelIndex()).size() ==
+                    model.notesInSubtree(all).size());
+        ZT_TRUE("и по id она находится",
+                model.hasNote(QStringLiteral("00000000000003")));
+    }
+
+    // Запросы по id: ими живут операции над заметками, пока индексов у них нет.
+    ZT_TRUE("родитель по id",
+            model.parentIdOf(QStringLiteral("0000000000000b")) ==
+                QStringLiteral("0000000000000a"));
+    ZT_TRUE("путь из имён папок",
+            model.ancestorTitles(QStringLiteral("0000000000000b"))
+                    .join(QLatin1Char('/')) == QStringLiteral("Папка/Подпапка"));
+    ZT_TRUE("папка по имени внутри папки",
+            model.childFolderByTitle(QStringLiteral("00000000000001"),
+                                     QStringLiteral("Подпапка")) ==
+                QStringLiteral("0000000000000a"));
+    ZT_TRUE("папка не считается заметкой",
+            model.isFolderId(QStringLiteral("0000000000000a")) &&
+                !model.isFolderId(QStringLiteral("0000000000000b")));
+    ZT_TRUE("корзина видна по id",
+            model.inTrashId(QStringLiteral("0000000000000v")) &&
+                !model.inTrashId(QStringLiteral("0000000000000b")));
+    ZT_TRUE("первая открываемая заметка — не папка",
+            !model.firstNoteId().isEmpty() && !model.isFolderId(model.firstNoteId()));
+
+    // Строка списка одной заметки — та же, что в общем списке.
+    {
+        const zametti::NoteRow row = model.rowOf(QStringLiteral("0000000000000b"));
+        ZT_TRUE("строка по id заполнена",
+                row.title == QStringLiteral("Глубокая") && !row.snippet.isEmpty() &&
+                    row.modified == QStringLiteral("2024-03-03T00:00:00Z"));
+    }
 
     QDir(g_root).removeRecursively();
     return zt::report("дерево хранилища");

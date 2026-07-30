@@ -1324,6 +1324,10 @@ void NoteEditor::save(bool interactive) {
             const ViewAnchor anchor = viewAnchor();
             rebuild(outcome.reread, cursor, anchor);
         }
+        // Файл на диске стал другим: средней колонке пора перечитать заголовок,
+        // начало текста и дату. Сигнал, а не прямой вызов: редактор про список
+        // ничего не знает и знать не должен.
+        emit fileSaved(path_);
         return;
     }
 

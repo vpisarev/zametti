@@ -1,6 +1,8 @@
 #include "note_tree.h"
 
+#include "ir.h"
 #include "note_id.h"
+#include "parser.h"
 #include "settings.h"
 
 #include <QCollator>
@@ -24,19 +26,25 @@ struct NoteTreeModel::Node {
     QString path;    // полный путь, и у файла, и у каталога
     QString id;      // id заметки в хранилище; вне хранилища пусто
     QString badge;   // пометка починки («сирота», «цикл») — подпись и подсказка
+    QString snippet; // начало текста для средней колонки
     QString modified;   // ISO из меты — для сортировки свежие сверху
     QString effectiveModified;   // максимум по поддереву: живые каталоги вперёд
     bool trash = false; // корзина: в самом низу корня
     bool folder = false;   // role: folder — директория и без детей
     bool dir = false;
+    bool storeRoot = false;   // «All notes»: корень хранилища отдельной строкой
     Node* parent = nullptr;
     std::vector<std::unique_ptr<Node>> children;
+    // Кого из детей видно наружу. В режиме «только папки» заметки остаются в
+    // children (средняя колонка берёт их оттуда), но в модель не попадают —
+    // иначе пришлось бы держать два дерева и синхронизировать их.
+    std::vector<Node*> shown;
 
     bool isDir() const { return dir; }
     int rowInParent() const {
         if (parent == nullptr) return 0;
-        for (size_t i = 0; i < parent->children.size(); ++i)
-            if (parent->children[i].get() == this) return int(i);
+        for (size_t i = 0; i < parent->shown.size(); ++i)
+            if (parent->shown[i] == this) return int(i);
         return 0;
     }
 };
@@ -93,11 +101,12 @@ std::unique_ptr<NoteTreeModel::Node> buildDir(const QString& dirPath, const QStr
 
 // --- плоское хранилище ------------------------------------------------------
 //
-// Дерево из метаданных: скан всех "<id>.md", у каждого — parent, modified и
-// заголовок. Заголовок — первая содержательная строка после шапки метаданных:
-// строка "#..." без решёток, иначе просто строка, усечённая; совсем пусто —
-// «Без названия». Файлы канонические (заголовок — первый блок), полный разбор
-// ядром здесь не нужен.
+// Дерево из метаданных: скан всех "<id>.md", у каждого — parent, modified,
+// заголовок и начало текста. Читается и разбирается ядром весь файл: сниппет
+// средней колонки — это текст блоков IR, а не первые байты файла, и получить
+// его из головы нельзя. Замер этапа 4: полный проход с разбором — 7.2 мс на
+// 271 заметке против 1.3 мс у чтения голов по 4096 байт; разница ниже порога
+// заметности, а колонка получает то, что показано человеку.
 //
 // Починка структуры живёт в памяти и только в ней: parent в никуда — заметка
 // в корне с пометкой «сирота»; цикл родителей рвётся, виновник в корень с
@@ -106,54 +115,100 @@ struct StoreNote {
     QString id;
     QString parent;
     QString title;
+    QString snippet;
     QString modified;
     bool trash = false;
     bool folder = false;
 };
 
+// Сколько знаков сниппета держим. Две-три строки списка при любой разумной
+// ширине панели; резать точно по строкам нельзя — ширина известна только
+// делегату, и она меняется вместе с разделителем.
+constexpr int kSnippetChars = 200;
+
+// Текст блока так, как его видит человек: у дословных кусков — сам кусок, он
+// и показан.
+QString blockPlainText(const Block& block) {
+    return QString::fromStdString(block.rawSource.empty() ? block.text : block.rawSource);
+}
+
+// Первая строка: заголовок в списке однострочный, а текст блока может нести
+// мягкие переносы.
+QString firstLine(const QString& text) {
+    const qsizetype eol = text.indexOf(QLatin1Char('\n'));
+    return (eol < 0 ? text : text.left(eol)).trimmed();
+}
+
+// Заголовок — первый содержательный блок; сниппет — то, что идёт за ним.
+// Пустые строки и HTML-комментарии в сниппет не берутся: первые ничего не
+// говорят, вторые — разметка, а не текст (шапка метаданных блоком и не
+// является — она в doc.meta).
+void describeNote(const Document& doc, StoreNote& out) {
+    bool haveTitle = false;
+    QString snippet;
+    for (const Block& block : doc.blocks) {
+        if (block.rawSource.empty() &&
+            (block.kind == Kind::VSpace || block.kind == Kind::Html))
+            continue;
+        if (!block.rawSource.empty() && isClosedHtmlComment(block)) continue;
+        const QString text = blockPlainText(block).simplified();
+        if (text.isEmpty()) continue;
+        if (!haveTitle) {
+            out.title = firstLine(text).left(64);
+            haveTitle = true;
+            continue;
+        }
+        if (!snippet.isEmpty()) snippet += QLatin1Char(' ');
+        snippet += text;
+        if (snippet.size() >= kSnippetChars) break;
+    }
+    if (snippet.size() > kSnippetChars)
+        snippet = snippet.left(kSnippetChars - 1) + QChar(0x2026);
+    out.snippet = snippet;
+    if (out.title.isEmpty()) out.title = QStringLiteral("Без названия");
+}
+
 bool readStoreNote(const QString& path, StoreNote& out) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) return false;
-    // Головы файла достаточно: шапка и заголовок живут в первых строках.
-    const QString head = QString::fromUtf8(f.read(4096));
-    const QStringList lines = head.split(QLatin1Char('\n'));
-    int i = 0;
-    if (i < lines.size() && lines[i] == QStringLiteral("<!-- zametti")) {
-        for (++i; i < lines.size() && lines[i] != QStringLiteral("-->"); ++i) {
-            const qsizetype colon = lines[i].indexOf(QLatin1Char(':'));
-            if (colon <= 0) continue;
-            const QString key = lines[i].left(colon).trimmed();
-            const QString value = lines[i].mid(colon + 1).trimmed();
-            if (key == QStringLiteral("parent")) out.parent = value;
-            else if (key == QStringLiteral("modified")) out.modified = value;
-            else if (key == QStringLiteral("role")) {
-                if (value == QStringLiteral("trash")) out.trash = true;
-                if (value == QStringLiteral("folder")) out.folder = true;
-            }
-        }
-        if (i < lines.size()) ++i;   // сама "-->"
-    }
-    for (; i < lines.size(); ++i) {
-        const QString line = lines[i].trimmed();
-        if (line.isEmpty()) continue;
-        if (line.startsWith(QLatin1Char('#'))) {
-            qsizetype at = 0;
-            while (at < line.size() && line[at] == QLatin1Char('#')) ++at;
-            out.title = line.mid(at).trimmed();
-        } else {
-            out.title = line.left(64);
-        }
-        break;
-    }
-    if (out.title.isEmpty()) out.title = QStringLiteral("Без названия");
+    const QByteArray bytes = f.readAll();
+    const Document doc = parse(std::string_view(bytes.constData(), size_t(bytes.size())));
+
+    out.parent = QString::fromStdString(doc.meta.get("parent"));
+    out.modified = QString::fromStdString(doc.meta.get("modified"));
+    const std::string role = doc.meta.get("role");
+    out.trash = role == "trash";
+    out.folder = role == "folder";
+    describeNote(doc, out);
     return true;
 }
 
+// Подпись корневой строки левой панели: имя хранилища из конфига, а нет его —
+// «All notes» (бриф этапа 4). Имя каталога сюда не подставляется намеренно:
+// оно техническое (у владельца это "vpnotes"), а строка означает не каталог, а
+// «все заметки хранилища». Выбор этой строки и означает ровно это.
+QString storeRootTitle(const QString&) {
+    const QString configured = appearance().storeTitle;
+    return configured.isEmpty() ? QStringLiteral("All notes") : configured;
+}
+
 std::unique_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath) {
-    auto root = std::make_unique<NoteTreeModel::Node>();
-    root->title = QFileInfo(rootPath).fileName();
-    root->path = QFileInfo(rootPath).absoluteFilePath();
-    root->dir = true;
+    // Два корня: невидимый (им отвечает QModelIndex()) и видимый — строка
+    // «All notes», которая в левой панели всегда первая и всегда на месте.
+    // Держать её узлом, а не рисовать отдельно, дешевле всего: перенос в
+    // корень, раскрытие и выделение работают тем же кодом, что и у папок.
+    auto hidden = std::make_unique<NoteTreeModel::Node>();
+    hidden->path = QFileInfo(rootPath).absoluteFilePath();
+    hidden->dir = true;
+
+    auto rootOwned = std::make_unique<NoteTreeModel::Node>();
+    rootOwned->title = storeRootTitle(rootPath);
+    rootOwned->path = QFileInfo(rootPath).absoluteFilePath();
+    rootOwned->dir = true;
+    rootOwned->storeRoot = true;
+    rootOwned->parent = hidden.get();
+    NoteTreeModel::Node* root = rootOwned.get();
+    hidden->children.push_back(std::move(rootOwned));
 
     // Скан: только "<id>.md".
     std::vector<std::unique_ptr<NoteTreeModel::Node>> nodes;
@@ -168,6 +223,7 @@ std::unique_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath) {
         auto node = std::make_unique<NoteTreeModel::Node>();
         node->id = stem;
         node->title = meta.title;
+        node->snippet = meta.snippet;
         node->path = info.absoluteFilePath();
         node->modified =
             meta.modified.isEmpty()
@@ -201,7 +257,7 @@ std::unique_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath) {
     // Подвес: parent в никуда — сирота в корне с пометкой.
     for (auto& node : nodes) {
         const QString parent = parentOf.value(node->id);
-        NoteTreeModel::Node* home = root.get();
+        NoteTreeModel::Node* home = root;
         if (!parent.isEmpty()) {
             if (byId.contains(parent)) home = byId.value(parent);
             else node->badge = QStringLiteral("сирота");
@@ -227,7 +283,11 @@ std::unique_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath) {
         }
     };
     for (auto& child : root->children) Finish::run(child.get());
-    return root;
+    root->effectiveModified.clear();
+    for (auto& child : root->children)
+        if (child->effectiveModified > root->effectiveModified)
+            root->effectiveModified = child->effectiveModified;
+    return hidden;
 }
 
 // Братья: корзина всегда внизу; дальше по режиму.
@@ -243,6 +303,17 @@ void sortStore(NoteTreeModel::Node* node, NoteTreeModel::SortMode mode,
                   return a->effectiveModified > b->effectiveModified;
               });
     for (auto& child : node->children) sortStore(child.get(), mode, collator);
+}
+
+// Кого показывать наружу. Пересчитывается после каждой сортировки и после
+// смены режима: порядок shown обязан совпадать с порядком children, иначе
+// строки и узлы разъедутся.
+void rebuildShown(NoteTreeModel::Node* node, bool foldersOnly) {
+    node->shown.clear();
+    for (auto& child : node->children) {
+        if (!foldersOnly || child->isDir()) node->shown.push_back(child.get());
+        rebuildShown(child.get(), foldersOnly);
+    }
 }
 
 // Значок папки рисуется знаком из шрифта: готовых чёрно-белых иконок в Qt нет,
@@ -306,17 +377,15 @@ bool NoteTreeModel::isStoreRoot(const QString& dir) {
 }
 
 void NoteTreeModel::build() {
-    if (store_) {
-        root_ = buildStore(rootPath_);
-        QCollator collator;
-        collator.setNumericMode(true);
-        collator.setCaseSensitivity(Qt::CaseInsensitive);
-        sortStore(root_.get(), sortMode_, collator);
-        return;
-    }
     QCollator collator;
     collator.setNumericMode(true);
     collator.setCaseSensitivity(Qt::CaseInsensitive);
+    if (store_) {
+        root_ = buildStore(rootPath_);
+        sortStore(root_.get(), sortMode_, collator);
+        rebuildShown(root_.get(), foldersOnly_);
+        return;
+    }
     root_ = buildDir(rootPath_, QFileInfo(rootPath_).fileName(), collator);
     if (root_ == nullptr) {
         root_ = std::make_unique<Node>();
@@ -324,6 +393,15 @@ void NoteTreeModel::build() {
         root_->path = QFileInfo(rootPath_).absoluteFilePath();
         root_->dir = true;
     }
+    rebuildShown(root_.get(), false);
+}
+
+void NoteTreeModel::setFoldersOnly(bool on) {
+    if (on == foldersOnly_) return;
+    foldersOnly_ = on;
+    beginResetModel();
+    rebuildShown(root_.get(), foldersOnly_);
+    endResetModel();
 }
 
 void NoteTreeModel::setSortMode(SortMode mode) {
@@ -344,12 +422,25 @@ QString NoteTreeModel::idOf(const QModelIndex& index) const {
 }
 
 void NoteTreeModel::updateTitle(const QString& filePath, const QString& title) {
-    const QModelIndex index = indexForPath(filePath);
-    if (!index.isValid() || title.isEmpty()) return;
-    Node* node = static_cast<Node*>(index.internalPointer());
-    if (node->title == title) return;
+    if (title.isEmpty()) return;
+    // По всему дереву, а не по видимой части: заголовок правится у заметки, а
+    // заметок в левой панели теперь нет — строку ждёт средняя колонка.
+    struct Find {
+        static Node* run(Node* node, const QString& path) {
+            for (auto& child : node->children) {
+                if (child->path == path) return child.get();
+                Node* found = run(child.get(), path);
+                if (found != nullptr) return found;
+            }
+            return nullptr;
+        }
+    };
+    Node* node = Find::run(root_.get(), filePath);
+    if (node == nullptr || node->title == title) return;
     node->title = title;
-    emit dataChanged(index, index, {Qt::DisplayRole});
+    const QModelIndex index = indexForNode(node);
+    if (index.isValid()) emit dataChanged(index, index, {Qt::DisplayRole});
+    emit noteRowChanged(node->id);
 }
 
 NoteTreeModel::~NoteTreeModel() = default;
@@ -357,7 +448,7 @@ NoteTreeModel::~NoteTreeModel() = default;
 QModelIndex NoteTreeModel::index(int row, int column, const QModelIndex& parent) const {
     if (!hasIndex(row, column, parent)) return {};
     const Node* parentNode = nodeOf(parent, root_.get());
-    return createIndex(row, column, parentNode->children[size_t(row)].get());
+    return createIndex(row, column, parentNode->shown[size_t(row)]);
 }
 
 QModelIndex NoteTreeModel::parent(const QModelIndex& child) const {
@@ -370,7 +461,7 @@ QModelIndex NoteTreeModel::parent(const QModelIndex& child) const {
 
 int NoteTreeModel::rowCount(const QModelIndex& parent) const {
     if (parent.column() > 0) return 0;
-    return int(nodeOf(parent, root_.get())->children.size());
+    return int(nodeOf(parent, root_.get())->shown.size());
 }
 
 int NoteTreeModel::columnCount(const QModelIndex&) const { return 1; }
@@ -438,7 +529,199 @@ void NoteTreeModel::setExpanded(const QModelIndex& index, bool expanded) {
     if (index.isValid()) emit dataChanged(index, index, {Qt::DecorationRole});
 }
 
-bool NoteTreeModel::isEmpty() const { return root_->children.empty(); }
+bool NoteTreeModel::isEmpty() const { return topNode()->children.empty(); }
+
+// Узел, под которым лежит содержимое: в хранилище это видимая строка
+// «All notes», вне его — сам корень.
+const NoteTreeModel::Node* NoteTreeModel::topNode() const {
+    if (store_ && !root_->children.empty()) return root_->children.front().get();
+    return root_.get();
+}
+
+std::vector<NoteRow> NoteTreeModel::notesInSubtree(const QModelIndex& index) const {
+    std::vector<NoteRow> out;
+    if (!store_) return out;
+    const Node* node = index.isValid() ? static_cast<const Node*>(index.internalPointer())
+                                       : topNode();
+    // Корзина в общий список не попадает: выброшенное не должно всплывать
+    // рядом с живым (так же ведёт себя Apple Notes). Внутри самой корзины —
+    // наоборот, показываем всё её содержимое.
+    const bool insideTrash = [&] {
+        for (const Node* up = node; up != nullptr; up = up->parent)
+            if (up->trash) return true;
+        return false;
+    }();
+    struct Walk {
+        static void run(const Node* node, bool insideTrash, std::vector<NoteRow>& out) {
+            for (const auto& child : node->children) {
+                if (child->trash && !insideTrash) continue;
+                // Папка — структура, а не заметка: её тело открывается через
+                // «Открыть как заметку», в списке ей делать нечего.
+                if (!child->isDir())
+                    out.push_back(NoteRow{child->id, child->path, child->title,
+                                          child->snippet, child->modified});
+                run(child.get(), insideTrash, out);
+            }
+        }
+    };
+    Walk::run(node, insideTrash, out);
+    return out;
+}
+
+QModelIndex NoteTreeModel::folderIndexForNote(const QString& noteId) const {
+    if (!store_ || noteId.isEmpty()) return {};
+    struct Find {
+        static const Node* run(const Node* node, const QString& id) {
+            for (const auto& child : node->children) {
+                if (child->id == id) return node;
+                const Node* found = run(child.get(), id);
+                if (found != nullptr) return found;
+            }
+            return nullptr;
+        }
+    };
+    const Node* folder = Find::run(topNode(), noteId);
+    if (folder == nullptr) return {};
+    return indexForNode(folder);
+}
+
+QModelIndex NoteTreeModel::indexForNode(const Node* node) const {
+    if (node == nullptr || node == root_.get()) return {};
+    return createIndex(node->rowInParent(), 0, const_cast<Node*>(node));
+}
+
+const NoteTreeModel::Node* NoteTreeModel::nodeById(const QString& id) const {
+    if (id.isEmpty()) return nullptr;
+    struct Find {
+        static const Node* run(const Node* node, const QString& id) {
+            for (const auto& child : node->children) {
+                if (child->id == id) return child.get();
+                const Node* found = run(child.get(), id);
+                if (found != nullptr) return found;
+            }
+            return nullptr;
+        }
+    };
+    return Find::run(root_.get(), id);
+}
+
+bool NoteTreeModel::hasNote(const QString& id) const { return nodeById(id) != nullptr; }
+
+bool NoteTreeModel::isFolderId(const QString& id) const {
+    const Node* node = nodeById(id);
+    return node != nullptr && node->isDir();
+}
+
+bool NoteTreeModel::inTrashId(const QString& id) const {
+    for (const Node* node = nodeById(id); node != nullptr; node = node->parent)
+        if (node->trash) return true;
+    return false;
+}
+
+QString NoteTreeModel::parentIdOf(const QString& id) const {
+    const Node* node = nodeById(id);
+    if (node == nullptr || node->parent == nullptr) return {};
+    return node->parent->id;
+}
+
+QString NoteTreeModel::titleOfId(const QString& id) const {
+    const Node* node = nodeById(id);
+    return node == nullptr ? QString() : node->title;
+}
+
+QStringList NoteTreeModel::ancestorTitles(const QString& id) const {
+    QStringList out;
+    const Node* node = nodeById(id);
+    if (node == nullptr) return out;
+    for (const Node* up = node->parent; up != nullptr && !up->storeRoot; up = up->parent)
+        out.prepend(up->title);
+    return out;
+}
+
+int NoteTreeModel::childCountOf(const QString& id) const {
+    const Node* node = nodeById(id);
+    return node == nullptr ? 0 : int(node->children.size());
+}
+
+QString NoteTreeModel::pathOfId(const QString& id) const {
+    const Node* node = nodeById(id);
+    return node == nullptr ? QString() : node->path;
+}
+
+QString NoteTreeModel::childFolderByTitle(const QString& parentId,
+                                          const QString& title) const {
+    const Node* parent = parentId.isEmpty() ? topNode() : nodeById(parentId);
+    if (parent == nullptr) return {};
+    for (const auto& child : parent->children) {
+        if (!child->isDir() || child->trash) continue;
+        if (child->title == title) return child->id;
+    }
+    return {};
+}
+
+QString NoteTreeModel::firstNoteId() const {
+    struct Walk {
+        static QString run(const Node* node) {
+            for (const auto& child : node->children) {
+                if (!child->isDir()) return child->id;
+                const QString inside = run(child.get());
+                if (!inside.isEmpty()) return inside;
+            }
+            return {};
+        }
+    };
+    return Walk::run(topNode());
+}
+
+QString NoteTreeModel::neighbourOf(const QString& id) const {
+    const Node* node = nodeById(id);
+    if (node == nullptr || node->parent == nullptr) return {};
+    const auto& siblings = node->parent->children;
+    size_t at = siblings.size();
+    for (size_t i = 0; i < siblings.size(); ++i)
+        if (siblings[i].get() == node) at = i;
+    if (at == siblings.size()) return {};
+    for (size_t i = at + 1; i < siblings.size(); ++i)
+        if (!siblings[i]->isDir()) return siblings[i]->id;
+    for (size_t i = at; i-- > 0;)
+        if (!siblings[i]->isDir()) return siblings[i]->id;
+    return {};
+}
+
+void NoteTreeModel::refreshNote(const QString& path) {
+    if (!store_) return;
+    // Ищем по всему дереву, а не через indexForPath: заметку в режиме «только
+    // папки» модель наружу не показывает, а обновить её строку надо.
+    struct Find {
+        static Node* run(Node* node, const QString& path) {
+            for (auto& child : node->children) {
+                if (child->path == path) return child.get();
+                Node* found = run(child.get(), path);
+                if (found != nullptr) return found;
+            }
+            return nullptr;
+        }
+    };
+    Node* node = Find::run(root_.get(), path);
+    if (node == nullptr) return;
+    StoreNote fresh;
+    if (!readStoreNote(path, fresh)) return;
+    if (node->title == fresh.title && node->snippet == fresh.snippet &&
+        node->modified == fresh.modified)
+        return;
+    node->title = fresh.title;
+    node->snippet = fresh.snippet;
+    if (!fresh.modified.isEmpty()) node->modified = fresh.modified;
+    const QModelIndex index = indexForNode(node);
+    if (index.isValid()) emit dataChanged(index, index, {Qt::DisplayRole});
+    emit noteRowChanged(node->id);
+}
+
+NoteRow NoteTreeModel::rowOf(const QString& id) const {
+    const Node* node = nodeById(id);
+    if (node == nullptr) return {};
+    return NoteRow{node->id, node->path, node->title, node->snippet, node->modified};
+}
 
 QString NoteTreeModel::folderIdFor(const QModelIndex& index) const {
     const Node* node =
@@ -456,7 +739,7 @@ QString NoteTreeModel::titleOf(const QModelIndex& index) const {
 }
 
 QString NoteTreeModel::trashId() const {
-    for (const auto& child : root_->children)
+    for (const auto& child : topNode()->children)
         if (child->trash) return child->id;
     return {};
 }
