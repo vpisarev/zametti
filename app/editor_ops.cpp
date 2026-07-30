@@ -295,21 +295,41 @@ MoveResult toggleCodeBlock(QTextDocument& doc, const QTextCursor& cursor) {
     // построчно, и номера блоков документа с номерами IR не совпадают.
     const int start = qMin(cursor.selectionStart(), cursor.selectionEnd());
     const int end = qMax(cursor.selectionStart(), cursor.selectionEnd());
-    const int first = irIndexOfBlock(doc.findBlock(start));
-    const int last = irIndexOfBlock(doc.findBlock(end));
+    int first = irIndexOfBlock(doc.findBlock(start));
+    int last = irIndexOfBlock(doc.findBlock(end));
     if (first < 0 || last >= int(ir.size()) || first > last) return {};
+
+    // Крайние пустые строки выделения — не код: клавиатурное выделение легко
+    // цепляет соседний VSpace (Shift+Down с пустой строки или до неё), и без
+    // обрезки блок кода съедал отбивку у соседа (поймано владельцем: черта
+    // слипалась с забором). Выделение из одних пустых строк — не операция.
+    while (first <= last && ir[size_t(first)].rawSource.empty() &&
+           ir[size_t(first)].kind == Kind::VSpace)
+        ++first;
+    while (last >= first && ir[size_t(last)].rawSource.empty() &&
+           ir[size_t(last)].kind == Kind::VSpace)
+        --last;
+    if (first > last) return {};
+
+    // Позиции выделения — в пределы обрезанного диапазона: край, стоявший на
+    // пустой строке, иначе продолжал бы командовать разниманием ниже.
+    const int selStart = qMax(start, blockForIrIndex(doc, first).position());
+    QTextBlock lastDocBlock = blockForIrIndex(doc, last);
+    while (lastDocBlock.next().isValid() && irIndexOfBlock(lastDocBlock.next()) == last)
+        lastDocBlock = lastDocBlock.next();
+    const int selEnd = qMin(end, lastDocBlock.position() + lastDocBlock.length() - 1);
 
     // Абзац с мягкими переносами — один блок, а выделить в нём человек может
     // несколько строк из многих. Тогда блок надо разнять: что осталось снаружи,
     // остаётся как было. Границы притягиваются к краям строк.
-    const QTextBlock firstBlock = doc.findBlock(start);
-    const QTextBlock lastBlock = doc.findBlock(end);
-    const int lineStart = lineStartAt(doc, start);
+    const QTextBlock firstBlock = doc.findBlock(selStart);
+    const QTextBlock lastBlock = doc.findBlock(selEnd);
+    const int lineStart = lineStartAt(doc, selStart);
     // Конец выделения ровно на начале строки: эту строку человек не выделял, и
     // тянуть её в блок кода незачем.
-    const int lineEnd = (end > start && end == lineStartAt(doc, end))
-                            ? end - 1
-                            : lineEndAt(doc, end);
+    const int lineEnd = (selEnd > selStart && selEnd == lineStartAt(doc, selEnd))
+                            ? selEnd - 1
+                            : lineEndAt(doc, selEnd);
     const int blockEnd = lastBlock.position() + lastBlock.length() - 1;
 
     // Разделители строк на срезах в куски не берём: иначе оставшийся кусок

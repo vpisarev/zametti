@@ -1330,6 +1330,44 @@ void checkInputRuleSplitsLine() {
     ZT_TRUE("соседние строки уцелели текстом", one && three);
 }
 
+// Ctrl+Shift+E: крайние пустые строки выделения не входят в блок кода —
+// клавиатурное выделение легко цепляет соседний VSpace, и код съедал
+// отбивку у черты сверху (сценарий владельца).
+void checkCodeToggleTrimsBlankEdges() {
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+    const QString path = writeNote(
+        "код-под-чертой.md",
+        QStringLiteral("___\n\nimport sys\nprint(sys.argv)\n\nхвост\n"));
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    QTextBlock program;
+    for (QTextBlock b = editor.document()->begin(); b.isValid(); b = b.next())
+        if (b.text().contains(QStringLiteral("import sys"))) { program = b; break; }
+    ZT_TRUE("программа найдена", program.isValid());
+
+    // Якорь на пустой строке НАД программой (как выходит Shift-стрелками),
+    // конец — за последней строкой (на начале строки ниже).
+    QTextCursor sel(editor.document());
+    sel.setPosition(program.position() - 1);
+    sel.setPosition(program.position() + program.length(), QTextCursor::KeepAnchor);
+    editor.setTextCursor(sel);
+    QTest::keyClick(&editor, Qt::Key_E, Qt::ControlModifier | Qt::ShiftModifier);
+    QTest::qWait(10);
+
+    const std::string out =
+        zametti::serialize(zametti::readDocument(*editor.document()));
+    ZT_TRUE("пустая строка над кодом уцелела",
+            out.find("___\n\n```") != std::string::npos);
+    ZT_TRUE("в коде ровно программа",
+            out.find("```\nimport sys\nprint(sys.argv)\n```") != std::string::npos);
+    ZT_TRUE("хвост не тронут", out.find("\n\nхвост\n") != std::string::npos);
+}
+
 void checkOrderedMarkerFaces() {
     const zametti::MarkerStyle ordered{zametti::Marker::Ordered, false};
     const auto face = [&](int ordinal, int level) {
@@ -1375,6 +1413,7 @@ int main(int argc, char** argv) {
     checkOrderedMarkerFaces();
     checkCommentOps();
     checkInputRuleSplitsLine();
+    checkCodeToggleTrimsBlankEdges();
 
     fs::remove_all(g_dir);
     return zt::report("списки");
