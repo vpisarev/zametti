@@ -260,6 +260,9 @@ private:
     QTimer autosave_;
     QElapsedTimer sinceLastEdit_;
     QString lastComplaint_;
+    // Ложь на время editMeta без правок текста: мета-правка не трогает
+    // modified.
+    bool stampModifiedOnSave_ = true;
     // Файлы, про которые в этой сессии больше не предупреждать: человек знает,
     // что файл не в ладах с моделью, и правит его руками.
     QSet<QString> mutedComplaints_;

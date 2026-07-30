@@ -141,6 +141,21 @@ void checkMetaSurvivesEditing() {
                stripped, "правка текста не теряет и не двигает метаданные");
     check(saved.contains(QStringLiteral("modified: ")),
           "сохранение проставило modified");
+
+    // Правка одной меты (перенос, корзина, восстановление) modified не
+    // трогает: заметка не должна всплывать наверх списка от переноса.
+    const QString stamped = readFile(path);
+    QTest::qWait(1100);   // чтобы возможный новый штамп отличался секундой
+    editor.editMeta([](zametti::NoteMeta& meta) {
+        meta.set("parent", "01n6x9k2m4qp");
+    });
+    QTest::qWait(10);
+    const QString afterMeta = readFile(path);
+    check(afterMeta.contains(QStringLiteral("parent: 01n6x9k2m4qp")),
+          "мета-правка записана");
+    QRegularExpression stamp(QStringLiteral("modified: ([0-9T:Z-]+)"));
+    check(stamp.match(stamped).captured(1) == stamp.match(afterMeta).captured(1),
+          "modified не изменился от мета-правки");
 }
 
 // Правило этапа: документ — содержимое, а не облик. Undo возвращает текст и не

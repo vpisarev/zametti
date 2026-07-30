@@ -1273,8 +1273,14 @@ void NoteEditor::recordEdit() {
 void NoteEditor::editMeta(const std::function<void(NoteMeta&)>& change) {
     meta_.present = true;
     change(meta_);
+    // Правка одной меты не трогает modified: перенос, корзина и
+    // восстановление — не редактирование содержимого, и всплывать наверх
+    // списка заметка от них не должна (правило владельца). Несохранённые
+    // правки текста, подобранные этой же записью, штамп заслужили.
+    stampModifiedOnSave_ = document()->isModified();
     document()->setModified(true);
     save(false);
+    stampModifiedOnSave_ = true;
 }
 
 void NoteEditor::setMetaParent(const QString& parentId) {
@@ -1290,7 +1296,7 @@ void NoteEditor::save(bool interactive) {
     // modified обновляется только при настоящем сохранении: сюда мы доходим
     // лишь с несохранёнными правками, так что цикла «запись ради метаданных»
     // не возникает. Внешние правки оставляют modified устаревшим — принято.
-    if (meta_.present)
+    if (meta_.present && stampModifiedOnSave_)
         meta_.set("modified",
                   QDateTime::currentDateTimeUtc()
                       .toString(QStringLiteral("yyyy-MM-ddTHH:mm:ss'Z'"))
