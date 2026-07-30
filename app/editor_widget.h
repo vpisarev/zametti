@@ -50,10 +50,42 @@ public:
     void undo();
     void redo();
 
+    // --- поиск в открытой заметке ---
+    //
+    // Подсветка живёт в extraSelections: документ она не трогает вовсе, а
+    // значит не заводит ни шага истории, ни признака «есть несохранённое».
+    // Совпадения держатся курсорами — они переживают правки текста.
+    //
+    // Ищем по самому документу, а не по IR: в документе нет ни метаданных, ни
+    // маркеров разметки — ровно то, что видит человек, — и совпадение само
+    // собой не пересекает границу блока (разделитель блоков в текст не
+    // попадает).
+    int findMatches(const QString& text, bool caseSensitive);
+    int matchCount() const { return int(matches_.size()); }
+    // Какое совпадение сейчас текущее, с нуля; -1 — ни одного.
+    int currentMatch() const { return currentMatch_; }
+    // Перейти к совпадению по кругу: -1 подхватывает ближайшее после каретки.
+    void goToMatch(int index);
+    void stepMatch(int direction);
+    void clearMatches();
+
+    // Замена. Обе — одна операция и один шаг отмены; «заменить все» тоже,
+    // иначе откатывать пришлось бы по одному вхождению.
+    bool replaceCurrentMatch(const QString& with);
+    int replaceAllMatches(const QString& text, bool caseSensitive, const QString& with);
+
     // Файл изменился снаружи, а у нас есть несохранённые правки: пока человек
     // не решит, чьё содержимое брать, мы ничего не трогаем.
     bool hasExternalConflict() const { return externalPending_; }
     void resolveExternalConflict(bool takeExternal);
+
+    // Внешняя правка снесла или обкорнала блок метаданных. Прежние значения
+    // остались в памяти — вернуть их обычной записью, сохранив правки тела.
+    // Тихой деградации быть не должно: заметка без меты уезжает в корень и
+    // теряет дату создания.
+    bool hasDamagedMeta() const { return lostMeta_.present; }
+    void restoreDamagedMeta();
+    void forgetDamagedMeta() { lostMeta_ = NoteMeta(); }
 
     // Сохранить, если есть что. interactive — показывать ли окно с ошибкой.
     void save(bool interactive);
@@ -94,6 +126,14 @@ signals:
     // Файл изменился снаружи, а у нас есть несохранённые правки. Окно с
     // вопросом показывает тот, кто нас создал: виджет о нём знать не должен.
     void externalChangeDetected();
+    // Внешняя правка испортила метаданные. keys — что именно пропало, для
+    // человеческого текста в окне.
+    void metaDamaged(const QString& path, const QStringList& keys);
+    // Внешнее содержимое принято: файл на диске мог сменить и заголовок, и
+    // родителя — дереву со списком пора догонять.
+    void externalAdopted(const QString& path);
+    // «Открыть во внешнем редакторе» из контекстного меню: команду знает окно.
+    void externalEditorRequested(const QString& path);
 
 protected:
     // Обменный формат — сам markdown. Переопределять обязательно: иначе Qt
@@ -225,6 +265,14 @@ private:
     // один свой.
     bool recordingSuspended_ = false;
 
+    // Найденные вхождения в открытой заметке. Курсорами, а не смещениями:
+    // смещения поехали бы от первой же правки, а курсоры Qt двигает сам.
+    void showMatchHighlights();
+    std::vector<QTextCursor> matches_;
+    int currentMatch_ = -1;
+    QString matchText_;
+    bool matchCaseSensitive_ = false;
+
     QKeySequence moveUpKey_;
     QKeySequence moveDownKey_;
     // Сочетание и операция, которую оно вызывает. Списком, а не полями: их
@@ -257,6 +305,9 @@ private:
     // Метаданные открытой заметки. В QTextDocument их нет — редактор их не
     // видит, — поэтому от открытия до сохранения они живут здесь.
     NoteMeta meta_;
+    // Что было в шапке до того, как её испортили снаружи; пусто — портить
+    // нечего или человек уже решил.
+    NoteMeta lostMeta_;
     bool externalPending_ = false;
     std::string externalText_;
 

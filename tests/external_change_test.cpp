@@ -12,6 +12,7 @@
 #include <QDir>
 #include <QFile>
 #include <QScrollBar>
+#include <QSignalSpy>
 #include <QTest>
 #include <QTextCursor>
 #include <QTextDocument>
@@ -36,6 +37,12 @@ void checkEqual(const QString& expected, const QString& actual, const std::strin
     std::printf("провал: %s\n  ждали:  %s\n  вышло:  %s\n", what.c_str(),
                 expected.toUtf8().replace("\n", "\\n").constData(),
                 actual.toUtf8().replace("\n", "\\n").constData());
+}
+
+QString readFile(const QString& path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) return QStringLiteral("<нет файла>");
+    return QString::fromUtf8(file.readAll());
 }
 
 void writeFile(const QString& path, const QString& text) {
@@ -254,6 +261,127 @@ void checkTruncateWriteRace() {
                "первый Ctrl+Z возвращает состояние до внешней правки, а не пустоту");
 }
 
+// --- внешний редактор и метаданные (этап 4) ---------------------------------
+//
+// Инвариант: тихой потери метаданных не бывает. Либо они валидны, либо
+// предложено восстановление. Правку parent руками мы считаем законным
+// переносом, а не потерей, — это решение брифа.
+
+// Тело правится, шапка цела: обычное перечитывание, никаких вопросов.
+void checkExternalBodyEdit() {
+    const QString path = g_dir + QStringLiteral("/00000000000001.md");
+    writeFile(path, QStringLiteral("<!-- zametti\nid: 00000000000001\n"
+                                   "created: 2020-01-01T00:00:00Z\nparent: 0000000000000p\n"
+                                   "-->\n\n# Заметка\n\nстарое тело\n"));
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    QSignalSpy damaged(&editor, &zametti::NoteEditor::metaDamaged);
+    writeFile(path, QStringLiteral("<!-- zametti\nid: 00000000000001\n"
+                                   "created: 2020-01-01T00:00:00Z\nparent: 0000000000000p\n"
+                                   "-->\n\n# Заметка\n\nновое тело\n"));
+    waitForWatcher(editor, QStringLiteral("# Заметка\n\nновое тело\n"));
+    checkEqual(QStringLiteral("# Заметка\n\nновое тело\n"), textOf(editor),
+               "правка тела снаружи подтягивается");
+    check(damaged.isEmpty(), "целая шапка вопросов не вызывает");
+    check(!editor.hasDamagedMeta(), "чинить нечего");
+}
+
+// Шапку снесли целиком: предложено восстановление, тело при этом сохраняется.
+void checkExternalMetaLost() {
+    const QString path = g_dir + QStringLiteral("/00000000000002.md");
+    writeFile(path, QStringLiteral("<!-- zametti\nid: 00000000000002\n"
+                                   "created: 2019-03-03T00:00:00Z\nparent: 0000000000000p\n"
+                                   "-->\n\n# Важная\n\nтело на месте\n"));
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    QSignalSpy damaged(&editor, &zametti::NoteEditor::metaDamaged);
+    // Внешний редактор снёс шапку и заодно правил текст.
+    writeFile(path, QStringLiteral("# Важная\n\nтело правлено снаружи\n"));
+    for (int i = 0; i < 150 && damaged.isEmpty(); ++i) QTest::qWait(20);
+    check(!damaged.isEmpty(), "о пропаже метаданных сказано вслух");
+    check(editor.hasDamagedMeta(), "прежние значения не потеряны");
+    checkEqual(QStringLiteral("# Важная\n\nтело правлено снаружи\n"), textOf(editor),
+               "тело осталось внешним");
+
+    editor.restoreDamagedMeta();
+    QTest::qWait(50);
+    const QString written = readFile(path);
+    check(written.contains(QStringLiteral("created: 2019-03-03T00:00:00Z")),
+          "created вернулся");
+    check(written.contains(QStringLiteral("parent: 0000000000000p")), "parent вернулся");
+    check(written.contains(QStringLiteral("тело правлено снаружи")),
+          "правки тела при починке сохранились");
+    check(!editor.hasDamagedMeta(), "чинить больше нечего");
+}
+
+// Отказ от починки: заметка живёт без шапки, повторных вопросов нет.
+void checkExternalMetaRefused() {
+    const QString path = g_dir + QStringLiteral("/00000000000003.md");
+    writeFile(path, QStringLiteral("<!-- zametti\nid: 00000000000003\n"
+                                   "created: 2019-04-04T00:00:00Z\n-->\n\n# Отказ\n\nтело\n"));
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    QSignalSpy damaged(&editor, &zametti::NoteEditor::metaDamaged);
+    writeFile(path, QStringLiteral("# Отказ\n\nтело снаружи\n"));
+    for (int i = 0; i < 150 && damaged.isEmpty(); ++i) QTest::qWait(20);
+    check(!damaged.isEmpty(), "спросили");
+    editor.forgetDamagedMeta();
+    check(!editor.hasDamagedMeta(), "отказ запомнен");
+
+    // Правка после отказа не воскрешает шапку самовольно.
+    QTest::keyClick(&editor, Qt::Key_A);
+    editor.save(false);
+    QTest::qWait(50);
+    check(!readFile(path).contains(QStringLiteral("<!-- zametti")),
+          "после отказа заметка живёт без метаданных");
+}
+
+// parent, заменённый на другой валидный id, — законный перенос: это не
+// потеря, и вопросов быть не должно.
+void checkExternalParentChange() {
+    const QString path = g_dir + QStringLiteral("/00000000000004.md");
+    writeFile(path, QStringLiteral("<!-- zametti\nid: 00000000000004\n"
+                                   "created: 2021-01-01T00:00:00Z\nparent: 0000000000000a\n"
+                                   "-->\n\n# Переезд\n\nтело\n"));
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    QSignalSpy damaged(&editor, &zametti::NoteEditor::metaDamaged);
+    QSignalSpy adopted(&editor, &zametti::NoteEditor::externalAdopted);
+    writeFile(path, QStringLiteral("<!-- zametti\nid: 00000000000004\n"
+                                   "created: 2021-01-01T00:00:00Z\nparent: 0000000000000b\n"
+                                   "-->\n\n# Переезд\n\nтело\n"));
+    for (int i = 0; i < 150 && adopted.isEmpty(); ++i) QTest::qWait(20);
+    check(!adopted.isEmpty(), "о принятой внешней правке сказано — дереву пора обновиться");
+    check(damaged.isEmpty(), "смена parent потерей не считается");
+
+    // И сохранение поверх не возвращает прежнего родителя.
+    QTest::keyClick(&editor, Qt::Key_B);
+    editor.save(false);
+    QTest::qWait(50);
+    check(readFile(path).contains(QStringLiteral("parent: 0000000000000b")),
+          "новый родитель пережил сохранение из приложения");
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     if (argc < 2) {
@@ -274,6 +402,10 @@ int main(int argc, char** argv) {
     checkOwnSaveIsNotExternal();
     checkShrunkFromOutside();
     checkTruncateWriteRace();
+    checkExternalBodyEdit();
+    checkExternalMetaLost();
+    checkExternalMetaRefused();
+    checkExternalParentChange();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;

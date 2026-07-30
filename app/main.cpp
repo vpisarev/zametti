@@ -5,8 +5,12 @@
 
 #include "doc_model.h"
 #include "editor_widget.h"
+#include "find_bar.h"
 #include "note_list.h"
 #include "note_tree.h"
+#include "search.h"
+#include "search_results.h"
+#include "store_search.h"
 #include "store.h"
 #include "note_view.h"
 #include "parser.h"
@@ -24,6 +28,9 @@
 #include <QMenu>
 #include <QKeyEvent>
 #include <QMessageBox>
+#include <QDesktopServices>
+#include <QProcess>
+#include <QUrl>
 #include <QPushButton>
 #include <QShortcut>
 #include <QSignalBlocker>
@@ -377,13 +384,44 @@ int main(int argc, char** argv) {
         layout->addWidget(&listView, 1);
     }
 
+    // Правая сторона — заметка, под ней список найденного (появляется только у
+    // поиска по всему хранилищу) и панель поиска у самого низа, как в Sublime.
+    QWidget rightSide;
+    zametti::FindBar findBar;
+    zametti::SearchResultsModel results;
+    zametti::SearchResultsDelegate resultsDelegate;
+    QListView resultsView;
+    zametti::StoreSearch storeSearch;
+    QTimer searchDebounce;
+    {
+        auto* layout = new QVBoxLayout(&rightSide);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layout->setSpacing(0);
+        resultsView.setModel(&results);
+        resultsView.setItemDelegate(&resultsDelegate);
+        resultsView.setFont(sidebarFont);
+        resultsView.setUniformItemSizes(false);
+        resultsView.setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        resultsView.setMaximumHeight(240);
+        resultsView.hide();
+        layout->addWidget(&editor, 1);
+        layout->addWidget(&resultsView);
+        layout->addWidget(&findBar);
+    }
+    // Дебаунс по замеру этапа 4: полный проход по хранилищу — 11 мс тёплым и
+    // 113 мс на десятикратном корпусе, так что 150 мс успевают проглотить
+    // любой из них, а набор не тормозит.
+    searchDebounce.setSingleShot(true);
+    searchDebounce.setInterval(150);
+
     zametti::applyPalette(editor);
     zametti::applyPalette(tree);
     zametti::applyPalette(listView);
+    zametti::applyPalette(resultsView);
 
     window.addWidget(&tree);
     if (model.isStore()) window.addWidget(&middle);
-    window.addWidget(&editor);
+    window.addWidget(&rightSide);
     window.setStretchFactor(window.count() - 1, 1);   // растёт текст, а не панели
     window.setChildrenCollapsible(false);
 
@@ -964,6 +1002,77 @@ int main(int argc, char** argv) {
                           : zametti::NoteTreeModel::SortMode::ByModified);
     });
 
+    // --- внешний редактор ----------------------------------------------------
+    //
+    // Открывается настоящий файл хранилища целиком, вместе с шапкой метаданных.
+    // Никаких временных копий и «очищенных» выгрузок: инвариант «файл правится
+    // чем угодно» — основа формата, а мета-комментарий выбран именно за то, что
+    // переживает чужие редакторы.
+    const auto openExternally = [&](const QString& file) {
+        if (file.isEmpty()) return;
+        editor.save(false);   // сначала на диск, иначе снаружи откроется старое
+        const QString command = zametti::appearance().externalEditor;
+        if (command.isEmpty()) {
+            QDesktopServices::openUrl(QUrl::fromLocalFile(file));
+            return;
+        }
+        QStringList parts = QProcess::splitCommand(command);
+        if (parts.isEmpty()) return;
+        const QString program = parts.takeFirst();
+        bool gotPlaceholder = false;
+        for (QString& part : parts) {
+            if (!part.contains(QStringLiteral("%f"))) continue;
+            part.replace(QStringLiteral("%f"), file);
+            gotPlaceholder = true;
+        }
+        // Без %f путь всё равно нужен: команда без него открыла бы редактор
+        // пустым, и это выглядело бы как «не работает».
+        if (!gotPlaceholder) parts.append(file);
+        if (!QProcess::startDetached(program, parts))
+            QMessageBox::warning(&window, QStringLiteral("zametti"),
+                                 QStringLiteral("не запускается: %1").arg(command));
+    };
+
+    // Внешний редактор снёс или обкорнал шапку. Молчать нельзя: заметка без
+    // меты уезжает в корень и теряет дату создания. Окно неблокирующее —
+    // работа не встаёт, пока человек думает.
+    QObject::connect(&editor, &zametti::NoteEditor::metaDamaged, &window,
+                     [&](const QString& file, const QStringList& keys) {
+        auto* ask = new QMessageBox(&window);
+        ask->setAttribute(Qt::WA_DeleteOnClose);
+        ask->setWindowModality(Qt::NonModal);
+        ask->setIcon(QMessageBox::Warning);
+        ask->setWindowTitle(QStringLiteral("zametti"));
+        ask->setText(QStringLiteral("Во внешней правке «%1» пропало: %2.")
+                         .arg(model.titleOfId(QFileInfo(file).completeBaseName()),
+                              keys.join(QStringLiteral(", "))));
+        ask->setInformativeText(
+            QStringLiteral("Восстановить прежние значения? Правки текста сохранятся, "
+                           "вернуть можно отменой (Ctrl+Z)."));
+        QPushButton* restore =
+            ask->addButton(QStringLiteral("Восстановить"), QMessageBox::AcceptRole);
+        ask->addButton(QStringLiteral("Оставить как есть"), QMessageBox::RejectRole);
+        ask->setDefaultButton(restore);
+        QObject::connect(ask, &QMessageBox::finished, &window, [&, ask, restore] {
+            if (ask->clickedButton() == restore) editor.restoreDamagedMeta();
+            else editor.forgetDamagedMeta();
+            refreshTree(editor.filePath());
+        });
+        ask->open();
+    });
+
+    QObject::connect(&editor, &zametti::NoteEditor::externalEditorRequested, &window,
+                     [&](const QString& file) { openExternally(file); });
+
+    // Внешняя правка могла сменить parent — это законный перенос — или тронуть
+    // заголовок. Дерево и список догоняют файл. Пересканируем всё хранилище, а
+    // не одну строку: перенос меняет структуру, а внешние правки редки (7 мс
+    // по замеру этапа 4 — цена, которую не жалко).
+    QObject::connect(&editor, &zametti::NoteEditor::externalAdopted, &window,
+                     [&](const QString& file) {
+                         if (model.isStore()) refreshTree(file);
+                     });
+
     // Контекстное меню левой панели — про папки: создание, переименование,
     // корзина. Тело самой папки открывается отдельным пунктом: в средней
     // колонке папок нет, и иначе до её текста было бы не добраться.
@@ -1029,6 +1138,9 @@ int main(int argc, char** argv) {
         addFolders(QModelIndex(), 0);
 
         menu.addSeparator();
+        menu.addAction(QStringLiteral("Открыть во внешнем редакторе"),
+                       [&] { openExternally(model.pathOfId(id)); });
+        menu.addSeparator();
         if (model.inTrashId(id))
             menu.addAction(QStringLiteral("Восстановить"), [&] { restoreNote(id); });
         menu.addAction(model.inTrashId(id) ? QStringLiteral("Удалить насовсем")
@@ -1036,6 +1148,190 @@ int main(int argc, char** argv) {
                        [&] { deleteNote(id); });
         menu.exec(listView.viewport()->mapToGlobal(pos));
     });
+
+    // --- поиск --------------------------------------------------------------
+    //
+    // Панель одна на три команды; какая из них действует, решает её вид. F3
+    // отдаётся той панели, что открыта, — открытие одной закрывает другую по
+    // построению: панель-то одна.
+    const auto searchRoot = [&] { return model.nodePath(QModelIndex()); };
+
+    const auto updateInNoteSearch = [&](const QString& text) {
+        const zametti::Query query = zametti::makeQuery(text);
+        if (query.isEmpty()) {
+            editor.clearMatches();
+            findBar.setStatus(QString());
+            return;
+        }
+        const int count = editor.findMatches(query.needle, query.caseSensitive);
+        findBar.setStatus(count == 0
+                              ? QStringLiteral("нет совпадений")
+                              : QStringLiteral("%1/%2")
+                                    .arg(editor.currentMatch() + 1)
+                                    .arg(count));
+    };
+
+    const auto showCounter = [&] {
+        if (editor.matchCount() == 0) {
+            findBar.setStatus(QStringLiteral("нет совпадений"));
+            return;
+        }
+        findBar.setStatus(QStringLiteral("%1/%2")
+                              .arg(editor.currentMatch() + 1)
+                              .arg(editor.matchCount()));
+    };
+
+    QObject::connect(&findBar, &zametti::FindBar::queryChanged, &window,
+                     [&](const QString& text) {
+        if (findBar.mode() == zametti::FindBar::Mode::Global) {
+            const zametti::Query query = zametti::makeQuery(text);
+            if (query.isEmpty() || query.tooShort()) {
+                storeSearch.cancel();
+                searchDebounce.stop();
+                results.clear();
+                findBar.setStatus(query.isEmpty() ? QString()
+                                                  : QStringLiteral("нужно два знака"));
+                return;
+            }
+            searchDebounce.start();
+            return;
+        }
+        updateInNoteSearch(text);
+    });
+
+    QObject::connect(&searchDebounce, &QTimer::timeout, &window, [&] {
+        storeSearch.search(searchRoot(), findBar.query());
+    });
+
+    QObject::connect(&storeSearch, &zametti::StoreSearch::found, &window,
+                     [&](const QString& text, const QVector<zametti::SearchResult>& found,
+                         bool truncated, qint64 elapsedMs) {
+        // Ответ мог прийти на запрос, который уже никому не нужен: пока он
+        // бежал, в поле успели дописать. Отсеиваем по самому запросу.
+        if (text != findBar.query()) return;
+        results.setResults(found);
+        resultsView.setVisible(findBar.mode() == zametti::FindBar::Mode::Global);
+        int notes = 0;
+        for (int row = 0; row < results.rowCount(); ++row)
+            if (results.isHeader(results.index(row, 0))) ++notes;
+        if (found.isEmpty()) {
+            findBar.setStatus(QStringLiteral("ничего"));
+            return;
+        }
+        findBar.setStatus(truncated
+                              ? QStringLiteral("%1+ в %2, показаны не все")
+                                    .arg(found.size())
+                                    .arg(notes)
+                              : QStringLiteral("%1 в %2 за %3 мс")
+                                    .arg(found.size())
+                                    .arg(notes)
+                                    .arg(elapsedMs));
+    });
+
+    // Показать найденное: открыть заметку и встать ровно на то совпадение, по
+    // которому щёлкнули. Считаем по порядковому номеру внутри заметки, а не по
+    // смещению: в документе текст блока и текст IR — одно и то же, а вот
+    // смещения от начала файла у них разные.
+    const auto openResult = [&](const QModelIndex& index) {
+        if (!index.isValid() || results.isHeader(index)) return;
+        const QString file = index.data(zametti::SearchResultsModel::PathRole).toString();
+        const int ordinal = index.data(zametti::SearchResultsModel::OrdinalRole).toInt();
+        if (file.isEmpty()) return;
+        if (file != editor.filePath()) {
+            editor.openFile(file);
+            // Заметка может лежать в другой папке: показать её и в списке.
+            const QModelIndex row = list.indexForPath(file);
+            if (row.isValid()) {
+                const QSignalBlocker blocked(listView.selectionModel());
+                listView.setCurrentIndex(row);
+                listView.scrollTo(row);
+            }
+        }
+        const zametti::Query query = zametti::makeQuery(findBar.query());
+        editor.findMatches(query.needle, query.caseSensitive);
+        editor.goToMatch(ordinal);
+    };
+    QObject::connect(&resultsView, &QAbstractItemView::clicked, &window, openResult);
+    QObject::connect(resultsView.selectionModel(), &QItemSelectionModel::currentChanged,
+                     &window, [&](const QModelIndex& index, const QModelIndex&) {
+                         openResult(index);
+                     });
+
+    const auto stepSearch = [&](int direction) {
+        if (findBar.isHidden()) return;
+        if (findBar.mode() == zametti::FindBar::Mode::Global) {
+            if (results.rowCount() == 0) return;
+            const QModelIndex at = resultsView.currentIndex();
+            const QModelIndex next =
+                results.firstHit(at.isValid() ? at.row() + direction : 0, direction);
+            if (next.isValid()) {
+                resultsView.setCurrentIndex(next);
+                resultsView.scrollTo(next);
+            }
+            return;
+        }
+        editor.stepMatch(direction);
+        showCounter();
+    };
+    QObject::connect(&findBar, &zametti::FindBar::findNext, &window, [&] { stepSearch(1); });
+    QObject::connect(&findBar, &zametti::FindBar::findPrevious, &window,
+                     [&] { stepSearch(-1); });
+
+    QObject::connect(&findBar, &zametti::FindBar::replaceOne, &window, [&] {
+        if (editor.currentMatch() < 0) editor.stepMatch(1);
+        editor.replaceCurrentMatch(findBar.replacement());
+        showCounter();
+    });
+    QObject::connect(&findBar, &zametti::FindBar::replaceAll, &window, [&] {
+        const zametti::Query query = zametti::makeQuery(findBar.query());
+        if (query.isEmpty()) return;
+        const int replaced =
+            editor.replaceAllMatches(query.needle, query.caseSensitive, findBar.replacement());
+        findBar.setStatus(QStringLiteral("заменено: %1").arg(replaced));
+    });
+
+    QObject::connect(&findBar, &zametti::FindBar::closed, &window, [&] {
+        editor.clearMatches();
+        storeSearch.cancel();
+        searchDebounce.stop();
+        resultsView.hide();
+        results.clear();
+        editor.setFocus();
+    });
+
+    const auto openFind = [&](zametti::FindBar::Mode mode) {
+        const bool global = mode == zametti::FindBar::Mode::Global;
+        if (!global) {
+            resultsView.hide();
+            results.clear();
+            storeSearch.cancel();
+        } else {
+            editor.clearMatches();
+        }
+        // Выделенное в редакторе — готовый запрос: чаще всего ищут именно то,
+        // на что смотрят.
+        QString preset = editor.textCursor().selectedText();
+        if (preset.contains(QChar::ParagraphSeparator)) preset.clear();
+        findBar.open(mode, preset);
+    };
+    shortcut(QKeySequence::Find, [&] { openFind(zametti::FindBar::Mode::InNote); });
+    shortcut(QKeySequence::Replace, [&] { openFind(zametti::FindBar::Mode::Replace); });
+    shortcut(QKeySequence(QStringLiteral("Ctrl+Shift+F")), [&] {
+        if (!model.isStore()) return;
+        openFind(zametti::FindBar::Mode::Global);
+    });
+    shortcut(QKeySequence(Qt::Key_F3), [&] { stepSearch(1); });
+    shortcut(QKeySequence(Qt::SHIFT | Qt::Key_F3), [&] { stepSearch(-1); });
+    {
+        // Esc закрывает панель, откуда бы ни нажали: в самой панели его ловит
+        // её keyPressEvent, а из редактора — этот ярлык.
+        auto* escape = new QShortcut(QKeySequence(Qt::Key_Escape), &window);
+        QObject::connect(escape, &QShortcut::activated, &window, [&] {
+            if (findBar.isHidden()) return;
+            findBar.hide();
+            emit findBar.closed();
+        });
+    }
 
     // Фокус ушёл из приложения — момент, когда человек переключился на что-то
     // другое и меньше всего ждёт потери правок.

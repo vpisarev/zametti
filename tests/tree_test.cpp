@@ -356,6 +356,36 @@ int main(int argc, char** argv) {
     ZT_TRUE("первая открываемая заметка — не папка",
             !model.firstNoteId().isEmpty() && !model.isFolderId(model.firstNoteId()));
 
+    // Шапку заметки может испортить чужой редактор: «-->» внутри значения
+    // закрывает комментарий раньше времени, и остаток шапки становится телом.
+    // Требование этапа 4: одна такая заметка не ломает разбор соседних.
+    {
+        note("0000000000000c",
+             "parent: 00000000000001\nmodified: 2024-04-04T00:00:00Z\n"
+             "trash-path: папка --> другая\nrole: folder\n",
+             "# Битая\n");
+        model.refresh();
+        all = model.index(0, 0, QModelIndex());
+
+        ZT_TRUE("заметка с битой шапкой в дереве есть",
+                model.hasNote(QStringLiteral("0000000000000c")));
+        // Ключи после разрыва не читаются — это следствие самого формата, а не
+        // наша беда: role: folder оказался уже в теле.
+        ZT_TRUE("ключи после разрыва в мету не попали",
+                !model.isFolderId(QStringLiteral("0000000000000c")));
+        // А главное — соседи целы: и структура, и заголовки, и список.
+        ZT_TRUE("сосед по папке не пострадал",
+                model.parentIdOf(QStringLiteral("0000000000000b")) ==
+                    QStringLiteral("0000000000000a"));
+        ZT_TRUE("заголовки соседей на месте",
+                model.titleOfId(QStringLiteral("0000000000000b")) ==
+                    QStringLiteral("Глубокая"));
+        bool deepStillListed = false;
+        for (const auto& row : model.notesInSubtree(all))
+            if (row.title == QStringLiteral("Глубокая")) deepStillListed = true;
+        ZT_TRUE("список заметок собрался целиком", deepStillListed);
+    }
+
     // Строка списка одной заметки — та же, что в общем списке.
     {
         const zametti::NoteRow row = model.rowOf(QStringLiteral("0000000000000b"));

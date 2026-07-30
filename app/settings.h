@@ -245,6 +245,12 @@ struct Appearance {
     QString makeTaskKey = QStringLiteral("Ctrl+T");
     QString makeParagraphKey = QStringLiteral("Ctrl+Shift+0");
     QString makeCommentKey = QStringLiteral("Ctrl+/");
+    // Команда «Открыть во внешнем редакторе»: %f — путь к файлу заметки
+    // (например "gedit %f" или "code -g %f"). Пусто — xdg-open. Открывается
+    // настоящий файл хранилища целиком, вместе с блоком метаданных: инвариант
+    // «файл правится чем угодно» — основа формата. Терминальные редакторы —
+    // забота человека: он впишет свой запуск терминала.
+    QString externalEditor;
 
     // --- масштаб ---
     qreal zoomStep = 1.1;

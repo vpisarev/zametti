@@ -356,11 +356,55 @@ void NoteEditor::resolveExternalConflict(bool takeExternal) {
 
 void NoteEditor::adoptExternal(const std::string& text) {
     Document ir = parse(text);
+    // Чужой редактор мог снести или испортить блок метаданных. Тихо принять
+    // это нельзя: заметка потеряла бы родителя и дату создания, то есть уехала
+    // бы в корень и «постарела». Прежние значения у нас в памяти — предлагаем
+    // вернуть их одним действием, а решает человек.
+    const NoteMeta previous = meta_;
+    const bool lost = previous.present && !ir.meta.present;
+    // Ключи, которые были и пропали. parent сюда не входит: его правка руками
+    // — законный перенос заметки, а не потеря (решение брифа этапа 4).
+    QStringList dropped;
+    if (!lost && previous.present && ir.meta.present) {
+        for (const char* key : {"created", "id"}) {
+            if (!previous.get(key).empty() && ir.meta.get(key).empty())
+                dropped.append(QString::fromLatin1(key));
+        }
+    }
+
     meta_ = ir.meta;
     history_.push(ir, textCursor().position());
     sinceLastEdit_.invalidate();
     rebuild(ir, textCursor().position(), viewAnchor());
     document()->setModified(false);
+
+    emit externalAdopted(path_);
+    if (lost || !dropped.isEmpty()) {
+        lostMeta_ = previous;
+        emit metaDamaged(path_, lost ? QStringList{QStringLiteral("весь блок")} : dropped);
+    }
+}
+
+void NoteEditor::restoreDamagedMeta() {
+    if (!lostMeta_.present) return;
+    NoteMeta restored = lostMeta_;
+    lostMeta_ = NoteMeta();
+    // Правки тела сохраняются: меняется только шапка. Обычная запись — значит
+    // и обычная отмена: вернуть всё как было можно тем же Ctrl+Z.
+    editMeta([&restored](NoteMeta& meta) {
+        // Ключи, которые чужой редактор оставил, важнее прежних: он мог
+        // осмысленно поправить parent, и затирать это нельзя.
+        for (const std::string& line : restored.lines) {
+            const size_t colon = line.find(':');
+            if (colon == std::string::npos) continue;
+            const std::string key = line.substr(0, colon);
+            if (!meta.get(key).empty()) continue;
+            meta.set(key, line.substr(colon + 1).find_first_not_of(' ') == std::string::npos
+                              ? std::string()
+                              : line.substr(line.find_first_not_of(' ', colon + 1)));
+        }
+        meta.present = true;
+    });
 }
 
 void NoteEditor::applyZoom(qreal value) {
@@ -404,6 +448,137 @@ void NoteEditor::showEditPlace(int scrollBefore) {
         return;
     }
     verticalScrollBar()->setValue(where - height / 2);
+}
+
+int NoteEditor::findMatches(const QString& text, bool caseSensitive) {
+    matchText_ = text;
+    matchCaseSensitive_ = caseSensitive;
+    matches_.clear();
+    currentMatch_ = -1;
+    if (!text.isEmpty()) {
+        QTextDocument::FindFlags flags;
+        if (caseSensitive) flags |= QTextDocument::FindCaseSensitively;
+        QTextCursor at(document());
+        while (true) {
+            at = document()->find(text, at, flags);
+            if (at.isNull()) break;
+            matches_.push_back(at);
+            // Со следующего знака после НАЧАЛА совпадения: перекрывающиеся
+            // вхождения тоже вхождения, и счётчик обязан считать их так же,
+            // как их обойдёт F3.
+            QTextCursor next(document());
+            next.setPosition(at.selectionStart() + 1);
+            if (next.position() >= document()->characterCount() - 1) break;
+            at = next;
+        }
+    }
+    showMatchHighlights();
+    return int(matches_.size());
+}
+
+void NoteEditor::showMatchHighlights() {
+    QList<QTextEdit::ExtraSelection> selections;
+    selections.reserve(int(matches_.size()));
+    const QColor base = appearance().selectionBackground;
+    // Текущее совпадение — контрастнее прочих. Не другим цветом: цвет в
+    // оформлении один, а разной должна быть заметность.
+    QColor pale = base;
+    pale.setAlpha(110);
+    for (size_t i = 0; i < matches_.size(); ++i) {
+        QTextEdit::ExtraSelection selection;
+        selection.cursor = matches_[i];
+        selection.format.setBackground(int(i) == currentMatch_ ? base : pale);
+        selections.append(selection);
+    }
+    setExtraSelections(selections);
+}
+
+void NoteEditor::goToMatch(int index) {
+    if (matches_.empty()) return;
+    const int count = int(matches_.size());
+    currentMatch_ = ((index % count) + count) % count;
+    const int scrollBefore = verticalScrollBar()->value();
+    setTextCursor(matches_[size_t(currentMatch_)]);
+    showMatchHighlights();
+    // Тем же правилом, что и правки: пока совпадение в пределах видимости —
+    // картинку не дёргаем, ушло за край — показываем по центру.
+    showEditPlace(scrollBefore);
+}
+
+void NoteEditor::stepMatch(int direction) {
+    if (matches_.empty()) return;
+    if (currentMatch_ >= 0) {
+        goToMatch(currentMatch_ + direction);
+        return;
+    }
+    // Первый шаг — от каретки, а не с начала заметки: человек только что на
+    // что-то смотрел, и прыжок в начало документа был бы неожиданным.
+    const int at = textCursor().position();
+    if (direction > 0) {
+        for (size_t i = 0; i < matches_.size(); ++i)
+            if (matches_[i].selectionStart() >= at) {
+                goToMatch(int(i));
+                return;
+            }
+        goToMatch(0);
+        return;
+    }
+    for (size_t i = matches_.size(); i-- > 0;)
+        if (matches_[i].selectionEnd() <= at) {
+            goToMatch(int(i));
+            return;
+        }
+    goToMatch(int(matches_.size()) - 1);
+}
+
+void NoteEditor::clearMatches() {
+    matches_.clear();
+    currentMatch_ = -1;
+    matchText_.clear();
+    setExtraSelections({});
+}
+
+bool NoteEditor::replaceCurrentMatch(const QString& with) {
+    if (currentMatch_ < 0 || size_t(currentMatch_) >= matches_.size()) return false;
+    const QTextCursor target = matches_[size_t(currentMatch_)];
+    const bool done = runOperation([&](QTextDocument&, QTextCursor& cursor) {
+        cursor.setPosition(target.selectionStart());
+        cursor.setPosition(target.selectionEnd(), QTextCursor::KeepAnchor);
+        cursor.insertText(with);
+        return true;
+    });
+    if (!done) return false;
+    // Документ пересобран — прежние курсоры недействительны, ищем заново и
+    // встаём на следующее вхождение.
+    const int at = currentMatch_;
+    findMatches(matchText_, matchCaseSensitive_);
+    if (!matches_.empty()) goToMatch(at < int(matches_.size()) ? at : 0);
+    return true;
+}
+
+int NoteEditor::replaceAllMatches(const QString& text, bool caseSensitive,
+                                  const QString& with) {
+    if (text.isEmpty()) return 0;
+    int replaced = 0;
+    const bool done = runOperation([&](QTextDocument& doc, QTextCursor& cursor) {
+        QTextDocument::FindFlags flags;
+        if (caseSensitive) flags |= QTextDocument::FindCaseSensitively;
+        // Одна транзакция на всю замену: иначе Ctrl+Z откатывал бы её по
+        // одному вхождению.
+        cursor.beginEditBlock();
+        QTextCursor at(&doc);
+        while (true) {
+            at = doc.find(text, at, flags);
+            if (at.isNull()) break;
+            at.insertText(with);
+            ++replaced;
+        }
+        cursor.endEditBlock();
+        return replaced > 0;
+    });
+    if (!done) return 0;
+    findMatches(text, caseSensitive);
+    return replaced;
 }
 
 void NoteEditor::undo() {
@@ -1075,6 +1250,13 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
     QAction* down = menu->addAction(QStringLiteral("Переставить вниз"), this,
                                     [this] { moveItem(1); });
     down->setShortcut(QKeySequence(appearance().moveDownKey, QKeySequence::PortableText));
+
+    // Внешний редактор — команда окна, а не редактора: запускать процессы
+    // виджету текста не по чину. Пункт здесь, потому что искать его человек
+    // будет там, где смотрит на заметку.
+    menu->addSeparator();
+    menu->addAction(QStringLiteral("Открыть во внешнем редакторе"), this,
+                    [this] { emit externalEditorRequested(path_); });
 
     menu->popup(event->globalPos());
 }

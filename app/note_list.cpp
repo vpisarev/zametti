@@ -2,6 +2,7 @@
 
 #include "settings.h"
 
+#include <QAbstractItemView>
 #include <QApplication>
 #include <QDateTime>
 #include <QFontMetrics>

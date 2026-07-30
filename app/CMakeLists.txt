@@ -29,6 +29,8 @@ add_library(zametti-view STATIC
     editor_ops.cpp
     marker.h
     marker.cpp
+    search.h
+    search.cpp
     settings.h
     settings.cpp
 )
@@ -39,10 +41,16 @@ target_include_directories(zametti-view PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # Слой окна. Отдельной целью, а не прямо в исполняемом файле: тесту редактора
 # нужны те же виджеты, а собирать их дважды незачем.
 add_library(zametti-widgets STATIC
+    find_bar.h
+    find_bar.cpp
     note_tree.h
     note_tree.cpp
     note_list.h
     note_list.cpp
+    search_results.h
+    search_results.cpp
+    store_search.h
+    store_search.cpp
     note_view.h
     note_view.cpp
     editor_widget.h
