@@ -195,7 +195,7 @@ struct Appearance {
     // --- боковая панель ---
     // Гарнитура панели; пусто — та же, что у текста.
     QString sidebarFontFamily = QStringLiteral("IBM Plex Sans SemiCondensed");
-    qreal sidebarFontPoint = 11.0;
+    qreal sidebarFontPoint = 12.0;
     // Высота строки списка, долей от высоты шрифта панели.
     qreal sidebarLineHeightFactor = 1.6;
     // Значки папок вместо треугольников. Гарнитура нужна отдельная: в обычных
@@ -228,7 +228,7 @@ struct Appearance {
     QString findPreviousGlyph = QStringLiteral("↑");
     QString findNextGlyph = QStringLiteral("↓");
     // Кнопка истории запросов — слева от поля; список раскрывается вверх.
-    QString findHistoryGlyph = QStringLiteral("⌄");
+    QString findHistoryGlyph = QStringLiteral("^");
     // Сколько прежних запросов помнить между запусками.
     int findHistoryLimit = 30;
 
@@ -259,6 +259,10 @@ struct Appearance {
     QString makeTaskKey = QStringLiteral("Ctrl+T");
     QString makeParagraphKey = QStringLiteral("Ctrl+Shift+0");
     QString makeCommentKey = QStringLiteral("Ctrl+/");
+    // Длинное тире: знака на клавиатуре нет, а в тексте оно нужно постоянно.
+    // Сам знак тоже настраивается — кому-то привычнее среднее тире.
+    QString emDashKey = QStringLiteral("Alt+-");
+    QString emDash = QStringLiteral("—");
     // Команда «Открыть во внешнем редакторе»: %f — путь к файлу заметки
     // (например "gedit %f" или "code -g %f"). Пусто — xdg-open. Открывается
     // настоящий файл хранилища целиком, вместе с блоком метаданных: инвариант

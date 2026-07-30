@@ -634,6 +634,12 @@ bool isBulletMarker(QChar c) {
     return c == QLatin1Char('-') || c == QLatin1Char('*') || c == QLatin1Char('+');
 }
 
+// Знак, с которого начинается заголовок при наборе. В файл уходит всегда
+// решётка — знак номера живёт только на клавиатуре, канон его не знает.
+bool isHeadingMark(QChar c) {
+    return c == QLatin1Char('#') || c == QChar(0x2116);   // # и №
+}
+
 // Скобочная часть автозамены — то, что человек набрал вместо чекбокса; пробел в
 // конце уже отрезан.
 //
@@ -690,11 +696,18 @@ InputRule matchInputRule(const QTextBlock& block, const QString& typed) {
         (body.at(digits) == QLatin1Char('.') || body.at(digits) == QLatin1Char(')')))
         return {{Kind::ListItem, Marker::Ordered, false}, 0, int(typed.size()), true};
 
-    // Заголовок: от одной решётки до шести.
-    int hashes = 0;
-    while (hashes < body.size() && body.at(hashes) == QLatin1Char('#')) ++hashes;
-    if (hashes >= 1 && hashes <= 6 && hashes == body.size() && kind != Kind::Heading)
-        return {{Kind::Heading, Marker::Bullet, false}, hashes, int(typed.size()), true};
+    // Заголовок: от одной решётки до шести. Знак номера работает наравне с
+    // решёткой (просьба владельца): на русской раскладке «#» набирается только
+    // переключением на латиницу, а «№» стоит на той же клавише в кириллице.
+    // Ряд должен быть однородным — «#№ » ничего не значит и заголовком не
+    // становится.
+    if (!body.isEmpty() && isHeadingMark(body.at(0))) {
+        const QChar mark = body.at(0);
+        int marks = 0;
+        while (marks < body.size() && body.at(marks) == mark) ++marks;
+        if (marks >= 1 && marks <= 6 && marks == body.size() && kind != Kind::Heading)
+            return {{Kind::Heading, Marker::Bullet, false}, marks, int(typed.size()), true};
+    }
 
     return {};
 }

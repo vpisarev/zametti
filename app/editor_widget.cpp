@@ -79,6 +79,10 @@ NoteEditor::NoteEditor(QWidget* parent)
     inlineBindings_.push_back(
         {QKeySequence(QStringLiteral("Ctrl+K")), {SpanStrike, toggleStrike}});
 
+    for (const QKeySequence& keys :
+         QKeySequence::listFromString(appearance().emDashKey, QKeySequence::PortableText))
+        if (!keys.isEmpty()) dashKeys_.push_back(keys);
+
     bind(appearance().toggleTaskKey, toggleTaskAtCursor);
     bind(appearance().makeBulletKey, makeBullet);
     bind(appearance().makeOrderedKey, makeOrdered);
@@ -1083,6 +1087,17 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     };
     if (pressed(moveUpKey_) && moveItem(-1)) return;
     if (pressed(moveDownKey_) && moveItem(1)) return;
+
+    // Длинное тире. Это не операция над блоками, а тот же набор, только знаком,
+    // которого нет на клавиатуре: идёт обычной вставкой, слипается в один шаг
+    // истории с соседними буквами и работает в дословных кусках наравне с
+    // остальным текстом.
+    for (const QKeySequence& keys : dashKeys_) {
+        if (!pressed(keys)) continue;
+        textCursor().insertText(appearance().emDash);
+        keepCaretOffEdge();
+        return;
+    }
 
     // Начертание без выделения — не правка документа, а формат для следующей
     // буквы. Отдельный путь: шага истории здесь нет и быть не должно.

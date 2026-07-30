@@ -26,6 +26,7 @@
 #include <QApplication>
 #include <QKeySequence>
 #include <QScrollBar>
+#include <QKeyEvent>
 #include <QTest>
 #include <QTextBlock>
 #include <QTextCursor>
@@ -48,6 +49,18 @@ QString writeNote(const std::string& name, const QString& text) {
     const QByteArray bytes = text.toUtf8();
     out.write(bytes.constData(), bytes.size());
     return QString::fromStdString(path.string());
+}
+
+// Набор произвольного текста. QTest::keyClicks переводит знаки в коды клавиш
+// по таблице ASCII и на «№» падает с утверждением — шлём события ввода
+// напрямую, как это делает раскладка.
+void typeText(zametti::NoteEditor& editor, const QString& text) {
+    for (const QChar ch : text) {
+        QKeyEvent press(QEvent::KeyPress, Qt::Key_unknown, Qt::NoModifier, QString(ch));
+        QApplication::sendEvent(&editor, &press);
+        QKeyEvent release(QEvent::KeyRelease, Qt::Key_unknown, Qt::NoModifier, QString(ch));
+        QApplication::sendEvent(&editor, &release);
+    }
 }
 
 QString textOf(const zametti::NoteEditor& editor) {
@@ -1330,6 +1343,93 @@ void checkInputRuleSplitsLine() {
     ZT_TRUE("соседние строки уцелели текстом", one && three);
 }
 
+// Знак номера работает при наборе наравне с решёткой: на русской раскладке «#»
+// набирается только переключением на латиницу (просьба владельца). В файл при
+// этом уходит решётка — знак номера живёт только на клавиатуре.
+void checkNumberSignHeadings() {
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+
+    const QString path = writeNote("номер.md", QStringLiteral("текст\n"));
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    const auto typeInFresh = [&](const QString& prefix, const QString& title) {
+        QTextCursor end(editor.document());
+        end.movePosition(QTextCursor::End);
+        editor.setTextCursor(end);
+        QTest::keyClick(&editor, Qt::Key_Return);
+        QTest::keyClick(&editor, Qt::Key_Return);
+        typeText(editor, prefix + QStringLiteral(" ") + title);
+        QTest::qWait(10);
+        return editor.textCursor().block();
+    };
+
+    for (int level = 1; level <= 6; ++level) {
+        const QString prefix(level, QChar(0x2116));
+        const QTextBlock block = typeInFresh(prefix, QStringLiteral("уровень%1").arg(level));
+        ZT_TRUE("№ завёл заголовок", zametti::kindOf(block) == zametti::Kind::Heading);
+        ZT_TRUE("уровень по числу знаков", block.blockFormat().headingLevel() == level);
+        ZT_TRUE("знак номера съеден вместе с пробелом",
+                block.text() == QStringLiteral("уровень%1").arg(level));
+    }
+
+    // В файл уходит решётка, а не знак номера: канон его не знает.
+    editor.save(false);
+    QTest::qWait(20);
+    const QString written = textOf(editor);
+    ZT_TRUE("в файле решётки", written.contains(QStringLiteral("###### уровень6")));
+    ZT_TRUE("знака номера в файле нет", !written.contains(QChar(0x2116)));
+
+    // Семь знаков — не заголовок, как и семь решёток.
+    {
+        const QTextBlock block = typeInFresh(QString(7, QChar(0x2116)), QStringLiteral("нет"));
+        ZT_TRUE("семь знаков заголовком не делают",
+                zametti::kindOf(block) != zametti::Kind::Heading);
+    }
+    // Смешанный ряд ничего не значит: правило требует однородности.
+    {
+        const QTextBlock block =
+            typeInFresh(QStringLiteral("#") + QChar(0x2116), QStringLiteral("нет"));
+        ZT_TRUE("смесь решётки и номера — не заголовок",
+                zametti::kindOf(block) != zametti::Kind::Heading);
+    }
+}
+
+// Длинное тире по сочетанию: знака нет на клавиатуре, а в тексте он нужен.
+void checkEmDashKey() {
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+
+    const QString path = writeNote("тире.md", QStringLiteral("раз\n"));
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    QTextCursor end(editor.document());
+    end.movePosition(QTextCursor::End);
+    editor.setTextCursor(end);
+    typeText(editor, QStringLiteral(" "));
+    QTest::keyClick(&editor, Qt::Key_Minus, Qt::AltModifier);
+    typeText(editor, QStringLiteral(" два"));
+    QTest::qWait(10);
+
+    ZT_TRUE("тире вставилось в текст",
+            editor.document()->firstBlock().text() ==
+                QStringLiteral("раз — два"));
+
+    // Это обычный набор, а не операция: одна отмена убирает всю серию, включая
+    // тире, и в файл оно уходит как есть.
+    editor.save(false);
+    QTest::qWait(20);
+    ZT_TRUE("в файле длинное тире", textOf(editor).contains(QStringLiteral("раз — два")));
+}
+
 // Ctrl+Shift+E: крайние пустые строки выделения не входят в блок кода —
 // клавиатурное выделение легко цепляет соседний VSpace, и код съедал
 // отбивку у черты сверху (сценарий владельца).
@@ -1413,6 +1513,8 @@ int main(int argc, char** argv) {
     checkOrderedMarkerFaces();
     checkCommentOps();
     checkInputRuleSplitsLine();
+    checkNumberSignHeadings();
+    checkEmDashKey();
     checkCodeToggleTrimsBlankEdges();
 
     fs::remove_all(g_dir);
