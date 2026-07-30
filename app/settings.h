@@ -221,12 +221,16 @@ struct Appearance {
     // --- панель поиска ---
     // Прибавка к кеглю боковой панели: поле, в которое печатают, читается
     // хуже подписи, на которую только смотрят.
-    qreal findFontDelta = 1.0;
+    qreal findFontDelta = 2.0;
     // Знаки на кнопках обхода. Настоящие стрелки, а не треугольники
     // проигрывателя. Вверх и вниз, а не влево и вправо: ходим по тексту, а
     // текст идёт сверху вниз.
     QString findPreviousGlyph = QStringLiteral("↑");
     QString findNextGlyph = QStringLiteral("↓");
+    // Кнопка истории запросов — слева от поля; список раскрывается вверх.
+    QString findHistoryGlyph = QStringLiteral("⌄");
+    // Сколько прежних запросов помнить между запусками.
+    int findHistoryLimit = 30;
 
     // --- редактирование ---
     // Задержка автосохранения после последней правки, мс. Сохранение идёт и по
@@ -293,6 +297,9 @@ struct Session {
     QString treeSort;
     QByteArray splitterState;
     QStringList expandedDirs;
+    // Прежние запросы поиска, свежий первым. Не путать с историей заметок —
+    // её нет: это то, что набирали в поле поиска.
+    QStringList searchHistory;
     double scrollRatio = 0.0;   // доля прокрутки: в пикселях она зависит от зума
     qreal zoom = 1.0;
     QByteArray windowGeometry;

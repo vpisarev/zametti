@@ -37,6 +37,14 @@ public:
     // Счётчик «3/17» или пояснение вроде «ничего не найдено».
     void setStatus(const QString& text);
 
+    // История запросов. Живёт между запусками (state.json), поэтому список
+    // отдаётся наружу целиком, а не прячется внутри панели.
+    void setHistory(const QStringList& items);
+    QStringList history() const { return history_; }
+    // Запомнить нынешний запрос. Зовётся, когда им ВОСПОЛЬЗОВАЛИСЬ, а не на
+    // каждую букву: иначе история заполнится обрывками недонабранного.
+    void rememberQuery();
+
 signals:
     void queryChanged(const QString& text);
     void findNext();
@@ -52,7 +60,11 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
 
 private:
+    void showHistory();
+
     Mode mode_ = Mode::InNote;
+    QStringList history_;
+    QToolButton* historyButton_ = nullptr;
     QLineEdit* find_ = nullptr;
     QLineEdit* replace_ = nullptr;
     QLabel* status_ = nullptr;

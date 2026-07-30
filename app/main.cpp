@@ -419,6 +419,7 @@ int main(int argc, char** argv) {
     // любой из них, а набор не тормозит.
     searchDebounce.setSingleShot(true);
     searchDebounce.setInterval(150);
+    findBar.setHistory(session.searchHistory);
 
     zametti::applyPalette(editor);
     zametti::applyPalette(tree);
@@ -1421,6 +1422,7 @@ int main(int argc, char** argv) {
         out.windowGeometry = window.saveGeometry();
         out.splitterState = window.saveState();
         out.expandedDirs = expandedDirs();
+        out.searchHistory = findBar.history();
         out.storeRoot = model.isStore() ? model.nodePath(QModelIndex()) : QString();
         out.treeSort = model.sortMode() == zametti::NoteTreeModel::SortMode::ByName
                            ? QStringLiteral("name")

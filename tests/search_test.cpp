@@ -9,8 +9,10 @@
 //     «заменить все» одним шагом отмены, дословность rawSource.
 
 #include "editor_widget.h"
+#include "find_bar.h"
 #include "parser.h"
 #include "search.h"
+#include "settings.h"
 #include "store_search.h"
 #include "test_util.h"
 
@@ -259,6 +261,52 @@ void checkCaretMemory() {
             editor.textCursor().position() == remembered);
 }
 
+// История ЗАПРОСОВ (не заметок): что попадает в список, в каком порядке и
+// сколько его хранится. Живёт между запусками, поэтому проверяется отдельно от
+// самого поиска.
+void checkQueryHistory() {
+    const QStringList onlyHay{QStringLiteral("сено")};
+    const QStringList strawFirst{QStringLiteral("солома"), QStringLiteral("сено")};
+    const QStringList hayFirst{QStringLiteral("сено"), QStringLiteral("солома")};
+    const QStringList hayAndNeedle{QStringLiteral("сено"), QStringLiteral("иголка")};
+
+    zametti::FindBar bar;
+    bar.open(zametti::FindBar::Mode::InNote, QStringLiteral("сено"));
+    bar.rememberQuery();
+    ZT_TRUE("запрос попал в историю", bar.history() == onlyHay);
+
+    bar.open(zametti::FindBar::Mode::InNote, QStringLiteral("солома"));
+    bar.rememberQuery();
+    ZT_TRUE("свежий запрос сверху", bar.history() == strawFirst);
+
+    // Повтор не плодит строк, а всплывает наверх.
+    bar.open(zametti::FindBar::Mode::InNote, QStringLiteral("сено"));
+    bar.rememberQuery();
+    ZT_TRUE("повтор всплывает, а не дублируется", bar.history() == hayFirst);
+
+    // Короткий запрос не исполняется поиском — и в историю не идёт.
+    bar.open(zametti::FindBar::Mode::InNote, QStringLiteral("с"));
+    bar.rememberQuery();
+    ZT_TRUE("однобуквенный запрос не запоминается", bar.history().size() == 2);
+
+    // Список из прошлого запуска: дубли и пустые строки отсеиваются.
+    zametti::FindBar restored;
+    restored.setHistory({QStringLiteral("сено"), QString(), QStringLiteral("сено"),
+                         QStringLiteral("  "), QStringLiteral("иголка")});
+    ZT_TRUE("при загрузке дубли и пустые отброшены", restored.history() == hayAndNeedle);
+
+    // Потолок: сколько бы ни искали, помним настроенное число.
+    const int limit = zametti::appearance().findHistoryLimit;
+    zametti::FindBar many;
+    for (int i = 0; i < limit + 10; ++i) {
+        many.open(zametti::FindBar::Mode::InNote, QStringLiteral("запрос%1").arg(i));
+        many.rememberQuery();
+    }
+    ZT_TRUE("список не растёт бесконечно", many.history().size() == limit);
+    ZT_TRUE("самый свежий остался первым",
+            many.history().first() == QStringLiteral("запрос%1").arg(limit + 9));
+}
+
 // Сочетания должны доходить до окна, а не застревать в редакторе: QTextEdit
 // объявляет своими куда больше сочетаний, чем кажется, и через ShortcutOverride
 // съедает их молча. На этом уже дважды ловились (Ctrl+Z и Ctrl+N), поэтому
@@ -323,6 +371,7 @@ int main(int argc, char** argv) {
     checkStoreSearch();
     checkEditorSearch();
     checkCaretMemory();
+    checkQueryHistory();
     checkShortcutsReachWindow();
 
     QDir(g_root).removeRecursively();

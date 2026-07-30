@@ -3,6 +3,7 @@
 #include "settings.h"
 
 #include <QHBoxLayout>
+#include <QMenu>
 #include <QKeyEvent>
 
 namespace zametti {
@@ -11,6 +12,13 @@ FindBar::FindBar(QWidget* parent) : QWidget(parent) {
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(6, 4, 6, 4);
     layout->setSpacing(6);
+
+    // История — слева от поля: по сути выпадающий список, только раскрывается
+    // вверх (панель у нижней кромки окна, вниз списку некуда).
+    historyButton_ = new QToolButton(this);
+    historyButton_->setText(appearance().findHistoryGlyph);
+    historyButton_->setToolTip(QStringLiteral("Прежние запросы"));
+    connect(historyButton_, &QToolButton::clicked, this, &FindBar::showHistory);
 
     find_ = new QLineEdit(this);
     find_->setPlaceholderText(QStringLiteral("Найти"));
@@ -37,6 +45,7 @@ FindBar::FindBar(QWidget* parent) : QWidget(parent) {
     close->setText(QStringLiteral("✕"));
     close->setToolTip(QStringLiteral("Закрыть (Esc)"));
 
+    layout->addWidget(historyButton_);
     layout->addWidget(find_, 2);
     layout->addWidget(status_);
     layout->addWidget(previous);
@@ -48,11 +57,26 @@ FindBar::FindBar(QWidget* parent) : QWidget(parent) {
     layout->addWidget(close);
 
     connect(find_, &QLineEdit::textChanged, this, &FindBar::queryChanged);
-    connect(previous, &QToolButton::clicked, this, &FindBar::findPrevious);
-    connect(next, &QToolButton::clicked, this, &FindBar::findNext);
-    connect(replaceButton_, &QToolButton::clicked, this, &FindBar::replaceOne);
-    connect(replaceAllButton_, &QToolButton::clicked, this, &FindBar::replaceAll);
+    // Запрос попадает в историю, когда им воспользовались: перешли к
+    // совпадению или заменили. Набор в поле — ещё не запрос.
+    connect(previous, &QToolButton::clicked, this, [this] {
+        rememberQuery();
+        emit findPrevious();
+    });
+    connect(next, &QToolButton::clicked, this, [this] {
+        rememberQuery();
+        emit findNext();
+    });
+    connect(replaceButton_, &QToolButton::clicked, this, [this] {
+        rememberQuery();
+        emit replaceOne();
+    });
+    connect(replaceAllButton_, &QToolButton::clicked, this, [this] {
+        rememberQuery();
+        emit replaceAll();
+    });
     connect(close, &QToolButton::clicked, this, [this] {
+        rememberQuery();
         hide();
         emit closed();
     });
@@ -88,15 +112,68 @@ void FindBar::open(Mode mode, const QString& preset) {
 
 void FindBar::setStatus(const QString& text) { status_->setText(text); }
 
+void FindBar::setHistory(const QStringList& items) {
+    history_.clear();
+    for (const QString& item : items) {
+        const QString trimmed = item.trimmed();
+        if (trimmed.isEmpty() || history_.contains(trimmed)) continue;
+        history_.append(trimmed);
+        if (history_.size() >= appearance().findHistoryLimit) break;
+    }
+}
+
+void FindBar::rememberQuery() {
+    const QString text = find_->text().trimmed();
+    // Тот же порог, что у поиска: однобуквенные запросы не исполняются, и
+    // помнить их незачем.
+    if (text.size() < 2) return;
+    history_.removeAll(text);
+    history_.prepend(text);   // свежий сверху
+    while (history_.size() > appearance().findHistoryLimit) history_.removeLast();
+}
+
+void FindBar::showHistory() {
+    QMenu menu(this);
+    if (history_.isEmpty()) {
+        menu.addAction(QStringLiteral("пока пусто"))->setEnabled(false);
+    } else {
+        for (const QString& item : history_) {
+            const QString text = item;
+            menu.addAction(text, this, [this, text] {
+                find_->setText(text);
+                find_->setFocus();
+                find_->selectAll();
+            });
+        }
+    }
+    // Раскрываем ВВЕРХ: панель стоит у нижней кромки окна, и список, выпавший
+    // вниз, ушёл бы за экран. Qt переворачивает меню сам, только когда места
+    // не хватает физически; здесь место есть — оно за пределами окна.
+    const QSize size = menu.sizeHint();
+    const QPoint at = historyButton_->mapToGlobal(QPoint(0, 0));
+    menu.exec(QPoint(at.x(), at.y() - size.height()));
+}
+
 void FindBar::keyPressEvent(QKeyEvent* event) {
     if (event->key() == Qt::Key_Escape) {
+        rememberQuery();
         hide();
         emit closed();
         return;
     }
     if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+        rememberQuery();
         if ((event->modifiers() & Qt::ShiftModifier) != 0) emit findPrevious();
         else emit findNext();
+        return;
+    }
+    // Стрелка вверх в поле — самый быстрый способ достать прошлый запрос, как
+    // в оболочке командной строки.
+    if (event->key() == Qt::Key_Up && !history_.isEmpty() && find_->hasFocus()) {
+        const int at = history_.indexOf(find_->text().trimmed());
+        const int next = at < 0 ? 0 : qMin(at + 1, int(history_.size()) - 1);
+        find_->setText(history_.at(next));
+        find_->selectAll();
         return;
     }
     QWidget::keyPressEvent(event);

@@ -159,6 +159,8 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("fontDelta"), a.findFontDelta},
         {QStringLiteral("previousGlyph"), a.findPreviousGlyph},
         {QStringLiteral("nextGlyph"), a.findNextGlyph},
+        {QStringLiteral("historyGlyph"), a.findHistoryGlyph},
+        {QStringLiteral("historyLimit"), a.findHistoryLimit},
     };
 
     QJsonObject editor{
@@ -303,6 +305,9 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readReal(find, "fontDelta", a.findFontDelta);
     readString(find, "previousGlyph", a.findPreviousGlyph);
     readString(find, "nextGlyph", a.findNextGlyph);
+    readString(find, "historyGlyph", a.findHistoryGlyph);
+    const QJsonValue historyLimit = find.value(QStringLiteral("historyLimit"));
+    if (historyLimit.isDouble()) a.findHistoryLimit = qMax(0, historyLimit.toInt());
 
     const QJsonObject editor = root.value(QStringLiteral("editor")).toObject();
     const QJsonValue delay = editor.value(QStringLiteral("autosaveDelayMs"));
@@ -395,12 +400,16 @@ Session loadSession() {
         root.value(QStringLiteral("splitterState")).toString().toLatin1());
     for (const QJsonValue& v : root.value(QStringLiteral("expandedDirs")).toArray())
         if (v.isString()) session.expandedDirs.append(v.toString());
+    for (const QJsonValue& v : root.value(QStringLiteral("searchHistory")).toArray())
+        if (v.isString()) session.searchHistory.append(v.toString());
     return session;
 }
 
 void saveSession(const Session& session) {
     QJsonArray expanded;
     for (const QString& dir : session.expandedDirs) expanded.append(dir);
+    QJsonArray searches;
+    for (const QString& query : session.searchHistory) searches.append(query);
 
     writeJson(statePath(),
               QJsonObject{
@@ -414,6 +423,7 @@ void saveSession(const Session& session) {
                   {QStringLiteral("splitterState"),
                    QString::fromLatin1(session.splitterState.toBase64())},
                   {QStringLiteral("expandedDirs"), expanded},
+                  {QStringLiteral("searchHistory"), searches},
               });
 }
 
