@@ -10,6 +10,7 @@
 #define ZAMETTI_NOTE_TREE_H
 
 #include <QAbstractItemModel>
+#include <QMimeData>
 #include <QModelIndex>
 #include <QString>
 #include <QSet>
@@ -31,6 +32,45 @@ public:
 
     explicit NoteTreeModel(const QString& root, QObject* parent = nullptr);
     ~NoteTreeModel() override;
+
+    // Плоское ли это хранилище (метка — каталог .zametti). В нём дерево
+    // строится не по файловой системе, а по метаданным: каталог — это обычная
+    // заметка, у которой есть дети (parent в мете ребёнка).
+    static bool isStoreRoot(const QString& dir);
+    bool isStore() const { return store_; }
+
+    // Id заметки узла (пусто вне хранилища). Корневой индекс — пустой id.
+    QString idOf(const QModelIndex& index) const;
+
+    // Перестроить дерево по текущему содержимому. Выбор и раскрытость чинит
+    // вызывающий: у модели нет доступа к представлению.
+    void refresh();
+
+    // Живая подпись: заголовок правится в редакторе — дерево обновляется, не
+    // дожидаясь ни сохранения, ни пересборки.
+    void updateTitle(const QString& filePath, const QString& title);
+
+    // Id заметки-корзины (мета-ключ role: trash); пусто, если её ещё нет.
+    QString trashId() const;
+    // Лежит ли узел в поддереве корзины.
+    bool inTrash(const QModelIndex& index) const;
+    // Является ли candidate самим узлом id или его потомком: перенос заметки
+    // в собственное поддерево запрещён.
+    bool isDescendantOf(const QString& candidateId, const QString& id) const;
+
+    // Правки самих файлов модель не делает — только просит: у неё нет ни
+    // редактора (открытая заметка правится через него), ни права молча писать.
+    Qt::ItemFlags flags(const QModelIndex& index) const override;
+    bool setData(const QModelIndex& index, const QVariant& value, int role) override;
+    QStringList mimeTypes() const override;
+    QMimeData* mimeData(const QModelIndexList& indexes) const override;
+    bool canDropMimeData(const QMimeData* data, Qt::DropAction action, int row, int column,
+                         const QModelIndex& parent) const override;
+    bool dropMimeData(const QMimeData* data, Qt::DropAction action, int row, int column,
+                      const QModelIndex& parent) override;
+    Qt::DropActions supportedDropActions() const override;
+
+
 
     QModelIndex index(int row, int column, const QModelIndex& parent) const override;
     QModelIndex parent(const QModelIndex& child) const override;
@@ -58,7 +98,18 @@ public:
     // просто каталог самой заметки.
     static QString rootFor(const QString& filePath, const QString& configuredRoot);
 
+signals:
+    // F2: человек ввёл новый заголовок. Меняется первый заголовок заметки —
+    // выполняет главное окно (через редактор, если заметка открыта).
+    void renameRequested(const QString& filePath, const QString& title);
+    // Перенос: parentId пуст — в корень.
+    void moveRequested(const QString& noteId, const QString& parentId);
+
 private:
+    void build();
+
+    QString rootPath_;
+    bool store_ = false;
     std::unique_ptr<Node> root_;
     QSet<QString> expanded_;
 };

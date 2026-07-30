@@ -7,6 +7,7 @@
 #include "parser.h"
 #include "serializer.h"
 
+#include <QFileInfo>
 #include <QDateTime>
 #include <QFile>
 #include <QSaveFile>
@@ -591,7 +592,16 @@ SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
     const Document reread =
         parse(std::string(text.constData(), static_cast<size_t>(text.size())));
     if (!sameSkeleton(ir, reread)) {
-        const QString rescuePath = path + QStringLiteral(".rescue-") + timestamp;
+        // В хранилище побитое складывается в .rescue/ (не синхронизируется);
+        // вне хранилища — рядом с файлом, как раньше.
+        const QFileInfo fileInfo(path);
+        const QString rescueDir = fileInfo.absolutePath() + QStringLiteral("/.rescue");
+        const QString rescuePath =
+            QFileInfo(fileInfo.absolutePath() + QStringLiteral("/.zametti")).isDir() &&
+                    QFileInfo(rescueDir).isDir()
+                ? rescueDir + QLatin1Char('/') + fileInfo.fileName() +
+                      QStringLiteral(".rescue-") + timestamp
+                : path + QStringLiteral(".rescue-") + timestamp;
         QString error;
         if (!writeFile(rescuePath, text, &error)) {
             return {SaveResult::Failed,

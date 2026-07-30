@@ -54,7 +54,7 @@ add_executable(zametti
     resources.qrc
 )
 
-target_link_libraries(zametti PRIVATE zametti-widgets zametti-warnings)
+target_link_libraries(zametti PRIVATE zametti-widgets zametti-store-lib zametti-warnings)
 
 # Иконку в доке оболочка ищет не у окна, а по .desktop-файлу с именем, которое
 # приложение сообщает через setDesktopFileName. Без установки этих двух файлов

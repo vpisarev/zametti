@@ -9,6 +9,7 @@
 #include "parser.h"
 #include "settings.h"
 
+#include <QDateTime>
 #include <QFileInfo>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -1269,8 +1270,25 @@ void NoteEditor::recordEdit() {
     sinceLastEdit_.restart();
 }
 
+void NoteEditor::setMetaParent(const QString& parentId) {
+    meta_.present = true;
+    if (parentId.isEmpty()) meta_.unset("parent");
+    else meta_.set("parent", parentId.toStdString());
+    document()->setModified(true);
+    save(false);
+}
+
 void NoteEditor::save(bool interactive) {
     if (path_.isEmpty() || !document()->isModified()) return;
+
+    // modified обновляется только при настоящем сохранении: сюда мы доходим
+    // лишь с несохранёнными правками, так что цикла «запись ради метаданных»
+    // не возникает. Внешние правки оставляют modified устаревшим — принято.
+    if (meta_.present)
+        meta_.set("modified",
+                  QDateTime::currentDateTimeUtc()
+                      .toString(QStringLiteral("yyyy-MM-ddTHH:mm:ss'Z'"))
+                      .toStdString());
 
     const SaveOutcome outcome =
         saveDocument(*document(), path_, rescueTimestamp(), nullptr, meta_);

@@ -65,4 +65,21 @@ void NoteMeta::set(std::string_view key, std::string_view value) {
     lines.push_back(std::move(line));
 }
 
+void NoteMeta::unset(std::string_view key) {
+    for (auto it = lines.begin(); it != lines.end();) {
+        const std::string& line = *it;
+        const size_t colon = line.find(':');
+        bool match = false;
+        if (colon != std::string::npos) {
+            std::string_view name(line.data(), colon);
+            while (!name.empty() && (name.back() == ' ' || name.back() == '\t'))
+                name.remove_suffix(1);
+            while (!name.empty() && (name.front() == ' ' || name.front() == '\t'))
+                name.remove_prefix(1);
+            match = name == key;
+        }
+        it = match ? lines.erase(it) : it + 1;
+    }
+}
+
 }  // namespace zametti

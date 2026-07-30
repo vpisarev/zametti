@@ -3,8 +3,10 @@
 // Это не самоцель, а первый стенд для проверки ядра. Отсюда же работает режим
 // --check: прогнать parse → serialize и показать расхождение с оригиналом.
 
+#include "doc_model.h"
 #include "editor_widget.h"
 #include "note_tree.h"
+#include "store.h"
 #include "note_view.h"
 #include "parser.h"
 #include "serializer.h"
@@ -21,6 +23,9 @@
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QSplitter>
+#include <QTextBlock>
+#include <QTextCursor>
+#include <QFile>
 #include <QTimer>
 #include <QTreeView>
 
@@ -86,6 +91,7 @@ int runCheck(const QString& path) {
 
 const char* kUsage =
     "использование: zametti [--noconfig] [файл.md]\n"
+    "               zametti --root каталог-хранилища\n"
     "               zametti --check файл.md\n"
     "               zametti --dump-config\n";
 
@@ -108,6 +114,12 @@ void printHelp() {
         "\n"
         "Просмотрщик заметок в markdown. Слева дерево заметок, справа документ.\n"
         "Без имени файла открывается тот, что читали в прошлый раз.\n"
+        "\n"
+        "Хранилище (--root):\n"
+        "  Ctrl+N            новая заметка (ребёнок выбранной в дереве)\n"
+        "  F2                переименовать заметку (правит её первый заголовок)\n"
+        "  Del в дереве      в корзину; в корзине — насовсем, с подтверждением\n"
+        "  перетаскивание    перенос заметки; каталог — это заметка с детьми\n"
         "\n"
         "Ключи:\n"
         "  --check файл.md   прогнать разбор и обратную запись, показать расхождение\n"
@@ -173,6 +185,7 @@ int main(int argc, char** argv) {
     QCoreApplication::setApplicationName(QStringLiteral("zametti"));
 
     QString path;
+    QString storeRoot;
     bool check = false;
     bool dumpConfig = false;
     bool noConfig = false;
@@ -185,6 +198,9 @@ int main(int argc, char** argv) {
         if (arg == "--check") check = true;
         else if (arg == "--dump-config") dumpConfig = true;
         else if (arg == "--noconfig") noConfig = true;
+        else if (arg == "--root" && i + 1 < argc) {
+            storeRoot = QString::fromLocal8Bit(argv[++i]);
+        }
         else if (arg.rfind("--", 0) == 0) {
             std::fprintf(stderr, "неизвестный ключ: %s\n", arg.c_str());
             return 2;
@@ -227,24 +243,59 @@ int main(int argc, char** argv) {
 
     const zametti::Session session = zametti::loadSession();
 
-    // Без аргумента открываем то, что читали в прошлый раз.
+    // Без аргумента открываем то, что читали в прошлый раз. С --root — свежую
+    // заметку хранилища (или прошлую, если она из этого же хранилища).
     if (path.isEmpty()) path = session.lastFile;
-    if (path.isEmpty()) {
+    if (!storeRoot.isEmpty()) {
+        const QString absRoot = QFileInfo(storeRoot).absoluteFilePath();
+        if (!zametti::NoteTreeModel::isStoreRoot(absRoot)) {
+            std::fprintf(stderr, "не похоже на хранилище (нет .zametti): %s\n",
+                         absRoot.toUtf8().constData());
+            return 2;
+        }
+        if (path.isEmpty() || !QFileInfo(path).absoluteFilePath().startsWith(absRoot))
+            path = QString();   // выберем свежую после построения дерева
+    } else if (path.isEmpty()) {
         printUsage();
         return 2;
     }
 
-    const QString current = QFileInfo(path).absoluteFilePath();
+    QString current = path.isEmpty() ? QString() : QFileInfo(path).absoluteFilePath();
 
     QSplitter window(Qt::Horizontal);
     zametti::NoteTreeView tree;
     zametti::NoteEditor editor;
 
     zametti::NoteTreeModel model(
-        zametti::NoteTreeModel::rootFor(current, zametti::appearance().notesRoot));
+        storeRoot.isEmpty()
+            ? zametti::NoteTreeModel::rootFor(current, zametti::appearance().notesRoot)
+            : QFileInfo(storeRoot).absoluteFilePath());
+
+    // Свежая заметка хранилища — первая в корне (свежие сверху); пустое
+    // хранилище получает первую заметку тут же.
+    if (current.isEmpty()) {
+        QModelIndex first = model.index(0, 0, QModelIndex());
+        if (!first.isValid()) {
+            QString newError;
+            const QString made = zametti::store::newNote(
+                QFileInfo(storeRoot).absoluteFilePath(), QString(), &newError);
+            if (made.isEmpty()) {
+                std::fprintf(stderr, "%s\n", newError.toUtf8().constData());
+                return 2;
+            }
+            model.refresh();
+            first = model.index(0, 0, QModelIndex());
+        }
+        current = model.filePath(first);
+    }
     tree.setModel(&model);
     tree.setHeaderHidden(true);
-    tree.setEditTriggers(QAbstractItemView::NoEditTriggers);
+    tree.setEditTriggers(model.isStore() ? QAbstractItemView::EditKeyPressed
+                                         : QAbstractItemView::NoEditTriggers);
+    if (model.isStore()) {
+        tree.setDragDropMode(QAbstractItemView::InternalMove);
+        tree.setDefaultDropAction(Qt::MoveAction);
+    }
     tree.setUniformRowHeights(true);
 
     QFont sidebarFont(zametti::appearance().sidebarFontFamily.isEmpty()
@@ -361,6 +412,203 @@ int main(int argc, char** argv) {
     // Отмена и повтор живут в самом редакторе: QTextEdit объявляет их своими и
     // до ярлыка окна они не доходят.
     shortcut(QKeySequence::Save, [&] { editor.save(true); });
+
+    // Живой заголовок: правится первый заголовок в редакторе — обновляется и
+    // подпись в дереве, не дожидаясь сохранения. Заголовок — первый
+    // содержательный блок; без заголовка — первая строка, усечённая.
+    QObject::connect(&editor, &QTextEdit::textChanged, &window, [&] {
+        if (!model.isStore()) return;
+        QString title;
+        for (QTextBlock block = editor.document()->begin(); block.isValid();
+             block = block.next()) {
+            if (!zametti::isRawBlock(block) &&
+                zametti::kindOf(block) == zametti::Kind::VSpace)
+                continue;
+            QString text = block.text();
+            const qsizetype eol = text.indexOf(QChar::LineSeparator);
+            if (eol >= 0) text = text.left(eol);
+            title = text.trimmed().left(64);
+            break;
+        }
+        if (title.isEmpty()) title = QStringLiteral("Без названия");
+        model.updateTitle(editor.filePath(), title);
+    });
+
+    // Правка файла хранилища мимо редактора: только для закрытых заметок —
+    // открытая правится через редактор, иначе сторож примет запись за чужую.
+    const auto rewriteNote = [&](const QString& file,
+                                 auto&& change) -> bool {
+        std::string bytes;
+        if (!readFile(file, bytes)) return false;
+        zametti::Document doc = zametti::parse(bytes);
+        change(doc);
+        const std::string out = zametti::serialize(doc);
+        std::ofstream outFile(file.toStdString(), std::ios::binary | std::ios::trunc);
+        if (!outFile) return false;
+        outFile.write(out.data(), std::streamsize(out.size()));
+        return bool(outFile);
+    };
+
+    // Обновить дерево, не потеряв ни раскрытых веток, ни выбранной заметки.
+    const auto refreshTree = [&](const QString& keepPath) {
+        const QStringList open = expandedDirs();
+        model.refresh();
+        for (const QString& dir : open) {
+            const QModelIndex index = model.indexForPath(dir);
+            if (index.isValid()) tree.expand(index);
+        }
+        const QModelIndex keep = model.indexForPath(
+            keepPath.isEmpty() ? editor.filePath() : keepPath);
+        if (keep.isValid()) {
+            const QSignalBlocker blocked(tree.selectionModel());
+            for (QModelIndex up = keep.parent(); up.isValid(); up = up.parent())
+                tree.expand(up);
+            tree.setCurrentIndex(keep);
+        }
+    };
+
+    // F2: новый заголовок. Открытая заметка правится через редактор (первый
+    // содержательный блок), закрытая — через ядро по файлу.
+    QObject::connect(&model, &zametti::NoteTreeModel::renameRequested, &window,
+                     [&](const QString& file, const QString& title) {
+        if (file == editor.filePath()) {
+            for (QTextBlock block = editor.document()->begin(); block.isValid();
+                 block = block.next()) {
+                if (!zametti::isRawBlock(block) &&
+                    zametti::kindOf(block) == zametti::Kind::VSpace)
+                    continue;
+                if (zametti::isRawBlock(block) ||
+                    zametti::kindOf(block) != zametti::Kind::Heading)
+                    break;   // без заголовка — файл перепишет ветка ниже
+                QTextCursor cursor(block);
+                cursor.setPosition(block.position());
+                cursor.setPosition(block.position() + block.length() - 1,
+                                   QTextCursor::KeepAnchor);
+                cursor.insertText(title);
+                editor.save(false);
+                return;
+            }
+            editor.save(false);
+        }
+        rewriteNote(file, [&](zametti::Document& doc) {
+            for (auto& b : doc.blocks) {
+                if (b.rawSource.empty() && b.kind == zametti::Kind::VSpace) continue;
+                if (b.rawSource.empty() && b.kind == zametti::Kind::Heading) {
+                    b.text = title.toUtf8().toStdString();
+                    return;
+                }
+                break;
+            }
+            zametti::Block heading;
+            heading.kind = zametti::Kind::Heading;
+            heading.headingLevel = 1;
+            heading.text = title.toUtf8().toStdString();
+            zametti::Block gap;
+            gap.kind = zametti::Kind::VSpace;
+            doc.blocks.insert(doc.blocks.begin(), std::move(gap));
+            doc.blocks.insert(doc.blocks.begin(), std::move(heading));
+        });
+        if (file == editor.filePath()) editor.openFile(file);
+        refreshTree(file);
+    });
+
+    // Перенос: правка parent. Открытая — через редактор, закрытая — по файлу.
+    const auto moveNote = [&](const QString& noteId, const QString& parentId) {
+        const QString file =
+            model.nodePath(QModelIndex()) + QLatin1Char('/') + noteId +
+            QStringLiteral(".md");
+        if (file == editor.filePath()) {
+            editor.setMetaParent(parentId);
+        } else {
+            rewriteNote(file, [&](zametti::Document& doc) {
+                doc.meta.present = true;
+                if (parentId.isEmpty()) doc.meta.unset("parent");
+                else doc.meta.set("parent", parentId.toStdString());
+            });
+        }
+        refreshTree(file);
+    };
+    QObject::connect(&model, &zametti::NoteTreeModel::moveRequested, &window,
+                     [&](const QString& noteId, const QString& parentId) {
+                         moveNote(noteId, parentId);
+                     });
+
+    // Del в дереве: заметка едет в корзину; в корзине — удаляется насовсем,
+    // с подтверждением. Корзина — обычная заметка с role: trash, заводится
+    // при первом удалении.
+    {
+        auto* del = new QShortcut(QKeySequence::Delete, &tree);
+        del->setContext(Qt::WidgetWithChildrenShortcut);
+        QObject::connect(del, &QShortcut::activated, &window, [&] {
+            if (!model.isStore()) return;
+            const QModelIndex index = tree.currentIndex();
+            if (!index.isValid()) return;
+            const QString noteId = model.idOf(index);
+            if (noteId.isEmpty() || noteId == model.trashId()) return;
+            const QString file = model.filePath(index);
+
+            if (model.inTrash(index)) {
+                const auto answer = QMessageBox::question(
+                    &window, QStringLiteral("zametti"),
+                    QStringLiteral("Удалить насовсем «%1»?")
+                        .arg(model.data(index, Qt::DisplayRole).toString()));
+                if (answer != QMessageBox::Yes) return;
+                const bool wasOpen = file == editor.filePath();
+                QFile::remove(file);
+                refreshTree(wasOpen ? QString() : editor.filePath());
+                if (wasOpen) {
+                    const QModelIndex first = model.index(0, 0, QModelIndex());
+                    if (first.isValid()) editor.openFile(model.filePath(first));
+                }
+                return;
+            }
+
+            QString trash = model.trashId();
+            if (trash.isEmpty()) {
+                QString newError;
+                const QString made = zametti::store::newNote(
+                    model.nodePath(QModelIndex()), QString(), &newError);
+                if (made.isEmpty()) {
+                    QMessageBox::warning(&window, QStringLiteral("zametti"), newError);
+                    return;
+                }
+                rewriteNote(made, [](zametti::Document& doc) {
+                    doc.meta.set("role", "trash");
+                    zametti::Block heading;
+                    heading.kind = zametti::Kind::Heading;
+                    heading.headingLevel = 1;
+                    heading.text = "Корзина";
+                    doc.blocks.push_back(std::move(heading));
+                });
+                model.refresh();
+                trash = model.trashId();
+            }
+            if (!trash.isEmpty()) moveNote(noteId, trash);
+        });
+    }
+
+    // Ctrl+N: новая заметка. Родитель — выбранная в дереве (любая заметка
+    // может стать каталогом); ничего не выбрано — в корень.
+    shortcut(QKeySequence::New, [&] {
+        if (!model.isStore()) return;
+        editor.save(false);
+        const QString parentId = model.idOf(tree.currentIndex());
+        QString newError;
+        const QString made = zametti::store::newNote(
+            model.nodePath(QModelIndex()), parentId, &newError);
+        if (made.isEmpty()) {
+            QMessageBox::warning(&window, QStringLiteral("zametti"), newError);
+            return;
+        }
+        model.refresh();
+        const QModelIndex fresh = model.indexForPath(made);
+        if (fresh.isValid()) {
+            for (QModelIndex up = fresh.parent(); up.isValid(); up = up.parent())
+                tree.expand(up);
+            tree.setCurrentIndex(fresh);
+        }
+        editor.setFocus();
+    });
 
     // Фокус ушёл из приложения — момент, когда человек переключился на что-то
     // другое и меньше всего ждёт потери правок.

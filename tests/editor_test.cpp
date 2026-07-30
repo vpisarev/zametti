@@ -18,6 +18,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QFile>
+#include <QRegularExpression>
 #include <QTest>
 #include <QTextBlock>
 #include <QAbstractTextDocumentLayout>
@@ -125,13 +126,21 @@ void checkMetaSurvivesEditing() {
     QTest::qWait(10);
     editor.save(false);
 
+    // modified редактор дописывает при настоящем сохранении — его метка
+    // времени плавает, сверяем всё вокруг неё.
+    const QString saved = readFile(path);
+    QString stripped = saved;
+    stripped.replace(QRegularExpression(QStringLiteral("modified: [0-9T:Z-]+\\n")),
+                     QString());
     checkEqual(QStringLiteral("<!-- zametti\n"
                               "parent: 01n6x9k2m4qp\n"
                               "неизвестный: ключ\n"
                               "-->\n"
                               "\n"
                               "# Заголовок дописан\n"),
-               readFile(path), "правка текста не теряет и не двигает метаданные");
+               stripped, "правка текста не теряет и не двигает метаданные");
+    check(saved.contains(QStringLiteral("modified: ")),
+          "сохранение проставило modified");
 }
 
 // Правило этапа: документ — содержимое, а не облик. Undo возвращает текст и не
