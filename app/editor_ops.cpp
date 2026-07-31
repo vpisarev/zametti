@@ -1441,6 +1441,10 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
     }
 
     const bool literal = isRawBlock(block) || kindOf(block) == Kind::Code;
+    // Разрез в начале пункта переставляет половинки ролями: текст целиком
+    // уезжает в НИЖНЮЮ, а пустым остаётся верхний блок (подробнее — ниже, там
+    // где курсор возвращается наверх). Формат готовится с оглядкой на это.
+    const bool atListStart = isListBlock(block) && cursor.positionInBlock() == 0;
     QTextBlockFormat next = format;
 
     const bool wasLast = literal && lastLineOfLiteral(block);
@@ -1460,7 +1464,10 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
         next.clearProperty(ContinuationProperty);
         next.clearProperty(TrailingNewlineProperty);
         // Новый пункт всегда невыполненный: отмечать за человека нечего.
-        if (isTaskBlock(block)) next.setProperty(CheckedProperty, false);
+        // В начале пункта новый — это ВЕРХНИЙ блок, а нижнему достаётся весь
+        // прежний текст, и отметку он обязан сохранить. Её снимает отдельная
+        // ветка после разреза.
+        if (isTaskBlock(block) && !atListStart) next.setProperty(CheckedProperty, false);
         switch (kindOf(block)) {
             case Kind::Heading:
                 // За заголовком идёт обычный текст, а не второй заголовок.
@@ -1523,7 +1530,6 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
     // Если бы курсор уезжал вниз с текстом, не работало бы ни то ни другое:
     // печатать пришлось бы не там, а второй Enter заводил бы ещё один пустой
     // пункт вместо разрыва — от этого они и множились.
-    const bool atListStart = isListBlock(block) && cursor.positionInBlock() == 0;
     // Enter в начале заголовка отбивает его сверху пустой строкой: заголовок
     // уезжает вниз целиком, а над ним встаёт пустая строка. Курсор остаётся с
     // заголовком — человек двигал именно его.
@@ -1547,6 +1553,15 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
         QTextCursor headCursor(&doc);
         headCursor.setPosition(doc.findBlockByNumber(landed - 1).position());
         headCursor.setBlockFormat(head);
+    }
+    // Верхняя половина пункта пуста — это и есть только что заведённый пункт,
+    // и выполненным ему быть не с чего. Отмечено было то, что уехало вниз.
+    if (atListStart && landed > 0 && isTaskBlock(block)) {
+        QTextBlockFormat fresh = doc.findBlockByNumber(landed - 1).blockFormat();
+        fresh.setProperty(CheckedProperty, false);
+        QTextCursor above(&doc);
+        above.setPosition(doc.findBlockByNumber(landed - 1).position());
+        above.setBlockFormat(fresh);
     }
     // Верхняя половина заголовка пуста и заголовком быть не должна: это та самая
     // пустая строка, ради которой Enter и нажали.
