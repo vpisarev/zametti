@@ -26,7 +26,10 @@
 #include <QTextLayout>
 #include <QTextFrameFormat>
 
+#include <algorithm>
 #include <cmath>
+#include <utility>
+#include <vector>
 
 namespace zametti {
 namespace {
@@ -231,9 +234,17 @@ void NoteView::touchImage(const QString& key) {
 // Картинки открытой заметки не вытесняются никогда, поэтому потолок мягкий: на
 // одну заметку кэша хватает всегда, пусть она одна и больше бюджета. Так решил
 // владелец, и это правило, а не следствие реализации.
-void NoteView::trimImageCache(const QString& keep) {
-    const qint64 budget = qint64(qMax(8, appearance().imageCacheSizeMb)) * 1024 * 1024;
-    for (qsizetype i = imageOrder_.size() - 1; i >= 0 && imageCacheBytes_ > budget; --i) {
+qint64 NoteView::budgetBytes() {
+    return qint64(qMax(8, appearance().imageCacheSizeMb)) * 1024 * 1024;
+}
+
+void NoteView::trimImageCache(const QString& keep, qint64 need) {
+    const qint64 budget = budgetBytes();
+    // need — вес того, что вот-вот добавят. Отдельного прохода по уборке нет и
+    // не надо: вытеснение живёт внутри добавления и срабатывает только когда
+    // места не хватает под КОНКРЕТНУЮ картинку. С need = 0 условие вырождается
+    // в прежнее «пока не уложились».
+    for (qsizetype i = imageOrder_.size() - 1; i >= 0 && imageCacheBytes_ + need > budget; --i) {
         const QString& key = imageOrder_.at(i);
         if (key == keep || currentNoteImages_.contains(key)) continue;
         const auto it = imageCache_.constFind(key);
@@ -243,7 +254,32 @@ void NoteView::trimImageCache(const QString& keep) {
     }
 }
 
-const NoteView::CachedImage* NoteView::cachedImage(const QString& path) {
+int NoteView::shownImageCount() const {
+    int count = 0;
+    for (const CachedImage& entry : imageCache_)
+        if (entry.state == ImageState::Shown) ++count;
+    return count;
+}
+
+int NoteView::framedImageCount() const {
+    int count = 0;
+    for (const CachedImage& entry : imageCache_)
+        if (entry.framed()) ++count;
+    return count;
+}
+
+qint64 NoteView::decodedBytes(QSize declared, int limit) {
+    QSize shown = declared;
+    if (limit > 0 && (shown.width() > limit || shown.height() > limit)) {
+        shown = shown.scaled(limit, limit, Qt::KeepAspectRatio);
+        shown.setWidth(qMax(1, shown.width()));
+        shown.setHeight(qMax(1, shown.height()));
+    }
+    // Четыре байта на точку: столько занимает разжатая копия в памяти.
+    return qint64(shown.width()) * shown.height() * 4;
+}
+
+const NoteView::CachedImage* NoteView::imageInfo(const QString& path) {
     const QString abs = absoluteImagePath(path);
     if (abs.isEmpty()) return nullptr;
     // Всякий спрос идёт от блока открытой заметки — значит эта картинка её.
@@ -261,16 +297,85 @@ const NoteView::CachedImage* NoteView::cachedImage(const QString& path) {
         imageOrder_.removeAll(abs);
     }
 
+    // Только заголовок: размеры есть, пикселей нет и не надо. Место под
+    // фотографию считается по НАСТОЯЩИМ размерам, а не по размеру копии.
+    const QSize declared = QImageReader(abs).size();
+    if (declared.isEmpty()) return nullptr;   // файла нет или он не картинка
+
+    CachedImage entry;
+    entry.declared = declared;
+    entry.limit = loadedImageSizeLimit();
+    entry.state = ImageState::Pending;
+    imageCache_.insert(abs, std::move(entry));
+    imageOrder_.prepend(abs);
+    const auto found = imageCache_.constFind(abs);
+    return found == imageCache_.constEnd() ? nullptr : &found.value();
+}
+
+void NoteView::planNoteImages() {
+    const qint64 budget = qint64(qMax(8, appearance().imageCacheSizeMb)) * 1024 * 1024;
+    const int limit = loadedImageSizeLimit();
+
+    // Все картинки этой заметки — от самой лёгкой к самой тяжёлой. Порядок
+    // именно такой: так их покажется больше всего.
+    std::vector<std::pair<qint64, QString>> mine;
+    for (const QString& key : currentNoteImages_) {
+        const auto it = imageCache_.constFind(key);
+        if (it == imageCache_.constEnd()) continue;
+        mine.push_back({decodedBytes(it->declared, limit), key});
+    }
+    std::sort(mine.begin(), mine.end());
+
+    qint64 taken = 0;
+    for (const auto& [cost, key] : mine) {
+        auto it = imageCache_.find(key);
+        if (it == imageCache_.end()) continue;
+        // Отказ Qt разжимать и уже принятое решение «рамка» не пересматриваем:
+        // иначе одна и та же картинка мигала бы туда-сюда при каждой правке.
+        if (it->state == ImageState::TooBig || it->state == ImageState::Crowded) continue;
+
+        // Потолок Qt на разжатие — тоже по заголовку, до всякого чтения
+        // пикселей. Считается он по ПОЛНОМУ размеру: предел стороны тут не
+        // помощник, ужимать Qt всё равно будет уже разжатое. Решить это здесь
+        // важно: место под картинку резервируется до первой отрисовки, и
+        // узнав об отказе только при ней, мы бы держали дырку в тексте
+        // размером с несостоявшуюся фотографию.
+        const qint64 full = qint64(it->declared.width()) * it->declared.height() * 4;
+        if (full > qint64(QImageReader::allocationLimit()) * 1024 * 1024) {
+            it->state = ImageState::TooBig;
+            continue;
+        }
+
+        taken += cost;
+        if (taken > budget) it->state = ImageState::Crowded;
+    }
+}
+
+// Пиксели — лениво, по первому рисованию. Разжимать всю заметку при открытии
+// незачем: замер на 25 снимках дал 2.7 с, а видно из них один-два.
+const QImage* NoteView::pixelsFor(const QString& key) {
+    auto it = imageCache_.find(key);
+    if (it == imageCache_.end()) return nullptr;
+    if (it->state == ImageState::Shown) return &it->image;
+    if (it->state != ImageState::Pending) return nullptr;
+
+    const QSize declared = it->declared;
+    const int limit = loadedImageSizeLimit();
+    const qint64 cost = decodedBytes(declared, limit);
+    // Место под неё — за счёт чужих заметок: свои не трогаем никогда.
+    trimImageCache(key, cost);
+    if (imageCacheBytes_ + cost > budgetBytes()) {
+        // Не влезла даже после вытеснения — рамка. Спрашиваем ДО разжатия:
+        // иначе платили бы памятью ровно за то, чего решили не показывать.
+        it = imageCache_.find(key);
+        if (it != imageCache_.end()) it->state = ImageState::Crowded;
+        return nullptr;
+    }
+
     QElapsedTimer decode;
     decode.start();
-    // Размеры — из заголовка файла, до всякого разжатия: по ним и решается,
-    // ужимать ли, а сами они остаются НАСТОЯЩИМИ размерами картинки и держат
-    // вёрстку. Копия в памяти может быть мельче, и это на место не влияет.
-    QImageReader reader(abs);
-    const QSize declared = reader.size();
-    const int limit = loadedImageSizeLimit();
-    if (!declared.isEmpty() && limit > 0 &&
-        (declared.width() > limit || declared.height() > limit)) {
+    QImageReader reader(key);
+    if (limit > 0 && (declared.width() > limit || declared.height() > limit)) {
         // Предел держит ОБЕ стороны. Только вниз: картинка мельче предела
         // остаётся собой. Просим об этом сам читатель — иные форматы умеют
         // разжимать сразу в нужный размер и полной копии не заводят вовсе.
@@ -285,37 +390,26 @@ const NoteView::CachedImage* NoteView::cachedImage(const QString& path) {
     ++g_imageDecodes;
     g_imageDecodeMicros += decode.nsecsElapsed() / 1000;
 
-    CachedImage entry;
-    entry.limit = limit;
+    it = imageCache_.find(key);
+    if (it == imageCache_.end()) return nullptr;
     if (image.isNull()) {
-        // Пустой результат на файле с известными размерами — это отказ Qt
-        // разжимать: картинка больше потолка (см. settings.cpp). Отличаем от
-        // «файла нет» и запоминаем, чтобы не спрашивать заново на каждом кадре.
-        if (!declared.isEmpty()) {
-            entry.declared = declared;
-            entry.tooBig = true;
-        } else {
-            return nullptr;
-        }
-    } else {
-        entry.declared = declared.isEmpty() ? image.size() : declared;
-        entry.bytes = qint64(image.sizeInBytes());
-        entry.image = std::move(image);
+        // Отказ Qt разжимать: картинка больше потолка (см. settings.cpp).
+        // Запоминаем, чтобы не спрашивать заново на каждом кадре.
+        it->state = ImageState::TooBig;
+        return nullptr;
     }
-
-    imageCacheBytes_ += entry.bytes;
-    imageCache_.insert(abs, std::move(entry));
-    imageOrder_.prepend(abs);
-    trimImageCache(abs);
-    // Заново: вытеснение меняло QHash, а ссылки в нём этого не переживают.
-    const auto found = imageCache_.constFind(abs);
-    return found == imageCache_.constEnd() ? nullptr : &found.value();
+    it->bytes = qint64(image.sizeInBytes());
+    it->image = std::move(image);
+    it->state = ImageState::Shown;
+    imageCacheBytes_ += it->bytes;
+    touchImage(key);
+    return &it->image;
 }
 
 const QImage* NoteView::imageFor(const QString& path) {
-    const CachedImage* entry = cachedImage(path);
-    if (entry == nullptr || entry->image.isNull()) return nullptr;
-    return &entry->image;
+    const CachedImage* entry = imageInfo(path);
+    if (entry == nullptr) return nullptr;
+    return pixelsFor(absoluteImagePath(path));
 }
 
 QSizeF NoteView::imageDisplaySize(QSize natural_, qreal widthHint,
@@ -357,14 +451,14 @@ NoteView::ImageGeometry NoteView::imageGeometry(const QTextBlock& block) {
     // Слишком большая картинка место занимает наравне с показанной: на её
     // месте стоит рамка с надписью, и вёрстка не прыгнет, если потолок в
     // конфиге поднимут.
-    const CachedImage* entry = cachedImage(ref.path);
+    const CachedImage* entry = imageInfo(ref.path);
     if (entry == nullptr) return {};
 
     qreal widthHint = ref.widthHint;
     if (block.blockNumber() == imageDragBlock_ && imageDragWidth_ > 0.0)
         widthHint = imageDragWidth_;
-    const QSizeF size = entry->tooBig ? tooBigBoxSize(block, *entry)
-                                      : imageDisplaySize(entry->declared, widthHint, block);
+    const QSizeF size = entry->framed() ? tooBigBoxSize(block, *entry)
+                                        : imageDisplaySize(entry->declared, widthHint, block);
     if (size.isEmpty()) return {};
 
     const QTextLayout* layout = block.layout();
@@ -447,6 +541,11 @@ void NoteView::syncImageSpace() {
         changingLayout_ = false;
     }
 
+    // Обход закончен: известны все картинки этой заметки и их размеры. Теперь
+    // решается, каким достанутся пиксели; само разжатие — лениво, по первому
+    // рисованию.
+    planNoteImages();
+
     // Нижнее поле ПОСЛЕДНЕГО блока Qt в высоту документа не берёт вовсе —
     // замер: поле 500 на последнем блоке даёт +0, а такое же поле рамки даёт
     // +500. Фотография в последней строке из-за этого не пролезала под нижнюю
@@ -518,18 +617,23 @@ void NoteView::paintImage(QPainter& painter, const QTextBlock& block) {
     const ImageGeometry geometry = imageGeometry(block);
     if (!geometry.valid) return;
     const BlockImageRef ref = blockImageRef(block);
-    const CachedImage* entry = cachedImage(ref.path);
+    const CachedImage* entry = imageInfo(ref.path);
     if (entry == nullptr) return;
 
     painter.save();
     // Строка хитро-отрисованная: текст закрашивается фоном, фотография встаёт
     // на его место. Каретка рисуется позже и поверх — ей можно.
     painter.fillRect(geometry.line.adjusted(-2, 0, 2, 0), appearance().pageBackground);
-    if (entry->tooBig) {
-        paintTooBigImage(painter, block, geometry, *entry);
+    // Пиксели берутся здесь и только здесь: рисуем — значит нужны.
+    const QImage* pixels = entry->framed() ? nullptr : pixelsFor(absoluteImagePath(ref.path));
+    if (pixels == nullptr) {
+        // Заново: разжатие могло сменить состояние записи, а ссылки в QHash
+        // этого не переживают.
+        const CachedImage* fresh = imageInfo(ref.path);
+        if (fresh != nullptr) paintTooBigImage(painter, block, geometry, *fresh);
     } else {
         painter.setRenderHint(QPainter::SmoothPixmapTransform);
-        painter.drawImage(geometry.photo, entry->image);
+        painter.drawImage(geometry.photo, *pixels);
     }
 
     // Выделение, задевшее строку, — это выделенная фотография, а не вскрытая

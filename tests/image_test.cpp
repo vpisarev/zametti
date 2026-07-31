@@ -491,10 +491,24 @@ int main(int argc, char** argv) {
         cacheEditor.resize(600, 500);
         cacheEditor.show();
         QTest::qWait(20);
+        // Пиксели берутся лениво, по первому рисованию: чтобы разжались все
+        // картинки заметки, её надо прокрутить до конца — ровно как человек.
+        const auto showAll = [](zametti::NoteEditor& view) {
+            for (int at = 0; at <= view.verticalScrollBar()->maximum();
+                 at += qMax(1, view.viewport()->height() / 2)) {
+                view.verticalScrollBar()->setValue(at);
+                view.repaint();
+                QTest::qWait(0);
+            }
+            view.verticalScrollBar()->setValue(view.verticalScrollBar()->maximum());
+            view.repaint();
+            QTest::qWait(0);
+        };
         const auto openNote = [&](int n) {
             cacheEditor.openFile(QString::fromStdString(
                 (cacheDir / ("з" + std::to_string(n) + ".md")).string()));
             QTest::qWait(20);
+            showAll(cacheEditor);
         };
 
         const int savedBudget = zametti::appearance().imageCacheSizeMb;
@@ -505,7 +519,7 @@ int main(int argc, char** argv) {
 
         zametti::NoteView::resetImageDecodeCounters();
         openNote(0);
-        ZT_EQ("первое открытие разжало обе картинки", std::to_string(2),
+        ZT_EQ("показанные картинки разжаты", std::to_string(2),
               std::to_string(zametti::NoteView::imageDecodes()));
         ZT_EQ("в кэше две записи", std::to_string(2),
               std::to_string(cacheEditor.cachedImageCount()));
@@ -535,7 +549,9 @@ int main(int argc, char** argv) {
         ZT_EQ("вытесняется самое старое", std::to_string(2),
               std::to_string(zametti::NoteView::imageDecodes()));
 
-        // Заметка тяжелее всего бюджета: её картинки всё равно все на месте.
+        // Заметка тяжелее всего бюджета: показывается столько картинок,
+        // сколько влезло, остальные — рамки с надписью. Грузятся они от самой
+        // мелкой, поэтому влезает их столько, сколько вообще возможно.
         // Ниже восьми мегабайт бюджет не опускается — кэш на одну картинку
         // смысла не имеет, — поэтому заметка берётся из десяти.
         {
@@ -549,10 +565,21 @@ int main(int argc, char** argv) {
         QTest::qWait(20);
         heavy.openFile(QString::fromStdString((cacheDir / "тяжёлая.md").string()));
         QTest::qWait(20);
-        ZT_EQ("на одну заметку кэша хватает всегда: все десять на месте",
-              std::to_string(10), std::to_string(heavy.cachedImageCount()));
-        ZT_TRUE("и кэш при этом заведомо больше бюджета",
-                heavy.imageCacheBytes() > 8 * 1024 * 1024);
+        ZT_EQ("все десять картинок заметки известны", std::to_string(10),
+              std::to_string(heavy.cachedImageCount()));
+        // Решение принято по размерам из заголовков, ДО всякого разжатия: две
+        // самые крупные объявлены рамками, и разжимать их никто не станет.
+        ZT_EQ("что не влезло в бюджет — рамки", std::to_string(2),
+              std::to_string(heavy.framedImageCount()));
+        for (int at = 0; at <= heavy.verticalScrollBar()->maximum(); at += 200) {
+            heavy.verticalScrollBar()->setValue(at);
+            heavy.repaint();
+            QTest::qWait(0);
+        }
+        ZT_EQ("показано столько, сколько влезло", std::to_string(8),
+              std::to_string(heavy.shownImageCount()));
+        ZT_TRUE("и бюджет при этом не превышен",
+                heavy.imageCacheBytes() <= 8 * 1024 * 1024);
         zametti::NoteView::resetImageDecodeCounters();
         heavy.repaint();
         QTest::qWait(0);
