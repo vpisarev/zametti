@@ -1,10 +1,57 @@
 #include "doc_model.h"
 
+#include <QDebug>
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextFragment>
+#include <QTextFrame>
+
 
 namespace zametti {
+namespace {
+
+// Свойства формата — в порядке ключа: QMap уже упорядочен, но полагаться на
+// это в отпечатке не хочется. Значение печатаем через QDebug: у QBrush и QFont
+// toString() пуст, а сравнивать надо именно их.
+QString formatFingerprint(const QTextFormat& format, const QList<int>& skip) {
+    QString out;
+    const QMap<int, QVariant> properties = format.properties();
+    for (auto it = properties.begin(); it != properties.end(); ++it) {
+        if (skip.contains(it.key())) continue;
+        QString value;
+        QDebug(&value).nospace() << it.value();
+        out += QStringLiteral("%1=%2;").arg(it.key()).arg(value.trimmed());
+    }
+    return out;
+}
+
+}  // namespace
+
+QString blockFingerprint(const QTextBlock& block, const QList<int>& skip) {
+    QString out = QStringLiteral("блок«%1» формат[%2] знаки[%3]")
+                      .arg(block.text(), formatFingerprint(block.blockFormat(), skip),
+                           formatFingerprint(block.charFormat(), skip));
+    for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+        const QTextFragment fragment = it.fragment();
+        if (!fragment.isValid()) continue;
+        out += QStringLiteral(" кусок«%1»[%2]")
+                   .arg(fragment.text(), formatFingerprint(fragment.charFormat(), skip));
+    }
+    return out;
+}
+
+QString documentFingerprint(const QTextDocument& doc, const QList<int>& skip) {
+    QString out = QStringLiteral("шрифт[%1] поле[%2]\n")
+                      .arg(doc.defaultFont().toString())
+                      .arg(doc.documentMargin());
+    if (doc.rootFrame() != nullptr)
+        out += QStringLiteral("рамка[%1]\n")
+                   .arg(formatFingerprint(doc.rootFrame()->frameFormat(), skip));
+    int number = 0;
+    for (QTextBlock block = doc.begin(); block.isValid(); block = block.next(), ++number)
+        out += QStringLiteral("%1 %2\n").arg(number).arg(blockFingerprint(block, skip));
+    return out;
+}
 
 bool isRawBlock(const QTextBlock& block) {
     return block.blockFormat().boolProperty(RawProperty);

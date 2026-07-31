@@ -353,6 +353,9 @@ bool NoteEditor::openFile(const QString& path) {
     meta_ = doc.meta;
     const int caret = caretMemory_.value(path_, 0);
     history_.reset(doc, caret);
+    // Открывается другой файл: с прежним документом у нового ничего общего,
+    // заплатке не за что зацепиться.
+    builtValid_ = false;
     rebuild(doc, caret, {});
     // Показать место каретки, а не начало документа: иначе «вернуться туда,
     // где читал» означало бы прокрутить заново.
@@ -485,6 +488,10 @@ void NoteEditor::applyZoom(qreal value) {
 void NoteEditor::refreshAppearance() {
     // Облик меняется — содержимое нет. Берём его из истории и собираем заново;
     // ни нового шага, ни сдвига по истории при этом не происходит.
+    //
+    // Именно собираем: от облика зависит каждый блок, в том числе и те, что не
+    // менялись, и заплатка их не тронула бы.
+    builtValid_ = false;
     rebuild(history_.current().doc, textCursor().position(), viewAnchor());
 }
 
@@ -718,10 +725,26 @@ NoteEditor::ViewAnchor NoteEditor::viewAnchor() const {
     return {anchorIndex, top - int(layout->blockBoundingRect(at).top())};
 }
 
-void NoteEditor::rebuild(const Document& doc, int cursor, const ViewAnchor& anchor) {
+void NoteEditor::rebuild(const Document& doc, int cursor, const ViewAnchor& anchor,
+                         const Document* current) {
     const bool wasSuspended = recordingSuspended_;
     recordingSuspended_ = true;
-    buildDocument(doc, *document(), zoom());
+    // Заплатка вместо сборки: на большой заметке сборка стоит 151 мс, а
+    // меняется при обычной правке один блок. Облик и масштаб задают каждый
+    // блок, а не только изменившиеся, — при их смене заплатка не годится.
+    bool patched = false;
+    if (builtValid_ && builtZoom_ == zoom()) {
+        Document read;
+        if (current == nullptr) {
+            read = readDocument(*document());
+            current = &read;
+        }
+        patched = patchDocument(built_, *current, doc, *document(), zoom());
+    }
+    if (!patched) buildDocument(doc, *document(), zoom());
+    built_ = doc;
+    builtValid_ = true;
+    builtZoom_ = zoom();
     applyContentWidth();
     // Сборка — не правка: подметать за ней нечего, а область от неё вышла бы
     // во весь документ и утащила бы следующую уборку на полный проход.
@@ -1258,7 +1281,7 @@ bool NoteEditor::runOperation(const std::function<bool(QTextDocument&, QTextCurs
     // Операция — отдельный шаг: следующая набранная буква к ней не приклеится.
     sinceLastEdit_.invalidate();
 
-    rebuild(ir, position, viewAnchor());
+    rebuild(ir, position, viewAnchor(), &ir);
     // Выделение возвращаем: операция могла тронуть десяток пунктов сразу, и
     // терять его после этого — значит заставлять выделять заново. Текст от
     // смены рода не меняется, поэтому обе границы остаются на своих местах.
@@ -1459,7 +1482,7 @@ void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
     Document ir = readDocument(*document());
     history_.push(ir, landed);
     sinceLastEdit_.invalidate();
-    rebuild(ir, landed, viewAnchor());
+    rebuild(ir, landed, viewAnchor(), &ir);
     document()->setModified(true);
     showEditPlace(scrollBefore);
     autosave_.start(appearance().autosaveDelayMs);

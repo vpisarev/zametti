@@ -222,7 +222,11 @@ private:
     // что и поле страницы, — им же он и меряется.
     void keepCaretOffEdge();
 
-    void rebuild(const Document& doc, int cursor, const ViewAnchor& anchor);
+    // current — IR того, что в документе лежит СЕЙЧАС, если вызывающий его уже
+    // прочитал: заплатке он нужен, чтобы понять, какому блоку документа какой
+    // номер соответствует. Не передали — прочитаем сами.
+    void rebuild(const Document& doc, int cursor, const ViewAnchor& anchor,
+                 const Document* current = nullptr);
     void recordEdit();
     void onContentsChanged();
     void onContentsChange(int position, int charsRemoved, int charsAdded);
@@ -238,6 +242,13 @@ private:
     void watchFile();
 
     EditHistory history_;
+    // IR, из которого документ собран в последний раз. Нужен заплатке: она
+    // пересобирает только то, чем новый IR от него отличается. Между
+    // пересборками документ уходит вперёд от набора — и это ровно то, что
+    // заплатке надо пересобрать, так что расхождение здесь не изъян, а смысл.
+    Document built_;
+    bool builtValid_ = false;
+    qreal builtZoom_ = 0.0;
     QString path_;
 
     // Перетаскивание угла фотографии. Фото прижато к левому краю колонки,

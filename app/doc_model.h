@@ -14,6 +14,7 @@
 
 #include "ir.h"
 
+#include <QList>
 #include <QTextFormat>
 
 #include <string>
@@ -144,6 +145,16 @@ int irIndexOfBlock(const QTextBlock& block);
 // Обратное: первый блок документа, принадлежащий блоку IR с этим номером.
 // Недействительный блок, если такого нет.
 QTextBlock blockForIrIndex(const QTextDocument& doc, int index);
+
+// Полный отпечаток блока: текст, все свойства формата блока и все свойства
+// формата каждого куска. Нужен, чтобы сравнивать документ, собранный целиком,
+// с документом, собранным заплаткой: «выглядит так же» тут не годится —
+// разойтись они могут любым свойством, включая те, которых на экране не видно.
+// skip — свойства, которые в сравнении не участвуют: их держит не сборщик.
+QString blockFingerprint(const QTextBlock& block, const QList<int>& skip = {});
+
+// То же для всего документа, вместе со шрифтом по умолчанию и полями рамки.
+QString documentFingerprint(const QTextDocument& doc, const QList<int>& skip = {});
 
 // Прогоны списка, по одному на каждый уровень вложенности. Ключ прогона — не
 // сам Kind, а его проекция (уровень, нумерованность): Bullet, TaskUnchecked и
