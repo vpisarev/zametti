@@ -6,6 +6,7 @@
 
 #include <QAbstractTextDocumentLayout>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFontMetricsF>
 #include <QPainter>
 #include <QPaintEvent>
@@ -193,6 +194,19 @@ void NoteView::setImageBase(const QString& dir) {
     syncImageSpace();
 }
 
+namespace {
+int g_imageDecodes = 0;
+qint64 g_imageDecodeMicros = 0;
+}  // namespace
+
+int NoteView::imageDecodes() { return g_imageDecodes; }
+qint64 NoteView::imageDecodeMicros() { return g_imageDecodeMicros; }
+
+void NoteView::resetImageDecodeCounters() {
+    g_imageDecodes = 0;
+    g_imageDecodeMicros = 0;
+}
+
 const QImage* NoteView::imageFor(const QString& path) {
     if (path.isEmpty()) return nullptr;
     QString abs = QDir::isAbsolutePath(path)
@@ -201,7 +215,14 @@ const QImage* NoteView::imageFor(const QString& path) {
     if (abs.isEmpty()) return nullptr;
     abs = QDir::cleanPath(abs);
     auto it = imageCache_.find(abs);
-    if (it == imageCache_.end()) it = imageCache_.insert(abs, QImage(abs));
+    if (it == imageCache_.end()) {
+        QElapsedTimer decode;
+        decode.start();
+        QImage image(abs);
+        ++g_imageDecodes;
+        g_imageDecodeMicros += decode.nsecsElapsed() / 1000;
+        it = imageCache_.insert(abs, std::move(image));
+    }
     return it->isNull() ? nullptr : &it.value();
 }
 
