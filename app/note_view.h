@@ -22,7 +22,8 @@ namespace zametti {
 
 // Цвета страницы и выделения. Ставятся и просмотрщику, и дереву заметок,
 // поэтому живут отдельной функцией, а не в конструкторе.
-void applyPalette(QWidget& view);
+// history — тонировать поле как прошлое (см. historyBackground).
+void applyPalette(QWidget& view, bool history = false);
 
 class NoteView : public QTextBrowser {
     Q_OBJECT

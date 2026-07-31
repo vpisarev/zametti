@@ -46,9 +46,14 @@ qreal imageGap(qreal zoom) { return 6.0 * zoom; }
 
 }  // namespace
 
-void applyPalette(QWidget& view) {
+void applyPalette(QWidget& view, bool history) {
     QPalette palette = view.palette();
-    palette.setColor(QPalette::Base, appearance().pageBackground);
+    // В режиме истории поле тонируется: слегка пожелтевший от времени фон
+    // (решение владельца). Прошлое видно ещё до того, как человек прочтёт
+    // баннер, а совпадение historyBackground с pageBackground выключает
+    // тонировку — это законная настройка, а не поломка.
+    palette.setColor(QPalette::Base, history ? appearance().historyBackground
+                                             : appearance().pageBackground);
     palette.setColor(QPalette::Highlight, appearance().selectionBackground);
     // Выделение светлое, поэтому текст в нём остаётся тёмным: белый по
     // умолчанию на таком фоне просто пропал бы.

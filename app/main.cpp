@@ -6,6 +6,7 @@
 #include "doc_model.h"
 #include "editor_widget.h"
 #include "find_bar.h"
+#include "history_panel.h"
 #include "note_list.h"
 #include "note_tree.h"
 #include "search.h"
@@ -476,6 +477,8 @@ int main(int argc, char** argv) {
     // Правая сторона — заметка, под ней список найденного (появляется только у
     // поиска по всему хранилищу) и панель поиска у самого низа, как в Sublime.
     zametti::FindBar findBar;
+    zametti::HistoryBanner historyBanner;
+    zametti::HistoryTimeline historyTimeline;
     zametti::SearchResultsModel results;
     zametti::SearchResultsDelegate resultsDelegate;
     QListView resultsView;
@@ -492,7 +495,21 @@ int main(int argc, char** argv) {
         resultsView.setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
         resultsView.setMaximumHeight(240);
         resultsView.hide();
-        layout->addWidget(&editor, 1);
+
+        // Режим истории: баннер НАД текстом, таймлайн СБОКУ. Обе части видны
+        // всё время режима и обе спрятаны вне его — тем режим и громкий.
+        historyBanner.hide();
+        historyTimeline.hide();
+        historyTimeline.setFont(sidebarFont);
+        historyTimeline.setFixedWidth(zametti::appearance().noteListWidth);
+        auto* middleRow = new QHBoxLayout;
+        middleRow->setContentsMargins(0, 0, 0, 0);
+        middleRow->setSpacing(0);
+        middleRow->addWidget(&editor, 1);
+        middleRow->addWidget(&historyTimeline);
+
+        layout->addWidget(&historyBanner);
+        layout->addLayout(middleRow, 1);
         layout->addWidget(&resultsView);
         layout->addWidget(&findBar);
     }
@@ -752,6 +769,57 @@ int main(int argc, char** argv) {
         if (title.isEmpty()) title = QStringLiteral("Без названия");
         model.updateTitle(editor.filePath(), title);
         window.setWindowTitle(title + QStringLiteral(" — zametti"));
+    });
+
+    // --- режим истории ------------------------------------------------------
+    //
+    // Окно только показывает и передаёт: что показать, решает редактор, он же
+    // держит журнал. Заголовок в режиме получает машинный штамп с секундами
+    // (решение владельца): по нему видно точный момент, и два слепка одной
+    // минуты не выглядят одинаково.
+    const auto showHistoryState = [&] {
+        const int at = editor.historyIndex();
+        const auto& entries = editor.timeline().entries;
+        if (at < 0 || at >= entries.size()) return;
+        historyBanner.setSnapshot(entries[at].time, entries[at].kind);
+        historyTimeline.setCurrent(at);
+        window.setWindowTitle(windowTitleFor(editor.filePath()) + QStringLiteral(" — ") +
+                              zametti::historyStamp(entries[at].time) +
+                              QStringLiteral(" — zametti"));
+    };
+
+    QObject::connect(&editor, &zametti::NoteEditor::historyModeChanged, &window,
+                     [&](bool on) {
+                         historyBanner.setVisible(on);
+                         historyTimeline.setVisible(on);
+                         // Тонировка поля: слегка пожелтевший от времени фон,
+                         // чтобы прошлое было видно ещё до чтения баннера.
+                         zametti::applyPalette(editor, on);
+                         if (on) {
+                             // Заголовок и выделение приедут с historyIndexChanged:
+                             // редактор шлёт его следом, уже показав слепок.
+                             historyTimeline.setEntries(editor.timeline().entries);
+                             return;
+                         }
+                         window.setWindowTitle(windowTitleFor(editor.filePath()) +
+                                               QStringLiteral(" — zametti"));
+                     });
+    QObject::connect(&editor, &zametti::NoteEditor::historyIndexChanged, &window,
+                     [&](int) { showHistoryState(); });
+    QObject::connect(&editor, &zametti::NoteEditor::historyEditRefused, &historyBanner,
+                     &zametti::HistoryBanner::flashRestore);
+    // Закрытие таймлайна и «К текущей версии» — одна и та же дверь наружу.
+    QObject::connect(&historyBanner, &zametti::HistoryBanner::leaveRequested, &editor,
+                     [&] { editor.leaveHistory(); });
+    QObject::connect(&historyTimeline, &zametti::HistoryTimeline::closeRequested, &editor,
+                     [&] { editor.leaveHistory(); });
+    QObject::connect(&historyTimeline, &zametti::HistoryTimeline::entryChosen, &editor,
+                     [&](int index) { editor.enterHistory(index); });
+    QObject::connect(&historyBanner, &zametti::HistoryBanner::restoreRequested, &window, [&] {
+        const qint64 source = editor.restoreShownSnapshot();
+        if (source == 0) return;
+        findBar.setStatus(QStringLiteral("восстановлено из слепка %1")
+                              .arg(zametti::historyMoment(source)));
     });
 
     // Правка файла хранилища мимо редактора: только для закрытых заметок —

@@ -17,6 +17,7 @@
 #include "test_util.h"
 
 #include <QApplication>
+#include <QClipboard>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -2146,6 +2147,135 @@ void checkHistoryPoints() {
     check(int(records().size()) == settled, "отмена без правок шага не пишет");
 }
 
+// Режим истории: вход, ходьба по слепкам, только чтение, восстановление.
+//
+// Главное, что здесь проверяется, — что живая заметка переживает поход в
+// прошлое целиком: не только текст, но и цепочка отмены с кареткой. Пересборки
+// из текста при возврате нет, и терять при нём нечего.
+void checkHistoryMode() {
+    const QString root = g_dir + QStringLiteral("/хранилище-режима");
+    QDir().mkpath(root + QStringLiteral("/history"));
+    const QString path = root + QStringLiteral("/01n6cqevsd7v5e.md");
+    const QString noteId = QStringLiteral("01n6cqevsd7v5e");
+    {
+        QFile file(path);
+        check(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "заметка создана");
+        file.write(QStringLiteral("# заметка\n\nодин\n").toUtf8());
+    }
+
+    zametti::journal::History history(root);
+    zametti::NoteEditor editor;
+    editor.setStoreRoot(root);
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+
+    auto text = [&editor] {
+        return QString::fromStdString(
+            zametti::serialize(zametti::readDocument(*editor.document())));
+    };
+
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    // Три сохранения — три слепка в истории.
+    for (const char* piece : {" two", " three"}) {
+        QTextCursor at(editor.document()->lastBlock());
+        at.movePosition(QTextCursor::EndOfBlock);
+        editor.setTextCursor(at);
+        QTest::keyClicks(&editor, QString::fromLatin1(piece));
+        // Пауза длиннее склейки набора: иначе обе серии стали бы одним шагом
+        // отмены, и проверка «цепочка пережила поход» проверяла бы не то.
+        QTest::qWait(zametti::appearance().undoCoalesceMs + 50);
+        editor.save(false);
+        QTest::qWait(20);
+    }
+    const QString live = text();
+
+    // Вход в режим: показан последний слепок, править нельзя.
+    check(!editor.inHistory(), "до входа режима нет");
+    check(editor.enterHistory(), "вход в режим истории");
+    check(editor.inHistory(), "режим идёт");
+    check(editor.isReadOnly(), "в слепке править нельзя");
+    check(editor.timeline().entries.size() == 2, "таймлайн знает про два слепка");
+    check(editor.historyIndex() == 1, "показан последний слепок");
+    checkEqual(live, text(), "последний слепок совпадает с живой версией");
+
+    // Шаг назад — более старый слепок.
+    check(editor.historyStepBack(), "шаг в прошлое");
+    check(editor.historyIndex() == 0, "показан первый слепок");
+    check(text().contains(QStringLiteral("two")) && !text().contains(QStringLiteral("three")),
+          "в первом слепке нет того, что дописали позже");
+    check(!editor.historyStepBack(), "дальше первого слепка ходу нет");
+    check(editor.historyIndex() == 0, "и мы остались на нём же");
+
+    // Печатающая клавиша не восстанавливает и не правит.
+    int refusals = 0;
+    QObject::connect(&editor, &zametti::NoteEditor::historyEditRefused,
+                     [&refusals] { ++refusals; });
+    const QString beforeTyping = text();
+    QTest::keyClicks(&editor, QStringLiteral("x"));
+    QTest::qWait(10);
+    checkEqual(beforeTyping, text(), "печатающая клавиша слепок не меняет");
+    check(refusals == 1, "и про отказ сказано вслух");
+
+    // Копировать из прошлого можно — ради этого режим и заведён.
+    editor.selectAll();
+    editor.copy();
+    check(!QApplication::clipboard()->text().isEmpty(), "из слепка копируется");
+
+    // Шаг вперёд дважды: на последний слепок и дальше — в живую версию.
+    check(editor.historyStepForward(), "шаг в будущее");
+    check(editor.historyIndex() == 1, "снова последний слепок");
+    check(editor.historyStepForward(), "шаг дальше последнего");
+    check(!editor.inHistory(), "и он вывел в живую версию");
+    check(!editor.isReadOnly(), "живую версию снова можно править");
+    checkEqual(live, text(), "живая версия вернулась целой");
+
+    // Цепочка отмены пережила поход: Ctrl+Z отменяет правку, сделанную ДО него.
+    editor.undo();
+    QTest::qWait(10);
+    check(text().contains(QStringLiteral("two")) && !text().contains(QStringLiteral("three")),
+          "отмена после возврата отменяет правку, а не поход в историю");
+    editor.redo();
+    QTest::qWait(10);
+
+    // Восстановление: новая запись, отдельным шагом отмены.
+    const int recordsBefore = [&] {
+        zametti::journal::Journal journal;
+        QString error;
+        history.read(noteId, &journal, &error);
+        return int(journal.entries.size());
+    }();
+    check(editor.enterHistory(0), "вход на первый слепок");
+    const QString old = text();
+    const qint64 source = editor.restoreShownSnapshot();
+    QTest::qWait(20);
+    check(source != 0, "восстановление состоялось");
+    check(!editor.inHistory(), "и режим закрылся");
+    checkEqual(old, text(), "в живой заметке теперь содержимое слепка");
+
+    zametti::journal::Journal journal;
+    QString error;
+    history.read(noteId, &journal, &error);
+    check(int(journal.entries.size()) == recordsBefore + 1,
+          "восстановление дописало ровно одну запись");
+    check(!journal.entries.isEmpty() &&
+              journal.entries.last().kind == zametti::journal::Kind::Restore,
+          "и это запись restore");
+    check(!journal.entries.isEmpty() && journal.entries.last().source == source,
+          "в записи назван источник");
+
+    // Инвариант C: журнал не укоротился.
+    check(int(journal.entries.size()) > recordsBefore, "журнал только вырос");
+
+    // Ctrl+Z сразу после восстановления отменяет восстановление.
+    editor.undo();
+    QTest::qWait(20);
+    checkEqual(live, text(), "отмена вернула то, что было до восстановления");
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     if (argc < 2) {
@@ -2185,6 +2315,7 @@ int main(int argc, char** argv) {
     checkWideWindowOperations();
     checkNoteCache();
     checkHistoryPoints();
+    checkHistoryMode();
     checkCanonicaliseOnOpen();
     checkSaveWithoutAutosave();
     checkSizeAfterSoftBreak();

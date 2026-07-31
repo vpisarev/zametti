@@ -1,0 +1,90 @@
+// Вид режима истории: баннер над текстом и таймлайн сбоку.
+//
+// Режим громкий по решению владельца: человек обязан видеть, что перед ним
+// прошлое, а не тихо подменённые байты. Отсюда две части, и обе на виду всё
+// время режима — баннер с обеими дверьми наружу («К текущей версии»,
+// «Восстановить эту») и список записей, по которому видно, куда ещё можно
+// шагнуть.
+//
+// Виджеты ничего не знают ни про журнал, ни про редактор: им приносят готовые
+// строки, а они отдают сигналы. Так их можно показать в снимке Xvfb, не заводя
+// хранилища.
+
+#ifndef ZAMETTI_HISTORY_PANEL_H
+#define ZAMETTI_HISTORY_PANEL_H
+
+#include "journal.h"
+
+#include <QLabel>
+#include <QListWidget>
+#include <QPushButton>
+#include <QWidget>
+
+namespace zametti {
+
+// Человеческое время записи: «14 марта 2024, 21:40». Отдельно от виджета —
+// нужно и заголовку окна.
+QString historyMoment(qint64 msSinceEpoch);
+
+// Штамп для заголовка окна: «history:2024-03-14 21:40:05» (решение владельца).
+// Машинный вид с секундами намеренно: заголовок окна — не то место, где нужна
+// красота, зато по нему видно точный момент, а два соседних слепка одной
+// минуты не выглядят одинаково.
+QString historyStamp(qint64 msSinceEpoch);
+
+// Короткое имя вида записи для таймлайна.
+QString historyKindName(journal::Kind kind);
+
+class HistoryBanner : public QWidget {
+    Q_OBJECT
+
+public:
+    explicit HistoryBanner(QWidget* parent = nullptr);
+
+    // Что показано: время слепка и его вид.
+    void setSnapshot(qint64 time, journal::Kind kind);
+
+    // Печатающую клавишу в слепке отбили — коротко подсветить «Восстановить
+    // эту» и сказать словами, что делать. Восстановление только явным жестом,
+    // и подсветка тут вместо действия, а не в придачу к нему.
+    void flashRestore();
+
+signals:
+    void leaveRequested();
+    void restoreRequested();
+
+private:
+    QLabel* text_;
+    QPushButton* leave_;
+    QPushButton* restore_;
+    QString restoreStyle_;
+};
+
+// Таймлайн: время, вид и размер каждой записи. Закрытие панели — это выход из
+// режима, поэтому у неё есть свой крестик, а сигнал тот же, что у кнопки «К
+// текущей версии».
+class HistoryTimeline : public QWidget {
+    Q_OBJECT
+
+public:
+    explicit HistoryTimeline(QWidget* parent = nullptr);
+
+    // Заполнить записями. Свежие сверху: в прошлое человек идёт сверху вниз,
+    // как в списке заметок.
+    void setEntries(const QVector<journal::Entry>& entries);
+    // Отметить показанную запись (номер в журнале, не в списке).
+    void setCurrent(int index);
+
+signals:
+    void entryChosen(int index);
+    void closeRequested();
+
+private:
+    QListWidget* list_;
+    QVector<journal::Entry> entries_;
+    bool quiet_ = false;   // выделение переставляем сами — сигнал не нужен
+};
+
+}  // namespace zametti
+
+#endif  // ZAMETTI_HISTORY_PANEL_H

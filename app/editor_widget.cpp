@@ -840,7 +840,13 @@ void NoteEditor::undo() {
     const int recorded = history_.current().cursor;
     const QString undonePlain = document()->toPlainText();
     const HistoryStep* step = history_.undo();
-    if (step == nullptr) return;
+    if (step == nullptr) {
+        // Дно внутридокументной цепочки — дальше шагаем в слепки. Режим
+        // объявляет себя сам (баннер, заголовок окна), и это же служит защитой
+        // от случайного глубокого отката.
+        enterHistory();
+        return;
+    }
     undoRun_ = true;
     rebuild(step->doc, 0, viewAnchor());
     const QString restoredPlain = document()->toPlainText();
@@ -1197,6 +1203,39 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
             return;
         default:
             break;
+    }
+
+    // В слепке клавиши работают иначе: править нечего, зато ходить по истории
+    // и копировать из неё — можно, ради этого режим и заведён.
+    if (inHistory()) {
+        if (event->matches(QKeySequence::Undo)) {   // шаг в более старое
+            historyStepBack();
+            event->accept();
+            return;
+        }
+        if (event->matches(QKeySequence::Redo)) {   // шаг в более новое и в живое
+            historyStepForward();
+            event->accept();
+            return;
+        }
+        if (event->key() == Qt::Key_Escape) {
+            leaveHistory();
+            event->accept();
+            return;
+        }
+        // Печатающая клавиша не восстанавливает ничего (решение владельца:
+        // случайное нажатие при попытке выделить не должно менять режим).
+        // Окно на этот сигнал подсвечивает кнопку «Восстановить эту».
+        if (!event->text().isEmpty() && event->text().at(0).isPrint() &&
+            (event->modifiers() & ~Qt::ShiftModifier) == Qt::NoModifier) {
+            emit historyEditRefused();
+            event->accept();
+            return;
+        }
+        // Всё остальное — базовому виджету: перемещение каретки, выделение,
+        // Ctrl+C. Правки он и сам не пропустит, поле только для чтения.
+        NoteView::keyPressEvent(event);
+        return;
     }
 
     // Esc посреди перетаскивания угла фотографии — отмена жеста: примерочная
@@ -1809,6 +1848,157 @@ void NoteEditor::setMetaParent(const QString& parentId) {
     });
 }
 
+// --- режим истории ----------------------------------------------------------
+
+bool NoteEditor::enterHistory(int index) {
+    // Уже в режиме — значит просят другой слепок (щёлкнули в таймлайне).
+    // Отдельного метода на это не заводим: снаружи это одно и то же желание —
+    // «покажи вот эту запись».
+    if (inHistory()) return index >= 0 && showSnapshot(index);
+    if (storeRoot_.isEmpty() || path_.isEmpty()) return false;
+
+    // Незаписанные правки — в файл, а значит и в журнал: человек пошёл смотреть
+    // прошлое, и вершина цепочки обязана в этом прошлом оказаться. Иначе он
+    // вернётся к живой версии, уйдёт из заметки — и то, что набрал, пропадёт
+    // из истории навсегда.
+    flushPendingEdit();
+    if (document()->isModified()) save(false);
+
+    journal::History history(storeRoot_);
+    QString error;
+    if (!history.read(QFileInfo(path_).completeBaseName(), &timeline_, &error)) {
+        std::fprintf(stderr, "история не читается: %s\n", error.toUtf8().constData());
+        return false;
+    }
+    // Записи без слепка (надгробие) показывать нечего.
+    int last = timeline_.entries.size() - 1;
+    while (last >= 0 && !timeline_.entries[last].hasSnapshot()) --last;
+    if (last < 0) return false;
+
+    LiveNote live;
+    live.document = std::move(ownDocument_);
+    live.history = std::move(history_);
+    live.built = built_;
+    live.builtZoom = builtZoom_;
+    live.builtValid = builtValid_;
+    live.cursor = textCursor().position();
+    live.scroll = verticalScrollBar()->value();
+    live.modified = live.document && live.document->isModified();
+    // ownDocument_ уже пуст: installDocument ниже заберёт его как «прежний» и
+    // ничего не удалит — живой документ теперь наш, в live_.
+    live_ = std::move(live);
+
+    setReadOnly(true);
+    // О начале режима сообщаем ДО показа слепка: слушатель на этом сигнале
+    // заполняет таймлайн, а сигнал о номере записи приходит из showSnapshot.
+    // Обратный порядок означал бы, что номер приезжает в пустой список и
+    // выделение теряется, — так и было, пока не поменял.
+    emit historyModeChanged(true);
+    if (!showSnapshot(index < 0 ? last : index)) {
+        leaveHistory();
+        return false;
+    }
+    return true;
+}
+
+bool NoteEditor::showSnapshot(int index) {
+    if (index < 0 || index >= timeline_.entries.size()) return false;
+    if (!timeline_.entries[index].hasSnapshot()) return false;
+
+    journal::History history(storeRoot_);
+    QByteArray bytes;
+    QString error;
+    if (!history.snapshotAt(QFileInfo(path_).completeBaseName(), index, &bytes, &error)) {
+        std::fprintf(stderr, "слепок не собрать: %s\n", error.toUtf8().constData());
+        return false;
+    }
+
+    // Слепок — байты файла целиком, вместе с шапкой. Разбираем тем же ядром,
+    // что и обычное открытие: второго способа прочитать заметку нет.
+    const Document doc = parse(std::string(bytes.constData(), size_t(bytes.size())));
+    installDocument(std::make_unique<QTextDocument>());
+    builtValid_ = false;
+    rebuild(doc, 0, ViewAnchor{});
+    document()->setModified(false);
+    historyIndex_ = index;
+    emit historyIndexChanged(index);
+    return true;
+}
+
+void NoteEditor::leaveHistory() {
+    if (!inHistory()) return;
+    LiveNote live = std::move(*live_);
+    live_.reset();
+    historyIndex_ = -1;
+
+    history_ = std::move(live.history);
+    built_ = std::move(live.built);
+    builtZoom_ = live.builtZoom;
+    builtValid_ = live.builtValid;
+    installDocument(std::move(live.document));
+    applyContentWidth();
+
+    QTextCursor place(document());
+    place.setPosition(qBound(0, live.cursor, document()->characterCount() - 1));
+    setTextCursor(place);
+    verticalScrollBar()->setValue(live.scroll);
+    document()->setModified(live.modified);
+
+    setReadOnly(false);
+    emit historyModeChanged(false);
+}
+
+bool NoteEditor::historyStepBack() {
+    if (!inHistory() && !enterHistory()) return false;
+    int at = historyIndex_ - 1;
+    while (at >= 0 && !timeline_.entries[at].hasSnapshot()) --at;
+    if (at < 0) return false;   // дальше в прошлое некуда: остаёмся где были
+    return showSnapshot(at);
+}
+
+bool NoteEditor::historyStepForward() {
+    if (!inHistory()) return false;
+    int at = historyIndex_ + 1;
+    while (at < timeline_.entries.size() && !timeline_.entries[at].hasSnapshot()) ++at;
+    if (at >= timeline_.entries.size()) {
+        // Дальше последнего слепка — живая версия. Это и есть выход из режима
+        // хронологическим шагом вперёд.
+        leaveHistory();
+        return true;
+    }
+    return showSnapshot(at);
+}
+
+qint64 NoteEditor::restoreShownSnapshot() {
+    if (!inHistory() || historyIndex_ < 0) return 0;
+    const qint64 source = timeline_.entries[historyIndex_].time;
+
+    // Тело слепка забираем ДО выхода из режима: сейчас оно в поле редактора.
+    Document body = readDocument(*document());
+
+    leaveHistory();
+
+    // Метаданные живой заметки побеждают: история возвращает содержимое, а не
+    // местоположение. parent, теги и created остаются нынешними; modified
+    // поднимется при записи, как при любой правке.
+    //
+    // Одной правкой, а не пересозданием документа: восстановление обязано
+    // отменяться обычным Ctrl+Z, а для этого оно должно быть шагом нашей
+    // цепочки, как всякая другая правка.
+    flushPendingEdit();
+    rebuild(body, textCursor().position(), viewAnchor());
+    document()->setModified(true);
+    typingRun_ = false;
+    undoRun_ = false;
+    recordEdit();
+    flushPendingEdit();
+
+    // Ближайшее сохранение станет записью restore со ссылкой на источник.
+    pendingRestoreSource_ = source;
+    save(false);
+    return source;
+}
+
 void NoteEditor::recordHistory(journal::Kind kind, const QByteArray& snapshot, qint64 source) {
     if (storeRoot_.isEmpty() || path_.isEmpty()) return;
     journal::History history(storeRoot_);
@@ -1860,8 +2050,14 @@ void NoteEditor::save(bool interactive) {
         // означает, что на диске уже ровно это, и второй одинаковый слепок
         // подряд в журнале не нужен (дедупликация тут бесплатна, потому что
         // сравнение отпечатков уже сделано выше).
-        if (outcome.result == SaveResult::Written)
-            recordHistory(journal::Kind::Save, outcome.written);
+        if (outcome.result == SaveResult::Written) {
+            const bool restore = pendingRestoreSource_ != 0;
+            recordHistory(restore ? journal::Kind::Restore : journal::Kind::Save,
+                          outcome.written, pendingRestoreSource_);
+        }
+        // Признак гасим при любом исходе записи: он относится к одному
+        // ближайшему сохранению, а не «пока не сработает».
+        pendingRestoreSource_ = 0;
 
         // Файл на диске стал другим: средней колонке пора перечитать заголовок,
         // начало текста и дату. Сигнал, а не прямой вызов: редактор про список

@@ -95,6 +95,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
 
     QJsonObject colors{
         {QStringLiteral("pageBackground"), colorToString(a.pageBackground)},
+        {QStringLiteral("historyBackground"), colorToString(a.historyBackground)},
         {QStringLiteral("selectionBackground"), colorToString(a.selectionBackground)},
         {QStringLiteral("link"), colorToString(a.linkColor)},
         {QStringLiteral("quote"), colorToString(a.quoteColor)},
@@ -242,6 +243,7 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
 
     const QJsonObject colors = root.value(QStringLiteral("colors")).toObject();
     readColor(colors, "pageBackground", a.pageBackground);
+    readColor(colors, "historyBackground", a.historyBackground);
     readColor(colors, "selectionBackground", a.selectionBackground);
     readColor(colors, "link", a.linkColor);
     readColor(colors, "quote", a.quoteColor);

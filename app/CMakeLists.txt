@@ -46,6 +46,8 @@ target_include_directories(zametti-view PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 add_library(zametti-widgets STATIC
     find_bar.h
     find_bar.cpp
+    history_panel.h
+    history_panel.cpp
     note_tree.h
     note_tree.cpp
     note_list.h
