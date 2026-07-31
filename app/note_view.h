@@ -142,6 +142,7 @@ private:
         Shown,     // разжата, image непустой
         TooBig,    // Qt отказался разжимать: больше потолка
         Crowded,   // в кэш не влезла: заметка тяжелее бюджета
+        Missing,   // файла нет: удалили руками или он ещё не приехал с синком
     };
     struct CachedImage {
         QImage image;
@@ -151,7 +152,14 @@ private:
         ImageState state = ImageState::Pending;
 
         // Рисуется рамка с надписью, а не фотография.
-        bool framed() const { return state == ImageState::TooBig || state == ImageState::Crowded; }
+        // Рамка вместо фотографии. Причины разные, а поведение одно: место
+        // держим, пикселей не спрашиваем, надпись объясняет человеку, что не
+        // так. Ссылка в заметке при этом неприкосновенна: вернётся файл или
+        // поднимется потолок — вернётся и картинка.
+        bool framed() const {
+            return state == ImageState::TooBig || state == ImageState::Crowded ||
+                   state == ImageState::Missing;
+        }
     };
 
     QString absoluteImagePath(const QString& path) const;
@@ -186,8 +194,9 @@ private:
     // Надпись на рамке вместо слишком большой картинки и место под неё.
     // Пропорций картинки рамка не повторяет: это не картинка, а сообщение, и
     // растягивать её на экран под стать оригиналу незачем.
-    QString tooBigText(const QTextBlock& block, const CachedImage& entry) const;
-    QSizeF tooBigBoxSize(const QTextBlock& block, const CachedImage& entry) const;
+    // Надпись в рамке: по состоянию записи.
+    QString frameText(const QTextBlock& block, const CachedImage& entry) const;
+    QSizeF frameBoxSize(const QTextBlock& block, const CachedImage& entry) const;
     void paintTooBigImage(QPainter& painter, const QTextBlock& block,
                           const ImageGeometry& geometry, const CachedImage& entry);
     // Место под картинку на экране. Берёт размеры, а не саму картинку: у

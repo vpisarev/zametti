@@ -305,7 +305,23 @@ const NoteView::CachedImage* NoteView::imageInfo(const QString& path) {
     // Только заголовок: размеры есть, пикселей нет и не надо. Место под
     // фотографию считается по НАСТОЯЩИМ размерам, а не по размеру копии.
     const QSize declared = QImageReader(abs).size();
-    if (declared.isEmpty()) return nullptr;   // файла нет или он не картинка
+    if (declared.isEmpty()) {
+        // Файла нет — рисуем рамку и держим под неё место. Так человек видит,
+        // что вложение пропало, а не пустоту; байты ссылки в заметке при этом
+        // не трогаются вовсе: вернётся файл — вернётся картинка. То же самое
+        // штатно бывает в слепке истории, который ссылается на давно удалённое.
+        //
+        // Файл, который есть, но картинкой не является, — не наше дело: строка
+        // остаётся строкой, как и всякий текст, который мы не поняли.
+        if (QFileInfo::exists(abs)) return nullptr;
+        CachedImage gone;
+        gone.limit = loadedImageSizeLimit();
+        gone.state = ImageState::Missing;
+        imageCache_.insert(abs, std::move(gone));
+        imageOrder_.prepend(abs);
+        const auto lost = imageCache_.constFind(abs);
+        return lost == imageCache_.constEnd() ? nullptr : &lost.value();
+    }
 
     CachedImage entry;
     entry.declared = declared;
@@ -318,6 +334,19 @@ const NoteView::CachedImage* NoteView::imageInfo(const QString& path) {
 }
 
 void NoteView::planNoteImages() {
+    // Пропавшие файлы перепроверяем: рамка «файл не найден» не имеет права
+    // застыть навсегда. Вернулся файл — вернётся и картинка, а стоит проверка
+    // одного обращения к файловой системе на картинку, и то не на каждый кадр,
+    // а на пересчёт места.
+    for (auto it = imageCache_.begin(); it != imageCache_.end();) {
+        if (it->state == ImageState::Missing && QFileInfo::exists(it.key())) {
+            imageOrder_.removeAll(it.key());
+            it = imageCache_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
     const qint64 budget = qint64(qMax(8, appearance().imageCacheSizeMb)) * 1024 * 1024;
     const int limit = loadedImageSizeLimit();
 
@@ -462,7 +491,7 @@ NoteView::ImageGeometry NoteView::imageGeometry(const QTextBlock& block) {
     qreal widthHint = ref.widthHint;
     if (block.blockNumber() == imageDragBlock_ && imageDragWidth_ > 0.0)
         widthHint = imageDragWidth_;
-    const QSizeF size = entry->framed() ? tooBigBoxSize(block, *entry)
+    const QSizeF size = entry->framed() ? frameBoxSize(block, *entry)
                                         : imageDisplaySize(entry->declared, widthHint, block);
     if (size.isEmpty()) return {};
 
@@ -604,9 +633,12 @@ void NoteView::syncImageSpace(bool whole) {
     syncingImages_ = false;
 }
 
-QString NoteView::tooBigText(const QTextBlock& block, const CachedImage& entry) const {
+QString NoteView::frameText(const QTextBlock& block, const CachedImage& entry) const {
+    const QString name = QFileInfo(blockImageRef(block).path).fileName();
+    if (entry.state == ImageState::Missing)
+        return QStringLiteral("%1:\nфайл не найден").arg(name);
     return QStringLiteral("%1:\na big %2x%3 image")
-        .arg(QFileInfo(blockImageRef(block).path).fileName())
+        .arg(name)
         .arg(entry.declared.width())
         .arg(entry.declared.height());
 }
@@ -614,11 +646,11 @@ QString NoteView::tooBigText(const QTextBlock& block, const CachedImage& entry) 
 // Небольшой прямоугольник по размеру самой надписи, с полем вокруг. Ни
 // пропорций картинки, ни её размеров он не наследует: 1x1000000 растянуло бы
 // рамку на миллион пикселей, а показывать в ней всё равно нечего.
-QSizeF NoteView::tooBigBoxSize(const QTextBlock& block, const CachedImage& entry) const {
+QSizeF NoteView::frameBoxSize(const QTextBlock& block, const CachedImage& entry) const {
     const QFontMetricsF metrics(baseFont());
     const qreal padding = metrics.height();
     QSizeF box = metrics.boundingRect(QRectF(0, 0, 1e6, 1e6), Qt::AlignLeft | Qt::TextWordWrap,
-                                      tooBigText(block, entry))
+                                      frameText(block, entry))
                      .size();
     box += QSizeF(2 * padding, 2 * padding);
 
@@ -648,7 +680,7 @@ void NoteView::paintTooBigImage(QPainter& painter, const QTextBlock& block,
     painter.setFont(baseFont());
     painter.setPen(appearance().rawColor);
     painter.drawText(geometry.photo, Qt::AlignCenter | Qt::TextWordWrap,
-                     tooBigText(block, entry));
+                     frameText(block, entry));
 }
 
 void NoteView::paintImage(QPainter& painter, const QTextBlock& block) {

@@ -117,6 +117,102 @@ int main(int argc, char** argv) {
                 !store::deleteNoteFile(root, QStringLiteral("нет-такой"), &error));
     }
 
+    // --- verify: журналы ----------------------------------------------------
+    //
+    // Журнал не восстановим из файлов, поэтому проверяется всерьёз: каждый
+    // слепок обязан собираться и сходиться с отпечатком. И отдельно —
+    // достижимость вложений через прошлое: картинка, видная хоть в одной
+    // версии истории, не сирота.
+    {
+        const QString root = g_base + QStringLiteral("/проверка-журналов");
+        QString error;
+        ZT_TRUE("хранилище заведено", store::initStore(root, &error));
+        const QString path = store::newNote(root, QString(), &error);
+        const QString noteId = QFileInfo(path).completeBaseName();
+
+        // Вложение, на которое ссылается ТОЛЬКО прошлое: в живой заметке
+        // картинки уже нет.
+        const QString picture = QStringLiteral("01n6cqevh7bbfr.webp");
+        write(QStringLiteral("проверка-журналов/") + picture, "не картинка, но файл");
+
+        journal::History history(root);
+        const QByteArray withPicture =
+            QStringLiteral("<!-- zametti\ncreated: 2023-01-01T00:00:00Z\n-->\n\n"
+                           "# было\n\n![вид](%1)\n").arg(picture).toUtf8();
+        const QByteArray withoutPicture =
+            QStringLiteral("<!-- zametti\ncreated: 2023-01-01T00:00:00Z\n-->\n\n"
+                           "# стало\n\nбез картинки\n").toUtf8();
+        ZT_TRUE("слепок с картинкой",
+                history.append(noteId, journal::Kind::Save, 1'700'000'000'000LL, withPicture, 0,
+                               &error));
+        ZT_TRUE("слепок без картинки",
+                history.append(noteId, journal::Kind::Save, 1'700'000'060'000LL, withoutPicture,
+                               0, &error));
+        {
+            QFile f(path);
+            ZT_TRUE("живая заметка — без картинки", f.open(QIODevice::WriteOnly));
+            f.write(withoutPicture);
+        }
+
+        store::Report report;
+        const bool ok = store::verifyStore(root, report);
+        ZT_TRUE("проверка проходит", ok);
+        const QString all = report.lines.join(QLatin1Char('\n'));
+        ZT_TRUE("журналы посчитаны", all.contains(QStringLiteral("журналов: 1")));
+        ZT_TRUE("вложение, видное только в прошлом, не сирота",
+                !all.contains(QStringLiteral("осиротевшее вложение")));
+
+        // Испорченный слепок обязан всплыть бедой, а не молчанием.
+        {
+            QFile f(history.pathFor(noteId));
+            ZT_TRUE("журнал открылся", f.open(QIODevice::ReadWrite));
+            QByteArray blob = f.readAll();
+            blob[blob.size() - 4] = char(blob[blob.size() - 4] ^ 0x5a);
+            f.seek(0);
+            f.write(blob);
+        }
+        store::Report broken;
+        ZT_TRUE("проверка видит порчу в журнале", !store::verifyStore(root, broken));
+        ZT_TRUE("и называет журнал",
+                broken.lines.join(QLatin1Char('\n')).contains(QStringLiteral("журнал")));
+    }
+
+    // --- verify: журнал без заметки -----------------------------------------
+    {
+        const QString root = g_base + QStringLiteral("/журнал-без-заметки");
+        QString error;
+        ZT_TRUE("хранилище заведено", store::initStore(root, &error));
+        const QString path = store::newNote(root, QString(), &error);
+        const QString noteId = QFileInfo(path).completeBaseName();
+        journal::History history(root);
+        history.append(noteId, journal::Kind::Save, 1'700'000'000'000LL,
+                       QByteArray("<!-- zametti\ncreated: 2023-01-01T00:00:00Z\n-->\n\n"
+                                  "# была\n"),
+                       0, &error);
+
+        // Удалили как положено — надгробие есть, история осталась намеренно.
+        ZT_TRUE("заметка удалена", store::deleteNoteFile(root, noteId, &error));
+        store::Report buried;
+        ZT_TRUE("проверка проходит", store::verifyStore(root, buried));
+        ZT_TRUE("и надгробие названо нормой",
+                buried.lines.join(QLatin1Char('\n'))
+                    .contains(QStringLiteral("с надгробием")));
+
+        // А теперь заметку унесли мимо программы: журнал есть, надгробия нет.
+        const QString second = store::newNote(root, QString(), &error);
+        const QString secondId = QFileInfo(second).completeBaseName();
+        history.append(secondId, journal::Kind::Save, 1'700'000'000'000LL,
+                       QByteArray("<!-- zametti\ncreated: 2023-01-01T00:00:00Z\n-->\n\n"
+                                  "# унесли\n"),
+                       0, &error);
+        ZT_TRUE("файл унесён мимо программы", QFile::remove(second));
+        store::Report orphan;
+        ZT_TRUE("проверка всё ещё проходит", store::verifyStore(root, orphan));
+        ZT_TRUE("но про унесённую сказано",
+                orphan.lines.join(QLatin1Char('\n'))
+                    .contains(QStringLiteral("мимо программы")));
+    }
+
     // --- new ----------------------------------------------------------------
     {
         QString error;

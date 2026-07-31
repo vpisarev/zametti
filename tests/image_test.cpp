@@ -54,6 +54,63 @@ const qreal kGap = 6.0;
 
 }  // namespace
 
+
+// Пропавшее вложение — рамка, а не пустота.
+//
+// Случай не выдуманный: файл могли удалить руками, он мог не приехать с
+// синхронизацией, а в слепке истории ссылка на давно удалённое — вообще норма.
+// Байты ссылки в заметке при этом неприкосновенны: вернётся файл — вернётся и
+// картинка, и это тоже проверяется.
+void checkMissingAttachment() {
+    const fs::path dir = fs::temp_directory_path() / "zametti-нет-вложения";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+
+    const QString picture = QString::fromStdString((dir / "01n6cqevh7bbfr.webp").string());
+    const QString note = QString::fromStdString((dir / "заметка.md").string());
+    {
+        QFile f(note);
+        ZT_TRUE("заметка записана", f.open(QIODevice::WriteOnly));
+        f.write(QStringLiteral("# Заметка\n\n![вид](01n6cqevh7bbfr.webp#w=300)\n").toUtf8());
+    }
+
+    zametti::NoteEditor editor;
+    editor.resize(800, 600);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(note);
+    QTest::qWait(50);
+
+    ZT_EQ("файла нет — картинка не показана", std::string("0"),
+          std::to_string(editor.shownImageCount()));
+    ZT_EQ("вместо неё рамка", std::string("1"),
+          std::to_string(editor.framedImageCount()));
+
+    // Место под рамку держится: строка не схлопнулась в обычную.
+    const QTextBlock block = editor.document()->findBlockByNumber(2);
+    ZT_TRUE("строка осталась строкой-фотографией", zametti::blockImageRef(block).valid);
+    ZT_TRUE("и под неё отведено место",
+            block.blockFormat().bottomMargin() > 0.0);
+
+    // Байты ссылки не тронуты.
+    const std::string text = zametti::serialize(zametti::readDocument(*editor.document()));
+    ZT_TRUE("ссылка в заметке цела",
+            text.find("01n6cqevh7bbfr.webp#w=300") != std::string::npos);
+
+    // Файл вернулся — вернулась и картинка.
+    QImage real(120, 80, QImage::Format_RGB32);
+    real.fill(Qt::darkGreen);
+    ZT_TRUE("вложение вернулось", real.save(picture));
+    editor.openFile(note);
+    QTest::qWait(50);
+    ZT_EQ("рамки больше нет", std::string("0"),
+          std::to_string(editor.framedImageCount()));
+    ZT_EQ("картинка показана", std::string("1"),
+          std::to_string(editor.shownImageCount()));
+
+    fs::remove_all(dir);
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     zametti::loadAppearance(nullptr);
@@ -96,8 +153,11 @@ int main(int argc, char** argv) {
             std::fabs(marginOf(0) - (64.0 + kGap - lineOf(0))) < 1.5);
     ZT_TRUE("резерв вики-вложения: ширина 40 уважена",
             std::fabs(marginOf(2) - qMax(0.0, 40.0 + kGap - lineOf(2))) < 1.5);
-    // Файла нет — и места нет.
-    ZT_TRUE("под пропавший файл места нет", marginOf(4) == 0.0);
+    // Файла нет — но место есть: с этапа 7 вместо пропавшего вложения рисуется
+    // рамка «файл не найден», и под неё резервируется место. Прежде строка
+    // схлопывалась в обычную, и пропажа выглядела как будто картинки тут
+    // никогда и не было.
+    ZT_TRUE("под пропавший файл держится место для рамки", marginOf(4) > 0.0);
     ZT_TRUE("под обычный текст места нет", marginOf(6) == 0.0);
 
     // Цвет в центре фотографии блока — тонировку видно по нему.
@@ -825,6 +885,8 @@ int main(int argc, char** argv) {
         ZT_TRUE("прокрутив до упора, картинку видно целиком",
                 !photo.isEmpty() && photo.bottom() <= tailEditor.viewport()->height() + 1.0);
     }
+
+    checkMissingAttachment();
 
     return zt::report("картинки в просмотре");
 }

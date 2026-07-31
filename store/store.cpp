@@ -968,13 +968,91 @@ bool verifyStore(const QString& root, Report& report) {
         }
     }
 
+    // --- журналы ------------------------------------------------------------
+    //
+    // Журнал — не кэш: он не восстановим из файлов и однажды поедет в синк.
+    // Поэтому проверяется он всерьёз: рамки записей и версия формата (их
+    // разбирает сам читатель), а сверх того — что КАЖДЫЙ слепок собирается и
+    // сходится со своим отпечатком. Собрать значит и распаковать по кодеку
+    // записи, и пройти всю цепочку её поколения: у звена нет смысла в отрыве
+    // от предшественника.
+    //
+    // Заодно отсюда берётся достижимость вложений. Вложение живо, если на него
+    // ссылается живая заметка ИЛИ любой выживший слепок любого журнала: пока
+    // картинка видна хоть в одной версии прошлого, она не сирота. Иначе
+    // будущая уборка снесла бы то, ради чего история и заводилась.
+    const QDir historyDir(d.filePath(QStringLiteral("history")));
+    int journals = 0;
+    qint64 records = 0;
+    if (historyDir.exists()) {
+        journal::History history(root);
+        for (const QString& name :
+             historyDir.entryList({QStringLiteral("*.log")}, QDir::Files)) {
+            const QString noteId = name.left(name.size() - 4);
+            if (!isValidNoteId(toUtf8(noteId))) {
+                report.problem(QStringLiteral("чужой файл в history/: %1").arg(name));
+                continue;
+            }
+            journal::Journal j;
+            QString error;
+            if (!history.read(noteId, &j, &error)) {
+                report.problem(QStringLiteral("журнал %1: %2").arg(name, error));
+                continue;
+            }
+            ++journals;
+            records += j.entries.size();
+            if (j.tailTrimmed)
+                report.note(QStringLiteral("журнал %1: оборванный хвост "
+                                           "(отрежется при первой дозаписи)")
+                                .arg(name));
+
+            for (int i = 0; i < j.entries.size(); ++i) {
+                if (!j.entries[i].hasSnapshot()) continue;
+                QByteArray body;
+                if (!history.snapshotAt(noteId, i, &body, &error)) {
+                    report.problem(QStringLiteral("журнал %1, запись %2: %3")
+                                       .arg(name)
+                                       .arg(i)
+                                       .arg(error));
+                    continue;
+                }
+                // Что видно в слепке — то живо. Разбираем тем же ядром, что и
+                // заметку: второго способа прочитать её нет.
+                const Document old = parse(std::string(body.constData(), size_t(body.size())));
+                for (const Block& b : old.blocks)
+                    for (const Inline& span : old.inlines(b)) {
+                        if (!span.image()) continue;
+                        QString href = fromUtf8(std::string(old.href(span)));
+                        const qsizetype hash = href.lastIndexOf(QLatin1Char('#'));
+                        if (hash >= 0) href = href.left(hash);
+                        if (isLocalRelative(href)) referenced.insert(href);
+                    }
+            }
+
+            // Журнал без заметки. Надгробие — норма: заметку удалили, и её
+            // история осталась намеренно, по ней её и воскрешают. Нет
+            // надгробия — заметку унесли мимо программы, и сказать об этом
+            // надо, но бедой это не считаем: файл мог убрать сам человек.
+            if (notes.find(toUtf8(noteId)) != notes.end()) continue;
+            const bool buried = !j.entries.isEmpty() &&
+                                j.entries.last().kind == journal::Kind::Tombstone;
+            report.note(buried ? QStringLiteral("журнал удалённой заметки %1 (с надгробием)")
+                                     .arg(noteId)
+                               : QStringLiteral("журнал %1 без заметки и без надгробия: "
+                                                "файл унесли мимо программы")
+                                     .arg(noteId));
+        }
+    }
+
     for (const QString& name : attachments)
         if (referenced.find(name) == referenced.end())
             report.note(QStringLiteral("осиротевшее вложение: %1").arg(name));
 
-    report.note(QStringLiteral("заметок: %1, вложений: %2")
+    report.note(QStringLiteral("заметок: %1, вложений: %2, журналов: %3 (записей %4)")
                     .arg(notes.size())
-                    .arg(attachments.size()));
+                    .arg(attachments.size())
+                    .arg(journals)
+                    .arg(records));
     return report.problems == 0;
 }
 
