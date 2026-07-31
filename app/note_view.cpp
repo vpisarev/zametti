@@ -76,7 +76,7 @@ NoteView::NoteView(QWidget* parent) : QTextBrowser(parent) {
     connect(this, &QTextEdit::textChanged, this, &NoteView::showCaret);
     // Правка могла родить или убить строку с картинкой — место перемеряется
     // после каждой. Свои же выставления полей отсекает syncingImages_.
-    connect(this, &QTextEdit::textChanged, this, &NoteView::syncImageSpace);
+    connect(this, &QTextEdit::textChanged, this, [this] { syncImageSpace(false); });
     // Тонировка выделенной фотографии — своя отрисовка, Qt про неё не знает;
     // перерисовка на каждой смене выделения (снятие позицию не двигает и
     // cursorPositionChanged не даёт).
@@ -514,15 +514,48 @@ void NoteView::setImageDragWidth(int blockNumber, qreal width) {
     viewport()->update();
 }
 
-void NoteView::syncImageSpace() {
+void NoteView::markImageRegion(int position, int charsAdded) {
+    if (syncingImages_) return;   // свои же правки полей перемерять незачем
+    const int last = qMax(0, document()->characterCount() - 1);
+    const int from = qBound(0, position, last);
+    const int to = qBound(from, position + charsAdded, last);
+    if (imageDirty_.isNull() || imageDirty_.document() != document()) {
+        imageDirty_ = QTextCursor(document());
+        imageDirty_.setPosition(from);
+        imageDirty_.setPosition(to, QTextCursor::KeepAnchor);
+        return;
+    }
+    imageDirty_.setPosition(qMin(imageDirty_.selectionStart(), from));
+    imageDirty_.setPosition(qMax(imageDirty_.selectionEnd(), to), QTextCursor::KeepAnchor);
+}
+
+void NoteView::syncImageSpace(bool whole) {
     if (syncingImages_) return;
     syncingImages_ = true;
-    // Набор незащищаемых от вытеснения собирается заново: он про ТУ заметку,
-    // что в документе сейчас. Наполнит его сам обход ниже — cachedImage
-    // зовётся ровно для картинок этого документа.
-    currentNoteImages_.clear();
+
+    // Полный обход — когда меняется не текст, а всё сразу: ширина колонки,
+    // масштаб, сам документ. Частичный — когда правка задела кусок и её
+    // границы нам сказали. Без границ полный: верно всегда, просто дороже.
+    const bool partial = !whole && !imageDirty_.isNull();
+    int first = 0;
+    int afterLast = document()->blockCount() - 1;
+    if (partial) {
+        // Соседний блок с каждой стороны — про запас, как и в уборке: правка
+        // на границе блоков сливает и делит их.
+        first = qMax(0, document()->findBlock(imageDirty_.selectionStart()).blockNumber() - 1);
+        afterLast = qMin(afterLast,
+                         document()->findBlock(imageDirty_.selectionEnd()).blockNumber() + 1);
+    }
+    imageDirty_ = QTextCursor();
+
+    // Набор незащищаемых от вытеснения собирается заново — но только при
+    // полном обходе: при частичном мы видим не все картинки заметки, и
+    // очистив набор, отдали бы остальные на вытеснение.
+    if (!partial) currentNoteImages_.clear();
     const qreal gap = imageGap(zoom_);
-    for (QTextBlock block = document()->begin(); block.isValid(); block = block.next()) {
+    QTextBlock block = document()->findBlockByNumber(first);
+    for (int number = first; number <= afterLast && block.isValid();
+         ++number, block = block.next()) {
         const ImageGeometry geometry = imageGeometry(block);
         qreal want = 0.0;
         if (geometry.valid) {

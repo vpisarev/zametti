@@ -180,6 +180,10 @@ void NoteEditor::onCaretMoved() {
 // заводит.
 void NoteEditor::onContentsChange(int position, int charsRemoved, int charsAdded) {
     Q_UNUSED(charsRemoved);
+    // Границы нужны не только уборке: место под фотографии тоже перемеряется
+    // после каждой правки, и по всему документу это 458 мкс на большой
+    // заметке — почти всё, что мы добавляем сверх Qt.
+    markImageRegion(position, charsAdded);
     if (tidying_) return;
     const int last = qMax(0, document()->characterCount() - 1);
     const int from = qBound(0, position, last);
