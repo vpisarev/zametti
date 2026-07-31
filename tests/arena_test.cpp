@@ -15,7 +15,10 @@
 #include <string_view>
 #include <vector>
 
-#if defined(__unix__) || defined(__APPLE__)
+// Смертельные проверки стерегут assert внутри validate(), а в сборке с NDEBUG
+// его нет вовсе: ронять там нечему, и проверять нечего. Признак сборки, а не
+// молчаливый пропуск, — иначе набор был бы «зелёным» в release по недосмотру.
+#if (defined(__unix__) || defined(__APPLE__)) && !defined(NDEBUG)
 #include <sys/wait.h>
 #include <unistd.h>
 #define ZAMETTI_CAN_FORK 1
@@ -276,6 +279,7 @@ void checkValidate() {
     ZT_TRUE("дословный кусок с родом ловится", abortsOn(damageRawWithKind));
 }
 #else
+// Без assert проверять нечего: validate() в release не роняет по построению.
 void checkValidate() {}
 #endif
 

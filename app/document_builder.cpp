@@ -549,13 +549,19 @@ bool sameBlock(const Document& a, const Block& x, const Document& b, const Block
 void checkPatchMatchesBuild(const Document& to, const QTextDocument& target, qreal zoom) {
     QTextDocument reference;
     buildDocument(to, reference, zoom);
-    // Нижние поля в сравнении не участвуют: их держит вид, а не сборщик.
-    // У блока в нижнем поле живёт высота фотографии; у рамки — недостача за
-    // картинку в последней строке (Qt не берёт нижнее поле последнего блока в
-    // высоту документа, см. note_view.cpp). Сборщик пишет туда своё, вид
-    // ставит заново; заплатка нетронутое не трогает, и поле остаётся стоять.
-    // Разница не в сборке, а в том, что сборка сбивает чужое.
-    const QList<int> skip{QTextFormat::BlockBottomMargin, QTextFormat::FrameBottomMargin};
+    // Поля в сравнении не участвуют: их держит ВИД, а не сборщик, и заплатка
+    // их не трогает вовсе — сверять тут нечего.
+    //   - нижнее поле блока: в нём живёт высота фотографии (syncImageSpace);
+    //   - поля рамки: их пересчитывает applyContentWidth под ширину окна —
+    //     колонка в широком окне центрируется, и левое поле у живого документа
+    //     87 против 55.99 у только что собранного. Сборщик ставит начальные
+    //     значения, вид тут же ставит свои.
+    // Сравнивать чужое — значит ловить не расхождение заплатки, а порядок
+    // вызовов. Ровно на этом проверка и падала: у всех тестовых окон колонка
+    // уже колонки не была, центрирование не включалось, и разница не всплывала.
+    const QList<int> skip{QTextFormat::BlockBottomMargin,   QTextFormat::FrameTopMargin,
+                          QTextFormat::FrameBottomMargin,   QTextFormat::FrameLeftMargin,
+                          QTextFormat::FrameRightMargin};
     const QString want = documentFingerprint(reference, skip);
     const QString got = documentFingerprint(target, skip);
     if (want == got) return;

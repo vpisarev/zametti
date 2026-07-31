@@ -28,6 +28,7 @@
 #include <QScrollBar>
 #include <QTextCursor>
 #include <QTextFragment>
+#include <QTextFrame>
 #include <QTextLayout>
 #include <QTextLine>
 #include <QTextDocument>
@@ -663,6 +664,41 @@ void checkDeferredSnapshot() {
     editor.undo();
     QTest::qWait(10);
     checkEqual(QStringLiteral("основа one\n"), text(), "пауза разделяет серии набора");
+}
+
+// Широкое окно: колонка уже окна, и applyContentWidth раздвигает поля рамки,
+// центрируя её. Поля рамки держит ВИД, а не сборщик, и заплатка их не трогает
+// — но сверка заплатки с полной сборкой их сравнивала и роняла отладочную
+// сборку на первом же Enter в списке. У всех прежних тестов окно было узкое,
+// центрирование не включалось, и разница не всплывала.
+void checkWideWindowOperations() {
+    const QString path = writeNote("широкое-окно.md",
+                                   QStringLiteral("15-21 декабря:\n- [x] пункт\n- [ ] другой\n"));
+    zametti::NoteEditor editor;
+    // Заведомо шире maxContentWidth: поля обязаны раздвинуться.
+    editor.resize(1400, 800);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    const qreal side = editor.document()->rootFrame()->frameFormat().leftMargin();
+    check(side > 60.0, "в широком окне колонка центрируется: поле рамки раздвинуто");
+
+    // Enter в конце пункта — та самая операция, на которой падало.
+    QTextCursor at(editor.document()->findBlockByNumber(1));
+    editor.setTextCursor(at);
+    QTest::keyClick(&editor, Qt::Key_End);
+    QTest::qWait(10);
+    QTest::keyClick(&editor, Qt::Key_Return);
+    QTest::qWait(10);
+    check(editor.document()->blockCount() == 4, "Enter завёл новый пункт");
+    checkEqual(QStringLiteral("15-21 декабря:"), firstLine(editor),
+               "текст первой строки цел");
+    // И поля не сбились от заплатки: колонка осталась центрированной.
+    check(std::fabs(editor.document()->rootFrame()->frameFormat().leftMargin() - side) < 0.5,
+          "поля рамки после операции на месте");
 }
 
 // Текст после переноса строки обязан набираться тем же кеглем. Разделитель
@@ -1827,6 +1863,7 @@ int main(int argc, char** argv) {
     checkSelectionSurvivesOperation();
     checkUndoFromKeyboard();
     checkDeferredSnapshot();
+    checkWideWindowOperations();
     checkSizeAfterSoftBreak();
     checkCodeTyping();
     checkCodeAtEdge();
