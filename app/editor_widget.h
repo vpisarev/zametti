@@ -228,6 +228,11 @@ private:
     void rebuild(const Document& doc, int cursor, const ViewAnchor& anchor,
                  const Document* current = nullptr);
     void recordEdit();
+    // Записать отложенный снимок прямо сейчас. Обязателен везде, где история
+    // читается или пополняется: иначе шаг серии остался бы без содержимого.
+    void flushPendingEdit();
+    // Забыть отложенный снимок вместе с серией: открылся другой файл.
+    void forgetPendingEdit();
     void onContentsChanged();
     void onContentsChange(int position, int charsRemoved, int charsAdded);
     void onCaretMoved();
@@ -332,7 +337,15 @@ private:
     std::string externalText_;
 
     QTimer autosave_;
-    QElapsedTimer sinceLastEdit_;
+    // Снимок истории — не на каждую букву, а в конце серии набора: снимок
+    // читает документ целиком, и на каждое нажатие это O(N). Таймер тот же,
+    // которым серия и склеивается в один шаг.
+    QTimer snapshot_;
+    bool pendingEdit_ = false;
+    int pendingCursor_ = 0;
+    // Шаг истории уже заведён этой серией: следующий снимок дописывает его, а
+    // не заводит новый.
+    bool typingRun_ = false;
     QString lastComplaint_;
     // Где стояла каретка в каждой заметке этой сессии: переключение туда-сюда
     // не должно каждый раз возвращать к началу.

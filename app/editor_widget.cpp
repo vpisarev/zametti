@@ -98,6 +98,13 @@ NoteEditor::NoteEditor(QWidget* parent)
 
     autosave_.setSingleShot(true);
     connect(&autosave_, &QTimer::timeout, this, [this] { save(true); });
+    snapshot_.setSingleShot(true);
+    // Тишина дольше склейки — серия набора кончилась: записываем шаг и
+    // закрываем серию, следующая буква заведёт новый шаг.
+    connect(&snapshot_, &QTimer::timeout, this, [this] {
+        flushPendingEdit();
+        typingRun_ = false;
+    });
     // Оба сигнала, и порядок важен: contentsChange приходит первым и приносит
     // границы правки, contentsChanged — следом, и по нему уже подметаем.
     connect(document(), &QTextDocument::contentsChange, this, &NoteEditor::onContentsChange);
@@ -347,7 +354,7 @@ bool NoteEditor::openFile(const QString& path) {
     watchFile();
     // Серию набора обрываем: иначе первая правка в новой заметке подмешалась бы
     // к её исходному состоянию и отменить её было бы нечем.
-    sinceLastEdit_.invalidate();
+    forgetPendingEdit();
 
     Document doc = parse(text);
     meta_ = doc.meta;
@@ -420,6 +427,7 @@ void NoteEditor::resolveExternalConflict(bool takeExternal) {
 }
 
 void NoteEditor::adoptExternal(const std::string& text) {
+    flushPendingEdit();
     Document ir = parse(text);
     // Чужой редактор мог снести или испортить блок метаданных. Тихо принять
     // это нельзя: заметка потеряла бы родителя и дату создания, то есть уехала
@@ -446,7 +454,7 @@ void NoteEditor::adoptExternal(const std::string& text) {
 
     meta_ = ir.meta;
     history_.push(ir, textCursor().position());
-    sinceLastEdit_.invalidate();
+    typingRun_ = false;
     rebuild(ir, textCursor().position(), viewAnchor());
     document()->setModified(false);
 
@@ -486,6 +494,7 @@ void NoteEditor::applyZoom(qreal value) {
 }
 
 void NoteEditor::refreshAppearance() {
+    flushPendingEdit();
     // Облик меняется — содержимое нет. Берём его из истории и собираем заново;
     // ни нового шага, ни сдвига по истории при этом не происходит.
     //
@@ -658,6 +667,7 @@ int NoteEditor::replaceAllMatches(const QString& text, bool caseSensitive,
 }
 
 void NoteEditor::undo() {
+    flushPendingEdit();
     const int scrollBefore = verticalScrollBar()->value();
     // Курсор ставим туда, где была отменяемая правка, — но её позиция записана
     // в координатах ОТМЕНЯЕМОГО документа, а вернём мы другой. Отображаем
@@ -703,6 +713,7 @@ void NoteEditor::undo() {
 }
 
 void NoteEditor::redo() {
+    flushPendingEdit();
     const int scrollBefore = verticalScrollBar()->value();
     const HistoryStep* step = history_.redo();
     if (step == nullptr) return;
@@ -1254,6 +1265,10 @@ bool NoteEditor::runOperation(bool (*op)(QTextDocument&, QTextCursor&)) {
 }
 
 bool NoteEditor::runOperation(const std::function<bool(QTextDocument&, QTextCursor&)>& op) {
+    // Набранное до операции обязано остаться отдельным шагом: Ctrl+Z после
+    // правила черты возвращает голые дефисы, а не съедает их вместе с чертой.
+    // Снимок только один на серию, так что платим за него не чаще раза.
+    flushPendingEdit();
     QTextCursor cursor = textCursor();
     const int scrollBefore = verticalScrollBar()->value();
     // Шаг истории у операции свой; правки, которые она делает по дороге, в
@@ -1279,7 +1294,7 @@ bool NoteEditor::runOperation(const std::function<bool(QTextDocument&, QTextCurs
     Document ir = readDocument(*document());
     history_.push(ir, position);
     // Операция — отдельный шаг: следующая набранная буква к ней не приклеится.
-    sinceLastEdit_.invalidate();
+    typingRun_ = false;
 
     rebuild(ir, position, viewAnchor(), &ir);
     // Выделение возвращаем: операция могла тронуть десяток пунктов сразу, и
@@ -1386,6 +1401,8 @@ void NoteEditor::insertFromMimeData(const QMimeData* source) {
 }
 
 void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
+    // Вставка — свой шаг истории, и набранное до неё обязано остаться своим.
+    flushPendingEdit();
     const int scrollBefore = verticalScrollBar()->value();
     if (text.isEmpty()) return;
     const QByteArray utf8 = text.toUtf8();
@@ -1481,7 +1498,7 @@ void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
 
     Document ir = readDocument(*document());
     history_.push(ir, landed);
-    sinceLastEdit_.invalidate();
+    typingRun_ = false;
     rebuild(ir, landed, viewAnchor(), &ir);
     document()->setModified(true);
     showEditPlace(scrollBefore);
@@ -1493,11 +1510,12 @@ bool NoteEditor::moveItem(int direction) {
 }
 
 bool NoteEditor::applyIrEdit(const MoveResult& moved) {
+    flushPendingEdit();
     if (!moved.done) return false;
     const int scrollBefore = verticalScrollBar()->value();
 
     history_.push(moved.doc, textCursor().position());
-    sinceLastEdit_.invalidate();
+    typingRun_ = false;
     rebuild(moved.doc, 0, viewAnchor());
 
     // Курсор ставим по месту в IR: после перестановки или слияния блоков прежняя
@@ -1544,18 +1562,32 @@ void NoteEditor::onContentsChanged() {
     autosave_.start(appearance().autosaveDelayMs);
 }
 
+// Правка есть — снимка пока нет. Читать документ целиком на каждую букву
+// незачем: набор подряд всё равно склеивается в один шаг, и все промежуточные
+// снимки этого шага выбрасываются. Ждём конца серии.
 void NoteEditor::recordEdit() {
-    Document doc = readDocument(*document());
-    const int cursor = textCursor().position();
+    pendingCursor_ = textCursor().position();
+    pendingEdit_ = true;
+    snapshot_.start(appearance().undoCoalesceMs);
+}
 
-    // Набор подряд — один шаг: иначе Ctrl+Z возвращал бы по одной букве. Паузу
-    // меряем от предыдущей правки, а не от начала шага, — тогда длинная фраза
-    // без пауз остаётся одним шагом, как и ожидается.
-    const bool sameRun = sinceLastEdit_.isValid() &&
-                         sinceLastEdit_.elapsed() < appearance().undoCoalesceMs;
-    if (sameRun) history_.amend(std::move(doc), cursor);
-    else history_.push(std::move(doc), cursor);
-    sinceLastEdit_.restart();
+void NoteEditor::flushPendingEdit() {
+    if (!pendingEdit_) return;
+    pendingEdit_ = false;
+    snapshot_.stop();
+    // Набор подряд — один шаг: иначе Ctrl+Z возвращал бы по одной букве. Серия
+    // кончается тишиной (сработал таймер) или чем угодно, что заводит
+    // собственный шаг, — те сами гасят признак.
+    Document doc = readDocument(*document());
+    if (typingRun_) history_.amend(std::move(doc), pendingCursor_);
+    else history_.push(std::move(doc), pendingCursor_);
+    typingRun_ = true;
+}
+
+void NoteEditor::forgetPendingEdit() {
+    pendingEdit_ = false;
+    snapshot_.stop();
+    typingRun_ = false;
 }
 
 void NoteEditor::editMeta(const std::function<void(NoteMeta&)>& change) {
@@ -1580,6 +1612,9 @@ void NoteEditor::setMetaParent(const QString& parentId) {
 
 void NoteEditor::save(bool interactive) {
     if (path_.isEmpty() || !document()->isModified()) return;
+    // До записи: сохранение умеет пересобрать документ из перечитанного файла,
+    // и шаг серии остался бы без содержимого.
+    flushPendingEdit();
 
     // modified обновляется только при настоящем сохранении: сюда мы доходим
     // лишь с несохранёнными правками, так что цикла «запись ради метаданных»

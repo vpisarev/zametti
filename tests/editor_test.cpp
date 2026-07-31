@@ -580,6 +580,91 @@ void checkUndoFromKeyboard() {
     checkEqual(QStringLiteral("текст правка\n"), text(), "Ctrl+Shift+Z возвращает");
 }
 
+// Снимок истории откладывается до конца серии набора: читать документ целиком
+// на каждую букву — это O(N) на нажатие. Отложенный снимок обязан быть на
+// месте всюду, где история читается или пополняется, и здесь проверены все
+// такие места разом — каждое из них без записи снимка теряло бы набранное.
+// Набираем латиницей: QTest::keyClicks умеет только ASCII. Каждый случай — со
+// своим файлом: открытие заметки сохраняет прежнюю, и случаи протекали бы
+// друг в друга.
+void checkDeferredSnapshot() {
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+
+    auto text = [&editor] {
+        return QString::fromStdString(
+            zametti::serialize(zametti::readDocument(*editor.document())));
+    };
+    auto open = [&](const char* name) {
+        editor.openFile(writeNote(name, QStringLiteral("основа\n")));
+        QTest::qWait(10);
+        QTextCursor cursor = editor.textCursor();
+        cursor.movePosition(QTextCursor::End);
+        editor.setTextCursor(cursor);
+    };
+
+    // Отмена сразу после набора, без паузы: снимок ещё отложен, и отменять
+    // было бы нечего.
+    open("снимок-отмена.md");
+    QTest::keyClicks(&editor, QStringLiteral(" tail"));
+    editor.undo();
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("основа\n"), text(), "отмена сразу после набора");
+
+    // Набор, потом операция: набранное — свой шаг, операция — свой.
+    open("снимок-операция.md");
+    QTest::keyClicks(&editor, QStringLiteral(" more"));
+    const QString typed = text();
+    QTest::keyClick(&editor, Qt::Key_Return);
+    QTest::qWait(10);
+    editor.undo();
+    QTest::qWait(10);
+    checkEqual(typed, text(), "отмена операции возвращает к набранному");
+    editor.undo();
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("основа\n"), text(), "вторая отмена возвращает к исходному");
+
+    // Смена облика посреди серии: она собирает документ ИЗ ИСТОРИИ, и со
+    // стухшим снимком набранное просто пропало бы с экрана.
+    open("снимок-масштаб.md");
+    QTest::keyClicks(&editor, QStringLiteral(" zoom"));
+    editor.applyZoom(1.5);
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("основа zoom\n"), text(), "набранное переживает смену масштаба");
+    editor.applyZoom(1.0);
+    QTest::qWait(10);
+
+    // Сохранение посреди серии: оно умеет пересобрать документ из файла.
+    const QString saved = writeNote("снимок-запись.md", QStringLiteral("основа\n"));
+    editor.openFile(saved);
+    QTest::qWait(10);
+    {
+        QTextCursor cursor = editor.textCursor();
+        cursor.movePosition(QTextCursor::End);
+        editor.setTextCursor(cursor);
+    }
+    QTest::keyClicks(&editor, QStringLiteral(" save"));
+    editor.save(false);
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("основа save\n"), readFile(saved), "набранное дошло до файла");
+    editor.undo();
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("основа\n"), text(), "после записи отмена возвращает к исходному");
+
+    // Серия кончается тишиной: два прогона набора — два шага.
+    open("снимок-пауза.md");
+    QTest::keyClicks(&editor, QStringLiteral(" one"));
+    QTest::qWait(zametti::appearance().undoCoalesceMs + 150);
+    QTest::keyClicks(&editor, QStringLiteral(" two"));
+    QTest::qWait(zametti::appearance().undoCoalesceMs + 150);
+    editor.undo();
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("основа one\n"), text(), "пауза разделяет серии набора");
+}
+
 // Текст после переноса строки обязан набираться тем же кеглем. Разделитель
 // строк шрифту неизвестен, и без оговорки он попадал под правило увеличения
 // эмодзи — а набранное сразу после него наследовало крупный формат.
@@ -1741,6 +1826,7 @@ int main(int argc, char** argv) {
     checkInputRules();
     checkSelectionSurvivesOperation();
     checkUndoFromKeyboard();
+    checkDeferredSnapshot();
     checkSizeAfterSoftBreak();
     checkCodeTyping();
     checkCodeAtEdge();
