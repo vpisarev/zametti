@@ -1802,8 +1802,10 @@ void NoteEditor::save(bool interactive) {
                       .toString(QStringLiteral("yyyy-MM-ddTHH:mm:ss'Z'"))
                       .toStdString());
 
+    // Отпечаток того, что в файле, мы знаем — значит «не изменилось ли»
+    // решается без чтения файла.
     const SaveOutcome outcome =
-        saveDocument(*document(), path_, rescueTimestamp(), nullptr, meta_);
+        saveDocument(*document(), path_, rescueTimestamp(), nullptr, meta_, knownDigest_);
     if (outcome.result == SaveResult::Written || outcome.result == SaveResult::Unchanged) {
         document()->setModified(false);
         lastComplaint_.clear();

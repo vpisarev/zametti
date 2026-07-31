@@ -653,18 +653,20 @@ bool canonicaliseNoteFile(const QString& path, std::string& text, Digest& digest
 
 SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
                          const QString& timestamp, DocumentReaderFn reader,
-                         const NoteMeta& meta) {
+                         const NoteMeta& meta, const Digest& known) {
     Document read = reader ? reader(doc) : readDocument(doc);
     read.meta = meta;
     const Document ir = documentForFile(std::move(read));
     const QByteArray text = toBytes(serialize(ir));
 
-    // Не писать, если не изменилось. Сравнение здесь побайтовое, а не по
-    // отпечатку: файл всё равно прочитан целиком, и хеш от него ничего бы не
-    // ускорил. Отпечаток нужен ПОСЛЕ — тому, кто будет сверять файл, не читая
-    // его (кэш документов, слежение за внешними правками).
-    if (QFile::exists(path) && fileContents(path) == text) {
-        return {SaveResult::Unchanged, {}, {}, {}, false, hashOf(asView(text))};
+    // Не писать, если не изменилось.
+    const Digest digest = hashOf(asView(text));
+    if (!known.empty()) {
+        // Отпечаток файла известен — сравниваем отпечатки, файл не читаем.
+        if (digest == known) return {SaveResult::Unchanged, {}, {}, {}, false, digest};
+    } else if (QFile::exists(path) && fileContents(path) == text) {
+        // Не знаем — читаем и сравниваем байты, как раньше.
+        return {SaveResult::Unchanged, {}, {}, {}, false, digest};
     }
 
     // Последний рубеж: то, что мы собрались записать, должно читаться обратно в
@@ -718,7 +720,7 @@ SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
     }
     // Отпечаток — по тому же буферу и только после самопроверки: не прошла
     // она — файл не тронут, и отпечатку взяться неоткуда.
-    return {SaveResult::Written, {}, {}, reread, toJson(reread) != toJson(ir), hashOf(asView(text))};
+    return {SaveResult::Written, {}, {}, reread, toJson(reread) != toJson(ir), digest};
 }
 
 }  // namespace zametti

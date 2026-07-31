@@ -101,6 +101,25 @@ void checkSave(const std::string& source, const char* name) {
     check(second.digest == onDisk,
           std::string(name) + ": отпечаток при «не изменилось» тоже совпадает");
     check(!first.digest.empty(), std::string(name) + ": отпечаток не пуст");
+
+    // С известным отпечатком «не изменилось» решается без чтения файла. Чтобы
+    // это было ВИДНО, а не только быстро, подменим файл мусором: старый путь
+    // прочитал бы его и переписал, новый даже не заглянет.
+    check(writeFile(path, std::string("мусор, которого тут быть не должно\n")),
+          std::string(name) + ": мусор записан");
+    const zametti::SaveOutcome byDigest =
+        zametti::saveDocument(doc, path, QStringLiteral("test"), nullptr, {}, onDisk);
+    check(byDigest.result == zametti::SaveResult::Unchanged,
+          std::string(name) + ": с известным отпечатком файл не читается");
+    checkEqual(std::string("мусор, которого тут быть не должно\n"), readFile(path),
+               std::string(name) + ": и не переписывается");
+
+    // А без отпечатка — прежний путь: прочитает, увидит расхождение, перепишет.
+    const zametti::SaveOutcome byBytes =
+        zametti::saveDocument(doc, path, QStringLiteral("test"));
+    check(byBytes.result == zametti::SaveResult::Written,
+          std::string(name) + ": без отпечатка расхождение видно и файл переписан");
+    checkEqual(canonical, readFile(path), std::string(name) + ": и содержимое вернулось");
 }
 
 const char* const kSources[] = {
