@@ -181,6 +181,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("undoBudgetMb"), a.undoBudgetMb},
         {QStringLiteral("imageCacheSizeMb"), a.imageCacheSizeMb},
         {QStringLiteral("maxLoadedImageSize"), a.maxLoadedImageSize},
+        {QStringLiteral("documentCacheSizeMb"), a.documentCacheSizeMb},
         {QStringLiteral("toggleTaskKey"), a.toggleTaskKey},
         {QStringLiteral("moveUpKey"), a.moveUpKey},
         {QStringLiteral("moveDownKey"), a.moveDownKey},
@@ -337,6 +338,8 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     if (images.isDouble()) a.imageCacheSizeMb = images.toInt();
     const QJsonValue loaded = editor.value(QStringLiteral("maxLoadedImageSize"));
     if (loaded.isDouble()) a.maxLoadedImageSize = loaded.toInt();
+    const QJsonValue documents = editor.value(QStringLiteral("documentCacheSizeMb"));
+    if (documents.isDouble()) a.documentCacheSizeMb = documents.toInt();
     readString(editor, "toggleTaskKey", a.toggleTaskKey);
     readString(editor, "moveUpKey", a.moveUpKey);
     readString(editor, "moveDownKey", a.moveDownKey);

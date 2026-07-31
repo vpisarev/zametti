@@ -7,6 +7,7 @@
 #include "editor_ops.h"
 #include "marker.h"
 #include "parser.h"
+#include "serializer.h"
 #include "settings.h"
 
 #include <QDateTime>
@@ -106,11 +107,7 @@ NoteEditor::NoteEditor(QWidget* parent)
         flushPendingEdit();
         typingRun_ = false;
     });
-    // Оба сигнала, и порядок важен: contentsChange приходит первым и приносит
-    // границы правки, contentsChanged — следом, и по нему уже подметаем.
-    connect(document(), &QTextDocument::contentsChange, this, &NoteEditor::onContentsChange);
-    connect(document(), &QTextDocument::contentsChanged, this,
-            &NoteEditor::onContentsChanged);
+    connectDocument();
     connect(&watcher_, &QFileSystemWatcher::fileChanged, this, &NoteEditor::onFileChanged);
     externalSettle_.setSingleShot(true);
     connect(&externalSettle_, &QTimer::timeout, this, &NoteEditor::onExternalSettled);
@@ -328,6 +325,129 @@ void NoteEditor::tidyLeftLine(const QTextCursor& left) {
     tidying_ = false;
 }
 
+
+// Сигналы документа подключаются заново на каждой подмене: документ у нас не
+// один на всю жизнь виджета, а свой у каждой заметки.
+//
+// Оба сигнала, и порядок важен: contentsChange приходит первым и приносит
+// границы правки, contentsChanged — следом, и по нему уже подметаем.
+void NoteEditor::connectDocument() {
+    connect(document(), &QTextDocument::contentsChange, this, &NoteEditor::onContentsChange);
+    connect(document(), &QTextDocument::contentsChanged, this, &NoteEditor::onContentsChanged);
+}
+
+void NoteEditor::installDocument(std::unique_ptr<QTextDocument> doc) {
+    // Прежний держим живым до самой подмены: Qt удаляет старый документ только
+    // если сам его и заводил, а наши — наши, и умирают здесь, строкой ниже.
+    std::unique_ptr<QTextDocument> previous = std::move(ownDocument_);
+    if (document() != nullptr) disconnect(document(), nullptr, this, nullptr);
+    ownDocument_ = std::move(doc);
+    setDocument(ownDocument_.get());
+    connectDocument();
+    // Курсоры, державшиеся за прежний документ, теперь ни на что не указывают.
+    lastLine_ = QTextCursor();
+    dirty_ = QTextCursor();
+}
+
+qint64 NoteEditor::estimateDocumentBytes(const QTextDocument& doc) {
+    // Знаки UTF-16 плюс множитель на фрагменты, форматы и undo-стек Qt; плюс
+    // надбавка на сам документ, чтобы у крошечной заметки вес не выходил
+    // нулевым. Обоснование множителя — замером, см. documentCacheSizeMb.
+    return qint64(doc.characterCount()) * 2 * 9 / 2 + 4096;
+}
+
+qint64 NoteEditor::cachedNoteBytes() const {
+    qint64 total = 0;
+    for (const CachedNote& note : noteCache_) total += note.bytes;
+    return total;
+}
+
+void NoteEditor::clearNoteCache() {
+    noteCache_.clear();
+}
+
+void NoteEditor::trimNoteCache() {
+    const qint64 budget = qint64(qMax(1, appearance().documentCacheSizeMb)) * 1024 * 1024;
+    // С хвоста, пока не уложились: самое давнее уходит первым.
+    while (!noteCache_.empty() && cachedNoteBytes() > budget) noteCache_.pop_back();
+}
+
+void NoteEditor::stashCurrentNote() {
+    // Откладываем только ЧИСТОЕ и только то, чей отпечаток мы знаем: иначе при
+    // возврате не с чем было бы сверять файл. Несохранённое не откладываем
+    // вовсе — потерять правки страшнее, чем пересобрать документ.
+    if (path_.isEmpty() || ownDocument_ == nullptr) return;
+    if (document()->isModified() || knownDigest_.empty()) return;
+    flushPendingEdit();
+
+    // Инвариант кэша: в нём лежат только документы, чья сериализация БАЙТ В
+    // БАЙТ равна файлу. Документ имеет право отличаться от файла: хвост пустых
+    // строк в конце набирается случайно, в файл не идёт и при перечитывании
+    // исчезает. Отдав такой документ из кэша, мы вернули бы человеку то, чего в
+    // файле нет.
+    //
+    // Сериализуется документ КАК ЕСТЬ, без приведения к тому, что умеет
+    // файл: именно приведение и срезает хвост, и со сверкой через него
+    // отпечатки сходились бы всегда. Нам нужен другой вопрос — «этот документ
+    // и есть файл?», а не «запишется ли он в тот же файл».
+    Document read = readDocument(*document());
+    read.meta = meta_;
+    if (hashOf(serialize(read)) != knownDigest_) return;
+
+    const qint64 bytes = estimateDocumentBytes(*document());
+    const qint64 budget = qint64(qMax(1, appearance().documentCacheSizeMb)) * 1024 * 1024;
+    // Заметка тяжелее всего бюджета в кэш не идёт: она вытеснила бы всё
+    // остальное и всё равно осталась бы одна.
+    if (bytes > budget) return;
+
+    // Прежняя запись про этот же файл больше не нужна.
+    std::erase_if(noteCache_, [this](const CachedNote& note) { return note.path == path_; });
+
+    CachedNote note;
+    note.path = path_;
+    note.document = std::move(ownDocument_);
+    note.history = std::move(history_);
+    note.meta = meta_;
+    note.digest = knownDigest_;
+    note.built = built_;
+    note.builtZoom = builtValid_ ? builtZoom_ : -1.0;
+    note.cursor = textCursor().position();
+    note.scroll = verticalScrollBar()->value();
+    note.bytes = bytes;
+    noteCache_.insert(noteCache_.begin(), std::move(note));
+    trimNoteCache();
+}
+
+bool NoteEditor::restoreCachedNote(const QString& path, const Digest& digest) {
+    const auto at = std::find_if(noteCache_.begin(), noteCache_.end(),
+                                 [&path](const CachedNote& note) { return note.path == path; });
+    if (at == noteCache_.end()) return false;
+    // Отпечаток не сошёлся — файл правили снаружи. Отложенное выбрасываем и
+    // собираем с диска: терять нечего, в кэш попало только записанное.
+    if (at->digest != digest) {
+        noteCache_.erase(at);
+        return false;
+    }
+
+    CachedNote note = std::move(*at);
+    noteCache_.erase(at);
+
+    meta_ = note.meta;
+    history_ = std::move(note.history);
+    built_ = std::move(note.built);
+    builtZoom_ = note.builtZoom;
+    builtValid_ = note.builtZoom >= 0.0;
+    installDocument(std::move(note.document));
+    applyContentWidth();
+
+    QTextCursor place(document());
+    place.setPosition(qBound(0, note.cursor, document()->characterCount() - 1));
+    setTextCursor(place);
+    verticalScrollBar()->setValue(note.scroll);
+    document()->setModified(false);
+    return true;
+}
+
 bool NoteEditor::openFile(const QString& path) {
     save(true);
 
@@ -343,6 +463,10 @@ bool NoteEditor::openFile(const QString& path) {
     // (state.json), и заводить ради этого файл на каждую заметку незачем.
     if (!path_.isEmpty() && path_ != path) caretMemory_[path_] = textCursor().position();
 
+    // Уходя из заметки, откладываем её целиком — если есть что откладывать.
+    if (path_ != path) stashCurrentNote();
+
+    const Digest digest = hashOf(text);
     path_ = path;
     setImageBase(QFileInfo(path).absolutePath());
     lastComplaint_.clear();
@@ -351,11 +475,18 @@ bool NoteEditor::openFile(const QString& path) {
     externalSettle_.stop();
     externalEmptyRetried_ = false;
     lastLine_ = QTextCursor();
-    knownDigest_ = hashOf(text);
+    knownDigest_ = digest;
     watchFile();
     // Серию набора обрываем: иначе первая правка в новой заметке подмешалась бы
     // к её исходному состоянию и отменить её было бы нечем.
     forgetPendingEdit();
+
+    // Отложенная заметка: файл не разбираем и документ не собираем вовсе —
+    // история, каретка и прокрутка возвращаются такими, какими были.
+    if (restoreCachedNote(path, digest)) {
+        emit fileChanged(path_);
+        return true;
+    }
 
     Document doc = parse(text);
     meta_ = doc.meta;
@@ -364,6 +495,7 @@ bool NoteEditor::openFile(const QString& path) {
     // Открывается другой файл: с прежним документом у нового ничего общего,
     // заплатке не за что зацепиться.
     builtValid_ = false;
+    installDocument(std::make_unique<QTextDocument>());
     rebuild(doc, caret, {});
     // Показать место каретки, а не начало документа: иначе «вернуться туда,
     // где читал» означало бы прокрутить заново.
@@ -499,6 +631,8 @@ void NoteEditor::applyZoom(qreal value) {
 
 void NoteEditor::refreshAppearance() {
     flushPendingEdit();
+    // Облик запечён в документах при сборке: всё отложенное протухло разом.
+    clearNoteCache();
     // Облик меняется — содержимое нет. Берём его из истории и собираем заново;
     // ни нового шага, ни сдвига по истории при этом не происходит.
     //

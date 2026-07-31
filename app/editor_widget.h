@@ -26,6 +26,7 @@
 #include <QTimer>
 
 #include <functional>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -228,6 +229,54 @@ private:
     // номер соответствует. Не передали — прочитаем сами.
     void rebuild(const Document& doc, int cursor, const ViewAnchor& anchor,
                  const Document* current = nullptr);
+
+    // --- кэш заметок сессии ---
+    //
+    // Уходя из ЧИСТОЙ заметки, откладываем её целиком: живой документ вместе с
+    // историей правок, кареткой и прокруткой. Вернувшись, человек застаёт её
+    // ровно такой, какой оставил, и Ctrl+Z отменяет правки прошлого захода.
+    //
+    // Кладём только чистое и только после записи. Вместе с записью
+    // запоминается отпечаток файла; при возврате он сверяется с отпечатком
+    // того, что лежит на диске сейчас. Совпал — файл никто не трогал, отдаём
+    // отложенное как есть. Не совпал — правил кто-то снаружи, отложенное
+    // выбрасываем и собираем с диска заново. Терять при этом нечего: в кэш
+    // попало только то, что уже записано в файл.
+    struct CachedNote {
+        QString path;
+        std::unique_ptr<QTextDocument> document;
+        EditHistory history;
+        NoteMeta meta;
+        Digest digest;      // каким файл был, когда мы уходили
+        Document built;     // из чего документ собран: нужно заплатке
+        qreal builtZoom = 0.0;
+        int cursor = 0;
+        int scroll = 0;
+        qint64 bytes = 0;   // оценка веса, см. documentCacheSizeMb
+    };
+
+    // Оценка веса документа. Точного размера QTextDocument не отдаёт; чем эта
+    // оценка обоснована — см. documentCacheSizeMb в settings.h.
+    static qint64 estimateDocumentBytes(const QTextDocument& doc);
+
+    void installDocument(std::unique_ptr<QTextDocument> doc);
+    void connectDocument();
+    // Отложить текущую заметку, если её есть смысл откладывать.
+    void stashCurrentNote();
+    // Достать отложенную, если отпечаток файла с ней сходится.
+    bool restoreCachedNote(const QString& path, const Digest& digest);
+    void trimNoteCache();
+
+public:
+    // Кэш заметок целиком: облик запечён в документах при сборке, и от смены
+    // шрифта, цвета или масштаба всё отложенное протухает разом.
+    void clearNoteCache();
+    // Наблюдатели для тестов: правило «возврат не пересобирает» иначе не
+    // проверить.
+    int cachedNoteCount() const { return int(noteCache_.size()); }
+    qint64 cachedNoteBytes() const;
+
+private:
     void recordEdit();
     // Записать отложенный снимок прямо сейчас. Обязателен везде, где история
     // читается или пополняется: иначе шаг серии остался бы без содержимого.
@@ -355,6 +404,11 @@ private:
     // Где стояла каретка в каждой заметке этой сессии: переключение туда-сюда
     // не должно каждый раз возвращать к началу.
     QHash<QString, int> caretMemory_;
+    // Документ, установленный сейчас, — наш, а не заведённый Qt: только своими
+    // документами и можно меняться. Отложенные лежат в noteCache_, свежайшая
+    // заметка первой.
+    std::unique_ptr<QTextDocument> ownDocument_;
+    std::vector<CachedNote> noteCache_;
     // Ложь на время editMeta без правок текста: мета-правка не трогает
     // modified.
     bool stampModifiedOnSave_ = true;

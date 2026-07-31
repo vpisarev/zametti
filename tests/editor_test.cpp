@@ -701,6 +701,112 @@ void checkWideWindowOperations() {
           "поля рамки после операции на месте");
 }
 
+// Кэш заметок сессии. Возвращаясь в недавнюю заметку, человек застаёт её
+// такой, какой оставил: цела история правок, каретка и прокрутка. Кладётся
+// туда только ЧИСТОЕ и только то, чья сериализация байт в байт равна файлу.
+void checkNoteCache() {
+    const QString first = writeNote("кэш-первая.md",
+                                    QStringLiteral("# первая\n\nстрока раз\nстрока два\n"));
+    const QString second = writeNote("кэш-вторая.md", QStringLiteral("# вторая\n\nтекст\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+
+    auto text = [&editor] {
+        return QString::fromStdString(
+            zametti::serialize(zametti::readDocument(*editor.document())));
+    };
+
+    // Правим первую, сохраняем, уходим и возвращаемся.
+    editor.openFile(first);
+    QTest::qWait(20);
+    QTextCursor at(editor.document()->findBlockByNumber(2));
+    at.movePosition(QTextCursor::EndOfBlock);
+    editor.setTextCursor(at);
+    QTest::keyClicks(&editor, QStringLiteral(" tail"));
+    editor.save(false);
+    QTest::qWait(20);
+    const QString saved = text();
+    const int caret = editor.textCursor().position();
+
+    editor.openFile(second);
+    QTest::qWait(20);
+    check(editor.cachedNoteCount() == 1, "чистая заметка отложена в кэш");
+    check(editor.cachedNoteBytes() > 0, "вес отложенного посчитан");
+
+    editor.openFile(first);
+    QTest::qWait(20);
+    checkEqual(saved, text(), "вернулись к тому же содержимому");
+    checkEqual(QString::number(caret), QString::number(editor.textCursor().position()),
+               "каретка вернулась на место");
+    check(editor.cachedNoteCount() == 1, "отложенная взята из кэша, а вторая легла туда");
+
+    // Главное: история цела — Ctrl+Z отменяет правку ПРОШЛОГО захода.
+    editor.undo();
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("# первая\n\nстрока раз\nстрока два\n"), text(),
+               "Ctrl+Z отменяет правку прошлого захода");
+
+    // Внешняя правка: отпечаток не сойдётся, кэш выбрасывается, заметка
+    // собирается с диска.
+    editor.openFile(second);
+    QTest::qWait(20);
+    {
+        QFile file(first);
+        check(file.open(QIODevice::WriteOnly), "внешняя правка записана");
+        file.write("# первая\n\nсовсем другое\n");
+        file.close();
+    }
+    editor.openFile(first);
+    QTest::qWait(20);
+    checkEqual(QStringLiteral("# первая\n\nсовсем другое\n"), text(),
+               "внешняя правка победила отложенное");
+    editor.undo();
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("# первая\n\nсовсем другое\n"), text(),
+               "и истории от прошлого захода не осталось");
+
+    // Смена облика: документы собраны с запечённым обликом, кэш протухает весь.
+    editor.openFile(second);
+    QTest::qWait(20);
+    check(editor.cachedNoteCount() > 0, "перед сменой облика в кэше что-то есть");
+    editor.applyZoom(1.5);
+    QTest::qWait(10);
+    check(editor.cachedNoteCount() == 0, "смена масштаба чистит кэш целиком");
+    editor.applyZoom(1.0);
+    QTest::qWait(10);
+
+    // Несохранённое не откладывается: потерять правки страшнее, чем пересобрать.
+    editor.openFile(first);
+    QTest::qWait(20);
+    QTextCursor dirty = editor.textCursor();
+    dirty.movePosition(QTextCursor::End);
+    editor.setTextCursor(dirty);
+    QTest::keyClicks(&editor, QStringLiteral(" x"));
+    QTest::qWait(10);
+    const int before = editor.cachedNoteCount();
+    editor.openFile(second);   // сохранит и отложит уже чистую
+    QTest::qWait(20);
+    check(editor.cachedNoteCount() >= before, "после сохранения заметка откладывается");
+
+    // Заметка тяжелее всего бюджета в кэш не идёт.
+    const int savedBudget = zametti::appearance().documentCacheSizeMb;
+    zametti::appearance().documentCacheSizeMb = 1;
+    editor.clearNoteCache();
+    QString big = QStringLiteral("# большая\n\n");
+    for (int i = 0; i < 40000; ++i) big += QStringLiteral("строка с текстом %1\n").arg(i);
+    const QString heavy = writeNote("кэш-тяжёлая.md", big);
+    editor.openFile(heavy);
+    QTest::qWait(60);
+    editor.openFile(second);
+    QTest::qWait(20);
+    check(editor.cachedNoteCount() == 0, "заметка тяжелее бюджета в кэш не идёт");
+    zametti::appearance().documentCacheSizeMb = savedBudget;
+}
+
 // Текст после переноса строки обязан набираться тем же кеглем. Разделитель
 // строк шрифту неизвестен, и без оговорки он попадал под правило увеличения
 // эмодзи — а набранное сразу после него наследовало крупный формат.
@@ -1864,6 +1970,7 @@ int main(int argc, char** argv) {
     checkUndoFromKeyboard();
     checkDeferredSnapshot();
     checkWideWindowOperations();
+    checkNoteCache();
     checkSizeAfterSoftBreak();
     checkCodeTyping();
     checkCodeAtEdge();
