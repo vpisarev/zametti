@@ -549,12 +549,13 @@ bool sameBlock(const Document& a, const Block& x, const Document& b, const Block
 void checkPatchMatchesBuild(const Document& to, const QTextDocument& target, qreal zoom) {
     QTextDocument reference;
     buildDocument(to, reference, zoom);
-    // Нижнее поле блока в сравнении не участвует: сборщик всегда пишет туда
-    // ноль, а ненулевое значение ставит вид — в нём живёт высота фотографии
-    // (см. note_view.cpp). Полная сборка его затирает, и вид ставит заново;
-    // заплатка нетронутые блоки не трогает, и поле остаётся стоять. Разница
-    // не в сборке, а в том, что сборка сбивает чужое.
-    const QList<int> skip{QTextFormat::BlockBottomMargin};
+    // Нижние поля в сравнении не участвуют: их держит вид, а не сборщик.
+    // У блока в нижнем поле живёт высота фотографии; у рамки — недостача за
+    // картинку в последней строке (Qt не берёт нижнее поле последнего блока в
+    // высоту документа, см. note_view.cpp). Сборщик пишет туда своё, вид
+    // ставит заново; заплатка нетронутое не трогает, и поле остаётся стоять.
+    // Разница не в сборке, а в том, что сборка сбивает чужое.
+    const QList<int> skip{QTextFormat::BlockBottomMargin, QTextFormat::FrameBottomMargin};
     const QString want = documentFingerprint(reference, skip);
     const QString got = documentFingerprint(target, skip);
     if (want == got) return;

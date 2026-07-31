@@ -446,6 +446,24 @@ void NoteView::syncImageSpace() {
         cursor.setBlockFormat(format);
         changingLayout_ = false;
     }
+
+    // Нижнее поле ПОСЛЕДНЕГО блока Qt в высоту документа не берёт вовсе —
+    // замер: поле 500 на последнем блоке даёт +0, а такое же поле рамки даёт
+    // +500. Фотография в последней строке из-за этого не пролезала под нижнюю
+    // кромку: прокрутка кончалась раньше, чем она. Недостачу добавляем полем
+    // рамки — единственным, которое Qt считает.
+    const QTextBlock last = document()->lastBlock();
+    const qreal missing = last.isValid() ? last.blockFormat().bottomMargin() : 0.0;
+    const qreal want =
+        appearance().verticalMargin * QFontMetricsF(baseFontFor(zoom_)).height() + missing;
+    QTextFrameFormat frame = document()->rootFrame()->frameFormat();
+    // С допуском: каждое выставление формата рамки переразмечает документ.
+    if (std::fabs(frame.bottomMargin() - want) >= 0.5) {
+        frame.setBottomMargin(want);
+        changingLayout_ = true;
+        document()->rootFrame()->setFrameFormat(frame);
+        changingLayout_ = false;
+    }
     syncingImages_ = false;
 }
 

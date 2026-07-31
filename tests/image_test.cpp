@@ -765,5 +765,39 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Картинка в ПОСЛЕДНЕЙ строке заметки: нижнее поле последнего блока Qt в
+    // высоту документа не берёт вовсе (замер: поле 500 даёт +0, а такое же
+    // поле рамки даёт +500). Прокрутка из-за этого кончалась раньше картинки,
+    // и снизу было видно только её верхушку.
+    {
+        const fs::path tailDir = dir / "последняя";
+        fs::create_directories(tailDir);
+        QImage tall(300, 900, QImage::Format_RGB32);
+        tall.fill(QColor(220, 120, 40));
+        ZT_TRUE("высокая картинка записана",
+                tall.save(QString::fromStdString((tailDir / "в.png").string())));
+        {
+            std::ofstream out(tailDir / "з.md", std::ios::binary);
+            out << "# заметка\n\nтекст\n\n![[в.png]]\n";
+        }
+
+        zametti::NoteEditor tailEditor;
+        tailEditor.resize(600, 400);
+        tailEditor.show();
+        QTest::qWait(20);
+        tailEditor.openFile(QString::fromStdString((tailDir / "з.md").string()));
+        QTest::qWait(30);
+
+        const QTextBlock lastBlock = tailEditor.document()->lastBlock();
+        ZT_TRUE("под картинку в последней строке отведено место",
+                lastBlock.blockFormat().bottomMargin() > 0.0);
+
+        tailEditor.verticalScrollBar()->setValue(tailEditor.verticalScrollBar()->maximum());
+        QTest::qWait(20);
+        const QRectF photo = tailEditor.imageRectInViewport(lastBlock);
+        ZT_TRUE("прокрутив до упора, картинку видно целиком",
+                !photo.isEmpty() && photo.bottom() <= tailEditor.viewport()->height() + 1.0);
+    }
+
     return zt::report("картинки в просмотре");
 }
