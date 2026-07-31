@@ -9,6 +9,11 @@ target_link_libraries(mddump PRIVATE zametti-core zametti-warnings)
 add_executable(ir_bench ir_bench.cpp)
 target_link_libraries(ir_bench PRIVATE zametti-core zametti-warnings)
 
+add_executable(hash_test hash_test.cpp)
+target_link_libraries(hash_test PRIVATE zametti-core zametti-warnings)
+target_include_directories(hash_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME blake3 COMMAND hash_test)
+
 add_executable(id_test id_test.cpp)
 target_link_libraries(id_test PRIVATE zametti-core zametti-warnings)
 target_include_directories(id_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
