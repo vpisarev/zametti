@@ -51,9 +51,7 @@ bool readFile(const QString& path, std::string& out) {
 
 }  // namespace
 
-NoteEditor::NoteEditor(QWidget* parent)
-    : NoteView(parent), history_(appearance().undoLimit,
-               size_t(qMax(1, appearance().undoBudgetMb)) * 1024 * 1024) {
+NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
     setReadOnly(false);
     setUndoRedoEnabled(false);   // историю ведём сами, см. edit_history.h
 
@@ -105,7 +103,7 @@ NoteEditor::NoteEditor(QWidget* parent)
     // закрываем серию, следующая буква заведёт новый шаг.
     connect(&snapshot_, &QTimer::timeout, this, [this] {
         flushPendingEdit();
-        typingRun_ = false;
+        note_.typingRun = false;
     });
     connectDocument();
     connect(&watcher_, &QFileSystemWatcher::fileChanged, this, &NoteEditor::onFileChanged);
@@ -124,8 +122,8 @@ NoteEditor::NoteEditor(QWidget* parent)
 void NoteEditor::snapCaretOffImage() {
     if (snappingCaret_) return;
     const QTextCursor cursor = textCursor();
-    const int cameFrom = lastCaretPosition_;
-    lastCaretPosition_ = cursor.position();
+    const int cameFrom = note_.lastCaretPosition;
+    note_.lastCaretPosition = cursor.position();
     if (cursor.hasSelection()) return;
     const QTextBlock block = cursor.block();
     if (cursor.positionInBlock() == 0) return;
@@ -141,7 +139,7 @@ void NoteEditor::snapCaretOffImage() {
     snappingCaret_ = true;
     setTextCursor(moved);
     snappingCaret_ = false;
-    lastCaretPosition_ = moved.position();
+    note_.lastCaretPosition = moved.position();
 }
 
 // Строка из одних пробелов неотличима глазом от пустой, а ведёт себя как
@@ -152,24 +150,24 @@ void NoteEditor::snapCaretOffImage() {
 // хвостовые пробелы — содержимое.
 void NoteEditor::onCaretMoved() {
     if (tidying_ || recordingSuspended_ || changingLayout()) {
-        lastLine_ = textCursor();
+        note_.lastLine = textCursor();
         return;
     }
     const QTextCursor now = textCursor();
-    if (!lastLine_.isNull() && lastLine_.document() == document()) {
-        const QString text = lastLine_.block().text();
+    if (!note_.lastLine.isNull() && note_.lastLine.document() == document()) {
+        const QString text = note_.lastLine.block().text();
         int line = 0;
-        for (int i = 0; i < lastLine_.positionInBlock() && i < text.size(); ++i)
+        for (int i = 0; i < note_.lastLine.positionInBlock() && i < text.size(); ++i)
             if (text.at(i) == QChar::LineSeparator) ++line;
         const QString nowText = now.block().text();
         int nowLine = 0;
         for (int i = 0; i < now.positionInBlock() && i < nowText.size(); ++i)
             if (nowText.at(i) == QChar::LineSeparator) ++nowLine;
-        if (lastLine_.blockNumber() != now.blockNumber() ||
+        if (note_.lastLine.blockNumber() != now.blockNumber() ||
             line != nowLine)
-            tidyLeftLine(lastLine_);
+            tidyLeftLine(note_.lastLine);
     }
-    lastLine_ = textCursor();
+    note_.lastLine = textCursor();
 }
 
 // Границы того, что менялось с прошлой уборки. Курсор, а не пара чисел:
@@ -188,16 +186,16 @@ void NoteEditor::onContentsChange(int position, int charsRemoved, int charsAdded
     const int last = qMax(0, document()->characterCount() - 1);
     const int from = qBound(0, position, last);
     const int to = qBound(from, position + charsAdded, last);
-    if (dirty_.isNull() || dirty_.document() != document()) {
-        dirty_ = QTextCursor(document());
-        dirty_.setPosition(from);
-        dirty_.setPosition(to, QTextCursor::KeepAnchor);
+    if (note_.dirty.isNull() || note_.dirty.document() != document()) {
+        note_.dirty = QTextCursor(document());
+        note_.dirty.setPosition(from);
+        note_.dirty.setPosition(to, QTextCursor::KeepAnchor);
         return;
     }
-    const int lo = qMin(dirty_.selectionStart(), from);
-    const int hi = qMax(dirty_.selectionEnd(), to);
-    dirty_.setPosition(lo);
-    dirty_.setPosition(hi, QTextCursor::KeepAnchor);
+    const int lo = qMin(note_.dirty.selectionStart(), from);
+    const int hi = qMax(note_.dirty.selectionEnd(), to);
+    note_.dirty.setPosition(lo);
+    note_.dirty.setPosition(hi, QTextCursor::KeepAnchor);
 }
 
 // Хвостовые пробелы — везде, кроме строки каретки, кода и дословных кусков.
@@ -211,12 +209,12 @@ void NoteEditor::onContentsChange(int position, int charsRemoved, int charsAdded
 // Полный проход остаётся там, где документ и так собирается целиком: после
 // пересборки область забывается, и подметать в ней нечего.
 void NoteEditor::tidySweep(const QTextCursor& caret) {
-    if (tidying_ || dirty_.isNull()) return;
-    const int first = qMax(0, document()->findBlock(dirty_.selectionStart()).blockNumber() - 1);
+    if (tidying_ || note_.dirty.isNull()) return;
+    const int first = qMax(0, document()->findBlock(note_.dirty.selectionStart()).blockNumber() - 1);
     const int afterLast =
         qMin(document()->blockCount() - 1,
-             document()->findBlock(dirty_.selectionEnd()).blockNumber() + 1);
-    dirty_ = QTextCursor();
+             document()->findBlock(note_.dirty.selectionEnd()).blockNumber() + 1);
+    note_.dirty = QTextCursor();
 
     const int caretBlock = caret.blockNumber();
     int caretLine = 0;
@@ -340,17 +338,54 @@ void NoteEditor::connectDocument() {
     connect(document(), &QTextDocument::contentsChanged, this, &NoteEditor::onContentsChanged);
 }
 
+void NoteEditor::installSession(NoteSession session) {
+    // Подмена заметки — ОДНА операция, а не «присвоить объект, потом поставить
+    // документ». Порознь между ними существует миг, когда виджет смотрит на
+    // уже разрушенный документ: присваивание объекта убивает старый вместе с
+    // ним. Так и падало, пока не свёл в одно место.
+    std::unique_ptr<QTextDocument> previous = std::move(note_.document);
+    if (document() != nullptr) disconnect(document(), nullptr, this, nullptr);
+    note_ = std::move(session);
+    setDocument(note_.document.get());
+    connectDocument();
+    applyContentWidth();
+
+    QTextCursor place(document());
+    place.setPosition(qBound(0, note_.cursor, document()->characterCount() - 1));
+    setTextCursor(place);
+    verticalScrollBar()->setValue(note_.scroll);
+    document()->setModified(note_.modified);
+    // Курсоры, державшиеся за прежний документ, теперь ни на что не указывают.
+    note_.lastLine = QTextCursor();
+    note_.dirty = QTextCursor();
+
+    // Мимолётное состояние жестов принадлежит не заметке, а прикосновению к
+    // ней, и через подмену не переносится: номер блока, за угол которого тянут,
+    // в новом документе значит совсем другое.
+    imageResizeBlock_ = -1;
+    imageHoverCorner_ = false;
+    pressedAnchor_.clear();
+
+    // Таймеры перенастраиваются под новую заметку. Отложенный снимок — её
+    // свойство и приехал вместе с ней; висящий от прошлой заметки таймер
+    // отменяем, иначе он записал бы шаг в чужую цепочку.
+    snapshot_.stop();
+    autosave_.stop();
+    if (note_.pendingEdit) snapshot_.start(appearance().undoCoalesceMs);
+    watchFile();
+}
+
 void NoteEditor::installDocument(std::unique_ptr<QTextDocument> doc) {
     // Прежний держим живым до самой подмены: Qt удаляет старый документ только
     // если сам его и заводил, а наши — наши, и умирают здесь, строкой ниже.
-    std::unique_ptr<QTextDocument> previous = std::move(ownDocument_);
+    std::unique_ptr<QTextDocument> previous = std::move(note_.document);
     if (document() != nullptr) disconnect(document(), nullptr, this, nullptr);
-    ownDocument_ = std::move(doc);
-    setDocument(ownDocument_.get());
+    note_.document = std::move(doc);
+    setDocument(note_.document.get());
     connectDocument();
     // Курсоры, державшиеся за прежний документ, теперь ни на что не указывают.
-    lastLine_ = QTextCursor();
-    dirty_ = QTextCursor();
+    note_.lastLine = QTextCursor();
+    note_.dirty = QTextCursor();
 }
 
 qint64 NoteEditor::estimateDocumentBytes(const QTextDocument& doc) {
@@ -362,7 +397,7 @@ qint64 NoteEditor::estimateDocumentBytes(const QTextDocument& doc) {
 
 qint64 NoteEditor::cachedNoteBytes() const {
     qint64 total = 0;
-    for (const CachedNote& note : noteCache_) total += note.bytes;
+    for (const NoteSession& note : noteCache_) total += note.bytes;
     return total;
 }
 
@@ -372,16 +407,30 @@ void NoteEditor::clearNoteCache() {
 
 void NoteEditor::trimNoteCache() {
     const qint64 budget = qint64(qMax(1, appearance().documentCacheSizeMb)) * 1024 * 1024;
-    // С хвоста, пока не уложились: самое давнее уходит первым.
-    while (!noteCache_.empty() && cachedNoteBytes() > budget) noteCache_.pop_back();
+    // С хвоста, пока не уложились: самое давнее уходит первым. От вытесненной
+    // заметки остаётся только место каретки — вот единственное место, где оно
+    // попадает в общую карту. Каретка принадлежит заметке и живёт в её объекте;
+    // карта — это ОСТАТОК объекта, а не второй источник правды о нём.
+    while (!noteCache_.empty() && cachedNoteBytes() > budget) {
+        const NoteSession& going = noteCache_.back();
+        if (!going.path.isEmpty()) caretMemory_[going.path] = going.cursor;
+        noteCache_.pop_back();
+    }
 }
 
 void NoteEditor::stashCurrentNote() {
+    // Место каретки — свойство заметки, и живёт оно в её объекте. Но объект
+    // тяжёлый и в кэше остаётся не всегда, а место каретки весит четыре байта
+    // и терять его незачем. Поэтому здесь, в единственной точке ухода заметки
+    // из открытых, от неё остаётся этот лёгкий след. Второй записи в карту в
+    // программе нет: иначе появился бы второй источник правды о каретке.
+    if (!note_.path.isEmpty()) caretMemory_[note_.path] = textCursor().position();
+
     // Откладываем только ЧИСТОЕ и только то, чей отпечаток мы знаем: иначе при
     // возврате не с чем было бы сверять файл. Несохранённое не откладываем
     // вовсе — потерять правки страшнее, чем пересобрать документ.
-    if (path_.isEmpty() || ownDocument_ == nullptr) return;
-    if (document()->isModified() || knownDigest_.empty()) return;
+    if (note_.path.isEmpty() || note_.document == nullptr) return;
+    if (document()->isModified() || note_.digest.empty()) return;
     flushPendingEdit();
 
     // Инвариант кэша: в нём лежат только документы, чья сериализация БАЙТ В
@@ -395,8 +444,8 @@ void NoteEditor::stashCurrentNote() {
     // отпечатки сходились бы всегда. Нам нужен другой вопрос — «этот документ
     // и есть файл?», а не «запишется ли он в тот же файл».
     Document read = readDocument(*document());
-    read.meta = meta_;
-    if (hashOf(serialize(read)) != knownDigest_) return;
+    read.meta = note_.meta;
+    if (hashOf(serialize(read)) != note_.digest) return;
 
     const qint64 bytes = estimateDocumentBytes(*document());
     const qint64 budget = qint64(qMax(1, appearance().documentCacheSizeMb)) * 1024 * 1024;
@@ -405,26 +454,23 @@ void NoteEditor::stashCurrentNote() {
     if (bytes > budget) return;
 
     // Прежняя запись про этот же файл больше не нужна.
-    std::erase_if(noteCache_, [this](const CachedNote& note) { return note.path == path_; });
+    std::erase_if(noteCache_,
+                  [this](const NoteSession& note) { return note.path == note_.path; });
 
-    CachedNote note;
-    note.path = path_;
-    note.document = std::move(ownDocument_);
-    note.history = std::move(history_);
-    note.meta = meta_;
-    note.digest = knownDigest_;
-    note.built = built_;
-    note.builtZoom = builtValid_ ? builtZoom_ : -1.0;
-    note.cursor = textCursor().position();
-    note.scroll = verticalScrollBar()->value();
-    note.bytes = bytes;
-    noteCache_.insert(noteCache_.begin(), std::move(note));
+    // Уезжает ВЕСЬ объект заметки, а не выбранные поля. Забыть перенести
+    // что-то нельзя: переносится всё, потому что переносится он сам.
+    note_.cursor = textCursor().position();
+    note_.scroll = verticalScrollBar()->value();
+    note_.modified = false;
+    note_.bytes = bytes;
+    noteCache_.insert(noteCache_.begin(), std::move(note_));
+    note_ = NoteSession{};
     trimNoteCache();
 }
 
 bool NoteEditor::restoreCachedNote(const QString& path, const Digest& digest) {
     const auto at = std::find_if(noteCache_.begin(), noteCache_.end(),
-                                 [&path](const CachedNote& note) { return note.path == path; });
+                                 [&path](const NoteSession& note) { return note.path == path; });
     if (at == noteCache_.end()) return false;
     // Отпечаток не сошёлся — файл правили снаружи. Отложенное выбрасываем и
     // собираем с диска: терять нечего, в кэш попало только записанное.
@@ -433,22 +479,10 @@ bool NoteEditor::restoreCachedNote(const QString& path, const Digest& digest) {
         return false;
     }
 
-    CachedNote note = std::move(*at);
+    NoteSession note = std::move(*at);
     noteCache_.erase(at);
-
-    meta_ = note.meta;
-    history_ = std::move(note.history);
-    built_ = std::move(note.built);
-    builtZoom_ = note.builtZoom;
-    builtValid_ = note.builtZoom >= 0.0;
-    installDocument(std::move(note.document));
-    applyContentWidth();
-
-    QTextCursor place(document());
-    place.setPosition(qBound(0, note.cursor, document()->characterCount() - 1));
-    setTextCursor(place);
-    verticalScrollBar()->setValue(note.scroll);
-    document()->setModified(false);
+    note.modified = false;   // в кэш попадает только записанное
+    installSession(std::move(note));
     return true;
 }
 
@@ -466,14 +500,13 @@ bool NoteEditor::openFile(const QString& path) {
         return false;
     }
 
-    // Уходя, запоминаем место каретки: вернувшись в заметку, человек ждёт
-    // увидеть то место, где читал, а не её начало. Память живёт до выхода из
-    // приложения — между запусками место помнит только последняя заметка
-    // (state.json), и заводить ради этого файл на каждую заметку незачем.
-    if (!path_.isEmpty() && path_ != path) caretMemory_[path_] = textCursor().position();
+    // Место каретки запоминается в stashCurrentNote — единственной точке, где
+    // заметка перестаёт быть открытой. Память живёт до выхода из приложения:
+    // между запусками место помнит только последняя заметка (state.json), и
+    // заводить ради этого файл на каждую заметку незачем.
 
     // Уходя из заметки, откладываем её целиком — если есть что откладывать.
-    if (path_ != path) stashCurrentNote();
+    if (note_.path != path) stashCurrentNote();
 
     Digest digest = hashOf(text);
     // Хранилище наше, и держать в нём сор незачем: лишние пробелы в конце строк
@@ -481,15 +514,15 @@ bool NoteEditor::openFile(const QString& path) {
     // не трогая ни одного значения в шапке. Заметку всего лишь открыли —
     // всплывать наверх списка недавних ей не с чего.
     canonicaliseNoteFile(path, text, digest);
-    path_ = path;
+    note_.path = path;
     setImageBase(QFileInfo(path).absolutePath());
-    lastComplaint_.clear();
-    externalPending_ = false;
-    externalText_.clear();
+    note_.lastComplaint.clear();
+    note_.externalPending = false;
+    note_.externalText.clear();
     externalSettle_.stop();
-    externalEmptyRetried_ = false;
-    lastLine_ = QTextCursor();
-    knownDigest_ = digest;
+    note_.externalEmptyRetried = false;
+    note_.lastLine = QTextCursor();
+    note_.digest = digest;
     watchFile();
     // Серию набора обрываем: иначе первая правка в новой заметке подмешалась бы
     // к её исходному состоянию и отменить её было бы нечем.
@@ -509,29 +542,29 @@ bool NoteEditor::openFile(const QString& path) {
     // Отложенная заметка: файл не разбираем и документ не собираем вовсе —
     // история, каретка и прокрутка возвращаются такими, какими были.
     if (restoreCachedNote(path, digest)) {
-        emit fileChanged(path_);
+        emit fileChanged(note_.path);
         return true;
     }
 
     Document doc = parse(text);
-    meta_ = doc.meta;
-    const int caret = caretMemory_.value(path_, 0);
-    history_.reset(doc, caret);
+    note_.meta = doc.meta;
+    const int caret = caretMemory_.value(note_.path, 0);
+    note_.undoChain.reset(doc, caret);
     // Открывается другой файл: с прежним документом у нового ничего общего,
     // заплатке не за что зацепиться.
-    builtValid_ = false;
+    note_.builtValid = false;
     installDocument(std::make_unique<QTextDocument>());
     rebuild(doc, caret, {});
     // Показать место каретки, а не начало документа: иначе «вернуться туда,
     // где читал» означало бы прокрутить заново.
     if (caret > 0) ensureCursorVisible();
-    emit fileChanged(path_);
+    emit fileChanged(note_.path);
     return true;
 }
 
 void NoteEditor::watchFile() {
     if (!watcher_.files().isEmpty()) watcher_.removePaths(watcher_.files());
-    if (!path_.isEmpty()) watcher_.addPath(path_);
+    if (!note_.path.isEmpty()) watcher_.addPath(note_.path);
 }
 
 void NoteEditor::onFileChanged(const QString& path) {
@@ -547,22 +580,22 @@ void NoteEditor::onFileChanged(const QString& path) {
 
 void NoteEditor::onExternalSettled() {
     std::string text;
-    if (!readFile(path_, text)) return;   // файл унесли: ждём, пока вернётся
+    if (!readFile(note_.path, text)) return;   // файл унесли: ждём, пока вернётся
     const Digest digest = hashOf(text);
-    if (digest == knownDigest_) return;   // это мы сами и записали
+    if (digest == note_.digest) return;   // это мы сами и записали
 
     // Файл опустел, а был непустым: похоже, мы всё же попали в середину чужой
     // записи. Одна повторная попытка, прежде чем поверить в пустоту. «Был
     // непустым» — это «прежний отпечаток не равен отпечатку пустоты»: у пустого
     // входа отпечаток свой, и с «не считали» он не путается.
-    if (text.empty() && knownDigest_ != hashOf(std::string_view()) &&
-        !externalEmptyRetried_) {
-        externalEmptyRetried_ = true;
+    if (text.empty() && note_.digest != hashOf(std::string_view()) &&
+        !note_.externalEmptyRetried) {
+        note_.externalEmptyRetried = true;
         externalSettle_.start(300);
         return;
     }
-    externalEmptyRetried_ = false;
-    knownDigest_ = digest;
+    note_.externalEmptyRetried = false;
+    note_.digest = digest;
 
     // Шаг истории пишется здесь, а не после ответа человека: файл на диске уже
     // изменился, и это случилось независимо от того, примем мы чужую версию
@@ -577,16 +610,16 @@ void NoteEditor::onExternalSettled() {
     }
 
     // С правками не затираем молча ничего: спрашиваем и ждём ответа.
-    externalPending_ = true;
-    externalText_ = text;
+    note_.externalPending = true;
+    note_.externalText = text;
     emit externalChangeDetected();
 }
 
 void NoteEditor::resolveExternalConflict(bool takeExternal) {
-    if (!externalPending_) return;
-    externalPending_ = false;
-    const std::string text = std::move(externalText_);
-    externalText_.clear();
+    if (!note_.externalPending) return;
+    note_.externalPending = false;
+    const std::string text = std::move(note_.externalText);
+    note_.externalText.clear();
     // «Оставить моё» ничего не делает: наша версия перезапишет файл при
     // ближайшем сохранении, и это ровно то, о чём человека спросили.
     if (takeExternal) adoptExternal(text);
@@ -599,7 +632,7 @@ void NoteEditor::adoptExternal(const std::string& text) {
     // это нельзя: заметка потеряла бы родителя и дату создания, то есть уехала
     // бы в корень и «постарела». Прежние значения у нас в памяти — предлагаем
     // вернуть их одним действием, а решает человек.
-    const NoteMeta previous = meta_;
+    const NoteMeta previous = note_.meta;
     const bool lost = previous.present && !ir.meta.present;
     // Ключи, которые были и пропали. parent сюда не входит: его правка руками
     // — законный перенос заметки, а не потеря (решение брифа этапа 4).
@@ -618,23 +651,23 @@ void NoteEditor::adoptExternal(const std::string& text) {
     if (ir.meta.present && ir.meta.get("role") != previous.get("role"))
         ir.meta.set("role", previous.get("role"));
 
-    meta_ = ir.meta;
-    history_.push(ir, textCursor().position());
-    typingRun_ = false;
+    note_.meta = ir.meta;
+    note_.undoChain.push(ir, textCursor().position());
+    note_.typingRun = false;
     rebuild(ir, textCursor().position(), viewAnchor());
     document()->setModified(false);
 
-    emit externalAdopted(path_);
+    emit externalAdopted(note_.path);
     if (lost || !dropped.isEmpty()) {
-        lostMeta_ = previous;
-        emit metaDamaged(path_, lost ? QStringList{QStringLiteral("весь блок")} : dropped);
+        note_.lostMeta = previous;
+        emit metaDamaged(note_.path, lost ? QStringList{QStringLiteral("весь блок")} : dropped);
     }
 }
 
 void NoteEditor::restoreDamagedMeta() {
-    if (!lostMeta_.present) return;
-    NoteMeta restored = lostMeta_;
-    lostMeta_ = NoteMeta();
+    if (!note_.lostMeta.present) return;
+    NoteMeta restored = note_.lostMeta;
+    note_.lostMeta = NoteMeta();
     // Правки тела сохраняются: меняется только шапка. Обычная запись — значит
     // и обычная отмена: вернуть всё как было можно тем же Ctrl+Z.
     editMeta([&restored](NoteMeta& meta) {
@@ -668,8 +701,8 @@ void NoteEditor::refreshAppearance() {
     //
     // Именно собираем: от облика зависит каждый блок, в том числе и те, что не
     // менялись, и заплатка их не тронула бы.
-    builtValid_ = false;
-    rebuild(history_.current().doc, textCursor().position(), viewAnchor());
+    note_.builtValid = false;
+    rebuild(note_.undoChain.current().doc, textCursor().position(), viewAnchor());
 }
 
 void NoteEditor::keepCaretOffEdge() {
@@ -704,10 +737,10 @@ void NoteEditor::showEditPlace(int scrollBefore) {
 }
 
 int NoteEditor::findMatches(const QString& text, bool caseSensitive) {
-    matchText_ = text;
-    matchCaseSensitive_ = caseSensitive;
-    matches_.clear();
-    currentMatch_ = -1;
+    note_.matchText = text;
+    note_.matchCaseSensitive = caseSensitive;
+    note_.matches.clear();
+    note_.currentMatch = -1;
     if (!text.isEmpty()) {
         QTextDocument::FindFlags flags;
         if (caseSensitive) flags |= QTextDocument::FindCaseSensitively;
@@ -715,7 +748,7 @@ int NoteEditor::findMatches(const QString& text, bool caseSensitive) {
         while (true) {
             at = document()->find(text, at, flags);
             if (at.isNull()) break;
-            matches_.push_back(at);
+            note_.matches.push_back(at);
             // Со следующего знака после НАЧАЛА совпадения: перекрывающиеся
             // вхождения тоже вхождения, и счётчик обязан считать их так же,
             // как их обойдёт F3.
@@ -726,32 +759,32 @@ int NoteEditor::findMatches(const QString& text, bool caseSensitive) {
         }
     }
     showMatchHighlights();
-    return int(matches_.size());
+    return int(note_.matches.size());
 }
 
 void NoteEditor::showMatchHighlights() {
     QList<QTextEdit::ExtraSelection> selections;
-    selections.reserve(int(matches_.size()));
+    selections.reserve(int(note_.matches.size()));
     const QColor base = appearance().selectionBackground;
     // Текущее совпадение — контрастнее прочих. Не другим цветом: цвет в
     // оформлении один, а разной должна быть заметность.
     QColor pale = base;
     pale.setAlpha(110);
-    for (size_t i = 0; i < matches_.size(); ++i) {
+    for (size_t i = 0; i < note_.matches.size(); ++i) {
         QTextEdit::ExtraSelection selection;
-        selection.cursor = matches_[i];
-        selection.format.setBackground(int(i) == currentMatch_ ? base : pale);
+        selection.cursor = note_.matches[i];
+        selection.format.setBackground(int(i) == note_.currentMatch ? base : pale);
         selections.append(selection);
     }
     setExtraSelections(selections);
 }
 
 void NoteEditor::goToMatch(int index) {
-    if (matches_.empty()) return;
-    const int count = int(matches_.size());
-    currentMatch_ = ((index % count) + count) % count;
+    if (note_.matches.empty()) return;
+    const int count = int(note_.matches.size());
+    note_.currentMatch = ((index % count) + count) % count;
     const int scrollBefore = verticalScrollBar()->value();
-    setTextCursor(matches_[size_t(currentMatch_)]);
+    setTextCursor(note_.matches[size_t(note_.currentMatch)]);
     showMatchHighlights();
     // Тем же правилом, что и правки: пока совпадение в пределах видимости —
     // картинку не дёргаем, ушло за край — показываем по центру.
@@ -759,41 +792,41 @@ void NoteEditor::goToMatch(int index) {
 }
 
 void NoteEditor::stepMatch(int direction) {
-    if (matches_.empty()) return;
-    if (currentMatch_ >= 0) {
-        goToMatch(currentMatch_ + direction);
+    if (note_.matches.empty()) return;
+    if (note_.currentMatch >= 0) {
+        goToMatch(note_.currentMatch + direction);
         return;
     }
     // Первый шаг — от каретки, а не с начала заметки: человек только что на
     // что-то смотрел, и прыжок в начало документа был бы неожиданным.
     const int at = textCursor().position();
     if (direction > 0) {
-        for (size_t i = 0; i < matches_.size(); ++i)
-            if (matches_[i].selectionStart() >= at) {
+        for (size_t i = 0; i < note_.matches.size(); ++i)
+            if (note_.matches[i].selectionStart() >= at) {
                 goToMatch(int(i));
                 return;
             }
         goToMatch(0);
         return;
     }
-    for (size_t i = matches_.size(); i-- > 0;)
-        if (matches_[i].selectionEnd() <= at) {
+    for (size_t i = note_.matches.size(); i-- > 0;)
+        if (note_.matches[i].selectionEnd() <= at) {
             goToMatch(int(i));
             return;
         }
-    goToMatch(int(matches_.size()) - 1);
+    goToMatch(int(note_.matches.size()) - 1);
 }
 
 void NoteEditor::clearMatches() {
-    matches_.clear();
-    currentMatch_ = -1;
-    matchText_.clear();
+    note_.matches.clear();
+    note_.currentMatch = -1;
+    note_.matchText.clear();
     setExtraSelections({});
 }
 
 bool NoteEditor::replaceCurrentMatch(const QString& with) {
-    if (currentMatch_ < 0 || size_t(currentMatch_) >= matches_.size()) return false;
-    const QTextCursor target = matches_[size_t(currentMatch_)];
+    if (note_.currentMatch < 0 || size_t(note_.currentMatch) >= note_.matches.size()) return false;
+    const QTextCursor target = note_.matches[size_t(note_.currentMatch)];
     const bool done = runOperation([&](QTextDocument&, QTextCursor& cursor) {
         cursor.setPosition(target.selectionStart());
         cursor.setPosition(target.selectionEnd(), QTextCursor::KeepAnchor);
@@ -803,9 +836,9 @@ bool NoteEditor::replaceCurrentMatch(const QString& with) {
     if (!done) return false;
     // Документ пересобран — прежние курсоры недействительны, ищем заново и
     // встаём на следующее вхождение.
-    const int at = currentMatch_;
-    findMatches(matchText_, matchCaseSensitive_);
-    if (!matches_.empty()) goToMatch(at < int(matches_.size()) ? at : 0);
+    const int at = note_.currentMatch;
+    findMatches(note_.matchText, note_.matchCaseSensitive);
+    if (!note_.matches.empty()) goToMatch(at < int(note_.matches.size()) ? at : 0);
     return true;
 }
 
@@ -850,7 +883,7 @@ void NoteEditor::undo() {
     // Только первый шаг: дальше человек идёт по уже записанному прошлому, и
     // складывать в историю промежуточные состояния отката значило бы забивать
     // её ровно тем, от чего он уходит.
-    if (document()->isModified() && !undoRun_) save(false);
+    if (document()->isModified() && !note_.undoRun) save(false);
     const int scrollBefore = verticalScrollBar()->value();
     // Курсор ставим туда, где была отменяемая правка, — но её позиция записана
     // в координатах ОТМЕНЯЕМОГО документа, а вернём мы другой. Отображаем
@@ -859,9 +892,9 @@ void NoteEditor::undo() {
     // зоны каретка идёт к началу расхождения. Голое записанное смещение
     // промахивалось: правка добавила знаки выше каретки — и в более коротком
     // возвращённом документе каретка прыгала на пару строк вниз.
-    const int recorded = history_.current().cursor;
+    const int recorded = note_.undoChain.current().cursor;
     const QString undonePlain = document()->toPlainText();
-    const HistoryStep* step = history_.undo();
+    const HistoryStep* step = note_.undoChain.undo();
     if (step == nullptr) {
         // Дно внутридокументной цепочки — дальше шагаем в слепки. Режим
         // объявляет себя сам (баннер, заголовок окна), и это же служит защитой
@@ -869,7 +902,7 @@ void NoteEditor::undo() {
         enterHistory();
         return;
     }
-    undoRun_ = true;
+    note_.undoRun = true;
     rebuild(step->doc, 0, viewAnchor());
     const QString restoredPlain = document()->toPlainText();
 
@@ -909,9 +942,9 @@ void NoteEditor::redo() {
     }
     flushPendingEdit();
     const int scrollBefore = verticalScrollBar()->value();
-    const HistoryStep* step = history_.redo();
+    const HistoryStep* step = note_.undoChain.redo();
     if (step == nullptr) return;
-    undoRun_ = true;
+    note_.undoRun = true;
     rebuild(step->doc, step->cursor, viewAnchor());
     showEditPlace(scrollBefore);
     document()->setModified(true);
@@ -939,22 +972,22 @@ void NoteEditor::rebuild(const Document& doc, int cursor, const ViewAnchor& anch
     // меняется при обычной правке один блок. Облик и масштаб задают каждый
     // блок, а не только изменившиеся, — при их смене заплатка не годится.
     bool patched = false;
-    if (builtValid_ && builtZoom_ == zoom()) {
+    if (note_.builtValid && note_.builtZoom == zoom()) {
         Document read;
         if (current == nullptr) {
             read = readDocument(*document());
             current = &read;
         }
-        patched = patchDocument(built_, *current, doc, *document(), zoom());
+        patched = patchDocument(note_.built, *current, doc, *document(), zoom());
     }
     if (!patched) buildDocument(doc, *document(), zoom());
-    built_ = doc;
-    builtValid_ = true;
-    builtZoom_ = zoom();
+    note_.built = doc;
+    note_.builtValid = true;
+    note_.builtZoom = zoom();
     applyContentWidth();
     // Сборка — не правка: подметать за ней нечего, а область от неё вышла бы
     // во весь документ и утащила бы следующую уборку на полный проход.
-    dirty_ = QTextCursor();
+    note_.dirty = QTextCursor();
 
     QTextCursor place(document());
     place.setPosition(qBound(0, cursor, document()->characterCount() - 1));
@@ -1532,9 +1565,9 @@ bool NoteEditor::runOperation(const std::function<bool(QTextDocument&, QTextCurs
     const int anchor = cursor.anchor();
     const int position = cursor.position();
     Document ir = readDocument(*document());
-    history_.push(ir, position);
+    note_.undoChain.push(ir, position);
     // Операция — отдельный шаг: следующая набранная буква к ней не приклеится.
-    typingRun_ = false;
+    note_.typingRun = false;
 
     rebuild(ir, position, viewAnchor(), &ir);
     // Выделение возвращаем: операция могла тронуть десяток пунктов сразу, и
@@ -1639,7 +1672,7 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
     // будет там, где смотрит на заметку.
     menu->addSeparator();
     menu->addAction(QStringLiteral("Открыть во внешнем редакторе"), this,
-                    [this] { emit externalEditorRequested(path_); });
+                    [this] { emit externalEditorRequested(note_.path); });
 
     menu->popup(event->globalPos());
 }
@@ -1759,8 +1792,8 @@ void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
     recordingSuspended_ = false;
 
     Document ir = readDocument(*document());
-    history_.push(ir, landed);
-    typingRun_ = false;
+    note_.undoChain.push(ir, landed);
+    note_.typingRun = false;
     rebuild(ir, landed, viewAnchor(), &ir);
     document()->setModified(true);
     showEditPlace(scrollBefore);
@@ -1776,8 +1809,8 @@ bool NoteEditor::applyIrEdit(const MoveResult& moved) {
     if (!moved.done) return false;
     const int scrollBefore = verticalScrollBar()->value();
 
-    history_.push(moved.doc, textCursor().position());
-    typingRun_ = false;
+    note_.undoChain.push(moved.doc, textCursor().position());
+    note_.typingRun = false;
     rebuild(moved.doc, 0, viewAnchor());
 
     // Курсор ставим по месту в IR: после перестановки или слияния блоков прежняя
@@ -1820,7 +1853,7 @@ void NoteEditor::onContentsChanged() {
     // владельца: таких строк не существует. Чистим после каждой правки.
     tidySweep(textCursor());
 
-    undoRun_ = false;   // настоящая правка — серия отмены кончилась
+    note_.undoRun = false;   // настоящая правка — серия отмены кончилась
     recordEdit();
     autosave_.start(appearance().autosaveDelayMs);
 }
@@ -1829,34 +1862,34 @@ void NoteEditor::onContentsChanged() {
 // незачем: набор подряд всё равно склеивается в один шаг, и все промежуточные
 // снимки этого шага выбрасываются. Ждём конца серии.
 void NoteEditor::recordEdit() {
-    pendingCursor_ = textCursor().position();
-    pendingEdit_ = true;
+    note_.pendingCursor = textCursor().position();
+    note_.pendingEdit = true;
     snapshot_.start(appearance().undoCoalesceMs);
 }
 
 void NoteEditor::flushPendingEdit() {
-    if (!pendingEdit_) return;
-    pendingEdit_ = false;
+    if (!note_.pendingEdit) return;
+    note_.pendingEdit = false;
     snapshot_.stop();
     // Набор подряд — один шаг: иначе Ctrl+Z возвращал бы по одной букве. Серия
     // кончается тишиной (сработал таймер) или чем угодно, что заводит
     // собственный шаг, — те сами гасят признак.
     Document doc = readDocument(*document());
-    if (typingRun_) history_.amend(std::move(doc), pendingCursor_);
-    else history_.push(std::move(doc), pendingCursor_);
-    typingRun_ = true;
+    if (note_.typingRun) note_.undoChain.amend(std::move(doc), note_.pendingCursor);
+    else note_.undoChain.push(std::move(doc), note_.pendingCursor);
+    note_.typingRun = true;
 }
 
 void NoteEditor::forgetPendingEdit() {
-    undoRun_ = false;   // другой файл — своя серия
-    pendingEdit_ = false;
+    note_.undoRun = false;   // другой файл — своя серия
+    note_.pendingEdit = false;
     snapshot_.stop();
-    typingRun_ = false;
+    note_.typingRun = false;
 }
 
 void NoteEditor::editMeta(const std::function<void(NoteMeta&)>& change) {
-    meta_.present = true;
-    change(meta_);
+    note_.meta.present = true;
+    change(note_.meta);
     // Правка одной меты не трогает modified: перенос, корзина и
     // восстановление — не редактирование содержимого, и всплывать наверх
     // списка заметка от них не должна (правило владельца). Несохранённые
@@ -1881,7 +1914,7 @@ bool NoteEditor::enterHistory(int index) {
     // Отдельного метода на это не заводим: снаружи это одно и то же желание —
     // «покажи вот эту запись».
     if (inHistory()) return index >= 0 && showSnapshot(index);
-    if (storeRoot_.isEmpty() || path_.isEmpty()) return false;
+    if (storeRoot_.isEmpty() || note_.path.isEmpty()) return false;
 
     // Незаписанные правки — в файл, а значит и в журнал: человек пошёл смотреть
     // прошлое, и вершина цепочки обязана в этом прошлом оказаться. Иначе он
@@ -1892,36 +1925,37 @@ bool NoteEditor::enterHistory(int index) {
 
     journal::History history(storeRoot_);
     QString error;
-    if (!history.read(QFileInfo(path_).completeBaseName(), &timeline_, &error)) {
+    // Читаем в местную переменную: объект заметки сейчас уедет целиком, и
+    // положенное в него до этого уехало бы вместе с ним.
+    journal::Journal timeline;
+    if (!history.read(QFileInfo(note_.path).completeBaseName(), &timeline, &error)) {
         std::fprintf(stderr, "история не читается: %s\n", error.toUtf8().constData());
         return false;
     }
     // Записи без слепка (надгробие) показывать нечего.
-    int last = timeline_.entries.size() - 1;
-    while (last >= 0 && !timeline_.entries[last].hasSnapshot()) --last;
+    int last = timeline.entries.size() - 1;
+    while (last >= 0 && !timeline.entries[last].hasSnapshot()) --last;
     if (last < 0) return false;
 
     // Незаписанный снимок принадлежит живой заметке; он уедет вместе с ней, а
     // не в режим истории.
-    forgetPendingEdit();
+    flushPendingEdit();
 
-    LiveNote live;
-    live.document = std::move(ownDocument_);
-    // На место уехавшей цепочки — СВЕЖАЯ, а не пустая. Перенесённая оставляет
-    // за собой очередь без шагов, но с прежним указателем на текущий, и первое
-    // же обращение к ней падает на выходе за границу. Ловилось набором.
-    live.history = std::exchange(
-        history_, EditHistory(appearance().undoLimit,
-                              size_t(qMax(1, appearance().undoBudgetMb)) * 1024 * 1024));
-    live.built = built_;
-    live.builtZoom = builtZoom_;
-    live.builtValid = builtValid_;
-    live.cursor = textCursor().position();
-    live.scroll = verticalScrollBar()->value();
-    live.modified = live.document && live.document->isModified();
-    // ownDocument_ уже пуст: installDocument ниже заберёт его как «прежний» и
-    // ничего не удалит — живой документ теперь наш, в live_.
-    live_ = std::move(live);
+    // Живая заметка уезжает целиком в дочерний объект, а на её месте
+    // заводится объект слепка — с тем же путём и метой, но со своей цепочкой
+    // отмены и своим документом. Возврат — обратная подмена, и потерять при
+    // ней нечего: переносится объект, а не набор полей.
+    auto live = std::make_unique<NoteSession>(std::move(note_));
+    live->cursor = textCursor().position();
+    live->scroll = verticalScrollBar()->value();
+    live->modified = live->document && live->document->isModified();
+
+    note_ = NoteSession{};
+    note_.path = live->path;
+    note_.meta = live->meta;
+    note_.digest = live->digest;
+    note_.timeline = std::move(timeline);
+    note_.live = std::move(live);
 
     setReadOnly(true);
     // О начале режима сообщаем ДО показа слепка: слушатель на этом сигнале
@@ -1937,8 +1971,8 @@ bool NoteEditor::enterHistory(int index) {
 }
 
 bool NoteEditor::showSnapshot(int index) {
-    if (index < 0 || index >= timeline_.entries.size()) return false;
-    if (!timeline_.entries[index].hasSnapshot()) return false;
+    if (index < 0 || index >= note_.timeline.entries.size()) return false;
+    if (!note_.timeline.entries[index].hasSnapshot()) return false;
 
     // Показ слепка — не правка человека. Без этого подмена документа считалась
     // бы правкой и лезла в цепочку отмены, которой сейчас нет вовсе: она
@@ -1955,7 +1989,7 @@ bool NoteEditor::showSnapshot(int index) {
     journal::History history(storeRoot_);
     QByteArray bytes;
     QString error;
-    if (!history.snapshotAt(QFileInfo(path_).completeBaseName(), index, &bytes, &error)) {
+    if (!history.snapshotAt(QFileInfo(note_.path).completeBaseName(), index, &bytes, &error)) {
         std::fprintf(stderr, "слепок не собрать: %s\n", error.toUtf8().constData());
         return false;
     }
@@ -1964,52 +1998,37 @@ bool NoteEditor::showSnapshot(int index) {
     // что и обычное открытие: второго способа прочитать заметку нет.
     const Document doc = parse(std::string(bytes.constData(), size_t(bytes.size())));
     installDocument(std::make_unique<QTextDocument>());
-    builtValid_ = false;
+    note_.builtValid = false;
     rebuild(doc, 0, ViewAnchor{});
     document()->setModified(false);
-    historyIndex_ = index;
+    note_.historyIndex = index;
     emit historyIndexChanged(index);
     return true;
 }
 
 void NoteEditor::leaveHistory() {
     if (!inHistory()) return;
-    // Всё, что успело накопиться на слепке, к живой заметке отношения не имеет.
-    forgetPendingEdit();
-    LiveNote live = std::move(*live_);
-    live_.reset();
-    historyIndex_ = -1;
+    // Всё, что накопилось на слепке, к живой заметке отношения не имеет.
+    flushPendingEdit();
 
-    history_ = std::move(live.history);
-    built_ = std::move(live.built);
-    builtZoom_ = live.builtZoom;
-    builtValid_ = live.builtValid;
-    installDocument(std::move(live.document));
-    applyContentWidth();
-
-    QTextCursor place(document());
-    place.setPosition(qBound(0, live.cursor, document()->characterCount() - 1));
-    setTextCursor(place);
-    verticalScrollBar()->setValue(live.scroll);
-    document()->setModified(live.modified);
-
+    installSession(std::move(*note_.live));
     setReadOnly(false);
     emit historyModeChanged(false);
 }
 
 bool NoteEditor::historyStepBack() {
     if (!inHistory() && !enterHistory()) return false;
-    int at = historyIndex_ - 1;
-    while (at >= 0 && !timeline_.entries[at].hasSnapshot()) --at;
+    int at = note_.historyIndex - 1;
+    while (at >= 0 && !note_.timeline.entries[at].hasSnapshot()) --at;
     if (at < 0) return false;   // дальше в прошлое некуда: остаёмся где были
     return showSnapshot(at);
 }
 
 bool NoteEditor::historyStepForward() {
     if (!inHistory()) return false;
-    int at = historyIndex_ + 1;
-    while (at < timeline_.entries.size() && !timeline_.entries[at].hasSnapshot()) ++at;
-    if (at >= timeline_.entries.size()) {
+    int at = note_.historyIndex + 1;
+    while (at < note_.timeline.entries.size() && !note_.timeline.entries[at].hasSnapshot()) ++at;
+    if (at >= note_.timeline.entries.size()) {
         // Дальше последнего слепка — живая версия. Это и есть выход из режима
         // хронологическим шагом вперёд.
         leaveHistory();
@@ -2019,8 +2038,8 @@ bool NoteEditor::historyStepForward() {
 }
 
 qint64 NoteEditor::restoreShownSnapshot() {
-    if (!inHistory() || historyIndex_ < 0) return 0;
-    const qint64 source = timeline_.entries[historyIndex_].time;
+    if (!inHistory() || note_.historyIndex < 0) return 0;
+    const qint64 source = note_.timeline.entries[note_.historyIndex].time;
 
     // Тело слепка забираем ДО выхода из режима: сейчас оно в поле редактора.
     Document body = readDocument(*document());
@@ -2037,21 +2056,21 @@ qint64 NoteEditor::restoreShownSnapshot() {
     flushPendingEdit();
     rebuild(body, textCursor().position(), viewAnchor());
     document()->setModified(true);
-    typingRun_ = false;
-    undoRun_ = false;
+    note_.typingRun = false;
+    note_.undoRun = false;
     recordEdit();
     flushPendingEdit();
 
     // Ближайшее сохранение станет записью restore со ссылкой на источник.
-    pendingRestoreSource_ = source;
+    note_.restoreSource = source;
     save(false);
     return source;
 }
 
 void NoteEditor::recordBaseline(const QByteArray& contents) {
-    if (storeRoot_.isEmpty() || path_.isEmpty()) return;
+    if (storeRoot_.isEmpty() || note_.path.isEmpty()) return;
     journal::History history(storeRoot_);
-    const QString noteId = QFileInfo(path_).completeBaseName();
+    const QString noteId = QFileInfo(note_.path).completeBaseName();
     journal::Journal journal;
     QString error;
     if (!history.read(noteId, &journal, &error)) {
@@ -2060,7 +2079,7 @@ void NoteEditor::recordBaseline(const QByteArray& contents) {
     }
     if (!journal.entries.isEmpty()) return;   // история уже начата
 
-    const QDateTime when = QFileInfo(path_).lastModified();
+    const QDateTime when = QFileInfo(note_.path).lastModified();
     if (!history.append(noteId, journal::Kind::Save,
                         when.isValid() ? when.toMSecsSinceEpoch()
                                        : QDateTime::currentMSecsSinceEpoch(),
@@ -2069,16 +2088,16 @@ void NoteEditor::recordBaseline(const QByteArray& contents) {
 }
 
 void NoteEditor::recordHistory(journal::Kind kind, const QByteArray& snapshot, qint64 source) {
-    if (storeRoot_.isEmpty() || path_.isEmpty()) return;
+    if (storeRoot_.isEmpty() || note_.path.isEmpty()) return;
     journal::History history(storeRoot_);
     QString error;
-    if (!history.append(QFileInfo(path_).completeBaseName(), kind,
+    if (!history.append(QFileInfo(note_.path).completeBaseName(), kind,
                         QDateTime::currentMSecsSinceEpoch(), snapshot, source, &error))
         std::fprintf(stderr, "история не записана: %s\n", error.toUtf8().constData());
 }
 
 void NoteEditor::save(bool interactive) {
-    if (path_.isEmpty() || !document()->isModified()) return;
+    if (note_.path.isEmpty() || !document()->isModified()) return;
     // До записи: сохранение умеет пересобрать документ из перечитанного файла,
     // и шаг серии остался бы без содержимого.
     flushPendingEdit();
@@ -2086,8 +2105,8 @@ void NoteEditor::save(bool interactive) {
     // modified обновляется только при настоящем сохранении: сюда мы доходим
     // лишь с несохранёнными правками, так что цикла «запись ради метаданных»
     // не возникает. Внешние правки оставляют modified устаревшим — принято.
-    if (meta_.present && stampModifiedOnSave_)
-        meta_.set("modified",
+    if (note_.meta.present && stampModifiedOnSave_)
+        note_.meta.set("modified",
                   QDateTime::currentDateTimeUtc()
                       .toString(QStringLiteral("yyyy-MM-ddTHH:mm:ss'Z'"))
                       .toStdString());
@@ -2095,14 +2114,14 @@ void NoteEditor::save(bool interactive) {
     // Отпечаток того, что в файле, мы знаем — значит «не изменилось ли»
     // решается без чтения файла.
     const SaveOutcome outcome =
-        saveDocument(*document(), path_, rescueTimestamp(), nullptr, meta_, knownDigest_);
+        saveDocument(*document(), note_.path, rescueTimestamp(), nullptr, note_.meta, note_.digest);
     if (outcome.result == SaveResult::Written || outcome.result == SaveResult::Unchanged) {
         document()->setModified(false);
-        lastComplaint_.clear();
+        note_.lastComplaint.clear();
         // Что теперь в файле, известно из самой записи: отпечаток посчитан по
         // тому буферу, который туда и ушёл. Раньше файл ради этого читался
         // заново — на каждое автосохранение.
-        knownDigest_ = outcome.digest;
+        note_.digest = outcome.digest;
         watchFile();
 
         // Файл может прочитаться богаче документа: голую ссылку человек набирает
@@ -2120,29 +2139,29 @@ void NoteEditor::save(bool interactive) {
         // подряд в журнале не нужен (дедупликация тут бесплатна, потому что
         // сравнение отпечатков уже сделано выше).
         if (outcome.result == SaveResult::Written) {
-            const bool restore = pendingRestoreSource_ != 0;
+            const bool restore = note_.restoreSource != 0;
             recordHistory(restore ? journal::Kind::Restore : journal::Kind::Save,
-                          outcome.written, pendingRestoreSource_);
+                          outcome.written, note_.restoreSource);
         }
         // Признак гасим при любом исходе записи: он относится к одному
         // ближайшему сохранению, а не «пока не сработает».
-        pendingRestoreSource_ = 0;
+        note_.restoreSource = 0;
 
         // Файл на диске стал другим: средней колонке пора перечитать заголовок,
         // начало текста и дату. Сигнал, а не прямой вызов: редактор про список
         // ничего не знает и знать не должен.
-        emit fileSaved(path_);
+        emit fileSaved(note_.path);
         return;
     }
 
     std::fprintf(stderr, "%s\n", outcome.message.toUtf8().constData());
     // Одну и ту же беду показываем один раз: автосохранение повторяется по
     // таймеру, и окно с ошибкой раз в полторы секунды — это пытка.
-    if (!interactive || outcome.message == lastComplaint_) return;
+    if (!interactive || outcome.message == note_.lastComplaint) return;
     // Файл, про который человек попросил не напоминать, — молчим до конца
     // сессии: беда известна, он правит её руками.
-    if (mutedComplaints_.contains(path_)) return;
-    lastComplaint_ = outcome.message;
+    if (mutedComplaints_.contains(note_.path)) return;
+    note_.lastComplaint = outcome.message;
 
     QMessageBox box(QMessageBox::Warning, QStringLiteral("zametti"), outcome.message,
                     QMessageBox::Ok, this);
@@ -2150,7 +2169,7 @@ void NoteEditor::save(bool interactive) {
         QStringLiteral("больше не предупреждать про этот файл в этой сессии"), &box);
     box.setCheckBox(mute);
     box.exec();
-    if (mute->isChecked()) mutedComplaints_.insert(path_);
+    if (mute->isChecked()) mutedComplaints_.insert(note_.path);
 }
 
 double NoteEditor::scrollRatio() const {

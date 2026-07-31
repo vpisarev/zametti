@@ -20,6 +20,7 @@
 #include <QHash>
 #include <QTextBlock>
 #include "journal.h"
+#include "settings.h"
 
 #include <QFileSystemWatcher>
 #include <QKeySequence>
@@ -44,7 +45,7 @@ public:
 
     // Открыть заметку. Прежняя сохраняется, история начинается заново.
     bool openFile(const QString& path);
-    QString filePath() const { return path_; }
+    QString filePath() const { return note_.path; }
 
     // Масштаб — облик: документ пересобирается, история остаётся как была.
     void applyZoom(qreal zoom);
@@ -67,9 +68,9 @@ public:
     // собой не пересекает границу блока (разделитель блоков в текст не
     // попадает).
     int findMatches(const QString& text, bool caseSensitive);
-    int matchCount() const { return int(matches_.size()); }
+    int matchCount() const { return int(note_.matches.size()); }
     // Какое совпадение сейчас текущее, с нуля; -1 — ни одного.
-    int currentMatch() const { return currentMatch_; }
+    int currentMatch() const { return note_.currentMatch; }
     // Перейти к совпадению по кругу: -1 подхватывает ближайшее после каретки.
     void goToMatch(int index);
     void stepMatch(int direction);
@@ -82,16 +83,16 @@ public:
 
     // Файл изменился снаружи, а у нас есть несохранённые правки: пока человек
     // не решит, чьё содержимое брать, мы ничего не трогаем.
-    bool hasExternalConflict() const { return externalPending_; }
+    bool hasExternalConflict() const { return note_.externalPending; }
     void resolveExternalConflict(bool takeExternal);
 
     // Внешняя правка снесла или обкорнала блок метаданных. Прежние значения
     // остались в памяти — вернуть их обычной записью, сохранив правки тела.
     // Тихой деградации быть не должно: заметка без меты уезжает в корень и
     // теряет дату создания.
-    bool hasDamagedMeta() const { return lostMeta_.present; }
+    bool hasDamagedMeta() const { return note_.lostMeta.present; }
     void restoreDamagedMeta();
-    void forgetDamagedMeta() { lostMeta_ = NoteMeta(); }
+    void forgetDamagedMeta() { note_.lostMeta = NoteMeta(); }
 
     // Сохранить, если есть что. interactive — показывать ли окно с ошибкой.
     void save(bool interactive);
@@ -120,11 +121,11 @@ public:
     bool enterHistory(int index = -1);
     // Вернуться к живой версии. В обычном состоянии ничего не делает.
     void leaveHistory();
-    bool inHistory() const { return live_.has_value(); }
+    bool inHistory() const { return note_.live != nullptr; }
     // Какая запись показана; -1 вне режима.
-    int historyIndex() const { return historyIndex_; }
+    int historyIndex() const { return note_.historyIndex; }
     // Рамки записей открытой заметки — таймлайну. Читаются при входе в режим.
-    const journal::Journal& timeline() const { return timeline_; }
+    const journal::Journal& timeline() const { return note_.timeline; }
     // Шаг к более старому слепку и к более новому. Шаг вперёд с последнего
     // слепка выводит из режима — это и есть «в конце возвращаемся к живой».
     bool historyStepBack();
@@ -146,7 +147,7 @@ public:
     void recordHistory(journal::Kind kind, const QByteArray& snapshot, qint64 source = 0);
 
     // Правка меты открытой заметки с немедленным сохранением. Здесь, а не
-    // снаружи: meta_ живёт в редакторе, и файл под открытой заметкой
+    // снаружи: note_.meta живёт в редакторе, и файл под открытой заметкой
     // переписывать нельзя — сторож примет за чужую правку.
     void editMeta(const std::function<void(NoteMeta&)>& change);
     // Перенос: правка parent. Пустой — в корень.
@@ -303,23 +304,84 @@ private:
     // отложенное как есть. Не совпал — правил кто-то снаружи, отложенное
     // выбрасываем и собираем с диска заново. Терять при этом нечего: в кэш
     // попало только то, что уже записано в файл.
-    struct CachedNote {
+    // ВСЁ, что относится к одной заметке, — здесь и только здесь.
+    //
+    // Правило простое: поле, у которого есть ответ на вопрос «какой заметки?»,
+    // живёт в этом объекте, а не в редакторе. Переключение заметки — это смена
+    // объекта целиком, а не переприсваивание десятка полей. Забыть при этом
+    // что-то сбросить нельзя: несброшенного просто не остаётся.
+    //
+    // Правило родилось на живой ошибке: признак «мы в режиме истории» лежал в
+    // редакторе и пережил переход к другой заметке — редактор показывал слепок
+    // ПРЕЖНЕЙ заметки, имея путь новой. Пока состояние размазано по объекту
+    // приложения, такие рассинхронизации будут появляться снова и снова
+    // (наблюдение владельца).
+    //
+    // Один и тот же тип служит трём вещам: открытой заметке, отложенной в кэш и
+    // слепку в режиме истории. Это не экономия, а следствие: все три — заметка
+    // со своим состоянием, и разница между ними только в том, кто её держит.
+    struct NoteSession {
         QString path;
         std::unique_ptr<QTextDocument> document;
-        EditHistory history;
         NoteMeta meta;
-        Digest digest;      // каким файл был, когда мы уходили
-        Document built;     // из чего документ собран: нужно заплатке
+        // Мета, потерянная внешней правкой: показать человеку, что пропало.
+        NoteMeta lostMeta;
+        Digest digest;          // каким файл был, когда мы его последний раз видели
+        // Цепочка отмены этой заметки. Пределы берутся из настроек прямо
+        // здесь: у каждой заметки своя цепочка, и заводится она вместе с ней.
+        EditHistory undoChain{appearance().undoLimit,
+                              size_t(qMax(1, appearance().undoBudgetMb)) * 1024 * 1024};
+        Document built;         // из чего собран документ: нужно заплатке
         qreal builtZoom = 0.0;
+        bool builtValid = false;
         int cursor = 0;
         int scroll = 0;
-        qint64 bytes = 0;   // оценка веса, см. documentCacheSizeMb
+        bool modified = false;  // осмысленно у отложенной: у открытой спрашивают документ
+        qint64 bytes = 0;       // оценка веса, см. documentCacheSizeMb
+
+        // Отложенный снимок для цепочки отмены: правка есть, снимок ещё нет.
+        bool pendingEdit = false;
+        int pendingCursor = 0;
+        bool typingRun = false;   // идёт серия набора — дописывать в тот же шаг
+        bool undoRun = false;     // идёт серия отмены — см. NoteEditor::undo
+
+        // Курсоры внутрь документа: живут ровно столько, сколько он.
+        QTextCursor lastLine;
+        QTextCursor dirty;        // область, накопленная с прошлой уборки
+
+        // Внешняя правка, ждущая ответа человека.
+        bool externalPending = false;
+        std::string externalText;
+        bool externalEmptyRetried = false;
+        QString lastComplaint;    // о чём уже жаловались: не повторяться
+
+        // Найденное в этой заметке. Курсоры смотрят в её документ, поэтому и
+        // хранятся с ним: у чужой заметки они не значат ничего.
+        std::vector<QTextCursor> matches;
+        int currentMatch = -1;
+        QString matchText;
+        bool matchCaseSensitive = false;
+        int lastCaretPosition = 0;
+
+        // Режим истории. Открытая заметка подменяется слепком, а сама она
+        // уезжает СЮДА и возвращается назад целиком. Непусто — идёт режим.
+        std::unique_ptr<NoteSession> live;
+        journal::Journal timeline;   // рамки записей: таймлайну
+        int historyIndex = -1;       // какая запись показана; -1 вне режима
+        // Ближайшее сохранение записать восстановлением: время источника.
+        qint64 restoreSource = 0;
     };
 
     // Оценка веса документа. Точного размера QTextDocument не отдаёт; чем эта
     // оценка обоснована — см. documentCacheSizeMb в settings.h.
     static qint64 estimateDocumentBytes(const QTextDocument& doc);
 
+    // Сделать эту заметку открытой: подменяет и объект, и документ, и место
+    // каретки одной операцией. Порознь между ними есть миг, когда виджет
+    // смотрит на уже разрушенный документ.
+    void installSession(NoteSession session);
+    // Подменить только документ, оставив ту же заметку: сборка с нуля и показ
+    // слепка.
     void installDocument(std::unique_ptr<QTextDocument> doc);
     void connectDocument();
     // Отложить текущую заметку, если её есть смысл откладывать.
@@ -357,15 +419,10 @@ private:
     void adoptExternal(const std::string& text);
     void watchFile();
 
-    EditHistory history_;
     // IR, из которого документ собран в последний раз. Нужен заплатке: она
     // пересобирает только то, чем новый IR от него отличается. Между
     // пересборками документ уходит вперёд от набора — и это ровно то, что
     // заплатке надо пересобрать, так что расхождение здесь не изъян, а смысл.
-    Document built_;
-    bool builtValid_ = false;
-    qreal builtZoom_ = 0.0;
-    QString path_;
     // Корень хранилища — ради истории правок. Пусто: файл открыт сам по себе,
     // вне хранилища, и журналу взяться неоткуда.
     QString storeRoot_;
@@ -389,7 +446,6 @@ private:
     // перепрыгивает строку целиком. Направление различается по прошлой
     // позиции.
     void snapCaretOffImage();
-    int lastCaretPosition_ = 0;
     bool snappingCaret_ = false;
 
     // Пересборка документа и операции меняют его содержимое и потому неотличимы
@@ -401,10 +457,6 @@ private:
     // Найденные вхождения в открытой заметке. Курсорами, а не смещениями:
     // смещения поехали бы от первой же правки, а курсоры Qt двигает сам.
     void showMatchHighlights();
-    std::vector<QTextCursor> matches_;
-    int currentMatch_ = -1;
-    QString matchText_;
-    bool matchCaseSensitive_ = false;
 
     QKeySequence moveUpKey_;
     QKeySequence moveDownKey_;
@@ -431,35 +483,15 @@ private:
     // и сторож стреляет на пустом файле посреди записи. Перечитываем только
     // после паузы тишины, иначе в историю попадал пустой документ.
     QTimer externalSettle_;
-    bool externalEmptyRetried_ = false;
     // Отпечаток того, что мы в последний раз видели в файле. Им слежение
     // отличает нашу же запись от чужой правки. Отпечаток, а не сами байты:
     // держать копию каждой открытой заметки незачем, а после записи он
     // приходит из пути сохранения — перечитывать файл не надо вовсе.
-    Digest knownDigest_;
-    // Живая заметка, отложенная на время режима истории. Пусто — режима нет.
-    // Держим сам объект документа, а не текст: возврат обязан вернуть и
-    // цепочку отмены, и каретку, и признак «правлен».
-    struct LiveNote {
-        std::unique_ptr<QTextDocument> document;
-        EditHistory history;
-        Document built;
-        qreal builtZoom = 0.0;
-        bool builtValid = false;
-        int cursor = 0;
-        int scroll = 0;
-        bool modified = false;
-    };
-    std::optional<LiveNote> live_;
-    journal::Journal timeline_;
-    int historyIndex_ = -1;
-    // Ближайшее сохранение записать восстановлением, а не обычным шагом: время
-    // записи-источника, 0 — обычное сохранение. Так подпись «восстановлено
-    // из …» берётся из журнала, а не додумывается по времени.
-    qint64 pendingRestoreSource_ = 0;
+    // Документ, которым владеем: нужен подмене объекта заметки.
+    std::unique_ptr<QTextDocument>& ownedDocument() { return note_.document; }
 
     // Показать слепок записи index в поле редактора. Живая заметка к этому
-    // моменту уже отложена.
+    // моменту уже отложена в note_.live.
     bool showSnapshot(int index);
 
     // Идёт ли серия отмены. Сохранением в историю отгораживается только ПЕРВЫЙ
@@ -467,43 +499,35 @@ private:
     // Дальше он шагает по уже записанному прошлому, и записывать промежуточные
     // состояния отката в историю незачем — она заполнилась бы тем, от чего он
     // как раз уходит. Признак гасит любая настоящая правка.
-    bool undoRun_ = false;
     // Строка, на которой каретка стояла в прошлый раз: уходя со строки,
     // редактор стирает её хвостовые пробелы, а опустевшую превращает в
     // пустую строку. Держится курсором — переживает правки.
-    QTextCursor lastLine_;
     // Что менялось с прошлой уборки: подметаем только это. Пусто — менять было
     // нечего, и проходить по документу незачем.
-    QTextCursor dirty_;
     bool tidying_ = false;
     // Метаданные открытой заметки. В QTextDocument их нет — редактор их не
     // видит, — поэтому от открытия до сохранения они живут здесь.
-    NoteMeta meta_;
     // Что было в шапке до того, как её испортили снаружи; пусто — портить
     // нечего или человек уже решил.
-    NoteMeta lostMeta_;
-    bool externalPending_ = false;
-    std::string externalText_;
 
     QTimer autosave_;
     // Снимок истории — не на каждую букву, а в конце серии набора: снимок
     // читает документ целиком, и на каждое нажатие это O(N). Таймер тот же,
     // которым серия и склеивается в один шаг.
     QTimer snapshot_;
-    bool pendingEdit_ = false;
-    int pendingCursor_ = 0;
     // Шаг истории уже заведён этой серией: следующий снимок дописывает его, а
     // не заводит новый.
-    bool typingRun_ = false;
-    QString lastComplaint_;
     // Где стояла каретка в каждой заметке этой сессии: переключение туда-сюда
     // не должно каждый раз возвращать к началу.
     QHash<QString, int> caretMemory_;
     // Документ, установленный сейчас, — наш, а не заведённый Qt: только своими
     // документами и можно меняться. Отложенные лежат в noteCache_, свежайшая
     // заметка первой.
-    std::unique_ptr<QTextDocument> ownDocument_;
-    std::vector<CachedNote> noteCache_;
+    // Открытая заметка. Всё её состояние — здесь; смена заметки это смена
+    // этого объекта целиком.
+    NoteSession note_;
+    // Отложенные заметки: те же объекты, только не показанные.
+    std::vector<NoteSession> noteCache_;
     // Ложь на время editMeta без правок текста: мета-правка не трогает
     // modified.
     bool stampModifiedOnSave_ = true;
