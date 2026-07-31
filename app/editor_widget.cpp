@@ -98,6 +98,9 @@ NoteEditor::NoteEditor(QWidget* parent)
 
     autosave_.setSingleShot(true);
     connect(&autosave_, &QTimer::timeout, this, [this] { save(true); });
+    // Оба сигнала, и порядок важен: contentsChange приходит первым и приносит
+    // границы правки, contentsChanged — следом, и по нему уже подметаем.
+    connect(document(), &QTextDocument::contentsChange, this, &NoteEditor::onContentsChange);
     connect(document(), &QTextDocument::contentsChanged, this,
             &NoteEditor::onContentsChanged);
     connect(&watcher_, &QFileSystemWatcher::fileChanged, this, &NoteEditor::onFileChanged);
@@ -164,11 +167,48 @@ void NoteEditor::onCaretMoved() {
     lastLine_ = textCursor();
 }
 
-// Хвостовые пробелы — везде, кроме строки каретки, кода и дословных кусков.
-// Один проход по документу после каждой правки: где бы правка ни насорила,
-// подметается всё разом — искать «все места» не приходится.
-void NoteEditor::tidySweep(const QTextCursor& caret) {
+// Границы того, что менялось с прошлой уборки. Курсор, а не пара чисел:
+// позиции плывут от каждой следующей правки, а курсор Qt двигает сам —
+// починка после набора и слияние блоков область не сбивают.
+//
+// Свои же вырезы копить незачем: уборка только удаляет пробелы и новых не
+// заводит.
+void NoteEditor::onContentsChange(int position, int charsRemoved, int charsAdded) {
+    Q_UNUSED(charsRemoved);
     if (tidying_) return;
+    const int last = qMax(0, document()->characterCount() - 1);
+    const int from = qBound(0, position, last);
+    const int to = qBound(from, position + charsAdded, last);
+    if (dirty_.isNull() || dirty_.document() != document()) {
+        dirty_ = QTextCursor(document());
+        dirty_.setPosition(from);
+        dirty_.setPosition(to, QTextCursor::KeepAnchor);
+        return;
+    }
+    const int lo = qMin(dirty_.selectionStart(), from);
+    const int hi = qMax(dirty_.selectionEnd(), to);
+    dirty_.setPosition(lo);
+    dirty_.setPosition(hi, QTextCursor::KeepAnchor);
+}
+
+// Хвостовые пробелы — везде, кроме строки каретки, кода и дословных кусков.
+//
+// Проход не по всему документу, а по накопленной области правки: хвостовым
+// пробелам неоткуда взяться там, куда правка не дотянулась. Строку, с которой
+// ушла каретка, чистит tidyLeftLine — она в область может и не попасть.
+// Соседний блок с каждой стороны берём про запас: правка на границе блоков
+// сливает и делит их, и то, что стало «соседом», час назад было серединой.
+//
+// Полный проход остаётся там, где документ и так собирается целиком: после
+// пересборки область забывается, и подметать в ней нечего.
+void NoteEditor::tidySweep(const QTextCursor& caret) {
+    if (tidying_ || dirty_.isNull()) return;
+    const int first = qMax(0, document()->findBlock(dirty_.selectionStart()).blockNumber() - 1);
+    const int afterLast =
+        qMin(document()->blockCount() - 1,
+             document()->findBlock(dirty_.selectionEnd()).blockNumber() + 1);
+    dirty_ = QTextCursor();
+
     const int caretBlock = caret.blockNumber();
     int caretLine = 0;
     {
@@ -179,7 +219,9 @@ void NoteEditor::tidySweep(const QTextCursor& caret) {
 
     // Сначала собрать, потом резать с конца: позиции не плывут.
     std::vector<std::pair<int, int>> cuts;
-    for (QTextBlock block = document()->begin(); block.isValid(); block = block.next()) {
+    QTextBlock block = document()->findBlockByNumber(first);
+    for (int number = first; number <= afterLast && block.isValid();
+         ++number, block = block.next()) {
         if (isRawBlock(block)) continue;
         const Kind kind = kindOf(block);
         if (kind == Kind::Code) continue;
@@ -681,6 +723,9 @@ void NoteEditor::rebuild(const Document& doc, int cursor, const ViewAnchor& anch
     recordingSuspended_ = true;
     buildDocument(doc, *document(), zoom());
     applyContentWidth();
+    // Сборка — не правка: подметать за ней нечего, а область от неё вышла бы
+    // во весь документ и утащила бы следующую уборку на полный проход.
+    dirty_ = QTextCursor();
 
     QTextCursor place(document());
     place.setPosition(qBound(0, cursor, document()->characterCount() - 1));

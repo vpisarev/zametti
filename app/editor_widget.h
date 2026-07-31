@@ -225,8 +225,10 @@ private:
     void rebuild(const Document& doc, int cursor, const ViewAnchor& anchor);
     void recordEdit();
     void onContentsChanged();
+    void onContentsChange(int position, int charsRemoved, int charsAdded);
     void onCaretMoved();
     void tidyLeftLine(const QTextCursor& left);
+    // Подметает не весь документ, а область, накопленную с прошлой уборки.
     void tidySweep(const QTextCursor& caret);
     void onFileChanged(const QString& path);
     void onExternalSettled();
@@ -305,6 +307,9 @@ private:
     // редактор стирает её хвостовые пробелы, а опустевшую превращает в
     // пустую строку. Держится курсором — переживает правки.
     QTextCursor lastLine_;
+    // Что менялось с прошлой уборки: подметаем только это. Пусто — менять было
+    // нечего, и проходить по документу незачем.
+    QTextCursor dirty_;
     bool tidying_ = false;
     // Метаданные открытой заметки. В QTextDocument их нет — редактор их не
     // видит, — поэтому от открытия до сохранения они живут здесь.
