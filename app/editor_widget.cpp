@@ -2037,7 +2037,8 @@ bool NoteEditor::historyStepForward() {
     return showSnapshot(at);
 }
 
-qint64 NoteEditor::restoreShownSnapshot() {
+qint64 NoteEditor::restoreShownSnapshot(bool* alreadyCurrent) {
+    if (alreadyCurrent != nullptr) *alreadyCurrent = false;
     if (!inHistory() || note_.historyIndex < 0) return 0;
     const qint64 source = note_.timeline.entries[note_.historyIndex].time;
 
@@ -2045,6 +2046,18 @@ qint64 NoteEditor::restoreShownSnapshot() {
     Document body = readDocument(*document());
 
     leaveHistory();
+
+    // Слепок и есть нынешняя версия — восстанавливать нечего. Сравниваем тела,
+    // без меты: восстановление её и не трогает, а штамп modified у слепка свой
+    // и разошёлся бы всегда.
+    Document liveBody = readDocument(*document());
+    liveBody.meta = {};
+    Document sameBody = body;
+    sameBody.meta = {};
+    if (serialize(sameBody) == serialize(liveBody)) {
+        if (alreadyCurrent != nullptr) *alreadyCurrent = true;
+        return 0;
+    }
 
     // Метаданные живой заметки побеждают: история возвращает содержимое, а не
     // местоположение. parent, теги и created остаются нынешними; modified

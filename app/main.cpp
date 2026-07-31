@@ -816,7 +816,12 @@ int main(int argc, char** argv) {
     QObject::connect(&historyTimeline, &zametti::HistoryTimeline::entryChosen, &editor,
                      [&](int index) { editor.enterHistory(index); });
     QObject::connect(&historyBanner, &zametti::HistoryBanner::restoreRequested, &window, [&] {
-        const qint64 source = editor.restoreShownSnapshot();
+        bool alreadyCurrent = false;
+        const qint64 source = editor.restoreShownSnapshot(&alreadyCurrent);
+        if (alreadyCurrent) {
+            findBar.setStatus(QStringLiteral("этот слепок и есть нынешняя версия"));
+            return;
+        }
         if (source == 0) return;
         findBar.setStatus(QStringLiteral("восстановлено из слепка %1")
                               .arg(zametti::historyMoment(source)));

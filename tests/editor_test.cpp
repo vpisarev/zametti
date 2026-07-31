@@ -2281,6 +2281,33 @@ void checkHistoryMode() {
     // Инвариант C: журнал не укоротился.
     check(int(journal.entries.size()) > recordsBefore, "журнал только вырос");
 
+    // Слепок, совпадающий с нынешней версией, не восстанавливается: журнал не
+    // растёт, цепочка отмены не засоряется пустым шагом, и человеку говорят
+    // правду, а не «восстановлено».
+    {
+        const int wasRecords = [&] {
+            zametti::journal::Journal journal;
+            QString e;
+            history.read(noteId, &journal, &e);
+            return int(journal.entries.size());
+        }();
+        const int wasUndo = editor.undoSteps();
+        check(editor.enterHistory(), "вход в историю на последний слепок");
+        bool alreadyCurrent = false;
+        const qint64 same = editor.restoreShownSnapshot(&alreadyCurrent);
+        QTest::qWait(20);
+        check(same == 0 && alreadyCurrent, "восстановление того же самого — не восстановление");
+        check(!editor.inHistory(), "и режим всё равно закрылся");
+        const int nowRecords = [&] {
+            zametti::journal::Journal journal;
+            QString e;
+            history.read(noteId, &journal, &e);
+            return int(journal.entries.size());
+        }();
+        check(nowRecords == wasRecords, "журнал не вырос");
+        check(editor.undoSteps() == wasUndo, "и пустого шага отмены не добавилось");
+    }
+
     // Ctrl+Z сразу после восстановления отменяет восстановление.
     editor.undo();
     QTest::qWait(20);
