@@ -871,6 +871,26 @@ bool verifyStore(const QString& root, Report& report) {
             }
     }
 
+    // Заметка-папка (и сама корзина) — структура, а не текст: в её файле
+    // положено быть шапке и ровно одному заголовку, и больше ничему. Редактор
+    // такой файл не открывает вовсе, так что тело в нём может завестись только
+    // снаружи — и увидеть его будет негде: список показывает содержимое папки,
+    // а не её саму.
+    for (const auto& [id, doc] : notes) {
+        const std::string role = doc.meta.get("role");
+        if (role != "folder" && role != "trash") continue;
+        if (doc.blocks.size() == 1 && !doc.blocks[0].raw &&
+            doc.blocks[0].kind == Kind::Heading)
+            continue;
+        if (doc.blocks.empty()) {
+            report.problem(QStringLiteral("папка без заголовка: %1.md").arg(fromUtf8(id)));
+            continue;
+        }
+        report.problem(QStringLiteral("в папке %1.md есть тело сверх заголовка (%2 блоков)")
+                           .arg(fromUtf8(id))
+                           .arg(doc.blocks.size()));
+    }
+
     // parent: существование и циклы.
     for (const auto& [id, doc] : notes) {
         const std::string parent = doc.meta.get("parent");

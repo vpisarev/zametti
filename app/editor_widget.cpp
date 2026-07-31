@@ -392,6 +392,13 @@ void NoteEditor::adoptExternal(const std::string& text) {
         }
     }
 
+    // role — ключ хранилища, а не текста: им задаётся, папка это или заметка,
+    // а заметка папкой никогда не становится и наоборот. Что бы ни вписал
+    // снаружи чужой редактор, ставим обратно своё значение; не было своего —
+    // просто снимаем ключ. Спрашивать тут нечего: подмена рода не «правка».
+    if (ir.meta.present && ir.meta.get("role") != previous.get("role"))
+        ir.meta.set("role", previous.get("role"));
+
     meta_ = ir.meta;
     history_.push(ir, textCursor().position());
     sinceLastEdit_.invalidate();

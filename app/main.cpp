@@ -470,10 +470,28 @@ int main(int argc, char** argv) {
         }
         return QFileInfo(file).completeBaseName();
     };
+    // Где эта заметка лежит — видно слева, откуда бы её ни открыли: из общего
+    // списка «All notes», из результатов поиска, из другой папки. Курсор в
+    // дереве переставляется с заглушенными сигналами: он здесь указатель, а не
+    // навигация, и средний список от него перестраиваться не должен — иначе
+    // просмотр «всех заметок» схлопывался бы до одной папки при первом же
+    // щелчке.
+    const auto revealInTree = [&](const QString& file) {
+        if (!model.isStore() || file.isEmpty()) return;
+        const QModelIndex folder =
+            model.folderIndexForNote(QFileInfo(file).completeBaseName());
+        if (!folder.isValid()) return;
+        const QSignalBlocker blocked(tree.selectionModel());
+        for (QModelIndex up = folder; up.isValid(); up = up.parent()) tree.expand(up);
+        tree.setCurrentIndex(folder);
+        tree.scrollTo(folder);
+    };
+
     QObject::connect(&editor, &zametti::NoteEditor::fileChanged, &window,
                      [&](const QString& file) {
                          window.setWindowTitle(windowTitleFor(file) +
                                                QStringLiteral(" — zametti"));
+                         revealInTree(file);
                      });
 
     // Кегль задан явно в каждом формате, поэтому штатный зум QTextEdit до него
@@ -1096,13 +1114,11 @@ int main(int argc, char** argv) {
                        [&] { createNote(model.folderIdFor(at), true); });
         if (!id.isEmpty()) {
             menu.addSeparator();
-            menu.addAction(QStringLiteral("Открыть как заметку"), [&] {
-                const QString file = model.pathOfId(id);
-                if (!file.isEmpty()) {
-                    editor.openFile(file);
-                    editor.setFocus();
-                }
-            });
+            // «Открыть как заметку» здесь больше нет. Папка — структура, а не
+            // заметка; то, что она лежит в хранилище файлом .md, — особенность
+            // хранения, и наружу её выпускать незачем. В теле такого файла
+            // положено быть только шапке и заголовку, а редактор рано или
+            // поздно завёл бы там текст, который никто уже не увидит.
             menu.addAction(QStringLiteral("Переименовать"), [&] { tree.edit(at); });
             if (model.inTrashId(id) && id != model.trashId())
                 menu.addAction(QStringLiteral("Восстановить"), [&] { restoreNote(id); });

@@ -382,6 +382,41 @@ void checkExternalParentChange() {
           "новый родитель пережил сохранение из приложения");
 }
 
+// Род заметки — дело хранилища, а не чужого редактора. Вписанный снаружи
+// role снимается молча: заметка папкой не становится никогда, и спрашивать
+// об этом человека не о чем.
+void checkExternalRoleRefused() {
+    const QString path = g_dir + QStringLiteral("/00000000000005.md");
+    writeFile(path, QStringLiteral("<!-- zametti\nid: 00000000000005\n"
+                                   "created: 2021-01-01T00:00:00Z\n-->\n\n"
+                                   "# Обычная\n\nтело\n"));
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    QSignalSpy adopted(&editor, &zametti::NoteEditor::externalAdopted);
+    writeFile(path, QStringLiteral("<!-- zametti\nid: 00000000000005\n"
+                                   "created: 2021-01-01T00:00:00Z\nrole: folder\n-->\n\n"
+                                   "# Обычная\n\nтело\n"));
+    for (int i = 0; i < 150 && adopted.isEmpty(); ++i) QTest::qWait(20);
+    check(!adopted.isEmpty(), "внешняя правка принята");
+
+    // Сохранение из приложения возвращает файл к правде: role там взяться
+    // неоткуда.
+    QTest::keyClick(&editor, Qt::Key_B);
+    editor.save(false);
+    QTest::qWait(50);
+    const QString written = readFile(path);
+    check(!written.contains(QStringLiteral("role:")),
+          "вписанный снаружи role снят при первом же сохранении");
+    check(written.contains(QStringLiteral("created: 2021-01-01T00:00:00Z")),
+          "остальная шапка не пострадала");
+    check(written.contains(QStringLiteral("тело")), "текст заметки на месте");
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     if (argc < 2) {
@@ -406,6 +441,7 @@ int main(int argc, char** argv) {
     checkExternalMetaLost();
     checkExternalMetaRefused();
     checkExternalParentChange();
+    checkExternalRoleRefused();
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;

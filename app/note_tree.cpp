@@ -554,8 +554,8 @@ std::vector<NoteRow> NoteTreeModel::notesInSubtree(const QModelIndex& index) con
         static void run(const Node* node, bool insideTrash, std::vector<NoteRow>& out) {
             for (const auto& child : node->children) {
                 if (child->trash && !insideTrash) continue;
-                // Папка — структура, а не заметка: её тело открывается через
-                // «Открыть как заметку», в списке ей делать нечего.
+                // Папка — структура, а не заметка: в списке ей делать нечего,
+                // и открыть её тело редактором нельзя вовсе.
                 if (!child->isDir())
                     out.push_back(NoteRow{child->id, child->path, child->title,
                                           child->snippet, child->modified});

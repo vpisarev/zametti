@@ -70,6 +70,12 @@ public slots:
 
             const Document doc =
                 parse(std::string_view(bytes.constData(), size_t(bytes.size())));
+            // Заметки-папки (и сама корзина) — структура хранилища, а не текст:
+            // в среднем списке их нет, и в результатах поиска им делать нечего.
+            // Иначе щелчок по находке открыл бы в редакторе файл, который тело
+            // иметь не должен.
+            const std::string role = doc.meta.get("role");
+            if (role == "folder" || role == "trash") continue;
             const std::vector<Hit> hits = findInDocument(doc, query);
             if (hits.empty()) continue;
 
