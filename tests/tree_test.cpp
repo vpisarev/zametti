@@ -386,6 +386,26 @@ int main(int argc, char** argv) {
         ZT_TRUE("список заметок собрался целиком", deepStillListed);
     }
 
+    // Заголовок для окна берётся по id, а не по QModelIndex. Дерево показывает
+    // только папки, поэтому видимой строки у заметки нет вовсе, и indexForPath
+    // для неё пуст — кто спросит заголовок через индекс, покажет человеку id.
+    // Ровно на этом заголовок окна показывал имя файла вместо названия заметки.
+    {
+        const QString noteFile =
+            g_root + QStringLiteral("/0000000000000b.md");
+        const QString folderFile =
+            g_root + QStringLiteral("/0000000000000a.md");
+        model.setFoldersOnly(true);
+        ZT_TRUE("у заметки видимой строки в дереве нет",
+                !model.indexForPath(noteFile).isValid());
+        ZT_TRUE("а у папки есть", model.indexForPath(folderFile).isValid());
+        ZT_TRUE("заголовок заметки по id находится",
+                model.titleOfId(QStringLiteral("0000000000000b")) ==
+                    QStringLiteral("Глубокая"));
+        ZT_TRUE("и заголовок папки по id тоже",
+                !model.titleOfId(QStringLiteral("0000000000000a")).isEmpty());
+    }
+
     // Строка списка одной заметки — та же, что в общем списке.
     {
         const zametti::NoteRow row = model.rowOf(QStringLiteral("0000000000000b"));

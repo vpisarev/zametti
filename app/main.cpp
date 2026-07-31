@@ -459,12 +459,13 @@ int main(int argc, char** argv) {
 
     // В хранилище имя файла — непрозрачный id, в заголовок окна идёт
     // заголовок самой заметки.
+    //
+    // Спрашиваем по id, а не по QModelIndex: дерево показывает только папки, и
+    // у заметки видимой строки нет вовсе — indexForPath вернул бы пустоту, а
+    // откат по имени файла показал бы человеку id.
     const auto windowTitleFor = [&](const QString& file) {
         if (model.isStore()) {
-            const QModelIndex index = model.indexForPath(file);
-            const QString title =
-                index.isValid() ? model.data(index, Qt::DisplayRole).toString()
-                                : QString();
+            const QString title = model.titleOfId(QFileInfo(file).completeBaseName());
             if (!title.isEmpty()) return title;
         }
         return QFileInfo(file).completeBaseName();
