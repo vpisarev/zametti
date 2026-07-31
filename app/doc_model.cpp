@@ -1,6 +1,7 @@
 #include "doc_model.h"
 
 #include <QDebug>
+#include <QStringList>
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextFragment>
@@ -200,6 +201,68 @@ int ListRuns::next(int level, bool ordered) {
     return own.ordinal;
 }
 
+ImageAlign imageAlignFromText(QString text, bool* ok) {
+    if (ok != nullptr) *ok = true;
+    text = text.trimmed();
+    if (text == QStringLiteral("align=left")) return ImageAlign::Left;
+    if (text == QStringLiteral("align=right")) return ImageAlign::Right;
+    if (text == QStringLiteral("align=center")) return ImageAlign::Center;
+    if (ok != nullptr) *ok = false;
+    return ImageAlign::Center;
+}
+
+QString imageAlignText(ImageAlign align) {
+    switch (align) {
+        case ImageAlign::Left: return QStringLiteral("align=left");
+        case ImageAlign::Right: return QStringLiteral("align=right");
+        case ImageAlign::Center: break;
+    }
+    // Умолчание не пишется: заметка не обязана хранить то, чего человек не
+    // задавал.
+    return {};
+}
+
+QString imageRefText(const BlockImageRef& ref) {
+    QStringList extras;
+    if (ref.widthHint > 0.0) extras << QString::number(qRound(ref.widthHint));
+    const QString align = imageAlignText(ref.align);
+    if (!align.isEmpty()) extras << align;
+
+    if (ref.wiki) {
+        // "![[путь]]", "![[путь|ширина]]", "![[путь|ширина|align=left]]".
+        QString inner = ref.path;
+        for (const QString& extra : extras) inner += QLatin1Char('|') + extra;
+        return QStringLiteral("![[%1]]").arg(inner);
+    }
+    // Адрес image-спана: атрибуты во фрагменте, "путь#w=560&align=left".
+    if (extras.isEmpty()) return ref.path;
+    QStringList pairs;
+    if (ref.widthHint > 0.0)
+        pairs << QStringLiteral("w=") + QString::number(qRound(ref.widthHint));
+    if (!align.isEmpty()) pairs << align;
+    return ref.path + QLatin1Char('#') + pairs.join(QLatin1Char('&'));
+}
+
+// Атрибуты картинки — ширина и выравнивание — разбираются одинаково в обеих
+// формах записи: каждое поле пробуется как число, потом как выравнивание, а
+// что не подошло, то подпись, и её мы не трогаем. Порядок полей поэтому
+// значения не имеет.
+namespace {
+
+void takeImageAttribute(const QString& field, qreal& width, ImageAlign& align) {
+    bool number = false;
+    const double value = field.trimmed().toDouble(&number);
+    if (number && value > 0.0) {
+        width = value;
+        return;
+    }
+    bool known = false;
+    const ImageAlign parsed = imageAlignFromText(field, &known);
+    if (known) align = parsed;
+}
+
+}  // namespace
+
 BlockImageRef blockImageRef(const QTextBlock& block) {
     if (!block.isValid() || isRawBlock(block)) return {};
     if (kindOf(block) != Kind::Paragraph) return {};
@@ -221,43 +284,60 @@ BlockImageRef blockImageRef(const QTextBlock& block) {
         href = format.anchorHref();
     }
     if (whole && !href.isEmpty()) {
-        // Ширина — из "#w=N" в пути. Фрагмент остаётся байтами пути (ядро его
-        // не трактует), но вид и ресайз читают и пишут ровно его.
+        // Атрибуты — во фрагменте пути: "#w=560", "#w=560&align=left".
+        // Фрагмент остаётся байтами пути (ядро его не трактует), но вид,
+        // ресайз и выравнивание читают и пишут ровно его.
         qreal width = 0.0;
+        ImageAlign align = ImageAlign::Center;
         QString path = href;
         const qsizetype hash = href.lastIndexOf(QLatin1Char('#'));
-        if (hash >= 0 && href.mid(hash, 3) == QStringLiteral("#w=")) {
-            bool ok = false;
-            const double w = href.mid(hash + 3).toDouble(&ok);
-            if (ok && w > 0.0) {
-                width = w;
-                path = href.left(hash);
+        if (hash >= 0) {
+            const QStringList pairs =
+                href.mid(hash + 1).split(QLatin1Char('&'), Qt::SkipEmptyParts);
+            bool understood = !pairs.isEmpty();
+            for (const QString& pair : pairs) {
+                if (pair.startsWith(QStringLiteral("w="))) {
+                    bool ok = false;
+                    const double w = pair.mid(2).toDouble(&ok);
+                    if (ok && w > 0.0) width = w;
+                    else understood = false;
+                } else {
+                    bool ok = false;
+                    const ImageAlign parsed = imageAlignFromText(pair, &ok);
+                    if (ok) align = parsed;
+                    else understood = false;
+                }
+            }
+            // Чужой якорь в пути картинкой не заведует: путь оставляем целиком.
+            if (understood) path = href.left(hash);
+            else {
+                width = 0.0;
+                align = ImageAlign::Center;
             }
         }
-        return {path, width, false, true};
+        return {path, width, align, false, true};
     }
 
-    // Вики-вложение Obsidian: строка целиком "![[путь]]" или "![[путь|ширина]]".
-    // Модель хранит его дословным текстом абзаца (wikilinks не переписываются),
-    // но фотографию по нему показать можно и нужно.
+    // Вики-вложение Obsidian: строка целиком "![[путь]]", "![[путь|ширина]]"
+    // или "![[путь|ширина|align=left]]". Модель хранит его дословным текстом
+    // абзаца (wikilinks не переписываются), но фотографию по нему показать
+    // можно и нужно.
     const QString text = block.text().trimmed();
     if (!text.startsWith(QStringLiteral("![[")) || !text.endsWith(QStringLiteral("]]")))
         return {};
-    QString inner = text.mid(3, text.size() - 5);
+    const QString inner = text.mid(3, text.size() - 5);
     if (inner.isEmpty() || inner.contains(QStringLiteral("]]"))) return {};
+
+    const QStringList fields = inner.split(QLatin1Char('|'));
     qreal width = 0.0;
-    const qsizetype bar = inner.lastIndexOf(QLatin1Char('|'));
-    if (bar >= 0) {
-        // После черты либо ширина, либо подпись (Obsidian допускает обе);
-        // подпись фотографии не мешает — просто остаётся своя ширина.
-        bool ok = false;
-        const double w = inner.mid(bar + 1).trimmed().toDouble(&ok);
-        if (ok && w > 0.0) width = w;
-        inner = inner.left(bar);
-    }
-    inner = inner.trimmed();
-    if (inner.isEmpty()) return {};
-    return {inner, width, true, true};
+    ImageAlign align = ImageAlign::Center;
+    // Первое поле — путь, остальные атрибуты; подпись (Obsidian её допускает)
+    // фотографии не мешает — просто ни числом, ни выравниванием не окажется.
+    for (qsizetype i = 1; i < fields.size(); ++i) takeImageAttribute(fields.at(i), width, align);
+
+    const QString path = fields.value(0).trimmed();
+    if (path.isEmpty()) return {};
+    return {path, width, align, true, true};
 }
 
 }  // namespace zametti

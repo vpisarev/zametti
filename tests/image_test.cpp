@@ -671,5 +671,99 @@ int main(int argc, char** argv) {
         zametti::appearance().maxLoadedImageSize = savedLimit;
     }
 
+    // Выравнивание фотографии в колонке. Умолчание — по центру, и в файл ради
+    // него не пишется ничего: заметка не обязана хранить незаданное.
+    {
+        const fs::path alignDir = dir / "выравнивание";
+        fs::create_directories(alignDir);
+        QImage small(80, 60, QImage::Format_RGB32);
+        small.fill(QColor(40, 40, 220));
+        ZT_TRUE("картинка выравнивания записана",
+                small.save(QString::fromStdString((alignDir / "м.png").string())));
+        {
+            std::ofstream out(alignDir / "з.md", std::ios::binary);
+            out << "![[м.png]]\n\n![подпись](м.png)\n";
+        }
+
+        zametti::NoteEditor aligned;
+        aligned.resize(700, 500);
+        aligned.show();
+        QTest::qWait(20);
+        aligned.openFile(QString::fromStdString((alignDir / "з.md").string()));
+        QTest::qWait(20);
+        const auto blockOf = [&](int n) { return aligned.document()->findBlockByNumber(n); };
+        const auto photoOf = [&](int n) { return aligned.imageRectInViewport(blockOf(n)); };
+        const auto setAlign = [&](int n, zametti::ImageAlign to) {
+            QTextCursor cursor(blockOf(n));
+            const bool changed = zametti::setImageAlignAtCursor(*aligned.document(), cursor, to);
+            QTest::qWait(10);
+            return changed;
+        };
+
+        // Умолчание: фотография стоит посередине колонки, а не у левого края.
+        const QRectF centred = photoOf(0);
+        ZT_TRUE("по умолчанию фотография по центру", centred.left() > 40.0);
+        ZT_EQ("и в тексте про выравнивание ничего не написано",
+              std::string("![[м.png]]"), blockOf(0).text().toStdString());
+
+        ZT_TRUE("выравнивание влево принято", setAlign(0, zametti::ImageAlign::Left));
+        const QRectF left = photoOf(0);
+        ZT_TRUE("слева фотография уехала левее центра", left.left() < centred.left() - 20.0);
+        ZT_EQ("выравнивание записано рядом с шириной",
+              std::string("![[м.png|align=left]]"), blockOf(0).text().toStdString());
+
+        ZT_TRUE("выравнивание вправо принято", setAlign(0, zametti::ImageAlign::Right));
+        const QRectF right = photoOf(0);
+        ZT_TRUE("справа фотография уехала правее центра", right.left() > centred.left() + 20.0);
+        ZT_EQ("и записано так же", std::string("![[м.png|align=right]]"),
+              blockOf(0).text().toStdString());
+
+        // Возврат к умолчанию стирает запись, а не пишет "align=center".
+        ZT_TRUE("возврат к центру принят", setAlign(0, zametti::ImageAlign::Center));
+        ZT_EQ("умолчание в файл не пишется", std::string("![[м.png]]"),
+              blockOf(0).text().toStdString());
+        ZT_TRUE("и фотография вернулась на середину",
+                std::fabs(photoOf(0).left() - centred.left()) < 1.5);
+
+        // Ширина и выравнивание уживаются рядом и не сбивают друг друга.
+        {
+            QTextCursor cursor(blockOf(0));
+            ZT_TRUE("ширина записана", zametti::setImageWidthAtCursor(*aligned.document(),
+                                                                     cursor, 50));
+        }
+        QTest::qWait(10);
+        setAlign(0, zametti::ImageAlign::Right);
+        ZT_EQ("ширина и выравнивание стоят рядом",
+              std::string("![[м.png|50|align=right]]"), blockOf(0).text().toStdString());
+        {
+            QTextCursor cursor(blockOf(0));
+            ZT_TRUE("ширина меняется, выравнивание цело",
+                    zametti::setImageWidthAtCursor(*aligned.document(), cursor, 60));
+        }
+        QTest::qWait(10);
+        ZT_EQ("обе величины на месте", std::string("![[м.png|60|align=right]]"),
+              blockOf(0).text().toStdString());
+
+        // Image-спан: то же самое, но во фрагменте пути.
+        setAlign(2, zametti::ImageAlign::Left);
+        {
+            const zametti::Document ir = zametti::readDocument(*aligned.document());
+            const std::string out = zametti::serialize(ir);
+            ZT_TRUE("у image-спана выравнивание уходит во фрагмент пути",
+                    out.find("![подпись](м.png#align=left)") != std::string::npos);
+        }
+        {
+            QTextCursor cursor(blockOf(2));
+            zametti::setImageWidthAtCursor(*aligned.document(), cursor, 70);
+        }
+        QTest::qWait(10);
+        {
+            const zametti::Document ir = zametti::readDocument(*aligned.document());
+            const std::string out = zametti::serialize(ir);
+            ZT_TRUE("ширина встаёт рядом с выравниванием",
+                    out.find("![подпись](м.png#w=70&align=left)") != std::string::npos);
+        }
+    }
+
     return zt::report("картинки в просмотре");
 }

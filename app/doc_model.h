@@ -108,12 +108,31 @@ int levelOf(const QTextBlock& block);
 // черты. Распознаются две формы: image-спан целым абзацем (ширина — из
 // "#w=N" в пути, если есть) и вики-вложение "![[путь]]"/"![[путь|ширина]]",
 // которое модель хранит дословным текстом.
+// Куда прижимать фотографию в колонке. По умолчанию — по центру: так страница
+// выглядит по-книжному. Умолчание в файл не пишется вовсе, поэтому Center
+// стоит первым и означает «не задано».
+enum class ImageAlign {
+    Center,
+    Left,
+    Right,
+};
+
 struct BlockImageRef {
     QString path;
     qreal widthHint = 0.0;   // 0 — своя ширина картинки; логические пиксели
+    ImageAlign align = ImageAlign::Center;
     bool wiki = false;       // форма записи: вики-вложение или image-спан
     bool valid = false;
 };
+
+// Разбор и сборка одного атрибута выравнивания: "align=left". Пусто — не оно.
+ImageAlign imageAlignFromText(QString text, bool* ok = nullptr);
+QString imageAlignText(ImageAlign align);
+
+// Как эта картинка выглядит в файле: дословный текст строки для вики-вложения
+// или адрес для image-спана. Ширина и выравнивание пишутся рядом; умолчания
+// (нулевая ширина, выравнивание по центру) не пишутся вовсе.
+QString imageRefText(const BlockImageRef& ref);
 
 BlockImageRef blockImageRef(const QTextBlock& block);
 bool isListBlock(const QTextBlock& block);

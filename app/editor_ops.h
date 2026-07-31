@@ -11,6 +11,7 @@
 #ifndef ZAMETTI_EDITOR_OPS_H
 #define ZAMETTI_EDITOR_OPS_H
 
+#include "doc_model.h"
 #include "ir.h"
 
 #include <QString>
@@ -221,6 +222,11 @@ bool uncommentAtBlockStart(QTextDocument& doc, QTextCursor& cursor);
 // (фрагмент — просто байты пути, ядро его не трактует). Отказывается, если блок
 // не фотография или ширина уже такая.
 bool setImageWidthAtCursor(QTextDocument& doc, QTextCursor& cursor, int width);
+
+// Выравнивание фотографии в колонке. Пишется рядом с шириной, в той же форме:
+// "![[путь|560|align=left]]" или "путь#w=560&align=left". Выравнивание по
+// центру — умолчание, и в файл оно не пишется вовсе.
+bool setImageAlignAtCursor(QTextDocument& doc, QTextCursor& cursor, ImageAlign align);
 
 // Убирает строку-фотографию под курсором целиком (текст и разделитель блока),
 // не тронув соседей, — вторая половина Ctrl-X; текстовое представление в

@@ -1355,6 +1355,28 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
                 [this] { applyIrEdit(toggleCodeBlock(*document(), textCursor())); });
     }
 
+    // Выравнивание — только на строке с фотографией: где картинки нет, пункт
+    // ничего не значит и в меню ему делать нечего.
+    if (blockImageRef(textCursor().block()).valid) {
+        menu->addSeparator();
+        QMenu* align = menu->addMenu(QStringLiteral("Выровнять фотографию"));
+        const BlockImageRef ref = blockImageRef(textCursor().block());
+        const auto addAlign = [this, align, ref](const QString& title, ImageAlign to) {
+            QAction* action = align->addAction(title, this, [this, to] {
+                runOperation([to](QTextDocument& doc, QTextCursor& at) {
+                    return setImageAlignAtCursor(doc, at, to);
+                });
+            });
+            // Отметка показывает, что стоит сейчас; по центру — и когда в файле
+            // не написано ничего.
+            action->setCheckable(true);
+            action->setChecked(ref.align == to);
+        };
+        addAlign(QStringLiteral("Слева"), ImageAlign::Left);
+        addAlign(QStringLiteral("По центру"), ImageAlign::Center);
+        addAlign(QStringLiteral("Справа"), ImageAlign::Right);
+    }
+
     menu->addSeparator();
     add(QStringLiteral("Переключить задачу"), appearance().toggleTaskKey,
         toggleTaskAtCursor);

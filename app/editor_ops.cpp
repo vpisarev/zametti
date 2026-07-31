@@ -971,35 +971,50 @@ bool makeParagraph(QTextDocument& doc, QTextCursor& cursor) {
     return setBlockKind(doc, cursor, {Kind::Paragraph, Marker::Bullet, false});
 }
 
-bool setImageWidthAtCursor(QTextDocument& doc, QTextCursor& cursor, int width) {
-    Q_UNUSED(doc);
-    const QTextBlock block = cursor.block();
-    const BlockImageRef ref = blockImageRef(block);
-    if (!ref.valid || width <= 0) return false;
+namespace {
 
+// Записать картинку строкой заново — в той же форме, в какой она записана.
+// Ширина и выравнивание идут рядом, умолчания не пишутся; см. imageRefText.
+bool rewriteImageRef(QTextCursor& cursor, const QTextBlock& block, const BlockImageRef& ref) {
+    const QString text = imageRefText(ref);
     if (ref.wiki) {
-        // Ширина — часть дословного текста строки: "![[путь|ширина]]".
-        const QString text =
-            QStringLiteral("![[%1|%2]]").arg(ref.path).arg(width);
         if (block.text() == text) return false;
         QTextCursor edit(block);
         edit.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
         edit.insertText(text);
     } else {
-        // Ширина — фрагмент пути image-спана: "путь#w=ширина".
-        if (qRound(ref.widthHint) == width) return false;
-        const QString href =
-            ref.path + QStringLiteral("#w=") + QString::number(width);
         QTextCursor edit(block);
         edit.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+        if (edit.charFormat().anchorHref() == text) return false;
         QTextCharFormat format;
-        format.setAnchorHref(href);
+        format.setAnchorHref(text);
         edit.mergeCharFormat(format);
     }
     // Каретка — к началу строки: строка хитро-отрисованная, внутри неё каретке
     // делать нечего.
     cursor.setPosition(block.position());
     return true;
+}
+
+}  // namespace
+
+bool setImageWidthAtCursor(QTextDocument& doc, QTextCursor& cursor, int width) {
+    Q_UNUSED(doc);
+    const QTextBlock block = cursor.block();
+    BlockImageRef ref = blockImageRef(block);
+    if (!ref.valid || width <= 0) return false;
+    if (!ref.wiki && qRound(ref.widthHint) == width) return false;
+    ref.widthHint = width;
+    return rewriteImageRef(cursor, block, ref);
+}
+
+bool setImageAlignAtCursor(QTextDocument& doc, QTextCursor& cursor, ImageAlign align) {
+    Q_UNUSED(doc);
+    const QTextBlock block = cursor.block();
+    BlockImageRef ref = blockImageRef(block);
+    if (!ref.valid || ref.align == align) return false;
+    ref.align = align;
+    return rewriteImageRef(cursor, block, ref);
 }
 
 // Убрать блок-строку с текстом целиком — текст и разделитель, не тронув

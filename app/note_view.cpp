@@ -379,11 +379,28 @@ NoteView::ImageGeometry NoteView::imageGeometry(const QTextBlock& block) {
                                  : layout->boundingRect().height();
     const QPointF textTop = layout->position();
 
+    // Выравнивание в колонке. Умолчание — по центру: страница с фотографиями
+    // посередине выглядит по-книжному, и ради этого умолчания в файл ничего
+    // писать не надо.
+    const QTextFrameFormat root = document()->rootFrame()->frameFormat();
+    const qreal available = viewport()->width() - root.leftMargin() - root.rightMargin() -
+                            block.blockFormat().leftMargin();
+    qreal shift = 0.0;
+    if (available > size.width()) {
+        switch (ref.align) {
+            case ImageAlign::Center: shift = (available - size.width()) / 2.0; break;
+            case ImageAlign::Right: shift = available - size.width(); break;
+            case ImageAlign::Left: break;
+        }
+    }
+
     ImageGeometry geometry;
     geometry.valid = true;
+    // Строка закрашивается во всю колонку: фотография съехала вбок, а текст
+    // под ней остался у левого края, и без этого он выглядывал бы рядом.
     geometry.line = QRectF(textTop.x(), textTop.y(),
-                           qMax(size.width(), layout->boundingRect().width()), textHeight);
-    geometry.photo = QRectF(textTop, size);
+                           qMax(available, layout->boundingRect().width()), textHeight);
+    geometry.photo = QRectF(textTop + QPointF(shift, 0.0), size);
     return geometry;
 }
 
