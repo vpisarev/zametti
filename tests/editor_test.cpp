@@ -16,6 +16,7 @@
 #include "test_util.h"
 
 #include <QApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QRegularExpression>
@@ -805,6 +806,52 @@ void checkNoteCache() {
     QTest::qWait(20);
     check(editor.cachedNoteCount() == 0, "заметка тяжелее бюджета в кэш не идёт");
     zametti::appearance().documentCacheSizeMb = savedBudget;
+}
+
+// Канонизация при открытии. Хранилище наше, и сор в нём — лишние пробелы в
+// конце строк, недостающий перевод строки в конце файла — причёсывается прямо
+// на диске. Ни одно значение в шапке при этом не меняется: заметку всего лишь
+// открыли, и всплывать наверх списка недавних ей не с чего. Чужой .md без
+// шапки не трогаем вовсе.
+void checkCanonicaliseOnOpen() {
+    const QString stamp = QStringLiteral("2020-01-02T03:04:05Z");
+    const QString header = QStringLiteral("<!-- zametti\nid: 01test\ncreated: %1\n"
+                                          "modified: %1\n-->\n\n").arg(stamp);
+    const QString messy = header + QStringLiteral("# заголовок   \n\nстрока с хвостом   ");
+    const QString path = writeNote("сор.md", messy);
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    const QString onDisk = readFile(path);
+    check(!onDisk.contains(QStringLiteral("   \n")), "хвостовые пробелы с диска ушли");
+    check(onDisk.endsWith(QLatin1Char('\n')), "перевод строки в конце файла появился");
+    check(onDisk.count(stamp) == 2,
+          "штампы created и modified не тронуты: заметку только открыли");
+    check(!editor.document()->isModified(),
+          "после канонизации документ не считается изменённым");
+
+    // Повторное открытие уже канонического файла его не трогает.
+    const QFileInfo info(path);
+    const QDateTime was = info.lastModified();
+    QTest::qWait(1100);
+    editor.openFile(writeNote("другая-канон.md", QStringLiteral("другая\n")));
+    QTest::qWait(20);
+    editor.openFile(path);
+    QTest::qWait(20);
+    check(QFileInfo(path).lastModified() == was,
+          "канонический файл при открытии не переписывается");
+
+    // Чужой .md без шапки не наш: его не трогаем.
+    const QString alien = writeNote("чужой.md", QStringLiteral("# чужой   \n\nхвост   "));
+    editor.openFile(alien);
+    QTest::qWait(20);
+    checkEqual(QStringLiteral("# чужой   \n\nхвост   "), readFile(alien),
+               "файл без шапки остался как был");
 }
 
 // Текст после переноса строки обязан набираться тем же кеглем. Разделитель
@@ -1971,6 +2018,7 @@ int main(int argc, char** argv) {
     checkDeferredSnapshot();
     checkWideWindowOperations();
     checkNoteCache();
+    checkCanonicaliseOnOpen();
     checkSizeAfterSoftBreak();
     checkCodeTyping();
     checkCodeAtEdge();

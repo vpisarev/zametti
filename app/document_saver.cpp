@@ -630,6 +630,27 @@ std::string_view asView(const QByteArray& bytes) {
 
 }  // namespace
 
+bool canonicaliseNoteFile(const QString& path, std::string& text, Digest& digest) {
+    const Document parsed = parse(text);
+    if (!parsed.meta.present) return false;   // не наша заметка
+
+    const std::string canonical = serialize(parsed);
+    if (canonical == text) return false;      // и так канон
+
+    // Последний рубеж, тот же, что и при записи: причёсанное обязано читаться
+    // обратно тем же документом. Не сошлось — файл не трогаем вовсе.
+    if (!sameSkeleton(parsed, parse(canonical))) return false;
+
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) return false;
+    file.write(canonical.data(), qint64(canonical.size()));
+    if (!file.commit()) return false;
+
+    text = canonical;
+    digest = hashOf(text);
+    return true;
+}
+
 SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
                          const QString& timestamp, DocumentReaderFn reader,
                          const NoteMeta& meta) {

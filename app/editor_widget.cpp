@@ -466,7 +466,12 @@ bool NoteEditor::openFile(const QString& path) {
     // Уходя из заметки, откладываем её целиком — если есть что откладывать.
     if (path_ != path) stashCurrentNote();
 
-    const Digest digest = hashOf(text);
+    Digest digest = hashOf(text);
+    // Хранилище наше, и держать в нём сор незачем: лишние пробелы в конце строк
+    // и недостающий перевод строки в конце файла причёсываются прямо на диске,
+    // не трогая ни одного значения в шапке. Заметку всего лишь открыли —
+    // всплывать наверх списка недавних ей не с чего.
+    canonicaliseNoteFile(path, text, digest);
     path_ = path;
     setImageBase(QFileInfo(path).absolutePath());
     lastComplaint_.clear();
