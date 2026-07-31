@@ -11,6 +11,7 @@
 #include "search.h"
 #include "search_results.h"
 #include "store_search.h"
+#include "journal.h"
 #include "store.h"
 #include "note_view.h"
 #include "parser.h"
@@ -30,7 +31,11 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QDesktopServices>
+#include <QDateTime>
+#include <QLockFile>
+#include <QSysInfo>
 #include <QProcess>
+#include <QThreadPool>
 #include <QUrl>
 #include <QPushButton>
 #include <QShortcut>
@@ -45,6 +50,8 @@
 #include <QWidget>
 
 #include <algorithm>
+#include <cerrno>
+#include <csignal>
 #include <cstdio>
 #include <functional>
 #include <fstream>
@@ -104,11 +111,24 @@ int runCheck(const QString& path) {
     return 1;
 }
 
+// Жив ли процесс с таким номером. Сигнал 0 ничего не посылает, а только
+// проверяет право послать: единственный переносимый по UNIX способ спросить
+// «этот pid ещё существует?».
+bool processAlive(qint64 pid) {
+#ifdef Q_OS_UNIX
+    return ::kill(pid_t(pid), 0) == 0 || errno == EPERM;
+#else
+    Q_UNUSED(pid);
+    return true;   // на прочих системах не гадаем: пусть решает --unlock
+#endif
+}
+
 const char* kUsage =
     "использование: zametti [--noconfig] [файл.md]\n"
     "               zametti --root каталог-хранилища\n"
     "               zametti --check файл.md\n"
-    "               zametti --dump-config\n";
+    "               zametti --dump-config\n"
+    "               zametti --root каталог-хранилища --unlock\n";
 
 void printUsage() { std::fputs(kUsage, stderr); }
 
@@ -204,6 +224,7 @@ int main(int argc, char** argv) {
     bool check = false;
     bool dumpConfig = false;
     bool noConfig = false;
+    bool unlock = false;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--help" || arg == "-h") {
@@ -213,6 +234,7 @@ int main(int argc, char** argv) {
         if (arg == "--check") check = true;
         else if (arg == "--dump-config") dumpConfig = true;
         else if (arg == "--noconfig") noConfig = true;
+        else if (arg == "--unlock") unlock = true;
         else if (arg == "--root" && i + 1 < argc) {
             storeRoot = QString::fromLocal8Bit(argv[++i]);
         }
@@ -308,6 +330,61 @@ int main(int argc, char** argv) {
     // Левая панель — только папки (этап 4). Заметки живут в средней колонке;
     // из дерева они не пропадают, но наружу не показываются.
     model.setFoldersOnly(model.isStore());
+
+    // Одно хранилище — одна программа. Второй экземпляр на том же хранилище
+    // писал бы в те же файлы и те же журналы, ничего не зная о первом, поэтому
+    // он просто не запускается. Замок файловый, потому что процессы разные;
+    // внутри процесса потоки разводит замок самого журнала. Стоит это 4.4 мс
+    // один раз за запуск. Другое хранилище открыть вторым окном по-прежнему
+    // можно: замок лежит внутри хранилища.
+    //
+    // Забытый замок после падения программы не беда: QLockFile хранит в нём
+    // pid и имя машины и снимает замок, чей процесс не жив.
+    static QLockFile storeLock(
+        zametti::journal::storeLockPath(model.isStore() ? model.nodePath(QModelIndex())
+                                                        : QDir::tempPath()));
+    if (model.isStore()) {
+        // --unlock: снять забытый замок. Обычно он снимается сам, но бывает,
+        // что QLockFile судить не берётся — тот же pid достался чужому
+        // процессу, хранилище на сетевой шаре. Тогда ключ решает спор руками.
+        if (unlock) {
+            qint64 pid = 0;
+            QString host, appName;
+            if (storeLock.getLockInfo(&pid, &host, &appName))
+                std::fprintf(stderr, "снимаю замок хранилища (был за pid %lld на «%s»)\n",
+                             (long long)pid, host.toUtf8().constData());
+            else
+                std::fprintf(stderr, "замка на хранилище и не было\n");
+            QFile::remove(zametti::journal::storeLockPath(model.nodePath(QModelIndex())));
+        }
+        // QLockFile сам снимает забытый замок только через полминуты, а
+        // перезапуск сразу после падения — самый частый случай. Поэтому
+        // спрашиваем сами: если замок нашей машины, а процесса с таким pid уже
+        // нет, значит это наш собственный труп — снимаем и продолжаем. Живой
+        // pid не трогаем никогда.
+        if (!storeLock.tryLock(0)) {
+            qint64 pid = 0;
+            QString host, appName;
+            if (storeLock.getLockInfo(&pid, &host, &appName) &&
+                host == QSysInfo::machineHostName() && pid > 0 && !processAlive(pid)) {
+                std::fprintf(stderr, "снимаю забытый замок хранилища (pid %lld не жив)\n",
+                             (long long)pid);
+                QFile::remove(zametti::journal::storeLockPath(model.nodePath(QModelIndex())));
+            }
+        }
+        if (!storeLock.isLocked() && !storeLock.tryLock(0)) {
+            qint64 pid = 0;
+            QString host, appName;
+            storeLock.getLockInfo(&pid, &host, &appName);
+            std::fprintf(stderr,
+                         "это хранилище уже открыто другой копией zametti:\n  %s\n"
+                         "  замок держит pid %lld на «%s»\n"
+                         "Если та копия давно умерла: zametti --root … --unlock\n",
+                         model.nodePath(QModelIndex()).toUtf8().constData(), (long long)pid,
+                         host.toUtf8().constData());
+            return 3;
+        }
+    }
 
     // Свежая заметка хранилища — первая ОТКРЫВАЕМАЯ (директории не в счёт),
     // поиском в глубину; пустое хранилище получает первую заметку тут же.
@@ -1465,6 +1542,32 @@ int main(int argc, char** argv) {
     else
         window.setSizes({zametti::appearance().sidebarWidth, 800});
     window.show();
+
+    // Прореживание журналов — фоном и один раз за запуск. В отдельном потоке
+    // потому, что полный проход по корпусу владельца стоит 1.6 секунды, а
+    // держать окно неподвижным столько времени ради уборки истории незачем.
+    //
+    // Запирать журналы не нужно: thin перед подменой файла сверяет его размер
+    // и время правки с теми, что видел на чтении, и молча отступает, если под
+    // руками дописали запись. Поэтому поток не знает ни про окно, ни про
+    // открытую заметку — он трогает только файлы в history/.
+    if (model.isStore()) {
+        const QString storePath = model.nodePath(QModelIndex());
+        QThreadPool::globalInstance()->start([storePath] {
+            zametti::journal::History history(storePath);
+            const zametti::journal::ThinReport report =
+                history.thinAll(QDateTime::currentMSecsSinceEpoch());
+            for (const QString& name : report.trimmed)
+                std::fprintf(stderr, "журнал %s: оборванный хвост отрезан\n",
+                             name.toUtf8().constData());
+            for (const QString& line : report.problems)
+                std::fprintf(stderr, "журнал не прорежен: %s\n", line.toUtf8().constData());
+            if (report.recordsBefore != report.recordsAfter)
+                std::fprintf(stderr, "журналы прорежены: записей %lld -> %lld, байт %lld -> %lld\n",
+                             (long long)report.recordsBefore, (long long)report.recordsAfter,
+                             (long long)report.bytesBefore, (long long)report.bytesAfter);
+        });
+    }
 
     // Показать текущую заметку в дереве надо после show(): раскрытие веток
     // требует уже созданных представлений. Раскрытые ветки восстанавливаем до

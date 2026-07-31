@@ -4,16 +4,40 @@
 
 #include <QCborStreamReader>
 #include <QCborStreamWriter>
+#include <QDateTime>
 #include <QDir>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QFile>
 #include <QFileInfo>
 #include <QSaveFile>
 
 #include <cassert>
 #include <cstring>
+#include <limits>
+#include <utility>
 
 namespace zametti::journal {
 namespace {
+
+// Тот самый единый замок (см. journal.h). Один на все журналы и на все
+// экземпляры History: история у хранилища одна.
+QMutex& gate() {
+    static QMutex mutex;
+    return mutex;
+}
+
+// Обещание «закрытые методы зовутся только из-под замка» — не слова, а
+// проверка. tryLock на уже взятом мьютексе не проходит; прошёл — значит замка
+// не было, и это ошибка вызова, а не случайность. В релизе не стоит ничего.
+void assertLocked() {
+#ifndef NDEBUG
+    if (gate().tryLock()) {
+        gate().unlock();
+        assert(false && "операция истории вызвана без замка");
+    }
+#endif
+}
 
 // Ключи карт — целые: короче текстовых и не зависят от языка. Номера навсегда;
 // новое поле получает новый номер, старые не переиспользуются никогда.
@@ -47,7 +71,7 @@ QByteArray headerBytes() {
 }
 
 QByteArray recordBytes(Kind kind, qint64 time, const Digest& digest, const QByteArray& packed,
-                       qint64 plainSize, qint64 source) {
+                       qint64 plainSize, qint64 source, Codec codec) {
     const bool tombstone = kind == Kind::Tombstone;
     const bool restore = kind == Kind::Restore;
     QByteArray out;
@@ -62,7 +86,7 @@ QByteArray recordBytes(Kind kind, qint64 time, const Digest& digest, const QByte
                              qsizetype(digest.bytes.size())));
     if (!tombstone) {
         writer.append(KeyCodec);
-        writer.append(int(Codec::Zstd));
+        writer.append(int(codec));
         writer.append(KeyPlainSize);
         writer.append(plainSize);
         writer.append(KeySnapshot);
@@ -76,21 +100,53 @@ QByteArray recordBytes(Kind kind, qint64 time, const Digest& digest, const QByte
     return out;
 }
 
-QByteArray compressSnapshot(const QByteArray& plain) {
+// Окно должно накрывать предшественника вместе с новым слепком, иначе
+// совпадений в нём не найти. Считаем по месту, а не берём с запасом: окно —
+// это ещё и память, которую займёт сжатие.
+int windowLogFor(qint64 bytes) {
+    int log = 10;
+    while ((qint64(1) << log) < bytes && log < 27) ++log;
+    return log;
+}
+
+// base пуст — полный слепок; иначе звено цепочки. Механизм тот же, что у
+// `zstd --patch-from`: предшественник объявляется префиксом, и всё, что в нём
+// повторяется, уходит в ссылки.
+QByteArray compressSnapshot(const QByteArray& plain, const QByteArray& base) {
     QByteArray out(qsizetype(ZSTD_compressBound(size_t(plain.size()))), Qt::Uninitialized);
-    const size_t size = ZSTD_compress(out.data(), size_t(out.size()), plain.constData(),
-                                      size_t(plain.size()), kZstdLevel);
+    size_t size = 0;
+    if (base.isEmpty()) {
+        size = ZSTD_compress(out.data(), size_t(out.size()), plain.constData(),
+                             size_t(plain.size()), kZstdLevel);
+    } else {
+        ZSTD_CCtx* ctx = ZSTD_createCCtx();
+        ZSTD_CCtx_setParameter(ctx, ZSTD_c_compressionLevel, kZstdLevel);
+        ZSTD_CCtx_setParameter(ctx, ZSTD_c_windowLog,
+                               windowLogFor(base.size() + plain.size()));
+        ZSTD_CCtx_refPrefix(ctx, base.constData(), size_t(base.size()));
+        size = ZSTD_compress2(ctx, out.data(), size_t(out.size()), plain.constData(),
+                              size_t(plain.size()));
+        ZSTD_freeCCtx(ctx);
+    }
     if (ZSTD_isError(size)) return {};
     out.resize(qsizetype(size));
     return out;
 }
 
-bool decompressSnapshot(const QByteArray& packed, qint64 plainSize, QByteArray* out) {
+bool decompressSnapshot(const QByteArray& packed, const QByteArray& base, qint64 plainSize,
+                        QByteArray* out) {
     out->resize(qsizetype(plainSize));
-    if (plainSize == 0) return packed.isEmpty() || ZSTD_getFrameContentSize(
-                                                      packed.constData(), size_t(packed.size())) == 0;
-    const size_t size = ZSTD_decompress(out->data(), size_t(out->size()), packed.constData(),
-                                        size_t(packed.size()));
+    if (plainSize == 0)
+        return packed.isEmpty() ||
+               ZSTD_getFrameContentSize(packed.constData(), size_t(packed.size())) == 0;
+    // Предел окна на распаковке не трогаем: по умолчанию он 27, то есть не
+    // меньше любого, каким мы сжимаем. Однажды я поставил его «по месту», и
+    // полные слепки перестали распаковываться — окно вышло уже, чем при сжатии.
+    ZSTD_DCtx* ctx = ZSTD_createDCtx();
+    if (!base.isEmpty()) ZSTD_DCtx_refPrefix(ctx, base.constData(), size_t(base.size()));
+    const size_t size = ZSTD_decompressDCtx(ctx, out->data(), size_t(out->size()),
+                                            packed.constData(), size_t(packed.size()));
+    ZSTD_freeDCtx(ctx);
     return !ZSTD_isError(size) && qint64(size) == plainSize;
 }
 
@@ -213,6 +269,51 @@ RawRecord readRecord(QCborStreamReader& reader, bool wantSnapshot) {
     return out;
 }
 
+// Собрать распакованный слепок записи index, идя от начала её поколения.
+// packed выровнен по entries; звенья своего поколения в нём есть.
+bool rebuildAt(const QVector<Entry>& entries, const QVector<QByteArray>& packed, int index,
+               QByteArray* out, QString* error) {
+    int base = index;
+    while (base > 0 && !entries[base].full()) --base;
+    if (!entries[base].full()) {
+        if (error)
+            *error = QStringLiteral("поколение записи №%1 начинается не с полного слепка")
+                         .arg(index);
+        return false;
+    }
+    QByteArray current;
+    for (int i = base; i <= index; ++i) {
+        const Entry& e = entries[i];
+        if (!e.hasSnapshot()) continue;  // надгробие цепочку не рвёт: у него слепка нет
+        if (e.codec != Codec::Zstd && e.codec != Codec::None && e.codec != Codec::ZstdDelta) {
+            if (error)
+                *error = QStringLiteral("слепок записи №%1 сжат неизвестным кодеком %2")
+                             .arg(i)
+                             .arg(int(e.codec));
+            return false;
+        }
+        QByteArray plain;
+        if (e.codec == Codec::None) {
+            plain = packed[i];
+        } else if (!decompressSnapshot(packed[i], e.full() ? QByteArray() : current, e.plainSize,
+                                       &plain)) {
+            if (error) *error = QStringLiteral("слепок записи №%1 не распаковывается").arg(i);
+            return false;
+        }
+        // Сверка на каждом звене, а не только на последнем: иначе беда,
+        // случившаяся в середине поколения, всплыла бы под чужим номером.
+        const Digest actual = hashOf(std::string_view(plain.constData(), size_t(plain.size())));
+        if (actual != e.digest) {
+            if (error)
+                *error = QStringLiteral("слепок записи №%1 не сходится с отпечатком").arg(i);
+            return false;
+        }
+        current = plain;
+    }
+    *out = current;
+    return true;
+}
+
 QString describeKind(Kind kind) {
     switch (kind) {
         case Kind::Save: return QStringLiteral("save");
@@ -225,9 +326,12 @@ QString describeKind(Kind kind) {
 
 // Разбор всего файла из памяти. Возвращает число целых записей; хвост, который
 // не разобрался, остаётся за границей goodBytes.
-// Какие слепки собирать: ничей (таймлайн), один (переход к слепку) или все
-// (прореживание переписывает файл целиком).
-enum class Want { None, One, All };
+// Какие слепки собирать: ничьих (таймлайн), поколение до нужной записи
+// (переход к слепку, дозапись) или все (прореживание переписывает файл
+// целиком). Поколение держится скользящим окном: встретив полный слепок,
+// прежде собранное выбрасываем — память ограничена одним поколением, а не
+// длиной журнала.
+enum class Want { None, Chain, All };
 
 bool parseAll(const QByteArray& blob, Journal* out, Want want, int wantIndex,
               QVector<QByteArray>* packed, QString* error) {
@@ -264,15 +368,22 @@ bool parseAll(const QByteArray& blob, Journal* out, Want want, int wantIndex,
 
     while (offset < blob.size()) {
         QCborStreamReader next(blob.constData() + offset, blob.size() - offset);
-        const bool takeThis = want == Want::All ||
-                              (want == Want::One && out->entries.size() == wantIndex);
+        const bool takeThis =
+            want == Want::All || (want == Want::Chain && out->entries.size() <= wantIndex);
         const RawRecord record = readRecord(next, takeThis);
         if (!record.valid || record.isHeader || next.currentOffset() == 0) {
             // Оборванный или испорченный хвост. Всё, что до него, — целое.
             out->tailTrimmed = true;
             break;
         }
+        // Скользящее окно чистит собранное, только пока нужное поколение ещё
+        // не набрано: иначе полный слепок, встреченный ПОСЛЕ него, выбросил бы
+        // как раз то, ради чего читали.
+        if (want == Want::Chain && packed && record.entry.full() &&
+            out->entries.size() <= wantIndex)
+            for (QByteArray& old : *packed) old.clear();
         out->entries.append(record.entry);
+        out->entries.last().offset = qint64(offset);
         if (packed) packed->append(record.packed);
         offset += next.currentOffset();
         out->goodBytes = qint64(offset);
@@ -282,51 +393,103 @@ bool parseAll(const QByteArray& blob, Journal* out, Want want, int wantIndex,
 
 }  // namespace
 
-QString journalPath(const QString& root, const QString& noteId) {
-    return QDir(root).filePath(QStringLiteral("history/%1.log").arg(noteId));
+History::History(QString root) : root_(std::move(root)) {}
+
+QString History::pathFor(const QString& noteId) const {
+    return QDir(root_).filePath(QStringLiteral("history/%1.log").arg(noteId));
 }
 
-bool append(const QString& path, Kind kind, qint64 time, const QByteArray& snapshot,
-            qint64 source, QString* error) {
+QString storeLockPath(const QString& root) {
+    return QDir(root).filePath(QStringLiteral(".zametti/store.lock"));
+}
+
+bool History::appendLocked(const QString& path, Kind kind, qint64 time,
+                           const QByteArray& snapshot, qint64 source, QString* error) {
+    assertLocked();
     const bool tombstone = kind == Kind::Tombstone;
-    QByteArray packed;
+
+    // Что уже лежит в журнале: сколько записей прошло от начала поколения и
+    // чем был предшественник. Читается только последнее поколение — память и
+    // время ограничены им, а не длиной журнала.
+    Journal journal;
+    QVector<QByteArray> packed;
+    QByteArray blob;
+    QFile file(path);
+    const bool exists = file.exists() && file.size() > 0;
+    if (exists) {
+        if (!file.open(QIODevice::ReadOnly)) {
+            if (error) *error = QStringLiteral("журнал не прочитать: %1").arg(file.errorString());
+            return false;
+        }
+        blob = file.readAll();
+        file.close();
+        if (!parseAll(blob, &journal, Want::Chain, std::numeric_limits<int>::max(), &packed, error))
+            return false;
+    }
+
+    // Оборванный хвост отрезаем прежде дозаписи, а не после: иначе мусор
+    // остался бы посреди файла и увёл бы за собой всё поколение.
+    if (journal.tailTrimmed) {
+        if (!trimTailLocked(path, error)) return false;
+    }
+
+    QByteArray base;   // пусто — запись станет полным слепком
     Digest digest;
     if (!tombstone) {
         digest = hashOf(std::string_view(snapshot.constData(), size_t(snapshot.size())));
-        packed = compressSnapshot(snapshot);
-        if (packed.isEmpty() && !snapshot.isEmpty()) {
+
+        int last = journal.entries.size() - 1;
+        while (last >= 0 && !journal.entries[last].hasSnapshot()) --last;
+        if (last >= 0) {
+            int from = last;
+            while (from > 0 && !journal.entries[from].full()) --from;
+            const int inGeneration = last - from + 1;
+            if (inGeneration < kGeneration) {
+                QString why;
+                // Не собрался предшественник — начинаем новое поколение. Это
+                // строго лучше отказа: беда в старом поколении не мешает
+                // писать новую историю.
+                if (!rebuildAt(journal.entries, packed, last, &base, &why)) base.clear();
+            }
+        }
+    }
+
+    const Codec codec = base.isEmpty() ? Codec::Zstd : Codec::ZstdDelta;
+    QByteArray body;
+    if (!tombstone) {
+        body = compressSnapshot(snapshot, base);
+        if (body.isEmpty() && !snapshot.isEmpty()) {
             if (error) *error = QStringLiteral("не удалось сжать слепок");
             return false;
         }
     }
 
-    QByteArray blob;
-    QFile file(path);
-    const bool fresh = !file.exists() || file.size() == 0;
-    if (fresh) {
+    QByteArray tail;
+    if (!exists) {
         QDir().mkpath(QFileInfo(path).absolutePath());
-        blob = headerBytes();
+        tail = headerBytes();
     }
-    blob += recordBytes(kind, time, digest, packed, snapshot.size(), source);
+    tail += recordBytes(kind, time, digest, body, snapshot.size(), source, codec);
 
     if (!file.open(QIODevice::WriteOnly | QIODevice::Append)) {
         if (error) *error = QStringLiteral("журнал не открыть: %1").arg(file.errorString());
         return false;
     }
-    const qint64 wrote = file.write(blob);
+    const qint64 wrote = file.write(tail);
     // Закрываем без fsync — см. шапку журнала. Незаписавшийся хвост (диск
     // кончился) читатель отрежет сам, но сказать об этом надо сразу.
     file.close();
-    if (wrote != blob.size()) {
+    if (wrote != tail.size()) {
         if (error) *error = QStringLiteral("журнал записан не целиком: %1 из %2 байт")
                                 .arg(wrote)
-                                .arg(blob.size());
+                                .arg(tail.size());
         return false;
     }
     return true;
 }
 
-bool read(const QString& path, Journal* out, QString* error) {
+bool History::readLocked(const QString& path, Journal* out, QString* error) const {
+    assertLocked();
     QFile file(path);
     if (!file.exists()) {
         *out = Journal{};
@@ -341,7 +504,9 @@ bool read(const QString& path, Journal* out, QString* error) {
     return parseAll(blob, out, Want::None, -1, nullptr, error);
 }
 
-bool snapshotAt(const QString& path, int index, QByteArray* out, QString* error) {
+bool History::snapshotAtLocked(const QString& path, int index, QByteArray* out,
+                               QString* error) const {
+    assertLocked();
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
         if (error) *error = QStringLiteral("журнал не прочитать: %1").arg(file.errorString());
@@ -352,7 +517,7 @@ bool snapshotAt(const QString& path, int index, QByteArray* out, QString* error)
 
     Journal journal;
     QVector<QByteArray> packed;
-    if (!parseAll(blob, &journal, Want::One, index, &packed, error)) return false;
+    if (!parseAll(blob, &journal, Want::Chain, index, &packed, error)) return false;
     if (index < 0 || index >= journal.entries.size()) {
         if (error) *error = QStringLiteral("в журнале нет записи №%1").arg(index);
         return false;
@@ -365,32 +530,20 @@ bool snapshotAt(const QString& path, int index, QByteArray* out, QString* error)
                          .arg(describeKind(entry.kind));
         return false;
     }
-    if (entry.codec != Codec::Zstd && entry.codec != Codec::None) {
-        if (error)
-            *error = QStringLiteral("слепок записи №%1 сжат неизвестным кодеком %2")
-                         .arg(index)
-                         .arg(int(entry.codec));
-        return false;
-    }
-    if (entry.codec == Codec::None) {
-        *out = packed[index];
-    } else if (!decompressSnapshot(packed[index], entry.plainSize, out)) {
-        if (error) *error = QStringLiteral("слепок записи №%1 не распаковывается").arg(index);
-        return false;
-    }
-    // Сверка всегда: история, молча отдающая не те байты, хуже отсутствующей.
-    const Digest actual = hashOf(std::string_view(out->constData(), size_t(out->size())));
-    if (actual != entry.digest) {
-        if (error)
-            *error = QStringLiteral("слепок записи №%1 не сходится с отпечатком").arg(index);
-        return false;
-    }
-    return true;
+    return rebuildAt(journal.entries, packed, index, out, error);
 }
 
-bool trimTail(const QString& path, QString* error) {
+bool History::trimTailLocked(const QString& path, QString* error) {
+    assertLocked();
     Journal journal;
-    if (!read(path, &journal, error)) return false;
+    QFile probe(path);
+    if (!probe.open(QIODevice::ReadOnly)) {
+        if (error) *error = QStringLiteral("журнал не прочитать: %1").arg(probe.errorString());
+        return false;
+    }
+    const QByteArray blob = probe.readAll();
+    probe.close();
+    if (!parseAll(blob, &journal, Want::None, -1, nullptr, error)) return false;
     if (!journal.tailTrimmed) return true;
     QFile file(path);
     if (!file.open(QIODevice::ReadWrite)) {
@@ -438,15 +591,22 @@ QVector<int> survivors(const QVector<Entry>& entries, qint64 now) {
     return keep;
 }
 
-bool thin(const QString& path, qint64 now, QString* error) {
+bool History::thinLocked(const QString& path, qint64 now, QString* error) {
+    assertLocked();
+    QFileInfo info(path);
+    if (!info.exists()) return true;
     QFile file(path);
-    if (!file.exists()) return true;
     if (!file.open(QIODevice::ReadOnly)) {
         if (error) *error = QStringLiteral("журнал не прочитать: %1").arg(file.errorString());
         return false;
     }
     const QByteArray blob = file.readAll();
     file.close();
+    // Метка состояния файла на момент чтения — по ней перед подменой видно,
+    // не дописал ли кто-то запись, пока мы считали. Так прореживание можно
+    // гонять в отдельном потоке, не запирая журнал.
+    const qint64 sawSize = info.size();
+    const QDateTime sawTime = info.lastModified();
 
     Journal journal;
     QVector<QByteArray> packed;
@@ -454,10 +614,38 @@ bool thin(const QString& path, qint64 now, QString* error) {
     const QVector<int> keep = survivors(journal.entries, now);
     if (keep.size() == journal.entries.size() && !journal.tailTrimmed) return true;  // нечего делать
 
+    // Выжившие перекодируются заново: звено цепочки осмысленно только рядом со
+    // своим предшественником, а он мог не выжить. Заодно поколения выходят
+    // ровными, а не рваными.
     QByteArray out = headerBytes();
+    QByteArray previous;
+    int written = 0;
     for (int i : keep) {
         const Entry& e = journal.entries[i];
-        out += recordBytes(e.kind, e.time, e.digest, packed[i], e.plainSize, e.source);
+        if (!e.hasSnapshot()) {
+            out += recordBytes(e.kind, e.time, e.digest, QByteArray(), 0, e.source, Codec::Zstd);
+            continue;
+        }
+        QByteArray plain;
+        if (!rebuildAt(journal.entries, packed, i, &plain, error)) return false;
+        const bool full = written % kGeneration == 0;
+        const Codec codec = full ? Codec::Zstd : Codec::ZstdDelta;
+        const QByteArray body = compressSnapshot(plain, full ? QByteArray() : previous);
+        if (body.isEmpty() && !plain.isEmpty()) {
+            if (error) *error = QStringLiteral("не удалось сжать слепок записи №%1").arg(i);
+            return false;
+        }
+        out += recordBytes(e.kind, e.time, e.digest, body, plain.size(), e.source, codec);
+        previous = plain;
+        ++written;
+    }
+
+    QFileInfo now2(path);
+    if (now2.size() != sawSize || now2.lastModified() != sawTime) {
+        // Журнал изменился под руками — в него дописали, пока мы считали.
+        // Отменяемся молча: прореживание не обязано случиться именно сейчас,
+        // а вот потерять свежую запись оно права не имеет.
+        return true;
     }
 
     // Переписывание целиком и атомарно: журнал в промежуточном состоянии не
@@ -474,6 +662,70 @@ bool thin(const QString& path, qint64 now, QString* error) {
         return false;
     }
     return true;
+}
+
+// Открытые методы: замок и ничего больше. Ни одной строки работы с файлами
+// здесь нет и быть не должно — на этом стоит обещание «всё под замком».
+bool History::append(const QString& noteId, Kind kind, qint64 time, const QByteArray& snapshot,
+                     qint64 source, QString* error) {
+    const QMutexLocker locked(&gate());
+    return appendLocked(pathFor(noteId), kind, time, snapshot, source, error);
+}
+
+bool History::read(const QString& noteId, Journal* out, QString* error) const {
+    const QMutexLocker locked(&gate());
+    return readLocked(pathFor(noteId), out, error);
+}
+
+bool History::snapshotAt(const QString& noteId, int index, QByteArray* out,
+                         QString* error) const {
+    const QMutexLocker locked(&gate());
+    return snapshotAtLocked(pathFor(noteId), index, out, error);
+}
+
+bool History::trimTail(const QString& noteId, QString* error) {
+    const QMutexLocker locked(&gate());
+    return trimTailLocked(pathFor(noteId), error);
+}
+
+bool History::thin(const QString& noteId, qint64 now, QString* error) {
+    const QMutexLocker locked(&gate());
+    return thinLocked(pathFor(noteId), now, error);
+}
+
+ThinReport History::thinAll(qint64 now, bool dryRun) {
+    ThinReport report;
+    const QDir history(QDir(root_).filePath(QStringLiteral("history")));
+    if (!history.exists()) return report;
+
+    for (const QString& name : history.entryList({QStringLiteral("*.log")}, QDir::Files)) {
+        const QString noteId = name.left(name.size() - 4);
+        Journal before;
+        QString error;
+        if (!read(noteId, &before, &error)) {
+            report.problems.append(QStringLiteral("%1: %2").arg(name, error));
+            continue;
+        }
+        ++report.journals;
+        report.recordsBefore += before.entries.size();
+        report.bytesBefore += QFileInfo(pathFor(noteId)).size();
+        if (before.tailTrimmed) report.trimmed.append(name);
+
+        if (dryRun) {
+            report.recordsAfter += survivors(before.entries, now).size();
+            report.bytesAfter += QFileInfo(pathFor(noteId)).size();
+            continue;
+        }
+        if (!thin(noteId, now, &error)) {
+            report.problems.append(QStringLiteral("%1: %2").arg(name, error));
+            continue;
+        }
+        Journal after;
+        read(noteId, &after, &error);
+        report.recordsAfter += after.entries.size();
+        report.bytesAfter += QFileInfo(pathFor(noteId)).size();
+    }
+    return report;
 }
 
 }  // namespace zametti::journal
