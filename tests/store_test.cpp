@@ -5,6 +5,7 @@
 
 #include "note_id.h"
 #include "parser.h"
+#include "serializer.h"
 #include "store.h"
 
 #include "test_util.h"
@@ -224,6 +225,80 @@ int main(int argc, char** argv) {
         ZT_TRUE("сирота не беда", store::verifyStore(options.root, v));
         ZT_TRUE("но в отчёте", v.lines.filter(QStringLiteral("осиротев")).size() == 1);
         QFile::remove(orphan);
+    }
+
+    // --- импорт одиночных .md ------------------------------------------------
+    {
+        const QString root = g_base + QStringLiteral("/импорт");
+        QString error;
+        ZT_TRUE("хранилище под импорт заведено", store::initStore(root, &error));
+
+        // Папка, в которую импортируем.
+        const QString folderPath = store::newNote(root, QString(), &error);
+        ZT_TRUE("папка заведена", !folderPath.isEmpty());
+        const QString folderId = QFileInfo(folderPath).completeBaseName();
+
+        // Чужой файл: без шапки, с неканоническим markdown.
+        const QString source =
+            write(QStringLiteral("чужие/Заметка.md"),
+                  "Заголовок\n=========\n\n*  пункт\n*  второй\n\nтекст с __жирным__\n");
+        const QString made = store::importNote(root, folderId, source, &error);
+        ZT_TRUE("импорт прошёл", !made.isEmpty());
+        ZT_TRUE("источник на месте и не тронут",
+                readAll(source) ==
+                    "Заголовок\n=========\n\n*  пункт\n*  второй\n\nтекст с __жирным__\n");
+        ZT_TRUE("имя файла — свежий id",
+                isValidNoteId(QFileInfo(made).completeBaseName().toStdString()) &&
+                    QFileInfo(made).completeBaseName() != folderId);
+
+        const std::string written = readAll(made);
+        const Document doc = parse(written);
+        ZT_TRUE("шапка на месте", doc.meta.present);
+        ZT_EQ("родитель проставлен", folderId.toStdString(), doc.meta.get("parent"));
+        ZT_TRUE("времена проставлены",
+                !doc.meta.get("created").empty() && !doc.meta.get("modified").empty());
+        ZT_TRUE("role не появился", doc.meta.get("role").empty());
+        // Канон: setext-заголовок стал ATX, звёздочки — дефисами, __ — **.
+        ZT_TRUE("содержимое канонизировано",
+                written.find("# Заголовок") != std::string::npos &&
+                    written.find("- пункт") != std::string::npos &&
+                    written.find("**жирным**") != std::string::npos);
+        ZT_EQ("и дрейфа нет", written, serialize(parse(written)));
+
+        // Файл из другого хранилища: id и role не наследуются, времена
+        // берутся из шапки.
+        const QString exported =
+            write(QStringLiteral("чужие/Вывезенная.md"),
+                  "<!-- zametti\nid: 00000000000042\nrole: folder\n"
+                  "parent: 0000000000000z\ncreated: 2019-03-14T09:26:53Z\n"
+                  "modified: 2020-01-02T03:04:05Z\nx-своё: беречь\n-->\n\n# Вывезенная\n");
+        const QString second = store::importNote(root, QString(), exported, &error);
+        ZT_TRUE("второй импорт прошёл", !second.isEmpty());
+        const Document back = parse(readAll(second));
+        ZT_TRUE("чужой id не унаследован", back.meta.get("id").empty());
+        ZT_TRUE("чужой role снят", back.meta.get("role").empty());
+        ZT_TRUE("в корень — родителя нет", back.meta.get("parent").empty());
+        ZT_EQ("время создания взято из шапки", "2019-03-14T09:26:53Z", back.meta.get("created"));
+        ZT_EQ("и время правки тоже", "2020-01-02T03:04:05Z", back.meta.get("modified"));
+        ZT_EQ("неизвестный ключ уцелел", "беречь", back.meta.get("x-своё"));
+
+        // Пустой файл: пустая строка после "-->" дала бы дрейф.
+        const QString empty = write(QStringLiteral("чужие/Пустая.md"), "");
+        const QString third = store::importNote(root, QString(), empty, &error);
+        ZT_TRUE("пустой файл импортируется", !third.isEmpty());
+        ZT_EQ("и без дрейфа", readAll(third), serialize(parse(readAll(third))));
+
+        // Отказы.
+        ZT_TRUE("несуществующий источник — отказ",
+                store::importNote(root, QString(), g_base + QStringLiteral("/нет.md"), &error)
+                        .isEmpty() &&
+                    !error.isEmpty());
+        ZT_TRUE("несуществующая папка — отказ",
+                store::importNote(root, QStringLiteral("00000000000001"), source, &error)
+                    .isEmpty());
+
+        store::Report v;
+        ZT_TRUE("хранилище после импорта проходит проверку", store::verifyStore(root, v));
     }
 
     QDir(g_base).removeRecursively();

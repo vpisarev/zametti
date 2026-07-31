@@ -27,6 +27,7 @@
 #include <QListView>
 #include <QMenu>
 #include <QKeyEvent>
+#include <QFileDialog>
 #include <QMessageBox>
 #include <QDesktopServices>
 #include <QProcess>
@@ -1023,6 +1024,45 @@ int main(int argc, char** argv) {
         }
     };
 
+    // Импорт .md в хранилище. Источник не трогается: делается копия под
+    // свежим id, с шапкой и сразу в каноническом виде — чтобы человек тут же
+    // увидел, во что превратился его файл, а не узнал об этом при первом
+    // сохранении. Выбор множественный: приносят обычно не по одному файлу.
+    const auto importNotes = [&](const QString& parentId) {
+        if (!model.isStore()) return;
+        const QStringList files = QFileDialog::getOpenFileNames(
+            &window, QStringLiteral("Импортировать заметки"), QString(),
+            QStringLiteral("Заметки markdown (*.md *.markdown);;Все файлы (*)"));
+        if (files.isEmpty()) return;
+
+        QString first;
+        QStringList failed;
+        for (const QString& file : files) {
+            QString error;
+            const QString made = zametti::store::importNote(
+                model.nodePath(QModelIndex()), parentId, file, &error);
+            if (made.isEmpty()) {
+                failed.append(QFileInfo(file).fileName() + QStringLiteral(": ") + error);
+                continue;
+            }
+            if (first.isEmpty()) first = made;
+        }
+
+        if (!first.isEmpty()) {
+            refreshTree(first);
+            // Открыть явно: refreshTree выделяет с заглушенными сигналами.
+            editor.openFile(first);
+            editor.setFocus();
+        }
+        if (!failed.isEmpty()) {
+            QMessageBox::warning(
+                &window, QStringLiteral("zametti"),
+                QStringLiteral("Не импортировано файлов: %1\n\n%2")
+                    .arg(failed.size())
+                    .arg(failed.join(QLatin1Char('\n'))));
+        }
+    };
+
     // Ctrl+N: редактор перехватывает сочетание через ShortcutOverride, до
     // оконного ярлыка оно не доживало — поэтому фильтр на самом редакторе.
     struct NewNoteGrab : QObject {
@@ -1163,6 +1203,8 @@ int main(int argc, char** argv) {
                        [&] { createNote(model.folderIdFor(at), false); });
         menu.addAction(QStringLiteral("Новая папка"),
                        [&] { createNote(model.folderIdFor(at), true); });
+        menu.addAction(QStringLiteral("Импортировать…"),
+                       [&] { importNotes(model.folderIdFor(at)); });
         if (!id.isEmpty()) {
             menu.addSeparator();
             // «Открыть как заметку» здесь больше нет. Папка — структура, а не
@@ -1183,11 +1225,21 @@ int main(int argc, char** argv) {
     // Контекстное меню списка — про заметки: перенос, корзина, восстановление.
     QObject::connect(&listView, &QWidget::customContextMenuRequested, &window,
                      [&](const QPoint& pos) {
+        if (!model.isStore()) return;
         QModelIndex at = listView.indexAt(pos);
         if (!at.isValid()) at = listView.currentIndex();
         const QString id = list.idAt(at);
-        if (id.isEmpty()) return;
         QMenu menu(&listView);
+
+        // Импорт есть всегда, даже когда щёлкнули мимо строк и заметки под
+        // курсором нет вовсе: он про папку, а не про строку.
+        menu.addAction(QStringLiteral("Импортировать…"),
+                       [&] { importNotes(model.folderIdFor(tree.currentIndex())); });
+        if (id.isEmpty()) {
+            menu.exec(listView.viewport()->mapToGlobal(pos));
+            return;
+        }
+        menu.addSeparator();
 
         // Перенос: список папок плоским перечнем с отступами. Перетаскивание
         // работает и так, но мышью через всё дерево — не для длинного списка.

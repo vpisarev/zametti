@@ -298,6 +298,59 @@ QString newNote(const QString& root, const QString& parentId, QString* error) {
     return fromUtf8(path);
 }
 
+QString importNote(const QString& root, const QString& parentId, const QString& sourcePath,
+                   QString* error) {
+    const auto fail = [&](const QString& why) {
+        if (error != nullptr) *error = why;
+        return QString();
+    };
+    if (!QDir(root).exists()) return fail(QStringLiteral("нет хранилища: %1").arg(root));
+    const QFileInfo info(sourcePath);
+    if (!info.isFile()) return fail(QStringLiteral("не файл: %1").arg(sourcePath));
+    if (!parentId.isEmpty() &&
+        !QFileInfo::exists(root + QLatin1Char('/') + parentId + QStringLiteral(".md")))
+        return fail(QStringLiteral("папки нет в хранилище: %1").arg(parentId));
+
+    std::string bytes;
+    if (!readAll(sourcePath, bytes))
+        return fail(QStringLiteral("не читается: %1").arg(sourcePath));
+
+    Document doc = parse(bytes);
+
+    // Времена: своя шапка знает их лучше файловой системы (файл могли
+    // скопировать, и mtime стал бы датой копирования).
+    const QDateTime fsModified = info.lastModified();
+    const QDateTime fsBirth = info.birthTime();
+    QString created = fromUtf8(doc.meta.get("created"));
+    QString modified = fromUtf8(doc.meta.get("modified"));
+    if (modified.isEmpty()) modified = isoUtc(fsModified);
+    if (created.isEmpty())
+        created = isoUtc(fsBirth.isValid() && fsBirth <= fsModified ? fsBirth : fsModified);
+
+    // id и role чужого файла не наследуются: id принадлежит этому хранилищу
+    // (иначе две заметки с одним id), а role сделал бы из заметки папку.
+    doc.meta.unset("id");
+    doc.meta.unset("role");
+    doc.meta.set("parent", toUtf8(parentId));   // пусто снимает ключ — «в корне»
+    doc.meta.set("created", toUtf8(created));
+    doc.meta.set("modified", toUtf8(modified));
+    doc.meta.present = true;
+    // Пустая строка после "-->" положена перед содержимым; у пустого файла
+    // содержимого нет, и она дала бы дрейф.
+    doc.meta.blankAfter = !doc.blocks.empty();
+
+    const std::string content = serialize(doc);
+    // Последний рубеж, тот же, что и у сохранения: записанное обязано читаться
+    // обратно в себя. Ядро это гарантирует, но файл пришёл снаружи.
+    if (serialize(parse(content)) != content)
+        return fail(QStringLiteral("канонизация не сошлась на %1").arg(info.fileName()));
+
+    std::string path;
+    if (createNoteFile(toUtf8(root), content, &path).empty())
+        return fail(QStringLiteral("не записалось в %1").arg(root));
+    return fromUtf8(path);
+}
+
 bool importTree(const ImportOptions& options, Report& report) {
     const QString srcRoot = QDir(options.from).absolutePath();
     if (!QDir(srcRoot).exists()) {

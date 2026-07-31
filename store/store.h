@@ -35,6 +35,19 @@ bool initStore(const QString& dir, QString* error);
 // parent — если задан и существует). Возвращает путь к файлу; пусто — ошибка.
 QString newNote(const QString& root, const QString& parentId, QString* error);
 
+// Один .md-файл в хранилище. Источник НЕ трогается: делается копия под
+// свежим id, с нашей шапкой метаданных и в каноническом виде — то есть
+// serialize(parse(x)). Канонизация сразу, а не когда-нибудь: человек должен
+// увидеть результат импорта немедленно, а не через первое сохранение.
+//
+// Времена берутся из шапки источника, если она наша; иначе из файловой
+// системы. id и role источника не наследуются никогда: id принадлежит этому
+// хранилищу, а role сделал бы из заметки папку.
+//
+// Возвращает путь созданной заметки; пусто — ошибка, объяснение в error.
+QString importNote(const QString& root, const QString& parentId, const QString& sourcePath,
+                   QString* error);
+
 struct ImportOptions {
     QString root;
     QString from;
