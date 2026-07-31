@@ -854,6 +854,67 @@ void checkCanonicaliseOnOpen() {
                "файл без шапки остался как был");
 }
 
+// Автосохранение можно откладывать надолго, но четыре пути к записи обязаны
+// работать всегда: переключение на другую заметку, уход фокуса, Ctrl+S и
+// закрытие. Задержку в тесте ставим заведомо больше прогона — тогда всё, что
+// дошло до диска, дошло не по таймеру.
+void checkSaveWithoutAutosave() {
+    const int savedDelay = zametti::appearance().autosaveDelayMs;
+    zametti::appearance().autosaveDelayMs = 600000;
+
+    const QString first = writeNote("без-таймера-раз.md", QStringLiteral("раз\n"));
+    const QString second = writeNote("без-таймера-два.md", QStringLiteral("два\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+
+    const auto typeTail = [&editor](const QString& what) {
+        QTextCursor at = editor.textCursor();
+        at.movePosition(QTextCursor::End);
+        editor.setTextCursor(at);
+        QTest::keyClicks(&editor, what);
+        QTest::qWait(10);
+    };
+
+    // Переключение на другую заметку.
+    editor.openFile(first);
+    QTest::qWait(20);
+    typeTail(QStringLiteral(" one"));
+    editor.openFile(second);
+    QTest::qWait(20);
+    checkEqual(QStringLiteral("раз one\n"), readFile(first),
+               "переключение на другую заметку записывает прежнюю");
+
+    // Ctrl+S.
+    typeTail(QStringLiteral(" two"));
+    QTest::keyClick(&editor, Qt::Key_S, Qt::ControlModifier);
+    QTest::qWait(20);
+    // Сочетание живёт в окне, а не в редакторе, — здесь зовём напрямую.
+    editor.save(true);
+    QTest::qWait(20);
+    checkEqual(QStringLiteral("два two\n"), readFile(second), "Ctrl+S записывает");
+
+    // Уход фокуса и закрытие идут тем же вызовом save(false) из окна; проверяем
+    // сам вызов — что он пишет, не дожидаясь таймера.
+    typeTail(QStringLiteral(" three"));
+    editor.save(false);
+    QTest::qWait(20);
+    checkEqual(QStringLiteral("два two three\n"), readFile(second),
+               "явное сохранение не ждёт таймера");
+
+    // И обратное: пока таймер не сработал, файл не трогается.
+    typeTail(QStringLiteral(" four"));
+    QTest::qWait(200);
+    checkEqual(QStringLiteral("два two three\n"), readFile(second),
+               "до таймера набранное на диск не уходит");
+    editor.save(false);
+
+    zametti::appearance().autosaveDelayMs = savedDelay;
+}
+
 // Текст после переноса строки обязан набираться тем же кеглем. Разделитель
 // строк шрифту неизвестен, и без оговорки он попадал под правило увеличения
 // эмодзи — а набранное сразу после него наследовало крупный формат.
@@ -2019,6 +2080,7 @@ int main(int argc, char** argv) {
     checkWideWindowOperations();
     checkNoteCache();
     checkCanonicaliseOnOpen();
+    checkSaveWithoutAutosave();
     checkSizeAfterSoftBreak();
     checkCodeTyping();
     checkCodeAtEdge();
