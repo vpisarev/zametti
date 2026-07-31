@@ -663,10 +663,10 @@ SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
     const Digest digest = hashOf(asView(text));
     if (!known.empty()) {
         // Отпечаток файла известен — сравниваем отпечатки, файл не читаем.
-        if (digest == known) return {SaveResult::Unchanged, {}, {}, {}, false, digest};
+        if (digest == known) return {SaveResult::Unchanged, {}, {}, {}, false, digest, text};
     } else if (QFile::exists(path) && fileContents(path) == text) {
         // Не знаем — читаем и сравниваем байты, как раньше.
-        return {SaveResult::Unchanged, {}, {}, {}, false, digest};
+        return {SaveResult::Unchanged, {}, {}, {}, false, digest, text};
     }
 
     // Последний рубеж: то, что мы собрались записать, должно читаться обратно в
@@ -695,13 +695,13 @@ SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
             return {SaveResult::Failed,
                     QStringLiteral("самопроверка не прошла, и аварийный файл не записан: ") +
                         error,
-                    {}, {}, false, {}};
+                    {}, {}, false, {}, {}};
         }
         return {SaveResult::Rescued,
                 QStringLiteral("самопроверка перед записью не прошла: разобранное обратно "
                                "не совпало с документом. Файл не тронут, буфер сохранён в ") +
                     rescuePath,
-                rescuePath, {}, false, {}};
+                rescuePath, {}, false, {}, {}};
     }
 
     // Замена файла целиком и разом: QSaveFile пишет во временный файл рядом и
@@ -711,16 +711,16 @@ SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
     if (!file.open(QIODevice::WriteOnly)) {
         return {SaveResult::Failed,
                 QStringLiteral("не открыть на запись: ") + file.errorString(), {}, {},
-                false, {}};
+                false, {}, {}};
     }
     file.write(text);
     if (!file.commit()) {
         return {SaveResult::Failed, QStringLiteral("не записать: ") + file.errorString(), {},
-                {}, false, {}};
+                {}, false, {}, {}};
     }
     // Отпечаток — по тому же буферу и только после самопроверки: не прошла
     // она — файл не тронут, и отпечатку взяться неоткуда.
-    return {SaveResult::Written, {}, {}, reread, toJson(reread) != toJson(ir), digest};
+    return {SaveResult::Written, {}, {}, reread, toJson(reread) != toJson(ir), digest, text};
 }
 
 }  // namespace zametti

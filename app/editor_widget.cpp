@@ -548,6 +548,11 @@ void NoteEditor::onExternalSettled() {
     externalEmptyRetried_ = false;
     knownDigest_ = digest;
 
+    // Шаг истории пишется здесь, а не после ответа человека: файл на диске уже
+    // изменился, и это случилось независимо от того, примем мы чужую версию
+    // или перезапишем своей. «Оставить моё» тогда ляжет следующей записью.
+    recordHistory(journal::Kind::External, QByteArray(text.data(), qsizetype(text.size())));
+
     // Без несохранённых правок внешнее содержимое — просто ещё один шаг
     // истории: undo вернёт то, что было до него.
     if (!document()->isModified()) {
@@ -815,6 +820,15 @@ int NoteEditor::replaceAllMatches(const QString& text, bool caseSensitive,
 
 void NoteEditor::undo() {
     flushPendingEdit();
+    // Граница серии отмены: первое Ctrl+Z после правок сначала сохраняет.
+    // Иначе вершина цепочки — то, что человек только что набрал, — не попала
+    // бы в историю вовсе: он отменяет её, уходит из заметки, и сохранять уже
+    // нечего. Сохранение само пишет свой шаг истории, отдельной записи тут нет.
+    //
+    // Только первый шаг: дальше человек идёт по уже записанному прошлому, и
+    // складывать в историю промежуточные состояния отката значило бы забивать
+    // её ровно тем, от чего он уходит.
+    if (document()->isModified() && !undoRun_) save(false);
     const int scrollBefore = verticalScrollBar()->value();
     // Курсор ставим туда, где была отменяемая правка, — но её позиция записана
     // в координатах ОТМЕНЯЕМОГО документа, а вернём мы другой. Отображаем
@@ -827,6 +841,7 @@ void NoteEditor::undo() {
     const QString undonePlain = document()->toPlainText();
     const HistoryStep* step = history_.undo();
     if (step == nullptr) return;
+    undoRun_ = true;
     rebuild(step->doc, 0, viewAnchor());
     const QString restoredPlain = document()->toPlainText();
 
@@ -864,6 +879,7 @@ void NoteEditor::redo() {
     const int scrollBefore = verticalScrollBar()->value();
     const HistoryStep* step = history_.redo();
     if (step == nullptr) return;
+    undoRun_ = true;
     rebuild(step->doc, step->cursor, viewAnchor());
     showEditPlace(scrollBefore);
     document()->setModified(true);
@@ -1739,6 +1755,7 @@ void NoteEditor::onContentsChanged() {
     // владельца: таких строк не существует. Чистим после каждой правки.
     tidySweep(textCursor());
 
+    undoRun_ = false;   // настоящая правка — серия отмены кончилась
     recordEdit();
     autosave_.start(appearance().autosaveDelayMs);
 }
@@ -1766,6 +1783,7 @@ void NoteEditor::flushPendingEdit() {
 }
 
 void NoteEditor::forgetPendingEdit() {
+    undoRun_ = false;   // другой файл — своя серия
     pendingEdit_ = false;
     snapshot_.stop();
     typingRun_ = false;
@@ -1789,6 +1807,15 @@ void NoteEditor::setMetaParent(const QString& parentId) {
         if (parentId.isEmpty()) meta.unset("parent");
         else meta.set("parent", parentId.toStdString());
     });
+}
+
+void NoteEditor::recordHistory(journal::Kind kind, const QByteArray& snapshot, qint64 source) {
+    if (storeRoot_.isEmpty() || path_.isEmpty()) return;
+    journal::History history(storeRoot_);
+    QString error;
+    if (!history.append(QFileInfo(path_).completeBaseName(), kind,
+                        QDateTime::currentMSecsSinceEpoch(), snapshot, source, &error))
+        std::fprintf(stderr, "история не записана: %s\n", error.toUtf8().constData());
 }
 
 void NoteEditor::save(bool interactive) {
@@ -1829,6 +1856,13 @@ void NoteEditor::save(bool interactive) {
             const ViewAnchor anchor = viewAnchor();
             rebuild(outcome.reread, cursor, anchor);
         }
+        // Шаг истории — по факту записи, а не по факту нажатия: Unchanged
+        // означает, что на диске уже ровно это, и второй одинаковый слепок
+        // подряд в журнале не нужен (дедупликация тут бесплатна, потому что
+        // сравнение отпечатков уже сделано выше).
+        if (outcome.result == SaveResult::Written)
+            recordHistory(journal::Kind::Save, outcome.written);
+
         // Файл на диске стал другим: средней колонке пора перечитать заголовок,
         // начало текста и дату. Сигнал, а не прямой вызов: редактор про список
         // ничего не знает и знать не должен.

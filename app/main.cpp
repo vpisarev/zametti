@@ -331,6 +331,10 @@ int main(int argc, char** argv) {
     // из дерева они не пропадают, но наружу не показываются.
     model.setFoldersOnly(model.isStore());
 
+    // Редактор узнаёт своё хранилище: без него истории правок не будет вовсе
+    // (одиночный файл, открытый вне хранилища, журналу негде лежать).
+    editor.setStoreRoot(model.isStore() ? model.nodePath(QModelIndex()) : QString());
+
     // Одно хранилище — одна программа. Второй экземпляр на том же хранилище
     // писал бы в те же файлы и те же журналы, ничего не зная о первом, поэтому
     // он просто не запускается. Замок файловый, потому что процессы разные;
@@ -929,8 +933,20 @@ int main(int argc, char** argv) {
                         .arg(model.titleOfId(noteId)));
                 if (answer != QMessageBox::Yes) return;
             }
-            // Файловая корзина ОС; нет её (сеть, голый сервер) — удалить.
-            if (!QFile::moveToTrash(file)) QFile::remove(file);
+            // Если заметка открыта, сначала сохраняем: иначе последним слепком
+            // в истории осталось бы состояние до последних правок, а человек
+            // удаляет то, что видит.
+            if (wasOpen) editor.save(false);
+            // Само удаление — в хранилище: там же живёт правило «сначала
+            // надгробие, потом файл» и обещание никогда не удалять журнал.
+            QString deleteError;
+            if (!zametti::store::deleteNoteFile(model.nodePath(QModelIndex()), noteId,
+                                                &deleteError)) {
+                QMessageBox::warning(&window, QStringLiteral("zametti"), deleteError);
+                return;
+            }
+            if (!deleteError.isEmpty())
+                std::fprintf(stderr, "%s\n", deleteError.toUtf8().constData());
             settleAfter();
             return;
         }

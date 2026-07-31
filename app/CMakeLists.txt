@@ -34,7 +34,10 @@ add_library(zametti-view STATIC
     settings.h
     settings.cpp
 )
-target_link_libraries(zametti-view PUBLIC zametti-core Qt6::Gui)
+# История правок живёт в хранилищной библиотеке, а зовёт её редактор — отсюда
+# зависимость слоя модели на zametti-store-lib. Обратной нет и быть не должно:
+# хранилище про виджеты не знает.
+target_link_libraries(zametti-view PUBLIC zametti-core zametti-store-lib Qt6::Gui)
 target_link_libraries(zametti-view PRIVATE zametti-warnings)
 target_include_directories(zametti-view PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 

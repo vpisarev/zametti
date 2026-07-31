@@ -10,6 +10,7 @@
 #include "doc_model.h"
 #include "document_reader.h"
 #include "editor_widget.h"
+#include "journal.h"
 #include "marker.h"
 #include "serializer.h"
 #include "settings.h"
@@ -2041,6 +2042,110 @@ void checkSeparatorGeometry() {
 
 }  // namespace
 
+// Точки записи истории: сохранение, внешняя правка, граница серии отмены.
+//
+// Проверяется не «журнал не пуст», а что в нём лежат ИМЕННО те байты, которые
+// оказались на диске, и в том порядке, в каком случились события. Иначе
+// история была бы правдоподобной, но не настоящей.
+void checkHistoryPoints() {
+    // Своё хранилище: истории нужен каталог history/ рядом с заметкой.
+    const QString root = g_dir + QStringLiteral("/хранилище-истории");
+    QDir().mkpath(root + QStringLiteral("/history"));
+    const QString path = root + QStringLiteral("/01n6cqevh7bbfr.md");
+    const QString noteId = QStringLiteral("01n6cqevh7bbfr");
+    {
+        QFile file(path);
+        check(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "заметка создана");
+        file.write(QStringLiteral("# заметка\n\nстрока раз\n").toUtf8());
+    }
+
+    zametti::journal::History history(root);
+    zametti::NoteEditor editor;
+    editor.setStoreRoot(root);
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+
+    auto records = [&history, &noteId] {
+        zametti::journal::Journal journal;
+        QString error;
+        history.read(noteId, &journal, &error);
+        return journal.entries;
+    };
+    auto snapshot = [&history, &noteId](int index) {
+        QByteArray got;
+        QString error;
+        if (!history.snapshotAt(noteId, index, &got, &error)) return QString();
+        return QString::fromUtf8(got);
+    };
+    auto fileText = [&path] {
+        QFile file(path);
+        return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString();
+    };
+
+    editor.openFile(path);
+    QTest::qWait(20);
+    check(records().isEmpty(), "открытие заметки истории не пишет");
+
+    // 1. Сохранение — запись save с теми же байтами, что легли в файл.
+    QTextCursor at(editor.document()->findBlockByNumber(2));
+    at.movePosition(QTextCursor::EndOfBlock);
+    editor.setTextCursor(at);
+    QTest::keyClicks(&editor, QStringLiteral(" tail"));
+    editor.save(false);
+    QTest::qWait(20);
+    auto after = records();
+    check(after.size() == 1, "сохранение записало один шаг");
+    check(after.size() == 1 && after[0].kind == zametti::journal::Kind::Save,
+          "и это шаг save");
+    checkEqual(fileText(), snapshot(0), "слепок — ровно то, что легло в файл");
+
+    // Повторное сохранение без правок ничего не пишет: на диске уже это.
+    editor.save(false);
+    QTest::qWait(20);
+    check(records().size() == 1, "сохранение без правок шага не добавляет");
+
+    // 2. Внешняя правка — запись external с чужими байтами.
+    const QString outside = QStringLiteral("# заметка\n\nстрока раз\n\nчужая правка\n");
+    {
+        QFile file(path);
+        check(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "чужая правка записана");
+        file.write(outside.toUtf8());
+    }
+    // Ждём сторожа файлов: точку записи проверяем настоящим путём, а не
+    // вызовом внутреннего метода, иначе проверялась бы не проводка, а функция.
+    for (int i = 0; i < 100 && records().size() < 2; ++i) QTest::qWait(20);
+    after = records();
+    check(after.size() == 2, "внешняя правка записала шаг");
+    check(after.size() == 2 && after[1].kind == zametti::journal::Kind::External,
+          "и это шаг external");
+    checkEqual(outside, snapshot(1), "слепок — чужие байты, как они есть на диске");
+
+    // 3. Граница серии отмены: первое Ctrl+Z после правок сначала сохраняет,
+    // иначе только что набранное не попало бы в историю вовсе.
+    QTextCursor end(editor.document()->lastBlock());
+    end.movePosition(QTextCursor::EndOfBlock);
+    editor.setTextCursor(end);
+    QTest::keyClicks(&editor, QStringLiteral(" before undo"));
+    QTest::qWait(20);
+    const int before = int(records().size());
+    editor.undo();
+    QTest::qWait(20);
+    after = records();
+    check(after.size() == before + 1, "первое Ctrl+Z после правок записало шаг");
+    check(!after.isEmpty() && after.last().kind == zametti::journal::Kind::Save,
+          "и это обычное сохранение, а не особая запись");
+    check(snapshot(int(after.size()) - 1).contains(QStringLiteral("before undo")),
+          "в истории осталось то, что отменили");
+
+    // Отмена без правок второй записи не делает: сохранять нечего.
+    const int settled = int(records().size());
+    editor.undo();
+    QTest::qWait(20);
+    check(int(records().size()) == settled, "отмена без правок шага не пишет");
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     if (argc < 2) {
@@ -2079,6 +2184,7 @@ int main(int argc, char** argv) {
     checkDeferredSnapshot();
     checkWideWindowOperations();
     checkNoteCache();
+    checkHistoryPoints();
     checkCanonicaliseOnOpen();
     checkSaveWithoutAutosave();
     checkSizeAfterSoftBreak();

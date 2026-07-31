@@ -6,6 +6,7 @@
 #include "note_id.h"
 #include "parser.h"
 #include "serializer.h"
+#include "journal.h"
 #include "store.h"
 
 #include "test_util.h"
@@ -68,6 +69,52 @@ int main(int argc, char** argv) {
         write(QStringLiteral("занятое/мусор.txt"), "x");
         ZT_TRUE("init в непустом отказывает",
                 !store::initStore(g_base + "/занятое", &error) && !error.isEmpty());
+    }
+
+    // --- удаление заметки: надгробие остаётся навсегда ----------------------
+    {
+        const QString root = g_base + QStringLiteral("/удаление");
+        QString error;
+        ZT_TRUE("хранилище заведено", store::initStore(root, &error));
+        const QString path = store::newNote(root, QString(), &error);
+        const QString noteId = QFileInfo(path).completeBaseName();
+
+        // История заметки: пара сохранений, как в жизни.
+        journal::History history(root);
+        ZT_TRUE("первый слепок",
+                history.append(noteId, journal::Kind::Save, 1'700'000'000'000LL,
+                               QByteArray("# заметка\n\nраз\n"), 0, &error));
+        ZT_TRUE("второй слепок",
+                history.append(noteId, journal::Kind::Save, 1'700'000'060'000LL,
+                               QByteArray("# заметка\n\nраз\nдва\n"), 0, &error));
+
+        ZT_TRUE("заметка удалена", store::deleteNoteFile(root, noteId, &error));
+        ZT_EQ("и без жалоб", std::string(), error.toStdString());
+        ZT_TRUE("файла заметки больше нет", !QFileInfo::exists(path));
+
+        journal::Journal journal;
+        ZT_TRUE("журнал на месте", history.read(noteId, &journal, &error));
+        ZT_EQ("и в нём три записи", std::string("3"),
+              std::to_string(journal.entries.size()));
+        // Пустой журнал здесь — не «не сошлось число», а «журнал удалили
+        // вместе с заметкой»; спрашивать у него последнюю запись нельзя.
+        const bool haveRecords = !journal.entries.isEmpty();
+        ZT_TRUE("журнал не удалён вместе с заметкой", haveRecords);
+        ZT_TRUE("последняя — надгробие",
+                haveRecords && journal.entries.last().kind == journal::Kind::Tombstone);
+        ZT_TRUE("у надгробия своего слепка нет",
+                haveRecords && !journal.entries.last().hasSnapshot());
+
+        // Главное обещание: по журналу удалённую заметку можно воскресить.
+        QByteArray last;
+        ZT_TRUE("предпоследний слепок достаётся",
+                journal.entries.size() >= 2 &&
+                    history.snapshotAt(noteId, int(journal.entries.size()) - 2, &last, &error));
+        ZT_EQ("и это её последнее содержимое", std::string("# заметка\n\nраз\nдва\n"),
+              std::string(last.constData(), size_t(last.size())));
+
+        ZT_TRUE("удалять несуществующую нельзя",
+                !store::deleteNoteFile(root, QStringLiteral("нет-такой"), &error));
     }
 
     // --- new ----------------------------------------------------------------

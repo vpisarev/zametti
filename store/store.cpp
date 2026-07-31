@@ -1,5 +1,7 @@
 #include "store.h"
 
+#include "journal.h"
+
 #include "note_id.h"
 #include "parser.h"
 #include "serializer.h"
@@ -974,6 +976,27 @@ bool verifyStore(const QString& root, Report& report) {
                     .arg(notes.size())
                     .arg(attachments.size()));
     return report.problems == 0;
+}
+
+bool deleteNoteFile(const QString& root, const QString& noteId, QString* error) {
+    const QString file = QDir(root).filePath(noteId + QStringLiteral(".md"));
+    if (!QFile::exists(file)) {
+        if (error) *error = QStringLiteral("заметки %1 в хранилище нет").arg(noteId);
+        return false;
+    }
+
+    journal::History history(root);
+    QString historyError;
+    const bool marked = history.append(noteId, journal::Kind::Tombstone,
+                                       QDateTime::currentMSecsSinceEpoch(), QByteArray(), 0,
+                                       &historyError);
+
+    if (!QFile::moveToTrash(file) && !QFile::remove(file)) {
+        if (error) *error = QStringLiteral("файл заметки %1 не удалить").arg(noteId);
+        return false;
+    }
+    if (!marked && error) *error = QStringLiteral("надгробие не записано: %1").arg(historyError);
+    return true;
 }
 
 }  // namespace zametti::store
