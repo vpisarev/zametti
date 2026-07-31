@@ -453,6 +453,11 @@ bool NoteEditor::restoreCachedNote(const QString& path, const Digest& digest) {
 }
 
 bool NoteEditor::openFile(const QString& path) {
+    // Открытие другой заметки выводит из режима истории. Без этого редактор
+    // остался бы показывать слепок ПРЕЖНЕЙ заметки, имея путь новой, — и
+    // первая же правка записала бы чужое прошлое в новый файл. Найдено
+    // пробником: после ухода и возврата режим оставался включён.
+    leaveHistory();
     save(true);
 
     std::string text;
@@ -489,6 +494,17 @@ bool NoteEditor::openFile(const QString& path) {
     // Серию набора обрываем: иначе первая правка в новой заметке подмешалась бы
     // к её исходному состоянию и отменить её было бы нечем.
     forgetPendingEdit();
+
+    // Опорная запись. Заметки старше журнала: хранилище жило годами, а история
+    // заведена только сейчас. Если журнала у заметки ещё нет, кладём в него то,
+    // с чем её открыли, — иначе первой записью стало бы первое сохранение, и
+    // всё, чем заметка была до него, не попало бы в историю никогда. Владелец
+    // на это и наткнулся: он опустошил заметку (Ctrl+A, Delete), автосохранение
+    // записало пустоту, и она оказалась самой первой записью её истории.
+    //
+    // Время берём у файла, а не «сейчас»: содержимое ровно такой давности, и
+    // таймлайн не должен утверждать, будто заметка написана в эту минуту.
+    recordBaseline(QByteArray(text.data(), qsizetype(text.size())));
 
     // Отложенная заметка: файл не разбираем и документ не собираем вовсе —
     // история, каретка и прокрутка возвращаются такими, какими были.
@@ -819,6 +835,12 @@ int NoteEditor::replaceAllMatches(const QString& text, bool caseSensitive,
 }
 
 void NoteEditor::undo() {
+    // В режиме истории отмена шагает по слепкам. Клавиша это и так знает, но
+    // отмена приходит и из меню, и из тестов, а поведение обязано быть одно.
+    if (inHistory()) {
+        historyStepBack();
+        return;
+    }
     flushPendingEdit();
     // Граница серии отмены: первое Ctrl+Z после правок сначала сохраняет.
     // Иначе вершина цепочки — то, что человек только что набрал, — не попала
@@ -881,6 +903,10 @@ void NoteEditor::undo() {
 }
 
 void NoteEditor::redo() {
+    if (inHistory()) {
+        historyStepForward();
+        return;
+    }
     flushPendingEdit();
     const int scrollBefore = verticalScrollBar()->value();
     const HistoryStep* step = history_.redo();
@@ -1875,9 +1901,18 @@ bool NoteEditor::enterHistory(int index) {
     while (last >= 0 && !timeline_.entries[last].hasSnapshot()) --last;
     if (last < 0) return false;
 
+    // Незаписанный снимок принадлежит живой заметке; он уедет вместе с ней, а
+    // не в режим истории.
+    forgetPendingEdit();
+
     LiveNote live;
     live.document = std::move(ownDocument_);
-    live.history = std::move(history_);
+    // На место уехавшей цепочки — СВЕЖАЯ, а не пустая. Перенесённая оставляет
+    // за собой очередь без шагов, но с прежним указателем на текущий, и первое
+    // же обращение к ней падает на выходе за границу. Ловилось набором.
+    live.history = std::exchange(
+        history_, EditHistory(appearance().undoLimit,
+                              size_t(qMax(1, appearance().undoBudgetMb)) * 1024 * 1024));
     live.built = built_;
     live.builtZoom = builtZoom_;
     live.builtValid = builtValid_;
@@ -1905,6 +1940,18 @@ bool NoteEditor::showSnapshot(int index) {
     if (index < 0 || index >= timeline_.entries.size()) return false;
     if (!timeline_.entries[index].hasSnapshot()) return false;
 
+    // Показ слепка — не правка человека. Без этого подмена документа считалась
+    // бы правкой и лезла в цепочку отмены, которой сейчас нет вовсе: она
+    // отложена вместе с живой заметкой. Первый же отложенный снимок ронял
+    // программу на пустой очереди — поймано набором.
+    const bool wasSuspended = recordingSuspended_;
+    recordingSuspended_ = true;
+    struct Restore {
+        NoteEditor* self;
+        bool was;
+        ~Restore() { self->recordingSuspended_ = was; }
+    } restore{this, wasSuspended};
+
     journal::History history(storeRoot_);
     QByteArray bytes;
     QString error;
@@ -1927,6 +1974,8 @@ bool NoteEditor::showSnapshot(int index) {
 
 void NoteEditor::leaveHistory() {
     if (!inHistory()) return;
+    // Всё, что успело накопиться на слепке, к живой заметке отношения не имеет.
+    forgetPendingEdit();
     LiveNote live = std::move(*live_);
     live_.reset();
     historyIndex_ = -1;
@@ -1997,6 +2046,26 @@ qint64 NoteEditor::restoreShownSnapshot() {
     pendingRestoreSource_ = source;
     save(false);
     return source;
+}
+
+void NoteEditor::recordBaseline(const QByteArray& contents) {
+    if (storeRoot_.isEmpty() || path_.isEmpty()) return;
+    journal::History history(storeRoot_);
+    const QString noteId = QFileInfo(path_).completeBaseName();
+    journal::Journal journal;
+    QString error;
+    if (!history.read(noteId, &journal, &error)) {
+        std::fprintf(stderr, "история не читается: %s\n", error.toUtf8().constData());
+        return;
+    }
+    if (!journal.entries.isEmpty()) return;   // история уже начата
+
+    const QDateTime when = QFileInfo(path_).lastModified();
+    if (!history.append(noteId, journal::Kind::Save,
+                        when.isValid() ? when.toMSecsSinceEpoch()
+                                       : QDateTime::currentMSecsSinceEpoch(),
+                        contents, 0, &error))
+        std::fprintf(stderr, "опорная запись не записана: %s\n", error.toUtf8().constData());
 }
 
 void NoteEditor::recordHistory(journal::Kind kind, const QByteArray& snapshot, qint64 source) {

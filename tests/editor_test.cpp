@@ -2087,7 +2087,11 @@ void checkHistoryPoints() {
 
     editor.openFile(path);
     QTest::qWait(20);
-    check(records().isEmpty(), "открытие заметки истории не пишет");
+    // Открытие кладёт в пустую историю опорную запись — то, с чем заметку
+    // открыли. Без неё прошлое заметки, прожитой до появления журнала, было бы
+    // недостижимо; см. checkHistoryBaseline.
+    check(records().size() == 1, "открытие завело опорную запись");
+    checkEqual(fileText(), snapshot(0), "и в ней заметка, как была на диске");
 
     // 1. Сохранение — запись save с теми же байтами, что легли в файл.
     QTextCursor at(editor.document()->findBlockByNumber(2));
@@ -2097,15 +2101,15 @@ void checkHistoryPoints() {
     editor.save(false);
     QTest::qWait(20);
     auto after = records();
-    check(after.size() == 1, "сохранение записало один шаг");
-    check(after.size() == 1 && after[0].kind == zametti::journal::Kind::Save,
+    check(after.size() == 2, "сохранение записало шаг поверх опорного");
+    check(after.size() == 2 && after[1].kind == zametti::journal::Kind::Save,
           "и это шаг save");
-    checkEqual(fileText(), snapshot(0), "слепок — ровно то, что легло в файл");
+    checkEqual(fileText(), snapshot(1), "слепок — ровно то, что легло в файл");
 
     // Повторное сохранение без правок ничего не пишет: на диске уже это.
     editor.save(false);
     QTest::qWait(20);
-    check(records().size() == 1, "сохранение без правок шага не добавляет");
+    check(records().size() == 2, "сохранение без правок шага не добавляет");
 
     // 2. Внешняя правка — запись external с чужими байтами.
     const QString outside = QStringLiteral("# заметка\n\nстрока раз\n\nчужая правка\n");
@@ -2116,12 +2120,12 @@ void checkHistoryPoints() {
     }
     // Ждём сторожа файлов: точку записи проверяем настоящим путём, а не
     // вызовом внутреннего метода, иначе проверялась бы не проводка, а функция.
-    for (int i = 0; i < 100 && records().size() < 2; ++i) QTest::qWait(20);
+    for (int i = 0; i < 100 && records().size() < 3; ++i) QTest::qWait(20);
     after = records();
-    check(after.size() == 2, "внешняя правка записала шаг");
-    check(after.size() == 2 && after[1].kind == zametti::journal::Kind::External,
+    check(after.size() == 3, "внешняя правка записала шаг");
+    check(after.size() == 3 && after[2].kind == zametti::journal::Kind::External,
           "и это шаг external");
-    checkEqual(outside, snapshot(1), "слепок — чужие байты, как они есть на диске");
+    checkEqual(outside, snapshot(2), "слепок — чужие байты, как они есть на диске");
 
     // 3. Граница серии отмены: первое Ctrl+Z после правок сначала сохраняет,
     // иначе только что набранное не попало бы в историю вовсе.
@@ -2198,17 +2202,22 @@ void checkHistoryMode() {
     check(editor.enterHistory(), "вход в режим истории");
     check(editor.inHistory(), "режим идёт");
     check(editor.isReadOnly(), "в слепке править нельзя");
-    check(editor.timeline().entries.size() == 2, "таймлайн знает про два слепка");
-    check(editor.historyIndex() == 1, "показан последний слепок");
+    // Записей три: опорная (с чем открыли) и два сохранения.
+    check(editor.timeline().entries.size() == 3, "таймлайн знает про все три записи");
+    check(editor.historyIndex() == 2, "показан последний слепок");
     checkEqual(live, text(), "последний слепок совпадает с живой версией");
 
     // Шаг назад — более старый слепок.
     check(editor.historyStepBack(), "шаг в прошлое");
-    check(editor.historyIndex() == 0, "показан первый слепок");
+    check(editor.historyIndex() == 1, "показан предыдущий слепок");
     check(text().contains(QStringLiteral("two")) && !text().contains(QStringLiteral("three")),
-          "в первом слепке нет того, что дописали позже");
-    check(!editor.historyStepBack(), "дальше первого слепка ходу нет");
-    check(editor.historyIndex() == 0, "и мы остались на нём же");
+          "в нём нет того, что дописали позже");
+    check(editor.historyStepBack(), "ещё шаг — к опорной записи");
+    check(editor.historyIndex() == 0, "показана опорная запись");
+    check(!text().contains(QStringLiteral("two")),
+          "опорная запись — заметка, какой её открыли");
+    check(!editor.historyStepBack(), "дальше опорной записи ходу нет");
+    check(editor.historyIndex() == 0, "и мы остались на ней же");
 
     // Печатающая клавиша не восстанавливает и не правит.
     int refusals = 0;
@@ -2225,9 +2234,11 @@ void checkHistoryMode() {
     editor.copy();
     check(!QApplication::clipboard()->text().isEmpty(), "из слепка копируется");
 
-    // Шаг вперёд дважды: на последний слепок и дальше — в живую версию.
+    // Шагами вперёд — до последнего слепка и дальше, в живую версию.
     check(editor.historyStepForward(), "шаг в будущее");
-    check(editor.historyIndex() == 1, "снова последний слепок");
+    check(editor.historyIndex() == 1, "предыдущий слепок");
+    check(editor.historyStepForward(), "ещё шаг");
+    check(editor.historyIndex() == 2, "снова последний слепок");
     check(editor.historyStepForward(), "шаг дальше последнего");
     check(!editor.inHistory(), "и он вывел в живую версию");
     check(!editor.isReadOnly(), "живую версию снова можно править");
@@ -2276,6 +2287,130 @@ void checkHistoryMode() {
     checkEqual(live, text(), "отмена вернула то, что было до восстановления");
 }
 
+// Заметка старше своего журнала — и её прошлое обязано быть достижимо.
+//
+// Хранилище жило годами, история заведена только сейчас. Если не положить в
+// пустой журнал опорную запись при открытии, первой записью станет первое
+// сохранение — и всё, чем заметка была до него, не попадёт в историю никогда.
+// Владелец наткнулся на это живьём: опустошил заметку (Ctrl+A, Delete),
+// автосохранение записало пустоту, и она оказалась самой первой записью.
+//
+// Инвариант, который здесь стережётся, владелец назвал так: НАЧАЛЬНОЕ
+// СОСТОЯНИЕ ДОКУМЕНТА НЕ ДОЛЖНО БЫТЬ НЕДОСТИЖИМО.
+void checkHistoryBaseline() {
+    const QString root = g_dir + QStringLiteral("/хранилище-опоры");
+    QDir().mkpath(root + QStringLiteral("/history"));
+    const QString path = root + QStringLiteral("/01n6n787fntjy8.md");
+    const QString noteId = QStringLiteral("01n6n787fntjy8");
+    const QString original =
+        QStringLiteral("<!-- zametti\ncreated: 2023-06-02T23:00:02Z\n-->\n\n"
+                       "# Python acceleration\n\nvery old text\n");
+    {
+        QFile file(path);
+        check(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "старая заметка на месте");
+        file.write(original.toUtf8());
+    }
+
+    zametti::journal::History history(root);
+    zametti::NoteEditor editor;
+    editor.setStoreRoot(root);
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.setFocus();
+
+    auto records = [&history, &noteId] {
+        zametti::journal::Journal journal;
+        QString error;
+        history.read(noteId, &journal, &error);
+        return journal.entries;
+    };
+    auto snapshot = [&history, &noteId](int index) {
+        QByteArray got;
+        QString error;
+        if (!history.snapshotAt(noteId, index, &got, &error)) return QString();
+        return QString::fromUtf8(got);
+    };
+
+    check(records().isEmpty(), "у старой заметки истории ещё нет");
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    auto after = records();
+    check(after.size() == 1, "открытие завело опорную запись");
+    checkEqual(original, snapshot(0), "и в ней заметка, как была на диске");
+    // Время опорной записи — файла, а не «сейчас»: содержимое ровно такой
+    // давности, и таймлайн не должен утверждать, будто оно свежее.
+    check(!after.isEmpty() &&
+              qAbs(after[0].time - QFileInfo(path).lastModified().toMSecsSinceEpoch()) < 2000,
+          "время опорной записи взято у файла");
+
+    // Повторное открытие второй опорной не плодит.
+    editor.openFile(path);
+    QTest::qWait(20);
+    check(records().size() == 1, "повторное открытие опорную не удваивает");
+
+    // Теперь то, на чём владелец обжёгся: выделить всё и стереть.
+    QTest::keyClick(&editor, Qt::Key_A, Qt::ControlModifier);
+    QTest::keyClick(&editor, Qt::Key_Delete);
+    QTest::qWait(20);
+    editor.save(false);
+    QTest::qWait(20);
+    after = records();
+    check(after.size() == 2, "опустошение записано вторым шагом");
+
+    // Главное: начальное состояние достижимо. Первый шаг назад из истории
+    // приводит к тому, с чего заметка начиналась, а не в пустоту.
+    check(editor.enterHistory(), "вход в историю");
+    check(editor.historyStepBack(), "шаг в прошлое");
+    check(editor.historyIndex() == 0, "и он привёл к самой первой записи");
+    checkEqual(original, snapshot(editor.historyIndex()),
+               "начальное состояние заметки достижимо");
+    editor.leaveHistory();
+}
+
+// Уход в другую заметку обязан выводить из режима истории. Иначе редактор
+// показывает слепок ПРЕЖНЕЙ заметки, имея путь новой, и первая же правка
+// записала бы чужое прошлое в чужой файл.
+void checkHistoryLeavesOnOpen() {
+    const QString root = g_dir + QStringLiteral("/хранилище-ухода");
+    QDir().mkpath(root + QStringLiteral("/history"));
+    const QString first = root + QStringLiteral("/01n6cqevh7bbf1.md");
+    const QString second = root + QStringLiteral("/01n6cqevh7bbf2.md");
+    for (const QString& path : {first, second}) {
+        QFile file(path);
+        check(file.open(QIODevice::WriteOnly | QIODevice::Truncate), "заметка создана");
+        file.write(QStringLiteral("<!-- zametti\ncreated: 2023-06-02T23:00:02Z\n-->\n\n"
+                                  "# %1\n\nтекст\n")
+                       .arg(QFileInfo(path).completeBaseName())
+                       .toUtf8());
+    }
+
+    zametti::NoteEditor editor;
+    editor.setStoreRoot(root);
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+
+    editor.openFile(first);
+    QTest::qWait(20);
+    check(editor.enterHistory(), "вошли в историю первой заметки");
+    check(editor.inHistory(), "режим идёт");
+
+    editor.openFile(second);
+    QTest::qWait(20);
+    check(!editor.inHistory(), "открытие другой заметки вывело из режима");
+    check(!editor.isReadOnly(), "и править её можно");
+    check(editor.document()->toPlainText().contains(QStringLiteral("bbf2")),
+          "показана именно вторая заметка");
+
+    // И первая при этом цела: чужой слепок в неё не уехал.
+    QFile file(first);
+    check(file.open(QIODevice::ReadOnly), "первая заметка на месте");
+    check(QString::fromUtf8(file.readAll()).contains(QStringLiteral("bbf1")),
+          "первая заметка не перезаписана слепком");
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     if (argc < 2) {
@@ -2316,6 +2451,8 @@ int main(int argc, char** argv) {
     checkNoteCache();
     checkHistoryPoints();
     checkHistoryMode();
+    checkHistoryBaseline();
+    checkHistoryLeavesOnOpen();
     checkCanonicaliseOnOpen();
     checkSaveWithoutAutosave();
     checkSizeAfterSoftBreak();
