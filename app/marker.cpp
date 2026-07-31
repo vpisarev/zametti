@@ -75,10 +75,40 @@ QFont markerFont(MarkerStyle style, const QFont& base) {
     return font;
 }
 
+// Метрики базового шрифта, считанные один раз на шрифт.
+//
+// Зовут их на КАЖДЫЙ маркер в кадре, а tightBoundingRect строит контуры глифов
+// — самая дорогая из трёх. Шрифт же весь кадр один и тот же, и меняется он
+// только от зума или настроек. Отсюда кэш на одну запись: сравнить QFont
+// дёшево, посчитать заново — нет.
+struct BaseMetrics {
+    qreal charUnit = 0;      // ширина "A"
+    qreal xHeight = 0;
+    qreal checkboxSide = 0;  // высота чернил строчных с выносными
+};
+
+const BaseMetrics& metricsOf(const QFont& base) {
+    static QFont knownFont;
+    static BaseMetrics known;
+    static bool valid = false;
+    if (valid && knownFont == base) return known;
+
+    const QFontMetricsF metrics(base);
+    known.charUnit = metrics.horizontalAdvance(QLatin1Char('A'));
+    known.xHeight = metrics.xHeight();
+    // Ровно высота чернил строчных с выносными элементами, от хвоста "y" до
+    // верхушки "i". Абстрактные ascent/descent для этого не годятся, они
+    // описывают кегельную площадку с запасом.
+    known.checkboxSide = metrics.tightBoundingRect(QStringLiteral("iy")).height();
+    knownFont = base;
+    valid = true;
+    return known;
+}
+
 // Зазор от маркера до текста. В ширинах "A", а не в пробелах: у пропорциональных
 // гарнитур пробел вдвое уже буквы, и колонка на нём выходила бы вплотную.
 qreal gapFor(MarkerStyle style, const QFont& base) {
-    const qreal unit = QFontMetricsF(base).horizontalAdvance(QLatin1Char('A'));
+    const qreal unit = metricsOf(base).charUnit;
     switch (style.marker) {
         case Marker::Task:    return appearance().checkboxTextGap * unit;
         case Marker::Ordered: return appearance().orderedTextGap * unit;
@@ -87,16 +117,11 @@ qreal gapFor(MarkerStyle style, const QFont& base) {
     return appearance().bulletTextGap * unit;
 }
 
-// Сторона рамки чекбокса: ровно высота чернил строчных с выносными элементами,
-// от хвоста "y" до верхушки "i". Абстрактные ascent/descent для этого не годятся,
-// они описывают кегельную площадку с запасом.
-qreal checkboxSide(const QFont& base) {
-    return QFontMetricsF(base).tightBoundingRect(QStringLiteral("iy")).height();
-}
+qreal checkboxSide(const QFont& base) { return metricsOf(base).checkboxSide; }
 
 qreal glyphWidth(MarkerStyle style, int ordinal, int level, const QFont& base) {
     if (drawnCheckbox(style)) return checkboxSide(base);
-    if (drawnBullet(style)) return QFontMetricsF(base).xHeight() * appearance().bulletDiameter;
+    if (drawnBullet(style)) return metricsOf(base).xHeight * appearance().bulletDiameter;
     return QFontMetricsF(markerFont(style, base))
         .horizontalAdvance(markerText(style, ordinal, level));
 }
@@ -240,7 +265,7 @@ void paintMarker(QPainter& painter, const QTextBlock& block, const QFont& base) 
     if (drawnCheckbox(style)) {
         paintCheckbox(painter, checkboxRect(block, base), style.checked);
     } else if (drawnBullet(style)) {
-        const qreal xHeight = QFontMetricsF(base).xHeight();
+        const qreal xHeight = metricsOf(base).xHeight;
         const qreal diameter = xHeight * appearance().bulletDiameter;
         // Кружок стоит на средней линии строчных: она у любой гарнитуры именно
         // там, где глаз ждёт буллет.
@@ -265,7 +290,7 @@ void paintMarker(QPainter& painter, const QTextBlock& block, const QFont& base) 
         painter.setFont(font);
         painter.setPen(color);
         painter.drawText(QPointF(anchor.right - QFontMetricsF(font).horizontalAdvance(text),
-                                 anchor.baseline - rise * QFontMetricsF(base).xHeight()),
+                                 anchor.baseline - rise * metricsOf(base).xHeight),
                          text);
     }
 

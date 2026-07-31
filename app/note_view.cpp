@@ -695,6 +695,10 @@ void NoteView::paintCodeBackground(QPainter& painter, const QRectF& visible) {
 
     painter.setPen(Qt::NoPen);
     painter.setBrush(appearance().codeBackground);
+    // Метрики шрифта — один раз на отрисовку, а не на блок: код нарезан
+    // построчно, и в кадре таких блоков десятки.
+    const qreal charUnit =
+        QFontMetricsF(baseFontFor(zoom_)).horizontalAdvance(QLatin1Char('A'));
     for (QTextBlock block = document()->findBlock(firstVisible); block.isValid();
          block = block.next()) {
         const QRectF rect = layout->blockBoundingRect(block);
@@ -715,8 +719,6 @@ void NoteView::paintCodeBackground(QPainter& painter, const QRectF& visible) {
         // колонки своего пункта: иначе подложка вылезала бы левее маркера и
         // разрезала список надвое. Собственный отступ кода при этом не в счёт —
         // на верхнем уровне подложка как шла почти во всю колонку, так и идёт.
-        const qreal charUnit =
-            QFontMetricsF(baseFontFor(zoom_)).horizontalAdvance(QLatin1Char('A'));
         const qreal shift = qMax(0.0, block.blockFormat().leftMargin() -
                                           appearance().codeIndent * charUnit);
         painter.drawRect(
