@@ -54,6 +54,11 @@ public:
     static qint64 imageDecodeMicros();
     static void resetImageDecodeCounters();
 
+    // Сколько сейчас занято кэшем картинок и сколько в нём записей. Тоже часть
+    // договора: потолок иначе не проверить.
+    qint64 imageCacheBytes() const { return imageCacheBytes_; }
+    int cachedImageCount() const { return int(imageCache_.size()); }
+
     // Прямоугольник фотографии блока в координатах вьюпорта; пустой, если
     // фотографии нет. По нему ресайз ловит угол, по нему же смотрят тесты.
     QRectF imageRectInViewport(const QTextBlock& block);
@@ -109,9 +114,33 @@ private:
     };
     ImageGeometry imageGeometry(const QTextBlock& block);
     void syncImageSpace();
+
+    // Что мы знаем о картинке блока. Три состояния, и путать их нельзя:
+    // картинка разжата (image не пуст); картинка слишком велика — Qt отказался
+    // её разжимать, но размеры из заголовка файла известны и место под неё
+    // резервируется как под настоящую; файла нет вовсе — строка остаётся
+    // обычным текстом.
+    struct CachedImage {
+        QImage image;
+        QSize declared;      // размеры из заголовка файла; нужны заглушке
+        qint64 bytes = 0;    // вес разжатой; у заглушки ноль
+        int limit = 0;       // предел стороны, которым ужимали: сменится — перечитаем
+        bool tooBig = false;
+    };
+
+    QString absoluteImagePath(const QString& path) const;
+    // Запись кэша для пути; nullptr — файла нет или он не картинка.
+    const CachedImage* cachedImage(const QString& path);
     const QImage* imageFor(const QString& path);
-    QSizeF imageDisplaySize(const QImage& image, qreal widthHint,
-                            const QTextBlock& block) const;
+    // Вытесняет с хвоста, пока кэш не уложится в бюджет. Не трогает картинки
+    // открытой заметки и только что добавленную keep.
+    void trimImageCache(const QString& keep);
+    void touchImage(const QString& key);
+    void paintTooBigImage(QPainter& painter, const QTextBlock& block,
+                          const ImageGeometry& geometry, const CachedImage& entry);
+    // Место под картинку на экране. Берёт размеры, а не саму картинку: у
+    // слишком большой пикселей нет вовсе, а место она занимает то же.
+    QSizeF imageDisplaySize(QSize natural, qreal widthHint, const QTextBlock& block) const;
     void paintImage(QPainter& painter, const QTextBlock& block);
 
     qreal zoom_ = 1.0;
@@ -120,7 +149,16 @@ private:
     bool caretOn_ = true;
     QString imageBase_;
     bool syncingImages_ = false;
-    QHash<QString, QImage> imageCache_;   // абсолютный путь → картинка (null — не читается)
+    // Кэш разжатых картинок: абсолютный путь → запись. Живёт всю сессию, а не
+    // заметку, поэтому у него есть потолок и вытеснение — см. imageCacheSizeMb.
+    QHash<QString, CachedImage> imageCache_;
+    QList<QString> imageOrder_;           // свежие в начале
+    qint64 imageCacheBytes_ = 0;
+    // Картинки открытой заметки: их не вытесняем никогда. Набор чистится в
+    // начале syncImageSpace и наполняется самим cachedImage — тот зовётся
+    // только для блоков текущего документа, так что отдельного прохода по
+    // блокам заводить не надо.
+    QSet<QString> currentNoteImages_;
     int imageDragBlock_ = -1;             // номер блока с перетаскиваемым углом
     qreal imageDragWidth_ = 0.0;
 };

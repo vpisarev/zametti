@@ -23,6 +23,7 @@
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QImage>
+#include <QImageReader>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QScrollBar>
@@ -427,6 +428,170 @@ int main(int argc, char** argv) {
         ZT_TRUE("щелчок по фото поставил каретку в начало его строки",
                 editor.textCursor().position() == blockAt(2).position() &&
                     !editor.textCursor().hasSelection());
+    }
+
+    // --- кэш картинок: потолок, вытеснение, защита от бомбы ---
+    //
+    // Кэш живёт всю сессию, а не заметку, поэтому у него есть бюджет. Правила
+    // владельца: сначала добавляем, потом убираем; картинки ОТКРЫТОЙ заметки
+    // не вытесняем никогда.
+    //
+    // Ниже восьми мегабайт бюджет не опускается: кэш на одну картинку смысла
+    // не имеет. Числа ниже подобраны под это, а не взяты с потолка.
+    {
+        const fs::path cacheDir = dir / "кэш";
+        fs::create_directories(cacheDir);
+        // Восемнадцать картинок по мегабайту разжатыми: 512x512 RGB32.
+        const int kSide = 512;
+        const qint64 kOne = qint64(kSide) * kSide * 4;
+        for (int i = 0; i < 20; ++i) {
+            QImage tile(kSide, kSide, QImage::Format_RGB32);
+            tile.fill(QColor(10 * i, 40, 200));
+            ZT_TRUE("картинка кэша записана",
+                    tile.save(QString::fromStdString(
+                        (cacheDir / ("к" + std::to_string(i) + ".png")).string())));
+        }
+        // Десять заметок по две картинки.
+        for (int n = 0; n < 10; ++n) {
+            std::ofstream out(cacheDir / ("з" + std::to_string(n) + ".md"), std::ios::binary);
+            out << "![[к" << (n * 2) << ".png]]\n\n![[к" << (n * 2 + 1) << ".png]]\n";
+        }
+
+        // Свой редактор: кэш у каждого вида собственный, и картинки проверок
+        // выше сбивали бы счёт.
+        zametti::NoteEditor cacheEditor;
+        cacheEditor.resize(600, 500);
+        cacheEditor.show();
+        QTest::qWait(20);
+        const auto openNote = [&](int n) {
+            cacheEditor.openFile(QString::fromStdString(
+                (cacheDir / ("з" + std::to_string(n) + ".md")).string()));
+            QTest::qWait(20);
+        };
+
+        const int savedBudget = zametti::appearance().imageCacheSizeMb;
+        // Бюджет 16 МБ: в кэш влезает шестнадцать мегабайтных картинок,
+        // а всего их двадцать.
+        zametti::appearance().imageCacheSizeMb = 16;
+        zametti::applyImageAllocationLimit();
+
+        zametti::NoteView::resetImageDecodeCounters();
+        openNote(0);
+        ZT_EQ("первое открытие разжало обе картинки", std::to_string(2),
+              std::to_string(zametti::NoteView::imageDecodes()));
+        ZT_EQ("в кэше две записи", std::to_string(2),
+              std::to_string(cacheEditor.cachedImageCount()));
+        ZT_EQ("вес кэша — две картинки", std::to_string(2 * kOne),
+              std::to_string(cacheEditor.imageCacheBytes()));
+
+        // Повторное открытие той же заметки не разжимает ничего.
+        zametti::NoteView::resetImageDecodeCounters();
+        openNote(0);
+        ZT_EQ("повторное открытие не разжимает ничего", std::to_string(0),
+              std::to_string(zametti::NoteView::imageDecodes()));
+
+        for (int n = 1; n < 9; ++n) openNote(n);
+        ZT_TRUE("кэш уложился в бюджет",
+                cacheEditor.imageCacheBytes() <= 16 * 1024 * 1024);
+        ZT_TRUE("вытеснение случилось: записей меньше, чем картинок",
+                cacheEditor.cachedImageCount() < 18);
+        zametti::NoteView::resetImageDecodeCounters();
+        cacheEditor.repaint();
+        QTest::qWait(0);
+        ZT_EQ("картинки открытой заметки не вытеснены", std::to_string(0),
+              std::to_string(zametti::NoteView::imageDecodes()));
+
+        // Возврат в самую старую заметку: её картинки успели вытесниться.
+        zametti::NoteView::resetImageDecodeCounters();
+        openNote(0);
+        ZT_EQ("вытесняется самое старое", std::to_string(2),
+              std::to_string(zametti::NoteView::imageDecodes()));
+
+        // Заметка тяжелее всего бюджета: её картинки всё равно все на месте.
+        // Ниже восьми мегабайт бюджет не опускается — кэш на одну картинку
+        // смысла не имеет, — поэтому заметка берётся из десяти.
+        {
+            std::ofstream out(cacheDir / "тяжёлая.md", std::ios::binary);
+            for (int i = 10; i < 20; ++i) out << "![[к" << i << ".png]]\n\n";
+        }
+        zametti::appearance().imageCacheSizeMb = 1;   // упрётся в нижние 8 МБ
+        zametti::NoteEditor heavy;
+        heavy.resize(600, 500);
+        heavy.show();
+        QTest::qWait(20);
+        heavy.openFile(QString::fromStdString((cacheDir / "тяжёлая.md").string()));
+        QTest::qWait(20);
+        ZT_EQ("на одну заметку кэша хватает всегда: все десять на месте",
+              std::to_string(10), std::to_string(heavy.cachedImageCount()));
+        ZT_TRUE("и кэш при этом заведомо больше бюджета",
+                heavy.imageCacheBytes() > 8 * 1024 * 1024);
+        zametti::NoteView::resetImageDecodeCounters();
+        heavy.repaint();
+        QTest::qWait(0);
+        ZT_EQ("и ни одна не разжимается заново", std::to_string(0),
+              std::to_string(zametti::NoteView::imageDecodes()));
+
+        zametti::appearance().imageCacheSizeMb = savedBudget;
+        zametti::applyImageAllocationLimit();
+    }
+
+    // Картинка больше потолка: Qt её не разжимает, вместо неё рамка с
+    // надписью. Место она занимает ровно то же, что заняла бы сама картинка —
+    // иначе вёрстка прыгала бы от правки потолка в конфиге. Это и проверяем:
+    // один и тот же файл при высоком потолке и при низком.
+    {
+        const fs::path bombDir = dir / "бомба";
+        fs::create_directories(bombDir);
+        QImage huge(1024, 768, QImage::Format_RGB32);
+        huge.fill(QColor(30, 200, 30));
+        ZT_TRUE("большая картинка записана",
+                huge.save(QString::fromStdString((bombDir / "б.png").string())));
+        {
+            std::ofstream out(bombDir / "з.md", std::ios::binary);
+            out << "![[б.png]]\n";
+        }
+        const QString note = QString::fromStdString((bombDir / "з.md").string());
+        const int savedBudget = zametti::appearance().imageCacheSizeMb;
+        // Порог высокий: картинка разжимается, место меряется по ней.
+        zametti::appearance().imageCacheSizeMb = 512;
+        zametti::applyImageAllocationLimit();
+        zametti::NoteEditor shown;
+        shown.resize(600, 500);
+        shown.show();
+        QTest::qWait(20);
+        shown.openFile(note);
+        QTest::qWait(20);
+        const qreal roomForImage =
+            shown.document()->findBlockByNumber(0).blockFormat().bottomMargin();
+        ZT_TRUE("картинка разжалась и заняла место", roomForImage > 0.0);
+        ZT_TRUE("и заняла вес в кэше", shown.imageCacheBytes() > 0);
+
+        // Порог низкий: та же картинка отвергнута, место то же самое.
+        // Четверть от восьми мегабайт — два, а картинка весит три.
+        zametti::appearance().imageCacheSizeMb = 8;
+        zametti::applyImageAllocationLimit();
+        zametti::NoteEditor refused;
+        refused.resize(600, 500);
+        refused.show();
+        QTest::qWait(20);
+        zametti::NoteView::resetImageDecodeCounters();
+        refused.openFile(note);
+        QTest::qWait(20);
+        const qreal roomForFrame =
+            refused.document()->findBlockByNumber(0).blockFormat().bottomMargin();
+        ZT_TRUE("отвергнутая картинка занимает место наравне с показанной",
+                std::fabs(roomForFrame - roomForImage) < 0.5);
+        ZT_EQ("веса в кэше она не занимает", std::to_string(0),
+              std::to_string(refused.imageCacheBytes()));
+
+        const int decodes = zametti::NoteView::imageDecodes();
+        refused.repaint();
+        QTest::qWait(0);
+        ZT_EQ("отказ не повторяется на каждом кадре", std::to_string(decodes),
+              std::to_string(zametti::NoteView::imageDecodes()));
+
+        zametti::appearance().imageCacheSizeMb = savedBudget;
+        zametti::applyImageAllocationLimit();
     }
 
     return zt::report("картинки в просмотре");

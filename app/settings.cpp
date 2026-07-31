@@ -2,6 +2,9 @@
 
 #include <QDir>
 #include <QFile>
+#include <QGuiApplication>
+#include <QImageReader>
+#include <QScreen>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -176,6 +179,8 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("undoCoalesceMs"), a.undoCoalesceMs},
         {QStringLiteral("undoLimit"), a.undoLimit},
         {QStringLiteral("undoBudgetMb"), a.undoBudgetMb},
+        {QStringLiteral("imageCacheSizeMb"), a.imageCacheSizeMb},
+        {QStringLiteral("maxLoadedImageSize"), a.maxLoadedImageSize},
         {QStringLiteral("toggleTaskKey"), a.toggleTaskKey},
         {QStringLiteral("moveUpKey"), a.moveUpKey},
         {QStringLiteral("moveDownKey"), a.moveDownKey},
@@ -328,6 +333,10 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     if (limit.isDouble()) a.undoLimit = limit.toInt();
     const QJsonValue budget = editor.value(QStringLiteral("undoBudgetMb"));
     if (budget.isDouble()) a.undoBudgetMb = budget.toInt();
+    const QJsonValue images = editor.value(QStringLiteral("imageCacheSizeMb"));
+    if (images.isDouble()) a.imageCacheSizeMb = images.toInt();
+    const QJsonValue loaded = editor.value(QStringLiteral("maxLoadedImageSize"));
+    if (loaded.isDouble()) a.maxLoadedImageSize = loaded.toInt();
     readString(editor, "toggleTaskKey", a.toggleTaskKey);
     readString(editor, "moveUpKey", a.moveUpKey);
     readString(editor, "moveDownKey", a.moveDownKey);
@@ -384,6 +393,78 @@ QString statePath() {
            QStringLiteral("/state.json");
 }
 
+// Потолок на одну разжатую картинку — одна восьмая бюджета кэша. Отдельным
+// ключом в конфиге его не задают: два числа про одно и то же разъехались бы
+// от первой же правки, а «одна картинка не занимает заметную долю кэша» —
+// правило, а не настройка.
+//
+// Сверх потолка Qt картинку не разжимает вовсе и отдаёт пустой QImage: это и
+// есть защита от бомбы, показывать вместо такой картинки нечего, кроме рамки
+// с надписью. Ставится здесь, а не при старте, чтобы следовать за конфигом —
+// это единственная точка, через которую настройки попадают в программу.
+namespace {
+
+// Сколько всего памяти у машины, мегабайты; 0 — не удалось узнать. Портативного
+// способа у Qt нет, поэтому спрашиваем систему напрямую; не Linux — не знаем и
+// не гадаем.
+int totalMemoryMb() {
+#ifdef Q_OS_LINUX
+    QFile meminfo(QStringLiteral("/proc/meminfo"));
+    if (!meminfo.open(QIODevice::ReadOnly)) return 0;
+    const QByteArray text = meminfo.readAll();
+    const int at = text.indexOf("MemTotal:");
+    if (at < 0) return 0;
+    return text.mid(at + 9, 32).trimmed().split(' ').first().toInt() / 1024;
+#else
+    return 0;
+#endif
+}
+
+// Предел стороны, выведенный самими. Правило простое: держать в памяти
+// картинку крупнее, чем экран способен показать, незачем ни на какой машине.
+// Запаса на зум не даём — колонка текста и так заметно уже экрана. Слабая
+// машина опускает предел ещё: там дороже каждая копия.
+int derivedImageSizeLimit() {
+    int screenSide = 0;
+    for (const QScreen* screen : QGuiApplication::screens()) {
+        const QSize size = screen->size() * screen->devicePixelRatio();
+        screenSide = qMax(screenSide, qMax(size.width(), size.height()));
+    }
+    // Экрана может не быть вовсе (offscreen, тесты) — тогда берём разумное
+    // настольное значение, а не ноль.
+    if (screenSide <= 0) screenSide = 1920;
+    int limit = screenSide;
+
+    const int memory = totalMemoryMb();
+    if (memory > 0 && memory < 4096) limit = qMin(limit, 1600);
+    else if (memory > 0 && memory < 8192) limit = qMin(limit, 2560);
+    return qBound(1024, limit, 4096);
+}
+
+int g_loadedImageSizeLimit = 0;
+
+}  // namespace
+
+int loadedImageSizeLimit() {
+    if (g_appearance.maxLoadedImageSize > 0) return g_appearance.maxLoadedImageSize;
+    if (g_loadedImageSizeLimit == 0) g_loadedImageSizeLimit = derivedImageSizeLimit();
+    return g_loadedImageSizeLimit;
+}
+
+void applyImageAllocationLimit() {
+    // Разжатие — трата разовая: картинка тут же ужимается до
+    // maxLoadedImageSize, а полный образ освобождается. Поэтому допускаем,
+    // чтобы она временно заняла четверть кэша: при 512 МБ это 128 МБ, то есть
+    // 32 Мп. Обычное фото с телефона на 24 Мп (91 МБ разжатым) проходит,
+    // а что крупнее — уже не фотография, и вместо неё честнее показать рамку
+    // с надписью, чем встать колом на полминуты.
+    //
+    // Восьмая доля, которую я взял сначала, давала 64 МБ и отвергала как раз
+    // обычные телефонные фото.
+    const int budget = qMax(8, g_appearance.imageCacheSizeMb);
+    QImageReader::setAllocationLimit(qMax(1, budget / 4));
+}
+
 bool loadAppearance(QString* error) {
     const QString path = configPath();
     QFile file(path);
@@ -403,6 +484,7 @@ bool loadAppearance(QString* error) {
         }
         appearanceFromJson(doc.object(), g_appearance);
     }
+    applyImageAllocationLimit();
     return true;
 }
 
