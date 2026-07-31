@@ -470,28 +470,46 @@ int main(int argc, char** argv) {
         }
         return QFileInfo(file).completeBaseName();
     };
-    // Где эта заметка лежит — видно слева, откуда бы её ни открыли: из общего
-    // списка «All notes», из результатов поиска, из другой папки. Курсор в
-    // дереве переставляется с заглушенными сигналами: он здесь указатель, а не
-    // навигация, и средний список от него перестраиваться не должен — иначе
-    // просмотр «всех заметок» схлопывался бы до одной папки при первом же
-    // щелчке.
-    const auto revealInTree = [&](const QString& file) {
+    // Открытая заметка видна в обеих боковых колонках, откуда бы её ни
+    // открыли: из общего списка «All notes», из результатов поиска, из другой
+    // папки. Слева курсор встаёт на папку, где она лежит, и предки
+    // раскрываются; в середине она становится текущей строкой.
+    //
+    // Сигналы обеих панелей при этом заглушены: курсор здесь указатель, а не
+    // навигация. Иначе перестановка курсора в дереве перезаполняла бы средний
+    // список, и просмотр «всех заметок» схлопывался бы до одной папки при
+    // первом же щелчке.
+    const auto revealOpenNote = [&](const QString& file) {
         if (!model.isStore() || file.isEmpty()) return;
         const QModelIndex folder =
             model.folderIndexForNote(QFileInfo(file).completeBaseName());
-        if (!folder.isValid()) return;
-        const QSignalBlocker blocked(tree.selectionModel());
-        for (QModelIndex up = folder; up.isValid(); up = up.parent()) tree.expand(up);
-        tree.setCurrentIndex(folder);
-        tree.scrollTo(folder);
+        if (folder.isValid()) {
+            const QSignalBlocker blocked(tree.selectionModel());
+            for (QModelIndex up = folder; up.isValid(); up = up.parent()) tree.expand(up);
+            tree.setCurrentIndex(folder);
+            tree.scrollTo(folder);
+        }
+
+        // Заметки может не быть в списке вовсе — так бывает, когда из поиска
+        // открыли заметку из другой папки. Тогда список пересобирается по той
+        // папке, где она лежит: пустая средняя колонка рядом с открытым
+        // текстом читалась бы как потеря места.
+        QModelIndex row = list.indexForPath(file);
+        if (!row.isValid() && folder.isValid()) {
+            list.setRows(model.notesInSubtree(folder));
+            row = list.indexForPath(file);
+        }
+        if (!row.isValid()) return;
+        const QSignalBlocker blocked(listView.selectionModel());
+        listView.setCurrentIndex(row);
+        listView.scrollTo(row);
     };
 
     QObject::connect(&editor, &zametti::NoteEditor::fileChanged, &window,
                      [&](const QString& file) {
                          window.setWindowTitle(windowTitleFor(file) +
                                                QStringLiteral(" — zametti"));
-                         revealInTree(file);
+                         revealOpenNote(file);
                      });
 
     // Кегль задан явно в каждом формате, поэтому штатный зум QTextEdit до него
@@ -1257,16 +1275,9 @@ int main(int argc, char** argv) {
         const QString file = index.data(zametti::SearchResultsModel::PathRole).toString();
         const int ordinal = index.data(zametti::SearchResultsModel::OrdinalRole).toInt();
         if (file.isEmpty()) return;
-        if (file != editor.filePath()) {
-            editor.openFile(file);
-            // Заметка может лежать в другой папке: показать её и в списке.
-            const QModelIndex row = list.indexForPath(file);
-            if (row.isValid()) {
-                const QSignalBlocker blocked(listView.selectionModel());
-                listView.setCurrentIndex(row);
-                listView.scrollTo(row);
-            }
-        }
+        // Показать заметку в боковых колонках — общий путь через fileChanged,
+        // отдельного кода здесь больше не нужно.
+        if (file != editor.filePath()) editor.openFile(file);
         const zametti::Query query = zametti::makeQuery(findBar.query());
         editor.findMatches(query.needle, query.caseSensitive);
         editor.goToMatch(ordinal);
