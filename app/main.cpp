@@ -575,6 +575,17 @@ int main(int argc, char** argv) {
                          if (!file.isEmpty() && file != editor.filePath()) editor.openFile(file);
                      });
 
+    // Щелчок по УЖЕ выбранной папке. Курсор мог встать на неё сам — так
+    // работает подсветка открытой заметки, — и тогда currentChanged больше не
+    // сработает, а сузить список надо: человек ткнул в папку явно и ждёт
+    // увидеть только её заметки. Программная перестановка курсора сюда не
+    // попадает: clicked приходит только от настоящего щелчка, и по стрелке
+    // раскрытия он тоже не приходит.
+    QObject::connect(&tree, &QAbstractItemView::clicked, &tree,
+                     [&](const QModelIndex& index) {
+                         if (model.isStore()) fillList(index, true);
+                     });
+
     // Выбор строки списка открывает заметку. Фокус при этом не переезжает:
     // ↑/↓ должны ходить по списку, а не по тексту (правило средней колонки).
     QObject::connect(listView.selectionModel(), &QItemSelectionModel::currentChanged,
