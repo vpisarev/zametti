@@ -8,6 +8,9 @@
 // "1. " содержимое начинается с колонки 3, и вложенный список с отступом 2
 // разорвал бы родительский — CommonMark считает такую строку не продолжением
 // элемента, а новым блоком.
+//
+// Текст блока сюда приходит видом в арену (string_view), а не строкой: копий
+// содержимого при выводе не делается вовсе.
 
 #include "serializer.h"
 
@@ -17,6 +20,7 @@
 #include <cctype>
 #include <cstring>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace zametti {
@@ -34,12 +38,12 @@ bool isDigit(char c) { return c >= '0' && c <= '9'; }
 // Классы символов для правил «фланкирования» из CommonMark. Не-ASCII считаем
 // обычной буквой: для кириллицы это верно, а редкие случаи юникодной пунктуации
 // приведут лишь к одному лишнему обратному слэшу, а не к потере смысла.
-bool flankWhitespace(const std::string& s, size_t i, bool atEdge) {
+bool flankWhitespace(std::string_view s, size_t i, bool atEdge) {
     if (atEdge) return true;
     return isAsciiSpace(s[i]);
 }
 
-bool flankPunct(const std::string& s, size_t i, bool atEdge) {
+bool flankPunct(std::string_view s, size_t i, bool atEdge) {
     if (atEdge) return false;
     return isAsciiPunct(s[i]);
 }
@@ -49,7 +53,7 @@ bool flankPunct(const std::string& s, size_t i, bool atEdge) {
 bool isWordByte(char c) { return !isAsciiSpace(c) && !isAsciiPunct(c); }
 
 // Может ли прогон из delim открыть или закрыть выделение в этом месте.
-bool runCanDelimit(const std::string& s, size_t begin, size_t end) {
+bool runCanDelimit(std::string_view s, size_t begin, size_t end) {
     bool prevEdge = (begin == 0);
     bool nextEdge = (end >= s.size());
     size_t prev = prevEdge ? 0 : begin - 1;
@@ -77,7 +81,7 @@ bool runCanDelimit(const std::string& s, size_t begin, size_t end) {
     return leftFlanking || rightFlanking;
 }
 
-bool looksLikeEntity(const std::string& s, size_t i) {
+bool looksLikeEntity(std::string_view s, size_t i) {
     size_t j = i + 1;
     if (j < s.size() && s[j] == '#') {
         ++j;
@@ -90,7 +94,7 @@ bool looksLikeEntity(const std::string& s, size_t i) {
     return j > digitsBegin && j < s.size() && s[j] == ';';
 }
 
-bool startsHtmlish(const std::string& s, size_t i) {
+bool startsHtmlish(std::string_view s, size_t i) {
     size_t j = i + 1;
     if (j >= s.size()) return false;
     char c = s[j];
@@ -101,7 +105,7 @@ bool startsHtmlish(const std::string& s, size_t i) {
 // "[x]" сам по себе — обычный текст, ссылкой он станет лишь при определении
 // вида "[x]: /a", а таких мы не выводим. Экранировать всё подряд нельзя:
 // "1. [x] текст" обязано вернуться байт в байт.
-bool bracketOpensLink(const std::string& s, size_t i) {
+bool bracketOpensLink(std::string_view s, size_t i) {
     int depth = 0;
     for (size_t j = i; j < s.size(); ++j) {
         if (s[j] == '\\') { ++j; continue; }
@@ -115,7 +119,7 @@ bool bracketOpensLink(const std::string& s, size_t i) {
 }
 
 // Просто парная скобка, без разбора того, во что она превратится.
-bool bracketPairAt(const std::string& s, size_t i) {
+bool bracketPairAt(std::string_view s, size_t i) {
     int depth = 0;
     for (size_t j = i; j < s.size(); ++j) {
         if (s[j] == '\\') { ++j; continue; }
@@ -126,14 +130,14 @@ bool bracketPairAt(const std::string& s, size_t i) {
     return false;
 }
 
-size_t lineEndFrom(const std::string& s, size_t i) {
+size_t lineEndFrom(std::string_view s, size_t i) {
     size_t e = s.find('\n', i);
-    return e == std::string::npos ? s.size() : e;
+    return e == std::string_view::npos ? s.size() : e;
 }
 
 // Начало строки: конструкции, которые захватывают всю строку и потому меняют
 // разбор, если их не экранировать.
-bool needsLineStartEscape(const std::string& s, size_t i, size_t& escapeAt) {
+bool needsLineStartEscape(std::string_view s, size_t i, size_t& escapeAt) {
     size_t e = lineEndFrom(s, i);
     char c = s[i];
 
@@ -219,7 +223,7 @@ unsigned char markAt(const TextSink& sink, size_t i) {
 // Кладёт [begin, end) текста в вывод, экранируя ровно то, что иначе изменит
 // разбор. Контекст (соседние символы) берётся из полного текста, чтобы разрез
 // на прогоны стилей не влиял на решения.
-void appendEscaped(TextSink& sink, const std::string& text, size_t begin, size_t end) {
+void appendEscaped(TextSink& sink, std::string_view text, size_t begin, size_t end) {
     size_t i = begin;
     while (i < end) {
         char c = text[i];
@@ -306,13 +310,13 @@ void appendEscaped(TextSink& sink, const std::string& text, size_t begin, size_t
 // на стыке со словом приходится брать '*'. Иначе "ksize*ksize" из вставленного
 // кода после одного круга превратился бы в "ksize_ksize" и перестал разбираться
 // как выделение — неподвижной точки не будет.
-const char* italicDelim(const std::string& text, size_t begin, size_t end) {
+const char* italicDelim(std::string_view text, size_t begin, size_t end) {
     bool leftIntraword = begin > 0 && isWordByte(text[begin - 1]);
     bool rightIntraword = end < text.size() && isWordByte(text[end]);
     return (leftIntraword || rightIntraword) ? "*" : "_";
 }
 
-bool hrefNeedsBrackets(const std::string& h) {
+bool hrefNeedsBrackets(std::string_view h) {
     for (char c : h)
         if (isAsciiSpace(c) || c == '(' || c == ')' || c == '<' || c == '>' ||
             static_cast<unsigned char>(c) < 0x20)
@@ -320,15 +324,16 @@ bool hrefNeedsBrackets(const std::string& h) {
     return h.empty();
 }
 
-bool looksLikeEmail(const std::string& text) {
+bool looksLikeEmail(std::string_view text) {
     size_t at = text.find('@');
-    return at != std::string::npos && at > 0 && at + 1 < text.size() &&
-           text.find('@', at + 1) == std::string::npos && text.find('.', at) != std::string::npos;
+    return at != std::string_view::npos && at > 0 && at + 1 < text.size() &&
+           text.find('@', at + 1) == std::string_view::npos &&
+           text.find('.', at) != std::string_view::npos;
 }
 
-bool hasScheme(const std::string& text, bool requireSlashes) {
+bool hasScheme(std::string_view text, bool requireSlashes) {
     size_t colon = text.find(':');
-    if (colon == std::string::npos || colon == 0) return false;
+    if (colon == std::string_view::npos || colon == 0) return false;
     for (size_t i = 0; i < colon; ++i) {
         char c = text[i];
         bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || isDigit(c) || c == '+' ||
@@ -348,7 +353,7 @@ enum class LinkShape {
 // Годится ли адрес для вывода без разметки. Разбор подхватывает голую ссылку
 // только пока в ней нет знаков, которые её оборвут или которые пришлось бы
 // экранировать, — а экранировать внутри адреса нельзя, он от этого развалится.
-bool bareSafe(const std::string& text) {
+bool bareSafe(std::string_view text) {
     if (text.empty()) return false;
     for (unsigned char c : text) {
         // Не-ASCII в голой ссылке разбор не принимает: "https://x/путь" без
@@ -363,12 +368,12 @@ bool bareSafe(const std::string& text) {
 
 // Голой ссылкой разбор считает только адрес с настоящим доменом: "https://../"
 // в угловых скобках ссылка, а без них — обычный текст.
-bool hasRealHost(const std::string& text) {
+bool hasRealHost(std::string_view text) {
     size_t begin = text.find("://");
-    if (begin == std::string::npos) return false;
+    if (begin == std::string_view::npos) return false;
     begin += 3;
     size_t end = text.find_first_of("/?#", begin);
-    if (end == std::string::npos) end = text.size();
+    if (end == std::string_view::npos) end = text.size();
     if (begin >= end) return false;
     if (!std::isalnum(static_cast<unsigned char>(text[begin]))) return false;
     for (size_t i = begin; i + 1 < end; ++i)
@@ -380,7 +385,7 @@ bool hasRealHost(const std::string& text) {
 // голыми: обернув "https://x" в угловые скобки, мы переписали бы каждую заметку,
 // где ссылка просто набрана в строку. Но опознаёт он не всё подряд — только три
 // схемы, "www." и почту, поэтому список здесь закрытый, а не "любая схема".
-LinkShape linkShape(const std::string& text, const std::string& href) {
+LinkShape linkShape(std::string_view text, std::string_view href) {
     if (text.empty()) return LinkShape::Inline;
     for (char c : text)
         if (isAsciiSpace(c) || c == '<' || c == '>') return LinkShape::Inline;
@@ -395,20 +400,20 @@ LinkShape linkShape(const std::string& text, const std::string& href) {
     }
 
     if (href.size() == text.size() + 7 && href.compare(0, 7, "mailto:") == 0 &&
-        href.compare(7, std::string::npos, text) == 0 && looksLikeEmail(text) &&
+        href.compare(7, std::string_view::npos, text) == 0 && looksLikeEmail(text) &&
         bareSafe(text)) {
         return LinkShape::Bare;
     }
 
     if (href.size() == text.size() + 7 && href.compare(0, 7, "http://") == 0 &&
-        href.compare(7, std::string::npos, text) == 0 && text.compare(0, 4, "www.") == 0 &&
-        bareSafe(text)) {
+        href.compare(7, std::string_view::npos, text) == 0 &&
+        text.compare(0, 4, "www.") == 0 && bareSafe(text)) {
         return LinkShape::Bare;
     }
     return LinkShape::Inline;
 }
 
-void appendHref(std::string& out, const std::string& href) {
+void appendHref(std::string& out, std::string_view href) {
     if (!hrefNeedsBrackets(href)) {
         out += href;
         return;
@@ -421,7 +426,7 @@ void appendHref(std::string& out, const std::string& href) {
     out.push_back('>');
 }
 
-void appendCodeSpan(std::string& out, const std::string& content) {
+void appendCodeSpan(std::string& out, std::string_view content) {
     size_t longest = 0;
     size_t run = 0;
     for (char c : content) {
@@ -433,7 +438,7 @@ void appendCodeSpan(std::string& out, const std::string& content) {
     bool pad = !content.empty() &&
                (content.front() == '`' || content.back() == '`' ||
                 (isAsciiSpace(content.front()) && isAsciiSpace(content.back()) &&
-                 content.find_first_not_of(" \t\n") != std::string::npos));
+                 content.find_first_not_of(" \t\n") != std::string_view::npos));
 
     out += ticks;
     if (pad) out.push_back(' ');
@@ -454,57 +459,62 @@ enum Attr { kStrike = 0, kBold = 1, kItalic = 2, kHref = 3, kCode = 4, kAttrCoun
 struct Segment {
     size_t begin = 0;
     size_t end = 0;
-    const Span* span = nullptr;   // nullptr → голый текст между спанами
+    const Inline* span = nullptr;   // nullptr → голый текст между спанами
 };
 
-bool hasAttr(const Span* s, int a) {
+bool hasAttr(const Inline* s, int a) {
     if (s == nullptr) return false;
     // Картинка и строчный комментарий выводятся целиком отдельными ветвями;
     // в ряды соседних признаков их втягивать нельзя.
-    if (s->image) return false;
-    if (s->comment) return false;
+    if (s->image()) return false;
+    if (s->comment()) return false;
     switch (a) {
-        case kStrike: return s->strike;
-        case kBold:   return s->bold;
-        case kItalic: return s->italic;
+        case kStrike: return s->strike();
+        case kBold:   return s->bold();
+        case kItalic: return s->italic();
         case kHref:   return !s->href.empty();
-        case kCode:   return s->code;
+        case kCode:   return s->code();
         default:      return false;
     }
 }
 
-std::vector<Segment> splitIntoSegments(const Block& b) {
+// Смещения спанов относительные — от начала текста блока, — поэтому сегменты
+// индексируют ровно этот текст, и пересчитывать ничего не нужно.
+std::vector<Segment> splitIntoSegments(const Document& doc, const Block& b) {
+    const size_t textSize = doc.text(b).size();
     std::vector<Segment> segs;
     size_t pos = 0;
-    for (const Span& s : b.inlines) {
-        size_t so = static_cast<size_t>(s.offset);
-        size_t se = so + static_cast<size_t>(s.length);
-        if (so > b.text.size() || se > b.text.size() || se < so || so < pos) continue;
+    for (const Inline& s : doc.inlines(b)) {
+        size_t so = static_cast<size_t>(s.text.start);
+        size_t se = static_cast<size_t>(s.text.end);
+        if (so > textSize || se > textSize || se < so || so < pos) continue;
         if (so > pos) segs.push_back(Segment{pos, so, nullptr});
         segs.push_back(Segment{so, se, &s});
         pos = se;
     }
-    if (pos < b.text.size()) segs.push_back(Segment{pos, b.text.size(), nullptr});
+    if (pos < textSize) segs.push_back(Segment{pos, textSize, nullptr});
     return segs;
 }
 
 // Длина ряда соседей, у которых есть этот же признак.
-size_t runLength(const std::vector<Segment>& segs, size_t i, size_t hi, int attr) {
-    const std::string& href = segs[i].span->href;
+size_t runLength(const Document& doc, const std::vector<Segment>& segs, size_t i, size_t hi,
+                 int attr) {
+    const std::string_view href = doc.href(*segs[i].span);
     size_t j = i;
-    while (j < hi && hasAttr(segs[j].span, attr) && (attr != kHref || segs[j].span->href == href))
+    while (j < hi && hasAttr(segs[j].span, attr) &&
+           (attr != kHref || doc.href(*segs[j].span) == href))
         ++j;
     return j - i;
 }
 
-void emitSegments(TextSink& sink, const std::string& text, const std::vector<Segment>& segs,
-                  size_t lo, size_t hi, unsigned openMask,
+void emitSegments(TextSink& sink, const Document& doc, std::string_view text,
+                  const std::vector<Segment>& segs, size_t lo, size_t hi, unsigned openMask,
                   std::vector<unsigned char>* marksBuf) {
     size_t i = lo;
     while (i < hi) {
         // Строчный комментарий: внутренность буквальна, скобки — структура.
         // Канонические крайние пробелы, как у блочного.
-        if (segs[i].span != nullptr && segs[i].span->comment) {
+        if (segs[i].span != nullptr && segs[i].span->comment()) {
             sink.out += "<!-- ";
             sink.out.append(text, segs[i].begin, segs[i].end - segs[i].begin);
             sink.out += " -->";
@@ -516,8 +526,8 @@ void emitSegments(TextSink& sink, const std::string& text, const std::vector<Seg
         // Картинка: подпись дословно-плоская по построению (разбор деградирует
         // иначе), поэтому весь спан выводится одним куском. Скобки в подписи
         // экранируются как в тексте ссылки — иначе подпись оборвётся.
-        if (segs[i].span != nullptr && segs[i].span->image) {
-            const Span& img = *segs[i].span;
+        if (segs[i].span != nullptr && segs[i].span->image()) {
+            const Inline& img = *segs[i].span;
             if (marksBuf != nullptr)
                 for (size_t k = segs[i].begin; k < segs[i].end; ++k)
                     (*marksBuf)[k] |= kMarkInLink;
@@ -525,12 +535,13 @@ void emitSegments(TextSink& sink, const std::string& text, const std::vector<Seg
             sink.bol = false;
             appendEscaped(sink, text, segs[i].begin, segs[i].end);
             sink.out += "](";
-            appendHref(sink.out, img.href);
-            if (!img.title.empty()) {
+            appendHref(sink.out, doc.href(img));
+            const std::string_view imgTitle = doc.title(img);
+            if (!imgTitle.empty()) {
                 // Кавычку и перевод строки разбор в title не пускает; обратная
                 // косая экранируется, чтобы не съела закрывающую кавычку.
                 sink.out += " \"";
-                for (char tc : img.title) {
+                for (char tc : imgTitle) {
                     if (tc == '\\') sink.out.push_back('\\');
                     sink.out.push_back(tc);
                 }
@@ -548,7 +559,7 @@ void emitSegments(TextSink& sink, const std::string& text, const std::vector<Seg
         for (int a = 0; a < kAttrCount; ++a) {
             if ((openMask & (1u << a)) != 0) continue;
             if (!hasAttr(segs[i].span, a)) continue;
-            size_t len = runLength(segs, i, hi, a);
+            size_t len = runLength(doc, segs, i, hi, a);
             if (len > best) { best = len; attr = a; }
         }
         if (attr < 0) {
@@ -557,7 +568,7 @@ void emitSegments(TextSink& sink, const std::string& text, const std::vector<Seg
             continue;
         }
 
-        const std::string& href = segs[i].span->href;
+        const std::string_view href = doc.href(*segs[i].span);
         size_t j = i + best;
 
         size_t gb = segs[i].begin;
@@ -611,7 +622,7 @@ void emitSegments(TextSink& sink, const std::string& text, const std::vector<Seg
         }
         sink.bol = false;
 
-        emitSegments(sink, text, segs, i, j, openMask | (1u << attr), marksBuf);
+        emitSegments(sink, doc, text, segs, i, j, openMask | (1u << attr), marksBuf);
 
         switch (attr) {
             case kStrike: sink.out += "~~"; break;
@@ -628,28 +639,29 @@ void emitSegments(TextSink& sink, const std::string& text, const std::vector<Seg
     }
 }
 
-void appendInlineText(TextSink& sink, const Block& b) {
-    std::vector<Segment> segs = splitIntoSegments(b);
+void appendInlineText(TextSink& sink, const Document& doc, const Block& b) {
+    const std::string_view text = doc.text(b);
+    std::vector<Segment> segs = splitIntoSegments(doc, b);
 
     // Пометки зависят от расстановки ограничителей, а она — от текста. Поэтому
     // первый проход только собирает пометки, а выводит уже второй.
-    std::vector<unsigned char> marks(b.text.size(), 0);
+    std::vector<unsigned char> marks(text.size(), 0);
     TextSink probe;
     probe.contIndent = sink.contIndent;
     probe.bol = sink.bol;
     probe.hasLinkDefs = sink.hasLinkDefs;
-    emitSegments(probe, b.text, segs, 0, segs.size(), 0, &marks);
+    emitSegments(probe, doc, text, segs, 0, segs.size(), 0, &marks);
 
     sink.marks = &marks;
-    emitSegments(sink, b.text, segs, 0, segs.size(), 0, nullptr);
+    emitSegments(sink, doc, text, segs, 0, segs.size(), 0, nullptr);
     sink.marks = nullptr;
 }
 
 // Забор должен быть длиннее самого длинного прогона того же символа в строках
 // содержимого, иначе содержимое закроет блок само. Обратные кавычки в
 // info-строке для них запрещены — тогда забор из тильд.
-std::string fenceFor(const std::string& code, const std::string& info) {
-    char ch = (info.find('`') != std::string::npos) ? '~' : '`';
+std::string fenceFor(std::string_view code, std::string_view info) {
+    char ch = (info.find('`') != std::string_view::npos) ? '~' : '`';
     size_t longest = 0;
     size_t run = 0;
     bool atBol = true;
@@ -666,8 +678,8 @@ std::string fenceFor(const std::string& code, const std::string& info) {
     return std::string(n, ch);
 }
 
-void validate(const Block& b) {
-    if (!b.rawSource.empty()) return;
+void validate([[maybe_unused]] const Document& doc, [[maybe_unused]] const Block& b) {
+    if (b.raw) return;
     assert((b.kind == Kind::Heading) == (b.headingLevel != 0) &&
            "headingLevel осмыслен только у заголовка");
     assert((b.kind != Kind::Heading || (b.headingLevel >= 1 && b.headingLevel <= 6)) &&
@@ -682,18 +694,18 @@ void validate(const Block& b) {
     assert((b.kind == Kind::ListItem || !b.checked) && "отметка осмысленна только у задачи");
     assert((b.kind == Kind::Code || b.info.empty()) && "info осмыслена только у блока кода");
     assert(b.level >= -1 && "уровень мельче, чем вне списка");
-    assert((b.kind != Kind::Html || b.text.find("-->") == std::string::npos) &&
+    assert((b.kind != Kind::Html || doc.text(b).find("-->") == std::string_view::npos) &&
            "внутренность комментария не может содержать -->");
     assert((b.kind != Kind::Html || b.inlines.empty()) &&
            "внутри комментария разметки не бывает");
-    for (const Span& s : b.inlines) {
-        assert((!s.image || !s.href.empty()) && "у картинки обязан быть путь");
-        assert((!s.comment ||
-                (!s.bold && !s.italic && !s.strike && !s.code && !s.image &&
-                 s.href.empty())) &&
+    for ([[maybe_unused]] const Inline& s : doc.inlines(b)) {
+        assert((!s.image() || !s.href.empty()) && "у картинки обязан быть путь");
+        assert((!s.comment() ||
+                (s.flags == InlineComment && s.href.empty())) &&
                "строчный комментарий не сочетается с другой разметкой");
-        assert((s.title.empty() || s.image) && "title осмыслен только у картинки");
-        assert((!s.image || !(s.bold || s.italic || s.strike || s.code)) &&
+        assert((s.title.empty() || s.image()) && "title осмыслен только у картинки");
+        assert((!s.image() ||
+                (s.flags & (InlineBold | InlineItalic | InlineStrike | InlineCode)) == 0) &&
                "картинка не сочетается с другой разметкой");
     }
 }
@@ -733,11 +745,11 @@ size_t indentInsideItem(const Block& b, const std::vector<size_t>& contentCol) {
 // Определение ссылки в дословном куске: "[метка]: /url". Если такое в документе
 // есть, то любая пара скобок в тексте может при разборе стать ссылкой, и её
 // приходится экранировать.
-bool looksLikeLinkDefinition(const std::string& raw) {
+bool looksLikeLinkDefinition(std::string_view raw) {
     size_t i = 0;
     while (i < raw.size()) {
         size_t e = raw.find('\n', i);
-        if (e == std::string::npos) e = raw.size();
+        if (e == std::string_view::npos) e = raw.size();
         size_t p = i;
         size_t indent = 0;
         while (p < e && raw[p] == ' ' && indent < 4) { ++p; ++indent; }
@@ -757,6 +769,7 @@ bool looksLikeLinkDefinition(const std::string& raw) {
 }  // namespace
 
 std::string serialize(const Document& doc) {
+    doc.validate();
     std::string out;
 
     if (doc.meta.present) {
@@ -773,7 +786,7 @@ std::string serialize(const Document& doc) {
 
     bool hasLinkDefs = false;
     for (const Block& b : doc.blocks)
-        if (!b.rawSource.empty() && looksLikeLinkDefinition(b.rawSource)) { hasLinkDefs = true; break; }
+        if (b.raw && looksLikeLinkDefinition(doc.text(b))) { hasLinkDefs = true; break; }
 
     // Колонка, с которой начинается содержимое на каждом уровне вложенности,
     // и счётчики нумерации.
@@ -788,19 +801,20 @@ std::string serialize(const Document& doc) {
 
     for (size_t i = 0; i < doc.blocks.size(); ++i) {
         const Block& b = doc.blocks[i];
-        validate(b);
+        validate(doc, b);
+        const std::string_view body = doc.text(b);
 
-        bool thisIsQuote = b.rawSource.empty() && b.kind == Kind::Quote;
+        bool thisIsQuote = !b.raw && b.kind == Kind::Quote;
 
         // Пустая строка выводится только блоком VSpace — от себя не добавляем
         // ничего. Иначе обязательная пустая строка при следующем чтении стала бы
         // блоком VSpace, которого никто не набирал, и круг бы разошёлся. Что два
         // соседних блока не слипнутся, держит инвариант IR: между такими всегда
-        // стоит VSpace (см. wouldMerge в ir.h).
+        // стоит VSpace (см. Document::wouldMerge).
         // Текст в пустой строке инвариант запрещает, но если он там всё же
         // оказался — печатаем его абзацем. Текст свят; потерять его нельзя ни
         // при каких обстоятельствах.
-        if (b.rawSource.empty() && b.kind == Kind::VSpace && b.text.empty()) {
+        if (!b.raw && b.kind == Kind::VSpace && body.empty()) {
             out += "\n";
             // Прогон списка пустая строка не обрывает: "- раз\n\n- два" — один
             // список, просто просторный. А вот цитату обрывает: две цитаты
@@ -816,11 +830,11 @@ std::string serialize(const Document& doc) {
         // Последний рубеж инварианта: если между блоками нет VSpace, а без
         // пустой строки они слипнутся, — ставим её. Такое IR неправильно, но
         // испортить файл оно не должно.
-        else if (i > 0 && wouldMerge(doc.blocks[i - 1], b))
+        else if (i > 0 && doc.wouldMerge(doc.blocks[i - 1], b))
             out += "\n";
 
-        if (!b.rawSource.empty()) {
-            out += b.rawSource;
+        if (b.raw) {
+            out += body;
             if (out.empty() || out.back() != '\n') out.push_back('\n');
             std::fill(runAlive.begin(), runAlive.end(), 0);
             prevWasQuote = false;
@@ -834,7 +848,7 @@ std::string serialize(const Document& doc) {
                 TextSink sink;
                 sink.bol = false;
                 sink.hasLinkDefs = hasLinkDefs;
-                appendInlineText(sink, b);
+                appendInlineText(sink, doc, b);
                 if (!sink.out.empty()) {
                     out.push_back(' ');
                     // Хвостовой прогон '#' Markdown считает закрывающей
@@ -856,17 +870,17 @@ std::string serialize(const Document& doc) {
                 // остаются пустыми: отступ в них дал бы концевые пробелы, а
                 // блоку кода они не нужны.
                 const std::string pad(indentInsideItem(b, contentCol), ' ');
-                const std::string fence = fenceFor(b.text, b.info);
+                const std::string fence = fenceFor(body, doc.info(b));
                 out += pad;
                 out += fence;
-                out += b.info;
+                out += doc.info(b);
                 out.push_back('\n');
-                for (size_t at = 0; at < b.text.size();) {
-                    size_t end = b.text.find('\n', at);
-                    if (end == std::string::npos) end = b.text.size();
+                for (size_t at = 0; at < body.size();) {
+                    size_t end = body.find('\n', at);
+                    if (end == std::string_view::npos) end = body.size();
                     if (end > at) {
                         out += pad;
-                        out.append(b.text, at, end - at);
+                        out.append(body, at, end - at);
                     }
                     out.push_back('\n');
                     at = end + 1;
@@ -887,7 +901,7 @@ std::string serialize(const Document& doc) {
                 TextSink sink;
                 sink.contIndent = std::string(indent, ' ');
                 sink.hasLinkDefs = hasLinkDefs;
-                appendInlineText(sink, b);
+                appendInlineText(sink, doc, b);
                 out += sink.out;
                 out.push_back('\n');
                 break;
@@ -899,7 +913,7 @@ std::string serialize(const Document& doc) {
                 TextSink sink;
                 sink.contIndent = std::string(indent, ' ') + "> ";
                 sink.hasLinkDefs = hasLinkDefs;
-                appendInlineText(sink, b);
+                appendInlineText(sink, doc, b);
                 if (sink.out.empty()) {
                     out.push_back('>');
                 } else {
@@ -918,18 +932,18 @@ std::string serialize(const Document& doc) {
                     case HtmlKind::Comment: {
                         const size_t indent = indentInsideItem(b, contentCol);
                         out.append(indent, ' ');
-                        if (b.text.empty()) {
+                        if (body.empty()) {
                             out += "<!-- -->\n";
                             break;
                         }
                         out += "<!-- ";
                         // Строки внутренности с отступом блока — как строки кода.
-                        for (size_t at = 0; at < b.text.size();) {
-                            size_t end = b.text.find('\n', at);
-                            if (end == std::string::npos) end = b.text.size();
+                        for (size_t at = 0; at < body.size();) {
+                            size_t end = body.find('\n', at);
+                            if (end == std::string_view::npos) end = body.size();
                             if (at > 0) out.append(indent, ' ');
-                            out.append(b.text, at, end - at);
-                            if (end < b.text.size()) out.push_back('\n');
+                            out.append(body, at, end - at);
+                            if (end < body.size()) out.push_back('\n');
                             at = end + 1;
                         }
                         out += " -->\n";
@@ -941,10 +955,10 @@ std::string serialize(const Document& doc) {
             case Kind::Divider:
                 // Текст свят: разделителю он не положен, но если он там всё же
                 // оказался — печатаем абзацем, как это делает пустая строка.
-                if (!b.text.empty()) {
+                if (!body.empty()) {
                     TextSink sink;
                     sink.hasLinkDefs = hasLinkDefs;
-                    appendInlineText(sink, b);
+                    appendInlineText(sink, doc, b);
                     out += sink.out;
                     out.push_back('\n');
                     break;
@@ -978,7 +992,7 @@ std::string serialize(const Document& doc) {
                 contentCol[level + 1] = childIndent;
 
                 out.append(indent, ' ');
-                if (b.text.empty()) {
+                if (body.empty()) {
                     // "- " с висящим пробелом Markdown бы съел, но глазами это
                     // читается как мусор.
                     while (!marker.empty() && marker.back() == ' ') marker.pop_back();
@@ -988,7 +1002,7 @@ std::string serialize(const Document& doc) {
                     TextSink sink;
                     sink.contIndent = std::string(childIndent, ' ');
                     sink.hasLinkDefs = hasLinkDefs;
-                    appendInlineText(sink, b);
+                    appendInlineText(sink, doc, b);
                     out += sink.out;
                 }
                 out.push_back('\n');
@@ -998,7 +1012,7 @@ std::string serialize(const Document& doc) {
 
         // Прогон списка обрывает только блок, вышедший из списка. Второй абзац
         // пункта список не заканчивает: нумерация за ним продолжается.
-        const bool insideList = b.rawSource.empty() && b.level >= 0;
+        const bool insideList = !b.raw && b.level >= 0;
         if (!insideList) std::fill(runAlive.begin(), runAlive.end(), 0);
         prevWasQuote = thisIsQuote;
         prevLevel = insideList ? b.level : -1;

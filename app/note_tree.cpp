@@ -128,8 +128,9 @@ constexpr int kSnippetChars = 200;
 
 // Текст блока так, как его видит человек: у дословных кусков — сам кусок, он
 // и показан.
-QString blockPlainText(const Block& block) {
-    return QString::fromStdString(block.rawSource.empty() ? block.text : block.rawSource);
+QString blockPlainText(const Document& doc, const Block& block) {
+    const std::string_view text = doc.text(block);
+    return QString::fromUtf8(text.data(), qsizetype(text.size()));
 }
 
 // Первая строка: заголовок в списке однострочный, а текст блока может нести
@@ -147,11 +148,9 @@ void describeNote(const Document& doc, StoreNote& out) {
     bool haveTitle = false;
     QString snippet;
     for (const Block& block : doc.blocks) {
-        if (block.rawSource.empty() &&
-            (block.kind == Kind::VSpace || block.kind == Kind::Html))
-            continue;
-        if (!block.rawSource.empty() && isClosedHtmlComment(block)) continue;
-        const QString text = blockPlainText(block).simplified();
+        if (!block.raw && (block.kind == Kind::VSpace || block.kind == Kind::Html)) continue;
+        if (block.raw && doc.isClosedHtmlComment(block)) continue;
+        const QString text = blockPlainText(doc, block).simplified();
         if (text.isEmpty()) continue;
         if (!haveTitle) {
             out.title = firstLine(text).left(64);

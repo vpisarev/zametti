@@ -23,12 +23,13 @@ bool blocksWouldMerge(const QTextBlock& previous, const QTextBlock& next) {
     // wouldMerge смотрит только на род и на дословность — большего для этого
     // вопроса и не нужно, поэтому обходимся заготовками, а не читаем блоки
     // целиком.
-    auto stub = [](const QTextBlock& block, bool asPrevious) {
+    Document ir;
+    auto stub = [&ir](const QTextBlock& block, bool asPrevious) {
         Block out;
         if (isRawBlock(block)) {
             // Дословный кусок лежит построчно; для wouldMerge довольно знать,
             // законченный ли это HTML-комментарий — он прозрачен для соседства
-            // (см. isClosedHtmlComment в ir.h), прочее дословное непрозрачно.
+            // (см. Document::isClosedHtmlComment), прочее дословное непрозрачно.
             // Первая строка куска — назад по строкам-продолжениям.
             QTextBlock first = block;
             while (isContinuationBlock(first) && first.previous().isValid())
@@ -36,13 +37,18 @@ bool blocksWouldMerge(const QTextBlock& previous, const QTextBlock& next) {
             const bool closed = asPrevious &&
                                 first.text().startsWith(QStringLiteral("<!--")) &&
                                 block.text().endsWith(QStringLiteral("-->"));
-            out.rawSource = closed ? "<!---->\n" : " ";
+            // Заготовка дословного куска: точные байты не важны, важно лишь,
+            // законченный ли это комментарий.
+            out.raw = true;
+            out.text = ir.append(closed ? "<!---->\n" : " ");
         } else {
             out.kind = kindOf(block);
         }
         return out;
     };
-    return wouldMerge(stub(previous, true), stub(next, false));
+    const Block first = stub(previous, true);
+    const Block second = stub(next, false);
+    return ir.wouldMerge(first, second);
 }
 
 Kind kindOf(const QTextBlock& block) {

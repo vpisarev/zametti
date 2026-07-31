@@ -26,12 +26,32 @@ namespace {
 using zametti::Block;
 using zametti::Document;
 
-// Документ из одних блоков: тестам ядра метаданные не нужны.
-zametti::Document docOf(std::vector<zametti::Block> blocks) {
-    return {{}, std::move(blocks)};
-}
 using zametti::Kind;
 using zametti::Marker;
+
+// Литерал блока в тесте — описание, а не сам Block: блок без своей арены это
+// набор смещений в никуда. Документ из описаний собирает docOf билдером.
+struct Piece {
+    Kind kind = Kind::Paragraph;
+    Marker marker = Marker::Bullet;
+    int level = -1;
+    const char* text = "";
+};
+
+zametti::Document docOf(const std::vector<Piece>& pieces) {
+    zametti::Document ir;
+    for (const Piece& p : pieces) {
+        Block b = ir.newBlock(p.kind, p.text);
+        b.marker = p.marker;
+        b.level = static_cast<int16_t>(p.level);
+        ir.blocks.push_back(b);
+    }
+    return ir;
+}
+
+zametti::Document docOf(std::initializer_list<Piece> pieces) {
+    return docOf(std::vector<Piece>(pieces));
+}
 
 void check(bool ok, const std::string& what) {
     ++zt::g_checks;
@@ -48,20 +68,11 @@ void checkEqual(const std::string& expected, const std::string& actual,
     std::printf("провал: %s\n%s", what.c_str(), zt::diff(expected, actual).c_str());
 }
 
-Block listItem(Marker marker, int level, const char* text) {
-    Block b;
-    b.kind = Kind::ListItem;
-    b.marker = marker;
-    b.level = level;
-    b.text = text;
-    return b;
+Piece listItem(Marker marker, int level, const char* text) {
+    return {Kind::ListItem, marker, level, text};
 }
 
-Block paragraph(const char* text) {
-    Block b;
-    b.text = text;
-    return b;
-}
+Piece paragraph(const char* text) { return {Kind::Paragraph, Marker::Bullet, -1, text}; }
 
 // Уровни, как они лежат в документе, — их и правит syncLists.
 std::vector<int> levelsOf(const QTextDocument& doc) {
@@ -81,7 +92,7 @@ std::string levelsToString(const std::vector<int>& levels) {
 }
 
 // syncLists правит уровни и не трогает текст.
-void checkSync(const std::vector<zametti::Block>& before, const char* expectedLevels,
+void checkSync(std::initializer_list<Piece> before, const char* expectedLevels,
                const char* what) {
     QTextDocument doc;
     zametti::buildDocument(docOf(before), doc);
@@ -94,10 +105,11 @@ void checkSync(const std::vector<zametti::Block>& before, const char* expectedLe
           std::string(what) + ": инвариант нарушен — " + problem.toStdString());
 
     // Текст не должен пострадать: операция про уровни.
-    const std::vector<zametti::Block> after = zametti::readDocument(doc).blocks;
-    check(after.size() == before.size(), std::string(what) + ": число блоков изменилось");
-    for (size_t i = 0; i < after.size() && i < before.size(); ++i)
-        check(after[i].text == before[i].text, std::string(what) + ": текст блока изменился");
+    const zametti::Document after = zametti::readDocument(doc);
+    check(after.blocks.size() == before.size(), std::string(what) + ": число блоков изменилось");
+    for (size_t i = 0; i < after.blocks.size() && i < before.size(); ++i)
+        check(after.text(after.blocks[i]) == (before.begin() + i)->text,
+              std::string(what) + ": текст блока изменился");
 }
 
 void checkLevelNormalisation() {
@@ -133,7 +145,7 @@ qreal marginOf(const QTextDocument& doc, int block) {
 // Колонку текста задаёт самый широкий маркер прогона: иначе под "10." текст
 // начинался бы правее, чем под "1.", и левый край списка выходил бы рваным.
 void checkGeometry() {
-    std::vector<zametti::Block> blocks;
+    std::vector<Piece> blocks;
     for (int i = 0; i < 12; ++i) blocks.push_back(listItem(Marker::Ordered, 0, "пункт"));
     blocks.push_back(listItem(Marker::Ordered, 1, "вложенный"));
     const Document doc = docOf(blocks);

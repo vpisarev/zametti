@@ -40,7 +40,7 @@ struct Query {
 Query makeQuery(const QString& text);
 
 // Текст блока так, как его видит человек: у дословных кусков — сам кусок.
-QString blockText(const Block& block);
+QString blockText(const Document& doc, const Block& block);
 
 // Совпадение внутри одной заметки.
 struct Hit {

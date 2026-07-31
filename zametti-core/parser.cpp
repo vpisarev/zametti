@@ -7,9 +7,23 @@
 // а потом расширяются до границ строк и до соседей. Подробности — в
 // finishExtents() ниже.
 //
-// Всё, что не ложится в IR, деградирует в rawSource целиком по внешнему блоку:
-// картинка внутри абзаца делает rawSource из абзаца, а таблица или цитата — из
+// Всё, что не ложится в IR, деградирует в дословный кусок целиком по внешнему
+// блоку: картинка внутри абзаца делает дословным абзац, а таблица или цитата —
 // себя целиком. Это грубо, зато байты не теряются никогда.
+//
+// --- как разбор пишет в арену ----------------------------------------------
+//
+// Текст текущего блока копится во временном буфере Ctx::text и уезжает в арену
+// одним куском при закрытии блока: арена — сплошной буфер, и растить текст
+// блока прямо в ней нельзя, между кусками текста в неё пишутся адреса ссылок.
+// Буфер один на весь разбор и переиспользуется — аллокаций на блок нет.
+//
+// Спаны пишутся сразу в Document::spans; спаны текущего блока — хвост этого
+// массива от Ctx::spanStart.
+//
+// Деградация (demote) откатывает и арену, и спаны к рубежу, снятому на входе во
+// внешний блок: всё, что за рубежом, принадлежало выброшенным блокам. Поэтому
+// мусора в арене после разбора не остаётся.
 
 #include "parser.h"
 
@@ -26,21 +40,16 @@ namespace {
 constexpr size_t kNoOffset = static_cast<size_t>(-1);
 
 struct Style {
-    bool bold = false;
-    bool italic = false;
-    bool strike = false;
-    bool code = false;
-    bool image = false;
-    std::string href;
-    std::string title;
+    uint8_t flags = 0;   // InlineBold | InlineItalic | ... | InlineImage
+    Range href;
+    Range title;
 
-    bool plain() const {
-        return !bold && !italic && !strike && !code && !image && href.empty();
-    }
+    bool plain() const { return flags == 0 && href.empty(); }
 };
 
-// Диапазон исходника, занятый блоком. Хранится параллельно Document, потому что
-// самому IR эти сведения не нужны — они нужны только чтобы вырезать rawSource.
+// Диапазон исходника, занятый блоком. Хранится параллельно списку блоков, потому
+// что самому IR эти сведения не нужны — они нужны только чтобы вырезать
+// дословный кусок.
 struct Extent {
     size_t minOff = kNoOffset;
     size_t maxOff = kNoOffset;   // смещение последнего байта, не следующего за ним
@@ -53,6 +62,9 @@ struct Extent {
 struct Frame {
     MD_BLOCKTYPE type = MD_BLOCK_DOC;
     size_t docSizeAtEnter = 0;
+    // Рубежи арены и спанов на входе в блок: по ним откатывается деградация.
+    size_t charsAtEnter = 0;
+    size_t spansAtEnter = 0;
 
     bool ordered = false;   // для UL/OL
     int  childIdx = 0;      // для LI: сколько блочных детей уже видели
@@ -64,13 +76,14 @@ struct Ctx {
     const char* buf = nullptr;
     size_t len = 0;
 
+    Document ir;               // арена и спаны; blocks заполняется в самом конце
     std::vector<Block> doc;
     std::vector<Extent> ext;
 
     std::vector<Frame> stack;
 
-    // Деградация в rawSource. Пока raw == true, содержимое не разбирается,
-    // копятся только смещения.
+    // Деградация в дословный кусок. Пока raw == true, содержимое не
+    // разбирается, копятся только смещения.
     bool   raw = false;
     size_t rawMin = kNoOffset;
     size_t rawMax = kNoOffset;
@@ -80,6 +93,9 @@ struct Ctx {
     // Текущий листовой блок.
     bool   inLeaf = false;
     Block  cur;
+    std::string text;            // текст текущего блока, до переезда в арену
+    size_t charsStart = 0;       // рубеж арены на начало текущего блока
+    int32_t spanStart = 0;       // первый спан текущего блока в ir.spans
     bool   curFenced = false;
     bool   curRawAtEnd = false;  // блок разбирается, но уйдёт дословно
     size_t curMin = kNoOffset;
@@ -91,8 +107,8 @@ struct Ctx {
     bool   codeSpanAwaitsText = false;
 
     std::vector<Style> styles;       // стек стилей; вершина — действующий
-    std::vector<size_t> styleStart;  // где в cur.text открылся каждый из них
-    size_t runStart = 0;         // начало текущего прогона одного стиля в cur.text
+    std::vector<size_t> styleStart;  // где в text открылся каждый из них
+    size_t runStart = 0;         // начало текущего прогона одного стиля в text
 
     // Литеральный маркер "[x] ", возвращаемый в текст для чекбокса внутри
     // нумерованного списка (правило 2).
@@ -131,8 +147,22 @@ const Frame* enclosingList(const Ctx& c) {
     return nullptr;
 }
 
-// Перевести внешний открытый блок (ребёнка MD_BLOCK_DOC) в rawSource: выкинуть
-// всё, что уже успели из него собрать, и дальше только копить смещения.
+// Забыть всё, что набрано для текущего листа: текст, спаны и байты, ушедшие в
+// арену от его имени (info-строка блока кода, адреса ссылок).
+void dropLeaf(Ctx& c) {
+    c.inLeaf = false;
+    c.cur = Block{};
+    c.text.clear();
+    c.ir.spans.resize(size_t(c.spanStart));
+    c.ir.chars.resize(c.charsStart);
+    c.curMin = c.curMax = kNoOffset;
+    c.curRawAtEnd = false;
+    c.styles.clear();
+    c.styleStart.clear();
+}
+
+// Перевести внешний открытый блок (ребёнка MD_BLOCK_DOC) в дословный кусок:
+// выкинуть всё, что уже успели из него собрать, и дальше только копить смещения.
 void demote(Ctx& c) {
     if (c.raw) return;
     if (c.stack.size() < 2) return;   // на уровне документа деградировать нечего
@@ -153,8 +183,16 @@ void demote(Ctx& c) {
     if (c.pendingPrefixOff != kNoOffset)
         mergeOffset(c.rawMin, c.rawMax, c.pendingPrefixOff, c.pendingPrefix.size());
 
+    // Арена и спаны — назад к рубежу внешнего блока. Всё, что за ним, принадлежало
+    // блокам, которые мы только что выбросили; у блоков, оставшихся в c.doc,
+    // смещения лежат до рубежа.
     c.inLeaf = false;
     c.cur = Block{};
+    c.text.clear();
+    c.ir.spans.resize(c.stack[1].spansAtEnter);
+    c.ir.chars.resize(c.stack[1].charsAtEnter);
+    c.charsStart = c.stack[1].charsAtEnter;
+    c.spanStart = int32_t(c.stack[1].spansAtEnter);
     c.curMin = c.curMax = kNoOffset;
     c.curRawAtEnd = false;
     c.styles.clear();
@@ -166,19 +204,14 @@ void demote(Ctx& c) {
 void flushRun(Ctx& c) {
     if (!c.inLeaf) return;
     const Style& st = c.styles.back();
-    size_t end = c.cur.text.size();
+    size_t end = c.text.size();
     if (end > c.runStart && !st.plain()) {
-        Span s;
-        s.offset = static_cast<int>(c.runStart);
-        s.length = static_cast<int>(end - c.runStart);
-        s.bold = st.bold;
-        s.italic = st.italic;
-        s.strike = st.strike;
-        s.code = st.code;
-        s.image = st.image;
+        Inline s;
+        s.text = {int32_t(c.runStart), int32_t(end)};
+        s.flags = st.flags;
         s.href = st.href;
         s.title = st.title;
-        c.cur.inlines.push_back(std::move(s));
+        c.ir.spans.push_back(s);
     }
     c.runStart = end;
 }
@@ -187,8 +220,11 @@ void startLeaf(Ctx& c, Kind kind, int headingLevel, int level) {
     c.inLeaf = true;
     c.cur = Block{};
     c.cur.kind = kind;
-    c.cur.headingLevel = headingLevel;
-    c.cur.level = level;
+    c.cur.headingLevel = static_cast<int8_t>(headingLevel);
+    c.cur.level = static_cast<int16_t>(level);
+    c.text.clear();
+    c.charsStart = c.ir.chars.size();
+    c.spanStart = int32_t(c.ir.spans.size());
     c.curMin = c.curMax = kNoOffset;
     c.curFenced = false;
     c.curRawAtEnd = false;
@@ -198,8 +234,8 @@ void startLeaf(Ctx& c, Kind kind, int headingLevel, int level) {
     c.runStart = 0;
 
     if (!c.pendingPrefix.empty()) {
-        c.cur.text = c.pendingPrefix;
-        c.runStart = c.cur.text.size();
+        c.text = c.pendingPrefix;
+        c.runStart = c.text.size();
         mergeOffset(c.curMin, c.curMax, c.pendingPrefixOff, c.pendingPrefix.size());
         c.pendingPrefix.clear();
         c.pendingPrefixOff = kNoOffset;
@@ -209,22 +245,31 @@ void startLeaf(Ctx& c, Kind kind, int headingLevel, int level) {
 // Стык двух спанов одного стиля смысла не несёт: разбор мог разбить прогон на
 // части (вложенное выделение, экранированный символ), а модели важен только
 // итоговый стиль. Без склейки IR перестал бы совпадать сам с собой после круга.
-void mergeAdjacentSpans(std::vector<Span>& spans) {
-    std::vector<Span> merged;
-    merged.reserve(spans.size());
-    for (Span& s : spans) {
-        if (s.length <= 0) continue;
-        if (!merged.empty()) {
-            Span& p = merged.back();
-            if (p.offset + p.length == s.offset && p.bold == s.bold && p.italic == s.italic &&
-                p.strike == s.strike && p.code == s.code && p.href == s.href) {
-                p.length += s.length;
+//
+// Сравниваются ровно четыре признака и адрес — так было и до арены. Картинка и
+// строчный комментарий в сравнение НЕ входят: у картинки адрес всегда свой, а
+// два строчных комментария подряд склеиваются в один — это давнее поведение, и
+// менять его здесь нельзя.
+void mergeAdjacentSpans(Ctx& c) {
+    constexpr uint8_t kStyleMask = InlineBold | InlineItalic | InlineStrike | InlineCode;
+    std::vector<Inline>& all = c.ir.spans;
+    const size_t from = size_t(c.spanStart);
+    size_t write = from;
+    for (size_t read = from; read < all.size(); ++read) {
+        const Inline s = all[read];
+        if (s.text.size() <= 0) continue;
+        if (write > from) {
+            Inline& p = all[write - 1];
+            if (p.text.end == s.text.start &&
+                (p.flags & kStyleMask) == (s.flags & kStyleMask) &&
+                c.ir.view(p.href) == c.ir.view(s.href)) {
+                p.text.end = s.text.end;
                 continue;
             }
         }
-        merged.push_back(std::move(s));
+        all[write++] = s;
     }
-    spans.swap(merged);
+    all.resize(write);
 }
 
 // Отмотать прогоны обратных кавычек назад от известного смещения. Нужно, когда
@@ -261,13 +306,14 @@ size_t forwardOverTicks(const char* buf, size_t len, size_t from) {
     return k;
 }
 
-void trimAsciiSpaces(std::string& s) {
+bool asciiSpace(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
+
+std::string_view trimAscii(std::string_view s) {
     size_t b = 0;
-    while (b < s.size() && (s[b] == ' ' || s[b] == '\t' || s[b] == '\n' || s[b] == '\r')) ++b;
+    while (b < s.size() && asciiSpace(s[b])) ++b;
     size_t e = s.size();
-    while (e > b && (s[e - 1] == ' ' || s[e - 1] == '\t' || s[e - 1] == '\n' || s[e - 1] == '\r'))
-        --e;
-    s = s.substr(b, e - b);
+    while (e > b && asciiSpace(s[e - 1])) --e;
+    return s.substr(b, e - b);
 }
 
 // Собранный HTML-блок — ровно один законченный комментарий? Тогда это
@@ -277,56 +323,83 @@ void trimAsciiSpaces(std::string& s) {
 bool adoptCommentLeaf(Ctx& c) {
     // Шапка метаданных "<!-- zametti" — не Kind::Html: её забирает liftMeta из
     // дословного блока, и её байты (включая неизвестные ключи) неприкосновенны.
-    if (c.cur.text.compare(0, 13, "<!-- zametti\n") == 0) return false;
-    std::string body = c.cur.text;
-    trimAsciiSpaces(body);
+    if (c.text.compare(0, 13, "<!-- zametti\n") == 0) return false;
+    const std::string_view body = trimAscii(c.text);
     if (body.size() < 7) return false;
     if (body.compare(0, 4, "<!--") != 0) return false;
     if (body.compare(body.size() - 3, 3, "-->") != 0) return false;
-    std::string interior = body.substr(4, body.size() - 7);
-    if (interior.find("-->") != std::string::npos) return false;
-    trimAsciiSpaces(interior);
-    c.cur.text = std::move(interior);
+    const std::string_view interior = trimAscii(body.substr(4, body.size() - 7));
+    if (interior.find("-->") != std::string_view::npos) return false;
+
+    // Внутренность вырезается на месте: она лежит внутри c.text, и присваивать
+    // строке вид на саму себя нельзя.
+    const size_t at = size_t(interior.data() - c.text.data());
+    const size_t size = interior.size();
+    c.text.erase(0, at);
+    c.text.resize(size);
     c.cur.html = HtmlKind::Comment;
     return true;
+}
+
+// Текст листа уезжает в арену одним куском, спаны привязываются к блоку.
+void commitLeaf(Ctx& c) {
+    c.cur.text = c.ir.append(c.text);
+    c.cur.inlines = {c.spanStart, int32_t(c.ir.spans.size())};
+    c.doc.push_back(c.cur);
 }
 
 void endLeaf(Ctx& c) {
     if (!c.inLeaf) return;
     flushRun(c);
-    mergeAdjacentSpans(c.cur.inlines);
+    mergeAdjacentSpans(c);
 
-    if (!c.cur.inlines.empty() && c.curMin != kNoOffset) {
-        const Span& head = c.cur.inlines.front();
-        const Span& tail = c.cur.inlines.back();
-        if (head.code && head.offset == 0)
+    const size_t spanCount = c.ir.spans.size() - size_t(c.spanStart);
+    if (spanCount > 0 && c.curMin != kNoOffset) {
+        const Inline& head = c.ir.spans[size_t(c.spanStart)];
+        const Inline& tail = c.ir.spans.back();
+        if (head.code() && head.text.start == 0)
             mergeOffset(c.curMin, c.curMax, backOverTicks(c.buf, c.curMin), 1);
-        if (tail.code && static_cast<size_t>(tail.offset + tail.length) == c.cur.text.size()) {
+        if (tail.code() && size_t(tail.text.end) == c.text.size()) {
             size_t e = forwardOverTicks(c.buf, c.len, c.curMax + 1);
             if (e > c.curMax + 1) mergeOffset(c.curMin, c.curMax, e - 1, 1);
         }
     }
 
-    c.doc.push_back(std::move(c.cur));
+    commitLeaf(c);
     c.ext.push_back(Extent{c.curMin, c.curMax, false, c.curFenced});
     c.cur = Block{};
+    c.text.clear();
     c.inLeaf = false;
+    c.charsStart = c.ir.chars.size();
+    c.spanStart = int32_t(c.ir.spans.size());
     c.curMin = c.curMax = kNoOffset;
     c.styles.clear();
     c.styleStart.clear();
 }
 
+// Лист уходит дословным куском: содержимое выбрасывается, границы остаются —
+// текст вырежет finishExtents прямо из исходника.
+void endLeafAsRaw(Ctx& c, size_t rawLines) {
+    const size_t minOff = c.curMin;
+    const size_t maxOff = c.curMax;
+    dropLeaf(c);
+    c.doc.push_back(Block{});
+    c.ext.push_back(Extent{minOff, maxOff, true, false, rawLines, false});
+    c.charsStart = c.ir.chars.size();
+    c.spanStart = int32_t(c.ir.spans.size());
+}
+
 // Атрибут md4c (href, info-строка и т.п.) — это исходный текст с разметкой на
 // подстроки. Берём его дословно: так он и уйдёт обратно в вывод байт в байт.
-// Нулевые символы представить нечем — сигналим о деградации.
-bool attrToString(const MD_ATTRIBUTE& a, std::string& out) {
-    out.clear();
+// Нулевые символы представить нечем — сигналим о деградации, ничего не дописав.
+bool attrToRange(Ctx& c, const MD_ATTRIBUTE& a, Range& out) {
+    out = Range{};
     if (a.text == nullptr || a.size == 0) return true;
     if (a.substr_types != nullptr && a.substr_offsets != nullptr) {
         for (unsigned i = 0; a.substr_offsets[i] < a.size; ++i)
             if (a.substr_types[i] == MD_TEXT_NULLCHAR) return false;
     }
-    out.assign(a.text, a.size);
+    out = c.ir.append(std::string_view(a.text, a.size));
     return true;
 }
 
@@ -341,6 +414,8 @@ int enterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
     Frame f;
     f.type = type;
     f.docSizeAtEnter = c.doc.size();
+    f.charsAtEnter = c.ir.chars.size();
+    f.spansAtEnter = c.ir.spans.size();
 
     if (type == MD_BLOCK_DOC) {
         c.stack.push_back(f);
@@ -464,7 +539,6 @@ int enterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
 
         case MD_BLOCK_CODE: {
             const auto* d = static_cast<const MD_BLOCK_CODE_DETAIL*>(detail);
-            std::string info;
             bool inList = !c.stack.empty() && c.stack.back().type == MD_BLOCK_LI;
             // Внутри цитаты код по-прежнему дословен: цитата держит только
             // абзацы. А внутри пункта списка — обычный блок кода, у которого
@@ -492,8 +566,9 @@ int enterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
             // уходит дословно. Разобрать его при этом всё равно надо: высота
             // забора считается по числу строк содержимого, а его на входе в
             // блок ещё нет.
-            c.curRawAtEnd = !attrToString(d->info, info);
-            c.cur.info = std::move(info);
+            Range info;
+            c.curRawAtEnd = !attrToRange(c, d->info, info);
+            c.cur.info = info;
             break;
         }
 
@@ -564,8 +639,7 @@ int leaveBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
     if (c.raw) {
         if (c.stack.size() == 1) {   // вышли из внешнего деградировавшего блока
             c.raw = false;
-            Block b;
-            c.doc.push_back(std::move(b));
+            c.doc.push_back(Block{});
             c.ext.push_back(Extent{c.rawMin, c.rawMax, true, false, c.rawLines, c.rawWasHeading});
             c.rawMin = c.rawMax = kNoOffset;
             c.rawLines = 0;
@@ -578,17 +652,9 @@ int leaveBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
         case MD_BLOCK_CODE:
             if (c.inLeaf && c.curRawAtEnd) {
                 size_t contentLines = 0;
-                for (char ch : c.cur.text)
+                for (char ch : c.text)
                     if (ch == '\n') ++contentLines;
-                c.doc.push_back(Block{});
-                c.ext.push_back(Extent{c.curMin, c.curMax, true, false,
-                                       contentLines + (c.curFenced ? 2 : 0), false});
-                c.cur = Block{};
-                c.inLeaf = false;
-                c.curMin = c.curMax = kNoOffset;
-                c.curRawAtEnd = false;
-                c.styles.clear();
-                c.styleStart.clear();
+                endLeafAsRaw(c, contentLines + (c.curFenced ? 2 : 0));
                 break;
             }
             endLeaf(c);
@@ -611,15 +677,7 @@ int leaveBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
                 demote(c);
                 break;
             }
-            if (c.inLeaf) {
-                c.doc.push_back(Block{});
-                c.ext.push_back(Extent{c.curMin, c.curMax, true, false, 0, false});
-                c.cur = Block{};
-                c.inLeaf = false;
-                c.curMin = c.curMax = kNoOffset;
-                c.styles.clear();
-                c.styleStart.clear();
-            }
+            if (c.inLeaf) endLeafAsRaw(c, 0);
             break;
         case MD_BLOCK_P:
             // Внутри элемента списка абзац лишь наполняет уже открытый блок:
@@ -648,7 +706,7 @@ int enterSpan(MD_SPANTYPE type, void* detail, void* userdata) {
 
     flushRun(c);
     Style st = c.styles.back();
-    if (st.image) {
+    if ((st.flags & InlineImage) != 0) {
         // Разметка внутри подписи картинки: плоскими спанами не выражается.
         demote(c);
         return 0;
@@ -656,16 +714,16 @@ int enterSpan(MD_SPANTYPE type, void* detail, void* userdata) {
 
     switch (type) {
         case MD_SPAN_EM:
-            st.italic = true;
+            st.flags |= InlineItalic;
             break;
         case MD_SPAN_STRONG:
-            st.bold = true;
+            st.flags |= InlineBold;
             break;
         case MD_SPAN_DEL:
-            st.strike = true;
+            st.flags |= InlineStrike;
             break;
         case MD_SPAN_CODE:
-            st.code = true;
+            st.flags |= InlineCode;
             c.codeSpanAwaitsText = true;
             break;
         case MD_SPAN_IMG: {
@@ -675,33 +733,33 @@ int enterSpan(MD_SPANTYPE type, void* detail, void* userdata) {
             // картинки — обычный текст, а картинка внутри ссылки или разметки
             // плоским спаном не выражается — дословно.
             const auto* d = static_cast<const MD_SPAN_IMG_DETAIL*>(detail);
-            std::string src;
-            std::string title;
-            if (!attrToString(d->src, src) || !attrToString(d->title, title) ||
+            Range src;
+            Range title;
+            if (!attrToRange(c, d->src, src) || !attrToRange(c, d->title, title) ||
                 src.empty() || !st.plain() ||
-                title.find('"') != std::string::npos ||
-                title.find('\n') != std::string::npos) {
+                c.ir.view(title).find('"') != std::string_view::npos ||
+                c.ir.view(title).find('\n') != std::string_view::npos) {
                 demote(c);
                 return 0;
             }
-            st.image = true;
-            st.href = std::move(src);
-            st.title = std::move(title);
+            st.flags |= InlineImage;
+            st.href = src;
+            st.title = title;
             break;
         }
 
         case MD_SPAN_A: {
             const auto* d = static_cast<const MD_SPAN_A_DETAIL*>(detail);
-            std::string href;
-            std::string title;
-            if (!attrToString(d->href, href) || !attrToString(d->title, title) ||
+            Range href;
+            Range title;
+            if (!attrToRange(c, d->href, href) || !attrToRange(c, d->title, title) ||
                 !title.empty() || href.empty()) {
                 // Заголовок ссылки представить нечем; пустой href — тоже
                 // (по нему ссылку не отличить от обычного текста).
                 demote(c);
                 return 0;
             }
-            st.href = std::move(href);
+            st.href = href;
             break;
         }
         default:
@@ -710,8 +768,8 @@ int enterSpan(MD_SPANTYPE type, void* detail, void* userdata) {
             return 0;
     }
 
-    c.styles.push_back(std::move(st));
-    c.styleStart.push_back(c.cur.text.size());
+    c.styles.push_back(st);
+    c.styleStart.push_back(c.text.size());
     return 0;
 }
 
@@ -733,9 +791,9 @@ int leaveSpan(MD_SPANTYPE type, void* detail, void* userdata) {
         if (k > c.curMax + 1) mergeOffset(c.curMin, c.curMax, c.curMax, k - c.curMax);
     }
 
-    // Пустой спан ("[](/url)") модель не выражает: Span нулевой длины ничего не
+    // Пустой спан ("[](/url)") модель не выражает: спан нулевой длины ничего не
     // помечает и просто исчезнет вместе со ссылкой. Молча терять нельзя.
-    if (c.cur.text.size() == c.styleStart.back()) {
+    if (c.text.size() == c.styleStart.back()) {
         demote(c);
         return 0;
     }
@@ -778,14 +836,14 @@ int onText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) 
         case MD_TEXT_NORMAL:
         case MD_TEXT_ENTITY:
         case MD_TEXT_CODE:
-            c.cur.text.append(text, size);
+            c.text.append(text, size);
             break;
         case MD_TEXT_SOFTBR:
             // Содержимое setext-заголовка может занимать несколько строк, а ATX
             // — нет, и переносить его в вывод некуда. Такой заголовок остаётся
             // дословным.
             if (c.cur.kind == Kind::Heading) demote(c);
-            else c.cur.text.push_back('\n');
+            else c.text.push_back('\n');
             break;
         case MD_TEXT_BR:
             // Жёсткий перенос ("  \n" или "\\\n") моделью не выражается.
@@ -794,7 +852,7 @@ int onText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) 
         case MD_TEXT_HTML:
             // Внутри HTML-блока текст просто копится: судьбу решит leaveBlock.
             if (c.inLeaf && c.cur.kind == Kind::Html) {
-                c.cur.text.append(text, size);
+                c.text.append(text, size);
                 break;
             }
             // Строчный комментарий в абзаце: приходит одним куском. Всё прочее
@@ -803,16 +861,14 @@ int onText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) 
                 std::strncmp(text + size - 3, "-->", 3) == 0 && c.styles.back().plain() &&
                 std::string_view(text + 4, size - 7).find("-->") == std::string_view::npos) {
                 flushRun(c);
-                std::string interior(text + 4, size - 7);
-                trimAsciiSpaces(interior);
+                const std::string_view interior = trimAscii(std::string_view(text + 4, size - 7));
                 if (interior.empty()) { demote(c); break; }
-                Span s;
-                s.offset = static_cast<int>(c.cur.text.size());
-                s.length = static_cast<int>(interior.size());
-                s.comment = true;
-                c.cur.text += interior;
-                c.cur.inlines.push_back(std::move(s));
-                c.runStart = c.cur.text.size();
+                Inline s;
+                s.text = {int32_t(c.text.size()), int32_t(c.text.size() + interior.size())};
+                s.set(InlineComment, true);
+                c.text.append(interior);
+                c.ir.spans.push_back(s);
+                c.runStart = c.text.size();
                 break;
             }
             demote(c);
@@ -914,8 +970,8 @@ bool blankLine(const char* buf, const Lines& l, size_t i) {
 // непустые ячейки, у HTML-блока — непустые строки. Расширяем до целых строк, а
 // потом раздаём незанятые строки в промежутках между блоками: сначала вперёд от
 // предыдущего блока, потом назад от следующего, останавливаясь на пустой
-// строке. Так в rawSource попадают и строка-разделитель таблицы, и хвостовой
-// ряд из пустых ячеек, и открывающая строка вроде "|   |   |".
+// строке. Так в дословный кусок попадают и строка-разделитель таблицы, и
+// хвостовой ряд из пустых ячеек, и открывающая строка вроде "|   |   |".
 void finishExtents(Ctx& c) {
     if (c.doc.empty()) return;
 
@@ -977,7 +1033,7 @@ void finishExtents(Ctx& c) {
             // начинается с пустых строк, колбэков по ним не приходит и забор
             // уезжает вниз.
             size_t contentLines = 0;
-            for (char ch : c.doc[i].text)
+            for (char ch : c.ir.text(c.doc[i]))
                 if (ch == '\n') ++contentLines;
             // Забор ищется по виду строки, а не по «первой непустой после
             // предыдущего блока»: слева может стоять дословный кусок, чьи
@@ -1028,7 +1084,7 @@ void finishExtents(Ctx& c) {
         }
     }
 
-    // Промежутки. Расширяем только rawSource-блоки: у остальных вывод всё равно
+    // Промежутки. Расширяем только дословные куски: у остальных вывод всё равно
     // порождается заново.
     for (size_t i = 0; i < n; ++i) {
         size_t gapLo = last[i] + 1;
@@ -1112,23 +1168,19 @@ void finishExtents(Ctx& c) {
         if (!c.ext[i].raw) continue;
         size_t b = lines.start[first[i]];
         size_t e = lines.end(last[i]);
-        c.doc[i].rawSource.assign(c.buf + b, e - b);
-        if (c.doc[i].rawSource.empty() || c.doc[i].rawSource.back() != '\n')
-            c.doc[i].rawSource.push_back('\n');
+        c.doc[i] = c.ir.newRaw(std::string_view(c.buf + b, e - b));
     }
 
     // Определения ссылок ("[1]: /a") md4c не отдаёт ни одним колбэком: он их
     // разрешает молча. Такие строки не покрыты ни одним блоком — и это
     // единственный оставшийся способ потерять байты, поэтому непокрытые
-    // непустые строки становятся rawSource-блоками на своих местах.
+    // непустые строки становятся дословными кусками на своих местах.
     // Дословный кусок всегда заканчивается переводом строки: сериализатор его
     // всё равно допишет, и без этого IR последнего блока в файле без хвостового
-    // перевода строки не совпал бы сам с собой после круга.
+    // перевода строки не совпал бы сам с собой после круга (это делает newRaw).
     auto rawFromLines = [&](size_t a, size_t b) {
-        Block blk;
-        blk.rawSource.assign(c.buf + lines.start[a], lines.end(b) - lines.start[a]);
-        if (blk.rawSource.empty() || blk.rawSource.back() != '\n') blk.rawSource.push_back('\n');
-        return blk;
+        return c.ir.newRaw(
+            std::string_view(c.buf + lines.start[a], lines.end(b) - lines.start[a]));
     };
 
     std::vector<Block> out;
@@ -1147,10 +1199,10 @@ void finishExtents(Ctx& c) {
             for (size_t k = prevLast + 1; k < from; ++k) {
                 Block gap;
                 gap.kind = Kind::VSpace;
-                out.push_back(std::move(gap));
+                out.push_back(gap);
             }
         }
-        out.push_back(std::move(blk));
+        out.push_back(blk);
         prevLast = to;
         havePrev = true;
     };
@@ -1163,7 +1215,7 @@ void finishExtents(Ctx& c) {
             while (line < first[i] && !blankLine(c.buf, lines, line)) ++line;
             emit(rawFromLines(b, line - 1), b, line - 1);
         }
-        emit(std::move(c.doc[i]), first[i], last[i]);
+        emit(c.doc[i], first[i], last[i]);
         if (last[i] + 1 > line) line = last[i] + 1;
     }
     while (line < lines.count()) {
@@ -1182,13 +1234,13 @@ void finishExtents(Ctx& c) {
     // разъезжаются.
     std::vector<Block> fixed;
     fixed.reserve(out.size() + 2);
-    for (Block& blk : out) {
-        if (!fixed.empty() && wouldMerge(fixed.back(), blk)) {
+    for (const Block& blk : out) {
+        if (!fixed.empty() && c.ir.wouldMerge(fixed.back(), blk)) {
             Block gap;
             gap.kind = Kind::VSpace;
-            fixed.push_back(std::move(gap));
+            fixed.push_back(gap);
         }
-        fixed.push_back(std::move(blk));
+        fixed.push_back(blk);
     }
     c.doc = std::move(fixed);
 }
@@ -1202,7 +1254,8 @@ void finishExtents(Ctx& c) {
 // блоком (замерено пробником: md4c отдаёт такой комментарий одним блоком).
 void liftMeta(Document& doc) {
     if (doc.blocks.empty()) return;
-    const std::string& raw = doc.blocks.front().rawSource;
+    if (!doc.blocks.front().raw) return;
+    const std::string_view raw = doc.text(doc.blocks.front());
     constexpr std::string_view head = "<!-- zametti\n";
     constexpr std::string_view tail = "-->\n";
     if (raw.size() < head.size() + tail.size()) return;
@@ -1215,13 +1268,13 @@ void liftMeta(Document& doc) {
     const size_t end = raw.size() - tail.size();
     while (from < end) {
         const size_t eol = raw.find('\n', from);
-        doc.meta.lines.push_back(raw.substr(from, eol - from));
+        doc.meta.lines.emplace_back(raw.substr(from, eol - from));
         from = eol + 1;
     }
     doc.blocks.erase(doc.blocks.begin());
     // Пустую строку после "-->" забираем с собой: в блоках ей стоять не за чем
     // — редактор показал бы пустую первую строку у каждой заметки.
-    if (!doc.blocks.empty() && doc.blocks.front().rawSource.empty() &&
+    if (!doc.blocks.empty() && !doc.blocks.front().raw &&
         doc.blocks.front().kind == Kind::VSpace) {
         doc.meta.blankAfter = true;
         doc.blocks.erase(doc.blocks.begin());
@@ -1251,13 +1304,20 @@ Document parse(std::string_view markdown) {
 
     if (c.len == 0) return {};
 
+    // Арена вмещает текст блоков, дословные куски, info-строки и адреса. Всё
+    // это — куски исходника, и суммарно больше него не выходит (замер на
+    // корпусе: коэффициент см. docs/zametti-m5-report.md). Резерв с запасом
+    // избавляет разбор от реаллокаций арены целиком.
+    c.ir.chars.reserve(arenaReserveFor(c.len));
+
     md_parse(c.buf, static_cast<MD_SIZE>(c.len), &parser, &c);
 
     endLeaf(c);
     finishExtents(c);
-    Document result;
+    Document result = std::move(c.ir);
     result.blocks = std::move(c.doc);
     liftMeta(result);
+    result.validate();
     return result;
 }
 

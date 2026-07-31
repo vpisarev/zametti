@@ -7,6 +7,7 @@
 
 #include <cstdio>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace zt {
@@ -14,7 +15,7 @@ namespace zt {
 inline int g_failures = 0;
 inline int g_checks = 0;
 
-inline std::string visible(const std::string& s) {
+inline std::string visible(std::string_view s) {
     std::string out;
     for (char c : s) {
         if (c == '\n') out += "\\n\n";
@@ -27,23 +28,23 @@ inline std::string visible(const std::string& s) {
 
 // Построчный дифф. Нужен и тестам, и режиму --check просмотрщика, поэтому
 // формат держим человекочитаемым, а не «первый различающийся байт».
-inline std::vector<std::string> splitLines(const std::string& s) {
+inline std::vector<std::string> splitLines(std::string_view s) {
     std::vector<std::string> lines;
     size_t pos = 0;
     while (pos <= s.size()) {
         size_t e = s.find('\n', pos);
-        if (e == std::string::npos) {
-            if (pos < s.size()) lines.push_back(s.substr(pos));
+        if (e == std::string_view::npos) {
+            if (pos < s.size()) lines.push_back(std::string(s.substr(pos)));
             break;
         }
-        lines.push_back(s.substr(pos, e - pos));
+        lines.push_back(std::string(s.substr(pos, e - pos)));
         pos = e + 1;
         if (pos == s.size()) break;
     }
     return lines;
 }
 
-inline std::string diff(const std::string& expected, const std::string& actual) {
+inline std::string diff(std::string_view expected, std::string_view actual) {
     std::vector<std::string> a = splitLines(expected);
     std::vector<std::string> b = splitLines(actual);
     std::string out;
@@ -60,12 +61,12 @@ inline std::string diff(const std::string& expected, const std::string& actual) 
     return out;
 }
 
-inline void checkEq(const std::string& what, const std::string& expected,
-                    const std::string& actual, const char* file, int line) {
+inline void checkEq(std::string_view what, std::string_view expected,
+                    std::string_view actual, const char* file, int line) {
     ++g_checks;
     if (expected == actual) return;
     ++g_failures;
-    std::fprintf(stderr, "FAIL %s:%d  %s\n", file, line, what.c_str());
+    std::fprintf(stderr, "FAIL %s:%d  %.*s\n", file, line, int(what.size()), what.data());
     std::fprintf(stderr, "--- ожидалось\n%s\n+++ получено\n%s\n", visible(expected).c_str(),
                  visible(actual).c_str());
     std::string d = diff(expected, actual);
@@ -73,11 +74,11 @@ inline void checkEq(const std::string& what, const std::string& expected,
     std::fprintf(stderr, "\n");
 }
 
-inline void checkTrue(const std::string& what, bool cond, const char* file, int line) {
+inline void checkTrue(std::string_view what, bool cond, const char* file, int line) {
     ++g_checks;
     if (cond) return;
     ++g_failures;
-    std::fprintf(stderr, "FAIL %s:%d  %s\n\n", file, line, what.c_str());
+    std::fprintf(stderr, "FAIL %s:%d  %.*s\n\n", file, line, int(what.size()), what.data());
 }
 
 inline int report(const char* suite) {

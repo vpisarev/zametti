@@ -28,7 +28,7 @@ const char* markerName(Marker m) {
     return "?";
 }
 
-void appendJsonString(std::string& out, const std::string& s) {
+void appendJsonString(std::string& out, std::string_view s) {
     out.push_back('"');
     for (unsigned char c : s) {
         switch (c) {
@@ -77,9 +77,9 @@ std::string toJson(const Document& doc) {
     for (size_t i = 0; i < doc.blocks.size(); ++i) {
         const Block& b = doc.blocks[i];
         out += "  {";
-        if (!b.rawSource.empty()) {
+        if (b.raw) {
             out += "\"raw\": ";
-            appendJsonString(out, b.rawSource);
+            appendJsonString(out, doc.text(b));
         } else {
             out += "\"kind\": ";
             out += '"';
@@ -102,32 +102,35 @@ std::string toJson(const Document& doc) {
             }
             if (b.kind == Kind::Code && !b.info.empty()) {
                 out += ", \"info\": ";
-                appendJsonString(out, b.info);
+                appendJsonString(out, doc.info(b));
             }
             out += ", \"text\": ";
-            appendJsonString(out, b.text);
+            appendJsonString(out, doc.text(b));
             if (!b.inlines.empty()) {
                 out += ", \"inlines\": [";
-                for (size_t j = 0; j < b.inlines.size(); ++j) {
-                    const Span& s = b.inlines[j];
-                    if (j) out += ", ";
+                bool firstSpan = true;
+                for (const Inline& s : doc.inlines(b)) {
+                    if (!firstSpan) out += ", ";
+                    firstSpan = false;
+                    // Смещение спана относительное — от начала текста блока, —
+                    // и в дампе оно таким и было всегда.
                     out += "{\"offset\": ";
-                    appendInt(out, s.offset);
+                    appendInt(out, s.text.start);
                     out += ", \"length\": ";
-                    appendInt(out, s.length);
-                    if (s.bold) out += ", \"bold\": true";
-                    if (s.italic) out += ", \"italic\": true";
-                    if (s.strike) out += ", \"strike\": true";
-                    if (s.code) out += ", \"code\": true";
-                    if (s.image) out += ", \"image\": true";
-                    if (s.comment) out += ", \"comment\": true";
+                    appendInt(out, s.text.size());
+                    if (s.bold()) out += ", \"bold\": true";
+                    if (s.italic()) out += ", \"italic\": true";
+                    if (s.strike()) out += ", \"strike\": true";
+                    if (s.code()) out += ", \"code\": true";
+                    if (s.image()) out += ", \"image\": true";
+                    if (s.comment()) out += ", \"comment\": true";
                     if (!s.href.empty()) {
                         out += ", \"href\": ";
-                        appendJsonString(out, s.href);
+                        appendJsonString(out, doc.href(s));
                     }
                     if (!s.title.empty()) {
                         out += ", \"title\": ";
-                        appendJsonString(out, s.title);
+                        appendJsonString(out, doc.title(s));
                     }
                     out += "}";
                 }

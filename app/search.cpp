@@ -12,8 +12,11 @@ Query makeQuery(const QString& text) {
     return query;
 }
 
-QString blockText(const Block& block) {
-    return QString::fromStdString(block.rawSource.empty() ? block.text : block.rawSource);
+QString blockText(const Document& doc, const Block& block) {
+    // Дословный кусок и обычный текст лежат в арене одинаково: у дословного
+    // куска показан он сам, и это тот же Block::text.
+    const std::string_view text = doc.text(block);
+    return QString::fromUtf8(text.data(), qsizetype(text.size()));
 }
 
 std::vector<Hit> findInDocument(const Document& doc, const Query& query) {
@@ -21,7 +24,7 @@ std::vector<Hit> findInDocument(const Document& doc, const Query& query) {
     if (query.isEmpty()) return hits;
     int ordinal = 0;
     for (size_t i = 0; i < doc.blocks.size(); ++i) {
-        const QString text = blockText(doc.blocks[i]);
+        const QString text = blockText(doc, doc.blocks[i]);
         if (text.isEmpty()) continue;
         qsizetype at = text.indexOf(query.needle, 0, query.sensitivity());
         while (at >= 0) {
@@ -38,7 +41,7 @@ std::vector<Hit> findInDocument(const Document& doc, const Query& query) {
 HitLine hitLine(const Document& doc, const Hit& hit, int radius) {
     HitLine out;
     if (hit.block < 0 || size_t(hit.block) >= doc.blocks.size()) return out;
-    const QString text = blockText(doc.blocks[size_t(hit.block)]);
+    const QString text = blockText(doc, doc.blocks[size_t(hit.block)]);
     if (hit.offset < 0 || hit.offset > text.size()) return out;
 
     // Строка, в которой стоит совпадение: у блока их может быть несколько

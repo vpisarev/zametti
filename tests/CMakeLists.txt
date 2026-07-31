@@ -4,6 +4,11 @@
 add_executable(mddump mddump.cpp)
 target_link_libraries(mddump PRIVATE zametti-core zametti-warnings)
 
+# Пробник представления IR: аллокации, время, память. Тестом не заводится —
+# это прибор, его запускают руками (см. docs/zametti-m5-report.md).
+add_executable(ir_bench ir_bench.cpp)
+target_link_libraries(ir_bench PRIVATE zametti-core zametti-warnings)
+
 add_executable(id_test id_test.cpp)
 target_link_libraries(id_test PRIVATE zametti-core zametti-warnings)
 target_include_directories(id_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -17,6 +22,13 @@ add_test(NAME store COMMAND store_test)
 add_executable(roundtrip_test roundtrip_test.cpp)
 target_link_libraries(roundtrip_test PRIVATE zametti-core zametti-warnings)
 add_test(NAME roundtrip COMMAND roundtrip_test)
+
+# Арена IR: границы обоих координатных пространств, перенос между документами,
+# независимость копии, резерв без реаллокаций.
+add_executable(arena_test arena_test.cpp)
+target_link_libraries(arena_test PRIVATE zametti-core zametti-warnings)
+target_include_directories(arena_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME arena COMMAND arena_test)
 
 add_executable(golden_test golden_test.cpp)
 target_link_libraries(golden_test PRIVATE zametti-core zametti-warnings)

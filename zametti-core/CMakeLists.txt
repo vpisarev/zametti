@@ -6,6 +6,7 @@
 
 add_library(zametti-core STATIC
     ir.h
+    ir.cpp
     meta.cpp
     parser.h
     parser.cpp

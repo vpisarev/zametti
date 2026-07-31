@@ -22,10 +22,8 @@ constexpr int kMaxResults = 2000;
 // дерева. Дублировать разбор незачем: документ уже разобран.
 QString titleOf(const Document& doc) {
     for (const Block& block : doc.blocks) {
-        if (block.rawSource.empty() &&
-            (block.kind == Kind::VSpace || block.kind == Kind::Html))
-            continue;
-        const QString text = blockText(block).simplified();
+        if (!block.raw && (block.kind == Kind::VSpace || block.kind == Kind::Html)) continue;
+        const QString text = blockText(doc, block).simplified();
         if (text.isEmpty()) continue;
         const qsizetype eol = text.indexOf(QLatin1Char('\n'));
         return (eol < 0 ? text : text.left(eol)).left(64);

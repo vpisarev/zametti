@@ -1321,10 +1321,9 @@ void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
     if (literal) {
         // Один абзац с текстом как есть: переводы строк внутри блока сборщик
         // разметит сам, и они вернутся переводами, а не разметкой.
-        Block block;
-        block.text = source;
-        while (!block.text.empty() && block.text.back() == '\n') block.text.pop_back();
-        pieces.push_back(std::move(block));
+        std::string body = source;
+        while (!body.empty() && body.back() == '\n') body.pop_back();
+        pieces.push_back(fragment.newBlock(Kind::Paragraph, body));
     } else {
         // Полным парсером ядра, а не вторым упрощённым разбором: их
         // идемпотентность и гарантирует, что скопированное вставится без потерь.
@@ -1343,14 +1342,15 @@ void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
     // Фотография — тоже блочная вещь: абзац из одного image-спана целиком и
     // вики-вложение "![[...]]" встают своей строкой, а не вклеиваются в текст
     // (в середине текста фотография не показывается — вклейка её потеряла бы).
+    const std::string_view headText = fragment.text(head);
+    const std::span<const Inline> headSpans = fragment.inlines(head);
     const bool wholeImage =
-        head.rawSource.empty() && head.kind == Kind::Paragraph &&
-        ((head.inlines.size() == 1 && head.inlines[0].image &&
-          head.inlines[0].offset == 0 &&
-          size_t(head.inlines[0].length) == head.text.size()) ||
-         (head.text.rfind("![[", 0) == 0 && head.text.size() > 5 &&
-          head.text.compare(head.text.size() - 2, 2, "]]") == 0));
-    const bool blockLevel = pieces.size() > 1 || !head.rawSource.empty() ||
+        !head.raw && head.kind == Kind::Paragraph &&
+        ((headSpans.size() == 1 && headSpans[0].image() && headSpans[0].text.start == 0 &&
+          size_t(headSpans[0].text.end) == headText.size()) ||
+         (headText.rfind("![[", 0) == 0 && headText.size() > 5 &&
+          headText.compare(headText.size() - 2, 2, "]]") == 0));
+    const bool blockLevel = pieces.size() > 1 || head.raw ||
                             head.kind != Kind::Paragraph || wholeImage;
 
     recordingSuspended_ = true;

@@ -4,15 +4,68 @@
 // QTextDocument никогда не существует, синхронизировать его не с чем.
 //
 // Ядро работает в UTF-8 (std::string). Ни одного include из Qt здесь быть не должно.
+//
+// --- представление ---------------------------------------------------------
+//
+// Всё содержимое документа лежит в одной сплошной арене байтов
+// (Document::chars): текст блоков, дословные куски, info-строки блоков кода,
+// адреса и заголовки ссылок и картинок. Блок и спан — POD со смещениями, ни
+// один из них ничем не владеет и ничего не аллоцирует. Копия Document — это
+// memcpy четырёх буферов, и она полностью независима от оригинала.
+//
+// Координатных пространств три, и путать их нельзя:
+//
+//   Block::text, Block::info, Inline::href, Inline::title — БАЙТЫ в chars;
+//   Block::inlines                                        — ИНДЕКСЫ в spans;
+//   Inline::text                       — БАЙТЫ ОТ НАЧАЛА ТЕКСТА СВОЕГО БЛОКА.
+//
+// Все три проверяются в validate().
+//
+// Спан меряется от текста блока, а не от начала арены, нарочно. При правке
+// текст блока переезжает в хвост арены целиком (replace-by-append), и
+// абсолютные смещения спанов пришлось бы сдвигать при каждой такой правке.
+// Забытый сдвиг был бы невидим: старые байты из арены никуда не делись,
+// смещение осталось бы в границах chars, и validate() промолчал бы, а разметка
+// молча приехала бы от прошлой версии текста. С относительным смещением этого
+// класса ошибки нет.
+//
+// Арена растёт только в хвост. Смещения не протухают никогда, поэтому правка
+// содержимого — это replace-by-append: новые байты дописываются в конец, Range
+// перенаправляется, старые байты остаются мусором. Для транзиентного IR это
+// нормально.
+//
+// Порядок блоков в blocks и порядок байтов в арене между собой не связаны:
+// нулевой блок вполне может смотреть в самый хвост арены (так бывает после
+// adopt и после любой правки). Никто не ходит по арене подряд, и полагаться на
+// её порядок нельзя.
+//
+// Возвращаемые string_view живут не дольше самого Document и портятся при
+// любой дописи в арену: держать их через вызовы, которые арену трогают,
+// нельзя.
 
 #ifndef ZAMETTI_IR_H
 #define ZAMETTI_IR_H
 
+#include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace zametti {
+
+// Полуоткрытый диапазон [start, end), как cv::Range. int32 достаточно: заметка
+// больше двух гигабайт в модель мира не входит, и validate() это утверждает.
+struct Range {
+    int32_t start = 0;
+    int32_t end = 0;
+
+    bool empty() const { return start >= end; }
+    int32_t size() const { return end - start; }
+};
+
+inline bool operator==(Range a, Range b) { return a.start == b.start && a.end == b.end; }
+inline bool operator!=(Range a, Range b) { return !(a == b); }
 
 // Род блока — что это за блок, и только. Чем помечен пункт и на каком уровне он
 // стоит, родом не выражается: это отдельные оси (Marker, level).
@@ -20,7 +73,7 @@ namespace zametti {
 // Родов нарочно мало, и ветки default в switch по роду быть не должно. Тогда
 // -Wswitch при -Werror сам перечисляет места, где новый род не разобран, — иначе
 // код рос бы по квадрату от числа родов, а забытое место молча делало бы не то.
-enum class Kind {
+enum class Kind : uint8_t {
     Paragraph,
     Heading,          // headingLevel = 1..6
     Code,             // info = язык или пусто
@@ -50,7 +103,7 @@ enum class Kind {
 
 // Вид понятого HTML-блока. Значений будет больше (когда редактор научится
 // понимать что-то ещё) — новый вид тогда станет значением оси, а не родом.
-enum class HtmlKind {
+enum class HtmlKind : uint8_t {
     // "<!-- внутренность -->": в тексте блока — внутренность без скобок и
     // крайних пробелов, скобки — структура и повредить их правкой нельзя.
     // Канон: "<!-- " + текст + " -->". Внутренность с "-->" невозможна по
@@ -60,7 +113,7 @@ enum class HtmlKind {
 
 // Чем помечен пункт. Выполненность — отдельный признак, а не свой вид маркера:
 // переключение задачи это смена bool, а не подмена рода блока.
-enum class Marker {
+enum class Marker : uint8_t {
     Bullet,
     Ordered,
     Task,
@@ -68,90 +121,70 @@ enum class Marker {
 
 inline bool isList(Kind k) { return k == Kind::ListItem; }
 
-struct Span {
-    int  offset = 0;    // в байтах, от начала Block::text
-    int  length = 0;
-    bool bold   = false;
-    bool italic = false;
-    bool strike = false;
-    bool code   = false;   // встроенный код; содержимое буквальное, разметки внутри нет
-    bool image  = false;   // картинка: текст спана — подпись (alt), href — путь
-    // Строчный HTML-комментарий: текст спана — внутренность без скобок,
-    // буквальная, без вложенной разметки (как у кода). Канон: "<!-- т -->".
-    bool comment = false;
-    std::string href;      // непусто → ссылка (или путь картинки при image)
-    std::string title;     // осмысленно только при image: ![alt](путь "title")
+// Начертание куска строки. Битами, а не полями: Inline обязан оставаться
+// маленьким POD, а перечислить признаки в одном месте всё равно полезно.
+enum InlineFlag : uint8_t {
+    InlineBold    = 1u << 0,
+    InlineItalic  = 1u << 1,
+    InlineStrike  = 1u << 2,
+    // Встроенный код: содержимое буквальное, разметки внутри нет.
+    InlineCode    = 1u << 3,
+    // Картинка: текст спана — подпись (alt), href — путь, title — заголовок.
+    InlineImage   = 1u << 4,
+    // Строчный HTML-комментарий: текст — внутренность без скобок, буквальная,
+    // без вложенной разметки (как у кода). Канон: "<!-- т -->".
+    InlineComment = 1u << 5,
+};
+
+// Кусок строки с одним начертанием (бывший Span; имя — из словаря CommonMark).
+struct Inline {
+    // Байты ОТ НАЧАЛА ТЕКСТА СВОЕГО БЛОКА, а не от начала арены: текст блока
+    // при правке переезжает целиком, и спанам от этого меняться незачем.
+    Range   text;
+    Range   href;           // байты в chars; пусто → не ссылка, при картинке — путь
+    Range   title;          // байты в chars; пусто → нет; осмыслен только при картинке
+    uint8_t flags = 0;
+
+    bool bold() const    { return (flags & InlineBold) != 0; }
+    bool italic() const  { return (flags & InlineItalic) != 0; }
+    bool strike() const  { return (flags & InlineStrike) != 0; }
+    bool code() const    { return (flags & InlineCode) != 0; }
+    bool image() const   { return (flags & InlineImage) != 0; }
+    bool comment() const { return (flags & InlineComment) != 0; }
+
+    void set(InlineFlag flag, bool on) {
+        flags = on ? uint8_t(flags | flag) : uint8_t(flags & ~unsigned(flag));
+    }
 };
 
 struct Block {
     Kind   kind         = Kind::Paragraph;
     Marker marker       = Marker::Bullet;    // осмысленно только при Kind::ListItem
     bool   checked      = false;             // осмысленно только при Marker::Task
-    int    headingLevel = 0;                 // осмысленно только при Kind::Heading
+    // true → text это дословные байты, а kind, marker, info и разметка
+    // игнорируются. Отдельного буфера под дословное нет: арена одна.
+    bool   raw          = false;
+    int8_t headingLevel = 0;                 // осмысленно только при Kind::Heading
+    HtmlKind html       = HtmlKind::Comment; // осмысленно только при Kind::Html
     // На каком уровне списка стоит блок. -1 — снаружи списка.
     //
     // Ось общая, а не поле пункта: пункт всегда имеет уровень, но и другие
     // блоки могут стоять внутри пункта — второй абзац, код, цитата. Уровень и
     // говорит, внутри какого пункта они стоят.
-    int    level        = -1;
-    HtmlKind html       = HtmlKind::Comment; // осмысленно только при Kind::Html
-    std::string text;                        // чистый текст, без маркеров
-    std::string info;                        // осмысленно только при Kind::Code: "cpp", "sh", ...
-    std::vector<Span> inlines;
-    std::string rawSource;                   // непусто → выводить дословно, остальные поля игнорировать
+    int16_t level       = -1;
+
+    Range  text;      // байты в Document::chars: чистый текст либо дословный кусок
+    Range  info;      // байты в Document::chars; осмысленна только при Kind::Code
+    Range  inlines;   // ИНДЕКСЫ в Document::spans, не байты
 };
 
 // Нумерованный ли это пункт и задача ли это. Спрашивать про род тут нечего: род
-// у всех пунктов один, различает их маркер.
+// у всех пунктов один, различает их маркер. Арены эти вопросы не касаются.
 inline bool isOrdered(const Block& b) {
-    return b.kind == Kind::ListItem && b.marker == Marker::Ordered;
+    return !b.raw && b.kind == Kind::ListItem && b.marker == Marker::Ordered;
 }
 inline bool isTask(const Block& b) {
-    return b.kind == Kind::ListItem && b.marker == Marker::Task;
-}
-
-// Дословный кусок — законченный HTML-комментарий: начинается с "<!--" и
-// кончается строкой с "-->" на конце. HTML-блок этого типа по CommonMark
-// кончается ровно на первой строке с "-->", поэтому такой кусок — один целый
-// комментарий, и внутри него не прячется ничего незакрытого. Куски с "-->" в
-// середине (обычные HTML-блоки) сюда не попадают — и не должны: замерено, что
-// "<div>" с "-->" внутри жадно съедает соседний код при следующем чтении.
-inline bool isClosedHtmlComment(const Block& b) {
-    const std::string& raw = b.rawSource;
-    if (raw.size() < 8) return false;
-    return raw.compare(0, 4, "<!--") == 0 && raw.compare(raw.size() - 4, 4, "-->\n") == 0;
-}
-
-// Слипнутся ли эти два блока, если поставить их в файле подряд без пустой
-// строки. Проверено на ядре: абзац после абзаца читается одним абзацем, абзац
-// после пункта и после цитаты — их ленивым продолжением. Всё прочее — заголовок,
-// список, код, цитата после абзаца — прекрасно стоит вплотную.
-//
-// Отсюда инвариант IR: между такими блоками обязан стоять VSpace. Тогда
-// сериализатору не нужно вставлять пустую строку от себя, и одна пустая строка
-// в файле — это ровно один блок VSpace, в обе стороны.
-inline bool wouldMerge(const Block& previous, const Block& next) {
-    // Законченный HTML-комментарий обрывает себя сам: "-->" завершает блок, и
-    // любой сосед начинается заново — замерено на md4c для кода, абзаца,
-    // черты, таблицы и второго комментария. Он прозрачен для соседства, в
-    // отличие от прочего дословного. Kind::Html (комментарий, понятый
-    // моделью) прозрачен так же; снизу его защищает то, что HTML-блок второго
-    // типа прерывает абзац по спецификации.
-    if (isClosedHtmlComment(previous)) return false;
-    if (previous.rawSource.empty() && previous.kind == Kind::Html) return false;
-    // Два блока кода подряд: их заборы спарились бы не так, как надо, — канон
-    // ведь дописывает закрывающий забор незакрытому. Два дословных куска
-    // подряд — по той же причине непрозрачности.
-    const bool prevLiteral = !previous.rawSource.empty() || previous.kind == Kind::Code;
-    const bool nextLiteral = !next.rawSource.empty() || next.kind == Kind::Code;
-    if (prevLiteral && nextLiteral) return true;
-    // Разделитель ("___") стоит вплотную к любому соседу: подчёркивание не
-    // бывает setext-подчёркиванием — замерено для абзаца, пункта, цитаты,
-    // заголовка, комментария и второго разделителя. Ровно ради этого канон и
-    // выбрал "___", а не "---".
-    if (next.kind != Kind::Paragraph) return false;
-    return previous.kind == Kind::Paragraph || previous.kind == Kind::Quote ||
-           isList(previous.kind);
+    return !b.raw && b.kind == Kind::ListItem && b.marker == Marker::Task;
 }
 
 // Метаданные заметки — первый блок файла фиксированной формы:
@@ -164,6 +197,9 @@ inline bool wouldMerge(const Block& previous, const Block& next) {
 // Хранятся строками между маркером и закрывающей скобкой — дословно и в своём
 // порядке: неизвестные ключи обязаны пережить круг побайтово, это forward
 // compatibility. Известные ключи читаются и правятся поверх строк.
+//
+// В арену не переезжают: их единицы, они правятся поимённо, и строки здесь
+// удобнее смещений.
 struct NoteMeta {
     bool present = false;
     // Стояла ли после "-->" пустая строка. В каноне стоит всегда, но флаг
@@ -183,7 +219,75 @@ struct NoteMeta {
 
 struct Document {
     NoteMeta meta;
+    std::string chars;             // единая арена: текст, дословное, info, href, title
+    std::vector<Inline> spans;
     std::vector<Block> blocks;
+
+    // --- доступ ------------------------------------------------------------
+
+    std::string_view view(Range r) const {
+        return std::string_view(chars).substr(size_t(r.start), size_t(r.size() > 0 ? r.size() : 0));
+    }
+    std::string_view text(const Block& b) const { return view(b.text); }
+    std::string_view info(const Block& b) const { return view(b.info); }
+    // Текст спана меряется от текста блока — потому блок и обязателен.
+    std::string_view text(const Block& b, const Inline& s) const {
+        return text(b).substr(size_t(s.text.start), size_t(s.text.size() > 0 ? s.text.size() : 0));
+    }
+    std::string_view href(const Inline& s) const { return view(s.href); }
+    std::string_view title(const Inline& s) const { return view(s.title); }
+
+    std::span<const Inline> inlines(const Block& b) const {
+        return std::span<const Inline>(spans.data() + b.inlines.start, size_t(b.inlines.size()));
+    }
+    std::span<Inline> inlines(const Block& b) {
+        return std::span<Inline>(spans.data() + b.inlines.start, size_t(b.inlines.size()));
+    }
+
+    // --- построение --------------------------------------------------------
+
+    // Дописать байты в хвост арены. Возвращённый Range не протухает никогда.
+    Range append(std::string_view bytes);
+    // Дописать спаны в хвост spans. Возвращённый Range — индексы, а не байты.
+    Range appendInlines(std::span<const Inline> items);
+
+    // Новый блок с текстом: байты уезжают в арену, блок возвращается значением.
+    // Куда его класть — дело вызывающего (push_back, insert, присвоение).
+    Block newBlock(Kind kind, std::string_view text = {});
+    // Дословный кусок. Дословное всегда кончается переводом строки: без него
+    // IR последнего блока не совпал бы сам с собой после круга.
+    Block newRaw(std::string_view bytes);
+
+    // Блок из ЧУЖОГО документа. Его байты (текст, info, а у каждого спана —
+    // текст, href, title) копируются в хвост нашей арены, спаны — в хвост
+    // нашего spans, и возвращённый блок смотрит уже на них. Единственный
+    // законный способ перенести блок между документами: Range чужого документа
+    // в нашей арене указывает в произвольное место.
+    Block adopt(const Document& from, const Block& b);
+
+    // --- запросы, которым нужна арена --------------------------------------
+
+    // Дословный кусок — законченный HTML-комментарий: начинается с "<!--" и
+    // кончается строкой с "-->" на конце. HTML-блок этого типа по CommonMark
+    // кончается ровно на первой строке с "-->", поэтому такой кусок — один
+    // целый комментарий, и внутри него не прячется ничего незакрытого. Куски с
+    // "-->" в середине (обычные HTML-блоки) сюда не попадают — и не должны:
+    // замерено, что "<div>" с "-->" внутри жадно съедает соседний код при
+    // следующем чтении.
+    bool isClosedHtmlComment(const Block& b) const;
+
+    // Слипнутся ли эти два блока, если поставить их в файле подряд без пустой
+    // строки. Проверено на ядре: абзац после абзаца читается одним абзацем,
+    // абзац после пункта и после цитаты — их ленивым продолжением. Всё прочее —
+    // заголовок, список, код, цитата после абзаца — прекрасно стоит вплотную.
+    //
+    // Отсюда инвариант IR: между такими блоками обязан стоять VSpace. Тогда
+    // сериализатору не нужно вставлять пустую строку от себя, и одна пустая
+    // строка в файле — это ровно один блок VSpace, в обе стороны.
+    bool wouldMerge(const Block& previous, const Block& next) const;
+
+    // Оба координатных пространства целы. Только ассерты: в NDEBUG пусто.
+    void validate() const;
 };
 
 }  // namespace zametti

@@ -48,7 +48,7 @@ struct Break {
     int source;
 };
 
-QString toQt(const std::string& utf8, std::vector<Break>& breaks) {
+QString toQt(std::string_view utf8, std::vector<Break>& breaks) {
     QString s = QString::fromUtf8(utf8.data(), static_cast<qsizetype>(utf8.size()));
     for (qsizetype i = 0; i < s.size(); ++i) {
         int source = 0;
@@ -65,15 +65,15 @@ QString toQt(const std::string& utf8, std::vector<Break>& breaks) {
 // Литеральный текст по строкам. Один завершающий перевод строки снимается —
 // он не начинает новую строку, а завершает последнюю. Пустой текст даёт одну
 // пустую строку: блок в документе есть всегда, пустых блоков не бывает.
-std::vector<std::string> splitLiteralLines(const std::string& text) {
-    std::string body = text;
-    if (!body.empty() && body.back() == '\n') body.pop_back();
+std::vector<std::string_view> splitLiteralLines(std::string_view text) {
+    std::string_view body = text;
+    if (!body.empty() && body.back() == '\n') body.remove_suffix(1);
 
-    std::vector<std::string> lines;
+    std::vector<std::string_view> lines;
     size_t start = 0;
     for (;;) {
         const size_t end = body.find('\n', start);
-        if (end == std::string::npos) {
+        if (end == std::string_view::npos) {
             lines.push_back(body.substr(start));
             break;
         }
@@ -100,7 +100,7 @@ void markBreaks(QTextDocument& doc, int textStart, const std::vector<Break>& bre
 // смещений, поэтому каждый кусок текста пересчитывается ровно один раз.
 class OffsetMap {
 public:
-    explicit OffsetMap(const std::string& text) : text_(text) {}
+    explicit OffsetMap(std::string_view text) : text_(text) {}
 
     int at(size_t byteOffset) {
         if (byteOffset < byte_) {   // мусорный спан: назад не отматываем
@@ -116,7 +116,7 @@ public:
     }
 
 private:
-    const std::string& text_;
+    const std::string_view text_;
     size_t byte_ = 0;
     int utf16_ = 0;
 };
@@ -178,50 +178,51 @@ qreal codePoint(qreal surrounding, qreal zoom) {
     return appearance().codePointSize * zoom;
 }
 
-void applySpans(QTextDocument& doc, int textStart, const Block& b, qreal linePoint,
-                qreal zoom) {
-    OffsetMap map(b.text);
+void applySpans(QTextDocument& doc, int textStart, const Document& ir, const Block& b,
+                qreal linePoint, qreal zoom) {
+    OffsetMap map(ir.text(b));
     QTextCursor cursor(&doc);
-    for (const Span& s : b.inlines) {
-        if (s.length <= 0) continue;
-        const int from = map.at(static_cast<size_t>(s.offset));
-        const int to = map.at(static_cast<size_t>(s.offset) + static_cast<size_t>(s.length));
+    for (const Inline& s : ir.inlines(b)) {
+        if (s.text.size() <= 0) continue;
+        const int from = map.at(static_cast<size_t>(s.text.start));
+        const int to = map.at(static_cast<size_t>(s.text.end));
         if (to <= from) continue;
 
         // Стиль записывается свойством, а не выводится обратно из оформления:
         // заголовок набран жирным целиком, и «жирный» внутри него по весу
         // шрифта было бы не отличить от самого заголовка.
         int style = 0;
-        if (s.bold) style |= SpanBold;
-        if (s.italic) style |= SpanItalic;
-        if (s.strike) style |= SpanStrike;
-        if (s.code) style |= SpanCode;
-        if (s.image) style |= SpanImage;
-        if (s.comment) style |= SpanComment;
+        if (s.bold()) style |= SpanBold;
+        if (s.italic()) style |= SpanItalic;
+        if (s.strike()) style |= SpanStrike;
+        if (s.code()) style |= SpanCode;
+        if (s.image()) style |= SpanImage;
+        if (s.comment()) style |= SpanComment;
 
         QTextCharFormat fmt;
         if (style != 0) fmt.setProperty(SpanStyleProperty, style);
-        if (s.bold) fmt.setFontWeight(QFont::Bold);
-        if (s.italic) fmt.setFontItalic(true);
-        if (s.strike) fmt.setFontStrikeOut(true);
-        if (s.code) {
+        if (s.bold()) fmt.setFontWeight(QFont::Bold);
+        if (s.italic()) fmt.setFontItalic(true);
+        if (s.strike()) fmt.setFontStrikeOut(true);
+        if (s.code()) {
             fmt.setBackground(appearance().codeBackground);
             fmt.setFontPointSize(codePoint(linePoint, zoom));
             if (!appearance().codeFamily.isEmpty())
                 fmt.setFontFamilies({QString(appearance().codeFamily)});
         }
         if (!s.href.empty()) {
+            const std::string_view href = ir.href(s);
             fmt.setAnchor(true);
-            fmt.setAnchorHref(
-                QString::fromUtf8(s.href.data(), static_cast<qsizetype>(s.href.size())));
+            fmt.setAnchorHref(QString::fromUtf8(href.data(), static_cast<qsizetype>(href.size())));
             fmt.setForeground(appearance().linkColor);
             fmt.setFontUnderline(true);
         }
-        if (s.comment) fmt.setForeground(appearance().rawColor);
-        if (!s.title.empty())
+        if (s.comment()) fmt.setForeground(appearance().rawColor);
+        if (!s.title.empty()) {
+            const std::string_view title = ir.title(s);
             fmt.setProperty(SpanTitleProperty,
-                            QString::fromUtf8(s.title.data(),
-                                              static_cast<qsizetype>(s.title.size())));
+                            QString::fromUtf8(title.data(), static_cast<qsizetype>(title.size())));
+        }
         cursor.setPosition(textStart + from);
         cursor.setPosition(textStart + to, QTextCursor::KeepAnchor);
         cursor.mergeCharFormat(fmt);
@@ -299,7 +300,7 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
     bool prevVSpace = false;
 
     for (const Block& b : doc.blocks) {
-        const bool raw = !b.rawSource.empty();
+        const bool raw = b.raw;
         const bool list = !raw && isList(b.kind);
 
         QTextBlockFormat blockFmt;
@@ -344,7 +345,7 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
         // Qt переразмечает целиком тот блок, в который пишут, и длинный блок
         // кода делал набор внутри себя ощутимо медленным.
         const bool literal = raw || b.kind == Kind::Code;
-        const std::string& source = raw ? b.rawSource : b.text;
+        const std::string_view source = doc.text(b);
         // Один завершающий перевод строки снимаем: иначе внизу висела бы лишняя
         // пустая строка. По виду документа его не восстановить — пустой блок
         // кода и блок из одной пустой строки выглядят одинаково.
@@ -367,9 +368,9 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
                     // Отступ маленький: подложка идёт почти во всю колонку, как
                     // в остальных программах для заметок.
                     blockFmt.setLeftMargin(appearance().codeIndent * charUnit);
-                    blockFmt.setProperty(InfoProperty,
-                                         QString::fromUtf8(b.info.data(),
-                                                           qsizetype(b.info.size())));
+                    blockFmt.setProperty(
+                        InfoProperty,
+                        QString::fromUtf8(doc.info(b).data(), qsizetype(doc.info(b).size())));
                     linePoint = codePoint(basePoint, zoom);
                     charFmt.setFontPointSize(linePoint);
                     if (!appearance().codeFamily.isEmpty())
@@ -403,7 +404,7 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
                     charFmt.setForeground(appearance().rawColor);
                     break;
             }
-            if (b.kind != Kind::Code) text = toQt(b.text, breaks);
+            if (b.kind != Kind::Code) text = toQt(doc.text(b), breaks);
         }
 
         blockFmt.setTopMargin(first ? 0 : topMargin * lineUnit);
@@ -423,8 +424,8 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
         // Один QTextBlock у обычного блока и по одному на строку у литерального.
         // Все, кроме первого, помечены продолжением: без этого разрезанный блок
         // кода из двух строк не отличить от двух блоков кода подряд.
-        const std::vector<std::string> lines =
-            literal ? splitLiteralLines(source) : std::vector<std::string>{};
+        const std::vector<std::string_view> lines =
+            literal ? splitLiteralLines(source) : std::vector<std::string_view>{};
         const size_t count = literal ? lines.size() : 1;
 
         for (size_t line = 0; line < count; ++line) {
@@ -459,7 +460,7 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
             cursor.insertText(text, charFmt);
             markBreaks(target, textStart, breaks);
             if (!literal && !b.inlines.empty())
-                applySpans(target, textStart, b, linePoint, zoom);
+                applySpans(target, textStart, doc, b, linePoint, zoom);
             enlargeFallbackGlyphs(target, textStart, text, linePoint, primaryFont);
         }
         prevVSpace = vspace;

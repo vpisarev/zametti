@@ -16,20 +16,25 @@ std::string toUtf8(const QString& text) {
     return std::string(utf8.constData(), static_cast<size_t>(utf8.size()));
 }
 
-bool sameStyle(const Span& a, const Span& b) {
-    return a.bold == b.bold && a.italic == b.italic && a.strike == b.strike &&
-           a.code == b.code && a.image == b.image && a.comment == b.comment &&
-           a.href == b.href && a.title == b.title;
+bool sameStyle(const Document& doc, const Inline& a, const Inline& b) {
+    return a.flags == b.flags && doc.view(a.href) == doc.view(b.href) &&
+           doc.view(a.title) == doc.view(b.title);
 }
 
 // Блок читается одним проходом по кускам: и текст, и спаны. Смещение копится в
 // байтах — куски идут подряд и покрывают блок целиком, так что складывать длины
-// достаточно, пересчитывать позиции не надо.
+// достаточно, пересчитывать позиции не надо. Смещение спана относительное, от
+// начала текста блока, — ровно то, что здесь и копится.
+//
+// Текст блока собирается в буфере text и уедет в арену одним куском при
+// закрытии блока; спаны пишутся сразу в doc.spans, спаны текущего блока —
+// хвост от spanStart.
 //
 // Разделитель строк превращается обратно в исходный знак только там, где стоит
 // пометка BreakSourceProperty. Без неё это чужой U+2028 из самого текста
 // заметки, и трогать его нельзя.
-void readBlock(const QTextBlock& block, Block& out, bool withSpans) {
+void readBlock(const QTextBlock& block, Document& doc, std::string& text, int32_t spanStart,
+               bool withSpans) {
     for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
         const QTextFragment fragment = it.fragment();
         if (!fragment.isValid()) continue;
@@ -50,54 +55,54 @@ void readBlock(const QTextBlock& block, Block& out, bool withSpans) {
                 break;   // чужой U+2028 из самого текста — трогать нельзя
         }
 
-        const std::string text = toUtf8(piece);
-        if (text.empty()) continue;
+        const std::string bytes = toUtf8(piece);
+        if (bytes.empty()) continue;
 
-        const int offset = static_cast<int>(out.text.size());
-        out.text += text;
+        const int32_t offset = static_cast<int32_t>(text.size());
+        text += bytes;
         if (!withSpans) continue;
 
         const int style = format.intProperty(SpanStyleProperty);
         const QString href = format.anchorHref();
         if (style == 0 && href.isEmpty()) continue;
 
-        Span span;
-        span.offset = offset;
-        span.length = static_cast<int>(text.size());
-        span.bold = (style & SpanBold) != 0;
-        span.italic = (style & SpanItalic) != 0;
-        span.strike = (style & SpanStrike) != 0;
-        span.code = (style & SpanCode) != 0;
-        span.href = toUtf8(href);
+        Inline span;
+        span.text = {offset, offset + static_cast<int32_t>(bytes.size())};
+        span.set(InlineBold, (style & SpanBold) != 0);
+        span.set(InlineItalic, (style & SpanItalic) != 0);
+        span.set(InlineStrike, (style & SpanStrike) != 0);
+        span.set(InlineCode, (style & SpanCode) != 0);
+        span.href = doc.append(toUtf8(href));
 
         // Подпись картинки плоская по построению (см. разбор): правки могли
         // домешать в формат другие биты — они здесь гасятся, иначе IR выразит
         // то, что файл выразить не может. Картинка без пути — не картинка.
-        span.image = (style & SpanImage) != 0 && !span.href.empty();
-        if (span.image) {
-            span.bold = span.italic = span.strike = span.code = false;
-            span.title = toUtf8(format.property(SpanTitleProperty).toString());
+        span.set(InlineImage, (style & SpanImage) != 0 && !span.href.empty());
+        if (span.image()) {
+            span.flags = InlineImage;
+            span.title = doc.append(toUtf8(format.property(SpanTitleProperty).toString()));
         }
 
         // Строчный комментарий плоский так же; внутренность с "-->" файл
         // выразить не может — такой спан перестаёт быть комментарием и
         // становится видимым текстом (сериализатор его экранирует).
-        span.comment = (style & SpanComment) != 0 && !span.image &&
-                       text.find("-->") == std::string::npos;
-        if (span.comment) {
-            span.bold = span.italic = span.strike = span.code = false;
-            span.href.clear();
-            span.title.clear();
+        span.set(InlineComment, (style & SpanComment) != 0 && !span.image() &&
+                                    bytes.find("-->") == std::string::npos);
+        if (span.comment()) {
+            span.flags = InlineComment;
+            span.href = Range{};
+            span.title = Range{};
         }
 
         // Куски дробятся и без смены стиля: мягкий перенос помечен отдельно,
         // эмодзи набраны другим кеглем. Такие соседи склеиваются, иначе IR
         // разошёлся бы с разбором файла, где спан один.
-        if (!out.inlines.empty() && sameStyle(out.inlines.back(), span) &&
-            out.inlines.back().offset + out.inlines.back().length == span.offset) {
-            out.inlines.back().length += span.length;
+        const bool haveOwn = doc.spans.size() > static_cast<size_t>(spanStart);
+        if (haveOwn && sameStyle(doc, doc.spans.back(), span) &&
+            doc.spans.back().text.end == span.text.start) {
+            doc.spans.back().text.end = span.text.end;
         } else {
-            out.inlines.push_back(std::move(span));
+            doc.spans.push_back(span);
         }
     }
 }
@@ -118,34 +123,42 @@ Document readDocument(const QTextDocument& doc) {
     // Метаданных в QTextDocument нет и не бывает — редактор их не видит.
     // Прицепить их к прочитанному — забота сохранения (см. document_saver).
     Document result;
-    std::vector<Block>& out = result.blocks;
 
     // Литеральные блоки лежат в документе построчно, по QTextBlock на строку, и
     // склеиваются здесь. Признак продолжения обязателен: без него разрезанный
-    // блок кода из двух строк не отличить от двух блоков кода подряд, а это
-    // разный markdown.
+    // блок кода из двух строк не отличить от двух блоков кода подряд.
     Block pending;
+    std::string text;
+    int32_t spanStart = 0;
     bool hasPending = false;
     bool pendingRaw = false;
 
     auto flush = [&] {
         if (!hasPending) return;
+        // У дословного куска рода нет: он остаётся Paragraph, а текст блока и
+        // есть его дословные байты.
         if (pendingRaw) {
-            pending.rawSource = std::move(pending.text);
-            pending.text.clear();
+            pending.raw = true;
+            pending.kind = Kind::Paragraph;
+            pending.info = Range{};
         }
         // Комментарий держит свой инвариант на границе документ→IR: разметки
         // внутри не бывает (набранные поверх биты — мусор правок), а
         // внутренность с "-->" файл выразить не может — такой блок перестаёт
         // быть комментарием и становится видимым текстом.
-        if (pending.rawSource.empty() && pending.kind == Kind::Html) {
-            if (pending.text.find("-->") != std::string::npos)
+        if (!pending.raw && pending.kind == Kind::Html) {
+            if (text.find("-->") != std::string::npos)
                 pending.kind = Kind::Paragraph;
             else
-                pending.inlines.clear();
+                result.spans.resize(static_cast<size_t>(spanStart));
         }
-        out.push_back(std::move(pending));
+        pending.text = result.append(text);
+        pending.inlines = {spanStart, static_cast<int32_t>(result.spans.size())};
+        result.blocks.push_back(pending);
+
         pending = Block{};
+        text.clear();
+        spanStart = static_cast<int32_t>(result.spans.size());
         hasPending = false;
     };
 
@@ -156,33 +169,35 @@ Document readDocument(const QTextDocument& doc) {
         const bool raw = isRawBlock(block);
 
         if (isContinuationBlock(block) && hasPending) {
-            pending.text.push_back('\n');
-            readBlock(block, pending, false);
+            text.push_back('\n');
+            readBlock(block, result, text, spanStart, false);
         } else {
             flush();
             hasPending = true;
             pendingRaw = raw;
             if (!raw) {
                 pending.kind = kindOf(block);
-                if (pending.kind == Kind::Heading) pending.headingLevel = format.headingLevel();
+                if (pending.kind == Kind::Heading)
+                    pending.headingLevel = static_cast<int8_t>(format.headingLevel());
                 if (isList(pending.kind)) {
                     pending.marker = markerOf(block).marker;
                     pending.checked = markerOf(block).checked;
                 }
-                pending.level = levelOf(block);
+                pending.level = static_cast<int16_t>(levelOf(block));
                 if (pending.kind == Kind::Code)
-                    pending.info = toUtf8(format.stringProperty(InfoProperty));
+                    pending.info = result.append(toUtf8(format.stringProperty(InfoProperty)));
             }
             // Разметку внутри блока кода не читаем: содержимое там буквальное,
             // и сборщик её всё равно не поставит — прочитанное разошлось бы с
             // собранным, а на этом стоит инвариант A.
-            readBlock(block, pending, !raw && pending.kind != Kind::Code);
+            readBlock(block, result, text, spanStart, !raw && pending.kind != Kind::Code);
         }
 
         // Признак стоит на последней строке блока — там, где перевод и был.
-        if (format.boolProperty(TrailingNewlineProperty)) pending.text.push_back('\n');
+        if (format.boolProperty(TrailingNewlineProperty)) text.push_back('\n');
     }
     flush();
+    result.validate();
     return result;
 }
 

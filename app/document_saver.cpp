@@ -56,7 +56,7 @@ bool isSpace(char c) { return c == ' ' || c == '\t'; }
 // Начинается ли в этом месте пробельный знак и сколько он занимает байт. Ноль —
 // не пробельный. Неразрывный пробел занимает два байта, и рубить его пополам
 // нельзя.
-int whitespaceAt(const std::string& text, size_t at) {
+int whitespaceAt(std::string_view text, size_t at) {
     if (at >= text.size()) return 0;
     const unsigned char c = static_cast<unsigned char>(text[at]);
     if (c == ' ' || c == '\t' || c == '\n' || c == '\r') return 1;
@@ -66,7 +66,7 @@ int whitespaceAt(const std::string& text, size_t at) {
     return 0;
 }
 
-int whitespaceBefore(const std::string& text, size_t at) {
+int whitespaceBefore(std::string_view text, size_t at) {
     if (at == 0) return 0;
     const unsigned char c = static_cast<unsigned char>(text[at - 1]);
     if (c == ' ' || c == '\t' || c == '\n' || c == '\r') return 1;
@@ -89,20 +89,17 @@ bool wordByte(unsigned char c) {
 //
 // Поэтому кусок раздаётся наружу до границ слова. Обрезать его внутрь было бы
 // хуже: выделив половину слова, человек остался бы вовсе без зачёркивания.
-Block withStrikeOnWholeWords(Block block) {
-    if (!block.rawSource.empty() || block.kind == Kind::Code) return block;
+Block withStrikeOnWholeWords(Document& doc, Block block) {
+    if (block.raw || block.kind == Kind::Code) return block;
 
-    for (Span& span : block.inlines) {
-        if (!span.strike) continue;
-        size_t from = size_t(qBound(0, span.offset, int(block.text.size())));
-        size_t to = size_t(qBound(int(from), span.offset + span.length,
-                                  int(block.text.size())));
-        while (from > 0 && wordByte(static_cast<unsigned char>(block.text[from - 1]))) --from;
-        while (to < block.text.size() &&
-               wordByte(static_cast<unsigned char>(block.text[to])))
-            ++to;
-        span.offset = int(from);
-        span.length = int(to - from);
+    const std::string_view text = doc.text(block);
+    for (Inline& span : doc.inlines(block)) {
+        if (!span.strike()) continue;
+        size_t from = size_t(qBound(0, int(span.text.start), int(text.size())));
+        size_t to = size_t(qBound(int(from), int(span.text.end), int(text.size())));
+        while (from > 0 && wordByte(static_cast<unsigned char>(text[from - 1]))) --from;
+        while (to < text.size() && wordByte(static_cast<unsigned char>(text[to]))) ++to;
+        span.text = {int32_t(from), int32_t(to)};
     }
     return block;
 }
@@ -120,55 +117,74 @@ Block withStrikeOnWholeWords(Block block) {
 // самим строкам, без ведущих пробелов.
 // Делят ли эти два спана хоть одно начертание. Если делят, то на их стыке
 // разметка не кончается — она продолжается дальше, и стык внутри неё.
-bool sharesStyle(const Span& a, const Span& b) {
-    return (a.bold && b.bold) || (a.italic && b.italic) || (a.strike && b.strike) ||
-           (a.code && b.code) || (!a.href.empty() && a.href == b.href);
+bool sharesStyle(const Document& doc, const Inline& a, const Inline& b) {
+    return (a.bold() && b.bold()) || (a.italic() && b.italic()) ||
+           (a.strike() && b.strike()) || (a.code() && b.code()) ||
+           (!a.href.empty() && doc.view(a.href) == doc.view(b.href));
 }
 
-Block withTrimmedSpans(Block block) {
-    if (!block.rawSource.empty() || block.kind == Kind::Code) return block;
+// Спаны блока после правки смещений: выбросить схлопнувшиеся, оставшиеся
+// подтянуть к началу диапазона. Диапазон обязан оставаться сплошным, поэтому
+// не erase, а уплотнение на месте; освободившиеся ячейки остаются в spans
+// ничьими — для транзиентного IR это норм.
+void compactSpans(Document& doc, Block& block) {
+    const std::span<Inline> spans = doc.inlines(block);
+    size_t write = 0;
+    for (size_t i = 0; i < spans.size(); ++i)
+        if (spans[i].text.size() > 0) spans[write++] = spans[i];
+    block.inlines.end = block.inlines.start + int32_t(write);
+}
 
-    for (size_t i = 0; i < block.inlines.size(); ++i) {
-        Span& span = block.inlines[i];
+// Текст блока укоротили — спаны, вылезшие за его конец, выбрасываем. Вывод от
+// этого не меняется: сериализатор такие спаны и так пропускал, а инвариант
+// «спан внутри текста своего блока» остаётся целым.
+void dropSpansPastText(Document& doc, Block& block) {
+    const int32_t size = block.text.size();
+    for (Inline& span : doc.inlines(block))
+        if (span.text.end > size) span.text = Range{};
+    compactSpans(doc, block);
+}
+
+Block withTrimmedSpans(Document& doc, Block block) {
+    if (block.raw || block.kind == Kind::Code) return block;
+
+    const std::string_view text = doc.text(block);
+    const std::span<Inline> spans = doc.inlines(block);
+    for (size_t i = 0; i < spans.size(); ++i) {
+        Inline& span = spans[i];
         // Пробелов на краю не терпит только начертание: звёздочка или тильда
         // перед пробелом кусок не открывает. Встроенный код и ссылка терпят —
         // проверено на ядре, `[x] ` и [ так ](/url) проходят круг дословно.
         //
         // У куска кода край всегда обратная кавычка, а не пробел, поэтому
         // начертание вокруг него тоже цело.
-        if (span.code || !(span.bold || span.italic || span.strike)) continue;
+        if (span.code() || !(span.bold() || span.italic() || span.strike())) continue;
         // Край, к которому вплотную примыкает спан того же начертания, краем
         // разметки не является: жирный кусок со встроенным кодом внутри лежит у
         // нас двумя спанами, и пробел между ними — середина жирного, а не его
         // конец. Поджав такой край, мы разрывали жирный надвое, и открытие файла
         // переписывало его без единой правки.
-        const bool joinedLeft =
-            i > 0 && block.inlines[i - 1].offset + block.inlines[i - 1].length == span.offset &&
-            sharesStyle(block.inlines[i - 1], span);
-        const bool joinedRight =
-            i + 1 < block.inlines.size() &&
-            span.offset + span.length == block.inlines[i + 1].offset &&
-            sharesStyle(span, block.inlines[i + 1]);
+        const bool joinedLeft = i > 0 && spans[i - 1].text.end == span.text.start &&
+                                sharesStyle(doc, spans[i - 1], span);
+        const bool joinedRight = i + 1 < spans.size() &&
+                                 span.text.end == spans[i + 1].text.start &&
+                                 sharesStyle(doc, span, spans[i + 1]);
 
-        size_t from = size_t(qBound(0, span.offset, int(block.text.size())));
-        size_t to = size_t(qBound(int(from), span.offset + span.length,
-                                  int(block.text.size())));
+        size_t from = size_t(qBound(0, int(span.text.start), int(text.size())));
+        size_t to = size_t(qBound(int(from), int(span.text.end), int(text.size())));
         while (!joinedLeft && from < to) {
-            const int width = whitespaceAt(block.text, from);
+            const int width = whitespaceAt(text, from);
             if (width == 0) break;
             from += size_t(width);
         }
         while (!joinedRight && to > from) {
-            const int width = whitespaceBefore(block.text, to);
+            const int width = whitespaceBefore(text, to);
             if (width == 0) break;
             to -= size_t(width);
         }
-        span.offset = int(from);
-        span.length = int(to - from);
+        span.text = {int32_t(from), int32_t(to)};
     }
-    block.inlines.erase(std::remove_if(block.inlines.begin(), block.inlines.end(),
-                                       [](const Span& s) { return s.length <= 0; }),
-                        block.inlines.end());
+    compactSpans(doc, block);
     return block;
 }
 
@@ -176,10 +192,16 @@ Block withTrimmedSpans(Block block) {
 // разбор возвращает заголовок и отдельный абзац за ним. Заголовок по природе
 // однострочен, поэтому перенос становится пробелом — байт в байт, и смещения
 // разметки не съезжают.
-Block withHeadingOnOneLine(Block block) {
-    if (!block.rawSource.empty() || block.kind != Kind::Heading) return block;
-    for (char& c : block.text)
+Block withHeadingOnOneLine(Document& doc, Block block) {
+    if (block.raw || block.kind != Kind::Heading) return block;
+    const std::string_view text = doc.text(block);
+    if (text.find('\n') == std::string_view::npos) return block;
+    // Арена растёт только в хвост: текст не правится на месте, а дописывается
+    // заново. Длина та же, поэтому смещения спанов не меняются.
+    std::string flat(text);
+    for (char& c : flat)
         if (c == '\n') c = ' ';
+    block.text = doc.append(flat);
     return block;
 }
 
@@ -187,31 +209,33 @@ Block withHeadingOnOneLine(Block block) {
 // превращает перенос в пробел, и текст расходится с документом. Дотянуть Ctrl+E
 // до соседней строки человек может запросто, поэтому такой кусок режется
 // построчно — по куску кода на строку.
-Block withCodeSpansPerLine(Block block) {
-    if (!block.rawSource.empty() || block.kind == Kind::Code) return block;
+Block withCodeSpansPerLine(Document& doc, Block block) {
+    if (block.raw || block.kind == Kind::Code) return block;
 
-    std::vector<Span> pieces;
-    for (const Span& span : block.inlines) {
-        if (!span.code) {
-            pieces.push_back(span);
+    const size_t textSize = doc.text(block).size();
+    const int32_t base = int32_t(doc.spans.size());
+    // Читаем спаны по индексу и копией: doc.spans тут же растёт, и вид на него
+    // протух бы посреди обхода.
+    for (int32_t at = block.inlines.start; at < block.inlines.end; ++at) {
+        const Inline span = doc.spans[size_t(at)];
+        if (!span.code()) {
+            doc.spans.push_back(span);
             continue;
         }
-        const size_t end = size_t(qBound(0, span.offset + span.length,
-                                         int(block.text.size())));
-        size_t from = size_t(qBound(0, span.offset, int(end)));
+        const size_t end = size_t(qBound(0, int(span.text.end), int(textSize)));
+        size_t from = size_t(qBound(0, int(span.text.start), int(end)));
         while (from < end) {
-            const size_t found = block.text.find('\n', from);
-            const size_t stop = (found == std::string::npos || found > end) ? end : found;
+            const size_t found = doc.text(block).find('\n', from);
+            const size_t stop = (found == std::string_view::npos || found > end) ? end : found;
             if (stop > from) {
-                Span piece = span;
-                piece.offset = int(from);
-                piece.length = int(stop - from);
-                pieces.push_back(piece);
+                Inline piece = span;
+                piece.text = {int32_t(from), int32_t(stop)};
+                doc.spans.push_back(piece);
             }
             from = stop >= end ? end : stop + 1;
         }
     }
-    block.inlines = std::move(pieces);
+    block.inlines = {base, int32_t(doc.spans.size())};
     return block;
 }
 
@@ -225,12 +249,15 @@ bool sameSkeleton(const Document& a, const Document& b) {
     const std::vector<Block>& y = b.blocks;
     if (x.size() != y.size()) return false;
     for (size_t i = 0; i < x.size(); ++i) {
-        if (x[i].rawSource != y[i].rawSource) return false;
-        if (!x[i].rawSource.empty()) continue;
+        if (x[i].raw != y[i].raw) return false;
+        if (x[i].raw) {
+            if (a.text(x[i]) != b.text(y[i])) return false;
+            continue;
+        }
         if (x[i].kind != y[i].kind || x[i].level != y[i].level ||
             x[i].marker != y[i].marker || x[i].checked != y[i].checked ||
-            x[i].headingLevel != y[i].headingLevel || x[i].info != y[i].info ||
-            x[i].text != y[i].text)
+            x[i].headingLevel != y[i].headingLevel ||
+            a.info(x[i]) != b.info(y[i]) || a.text(x[i]) != b.text(y[i]))
             return false;
     }
     return true;
@@ -252,18 +279,25 @@ const char* const kNbsp = "\xC2\xA0";
 // пустой строке — не отступ, и оставлять от него неразрывные знаки незачем.
 //
 // Литеральные блоки не трогаем: в коде и дословных кусках пробел и так значим.
-Block withEdgesNormalised(Block block) {
+Block withEdgesNormalised(Document& doc, Block block) {
     // В коде пробел значим — его копируют и вставляют в терминал, и хитрым
     // знакам там взяться неоткуда. Трогаем только завершающий перевод строки:
     // забор всё равно ставится с новой строки, и без него разбор вернул бы
     // текст с переводом, а самопроверка честно не дала бы записать.
-    if (block.kind == Kind::Code && block.rawSource.empty()) {
-        if (!block.text.empty() && block.text.back() != '\n') block.text.push_back('\n');
+    if (block.kind == Kind::Code && !block.raw) {
+        const std::string_view code = doc.text(block);
+        if (!code.empty() && code.back() != '\n') {
+            // Дописать байт к чужому куску арены нельзя — он там не последний.
+            // Значит, текст переезжает в хвост целиком, с переводом на конце.
+            std::string fixed(code);
+            fixed.push_back('\n');
+            block.text = doc.append(fixed);
+        }
         return block;
     }
-    if (!block.rawSource.empty()) return block;
+    if (block.raw) return block;
 
-    const std::string& text = block.text;
+    const std::string_view text = doc.text(block);
     std::vector<int> map(text.size() + 1, 0);
     std::string out;
 
@@ -320,16 +354,13 @@ Block withEdgesNormalised(Block block) {
         line = end + 1;
     }
 
-    for (Span& span : block.inlines) {
-        const size_t from = size_t(qBound(0, span.offset, int(text.size())));
-        const size_t to = size_t(qBound(0, span.offset + span.length, int(text.size())));
-        span.offset = map[from];
-        span.length = map[to] - map[from];
+    for (Inline& span : doc.inlines(block)) {
+        const size_t from = size_t(qBound(0, int(span.text.start), int(text.size())));
+        const size_t to = size_t(qBound(0, int(span.text.end), int(text.size())));
+        span.text = {map[from], map[to]};
     }
-    block.inlines.erase(std::remove_if(block.inlines.begin(), block.inlines.end(),
-                                       [](const Span& s) { return s.length <= 0; }),
-                        block.inlines.end());
-    block.text = std::move(out);
+    compactSpans(doc, block);
+    block.text = doc.append(out);
     return block;
 }
 
@@ -342,31 +373,38 @@ Block withEdgesNormalised(Block block) {
 // Поэтому правило простое: текст свят, разметка — по возможности. Если блок с
 // разметкой обратно не читается, разметка снимается, а текст остаётся до знака.
 // Потерять начертание неприятно; потерять слово нельзя.
-Block withMarkupThatSurvives(Block block) {
-    if (!block.rawSource.empty() || block.inlines.empty()) return block;
+Block withMarkupThatSurvives(Document& doc, Block block) {
+    if (block.raw || block.inlines.empty()) return block;
 
     // Уровень вложенности сбрасываем: вопрос здесь только про разметку внутри
     // строки, а сериализатор в одиночном блоке ждёт, что уровень не прыгает
     // через один, и на вложенном пункте падал бы проверкой.
-    Block probe = block;
-    probe.level = isList(probe.kind) ? 0 : -1;
+    //
+    // Блок уезжает в чужой документ — значит, только через adopt: Range нашей
+    // арены в чужой указывал бы в произвольное место.
     Document one;
-    one.blocks.push_back(std::move(probe));
+    Block probe = one.adopt(doc, block);
+    probe.level = isList(probe.kind) ? 0 : -1;
+    one.blocks.push_back(probe);
     const Document back = parse(serialize(one));
-    if (back.blocks.size() == 1 && back.blocks[0].rawSource.empty() &&
-        back.blocks[0].text == block.text)
+    if (back.blocks.size() == 1 && !back.blocks[0].raw &&
+        back.text(back.blocks[0]) == doc.text(block))
         return block;
 
-    block.inlines.clear();
+    block.inlines = Range{};
     return block;
 }
 
 // Дословный кусок выводится как есть, и завершающий перевод строки для него —
 // часть текста. Правка внутри такого блока его снимает, и разбор возвращает
 // текст с переводом, которого в документе нет.
-Block withRawNewline(Block block) {
-    if (block.rawSource.empty()) return block;
-    if (block.rawSource.back() != '\n') block.rawSource.push_back('\n');
+Block withRawNewline(Document& doc, Block block) {
+    if (!block.raw || block.text.empty()) return block;
+    const std::string_view raw = doc.text(block);
+    if (raw.back() == '\n') return block;
+    std::string fixed(raw);
+    fixed.push_back('\n');
+    block.text = doc.append(fixed);
     return block;
 }
 
@@ -386,9 +424,8 @@ std::vector<Block> withoutEmptyNested(std::vector<Block> doc) {
     out.reserve(doc.size());
     for (size_t i = 0; i < doc.size(); ++i) {
         const Block& block = doc[i];
-        const bool drop = block.rawSource.empty() && block.text.empty() &&
-                          block.level > 0 && block.kind == Kind::ListItem &&
-                          block.marker != Marker::Task;
+        const bool drop = !block.raw && block.text.empty() && block.level > 0 &&
+                          block.kind == Kind::ListItem && block.marker != Marker::Task;
         if (!drop) {
             out.push_back(block);
             continue;
@@ -396,8 +433,7 @@ std::vector<Block> withoutEmptyNested(std::vector<Block> doc) {
         // Потомки — всё, что глубже, до первого блока своего уровня или выше.
         for (size_t k = i + 1; k < doc.size(); ++k) {
             Block& next = doc[k];
-            if (!next.rawSource.empty() || !isList(next.kind) || next.level <= block.level)
-                break;
+            if (next.raw || !isList(next.kind) || next.level <= block.level) break;
             --next.level;
         }
     }
@@ -412,65 +448,72 @@ std::vector<Block> withoutEmptyNested(std::vector<Block> doc) {
 // Только абзац. Пункт списка так резать нельзя — у второй половины появился бы
 // маркер, которого никто не ставил; цитату тоже — две цитаты через пустую
 // строку это уже две цитаты. Там пустая строка держится неразрывным пробелом.
-void appendSplitOnBlankLines(std::vector<Block>& out, Block block) {
-    if (!block.rawSource.empty()) {
+void appendSplitOnBlankLines(std::vector<Block>& out, Document& doc, Block block) {
+    if (block.raw) {
         // Дословный кусок, начинающийся с пустой строки: сама она куском не
         // является — разбор вернул бы её отдельной пустой строкой перед ним.
         size_t at = 0;
-        while (at < block.rawSource.size() && block.rawSource[at] == '\n') {
+        const std::string_view raw = doc.text(block);
+        while (at < raw.size() && raw[at] == '\n') {
             Block gap;
             gap.kind = Kind::VSpace;
-            out.push_back(std::move(gap));
+            out.push_back(gap);
             ++at;
         }
-        if (at > 0) block.rawSource.erase(0, at);
-        if (!block.rawSource.empty()) out.push_back(std::move(block));
+        // Отрезать начало — это подвинуть границу Range, копировать нечего.
+        block.text.start += int32_t(at);
+        if (!block.text.empty()) out.push_back(block);
         return;
     }
     if (block.kind != Kind::Paragraph) {
-        out.push_back(std::move(block));
+        out.push_back(block);
         return;
     }
 
+    const int32_t base = block.text.start;
+    const size_t textSize = doc.text(block).size();
     size_t at = 0;
-    size_t pieceFrom = std::string::npos;
+    size_t pieceFrom = std::string_view::npos;
     auto flush = [&](size_t to) {
-        if (pieceFrom == std::string::npos) return;
+        if (pieceFrom == std::string_view::npos) return;
         Block piece;
         piece.kind = Kind::Paragraph;
         // Уровень переносим: куски остаются там же, где стоял сам абзац, — то
         // есть внутри своего пункта, если он там стоял.
         piece.level = block.level;
-        piece.text = block.text.substr(pieceFrom, to - pieceFrom);
-        for (const Span& span : block.inlines) {
-            const size_t from = std::max(size_t(span.offset), pieceFrom);
-            const size_t stop = std::min(size_t(span.offset + span.length), to);
+        // Кусок абзаца — подотрезок его же байтов: копировать текст не нужно.
+        piece.text = {base + int32_t(pieceFrom), base + int32_t(to)};
+        const int32_t spanBase = int32_t(doc.spans.size());
+        for (int32_t i = block.inlines.start; i < block.inlines.end; ++i) {
+            const Inline span = doc.spans[size_t(i)];
+            const size_t from = std::max(size_t(span.text.start), pieceFrom);
+            const size_t stop = std::min(size_t(span.text.end), to);
             if (stop <= from) continue;
-            Span moved = span;
-            moved.offset = int(from - pieceFrom);
-            moved.length = int(stop - from);
-            piece.inlines.push_back(moved);
+            Inline moved = span;
+            moved.text = {int32_t(from - pieceFrom), int32_t(stop - pieceFrom)};
+            doc.spans.push_back(moved);
         }
-        out.push_back(std::move(piece));
-        pieceFrom = std::string::npos;
+        piece.inlines = {spanBase, int32_t(doc.spans.size())};
+        out.push_back(piece);
+        pieceFrom = std::string_view::npos;
     };
 
     for (;;) {
-        size_t end = block.text.find('\n', at);
-        const bool last = end == std::string::npos;
-        if (last) end = block.text.size();
+        size_t end = doc.text(block).find('\n', at);
+        const bool last = end == std::string_view::npos;
+        if (last) end = textSize;
 
         if (end == at) {                       // пустая строка
             flush(at > 0 ? at - 1 : at);
             Block gap;
             gap.kind = Kind::VSpace;
-            out.push_back(std::move(gap));
-        } else if (pieceFrom == std::string::npos) {
+            out.push_back(gap);
+        } else if (pieceFrom == std::string_view::npos) {
             pieceFrom = at;
         }
 
         if (last) {
-            flush(block.text.size());
+            flush(textSize);
             break;
         }
         at = end + 1;
@@ -483,46 +526,55 @@ Document documentForFile(Document doc) {
     for (Block& block : doc.blocks) {
         // Пробельная пустая строка (каретка ещё не ушла с неё) — пустая:
         // markdown пробелы выбросил бы сам, а edges превратили бы их в nbsp.
-        if (block.rawSource.empty() && block.kind == Kind::VSpace &&
-            block.text.find_first_not_of(" \t") == std::string::npos)
-            block.text.clear();
+        if (!block.raw && block.kind == Kind::VSpace &&
+            doc.text(block).find_first_not_of(" \t") == std::string_view::npos)
+            block.text = Range{};
         appendSplitOnBlankLines(
-            out, withMarkupThatSurvives(withStrikeOnWholeWords(withTrimmedSpans(
-                     withCodeSpansPerLine(withHeadingOnOneLine(
-                         withRawNewline(withEdgesNormalised(std::move(block)))))))));
+            out, doc,
+            withMarkupThatSurvives(
+                doc, withStrikeOnWholeWords(
+                         doc, withTrimmedSpans(
+                                  doc, withCodeSpansPerLine(
+                                           doc, withHeadingOnOneLine(
+                                                    doc, withRawNewline(
+                                                             doc, withEdgesNormalised(
+                                                                      doc, block))))))));
     }
 
     // Пустые строки в начале документа файл выразить не может: пустая строка
     // там стоит между блоками, а до первого блока никакого стыка нет — разбор
     // такие строки просто пропускает. Снимаем их сами, иначе круг разошёлся бы.
     size_t head = 0;
-    while (head < out.size() && out[head].rawSource.empty() &&
-           out[head].kind == Kind::VSpace)
-        ++head;
+    while (head < out.size() && !out[head].raw && out[head].kind == Kind::VSpace) ++head;
     if (head > 0) out.erase(out.begin(), out.begin() + qsizetype(head));
 
     // В конце документа пустые строки не нужны по той же причине: после
     // последнего блока стыка тоже нет.
-    while (!out.empty() && out.back().rawSource.empty() &&
+    while (!out.empty() && !out.back().raw &&
            (out.back().kind == Kind::VSpace ||
             (out.back().kind == Kind::Paragraph && out.back().text.empty())))
         out.pop_back();
     if (!out.empty()) {
         Block& last = out.back();
-        if (last.rawSource.empty() && last.kind != Kind::Code) {
-            while (!last.text.empty() && last.text.back() == '\n') last.text.pop_back();
+        if (!last.raw && last.kind != Kind::Code) {
+            // Хвост отрезается сдвигом границы Range: байты остаются в арене,
+            // блок просто перестаёт на них смотреть.
+            const auto tail = [&](size_t width) {
+                return doc.view({last.text.end - int32_t(width), last.text.end});
+            };
+            while (last.text.size() >= 1 && tail(1) == "\n") last.text.end -= 1;
             // Хвостовые неразрывные строки последнего блока — тот же случай:
             // пустая строка, которой в файле после последнего блока не бывает.
-            const std::string nbsp = kNbsp;
-            while (last.text.size() >= nbsp.size() + 1 &&
-                   last.text.compare(last.text.size() - nbsp.size(), nbsp.size(), nbsp) == 0 &&
-                   last.text[last.text.size() - nbsp.size() - 1] == '\n') {
-                last.text.erase(last.text.size() - nbsp.size() - 1);
+            const std::string_view nbsp = kNbsp;
+            while (last.text.size() >= int32_t(nbsp.size()) + 1 &&
+                   tail(nbsp.size()) == nbsp &&
+                   tail(nbsp.size() + 1).substr(0, 1) == "\n") {
+                last.text.end -= int32_t(nbsp.size()) + 1;
             }
-            if (last.text == nbsp) last.text.clear();
+            if (doc.text(last) == nbsp) last.text = Range{};
+            dropSpansPastText(doc, last);
         }
-        if (out.back().rawSource.empty() && out.back().kind == Kind::Paragraph &&
-            out.back().text.empty())
+        if (!out.back().raw && out.back().kind == Kind::Paragraph && out.back().text.empty())
             out.pop_back();
     }
 
@@ -535,7 +587,7 @@ Document documentForFile(Document doc) {
         for (Block& block : out) {
             // Дословный кусок выводится с нулевой колонки и список этим
             // заканчивает: всё, что за ним, стоит уже снаружи.
-            if (!block.rawSource.empty()) { deepest = -1; continue; }
+            if (block.raw) { deepest = -1; continue; }
             if (block.kind == Kind::VSpace) continue;
             if (isList(block.kind)) {
                 // Пункт может открыть только один уровень за раз. Глубже —
@@ -556,13 +608,13 @@ Document documentForFile(Document doc) {
     // мы отвечаем за файл — а испорченный файл дороже лишней проверки.
     std::vector<Block> spaced;
     spaced.reserve(out.size() + 2);
-    for (Block& block : out) {
-        if (!spaced.empty() && wouldMerge(spaced.back(), block)) {
+    for (const Block& block : out) {
+        if (!spaced.empty() && doc.wouldMerge(spaced.back(), block)) {
             Block gap;
             gap.kind = Kind::VSpace;
-            spaced.push_back(std::move(gap));
+            spaced.push_back(gap);
         }
-        spaced.push_back(std::move(block));
+        spaced.push_back(block);
     }
 
     // Метаданные проезжают насквозь как есть: нормализация — про блоки.

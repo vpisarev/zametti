@@ -560,28 +560,26 @@ bool importTree(const ImportOptions& options, Report& report) {
         return true;
     };
 
-    const auto adoptWikiAttachments = [&](std::vector<Block>& blocks,
-                                          const QString& noteDirRel) {
+    const auto adoptWikiAttachments = [&](Document& ir, const QString& noteDirRel) {
         std::vector<Block> out;
-        out.reserve(blocks.size());
-        for (Block& b : blocks) {
-            const bool candidate = b.rawSource.empty() && b.kind == Kind::Paragraph &&
-                                   b.inlines.empty() &&
-                                   b.text.find("[[") != std::string::npos;
+        out.reserve(ir.blocks.size());
+        for (size_t at = 0; at < ir.blocks.size(); ++at) {
+            const Block b = ir.blocks[at];
+            const bool candidate = !b.raw && b.kind == Kind::Paragraph && b.inlines.empty() &&
+                                   ir.text(b).find("[[") != std::string_view::npos;
             if (!candidate) {
-                out.push_back(std::move(b));
+                out.push_back(b);
                 continue;
             }
-            const QStringList lines = fromUtf8(b.text).split(QLatin1Char('\n'));
+            const QStringList lines =
+                fromUtf8(std::string(ir.text(b))).split(QLatin1Char('\n'));
             std::vector<Block> pieces;
             QStringList pending;
             const auto flushPending = [&]() {
                 if (pending.isEmpty()) return;
-                Block piece;
-                piece.kind = Kind::Paragraph;
+                Block piece = ir.newBlock(Kind::Paragraph, toUtf8(pending.join(QLatin1Char('\n'))));
                 piece.level = b.level;
-                piece.text = toUtf8(pending.join(QLatin1Char('\n')));
-                pieces.push_back(std::move(piece));
+                pieces.push_back(piece);
                 pending.clear();
             };
             for (const QString& line : lines) {
@@ -600,24 +598,21 @@ bool importTree(const ImportOptions& options, Report& report) {
                     continue;
                 }
                 flushPending();
-                Block image;
-                image.kind = Kind::Paragraph;
+                Block image = ir.newBlock(Kind::Paragraph, toUtf8(alt));
                 image.level = b.level;
-                image.text = toUtf8(alt);
-                Span span;
-                span.image = true;
-                span.href = toUtf8(
-                    width.isEmpty() ? name : name + QStringLiteral("#w=") + width);
-                span.offset = 0;
-                span.length = int(image.text.size());
-                image.inlines.push_back(std::move(span));
-                pieces.push_back(std::move(image));
+                Inline span;
+                span.set(InlineImage, true);
+                span.href = ir.append(
+                    toUtf8(width.isEmpty() ? name : name + QStringLiteral("#w=") + width));
+                span.text = {0, image.text.size()};
+                image.inlines = ir.appendInlines(std::span<const Inline>(&span, 1));
+                pieces.push_back(image);
             }
             flushPending();
             if (pieces.size() <= 1 && pending.isEmpty() &&
                 (pieces.empty() || pieces[0].inlines.empty())) {
                 // Ничего не выкроилось — блок как был.
-                out.push_back(std::move(b));
+                out.push_back(b);
                 continue;
             }
             // Куски разделяются пустой строкой: соседство абзаца с абзацем
@@ -626,12 +621,12 @@ bool importTree(const ImportOptions& options, Report& report) {
                 if (i > 0) {
                     Block gap;
                     gap.kind = Kind::VSpace;
-                    out.push_back(std::move(gap));
+                    out.push_back(gap);
                 }
-                out.push_back(std::move(pieces[i]));
+                out.push_back(pieces[i]);
             }
         }
-        blocks = std::move(out);
+        ir.blocks = std::move(out);
     };
 
 
@@ -641,11 +636,9 @@ bool importTree(const ImportOptions& options, Report& report) {
         if (e.isDir) {
             // Заметка-каталог: заголовок — имя каталога, признак — в мете
             // (правило владельца: у любой директории, пустой или нет).
-            Block h;
-            h.kind = Kind::Heading;
+            Block h = ir.newBlock(Kind::Heading, toUtf8(e.title));
             h.headingLevel = 1;
-            h.text = toUtf8(e.title);
-            ir.blocks.push_back(std::move(h));
+            ir.blocks.push_back(h);
             ir.meta.set("role", "folder");
         } else {
             std::string bytes;
@@ -661,27 +654,23 @@ bool importTree(const ImportOptions& options, Report& report) {
         if (!e.isDir) {
             QString firstHeading;
             for (const Block& b : ir.blocks) {
-                if (b.rawSource.empty() && b.kind == Kind::VSpace) continue;
-                if (b.rawSource.empty() && b.kind == Kind::Heading)
-                    firstHeading = fromUtf8(b.text).trimmed();
+                if (!b.raw && b.kind == Kind::VSpace) continue;
+                if (!b.raw && b.kind == Kind::Heading)
+                    firstHeading = fromUtf8(std::string(ir.text(b))).trimmed();
                 break;
             }
             const QString title = e.displayTitle.trimmed();
             if (!title.isEmpty() && firstHeading != title) {
-                Block heading;
-                heading.kind = Kind::Heading;
+                Block heading = ir.newBlock(Kind::Heading, toUtf8(title));
                 heading.headingLevel = 1;
-                heading.text = toUtf8(title);
                 std::vector<Block> withTitle;
-                withTitle.push_back(std::move(heading));
+                withTitle.push_back(heading);
                 if (!ir.blocks.empty()) {
                     Block gap;
                     gap.kind = Kind::VSpace;
-                    withTitle.push_back(std::move(gap));
+                    withTitle.push_back(gap);
                 }
-                withTitle.insert(withTitle.end(),
-                                 std::make_move_iterator(ir.blocks.begin()),
-                                 std::make_move_iterator(ir.blocks.end()));
+                withTitle.insert(withTitle.end(), ir.blocks.begin(), ir.blocks.end());
                 ir.blocks = std::move(withTitle);
             }
         }
@@ -689,16 +678,16 @@ bool importTree(const ImportOptions& options, Report& report) {
         // Вложения и ссылки. Вики-вложения усыновляются в канон, прочие
         // wikilinks не переписываются — только счёт.
         const QString noteDirRel = e.parentRel;
-        adoptWikiAttachments(ir.blocks, noteDirRel);
+        adoptWikiAttachments(ir, noteDirRel);
         for (Block& b : ir.blocks) {
-            if (!b.rawSource.empty()) {
-                if (b.rawSource.find("[[") != std::string::npos) ++wikilinks;
+            if (b.raw) {
+                if (ir.text(b).find("[[") != std::string_view::npos) ++wikilinks;
                 continue;
             }
-            if (b.text.find("[[") != std::string::npos) ++wikilinks;
-            for (Span& s : b.inlines) {
+            if (ir.text(b).find("[[") != std::string_view::npos) ++wikilinks;
+            for (Inline& s : ir.inlines(b)) {
                 if (s.href.empty()) continue;
-                QString href = fromUtf8(s.href);
+                QString href = fromUtf8(std::string(ir.href(s)));
                 // Фрагмент (#w=300) — часть нашего канона, не путь.
                 QString fragment;
                 const qsizetype hash = href.lastIndexOf(QLatin1Char('#'));
@@ -708,7 +697,7 @@ bool importTree(const ImportOptions& options, Report& report) {
                 }
                 if (!isLocalRelative(href)) continue;
 
-                if (s.image) {
+                if (s.image()) {
                     // Уже канонное плоское имя — вложение усыновлено выше.
                     const qsizetype dot = href.lastIndexOf(QLatin1Char('.'));
                     if (dot > 0 && !href.contains(QLatin1Char('/')) &&
@@ -728,7 +717,7 @@ bool importTree(const ImportOptions& options, Report& report) {
                             QStringLiteral("вложение не читается: %1").arg(targetRel));
                         continue;
                     }
-                    s.href = toUtf8(name + fragment);
+                    s.href = ir.append(toUtf8(name + fragment));
                 } else if (href.endsWith(QStringLiteral(".md"))) {
                     const QString joined = noteDirRel.isEmpty()
                                                ? href
@@ -740,7 +729,7 @@ bool importTree(const ImportOptions& options, Report& report) {
                                         .arg(href, e.rel));
                         continue;
                     }
-                    s.href = entries[found->second].id + ".md";
+                    s.href = ir.append(entries[found->second].id + ".md");
                 }
             }
         }
@@ -860,9 +849,9 @@ bool verifyStore(const QString& root, Report& report) {
     // Цели картинок: канонное плоское имя "<id>.<ext>" и существование.
     for (const auto& [id, doc] : notes) {
         for (const Block& b : doc.blocks)
-            for (const Span& span : b.inlines) {
-                if (!span.image) continue;
-                QString href = fromUtf8(span.href);
+            for (const Inline& span : doc.inlines(b)) {
+                if (!span.image()) continue;
+                QString href = fromUtf8(std::string(doc.href(span)));
                 const qsizetype hash = href.lastIndexOf(QLatin1Char('#'));
                 if (hash >= 0) href = href.left(hash);
                 if (!isLocalRelative(href)) continue;

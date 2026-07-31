@@ -680,21 +680,22 @@ int main(int argc, char** argv) {
         }
         rewriteNote(file, [&](zametti::Document& doc) {
             for (auto& b : doc.blocks) {
-                if (b.rawSource.empty() && b.kind == zametti::Kind::VSpace) continue;
-                if (b.rawSource.empty() && b.kind == zametti::Kind::Heading) {
-                    b.text = title.toUtf8().toStdString();
+                if (!b.raw && b.kind == zametti::Kind::VSpace) continue;
+                if (!b.raw && b.kind == zametti::Kind::Heading) {
+                    // Правка текста — это дописать байты в хвост арены и
+                    // перенацелить Range: на месте арену не правят.
+                    b.text = doc.append(title.toUtf8().toStdString());
                     return;
                 }
                 break;
             }
-            zametti::Block heading;
-            heading.kind = zametti::Kind::Heading;
+            zametti::Block heading =
+                doc.newBlock(zametti::Kind::Heading, title.toUtf8().toStdString());
             heading.headingLevel = 1;
-            heading.text = title.toUtf8().toStdString();
             zametti::Block gap;
             gap.kind = zametti::Kind::VSpace;
-            doc.blocks.insert(doc.blocks.begin(), std::move(gap));
-            doc.blocks.insert(doc.blocks.begin(), std::move(heading));
+            doc.blocks.insert(doc.blocks.begin(), gap);
+            doc.blocks.insert(doc.blocks.begin(), heading);
         });
         if (file == editor.filePath()) editor.openFile(file);
         refreshTree(file);
@@ -766,7 +767,7 @@ int main(int argc, char** argv) {
                 const zametti::Document doc = zametti::parse(bytes);
                 empty = true;
                 for (const auto& b : doc.blocks)
-                    if (!b.rawSource.empty() || b.kind != zametti::Kind::VSpace) {
+                    if (b.raw || b.kind != zametti::Kind::VSpace) {
                         empty = false;
                         break;
                     }
@@ -797,11 +798,9 @@ int main(int argc, char** argv) {
             }
             rewriteNote(made, [](zametti::Document& doc) {
                 doc.meta.set("role", "trash");
-                zametti::Block heading;
-                heading.kind = zametti::Kind::Heading;
+                zametti::Block heading = doc.newBlock(zametti::Kind::Heading, "Корзина");
                 heading.headingLevel = 1;
-                heading.text = "Корзина";
-                doc.blocks.push_back(std::move(heading));
+                doc.blocks.push_back(heading);
             });
             model.refresh();
             trash = model.trashId();
@@ -870,11 +869,10 @@ int main(int argc, char** argv) {
                     }
                     rewriteNote(made, [&](zametti::Document& folderDoc) {
                         folderDoc.meta.set("role", "folder");
-                        zametti::Block heading;
-                        heading.kind = zametti::Kind::Heading;
+                        zametti::Block heading = folderDoc.newBlock(
+                            zametti::Kind::Heading, name.toUtf8().toStdString());
                         heading.headingLevel = 1;
-                        heading.text = name.toUtf8().toStdString();
-                        folderDoc.blocks.push_back(std::move(heading));
+                        folderDoc.blocks.push_back(heading);
                     });
                     model.refresh();
                     foundId = QFileInfo(made).completeBaseName();
@@ -937,11 +935,9 @@ int main(int argc, char** argv) {
         if (folder) {
             rewriteNote(made, [](zametti::Document& doc) {
                 doc.meta.set("role", "folder");
-                zametti::Block heading;
-                heading.kind = zametti::Kind::Heading;
+                zametti::Block heading = doc.newBlock(zametti::Kind::Heading, "Новая папка");
                 heading.headingLevel = 1;
-                heading.text = "Новая папка";
-                doc.blocks.push_back(std::move(heading));
+                doc.blocks.push_back(heading);
             });
         }
         refreshTree(made);

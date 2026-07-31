@@ -128,15 +128,36 @@ const char* const kNonCanonical[] = {
 // недопустимым IR и падает на проверке, не дойдя до самопроверки, а название
 // языка с обратной кавычкой сериализатор сам выводит забором из волнистых
 // черт — и круг сходится.
-// Документ из одних блоков: тестам сохранения метаданные приносит виджет.
-zametti::Document docOf(std::vector<zametti::Block> blocks) {
-    return {{}, std::move(blocks)};
-}
+// Литералы IR строятся билдером: блок без своей арены — набор смещений в
+// никуда. Строитель держит документ и раздаёт ссылки на блоки в нём.
+struct Builder {
+    zametti::Document ir;
+
+    zametti::Block& add(zametti::Kind kind, std::string_view text) {
+        ir.blocks.push_back(ir.newBlock(kind, text));
+        return ir.blocks.back();
+    }
+    zametti::Block& addRaw(std::string_view bytes) {
+        ir.blocks.push_back(ir.newRaw(bytes));
+        return ir.blocks.back();
+    }
+    // Спаны блока обязаны лежать в spans подряд, поэтому размечать блок надо
+    // до того, как заведён следующий.
+    void mark(zametti::Block& block, int from, int length, zametti::InlineFlag flag) {
+        zametti::Inline span;
+        span.text = {from, from + length};
+        span.set(flag, true);
+        const int32_t at = static_cast<int32_t>(ir.spans.size());
+        ir.spans.push_back(span);
+        if (block.inlines.empty()) block.inlines = {at, at + 1};
+        else block.inlines.end = at + 1;
+    }
+};
 
 zametti::Document brokenReader(const QTextDocument&) {
-    zametti::Block b;
-    b.rawSource = "| это не таблица |\n";
-    return docOf({b});
+    Builder b;
+    b.addRaw("| это не таблица |\n");
+    return std::move(b.ir);
 }
 
 void checkRescue() {
@@ -278,10 +299,10 @@ void checkEdgeSpaces() {
     {
         const QString path = pathFor("пустая-внутри.md");
         check(writeFile(path, "первая\nвторая\n"), "не записать исходник");
-        zametti::Block block;
-        block.text = "первая\n   \nвторая";
+        Builder builder;
+        builder.add(zametti::Kind::Paragraph, "первая\n   \nвторая");
         QTextDocument doc;
-        zametti::buildDocument(docOf({block}), doc);
+        zametti::buildDocument(builder.ir, doc);
 
         const zametti::SaveOutcome outcome =
             zametti::saveDocument(doc, path, QStringLiteral("test"));
@@ -296,10 +317,10 @@ void checkEdgeSpaces() {
     {
         const QString path = pathFor("хвост-пустых.md");
         check(writeFile(path, "текст\n"), "не записать исходник");
-        zametti::Block block;
-        block.text = "текст\n\n\n";
+        Builder builder;
+        builder.add(zametti::Kind::Paragraph, "текст\n\n\n");
         QTextDocument doc;
-        zametti::buildDocument(docOf({block}), doc);
+        zametti::buildDocument(builder.ir, doc);
 
         const zametti::SaveOutcome outcome =
             zametti::saveDocument(doc, path, QStringLiteral("test"));
@@ -336,15 +357,11 @@ void checkEdgeSpaces() {
                 pathFor((std::string("курсив") + std::to_string(n++) + ".md").c_str());
             check(writeFile(path, "заглушка\n"), "не записать исходник");
 
-            zametti::Block block;
-            block.text = c.text;
-            zametti::Span span;
-            span.offset = 0;
-            span.length = int(block.text.size());
-            span.italic = true;
-            block.inlines.push_back(span);
+            Builder builder;
+            zametti::Block& block = builder.add(zametti::Kind::Paragraph, c.text);
+            builder.mark(block, 0, block.text.size(), zametti::InlineItalic);
             QTextDocument doc;
-            zametti::buildDocument(docOf({block}), doc);
+            zametti::buildDocument(builder.ir, doc);
 
             const zametti::SaveOutcome outcome =
                 zametti::saveDocument(doc, path, QStringLiteral("test"));
@@ -360,12 +377,10 @@ void checkEdgeSpaces() {
     {
         const QString heading = pathFor("заголовок-в-две-строки.md");
         check(writeFile(heading, "заглушка\n"), "не записать исходник");
-        zametti::Block block;
-        block.kind = zametti::Kind::Heading;
-        block.headingLevel = 2;
-        block.text = "первая\nвторая";
+        Builder builder;
+        builder.add(zametti::Kind::Heading, "первая\nвторая").headingLevel = 2;
         QTextDocument doc;
-        zametti::buildDocument(docOf({block}), doc);
+        zametti::buildDocument(builder.ir, doc);
         const zametti::SaveOutcome outcome =
             zametti::saveDocument(doc, heading, QStringLiteral("test"));
         check(outcome.result != zametti::SaveResult::Rescued,
@@ -376,15 +391,11 @@ void checkEdgeSpaces() {
     {
         const QString path = pathFor("код-через-строку.md");
         check(writeFile(path, "заглушка\n"), "не записать исходник");
-        zametti::Block block;
-        block.text = "раз\nдва";
-        zametti::Span span;
-        span.offset = 0;
-        span.length = int(block.text.size());
-        span.code = true;
-        block.inlines.push_back(span);
+        Builder builder;
+        zametti::Block& block = builder.add(zametti::Kind::Paragraph, "раз\nдва");
+        builder.mark(block, 0, block.text.size(), zametti::InlineCode);
         QTextDocument doc;
-        zametti::buildDocument(docOf({block}), doc);
+        zametti::buildDocument(builder.ir, doc);
         const zametti::SaveOutcome outcome =
             zametti::saveDocument(doc, path, QStringLiteral("test"));
         check(outcome.result != zametti::SaveResult::Rescued,
@@ -435,19 +446,17 @@ void checkEdgeSpaces() {
     {
         const QString path = pathFor("потомки-пустого.md");
         check(writeFile(path, "заглушка\n"), "не записать исходник");
-        auto item = [](zametti::Marker marker, int level, const char* text) {
-            zametti::Block block;
-            block.kind = zametti::Kind::ListItem;
+        Builder builder;
+        const auto item = [&builder](zametti::Marker marker, int level, const char* text) {
+            zametti::Block& block = builder.add(zametti::Kind::ListItem, text);
             block.marker = marker;
-            block.level = level;
-            block.text = text;
-            return block;
+            block.level = static_cast<int16_t>(level);
         };
+        item(zametti::Marker::Bullet, 0, "раз");
+        item(zametti::Marker::Bullet, 1, "");
+        item(zametti::Marker::Bullet, 2, "внук");
         QTextDocument doc;
-        zametti::buildDocument(docOf({item(zametti::Marker::Bullet, 0, "раз"),
-                                      item(zametti::Marker::Bullet, 1, ""),
-                                      item(zametti::Marker::Bullet, 2, "внук")}),
-                               doc);
+        zametti::buildDocument(builder.ir, doc);
         const zametti::SaveOutcome outcome =
             zametti::saveDocument(doc, path, QStringLiteral("test"));
         check(outcome.result != zametti::SaveResult::Rescued,
@@ -462,15 +471,11 @@ void checkEdgeSpaces() {
     {
         const QString path = pathFor("зачёркнуто-полслова.md");
         check(writeFile(path, "заглушка\n"), "не записать исходник");
-        zametti::Block block;
-        block.text = "фрукты";
-        zametti::Span span;
-        span.offset = 6;   // "кты" — вторая половина слова
-        span.length = 6;
-        span.strike = true;
-        block.inlines.push_back(span);
+        Builder builder;
+        zametti::Block& block = builder.add(zametti::Kind::Paragraph, "фрукты");
+        builder.mark(block, 6, 6, zametti::InlineStrike);   // "кты" — вторая половина слова
         QTextDocument doc;
-        zametti::buildDocument(docOf({block}), doc);
+        zametti::buildDocument(builder.ir, doc);
         const zametti::SaveOutcome outcome =
             zametti::saveDocument(doc, path, QStringLiteral("test"));
         check(outcome.result != zametti::SaveResult::Rescued,
@@ -484,15 +489,11 @@ void checkEdgeSpaces() {
     {
         const QString path = pathFor("неживучая-разметка.md");
         check(writeFile(path, "заглушка\n"), "не записать исходник");
-        zametti::Block block;
-        block.text = "штуки 2-5.";
-        zametti::Span span;
-        span.offset = 9;   // одна точка, и та в конце
-        span.length = 1;
-        span.bold = true;
-        block.inlines.push_back(span);
+        Builder builder;
+        zametti::Block& block = builder.add(zametti::Kind::Paragraph, "штуки 2-5.");
+        builder.mark(block, 9, 1, zametti::InlineBold);   // одна точка, и та в конце
         QTextDocument doc;
-        zametti::buildDocument(docOf({block}), doc);
+        zametti::buildDocument(builder.ir, doc);
         const zametti::SaveOutcome outcome =
             zametti::saveDocument(doc, path, QStringLiteral("test"));
         check(outcome.result != zametti::SaveResult::Rescued,
