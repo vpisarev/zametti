@@ -136,6 +136,11 @@ private:
     // открытой заметки и только что добавленную keep.
     void trimImageCache(const QString& keep);
     void touchImage(const QString& key);
+    // Надпись на рамке вместо слишком большой картинки и место под неё.
+    // Пропорций картинки рамка не повторяет: это не картинка, а сообщение, и
+    // растягивать её на экран под стать оригиналу незачем.
+    QString tooBigText(const QTextBlock& block, const CachedImage& entry) const;
+    QSizeF tooBigBoxSize(const QTextBlock& block, const CachedImage& entry) const;
     void paintTooBigImage(QPainter& painter, const QTextBlock& block,
                           const ImageGeometry& geometry, const CachedImage& entry);
     // Место под картинку на экране. Берёт размеры, а не саму картинку: у

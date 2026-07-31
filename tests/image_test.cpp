@@ -579,8 +579,15 @@ int main(int argc, char** argv) {
         QTest::qWait(20);
         const qreal roomForFrame =
             refused.document()->findBlockByNumber(0).blockFormat().bottomMargin();
-        ZT_TRUE("отвергнутая картинка занимает место наравне с показанной",
-                std::fabs(roomForFrame - roomForImage) < 0.5);
+        // Рамка — не картинка: пропорций оригинала она не повторяет, а занимает
+        // ровно столько, сколько нужно надписи. Показывать в ней всё равно
+        // нечего, а 1x1000000 растянуло бы её на миллион пикселей.
+        ZT_TRUE("рамка меньше самой картинки", roomForFrame < roomForImage);
+        ZT_TRUE("но не вырождается: надпись в неё помещается",
+                roomForFrame > 2 * refused.document()
+                                       ->findBlockByNumber(0)
+                                       .blockFormat()
+                                       .lineHeight());
         ZT_EQ("веса в кэше она не занимает", std::to_string(0),
               std::to_string(refused.imageCacheBytes()));
 
@@ -592,6 +599,48 @@ int main(int argc, char** argv) {
 
         zametti::appearance().imageCacheSizeMb = savedBudget;
         zametti::applyImageAllocationLimit();
+    }
+
+    // Вырожденные пропорции. Предел стороны держит ОБЕ стороны, поэтому худший
+    // случай в кэше — квадрат limit x limit, а не лента: 1x1000000 занимает
+    // столько же, сколько 1x1024. И место в документе тоже ограничено — без
+    // этого замер на 1x20000 давал 19984 px поля под одну строку и документ
+    // высотой в двадцать тысяч пикселей.
+    {
+        const fs::path thinDir = dir / "вырожденные";
+        fs::create_directories(thinDir);
+        QImage thin(1, 20000, QImage::Format_RGB32);
+        thin.fill(QColor(200, 40, 40));
+        ZT_TRUE("тонкая картинка записана",
+                thin.save(QString::fromStdString((thinDir / "тонкая.png").string())));
+        QImage wide(20000, 1, QImage::Format_RGB32);
+        wide.fill(QColor(40, 200, 40));
+        ZT_TRUE("широкая картинка записана",
+                wide.save(QString::fromStdString((thinDir / "широкая.png").string())));
+        {
+            std::ofstream out(thinDir / "з.md", std::ios::binary);
+            out << "![[тонкая.png]]\n\n![[широкая.png]]\n";
+        }
+
+        const int savedLimit = zametti::appearance().maxLoadedImageSize;
+        zametti::appearance().maxLoadedImageSize = 1024;
+        zametti::NoteEditor thinEditor;
+        thinEditor.resize(600, 500);
+        thinEditor.show();
+        QTest::qWait(20);
+        thinEditor.openFile(QString::fromStdString((thinDir / "з.md").string()));
+        QTest::qWait(20);
+
+        const qreal thinRoom =
+            thinEditor.document()->findBlockByNumber(0).blockFormat().bottomMargin();
+        ZT_TRUE("под ленту 1x20000 отведено место, а не двадцать тысяч пикселей",
+                thinRoom > 0.0 && thinRoom < 4.0 * 500 + 50);
+        // Худший случай в кэше — квадрат стороной в предел, и обе вырожденные
+        // вместе до него не дотягивают.
+        ZT_TRUE("вырожденные картинки в кэше — не лента, а мелочь",
+                thinEditor.imageCacheBytes() < qint64(1024) * 1024 * 4);
+
+        zametti::appearance().maxLoadedImageSize = savedLimit;
     }
 
     return zt::report("картинки в просмотре");

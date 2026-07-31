@@ -271,10 +271,15 @@ const NoteView::CachedImage* NoteView::cachedImage(const QString& path) {
     const int limit = loadedImageSizeLimit();
     if (!declared.isEmpty() && limit > 0 &&
         (declared.width() > limit || declared.height() > limit)) {
-        // Только вниз: картинка мельче предела остаётся собой. Просим об этом
-        // сам читатель — иные форматы умеют разжимать сразу в нужный размер и
-        // полную картинку в памяти не заводят вовсе.
-        reader.setScaledSize(declared.scaled(limit, limit, Qt::KeepAspectRatio));
+        // Предел держит ОБЕ стороны. Только вниз: картинка мельче предела
+        // остаётся собой. Просим об этом сам читатель — иные форматы умеют
+        // разжимать сразу в нужный размер и полной копии не заводят вовсе.
+        QSize scaled = declared.scaled(limit, limit, Qt::KeepAspectRatio);
+        // У вырожденной картинки (1x1000000) короткая сторона уходит в ноль, а
+        // картинки нулевой ширины не бывает.
+        scaled.setWidth(qMax(1, scaled.width()));
+        scaled.setHeight(qMax(1, scaled.height()));
+        reader.setScaledSize(scaled);
     }
     QImage image = reader.read();
     ++g_imageDecodes;
@@ -328,7 +333,22 @@ QSizeF NoteView::imageDisplaySize(QSize natural_, qreal widthHint,
                             block.blockFormat().leftMargin();
     if (available > 16.0 && width > available) width = available;
     if (width < 1.0) width = 1.0;
-    return QSizeF(width, width * natural_.height() / natural_.width());
+
+    qreal height = width * natural_.height() / natural_.width();
+    // Выше нескольких экранов картинку всё равно не рассмотреть, а вырожденная
+    // разносит документ: замер на 1x20000 — 19984 px поля под одну строку,
+    // документ высотой в двадцать тысяч пикселей; при 1x1000000 это миллион.
+    // Ужимаем ОБЕ стороны сразу — картинка остаётся собой, только мельче, и
+    // пропорции целы. Правило одно на фотографию и на рамку-заглушку: иначе
+    // вёрстка прыгала бы при смене потолка разжатия.
+    const qreal tallest = 4.0 * (viewport()->height() > 0 ? viewport()->height() : 1000);
+    if (height > tallest) {
+        width *= tallest / height;
+        height = tallest;
+    }
+    // Обе стороны — не меньше пикселя: у ленты 20000x1 высота уходила под
+    // пиксель, а у 1x1000000 после ужатия по высоте так же уходит ширина.
+    return QSizeF(qMax(1.0, width), qMax(1.0, height));
 }
 
 NoteView::ImageGeometry NoteView::imageGeometry(const QTextBlock& block) {
@@ -343,7 +363,8 @@ NoteView::ImageGeometry NoteView::imageGeometry(const QTextBlock& block) {
     qreal widthHint = ref.widthHint;
     if (block.blockNumber() == imageDragBlock_ && imageDragWidth_ > 0.0)
         widthHint = imageDragWidth_;
-    const QSizeF size = imageDisplaySize(entry->declared, widthHint, block);
+    const QSizeF size = entry->tooBig ? tooBigBoxSize(block, *entry)
+                                      : imageDisplaySize(entry->declared, widthHint, block);
     if (size.isEmpty()) return {};
 
     const QTextLayout* layout = block.layout();
@@ -411,6 +432,34 @@ void NoteView::syncImageSpace() {
     syncingImages_ = false;
 }
 
+QString NoteView::tooBigText(const QTextBlock& block, const CachedImage& entry) const {
+    return QStringLiteral("%1:\na big %2x%3 image")
+        .arg(QFileInfo(blockImageRef(block).path).fileName())
+        .arg(entry.declared.width())
+        .arg(entry.declared.height());
+}
+
+// Небольшой прямоугольник по размеру самой надписи, с полем вокруг. Ни
+// пропорций картинки, ни её размеров он не наследует: 1x1000000 растянуло бы
+// рамку на миллион пикселей, а показывать в ней всё равно нечего.
+QSizeF NoteView::tooBigBoxSize(const QTextBlock& block, const CachedImage& entry) const {
+    const QFontMetricsF metrics(baseFont());
+    const qreal padding = metrics.height();
+    QSizeF box = metrics.boundingRect(QRectF(0, 0, 1e6, 1e6), Qt::AlignLeft | Qt::TextWordWrap,
+                                      tooBigText(block, entry))
+                     .size();
+    box += QSizeF(2 * padding, 2 * padding);
+
+    // Ни шире колонки, ни выше экрана — обе стороны, как и у фотографии.
+    const QTextFrameFormat root = document()->rootFrame()->frameFormat();
+    const qreal available = viewport()->width() - root.leftMargin() - root.rightMargin() -
+                            block.blockFormat().leftMargin();
+    if (available > 16.0 && box.width() > available) box.setWidth(available);
+    const qreal tallest = viewport()->height() > 0 ? viewport()->height() : 1000;
+    if (box.height() > tallest) box.setHeight(tallest);
+    return box;
+}
+
 // Картинка, которую Qt разжимать отказался: она больше потолка, выведенного из
 // бюджета кэша. Показать вместо неё нечего, но и молчать нельзя — человек
 // должен увидеть, что случайно положил в хранилище здоровенный файл и его надо
@@ -418,7 +467,6 @@ void NoteView::syncImageSpace() {
 // непонятого, имя файла и настоящие размеры из его заголовка.
 void NoteView::paintTooBigImage(QPainter& painter, const QTextBlock& block,
                                 const ImageGeometry& geometry, const CachedImage& entry) {
-    const BlockImageRef ref = blockImageRef(block);
     QPen pen(appearance().rawColor);
     pen.setStyle(Qt::DashLine);
     pen.setWidthF(qMax(1.0, 1.5 * zoom_));
@@ -427,11 +475,8 @@ void NoteView::paintTooBigImage(QPainter& painter, const QTextBlock& block,
 
     painter.setFont(baseFont());
     painter.setPen(appearance().rawColor);
-    const QString text = QStringLiteral("%1:\na big %2x%3 image")
-                             .arg(QFileInfo(ref.path).fileName())
-                             .arg(entry.declared.width())
-                             .arg(entry.declared.height());
-    painter.drawText(geometry.photo, Qt::AlignCenter | Qt::TextWordWrap, text);
+    painter.drawText(geometry.photo, Qt::AlignCenter | Qt::TextWordWrap,
+                     tooBigText(block, entry));
 }
 
 void NoteView::paintImage(QPainter& painter, const QTextBlock& block) {
