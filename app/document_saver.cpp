@@ -622,6 +622,14 @@ Document documentForFile(Document doc) {
     return doc;
 }
 
+namespace {
+
+std::string_view asView(const QByteArray& bytes) {
+    return std::string_view(bytes.constData(), static_cast<size_t>(bytes.size()));
+}
+
+}  // namespace
+
 SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
                          const QString& timestamp, DocumentReaderFn reader,
                          const NoteMeta& meta) {
@@ -630,8 +638,13 @@ SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
     const Document ir = documentForFile(std::move(read));
     const QByteArray text = toBytes(serialize(ir));
 
-    if (QFile::exists(path) && fileContents(path) == text)
-        return {SaveResult::Unchanged, {}, {}, {}, false};
+    // Не писать, если не изменилось. Сравнение здесь побайтовое, а не по
+    // отпечатку: файл всё равно прочитан целиком, и хеш от него ничего бы не
+    // ускорил. Отпечаток нужен ПОСЛЕ — тому, кто будет сверять файл, не читая
+    // его (кэш документов, слежение за внешними правками).
+    if (QFile::exists(path) && fileContents(path) == text) {
+        return {SaveResult::Unchanged, {}, {}, {}, false, hashOf(asView(text))};
+    }
 
     // Последний рубеж: то, что мы собрались записать, должно читаться обратно в
     // тот же документ.
@@ -659,13 +672,13 @@ SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
             return {SaveResult::Failed,
                     QStringLiteral("самопроверка не прошла, и аварийный файл не записан: ") +
                         error,
-                    {}, {}, false};
+                    {}, {}, false, {}};
         }
         return {SaveResult::Rescued,
                 QStringLiteral("самопроверка перед записью не прошла: разобранное обратно "
                                "не совпало с документом. Файл не тронут, буфер сохранён в ") +
                     rescuePath,
-                rescuePath, {}, false};
+                rescuePath, {}, false, {}};
     }
 
     // Замена файла целиком и разом: QSaveFile пишет во временный файл рядом и
@@ -674,14 +687,17 @@ SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly)) {
         return {SaveResult::Failed,
-                QStringLiteral("не открыть на запись: ") + file.errorString(), {}, {}, false};
+                QStringLiteral("не открыть на запись: ") + file.errorString(), {}, {},
+                false, {}};
     }
     file.write(text);
     if (!file.commit()) {
         return {SaveResult::Failed, QStringLiteral("не записать: ") + file.errorString(), {},
-                {}, false};
+                {}, false, {}};
     }
-    return {SaveResult::Written, {}, {}, reread, toJson(reread) != toJson(ir)};
+    // Отпечаток — по тому же буферу и только после самопроверки: не прошла
+    // она — файл не тронут, и отпечатку взяться неоткуда.
+    return {SaveResult::Written, {}, {}, reread, toJson(reread) != toJson(ir), hashOf(asView(text))};
 }
 
 }  // namespace zametti

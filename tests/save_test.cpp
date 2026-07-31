@@ -9,6 +9,7 @@
 #include "document_builder.h"
 #include "document_reader.h"
 #include "document_saver.h"
+#include "hash.h"
 #include "editor_ops.h"
 #include "parser.h"
 #include "serializer.h"
@@ -90,6 +91,16 @@ void checkSave(const std::string& source, const char* name) {
         zametti::saveDocument(doc, path, QStringLiteral("test"));
     check(second.result == zametti::SaveResult::Unchanged,
           std::string(name) + ": повторное сохранение должно быть пустой операцией");
+
+    // Отпечаток из записи обязан совпасть с отпечатком того, что лежит в
+    // файле: на нём стоит вся сверка «правил ли кто-то файл снаружи», и
+    // перечитывать файл ради неё больше никто не будет.
+    const zametti::Digest onDisk = zametti::hashOf(readFile(path));
+    check(first.digest == onDisk,
+          std::string(name) + ": отпечаток записи совпадает с файлом");
+    check(second.digest == onDisk,
+          std::string(name) + ": отпечаток при «не изменилось» тоже совпадает");
+    check(!first.digest.empty(), std::string(name) + ": отпечаток не пуст");
 }
 
 const char* const kSources[] = {

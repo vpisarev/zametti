@@ -11,6 +11,7 @@
 #ifndef ZAMETTI_DOCUMENT_SAVER_H
 #define ZAMETTI_DOCUMENT_SAVER_H
 
+#include "hash.h"
 #include "ir.h"
 
 #include <QString>
@@ -37,6 +38,11 @@ struct SaveOutcome {
     // читает её ссылкой. Виджет догоняет документ этим содержимым.
     Document reread;
     bool differsFromDocument = false;
+    // Отпечаток того, что теперь лежит в файле. Считается здесь, по тому самому
+    // буферу, который уходит на диск, — перечитывать файл после записи не надо
+    // вовсе. Пустой (все нули) — записи не было и отпечатку взяться неоткуда:
+    // так выглядят Failed и Rescued.
+    Digest digest;
 };
 
 // reader подменяется только тестом самопроверки: испортить читателя иначе

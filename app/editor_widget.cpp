@@ -351,7 +351,7 @@ bool NoteEditor::openFile(const QString& path) {
     externalSettle_.stop();
     externalEmptyRetried_ = false;
     lastLine_ = QTextCursor();
-    knownContent_ = QByteArray(text.data(), qsizetype(text.size()));
+    knownDigest_ = hashOf(text);
     watchFile();
     // Серию набора обрываем: иначе первая правка в новой заметке подмешалась бы
     // к её исходному состоянию и отменить её было бы нечем.
@@ -391,18 +391,21 @@ void NoteEditor::onFileChanged(const QString& path) {
 void NoteEditor::onExternalSettled() {
     std::string text;
     if (!readFile(path_, text)) return;   // файл унесли: ждём, пока вернётся
-    const QByteArray content(text.data(), qsizetype(text.size()));
-    if (content == knownContent_) return;   // это мы сами и записали
+    const Digest digest = hashOf(text);
+    if (digest == knownDigest_) return;   // это мы сами и записали
 
     // Файл опустел, а был непустым: похоже, мы всё же попали в середину чужой
-    // записи. Одна повторная попытка, прежде чем поверить в пустоту.
-    if (content.isEmpty() && !knownContent_.isEmpty() && !externalEmptyRetried_) {
+    // записи. Одна повторная попытка, прежде чем поверить в пустоту. «Был
+    // непустым» — это «прежний отпечаток не равен отпечатку пустоты»: у пустого
+    // входа отпечаток свой, и с «не считали» он не путается.
+    if (text.empty() && knownDigest_ != hashOf(std::string_view()) &&
+        !externalEmptyRetried_) {
         externalEmptyRetried_ = true;
         externalSettle_.start(300);
         return;
     }
     externalEmptyRetried_ = false;
-    knownContent_ = content;
+    knownDigest_ = digest;
 
     // Без несохранённых правок внешнее содержимое — просто ещё один шаг
     // истории: undo вернёт то, что было до него.
@@ -1665,11 +1668,10 @@ void NoteEditor::save(bool interactive) {
     if (outcome.result == SaveResult::Written || outcome.result == SaveResult::Unchanged) {
         document()->setModified(false);
         lastComplaint_.clear();
-        // Запоминаем, что теперь в файле: иначе слежение примет нашу же запись
-        // за чужую правку.
-        std::string written;
-        if (readFile(path_, written))
-            knownContent_ = QByteArray(written.data(), qsizetype(written.size()));
+        // Что теперь в файле, известно из самой записи: отпечаток посчитан по
+        // тому буферу, который туда и ушёл. Раньше файл ради этого читался
+        // заново — на каждое автосохранение.
+        knownDigest_ = outcome.digest;
         watchFile();
 
         // Файл может прочитаться богаче документа: голую ссылку человек набирает
