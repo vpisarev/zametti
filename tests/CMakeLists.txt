@@ -181,6 +181,13 @@ add_test(NAME core-without-qt
          COMMAND ${CMAKE_COMMAND} -DCORE_DIR=${CMAKE_SOURCE_DIR}/zametti-core
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/no_qt_check.cmake)
 
+# Стенд отрисовки. Цель собирается, но add_test для него НЕТ и не будет: это
+# замер, а не проверка, и смотрят на него тогда, когда есть подозрение, что
+# правка замедлила отрисовку. Запускать руками, см. заголовок файла.
+add_executable(render_bench render_bench.cpp)
+target_link_libraries(render_bench PRIVATE zametti-widgets Qt6::Test zametti-warnings)
+target_include_directories(render_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_executable(caret_scale_test caret_scale_test.cpp)
 target_link_libraries(caret_scale_test PRIVATE zametti-widgets Qt6::Test zametti-warnings)
 target_include_directories(caret_scale_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
