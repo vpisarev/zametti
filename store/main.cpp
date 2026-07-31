@@ -109,9 +109,16 @@ int main(int argc, char** argv) {
         // бережёт, а ставить файловый на каждую запись — 4.4 мс на ровном месте.
         QLockFile lock(zametti::journal::storeLockPath(root));
         if (!lock.tryLock(0)) {
-            std::fprintf(stderr,
-                         "хранилище занято: похоже, открыта программа. "
-                         "Прореживание идёт фоном при её запуске.\n");
+            // Различаем два разных отказа: замок держат — и замок не завести
+            // вовсе. Второе случается на каталоге, который хранилищем не
+            // является, и списывать это на занятость было бы враньём.
+            if (lock.error() == QLockFile::LockFailedError)
+                std::fprintf(stderr,
+                             "хранилище занято: похоже, открыта программа. "
+                             "Прореживание идёт фоном при её запуске.\n");
+            else
+                std::fprintf(stderr, "замок хранилища не завести: %s\n",
+                             zametti::journal::storeLockPath(root).toUtf8().constData());
             return 1;
         }
         zametti::journal::History history(root);

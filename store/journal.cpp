@@ -271,8 +271,14 @@ RawRecord readRecord(QCborStreamReader& reader, bool wantSnapshot) {
 
 // Собрать распакованный слепок записи index, идя от начала её поколения.
 // packed выровнен по entries; звенья своего поколения в нём есть.
+// eachLink — сверять отпечаток на КАЖДОМ звене. По умолчанию нет: сверка стоит
+// 210 мкс на звено против 4.7 мкс на саму распаковку (замер на заметке в
+// 239 КБ), то есть на цепочке в 31 звено это 98% всей цены. И она избыточна:
+// порча любого звена меняет итоговые байты, а отпечаток последнего мы сверяем
+// всегда. Посленинная сверка нужна ровно для одного — назвать, какое именно
+// звено испорчено, — и включается она только тогда, когда итог уже не сошёлся.
 bool rebuildAt(const QVector<Entry>& entries, const QVector<QByteArray>& packed, int index,
-               QByteArray* out, QString* error) {
+               QByteArray* out, QString* error, bool eachLink = false) {
     int base = index;
     while (base > 0 && !entries[base].full()) --base;
     if (!entries[base].full()) {
@@ -300,15 +306,27 @@ bool rebuildAt(const QVector<Entry>& entries, const QVector<QByteArray>& packed,
             if (error) *error = QStringLiteral("слепок записи №%1 не распаковывается").arg(i);
             return false;
         }
-        // Сверка на каждом звене, а не только на последнем: иначе беда,
-        // случившаяся в середине поколения, всплыла бы под чужим номером.
-        const Digest actual = hashOf(std::string_view(plain.constData(), size_t(plain.size())));
-        if (actual != e.digest) {
-            if (error)
-                *error = QStringLiteral("слепок записи №%1 не сходится с отпечатком").arg(i);
-            return false;
+        if (eachLink || i == index) {
+            const Digest actual =
+                hashOf(std::string_view(plain.constData(), size_t(plain.size())));
+            if (actual != e.digest) {
+                if (error)
+                    *error = QStringLiteral("слепок записи №%1 не сходится с отпечатком").arg(i);
+                // Итог не сошёлся — теперь стоит пройти цепочку с проверкой
+                // каждого звена и назвать то, с которого всё пошло не так.
+                if (!eachLink) {
+                    QByteArray ignored;
+                    QString which;
+                    if (!rebuildAt(entries, packed, index, &ignored, &which, true) &&
+                        error != nullptr)
+                        *error = which;
+                }
+                return false;
+            }
         }
-        current = plain;
+        // Перекладываем, а не копируем: на цепочке в 31 звено копия слепка в
+        // четверть мегабайта каждый раз — половина оставшейся цены.
+        current = std::move(plain);
     }
     *out = current;
     return true;
