@@ -13,6 +13,11 @@
 // Интерфейс намеренно узкий — снимок туда, снимок обратно. Если снимки окажутся
 // дороги (замер: копия IR заметки в 141 КБ — 50 мкс), внутренность можно
 // заменить на разности или общий буфер, не трогая ни операции, ни виджет.
+//
+// Глубина ограничена с двух сторон: числом шагов и суммарным весом. Одного
+// счёта шагов мало — замер на заметке в 239 КБ дал 361 КБ на шаг, то есть
+// 72 МБ на 200 шагов за одну заметку. Разности это сняли бы совсем; бюджет
+// дешевле и потолок задаёт уже сейчас.
 
 #ifndef ZAMETTI_EDIT_HISTORY_H
 #define ZAMETTI_EDIT_HISTORY_H
@@ -33,7 +38,8 @@ struct HistoryStep {
 
 class EditHistory {
 public:
-    explicit EditHistory(int limit = 200) : limit_(limit > 1 ? limit : 2) {}
+    explicit EditHistory(int limit = 200, size_t budgetBytes = 32u * 1024 * 1024)
+        : limit_(limit > 1 ? limit : 2), budget_(budgetBytes) {}
 
     // Начало работы с файлом: история обнуляется, откатывать нечего.
     void reset(Document doc, int cursor);
@@ -55,6 +61,8 @@ public:
 
     const HistoryStep& current() const { return steps_[position_]; }
     size_t size() const { return steps_.size(); }
+    // Сколько памяти занимают снимки: арена, спаны и блоки каждого шага.
+    size_t bytes() const;
 
 private:
     void dropOldestIfNeeded();
@@ -62,6 +70,7 @@ private:
     std::deque<HistoryStep> steps_{HistoryStep{}};
     size_t position_ = 0;
     int limit_;
+    size_t budget_;
 };
 
 }  // namespace zametti

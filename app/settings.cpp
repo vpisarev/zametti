@@ -175,6 +175,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("autosaveDelayMs"), a.autosaveDelayMs},
         {QStringLiteral("undoCoalesceMs"), a.undoCoalesceMs},
         {QStringLiteral("undoLimit"), a.undoLimit},
+        {QStringLiteral("undoBudgetMb"), a.undoBudgetMb},
         {QStringLiteral("toggleTaskKey"), a.toggleTaskKey},
         {QStringLiteral("moveUpKey"), a.moveUpKey},
         {QStringLiteral("moveDownKey"), a.moveDownKey},
@@ -325,6 +326,8 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     if (coalesce.isDouble()) a.undoCoalesceMs = coalesce.toInt();
     const QJsonValue limit = editor.value(QStringLiteral("undoLimit"));
     if (limit.isDouble()) a.undoLimit = limit.toInt();
+    const QJsonValue budget = editor.value(QStringLiteral("undoBudgetMb"));
+    if (budget.isDouble()) a.undoBudgetMb = budget.toInt();
     readString(editor, "toggleTaskKey", a.toggleTaskKey);
     readString(editor, "moveUpKey", a.moveUpKey);
     readString(editor, "moveDownKey", a.moveDownKey);

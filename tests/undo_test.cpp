@@ -115,6 +115,34 @@ void checkHistoryLimit() {
     check(steps == 3, "отменить можно ровно то, что осталось");
 }
 
+// Бюджет памяти держит глубину сверх счёта шагов: одна большая заметка
+// укладывала в историю 200 своих копий — 72 МБ на замере заметки в 239 КБ.
+void checkHistoryBudget() {
+    // Шаг весит около килобайта; бюджета хватает на три.
+    std::string big = "заметка\n\n";
+    while (big.size() < 1000) big += "строка с текстом подлиннее\n";
+
+    zametti::EditHistory history(200, 3 * 1024);
+    history.reset(parse(big.c_str()), 0);
+    for (int i = 1; i <= 20; ++i)
+        history.push(parse((big + "правка " + std::to_string(i) + "\n").c_str()), 0);
+
+    check(history.size() < 20, "бюджет обрезал историю раньше счёта шагов");
+    check(history.bytes() <= 3 * 1024 || history.size() == 2,
+          "вес истории уложился в бюджет");
+    check(history.size() >= 2, "два шага остаются всегда: откатиться есть куда");
+    check(zametti::serialize(history.current().doc) == big + "правка 20\n",
+          "текущий шаг после обрезки по весу — последний");
+    check(history.undo() != nullptr, "отмена после обрезки по весу работает");
+
+    // Медианной заметке бюджет не мешает: глубина остаётся полной.
+    zametti::EditHistory small(200, 32u * 1024 * 1024);
+    small.reset(parse("мелочь\n"), 0);
+    for (int i = 1; i <= 50; ++i)
+        small.push(parse((std::string("мелочь ") + std::to_string(i) + "\n").c_str()), 0);
+    check(small.size() == 51, "маленькой заметке бюджет глубину не режет");
+}
+
 // Инвариант C: операция и отмена возвращают ровно исходный IR.
 void checkOpThenUndo(const char* source, const char* label) {
     const Document before = parse(source);
@@ -168,6 +196,7 @@ int main(int argc, char** argv) {
     checkAppearanceIsNotContent();
     checkHistoryOrder();
     checkHistoryLimit();
+    checkHistoryBudget();
     for (const char* source : kOpCases)
         checkOpThenUndo(source, (std::string("случай: ") + source).c_str());
 

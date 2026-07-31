@@ -51,7 +51,8 @@ bool readFile(const QString& path, std::string& out) {
 }  // namespace
 
 NoteEditor::NoteEditor(QWidget* parent)
-    : NoteView(parent), history_(appearance().undoLimit) {
+    : NoteView(parent), history_(appearance().undoLimit,
+               size_t(qMax(1, appearance().undoBudgetMb)) * 1024 * 1024) {
     setReadOnly(false);
     setUndoRedoEnabled(false);   // историю ведём сами, см. edit_history.h
 
