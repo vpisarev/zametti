@@ -181,6 +181,34 @@ int main(int argc, char** argv) {
               blockAt(2).text().toStdString());
     }
 
+    // Esc посреди жеста — отмена без записи: ни текста, ни шага истории.
+    {
+        const std::string before = blockAt(2).text().toStdString();
+        const qreal roomBefore = marginOf(2);
+        const QRectF photo = editor.imageRectInViewport(blockAt(2));
+        const QPointF grip(photo.right() - 4.0, photo.bottom() - 4.0);
+        const QPointF pulled = grip + QPointF(40.0, 14.0);
+
+        QTest::mousePress(editor.viewport(), Qt::LeftButton, {}, grip.toPoint());
+        QMouseEvent drag(QEvent::MouseMove, pulled, editor.viewport()->mapToGlobal(pulled),
+                         Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(editor.viewport(), &drag);
+        QTest::qWait(10);
+        ZT_TRUE("во время жеста фото и правда тянется",
+                editor.imageRectInViewport(blockAt(2)).width() > photo.width() + 20.0);
+
+        QTest::keyClick(&editor, Qt::Key_Escape);
+        QTest::qWait(10);
+        ZT_TRUE("Esc вернул примерочную ширину на место",
+                std::fabs(editor.imageRectInViewport(blockAt(2)).width() - photo.width()) < 1.5);
+
+        QTest::mouseRelease(editor.viewport(), Qt::LeftButton, {}, pulled.toPoint());
+        QTest::qWait(10);
+        ZT_EQ("после Esc отпускание ничего не записывает", before,
+              blockAt(2).text().toStdString());
+        ZT_TRUE("и резерв остался прежним", std::fabs(marginOf(2) - roomBefore) < 1.5);
+    }
+
     // Запись ширины image-спана — во фрагмент пути "#w=". Операция напрямую:
     // мышь уже проверена на вики-форме, путь тот же.
     {
