@@ -470,6 +470,11 @@ int main(int argc, char** argv) {
         }
         return QFileInfo(file).completeBaseName();
     };
+    // Идёт синхронизация боковых колонок с открытой заметкой. Обработчики
+    // выделения на это время молчат: иначе перестановка курсора читалась бы
+    // как выбор человека и открывала бы другую заметку.
+    bool revealing = false;
+
     // Открытая заметка видна в обеих боковых колонках, откуда бы её ни
     // открыли: из общего списка «All notes», из результатов поиска, из другой
     // папки. Слева курсор встаёт на папку, где она лежит, и предки
@@ -484,10 +489,17 @@ int main(int argc, char** argv) {
         const QModelIndex folder =
             model.folderIndexForNote(QFileInfo(file).completeBaseName());
         if (folder.isValid()) {
-            const QSignalBlocker blocked(tree.selectionModel());
+            // Не QSignalBlocker: замерено пробником, что с заглушенными
+            // сигналами курсор дерева не переставляется вовсе — «было=All
+            // notes, стало=All notes», — а без глушения встаёт куда надо.
+            // Поэтому сигнал идёт как обычно, а его обработчик на время
+            // синхронизации выключен флагом: курсор здесь указатель, а не
+            // навигация, и средний список от него перезаполняться не должен.
+            revealing = true;
             for (QModelIndex up = folder; up.isValid(); up = up.parent()) tree.expand(up);
             tree.setCurrentIndex(folder);
             tree.scrollTo(folder);
+            revealing = false;
         }
 
         // Заметки может не быть в списке вовсе — так бывает, когда из поиска
@@ -500,17 +512,25 @@ int main(int argc, char** argv) {
             row = list.indexForPath(file);
         }
         if (!row.isValid()) return;
-        const QSignalBlocker blocked(listView.selectionModel());
+        revealing = true;
         listView.setCurrentIndex(row);
         listView.scrollTo(row);
+        revealing = false;
     };
 
+    // Точка одна: заметку открывает только openFile, и он же говорит об этом
+    // сигналом. Связь очередью, а не прямым вызовом, — иначе синхронизация
+    // выполнялась бы ВНУТРИ ещё не доигранной смены выделения (щелчок по
+    // папке открывает первую заметку прямо из обработчика currentChanged), и
+    // та, завершившись, возвращала бы курсор дерева на прежнее место.
+    // Замерено пробником: папка находилась верно, но выделение откатывалось.
     QObject::connect(&editor, &zametti::NoteEditor::fileChanged, &window,
                      [&](const QString& file) {
                          window.setWindowTitle(windowTitleFor(file) +
                                                QStringLiteral(" — zametti"));
                          revealOpenNote(file);
-                     });
+                     },
+                     Qt::QueuedConnection);
 
     // Кегль задан явно в каждом формате, поэтому штатный зум QTextEdit до него
     // не дотягивается: при смене масштаба документ собирается заново из того же
@@ -545,6 +565,7 @@ int main(int argc, char** argv) {
 
     QObject::connect(tree.selectionModel(), &QItemSelectionModel::currentChanged, &tree,
                      [&](const QModelIndex& index, const QModelIndex&) {
+                         if (revealing) return;
                          if (model.isStore()) {
                              fillList(index, true);
                              return;
@@ -558,6 +579,7 @@ int main(int argc, char** argv) {
     // ↑/↓ должны ходить по списку, а не по тексту (правило средней колонки).
     QObject::connect(listView.selectionModel(), &QItemSelectionModel::currentChanged,
                      &listView, [&](const QModelIndex& index, const QModelIndex&) {
+                         if (revealing) return;
                          const QString file = list.pathAt(index);
                          if (!file.isEmpty() && file != editor.filePath()) editor.openFile(file);
                      });
