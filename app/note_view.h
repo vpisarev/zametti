@@ -94,6 +94,19 @@ protected:
     // строками кода незакрашенные полосы (замер: 1.9 px на строку).
     void paintCodeBackground(QPainter& painter, const QRectF& visible);
 
+    // Где на экране лежит фотография блока. Здесь, а не в private, по той же
+    // причине, что и paintCodeBackground: это часть отрисовки, и наследник о
+    // ней вправе знать. Наборам приёмки она нужна как единственный честный
+    // ответ на вопрос «как картинка ВЫГЛЯДИТ»: blockBoundingRect отдаёт высоту
+    // пустой строки (810×20 на портретном фото), потому что картинка рисуется
+    // поверх блока, а не является его содержимым.
+    struct ImageGeometry {
+        bool valid = false;
+        QRectF photo;            // координаты документа
+        QRectF line;             // прямоугольник текста строки (для закраски)
+    };
+    ImageGeometry imageGeometry(const QTextBlock& block);
+
 private:
     // Каретку рисуем сами: своей Qt цвета не отдаёт (см. caretColor в
     // settings.h). Раз рисуем сами — сами и мигаем: частота та же, что у
@@ -117,12 +130,6 @@ private:
     // фотографии, а не вскрытой разметкой. Место под фотографию резервирует
     // syncImageSpace, ставя bottomMargin (у всех прочих блоков он ноль по
     // построению сборщика); от каретки резерв не зависит.
-    struct ImageGeometry {
-        bool valid = false;
-        QRectF photo;            // координаты документа
-        QRectF line;             // прямоугольник текста строки (для закраски)
-    };
-    ImageGeometry imageGeometry(const QTextBlock& block);
     // Перемерить место под фотографии. whole — по всему документу; иначе
     // только по области, накопленной markImageRegion, и лишь если она есть.
     //

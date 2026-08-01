@@ -158,6 +158,17 @@ if(TARGET zametti-view)
         add_test(NAME image-insert COMMAND image_insert_test)
         set_tests_properties(image-insert PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+        # Снимки приёмки. Кладёт png в каталог сборки и заодно проверяет то, что
+        # поддаётся числу: поворот, вписанность, порядок блоков.
+        add_executable(image_shots_test image_shots_test.cpp)
+        target_link_libraries(image_shots_test PRIVATE zametti-widgets Qt6::Test
+                              zametti-warnings)
+        target_include_directories(image_shots_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        add_test(NAME image-shots COMMAND image_shots_test
+                 ${CMAKE_SOURCE_DIR}/.testdata/images/originals
+                 ${CMAKE_CURRENT_BINARY_DIR}/снимки-этапа-8)
+        set_tests_properties(image-shots PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
         add_executable(search_test search_test.cpp)
         target_link_libraries(search_test PRIVATE zametti-widgets Qt6::Test zametti-warnings)
         target_include_directories(search_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
