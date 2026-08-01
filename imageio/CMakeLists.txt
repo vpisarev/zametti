@@ -1,0 +1,67 @@
+# Свои читатели картинок: JPEG XL поверх вендоренной libjxl и AVIF/HEIC
+# поверх системной libheif.
+#
+# Зачем свои. JXL — основной формат хранения zametti, и его декод обязан быть
+# одинаковым везде; дистрибутивный плагин где-то есть, где-то нет. Для
+# AVIF/HEIC плагина под Qt6 в дистрибутиве нет ВОВСЕ (qt6-image-formats-plugins
+# даёт tiff/webp/tga/mng/icns/wbmp, kimageformats под Qt6 в apt отсутствует), а
+# шесть файлов матрицы перекодирования — как раз avif и heic.
+#
+# Плагины СТАТИЧЕСКИЕ. Динамический пришлось бы куда-то устанавливать и
+# надеяться, что Qt его найдёт, — ровно та зависимость от окружения, от которой
+# мы и уходим. Статический линкуется в программу: слинковали — значит работает.
+#
+# Цель отдельная, не внутри app/, потому что читатели нужны троим: просмотрщику,
+# утилите хранилища (recompress разжимает вложения) и наборам тестов.
+
+find_package(Qt6 QUIET COMPONENTS Gui)
+if(NOT Qt6_FOUND)
+    message(STATUS "Qt6 Gui не найден — свои читатели картинок собраны не будут")
+    return()
+endif()
+
+set(CMAKE_AUTOMOC ON)
+
+qt_add_plugin(zametti-jxl STATIC
+    CLASS_NAME JxlPlugin
+    PLUGIN_TYPE imageformats
+)
+target_sources(zametti-jxl PRIVATE jxl_plugin.cpp jxl_handler.cpp)
+target_link_libraries(zametti-jxl PRIVATE Qt6::Gui libjxl zametti-warnings)
+target_include_directories(zametti-jxl PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+# --- AVIF и HEIC -----------------------------------------------------------
+#
+# libheif системная, не вендоренная: она тянет за собой кодеки видео (aom или
+# de265/x265), и вендоринг этого хозяйства обошёлся бы дороже самой libjxl, а
+# AVIF для нас формат ВХОДА, не хранения. Нет libheif — нет плагина, и вставка
+# avif/heic честно откажет; тихого пропуска не будет.
+
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(LIBHEIF IMPORTED_TARGET libheif)
+endif()
+
+if(LIBHEIF_FOUND)
+    qt_add_plugin(zametti-heif STATIC
+        CLASS_NAME HeifPlugin
+        PLUGIN_TYPE imageformats
+    )
+    target_sources(zametti-heif PRIVATE heif_plugin.cpp heif_handler.cpp)
+    target_link_libraries(zametti-heif PRIVATE Qt6::Gui PkgConfig::LIBHEIF zametti-warnings)
+    target_include_directories(zametti-heif PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+    set(ZAMETTI_HAVE_HEIF ON PARENT_SCOPE)
+    set(ZAMETTI_HEIF_VERSION "${LIBHEIF_VERSION}" PARENT_SCOPE)
+else()
+    message(STATUS "libheif не найдена — avif и heic читаться не будут. "
+                   "Поставьте libheif-dev.")
+    set(ZAMETTI_HAVE_HEIF OFF PARENT_SCOPE)
+endif()
+
+# Одна цель на всё: потребителю незачем знать, из скольких плагинов состоят
+# наши читатели и какие из них собрались.
+add_library(zametti-imageio INTERFACE)
+target_link_libraries(zametti-imageio INTERFACE zametti-jxl)
+if(LIBHEIF_FOUND)
+    target_link_libraries(zametti-imageio INTERFACE zametti-heif)
+endif()

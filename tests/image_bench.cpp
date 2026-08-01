@@ -36,6 +36,7 @@
 #include <QImage>
 #include <QImageReader>
 #include <QImageWriter>
+#include <QColorSpace>
 
 #include "tools/ssimulacra2.h"
 #include "lib/jxl/color_encoding_internal.h"
@@ -405,6 +406,23 @@ void bench(const QString& path, int runs, void* runner) {
     }
     row("декод входа (Qt)", std::to_string(img.width()) + "x" + std::to_string(img.height()),
         tDecode);
+    // Что именно донесли читатели: глубина и профиль. Ради этого свои плагины
+    // и написаны, так что смотреть на это надо в каждом прогоне.
+    std::printf("      глубина %d бит/канал%s, профиль: %s\n",
+                img.depth() / 4, img.hasAlphaChannel() ? ", с альфой" : "",
+                img.colorSpace().isValid()
+                    ? img.colorSpace().description().toUtf8().constData()
+                    : "нет");
+
+    // ZAMETTI_BENCH_DUMP=<каталог> — сложить разобранный вход картинкой рядом.
+    // Нужно, чтобы сверять наши читатели с эталонными утилитами (heif-dec,
+    // djxl): «декодировалось» и «декодировалось верно» — разные утверждения.
+    if (const QByteArray dump = qgetenv("ZAMETTI_BENCH_DUMP"); !dump.isEmpty()) {
+        const QString to = QString::fromLocal8Bit(dump) + "/" +
+                           QFileInfo(path).completeBaseName() + ".png";
+        img.convertToFormat(QImage::Format_RGB888).save(to, "PNG");
+        std::printf("      выгружено: %s\n", to.toUtf8().constData());
+    }
 
     const Pixels full = fromImage(img);
     if (!full.ok()) return;

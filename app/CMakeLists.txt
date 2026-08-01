@@ -61,7 +61,10 @@ add_library(zametti-widgets STATIC
     editor_widget.h
     editor_widget.cpp
 )
-target_link_libraries(zametti-widgets PUBLIC zametti-view Qt6::Widgets)
+# Свои читатели картинок (jxl, avif/heic) — статические плагины. Линкуются
+# сюда, а не в исполняемый файл, потому что тестам редактора нужны те же
+# форматы: набор, который не умеет прочитать jxl, проверял бы не то.
+target_link_libraries(zametti-widgets PUBLIC zametti-view zametti-imageio Qt6::Widgets)
 target_link_libraries(zametti-widgets PRIVATE zametti-warnings)
 
 add_executable(zametti
