@@ -28,7 +28,7 @@
 # говорит «markdown → IR → markdown», а EXIF там ни при чём. Рассуждение было
 # про зависимости («чистые байты, значит можно в ядро»), а надо было про
 # принадлежность.
-add_library(zametti-imagemeta STATIC exif.cpp exif.h)
+add_library(zametti-imagemeta STATIC exif.cpp exif.h import_limits.cpp import_limits.h)
 target_include_directories(zametti-imagemeta PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(zametti-imagemeta PRIVATE zametti-warnings)
 set_target_properties(zametti-imagemeta PROPERTIES POSITION_INDEPENDENT_CODE ON)

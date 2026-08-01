@@ -211,6 +211,11 @@ if(TARGET zametti-tiff)
     set_tests_properties(tiff PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()
 
+add_executable(import_limits_test import_limits_test.cpp)
+target_link_libraries(import_limits_test PRIVATE zametti-imagemeta zametti-warnings)
+target_include_directories(import_limits_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME import-limits COMMAND import_limits_test)
+
 add_executable(exif_test exif_test.cpp)
 target_link_libraries(exif_test PRIVATE zametti-imagemeta zametti-warnings)
 target_include_directories(exif_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

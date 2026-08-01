@@ -29,6 +29,16 @@ void readReal(const QJsonObject& o, const char* key, qreal& out) {
     if (v.isDouble()) out = v.toDouble();
 }
 
+void readInt(const QJsonObject& o, const char* key, int& out) {
+    const QJsonValue v = o.value(QLatin1String(key));
+    if (v.isDouble()) out = v.toInt();
+}
+
+void readDouble(const QJsonObject& o, const char* key, double& out) {
+    const QJsonValue v = o.value(QLatin1String(key));
+    if (v.isDouble()) out = v.toDouble();
+}
+
 void readString(const QJsonObject& o, const char* key, QString& out) {
     const QJsonValue v = o.value(QLatin1String(key));
     if (v.isString()) out = v.toString();
@@ -195,6 +205,15 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("externalEditor"), a.externalEditor},
     };
 
+    QJsonObject images{
+        {QStringLiteral("maxImportedImageSize"), a.images.maxImportedImageSize},
+        {QStringLiteral("maxImportedImageFileSizeMb"), a.images.maxImportedImageFileSizeMb},
+        {QStringLiteral("photoQuality"), a.images.photoQuality},
+        {QStringLiteral("losslessThreshold"), a.images.losslessThreshold},
+        {QStringLiteral("maxBitsPerChannel"), a.images.maxBitsPerChannel},
+        {QStringLiteral("maxDecodeMemoryMb"), a.images.maxDecodeMemoryMb},
+    };
+
     QJsonObject zoom{
         {QStringLiteral("step"), a.zoomStep},
         {QStringLiteral("min"), a.zoomMin},
@@ -212,6 +231,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("noteList"), noteList},
         {QStringLiteral("find"), find},
         {QStringLiteral("editor"), editor},
+        {QStringLiteral("images"), images},
         {QStringLiteral("zoom"), zoom},
     };
 }
@@ -365,6 +385,16 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
         }
     }
     readString(editor, "externalEditor", a.externalEditor);
+
+    // Имя своё, а не "images": в этой же области уже живёт значение ключа
+    // editor.imageCacheSizeMb под этим именем.
+    const QJsonObject importGroup = root.value(QStringLiteral("images")).toObject();
+    readInt(importGroup, "maxImportedImageSize", a.images.maxImportedImageSize);
+    readInt(importGroup, "maxImportedImageFileSizeMb", a.images.maxImportedImageFileSizeMb);
+    readInt(importGroup, "photoQuality", a.images.photoQuality);
+    readDouble(importGroup, "losslessThreshold", a.images.losslessThreshold);
+    readInt(importGroup, "maxBitsPerChannel", a.images.maxBitsPerChannel);
+    readInt(importGroup, "maxDecodeMemoryMb", a.images.maxDecodeMemoryMb);
 
     const QJsonObject zoom = root.value(QStringLiteral("zoom")).toObject();
     readReal(zoom, "step", a.zoomStep);
