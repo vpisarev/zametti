@@ -18,8 +18,6 @@ add_library(zametti-core STATIC
     note_id.cpp
     hash.h
     hash.cpp
-    exif.h
-    exif.cpp
 )
 
 target_include_directories(zametti-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

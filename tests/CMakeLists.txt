@@ -212,7 +212,7 @@ if(TARGET zametti-tiff)
 endif()
 
 add_executable(exif_test exif_test.cpp)
-target_link_libraries(exif_test PRIVATE zametti-core zametti-warnings)
+target_link_libraries(exif_test PRIVATE zametti-imagemeta zametti-warnings)
 target_include_directories(exif_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME exif COMMAND exif_test ${CMAKE_SOURCE_DIR}/.testdata/images/originals)
 

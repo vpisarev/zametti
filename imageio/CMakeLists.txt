@@ -14,6 +14,25 @@
 # Цель отдельная, не внутри app/, потому что читатели нужны троим: просмотрщику,
 # утилите хранилища (recompress разжимает вложения) и наборам тестов.
 
+# --- метаданные картинок ---------------------------------------------------
+#
+# ОТДЕЛЬНОЙ целью и БЕЗ Qt, хотя всё остальное в этом каталоге на нём. Причина
+# в потребителях: метаданные нужны и утилите хранилища (recompress), а она
+# живёт на Qt6::Core и тащить ради этого весь Qt6::Gui незачем.
+#
+# Здесь обход контейнеров — вынуть блоб оттуда, где он лежит: маркеры JPEG,
+# чанки RIFF у WebP, чанки PNG. У TIFF, HEIF и JXL метаданные забирают их
+# собственные читатели, каждый своим способом.
+#
+# Сперва этот файл лежал в zametti-core — и это было неправильно: ядро о себе
+# говорит «markdown → IR → markdown», а EXIF там ни при чём. Рассуждение было
+# про зависимости («чистые байты, значит можно в ядро»), а надо было про
+# принадлежность.
+add_library(zametti-imagemeta STATIC exif.cpp exif.h)
+target_include_directories(zametti-imagemeta PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(zametti-imagemeta PRIVATE zametti-warnings)
+set_target_properties(zametti-imagemeta PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 find_package(Qt6 QUIET COMPONENTS Gui)
 if(NOT Qt6_FOUND)
     message(STATUS "Qt6 Gui не найден — свои читатели картинок собраны не будут")
@@ -72,7 +91,7 @@ target_include_directories(zametti-tiff PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # Одна цель на всё: потребителю незачем знать, из скольких плагинов состоят
 # наши читатели и какие из них собрались.
 add_library(zametti-imageio INTERFACE)
-target_link_libraries(zametti-imageio INTERFACE zametti-jxl zametti-tiff)
+target_link_libraries(zametti-imageio INTERFACE zametti-jxl zametti-tiff zametti-imagemeta)
 if(LIBHEIF_FOUND)
     target_link_libraries(zametti-imageio INTERFACE zametti-heif)
 endif()
