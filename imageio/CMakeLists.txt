@@ -87,19 +87,43 @@ endif()
 # Запись JXL: единственное место, где картинка превращается в то, что ляжет в
 # хранилище. Отдельной целью от плагина чтения — читают у нас все, а пишет
 # только импорт.
-add_library(zametti-jxl-encode STATIC jxl_encoder.cpp jxl_encoder.h)
+add_library(zametti-jxl-encode STATIC jxl_encoder.cpp jxl_encoder.h
+                                     resample.cpp resample.h)
 target_link_libraries(zametti-jxl-encode PUBLIC Qt6::Gui libjxl PRIVATE zametti-warnings)
+
+# Ресемплер раскладывается по строкам без связей между ними — параллелится
+# даром. OpenMP берём, ТОЛЬКО если компилятор его даёт: на macOS с AppleClang
+# он требует отдельной libomp, а зависеть от неё нельзя (правило владельца —
+# компилятор, CMake и Qt, и ничего больше). Нет OpenMP — всё работает так же,
+# только в один поток.
+find_package(OpenMP QUIET COMPONENTS CXX)
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(zametti-jxl-encode PRIVATE OpenMP::OpenMP_CXX)
+    set(ZAMETTI_HAVE_OPENMP ON PARENT_SCOPE)
+else()
+    set(ZAMETTI_HAVE_OPENMP OFF PARENT_SCOPE)
+endif()
 target_include_directories(zametti-jxl-encode PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_library(zametti-tiff STATIC tiff_reader.cpp tiff_reader.h)
 target_link_libraries(zametti-tiff PUBLIC Qt6::Gui libtiff PRIVATE zametti-warnings)
 target_include_directories(zametti-tiff PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
+# --- конвейер вставки ------------------------------------------------------
+#
+# Таблица решений и всё, что вокруг неё. Собирает вместе уже проверенные по
+# отдельности части: границы, чтение TIFF, метаданные, запись JXL, ресемплер.
+add_library(zametti-import STATIC import.cpp import.h)
+target_link_libraries(zametti-import
+    PUBLIC Qt6::Gui zametti-jxl-encode zametti-tiff zametti-imagemeta
+    PRIVATE zametti-warnings)
+target_include_directories(zametti-import PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
 # Одна цель на всё: потребителю незачем знать, из скольких плагинов состоят
 # наши читатели и какие из них собрались.
 add_library(zametti-imageio INTERFACE)
 target_link_libraries(zametti-imageio INTERFACE zametti-jxl zametti-jxl-encode
-                      zametti-tiff zametti-imagemeta)
+                      zametti-tiff zametti-imagemeta zametti-import)
 if(LIBHEIF_FOUND)
     target_link_libraries(zametti-imageio INTERFACE zametti-heif)
 endif()

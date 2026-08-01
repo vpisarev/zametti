@@ -204,6 +204,26 @@ target_link_libraries(render_bench PRIVATE zametti-widgets Qt6::Test zametti-war
 target_include_directories(render_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 if(TARGET zametti-jxl-encode)
+    # Стенд подбора параметров: строит кривую «качество против байтов» на
+    # большой выборке. Тестом не заводится — это прибор, и гоняется он долго.
+    add_executable(quality_study quality_study.cpp)
+    target_link_libraries(quality_study PRIVATE zametti-jxl-encode zametti-jxl
+                          zametti-imagemeta libjxl Qt6::Gui zametti-warnings)
+    target_include_directories(quality_study PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_executable(import_test import_test.cpp)
+    target_link_libraries(import_test PRIVATE zametti-import zametti-jxl Qt6::Gui
+                          zametti-warnings)
+    target_include_directories(import_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME import COMMAND import_test ${CMAKE_SOURCE_DIR}/.testdata/images/originals)
+    set_tests_properties(import PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    add_executable(resample_test resample_test.cpp)
+    target_link_libraries(resample_test PRIVATE zametti-jxl-encode Qt6::Gui zametti-warnings)
+    target_include_directories(resample_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME resample COMMAND resample_test)
+    set_tests_properties(resample PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     add_executable(jxl_encode_test jxl_encode_test.cpp)
     target_link_libraries(jxl_encode_test PRIVATE zametti-jxl-encode zametti-jxl
                           zametti-imagemeta Qt6::Gui zametti-warnings)
