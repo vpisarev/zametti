@@ -58,7 +58,11 @@ QImage smooth(int w, int h) {
 }
 
 void checkNoStepsWhenFits() {
+    // Качество задаётся ЯВНО: набор проверяет саму лестницу, а не умолчание
+    // конфига. За умолчание отвечает import_limits_test — иначе его правка
+    // красила бы здесь всё подряд и прятала настоящую поломку.
     ImportLimits limits;
+    limits.quality = 90;
     limits.maxFileSizeMb = 4;   // щедрый бюджет
     const LadderResult r = runLadder(smooth(800, 600), EncodeMeta{}, limits);
     ZT_TRUE("влезло: " + r.error.toStdString(), r.ok());
@@ -87,6 +91,7 @@ QImage realPhoto(const QString& root) {
 
 void checkQualityStep(const QString& root) {
     ImportLimits limits;
+    limits.quality = 90;   // явно: набор про лестницу, не про умолчание
     const QImage src = realPhoto(root);
     if (src.isNull()) return;   // без корпуса эту ступень не проверить
     // Сколько весит при обычном качестве — от этого и пляшем.
@@ -113,6 +118,7 @@ void checkQualityStep(const QString& root) {
 void checkResolutionStepAndFloor(const QString& root) {
     // Совсем тесный бюджет: обязаны пройти и качество, и разрешение, и пол.
     ImportLimits limits;
+    limits.quality = 90;   // явно: набор про лестницу, не про умолчание
     limits.maxFileSizeMb = 0.05;   // 50 КБ: сюда фотография не влезет никак
     const QImage src = realPhoto(root);
     if (src.isNull()) return;
@@ -132,6 +138,7 @@ void checkResolutionStepAndFloor(const QString& root) {
 // вход: любое понижение качества обваливает оценку.
 void checkArbiterRollsBack() {
     ImportLimits limits;
+    limits.quality = 90;   // явно: набор про лестницу, не про умолчание
     const QImage src = noise(700, 500);
     EncodeOptions opt;
     QString err;

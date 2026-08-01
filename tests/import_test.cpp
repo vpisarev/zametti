@@ -57,7 +57,7 @@ void expectRoute(const QString& root, const char* rel, Route want, const char* w
 }
 
 void checkTable(const QString& root) {
-    ImportLimits limits;   // умолчания: S=1600, файл 1 МБ
+    ImportLimits limits;   // умолчания: S=1920, качество 88, файл 1 МБ
 
     // --- ряд «JPEG влезает в оба бюджета» → байт-точный транскод ---------
     expectRoute(root, "art/leonardo-oldmen.jpg", Route::TranscodedJpeg,

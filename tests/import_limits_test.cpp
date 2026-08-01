@@ -38,7 +38,7 @@ void checkRefusal(const std::string& what, Refusal expected, int w, int h, int b
 }
 
 void checkBoundaries() {
-    ImportLimits limits;   // умолчания: S=1600, потолок разжатия 1024 МБ
+    ImportLimits limits;   // умолчания; границы входа от S не зависят
 
     checkRefusal("обычное фото проходит", Refusal::None, 4032, 3024, 8, limits);
     checkRefusal("крошечная проходит", Refusal::None, 120, 120, 8, limits);
@@ -90,8 +90,23 @@ void checkMemoryCeiling() {
           num(static_cast<long long>(decodedBytes(1000, 1000, 16))));
 }
 
+// Умолчания отдельной проверкой: они выведены замером (таблицы в
+// app/settings.h), и молчаливая их смена — это молчаливая смена всего, что
+// ляжет в хранилище. Пусть такая правка сначала покраснеет здесь.
+void checkDefaults() {
+    const ImportLimits d;
+    ZT_EQ("S по умолчанию", num(1920), num(d.maxSize));
+    ZT_EQ("качество по умолчанию", num(88), num(d.quality));
+    ZT_EQ("бюджет файла по умолчанию, байт", num(1048576), num(d.fileBudgetBytes()));
+    ZT_EQ("потолок глубины по умолчанию", num(12), num(d.maxBitsPerChannel));
+}
+
 void checkTargetSize() {
-    ImportLimits limits;   // S = 1600, бюджет 2.56 Мп, потолок стороны 4800
+    // S задаётся ЯВНО: здесь проверяется арифметика бюджета, а не умолчание.
+    // За умолчание отвечает checkDefaults, и это разные вопросы — иначе смена
+    // умолчания красила бы весь набор и прятала настоящую поломку.
+    ImportLimits limits;
+    limits.maxSize = 1600;   // бюджет 2.56 Мп, потолок стороны 4800
 
     // Квадрат ровно в бюджет.
     ZT_EQ("квадрат ужимается до стороны S", sz({1600, 1600}),
@@ -171,6 +186,7 @@ void checkSanity() {
 int main() {
     checkBoundaries();
     checkMemoryCeiling();
+    checkDefaults();
     checkTargetSize();
     checkSanity();
     return zt::report("границы входа и бюджет");

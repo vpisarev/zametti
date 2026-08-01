@@ -154,7 +154,7 @@ int main(int argc, char** argv) {
     // выполаживается, а не подтвердить заранее выбранное число.
     const QList<int> sizes = mode == QStringLiteral("quality")
                                  ? QList<int>{1920}
-                                 : QList<int>{1680, 1920, 2400, 3360, 3840};
+                                 : QList<int>{1680, 1920, 2400, 2880, 3360, 3840};
 
     int done = 0;
     int skipped = 0;
