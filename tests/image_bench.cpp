@@ -408,8 +408,11 @@ void bench(const QString& path, int runs, void* runner) {
         tDecode);
     // Что именно донесли читатели: глубина и профиль. Ради этого свои плагины
     // и написаны, так что смотреть на это надо в каждом прогоне.
-    std::printf("      глубина %d бит/канал%s, профиль: %s\n",
-                img.depth() / 4, img.hasAlphaChannel() ? ", с альфой" : "",
+    // depth() — бит на ПИКСЕЛЬ, а не на канал; делить его на четыре можно
+    // только у четырёхканальных. На сером TIFF такая формула выдала «2 бита»
+    // — печатаем то, что Qt действительно говорит, и имя формата рядом.
+    std::printf("      %d бит/пиксель, формат Qt %d%s, профиль: %s\n", img.depth(),
+                int(img.format()), img.hasAlphaChannel() ? ", с альфой" : "",
                 img.colorSpace().isValid()
                     ? img.colorSpace().description().toUtf8().constData()
                     : "нет");
