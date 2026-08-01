@@ -84,6 +84,13 @@ endif()
 # и EXIF, а интерфейс QImageIOHandler ничего этого не передаёт. Плагин Qt для
 # TIFF остаётся на месте и обслуживает показ; импорт идёт мимо него, потому что
 # он тихо перевирает CIELab.
+# Запись JXL: единственное место, где картинка превращается в то, что ляжет в
+# хранилище. Отдельной целью от плагина чтения — читают у нас все, а пишет
+# только импорт.
+add_library(zametti-jxl-encode STATIC jxl_encoder.cpp jxl_encoder.h)
+target_link_libraries(zametti-jxl-encode PUBLIC Qt6::Gui libjxl PRIVATE zametti-warnings)
+target_include_directories(zametti-jxl-encode PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_library(zametti-tiff STATIC tiff_reader.cpp tiff_reader.h)
 target_link_libraries(zametti-tiff PUBLIC Qt6::Gui libtiff PRIVATE zametti-warnings)
 target_include_directories(zametti-tiff PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -91,7 +98,8 @@ target_include_directories(zametti-tiff PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # Одна цель на всё: потребителю незачем знать, из скольких плагинов состоят
 # наши читатели и какие из них собрались.
 add_library(zametti-imageio INTERFACE)
-target_link_libraries(zametti-imageio INTERFACE zametti-jxl zametti-tiff zametti-imagemeta)
+target_link_libraries(zametti-imageio INTERFACE zametti-jxl zametti-jxl-encode
+                      zametti-tiff zametti-imagemeta)
 if(LIBHEIF_FOUND)
     target_link_libraries(zametti-imageio INTERFACE zametti-heif)
 endif()

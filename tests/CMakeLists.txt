@@ -203,6 +203,16 @@ add_executable(render_bench render_bench.cpp)
 target_link_libraries(render_bench PRIVATE zametti-widgets Qt6::Test zametti-warnings)
 target_include_directories(render_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+if(TARGET zametti-jxl-encode)
+    add_executable(jxl_encode_test jxl_encode_test.cpp)
+    target_link_libraries(jxl_encode_test PRIVATE zametti-jxl-encode zametti-jxl
+                          zametti-imagemeta Qt6::Gui zametti-warnings)
+    target_include_directories(jxl_encode_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME jxl-encode
+             COMMAND jxl_encode_test ${CMAKE_SOURCE_DIR}/.testdata/images/originals)
+    set_tests_properties(jxl-encode PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endif()
+
 if(TARGET zametti-tiff)
     add_executable(tiff_test tiff_test.cpp)
     target_link_libraries(tiff_test PRIVATE zametti-tiff Qt6::Gui zametti-warnings)
