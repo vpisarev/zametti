@@ -38,6 +38,7 @@ find_package(Qt6 QUIET COMPONENTS Core Gui Widgets Test)
 add_subdirectory(3rdparty/md4c)
 add_subdirectory(3rdparty/blake3)
 add_subdirectory(3rdparty/zstd)
+add_subdirectory(3rdparty/libjxl)
 add_subdirectory(zametti-core)
 add_subdirectory(store)
 add_subdirectory(app)
@@ -57,6 +58,12 @@ function(zametti_row label value)
     # для выравнивания не годится вовсе. Поэтому ширину держим пробелами прямо
     # в подписи, а здесь только склеиваем.
     message(NOTICE "* ${label} ${value}")
+endfunction()
+
+# Вложенный пункт списка: вендоренного добра накопилось столько, что в строку
+# оно уже не влезает.
+function(zametti_subrow value)
+    message(NOTICE "    * ${value}")
 endfunction()
 
 function(zametti_summary)
@@ -117,7 +124,11 @@ function(zametti_summary)
     zametti_row("сборка:    " "`${config}`")
     zametti_row("компилятор:" "`${compiler}`")
     zametti_row("Qt:        " "`${qt}`")
-    zametti_row("вендоринг: " "`md4c ${MD4C_VENDORED_VERSION}, blake3 ${BLAKE3_VENDORED_VERSION}, zstd ${ZSTD_VENDORED_VERSION}`")
+    zametti_row("вендоринг: " "")
+    zametti_subrow("`md4c ${MD4C_VENDORED_VERSION}` — разбор markdown")
+    zametti_subrow("`blake3 ${BLAKE3_VENDORED_VERSION}` — отпечатки заметок и вложений")
+    zametti_subrow("`zstd ${ZSTD_VENDORED_VERSION}` — слепки в журнале правок")
+    zametti_subrow("`libjxl ${JXL_VENDORED_VERSION}` — картинки: кодек, транскод JPEG, SSIMULACRA2")
     zametti_row("корпуса:   " "`${corpora}`")
     if(fuzz)
         zametti_row("фаззинг:   " "`${fuzz}`")
