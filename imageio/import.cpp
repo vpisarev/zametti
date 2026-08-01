@@ -1,5 +1,6 @@
 #include "import.h"
 
+#include "color.h"
 #include "exif.h"
 #include "jxl_encoder.h"
 #include "ladder.h"
@@ -296,6 +297,22 @@ ImportResult importImage(const QString& path, const ImportLimits& limits) {
         meta = metaFor(raw);
     }
 
+    // --- цвет: привести к тому, что переживёт круг ------------------------
+    //
+    // Здесь, а не в путях записи: приведение обязано случиться ДО любых проб и
+    // решений, иначе проба lossless мерила бы одну картинку, а записывалась бы
+    // другая. Молчаливо ничего не теряется — профили, выражаемые описанием
+    // (sRGB, Display P3, Adobe RGB), проходят мимо нетронутыми.
+    const bool colorFixed = canonicalizeColor(image, meta.icc);
+    // Приписка идёт ко ВСЕМ дальнейшим исходам, а исходов ниже несколько, и
+    // каждый собирает свой ImportResult заново. Отсюда обёртка, а не поле.
+    const auto noteColor = [colorFixed](ImportResult r) {
+        if (!colorFixed) return r;
+        const QString note = QStringLiteral("цвет приведён к Display P3");
+        r.message = r.message.isEmpty() ? note : r.message + QStringLiteral("; ") + note;
+        return r;
+    };
+
     // --- WebP, влезающий: пробуем перекодировать -------------------------
     if (info.format == QLatin1String("webp") && fitsFile && fitsPixels) {
         const double ratio = losslessRatio(image, limits);
@@ -306,7 +323,7 @@ ImportResult importImage(const QString& path, const ImportLimits& limits) {
         tried.encodes += 2;   // проба тоже энкоды
         // Заменяем только при заметном выигрыше: гонять байты ради пяти
         // процентов незачем, а вот потерять качество — запросто.
-        if (tried.ok() && tried.bytes.size() * 100 <= raw.size() * 85) return tried;
+        if (tried.ok() && tried.bytes.size() * 100 <= raw.size() * 85) return noteColor(tried);
         result.route = Route::AsIs;
         result.bytes = raw;
         result.extension = QStringLiteral("webp");
@@ -327,13 +344,13 @@ ImportResult importImage(const QString& path, const ImportLimits& limits) {
                                : photoPath(image, meta, limits);
         out.sourceBytes = raw.size();
         out.encodes += 2;
-        return out;
+        return noteColor(out);
     }
 
     // --- всё прочее: путь фото -------------------------------------------
     ImportResult out = photoPath(image, meta, limits);
     out.sourceBytes = raw.size();
-    return out;
+    return noteColor(out);
 }
 
 ImportResult importPixels(const QImage& image, const ImportLimits& limits) {

@@ -225,6 +225,13 @@ if(TARGET zametti-jxl-encode)
     add_test(NAME import COMMAND import_test ${CMAKE_SOURCE_DIR}/.testdata/images/originals)
     set_tests_properties(import PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    add_executable(color_test color_test.cpp)
+    target_link_libraries(color_test PRIVATE zametti-color zametti-jxl-encode zametti-jxl
+                          Qt6::Gui zametti-warnings)
+    target_include_directories(color_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME color COMMAND color_test ${CMAKE_SOURCE_DIR}/.testdata/images/originals)
+    set_tests_properties(color PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     add_executable(resample_test resample_test.cpp)
     target_link_libraries(resample_test PRIVATE zametti-jxl-encode Qt6::Gui zametti-warnings)
     target_include_directories(resample_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

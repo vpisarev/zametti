@@ -41,12 +41,26 @@ endif()
 
 set(CMAKE_AUTOMOC ON)
 
+# --- цвет ------------------------------------------------------------------
+#
+# Отдельной целью, потому что нужен ОБОИМ концам: записи — чтобы привести
+# картинку к пространству, которое переживёт круг, и чтению — чтобы вернуть
+# пиксели чужого файла из линейного пространства libjxl в его исходное.
+#
+# Движком служит CMS самой libjxl (skcms). Не Qt: на табличных профилях вроде
+# «Apple Wide Color Sharing Profile» Qt строит преобразование по угаданным
+# первичным и ошибается втрое (замер: 53/50/42 он переводит в 37/35/28, тогда
+# как littleCMS — в 47/44/36).
+add_library(zametti-color STATIC color.cpp color.h)
+target_link_libraries(zametti-color PUBLIC Qt6::Gui libjxl PRIVATE zametti-warnings)
+target_include_directories(zametti-color PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
 qt_add_plugin(zametti-jxl STATIC
     CLASS_NAME JxlPlugin
     PLUGIN_TYPE imageformats
 )
 target_sources(zametti-jxl PRIVATE jxl_plugin.cpp jxl_handler.cpp)
-target_link_libraries(zametti-jxl PRIVATE Qt6::Gui libjxl zametti-warnings)
+target_link_libraries(zametti-jxl PRIVATE Qt6::Gui libjxl zametti-color zametti-warnings)
 target_include_directories(zametti-jxl PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # --- AVIF и HEIC -----------------------------------------------------------
@@ -89,7 +103,8 @@ endif()
 # только импорт.
 add_library(zametti-jxl-encode STATIC jxl_encoder.cpp jxl_encoder.h
                                      resample.cpp resample.h)
-target_link_libraries(zametti-jxl-encode PUBLIC Qt6::Gui libjxl PRIVATE zametti-warnings)
+target_link_libraries(zametti-jxl-encode PUBLIC Qt6::Gui libjxl zametti-color
+                      PRIVATE zametti-warnings)
 
 # Ресемплер раскладывается по строкам без связей между ними — параллелится
 # даром. OpenMP берём, ТОЛЬКО если компилятор его даёт: на macOS с AppleClang
@@ -99,6 +114,7 @@ target_link_libraries(zametti-jxl-encode PUBLIC Qt6::Gui libjxl PRIVATE zametti-
 find_package(OpenMP QUIET COMPONENTS CXX)
 if(OpenMP_CXX_FOUND)
     target_link_libraries(zametti-jxl-encode PRIVATE OpenMP::OpenMP_CXX)
+    target_link_libraries(zametti-color PRIVATE OpenMP::OpenMP_CXX)
     set(ZAMETTI_HAVE_OPENMP ON PARENT_SCOPE)
 else()
     set(ZAMETTI_HAVE_OPENMP OFF PARENT_SCOPE)
@@ -125,7 +141,7 @@ target_include_directories(zametti-import PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # наши читатели и какие из них собрались.
 add_library(zametti-imageio INTERFACE)
 target_link_libraries(zametti-imageio INTERFACE zametti-jxl zametti-jxl-encode
-                      zametti-tiff zametti-imagemeta zametti-import)
+                      zametti-color zametti-tiff zametti-imagemeta zametti-import)
 if(LIBHEIF_FOUND)
     target_link_libraries(zametti-imageio INTERFACE zametti-heif)
 endif()

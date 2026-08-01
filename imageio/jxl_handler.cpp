@@ -1,5 +1,7 @@
 #include "jxl_handler.h"
 
+#include "color.h"
+
 #include <jxl/cms.h>
 #include <jxl/decode.h>
 #include <jxl/decode_cxx.h>
@@ -228,8 +230,7 @@ bool JxlHandler::read(QImage* image) {
         scratch_.clear();
     }
 
-    // ЦВЕТ, и здесь остаётся НЕЗАКРЫТАЯ БЕДА. Записываю подробно, чтобы не
-    // разбираться заново.
+    // ЦВЕТ. Устройство такое, и оно неочевидное.
     //
     // У lossy-файла (XYB) пиксели внутри libjxl лежат в её собственном
     // ЛИНЕЙНОМ пространстве, и отдаёт она их такими. Профиль «данных» при этом
@@ -242,7 +243,18 @@ bool JxlHandler::read(QImage* image) {
     // средствами Qt. Но Qt не разбирает 30-килобайтный профиль Apple из бокса
     // JXL, хотя из JPEG разбирает, — и перевод молча не происходит.
     //
-    // Что уже пробовал и почему не подошло:
+    // Значит, пиксели надо ВЕРНУТЬ из пространства данных в исходное, а не
+    // просто переклеить ярлык. Перевод делает convertIcc — то есть CMS самой
+    // libjxl. Не Qt: на табличных профилях (у Apple это таблица A2B без
+    // обратной B2A и без обычных первичных) Qt строит преобразование по
+    // угаданным первичным и ошибается втрое — 53/50/42 он переводит в
+    // 37/35/28, тогда как littleCMS в 47/44/36.
+    //
+    // Наши собственные файлы сюда не попадают: импорт приводит цвет к
+    // выражаемому описанием пространству ДО записи (см. color.h), и тогда оба
+    // профиля совпадают. Ветка нужна для ЧУЖИХ JXL, записанных как придётся.
+    //
+    // Что пробовал и почему не подошло:
     //   * JxlDecoderSetOutputColorProfile с ОПИСАНИЕМ пространства — не
     //     срабатывает, когда исходный профиль описанием не выражается;
     //   * то же с ICC-блобом — принимается с кодом успеха, но картинки после
@@ -257,11 +269,19 @@ bool JxlHandler::read(QImage* image) {
         iccData_.isEmpty() ? QColorSpace() : QColorSpace::fromIccProfile(iccData_);
     const QColorSpace originalSpace =
         icc_.isEmpty() ? QColorSpace() : QColorSpace::fromIccProfile(icc_);
-    if (dataSpace.isValid()) out.setColorSpace(dataSpace);
-    else if (originalSpace.isValid()) out.setColorSpace(originalSpace);
 
-    if (originalSpace.isValid() && dataSpace.isValid() && originalSpace != dataSpace)
-        out.convertToColorSpace(originalSpace);
+    if (!icc_.isEmpty() && !iccData_.isEmpty() && icc_ != iccData_ &&
+        convertIcc(out, iccData_, icc_)) {
+        // Перевод удался — пиксели теперь ДЕЙСТВИТЕЛЬНО в исходном
+        // пространстве, им и помечаем.
+        if (originalSpace.isValid()) out.setColorSpace(originalSpace);
+    } else if (dataSpace.isValid()) {
+        // Не удался — помечаем тем, что есть на самом деле. Соврать ярлыком
+        // хуже, чем показать честные, пусть и не те цвета.
+        out.setColorSpace(dataSpace);
+    } else if (originalSpace.isValid()) {
+        out.setColorSpace(originalSpace);
+    }
 
     *image = out;
     scanned_ = true;
