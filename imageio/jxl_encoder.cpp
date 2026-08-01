@@ -1,5 +1,6 @@
 #include "jxl_encoder.h"
 
+#include <jxl/cms.h>
 #include <jxl/encode.h>
 #include <jxl/encode_cxx.h>
 #include <jxl/decode.h>
@@ -132,6 +133,16 @@ QByteArray encodeJxl(const QImage& image, const EncodeOptions& options, const En
     auto runner = JxlThreadParallelRunnerMake(nullptr, workerCount(options.threads));
     if (runner)
         JxlEncoderSetParallelRunner(enc.get(), JxlThreadParallelRunner, runner.get());
+
+    // МОДУЛЬ УПРАВЛЕНИЯ ЦВЕТОМ. Без него libjxl не умеет перевести пиксели из
+    // произвольного ICC-профиля в своё внутреннее пространство XYB — и молча
+    // выдаёт систематически неверные цвета.
+    //
+    // Наступал: снимки с телефона в Apple Wide Color (треть каталога владельца)
+    // давали SSIMULACRA2 около минус сорока, ОДИНАКОВО при любом качестве.
+    // Постоянство оценки и выдало причину: расхождение не от сжатия, а от
+    // цвета. Файлы в sRGB при этом были в порядке — там переводить нечего.
+    JxlEncoderSetCms(enc.get(), *JxlGetDefaultCms());
 
     JxlBasicInfo info;
     JxlEncoderInitBasicInfo(&info);

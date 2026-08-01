@@ -49,7 +49,8 @@ private:
     mutable QSize size_;
     mutable int bitsPerSample_ = 8;
     mutable bool hasAlpha_ = false;
-    mutable QByteArray icc_;
+    mutable QByteArray icc_;      // исходное пространство картинки
+    mutable QByteArray iccData_;  // то, в котором декодер её отдаёт
     mutable Transformations transform_ = TransformationNone;
     bool scanned_ = false;         // кадр уже отдан: JXL-анимацию не крутим
 };

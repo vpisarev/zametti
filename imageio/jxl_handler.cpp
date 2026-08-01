@@ -1,5 +1,6 @@
 #include "jxl_handler.h"
 
+#include <jxl/cms.h>
 #include <jxl/decode.h>
 #include <jxl/decode_cxx.h>
 #include <jxl/resizable_parallel_runner.h>
@@ -9,6 +10,7 @@
 #include <QImage>
 #include <QIODevice>
 #include <QVariant>
+#include <QtGlobal>
 
 #include <algorithm>
 #include <thread>
@@ -80,15 +82,37 @@ bool JxlHandler::readHeader() const {
             if (JxlDecoderGetBasicInfo(dec.get(), &info) != JXL_DEC_SUCCESS) break;
             gotInfo = true;
         } else if (st == JXL_DEC_COLOR_ENCODING) {
+            // ИМЕННО ORIGINAL, а не DATA. У lossy-файла пиксели внутри лежат
+            // в собственном пространстве libjxl, и DATA описывает ЕГО, а не то,
+            // в чём картинка была. Взяв DATA, мы получили бы профиль от одного,
+            // а значения от другого.
+            //
+            // Наступал: снимки в Apple Wide Color давали SSIMULACRA2 около
+            // минус сорока — ОДИНАКОВО при любом качестве. Постоянство оценки и
+            // выдало причину: расхождение не от сжатия, а от цвета. Файлы в
+            // sRGB были в порядке, потому что там оба профиля совпадают.
             size_t need = 0;
-            if (JxlDecoderGetICCProfileSize(dec.get(), JXL_COLOR_PROFILE_TARGET_DATA, &need) ==
-                    JXL_DEC_SUCCESS &&
+            if (JxlDecoderGetICCProfileSize(dec.get(), JXL_COLOR_PROFILE_TARGET_ORIGINAL,
+                                            &need) == JXL_DEC_SUCCESS &&
                 need > 0) {
                 QByteArray icc(qsizetype(need), Qt::Uninitialized);
-                if (JxlDecoderGetColorAsICCProfile(dec.get(), JXL_COLOR_PROFILE_TARGET_DATA,
+                if (JxlDecoderGetColorAsICCProfile(dec.get(), JXL_COLOR_PROFILE_TARGET_ORIGINAL,
                                                    reinterpret_cast<uint8_t*>(icc.data()),
                                                    need) == JXL_DEC_SUCCESS) {
                     icc_ = icc;
+                }
+            }
+            // И ОТДЕЛЬНО — пространство, в котором декодер отдаёт пиксели. У
+            // lossy-файла оно СВОЁ, линейное, и с исходным не совпадает.
+            size_t dataNeed = 0;
+            if (JxlDecoderGetICCProfileSize(dec.get(), JXL_COLOR_PROFILE_TARGET_DATA,
+                                            &dataNeed) == JXL_DEC_SUCCESS &&
+                dataNeed > 0) {
+                QByteArray icc(qsizetype(dataNeed), Qt::Uninitialized);
+                if (JxlDecoderGetColorAsICCProfile(dec.get(), JXL_COLOR_PROFILE_TARGET_DATA,
+                                                   reinterpret_cast<uint8_t*>(icc.data()),
+                                                   dataNeed) == JXL_DEC_SUCCESS) {
+                    iccData_ = icc;
                 }
             }
             break;   // всё, что нужно из шапки, собрано
@@ -144,7 +168,12 @@ bool JxlHandler::read(QImage* image) {
     if (JxlDecoderSetParallelRunner(dec.get(), JxlResizableParallelRunner, runner.get()) !=
         JXL_DEC_SUCCESS)
         return false;
-    if (JxlDecoderSubscribeEvents(dec.get(), JXL_DEC_FULL_IMAGE) != JXL_DEC_SUCCESS) return false;
+    if (JxlDecoderSubscribeEvents(dec.get(), JXL_DEC_COLOR_ENCODING | JXL_DEC_FULL_IMAGE) !=
+        JXL_DEC_SUCCESS)
+        return false;
+    // Модуль управления цветом нужен, чтобы попросить вывод В ИСХОДНОМ
+    // пространстве: без него декодер отдаёт своё внутреннее.
+    JxlDecoderSetCms(dec.get(), *JxlGetDefaultCms());
     JxlDecoderSetInput(dec.get(), reinterpret_cast<const uint8_t*>(data_.constData()),
                        size_t(data_.size()));
     JxlDecoderCloseInput(dec.get());
@@ -156,7 +185,14 @@ bool JxlHandler::read(QImage* image) {
     bool done = false;
     for (;;) {
         const JxlDecoderStatus st = JxlDecoderProcessInput(dec.get());
-        if (st == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
+        if (st == JXL_DEC_COLOR_ENCODING) {
+            // ЗДЕСЬ ОСТАЛАСЬ НЕЗАКРЫТАЯ БЕДА, см. длинный комментарий ниже, у
+            // выставления профиля. Просить декодер отдавать в исходном
+            // пространстве пробовал двумя способами: описанием пространства
+            // (не срабатывает — у Apple Wide Color профиль описанием не
+            // выражается) и ICC-блобом (принимается с кодом успеха, но декод
+            // после этого не даёт картинки вовсе).
+        } else if (st == JXL_DEC_NEED_IMAGE_OUT_BUFFER) {
             // Отдаём саму память QImage: лишней копии кадра не нужно.
             // bytesPerLine у Qt может быть больше строки — тогда честнее
             // собрать во временный буфер, чем врать декодеру про шаг.
@@ -192,10 +228,40 @@ bool JxlHandler::read(QImage* image) {
         scratch_.clear();
     }
 
-    if (!icc_.isEmpty()) {
-        const QColorSpace cs = QColorSpace::fromIccProfile(icc_);
-        if (cs.isValid()) out.setColorSpace(cs);
-    }
+    // ЦВЕТ, и здесь остаётся НЕЗАКРЫТАЯ БЕДА. Записываю подробно, чтобы не
+    // разбираться заново.
+    //
+    // У lossy-файла (XYB) пиксели внутри libjxl лежат в её собственном
+    // ЛИНЕЙНОМ пространстве, и отдаёт она их такими. Профиль «данных» при этом
+    // честно называется RGB_D65_SRG_Rel_Lin, а исходный (скажем, Apple Wide
+    // Color, 30 КБ) хранится отдельно.
+    //
+    // Пометить линейные пиксели исходным профилем — соврать: картинка выходит
+    // заметно темнее (средние 28/23/15 вместо 52/49/42 на снимке с телефона).
+    // Поэтому помечаем тем, что есть на самом деле, и пробуем перевести
+    // средствами Qt. Но Qt не разбирает 30-килобайтный профиль Apple из бокса
+    // JXL, хотя из JPEG разбирает, — и перевод молча не происходит.
+    //
+    // Что уже пробовал и почему не подошло:
+    //   * JxlDecoderSetOutputColorProfile с ОПИСАНИЕМ пространства — не
+    //     срабатывает, когда исходный профиль описанием не выражается;
+    //   * то же с ICC-блобом — принимается с кодом успеха, но картинки после
+    //     этого не получается вовсе;
+    //   * uses_original_profile = TRUE у энкодера чинит цвет, но отключает XYB,
+    //     и файл распухает ВТРОЕ. Это диагноз, а не лечение.
+    //
+    // Как ошибка нашлась: SSIMULACRA2 давала около минус сорока ОДИНАКОВО при
+    // любом качестве. Постоянство и выдало причину — расхождение не от сжатия,
+    // а от цвета. Файлы в sRGB не задеты: у них оба профиля совпадают.
+    const QColorSpace dataSpace =
+        iccData_.isEmpty() ? QColorSpace() : QColorSpace::fromIccProfile(iccData_);
+    const QColorSpace originalSpace =
+        icc_.isEmpty() ? QColorSpace() : QColorSpace::fromIccProfile(icc_);
+    if (dataSpace.isValid()) out.setColorSpace(dataSpace);
+    else if (originalSpace.isValid()) out.setColorSpace(originalSpace);
+
+    if (originalSpace.isValid() && dataSpace.isValid() && originalSpace != dataSpace)
+        out.convertToColorSpace(originalSpace);
 
     *image = out;
     scanned_ = true;

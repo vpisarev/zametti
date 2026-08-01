@@ -192,6 +192,31 @@ int main(int argc, char** argv) {
                 // В режиме restore возвращаем картинку к исходному размеру и
                 // сверяем с оригиналом. Если уменьшения не было, восстанавливать
                 // нечего — сравниваем как есть.
+                if (qEnvironmentVariableIsSet("ZAMETTI_STUDY_DIAG")) {
+                    auto mean = [](const QImage& im) {
+                        const QImage x = im.convertToFormat(QImage::Format_RGB888);
+                        double s3[3] = {0, 0, 0};
+                        for (int y = 0; y < x.height(); ++y)
+                            for (int px = 0; px < x.width(); ++px)
+                                for (int c = 0; c < 3; ++c)
+                                    s3[c] += x.constScanLine(y)[size_t(px) * 3 + size_t(c)];
+                        const double n = double(x.width()) * x.height();
+                        return QStringLiteral("%1/%2/%3").arg(int(s3[0] / n)).arg(int(s3[1] / n))
+                            .arg(int(s3[2] / n));
+                    };
+                    std::fprintf(stderr,
+                                 "  ДИАГ %s q%d: эталон %s формат %d профиль %s | назад %s "
+                                 "формат %d профиль %s\n",
+                                 name.toUtf8().constData(), q,
+                                 mean(scaled).toUtf8().constData(), int(scaled.format()),
+                                 scaled.colorSpace().isValid()
+                                     ? scaled.colorSpace().description().toUtf8().constData()
+                                     : "нет",
+                                 mean(back).toUtf8().constData(), int(back.format()),
+                                 back.colorSpace().isValid()
+                                     ? back.colorSpace().description().toUtf8().constData()
+                                     : "нет");
+                }
                 const double sc =
                     restore ? (shrunk ? score(src, resampleLanczos(back, src.width(),
                                                                    src.height()))
