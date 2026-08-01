@@ -13,5 +13,11 @@ target_include_directories(zametti-store-lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(zametti-store-lib PUBLIC zametti-core Qt6::Core
                       PRIVATE zstd zametti-warnings)
 
+# Пережатие вложений тянет за собой картиночный слой, а с ним Qt6::Gui. Для
+# самой утилиты этого хватает: окон она не открывает, а Gui нужен ради QImage.
 add_executable(zametti-store main.cpp)
 target_link_libraries(zametti-store PRIVATE zametti-store-lib zametti-warnings)
+if(TARGET zametti-import)
+    target_link_libraries(zametti-store PRIVATE zametti-import zametti-imageio)
+    target_compile_definitions(zametti-store PRIVATE ZAMETTI_HAVE_IMAGEIO)
+endif()

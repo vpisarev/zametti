@@ -5,9 +5,14 @@
 //   zametti-store import --root <dir> --from <srcdir> [--apple-manifest <json>] [--dry-run]
 //   zametti-store verify --root <dir>
 //   zametti-store thin --root <dir> [--dry-run]
+//   zametti-store recompress --root <dir> --id <id|all> [--max-size N]
+//                            [--max-file-mb M] [--quality Q] [--dry-run]
 
 #include "journal.h"
 #include "store.h"
+#ifdef ZAMETTI_HAVE_IMAGEIO
+#include "recompress.h"
+#endif
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -32,7 +37,13 @@ int usage() {
                  "  zametti-store import --root <dir> --from <srcdir>"
                  " [--apple-manifest <json>] [--dry-run]\n"
                  "  zametti-store verify --root <dir>\n"
-                 "  zametti-store thin --root <dir> [--dry-run]\n");
+                 "  zametti-store thin --root <dir> [--dry-run]\n"
+                 "  zametti-store recompress --root <dir> --id <id|all>\n"
+                 "        [--max-size N] [--max-file-mb M] [--quality Q] [--dry-run]\n"
+                 "\n"
+                 "  У recompress НЕТ умолчания для --id: пережатие необратимо, и\n"
+                 "  переехать всё хранилище одной забытой опцией быть не должно.\n"
+                 "  Все картинки — только явным «--id all».\n");
     return 2;
 }
 
@@ -50,6 +61,8 @@ int main(int argc, char** argv) {
     QString manifest;
     QString parent;
     QString positional;
+    QString id;
+    QString maxSize, maxFileMb, quality;
     bool dryRun = false;
     for (qsizetype i = 2; i < args.size(); ++i) {
         const QString& a = args[i];
@@ -60,6 +73,10 @@ int main(int argc, char** argv) {
         else if (a == QStringLiteral("--from")) from = next();
         else if (a == QStringLiteral("--apple-manifest")) manifest = next();
         else if (a == QStringLiteral("--parent")) parent = next();
+        else if (a == QStringLiteral("--id")) id = next();
+        else if (a == QStringLiteral("--max-size")) maxSize = next();
+        else if (a == QStringLiteral("--max-file-mb")) maxFileMb = next();
+        else if (a == QStringLiteral("--quality")) quality = next();
         else if (a == QStringLiteral("--dry-run")) dryRun = true;
         else if (!a.startsWith(QStringLiteral("--")) && positional.isEmpty()) positional = a;
         else return usage();
@@ -136,6 +153,44 @@ int main(int argc, char** argv) {
         std::printf("%s\n", dryRun ? " (только показ)" : "");
         return report.problems.isEmpty() ? 0 : 1;
     }
+
+#ifdef ZAMETTI_HAVE_IMAGEIO
+    // Пережатие вложений. Числа берутся из ключей, а не из конфига программы:
+    // утилита должна уметь то, чего в конфиге нет, — например прогнать с другим
+    // качеством и сравнить глазами.
+    if (command == QStringLiteral("recompress")) {
+        if (root.isEmpty()) return usage();
+        zametti::RecompressOptions options;
+        options.root = root;
+        options.id = id;
+        options.dryRun = dryRun;
+        bool bad = false;
+        if (!maxSize.isEmpty()) options.limits.maxSize = maxSize.toInt(&bad), bad = !bad;
+        if (!bad && !maxFileMb.isEmpty())
+            options.limits.maxFileSizeMb = maxFileMb.toDouble(&bad), bad = !bad;
+        if (!bad && !quality.isEmpty()) options.limits.quality = quality.toInt(&bad), bad = !bad;
+        if (bad) {
+            std::fprintf(stderr, "непонятное число в ключах\n");
+            return 1;
+        }
+
+        zametti::RecompressReport report;
+        const bool ok = zametti::recompressStore(options, report);
+        for (const QString& line : report.lines)
+            std::printf("%s\n", line.toUtf8().constData());
+        for (const QString& p : report.problems)
+            std::fprintf(stderr, "%s\n", p.toUtf8().constData());
+        if (report.examined > 0) {
+            std::printf("\nосмотрено %d, переписано %d, оставлено %d, не вышло %d\n",
+                        report.examined, report.rewritten, report.untouched, report.failed);
+            std::printf("было %.1f МБ, стало %.1f МБ\n",
+                        double(report.bytesBefore) / 1048576.0,
+                        double(report.bytesAfter) / 1048576.0);
+            if (dryRun) std::printf("(это была примерка, ничего не записано)\n");
+        }
+        return ok ? 0 : 1;
+    }
+#endif
 
     if (command == QStringLiteral("verify")) {
         if (root.isEmpty()) return usage();

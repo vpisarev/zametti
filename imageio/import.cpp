@@ -214,7 +214,26 @@ ImportResult importImage(const QString& path, const ImportLimits& limits) {
     const bool fitsPixels = target == info.size;
 
     // --- JXL: уже наш формат ---------------------------------------------
-    if (info.format == QLatin1String("jxl") && fitsFile && fitsPixels) {
+    //
+    // Для СВОЕГО формата решает БЮДЖЕТ ФАЙЛА, а не бюджет пикселей. Иначе
+    // получается противоречие, на котором я и наступил: путь lossless нарочно
+    // разрешает плоским картинкам быть крупнее S (у ужатого скриншота текст
+    // нечитаем), а правило «JXL как есть» требовало влезать в тот же бюджет
+    // пикселей. Из-за этого скриншот, положенный без потерь на полном размере,
+    // при ПОВТОРНОМ прогоне recompress уезжал на путь фото и терял пиксели —
+    // то есть ломался инвариант идемпотентности.
+    //
+    // Потолок пикселей всё же есть, но тот же, что у lossless: шесть S. Он
+    // защищает от чужого JXL в двадцать мегапикселей, который случайно влез в
+    // мегабайт.
+    const int jxlCap = 6 * limits.maxSize;
+    const bool fitsJxlCap = std::max(info.size.width, info.size.height) <= jxlCap;
+    // Запас тот же, что принимает лестница: она сама кладёт файлы до
+    // полутора бюджетов, и считать их «не влезающими» значило бы пережимать
+    // собственный выход при каждом прогоне впустую.
+    const bool fitsFileWithSlack =
+        raw.size() <= qint64(double(limits.fileBudgetBytes()) * kBudgetSlack);
+    if (info.format == QLatin1String("jxl") && fitsFileWithSlack && fitsJxlCap) {
         result.route = Route::AsIs;
         result.bytes = raw;
         result.extension = QStringLiteral("jxl");
