@@ -5,12 +5,15 @@
 #include "document_saver.h"
 #include "doc_model.h"
 #include "editor_ops.h"
+#include "image_insert.h"
 #include "marker.h"
 #include "parser.h"
 #include "serializer.h"
 #include "settings.h"
 
 #include <QDateTime>
+#include <QFileDialog>
+#include <QImageReader>
 #include <QFileInfo>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -1522,6 +1525,14 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
         return;
     }
 
+    // Ctrl+Shift+I — добавить изображения. Из свободных сочетаний это
+    // единственное с говорящей буквой: Ctrl+I занят курсивом.
+    if (event->key() == Qt::Key_I &&
+        event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier)) {
+        chooseAndInsertImages();
+        return;
+    }
+
     // Автозамена срабатывает по пробелу и уже после того, как он набран: правило
     // смотрит на то, что человек написал. Отдельным шагом истории — первый
     // Ctrl+Z обязан вернуть набранные знаки, а не отменить предыдущую правку.
@@ -1604,6 +1615,13 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
     };
 
     menu->addSeparator();
+    {
+        QAction* action = menu->addAction(QStringLiteral("Добавить изображения…"), this,
+                                          &NoteEditor::chooseAndInsertImages);
+        action->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+I")));
+    }
+
+    menu->addSeparator();
     add(QStringLiteral("Жирный"), QStringLiteral("Ctrl+B"), toggleBold);
     add(QStringLiteral("Курсив"), QStringLiteral("Ctrl+I"), toggleItalic);
     add(QStringLiteral("Зачёркнутый"), QStringLiteral("Ctrl+K"), toggleStrike);
@@ -1684,11 +1702,38 @@ QMimeData* NoteEditor::createMimeDataFromSelection() const {
 }
 
 bool NoteEditor::canInsertFromMimeData(const QMimeData* source) const {
-    return source != nullptr && source->hasText();
+    if (source == nullptr) return false;
+    // Битмап и файлы принимаем наравне с текстом — на этом же ответе стоит и
+    // drag&drop: Qt спрашивает разрешения именно здесь, а бросив «нет»,
+    // перетаскивание молча не сработало бы.
+    return source->hasText() || source->hasImage() || source->hasUrls();
 }
 
 void NoteEditor::insertFromMimeData(const QMimeData* source) {
-    if (source == nullptr || !source->hasText()) return;
+    if (source == nullptr) return;
+
+    // ПОРЯДОК ВАЖЕН. Файловые менеджеры кладут в буфер и путь текстом, и список
+    // ссылок; браузеры — и картинку, и её адрес. Спрашиваем сначала о том, что
+    // человек скорее всего имел в виду, а текст оставляем на потом.
+    if (source->hasUrls()) {
+        QStringList files;
+        for (const QUrl& url : source->urls())
+            if (url.isLocalFile()) files << url.toLocalFile();
+        // Из принесённого берём только то, что вообще читается как картинка:
+        // перетащенный pdf должен вставиться ссылкой, а не притвориться фото.
+        QStringList images;
+        for (const QString& f : files)
+            if (!QImageReader(f).format().isEmpty()) images << f;
+        if (!images.isEmpty()) {
+            insertImageFiles(images);
+            return;
+        }
+    }
+    if (source->hasImage()) {
+        const QImage image = qvariant_cast<QImage>(source->imageData());
+        if (!image.isNull() && insertImagePixels(image)) return;
+    }
+    if (!source->hasText()) return;
     // В литеральный блок markdown не вставляется: там текст буквальный, и разбор
     // превратил бы вставленное в разметку, которой в коде взяться неоткуда.
     const QTextBlock block = textCursor().block();
@@ -1798,6 +1843,99 @@ void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
     document()->setModified(true);
     showEditPlace(scrollBefore);
     autosave_.start(appearance().autosaveDelayMs);
+}
+
+QString NoteEditor::attachmentDir() const {
+    if (note_.path.isEmpty()) return {};
+    return QFileInfo(note_.path).absolutePath();
+}
+
+int NoteEditor::insertImageFiles(const QStringList& paths) {
+    if (paths.isEmpty()) return 0;
+    const QString dir = attachmentDir();
+    if (dir.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("zametti"),
+                             QStringLiteral("Заметка ещё не сохранена — вложению некуда лечь."));
+        return 0;
+    }
+
+    const ImportLimits limits = limitsFromSettings();
+    // Импорт крупной картинки идёт секунды: без этого окно бы просто застыло, и
+    // человек решил бы, что программа повисла.
+    QGuiApplication::setOverrideCursor(Qt::WaitCursor);
+    QStringList pieces;
+    QStringList failures;
+    for (const QString& path : paths) {
+        const StoredImage stored = storeImageFile(path, dir, limits);
+        if (stored.ok())
+            pieces << imageMarkdown(stored);
+        else
+            failures << QStringLiteral("%1: %2").arg(QFileInfo(path).fileName(), stored.error);
+    }
+    QGuiApplication::restoreOverrideCursor();
+
+    // ОДНОЙ ВСТАВКОЙ, а не в цикле: тогда это один шаг истории, и Ctrl+Z
+    // убирает всё разом (инвариант C брифа).
+    //
+    // РАЗДЕЛИТЕЛЬ — ПУСТАЯ СТРОКА, и это требование владельца, а не оформление:
+    // без неё, чтобы написать что-то между двумя картинками, пришлось бы
+    // вставать вплотную к ним, и одно неверное движение стёрло бы картинку.
+    // Проверено разбором: "![a](1)\n\n![b](2)" даёт три блока — картинка,
+    // VSpace, картинка, — то есть пустая строка выживает как настоящий блок, в
+    // который можно встать. Собирать её из "\n" было бы ошибкой: подряд идущие
+    // строки markdown слил бы в один абзац, и вторая картинка пропала бы.
+    if (!pieces.isEmpty()) pasteMarkdown(pieces.join(QStringLiteral("\n\n")), false);
+
+    // О неудачах говорим ПОСЛЕ вставки удачных: молчаливый пропуск — худшее из
+    // возможного, а прерывать всю пачку из-за одного битого файла незачем.
+    if (!failures.isEmpty())
+        QMessageBox::warning(this, QStringLiteral("zametti"),
+                             QStringLiteral("Не вставилось:\n") +
+                                 failures.join(QLatin1Char('\n')));
+    return int(pieces.size());
+}
+
+bool NoteEditor::insertImagePixels(const QImage& image) {
+    if (image.isNull()) return false;
+    const QString dir = attachmentDir();
+    if (dir.isEmpty()) return false;
+
+    QGuiApplication::setOverrideCursor(Qt::WaitCursor);
+    const StoredImage stored = storeImagePixels(image, dir, limitsFromSettings());
+    QGuiApplication::restoreOverrideCursor();
+
+    if (!stored.ok()) {
+        QMessageBox::warning(this, QStringLiteral("zametti"),
+                             QStringLiteral("Картинка не вставилась: ") + stored.error);
+        return false;
+    }
+    pasteMarkdown(imageMarkdown(stored), false);
+    return true;
+}
+
+void NoteEditor::chooseAndInsertImages() {
+    if (attachmentDir().isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("zametti"),
+                             QStringLiteral("Заметка ещё не сохранена — вложению некуда лечь."));
+        return;
+    }
+    // Фильтр строим из того, что читатели УМЕЮТ на этой машине, а не из
+    // списка в коде: без libheif heic не прочтётся, и предлагать его было бы
+    // обманом.
+    QStringList patterns;
+    for (const QByteArray& fmt : QImageReader::supportedImageFormats())
+        patterns << QStringLiteral("*.") + QString::fromLatin1(fmt);
+    patterns.sort();
+    const QString filter = QStringLiteral("Картинки (%1);;Все файлы (*)")
+                               .arg(patterns.join(QLatin1Char(' ')));
+
+    const QStringList chosen = QFileDialog::getOpenFileNames(
+        this, QStringLiteral("Добавить изображения"), lastImageDir_, filter);
+    if (chosen.isEmpty()) return;
+    // Следующий раз открываемся там же: складывать картинки обычно приходится
+    // из одного каталога, и заставлять человека ходить туда заново невежливо.
+    lastImageDir_ = QFileInfo(chosen.first()).absolutePath();
+    insertImageFiles(chosen);
 }
 
 bool NoteEditor::moveItem(int direction) {

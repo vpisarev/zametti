@@ -150,6 +150,14 @@ if(TARGET zametti-view)
         add_test(NAME editor COMMAND editor_test ${CMAKE_CURRENT_BINARY_DIR})
         set_tests_properties(editor PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+        # Вставка картинок: живое окно плюс настоящий конвейер импорта.
+        add_executable(image_insert_test image_insert_test.cpp)
+        target_link_libraries(image_insert_test PRIVATE zametti-widgets Qt6::Test
+                              zametti-warnings)
+        target_include_directories(image_insert_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        add_test(NAME image-insert COMMAND image_insert_test)
+        set_tests_properties(image-insert PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
         add_executable(search_test search_test.cpp)
         target_link_libraries(search_test PRIVATE zametti-widgets Qt6::Test zametti-warnings)
         target_include_directories(search_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

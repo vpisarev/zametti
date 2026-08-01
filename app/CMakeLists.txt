@@ -60,6 +60,8 @@ add_library(zametti-widgets STATIC
     note_view.cpp
     editor_widget.h
     editor_widget.cpp
+    image_insert.h
+    image_insert.cpp
 )
 # Свои читатели картинок (jxl, avif/heic) — статические плагины. Линкуются
 # сюда, а не в исполняемый файл, потому что тестам редактора нужны те же
