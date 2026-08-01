@@ -87,12 +87,17 @@ add_subdirectory(upstream EXCLUDE_FROM_ALL)
 # публичный jxl, но с внутренними заголовками наружу; линковать надо ИМЕННО
 # его, иначе символы задвоятся.
 
+# Три пары файлов — всё, что нам нужно из tools/. Их собственный CMakeLists
+# заменён заглушкой (см. update.sh), так что gauss_blur собираем тоже сами.
+# Он написан под hwy/foreach_target.h, то есть компилируется по разу на каждый
+# набор команд SIMD — линковки с hwy для этого достаточно.
 add_library(jxl_ssimulacra2 STATIC
     upstream/tools/ssimulacra2.cc
+    upstream/tools/gauss_blur.cc
     upstream/tools/no_memory_manager.cc
 )
 target_include_directories(jxl_ssimulacra2 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/upstream)
-target_link_libraries(jxl_ssimulacra2 PUBLIC jxl-internal jxl_gauss_blur jxl_cms)
+target_link_libraries(jxl_ssimulacra2 PUBLIC jxl-internal jxl_cms hwy)
 set_target_properties(jxl_ssimulacra2 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # --- то, что видит наш код ------------------------------------------------
@@ -108,7 +113,7 @@ target_link_libraries(libjxl INTERFACE jxl-internal jxl_threads jxl_cms jxl_ssim
 # -Wunused-parameter в image_bench.cpp) и при -Werror ломают нашу сборку из-за
 # чужого кода. Правило то же, что и для самой сборки libjxl, только с другой
 # стороны: чужой код чужими правилами.
-foreach(lib jxl-internal jxl_threads jxl_cms jxl_gauss_blur jxl_ssimulacra2 hwy
+foreach(lib jxl-internal jxl_threads jxl_cms jxl_ssimulacra2 hwy
             brotlienc brotlidec brotlicommon)
     if(TARGET ${lib})
         get_target_property(dirs ${lib} INTERFACE_INCLUDE_DIRECTORIES)
