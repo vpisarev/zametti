@@ -107,23 +107,31 @@ struct Pixels {
     int width = 0;
     int height = 0;
     int channels = 0;   // 3 или 4
+    int bits = 8;       // 8 или 16 на канал
     std::vector<uint8_t> data;
     bool ok() const { return width > 0 && height > 0; }
+    size_t rowBytes() const { return size_t(width) * size_t(channels) * size_t(bits / 8); }
 };
 
-Pixels fromImage(const QImage& src) {
+// deep — просить шестнадцать бит на канал. Нужно опыту про точность: путь
+// «источник глубже восьми бит» иначе не измерить.
+Pixels fromImage(const QImage& src, bool deep = false) {
     Pixels p;
     if (src.isNull()) return p;
     const bool alpha = src.hasAlphaChannel();
-    const QImage img = src.convertToFormat(alpha ? QImage::Format_RGBA8888
-                                                 : QImage::Format_RGB888);
+    const QImage::Format fmt =
+        deep ? (alpha ? QImage::Format_RGBA64 : QImage::Format_RGBX64)
+             : (alpha ? QImage::Format_RGBA8888 : QImage::Format_RGB888);
+    const QImage img = src.convertToFormat(fmt);
     p.width = img.width();
     p.height = img.height();
-    p.channels = alpha ? 4 : 3;
-    p.data.resize(size_t(p.width) * size_t(p.height) * size_t(p.channels));
-    const size_t row = size_t(p.width) * size_t(p.channels);
+    // RGBX64 несёт четвёртый канал всегда; для энкодера это лишний канал, но
+    // честнее отдать его как есть, чем терять разряды на переупаковке.
+    p.channels = deep ? 4 : (alpha ? 4 : 3);
+    p.bits = deep ? 16 : 8;
+    p.data.resize(p.rowBytes() * size_t(p.height));
     for (int y = 0; y < p.height; ++y)
-        std::memcpy(p.data.data() + size_t(y) * row, img.constScanLine(y), row);
+        std::memcpy(p.data.data() + size_t(y) * p.rowBytes(), img.constScanLine(y), p.rowBytes());
     return p;
 }
 
@@ -172,10 +180,10 @@ QByteArray encodeJxl(const Pixels& px, float quality, bool lossless, void* runne
     JxlEncoderInitBasicInfo(&info);
     info.xsize = uint32_t(px.width);
     info.ysize = uint32_t(px.height);
-    info.bits_per_sample = 8;
+    info.bits_per_sample = uint32_t(px.bits);
     info.num_color_channels = 3;
     info.num_extra_channels = px.channels == 4 ? 1 : 0;
-    info.alpha_bits = px.channels == 4 ? 8 : 0;
+    info.alpha_bits = px.channels == 4 ? uint32_t(px.bits) : 0;
     // Для lossless просим не переводить в внутреннее XYB: иначе «без потерь»
     // потеряет — это ровно та ловушка, ради которой флаг и существует.
     info.uses_original_profile = lossless ? JXL_TRUE : JXL_FALSE;
@@ -197,7 +205,9 @@ QByteArray encodeJxl(const Pixels& px, float quality, bool lossless, void* runne
         JxlEncoderSetFrameDistance(fs, JxlEncoderDistanceFromQuality(quality));
     }
 
-    const JxlPixelFormat fmt{uint32_t(px.channels), JXL_TYPE_UINT8, JXL_NATIVE_ENDIAN, 0};
+    const JxlPixelFormat fmt{uint32_t(px.channels),
+                             px.bits == 16 ? JXL_TYPE_UINT16 : JXL_TYPE_UINT8,
+                             JXL_NATIVE_ENDIAN, 0};
     if (JxlEncoderAddImageFrame(fs, &fmt, px.data.data(), px.data.size()) != JXL_ENC_SUCCESS) {
         JxlEncoderDestroy(enc);
         return {};
@@ -342,14 +352,23 @@ std::shared_ptr<jxl::ImageBundle> toBundle(const Pixels& px) {
     if (!created.ok()) return nullptr;
     jxl::Image3F img = std::move(created).value_();
     for (int y = 0; y < px.height; ++y) {
-        const uint8_t* src = px.data.data() + size_t(y) * size_t(px.width) * size_t(px.channels);
+        const uint8_t* row = px.data.data() + size_t(y) * px.rowBytes();
         float* r = img.PlaneRow(0, size_t(y));
         float* g = img.PlaneRow(1, size_t(y));
         float* b = img.PlaneRow(2, size_t(y));
-        for (int x = 0; x < px.width; ++x) {
-            r[x] = src[x * px.channels + 0] / 255.0f;
-            g[x] = src[x * px.channels + 1] / 255.0f;
-            b[x] = src[x * px.channels + 2] / 255.0f;
+        if (px.bits == 16) {
+            const auto* s16 = reinterpret_cast<const uint16_t*>(row);
+            for (int x = 0; x < px.width; ++x) {
+                r[x] = s16[x * px.channels + 0] / 65535.0f;
+                g[x] = s16[x * px.channels + 1] / 65535.0f;
+                b[x] = s16[x * px.channels + 2] / 65535.0f;
+            }
+        } else {
+            for (int x = 0; x < px.width; ++x) {
+                r[x] = row[x * px.channels + 0] / 255.0f;
+                g[x] = row[x * px.channels + 1] / 255.0f;
+                b[x] = row[x * px.channels + 2] / 255.0f;
+            }
         }
     }
     auto ib = std::make_shared<jxl::ImageBundle>(mm, new jxl::ImageMetadata());
@@ -548,6 +567,51 @@ void bench(const QString& path, int runs, void* runner) {
     }
 }
 
+// --- сколько стоит лишнее округление до восьми бит -------------------------
+//
+// Вопрос владельца: стоит ли вендорить jpegli ради того, что он разжимает JPEG
+// во внутреннее 16-битное представление. Приз — одно СПРЯМЛЁННОЕ округление
+// перед уменьшением и кодированием.
+//
+// Меряем прямо, на 16-битном источнике:
+//   эталон — уменьшенный 16-битный оригинал;
+//   путь А — округлить до 8 бит, потом уменьшить и закодировать (как сейчас);
+//   путь Б — уменьшить и закодировать из 16 бит (как было бы с jpegli).
+//
+// Это ВЕРХНЯЯ оценка: у настоящего JPEG поверх лежит ещё и шум квантования
+// самого JPEG, заведомо больший. Мелочь здесь — значит мелочь и там.
+void precision(const QString& path, int runs, void* runner) {
+    QImageReader r(path);
+    r.setAutoTransform(true);
+    const QImage src = r.read();
+    if (src.isNull() || src.depth() < 48) return;   // опыт только для глубоких
+
+    const QSize target = targetSize(src.size());
+    const QImage refDeep = src.convertToFormat(QImage::Format_RGBX64)
+                               .scaled(target, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    const QImage viaEight = src.convertToFormat(QImage::Format_RGB888)
+                                .scaled(target, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+
+    const Pixels ref = fromImage(refDeep, true);    // эталон, к нему сравниваем
+    const Pixels deep = fromImage(refDeep, true);   // путь Б: 16 бит до энкодера
+    const Pixels eight = fromImage(viaEight);       // путь А: восемь бит с начала
+    if (!ref.ok()) return;
+
+    auto score = [&](const Pixels& px) {
+        const QByteArray jxl = encodeJxl(px, 90.0f, false, runner);
+        if (jxl.isEmpty()) return -1000.0;
+        const Pixels back = decodeJxl(jxl);
+        auto a = toBundle(ref);
+        auto b = toBundle(back);
+        return (a && b) ? ssimulacra2(*a, *b) : -1000.0;
+    };
+    (void)runs;
+    const double viaDeep = score(deep);
+    const double viaByte = score(eight);
+    std::printf("      ТОЧНОСТЬ: из 16 бит %.2f, через 8 бит %.2f, разница %+.2f\n",
+                viaDeep, viaByte, viaByte - viaDeep);
+}
+
 void collect(const QString& path, QStringList* out) {
     QFileInfo info(path);
     if (info.isDir()) {
@@ -598,7 +662,15 @@ int main(int argc, char** argv) {
                 cores == 1 ? "  → строка «все ядра» здесь бессмысленна, нужен прогон без taskset"
                            : "  → однопоточные строки надо перемерить под taskset -c 0");
 
-    for (const QString& f : files) bench(f, runs, runner);
+    const bool precisionOnly = qEnvironmentVariableIntValue("ZAMETTI_BENCH_PRECISION") > 0;
+    for (const QString& f : files) {
+        if (precisionOnly) {
+            std::printf("\n### %s\n", QFileInfo(f).fileName().toUtf8().constData());
+            precision(f, runs, runner);
+        } else {
+            bench(f, runs, runner);
+        }
+    }
 
     JxlThreadParallelRunnerDestroy(runner);
     std::printf("\n(эталон в сумме: %.3f)\n", g_sink);

@@ -19,14 +19,17 @@ namespace zametti {
 // оформление: этому слою Qt не нужен, а тестам удобно подставлять своё.
 struct ImportLimits {
     int maxSize = 1600;            // S: сторона «квадратного бюджета»
-    int maxFileSizeMb = 1;         // бюджет файла, мегабайты
+    // Бюджет файла, мегабайты. ДРОБНЫЙ: целого шага в мегабайт слишком грубо —
+    // человек вправе захотеть полмегабайта, а лестницу иначе не загнать в
+    // нужную ступень при проверке.
+    double maxFileSizeMb = 1.0;
     int quality = 90;              // lossy JXL
     double losslessThreshold = 3.0;// порог пробы на ~800 px
     int maxBitsPerChannel = 12;    // потолок глубины
     int maxDecodeMemoryMb = 1024;  // потолок памяти под разжатую картинку
 
     long long fileBudgetBytes() const {
-        return static_cast<long long>(maxFileSizeMb) * 1024 * 1024;
+        return static_cast<long long>(maxFileSizeMb * 1024.0 * 1024.0);
     }
     double decodeBudgetBytes() const {
         return static_cast<double>(maxDecodeMemoryMb) * 1024.0 * 1024.0;

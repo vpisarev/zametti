@@ -2,6 +2,7 @@
 
 #include "exif.h"
 #include "jxl_encoder.h"
+#include "ladder.h"
 #include "resample.h"
 #include "tiff_reader.h"
 
@@ -95,30 +96,34 @@ double losslessRatio(const QImage& image, const ImportLimits& limits) {
     return double(a.size()) / double(b.size());
 }
 
-// Путь фото: уменьшить до бюджета и сжать. Лестница качества живёт отдельно
-// (ladder.cpp) — здесь только один заход, которым она и пользуется.
+// Путь фото: уменьшить до бюджета пикселей и отдать лестнице. Лестница сама
+// решит, надо ли отступать по качеству и разрешению.
 ImportResult photoPath(const QImage& image, const EncodeMeta& meta, const ImportLimits& limits) {
     const Size target = targetSize({image.width(), image.height()}, limits);
     const QImage scaled = (target.width == image.width() && target.height == image.height())
                               ? image
                               : resampleArea(image, target.width, target.height);
 
-    EncodeOptions opt;
-    opt.quality = limits.quality;
-    opt.maxBitsPerChannel = limits.maxBitsPerChannel;
-
-    QString err;
-    const QByteArray jxl = encodeJxl(scaled, opt, meta, &err);
-    if (jxl.isEmpty()) return refuse(Refusal::None, QStringLiteral("не удалось сжать: %1").arg(err));
+    const LadderResult ladder = runLadder(scaled, meta, limits);
+    if (!ladder.ok())
+        return refuse(Refusal::None,
+                      QStringLiteral("не удалось сжать: %1").arg(ladder.error));
 
     ImportResult out;
     out.route = Route::Photo;
-    out.bytes = jxl;
+    out.bytes = ladder.bytes;
     out.extension = QStringLiteral("jxl");
-    out.size = {scaled.width(), scaled.height()};
+    out.size = {ladder.width, ladder.height};
     out.bitsPerSample = scaled.depth() > 32 ? std::min(16, limits.maxBitsPerChannel) : 8;
-    out.encodes = 1;
-    out.quality = limits.quality;
+    out.encodes = ladder.encodes;
+    out.quality = ladder.quality;
+    out.ssimulacra2 = ladder.ssimulacra2;
+    if (ladder.arbiterRolledBack)
+        out.message = QStringLiteral("арбитр вернул ступень назад: качество дороже бюджета");
+    else if (ladder.overBudget)
+        out.message = QStringLiteral("принят перелёт бюджета: ниже пола качества не опускаемся");
+    else if (ladder.hitQualityFloor)
+        out.message = QStringLiteral("дошло до пола качества");
     return out;
 }
 

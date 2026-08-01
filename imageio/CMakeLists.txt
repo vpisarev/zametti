@@ -113,9 +113,10 @@ target_include_directories(zametti-tiff PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 #
 # Таблица решений и всё, что вокруг неё. Собирает вместе уже проверенные по
 # отдельности части: границы, чтение TIFF, метаданные, запись JXL, ресемплер.
-add_library(zametti-import STATIC import.cpp import.h)
+add_library(zametti-import STATIC import.cpp import.h ladder.cpp ladder.h)
+# libjxl нужна напрямую: арбитр SSIMULACRA2 живёт в её внутренностях.
 target_link_libraries(zametti-import
-    PUBLIC Qt6::Gui zametti-jxl-encode zametti-tiff zametti-imagemeta
+    PUBLIC Qt6::Gui zametti-jxl-encode zametti-tiff zametti-imagemeta libjxl
     PRIVATE zametti-warnings)
 target_include_directories(zametti-import PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
