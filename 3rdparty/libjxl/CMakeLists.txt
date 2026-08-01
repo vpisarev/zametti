@@ -20,7 +20,8 @@
 # AVIF+WebP отвергнут: webp-lossless умеет только 8 бит на канал.
 #
 # Цена (замеры, Release, -j8): дерево 17 МБ и 1226 файлов; холодная сборка
-# 57.9 с, ноль предупреждений; libjxl.a 6.8 МБ. Наружу не тянет ничего, кроме
+# 57.9 с, ноль предупреждений; libjxl.a 6.8 МБ. Highway в это дерево больше не
+# входит — она вынесена в 3rdparty/highway и общая с jpegli. Наружу не тянет ничего, кроме
 # libstdc++/libm/libc/pthread — проверено линковкой пробника: ни png, ни zlib,
 # ни lcms не нужны, они питают только lib/extras, которых мы не берём
 # (декодирует входные форматы Qt).
@@ -42,6 +43,13 @@ endmacro()
 zametti_jxl_option(JPEGXL_ENABLE_TRANSCODE_JPEG ON)   # инвариант A: байт-точная реконструкция
 zametti_jxl_option(JPEGXL_ENABLE_BOXES          ON)   # боксы контейнера: EXIF, XMP
 zametti_jxl_option(JPEGXL_ENABLE_SKCMS          ON)   # цвет через skcms: вчетверо легче lcms
+
+# Highway берём ОБЩУЮ, из 3rdparty/highway: её же просит jpegli, а две копии
+# статической библиотеки с одинаковыми символами в одной программе не уживутся.
+# Подкаталог third_party/highway из вендоренного дерева выброшен, поэтому
+# libjxl пойдёт путём find_package(HWY) — а его мы уже удовлетворили, см.
+# 3rdparty/highway/CMakeLists.txt. Чужой CMake при этом не тронут ни в строке.
+zametti_jxl_option(JPEGXL_FORCE_SYSTEM_HWY      ON)
 
 # Что не нужно. Каждая строка — это ещё и подмодуль, который не пришлось брать.
 zametti_jxl_option(JPEGXL_ENABLE_TOOLS      OFF)
