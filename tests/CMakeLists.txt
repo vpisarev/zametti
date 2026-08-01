@@ -203,6 +203,11 @@ add_executable(render_bench render_bench.cpp)
 target_link_libraries(render_bench PRIVATE zametti-widgets Qt6::Test zametti-warnings)
 target_include_directories(render_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+add_executable(exif_test exif_test.cpp)
+target_link_libraries(exif_test PRIVATE zametti-core zametti-warnings)
+target_include_directories(exif_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME exif COMMAND exif_test ${CMAKE_SOURCE_DIR}/.testdata/images/originals)
+
 # Стенд кодеков этапа 8. Тоже замер, а не проверка: add_test для него нет.
 # Запускать под taskset, см. заголовок файла.
 add_executable(image_bench image_bench.cpp)
