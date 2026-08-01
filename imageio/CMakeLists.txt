@@ -58,10 +58,21 @@ else()
     set(ZAMETTI_HAVE_HEIF OFF PARENT_SCOPE)
 endif()
 
+# --- TIFF ------------------------------------------------------------------
+#
+# НЕ плагин, а обычный читатель. Плагином он быть не может и не должен: нам
+# нужны не только пиксели, но и сырые отсчёты, цветовое пространство, ICC, XMP
+# и EXIF, а интерфейс QImageIOHandler ничего этого не передаёт. Плагин Qt для
+# TIFF остаётся на месте и обслуживает показ; импорт идёт мимо него, потому что
+# он тихо перевирает CIELab.
+add_library(zametti-tiff STATIC tiff_reader.cpp tiff_reader.h)
+target_link_libraries(zametti-tiff PUBLIC Qt6::Gui libtiff PRIVATE zametti-warnings)
+target_include_directories(zametti-tiff PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
 # Одна цель на всё: потребителю незачем знать, из скольких плагинов состоят
 # наши читатели и какие из них собрались.
 add_library(zametti-imageio INTERFACE)
-target_link_libraries(zametti-imageio INTERFACE zametti-jxl)
+target_link_libraries(zametti-imageio INTERFACE zametti-jxl zametti-tiff)
 if(LIBHEIF_FOUND)
     target_link_libraries(zametti-imageio INTERFACE zametti-heif)
 endif()
