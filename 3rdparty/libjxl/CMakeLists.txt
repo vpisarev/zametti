@@ -95,6 +95,22 @@ set_target_properties(jxl_ssimulacra2 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(libjxl INTERFACE)
 target_link_libraries(libjxl INTERFACE jxl-internal jxl_threads jxl_cms jxl_ssimulacra2)
 
+# Заголовки libjxl — СИСТЕМНЫЕ для всех, кто их включает. Без этого чужие
+# предупреждения выписываются на наш файл (проверено: lib/jxl/image.h насыпал
+# -Wunused-parameter в image_bench.cpp) и при -Werror ломают нашу сборку из-за
+# чужого кода. Правило то же, что и для самой сборки libjxl, только с другой
+# стороны: чужой код чужими правилами.
+foreach(lib jxl-internal jxl_threads jxl_cms jxl_gauss_blur jxl_ssimulacra2 hwy
+            brotlienc brotlidec brotlicommon)
+    if(TARGET ${lib})
+        get_target_property(dirs ${lib} INTERFACE_INCLUDE_DIRECTORIES)
+        if(dirs)
+            set_target_properties(${lib} PROPERTIES
+                INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${dirs}")
+        endif()
+    endif()
+endforeach()
+
 # Чужой код чужими правилами: zametti-warnings (-Wall -Wextra -Wpedantic и, по
 # ключу, -Werror) сюда НЕ цепляется. Иначе каждое обновление libjxl ломало бы
 # нам сборку своими предупреждениями. Тот же уговор, что с md4c, blake3 и zstd.

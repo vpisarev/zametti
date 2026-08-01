@@ -203,6 +203,11 @@ add_executable(render_bench render_bench.cpp)
 target_link_libraries(render_bench PRIVATE zametti-widgets Qt6::Test zametti-warnings)
 target_include_directories(render_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+# Стенд кодеков этапа 8. Тоже замер, а не проверка: add_test для него нет.
+# Запускать под taskset, см. заголовок файла.
+add_executable(image_bench image_bench.cpp)
+target_link_libraries(image_bench PRIVATE libjxl Qt6::Gui zametti-warnings)
+
 add_executable(caret_scale_test caret_scale_test.cpp)
 target_link_libraries(caret_scale_test PRIVATE zametti-widgets Qt6::Test zametti-warnings)
 target_include_directories(caret_scale_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
