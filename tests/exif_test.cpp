@@ -211,12 +211,36 @@ void checkFileNameInXmp() {
     ZT_EQ("пустое имя ничего не меняет", had, xmpWithFileName(had, {}));
 }
 
+// Различитель вида сжатия WebP. От него зависит, с чем состязается пережатие:
+// у lossless-исходника есть право остаться точным, у lossy — нет.
+void checkWebpFlavour(const std::filesystem::path& root) {
+    const auto read = [](const std::filesystem::path& p) {
+        std::ifstream in(p, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    };
+    const auto lossless = root / "formats" / "плоская-графика-lossless.webp";
+    const auto lossy = root / "formats" / "плоская-графика-lossy.webp";
+    if (!std::filesystem::exists(lossless) || !std::filesystem::exists(lossy)) return;
+
+    // Один и тот же рисунок, сохранённый двумя способами: расширение у них
+    // одинаковое, и отличить их можно только по чанку внутри контейнера.
+    ZT_TRUE("VP8L опознан как lossless", webpIsLossless(read(lossless)));
+    ZT_TRUE("VP8 опознан как lossy", !webpIsLossless(read(lossy)));
+
+    // Мусор и обрывки не должны выдавать себя за lossless.
+    ZT_TRUE("пустое — не lossless", !webpIsLossless(std::string_view()));
+    ZT_TRUE("не webp — не lossless", !webpIsLossless(std::string_view("RIFF____NOTW", 12)));
+    const std::string cut = read(lossless).substr(0, 14);
+    ZT_TRUE("обрывок — не lossless", !webpIsLossless(cut));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     checkOrientationParsing();
     checkOrientationReset();
     checkFileNameInXmp();
+    if (argc > 1) checkWebpFlavour(std::filesystem::path(argv[1]));
     if (argc > 1) checkRealFiles(std::filesystem::path(argv[1]));
     return zt::report("метаданные картинок");
 }

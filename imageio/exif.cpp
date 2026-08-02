@@ -274,6 +274,27 @@ ImageMeta readImageMeta(std::string_view file) {
     return meta;
 }
 
+bool webpIsLossless(std::string_view file) {
+    if (file.size() < 12) return false;
+    const uint8_t* p = bytes(file);
+    if (std::memcmp(p, "RIFF", 4) != 0 || std::memcmp(p + 8, "WEBP", 4) != 0) return false;
+
+    size_t i = 12;
+    while (i + 8 <= file.size()) {
+        const std::string_view name(file.data() + i, 4);
+        const uint32_t len = le32(p + i + 4);
+        const size_t body = i + 8;
+        if (len > file.size() || body + len > file.size()) break;
+        // VP8L — пиксели закодированы без потерь. VP8 (с пробелом) — с
+        // потерями. VP8X только объявляет расширения, ответа в нём нет, и мы
+        // идём дальше по чанкам.
+        if (name == "VP8L") return true;
+        if (name == "VP8 ") return false;
+        i = body + len + (len & 1);
+    }
+    return false;
+}
+
 namespace {
 
 // Экранирование для XML. Имя файла — чужая строка, в ней бывает и «&», и «<»;

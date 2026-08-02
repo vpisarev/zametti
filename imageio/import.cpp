@@ -123,6 +123,69 @@ double losslessRatio(const QImage& image, const ImportLimits& limits) {
     return double(a.size()) / double(b.size());
 }
 
+// Пережать исходник, если выигрыш крупный. Одна функция на JPEG и на WebP:
+// правило у них одно (решение владельца — чем меньше параметров, тем однороднее
+// логика), и разводить его по двум веткам значило бы однажды поправить одну и
+// забыть другую.
+//
+// Пустой результат — «не выиграли», и тогда решает общий порядок: у JPEG это
+// байт-точный транскод, у WebP — оставить как есть.
+ImportResult recompressIfWorthIt(const QString& path, const QByteArray& raw,
+                                 const Size& size, const ImportLimits& limits,
+                                 bool sourceIsLossless) {
+    QImageReader reader(path);
+    reader.setAutoTransform(true);
+    QImage pixels = reader.read();
+    if (pixels.isNull()) return {};
+
+    EncodeMeta meta = metaFor(raw);
+    // Цвет приводим и здесь: пережатый файл ложится в хранилище насовсем, и
+    // правило «в хранилище только то, что переживёт круг» на него
+    // распространяется так же (см. color.h).
+    canonicalizeColor(pixels, meta.icc);
+
+    QString err;
+    EncodeOptions lossy;
+    lossy.quality = kRecompressQuality;
+    lossy.maxBitsPerChannel = limits.maxBitsPerChannel;
+    QByteArray best = encodeJxl(pixels, lossy, meta, &err);
+    bool bestIsLossless = false;
+
+    // С LOSSLESS-ИСХОДНИКОМ СРАЖАЮТСЯ ОБЕ ВЕРСИИ (замечание владельца). У него
+    // есть право остаться точным, и решать за него, что «теперь будет lossy»,
+    // мы не вправе — пусть решит размер.
+    //
+    // А вот lossy-исходнику предлагать lossless бессмысленно: тот заведомо
+    // проиграет, потому что станет честно кодировать в том числе артефакты
+    // чужого сжатия. Оттого и спрашиваем контейнер, а не гадаем по расширению.
+    if (sourceIsLossless) {
+        EncodeOptions exact;
+        exact.lossless = true;
+        exact.maxBitsPerChannel = limits.maxBitsPerChannel;
+        const QByteArray precise = encodeJxl(pixels, exact, meta, &err);
+        if (!precise.isEmpty() && (best.isEmpty() || precise.size() <= best.size())) {
+            best = precise;
+            bestIsLossless = true;
+        }
+    }
+
+    if (best.isEmpty() || double(best.size()) > double(raw.size()) * kRecompressWin) return {};
+
+    ImportResult out;
+    out.route = bestIsLossless ? Route::Lossless : Route::Photo;
+    out.bytes = best;
+    out.extension = QStringLiteral("jxl");
+    out.size = size;
+    out.bitsPerSample = pixels.depth() > 32 ? std::min(16, limits.maxBitsPerChannel) : 8;
+    out.quality = bestIsLossless ? 0 : kRecompressQuality;
+    out.encodes = sourceIsLossless ? 2 : 1;
+    out.message = QStringLiteral("пережат %1: %2% от исходного")
+                      .arg(bestIsLossless ? QStringLiteral("без потерь")
+                                          : QStringLiteral("в q95"))
+                      .arg(100 * best.size() / std::max<qint64>(1, raw.size()));
+    return out;
+}
+
 // Путь фото: уменьшить до бюджета пикселей и сжать. Всё.
 //
 // Лестницы качества здесь больше нет — вместе с бюджетом файла (см. ladder.h).
@@ -215,16 +278,19 @@ ImportResult decideFlat(const QImage& image, const EncodeMeta& meta,
 
 ImportResult losslessPath(const QImage& image, const EncodeMeta& meta,
                           const ImportLimits& limits) {
-    // Уменьшать «плоские» картинки нельзя так же вольно, как фотографии: у
-    // скриншота текст становится нечитаемым. Им разрешено быть вдвое крупнее
-    // потолка стороны — до 2 × 3S.
-    const int cap = 6 * limits.maxSize;
+    // ПОТОЛОК ТОТ ЖЕ, ЧТО У ВСЕХ. Раньше «плоским» разрешалось быть вдвое
+    // крупнее (до 6S) ради читаемости мелкого текста на скриншотах. При S=1600
+    // это давало 9600 пикселей и звучало разумно; при S=2880 — 17280, то есть
+    // скриншот 4K не уменьшался вовсе.
+    //
+    // Общее правило без исключений (решение владельца). Оно же чинит и старое
+    // противоречие: собственный выход этого пути теперь проходит проверку
+    // «влезает» при повторном recompress, и инвариант идемпотентности держится
+    // сам, а не заплаткой.
+    const Size cap = targetSize({image.width(), image.height()}, limits);
     QImage src = image;
-    if (std::max(image.width(), image.height()) > cap) {
-        const double k = double(cap) / std::max(image.width(), image.height());
-        src = resampleArea(image, std::max(1, int(image.width() * k)),
-                           std::max(1, int(image.height() * k)));
-    }
+    if (cap.width != image.width() || cap.height != image.height())
+        src = resampleLanczos(image, cap.width, cap.height);
 
     EncodeOptions opt;
     opt.lossless = true;
@@ -322,13 +388,20 @@ ImportResult importImage(const QString& path, const ImportLimits& limits) {
     // при ПОВТОРНОМ прогоне recompress уезжал на путь фото и терял пиксели —
     // то есть ломался инвариант идемпотентности.
     //
-    // Решает ПОТОЛОК ПИКСЕЛЕЙ, и тот же, что у lossless: шесть S. Он защищает
-    // от чужого JXL в двадцать мегапикселей. Бюджета файла больше нет вовсе —
-    // а раз так, чужой JXL разумного размера мы просто не трогаем: пережимать
-    // уже сжатое тем же кодеком незачем.
-    const int jxlCap = 6 * limits.maxSize;
-    const bool fitsJxlCap = std::max(info.size.width, info.size.height) <= jxlCap;
-    if (info.format == QLatin1String("jxl") && fitsJxlCap) {
+    // ОБЩЕЕ ПРАВИЛО, БЕЗ ИСКЛЮЧЕНИЙ (решение владельца): влезает по пикселям —
+    // не трогаем, не влезает — уменьшаем, как всех.
+    //
+    // Раньше здесь стоял свой потолок в 6S, и это была заплатка. Появилась она
+    // из починки идемпотентности: путь lossless клал скриншоты до 6S, а «как
+    // есть» принимал только до 3S — и собственный выход при повторном прогоне
+    // recompress уезжал на путь фото, теряя пиксели. Заплатка отвечала на
+    // вопрос «как не сломать инвариант», а не на вопрос «что делать с чужим
+    // JXL», и после отмены бюджета файла превратилась в нелепость: JPEG на 40
+    // Мп уменьшался, а тот же кадр в JXL ложился целиком.
+    //
+    // Теперь потолок один на всех — и у lossless тоже (см. ниже), иначе
+    // противоречие вернулось бы.
+    if (info.format == QLatin1String("jxl") && fitsPixels) {
         result.route = Route::AsIs;
         result.bytes = raw;
         result.extension = QStringLiteral("jxl");
@@ -344,38 +417,15 @@ ImportResult importImage(const QString& path, const ImportLimits& limits) {
     // обычным путём фото, ниже.
     if ((info.format == QLatin1String("jpeg") || info.format == QLatin1String("jpg")) &&
         fitsPixels) {
-        // Проба пережатия. Разжать приходится в любом случае, если хотим
-        // сравнить, — но энкод при q95 стоит недорого, а выигрыш бывает
-        // двукратным.
+        // Сперва пробуем пережать; не выиграли — байт-точный транскод.
         {
-            QImageReader reader(path);
-            reader.setAutoTransform(true);
-            QImage pixels = reader.read();
-            if (!pixels.isNull()) {
-                EncodeMeta meta = metaFor(raw);
-                // Цвет приводим и здесь: пережатый файл ложится в хранилище
-                // насовсем, и правило «в хранилище только то, что переживёт
-                // круг» на него распространяется так же (см. color.h).
-                canonicalizeColor(pixels, meta.icc);
-                EncodeOptions opt;
-                opt.quality = kRecompressQuality;
-                opt.maxBitsPerChannel = limits.maxBitsPerChannel;
-                QString e;
-                const QByteArray tighter = encodeJxl(pixels, opt, meta, &e);
-                if (!tighter.isEmpty() &&
-                    double(tighter.size()) <= double(raw.size()) * kRecompressWin) {
-                    result.route = Route::Photo;
-                    result.bytes = tighter;
-                    result.extension = QStringLiteral("jxl");
-                    result.size = info.size;
-                    result.bitsPerSample = 8;
-                    result.quality = kRecompressQuality;
-                    result.encodes = 1;
-                    result.message =
-                        QStringLiteral("пережат вместо транскода: %1% от исходного")
-                            .arg(100 * tighter.size() / std::max<qint64>(1, raw.size()));
-                    return result;
-                }
+            // JPEG всегда lossy по природе — состязаться с ним lossless нечего.
+            const ImportResult tighter =
+                recompressIfWorthIt(path, raw, info.size, limits, false);
+            if (tighter.ok()) {
+                ImportResult out = tighter;
+                out.sourceBytes = raw.size();
+                return out;
             }
         }
         QString err;
@@ -458,25 +508,31 @@ ImportResult importImage(const QString& path, const ImportLimits& limits) {
         return r;
     };
 
-    // --- WebP, не уменьшаемый: пробуем перекодировать ---------------------
+    // --- WebP: то же правило, что у JPEG ----------------------------------
     //
-    // Условие только по пикселям: бюджета файла больше нет. Уменьшаемый webp
-    // и так пойдёт общим путём ниже — сравнивать его с исходником незачем,
-    // размеры разные.
+    // Одно правило на оба формата (решение владельца): чем меньше параметров,
+    // тем однороднее логика. Не выиграли — оставляем исходник как есть;
+    // байт-точного транскода у webp, в отличие от JPEG, нет.
+    //
+    // У LOSSLESS-WEBP сражаются ОБЕ версии JXL, у lossy — только lossy.
+    // Спрашиваем контейнер (чанк VP8L против VP8), а не расширение: «.webp» о
+    // виде сжатия не говорит ничего.
     if (info.format == QLatin1String("webp") && fitsPixels) {
-        int spent = 0;
-        ImportResult tried = decideFlat(image, meta, limits, &spent);
-        tried.sourceBytes = raw.size();
-        tried.encodes += spent;   // проба тоже энкоды
-        // Заменяем только при заметном выигрыше: гонять байты ради пяти
-        // процентов незачем, а вот потерять качество — запросто.
-        if (tried.ok() && tried.bytes.size() * 100 <= raw.size() * 85) return noteColor(tried);
+        const bool lossless =
+            webpIsLossless(std::string_view(raw.constData(), size_t(raw.size())));
+        const ImportResult tighter =
+            recompressIfWorthIt(path, raw, info.size, limits, lossless);
+        if (tighter.ok()) {
+            ImportResult out = tighter;
+            out.sourceBytes = raw.size();
+            return noteColor(out);
+        }
         result.route = Route::AsIs;
         result.bytes = raw;
         result.extension = QStringLiteral("webp");
         result.size = info.size;
         result.bitsPerSample = info.bitsPerSample;
-        result.message = QStringLiteral("перекодирование не дало выигрыша");
+        result.message = QStringLiteral("пережатие не дало выигрыша");
         return result;
     }
 
