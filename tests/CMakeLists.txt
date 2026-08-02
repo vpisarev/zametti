@@ -231,7 +231,7 @@ if(TARGET zametti-jxl-encode)
     target_include_directories(quality_study PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(import_test import_test.cpp)
-    target_link_libraries(import_test PRIVATE zametti-import zametti-jxl Qt6::Gui
+    target_link_libraries(import_test PRIVATE zametti-import zametti-imageio Qt6::Gui
                           zametti-warnings)
     target_include_directories(import_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     add_test(NAME import COMMAND import_test ${CMAKE_SOURCE_DIR}/.testdata/images/originals)
