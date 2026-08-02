@@ -72,6 +72,11 @@ EncodeMeta metaFor(const QByteArray& file) {
     return out;
 }
 
+// Сторона, до которой уменьшается копия для пробы. Она же — граница между
+// «мелкой» и «крупной» картинкой: у мелкой копия совпадает с оригиналом, и
+// проба перестаёт быть предсказанием, становясь точным ответом.
+inline constexpr int kProbeSide = 800;
+
 // Проба на копии ~800 px: во сколько раз lossless тяжелее lossy. Малое
 // отношение означает «плоскую» картинку — скриншот, схему, рисунок, — и ей
 // место в lossless.
@@ -128,6 +133,59 @@ ImportResult photoPath(const QImage& image, const EncodeMeta& meta, const Import
     return out;
 }
 
+// Мелкая картинка: сжимаем ОБА варианта по-настоящему и берём тот, что меньше.
+//
+// Почему не по размеру и не по пробе. Замер на 56 рисунках Леонардо и 24
+// файлах разных форматов: отношение lossless/lossy имеет медиану 4.65 и 4.80,
+// и НИ ОДИН файл не прошёл бы в lossless ни при каком разумном пороге. Мелкая
+// картинка, набитая деталями, ничем не отличается от большой: banner.jpg на
+// 0.03 Мп стоит без потерь 31 КБ против 7 у lossy — вчетверо. Значит признак
+// один — отношение, и размер о нём не говорит ничего.
+//
+// А вот СЧИТАТЬ это отношение для мелкой картинки надо точно: копия в 800 px
+// совпадает с ней самой, и приближать нечего. Заодно и дешевле — победивший
+// вариант уже сжат, повторно кодировать его не нужно.
+ImportResult smallExact(const QImage& image, const EncodeMeta& meta,
+                        const ImportLimits& limits, int* encodes) {
+    EncodeOptions lossless;
+    lossless.lossless = true;
+    lossless.maxBitsPerChannel = limits.maxBitsPerChannel;
+    EncodeOptions lossy;
+    lossy.quality = limits.quality;
+
+    QString err;
+    const QByteArray a = encodeJxl(image, lossless, meta, &err);
+    const QByteArray b = encodeJxl(image, lossy, meta, &err);
+    if (encodes != nullptr) *encodes = 2;
+    if (a.isEmpty()) return {};   // не вышло — пусть решает общий порядок
+
+    // Порог тот же, что и у пробы: lossless разрешено быть чуть дороже, потому
+    // что взамен он даёт точные пиксели.
+    if (b.isEmpty() || double(a.size()) <= double(b.size()) * limits.losslessThreshold) {
+        if (a.size() > limits.fileBudgetBytes() * kLosslessSlack) return {};
+        ImportResult out;
+        out.route = Route::Lossless;
+        out.bytes = a;
+        out.extension = QStringLiteral("jxl");
+        out.size = {image.width(), image.height()};
+        out.bitsPerSample = image.depth() > 32 ? std::min(16, limits.maxBitsPerChannel) : 8;
+        out.encodes = 2;
+        return out;
+    }
+    return {};   // победил lossy — его считает путь фото, с лестницей
+}
+
+// Единственное место, где решается «плоская или фотография». Раньше это
+// решение было выписано трижды — у webp, у png и у буфера обмена, — и всякая
+// правка порядка требовала помнить про все три.
+//
+// Порядок такой:
+//   1. мелочь жмём без потерь и смотрим на результат — проба для неё дороже
+//      самого дела;
+//   2. остальное решает проба на копии ~800 px.
+ImportResult decideFlat(const QImage& image, const EncodeMeta& meta,
+                        const ImportLimits& limits, int* encodes);
+
 ImportResult losslessPath(const QImage& image, const EncodeMeta& meta,
                           const ImportLimits& limits) {
     // Уменьшать «плоские» картинки нельзя так же вольно, как фотографии: у
@@ -152,7 +210,13 @@ ImportResult losslessPath(const QImage& image, const EncodeMeta& meta,
 
     // Правило брифа: lossless, вылезший за бюджет файла, уходит на путь фото.
     // Проба — предсказание, полный энкод — измерение, измерение главнее.
-    if (jxl.size() > limits.fileBudgetBytes()) return photoPath(image, meta, limits);
+    //
+    // НО С ЗАПАСОМ В 15% (решение владельца): за перелёт на несколько процентов
+    // терять точность пикселей не стоит. Запас именно 15, а не 50, как у
+    // лестницы: полтинник — уже серьёзное превышение, и на нём lossy обычно
+    // выигрывает по обоим счетам сразу.
+    if (double(jxl.size()) > double(limits.fileBudgetBytes()) * kLosslessSlack)
+        return photoPath(image, meta, limits);
 
     ImportResult out;
     out.route = Route::Lossless;
@@ -162,6 +226,24 @@ ImportResult losslessPath(const QImage& image, const EncodeMeta& meta,
     out.bitsPerSample = src.depth() > 32 ? std::min(16, limits.maxBitsPerChannel) : 8;
     out.encodes = 1;
     return out;
+}
+
+ImportResult decideFlat(const QImage& image, const EncodeMeta& meta,
+                        const ImportLimits& limits, int* encodes) {
+    if (encodes != nullptr) *encodes = 2;   // два энкода тратятся в любом случае
+
+    // Мелкая — считаем точно; крупная — предсказываем по копии.
+    if (std::max(image.width(), image.height()) <= kProbeSide) {
+        int spent = 0;
+        const ImportResult exact = smallExact(image, meta, limits, &spent);
+        if (encodes != nullptr) *encodes = spent;
+        if (exact.ok()) return exact;
+        return photoPath(image, meta, limits);
+    }
+
+    const double ratio = losslessRatio(image, limits);
+    return ratio <= limits.losslessThreshold ? losslessPath(image, meta, limits)
+                                             : photoPath(image, meta, limits);
 }
 
 }  // namespace
@@ -315,12 +397,10 @@ ImportResult importImage(const QString& path, const ImportLimits& limits) {
 
     // --- WebP, влезающий: пробуем перекодировать -------------------------
     if (info.format == QLatin1String("webp") && fitsFile && fitsPixels) {
-        const double ratio = losslessRatio(image, limits);
-        ImportResult tried = ratio < limits.losslessThreshold
-                                 ? losslessPath(image, meta, limits)
-                                 : photoPath(image, meta, limits);
+        int spent = 0;
+        ImportResult tried = decideFlat(image, meta, limits, &spent);
         tried.sourceBytes = raw.size();
-        tried.encodes += 2;   // проба тоже энкоды
+        tried.encodes += spent;   // проба тоже энкоды
         // Заменяем только при заметном выигрыше: гонять байты ради пяти
         // процентов незачем, а вот потерять качество — запросто.
         if (tried.ok() && tried.bytes.size() * 100 <= raw.size() * 85) return noteColor(tried);
@@ -338,12 +418,10 @@ ImportResult importImage(const QString& path, const ImportLimits& limits) {
                                info.format == QLatin1String("gif") ||
                                info.format == QLatin1String("bmp");
     if (flatCandidate) {
-        const double ratio = losslessRatio(image, limits);
-        ImportResult out = ratio < limits.losslessThreshold
-                               ? losslessPath(image, meta, limits)
-                               : photoPath(image, meta, limits);
+        int spent = 0;
+        ImportResult out = decideFlat(image, meta, limits, &spent);
         out.sourceBytes = raw.size();
-        out.encodes += 2;
+        out.encodes += spent;
         return noteColor(out);
     }
 
@@ -360,12 +438,10 @@ ImportResult importPixels(const QImage& image, const ImportLimits& limits) {
     if (r != Refusal::None) return refuse(r);
 
     // Из буфера обмена приходят и скриншоты, и фотографии, и рисунки — формата
-    // у них нет, значит решает только проба.
-    const double ratio = losslessRatio(image, limits);
-    ImportResult out = ratio < limits.losslessThreshold
-                           ? losslessPath(image, EncodeMeta{}, limits)
-                           : photoPath(image, EncodeMeta{}, limits);
-    out.encodes += 2;
+    // у них нет, значит решает то же общее правило.
+    int spent = 0;
+    ImportResult out = decideFlat(image, EncodeMeta{}, limits, &spent);
+    out.encodes += spent;
     return out;
 }
 

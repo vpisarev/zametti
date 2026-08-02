@@ -27,7 +27,9 @@ struct ImportLimits {
     // нужную ступень при проверке.
     double maxFileSizeMb = 1.0;
     int quality = 88;              // lossy JXL, излом кривой цены
-    double losslessThreshold = 3.0;// порог пробы на ~800 px
+    // Порог пробы: во сколько раз lossless разрешено быть тяжелее lossy, чтобы
+    // мы всё-таки взяли lossless. Обоснование — в app/settings.h.
+    double losslessThreshold = 1.15;
     int maxBitsPerChannel = 12;    // потолок глубины
     int maxDecodeMemoryMb = 1024;  // потолок памяти под разжатую картинку
 

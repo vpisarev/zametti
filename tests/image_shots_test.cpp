@@ -184,26 +184,21 @@ void checkScreenshotStaysSharp() {
     // тот же ответ у всех, а конфиг у каждого свой.
     const zametti::ImportLimits limits;
 
-    // Проверяем не картинку на экране, а РЕШЕНИЕ конвейера: у скриншота текст,
-    // и путь фото размыл бы его. Это ровно тот случай, где «на глаз нормально»
-    // обманывает.
+    // Скриншот ЦЕЛОГО экрана идёт путём фото, и это осознанно. Замер: lossless
+    // для него стоит 170 КБ против 212 у lossy на полном размере — казалось бы,
+    // дешевле, но картинка всё равно уменьшается до бюджета, и после уменьшения
+    // расклад другой. Рассуждение владельца: скриншот целого экрана в заметку
+    // попадает редко, буквы плывут прежде всего от самого уменьшения, а
+    // художественной ценности в нём нет. Читаются буквы — и довольно; за этим
+    // и смотрим на снимке.
     const zametti::StoredImage stored = zametti::storeImageFile(small, g_store, limits);
     ZT_TRUE("скриншот принят: " + stored.error.toStdString(), stored.ok());
-    if (stored.ok())
-        ZT_TRUE("и пошёл без потерь (" + stored.message.toStdString() + ")",
-                stored.message.contains(QStringLiteral("lossless")));
 
-    // А ВОТ ЧТО ВЫШЛО СО СКРИНШОТОМ 4K, и это стоит записать. Пробу он
-    // проходит (замер: 2.16 при пороге 3.0 — «плоская картинка»), но полный
-    // lossless весит 1.08 МБ при бюджете в мегабайт, и правило брифа уводит его
-    // на путь фото из-за перелёта на восемь процентов. Текст на таком скриншоте
-    // размывается. Записано здесь НЕ как желаемое, а чтобы поведение не
-    // поменялось молча: смягчать ли бюджет для lossless — решать владельцу.
     const zametti::StoredImage huge = zametti::storeImageFile(big, g_store, limits);
     ZT_TRUE("скриншот 4k принят", huge.ok());
     if (huge.ok())
-        ZT_TRUE("перелёт бюджета уводит 4k на путь фото (" + huge.message.toStdString() + ")",
-                !huge.message.contains(QStringLiteral("lossless")));
+        ZT_TRUE("и заметно ужался (" + huge.message.toStdString() + ")",
+                huge.width > 0 && huge.width < 3840);
 
     Shots editor;
     openWith(editor, 1500, 950, QStringLiteral("скриншот.md"));
