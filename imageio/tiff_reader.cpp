@@ -1,12 +1,16 @@
 #include "tiff_reader.h"
 
+#include "color.h"
+
 #include <tiffio.h>
 
 #include <QColorSpace>
 #include <QFile>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <memory>
 #include <vector>
 
 namespace zametti {
@@ -176,6 +180,24 @@ bool readTiff(const QString& path, TiffImage* out, QString* error, qint64 maxDec
     QImage img(int(w), int(h), fmt);
     if (img.isNull()) return fail(QStringLiteral("не хватило памяти под картинку"));
 
+    // CMYK ПО ПРОФИЛЮ. Наивная формула (1-C)*(1-K) ниже — не колориметрия, и
+    // это видно глазом: на «Девятом вале» Айвазовского (профиль 3M Matchprint,
+    // 424 КБ) она даёт средний RGB 137/86/54 против 146/105/67 у lcms, разброс
+    // 78 против 64 и насыщенность на 11% выше. Владелец увидел это раньше
+    // всяких замеров: наш JXL рядом с GIMP и macOS выглядел пережаренным.
+    //
+    // Поэтому, если профиль в файле есть, переводим по нему тем же движком,
+    // которым переводим всё остальное. Сверка с lcms на той же картинке:
+    // средний модуль расхождения 0.72 из 255, наибольшее 4 (tests/cmyk_probe).
+    //
+    // Профиля нет — остаётся наивный путь: врать нечем, а отказываться от
+    // картинки из-за отсутствия профиля хуже, чем показать её приблизительно.
+    std::unique_ptr<RowIccConverter> cmyk;
+    if (photo == PHOTOMETRIC_SEPARATED && !out->icc.isEmpty()) {
+        cmyk = std::make_unique<RowIccConverter>(out->icc, 4, displayP3Icc(), int(w));
+        if (!cmyk->valid()) cmyk.reset();
+    }
+
     const tmsize_t rowBytes = TIFFScanlineSize(t);
     if (rowBytes <= 0) return fail(QStringLiteral("нулевая длина строки"));
     // Скобки фигурные: круглые тут читаются как объявление функции.
@@ -192,6 +214,31 @@ bool readTiff(const QString& path, TiffImage* out, QString* error, qint64 maxDec
         const auto* src16 = reinterpret_cast<const uint16_t*>(row.data());
         auto* dst8 = img.scanLine(int(y));
         auto* dst16 = reinterpret_cast<uint16_t*>(img.scanLine(int(y)));
+
+        // Строка целиком через CMS — по отдельному пикселю такое не считают:
+        // преобразование строится один раз на всю строку.
+        if (cmyk) {
+            const double m = deep ? 65535.0 : 255.0;
+            float* in = cmyk->input();
+            for (uint32_t x = 0; x < w; ++x)
+                for (int c = 0; c < 4; ++c)
+                    in[size_t(x) * 4 + size_t(c)] =
+                        float((deep ? double(src16[size_t(x) * samples + size_t(c)])
+                                    : double(src8[size_t(x) * samples + size_t(c)])) / m);
+            if (!cmyk->run()) return fail(QStringLiteral("перевод CMYK сорвался на строке %1").arg(y));
+            const float* got = cmyk->output();
+            // Кадр здесь всегда широкий: у PHOTOMETRIC_SEPARATED wideOut истинно.
+            for (uint32_t x = 0; x < w; ++x) {
+                for (int c = 0; c < 3; ++c) {
+                    const float v = std::clamp(got[size_t(x) * 3 + size_t(c)], 0.0f, 1.0f);
+                    dst16[size_t(x) * 4 + size_t(c)] = uint16_t(std::lround(double(v) * 65535.0));
+                }
+                dst16[size_t(x) * 4 + 3] = 65535;
+            }
+            out->color = TiffColor::Cmyk;
+            out->converted = true;
+            continue;
+        }
 
         for (uint32_t x = 0; x < w; ++x) {
             double rgb[3] = {0, 0, 0};
@@ -307,14 +354,20 @@ bool readTiff(const QString& path, TiffImage* out, QString* error, qint64 maxDec
         }
     }
 
-    // Профиль. Перевели сами — значит картинка теперь в sRGB, и чужой профиль
-    // на неё вешать НЕЛЬЗЯ: он описывал бы исходное пространство, которого в
-    // пикселях больше нет.
-    if (out->converted && out->color == TiffColor::Lab) {
-        // Перевели сами — значит картинка теперь в Display P3, им и помечаем.
-        // Чужой профиль (он описывал Lab) с ней больше не связан и наружу не
-        // отдаётся: пометить P3-пиксели Lab-профилем значило бы соврать.
+    // Профиль. Перевели сами — чужой на картинку вешать НЕЛЬЗЯ: он описывал
+    // исходное пространство, которого в пикселях больше нет. Пометить
+    // P3-пиксели профилем Lab или печатным CMYK значило бы соврать.
+    if (out->color == TiffColor::Lab || cmyk) {
+        // Оба этих пути ведут в Display P3 — им и помечаем. У CMYK условие
+        // именно `cmyk`, а не `color == Cmyk`: наивная формула тоже ставит
+        // Cmyk, но в P3 не переводит, и метка ей не полагается.
         img.setColorSpace(QColorSpace(QColorSpace::DisplayP3));
+    } else if (out->color == TiffColor::Cmyk) {
+        // Наивно переведённый CMYK остаётся БЕЗ пометки. Профиля в файле не
+        // было, чужого вешать нечего, а объявить эти пиксели хоть каким-то
+        // известным пространством — соврать наугад. Молчание честнее: дальше
+        // их прочтут как sRGB, и это ровно то приближение, которым они и
+        // получены.
     } else if (!out->icc.isEmpty()) {
         const QColorSpace cs = QColorSpace::fromIccProfile(out->icc);
         if (cs.isValid()) img.setColorSpace(cs);

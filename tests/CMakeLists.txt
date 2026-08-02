@@ -230,6 +230,13 @@ if(TARGET zametti-jxl-encode)
                           zametti-imagemeta libjxl Qt6::Gui zametti-warnings)
     target_include_directories(quality_study PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+    # Пробник CMYK: сверяет наш CMS с lcms на профиле 3M Matchprint. Тестом не
+    # заводится — ему нужна выборка, приготовленная отдельно; см. заголовок.
+    add_executable(cmyk_probe cmyk_probe.cpp)
+    target_link_libraries(cmyk_probe PRIVATE zametti-import zametti-imageio libjxl
+                          Qt6::Gui zametti-warnings)
+    target_include_directories(cmyk_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 add_executable(import_test import_test.cpp)
     target_link_libraries(import_test PRIVATE zametti-import zametti-imageio Qt6::Gui
                           zametti-warnings)
@@ -238,8 +245,10 @@ add_executable(import_test import_test.cpp)
     set_tests_properties(import PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
     add_executable(color_test color_test.cpp)
+    # zametti-tiff — ради настоящего CMYK-профиля печати: сочинить его
+    # средствами Qt нельзя, а на выдуманном проверка ничего бы не стоила.
     target_link_libraries(color_test PRIVATE zametti-color zametti-jxl-encode zametti-jxl
-                          Qt6::Gui zametti-warnings)
+                          zametti-tiff Qt6::Gui zametti-warnings)
     target_include_directories(color_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     add_test(NAME color COMMAND color_test ${CMAKE_SOURCE_DIR}/.testdata/images/originals)
     set_tests_properties(color PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

@@ -122,7 +122,10 @@ endif()
 target_include_directories(zametti-jxl-encode PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_library(zametti-tiff STATIC tiff_reader.cpp tiff_reader.h)
-target_link_libraries(zametti-tiff PUBLIC Qt6::Gui libtiff PRIVATE zametti-warnings)
+# zametti-color — не украшение: CMYK переводится по вложенному профилю тем же
+# движком, что и всё остальное (см. tiff_reader.cpp).
+target_link_libraries(zametti-tiff PUBLIC Qt6::Gui libtiff zametti-color
+                      PRIVATE zametti-warnings)
 target_include_directories(zametti-tiff PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # --- конвейер вставки ------------------------------------------------------

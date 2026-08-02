@@ -10,6 +10,7 @@
 // пока не показано, что он краснеет без починки.
 
 #include "color.h"
+#include "tiff_reader.h"
 #include "jxl_encoder.h"
 
 #include "test_util.h"
@@ -18,6 +19,7 @@
 #include <QColorSpace>
 #include <QGuiApplication>
 #include <QImage>
+#include <QFileInfo>
 #include <QImageReader>
 
 #include <array>
@@ -113,6 +115,40 @@ void checkCanonicalUntouched() {
     QImage plain = colorful(32, 32);   // вовсе без профиля
     QByteArray none;
     ZT_TRUE("без профиля приводить нечего", !canonicalizeColor(plain, none));
+}
+
+void checkProfileMustMatchPixels(const QString& root) {
+    // ПРОФИЛЬ, ОПИСЫВАЮЩИЙ НЕ ТЕ ПИКСЕЛИ, обязан быть выброшен, а не применён.
+    //
+    // Откуда берётся такая пара. У CMYK-JPEG от Adobe в файле лежит печатный
+    // CMYK-профиль, а Qt отдаёт нам пиксели уже переведёнными в RGB своими
+    // силами. Профиль и пиксели после этого про разное, и перевод «по профилю»
+    // даёт правдоподобную чепуху: замерено — средний RGB 41/41/38 там, где
+    // правда 99/97/78.
+    //
+    // Профиль печати берём настоящий, из файла корпуса: сочинить CMYK-профиль
+    // средствами Qt нельзя, а на выдуманном проверка ничего бы не стоила.
+    const QString path = root + QStringLiteral("/museum/cmyk.tif");
+    if (root.isEmpty() || !QFileInfo::exists(path)) return;
+    TiffImage tiff;
+    QString err;
+    if (!readTiff(path, &tiff, &err) || tiff.icc.isEmpty()) {
+        ZT_TRUE("CMYK-профиль для проверки достался: " + err.toStdString(), false);
+        return;
+    }
+    ZT_TRUE("профиль печати не считается описывающим RGB", !iccDescribesRgb(tiff.icc));
+    ZT_TRUE("обычный профиль считается описывающим RGB",
+            iccDescribesRgb(QColorSpace(QColorSpace::DisplayP3).iccProfile()));
+
+    QImage rgb = colorful(64, 48);
+    const QImage before = rgb;
+    QByteArray icc = tiff.icc;
+    ZT_TRUE("по чужому профилю не переводим", !canonicalizeColor(rgb, icc));
+    ZT_TRUE("пиксели не тронуты", rgb == before);
+    // Выбросить надо совсем: класть в хранилище профиль, который не описывает
+    // пиксели, — то же враньё, только отложенное до чтения.
+    ZT_TRUE("и сам профиль выброшен", icc.isEmpty());
+    ZT_TRUE("пометка с картинки снята", !rgb.colorSpace().isValid());
 }
 
 void checkConvertIsRealTransform() {
@@ -212,6 +248,7 @@ int main(int argc, char** argv) {
     const QString root = argc > 1 ? QString::fromLocal8Bit(argv[1]) : QString();
     checkCanonicalRecognition();
     checkCanonicalUntouched();
+    checkProfileMustMatchPixels(root);
     checkConvertIsRealTransform();
     checkCanonicalWideGamutSurvives();
     checkRoundTripClosesOnWideGamut(root);

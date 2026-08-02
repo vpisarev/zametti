@@ -10,12 +10,15 @@
 
 #include "tiff_reader.h"
 
+#include <tiffio.h>
+
 #include "test_util.h"
 
 #include <QColorSpace>
 #include <QCoreApplication>
 #include <QFile>
 #include <QFileInfo>
+#include <QTemporaryDir>
 
 using namespace zametti;
 
@@ -30,6 +33,92 @@ void checkSignature() {
     ZT_TRUE("JPEG не опознан", !looksLikeTiff(QByteArray("\xff\xd8\xff\xe0", 4)));
     ZT_TRUE("PNG не опознан", !looksLikeTiff(QByteArray("\x89PNG", 4)));
     ZT_TRUE("короткое не опознано", !looksLikeTiff(QByteArray("II", 2)));
+}
+
+// CMYK без профиля — запасной путь читателя. Файл под него сочиняем на месте:
+// в корпусе оба CMYK с профилем, а ветка без профиля стала после починки
+// именно запасной, и оставлять её без проверки нельзя.
+QString makeCmykTiff(const QString& dir, const QString& name, const QByteArray& icc) {
+    const QString path = dir + "/" + name;
+    TIFF* t = TIFFOpen(path.toLocal8Bit().constData(), "w");
+    if (!t) return {};
+    if (!icc.isEmpty())
+        TIFFSetField(t, TIFFTAG_ICCPROFILE, uint32_t(icc.size()), icc.constData());
+    const uint32_t w = 4, h = 2;
+    TIFFSetField(t, TIFFTAG_IMAGEWIDTH, w);
+    TIFFSetField(t, TIFFTAG_IMAGELENGTH, h);
+    TIFFSetField(t, TIFFTAG_SAMPLESPERPIXEL, uint16_t(4));
+    TIFFSetField(t, TIFFTAG_BITSPERSAMPLE, uint16_t(8));
+    TIFFSetField(t, TIFFTAG_PHOTOMETRIC, uint16_t(PHOTOMETRIC_SEPARATED));
+    TIFFSetField(t, TIFFTAG_PLANARCONFIG, uint16_t(PLANARCONFIG_CONTIG));
+    TIFFSetField(t, TIFFTAG_COMPRESSION, uint16_t(COMPRESSION_NONE));
+    // Первый пиксель — тот же набор красок, что и в углу картины Шишкина.
+    uint8_t row[4 * 4] = {170, 181, 219, 80, 0, 0, 0, 0, 0, 0, 0, 255, 128, 64, 32, 16};
+    bool ok = true;
+    for (uint32_t y = 0; y < h && ok; ++y) ok = TIFFWriteScanline(t, row, y, 0) == 1;
+    TIFFClose(t);
+    return ok ? path : QString();
+}
+
+void checkCmykWithoutProfile() {
+    QTemporaryDir tmp;
+    if (!tmp.isValid()) return;
+    const QString path = makeCmykTiff(tmp.path(), QStringLiteral("cmyk-без-профиля.tif"), {});
+    ZT_TRUE("CMYK без профиля сочинён", !path.isEmpty());
+    if (path.isEmpty()) return;
+
+    TiffImage img;
+    QString err;
+    ZT_TRUE("CMYK без профиля прочитан: " + err.toStdString(), readTiff(path, &img, &err));
+    if (img.isNull()) return;
+    ZT_TRUE("опознан как CMYK", img.color == TiffColor::Cmyk);
+    ZT_TRUE("отмечено, что пространство переводили мы", img.converted);
+    ZT_TRUE("профиля в файле нет", img.icc.isEmpty());
+
+    // Значения — по формуле (1-C)*(1-K), посчитанной на бумаге:
+    //   C=170/255=0.6667, K=80/255=0.3137 -> (1-0.6667)*(1-0.3137)=0.2288 -> 58
+    //   M=181/255=0.7098                  -> (1-0.7098)*0.6863   =0.1992 -> 51
+    //   Y=219/255=0.8588                  -> (1-0.8588)*0.6863   =0.0969 -> 25
+    const QColor c = img.image.pixelColor(0, 0);
+    ZT_EQ("наивный красный", num(58), num(c.red()));
+    ZT_EQ("наивный зелёный", num(51), num(c.green()));
+    ZT_EQ("наивный синий", num(25), num(c.blue()));
+    // Бумага без краски обязана выйти белой и на запасном пути тоже.
+    const QColor paper = img.image.pixelColor(1, 0);
+    ZT_EQ("бумага белая", num(255), num(paper.red()));
+    // Сплошной чёрный (K=255) — чёрным.
+    const QColor black = img.image.pixelColor(2, 0);
+    ZT_EQ("сплошной K чёрный", num(0), num(black.red()));
+}
+
+void checkCmykWithForeignProfile() {
+    // CMYK, но профиль в файле — НЕ CMYK. Такая пара бессмысленна, и важно, что
+    // именно происходит: перевод по профилю невозможен (skcms переворачивает
+    // краску только для CMYK-профилей, и подставить сюда sRGB значило бы
+    // разойтись с ним в соглашении), значит идём наивным путём — а раз так,
+    // чужой профиль на получившиеся пиксели вешать НЕЛЬЗЯ.
+    //
+    // Проверка различающая: убери в читателе ветку `out->color == Cmyk`, и
+    // картинка уедет в `else`, где на приближённые пиксели встанет sRGB.
+    QTemporaryDir tmp;
+    if (!tmp.isValid()) return;
+    const QByteArray srgb = QColorSpace(QColorSpace::SRgb).iccProfile();
+    const QString path = makeCmykTiff(tmp.path(), QStringLiteral("cmyk-чужой-профиль.tif"), srgb);
+    ZT_TRUE("CMYK с чужим профилем сочинён", !path.isEmpty());
+    if (path.isEmpty()) return;
+
+    TiffImage img;
+    QString err;
+    ZT_TRUE("прочитан: " + err.toStdString(), readTiff(path, &img, &err));
+    if (img.isNull()) return;
+    ZT_TRUE("профиль из файла забран", !img.icc.isEmpty());
+    ZT_TRUE("опознан как CMYK", img.color == TiffColor::Cmyk);
+    ZT_TRUE("чужой профиль на пиксели НЕ поставлен", !img.image.colorSpace().isValid());
+    // И пиксели именно наивные, а не переведённые по чужому профилю.
+    const QColor c = img.image.pixelColor(0, 0);
+    ZT_EQ("красный наивный", num(58), num(c.red()));
+    ZT_EQ("зелёный наивный", num(51), num(c.green()));
+    ZT_EQ("синий наивный", num(25), num(c.blue()));
 }
 
 void checkFiles(const QString& root) {
@@ -113,9 +202,46 @@ void checkFiles(const QString& root) {
         ZT_TRUE("CMYK прочитан", readTiff(cmyk, &img, &err));
         if (!img.isNull()) {
             ZT_TRUE("опознан как CMYK", img.color == TiffColor::Cmyk);
-            // Профиль в 424 КБ забираем, даже если переводим пока наивно: без
-            // него правильный перевод потом сделать будет не из чего.
+            // Профиль в 424 КБ — «3M Matchprint», типографский. Без него
+            // правильный перевод сделать не из чего.
             ZT_TRUE("профиль CMYK забран", img.icc.size() > 100000);
+            ZT_TRUE("отмечено, что пространство переводили мы", img.converted);
+            ZT_TRUE("кадр шестнадцатибитный, хотя файл восьмибитный",
+                    img.image.depth() > 32);
+            ZT_TRUE("после перевода стоит Display P3",
+                    img.image.colorSpace() == QColorSpace(QColorSpace::DisplayP3));
+
+            // ЦВЕТ. Числа получены НЕ нашим кодом: littleCMS переведён тем же
+            // профилем в тот самый Display P3, который отдаёт Qt, намерение
+            // относительно-колориметрическое. Это ровно тот движок, которым
+            // считают GIMP и macOS, — с ними владелец нас и сравнил.
+            //
+            // Ради чего проверка. Раньше CMYK переводился наивно, (1-C)*(1-K),
+            // и «Девятый вал» Айвазовского в хранилище выходил заметно
+            // насыщеннее и контрастнее оригинала. Наивная формула на этих же
+            // пикселях даёт (58,51,25) вместо (84,73,50) и (16,20,15) вместо
+            // (17,22,19) — то есть проверка краснеет от снятия починки на
+            // первом же пикселе.
+            //
+            // Допуск в три единицы: у skcms и lcms своя решётка интерполяции
+            // и своё округление, замеренное расхождение на всей картине —
+            // 0.72 из 255 в среднем при наибольшем 4 (tests/cmyk_probe).
+            struct Point { int x, y, r, g, b; };
+            const Point pts[] = {{0, 0, 84, 73, 50},
+                                 {100, 100, 70, 72, 56},
+                                 {2834, 1920, 66, 69, 48},
+                                 {5000, 3000, 79, 68, 45},
+                                 {5667, 3839, 17, 22, 19}};
+            for (const Point& p : pts) {
+                const QColor c = img.image.pixelColor(p.x, p.y);
+                const std::string where = "(" + num(p.x) + "," + num(p.y) + ")";
+                ZT_TRUE("CMYK " + where + " красный " + num(c.red()) + " против " + num(p.r),
+                        std::abs(c.red() - p.r) <= 3);
+                ZT_TRUE("CMYK " + where + " зелёный " + num(c.green()) + " против " + num(p.g),
+                        std::abs(c.green() - p.g) <= 3);
+                ZT_TRUE("CMYK " + where + " синий " + num(c.blue()) + " против " + num(p.b),
+                        std::abs(c.blue() - p.b) <= 3);
+            }
         }
     }
 
@@ -147,6 +273,8 @@ void checkFiles(const QString& root) {
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     checkSignature();
+    checkCmykWithoutProfile();
+    checkCmykWithForeignProfile();
     if (argc > 1) checkFiles(QString::fromLocal8Bit(argv[1]));
     return zt::report("читатель TIFF");
 }

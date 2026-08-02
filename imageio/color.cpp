@@ -13,23 +13,33 @@
 
 namespace zametti {
 
-namespace {
-
 // Профиль как его видит CMS: блоб плюс описание, если оно вышло. Описание
 // заполняем по мере сил — движку оно подсказка, а не обязанность.
+//
+// Лежит НЕ в безымянном пространстве имён нарочно: он поле у
+// RowIccConverter::Impl, а тот объявлен в заголовке и связывание имеет внешнее.
+// Поле с внутренним связыванием у такого класса — предупреждение компилятора,
+// и справедливое.
 struct Profile {
     JxlColorProfile jxl{};
     QByteArray icc;
+    // Объявляет ли профиль своим пространством данных CMYK. Это НЕ то же, что
+    // «каналов четыре»: по этому полю skcms решает, переворачивать ли краску,
+    // и наш переворот обязан висеть на том же условии, а не на числе каналов.
+    bool cmyk = false;
 
     Profile(const JxlCmsInterface& cms, const QByteArray& blob, size_t channels) : icc(blob) {
         jxl.icc.data = reinterpret_cast<const uint8_t*>(icc.constData());
         jxl.icc.size = size_t(icc.size());
         jxl.num_channels = channels;
-        JXL_BOOL cmyk = JXL_FALSE;
+        JXL_BOOL isCmyk = JXL_FALSE;
         cms.set_fields_from_icc(cms.set_fields_data, jxl.icc.data, jxl.icc.size,
-                                &jxl.color_encoding, &cmyk);
+                                &jxl.color_encoding, &isCmyk);
+        cmyk = isCmyk != 0;
     }
 };
+
+namespace {
 
 // Формат, в котором удобно переводить: четыре чередующихся составляющих,
 // цвет в первых трёх. Оба варианта — восьмибитный и шестнадцатибитный —
@@ -55,6 +65,16 @@ bool iccIsCanonical(const QByteArray& icc) {
     if (!cs.isValid()) return false;
     return cs.primaries() != QColorSpace::Primaries::Custom &&
            cs.transferFunction() != QColorSpace::TransferFunction::Custom;
+}
+
+bool iccDescribesRgb(const QByteArray& icc) {
+    if (icc.isEmpty()) return false;
+    const JxlCmsInterface cms = *JxlGetDefaultCms();
+    const Profile p(cms, icc, 3);
+    if (p.cmyk) return false;
+    // Серый профиль на трёхканальных пикселях — та же беда с другой стороны:
+    // одна кривая на три составляющих не натягивается.
+    return p.jxl.color_encoding.color_space != JXL_COLOR_SPACE_GRAY;
 }
 
 QByteArray displayP3Icc() {
@@ -141,6 +161,68 @@ bool convertIcc(QImage& image, const QByteArray& from, const QByteArray& to) {
     return ok;
 }
 
+struct RowIccConverter::Impl {
+    // Порядок объявления существен: cms должен быть готов до профилей, а
+    // профили — до init. Список инициализации идёт по объявлению, не по записи.
+    JxlCmsInterface cms;
+    Profile src;
+    Profile dst;
+    int channels;
+    int width;
+    void* state = nullptr;
+
+    Impl(const QByteArray& from, int ch, const QByteArray& to, int w)
+        : cms(*JxlGetDefaultCms()),
+          src(cms, from, size_t(ch)),
+          dst(cms, to, 3),
+          channels(ch),
+          width(w) {
+        // Четыре канала имеют смысл ТОЛЬКО с профилем, который сам объявил себя
+        // CMYK. Иначе выйдет молчаливая чепуха: мы бы переворачивали краску, а
+        // skcms — нет, и наоборот. Пусть лучше зовущий узнает отказ и уйдёт на
+        // свой запасной путь.
+        if (ch == 4 && !src.cmyk) return;
+        if (w > 0) state = cms.init(cms.init_data, 1, size_t(w), &src.jxl, &dst.jxl, 255.0f);
+    }
+    ~Impl() {
+        if (state) cms.destroy(state);
+    }
+};
+
+RowIccConverter::RowIccConverter(const QByteArray& from, int channels, const QByteArray& to,
+                                 int width)
+    : impl_(from.isEmpty() || to.isEmpty() || channels < 1 || channels > 4 || width < 1
+                ? nullptr
+                : std::make_unique<Impl>(from, channels, to, width)) {}
+
+RowIccConverter::~RowIccConverter() = default;
+
+bool RowIccConverter::valid() const { return impl_ && impl_->state != nullptr; }
+
+float* RowIccConverter::input() {
+    return valid() ? impl_->cms.get_src_buf(impl_->state, 0) : nullptr;
+}
+
+const float* RowIccConverter::output() const {
+    return valid() ? impl_->cms.get_dst_buf(impl_->state, 0) : nullptr;
+}
+
+bool RowIccConverter::run() {
+    if (!valid()) return false;
+    float* in = impl_->cms.get_src_buf(impl_->state, 0);
+    float* out = impl_->cms.get_dst_buf(impl_->state, 0);
+    if (!in || !out) return false;
+    // ВОТ ТОТ САМЫЙ ПЕРЕВОРОТ, про который написано в заголовке. Снаружи
+    // единица — полная краска, у skcms единица — чистая бумага. Условие ровно
+    // то же, по которому переворачивает skcms: не «каналов четыре», а «профиль
+    // объявил себя CMYK».
+    if (impl_->src.cmyk) {
+        const int n = impl_->width * 4;
+        for (int i = 0; i < n; ++i) in[i] = 1.0f - in[i];
+    }
+    return impl_->cms.run(impl_->state, 0, in, out, size_t(impl_->width)) != 0;
+}
+
 bool canonicalizeColor(QImage& image, QByteArray& icc) {
     if (image.isNull()) return false;
 
@@ -149,6 +231,18 @@ bool canonicalizeColor(QImage& image, QByteArray& icc) {
     // проверяли бы одно, а записывали другое.
     const QByteArray have = !icc.isEmpty() ? icc : image.colorSpace().iccProfile();
     if (have.isEmpty()) return false;      // профиля нет — и приводить нечего
+
+    // ПРОФИЛЬ ОБЯЗАН ОПИСЫВАТЬ ТЕ ПИКСЕЛИ, ЧТО НАМ ДАЛИ. У CMYK-JPEG от Adobe
+    // в файле печатный CMYK-профиль, а Qt отдаёт уже переведённый им RGB —
+    // профиль и пиксели после этого про разное. Такой профиль выбрасываем
+    // совсем: и переводить по нему нельзя, и в хранилище класть тоже —
+    // пиксели он не описывает.
+    if (!iccDescribesRgb(have)) {
+        icc.clear();
+        image.setColorSpace(QColorSpace());
+        return false;
+    }
+
     if (iccIsCanonical(have)) return false;  // уже выражается описанием
 
     const QByteArray target = displayP3Icc();
