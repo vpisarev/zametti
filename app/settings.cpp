@@ -34,10 +34,6 @@ void readInt(const QJsonObject& o, const char* key, int& out) {
     if (v.isDouble()) out = v.toInt();
 }
 
-void readDouble(const QJsonObject& o, const char* key, double& out) {
-    const QJsonValue v = o.value(QLatin1String(key));
-    if (v.isDouble()) out = v.toDouble();
-}
 
 void readString(const QJsonObject& o, const char* key, QString& out) {
     const QJsonValue v = o.value(QLatin1String(key));
@@ -205,12 +201,15 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("externalEditor"), a.externalEditor},
     };
 
+    // ТОЛЬКО S. Остальные числа импорта настройке не подлежат — решение
+    // владельца, и вот его причина: они выведены замерами на большом корпусе и
+    // СОГЛАСОВАНЫ МЕЖДУ СОБОЙ. Произвольная смена одного ломает логику
+    // остальных — например, качество и порог пережатия подобраны так, чтобы
+    // спор с исходником имел смысл; сдвинь одно, и правило станет либо
+    // бесполезным, либо вредным. Значения живут в settings.h, и менять их
+    // можно только правкой кода, то есть осознанно и с новым замером.
     QJsonObject images{
         {QStringLiteral("maxImportedImageSize"), a.images.maxImportedImageSize},
-        {QStringLiteral("photoQuality"), a.images.photoQuality},
-        {QStringLiteral("losslessThreshold"), a.images.losslessThreshold},
-        {QStringLiteral("maxBitsPerChannel"), a.images.maxBitsPerChannel},
-        {QStringLiteral("maxDecodeMemoryMb"), a.images.maxDecodeMemoryMb},
     };
 
     QJsonObject zoom{
@@ -389,10 +388,6 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     // editor.imageCacheSizeMb под этим именем.
     const QJsonObject importGroup = root.value(QStringLiteral("images")).toObject();
     readInt(importGroup, "maxImportedImageSize", a.images.maxImportedImageSize);
-    readInt(importGroup, "photoQuality", a.images.photoQuality);
-    readDouble(importGroup, "losslessThreshold", a.images.losslessThreshold);
-    readInt(importGroup, "maxBitsPerChannel", a.images.maxBitsPerChannel);
-    readInt(importGroup, "maxDecodeMemoryMb", a.images.maxDecodeMemoryMb);
 
     const QJsonObject zoom = root.value(QStringLiteral("zoom")).toObject();
     readReal(zoom, "step", a.zoomStep);
