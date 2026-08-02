@@ -77,6 +77,27 @@ EncodeMeta metaFor(const QByteArray& file) {
 // проба перестаёт быть предсказанием, становясь точным ответом.
 inline constexpr int kProbeSide = 800;
 
+// ПЕРЕЖАТИЕ JPEG ВМЕСТО ТРАНСКОДА. Байт-точный транскод — хорошая вещь, но он
+// сохраняет и то, что в исходнике сжато небрежно: JPEG, записанный с запасом,
+// так и останется толстым. JXL при q95 нередко жмёт его заметно лучше.
+//
+// Правило владельца: берём пережатие, только если выигрыш КРУПНЫЙ — не меньше
+// пятой части. Здесь есть асимметрия с порогом lossless (там lossless
+// разрешено быть даже на 15% дороже), и она намеренная: там мы точность
+// ПРИОБРЕТАЕМ, а здесь — теряем, причём пережимая уже сжатое. Значит и платить
+// за это должно заметным выигрышем, и качество брать с запасом.
+//
+// Замер на сотне самых лёгких Wallpapers: правило срабатывает у 37% файлов и
+// даёт 35.1 МБ против 37.7 у сплошного транскода. Важно, что оно НИКОГДА не
+// хуже — где q95 проигрывает, остаётся транскод; сплошное пережатие всех
+// подряд дало бы 41.2 МБ, то есть хуже нынешнего. На рисунках Леонардо (56
+// сканов, плотная штриховка) правило не срабатывает ни разу — и правильно.
+inline constexpr double kRecompressWin = 0.8;
+// Качество пережатия. Выше рабочего: обратимость мы теряем, и запас качества —
+// плата за это. Замер: средняя оценка 90.6 и 90.95 по шкале CID22, то есть
+// «глазом не отличить».
+inline constexpr int kRecompressQuality = 95;
+
 // Проба на копии ~800 px: во сколько раз lossless тяжелее lossy. Малое
 // отношение означает «плоскую» картинку — скриншот, схему, рисунок, — и ей
 // место в lossless.
@@ -102,34 +123,41 @@ double losslessRatio(const QImage& image, const ImportLimits& limits) {
     return double(a.size()) / double(b.size());
 }
 
-// Путь фото: уменьшить до бюджета пикселей и отдать лестнице. Лестница сама
-// решит, надо ли отступать по качеству и разрешению.
+// Путь фото: уменьшить до бюджета пикселей и сжать. Всё.
+//
+// Лестницы качества здесь больше нет — вместе с бюджетом файла (см. ladder.h).
+// Платим за весь объём хранилища, а не за каждую картинку поодиночке: одни
+// выходят мельче ожидаемого, другие крупнее. Замер на 321 файле шести
+// каталогов: медиана 1.44 МБ, максимум 3.58, а потолок самого формата при q90
+// — 8.2 МБ на шуме, которого в природе не бывает.
 ImportResult photoPath(const QImage& image, const EncodeMeta& meta, const ImportLimits& limits) {
     const Size target = targetSize({image.width(), image.height()}, limits);
+    // УМЕНЬШАЕМ LANCZOS, А НЕ УСРЕДНЕНИЕМ ПО ПЛОЩАДИ. Прежнее правило («в
+    // сторону уменьшения только inter_area») стоило нам четырёх-пяти баллов на
+    // каждой фотографии: замер на снимках DxO даёт против оригинала 49.92 /
+    // 38.15 / 50.61 у area и 54.38 / 42.98 / 56.21 у Lanczos, ценой всего семи
+    // процентов байт. Ореолов, ради которых правило вводилось, глазами не
+    // видно ни на листве, ни на мелком тексте скриншота.
     const QImage scaled = (target.width == image.width() && target.height == image.height())
                               ? image
-                              : resampleArea(image, target.width, target.height);
+                              : resampleLanczos(image, target.width, target.height);
 
-    const LadderResult ladder = runLadder(scaled, meta, limits);
-    if (!ladder.ok())
-        return refuse(Refusal::None,
-                      QStringLiteral("не удалось сжать: %1").arg(ladder.error));
+    EncodeOptions opt;
+    opt.quality = limits.quality;
+    opt.maxBitsPerChannel = limits.maxBitsPerChannel;
+    QString err;
+    const QByteArray jxl = encodeJxl(scaled, opt, meta, &err);
+    if (jxl.isEmpty())
+        return refuse(Refusal::None, QStringLiteral("не удалось сжать: %1").arg(err));
 
     ImportResult out;
     out.route = Route::Photo;
-    out.bytes = ladder.bytes;
+    out.bytes = jxl;
     out.extension = QStringLiteral("jxl");
-    out.size = {ladder.width, ladder.height};
+    out.size = {scaled.width(), scaled.height()};
     out.bitsPerSample = scaled.depth() > 32 ? std::min(16, limits.maxBitsPerChannel) : 8;
-    out.encodes = ladder.encodes;
-    out.quality = ladder.quality;
-    out.ssimulacra2 = ladder.ssimulacra2;
-    if (ladder.arbiterRolledBack)
-        out.message = QStringLiteral("арбитр вернул ступень назад: качество дороже бюджета");
-    else if (ladder.overBudget)
-        out.message = QStringLiteral("принят перелёт бюджета: ниже пола качества не опускаемся");
-    else if (ladder.hitQualityFloor)
-        out.message = QStringLiteral("дошло до пола качества");
+    out.encodes = 1;
+    out.quality = limits.quality;
     return out;
 }
 
@@ -162,7 +190,6 @@ ImportResult smallExact(const QImage& image, const EncodeMeta& meta,
     // Порог тот же, что и у пробы: lossless разрешено быть чуть дороже, потому
     // что взамен он даёт точные пиксели.
     if (b.isEmpty() || double(a.size()) <= double(b.size()) * limits.losslessThreshold) {
-        if (a.size() > limits.fileBudgetBytes() * kLosslessSlack) return {};
         ImportResult out;
         out.route = Route::Lossless;
         out.bytes = a;
@@ -189,8 +216,8 @@ ImportResult decideFlat(const QImage& image, const EncodeMeta& meta,
 ImportResult losslessPath(const QImage& image, const EncodeMeta& meta,
                           const ImportLimits& limits) {
     // Уменьшать «плоские» картинки нельзя так же вольно, как фотографии: у
-    // скриншота текст становится нечитаемым. Бриф разрешает им быть вдвое
-    // крупнее потолка стороны — до 2 × 3S.
+    // скриншота текст становится нечитаемым. Им разрешено быть вдвое крупнее
+    // потолка стороны — до 2 × 3S.
     const int cap = 6 * limits.maxSize;
     QImage src = image;
     if (std::max(image.width(), image.height()) > cap) {
@@ -207,16 +234,6 @@ ImportResult losslessPath(const QImage& image, const EncodeMeta& meta,
     const QByteArray jxl = encodeJxl(src, opt, meta, &err);
     if (jxl.isEmpty())
         return refuse(Refusal::None, QStringLiteral("не удалось сжать без потерь: %1").arg(err));
-
-    // Правило брифа: lossless, вылезший за бюджет файла, уходит на путь фото.
-    // Проба — предсказание, полный энкод — измерение, измерение главнее.
-    //
-    // НО С ЗАПАСОМ В 15% (решение владельца): за перелёт на несколько процентов
-    // терять точность пикселей не стоит. Запас именно 15, а не 50, как у
-    // лестницы: полтинник — уже серьёзное превышение, и на нём lossy обычно
-    // выигрывает по обоим счетам сразу.
-    if (double(jxl.size()) > double(limits.fileBudgetBytes()) * kLosslessSlack)
-        return photoPath(image, meta, limits);
 
     ImportResult out;
     out.route = Route::Lossless;
@@ -292,7 +309,6 @@ ImportResult importImage(const QString& path, const ImportLimits& limits) {
 
     ImportResult result;
     result.sourceBytes = raw.size();
-    const bool fitsFile = raw.size() <= limits.fileBudgetBytes();
     const Size target = targetSize(info.size, limits);
     const bool fitsPixels = target == info.size;
 
@@ -306,17 +322,13 @@ ImportResult importImage(const QString& path, const ImportLimits& limits) {
     // при ПОВТОРНОМ прогоне recompress уезжал на путь фото и терял пиксели —
     // то есть ломался инвариант идемпотентности.
     //
-    // Потолок пикселей всё же есть, но тот же, что у lossless: шесть S. Он
-    // защищает от чужого JXL в двадцать мегапикселей, который случайно влез в
-    // мегабайт.
+    // Решает ПОТОЛОК ПИКСЕЛЕЙ, и тот же, что у lossless: шесть S. Он защищает
+    // от чужого JXL в двадцать мегапикселей. Бюджета файла больше нет вовсе —
+    // а раз так, чужой JXL разумного размера мы просто не трогаем: пережимать
+    // уже сжатое тем же кодеком незачем.
     const int jxlCap = 6 * limits.maxSize;
     const bool fitsJxlCap = std::max(info.size.width, info.size.height) <= jxlCap;
-    // Запас тот же, что принимает лестница: она сама кладёт файлы до
-    // полутора бюджетов, и считать их «не влезающими» значило бы пережимать
-    // собственный выход при каждом прогоне впустую.
-    const bool fitsFileWithSlack =
-        raw.size() <= qint64(double(limits.fileBudgetBytes()) * kBudgetSlack);
-    if (info.format == QLatin1String("jxl") && fitsFileWithSlack && fitsJxlCap) {
+    if (info.format == QLatin1String("jxl") && fitsJxlCap) {
         result.route = Route::AsIs;
         result.bytes = raw;
         result.extension = QStringLiteral("jxl");
@@ -325,9 +337,47 @@ ImportResult importImage(const QString& path, const ImportLimits& limits) {
         return result;
     }
 
-    // --- JPEG: байт-точный транскод, если влезает в оба бюджета -----------
+    // --- JPEG: пережать, если сильно выигрываем; иначе транскод -----------
+    //
+    // Транскод возможен ТОЛЬКО когда картинка не уменьшается: он сохраняет
+    // исходные коэффициенты, а с ними и размер. Не влезает по пикселям — идёт
+    // обычным путём фото, ниже.
     if ((info.format == QLatin1String("jpeg") || info.format == QLatin1String("jpg")) &&
-        fitsFile && fitsPixels) {
+        fitsPixels) {
+        // Проба пережатия. Разжать приходится в любом случае, если хотим
+        // сравнить, — но энкод при q95 стоит недорого, а выигрыш бывает
+        // двукратным.
+        {
+            QImageReader reader(path);
+            reader.setAutoTransform(true);
+            QImage pixels = reader.read();
+            if (!pixels.isNull()) {
+                EncodeMeta meta = metaFor(raw);
+                // Цвет приводим и здесь: пережатый файл ложится в хранилище
+                // насовсем, и правило «в хранилище только то, что переживёт
+                // круг» на него распространяется так же (см. color.h).
+                canonicalizeColor(pixels, meta.icc);
+                EncodeOptions opt;
+                opt.quality = kRecompressQuality;
+                opt.maxBitsPerChannel = limits.maxBitsPerChannel;
+                QString e;
+                const QByteArray tighter = encodeJxl(pixels, opt, meta, &e);
+                if (!tighter.isEmpty() &&
+                    double(tighter.size()) <= double(raw.size()) * kRecompressWin) {
+                    result.route = Route::Photo;
+                    result.bytes = tighter;
+                    result.extension = QStringLiteral("jxl");
+                    result.size = info.size;
+                    result.bitsPerSample = 8;
+                    result.quality = kRecompressQuality;
+                    result.encodes = 1;
+                    result.message =
+                        QStringLiteral("пережат вместо транскода: %1% от исходного")
+                            .arg(100 * tighter.size() / std::max<qint64>(1, raw.size()));
+                    return result;
+                }
+            }
+        }
         QString err;
         const QByteArray jxl = transcodeJpegToJxl(raw, &err);
         if (!jxl.isEmpty()) {
@@ -379,6 +429,19 @@ ImportResult importImage(const QString& path, const ImportLimits& limits) {
         meta = metaFor(raw);
     }
 
+    // --- имя исходника в XMP ----------------------------------------------
+    //
+    // В хранилище файл называется бессмысленным id, и человеческое имя живёт
+    // только в заметке — как alt у картинки. Стоит вынести вложение наружу, и
+    // имя потеряно. Кладём его внутрь самой картинки, в xmpMM:PreservedFileName.
+    {
+        const QByteArray name = QFileInfo(path).fileName().toUtf8();
+        const std::string xmp = xmpWithFileName(
+            std::string_view(meta.xmp.constData(), size_t(meta.xmp.size())),
+            std::string_view(name.constData(), size_t(name.size())));
+        meta.xmp = QByteArray(xmp.data(), qsizetype(xmp.size()));
+    }
+
     // --- цвет: привести к тому, что переживёт круг ------------------------
     //
     // Здесь, а не в путях записи: приведение обязано случиться ДО любых проб и
@@ -395,8 +458,12 @@ ImportResult importImage(const QString& path, const ImportLimits& limits) {
         return r;
     };
 
-    // --- WebP, влезающий: пробуем перекодировать -------------------------
-    if (info.format == QLatin1String("webp") && fitsFile && fitsPixels) {
+    // --- WebP, не уменьшаемый: пробуем перекодировать ---------------------
+    //
+    // Условие только по пикселям: бюджета файла больше нет. Уменьшаемый webp
+    // и так пойдёт общим путём ниже — сравнивать его с исходником незачем,
+    // размеры разные.
+    if (info.format == QLatin1String("webp") && fitsPixels) {
         int spent = 0;
         ImportResult tried = decideFlat(image, meta, limits, &spent);
         tried.sourceBytes = raw.size();

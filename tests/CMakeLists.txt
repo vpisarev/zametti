@@ -230,14 +230,7 @@ if(TARGET zametti-jxl-encode)
                           zametti-imagemeta libjxl Qt6::Gui zametti-warnings)
     target_include_directories(quality_study PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-    add_executable(ladder_test ladder_test.cpp)
-    target_link_libraries(ladder_test PRIVATE zametti-import zametti-jxl Qt6::Gui
-                          zametti-warnings)
-    target_include_directories(ladder_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    add_test(NAME ladder COMMAND ladder_test ${CMAKE_SOURCE_DIR}/.testdata/images/originals)
-    set_tests_properties(ladder PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-    add_executable(import_test import_test.cpp)
+add_executable(import_test import_test.cpp)
     target_link_libraries(import_test PRIVATE zametti-import zametti-jxl Qt6::Gui
                           zametti-warnings)
     target_include_directories(import_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

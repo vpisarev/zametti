@@ -100,6 +100,13 @@ double score(const QImage& reference, const QImage& got) {
     return std::move(res).value_().Score();
 }
 
+// Поле csv: кавычки вокруг и удвоение кавычек внутри — как велит RFC 4180.
+QString quoted(const QString& value) {
+    QString out = value;
+    out.replace(QLatin1Char('"'), QStringLiteral("\"\""));
+    return QLatin1Char('"') + out + QLatin1Char('"');
+}
+
 QString sourceOf(const QString& path) {
     // Имя каталога сразу под ~/Pictures: по нему в отчёте видно, что за род
     // картинок, — фотографии, сканы плёнки, работы художника.
@@ -204,7 +211,11 @@ int main(int argc, char** argv) {
                                       : score(src, back))
                             : score(scaled, back);
 
-                csv << source << ',' << name << ',' << src.width() << ',' << src.height() << ','
+                // Имя и каталог — В КАВЫЧКАХ. Наступал: файлы Эрмитажа названы
+                // «Фамилия, Имя — Название.tif», и запятая в имени сдвигала все
+                // столбцы csv. Разбор потом честно читал размер там, где лежал
+                // кусок названия картины, и выдавал оценки в миллионы.
+                csv << quoted(source) << ',' << quoted(name) << ',' << src.width() << ',' << src.height() << ','
                     << s << ',' << q << ',' << target.width << ',' << target.height << ','
                     << jxl.size() << ',' << QString::number(sc, 'f', 3) << ',' << ms << ','
                     << (shrunk ? 1 : 0) << '\n';

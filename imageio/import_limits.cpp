@@ -54,10 +54,5 @@ Size targetSize(Size src, const ImportLimits& limits) {
     return out;
 }
 
-double bitsPerPixelBudget(const ImportLimits& limits) {
-    const double pixels = double(limits.maxSize) * double(limits.maxSize);
-    if (pixels <= 0) return 0.0;
-    return double(limits.fileBudgetBytes()) * 8.0 / pixels;
-}
 
 }  // namespace zametti

@@ -95,9 +95,8 @@ void checkMemoryCeiling() {
 // ляжет в хранилище. Пусть такая правка сначала покраснеет здесь.
 void checkDefaults() {
     const ImportLimits d;
-    ZT_EQ("S по умолчанию", num(1920), num(d.maxSize));
-    ZT_EQ("качество по умолчанию", num(88), num(d.quality));
-    ZT_EQ("бюджет файла по умолчанию, байт", num(1048576), num(d.fileBudgetBytes()));
+    ZT_EQ("S по умолчанию", num(2880), num(d.maxSize));
+    ZT_EQ("качество по умолчанию", num(90), num(d.quality));
     ZT_EQ("потолок глубины по умолчанию", num(12), num(d.maxBitsPerChannel));
 }
 
@@ -153,33 +152,6 @@ void checkTargetSize() {
     ZT_EQ("нулевой бюджет ничего не меняет", sz({100, 50}), sz(targetSize({100, 50}, zero)));
 }
 
-void checkSanity() {
-    ImportLimits limits;   // 1 МБ на 2.56 Мп
-    const double bpp = bitsPerPixelBudget(limits);
-    ZT_TRUE("умолчания вменяемы (" + std::to_string(bpp) + " бит/пиксель)",
-            bpp > kSaneBitsPerPixel);
-
-    // Где именно проходит граница: при бюджете файла в 1 МБ порог в половину
-    // бита переходится ровно на S = 4096 (16.8 Мп). Проверяю по обе стороны от
-    // этого числа, а не наугад — первая моя попытка взяла S = 3200, а там ещё
-    // 0.82 бита, то есть вменяемо.
-    ImportLimits wide = limits;
-    wide.maxSize = 3200;    // 10.24 Мп → 0.82 бит/пиксель
-    ZT_TRUE("S = 3200 при мегабайте ещё вменяемо",
-            bitsPerPixelBudget(wide) > kSaneBitsPerPixel);
-
-    ImportLimits tight = limits;
-    tight.maxSize = 5000;   // 25 Мп → 0.34 бит/пиксель
-    ZT_TRUE("S = 5000 при мегабайте — противоречие",
-            bitsPerPixelBudget(tight) < kSaneBitsPerPixel);
-
-    // И обратный перекос: тот же бюджет пикселей, но файл в тридцать раз
-    // меньше — тоже противоречие, только с другой стороны.
-    ImportLimits starved = limits;
-    starved.maxFileSizeMb = 0;   // ноль мегабайт — бюджета нет вовсе
-    ZT_TRUE("нулевой бюджет файла — противоречие",
-            bitsPerPixelBudget(starved) < kSaneBitsPerPixel);
-}
 
 }  // namespace
 
@@ -188,6 +160,5 @@ int main() {
     checkMemoryCeiling();
     checkDefaults();
     checkTargetSize();
-    checkSanity();
     return zt::report("границы входа и бюджет");
 }

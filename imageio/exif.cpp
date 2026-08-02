@@ -274,4 +274,63 @@ ImageMeta readImageMeta(std::string_view file) {
     return meta;
 }
 
+namespace {
+
+// Экранирование для XML. Имя файла — чужая строка, в ней бывает и «&», и «<»;
+// без этого один такой файл сделал бы XMP невалидным, а метаданные —
+// нечитаемыми целиком.
+std::string escapeXml(std::string_view text) {
+    std::string out;
+    out.reserve(text.size() + 16);
+    for (char c : text) {
+        switch (c) {
+            case '&': out += "&amp;"; break;
+            case '<': out += "&lt;"; break;
+            case '>': out += "&gt;"; break;
+            case '"': out += "&quot;"; break;
+            case '\'': out += "&apos;"; break;
+            default: out.push_back(c);
+        }
+    }
+    return out;
+}
+
+}  // namespace
+
+std::string xmpWithFileName(std::string_view existing, std::string_view fileName) {
+    if (fileName.empty()) return std::string(existing);
+
+    const std::string block =
+        "  <rdf:Description rdf:about=\"\""
+        " xmlns:xmpMM=\"http://ns.adobe.com/xap/1.0/mm/\">\n"
+        "   <xmpMM:PreservedFileName>" + escapeXml(fileName) +
+        "</xmpMM:PreservedFileName>\n"
+        "  </rdf:Description>\n";
+
+    // Если XMP уже есть — вставляем свой Description перед закрытием rdf:RDF.
+    // Ищем именно закрывающий тег, а не разбираем XML: разборщик XML ради
+    // одного поля — цена, которой это не стоит.
+    const std::string_view close = "</rdf:RDF>";
+    const size_t at = existing.rfind(close);
+    if (at != std::string_view::npos) {
+        std::string out;
+        out.reserve(existing.size() + block.size());
+        out.append(existing.substr(0, at));
+        out.append(block);
+        out.append(existing.substr(at));
+        return out;
+    }
+
+    // Не нашли — собираем пакет с нуля. Заголовок и хвост ровно те, что велит
+    // спецификация XMP; id в xpacket постоянный и тоже задан ею.
+    return
+        "<?xpacket begin=\"\xEF\xBB\xBF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n"
+        "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\n"
+        " <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n" +
+        block +
+        " </rdf:RDF>\n"
+        "</x:xmpmeta>\n"
+        "<?xpacket end=\"w\"?>";
+}
+
 }  // namespace zametti

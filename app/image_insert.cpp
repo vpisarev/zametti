@@ -93,7 +93,6 @@ ImportLimits limitsFromSettings() {
     const Appearance::Images& s = appearance().images;
     ImportLimits limits;
     limits.maxSize = s.maxImportedImageSize;
-    limits.maxFileSizeMb = s.maxImportedImageFileSizeMb;
     limits.quality = s.photoQuality;
     limits.losslessThreshold = s.losslessThreshold;
     limits.maxBitsPerChannel = s.maxBitsPerChannel;

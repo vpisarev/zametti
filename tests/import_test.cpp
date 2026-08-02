@@ -57,18 +57,25 @@ void expectRoute(const QString& root, const char* rel, Route want, const char* w
 }
 
 void checkTable(const QString& root) {
-    ImportLimits limits;   // умолчания: S=1920, качество 88, файл 1 МБ
+    ImportLimits limits;   // умолчания: S=2880 (бюджет 8.3 Мп), качество 90
 
     // --- ряд «JPEG влезает в оба бюджета» → байт-точный транскод ---------
     expectRoute(root, "art/leonardo-oldmen.jpg", Route::TranscodedJpeg,
                 "небольшой JPEG влезает в оба бюджета", limits);
     expectRoute(root, "art/leonardo-tiny.jpg", Route::TranscodedJpeg, "крошечный JPEG", limits);
 
-    // --- тот же ряд, но файл велик → путь фото ---------------------------
+    // --- тот же ряд, но картинка не влезает по пикселям → путь фото -------
+    //
+    // Транскод сохраняет исходные коэффициенты, а с ними и размер: он возможен
+    // ТОЛЬКО пока картинка не уменьшается. 60 Мп при бюджете в 8.3 уменьшаются
+    // обязательно — значит транскод отпадает.
     expectRoute(root, "photo/sony-60mp.jpg", Route::Photo,
-                "60 Мп не влезает ни по пикселям, ни по файлу", limits);
-    expectRoute(root, "photo/wallpaper-4mp.jpg", Route::Photo,
-                "4 Мп не влезает по пикселям", limits);
+                "60 Мп уменьшается, транскод невозможен", limits);
+    // А 4 Мп при S=2880 влезают целиком, и для них транскод — лучший выбор:
+    // байт в байт дешевле, чем пережимать уже сжатое. (При прежнем S=1920 эта
+    // же картинка уменьшалась и шла путём фото.)
+    expectRoute(root, "photo/wallpaper-4mp.jpg", Route::TranscodedJpeg,
+                "4 Мп влезают целиком — транскод", limits);
 
     // --- ряд «JXL» → как есть --------------------------------------------
     expectRoute(root, "formats/dice.jxl", Route::AsIs, "JXL влезает — кладём как есть", limits);
@@ -156,23 +163,24 @@ void checkLimitsMatter(const QString& root) {
 
     // Тот же файл при разных числах обязан идти РАЗНЫМИ путями — иначе
     // настройки ни на что не влияют, и проверка таблицы пуста.
-    ImportLimits tiny;
-    tiny.maxFileSizeMb = 0;   // бюджета файла нет вовсе
-    const ImportResult r1 = importImage(path, tiny);
-    ZT_EQ("при нулевом бюджете файла транскод не годится", std::string("путь фото"),
-          std::string(routeName(r1.route)));
-
+    //
+    // Бюджета файла больше нет вовсе (его убрал владелец: платим за весь объём
+    // хранилища, а не за каждую картинку, и потолок у формата свой — 8.2 МБ на
+    // шуме при q90). Значит различать пути должен ОСТАВШИЙСЯ рычаг — S.
     ImportLimits roomy;
-    roomy.maxFileSizeMb = 8;
     const ImportResult r2 = importImage(path, roomy);
-    ZT_EQ("при щедром бюджете идёт транскод", std::string("транскод JPEG"),
+    ZT_EQ("при обычных числах идёт транскод", std::string("транскод JPEG"),
           std::string(routeName(r2.route)));
 
-    // И размер тоже должен слушаться.
+    // Транскод возможен только пока картинка не уменьшается: он сохраняет
+    // исходные коэффициенты, а с ними и размер. Ужать S — и путь обязан
+    // смениться на путь фото.
     ImportLimits small;
     small.maxSize = 400;
     const ImportResult r3 = importImage(path, small);
-    ZT_TRUE("при S=400 картинка уменьшена (" + num(r3.size.width) + ")", r3.size.width <= 1200);
+    ZT_EQ("при тесном S транскод невозможен", std::string("путь фото"),
+          std::string(routeName(r3.route)));
+    ZT_TRUE("и картинка уменьшена (" + num(r3.size.width) + ")", r3.size.width <= 1200);
 }
 
 void checkPixels() {

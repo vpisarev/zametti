@@ -207,7 +207,6 @@ QJsonObject appearanceToJson(const Appearance& a) {
 
     QJsonObject images{
         {QStringLiteral("maxImportedImageSize"), a.images.maxImportedImageSize},
-        {QStringLiteral("maxImportedImageFileSizeMb"), a.images.maxImportedImageFileSizeMb},
         {QStringLiteral("photoQuality"), a.images.photoQuality},
         {QStringLiteral("losslessThreshold"), a.images.losslessThreshold},
         {QStringLiteral("maxBitsPerChannel"), a.images.maxBitsPerChannel},
@@ -390,7 +389,6 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     // editor.imageCacheSizeMb под этим именем.
     const QJsonObject importGroup = root.value(QStringLiteral("images")).toObject();
     readInt(importGroup, "maxImportedImageSize", a.images.maxImportedImageSize);
-    readDouble(importGroup, "maxImportedImageFileSizeMb", a.images.maxImportedImageFileSizeMb);
     readInt(importGroup, "photoQuality", a.images.photoQuality);
     readDouble(importGroup, "losslessThreshold", a.images.losslessThreshold);
     readInt(importGroup, "maxBitsPerChannel", a.images.maxBitsPerChannel);

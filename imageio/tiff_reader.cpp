@@ -32,13 +32,19 @@ extern "C" void tiffWarning(const char*, const char*, va_list) {
 
 // --- цвет -----------------------------------------------------------------
 
-// Lab → линейный sRGB, белая точка D50 (та, что у TIFF по стандарту).
+// Lab → линейный Display P3, белая точка источника D50 (та, что у TIFF по
+// стандарту), приёмника — D65.
 //
-// Сверено с независимым разбором на файле Эрмитажа: пиксель Lab(56.1, 16, 29)
-// даёт (172,123,85) у нас и (172,123,84) у него — расхождение в единицу.
-// Утилита tiff2rgba на том же пикселе даёт (183,126,74), то есть заметно
-// теплее; именно этой ошибкой и болеет Qt.
-void labToLinearSrgb(double L, double a, double b, double out[3]) {
+// ПОЧЕМУ P3, А НЕ sRGB. Lab покрывает весь видимый охват, и перевод в sRGB
+// упирает часть цветов в границу — насыщенные краски на картинах теряются
+// первыми. Display P3 шире sRGB процентов на двадцать пять и при этом
+// выражается описанием, то есть переживает круг записи и чтения (см. color.h).
+//
+// Матрица получена сверткой трёх известных: адаптация Брэдфорда D50→D65,
+// затем XYZ(D65) → линейный Display P3. Проверяется не глазами, а замером:
+// белая точка Lab(100,0,0) обязана дать ровно (1,1,1), а пиксель Эрмитажа —
+// совпасть с независимым разбором (см. tiff_test).
+void labToLinearP3(double L, double a, double b, double out[3]) {
     const double fy = (L + 16.0) / 116.0;
     const double fx = fy + a / 500.0;
     const double fz = fy - b / 200.0;
@@ -49,11 +55,15 @@ void labToLinearSrgb(double L, double a, double b, double out[3]) {
     const double X = finv(fx) * 0.96422;
     const double Y = finv(fy) * 1.00000;
     const double Z = finv(fz) * 0.82521;
-    out[0] =  3.1338561 * X - 1.6168667 * Y - 0.4906146 * Z;
-    out[1] = -0.9787684 * X + 1.9161415 * Y + 0.0334540 * Z;
-    out[2] =  0.0719453 * X - 0.2289914 * Y + 1.4052427 * Z;
+    // XYZ(D50) → линейный Display P3 (D65), адаптация Брэдфорда свёрнута
+    // внутрь. Проверка, которую матрица обязана проходить: белая точка D50
+    // (0.96422, 1.0, 0.82521) даёт ровно (1, 1, 1).
+    out[0] =  2.4038183 * X - 0.9897174 * Y - 0.3975865 * Z;
+    out[1] = -0.8422290 * X + 1.7988454 * Y + 0.0160549 * Z;
+    out[2] =  0.0481867 * X - 0.0973766 * Y + 1.2735110 * Z;
 }
 
+// Кривая у Display P3 та же, что у sRGB, — этим он и удобен.
 double srgbGamma(double v) {
     v = v < 0 ? 0 : (v > 1 ? 1 : v);
     return v <= 0.0031308 ? 12.92 * v : 1.055 * std::pow(v, 1 / 2.4) - 0.055;
@@ -119,7 +129,16 @@ bool readTiff(const QString& path, TiffImage* out, QString* error, qint64 maxDec
         return fail(QStringLiteral("каналы разложены по отдельным плоскостям — "
                                    "такой TIFF не читаем"));
 
+    // ГЛУБИНА ВХОДА — bits; глубина РАБОЧЕГО КАДРА может быть больше. Lab и
+    // CMYK мы переводим сами, а перевод нелинеен: восьмибитный Lab покрывает
+    // охват шире, чем восьмибитный RGB, и округлять результат до восьми бит
+    // значило бы терять то, ради чего затевался свой читатель. Поэтому такие
+    // картинки всегда едут в шестнадцатибитном кадре, а до двенадцати их
+    // ужмёт уже энкодер — один раз, а не дважды.
     const bool deep = bits > 8;
+    const bool wideOut = deep || photo == PHOTOMETRIC_CIELAB ||
+                         photo == PHOTOMETRIC_ICCLAB || photo == PHOTOMETRIC_ITULAB ||
+                         photo == PHOTOMETRIC_SEPARATED;
     // Границы ДО чтения хоть одной строки: у TIFF всё нужное известно из
     // заголовка, и выяснять про бомбу после выделения памяти незачем.
     if (maxDecodeBytes > 0 && decodedBytes(w, h, deep) > double(maxDecodeBytes))
@@ -150,9 +169,10 @@ bool readTiff(const QString& path, TiffImage* out, QString* error, qint64 maxDec
                           (extraTypes[0] == EXTRASAMPLE_ASSOCALPHA ||
                            extraTypes[0] == EXTRASAMPLE_UNASSALPHA);
 
-    const QImage::Format fmt = deep ? (hasAlpha ? QImage::Format_RGBA64 : QImage::Format_RGBX64)
-                                    : (hasAlpha ? QImage::Format_RGBA8888
-                                                : QImage::Format_RGBX8888);
+    const QImage::Format fmt = wideOut ? (hasAlpha ? QImage::Format_RGBA64
+                                                   : QImage::Format_RGBX64)
+                                       : (hasAlpha ? QImage::Format_RGBA8888
+                                                   : QImage::Format_RGBX8888);
     QImage img(int(w), int(h), fmt);
     if (img.isNull()) return fail(QStringLiteral("не хватило памяти под картинку"));
 
@@ -201,7 +221,7 @@ bool readTiff(const QString& path, TiffImage* out, QString* error, qint64 maxDec
                         a = photo == PHOTOMETRIC_CIELAB ? double(int8_t(ra)) : double(ra) - 128.0;
                         b = photo == PHOTOMETRIC_CIELAB ? double(int8_t(rb)) : double(rb) - 128.0;
                     }
-                    labToLinearSrgb(L, a, b, rgb);
+                    labToLinearP3(L, a, b, rgb);
                     out->color = TiffColor::Lab;
                     out->converted = true;
                     break;
@@ -221,7 +241,7 @@ bool readTiff(const QString& path, TiffImage* out, QString* error, qint64 maxDec
                     // Значения уже с гаммой — второй раз её накладывать нельзя.
                     out->color = TiffColor::Cmyk;
                     out->converted = true;
-                    if (deep) {
+                    if (wideOut) {
                         for (int c = 0; c < 3; ++c)
                             dst16[size_t(x) * 4 + c] = uint16_t(std::lround(rgb[c] * 65535.0));
                         dst16[size_t(x) * 4 + 3] = 65535;
@@ -244,7 +264,7 @@ bool readTiff(const QString& path, TiffImage* out, QString* error, qint64 maxDec
                                       : double(src8[size_t(x) * samples + 1])) / m;
                     out->color = TiffColor::Gray;
                     // Уже с гаммой — пишем как есть.
-                    if (deep) {
+                    if (wideOut) {
                         for (int c = 0; c < 3; ++c)
                             dst16[size_t(x) * 4 + c] = uint16_t(std::lround(rgb[c] * 65535.0));
                         dst16[size_t(x) * 4 + 3] = uint16_t(std::lround(alpha * 65535.0));
@@ -276,7 +296,7 @@ bool readTiff(const QString& path, TiffImage* out, QString* error, qint64 maxDec
 
             // Сюда доходит только Lab: у него значения линейные, гамму
             // накладываем здесь.
-            if (deep) {
+            if (wideOut) {
                 for (int c = 0; c < 3; ++c) dst16[size_t(x) * 4 + c] = toSample16(rgb[c]);
                 dst16[size_t(x) * 4 + 3] = 65535;
             } else {
@@ -291,7 +311,10 @@ bool readTiff(const QString& path, TiffImage* out, QString* error, qint64 maxDec
     // на неё вешать НЕЛЬЗЯ: он описывал бы исходное пространство, которого в
     // пикселях больше нет.
     if (out->converted && out->color == TiffColor::Lab) {
-        img.setColorSpace(QColorSpace(QColorSpace::SRgb));
+        // Перевели сами — значит картинка теперь в Display P3, им и помечаем.
+        // Чужой профиль (он описывал Lab) с ней больше не связан и наружу не
+        // отдаётся: пометить P3-пиксели Lab-профилем значило бы соврать.
+        img.setColorSpace(QColorSpace(QColorSpace::DisplayP3));
     } else if (!out->icc.isEmpty()) {
         const QColorSpace cs = QColorSpace::fromIccProfile(out->icc);
         if (cs.isValid()) img.setColorSpace(cs);

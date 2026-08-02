@@ -6,7 +6,6 @@
 //   zametti-store verify --root <dir>
 //   zametti-store thin --root <dir> [--dry-run]
 //   zametti-store recompress --root <dir> --id <id|all> [--max-size N]
-//                            [--max-file-mb M] [--quality Q] [--dry-run]
 
 #include "journal.h"
 #include "store.h"
@@ -39,7 +38,6 @@ int usage() {
                  "  zametti-store verify --root <dir>\n"
                  "  zametti-store thin --root <dir> [--dry-run]\n"
                  "  zametti-store recompress --root <dir> --id <id|all>\n"
-                 "        [--max-size N] [--max-file-mb M] [--quality Q] [--dry-run]\n"
                  "\n"
                  "  У recompress НЕТ умолчания для --id: пережатие необратимо, и\n"
                  "  переехать всё хранилище одной забытой опцией быть не должно.\n"
@@ -75,7 +73,6 @@ int main(int argc, char** argv) {
         else if (a == QStringLiteral("--parent")) parent = next();
         else if (a == QStringLiteral("--id")) id = next();
         else if (a == QStringLiteral("--max-size")) maxSize = next();
-        else if (a == QStringLiteral("--max-file-mb")) maxFileMb = next();
         else if (a == QStringLiteral("--quality")) quality = next();
         else if (a == QStringLiteral("--dry-run")) dryRun = true;
         else if (!a.startsWith(QStringLiteral("--")) && positional.isEmpty()) positional = a;
@@ -167,7 +164,6 @@ int main(int argc, char** argv) {
         bool bad = false;
         if (!maxSize.isEmpty()) options.limits.maxSize = maxSize.toInt(&bad), bad = !bad;
         if (!bad && !maxFileMb.isEmpty())
-            options.limits.maxFileSizeMb = maxFileMb.toDouble(&bad), bad = !bad;
         if (!bad && !quality.isEmpty()) options.limits.quality = quality.toInt(&bad), bad = !bad;
         if (bad) {
             std::fprintf(stderr, "непонятное число в ключах\n");

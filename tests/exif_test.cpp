@@ -164,11 +164,59 @@ void checkRealFiles(const std::filesystem::path& root) {
     }
 }
 
+// Имя исходника в XMP. Не «функция что-то вернула», а свойства, на которых
+// стоит польза: имя должно найтись в готовом XMP, чужие поля должны уцелеть, а
+// XML — не развалиться от знака «&» в имени.
+void checkFileNameInXmp() {
+    // Пустого XMP не было — собираем пакет с нуля.
+    const std::string fresh = xmpWithFileName({}, "фото.jpg");
+    ZT_TRUE("собран пакет XMP", fresh.find("<x:xmpmeta") != std::string::npos &&
+                                fresh.find("</x:xmpmeta>") != std::string::npos);
+    ZT_TRUE("имя на месте", fresh.find("<xmpMM:PreservedFileName>фото.jpg<") !=
+                                std::string::npos);
+    ZT_TRUE("объявлено пространство имён xmpMM",
+            fresh.find("http://ns.adobe.com/xap/1.0/mm/") != std::string::npos);
+
+    // XMP уже был — чужое обязано уцелеть целиком.
+    const std::string had =
+        "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n"
+        "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\n"
+        " <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n"
+        "  <rdf:Description rdf:about=\"\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n"
+        "   <dc:creator>Кто-то другой</dc:creator>\n"
+        "  </rdf:Description>\n"
+        " </rdf:RDF>\n"
+        "</x:xmpmeta>\n<?xpacket end=\"w\"?>";
+    const std::string merged = xmpWithFileName(had, "снимок.png");
+    ZT_TRUE("чужое поле уцелело", merged.find("<dc:creator>Кто-то другой</dc:creator>") !=
+                                      std::string::npos);
+    ZT_TRUE("и имя добавилось", merged.find("<xmpMM:PreservedFileName>снимок.png<") !=
+                                    std::string::npos);
+    ZT_TRUE("пакет остался одним целым",
+            merged.find("</rdf:RDF>") != std::string::npos &&
+                merged.find("</rdf:RDF>") == merged.rfind("</rdf:RDF>"));
+    // Наш блок обязан лежать ВНУТРИ rdf:RDF, иначе это не XMP, а мусор рядом.
+    ZT_TRUE("вставлено внутрь rdf:RDF",
+            merged.find("PreservedFileName") < merged.find("</rdf:RDF>"));
+
+    // Знаки, ломающие XML. Один такой файл сделал бы метаданные нечитаемыми
+    // целиком — не только имя.
+    const std::string tricky = xmpWithFileName({}, "a&b<c>d\"e.jpg");
+    ZT_TRUE("амперсанд экранирован", tricky.find("a&amp;b") != std::string::npos);
+    ZT_TRUE("угловые скобки экранированы", tricky.find("&lt;c&gt;") != std::string::npos);
+    ZT_TRUE("сырых скобок в имени не осталось",
+            tricky.find("b<c") == std::string::npos);
+
+    // Пустое имя — не повод портить существующий XMP.
+    ZT_EQ("пустое имя ничего не меняет", had, xmpWithFileName(had, {}));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     checkOrientationParsing();
     checkOrientationReset();
+    checkFileNameInXmp();
     if (argc > 1) checkRealFiles(std::filesystem::path(argv[1]));
     return zt::report("метаданные картинок");
 }
