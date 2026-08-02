@@ -252,6 +252,68 @@ void checkFiveInARow() {
     shoot(editor, QStringLiteral("пять-после-отмены"));
 }
 
+// МНОГО КАРТИНОК ПОДРЯД: не наезжают ли они друг на друга.
+//
+// Ошибка, ради которой эта проверка написана, ловится только на длинной
+// заметке и только при ПОВТОРНОМ открытии. Qt размечает документ лениво: у
+// блоков за пределами показанной области lineCount() равен нулю, и высоты у
+// них нет — расстояние до следующего даёт один лишь bottomMargin. Резерв же
+// считался так, будто строка есть, и её высота вычиталась дважды: фотографии
+// наезжали ровно на высоту строки.
+//
+// Сразу после вставки всё сходилось (документ уже размечен), и потому ошибка
+// пряталась до следующего запуска программы.
+void checkManyImagesDoNotOverlap(const QString& root) {
+    const QStringList sources = {
+        root + QStringLiteral("/photo/wallpaper-4mp.jpg"),
+        root + QStringLiteral("/photo/portrait-phone.jpg"),
+        root + QStringLiteral("/photo/orientation6.jpg"),
+        root + QStringLiteral("/vivo/vivo-display-p3.jpg"),
+    };
+    for (const QString& s : sources)
+        if (!QFile::exists(s)) return;
+
+    // Окно НАМЕРЕННО НИЗКОЕ: за его краем и начинается неразмеченная часть,
+    // где ошибка и жила. В высоком окне всё поместилось бы и проверка ничего
+    // бы не поймала.
+    Shots editor;
+    openWith(editor, 900, 400, QStringLiteral("много-картинок.md"));
+    QStringList many;
+    // ШТУК ПОБОЛЬШЕ, и это не запас, а условие проверки: Qt размечает лениво,
+    // и на коротком документе неразмеченной части просто не остаётся. Первая
+    // редакция брала двенадцать картинок — и со снятой починкой оставалась
+    // зелёной, то есть не проверяла ничего.
+    for (int i = 0; i < 10; ++i) many += sources;   // сорок штук
+    editor.insertImageFiles(many);
+    QTest::qWait(50);
+
+    // Перечитываем файл: именно так ошибка и всплывала — при открытии, а не
+    // при вставке.
+    const QString path = QDir(g_store).filePath(QStringLiteral("много-картинок.md"));
+    editor.save(false);
+    Shots reopened;
+    reopened.resize(900, 400);
+    reopened.show();
+    QTest::qWait(20);
+    reopened.openFile(path);
+    QTest::qWait(200);
+
+    int seen = 0;
+    int overlaps = 0;
+    double previousBottom = -1e9;
+    for (QTextBlock b = reopened.document()->firstBlock(); b.isValid(); b = b.next()) {
+        if (!zametti::blockImageRef(b).valid) continue;
+        ++seen;
+        const QRectF r = reopened.photoRect(b);
+        if (r.height() <= 0) continue;
+        if (r.top() < previousBottom - 1.0) ++overlaps;
+        previousBottom = r.bottom();
+    }
+    ZT_TRUE("картинки на месте после перечитывания (" + num(seen) + ")", seen >= 12);
+    ZT_EQ("ни одна не наезжает на соседнюю", num(0), num(overlaps));
+    shoot(reopened, QStringLiteral("много-картинок-после-перечитывания"));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -279,6 +341,7 @@ int main(int argc, char** argv) {
     checkPanoramaFitsWide();
     checkScreenshotStaysSharp();
     checkFiveInARow();
+    checkManyImagesDoNotOverlap(g_corpus);
 
     std::printf("снимки сложены в %s\n", qPrintable(g_shots));
     return zt::report("снимки этапа 8");

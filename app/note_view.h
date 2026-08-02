@@ -12,6 +12,7 @@
 #include <QFont>
 #include <QHash>
 #include <QImage>
+#include <QEvent>
 #include <QTextBrowser>
 #include <QTimer>
 #include <QtGlobal>
@@ -80,6 +81,10 @@ public:
 protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
+    // Смена плотности экрана. Отдельным событием, потому что resizeEvent на
+    // неё не приходит: логический размер окна не меняется, меняется только
+    // отношение логических пикселей к физическим.
+    bool event(QEvent* e) override;
     void focusInEvent(QFocusEvent* event) override;
     void focusOutEvent(QFocusEvent* event) override;
 
@@ -103,7 +108,11 @@ protected:
     struct ImageGeometry {
         bool valid = false;
         QRectF photo;            // координаты документа
-        QRectF line;             // прямоугольник текста строки (для закраски)
+        QRectF line;             // прямоугольник ТЕКСТА строки (для закраски)
+        // Высота, которую блоку отвёл Qt. Не равна высоте текста: при
+        // lineHeight 22 Qt отводит 20, а неразмеченному блоку — ноль. От неё
+        // считается резерв под фотографию, и только от неё.
+        qreal allotted = 0.0;
     };
     ImageGeometry imageGeometry(const QTextBlock& block);
 

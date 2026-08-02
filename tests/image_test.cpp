@@ -28,6 +28,7 @@
 #include <QPainter>
 #include <QScrollBar>
 #include <QTest>
+#include <QAbstractTextDocumentLayout>
 #include <QTextBlock>
 #include <QTextCursor>
 
@@ -146,13 +147,23 @@ int main(int argc, char** argv) {
 
     const auto blockAt = [&](int n) { return editor.document()->findBlockByNumber(n); };
     const auto marginOf = [&](int n) { return blockAt(n).blockFormat().bottomMargin(); };
-    const auto lineOf = [&](int n) { return blockAt(n).blockFormat().lineHeight(); };
+    // СКОЛЬКО МЕСТА БЛОК ЗАНЯЛ НА САМОМ ДЕЛЕ — отведённая Qt высота плюс наше
+    // поле. Проверять надо это, а не формулу резерва: формула — реализация, а
+    // занятое место — обещание. Прежняя редакция сверяла «фото + отбивка минус
+    // ЗАПРОШЕННАЯ высота строки», и когда выяснилось, что Qt отводит другую,
+    // проверки покраснели, хотя вёрстка стала правильнее.
+    const auto takenBy = [&](int n) {
+        return editor.document()->documentLayout()->blockBoundingRect(blockAt(n)).height() +
+               marginOf(n);
+    };
 
     // Скрытая строка: фото стоит на месте текста и торчит из него вниз.
-    ZT_TRUE("резерв image-спана: фото плюс отбивка минус строка",
-            std::fabs(marginOf(0) - (64.0 + kGap - lineOf(0))) < 1.5);
-    ZT_TRUE("резерв вики-вложения: ширина 40 уважена",
-            std::fabs(marginOf(2) - qMax(0.0, 40.0 + kGap - lineOf(2))) < 1.5);
+    ZT_TRUE("под фотографию 64 px занято ровно столько, сколько нужно (" +
+                std::to_string(int(takenBy(0))) + ")",
+            std::fabs(takenBy(0) - (64.0 + kGap)) < 1.5);
+    ZT_TRUE("вики-вложение шириной 40 заняло своё (" +
+                std::to_string(int(takenBy(2))) + ")",
+            std::fabs(takenBy(2) - (40.0 + kGap)) < 1.5);
     // Файла нет — но место есть: с этапа 7 вместо пропавшего вложения рисуется
     // рамка «файл не найден», и под неё резервируется место. Прежде строка
     // схлопывалась в обычную, и пропажа выглядела как будто картинки тут
@@ -188,7 +199,7 @@ int main(int argc, char** argv) {
         editor.setTextCursor(cursor);
         QTest::qWait(10);
         ZT_TRUE("выделение не тронуло резерв",
-                std::fabs(marginOf(2) - qMax(0.0, 40.0 + kGap - lineOf(2))) < 1.5);
+                std::fabs(takenBy(2) - (40.0 + kGap)) < 1.5);
         ZT_TRUE("выделенная фотография тонирована", !sameShade(plain, shadeOf(2)));
 
         caretTo(6);
@@ -233,7 +244,7 @@ int main(int argc, char** argv) {
               QStringLiteral("![[img.png|%1]]").arg(expected).toStdString(),
               blockAt(2).text().toStdString());
         ZT_TRUE("резерв пересчитан под новую ширину",
-                std::fabs(marginOf(2) - qMax(0.0, expected + kGap - lineOf(2))) < 1.5);
+                std::fabs(takenBy(2) - (expected + kGap)) < 1.5);
 
         QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
         QTest::qWait(10);
@@ -281,7 +292,7 @@ int main(int argc, char** argv) {
         ZT_TRUE("в файл уходит путь с #w=50",
                 out.find("![фото](img.png#w=50)") != std::string::npos);
         ZT_TRUE("резерв ужался до 50",
-                std::fabs(marginOf(0) - qMax(0.0, 50.0 + kGap - lineOf(0))) < 1.5);
+                std::fabs(takenBy(0) - (50.0 + kGap)) < 1.5);
     }
 
     // Правка ломает путь вики-вложения — резерв обязан сняться.
@@ -295,8 +306,9 @@ int main(int argc, char** argv) {
     // И возврат правкой же — резерв возвращается.
     QTest::keyClick(&editor, Qt::Key_Backspace);
     QTest::qWait(10);
-    ZT_TRUE("резерв вернулся после починки строки",
-            std::fabs(marginOf(2) - qMax(0.0, 40.0 + kGap - lineOf(2))) < 1.5);
+    ZT_TRUE("место вернулось после починки строки (" +
+                std::to_string(int(takenBy(2))) + ")",
+            std::fabs(takenBy(2) - (40.0 + kGap)) < 1.5);
 
     // Ctrl+C/Ctrl+X/Ctrl+V: каретка на картинке — выбранная картинка. В
     // клипборд идёт текстовое представление строки, вставка идёт через полный
@@ -330,9 +342,9 @@ int main(int argc, char** argv) {
         if (pasted >= 0) {
             ZT_TRUE("вставленная строка — своя, не вклейка",
                     blockAt(pasted).text() == QStringLiteral("![[img.png|40]]"));
-            ZT_TRUE("резерв места у вставленной есть",
-                    std::fabs(marginOf(pasted) -
-                              qMax(0.0, 40.0 + kGap - lineOf(pasted))) < 1.5);
+            ZT_TRUE("у вставленной место есть (" +
+                        std::to_string(int(takenBy(pasted))) + ")",
+                    std::fabs(takenBy(pasted) - (40.0 + kGap)) < 1.5);
         }
 
         // Откат: вставка и вырезание — по своему шагу истории.

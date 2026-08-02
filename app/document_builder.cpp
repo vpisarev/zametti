@@ -32,7 +32,6 @@
 #include <QTextFrame>
 #include <QTextFrameFormat>
 
-#include <QDebug>
 
 #include <algorithm>
 #include <vector>

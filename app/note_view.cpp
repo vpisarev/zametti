@@ -192,6 +192,32 @@ void NoteView::applyContentWidth() {
     syncImageSpace();
 }
 
+bool NoteView::event(QEvent* e) {
+    // ПЛОТНОСТЬ ЭКРАНА МЕНЯЕТСЯ НА ЛЕТУ, и это ломало вёрстку фотографий.
+    //
+    // Размер фотографии считается как «своя ширина в физических пикселях,
+    // делённая на devicePixelRatio»: так пиксели ложатся один в один. Но у
+    // виджета этот коэффициент не постоянен — при запуске РАСПАХНУТОГО окна Qt
+    // сначала отдаёт 2.00, а когда окно оказывается на экране с дробным
+    // масштабом, становится 1.67 (замер на машине владельца).
+    //
+    // resizeEvent при этом НЕ приходит: логический размер окна тот же. Резерв
+    // остаётся посчитанным по старому коэффициенту, а рисуются фотографии по
+    // новому — то есть крупнее отведённого места, и наезжают друг на друга.
+    //
+    // Отсюда и вся картина: ошибка только при запуске, только на распахнутом
+    // окне, лечится выходом из полноэкранного режима или переключением заметки
+    // — всем, что вызывает полный пересчёт.
+    if (e->type() == QEvent::DevicePixelRatioChange) {
+        const bool handled = QTextBrowser::event(e);
+        applyContentWidth();
+        syncImageSpace();
+        viewport()->update();
+        return handled;
+    }
+    return QTextBrowser::event(e);
+}
+
 void NoteView::resizeEvent(QResizeEvent* event) {
     QTextBrowser::resizeEvent(event);
     applyContentWidth();
@@ -500,6 +526,22 @@ NoteView::ImageGeometry NoteView::imageGeometry(const QTextBlock& block) {
     // layout->position() отдаёт координаты документа — те же, в которых рисует
     // paintEvent. Высота текста — по числу строк и назначенной высоте, как у
     // подложки кода: длинный путь вики-вложения переносится.
+    // ДВЕ РАЗНЫЕ ВЫСОТЫ, и путать их нельзя — на этом я и обжёгся.
+    //
+    // textHeight — высота ТЕКСТА строки. Ею закрашивается строка под
+    // фотографией: в блоке лежит "![alt](файл.jxl)", отрисованный цветом
+    // ссылки, и он обязан скрыться целиком. Возьмёшь её больше или меньше —
+    // текст проступит синей полосой (владелец увидел ровно это).
+    //
+    // allotted — высота, которую блоку ОТВЁЛ Qt. От неё считается резерв:
+    // «сколько добрать сверх того, что блок и так занимает». Она не равна
+    // запрошенной: при lineHeight = 22 Qt отводит 20, а неразмеченному блоку —
+    // и вовсе ноль, потому что размечает лениво. Вычитая запрошенные 22, мы
+    // получали наслоение фотографий: на два пикселя у размеченных блоков и на
+    // все двадцать два у хвоста документа.
+    //
+    // Проявлялось при ПОВТОРНОМ открытии длинной заметки — сразу после вставки
+    // документ уже размечен, и всё сходилось.
     const qreal assigned = block.blockFormat().lineHeight();
     const int lines = layout->lineCount() > 0 ? layout->lineCount() : 1;
     const qreal textHeight = assigned > 0
@@ -524,6 +566,7 @@ NoteView::ImageGeometry NoteView::imageGeometry(const QTextBlock& block) {
 
     ImageGeometry geometry;
     geometry.valid = true;
+    geometry.allotted = document()->documentLayout()->blockBoundingRect(block).height();
     // Строка закрашивается во всю колонку: фотография съехала вбок, а текст
     // под ней остался у левого края, и без этого он выглядывал бы рядом.
     geometry.line = QRectF(textTop.x(), textTop.y(),
@@ -582,6 +625,21 @@ void NoteView::syncImageSpace(bool whole) {
     }
     imageDirty_ = QTextCursor();
 
+    // РАЗМЕТКУ ДОВОДИМ ДО КОНЦА ПЕРЕД ОБХОДОМ. Резерв считается от высоты,
+    // которую Qt блоку ОТВЁЛ, а размечает он лениво — и на свежем документе
+    // отдал бы устаревшие числа либо нули.
+    //
+    // Ошибка от этого выходила плавающая, «через раз»: при запуске заметка
+    // открывается ещё ДО show(), в узком окне, и колонку двигает уже первое
+    // изменение размера. Успела разметка обновиться до нашего обхода — всё
+    // сходилось; не успела — фотографии наезжали друг на друга. Переключение
+    // на другую заметку чинило картину, потому что там обход шёл уже в готовом
+    // окне.
+    //
+    // documentSize() именно доводит разметку, а не спрашивает готовое: у
+    // QPlainTextDocumentLayout это единственный дешёвый способ.
+    document()->documentLayout()->documentSize();
+
     // Набор незащищаемых от вытеснения собирается заново — но только при
     // полном обходе: при частичном мы видим не все картинки заметки, и
     // очистив набор, отдали бы остальные на вытеснение.
@@ -590,11 +648,39 @@ void NoteView::syncImageSpace(bool whole) {
     QTextBlock block = document()->findBlockByNumber(first);
     for (int number = first; number <= afterLast && block.isValid();
          ++number, block = block.next()) {
-        const ImageGeometry geometry = imageGeometry(block);
+        // РЕЗЕРВ СЧИТАЕТСЯ БЕЗ РАСКЛАДКИ. Высота фотографии выводится из
+        // размеров файла и ширины колонки — ни то, ни другое к QTextLayout
+        // отношения не имеет. А imageGeometry без раскладки возвращает
+        // пустоту, потому что ей нужно ещё и ПОЛОЖЕНИЕ строки, нужное для
+        // отрисовки, но не для резерва.
+        //
+        // Я связал эти две вещи, и вышло вот что: при распахивании окна на
+        // весь экран колонка выросла с 67 до 268, но раскладку успели получить
+        // не все блоки — резерв поправился у 91 картинки из 118, а остальные
+        // остались с полем от узкого окна и наехали друг на друга. Следующий
+        // полный обход считал, что всё уже верно, и не трогал ничего;
+        // переключение заметки чинило, потому что там документ строился заново
+        // в уже готовом окне.
         qreal want = 0.0;
-        if (geometry.valid) {
-            // Фотография стоит на месте текста строки и торчит из него вниз.
-            want = qMax(0.0, geometry.photo.height() + gap - geometry.line.height());
+        const BlockImageRef ref = blockImageRef(block);
+        if (ref.valid) {
+            if (const CachedImage* entry = imageInfo(ref.path)) {
+                qreal widthHint = ref.widthHint;
+                if (block.blockNumber() == imageDragBlock_ && imageDragWidth_ > 0.0)
+                    widthHint = imageDragWidth_;
+                const QSizeF size = entry->framed()
+                                        ? frameBoxSize(block, *entry)
+                                        : imageDisplaySize(entry->declared, widthHint, block);
+                if (!size.isEmpty()) {
+                    // Отведённая высота у неразмеченного блока — ноль, и это
+                    // не беда: как только Qt его разметит, поле останется
+                    // верным, а лишняя строка добавится к зазору, а не съест
+                    // фотографию.
+                    const qreal allotted =
+                        document()->documentLayout()->blockBoundingRect(block).height();
+                    want = qMax(0.0, size.height() + gap - allotted);
+                }
+            }
         }
         QTextBlockFormat format = block.blockFormat();
         // Нижнее поле всех прочих блоков — ноль по построению сборщика, так
@@ -602,6 +688,12 @@ void NoteView::syncImageSpace(bool whole) {
         // выставление формата переразмечает документ.
         if (std::fabs(format.bottomMargin() - want) < 0.5) continue;
         format.setBottomMargin(want);
+        // ВЫСОТА БЛОКА ЦЕЛИКОМ НАША, а не «строка плюс поле». Иначе она
+        // складывается из двух слагаемых, одно из которых считает Qt, — и
+        // стоит ему дать неразмеченному блоку ноль вместо высоты строки, как
+        // сумма разъезжается: фотографии наезжают друг на друга ровно на эту
+        // высоту. Проявлялось при ПОВТОРНОМ открытии длинной заметки: Qt
+        // размечает лениво, и у хвоста разметки ещё нет.
         changingLayout_ = true;
         QTextCursor cursor(block);
         cursor.setBlockFormat(format);
