@@ -257,6 +257,38 @@ void benchKeystroke(int notes) {
                  double(acc));
 }
 
+// СТОРОЖ ЛИШНЕЙ КОСОЙ ЧЕРТЫ. Владелец запустил программу как
+// `--root sandbox/vpnotes/` — дополнение в оболочке добавляет черту само, — и
+// в логе появилось `vpnotes//<id>.md`. Путь рабочий, открывается и пишется, но
+// по строке не равен тому, которым ту же заметку зовёт дерево. Ровно этот
+// лишний знак и ломал заголовок в средней колонке.
+void checkTrailingSlashInRoot() {
+    const QString real = g_root + QStringLiteral("-slash");
+    QDir(real).removeRecursively();
+    QDir().mkpath(real + QStringLiteral("/.zametti"));
+
+    // Корень С ЧЕРТОЙ на конце — как его отдаёт оболочка.
+    NoteTreeModel model(real + QLatin1Char('/'));
+    model.setFoldersOnly(true);
+    NoteListModel list;
+    wire(model, list);
+
+    QString error;
+    const QString made = zametti::store::newNote(model.nodePath(QModelIndex()), QString(), &error);
+    ZT_TRUE("заметка создана: " + s(error), !made.isEmpty());
+    if (made.isEmpty()) return;
+    ZT_TRUE("в пути новой заметки нет двойной черты: " + s(made),
+            !made.contains(QStringLiteral("//")));
+
+    model.refresh();
+    list.setRows(model.notesInSubtree(QModelIndex()));
+    const QString id = QFileInfo(made).completeBaseName();
+    ZT_EQ("дерево и хранилище зовут заметку одинаково", s(made), s(model.rowOf(id).path));
+
+    model.updateTitle(made, QStringLiteral("Стамбул"));
+    ZT_EQ("и заголовок подхватывается", std::string("Стамбул"), s(shownTitle(list, id)));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -271,6 +303,7 @@ int main(int argc, char** argv) {
     checkFreshNote();
     checkFreshNoteThroughEditor();
     checkTitleSurvivesPathMismatch();
+    checkTrailingSlashInRoot();
 
     if (argc > 1 && QString::fromLocal8Bit(argv[1]) == QStringLiteral("--bench")) {
         for (int notes : {100, 300, 1000, 3000}) benchKeystroke(notes);

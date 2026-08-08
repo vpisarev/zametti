@@ -345,7 +345,16 @@ const NoteTreeModel::Node* nodeOf(const QModelIndex& index, const NoteTreeModel:
 }  // namespace
 
 NoteTreeModel::NoteTreeModel(const QString& root, QObject* parent)
-    : QAbstractItemModel(parent), rootPath_(root), store_(isStoreRoot(root)) {
+    // Корень приводится к чистому виду ОДИН РАЗ, у двери. Дальше он расходится
+    // по всей программе: из него собираются пути новых заметок и вложений, он
+    // ложится в state.json, по нему ищется замок хранилища. Завершающая косая
+    // черта (её добавляет дополнение в оболочке: `--root sandbox/vpnotes/`)
+    // давала `vpnotes//<id>.md` — путь рабочий, но НЕ РАВНЫЙ по строке тому,
+    // что видит дерево. Из-за этого переставал обновляться заголовок в средней
+    // колонке. Чистить в месте склейки поздно: строка успевает разойтись.
+    : QAbstractItemModel(parent),
+      rootPath_(QDir::cleanPath(root)),
+      store_(isStoreRoot(QDir::cleanPath(root))) {
     build();
 }
 

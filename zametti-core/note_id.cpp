@@ -60,7 +60,14 @@ std::string createNoteFile(const std::string& dir, const std::string& content,
     // попытка уже почти невозможна (32^6 вариантов в ту же секунду).
     for (int attempt = 0; attempt < 64; ++attempt) {
         const std::string id = generator ? generator() : newNoteId();
-        const std::string path = dir + "/" + id + ".md";
+        // Завершающая косая черта в каталоге дала бы "хранилище//<id>.md".
+        // Открылось бы и записалось нормально — и именно поэтому опасно: путь
+        // рабочий, но по строке не равен тому, которым ту же заметку зовёт
+        // остальная программа. Один такой лишний знак стоил бага с заголовком
+        // в средней колонке.
+        std::string base = dir;
+        while (base.size() > 1 && base.back() == '/') base.pop_back();
+        const std::string path = base + "/" + id + ".md";
 
         // O_EXCL — единственная честная защита от гонки: проверка "файла нет"
         // и создание — одно действие ядра ОС.
