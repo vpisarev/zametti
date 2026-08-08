@@ -1,5 +1,6 @@
 #include "note_tree.h"
 
+#include "icons.h"
 #include "ir.h"
 #include "note_id.h"
 #include "parser.h"
@@ -10,7 +11,6 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QFontDatabase>
 #include <QFontMetricsF>
 #include <QGuiApplication>
 #include <QHash>
@@ -18,6 +18,7 @@
 #include <QPixmap>
 
 #include <algorithm>
+#include <cstdio>
 
 namespace zametti {
 
@@ -315,48 +316,25 @@ void rebuildShown(NoteTreeModel::Node* node, bool foldersOnly) {
     }
 }
 
-// Значок папки рисуется знаком из шрифта: готовых чёрно-белых иконок в Qt нет,
-// а эмодзи-шрифты дают цветные. Результат кэшируется — иначе он перерисовывался
-// бы на каждую отрисовку строки.
-// Запасная пара на случай, если настроенной гарнитуры в системе нет: эти знаки
-// есть в Noto Sans Symbols2, который ставится вместе с дистрибутивом.
-constexpr char16_t kFallbackFamily[] = u"Noto Sans Symbols2";
-constexpr char32_t kFallbackClosed = U'\U0001F5C0';
-constexpr char32_t kFallbackOpen = U'\U0001F5C1';
-
-QPixmap folderPixmap(bool open) {
+// Значок строки дерева — иконка Lucide, та же семья, что и на тулбаре.
+//
+// Раньше здесь рисовался ЗНАК ИЗ ШРИФТА: готовых чёрно-белых иконок в Qt нет, а
+// эмодзи-шрифты дают цветные, и приходилось просить «Noto Emoji» с приписанным
+// U+FE0E, да ещё держать запасную пару из Noto Sans Symbols2 на случай, если
+// гарнитуры в системе не окажется. Всё это была плата за отсутствие своих
+// иконок. Иконки появились — плата отменяется: рисунок больше не зависит ни от
+// установленных шрифтов, ни от того, как эмодзи выглядит в этом году.
+//
+// Размер привязан к кеглю панели, а не задан числом: строка растёт вместе с
+// шрифтом, и значок обязан расти с ней.
+QPixmap rowPixmap(const char* icon) {
     const Appearance& a = appearance();
     const qreal dpr = qGuiApp != nullptr ? qGuiApp->devicePixelRatio() : 1.0;
-    const QString key = QStringLiteral("%1|%2|%3").arg(int(open)).arg(a.sidebarFontPoint).arg(dpr);
 
-    static QHash<QString, QPixmap> cache;
-    const auto found = cache.constFind(key);
-    if (found != cache.constEnd()) return *found;
-
-    QString family = a.sidebarFolderFamily;
-    QString glyph = open ? a.sidebarFolderOpen : a.sidebarFolderClosed;
-    if (!QFontDatabase::families().contains(family)) {
-        family = QString::fromUtf16(kFallbackFamily);
-        glyph = QString::fromUcs4(open ? &kFallbackOpen : &kFallbackClosed, 1);
-    }
-
-    QFont font(family);
+    QFont font;
     font.setPointSizeF(a.sidebarFontPoint * a.sidebarFolderScale);
-    const QFontMetrics metrics(font);
-    const int side = metrics.height();
-
-    QPixmap pixmap(QSize(side, side) * dpr);
-    pixmap.setDevicePixelRatio(dpr);
-    pixmap.fill(Qt::transparent);
-
-    QPainter painter(&pixmap);
-    painter.setFont(font);
-    painter.setPen(a.sidebarFolderColor);
-    painter.drawText(QRect(0, 0, side, side), Qt::AlignCenter, glyph);
-    painter.end();
-
-    cache.insert(key, pixmap);
-    return pixmap;
+    const int side = QFontMetrics(font).height();
+    return toolbarIcon(QString::fromLatin1(icon), side, a.sidebarFolderColor, dpr);
 }
 
 const NoteTreeModel::Node* nodeOf(const QModelIndex& index, const NoteTreeModel::Node* root) {
@@ -422,20 +400,20 @@ QString NoteTreeModel::idOf(const QModelIndex& index) const {
 
 void NoteTreeModel::updateTitle(const QString& filePath, const QString& title) {
     if (title.isEmpty()) return;
-    // По всему дереву, а не по видимой части: заголовок правится у заметки, а
-    // заметок в левой панели теперь нет — строку ждёт средняя колонка.
-    struct Find {
-        static Node* run(Node* node, const QString& path) {
-            for (auto& child : node->children) {
-                if (child->path == path) return child.get();
-                Node* found = run(child.get(), path);
-                if (found != nullptr) return found;
-            }
-            return nullptr;
-        }
-    };
-    Node* node = Find::run(root_.get(), filePath);
-    if (node == nullptr || node->title == title) return;
+    Node* node = findByFile(filePath);
+    // Не нашли — значит путь, которым заметку зовёт редактор, и путь, которым
+    // её знает дерево, разошлись. Молчать тут нельзя: строка средней колонки
+    // просто перестаёт обновляться, и выглядит это как «живой заголовок иногда
+    // не работает». Владелец именно так этот отказ и описал, а найти его
+    // изнутри было нечем — отказ был беззвучным.
+    if (node == nullptr) {
+        std::fprintf(stderr,
+                     "живой заголовок: заметки нет в дереве по пути [%s] — "
+                     "строка списка не обновится\n",
+                     filePath.toUtf8().constData());
+        return;
+    }
+    if (node->title == title) return;
     node->title = title;
     const QModelIndex index = indexForNode(node);
     if (index.isValid()) emit dataChanged(index, index, {Qt::DisplayRole});
@@ -479,8 +457,12 @@ QVariant NoteTreeModel::data(const QModelIndex& index, int role) const {
             return QStringLiteral("цикл родителей разорван: ") + node->path;
         return node->path;
     }
-    if (role == Qt::DecorationRole && node->isDir())
-        return folderPixmap(expanded_.contains(node->path));
+    if (role == Qt::DecorationRole && node->isDir()) {
+        // У корзины свой значок: она не папка, а другое место, и путать их
+        // нельзя — перетаскивание туда означает удаление.
+        if (node->trash) return rowPixmap("trash-2");
+        return rowPixmap(expanded_.contains(node->path) ? "folder-open" : "folder");
+    }
     return {};
 }
 
@@ -589,6 +571,58 @@ QModelIndex NoteTreeModel::indexForNode(const Node* node) const {
     return createIndex(node->rowInParent(), 0, const_cast<Node*>(node));
 }
 
+// Узел заметки по ФАЙЛУ, которым её зовёт редактор.
+//
+// Искали по строке пути — и это была ошибка. Владелец видел её так: у только
+// что созданной заметки заголовок в средней колонке не менялся, пока не
+// переключишься на другую и обратно. Заголовок окна при этом обновлялся: ему
+// путь не нужен, а поиску строки — нужен. Строки путей у редактора и у дерева
+// приходят разными дорогами (одна собрана хранилищем при создании, другая —
+// сканом каталога) и совпадают не всегда: хватает лишней косой черты, «..» или
+// символической ссылки в корне хранилища.
+//
+// В плоском хранилище у заметки есть настоящее имя — её id, и он же лежит в
+// имени файла. Сравнивать надо ЕГО: это чистое сравнение строк без обращений к
+// файловой системе, и оно не зависит от того, как записан путь. Путь остаётся
+// запасным ходом — для дерева каталогов, где id нет вовсе.
+NoteTreeModel::Node* NoteTreeModel::findByFile(const QString& filePath) {
+    struct Find {
+        static Node* byId(Node* node, const QString& id) {
+            for (auto& child : node->children) {
+                if (!child->id.isEmpty() && child->id == id) return child.get();
+                if (Node* found = byId(child.get(), id)) return found;
+            }
+            return nullptr;
+        }
+        static Node* byPath(Node* node, const QString& path) {
+            for (auto& child : node->children) {
+                if (child->path == path) return child.get();
+                if (Node* found = byPath(child.get(), path)) return found;
+            }
+            return nullptr;
+        }
+    };
+    if (store_) {
+        const QString id = QFileInfo(filePath).completeBaseName();
+        if (Node* found = Find::byId(root_.get(), id)) {
+            // Нашли по id, а по пути не нашли бы: значит строки путей с двух
+            // сторон РАЗНЫЕ. Сама по себе беда невелика (id её лечит), но знать,
+            // чем именно они отличаются, стоит: это скажет, кто из двух путей
+            // записан не так. Жалуемся один раз за запуск, чтобы не залить
+            // stderr на каждой букве.
+            static bool told = false;
+            if (!told && found->path != filePath) {
+                told = true;
+                std::fprintf(stderr,
+                             "пути заметки расходятся:\n  редактор: [%s]\n  дерево:   [%s]\n",
+                             filePath.toUtf8().constData(), found->path.toUtf8().constData());
+            }
+            return found;
+        }
+    }
+    return Find::byPath(root_.get(), filePath);
+}
+
 const NoteTreeModel::Node* NoteTreeModel::nodeById(const QString& id) const {
     if (id.isEmpty()) return nullptr;
     struct Find {
@@ -689,20 +723,12 @@ QString NoteTreeModel::neighbourOf(const QString& id) const {
 
 void NoteTreeModel::refreshNote(const QString& path) {
     if (!store_) return;
-    // Ищем по всему дереву, а не через indexForPath: заметку в режиме «только
-    // папки» модель наружу не показывает, а обновить её строку надо.
-    struct Find {
-        static Node* run(Node* node, const QString& path) {
-            for (auto& child : node->children) {
-                if (child->path == path) return child.get();
-                Node* found = run(child.get(), path);
-                if (found != nullptr) return found;
-            }
-            return nullptr;
-        }
-    };
-    Node* node = Find::run(root_.get(), path);
-    if (node == nullptr) return;
+    Node* node = findByFile(path);
+    if (node == nullptr) {
+        std::fprintf(stderr, "обновление строки: заметки нет в дереве по пути [%s]\n",
+                     path.toUtf8().constData());
+        return;
+    }
     StoreNote fresh;
     if (!readStoreNote(path, fresh)) return;
     if (node->title == fresh.title && node->snippet == fresh.snippet &&

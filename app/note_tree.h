@@ -190,6 +190,10 @@ private:
     const Node* topNode() const;
     QModelIndex indexForNode(const Node* node) const;
     const Node* nodeById(const QString& id) const;
+    // Узел заметки по файлу, которым её зовёт редактор. В хранилище ищет по id
+    // из имени файла, а не по тексту пути: пути с двух сторон приходят разными
+    // дорогами и совпадают не всегда — см. пояснение в note_tree.cpp.
+    Node* findByFile(const QString& filePath);
 
     QString rootPath_;
     bool store_ = false;

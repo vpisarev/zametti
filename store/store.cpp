@@ -319,15 +319,26 @@ QString importNote(const QString& root, const QString& parentId, const QString& 
 
     Document doc = parse(bytes);
 
-    // Времена: своя шапка знает их лучше файловой системы (файл могли
-    // скопировать, и mtime стал бы датой копирования).
+    // Времена. СОЗДАНА заметка тогда, когда её написали: своя шапка знает это
+    // лучше файловой системы (файл могли скопировать, и mtime стал бы датой
+    // копирования), поэтому created берётся у источника.
+    //
+    // А вот ПРАВЛЕНА она сейчас, и это не формальность. Средняя колонка по
+    // умолчанию отсортирована по дате правки, и заметка, привезённая с чужой
+    // датой, уходит в самый низ списка — владелец так и сказал: «непонятно
+    // куда она импортируется, я не нашёл в какую папку она попадает».
+    // Привезённое ищут среди свежего, потому что привоз и есть событие
+    // «сейчас»; хронология источника при этом не теряется — она в created.
     const QDateTime fsModified = info.lastModified();
     const QDateTime fsBirth = info.birthTime();
     QString created = fromUtf8(doc.meta.get("created"));
-    QString modified = fromUtf8(doc.meta.get("modified"));
-    if (modified.isEmpty()) modified = isoUtc(fsModified);
+    // Своего created у файла нет — годится и чужая дата правки: заметка точно
+    // существовала уже тогда. Это ближе к правде, чем время появления файла на
+    // диске, которое у копии равно времени копирования.
+    if (created.isEmpty()) created = fromUtf8(doc.meta.get("modified"));
     if (created.isEmpty())
         created = isoUtc(fsBirth.isValid() && fsBirth <= fsModified ? fsBirth : fsModified);
+    const QString modified = isoUtc(QDateTime::currentDateTimeUtc());
 
     // id и role чужого файла не наследуются: id принадлежит этому хранилищу
     // (иначе две заметки с одним id), а role сделал бы из заметки папку.

@@ -12,6 +12,7 @@
 #include "test_util.h"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -408,8 +409,15 @@ int main(int argc, char** argv) {
                     written.find("**жирным**") != std::string::npos);
         ZT_EQ("и дрейфа нет", written, serialize(parse(written)));
 
-        // Файл из другого хранилища: id и role не наследуются, времена
-        // берутся из шапки.
+        // Файл из другого хранилища: id и role не наследуются, время СОЗДАНИЯ
+        // берётся из шапки, а время правки — сегодняшнее.
+        //
+        // Раньше из шапки брались оба, и проверка ниже стерегла именно это.
+        // Владелец наткнулся на цену такого решения: привезённая заметка со
+        // старой датой уходит в самый низ средней колонки, отсортированной по
+        // дате правки, и найти её нельзя — «непонятно куда она импортируется».
+        // Привоз и есть правка ЭТОГО хранилища; хронология источника при этом
+        // цела, она в created.
         const QString exported =
             write(QStringLiteral("чужие/Вывезенная.md"),
                   "<!-- zametti\nid: 00000000000042\nrole: folder\n"
@@ -422,7 +430,13 @@ int main(int argc, char** argv) {
         ZT_TRUE("чужой role снят", back.meta.get("role").empty());
         ZT_TRUE("в корень — родителя нет", back.meta.get("parent").empty());
         ZT_EQ("время создания взято из шапки", "2019-03-14T09:26:53Z", back.meta.get("created"));
-        ZT_EQ("и время правки тоже", "2020-01-02T03:04:05Z", back.meta.get("modified"));
+        ZT_TRUE("а время правки — сегодняшнее, а не из шапки",
+                back.meta.get("modified") != "2020-01-02T03:04:05Z" &&
+                    back.meta.get("modified").rfind(
+                        QDateTime::currentDateTimeUtc()
+                            .toString(QStringLiteral("yyyy-MM-dd"))
+                            .toStdString(),
+                        0) == 0);
         ZT_EQ("неизвестный ключ уцелел", "беречь", back.meta.get("x-своё"));
 
         // Пустой файл: пустая строка после "-->" дала бы дрейф.

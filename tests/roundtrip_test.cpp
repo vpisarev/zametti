@@ -49,6 +49,53 @@ void testBasics() {
     stable("пустые строки сохраняются", "a\n\n\n\nb\n", "a\n\n\n\nb\n");
 }
 
+// Что именно разбор счёл ссылкой в абзаце из одного спана; пусто — не счёл.
+std::string bareLink(const std::string& text) {
+    Document d = parse(text + "\n");
+    if (d.blocks.size() != 1) return "<не один блок>";
+    const auto spans = d.inlines(d.blocks[0]);
+    if (spans.empty()) return "";
+    return std::string(d.href(spans[0]));
+}
+
+// СТОРОЖ ПРАВКИ md4c. В вендоренном md4c таблица URL_MAP разрешала в якоре
+// только `.-+_`, и ссылка на заголовок в Google Docs
+// (…/edit#heading=h.g45yo1p5xtmu) переставала быть ссылкой из-за одного знака
+// `=`. Мы расширили набор — см. 3rdparty/md4c/CMakeLists.txt, раздел «Наши
+// правки». Обновление md4c без переноса правки погасит эти проверки.
+//
+// Вторая половина не менее важна: расширять набор можно ровно до тех пор, пока
+// знаки препинания в конце предложения не втягиваются в ссылку.
+void testAnchorsInBareLinks() {
+    ZT_EQ("якорь со знаком равенства (правка md4c)",
+          std::string("https://docs.google.com/document/d/1H_P8Oe/edit#heading=h.g45yo1p5"),
+          bareLink("https://docs.google.com/document/d/1H_P8Oe/edit#heading=h.g45yo1p5"));
+    ZT_EQ("якорь с тильдой", std::string("https://example.org/a#b~c"),
+          bareLink("https://example.org/a#b~c"));
+    ZT_EQ("якорь с двоеточием", std::string("https://example.org/a#b:c"),
+          bareLink("https://example.org/a#b:c"));
+    ZT_EQ("якорь с амперсандом", std::string("https://example.org/a#b&c"),
+          bareLink("https://example.org/a#b&c"));
+    ZT_EQ("якорь с процентом", std::string("https://example.org/a#b%20c"),
+          bareLink("https://example.org/a#b%20c"));
+
+    // Прежнее поведение не должно поехать.
+    ZT_EQ("якорь из одних букв", std::string("https://example.org/a#heading"),
+          bareLink("https://example.org/a#heading"));
+    ZT_EQ("запрос со знаком равенства", std::string("https://example.org/a?b=c"),
+          bareLink("https://example.org/a?b=c"));
+
+    // Знаки препинания рядом — не часть ссылки. Это и есть плата за
+    // расширенный набор, и её надо стеречь: добавленные знаки разрешены только
+    // МЕЖДУ буквами и цифрами.
+    ZT_EQ("запятая после ссылки не съедена", std::string("https://example.org/a#b=c"),
+          bareLink("см. https://example.org/a#b=c, дальше"));
+    ZT_EQ("точка в конце предложения не съедена", std::string("https://example.org/a#b=c"),
+          bareLink("см. https://example.org/a#b=c."));
+    ZT_EQ("одинокий знак равенства в конце якоря ссылкой не делает", std::string(""),
+          bareLink("https://example.org/a#b="));
+}
+
 void testInline() {
     canonical("жирный", "текст **жирный** дальше\n");
     canonical("курсив", "текст _курсив_ дальше\n");
@@ -73,6 +120,7 @@ void testInline() {
     ZT_TRUE("голая ссылка стала спаном",
             u.blocks.size() == 1 && u.inlines(u.blocks[0]).size() == 1 &&
                 u.href(u.inlines(u.blocks[0])[0]) == "https://example.org/x");
+    testAnchorsInBareLinks();
     canonical("жирная ссылка", "**[туда](/a/b)**\n");
 
     stable("курсив звёздочками приводится к подчёркиванию", "*курсив*\n", "_курсив_\n");

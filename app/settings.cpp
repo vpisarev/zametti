@@ -161,9 +161,6 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("lineHeightFactor"), a.sidebarLineHeightFactor},
         {QStringLiteral("width"), a.sidebarWidth},
         {QStringLiteral("folderColor"), colorToString(a.sidebarFolderColor)},
-        {QStringLiteral("folderFamily"), a.sidebarFolderFamily},
-        {QStringLiteral("folderClosed"), a.sidebarFolderClosed},
-        {QStringLiteral("folderOpen"), a.sidebarFolderOpen},
         {QStringLiteral("folderScale"), a.sidebarFolderScale},
     };
 
@@ -346,9 +343,6 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readReal(sidebar, "fontSize", a.sidebarFontPoint);
     readReal(sidebar, "lineHeightFactor", a.sidebarLineHeightFactor);
     readColor(sidebar, "folderColor", a.sidebarFolderColor);
-    readString(sidebar, "folderFamily", a.sidebarFolderFamily);
-    readString(sidebar, "folderClosed", a.sidebarFolderClosed);
-    readString(sidebar, "folderOpen", a.sidebarFolderOpen);
     readReal(sidebar, "folderScale", a.sidebarFolderScale);
     const QJsonValue width = sidebar.value(QStringLiteral("width"));
     if (width.isDouble()) a.sidebarWidth = width.toInt();

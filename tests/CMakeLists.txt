@@ -233,6 +233,25 @@ if(TARGET zametti-view)
 
         add_test(NAME session COMMAND session_test)
         set_tests_properties(session PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+        # Живой заголовок в средней колонке. Цепочка из трёх звеньев, и молчащее
+        # звено посередине глазами не найти: сигнал просто не доходит.
+        add_executable(live_title_test live_title_test.cpp)
+        target_link_libraries(live_title_test PRIVATE zametti-widgets Qt6::Test
+                              zametti-warnings)
+        target_include_directories(live_title_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+        add_test(NAME live-title COMMAND live_title_test)
+        set_tests_properties(live-title PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+        # Импорт .md: в ту ли папку и видно ли привезённое. Жалоба владельца
+        # звучала как одна, а вопросов в ней три, и ответы у них разные.
+        add_executable(note_import_test note_import_test.cpp)
+        target_link_libraries(note_import_test PRIVATE zametti-widgets zametti-warnings)
+        target_include_directories(note_import_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+        add_test(NAME note-import COMMAND note_import_test)
+        set_tests_properties(note-import PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     endif()
 
     add_test(NAME view-without-widgets

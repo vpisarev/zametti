@@ -218,6 +218,93 @@ void checkMultiInsertIsOneUndo() {
 
 // Инвариант B в этом месте: вставка НЕ увеличивает картинку. Мелкая должна
 // остаться собой — апскейл был бы выдумыванием пикселей.
+// ВСТАВЛЕННАЯ КАРТИНКА ОБЯЗАНА ДОЖИТЬ ДО ФАЙЛА.
+//
+// Дыра была не в коде, а в матрице: все прежние проверки смотрели на документ
+// в памяти — «три картинки, между ними пустые строки», — и ни одна не спросила,
+// что окажется в .md после сохранения. Владелец наткнулся на это с другой
+// стороны: вставил картинку, а после перечитывания заметки её не было.
+void checkInsertSurvivesSave() {
+    const QString source = writeSource("сохраняемая.png", 320, 240);
+    const QString note = writeNote("с-картинкой.md", QStringLiteral("Начало\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(900, 700);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(note);
+    QTest::qWait(20);
+
+    QTextCursor at = editor.textCursor();
+    at.movePosition(QTextCursor::End);
+    editor.setTextCursor(at);
+
+    ZT_EQ("картинка вставилась", num(1), num(editor.insertImageFiles({source})));
+    QTest::qWait(20);
+    editor.save(true);
+    QTest::qWait(20);
+
+    QFile f(note);
+    ZT_TRUE("заметка читается", f.open(QIODevice::ReadOnly));
+    const QString saved = QString::fromUtf8(f.readAll());
+    ZT_TRUE("текст на месте", saved.contains(QStringLiteral("Начало")));
+    ZT_TRUE("ссылка на вложение дожила до файла:\n" + saved.toStdString(),
+            saved.contains(QStringLiteral(".jxl")));
+
+    // И обратно: перечитанная с диска заметка снова показывает картинку.
+    zametti::NoteEditor again;
+    again.resize(900, 700);
+    again.show();
+    QTest::qWait(20);
+    again.openFile(note);
+    QTest::qWait(20);
+    ZT_EQ("после перечитывания картинка на месте", num(1), num(imageCount(again)));
+}
+
+// То же самое, но в НАСТОЯЩЕМ ХРАНИЛИЩЕ. Путь сохранения там другой: шапка с
+// метаданными, журнал правок и правило «не писать, если не изменилось». Именно
+// на нём владелец и потерял вставленную картинку, а проверка выше — нет,
+// потому что работала с голым файлом вне хранилища.
+void checkInsertSurvivesSaveInStore() {
+    const QString root = QDir(g_dir).filePath(QStringLiteral("хранилище"));
+    QDir().mkpath(root + QStringLiteral("/.zametti"));
+    const QString note = QDir(root).filePath(QStringLiteral("00000000000001.md"));
+    {
+        QFile f(note);
+        if (f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+            f.write(QStringLiteral("<!-- zametti\ncreated: 2026-08-01T10:00:00Z\n"
+                                   "modified: 2026-08-08T10:00:00Z\n-->\n\n# Вставка\n\n"
+                                   "Текст до.\n")
+                        .toUtf8());
+    }
+    const QString source = writeSource("в-хранилище.png", 320, 240);
+
+    zametti::NoteEditor editor;
+    editor.setStoreRoot(root);
+    editor.resize(900, 700);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(note);
+    QTest::qWait(20);
+
+    QTextCursor at = editor.textCursor();
+    at.movePosition(QTextCursor::End);
+    editor.setTextCursor(at);
+
+    ZT_EQ("картинка вставилась в заметку хранилища", num(1),
+          num(editor.insertImageFiles({source})));
+    QTest::qWait(20);
+    editor.save(true);
+    QTest::qWait(50);
+
+    QFile f(note);
+    ZT_TRUE("заметка хранилища читается", f.open(QIODevice::ReadOnly));
+    const QString saved = QString::fromUtf8(f.readAll());
+    ZT_TRUE("шапка на месте", saved.contains(QStringLiteral("<!-- zametti")));
+    ZT_TRUE("ссылка на вложение дожила до файла хранилища:\n" + saved.toStdString(),
+            saved.contains(QStringLiteral(".jxl")));
+}
+
 void checkNoUpscale() {
     const QString small = writeSource("мелкая.png", 200, 150);
     const zametti::StoredImage stored =
@@ -282,6 +369,8 @@ int main(int argc, char** argv) {
     checkStoresUnderFreshName();
     checkRefusalLeavesNoTrash();
     checkMarkdownEscapesAlt();
+    checkInsertSurvivesSave();
+    checkInsertSurvivesSaveInStore();
     checkNoUpscale();
     checkPixelsFromClipboard();
     checkMimeAcceptance();
