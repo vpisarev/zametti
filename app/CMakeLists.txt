@@ -1,10 +1,20 @@
 # Просмотрщик. Единственная цель в проекте, которая знает про Qt.
 
-find_package(Qt6 QUIET COMPONENTS Gui Widgets)
+find_package(Qt6 QUIET COMPONENTS Gui Widgets Svg)
 
 if(NOT Qt6_FOUND)
     message(STATUS "Qt6 Widgets не найден — просмотрщик собран не будет "
                    "(ядру и его тестам Qt не нужен). Поставьте qt6-base-dev.")
+    return()
+endif()
+
+# Svg отдельным пакетом, поэтому и проверка отдельная. Модуль, а не плагин
+# imageformats: плагин лежит в необязательном qt6-svg-plugins, и на машине без
+# него тулбар оказался бы пустым молча. Слинкованный модуль превращает
+# зависимость в объявленную — забыть её при упаковке уже нельзя.
+if(NOT TARGET Qt6::Svg)
+    message(STATUS "Qt6 Svg не найден — просмотрщик собран не будет: без него "
+                   "нечем рисовать иконки тулбара. Поставьте qt6-svg-dev.")
     return()
 endif()
 
@@ -62,6 +72,10 @@ add_library(zametti-widgets STATIC
     editor_widget.cpp
     image_insert.h
     image_insert.cpp
+    icons.h
+    icons.cpp
+    toolbar.h
+    toolbar.cpp
     resources.h
     resources.cpp
     ${CMAKE_SOURCE_DIR}/resources/resources.qrc
@@ -80,7 +94,7 @@ set_property(TARGET zametti-widgets APPEND PROPERTY AUTORCC_OPTIONS "--threshold
 # Свои читатели картинок (jxl, avif/heic) — статические плагины. Линкуются
 # сюда, а не в исполняемый файл, потому что тестам редактора нужны те же
 # форматы: набор, который не умеет прочитать jxl, проверял бы не то.
-target_link_libraries(zametti-widgets PUBLIC zametti-view zametti-imageio Qt6::Widgets)
+target_link_libraries(zametti-widgets PUBLIC zametti-view zametti-imageio Qt6::Widgets Qt6::Svg)
 target_link_libraries(zametti-widgets PRIVATE zametti-warnings)
 
 add_executable(zametti

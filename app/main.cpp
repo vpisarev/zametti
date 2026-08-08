@@ -19,9 +19,9 @@
 #include "resources.h"
 #include "serializer.h"
 #include "settings.h"
+#include "toolbar.h"
 
 #include <QApplication>
-#include <QComboBox>
 #include <QFileInfo>
 #include <QFont>
 #include <QIcon>
@@ -318,12 +318,18 @@ int main(int argc, char** argv) {
 
     QString current = path.isEmpty() ? QString() : QFileInfo(path).absoluteFilePath();
 
-    QSplitter window(Qt::Horizontal);
     // Контейнеры объявлены ПЕРЕД теми виджетами, которых они усыновят через
     // layout: добавление в раскладку делает виджет ребёнком, а объекты на
     // стеке разрушаются в обратном порядке объявления. Контейнер, объявленный
     // позже ребёнка, умирал первым и удалял его вторым разом — приложение
     // падало при закрытии окна крестиком (замечено владельцем).
+    //
+    // Окном был сам сплиттер, пока не появился тулбар: полоса кнопок стоит над
+    // всеми тремя панелями сразу, а не внутри одной из них. Отсюда оболочка —
+    // самый внешний виджет, в ней сверху вниз тулбар и сплиттер.
+    QWidget window;
+    QSplitter splitter(Qt::Horizontal);
+    zametti::Toolbar toolbar;
     QWidget middle;
     QWidget rightSide;
 
@@ -452,20 +458,15 @@ int main(int argc, char** argv) {
     QObject::connect(&tree, &QTreeView::collapsed, &tree,
                      [&model](const QModelIndex& i) { model.setExpanded(i, false); });
 
-    // Средняя колонка: переключатель сортировки сверху, плоский список заметок
-    // под ним. Сортировка одна на обе панели, поэтому контрол стоит здесь, а
-    // не в каждой панели по разу.
-    QComboBox sortBox;
+    // Средняя колонка: плоский список заметок целиком. Переключатель сортировки
+    // стоял здесь комбобоксом, а теперь живёт на тулбаре парой кнопок:
+    // сортировка одна на обе панели, и место ей над всем окном, а не над одной
+    // из колонок.
     zametti::NoteListDelegate listDelegate;
     {
         auto* layout = new QVBoxLayout(&middle);
         layout->setContentsMargins(0, 0, 0, 0);
         layout->setSpacing(0);
-        sortBox.addItem(QStringLiteral("По дате правки"));
-        sortBox.addItem(QStringLiteral("По имени"));
-        sortBox.setCurrentIndex(
-            model.sortMode() == zametti::NoteTreeModel::SortMode::ByName ? 1 : 0);
-        sortBox.setFont(sidebarFont);
         listView.setModel(&list);
         listView.setItemDelegate(&listDelegate);
         listView.setFont(sidebarFont);
@@ -478,7 +479,6 @@ int main(int argc, char** argv) {
         listView.setDragEnabled(true);         // перетащить заметку на папку слева
         listView.setDragDropMode(QAbstractItemView::DragOnly);
         listView.setContextMenuPolicy(Qt::CustomContextMenu);
-        layout->addWidget(&sortBox);
         layout->addWidget(&listView, 1);
     }
 
@@ -533,11 +533,19 @@ int main(int argc, char** argv) {
     zametti::applyPalette(listView);
     zametti::applyPalette(resultsView);
 
-    window.addWidget(&tree);
-    if (model.isStore()) window.addWidget(&middle);
-    window.addWidget(&rightSide);
-    window.setStretchFactor(window.count() - 1, 1);   // растёт текст, а не панели
-    window.setChildrenCollapsible(false);
+    splitter.addWidget(&tree);
+    if (model.isStore()) splitter.addWidget(&middle);
+    splitter.addWidget(&rightSide);
+    splitter.setStretchFactor(splitter.count() - 1, 1);   // растёт текст, а не панели
+    splitter.setChildrenCollapsible(false);
+
+    {
+        auto* shell = new QVBoxLayout(&window);
+        shell->setContentsMargins(0, 0, 0, 0);
+        shell->setSpacing(0);
+        shell->addWidget(&toolbar);
+        shell->addWidget(&splitter, 1);
+    }
 
     // Файл изменился снаружи, а правки не сохранены. Окно неблокирующее: работа
     // не встаёт, пока человек думает, и молча мы ничего не затираем.
@@ -785,6 +793,16 @@ int main(int argc, char** argv) {
     // держит журнал. Заголовок в режиме получает машинный штамп с секундами
     // (решение владельца): по нему видно точный момент, и два слепка одной
     // минуты не выглядят одинаково.
+    // Закладка для челночных походов «утащил кусок → к последней → вставил →
+    // назад». Живёт в сеансе и по заметке: журнал про неё знать не должен —
+    // это привычка человека, а не свойство заметки. Обновляется при каждом
+    // уходе из режима, поэтому «назад» всегда ведёт туда, откуда только что
+    // ушли, а не в начало времён.
+    QHash<QString, int> visitedSnapshot;
+    // Какой слепок показан прямо сейчас. Нужен отдельно от editor.historyIndex()
+    // ровно в один момент — при выходе из режима, когда индекс уже обнулён.
+    int lastHistoryIndex = -1;
+
     const auto showHistoryState = [&] {
         const int at = editor.historyIndex();
         const auto& entries = editor.timeline().entries;
@@ -803,17 +821,28 @@ int main(int argc, char** argv) {
                          // Тонировка поля: слегка пожелтевший от времени фон,
                          // чтобы прошлое было видно ещё до чтения баннера.
                          zametti::applyPalette(editor, on);
+                         // Три кнопки истории на тулбаре живут ровно столько,
+                         // сколько идёт режим: вне его им не на чем работать.
+                         toolbar.setHistoryMode(on);
                          if (on) {
                              // Заголовок и выделение приедут с historyIndexChanged:
                              // редактор шлёт его следом, уже показав слепок.
                              historyTimeline.setEntries(editor.timeline().entries);
                              return;
                          }
+                         // Уходим — запоминаем, откуда: «назад к посещённому»
+                         // вернёт сюда же. Индекс берётся ДО выхода, потому что
+                         // после него historyIndex() уже -1.
+                         if (lastHistoryIndex >= 0 && !editor.filePath().isEmpty())
+                             visitedSnapshot.insert(editor.filePath(), lastHistoryIndex);
                          window.setWindowTitle(windowTitleFor(editor.filePath()) +
                                                QStringLiteral(" — zametti"));
                      });
     QObject::connect(&editor, &zametti::NoteEditor::historyIndexChanged, &window,
-                     [&](int) { showHistoryState(); });
+                     [&](int index) {
+                         lastHistoryIndex = index;
+                         showHistoryState();
+                     });
     QObject::connect(&editor, &zametti::NoteEditor::historyEditRefused, &historyBanner,
                      &zametti::HistoryBanner::flashRestore);
     // Закрытие таймлайна и «К текущей версии» — одна и та же дверь наружу.
@@ -823,7 +852,10 @@ int main(int argc, char** argv) {
                      [&] { editor.leaveHistory(); });
     QObject::connect(&historyTimeline, &zametti::HistoryTimeline::entryChosen, &editor,
                      [&](int index) { editor.enterHistory(index); });
-    QObject::connect(&historyBanner, &zametti::HistoryBanner::restoreRequested, &window, [&] {
+    // Восстановление — одно на баннер и на кнопку тулбара. Две копии этого
+    // кода однажды разошлись бы в мелочи вроде текста в статусе, и человек
+    // получил бы два разных ответа на один и тот же жест.
+    const auto restoreFromHistory = [&] {
         bool alreadyCurrent = false;
         const qint64 source = editor.restoreShownSnapshot(&alreadyCurrent);
         if (alreadyCurrent) {
@@ -833,7 +865,9 @@ int main(int argc, char** argv) {
         if (source == 0) return;
         findBar.setStatus(QStringLiteral("восстановлено из слепка %1")
                               .arg(zametti::historyMoment(source)));
-    });
+    };
+    QObject::connect(&historyBanner, &zametti::HistoryBanner::restoreRequested, &window,
+                     [&] { restoreFromHistory(); });
 
     // Правка файла хранилища мимо редактора: только для закрытых заметок —
     // открытая правится через редактор, иначе сторож примет запись за чужую.
@@ -1284,10 +1318,16 @@ int main(int argc, char** argv) {
             listView.scrollTo(back);
         }
     };
-    QObject::connect(&sortBox, &QComboBox::currentIndexChanged, &window, [&](int at) {
-        applySort(at == 1 ? zametti::NoteTreeModel::SortMode::ByName
-                          : zametti::NoteTreeModel::SortMode::ByModified);
-    });
+    // Две кнопки вместо комбобокса — группа с единственным нажатым: нажать
+    // «по имени» значит отжать «по дате». Отжать обе нельзя, поэтому повторное
+    // нажатие уже нажатой возвращает её назад, а не оставляет обе пустыми:
+    // сортировки «никакой» не бывает.
+    const auto showSortMode = [&toolbar](zametti::NoteTreeModel::SortMode mode) {
+        const bool byName = mode == zametti::NoteTreeModel::SortMode::ByName;
+        toolbar.setChecked(zametti::Toolbar::Button::SortByName, byName);
+        toolbar.setChecked(zametti::Toolbar::Button::SortByDate, !byName);
+    };
+    showSortMode(model.sortMode());
 
     // --- внешний редактор ----------------------------------------------------
     //
@@ -1612,6 +1652,103 @@ int main(int argc, char** argv) {
     });
     shortcut(QKeySequence(Qt::Key_F3), [&] { stepSearch(1); });
     shortcut(QKeySequence(Qt::SHIFT | Qt::Key_F3), [&] { stepSearch(-1); });
+
+    // --- тулбар --------------------------------------------------------------
+    //
+    // Кнопки не делают ничего своего: каждая зовёт то же самое, что и ярлык или
+    // пункт меню. Иначе тулбар стал бы вторым набором правил.
+    // Ни одна из этих переменных не может жить во вложенном блоке: лямбда,
+    // отданная в connect, переживает блок и держала бы висячие ссылки. Поэтому
+    // всё, что она захватывает, объявлено на уровне main — как и остальное окно.
+    using Button = zametti::Toolbar::Button;
+
+    // Панели убираются и возвращаются одной кнопкой. Ширины запоминаются ПЕРЕД
+    // тем, как прятать: сплиттер хранит размеры видимых виджетов, и спрятанные
+    // панели вернулись бы схлопнутыми.
+    QList<int> keptSizes = splitter.sizes();
+    const auto showPanels = [&](bool visible) {
+        if (!visible) keptSizes = splitter.sizes();
+        tree.setVisible(visible);
+        if (model.isStore()) middle.setVisible(visible);
+        if (visible && keptSizes.size() == splitter.count()) splitter.setSizes(keptSizes);
+        toolbar.setChecked(Button::Panels, !visible);
+        toolbar.buttonFor(Button::Panels)
+            ->setToolTip(visible ? QStringLiteral("Скрыть боковые панели")
+                                 : QStringLiteral("Показать боковые панели"));
+    };
+    {
+        if (session.panelsHidden) showPanels(false);
+
+        // Обещания. Погашенная кнопка без объяснения читается как поломка, а
+        // не как «будет позже», поэтому у каждой — своя причина словами.
+        toolbar.setPromise(Button::Cloud,
+                           QStringLiteral("появится вместе с синхронизацией"));
+        toolbar.setPromise(Button::Export, QStringLiteral("появится в этом этапе"));
+        toolbar.setPromise(Button::Settings, QStringLiteral("появится в этом этапе"));
+        toolbar.setPromise(Button::Help, QStringLiteral("появится в этом этапе"));
+        toolbar.setPromise(Button::SearchInHistory,
+                           QStringLiteral("появится вместе с единым поиском"));
+        if (!model.isStore()) {
+            // Открыт одиночный файл, а не хранилище: создавать и сортировать
+            // нечего и негде. Это не «пока не сделано», а другое состояние мира.
+            const QString single = QStringLiteral("открыт один файл, а не хранилище");
+            for (Button id : {Button::NewNote, Button::NewFolder, Button::ImportNotes,
+                              Button::SortByName, Button::SortByDate})
+                toolbar.setPromise(id, single);
+        }
+        toolbar.setHistoryMode(editor.inHistory());
+
+        QObject::connect(&toolbar, &zametti::Toolbar::pressed, &window, [&](Button id) {
+            switch (id) {
+            case Button::NewNote:
+                createNote(model.folderIdFor(tree.currentIndex()), false);
+                break;
+            case Button::NewFolder:
+                createNote(model.folderIdFor(tree.currentIndex()), true);
+                break;
+            case Button::ImportNotes:
+                importNotes(model.folderIdFor(tree.currentIndex()));
+                break;
+            case Button::InsertImages:
+                editor.chooseAndInsertImages();
+                break;
+            case Button::Panels:
+                showPanels(!toolbar.isChecked(Button::Panels));
+                break;
+            case Button::SortByName:
+                applySort(zametti::NoteTreeModel::SortMode::ByName);
+                showSortMode(model.sortMode());
+                break;
+            case Button::SortByDate:
+                applySort(zametti::NoteTreeModel::SortMode::ByModified);
+                showSortMode(model.sortMode());
+                break;
+            case Button::HistoryRestore:
+                restoreFromHistory();
+                break;
+            case Button::HistoryForward:
+                editor.leaveHistory();
+                break;
+            case Button::HistoryRewind: {
+                // Закладка ставится при уходе из режима, а нажимают кнопку внутри
+                // него: значит она ведёт к слепку прошлого захода, а не к тому,
+                // на котором стоим. Закладки нет — молчим, а не прыгаем наугад.
+                const int at = visitedSnapshot.value(editor.filePath(), -1);
+                if (at >= 0) editor.enterHistory(at);
+                break;
+            }
+            case Button::Search:
+                openFind(zametti::FindBar::Mode::InNote);
+                break;
+            case Button::Export:
+            case Button::Cloud:
+            case Button::Settings:
+            case Button::Help:
+            case Button::SearchInHistory:
+                break;   // обещания: кнопки погашены, сюда не доходит
+            }
+        });
+    }
     {
         // Esc закрывает панель, откуда бы ни нажали: в самой панели его ловит
         // её keyPressEvent, а из редактора — этот ярлык.
@@ -1632,12 +1769,12 @@ int main(int argc, char** argv) {
 
     if (!session.windowGeometry.isEmpty()) window.restoreGeometry(session.windowGeometry);
     else window.resize(1150, 780);
-    if (!session.splitterState.isEmpty()) window.restoreState(session.splitterState);
+    if (!session.splitterState.isEmpty()) splitter.restoreState(session.splitterState);
     else if (model.isStore())
-        window.setSizes({zametti::appearance().sidebarWidth,
-                         zametti::appearance().noteListWidth, 700});
+        splitter.setSizes({zametti::appearance().sidebarWidth,
+                           zametti::appearance().noteListWidth, 700});
     else
-        window.setSizes({zametti::appearance().sidebarWidth, 800});
+        splitter.setSizes({zametti::appearance().sidebarWidth, 800});
     window.show();
 
     // Прореживание журналов — фоном и один раз за запуск. В отдельном потоке
@@ -1729,7 +1866,8 @@ int main(int argc, char** argv) {
         out.scrollRatio = editor.scrollRatio();
         out.zoom = editor.zoom();
         out.windowGeometry = window.saveGeometry();
-        out.splitterState = window.saveState();
+        out.splitterState = splitter.saveState();
+        out.panelsHidden = toolbar.isChecked(zametti::Toolbar::Button::Panels);
         out.expandedDirs = expandedDirs();
         out.searchHistory = findBar.history();
         out.storeRoot = model.isStore() ? model.nodePath(QModelIndex()) : QString();

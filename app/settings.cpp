@@ -12,6 +12,8 @@
 #include <QJsonParseError>
 #include <QStandardPaths>
 
+#include <algorithm>
+
 namespace zametti {
 namespace {
 
@@ -165,6 +167,19 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("folderScale"), a.sidebarFolderScale},
     };
 
+    QJsonObject toolbar{
+        {QStringLiteral("iconSize"), a.toolbarIconSize},
+        {QStringLiteral("buttonPadding"), a.toolbarButtonPadding},
+        {QStringLiteral("groupSpacing"), a.toolbarGroupSpacing},
+        {QStringLiteral("background"), colorToString(a.toolbarBackground)},
+        {QStringLiteral("iconColor"), colorToString(a.toolbarIconColor)},
+        {QStringLiteral("iconHoverColor"), colorToString(a.toolbarIconHoverColor)},
+        {QStringLiteral("iconOnColor"), colorToString(a.toolbarIconOnColor)},
+        {QStringLiteral("iconDisabledColor"), colorToString(a.toolbarIconDisabledColor)},
+        {QStringLiteral("hoverBackground"), colorToString(a.toolbarHoverBackground)},
+        {QStringLiteral("separatorColor"), colorToString(a.toolbarSeparatorColor)},
+    };
+
     QJsonObject find{
         {QStringLiteral("fontDelta"), a.findFontDelta},
         {QStringLiteral("previousGlyph"), a.findPreviousGlyph},
@@ -227,6 +242,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("notes"), notes},
         {QStringLiteral("sidebar"), sidebar},
         {QStringLiteral("noteList"), noteList},
+        {QStringLiteral("toolbar"), toolbar},
         {QStringLiteral("find"), find},
         {QStringLiteral("editor"), editor},
         {QStringLiteral("images"), images},
@@ -336,6 +352,24 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readReal(sidebar, "folderScale", a.sidebarFolderScale);
     const QJsonValue width = sidebar.value(QStringLiteral("width"));
     if (width.isDouble()) a.sidebarWidth = width.toInt();
+
+    const QJsonObject toolbar = root.value(QStringLiteral("toolbar")).toObject();
+    const QJsonValue iconSize = toolbar.value(QStringLiteral("iconSize"));
+    // Иконка меньше двенадцати точек перестаёт читаться, больше шестидесяти
+    // ломает высоту тулбара. Границы не вкус, а пределы, за которыми настройка
+    // портит окно, а не настраивает его.
+    if (iconSize.isDouble()) a.toolbarIconSize = std::clamp(iconSize.toInt(), 12, 64);
+    const QJsonValue buttonPadding = toolbar.value(QStringLiteral("buttonPadding"));
+    if (buttonPadding.isDouble()) a.toolbarButtonPadding = qMax(0, buttonPadding.toInt());
+    const QJsonValue groupSpacing = toolbar.value(QStringLiteral("groupSpacing"));
+    if (groupSpacing.isDouble()) a.toolbarGroupSpacing = qMax(0, groupSpacing.toInt());
+    readColor(toolbar, "background", a.toolbarBackground);
+    readColor(toolbar, "iconColor", a.toolbarIconColor);
+    readColor(toolbar, "iconHoverColor", a.toolbarIconHoverColor);
+    readColor(toolbar, "iconOnColor", a.toolbarIconOnColor);
+    readColor(toolbar, "iconDisabledColor", a.toolbarIconDisabledColor);
+    readColor(toolbar, "hoverBackground", a.toolbarHoverBackground);
+    readColor(toolbar, "separatorColor", a.toolbarSeparatorColor);
 
     const QJsonObject find = root.value(QStringLiteral("find")).toObject();
     readReal(find, "fontDelta", a.findFontDelta);
@@ -534,6 +568,7 @@ Session loadSession() {
         root.value(QStringLiteral("windowGeometry")).toString().toLatin1());
     session.splitterState = QByteArray::fromBase64(
         root.value(QStringLiteral("splitterState")).toString().toLatin1());
+    session.panelsHidden = root.value(QStringLiteral("panelsHidden")).toBool(false);
     for (const QJsonValue& v : root.value(QStringLiteral("expandedDirs")).toArray())
         if (v.isString()) session.expandedDirs.append(v.toString());
     for (const QJsonValue& v : root.value(QStringLiteral("searchHistory")).toArray())
@@ -558,6 +593,7 @@ void saveSession(const Session& session) {
                    QString::fromLatin1(session.windowGeometry.toBase64())},
                   {QStringLiteral("splitterState"),
                    QString::fromLatin1(session.splitterState.toBase64())},
+                  {QStringLiteral("panelsHidden"), session.panelsHidden},
                   {QStringLiteral("expandedDirs"), expanded},
                   {QStringLiteral("searchHistory"), searches},
               });

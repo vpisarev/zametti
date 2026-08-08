@@ -215,6 +215,24 @@ if(TARGET zametti-view)
 
         add_test(NAME resources COMMAND resources_test ${CMAKE_CURRENT_BINARY_DIR})
         set_tests_properties(resources PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+        # Тулбар. Кнопка с чужой иконкой, без тултипа или погашенная без
+        # объяснения выглядит ровно как исправная — глазами это не ловится.
+        add_executable(toolbar_test toolbar_test.cpp)
+        target_link_libraries(toolbar_test PRIVATE zametti-widgets zametti-warnings)
+        target_include_directories(toolbar_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+        add_test(NAME toolbar COMMAND toolbar_test ${CMAKE_CURRENT_BINARY_DIR})
+        set_tests_properties(toolbar PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+        # Состояние сеанса. Поле, не попавшее в запись или в чтение, работает до
+        # перезапуска и молча забывается — глазами такое не ловится.
+        add_executable(session_test session_test.cpp)
+        target_link_libraries(session_test PRIVATE zametti-view zametti-warnings)
+        target_include_directories(session_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+        add_test(NAME session COMMAND session_test)
+        set_tests_properties(session PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     endif()
 
     add_test(NAME view-without-widgets

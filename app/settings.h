@@ -217,6 +217,27 @@ struct Appearance {
     // Ширина при первом запуске, дальше её помнит state.json.
     int sidebarWidth = 260;
 
+    // --- тулбар ---
+    // Сторона иконки в ТОЧКАХ ИНТЕРФЕЙСА, не в пикселях: в пиксели она
+    // переводится домножением на devicePixelRatio окна, и рисуется сразу в
+    // нужном разрешении. Отрисовать в 20 пикселей и растянуть — то же самое
+    // мыло, из-за которого на этапе 8 расползались картинки.
+    int toolbarIconSize = 20;
+    // Поле вокруг иконки внутри кнопки и промежуток между смысловыми группами.
+    // Группы разделяются пустотой, а не чертой: черта в маленьком тулбаре
+    // спорит с самими иконками за внимание.
+    int toolbarButtonPadding = 6;
+    int toolbarGroupSpacing = 16;
+    QColor toolbarBackground{0xf5, 0xf5, 0xf2};
+    QColor toolbarIconColor{0x4a, 0x51, 0x59};
+    QColor toolbarIconHoverColor{0x1e, 0x24, 0x2b};
+    // Нажатая кнопка-переключатель (сортировка, панели) — цветом, а не рамкой.
+    QColor toolbarIconOnColor{0x32, 0x5c, 0xc0};
+    // Задизейбленное обещание видно, но не зовёт: контраст втрое ниже обычного.
+    QColor toolbarIconDisabledColor{0xb8, 0xbd, 0xc4};
+    QColor toolbarHoverBackground{0, 0, 0, 18};
+    QColor toolbarSeparatorColor{0xdd, 0xe1, 0xe5};
+
     // --- средняя колонка: плоский список заметок ---
     int noteListWidth = 320;
     // Сколько строк сниппета показывать под заголовком.
@@ -501,6 +522,10 @@ struct Session {
     double scrollRatio = 0.0;   // доля прокрутки: в пикселях она зависит от зума
     qreal zoom = 1.0;
     QByteArray windowGeometry;
+    // Левые панели убраны кнопкой тулбара. Хранится отдельно от splitterState:
+    // тот помнит ШИРИНЫ, и если спрятать панели, схлопнув их в ноль, ширины
+    // потеряются и по возвращении панели придут не туда, где были.
+    bool panelsHidden = false;
 };
 
 Session loadSession();
