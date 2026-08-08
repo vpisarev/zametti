@@ -1,0 +1,58 @@
+<!-- Всё, что вшивается в бинарник: иконка приложения, иконки тулбара и шрифты.
+     Путь до resources/ на машине пользователя неизвестен, а программа должна
+     выглядеть одинаково всюду — значит внутрь.
+
+     zametti.png — 512×512, палитра 256 цветов: 98 158 байт против 274 132 у
+     zametti_lossless.png рядом, при PSNR 46.54 дБ и SSIM(8x8) 0.9965 (разницы
+     не видно и на увеличении втрое). Правится lossless-вариант, палитра — из
+     него скриптом compress.sh, в котором этот шаг однажды уже терялся: файл
+     тогда молча стал весить 255 207 байт.
+
+     Меры считаются по ДОМНОЖЕННОМУ НА АЛЬФУ цвету. По сырому RGBA их считать
+     нельзя: 16% точек иконки полностью прозрачны, палитра пишет под ними
+     произвольный цвет, и PSNR падает с 46.6 дБ до 18.5, ничего не говоря о
+     видимой картинке.
+
+     Списки ниже дублируются в app/resources.cpp — и это не случайность: там
+     они нужны как таблица, по которой ходят и загрузка, и набор resources.
+     Расхождение ловит именно набор, а не молчаливое ":/icons/нет-такой". -->
+<RCC>
+    <qresource prefix="/">
+        <file alias="zametti.png">zametti.png</file>
+    </qresource>
+
+    <!-- Иконки Lucide, ISC. Происхождение и список — resources/icons/README.md. -->
+    <qresource prefix="/icons">
+        <file alias="arrow-down-a-z.svg">icons/arrow-down-a-z.svg</file>
+        <file alias="circle-question-mark.svg">icons/circle-question-mark.svg</file>
+        <file alias="clock-arrow-down.svg">icons/clock-arrow-down.svg</file>
+        <file alias="cloud-sync.svg">icons/cloud-sync.svg</file>
+        <file alias="columns-3.svg">icons/columns-3.svg</file>
+        <file alias="database-search.svg">icons/database-search.svg</file>
+        <file alias="fast-forward.svg">icons/fast-forward.svg</file>
+        <file alias="file-plus-corner.svg">icons/file-plus-corner.svg</file>
+        <file alias="folder-input.svg">icons/folder-input.svg</file>
+        <file alias="folder-open.svg">icons/folder-open.svg</file>
+        <file alias="folder-plus.svg">icons/folder-plus.svg</file>
+        <file alias="folder.svg">icons/folder.svg</file>
+        <file alias="image-down.svg">icons/image-down.svg</file>
+        <file alias="rewind.svg">icons/rewind.svg</file>
+        <file alias="rotate-ccw-clock.svg">icons/rotate-ccw-clock.svg</file>
+        <file alias="search.svg">icons/search.svg</file>
+        <file alias="settings.svg">icons/settings.svg</file>
+        <file alias="square-arrow-out-up-right.svg">icons/square-arrow-out-up-right.svg</file>
+        <file alias="trash-2.svg">icons/trash-2.svg</file>
+    </qresource>
+
+    <!-- IBM Plex, OFL 1.1. Почему именно эти восемь — resources/fonts/README.md. -->
+    <qresource prefix="/fonts">
+        <file alias="IBMPlexMono-Regular.ttf">fonts/IBMPlexMono-Regular.ttf</file>
+        <file alias="IBMPlexMono-Italic.ttf">fonts/IBMPlexMono-Italic.ttf</file>
+        <file alias="IBMPlexMono-Bold.ttf">fonts/IBMPlexMono-Bold.ttf</file>
+        <file alias="IBMPlexMono-BoldItalic.ttf">fonts/IBMPlexMono-BoldItalic.ttf</file>
+        <file alias="IBMPlexSans_SemiCondensed-Regular.ttf">fonts/IBMPlexSans_SemiCondensed-Regular.ttf</file>
+        <file alias="IBMPlexSans_SemiCondensed-Italic.ttf">fonts/IBMPlexSans_SemiCondensed-Italic.ttf</file>
+        <file alias="IBMPlexSans_SemiCondensed-Bold.ttf">fonts/IBMPlexSans_SemiCondensed-Bold.ttf</file>
+        <file alias="IBMPlexSans_SemiCondensed-BoldItalic.ttf">fonts/IBMPlexSans_SemiCondensed-BoldItalic.ttf</file>
+    </qresource>
+</RCC>

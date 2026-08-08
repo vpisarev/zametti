@@ -204,6 +204,17 @@ if(TARGET zametti-view)
                  COMMAND external_change_test ${CMAKE_CURRENT_BINARY_DIR})
         set_tests_properties(external-change PROPERTIES ENVIRONMENT
                              "QT_QPA_PLATFORM=offscreen")
+
+        # Вшитое в бинарник. Набор нужен именно потому, что на этой машине
+        # сломанный qrc неотличим от исправного: IBM Plex стоит в системе, и
+        # программа с пустыми ресурсами выглядит нормально. Сломается она у
+        # другого человека, и уже в первом окне.
+        add_executable(resources_test resources_test.cpp)
+        target_link_libraries(resources_test PRIVATE zametti-widgets zametti-warnings)
+        target_include_directories(resources_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+        add_test(NAME resources COMMAND resources_test ${CMAKE_CURRENT_BINARY_DIR})
+        set_tests_properties(resources PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
     endif()
 
     add_test(NAME view-without-widgets

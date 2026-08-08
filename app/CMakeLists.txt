@@ -62,7 +62,21 @@ add_library(zametti-widgets STATIC
     editor_widget.cpp
     image_insert.h
     image_insert.cpp
+    resources.h
+    resources.cpp
+    ${CMAKE_SOURCE_DIR}/resources/resources.qrc
 )
+# Ресурсы (иконка, иконки тулбара, шрифты) собираются сюда, а не в исполняемый
+# файл: тестам нужны те же шрифты и те же иконки, а набор, рисующий чужим
+# шрифтом, проверял бы не то. Плата — Q_INIT_RESOURCE внутри resources.cpp:
+# объектный файл ресурсов в статической библиотеке компоновщик вправе выбросить.
+#
+# Порог сжатия. Умолчание rcc (--threshold 70) требует, чтобы сжатое было меньше
+# исходного на 70%, а ttf ужимается zstd на 48–63% — и восемь начертаний легли
+# бы в бинарник как есть. Замер на нашем qrc: без ключа и с --no-compress
+# одинаковые 1 723 331 байт, с порогом 30 — 852 558. Ниже тридцати ничего не
+# меняется (порог 20 и 5 дают тот же байт), выше сорока начинает расти.
+set_property(TARGET zametti-widgets APPEND PROPERTY AUTORCC_OPTIONS "--threshold;30")
 # Свои читатели картинок (jxl, avif/heic) — статические плагины. Линкуются
 # сюда, а не в исполняемый файл, потому что тестам редактора нужны те же
 # форматы: набор, который не умеет прочитать jxl, проверял бы не то.
@@ -71,7 +85,6 @@ target_link_libraries(zametti-widgets PRIVATE zametti-warnings)
 
 add_executable(zametti
     main.cpp
-    resources.qrc
 )
 
 target_link_libraries(zametti PRIVATE zametti-widgets zametti-store-lib zametti-warnings)
@@ -83,5 +96,5 @@ include(GNUInstallDirs)
 install(TARGETS zametti RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES ${CMAKE_SOURCE_DIR}/packaging/zametti.desktop
         DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
-install(FILES ${CMAKE_SOURCE_DIR}/art/zametti.png
+install(FILES ${CMAKE_SOURCE_DIR}/resources/zametti.png
         DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/512x512/apps)

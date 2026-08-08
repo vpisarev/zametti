@@ -16,6 +16,7 @@
 #include "store.h"
 #include "note_view.h"
 #include "parser.h"
+#include "resources.h"
 #include "serializer.h"
 #include "settings.h"
 
@@ -267,6 +268,13 @@ int main(int argc, char** argv) {
     // из .desktop-файла с этим именем — см. packaging/zametti.desktop.
     QGuiApplication::setDesktopFileName(QStringLiteral("zametti"));
     QGuiApplication::setWindowIcon(QIcon(QStringLiteral(":/zametti.png")));
+
+    // Шрифты — до чтения конфига и до первого виджета: настройки называют
+    // семейства по имени, и если имя некому отдать, Qt молча подставит своё.
+    // Жалуемся, но работаем: без шрифта программа некрасива, а не мертва.
+    for (const QString& face : zametti::loadEmbeddedFonts())
+        std::fprintf(stderr, "влинкованный шрифт не принят Qt: %s\n",
+                     face.toUtf8().constData());
 
     // --noconfig нужен, чтобы посмотреть на вид по умолчанию, не убирая свой
     // конфиг: удобно и при правке конфига, и при разговоре о том, «как оно
