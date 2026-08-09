@@ -97,6 +97,10 @@ public:
     // пересоздаёт цепочку, если прежних папок уже нет.
     QStringList ancestorTitles(const QString& id) const;
     int childCountOf(const QString& id) const;
+    // Всё поддерево этого узла, сам узел не входит. Порядок — от самых
+    // глубоких к верхним: так их можно удалять подряд, не оставляя папку с
+    // детьми. Нужен «очистить корзину»: там надо и перечислить, и удалить.
+    QStringList descendantIdsOf(const QString& id) const;
     QString pathOfId(const QString& id) const;
     // Папка с таким заголовком внутри папки parentId (пусто — корень); пусто,
     // если её нет. Нужна восстановлению из корзины: путь запомнен именами.

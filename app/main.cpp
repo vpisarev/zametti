@@ -1592,6 +1592,69 @@ int main(int argc, char** argv) {
     // корзина. Тело самой папки открывается отдельным пунктом: в средней
     // колонке папок нет, и иначе до её текста было бы не добраться.
     tree.setContextMenuPolicy(Qt::CustomContextMenu);
+    // Очистить корзину: удалить всё, что в ней лежит, насовсем. Пункт один, а
+    // удалений много, поэтому спрашиваем ОДИН раз и перечисляем, что уйдёт, —
+    // «удалить 47 заметок?» без имён это просьба поверить на слово.
+    const auto emptyTrash = [&] {
+        const QString trash = model.trashId();
+        if (trash.isEmpty()) return;
+        const QStringList doomed = model.descendantIdsOf(trash);
+        if (doomed.isEmpty()) return;
+
+        // Перечисляем не больше двенадцати: длинный список превращает окно в
+        // простыню, которую не читают, а бегло смотрят.
+        const int kShow = 12;
+        QStringList lines;
+        for (const QString& victim : doomed) {
+            if (lines.size() >= kShow) break;
+            const QString title = model.titleOfId(victim);
+            lines << (model.isFolderId(victim)
+                          ? QStringLiteral("• папка «%1»").arg(title)
+                          : QStringLiteral("• %1").arg(title));
+        }
+        QString text = QStringLiteral("Удалить насовсем из корзины (%1):\n\n%2")
+                           .arg(doomed.size())
+                           .arg(lines.join(QLatin1Char('\n')));
+        if (doomed.size() > kShow) text += QStringLiteral("\n…");
+        text += QLatin1Char('?');
+
+        QMessageBox ask(QMessageBox::Question, QStringLiteral("zametti"), text,
+                        QMessageBox::Yes | QMessageBox::No, &window);
+        ask.setDefaultButton(QMessageBox::No);   // необратимое не делается по Enter
+        if (ask.exec() != QMessageBox::Yes) return;
+
+        // Открытая заметка могла лежать в корзине: сохраняем до удаления, иначе
+        // сторож внешних правок увидит пропажу файла под собой.
+        const QString openId = QFileInfo(editor.filePath()).completeBaseName();
+        if (doomed.contains(openId)) editor.save(false);
+
+        // Порядок из descendantIdsOf: дети раньше родителей, поэтому папка
+        // удаляется уже пустой.
+        QStringList failed;
+        for (const QString& victim : doomed) {
+            QString error;
+            if (!zametti::store::deleteNoteFile(model.nodePath(QModelIndex()), victim, &error)) {
+                failed << (error.isEmpty() ? victim : error);
+                continue;
+            }
+            if (!error.isEmpty()) std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+        }
+        // Дерево и список перечитываем сами: settleAfter живёт внутри
+        // deleteNote и знает про «какая заметка была открыта», а здесь открытую
+        // мы уже сохранили и, если она лежала в корзине, её файла больше нет.
+        refreshTree(QString());
+        if (doomed.contains(openId)) {
+            const QString next = model.pathOfId(model.firstNoteId());
+            if (!next.isEmpty()) editor.openFile(next);
+        }
+        // Молчать про недоудалённое нельзя: корзина осталась бы непустой, а
+        // человек считал бы, что очистил её.
+        if (!failed.isEmpty())
+            QMessageBox::warning(&window, QStringLiteral("zametti"),
+                                 QStringLiteral("Удалить удалось не всё:\n%1")
+                                     .arg(failed.join(QLatin1Char('\n'))));
+    };
+
     QObject::connect(&tree, &QWidget::customContextMenuRequested, &window,
                      [&](const QPoint& pos) {
         if (!model.isStore()) return;
@@ -1620,6 +1683,14 @@ int main(int argc, char** argv) {
             menu.addAction(model.inTrashId(id) ? QStringLiteral("Удалить насовсем")
                                                : QStringLiteral("В корзину"),
                            [&] { deleteNote(id); });
+            if (id == model.trashId()) {
+                menu.addSeparator();
+                QAction* empty = menu.addAction(QStringLiteral("Очистить корзину"),
+                                                [&] { emptyTrash(); });
+                // Пустая корзина — пункт видно, но он ничего не делает: так
+                // человек не ищет глазами то, что «куда-то делось».
+                empty->setEnabled(model.childCountOf(id) > 0);
+            }
         }
         menu.exec(tree.viewport()->mapToGlobal(pos));
     });

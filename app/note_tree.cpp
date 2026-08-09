@@ -1,5 +1,7 @@
 #include "note_tree.h"
 
+#include <functional>
+
 #include "icons.h"
 #include "ir.h"
 #include "note_id.h"
@@ -690,6 +692,23 @@ QStringList NoteTreeModel::ancestorTitles(const QString& id) const {
 int NoteTreeModel::childCountOf(const QString& id) const {
     const Node* node = nodeById(id);
     return node == nullptr ? 0 : int(node->children.size());
+}
+
+QStringList NoteTreeModel::descendantIdsOf(const QString& id) const {
+    QStringList out;
+    const Node* node = nodeById(id);
+    if (node == nullptr) return out;
+    // Обход в глубину с добавлением ПОСЛЕ детей: родитель всегда оказывается
+    // в списке позже своих детей, и удаление подряд не наткнётся на папку,
+    // внутри которой ещё что-то лежит.
+    const std::function<void(const Node*)> walk = [&](const Node* at) {
+        for (const auto& child : at->children) {
+            walk(child.get());
+            out << child->id;
+        }
+    };
+    walk(node);
+    return out;
 }
 
 QString NoteTreeModel::pathOfId(const QString& id) const {
