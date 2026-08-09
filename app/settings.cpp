@@ -164,6 +164,12 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("folderScale"), a.sidebarFolderScale},
     };
 
+    QJsonObject imageSelection{
+        {QStringLiteral("cornerShare"), a.imageCornerShare},
+        {QStringLiteral("cornerMaxLength"), a.imageCornerMaxLength},
+        {QStringLiteral("cornerWidth"), a.imageCornerWidth},
+    };
+
     QJsonObject statusBar{
         {QStringLiteral("family"), a.statusFamily},
         {QStringLiteral("fontPoints"), a.statusFontPoints},
@@ -251,6 +257,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("noteList"), noteList},
         {QStringLiteral("toolbar"), toolbar},
         {QStringLiteral("statusBar"), statusBar},
+        {QStringLiteral("imageSelection"), imageSelection},
         {QStringLiteral("find"), find},
         {QStringLiteral("editor"), editor},
         {QStringLiteral("images"), images},
@@ -357,6 +364,15 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readReal(sidebar, "folderScale", a.sidebarFolderScale);
     const QJsonValue width = sidebar.value(QStringLiteral("width"));
     if (width.isDouble()) a.sidebarWidth = width.toInt();
+
+    const QJsonObject imageSelection =
+        root.value(QStringLiteral("imageSelection")).toObject();
+    const QJsonValue cornerShare = imageSelection.value(QStringLiteral("cornerShare"));
+    if (cornerShare.isDouble()) a.imageCornerShare = std::clamp(cornerShare.toDouble(), 0.0, 0.5);
+    const QJsonValue cornerMax = imageSelection.value(QStringLiteral("cornerMaxLength"));
+    if (cornerMax.isDouble()) a.imageCornerMaxLength = qMax(0, cornerMax.toInt());
+    const QJsonValue cornerWidth = imageSelection.value(QStringLiteral("cornerWidth"));
+    if (cornerWidth.isDouble()) a.imageCornerWidth = qMax(0.5, cornerWidth.toDouble());
 
     const QJsonObject statusBar = root.value(QStringLiteral("statusBar")).toObject();
     const QJsonValue statusFamily = statusBar.value(QStringLiteral("family"));

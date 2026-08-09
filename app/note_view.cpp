@@ -833,10 +833,40 @@ void NoteView::paintImage(QPainter& painter, const QTextBlock& block) {
                       block.position() + block.length() &&
                   qMax(cursor.anchor(), cursor.position()) > block.position()
             : cursor.block() == block;
-    if (selected) {
-        QColor tint = appearance().selectionBackground;
-        tint.setAlpha(128);
-        painter.fillRect(geometry.photo, tint);
+    if (selected) paintImageCorners(painter, geometry.photo);
+    painter.restore();
+}
+
+// Четыре уголка по краям фотографии — как мишень в видоискателе. Заливка
+// поверх снимка красила его собственные цвета, а именно за цветами на него
+// чаще всего и смотрят; уголки стоят СНАРУЖИ пикселей и не трогают ни один.
+void NoteView::paintImageCorners(QPainter& painter, const QRectF& photo) {
+    if (photo.isEmpty()) return;
+    const Appearance& a = appearance();
+    const qreal length =
+        qMin(qreal(a.imageCornerMaxLength),
+             qMin(photo.width(), photo.height()) * qMax(0.0, a.imageCornerShare));
+    if (length <= 0.0) return;
+
+    QPen pen(a.caretColor);
+    pen.setWidthF(qMax(0.5, a.imageCornerWidth));
+    pen.setCapStyle(Qt::FlatCap);
+    pen.setJoinStyle(Qt::MiterJoin);
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    painter.setPen(pen);
+    // Половина толщины внутрь: линия шириной w рисуется по центру пути, и без
+    // сдвига половина уголка ушла бы за край фотографии.
+    const QRectF box = photo.adjusted(pen.widthF() / 2, pen.widthF() / 2, -pen.widthF() / 2,
+                                      -pen.widthF() / 2);
+    for (int corner = 0; corner < 4; ++corner) {
+        const bool right = corner == 1 || corner == 2;
+        const bool bottom = corner >= 2;
+        const QPointF at(right ? box.right() : box.left(), bottom ? box.bottom() : box.top());
+        const qreal dx = right ? -length : length;
+        const qreal dy = bottom ? -length : length;
+        painter.drawLine(at, at + QPointF(dx, 0));
+        painter.drawLine(at, at + QPointF(0, dy));
     }
     painter.restore();
 }

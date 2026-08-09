@@ -171,7 +171,8 @@ int main(int argc, char** argv) {
     ZT_TRUE("под пропавший файл держится место для рамки", marginOf(4) > 0.0);
     ZT_TRUE("под обычный текст места нет", marginOf(6) == 0.0);
 
-    // Цвет в центре фотографии блока — тонировку видно по нему.
+    // Цвет в центре фотографии блока: по нему видно, трогает ли выбор сами
+    // пиксели снимка. Не должен трогать — за цветами на снимок и смотрят.
     const auto shadeOf = [&](int n) {
         QImage frame(editor.viewport()->size(), QImage::Format_RGB32);
         frame.fill(Qt::white);
@@ -188,11 +189,39 @@ int main(int argc, char** argv) {
         QTest::qWait(10);
     };
 
-    // Выделение — это выделенная фотография, а не вскрытая разметка: текст
-    // не показывается, резерв не дёргается, поверх фото ложится тонировка.
+    // Сколько точек цвета каретки видно в углу фотографии: выбор помечается
+    // четырьмя уголками, как мишень в видоискателе. Считаем именно их, а не
+    // «стало не так, как было»: посчитанные точки говорят, что нарисовано
+    // ровно то и ровно там.
+    const auto cornerMarks = [&](int n) {
+        QImage frame(editor.viewport()->size(), QImage::Format_RGB32);
+        frame.fill(Qt::white);
+        QPainter painter(&frame);
+        editor.viewport()->render(&painter);
+        const QRectF photo = editor.imageRectInViewport(blockAt(n));
+        const QColor want = zametti::appearance().caretColor;
+        int marks = 0;
+        // Полоса в десять точек вдоль верхнего края: там лежат верхние уголки
+        // и ничего больше.
+        for (int x = int(photo.left()); x < int(photo.right()); ++x)
+            for (int y = int(photo.top()); y < int(photo.top()) + 10 && y < frame.height(); ++y) {
+                if (x < 0 || y < 0 || x >= frame.width()) continue;
+                const QColor at = frame.pixelColor(x, y);
+                if (std::abs(at.red() - want.red()) < 24 &&
+                    std::abs(at.green() - want.green()) < 24 &&
+                    std::abs(at.blue() - want.blue()) < 24)
+                    ++marks;
+            }
+        return marks;
+    };
+
+    // Выделение — это выбранная фотография, а не вскрытая разметка: текст не
+    // показывается, резерв не дёргается, а по углам встают уголки. Сами
+    // пиксели снимка при этом не трогаются вовсе — прежняя заливка их красила.
     {
-        caretTo(6);   // каретка в стороне: она тонирует фото сама по себе
+        caretTo(6);   // каретка в стороне: она сама по себе помечает фото
         const QColor plain = shadeOf(2);
+        ZT_TRUE("невыбранная фотография уголков не имеет", cornerMarks(2) == 0);
 
         QTextCursor cursor(blockAt(2));
         cursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor, 3);
@@ -200,17 +229,18 @@ int main(int argc, char** argv) {
         QTest::qWait(10);
         ZT_TRUE("выделение не тронуло резерв",
                 std::fabs(takenBy(2) - (40.0 + kGap)) < 1.5);
-        ZT_TRUE("выделенная фотография тонирована", !sameShade(plain, shadeOf(2)));
+        ZT_TRUE("у выделенной фотографии есть уголки", cornerMarks(2) > 0);
+        ZT_TRUE("цвета самого снимка не тронуты", sameShade(plain, shadeOf(2)));
 
         caretTo(6);
-        ZT_TRUE("тонировка снята вместе с выделением", sameShade(plain, shadeOf(2)));
+        ZT_TRUE("уголки сняты вместе с выделением", cornerMarks(2) == 0);
 
         // Каретка, вставшая на строку-фотографию, — та же выбранная
-        // фотография: тонировка без всякого выделения.
+        // фотография: уголки без всякого выделения.
         caretTo(2);
-        ZT_TRUE("каретка на фотографии тонирует её", !sameShade(plain, shadeOf(2)));
+        ZT_TRUE("каретка на фотографии помечает её уголками", cornerMarks(2) > 0);
         caretTo(6);
-        ZT_TRUE("каретка ушла — тонировка снята", sameShade(plain, shadeOf(2)));
+        ZT_TRUE("каретка ушла — уголки сняты", cornerMarks(2) == 0);
     }
 
     // Фотографии действительно в кадре: красных пикселей не меньше, чем в

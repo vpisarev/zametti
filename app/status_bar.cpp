@@ -161,12 +161,16 @@ void StatusBar::showImage() {
     // Внутри третьей группы разделитель — пробел: это всё про одно, про сами
     // пиксели, и точками оно бы рассыпалось.
     QStringList head;
-    head << image_.name << humanBytes(image_.bytes);
+    head << image_.name;
+    // Формат стоит при ВЕСЕ, а не при разрешении: и то и другое — про сам файл,
+    // а группа справа тогда остаётся чисто про пиксели и не рябит.
+    head << (image_.format.isEmpty()
+                 ? humanBytes(image_.bytes)
+                 : image_.format.toUpper() + QLatin1Char(' ') + humanBytes(image_.bytes));
 
     QStringList pixels;
     if (!image_.size.isEmpty())
         pixels << QStringLiteral("%1×%2").arg(image_.size.width()).arg(image_.size.height());
-    if (!image_.format.isEmpty()) pixels << image_.format.toUpper();
     // Цвет и глубина известны только у разжатой копии. Пока картинку не
     // показывали, их просто нет — и придумывать их нельзя.
     if (!image_.colorSpace.isEmpty()) pixels << image_.colorSpace;

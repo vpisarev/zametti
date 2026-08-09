@@ -105,6 +105,8 @@ protected:
     // blockBoundingRect отдаёт естественную высоту строки, а шаг между блоками
     // идёт по назначенной, и заливка по прямоугольнику блока оставляла бы между
     // строками кода незакрашенные полосы (замер: 1.9 px на строку).
+    // Уголки-мишень вокруг выбранной фотографии.
+    void paintImageCorners(QPainter& painter, const QRectF& photo);
     void paintCodeBackground(QPainter& painter, const QRectF& visible);
 
     // Где на экране лежит фотография блока. Здесь, а не в private, по той же
