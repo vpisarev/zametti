@@ -1061,6 +1061,28 @@ bool cutImageLineAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     return true;
 }
 
+// Enter на фотографии: ПУСТАЯ СТРОКА ПОСЛЕ НЕЁ, а сама она цела.
+//
+// Правило владельца: каретка, стоящая на фотографии, считается стоящей сразу
+// ЗА ней. Отсюда и поведение — Enter начинает новую строку после картинки, а
+// не делит её блок. Деление разрушало разметку "![alt](путь)" и оставляло
+// подпись, показанную ссылкой: вроде картинка и есть, а вроде её и нет.
+//
+// Это же закрывает «за последней картинкой некуда встать»: нажал Enter —
+// получил строку.
+bool newLineAfterImage(QTextDocument& doc, QTextCursor& cursor) {
+    Q_UNUSED(doc);
+    if (cursor.hasSelection()) return false;
+    const QTextBlock photo = cursor.block();
+    if (!blockImageRef(photo).valid) return false;
+
+    QTextCursor edit(cursor);
+    edit.setPosition(photo.position() + photo.length() - 1);
+    edit.insertBlock(vspaceBlockFormat(*edit.document(), false, false), QTextCharFormat());
+    cursor = edit;
+    return true;
+}
+
 bool deleteImageLineBackward(QTextDocument& doc, QTextCursor& cursor) {
     Q_UNUSED(doc);
     if (cursor.hasSelection() || !cursor.atBlockStart()) return false;

@@ -20,6 +20,7 @@
 #include "test_util.h"
 
 #include <QApplication>
+#include <QElapsedTimer>
 #include <QDir>
 #include <QFile>
 #include <QImage>
@@ -99,6 +100,16 @@ public:
 
 // --- сама вставка ----------------------------------------------------------
 
+// Ввоз теперь фоновый, и всякий, кто ждёт его результата, обязан ДОЖДАТЬСЯ.
+// Признак конца — редактор снова правится: на время ввоза он читалка.
+void waitForImport(zametti::NoteEditor& editor) {
+    QElapsedTimer waiting;
+    waiting.start();
+    while (editor.isReadOnly() && waiting.elapsed() < 60000)
+        QApplication::processEvents(QEventLoop::AllEvents, 20);
+    QApplication::processEvents();
+}
+
 void checkStoresUnderFreshName() {
     const QString source = writeSource("исходник.png", 640, 480);
     zametti::ImportLimits limits;
@@ -172,6 +183,7 @@ void checkMultiInsertIsOneUndo() {
 
     const int attachmentsBefore = countAttachments();
     const int inserted = editor.insertImageFiles({a, b, c});
+    waitForImport(editor);
     QTest::qWait(20);
     ZT_EQ("вставились все три", num(3), num(inserted));
     ZT_EQ("и в хранилище прибавилось ровно три",
@@ -240,6 +252,7 @@ void checkInsertSurvivesSave() {
     editor.setTextCursor(at);
 
     ZT_EQ("картинка вставилась", num(1), num(editor.insertImageFiles({source})));
+    waitForImport(editor);
     QTest::qWait(20);
     editor.save(true);
     QTest::qWait(20);
@@ -293,6 +306,7 @@ void checkInsertSurvivesSaveInStore() {
 
     ZT_EQ("картинка вставилась в заметку хранилища", num(1),
           num(editor.insertImageFiles({source})));
+    waitForImport(editor);
     QTest::qWait(20);
     editor.save(true);
     QTest::qWait(50);
@@ -357,6 +371,70 @@ void checkMimeAcceptance() {
 
 }  // namespace
 
+// Ввоз идёт В ФОНЕ: окно не замирает, порядок вставки — порядок выбора файлов,
+// и вся пачка ложится ОДНИМ шагом истории.
+void checkBackgroundImport() {
+    const QString dir = g_dir + QStringLiteral("/фон");
+    QDir().mkpath(dir);
+    QStringList sources;
+    for (int i = 0; i < 3; ++i) {
+        QImage picture(120 + i * 10, 80, QImage::Format_RGB32);
+        picture.fill(QColor(40 * i, 90, 200));
+        const QString path = dir + QStringLiteral("/кадр-%1.png").arg(i);
+        picture.save(path);
+        sources << path;
+    }
+
+    const QString notePath = dir + QStringLiteral("/01n6cqev00imp1.md");
+    QFile note(notePath);
+    if (note.open(QIODevice::WriteOnly)) note.write("# Пачка\n\nТекст.\n");
+    note.close();
+
+    zametti::NoteEditor editor;
+    editor.resize(600, 400);
+    editor.show();
+    editor.openFile(notePath);
+    const int blocksBefore = editor.document()->blockCount();
+
+    const int queued = editor.insertImageFiles(sources);
+    // Ждать здесь НЕЛЬЗЯ: следующие три утверждения — про то, что управление
+    // вернулось до конца ввоза. Скрипт, расставлявший ожидания по всему файлу,
+    // дописал его и сюда, и проверка стала проверять обратное самой себе.
+    ZT_TRUE("в работу принята вся пачка", queued == 3);
+    // Управление вернулось СРАЗУ: до окончания ввоза в документе ничего нет.
+    ZT_TRUE("вставки ещё нет: ввоз идёт в фоне",
+            editor.document()->blockCount() == blocksBefore);
+    ZT_TRUE("пока везём, править нельзя", editor.isReadOnly());
+
+    // Цикл событий крутится — ровно то, чего не было раньше и из-за чего
+    // система вешала «программа не отвечает».
+    int spins = 0;
+    QElapsedTimer waiting;
+    waiting.start();
+    while (editor.isReadOnly() && waiting.elapsed() < 30000) {
+        QApplication::processEvents(QEventLoop::AllEvents, 20);
+        ++spins;
+    }
+    ZT_TRUE("цикл событий работал во время ввоза", spins > 1);
+    ZT_TRUE("после ввоза правка вернулась", !editor.isReadOnly());
+
+    // Порядок вставки — порядок ВЫБОРА, а не готовности.
+    QStringList inserted;
+    for (QTextBlock block = editor.document()->begin(); block.isValid(); block = block.next()) {
+        const zametti::BlockImageRef ref = zametti::blockImageRef(block);
+        if (ref.valid) inserted << block.text().trimmed();
+    }
+    ZT_EQ("порядок вставки — порядок выбора файлов", std::string("кадр-0, кадр-1, кадр-2"),
+          inserted.join(QStringLiteral(", ")).toStdString());
+
+    // Один шаг истории на всю пачку: Ctrl+Z убирает три картинки разом.
+    editor.undo();
+    QStringList afterUndo;
+    for (QTextBlock block = editor.document()->begin(); block.isValid(); block = block.next())
+        if (zametti::blockImageRef(block).valid) afterUndo << block.text();
+    ZT_TRUE("одна отмена убрала всю пачку", afterUndo.isEmpty());
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     QTemporaryDir tmp;
@@ -366,6 +444,7 @@ int main(int argc, char** argv) {
     }
     g_dir = tmp.path();
 
+    checkBackgroundImport();
     checkStoresUnderFreshName();
     checkRefusalLeavesNoTrash();
     checkMarkdownEscapesAlt();

@@ -78,6 +78,8 @@ add_library(zametti-widgets STATIC
     icons.cpp
     image_facts.h
     image_facts.cpp
+    image_importer.h
+    image_importer.cpp
     about_window.h
     about_window.cpp
     status_bar.h

@@ -14,6 +14,7 @@
 #include "edit_history.h"
 #include "hash.h"
 #include "editor_ops.h"
+#include "image_importer.h"
 #include "note_view.h"
 #include "text_stats.h"
 
@@ -35,6 +36,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+class QProgressDialog;
 
 namespace zametti {
 
@@ -224,6 +227,10 @@ signals:
     // строится целиком: полная пересборка документа и запись на диск. На
     // нажатие клавиши не шлётся ничего.
     void statsChanged();
+    // Ввоз картинок идёт: что показать в полосе сведений. Пустая строка —
+    // кончился. Само окно про импортёр знать не должно, поэтому сигнал, а не
+    // доступ к нему наружу.
+    void importStatus(const QString& text);
 
 protected:
     // Обменный формат — сам markdown. Переопределять обязательно: иначе Qt
@@ -304,6 +311,14 @@ public:
     // ВСЕ РАЗОМ — один шаг истории (инвариант C брифа). Поэтому и собирается
     // один кусок markdown на всех, а не вызывается вставка в цикле: цикл дал бы
     // N шагов отмены, и человеку пришлось бы жать Ctrl+Z пять раз подряд.
+    // Ввоз идёт В ФОНОВОМ ПОТОКЕ и возвращает управление немедленно: одна
+    // фотография с зеркалки считается 1.5–2.5 секунды, и раньше окно на это
+    // время замирало. Возвращается число ПРИНЯТЫХ в работу, а не вставленных:
+    // вставка случится позже, когда посчитается вся пачка.
+    //
+    // Вставка — ОДНИМ шагом истории на всю пачку (инвариант C брифа): добавили
+    // пять картинок — Ctrl+Z убирает пять, а не одну из пяти. Поэтому и ждём
+    // конца пачки, а не вставляем по мере готовности.
     int insertImageFiles(const QStringList& paths);
 
     // То же для готовых пикселей: буфер обмена, снимок экрана.
@@ -468,6 +483,11 @@ private:
     void forgetPendingEdit();
     void onContentsChanged();
     void refreshStats(const Document& ir);
+    // Пачка, которую сейчас везёт фоновый поток: результаты копятся здесь и
+    // складываются по index, а не по времени готовности, — порядок вставки
+    // обязан быть порядком выбора файлов.
+    bool beginImport(int count);
+    void onImportFinished(int done, int total, bool cancelled);
     void refreshStats(const NoteStats& stats);
     void onContentsChange(int position, int charsRemoved, int charsAdded);
     void onCaretMoved();
@@ -573,6 +593,12 @@ private:
     // нечего или человек уже решил.
 
     QTimer autosave_;
+    ImageImporter* importer_ = nullptr;         // заводится по первому спросу
+    std::vector<ImportedImage> importedBatch_;  // складывается по index
+    QProgressDialog* importProgress_ = nullptr;
+    // Был ли редактор правимым до ввоза: в режиме истории он читалка и без
+    // нас, и возвращать его в правимое состояние нельзя.
+    bool wasEditableBeforeImport_ = true;
     // Снимок истории — не на каждую букву, а в конце серии набора: снимок
     // читает документ целиком, и на каждое нажатие это O(N). Таймер тот же,
     // которым серия и склеивается в один шаг.

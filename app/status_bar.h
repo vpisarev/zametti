@@ -41,6 +41,7 @@ public:
         QDateTime modified;
         int words = 0;
         int lines = 1;
+        int images = 0;   // ноль — про картинки не пишем вовсе
         bool wordsKnown = false;   // false — показать «?»
         bool valid = false;        // заметки нет: панель пуста
     };

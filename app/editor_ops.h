@@ -235,6 +235,10 @@ bool cutImageLineAtCursor(QTextDocument& doc, QTextCursor& cursor);
 
 // Фотография — атом: Backspace в начале строки под ней убирает её целиком
 // (как черту), Delete в конце строки над ней — так же. Каретка не двигается.
+// Enter на фотографии заводит пустую строку ПОСЛЕ неё, не трогая саму
+// картинку: каретка на ней считается стоящей сразу за ней.
+bool newLineAfterImage(QTextDocument& doc, QTextCursor& cursor);
+
 bool deleteImageLineBackward(QTextDocument& doc, QTextCursor& cursor);
 bool deleteImageLineForward(QTextDocument& doc, QTextCursor& cursor);
 

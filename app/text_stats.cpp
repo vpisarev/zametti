@@ -155,7 +155,10 @@ BlockStats blockStats(const QTextBlock& block) {
     // Фотография занимает блок целиком, а её текст — это путь к файлу и
     // подпись вложения. Считать их словами заметки нельзя: "![[img/foo-bar.jpg]]"
     // дало бы четыре слова из ничего.
-    if (blockImageRef(block).valid) return out;
+    if (blockImageRef(block).valid) {
+        out.image = true;
+        return out;
+    }
     out.words = countWords(text);
     return out;
 }
@@ -167,6 +170,7 @@ NoteStats documentStats(const QTextDocument& doc) {
     for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {
         const BlockStats stats = blockStats(block);
         out.words += stats.words;
+        out.images += int(stats.image);
         if (stats.breaks > 0) {
             out.marks.push_back({block.blockNumber(), breaks});
             breaks += stats.breaks;
@@ -257,7 +261,8 @@ NoteStats irStats(const Document& ir) {
         const std::string_view text = ir.text(b);
         const bool literal = b.raw || b.kind == Kind::Code;
         const BlockShape shape = shapeOf(text, literal);
-        if (!isImageBlock(ir, b)) out.words += countWords(text);
+        if (isImageBlock(ir, b)) ++out.images;
+        else out.words += countWords(text);
         if (shape.breaks > 0) {
             // Мягкий перенос в литеральном блоке — редкость ('\r' внутри
             // строки кода): приписываем его первой строке блока, точнее по

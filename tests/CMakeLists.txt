@@ -122,6 +122,14 @@ if(TARGET zametti-view)
                              "QT_QPA_PLATFORM=offscreen")
     endforeach()
 
+    # Края фотографии: матрица «операция × сторона картинки». Три беды владельца
+    # оказались одной, и проверять надо инвариант, а не найденные случаи.
+    add_executable(image_edge_test image_edge_test.cpp)
+    target_link_libraries(image_edge_test PRIVATE zametti-widgets Qt6::Test zametti-warnings)
+    target_include_directories(image_edge_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME image-edges COMMAND image_edge_test)
+    set_tests_properties(image-edges PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     # Конфиг: срезатель //-комментариев и сгенерированный шаблон. Шаблон обязан
     # одновременно разбираться в пустой объект и содержать каждый параметр —
     # сломать эти два свойства можно порознь.

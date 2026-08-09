@@ -674,6 +674,7 @@ int main(int argc, char** argv) {
             if (!info.modified.isValid()) info.modified = file.lastModified();
             info.words = editor.stats().words;
             info.lines = editor.stats().lines;
+            info.images = editor.stats().images;
             info.wordsKnown = editor.statsFresh() && editor.stats().valid;
         }
         statusBar.setNote(info);
@@ -681,6 +682,22 @@ int main(int argc, char** argv) {
         statusBar.setCaret(place.line, place.column);
     };
     QObject::connect(&editor, &zametti::NoteEditor::statsChanged, &window, showStats);
+    // Ввоз картинок: полоса говорит, почему сейчас нельзя править.
+    QObject::connect(&editor, &zametti::NoteEditor::importStatus, &window,
+                     [&](const QString& text) {
+                         statusBar.setMessage(text);
+                         // Пока везём — запираем ВСЁ, чем можно поменять
+                         // заметку или уйти с неё: дерево, список и тулбар.
+                         // Одним движением, а не проверкой в каждой операции:
+                         // проверок два десятка, и забыть одну — вопрос
+                         // времени, а цена ошибки — вставка в чужую заметку.
+                         const bool locked = !text.isEmpty();
+                         tree.setEnabled(!locked);
+                         listView.setEnabled(!locked);
+                         // Явно QWidget::: у тулбара есть свой setEnabled(кнопка,
+                         // да/нет), и он перекрывает виджетный.
+                         toolbar.QWidget::setEnabled(!locked);
+                     });
     QObject::connect(&editor, &zametti::NoteEditor::fileChanged, &window,
                      [showStats](const QString&) { showStats(); });
     QObject::connect(&editor, &zametti::NoteEditor::fileSaved, &window,

@@ -27,6 +27,7 @@
 #include <QUrl>
 #include <QGuiApplication>
 #include <QMessageBox>
+#include <QProgressDialog>
 #include <QCheckBox>
 #include <QAbstractTextDocumentLayout>
 #include <QFontMetricsF>
@@ -1349,6 +1350,9 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
                             (event->modifiers() & ~Qt::KeypadModifier) == Qt::NoModifier;
     // "---" и Enter — тоже тематическая черта, как и "---" с пробелом:
     // правило раньше разреза, иначе Enter развёл бы дефисы и новый блок.
+    // На фотографии Enter не делит блок, а заводит пустую строку ЗА ней:
+    // каретка на картинке считается стоящей сразу за ней (правило владельца).
+    if (plainEnter && runOperation(newLineAfterImage)) return;
     if (plainEnter && runOperation(applyDividerRuleAtCursor)) return;
     if (plainEnter && runOperation(splitBlockAtCursor)) return;
 
@@ -1406,6 +1410,35 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
             if (photo.isValid() && !imageRectInViewport(photo).isEmpty() &&
                 blocksWouldMerge(own, photo)) {
                 setTextCursor(QTextCursor(photo));
+                return;
+            }
+        }
+
+        // ТО ЖЕ САМОЕ, но когда каретка стоит НА САМОЙ пустой строке. Прежнее
+        // правило смотрело только с текстовой строки, и три подхода из четырёх
+        // проходили мимо него: Delete сверху, Backspace и Delete снизу склеивали
+        // пустую строку с фотографией и рассыпали её в огрызок разметки.
+        // Владелец нашёл один из них, набор — остальные.
+        if (isVSpaceBlock(own)) {
+            const bool back = event->key() == Qt::Key_Backspace;
+            const bool forward = event->key() == Qt::Key_Delete;
+            const QTextBlock photo = back ? own.previous() : own.next();
+            // Спрашиваем МОДЕЛЬ, а не вид: imageRectInViewport отвечает только
+            // про то, что уже разложено на экране, и в наборе без окна молчал.
+            // Правило же не про показ, а про то, чем блок является.
+            if ((back || forward) && photo.isValid() && blockImageRef(photo).valid) {
+                // Отказ и шаг, как у черты: каретка встаёт на фотографию —
+                // выбирает её, — и следующее нажатие убирает её целиком.
+                setTextCursor(QTextCursor(photo));
+                return;
+            }
+            // Пустая строка ПОД фотографией: убрать её нельзя и в другую
+            // сторону — текст снизу поднялся бы к фотографии вплотную и слился
+            // бы с ней при первом же чтении файла.
+            const QTextBlock above = own.previous();
+            if (forward && above.isValid() && blockImageRef(above).valid &&
+                own.next().isValid() && blocksWouldMerge(above, own.next())) {
+                setTextCursor(QTextCursor(above));
                 return;
             }
         }
@@ -1865,20 +1898,94 @@ int NoteEditor::insertImageFiles(const QStringList& paths) {
         return 0;
     }
 
-    const ImportLimits limits = limitsFromSettings();
-    // Импорт крупной картинки идёт секунды: без этого окно бы просто застыло, и
-    // человек решил бы, что программа повисла.
-    QGuiApplication::setOverrideCursor(Qt::WaitCursor);
+    if (!beginImport(int(paths.size()))) return 0;
+    importer_->importFiles(paths, dir);
+    return int(paths.size());
+}
+
+// Общая подготовка пачки: работник, окно прогресса и замок правки. Одна на оба
+// входа (файлы и буфер обмена) — разъехаться им негде.
+bool NoteEditor::beginImport(int count) {
+    if (importer_ != nullptr && importer_->busy()) {
+        // Второй пачки разом не бывает: поток один, и очередь в нём — не то,
+        // чего человек ждёт от «вставить ещё раз». Говорим прямо.
+        QMessageBox::information(this, QStringLiteral("zametti"),
+                                 QStringLiteral("Предыдущие картинки ещё везутся."));
+        return false;
+    }
+    if (importer_ == nullptr) {
+        importer_ = new ImageImporter(this);
+        connect(importer_, &ImageImporter::imported, this,
+                [this](const ImportedImage& one) { importedBatch_.push_back(one); });
+        connect(importer_, &ImageImporter::finished, this, &NoteEditor::onImportFinished);
+        connect(importer_, &ImageImporter::progress, this,
+                [this](int done, int total, const QString& name) {
+                    if (importProgress_ != nullptr) {
+                        importProgress_->setMaximum(total);
+                        importProgress_->setValue(done);
+                        if (!name.isEmpty()) importProgress_->setLabelText(name);
+                    }
+                    // И в полосе сведений — там человек и ищет ответ на «почему
+                    // не печатается». Числа рядом: без них «везу» не говорит,
+                    // сколько ещё ждать.
+                    if (!name.isEmpty())
+                        emit importStatus(QStringLiteral("режим чтения: импортируем %1 (%2 из %3)")
+                                              .arg(name)
+                                              .arg(done + 1)
+                                              .arg(total));
+                });
+    }
+
+    importedBatch_.clear();
+    // Окно прогресса неблокирующее: цикл событий крутится, окно перерисовывается,
+    // и «программа не отвечает» больше неоткуда взяться.
+    delete importProgress_;
+    importProgress_ = new QProgressDialog(QStringLiteral("Ввоз картинок…"),
+                                          QStringLiteral("Отмена"), 0, count, this);
+    importProgress_->setWindowModality(Qt::NonModal);
+    importProgress_->setAutoClose(false);
+    importProgress_->setAutoReset(false);
+    // Не выскакивать на мелочи: пачка из одного маленького png успевает
+    // кончиться раньше, чем человек заметит окно.
+    importProgress_->setMinimumDuration(400);
+    connect(importProgress_, &QProgressDialog::canceled, importer_, &ImageImporter::cancel);
+
+    // Замок: пока везём, править нельзя ничего. Редактор становится читалкой
+    // (это перекрывает и набор, и вставку, и операции клавишами), а дерево со
+    // списком гасит окно. Отдельного флага нет — editingAllowed спрашивает
+    // сам импортёр.
+    wasEditableBeforeImport_ = !isReadOnly();
+    setReadOnly(true);
+
+    return true;
+}
+
+void NoteEditor::onImportFinished(int done, int total, bool cancelled) {
+    Q_UNUSED(done);
+    Q_UNUSED(total);
+    // Замок снимается сам: работник уже опустил busy, и editingAllowed это
+    // видит. Здесь только возвращаем редактору правимость.
+    if (wasEditableBeforeImport_) setReadOnly(false);
+    emit importStatus(QString());
+    if (importProgress_ != nullptr) {
+        importProgress_->reset();
+        importProgress_->deleteLater();
+        importProgress_ = nullptr;
+    }
+
+    // Порядок вставки — порядок ВЫБОРА файлов, а не готовности.
+    std::sort(importedBatch_.begin(), importedBatch_.end(),
+              [](const ImportedImage& a, const ImportedImage& b) { return a.index < b.index; });
     QStringList pieces;
     QStringList failures;
-    for (const QString& path : paths) {
-        const StoredImage stored = storeImageFile(path, dir, limits);
-        if (stored.ok())
-            pieces << imageMarkdown(stored);
+    for (const ImportedImage& one : importedBatch_) {
+        if (one.stored.ok()) pieces << imageMarkdown(one.stored);
         else
-            failures << QStringLiteral("%1: %2").arg(QFileInfo(path).fileName(), stored.error);
+            failures << QStringLiteral("%1: %2").arg(QFileInfo(one.source).fileName(),
+                                                     one.stored.error);
     }
-    QGuiApplication::restoreOverrideCursor();
+    importedBatch_.clear();
+    Q_UNUSED(cancelled);
 
     // ОДНОЙ ВСТАВКОЙ, а не в цикле: тогда это один шаг истории, и Ctrl+Z
     // убирает всё разом (инвариант C брифа).
@@ -1890,7 +1997,12 @@ int NoteEditor::insertImageFiles(const QStringList& paths) {
     // VSpace, картинка, — то есть пустая строка выживает как настоящий блок, в
     // который можно встать. Собирать её из "\n" было бы ошибкой: подряд идущие
     // строки markdown слил бы в один абзац, и вторая картинка пропала бы.
-    if (!pieces.isEmpty()) pasteMarkdown(pieces.join(QStringLiteral("\n\n")), false);
+    if (!pieces.isEmpty()) {
+        // Пустая строка ПОСЛЕ последней картинки — не украшение: в саму
+        // картинку каретка не пускается, и без соседа за ней в заметку
+        // нечего было бы дописать вовсе. Владелец на это и наткнулся.
+        pasteMarkdown(pieces.join(QStringLiteral("\n\n")) + QStringLiteral("\n\n"), false);
+    }
 
     // О неудачах говорим ПОСЛЕ вставки удачных: молчаливый пропуск — худшее из
     // возможного, а прерывать всю пачку из-за одного битого файла незачем.
@@ -1898,7 +2010,6 @@ int NoteEditor::insertImageFiles(const QStringList& paths) {
         QMessageBox::warning(this, QStringLiteral("zametti"),
                              QStringLiteral("Не вставилось:\n") +
                                  failures.join(QLatin1Char('\n')));
-    return int(pieces.size());
 }
 
 bool NoteEditor::insertImagePixels(const QImage& image) {
@@ -1906,16 +2017,10 @@ bool NoteEditor::insertImagePixels(const QImage& image) {
     const QString dir = attachmentDir();
     if (dir.isEmpty()) return false;
 
-    QGuiApplication::setOverrideCursor(Qt::WaitCursor);
-    const StoredImage stored = storeImagePixels(image, dir, limitsFromSettings());
-    QGuiApplication::restoreOverrideCursor();
-
-    if (!stored.ok()) {
-        QMessageBox::warning(this, QStringLiteral("zametti"),
-                             QStringLiteral("Картинка не вставилась: ") + stored.error);
-        return false;
-    }
-    pasteMarkdown(imageMarkdown(stored), false);
+    // Тем же путём, что и файлы: снимок экрана из буфера бывает и на
+    // двадцать мегапикселей, и замирало на нём точно так же.
+    if (!beginImport(1)) return false;
+    importer_->importPixels(image, dir);
     return true;
 }
 

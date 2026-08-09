@@ -201,8 +201,13 @@ void StatusBar::relayout() {
     // «?» вместо числа слов — это не заглушка на будущее, а признак: счёт
     // отстал от документа и будет пересчитан ближайшим сохранением.
     const QString words = note_.wordsKnown ? humanCount(note_.words) : QStringLiteral("?");
-    right_->setText(QStringLiteral("слов %1   ·   строка %2/%3   ·   кол %4")
-                        .arg(words, humanCount(line_), humanCount(note_.lines),
+    // «Картинка стоит тысячи слов», а в счёте слов она стоит нуля — поэтому
+    // про них говорим отдельно и только когда они есть.
+    const QString photos = note_.images > 0
+                               ? QStringLiteral("   ·   изображений %1").arg(humanCount(note_.images))
+                               : QString();
+    right_->setText(QStringLiteral("слов %1%2   ·   строка %3/%4   ·   кол %5")
+                        .arg(words, photos, humanCount(line_), humanCount(note_.lines),
                              humanCount(column_)));
 }
 

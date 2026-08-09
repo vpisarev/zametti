@@ -144,7 +144,8 @@ zametti::NoteStats bothCounts(const std::string& markdown, const std::string& wh
     const zametti::NoteStats byDoc = zametti::documentStats(doc);
     ++zt::g_checks;
     if (byIr.words != byDoc.words || byIr.lines != byDoc.lines ||
-        byIr.blocks != byDoc.blocks || byIr.blocks != doc.blockCount()) {
+        byIr.blocks != byDoc.blocks || byIr.blocks != doc.blockCount() ||
+        byIr.images != byDoc.images) {
         ++zt::g_failures;
         std::printf("провал: счёт по IR разошёлся с обходом документа (%s)\n"
                     "  по IR:      слов %d, строк %d, блоков %d\n"

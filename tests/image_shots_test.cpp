@@ -25,6 +25,7 @@
 #include "test_util.h"
 
 #include <QApplication>
+#include <QElapsedTimer>
 #include <QDir>
 #include <QFile>
 #include <QImage>
@@ -37,6 +38,16 @@
 #include <string>
 
 namespace {
+
+// Ввоз картинок стал фоновым: кто ждёт его результата, обязан дождаться.
+// Признак конца — редактор снова правится (на время ввоза он читалка).
+void waitForImport(zametti::NoteEditor& editor) {
+    QElapsedTimer waiting;
+    waiting.start();
+    while (editor.isReadOnly() && waiting.elapsed() < 60000)
+        QApplication::processEvents(QEventLoop::AllEvents, 20);
+    QApplication::processEvents();
+}
 
 QString g_corpus;   // .testdata/images/originals
 QString g_store;    // куда кладём заметку и вложения
@@ -126,6 +137,7 @@ void checkPortraitStandsUp() {
     Shots editor;
     openWith(editor, 1400, 900, QStringLiteral("портрет.md"));
     ZT_EQ("портретное фото вставилось", num(1), num(editor.insertImageFiles({source})));
+    waitForImport(editor);
     shoot(editor, QStringLiteral("портрет-широкое-окно"));
 
     const Shown shown = shownImage(editor);
@@ -148,6 +160,7 @@ void checkPanoramaFitsWide() {
     Shots wide;
     openWith(wide, 1900, 800, QStringLiteral("панорама-широкая.md"));
     ZT_EQ("панорама вставилась", num(1), num(wide.insertImageFiles({source})));
+    waitForImport(wide);
     shoot(wide, QStringLiteral("панорама-широкое-окно"));
 
     const Shown w = shownImage(wide);
@@ -166,6 +179,7 @@ void checkPanoramaFitsWide() {
     Shots narrow;
     openWith(narrow, 620, 800, QStringLiteral("панорама-узкая.md"));
     narrow.insertImageFiles({source});
+    waitForImport(narrow);
     shoot(narrow, QStringLiteral("панорама-узкое-окно"));
     const Shown n = shownImage(narrow);
     if (n.found)
@@ -203,11 +217,13 @@ void checkScreenshotStaysSharp() {
     Shots editor;
     openWith(editor, 1500, 950, QStringLiteral("скриншот.md"));
     editor.insertImageFiles({small});
+    waitForImport(editor);
     shoot(editor, QStringLiteral("скриншот-широкое-окно"));
 
     Shots big4k;
     openWith(big4k, 1500, 950, QStringLiteral("скриншот-4k.md"));
     big4k.insertImageFiles({big});
+    waitForImport(big4k);
     shoot(big4k, QStringLiteral("скриншот-4k-широкое-окно"));
 }
 
@@ -226,6 +242,7 @@ void checkFiveInARow() {
     Shots editor;
     openWith(editor, 1400, 1000, QStringLiteral("пятёрка.md"));
     ZT_EQ("вставились все пять", num(5), num(editor.insertImageFiles(sources)));
+    waitForImport(editor);
     shoot(editor, QStringLiteral("пять-подряд"));
 
     // ОДНА ПОД ДРУГОЙ: у каждой следующей верх ниже, чем у предыдущей. Это и
@@ -285,6 +302,7 @@ void checkManyImagesDoNotOverlap(const QString& root) {
     // зелёной, то есть не проверяла ничего.
     for (int i = 0; i < 10; ++i) many += sources;   // сорок штук
     editor.insertImageFiles(many);
+    waitForImport(editor);
     QTest::qWait(50);
 
     // Перечитываем файл: именно так ошибка и всплывала — при открытии, а не
