@@ -26,7 +26,7 @@ namespace {
 std::string s(const QString& q) { return q.toStdString(); }
 
 void checkStrip(const char* what, const QByteArray& source, const QByteArray& expected) {
-    ZT_EQ(what, expected.toStdString(), zametti::stripJsonComments(source).toStdString());
+    ZT_EQ(what, expected.toStdString(), zametti::stripJsonSugar(source).toStdString());
 }
 
 void checkStripper() {
@@ -45,10 +45,24 @@ void checkStripper() {
     // Одиночная косая — не комментарий: она бывает в путях и в цветах.
     checkStrip("одиночная косая цела", "{\"a\": \"/tmp/x\"}", "{\"a\": \"/tmp/x\"}");
 
+    // Висячая запятая перед закрывающей скобкой — вторая и последняя поблажка.
+    checkStrip("висячая запятая перед фигурной скобкой", "{\n  \"a\": 1,\n}",
+               "{\n  \"a\": 1\n}");
+    checkStrip("висячая запятая перед квадратной", "[1, 2, ]", "[1, 2 ]");
+    checkStrip("висячая запятая после комментария", "{\n  \"a\": 1, // всё\n}",
+               "{\n  \"a\": 1 \n}");
+    checkStrip("запятая между полями цела", "{\"a\": 1, \"b\": 2}", "{\"a\": 1, \"b\": 2}");
+    checkStrip("запятая внутри строки цела", "{\"a\": \"раз, два\"}", "{\"a\": \"раз, два\"}");
+    checkStrip("скобка внутри строки не считается закрывающей",
+               "{\"a\": \",}\", \"b\": 2}", "{\"a\": \",}\", \"b\": 2}");
+    // Две запятые подряд — это не «висячая», а битый JSON, и он обязан
+    // остаться битым: чинить за человека мы не нанимались.
+    checkStrip("две запятые подряд не склеиваются", "[1,,]", "[1,]");
+
     // Номера строк обязаны сойтись с файлом: сообщение об ошибке разбора
     // указывает строку, и если стриппер их съест, оно будет врать.
     const QByteArray source = "// раз\n// два\n{\n  \"a\": 1\n}\n";
-    const QByteArray stripped = zametti::stripJsonComments(source);
+    const QByteArray stripped = zametti::stripJsonSugar(source);
     ZT_TRUE("переводы строк не съедены",
             stripped.count('\n') == source.count('\n'));
 }
@@ -68,7 +82,7 @@ void checkTemplate() {
     // 1. Разбирается — и разбирается в ПУСТОЙ объект: отклонений нет.
     QJsonParseError parseError{};
     const QJsonDocument doc =
-        QJsonDocument::fromJson(zametti::stripJsonComments(written), &parseError);
+        QJsonDocument::fromJson(zametti::stripJsonSugar(written), &parseError);
     ZT_TRUE("шаблон разбирается: " + s(parseError.errorString()),
             parseError.error == QJsonParseError::NoError);
     ZT_TRUE("шаблон — объект", doc.isObject());
@@ -120,7 +134,7 @@ void checkLoadUnderstandsComments() {
         "// мой конфиг\n"
         "{\n"
         "    // через сколько записывать\n"
-        "    \"editor\": { \"autosaveDelayMs\": 1700 }   // отклонение\n"
+        "    \"editor\": { \"autosaveDelayMs\": 1700, },   // отклонение, с висячей запятой\n"
         "}\n");
     file.close();
 

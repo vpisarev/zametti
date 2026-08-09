@@ -13,6 +13,7 @@
 #include <QStandardPaths>
 
 #include <algorithm>
+#include <cctype>
 
 namespace zametti {
 namespace {
@@ -482,7 +483,10 @@ QByteArray defaultAppearanceJson() {
     return QJsonDocument(appearanceToJson(Appearance{})).toJson(QJsonDocument::Indented);
 }
 
-QByteArray stripJsonComments(const QByteArray& json) {
+namespace {
+
+// Первый проход: комментарии.
+QByteArray stripComments(const QByteArray& json) {
     QByteArray out;
     out.reserve(json.size());
     bool inString = false;
@@ -511,6 +515,47 @@ QByteArray stripJsonComments(const QByteArray& json) {
         out.append(c);
     }
     return out;
+}
+
+// Второй проход: висячие запятые. Отдельным проходом, а не в том же цикле,
+// ровно потому, что заглядывать вперёд надо УЖЕ без комментариев: между
+// запятой и скобкой человек запросто напишет «// последняя».
+QByteArray stripTrailingCommas(const QByteArray& json) {
+    QByteArray out;
+    out.reserve(json.size());
+    bool inString = false;
+    bool escaped = false;
+    for (int i = 0; i < json.size(); ++i) {
+        const char c = json.at(i);
+        if (inString) {
+            out.append(c);
+            if (escaped) escaped = false;
+            else if (c == '\\') escaped = true;
+            else if (c == '"') inString = false;
+            continue;
+        }
+        if (c == '"') {
+            inString = true;
+            out.append(c);
+            continue;
+        }
+        if (c == ',') {
+            int at = i + 1;
+            while (at < json.size() && std::isspace(static_cast<unsigned char>(json.at(at))))
+                ++at;
+            // Запятая перед закрывающей скобкой — висячая: выбрасываем её, а
+            // пробелы и переводы строк за ней оставляем как есть.
+            if (at < json.size() && (json.at(at) == '}' || json.at(at) == ']')) continue;
+        }
+        out.append(c);
+    }
+    return out;
+}
+
+}  // namespace
+
+QByteArray stripJsonSugar(const QByteArray& json) {
+    return stripTrailingCommas(stripComments(json));
 }
 
 bool writeConfigTemplate(QString* error) {
@@ -666,7 +711,7 @@ bool loadAppearance(QString* error, QStringList* unknown) {
         // Сначала срезаем //-комментарии: сгенерированный конфиг из них и
         // состоит, и без этого он бы вовсе не разобрался.
         const QJsonDocument doc =
-            QJsonDocument::fromJson(stripJsonComments(file.readAll()), &parseError);
+            QJsonDocument::fromJson(stripJsonSugar(file.readAll()), &parseError);
         file.close();
         if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
             if (error != nullptr)
