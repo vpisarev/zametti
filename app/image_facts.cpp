@@ -1,53 +1,20 @@
 #include "image_facts.h"
 
-#include <QDateTime>
 #include <QFileInfo>
-#include <QHash>
+#include <QColorSpace>
+#include <QImage>
 #include <QImageReader>
 
 namespace zametti {
-namespace {
 
-// Ключ кэша — не только путь: вложение могло смениться на диске (синхронизация,
-// правка руками). Время правки вместе с размером ловит и то и другое, а стоят
-// они одного stat, который QFileInfo всё равно делает.
-struct Key {
-    qint64 modified = 0;
-    qint64 bytes = 0;
-};
-
-struct Entry {
-    Key key;
-    ImageFacts facts;
-};
-
-QHash<QString, Entry>& cache() {
-    static QHash<QString, Entry> table;
-    return table;
-}
-
-}  // namespace
-
-ImageFacts imageFacts(const QString& absolutePath) {
-    ImageFacts out;
-    if (absolutePath.isEmpty()) return out;
+void readImageFacts(const QString& absolutePath, ImageFacts& out) {
     out.path = absolutePath;
     const QFileInfo file(absolutePath);
     out.name = file.fileName();
+    out.valid = true;
+    if (!file.exists()) return;   // рамка вместо фотографии: сказать об этом надо
 
-    if (!file.exists()) {
-        // Кэшировать «нет файла» нельзя: он ровно за этим и появится.
-        out.valid = true;
-        return out;
-    }
     out.exists = true;
-
-    const Key key{file.lastModified().toMSecsSinceEpoch(), file.size()};
-    const auto found = cache().constFind(absolutePath);
-    if (found != cache().constEnd() && found->key.modified == key.modified &&
-        found->key.bytes == key.bytes)
-        return found->facts;
-
     out.bytes = file.size();
     QImageReader reader(absolutePath);
     out.size = reader.size();
@@ -59,14 +26,44 @@ ImageFacts imageFacts(const QString& absolutePath) {
     // Кадров у неанимированного формата бывает и ноль, и минус один: у каждого
     // читателя свой ответ. Наружу отдаём «хотя бы один».
     out.frames = qMax(1, reader.imageCount());
-    out.valid = true;
-
-    cache().insert(absolutePath, Entry{key, out});
-    return out;
 }
 
-int imageFactsCacheSize() { return int(cache().size()); }
-
-void clearImageFactsCache() { cache().clear(); }
+void addDecodedFacts(const QImage& image, ImageFacts& out) {
+    if (image.isNull()) return;
+    // Глубина — по представлению разжатой копии, а не по имени формата:
+    // шестнадцатибитный файл Qt отдаёт в шестнадцатибитном представлении, и
+    // это ровно то, с чем работает показ.
+    switch (image.format()) {
+        case QImage::Format_RGBX64:
+        case QImage::Format_RGBA64:
+        case QImage::Format_RGBA64_Premultiplied:
+        case QImage::Format_Grayscale16:
+            out.bits = 16;
+            break;
+        case QImage::Format_RGBX16FPx4:
+        case QImage::Format_RGBA16FPx4:
+        case QImage::Format_RGBA16FPx4_Premultiplied:
+            out.bits = 16;   // с плавающей точкой, но бит на канал столько же
+            break;
+        default:
+            out.bits = 8;
+            break;
+    }
+    const QColorSpace space = image.colorSpace();
+    if (!space.isValid()) return;
+    out.colorSpace = space.description();
+    // Профиль без имени — обычное дело у файлов из камер. Тогда называем то,
+    // что знаем наверняка: основные цвета.
+    if (!out.colorSpace.isEmpty()) return;
+    switch (space.primaries()) {
+        case QColorSpace::Primaries::SRgb: out.colorSpace = QStringLiteral("sRGB"); break;
+        case QColorSpace::Primaries::DciP3D65: out.colorSpace = QStringLiteral("Display P3"); break;
+        case QColorSpace::Primaries::AdobeRgb: out.colorSpace = QStringLiteral("Adobe RGB"); break;
+        case QColorSpace::Primaries::ProPhotoRgb:
+            out.colorSpace = QStringLiteral("ProPhoto RGB");
+            break;
+        default: break;
+    }
+}
 
 }  // namespace zametti

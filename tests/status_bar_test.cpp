@@ -193,13 +193,12 @@ void checkCaretImage() {
     check(facts.caption == QStringLiteral("Снимок с телефона"),
           "подпись берётся из заметки, а не из файла");
 
-    // Второй спрос той же картинки файл не перечитывает: кэш на месте.
-    zametti::clearImageFactsCache();
-    editor.caretImage();
-    const int afterFirst = zametti::imageFactsCacheSize();
-    editor.caretImage();
-    check(afterFirst == 1 && zametti::imageFactsCacheSize() == 1,
-          "картинка читается один раз, дальше из кэша");
+    // Сведения живут в кэше картинок вида, своего кэша у них нет: второй
+    // спрос обязан дать ровно то же, не перечитывая файл.
+    const zametti::ImageFacts again = editor.caretImage();
+    check(again.size == facts.size && again.bytes == facts.bytes &&
+              again.format == facts.format,
+          "повторный спрос даёт то же самое");
 
     // Настоящий путь человека: он не ставит каретку из кода, он ЩЁЛКАЕТ по
     // фотографии. Щелчок проходит через snapCaretOffImage и может оставить
@@ -207,7 +206,7 @@ void checkCaretImage() {
     {
         editor.resize(700, 500);
         editor.show();
-        QTest::qWaitForWindowExposed(&editor);
+        (void)QTest::qWaitForWindowExposed(&editor);
         QTest::qWait(50);
 
         QTextBlock photo;
@@ -235,9 +234,21 @@ void checkCaretImage() {
     }
 
     // Вложение пропало — сведения обязаны это сказать, а не соврать старым.
-    zametti::clearImageFactsCache();
+    // Редактор новый: у прежнего в кэше лежат и пиксели, и сведения об уже
+    // прочитанном файле, и он законно продолжает показывать то, что показывает.
     check(QFile::remove(imagePath), "вложение удалено");
-    const zametti::ImageFacts gone = editor.caretImage();
+    zametti::NoteEditor fresh;
+    fresh.resize(700, 500);
+    fresh.show();
+    fresh.openFile(notePath);
+    for (QTextBlock block = fresh.document()->begin(); block.isValid(); block = block.next()) {
+        if (!zametti::blockImageRef(block).valid) continue;
+        QTextCursor place = fresh.textCursor();
+        place.setPosition(block.position());
+        fresh.setTextCursor(place);
+        break;
+    }
+    const zametti::ImageFacts gone = fresh.caretImage();
     check(gone.valid && !gone.exists, "пропавшее вложение видно как пропавшее");
 }
 

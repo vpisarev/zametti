@@ -90,7 +90,8 @@ void StatusBar::setImage(const ImageInfo& info) {
     const bool same = info.valid == image_.valid && info.exists == image_.exists &&
                       info.name == image_.name && info.caption == image_.caption &&
                       info.format == image_.format && info.size == image_.size &&
-                      info.bytes == image_.bytes && info.frames == image_.frames;
+                      info.bytes == image_.bytes && info.frames == image_.frames &&
+                      info.colorSpace == image_.colorSpace && info.bits == image_.bits;
     if (same) return;
     image_ = info;
     showLeft();
@@ -146,29 +147,47 @@ void StatusBar::showLeft() {
 }
 
 void StatusBar::showImage() {
-    QStringList parts;
+    const QString separator = QStringLiteral("   ·   ");
     if (!image_.exists) {
         // Вложения нет: об этом и говорим. Заметка на него ссылается, место под
         // рамку держится, и молчать тут нельзя — иначе непонятно, почему вместо
         // снимка рамка.
-        parts << QStringLiteral("вложения нет") << image_.name;
-        left_->setText(parts.join(QStringLiteral("   ·   ")));
+        left_->setText(image_.name + separator + QStringLiteral("вложения нет"));
         left_->setToolTip(image_.name);
         return;
     }
-    if (!image_.caption.isEmpty()) parts << image_.caption;
-    parts << image_.name;
-    if (!image_.size.isEmpty())
-        parts << QStringLiteral("%1×%2").arg(image_.size.width()).arg(image_.size.height());
-    if (!image_.format.isEmpty()) parts << image_.format.toUpper();
-    parts << humanBytes(image_.bytes);
-    if (image_.frames > 1) parts << QStringLiteral("кадров %1").arg(humanCount(image_.frames));
 
-    const QString separator = QStringLiteral("   ·   ");
-    const QString text = parts.join(separator);
+    // Порядок владельца: имя · вес · «разрешение формат цвет глубина» · описание.
+    // Внутри третьей группы разделитель — пробел: это всё про одно, про сами
+    // пиксели, и точками оно бы рассыпалось.
+    QStringList head;
+    head << image_.name << humanBytes(image_.bytes);
+
+    QStringList pixels;
+    if (!image_.size.isEmpty())
+        pixels << QStringLiteral("%1×%2").arg(image_.size.width()).arg(image_.size.height());
+    if (!image_.format.isEmpty()) pixels << image_.format.toUpper();
+    // Цвет и глубина известны только у разжатой копии. Пока картинку не
+    // показывали, их просто нет — и придумывать их нельзя.
+    if (!image_.colorSpace.isEmpty()) pixels << image_.colorSpace;
+    if (image_.bits > 0) pixels << QStringLiteral("%1 бит").arg(image_.bits);
+    if (image_.frames > 1) pixels << QStringLiteral("кадров %1").arg(humanCount(image_.frames));
+    if (!pixels.isEmpty()) head << pixels.join(QLatin1Char(' '));
+
+    const QString known = head.join(separator);
+    left_->setToolTip(image_.caption.isEmpty() ? known : known + separator + image_.caption);
+    if (image_.caption.isEmpty()) {
+        left_->setText(known);
+        return;
+    }
+
+    // Режется ТОЛЬКО описание, и только с конца: оно бывает длиной в абзац, а
+    // всё, что слева, — это про сам файл, и терять его нельзя.
     const QFontMetrics metrics(left_->font());
-    left_->setText(metrics.elidedText(text, Qt::ElideRight, qMax(0, left_->width())));
-    left_->setToolTip(text);
+    const int room =
+        qMax(0, left_->width() - metrics.horizontalAdvance(known + separator));
+    const QString shown = metrics.elidedText(image_.caption, Qt::ElideRight, room);
+    left_->setText(shown.isEmpty() ? known : known + separator + shown);
 }
 
 void StatusBar::relayout() {
@@ -180,7 +199,7 @@ void StatusBar::relayout() {
     // «?» вместо числа слов — это не заглушка на будущее, а признак: счёт
     // отстал от документа и будет пересчитан ближайшим сохранением.
     const QString words = note_.wordsKnown ? humanCount(note_.words) : QStringLiteral("?");
-    right_->setText(QStringLiteral("слов %1   ·   строка %2 из %3   ·   знак %4")
+    right_->setText(QStringLiteral("слов %1   ·   строка %2/%3   ·   кол %4")
                         .arg(words, humanCount(line_), humanCount(note_.lines),
                              humanCount(column_)));
 }

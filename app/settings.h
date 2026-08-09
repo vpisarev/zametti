@@ -243,7 +243,7 @@ struct Appearance {
     // (не текстовый): цифры в панели должны стоять столбиком при смене числа,
     // а не прыгать по ширине.
     QString statusFamily{QStringLiteral("IBM Plex Sans SemiCondensed")};
-    int statusFontPoints = 9;
+    int statusFontPoints = 10;
     int statusPadding = 10;
     int statusPaddingTop = 4;
     QColor statusBackground{0xf5, 0xf5, 0xf2};

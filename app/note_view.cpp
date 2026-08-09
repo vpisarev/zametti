@@ -310,11 +310,16 @@ qint64 NoteView::decodedBytes(QSize declared, int limit) {
     return qint64(shown.width()) * shown.height() * 4;
 }
 
-ImageFacts NoteView::caretImage() const {
+ImageFacts NoteView::caretImage() {
     const QTextBlock block = textCursor().block();
     const BlockImageRef ref = blockImageRef(block);
     if (!ref.valid) return {};
-    ImageFacts facts = imageFacts(absoluteImagePath(ref.path));
+    // Спрашиваем тот же кэш, что и показ: он уже читал заголовок этого файла,
+    // а если картинку успели разжать — знает и цвет с глубиной.
+    const CachedImage* entry = imageInfo(ref.path);
+    ImageFacts facts;
+    if (entry != nullptr) facts = entry->facts;
+    else readImageFacts(absoluteImagePath(ref.path), facts);
     // Подпись — это alt картинки, и в ней живёт имя исходного файла (см.
     // xmpWithFileName в exif.h). У вики-вложения alt нет: текстом абзаца там
     // стоит сама запись "![[путь]]", и показывать её вместо подписи незачем.
@@ -353,6 +358,7 @@ const NoteView::CachedImage* NoteView::imageInfo(const QString& path) {
         // остаётся строкой, как и всякий текст, который мы не поняли.
         if (QFileInfo::exists(abs)) return nullptr;
         CachedImage gone;
+        readImageFacts(abs, gone.facts);
         gone.limit = loadedImageSizeLimit();
         gone.state = ImageState::Missing;
         imageCache_.insert(abs, std::move(gone));
@@ -363,6 +369,7 @@ const NoteView::CachedImage* NoteView::imageInfo(const QString& path) {
 
     CachedImage entry;
     entry.declared = declared;
+    readImageFacts(abs, entry.facts);
     entry.limit = loadedImageSizeLimit();
     entry.state = ImageState::Pending;
     imageCache_.insert(abs, std::move(entry));
@@ -473,6 +480,10 @@ const QImage* NoteView::pixelsFor(const QString& key) {
     it->bytes = qint64(image.sizeInBytes());
     it->image = std::move(image);
     it->state = ImageState::Shown;
+    // Раз уж картинку всё равно разжали — забираем заодно и то, что видно
+    // только у разжатой копии: цветовое пространство и глубину. Второй раз за
+    // ними никто не пойдёт: они лежат рядом с пикселями, в той же записи кэша.
+    addDecodedFacts(it->image, it->facts);
     imageCacheBytes_ += it->bytes;
     touchImage(key);
     return &it->image;

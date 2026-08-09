@@ -685,6 +685,8 @@ int main(int argc, char** argv) {
                          shown.size = facts.size;
                          shown.bytes = facts.bytes;
                          shown.frames = facts.frames;
+                         shown.colorSpace = facts.colorSpace;
+                         shown.bits = facts.bits;
                          shown.exists = facts.exists;
                          statusBar.setImage(shown);
                      });

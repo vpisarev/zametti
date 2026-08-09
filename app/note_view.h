@@ -68,7 +68,7 @@ public:
     // разжатия. Пусто, если каретка не на картинке. Нужна полосе сведений —
     // и знать, где лежит вложение, обязан именно вид: путь в заметке
     // относительный, а от чего он считается, знает только он.
-    ImageFacts caretImage() const;
+    ImageFacts caretImage();
 
     qint64 imageCacheBytes() const { return imageCacheBytes_; }
     int cachedImageCount() const { return int(imageCache_.size()); }
@@ -171,6 +171,11 @@ private:
     struct CachedImage {
         QImage image;
         QSize declared;      // размеры из заголовка файла; известны всегда
+        // Всё, что показывает полоса сведений: имя, формат, вес, кадры, а
+        // после разжатия — цвет и глубина. Живёт ЗДЕСЬ, а не в своём кэше
+        // рядом: файл уже открыт и заголовок уже прочитан, а второй кэш дал бы
+        // второй ответ на вопрос «что это за файл».
+        ImageFacts facts;
         qint64 bytes = 0;    // вес разжатой; у Pending, TooBig и Crowded ноль
         int limit = 0;       // предел стороны, которым ужимали: сменится — перечитаем
         ImageState state = ImageState::Pending;

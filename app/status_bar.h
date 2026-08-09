@@ -54,6 +54,11 @@ public:
         QString caption;
         QString format;
         QSize size;
+        // Цветовое пространство и глубина берутся у УЖЕ РАЗЖАТОЙ копии, если
+        // она есть: разжимать снимок ради строчки в панели нельзя. Пусто и
+        // ноль — картинку ещё не показывали, и врать нам нечем.
+        QString colorSpace;
+        int bits = 0;
         qint64 bytes = 0;
         int frames = 1;
         bool exists = false;
