@@ -1947,13 +1947,18 @@ int main(int argc, char** argv) {
         tree.setVisible(visible);
         if (model.isStore()) middle.setVisible(visible);
         if (visible && keptSizes.size() == splitter.count()) splitter.setSizes(keptSizes);
-        toolbar.setChecked(Button::Panels, !visible);
+        // Кнопка НАЖАТА, когда панели видны, а не наоборот: нажатый
+        // переключатель означает «это включено». Прежде было зеркально —
+        // панели пропадали, а кнопка загоралась.
+        toolbar.setChecked(Button::Panels, visible);
         toolbar.buttonFor(Button::Panels)
             ->setToolTip(visible ? QStringLiteral("Скрыть боковые панели")
                                  : QStringLiteral("Показать боковые панели"));
     };
     {
-        if (session.panelsHidden) showPanels(false);
+        // Зовём ВСЕГДА, а не только когда панели спрятаны: кнопка обязана
+        // показывать своё состояние с первой секунды, а не с первого нажатия.
+        showPanels(!session.panelsHidden);
 
         // Обещания. Погашенная кнопка без объяснения читается как поломка, а
         // не как «будет позже», поэтому у каждой — своя причина словами.
@@ -1988,7 +1993,7 @@ int main(int argc, char** argv) {
                 editor.chooseAndInsertImages();
                 break;
             case Button::Panels:
-                showPanels(!toolbar.isChecked(Button::Panels));
+                showPanels(toolbar.isChecked(Button::Panels));
                 break;
             case Button::SortByName:
                 applySort(zametti::NoteTreeModel::SortMode::ByName);
@@ -2170,7 +2175,7 @@ int main(int argc, char** argv) {
         out.zoom = editor.zoom();
         out.windowGeometry = window.saveGeometry();
         out.splitterState = splitter.saveState();
-        out.panelsHidden = toolbar.isChecked(zametti::Toolbar::Button::Panels);
+        out.panelsHidden = !toolbar.isChecked(zametti::Toolbar::Button::Panels);
         out.expandedDirs = expandedDirs();
         out.searchHistory = findBar.history();
         out.storeRoot = model.isStore() ? model.nodePath(QModelIndex()) : QString();

@@ -11,6 +11,7 @@
 #include <QDialogButtonBox>
 #include <QTextBrowser>
 #include <QUrl>
+#include <QStringList>
 #include <QTabWidget>
 #include <QTextDocument>
 #include <QVBoxLayout>
@@ -62,6 +63,27 @@ QString buildFactsMarkdown() {
                    .arg(QString::fromUtf8(fact.name), QString::fromUtf8(fact.version),
                         QString::fromUtf8(fact.what));
     }
+
+    // Иконки и шрифты — такая же часть сборки, как библиотеки: они вшиты в
+    // бинарник, и человек вправе знать, чьи они. Числа берутся из тех же
+    // списков, по которым идёт загрузка (resources.h), а не переписаны сюда:
+    // разойтись им тогда негде.
+    out += QStringLiteral("\n## Иконки и шрифты\n\n");
+    out += QStringLiteral("- **Lucide** — %1 иконки тулбара и дерева, ISC\n")
+               .arg(embeddedIcons().size());
+
+    QStringList families;
+    for (const EmbeddedFace& face : embeddedFaces()) {
+        const QString family = QString::fromUtf8(face.family);
+        if (!families.contains(family)) families << family;
+    }
+    out += QStringLiteral("- **%1** — %2 начертаний, OFL 1.1\n")
+               .arg(families.join(QStringLiteral(" и ")))
+               .arg(embeddedFaces().size());
+    out += QStringLiteral(
+        "\nШрифты вшиты нарочно: имя семейства в настройках — это просьба, а не "
+        "обещание. Нет шрифта в системе — Qt молча подставит что найдётся, и вёрстка "
+        "поедет на первом же чужом запуске.\n");
 
     // Данные не заперты — это уговор владельца, и место ему здесь, рядом с
     // версиями: человек, читающий «о программе», как раз и спрашивает, что

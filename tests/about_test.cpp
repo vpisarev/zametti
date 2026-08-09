@@ -84,6 +84,14 @@ void checkBuildFacts() {
     // Пустая версия — это "**md4c ** — разбор markdown": библиотека названа,
     // а версии нет. Ловим по двойному пробелу перед тире.
     check(!facts.contains(QStringLiteral("  —")), "пустых версий в сводке нет");
+    // Иконки и шрифты — тоже вшитое, и о них сказано числами из тех же
+    // списков, по которым идёт загрузка.
+    check(facts.contains(QStringLiteral("Lucide")), "иконки названы в сводке");
+    check(facts.contains(QStringLiteral("IBM Plex")), "шрифты названы в сводке");
+    check(facts.contains(QStringLiteral("%1").arg(zametti::embeddedIcons().size())),
+          "число иконок — из списка загрузки, а не переписано");
+    check(facts.contains(QStringLiteral("%1").arg(zametti::embeddedFaces().size())),
+          "число начертаний — из списка загрузки");
 }
 
 void checkWindow() {

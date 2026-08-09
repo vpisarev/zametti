@@ -130,7 +130,14 @@ struct Appearance {
     QColor caretColor{0x1e, 0xab, 0xd6};
     qreal caretWidth = 2.4;
     qreal dividerWidth = 2.0;   // толщина тематической черты, px (умножается на зум)
-    QColor selectionBackground{0xbf, 0xdb, 0xfe};
+    // Выделение ПОЛУПРОЗРАЧНОЕ: на белом оно голубое, а поверх серой подложки
+    // кода — серо-голубое, и человек видит, что кусок стал кодом, прямо во
+    // время выделения. Непрозрачное закрашивало подложку целиком, и Ctrl+E на
+    // выделенном тексте не менял на экране ровным счётом ничего.
+    //
+    // Альфа именно в цвете, а не отдельным числом: QPalette::Highlight его и
+    // берёт, а Qt рисует выделение обычной заливкой с композицией.
+    QColor selectionBackground{0xbf, 0xdb, 0xfe, 0xb0};
     QColor linkColor{0x32, 0x5c, 0xc0};
     QColor quoteColor{0x5a, 0x62, 0x6a};
     QColor rawColor{0x99, 0x9f, 0xa6};      // непонятое, дословный кусок

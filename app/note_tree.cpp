@@ -186,12 +186,17 @@ bool readStoreNote(const QString& path, StoreNote& out) {
 }
 
 // Подпись корневой строки левой панели: имя хранилища из конфига, а нет его —
-// «All notes» (бриф этапа 4). Имя каталога сюда не подставляется намеренно:
-// оно техническое (у владельца это "vpnotes"), а строка означает не каталог, а
-// «все заметки хранилища». Выбор этой строки и означает ровно это.
-QString storeRootTitle(const QString&) {
+// ИМЯ КАТАЛОГА хранилища (решение владельца). Прежде здесь стояло «All notes»
+// с обоснованием «имя каталога техническое»; на деле оно как раз и отвечает на
+// вопрос «а какое хранилище открыто», а у человека их бывает несколько.
+QString storeRootTitle(const QString& root) {
     const QString configured = appearance().storeTitle;
-    return configured.isEmpty() ? QStringLiteral("All notes") : configured;
+    if (!configured.isEmpty()) return configured;
+    // Голое имя каталога, без пути. Завершающая черта в корне отрезается —
+    // иначе dirName() вернул бы пустую строку (тот же лишний слэш из оболочки,
+    // который однажды уже стоил нам бага с заголовком).
+    const QString name = QDir(QDir::cleanPath(root)).dirName();
+    return name.isEmpty() ? QStringLiteral("All notes") : name;
 }
 
 std::unique_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath) {
@@ -479,7 +484,11 @@ QVariant NoteTreeModel::data(const QModelIndex& index, int role) const {
         // У корзины свой значок: она не папка, а другое место, и путать их
         // нельзя — перетаскивание туда означает удаление.
         if (node->trash) return rowPixmap("trash-2");
-        return rowPixmap(expanded_.contains(node->path) ? "folder-open" : "folder");
+        // Пустая папка рисуется ОТКРЫТОЙ, хотя раскрыть её нельзя: закрытый
+        // значок обещает содержимое, которого нет, и человек тыкает в неё
+        // снова и снова. Открытая честно говорит «здесь пусто».
+        const bool open = expanded_.contains(node->path) || node->children.empty();
+        return rowPixmap(open ? "folder-open" : "folder");
     }
     return {};
 }

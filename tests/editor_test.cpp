@@ -26,7 +26,9 @@
 #include <QTextBlock>
 #include <QAbstractTextDocumentLayout>
 #include <QFontMetricsF>
+#include <QHash>
 #include <QImage>
+#include <QPainter>
 #include <QLineEdit>
 #include <QScrollBar>
 #include <QTextCursor>
