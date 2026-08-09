@@ -594,7 +594,10 @@ NoteView::ImageGeometry NoteView::imageGeometry(const QTextBlock& block) {
     // под ней остался у левого края, и без этого он выглядывал бы рядом.
     geometry.line = QRectF(textTop.x(), textTop.y(),
                            qMax(available, layout->boundingRect().width()), textHeight);
-    geometry.photo = QRectF(textTop + QPointF(shift, 0.0), size);
+    // Фотография опускается на вылет уголков: они рисуются снаружи её края, и
+    // без этого верхние уходили бы в полосу предыдущего блока, где их
+    // откусывает чужая перерисовка при прокрутке.
+    geometry.photo = QRectF(textTop + QPointF(shift, imageCornerOverhang()), size);
     return geometry;
 }
 
@@ -701,7 +704,11 @@ void NoteView::syncImageSpace(bool whole) {
                     // фотографию.
                     const qreal allotted =
                         document()->documentLayout()->blockBoundingRect(block).height();
-                    want = qMax(0.0, size.height() + gap - allotted);
+                    // Вылет уголков закладывается сверху и снизу — всегда, а
+                    // не только у выбранной: резерв не должен зависеть от того,
+                    // куда сейчас поставили каретку.
+                    want = qMax(0.0, size.height() + 2 * imageCornerOverhang() + gap -
+                                         allotted);
                 }
             }
         }
@@ -840,6 +847,11 @@ void NoteView::paintImage(QPainter& painter, const QTextBlock& block) {
 // Четыре уголка по краям фотографии — как мишень в видоискателе. Заливка
 // поверх снимка красила его собственные цвета, а именно за цветами на него
 // чаще всего и смотрят; уголки стоят СНАРУЖИ пикселей и не трогают ни один.
+qreal NoteView::imageCornerOverhang() {
+    const Appearance& a = appearance();
+    return qMax(0.0, a.imageCornerOffset) + qMax(0.5, a.imageCornerWidth);
+}
+
 void NoteView::paintImageCorners(QPainter& painter, const QRectF& photo) {
     if (photo.isEmpty()) return;
     const Appearance& a = appearance();

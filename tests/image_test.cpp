@@ -52,6 +52,13 @@ int countReddish(const QImage& shot) {
 
 // Та же отбивка, что у вида (imageGap при масштабе 1).
 const qreal kGap = 6.0;
+// Вылет уголков выбора закладывается в резерв ВСЕГДА, сверху и снизу: иначе
+// при прокрутке их откусывало бы чужой перерисовкой. Берём числа из настроек,
+// а не переписываем сюда: разойтись им тогда негде.
+qreal cornersRoom() {
+    return 2.0 * (qMax(0.0, zametti::appearance().imageCornerOffset) +
+                  qMax(0.5, zametti::appearance().imageCornerWidth));
+}
 
 }  // namespace
 
@@ -160,10 +167,10 @@ int main(int argc, char** argv) {
     // Скрытая строка: фото стоит на месте текста и торчит из него вниз.
     ZT_TRUE("под фотографию 64 px занято ровно столько, сколько нужно (" +
                 std::to_string(int(takenBy(0))) + ")",
-            std::fabs(takenBy(0) - (64.0 + kGap)) < 1.5);
+            std::fabs(takenBy(0) - (64.0 + kGap + cornersRoom())) < 1.5);
     ZT_TRUE("вики-вложение шириной 40 заняло своё (" +
                 std::to_string(int(takenBy(2))) + ")",
-            std::fabs(takenBy(2) - (40.0 + kGap)) < 1.5);
+            std::fabs(takenBy(2) - (40.0 + kGap + cornersRoom())) < 1.5);
     // Файла нет — но место есть: с этапа 7 вместо пропавшего вложения рисуется
     // рамка «файл не найден», и под неё резервируется место. Прежде строка
     // схлопывалась в обычную, и пропажа выглядела как будто картинки тут
@@ -229,7 +236,7 @@ int main(int argc, char** argv) {
         editor.setTextCursor(cursor);
         QTest::qWait(10);
         ZT_TRUE("выделение не тронуло резерв",
-                std::fabs(takenBy(2) - (40.0 + kGap)) < 1.5);
+                std::fabs(takenBy(2) - (40.0 + kGap + cornersRoom())) < 1.5);
         ZT_TRUE("у выделенной фотографии есть уголки", cornerMarks(2) > 0);
         ZT_TRUE("цвета самого снимка не тронуты", sameShade(plain, shadeOf(2)));
 
@@ -275,7 +282,7 @@ int main(int argc, char** argv) {
               QStringLiteral("![[img.png|%1]]").arg(expected).toStdString(),
               blockAt(2).text().toStdString());
         ZT_TRUE("резерв пересчитан под новую ширину",
-                std::fabs(takenBy(2) - (expected + kGap)) < 1.5);
+                std::fabs(takenBy(2) - (expected + kGap + cornersRoom())) < 1.5);
 
         QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
         QTest::qWait(10);
@@ -323,7 +330,7 @@ int main(int argc, char** argv) {
         ZT_TRUE("в файл уходит путь с #w=50",
                 out.find("![фото](img.png#w=50)") != std::string::npos);
         ZT_TRUE("резерв ужался до 50",
-                std::fabs(takenBy(0) - (50.0 + kGap)) < 1.5);
+                std::fabs(takenBy(0) - (50.0 + kGap + cornersRoom())) < 1.5);
     }
 
     // Правка ломает путь вики-вложения — резерв обязан сняться.
@@ -339,7 +346,7 @@ int main(int argc, char** argv) {
     QTest::qWait(10);
     ZT_TRUE("место вернулось после починки строки (" +
                 std::to_string(int(takenBy(2))) + ")",
-            std::fabs(takenBy(2) - (40.0 + kGap)) < 1.5);
+            std::fabs(takenBy(2) - (40.0 + kGap + cornersRoom())) < 1.5);
 
     // Ctrl+C/Ctrl+X/Ctrl+V: каретка на картинке — выбранная картинка. В
     // клипборд идёт текстовое представление строки, вставка идёт через полный
@@ -375,7 +382,7 @@ int main(int argc, char** argv) {
                     blockAt(pasted).text() == QStringLiteral("![[img.png|40]]"));
             ZT_TRUE("у вставленной место есть (" +
                         std::to_string(int(takenBy(pasted))) + ")",
-                    std::fabs(takenBy(pasted) - (40.0 + kGap)) < 1.5);
+                    std::fabs(takenBy(pasted) - (40.0 + kGap + cornersRoom())) < 1.5);
         }
 
         // Откат: вставка и вырезание — по своему шагу истории.
