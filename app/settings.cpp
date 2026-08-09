@@ -168,6 +168,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("cornerShare"), a.imageCornerShare},
         {QStringLiteral("cornerMaxLength"), a.imageCornerMaxLength},
         {QStringLiteral("cornerWidth"), a.imageCornerWidth},
+        {QStringLiteral("cornerOffset"), a.imageCornerOffset},
     };
 
     QJsonObject statusBar{
@@ -373,6 +374,8 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     if (cornerMax.isDouble()) a.imageCornerMaxLength = qMax(0, cornerMax.toInt());
     const QJsonValue cornerWidth = imageSelection.value(QStringLiteral("cornerWidth"));
     if (cornerWidth.isDouble()) a.imageCornerWidth = qMax(0.5, cornerWidth.toDouble());
+    const QJsonValue cornerOffset = imageSelection.value(QStringLiteral("cornerOffset"));
+    if (cornerOffset.isDouble()) a.imageCornerOffset = qMax(0.0, cornerOffset.toDouble());
 
     const QJsonObject statusBar = root.value(QStringLiteral("statusBar")).toObject();
     const QJsonValue statusFamily = statusBar.value(QStringLiteral("family"));

@@ -843,9 +843,10 @@ void NoteView::paintImage(QPainter& painter, const QTextBlock& block) {
 void NoteView::paintImageCorners(QPainter& painter, const QRectF& photo) {
     if (photo.isEmpty()) return;
     const Appearance& a = appearance();
-    const qreal length =
-        qMin(qreal(a.imageCornerMaxLength),
-             qMin(photo.width(), photo.height()) * qMax(0.0, a.imageCornerShare));
+    // Доля от ПОКАЗАННОГО размера, а не от размера файла: уголки — это про то,
+    // что человек видит на экране.
+    qreal length = qMin(photo.width(), photo.height()) * qMax(0.0, a.imageCornerShare);
+    if (a.imageCornerMaxLength > 0) length = qMin(length, qreal(a.imageCornerMaxLength));
     if (length <= 0.0) return;
 
     QPen pen(a.caretColor);
@@ -855,10 +856,11 @@ void NoteView::paintImageCorners(QPainter& painter, const QRectF& photo) {
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, false);
     painter.setPen(pen);
-    // Половина толщины внутрь: линия шириной w рисуется по центру пути, и без
-    // сдвига половина уголка ушла бы за край фотографии.
-    const QRectF box = photo.adjusted(pen.widthF() / 2, pen.widthF() / 2, -pen.widthF() / 2,
-                                      -pen.widthF() / 2);
+    // Наружу от края: по самому краю уголки сливались с содержимым снимка.
+    // Половина толщины добавляется сверху — линия рисуется по центру пути, и
+    // без этого внутренний край уголка лёг бы на пиксели фотографии.
+    const qreal out = qMax(0.0, a.imageCornerOffset) + pen.widthF() / 2;
+    const QRectF box = photo.adjusted(-out, -out, out, out);
     for (int corner = 0; corner < 4; ++corner) {
         const bool right = corner == 1 || corner == 2;
         const bool bottom = corner >= 2;

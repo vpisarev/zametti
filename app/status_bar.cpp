@@ -161,22 +161,20 @@ void StatusBar::showImage() {
     // Внутри третьей группы разделитель — пробел: это всё про одно, про сами
     // пиксели, и точками оно бы рассыпалось.
     QStringList head;
-    head << image_.name;
-    // Формат стоит при ВЕСЕ, а не при разрешении: и то и другое — про сам файл,
-    // а группа справа тогда остаётся чисто про пиксели и не рябит.
-    head << (image_.format.isEmpty()
-                 ? humanBytes(image_.bytes)
-                 : image_.format.toUpper() + QLatin1Char(' ') + humanBytes(image_.bytes));
-
-    QStringList pixels;
+    // Формата в строке нет намеренно: расширение в имени файла говорит о нём
+    // однозначно, и «01n6….jxl · JXL» — это одно и то же слово дважды.
+    head << image_.name << humanBytes(image_.bytes);
     if (!image_.size.isEmpty())
-        pixels << QStringLiteral("%1×%2").arg(image_.size.width()).arg(image_.size.height());
-    // Цвет и глубина известны только у разжатой копии. Пока картинку не
-    // показывали, их просто нет — и придумывать их нельзя.
-    if (!image_.colorSpace.isEmpty()) pixels << image_.colorSpace;
-    if (image_.bits > 0) pixels << QStringLiteral("%1 бит").arg(image_.bits);
-    if (image_.frames > 1) pixels << QStringLiteral("кадров %1").arg(humanCount(image_.frames));
-    if (!pixels.isEmpty()) head << pixels.join(QLatin1Char(' '));
+        head << QStringLiteral("%1×%2").arg(image_.size.width()).arg(image_.size.height());
+
+    // Цвет и глубина — вместе и отдельной секцией: это про то, как записаны
+    // сами отсчёты. Известны они только у разжатой копии; пока картинку не
+    // показывали, их просто нет, и придумывать их нельзя.
+    QStringList samples;
+    if (!image_.colorSpace.isEmpty()) samples << image_.colorSpace;
+    if (image_.bits > 0) samples << QStringLiteral("%1 бит").arg(image_.bits);
+    if (image_.frames > 1) samples << QStringLiteral("кадров %1").arg(humanCount(image_.frames));
+    if (!samples.isEmpty()) head << samples.join(QLatin1Char(' '));
 
     const QString known = head.join(separator);
     left_->setToolTip(image_.caption.isEmpty() ? known : known + separator + image_.caption);

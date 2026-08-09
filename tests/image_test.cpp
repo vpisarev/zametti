@@ -201,10 +201,11 @@ int main(int argc, char** argv) {
         const QRectF photo = editor.imageRectInViewport(blockAt(n));
         const QColor want = zametti::appearance().caretColor;
         int marks = 0;
-        // Полоса в десять точек вдоль верхнего края: там лежат верхние уголки
-        // и ничего больше.
-        for (int x = int(photo.left()); x < int(photo.right()); ++x)
-            for (int y = int(photo.top()); y < int(photo.top()) + 10 && y < frame.height(); ++y) {
+        // Полоса вдоль верхнего края, захватывающая и то, что СНАРУЖИ: уголки
+        // вынесены за край фотографии, чтобы не сливаться с её содержимым.
+        for (int x = int(photo.left()) - 12; x < int(photo.right()) + 12; ++x)
+            for (int y = int(photo.top()) - 12; y < int(photo.top()) + 4 && y < frame.height();
+                 ++y) {
                 if (x < 0 || y < 0 || x >= frame.width()) continue;
                 const QColor at = frame.pixelColor(x, y);
                 if (std::abs(at.red() - want.red()) < 24 &&

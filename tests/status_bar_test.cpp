@@ -131,7 +131,11 @@ void checkImageLine() {
     bar.setImage(image);
 
     checkHas(leftText(bar), QStringLiteral("1920×1080"), "разрешение картинки");
-    checkHas(leftText(bar), QStringLiteral("WEBP"), "формат картинки");
+    // Формата в строке нет намеренно: расширение в имени файла говорит о нём
+    // однозначно, и «01n6….webp · WEBP» — одно слово дважды.
+    check(!leftText(bar).contains(QStringLiteral("WEBP")),
+          "формат отдельным словом не пишется: он в имени файла");
+    checkHas(leftText(bar), QStringLiteral(".webp"), "расширение видно в имени");
     checkHas(leftText(bar), QStringLiteral("Drawing"), "подпись картинки");
     check(!leftText(bar).contains(QStringLiteral(".md")),
           "пока каретка на картинке, заметка уступает ей место");
