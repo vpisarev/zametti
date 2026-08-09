@@ -843,32 +843,41 @@ void NoteView::paintImage(QPainter& painter, const QTextBlock& block) {
 void NoteView::paintImageCorners(QPainter& painter, const QRectF& photo) {
     if (photo.isEmpty()) return;
     const Appearance& a = appearance();
+    const qreal shortSide = qMin(photo.width(), photo.height());
     // Доля от ПОКАЗАННОГО размера, а не от размера файла: уголки — это про то,
-    // что человек видит на экране.
-    qreal length = qMin(photo.width(), photo.height()) * qMax(0.0, a.imageCornerShare);
-    if (a.imageCornerMaxLength > 0) length = qMin(length, qreal(a.imageCornerMaxLength));
+    // что человек видит на экране. Пол — чтобы на маленькой картинке уголок не
+    // выродился в точку, потолок — сама короткая сторона: длиннее ему негде.
+    const qreal length =
+        qMin(shortSide, qMax(shortSide * qMax(0.0, a.imageCornerShare),
+                             qreal(a.imageCornerMinLength)));
+    const qreal thick = qMax(0.5, a.imageCornerWidth);
     if (length <= 0.0) return;
 
-    QPen pen(a.caretColor);
-    pen.setWidthF(qMax(0.5, a.imageCornerWidth));
-    pen.setCapStyle(Qt::FlatCap);
-    pen.setJoinStyle(Qt::MiterJoin);
+    // Каждый уголок — ОДИН многоугольник, а не две линии. Двумя линиями в
+    // самом углу выходил заметный артефакт: два прямоугольника накладывались
+    // под прямым углом, и стык был виден ступенькой.
+    const qreal out = qMax(0.0, a.imageCornerOffset);
+    const QRectF box = photo.adjusted(-out - thick, -out - thick, out + thick, out + thick);
+
     painter.save();
-    painter.setRenderHint(QPainter::Antialiasing, false);
-    painter.setPen(pen);
-    // Наружу от края: по самому краю уголки сливались с содержимым снимка.
-    // Половина толщины добавляется сверху — линия рисуется по центру пути, и
-    // без этого внутренний край уголка лёг бы на пиксели фотографии.
-    const qreal out = qMax(0.0, a.imageCornerOffset) + pen.widthF() / 2;
-    const QRectF box = photo.adjusted(-out, -out, out, out);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(a.caretColor);
     for (int corner = 0; corner < 4; ++corner) {
         const bool right = corner == 1 || corner == 2;
         const bool bottom = corner >= 2;
         const QPointF at(right ? box.right() : box.left(), bottom ? box.bottom() : box.top());
-        const qreal dx = right ? -length : length;
-        const qreal dy = bottom ? -length : length;
-        painter.drawLine(at, at + QPointF(dx, 0));
-        painter.drawLine(at, at + QPointF(0, dy));
+        const qreal dx = right ? -1.0 : 1.0;
+        const qreal dy = bottom ? -1.0 : 1.0;
+        const QPointF points[6] = {
+            at,
+            at + QPointF(dx * length, 0),
+            at + QPointF(dx * length, dy * thick),
+            at + QPointF(dx * thick, dy * thick),
+            at + QPointF(dx * thick, dy * length),
+            at + QPointF(0, dy * length),
+        };
+        painter.drawPolygon(points, 6);
     }
     painter.restore();
 }

@@ -166,7 +166,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
 
     QJsonObject imageSelection{
         {QStringLiteral("cornerShare"), a.imageCornerShare},
-        {QStringLiteral("cornerMaxLength"), a.imageCornerMaxLength},
+        {QStringLiteral("cornerMinLength"), a.imageCornerMinLength},
         {QStringLiteral("cornerWidth"), a.imageCornerWidth},
         {QStringLiteral("cornerOffset"), a.imageCornerOffset},
     };
@@ -370,8 +370,8 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
         root.value(QStringLiteral("imageSelection")).toObject();
     const QJsonValue cornerShare = imageSelection.value(QStringLiteral("cornerShare"));
     if (cornerShare.isDouble()) a.imageCornerShare = std::clamp(cornerShare.toDouble(), 0.0, 0.5);
-    const QJsonValue cornerMax = imageSelection.value(QStringLiteral("cornerMaxLength"));
-    if (cornerMax.isDouble()) a.imageCornerMaxLength = qMax(0, cornerMax.toInt());
+    const QJsonValue cornerMin = imageSelection.value(QStringLiteral("cornerMinLength"));
+    if (cornerMin.isDouble()) a.imageCornerMinLength = qMax(0, cornerMin.toInt());
     const QJsonValue cornerWidth = imageSelection.value(QStringLiteral("cornerWidth"));
     if (cornerWidth.isDouble()) a.imageCornerWidth = qMax(0.5, cornerWidth.toDouble());
     const QJsonValue cornerOffset = imageSelection.value(QStringLiteral("cornerOffset"));

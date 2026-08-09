@@ -50,7 +50,13 @@ void addDecodedFacts(const QImage& image, ImageFacts& out) {
             break;
     }
     const QColorSpace space = image.colorSpace();
-    if (!space.isValid()) return;
+    if (!space.isValid()) {
+        // Профиля в файле нет вовсе (обычное дело у webp и png). Это не
+        // «неизвестно»: и мы, и любой просмотрщик читаем такие отсчёты как
+        // sRGB — так и пишем, потому что именно так они и показаны.
+        out.colorSpace = QStringLiteral("sRGB");
+        return;
+    }
     out.colorSpace = space.description();
     // Профиль без имени — обычное дело у файлов из камер. Тогда называем то,
     // что знаем наверняка: основные цвета.
