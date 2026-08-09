@@ -17,6 +17,8 @@
 #include "image_insert.h"
 #include "note_id.h"
 #include "settings.h"
+#include "exif.h"
+#include <QDateTime>
 #include "test_util.h"
 
 #include <QApplication>
@@ -105,9 +107,65 @@ public:
 void waitForImport(zametti::NoteEditor& editor) {
     QElapsedTimer waiting;
     waiting.start();
-    while (editor.isReadOnly() && waiting.elapsed() < 60000)
+    while (editor.isReadOnly() && waiting.elapsed() < 600000)
         QApplication::processEvents(QEventLoop::AllEvents, 20);
     QApplication::processEvents();
+}
+
+// Имя вложения чеканится от ДАТЫ СЪЁМКИ, а не от «сейчас»: на этом стоит вся
+// дедупликация — повторный ввоз того же снимка обязан дать тот же префикс id.
+void checkNameCarriesShotDate() {
+    // Снимок с EXIF: берём настоящий файл из корпуса, выдуманный EXIF проверял
+    // бы наш же писатель, а не чужие файлы.
+    const QString source = QStringLiteral("/home/vpisarev/Pictures/Wallpapers");
+    QDir dir(source);
+    const QStringList shots = dir.entryList({QStringLiteral("*.jpg")}, QDir::Files);
+    if (shots.isEmpty()) return;   // нет корпуса — проверять нечего
+
+    const QString path = dir.filePath(shots.first());
+    const QString store = QDir(g_dir).filePath(QStringLiteral("дата"));
+    QDir().mkpath(store);
+
+    const zametti::StoredImage first =
+        zametti::storeImageFile(path, store, zametti::limitsFromSettings());
+    ZT_TRUE("снимок положен: " + first.error.toStdString(), first.ok());
+    if (!first.ok()) return;
+
+    // Тот же файл второй раз: префикс id (восемь знаков — секунды) обязан
+    // совпасть, а случайный хвост — разойтись.
+    const zametti::StoredImage second =
+        zametti::storeImageFile(path, store, zametti::limitsFromSettings());
+    ZT_TRUE("снимок положен второй раз", second.ok());
+    if (!second.ok()) return;
+
+    ZT_EQ("префикс имени тот же: он от даты съёмки",
+          first.fileName.left(8).toStdString(), second.fileName.left(8).toStdString());
+    // Двойник: второй ввоз того же файла НЕ заводит второго вложения, а
+    // ссылается на первое. Это и есть дедупликация — часть ввоза, а не
+    // надстройка: снаружи возвращается имя для ссылки, как и всегда.
+    ZT_EQ("второй ввоз того же снимка дал то же вложение",
+          first.fileName.toStdString(), second.fileName.toStdString());
+    ZT_TRUE("и сказал, что это двойник", second.duplicate);
+    ZT_TRUE("а первый двойником не был", !first.duplicate);
+    ZT_EQ("файл в хранилище один", num(1),
+          num(QDir(store).entryList({QStringLiteral("*.*")}, QDir::Files).size()));
+
+    // И главное: префикс должен отвечать именно ДАТЕ СЪЁМКИ. Без этой сверки
+    // проверка выше проходила бы и с датой создания файла, и даже с «сейчас» —
+    // два ввоза подряд всё равно попали бы в одну секунду.
+    QFile raw(path);
+    if (!raw.open(QIODevice::ReadOnly)) return;
+    const QByteArray head = raw.read(2 * 1024 * 1024);
+    const zametti::ImageMeta meta =
+        zametti::readImageMeta(std::string_view(head.constData(), size_t(head.size())));
+    const QString when = QString::fromStdString(zametti::exifDateTaken(meta.exif));
+    if (when.isEmpty()) return;   // у этого файла даты нет — сверять нечего
+
+    const QDateTime taken = QDateTime::fromString(when, Qt::ISODate);
+    const QString expected = QString::fromStdString(
+        zametti::makeNoteId(std::uint64_t(taken.toSecsSinceEpoch()), 0));
+    ZT_EQ("префикс id — это дата съёмки (" + when.toStdString() + ")",
+          expected.left(8).toStdString(), first.fileName.left(8).toStdString());
 }
 
 void checkStoresUnderFreshName() {
@@ -129,10 +187,15 @@ void checkStoresUnderFreshName() {
     // А человеческое имя обязано уцелеть в alt — иначе оно потеряно навсегда.
     ZT_EQ("alt — имя исходника", std::string("исходник"), stored.alt.toStdString());
 
-    // Вторая такая же ложится РЯДОМ, а не поверх.
+    // Вторая такая же НЕ ложится второй копией: с появлением дедупликации тот
+    // же самый файл возвращает имя уже лежащего вложения. Прежде здесь
+    // проверялось обратное («и под другим именем») — и это была верная
+    // проверка ровно до того дня, пока двойники не начали ловиться.
     const zametti::StoredImage again = zametti::storeImageFile(source, g_dir, limits);
-    ZT_TRUE("вторая тоже легла", again.ok());
-    ZT_TRUE("и под другим именем", again.fileName != stored.fileName);
+    ZT_TRUE("вторая тоже дала имя для ссылки", again.ok());
+    ZT_EQ("и это имя того же вложения", stored.fileName.toStdString(),
+          again.fileName.toStdString());
+    ZT_TRUE("отмечено как двойник", again.duplicate);
 }
 
 void checkRefusalLeavesNoTrash() {
@@ -444,6 +507,7 @@ int main(int argc, char** argv) {
     }
     g_dir = tmp.path();
 
+    checkNameCarriesShotDate();
     checkBackgroundImport();
     checkStoresUnderFreshName();
     checkRefusalLeavesNoTrash();

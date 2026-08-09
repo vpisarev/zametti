@@ -77,6 +77,67 @@ size_t findTagValue(std::string_view exif, uint16_t tag, bool* bigOut) {
     return 0;
 }
 
+// Запись тега в ЛЮБОМ каталоге, а не только в нулевом: дата съёмки лежит в
+// подкаталоге Exif IFD, и ходить туда прежним findTagValue было нечем.
+// Возвращает смещение самой записи (12 байт), или 0.
+size_t findEntryIn(std::string_view exif, uint32_t ifd, uint16_t tag, bool big) {
+    if (ifd < 8 || size_t(ifd) + 2 > exif.size()) return 0;
+    const uint8_t* p = bytes(exif);
+    const uint16_t count = read16(p + ifd, big);
+    for (uint16_t i = 0; i < count; ++i) {
+        const size_t entry = size_t(ifd) + 2 + size_t(i) * 12;
+        if (entry + 12 > exif.size()) return 0;
+        if (read16(p + entry, big) == tag) return entry;
+    }
+    return 0;
+}
+
+// ASCII-значение записи. Значения длиннее четырёх байт лежат НЕ в самой
+// записи, а по смещению из неё, — на этом молча ошибаются чаще всего.
+std::string asciiValue(std::string_view exif, size_t entry, bool big) {
+    if (entry == 0 || entry + 12 > exif.size()) return {};
+    const uint8_t* p = bytes(exif);
+    const uint16_t type = read16(p + entry + 2, big);
+    if (type != 2 && type != 7) return {};   // ASCII либо UNDEFINED (UserComment)
+    const uint32_t count = read32(p + entry + 4, big);
+    if (count == 0 || count > exif.size()) return {};
+    size_t at = entry + 8;
+    if (count > 4) {
+        const uint32_t offset = read32(p + entry + 8, big);
+        if (offset + count > exif.size()) return {};
+        at = offset;
+    }
+    std::string_view value = exif.substr(at, count);
+    // UserComment начинается с восьмибайтовой пометки кодировки ("ASCII\0\0\0",
+    // "UNICODE\0"). Её надо снять, иначе в подпись уедет служебное слово.
+    if (type == 7 && value.size() > 8) {
+        if (value.compare(0, 6, "ASCII\0", 6) == 0) value = value.substr(8);
+        else return {};   // UNICODE/JIS не разбираем: там UTF-16 и своя возня
+    }
+    while (!value.empty() && (value.back() == '\0' || value.back() == ' '))
+        value.remove_suffix(1);
+    while (!value.empty() && value.front() == ' ') value.remove_prefix(1);
+    return std::string(value);
+}
+
+// Подкаталог Exif IFD: тег 0x8769 нулевого каталога, значение — смещение.
+uint32_t exifSubIfd(std::string_view exif, uint32_t ifd0, bool big) {
+    const size_t entry = findEntryIn(exif, ifd0, 0x8769, big);
+    if (entry == 0) return 0;
+    return read32(bytes(exif) + entry + 8, big);
+}
+
+// "YYYY:MM:DD HH:MM:SS" из EXIF — в "YYYY-MM-DDTHH:MM:SS".
+std::string isoFromExifTime(const std::string& raw) {
+    if (raw.size() < 19) return {};
+    std::string out = raw.substr(0, 19);
+    if (out[4] != ':' || out[7] != ':' || out[10] != ' ') return {};
+    out[4] = '-';
+    out[7] = '-';
+    out[10] = 'T';
+    return out;
+}
+
 // --- обход контейнеров ----------------------------------------------------
 
 // Длины ЯВНО: string_view из литерала обрывается на первом нуле, и "Exif\0\0"
@@ -96,6 +157,33 @@ bool looksLikeExif(std::string_view exif) {
     bool big = false;
     uint32_t ifd0 = 0;
     return exifHeader(exif, &big, &ifd0);
+}
+
+std::string exifDateTaken(std::string_view exif) {
+    bool big = false;
+    uint32_t ifd0 = 0;
+    if (!exifHeader(exif, &big, &ifd0)) return {};
+
+    // Момент СЪЁМКИ, а не правки: DateTimeOriginal живёт в подкаталоге Exif.
+    if (const uint32_t sub = exifSubIfd(exif, ifd0, big)) {
+        const std::string taken = asciiValue(exif, findEntryIn(exif, sub, 0x9003, big), big);
+        const std::string iso = isoFromExifTime(taken);
+        if (!iso.empty()) return iso;
+    }
+    // Запасной ход — DateTime из нулевого каталога: у сканов и правленых
+    // файлов другого времени и нет.
+    return isoFromExifTime(asciiValue(exif, findEntryIn(exif, ifd0, 0x0132, big), big));
+}
+
+std::string exifComment(std::string_view exif) {
+    bool big = false;
+    uint32_t ifd0 = 0;
+    if (!exifHeader(exif, &big, &ifd0)) return {};
+    if (const uint32_t sub = exifSubIfd(exif, ifd0, big)) {
+        const std::string user = asciiValue(exif, findEntryIn(exif, sub, 0x9286, big), big);
+        if (!user.empty()) return user;
+    }
+    return asciiValue(exif, findEntryIn(exif, ifd0, 0x010E, big), big);
 }
 
 Orientation exifOrientation(std::string_view exif) {
@@ -274,6 +362,113 @@ ImageMeta readImageMeta(std::string_view file) {
     return meta;
 }
 
+// --- сверка двойников -----------------------------------------------------
+
+namespace {
+
+// Сравнение накопленных кусков. Собираем в строки, а не сравниваем на лету:
+// куски одних и тех же данных в двух файлах бывают нарезаны по-разному
+// (цепочка jxlp против одного jxlc), и «по кускам» они не сойдутся, хотя сами
+// данные равны.
+bool sameBytes(const std::string& a, const std::string& b) {
+    return !a.empty() && a == b;
+}
+
+// JXL: голый кодовый поток (подпись FF 0A) или контейнер ISO BMFF.
+std::string jxlData(std::string_view file) {
+    if (file.size() >= 2 && uint8_t(file[0]) == 0xFF && uint8_t(file[1]) == 0x0A)
+        return std::string(file);   // голый поток: он весь и есть данные
+
+    static constexpr std::string_view kSignature{"\0\0\0\x0CJXL \r\n\x87\n", 12};
+    if (!starts(file, kSignature)) return {};
+
+    std::string data;
+    size_t at = 0;
+    while (at + 8 <= file.size()) {
+        uint64_t size = read32(bytes(file) + at, true);
+        const std::string_view type = file.substr(at + 4, 4);
+        size_t header = 8;
+        if (size == 1) {   // расширенный размер: 64 бита после типа
+            if (at + 16 > file.size()) return {};
+            size = (uint64_t(read32(bytes(file) + at + 8, true)) << 32) |
+                   read32(bytes(file) + at + 12, true);
+            header = 16;
+        } else if (size == 0) {
+            size = file.size() - at;   // «до конца файла»
+        }
+        if (size < header || at + size > file.size()) return {};
+        if (type == "jxlc" || type == "jxlp") {
+            std::string_view body = file.substr(at + header, size - header);
+            // У jxlp первые четыре байта — номер куска, а не данные.
+            if (type == "jxlp" && body.size() >= 4) body = body.substr(4);
+            data.append(body);
+        }
+        at += size;
+    }
+    return data;
+}
+
+// WebP: чанки RIFF. Данные — VP8 (lossy), VP8L (lossless), ALPH (альфа);
+// метаданные — EXIF, XMP, ICCP; VP8X — заголовок расширенного контейнера, в
+// нём лежат флаги наличия метаданных, и сравнивать его нельзя.
+std::string webpData(std::string_view file) {
+    if (file.size() < 12 || !starts(file, "RIFF") || file.substr(8, 4) != "WEBP") return {};
+    std::string data;
+    size_t at = 12;
+    while (at + 8 <= file.size()) {
+        const std::string_view type = file.substr(at, 4);
+        const uint32_t size = read32(bytes(file) + at + 4, false);
+        if (at + 8 + size > file.size()) return {};
+        if (type == "VP8 " || type == "VP8L" || type == "ALPH")
+            data.append(file.substr(at + 8, size));
+        at += 8 + size + (size & 1);   // чанки выровнены по чётному байту
+    }
+    return data;
+}
+
+// JPEG: маркеры. Данные — всё, кроме APP1 (Exif, XMP), APP2 (ICC) и COM.
+// Остальные APP-маркеры (JFIF, Adobe) оставляем: они влияют на разжатие.
+std::string jpegData(std::string_view file) {
+    if (file.size() < 4 || uint8_t(file[0]) != 0xFF || uint8_t(file[1]) != 0xD8) return {};
+    std::string data;
+    size_t at = 2;
+    while (at + 4 <= file.size()) {
+        if (uint8_t(file[at]) != 0xFF) return {};
+        const uint8_t marker = uint8_t(file[at + 1]);
+        if (marker == 0xD9) break;                       // конец
+        const size_t length = read16(bytes(file) + at + 2, true);
+        if (length < 2 || at + 2 + length > file.size()) return {};
+        const bool meta = marker == 0xE1 || marker == 0xE2 || marker == 0xFE;
+        if (!meta) data.append(file.substr(at, 2 + length));
+        at += 2 + length;
+        if (marker == 0xDA) {   // начало скана: дальше сжатые данные до конца
+            data.append(file.substr(at));
+            break;
+        }
+    }
+    return data;
+}
+
+}  // namespace
+
+bool sameJxlCompressedData(std::string_view a, std::string_view b) {
+    return sameBytes(jxlData(a), jxlData(b));
+}
+
+bool sameWebpCompressedData(std::string_view a, std::string_view b) {
+    return sameBytes(webpData(a), webpData(b));
+}
+
+bool sameJpegCompressedData(std::string_view a, std::string_view b) {
+    return sameBytes(jpegData(a), jpegData(b));
+}
+
+bool sameCompressedData(std::string_view a, std::string_view b) {
+    if (sameJxlCompressedData(a, b)) return true;
+    if (sameWebpCompressedData(a, b)) return true;
+    return sameJpegCompressedData(a, b);
+}
+
 bool webpIsLossless(std::string_view file) {
     if (file.size() < 12) return false;
     const uint8_t* p = bytes(file);
@@ -317,6 +512,46 @@ std::string escapeXml(std::string_view text) {
 }
 
 }  // namespace
+
+namespace {
+
+// Значение свойства XMP: либо элементом <ns:имя>значение</ns:имя>, либо
+// атрибутом ns:имя="значение". Оба вида встречаются в живых файлах, и который
+// именно — зависит от программы, которая писала.
+std::string xmpValue(std::string_view xmp, std::string_view name) {
+    const std::string element = "<" + std::string(name) + ">";
+    size_t at = xmp.find(element);
+    if (at != std::string_view::npos) {
+        const size_t from = at + element.size();
+        const size_t to = xmp.find('<', from);
+        if (to != std::string_view::npos) return std::string(xmp.substr(from, to - from));
+    }
+    const std::string attribute = std::string(name) + "=\"";
+    at = xmp.find(attribute);
+    if (at == std::string_view::npos) return {};
+    const size_t from = at + attribute.size();
+    const size_t to = xmp.find('"', from);
+    if (to == std::string_view::npos) return {};
+    return std::string(xmp.substr(from, to - from));
+}
+
+}  // namespace
+
+std::string xmpDescription(std::string_view xmp) {
+    // dc:description чаще всего обёрнут в rdf:Alt/rdf:li — берём внутренность.
+    std::string value = xmpValue(xmp, "rdf:li");
+    if (xmp.find("dc:description") == std::string_view::npos) value.clear();
+    if (value.empty()) value = xmpValue(xmp, "dc:description");
+    return value;
+}
+
+std::string xmpCreateDate(std::string_view xmp) {
+    std::string value = xmpValue(xmp, "xmp:CreateDate");
+    // Зону и доли секунды отбрасываем: нам нужна секунда, из которой чеканится
+    // имя, и она обязана совпасть с той, что даёт EXIF.
+    if (value.size() > 19) value.resize(19);
+    return value;
+}
 
 std::string xmpWithFileName(std::string_view existing, std::string_view fileName) {
     if (fileName.empty()) return std::string(existing);

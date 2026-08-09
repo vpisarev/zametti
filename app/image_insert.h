@@ -43,6 +43,11 @@ struct StoredImage {
     int width = 0;
     int height = 0;
 
+    // Такая картинка уже лежала: файла не заводили, fileName — имя старого.
+    // Дедупликация — часть ввоза, а не надстройка над ним, и снаружи разницы
+    // нет: имя для ссылки возвращается в обоих случаях.
+    bool duplicate = false;
+
     bool ok() const { return !fileName.isEmpty(); }
 };
 

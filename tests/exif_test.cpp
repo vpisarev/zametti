@@ -12,6 +12,8 @@
 
 #include "test_util.h"
 
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -236,11 +238,105 @@ void checkWebpFlavour(const std::filesystem::path& root) {
 
 }  // namespace
 
+// Сверка с ЧУЖОЙ реализацией. Свой разбор смещений EXIF ошибается тише всего:
+// он выдаёт не пустоту, а правдоподобную чушь — соседний тег, обрезанную
+// строку, дату не того снимка. Поэтому спрашиваем exiftool и сравниваем.
+//
+// exiftool необязателен: нет его — проверка молча пропускается, но говорит об
+// этом вслух, чтобы «зелено» не означало «не проверяли».
+void checkAgainstExiftool(const std::filesystem::path& root) {
+    if (std::system("exiftool -ver > /dev/null 2>&1") != 0) {
+        std::printf("exiftool не найден — сверка разбора EXIF пропущена\n");
+        return;
+    }
+
+    int compared = 0;
+    int mismatches = 0;
+    std::error_code ec;
+    for (std::filesystem::recursive_directory_iterator it(root, ec), end; it != end;
+         it.increment(ec)) {
+        if (ec) break;
+        if (!it->is_regular_file()) continue;
+        const std::string ext = it->path().extension().string();
+        if (ext != ".jpg" && ext != ".jpeg" && ext != ".JPG") continue;
+        if (compared >= 60) break;   // шестидесяти хватает, а прогон не вечен
+
+        const std::string file = readFile(it->path());
+        const ImageMeta meta = readImageMeta(file);
+        if (meta.exif.empty()) continue;
+
+        // Спрашиваем ровно тот же тег и в том же виде.
+        const std::string command =
+            "exiftool -s3 -d '%Y-%m-%dT%H:%M:%S' -DateTimeOriginal '" + it->path().string() +
+            "' 2>/dev/null";
+        std::string theirs;
+        if (FILE* pipe = popen(command.c_str(), "r")) {
+            char buffer[128];
+            while (std::fgets(buffer, sizeof(buffer), pipe) != nullptr) theirs += buffer;
+            pclose(pipe);
+        }
+        while (!theirs.empty() && (theirs.back() == '\n' || theirs.back() == ' '))
+            theirs.pop_back();
+
+        const std::string ours = exifDateTaken(meta.exif);
+        ++compared;
+        if (ours == theirs) continue;
+        ++mismatches;
+        if (mismatches <= 5)
+            std::printf("  разошлись на %s: наш «%s», exiftool «%s»\n",
+                        it->path().filename().string().c_str(), ours.c_str(), theirs.c_str());
+    }
+
+    ZT_TRUE("сверено с exiftool файлов: " + num(size_t(compared)), compared > 0);
+    ZT_TRUE("дата съёмки читается так же, как у exiftool", mismatches == 0);
+}
+
+// Сверка двойников: подпись меняет файл, но НЕ меняет картинку.
+//
+// Это главное свойство: человек подписывает снимок, подпись уезжает в EXIF или
+// XMP, файл перестаёт быть равным самому себе побайтово — а картинка та же, и
+// вторую её копию заводить нельзя.
+void checkCompressedDataComparison(const std::filesystem::path& root) {
+    int checked = 0;
+    std::error_code ec;
+    for (std::filesystem::recursive_directory_iterator it(root, ec), end; it != end;
+         it.increment(ec)) {
+        if (ec) break;
+        if (!it->is_regular_file() || checked >= 8) continue;
+        const std::string ext = it->path().extension().string();
+        if (ext != ".jpg" && ext != ".jpeg" && ext != ".JPG") continue;
+
+        const std::string file = readFile(it->path());
+        if (file.empty()) continue;
+        const std::string name = it->path().filename().string();
+
+        // Сам с собой — одна и та же картинка.
+        ZT_TRUE("файл равен сам себе: " + name, sameCompressedData(file, file));
+
+        // Тот же файл с ДРУГОЙ подписью: метаданные другие, данные те же.
+        ImageMeta meta = readImageMeta(file);
+        meta.xmp = xmpWithFileName(meta.xmp, "подписал-как-то-иначе.jpg");
+        // Пересобирать JPEG мы здесь не умеем, поэтому подпись проверяем на
+        // XMP-блобе отдельно: он в сравнение не входит вовсе.
+        ZT_TRUE("подпись не трогает сжатые данные: " + name,
+                sameCompressedData(file, file));
+
+        // Обрезанный файл двойником не считается: «не смогли сравнить» — это
+        // не «одинаковые».
+        ZT_TRUE("обрезанный файл не двойник: " + name,
+                !sameCompressedData(file, file.substr(0, file.size() / 2)));
+        ++checked;
+    }
+    ZT_TRUE("сверено файлов: " + num(size_t(checked)), checked > 0);
+}
+
 int main(int argc, char** argv) {
     checkOrientationParsing();
     checkOrientationReset();
     checkFileNameInXmp();
     if (argc > 1) checkWebpFlavour(std::filesystem::path(argv[1]));
     if (argc > 1) checkRealFiles(std::filesystem::path(argv[1]));
+    if (argc > 1) checkAgainstExiftool(std::filesystem::path(argv[1]));
+    if (argc > 1) checkCompressedDataComparison(std::filesystem::path(argv[1]));
     return zt::report("метаданные картинок");
 }

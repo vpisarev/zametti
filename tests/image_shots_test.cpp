@@ -44,7 +44,8 @@ namespace {
 void waitForImport(zametti::NoteEditor& editor) {
     QElapsedTimer waiting;
     waiting.start();
-    while (editor.isReadOnly() && waiting.elapsed() < 60000)
+    // Debug вчетверо медленнее, а пачка бывает в сорок картинок: ждём долго.
+    while (editor.isReadOnly() && waiting.elapsed() < 600000)
         QApplication::processEvents(QEventLoop::AllEvents, 20);
     QApplication::processEvents();
 }
@@ -281,14 +282,20 @@ void checkFiveInARow() {
 // Сразу после вставки всё сходилось (документ уже размечен), и потому ошибка
 // пряталась до следующего запуска программы.
 void checkManyImagesDoNotOverlap(const QString& root) {
-    const QStringList sources = {
-        root + QStringLiteral("/photo/wallpaper-4mp.jpg"),
-        root + QStringLiteral("/photo/portrait-phone.jpg"),
-        root + QStringLiteral("/photo/orientation6.jpg"),
-        root + QStringLiteral("/vivo/vivo-display-p3.jpg"),
-    };
-    for (const QString& s : sources)
-        if (!QFile::exists(s)) return;
+    // Картинки здесь КРОШЕЧНЫЕ и сделанные на месте, а не снимки из корпуса.
+    // Проверке нужны сорок БЛОКОВ — длинный документ, у которого хвост Qt ещё
+    // не разметила, — а не сорок тяжёлых энкодов: с настоящими фотографиями
+    // прогон в отладочной сборке занимал шесть минут. Кодеки, ориентацию и
+    // цвет проверяют соседние проверки в этом же файле, на настоящих снимках.
+    Q_UNUSED(root);
+    QStringList sources;
+    for (int i = 0; i < 4; ++i) {
+        QImage tiny(24 + i * 8, 18, QImage::Format_RGB32);
+        tiny.fill(QColor(30 * i, 80, 200));
+        const QString path = QDir(g_store).filePath(QStringLiteral("мелкая-%1.png").arg(i));
+        if (!tiny.save(path)) return;
+        sources << path;
+    }
 
     // Окно НАМЕРЕННО НИЗКОЕ: за его краем и начинается неразмеченная часть,
     // где ошибка и жила. В высоком окне всё поместилось бы и проверка ничего
