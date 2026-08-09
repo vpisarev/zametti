@@ -122,6 +122,15 @@ if(TARGET zametti-view)
                              "QT_QPA_PLATFORM=offscreen")
     endforeach()
 
+    # Конфиг: срезатель //-комментариев и сгенерированный шаблон. Шаблон обязан
+    # одновременно разбираться в пустой объект и содержать каждый параметр —
+    # сломать эти два свойства можно порознь.
+    add_executable(config_test config_test.cpp)
+    target_link_libraries(config_test PRIVATE zametti-view zametti-warnings)
+    target_include_directories(config_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME config COMMAND config_test)
+    set_tests_properties(config PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     # Окно «О программе». Главное в нём — лицензии вшитого: их отсутствие
     # видно только тому, кто откроет вкладку, поэтому спрашивает набор.
     add_executable(about_test about_test.cpp)

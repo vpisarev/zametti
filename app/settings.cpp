@@ -463,6 +463,75 @@ QByteArray defaultAppearanceJson() {
     return QJsonDocument(appearanceToJson(Appearance{})).toJson(QJsonDocument::Indented);
 }
 
+QByteArray stripJsonComments(const QByteArray& json) {
+    QByteArray out;
+    out.reserve(json.size());
+    bool inString = false;
+    bool escaped = false;
+    for (int i = 0; i < json.size(); ++i) {
+        const char c = json.at(i);
+        if (inString) {
+            out.append(c);
+            if (escaped) escaped = false;
+            else if (c == '\\') escaped = true;
+            else if (c == '"') inString = false;
+            continue;
+        }
+        if (c == '"') {
+            inString = true;
+            out.append(c);
+            continue;
+        }
+        if (c == '/' && i + 1 < json.size() && json.at(i + 1) == '/') {
+            // До конца строки. Сам перевод строки оставляем: номера строк в
+            // сообщении об ошибке разбора обязаны сойтись с файлом.
+            while (i < json.size() && json.at(i) != '\n') ++i;
+            if (i < json.size()) out.append('\n');
+            continue;
+        }
+        out.append(c);
+    }
+    return out;
+}
+
+bool writeConfigTemplate(QString* error) {
+    const QString path = configPath();
+    if (QFile::exists(path)) return true;   // там правки человека
+    QDir().mkpath(QFileInfo(path).absolutePath());
+
+    // Всё тело — комментарием, снаружи пустой объект. Так файл и остаётся
+    // действующим (отклонений нет), и служит меню: раскомментировал строку —
+    // получил отклонение.
+    const QList<QByteArray> lines = defaultAppearanceJson().split('\n');
+    QByteArray out =
+        "// Конфиг zametti. Здесь перечислено ВСЁ, что можно покрутить, со\n"
+        "// значениями по умолчанию, и всё закомментировано: действующий конфиг —\n"
+        "// это список ОТКЛОНЕНИЙ от умолчаний, а не их копия. Раскомментируйте\n"
+        "// строку (уберите «//» в начале) — и значение станет вашим.\n"
+        "//\n"
+        "// Комментарии понимаются только такие: «//» до конца строки. Внутри\n"
+        "// кавычек они не срезаются, так что «https://» писать можно.\n"
+        "{\n";
+    for (const QByteArray& line : lines) {
+        const QByteArray trimmed = line.trimmed();
+        if (trimmed.isEmpty() || trimmed == "{" || trimmed == "}") continue;
+        out += "    // " + line.trimmed() + "\n";
+    }
+    out += "}\n";
+
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        if (error != nullptr)
+            *error = QStringLiteral("конфиг не записать: %1 (%2)").arg(path, file.errorString());
+        return false;
+    }
+    if (file.write(out) != out.size()) {
+        if (error != nullptr) *error = QStringLiteral("конфиг записан не целиком: ") + path;
+        return false;
+    }
+    return true;
+}
+
 QString configPath() {
     return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) +
            QStringLiteral("/config.json");
@@ -555,7 +624,10 @@ bool loadAppearance(QString* error) {
             return false;
         }
         QJsonParseError parseError{};
-        const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &parseError);
+        // Сначала срезаем //-комментарии: сгенерированный конфиг из них и
+        // состоит, и без этого он бы вовсе не разобрался.
+        const QJsonDocument doc =
+            QJsonDocument::fromJson(stripJsonComments(file.readAll()), &parseError);
         file.close();
         if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
             if (error != nullptr)

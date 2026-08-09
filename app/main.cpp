@@ -51,6 +51,7 @@
 #include <QTimer>
 #include <QTreeView>
 #include <QPointer>
+#include <QFileSystemWatcher>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -532,10 +533,85 @@ int main(int argc, char** argv) {
     searchDebounce.setInterval(150);
     findBar.setHistory(session.searchHistory);
 
-    zametti::applyPalette(editor);
-    zametti::applyPalette(tree);
-    zametti::applyPalette(listView);
-    zametti::applyPalette(resultsView);
+    // Облик применяется ОДНИМ местом — и на старте, и когда конфиг поправили
+    // снаружи. Два места разошлись бы: половина настроек подхватывалась бы на
+    // лету, половина только после перезапуска, и понять, какая именно, было бы
+    // нельзя.
+    const auto applyAppearance = [&] {
+        QFont font(zametti::appearance().sidebarFontFamily.isEmpty()
+                       ? zametti::appearance().fontFamily
+                       : zametti::appearance().sidebarFontFamily);
+        font.setPointSizeF(zametti::appearance().sidebarFontPoint);
+        tree.setFont(font);
+        listView.setFont(font);
+        resultsView.setFont(font);
+        historyTimeline.setFont(font);
+        historyTimeline.setFixedWidth(zametti::appearance().noteListWidth);
+
+        zametti::applyPalette(editor, editor.inHistory());
+        zametti::applyPalette(tree);
+        zametti::applyPalette(listView);
+        zametti::applyPalette(resultsView);
+
+        toolbar.refreshAppearance();
+        statusBar.refreshAppearance();
+        editor.refreshAppearance();
+
+        // Делегаты читают настройки прямо при отрисовке — им довольно
+        // перерисовки, но размеры строк они считают там же, и без сброса
+        // подсказок список остался бы с прежними высотами.
+        tree.doItemsLayout();
+        listView.doItemsLayout();
+        resultsView.doItemsLayout();
+    };
+    applyAppearance();
+
+    // Конфиг правят снаружи — своего окна настроек у нас нет. Следим за файлом
+    // и перечитываем его сами: иначе после каждой правки цвета пришлось бы
+    // перезапускать программу.
+    //
+    // Редакторы пишут конфиг «обрезать → записать» или через переименование, и
+    // слежение при этом слетает: путь возвращаем обратно на каждом срабатывании.
+    // Отстойник — от той же привычки: первый сигнал часто застаёт файл пустым
+    // или недописанным, и разбирать его в этот миг значит ругаться на мусор.
+    QFileSystemWatcher configWatcher;
+    QTimer configSettle;
+    configSettle.setSingleShot(true);
+    configSettle.setInterval(300);
+    const auto watchConfig = [&configWatcher] {
+        const QString path = zametti::configPath();
+        if (QFile::exists(path) && !configWatcher.files().contains(path))
+            configWatcher.addPath(path);
+    };
+    QObject::connect(&configWatcher, &QFileSystemWatcher::fileChanged, &window,
+                     [&](const QString&) {
+                         watchConfig();
+                         configSettle.start();
+                     });
+    QObject::connect(&configSettle, &QTimer::timeout, &window, [&] {
+        watchConfig();
+        // Несохранённое — на диск до перезагрузки облика: пересборка документа
+        // проходит через всю модель, и терять правки на ней недопустимо.
+        editor.save(true);
+
+        QString error;
+        if (!zametti::loadAppearance(&error)) {
+            // Мусор в конфиге — это не повод перекрашивать окно наугад:
+            // работаем на прежних значениях и говорим, что именно не так.
+            std::fprintf(stderr, "конфиг не принят: %s\n", error.toUtf8().constData());
+            // В полосе — причина, а не путь. Путь длиннее всей полосы, и в
+            // первом же снимке многоточие съело ровно то, ради чего сообщение
+            // и показывают: «object is missing after a comma».
+            QString why = error;
+            const QString prefix = zametti::configPath() + QStringLiteral(": ");
+            if (why.startsWith(prefix)) why = why.mid(prefix.size());
+            statusBar.setMessage(QStringLiteral("конфиг не принят: %1").arg(why));
+            return;
+        }
+        applyAppearance();
+        statusBar.setMessage(QString());
+    });
+    watchConfig();
 
     splitter.addWidget(&tree);
     if (model.isStore()) splitter.addWidget(&middle);
@@ -1775,7 +1851,6 @@ int main(int argc, char** argv) {
         toolbar.setPromise(Button::Cloud,
                            QStringLiteral("появится вместе с синхронизацией"));
         toolbar.setPromise(Button::Export, QStringLiteral("появится в этом этапе"));
-        toolbar.setPromise(Button::Settings, QStringLiteral("появится в этом этапе"));
 
         toolbar.setPromise(Button::SearchInHistory,
                            QStringLiteral("появится вместе с единым поиском"));
@@ -1841,9 +1916,28 @@ int main(int argc, char** argv) {
                 about->activateWindow();
                 break;
             }
+            case Button::Settings: {
+                // Конфига может не быть вовсе: тогда пишем шаблон — весь
+                // список параметров, целиком закомментированный. Открывать
+                // человеку пустоту и предлагать «наберите сами» нельзя.
+                QString error;
+                if (!zametti::writeConfigTemplate(&error)) {
+                    QMessageBox::warning(&window, QStringLiteral("zametti"), error);
+                    break;
+                }
+                const QString path = zametti::configPath();
+                if (!QDesktopServices::openUrl(QUrl::fromLocalFile(path))) {
+                    // Внешнего редактора не нашлось — молчать нельзя: человек
+                    // нажал кнопку и не увидел бы ничего.
+                    QMessageBox::warning(
+                        &window, QStringLiteral("zametti"),
+                        QStringLiteral("Не удалось открыть конфиг во внешнем редакторе.\n%1")
+                            .arg(path));
+                }
+                break;
+            }
             case Button::Export:
             case Button::Cloud:
-            case Button::Settings:
             case Button::SearchInHistory:
                 break;   // обещания: кнопки погашены, сюда не доходит
             }
