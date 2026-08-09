@@ -19,6 +19,7 @@
 #include "resources.h"
 #include "serializer.h"
 #include "settings.h"
+#include "status_bar.h"
 #include "toolbar.h"
 
 #include <QApplication>
@@ -330,6 +331,7 @@ int main(int argc, char** argv) {
     QWidget window;
     QSplitter splitter(Qt::Horizontal);
     zametti::Toolbar toolbar;
+    zametti::StatusBar statusBar;
     QWidget middle;
     QWidget rightSide;
 
@@ -545,7 +547,54 @@ int main(int argc, char** argv) {
         shell->setSpacing(0);
         shell->addWidget(&toolbar);
         shell->addWidget(&splitter, 1);
+        shell->addWidget(&statusBar);
     }
+
+    // Полоса сведений. Числа приносит редактор: слова и строки он считает сам,
+    // размер и даты берутся у файла и у метаданных заметки. Здесь только сборка
+    // в кучку — считать окно ничего не должно.
+    const auto showStats = [&editor, &statusBar] {
+        zametti::StatusBar::NoteInfo info;
+        const QString path = editor.filePath();
+        info.valid = !path.isEmpty();
+        if (info.valid) {
+            const QFileInfo file(path);
+            info.path = path;
+            info.bytes = file.size();
+            // Обе даты — из шапки заметки, а не у файла: копирование хранилища
+            // отметки файловой системы теряет (первый же снимок показал
+            // «правлена» временем копирования). Файл остаётся запасным ходом
+            // для заметок без шапки.
+            const auto fromMeta = [&editor](const char* key) {
+                const std::string value = editor.meta().get(key);
+                return value.empty() ? QDateTime()
+                                     : QDateTime::fromString(QString::fromStdString(value),
+                                                             Qt::ISODate);
+            };
+            info.created = fromMeta("created");
+            info.modified = fromMeta("modified");
+            if (!info.created.isValid()) info.created = file.birthTime();
+            if (!info.modified.isValid()) info.modified = file.lastModified();
+            info.words = editor.stats().words;
+            info.lines = editor.stats().lines;
+            info.wordsKnown = editor.statsFresh() && editor.stats().valid;
+        }
+        statusBar.setNote(info);
+        const zametti::CaretPlace place = editor.caretPlace();
+        statusBar.setCaret(place.line, place.column);
+    };
+    QObject::connect(&editor, &zametti::NoteEditor::statsChanged, &window, showStats);
+    QObject::connect(&editor, &zametti::NoteEditor::fileChanged, &window,
+                     [showStats](const QString&) { showStats(); });
+    QObject::connect(&editor, &zametti::NoteEditor::fileSaved, &window,
+                     [showStats](const QString&) { showStats(); });
+    // Место каретки — на каждое движение: по указателю строк это 0.9 мкс,
+    // документ при этом не обходится вовсе.
+    QObject::connect(&editor, &zametti::NoteEditor::cursorPositionChanged, &window,
+                     [&editor, &statusBar] {
+                         const zametti::CaretPlace place = editor.caretPlace();
+                         statusBar.setCaret(place.line, place.column);
+                     });
 
     // Файл изменился снаружи, а правки не сохранены. Окно неблокирующее: работа
     // не встаёт, пока человек думает, и молча мы ничего не затираем.

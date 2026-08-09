@@ -987,6 +987,12 @@ void NoteEditor::rebuild(const Document& doc, int cursor, const ViewAnchor& anch
     note_.built = doc;
     note_.builtValid = true;
     note_.builtZoom = zoom();
+
+    // Слова и строки — здесь и только здесь (плюс запись на диск). Полная
+    // сборка на заметке в 239 КБ стоит 19 мс, счёт по IR — 1.2 мс: в таком
+    // соседстве он незаметен. За заплаткой не считаем вовсе: она стоит 64 мкс,
+    // и счёт был бы в двадцать раз дороже самой правки.
+    if (!patched) refreshStats(doc);
     applyContentWidth();
     // Сборка — не правка: подметать за ней нечего, а область от неё вышла бы
     // во весь документ и утащила бы следующую уборку на полный проход.
@@ -1967,6 +1973,16 @@ bool NoteEditor::applyIrEdit(const MoveResult& moved) {
     return true;
 }
 
+// Пересчёт слов и строк. Зовётся из двух мест — полной сборки и записи на
+// диск, — и оба они и без него стоят миллисекунды.
+void NoteEditor::refreshStats(const Document& ir) { refreshStats(irStats(ir)); }
+
+void NoteEditor::refreshStats(const NoteStats& stats) {
+    note_.stats = stats;
+    note_.statsFresh = true;
+    emit statsChanged();
+}
+
 void NoteEditor::onContentsChanged() {
     // Пересборка и перекладка полей под ширину окна — это облик. Документу они
     // неотличимы от правки текста, и без этих двух признаков ширина окна
@@ -1992,6 +2008,12 @@ void NoteEditor::onContentsChanged() {
     tidySweep(textCursor());
 
     note_.undoRun = false;   // настоящая правка — серия отмены кончилась
+    // Числа отстали от документа. Сам пересчёт будет на ближайшем
+    // автосохранении: на нажатие клавиши статистику не считаем.
+    if (note_.statsFresh) {
+        note_.statsFresh = false;
+        emit statsChanged();
+    }
     recordEdit();
     autosave_.start(appearance().autosaveDelayMs);
 }
@@ -2297,6 +2319,17 @@ void NoteEditor::save(bool interactive) {
         // Признак гасим при любом исходе записи: он относится к одному
         // ближайшему сохранению, а не «пока не сработает».
         note_.restoreSource = 0;
+
+        // Слова и строки: IR записанного уже построен самой записью, и счёт по
+        // нему стоит долей от неё. Дальше документ не менялся — значит числа
+        // отвечают тому, что на экране.
+        //
+        // При Unchanged IR не отдают вовсе (записи не было), и там считаем
+        // обходом документа. Он втрое дороже, но случай редкий — правка,
+        // которая в файле ничего не поменяла, — а обнулить числа пустым IR было
+        // бы куда хуже цены.
+        if (outcome.result == SaveResult::Written) refreshStats(outcome.reread);
+        else refreshStats(documentStats(*document()));
 
         // Файл на диске стал другим: средней колонке пора перечитать заголовок,
         // начало текста и дату. Сигнал, а не прямой вызов: редактор про список

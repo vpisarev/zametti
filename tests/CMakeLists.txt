@@ -102,6 +102,26 @@ if(TARGET zametti-view)
     add_test(NAME save COMMAND save_test ${CMAKE_CURRENT_BINARY_DIR})
     set_tests_properties(save PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    # Счёт слов и строк. Прибор в том же бинарнике: ключ --bench меряет, сколько
+    # стоит пересчёт всего документа против пересчёта одного блока.
+    add_executable(text_stats_test text_stats_test.cpp)
+    target_link_libraries(text_stats_test PRIVATE zametti-view zametti-warnings)
+    target_include_directories(text_stats_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_test(NAME text-stats COMMAND text_stats_test)
+    set_tests_properties(text-stats PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # Та же сверка по корпусам: счёт по IR против обхода документа. Придуманных
+    # руками случаев мало — расхождение нашлось на живых заметках (U+2028 из
+    # Apple Notes), и ловить такое обязан набор, а не глаз.
+    foreach(dir ${ZAMETTI_CORPUS})
+        get_filename_component(name "${dir}" NAME)
+        get_filename_component(abs "${dir}" ABSOLUTE BASE_DIR ${CMAKE_SOURCE_DIR})
+        add_test(NAME text-stats-${name} COMMAND text_stats_test "${abs}")
+        set_tests_properties(text-stats-${name} PROPERTIES ENVIRONMENT
+                             "QT_QPA_PLATFORM=offscreen")
+    endforeach()
+
     add_executable(ops_test ops_test.cpp)
     target_link_libraries(ops_test PRIVATE zametti-view zametti-warnings)
     target_include_directories(ops_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

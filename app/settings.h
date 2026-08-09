@@ -238,6 +238,18 @@ struct Appearance {
     QColor toolbarHoverBackground{0, 0, 0, 18};
     QColor toolbarSeparatorColor{0xdd, 0xe1, 0xe5};
 
+    // --- полоса сведений под окном ---
+    // Кегль мельче основного текста: это справка, а не содержание. Шрифт свой
+    // (не текстовый): цифры в панели должны стоять столбиком при смене числа,
+    // а не прыгать по ширине.
+    QString statusFamily{QStringLiteral("IBM Plex Sans SemiCondensed")};
+    int statusFontPoints = 9;
+    int statusPadding = 10;
+    int statusPaddingTop = 4;
+    QColor statusBackground{0xf5, 0xf5, 0xf2};
+    QColor statusTextColor{0x6b, 0x71, 0x79};
+    QColor statusSeparatorColor{0xdd, 0xe1, 0xe5};
+
     // --- средняя колонка: плоский список заметок ---
     int noteListWidth = 320;
     // Сколько строк сниппета показывать под заголовком.

@@ -15,6 +15,7 @@
 #include "hash.h"
 #include "editor_ops.h"
 #include "note_view.h"
+#include "text_stats.h"
 
 #include <QElapsedTimer>
 #include <QHash>
@@ -57,6 +58,16 @@ public:
     void undo();
     void redo();
 
+    // --- сколько в заметке слов и строк ---
+    //
+    // Считается по IR (см. text_stats.h) и только тогда, когда IR и так строится
+    // целиком. Между пересчётами числа устаревают, и statsFresh об этом честно
+    // говорит: показывать устаревшее число словом без оговорки нельзя.
+    const NoteStats& stats() const { return note_.stats; }
+    bool statsFresh() const { return note_.statsFresh; }
+    // Где стоит каретка. Считается по указателю строк, документ не обходится.
+    CaretPlace caretPlace() const { return zametti::caretPlace(note_.stats, textCursor()); }
+
     // --- поиск в открытой заметке ---
     //
     // Подсветка живёт в extraSelections: документ она не трогает вовсе, а
@@ -90,6 +101,10 @@ public:
     // остались в памяти — вернуть их обычной записью, сохранив правки тела.
     // Тихой деградации быть не должно: заметка без меты уезжает в корень и
     // теряет дату создания.
+    // Шапка открытой заметки: полосе сведений нужна дата создания, и брать её
+    // у файла нельзя — копирование хранилища отметки файловой системы теряет.
+    const NoteMeta& meta() const { return note_.meta; }
+
     bool hasDamagedMeta() const { return note_.lostMeta.present; }
     void restoreDamagedMeta();
     void forgetDamagedMeta() { note_.lostMeta = NoteMeta(); }
@@ -205,6 +220,10 @@ signals:
     void externalAdopted(const QString& path);
     // «Открыть во внешнем редакторе» из контекстного меню: команду знает окно.
     void externalEditorRequested(const QString& path);
+    // Пересчитаны слова и строки. Шлётся только в те мгновения, когда IR и так
+    // строится целиком: полная пересборка документа и запись на диск. На
+    // нажатие клавиши не шлётся ничего.
+    void statsChanged();
 
 protected:
     // Обменный формат — сам markdown. Переопределять обязательно: иначе Qt
@@ -362,6 +381,13 @@ private:
         EditHistory undoChain{appearance().undoLimit,
                               size_t(qMax(1, appearance().undoBudgetMb)) * 1024 * 1024};
         Document built;         // из чего собран документ: нужно заплатке
+        // Слова и строки этой заметки. Живут в объекте заметки, а не в окне:
+        // отложенная заметка возвращается со своими числами и пересчитывать их
+        // при возврате незачем.
+        NoteStats stats;
+        // Числа отвечают тому, что в документе сейчас. Ложь тут дороже
+        // молчания: пока признак снят, окно показывает «?» вместо числа слов.
+        bool statsFresh = false;
         qreal builtZoom = 0.0;
         bool builtValid = false;
         int cursor = 0;
@@ -441,6 +467,8 @@ private:
     // Забыть отложенный снимок вместе с серией: открылся другой файл.
     void forgetPendingEdit();
     void onContentsChanged();
+    void refreshStats(const Document& ir);
+    void refreshStats(const NoteStats& stats);
     void onContentsChange(int position, int charsRemoved, int charsAdded);
     void onCaretMoved();
     void tidyLeftLine(const QTextCursor& left);

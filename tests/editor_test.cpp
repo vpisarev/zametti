@@ -100,6 +100,55 @@ void checkOpenDoesNotTouchFile() {
     checkEqual(source, readFile(path), "открытие заметки не должно её менять");
 }
 
+// Слова и строки: когда они верны, когда честно неизвестны и когда снова верны.
+//
+// Проверяется именно ПОВЕДЕНИЕ, а не арифметика (её проверяет text_stats_test):
+// после открытия число слов есть, после нажатия клавиши оно объявлено
+// устаревшим, после записи — снова есть и уже другое.
+void checkStatsFreshness() {
+    const QString path = writeNote("счёт-слов.md", QStringLiteral("раз два три\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+
+    int notified = 0;
+    QObject::connect(&editor, &zametti::NoteEditor::statsChanged, &editor, [&] { ++notified; });
+
+    editor.openFile(path);
+    QTest::qWait(20);
+    check(editor.statsFresh(), "после открытия число слов известно");
+    check(editor.stats().words == 3, "три слова в открытой заметке");
+    check(editor.stats().lines == 1, "одна строка");
+    const int afterOpen = notified;
+
+    // Каретка в конце: набранное в начале слиплось бы с первым словом, и
+    // «шесть слов» означало бы пять. На этом и попался первый заход.
+    QTextCursor caret = editor.textCursor();
+    caret.movePosition(QTextCursor::End);
+    editor.setTextCursor(caret);
+
+    QTest::keyClicks(&editor, QStringLiteral(" chetyre"));
+    QTest::qWait(20);
+    check(!editor.statsFresh(), "после набора число слов объявлено устаревшим");
+    check(notified > afterOpen, "об устаревании окно узнаёт сигналом, а не опросом");
+    check(editor.stats().words == 3, "устаревшее число не подменяется догадкой");
+
+    // Ещё десяток нажатий: сигнал об устаревании обязан быть ОДИН на серию,
+    // иначе окно перерисовывалось бы на каждую букву.
+    const int afterFirstKey = notified;
+    QTest::keyClicks(&editor, QStringLiteral(" pyat shest"));
+    QTest::qWait(20);
+    check(notified == afterFirstKey, "на каждое нажатие сигнала нет");
+
+    editor.save(false);
+    QTest::qWait(20);
+    check(editor.statsFresh(), "после записи число слов снова известно");
+    checkEqual(QStringLiteral("6"), QString::number(editor.stats().words),
+               "шесть слов после набора");
+}
+
 // Метаданные заметки редактор не видит — их нет в QTextDocument, — но терять
 // при сохранении не имеет права: в parent живёт место заметки в дереве.
 void checkMetaSurvivesEditing() {
@@ -2457,6 +2506,7 @@ int main(int argc, char** argv) {
     }
 
     checkOpenDoesNotTouchFile();
+    checkStatsFreshness();
     checkMetaSurvivesEditing();
     checkEmptyNoteCaret();
     checkCaretPainting();

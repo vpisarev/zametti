@@ -164,6 +164,16 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("folderScale"), a.sidebarFolderScale},
     };
 
+    QJsonObject statusBar{
+        {QStringLiteral("family"), a.statusFamily},
+        {QStringLiteral("fontPoints"), a.statusFontPoints},
+        {QStringLiteral("padding"), a.statusPadding},
+        {QStringLiteral("paddingTop"), a.statusPaddingTop},
+        {QStringLiteral("background"), colorToString(a.statusBackground)},
+        {QStringLiteral("textColor"), colorToString(a.statusTextColor)},
+        {QStringLiteral("separatorColor"), colorToString(a.statusSeparatorColor)},
+    };
+
     QJsonObject toolbar{
         {QStringLiteral("iconSize"), a.toolbarIconSize},
         {QStringLiteral("buttonPadding"), a.toolbarButtonPadding},
@@ -240,6 +250,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("sidebar"), sidebar},
         {QStringLiteral("noteList"), noteList},
         {QStringLiteral("toolbar"), toolbar},
+        {QStringLiteral("statusBar"), statusBar},
         {QStringLiteral("find"), find},
         {QStringLiteral("editor"), editor},
         {QStringLiteral("images"), images},
@@ -346,6 +357,19 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readReal(sidebar, "folderScale", a.sidebarFolderScale);
     const QJsonValue width = sidebar.value(QStringLiteral("width"));
     if (width.isDouble()) a.sidebarWidth = width.toInt();
+
+    const QJsonObject statusBar = root.value(QStringLiteral("statusBar")).toObject();
+    const QJsonValue statusFamily = statusBar.value(QStringLiteral("family"));
+    if (statusFamily.isString()) a.statusFamily = statusFamily.toString();
+    const QJsonValue statusPoints = statusBar.value(QStringLiteral("fontPoints"));
+    if (statusPoints.isDouble()) a.statusFontPoints = std::clamp(statusPoints.toInt(), 6, 24);
+    const QJsonValue statusPadding = statusBar.value(QStringLiteral("padding"));
+    if (statusPadding.isDouble()) a.statusPadding = qMax(0, statusPadding.toInt());
+    const QJsonValue statusPaddingTop = statusBar.value(QStringLiteral("paddingTop"));
+    if (statusPaddingTop.isDouble()) a.statusPaddingTop = qMax(0, statusPaddingTop.toInt());
+    readColor(statusBar, "background", a.statusBackground);
+    readColor(statusBar, "textColor", a.statusTextColor);
+    readColor(statusBar, "separatorColor", a.statusSeparatorColor);
 
     const QJsonObject toolbar = root.value(QStringLiteral("toolbar")).toObject();
     const QJsonValue iconSize = toolbar.value(QStringLiteral("iconSize"));

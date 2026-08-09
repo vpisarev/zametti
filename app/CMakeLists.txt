@@ -43,6 +43,8 @@ add_library(zametti-view STATIC
     search.cpp
     settings.h
     settings.cpp
+    text_stats.h
+    text_stats.cpp
 )
 # История правок живёт в хранилищной библиотеке, а зовёт её редактор — отсюда
 # зависимость слоя модели на zametti-store-lib. Обратной нет и быть не должно:
@@ -74,6 +76,8 @@ add_library(zametti-widgets STATIC
     image_insert.cpp
     icons.h
     icons.cpp
+    status_bar.h
+    status_bar.cpp
     toolbar.h
     toolbar.cpp
     resources.h
