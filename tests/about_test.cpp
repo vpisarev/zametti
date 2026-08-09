@@ -12,6 +12,11 @@
 
 #include <QApplication>
 #include <QTabWidget>
+#include <QTest>
+#include <QTextBlock>
+#include <QTextBrowser>
+#include <QTextFragment>
+#include <QUrl>
 #include <QTextDocument>
 #include <QTextEdit>
 
@@ -120,8 +125,56 @@ void checkWindow() {
         check(!rawMarkup, "справка собрана, а не показана сырьём");
     }
 
+    // Ссылки НЕ ходят внутри окна. QTextBrowser в режиме чтения по щелчку
+    // грузит адрес в себя, не может — и остаётся пустым насовсем; окно
+    // чинилось только выходом из программы. Проверяем и признак, и сам щелчок.
+    for (int i = 0; i < tabs->count(); ++i) {
+        auto* view = qobject_cast<QTextBrowser*>(tabs->widget(i));
+        check(view != nullptr && !view->openLinks(),
+              std::string("ссылки не ходят внутри вкладки ") +
+                  tabs->tabText(i).toUtf8().constData());
+        if (view == nullptr) continue;
+    }
+
     const int storage = tabWith(tabs, QStringLiteral("Формат хранилища"));
     check(storage >= 0, "вкладка формата хранилища есть");
+
+    // И настоящим щелчком по настоящей ссылке — потому что признак можно
+    // выставить, а обработчик написать неверно. Сигнал руками тут не годится:
+    // переход у QTextBrowser заведён на СВОЙ разбор нажатия, и «испущенный»
+    // anchorClicked ничего не ломает — такая проверка была бы пустышкой.
+    if (readme >= 0) {
+        auto* view = qobject_cast<QTextBrowser*>(tabs->widget(readme));
+        tabs->setCurrentIndex(readme);
+        about.resize(900, 700);
+        about.show();
+        QApplication::processEvents();
+
+        QTextCursor anchor;
+        for (QTextBlock block = view->document()->begin();
+             block.isValid() && anchor.isNull(); block = block.next()) {
+            for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+                const QTextFragment fragment = it.fragment();
+                if (!fragment.isValid() || !fragment.charFormat().isAnchor()) continue;
+                anchor = QTextCursor(view->document());
+                anchor.setPosition(fragment.position() + fragment.length() / 2);
+                break;
+            }
+        }
+        check(!anchor.isNull(), "в README есть хотя бы одна ссылка");
+        if (!anchor.isNull()) {
+            view->setTextCursor(anchor);
+            view->ensureCursorVisible();
+            QApplication::processEvents();
+            const QString before = view->document()->toPlainText();
+            const QRect box = view->cursorRect(anchor);
+            QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, box.center());
+            QApplication::processEvents();
+            check(view->document()->toPlainText() == before,
+                  "после щелчка по ссылке страница цела");
+            check(!view->document()->toPlainText().isEmpty(), "страница не опустела");
+        }
+    }
 
     const int build = tabWith(tabs, QStringLiteral("Сборка"));
     check(build >= 0, "вкладка сборки есть");

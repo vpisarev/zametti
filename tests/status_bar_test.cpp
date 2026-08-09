@@ -10,7 +10,10 @@
 #include "status_bar.h"
 #include "test_util.h"
 
+#include <QAbstractTextDocumentLayout>
 #include <QApplication>
+#include <QScrollBar>
+#include <QTest>
 #include <QDir>
 #include <QFile>
 #include <QImage>
@@ -197,6 +200,39 @@ void checkCaretImage() {
     editor.caretImage();
     check(afterFirst == 1 && zametti::imageFactsCacheSize() == 1,
           "картинка читается один раз, дальше из кэша");
+
+    // Настоящий путь человека: он не ставит каретку из кода, он ЩЁЛКАЕТ по
+    // фотографии. Щелчок проходит через snapCaretOffImage и может оставить
+    // каретку с выделением, чей position стоит уже в следующем блоке.
+    {
+        editor.resize(700, 500);
+        editor.show();
+        QTest::qWaitForWindowExposed(&editor);
+        QTest::qWait(50);
+
+        QTextBlock photo;
+        for (QTextBlock block = editor.document()->begin(); block.isValid();
+             block = block.next())
+            if (zametti::blockImageRef(block).valid) photo = block;
+        check(photo.isValid(), "блок с фотографией найден");
+
+        // Середина фотографии в координатах виджета.
+        const QAbstractTextDocumentLayout* layout = editor.document()->documentLayout();
+        const QRectF box = layout->blockBoundingRect(photo);
+        const QPoint at = QPoint(int(box.center().x()),
+                                 int(box.center().y()) - editor.verticalScrollBar()->value()) +
+                          QPoint(editor.viewport()->x(), editor.viewport()->y());
+        QTest::mouseClick(editor.viewport(), Qt::LeftButton, Qt::NoModifier, at);
+        QTest::qWait(50);
+
+        const zametti::ImageFacts clicked = editor.caretImage();
+        check(clicked.valid, "щёлкнули по фотографии — сведения о ней есть");
+        if (!clicked.valid)
+            std::printf("  каретка: блок %d, выделение %d..%d, блок фотографии %d\n",
+                        editor.textCursor().blockNumber(),
+                        editor.textCursor().selectionStart(),
+                        editor.textCursor().selectionEnd(), photo.blockNumber());
+    }
 
     // Вложение пропало — сведения обязаны это сказать, а не соврать старым.
     zametti::clearImageFactsCache();

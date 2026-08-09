@@ -134,7 +134,7 @@ if(TARGET zametti-view)
     # Окно «О программе». Главное в нём — лицензии вшитого: их отсутствие
     # видно только тому, кто откроет вкладку, поэтому спрашивает набор.
     add_executable(about_test about_test.cpp)
-    target_link_libraries(about_test PRIVATE zametti-widgets zametti-warnings)
+    target_link_libraries(about_test PRIVATE zametti-widgets Qt6::Test zametti-warnings)
     target_include_directories(about_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     add_test(NAME about COMMAND about_test)
     set_tests_properties(about PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

@@ -7,7 +7,10 @@
 #include "resources.h"
 #include "settings.h"
 
+#include <QDesktopServices>
 #include <QDialogButtonBox>
+#include <QTextBrowser>
+#include <QUrl>
 #include <QTabWidget>
 #include <QTextDocument>
 #include <QVBoxLayout>
@@ -21,6 +24,17 @@ namespace {
 NoteView* markdownPage(const QString& markdown, QWidget* parent) {
     auto* view = new NoteView(parent);
     view->setReadOnly(true);
+    // Ссылки НЕ ходят внутри окна. QTextBrowser в режиме чтения по щелчку
+    // пытается загрузить адрес в себя, не может — и остаётся пустым насовсем:
+    // документ уже подменён, вернуть его нечем, и окно чинится только выходом
+    // из программы. Владелец на это и наткнулся. Внешние адреса уходят в
+    // браузер, всё остальное не делает ничего.
+    view->setOpenLinks(false);
+    QObject::connect(view, &QTextBrowser::anchorClicked, view, [](const QUrl& url) {
+        if (url.scheme() == QStringLiteral("http") || url.scheme() == QStringLiteral("https") ||
+            url.scheme() == QStringLiteral("mailto"))
+            QDesktopServices::openUrl(url);
+    });
     // Документ принадлежит виду: своей жизни у справки нет, а Qt удалит его
     // вместе с родителем.
     auto* document = new QTextDocument(view);

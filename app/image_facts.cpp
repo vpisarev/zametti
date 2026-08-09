@@ -52,6 +52,10 @@ ImageFacts imageFacts(const QString& absolutePath) {
     QImageReader reader(absolutePath);
     out.size = reader.size();
     out.format = QString::fromLatin1(reader.format());
+    // Не всякий читатель называет свой формат: у .jxl Qt отдаёт пустую строку,
+    // и в полосе получалось «имя · разрешение · вес» без слова JXL. Расширение
+    // — запасной ход, а не первый: имя файла врёт легко, заголовок не врёт.
+    if (out.format.isEmpty()) out.format = file.suffix().toLower();
     // Кадров у неанимированного формата бывает и ноль, и минус один: у каждого
     // читателя свой ответ. Наружу отдаём «хотя бы один».
     out.frames = qMax(1, reader.imageCount());
