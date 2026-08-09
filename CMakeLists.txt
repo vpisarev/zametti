@@ -154,6 +154,33 @@ function(zametti_summary)
     zametti_row("строгость: " "`${strict}`")
     message(NOTICE "___")
     message(NOTICE "")
+
+    # Те же строки уезжают в окно «О программе». Именно эти, а не собранные
+    # заново рядом: два списка версий разошлись бы первым же обновлением
+    # вендоринга, и окно врало бы с уверенным видом.
+    set(ZAMETTI_FACT_PLATFORM "${platform}" PARENT_SCOPE)
+    set(ZAMETTI_FACT_CONFIG "${config}" PARENT_SCOPE)
+    set(ZAMETTI_FACT_COMPILER "${compiler}" PARENT_SCOPE)
+    set(ZAMETTI_FACT_QT "${qt}" PARENT_SCOPE)
+    string(REPLACE "`" "" plain_readers "${readers}")
+    set(ZAMETTI_FACT_READERS "${plain_readers}" PARENT_SCOPE)
 endfunction()
 
 zametti_summary()
+
+# Отметка коммита — на момент НАСТРОЙКИ. Снимать её при каждой сборке значило бы
+# трогать заголовок и пересобирать за ним весь app; в окне так и написано —
+# «настроено», а не «собрано».
+find_package(Git QUIET)
+set(ZAMETTI_FACT_COMMIT "неизвестен")
+if(GIT_FOUND)
+    execute_process(COMMAND ${GIT_EXECUTABLE} -C ${CMAKE_SOURCE_DIR} rev-parse --short HEAD
+                    OUTPUT_VARIABLE git_commit OUTPUT_STRIP_TRAILING_WHITESPACE
+                    ERROR_QUIET RESULT_VARIABLE git_failed)
+    if(NOT git_failed AND git_commit)
+        set(ZAMETTI_FACT_COMMIT "${git_commit}")
+    endif()
+endif()
+string(TIMESTAMP ZAMETTI_FACT_CONFIGURED "%Y-%m-%d %H:%M")
+configure_file(${CMAKE_SOURCE_DIR}/app/build_facts.h.in
+               ${CMAKE_BINARY_DIR}/generated/build_facts.h @ONLY)

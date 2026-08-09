@@ -310,6 +310,18 @@ qint64 NoteView::decodedBytes(QSize declared, int limit) {
     return qint64(shown.width()) * shown.height() * 4;
 }
 
+ImageFacts NoteView::caretImage() const {
+    const QTextBlock block = textCursor().block();
+    const BlockImageRef ref = blockImageRef(block);
+    if (!ref.valid) return {};
+    ImageFacts facts = imageFacts(absoluteImagePath(ref.path));
+    // Подпись — это alt картинки, и в ней живёт имя исходного файла (см.
+    // xmpWithFileName в exif.h). У вики-вложения alt нет: текстом абзаца там
+    // стоит сама запись "![[путь]]", и показывать её вместо подписи незачем.
+    if (!ref.wiki) facts.caption = block.text().trimmed();
+    return facts;
+}
+
 const NoteView::CachedImage* NoteView::imageInfo(const QString& path) {
     const QString abs = absoluteImagePath(path);
     if (abs.isEmpty()) return nullptr;

@@ -1,0 +1,54 @@
+// ПОРОЖДАЕТСЯ CMake из build_facts.h.in — править надо шаблон, а не результат.
+//
+// Здесь ровно те же числа, которые CMake печатает в сводке при настройке
+// (zametti_summary в корневом CMakeLists.txt). Второго списка версий в
+// программе нет намеренно: он разошёлся бы с настоящим первым же обновлением
+// вендоринга, и окно «О программе» врало бы с уверенным видом.
+//
+// Отметка коммита снимается в момент НАСТРОЙКИ, а не сборки: иначе каждая
+// пересборка трогала бы этот заголовок и тянула за собой весь app. Поэтому
+// рядом с ней так и написано — «настроено».
+
+#ifndef ZAMETTI_BUILD_FACTS_H
+#define ZAMETTI_BUILD_FACTS_H
+
+namespace zametti {
+
+struct BuildFact {
+    const char* name;
+    const char* value;
+};
+
+// Одна строка на вшитую библиотеку: имя, версия, зачем она нам.
+struct VendoredFact {
+    const char* name;
+    const char* version;
+    const char* what;
+};
+
+constexpr BuildFact kBuildFacts[] = {
+    {"платформа", "@ZAMETTI_FACT_PLATFORM@"},
+    {"сборка", "@ZAMETTI_FACT_CONFIG@"},
+    {"компилятор", "@ZAMETTI_FACT_COMPILER@"},
+    {"Qt", "@ZAMETTI_FACT_QT@"},
+    {"коммит", "@ZAMETTI_FACT_COMMIT@"},
+    {"настроено", "@ZAMETTI_FACT_CONFIGURED@"},
+};
+
+constexpr VendoredFact kVendoredFacts[] = {
+    {"md4c", "@MD4C_VENDORED_VERSION@", "разбор markdown"},
+    {"blake3", "@BLAKE3_VENDORED_VERSION@", "отпечатки заметок и вложений"},
+    {"zstd", "@ZSTD_VENDORED_VERSION@", "слепки в журнале правок"},
+    {"zlib", "@ZLIB_VENDORED_VERSION@", "Deflate внутри TIFF"},
+    {"libtiff", "@TIFF_VENDORED_VERSION@", "TIFF: сырые отсчёты, Lab/CMYK, ICC, XMP, EXIF"},
+    {"highway", "@HWY_VENDORED_VERSION@", "SIMD, общая для libjxl и jpegli"},
+    {"libjxl", "@JXL_VENDORED_VERSION@", "картинки: кодек, транскод JPEG, SSIMULACRA2"},
+    {"jpegli", "@JPEGLI_VENDORED_COMMIT@", "разжатие JPEG в 16 бит при импорте"},
+};
+
+// Читатели картинок: зависят от того, нашлась ли системная libheif.
+constexpr const char* kImageReaders = "@ZAMETTI_FACT_READERS@";
+
+}  // namespace zametti
+
+#endif  // ZAMETTI_BUILD_FACTS_H

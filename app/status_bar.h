@@ -17,6 +17,7 @@
 #define ZAMETTI_STATUS_BAR_H
 
 #include <QDateTime>
+#include <QSize>
 #include <QString>
 #include <QWidget>
 
@@ -45,6 +46,20 @@ public:
     };
 
     void setNote(const NoteInfo& info);
+
+    // Картинка под кареткой. Пока она есть, левая половина показывает её, а не
+    // заметку: спрашивают «что это за снимок» именно тогда, когда стоят на нём.
+    struct ImageInfo {
+        QString name;
+        QString caption;
+        QString format;
+        QSize size;
+        qint64 bytes = 0;
+        int frames = 1;
+        bool exists = false;
+        bool valid = false;
+    };
+    void setImage(const ImageInfo& info);
     // Место каретки. Отдельно от прочего: меняется на каждое движение, а
     // остальное — раз в полторы секунды.
     void setCaret(int line, int column);
@@ -61,10 +76,12 @@ protected:
 private:
     void relayout();
     void showLeft();
+    void showImage();
 
     QLabel* left_ = nullptr;
     QLabel* right_ = nullptr;
     NoteInfo note_;
+    ImageInfo image_;
     QString message_;
     int line_ = 1;
     int column_ = 1;

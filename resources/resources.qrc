@@ -44,6 +44,32 @@
         <file alias="trash-2.svg">icons/trash-2.svg</file>
     </qresource>
 
+    <!-- Справка и лицензии. README показывается нашим же ядром и сборщиком —
+         отдельного «просмотрщика справки» в программе не существует. Пути ведут
+         наружу из resources/: файлы живут там, где им место (корень и
+         3rdparty/), а копия рядом с qrc протухала бы молча.
+
+         Список дублируется в app/resources.cpp — как и у иконок, чтобы
+         пропавший файл ловил набор, а не пустая вкладка. -->
+    <qresource prefix="/docs">
+        <file alias="README.md">../README.md</file>
+        <file alias="zametti-storage.md">../docs/zametti-storage.md</file>
+    </qresource>
+
+    <qresource prefix="/licenses">
+        <file alias="zametti.txt">../LICENSE</file>
+        <file alias="ibm-plex.txt">fonts/LICENSE</file>
+        <file alias="lucide.txt">icons/LICENSE</file>
+        <file alias="md4c.txt">../3rdparty/md4c/LICENSE.md</file>
+        <file alias="blake3.txt">../3rdparty/blake3/LICENSE</file>
+        <file alias="zstd.txt">../3rdparty/zstd/LICENSE</file>
+        <file alias="zlib.txt">../3rdparty/zlib/LICENSE</file>
+        <file alias="libtiff.txt">../3rdparty/libtiff/upstream/LICENSE.md</file>
+        <file alias="highway.txt">../3rdparty/highway/upstream/LICENSE</file>
+        <file alias="libjxl.txt">../3rdparty/libjxl/upstream/LICENSE</file>
+        <file alias="jpegli.txt">../3rdparty/jpegli/upstream/LICENSE</file>
+    </qresource>
+
     <!-- IBM Plex, OFL 1.1. Почему именно эти восемь — resources/fonts/README.md. -->
     <qresource prefix="/fonts">
         <file alias="IBMPlexMono-Regular.ttf">fonts/IBMPlexMono-Regular.ttf</file>

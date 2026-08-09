@@ -10,6 +10,8 @@
 #define ZAMETTI_NOTE_VIEW_H
 
 #include <QFont>
+#include "image_facts.h"
+
 #include <QHash>
 #include <QImage>
 #include <QEvent>
@@ -62,6 +64,12 @@ public:
 
     // Сколько сейчас занято кэшем картинок и сколько в нём записей. Тоже часть
     // договора: потолок иначе не проверить.
+    // Картинка, на которой стоит каретка: сведения по заголовку файла, без
+    // разжатия. Пусто, если каретка не на картинке. Нужна полосе сведений —
+    // и знать, где лежит вложение, обязан именно вид: путь в заметке
+    // относительный, а от чего он считается, знает только он.
+    ImageFacts caretImage() const;
+
     qint64 imageCacheBytes() const { return imageCacheBytes_; }
     int cachedImageCount() const { return int(imageCache_.size()); }
     // Сколько картинок показывается фотографиями, а сколько рамками с

@@ -82,6 +82,20 @@ void StatusBar::setNote(const NoteInfo& info) {
     relayout();
 }
 
+void StatusBar::setImage(const ImageInfo& info) {
+    // Движение каретки внутри одной картинки перекладывать строку не должно —
+    // отсюда сравнение. Сравниваются ВСЕ поля, которые видны в строке: первый
+    // заход сличал четыре из семи, и пропажа вложения (менялся только признак
+    // «файл на месте») на панели не показывалась вовсе. Набор это и поймал.
+    const bool same = info.valid == image_.valid && info.exists == image_.exists &&
+                      info.name == image_.name && info.caption == image_.caption &&
+                      info.format == image_.format && info.size == image_.size &&
+                      info.bytes == image_.bytes && info.frames == image_.frames;
+    if (same) return;
+    image_ = info;
+    showLeft();
+}
+
 void StatusBar::setCaret(int line, int column) {
     if (line == line_ && column == column_) return;
     line_ = line;
@@ -98,6 +112,10 @@ void StatusBar::setMessage(const QString& text) {
 void StatusBar::showLeft() {
     if (!message_.isEmpty()) {
         left_->setText(message_);
+        return;
+    }
+    if (image_.valid) {
+        showImage();
         return;
     }
     if (!note_.valid) {
@@ -125,6 +143,32 @@ void StatusBar::showLeft() {
     const QString shown = metrics.elidedText(name, Qt::ElideMiddle, room);
     left_->setText(shown.isEmpty() ? rest : shown + separator + rest);
     left_->setToolTip(note_.path);
+}
+
+void StatusBar::showImage() {
+    QStringList parts;
+    if (!image_.exists) {
+        // Вложения нет: об этом и говорим. Заметка на него ссылается, место под
+        // рамку держится, и молчать тут нельзя — иначе непонятно, почему вместо
+        // снимка рамка.
+        parts << QStringLiteral("вложения нет") << image_.name;
+        left_->setText(parts.join(QStringLiteral("   ·   ")));
+        left_->setToolTip(image_.name);
+        return;
+    }
+    if (!image_.caption.isEmpty()) parts << image_.caption;
+    parts << image_.name;
+    if (!image_.size.isEmpty())
+        parts << QStringLiteral("%1×%2").arg(image_.size.width()).arg(image_.size.height());
+    if (!image_.format.isEmpty()) parts << image_.format.toUpper();
+    parts << humanBytes(image_.bytes);
+    if (image_.frames > 1) parts << QStringLiteral("кадров %1").arg(humanCount(image_.frames));
+
+    const QString separator = QStringLiteral("   ·   ");
+    const QString text = parts.join(separator);
+    const QFontMetrics metrics(left_->font());
+    left_->setText(metrics.elidedText(text, Qt::ElideRight, qMax(0, left_->width())));
+    left_->setToolTip(text);
 }
 
 void StatusBar::relayout() {

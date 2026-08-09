@@ -76,6 +76,10 @@ add_library(zametti-widgets STATIC
     image_insert.cpp
     icons.h
     icons.cpp
+    image_facts.h
+    image_facts.cpp
+    about_window.h
+    about_window.cpp
     status_bar.h
     status_bar.cpp
     toolbar.h
@@ -98,6 +102,10 @@ set_property(TARGET zametti-widgets APPEND PROPERTY AUTORCC_OPTIONS "--threshold
 # Свои читатели картинок (jxl, avif/heic) — статические плагины. Линкуются
 # сюда, а не в исполняемый файл, потому что тестам редактора нужны те же
 # форматы: набор, который не умеет прочитать jxl, проверял бы не то.
+# build_facts.h порождает CMake рядом со сводкой настройки — см. корневой
+# CMakeLists.txt. Каталог общий на все цели: тесту «О программе» нужны те же
+# числа, что и окну.
+target_include_directories(zametti-widgets PUBLIC ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(zametti-widgets PUBLIC zametti-view zametti-imageio Qt6::Widgets Qt6::Svg)
 target_link_libraries(zametti-widgets PRIVATE zametti-warnings)
 

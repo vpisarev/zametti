@@ -19,6 +19,7 @@
 #include "resources.h"
 #include "serializer.h"
 #include "settings.h"
+#include "about_window.h"
 #include "status_bar.h"
 #include "toolbar.h"
 
@@ -49,6 +50,7 @@
 #include <QFile>
 #include <QTimer>
 #include <QTreeView>
+#include <QPointer>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -594,6 +596,21 @@ int main(int argc, char** argv) {
                      [&editor, &statusBar] {
                          const zametti::CaretPlace place = editor.caretPlace();
                          statusBar.setCaret(place.line, place.column);
+
+                         // Картинка под кареткой. Только заголовок файла и
+                         // только по разу на картинку: сведения кэшируются, а
+                         // движение внутри одной картинки панель не трогает.
+                         const zametti::ImageFacts facts = editor.caretImage();
+                         zametti::StatusBar::ImageInfo shown;
+                         shown.valid = facts.valid;
+                         shown.name = facts.name;
+                         shown.caption = facts.caption;
+                         shown.format = facts.format;
+                         shown.size = facts.size;
+                         shown.bytes = facts.bytes;
+                         shown.frames = facts.frames;
+                         shown.exists = facts.exists;
+                         statusBar.setImage(shown);
                      });
 
     // Файл изменился снаружи, а правки не сохранены. Окно неблокирующее: работа
@@ -1734,7 +1751,7 @@ int main(int argc, char** argv) {
                            QStringLiteral("появится вместе с синхронизацией"));
         toolbar.setPromise(Button::Export, QStringLiteral("появится в этом этапе"));
         toolbar.setPromise(Button::Settings, QStringLiteral("появится в этом этапе"));
-        toolbar.setPromise(Button::Help, QStringLiteral("появится в этом этапе"));
+
         toolbar.setPromise(Button::SearchInHistory,
                            QStringLiteral("появится вместе с единым поиском"));
         if (!model.isStore()) {
@@ -1789,10 +1806,19 @@ int main(int argc, char** argv) {
             case Button::Search:
                 openFind(zametti::FindBar::Mode::InNote);
                 break;
+            case Button::Help: {
+                // Одно окно на программу: второе нажатие поднимает открытое, а
+                // не заводит близнеца.
+                static QPointer<zametti::AboutWindow> about;
+                if (about.isNull()) about = new zametti::AboutWindow(&window);
+                about->show();
+                about->raise();
+                about->activateWindow();
+                break;
+            }
             case Button::Export:
             case Button::Cloud:
             case Button::Settings:
-            case Button::Help:
             case Button::SearchInHistory:
                 break;   // обещания: кнопки погашены, сюда не доходит
             }

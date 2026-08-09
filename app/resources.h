@@ -45,6 +45,31 @@ QStringList loadEmbeddedFonts();
 // красным набором.
 std::span<const char* const> embeddedIcons();
 
+// Лицензия вшитой части: что это, чьё и где лежит текст. Список — тот же
+// источник правды, что и у иконок: вкладка «Лицензии» строится по нему, и
+// набор по нему же проверяет, что каждый текст на месте и непуст. Пропавшая
+// лицензия — это не косметика, а нарушение условий чужой лицензии.
+struct EmbeddedLicense {
+    const char* path;     // путь в qrc
+    const char* name;     // как называется вшитое
+    const char* what;     // зачем оно нам
+    const char* license;  // под какой лицензией
+};
+
+std::span<const EmbeddedLicense> embeddedLicenses();
+
+// Справка: markdown, который показывается нашим же ядром и сборщиком.
+struct EmbeddedDoc {
+    const char* path;
+    const char* title;
+};
+
+std::span<const EmbeddedDoc> embeddedDocs();
+
+// Содержимое вшитого файла как UTF-8. Пусто — файла в ресурсах нет (а значит,
+// в qrc опечатка): молчать об этом нельзя, поэтому жалоба в stderr.
+QString embeddedText(const char* path);
+
 // Гарантирует, что ресурсы подключены, и возвращает путь иконки в qrc.
 // Ходить в ":/icons/..." мимо этой функции нельзя: в статической библиотеке
 // ресурсов может ещё не быть.

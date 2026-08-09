@@ -122,6 +122,21 @@ if(TARGET zametti-view)
                              "QT_QPA_PLATFORM=offscreen")
     endforeach()
 
+    # Окно «О программе». Главное в нём — лицензии вшитого: их отсутствие
+    # видно только тому, кто откроет вкладку, поэтому спрашивает набор.
+    add_executable(about_test about_test.cpp)
+    target_link_libraries(about_test PRIVATE zametti-widgets zametti-warnings)
+    target_include_directories(about_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME about COMMAND about_test)
+    set_tests_properties(about PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # Полоса сведений: что она показывает. Нужны виджеты — она из них и состоит.
+    add_executable(status_bar_test status_bar_test.cpp)
+    target_link_libraries(status_bar_test PRIVATE zametti-widgets Qt6::Test zametti-warnings)
+    target_include_directories(status_bar_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME status-bar COMMAND status_bar_test ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(status-bar PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     add_executable(ops_test ops_test.cpp)
     target_link_libraries(ops_test PRIVATE zametti-view zametti-warnings)
     target_include_directories(ops_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
