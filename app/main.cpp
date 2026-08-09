@@ -284,7 +284,8 @@ int main(int argc, char** argv) {
     // конфиг: удобно и при правке конфига, и при разговоре о том, «как оно
     // выглядит из коробки».
     QString configError;
-    if (!noConfig && !zametti::loadAppearance(&configError)) {
+    QStringList configUnknown;
+    if (!noConfig && !zametti::loadAppearance(&configError, &configUnknown)) {
         // Молча подставить умолчания нельзя: опечатка в конфиге выглядела бы
         // как «настройка не работает».
         std::fprintf(stderr, "конфиг не разобран, взяты значения по умолчанию:\n  %s\n",
@@ -595,7 +596,8 @@ int main(int argc, char** argv) {
         editor.save(true);
 
         QString error;
-        if (!zametti::loadAppearance(&error)) {
+        QStringList unknown;
+        if (!zametti::loadAppearance(&error, &unknown)) {
             // Мусор в конфиге — это не повод перекрашивать окно наугад:
             // работаем на прежних значениях и говорим, что именно не так.
             std::fprintf(stderr, "конфиг не принят: %s\n", error.toUtf8().constData());
@@ -609,9 +611,26 @@ int main(int argc, char** argv) {
             return;
         }
         applyAppearance();
-        statusBar.setMessage(QString());
+        // Незнакомый ключ — это не «настройка не работает», а опечатка или
+        // придуманное имя, и молчать о нём нельзя: владелец потерял вечер на
+        // «caretColor» вместо «colors.caret».
+        statusBar.setMessage(unknown.isEmpty()
+                                 ? QString()
+                                 : QStringLiteral("в конфиге не понято: %1")
+                                       .arg(unknown.join(QStringLiteral(", "))));
+        if (!unknown.isEmpty())
+            std::fprintf(stderr, "в конфиге не понято: %s\n",
+                         unknown.join(QStringLiteral(", ")).toUtf8().constData());
     });
     watchConfig();
+    // Про конфиг, прочитанный на старте, сказать надо сразу, а не ждать, пока
+    // человек его тронет: незнакомый ключ выглядит как «настройка не работает».
+    if (!configUnknown.isEmpty()) {
+        std::fprintf(stderr, "в конфиге не понято: %s\n",
+                     configUnknown.join(QStringLiteral(", ")).toUtf8().constData());
+        statusBar.setMessage(QStringLiteral("в конфиге не понято: %1")
+                                 .arg(configUnknown.join(QStringLiteral(", "))));
+    }
 
     splitter.addWidget(&tree);
     if (model.isStore()) splitter.addWidget(&middle);

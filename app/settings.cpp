@@ -633,7 +633,27 @@ void applyImageAllocationLimit() {
     QImageReader::setAllocationLimit(qMax(1, budget / 4));
 }
 
-bool loadAppearance(QString* error) {
+QStringList unknownConfigKeys(const QJsonObject& root) {
+    // Сверяемся с полным списком умолчаний: он и есть словарь всех имён.
+    const QJsonObject known =
+        QJsonDocument::fromJson(defaultAppearanceJson()).object();
+    QStringList out;
+    for (auto section = root.begin(); section != root.end(); ++section) {
+        if (!known.contains(section.key())) {
+            out << section.key();
+            continue;
+        }
+        if (!section.value().isObject() || !known.value(section.key()).isObject()) continue;
+        const QJsonObject mine = section.value().toObject();
+        const QJsonObject theirs = known.value(section.key()).toObject();
+        for (auto item = mine.begin(); item != mine.end(); ++item)
+            if (!theirs.contains(item.key()))
+                out << section.key() + QLatin1Char('.') + item.key();
+    }
+    return out;
+}
+
+bool loadAppearance(QString* error, QStringList* unknown) {
     const QString path = configPath();
     QFile file(path);
 
@@ -653,6 +673,7 @@ bool loadAppearance(QString* error) {
                 *error = path + QStringLiteral(": ") + parseError.errorString();
             return false;
         }
+        if (unknown != nullptr) *unknown = unknownConfigKeys(doc.object());
         appearanceFromJson(doc.object(), g_appearance);
     }
     applyImageAllocationLimit();

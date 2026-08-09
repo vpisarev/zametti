@@ -1,6 +1,17 @@
 cmake_minimum_required(VERSION 3.20)
 project(zametti LANGUAGES C CXX)
 
+# По умолчанию — Release. Отладочная сборка нужна нам и будущим участникам, а
+# всем прочим достаётся то, что они и ждут: оптимизированная программа.
+# Умолчание CMake (пустой тип) даёт сборку вовсе без -O, и владелец дважды
+# собрал такую по случайности, а потом удивлялся, что программа подтормаживает.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Тип сборки" FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
+                 Debug Release RelWithDebInfo MinSizeRel)
+    message(NOTICE "CMAKE_BUILD_TYPE не задан — берём Release")
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)

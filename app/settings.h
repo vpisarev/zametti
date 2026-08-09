@@ -15,6 +15,7 @@
 
 #include <QByteArray>
 #include <QColor>
+#include <QJsonObject>
 #include <QString>
 #include <QStringList>
 #include <QtGlobal>
@@ -531,7 +532,12 @@ QString statePath();
 // Читает конфиг, если он есть. Возвращает false и заполняет error, если файл
 // есть, но не разбирается: молча подставлять умолчания в этом случае нельзя,
 // иначе опечатка выглядела бы как «настройка не работает».
-bool loadAppearance(QString* error);
+bool loadAppearance(QString* error, QStringList* unknown = nullptr);
+
+// Ключи конфига, которых мы не знаем. Молчать о них нельзя: опечатка или
+// придуманное имя («caretColor» вместо «colors.caret») выглядит как
+// «настройка не работает», и владелец на этом потерял вечер.
+QStringList unknownConfigKeys(const QJsonObject& root);
 
 // Полный список параметров со значениями по умолчанию, в том же виде, в каком
 // их ждёт config.json. Нужен ключу --dump-config: раз приложение конфиг не
