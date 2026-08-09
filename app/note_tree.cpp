@@ -219,7 +219,14 @@ std::unique_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath) {
         const QString stem = info.completeBaseName();
         if (!isValidNoteId(stem.toStdString())) continue;
         StoreNote meta;
-        if (!readStoreNote(info.absoluteFilePath(), meta)) continue;
+        if (!readStoreNote(info.absoluteFilePath(), meta)) {
+            // Заметка есть на диске, но не читается — и молча пропадала из
+            // дерева целиком. Человек видел бы пустое место и не узнал бы, что
+            // файл на месте: жалуемся.
+            std::fprintf(stderr, "заметка не читается, в дереве её не будет: [%s]\n",
+                         info.absoluteFilePath().toUtf8().constData());
+            continue;
+        }
         auto node = std::make_unique<NoteTreeModel::Node>();
         node->id = stem;
         node->title = meta.title;
@@ -739,7 +746,13 @@ void NoteTreeModel::refreshNote(const QString& path) {
         return;
     }
     StoreNote fresh;
-    if (!readStoreNote(path, fresh)) return;
+    if (!readStoreNote(path, fresh)) {
+        // Строка списка осталась бы показывать прежний заголовок и прежнюю
+        // дату — то есть врать о файле, которого мы не прочли.
+        std::fprintf(stderr, "строка списка не обновлена: заметка не читается [%s]\n",
+                     path.toUtf8().constData());
+        return;
+    }
     if (node->title == fresh.title && node->snippet == fresh.snippet &&
         node->modified == fresh.modified)
         return;

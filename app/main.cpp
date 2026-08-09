@@ -937,17 +937,38 @@ int main(int argc, char** argv) {
 
     // Правка файла хранилища мимо редактора: только для закрытых заметок —
     // открытая правится через редактор, иначе сторож примет запись за чужую.
+    //
+    // ЖАЛУЕТСЯ САМА. Семь мест зовут её — переименование, «в корзину»,
+    // восстановление, назначение роли папки, — и ни одно не смотрело на ответ.
+    // Отказ записи означал бы, что папка на диске осталась заметкой, а
+    // выброшенная заметка — невыброшенной, и оба раза молча. Ответ по-прежнему
+    // возвращается: кому надо ветвиться — ветвится.
+    const auto complain = [&window](const QString& file, const QString& why) {
+        std::fprintf(stderr, "правка заметки не удалась: %s — %s\n",
+                     file.toUtf8().constData(), why.toUtf8().constData());
+        QMessageBox::warning(&window, QStringLiteral("zametti"),
+                             QStringLiteral("Не удалось записать %1: %2")
+                                 .arg(QFileInfo(file).fileName(), why));
+    };
     const auto rewriteNote = [&](const QString& file,
                                  auto&& change) -> bool {
         std::string bytes;
-        if (!readFile(file, bytes)) return false;
+        if (!readFile(file, bytes)) {
+            complain(file, QStringLiteral("файл не читается"));
+            return false;
+        }
         zametti::Document doc = zametti::parse(bytes);
         change(doc);
         const std::string out = zametti::serialize(doc);
         std::ofstream outFile(file.toStdString(), std::ios::binary | std::ios::trunc);
-        if (!outFile) return false;
+        if (!outFile) {
+            complain(file, QStringLiteral("файл не открывается на запись"));
+            return false;
+        }
         outFile.write(out.data(), std::streamsize(out.size()));
-        return bool(outFile);
+        if (outFile) return true;
+        complain(file, QStringLiteral("запись оборвалась"));
+        return false;
     };
 
     // Обновить дерево и список, не потеряв ни раскрытых веток, ни выбранной
@@ -1187,7 +1208,11 @@ int main(int argc, char** argv) {
         const QString file = root + QLatin1Char('/') + noteId + QStringLiteral(".md");
 
         std::string bytes;
-        if (!readFile(file, bytes)) return;
+        if (!readFile(file, bytes)) {
+            // Человек нажал «восстановить», и ничего не произошло бы вовсе.
+            complain(file, QStringLiteral("файл не читается"));
+            return;
+        }
         zametti::Document doc = zametti::parse(bytes);
         const QString savedParent =
             QString::fromStdString(doc.meta.get("trash-parent"));

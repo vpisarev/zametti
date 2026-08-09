@@ -7,6 +7,9 @@
 
 #include "test_util.h"
 
+#include <unistd.h>
+#include <cstdio>
+
 #include <QApplication>
 #include <QDir>
 #include <QFile>
@@ -72,6 +75,35 @@ int main(int argc, char** argv) {
          "# Выброшенная\n");
     note("0000000000000f", "role: folder\nmodified: 2018-01-01T00:00:00Z\n",
          "# Пустая папка\n");
+
+    // Нечитаемая заметка. Пропасть из дерева она может — прочесть её нечем, —
+    // но пропасть МОЛЧА не имеет права: файл на месте, человек его видит, а
+    // программа делает вид, что заметки нет. Ловим саму жалобу: перехватываем
+    // stderr и смотрим, назван ли в нём путь.
+    note("0000000000000x", "modified: 2026-02-02T00:00:00Z\n", "# Нечитаемая\n");
+    const QString locked = g_root + QStringLiteral("/0000000000000x.md");
+    const bool hidden = QFile::setPermissions(locked, QFile::Permissions());
+    const QString complaints = QDir::tempPath() + QStringLiteral("/zametti-tree-stderr.txt");
+    QFile::remove(complaints);
+    if (hidden) {
+        std::fflush(stderr);
+        const int saved = dup(fileno(stderr));
+        FILE* redirected = std::freopen(complaints.toUtf8().constData(), "w", stderr);
+        NoteTreeModel quiet(g_root);
+        (void)quiet.rowCount(QModelIndex());
+        std::fflush(stderr);
+        if (redirected != nullptr) {
+            dup2(saved, fileno(stderr));
+            ::close(saved);
+        }
+        QFile file(complaints);
+        QString said;
+        if (file.open(QIODevice::ReadOnly)) said = QString::fromUtf8(file.readAll());
+        ZT_TRUE("о нечитаемой заметке сказано вслух",
+                said.contains(QStringLiteral("0000000000000x")));
+        QFile::setPermissions(locked, QFile::ReadOwner | QFile::WriteOwner);
+    }
+    QFile::remove(locked);
 
     ZT_TRUE("хранилище распознано", NoteTreeModel::isStoreRoot(g_root));
     NoteTreeModel model(g_root);
