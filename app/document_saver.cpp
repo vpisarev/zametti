@@ -630,8 +630,54 @@ std::string_view asView(const QByteArray& bytes) {
 
 }  // namespace
 
+// Лишние неразрывные пробелы — обычными.
+//
+// Неразрывный пробел у нас ЗНАЧИМ, но только в НАЧАЛЕ строки: им держится
+// отступ, потому что обычный пробел markdown в начале строки съедает (см.
+// withEdgesNormalised). Везде дальше он не значит ничего — и приезжает мусором
+// из чужих выгрузок: в одной заметке владельца их 437, из них 317 стоят прямо
+// между словами, и даже внутри блоков кода.
+//
+// Правило выведено ЗАМЕРОМ по корпусу владельца (274 заметки): ведущих
+// неразрывных 179, одиночных в середине строк 346, а серий из двух и более —
+// НИ ОДНОЙ. Значит:
+//
+//   * ведущие не трогаем никогда — это наш отступ;
+//   * ОДИНОЧНЫЙ в середине — мусор из чужой выгрузки, становится обычным;
+//   * СЕРИЯ из двух и более в середине — выравнивание, и его мы теперь пишем
+//     сами: столбик "int a     = 5" из блока кода, превращённого в абзац,
+//     держится только неразрывными (обычные markdown схлопнет). Трогать её
+//     значило бы ломать то, что сами и поставили.
+std::string spacesNormalised(const std::string& text) {
+    static const std::string nbsp = "\xC2\xA0";
+    std::string out;
+    out.reserve(text.size());
+    bool leading = true;   // мы всё ещё в отступе строки
+    for (size_t i = 0; i < text.size();) {
+        if (text[i] == '\n') {
+            out.push_back('\n');
+            leading = true;
+            ++i;
+            continue;
+        }
+        if (text.compare(i, nbsp.size(), nbsp) == 0) {
+            size_t run = 0;
+            while (text.compare(i + run * nbsp.size(), nbsp.size(), nbsp) == 0) ++run;
+            const bool keep = leading || run > 1;
+            for (size_t k = 0; k < run; ++k) out += keep ? nbsp : std::string(" ");
+            i += run * nbsp.size();
+            leading = false;
+            continue;
+        }
+        if (text[i] != ' ' && text[i] != '\t') leading = false;
+        out.push_back(text[i]);
+        ++i;
+    }
+    return out;
+}
+
 bool canonicaliseNoteFile(const QString& path, std::string& text, Digest& digest) {
-    const Document parsed = parse(text);
+    const Document parsed = parse(spacesNormalised(text));
     if (!parsed.meta.present) return false;   // не наша заметка
 
     const std::string canonical = serialize(parsed);
@@ -679,29 +725,39 @@ SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
     // текст блока обязан совпасть до знака.
     const Document reread =
         parse(std::string(text.constData(), static_cast<size_t>(text.size())));
+    // РАСХОЖДЕНИЕ БОЛЬШЕ НЕ ЗАПРЕЩАЕТ ЗАПИСЬ.
+    //
+    // Прежде самопроверка отказывалась писать вовсе: файл оставался прежним, а
+    // буфер уезжал в .rescue. Задумано это было как последний рубеж против
+    // потери данных, а на деле стало способом её устроить: у владельца отказ
+    // повторялся на каждом автосохранении, он выключил предупреждение
+    // («больше не беспокоить»), доработал заметку, вышел — и не нашёл ни одной
+    // своей правки. Сторож, поставленный беречь текст, его и потерял.
+    //
+    // Теперь пишем всегда, а расхождение остаётся ДИАГНОСТИКОЙ: копия буфера
+    // ложится в .rescue и человеку говорится, что именно не сошлось. Это стало
+    // возможно потому, что у заметки есть полная история (журнал со слепками):
+    // неудачная запись отменима, а потерянная работа — нет.
+    QString rescuePath;
     if (!sameSkeleton(ir, reread)) {
         // В хранилище побитое складывается в .rescue/ (не синхронизируется);
         // вне хранилища — рядом с файлом, как раньше.
         const QFileInfo fileInfo(path);
         const QString rescueDir = fileInfo.absolutePath() + QStringLiteral("/.rescue");
-        const QString rescuePath =
+        rescuePath =
             QFileInfo(fileInfo.absolutePath() + QStringLiteral("/.zametti")).isDir() &&
                     QFileInfo(rescueDir).isDir()
                 ? rescueDir + QLatin1Char('/') + fileInfo.fileName() +
                       QStringLiteral(".rescue-") + timestamp
                 : path + QStringLiteral(".rescue-") + timestamp;
         QString error;
+        // Копия — дело полезное, но не обязательное: не легла, и ладно, запись
+        // всё равно состоится. Молчать при этом нельзя.
         if (!writeFile(rescuePath, text, &error)) {
-            return {SaveResult::Failed,
-                    QStringLiteral("самопроверка не прошла, и аварийный файл не записан: ") +
-                        error,
-                    {}, {}, false, {}, {}};
+            std::fprintf(stderr, "аварийная копия не записана: %s\n",
+                         error.toUtf8().constData());
+            rescuePath.clear();
         }
-        return {SaveResult::Rescued,
-                QStringLiteral("самопроверка перед записью не прошла: разобранное обратно "
-                               "не совпало с документом. Файл не тронут, буфер сохранён в ") +
-                    rescuePath,
-                rescuePath, {}, false, {}, {}};
     }
 
     // Замена файла целиком и разом: QSaveFile пишет во временный файл рядом и
@@ -718,9 +774,15 @@ SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
         return {SaveResult::Failed, QStringLiteral("не записать: ") + file.errorString(), {},
                 {}, false, {}, {}};
     }
-    // Отпечаток — по тому же буферу и только после самопроверки: не прошла
-    // она — файл не тронут, и отпечатку взяться неоткуда.
-    return {SaveResult::Written, {}, {}, reread, toJson(reread) != toJson(ir), digest, text};
+    // Записано. Если самопроверка не сошлась, говорим об этом — но записью, а
+    // не отказом: правки человека уже на диске, а копия буфера лежит рядом.
+    QString message;
+    if (!rescuePath.isEmpty())
+        message = QStringLiteral("самопроверка не сошлась: разобранное обратно отличается от "
+                                 "документа. Заметка записана, копия буфера — в ") +
+                  rescuePath;
+    return {SaveResult::Written, message, rescuePath, reread,
+            toJson(reread) != toJson(ir), digest, text};
 }
 
 }  // namespace zametti

@@ -289,6 +289,66 @@ Document irOfRange(QTextDocument& doc, int from, int to) {
 
 }  // namespace
 
+// Пробелы при переходе в код и обратно.
+//
+// В КОДЕ пробел значим сам по себе: его копируют в терминал, и неразрывный там
+// не нужен, а нужен ровно тот, что виден. Поэтому в блоке кода неразрывные
+// становятся обычными.
+//
+// В АБЗАЦЕ наоборот: markdown схлопывает несколько пробелов в один и съедает
+// ведущие. Столбик из кода — "int a     = 5" — превратился бы в "int a = 5", и
+// выравнивание пропало бы навсегда. Поэтому обратный ход делает неразрывными и
+// ведущие пробелы, и СЕРИИ из двух и более в середине строки. Одиночные не
+// трогаем: между словами неразрывный пробел не нужен, а мусор из чужих
+// выгрузок мы как раз убираем (см. spacesNormalised в document_saver.cpp).
+std::string spacesForCode(std::string_view text) {
+    static const std::string nbsp = "\xC2\xA0";
+    std::string out;
+    out.reserve(text.size());
+    for (size_t i = 0; i < text.size();) {
+        if (text.compare(i, nbsp.size(), nbsp) == 0) {
+            out.push_back(' ');
+            i += nbsp.size();
+            continue;
+        }
+        out.push_back(text[i]);
+        ++i;
+    }
+    return out;
+}
+
+std::string spacesForProse(std::string_view text) {
+    static const std::string nbsp = "\xC2\xA0";
+    std::string out;
+    out.reserve(text.size());
+    size_t i = 0;
+    while (i < text.size()) {
+        const size_t lineEnd = std::min(text.find('\n', i), text.size());
+        bool leading = true;
+        size_t at = i;
+        while (at < lineEnd) {
+            if (text[at] != ' ') {
+                leading = false;
+                out.push_back(text[at]);
+                ++at;
+                continue;
+            }
+            size_t run = 0;
+            while (at + run < lineEnd && text[at + run] == ' ') ++run;
+            // Ведущие — всегда, серия из двух и более — всегда: и то и другое
+            // markdown иначе потеряет. Одиночный пробел между словами остаётся
+            // обычным.
+            const bool hold = leading || run > 1;
+            for (size_t k = 0; k < run; ++k) out += hold ? nbsp : std::string(" ");
+            at += run;
+            leading = false;
+        }
+        if (lineEnd < text.size()) out.push_back('\n');
+        i = lineEnd + 1;
+    }
+    return out;
+}
+
 MoveResult toggleCodeBlock(QTextDocument& doc, const QTextCursor& cursor) {
     Document irDoc = readDocument(doc);
     std::vector<Block>& ir = irDoc.blocks;
@@ -353,7 +413,7 @@ MoveResult toggleCodeBlock(QTextDocument& doc, const QTextCursor& cursor) {
             code += chosen.text(piece);
         }
         if (!code.empty() && code.back() != '\n') code.push_back('\n');
-        result.push_back(irDoc.newBlock(Kind::Code, code));
+        result.push_back(irDoc.newBlock(Kind::Code, spacesForCode(code)));
 
         const int landed = int(result.size()) - 1;
         for (const Block& b : tail.blocks) result.push_back(irDoc.adopt(tail, b));
@@ -382,11 +442,12 @@ MoveResult toggleCodeBlock(QTextDocument& doc, const QTextCursor& cursor) {
         // Текст не копируется: абзац смотрит на те же байты арены, только без
         // хвостовых переводов строки.
         for (int i = first; i <= last; ++i) {
+            std::string_view body = irDoc.text(ir[size_t(i)]);
+            while (!body.empty() && body.back() == '\n') body.remove_suffix(1);
+            // Текст переезжает в хвост арены: пробелы стали другими, и смотреть
+            // на прежние байты больше нельзя.
             Block plain;
-            plain.text = ir[size_t(i)].text;
-            while (!plain.text.empty() &&
-                   irDoc.chars[size_t(plain.text.end) - 1] == '\n')
-                plain.text.end -= 1;
+            plain.text = irDoc.append(spacesForProse(body));
             result.push_back(plain);
         }
     } else {
@@ -396,7 +457,7 @@ MoveResult toggleCodeBlock(QTextDocument& doc, const QTextCursor& cursor) {
             code += irDoc.text(ir[size_t(i)]);
         }
         if (!code.empty() && code.back() != '\n') code.push_back('\n');
-        result.push_back(irDoc.newBlock(Kind::Code, code));
+        result.push_back(irDoc.newBlock(Kind::Code, spacesForCode(code)));
     }
     const int landed = int(result.size()) - 1;
     result.insert(result.end(), ir.begin() + last + 1, ir.end());

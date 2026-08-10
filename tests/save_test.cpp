@@ -201,14 +201,25 @@ void checkRescue() {
     const zametti::SaveOutcome outcome =
         zametti::saveDocument(doc, path, QStringLiteral("stamp"), brokenReader);
 
-    check(outcome.result == zametti::SaveResult::Rescued,
-          "испорченный читатель должен приводить к аварийному сохранению");
-    checkEqual(source, readFile(path), "исходный файл обязан остаться нетронутым");
+    // ДОГОВОР ИЗМЕНИЛСЯ. Прежде расхождение ЗАПРЕЩАЛО запись: файл оставался
+    // прежним, а буфер уезжал в .rescue. Задумано это было как последний рубеж
+    // против потери данных, а обернулось способом её устроить: у владельца
+    // отказ повторялся на каждом автосохранении, он выключил предупреждение,
+    // доработал заметку, вышел — и не нашёл ни одной своей правки.
+    //
+    // Теперь пишем всегда, а расхождение остаётся диагностикой. Это стало
+    // возможно потому, что у заметки есть полная история: неудачная запись
+    // отменима, а потерянная работа — нет.
+    check(outcome.result == zametti::SaveResult::Written,
+          "расхождение самопроверки больше не отменяет запись");
+    check(!outcome.message.isEmpty(), "но о нём сказано словами");
+    checkEqual("| это не таблица |\n", readFile(path),
+               "в файле то, что дал читатель");
 
     const QString rescuePath = path + QStringLiteral(".rescue-stamp");
-    check(QFile::exists(rescuePath), "аварийный файл не создан");
+    check(QFile::exists(rescuePath), "аварийная копия всё равно сделана");
     checkEqual("| это не таблица |\n", readFile(rescuePath),
-               "содержимое аварийного файла");
+               "содержимое аварийной копии");
 }
 
 // Пустой абзац markdown выразить нечем, а Enter его заводит. Без уборки
@@ -579,12 +590,16 @@ void checkBareLinks() {
     check(outcome.differsFromDocument,
           "прочитанное обратно богаче документа: появилась ссылка");
 
-    // А вот подмена текста обязана ловиться по-прежнему: строение и содержимое
-    // сверяются строго.
-    check(zametti::saveDocument(doc, pathFor("сломанный.md"), QStringLiteral("stamp"),
-                                brokenReader)
-                  .result == zametti::SaveResult::Rescued,
-          "испорченный читатель ловится и с новой сверкой");
+    // Подмена текста по-прежнему ЗАМЕЧАЕТСЯ — но теперь она не отменяет запись,
+    // а объясняется словами и копией буфера (см. checkRescue).
+    {
+        const zametti::SaveOutcome broken = zametti::saveDocument(
+            doc, pathFor("сломанный.md"), QStringLiteral("stamp"), brokenReader);
+        check(broken.result == zametti::SaveResult::Written,
+              "испорченный читатель записи не отменяет");
+        check(!broken.message.isEmpty(), "испорченный читатель ловится и с новой сверкой");
+        check(!broken.rescuePath.isEmpty(), "и копия буфера сделана");
+    }
 }
 
 // Enter в конце абзаца оставляет висящий перенос. В файле он даёт пустую
@@ -631,11 +646,74 @@ void checkFailure() {
 
 }  // namespace
 
+// СТОРОЖ НА ЖИВЫХ ЗАМЕТКАХ: пройти весь путь записи и посмотреть, на каких
+// заметках самопроверка не даёт записать. Не проверка, а прибор: зовётся
+// вторым параметром — каталогом с .md.
+//
+// Путь тот же, что и у настоящей записи: markdown → документ → IR документа →
+// то, что уйдёт в файл → разбор обратно → сверка скелетов. Именно эта сверка и
+// отправляла правки владельца в .rescue вместо файла.
+void surveyGuard(const QString& root) {
+    QDir dir(root);
+    const QStringList files = dir.entryList({QStringLiteral("*.md")}, QDir::Files);
+    int checked = 0;
+    int refused = 0;
+    for (const QString& name : files) {
+        QFile file(dir.filePath(name));
+        if (!file.open(QIODevice::ReadOnly)) continue;
+        const QByteArray bytes = file.readAll();
+        file.close();
+
+        const zametti::Document parsed =
+            zametti::parse(std::string(bytes.constData(), size_t(bytes.size())));
+        QTextDocument doc;
+        zametti::buildDocument(parsed, doc);
+
+        zametti::Document read = zametti::readDocument(doc);
+        read.meta = parsed.meta;
+        const zametti::Document going = zametti::documentForFile(std::move(read));
+        const std::string text = zametti::serialize(going);
+        const zametti::Document back = zametti::parse(text);
+
+        ++checked;
+        // sameSkeleton наружу не выведен — сверяем тем же, чем сверяет он:
+        // числом блоков, родом и текстом. Разойдёмся в мелочи — увидим больше,
+        // а не меньше, и это честнее.
+        bool same = going.blocks.size() == back.blocks.size();
+        for (size_t i = 0; same && i < going.blocks.size(); ++i) {
+            same = going.blocks[i].raw == back.blocks[i].raw &&
+                   going.blocks[i].kind == back.blocks[i].kind &&
+                   going.text(going.blocks[i]) == back.text(back.blocks[i]);
+        }
+        if (same) continue;
+        ++refused;
+        if (refused <= 5) {
+            std::printf("сторож не даёт записать: %s (блоков %zu против %zu)\n",
+                        name.toUtf8().constData(), going.blocks.size(), back.blocks.size());
+            for (size_t i = 0; i < going.blocks.size() && i < back.blocks.size(); ++i) {
+                if (going.text(going.blocks[i]) == back.text(back.blocks[i]) &&
+                    going.blocks[i].kind == back.blocks[i].kind)
+                    continue;
+                std::printf("  блок %zu:\n    ушло:  [%s]\n    вышло: [%s]\n", i,
+                            std::string(going.text(going.blocks[i])).substr(0, 90).c_str(),
+                            std::string(back.text(back.blocks[i])).substr(0, 90).c_str());
+                break;
+            }
+        }
+    }
+    std::printf("сторож: проверено %d, отказов %d\n", checked, refused);
+}
+
 int main(int argc, char** argv) {
     QGuiApplication app(argc, argv);
     if (argc < 2) {
         std::printf("использование: save_test <каталог для временных файлов>\n");
         return 2;
+    }
+
+    if (argc > 2) {
+        surveyGuard(QString::fromLocal8Bit(argv[2]));
+        return 0;
     }
 
     // Не "save_test": по этому имени в каталоге сборки уже лежит сам бинарник.
