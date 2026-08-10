@@ -1,5 +1,6 @@
 #include "export_pdf.h"
 
+#include "doc_model.h"
 #include "document_builder.h"
 #include "note_view.h"
 #include "parser.h"
@@ -15,6 +16,8 @@
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextLayout>
+
+#include <QUrl>
 
 #include <algorithm>
 #include <cmath>
@@ -82,7 +85,128 @@ std::vector<Unbreakable> collectUnbreakables(PaperView& view) {
     return out;
 }
 
+// Заголовок → имя якоря, к которому ведут ссылки вида "#имя". Правило то же,
+// каким пользуется markdown-мир: строчные буквы, пробелы в дефис. Отличаются
+// эти правила в мелочи — что делать со знаками препинания, — поэтому имён
+// заводим ДВА: со знаками и без. Стоит это ничего, а ссылка попадает в цель
+// при обоих написаниях.
+QStringList anchorNamesFor(const QString& heading) {
+    QString kept;
+    QString stripped;
+    for (const QChar ch : heading.simplified().toLower()) {
+        const bool word = ch.isLetterOrNumber() || ch == QLatin1Char('-') ||
+                          ch == QLatin1Char('_');
+        if (ch.isSpace()) {
+            kept.append(QLatin1Char('-'));
+            stripped.append(QLatin1Char('-'));
+        } else if (word) {
+            kept.append(ch);
+            stripped.append(ch);
+        } else {
+            kept.append(ch);   // знак препинания остаётся только в первом
+        }
+    }
+    QStringList out{kept};
+    if (stripped != kept && !stripped.isEmpty()) out << stripped;
+    return out;
+}
+
 }  // namespace
+
+void prepareForPaper(QTextDocument& doc) {
+    QTextCursor caret(&doc);
+    caret.beginEditBlock();
+    // КОММЕНТАРИЙ ОТДЕЛЬНЫМ БЛОКОМ. Род Html — это «понятый HTML-блок», и
+    // единственный понятый вид у нас сегодня как раз комментарий (см. HtmlKind
+    // в ir.h). Непонятый HTML остаётся дословным куском и на бумагу попадает:
+    // это уже не записка себе, а текст, который человек написал руками.
+    //
+    // Вместе с комментарием уходит и пустая строка за ним — иначе на её месте
+    // осталась бы дыра там, где ничего не было видно и раньше.
+    std::vector<QTextBlock> comments;
+    for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {
+        if (isRawBlock(block) || kindOf(block) != Kind::Html) continue;
+        comments.push_back(block);
+        const QTextBlock after = block.next();
+        if (after.isValid() && isVSpaceBlock(after)) {
+            comments.push_back(after);
+            block = after;
+        }
+    }
+    // С конца: удаление блока сдвигает позиции всего, что за ним.
+    for (auto it = comments.rbegin(); it != comments.rend(); ++it) {
+        QTextCursor kill(*it);
+        kill.select(QTextCursor::BlockUnderCursor);
+        kill.removeSelectedText();
+        // BlockUnderCursor не забирает разделитель у САМОГО ПЕРВОГО блока —
+        // от него осталась бы пустая строка.
+        if (kill.atStart() && kill.block().text().isEmpty() && !kill.atEnd()) kill.deleteChar();
+    }
+
+    for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {
+        // ЗАГОЛОВОК СТАНОВИТСЯ ЦЕЛЬЮ. Внутренние ссылки Qt пишет в PDF как
+        // ссылку на именованную цель, а самих целей в файле не было вовсе:
+        // заголовки ничем не помечены, и все 49 внутренних ссылок Ficus
+        // Tutorial вели в никуда.
+        if (!isRawBlock(block) && kindOf(block) == Kind::Heading) {
+            QTextCursor mark(block);
+            mark.select(QTextCursor::BlockUnderCursor);
+            QTextCharFormat anchor;
+            anchor.setAnchor(true);
+            anchor.setAnchorNames(anchorNamesFor(block.text()));
+            mark.mergeCharFormat(anchor);
+        }
+
+        for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            if (!fragment.isValid()) continue;
+            QTextCharFormat format = fragment.charFormat();
+            const int style = format.intProperty(SpanStyleProperty);
+
+            QTextCursor at(&doc);
+            at.setPosition(fragment.position());
+            at.setPosition(fragment.position() + fragment.length(), QTextCursor::KeepAnchor);
+
+            // Комментарий в строке на бумаге не нужен по той же причине, что и
+            // блок: это записка себе, а не текст заметки.
+            if ((style & SpanComment) != 0) {
+                at.removeSelectedText();
+                break;   // итератор фрагментов после правки недействителен
+            }
+            if (format.anchorHref().isEmpty()) continue;
+
+            QTextCharFormat fixed = format;
+            if ((style & SpanImage) != 0) {
+                // Строку с фотографией закрывает сама фотография, а ссылка под
+                // ней остаётся кликабельной — щелчок по снимку вёл бы на файл
+                // вложения, которого рядом с PDF нет.
+                //
+                // Гасится ТОЛЬКО признак ссылки, а адрес остаётся на месте:
+                // именно по нему вид и узнаёт строку-фотографию. Первый заход
+                // стирал адрес — и снимок пропадал со страницы вовсе.
+                fixed.setAnchor(false);
+            } else {
+                // URI Qt пишет в файл однобайтовым, и всё, что вне ASCII,
+                // превращается в "?" — так "Red–black tree" в Ficus Tutorial
+                // стал "Red?black tree". Приводим к процентной записи сами.
+                //
+                // Но ТОЛЬКО внешние адреса. Ссылка "#заголовок" — это не адрес,
+                // а имя цели внутри файла, и оно обязано совпасть с тем именем,
+                // которым помечен заголовок, знак в знак. Процентная запись
+                // сделала бы из "сборка-и-запуск" нечто вроде "%D1%81%D0%B1…",
+                // и ссылка перестала бы попадать в цель (проверено на файле).
+                const QString href = format.anchorHref();
+                if (!href.startsWith(QLatin1Char('#'))) {
+                    const QUrl url(href);
+                    if (!url.isEmpty())
+                        fixed.setAnchorHref(QString::fromLatin1(url.toEncoded()));
+                }
+            }
+            at.setCharFormat(fixed);
+        }
+    }
+    caret.endEditBlock();
+}
 
 std::vector<qreal> pageCuts(std::vector<Unbreakable> hard, qreal docHeight, qreal pageHeight) {
     std::sort(hard.begin(), hard.end(),
@@ -134,11 +258,33 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
         return report;
     }
 
+    // ОБЛИК НА ВРЕМЯ ВЫВОЗА ПОДМЕНЯЕТСЯ. Сборщик документа и вид спрашивают
+    // шрифты у глобального appearance(), и другого способа сказать им «сейчас
+    // мы на бумаге» нет — кроме как протащить облик параметром через десяток
+    // мест, которые о бумаге знать не должны.
+    //
+    // Подменяются ТОЛЬКО шрифты и кегли: цвета, поля, ритм страницы у бумаги
+    // те же, что на экране, — она и должна выглядеть как то, что человек
+    // видит. Возвращается облик на месте, чем бы вывоз ни кончился.
+    struct PaperLook {
+        Appearance saved = appearance();
+        ~PaperLook() { appearance() = saved; }
+    } look;
+    {
+        Appearance& a = appearance();
+        const Appearance::Pdf& paper = look.saved.pdf;
+        if (!paper.fontFamily.isEmpty()) a.fontFamily = paper.fontFamily;
+        if (paper.pointSize > 0.0) a.baseFontPoint = paper.pointSize;
+        if (!paper.codeFamily.isEmpty()) a.codeFamily = paper.codeFamily;
+        if (paper.codePointSize > 0.0) a.codePointSize = paper.codePointSize;
+        a.headingScale = paper.headingScale;
+    }
+    const Appearance::Pdf& paper = look.saved.pdf;
+
     QPdfWriter writer(targetPath);
     writer.setPageSize(QPageSize(options.page));
-    writer.setPageMargins(QMarginsF(options.marginMm, options.marginMm, options.marginMm,
-                                    options.marginMm),
-                          QPageLayout::Millimeter);
+    const qreal margin = options.marginMm > 0.0 ? options.marginMm : paper.marginMm;
+    writer.setPageMargins(QMarginsF(margin, margin, margin, margin), QPageLayout::Millimeter);
     // РАЗРЕШЕНИЕ PDF РАВНО ЕДИНИЦАМ ВЁРСТКИ, и это не мелочь оформления.
     //
     // Кегли у нас заданы в ПУНКТАХ. Документ разметился под виджет и свои
@@ -205,6 +351,7 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
 
     const Document ir = parse(text);
     buildDocument(ir, *view.document(), 1.0);
+    prepareForPaper(*view.document());
     view.applyContentWidth();
     // Ширину разметки ставим явно, хотя показанный виджет ставит её и сам:
     // разметка обязана идти по ширине страницы, и полагаться тут на побочное
@@ -229,15 +376,25 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
     // страницы. От разрешения устройства это не зависит: там, где вёрстка
     // отмерила два сантиметра, фотография ляжет своими пикселями, и их число
     // задаётся здесь и только здесь.
-    const qreal imageRatio = qMax(1.0, qreal(options.imageDpi) / kLayoutDpi);
+    const qreal marginPx = margin / 25.4 * kLayoutDpi;
+    const int dpi = options.imageDpi > 0 ? options.imageDpi : paper.imageDpi;
+    const qreal imageRatio = qMax(1.0, qreal(dpi) / kLayoutDpi);
 
     for (size_t i = 0; i + 1 < cuts.size(); ++i) {
         if (i > 0) writer.newPage();
         const qreal top = cuts[i];
         const qreal bottom = qMin(cuts[i + 1], top + pageHeight);
         painter.save();
+        // ФОН — НА ВЕСЬ ЛИСТ, а не только на поле набора. Начало координат у
+        // painter'а стоит в углу поля набора, поэтому заливка идёт с запасом в
+        // отрицательные координаты: иначе страница выглядела бы как цветная
+        // карточка на белом листе.
+        painter.fillRect(QRectF(-marginPx, -marginPx, pageWidth + 2 * marginPx,
+                                pageHeight + 2 * marginPx),
+                         appearance().pageBackground);
         painter.translate(0.0, -top);
-        view.renderSlice(painter, QRectF(0.0, top, pageWidth, bottom - top), imageRatio);
+        view.renderSlice(painter, QRectF(0.0, top, pageWidth, bottom - top), imageRatio,
+                         paper.maxExportedImageSize);
         painter.restore();
     }
     painter.end();

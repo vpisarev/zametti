@@ -88,6 +88,19 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("fallbackScale"), a.fallbackScale},
     };
 
+    QJsonArray paperHeadings;
+    for (qreal v : a.pdf.headingScale) paperHeadings.append(v);
+    QJsonObject pdf{
+        {QStringLiteral("fontFamily"), a.pdf.fontFamily},
+        {QStringLiteral("pointSize"), a.pdf.pointSize},
+        {QStringLiteral("codeFamily"), a.pdf.codeFamily},
+        {QStringLiteral("codePointSize"), a.pdf.codePointSize},
+        {QStringLiteral("headingScale"), paperHeadings},
+        {QStringLiteral("marginMm"), a.pdf.marginMm},
+        {QStringLiteral("imageDpi"), a.pdf.imageDpi},
+        {QStringLiteral("maxExportedImageSize"), a.pdf.maxExportedImageSize},
+    };
+
     QJsonObject layout{
         {QStringLiteral("lineHeightFactor"), a.lineHeightFactor},
         {QStringLiteral("listLineHeightFactor"), a.listLineHeightFactor},
@@ -250,6 +263,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
 
     return QJsonObject{
         {QStringLiteral("font"), font},
+        {QStringLiteral("pdf"), pdf},
         {QStringLiteral("layout"), layout},
         {QStringLiteral("colors"), colors},
         {QStringLiteral("list"), list},
@@ -278,6 +292,18 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     const QJsonArray headings = font.value(QStringLiteral("headingScale")).toArray();
     for (int i = 0; i < headings.size() && i < int(a.headingScale.size()); ++i)
         if (headings.at(i).isDouble()) a.headingScale[size_t(i)] = headings.at(i).toDouble();
+
+    const QJsonObject paper = root.value(QStringLiteral("pdf")).toObject();
+    readString(paper, "fontFamily", a.pdf.fontFamily);
+    readReal(paper, "pointSize", a.pdf.pointSize);
+    readString(paper, "codeFamily", a.pdf.codeFamily);
+    readReal(paper, "codePointSize", a.pdf.codePointSize);
+    readReal(paper, "marginMm", a.pdf.marginMm);
+    readInt(paper, "imageDpi", a.pdf.imageDpi);
+    readInt(paper, "maxExportedImageSize", a.pdf.maxExportedImageSize);
+    const QJsonArray paperHeads = paper.value(QStringLiteral("headingScale")).toArray();
+    for (int i = 0; i < paperHeads.size() && i < int(a.pdf.headingScale.size()); ++i)
+        if (paperHeads.at(i).isDouble()) a.pdf.headingScale[size_t(i)] = paperHeads.at(i).toDouble();
 
     const QJsonObject layout = root.value(QStringLiteral("layout")).toObject();
     readReal(layout, "lineHeightFactor", a.lineHeightFactor);

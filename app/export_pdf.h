@@ -32,6 +32,8 @@
 
 #include <vector>
 
+class QTextDocument;
+
 namespace zametti {
 
 // Кусок документа, который на две страницы не делится: строка текста или
@@ -50,12 +52,18 @@ struct Unbreakable {
 // остальное в PDF рисует тот же код, что и окно.
 std::vector<qreal> pageCuts(std::vector<Unbreakable> hard, qreal docHeight, qreal pageHeight);
 
+// Что бумага требует от собранного документа, а экран нет: комментарии вон,
+// заголовки помечены целями, ссылка под фотографией погашена, внешние адреса
+// приведены к процентной записи. Открыто по той же причине, что и pageCuts:
+// проверить это по готовому PDF нельзя — текст в нём лежит номерами глифов.
+void prepareForPaper(QTextDocument& doc);
+
 struct PdfOptions {
     QPageSize::PageSizeId page = QPageSize::A4;
-    qreal marginMm = 15.0;
-    // Разрешение, в котором картинки уезжают в файл. 200 — печатное качество
-    // для фотографии; выше файл растёт, а глаз не отличает.
-    int imageDpi = 200;
+    // Ноль — брать из конфига (раздел pdf). Не ноль — так велел вызывающий.
+    qreal marginMm = 0.0;
+    // Ноль — брать из конфига (раздел pdf).
+    int imageDpi = 0;
     // Заголовок в свойствах файла. Пусто — берётся имя файла.
     QString title;
 };

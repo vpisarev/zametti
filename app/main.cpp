@@ -1490,12 +1490,13 @@ int main(int argc, char** argv) {
     // Каталог запоминается на время сеанса: вывозят обычно несколько заметок
     // подряд и в одно место.
     QString exportDir;
-    const auto exportNote = [&] {
-        const QString file = editor.filePath();
+    const auto exportNote = [&](const QString& file) {
         if (file.isEmpty()) return;
         // Пишем ДО вывоза: иначе наружу уехала бы заметка без последних правок,
-        // а человек об этом не узнал бы — на экране-то они есть.
-        editor.save(false);
+        // а человек об этом не узнал бы — на экране-то они есть. Записывается
+        // открытая заметка, и вывозят чаще всего именно её; вывоз чужой
+        // заметки из списка её правок не касается.
+        if (file == editor.filePath()) editor.save(false);
 
         const QString title = model.titleOfId(QFileInfo(file).completeBaseName());
         const QString name = zametti::fileNameFromTitle(
@@ -1505,17 +1506,34 @@ int main(int argc, char** argv) {
 
         const QString markdown = QStringLiteral("Markdown с картинками (*.md)");
         const QString pdf = QStringLiteral("PDF (*.pdf)");
-        QString chosenFilter = markdown;
-        QString target = QFileDialog::getSaveFileName(
-            &window, QStringLiteral("Вывезти заметку"),
-            QDir(exportDir).filePath(name + QStringLiteral(".md")),
-            markdown + QStringLiteral(";;") + pdf, &chosenFilter);
+
+        // Диалог свой, а не getSaveFileName: тому нельзя сказать «сменили
+        // фильтр — смени и расширение», а без этого человек, выбрав PDF,
+        // сохранял файл с именем «Заметка.md» и получал markdown.
+        QFileDialog dialog(&window, QStringLiteral("Вывезти заметку"), exportDir);
+        dialog.setAcceptMode(QFileDialog::AcceptSave);
+        dialog.setNameFilters({markdown, pdf});
+        dialog.setDefaultSuffix(QStringLiteral("md"));
+        dialog.selectFile(name + QStringLiteral(".md"));
+        QObject::connect(&dialog, &QFileDialog::filterSelected, &dialog,
+                         [&dialog, &name, pdf](const QString& chosen) {
+            const bool paper = chosen == pdf;
+            dialog.setDefaultSuffix(paper ? QStringLiteral("pdf") : QStringLiteral("md"));
+            // Имя берём то, что человек уже набрал, а не предложенное:
+            // переключение фильтра не повод отменять его правку.
+            QString base = QFileInfo(dialog.selectedFiles().value(0)).completeBaseName();
+            if (base.isEmpty()) base = name;
+            dialog.selectFile(base + (paper ? QStringLiteral(".pdf") : QStringLiteral(".md")));
+        });
+        if (dialog.exec() != QDialog::Accepted) return;
+        QString target = dialog.selectedFiles().value(0);
         if (target.isEmpty()) return;
 
-        // Расширение мог не набрать никто: диалог его не навязывает. Тогда
-        // решает выбранный фильтр.
+        // Расширение мог не набрать никто: setDefaultSuffix спасает не всегда
+        // (набранная точка в имени сходит за расширение). Тогда решает фильтр.
         if (QFileInfo(target).suffix().isEmpty())
-            target += chosenFilter == pdf ? QStringLiteral(".pdf") : QStringLiteral(".md");
+            target += dialog.selectedNameFilter() == pdf ? QStringLiteral(".pdf")
+                                                         : QStringLiteral(".md");
         exportDir = QFileInfo(target).absolutePath();
 
         const QString suffix = QFileInfo(target).suffix().toLower();
@@ -1660,6 +1678,8 @@ int main(int argc, char** argv) {
         ask->open();
     });
 
+    QObject::connect(&editor, &zametti::NoteEditor::exportRequested, &window,
+                     [&](const QString& path) { exportNote(path); });
     QObject::connect(&editor, &zametti::NoteEditor::externalEditorRequested, &window,
                      [&](const QString& file) { openExternally(file); });
 
@@ -1820,6 +1840,8 @@ int main(int argc, char** argv) {
         menu.addSeparator();
         menu.addAction(QStringLiteral("Открыть во внешнем редакторе"),
                        [&] { openExternally(model.pathOfId(id)); });
+        menu.addAction(QStringLiteral("Экспортировать…"),
+                       [&] { exportNote(model.pathOfId(id)); });
         menu.addSeparator();
         if (model.inTrashId(id))
             menu.addAction(QStringLiteral("Восстановить"), [&] { restoreNote(id); });
@@ -2117,7 +2139,7 @@ int main(int argc, char** argv) {
                 break;
             }
             case Button::Export:
-                exportNote();
+                exportNote(editor.filePath());
                 break;
             case Button::Cloud:
             case Button::SearchInHistory:

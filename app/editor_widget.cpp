@@ -1775,6 +1775,10 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
     menu->addSeparator();
     menu->addAction(QStringLiteral("Открыть во внешнем редакторе"), this,
                     [this] { emit externalEditorRequested(note_.path); });
+    // Вывоз — тоже команда окна: диалог сохранения и запись PDF виджету текста
+    // не по чину, да и заметку перед вывозом надо сперва записать.
+    menu->addAction(QStringLiteral("Экспортировать…"), this,
+                    [this] { emit exportRequested(note_.path); });
 
     menu->popup(event->globalPos());
 }

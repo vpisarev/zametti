@@ -97,7 +97,10 @@ public:
     // pixelRatio — сколько устройственных пикселей приходится на логическую
     // единицу у чужого painter'а. Нужен ТОЛЬКО картинкам: без него Qt вложила
     // бы в PDF исходные пиксели целиком, сколько бы их ни было.
-    void renderSlice(QPainter& painter, const QRectF& documentRect, qreal pixelRatio);
+    // imageBudget — сторона квадратного бюджета площади для картинок, как
+    // maxImportedImageSize при ввозе; ноль — потолка нет.
+    void renderSlice(QPainter& painter, const QRectF& documentRect, qreal pixelRatio,
+                     int imageBudget = 0);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -281,6 +284,7 @@ private:
     // ужимаются до нужного странице размера, уголки-мишень не рисуются.
     // Живёт только внутри renderSlice.
     qreal exportRatio_ = 0.0;
+    int exportImageBudget_ = 0;
 };
 
 }  // namespace zametti

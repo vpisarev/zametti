@@ -1,6 +1,7 @@
 #include "note_view.h"
 
 #include "doc_model.h"
+#include "import_limits.h"
 #include "marker.h"
 #include "settings.h"
 
@@ -834,7 +835,17 @@ void NoteView::paintImage(QPainter& painter, const QTextBlock& block) {
             //
             // Только ВНИЗ: растянуть мелкую картинку до разрешения печати
             // нельзя, пикселей взять неоткуда, и файл вырос бы ни за что.
-            const int want = qMax(1, qRound(geometry.photo.width() * exportRatio_));
+            int want = qMax(1, qRound(geometry.photo.width() * exportRatio_));
+            if (exportImageBudget_ > 0) {
+                // Потолок считает ТОТ ЖЕ targetSize, что и ввоз: бюджет
+                // площади S², потолок стороны 3S, никогда вверх. Второй
+                // реализации того же правила быть не должно — разойдутся.
+                ImportLimits budget;
+                budget.maxSize = exportImageBudget_;
+                const int height = qMax(1, qRound(want * qreal(pixels->height()) /
+                                                  qreal(qMax(1, pixels->width()))));
+                want = qMin(want, targetSize({want, height}, budget).width);
+            }
             painter.drawImage(geometry.photo,
                               want < pixels->width()
                                   ? pixels->scaledToWidth(want, Qt::SmoothTransformation)
@@ -860,8 +871,10 @@ void NoteView::paintImage(QPainter& painter, const QTextBlock& block) {
     painter.restore();
 }
 
-void NoteView::renderSlice(QPainter& painter, const QRectF& documentRect, qreal pixelRatio) {
+void NoteView::renderSlice(QPainter& painter, const QRectF& documentRect, qreal pixelRatio,
+                           int imageBudget) {
     exportRatio_ = qMax(0.0, pixelRatio);
+    exportImageBudget_ = qMax(0, imageBudget);
     painter.save();
     painter.setClipRect(documentRect);
     // Фон рисуем сами: у бумаги его нет, а подложка кода и цвет текста заданы
@@ -896,6 +909,7 @@ void NoteView::renderSlice(QPainter& painter, const QRectF& documentRect, qreal 
 
     painter.restore();
     exportRatio_ = 0.0;
+    exportImageBudget_ = 0;
 }
 
 // Четыре уголка по краям фотографии — как мишень в видоискателе. Заливка

@@ -19,7 +19,11 @@
 // нет её почти у всех. Спрашивается у самого файла: у вшитого шрифта в PDF
 // есть дескриптор с потоком, у невшитого — нет.
 
+#include "document_builder.h"
+#include "doc_model.h"
 #include "export_pdf.h"
+#include "parser.h"
+#include "settings.h"
 #include "test_util.h"
 
 #include <QApplication>
@@ -27,6 +31,8 @@
 #include <QFile>
 #include <QImage>
 #include <QTemporaryDir>
+#include <QTextBlock>
+#include <QTextDocument>
 
 #include <string>
 #include <vector>
@@ -170,6 +176,99 @@ void checkShrunkImage() {
             smallSize * 4 < bigSize);
 }
 
+// Что бумага делает с документом до отрисовки. Проверяется здесь, а не по
+// готовому PDF: текст в PDF лежит номерами глифов, и «нет ли там комментария»
+// у файла не спросишь.
+void checkPaperPrep() {
+    const std::string source =
+        "# Первый раздел\n\n"
+        "<!-- записка себе -->\n\n"
+        "Ссылка [внутрь](#первый-раздел), наружу "
+        "[в вики](https://ru.wikipedia.org/wiki/Красно–чёрное_дерево) и "
+        "комментарий <!-- в строке --> внутри.\n\n"
+        "![снимок](01n6vwnr03mxzq.jxl)\n";
+
+    QTextDocument doc;
+    zametti::buildDocument(zametti::parse(source), doc, 1.0);
+    zametti::prepareForPaper(doc);
+
+    QString all;
+    bool headingMarked = false;
+    bool imageKept = false;
+    bool imageLinked = true;
+    QStringList hrefs;
+    for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {
+        all += block.text() + QLatin1Char('\n');
+        if (!zametti::isRawBlock(block) && zametti::kindOf(block) == zametti::Kind::Heading) {
+            for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it)
+                if (it.fragment().isValid() &&
+                    it.fragment().charFormat().anchorNames().contains(
+                        QStringLiteral("первый-раздел")))
+                    headingMarked = true;
+        }
+        for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+            if (!it.fragment().isValid()) continue;
+            const QTextCharFormat format = it.fragment().charFormat();
+            if ((format.intProperty(zametti::SpanStyleProperty) & zametti::SpanImage) != 0) {
+                imageKept = !format.anchorHref().isEmpty();
+                imageLinked = format.isAnchor();
+            } else if (!format.anchorHref().isEmpty()) {
+                hrefs << format.anchorHref();
+            }
+        }
+    }
+
+    ZT_TRUE("комментарий блоком не попал на бумагу: " + all.toStdString(),
+            !all.contains(QStringLiteral("записка себе")));
+    ZT_TRUE("комментарий в строке не попал на бумагу: " + all.toStdString(),
+            !all.contains(QStringLiteral("в строке")));
+    ZT_TRUE("а сам текст на месте: " + all.toStdString(),
+            all.contains(QStringLiteral("Ссылка")) && all.contains(QStringLiteral("внутри")));
+
+    // Заголовок стал ЦЕЛЬЮ. Без этого внутренние ссылки в PDF ведут в никуда:
+    // Qt пишет их как ссылку на именованную цель, а целей в файле нет.
+    ZT_TRUE("заголовок помечен именем цели", headingMarked);
+
+    // Ссылка под фотографией погашена, но АДРЕС ОСТАЛСЯ: по нему вид и узнаёт
+    // строку-фотографию. Первый заход стирал адрес — снимок пропадал вовсе.
+    ZT_TRUE("адрес фотографии на месте", imageKept);
+    ZT_TRUE("а ссылка под фотографией погашена", !imageLinked);
+
+    bool inner = false;
+    bool outer = false;
+    for (const QString& href : hrefs) {
+        // Внутренняя остаётся как есть: имя цели обязано совпасть знак в знак.
+        if (href == QStringLiteral("#первый-раздел")) inner = true;
+        // Внешняя приводится к процентной записи: Qt пишет URI однобайтовым, и
+        // "Красно–чёрное" превратилось бы в вереницу "?".
+        if (href.startsWith(QStringLiteral("https://")) && !href.contains(QChar(0x043A)) &&
+            href.contains(QStringLiteral("%D")))
+            outer = true;
+    }
+    ZT_TRUE("внутренняя ссылка не тронута: " + hrefs.join(QLatin1Char(' ')).toStdString(), inner);
+    ZT_TRUE("внешняя приведена к процентной записи: " +
+                hrefs.join(QLatin1Char(' ')).toStdString(),
+            outer);
+}
+
+// Шрифт бумаги — из раздела pdf конфига, а не экранный.
+void checkPaperFont() {
+    const QString note = makeNote(QStringLiteral("01gggggggggggg.md"),
+                                  "# Заголовок\n\nАбзац текста.\n\n```\nкод\n```\n");
+    zametti::appearance().pdf.fontFamily = QStringLiteral("IBM Plex Sans");
+    zametti::appearance().pdf.codeFamily = QStringLiteral("IBM Plex Mono");
+    exportAndSize(note, QStringLiteral("шрифты.pdf"), nullptr);
+
+    QFile file(QDir(g_dir).filePath(QStringLiteral("шрифты.pdf")));
+    ZT_TRUE("файл читается", file.open(QIODevice::ReadOnly));
+    const QByteArray bytes = file.readAll();
+    ZT_TRUE("текст набран бумажной гарнитурой", bytes.contains("IBMPlexSans"));
+    ZT_TRUE("а код — своей", bytes.contains("IBMPlexMono"));
+    // Облик возвращается на место: подмена живёт только внутри вывоза.
+    ZT_TRUE("экранная гарнитура не тронута вывозом",
+            zametti::appearance().fontFamily != QStringLiteral("IBM Plex Sans"));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -193,6 +292,8 @@ int main(int argc, char** argv) {
     }
 
     checkCuts();
+    checkPaperPrep();
+    checkPaperFont();
     checkRealFile();
     checkShrunkImage();
 
