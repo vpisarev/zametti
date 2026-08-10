@@ -40,11 +40,18 @@
 *.app
 
 # Build directories
-# /b/ — каталог сборки, заведённый по ошибке в корне; сборка живёт вне дерева
+#
+# ПРИВЯЗАНЫ К КОРНЮ (ведущий слэш), и это не косметика. Правило `build/` без
+# слэша прячет каталог с таким именем НА ЛЮБОЙ ГЛУБИНЕ — и спрятало
+# 3rdparty/libtiff/upstream/build, часть вендоренного дерева, которую её же
+# CMakeLists подключает строкой `add_subdirectory(build)`. В нашей рабочей
+# копии он лежал, поэтому всё собиралось; в свежем клоне его не было, и
+# настройка падала на «add_subdirectory given source 'build', which is not an
+# existing directory». Владелец наткнулся на это, собирая на маке.
 /b/
-build/
-Build/
-build-*/
+/build/
+/Build/
+/build-*/
 
 # CMake generated files
 CMakeFiles/
