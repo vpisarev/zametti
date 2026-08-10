@@ -131,6 +131,16 @@ if(TARGET zametti-view)
     add_test(NAME spaces COMMAND spaces_test)
     set_tests_properties(spaces PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    # Чего стоит история: сколько раз мы трогаем диск и сколько почти
+    # одинаковых копий заметки заводим. Замер, а не проверка — в набор не
+    # входит. Рабочий каталог на диске (.testdata), а не в tmpfs: QSaveFile
+    # внутри себя зовёт fdatasync, и в tmpfs он стоит ноль.
+    add_executable(history_bench history_bench.cpp)
+    target_link_libraries(history_bench PRIVATE zametti-widgets zametti-warnings)
+    target_include_directories(history_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_definitions(history_bench
+        PRIVATE ZAMETTI_TESTDATA="${CMAKE_SOURCE_DIR}/.testdata")
+
     # Вывоз заметки наружу. Матрица — про состояния каталога, куда вывозят:
     # пусто, та же картинка, чужой файл с тем же именем, само хранилище.
     add_executable(export_test export_test.cpp)
