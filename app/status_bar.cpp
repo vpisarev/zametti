@@ -140,10 +140,35 @@ void StatusBar::showLeft() {
     // заметок хранилища одинаковое, а места ест много. Полный путь остаётся в
     // подсказке — скопировать его иногда нужно.
     const QString name = QFileInfo(note_.path).fileName();
-    const int room = qMax(0, left_->width() - metrics.horizontalAdvance(rest + separator));
+    // Звёздочка занимает место и в обычном случае: без этого строка дёргалась
+    // бы туда-сюда при каждой смене признака.
+    const QString mark = note_.suspect ? QStringLiteral(" *") : QString();
+    const int room = qMax(
+        0, left_->width() - metrics.horizontalAdvance(rest + separator + QStringLiteral(" *")));
     const QString shown = metrics.elidedText(name, Qt::ElideMiddle, room);
-    left_->setText(shown.isEmpty() ? rest : shown + separator + rest);
-    left_->setToolTip(note_.path);
+    const QString plain = shown.isEmpty() ? rest : shown + mark + separator + rest;
+
+    if (!note_.suspect) {
+        left_->setTextFormat(Qt::PlainText);
+        left_->setText(plain);
+    } else {
+        // Красная только ЗВЁЗДОЧКА, а не вся строка: строка говорит про
+        // заметку, звёздочка — про беду. Разметкой, потому что цвет нужен
+        // куску текста, а не всей надписи; всё остальное экранируется.
+        left_->setTextFormat(Qt::RichText);
+        left_->setText(shown.toHtmlEscaped() +
+                       QStringLiteral(" <span style=\"color:%1\">*</span>")
+                           .arg(appearance().statusSuspectColor.name(QColor::HexRgb)) +
+                       QString(separator + rest).toHtmlEscaped());
+    }
+    left_->setToolTip(note_.suspect
+                          ? QStringLiteral("%1\n\nСамопроверка при записи не сошлась: "
+                                           "разобранное обратно отличается от документа. "
+                                           "Заметка записана, копия буфера — в .rescue. "
+                                           "Звёздочка погаснет, как только очередная запись "
+                                           "сойдётся.")
+                                .arg(note_.path)
+                          : note_.path);
 }
 
 void StatusBar::showImage() {

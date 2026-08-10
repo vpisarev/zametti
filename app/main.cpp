@@ -676,6 +676,7 @@ int main(int argc, char** argv) {
             info.lines = editor.stats().lines;
             info.images = editor.stats().images;
             info.wordsKnown = editor.statsFresh() && editor.stats().valid;
+            info.suspect = editor.selfCheckFailed();
         }
         statusBar.setNote(info);
         const zametti::CaretPlace place = editor.caretPlace();

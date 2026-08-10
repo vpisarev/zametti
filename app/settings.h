@@ -274,6 +274,8 @@ struct Appearance {
     QColor statusBackground{0xf5, 0xf5, 0xf2};
     QColor statusTextColor{0x6b, 0x71, 0x79};
     QColor statusSeparatorColor{0xdd, 0xe1, 0xe5};
+    // Звёздочка у имени заметки, когда самопроверка при записи не сошлась.
+    QColor statusSuspectColor{0xc0, 0x28, 0x28};
 
     // --- средняя колонка: плоский список заметок ---
     int noteListWidth = 320;

@@ -99,6 +99,19 @@ void checkNoteLine() {
     checkHas(rightText(bar), QStringLiteral("4"), "число строк");
     checkHas(rightText(bar), QStringLiteral("12"), "строка каретки");
 
+    // Красная звёздочка у имени: самопроверка при записи не сошлась. Окна с
+    // вопросом больше нет — оно повторялось на каждом автосохранении и потому
+    // выключалось вместе с самим сигналом.
+    check(!leftText(bar).contains(QStringLiteral("*")), "без беды звёздочки нет");
+    note.suspect = true;
+    bar.setNote(note);
+    checkHas(leftText(bar), QStringLiteral("*"), "звёздочка появилась");
+    checkHas(leftText(bar), QStringLiteral("color:"), "и она покрашена, а не просто знак");
+    checkHas(leftText(bar), QStringLiteral("01n6r08s8wy52h.md"), "имя заметки на месте");
+    note.suspect = false;
+    bar.setNote(note);
+    check(!leftText(bar).contains(QStringLiteral("*")), "и гаснет, когда запись сошлась");
+
     // Неизвестное число слов — «?», а не старое число молча.
     note.wordsKnown = false;
     bar.setNote(note);
