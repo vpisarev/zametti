@@ -790,8 +790,19 @@ std::string normaliseSpaces(std::string_view text) {
     static const std::string nbsp = "\xC2\xA0";
     std::string out;
     out.reserve(text.size());
-    bool leading = true;   // мы всё ещё в отступе строки
+    bool leading = true;    // мы всё ещё в отступе строки
+    bool inCode = false;    // между заборами блока кода
     for (size_t i = 0; i < text.size();) {
+        if (leading) {
+            // Забор блока кода: три знака и больше, с любым отступом перед
+            // ними. Внутри блока НЕРАЗРЫВНЫХ НЕ БЫВАЕТ ВОВСЕ — там значим сам
+            // пробел, его копируют в терминал, а неразрывный туда попадает
+            // только мусором из чужих выгрузок.
+            size_t at = i;
+            while (at < text.size() && (text[at] == ' ' || text[at] == '\t')) ++at;
+            if (text.compare(at, 3, "```") == 0 || text.compare(at, 3, "~~~") == 0)
+                inCode = !inCode;
+        }
         if (text[i] == '\n') {
             out.push_back('\n');
             leading = true;
@@ -801,7 +812,9 @@ std::string normaliseSpaces(std::string_view text) {
         if (text.compare(i, nbsp.size(), nbsp) == 0) {
             size_t run = 0;
             while (text.compare(i + run * nbsp.size(), nbsp.size(), nbsp) == 0) ++run;
-            const bool keep = leading || run > 1;
+            // Вне кода: ведущие держат отступ, серия из двух и более держит
+            // выравнивание, одиночный в середине не значит ничего.
+            const bool keep = !inCode && (leading || run > 1);
             for (size_t k = 0; k < run; ++k) out += keep ? nbsp : std::string(" ");
             i += run * nbsp.size();
             leading = false;

@@ -123,6 +123,26 @@ void checkLoad() {
           visible(afterLoad(head + "int a" + kNbsp + kNbsp + kNbsp + "= 5\n")));
 }
 
+// В блоке кода неразрывных быть не должно ни одного — даже ведущих. Владелец
+// нашёл это на «type exp_t = ...»: отступы внутри забора так и остались
+// заполнены неразрывными.
+void checkCodeFenceOnLoad() {
+    const std::string head = "<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n-->\n\n";
+    const std::string source = head + "```\n" + kNbsp + kNbsp + "type exp_t =\n" + kNbsp +
+                               "| Nil\n```\n\n" + kNbsp + kNbsp + "а тут отступ живёт\n";
+    const std::string got = afterLoad(source);
+
+    const size_t fence = got.find("```");
+    const size_t close = got.find("```", fence + 3);
+    ZT_TRUE("заборы на месте", fence != std::string::npos && close != std::string::npos);
+    if (fence == std::string::npos || close == std::string::npos) return;
+
+    ZT_TRUE("внутри забора неразрывных не осталось: " + visible(got.substr(fence, close - fence)),
+            got.substr(fence, close - fence).find(kNbsp) == std::string::npos);
+    ZT_TRUE("а отступ ВНЕ забора цел: " + visible(got),
+            got.find(kNbsp + kNbsp + "а тут отступ живёт") != std::string::npos);
+}
+
 void checkToCode() {
     // В код: неразрывные становятся обычными, в том числе ведущие.
     const std::string source = "int a" + kNbsp + kNbsp + "= 5\n" + kNbsp + "отступ\n";
@@ -169,6 +189,7 @@ int main(int argc, char** argv) {
 
     checkImport();
     checkLoad();
+    checkCodeFenceOnLoad();
     checkToCode();
     checkFromCode();
     checkRoundTrip();
