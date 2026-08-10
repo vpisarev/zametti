@@ -93,6 +93,23 @@ NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
             if (!sequence.isEmpty()) specialKeys_.push_back({sequence, text});
     }
 
+    // Уровень заголовка — ДЕЙСТВИЯМИ, а не разбором события. С зажатым Shift
+    // event->key() приходит знаком верхнего регистра ("@" вместо "2" на
+    // латинской раскладке, кавычка на русской), и сравнение с Qt::Key_2 не
+    // срабатывает никогда — владелец нажал Ctrl+Shift+2 и не получил ничего.
+    // Сопоставление сочетаний Qt делает сама и с учётом раскладки.
+    for (int level = 0; level <= 6; ++level) {
+        auto* action = new QAction(this);
+        action->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+%1").arg(level)));
+        action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+        connect(action, &QAction::triggered, this, [this, level] {
+            runOperation([level](QTextDocument& doc, QTextCursor& at) {
+                return setHeadingLevel(doc, at, level);
+            });
+        });
+        addAction(action);
+    }
+
     bind(appearance().toggleTaskKey, toggleTaskAtCursor);
     bind(appearance().makeBulletKey, makeBullet);
     bind(appearance().makeOrderedKey, makeOrdered);
@@ -1352,23 +1369,6 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     // правило раньше разреза, иначе Enter развёл бы дефисы и новый блок.
     // На фотографии Enter не делит блок, а заводит пустую строку ЗА ней:
     // каретка на картинке считается стоящей сразу за ней (правило владельца).
-    // Ctrl+Shift+0..6 — уровень заголовка: ноль это обычный текст. Именно
-    // с Shift: голые Ctrl+1..3 давно заняты видами списка, и первый заход их
-    // перебил — набор списков покраснел тремя проверками. А Ctrl+Shift+E уже
-    // означает «блок кода», так что смена рода блока живёт в одном ряду.
-    if ((event->modifiers() & Qt::ControlModifier) != 0 &&
-        (event->modifiers() & Qt::ShiftModifier) != 0 &&
-        (event->modifiers() & Qt::AltModifier) == 0 &&
-        event->key() >= Qt::Key_0 && event->key() <= Qt::Key_6) {
-        const int level = event->key() - Qt::Key_0;
-        if (runOperation([level](QTextDocument& doc, QTextCursor& at) {
-                return setHeadingLevel(doc, at, level);
-            })) {
-            event->accept();
-            return;
-        }
-    }
-
     if (plainEnter && runOperation(newLineAfterImage)) return;
     if (plainEnter && runOperation(applyDividerRuleAtCursor)) return;
     if (plainEnter && runOperation(splitBlockAtCursor)) return;
