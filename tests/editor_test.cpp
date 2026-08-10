@@ -168,7 +168,9 @@ void checkSelectionShowsCode() {
     zametti::NoteEditor editor;
     editor.resize(700, 400);
     editor.show();
-    QTest::qWaitForWindowExposed(&editor);
+    // Ответ не выбрасываем: не показанное окно делает бессмысленным всё, что
+    // ниже, — снимок брать неоткуда. В Debug это ещё и -Werror.
+    ZT_TRUE("окно редактора показалось", QTest::qWaitForWindowExposed(&editor));
     editor.openFile(path);
     QTest::qWait(50);
 

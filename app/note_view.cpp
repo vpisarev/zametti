@@ -825,7 +825,23 @@ void NoteView::paintImage(QPainter& painter, const QTextBlock& block) {
         if (fresh != nullptr) paintTooBigImage(painter, block, geometry, *fresh);
     } else {
         painter.setRenderHint(QPainter::SmoothPixmapTransform);
-        painter.drawImage(geometry.photo, *pixels);
+        if (exportRatio_ > 0.0) {
+            // НА БУМАГУ КАРТИНКА ЕДЕТ ТОГО РАЗМЕРА, КАКИМ ЕЁ ВИДНО. Qt вложила
+            // бы в PDF исходные пиксели целиком, сколько бы их ни было: она
+            // просто масштабирует при отрисовке, а в файл кладёт то, что дали.
+            // Фотография, уменьшенная мышью до трети, весила бы в файле как
+            // полная — а именно этого владелец и просил не делать.
+            //
+            // Только ВНИЗ: растянуть мелкую картинку до разрешения печати
+            // нельзя, пикселей взять неоткуда, и файл вырос бы ни за что.
+            const int want = qMax(1, qRound(geometry.photo.width() * exportRatio_));
+            painter.drawImage(geometry.photo,
+                              want < pixels->width()
+                                  ? pixels->scaledToWidth(want, Qt::SmoothTransformation)
+                                  : *pixels);
+        } else {
+            painter.drawImage(geometry.photo, *pixels);
+        }
     }
 
     // Выделение, задевшее строку, — это выделенная фотография, а не вскрытая
@@ -840,8 +856,46 @@ void NoteView::paintImage(QPainter& painter, const QTextBlock& block) {
                       block.position() + block.length() &&
                   qMax(cursor.anchor(), cursor.position()) > block.position()
             : cursor.block() == block;
-    if (selected) paintImageCorners(painter, geometry.photo);
+    if (selected && exportRatio_ <= 0.0) paintImageCorners(painter, geometry.photo);
     painter.restore();
+}
+
+void NoteView::renderSlice(QPainter& painter, const QRectF& documentRect, qreal pixelRatio) {
+    exportRatio_ = qMax(0.0, pixelRatio);
+    painter.save();
+    painter.setClipRect(documentRect);
+    // Фон рисуем сами: у бумаги его нет, а подложка кода и цвет текста заданы
+    // относительно него. Белая страница с нашими цветами текста читалась бы
+    // иначе, чем то, что человек видит в окне.
+    painter.fillRect(documentRect, appearance().pageBackground);
+    paintCodeBackground(painter, documentRect);
+
+    // Текст — тем же слоем, что и на экране, только без каретки и выделения:
+    // PaintContext отдаём пустой, cursorPosition = -1 по умолчанию.
+    QAbstractTextDocumentLayout::PaintContext context;
+    context.palette = palette();
+    context.clip = documentRect;
+    document()->documentLayout()->draw(&painter, context);
+
+    // Дальше — слово в слово то же, что в paintEvent: маркеры, черты,
+    // фотографии. Разошлись бы эти два обхода — бумага перестала бы совпадать
+    // с экраном, а заметить это можно было бы только глазами.
+    const QFont base = baseFontFor(zoom_);
+    const QAbstractTextDocumentLayout* layout = document()->documentLayout();
+    const int firstVisible = layout->hitTest(QPointF(0, documentRect.top()), Qt::FuzzyHit);
+    QTextBlock start = document()->findBlock(firstVisible);
+    if (start.isValid() && start.previous().isValid()) start = start.previous();
+    for (QTextBlock block = start; block.isValid(); block = block.next()) {
+        const QRectF rect = layout->blockBoundingRect(block);
+        if (rect.top() > documentRect.bottom()) break;
+        if (rect.bottom() + block.blockFormat().bottomMargin() < documentRect.top()) continue;
+        paintMarker(painter, block, base);
+        paintDivider(painter, block, rect, zoom_);
+        paintImage(painter, block);
+    }
+
+    painter.restore();
+    exportRatio_ = 0.0;
 }
 
 // Четыре уголка по краям фотографии — как мишень в видоискателе. Заливка
@@ -898,6 +952,13 @@ void NoteView::paintCodeBackground(QPainter& painter, const QRectF& visible) {
     const QAbstractTextDocumentLayout* layout = document()->documentLayout();
     const int firstVisible = layout->hitTest(QPointF(0, visible.top()), Qt::FuzzyHit);
 
+    // СОСТОЯНИЕ ВОЗВРАЩАЕМ. Цвет подложки кода полупрозрачен (альфа 14 из 255),
+    // и оставленная в painter'е кисть на экране безвредна — растровый painter
+    // при drawImage на неё не смотрит. А вот PDF смотрит: Qt складывает альфу
+    // кисти в состояние картинки, и фотография уехала на бумагу с прозрачностью
+    // 5% — бледной тенью. Найдено глазами по вывезенной странице, в самом файле
+    // это выглядело как "/ca 0.054901960" перед вставкой снимка.
+    painter.save();
     painter.setPen(Qt::NoPen);
     painter.setBrush(appearance().codeBackground);
     // Метрики шрифта — один раз на отрисовку, а не на блок: код нарезан
@@ -929,6 +990,7 @@ void NoteView::paintCodeBackground(QPainter& painter, const QRectF& visible) {
         painter.drawRect(
             QRectF(rect.left() + shift, rect.top(), rect.width() - shift, height));
     }
+    painter.restore();
 }
 
 // Подложка кода ПОВЕРХ выделения.

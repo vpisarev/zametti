@@ -20,6 +20,8 @@
 #include "serializer.h"
 #include "settings.h"
 #include "about_window.h"
+#include "export_note.h"
+#include "export_pdf.h"
 #include "status_bar.h"
 #include "toolbar.h"
 
@@ -29,6 +31,7 @@
 #include <QIcon>
 #include <QItemSelectionModel>
 #include <QKeySequence>
+#include <QStandardPaths>
 #include <QListView>
 #include <QMenu>
 #include <QKeyEvent>
@@ -1477,6 +1480,69 @@ int main(int argc, char** argv) {
         }
     };
 
+    // Вывоз открытой заметки наружу. Куда и в каком виде — решает расширение,
+    // которое выберет человек: .md или .pdf. Двух кнопок для этого не нужно,
+    // диалог сохранения и так спрашивает и то, и другое.
+    //
+    // Имя предлагается ПО ЗАГОЛОВКУ, а не по имени файла: в хранилище имя это
+    // идентификатор, и «01n6r08s8wy52h.md» снаружи не говорит ничего.
+    //
+    // Каталог запоминается на время сеанса: вывозят обычно несколько заметок
+    // подряд и в одно место.
+    QString exportDir;
+    const auto exportNote = [&] {
+        const QString file = editor.filePath();
+        if (file.isEmpty()) return;
+        // Пишем ДО вывоза: иначе наружу уехала бы заметка без последних правок,
+        // а человек об этом не узнал бы — на экране-то они есть.
+        editor.save(false);
+
+        const QString title = model.titleOfId(QFileInfo(file).completeBaseName());
+        const QString name = zametti::fileNameFromTitle(
+            title.isEmpty() ? QFileInfo(file).completeBaseName() : title);
+        if (exportDir.isEmpty())
+            exportDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+
+        const QString markdown = QStringLiteral("Markdown с картинками (*.md)");
+        const QString pdf = QStringLiteral("PDF (*.pdf)");
+        QString chosenFilter = markdown;
+        QString target = QFileDialog::getSaveFileName(
+            &window, QStringLiteral("Вывезти заметку"),
+            QDir(exportDir).filePath(name + QStringLiteral(".md")),
+            markdown + QStringLiteral(";;") + pdf, &chosenFilter);
+        if (target.isEmpty()) return;
+
+        // Расширение мог не набрать никто: диалог его не навязывает. Тогда
+        // решает выбранный фильтр.
+        if (QFileInfo(target).suffix().isEmpty())
+            target += chosenFilter == pdf ? QStringLiteral(".pdf") : QStringLiteral(".md");
+        exportDir = QFileInfo(target).absolutePath();
+
+        const QString suffix = QFileInfo(target).suffix().toLower();
+        zametti::ExportReport report;
+        if (suffix == QStringLiteral("pdf")) {
+            zametti::PdfOptions paper;
+            paper.title = title;
+            report = zametti::exportPdf(file, target, paper);
+        } else {
+            report = zametti::exportMarkdown(file, target);
+        }
+
+        if (!report.ok()) {
+            QMessageBox::warning(&window, QStringLiteral("zametti"),
+                                 QStringLiteral("Не удалось вывезти заметку.\n%1")
+                                     .arg(report.error));
+            return;
+        }
+        // Молчать нельзя ровно в двух случаях: что-то переименовано или чего-то
+        // не нашлось. В остальных человек и так видит файл там, где просил.
+        if (!report.notes.isEmpty())
+            QMessageBox::information(&window, QStringLiteral("zametti"),
+                                     QStringLiteral("Заметка вывезена в %1.\n\n%2")
+                                         .arg(QFileInfo(target).fileName(),
+                                              report.notes.join(QStringLiteral("\n"))));
+    };
+
     // Ctrl+N: редактор перехватывает сочетание через ShortcutOverride, до
     // оконного ярлыка оно не доживало — поэтому фильтр на самом редакторе.
     struct NewNoteGrab : QObject {
@@ -1965,7 +2031,6 @@ int main(int argc, char** argv) {
         // не как «будет позже», поэтому у каждой — своя причина словами.
         toolbar.setPromise(Button::Cloud,
                            QStringLiteral("появится вместе с синхронизацией"));
-        toolbar.setPromise(Button::Export, QStringLiteral("появится в этом этапе"));
 
         toolbar.setPromise(Button::SearchInHistory,
                            QStringLiteral("появится вместе с единым поиском"));
@@ -2052,6 +2117,8 @@ int main(int argc, char** argv) {
                 break;
             }
             case Button::Export:
+                exportNote();
+                break;
             case Button::Cloud:
             case Button::SearchInHistory:
                 break;   // обещания: кнопки погашены, сюда не доходит

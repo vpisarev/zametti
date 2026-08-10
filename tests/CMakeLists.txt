@@ -131,6 +131,22 @@ if(TARGET zametti-view)
     add_test(NAME spaces COMMAND spaces_test)
     set_tests_properties(spaces PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    # Вывоз заметки наружу. Матрица — про состояния каталога, куда вывозят:
+    # пусто, та же картинка, чужой файл с тем же именем, само хранилище.
+    add_executable(export_test export_test.cpp)
+    target_link_libraries(export_test PRIVATE zametti-view zametti-warnings)
+    target_include_directories(export_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME export COMMAND export_test)
+    set_tests_properties(export PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # Заметка на бумагу. Спрашивается только то, что бумага добавляет к
+    # отрисовке: разрез страниц, вес уменьшенной картинки, вшитые шрифты.
+    add_executable(export_pdf_test export_pdf_test.cpp)
+    target_link_libraries(export_pdf_test PRIVATE zametti-widgets zametti-warnings)
+    target_include_directories(export_pdf_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME export-pdf COMMAND export_pdf_test)
+    set_tests_properties(export-pdf PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     # Уровень заголовка: матрица «что было × во что превращаем × где стоит».
     # Проверяется круг через файл: род блока живёт в свойствах, и ошибка в них
     # видна лишь тогда, когда документ уедет на диск и прочтётся обратно.

@@ -86,6 +86,19 @@ public:
     // шириной (логические пиксели) вместо записанной. width <= 0 — снять.
     void setImageDragWidth(int blockNumber, qreal width);
 
+    // Нарисовать кусок ДОКУМЕНТА в чужой painter — вывоз на бумагу.
+    //
+    // Не то же самое, что paintEvent: тот рисует вьюпорт со сдвигом на
+    // прокрутку, а тут задан прямоугольник в координатах документа и рисуется
+    // ровно он. Каретки нет, выделения нет: на бумаге они не значат ничего, а
+    // у невидимого виджета каретка всё равно стоит в начале и первый абзац
+    // уехал бы «выделенным».
+    //
+    // pixelRatio — сколько устройственных пикселей приходится на логическую
+    // единицу у чужого painter'а. Нужен ТОЛЬКО картинкам: без него Qt вложила
+    // бы в PDF исходные пиксели целиком, сколько бы их ни было.
+    void renderSlice(QPainter& painter, const QRectF& documentRect, qreal pixelRatio);
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
@@ -264,6 +277,10 @@ private:
     QSet<QString> currentNoteImages_;
     int imageDragBlock_ = -1;             // номер блока с перетаскиваемым углом
     qreal imageDragWidth_ = 0.0;
+    // Ноль — рисуем на экран. Больше нуля — идёт вывоз на бумагу: картинки
+    // ужимаются до нужного странице размера, уголки-мишень не рисуются.
+    // Живёт только внутри renderSlice.
+    qreal exportRatio_ = 0.0;
 };
 
 }  // namespace zametti

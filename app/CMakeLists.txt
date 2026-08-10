@@ -37,6 +37,8 @@ add_library(zametti-view STATIC
     edit_history.cpp
     editor_ops.h
     editor_ops.cpp
+    export_note.h
+    export_note.cpp
     marker.h
     marker.cpp
     search.h
@@ -68,6 +70,8 @@ add_library(zametti-widgets STATIC
     search_results.cpp
     store_search.h
     store_search.cpp
+    export_pdf.h
+    export_pdf.cpp
     note_view.h
     note_view.cpp
     editor_widget.h
