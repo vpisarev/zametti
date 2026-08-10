@@ -669,9 +669,13 @@ void checkInputRules() {
     checkEqual(QStringLiteral("\\* текст\n"), text(),
                "первый undo возвращает набранные знаки");
 
+    // Шаг отмены — СЛОВО: звёздочка и пробел после неё лежат в разных шагах.
     editor.undo();
     QTest::qWait(10);
-    checkEqual(QStringLiteral("текст\n"), text(), "второй undo снимает набор");
+    checkEqual(QStringLiteral("\\*текст\n"), text(), "второй undo снимает пробел");
+    editor.undo();
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("текст\n"), text(), "третий undo снимает саму звёздочку");
 }
 
 // Выделение обязано пережить операцию: она могла тронуть десяток пунктов, и
@@ -791,7 +795,11 @@ void checkDeferredSnapshot() {
     QTest::keyClicks(&editor, QStringLiteral(" tail"));
     editor.undo();
     QTest::qWait(10);
-    checkEqual(QStringLiteral("основа\n"), text(), "отмена сразу после набора");
+    // Пробел перед словом — свой шаг, поэтому отмен две.
+    checkEqual(QStringLiteral("основа \n"), text(), "отмена сразу после набора сняла слово");
+    editor.undo();
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("основа\n"), text(), "вторая отмена сняла и пробел");
 
     // Набор, потом операция: набранное — свой шаг, операция — свой.
     open("снимок-операция.md");
@@ -804,7 +812,10 @@ void checkDeferredSnapshot() {
     checkEqual(typed, text(), "отмена операции возвращает к набранному");
     editor.undo();
     QTest::qWait(10);
-    checkEqual(QStringLiteral("основа\n"), text(), "вторая отмена возвращает к исходному");
+    checkEqual(QStringLiteral("основа \n"), text(), "вторая отмена сняла слово");
+    editor.undo();
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("основа\n"), text(), "третья вернула к исходному");
 
     // Смена облика посреди серии: она собирает документ ИЗ ИСТОРИИ, и со
     // стухшим снимком набранное просто пропало бы с экрана.
@@ -831,7 +842,10 @@ void checkDeferredSnapshot() {
     checkEqual(QStringLiteral("основа save\n"), readFile(saved), "набранное дошло до файла");
     editor.undo();
     QTest::qWait(10);
-    checkEqual(QStringLiteral("основа\n"), text(), "после записи отмена возвращает к исходному");
+    checkEqual(QStringLiteral("основа \n"), text(), "после записи отмена снимает слово");
+    editor.undo();
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("основа\n"), text(), "а следующая — пробел перед ним");
 
     // Серия кончается тишиной: два прогона набора — два шага.
     open("снимок-пауза.md");
@@ -841,7 +855,7 @@ void checkDeferredSnapshot() {
     QTest::qWait(zametti::appearance().undoCoalesceMs + 150);
     editor.undo();
     QTest::qWait(10);
-    checkEqual(QStringLiteral("основа one\n"), text(), "пауза разделяет серии набора");
+    checkEqual(QStringLiteral("основа one \n"), text(), "пауза разделяет серии набора");
 }
 
 // Широкое окно: колонка уже окна, и applyContentWidth раздвигает поля рамки,
@@ -922,11 +936,16 @@ void checkNoteCache() {
                "каретка вернулась на место");
     check(editor.cachedNoteCount() == 1, "отложенная взята из кэша, а вторая легла туда");
 
-    // Главное: история цела — Ctrl+Z отменяет правку ПРОШЛОГО захода.
+    // Главное: история цела — Ctrl+Z отменяет правку ПРОШЛОГО захода. Отмен
+    // две: набрано было « tail», а пробел перед словом — свой шаг.
+    editor.undo();
+    QTest::qWait(10);
+    checkEqual(QStringLiteral("# первая\n\nстрока раз\nстрока два \n"), text(),
+               "Ctrl+Z отменяет слово, набранное в прошлый заход");
     editor.undo();
     QTest::qWait(10);
     checkEqual(QStringLiteral("# первая\n\nстрока раз\nстрока два\n"), text(),
-               "Ctrl+Z отменяет правку прошлого захода");
+               "а вторая отмена — пробел перед ним");
 
     // Внешняя правка: отпечаток не сойдётся, кэш выбрасывается, заметка
     // собирается с диска.

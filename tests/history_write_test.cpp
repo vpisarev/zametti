@@ -134,6 +134,78 @@ void checkNoEqualNeighbours() {
     }
 }
 
+// Отмена шагает СЛОВАМИ, а не буквами и не сессиями.
+//
+// Владелец: «буфера на 200 шагов как будто нет, слишком быстро мы попадаем в
+// историю» и «сгруппировать undo по словам, как у Apple». До починки серия
+// набора кончалась только тишиной в 700 мс, а сохранение её не разрывало: пока
+// человек печатает ровно, весь набор ложился ОДНИМ шагом (замер: после 150
+// правок глубина цепочки — единица). Два Ctrl+Z — и редактор уходил в историю,
+// к чужому слепку.
+//
+// Печатаем по одной букве курсором РЕДАКТОРА: правка чужим курсором не двигает
+// каретку, и для разбора границ это совсем другой случай (на этом я сперва и
+// намерил ерунду).
+void typeText(zametti::NoteEditor& editor, const QString& text) {
+    for (const QChar ch : text) {
+        QTextCursor caret = editor.textCursor();
+        caret.insertText(QString(ch));
+        editor.setTextCursor(caret);
+    }
+}
+
+QString tailOf(const zametti::NoteEditor& editor, int chars) {
+    const QString all = editor.document()->toPlainText();
+    return all.right(qMin(chars, int(all.size())));
+}
+
+void checkUndoByWords() {
+    const QString path = makeNote(QStringLiteral("01cccccccccccc"), "# Слова\n\n");
+    zametti::NoteEditor editor;
+    editor.setStoreRoot(g_root);
+    editor.openFile(path);
+
+    QTextCursor caret = editor.textCursor();
+    caret.movePosition(QTextCursor::End);
+    editor.setTextCursor(caret);
+    typeText(editor, QStringLiteral("один два три четыре"));
+    ZT_EQ("набралось", std::string("один два три четыре"), tailOf(editor, 19).toStdString());
+
+    editor.undo();
+    ZT_EQ("первая отмена убрала последнее слово", std::string("один два три "),
+          tailOf(editor, 13).toStdString());
+    editor.undo();
+    ZT_EQ("вторая — предыдущее", std::string("один два "), tailOf(editor, 9).toStdString());
+    editor.undo();
+    ZT_EQ("третья — ещё одно", std::string("один "), tailOf(editor, 5).toStdString());
+}
+
+// Сколько слов помещается в цепочку. Владелец просил буфер на сотни правок;
+// проверяем, что сотня слов отменяется, не сваливаясь в историю.
+void checkUndoDepth() {
+    const QString path = makeNote(QStringLiteral("01dddddddddddd"), "# Глубина\n\n");
+    zametti::NoteEditor editor;
+    editor.setStoreRoot(g_root);
+    editor.openFile(path);
+
+    QTextCursor caret = editor.textCursor();
+    caret.movePosition(QTextCursor::End);
+    editor.setTextCursor(caret);
+    const int words = 120;
+    for (int i = 0; i < words; ++i) typeText(editor, QStringLiteral("слово "));
+
+    int steps = 0;
+    while (!editor.inHistory() && steps <= words + 5) {
+        editor.undo();
+        if (editor.inHistory()) break;
+        ++steps;
+    }
+    editor.leaveHistory();
+    ZT_TRUE("отменилось " + std::to_string(steps) + " слов из " + std::to_string(words) +
+                ", а не свалились в историю",
+            steps >= words);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -145,6 +217,8 @@ int main(int argc, char** argv) {
     }
     g_root = tmp.path();
 
+    checkUndoByWords();
+    checkUndoDepth();
     checkNoOpEditWritesNothing();
     checkRealEditWrites();
     checkNoEqualNeighbours();

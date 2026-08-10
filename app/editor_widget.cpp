@@ -125,6 +125,7 @@ NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
     connect(&snapshot_, &QTimer::timeout, this, [this] {
         flushPendingEdit();
         note_.typingRun = false;
+        note_.runChars = 0;
     });
     connectDocument();
     connect(&watcher_, &QFileSystemWatcher::fileChanged, this, &NoteEditor::onFileChanged);
@@ -199,6 +200,21 @@ void NoteEditor::onCaretMoved() {
 // заводит.
 void NoteEditor::onContentsChange(int position, int charsRemoved, int charsAdded) {
     Q_UNUSED(charsRemoved);
+    // Границы шага отмены считаются по ЭТИМ числам, а не по курсору редактора:
+    // курсор к моменту разбора может ещё стоять на старом месте (правка пришла
+    // не с клавиатуры, а из вставки или из системы ввода).
+    if (!tidying_ && !recordingSuspended_) {
+        note_.changeStart = position;
+        note_.changeEnd = position + charsAdded;
+        note_.changeSeparator = false;
+        for (int i = position; i < position + charsAdded; ++i) {
+            const QChar ch = document()->characterAt(i);
+            if (ch.isSpace() || ch.isPunct() || ch == QChar::ParagraphSeparator) {
+                note_.changeSeparator = true;
+                break;
+            }
+        }
+    }
     // Границы нужны не только уборке: место под фотографии тоже перемеряется
     // после каждой правки, и по всему документу это 458 мкс на большой
     // заметке — почти всё, что мы добавляем сверх Qt.
@@ -2183,8 +2199,44 @@ void NoteEditor::onContentsChanged() {
 // незачем: набор подряд всё равно склеивается в один шаг, и все промежуточные
 // снимки этого шага выбрасываются. Ждём конца серии.
 void NoteEditor::recordEdit() {
-    note_.pendingCursor = textCursor().position();
+    const int at = textCursor().position();
+
+    // СЕРИЯ РВЁТСЯ НЕ ТОЛЬКО ТИШИНОЙ. Пока человек печатает ровно, паузы в
+    // 700 мс не случается вовсе, и весь набор ложился одним шагом: два Ctrl+Z —
+    // и редактор уходил в историю, к чужому слепку. Владелец сказал про это
+    // «буфера на 200 шагов как будто нет», и замер подтвердил: после 150
+    // правок глубина цепочки была единица.
+    //
+    // Шаг — СЛОВО, как в Apple Notes. Границы три: набранный разделитель
+    // (он уходит в тот же шаг, следующая буква начинает новый), уход каретки в
+    // другое место и потолок в undoRunChars знаков — на случай слова, которое
+    // никак не кончается.
+    const int start = note_.changeStart >= 0 ? note_.changeStart : at;
+    const bool near = note_.runCursor < 0 || qAbs(start - note_.runCursor) <= 1;
+    if (!near || note_.runChars >= qMax(1, appearance().undoRunChars)) {
+        // Признак серии гасим ВСЕГДА, а не только когда есть что сбрасывать.
+        // flushPendingEdit оставляет его поднятым — и после сохранения, которое
+        // сбросило накопленное, следующая правка снова дописывалась в тот же
+        // шаг. Так вся сессия и оказывалась одним шагом.
+        if (note_.pendingEdit) flushPendingEdit();
+        note_.typingRun = false;
+        note_.runChars = 0;
+    }
+
+    ++note_.runChars;
+    note_.runCursor = note_.changeEnd >= 0 ? note_.changeEnd : at;
+    note_.pendingCursor = at;
     note_.pendingEdit = true;
+
+    // Разделитель закрывает шаг ПРЯМО СЕЙЧАС, а не при следующей правке.
+    // Иначе снимок брался бы уже после первой буквы нового слова, и отмена
+    // возвращала бы «один два три ч» вместо «один два три ».
+    if (note_.changeSeparator) {
+        flushPendingEdit();
+        note_.typingRun = false;
+        note_.runChars = 0;
+        return;
+    }
     snapshot_.start(appearance().undoCoalesceMs);
 }
 
@@ -2206,6 +2258,11 @@ void NoteEditor::forgetPendingEdit() {
     note_.pendingEdit = false;
     snapshot_.stop();
     note_.typingRun = false;
+    note_.runChars = 0;
+    note_.runCursor = -1;
+    note_.changeStart = -1;
+    note_.changeEnd = -1;
+    note_.changeSeparator = false;
 }
 
 void NoteEditor::editMeta(const std::function<void(NoteMeta&)>& change) {
