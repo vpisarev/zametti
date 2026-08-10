@@ -1352,6 +1352,23 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     // правило раньше разреза, иначе Enter развёл бы дефисы и новый блок.
     // На фотографии Enter не делит блок, а заводит пустую строку ЗА ней:
     // каретка на картинке считается стоящей сразу за ней (правило владельца).
+    // Ctrl+Shift+0..6 — уровень заголовка: ноль это обычный текст. Именно
+    // с Shift: голые Ctrl+1..3 давно заняты видами списка, и первый заход их
+    // перебил — набор списков покраснел тремя проверками. А Ctrl+Shift+E уже
+    // означает «блок кода», так что смена рода блока живёт в одном ряду.
+    if ((event->modifiers() & Qt::ControlModifier) != 0 &&
+        (event->modifiers() & Qt::ShiftModifier) != 0 &&
+        (event->modifiers() & Qt::AltModifier) == 0 &&
+        event->key() >= Qt::Key_0 && event->key() <= Qt::Key_6) {
+        const int level = event->key() - Qt::Key_0;
+        if (runOperation([level](QTextDocument& doc, QTextCursor& at) {
+                return setHeadingLevel(doc, at, level);
+            })) {
+            event->accept();
+            return;
+        }
+    }
+
     if (plainEnter && runOperation(newLineAfterImage)) return;
     if (plainEnter && runOperation(applyDividerRuleAtCursor)) return;
     if (plainEnter && runOperation(splitBlockAtCursor)) return;
@@ -1670,6 +1687,34 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
         action->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+E")));
         connect(action, &QAction::triggered, this,
                 [this] { applyIrEdit(toggleCodeBlock(*document(), textCursor())); });
+    }
+
+    // Уровень заголовка. Подменю, а не семь пунктов вперемешку с прочим:
+    // строка «Заголовок» в меню — это одна мысль, а какого он ранга — уточнение.
+    {
+        menu->addSeparator();
+        QMenu* heading = menu->addMenu(QStringLiteral("Заголовок"));
+        const int now = kindOf(textCursor().block()) == Kind::Heading
+                            ? textCursor().blockFormat().headingLevel()
+                            : 0;
+        const auto addLevel = [this, heading, now](const QString& title, int level) {
+            QAction* action = heading->addAction(title, this, [this, level] {
+                runOperation([level](QTextDocument& doc, QTextCursor& at) {
+                    return setHeadingLevel(doc, at, level);
+                });
+            });
+            // Отметка показывает, что стоит сейчас: без неё непонятно, какой
+            // ранг у строки, на которой стоишь.
+            action->setCheckable(true);
+            action->setChecked(now == level);
+            action->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+%1").arg(level)));
+        };
+        addLevel(QStringLiteral("Обычный текст"), 0);
+        for (int level = 1; level <= 3; ++level)
+            addLevel(QStringLiteral("Уровень %1").arg(level), level);
+        heading->addSeparator();
+        for (int level = 4; level <= 6; ++level)
+            addLevel(QStringLiteral("Уровень %1").arg(level), level);
     }
 
     // Выравнивание — только на строке с фотографией: где картинки нет, пункт

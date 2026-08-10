@@ -122,6 +122,15 @@ if(TARGET zametti-view)
                              "QT_QPA_PLATFORM=offscreen")
     endforeach()
 
+    # Уровень заголовка: матрица «что было × во что превращаем × где стоит».
+    # Проверяется круг через файл: род блока живёт в свойствах, и ошибка в них
+    # видна лишь тогда, когда документ уедет на диск и прочтётся обратно.
+    add_executable(heading_test heading_test.cpp)
+    target_link_libraries(heading_test PRIVATE zametti-view zametti-warnings)
+    target_include_directories(heading_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME headings COMMAND heading_test)
+    set_tests_properties(headings PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     # Края фотографии: матрица «операция × сторона картинки». Три беды владельца
     # оказались одной, и проверять надо инвариант, а не найденные случаи.
     add_executable(image_edge_test image_edge_test.cpp)

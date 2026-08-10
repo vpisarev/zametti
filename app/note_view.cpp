@@ -931,6 +931,79 @@ void NoteView::paintCodeBackground(QPainter& painter, const QRectF& visible) {
     }
 }
 
+// Подложка кода ПОВЕРХ выделения.
+//
+// Порядок отрисовки таков: сначала наша серая подложка, потом Qt рисует текст
+// и заливает выделение своим непрозрачным цветом — и подложка под выделением
+// пропадает целиком. Ctrl+E на выделенном тексте не менял на экране ровным
+// счётом ничего, и владелец на это наткнулся.
+//
+// Чиним не выделением, а подложкой: цвет кода у нас и так полупрозрачный
+// (codeBackground с малой альфой), и повторить его сверху — значит подкрасить
+// синеву выделения в серо-голубой, ничего больше не трогая. Альфа у самого
+// выделения не нужна вовсе: Qt её в QPalette::Highlight не соблюдает.
+void NoteView::paintCodeOverSelection(QPainter& painter, const QRectF& visible) {
+    const QTextCursor caret = textCursor();
+    if (!caret.hasSelection()) return;
+    const int from = caret.selectionStart();
+    const int to = caret.selectionEnd();
+
+    const QAbstractTextDocumentLayout* layout = document()->documentLayout();
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(appearance().codeBackground);
+    for (QTextBlock block = document()->findBlock(from); block.isValid();
+         block = block.next()) {
+        if (block.position() > to) break;
+        const QRectF rect = layout->blockBoundingRect(block);
+        if (rect.top() > visible.bottom()) break;
+        if (rect.bottom() < visible.top()) continue;
+        const QTextLayout* text = block.layout();
+        if (text == nullptr) continue;
+
+        // Кода в блоке бывает два рода, и оба надо подкрасить: ЦЕЛЫЙ блок в
+        // тройных кавычках и СТРОЧНЫЙ код внутри обычного абзаца (Ctrl+E на
+        // выделении делает именно его — на этом я и попался, починив сперва
+        // только блоки).
+        const bool whole = !isRawBlock(block) && kindOf(block) == Kind::Code;
+
+        // Отрезки блока, которые надо подкрасить, в координатах блока.
+        std::vector<std::pair<int, int>> runs;
+        const int start = qMax(0, from - block.position());
+        const int end = qMin(block.length() - 1, to - block.position());
+        if (start >= end) continue;
+        if (whole) {
+            runs.emplace_back(start, end);
+        } else {
+            // Строчный код: берём куски, помеченные фоном кода, и пересекаем с
+            // выделением. Спрашиваем именно фон, а не «моноширинный шрифт»:
+            // подкрашиваем ровно то, что и было подкрашено до выделения.
+            for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+                const QTextFragment fragment = it.fragment();
+                if (!fragment.isValid()) continue;
+                if (fragment.charFormat().background().style() == Qt::NoBrush) continue;
+                const int at = fragment.position() - block.position();
+                const int lo = qMax(start, at);
+                const int hi = qMin(end, at + fragment.length());
+                if (lo < hi) runs.emplace_back(lo, hi);
+            }
+        }
+        if (runs.empty()) continue;
+
+        for (int i = 0; i < text->lineCount(); ++i) {
+            const QTextLine line = text->lineAt(i);
+            for (const auto& run : runs) {
+                const int lineFrom = qMax(run.first, line.textStart());
+                const int lineTo = qMin(run.second, line.textStart() + line.textLength());
+                if (lineFrom >= lineTo) continue;
+                const qreal x0 = line.cursorToX(lineFrom);
+                const qreal x1 = line.cursorToX(lineTo);
+                painter.drawRect(QRectF(rect.left() + qMin(x0, x1), rect.top() + line.y(),
+                                        std::fabs(x1 - x0), line.height()));
+            }
+        }
+    }
+}
+
 void NoteView::paintEvent(QPaintEvent* event) {
     {
         // Рисуем до текста: сам виджет виден только там, где Qt уже стёр фон, а
@@ -943,6 +1016,16 @@ void NoteView::paintEvent(QPaintEvent* event) {
         paintCodeBackground(painter, visible);
     }
     QTextBrowser::paintEvent(event);
+
+    {
+        // Повторяем подложку кода поверх выделения: Qt только что закрасило её
+        // своим непрозрачным цветом.
+        QPainter painter(viewport());
+        painter.translate(-horizontalScrollBar()->value(), -verticalScrollBar()->value());
+        const QRectF visible(horizontalScrollBar()->value(), verticalScrollBar()->value(),
+                             viewport()->width(), viewport()->height());
+        paintCodeOverSelection(painter, visible);
+    }
 
     const QFont base = baseFontFor(zoom_);
     QPainter painter(viewport());

@@ -967,6 +967,141 @@ bool makeTask(QTextDocument& doc, QTextCursor& cursor) {
     return setBlockKind(doc, cursor, {Kind::ListItem, Marker::Task, false});
 }
 
+// Вырезать строки [from, to] блока в ОТДЕЛЬНЫЙ блок. Возвращает номер блока,
+// в котором они оказались.
+//
+// Зачем. Строка внутри абзаца — не блок: абзац со стихотворными переносами это
+// ОДИН блок с мягкими переносами внутри. Операция, работающая поблочно,
+// превращает в заголовок весь абзац разом — владелец наткнулся на это дважды,
+// сперва при наборе «# », теперь при смене уровня. Поэтому правило живёт
+// отдельной функцией, а не внутри одной операции.
+//
+// Режем СЗАДИ НАПЕРЁД: передний разрез сдвинул бы позиции заднего.
+int isolateLines(QTextDocument& doc, QTextCursor& edit, const QTextBlock& block, int from,
+                 int to) {
+    const QString text = block.text();
+    if (text.isEmpty()) return block.blockNumber();
+
+    int lineStart = 0;
+    for (int i = qMin(from, int(text.size())) - 1; i >= 0; --i)
+        if (text.at(i) == QChar::LineSeparator) {
+            lineStart = i + 1;
+            break;
+        }
+    int lineEnd = int(text.size());
+    for (int i = qMax(0, to); i < int(text.size()); ++i)
+        if (text.at(i) == QChar::LineSeparator) {
+            lineEnd = i;
+            break;
+        }
+    if (lineStart == 0 && lineEnd == int(text.size())) return block.blockNumber();
+
+    const int base = block.position();
+    if (lineEnd < int(text.size())) {
+        edit.setPosition(base + lineEnd);
+        edit.setPosition(base + lineEnd + 1, QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+        edit.insertBlock(block.blockFormat(), block.charFormat());
+    }
+    int start = base;
+    if (lineStart > 0) {
+        edit.setPosition(base + lineStart - 1);
+        edit.setPosition(base + lineStart, QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+        QTextBlockFormat carry = block.blockFormat();
+        carry.clearProperty(TrailingNewlineProperty);
+        edit.insertBlock(carry, block.charFormat());
+        start = edit.position();
+    }
+    return doc.findBlock(start).blockNumber();
+}
+
+bool setHeadingLevel(QTextDocument& doc, QTextCursor& cursor, int level) {
+    BlockRange range = selectedBlocks(doc, cursor);
+    level = std::clamp(level, 0, 6);
+
+    QTextCursor edit(&doc);
+    edit.beginEditBlock();
+
+    // Строку абзаца сперва делаем блоком: иначе заголовком станет весь абзац,
+    // а человек показал на одну строку.
+    //
+    // isolateLines режет блок С ОБОИХ КОНЦОВ за один вызов, поэтому случаев
+    // ровно два, и путать их нельзя: на одном блоке зовём её один раз, на
+    // нескольких — по разу с краёв, и обязательно СНАЧАЛА с хвоста, иначе
+    // передний разрез сдвинет позиции заднего. Первый заход звал её дважды и
+    // на одном блоке — второй вызов работал по устаревшим номерам, и заголовок
+    // уезжал на соседнюю строку.
+    {
+        const int from = qMin(cursor.anchor(), cursor.position());
+        const int to = qMax(cursor.anchor(), cursor.position());
+        if (range.first == range.last) {
+            const QTextBlock only = doc.findBlockByNumber(range.first);
+            if (only.isValid()) {
+                range.first = isolateLines(doc, edit, only, from - only.position(),
+                                           to - only.position());
+                range.last = range.first;
+            }
+        } else {
+            const QTextBlock tail = doc.findBlockByNumber(range.last);
+            if (tail.isValid()) range.last = isolateLines(doc, edit, tail, 0,
+                                                          to - tail.position());
+            const QTextBlock head = doc.findBlockByNumber(range.first);
+            if (head.isValid()) {
+                const int moved = isolateLines(doc, edit, head, from - head.position(),
+                                               int(head.text().size()));
+                range.last += moved - range.first;
+                range.first = moved;
+            }
+        }
+    }
+
+    bool any = false;
+    int first = -1;
+    int last = -1;
+    for (int i = range.first; i <= range.last; ++i) {
+        const QTextBlock block = doc.findBlockByNumber(i);
+        if (!block.isValid() || isRawBlock(block)) continue;
+        const Kind from = kindOf(block);
+        if (from == Kind::Code || from == Kind::VSpace || from == Kind::Divider) continue;
+        if (block.text().isEmpty()) continue;   // заголовка из ничего не бывает
+
+        QTextBlockFormat format = block.blockFormat();
+        if (level == 0) {
+            format.clearProperty(KindProperty);
+            format.clearProperty(MarkerProperty);
+            format.clearProperty(CheckedProperty);
+            format.clearProperty(LevelProperty);
+            format.setLeftMargin(0);
+            format.setHeadingLevel(0);
+        } else {
+            // Пункт списка, ставший заголовком, перестаёт быть пунктом: свойства
+            // списка снимаются целиком, иначе он уехал бы в файл как "- # текст".
+            format.clearProperty(MarkerProperty);
+            format.clearProperty(CheckedProperty);
+            format.clearProperty(LevelProperty);
+            format.setLeftMargin(0);
+            format.setProperty(KindProperty, int(Kind::Heading));
+            format.setHeadingLevel(level);
+        }
+        QTextCursor at(&doc);
+        at.setPosition(block.position());
+        at.setBlockFormat(format);
+        any = true;
+        if (first < 0) first = i;
+        last = i;
+    }
+
+    // Пустых строк вокруг заголовка НЕ заводим (решение владельца): операция
+    // меняет только то, о чём попросили. Там, где без разделителя блоки
+    // слиплись бы в файле, пустую строку поставит сам инвариант — normalise
+    // ниже это и делает.
+
+    if (any) normalise(doc, {qMax(0, first - 1), qMin(doc.blockCount() - 1, last + 1)});
+    edit.endEditBlock();
+    return any;
+}
+
 bool makeParagraph(QTextDocument& doc, QTextCursor& cursor) {
     return setBlockKind(doc, cursor, {Kind::Paragraph, Marker::Bullet, false});
 }

@@ -111,6 +111,9 @@ protected:
     // ВСЕГДА, выбрана картинка или нет: иначе резерв менялся бы от выделения,
     // а при прокрутке уголки откусывались бы вместе с чужой полосой.
     static qreal imageCornerOverhang();
+    // Подложка кода поверх выделения: Qt заливает выделение непрозрачно и
+    // стирает её, а человеку надо видеть, что выделенный кусок — код.
+    void paintCodeOverSelection(QPainter& painter, const QRectF& visible);
     void paintCodeBackground(QPainter& painter, const QRectF& visible);
 
     // Где на экране лежит фотография блока. Здесь, а не в private, по той же
