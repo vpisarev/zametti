@@ -131,6 +131,13 @@ if(TARGET zametti-view)
     add_test(NAME spaces COMMAND spaces_test)
     set_tests_properties(spaces PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    # Когда история обязана молчать: набрали и стёрли — записывать нечего.
+    add_executable(history_write_test history_write_test.cpp)
+    target_link_libraries(history_write_test PRIVATE zametti-widgets zametti-warnings)
+    target_include_directories(history_write_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME history-write COMMAND history_write_test)
+    set_tests_properties(history-write PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     # Чего стоит история: сколько раз мы трогаем диск и сколько почти
     # одинаковых копий заметки заводим. Замер, а не проверка — в набор не
     # входит. Рабочий каталог на диске (.testdata), а не в tmpfs: QSaveFile

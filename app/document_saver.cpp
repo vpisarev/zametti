@@ -651,13 +651,47 @@ bool canonicaliseNoteFile(const QString& path, std::string& text, Digest& digest
     return true;
 }
 
-SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
-                         const QString& timestamp, DocumentReaderFn reader,
-                         const NoteMeta& meta, const Digest& known) {
+QByteArray noteBytes(const QTextDocument& doc, const NoteMeta& meta, DocumentReaderFn reader,
+                     Document* fileIr) {
     Document read = reader ? reader(doc) : readDocument(doc);
     read.meta = meta;
-    const Document ir = documentForFile(std::move(read));
-    const QByteArray text = toBytes(serialize(ir));
+    Document forFile = documentForFile(std::move(read));
+    const QByteArray text = toBytes(serialize(forFile));
+    if (fileIr != nullptr) *fileIr = std::move(forFile);
+    return text;
+}
+
+// Шапка заметки — HTML-комментарий в начале файла. Строку modified ищем только
+// в ней: слово «modified:» в тексте заметки трогать нельзя.
+bool sameApartFromModified(const QByteArray& a, const QByteArray& b) {
+    const auto stripped = [](const QByteArray& text) {
+        const qsizetype head = text.indexOf("-->");
+        if (head < 0) return text;
+        const qsizetype at = text.indexOf("\nmodified:");
+        if (at < 0 || at > head) return text;
+        const qsizetype eol = text.indexOf('\n', at + 1);
+        if (eol < 0) return text;
+        QByteArray out = text;
+        out.remove(at, eol - at);
+        return out;
+    };
+    if (a.size() == b.size() && a == b) return true;
+    return stripped(a) == stripped(b);
+}
+
+SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
+                         const QString& timestamp, DocumentReaderFn reader,
+                         const NoteMeta& meta, const Digest& known,
+                         const Document* prebuiltIr, const QByteArray* prebuiltText) {
+    const bool ready = prebuiltIr != nullptr && prebuiltText != nullptr;
+    Document built;
+    if (!ready) {
+        Document read = reader ? reader(doc) : readDocument(doc);
+        read.meta = meta;
+        built = documentForFile(std::move(read));
+    }
+    const Document& ir = ready ? *prebuiltIr : built;
+    const QByteArray text = ready ? *prebuiltText : toBytes(serialize(ir));
 
     // Не писать, если не изменилось.
     const Digest digest = hashOf(asView(text));

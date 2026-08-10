@@ -45,6 +45,7 @@ namespace {
 const QChar kDivider = QChar(0x00A7);   // '§', в настоящих текстах не участвует
 
 fs::path g_note;
+fs::path g_dir;
 
 // Проекция документа в плоский буфер.
 QString flatten(const QTextDocument& doc) {
@@ -158,12 +159,21 @@ bool pressAndCheck(zametti::NoteEditor& editor, const QString& source, const cha
 }
 
 void openSource(zametti::NoteEditor& editor, const QString& source) {
+    // КАЖДЫЙ СЛУЧАЙ — СВОЙ ФАЙЛ, и это не аккуратность ради аккуратности.
+    //
+    // Прежде все случаи шли через один файл, а правки предыдущего случая
+    // выбрасывались через setModified(false). Выбросить их больше нельзя:
+    // уходя из заметки, редактор пишет её НЕ СПРАШИВАЯ этот признак (страховка
+    // от нашей же ошибки в расстановке признака — решение владельца). Оставь
+    // тут один файл — и запись предыдущего случая ложилась бы поверх
+    // исходника следующего.
+    static int counter = 0;
+    g_note = g_dir / ("ф" + std::to_string(++counter) + ".md");
     {
         std::ofstream out(g_note, std::ios::binary);
         const QByteArray bytes = source.toUtf8();
         out.write(bytes.constData(), bytes.size());
     }
-    editor.document()->setModified(false);
     editor.openFile(QString::fromStdString(g_note.string()));
 }
 
@@ -174,6 +184,7 @@ int main(int argc, char** argv) {
     zametti::loadAppearance(nullptr);
     const fs::path dir = fs::temp_directory_path() / "zametti-backspace-flat";
     fs::create_directories(dir);
+    g_dir = dir;
     g_note = dir / "ф.md";
 
     zametti::NoteEditor editor;

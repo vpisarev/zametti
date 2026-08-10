@@ -2279,7 +2279,7 @@ int main(int argc, char** argv) {
 
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &window, [&] {
         // На выходе окно с ошибкой показывать поздно: жалуемся в stderr.
-        editor.save(false);
+        editor.save(false, true);   // выходим: пробуем записать, не спрашивая признак
 
         zametti::Session out;
         out.lastFile = editor.filePath();

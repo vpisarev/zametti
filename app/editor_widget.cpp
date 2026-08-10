@@ -513,7 +513,7 @@ bool NoteEditor::openFile(const QString& path) {
     // первая же правка записала бы чужое прошлое в новый файл. Найдено
     // пробником: после ухода и возврата режим оставался включён.
     leaveHistory();
-    save(true);
+    save(true, true);   // уходим из заметки: пробуем записать, не спрашивая признак
 
     std::string text;
     if (!readFile(path, text)) {
@@ -544,6 +544,8 @@ bool NoteEditor::openFile(const QString& path) {
     note_.externalEmptyRetried = false;
     note_.lastLine = QTextCursor();
     note_.digest = digest;
+    // Копия файла в памяти: с ней сравнивается всё, что мы соберёмся писать.
+    note_.lastSaved = QByteArray(text.data(), qsizetype(text.size()));
     watchFile();
     // Серию набора обрываем: иначе первая правка в новой заметке подмешалась бы
     // к её исходному состоянию и отменить её было бы нечем.
@@ -617,6 +619,7 @@ void NoteEditor::onExternalSettled() {
     }
     note_.externalEmptyRetried = false;
     note_.digest = digest;
+    note_.lastSaved = QByteArray(text.data(), qsizetype(text.size()));
 
     // Шаг истории пишется здесь, а не после ответа человека: файл на диске уже
     // изменился, и это случилось независимо от того, примем мы чужую версию
@@ -2074,6 +2077,10 @@ bool NoteEditor::insertImagePixels(const QImage& image) {
 }
 
 void NoteEditor::chooseAndInsertImages() {
+    // Заметку на диск ДО ввоза (решение владельца). Ввоз идёт фоном и надолго
+    // запирает правку; если программа умрёт в это время, набранное до сих пор
+    // должно уже лежать в файле, а не в памяти.
+    save(false);
     if (attachmentDir().isEmpty()) {
         QMessageBox::warning(this, QStringLiteral("zametti"),
                              QStringLiteral("Заметка ещё не сохранена — вложению некуда лечь."));
@@ -2423,25 +2430,48 @@ void NoteEditor::recordHistory(journal::Kind kind, const QByteArray& snapshot, q
         std::fprintf(stderr, "история не записана: %s\n", error.toUtf8().constData());
 }
 
-void NoteEditor::save(bool interactive) {
-    if (note_.path.isEmpty() || !document()->isModified()) return;
+void NoteEditor::save(bool interactive, bool force) {
+    if (note_.path.isEmpty()) return;
+    if (!force && !document()->isModified()) return;
     // До записи: сохранение умеет пересобрать документ из перечитанного файла,
     // и шаг серии остался бы без содержимого.
     flushPendingEdit();
 
-    // modified обновляется только при настоящем сохранении: сюда мы доходим
-    // лишь с несохранёнными правками, так что цикла «запись ради метаданных»
-    // не возникает. Внешние правки оставляют modified устаревшим — принято.
+    // СРАВНИТЬ, НЕ СЧИТАЯ ШТАМПА. Порядок тут — не вкусовщина.
+    //
+    // Раньше свежий modified вставал в шапку ДО сериализации, и байты выходили
+    // другими всегда: набрал человек «abcd», стёр четыре раза — заметка та же,
+    // а на диск уходила копия и в историю запись, отличающаяся одной цифрой в
+    // дате. Владелец увидел это в таймлайне как соседей одинакового размера.
+    //
+    // Теперь собираем байты с ТЕМИ метаданными, что есть, и сравниваем с тем,
+    // что лежит в файле (отпечаток известен, файл не читаем). Совпало —
+    // сохранять нечего: ни файла, ни записи, ни штампа. Документ при этом
+    // перестаёт считаться изменённым: он и правда равен файлу.
+    // Штамп ставим сразу, а сравниваем потом и не считая его: так документ
+    // разбирается и сериализуется РОВНО ОДИН РАЗ. Не сошлось — эти же байты и
+    // уходят в файл; сошлось — откатываем штамп, чтобы шапка в памяти не
+    // разъехалась с той, что лежит на диске.
+    const NoteMeta metaBefore = note_.meta;
     if (note_.meta.present && stampModifiedOnSave_)
         note_.meta.set("modified",
                   QDateTime::currentDateTimeUtc()
                       .toString(QStringLiteral("yyyy-MM-ddTHH:mm:ss'Z'"))
                       .toStdString());
 
+    Document fileIr;
+    const QByteArray candidate = noteBytes(*document(), note_.meta, nullptr, &fileIr);
+    if (!note_.lastSaved.isEmpty() && sameApartFromModified(candidate, note_.lastSaved)) {
+        note_.meta = metaBefore;
+        document()->setModified(false);
+        return;
+    }
+
     // Отпечаток того, что в файле, мы знаем — значит «не изменилось ли»
     // решается без чтения файла.
     const SaveOutcome outcome =
-        saveDocument(*document(), note_.path, rescueTimestamp(), nullptr, note_.meta, note_.digest);
+        saveDocument(*document(), note_.path, rescueTimestamp(), nullptr, note_.meta, note_.digest,
+                     &fileIr, &candidate);
     if (outcome.result == SaveResult::Written || outcome.result == SaveResult::Unchanged) {
         document()->setModified(false);
         note_.lastComplaint.clear();
@@ -2449,6 +2479,7 @@ void NoteEditor::save(bool interactive) {
         // тому буферу, который туда и ушёл. Раньше файл ради этого читался
         // заново — на каждое автосохранение.
         note_.digest = outcome.digest;
+        note_.lastSaved = outcome.written;
         watchFile();
 
         // Файл может прочитаться богаче документа: голую ссылку человек набирает
