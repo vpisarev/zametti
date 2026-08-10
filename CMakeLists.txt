@@ -46,6 +46,30 @@ enable_testing()
 # тот требует его сам.
 find_package(Qt6 QUIET COMPONENTS Core Gui Widgets Test)
 
+# ЕСЛИ Qt НЕ НАШЁЛСЯ, СКАЗАТЬ ОБ ЭТОМ ЗДЕСЬ И ВНЯТНО.
+#
+# Без этого настройка падала глубоко в store/ на голом `find_package(Qt6
+# REQUIRED)`, а человек видел только «Configuring incomplete, errors occurred!»
+# — без подсказки, чего именно не хватило и куда смотреть. Владелец наткнулся
+# на это, собирая на маке.
+#
+# Ошибкой НЕ объявляем: ядро собирается и без Qt (за этим следит набор
+# core-without-qt), а кому Qt нужен, тот требует его сам — и теперь уже с
+# подсказкой перед глазами.
+if(NOT Qt6_FOUND)
+    message(NOTICE "")
+    message(NOTICE "Qt6 не найден. Ядро соберётся, программа — нет.")
+    if(APPLE)
+        message(NOTICE "  На маке Qt из brew сам себя не показывает — путь надо назвать:")
+        message(NOTICE "    cmake -S . -B build -DCMAKE_PREFIX_PATH=\"$(brew --prefix qt)\"")
+    elseif(WIN32)
+        message(NOTICE "  Назовите путь: cmake -S . -B build -DCMAKE_PREFIX_PATH=C:/Qt/6.x/msvc2022_64")
+    else()
+        message(NOTICE "  Поставьте qt6-base-dev (или назовите путь через CMAKE_PREFIX_PATH).")
+    endif()
+    message(NOTICE "")
+endif()
+
 add_subdirectory(3rdparty/md4c)
 add_subdirectory(3rdparty/blake3)
 # highway раньше libjxl: та её ищет, а не несёт.
