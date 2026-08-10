@@ -630,54 +630,8 @@ std::string_view asView(const QByteArray& bytes) {
 
 }  // namespace
 
-// Лишние неразрывные пробелы — обычными.
-//
-// Неразрывный пробел у нас ЗНАЧИМ, но только в НАЧАЛЕ строки: им держится
-// отступ, потому что обычный пробел markdown в начале строки съедает (см.
-// withEdgesNormalised). Везде дальше он не значит ничего — и приезжает мусором
-// из чужих выгрузок: в одной заметке владельца их 437, из них 317 стоят прямо
-// между словами, и даже внутри блоков кода.
-//
-// Правило выведено ЗАМЕРОМ по корпусу владельца (274 заметки): ведущих
-// неразрывных 179, одиночных в середине строк 346, а серий из двух и более —
-// НИ ОДНОЙ. Значит:
-//
-//   * ведущие не трогаем никогда — это наш отступ;
-//   * ОДИНОЧНЫЙ в середине — мусор из чужой выгрузки, становится обычным;
-//   * СЕРИЯ из двух и более в середине — выравнивание, и его мы теперь пишем
-//     сами: столбик "int a     = 5" из блока кода, превращённого в абзац,
-//     держится только неразрывными (обычные markdown схлопнет). Трогать её
-//     значило бы ломать то, что сами и поставили.
-std::string spacesNormalised(const std::string& text) {
-    static const std::string nbsp = "\xC2\xA0";
-    std::string out;
-    out.reserve(text.size());
-    bool leading = true;   // мы всё ещё в отступе строки
-    for (size_t i = 0; i < text.size();) {
-        if (text[i] == '\n') {
-            out.push_back('\n');
-            leading = true;
-            ++i;
-            continue;
-        }
-        if (text.compare(i, nbsp.size(), nbsp) == 0) {
-            size_t run = 0;
-            while (text.compare(i + run * nbsp.size(), nbsp.size(), nbsp) == 0) ++run;
-            const bool keep = leading || run > 1;
-            for (size_t k = 0; k < run; ++k) out += keep ? nbsp : std::string(" ");
-            i += run * nbsp.size();
-            leading = false;
-            continue;
-        }
-        if (text[i] != ' ' && text[i] != '\t') leading = false;
-        out.push_back(text[i]);
-        ++i;
-    }
-    return out;
-}
-
 bool canonicaliseNoteFile(const QString& path, std::string& text, Digest& digest) {
-    const Document parsed = parse(spacesNormalised(text));
+    const Document parsed = parse(normaliseSpaces(text));
     if (!parsed.meta.present) return false;   // не наша заметка
 
     const std::string canonical = serialize(parsed);

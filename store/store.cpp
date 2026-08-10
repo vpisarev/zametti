@@ -317,7 +317,10 @@ QString importNote(const QString& root, const QString& parentId, const QString& 
     if (!readAll(sourcePath, bytes))
         return fail(QStringLiteral("не читается: %1").arg(sourcePath));
 
-    Document doc = parse(bytes);
+    // Мусорные неразрывные пробелы вычищаются ПРИ ВВОЗЕ, а не при первом
+    // открытии: иначе привезённая заметка какое-то время лежала бы на диске
+    // грязной, и человек, заглянувший в неё чужим редактором, увидел бы сор.
+    Document doc = parse(normaliseSpaces(bytes));
 
     // Времена. СОЗДАНА заметка тогда, когда её написали: своя шапка знает это
     // лучше файловой системы (файл могли скопировать, и mtime стал бы датой
@@ -904,7 +907,10 @@ bool verifyStore(const QString& root, Report& report) {
             report.problem(QStringLiteral("не читается: %1").arg(name));
             continue;
         }
-        Document doc = parse(bytes);
+        // Мусорные неразрывные пробелы вычищаются ПРИ ВВОЗЕ, а не при первом
+    // открытии: иначе привезённая заметка какое-то время лежала бы на диске
+    // грязной, и человек, заглянувший в неё чужим редактором, увидел бы сор.
+    Document doc = parse(normaliseSpaces(bytes));
         if (!doc.meta.present)
             report.problem(QStringLiteral("нет блока метаданных: %1").arg(name));
         if (serialize(doc) != bytes)

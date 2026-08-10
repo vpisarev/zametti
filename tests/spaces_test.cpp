@@ -13,6 +13,7 @@
 #include "document_builder.h"
 #include "document_reader.h"
 #include "document_saver.h"
+#include "store.h"
 #include "editor_ops.h"
 #include "parser.h"
 #include "serializer.h"
@@ -74,6 +75,33 @@ std::string visible(const std::string& text) {
         ++i;
     }
     return out;
+}
+
+// ВВОЗ чужого .md. Прежде нормализация жила только в открытии заметки, и
+// привезённый файл лежал на диске грязным до первого открытия. Владелец
+// спросил про это прямо — и оказался прав.
+void checkImport() {
+    const QString from = QDir(g_dir).filePath(QStringLiteral("чужая.md"));
+    const std::string source =
+        "# Чужая\n\nдва" + kNbsp + "слова и" + kNbsp + kNbsp + "столбик\n";
+    QFile file(from);
+    if (file.open(QIODevice::WriteOnly)) file.write(source.data(), qint64(source.size()));
+    file.close();
+
+    const QString store = QDir(g_dir).filePath(QStringLiteral("хранилище"));
+    QDir().mkpath(store + QStringLiteral("/.zametti"));
+    QString error;
+    const QString made = zametti::store::importNote(store, QString(), from, &error);
+    ZT_TRUE("заметка ввезена: " + error.toStdString(), !made.isEmpty());
+    if (made.isEmpty()) return;
+
+    QFile got(made);
+    ZT_TRUE("файл ввезённой заметки читается", got.open(QIODevice::ReadOnly));
+    const std::string text = got.readAll().toStdString();
+    ZT_TRUE("одиночный неразрывный вычищен при ВВОЗЕ: " + visible(text),
+            text.find("два слова") != std::string::npos);
+    ZT_TRUE("а серия — цела: " + visible(text),
+            text.find("и" + kNbsp + kNbsp + "столбик") != std::string::npos);
 }
 
 void checkLoad() {
@@ -139,6 +167,7 @@ int main(int argc, char** argv) {
     }
     g_dir = tmp.path();
 
+    checkImport();
     checkLoad();
     checkToCode();
     checkFromCode();

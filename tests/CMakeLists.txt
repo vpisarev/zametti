@@ -126,7 +126,7 @@ if(TARGET zametti-view)
     # Три места (загрузка, в код, из кода) обязаны сходиться, иначе одно съедает
     # то, что поставило другое.
     add_executable(spaces_test spaces_test.cpp)
-    target_link_libraries(spaces_test PRIVATE zametti-view zametti-warnings)
+    target_link_libraries(spaces_test PRIVATE zametti-view zametti-store-lib zametti-warnings)
     target_include_directories(spaces_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     add_test(NAME spaces COMMAND spaces_test)
     set_tests_properties(spaces PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
