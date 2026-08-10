@@ -183,9 +183,10 @@ void checkPaperPrep() {
     const std::string source =
         "# Первый раздел\n\n"
         "<!-- записка себе -->\n\n"
-        "Ссылка [внутрь](#первый-раздел), наружу "
+        "Комментарий <!-- сперва --> и только потом ссылка "
+        "[внутрь](#первый-раздел), наружу "
         "[в вики](https://ru.wikipedia.org/wiki/Красно–чёрное_дерево) и "
-        "комментарий <!-- в строке --> внутри.\n\n"
+        "ещё <!-- в строке --> внутри.\n\n"
         "![снимок](01n6vwnr03mxzq.jxl)\n";
 
     QTextDocument doc;
@@ -223,7 +224,10 @@ void checkPaperPrep() {
     ZT_TRUE("комментарий в строке не попал на бумагу: " + all.toStdString(),
             !all.contains(QStringLiteral("в строке")));
     ZT_TRUE("а сам текст на месте: " + all.toStdString(),
-            all.contains(QStringLiteral("Ссылка")) && all.contains(QStringLiteral("внутри")));
+            all.contains(QStringLiteral("ссылка")) && all.contains(QStringLiteral("внутри")));
+    // На месте вырезанного комментария не остаётся дыры из двух пробелов.
+    ZT_TRUE("двойного пробела на месте комментария нет: " + all.toStdString(),
+            !all.contains(QStringLiteral("  ")));
 
     // Заголовок стал ЦЕЛЬЮ. Без этого внутренние ссылки в PDF ведут в никуда:
     // Qt пишет их как ссылку на именованную цель, а целей в файле нет.

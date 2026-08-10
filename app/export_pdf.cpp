@@ -157,23 +157,50 @@ void prepareForPaper(QTextDocument& doc) {
             mark.mergeCharFormat(anchor);
         }
 
+        // КОММЕНТАРИИ В СТРОКЕ — первым проходом и по одному, с перезапуском
+        // обхода: правка делает итератор фрагментов недействительным. Первая
+        // редакция после удаления просто выходила из блока — и ссылка, стоящая
+        // ЗА комментарием, оставалась неисправленной.
+        for (bool again = true; again;) {
+            again = false;
+            for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+                const QTextFragment fragment = it.fragment();
+                if (!fragment.isValid()) continue;
+                if ((fragment.charFormat().intProperty(SpanStyleProperty) & SpanComment) == 0)
+                    continue;
+
+                int from = fragment.position();
+                int to = from + fragment.length();
+                // «Текст с <!-- х --> внутри» оставил бы двойной пробел: один
+                // перед комментарием, другой за ним. Забираем один — но только
+                // ОБЫЧНЫЙ: неразрывный у нас значит отступ или выравнивание, и
+                // трогать его нельзя.
+                const QString line = block.text();
+                const int left = from - block.position() - 1;
+                const int right = to - block.position();
+                if (left >= 0 && left < line.size() && line.at(left) == QLatin1Char(' ') &&
+                    right < line.size() && line.at(right) == QLatin1Char(' '))
+                    ++to;
+
+                QTextCursor kill(&doc);
+                kill.setPosition(from);
+                kill.setPosition(to, QTextCursor::KeepAnchor);
+                kill.removeSelectedText();
+                again = true;
+                break;
+            }
+        }
+
         for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
             const QTextFragment fragment = it.fragment();
             if (!fragment.isValid()) continue;
             QTextCharFormat format = fragment.charFormat();
             const int style = format.intProperty(SpanStyleProperty);
+            if (format.anchorHref().isEmpty()) continue;
 
             QTextCursor at(&doc);
             at.setPosition(fragment.position());
             at.setPosition(fragment.position() + fragment.length(), QTextCursor::KeepAnchor);
-
-            // Комментарий в строке на бумаге не нужен по той же причине, что и
-            // блок: это записка себе, а не текст заметки.
-            if ((style & SpanComment) != 0) {
-                at.removeSelectedText();
-                break;   // итератор фрагментов после правки недействителен
-            }
-            if (format.anchorHref().isEmpty()) continue;
 
             QTextCharFormat fixed = format;
             if ((style & SpanImage) != 0) {
