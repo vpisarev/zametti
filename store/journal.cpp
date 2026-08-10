@@ -690,6 +690,34 @@ bool History::append(const QString& noteId, Kind kind, qint64 time, const QByteA
     return appendLocked(pathFor(noteId), kind, time, snapshot, source, error);
 }
 
+bool History::truncate(const QString& noteId, int keepCount, QString* error) {
+    const QMutexLocker locked(&gate());
+    const QString path = pathFor(noteId);
+
+    if (keepCount < 1) {
+        if (error) *error = QStringLiteral("первую запись журнала стирать нельзя");
+        return false;
+    }
+
+    Journal journal;
+    if (!readLocked(path, &journal, error)) return false;
+    if (keepCount >= journal.entries.size()) return true;   // отбрасывать нечего
+
+    // Режем по НАЧАЛУ первой лишней записи: всё, что до него, — целые записи,
+    // и читатель их видит ровно как раньше.
+    const qint64 cut = journal.entries[keepCount].offset;
+    if (cut <= 0) {
+        if (error) *error = QStringLiteral("непонятно, где кончается запись %1").arg(keepCount);
+        return false;
+    }
+    QFile file(path);
+    if (!file.resize(cut)) {
+        if (error) *error = QStringLiteral("журнал не укоротить: %1").arg(file.errorString());
+        return false;
+    }
+    return true;
+}
+
 bool History::read(const QString& noteId, Journal* out, QString* error) const {
     const QMutexLocker locked(&gate());
     return readLocked(pathFor(noteId), out, error);

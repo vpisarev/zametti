@@ -2332,7 +2332,11 @@ void checkHistoryPoints() {
     editor.undo();
     QTest::qWait(20);
     after = records();
+    // Записи прибавилось, хотя правка мелкая: заменять было бы нечего — прошлая
+    // запись здесь ВНЕШНЯЯ, а чужие вешки не стираются никогда.
     check(after.size() == before + 1, "первое Ctrl+Z после правок записало шаг");
+    check(snapshot(int(after.size()) - 1).contains(QStringLiteral("before undo")),
+          "первое Ctrl+Z после правок записало набранное");
     check(!after.isEmpty() && after.last().kind == zametti::journal::Kind::Save,
           "и это обычное сохранение, а не особая запись");
     check(snapshot(int(after.size()) - 1).contains(QStringLiteral("before undo")),
@@ -2378,7 +2382,15 @@ void checkHistoryMode() {
     QTest::qWait(20);
 
     // Три сохранения — три слепка в истории.
-    for (const char* piece : {" two", " three"}) {
+    //
+    // Куски КРУПНЫЕ нарочно. Мелкая правка теперь не заводит новую запись, а
+    // заменяет прошлую (historyMergeChars, решение владельца): двумя короткими
+    // словами тут получилось бы две записи вместо трёх, и проверка режима
+    // истории проверяла бы не то.
+    for (const char* piece : {" two two two two two two two two two two two two two two two"
+                              " two two two two two two two two two two two two two two two",
+                              " three three three three three three three three three three"
+                              " three three three three three three three three three three"}) {
         QTextCursor at(editor.document()->lastBlock());
         at.movePosition(QTextCursor::EndOfBlock);
         editor.setTextCursor(at);
@@ -2439,9 +2451,18 @@ void checkHistoryMode() {
     checkEqual(live, text(), "живая версия вернулась целой");
 
     // Цепочка отмены пережила поход: Ctrl+Z отменяет правку, сделанную ДО него.
+    // Отменяется СЛОВО (шаг отмены теперь пословный), поэтому смотрим не на
+    // «пропало ли three целиком», а на то, что его стало на одно меньше.
+    const auto countOf = [](const QString& where, const QString& what) {
+        int seen = 0;
+        for (qsizetype at = where.indexOf(what); at >= 0; at = where.indexOf(what, at + 1)) ++seen;
+        return seen;
+    };
+    const int threesBefore = countOf(text(), QStringLiteral("three"));
     editor.undo();
     QTest::qWait(10);
-    check(text().contains(QStringLiteral("two")) && !text().contains(QStringLiteral("three")),
+    check(text().contains(QStringLiteral("two")) &&
+              countOf(text(), QStringLiteral("three")) == threesBefore - 1,
           "отмена после возврата отменяет правку, а не поход в историю");
     editor.redo();
     QTest::qWait(10);

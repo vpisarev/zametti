@@ -228,6 +228,9 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("autosaveDelayMs"), a.autosaveDelayMs},
         {QStringLiteral("undoCoalesceMs"), a.undoCoalesceMs},
         {QStringLiteral("undoLimit"), a.undoLimit},
+        {QStringLiteral("undoRunChars"), a.undoRunChars},
+        {QStringLiteral("historyMergeChars"), a.historyMergeChars},
+        {QStringLiteral("historyMergeHours"), a.historyMergeHours},
         {QStringLiteral("undoBudgetMb"), a.undoBudgetMb},
         {QStringLiteral("imageCacheSizeMb"), a.imageCacheSizeMb},
         {QStringLiteral("maxLoadedImageSize"), a.maxLoadedImageSize},
@@ -448,6 +451,9 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     if (delay.isDouble()) a.autosaveDelayMs = delay.toInt();
     const QJsonValue coalesce = editor.value(QStringLiteral("undoCoalesceMs"));
     if (coalesce.isDouble()) a.undoCoalesceMs = coalesce.toInt();
+    readInt(editor, "undoRunChars", a.undoRunChars);
+    readInt(editor, "historyMergeChars", a.historyMergeChars);
+    readInt(editor, "historyMergeHours", a.historyMergeHours);
     const QJsonValue limit = editor.value(QStringLiteral("undoLimit"));
     if (limit.isDouble()) a.undoLimit = limit.toInt();
     const QJsonValue budget = editor.value(QStringLiteral("undoBudgetMb"));

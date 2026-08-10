@@ -562,6 +562,7 @@ bool NoteEditor::openFile(const QString& path) {
     note_.digest = digest;
     // Копия файла в памяти: с ней сравнивается всё, что мы соберёмся писать.
     note_.lastSaved = QByteArray(text.data(), qsizetype(text.size()));
+    note_.journalTailKnown = false;   // журнал этой заметки ещё не смотрели
     watchFile();
     // Серию набора обрываем: иначе первая правка в новой заметке подмешалась бы
     // к её исходному состоянию и отменить её было бы нечем.
@@ -2478,13 +2479,135 @@ void NoteEditor::recordBaseline(const QByteArray& contents) {
         std::fprintf(stderr, "опорная запись не записана: %s\n", error.toUtf8().constData());
 }
 
+// Насколько две версии разошлись — в знаках, считая и дописанное, и стёртое.
+//
+// Меряется куском, который изменился: общее начало и общий хвост отбрасываются,
+// остаётся то, что человек тронул. Разницы длин мало — два текста одной длины
+// бывают разными целиком.
+static int changedChars(const QByteArray& a, const QByteArray& b) {
+    const qsizetype shared = qMin(a.size(), b.size());
+    qsizetype prefix = 0;
+    while (prefix < shared && a[prefix] == b[prefix]) ++prefix;
+    qsizetype suffix = 0;
+    while (suffix < shared - prefix && a[a.size() - 1 - suffix] == b[b.size() - 1 - suffix])
+        ++suffix;
+    return int(qMax(a.size(), b.size()) - prefix - suffix);
+}
+
 void NoteEditor::recordHistory(journal::Kind kind, const QByteArray& snapshot, qint64 source) {
     if (storeRoot_.isEmpty() || note_.path.isEmpty()) return;
     journal::History history(storeRoot_);
+    const QString noteId = QFileInfo(note_.path).completeBaseName();
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
     QString error;
-    if (!history.append(QFileInfo(note_.path).completeBaseName(), kind,
-                        QDateTime::currentMSecsSinceEpoch(), snapshot, source, &error))
+
+    // Хвост журнала разжимается ОДИН РАЗ на заход в заметку. Дальше он у нас в
+    // руках: после каждой записи последней становится ровно то, что мы только
+    // что записали.
+    if (!note_.journalTailKnown) {
+        note_.journalTailKnown = true;
+        note_.journalTail.clear();
+        note_.journalTailTime = 0;
+        journal::Journal read;
+        if (history.read(noteId, &read, &error) && !read.entries.isEmpty()) {
+            const int last = int(read.entries.size()) - 1;
+            if (read.entries[last].hasSnapshot() &&
+                history.snapshotAt(noteId, last, &note_.journalTail, &error))
+                note_.journalTailTime = read.entries[last].time;
+        }
+    }
+
+    // ЭКВИВАЛЕНТНЫХ ЗАПИСЕЙ В ХВОСТЕ НЕ БЫВАЕТ — правило владельца, и оно
+    // рекурсивное. Одного сравнения с последней записью мало: набрал человек
+    // текст (M0'), отменил его (M0" = M0) — и в журнале появлялась пара
+    // одинаковых записей ЧЕРЕЗ ОДНУ. Так и вышло у него в «Пробуем Obsidian»:
+    //
+    //    9  1166      11  1166 == #9        ← набрали и отменили
+    //   10  1224      12  1224 == #10
+    //
+    // Поэтому решение принимается так: сперва считаем, сколько записей с конца
+    // уходит (мелкая свежая правка заменяет прошлую), а потом смотрим, не
+    // совпал ли новый слепок с тем, что после этого оказалось последним. Совпал
+    // — новую запись не пишем вовсе, остаётся САМАЯ СТАРАЯ из одинаковых:
+    //
+    //   …, M0        →  …, M0, M0'   →  …, M0
+    //
+    // Сравнение — «не считая строки modified»: она меняется на каждой записи и
+    // изменением заметки не является.
+    journal::Journal read;
+    if (!history.read(noteId, &read, &error)) {
+        std::fprintf(stderr, "история не читается: %s\n", error.toUtf8().constData());
+        note_.journalTailKnown = false;
+        return;
+    }
+
+    // ЗАМЕНА ВМЕСТО ДОБАВЛЕНИЯ: два условия, и оба обязаны сойтись — прошлая
+    // запись свежая (её ещё не поздно переписать) и разошлись версии на мелочь.
+    // Свежесть и близость считаются по слепку, который лежит у нас в памяти:
+    // ради этого решения журнал не разжимается.
+    const Appearance& look = appearance();
+    const qint64 age = now - note_.journalTailTime;
+    const bool fresh = note_.journalTailTime > 0 && age >= 0 &&
+                       age <= qint64(qMax(1, look.historyMergeHours)) * 3600 * 1000;
+    const bool close = !note_.journalTail.isEmpty() &&
+                       changedChars(note_.journalTail, snapshot) <= qMax(0, look.historyMergeChars);
+    // Заменяем ТОЛЬКО обычное сохранение обычным: возврат из истории и приход
+    // правки снаружи — вешки, которые человек ставил не набором, и стирать их
+    // нельзя ни в каком виде.
+    const bool merge = kind == journal::Kind::Save && fresh && close &&
+                       !read.entries.isEmpty() && read.entries.back().kind == journal::Kind::Save;
+
+    int keep = int(read.entries.size());
+    bool writeNew = true;
+
+    // ВОЗВРАТ К УЖЕ ЗАПИСАННОМУ СОСТОЯНИЮ. Ищем среди СВЕЖИХ записей хвоста
+    // самую старую, равную новому слепку. Нашли — всё, что после неё, было
+    // работой, которую человек сам же и отменил: она уходит, а новая запись не
+    // пишется вовсе.
+    //
+    // Почему только среди свежих: вернуться к состоянию месячной давности —
+    // законное дело, и стирать за это месяц истории было бы разбоем. Окно то
+    // же, что у замены (historyMergeHours): в пределах сегодняшней работы
+    // отмена не оставляет следов, дальше — история неприкосновенна.
+    // Схлопывание — ТОЛЬКО для обычного сохранения. Возврат из истории и приход
+    // правки снаружи — вешки, которые человек ставил намеренно; восстановив
+    // старый слепок, он ждёт увидеть в истории и его, и всё, от чего ушёл.
+    // (Без этой оговорки восстановление стирало всю историю новее себя —
+    // поймано набором.)
+    const qint64 window = qint64(qMax(1, look.historyMergeHours)) * 3600 * 1000;
+    int sameAs = -1;   // самая старая свежая запись, равная новому слепку
+    for (int i = kind == journal::Kind::Save ? int(read.entries.size()) - 1 : -1; i >= 0; --i) {
+        const journal::Entry& entry = read.entries[i];
+        if (now - entry.time > window) break;   // дальше история старая, её не трогаем
+        if (!entry.hasSnapshot()) break;        // надгробие: за него не заглядываем
+        QByteArray older;
+        if (!history.snapshotAt(noteId, i, &older, &error)) break;
+        if (sameApartFromModified(older, snapshot)) {
+            sameAs = i;     // нашли; но, может, ещё старее лежит такая же
+            continue;
+        }
+        if (sameAs >= 0) break;                          // старее — уже другое состояние
+        if (entry.kind != journal::Kind::Save) break;     // чужую вешку не перепрыгиваем
+    }
+    if (sameAs >= 0) {
+        keep = sameAs + 1;   // эта запись остаётся последней
+        writeNew = false;    // такое состояние в журнале уже есть
+    }
+
+    // Если возврата не было — работает правило замены: мелкая свежая правка
+    // становится на место прошлой, а не рядом с ней.
+    if (writeNew && merge && keep >= 2) --keep;
+
+    bool ok = true;
+    if (keep < int(read.entries.size())) ok = history.truncate(noteId, keep, &error);
+    if (ok && writeNew) ok = history.append(noteId, kind, now, snapshot, source, &error);
+    if (!ok) {
         std::fprintf(stderr, "история не записана: %s\n", error.toUtf8().constData());
+        note_.journalTailKnown = false;   // что там теперь — неизвестно
+        return;
+    }
+    note_.journalTail = snapshot;
+    note_.journalTailTime = now;
 }
 
 void NoteEditor::save(bool interactive, bool force) {

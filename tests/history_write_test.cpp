@@ -12,6 +12,7 @@
 // Сравнение идёт с ОТПЕЧАТКОМ последней записи, который редактор держит в
 // памяти, — файл ради этого не читается.
 
+#include "document_saver.h"
 #include "editor_widget.h"
 #include "journal.h"
 #include "test_util.h"
@@ -125,7 +126,8 @@ void checkRealEditWrites() {
 // Ни в одном журнале не должно быть двух одинаковых слепков подряд — что бы
 // человек ни делал.
 void checkNoEqualNeighbours() {
-    for (const QString& id : {QStringLiteral("01aaaaaaaaaaaa"), QStringLiteral("01bbbbbbbbbbbb")}) {
+    for (const QString& id : {QStringLiteral("01aaaaaaaaaaaa"), QStringLiteral("01bbbbbbbbbbbb"),
+                              QStringLiteral("01eeeeeeeeeeee")}) {
         const std::vector<QByteArray> all = snapshots(id);
         for (size_t i = 1; i < all.size(); ++i)
             ZT_TRUE("в журнале " + id.toStdString() + " записи " + std::to_string(i - 1) +
@@ -206,6 +208,162 @@ void checkUndoDepth() {
             steps >= words);
 }
 
+// Мелкая правка ЗАМЕНЯЕТ прошлую запись, крупная — заводит новую.
+//
+// Правило владельца: не склеивать почти одинаковые копии, а убирать только что
+// сделанную (если она свежая) и писать вместо неё свежую. Иначе за час правки
+// одной заметки в таймлайне копится сотня вешек, сквозь которые не видно
+// настоящих.
+void checkSmallEditsReplace() {
+    const QString id = QStringLiteral("01eeeeeeeeeeee");
+    const QString path = makeNote(id, "# Замена\n\nНачало.\n");
+
+    zametti::NoteEditor editor;
+    editor.setStoreRoot(g_root);
+    editor.openFile(path);
+    editor.save(false);
+    const int base = recordCount(id);
+    ZT_TRUE("опорная запись есть", base >= 1);
+
+    // Десять мелких правок подряд: каждая меньше порога.
+    for (int i = 0; i < 10; ++i) {
+        QTextCursor caret = editor.textCursor();
+        caret.movePosition(QTextCursor::End);
+        caret.insertText(QStringLiteral(" ещё%1").arg(i));
+        editor.setTextCursor(caret);
+        editor.save(false);
+    }
+    ZT_TRUE("десять мелких правок дали одну запись, а не десять: было " +
+                std::to_string(base) + ", стало " + std::to_string(recordCount(id)),
+            recordCount(id) == base + 1);
+
+    // А крупная — своя вешка. Порог по умолчанию 100 знаков.
+    QTextCursor caret = editor.textCursor();
+    caret.movePosition(QTextCursor::End);
+    // Латиница: кириллица в однобайтовом литерале не помещается (-Werror в Debug).
+    caret.insertText(QString(300, QLatin1Char('x')));
+    editor.setTextCursor(caret);
+    editor.save(false);
+    ZT_TRUE("крупная правка завела новую запись: стало " + std::to_string(recordCount(id)),
+            recordCount(id) == base + 2);
+
+    // И журнал остался читаемым: слепки достаются, последний равен файлу.
+    const std::vector<QByteArray> all = snapshots(id);
+    ZT_TRUE("все слепки читаются: " + std::to_string(all.size()) + " из " +
+                std::to_string(recordCount(id)),
+            int(all.size()) == recordCount(id));
+    QFile file(path);
+    ZT_TRUE("файл читается", file.open(QIODevice::ReadOnly));
+    ZT_TRUE("последний слепок — это то, что лежит в файле",
+            !all.empty() && all.back() == file.readAll());
+}
+
+// Сценарий владельца целиком: поработали, ЗАКРЫЛИ ПРОГРАММУ, открыли заново,
+// набрали и стёрли набранное. Не появится ли снова пара одинаковых слепков?
+//
+// Закрытие программы здесь настоящее: второй заход идёт другим экземпляром
+// редактора, то есть без единого байта в памяти от первого. Всё, на что он
+// может опереться, — файл и журнал на диске.
+void checkAcrossRestart() {
+    const QString id = QStringLiteral("01ffffffffffff");
+    const QString path = makeNote(id, "# Через перезапуск\n\nОснова.\n");
+
+    {
+        zametti::NoteEditor first;
+        first.setStoreRoot(g_root);
+        first.openFile(path);
+        first.save(false);
+        QTextCursor caret = first.textCursor();
+        caret.movePosition(QTextCursor::End);
+        first.setTextCursor(caret);
+        caret.insertText(QStringLiteral(" работа"));
+        first.setTextCursor(caret);
+        first.save(false, true);   // так пишет выход из программы
+    }
+
+    const int afterFirst = recordCount(id);
+
+    {
+        zametti::NoteEditor second;
+        second.setStoreRoot(g_root);
+        second.openFile(path);
+        QTextCursor caret = second.textCursor();
+        caret.movePosition(QTextCursor::End);
+        second.setTextCursor(caret);
+        caret.insertText(QStringLiteral("abcd"));
+        second.setTextCursor(caret);
+        for (int i = 0; i < 4; ++i) {
+            QTextCursor back = second.textCursor();
+            back.deletePreviousChar();
+            second.setTextCursor(back);
+        }
+        second.save(false, true);
+    }
+
+    ZT_TRUE("после набора и стирания записей не прибавилось: было " +
+                std::to_string(afterFirst) + ", стало " + std::to_string(recordCount(id)),
+            recordCount(id) == afterFirst);
+
+    // И ни одной пары одинаковых слепков во всём журнале — не только соседних.
+    const std::vector<QByteArray> all = snapshots(id);
+    for (size_t i = 0; i < all.size(); ++i)
+        for (size_t j = i + 1; j < all.size(); ++j)
+            ZT_TRUE("слепки " + std::to_string(i) + " и " + std::to_string(j) +
+                        " различаются не только штампом modified",
+                    !zametti::sameApartFromModified(all[i], all[j]));
+}
+
+// НАБРАЛИ, СОХРАНИЛИ, ОТМЕНИЛИ, СОХРАНИЛИ — и в журнале не должно остаться
+// двух одинаковых записей.
+//
+// Это случай владельца из «Пробуем Obsidian»: записи 9 и 11 там одинаковы, а
+// между ними стоит 10, и проверка «новая не равна последней» его не ловила.
+//
+//   было: …, M0            набрали: …, M0, M0'      отменили: …, M0
+//
+// Самая старая из одинаковых остаётся, новая не пишется вовсе.
+void checkUndoDoesNotDuplicate() {
+    const QString id = QStringLiteral("01aabbccddeeff");
+    const QString path = makeNote(id, "# Отмена\n\nОснова.\n");
+
+    zametti::NoteEditor editor;
+    editor.setStoreRoot(g_root);
+    editor.openFile(path);
+    editor.save(false);
+    const int base = recordCount(id);
+    ZT_TRUE("опорная запись есть", base >= 1);
+    const QByteArray before = snapshots(id).back();
+
+    // Правка крупная: иначе она заменила бы прошлую запись, и случай был бы
+    // другой — нам нужна именно вторая запись в журнале.
+    QTextCursor caret = editor.textCursor();
+    caret.movePosition(QTextCursor::End);
+    editor.setTextCursor(caret);
+    caret.insertText(QString(300, QLatin1Char('x')));
+    editor.setTextCursor(caret);
+    editor.save(false);
+    ZT_TRUE("правка встала отдельной записью: " + std::to_string(recordCount(id)),
+            recordCount(id) == base + 1);
+
+    // Отменяем её и сохраняем: заметка вернулась к тому, что уже есть в журнале.
+    editor.undo();
+    editor.save(false, true);
+
+    ZT_TRUE("после отмены записей стало " + std::to_string(recordCount(id)) + ", а ждали " +
+                std::to_string(base),
+            recordCount(id) == base);
+    const std::vector<QByteArray> all = snapshots(id);
+    ZT_TRUE("и последняя запись — та самая старая",
+            !all.empty() && zametti::sameApartFromModified(all.back(), before));
+
+    // Последний слепок обязан совпасть с файлом: иначе история врёт про то,
+    // что лежит на диске.
+    QFile file(path);
+    ZT_TRUE("файл читается", file.open(QIODevice::ReadOnly));
+    ZT_TRUE("последний слепок — это то, что в файле",
+            !all.empty() && zametti::sameApartFromModified(all.back(), file.readAll()));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -221,6 +379,9 @@ int main(int argc, char** argv) {
     checkUndoDepth();
     checkNoOpEditWritesNothing();
     checkRealEditWrites();
+    checkSmallEditsReplace();
+    checkUndoDoesNotDuplicate();
+    checkAcrossRestart();
     checkNoEqualNeighbours();
 
     return zt::report("что история не пишет");
