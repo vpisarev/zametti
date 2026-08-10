@@ -1,5 +1,7 @@
 #include "note_tree.h"
 
+#include <QMouseEvent>
+
 #include <functional>
 
 #include "icons.h"
@@ -529,6 +531,12 @@ QModelIndex NoteTreeModel::indexForPath(const QString& path) const {
     return Search::run(this, QModelIndex(), path);
 }
 
+void expandAncestors(QTreeView& tree, const QModelIndex& row) {
+    if (!row.isValid()) return;
+    // Именно row.parent(), а не row: см. договор в заголовке.
+    for (QModelIndex up = row.parent(); up.isValid(); up = up.parent()) tree.expand(up);
+}
+
 void NoteTreeModel::setExpanded(const QModelIndex& index, bool expanded) {
     const QString path = nodePath(index);
     if (path.isEmpty()) return;
@@ -928,9 +936,20 @@ NoteTreeView::NoteTreeView(QWidget* parent) : QTreeView(parent) {
     // Раз треугольников нет, папка должна раскрываться по обычному щелчку:
     // иначе цели для нажатия не остаётся вовсе.
     connect(this, &QTreeView::clicked, this, [this](const QModelIndex& index) {
-        if (model() != nullptr && model()->hasChildren(index))
-            setExpanded(index, !isExpanded(index));
+        if (model() == nullptr || !model()->hasChildren(index)) return;
+        // От состояния НА НАЖАТИИ, а не на отпускании (почему — в заголовке).
+        // Если нажали одну строку, а отпустили на другой, щелчка не было и
+        // переключать нечего.
+        if (QModelIndex(pressedRow_) != index) return;
+        setExpanded(index, !pressedExpanded_);
     });
+}
+
+void NoteTreeView::mousePressEvent(QMouseEvent* event) {
+    const QModelIndex at = indexAt(event->pos());
+    pressedRow_ = at;
+    pressedExpanded_ = at.isValid() && isExpanded(at);
+    QTreeView::mousePressEvent(event);
 }
 
 void NoteTreeView::drawBranches(QPainter*, const QRect&, const QModelIndex&) const {}

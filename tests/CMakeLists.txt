@@ -147,6 +147,14 @@ if(TARGET zametti-view)
     add_test(NAME export-pdf COMMAND export_pdf_test)
     set_tests_properties(export-pdf PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    # Дерево папок глазами виджета: то, что видно только когда модель стоит в
+    # живом QTreeView и сигналы ходят по кругу «вид → модель → вид».
+    add_executable(tree_view_test tree_view_test.cpp)
+    target_link_libraries(tree_view_test PRIVATE zametti-widgets Qt6::Test zametti-warnings)
+    target_include_directories(tree_view_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME tree-view COMMAND tree_view_test)
+    set_tests_properties(tree-view PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     # Уровень заголовка: матрица «что было × во что превращаем × где стоит».
     # Проверяется круг через файл: род блока живёт в свойствах, и ошибка в них
     # видна лишь тогда, когда документ уедет на диск и прочтётся обратно.
