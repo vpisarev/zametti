@@ -56,6 +56,14 @@ enable_testing()
 # find_package повторно ничего не стоит. QUIET и без REQUIRED — ядро и без Qt
 # собирается (за этим следит набор core-without-qt), а кто без Qt не может,
 # тот требует его сам.
+# Svg спрашиваем ОТДЕЛЬНО и ПЕРВЫМ. Отдельно — потому что без него собирается
+# всё, кроме самой программы (иконки тулбара рисовать нечем), и мешать его в
+# общий список значило бы объявить «Qt нет» из-за необязательной части.
+# Первым — потому что Qt6_FOUND хранит итог ПОСЛЕДНЕГО вызова, а нам нужен итог
+# главного. Здесь же, в корне, а не только в app/: иначе цель Qt6::Svg живёт в
+# чужой области видимости, и сводка её не видит (первая редакция так и врала:
+# «НЕТ: Svg» при собирающейся программе).
+find_package(Qt6 QUIET COMPONENTS Svg)
 find_package(Qt6 QUIET COMPONENTS Core Gui Widgets Test)
 
 # ЕСЛИ Qt НЕ НАШЁЛСЯ, СКАЗАТЬ ОБ ЭТОМ ЗДЕСЬ И ВНЯТНО.
@@ -141,8 +149,12 @@ function(zametti_summary)
     if(Qt6_FOUND)
         set(qt "${Qt6_VERSION}")
         set(missing "")
-        foreach(part Core Gui Widgets Test)
-            if(NOT Qt6${part}_FOUND)
+        # Спрашиваем ЦЕЛЬ, а не переменную Qt6<Часть>_FOUND: ту выставляет
+        # find_package в СВОЕЙ области видимости, и Svg, найденный в app/, в
+        # корне так и остался бы «ненайденным» (первая же редакция этой строки
+        # соврала именно так).
+        foreach(part Core Gui Widgets Svg Test)
+            if(NOT TARGET Qt6::${part})
                 list(APPEND missing ${part})
             endif()
         endforeach()
@@ -194,6 +206,13 @@ function(zametti_summary)
         set(readers "не собираются — нет Qt")
     endif()
     zametti_row("читатели:  " "${readers}")
+    # Есть ли сама программа. Строка обязательна: без неё «настройка прошла»
+    # означало лишь, что не упало, — а собралось при этом одно ядро.
+    if(TARGET zametti)
+        zametti_row("программа: " "`собирается`")
+    else()
+        zametti_row("программа: " "`НЕ СОБИРАЕТСЯ` — ${ZAMETTI_APP_SKIPPED}")
+    endif()
     zametti_row("корпуса:   " "`${corpora}`")
     if(fuzz)
         zametti_row("фаззинг:   " "`${fuzz}`")

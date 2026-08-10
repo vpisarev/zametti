@@ -1,10 +1,22 @@
 # Просмотрщик. Единственная цель в проекте, которая знает про Qt.
 
-find_package(Qt6 QUIET COMPONENTS Gui Widgets Svg)
+# Двумя вызовами, а не одним списком: пропажа ЛЮБОЙ части из общего списка
+# гасит Qt6_FOUND целиком, и причина «нет Svg» становилась неотличима от «нет
+# Qt вовсе» — ровно так первая редакция и соврала в сводке.
+find_package(Qt6 QUIET COMPONENTS Gui Widgets)
+find_package(Qt6 QUIET COMPONENTS Svg)
 
-if(NOT Qt6_FOUND)
-    message(STATUS "Qt6 Widgets не найден — просмотрщик собран не будет "
-                   "(ядру и его тестам Qt не нужен). Поставьте qt6-base-dev.")
+# ЕСЛИ ПРОГРАММЫ НЕ БУДЕТ — СКАЗАТЬ ГРОМКО. Раньше здесь стоял STATUS, и в
+# потоке чужого вывода его не видно вовсе: настройка проходила «успешно», а
+# цели zametti в проекте не появлялось. Владелец наткнулся на это в Xcode —
+# искал, почему не собирается libjxl, а на деле не заводился сам просмотрщик,
+# и тянуть libjxl было некому.
+#
+# Причина уезжает в сводку в корне: там её видно последней строкой, а не
+# первой из трёхсот.
+if(NOT TARGET Qt6::Widgets)
+    set(ZAMETTI_APP_SKIPPED "нет Qt6 Gui/Widgets" CACHE INTERNAL "почему нет программы")
+    message(NOTICE "Qt6 Widgets не найден — просмотрщика не будет (ядру и его тестам Qt не нужен).")
     return()
 endif()
 
@@ -13,10 +25,18 @@ endif()
 # него тулбар оказался бы пустым молча. Слинкованный модуль превращает
 # зависимость в объявленную — забыть её при упаковке уже нельзя.
 if(NOT TARGET Qt6::Svg)
-    message(STATUS "Qt6 Svg не найден — просмотрщик собран не будет: без него "
-                   "нечем рисовать иконки тулбара. Поставьте qt6-svg-dev.")
+    set(ZAMETTI_APP_SKIPPED "нет Qt6::Svg" CACHE INTERNAL "почему нет программы")
+    message(NOTICE "Qt6 Svg не найден — просмотрщика не будет: нечем рисовать иконки тулбара.")
+    if(APPLE)
+        message(NOTICE "  brew install qt  (модуль Svg входит в неё; qt@5 не годится)")
+    else()
+        message(NOTICE "  Поставьте qt6-svg-dev.")
+    endif()
     return()
 endif()
+
+# Дошли — программа будет.
+set(ZAMETTI_APP_SKIPPED "" CACHE INTERNAL "почему нет программы")
 
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
