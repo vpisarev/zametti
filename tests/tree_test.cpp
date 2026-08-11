@@ -5,6 +5,8 @@
 
 #include "note_tree.h"
 
+#include "icons.h"
+#include "settings.h"
 #include "test_util.h"
 
 #include <unistd.h>
@@ -14,7 +16,9 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFontMetrics>
 #include <QMimeData>
+#include <QPixmap>
 
 #include <memory>
 
@@ -37,6 +41,25 @@ void note(const QString& id, const QString& meta, const QString& body) {
 
 QString titleAt(const NoteTreeModel& model, const QModelIndex& parent, int row) {
     return model.data(model.index(row, 0, parent), Qt::DisplayRole).toString();
+}
+
+// Каким значком нарисована строка. Размер и цвет считаются ровно так же, как в
+// note_tree.cpp, а сравнение идёт по cacheKey: кэш иконок на одинаковый запрос
+// отдаёт ОДИН И ТОТ ЖЕ растр, и равенство ключей означает «нарисована именно
+// эта иконка», а не «похожа на неё». Сравнивать пиксели тут нельзя — folder и
+// folder-open различаются десятком точек, и порог «различаются» прошёл бы и на
+// сглаживании.
+bool iconIs(const NoteTreeModel& model, const QModelIndex& index, const char* name) {
+    const zametti::Appearance& a = zametti::appearance();
+    QFont font;
+    font.setPointSizeF(a.sidebarFontPoint * a.sidebarFolderScale);
+    const int side = QFontMetrics(font).height();
+    const qreal dpr = qGuiApp != nullptr ? qGuiApp->devicePixelRatio() : 1.0;
+    const QPixmap want =
+        zametti::toolbarIcon(QString::fromLatin1(name), side, a.sidebarFolderColor, dpr);
+    const QVariant got = model.data(index, Qt::DecorationRole);
+    if (want.isNull() || !got.canConvert<QPixmap>()) return false;
+    return got.value<QPixmap>().cacheKey() == want.cacheKey();
 }
 
 }  // namespace
@@ -366,6 +389,23 @@ int main(int argc, char** argv) {
                     model.notesInSubtree(all).size());
         ZT_TRUE("и по id она находится",
                 model.hasNote(QStringLiteral("00000000000003")));
+
+        // Значок папки в этом режиме. «Папка» содержит «Подпапку» — её есть
+        // куда раскрывать, значок закрытый. А вот «Подпапка» держит только
+        // заметки: строк под ней ноль, щёлкай сколько хочешь. Она рисовалась
+        // закрытой, потому что значок выбирался по children (заметки там есть),
+        // а не по shown (видимых строк нет).
+        const QModelIndex folder =
+            model.indexForPath(g_root + QStringLiteral("/00000000000001.md"));
+        const QModelIndex leaf =
+            model.indexForPath(g_root + QStringLiteral("/0000000000000a.md"));
+        ZT_TRUE("папка с подпапкой, пока не раскрыта, — значок закрытой",
+                iconIs(model, folder, "folder"));
+        ZT_TRUE("папка без подпапок — значок открытой, раскрывать нечего",
+                iconIs(model, leaf, "folder-open"));
+        model.setExpanded(folder, true);
+        ZT_TRUE("раскрытая — значок открытой", iconIs(model, folder, "folder-open"));
+        model.setExpanded(folder, false);
     }
 
     // Запросы по id: ими живут операции над заметками, пока индексов у них нет.
