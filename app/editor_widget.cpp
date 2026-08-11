@@ -387,8 +387,13 @@ void NoteEditor::installSession(NoteSession session) {
     connectDocument();
     applyContentWidth();
 
+    // Каретка и ВЫДЕЛЕНИЕ: сперва свободный конец, потом каретка с
+    // удержанием — так восстанавливается и то, и другое разом. Без выделения
+    // концы совпадают, и получается обычная каретка.
+    const int last = document()->characterCount() - 1;
     QTextCursor place(document());
-    place.setPosition(qBound(0, note_.cursor, document()->characterCount() - 1));
+    place.setPosition(qBound(0, note_.anchor, last));
+    place.setPosition(qBound(0, note_.cursor, last), QTextCursor::KeepAnchor);
     setTextCursor(place);
     verticalScrollBar()->setValue(note_.scroll);
     document()->setModified(note_.modified);
@@ -450,7 +455,7 @@ void NoteEditor::trimNoteCache() {
     // карта — это ОСТАТОК объекта, а не второй источник правды о нём.
     while (!noteCache_.empty() && cachedNoteBytes() > budget) {
         const NoteSession& going = noteCache_.back();
-        if (!going.path.isEmpty()) caretMemory_[going.path] = going.cursor;
+        if (!going.path.isEmpty()) caretMemory_[going.path] = {going.cursor, going.anchor};
         noteCache_.pop_back();
     }
 }
@@ -461,7 +466,8 @@ void NoteEditor::stashCurrentNote() {
     // и терять его незачем. Поэтому здесь, в единственной точке ухода заметки
     // из открытых, от неё остаётся этот лёгкий след. Второй записи в карту в
     // программе нет: иначе появился бы второй источник правды о каретке.
-    if (!note_.path.isEmpty()) caretMemory_[note_.path] = textCursor().position();
+    if (!note_.path.isEmpty())
+        caretMemory_[note_.path] = {textCursor().position(), textCursor().anchor()};
 
     // Откладываем только ЧИСТОЕ и только то, чей отпечаток мы знаем: иначе при
     // возврате не с чем было бы сверять файл. Несохранённое не откладываем
@@ -497,6 +503,7 @@ void NoteEditor::stashCurrentNote() {
     // Уезжает ВЕСЬ объект заметки, а не выбранные поля. Забыть перенести
     // что-то нельзя: переносится всё, потому что переносится он сам.
     note_.cursor = textCursor().position();
+    note_.anchor = textCursor().anchor();
     note_.scroll = verticalScrollBar()->value();
     note_.modified = false;
     note_.bytes = bytes;
@@ -523,7 +530,24 @@ bool NoteEditor::restoreCachedNote(const QString& path, const Digest& digest) {
     return true;
 }
 
-bool NoteEditor::openFile(const QString& path) {
+void NoteEditor::activateNote(bool takeFocus) {
+    // Каретка и выделение — из объекта заметки, где бы он ни взялся: приехал
+    // из кэша или собран только что. Оба пути сходятся здесь, поэтому забыть
+    // про один из них нельзя.
+    const int last = document()->characterCount() - 1;
+    QTextCursor place(document());
+    place.setPosition(qBound(0, note_.anchor, last));
+    place.setPosition(qBound(0, note_.cursor, last), QTextCursor::KeepAnchor);
+    setTextCursor(place);
+    ensureCursorVisible();
+
+    // Фокус. Каретку Qt рисует ТОЛЬКО в виджете с фокусом ввода, и без этой
+    // строки человек видел открытую заметку без каретки: место восстановлено,
+    // а печатать некуда — пока не ткнёшь в текст мышью.
+    if (takeFocus) setFocus(Qt::OtherFocusReason);
+}
+
+bool NoteEditor::openFile(const QString& path, bool takeFocus) {
     // Открытие другой заметки выводит из режима истории. Без этого редактор
     // остался бы показывать слепок ПРЕЖНЕЙ заметки, имея путь новой, — и
     // первая же правка записала бы чужое прошлое в новый файл. Найдено
@@ -582,22 +606,25 @@ bool NoteEditor::openFile(const QString& path) {
     // Отложенная заметка: файл не разбираем и документ не собираем вовсе —
     // история, каретка и прокрутка возвращаются такими, какими были.
     if (restoreCachedNote(path, digest)) {
+        activateNote(takeFocus);
         emit fileChanged(note_.path);
         return true;
     }
 
     Document doc = parse(text);
     note_.meta = doc.meta;
-    const int caret = caretMemory_.value(note_.path, 0);
-    note_.undoChain.reset(doc, caret);
+    const CaretSpot spot = caretMemory_.value(note_.path);
+    note_.cursor = spot.cursor;
+    note_.anchor = spot.anchor;
+    note_.undoChain.reset(doc, spot.cursor);
     // Открывается другой файл: с прежним документом у нового ничего общего,
     // заплатке не за что зацепиться.
     note_.builtValid = false;
     installDocument(std::make_unique<QTextDocument>());
-    rebuild(doc, caret, {});
-    // Показать место каретки, а не начало документа: иначе «вернуться туда,
-    // где читал» означало бы прокрутить заново.
-    if (caret > 0) ensureCursorVisible();
+    rebuild(doc, spot.cursor, {});
+    // Каретка, выделение, показ места и фокус — общей дорогой с отложенной
+    // заметкой: два пути открытия, одно правило.
+    activateNote(takeFocus);
     emit fileChanged(note_.path);
     return true;
 }

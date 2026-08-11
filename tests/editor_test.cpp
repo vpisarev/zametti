@@ -30,7 +30,9 @@
 #include <QImage>
 #include <QPainter>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QScrollBar>
+#include <QVBoxLayout>
 #include <QTextCursor>
 #include <QTextFragment>
 #include <QTextFrame>
@@ -2653,6 +2655,82 @@ void checkHistoryLeavesOnOpen() {
           "первая заметка не перезаписана слепком");
 }
 
+// Открыли заметку — печатать можно сразу.
+//
+// Беда владельца, дважды: сперва у новых заметок, потом у обычных. Заметка
+// открывается, место каретки восстанавливается, а каретки не видно и нажатия
+// уходят в никуда — фокус ввода остался в панели, из которой заметку выбрали, а
+// каретку Qt рисует ТОЛЬКО в виджете с фокусом. Лечится не в местах выбора
+// (их много, и каждое новое забудут), а в самом openFile.
+//
+// Проверка ставит рядом с редактором список — как средняя колонка в окне, — и
+// спрашивает окно, кому оно отдало ввод. Спрашивать hasFocus() нельзя: под
+// offscreen окно не становится активным, и он всегда ложь.
+void checkOpenTakesCaretAndFocus() {
+    const QString first = writeNote("фокус-первая.md",
+                                    QStringLiteral("# первая\n\nстрока раз\nстрока два\n"));
+    const QString second = writeNote("фокус-вторая.md", QStringLiteral("# вторая\n\nтекст\n"));
+
+    QWidget window;
+    auto* layout = new QVBoxLayout(&window);
+    auto* panel = new QListWidget(&window);
+    panel->addItem(QStringLiteral("строка"));
+    auto* editor = new zametti::NoteEditor(&window);
+    layout->addWidget(panel);
+    layout->addWidget(editor);
+    window.resize(700, 500);
+    window.show();
+    QTest::qWait(20);
+
+    panel->setFocus();
+    QTest::qWait(10);
+    check(window.focusWidget() == panel, "ввод отдан панели — так бывает при выборе мышью");
+
+    editor->openFile(first);
+    QTest::qWait(20);
+    check(window.focusWidget() == editor, "открытая заметка забрала ввод себе");
+
+    // Выделение — не просто место каретки: у него два конца, и вернуться
+    // обязаны оба (просьба владельца).
+    QTextCursor pick(editor->document()->findBlockByNumber(2));
+    pick.movePosition(QTextCursor::StartOfBlock);
+    pick.movePosition(QTextCursor::NextCharacter, QTextCursor::KeepAnchor, 6);
+    editor->setTextCursor(pick);
+    const int anchor = pick.anchor();
+    const int position = pick.position();
+    check(anchor != position, "выделение и правда есть");
+
+    // Дорога первая: заметка вернулась из кэша, документ не пересобирался.
+    editor->openFile(second);
+    QTest::qWait(20);
+    panel->setFocus();
+    editor->openFile(first);
+    QTest::qWait(20);
+    check(editor->textCursor().anchor() == anchor && editor->textCursor().position() == position,
+          "из кэша вернулось выделение целиком, а не одна каретка");
+    check(window.focusWidget() == editor, "и ввод снова в тексте");
+
+    // Дорога вторая: кэша нет, заметка собирается с диска заново. Место
+    // каретки живёт тогда в отдельной карте, и выделение обязано быть и там —
+    // иначе беда возвращалась бы, стоит заметке вытесниться из кэша.
+    editor->openFile(second);
+    QTest::qWait(20);
+    editor->clearNoteCache();
+    panel->setFocus();
+    editor->openFile(first);
+    QTest::qWait(20);
+    check(editor->textCursor().anchor() == anchor && editor->textCursor().position() == position,
+          "и с диска выделение вернулось таким же");
+    check(window.focusWidget() == editor, "и ввод снова в тексте");
+
+    // Единственное исключение: ходьба стрелками по панели. Там ↑/↓ обязаны
+    // листать список, и утащить фокус значило бы отобрать саму ходьбу.
+    panel->setFocus();
+    editor->openFile(second, false);
+    QTest::qWait(20);
+    check(window.focusWidget() == panel, "ходьба стрелками ввод не отбирает");
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     if (argc < 2) {
@@ -2693,6 +2771,7 @@ int main(int argc, char** argv) {
     checkDeferredSnapshot();
     checkWideWindowOperations();
     checkNoteCache();
+    checkOpenTakesCaretAndFocus();
     checkHistoryPoints();
     checkHistoryMode();
     checkHistoryBaseline();

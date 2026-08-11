@@ -860,6 +860,37 @@ int main(int argc, char** argv) {
                               zametti::appearance().zoomMax));
     if (!editor.openFile(current)) return 2;
 
+    // ХОДЬБА СТРЕЛКАМИ по дереву и по списку — единственный случай, когда
+    // открытая заметка НЕ забирает фокус.
+    //
+    // Уговор простой: открыли заметку — каретка в тексте, печатать можно сразу
+    // (это делает openFile, одним местом на всю программу). Но ↑/↓ в панелях
+    // обязаны листать панель, а не двигать каретку, и если бы фокус уезжал на
+    // первом же нажатии, ходить по списку стало бы нечем.
+    //
+    // Отличаем не «кто в фокусе» — при щелчке мышью панель тоже получает фокус,
+    // — а чем именно человек выбрал: клавишей или мышью. Признак ставится до
+    // того, как панель разберёт нажатие, а выделение меняется прямо внутри
+    // разбора, так что к нашему обработчику он приходит верным.
+    struct KeyWalk : QObject {
+        bool walking = false;
+        bool eventFilter(QObject*, QEvent* event) override {
+            if (event->type() == QEvent::KeyPress) {
+                const int key = static_cast<QKeyEvent*>(event)->key();
+                walking = key == Qt::Key_Up || key == Qt::Key_Down ||
+                          key == Qt::Key_PageUp || key == Qt::Key_PageDown ||
+                          key == Qt::Key_Home || key == Qt::Key_End;
+            } else if (event->type() == QEvent::MouseButtonPress) {
+                walking = false;
+            }
+            return false;
+        }
+    };
+    auto* keyWalk = new KeyWalk;
+    keyWalk->setParent(&window);
+    tree.installEventFilter(keyWalk);
+    listView.installEventFilter(keyWalk);
+
     // Средняя колонка наполняется по выбранной слева папке. Открытая заметка,
     // если она в этом поддереве, остаётся выбранной — переключение папки не
     // должно уводить человека с того, что он читает; иначе открывается первая
@@ -881,7 +912,8 @@ int main(int argc, char** argv) {
             listView.setCurrentIndex(first);
         }
         const QString file = list.pathAt(first);
-        if (!file.isEmpty() && file != editor.filePath()) editor.openFile(file);
+        if (!file.isEmpty() && file != editor.filePath())
+            editor.openFile(file, !keyWalk->walking);
     };
 
     QObject::connect(tree.selectionModel(), &QItemSelectionModel::currentChanged, &tree,
@@ -893,7 +925,8 @@ int main(int argc, char** argv) {
                          }
                          // Вне хранилища панель одна: заметки живут в дереве.
                          const QString file = model.filePath(index);
-                         if (!file.isEmpty() && file != editor.filePath()) editor.openFile(file);
+                         if (!file.isEmpty() && file != editor.filePath())
+                             editor.openFile(file, !keyWalk->walking);
                      });
 
     // Щелчок по УЖЕ выбранной папке. Курсор мог встать на неё сам — так
@@ -907,13 +940,15 @@ int main(int argc, char** argv) {
                          if (model.isStore()) fillList(index, true);
                      });
 
-    // Выбор строки списка открывает заметку. Фокус при этом не переезжает:
-    // ↑/↓ должны ходить по списку, а не по тексту (правило средней колонки).
+    // Выбор строки списка открывает заметку. Фокус переезжает в текст — кроме
+    // ходьбы стрелками: ↑/↓ должны листать список, а не двигать каретку
+    // (правило средней колонки).
     QObject::connect(listView.selectionModel(), &QItemSelectionModel::currentChanged,
                      &listView, [&](const QModelIndex& index, const QModelIndex&) {
                          if (revealing) return;
                          const QString file = list.pathAt(index);
-                         if (!file.isEmpty() && file != editor.filePath()) editor.openFile(file);
+                         if (!file.isEmpty() && file != editor.filePath())
+                             editor.openFile(file, !keyWalk->walking);
                      });
 
     // Enter в списке — перейти к правке: выбор уже сделан, дальше человек
@@ -1459,7 +1494,6 @@ int main(int argc, char** argv) {
             // (иначе каждое обновление перезагружало бы заметку), так что
             // на открытие через выделение полагаться нельзя.
             editor.openFile(made);
-            editor.setFocus();
         }
     };
 
@@ -1491,7 +1525,6 @@ int main(int argc, char** argv) {
             refreshTree(first);
             // Открыть явно: refreshTree выделяет с заглушенными сигналами.
             editor.openFile(first);
-            editor.setFocus();
         }
         if (!failed.isEmpty()) {
             QMessageBox::warning(
@@ -1963,7 +1996,13 @@ int main(int argc, char** argv) {
         if (file.isEmpty()) return;
         // Показать заметку в боковых колонках — общий путь через fileChanged,
         // отдельного кода здесь больше не нужно.
-        if (file != editor.filePath()) editor.openFile(file);
+        //
+        // Фокус НЕ забираем — второе и последнее исключение из правила «открыли
+        // заметку, каретка в тексте». Сюда попадают и щелчок по находке, и
+        // ходьба по списку находок, и просто набор в строке поиска: список
+        // перестраивается на каждую букву, текущая строка меняется сама, и
+        // утащить фокус значило бы выдернуть строку поиска из-под пальцев.
+        if (file != editor.filePath()) editor.openFile(file, false);
         const zametti::Query query = zametti::makeQuery(findBar.query());
         editor.findMatches(query.needle, query.caseSensitive);
         editor.goToMatch(ordinal);
