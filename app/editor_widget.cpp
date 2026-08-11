@@ -833,7 +833,7 @@ int NoteEditor::findMatches(const QString& text, bool caseSensitive) {
 void NoteEditor::showMatchHighlights() {
     QList<QTextEdit::ExtraSelection> selections;
     selections.reserve(int(note_.matches.size()));
-    const QColor base = appearance().selectionBackground;
+    const QColor base = appearance().searchHighlight;
     // Текущее совпадение — контрастнее прочих. Не другим цветом: цвет в
     // оформлении один, а разной должна быть заметность.
     QColor pale = base;

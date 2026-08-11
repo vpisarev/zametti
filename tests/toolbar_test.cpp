@@ -3,10 +3,10 @@
 // Проверять глазами тут особенно нечего: кнопка с чужой иконкой, кнопка без
 // тултипа и кнопка, погашенная без объяснения, выглядят ровно как исправные.
 // Поэтому набор спрашивает у виджета то, что человек спросить не может: из
-// какого файла нарисована каждая кнопка, какого цвета вышел растр и сколько
-// кнопок зажглось при входе в режим истории.
+// какого файла нарисована каждая кнопка, какого цвета вышел растр и в каком
+// порядке кнопки встали в раскладке.
 //
-// Заодно кладёт снимки приёмки: обычный вид и режим истории.
+// Заодно кладёт снимок приёмки.
 
 #include "icons.h"
 #include "resources.h"
@@ -18,6 +18,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QImage>
+#include <QLayout>
 #include <QSet>
 #include <QToolButton>
 
@@ -84,25 +85,29 @@ void checkShortcutsAreShown(const Toolbar& bar) {
     }
 }
 
-// Режим истории зажигает ровно три кнопки и гасит их на выходе.
-void checkHistoryModeLightsThree(Toolbar& bar) {
-    bar.setHistoryMode(false);
-    for (Button id : {Button::HistoryRestore, Button::HistoryForward, Button::HistoryRewind})
-        ZT_TRUE("вне истории кнопка погашена", !bar.isEnabled(id));
+// Два поиска: по заметке и по всему хранилищу. Стоят рядом, каждый называет
+// своё сочетание клавиш, и порядок именно такой — сперва поиск по заметке,
+// правее поиск по хранилищу (просьба владельца). Порядок спрашивается у
+// РАСКЛАДКИ, а не у списка: список задаёт его, но перепутать местами их может
+// и раскладка, и увидеть это иначе нечем.
+void checkSearchPair(Toolbar& bar) {
+    bar.resize(1100, bar.sizeHint().height());
+    if (bar.layout() != nullptr) bar.layout()->activate();
 
-    bar.setHistoryMode(true);
-    int lit = 0;
-    for (const Toolbar::Spec& spec : Toolbar::specs())
-        if (bar.isEnabled(spec.id)) ++lit;
-    // Кроме трёх исторических горят все, кому не выставлено обещание. Считаем
-    // именно три исторические: остальные в этой проверке не участвуют.
-    for (Button id : {Button::HistoryRestore, Button::HistoryForward, Button::HistoryRewind})
-        ZT_TRUE("в истории кнопка горит", bar.isEnabled(id));
-    ZT_TRUE("горящих кнопок стало больше трёх", lit > 3);
-
-    bar.setHistoryMode(false);
-    for (Button id : {Button::HistoryRestore, Button::HistoryForward, Button::HistoryRewind})
-        ZT_TRUE("на выходе кнопка снова погашена", !bar.isEnabled(id));
+    QToolButton* inNote = bar.buttonFor(Button::Search);
+    QToolButton* inStore = bar.buttonFor(Button::SearchInStore);
+    ZT_TRUE("кнопка поиска по заметке есть", inNote != nullptr);
+    ZT_TRUE("кнопка поиска по хранилищу есть", inStore != nullptr);
+    if (inNote == nullptr || inStore == nullptr) return;
+    ZT_TRUE("поиск по заметке называет Ctrl+F",
+            inNote->toolTip().contains(QStringLiteral("Ctrl+F")));
+    ZT_TRUE("поиск по хранилищу называет Ctrl+Shift+F",
+            inStore->toolTip().contains(QStringLiteral("Ctrl+Shift+F")));
+    ZT_TRUE("поиск по заметке стоит левее", inNote->x() < inStore->x());
+    // Рядом, а не в разных концах полосы: между ними не должно быть ни
+    // промежутка между группами, ни распорки.
+    ZT_TRUE("и вплотную к нему",
+            inStore->x() - (inNote->x() + inNote->width()) < 4);
 }
 
 // Обещание гасит кнопку И объясняет причину. Половина этого — хуже, чем ничего:
@@ -183,11 +188,7 @@ void checkCacheHolds() {
 
 void writeShots(Toolbar& bar, const QString& dir) {
     bar.resize(1100, bar.sizeHint().height());
-    bar.setHistoryMode(false);
-    bar.grab().save(QDir(dir).filePath(QStringLiteral("toolbar-normal.png")));
-    bar.setHistoryMode(true);
-    bar.grab().save(QDir(dir).filePath(QStringLiteral("toolbar-history.png")));
-    bar.setHistoryMode(false);
+    bar.grab().save(QDir(dir).filePath(QStringLiteral("toolbar.png")));
 }
 
 }  // namespace
@@ -203,7 +204,7 @@ int main(int argc, char** argv) {
     Toolbar bar;
     checkEveryButtonExists(bar);
     checkShortcutsAreShown(bar);
-    checkHistoryModeLightsThree(bar);
+    checkSearchPair(bar);
     checkPromiseExplainsItself(bar);
 
     if (argc > 1) writeShots(bar, QString::fromLocal8Bit(argv[1]));

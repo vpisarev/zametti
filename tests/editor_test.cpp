@@ -2731,6 +2731,82 @@ void checkOpenTakesCaretAndFocus() {
     check(window.focusWidget() == panel, "ходьба стрелками ввод не отбирает");
 }
 
+// Найденное красится СВОИМ цветом, а не цветом выделения.
+//
+// Проверка идёт ПО СНИМКУ и считает точки нужного цвета: цвет подсветки видно
+// только на экране, и «поставили в extraSelections» ещё не значит «человек это
+// увидел». Ровно так и вышло бы, спроси я редактор: Qt рисует выделение ПОВЕРХ
+// подсветки, и у текущей находки на экране цвет выделения, а не поиска.
+//
+// Отсюда и устройство проверки: считаются подсветки НЕ ТЕКУЩИХ находок. Их
+// цвет — тот, что назначен в облике, и никем не перекрыт.
+void checkSearchPaintsWithItsOwnColour() {
+    const QString path = writeNote("подсветка.md",
+                                   QStringLiteral("# заметка\n\nсосна и сосна\n"));
+    const QColor keepSearch = zametti::appearance().searchHighlight;
+    const QColor keepSelection = zametti::appearance().selectionBackground;
+    // Цвета нарочно разные и ни на что не похожие: совпади они — проверка
+    // прошла бы и на прежнем коде, бравшем цвет выделения. Оба непрозрачные и
+    // далёкие от фона страницы, чтобы точки считались без догадок.
+    zametti::appearance().searchHighlight = QColor(0x11, 0x99, 0x33);
+    zametti::appearance().selectionBackground = QColor(0xcc, 0x22, 0x88);
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    const int found = editor.findMatches(QStringLiteral("сосна"), false);
+    check(found == 2, "нашлись оба вхождения");
+    // Никуда не шагаем: пока по находкам не пошли, текущей нет вовсе и обе
+    // подсветки видны как есть. Это же и есть обычный вид при наборе запроса.
+    QTest::qWait(20);
+
+    // Подсветка НЕ ТЕКУЩЕЙ находки полупрозрачна (так она уступает текущей), и
+    // на экране лежит не сам цвет, а его смесь с фоном страницы в неизвестной
+    // нам доле. Поэтому ищем точки, которые лежат НА ОТРЕЗКЕ «фон → искомый
+    // цвет»: доля выясняется по каналу с наибольшим размахом и проверяется по
+    // остальным. Цвета выше подобраны так, что отрезки до них расходятся
+    // широко, и спутать их нельзя.
+    const QColor page = zametti::appearance().pageBackground;
+    auto count = [&editor, &page](const QColor& want) {
+        const QImage shot = editor.viewport()->grab().toImage();
+        const int span[3] = {want.red() - page.red(), want.green() - page.green(),
+                             want.blue() - page.blue()};
+        int widest = 0;
+        for (int i = 1; i < 3; ++i)
+            if (qAbs(span[i]) > qAbs(span[widest])) widest = i;
+        if (span[widest] == 0) return -1;   // цвет неотличим от фона: считать нечего
+
+        int painted = 0;
+        for (int y = 0; y < shot.height(); ++y)
+            for (int x = 0; x < shot.width(); ++x) {
+                const QColor c = shot.pixelColor(x, y);
+                const int got[3] = {c.red() - page.red(), c.green() - page.green(),
+                                    c.blue() - page.blue()};
+                const double part = double(got[widest]) / double(span[widest]);
+                // Доля меньше четверти — это уже почти чистый фон, и по нему
+                // отрезки всех цветов сходятся в одну точку.
+                if (part < 0.25 || part > 1.05) continue;
+                bool fits = true;
+                for (int i = 0; i < 3; ++i)
+                    if (qAbs(double(got[i]) - part * span[i]) > 4.0) fits = false;
+                if (fits) ++painted;
+            }
+        return painted;
+    };
+
+    const int mine = count(zametti::appearance().searchHighlight);
+    const int theirs = count(zametti::appearance().selectionBackground);
+    check(mine > 200, "находки закрашены цветом поиска (" + std::to_string(mine) + " точек)");
+    check(theirs == 0, "и ни одной точки цветом выделения (" + std::to_string(theirs) + ")");
+
+    zametti::appearance().searchHighlight = keepSearch;
+    zametti::appearance().selectionBackground = keepSelection;
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     if (argc < 2) {
@@ -2772,6 +2848,7 @@ int main(int argc, char** argv) {
     checkWideWindowOperations();
     checkNoteCache();
     checkOpenTakesCaretAndFocus();
+    checkSearchPaintsWithItsOwnColour();
     checkHistoryPoints();
     checkHistoryMode();
     checkHistoryBaseline();

@@ -1039,6 +1039,11 @@ int main(int argc, char** argv) {
     // это привычка человека, а не свойство заметки. Обновляется при каждом
     // уходе из режима, поэтому «назад» всегда ведёт туда, откуда только что
     // ушли, а не в начало времён.
+    //
+    // Читать её сейчас некому: кнопка «назад к посещённому» с тулбара убрана до
+    // отдельного брифа про историю. Закладка остаётся — она про поведение,
+    // которое никуда не делось, и выбрасывать её, чтобы через бриф написать
+    // заново, незачем.
     QHash<QString, int> visitedSnapshot;
     // Какой слепок показан прямо сейчас. Нужен отдельно от editor.historyIndex()
     // ровно в один момент — при выходе из режима, когда индекс уже обнулён.
@@ -1062,9 +1067,6 @@ int main(int argc, char** argv) {
                          // Тонировка поля: слегка пожелтевший от времени фон,
                          // чтобы прошлое было видно ещё до чтения баннера.
                          zametti::applyPalette(editor, on);
-                         // Три кнопки истории на тулбаре живут ровно столько,
-                         // сколько идёт режим: вне его им не на чем работать.
-                         toolbar.setHistoryMode(on);
                          if (on) {
                              // Заголовок и выделение приедут с historyIndexChanged:
                              // редактор шлёт его следом, уже показав слепок.
@@ -2072,10 +2074,12 @@ int main(int argc, char** argv) {
     };
     shortcut(QKeySequence::Find, [&] { openFind(zametti::FindBar::Mode::InNote); });
     shortcut(QKeySequence::Replace, [&] { openFind(zametti::FindBar::Mode::Replace); });
-    shortcut(QKeySequence(QStringLiteral("Ctrl+Shift+F")), [&] {
+    // Поиск по всем заметкам: и кнопкой тулбара, и сочетанием — одним кодом.
+    const auto openStoreFind = [&] {
         if (!model.isStore()) return;
         openFind(zametti::FindBar::Mode::Global);
-    });
+    };
+    shortcut(QKeySequence(QStringLiteral("Ctrl+Shift+F")), openStoreFind);
     shortcut(QKeySequence(Qt::Key_F3), [&] { stepSearch(1); });
     shortcut(QKeySequence(Qt::SHIFT | Qt::Key_F3), [&] { stepSearch(-1); });
 
@@ -2115,17 +2119,15 @@ int main(int argc, char** argv) {
         toolbar.setPromise(Button::Cloud,
                            QStringLiteral("появится вместе с синхронизацией"));
 
-        toolbar.setPromise(Button::SearchInHistory,
-                           QStringLiteral("появится вместе с единым поиском"));
         if (!model.isStore()) {
             // Открыт одиночный файл, а не хранилище: создавать и сортировать
             // нечего и негде. Это не «пока не сделано», а другое состояние мира.
+            // Поиск по всем заметкам сюда же: искать не по чему.
             const QString single = QStringLiteral("открыт один файл, а не хранилище");
             for (Button id : {Button::NewNote, Button::NewFolder, Button::ImportNotes,
-                              Button::SortByName, Button::SortByDate})
+                              Button::SortByName, Button::SortByDate, Button::SearchInStore})
                 toolbar.setPromise(id, single);
         }
-        toolbar.setHistoryMode(editor.inHistory());
 
         QObject::connect(&toolbar, &zametti::Toolbar::pressed, &window, [&](Button id) {
             switch (id) {
@@ -2152,22 +2154,13 @@ int main(int argc, char** argv) {
                 applySort(zametti::NoteTreeModel::SortMode::ByModified);
                 showSortMode(model.sortMode());
                 break;
-            case Button::HistoryRestore:
-                restoreFromHistory();
-                break;
-            case Button::HistoryForward:
-                editor.leaveHistory();
-                break;
-            case Button::HistoryRewind: {
-                // Закладка ставится при уходе из режима, а нажимают кнопку внутри
-                // него: значит она ведёт к слепку прошлого захода, а не к тому,
-                // на котором стоим. Закладки нет — молчим, а не прыгаем наугад.
-                const int at = visitedSnapshot.value(editor.filePath(), -1);
-                if (at >= 0) editor.enterHistory(at);
-                break;
-            }
             case Button::Search:
                 openFind(zametti::FindBar::Mode::InNote);
+                break;
+            case Button::SearchInStore:
+                // Ровно то же, что Ctrl+Shift+F: одна дверь на кнопку и на
+                // сочетание клавиш, иначе они разойдутся.
+                openStoreFind();
                 break;
             case Button::Help: {
                 // Одно окно на программу: второе нажатие поднимает открытое, а
@@ -2203,8 +2196,7 @@ int main(int argc, char** argv) {
                 exportNote(editor.filePath());
                 break;
             case Button::Cloud:
-            case Button::SearchInHistory:
-                break;   // обещания: кнопки погашены, сюда не доходит
+                break;   // обещание: кнопка погашена, сюда не доходит
             }
         });
     }

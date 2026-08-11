@@ -18,27 +18,27 @@ using B = Toolbar::Button;
 // Единственное место, где сказано, из чего состоит тулбар. Список владельца из
 // zametti_todo.md, раздел «Тулбар с кнопочками», в его же порядке.
 constexpr Toolbar::Spec kSpecs[] = {
-    {B::NewNote, "file-plus-corner", "Новая заметка", "Ctrl+N", 0, false, false},
-    {B::NewFolder, "folder-plus", "Новая папка", "", 0, false, false},
-    {B::ImportNotes, "folder-input", "Импортировать .md", "", 0, false, false},
-    {B::InsertImages, "image-down", "Вставить картинки", "", 0, false, false},
+    {B::NewNote, "file-plus-corner", "Новая заметка", "Ctrl+N", 0, false},
+    {B::NewFolder, "folder-plus", "Новая папка", "", 0, false},
+    {B::ImportNotes, "folder-input", "Импортировать .md", "", 0, false},
+    {B::InsertImages, "image-down", "Вставить картинки", "", 0, false},
 
-    {B::Export, "square-arrow-out-up-right", "Экспорт заметки", "", 1, false, false},
-    {B::Cloud, "cloud-sync", "Синхронизация", "", 1, false, false},
+    {B::Export, "square-arrow-out-up-right", "Экспорт заметки", "", 1, false},
+    {B::Cloud, "cloud-sync", "Синхронизация", "", 1, false},
 
-    {B::Panels, "columns-3", "Скрыть боковые панели", "", 2, true, false},
-    {B::SortByName, "arrow-down-a-z", "Сортировать по имени", "", 2, true, false},
-    {B::SortByDate, "clock-arrow-down", "Сортировать по дате правки", "", 2, true, false},
+    {B::Panels, "columns-3", "Скрыть боковые панели", "", 2, true},
+    {B::SortByName, "arrow-down-a-z", "Сортировать по имени", "", 2, true},
+    {B::SortByDate, "clock-arrow-down", "Сортировать по дате правки", "", 2, true},
 
-    {B::HistoryRestore, "rotate-ccw-clock", "Вернуть из истории", "", 3, false, false},
-    {B::HistoryForward, "fast-forward", "К последней версии", "", 3, false, false},
-    {B::HistoryRewind, "rewind", "Назад к посещённому слепку", "", 3, false, false},
+    // На месте трёх кнопок навигации по истории (вернуть, к последней версии,
+    // назад к посещённому). Их убрал владелец: история переезжает в отдельный
+    // бриф целиком, а до тех пор ходят по ней баннер и полоса времени, которые
+    // и так на виду, пока режим идёт.
+    {B::Search, "search", "Найти в заметке", "Ctrl+F", 3, false},
+    {B::SearchInStore, "database-search", "Найти по всем заметкам", "Ctrl+Shift+F", 3, false},
 
-    {B::Settings, "settings", "Настройки", "", 4, false, false},
-    {B::Help, "circle-question-mark", "Справка", "", 4, false, false},
-
-    {B::SearchInHistory, "database-search", "Поиск по истории", "", 5, false, true},
-    {B::Search, "search", "Найти", "Ctrl+F", 5, false, true},
+    {B::Settings, "settings", "Настройки", "", 4, false},
+    {B::Help, "circle-question-mark", "Справка", "", 4, false},
 };
 
 QString tipFor(const Toolbar::Spec& spec, const QString& promise) {
@@ -68,16 +68,7 @@ void Toolbar::build() {
     layout->setSpacing(0);
 
     int previousGroup = -1;
-    bool rightStarted = false;
     for (const Spec& spec : kSpecs) {
-        if (spec.rightSide && !rightStarted) {
-            // Всё, что после этой распорки, уезжает к правому краю. Поиск в
-            // правом верхнем углу — требование брифа, и держится оно распоркой,
-            // а не подсчётом ширин: подсчёт разъехался бы при смене кегля.
-            layout->addStretch(1);
-            rightStarted = true;
-            previousGroup = spec.group;
-        }
         if (previousGroup >= 0 && spec.group != previousGroup)
             layout->addSpacing(a.toolbarGroupSpacing);
         previousGroup = spec.group;
@@ -93,6 +84,10 @@ void Toolbar::build() {
         const Button id = spec.id;
         connect(button, &QToolButton::clicked, this, [this, id] { emit pressed(id); });
     }
+    // Пустота справа. Прежде туда распоркой уезжал поиск — «в правом верхнем
+    // углу», как просил бриф; владелец решил иначе: поиск встал вместе с
+    // остальными, а полоса кончается там же, где кончаются кнопки.
+    layout->addStretch(1);
 }
 
 void Toolbar::restyle() {
@@ -185,12 +180,6 @@ void Toolbar::setChecked(Button id, bool on) {
 bool Toolbar::isChecked(Button id) const {
     QToolButton* button = buttons_.value(int(id));
     return button && button->isChecked();
-}
-
-void Toolbar::setHistoryMode(bool on) {
-    setEnabled(Button::HistoryRestore, on);
-    setEnabled(Button::HistoryForward, on);
-    setEnabled(Button::HistoryRewind, on);
 }
 
 void Toolbar::setPromise(Button id, const QString& why) {
