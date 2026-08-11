@@ -7,7 +7,6 @@
 # точек полностью прозрачны, и палитра пишет под ними что угодно.
 set -e
 optipng -quiet -o7 -strip all zametti_lossless.png
-tmp=$(mktemp --suffix=.png)
-pngquant 256 --speed 1 --force --output "$tmp" zametti_lossless.png
-zopflipng -y -m "$tmp" zametti.png
-rm -f "$tmp"
+pngquant 256 --speed 1 --force --output __zametti__.png zametti_lossless.png
+zopflipng -y -m __zametti__.png zametti.png
+rm -f __zametti__.png
