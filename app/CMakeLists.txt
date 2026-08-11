@@ -135,7 +135,17 @@ target_include_directories(zametti-widgets PUBLIC ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(zametti-widgets PUBLIC zametti-view zametti-imageio Qt6::Widgets Qt6::Svg)
 target_link_libraries(zametti-widgets PRIVATE zametti-warnings)
 
-add_executable(zametti
+# qt_add_executable, а не add_executable: при СТАТИЧЕСКОМ Qt программе нужен
+# ещё и плагин платформы (cocoa, xcb, windows), а он такой же статический
+# архив, и вписать его в компоновку должен кто-то знающий. Знает Qt — этим
+# занимается «доводка» цели, которую qt_add_executable ставит в очередь.
+# С обычным Qt разницы никакой: та же add_executable внутри.
+#
+# Наши собственные плагины (jxl, heif) в этой доводке не нуждались и не
+# нуждаются: qt_add_plugin STATIC заводит рядом с плагином объектный файл с
+# Q_IMPORT_PLUGIN и цепляет его как INTERFACE-исходник — он приезжает вместе с
+# библиотекой сам.
+qt_add_executable(zametti
     main.cpp
 )
 
@@ -148,5 +158,36 @@ include(GNUInstallDirs)
 install(TARGETS zametti RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES ${CMAKE_SOURCE_DIR}/packaging/zametti.desktop
         DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
+
+# Каталог темы значков называется РАЗМЕРОМ картинки, и размер этот берётся из
+# самой картинки, а не пишется числом: иконку перерисовывают, она была 512, а
+# стала 1024, и число в пути молча превратилось бы в неправду.
+#
+# Ширина и высота лежат в заголовке PNG: 8 байт подписи, 4 длины, 4 «IHDR»,
+# дальше ширина и высота по 4 байта старшим байтом вперёд. Отсюда смещения 32 и
+# 40 в шестнадцатеричной записи (по два знака на байт).
+file(READ ${CMAKE_SOURCE_DIR}/resources/zametti.png zametti_png_head HEX LIMIT 24)
+string(SUBSTRING "${zametti_png_head}" 32 8 zametti_png_w)
+string(SUBSTRING "${zametti_png_head}" 40 8 zametti_png_h)
+math(EXPR zametti_png_w "0x${zametti_png_w}")
+math(EXPR zametti_png_h "0x${zametti_png_h}")
+
+# Каталог берётся НЕ равным размеру картинки, а самым большим из тех, что тема
+# hicolor у себя перечисляет (index.theme, ключ Directories) и который в
+# картинку помещается. Каталог 1024x1024 на диске есть, но в перечне его нет, и
+# положенное туда оболочка не находит вовсе — то есть «точнее» вышло бы хуже.
+# Лишние точки оболочка ужмёт сама, это она умеет.
+set(zametti_icon_dir 16)
+foreach(size 22 24 32 36 48 64 72 96 128 192 256 512)
+    if(NOT zametti_png_w LESS size)
+        set(zametti_icon_dir ${size})
+    endif()
+endforeach()
+if(NOT zametti_png_w EQUAL zametti_png_h)
+    message(NOTICE "resources/zametti.png не квадратная (${zametti_png_w}×${zametti_png_h}) — "
+                   "в доке её растянет")
+endif()
+
 install(FILES ${CMAKE_SOURCE_DIR}/resources/zametti.png
-        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/512x512/apps)
+        DESTINATION
+        ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/${zametti_icon_dir}x${zametti_icon_dir}/apps)

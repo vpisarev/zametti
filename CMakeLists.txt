@@ -37,6 +37,38 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(ZAMETTI_WARNINGS_AS_ERRORS "Считать предупреждения ошибками" OFF)
 
+# --- что тащить за собой ---------------------------------------------------
+#
+# Уговор: у готовой программы чужих библиотек рядом быть не должно. Наше
+# вендоренное добро линкуется внутрь, системного мы просим как можно меньше, а
+# остаётся то, без чего на этой машине жить нельзя вовсе — сам Qt (если он
+# динамический), libc и системные рамки.
+
+# AVIF и HEIC. ВЫКЛЮЧЕНО по умолчанию, и это перемена: раньше libheif бралась
+# молча, если нашлась. Причина в том, что она не одна: за ней идут видеокодеки
+# (aom либо de265/x265), а с ними — их зависимости. Пока сборка динамическая,
+# это чужая забота; в статической каждый из них нужен отдельным архивом, и
+# владелец на маке наступил ровно на это. AVIF/HEIC у нас формат ВХОДА, не
+# хранения: без них программа теряет ввоз двух форматов и ничего больше.
+option(WITH_HEIF "Читать AVIF и HEIC (нужна системная libheif)" OFF)
+
+# Статический Qt НЕ включается ключом — он либо есть на машине, либо нет:
+# динамический Qt статическим не станет ни от каких флагов. Ключ означает
+# другое: «я собираю ради самодостаточной программы, и молча получить
+# динамический Qt не согласен». Без него сборка одинаково рада обоим.
+#
+# Именно здесь владелец обжёгся: совет из сети предлагал добавить -static в
+# флаги компоновки, и статическими стали заодно libheif с кодеками, которых в
+# таком виде на машине не оказалось.
+option(WITH_STATIC_QT "Требовать статический Qt (иначе — ошибка настройки)" OFF)
+
+# Вендоренное — только статикой. Без этой строки libjxl объявляет в своём корне
+# `option(BUILD_SHARED_LIBS ... ON)`, и он ложится в кэш НА ВСЮ сборку: рядом с
+# программой появляются libjxl_cms.so, libjxl_threads.so и три libbrotli*.so —
+# причём из КАТАЛОГА СБОРКИ. Установленная программа искала бы их там же, то
+# есть `cmake --install` давал бы нерабочий двоичный файл.
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "вендоренное линкуется внутрь программы" FORCE)
+
 add_library(zametti-warnings INTERFACE)
 if(MSVC)
     target_compile_options(zametti-warnings INTERFACE /W4)
@@ -88,6 +120,30 @@ if(NOT Qt6_FOUND)
         message(NOTICE "  Поставьте qt6-base-dev (или назовите путь через CMAKE_PREFIX_PATH).")
     endif()
     message(NOTICE "")
+endif()
+
+# Динамический Qt или статический. Спрашиваем ЦЕЛЬ, а не переменную
+# QT6_IS_SHARED_LIBS_BUILD: та внутренняя, а тип импортированной библиотеки —
+# договор CMake, и врать ему нечем.
+set(ZAMETTI_QT_SHARED ON)
+if(TARGET Qt6::Core)
+    get_target_property(zametti_qt_core_type Qt6::Core TYPE)
+    if(zametti_qt_core_type STREQUAL "STATIC_LIBRARY")
+        set(ZAMETTI_QT_SHARED OFF)
+    endif()
+endif()
+
+# Ключ WITH_STATIC_QT ничего не переключает — он СТЕРЕЖЁТ. Собрать статически
+# можно только тем Qt, который сам собран статически, и если человек просил
+# самодостаточную программу, а нашёлся обычный Qt, честнее остановиться, чем
+# выдать ему то же, что и всегда.
+if(WITH_STATIC_QT AND Qt6_FOUND AND ZAMETTI_QT_SHARED)
+    message(FATAL_ERROR
+        "WITH_STATIC_QT=ON, но найденный Qt ${Qt6_VERSION} — динамический "
+        "(${QT6_INSTALL_PREFIX}).\n"
+        "  Флагами компоновки это не лечится: нужен Qt, собранный ключом "
+        "-static, и путь к нему через -DCMAKE_PREFIX_PATH.\n"
+        "  Собирать с обычным Qt — просто снимите ключ.")
 endif()
 
 add_subdirectory(3rdparty/md4c)
@@ -147,7 +203,13 @@ function(zametti_summary)
     set(compiler "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}, C++${CMAKE_CXX_STANDARD}")
 
     if(Qt6_FOUND)
-        set(qt "${Qt6_VERSION}")
+        # Статический он или нет — не мелочь оформления: от этого зависит,
+        # останется ли рядом с программой чужое добро.
+        if(ZAMETTI_QT_SHARED)
+            set(qt "${Qt6_VERSION} динамический")
+        else()
+            set(qt "${Qt6_VERSION} статический")
+        endif()
         set(missing "")
         # Спрашиваем ЦЕЛЬ, а не переменную Qt6<Часть>_FOUND: ту выставляет
         # find_package в СВОЕЙ области видимости, и Svg, найденный в app/, в
@@ -201,7 +263,7 @@ function(zametti_summary)
     if(ZAMETTI_HAVE_HEIF)
         set(readers "`jxl` (своя libjxl), `avif`/`heic`/`heif` (системная libheif ${ZAMETTI_HEIF_VERSION})")
     elseif(Qt6_FOUND)
-        set(readers "`jxl` (своя libjxl); avif/heic НЕ читаются — нет libheif-dev")
+        set(readers "`jxl` (своя libjxl); avif/heic не читаются — `WITH_HEIF=OFF`")
     else()
         set(readers "не собираются — нет Qt")
     endif()

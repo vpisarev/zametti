@@ -16,6 +16,7 @@
 #include <QImage>
 #include <QImageReader>
 
+#include <cstdio>
 #include <string>
 
 using namespace zametti;
@@ -182,10 +183,16 @@ void checkTable(const QString& root) {
     // только если это webp или jpeg, — значит состязаются оба кандидата. На
     // фотографии побеждает lossy, и это правильный исход; важно, что точная
     // версия ВООБЩЕ участвует (прежде эти форматы всегда шли lossy).
+#if ZAMETTI_HAVE_HEIF
     expectRoute(root, "formats/heif-green-leaf.heif", Route::Photo,
                 "HEIF: кандидаты состязаются, побеждает lossy", limits);
     expectRoute(root, "formats/avif-sample.avif", Route::Photo,
                 "AVIF: то же самое", limits);
+#else
+    // Не «файла нет», а «читателя нет»: молчаливый пропуск здесь означал бы,
+    // что поломку читателя мы тоже не заметим.
+    std::printf("ряды HEIF и AVIF пропущены: собрано без WITH_HEIF\n");
+#endif
 
     // --- ряд «lossy-исходник не получает точную версию» -------------------
     //

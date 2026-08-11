@@ -400,6 +400,11 @@ add_executable(import_test import_test.cpp)
     target_link_libraries(import_test PRIVATE zametti-import zametti-imageio Qt6::Gui
                           zametti-warnings)
     target_include_directories(import_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    # Два ряда таблицы (avif и heic) держатся на читателе, которого может не
+    # быть: WITH_HEIF по умолчанию выключен. Пропускать их по «файл не открылся»
+    # нельзя — так же выглядела бы и настоящая поломка читателя.
+    target_compile_definitions(import_test PRIVATE
+                               ZAMETTI_HAVE_HEIF=$<BOOL:${ZAMETTI_HAVE_HEIF}>)
     add_test(NAME import COMMAND import_test ${CMAKE_SOURCE_DIR}/.testdata/images/originals)
     set_tests_properties(import PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
@@ -467,3 +472,24 @@ target_link_libraries(tidy_fuzz_test PRIVATE zametti-widgets Qt6::Test zametti-w
 target_include_directories(tidy_fuzz_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME tidy-fuzz COMMAND tidy_fuzz_test)
 set_tests_properties(tidy-fuzz PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+# --- доводка целей под статический Qt ---------------------------------------
+#
+# Наборы заводятся обычной add_executable, и переписывать шесть десятков вызовов
+# ради статического Qt незачем: доводку, которая вписывает в компоновку плагин
+# платформы, можно позвать и потом, по списку уже созданных целей. Без неё
+# набор со статическим Qt собрался бы, но при запуске сказал бы «this
+# application failed to start because no Qt platform plugin could be
+# initialized» — и это выглядело бы как поломка набора, а не сборки.
+#
+# При динамическом Qt делать нечего: плагины лежат отдельными файлами и
+# отыскиваются при запуске.
+if(Qt6_FOUND AND NOT ZAMETTI_QT_SHARED)
+    get_property(zametti_test_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(target IN LISTS zametti_test_targets)
+        get_target_property(type ${target} TYPE)
+        if(type STREQUAL "EXECUTABLE")
+            qt_finalize_target(${target})
+        endif()
+    endforeach()
+endif()

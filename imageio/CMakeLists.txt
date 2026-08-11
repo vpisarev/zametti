@@ -67,15 +67,34 @@ target_include_directories(zametti-jxl PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 #
 # libheif системная, не вендоренная: она тянет за собой кодеки видео (aom или
 # de265/x265), и вендоринг этого хозяйства обошёлся бы дороже самой libjxl, а
-# AVIF для нас формат ВХОДА, не хранения. Нет libheif — нет плагина, и вставка
-# avif/heic честно откажет; тихого пропуска не будет.
+# AVIF для нас формат ВХОДА, не хранения. Нет плагина — вставка avif/heic
+# честно откажет; тихого пропуска не будет.
+#
+# Берётся ТОЛЬКО по ключу WITH_HEIF (см. обоснование в корневом CMakeLists) и
+# по умолчанию выключена. Раньше она бралась молча, если нашлась, — и сборка
+# получалась разной на разных машинах, не сказав об этом ни слова.
+if(WITH_HEIF)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(LIBHEIF IMPORTED_TARGET libheif)
+    endif()
 
-find_package(PkgConfig QUIET)
-if(PkgConfig_FOUND)
-    pkg_check_modules(LIBHEIF IMPORTED_TARGET libheif)
-endif()
+    # Просили явно — значит молчать нельзя. Прежний тихий пропуск оставлял
+    # человека с программой, которая не читает то, что он для неё включал.
+    if(NOT LIBHEIF_FOUND)
+        if(APPLE)
+            set(hint "brew install libheif")
+        elseif(WIN32)
+            set(hint "vcpkg install libheif (и путь через CMAKE_PREFIX_PATH)")
+        else()
+            set(hint "sudo apt install libheif-dev")
+        endif()
+        message(FATAL_ERROR
+            "WITH_HEIF=ON, а libheif не найдена (pkg-config её не видит).\n"
+            "  Поставьте: ${hint}\n"
+            "  Либо соберите без avif/heic: -DWITH_HEIF=OFF")
+    endif()
 
-if(LIBHEIF_FOUND)
     qt_add_plugin(zametti-heif STATIC
         CLASS_NAME HeifPlugin
         PLUGIN_TYPE imageformats
@@ -86,8 +105,6 @@ if(LIBHEIF_FOUND)
     set(ZAMETTI_HAVE_HEIF ON PARENT_SCOPE)
     set(ZAMETTI_HEIF_VERSION "${LIBHEIF_VERSION}" PARENT_SCOPE)
 else()
-    message(STATUS "libheif не найдена — avif и heic читаться не будут. "
-                   "Поставьте libheif-dev.")
     set(ZAMETTI_HAVE_HEIF OFF PARENT_SCOPE)
 endif()
 
@@ -145,6 +162,10 @@ target_include_directories(zametti-import PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 add_library(zametti-imageio INTERFACE)
 target_link_libraries(zametti-imageio INTERFACE zametti-jxl zametti-jxl-encode
                       zametti-color zametti-tiff zametti-imagemeta zametti-import)
-if(LIBHEIF_FOUND)
+# Спрашиваем ЦЕЛЬ, а не LIBHEIF_FOUND: та переменная приходит из кэша
+# pkg-config и переживает выключение ключа. С ней сборка после
+# `-DWITH_HEIF=OFF` в готовом каталоге падала на `cannot find -lzametti-heif`:
+# плагина уже нет, а строка компоновки его всё ещё звала.
+if(TARGET zametti-heif)
     target_link_libraries(zametti-imageio INTERFACE zametti-heif)
 endif()
