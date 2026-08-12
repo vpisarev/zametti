@@ -350,6 +350,11 @@ public:
     // Возвращает поле, чтобы приёмка могла в него напечатать; nullptr — блока
     // нет или он не виден.
     LanguageEditor* editCodeLanguage(int firstBlockNumber, const QRect& stripInViewport);
+
+    // Нажатие рядом с объектом (картинка, таблица, а позже формула). Правило
+    // одно на всех и живёт в block_object.h; здесь — только исполнение.
+    // Возвращает true, если нажатие разобрано и дальше его вести не надо.
+    bool handleObjectKey(QKeyEvent* event);
     LanguageEditor* codeLanguageEditor() const { return languageEditor_; }
     void closeCodeLanguageEditor();
 

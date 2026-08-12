@@ -142,6 +142,23 @@ qreal naturalWidth(QTextLayout& layout, bool plain) {
     return width;
 }
 
+// Сколько ячейке нужно КАК МИНИМУМ, чтобы не рвать слова: ширина самого
+// длинного слова.
+//
+// Это и есть мера, которой не хватало первой редакции. Она мерила только
+// «сколько ячейка просит одной строкой», и одна длинная ячейка раздувала свою
+// колонку до упора, а лечилось это усадкой шрифта ВСЕЙ таблицы — не тем
+// лекарством от не той болезни (замечание владельца). Зная минимум, ширину
+// колонки можно выбрать между минимумом и запросом, а текст перенести по
+// словам — так делают и браузеры, и GitHub.
+qreal longestWordWidth(const QString& text, const QFont& font) {
+    const QFontMetricsF metrics(font);
+    qreal widest = 0.0;
+    for (const QString& word : text.split(QLatin1Char(' '), Qt::SkipEmptyParts))
+        widest = qMax(widest, metrics.horizontalAdvance(word));
+    return widest;
+}
+
 // Разложить ячейку в заданную ширину и вернуть высоту текста.
 qreal layoutInto(QTextLayout& layout, qreal width, qreal lineHeight) {
     layout.beginLayout();
@@ -190,99 +207,169 @@ TableLayout layoutTable(const Table& table, const TableSpace& space) {
 
     // Место, в которое вписываемся: сперва колонка текста, а если не влезли —
     // поля до ширины окна (правило владельца «как картинки»).
-    const qreal roomy = qMax(space.columnWidth, space.fullWidth);
+    const qreal room = qMax(space.columnWidth, space.fullWidth);
 
-    // Пол усадки — ниже него шрифт не ужимаем, включается перенос.
+    // Пол усадки — ниже него шрифт не ужимаем; вместо этого разрешаем рвать
+    // слова где угодно.
     constexpr qreal kFloor = 0.55;
-    constexpr qreal kStep = 0.05;
 
-    // Разбор ячеек — ОДИН РАЗ на всю раскладку, до круга усадки: от масштаба
-    // он не зависит, а стоит почти всю её цену (см. замер выше по файлу).
+    // Разбор ячеек — ОДИН РАЗ: от масштаба он не зависит.
     QVector<CellMarkup> markup;
     markup.reserve(out.rows * out.columns);
     for (int row = 0; row < out.rows; ++row)
         for (int column = 0; column < out.columns; ++column)
             markup.push_back(markupOfCell(table.cell(row, column)));
 
-    for (qreal scale = 1.0;; scale -= kStep) {
-        const bool floored = scale <= kFloor;
-        if (floored) scale = kFloor;
-
-        const QFont font = tableFont(space.zoom, scale);
-        const qreal padX = tableCellPadX(space.zoom, scale);
-        const qreal padY = tableCellPadY(space.zoom, scale);
-        const qreal lineHeight =
-            std::round(QFontMetricsF(font).height() * appearance().lineHeightFactor);
-
-        // Разметка каждой ячейки и её естественная ширина.
+    // Мера колонки при этом масштабе: min (самый длинный неразрывный токен) и
+    // max (естественная ширина без переносов) — как в RFC 1942.
+    struct Measure {
         QVector<std::shared_ptr<QTextLayout>> layouts;
-        QVector<qreal> wants(out.columns, 0.0);
-        layouts.reserve(out.rows * out.columns);
+        QVector<qreal> minWidth;
+        QVector<qreal> maxWidth;
+        qreal minTotal = 0.0;
+        qreal maxTotal = 0.0;
+        qreal padX = 0.0;
+        qreal padY = 0.0;
+        qreal lineHeight = 0.0;
+    };
+    const auto measure = [&](qreal scale) {
+        Measure m;
+        const QFont font = tableFont(space.zoom, scale);
+        m.padX = tableCellPadX(space.zoom, scale);
+        m.padY = tableCellPadY(space.zoom, scale);
+        m.lineHeight = std::round(QFontMetricsF(font).height() * appearance().lineHeightFactor);
+        m.minWidth.fill(0.0, out.columns);
+        m.maxWidth.fill(0.0, out.columns);
+        m.layouts.reserve(out.rows * out.columns);
         for (int row = 0; row < out.rows; ++row) {
             for (int column = 0; column < out.columns; ++column) {
                 QFont cellFont = font;
                 if (row == 0) cellFont.setBold(true);   // шапка
-                auto layout = layoutOfCell(markup[row * out.columns + column], cellFont,
-                                           space.zoom, scale);
-                const bool plain = markup[row * out.columns + column].spans.isEmpty();
-                wants[column] = qMax(wants[column], naturalWidth(*layout, plain) + 2 * padX);
-                layouts.push_back(layout);
+                const CellMarkup& cell = markup[row * out.columns + column];
+                auto layout = layoutOfCell(cell, cellFont, space.zoom, scale);
+                m.maxWidth[column] = qMax(m.maxWidth[column],
+                                          naturalWidth(*layout, cell.spans.isEmpty()) + 2 * m.padX);
+                m.layouts.push_back(layout);
             }
         }
+        for (qreal w : m.maxWidth) m.maxTotal += w;
+        return m;
+    };
 
-        qreal total = 0.0;
-        for (qreal w : wants) total += w;
+    // Минимумы считаются ОТДЕЛЬНО и только если понадобятся: измерение самого
+    // длинного слова — это шейпинг каждого слова каждой ячейки, и на таблице
+    // 50×8 оно стоило 1.3 мс из 3.9 (замер). Пока Σmax помещается, минимумы не
+    // нужны вовсе — а помещается оно у всех таблиц корпуса, кроме самых широких.
+    const auto measureMins = [&](Measure& m, qreal scale) {
+        if (m.minTotal > 0.0) return;
+        const QFont font = tableFont(space.zoom, scale);
+        for (int row = 0; row < out.rows; ++row) {
+            for (int column = 0; column < out.columns; ++column) {
+                QFont cellFont = font;
+                if (row == 0) cellFont.setBold(true);
+                const CellMarkup& cell = markup[row * out.columns + column];
+                m.minWidth[column] = qMax(m.minWidth[column],
+                                          longestWordWidth(cell.text, cellFont) + 2 * m.padX);
+            }
+        }
+        for (int i = 0; i < out.columns; ++i) {
+            m.minWidth[i] = qMin(m.minWidth[i], m.maxWidth[i]);   // min не больше max
+            m.minTotal += m.minWidth[i];
+        }
+    };
 
-        // Влезли — раскладываем и уходим. Не влезли и пол не достигнут —
-        // ужимаем ещё. Достигли пола — раскладываем с переносом: ширины
-        // колонок ужимаются пропорционально их запросам.
-        QVector<qreal> widths = wants;
-        bool wrapped = false;
-        if (total > roomy) {
-            if (!floored) continue;
-            const qreal factor = roomy / total;
-            for (qreal& w : widths) w = qMax(4 * padX, w * factor);
+    // АЛГОРИТМ АВТО-РАСКЛАДКИ CSS2/HTML4 (RFC 1942) — тот, что четверть века
+    // стоит в каждом браузере:
+    //
+    //   Σmax ≤ W          — всем max, переносов нет вовсе;
+    //   Σmin ≤ W < Σmax   — каждой min плюс доля остатка ∝ (max − min);
+    //   Σmin > W          — каскад широких таблиц: поля (уже учтены в W),
+    //                       усадка шрифта, пол и разрыв слов где угодно.
+    //
+    // Из второго правила само собой следует то, чего и хотелось: переносится
+    // ровно та колонка, которой досталось меньше её max, а колонки с min == max
+    // (числа, даты, короткие слова) не переносятся никогда.
+    Measure m = measure(1.0);
+    qreal scale = 1.0;
+    bool wrapped = false;
+    QVector<qreal> widths;
+
+    const auto distribute = [&](const Measure& at) {
+        QVector<qreal> result(out.columns, 0.0);
+        const qreal spare = room - at.minTotal;
+        const qreal hunger = at.maxTotal - at.minTotal;
+        for (int i = 0; i < out.columns; ++i)
+            result[i] = at.minWidth[i] +
+                        (hunger > 0 ? (at.maxWidth[i] - at.minWidth[i]) * spare / hunger : 0.0);
+        return result;
+    };
+
+    if (m.maxTotal <= room) {
+        widths = m.maxWidth;
+    } else if (measureMins(m, 1.0), m.minTotal <= room) {
+        widths = distribute(m);
+        wrapped = true;
+    } else {
+        // УСАДКА ОДНИМ ДЕЛЕНИЕМ, а не перебором с шагом. min и max линейны по
+        // кеглю, значит нужный масштаб считается сразу: Σmin × scale = W.
+        // Перебор стоил бы десяти полных раскладок таблицы (2.5 мс каждая на
+        // 50×8) ровно там, где таблица и так самая тяжёлая.
+        scale = qBound(kFloor, room / m.minTotal, 1.0);
+        m = measure(scale);
+        measureMins(m, scale);
+        if (m.maxTotal <= room) {
+            widths = m.maxWidth;
+        } else if (m.minTotal <= room) {
+            widths = distribute(m);
+            wrapped = true;
+        } else {
+            // Пол усадки: слова-монстры (URL, длинные идентификаторы) режем где
+            // угодно — min схлопывается, и вписывание гарантировано.
+            const qreal factor = room / m.maxTotal;
+            widths.fill(0.0, out.columns);
+            for (int i = 0; i < out.columns; ++i)
+                widths[i] = qMax(4 * m.padX, m.maxWidth[i] * factor);
             wrapped = true;
         }
-
-        QVector<qreal> rowHeights(out.rows, 0.0);
-        for (int row = 0; row < out.rows; ++row) {
-            qreal tallest = 0.0;
-            for (int column = 0; column < out.columns; ++column) {
-                QTextLayout& layout = *layouts[row * out.columns + column];
-                const qreal text = layoutInto(layout, widths[column] - 2 * padX, lineHeight);
-                tallest = qMax(tallest, text + 2 * padY);
-            }
-            rowHeights[row] = std::round(tallest);
-        }
-
-        qreal x = 0.0;
-        qreal y = 0.0;
-        out.cells.reserve(out.rows * out.columns);
-        for (int row = 0; row < out.rows; ++row) {
-            x = 0.0;
-            for (int column = 0; column < out.columns; ++column) {
-                TableCellBox box;
-                box.rect = QRectF(x, y, widths[column], rowHeights[row]);
-                box.text = layouts[row * out.columns + column];
-                box.align = column < int(table.align.size()) ? table.align[size_t(column)]
-                                                             : TableAlign::Default;
-                box.row = row;
-                box.column = column;
-                out.cells.push_back(box);
-                x += widths[column];
-            }
-            y += rowHeights[row];
-        }
-
-        out.columnWidth = widths;
-        out.rowHeight = rowHeights;
-        out.width = x;
-        out.height = y;
-        out.scale = scale;
-        out.wrapped = wrapped;
-        return out;
     }
+
+    QVector<qreal> rowHeights(out.rows, 0.0);
+    for (int row = 0; row < out.rows; ++row) {
+        qreal tallest = 0.0;
+        for (int column = 0; column < out.columns; ++column) {
+            QTextLayout& layout = *m.layouts[row * out.columns + column];
+            const qreal text = layoutInto(layout, widths[column] - 2 * m.padX, m.lineHeight);
+            tallest = qMax(tallest, text + 2 * m.padY);
+        }
+        rowHeights[row] = std::round(tallest);
+    }
+
+    qreal x = 0.0;
+    qreal y = 0.0;
+    out.cells.reserve(out.rows * out.columns);
+    for (int row = 0; row < out.rows; ++row) {
+        x = 0.0;
+        for (int column = 0; column < out.columns; ++column) {
+            TableCellBox box;
+            box.rect = QRectF(x, y, widths[column], rowHeights[row]);
+            box.text = m.layouts[row * out.columns + column];
+            box.align = column < int(table.align.size()) ? table.align[size_t(column)]
+                                                         : TableAlign::Default;
+            box.row = row;
+            box.column = column;
+            out.cells.push_back(box);
+            x += widths[column];
+        }
+        y += rowHeights[row];
+    }
+
+    out.columnWidth = widths;
+    out.rowHeight = rowHeights;
+    out.width = x;
+    out.height = y;
+    out.scale = scale;
+    out.wrapped = wrapped;
+    return out;
 }
 
 }  // namespace zametti

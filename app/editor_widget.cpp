@@ -1,5 +1,6 @@
 #include "editor_widget.h"
 
+#include "block_object.h"
 #include "lang_editor.h"
 #include "diff_view.h"
 #include "history_rules.h"
@@ -182,6 +183,20 @@ void NoteEditor::snapCaretOffImage() {
 // человек имеет право начать с «   слово». Кода это не касается: там
 // хвостовые пробелы — содержимое.
 void NoteEditor::onCaretMoved() {
+    // Каретка забрела в спрятанную строку таблицы — подтягиваем её на видимую.
+    // Qt по невидимым блокам её водит охотно (пробник), и без этого каретка
+    // пропадала бы из виду посреди сетки. Одно правило на все пути входа:
+    // стрелки, щелчок, Home/End, поиск.
+    if (!inHistory() && snapCaretOutOfHiddenTable()) return;
+
+    // Ушли с таблицы, которую правили исходником, — она снова сетка. Правило
+    // то же, что у поля ввода языка: правка кончается уходом каретки.
+    if (editedTable() >= 0) {
+        const BlockObject object = objectOf(textCursor().block());
+        if (object.kind != ObjectKind::Table || object.first != editedTable())
+            setEditedTable(-1);
+    }
+
     if (tidying_ || recordingSuspended_ || changingLayout()) {
         note_.lastLine = textCursor();
         return;
@@ -1495,6 +1510,12 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
         applyIrEdit(toggleCodeBlock(*document(), textCursor()));
         return;
     }
+    // ОБЪЕКТЫ — одним местом. Картинка, таблица и будущая формула ведут себя
+    // одинаково, и правило для них лежит в block_object.h. Раньше правила
+    // картинки были размазаны ветками ниже; таблица принесла бы их вторую
+    // копию, а формула — третью.
+    if (handleObjectKey(event)) return;
+
     // Фотография — атом, как черта: Backspace и Delete не грызут её скрытый
     // текст по буквам, а убирают строку целиком. Правило действует, только
     // когда фото показано (файл читается) — иначе строка это видимый текст и
@@ -1719,6 +1740,114 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     // продолжался бы кодом — вышло бы `код и всё, что дальше`.
     if (event->text() == QStringLiteral("`") && runOperation(applyCodeSpanRuleAtCursor))
         setCurrentCharFormat(textCursor().block().charFormat());
+}
+
+
+// Исполнение правил слоя объекта. Само правило — чистая функция actionFor,
+// здесь только «что делать» и никакого «когда».
+bool NoteEditor::handleObjectKey(QKeyEvent* event) {
+    if (inHistory() || isReadOnly()) return false;
+
+    const QTextCursor caret = textCursor();
+    const QTextBlock block = caret.block();
+    const BlockObject own = objectOf(block);
+
+    ObjectContext where;
+    where.hasSelection = caret.hasSelection();
+    where.atBlockStart = caret.positionInBlock() == 0;
+    where.atBlockEnd = caret.positionInBlock() == block.length() - 1;
+    where.onGap = isVSpaceBlock(block);
+    // Каретка «на объекте» — это каретка на любой его строке. У картинки строка
+    // одна, у таблицы их столько, сколько в исходнике; таблица, которую сейчас
+    // правят исходником, объектом для клавиш не считается — там обычный текст.
+    where.onObject = own.valid() && own.first != editedTable();
+
+    const QTextBlock above = block.previous();
+    const QTextBlock below = block.next();
+    const BlockObject objectAbove = objectOf(above);
+    const BlockObject objectBelow = objectOf(below);
+    where.objectAbove = objectAbove.valid() && objectAbove.first != editedTable();
+    where.objectBelow = objectBelow.valid() && objectBelow.first != editedTable();
+    if (isVSpaceBlock(above)) {
+        const BlockObject overGap = objectOf(above.previous());
+        where.objectAboveGap = overGap.valid() && blocksWouldMerge(above.previous(), block);
+    }
+    if (isVSpaceBlock(below)) {
+        const BlockObject overGap = objectOf(below.next());
+        where.objectBelowGap = overGap.valid() && blocksWouldMerge(block, below.next());
+    }
+
+    const ObjectAction action = actionFor(event->key(), event->modifiers(), where);
+    if (action == ObjectAction::None) return false;
+
+    switch (action) {
+        case ObjectAction::Edit: {
+            // Править таблицу — значит показать её исходник и встать в него.
+            if (own.kind == ObjectKind::Table) {
+                setEditedTable(own.first);
+                QTextCursor at(document()->findBlockByNumber(own.first));
+                setTextCursor(at);
+                return true;
+            }
+            // У картинки править пока нечего: подпись — следующий заход.
+            // Молчать нельзя (правило проекта про молчаливые возвраты).
+            if (own.kind == ObjectKind::Image) {
+                emit importStatus(
+                    QStringLiteral("У картинки пока нечего править — подпись появится позже"));
+                return true;
+            }
+            return false;
+        }
+        case ObjectAction::LineAfter: {
+            const int last = own.last;
+            runOperation([last](QTextDocument& doc, QTextCursor& at) {
+                const QTextBlock block = doc.findBlockByNumber(last);
+                if (!block.isValid()) return false;
+                QTextCursor edit(&doc);
+                edit.setPosition(block.position() + block.length() - 1);
+                edit.insertBlock(vspaceBlockFormat(doc, false, false), QTextCharFormat());
+                at = edit;
+                return true;
+            });
+            return true;
+        }
+        case ObjectAction::Remove: {
+            const BlockObject target =
+                where.onObject ? own : (where.objectAbove ? objectAbove : objectBelow);
+            if (!target.valid()) return false;
+            const int first = target.first;
+            const int last = target.last;
+            runOperation([first, last](QTextDocument& doc, QTextCursor& at) {
+                const QTextBlock from = doc.findBlockByNumber(first);
+                const QTextBlock to = doc.findBlockByNumber(last);
+                if (!from.isValid() || !to.isValid()) return false;
+                QTextCursor edit(&doc);
+                edit.setPosition(from.position());
+                // Вместе с разделителем блока: иначе от объекта остаётся
+                // пустая строка, которой в файле не было.
+                const int end = qMin(to.position() + to.length(), doc.characterCount() - 1);
+                edit.setPosition(end, QTextCursor::KeepAnchor);
+                edit.removeSelectedText();
+                at = edit;
+                return true;
+            });
+            setEditedTable(-1);
+            return true;
+        }
+        case ObjectAction::Select: {
+            const BlockObject target = where.objectAbove || where.objectAboveGap
+                                           ? (where.objectAbove ? objectAbove
+                                                                : objectOf(above.previous()))
+                                           : (where.objectBelow ? objectBelow
+                                                                : objectOf(below.next()));
+            if (!target.valid()) return false;
+            setTextCursor(QTextCursor(document()->findBlockByNumber(target.last)));
+            return true;
+        }
+        case ObjectAction::None:
+            break;
+    }
+    return false;
 }
 
 LanguageEditor* NoteEditor::editCodeLanguage(int firstBlockNumber, const QRect& strip) {

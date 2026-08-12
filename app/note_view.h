@@ -93,6 +93,18 @@ public:
     // Раскладка таблицы, показанной сеткой; nullptr — этот блок не таблица или
     // она показана исходником.
     const TableRender* tableAt(int firstBlockNumber) const;
+    // Какую таблицу сейчас правят исходником; -1 — все показаны сеткой.
+    // Правка включается двойным щелчком или Enter на таблице, кончается уходом
+    // каретки наружу.
+    void setEditedTable(int firstBlockNumber);
+    int editedTable() const { return editedTable_; }
+    // Каретка стоит на спрятанной строке таблицы — подтянуть её на видимую.
+    // Каретку по спрятанным блокам Qt водит охотно (пробник), и без этого она
+    // пропадала бы из виду.
+    bool snapCaretOutOfHiddenTable();
+    // Прямоугольник сетки в координатах документа; пустой — таблицы нет или
+    // она показана исходником.
+    QRectF tableRect(int firstBlockNumber) const;
 
     // Пока язык блока правят полем ввода, СВОЮ надпись вид не рисует вовсе.
     // Закрашивать её фоном поля — надежда на стиль и на попадание пиксель в
@@ -336,6 +348,7 @@ private:
     int editedCodeLanguage_ = -1;
     // Таблицы, показанные сеткой: по номеру первого блока.
     QHash<int, TableRender> tables_;
+    int editedTable_ = -1;
     QTimer copiedFade_;
     QTimer caretBlink_;
     bool caretOn_ = true;

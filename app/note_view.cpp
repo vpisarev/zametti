@@ -1136,17 +1136,27 @@ void NoteView::setEditedCodeLanguage(int firstBlockNumber) {
 //   * каретка по спрятанным блокам ходит: стрелка вниз с видимой строки
 //     приводит её в невидимую. Это придётся ловить отдельно — на слое объекта.
 void NoteView::syncTables() {
+    // Место, в которое вписывается таблица, считается ОТ ЕЁ ЛЕВОГО КРАЯ.
+    //
+    // Таблица стоит там же, где начинается колонка текста, — то есть уже
+    // отступив левое поле рамки. Первая редакция брала полную ширину вьюпорта,
+    // и в узком окне таблица уезжала за правый край ровно на это поле: текст
+    // обрезался на «в какую коло…». Видно только глазами и только в узком
+    // окне — то самое, ради чего в матрице обязательны оба размера.
+    const QTextFrameFormat frame = document()->rootFrame()->frameFormat();
     const qreal columnWidth = document()->textWidth() > 0
-                                  ? document()->textWidth() -
-                                        document()->rootFrame()->frameFormat().leftMargin() -
-                                        document()->rootFrame()->frameFormat().rightMargin()
+                                  ? document()->textWidth() - frame.leftMargin() -
+                                        frame.rightMargin()
                                   : viewport()->width();
-    const qreal fullWidth = qMax(columnWidth, qreal(viewport()->width()) - 8);
+    const qreal margin = qMax(0.0, qreal(viewport()->width()) - frame.leftMargin() - 8);
+    const qreal fullWidth = qMax(columnWidth, margin);
 
     QHash<int, TableRender> fresh;
     for (QTextBlock block = document()->begin(); block.isValid(); block = block.next()) {
         const BlockObject object = objectOf(block);
         if (object.kind != ObjectKind::Table || object.first != block.blockNumber()) continue;
+        // Правят исходником — показываем как есть: строки на месте, сетки нет.
+        if (object.first == editedTable_) continue;
 
         // Исходник таблицы: строки блоков, как они есть.
         QString source;
@@ -1271,6 +1281,14 @@ void NoteView::paintTables(QPainter& painter, const QRectF& visible) {
             column(x, area.top(), area.height(), look.columnSeparator);
         }
 
+        // Выбранная таблица — с уголками-мишенями, как выбранная фотография:
+        // объект под кареткой человек видит одинаково, чем бы объект ни был.
+        const QTextCursor caret = textCursor();
+        const bool selected = !caret.hasSelection() &&
+                              caret.blockNumber() >= table.first &&
+                              caret.blockNumber() <= table.last;
+        if (selected && exportRatio_ <= 0.0) paintImageCorners(painter, area);
+
         // Текст ячеек. Выравнивание — из :---: разбора; по умолчанию влево,
         // как в GitHub.
         const qreal padX = tableCellPadX(zoom_, table.layout.scale);
@@ -1289,6 +1307,39 @@ void NoteView::paintTables(QPainter& painter, const QRectF& visible) {
         }
     }
     painter.restore();
+}
+
+void NoteView::setEditedTable(int firstBlockNumber) {
+    if (editedTable_ == firstBlockNumber) return;
+    editedTable_ = firstBlockNumber;
+    syncImageSpace(true);   // перемерить: строки то прячутся, то возвращаются
+    viewport()->update();
+}
+
+QRectF NoteView::tableRect(int firstBlockNumber) const {
+    const TableRender* table = tableAt(firstBlockNumber);
+    if (table == nullptr) return {};
+    const QTextBlock last = document()->findBlockByNumber(table->last);
+    if (!last.isValid()) return {};
+    const QRectF anchorRect = document()->documentLayout()->blockBoundingRect(last);
+    return QRectF(anchorRect.left(), anchorRect.top(), table->layout.width,
+                  table->layout.height);
+}
+
+bool NoteView::snapCaretOutOfHiddenTable() {
+    QTextCursor caret = textCursor();
+    if (caret.hasSelection()) return false;
+    const QTextBlock block = caret.block();
+    if (!block.isValid() || block.isVisible()) return false;
+
+    // Спрятанные строки бывают только у таблицы, показанной сеткой: ставим
+    // каретку на её ВИДИМУЮ строку — ту, на которой висит резерв. Дальше
+    // таблица считается выбранной, как выбрана картинка под кареткой.
+    const BlockObject object = objectOf(block);
+    if (object.kind != ObjectKind::Table) return false;
+    QTextCursor at(document()->findBlockByNumber(object.last));
+    setTextCursor(at);
+    return true;
 }
 
 const TableRender* NoteView::tableAt(int firstBlockNumber) const {

@@ -97,7 +97,11 @@ void checkContentKept() {
     }
 }
 
-// Широкая таблица: сперва поля, потом усадка, потом пол и перенос.
+// Вписывание. Порядок такой (правило владельца, уточнённое по ходу этапа):
+// сперва поля, потом ПЕРЕНОС ПО СЛОВАМ, и только потом усадка шрифта.
+//
+// Первая редакция переносила лишь на полу усадки, и одна длинная ячейка
+// ужимала шрифт всей таблицы — не то лекарство от не той болезни.
 void checkFitting() {
     const zametti::Table table = zametti::parseTable(kSmall);
 
@@ -105,21 +109,50 @@ void checkFitting() {
     const zametti::TableLayout roomy = zametti::layoutTable(table, roomFor(200, 2000));
     ZT_TRUE("в полях помещается без усадки: " + num(roomy.scale), roomy.scale == 1.0);
     ZT_TRUE("и шире колонки текста", roomy.width > 200);
+    ZT_TRUE("переноса не понадобилось", !roomy.wrapped);
 
-    // Места мало — ужимаем шрифт.
+    // Места мало — переносим по словам, но шрифт НЕ трогаем.
     const zametti::TableLayout tight = zametti::layoutTable(table, roomFor(260, 260));
-    ZT_TRUE("шрифт ужат: " + num(tight.scale), tight.scale < 1.0);
+    ZT_TRUE("шрифт цел: " + num(tight.scale), tight.scale == 1.0);
+    ZT_TRUE("зато включился перенос", tight.wrapped);
     ZT_TRUE("и таблица влезла: " + num(tight.width), tight.width <= 260.5);
-    ZT_TRUE("переноса пока не понадобилось", !tight.wrapped);
-
-    // Места совсем нет — усадка упирается в пол, включается перенос.
-    const zametti::TableLayout floored = zametti::layoutTable(table, roomFor(90, 90));
-    ZT_TRUE("усадка остановилась на полу: " + num(floored.scale), floored.scale >= 0.55);
-    ZT_TRUE("и включился перенос", floored.wrapped);
-    ZT_TRUE("таблица всё равно вписалась: " + num(floored.width), floored.width <= 90.5);
     // Перенос делает ряды выше — это и есть его цена.
-    ZT_TRUE("ряд стал выше одной строки",
-            floored.rowHeight.at(1) > zametti::tableCellPadY(1.0, floored.scale) * 2 + 1);
+    ZT_TRUE("ряд с длинной ячейкой стал выше шапки",
+            tight.rowHeight.at(2) > tight.rowHeight.at(0));
+
+    // Места совсем нет — переноса не хватает, ужимается шрифт.
+    const zametti::TableLayout floored = zametti::layoutTable(table, roomFor(90, 90));
+    ZT_TRUE("шрифт ужат: " + num(floored.scale), floored.scale < 1.0);
+    ZT_TRUE("усадка остановилась на полу: " + num(floored.scale), floored.scale >= 0.55);
+    ZT_TRUE("таблица всё равно вписалась: " + num(floored.width), floored.width <= 90.5);
+}
+
+// Замечание владельца: одна очень длинная ячейка не должна раздувать свою
+// колонку — её надо переносить по словам, а не ужимать всю таблицу.
+void checkLongCellWraps() {
+    const zametti::Table table = zametti::parseTable(
+        "| что | описание |\n"
+        "|---|---|\n"
+        "| болт | очень длинное описание детали, которое ни в какую колонку "
+        "целиком не поместится и обязано перенестись по словам |\n");
+
+    const zametti::TableLayout out = zametti::layoutTable(table, roomFor(600, 600));
+    ZT_TRUE("шрифт не тронут: " + num(out.scale), out.scale == 1.0);
+    ZT_TRUE("перенос включился", out.wrapped);
+    ZT_TRUE("таблица вписалась: " + num(out.width), out.width <= 600.5);
+    // Узкая колонка от переноса почти не пострадала, широкая ужалась.
+    ZT_TRUE("узкая колонка осталась узкой: " + num(out.columnWidth.at(0)),
+            out.columnWidth.at(0) < out.columnWidth.at(1));
+    // Ряд стал многострочным — это и значит «перенеслось». Спрашиваем саму
+    // разметку, а не высоту: высота зависит ещё и от полей, и сравнение с
+    // «вдвое выше шапки» ломалось на границе (54 против 27×2).
+    const zametti::TableCellBox* longCell = out.at(1, 1);
+    ZT_TRUE("длинная ячейка разложена", longCell != nullptr && longCell->text != nullptr);
+    if (longCell != nullptr && longCell->text != nullptr)
+        ZT_TRUE("и заняла несколько строк: " + n(longCell->text->lineCount()),
+                longCell->text->lineCount() > 1);
+    // Слова целы: колонка не уже самого длинного слова.
+    ZT_TRUE("колонка не уже самого длинного слова", out.columnWidth.at(1) > 40);
 }
 
 void checkEdges() {
@@ -211,6 +244,7 @@ int main(int argc, char** argv) {
     checkWidths();
     checkContentKept();
     checkFitting();
+    checkLongCellWraps();
     checkEdges();
     if (wantBench) bench();
 
