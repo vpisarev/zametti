@@ -109,6 +109,14 @@ QPainterPath platePath(const QRectF& rect, qreal radius, bool roundTop, bool rou
 
 }  // namespace
 
+bool caretShouldBeDrawn(bool focused, bool readOnly, bool hasSelection, bool onImage,
+                        bool inDrawnTable) {
+    if (!focused || readOnly) return false;
+    if (hasSelection) return false;
+    if (onImage || inDrawnTable) return false;
+    return true;
+}
+
 void applyPalette(QWidget& view, bool history) {
     QPalette palette = view.palette();
     // В режиме истории поле тонируется: слегка пожелтевший от времени фон
@@ -1309,6 +1317,101 @@ void NoteView::paintTables(QPainter& painter, const QRectF& visible) {
     painter.restore();
 }
 
+int NoteView::tableAtPoint(const QPointF& documentPoint) const {
+    for (const TableRender& table : std::as_const(tables_)) {
+        const QRectF area = tableRect(table.first);
+        if (!area.isEmpty() && area.contains(documentPoint)) return table.first;
+    }
+    return -1;
+}
+
+int NoteView::sourcePositionAt(const QPointF& documentPoint) const {
+    const int first = tableAtPoint(documentPoint);
+    if (first < 0) return -1;
+    const TableRender* table = tableAt(first);
+    const QRectF area = tableRect(first);
+    if (table == nullptr || area.isEmpty()) return -1;
+
+    // РЯД по вертикали щелчка, КОЛОНКА по горизонтали. Ряд заголовка — первая
+    // строка исходника, ряды тела — со второй, потому что между ними стоит
+    // строка-разделитель, которой на экране нет.
+    int row = 0;
+    qreal y = area.top();
+    for (; row + 1 < table->layout.rows; ++row) {
+        if (documentPoint.y() < y + table->layout.rowHeight.at(row)) break;
+        y += table->layout.rowHeight.at(row);
+    }
+    int column = 0;
+    qreal x = area.left();
+    for (; column + 1 < table->layout.columns; ++column) {
+        if (documentPoint.x() < x + table->layout.columnWidth.at(column)) break;
+        x += table->layout.columnWidth.at(column);
+    }
+
+    const int line = table->first + (row == 0 ? 0 : row + 1);
+    const QTextBlock block = document()->findBlockByNumber(line);
+    if (!block.isValid()) return -1;
+
+    // Начало ячейки в ИСХОДНОЙ строке: считаем неэкранированные палки. Первая
+    // палка строки — оформление, а не пустая ячейка.
+    const QString source = block.text();
+    int at = 0;
+    while (at < source.size() && source.at(at).isSpace()) ++at;
+    if (at < source.size() && source.at(at) == QLatin1Char('|')) ++at;
+    int seen = 0;
+    int cellStart = at;
+    for (; at < source.size() && seen < column; ++at) {
+        if (source.at(at) == QLatin1Char('\\')) { ++at; continue; }
+        if (source.at(at) != QLatin1Char('|')) continue;
+        ++seen;
+        cellStart = at + 1;
+    }
+    if (seen < column) cellStart = source.size();
+    // Пробел после палки в позицию ячейки не входит: человек целился в текст.
+    while (cellStart < source.size() && source.at(cellStart) == QLatin1Char(' ')) ++cellStart;
+
+    // Позиция ВНУТРИ ячейки — по x щелчка. Точна для ячеек без разметки: там
+    // показанный текст и есть исходный. В ячейке с разметкой показанное и
+    // исходное — разные строки (звёздочек на экране нет), и честного отображения
+    // одной в другую у нас пока нет: встаём в начало ячейки, а не наугад.
+    int inside = 0;
+    if (const TableCellBox* cell = table->layout.at(row, column)) {
+        if (cell->text != nullptr && cell->text->lineCount() > 0) {
+            const QString shown = cell->text->text();
+            const QString raw = source.mid(cellStart);
+            const bool plain = raw.startsWith(shown);
+            if (plain) {
+                const qreal padX = tableCellPadX(zoom_, table->layout.scale);
+                const QPointF local(documentPoint.x() - (area.left() + cell->rect.left()) - padX,
+                                    documentPoint.y() - (area.top() + cell->rect.top()));
+                const QTextLine textLine = cell->text->lineForTextPosition(0);
+                inside = textLine.isValid() ? textLine.xToCursor(local.x()) : 0;
+                inside = qBound(0, inside, shown.size());
+            }
+        }
+    }
+    return block.position() + qMin(cellStart + inside, block.length() - 1);
+}
+
+void NoteView::mouseDoubleClickEvent(QMouseEvent* event) {
+    // Двойной щелчок по сетке — правка исходника, каретка в ту ячейку, куда
+    // целились. Одинарный только выбирает таблицу (см. mousePressEvent).
+    if (event->button() == Qt::LeftButton && !isReadOnly()) {
+        const QPointF at = toDocument(event->position().toPoint());
+        const int position = sourcePositionAt(at);
+        if (position >= 0) {
+            const int first = tableAtPoint(at);
+            setEditedTable(first);
+            QTextCursor caret(document());
+            caret.setPosition(qBound(0, position, document()->characterCount() - 1));
+            setTextCursor(caret);
+            event->accept();
+            return;
+        }
+    }
+    QTextBrowser::mouseDoubleClickEvent(event);
+}
+
 void NoteView::setEditedTable(int firstBlockNumber) {
     if (editedTable_ == firstBlockNumber) return;
     editedTable_ = firstBlockNumber;
@@ -1484,6 +1587,19 @@ void NoteView::mousePressEvent(QMouseEvent* event) {
             event->accept();
             return;
         }
+
+        // Щелчок по сетке таблицы — выбрать её целиком. Пускать сюда Qt нельзя:
+        // про резерв места она не знает и ставит каретку по своим правилам,
+        // случайно попадая то в спрятанную строку, то в соседний абзац.
+        const int table = tableAtPoint(at);
+        if (table >= 0 && table != editedTable_) {
+            const TableRender* render = tableAt(table);
+            if (render != nullptr) {
+                setTextCursor(QTextCursor(document()->findBlockByNumber(render->last)));
+                event->accept();
+                return;
+            }
+        }
     }
     QTextBrowser::mousePressEvent(event);
 }
@@ -1644,9 +1760,18 @@ void NoteView::paintEvent(QPaintEvent* event) {
     // координаты вьюпорта. При выделении не рисуется вовсе: там видно и так, а
     // мигающая полоска на краю выделения только мешает. На строке-фотографии
     // тоже: там выбор показывает тонировка, а не полоска в углу картинки.
+    //
+    // И В НАРИСОВАННОЙ ТАБЛИЦЕ ЕЁ НЕТ. Каретка стоит на спрятанной строке
+    // исходника, и Qt отдаёт под неё огрызок высотой в ничто — владелец увидел
+    // «крохотный курсор, мигающий внутри таблицы». Выбранную таблицу показывают
+    // уголки, как и выбранную фотографию, а не полоска между ячейками.
+    const BlockObject caretObject = objectOf(textCursor().block());
+    const bool insideDrawnTable = caretObject.kind == ObjectKind::Table &&
+                                  caretObject.first != editedTable_;
     painter.resetTransform();
-    if (caretOn_ && hasFocus() && !isReadOnly() && !textCursor().hasSelection() &&
-        !imageGeometry(textCursor().block()).valid) {
+    if (caretOn_ && caretShouldBeDrawn(hasFocus(), isReadOnly(), textCursor().hasSelection(),
+                                       imageGeometry(textCursor().block()).valid,
+                                       insideDrawnTable)) {
         QRect at = cursorRect();
         at.setWidth(qMax(1, qRound(appearance().caretWidth * zoom_)));
         painter.fillRect(at, appearance().caretColor);

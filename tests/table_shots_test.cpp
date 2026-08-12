@@ -1,5 +1,6 @@
 // Снимки таблиц: то, что владелец проверяет глазами.
 #include "editor_widget.h"
+#include "block_object.h"
 #include "note_view.h"
 #include "settings.h"
 #include "test_util.h"
@@ -13,6 +14,7 @@
 #include <QScrollBar>
 #include <QTextBlock>
 #include <QTextCursor>
+#include <QAbstractTextDocumentLayout>
 #include <QTextDocument>
 
 namespace {
@@ -176,6 +178,22 @@ void checkFlip() {
         std::printf("провал: в правке остались спрятанные строки (%d)\n", visibleNow);
     }
 
+    // И РАСКЛАДКА ВЕРНУЛАСЬ. Одного isVisible() мало: блок может числиться
+    // видимым, а высоты у него так и остаться нулевой — тогда на экране видна
+    // одна строка вместо всей таблицы. Владелец увидел именно это.
+    int zeroHeight = 0;
+    for (int number = first; number <= first + 2; ++number) {
+        const QTextBlock b = editor.document()->findBlockByNumber(number);
+        if (!b.isValid()) continue;
+        if (editor.document()->documentLayout()->blockBoundingRect(b).height() <= 0.5)
+            ++zeroHeight;
+    }
+    ++zt::g_checks;
+    if (zeroHeight != 0) {
+        ++zt::g_failures;
+        std::printf("провал: строк без высоты в правке: %d\n", zeroHeight);
+    }
+
     // Увели каретку наружу — снова сетка.
     editor.setTextCursor(QTextCursor(editor.document()->firstBlock()));
     QTest::qWait(60);
@@ -188,6 +206,119 @@ void checkFlip() {
     if (editor.tableAt(first) == nullptr) {
         ++zt::g_failures;
         std::printf("провал: сетка не вернулась\n");
+    }
+}
+
+// Мышь: щелчок по сетке. Ровно тот путь, которым идёт владелец, — и ровно
+// он в первой редакции никуда не приводил: Qt про резерв места не знает и
+// ставит каретку по своим правилам.
+void checkMouse() {
+    const QString path = QDir(g_dir).filePath(QStringLiteral("мышь.md"));
+    QFile file(path);
+    if (file.open(QIODevice::WriteOnly))
+        file.write("до\n\n| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\nпосле\n");
+    file.close();
+
+    zametti::NoteEditor editor;
+    editor.resize(900, 700);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(path);
+    QTest::qWait(60);
+
+    int first = -1;
+    for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next())
+        if (editor.tableAt(b.blockNumber()) != nullptr) { first = b.blockNumber(); break; }
+    if (first < 0) {
+        ++zt::g_checks; ++zt::g_failures;
+        std::printf("провал: таблицы нет\n");
+        return;
+    }
+
+    const QRectF area = editor.tableRect(first);
+    const QPoint middle(int(area.center().x()),
+                        int(area.center().y()) - editor.verticalScrollBar()->value());
+
+    // Одинарный щелчок по сетке — таблица выбрана.
+    QTest::mouseClick(editor.viewport(), Qt::LeftButton, Qt::NoModifier, middle);
+    QTest::qWait(30);
+    const zametti::BlockObject picked = zametti::objectOf(editor.textCursor().block());
+    ++zt::g_checks;
+    if (picked.kind != zametti::ObjectKind::Table || picked.first != first) {
+        ++zt::g_failures;
+        std::printf("провал: щелчок по сетке не выбрал таблицу (каретка в блоке %d)\n",
+                    editor.textCursor().blockNumber());
+    }
+
+    // Выбранная таблица показана уголками-мишенями — тем же, чем показана
+    // выбранная фотография.
+    {
+        const QImage shot = editor.grab().toImage();
+        const QColor caretColour = zametti::appearance().caretColor;
+        int cornerPixels = 0;
+        for (int px = int(area.left()) - 12; px < int(area.right()) + 12 && px < shot.width();
+             ++px)
+            for (int py = int(area.top()) - 12; py < int(area.bottom()) + 12 && py < shot.height();
+                 ++py) {
+                if (px < 0 || py < 0) continue;
+                if (area.contains(QPointF(px, py))) continue;
+                const QColor at = shot.pixelColor(px, py);
+                if (qAbs(at.red() - caretColour.red()) < 20 &&
+                    qAbs(at.green() - caretColour.green()) < 20 &&
+                    qAbs(at.blue() - caretColour.blue()) < 20)
+                    ++cornerPixels;
+            }
+        ++zt::g_checks;
+        if (cornerPixels == 0) {
+            ++zt::g_failures;
+            std::printf("провал: выбранная таблица не показана уголками\n");
+        }
+    }
+
+    // А КАРЕТКИ ВНУТРИ НЕТ. Спрашиваем правило, а не картинку: у набора нет
+    // фокуса окна (под Xvfb hasFocus() всегда ложь), и по снимку это условие
+    // не проверить вовсе — первая редакция проверки была пустышкой и оставалась
+    // зелёной со снятой починкой.
+    ++zt::g_checks;
+    if (zametti::caretShouldBeDrawn(true, false, false, false, true)) {
+        ++zt::g_failures;
+        std::printf("провал: каретка рисуется внутри нарисованной таблицы\n");
+    }
+    ++zt::g_checks;
+    if (!zametti::caretShouldBeDrawn(true, false, false, false, false)) {
+        ++zt::g_failures;
+        std::printf("провал: в обычном тексте каретка пропала\n");
+    }
+
+    // Щелчок по НИЖНЕЙ части сетки — там, где кончается резерв места: без
+    // перехвата Qt ставит каретку в следующий за таблицей абзац.
+    const QPoint low(int(area.center().x()),
+                     int(area.bottom()) - 4 - editor.verticalScrollBar()->value());
+    QTest::mouseClick(editor.viewport(), Qt::LeftButton, Qt::NoModifier, low);
+    QTest::qWait(30);
+    ++zt::g_checks;
+    const zametti::BlockObject low_pick = zametti::objectOf(editor.textCursor().block());
+    if (low_pick.kind != zametti::ObjectKind::Table || low_pick.first != first) {
+        ++zt::g_failures;
+        std::printf("провал: щелчок по низу сетки не выбрал таблицу (блок %d)\n",
+                    editor.textCursor().blockNumber());
+    }
+
+    // Двойной щелчок — правка исходника, каретка рядом с местом щелчка.
+    QTest::mouseDClick(editor.viewport(), Qt::LeftButton, Qt::NoModifier, middle);
+    QTest::qWait(40);
+    ++zt::g_checks;
+    if (editor.editedTable() != first) {
+        ++zt::g_failures;
+        std::printf("провал: двойной щелчок не открыл исходник (правится %d)\n",
+                    editor.editedTable());
+    }
+    ++zt::g_checks;
+    const zametti::BlockObject inside = zametti::objectOf(editor.textCursor().block());
+    if (inside.kind != zametti::ObjectKind::Table || inside.first != first) {
+        ++zt::g_failures;
+        std::printf("провал: каретка не в исходнике таблицы (блок %d)\n",
+                    editor.textCursor().blockNumber());
     }
 }
 
@@ -261,6 +392,7 @@ int main(int argc, char** argv) {
     shoot(QStringLiteral("таблица-широкое"), 1000, 700, kNote);
     shoot(QStringLiteral("таблица-узкое"), 620, 700, kNote);
     checkFlip();
+    checkMouse();
 
     QStringList sources;
     for (int i = 2; i < argc; ++i) sources << QString::fromLocal8Bit(argv[i]);
