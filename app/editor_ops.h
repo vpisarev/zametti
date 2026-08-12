@@ -257,6 +257,20 @@ bool newLineAfterImage(QTextDocument& doc, QTextCursor& cursor);
 bool deleteImageLineBackward(QTextDocument& doc, QTextCursor& cursor);
 bool deleteImageLineForward(QTextDocument& doc, QTextCursor& cursor);
 
+// Ctrl+Enter в блоке кода: пустая строка сразу ПОСЛЕ блока, каретка в ней.
+// Содержимое блока не меняется вовсе — ни одной буквой. Лечит ловушку «блок
+// кода в конце заметки, после него не встать»; родня правила краёв картинки.
+// Отказывается, если каретка не в коде.
+bool leaveCodeBlockAtCursor(QTextDocument& doc, QTextCursor& cursor);
+
+// Табуляция в блоке кода. Знак TAB не вставляется никогда: Tab ставит ПРОБЕЛЫ
+// до следующего стопа (editor.codeTabWidth), Shift+Tab снимает отступ до
+// ближайшего стопа и не глубже нуля. Если выделение задело несколько строк —
+// отступ ходит у всех задетых, а выделение и каретка переживают правку.
+// Обе отказываются вне блоков кода: там Tab по-прежнему принадлежит спискам.
+bool indentCodeAtCursor(QTextDocument& doc, QTextCursor& cursor);
+bool outdentCodeAtCursor(QTextDocument& doc, QTextCursor& cursor);
+
 // Пересчитывает левые поля списочных блоков. Поле зависит от уровня и от ширины
 // маркеров всех родителей, поэтому считать его можно только проходом от начала
 // списка — отсюда же и расширение диапазона до целых прогонов.

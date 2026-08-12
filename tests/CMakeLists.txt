@@ -305,6 +305,14 @@ if(TARGET zametti-view)
                  ${CMAKE_CURRENT_BINARY_DIR}/снимки-этапа-8)
         set_tests_properties(image-shots PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+        # Правка блоков кода: матрица краёв, Ctrl+Enter, табуляция.
+        add_executable(code_edit_test code_edit_test.cpp)
+        target_link_libraries(code_edit_test PRIVATE zametti-widgets Qt6::Test
+                              zametti-warnings)
+        target_include_directories(code_edit_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        add_test(NAME code-edit COMMAND code_edit_test ${CMAKE_CURRENT_BINARY_DIR}/код-правка)
+        set_tests_properties(code-edit PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
         # Снимки блоков кода: приёмка этапа 11 глазами.
         add_executable(code_shots_test code_shots_test.cpp)
         target_link_libraries(code_shots_test PRIVATE zametti-widgets Qt6::Test

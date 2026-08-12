@@ -1469,6 +1469,12 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     if (plainEnter && runOperation(applyDividerRuleAtCursor)) return;
     if (plainEnter && runOperation(splitBlockAtCursor)) return;
 
+    // Ctrl+Enter — выход из блока кода вниз. Раньше разреза и раньше правил
+    // черты: в коде оба они означали бы другое, а тут нажатие однозначно.
+    const bool ctrlEnter = (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
+                           (event->modifiers() & ~Qt::KeypadModifier) == Qt::ControlModifier;
+    if (ctrlEnter && runOperation(leaveCodeBlockAtCursor)) return;
+
     // Shift+Enter — «другое»: в абзаце разрезает, в списке переносит строку
     // внутри пункта.
     const bool shiftEnter = (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
@@ -1592,11 +1598,18 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
 
     // Tab и Shift+Tab внутри списка двигают пункт по уровням; вне списка
     // операция отказывается, и Tab остаётся обычным знаком табуляции.
+    //
+    // Код спрашивается ПЕРВЫМ: блок кода бывает и внутри пункта списка, и там
+    // Tab должен отступать код, а не углублять пункт.
+    if (event->key() == Qt::Key_Tab && event->modifiers() == Qt::NoModifier &&
+        runOperation(indentCodeAtCursor))
+        return;
     if (event->key() == Qt::Key_Tab && event->modifiers() == Qt::NoModifier &&
         runOperation(indentListItems))
         return;
     if (event->key() == Qt::Key_Backtab ||
         (event->key() == Qt::Key_Tab && event->modifiers() == Qt::ShiftModifier)) {
+        if (runOperation(outdentCodeAtCursor)) return;
         if (runOperation(outdentListItems)) return;
         return;   // наружу Shift+Tab не отдаём: он увёл бы фокус из окна
     }
@@ -1636,12 +1649,17 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     for (const auto& [keys, op] : bindings_)
         if (pressed(keys) && runOperation(op)) return;
 
-    // Tab в списке молчит, даже когда отступать некуда: первый пункт отступать
-    // не к чему, но и табуляцию в его текст ставить незачем. Без этого отказ
-    // операции проваливался в QTextEdit, и в пункте появлялся знак табуляции.
-    if ((event->key() == Qt::Key_Tab || event->key() == Qt::Key_Backtab) &&
-        (isListBlock(textCursor().block()) || levelOf(textCursor().block()) >= 0))
-        return;
+    // Дальше Tab не идёт НИКОГДА, и это правило шире прежнего.
+    //
+    // Раньше Tab глотался только в списке, а в обычном абзаце проваливался в
+    // QTextEdit и вставлял знак табуляции. Матрица краёв этапа 11 показала,
+    // чем это кончается: "\tafter" — это в markdown блок кода с отступом, и
+    // абзац, в начале которого нажали Tab, при следующем открытии заметки
+    // становился кодом. В конце строки не лучше: хвостовой таб при чтении
+    // отбрасывается, и файл перестаёт читаться сам в себя.
+    //
+    // Внутри кода отступ ставит indentCodeAtCursor выше — пробелами.
+    if (event->key() == Qt::Key_Tab || event->key() == Qt::Key_Backtab) return;
 
     // Шаг вверх-вниз между блоками с разными полями: курсор должен остаться на
     // той же колонке, а не уехать на ширину маркера.

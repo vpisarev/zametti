@@ -1306,6 +1306,178 @@ bool deleteImageLineForward(QTextDocument& doc, QTextCursor& cursor) {
     return true;
 }
 
+// --- блок кода: выход и табуляция -------------------------------------------
+
+namespace {
+
+bool isCodeLine(const QTextBlock& block) {
+    return block.isValid() && !isRawBlock(block) && kindOf(block) == Kind::Code;
+}
+
+// Последняя строка блока кода, считая от этой. Строки блока — отдельные
+// QTextBlock, помеченные продолжением (см. ContinuationProperty).
+QTextBlock lastCodeLine(QTextBlock block) {
+    while (isCodeLine(block.next()) && isContinuationBlock(block.next())) block = block.next();
+    return block;
+}
+
+// Видимая колонка позиции в строке: знак табуляции доводит до следующего
+// стопа, остальные знаки стоят по одному. Без этого «до стопа» считалось бы
+// по числу знаков, и строка со старым табом отступала бы не туда, где её
+// рисуют.
+int visualColumn(const QString& text, int upTo, int width) {
+    int column = 0;
+    for (int i = 0; i < upTo && i < text.size(); ++i) {
+        if (text.at(i) == QLatin1Char('\t')) column += width - (column % width);
+        else ++column;
+    }
+    return column;
+}
+
+// Отступ строки в пробелах и сколько знаков он занимает в тексте.
+struct Lead {
+    int columns = 0;   // видимая ширина отступа
+    int chars = 0;     // сколько знаков текста он занимает
+};
+
+Lead leadingIndent(const QString& text, int width) {
+    Lead lead;
+    while (lead.chars < text.size()) {
+        const QChar c = text.at(lead.chars);
+        if (c == QLatin1Char(' ')) lead.columns += 1;
+        else if (c == QLatin1Char('\t')) lead.columns += width - (lead.columns % width);
+        else break;
+        ++lead.chars;
+    }
+    return lead;
+}
+
+int codeTabWidth() { return qMax(1, appearance().codeTabWidth); }
+
+// Переписать отступ строки на columns пробелов. Возвращает, на сколько знаков
+// строка стала длиннее (может быть отрицательным).
+int setLineIndent(QTextCursor& edit, const QTextBlock& block, int columns) {
+    columns = qMax(0, columns);
+    const Lead lead = leadingIndent(block.text(), codeTabWidth());
+    if (lead.columns == columns && lead.chars == columns) return 0;
+    edit.setPosition(block.position());
+    edit.setPosition(block.position() + lead.chars, QTextCursor::KeepAnchor);
+    edit.insertText(QString(columns, QLatin1Char(' ')));
+    return columns - lead.chars;
+}
+
+// Строки блока кода, задетые курсором: от строки начала выделения до строки
+// его конца. Пусто — курсор не в коде.
+QVector<QTextBlock> touchedCodeLines(const QTextDocument& doc, const QTextCursor& cursor) {
+    QVector<QTextBlock> lines;
+    QTextBlock block = doc.findBlock(qMin(cursor.anchor(), cursor.position()));
+    const QTextBlock last = doc.findBlock(qMax(cursor.anchor(), cursor.position()));
+    if (!isCodeLine(block)) return lines;
+    for (;; block = block.next()) {
+        if (!isCodeLine(block)) break;
+        lines.push_back(block);
+        if (block == last || !block.next().isValid()) break;
+    }
+    return lines;
+}
+
+}  // namespace
+
+bool leaveCodeBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+    if (!isCodeLine(cursor.block())) return false;
+
+    // Пустая строка, а не пустой абзац: пустая строка в этой модели — блок
+    // VSpace, и ровно она получается при чтении файла. Абзац без текста был бы
+    // состоянием, которого чтение файла не даёт, — а такого у нас не бывает.
+    const QTextBlock last = lastCodeLine(cursor.block());
+    QTextCursor edit(cursor);
+    edit.setPosition(last.position() + last.length() - 1);
+    edit.insertBlock(vspaceBlockFormat(doc, false, false), QTextCharFormat());
+    cursor = edit;
+    return true;
+}
+
+bool indentCodeAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+    const QVector<QTextBlock> lines = touchedCodeLines(doc, cursor);
+    if (lines.isEmpty()) return false;
+    const int width = codeTabWidth();
+
+    QTextCursor edit(cursor);
+    // Одна строка и нет выделения — это набор: пробелы встают ПОД КАРЕТКОЙ и
+    // ровно до ближайшего стопа, а не полной шириной. Всё остальное — отступ
+    // строк целиком, на целый стоп каждая.
+    if (lines.size() == 1 && !cursor.hasSelection()) {
+        const QTextBlock block = lines.front();
+        const int at = cursor.position() - block.position();
+        const int column = visualColumn(block.text(), at, width);
+        const int spaces = width - (column % width);
+        edit.setPosition(cursor.position());
+        edit.insertText(QString(spaces, QLatin1Char(' ')));
+        cursor = edit;
+        return true;
+    }
+
+    // Границы выделения держим смещениями в строках: текст под ними едет, а
+    // «та же колонка той же строки» переживает правку.
+    const bool forward = cursor.position() >= cursor.anchor();
+    QTextBlock anchorLine = doc.findBlock(cursor.anchor());
+    QTextBlock positionLine = doc.findBlock(cursor.position());
+    int anchorAt = cursor.anchor() - anchorLine.position();
+    int positionAt = cursor.position() - positionLine.position();
+
+    for (const QTextBlock& block : lines) {
+        const Lead lead = leadingIndent(block.text(), width);
+        const int delta = setLineIndent(edit, block, lead.columns + width);
+        if (block == anchorLine) anchorAt += delta;
+        if (block == positionLine) positionAt += delta;
+    }
+
+    QTextCursor restored(&doc);
+    restored.setPosition(anchorLine.position() + qMax(0, anchorAt));
+    restored.setPosition(positionLine.position() + qMax(0, positionAt),
+                         QTextCursor::KeepAnchor);
+    Q_UNUSED(forward);
+    cursor = restored;
+    return true;
+}
+
+bool outdentCodeAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+    const QVector<QTextBlock> lines = touchedCodeLines(doc, cursor);
+    if (lines.isEmpty()) return false;
+    const int width = codeTabWidth();
+
+    QTextBlock anchorLine = doc.findBlock(cursor.anchor());
+    QTextBlock positionLine = doc.findBlock(cursor.position());
+    int anchorAt = cursor.anchor() - anchorLine.position();
+    int positionAt = cursor.position() - positionLine.position();
+
+    QTextCursor edit(cursor);
+    bool moved = false;
+    for (const QTextBlock& block : lines) {
+        const Lead lead = leadingIndent(block.text(), width);
+        if (lead.columns == 0) continue;
+        // До БЛИЖАЙШЕГО стопа вниз, а не на целый стоп: строка, отступившая на
+        // шесть пробелов, встаёт на четыре, а не на два.
+        const int target = ((lead.columns - 1) / width) * width;
+        const int delta = setLineIndent(edit, block, target);
+        if (delta == 0) continue;
+        moved = true;
+        if (block == anchorLine) anchorAt += delta;
+        if (block == positionLine) positionAt += delta;
+    }
+    // Снимать нечего — но нажатие всё равно наше: Shift+Tab в коде не должен
+    // проваливаться в списки или уводить фокус из окна.
+    if (!moved) return true;
+
+    QTextCursor restored(&doc);
+    restored.setPosition(anchorLine.position() + qMax(0, anchorAt));
+    if (cursor.hasSelection())
+        restored.setPosition(positionLine.position() + qMax(0, positionAt),
+                             QTextCursor::KeepAnchor);
+    cursor = restored;
+    return true;
+}
+
 bool toggleCommentAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const int from = qMin(cursor.anchor(), cursor.position());
     const int to = qMax(cursor.anchor(), cursor.position());
@@ -2097,6 +2269,15 @@ bool repairAfterTyping(QTextDocument& doc, QTextCursor& cursor) {
                         !block.text().trimmed().isEmpty();
     // Или набрали поверх выделения, съевшего границу блоков, и рядом оказались
     // соседи, которых markdown раздельно не выражает.
+    //
+    // ЗАМЕЧЕНО НА ЭТАПЕ 11, НЕ ПОЧИНЕНО: строки одного блока кода — это тоже
+    // «соседи, которые слились бы», и первый же набранный в блоке знак склеивает
+    // их в один QTextBlock. На смысл это не влияет (файл выходит тот же), но
+    // нарезка блока кода по строкам, ради которой всё затевалось (4257 мкс
+    // против 109, см. doc_model.h), после первой правки пропадает. Оговорка
+    // «строки одного литерального блока не сливать» ломает инвариант разбивки
+    // на всех трёх фаззерах, то есть трогать надо не здесь; решение за
+    // владельцем, замер и разбор — в отчёте этапа 11.
     const bool mergesAhead =
         blocksWouldMerge(block, doc.findBlockByNumber(number + 1));
     const bool mergesBehind =
@@ -2440,18 +2621,22 @@ int syncGaps(QTextDocument& doc, BlockRange range) {
 
     // Поля сверху: их держит соседство, и после вставки они могли устареть.
     {
-        const qreal lineUnit = QFontMetricsF(baseFontOf(doc)).height();
+        const QFont base = baseFontOf(doc);
+        const qreal lineUnit = QFontMetricsF(base).height();
+        const qreal zoom = appearance().baseFontPoint > 0.0
+                               ? base.pointSizeF() / appearance().baseFontPoint
+                               : 1.0;
         int i = qMax(0, range.first);
         const int last = qMin(range.last + 2, doc.blockCount() - 1);
         for (; i <= last; ++i) {
             const QTextBlock block = doc.findBlockByNumber(i);
             if (!block.isValid()) break;
-            const qreal want =
-                isContinuationBlock(block)
-                    ? 0.0
-                    : blockTopMargin(kindOf(block), isRawBlock(block),
-                                     isVSpaceBlock(block.previous()), i == 0) *
-                          lineUnit;
+            // Поле спрашиваем у сборщика целиком, в пикселях: кроме отбивки в
+            // нём живёт резерв под полоску блока кода, и считать его тут
+            // заново значило бы стирать резерв на каждой операции.
+            const qreal want = blockTopMarginPx(kindOf(block), isRawBlock(block),
+                                                isVSpaceBlock(block.previous()), i == 0,
+                                                isContinuationBlock(block), lineUnit, zoom);
             QTextBlockFormat format = block.blockFormat();
             // Не трогаем формат, если поле и так верное: любая запись помечает
             // документ изменённым и тянет за собой автосохранение.

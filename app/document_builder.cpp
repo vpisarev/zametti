@@ -31,6 +31,7 @@
 #include <QTextDocument>
 #include <QTextFrame>
 #include <QTextFrameFormat>
+#include <QTextOption>
 
 
 #include <algorithm>
@@ -250,6 +251,16 @@ qreal blockTopMargin(Kind kind, bool raw, bool previousIsVSpace, bool first) {
     return 0.0;
 }
 
+qreal blockTopMarginPx(Kind kind, bool raw, bool previousIsVSpace, bool first,
+                       bool continuation, qreal lineUnit, qreal zoom) {
+    // Строки одного литерального блока стоят вплотную: полоска и отбивка есть
+    // только у первой.
+    if (continuation) return 0.0;
+    qreal margin = blockTopMargin(kind, raw, previousIsVSpace, first) * lineUnit;
+    if (!raw && kind == Kind::Code) margin += codePlate(zoom).strip;
+    return margin;
+}
+
 QTextBlockFormat vspaceBlockFormat(const QTextDocument& doc, bool previousIsVSpace, bool first) {
     const QFontMetricsF metrics(doc.defaultFont());
     QTextBlockFormat format;
@@ -335,7 +346,6 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     // Полями обрамляется только прогон пустых строк — сверху перед первой,
     // снизу после последней.
     const bool vspace = !raw && b.kind == Kind::VSpace;
-    const qreal topMargin = blockTopMargin(b.kind, raw, prevVSpace, first);
 
     // Высота строки задаётся явно, а не долей от самого высокого знака в
     // ней: иначе знак из запасного шрифта растягивал бы свою строку, и
@@ -412,16 +422,17 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
         if (b.kind != Kind::Code) text = toQt(doc.text(b), breaks);
     }
 
-    blockFmt.setTopMargin(first ? 0 : topMargin * ctx.lineUnit);
-    blockFmt.setBottomMargin(0);
-
     // Полоска с языком живёт НЕ в тексте, а в поле блока: резерв под неё —
     // верхнее поле первой строки блока кода, поле снизу — нижнее у последней
     // (ставится в цикле по строкам). Рисует в этом резерве note_view.cpp теми
     // же величинами. Резерв не зависит от того, задан язык или нет: пустая
     // полоска — это ряд, в котором стоит кнопка копирования.
     const bool code = !raw && b.kind == Kind::Code;
-    if (code) blockFmt.setTopMargin(blockFmt.topMargin() + ctx.plate.strip);
+    // Первому блоку документа отбивка не нужна (над ним поле страницы), а вот
+    // резерв под полоску нужен и ему — это и делает blockTopMarginPx.
+    blockFmt.setTopMargin(
+        blockTopMarginPx(b.kind, raw, prevVSpace, first, false, ctx.lineUnit, ctx.zoom));
+    blockFmt.setBottomMargin(0);
 
 
     QFont lineFont = ctx.base;
@@ -492,6 +503,22 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
 
     const BuildContext ctx = contextFor(zoom);
     target.setDefaultFont(ctx.base);
+    // Стоп табуляции — тот же, которым Tab ставит пробелы (editor.codeTabWidth).
+    // Иначе набранное нами и литеральные табы из старых файлов рисовались бы
+    // по-разному, и одинаковый на вид отступ оказывался бы разным.
+    //
+    // Стоп задаётся на весь документ, а не блокам кода: в QTextBlockFormat
+    // стопы задаются списком положений, а список — уникальное значение на
+    // блок, и QTextFormatCollection завела бы отдельный формат на каждую
+    // строку (см. про интернирование в doc_model.h).
+    {
+        QFont codeLine = ctx.base;
+        codeLine.setPointSizeF(codePoint(ctx.basePoint, ctx.zoom));
+        QTextOption option = target.defaultTextOption();
+        option.setTabStopDistance(appearance().codeTabWidth *
+                                  QFontMetricsF(codeLine).horizontalAdvance(QLatin1Char(' ')));
+        target.setDefaultTextOption(option);
+    }
 
     QTextFrameFormat rootFormat = target.rootFrame()->frameFormat();
     rootFormat.setLeftMargin(appearance().sideMargin * ctx.charUnit);

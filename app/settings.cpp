@@ -258,6 +258,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("makeTaskKey"), a.makeTaskKey},
         {QStringLiteral("makeParagraphKey"), a.makeParagraphKey},
         {QStringLiteral("makeCommentKey"), a.makeCommentKey},
+        {QStringLiteral("codeTabWidth"), a.codeTabWidth},
         {QStringLiteral("special"), special},
         {QStringLiteral("externalEditor"), a.externalEditor},
     };
@@ -492,6 +493,7 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     const QJsonValue coalesce = editor.value(QStringLiteral("undoCoalesceMs"));
     if (coalesce.isDouble()) a.undoCoalesceMs = coalesce.toInt();
     readInt(editor, "undoRunChars", a.undoRunChars);
+    readInt(editor, "codeTabWidth", a.codeTabWidth);
     readInt(editor, "historyMergeChars", a.historyMergeChars);
     readInt(editor, "historyMergeHours", a.historyMergeHours);
     const QJsonValue limit = editor.value(QStringLiteral("undoLimit"));

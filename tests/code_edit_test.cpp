@@ -1,0 +1,403 @@
+// Правка блоков кода: выход из блока и табуляция.
+//
+// Главное здесь — МАТРИЦА «операция × край блока». Написана она до починок, и
+// это не формальность: на картинках этапа 9 матрица нашла шесть бед там, где
+// глазами виделось три, и все три лишние жили именно по краям — в первой
+// строке, в последней, до блока и после него.
+//
+// Каждая клетка матрицы проверяется дважды: что вышло на экране (текст блоков
+// и место каретки) и что после этой правки документ остался ЗАКОННЫМ — то
+// есть инварианты дословных кусков, пустых строк и списков держатся, а файл
+// читается обратно в то же самое.
+//
+// Клавиши нажимаются по-настоящему (QTest::keyClick), а не зовутся функциями:
+// между «операция работает» и «клавиша работает» лежит весь разбор нажатия, и
+// ломалось у нас до сих пор именно там.
+
+#include "doc_model.h"
+#include "document_reader.h"
+#include "editor_ops.h"
+#include "editor_widget.h"
+#include "parser.h"
+#include "serializer.h"
+#include "settings.h"
+#include "test_util.h"
+
+#include <QApplication>
+#include <QDir>
+#include <QFile>
+#include <QTest>
+#include <QTextBlock>
+#include <QTextCursor>
+#include <QTextDocument>
+#include <QTextLayout>
+
+#include <cmath>
+#include <string>
+
+namespace {
+
+QString g_dir;
+
+std::string num(double v) {
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%.1f", v);
+    return buf;
+}
+
+void check(bool ok, const std::string& what) {
+    ++zt::g_checks;
+    if (ok) return;
+    ++zt::g_failures;
+    std::printf("провал: %s\n", what.c_str());
+}
+
+void checkEq(const std::string& expected, const std::string& got, const std::string& what) {
+    ++zt::g_checks;
+    if (expected == got) return;
+    ++zt::g_failures;
+    std::printf("провал: %s\n%s", what.c_str(), zt::diff(expected, got).c_str());
+}
+
+QString writeNote(const QString& name, const QString& text) {
+    const QString path = QDir(g_dir).filePath(name);
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return {};
+    f.write(text.toUtf8());
+    f.close();
+    return path;
+}
+
+// Заметка матрицы: абзац, блок кода из двух строк, абзац. Всё по-латински —
+// QTest::keyClicks роняет ассерт на кириллице (qasciikey.cpp).
+const char* kNote = R"(before
+
+```py
+one
+two
+```
+
+after
+)";
+
+std::string markdownOf(const zametti::NoteEditor& editor) {
+    return zametti::serialize(zametti::readDocument(*editor.document()));
+}
+
+// Документ законен: три инварианта плюс чтение файла обратно в то же самое.
+void checkStillLegal(zametti::NoteEditor& editor, const std::string& where) {
+    QString problem;
+    check(zametti::literalInvariantHolds(*editor.document(), &problem),
+          where + ": инвариант дословных кусков (" + problem.toStdString() + ")");
+    check(zametti::gapInvariantHolds(*editor.document(), &problem),
+          where + ": инвариант пустых строк (" + problem.toStdString() + ")");
+    check(zametti::listInvariantHolds(*editor.document(), &problem),
+          where + ": инвариант списков (" + problem.toStdString() + ")");
+
+    // Круг: то, что мы записали бы в файл, читается обратно в тот же markdown.
+    const std::string text = markdownOf(editor);
+    checkEq(text, zametti::serialize(zametti::parse(text)), where + ": файл читается в себя");
+}
+
+class Editor : public zametti::NoteEditor {
+public:
+    void openText(const QString& name, const char* text) {
+        const QString path = writeNote(name, QString::fromUtf8(text));
+        resize(900, 700);
+        show();
+        QTest::qWait(10);
+        openFile(path);
+        QTest::qWait(20);
+    }
+
+    // Каретка в строку с этим текстом; column — сколько знаков от начала строки.
+    void caretTo(const QString& lineText, int column) {
+        for (QTextBlock b = document()->firstBlock(); b.isValid(); b = b.next()) {
+            if (b.text() != lineText) continue;
+            QTextCursor at(b);
+            at.setPosition(b.position() + qMin(column, b.length() - 1));
+            setTextCursor(at);
+            return;
+        }
+        check(false, ("нет строки «" + lineText + "»").toStdString());
+    }
+
+    QString caretLine() const { return textCursor().block().text(); }
+    int caretColumn() const {
+        return textCursor().position() - textCursor().block().position();
+    }
+    zametti::Kind caretKind() const { return zametti::kindOf(textCursor().block()); }
+};
+
+// --- матрица «операция × край блока» ----------------------------------------
+//
+// Строки матрицы — четыре места внутри и вокруг блока кода, столбцы — четыре
+// операции. В каждой клетке спрашивается не «как оно сейчас», а два свойства,
+// которые обязаны держаться при любом ответе: документ остался законным и
+// содержимое блока кода изменилось только там, где операция это обещала.
+struct Place {
+    const char* name;
+    const char* line;
+    int column;
+};
+
+const Place kPlaces[] = {
+    {"до блока", "before", 6},
+    {"первая строка, начало", "one", 0},
+    {"первая строка, конец", "one", 3},
+    {"последняя строка, конец", "two", 3},
+    {"после блока", "after", 0},
+};
+
+void runMatrix() {
+    struct Op {
+        const char* name;
+        // Qt::Key, а не int: у QTest::keyClick есть перегрузка на char, и int
+        // уезжает именно в неё — Key_Return (0x01000004) обрезается до знака
+        // с кодом 4, и набор падает ассертом внутри Qt.
+        Qt::Key key;
+        Qt::KeyboardModifiers mods;
+    };
+    const Op ops[] = {
+        {"Enter", Qt::Key_Return, Qt::NoModifier},
+        {"Backspace", Qt::Key_Backspace, Qt::NoModifier},
+        {"Delete", Qt::Key_Delete, Qt::NoModifier},
+        {"Ctrl+Enter", Qt::Key_Return, Qt::ControlModifier},
+        {"Tab", Qt::Key_Tab, Qt::NoModifier},
+        {"Shift+Tab", Qt::Key_Backtab, Qt::ShiftModifier},
+    };
+
+    int cell = 0;
+    for (const Place& place : kPlaces) {
+        for (const Op& op : ops) {
+            Editor editor;
+            editor.openText(QStringLiteral("матрица-%1.md").arg(++cell), kNote);
+            editor.caretTo(QString::fromUtf8(place.line), place.column);
+            QTest::keyClick(&editor, op.key, op.mods);
+            QTest::qWait(5);
+            checkStillLegal(editor, std::string(op.name) + " в «" + place.name + "»");
+        }
+    }
+}
+
+// --- Ctrl+Enter: выход из блока ---------------------------------------------
+//
+// Договор брифа: из ЛЮБОГО места блока кода каретка встаёт в пустую строку
+// сразу после него, а содержимое блока не меняется вовсе.
+void checkLeaveCodeBlock() {
+    const Place inside[] = {
+        {"первая строка, начало", "one", 0},
+        {"первая строка, конец", "one", 3},
+        {"последняя строка, начало", "two", 0},
+        {"последняя строка, конец", "two", 3},
+    };
+    int n = 0;
+    for (const Place& place : inside) {
+        Editor editor;
+        editor.openText(QStringLiteral("выход-%1.md").arg(++n), kNote);
+        editor.caretTo(QString::fromUtf8(place.line), place.column);
+        QTest::keyClick(&editor, Qt::Key_Return, Qt::ControlModifier);
+        QTest::qWait(5);
+
+        check(editor.caretKind() != zametti::Kind::Code,
+              std::string("Ctrl+Enter из «") + place.name + "»: каретка вышла из кода");
+        check(editor.caretLine().isEmpty(),
+              std::string("Ctrl+Enter из «") + place.name + "»: строка пустая");
+
+        // Код не тронут — ни одной буквой.
+        const std::string text = markdownOf(editor);
+        check(text.find("one\ntwo\n```") != std::string::npos,
+              std::string("Ctrl+Enter из «") + place.name + "»: код цел");
+
+        // И печатать после этого можно обычным текстом, а не кодом.
+        QTest::keyClicks(&editor, QStringLiteral("tail"));
+        QTest::qWait(5);
+        check(editor.caretKind() == zametti::Kind::Paragraph,
+              std::string("Ctrl+Enter из «") + place.name + "»: печатается абзацем");
+        checkStillLegal(editor, std::string("Ctrl+Enter из «") + place.name + "» и набор");
+    }
+
+    // Блок в конце заметки — та самая ловушка владельца: после него не встать.
+    Editor tail;
+    tail.openText(QStringLiteral("выход-конец.md"), "head\n\n```py\none\n```\n");
+    tail.caretTo(QStringLiteral("one"), 3);
+    QTest::keyClick(&tail, Qt::Key_Return, Qt::ControlModifier);
+    QTest::qWait(5);
+    check(tail.caretKind() != zametti::Kind::Code, "блок в конце заметки: вышли из кода");
+    QTest::keyClicks(&tail, QStringLiteral("tail"));
+    QTest::qWait(5);
+    // Пустая строка, в которую встала каретка, ПРЕВРАЩАЕТСЯ в набранный абзац
+    // — отдельной пустой строки после блока не остаётся, и это верно: между
+    // забором и абзацем markdown её не требует.
+    checkEq("head\n\n```py\none\n```\ntail\n", markdownOf(tail),
+            "блок в конце: после него встал абзац");
+
+    // Один Ctrl+Z возвращает всё как было — включая пустую строку.
+    Editor undo;
+    undo.openText(QStringLiteral("выход-отмена.md"), kNote);
+    const std::string before = markdownOf(undo);
+    undo.caretTo(QStringLiteral("one"), 3);
+    QTest::keyClick(&undo, Qt::Key_Return, Qt::ControlModifier);
+    QTest::qWait(5);
+    check(markdownOf(undo) != before, "Ctrl+Enter что-то изменил");
+    undo.undo();
+    QTest::qWait(5);
+    checkEq(before, markdownOf(undo), "один Ctrl+Z возвращает прежнее");
+}
+
+// --- табуляция --------------------------------------------------------------
+void checkCodeTabs() {
+    const int width = zametti::appearance().codeTabWidth;
+    check(width == 4, "ширина стопа по умолчанию — четыре");
+
+    // Из начала строки Tab даёт ровно стоп пробелов, и это ПРОБЕЛЫ, а не знак
+    // табуляции: иначе набранное нами и старое из файлов разъезжались бы.
+    Editor editor;
+    editor.openText(QStringLiteral("таб-начало.md"), kNote);
+    editor.caretTo(QStringLiteral("one"), 0);
+    QTest::keyClick(&editor, Qt::Key_Tab, Qt::NoModifier);
+    QTest::qWait(5);
+    checkEq("    one", editor.caretLine().toStdString(), "Tab из начала строки — стоп пробелов");
+    check(!editor.caretLine().contains(QLatin1Char('\t')), "знака табуляции не появилось");
+    check(editor.caretColumn() == width, "каретка за вставленными пробелами");
+
+    // Из середины — ДО СТОПА, а не ширина стопа: после одного знака остаётся
+    // три пробела, а не четыре.
+    Editor middle;
+    middle.openText(QStringLiteral("таб-середина.md"), kNote);
+    middle.caretTo(QStringLiteral("one"), 1);
+    QTest::keyClick(&middle, Qt::Key_Tab, Qt::NoModifier);
+    QTest::qWait(5);
+    checkEq("o   ne", middle.caretLine().toStdString(), "Tab из середины — до ближайшего стопа");
+
+    // Shift+Tab без выделения снимает отступ своей строки, но не глубже нуля.
+    Editor back;
+    back.openText(QStringLiteral("таб-снять.md"), "head\n\n```py\n        deep\n```\n");
+    back.caretTo(QStringLiteral("        deep"), 12);
+    QTest::keyClick(&back, Qt::Key_Backtab, Qt::ShiftModifier);
+    QTest::qWait(5);
+    checkEq("    deep", back.caretLine().toStdString(), "Shift+Tab снял один стоп");
+    QTest::keyClick(&back, Qt::Key_Backtab, Qt::ShiftModifier);
+    QTest::qWait(5);
+    checkEq("deep", back.caretLine().toStdString(), "и второй");
+    QTest::keyClick(&back, Qt::Key_Backtab, Qt::ShiftModifier);
+    QTest::qWait(5);
+    checkEq("deep", back.caretLine().toStdString(), "глубже нуля не уходит");
+
+    // Отступ не кратен стопу: снимается ДО БЛИЖАЙШЕГО стопа, а не на целый
+    // стоп. Шесть пробелов дают четыре, а не два.
+    Editor odd;
+    odd.openText(QStringLiteral("таб-неровно.md"), "head\n\n```py\n      deep\n```\n");
+    odd.caretTo(QStringLiteral("      deep"), 10);
+    QTest::keyClick(&odd, Qt::Key_Backtab, Qt::ShiftModifier);
+    QTest::qWait(5);
+    checkEq("    deep", odd.caretLine().toStdString(), "снятие идёт до ближайшего стопа");
+
+    // Выделение по строкам: отступ всех задетых строк, каретка и выделение
+    // переживают правку.
+    Editor many;
+    many.openText(QStringLiteral("таб-выделение.md"), kNote);
+    {
+        QTextCursor at(many.document());
+        QTextBlock first;
+        for (QTextBlock b = many.document()->firstBlock(); b.isValid(); b = b.next())
+            if (b.text() == QStringLiteral("one")) first = b;
+        at.setPosition(first.position() + 1);
+        at.setPosition(first.next().position() + 1, QTextCursor::KeepAnchor);
+        many.setTextCursor(at);
+    }
+    QTest::keyClick(&many, Qt::Key_Tab, Qt::NoModifier);
+    QTest::qWait(5);
+    check(markdownOf(many).find("    one\n    two") != std::string::npos,
+          "Tab по выделению отступил обе строки");
+    check(many.textCursor().hasSelection(), "выделение пережило правку");
+    QTest::keyClick(&many, Qt::Key_Backtab, Qt::ShiftModifier);
+    QTest::qWait(5);
+    check(markdownOf(many).find("one\ntwo") != std::string::npos,
+          "Shift+Tab по выделению вернул как было");
+
+    // Вне блока кода Tab по-прежнему живёт списками: правило не должно было
+    // задеть их вовсе.
+    Editor list;
+    list.openText(QStringLiteral("таб-список.md"), "- one\n- two\n");
+    list.caretTo(QStringLiteral("two"), 0);
+    QTest::keyClick(&list, Qt::Key_Tab, Qt::NoModifier);
+    QTest::qWait(5);
+    check(zametti::levelOf(list.textCursor().block()) == 1,
+          "Tab в списке по-прежнему углубляет пункт");
+    check(!list.caretLine().startsWith(QLatin1Char(' ')),
+          "и пробелов в пункт не ставит");
+
+    checkStillLegal(editor, "после табуляции");
+}
+
+// --- нарезка блока кода по строкам ------------------------------------------
+//
+// ЗАМЕЧЕНО, НЕ ПОЧИНЕНО (см. repairAfterTyping в editor_ops.cpp): первый же
+// набранный в блоке кода знак склеивает его строки в один QTextBlock. Файл от
+// этого не меняется, а нарезка по строкам — та, ради которой блок кода вообще
+// режется, — пропадает. Проверка записана здесь как ОПИСАНИЕ нынешнего
+// поведения: когда решение будет принято, менять надо будет её, а не выяснять
+// заново, как оно было.
+void checkCodeSlicingAfterTyping() {
+    Editor editor;
+    editor.openText(QStringLiteral("нарезка.md"), kNote);
+
+    const auto codeBlocks = [&editor] {
+        int n = 0;
+        for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next())
+            if (zametti::kindOf(b) == zametti::Kind::Code) ++n;
+        return n;
+    };
+    check(codeBlocks() == 2, "после открытия строк кода две");
+
+    editor.caretTo(QStringLiteral("two"), 3);
+    QTest::keyClicks(&editor, QStringLiteral("x"));
+    QTest::qWait(5);
+    check(codeBlocks() == 1, "ПОКА ЧТО: после набора строки блока склеились в одну");
+    checkStillLegal(editor, "набор в блоке кода");
+}
+
+// --- литеральные табы из старых файлов --------------------------------------
+//
+// Мы ставим пробелы, но в чужих файлах табы есть, и рисоваться они обязаны тем
+// же стопом: иначе одинаковый на вид отступ на экране разъезжается. Спрашиваем
+// не настройку, а РАССТАНОВКУ — где на экране оказалась буква после таба.
+void checkLiteralTabs() {
+    Editor editor;
+    // Первая строка — таб, вторая — пробелы до того же стопа (ширина 4).
+    editor.openText(QStringLiteral("таб-старый.md"), "head\n\n```py\na\tb\na   b\n```\n");
+    QTest::qWait(20);
+
+    qreal withTab = -1;
+    qreal withSpaces = -2;
+    for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next()) {
+        const QTextLayout* layout = b.layout();
+        if (layout == nullptr || layout->lineCount() == 0) continue;
+        if (b.text() == QStringLiteral("a\tb")) withTab = layout->lineAt(0).cursorToX(2);
+        if (b.text() == QStringLiteral("a   b")) withSpaces = layout->lineAt(0).cursorToX(4);
+    }
+    check(withTab > 0, "строка с табом разложена");
+    check(std::fabs(withTab - withSpaces) < 1.0,
+          "таб доводит до того же стопа, что и пробелы (" + num(withTab) + " против " +
+              num(withSpaces) + ")");
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    QApplication app(argc, argv);
+    g_dir = argc > 1 ? QString::fromLocal8Bit(argv[1]) : QDir::tempPath();
+    QDir().mkpath(g_dir);
+
+    runMatrix();
+    checkLeaveCodeBlock();
+    checkCodeTabs();
+    checkLiteralTabs();
+    checkCodeSlicingAfterTyping();
+
+    std::printf("правка кода: %d проверок, %s\n", zt::g_checks,
+                zt::g_failures == 0 ? "всё зелено"
+                                    : (std::to_string(zt::g_failures) + " провалов").c_str());
+    return zt::g_failures == 0 ? 0 : 1;
+}
