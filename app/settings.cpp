@@ -115,6 +115,9 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("codePadBottom"), a.codePadBottom},
         {QStringLiteral("codeCornerRadius"), a.codeCornerRadius},
         {QStringLiteral("codeLangPointSize"), a.codeLangPointSize},
+        {QStringLiteral("codeStripPadding"), a.codeStripPadding},
+        {QStringLiteral("codeStripRuleWidth"), a.codeStripRuleWidth},
+        {QStringLiteral("codeStripRuleInset"), a.codeStripRuleInset},
         {QStringLiteral("quoteIndent"), a.quoteIndent},
         {QStringLiteral("sideMargin"), a.sideMargin},
         {QStringLiteral("verticalMargin"), a.verticalMargin},
@@ -137,6 +140,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("divider"), colorToString(a.dividerColor)},
         {QStringLiteral("codeBackground"), colorToString(a.codeBackground)},
         {QStringLiteral("codeStripBackground"), colorToString(a.codeStripBackground)},
+        {QStringLiteral("codeStripRule"), colorToString(a.codeStripRule)},
         {QStringLiteral("codeLang"), colorToString(a.codeLangColor)},
         {QStringLiteral("caret"), colorToString(a.caretColor)},
     };
@@ -343,6 +347,9 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readReal(layout, "codePadBottom", a.codePadBottom);
     readReal(layout, "codeCornerRadius", a.codeCornerRadius);
     readReal(layout, "codeLangPointSize", a.codeLangPointSize);
+    readReal(layout, "codeStripPadding", a.codeStripPadding);
+    readReal(layout, "codeStripRuleWidth", a.codeStripRuleWidth);
+    readReal(layout, "codeStripRuleInset", a.codeStripRuleInset);
     readReal(layout, "quoteIndent", a.quoteIndent);
     readReal(layout, "sideMargin", a.sideMargin);
     readReal(layout, "verticalMargin", a.verticalMargin);
@@ -364,6 +371,7 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readColor(colors, "divider", a.dividerColor);
     readColor(colors, "codeBackground", a.codeBackground);
     readColor(colors, "codeStripBackground", a.codeStripBackground);
+    readColor(colors, "codeStripRule", a.codeStripRule);
     readColor(colors, "codeLang", a.codeLangColor);
     readColor(colors, "caret", a.caretColor);
 
@@ -575,6 +583,9 @@ CodePlate codePlate(qreal zoom) {
     plate.padLeft = g_appearance.codePadLeft * charUnit;
     plate.indent = g_appearance.codeIndent * charUnit;
     plate.radius = g_appearance.codeCornerRadius * zoom;
+    plate.stripPadding = g_appearance.codeStripPadding * charUnit;
+    plate.ruleWidth = g_appearance.codeStripRuleWidth * zoom;
+    plate.ruleInset = g_appearance.codeStripRuleInset * charUnit;
     return plate;
 }
 

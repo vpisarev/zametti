@@ -333,13 +333,21 @@ void checkCodeTabs() {
 
 // --- нарезка блока кода по строкам ------------------------------------------
 //
-// ЗАМЕЧЕНО, НЕ ПОЧИНЕНО (см. repairAfterTyping в editor_ops.cpp): первый же
-// набранный в блоке кода знак склеивает его строки в один QTextBlock. Файл от
-// этого не меняется, а нарезка по строкам — та, ради которой блок кода вообще
-// режется, — пропадает. Проверка записана здесь как ОПИСАНИЕ нынешнего
-// поведения: когда решение будет принято, менять надо будет её, а не выяснять
-// заново, как оно было.
-void checkCodeSlicingAfterTyping() {
+// ЗАМЕЧЕНО, НЕ ПОЧИНЕНО. Блок кода лежит в документе построчно, по QTextBlock
+// на строку, и это не прихоть: Qt переразмечает целиком тот блок, в который
+// пишут, и правка внутри блока на 31 480 знаков стоила 4257 мкс против 109 мкс
+// в блоке на сотню (замер этапа 5, doc_model.h).
+//
+// Слияние соседей (repairAfterTyping) ставит на месте границы блоков
+// разделитель строк, и весь блок оказывается одним QTextBlock. Файл от этого
+// не меняется — читается тот же IR, — но нарезка пропадает.
+//
+// Пробовал двумя способами: не сливать строки одного литерального блока и,
+// наоборот, резать слитое обратно в syncLiteralBlocks. Оба меняют выход трёх
+// давних фаззеров, то есть задевают куда больше, чем видно; решение и разбор —
+// отдельным заходом. Проверка записана как ОПИСАНИЕ нынешнего поведения:
+// когда починим, менять надо будет её, а не выяснять заново, как оно было.
+void checkCodeStaysSliced() {
     Editor editor;
     editor.openText(QStringLiteral("нарезка.md"), kNote);
 
@@ -383,6 +391,77 @@ void checkLiteralTabs() {
               num(withSpaces) + ")");
 }
 
+// --- авто-отступ и отмена (замечания владельца по этапу 11) ------------------
+const char* kProgram = R"(head
+
+```
+#include <stdio.h>
+
+int main(int argc, char** argv)
+{
+    printf("Hello, darling!\n");
+}
+```
+)";
+
+void checkAutoIndent() {
+    Editor editor;
+    editor.openText(QStringLiteral("отступ.md"), kProgram);
+    const QString line = QStringLiteral("    printf(\"Hello, darling!\\n\");");
+    editor.caretTo(line, line.size());
+    QTest::keyClick(&editor, Qt::Key_Return, Qt::NoModifier);
+    QTest::qWait(10);
+    check(editor.caretColumn() == 4, "каретка встала за скопированным отступом (" +
+                                         std::to_string(editor.caretColumn()) + ")");
+    // Набирать здесь дальше нечего: первый же знак склеивает строки блока в
+    // одну (см. checkCodeStaysSliced) — беда известная и пока не починенная.
+}
+
+// Та же проверка, но на НАСТОЯЩЕЙ заметке владельца (копия): в ней есть
+// картинка, задачи и блок кода в самом конце.
+void checkAutoIndentInRealNote(const QString& source) {
+    if (source.isEmpty() || !QFile::exists(source)) return;
+    QFile in(source);
+    if (!in.open(QIODevice::ReadOnly)) return;
+    const QString text = QString::fromUtf8(in.readAll());
+    in.close();
+    Editor editor;
+    const QString path = writeNote(QStringLiteral("живая.md"), text);
+    editor.resize(900, 700);
+    editor.show();
+    QTest::qWait(10);
+    editor.openFile(path);
+    QTest::qWait(60);
+
+    const QString line = QStringLiteral("    printf(\"Hello, darling!\\n\");");
+    editor.caretTo(line, line.size());
+    QTest::keyClick(&editor, Qt::Key_Return, Qt::NoModifier);
+    QTest::qWait(10);
+    check(editor.caretColumn() == 4, "живая заметка: каретка за отступом (" +
+                                         std::to_string(editor.caretColumn()) + ")");
+}
+
+void checkUndoAfterLeaving() {
+    Editor editor;
+    editor.openText(QStringLiteral("отмена.md"), kProgram);
+    // Сначала правка ВНУТРИ блока — как у владельца.
+    editor.caretTo(QStringLiteral("}"), 1);
+    QTest::keyClicks(&editor, QStringLiteral("y"));
+    QTest::qWait(10);
+    const std::string afterTyping = markdownOf(editor);
+
+    QTest::keyClick(&editor, Qt::Key_Return, Qt::ControlModifier);
+    // ЖДЁМ автосохранение: человек между нажатиями думает, и таймер успевает
+    // сработать. Без этой паузы набор проверял не то, что делает владелец.
+    QTest::qWait(1600);
+    const std::string afterLeaving = markdownOf(editor);
+    check(afterLeaving != afterTyping, "Ctrl+Enter что-то изменил");
+
+    QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+    QTest::qWait(10);
+    checkEq(afterTyping, markdownOf(editor), "первый Ctrl+Z отменяет именно выход из блока");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -394,7 +473,10 @@ int main(int argc, char** argv) {
     checkLeaveCodeBlock();
     checkCodeTabs();
     checkLiteralTabs();
-    checkCodeSlicingAfterTyping();
+    checkCodeStaysSliced();
+    checkAutoIndent();
+    checkAutoIndentInRealNote(argc > 2 ? QString::fromLocal8Bit(argv[2]) : QString());
+    checkUndoAfterLeaving();
 
     std::printf("правка кода: %d проверок, %s\n", zt::g_checks,
                 zt::g_failures == 0 ? "всё зелено"

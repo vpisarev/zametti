@@ -1080,7 +1080,7 @@ QRectF NoteView::copyButtonRect(const CodeBand& band) const {
     const CodePlate plate = codePlate(zoom_);
     if (!band.first || plate.strip <= 0.0) return {};
     const qreal side = qMin(plate.strip * 0.62, 18.0 * zoom_);
-    const qreal gap = plate.padLeft;
+    const qreal gap = plate.padLeft + plate.stripPadding;
     return QRectF(band.rect.right() - gap - side,
                   band.rect.top() - plate.strip + (plate.strip - side) / 2.0, side, side);
 }
@@ -1111,13 +1111,26 @@ void NoteView::paintCodeBackground(QPainter& painter, const QRectF& visible) {
         painter.fillPath(path, appearance().codeBackground);
         if (!band.first) continue;
 
-        // Полоска — та же плашка, только темнее. Клип по контуру: иначе её
-        // прямые углы торчали бы из скруглённых углов плашки.
+        // Полоска того же цвета, что и плашка (решение владельца), а границу
+        // держит тонкая черта под ней. Заливка всё же своя: цвет вынесен в
+        // конфиг, и сделать полоску темнее — законная настройка.
         painter.save();
         painter.setClipPath(path, Qt::IntersectClip);
         painter.fillRect(QRectF(whole.left(), whole.top(), whole.width(), plate.strip),
                          appearance().codeStripBackground);
         painter.restore();
+
+        // Черта НЕ во всю ширину: слева начинается от отступа буквы, справа не
+        // доходит полбуквы до края. Иначе она читается как рамка, а нужна
+        // граница между надписью и кодом.
+        if (plate.ruleWidth > 0.0) {
+            const qreal left = whole.left() + plate.padLeft;
+            const qreal right = whole.right() - plate.ruleInset;
+            if (right > left)
+                painter.fillRect(QRectF(left, band.rect.top() - plate.ruleWidth,
+                                        right - left, plate.ruleWidth),
+                                 appearance().codeStripRule);
+        }
         paintCodeStrip(painter, band);
     }
     painter.restore();
@@ -1138,7 +1151,7 @@ void NoteView::paintCodeStrip(QPainter& painter, const CodeBand& band) {
     if (!band.info.isEmpty()) {
         painter.setFont(codeLangFont(zoom_));
         painter.setPen(appearance().codeLangColor);
-        painter.drawText(strip.adjusted(plate.padLeft + plate.indent, 0, 0, 0),
+        painter.drawText(strip.adjusted(plate.padLeft + plate.stripPadding, 0, 0, 0),
                          Qt::AlignVCenter | Qt::AlignLeft, band.info);
     }
 

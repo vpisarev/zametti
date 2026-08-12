@@ -175,10 +175,19 @@ struct Appearance {
     qreal codeStripHeight = 1.0;
     qreal codePadBottom = 0.4;
     qreal codeCornerRadius = 6.0;   // px, умножается на зум
+    // Внутреннее поле полоски: на столько имя языка отступает от левого края
+    // плашки, а кнопка копирования — от правого. В ширинах "A".
+    qreal codeStripPadding = 0.6;
+    // Черта между полоской и кодом. Полоска того же цвета, что и подложка
+    // (решение владельца), и границу держит именно она. Не во всю ширину: слева
+    // начинается от отступа буквы, справа не доходит полбуквы до края.
+    qreal codeStripRuleWidth = 1.0;   // px, умножается на зум
+    qreal codeStripRuleInset = 0.5;   // отступ справа, в ширинах "A"
     // Имя языка набирается гарнитурой боковых панелей (просьба владельца): в
     // полоске это подпись, а не код. Ноль в кегле — как у боковой панели.
     qreal codeLangPointSize = 8.5;
-    QColor codeStripBackground{0, 0, 0, 26};
+    QColor codeStripBackground{0, 0, 0, 14};
+    QColor codeStripRule{0, 0, 0, 40};
     QColor codeLangColor{0x7a, 0x80, 0x88};
 
     // --- маркированный список ---
@@ -690,6 +699,9 @@ struct CodePlate {
     qreal padLeft = 0.0;    // отступ кода от левого края плашки
     qreal indent = 0.0;     // отступ самой плашки от отступа абзаца
     qreal radius = 0.0;     // радиус скругления углов
+    qreal stripPadding = 0.0;  // поле полоски слева и справа
+    qreal ruleWidth = 0.0;     // толщина черты под полоской
+    qreal ruleInset = 0.0;     // насколько черта не доходит до правого края
 };
 CodePlate codePlate(qreal zoom);
 
