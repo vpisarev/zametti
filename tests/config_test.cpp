@@ -13,6 +13,7 @@
 #include "test_util.h"
 
 #include <QCoreApplication>
+#include <QColor>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -155,6 +156,88 @@ void checkLoadUnderstandsComments() {
     ZT_TRUE("и о нём сказано", !complaint.isEmpty());
 }
 
+// Раздел таблиц: умолчания ровно те, о которых договорились с владельцем, и
+// все девять ключей читаются из конфига.
+//
+// Умолчание — таблица БЕЗ СЕТКИ: три чёрных линии поперёк (над заголовком, под
+// ним и под последней строкой), всё остальное по нулям и прозрачно. Это не
+// придирка к числам, а описание вида: поменяется умолчание — поменяется и
+// таблица во всех заметках сразу, и узнать об этом надо здесь.
+void checkTablesDefaults() {
+    zametti::Appearance fresh;
+    ZT_EQ("цвет линий — чёрный", std::string("#000000"),
+          fresh.tables.borderColor.name(QColor::HexRgb).toStdString());
+    ZT_EQ("линия над и под таблицей", std::string("2"),
+          std::to_string(int(fresh.tables.horizontalBorder)));
+    ZT_EQ("линия под заголовком", std::string("2"),
+          std::to_string(int(fresh.tables.headerSeparator)));
+    ZT_EQ("вертикальных линий нет", std::string("0"),
+          std::to_string(int(fresh.tables.verticalBorder)));
+    ZT_EQ("разделителей строк нет", std::string("0"),
+          std::to_string(int(fresh.tables.rowSeparator)));
+    ZT_EQ("разделителей колонок нет", std::string("0"),
+          std::to_string(int(fresh.tables.columnSeparator)));
+    ZT_TRUE("заливка заголовка прозрачна", fresh.tables.headerColor.alpha() == 0);
+    ZT_TRUE("заливка тела прозрачна", fresh.tables.tableColor.alpha() == 0);
+    ZT_TRUE("зебры нет", fresh.tables.altTableColor.alpha() == 0);
+}
+
+void checkTablesFromConfig() {
+    QFile file(zametti::configPath());
+    ZT_TRUE("файл открывается на запись",
+            file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    file.write(R"cfg({
+  "tables": {
+    "borderColor": "#3355aa",
+    "horizontalBorder": 1,
+    "verticalBorder": 3,
+    "headerSeparator": 4,
+    "rowSeparator": 5,
+    "columnSeparator": 6,
+    "headerColor": "#eeeeee",
+    "tableColor": "#80ffffff",
+    "altTableColor": "#11223344"
+  }
+}
+)cfg");
+    file.close();
+
+    QString error;
+    QStringList unknown;
+    ZT_TRUE("конфиг с разделом таблиц прочитан: " + s(error),
+            zametti::loadAppearance(&error, &unknown));
+    // Раздел ЗНАКОМ программе: неизвестный ключ — это опечатка, о которой она
+    // обязана сказать, и молчание здесь означало бы, что раздел не заведён.
+    ZT_EQ("незнакомых ключей нет", std::string(), unknown.join(QLatin1Char(',')).toStdString());
+
+    const zametti::Appearance& a = zametti::appearance();
+    ZT_EQ("цвет линий", std::string("#3355aa"),
+          a.tables.borderColor.name(QColor::HexRgb).toStdString());
+    ZT_EQ("толщины прочитаны все шесть", std::string("1 3 4 5 6"),
+          std::to_string(int(a.tables.horizontalBorder)) + " " +
+              std::to_string(int(a.tables.verticalBorder)) + " " +
+              std::to_string(int(a.tables.headerSeparator)) + " " +
+              std::to_string(int(a.tables.rowSeparator)) + " " +
+              std::to_string(int(a.tables.columnSeparator)));
+    ZT_EQ("заливка заголовка", std::string("#eeeeee"),
+          a.tables.headerColor.name(QColor::HexRgb).toStdString());
+    ZT_EQ("полупрозрачная заливка тела", std::string("128"),
+          std::to_string(a.tables.tableColor.alpha()));
+    ZT_EQ("зебра с прозрачностью", std::string("17"),
+          std::to_string(a.tables.altTableColor.alpha()));
+
+    // Опечатка в имени ключа не должна проходить молча.
+    QFile typo(zametti::configPath());
+    ZT_TRUE("файл открывается на запись",
+            typo.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    typo.write(R"cfg({ "tables": { "borderColour": "#123456" } })cfg");
+    typo.close();
+    QStringList complaints;
+    zametti::loadAppearance(&error, &complaints);
+    ZT_EQ("об опечатке в ключе сказано", std::string("tables.borderColour"),
+          complaints.join(QLatin1Char(',')).toStdString());
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -167,6 +250,8 @@ int main(int argc, char** argv) {
     checkStripper();
     checkTemplate();
     checkLoadUnderstandsComments();
+    checkTablesDefaults();
+    checkTablesFromConfig();
 
     return zt::report("config");
 }

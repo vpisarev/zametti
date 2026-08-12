@@ -91,6 +91,18 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("fallbackScale"), a.fallbackScale},
     };
 
+    QJsonObject tables{
+        {QStringLiteral("borderColor"), colorToString(a.tables.borderColor)},
+        {QStringLiteral("horizontalBorder"), a.tables.horizontalBorder},
+        {QStringLiteral("verticalBorder"), a.tables.verticalBorder},
+        {QStringLiteral("headerSeparator"), a.tables.headerSeparator},
+        {QStringLiteral("rowSeparator"), a.tables.rowSeparator},
+        {QStringLiteral("columnSeparator"), a.tables.columnSeparator},
+        {QStringLiteral("headerColor"), colorToString(a.tables.headerColor)},
+        {QStringLiteral("tableColor"), colorToString(a.tables.tableColor)},
+        {QStringLiteral("altTableColor"), colorToString(a.tables.altTableColor)},
+    };
+
     QJsonArray paperHeadings;
     for (qreal v : a.pdf.headingScale) paperHeadings.append(v);
     QJsonObject pdf{
@@ -307,6 +319,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("imageSelection"), imageSelection},
         {QStringLiteral("find"), find},
         {QStringLiteral("editor"), editor},
+        {QStringLiteral("tables"), tables},
         {QStringLiteral("images"), images},
         {QStringLiteral("shortcuts"), shortcuts},
         {QStringLiteral("zoom"), zoom},
@@ -324,6 +337,17 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     const QJsonArray headings = font.value(QStringLiteral("headingScale")).toArray();
     for (int i = 0; i < headings.size() && i < int(a.headingScale.size()); ++i)
         if (headings.at(i).isDouble()) a.headingScale[size_t(i)] = headings.at(i).toDouble();
+
+    const QJsonObject tables = root.value(QStringLiteral("tables")).toObject();
+    readColor(tables, "borderColor", a.tables.borderColor);
+    readReal(tables, "horizontalBorder", a.tables.horizontalBorder);
+    readReal(tables, "verticalBorder", a.tables.verticalBorder);
+    readReal(tables, "headerSeparator", a.tables.headerSeparator);
+    readReal(tables, "rowSeparator", a.tables.rowSeparator);
+    readReal(tables, "columnSeparator", a.tables.columnSeparator);
+    readColor(tables, "headerColor", a.tables.headerColor);
+    readColor(tables, "tableColor", a.tables.tableColor);
+    readColor(tables, "altTableColor", a.tables.altTableColor);
 
     const QJsonObject paper = root.value(QStringLiteral("pdf")).toObject();
     readString(paper, "fontFamily", a.pdf.fontFamily);
