@@ -1044,11 +1044,23 @@ QVector<CodeBand> NoteView::codeBands(const QRectF& visible) const {
     const CodePlate plate = codePlate(zoom_);
 
     QVector<CodeBand> bands;
-    for (QTextBlock block = document()->findBlock(firstVisible); block.isValid();
-         block = block.next()) {
+    // Начинаем с блока ВЫШЕ первого видимого: плашка вылезает за прямоугольник
+    // своего блока — вверх на полоску, вниз на поле, — и блок, чей текст ещё не
+    // виден, вполне может показывать сюда свою полоску.
+    QTextBlock start = document()->findBlock(firstVisible);
+    if (start.isValid() && start.previous().isValid()) start = start.previous();
+
+    for (QTextBlock block = start; block.isValid(); block = block.next()) {
         const QRectF rect = layout->blockBoundingRect(block);
-        if (rect.top() > visible.bottom()) break;
-        if (rect.bottom() < visible.top()) continue;
+        // ГРАНИЦЫ С ЗАПАСОМ НА ПЛАШКУ. Qt при прокрутке перерисовывает только
+        // открывшуюся полосу, и она запросто попадает целиком в ПОЛЕ блока —
+        // туда, где нарисована полоска, а не текст. По голому прямоугольнику
+        // блока такой кусок оказывался «невидимым», и полоска не рисовалась
+        // вовсе: владелец увидел, что при прокрутке она то есть, то нет. Та же
+        // беда была у рамок вокруг картинок и лечится тем же — запасом на то,
+        // что блок рисует за своими краями.
+        if (rect.top() - plate.strip > visible.bottom()) break;
+        if (rect.bottom() + plate.padBottom < visible.top()) continue;
         if (isRawBlock(block) || kindOf(block) != Kind::Code) continue;
 
         // Высоту считаем по числу строк и назначенной высоте строки, а не по

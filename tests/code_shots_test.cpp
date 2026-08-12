@@ -425,6 +425,86 @@ void shootLanguageEditor(Peek& editor) {
     }
 }
 
+// --- полоска переживает частичную перерисовку --------------------------------
+//
+// При прокрутке Qt перерисовывает не весь вьюпорт, а открывшуюся полосу. Она
+// запросто попадает целиком в ПОЛЕ блока — туда, где нарисована полоска, а не
+// текст, — и по голому прямоугольнику блока такой кусок оказывался невидимым:
+// полоска то рисовалась, то нет (нашёл владелец; та же беда была у рамок
+// вокруг картинок).
+//
+// Проверка перерисовывает ровно такую полосу и смотрит, что в ней нарисовано.
+void checkStripSurvivesPartialRepaint(Peek& editor) {
+    const QVector<zametti::CodeBand> bands = editor.bands();
+    const zametti::CodePlate plate = zametti::codePlate(editor.zoom());
+    for (const zametti::CodeBand& band : bands) {
+        if (!band.first || band.info.isEmpty()) continue;
+        const int top = int(band.rect.top() - plate.strip) - editor.verticalScrollBar()->value();
+        if (top < 0 || top + int(plate.strip) >= editor.viewport()->height()) continue;
+
+        // Полоса РОВНО в высоту полоски: текста блока в ней нет ни пикселя.
+        const QRect slice(0, top + 1, editor.viewport()->width(), int(plate.strip) - 2);
+        QImage sheet(editor.viewport()->size(), QImage::Format_RGB32);
+        sheet.fill(Qt::magenta);   // чтобы нетронутое было видно сразу
+        editor.viewport()->render(&sheet, slice.topLeft(), QRegion(slice));
+
+        const int x = int(band.rect.left()) + 20;
+        const int y = slice.top() + slice.height() / 2;
+        const QRgb painted = sheet.pixel(x, y);
+        check(painted != qRgb(255, 0, 255), "полоса перерисовалась вообще");
+        // Плашка не равна фону страницы — по этому её и опознаём.
+        const QColor page = zametti::appearance().pageBackground;
+        check(qAbs(qRed(painted) - page.red()) > 1 || qAbs(qGreen(painted) - page.green()) > 1,
+              "в перерисованной полосе есть плашка, а не голый фон (" +
+                  std::to_string(qRed(painted)) + " против " + std::to_string(page.red()) + ")");
+        return;
+    }
+}
+
+// --- дополнение стоит ровно там, где продолжился бы набор ---------------------
+//
+// Владелец: набрал «c», а серое «pp» нарисовалось со сдвигом влево — вторая «p»
+// и «c» слились почти в одну букву. Причина в том, что Qt отдаёт под каретку
+// прямоугольник шириной десять пикселей, посаженный серединой на позицию
+// каретки; его левый край — это пять пикселей влево от места набора.
+//
+// Сравниваем ДВА рисунка одного и того же поля: «c» + серое «pp» и просто
+// «cpp». Правый край надписи обязан совпасть — на глаз такое расхождение
+// ловится плохо, а числом видно сразу.
+void checkCompletionSitsAtCaret(Peek& editor) {
+    const auto rightEdge = [](zametti::LanguageEditor& field) {
+        QImage sheet(field.size(), QImage::Format_RGB32);
+        sheet.fill(Qt::white);
+        field.render(&sheet);
+        int right = -1;
+        for (int x = 0; x < sheet.width(); ++x)
+            for (int y = 0; y < sheet.height(); ++y)
+                if (qGray(sheet.pixel(x, y)) < 230) right = qMax(right, x);
+        return right;
+    };
+
+    zametti::LanguageEditor whole({}, QStringLiteral("cpp"), editor.viewport());
+    whole.setFont(zametti::codeLangFont(editor.zoom()));
+    whole.resize(120, 20);
+    // Каретку уводим в начало: её столбик правый край не сдвинет.
+    whole.setCursorPosition(0);
+    const int wholeRight = rightEdge(whole);
+
+    zametti::LanguageEditor typed({QStringLiteral("cpp")}, QString(), editor.viewport());
+    typed.setFont(zametti::codeLangFont(editor.zoom()));
+    typed.resize(120, 20);
+    QTest::keyClicks(&typed, QStringLiteral("c"));
+    QTest::qWait(10);
+    check(typed.completion() == QStringLiteral("pp"), "дополнилось «pp»");
+    const int typedRight = rightEdge(typed);
+
+    check(qAbs(typedRight - wholeRight) <= 1,
+          "серый хвост кончается там же, где кончилось бы набранное целиком (" +
+              std::to_string(typedRight) + " против " + std::to_string(wholeRight) + ")");
+    whole.hide();
+    typed.hide();
+}
+
 void shots(int width, int height, const QString& tag, bool checks) {
     Peek editor;
     open(editor, width, height, tag);
@@ -434,6 +514,8 @@ void shots(int width, int height, const QString& tag, bool checks) {
         checkCornersAreRound(editor);
         checkStripIsNotDarker(editor);
         checkPaperHasNoStrip(editor);
+        checkStripSurvivesPartialRepaint(editor);
+        checkCompletionSitsAtCaret(editor);
         checkEditorHidesOldName(editor);
         shootLanguageEditor(editor);
         // Снимок — ДО проверки копирования: та оставляет на кнопке галочку
