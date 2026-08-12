@@ -51,6 +51,15 @@ struct ExportReport {
 // в «Без названия»: файла без имени не бывает.
 QString fileNameFromTitle(const QString& title);
 
+// Что подставить в диалог вывоза: ПОЛНЫЙ путь, а не одно имя.
+//
+// QFileDialog::selectFile с относительным именем ставит файл в каталог по
+// умолчанию, а не в тот, что задан диалогу: каталог сбрасывался на «Документы»
+// и при открытии диалога, и при каждой смене формата (нашёл владелец). Правило
+// записано функцией, чтобы у обоих мест — открытия и смены фильтра — оно было
+// одно.
+QString exportTargetPath(const QString& dir, const QString& base, bool paper);
+
 // Вывезти заметку как markdown. targetPath — полный путь к .md, каталог обязан
 // существовать. Картинки ложатся в тот же каталог.
 ExportReport exportMarkdown(const QString& notePath, const QString& targetPath);

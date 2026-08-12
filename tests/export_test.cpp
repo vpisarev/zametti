@@ -179,6 +179,25 @@ void checkIntoStore(const QDir& root) {
 
 }  // namespace
 
+// Полный путь в диалог вывоза, а не одно имя. Именно относительное имя и
+// сбрасывало каталог на «Документы» — и при открытии, и при смене формата.
+void checkExportTargetPath() {
+    ZT_EQ("к имени приписан каталог", std::string("/tmp/куда/Заметка.md"),
+          zametti::exportTargetPath(QStringLiteral("/tmp/куда"), QStringLiteral("Заметка"),
+                                    false).toStdString());
+    ZT_EQ("для бумаги расширение другое", std::string("/tmp/куда/Заметка.pdf"),
+          zametti::exportTargetPath(QStringLiteral("/tmp/куда"), QStringLiteral("Заметка"),
+                                    true).toStdString());
+    ZT_TRUE("путь абсолютный",
+            QFileInfo(zametti::exportTargetPath(QStringLiteral("/tmp/куда"),
+                                                QStringLiteral("Заметка"), false))
+                .isAbsolute());
+    // Каталога нет — остаётся одно имя, и диалог решит сам: без этого путь
+    // получался бы вида "/Заметка.md", то есть в корне.
+    ZT_EQ("без каталога — одно имя", std::string("Заметка.md"),
+          zametti::exportTargetPath(QString(), QStringLiteral("Заметка"), false).toStdString());
+}
+
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     QTemporaryDir tmp;
@@ -189,6 +208,7 @@ int main(int argc, char** argv) {
     const QDir root(tmp.path());
 
     checkNames();
+    checkExportTargetPath();
     checkFreshDir(root);
     checkSamePicture(root);
     checkStrangerInTheWay(root);

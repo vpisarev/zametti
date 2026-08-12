@@ -866,6 +866,7 @@ Session loadSession() {
     session.splitterState = QByteArray::fromBase64(
         root.value(QStringLiteral("splitterState")).toString().toLatin1());
     session.panelsHidden = root.value(QStringLiteral("panelsHidden")).toBool(false);
+    session.exportDir = root.value(QStringLiteral("exportDir")).toString();
     for (const QJsonValue& v : root.value(QStringLiteral("expandedDirs")).toArray())
         if (v.isString()) session.expandedDirs.append(v.toString());
     for (const QJsonValue& v : root.value(QStringLiteral("searchHistory")).toArray())
@@ -891,6 +892,7 @@ void saveSession(const Session& session) {
                   {QStringLiteral("splitterState"),
                    QString::fromLatin1(session.splitterState.toBase64())},
                   {QStringLiteral("panelsHidden"), session.panelsHidden},
+                  {QStringLiteral("exportDir"), session.exportDir},
                   {QStringLiteral("expandedDirs"), expanded},
                   {QStringLiteral("searchHistory"), searches},
               });

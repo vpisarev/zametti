@@ -48,6 +48,7 @@ int main(int argc, char** argv) {
     out.zoom = 1.25;
     out.windowGeometry = QByteArray("геометрия", 18);
     out.panelsHidden = true;
+    out.exportDir = QStringLiteral("/tmp/куда-вывозили");
     zametti::saveSession(out);
 
     const QString path = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) +
@@ -69,6 +70,9 @@ int main(int argc, char** argv) {
     ZT_EQ("геометрия окна", out.windowGeometry.toBase64().toStdString(),
           back.windowGeometry.toBase64().toStdString());
     ZT_EQ("панели убраны", b(out.panelsHidden), b(back.panelsHidden));
+    // Каталог вывоза переживает перезапуск: начинать каждый раз с «Документов»
+    // — значит каждый раз идти по дереву каталогов заново (замечание владельца).
+    ZT_EQ("каталог вывоза", s(out.exportDir), s(back.exportDir));
 
     // Умолчание важно не меньше: у человека, который запускает программу
     // впервые, файла нет вовсе, и панели обязаны быть на месте.

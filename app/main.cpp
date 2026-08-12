@@ -1701,7 +1701,8 @@ int main(int argc, char** argv) {
     //
     // Каталог запоминается на время сеанса: вывозят обычно несколько заметок
     // подряд и в одно место.
-    QString exportDir;
+    // Каталог вывоза переживает и смену формата, и перезапуск программы.
+    QString exportDir = session.exportDir;
     const auto exportNote = [&](const QString& file) {
         if (file.isEmpty()) return;
         // Пишем ДО вывоза: иначе наружу уехала бы заметка без последних правок,
@@ -1713,7 +1714,7 @@ int main(int argc, char** argv) {
         const QString title = model.titleOfId(QFileInfo(file).completeBaseName());
         const QString name = zametti::fileNameFromTitle(
             title.isEmpty() ? QFileInfo(file).completeBaseName() : title);
-        if (exportDir.isEmpty())
+        if (exportDir.isEmpty() || !QFileInfo(exportDir).isDir())
             exportDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
 
         const QString markdown = QStringLiteral("Markdown с картинками (*.md)");
@@ -1726,16 +1727,24 @@ int main(int argc, char** argv) {
         dialog.setAcceptMode(QFileDialog::AcceptSave);
         dialog.setNameFilters({markdown, pdf});
         dialog.setDefaultSuffix(QStringLiteral("md"));
-        dialog.selectFile(name + QStringLiteral(".md"));
+        // ИМЯ ЦЕЛИКОМ, С КАТАЛОГОМ. selectFile с относительным именем ставит
+        // файл в каталог по умолчанию, а не в тот, что задан диалогу: каталог
+        // сбрасывался на «Документы» и при открытии, и при каждой смене
+        // формата. Владелец наткнулся на оба случая.
+        dialog.selectFile(zametti::exportTargetPath(exportDir, name, false));
         QObject::connect(&dialog, &QFileDialog::filterSelected, &dialog,
                          [&dialog, &name, pdf](const QString& chosen) {
             const bool paper = chosen == pdf;
             dialog.setDefaultSuffix(paper ? QStringLiteral("pdf") : QStringLiteral("md"));
             // Имя берём то, что человек уже набрал, а не предложенное:
-            // переключение фильтра не повод отменять его правку.
-            QString base = QFileInfo(dialog.selectedFiles().value(0)).completeBaseName();
+            // переключение фильтра не повод отменять его правку. Каталог — тот,
+            // в котором он сейчас стоит, а не тот, с которого начали.
+            const QString chosenPath = dialog.selectedFiles().value(0);
+            QString base = QFileInfo(chosenPath).completeBaseName();
             if (base.isEmpty()) base = name;
-            dialog.selectFile(base + (paper ? QStringLiteral(".pdf") : QStringLiteral(".md")));
+            const QString where = chosenPath.isEmpty() ? dialog.directory().absolutePath()
+                                                       : QFileInfo(chosenPath).absolutePath();
+            dialog.selectFile(zametti::exportTargetPath(where, base, paper));
         });
         if (dialog.exec() != QDialog::Accepted) return;
         QString target = dialog.selectedFiles().value(0);
@@ -2484,9 +2493,23 @@ int main(int argc, char** argv) {
         // её keyPressEvent, а из редактора — этот ярлык.
         auto* escape = new QShortcut(QKeySequence(Qt::Key_Escape), &window);
         QObject::connect(escape, &QShortcut::activated, &window, [&] {
-            if (findBar.isHidden()) return;
-            findBar.hide();
-            emit findBar.closed();
+            // ОДНА ДВЕРЬ НА КЛАВИШУ. Ярлык окна срабатывает раньше, чем
+            // нажатие доходит до виджета с фокусом, — поэтому Esc в поле ввода
+            // языка не отменял ввод, а просто пропадал (нашёл владелец). Сам
+            // порядок живёт в escapeActionFor: до лямбды внутри main() набор
+            // не дотягивается, а до функции — вполне.
+            switch (zametti::escapeActionFor(editor.codeLanguageEditor() != nullptr,
+                                             !findBar.isHidden())) {
+                case zametti::EscapeAction::CloseLanguageEditor:
+                    editor.closeCodeLanguageEditor();
+                    return;
+                case zametti::EscapeAction::CloseFindBar:
+                    findBar.hide();
+                    emit findBar.closed();
+                    return;
+                case zametti::EscapeAction::Nothing:
+                    return;
+            }
         });
     }
 
@@ -2601,6 +2624,7 @@ int main(int argc, char** argv) {
         out.expandedDirs = expandedDirs();
         out.searchHistory = findBar.history();
         out.storeRoot = model.isStore() ? model.nodePath(QModelIndex()) : QString();
+        out.exportDir = exportDir;
         out.treeSort = model.sortMode() == zametti::NoteTreeModel::SortMode::ByName
                            ? QStringLiteral("name")
                            : QStringLiteral("modified");

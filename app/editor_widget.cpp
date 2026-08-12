@@ -3298,6 +3298,12 @@ void NoteEditor::setScrollRatio(double ratio) {
     bar->setValue(int(ratio * bar->maximum()));
 }
 
+EscapeAction escapeActionFor(bool languageEditorOpen, bool findBarVisible) {
+    if (languageEditorOpen) return EscapeAction::CloseLanguageEditor;
+    if (findBarVisible) return EscapeAction::CloseFindBar;
+    return EscapeAction::Nothing;
+}
+
 void installHistoryShortcuts(QWidget* window, NoteEditor& editor) {
     const auto add = [window](const QKeySequence& keys, auto&& slot) {
         auto* key = new QShortcut(keys, window);

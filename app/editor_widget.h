@@ -913,6 +913,20 @@ private:
 // а проводка клавиш — ровно то, что ломается молча. Зовут её двое: окно и набор.
 void installHistoryShortcuts(QWidget* window, NoteEditor& editor);
 
+// Что делает Esc. Ярлык окна срабатывает раньше, чем нажатие доходит до
+// виджета с фокусом, — значит порядок решает он, и решать его надо в одном
+// месте, а не в лямбде внутри main(), куда набор не дотягивается.
+//
+// Сперва закрывается то, что открыто ПОВЕРХ текста: поле ввода языка. Потом
+// панель поиска. Если не открыто ничего — ничего и не делаем: Esc не должен
+// иметь скрытых последствий.
+enum class EscapeAction {
+    Nothing,
+    CloseLanguageEditor,
+    CloseFindBar,
+};
+EscapeAction escapeActionFor(bool languageEditorOpen, bool findBarVisible);
+
 }  // namespace zametti
 
 #endif  // ZAMETTI_EDITOR_WIDGET_H

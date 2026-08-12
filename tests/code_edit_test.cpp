@@ -593,6 +593,19 @@ void checkNoCandidates() {
     QTest::qWait(10);
 }
 
+// Порядок для Esc: сперва закрывается то, что открыто поверх текста.
+void checkEscapeOrder() {
+    using zametti::EscapeAction;
+    check(zametti::escapeActionFor(true, true) == EscapeAction::CloseLanguageEditor,
+          "при открытом поле языка Esc закрывает его, а не поиск");
+    check(zametti::escapeActionFor(true, false) == EscapeAction::CloseLanguageEditor,
+          "поле языка закрывается и без панели поиска");
+    check(zametti::escapeActionFor(false, true) == EscapeAction::CloseFindBar,
+          "без поля языка Esc закрывает панель поиска");
+    check(zametti::escapeActionFor(false, false) == EscapeAction::Nothing,
+          "когда закрывать нечего, Esc не делает ничего");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -610,6 +623,7 @@ int main(int argc, char** argv) {
     checkUndoAfterLeaving();
     checkLanguageEditor();
     checkNoCandidates();
+    checkEscapeOrder();
 
     std::printf("правка кода: %d проверок, %s\n", zt::g_checks,
                 zt::g_failures == 0 ? "всё зелено"

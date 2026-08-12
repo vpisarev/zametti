@@ -7,6 +7,18 @@
 #include <QPainter>
 
 namespace zametti {
+namespace {
+
+// Полупрозрачный цвет поверх плотного — плотным же. Qt складывать цвета не
+// умеет, а нам нужен ровно тот вид, который даёт отрисовка полоски.
+QColor blend(const QColor& over, const QColor& under) {
+    const qreal a = over.alphaF();
+    return QColor::fromRgbF(over.redF() * a + under.redF() * (1 - a),
+                            over.greenF() * a + under.greenF() * (1 - a),
+                            over.blueF() * a + under.blueF() * (1 - a));
+}
+
+}  // namespace
 
 LanguageEditor::LanguageEditor(const QStringList& candidates, const QString& current,
                                QWidget* parent)
@@ -14,12 +26,17 @@ LanguageEditor::LanguageEditor(const QStringList& candidates, const QString& cur
     setFrame(false);
     setText(current);
     selectAll();
-    // Фон свой: поле стоит поверх полоски, и системный белый прямоугольник
-    // выглядел бы заплаткой на странице.
+    // ФОН НЕПРОЗРАЧНЫЙ, и это не про красоту. Прозрачное поле не стирает то,
+    // что нарисовано под ним, — а под ним нарисовано прежнее имя языка, и при
+    // правке буквы наезжали одна на другую (владелец увидел это как «фон не
+    // чистится»). Цвет берём тот же, каким выглядит полоска: полупрозрачную
+    // полоску складываем с фоном страницы и получаем ровно её вид, но плотный.
     QPalette colours = palette();
-    colours.setColor(QPalette::Base, Qt::transparent);
+    colours.setColor(QPalette::Base, blend(appearance().codeStripBackground,
+                                           appearance().pageBackground));
     colours.setColor(QPalette::Text, appearance().codeLangColor);
     setPalette(colours);
+    setAutoFillBackground(true);
     setAttribute(Qt::WA_MacShowFocusRect, false);
     connect(this, &QLineEdit::textEdited, this, [this] { updateCompletion(); });
     updateCompletion();
@@ -86,9 +103,13 @@ void LanguageEditor::paintEvent(QPaintEvent* event) {
     QColor grey = appearance().codeLangColor;
     grey.setAlpha(120);
     painter.setPen(grey);
-    const QRectF box = rect();
-    const qreal x = QFontMetricsF(font()).horizontalAdvance(text());
-    painter.drawText(box.adjusted(x, 0, 0, 0), Qt::AlignVCenter | Qt::AlignLeft, completion_);
+    // Начало хвоста берём У САМОЙ КАРЕТКИ, а не считаем шириной набранного:
+    // у QLineEdit есть своё внутреннее поле слева, и посчитанное от края
+    // виджета место оказывалось на пару пикселей левее — владелец увидел это
+    // как смещение первой буквы относительно дописанного.
+    const qreal x = cursorRect().left();
+    painter.drawText(QRectF(rect()).adjusted(x, 0, 0, 0),
+                     Qt::AlignVCenter | Qt::AlignLeft, completion_);
 }
 
 void LanguageEditor::focusOutEvent(QFocusEvent* event) {

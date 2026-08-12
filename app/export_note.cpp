@@ -106,6 +106,11 @@ QString freeName(const QDir& dir, const QString& wanted) {
 
 }  // namespace
 
+QString exportTargetPath(const QString& dir, const QString& base, bool paper) {
+    const QString name = base + (paper ? QStringLiteral(".pdf") : QStringLiteral(".md"));
+    return dir.isEmpty() ? name : QDir(dir).filePath(name);
+}
+
 QString fileNameFromTitle(const QString& title) {
     QString out;
     out.reserve(title.size());

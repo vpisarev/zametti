@@ -354,6 +354,40 @@ void checkPaperHasNoStrip(Peek& editor) {
 
 // Снимок с открытым полем ввода языка и серым дополнением — то, что владелец
 // проверяет глазами (бриф этапа 11, часть 2).
+// Поле поверх УЖЕ ВВЕДЁННОГО языка обязано закрывать его целиком: прозрачное
+// поле не стирает нарисованное под ним, и буквы наезжали одна на другую
+// (владелец увидел это как «фон не чистится»). Спрашиваем пикселем: под полем
+// не должно остаться ни одной тёмной точки от прежней надписи.
+void checkEditorHidesOldName(Peek& editor) {
+    for (const zametti::CodeBand& band : editor.bands()) {
+        if (!band.first || band.info.isEmpty()) continue;   // блок С языком
+        const QRectF where = editor.langRect(band);
+        if (where.isEmpty()) continue;
+        const QRect strip = where.translated(0, -editor.verticalScrollBar()->value()).toRect();
+        zametti::LanguageEditor* field = editor.editCodeLanguage(band.blockNumber, strip);
+        if (field == nullptr) return;
+        field->clear();   // имя стёрли — от прежнего не должно остаться следа
+        QTest::qWait(40);
+        const QImage shot = editor.grab().toImage();
+
+        // Считаем не точки, а КОЛОНКИ с тёмными точками: одна-две — это
+        // мигающая каретка пустого поля (её фаза от прогона к прогону разная),
+        // а прежнее имя занимало бы их десятки.
+        int columns = 0;
+        for (int x = strip.left() + 1; x < strip.right() - 1; ++x) {
+            bool dark = false;
+            for (int y = strip.top() + 3; y < strip.bottom() - 3 && !dark; ++y)
+                dark = qGray(shot.pixel(x, y)) < 200;
+            if (dark) ++columns;
+        }
+        check(columns <= 2, "под полем ввода не осталось прежней надписи (тёмных колонок " +
+                                std::to_string(columns) + ")");
+        editor.closeCodeLanguageEditor();
+        QTest::qWait(10);
+        return;
+    }
+}
+
 void shootLanguageEditor(Peek& editor) {
     for (const zametti::CodeBand& band : editor.bands()) {
         if (!band.first || !band.info.isEmpty()) continue;   // блок БЕЗ языка
@@ -383,6 +417,7 @@ void shots(int width, int height, const QString& tag, bool checks) {
         checkCornersAreRound(editor);
         checkStripIsNotDarker(editor);
         checkPaperHasNoStrip(editor);
+        checkEditorHidesOldName(editor);
         shootLanguageEditor(editor);
         // Снимок — ДО проверки копирования: та оставляет на кнопке галочку
         // «скопировано», и на снимке приёмки она бы озадачивала.
