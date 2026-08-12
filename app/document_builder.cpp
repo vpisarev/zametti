@@ -273,6 +273,7 @@ struct BuildContext {
     QRawFont primaryFont;
     qreal lineUnit = 0.0;
     qreal charUnit = 0.0;
+    CodePlate plate;
 };
 
 BuildContext contextFor(qreal zoom) {
@@ -289,6 +290,7 @@ BuildContext contextFor(qreal zoom) {
     const QFontMetricsF metrics(ctx.base);
     ctx.lineUnit = metrics.height();
     ctx.charUnit = metrics.horizontalAdvance(QLatin1Char('A'));
+    ctx.plate = codePlate(zoom);
     return ctx;
 }
 
@@ -367,9 +369,10 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
                 break;
 
             case Kind::Code:
-                // Отступ маленький: подложка идёт почти во всю колонку, как
-                // в остальных программах для заметок.
-                blockFmt.setLeftMargin(appearance().codeIndent * ctx.charUnit);
+                // Поле блока — это отступ САМОГО КОДА, то есть плашка плюс её
+                // внутреннее поле. Левый край плашки отрисовка находит,
+                // вычитая padLeft обратно (см. codePlate в settings.h).
+                blockFmt.setLeftMargin(ctx.plate.indent + ctx.plate.padLeft);
                 blockFmt.setProperty(
                     InfoProperty,
                     QString::fromUtf8(doc.info(b).data(), qsizetype(doc.info(b).size())));
@@ -412,6 +415,15 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     blockFmt.setTopMargin(first ? 0 : topMargin * ctx.lineUnit);
     blockFmt.setBottomMargin(0);
 
+    // Полоска с языком живёт НЕ в тексте, а в поле блока: резерв под неё —
+    // верхнее поле первой строки блока кода, поле снизу — нижнее у последней
+    // (ставится в цикле по строкам). Рисует в этом резерве note_view.cpp теми
+    // же величинами. Резерв не зависит от того, задан язык или нет: пустая
+    // полоска — это ряд, в котором стоит кнопка копирования.
+    const bool code = !raw && b.kind == Kind::Code;
+    if (code) blockFmt.setTopMargin(blockFmt.topMargin() + ctx.plate.strip);
+
+
     QFont lineFont = ctx.base;
     lineFont.setPointSizeF(linePoint);
     const qreal lineFactor = list ? appearance().listLineHeightFactor : appearance().lineHeightFactor;
@@ -438,6 +450,7 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
         }
         if (line + 1 == count && trailingNewline)
             lineFmt.setProperty(TrailingNewlineProperty, true);
+        if (code && line + 1 == count) lineFmt.setBottomMargin(ctx.plate.padBottom);
         // Язык стоит на каждой строке, хотя читатель берёт его с первой:
         // иначе удаление первой строки роняло бы язык всего блока. Лишних
         // форматов это не плодит — значение у всех строк одно, а

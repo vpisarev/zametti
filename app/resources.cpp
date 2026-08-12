@@ -33,12 +33,13 @@ constexpr zametti::EmbeddedFace kFaces[] = {
 };
 
 constexpr const char* kIcons[] = {
-    "arrow-down-a-z",   "circle-question-mark", "clock-arrow-down",
-    "cloud-sync",       "columns-3",            "database-search",
-    "fast-forward",     "file-plus-corner",     "folder",
-    "folder-input",     "folder-open",          "folder-plus",
-    "image-down",       "rewind",               "rotate-ccw-clock",
-    "search",           "settings",             "square-arrow-out-up-right",
+    "arrow-down-a-z",   "check",                "circle-question-mark",
+    "clock-arrow-down", "cloud-sync",           "columns-3",
+    "copy",             "database-search",      "fast-forward",
+    "file-plus-corner", "folder",               "folder-input",
+    "folder-open",      "folder-plus",          "image-down",
+    "rewind",           "rotate-ccw-clock",     "search",
+    "settings",         "square-arrow-out-up-right",
     "trash-2",
 };
 

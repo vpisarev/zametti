@@ -2,6 +2,8 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFont>
+#include <QFontMetricsF>
 #include <QGuiApplication>
 #include <QImageReader>
 #include <QScreen>
@@ -14,6 +16,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 
 namespace zametti {
 namespace {
@@ -107,6 +110,11 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("blockSpacing"), a.blockSpacing},
         {QStringLiteral("listIndent"), a.listIndent},
         {QStringLiteral("codeIndent"), a.codeIndent},
+        {QStringLiteral("codePadLeft"), a.codePadLeft},
+        {QStringLiteral("codeStripHeight"), a.codeStripHeight},
+        {QStringLiteral("codePadBottom"), a.codePadBottom},
+        {QStringLiteral("codeCornerRadius"), a.codeCornerRadius},
+        {QStringLiteral("codeLangPointSize"), a.codeLangPointSize},
         {QStringLiteral("quoteIndent"), a.quoteIndent},
         {QStringLiteral("sideMargin"), a.sideMargin},
         {QStringLiteral("verticalMargin"), a.verticalMargin},
@@ -128,6 +136,8 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("rawSource"), colorToString(a.rawColor)},
         {QStringLiteral("divider"), colorToString(a.dividerColor)},
         {QStringLiteral("codeBackground"), colorToString(a.codeBackground)},
+        {QStringLiteral("codeStripBackground"), colorToString(a.codeStripBackground)},
+        {QStringLiteral("codeLang"), colorToString(a.codeLangColor)},
         {QStringLiteral("caret"), colorToString(a.caretColor)},
     };
 
@@ -327,6 +337,11 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readReal(layout, "blockSpacing", a.blockSpacing);
     readReal(layout, "listIndent", a.listIndent);
     readReal(layout, "codeIndent", a.codeIndent);
+    readReal(layout, "codePadLeft", a.codePadLeft);
+    readReal(layout, "codeStripHeight", a.codeStripHeight);
+    readReal(layout, "codePadBottom", a.codePadBottom);
+    readReal(layout, "codeCornerRadius", a.codeCornerRadius);
+    readReal(layout, "codeLangPointSize", a.codeLangPointSize);
     readReal(layout, "quoteIndent", a.quoteIndent);
     readReal(layout, "sideMargin", a.sideMargin);
     readReal(layout, "verticalMargin", a.verticalMargin);
@@ -347,6 +362,8 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readColor(colors, "rawSource", a.rawColor);
     readColor(colors, "divider", a.dividerColor);
     readColor(colors, "codeBackground", a.codeBackground);
+    readColor(colors, "codeStripBackground", a.codeStripBackground);
+    readColor(colors, "codeLang", a.codeLangColor);
     readColor(colors, "caret", a.caretColor);
 
     const QJsonObject list = root.value(QStringLiteral("list")).toObject();
@@ -533,6 +550,41 @@ bool writeJson(const QString& path, const QJsonObject& root) {
 }  // namespace
 
 Appearance& appearance() { return g_appearance; }
+
+CodePlate codePlate(qreal zoom) {
+    // Единицы те же, что у сборщика документа: по вертикали — высота строки
+    // кода (гарнитура текста в кегле кода, как её считает document_builder),
+    // по горизонтали — ширина "A" основного шрифта.
+    QFont base{QString(g_appearance.fontFamily)};
+    base.setPointSizeF(g_appearance.baseFontPoint * zoom);
+    base.setStyleHint(QFont::Monospace);
+    const qreal charUnit = QFontMetricsF(base).horizontalAdvance(QLatin1Char('A'));
+
+    QFont codeLine = base;
+    codeLine.setPointSizeF(g_appearance.codePointSize > 0.0
+                               ? g_appearance.codePointSize * zoom
+                               : g_appearance.baseFontPoint * zoom);
+    const qreal lineUnit =
+        std::round(QFontMetricsF(codeLine).height() * g_appearance.lineHeightFactor);
+
+    CodePlate plate;
+    plate.strip = std::round(g_appearance.codeStripHeight * lineUnit);
+    plate.padBottom = std::round(g_appearance.codePadBottom * lineUnit);
+    plate.padLeft = g_appearance.codePadLeft * charUnit;
+    plate.indent = g_appearance.codeIndent * charUnit;
+    plate.radius = g_appearance.codeCornerRadius * zoom;
+    return plate;
+}
+
+QFont codeLangFont(qreal zoom) {
+    QFont font{QString(g_appearance.sidebarFontFamily)};
+    const qreal point = g_appearance.codeLangPointSize > 0.0
+                            ? g_appearance.codeLangPointSize
+                            : g_appearance.sidebarFontPoint;
+    font.setPointSizeF(point * zoom);
+    return font;
+}
+
 
 QByteArray defaultAppearanceJson() {
     return QJsonDocument(appearanceToJson(Appearance{})).toJson(QJsonDocument::Indented);

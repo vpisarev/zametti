@@ -24,10 +24,12 @@
     <!-- Иконки Lucide, ISC. Происхождение и список — resources/icons/README.md. -->
     <qresource prefix="/icons">
         <file alias="arrow-down-a-z.svg">icons/arrow-down-a-z.svg</file>
+        <file alias="check.svg">icons/check.svg</file>
         <file alias="circle-question-mark.svg">icons/circle-question-mark.svg</file>
         <file alias="clock-arrow-down.svg">icons/clock-arrow-down.svg</file>
         <file alias="cloud-sync.svg">icons/cloud-sync.svg</file>
         <file alias="columns-3.svg">icons/columns-3.svg</file>
+        <file alias="copy.svg">icons/copy.svg</file>
         <file alias="database-search.svg">icons/database-search.svg</file>
         <file alias="fast-forward.svg">icons/fast-forward.svg</file>
         <file alias="file-plus-corner.svg">icons/file-plus-corner.svg</file>

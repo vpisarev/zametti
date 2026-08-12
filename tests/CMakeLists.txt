@@ -305,6 +305,15 @@ if(TARGET zametti-view)
                  ${CMAKE_CURRENT_BINARY_DIR}/снимки-этапа-8)
         set_tests_properties(image-shots PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+        # Снимки блоков кода: приёмка этапа 11 глазами.
+        add_executable(code_shots_test code_shots_test.cpp)
+        target_link_libraries(code_shots_test PRIVATE zametti-widgets Qt6::Test
+                              zametti-warnings)
+        target_include_directories(code_shots_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        add_test(NAME code-shots COMMAND code_shots_test
+                 ${CMAKE_CURRENT_BINARY_DIR}/снимки-этапа-11)
+        set_tests_properties(code-shots PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
         # Разность версий. Виджетов не касается вовсе: сравнение — чистая
         # логика над строками канонического markdown.
         add_executable(diff_test diff_test.cpp)

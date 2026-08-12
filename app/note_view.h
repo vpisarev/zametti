@@ -14,6 +14,9 @@
 
 #include <QHash>
 #include <QImage>
+#include <QRectF>
+#include <QString>
+#include <QVector>
 #include <QEvent>
 #include <QTextBrowser>
 #include <QTimer>
@@ -27,6 +30,20 @@ namespace zametti {
 // поэтому живут отдельной функцией, а не в конструкторе.
 // history — тонировать поле как прошлое (см. historyBackground).
 void applyPalette(QWidget& view, bool history = false);
+
+// Полоса подложки под одной строкой блока кода — в координатах документа.
+//
+// Строк в блоке кода столько же, сколько QTextBlock'ов (см. ContinuationProperty),
+// и плашка складывается из таких полос. Первая несёт полоску с языком и кнопкой,
+// последняя — нижнее поле; по этим двум признакам видно, где блок начался и где
+// кончился, без обхода назад.
+struct CodeBand {
+    QRectF rect;
+    int blockNumber = 0;
+    bool first = false;
+    bool last = false;
+    QString info;
+};
 
 class NoteView : public QTextBrowser {
     Q_OBJECT
@@ -105,6 +122,7 @@ public:
 protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
+    void mousePressEvent(QMouseEvent* event) override;
     // Смена плотности экрана. Отдельным событием, потому что resizeEvent на
     // неё не приходит: логический размер окна не меняется, меняется только
     // отношение логических пикселей к физическим.
@@ -131,6 +149,19 @@ protected:
     // стирает её, а человеку надо видеть, что выделенный кусок — код.
     void paintCodeOverSelection(QPainter& painter, const QRectF& visible);
     void paintCodeBackground(QPainter& painter, const QRectF& visible);
+    // Полосы подложки, попадающие в этот кусок документа. Отсюда же берётся
+    // геометрия полоски и кнопки: рисование и попадание мышью обязаны считать
+    // её ОДНИМ кодом, иначе кнопка нажимается не там, где нарисована.
+    QVector<CodeBand> codeBands(const QRectF& visible) const;
+    QRectF copyButtonRect(const CodeBand& band) const;
+    void paintCodeStrip(QPainter& painter, const CodeBand& band);
+    // Текст блока кода целиком, от первой строки до последней: строки через
+    // "\n", без заборов и без языка — ровно то, что кладётся в буфер.
+    QString codeTextFrom(int firstBlockNumber) const;
+    // Копирование блока, начинающегося с этой строки. Отдельно от нажатия
+    // мышью: так его зовёт и набор.
+    void copyCodeBlock(int firstBlockNumber);
+    QPointF toDocument(const QPoint& viewportPoint) const;
 
     // Где на экране лежит фотография блока. Здесь, а не в private, по той же
     // причине, что и paintCodeBackground: это часть отрисовки, и наследник о
@@ -260,6 +291,11 @@ private:
 
     qreal zoom_ = 1.0;
     bool changingLayout_ = false;
+    // Блок, который только что скопировали: на нём кнопка на секунду
+    // становится галочкой, иначе о том, что нажатие сработало, человек не
+    // узнаёт вовсе.
+    int copiedCodeBlock_ = -1;
+    QTimer copiedFade_;
     QTimer caretBlink_;
     bool caretOn_ = true;
     QString imageBase_;

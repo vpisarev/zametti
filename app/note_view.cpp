@@ -1,6 +1,7 @@
 #include "note_view.h"
 
 #include "doc_model.h"
+#include "icons.h"
 #include "import_limits.h"
 #include "marker.h"
 #include "settings.h"
@@ -12,6 +13,7 @@
 #include <QImageReader>
 #include <QFontMetricsF>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPaintEvent>
 #include <QTextCursor>
 #include <QTextFragment>
@@ -20,7 +22,10 @@
 #include <QScrollBar>
 #include <QWidget>
 #include <QTextBlock>
+#include <QClipboard>
 #include <QGuiApplication>
+#include <QMouseEvent>
+#include <QStringList>
 #include <QStyleHints>
 #include <QTextDocument>
 #include <QTextFrame>
@@ -44,6 +49,61 @@ QFont baseFontFor(qreal zoom) {
 
 // Отбивка после фотографии (и перед ней, когда виден текст строки).
 qreal imageGap(qreal zoom) { return 6.0 * zoom; }
+
+// --- плашка блока кода ------------------------------------------------------
+//
+// Рисуется по геометрии блоков, а не свойствами формата: заливка по
+// прямоугольнику блока оставляла бы между строками кода незакрашенные полосы
+// (см. paintCodeBackground ниже), а полоски с языком в тексте нет вовсе —
+// каретка в неё не попадает, выделение её не берёт, поиск её не видит.
+//
+// Одна ПОЛОСА на строку кода, а не один прямоугольник на блок: строки блока —
+// это отдельные QTextBlock (ContinuationProperty), и обходить их назад до
+// начала блока на каждом кадре значило бы платить длиной блока за прокрутку.
+// Полосы собираются за один проход сверху вниз, и уже по ним видно, где блок
+// начался и где кончился.
+// Следующая строка того же блока кода?
+bool codeContinues(const QTextBlock& block) {
+    const QTextBlock next = block.next();
+    return next.isValid() && !isRawBlock(next) && kindOf(next) == Kind::Code &&
+           isContinuationBlock(next);
+}
+
+// Собственное нижнее поле блока — то, которое стоит в нём НЕ ради картинки.
+// Пока такое одно: поле под скругление у последней строки блока кода.
+qreal ownBottomMargin(const QTextBlock& block, const CodePlate& plate) {
+    if (isRawBlock(block) || kindOf(block) != Kind::Code) return 0.0;
+    return codeContinues(block) ? 0.0 : plate.padBottom;
+}
+
+QPainterPath platePath(const QRectF& rect, qreal radius, bool roundTop, bool roundBottom) {
+    QPainterPath path;
+    if (radius <= 0.0 || (!roundTop && !roundBottom)) {
+        path.addRect(rect);
+        return path;
+    }
+    const qreal r = qMin(radius, qMin(rect.width(), rect.height()) / 2.0);
+    path.moveTo(rect.left(), rect.top() + (roundTop ? r : 0.0));
+    if (roundTop) {
+        path.arcTo(QRectF(rect.left(), rect.top(), 2 * r, 2 * r), 180, -90);
+        path.lineTo(rect.right() - r, rect.top());
+        path.arcTo(QRectF(rect.right() - 2 * r, rect.top(), 2 * r, 2 * r), 90, -90);
+    } else {
+        path.lineTo(rect.left(), rect.top());
+        path.lineTo(rect.right(), rect.top());
+    }
+    if (roundBottom) {
+        path.lineTo(rect.right(), rect.bottom() - r);
+        path.arcTo(QRectF(rect.right() - 2 * r, rect.bottom() - 2 * r, 2 * r, 2 * r), 0, -90);
+        path.lineTo(rect.left() + r, rect.bottom());
+        path.arcTo(QRectF(rect.left(), rect.bottom() - 2 * r, 2 * r, 2 * r), 270, -90);
+    } else {
+        path.lineTo(rect.right(), rect.bottom());
+        path.lineTo(rect.left(), rect.bottom());
+    }
+    path.closeSubpath();
+    return path;
+}
 
 }  // namespace
 
@@ -88,6 +148,15 @@ NoteView::NoteView(QWidget* parent) : QTextBrowser(parent) {
     // cursorPositionChanged не даёт).
     connect(this, &QTextEdit::selectionChanged, this,
             [this] { viewport()->update(); });
+
+    // Галочка «скопировано» гаснет сама: подтверждение, которое не гаснет,
+    // через минуту врёт.
+    copiedFade_.setSingleShot(true);
+    copiedFade_.setInterval(900);
+    connect(&copiedFade_, &QTimer::timeout, this, [this] {
+        copiedCodeBlock_ = -1;
+        viewport()->update();
+    });
 }
 
 // Прямоугольник каретки с запасом: перерисовываем чуть больше, чем красим,
@@ -672,6 +741,7 @@ void NoteView::syncImageSpace(bool whole) {
     // очистив набор, отдали бы остальные на вытеснение.
     if (!partial) currentNoteImages_.clear();
     const qreal gap = imageGap(zoom_);
+    const CodePlate plate = codePlate(zoom_);
     QTextBlock block = document()->findBlockByNumber(first);
     for (int number = first; number <= afterLast && block.isValid();
          ++number, block = block.next()) {
@@ -714,9 +784,15 @@ void NoteView::syncImageSpace(bool whole) {
             }
         }
         QTextBlockFormat format = block.blockFormat();
-        // Нижнее поле всех прочих блоков — ноль по построению сборщика, так
-        // что ненулевое поле здесь только наше. Сравнение с допуском: каждое
-        // выставление формата переразмечает документ.
+        // СОБСТВЕННОЕ нижнее поле блока прибавляется к резерву, а не стирается
+        // им. Прежде здесь стоял ноль и рядом уговор «нижнее поле всех прочих
+        // блоков — ноль по построению сборщика»; уговор кончился вместе с
+        // плашкой кода, у последней строки которой поле своё. Обход стирал его
+        // на первой же правке — блок кода терял нижнее поле, и плашка
+        // обрезалась по последней строке. Поймал набор, а не глаз.
+        want += ownBottomMargin(block, plate);
+        // Сравнение с допуском: каждое выставление формата переразмечает
+        // документ.
         if (std::fabs(format.bottomMargin() - want) < 0.5) continue;
         format.setBottomMargin(want);
         // ВЫСОТА БЛОКА ЦЕЛИКОМ НАША, а не «строка плюс поле». Иначе она
@@ -962,23 +1038,12 @@ void NoteView::paintImageCorners(QPainter& painter, const QRectF& photo) {
     painter.restore();
 }
 
-void NoteView::paintCodeBackground(QPainter& painter, const QRectF& visible) {
+QVector<CodeBand> NoteView::codeBands(const QRectF& visible) const {
     const QAbstractTextDocumentLayout* layout = document()->documentLayout();
     const int firstVisible = layout->hitTest(QPointF(0, visible.top()), Qt::FuzzyHit);
+    const CodePlate plate = codePlate(zoom_);
 
-    // СОСТОЯНИЕ ВОЗВРАЩАЕМ. Цвет подложки кода полупрозрачен (альфа 14 из 255),
-    // и оставленная в painter'е кисть на экране безвредна — растровый painter
-    // при drawImage на неё не смотрит. А вот PDF смотрит: Qt складывает альфу
-    // кисти в состояние картинки, и фотография уехала на бумагу с прозрачностью
-    // 5% — бледной тенью. Найдено глазами по вывезенной странице, в самом файле
-    // это выглядело как "/ca 0.054901960" перед вставкой снимка.
-    painter.save();
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(appearance().codeBackground);
-    // Метрики шрифта — один раз на отрисовку, а не на блок: код нарезан
-    // построчно, и в кадре таких блоков десятки.
-    const qreal charUnit =
-        QFontMetricsF(baseFontFor(zoom_)).horizontalAdvance(QLatin1Char('A'));
+    QVector<CodeBand> bands;
     for (QTextBlock block = document()->findBlock(firstVisible); block.isValid();
          block = block.next()) {
         const QRectF rect = layout->blockBoundingRect(block);
@@ -995,16 +1060,147 @@ void NoteView::paintCodeBackground(QPainter& painter, const QRectF& visible) {
         const qreal height =
             assigned > 0 ? qMax(rect.height(), lines * assigned) : rect.height();
 
-        // Блок кода внутри пункта списка начинается не от края колонки, а от
-        // колонки своего пункта: иначе подложка вылезала бы левее маркера и
-        // разрезала список надвое. Собственный отступ кода при этом не в счёт —
-        // на верхнем уровне подложка как шла почти во всю колонку, так и идёт.
-        const qreal shift = qMax(0.0, block.blockFormat().leftMargin() -
-                                          appearance().codeIndent * charUnit);
-        painter.drawRect(
-            QRectF(rect.left() + shift, rect.top(), rect.width() - shift, height));
+        // Левый край плашки — поле блока минус внутреннее поле кода. Внутри
+        // пункта списка поле блока уже включает колонку пункта, и плашка едет
+        // вместе с ним: иначе она вылезала бы левее маркера и разрезала список
+        // надвое (проверено на снимке этапа 11).
+        const qreal left = rect.left() + block.blockFormat().leftMargin() - plate.padLeft;
+        CodeBand band;
+        band.rect = QRectF(left, rect.top(), rect.right() - left, height);
+        band.blockNumber = block.blockNumber();
+        band.first = !isContinuationBlock(block);
+        band.last = !codeContinues(block);
+        band.info = block.blockFormat().stringProperty(InfoProperty);
+        bands.push_back(band);
+    }
+    return bands;
+}
+
+QRectF NoteView::copyButtonRect(const CodeBand& band) const {
+    const CodePlate plate = codePlate(zoom_);
+    if (!band.first || plate.strip <= 0.0) return {};
+    const qreal side = qMin(plate.strip * 0.62, 18.0 * zoom_);
+    const qreal gap = plate.padLeft;
+    return QRectF(band.rect.right() - gap - side,
+                  band.rect.top() - plate.strip + (plate.strip - side) / 2.0, side, side);
+}
+
+void NoteView::paintCodeBackground(QPainter& painter, const QRectF& visible) {
+    const CodePlate plate = codePlate(zoom_);
+    const QVector<CodeBand> bands = codeBands(visible);
+
+    // СОСТОЯНИЕ ВОЗВРАЩАЕМ. Цвет подложки кода полупрозрачен (альфа 14 из 255),
+    // и оставленная в painter'е кисть на экране безвредна — растровый painter
+    // при drawImage на неё не смотрит. А вот PDF смотрит: Qt складывает альфу
+    // кисти в состояние картинки, и фотография уехала на бумагу с прозрачностью
+    // 5% — бледной тенью. Найдено глазами по вывезенной странице, в самом файле
+    // это выглядело как "/ca 0.054901960" перед вставкой снимка.
+    painter.save();
+    painter.setPen(Qt::NoPen);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    for (const CodeBand& band : bands) {
+        // Полоска сверху и поле снизу — это ПОЛЯ БЛОКА, зарезервированные
+        // сборщиком документа теми же величинами (codePlate в settings.h).
+        // Прямоугольник блока полей не включает — замерено пробником, а не
+        // взято из документации.
+        const qreal top = band.rect.top() - (band.first ? plate.strip : 0.0);
+        const qreal bottom = band.rect.bottom() + (band.last ? plate.padBottom : 0.0);
+        const QRectF whole(band.rect.left(), top, band.rect.width(), bottom - top);
+        const QPainterPath path = platePath(whole, plate.radius, band.first, band.last);
+        painter.fillPath(path, appearance().codeBackground);
+        if (!band.first) continue;
+
+        // Полоска — та же плашка, только темнее. Клип по контуру: иначе её
+        // прямые углы торчали бы из скруглённых углов плашки.
+        painter.save();
+        painter.setClipPath(path, Qt::IntersectClip);
+        painter.fillRect(QRectF(whole.left(), whole.top(), whole.width(), plate.strip),
+                         appearance().codeStripBackground);
+        painter.restore();
+        paintCodeStrip(painter, band);
     }
     painter.restore();
+}
+
+// Содержимое полоски: имя языка слева, кнопка копирования справа.
+//
+// Кнопка появляется при наведении на блок — держать её на виду всегда значило
+// бы, что на каждом блоке кода висит серый значок, которого человек не просил.
+// На бумаге её нет вовсе: нажимать там нечего.
+void NoteView::paintCodeStrip(QPainter& painter, const CodeBand& band) {
+    const CodePlate plate = codePlate(zoom_);
+    if (plate.strip <= 0.0) return;
+    const QRectF strip(band.rect.left(), band.rect.top() - plate.strip, band.rect.width(),
+                       plate.strip);
+
+    painter.save();
+    if (!band.info.isEmpty()) {
+        painter.setFont(codeLangFont(zoom_));
+        painter.setPen(appearance().codeLangColor);
+        painter.drawText(strip.adjusted(plate.padLeft + plate.indent, 0, 0, 0),
+                         Qt::AlignVCenter | Qt::AlignLeft, band.info);
+    }
+
+    // Кнопка видна ВСЕГДА, а не по наведению (решение владельца): слежение за
+    // мышью ради значка — это перерисовка вьюпорта на каждое движение, а
+    // выигрыш только в том, что серого значка не видно, пока он не нужен.
+    // На бумаге кнопки нет: нажимать там нечего.
+    if (exportRatio_ <= 0.0) {
+        const QRectF box = copyButtonRect(band);
+        const bool done = band.blockNumber == copiedCodeBlock_;
+        const QPixmap icon = toolbarIcon(
+            done ? QStringLiteral("check") : QStringLiteral("copy"),
+            int(std::round(box.width())), appearance().codeLangColor, devicePixelRatioF());
+        painter.drawPixmap(box.topLeft(), icon);
+    }
+    painter.restore();
+}
+
+QPointF NoteView::toDocument(const QPoint& viewportPoint) const {
+    return QPointF(viewportPoint.x() + horizontalScrollBar()->value(),
+                   viewportPoint.y() + verticalScrollBar()->value());
+}
+
+void NoteView::mousePressEvent(QMouseEvent* event) {
+    // Кнопка копирования перехватывает нажатие целиком: она нарисована в поле
+    // блока, но для Qt это обычное место документа, и без перехвата щелчок
+    // ставил бы туда каретку.
+    if (event->button() == Qt::LeftButton) {
+        const QPointF at = toDocument(event->position().toPoint());
+        const QRectF visible(0, verticalScrollBar()->value(), viewport()->width(),
+                             viewport()->height());
+        for (const CodeBand& band : codeBands(visible)) {
+            if (!band.first) continue;
+            const QRectF box = copyButtonRect(band);
+            if (box.isEmpty() || !box.contains(at)) continue;
+            copyCodeBlock(band.blockNumber);
+            event->accept();
+            return;
+        }
+    }
+    QTextBrowser::mousePressEvent(event);
+}
+
+QString NoteView::codeTextFrom(int firstBlockNumber) const {
+    QTextBlock block = document()->findBlockByNumber(firstBlockNumber);
+    if (!block.isValid() || isRawBlock(block) || kindOf(block) != Kind::Code) return {};
+    QStringList lines;
+    for (;;) {
+        lines << block.text();
+        if (!codeContinues(block)) break;
+        block = block.next();
+    }
+    return lines.join(QLatin1Char('\n'));
+}
+
+void NoteView::copyCodeBlock(int firstBlockNumber) {
+    const QString code = codeTextFrom(firstBlockNumber);
+    if (code.isEmpty()) return;
+    QGuiApplication::clipboard()->setText(code);
+    copiedCodeBlock_ = firstBlockNumber;
+    copiedFade_.start();
+    viewport()->update();
 }
 
 // Подложка кода ПОВЕРХ выделения.

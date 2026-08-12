@@ -2180,6 +2180,10 @@ void applyListGeometry(QTextDocument& doc, BlockRange range) {
     const QFont base = baseFontOf(doc);
     const qreal charUnit = QFontMetricsF(base).horizontalAdvance(QLatin1Char('A'));
     const qreal indent = appearance().listIndent * charUnit;
+    const qreal zoom = appearance().baseFontPoint > 0.0
+                           ? base.pointSizeF() / appearance().baseFontPoint
+                           : 1.0;
+    const CodePlate plate = codePlate(zoom);
 
     // Первый проход: к какой колонке принадлежит каждый блок и какой маркер в
     // ней самый широкий. Задаёт колонку именно он: иначе под "10." текст
@@ -2260,7 +2264,12 @@ void applyListGeometry(QTextDocument& doc, BlockRange range) {
             if (at >= contentCol.size()) continue;
             qreal own = 0;
             switch (kindOf(block)) {
-                case Kind::Code:  own = appearance().codeIndent * charUnit; break;
+                // У кода собственный отступ складывается из двух: плашка от
+                // абзаца и код внутри плашки. Спрашиваем codePlate, а не
+                // считаем сами, — иначе внутри пункта плашка съезжала бы
+                // относительно кода. Масштаб восстанавливаем из шрифта
+                // документа: сборщик кладёт в него baseFontPoint × зум.
+                case Kind::Code:  own = plate.indent + plate.padLeft; break;
                 case Kind::Quote: own = appearance().quoteIndent * charUnit; break;
                 case Kind::Paragraph:
                 case Kind::Heading:
