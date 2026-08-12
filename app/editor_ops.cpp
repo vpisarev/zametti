@@ -1314,6 +1314,12 @@ bool isCodeLine(const QTextBlock& block) {
     return block.isValid() && !isRawBlock(block) && kindOf(block) == Kind::Code;
 }
 
+// Следующая строка того же блока кода?
+bool codeContinuesInDoc(const QTextBlock& block) {
+    const QTextBlock next = block.next();
+    return isCodeLine(next) && isContinuationBlock(next);
+}
+
 // Последняя строка блока кода, считая от этой. Строки блока — отдельные
 // QTextBlock, помеченные продолжением (см. ContinuationProperty).
 QTextBlock lastCodeLine(QTextBlock block) {
@@ -1382,6 +1388,62 @@ QVector<QTextBlock> touchedCodeLines(const QTextDocument& doc, const QTextCursor
 }
 
 }  // namespace
+
+QString sanitiseCodeLanguage(QString language) {
+    // Пробелы и заборы — единственное, что в имени языка сломало бы файл:
+    // после забора идёт info-строка, и пробел в ней означает конец имени.
+    language.remove(QLatin1Char('`'));
+    language.remove(QLatin1Char('~'));
+    return language.simplified().remove(QLatin1Char(' '));
+}
+
+bool setCodeLanguage(QTextDocument& doc, QTextCursor& cursor, const QString& language) {
+    QTextBlock block = cursor.block();
+    if (!isCodeLine(block)) return false;
+    while (isContinuationBlock(block) && isCodeLine(block.previous())) block = block.previous();
+
+    const QString want = sanitiseCodeLanguage(language);
+    if (block.blockFormat().stringProperty(InfoProperty) == want) return false;
+
+    QTextCursor edit(&doc);
+    edit.beginEditBlock();
+    for (QTextBlock line = block; line.isValid(); line = line.next()) {
+        QTextBlockFormat format = line.blockFormat();
+        if (want.isEmpty()) format.clearProperty(InfoProperty);
+        else format.setProperty(InfoProperty, want);
+        edit.setPosition(line.position());
+        edit.setBlockFormat(format);
+        if (!codeContinuesInDoc(line)) break;
+    }
+    edit.endEditBlock();
+    return true;
+}
+
+QStringList codeLanguagesNear(const QTextDocument& doc, int blockNumber) {
+    struct Found {
+        QString name;
+        int distance = 0;
+        bool above = false;
+    };
+    std::vector<Found> found;
+    for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {
+        if (!isCodeLine(block) || isContinuationBlock(block)) continue;
+        const QString info = block.blockFormat().stringProperty(InfoProperty);
+        if (info.isEmpty()) continue;
+        if (block.blockNumber() == blockNumber) continue;
+        found.push_back({info, qAbs(block.blockNumber() - blockNumber),
+                         block.blockNumber() < blockNumber});
+    }
+    // Ближайший выше — первым: продолжают обычно то, что писали только что.
+    std::stable_sort(found.begin(), found.end(), [](const Found& a, const Found& b) {
+        if (a.above != b.above) return a.above;
+        return a.distance < b.distance;
+    });
+    QStringList out;
+    for (const Found& item : found)
+        if (!out.contains(item.name)) out << item.name;
+    return out;
+}
 
 bool leaveCodeBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     if (!isCodeLine(cursor.block())) return false;

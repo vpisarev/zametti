@@ -1085,6 +1085,16 @@ QRectF NoteView::copyButtonRect(const CodeBand& band) const {
                   band.rect.top() - plate.strip + (plate.strip - side) / 2.0, side, side);
 }
 
+QRectF NoteView::languageRect(const CodeBand& band) const {
+    const CodePlate plate = codePlate(zoom_);
+    if (!band.first || plate.strip <= 0.0) return {};
+    const qreal left = band.rect.left() + plate.padLeft + plate.stripPadding;
+    const QRectF button = copyButtonRect(band);
+    const qreal right = button.isEmpty() ? band.rect.right() : button.left() - plate.stripPadding;
+    if (right <= left) return {};
+    return QRectF(left, band.rect.top() - plate.strip, right - left, plate.strip);
+}
+
 void NoteView::paintCodeBackground(QPainter& painter, const QRectF& visible) {
     const CodePlate plate = codePlate(zoom_);
     const QVector<CodeBand> bands = codeBands(visible);
@@ -1108,22 +1118,32 @@ void NoteView::paintCodeBackground(QPainter& painter, const QRectF& visible) {
         const qreal bottom = band.rect.bottom() + (band.last ? plate.padBottom : 0.0);
         const QRectF whole(band.rect.left(), top, band.rect.width(), bottom - top);
         const QPainterPath path = platePath(whole, plate.radius, band.first, band.last);
-        painter.fillPath(path, appearance().codeBackground);
-        if (!band.first) continue;
+        const qreal stripHeight = band.first ? plate.strip : 0.0;
 
-        // Полоска того же цвета, что и плашка (решение владельца), а границу
-        // держит тонкая черта под ней. Заливка всё же своя: цвет вынесен в
-        // конфиг, и сделать полоску темнее — законная настройка.
+        // ДВЕ ЗАЛИВКИ, НЕ НАКЛАДЫВАЮЩИЕСЯ. Полоска и подложка полупрозрачны
+        // (по умолчанию обе — чернота с прозрачностью 14), и нарисованные одна
+        // поверх другой они дают удвоенную плотность: владелец увидел это как
+        // «цвет полоски всё ещё чуть-чуть отличается». Красим каждую область
+        // ровно один раз, а скруглённые углы держит клип по контуру.
         painter.save();
         painter.setClipPath(path, Qt::IntersectClip);
-        painter.fillRect(QRectF(whole.left(), whole.top(), whole.width(), plate.strip),
-                         appearance().codeStripBackground);
+        if (stripHeight > 0.0)
+            painter.fillRect(QRectF(whole.left(), whole.top(), whole.width(), stripHeight),
+                             appearance().codeStripBackground);
+        painter.fillRect(QRectF(whole.left(), whole.top() + stripHeight, whole.width(),
+                                whole.height() - stripHeight),
+                         appearance().codeBackground);
         painter.restore();
+        if (!band.first) continue;
 
         // Черта НЕ во всю ширину: слева начинается от отступа буквы, справа не
         // доходит полбуквы до края. Иначе она читается как рамка, а нужна
         // граница между надписью и кодом.
-        if (plate.ruleWidth > 0.0) {
+        // На бумаге полоски нет вовсе (решение владельца): ни черты, ни имени
+        // языка, ни кнопки. Скруглённые углы и поля остаются — плашка на
+        // странице выглядит как на экране, только без органов управления.
+        if (exportRatio_ > 0.0) continue;
+        if (plate.ruleWidth > 0.0 && plate.strip > 0.0) {
             const qreal left = whole.left() + plate.padLeft;
             const qreal right = whole.right() - plate.ruleInset;
             if (right > left)
@@ -1186,8 +1206,19 @@ void NoteView::mousePressEvent(QMouseEvent* event) {
         for (const CodeBand& band : codeBands(visible)) {
             if (!band.first) continue;
             const QRectF box = copyButtonRect(band);
-            if (box.isEmpty() || !box.contains(at)) continue;
-            copyCodeBlock(band.blockNumber);
+            if (!box.isEmpty() && box.contains(at)) {
+                copyCodeBlock(band.blockNumber);
+                event->accept();
+                return;
+            }
+            // Щелчок по месту языка — включая пустое: у блока без языка его
+            // как раз и надо задать, а целиться человеку некуда.
+            const QRectF where = languageRect(band);
+            if (where.isEmpty() || !where.contains(at)) continue;
+            const QRect inViewport =
+                where.translated(-horizontalScrollBar()->value(), -verticalScrollBar()->value())
+                    .toRect();
+            emit codeStripClicked(band.blockNumber, inViewport);
             event->accept();
             return;
         }

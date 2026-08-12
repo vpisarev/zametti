@@ -110,6 +110,8 @@ add_library(zametti-widgets STATIC
     image_insert.cpp
     icons.h
     icons.cpp
+    lang_editor.h
+    lang_editor.cpp
     image_facts.h
     image_facts.cpp
     image_importer.h

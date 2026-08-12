@@ -48,6 +48,12 @@ struct CodeBand {
 class NoteView : public QTextBrowser {
     Q_OBJECT
 
+signals:
+    // Щёлкнули по полоске блока кода — там, где стоит имя языка. Виджет сам
+    // язык не правит: правки документа живут этажом выше, у редактора.
+    // Прямоугольник — в координатах вьюпорта, в него и встаёт поле ввода.
+    void codeStripClicked(int firstBlockNumber, const QRect& stripInViewport);
+
 public:
     explicit NoteView(QWidget* parent = nullptr);
 
@@ -154,6 +160,8 @@ protected:
     // её ОДНИМ кодом, иначе кнопка нажимается не там, где нарисована.
     QVector<CodeBand> codeBands(const QRectF& visible) const;
     QRectF copyButtonRect(const CodeBand& band) const;
+    // Место под имя языка: полоска от левого поля до кнопки копирования.
+    QRectF languageRect(const CodeBand& band) const;
     void paintCodeStrip(QPainter& painter, const CodeBand& band);
     // Текст блока кода целиком, от первой строки до последней: строки через
     // "\n", без заборов и без языка — ровно то, что кладётся в буфер.

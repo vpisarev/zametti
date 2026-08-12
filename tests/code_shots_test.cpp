@@ -12,6 +12,7 @@
 
 #include "doc_model.h"
 #include "editor_widget.h"
+#include "lang_editor.h"
 #include "note_view.h"
 #include "settings.h"
 #include "test_util.h"
@@ -21,6 +22,8 @@
 #include <QDir>
 #include <QFile>
 #include <QImage>
+#include <QPainter>
+#include <QSet>
 #include <QTest>
 #include <QTextBlock>
 #include <QTextCursor>
@@ -65,7 +68,17 @@ public:
         return codeBands(QRectF(0, 0, 10000, 100000));
     }
     QRectF button(const zametti::CodeBand& band) { return copyButtonRect(band); }
+    QRectF langRect(const zametti::CodeBand& band) { return languageRect(band); }
     QString codeText(int firstBlock) { return codeTextFrom(firstBlock); }
+    // Кусок документа, нарисованный так же, как он уходит на бумагу.
+    QImage onPaper(const QRectF& area) {
+        QImage sheet(int(area.width()), int(area.height()), QImage::Format_RGB32);
+        sheet.fill(Qt::white);
+        QPainter painter(&sheet);
+        painter.translate(-area.left(), -area.top());
+        renderSlice(painter, area, 1.0);
+        return sheet;
+    }
     void copyBlock(int firstBlock) { copyCodeBlock(firstBlock); }
 };
 
@@ -280,6 +293,87 @@ void checkCornersAreRound(Peek& editor) {
     }
 }
 
+// --- полоска не темнее подложки ---------------------------------------------
+//
+// Цвета у обеих полупрозрачные, и нарисованные одна поверх другой они дают
+// удвоенную плотность: полоска выходит темнее подложки при одинаковых цветах в
+// конфиге. Владелец заметил это глазами дважды подряд — спрашиваем пикселем.
+void checkStripIsNotDarker(Peek& editor) {
+    const QVector<zametti::CodeBand> bands = editor.bands();
+    if (bands.isEmpty()) return;
+    const zametti::CodePlate plate = zametti::codePlate(editor.zoom());
+    const QImage shot = editor.grab().toImage();
+    zametti::appearance().codeStripBackground = zametti::appearance().codeBackground;
+
+    for (const zametti::CodeBand& band : bands) {
+        if (!band.first) continue;
+        // Точка в полоске и точка в теле плашки — на одной вертикали, подальше
+        // от имени языка и от черты под полоской.
+        const int x = int(band.rect.right() - 40);
+        const int inStrip = int(band.rect.top() - plate.strip / 2);
+        const int inBody = int(band.rect.top() + band.rect.height() / 2);
+        if (x <= 0 || inStrip <= 0 || inBody >= shot.height()) continue;
+        const QRgb strip = shot.pixel(x, inStrip);
+        const QRgb body = shot.pixel(x, inBody);
+        check(qAbs(qRed(strip) - qRed(body)) <= 1,
+              "полоска не темнее подложки (" + std::to_string(qRed(strip)) + " против " +
+                  std::to_string(qRed(body)) + ")");
+        return;
+    }
+}
+
+// --- на бумаге полоски нет --------------------------------------------------
+//
+// Имя языка и кнопка копирования — органы управления, а не содержание: на
+// странице им делать нечего (решение владельца). Скруглённые углы и поля
+// остаются, поэтому спрашиваем не «плашки нет», а «в полоске пусто»: полоса
+// пикселей над первой строкой кода обязана быть ровной.
+void checkPaperHasNoStrip(Peek& editor) {
+    const QVector<zametti::CodeBand> bands = editor.bands();
+    const zametti::CodePlate plate = zametti::codePlate(editor.zoom());
+    for (const zametti::CodeBand& band : bands) {
+        if (!band.first || band.info.isEmpty()) continue;
+        const QRectF area(0, band.rect.top() - plate.strip - 4, band.rect.right() + 20,
+                          plate.strip + 8);
+        const QImage sheet = editor.onPaper(area);
+
+        // Ровная — значит в каждой строке пикселей полоски не больше двух
+        // разных цветов (сама плашка и поле страницы слева от неё).
+        int worst = 0;
+        for (int y = 5; y < int(plate.strip) - 2; ++y) {
+            QSet<QRgb> colours;
+            for (int x = int(band.rect.left()) + 4; x < int(band.rect.right()) - 4; ++x)
+                colours.insert(sheet.pixel(x, y));
+            worst = qMax(worst, colours.size());
+        }
+        check(worst == 1, "в полоске на бумаге пусто (цветов в строке: " +
+                              std::to_string(worst) + ")");
+        return;
+    }
+}
+
+// Снимок с открытым полем ввода языка и серым дополнением — то, что владелец
+// проверяет глазами (бриф этапа 11, часть 2).
+void shootLanguageEditor(Peek& editor) {
+    for (const zametti::CodeBand& band : editor.bands()) {
+        if (!band.first || !band.info.isEmpty()) continue;   // блок БЕЗ языка
+        const QRectF where = editor.langRect(band);
+        if (where.isEmpty()) continue;
+        const QRect strip = where.translated(0, -editor.verticalScrollBar()->value()).toRect();
+        zametti::LanguageEditor* field = editor.editCodeLanguage(band.blockNumber, strip);
+        if (field == nullptr) return;
+        QTest::keyClicks(field, QStringLiteral("p"));
+        QTest::qWait(30);
+        check(!field->completion().isEmpty(), "на снимке видно серое дополнение");
+        const QImage shot = editor.grab().toImage();
+        const QString path = QDir(g_shots).filePath(QStringLiteral("язык-ввод.png"));
+        if (!shot.save(path)) std::printf("  НЕ СОХРАНИЛСЯ снимок ввода языка\n");
+        editor.closeCodeLanguageEditor();
+        QTest::qWait(10);
+        return;
+    }
+}
+
 void shots(int width, int height, const QString& tag, bool checks) {
     Peek editor;
     open(editor, width, height, tag);
@@ -287,6 +381,9 @@ void shots(int width, int height, const QString& tag, bool checks) {
         checkStripIsNotText(editor);
         checkPlateGeometry(editor);
         checkCornersAreRound(editor);
+        checkStripIsNotDarker(editor);
+        checkPaperHasNoStrip(editor);
+        shootLanguageEditor(editor);
         // Снимок — ДО проверки копирования: та оставляет на кнопке галочку
         // «скопировано», и на снимке приёмки она бы озадачивала.
         shoot(editor, tag);

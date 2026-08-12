@@ -45,6 +45,8 @@ class QProgressDialog;
 
 namespace zametti {
 
+class LanguageEditor;
+
 class NoteEditor : public NoteView {
     Q_OBJECT
 
@@ -342,6 +344,15 @@ signals:
     // доступ к нему наружу.
     void importStatus(const QString& text);
 
+public:
+    // Ввод языка блока кода прямо в его полоске. Заводится щелчком по месту
+    // языка, но нужен и наборам, и контекстному меню — поэтому открыт.
+    // Возвращает поле, чтобы приёмка могла в него напечатать; nullptr — блока
+    // нет или он не виден.
+    LanguageEditor* editCodeLanguage(int firstBlockNumber, const QRect& stripInViewport);
+    LanguageEditor* codeLanguageEditor() const { return languageEditor_; }
+    void closeCodeLanguageEditor();
+
 protected:
     // Обменный формат — сам markdown. Переопределять обязательно: иначе Qt
     // кладёт в буфер собственный HTML и вставляет чужой HTML прямо в документ,
@@ -452,6 +463,12 @@ private:
     // Где в прошлый раз брали картинки. Не в конфиге намеренно: это память об
     // одном сеансе, а не настройка, и переживать перезапуск ей незачем.
     QString lastImageDir_;
+
+    // Открытое поле ввода языка; ноль — закрыто. Живёт поверх вьюпорта и
+    // умирает через deleteLater: удалять виджет прямо в его же обработчике —
+    // это падение (урок этапа 10 про retireDocument).
+    LanguageEditor* languageEditor_ = nullptr;
+    int languageBlock_ = -1;
 
     // anchorY — экранная высота, на которой должен остаться курсор. Меньше нуля
     // означает "просто покажи курсор".

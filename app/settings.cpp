@@ -102,6 +102,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("marginMm"), a.pdf.marginMm},
         {QStringLiteral("imageDpi"), a.pdf.imageDpi},
         {QStringLiteral("maxExportedImageSize"), a.pdf.maxExportedImageSize},
+        {QStringLiteral("codeStripHeight"), a.pdf.codeStripHeight},
     };
 
     QJsonObject layout{
@@ -332,6 +333,7 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readReal(paper, "marginMm", a.pdf.marginMm);
     readInt(paper, "imageDpi", a.pdf.imageDpi);
     readInt(paper, "maxExportedImageSize", a.pdf.maxExportedImageSize);
+    readReal(paper, "codeStripHeight", a.pdf.codeStripHeight);
     const QJsonArray paperHeads = paper.value(QStringLiteral("headingScale")).toArray();
     for (int i = 0; i < paperHeads.size() && i < int(a.pdf.headingScale.size()); ++i)
         if (paperHeads.at(i).isDouble()) a.pdf.headingScale[size_t(i)] = paperHeads.at(i).toDouble();

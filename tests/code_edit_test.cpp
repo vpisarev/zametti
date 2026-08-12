@@ -18,6 +18,7 @@
 #include "document_reader.h"
 #include "editor_ops.h"
 #include "editor_widget.h"
+#include "lang_editor.h"
 #include "parser.h"
 #include "serializer.h"
 #include "settings.h"
@@ -462,6 +463,136 @@ void checkUndoAfterLeaving() {
     checkEq(afterTyping, markdownOf(editor), "первый Ctrl+Z отменяет именно выход из блока");
 }
 
+// --- язык блока кода --------------------------------------------------------
+//
+// Договор брифа: щелчок по месту языка заводит поле, Enter принимает, Esc
+// отменяет, пустое имя убирает язык; правка идёт штатным путём — отменяется
+// одним Ctrl+Z и сериализуется в ```lang.
+const char* kThree = R"(head
+
+```python
+one
+```
+
+middle
+
+```c++
+two
+```
+
+tail
+
+```
+three
+```
+)";
+
+int firstBlockOf(Editor& editor, const QString& lineText) {
+    for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next())
+        if (b.text() == lineText) return b.blockNumber();
+    return -1;
+}
+
+void checkLanguageEditor() {
+    Editor editor;
+    editor.openText(QStringLiteral("язык.md"), kThree);
+
+    // Кандидаты — из самой заметки, ближайший ВЫШЕ первым.
+    const int third = firstBlockOf(editor, QStringLiteral("three"));
+    const QStringList near = zametti::codeLanguagesNear(*editor.document(), third);
+    checkEq("c++,python", near.join(QLatin1Char(',')).toStdString(),
+            "кандидаты — языки этой заметки, ближайший выше первым");
+    check(zametti::codeLanguagesNear(*editor.document(),
+                                     firstBlockOf(editor, QStringLiteral("one")))
+              .join(QLatin1Char(',')) == QStringLiteral("c++"),
+          "у первого блока кандидат только нижний");
+
+    // Что «выше» важнее, чем «ближе»: продолжают обычно то, что писали только
+    // что. Здесь верхний кандидат ДАЛЬШЕ нижнего, и всё равно идёт первым.
+    Editor mixed;
+    mixed.openText(QStringLiteral("язык-порядок.md"),
+                   "```python\na\n```\n\nодин\n\nдва\n\n```\ntarget\n```\n\n"
+                   "```rust\nb\n```\n");
+    checkEq("python,rust",
+            zametti::codeLanguagesNear(*mixed.document(),
+                                       firstBlockOf(mixed, QStringLiteral("target")))
+                .join(QLatin1Char(',')).toStdString(),
+            "верхний кандидат идёт первым, даже если он дальше");
+
+    // Само поле: встаёт, дополняет серым, Enter применяет.
+    zametti::LanguageEditor* field = editor.editCodeLanguage(third, QRect(10, 10, 120, 20));
+    check(field != nullptr, "поле ввода языка открылось");
+    if (field == nullptr) return;
+    QTest::keyClicks(field, QStringLiteral("p"));
+    QTest::qWait(5);
+    checkEq("ython", field->completion().toStdString(), "по «p» дописалось «ython»");
+    checkEq("python", field->language().toStdString(), "принятое имя — целиком python");
+    QTest::keyClick(field, Qt::Key_Return);
+    QTest::qWait(20);
+    check(editor.codeLanguageEditor() == nullptr, "после Enter поле закрылось");
+    check(markdownOf(editor).find("```python\nthree") != std::string::npos,
+          "язык уехал в файл: " + markdownOf(editor));
+
+    // Один Ctrl+Z возвращает прежнее.
+    QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+    QTest::qWait(20);
+    check(markdownOf(editor).find("```\nthree") != std::string::npos,
+          "один Ctrl+Z вернул блок без языка");
+
+    // Esc не меняет ничего.
+    const std::string before = markdownOf(editor);
+    field = editor.editCodeLanguage(third, QRect(10, 10, 120, 20));
+    if (field != nullptr) {
+        QTest::keyClicks(field, QStringLiteral("py"));
+        QTest::keyClick(field, Qt::Key_Escape);
+        QTest::qWait(20);
+        check(editor.codeLanguageEditor() == nullptr, "после Esc поле закрылось");
+        checkEq(before, markdownOf(editor), "Esc ничего не поменял");
+    }
+
+    // Пустое имя убирает язык.
+    const int firstBlock = firstBlockOf(editor, QStringLiteral("one"));
+    field = editor.editCodeLanguage(firstBlock, QRect(10, 10, 120, 20));
+    if (field != nullptr) {
+        field->clear();
+        QTest::keyClick(field, Qt::Key_Return);
+        QTest::qWait(20);
+        check(markdownOf(editor).find("```\none") != std::string::npos,
+              "пустое имя убрало язык: " + markdownOf(editor));
+    }
+
+    // Свободные имена: никаких встроенных списков (владельцу нужны свои).
+    field = editor.editCodeLanguage(firstBlock, QRect(10, 10, 120, 20));
+    if (field != nullptr) {
+        QTest::keyClicks(field, QStringLiteral("pf"));
+        QTest::keyClick(field, Qt::Key_Return);
+        QTest::qWait(20);
+        check(markdownOf(editor).find("```pf\none") != std::string::npos,
+              "«pf» принят как есть: " + markdownOf(editor));
+    }
+
+    // Круг: сменённый язык переживает запись и чтение.
+    const std::string text = markdownOf(editor);
+    checkEq(text, zametti::serialize(zametti::parse(text)), "файл с новым языком читается в себя");
+    checkStillLegal(editor, "после смены языка");
+}
+
+// Заметка без языков: дополнять нечем, и поле молчит.
+void checkNoCandidates() {
+    Editor editor;
+    editor.openText(QStringLiteral("языков-нет.md"), kNote);
+    const int block = firstBlockOf(editor, QStringLiteral("one"));
+    check(zametti::codeLanguagesNear(*editor.document(), block).isEmpty(),
+          "в заметке без языков кандидатов нет");
+    zametti::LanguageEditor* field = editor.editCodeLanguage(block, QRect(10, 10, 120, 20));
+    if (field == nullptr) return;
+    QTest::keyClicks(field, QStringLiteral("p"));
+    QTest::qWait(5);
+    check(field->completion().isEmpty(), "дополнять нечем — и не дописывается");
+    QTest::keyClick(field, Qt::Key_Escape);
+    QTest::qWait(10);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -477,6 +608,8 @@ int main(int argc, char** argv) {
     checkAutoIndent();
     checkAutoIndentInRealNote(argc > 2 ? QString::fromLocal8Bit(argv[2]) : QString());
     checkUndoAfterLeaving();
+    checkLanguageEditor();
+    checkNoCandidates();
 
     std::printf("правка кода: %d проверок, %s\n", zt::g_checks,
                 zt::g_failures == 0 ? "всё зелено"

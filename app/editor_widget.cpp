@@ -1,4 +1,6 @@
 #include "editor_widget.h"
+
+#include "lang_editor.h"
 #include "diff_view.h"
 #include "history_rules.h"
 
@@ -61,6 +63,11 @@ bool readFile(const QString& path, std::string& out) {
 
 NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
     setReadOnly(false);
+    // Щелчок по месту языка в полоске заводит поле ввода. Виджет просмотра
+    // сам язык не правит: правки документа живут здесь.
+    connect(this, &NoteView::codeStripClicked, this, [this](int block, const QRect& strip) {
+        editCodeLanguage(block, strip);
+    });
     setUndoRedoEnabled(false);   // историю ведём сами, см. edit_history.h
 
     // Хоткеи разбираем один раз: на каждое нажатие клавиши это было бы разбором
@@ -1712,6 +1719,54 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     // продолжался бы кодом — вышло бы `код и всё, что дальше`.
     if (event->text() == QStringLiteral("`") && runOperation(applyCodeSpanRuleAtCursor))
         setCurrentCharFormat(textCursor().block().charFormat());
+}
+
+LanguageEditor* NoteEditor::editCodeLanguage(int firstBlockNumber, const QRect& strip) {
+    if (inHistory() || isReadOnly()) return nullptr;
+    const QTextBlock block = document()->findBlockByNumber(firstBlockNumber);
+    if (!block.isValid() || isRawBlock(block) || kindOf(block) != Kind::Code) return nullptr;
+    if (languageEditor_ != nullptr) closeCodeLanguageEditor();
+
+    languageBlock_ = firstBlockNumber;
+    languageEditor_ = new LanguageEditor(codeLanguagesNear(*document(), firstBlockNumber),
+                                         block.blockFormat().stringProperty(InfoProperty),
+                                         viewport());
+    languageEditor_->setFont(codeLangFont(zoom()));
+    languageEditor_->setGeometry(strip);
+    languageEditor_->show();
+    languageEditor_->setFocus(Qt::MouseFocusReason);
+
+    connect(languageEditor_, &LanguageEditor::accepted, this, [this](const QString& language) {
+        const int block = languageBlock_;
+        closeCodeLanguageEditor();
+        // Правка идёт ШТАТНЫМ путём: тот же runOperation, что у всех прочих
+        // операций, — значит и шаг отмены, и запись в журнал, и сериализация
+        // в ```lang получаются сами собой.
+        runOperation([block, language](QTextDocument& doc, QTextCursor& at) {
+            const QTextBlock line = doc.findBlockByNumber(block);
+            if (!line.isValid()) return false;
+            QTextCursor edit(&doc);
+            edit.setPosition(line.position());
+            const bool done = setCodeLanguage(doc, edit, language);
+            if (done) at = edit;
+            return done;
+        });
+    });
+    connect(languageEditor_, &LanguageEditor::cancelled, this,
+            [this] { closeCodeLanguageEditor(); });
+    return languageEditor_;
+}
+
+void NoteEditor::closeCodeLanguageEditor() {
+    if (languageEditor_ == nullptr) return;
+    LanguageEditor* going = languageEditor_;
+    languageEditor_ = nullptr;
+    languageBlock_ = -1;
+    going->hide();
+    // deleteLater, а не delete: закрытие приходит из обработчика самого поля
+    // (Esc, потеря фокуса), и убивать виджет под его же стеком нельзя.
+    going->deleteLater();
+    setFocus(Qt::OtherFocusReason);
 }
 
 bool NoteEditor::runOperation(bool (*op)(QTextDocument&, QTextCursor&)) {
