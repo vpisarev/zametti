@@ -225,10 +225,24 @@ int main(int argc, char** argv) {
             QTextCursor caret = editor.textCursor();
             caret.setPosition(editor.document()->findBlockByNumber(photo).position());
             editor.setTextCursor(caret);
+            // ЖЕСТ ПЕРЕЕХАЛ НА Ctrl+Enter (решение владельца, этап 12).
+            //
+            // Раньше строку за картинкой заводил обычный Enter. Теперь у всех
+            // объектов — картинки, таблицы, формулы — правила одни: Enter
+            // ПРАВИТ объект, а «встань на параграф после него» это Ctrl+Enter,
+            // тот же жест, что и у блока кода. Инвариант, ради которого писана
+            // эта проверка, не изменился: после последней картинки обязано
+            // быть куда встать.
+            const int before = editor.document()->blockCount();
             QTest::keyClick(&editor, Qt::Key_Return);
             QTest::qWait(20);
+            ZT_TRUE("обычный Enter картинку не делит и строк не заводит",
+                    editor.document()->blockCount() == before);
 
-            ZT_TRUE("Enter завёл строку за последней картинкой",
+            QTest::keyClick(&editor, Qt::Key_Return, Qt::ControlModifier);
+            QTest::qWait(20);
+
+            ZT_TRUE("Ctrl+Enter завёл строку за последней картинкой",
                     editor.document()->blockCount() > photo + 1);
             ZT_TRUE("каретка встала в неё, а не осталась на картинке",
                     editor.textCursor().blockNumber() > photo);

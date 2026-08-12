@@ -92,6 +92,8 @@ QJsonObject appearanceToJson(const Appearance& a) {
     };
 
     QJsonObject tables{
+        {QStringLiteral("cellPadding"), a.tables.cellPadding},
+        {QStringLiteral("cellPaddingY"), a.tables.cellPaddingY},
         {QStringLiteral("borderColor"), colorToString(a.tables.borderColor)},
         {QStringLiteral("horizontalBorder"), a.tables.horizontalBorder},
         {QStringLiteral("verticalBorder"), a.tables.verticalBorder},
@@ -339,6 +341,8 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
         if (headings.at(i).isDouble()) a.headingScale[size_t(i)] = headings.at(i).toDouble();
 
     const QJsonObject tables = root.value(QStringLiteral("tables")).toObject();
+    readReal(tables, "cellPadding", a.tables.cellPadding);
+    readReal(tables, "cellPaddingY", a.tables.cellPaddingY);
     readColor(tables, "borderColor", a.tables.borderColor);
     readReal(tables, "horizontalBorder", a.tables.horizontalBorder);
     readReal(tables, "verticalBorder", a.tables.verticalBorder);

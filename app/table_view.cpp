@@ -184,11 +184,12 @@ qreal tableCellPadX(qreal zoom, qreal scale) {
     // Поля ячейки — от кегля, а не в пикселях: с зумом и с усадкой они едут
     // вместе с текстом, иначе ужатая таблица стоит в непропорционально
     // просторных клетках.
-    return QFontMetricsF(tableFont(zoom, scale)).horizontalAdvance(QLatin1Char('A')) * 0.6;
+    return QFontMetricsF(tableFont(zoom, scale)).horizontalAdvance(QLatin1Char('A')) *
+           appearance().tables.cellPadding;
 }
 
 qreal tableCellPadY(qreal zoom, qreal scale) {
-    return QFontMetricsF(tableFont(zoom, scale)).height() * 0.25;
+    return QFontMetricsF(tableFont(zoom, scale)).height() * appearance().tables.cellPaddingY;
 }
 
 const TableCellBox* TableLayout::at(int row, int column) const {
@@ -327,10 +328,20 @@ TableLayout layoutTable(const Table& table, const TableSpace& space) {
         } else {
             // Пол усадки: слова-монстры (URL, длинные идентификаторы) режем где
             // угодно — min схлопывается, и вписывание гарантировано.
-            const qreal factor = room / m.maxTotal;
+            //
+            // Раздаём место ТОЧНО ПО МЕСТУ, а не «каждой не меньше чем...»:
+            // нижняя граница на колонку в сумме легко перерастает всю ширину,
+            // и таблица вылезала за край ровно там, где обязана была вписаться
+            // любой ценой (проверка на 90 пикселей это и поймала).
+            const qreal minCell = 2 * m.padX + 1.0;
             widths.fill(0.0, out.columns);
-            for (int i = 0; i < out.columns; ++i)
-                widths[i] = qMax(4 * m.padX, m.maxWidth[i] * factor);
+            if (minCell * out.columns >= room) {
+                for (int i = 0; i < out.columns; ++i) widths[i] = room / out.columns;
+            } else {
+                const qreal spare = room - minCell * out.columns;
+                for (int i = 0; i < out.columns; ++i)
+                    widths[i] = minCell + (m.maxTotal > 0 ? m.maxWidth[i] / m.maxTotal * spare : 0);
+            }
             wrapped = true;
         }
     }
