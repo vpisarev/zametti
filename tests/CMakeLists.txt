@@ -126,6 +126,14 @@ if(TARGET zametti-view)
     add_test(NAME objects COMMAND object_test)
     set_tests_properties(objects PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    # Раскладка таблицы: ширины, выравнивания, вписывание. Ключом --bench тот же
+    # бинарник меряет разбор и раскладку 50×8.
+    add_executable(table_view_test table_view_test.cpp)
+    target_link_libraries(table_view_test PRIVATE zametti-view zametti-warnings)
+    target_include_directories(table_view_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME table-layout COMMAND table_view_test)
+    set_tests_properties(table-layout PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     add_executable(save_test save_test.cpp)
     target_link_libraries(save_test PRIVATE zametti-view zametti-warnings)
     target_include_directories(save_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -335,6 +343,13 @@ if(TARGET zametti-view)
         target_include_directories(code_edit_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
         add_test(NAME code-edit COMMAND code_edit_test ${CMAKE_CURRENT_BINARY_DIR}/код-правка)
         set_tests_properties(code-edit PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+        # Снимки таблиц: приёмка этапа 12 глазами.
+        add_executable(table_shots_test table_shots_test.cpp)
+        target_link_libraries(table_shots_test PRIVATE zametti-widgets Qt6::Test zametti-warnings)
+        target_include_directories(table_shots_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        add_test(NAME table-shots COMMAND table_shots_test ${CMAKE_CURRENT_BINARY_DIR}/снимки-таблиц)
+        set_tests_properties(table-shots PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
         # Снимки блоков кода: приёмка этапа 11 глазами.
         add_executable(code_shots_test code_shots_test.cpp)
