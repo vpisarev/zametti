@@ -1205,6 +1205,8 @@ void NoteView::syncTables() {
     // тот случай, когда беда видна только в чужом наборе.
     const bool wasChanging = changingLayout_;
     changingLayout_ = true;
+    int dirtyFrom = -1;
+    int dirtyTo = -1;
     for (QTextBlock block = document()->begin(); block.isValid(); block = block.next()) {
         bool hide = false;
         for (const TableRender& table : std::as_const(tables_)) {
@@ -1213,8 +1215,21 @@ void NoteView::syncTables() {
                 break;
             }
         }
-        if (block.isVisible() != !hide) block.setVisible(!hide);
+        if (block.isVisible() == !hide) continue;
+        block.setVisible(!hide);
+        if (dirtyFrom < 0) dirtyFrom = block.position();
+        dirtyTo = block.position() + block.length();
     }
+
+    // ПОСЛЕ СМЕНЫ ВИДИМОСТИ БЛОКИ НАДО ПОМЕТИТЬ ГРЯЗНЫМИ.
+    //
+    // setVisible(true) возвращает блок в документ, но раскладку ему Qt сама не
+    // пересчитывает: он остаётся с нулевой высотой, то есть невидимым на
+    // экране. Владелец увидел ровно это — «щёлкаю по таблице, жму Enter, а
+    // показывается только последняя строка»: строки возвращались, высоты у них
+    // не было. В моём пробнике markContentsDirty стоял, и потому пробник этой
+    // беды не показал — а в syncTables я его не перенёс.
+    if (dirtyFrom >= 0) document()->markContentsDirty(dirtyFrom, dirtyTo - dirtyFrom);
     changingLayout_ = wasChanging;
 }
 

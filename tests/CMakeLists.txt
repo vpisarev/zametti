@@ -94,6 +94,9 @@ set(ZAMETTI_CORPUS_MUTATIONS 0 CACHE STRING "Сколько мутаций де�
 # Зерно задаётся явно, чтобы упавший прогон повторялся дословно.
 set(ZAMETTI_FUZZ_ROUNDS 40 CACHE STRING "Сколько случайных правок делать в каждой заметке")
 set(ZAMETTI_FUZZ_SEED 20260727 CACHE STRING "Зерно фаззинга операций")
+# Заметка с двумя таблицами для снимков и проверок показа. Не обязательна:
+# без неё набор идёт дальше, проверив то, что можно проверить выдумкой.
+set(ZAMETTI_TABLE_NOTE "" CACHE STRING "Заметка с таблицами для проверок показа")
 foreach(dir ${ZAMETTI_CORPUS})
     get_filename_component(name "${dir}" NAME)
     get_filename_component(abs "${dir}" ABSOLUTE BASE_DIR ${CMAKE_SOURCE_DIR})
@@ -348,7 +351,10 @@ if(TARGET zametti-view)
         add_executable(table_shots_test table_shots_test.cpp)
         target_link_libraries(table_shots_test PRIVATE zametti-widgets Qt6::Test zametti-warnings)
         target_include_directories(table_shots_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-        add_test(NAME table-shots COMMAND table_shots_test ${CMAKE_CURRENT_BINARY_DIR}/снимки-таблиц)
+        # Живая заметка владельца передаётся, если она есть: беда с правкой
+        # ВТОРОЙ таблицы на выдуманной заметке не воспроизводилась.
+        add_test(NAME table-shots COMMAND table_shots_test ${CMAKE_CURRENT_BINARY_DIR}/снимки-таблиц
+                 ${ZAMETTI_TABLE_NOTE})
         set_tests_properties(table-shots PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
         # Снимки блоков кода: приёмка этапа 11 глазами.

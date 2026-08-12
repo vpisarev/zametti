@@ -322,6 +322,76 @@ void checkMouse() {
     }
 }
 
+// ПУТЬ ВЛАДЕЛЬЦА ДОСЛОВНО: живая заметка с двумя таблицами, щелчок по ВТОРОЙ,
+// Enter. Он видел одну последнюю строку и крохотный курсор; выдуманная заметка
+// с одной таблицей эту беду не показывала.
+void checkSecondTableInLiveNote(const QString& source) {
+    if (source.isEmpty() || !QFile::exists(source)) return;
+    QFile in(source);
+    if (!in.open(QIODevice::ReadOnly)) return;
+    const QByteArray body = in.readAll();
+    in.close();
+    const QString copy = QDir(g_dir).filePath(QStringLiteral("вторая-таблица.md"));
+    QFile out(copy);
+    if (out.open(QIODevice::WriteOnly | QIODevice::Truncate)) out.write(body);
+    out.close();
+
+    zametti::NoteEditor editor;
+    editor.resize(1100, 800);
+    editor.show();
+    QTest::qWait(30);
+    editor.openFile(copy);
+    QTest::qWait(150);
+
+    QVector<int> tables;
+    for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next())
+        if (editor.tableAt(b.blockNumber()) != nullptr) tables.push_back(b.blockNumber());
+    ++zt::g_checks;
+    if (tables.size() < 2) {
+        ++zt::g_failures;
+        std::printf("провал: в живой заметке показано таблиц %d, ждали хотя бы две\n",
+                    int(tables.size()));
+        return;
+    }
+
+    const int second = tables[1];
+    const zametti::TableRender* render = editor.tableAt(second);
+    const int lines = render->last - render->first + 1;
+    const QRectF area = editor.tableRect(second);
+
+    editor.verticalScrollBar()->setValue(qMax(0, int(area.top()) - 100));
+    QTest::qWait(50);
+    const QPoint at(int(area.center().x()),
+                    int(area.center().y()) - editor.verticalScrollBar()->value());
+    QTest::mouseClick(editor.viewport(), Qt::LeftButton, Qt::NoModifier, at);
+    QTest::qWait(50);
+    QTest::keyClick(&editor, Qt::Key_Return);
+    QTest::qWait(100);
+
+    ++zt::g_checks;
+    if (editor.editedTable() != second) {
+        ++zt::g_failures;
+        std::printf("провал: Enter по второй таблице не открыл исходник (правится %d, ждали %d)\n",
+                    editor.editedTable(), second);
+    }
+
+    // Все строки исходника видны И имеют высоту.
+    int hidden = 0;
+    int flat = 0;
+    for (int number = second; number < second + lines; ++number) {
+        const QTextBlock b = editor.document()->findBlockByNumber(number);
+        if (!b.isValid()) continue;
+        if (!b.isVisible()) ++hidden;
+        if (editor.document()->documentLayout()->blockBoundingRect(b).height() <= 0.5) ++flat;
+    }
+    ++zt::g_checks;
+    if (hidden != 0 || flat != 0) {
+        ++zt::g_failures;
+        std::printf("провал: в правке второй таблицы спрятано %d строк, без высоты %d "
+                    "(всего строк %d)\n", hidden, flat, lines);
+    }
+}
+
 // ИНВАРИАНТ A ИЗ БРИФА: показ не меняет файл ни на байт.
 //
 // Открываем копии настоящих заметок владельца, даём виду их отрисовать, водим
@@ -396,7 +466,10 @@ int main(int argc, char** argv) {
 
     QStringList sources;
     for (int i = 2; i < argc; ++i) sources << QString::fromLocal8Bit(argv[i]);
-    if (!sources.isEmpty()) checkFilesUntouched(sources);
+    if (!sources.isEmpty()) {
+        checkFilesUntouched(sources);
+        checkSecondTableInLiveNote(sources.first());
+    }
 
     std::printf("снимки: %s\n", qPrintable(g_dir));
     return zt::report("снимки таблиц");
