@@ -58,6 +58,22 @@ target_link_libraries(arena_test PRIVATE zametti-core zametti-warnings)
 target_include_directories(arena_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME arena COMMAND arena_test)
 
+# Разбор таблиц для показа. Линкуется ещё и с md4c: он тут не зависимость, а
+# СУДЬЯ — чужая реализация того же формата, с которой сверяется наша.
+add_executable(table_test table_test.cpp)
+target_link_libraries(table_test PRIVATE zametti-core md4c zametti-warnings)
+target_include_directories(table_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME tables COMMAND table_test)
+# docs/ — постоянный корпус таблиц: он лежит в репозитории, и таблиц в нём
+# 67 против трёх в хранилище владельца (замер этапа 12). Сверка с md4c идёт
+# на нём всегда, а не только когда подключены внешние корпуса.
+add_test(NAME tables-docs COMMAND table_test ${CMAKE_SOURCE_DIR}/docs)
+foreach(dir ${ZAMETTI_CORPUS})
+    get_filename_component(name "${dir}" NAME)
+    get_filename_component(abs "${dir}" ABSOLUTE BASE_DIR ${CMAKE_SOURCE_DIR})
+    add_test(NAME tables-${name} COMMAND table_test "${abs}")
+endforeach()
+
 add_executable(golden_test golden_test.cpp)
 target_link_libraries(golden_test PRIVATE zametti-core zametti-warnings)
 add_test(NAME golden COMMAND golden_test ${CMAKE_CURRENT_SOURCE_DIR}/golden)
