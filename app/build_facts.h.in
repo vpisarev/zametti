@@ -39,6 +39,7 @@ constexpr VendoredFact kVendoredFacts[] = {
     {"md4c", "@MD4C_VENDORED_VERSION@", "разбор markdown"},
     {"blake3", "@BLAKE3_VENDORED_VERSION@", "отпечатки заметок и вложений"},
     {"zstd", "@ZSTD_VENDORED_VERSION@", "слепки в журнале правок"},
+    {"dtl", "@DTL_VENDORED_VERSION@", "разность версий в истории"},
     {"zlib", "@ZLIB_VENDORED_VERSION@", "Deflate внутри TIFF"},
     {"libtiff", "@TIFF_VENDORED_VERSION@", "TIFF: сырые отсчёты, Lab/CMYK, ICC, XMP, EXIF"},
     {"highway", "@HWY_VENDORED_VERSION@", "SIMD, общая для libjxl и jpegli"},

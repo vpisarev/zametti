@@ -92,6 +92,20 @@ void checkBuildFacts() {
           "число иконок — из списка загрузки, а не переписано");
     check(facts.contains(QStringLiteral("%1").arg(zametti::embeddedFaces().size())),
           "число начертаний — из списка загрузки");
+
+    // Два списка вшитого живут в разных местах: лицензии — в resources.cpp,
+    // версии — в build_facts.h.in. Разойтись им ничего не мешает, и они
+    // разошлись: dtl приехал на этапе 10 с лицензией, но без версии, и
+    // заметил это владелец, а не набор. Спрашиваем связь: всё, у чего есть
+    // лицензия, названо и в сводке сборки. Имена сверяем без учёта регистра —
+    // в списке лицензий пишется «DTL» и «BLAKE3».
+    for (const zametti::EmbeddedLicense& item : zametti::embeddedLicenses()) {
+        const QString name = QString::fromUtf8(item.name);
+        // Сама программа — не вшитая библиотека, её версии в этом списке нет.
+        if (name == QStringLiteral("zametti")) continue;
+        check(facts.contains(name, Qt::CaseInsensitive),
+              "вшитое названо и в сводке сборки: " + std::string(item.name));
+    }
 }
 
 void checkWindow() {
