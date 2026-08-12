@@ -373,15 +373,32 @@ void checkEditorHidesOldName(Peek& editor) {
         // Считаем не точки, а КОЛОНКИ с тёмными точками: одна-две — это
         // мигающая каретка пустого поля (её фаза от прогона к прогону разная),
         // а прежнее имя занимало бы их десятки.
+        // Смотрим ВСЮ полоску, без отступов по краям: первая редакция этой
+        // проверки щадила по три пикселя сверху и снизу, и остатки прежней
+        // надписи, торчащие у самых кромок, оставались невидимыми для неё.
         int columns = 0;
-        for (int x = strip.left() + 1; x < strip.right() - 1; ++x) {
+        for (int x = strip.left(); x <= strip.right(); ++x) {
             bool dark = false;
-            for (int y = strip.top() + 3; y < strip.bottom() - 3 && !dark; ++y)
+            for (int y = strip.top(); y <= strip.bottom() && !dark; ++y)
                 dark = qGray(shot.pixel(x, y)) < 200;
             if (dark) ++columns;
         }
         check(columns <= 2, "под полем ввода не осталось прежней надписи (тёмных колонок " +
                                 std::to_string(columns) + ")");
+
+        // И ГЛАВНОЕ: под полем не нарисовано НИЧЕГО — вид не рисует свою
+        // надпись, пока язык правят. Прячем поле и смотрим на голую полоску:
+        // так проверка не зависит ни от стиля, ни от того, точно ли поле
+        // попало в прямоугольник надписи.
+        field->hide();
+        QTest::qWait(40);
+        const QImage bare = editor.grab().toImage();
+        int left = 0;
+        for (int x = strip.left(); x <= strip.right(); ++x)
+            for (int y = strip.top(); y <= strip.bottom(); ++y)
+                if (qGray(bare.pixel(x, y)) < 200) ++left;
+        check(left == 0, "пока язык правят, вид своей надписи не рисует (точек " +
+                             std::to_string(left) + ")");
         editor.closeCodeLanguageEditor();
         QTest::qWait(10);
         return;

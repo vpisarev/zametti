@@ -14,6 +14,7 @@
 #ifndef ZAMETTI_LANG_EDITOR_H
 #define ZAMETTI_LANG_EDITOR_H
 
+#include <QColor>
 #include <QLineEdit>
 #include <QString>
 #include <QStringList>
@@ -42,6 +43,8 @@ protected:
 
 private:
     void updateCompletion();
+    // Цвет, которым поле закрывает то, что нарисовано под ним.
+    QColor backdrop_;
     // Принять дополнение в сам текст (Tab и стрелка вправо у конца строки).
     bool takeCompletion();
 

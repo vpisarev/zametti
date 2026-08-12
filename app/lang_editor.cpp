@@ -26,17 +26,22 @@ LanguageEditor::LanguageEditor(const QStringList& candidates, const QString& cur
     setFrame(false);
     setText(current);
     selectAll();
-    // ФОН НЕПРОЗРАЧНЫЙ, и это не про красоту. Прозрачное поле не стирает то,
-    // что нарисовано под ним, — а под ним нарисовано прежнее имя языка, и при
-    // правке буквы наезжали одна на другую (владелец увидел это как «фон не
-    // чистится»). Цвет берём тот же, каким выглядит полоска: полупрозрачную
-    // полоску складываем с фоном страницы и получаем ровно её вид, но плотный.
+    // ФОН ЗАКРАШИВАЕМ САМИ, в paintEvent, и это не перестраховка.
+    //
+    // Прозрачное поле не стирает нарисованное под ним — а под ним лежит
+    // прежнее имя языка, и при правке буквы наезжали одна на другую. Первая
+    // попытка чинила это палитрой (Base) и autoFillBackground, и стало ХУЖЕ:
+    // у поля снят фрейм, а фон роли Base рисует именно стиль вокруг фрейма —
+    // делает это он не в каждом стиле, зато autoFillBackground красит ролью
+    // Window, то есть чужим цветом. Владелец увидел усиление артефактов.
+    //
+    // Своя заливка от стиля не зависит вовсе. Цвет — тот же, каким выглядит
+    // полоска: полупрозрачную полоску складываем с фоном страницы.
+    backdrop_ = blend(appearance().codeStripBackground, appearance().pageBackground);
     QPalette colours = palette();
-    colours.setColor(QPalette::Base, blend(appearance().codeStripBackground,
-                                           appearance().pageBackground));
+    colours.setColor(QPalette::Base, backdrop_);
     colours.setColor(QPalette::Text, appearance().codeLangColor);
     setPalette(colours);
-    setAutoFillBackground(true);
     setAttribute(Qt::WA_MacShowFocusRect, false);
     connect(this, &QLineEdit::textEdited, this, [this] { updateCompletion(); });
     updateCompletion();
@@ -95,6 +100,11 @@ void LanguageEditor::keyPressEvent(QKeyEvent* event) {
 }
 
 void LanguageEditor::paintEvent(QPaintEvent* event) {
+    {
+        // Сперва своя заливка — ею и закрывается всё, что нарисовано под полем.
+        QPainter under(this);
+        under.fillRect(rect(), backdrop_);
+    }
     QLineEdit::paintEvent(event);
     if (completion_.isEmpty()) return;
 

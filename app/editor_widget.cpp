@@ -1732,6 +1732,8 @@ LanguageEditor* NoteEditor::editCodeLanguage(int firstBlockNumber, const QRect& 
                                          block.blockFormat().stringProperty(InfoProperty),
                                          viewport());
     languageEditor_->setFont(codeLangFont(zoom()));
+    // Пока правят — своя надпись не рисуется, чтобы под полем ничего не было.
+    setEditedCodeLanguage(firstBlockNumber);
     languageEditor_->setGeometry(strip);
     languageEditor_->show();
     languageEditor_->setFocus(Qt::MouseFocusReason);
@@ -1762,6 +1764,7 @@ void NoteEditor::closeCodeLanguageEditor() {
     LanguageEditor* going = languageEditor_;
     languageEditor_ = nullptr;
     languageBlock_ = -1;
+    setEditedCodeLanguage(-1);
     going->hide();
     // deleteLater, а не delete: закрытие приходит из обработчика самого поля
     // (Esc, потеря фокуса), и убивать виджет под его же стеком нельзя.

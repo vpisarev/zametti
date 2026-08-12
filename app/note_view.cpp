@@ -1085,6 +1085,12 @@ QRectF NoteView::copyButtonRect(const CodeBand& band) const {
                   band.rect.top() - plate.strip + (plate.strip - side) / 2.0, side, side);
 }
 
+void NoteView::setEditedCodeLanguage(int firstBlockNumber) {
+    if (editedCodeLanguage_ == firstBlockNumber) return;
+    editedCodeLanguage_ = firstBlockNumber;
+    viewport()->update();
+}
+
 QRectF NoteView::languageRect(const CodeBand& band) const {
     const CodePlate plate = codePlate(zoom_);
     if (!band.first || plate.strip <= 0.0) return {};
@@ -1168,7 +1174,7 @@ void NoteView::paintCodeStrip(QPainter& painter, const CodeBand& band) {
                        plate.strip);
 
     painter.save();
-    if (!band.info.isEmpty()) {
+    if (!band.info.isEmpty() && band.blockNumber != editedCodeLanguage_) {
         painter.setFont(codeLangFont(zoom_));
         painter.setPen(appearance().codeLangColor);
         painter.drawText(strip.adjusted(plate.padLeft + plate.stripPadding, 0, 0, 0),

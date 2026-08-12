@@ -69,6 +69,11 @@ public:
     // о размере окна.
     void applyContentWidth();
 
+    // Пока язык блока правят полем ввода, СВОЮ надпись вид не рисует вовсе.
+    // Закрашивать её фоном поля — надежда на стиль и на попадание пиксель в
+    // пиксель; не рисовать нечего надёжнее. -1 — никого не правят.
+    void setEditedCodeLanguage(int firstBlockNumber);
+
     // Каталог, от которого разрешаются относительные пути картинок, — каталог
     // открытой заметки. Ставится при открытии файла.
     void setImageBase(const QString& dir);
@@ -303,6 +308,7 @@ private:
     // становится галочкой, иначе о том, что нажатие сработало, человек не
     // узнаёт вовсе.
     int copiedCodeBlock_ = -1;
+    int editedCodeLanguage_ = -1;
     QTimer copiedFade_;
     QTimer caretBlink_;
     bool caretOn_ = true;
