@@ -29,6 +29,9 @@ public:
         int length = 0;
         QString path;
         int ordinal = 0;
+        // Слепок истории, в котором нашлось: время и отпечаток записи.
+        qint64 snapshotTime = 0;
+        Digest snapshotDigest;
     };
 
     enum Roles {
@@ -38,6 +41,8 @@ public:
         LengthRole,
         PathRole,
         OrdinalRole,
+        SnapshotTimeRole,
+        SnapshotDigestRole,
     };
 
     using QAbstractListModel::QAbstractListModel;

@@ -121,9 +121,11 @@ int main(int argc, char** argv) {
     // --- verify: журналы ----------------------------------------------------
     //
     // Журнал не восстановим из файлов, поэтому проверяется всерьёз: каждый
-    // слепок обязан собираться и сходиться с отпечатком. И отдельно —
-    // достижимость вложений через прошлое: картинка, видная хоть в одной
-    // версии истории, не сирота.
+    // слепок обязан собираться и сходиться с отпечатком.
+    //
+    // А вот достижимость вложений через прошлое с этапа 10 ОТМЕНЕНА: картинка,
+    // которую видит только история, — сирота (решение владельца; иначе ни одна
+    // картинка не покинула бы хранилище никогда, её видит прошлое).
     {
         const QString root = g_base + QStringLiteral("/проверка-журналов");
         QString error;
@@ -160,8 +162,8 @@ int main(int argc, char** argv) {
         ZT_TRUE("проверка проходит", ok);
         const QString all = report.lines.join(QLatin1Char('\n'));
         ZT_TRUE("журналы посчитаны", all.contains(QStringLiteral("журналов: 1")));
-        ZT_TRUE("вложение, видное только в прошлом, не сирота",
-                !all.contains(QStringLiteral("осиротевшее вложение")));
+        ZT_TRUE("вложение, видное только в прошлом, — сирота",
+                all.contains(QStringLiteral("осиротевшее вложение")));
 
         // Испорченный слепок обязан всплыть бедой, а не молчанием.
         {
@@ -176,6 +178,229 @@ int main(int argc, char** argv) {
         ZT_TRUE("проверка видит порчу в журнале", !store::verifyStore(root, broken));
         ZT_TRUE("и называет журнал",
                 broken.lines.join(QLatin1Char('\n')).contains(QStringLiteral("журнал")));
+    }
+
+    // --- каскад картинок ------------------------------------------------------
+    //
+    // Корзинность вложения ВЫВОДИТСЯ: «в корзине» ⇔ все ссылающиеся заметки в
+    // корзине. Поэтому перенос в корзину и восстановление над файлами не делают
+    // ничего (инвариант D), а физическое расставание — ровно один момент,
+    // очистка корзины (инвариант C).
+    {
+        const QString root = g_base + QStringLiteral("/каскад");
+        QString error;
+        ZT_TRUE("хранилище заведено", store::initStore(root, &error));
+
+        const QString shared = QStringLiteral("01n6cqevh7bbf1.webp");
+        const QString lonely = QStringLiteral("01n6cqevh7bbf2.webp");
+        const QString mentioned = QStringLiteral("01n6cqevh7bbf3.webp");
+        for (const QString& picture : {shared, lonely, mentioned})
+            write(QStringLiteral("каскад/") + picture, "не картинка, но файл");
+
+        const auto makeNote = [&](const QString& id, const QString& body) {
+            write(QStringLiteral("каскад/") + id + QStringLiteral(".md"),
+                  QStringLiteral("<!-- zametti\ncreated: 2023-01-01T00:00:00Z\n-->\n\n%1")
+                      .arg(body)
+                      .toUtf8());
+        };
+        // Первая и вторая делят одну картинку; у первой есть ещё своя.
+        makeNote(QStringLiteral("01n6cqevaaaa01"),
+                 QStringLiteral("# первая\n\n![вид](%1)\n\n![своя](%2)\n").arg(shared, lonely));
+        makeNote(QStringLiteral("01n6cqevaaaa02"),
+                 QStringLiteral("# вторая\n\n![вид](%1)\n").arg(shared));
+        // Третья только УПОМИНАЕТ id в блоке кода — ложное срабатывание, и оно
+        // обязано ошибаться в безопасную сторону.
+        makeNote(QStringLiteral("01n6cqevaaaa03"),
+                 QStringLiteral("# третья\n\n```\n%1\n```\n")
+                     .arg(mentioned.left(mentioned.lastIndexOf(QLatin1Char('.')))));
+        // Четвёртая ссылается на ту же «упомянутую» картинку по-настоящему.
+        makeNote(QStringLiteral("01n6cqevaaaa04"),
+                 QStringLiteral("# четвёртая\n\n![вид](%1)\n").arg(mentioned));
+
+        // Очищаем ТОЛЬКО первую: общая картинка остаётся (её держит вторая), а
+        // одинокая уходит.
+        QStringList doomed =
+            store::attachmentsLeavingWith(root, {QStringLiteral("01n6cqevaaaa01")});
+        ZT_EQ("с первой заметкой уходит одна картинка", std::string("1"),
+              std::to_string(doomed.size()));
+        ZT_TRUE("и это её собственная", doomed.contains(lonely));
+        ZT_TRUE("общая остаётся: её держит вторая заметка", !doomed.contains(shared));
+
+        // Очищаем обе — общая уходит следом.
+        doomed = store::attachmentsLeavingWith(
+            root, {QStringLiteral("01n6cqevaaaa01"), QStringLiteral("01n6cqevaaaa02")});
+        ZT_TRUE("вместе с обеими уходит и общая", doomed.contains(shared));
+        ZT_TRUE("и одинокая", doomed.contains(lonely));
+
+        // Ложное срабатывание: id текстом в кодовом блоке ЗАЩИЩАЕТ файл.
+        doomed = store::attachmentsLeavingWith(root, {QStringLiteral("01n6cqevaaaa04")});
+        ZT_TRUE("id, упомянутый текстом в чужой заметке, спасает картинку",
+                !doomed.contains(mentioned));
+
+        // Удаление файла вложения — в мусорку ОС, как и заметки.
+        ZT_TRUE("вложение удаляется", store::deleteAttachmentFile(root, lonely, &error));
+        ZT_TRUE("и файла больше нет",
+                !QFileInfo::exists(root + QLatin1Char('/') + lonely));
+        ZT_TRUE("повторное удаление не беда",
+                store::deleteAttachmentFile(root, lonely, &error));
+    }
+
+    // --- verify: три категории вложений ---------------------------------------
+    {
+        const QString root = g_base + QStringLiteral("/категории");
+        QString error;
+        ZT_TRUE("хранилище заведено", store::initStore(root, &error));
+        const QString alive = QStringLiteral("01n6cqevh7bbc1.webp");
+        const QString inTrash = QStringLiteral("01n6cqevh7bbc2.webp");
+        const QString orphan = QStringLiteral("01n6cqevh7bbc3.webp");
+        for (const QString& picture : {alive, inTrash, orphan})
+            write(QStringLiteral("категории/") + picture, "не картинка, но файл");
+
+        const QString trashId = QStringLiteral("01n6cqevbbbb00");
+        write(QStringLiteral("категории/") + trashId + QStringLiteral(".md"),
+              QStringLiteral("<!-- zametti\ncreated: 2023-01-01T00:00:00Z\nrole: trash\n-->\n\n"
+                             "# Корзина\n")
+                  .toUtf8());
+        write(QStringLiteral("категории/01n6cqevbbbb01.md"),
+              QStringLiteral("<!-- zametti\ncreated: 2023-01-01T00:00:00Z\n-->\n\n"
+                             "# живая\n\n![вид](%1)\n")
+                  .arg(alive)
+                  .toUtf8());
+        write(QStringLiteral("категории/01n6cqevbbbb02.md"),
+              QStringLiteral("<!-- zametti\ncreated: 2023-01-01T00:00:00Z\nparent: %1\n-->\n\n"
+                             "# выброшенная\n\n![вид](%2)\n")
+                  .arg(trashId, inTrash)
+                  .toUtf8());
+
+        store::Report v;
+        ZT_TRUE("проверка проходит", store::verifyStore(root, v));
+        const QString all = v.lines.join(QLatin1Char('\n'));
+        ZT_TRUE("живая картинка молчит",
+                !all.contains(QStringLiteral("осиротевшее вложение: ") + alive) &&
+                    !all.contains(QStringLiteral("вложение только в корзине: ") + alive));
+        ZT_TRUE("корзинная названа расписанием, а не бедой",
+                all.contains(QStringLiteral("вложение только в корзине: ") + inTrash));
+        ZT_TRUE("сирота названа сиротой",
+                all.contains(QStringLiteral("осиротевшее вложение: ") + orphan));
+    }
+
+    // --- ИНВАРИАНТ D: картинки следуют за заметкой сами ------------------------
+    //
+    // Заметку отправили в корзину и вернули обратно — над файлами вложений не
+    // сделано НИ ОДНОЙ операции, а «в корзине она или нет» каждый раз выводится
+    // заново. Проверяем оба ответа и неприкосновенность файла между ними.
+    {
+        const QString root = g_base + QStringLiteral("/следуют");
+        QString error;
+        ZT_TRUE("хранилище заведено", store::initStore(root, &error));
+        const QString picture = QStringLiteral("01n6cqevh7bbd1.webp");
+        const QString file = write(QStringLiteral("следуют/") + picture, "не картинка, но файл");
+        const QString trashId = QStringLiteral("01n6cqevcccc00");
+        write(QStringLiteral("следуют/") + trashId + QStringLiteral(".md"),
+              QStringLiteral("<!-- zametti\ncreated: 2023-01-01T00:00:00Z\nrole: trash\n-->\n\n"
+                             "# Корзина\n")
+                  .toUtf8());
+        const QString notePath = QStringLiteral("следуют/01n6cqevcccc01.md");
+        const auto writeNote = [&](const QString& parent) {
+            write(notePath,
+                  QStringLiteral("<!-- zametti\ncreated: 2023-01-01T00:00:00Z\n%1-->\n\n"
+                                 "# заметка\n\n![вид](%2)\n")
+                      .arg(parent.isEmpty() ? QString()
+                                            : QStringLiteral("parent: %1\n").arg(parent),
+                           picture)
+                      .toUtf8());
+        };
+
+        writeNote(QString());
+        const QDateTime touched = QFileInfo(file).lastModified();
+        const qint64 size = QFileInfo(file).size();
+
+        store::Report live;
+        ZT_TRUE("проверка проходит", store::verifyStore(root, live));
+        ZT_TRUE("у живой заметки картинка живая",
+                !live.lines.join(QLatin1Char('\n')).contains(QStringLiteral("только в корзине")));
+
+        writeNote(trashId);   // «в корзину» — это правка одной строки меты
+        store::Report trashed;
+        ZT_TRUE("проверка проходит и с корзиной", store::verifyStore(root, trashed));
+        ZT_TRUE("картинка уехала в корзину вместе с заметкой — сама",
+                trashed.lines.join(QLatin1Char('\n'))
+                    .contains(QStringLiteral("вложение только в корзине: ") + picture));
+
+        writeNote(QString());   // «восстановить» — та же правка обратно
+        store::Report back;
+        ZT_TRUE("проверка проходит после возврата", store::verifyStore(root, back));
+        ZT_TRUE("и картинка вернулась вместе с заметкой",
+                !back.lines.join(QLatin1Char('\n')).contains(QStringLiteral("только в корзине")));
+
+        ZT_TRUE("а файла вложения никто не касался",
+                QFileInfo(file).lastModified() == touched && QFileInfo(file).size() == size);
+    }
+
+    // --- verify журналы НЕ ПЕРЕПИСЫВАЕТ ---------------------------------------
+    //
+    // Чистка истории пер-заметочная и ленивая; корпусный обход не имеет права
+    // мигрировать журналы, иначе первый же verify стал бы той самой глобальной
+    // утилитой через чёрный ход (решение владельца). Проверяем по ВСЕМ
+    // журналам хранилища сразу: и по чищеному, и по старому.
+    {
+        const QString root = g_base + QStringLiteral("/verify-не-пишет");
+        QString error;
+        ZT_TRUE("хранилище заведено", store::initStore(root, &error));
+        journal::History history(root);
+        const QByteArray text = "<!-- zametti\ncreated: 2023-01-01T00:00:00Z\n-->\n\n# раз\n";
+        const QByteArray same = "<!-- zametti\ncreated: 2023-01-01T00:00:00Z\n"
+                                "modified: 2023-01-02T00:00:00Z\n-->\n\n# раз\n";
+
+        QStringList ids;
+        for (int i = 0; i < 2; ++i) {
+            const QString path = store::newNote(root, QString(), &error);
+            const QString id = QFileInfo(path).completeBaseName();
+            ids << id;
+            history.append(id, journal::Kind::Save, 1'700'000'000'000LL, text, 0, &error);
+            history.append(id, journal::Kind::Save, 1'700'000'060'000LL, same, 0, &error);
+        }
+        // Первый журнал делаем старым (v0): именно такому чистка и полагается —
+        // но не от verify.
+        {
+            const QString path = history.pathFor(ids[0]);
+            QFile file(path);
+            ZT_TRUE("журнал открыт", file.open(QIODevice::ReadOnly));
+            QByteArray blob = file.readAll();
+            file.close();
+            const QByteArray clean =
+                journal::headerBytesFor(QString::fromLatin1(journal::kCleanVersion));
+            blob = journal::headerBytesFor(QString()) + blob.mid(clean.size());
+            QFile out(path);
+            ZT_TRUE("журнал переписан на старый лад",
+                    out.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            out.write(blob);
+        }
+
+        struct Seen { QByteArray bytes; QDateTime when; };
+        QHash<QString, Seen> before;
+        for (const QString& id : ids) {
+            QFile file(history.pathFor(id));
+            ZT_TRUE("журнал читается", file.open(QIODevice::ReadOnly));
+            before.insert(id, Seen{file.readAll(), QFileInfo(history.pathFor(id)).lastModified()});
+        }
+
+        store::Report v;
+        ZT_TRUE("проверка проходит", store::verifyStore(root, v));
+
+        bool untouched = true;
+        for (const QString& id : ids) {
+            QFile file(history.pathFor(id));
+            if (!file.open(QIODevice::ReadOnly)) { untouched = false; continue; }
+            untouched = untouched && file.readAll() == before[id].bytes &&
+                        QFileInfo(history.pathFor(id)).lastModified() == before[id].when;
+        }
+        ZT_TRUE("ни один журнал не тронут: ни байтом, ни временем", untouched);
+
+        journal::Journal still;
+        ZT_TRUE("старый журнал читается", history.read(ids[0], &still, &error));
+        ZT_EQ("и остался старым", std::string(), still.cleanVersion.toStdString());
+        ZT_TRUE("с дубликатом внутри", still.entries.size() == 2);
     }
 
     // --- verify: журнал без заметки -----------------------------------------

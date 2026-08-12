@@ -827,9 +827,15 @@ std::string normaliseSpaces(std::string_view text) {
     return out;
 }
 
-std::string serialize(const Document& doc) {
+std::string serialize(const Document& doc, std::vector<BlockLines>* map) {
     doc.validate();
     std::string out;
+    // Где начался каждый блок — пока в БАЙТАХ; в номера строк переведём одним
+    // проходом в конце. Так карта не мешает потоку вывода: у него полдюжины
+    // мест с `continue`, и считать строки по дороге значило бы не забыть ни
+    // одного из них.
+    std::vector<size_t> startsAt;
+    if (map != nullptr) startsAt.reserve(doc.blocks.size());
 
     if (doc.meta.present) {
         out += "<!-- zametti\n";
@@ -860,6 +866,7 @@ std::string serialize(const Document& doc) {
 
     for (size_t i = 0; i < doc.blocks.size(); ++i) {
         const Block& b = doc.blocks[i];
+        if (map != nullptr) startsAt.push_back(out.size());
         validate(doc, b);
         const std::string_view body = doc.text(b);
 
@@ -1077,7 +1084,33 @@ std::string serialize(const Document& doc) {
         prevLevel = insideList ? b.level : -1;
     }
 
+    if (map != nullptr) {
+        map->assign(doc.blocks.size(), BlockLines{});
+        // Смещения не убывают, поэтому строки считаются одним проходом по
+        // выводу: идём по нему, отмечая границы блоков там, где они попались.
+        size_t at = 0;
+        int line = 0;
+        std::vector<int> lineAt(startsAt.size() + 1, 0);
+        for (size_t k = 0; k < startsAt.size(); ++k) {
+            while (at < startsAt[k]) {
+                if (out[at] == '\n') ++line;
+                ++at;
+            }
+            lineAt[k] = line;
+        }
+        while (at < out.size()) {
+            if (out[at] == '\n') ++line;
+            ++at;
+        }
+        lineAt[startsAt.size()] = line;
+        for (size_t k = 0; k < startsAt.size(); ++k) {
+            (*map)[k].first = lineAt[k];
+            (*map)[k].count = lineAt[k + 1] - lineAt[k];
+        }
+    }
     return out;
 }
+
+std::string serialize(const Document& doc) { return serialize(doc, nullptr); }
 
 }  // namespace zametti

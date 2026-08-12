@@ -13,6 +13,7 @@
 // памяти, — файл ради этого не читается.
 
 #include "document_saver.h"
+#include "history_rules.h"
 #include "editor_widget.h"
 #include "journal.h"
 #include "test_util.h"
@@ -20,6 +21,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QFile>
+#include <QDateTime>
 #include <QFileInfo>
 #include <QTemporaryDir>
 #include <QTextCursor>
@@ -364,6 +366,289 @@ void checkUndoDoesNotDuplicate() {
             !all.empty() && zametti::sameApartFromModified(all.back(), file.readAll()));
 }
 
+// --- ленивая миграция: оба триггера пер-заметочные ---------------------------
+//
+// Триггеров ровно два, и оба про ОДНУ заметку: первая запись в её журнал и
+// первое чтение её истории. Просто открыть заметку и смотреть на неё — журнала
+// не касается вовсе.
+
+// Журнал с дубликатами, каким его писала программа до этапа 10: записи в обход
+// правил отбора и шапка без версии содержимого.
+void makeDirtyJournal(const QString& id, qint64 when) {
+    zametti::journal::History history(g_root);
+    const QByteArray a = "<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n"
+                         "modified: 2020-01-01T00:00:01Z\n-->\n\n# Грязь\n\nодин\n";
+    const QByteArray b = "<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n"
+                         "modified: 2020-01-01T00:00:02Z\n-->\n\n# Грязь\n\n"
+                         "один два три четыре пять шесть семь восемь девять десять\n";
+    const QByteArray a2 = "<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n"
+                          "modified: 2020-01-01T00:00:03Z\n-->\n\n# Грязь\n\nодин\n";
+    QString error;
+    history.append(id, zametti::journal::Kind::Save, when, a, 0, &error);
+    history.append(id, zametti::journal::Kind::Save, when + 1000, b, 0, &error);
+    history.append(id, zametti::journal::Kind::Save, when + 2000, a2, 0, &error);
+
+    // Шапку — на старый лад, иначе чистить нечего: нынешний append заводит
+    // журнал сразу чищеным.
+    const QString path = history.pathFor(id);
+    QFile file(path);
+    ZT_TRUE("грязный журнал открыт", file.open(QIODevice::ReadOnly));
+    QByteArray bytes = file.readAll();
+    file.close();
+    const QByteArray clean =
+        zametti::journal::headerBytesFor(QString::fromLatin1(zametti::journal::kCleanVersion));
+    bytes = zametti::journal::headerBytesFor(QString()) + bytes.mid(clean.size());
+    QFile out(path);
+    ZT_TRUE("грязный журнал переписан", out.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    out.write(bytes);
+    out.close();
+}
+
+QString cleanVersionOf(const QString& id) {
+    zametti::journal::History history(g_root);
+    zametti::journal::Journal journal;
+    QString error;
+    if (!history.read(id, &journal, &error)) return QStringLiteral("не читается");
+    return journal.cleanVersion;
+}
+
+// Триггер первый: первая запись в журнал.
+void checkSaveMigrates() {
+    const QString id = QStringLiteral("01gggggggggggg");
+    const QString path = makeNote(id, "# Грязь\n\nодин\n");
+    makeDirtyJournal(id, QDateTime::currentMSecsSinceEpoch() - 60 * 60 * 1000);
+    ZT_EQ("журнал заведён старым (v0)", std::string(), cleanVersionOf(id).toStdString());
+    ZT_TRUE("и дубликаты в нём есть", recordCount(id) == 3);
+
+    zametti::NoteEditor editor;
+    editor.setStoreRoot(g_root);
+    editor.openFile(path);
+    ZT_EQ("просмотр заметки журнал не тронул", std::string(),
+          cleanVersionOf(id).toStdString());
+
+    QTextCursor caret = editor.textCursor();
+    caret.movePosition(QTextCursor::End);
+    caret.insertText(QStringLiteral(" и ещё длинный дописанный кусок текста сверх того"));
+    editor.setTextCursor(caret);
+    editor.save(false);
+
+    ZT_EQ("после первой же записи журнал чищен", std::string("0.1"),
+          cleanVersionOf(id).toStdString());
+    // Три записи с возвратом сходятся к одной, и к ней добавляется свежая.
+    ZT_TRUE("дубликаты вычищены: записей " + std::to_string(recordCount(id)), recordCount(id) == 2);
+}
+
+// Триггер второй: первое чтение истории. Ctrl+Z, доехавший до дна цепочки,
+// проваливается в историю — и журнал обязан быть чищен ДО первого шага.
+void checkHistoryReadMigrates() {
+    const QString id = QStringLiteral("01hhhhhhhhhhhh");
+    const QString path = makeNote(id, "# Грязь\n\nодин\n");
+    makeDirtyJournal(id, QDateTime::currentMSecsSinceEpoch() - 60 * 60 * 1000);
+
+    zametti::NoteEditor editor;
+    editor.setStoreRoot(g_root);
+    editor.openFile(path);
+    ZT_EQ("до входа в историю журнал не тронут", std::string(),
+          cleanVersionOf(id).toStdString());
+
+    ZT_TRUE("вход в историю удался", editor.enterHistory());
+    ZT_EQ("журнал вычищен входом в историю", std::string("0.1"),
+          cleanVersionOf(id).toStdString());
+    ZT_TRUE("и таймлайн показывает уже чистую историю: записей " +
+                std::to_string(editor.timeline().entries.size()),
+            editor.timeline().entries.size() == 1);
+    editor.leaveHistory();
+}
+
+// --- вход в историю ---------------------------------------------------------
+
+// Вход = ещё одна точка сохранения. Грязный буфер рождает запись, чистый — нет.
+void checkEnterSavesDirtyBuffer() {
+    const QString id = QStringLiteral("01iiiiiiiiiiii");
+    const QString path = makeNote(id, "# Вход\n\nОснова.\n");
+
+    zametti::NoteEditor editor;
+    editor.setStoreRoot(g_root);
+    editor.openFile(path);
+    editor.save(false);
+    const int base = recordCount(id);
+    ZT_TRUE("опорная запись есть", base >= 1);
+
+    // Чистый буфер: вход записи не добавляет.
+    ZT_TRUE("вошли в историю", editor.enterHistory());
+    editor.leaveHistory();
+    ZT_TRUE("с чистым буфером записи не появилось: было " + std::to_string(base) +
+                ", стало " + std::to_string(recordCount(id)),
+            recordCount(id) == base);
+
+    // Грязный буфер: вход обязан его записать, иначе набранное не попало бы в
+    // прошлое, за которым человек как раз и пошёл.
+    QTextCursor caret = editor.textCursor();
+    caret.movePosition(QTextCursor::End);
+    caret.insertText(QStringLiteral(" длинная дописка, которой хватит на новую запись целиком"));
+    editor.setTextCursor(caret);
+    ZT_TRUE("вошли в историю со свежими правками", editor.enterHistory());
+    ZT_TRUE("вершина работы записана: было " + std::to_string(base) + ", стало " +
+                std::to_string(recordCount(id)),
+            recordCount(id) == base + 1);
+
+    // И вершина таймлайна — настоящая головная запись, равная живому буферу:
+    // «Вернуть» на ней честно отказывается.
+    bool alreadyCurrent = false;
+    editor.restoreShownSnapshot(&alreadyCurrent);
+    ZT_TRUE("на вершине восстанавливать нечего", alreadyCurrent);
+    editor.leaveHistory();
+}
+
+// ИМЕНОВАННЫЙ ИНВАРИАНТ: режим истории живого буфера не трогает. Вышли — и
+// Ctrl+Z продолжает отматывать до-исторические правки, а не начинает с чистого
+// листа.
+void checkHistoryLeavesUndoStackAlone() {
+    const QString id = QStringLiteral("01jjjjjjjjjjjj");
+    const QString path = makeNote(id, "# Стек\n\n");
+
+    zametti::NoteEditor editor;
+    editor.setStoreRoot(g_root);
+    editor.openFile(path);
+    QTextCursor caret = editor.textCursor();
+    caret.movePosition(QTextCursor::End);
+    editor.setTextCursor(caret);
+    typeText(editor, QStringLiteral("один два три "));
+    const int stepsBefore = editor.undoSteps();
+    ZT_TRUE("шагов отмены набралось: " + std::to_string(stepsBefore), stepsBefore >= 3);
+
+    ZT_TRUE("вошли в историю", editor.enterHistory());
+    // В режиме истории цепочка отмены СВОЯ и пустая: живая отложена целиком.
+    // Пустая — это единица: в цепочке всегда лежит опорный шаг, с которого
+    // отменять уже некуда.
+    ZT_TRUE("в слепке своя пустая цепочка: " + std::to_string(editor.undoSteps()),
+            editor.undoSteps() == 1);
+    editor.leaveHistory();
+
+    ZT_TRUE("вернулись с той же цепочкой: было " + std::to_string(stepsBefore) + ", стало " +
+                std::to_string(editor.undoSteps()),
+            editor.undoSteps() == stepsBefore);
+    editor.undo();
+    ZT_EQ("и Ctrl+Z отменяет до-историческую правку", std::string("один два "),
+          tailOf(editor, 9).toStdString());
+}
+
+// Каретка и выделение переживают заход в историю.
+//
+// Владелец: «ставим курсор не в начало заметки, жмём историю, жмём ещё раз —
+// текст выделен от начала до курсора». Вход запоминал только позицию каретки, а
+// второй конец выделения оставался чужим — и заметка возвращалась выделенной.
+void checkHistoryKeepsCaretAndSelection() {
+    const QString id = QStringLiteral("01kkkkkkkkkkkk");
+    const QString path = makeNote(id, "# Каретка\n\nПервая строка.\n\nВторая строка.\n");
+
+    zametti::NoteEditor editor;
+    editor.setStoreRoot(g_root);
+    editor.openFile(path);
+    editor.save(false);
+
+    // Каретка в середине, выделения НЕТ.
+    QTextCursor caret = editor.textCursor();
+    caret.movePosition(QTextCursor::End);
+    caret.movePosition(QTextCursor::PreviousCharacter, QTextCursor::MoveAnchor, 5);
+    editor.setTextCursor(caret);
+    const int at = editor.textCursor().position();
+    ZT_TRUE("каретка не в начале: " + std::to_string(at), at > 0);
+    ZT_TRUE("и выделения нет", !editor.textCursor().hasSelection());
+
+    ZT_TRUE("вошли в историю", editor.enterHistory());
+    editor.leaveHistory();
+    ZT_TRUE("вернулись без выделения", !editor.textCursor().hasSelection());
+    ZT_TRUE("и каретка на месте: " + std::to_string(editor.textCursor().position()),
+            editor.textCursor().position() == at);
+
+    // А выделение, которое БЫЛО, возвращается целым — иначе первая проверка
+    // проходила бы и при «выделение всегда снимаем».
+    QTextCursor chosen = editor.textCursor();
+    chosen.movePosition(QTextCursor::PreviousWord, QTextCursor::KeepAnchor);
+    editor.setTextCursor(chosen);
+    const int anchor = editor.textCursor().anchor();
+    const int position = editor.textCursor().position();
+    ZT_TRUE("выделение сделано", editor.textCursor().hasSelection());
+
+    ZT_TRUE("снова вошли в историю", editor.enterHistory());
+    editor.leaveHistory();
+    ZT_TRUE("выделение вернулось тем же",
+            editor.textCursor().anchor() == anchor &&
+                editor.textCursor().position() == position);
+}
+
+// ЗАГЛУШКА ДИФФА НЕ ИМЕЕТ ПРАВА ПОПАСТЬ В ФАЙЛ ЗАМЕТКИ.
+//
+// Владелец нашёл посреди своего «Ficus Tutorial» строку «удалено: 2 строки» —
+// нашу подпись из режима истории. В поле в этот момент лежит документ СЛЕПКА со
+// вставленными заглушками, и любая запись из этого состояния уносит их на диск.
+void checkHistoryNeverWritesToFile() {
+    const QString id = QStringLiteral("01mmmmmmmmmmmm");
+    const QString path = makeNote(id, "# Заметка\n\nпервый\n\nвторой\n\nтретий\n");
+
+    zametti::NoteEditor editor;
+    editor.setStoreRoot(g_root);
+    editor.openFile(path);
+    editor.save(false);
+
+    // ТРИ ЗАПИСИ, и встать надо на среднюю: у неё и заглушка есть (абзац
+    // «второй» исчез), и содержимое отличается от файла. На последней записи
+    // проверка была бы пустышкой — там слепок равен файлу, и запись ничего бы
+    // не изменила даже без починки. На этом я и попался в первой редакции.
+    const auto write = [&](const char* body) {
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
+        file.write(QByteArray("<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n-->\n\n") + body);
+    };
+    zametti::journal::History history(g_root);
+    QString error;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    // Опорная запись с исходным содержимым уже есть — её положило открытие
+    // заметки. Дописываем только то, что после неё.
+    // Времена ПОСЛЕ опорной записи: её время — время файла, то есть «сейчас».
+    // Поставь я записи в прошлое — и слепок оказался бы старше своей базы, а
+    // подпись сменилась бы на «добавлено» (на этом я и попался).
+    history.append(id, zametti::journal::Kind::Save, now + 60'000,
+                   QByteArray("<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n-->\n\n"
+                              "# Заметка\n\nпервый\n\nтретий\n"),
+                   0, &error);
+    write("# Заметка\n\nпервый\n\nтретий\n\nчетвёртый\n");
+    history.append(id, zametti::journal::Kind::Save, now + 120'000,
+                   QByteArray("<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n-->\n\n"
+                              "# Заметка\n\nпервый\n\nтретий\n\nчетвёртый\n"),
+                   0, &error);
+
+    editor.openFile(path);
+    ZT_TRUE("вошли в историю", editor.enterHistory());
+    ZT_TRUE("встали на среднюю запись", editor.enterHistory(1));
+    const bool gapShown = [&] {
+        for (QTextBlock b = editor.document()->begin(); b.isValid(); b = b.next())
+            if (b.text().startsWith(QStringLiteral("удалено:"))) return true;
+        return false;
+    }();
+    ZT_TRUE("вспомогательная строка в поле есть — иначе проверять нечего", gapShown);
+    ZT_TRUE("и слепок отличается от файла — иначе проверять тоже нечего",
+            !editor.document()->toPlainText().contains(QStringLiteral("четвёртый")));
+
+    QFile before(path);
+    ZT_TRUE("файл читается", before.open(QIODevice::ReadOnly));
+    const QByteArray was = before.readAll();
+    before.close();
+
+    // ВОТ ОНА, ДВЕРЬ: так пишет выход из программы и уход из заметки — не
+    // спрашивая признак «изменён».
+    editor.save(false, true);
+    editor.save(true);
+
+    QFile after(path);
+    ZT_TRUE("файл читается и после", after.open(QIODevice::ReadOnly));
+    const QByteArray now2 = after.readAll();
+    ZT_TRUE("файл заметки не тронут записью из режима истории", now2 == was);
+    ZT_TRUE("и заглушки в нём нет", !now2.contains("удалено:"));
+    editor.leaveHistory();
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -383,6 +668,12 @@ int main(int argc, char** argv) {
     checkUndoDoesNotDuplicate();
     checkAcrossRestart();
     checkNoEqualNeighbours();
+    checkSaveMigrates();
+    checkHistoryReadMigrates();
+    checkEnterSavesDirtyBuffer();
+    checkHistoryLeavesUndoStackAlone();
+    checkHistoryKeepsCaretAndSelection();
+    checkHistoryNeverWritesToFile();
 
     return zt::report("что история не пишет");
 }

@@ -52,23 +52,16 @@ enum Key {
     KeyPlainSize = 5,
     KeySnapshot = 6,
     KeySource = 7,
+
+    // Версия содержимого (шапка). Номер взят СВОБОДНЫЙ, а не 3: читатель у
+    // шапки и у записи один, и ключи их живут в общем пространстве. Совпасть с
+    // KeyDigest значило бы различать их по типу значения — так уже сделано у
+    // пары Magic/Kind, и хватит: каждая такая пара это ловушка для того, кто
+    // добавит поле следующим.
+    KeyClean = 8,
 };
 
 constexpr int kZstdLevel = 3;
-
-// Шапка — первая запись файла, такая же CBOR-карта, как остальные. Отдельным
-// «форматом заголовка» не делаем: один читатель на весь файл проще.
-QByteArray headerBytes() {
-    QByteArray out;
-    QCborStreamWriter writer(&out);
-    writer.startMap(2);
-    writer.append(KeyMagic);
-    writer.append(QLatin1StringView(kMagic));
-    writer.append(KeyVersion);
-    writer.append(kFormatVersion);
-    writer.endMap();
-    return out;
-}
 
 QByteArray recordBytes(Kind kind, qint64 time, const Digest& digest, const QByteArray& packed,
                        qint64 plainSize, qint64 source, Codec codec) {
@@ -163,8 +156,23 @@ struct RawRecord {
     QByteArray packed;
     QString magic;
     int version = 0;
+    QString clean;
     bool isHeader = false;
 };
+
+// Строка CBOR читается кусками — она может быть разбита на части.
+bool readValueAsString(QCborStreamReader& reader, QString* value) {
+    if (!reader.isString()) return false;
+    auto chunk = reader.readString();
+    QString all;
+    while (chunk.status == QCborStreamReader::Ok) {
+        all += chunk.data;
+        chunk = reader.readString();
+    }
+    if (chunk.status == QCborStreamReader::Error) return false;
+    *value = all;
+    return true;
+}
 
 bool readValueAsInt(QCborStreamReader& reader, qint64* value) {
     if (!reader.isInteger()) return false;
@@ -198,14 +206,7 @@ RawRecord readRecord(QCborStreamReader& reader, bool wantSnapshot) {
             case KeyKind:  // он же KeyMagic — различаем по типу значения
                 if (reader.isString()) {
                     out.isHeader = true;
-                    auto chunk = reader.readString();
-                    QString all;
-                    while (chunk.status == QCborStreamReader::Ok) {
-                        all += chunk.data;
-                        chunk = reader.readString();
-                    }
-                    if (chunk.status == QCborStreamReader::Error) return out;
-                    out.magic = all;
+                    if (!readValueAsString(reader, &out.magic)) return out;
                 } else {
                     qint64 v = 0;
                     if (!readValueAsInt(reader, &v)) return out;
@@ -258,6 +259,9 @@ RawRecord readRecord(QCborStreamReader& reader, bool wantSnapshot) {
                 out.entry.source = v;
                 break;
             }
+            case KeyClean:
+                if (!readValueAsString(reader, &out.clean)) return out;
+                break;
             default:
                 reader.next();  // незнакомый ключ — не наше дело
                 break;
@@ -332,6 +336,57 @@ bool rebuildAt(const QVector<Entry>& entries, const QVector<QByteArray>& packed,
     return true;
 }
 
+// Собрать журнал заново из выживших записей. Общая часть прореживания и
+// чистки: обе переписывают файл целиком, и держать это двумя кусками кода —
+// прямой путь к тому, что поколения у них однажды разъедутся.
+//
+// Выжившие перекодируются с нуля: звено цепочки осмысленно только рядом со
+// своим предшественником, а он мог не выжить.
+bool rebuiltBytes(const QVector<Entry>& entries, const QVector<QByteArray>& packed,
+                  const QVector<int>& keep, const QString& clean, QByteArray* out,
+                  QString* error) {
+    *out = headerBytesFor(clean);
+    QByteArray previous;
+    int written = 0;
+    for (int i : keep) {
+        const Entry& e = entries[i];
+        if (!e.hasSnapshot()) {
+            // Надгробие поколения не начинает и не рвёт: слепка у него нет.
+            *out += recordBytes(e.kind, e.time, e.digest, QByteArray(), 0, e.source, Codec::Zstd);
+            continue;
+        }
+        QByteArray plain;
+        if (!rebuildAt(entries, packed, i, &plain, error)) return false;
+        const bool full = written % kGeneration == 0;
+        const Codec codec = full ? Codec::Zstd : Codec::ZstdDelta;
+        const QByteArray body = compressSnapshot(plain, full ? QByteArray() : previous);
+        if (body.isEmpty() && !plain.isEmpty()) {
+            if (error) *error = QStringLiteral("не удалось сжать слепок записи №%1").arg(i);
+            return false;
+        }
+        *out += recordBytes(e.kind, e.time, e.digest, body, plain.size(), e.source, codec);
+        previous = plain;
+        ++written;
+    }
+    return true;
+}
+
+// Подменить журнал целиком и атомарно. Промежуточного состояния у файла не
+// существует ни мгновения.
+bool replaceFile(const QString& path, const QByteArray& bytes, QString* error) {
+    QSaveFile save(path);
+    if (!save.open(QIODevice::WriteOnly)) {
+        if (error) *error = QStringLiteral("журнал не переписать: %1").arg(save.errorString());
+        return false;
+    }
+    save.write(bytes);
+    if (!save.commit()) {
+        if (error) *error = QStringLiteral("журнал не переписать: %1").arg(save.errorString());
+        return false;
+    }
+    return true;
+}
+
 QString describeKind(Kind kind) {
     switch (kind) {
         case Kind::Save: return QStringLiteral("save");
@@ -356,6 +411,7 @@ bool parseAll(const QByteArray& blob, Journal* out, Want want, int wantIndex,
     out->entries.clear();
     out->tailTrimmed = false;
     out->goodBytes = 0;
+    out->cleanVersion.clear();
     if (blob.isEmpty()) return true;  // пустой файл — пустой журнал, не беда
 
     // По читателю на запись. QCborStreamReader сам по последовательности
@@ -381,6 +437,7 @@ bool parseAll(const QByteArray& blob, Journal* out, Want want, int wantIndex,
                          .arg(kFormatVersion);
         return false;
     }
+    out->cleanVersion = header.clean;
     offset = reader.currentOffset();
     out->goodBytes = qint64(offset);
 
@@ -411,7 +468,44 @@ bool parseAll(const QByteArray& blob, Journal* out, Want want, int wantIndex,
 
 }  // namespace
 
+// Шапка — первая запись файла, такая же CBOR-карта, как остальные. Отдельным
+// «форматом заголовка» не делаем: один читатель на весь файл проще.
+//
+// clean — по какому своду правил журнал вычищен; пусто — ключа в шапке нет
+// вовсе, и это v0. Новый журнал заводится сразу чистым: он пишется нынешними
+// правилами, чистить в нём нечего по построению.
+QByteArray headerBytesFor(const QString& clean) {
+    QByteArray out;
+    QCborStreamWriter writer(&out);
+    writer.startMap(clean.isEmpty() ? 2 : 3);
+    writer.append(KeyMagic);
+    writer.append(QLatin1StringView(kMagic));
+    writer.append(KeyVersion);
+    writer.append(kFormatVersion);
+    if (!clean.isEmpty()) {
+        writer.append(KeyClean);
+        writer.append(clean);
+    }
+    writer.endMap();
+    return out;
+}
+
 History::History(QString root) : root_(std::move(root)) {}
+
+int indexOfEntry(const Journal& journal, qint64 time, const Digest& digest) {
+    int nearest = -1;
+    for (int i = 0; i < journal.entries.size(); ++i) {
+        const Entry& e = journal.entries[i];
+        if (e.time == time && e.digest == digest) return i;
+        if (e.hasSnapshot() && e.time <= time) nearest = i;
+    }
+    // Точной нет. Может, она просто переехала во времени — ищем по отпечатку.
+    for (int i = 0; i < journal.entries.size(); ++i)
+        if (journal.entries[i].digest == digest && journal.entries[i].hasSnapshot()) return i;
+    // И этого нет: запись вычистили. Ближайшая не позже искомой — то самое
+    // состояние, которое к тому моменту в журнале и осталось.
+    return nearest;
+}
 
 QString History::pathFor(const QString& noteId) const {
     return QDir(root_).filePath(QStringLiteral("history/%1.log").arg(noteId));
@@ -485,7 +579,10 @@ bool History::appendLocked(const QString& path, Kind kind, qint64 time,
     QByteArray tail;
     if (!exists) {
         QDir().mkpath(QFileInfo(path).absolutePath());
-        tail = headerBytes();
+        // Новый журнал заводится сразу чищеным: он весь написан нынешними
+        // правилами, и вычищать в нём нечего по построению. Иначе первая же
+        // заметка приезжала бы на чистку зря.
+        tail = headerBytesFor(QString::fromLatin1(kCleanVersion));
     }
     tail += recordBytes(kind, time, digest, body, snapshot.size(), source, codec);
 
@@ -632,31 +729,11 @@ bool History::thinLocked(const QString& path, qint64 now, QString* error) {
     const QVector<int> keep = survivors(journal.entries, now);
     if (keep.size() == journal.entries.size() && !journal.tailTrimmed) return true;  // нечего делать
 
-    // Выжившие перекодируются заново: звено цепочки осмысленно только рядом со
-    // своим предшественником, а он мог не выжить. Заодно поколения выходят
-    // ровными, а не рваными.
-    QByteArray out = headerBytes();
-    QByteArray previous;
-    int written = 0;
-    for (int i : keep) {
-        const Entry& e = journal.entries[i];
-        if (!e.hasSnapshot()) {
-            out += recordBytes(e.kind, e.time, e.digest, QByteArray(), 0, e.source, Codec::Zstd);
-            continue;
-        }
-        QByteArray plain;
-        if (!rebuildAt(journal.entries, packed, i, &plain, error)) return false;
-        const bool full = written % kGeneration == 0;
-        const Codec codec = full ? Codec::Zstd : Codec::ZstdDelta;
-        const QByteArray body = compressSnapshot(plain, full ? QByteArray() : previous);
-        if (body.isEmpty() && !plain.isEmpty()) {
-            if (error) *error = QStringLiteral("не удалось сжать слепок записи №%1").arg(i);
-            return false;
-        }
-        out += recordBytes(e.kind, e.time, e.digest, body, plain.size(), e.source, codec);
-        previous = plain;
-        ++written;
-    }
+    // Версию чистки переносим как есть: прореживание — это про время, а не про
+    // дубликаты, и объявить журнал чищеным оно права не имеет.
+    QByteArray out;
+    if (!rebuiltBytes(journal.entries, packed, keep, journal.cleanVersion, &out, error))
+        return false;
 
     QFileInfo now2(path);
     if (now2.size() != sawSize || now2.lastModified() != sawTime) {
@@ -666,20 +743,76 @@ bool History::thinLocked(const QString& path, qint64 now, QString* error) {
         return true;
     }
 
-    // Переписывание целиком и атомарно: журнал в промежуточном состоянии не
-    // существует ни мгновения. Инвариант «только растёт» действует между
-    // прореживаниями, и это единственное место, которое его нарушает.
-    QSaveFile save(path);
-    if (!save.open(QIODevice::WriteOnly)) {
-        if (error) *error = QStringLiteral("журнал не переписать: %1").arg(save.errorString());
-        return false;
+    // Инвариант «журнал только растёт» действует между перезаписями; их всего
+    // две — прореживание и чистка.
+    return replaceFile(path, out, error);
+}
+
+bool History::compressLocked(const QString& path, const Planner& planner, bool force,
+                             CompressOutcome* outcome, QString* error) {
+    assertLocked();
+    CompressOutcome done;
+    const auto finish = [&](bool ok) {
+        if (outcome != nullptr) *outcome = done;
+        return ok;
+    };
+
+    QFile file(path);
+    if (!file.exists()) return finish(true);   // журнала нет — и чистить нечего
+    if (!file.open(QIODevice::ReadOnly)) {
+        if (error) *error = QStringLiteral("журнал не прочитать: %1").arg(file.errorString());
+        return finish(false);
     }
-    save.write(out);
-    if (!save.commit()) {
-        if (error) *error = QStringLiteral("журнал не переписать: %1").arg(save.errorString());
-        return false;
+    const QByteArray blob = file.readAll();
+    file.close();
+
+    Journal journal;
+    QVector<QByteArray> packed;
+    if (!parseAll(blob, &journal, Want::All, -1, &packed, error)) return finish(false);
+
+    done.versionBefore = journal.cleanVersion;
+    done.versionAfter = journal.cleanVersion;
+    done.recordsBefore = int(journal.entries.size());
+    done.recordsAfter = done.recordsBefore;
+
+    // Ленивость: чищеный журнал не трогается вовсе. Люк ходит с force.
+    const QString target = QString::fromLatin1(kCleanVersion);
+    if (!force && journal.cleanVersion == target) return finish(true);
+
+    // Правилу нужны слепки, а не байты: «одинаковы ли две записи» — вопрос про
+    // содержимое. Распаковываем разом, потому что дальше правило смотрит на
+    // них помногу раз, и распаковывать по требованию значило бы делать это
+    // заново на каждом проходе.
+    QVector<QByteArray> plain(journal.entries.size());
+    for (int i = 0; i < journal.entries.size(); ++i) {
+        if (!journal.entries[i].hasSnapshot()) continue;
+        if (!rebuildAt(journal.entries, packed, i, &plain[i], error)) return finish(false);
     }
-    return true;
+
+    const QVector<int> keep = planner(journal.entries, plain);
+    // План приходит снаружи, и доверять ему на слово нельзя: перепутанный
+    // порядок или номер за границей испортили бы журнал молча.
+    for (int i = 0; i < keep.size(); ++i)
+        if (keep[i] < 0 || keep[i] >= journal.entries.size() ||
+            (i > 0 && keep[i] <= keep[i - 1])) {
+            if (error) *error = QStringLiteral("правило чистки вернуло негодный список");
+            return finish(false);
+        }
+
+    // НИ БАЙТА, ЕСЛИ НИЧЕГО НЕ ПОМЕНЯЛОСЬ — на этом стоит обещание
+    // идемпотентности: повторный форс не переписывает файл вовсе.
+    if (keep.size() == journal.entries.size() && !journal.tailTrimmed &&
+        journal.cleanVersion == target)
+        return finish(true);
+
+    QByteArray out;
+    if (!rebuiltBytes(journal.entries, packed, keep, target, &out, error)) return finish(false);
+    if (!replaceFile(path, out, error)) return finish(false);
+
+    done.versionAfter = target;
+    done.recordsAfter = int(keep.size());
+    done.rewritten = true;
+    return finish(true);
 }
 
 // Открытые методы: замок и ничего больше. Ни одной строки работы с файлами
@@ -737,6 +870,12 @@ bool History::trimTail(const QString& noteId, QString* error) {
 bool History::thin(const QString& noteId, qint64 now, QString* error) {
     const QMutexLocker locked(&gate());
     return thinLocked(pathFor(noteId), now, error);
+}
+
+bool History::compress(const QString& noteId, const Planner& planner, bool force,
+                       CompressOutcome* outcome, QString* error) {
+    const QMutexLocker locked(&gate());
+    return compressLocked(pathFor(noteId), planner, force, outcome, error);
 }
 
 ThinReport History::thinAll(qint64 now, bool dryRun) {

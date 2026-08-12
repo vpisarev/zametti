@@ -108,6 +108,17 @@ void checkSearchPair(Toolbar& bar) {
     // промежутка между группами, ни распорки.
     ZT_TRUE("и вплотную к нему",
             inStore->x() - (inNote->x() + inNote->width()) < 4);
+
+    // Кнопка истории вернулась — одна, слева от пары поиска и вплотную к ней.
+    // Порядок спрашивается у РАСКЛАДКИ, а не у списка: список его задаёт, но
+    // перепутать местами может и раскладка.
+    QToolButton* history = bar.buttonFor(Button::History);
+    ZT_TRUE("кнопка истории есть", history != nullptr);
+    if (history == nullptr) return;
+    ZT_TRUE("она про историю заметки",
+            history->toolTip().contains(QStringLiteral("История")));
+    ZT_TRUE("и стоит левее поиска", history->x() < inNote->x());
+    ZT_TRUE("вплотную к нему", inNote->x() - (history->x() + history->width()) < 4);
 }
 
 // Обещание гасит кнопку И объясняет причину. Половина этого — хуже, чем ничего:

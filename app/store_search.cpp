@@ -86,9 +86,10 @@ public slots:
                     break;
                 }
                 const HitLine line = hitLine(doc, hit);
+                // Поля слепка остаются нулевыми: это находка в живой заметке.
                 results.append(SearchResult{info.completeBaseName(),
                                             info.absoluteFilePath(), title, line.text,
-                                            line.offset, line.length, hit.ordinal});
+                                            line.offset, line.length, hit.ordinal, 0, {}});
             }
             if (truncated) break;
         }

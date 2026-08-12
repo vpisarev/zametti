@@ -9,6 +9,8 @@
 #ifndef ZAMETTI_STORE_SEARCH_H
 #define ZAMETTI_STORE_SEARCH_H
 
+#include "hash.h"
+
 #include <QObject>
 #include <QString>
 #include <QThread>
@@ -29,6 +31,13 @@ struct SearchResult {
     int lineOffset = 0;  // где в ней совпадение — для подсветки
     int lineLength = 0;
     int ordinal = 0;     // какое это совпадение по счёту внутри заметки
+
+    // Находка в СЛЕПКЕ ИСТОРИИ, а не в живой заметке (поиск по истории
+    // заметки). Адресуется запись парой (время, отпечаток), а не номером:
+    // номер протухает от чистки журнала — она выкидывает дубликаты, и всё,
+    // что после, съезжает. Ноль во времени — находка в живой заметке.
+    qint64 snapshotTime = 0;
+    Digest snapshotDigest;
 };
 
 class StoreSearch : public QObject {

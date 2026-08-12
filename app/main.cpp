@@ -51,6 +51,7 @@
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QFile>
+#include <QElapsedTimer>
 #include <QTimer>
 #include <QTreeView>
 #include <QPointer>
@@ -783,6 +784,15 @@ int main(int argc, char** argv) {
     // навигация. Иначе перестановка курсора в дереве перезаполняла бы средний
     // список, и просмотр «всех заметок» схлопывался бы до одной папки при
     // первом же щелчке.
+    // ЗАМЕТКУ ОТКРЫЛ ВЫБОР ПАПКИ, а не человек. Признак нужен показу: он иначе
+    // переставит курсор дерева на подпапку, в которой лежит первая заметка, —
+    // то есть уведёт его из папки, по которой только что щёлкнули. Владелец
+    // видел это как «кликаю по Tech, а курсор скачет на настройку».
+    //
+    // Именно путь, а не флажок: показ приходит очередью, и к его приходу флажок
+    // был бы уже снят.
+    QString openedByFolderPick;
+
     const auto revealOpenNote = [&](const QString& file) {
         if (!model.isStore() || file.isEmpty()) return;
         const QModelIndex folder =
@@ -809,14 +819,25 @@ int main(int argc, char** argv) {
             // работает. Открыли заметку из поиска или из середины — фокус там,
             // и показать, где заметка лежит, надо, даже если курсор дерева
             // стоит на её прародителе (а на корне он стоит почти всегда).
-            bool inside = false;
-            if (tree.hasFocus())
-                for (QModelIndex up = folder; up.isValid() && !inside; up = up.parent())
-                    inside = up == tree.currentIndex();
+            //
+            // ФОКУСА ОДНОГО МАЛО, и это стоило владельцу ещё одной беды: щелчок
+            // по папке открывает её первую заметку, а открытие уводит фокус в
+            // текст — к приходу показа дерево фокус уже потеряло, и курсор
+            // уезжал на подпапку. Поэтому спрашиваем прямо: не мы ли сами
+            // открыли эту заметку выбором папки.
+            const bool byFolderPick = !openedByFolderPick.isEmpty() && file == openedByFolderPick;
+            openedByFolderPick.clear();
+            bool insideCurrent = false;
+            for (QModelIndex up = folder; up.isValid() && !insideCurrent; up = up.parent())
+                insideCurrent = up == tree.currentIndex();
+            // Само правило — в note_tree.h: там оно названо, объяснено и
+            // проверено набором. Здесь только три ответа на его вопросы.
+            const bool move =
+                zametti::shouldMoveTreeCursor(byFolderPick, tree.hasFocus(), insideCurrent);
 
             revealing = true;
             zametti::expandAncestors(tree, folder);
-            if (!inside) {
+            if (move) {
                 tree.setCurrentIndex(folder);
                 tree.scrollTo(folder);
             }
@@ -912,8 +933,10 @@ int main(int argc, char** argv) {
             listView.setCurrentIndex(first);
         }
         const QString file = list.pathAt(first);
-        if (!file.isEmpty() && file != editor.filePath())
+        if (!file.isEmpty() && file != editor.filePath()) {
+            openedByFolderPick = file;
             editor.openFile(file, !keyWalk->walking);
+        }
     };
 
     QObject::connect(tree.selectionModel(), &QItemSelectionModel::currentChanged, &tree,
@@ -1053,7 +1076,17 @@ int main(int argc, char** argv) {
         const int at = editor.historyIndex();
         const auto& entries = editor.timeline().entries;
         if (at < 0 || at >= entries.size()) return;
-        historyBanner.setSnapshot(entries[at].time, entries[at].kind);
+        // Баннер пишет, КАКАЯ ВЕРСИЯ ПЕРЕД ГЛАЗАМИ, а по Tab перед глазами
+        // вторая сторона сравнения — её и называем.
+        if (editor.diffPeek()) {
+            if (editor.diffBaseIsLive()) historyBanner.setLiveVersion();
+            else if (editor.diffBaseTime() > 0)
+                historyBanner.setSnapshot(editor.diffBaseTime(), zametti::journal::Kind::Save);
+            else
+                historyBanner.setSnapshot(entries[at].time, entries[at].kind);
+        } else {
+            historyBanner.setSnapshot(entries[at].time, entries[at].kind);
+        }
         historyTimeline.setCurrent(at);
         window.setWindowTitle(windowTitleFor(editor.filePath()) + QStringLiteral(" — ") +
                               zametti::historyStamp(entries[at].time) +
@@ -1064,6 +1097,10 @@ int main(int argc, char** argv) {
                      [&](bool on) {
                          historyBanner.setVisible(on);
                          historyTimeline.setVisible(on);
+                         // Кнопка тулбара показывает состояние режима, откуда
+                         // бы в него ни вошли: Ctrl+Z, доехавший до дна цепочки,
+                         // приводит сюда же, и кнопка обязана загореться.
+                         toolbar.setChecked(zametti::Toolbar::Button::History, on);
                          // Тонировка поля: слегка пожелтевший от времени фон,
                          // чтобы прошлое было видно ещё до чтения баннера.
                          zametti::applyPalette(editor, on);
@@ -1072,6 +1109,13 @@ int main(int argc, char** argv) {
                              // редактор шлёт его следом, уже показав слепок.
                              historyTimeline.setEntries(editor.timeline().entries);
                              return;
+                         }
+                         // Список находок по слепкам без режима истории не
+                         // значит ничего: щёлкать в нём стало не по чему.
+                         if (findBar.mode() == zametti::FindBar::Mode::History) {
+                             results.clear();
+                             resultsView.hide();
+                             findBar.hide();
                          }
                          // Уходим — запоминаем, откуда: «назад к посещённому»
                          // вернёт сюда же. Индекс берётся ДО выхода, потому что
@@ -1086,6 +1130,8 @@ int main(int argc, char** argv) {
                          lastHistoryIndex = index;
                          showHistoryState();
                      });
+    QObject::connect(&editor, &zametti::NoteEditor::diffSideChanged, &window,
+                     [&](bool) { showHistoryState(); });
     QObject::connect(&editor, &zametti::NoteEditor::historyEditRefused, &historyBanner,
                      &zametti::HistoryBanner::flashRestore);
     // Закрытие таймлайна и «К текущей версии» — одна и та же дверь наружу.
@@ -1111,6 +1157,16 @@ int main(int argc, char** argv) {
     };
     QObject::connect(&historyBanner, &zametti::HistoryBanner::restoreRequested, &window,
                      [&] { restoreFromHistory(); });
+    // База сравнения. Кнопка знает только про два состояния, весь смысл — в
+    // редакторе: он и читает слепки, и считает разность.
+    QObject::connect(&historyBanner, &zametti::HistoryBanner::baseChanged, &editor,
+                     [&](bool fresh) { editor.setDiffFromFresh(fresh); });
+    QObject::connect(&historyBanner, &zametti::HistoryBanner::viewChanged, &editor,
+                     [&](bool plain) { editor.setDiffPlainView(plain); });
+    // Вид меняют и Tab, и кнопка — баннер обязан показывать, что действует,
+    // откуда бы смену ни попросили.
+    QObject::connect(&editor, &zametti::NoteEditor::diffViewChanged, &historyBanner,
+                     [&](bool plain) { historyBanner.setPlainView(plain); });
 
     // Правка файла хранилища мимо редактора: только для закрытых заметок —
     // открытая правится через редактор, иначе сторож примет запись за чужую.
@@ -1185,6 +1241,69 @@ int main(int argc, char** argv) {
             listView.scrollTo(keep);
         }
     };
+
+    QSet<QString> storeNames;
+    const auto listStore = [&] {
+        QSet<QString> names;
+        const QDir dir(model.nodePath(QModelIndex()));
+        for (const QString& name : dir.entryList(QDir::Files | QDir::Hidden)) names.insert(name);
+        return names;
+    };
+
+    // ПЕРЕЧИТАТЬ ХРАНИЛИЩЕ. Каталог меняется и мимо нас: файл вернули из
+    // системной корзины, положили заметку соседней программой, синхронизация
+    // принесла чужое. Раньше это лечилось только перезапуском (владелец
+    // наткнулся, восстанавливая заметку с картинками).
+    //
+    // Дверей три, и все зовут одно и то же: F5, Ctrl+R и пункт «Обновить» в
+    // контекстных меню.
+    const auto reloadStore = [&] {
+        refreshTree(editor.filePath());
+        storeNames = listStore();
+        statusBar.setMessage(QStringLiteral("хранилище перечитано"));
+        QTimer::singleShot(1500, &statusBar, [&statusBar] { statusBar.setMessage(QString()); });
+    };
+    shortcut(QKeySequence(Qt::Key_F5), reloadStore);
+    shortcut(QKeySequence(QStringLiteral("Ctrl+R")), reloadStore);
+
+    // СТОРОЖ КАТАЛОГА — ПО УМОЛЧАНИЮ ВЫКЛЮЧЕН (`notes.watchFolder`, решение
+    // владельца): штатный путь обновить хранилище один и явный — F5, Ctrl+R или
+    // «Обновить» в меню. Включённый сторож сообщает о появившихся и исчезнувших
+    // файлах; правку содержимого он не видит вовсе — за открытой заметкой
+    // следит свой сторож в редакторе.
+    //
+    // ДВЕ ОГОВОРКИ, обе про цену. Первая: срабатывает он и на НАШИ записи —
+    // QSaveFile пишет во временный файл и переименовывает его, а для каталога
+    // это появление и исчезновение файла. Вторая: перечитывание хранилища
+    // читает КАЖДУЮ заметку целиком (заголовок и начало текста для средней
+    // колонки), и на корпусе владельца это десятки миллисекунд.
+    //
+    // Поэтому сторож сперва сверяет СОСТАВ каталога — одно чтение оглавления,
+    // без единого открытия файла, — и молчит, если имена те же. Наши
+    // собственные сохранения до перечитывания не доходят вовсе.
+    QFileSystemWatcher storeWatcher;
+    QTimer storeSettle;
+    storeSettle.setSingleShot(true);
+    storeSettle.setInterval(400);
+    if (model.isStore() && zametti::appearance().watchStore) {
+        storeNames = listStore();
+        storeWatcher.addPath(model.nodePath(QModelIndex()));
+        QObject::connect(&storeWatcher, &QFileSystemWatcher::directoryChanged, &window,
+                         [&storeSettle](const QString&) { storeSettle.start(); });
+        QObject::connect(&storeSettle, &QTimer::timeout, &window, [&] {
+            // СВЕРКА СОСТАВА — 1.5 мс на корпусе владельца (276 файлов), а
+            // полное перечитывание — 24 мс: оно читает каждую заметку ради
+            // заголовка и начала текста для средней колонки. Наши собственные
+            // записи (QSaveFile пишет во временный файл и переименовывает его)
+            // до перечитывания не доходят вовсе.
+            const QSet<QString> now = listStore();
+            if (now == storeNames) return;
+            storeNames = now;
+            // Открытую заметку не трогаем: у неё свой сторож, и он умеет
+            // спрашивать человека. Здесь только состав хранилища.
+            refreshTree(editor.filePath());
+        });
+    }
 
     // F2: новый заголовок. Открытая заметка правится через редактор (первый
     // содержательный блок), закрытая — через ядро по файлу.
@@ -1316,16 +1435,28 @@ int main(int argc, char** argv) {
             // в истории осталось бы состояние до последних правок, а человек
             // удаляет то, что видит.
             if (wasOpen) editor.save(false);
+            // КАРТИНКИ СЧИТАЕМ ДО УДАЛЕНИЯ: чтобы узнать, какие были в заметке,
+            // надо прочитать её саму, а через мгновение файла не будет. Удаление
+            // насовсем — такое же физическое расставание, как очистка корзины:
+            // одна заметка или сорок, правило одно.
+            const QString storeRoot = model.nodePath(QModelIndex());
+            const QStringList doomedFiles =
+                zametti::store::attachmentsLeavingWith(storeRoot, {noteId});
             // Само удаление — в хранилище: там же живёт правило «сначала
             // надгробие, потом файл» и обещание никогда не удалять журнал.
             QString deleteError;
-            if (!zametti::store::deleteNoteFile(model.nodePath(QModelIndex()), noteId,
-                                                &deleteError)) {
+            if (!zametti::store::deleteNoteFile(storeRoot, noteId, &deleteError)) {
                 QMessageBox::warning(&window, QStringLiteral("zametti"), deleteError);
                 return;
             }
             if (!deleteError.isEmpty())
                 std::fprintf(stderr, "%s\n", deleteError.toUtf8().constData());
+            // Картинки — следом, в ту же мусорку ОС.
+            for (const QString& picture : doomedFiles) {
+                QString error;
+                if (!zametti::store::deleteAttachmentFile(storeRoot, picture, &error))
+                    std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+            }
             settleAfter();
             return;
         }
@@ -1443,7 +1574,31 @@ int main(int argc, char** argv) {
                 restoreMeta(noteDoc.meta);
             });
         }
-        refreshTree(file);   // показать, куда вернулась
+        refreshTree(file);
+
+        // И ПОКАЗАТЬ, КУДА ВЕРНУЛАСЬ. Без этого заметку приходится искать
+        // глазами: дерево осталось стоять там, где стояло, а средняя колонка
+        // показывает прежнюю папку. Раскрываем папку назначения, ставим на неё
+        // курсор дерева, наполняем список по ней и делаем текущей саму заметку —
+        // а текущая строка списка это и есть открытая заметка.
+        const QModelIndex folder = model.folderIndexForNote(noteId);
+        if (folder.isValid()) {
+            // Курсор дерева здесь указатель, а не навигация: список наполняем
+            // сами, иначе currentChanged открыл бы ПЕРВУЮ заметку папки, а нам
+            // нужна восстановленная.
+            revealing = true;
+            zametti::expandAncestors(tree, folder);
+            tree.expand(folder);   // человек идёт смотреть, что внутри
+            tree.setCurrentIndex(folder);
+            tree.scrollTo(folder);
+            revealing = false;
+            list.setRows(model.notesInSubtree(folder));
+        }
+        const QModelIndex row = list.indexForPath(file);
+        if (row.isValid()) {
+            listView.setCurrentIndex(row);
+            listView.scrollTo(row);
+        }
     };
     // Del в дереве бьёт по папке, Del в списке — по заметке. Каждый ярлык
     // висит на своём виджете: до этого Del из дерева удалял буквы заголовка в
@@ -1789,6 +1944,15 @@ int main(int argc, char** argv) {
         const QString openId = QFileInfo(editor.filePath()).completeBaseName();
         if (doomed.contains(openId)) editor.save(false);
 
+        // ВЛОЖЕНИЯ СЧИТАЕМ ДО УДАЛЕНИЯ: чтобы узнать, какие картинки были в
+        // очищаемых заметках, надо прочитать сами заметки, а через мгновение
+        // их файлов не будет. Расставание физическое и единственное: корзинность
+        // вложения выводится из заметок, и это тот самый момент, когда
+        // выводить становится не из чего.
+        const QString storeRoot = model.nodePath(QModelIndex());
+        const QStringList doomedFiles =
+            zametti::store::attachmentsLeavingWith(storeRoot, doomed);
+
         // Порядок из descendantIdsOf: дети раньше родителей, поэтому папка
         // удаляется уже пустой.
         QStringList failed;
@@ -1799,6 +1963,12 @@ int main(int argc, char** argv) {
                 continue;
             }
             if (!error.isEmpty()) std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+        }
+        // Картинки — следом за своими заметками, в ту же мусорку ОС.
+        for (const QString& picture : doomedFiles) {
+            QString error;
+            if (!zametti::store::deleteAttachmentFile(storeRoot, picture, &error))
+                failed << (error.isEmpty() ? picture : error);
         }
         // Дерево и список перечитываем сами: settleAfter живёт внутри
         // deleteNote и знает про «какая заметка была открыта», а здесь открытую
@@ -1825,6 +1995,8 @@ int main(int argc, char** argv) {
         if (!at.isValid()) at = tree.currentIndex();
         const QString id = model.idOf(at);
         QMenu menu(&tree);
+        menu.addAction(QStringLiteral("Обновить (F5)"), [&] { reloadStore(); });
+        menu.addSeparator();
         menu.addAction(QStringLiteral("Новая заметка"),
                        [&] { createNote(model.folderIdFor(at), false); });
         menu.addAction(QStringLiteral("Новая папка"),
@@ -1895,6 +2067,8 @@ int main(int argc, char** argv) {
         addFolders(QModelIndex(), 0);
 
         menu.addSeparator();
+        menu.addAction(QStringLiteral("Обновить (F5)"), [&] { reloadStore(); });
+        menu.addSeparator();
         menu.addAction(QStringLiteral("Открыть во внешнем редакторе"),
                        [&] { openExternally(model.pathOfId(id)); });
         menu.addAction(QStringLiteral("Экспортировать…"),
@@ -1930,6 +2104,39 @@ int main(int argc, char** argv) {
                                     .arg(count));
     };
 
+    // РЕЖИМ ИСТОРИИ: Ctrl+F ищет и по показанному слепку, и по всей истории
+    // этой заметки (решение владельца). Подсветка и F3 остаются на слепке —
+    // это то, на что человек смотрит, — а список внизу показывает, в каких ещё
+    // слепках встречается искомое.
+    const auto updateHistorySearch = [&](const QString& text) {
+        updateInNoteSearch(text);   // подсветка в слепке и счётчик
+        const zametti::Query query = zametti::makeQuery(text);
+        if (query.isEmpty() || query.tooShort()) {
+            results.clear();
+            resultsView.hide();
+            if (!query.isEmpty()) findBar.setStatus(QStringLiteral("нужно два знака"));
+            return;
+        }
+        const zametti::HistorySearchReport report = editor.searchNoteHistory(text);
+        results.setResults(report.hits);
+        resultsView.setVisible(!report.hits.isEmpty());
+        // Счётчик слепка уже написан updateInNoteSearch; дописываем к нему
+        // историю, иначе одно из двух чисел молча пропадёт.
+        const QString inSnapshot = editor.matchCount() > 0
+                                       ? QStringLiteral("%1/%2 в слепке")
+                                             .arg(editor.currentMatch() + 1)
+                                             .arg(editor.matchCount())
+                                       : QStringLiteral("в слепке нет");
+        findBar.setStatus(report.hits.isEmpty()
+                              ? inSnapshot + QStringLiteral(", в истории тоже")
+                              : QStringLiteral("%1; в истории %2 в %3 слепках%4")
+                                    .arg(inSnapshot)
+                                    .arg(report.hits.size())
+                                    .arg(report.withHits)
+                                    .arg(report.truncated ? QStringLiteral(", показаны не все")
+                                                          : QString()));
+    };
+
     const auto showCounter = [&] {
         if (editor.matchCount() == 0) {
             findBar.setStatus(QStringLiteral("нет совпадений"));
@@ -1942,6 +2149,10 @@ int main(int argc, char** argv) {
 
     QObject::connect(&findBar, &zametti::FindBar::queryChanged, &window,
                      [&](const QString& text) {
+        if (findBar.mode() == zametti::FindBar::Mode::History) {
+            updateHistorySearch(text);
+            return;
+        }
         if (findBar.mode() == zametti::FindBar::Mode::Global) {
             const zametti::Query query = zametti::makeQuery(text);
             if (query.isEmpty() || query.tooShort()) {
@@ -1995,6 +2206,24 @@ int main(int argc, char** argv) {
         if (!index.isValid() || results.isHeader(index)) return;
         const QString file = index.data(zametti::SearchResultsModel::PathRole).toString();
         const int ordinal = index.data(zametti::SearchResultsModel::OrdinalRole).toInt();
+
+        // Находка в слепке истории. Запись ищем по паре (время, отпечаток), а
+        // не по номеру: чистка журнала выкидывает дубликаты, и номера съезжают.
+        const qint64 stamp =
+            index.data(zametti::SearchResultsModel::SnapshotTimeRole).toLongLong();
+        if (stamp > 0) {
+            const QByteArray raw =
+                index.data(zametti::SearchResultsModel::SnapshotDigestRole).toByteArray();
+            zametti::Digest digest;
+            if (raw.size() == qsizetype(digest.bytes.size()))
+                std::memcpy(digest.bytes.data(), raw.constData(), digest.bytes.size());
+            const int at = zametti::journal::indexOfEntry(editor.timeline(), stamp, digest);
+            if (at >= 0) editor.enterHistory(at);
+            const zametti::Query query = zametti::makeQuery(findBar.query());
+            editor.findMatches(query.needle, query.caseSensitive);
+            editor.goToMatch(ordinal);
+            return;
+        }
         if (file.isEmpty()) return;
         // Показать заметку в боковых колонках — общий путь через fileChanged,
         // отдельного кода здесь больше не нужно.
@@ -2017,6 +2246,9 @@ int main(int argc, char** argv) {
 
     const auto stepSearch = [&](int direction) {
         if (findBar.isHidden()) return;
+        // В режиме истории F3 ходит по находкам ПОКАЗАННОГО СЛЕПКА: список
+        // внизу про другие слепки, и прыгать по нему клавишей означало бы
+        // менять показанную запись на каждое нажатие.
         if (findBar.mode() == zametti::FindBar::Mode::Global) {
             if (results.rowCount() == 0) return;
             const QModelIndex at = resultsView.currentIndex();
@@ -2057,8 +2289,15 @@ int main(int argc, char** argv) {
         editor.setFocus();
     });
 
-    const auto openFind = [&](zametti::FindBar::Mode mode) {
-        const bool global = mode == zametti::FindBar::Mode::Global;
+    const auto openFind = [&](zametti::FindBar::Mode requested) {
+        // В РЕЖИМЕ ИСТОРИИ ЗАМЕНЫ НЕТ ПО ПОСТРОЕНИЮ: слепок только для чтения.
+        // Ctrl+H там открывает обычный поиск, а не отказывается молча.
+        zametti::FindBar::Mode mode = requested;
+        if (editor.inHistory() && (mode == zametti::FindBar::Mode::InNote ||
+                                   mode == zametti::FindBar::Mode::Replace))
+            mode = zametti::FindBar::Mode::History;
+        const bool global = mode == zametti::FindBar::Mode::Global ||
+                            mode == zametti::FindBar::Mode::History;
         if (!global) {
             resultsView.hide();
             results.clear();
@@ -2077,11 +2316,26 @@ int main(int argc, char** argv) {
     // Поиск по всем заметкам: и кнопкой тулбара, и сочетанием — одним кодом.
     const auto openStoreFind = [&] {
         if (!model.isStore()) return;
+        // Поиск по истории ВСЕХ заметок в этот этап не входит (решение
+        // владельца: пер-заметочный сильно быстрее и востребованнее). Молчать
+        // нельзя — человек нажал и не увидел бы ничего.
+        if (editor.inHistory()) {
+            statusBar.setMessage(
+                QStringLiteral("поиск по истории всех заметок пока не поддерживается"));
+            QTimer::singleShot(3000, &statusBar,
+                               [&statusBar] { statusBar.setMessage(QString()); });
+            return;
+        }
         openFind(zametti::FindBar::Mode::Global);
     };
     shortcut(QKeySequence(QStringLiteral("Ctrl+Shift+F")), openStoreFind);
     shortcut(QKeySequence(Qt::Key_F3), [&] { stepSearch(1); });
     shortcut(QKeySequence(Qt::SHIFT | Qt::Key_F3), [&] { stepSearch(-1); });
+
+    // Клавиши режима истории (ходьба по изменениям и смена стороны сравнения)
+    // ставятся одной функцией — она же зовётся из набора.
+    zametti::installHistoryShortcuts(&window, editor);
+
 
     // --- тулбар --------------------------------------------------------------
     //
@@ -2124,8 +2378,12 @@ int main(int argc, char** argv) {
             // нечего и негде. Это не «пока не сделано», а другое состояние мира.
             // Поиск по всем заметкам сюда же: искать не по чему.
             const QString single = QStringLiteral("открыт один файл, а не хранилище");
+            // История живёт в хранилище (history/<id>.log), и у одиночного
+            // файла её нет вовсе — это не «пока не сделано», а другое
+            // состояние мира.
             for (Button id : {Button::NewNote, Button::NewFolder, Button::ImportNotes,
-                              Button::SortByName, Button::SortByDate, Button::SearchInStore})
+                              Button::SortByName, Button::SortByDate, Button::SearchInStore,
+                              Button::History})
                 toolbar.setPromise(id, single);
         }
 
@@ -2153,6 +2411,27 @@ int main(int argc, char** argv) {
             case Button::SortByDate:
                 applySort(zametti::NoteTreeModel::SortMode::ByModified);
                 showSortMode(model.sortMode());
+                break;
+            case Button::History:
+                // ПЕРЕКЛЮЧАТЕЛЬ: горит — идёт режим истории, нажали снова —
+                // вернулись к текущей версии. Прямой вход, минуя
+                // внутридокументный стек отмены; поиск кнопка НЕ включает —
+                // она открывает режим, а искать в слепке отдельный жест
+                // (Ctrl+F).
+                if (!toolbar.isChecked(Button::History)) {
+                    editor.leaveHistory();
+                    break;
+                }
+                if (!editor.enterHistory()) {
+                    toolbar.setChecked(Button::History, false);
+                    // Случай редкий (опорная запись кладётся при открытии
+                    // заметки), но молчать нельзя: нажали — не случилось
+                    // ничего. Сообщение само уходит: полоса сведений нужна ей
+                    // самой, а не нашей жалобе.
+                    statusBar.setMessage(QStringLiteral("у этой заметки истории пока нет"));
+                    QTimer::singleShot(3000, &statusBar,
+                                       [&statusBar] { statusBar.setMessage(QString()); });
+                }
                 break;
             case Button::Search:
                 openFind(zametti::FindBar::Mode::InNote);

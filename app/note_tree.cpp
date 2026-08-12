@@ -939,6 +939,12 @@ QString NoteTreeModel::rootFor(const QString& filePath, const QString& configure
     return best;
 }
 
+bool shouldMoveTreeCursor(bool byFolderPick, bool treeHasFocus, bool insideCurrent) {
+    if (byFolderPick) return false;
+    if (treeHasFocus && insideCurrent) return false;
+    return true;
+}
+
 NoteTreeView::NoteTreeView(QWidget* parent) : QTreeView(parent) {
     // Раз треугольников нет, папка должна раскрываться по обычному щелчку:
     // иначе цели для нажатия не остаётся вовсе.
@@ -948,6 +954,13 @@ NoteTreeView::NoteTreeView(QWidget* parent) : QTreeView(parent) {
         // Если нажали одну строку, а отпустили на другой, щелчка не было и
         // переключать нечего.
         if (QModelIndex(pressedRow_) != index) return;
+        // ПЕРВЫЙ ЩЕЛЧОК ПАПКУ НЕ ЗАКРЫВАЕТ. Он её выбирает, а закрытую заодно
+        // раскрывает: человек идёт смотреть, что внутри. Закрыть можно вторым
+        // щелчком — по уже выбранной (см. pressedWasCurrent_).
+        if (!pressedWasCurrent_) {
+            if (!pressedExpanded_) setExpanded(index, true);
+            return;
+        }
         setExpanded(index, !pressedExpanded_);
     });
 }
@@ -956,6 +969,8 @@ void NoteTreeView::mousePressEvent(QMouseEvent* event) {
     const QModelIndex at = indexAt(event->pos());
     pressedRow_ = at;
     pressedExpanded_ = at.isValid() && isExpanded(at);
+    // Спрашиваем ДО базового обработчика: он и переставит курсор.
+    pressedWasCurrent_ = at.isValid() && at == currentIndex();
     QTreeView::mousePressEvent(event);
 }
 

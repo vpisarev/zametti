@@ -34,6 +34,14 @@ target_link_libraries(journal_test PRIVATE zametti-store-lib zametti-warnings)
 target_include_directories(journal_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME journal COMMAND journal_test)
 
+# Ленивая чистка истории. Фикстура — настоящий журнал владельца; она живёт в
+# .testdata/, и без неё набор идёт дальше, громко сказав о пропуске.
+add_executable(history_compress_test history_compress_test.cpp)
+target_link_libraries(history_compress_test PRIVATE zametti-store-lib zametti-warnings)
+target_include_directories(history_compress_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME history-compress
+         COMMAND history_compress_test ${CMAKE_SOURCE_DIR}/.testdata/journal-fixture)
+
 add_executable(fuzz_journal_test fuzz_journal_test.cpp)
 target_link_libraries(fuzz_journal_test PRIVATE zametti-store-lib zametti-warnings)
 target_include_directories(fuzz_journal_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -130,6 +138,23 @@ if(TARGET zametti-view)
     target_include_directories(spaces_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     add_test(NAME spaces COMMAND spaces_test)
     set_tests_properties(spaces PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # Поиск по истории заметки: находит то, чего в живой версии нет.
+    add_executable(history_search_test history_search_test.cpp)
+    target_link_libraries(history_search_test PRIVATE zametti-widgets zametti-warnings)
+    target_include_directories(history_search_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME history-search COMMAND history_search_test)
+    set_tests_properties(history-search PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+    # Два вида разности. Главное здесь — сверка видов между собой: вид «как
+    # под капотом» служит эталоном виду с полосками. Корпус — первым
+    # аргументом, каталог снимков — вторым.
+    add_executable(diff_view_test diff_view_test.cpp)
+    target_link_libraries(diff_view_test PRIVATE zametti-widgets Qt6::Test zametti-warnings)
+    target_include_directories(diff_view_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME diff-view COMMAND diff_view_test
+             ${CMAKE_SOURCE_DIR}/.testdata/corpus)
+    set_tests_properties(diff-view PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
     # Когда история обязана молчать: набрали и стёрли — записывать нечего.
     add_executable(history_write_test history_write_test.cpp)
@@ -279,6 +304,14 @@ if(TARGET zametti-view)
                  ${CMAKE_SOURCE_DIR}/.testdata/images/originals
                  ${CMAKE_CURRENT_BINARY_DIR}/снимки-этапа-8)
         set_tests_properties(image-shots PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+        # Разность версий. Виджетов не касается вовсе: сравнение — чистая
+        # логика над строками канонического markdown.
+        add_executable(diff_test diff_test.cpp)
+        target_link_libraries(diff_test PRIVATE zametti-view zametti-warnings)
+        target_include_directories(diff_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        add_test(NAME diff COMMAND diff_test)
+        set_tests_properties(diff PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
         add_executable(search_test search_test.cpp)
         target_link_libraries(search_test PRIVATE zametti-widgets Qt6::Test zametti-warnings)

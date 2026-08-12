@@ -27,6 +27,7 @@ void SearchResultsModel::setResults(const QVector<SearchResult>& results) {
             header.header = true;
             header.title = result.title;
             header.path = result.path;
+            header.snapshotTime = result.snapshotTime;
             rows_.push_back(header);
         }
         Row row;
@@ -35,6 +36,8 @@ void SearchResultsModel::setResults(const QVector<SearchResult>& results) {
         row.length = result.lineLength;
         row.path = result.path;
         row.ordinal = result.ordinal;
+        row.snapshotTime = result.snapshotTime;
+        row.snapshotDigest = result.snapshotDigest;
         rows_.push_back(row);
     }
     endResetModel();
@@ -62,6 +65,10 @@ QVariant SearchResultsModel::data(const QModelIndex& index, int role) const {
         case LengthRole: return row.length;
         case PathRole: return row.path;
         case OrdinalRole: return row.ordinal;
+        case SnapshotTimeRole: return row.snapshotTime;
+        case SnapshotDigestRole:
+            return QByteArray(reinterpret_cast<const char*>(row.snapshotDigest.bytes.data()),
+                              qsizetype(row.snapshotDigest.bytes.size()));
         default: return {};
     }
 }

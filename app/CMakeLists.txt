@@ -45,6 +45,10 @@ set(CMAKE_AUTORCC ON)
 # намеренно: тесты этого слоя гоняются без дисплея и без QtWidgets, и проверяет
 # это тест view-without-widgets.
 add_library(zametti-view STATIC
+    diff.h
+    diff.cpp
+    diff_view.h
+    diff_view.cpp
     doc_model.h
     doc_model.cpp
     document_builder.h
@@ -72,6 +76,10 @@ add_library(zametti-view STATIC
 # зависимость слоя модели на zametti-store-lib. Обратной нет и быть не должно:
 # хранилище про виджеты не знает.
 target_link_libraries(zametti-view PUBLIC zametti-core zametti-store-lib Qt6::Gui)
+# dtl нужен ровно одному файлу (diff.cpp) и наружу не течёт: заголовочная
+# библиотека в публичных зависимостях удорожала бы сборку всем, кто линкует
+# zametti-view.
+target_link_libraries(zametti-view PRIVATE dtl)
 target_link_libraries(zametti-view PRIVATE zametti-warnings)
 target_include_directories(zametti-view PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
@@ -80,6 +88,8 @@ target_include_directories(zametti-view PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 add_library(zametti-widgets STATIC
     find_bar.h
     find_bar.cpp
+    history_search.h
+    history_search.cpp
     history_panel.h
     history_panel.cpp
     note_tree.h

@@ -877,7 +877,12 @@ bool verifyStore(const QString& root, Report& report) {
 
     std::map<std::string, Document> notes;
     std::set<QString> attachments;         // имена файлов-вложений
-    std::set<QString> referenced;
+    // ДВА множества, а не одно. Доктрина этапа 10: вложение живо, пока на него
+    // ссылается хоть одна ЗАМЕТКА — живая или корзинная; упомянутое только из
+    // корзины не аномалия, а «уйдёт при очистке». Слепки истории на живость
+    // вложения больше не влияют вовсе (см. ниже).
+    std::set<QString> referencedLive;
+    std::set<QString> referencedTrashed;
 
     for (const QFileInfo& info :
          d.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden)) {
@@ -918,6 +923,22 @@ bool verifyStore(const QString& root, Report& report) {
         notes[toUtf8(stem)] = std::move(doc);
     }
 
+    // Лежит ли заметка в корзине: идём по цепочке родителей до заметки с
+    // role: trash. Циклы уже проверены ниже, но на всякий случай ограничиваем
+    // глубину — verify не имеет права зациклиться на битом хранилище.
+    const auto inTrash = [&notes](const std::string& id) {
+        std::string at = id;
+        for (int depth = 0; depth < 64; ++depth) {
+            const auto found = notes.find(at);
+            if (found == notes.end()) return false;
+            if (found->second.meta.get("role") == "trash") return true;
+            const std::string parent = found->second.meta.get("parent");
+            if (parent.empty()) return false;
+            at = parent;
+        }
+        return false;
+    };
+
     // Цели картинок: канонное плоское имя "<id>.<ext>" и существование.
     for (const auto& [id, doc] : notes) {
         for (const Block& b : doc.blocks)
@@ -936,7 +957,8 @@ bool verifyStore(const QString& root, Report& report) {
                                     .arg(href, fromUtf8(id)));
                     continue;
                 }
-                referenced.insert(href);
+                if (inTrash(id)) referencedTrashed.insert(href);
+                else referencedLive.insert(href);
                 if (!QFileInfo::exists(root + QLatin1Char('/') + href))
                     report.problem(QStringLiteral("нет вложения «%1» из %2.md")
                                        .arg(href, fromUtf8(id)));
@@ -994,10 +1016,16 @@ bool verifyStore(const QString& root, Report& report) {
     // записи, и пройти всю цепочку её поколения: у звена нет смысла в отрыве
     // от предшественника.
     //
-    // Заодно отсюда берётся достижимость вложений. Вложение живо, если на него
-    // ссылается живая заметка ИЛИ любой выживший слепок любого журнала: пока
-    // картинка видна хоть в одной версии прошлого, она не сирота. Иначе
-    // будущая уборка снесла бы то, ради чего история и заводилась.
+    // ВЛОЖЕНИЯ ОТСЮДА БОЛЬШЕ НЕ БЕРУТСЯ. До этапа 10 картинка считалась живой,
+    // пока её видел хоть один слепок истории; с этапа 10 доктрина другая
+    // (решение владельца): удаление радикально, предохранителей три (корзина →
+    // очистка корзины → мусорка ОС), а слепок со ссылкой на исчезнувшее
+    // деградирует штатной рамкой «файл не найден». Иначе ни одна картинка не
+    // ушла бы из хранилища никогда: её видит прошлое.
+    //
+    // Поэтому битая ссылка ИЗ СЛЕПКА — норма и в отчёт не идёт вовсе. Слепки
+    // по-прежнему собираются и сверяются с отпечатками: это про целость
+    // журнала, а не про картинки.
     const QDir historyDir(d.filePath(QStringLiteral("history")));
     int journals = 0;
     qint64 records = 0;
@@ -1033,17 +1061,8 @@ bool verifyStore(const QString& root, Report& report) {
                                        .arg(error));
                     continue;
                 }
-                // Что видно в слепке — то живо. Разбираем тем же ядром, что и
-                // заметку: второго способа прочитать её нет.
-                const Document old = parse(std::string(body.constData(), size_t(body.size())));
-                for (const Block& b : old.blocks)
-                    for (const Inline& span : old.inlines(b)) {
-                        if (!span.image()) continue;
-                        QString href = fromUtf8(std::string(old.href(span)));
-                        const qsizetype hash = href.lastIndexOf(QLatin1Char('#'));
-                        if (hash >= 0) href = href.left(hash);
-                        if (isLocalRelative(href)) referenced.insert(href);
-                    }
+                // Слепок собрался и сошёлся с отпечатком — этого и добивались.
+                // Ссылки на картинки в нём не читаются: см. выше про доктрину.
             }
 
             // Журнал без заметки. Надгробие — норма: заметку удалили, и её
@@ -1061,9 +1080,20 @@ bool verifyStore(const QString& root, Report& report) {
         }
     }
 
-    for (const QString& name : attachments)
-        if (referenced.find(name) == referenced.end())
-            report.note(QStringLiteral("осиротевшее вложение: %1").arg(name));
+    // ТРИ КАТЕГОРИИ ВЛОЖЕНИЙ, и разница между ними — не косметика:
+    //   живое      — на него ссылается хоть одна незакорзиненная заметка;
+    //   «в корзине» — только корзинные; уйдёт вместе с очисткой корзины, и это
+    //                 не аномалия, а расписание;
+    //   сирота     — не упомянуто НИ В ОДНОЙ заметке вовсе. Вот это отчёт.
+    for (const QString& name : attachments) {
+        if (referencedLive.find(name) != referencedLive.end()) continue;
+        if (referencedTrashed.find(name) != referencedTrashed.end()) {
+            report.note(QStringLiteral("вложение только в корзине: %1 (уйдёт с очисткой)")
+                            .arg(name));
+            continue;
+        }
+        report.note(QStringLiteral("осиротевшее вложение: %1").arg(name));
+    }
 
     report.note(QStringLiteral("заметок: %1, вложений: %2, журналов: %3 (записей %4)")
                     .arg(notes.size())
@@ -1071,6 +1101,67 @@ bool verifyStore(const QString& root, Report& report) {
                     .arg(journals)
                     .arg(records));
     return report.problems == 0;
+}
+
+QStringList attachmentsLeavingWith(const QString& root, const QStringList& noteIds) {
+    const QDir dir(root);
+    const QSet<QString> doomed(noteIds.begin(), noteIds.end());
+
+    // Все вложения хранилища: всё, что не .md и носит наш id.
+    QStringList attachments;
+    for (const QString& name :
+         dir.entryList(QDir::Files | QDir::NoDotAndDotDot | QDir::Hidden)) {
+        if (name.endsWith(QStringLiteral(".md"))) continue;
+        const qsizetype dot = name.lastIndexOf(QLatin1Char('.'));
+        if (dot <= 0 || !isValidNoteId(toUtf8(name.left(dot)))) continue;
+        attachments.append(name);
+    }
+    if (attachments.isEmpty()) return {};
+
+    // Кандидаты — те, что упомянуты в очищаемых заметках. Иначе очистка
+    // корзины уносила бы заодно всех сирот, а решение про сирот владелец
+    // отложил («дальше придумаем»).
+    QSet<QString> candidates;
+    for (const QString& id : noteIds) {
+        std::string bytes;
+        if (!readAll(dir.filePath(id + QStringLiteral(".md")), bytes)) continue;
+        const QByteArray text = QByteArray::fromStdString(bytes);
+        for (const QString& name : attachments)
+            if (!candidates.contains(name) &&
+                text.contains(name.left(name.lastIndexOf(QLatin1Char('.'))).toLatin1()))
+                candidates.insert(name);
+    }
+    if (candidates.isEmpty()) return {};
+
+    // И вычёркиваем всё, что упомянуто в ОСТАЮЩИХСЯ заметках. Внешний цикл по
+    // заметкам, внутренний по картинкам: каждая заметка читается один раз.
+    for (const QString& name : dir.entryList({QStringLiteral("*.md")}, QDir::Files)) {
+        const QString id = name.left(name.size() - 3);
+        if (doomed.contains(id)) continue;
+        std::string bytes;
+        if (!readAll(dir.filePath(name), bytes)) continue;
+        const QByteArray text = QByteArray::fromStdString(bytes);
+        for (auto it = candidates.begin(); it != candidates.end();) {
+            const QString stem = it->left(it->lastIndexOf(QLatin1Char('.')));
+            if (text.contains(stem.toLatin1())) it = candidates.erase(it);
+            else ++it;
+        }
+        if (candidates.isEmpty()) break;
+    }
+
+    QStringList out(candidates.begin(), candidates.end());
+    out.sort();
+    return out;
+}
+
+bool deleteAttachmentFile(const QString& root, const QString& name, QString* error) {
+    const QString file = QDir(root).filePath(name);
+    if (!QFile::exists(file)) return true;   // уже нет — и хорошо
+    if (!QFile::moveToTrash(file) && !QFile::remove(file)) {
+        if (error) *error = QStringLiteral("файл вложения %1 не удалить").arg(name);
+        return false;
+    }
+    return true;
 }
 
 bool deleteNoteFile(const QString& root, const QString& noteId, QString* error) {

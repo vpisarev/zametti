@@ -6,6 +6,8 @@
 #include <QHBoxLayout>
 #include <QLocale>
 #include <QPalette>
+#include <QButtonGroup>
+#include <QSignalBlocker>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -58,6 +60,40 @@ HistoryBanner::HistoryBanner(QWidget* parent) : QWidget(parent) {
                       .arg(look.historyBackground.darker(104).name()));
 
     text_ = new QLabel(this);
+
+    // ПАРАМИ ЗАЛИПАЮЩИХ КНОПОК, а не одним переключателем с меняющейся
+    // надписью (просьба владельца): у одной кнопки второго состояния не видно
+    // вовсе, и надпись читается наоборот через раз — то как «показано сейчас»,
+    // то как «будет по нажатию». Пара показывает оба ответа сразу, нажатый —
+    // тот, что действует.
+    const auto latching = [this](const QString& text, const QString& tip) {
+        auto* button = new QPushButton(text, this);
+        button->setCheckable(true);
+        button->setFocusPolicy(Qt::NoFocus);   // клавиши остаются у слепка
+        button->setToolTip(tip);
+        return button;
+    };
+    fromPrevious_ = latching(QStringLiteral("с предыдущей"),
+                             QStringLiteral("Сравнивать с предыдущей записью истории"));
+    fromFresh_ = latching(QStringLiteral("со свежей"),
+                          QStringLiteral("Сравнивать с текущей версией заметки"));
+    viewMarks_ = latching(QStringLiteral("полоски"),
+                          QStringLiteral("Обычный вид с полосками на поле"));
+    viewPlain_ = latching(QStringLiteral("markdown"),
+                          QStringLiteral("Моноширинный markdown построчно"));
+    // Залипают по одной: QButtonGroup держит это сам, и «оба нажаты» не
+    // случится ни при какой последовательности щелчков.
+    auto* baseGroup = new QButtonGroup(this);
+    baseGroup->setExclusive(true);
+    baseGroup->addButton(fromPrevious_);
+    baseGroup->addButton(fromFresh_);
+    auto* viewGroup = new QButtonGroup(this);
+    viewGroup->setExclusive(true);
+    viewGroup->addButton(viewMarks_);
+    viewGroup->addButton(viewPlain_);
+    setBaseIsFresh(false);
+    setPlainView(false);
+
     leave_ = new QPushButton(QStringLiteral("К текущей версии"), this);
     restore_ = new QPushButton(QStringLiteral("Восстановить эту"), this);
     restoreStyle_ = restore_->styleSheet();
@@ -66,19 +102,54 @@ HistoryBanner::HistoryBanner(QWidget* parent) : QWidget(parent) {
     layout->setContentsMargins(10, 5, 10, 5);
     layout->setSpacing(8);
     layout->addWidget(text_, 1);
+    layout->addWidget(new QLabel(QStringLiteral("сравнение:"), this));
+    layout->addWidget(fromPrevious_);
+    layout->addWidget(fromFresh_);
+    layout->addSpacing(8);
+    layout->addWidget(new QLabel(QStringLiteral("вид:"), this));
+    layout->addWidget(viewMarks_);
+    layout->addWidget(viewPlain_);
+    layout->addSpacing(8);
     layout->addWidget(leave_);
     layout->addWidget(restore_);
 
     connect(leave_, &QPushButton::clicked, this, &HistoryBanner::leaveRequested);
     connect(restore_, &QPushButton::clicked, this, &HistoryBanner::restoreRequested);
+    connect(fromFresh_, &QPushButton::clicked, this, [this] { emit baseChanged(true); });
+    connect(fromPrevious_, &QPushButton::clicked, this, [this] { emit baseChanged(false); });
+    connect(viewPlain_, &QPushButton::clicked, this, [this] { emit viewChanged(true); });
+    connect(viewMarks_, &QPushButton::clicked, this, [this] { emit viewChanged(false); });
+}
+
+void HistoryBanner::setBaseIsFresh(bool fresh) {
+    // Состояние приходит от редактора: кнопки только показывают, что действует.
+    const QSignalBlocker quietFresh(fromFresh_);
+    const QSignalBlocker quietPrevious(fromPrevious_);
+    fromFresh_->setChecked(fresh);
+    fromPrevious_->setChecked(!fresh);
+}
+
+void HistoryBanner::setPlainView(bool plain) {
+    const QSignalBlocker quietPlain(viewPlain_);
+    const QSignalBlocker quietMarks(viewMarks_);
+    viewPlain_->setChecked(plain);
+    viewMarks_->setChecked(!plain);
 }
 
 void HistoryBanner::setSnapshot(qint64 time, journal::Kind kind) {
     restore_->setStyleSheet(restoreStyle_);
+    // Строка отвечает на ОДИН вопрос: какая версия сейчас перед глазами. По Tab
+    // она меняется вместе с показанным — иначе человек смотрит на одно, а
+    // читает про другое (просьба владельца; всё, что было после тире, убрано).
     QString what = QStringLiteral("Слепок от %1").arg(historyMoment(time));
     if (kind != journal::Kind::Save)
         what += QStringLiteral(" (%1)").arg(historyKindName(kind));
-    text_->setText(what + QStringLiteral(" — только чтение"));
+    text_->setText(what);
+}
+
+void HistoryBanner::setLiveVersion() {
+    restore_->setStyleSheet(restoreStyle_);
+    text_->setText(QStringLiteral("Текущая версия заметки"));
 }
 
 void HistoryBanner::flashRestore() {

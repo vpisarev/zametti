@@ -159,5 +159,77 @@ int main(int argc, char** argv) {
     QCoreApplication::processEvents();
     ZT_TRUE("а повторный щелчок закрывает", !tree.isExpanded(a));
 
+    // --- РИТУАЛ: ПЕРВЫЙ ЩЕЛЧОК ПАПКУ НЕ ЗАКРЫВАЕТ -------------------------
+    //
+    // Владелец: «если папка была открыта и мы просто на неё переходим — она
+    // закрывается. Это неправильно: мы хотим активировать папку, посмотреть,
+    // какие заметки в ней есть, зачем её закрывать?» Правило: первый щелчок
+    // выбирает папку (и раскрывает закрытую), закрывает только второй — по
+    // уже выбранной.
+    tree.expand(b);
+    tree.expand(a);
+    QCoreApplication::processEvents();
+    ZT_TRUE("A раскрыта", tree.isExpanded(a));
+
+    // Уводим выбор на другую строку — как будто человек работал в другой папке.
+    const QModelIndex c = findByTitle(model, QModelIndex(), QStringLiteral("C"));
+    ZT_TRUE("папка C нашлась", c.isValid());
+    tree.setCurrentIndex(c);
+    QCoreApplication::processEvents();
+    ZT_TRUE("выбрана другая строка", tree.currentIndex() != a);
+
+    const QRect rowA = tree.visualRect(a);
+    QTest::mouseClick(tree.viewport(), Qt::LeftButton, Qt::NoModifier, rowA.center());
+    QCoreApplication::processEvents();
+    ZT_TRUE("переход на открытую папку её НЕ закрывает", tree.isExpanded(a));
+    ZT_TRUE("и выбирает её", tree.currentIndex() == a);
+
+    // Второй щелчок — по уже выбранной — закрывает.
+    QTest::mouseClick(tree.viewport(), Qt::LeftButton, Qt::NoModifier, rowA.center());
+    QCoreApplication::processEvents();
+    ZT_TRUE("второй щелчок закрывает", !tree.isExpanded(a));
+
+    // А переход на ЗАКРЫТУЮ папку её раскрывает: смотреть внутрь — и есть
+    // смысл щелчка.
+    tree.setCurrentIndex(b);
+    QCoreApplication::processEvents();
+    const QRect rowA2 = tree.visualRect(a);
+    QTest::mouseClick(tree.viewport(), Qt::LeftButton, Qt::NoModifier, rowA2.center());
+    QCoreApplication::processEvents();
+    ZT_TRUE("переход на закрытую папку её раскрывает", tree.isExpanded(a));
+
+    // --- ПРАВИЛО «ДВИГАТЬ ЛИ КУРСОР» ------------------------------------
+    //
+    // Оно ломалось трижды, каждый раз по-новому, потому что жило россыпью
+    // условий в main(). Теперь оно одно и проверяется здесь по всем восьми
+    // сочетаниям — а не по тому, которое вспомнилось.
+    {
+        // Мы сами открыли заметку, наполнив список по выбранной папке: курсор
+        // не трогаем НИКОГДА. Иначе он уедет в подпапку, где лежит первая
+        // заметка, — беда владельца «кликаю по Tech, курсор скачет на настройку».
+        ZT_TRUE("выбор папки: курсор не двигаем (фокус в дереве, внутри)",
+                !zametti::shouldMoveTreeCursor(true, true, true));
+        ZT_TRUE("выбор папки: и с фокусом в тексте тоже",
+                !zametti::shouldMoveTreeCursor(true, false, true));
+        ZT_TRUE("выбор папки: и когда папка снаружи выбранной ветки",
+                !zametti::shouldMoveTreeCursor(true, false, false));
+        ZT_TRUE("выбор папки: и с фокусом в дереве снаружи ветки",
+                !zametti::shouldMoveTreeCursor(true, true, false));
+
+        // Человек работает в дереве, а заметка и так внутри выбранной ветки —
+        // показывать нечего, курсор его.
+        ZT_TRUE("работает в дереве, заметка внутри — не двигаем",
+                !zametti::shouldMoveTreeCursor(false, true, true));
+
+        // А вот это — «открыли откуда-то ещё»: из поиска, из середины, из
+        // корзины. Где заметка лежит, не видно, и курсор двигать надо.
+        ZT_TRUE("из поиска (фокус не в дереве) — двигаем",
+                zametti::shouldMoveTreeCursor(false, false, true));
+        ZT_TRUE("из поиска, папка снаружи ветки — двигаем",
+                zametti::shouldMoveTreeCursor(false, false, false));
+        ZT_TRUE("фокус в дереве, но папка снаружи ветки — двигаем",
+                zametti::shouldMoveTreeCursor(false, true, false));
+    }
+
     return zt::report("дерево в виджете");
 }

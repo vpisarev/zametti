@@ -55,6 +55,7 @@ constexpr zametti::EmbeddedLicense kLicenses[] = {
     {":/licenses/lucide.txt", "Lucide", "иконки тулбара и дерева", "ISC"},
     {":/licenses/md4c.txt", "md4c", "разбор markdown", "MIT"},
     {":/licenses/blake3.txt", "BLAKE3", "отпечатки заметок и вложений", "CC0 / Apache-2.0"},
+    {":/licenses/dtl.txt", "DTL", "разность версий в истории", "BSD-3"},
     {":/licenses/zstd.txt", "zstd", "слепки в журнале правок", "BSD / GPL-2.0"},
     {":/licenses/zlib.txt", "zlib", "Deflate внутри TIFF", "zlib"},
     {":/licenses/libtiff.txt", "libtiff", "чтение TIFF при импорте", "libtiff"},

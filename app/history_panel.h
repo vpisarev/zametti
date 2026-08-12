@@ -43,6 +43,15 @@ public:
 
     // Что показано: время слепка и его вид.
     void setSnapshot(qint64 time, journal::Kind kind);
+    // ...или живая версия заметки — по Tab показывается и она, если сравнение
+    // идёт со свежей.
+    void setLiveVersion();
+
+    // Какая база сравнения показана сейчас: предыдущая запись или свежая
+    // версия заметки.
+    void setBaseIsFresh(bool fresh);
+    // Какой вид разности показан: моноширинный markdown или полоски на поле.
+    void setPlainView(bool plain);
 
     // Печатающую клавишу в слепке отбили — коротко подсветить «Восстановить
     // эту» и сказать словами, что делать. Восстановление только явным жестом,
@@ -52,9 +61,21 @@ public:
 signals:
     void leaveRequested();
     void restoreRequested();
+    // Переключили базу сравнения: сравнивать со свежей версией или с
+    // предыдущей записью.
+    void baseChanged(bool fresh);
+    // Переключили вид разности.
+    void viewChanged(bool plain);
 
 private:
     QLabel* text_;
+    // Две пары залипающих кнопок: база сравнения и вид. Пара, а не один
+    // переключатель с меняющейся надписью, — просьба владельца: у одной кнопки
+    // не видно второго состояния, и читается она наоборот через раз.
+    QPushButton* fromFresh_;
+    QPushButton* fromPrevious_;
+    QPushButton* viewMarks_;
+    QPushButton* viewPlain_;
     QPushButton* leave_;
     QPushButton* restore_;
     QString restoreStyle_;

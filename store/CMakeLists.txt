@@ -8,6 +8,8 @@ add_library(zametti-store-lib STATIC
     store.cpp
     journal.h
     journal.cpp
+    history_rules.h
+    history_rules.cpp
 )
 target_include_directories(zametti-store-lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(zametti-store-lib PUBLIC zametti-core Qt6::Core

@@ -62,6 +62,7 @@
         <file alias="lucide.txt">icons/LICENSE</file>
         <file alias="md4c.txt">../3rdparty/md4c/LICENSE.md</file>
         <file alias="blake3.txt">../3rdparty/blake3/LICENSE</file>
+        <file alias="dtl.txt">../3rdparty/dtl/COPYING</file>
         <file alias="zstd.txt">../3rdparty/zstd/LICENSE</file>
         <file alias="zlib.txt">../3rdparty/zlib/LICENSE</file>
         <file alias="libtiff.txt">../3rdparty/libtiff/upstream/LICENSE.md</file>

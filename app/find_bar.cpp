@@ -101,8 +101,9 @@ void FindBar::open(Mode mode, const QString& preset) {
     replace_->setVisible(replacing);
     replaceButton_->setVisible(replacing);
     replaceAllButton_->setVisible(replacing);
-    find_->setPlaceholderText(mode == Mode::Global
-                                  ? QStringLiteral("Найти во всех заметках")
+    find_->setPlaceholderText(mode == Mode::Global ? QStringLiteral("Найти во всех заметках")
+                              : mode == Mode::History
+                                  ? QStringLiteral("Найти в слепке и в истории заметки")
                                   : QStringLiteral("Найти в заметке"));
     if (!preset.isEmpty()) find_->setText(preset);
     historyAt_ = -1;   // каждый заход в панель начинается со своего запроса

@@ -131,6 +131,16 @@ int irIndexOfBlock(const QTextBlock& block) {
     return index;
 }
 
+QVector<int> irIndexOfEveryBlock(const QTextDocument& doc) {
+    QVector<int> out;
+    int index = -1;
+    for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {
+        if (!isContinuationBlock(block)) ++index;
+        out.append(index);
+    }
+    return out;
+}
+
 QTextBlock blockForIrIndex(const QTextDocument& doc, int index) {
     int seen = 0;
     for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {

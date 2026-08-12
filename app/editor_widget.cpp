@@ -1,4 +1,6 @@
 #include "editor_widget.h"
+#include "diff_view.h"
+#include "history_rules.h"
 
 #include "document_builder.h"
 #include "document_reader.h"
@@ -18,7 +20,9 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QKeySequence>
+#include <QShortcut>
 #include <QMimeData>
+#include <QPainter>
 #include <QAction>
 #include <QClipboard>
 #include <QContextMenuEvent>
@@ -375,6 +379,32 @@ void NoteEditor::connectDocument() {
     connect(document(), &QTextDocument::contentsChanged, this, &NoteEditor::onContentsChanged);
 }
 
+void NoteEditor::retireDocument(std::unique_ptr<QTextDocument> previous) {
+    if (!previous) return;
+    // СТАРЫЙ ДОКУМЕНТ НЕ УМИРАЕТ ЗДЕСЬ И СЕЙЧАС — он уезжает в deleteLater.
+    //
+    // Подмена документа случается из обработчиков событий: Tab меняет сторону
+    // сравнения, потеря фокуса снимала подглядывание. Qt в этот момент ещё
+    // разбирается с тем же событием и с тем же документом — гасит каретку,
+    // закрывает ввод из системы, — и вырванная у неё из-под рук память
+    // роняет программу. Владелец получил падение по Alt: оконный менеджер
+    // забирал фокус, а мы на focusOut сносили документ.
+    //
+    // Отложенное удаление стоит ноль (один посланный объект) и снимает целый
+    // класс бед: документ доживает до возврата в цикл событий.
+    previous.release()->deleteLater();
+}
+
+void NoteEditor::rememberCaretInto(NoteSession& note) const {
+    // ПАРОЙ, а не двумя присваиваниями по месту. Забыть один конец — и заметка
+    // возвращается с выделением от начала файла до каретки: ровно это и вышло
+    // при входе в историю, где записывался только cursor. Прокрутка здесь же —
+    // «где я был» это все три числа сразу.
+    note.cursor = textCursor().position();
+    note.anchor = textCursor().anchor();
+    note.scroll = verticalScrollBar()->value();
+}
+
 void NoteEditor::installSession(NoteSession session) {
     // Подмена заметки — ОДНА операция, а не «присвоить объект, потом поставить
     // документ». Порознь между ними существует миг, когда виджет смотрит на
@@ -385,6 +415,7 @@ void NoteEditor::installSession(NoteSession session) {
     note_ = std::move(session);
     setDocument(note_.document.get());
     connectDocument();
+    retireDocument(std::move(previous));
     applyContentWidth();
 
     // Каретка и ВЫДЕЛЕНИЕ: сперва свободный конец, потом каретка с
@@ -419,12 +450,13 @@ void NoteEditor::installSession(NoteSession session) {
 
 void NoteEditor::installDocument(std::unique_ptr<QTextDocument> doc) {
     // Прежний держим живым до самой подмены: Qt удаляет старый документ только
-    // если сам его и заводил, а наши — наши, и умирают здесь, строкой ниже.
+    // если сам его и заводил, а наши — наши.
     std::unique_ptr<QTextDocument> previous = std::move(note_.document);
     if (document() != nullptr) disconnect(document(), nullptr, this, nullptr);
     note_.document = std::move(doc);
     setDocument(note_.document.get());
     connectDocument();
+    retireDocument(std::move(previous));
     // Курсоры, державшиеся за прежний документ, теперь ни на что не указывают.
     note_.lastLine = QTextCursor();
     note_.dirty = QTextCursor();
@@ -502,9 +534,7 @@ void NoteEditor::stashCurrentNote() {
 
     // Уезжает ВЕСЬ объект заметки, а не выбранные поля. Забыть перенести
     // что-то нельзя: переносится всё, потому что переносится он сам.
-    note_.cursor = textCursor().position();
-    note_.anchor = textCursor().anchor();
-    note_.scroll = verticalScrollBar()->value();
+    rememberCaretInto(note_);
     note_.modified = false;
     note_.bytes = bytes;
     noteCache_.insert(noteCache_.begin(), std::move(note_));
@@ -761,6 +791,21 @@ void NoteEditor::applyZoom(qreal value) {
 }
 
 void NoteEditor::refreshAppearance() {
+    // В РЕЖИМЕ ИСТОРИИ СОБИРАТЬ НАДО СЛЕПОК, а не живую заметку. Цепочка отмены
+    // здесь своя и пустая — по ней документ вышел бы чистым листом. Облик
+    // запечён в собранных документах разности, поэтому все слоты выбрасываем и
+    // строим заново тот, что показан.
+    if (inHistory()) {
+        const DiffSpot keep = diffSpotAtCaret();
+        dropDiffDocuments();
+        // Тот, что в поле, в слотах не лежит — его забрали при показе. Он тоже
+        // устарел, и уходит он тем же путём: отложенным удалением, а не здесь и
+        // сейчас (виджет на него ещё смотрит).
+        retireDocument(std::move(note_.document));
+        note_.diffSlot = -1;
+        renderDiff(keep);
+        return;
+    }
     flushPendingEdit();
     // Облик запечён в документах при сборке: всё отложенное протухло разом.
     clearNoteCache();
@@ -1326,11 +1371,11 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     // хвостовой keepCaretOffEdge прокручивал бы вид к ней: нажал Ctrl перед
     // Ctrl+кликом — и текст упрыгал к каретке. Мимо всей обработки.
     switch (event->key()) {
+        case Qt::Key_Alt:
         case Qt::Key_Control:
         case Qt::Key_Shift:
-        case Qt::Key_Alt:
-        case Qt::Key_AltGr:
         case Qt::Key_Meta:
+        case Qt::Key_AltGr:
         case Qt::Key_CapsLock:
             NoteView::keyPressEvent(event);
             return;
@@ -1356,6 +1401,10 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
             event->accept();
             return;
         }
+        // TAB (сторона сравнения) и F4 (ходьба по изменениям) ловятся ЯРЛЫКАМИ
+        // ОКНА, а не здесь: фокус в режиме истории запросто оказывается в
+        // списке слепков, и обработчик редактора до них не доходил. Одна дверь
+        // на клавишу — в main.cpp.
         // Печатающая клавиша не восстанавливает ничего (решение владельца:
         // случайное нажатие при попытке выделить не должно менять режим).
         // Окно на этот сигнал подсвечивает кнопку «Восстановить эту».
@@ -2326,8 +2375,21 @@ bool NoteEditor::enterHistory(int index) {
     // прошлое, и вершина цепочки обязана в этом прошлом оказаться. Иначе он
     // вернётся к живой версии, уйдёт из заметки — и то, что набрал, пропадёт
     // из истории навсегда.
+    // ВХОД В ИСТОРИЮ — ЕЩЁ ОДНА ТОЧКА СОХРАНЕНИЯ, в один ряд с уходом из
+    // заметки и выходом из программы. Признак «изменён» не спрашивается вовсе
+    // (force): он может и не встать из-за нашей же ошибки в редком пути правки,
+    // а человек как раз пошёл смотреть прошлое, и вершина его работы обязана в
+    // этом прошлом оказаться. Лишней записи от этого не бывает — все правила
+    // отбора внутри save работают: не изменилось, значит записи нет, и вершина
+    // таймлайна и так равна живому буферу.
     flushPendingEdit();
-    if (document()->isModified()) save(false);
+    save(false, true);
+
+    // ВТОРОЙ ТРИГГЕР ЛЕНИВОЙ МИГРАЦИИ: первое чтение журнала ради истории этой
+    // заметки. Просмотр заметки журнал не трогает вовсе — а вот пошёл человек
+    // в прошлое, и прошлое обязано быть уже чистым: показывать дубликаты,
+    // которые всё равно уйдут при первой правке, незачем.
+    compressJournalOfNote();
 
     journal::History history(storeRoot_);
     QString error;
@@ -2352,8 +2414,7 @@ bool NoteEditor::enterHistory(int index) {
     // отмены и своим документом. Возврат — обратная подмена, и потерять при
     // ней нечего: переносится объект, а не набор полей.
     auto live = std::make_unique<NoteSession>(std::move(note_));
-    live->cursor = textCursor().position();
-    live->scroll = verticalScrollBar()->value();
+    rememberCaretInto(*live);
     live->modified = live->document && live->document->isModified();
 
     note_ = NoteSession{};
@@ -2402,20 +2463,421 @@ bool NoteEditor::showSnapshot(int index) {
 
     // Слепок — байты файла целиком, вместе с шапкой. Разбираем тем же ядром,
     // что и обычное открытие: второго способа прочитать заметку нет.
-    const Document doc = parse(std::string(bytes.constData(), size_t(bytes.size())));
-    installDocument(std::make_unique<QTextDocument>());
-    note_.builtValid = false;
-    rebuild(doc, 0, ViewAnchor{});
-    document()->setModified(false);
+    // ГДЕ ЧЕЛОВЕК СТОЯЛ. У другого слепка другой текст, и точного места в нём
+    // нет; но номер строки от слепка к слепку меняется мало, и вернуться
+    // ПРИМЕРНО туда же куда полезнее, чем начинать каждый слепок с начала
+    // (просьба владельца). Снимаем ДО подмены — потом этого документа не будет.
+    const int wasLine = diffLineAtCaret();
+    const int wasOnScreen = caretOnScreen();
+
+    note_.snapshotIr = parse(std::string(bytes.constData(), size_t(bytes.size())));
     note_.historyIndex = index;
+    computeDiff(index);
+    renderDiff({});
+    goToDiffLine(wasLine, wasOnScreen);
     emit historyIndexChanged(index);
     return true;
+}
+
+// --- разность ---------------------------------------------------------------
+
+void NoteEditor::computeDiff(int index) {
+    dropDiffDocuments();   // собранное относилось к другому слепку или другой базе
+    note_.diffReady = false;
+    note_.baseIr = Document{};
+    note_.snapshotText = diff::textOf(note_.snapshotIr);
+
+    note_.baseTime = 0;
+    note_.baseIsLive = diffFromFresh_;
+    QByteArray baseBytes;
+    if (diffFromFresh_) {
+        // Со свежей версией. Она у нас в руках — это последняя записанная
+        // копия отложенной живой заметки; читать файл заново незачем.
+        if (note_.live != nullptr) baseBytes = note_.live->lastSaved;
+        if (baseBytes.isEmpty()) {
+            QFile file(note_.path);
+            if (file.open(QIODevice::ReadOnly)) baseBytes = file.readAll();
+        }
+    } else {
+        // С предыдущей записью. Надгробия пропускаем: слепка у них нет.
+        journal::History history(storeRoot_);
+        const QString noteId = QFileInfo(note_.path).completeBaseName();
+        int at = index - 1;
+        while (at >= 0 && !note_.timeline.entries[at].hasSnapshot()) --at;
+        QString error;
+        if (at >= 0) {
+            note_.baseTime = note_.timeline.entries[at].time;
+            if (!history.snapshotAt(noteId, at, &baseBytes, &error))
+                std::fprintf(stderr, "слепок для сравнения не собрать: %s\n",
+                             error.toUtf8().constData());
+        }
+    }
+
+    // Базы нет вовсе (самая первая запись) — сравниваем с пустотой: вся
+    // заметка окажется добавленной, и это правда.
+    note_.baseIr = parse(std::string(baseBytes.constData(), size_t(baseBytes.size())));
+    note_.baseText = diff::textOf(note_.baseIr);
+    // ДВА ПРОГОНА, по одному на сторону: показанная сторона всегда «after»
+    // своего сравнения, и тогда зелёное с красным не приходится выворачивать
+    // наизнанку при переключении — они просто меняются местами сами.
+    note_.diffResult = diff::compare(note_.baseText.lines, note_.snapshotText.lines);
+    note_.diffReverse = diff::compare(note_.snapshotText.lines, note_.baseText.lines);
+    note_.diffReady = true;
+}
+
+NoteEditor::DiffSpot NoteEditor::diffSpotAtCaret() const {
+    DiffSpot spot;
+    if (!note_.diffReady) return spot;
+    spot.base = diffPeek_;
+
+    // ДЕРЖИМСЯ ЗА ТО, ЧТО НА ЭКРАНЕ, а не за каретку. Читая историю, человек
+    // крутит колесо, а каретка так и стоит там, где её оставили, — чаще всего в
+    // самом начале. Держась за неё, мы возвращали вид к началу документа:
+    // владелец увидел это как «Tab убегает, иногда вообще на начало».
+    //
+    // Тот же приём, что у пересборки документа (см. ViewAnchor): блок у верхней
+    // кромки окна и его высота относительно неё.
+    const QAbstractTextDocumentLayout* layout = document()->documentLayout();
+    const int scroll = verticalScrollBar()->value();
+    const int at = layout->hitTest(QPointF(0, scroll), Qt::FuzzyHit);
+    QTextBlock top = document()->findBlock(at);
+    if (!top.isValid()) top = document()->begin();
+    if (!top.isValid()) return spot;
+
+    const int number = top.blockNumber();
+    const int source = number >= 0 && number < diffSource_.size() ? diffSource_[number] : -1;
+    if (diffPlainView_) {
+        spot.line = number >= 0 && number < shownResult().rows.size()
+                        ? shownResult().rows[number].after
+                        : -1;
+    } else {
+        const diff::Text& text = shownText();
+        spot.line = source >= 0 && source < text.blocks.size() ? text.blocks[source].first : -1;
+    }
+    if (spot.line < 0) return spot;
+    spot.onScreen = int(layout->blockBoundingRect(top).top()) - scroll;
+    return spot;
+}
+
+int NoteEditor::lineOnOtherSide(int line, bool fromBase) const {
+    // Пары строк живут в ПРЯМОМ сравнении: у общей и у изменённой строки есть
+    // обе стороны. Точной пары может не быть (строка есть только здесь) —
+    // тогда берём ближайшую, у которой пара есть: лучше рядом, чем в начале.
+    int best = -1;
+    int bestDistance = -1;
+    for (const diff::Row& row : note_.diffResult.rows) {
+        const int here = fromBase ? row.before : row.after;
+        const int there = fromBase ? row.after : row.before;
+        if (here < 0 || there < 0) continue;
+        const int distance = qAbs(here - line);
+        if (bestDistance < 0 || distance < bestDistance) {
+            bestDistance = distance;
+            best = there;
+        }
+        if (distance == 0) break;
+    }
+    return best;
+}
+
+void NoteEditor::diffGoToSpot(const DiffSpot& spot) {
+    if (spot.line < 0) return;
+    // Сторона могла смениться (Tab): переводим строку в её пространство.
+    const int line = spot.base == diffPeek_ ? spot.line
+                                            : lineOnOtherSide(spot.line, spot.base);
+    goToDiffLine(line, spot.onScreen);
+}
+
+int NoteEditor::caretOnScreen() const {
+    const QRectF rect = document()->documentLayout()->blockBoundingRect(textCursor().block());
+    return int(rect.top()) - verticalScrollBar()->value();
+}
+
+int NoteEditor::diffLineAtCaret() const {
+    if (!inHistory() || !note_.diffReady) return -1;
+    if (diffPlainView_) {
+        const int row = textCursor().blockNumber();
+        if (row < 0 || row >= shownResult().rows.size()) return -1;
+        return shownResult().rows[row].after;
+    }
+    // Номер блока КОПИИ переводим в блок слепка: у копии свои номера, и всё,
+    // что ниже дорисованной строки, съехало бы.
+    const int number = textCursor().blockNumber();
+    const int source = number >= 0 && number < diffSource_.size() ? diffSource_[number] : -1;
+    const diff::Text& text = shownText();
+    return source >= 0 && source < text.blocks.size() ? text.blocks[source].first : -1;
+}
+
+void NoteEditor::goToDiffLine(int line, int onScreen) {
+    if (line < 0 || !inHistory() || !note_.diffReady) return;
+    if (diffPlainView_) {
+        // В виде «как под капотом» ищем строку сравнения с таким номером на
+        // показанной стороне; точной может не быть — берём ближайшую сверху.
+        int row = -1;
+        for (int i = 0; i < shownResult().rows.size(); ++i) {
+            const int at = shownResult().rows[i].after;
+            if (at >= 0 && at <= line) row = i;
+        }
+        if (row < 0) return;
+        const QTextBlock target = document()->findBlockByNumber(row);
+        if (!target.isValid()) return;
+        // КАРЕТКУ НЕ ТРОГАЕМ: в режиме истории она человеку не нужна, а вид —
+        // нужен. Двигаем только прокрутку.
+        const QRectF rect = document()->documentLayout()->blockBoundingRect(target);
+        verticalScrollBar()->setValue(int(rect.top()) - onScreen);
+        return;
+    }
+    const diff::Text& text = shownText();
+    int block = -1;
+    for (int i = 0; i < text.blocks.size(); ++i)
+        if (text.blocks[i].first <= line) block = i;
+    if (block < 0) return;
+    // Обратно: ищем блок ПОКАЗАННОГО документа, взятый из этого блока слепка.
+    QTextBlock target;
+    int number = 0;
+    for (QTextBlock b = document()->begin(); b.isValid(); b = b.next(), ++number)
+        if (number < diffSource_.size() && diffSource_[number] == block) {
+            target = b;
+            break;
+        }
+    if (!target.isValid()) return;
+    const QRectF rect = document()->documentLayout()->blockBoundingRect(target);
+    verticalScrollBar()->setValue(int(rect.top()) - onScreen);
+}
+
+void NoteEditor::dropDiffDocuments() {
+    for (std::unique_ptr<QTextDocument>& doc : note_.diffDocs) retireDocument(std::move(doc));
+    for (QVector<diff::Mark>& marks : note_.diffDocMarks) marks.clear();
+    for (QVector<int>& source : note_.diffDocSource) source.clear();
+    note_.diffSlot = -1;
+}
+
+std::unique_ptr<QTextDocument> NoteEditor::buildDiffDocument(int slot,
+                                                             QVector<diff::Mark>* marks,
+                                                             QVector<int>* source) {
+    const bool base = (slot & 1) != 0;
+    const bool plain = (slot & 2) != 0;
+    // Сравнение выбирается СТОРОНОЙ: показанная сторона всегда «after».
+    const diff::Result& result = base ? note_.diffReverse : note_.diffResult;
+    auto doc = std::make_unique<QTextDocument>();
+    source->clear();
+    if (plain) {
+        diff::buildPlainDocument(result, *doc, zoom(), marks);
+        return doc;   // у этого вида блок и есть строка сравнения
+    }
+    // ПОКАЗЫВАЕМ ИЛЛЮСТРИРОВАННУЮ КОПИЮ, а не сам слепок. Слепок (snapshotIr,
+    // baseIr) — истина, он лежит рядом неизменным, и по нему работает
+    // восстановление; копия существует только ради показа, и всё дорисованное
+    // живёт в ней.
+    const diff::Text& front = base ? note_.baseText : note_.snapshotText;
+    const diff::BlockMarks blocks =
+        note_.diffReady ? diff::blockMarks(result, front.blocks) : diff::BlockMarks{};
+    const diff::Illustrated shown =
+        diff::illustrate(base ? note_.baseIr : note_.snapshotIr, blocks);
+    buildDocument(shown.ir, *doc, zoom());
+    // Метка блока документа — из метки блока копии; соответствие «блок IR →
+    // блок документа» не один к одному (литеральные блоки лежат построчно).
+    marks->clear();
+    for (int ir : irIndexOfEveryBlock(*doc)) {
+        marks->append(ir >= 0 && ir < shown.blockMark.size() ? shown.blockMark[ir]
+                                                            : diff::Mark::Same);
+        source->append(ir >= 0 && ir < shown.sourceBlock.size() ? shown.sourceBlock[ir] : -1);
+    }
+
+    // Дорисованные строки — цветом разности: они не текст заметки, и читаться
+    // как текст заметки не должны. Цвет ставим ПОСЛЕ сборки, прямо в документе:
+    // в IR цвета нет вовсе (там курсив), а документ этот и есть копия — портить
+    // в нём нечего.
+    {
+        QTextCursor paint(doc.get());
+        int number = 0;
+        for (QTextBlock block = doc->begin(); block.isValid(); block = block.next(), ++number) {
+            if (number >= source->size() || source->at(number) >= 0) continue;
+            if (block.text().isEmpty()) continue;
+            QTextCharFormat colour;
+            colour.setForeground(appearance().diffRemoved);
+            paint.setPosition(block.position());
+            paint.setPosition(block.position() + block.length() - 1, QTextCursor::KeepAnchor);
+            paint.mergeCharFormat(colour);
+        }
+    }
+    return doc;
+}
+
+void NoteEditor::renderDiff(const DiffSpot& keep) {
+    if (!inHistory()) return;
+    const int slot = diffSlotNow();
+    if (note_.diffSlot == slot && note_.document) return;   // этот уже в поле
+
+    // Подсветка находок держится курсорами в документе, а документ сейчас
+    // сменится: запоминаем запрос и ставим подсветку заново на новом. Без
+    // этого смена стороны гасила поиск молча.
+    const QString query = note_.matchText;
+    const bool caseSensitive = note_.matchCaseSensitive;
+    clearMatches();
+
+    // Показ слепка — не правка человека: цепочки отмены здесь нет вовсе, она
+    // отложена вместе с живой заметкой.
+    const bool wasSuspended = recordingSuspended_;
+    recordingSuspended_ = true;
+    struct Restore {
+        NoteEditor* self;
+        bool was;
+        ~Restore() { self->recordingSuspended_ = was; }
+    } restore{this, wasSuspended};
+
+    // ПРЕЖНИЙ ДОКУМЕНТ ВОЗВРАЩАЕТСЯ В СВОЙ СЛОТ, а не уничтожается: на него мы
+    // ещё вернёмся следующим же Tab. Отсюда и вся быстрота переключения —
+    // строится каждая сторона по одному разу.
+    if (note_.diffSlot >= 0 && note_.document)
+        note_.diffDocs[size_t(note_.diffSlot)] = std::move(note_.document);
+    if (!note_.diffDocs[size_t(slot)])
+        note_.diffDocs[size_t(slot)] =
+            buildDiffDocument(slot, &note_.diffDocMarks[size_t(slot)],
+                              &note_.diffDocSource[size_t(slot)]);
+
+    installDocument(std::move(note_.diffDocs[size_t(slot)]));
+    note_.diffSlot = slot;
+    diffMarks_ = note_.diffDocMarks[size_t(slot)];
+    diffSource_ = note_.diffDocSource[size_t(slot)];
+    // Документ собран не через rebuild, значит заплатке опереться не на что.
+    note_.builtValid = false;
+    applyContentWidth();
+    document()->setModified(false);
+
+    diffGoToSpot(keep);
+    if (!query.isEmpty()) findMatches(query, caseSensitive);
+    viewport()->update();
+}
+
+void NoteEditor::setDiffPlainView(bool on) {
+    if (diffPlainView_ == on) return;
+    // МЕСТО СНИМАЕТСЯ ДО СМЕНЫ ПРИЗНАКА. Иначе оно считается по новым правилам
+    // на старом документе: у вида «как под капотом» строка — это номер блока, у
+    // вида с полосками — блок IR, и перепутанные местами они дают то соседнюю
+    // строку, то начало документа. Владелец это и увидел.
+    const DiffSpot keep = diffSpotAtCaret();
+    diffPlainView_ = on;
+    renderDiff(keep);
+    emit diffViewChanged(on);
+}
+
+void NoteEditor::setDiffPeek(bool on) {
+    if (diffPeek_ == on) return;
+    const DiffSpot keep = diffSpotAtCaret();   // та же причина, что и у вида
+    diffPeek_ = on;
+    renderDiff(keep);
+    emit diffSideChanged(on);
+}
+
+void NoteEditor::setDiffFromFresh(bool on) {
+    if (diffFromFresh_ == on) return;
+    diffFromFresh_ = on;
+    if (!inHistory() || note_.historyIndex < 0) return;
+    // База сменилась, слепок тот же — место держим.
+    const DiffSpot keep = diffSpotAtCaret();
+    computeDiff(note_.historyIndex);
+    renderDiff(keep);
+}
+
+HistorySearchReport NoteEditor::searchNoteHistory(const QString& text) {
+    HistorySearchReport report;
+    if (storeRoot_.isEmpty() || note_.path.isEmpty()) return report;
+    // Обращение к истории — значит и чистка: искать надо по уже вычищенному
+    // журналу, иначе один и тот же текст найдётся в трёх дубликатах.
+    compressJournalOfNote();
+    const journal::History history(storeRoot_);
+    return zametti::searchNoteHistory(history, QFileInfo(note_.path).completeBaseName(),
+                                      makeQuery(text));
+}
+
+void NoteEditor::showBlockInGolden(const QTextBlock& block) {
+    if (!block.isValid()) return;
+    QTextCursor place(block);
+    setTextCursor(place);
+
+    const int height = viewport()->height();
+    if (height <= 0) return;
+    const QRectF rect = document()->documentLayout()->blockBoundingRect(block);
+    const int scroll = verticalScrollBar()->value();
+    const qreal top = rect.top() - scroll;
+
+    // Уже на виду и не у самой кромки — вид не трогаем: дёргать картинку под
+    // человеком, когда он и так смотрит на нужное место, хуже, чем не двигать.
+    const qreal edge = height * 0.15;
+    if (top >= edge && rect.bottom() - scroll <= height - edge) return;
+
+    // Иначе ставим изменение в ЗОЛОТОЕ СЕЧЕНИЕ окна (просьба владельца:
+    // «в середине или чуть выше»). Прежде тут стоял ensureCursorVisible, а он
+    // прокручивает МИНИМАЛЬНО — то есть кладёт находку у самой нижней кромки,
+    // где её толком и не видно.
+    verticalScrollBar()->setValue(
+        int(rect.top() - height * qBound(0.0, appearance().diffFocusRatio, 0.9)));
+}
+
+void NoteEditor::paintEvent(QPaintEvent* event) {
+    NoteView::paintEvent(event);
+    if (!inHistory() || diffMarks_.isEmpty()) return;
+
+    // Полоска на поле, у самого края окна: она отвечает на вопрос «сюда
+    // смотреть?», и место ей там, где взгляд ведёт строку, а не внутри текста.
+    // Координаты вьюпорта, без сдвига по горизонтали: полоса стоит у кромки
+    // окна и при прокрутке вбок не уезжает.
+    QPainter painter(viewport());
+    const QAbstractTextDocumentLayout* layout = document()->documentLayout();
+    const int scroll = verticalScrollBar()->value();
+    const qreal width = qMax(1.0, appearance().diffBarWidth * zoom());
+    for (QTextBlock block = document()->begin(); block.isValid(); block = block.next()) {
+        const int number = block.blockNumber();
+        if (number >= diffMarks_.size()) break;
+        const diff::Mark mark = diffMarks_[number];
+        if (mark == diff::Mark::Same) continue;
+        const QRectF rect = layout->blockBoundingRect(block);
+        const qreal top = rect.top() - scroll;
+        if (top > viewport()->height()) break;
+        if (top + rect.height() < 0) continue;
+        QColor colour = mark == diff::Mark::Added      ? appearance().diffAdded
+                        : mark == diff::Mark::Removed  ? appearance().diffRemoved
+                                                       : appearance().diffChanged;
+        painter.fillRect(QRectF(width, top, width, rect.height()), colour);
+    }
+}
+
+bool NoteEditor::focusNextPrevChild(bool next) {
+    if (inHistory()) return false;   // Tab тут меняет вид, а не фокус
+    return NoteView::focusNextPrevChild(next);
+}
+
+bool NoteEditor::diffStep(bool forward) {
+    if (!inHistory() || diffMarks_.isEmpty()) return false;
+    const int blocks = document()->blockCount();
+    const int from = textCursor().blockNumber();
+    // По кругу: дошли до края — начинаем сначала. Ходьба по изменениям без
+    // круга каждый раз упирается в конец и молчит.
+    for (int step = 1; step <= blocks; ++step) {
+        const int at = ((forward ? from + step : from - step) % blocks + blocks) % blocks;
+        if (at >= diffMarks_.size() || diffMarks_[at] == diff::Mark::Same) continue;
+        // Соседние блоки одного изменения — одно место: встаём на его начало,
+        // иначе F4 шагал бы по строкам внутри одного правленого куска.
+        int start = at;
+        if (forward)
+            while (start > 0 && start - 1 < diffMarks_.size() &&
+                   diffMarks_[start - 1] != diff::Mark::Same && start - 1 != from)
+                --start;
+        showBlockInGolden(document()->findBlockByNumber(start));
+        return true;
+    }
+    return false;
 }
 
 void NoteEditor::leaveHistory() {
     if (!inHistory()) return;
     // Всё, что накопилось на слепке, к живой заметке отношения не имеет.
     flushPendingEdit();
+    // Подглядывание — состояние на время удержания клавиши, и переживать
+    // режим оно не должно ни в каком виде.
+    diffPeek_ = false;
+    diffMarks_.clear();
+    dropDiffDocuments();
 
     installSession(std::move(*note_.live));
     setReadOnly(false);
@@ -2448,8 +2910,12 @@ qint64 NoteEditor::restoreShownSnapshot(bool* alreadyCurrent) {
     if (!inHistory() || note_.historyIndex < 0) return 0;
     const qint64 source = note_.timeline.entries[note_.historyIndex].time;
 
-    // Тело слепка забираем ДО выхода из режима: сейчас оно в поле редактора.
-    Document body = readDocument(*document());
+    // Тело слепка берём ИЗ РАЗОБРАННОГО СЛЕПКА, а не из поля редактора. В поле
+    // сейчас может лежать что угодно из того, что показывает режим: документ с
+    // заглушками «удалено: N строк», вид «как под капотом» построчно или вовсе
+    // вторая сторона сравнения по зажатому Alt. Восстанавливать надо ту запись,
+    // которую человек выбрал в таймлайне, а не то, чем она сейчас нарисована.
+    Document body = note_.snapshotIr;
 
     leaveHistory();
 
@@ -2506,19 +2972,29 @@ void NoteEditor::recordBaseline(const QByteArray& contents) {
         std::fprintf(stderr, "опорная запись не записана: %s\n", error.toUtf8().constData());
 }
 
-// Насколько две версии разошлись — в знаках, считая и дописанное, и стёртое.
-//
-// Меряется куском, который изменился: общее начало и общий хвост отбрасываются,
-// остаётся то, что человек тронул. Разницы длин мало — два текста одной длины
-// бывают разными целиком.
-static int changedChars(const QByteArray& a, const QByteArray& b) {
-    const qsizetype shared = qMin(a.size(), b.size());
-    qsizetype prefix = 0;
-    while (prefix < shared && a[prefix] == b[prefix]) ++prefix;
-    qsizetype suffix = 0;
-    while (suffix < shared - prefix && a[a.size() - 1 - suffix] == b[b.size() - 1 - suffix])
-        ++suffix;
-    return int(qMax(a.size(), b.size()) - prefix - suffix);
+// Правила отбора записей взяты из общего свода (store/history_rules.h): тем же
+// кодом чистится и старая история. Здесь — только числа из настроек.
+zametti::history::Rules NoteEditor::historyRules() {
+    const Appearance& look = appearance();
+    zametti::history::Rules rules;
+    rules.mergeChars = qMax(0, look.historyMergeChars);
+    rules.mergeHours = qMax(1, look.historyMergeHours);
+    rules.ignoreAge = false;   // живая запись смотрит только на свежие записи
+    return rules;
+}
+
+// Ленивая миграция журнала этой заметки. Зовётся из двух мест, и оба
+// пер-заметочные: перед первой записью и перед первым чтением истории.
+// Не вышло — жалуемся и живём дальше: чистка это удобство, а не условие работы.
+void NoteEditor::compressJournalOfNote() {
+    if (storeRoot_.isEmpty() || note_.path.isEmpty()) return;
+    if (note_.journalCompressed) return;   // за один заход в заметку — один раз
+    note_.journalCompressed = true;
+    journal::History history(storeRoot_);
+    QString error;
+    if (!zametti::history::compressJournal(history, QFileInfo(note_.path).completeBaseName(),
+                                           historyRules(), false, nullptr, &error))
+        std::fprintf(stderr, "история не вычищена: %s\n", error.toUtf8().constData());
 }
 
 void NoteEditor::recordHistory(journal::Kind kind, const QByteArray& snapshot, qint64 source) {
@@ -2544,23 +3020,35 @@ void NoteEditor::recordHistory(journal::Kind kind, const QByteArray& snapshot, q
         }
     }
 
-    // ЭКВИВАЛЕНТНЫХ ЗАПИСЕЙ В ХВОСТЕ НЕ БЫВАЕТ — правило владельца, и оно
-    // рекурсивное. Одного сравнения с последней записью мало: набрал человек
-    // текст (M0'), отменил его (M0" = M0) — и в журнале появлялась пара
-    // одинаковых записей ЧЕРЕЗ ОДНУ. Так и вышло у него в «Пробуем Obsidian»:
-    //
-    //    9  1166      11  1166 == #9        ← набрали и отменили
-    //   10  1224      12  1224 == #10
-    //
-    // Поэтому решение принимается так: сперва считаем, сколько записей с конца
-    // уходит (мелкая свежая правка заменяет прошлую), а потом смотрим, не
-    // совпал ли новый слепок с тем, что после этого оказалось последним. Совпал
-    // — новую запись не пишем вовсе, остаётся САМАЯ СТАРАЯ из одинаковых:
-    //
-    //   …, M0        →  …, M0, M0'   →  …, M0
-    //
-    // Сравнение — «не считая строки modified»: она меняется на каждой записи и
-    // изменением заметки не является.
+    // ПЕРВАЯ ЗАПИСЬ В ЖУРНАЛ — первый из двух триггеров ленивой миграции
+    // (второй — первое чтение истории, см. enterHistory). Старый журнал
+    // чистится ЗДЕСЬ, до того как правило отбора начнёт сравнивать новый слепок
+    // с хвостом: иначе правило работало бы поверх дубликатов, которых оно и
+    // призвано не допускать.
+    if (!note_.journalCompressed) {
+        compressJournalOfNote();
+        note_.journalTailKnown = false;   // хвост мог переехать
+    }
+
+    // Хвост журнала разжимается ОДИН РАЗ на заход в заметку. Дальше он у нас в
+    // руках: после каждой записи последней становится ровно то, что мы только
+    // что записали.
+    if (!note_.journalTailKnown) {
+        note_.journalTailKnown = true;
+        note_.journalTail.clear();
+        note_.journalTailTime = 0;
+        journal::Journal read;
+        if (history.read(noteId, &read, &error) && !read.entries.isEmpty()) {
+            const int last = int(read.entries.size()) - 1;
+            if (read.entries[last].hasSnapshot() &&
+                history.snapshotAt(noteId, last, &note_.journalTail, &error))
+                note_.journalTailTime = read.entries[last].time;
+        }
+    }
+
+    // РЕШЕНИЕ ПРИНИМАЕТ ОБЩИЙ СВОД ПРАВИЛ (store/history_rules.h) — тот же, что
+    // чистит старую историю. Здесь остаётся механика: прочитать журнал, отдать
+    // правилу слепки и сделать, что сказано.
     journal::Journal read;
     if (!history.read(noteId, &read, &error)) {
         std::fprintf(stderr, "история не читается: %s\n", error.toUtf8().constData());
@@ -2568,66 +3056,24 @@ void NoteEditor::recordHistory(journal::Kind kind, const QByteArray& snapshot, q
         return;
     }
 
-    // ЗАМЕНА ВМЕСТО ДОБАВЛЕНИЯ: два условия, и оба обязаны сойтись — прошлая
-    // запись свежая (её ещё не поздно переписать) и разошлись версии на мелочь.
-    // Свежесть и близость считаются по слепку, который лежит у нас в памяти:
-    // ради этого решения журнал не разжимается.
-    const Appearance& look = appearance();
-    const qint64 age = now - note_.journalTailTime;
-    const bool fresh = note_.journalTailTime > 0 && age >= 0 &&
-                       age <= qint64(qMax(1, look.historyMergeHours)) * 3600 * 1000;
-    const bool close = !note_.journalTail.isEmpty() &&
-                       changedChars(note_.journalTail, snapshot) <= qMax(0, look.historyMergeChars);
-    // Заменяем ТОЛЬКО обычное сохранение обычным: возврат из истории и приход
-    // правки снаружи — вешки, которые человек ставил не набором, и стирать их
-    // нельзя ни в каком виде.
-    const bool merge = kind == journal::Kind::Save && fresh && close &&
-                       !read.entries.isEmpty() && read.entries.back().kind == journal::Kind::Save;
-
-    int keep = int(read.entries.size());
-    bool writeNew = true;
-
-    // ВОЗВРАТ К УЖЕ ЗАПИСАННОМУ СОСТОЯНИЮ. Ищем среди СВЕЖИХ записей хвоста
-    // самую старую, равную новому слепку. Нашли — всё, что после неё, было
-    // работой, которую человек сам же и отменил: она уходит, а новая запись не
-    // пишется вовсе.
-    //
-    // Почему только среди свежих: вернуться к состоянию месячной давности —
-    // законное дело, и стирать за это месяц истории было бы разбоем. Окно то
-    // же, что у замены (historyMergeHours): в пределах сегодняшней работы
-    // отмена не оставляет следов, дальше — история неприкосновенна.
-    // Схлопывание — ТОЛЬКО для обычного сохранения. Возврат из истории и приход
-    // правки снаружи — вешки, которые человек ставил намеренно; восстановив
-    // старый слепок, он ждёт увидеть в истории и его, и всё, от чего ушёл.
-    // (Без этой оговорки восстановление стирало всю историю новее себя —
-    // поймано набором.)
-    const qint64 window = qint64(qMax(1, look.historyMergeHours)) * 3600 * 1000;
-    int sameAs = -1;   // самая старая свежая запись, равная новому слепку
-    for (int i = kind == journal::Kind::Save ? int(read.entries.size()) - 1 : -1; i >= 0; --i) {
-        const journal::Entry& entry = read.entries[i];
-        if (now - entry.time > window) break;   // дальше история старая, её не трогаем
-        if (!entry.hasSnapshot()) break;        // надгробие: за него не заглядываем
+    // Слепки правило спрашивает по одному и только те, до которых дошло: у
+    // хвоста они уже в памяти (ради этого решения журнал не разжимается), за
+    // остальными идём в журнал.
+    const int lastIndex = int(read.entries.size()) - 1;
+    const auto snapshotOf = [&](int i) -> QByteArray {
+        if (i == lastIndex && note_.journalTailTime > 0) return note_.journalTail;
         QByteArray older;
-        if (!history.snapshotAt(noteId, i, &older, &error)) break;
-        if (sameApartFromModified(older, snapshot)) {
-            sameAs = i;     // нашли; но, может, ещё старее лежит такая же
-            continue;
-        }
-        if (sameAs >= 0) break;                          // старее — уже другое состояние
-        if (entry.kind != journal::Kind::Save) break;     // чужую вешку не перепрыгиваем
-    }
-    if (sameAs >= 0) {
-        keep = sameAs + 1;   // эта запись остаётся последней
-        writeNew = false;    // такое состояние в журнале уже есть
-    }
-
-    // Если возврата не было — работает правило замены: мелкая свежая правка
-    // становится на место прошлой, а не рядом с ней.
-    if (writeNew && merge && keep >= 2) --keep;
+        QString why;
+        if (!history.snapshotAt(noteId, i, &older, &why)) return {};
+        return older;
+    };
+    const zametti::history::Step step =
+        zametti::history::decideStep(read.entries, snapshotOf, snapshot, kind, now,
+                                     historyRules());
 
     bool ok = true;
-    if (keep < int(read.entries.size())) ok = history.truncate(noteId, keep, &error);
-    if (ok && writeNew) ok = history.append(noteId, kind, now, snapshot, source, &error);
+    if (step.keep < int(read.entries.size())) ok = history.truncate(noteId, step.keep, &error);
+    if (ok && step.writeNew) ok = history.append(noteId, kind, now, snapshot, source, &error);
     if (!ok) {
         std::fprintf(stderr, "история не записана: %s\n", error.toUtf8().constData());
         note_.journalTailKnown = false;   // что там теперь — неизвестно
@@ -2639,6 +3085,14 @@ void NoteEditor::recordHistory(journal::Kind kind, const QByteArray& snapshot, q
 
 void NoteEditor::save(bool interactive, bool force) {
     if (note_.path.isEmpty()) return;
+    // В РЕЖИМЕ ИСТОРИИ НЕ ПИШЕМ НИЧЕГО. В поле лежит слепок, а не заметка:
+    // записать его — значит откатить заметку к прошлому молча, а с этапа 10 ещё
+    // и унести на диск заглушки «удалено: N строк». Живая заметка отложена
+    // целиком и уже сохранена — вход в режим её и записывает.
+    //
+    // Дверь эта не выдуманная: и выход из программы, и уход из заметки зовут
+    // save с force, не спрашивая признак «изменён».
+    if (inHistory()) return;
     if (!force && !document()->isModified()) return;
     // До записи: сохранение умеет пересобрать документ из перечитанного файла,
     // и шаг серии остался бы без содержимого.
@@ -2769,6 +3223,35 @@ double NoteEditor::scrollRatio() const {
 void NoteEditor::setScrollRatio(double ratio) {
     QScrollBar* bar = verticalScrollBar();
     bar->setValue(int(ratio * bar->maximum()));
+}
+
+void installHistoryShortcuts(QWidget* window, NoteEditor& editor) {
+    const auto add = [window](const QKeySequence& keys, auto&& slot) {
+        auto* key = new QShortcut(keys, window);
+        QObject::connect(key, &QShortcut::activated, window, slot);
+        return key;
+    };
+    // Ходьба по изменённым местам. Сочетания — из конфига: на маке F4 занята
+    // системой, и владелец выберет свой аккорд правкой конфига, а не кода.
+    // Через точку с запятой их можно перечислить несколько.
+    const auto walk = [&](const QString& spec, bool forward) {
+        for (const QString& part : spec.split(QLatin1Char(';'))) {
+            const QKeySequence keys(part.trimmed());
+            if (keys.isEmpty()) continue;
+            add(keys, [&editor, forward] { editor.diffStep(forward); });
+        }
+    };
+    walk(appearance().diffPreviousKey, false);
+    walk(appearance().diffNextKey, true);
+
+    // Tab меняет сторону сравнения. Ярлык включается ТОЛЬКО в режиме истории:
+    // в обычной работе Tab принадлежит переходу фокуса, и отбирать его у всего
+    // окна нельзя.
+    QShortcut* side = add(QKeySequence(Qt::Key_Tab),
+                          [&editor] { editor.setDiffPeek(!editor.diffPeek()); });
+    side->setEnabled(editor.inHistory());
+    QObject::connect(&editor, &NoteEditor::historyModeChanged, side,
+                     [side](bool on) { side->setEnabled(on); });
 }
 
 }  // namespace zametti

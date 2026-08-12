@@ -5,8 +5,10 @@
 //   zametti-store import --root <dir> --from <srcdir> [--apple-manifest <json>] [--dry-run]
 //   zametti-store verify --root <dir>
 //   zametti-store thin --root <dir> [--dry-run]
+//   zametti-store history compress <id | путь к .md> [--root <dir>]
 //   zametti-store recompress --root <dir> --id <id|all> [--max-size N]
 
+#include "history_rules.h"
 #include "journal.h"
 #include "store.h"
 #ifdef ZAMETTI_HAVE_IMAGEIO
@@ -37,6 +39,7 @@ int usage() {
                  " [--apple-manifest <json>] [--dry-run]\n"
                  "  zametti-store verify --root <dir>\n"
                  "  zametti-store thin --root <dir> [--dry-run]\n"
+                 "  zametti-store history compress <id | путь к .md> [--root <dir>]\n"
                  "  zametti-store recompress --root <dir> --id <id|all>\n"
                  "\n"
                  "  У recompress НЕТ умолчания для --id: пережатие необратимо, и\n"
@@ -59,6 +62,7 @@ int main(int argc, char** argv) {
     QString manifest;
     QString parent;
     QString positional;
+    QString positional2;
     QString id;
     QString maxSize, maxFileMb, quality;
     bool dryRun = false;
@@ -76,6 +80,7 @@ int main(int argc, char** argv) {
         else if (a == QStringLiteral("--quality")) quality = next();
         else if (a == QStringLiteral("--dry-run")) dryRun = true;
         else if (!a.startsWith(QStringLiteral("--")) && positional.isEmpty()) positional = a;
+        else if (!a.startsWith(QStringLiteral("--")) && positional2.isEmpty()) positional2 = a;
         else return usage();
     }
 
@@ -149,6 +154,63 @@ int main(int argc, char** argv) {
                         (long long)report.bytesAfter);
         std::printf("%s\n", dryRun ? " (только показ)" : "");
         return report.problems.isEmpty() ? 0 : 1;
+    }
+
+    // ТЕСТОВЫЙ ЛЮК. Существует ровно для того, чтобы гонять миграцию без UI:
+    // форсирует ТУ ЖЕ функцию, что зовут автосохранение и вход в историю, а не
+    // параллельную реализацию «как бы того же самого».
+    //
+    // Штатного пути чистить историю руками у человека нет и не будет: чистка
+    // ленивая и пер-заметочная (решение владельца).
+    if (command == QStringLiteral("history")) {
+        if (positional != QStringLiteral("compress") || positional2.isEmpty()) return usage();
+        // Цель — id или путь к файлу заметки. По пути хранилище видно само;
+        // голому id нужен --root.
+        QString noteId = positional2;
+        QString target = root;
+        if (positional2.endsWith(QStringLiteral(".md"))) {
+            const QFileInfo info(positional2);
+            noteId = info.completeBaseName();
+            if (target.isEmpty()) target = info.absolutePath();
+        }
+        if (target.isEmpty()) {
+            std::fprintf(stderr, "не сказано, какое хранилище: нужен --root или путь к .md\n");
+            return 1;
+        }
+
+        // Тот же межпроцессный замок, что у thin: пока открыта программа,
+        // журналы правит она.
+        QLockFile lock(zametti::journal::storeLockPath(target));
+        if (!lock.tryLock(0)) {
+            // Занято и «замок негде завести» — разные беды, и валить вторую на
+            // первую значит врать: чаще всего это просто не хранилище.
+            if (lock.error() == QLockFile::LockFailedError)
+                std::fprintf(stderr, "хранилище занято: похоже, открыта программа\n");
+            else
+                std::fprintf(stderr, "замок хранилища не завести: %s\n",
+                             zametti::journal::storeLockPath(target).toUtf8().constData());
+            return 1;
+        }
+
+        zametti::journal::History history(target);
+        zametti::history::Report report;
+        QString error;
+        // force: люк на то и люк, чтобы прогонять чистку и по уже чищеному
+        // журналу — так проверяется идемпотентность.
+        if (!zametti::history::compressJournal(history, noteId, {}, true, &report, &error)) {
+            std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+            return 1;
+        }
+        const auto name = [](const QString& v) {
+            return v.isEmpty() ? QStringLiteral("0 (не чищен)") : v;
+        };
+        std::printf("%s: версия %s -> %s\n", noteId.toUtf8().constData(),
+                    name(report.versionBefore).toUtf8().constData(),
+                    name(report.versionAfter).toUtf8().constData());
+        std::printf("записей %d -> %d (дубликатов %d, схлопнуто %d)%s\n", report.recordsBefore,
+                    report.recordsAfter, report.duplicates, report.merged,
+                    report.rewritten ? "" : "; файл не тронут");
+        return 0;
     }
 
 #ifdef ZAMETTI_HAVE_IMAGEIO

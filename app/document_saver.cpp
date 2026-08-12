@@ -1,5 +1,7 @@
 #include "document_saver.h"
 
+#include "history_rules.h"
+
 #include "doc_model.h"
 
 #include "document_reader.h"
@@ -659,24 +661,6 @@ QByteArray noteBytes(const QTextDocument& doc, const NoteMeta& meta, DocumentRea
     const QByteArray text = toBytes(serialize(forFile));
     if (fileIr != nullptr) *fileIr = std::move(forFile);
     return text;
-}
-
-// Шапка заметки — HTML-комментарий в начале файла. Строку modified ищем только
-// в ней: слово «modified:» в тексте заметки трогать нельзя.
-bool sameApartFromModified(const QByteArray& a, const QByteArray& b) {
-    const auto stripped = [](const QByteArray& text) {
-        const qsizetype head = text.indexOf("-->");
-        if (head < 0) return text;
-        const qsizetype at = text.indexOf("\nmodified:");
-        if (at < 0 || at > head) return text;
-        const qsizetype eol = text.indexOf('\n', at + 1);
-        if (eol < 0) return text;
-        QByteArray out = text;
-        out.remove(at, eol - at);
-        return out;
-    };
-    if (a.size() == b.size() && a == b) return true;
-    return stripped(a) == stripped(b);
 }
 
 SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,

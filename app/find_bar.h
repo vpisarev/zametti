@@ -23,7 +23,10 @@ class FindBar : public QWidget {
     Q_OBJECT
 
 public:
-    enum class Mode { InNote, Replace, Global };
+    // InNote — по открытой заметке, Replace — она же с заменой, Global — по
+    // всему хранилищу, History — по слепку И по всей истории этой заметки
+    // (только в режиме истории; замена там невозможна по построению).
+    enum class Mode { InNote, Replace, Global, History };
 
     explicit FindBar(QWidget* parent = nullptr);
 

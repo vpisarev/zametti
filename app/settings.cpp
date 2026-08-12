@@ -120,6 +120,9 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("historyBackground"), colorToString(a.historyBackground)},
         {QStringLiteral("selectionBackground"), colorToString(a.selectionBackground)},
         {QStringLiteral("searchHighlight"), colorToString(a.searchHighlight)},
+        {QStringLiteral("diffAdded"), colorToString(a.diffAdded)},
+        {QStringLiteral("diffRemoved"), colorToString(a.diffRemoved)},
+        {QStringLiteral("diffChanged"), colorToString(a.diffChanged)},
         {QStringLiteral("link"), colorToString(a.linkColor)},
         {QStringLiteral("quote"), colorToString(a.quoteColor)},
         {QStringLiteral("rawSource"), colorToString(a.rawColor)},
@@ -161,6 +164,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
     QJsonObject notes{
         {QStringLiteral("root"), a.notesRoot},
         {QStringLiteral("title"), a.storeTitle},
+        {QStringLiteral("watchFolder"), a.watchStore},
     };
 
     QJsonObject noteList{
@@ -259,6 +263,13 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("maxImportedImageSize"), a.images.maxImportedImageSize},
     };
 
+    // Сочетания клавиш, которым суждено разойтись по системам. Пока их два —
+    // ходьба по изменённым местам в истории: на маке F4 занята системой.
+    QJsonObject shortcuts{
+        {QStringLiteral("diffNext"), a.diffNextKey},
+        {QStringLiteral("diffPrevious"), a.diffPreviousKey},
+    };
+
     QJsonObject zoom{
         {QStringLiteral("step"), a.zoomStep},
         {QStringLiteral("min"), a.zoomMin},
@@ -281,6 +292,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("find"), find},
         {QStringLiteral("editor"), editor},
         {QStringLiteral("images"), images},
+        {QStringLiteral("shortcuts"), shortcuts},
         {QStringLiteral("zoom"), zoom},
     };
 }
@@ -327,6 +339,9 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readColor(colors, "historyBackground", a.historyBackground);
     readColor(colors, "selectionBackground", a.selectionBackground);
     readColor(colors, "searchHighlight", a.searchHighlight);
+    readColor(colors, "diffAdded", a.diffAdded);
+    readColor(colors, "diffRemoved", a.diffRemoved);
+    readColor(colors, "diffChanged", a.diffChanged);
     readColor(colors, "link", a.linkColor);
     readColor(colors, "quote", a.quoteColor);
     readColor(colors, "rawSource", a.rawColor);
@@ -380,6 +395,8 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     const QJsonObject notes = root.value(QStringLiteral("notes")).toObject();
     readString(notes, "root", a.notesRoot);
     readString(notes, "title", a.storeTitle);
+    const QJsonValue watch = notes.value(QStringLiteral("watchFolder"));
+    if (watch.isBool()) a.watchStore = watch.toBool();
 
     const QJsonObject noteList = root.value(QStringLiteral("noteList")).toObject();
     const QJsonValue listWidth = noteList.value(QStringLiteral("width"));
@@ -447,6 +464,10 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readString(find, "historyGlyph", a.findHistoryGlyph);
     const QJsonValue historyLimit = find.value(QStringLiteral("historyLimit"));
     if (historyLimit.isDouble()) a.findHistoryLimit = qMax(0, historyLimit.toInt());
+
+    const QJsonObject shortcuts = root.value(QStringLiteral("shortcuts")).toObject();
+    readString(shortcuts, "diffNext", a.diffNextKey);
+    readString(shortcuts, "diffPrevious", a.diffPreviousKey);
 
     const QJsonObject editor = root.value(QStringLiteral("editor")).toObject();
     const QJsonValue delay = editor.value(QStringLiteral("autosaveDelayMs"));
