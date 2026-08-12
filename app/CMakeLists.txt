@@ -45,6 +45,8 @@ set(CMAKE_AUTORCC ON)
 # намеренно: тесты этого слоя гоняются без дисплея и без QtWidgets, и проверяет
 # это тест view-without-widgets.
 add_library(zametti-view STATIC
+    block_object.h
+    block_object.cpp
     diff.h
     diff.cpp
     diff_view.h

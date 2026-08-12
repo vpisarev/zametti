@@ -1,0 +1,93 @@
+// Объект в тексте: картинка, таблица, а позже формула.
+//
+// ЗАЧЕМ ОТДЕЛЬНЫЙ СЛОЙ. Картинка появилась первой, и её правила расползлись по
+// обработчику клавиш десятком веток: Enter на картинке, Backspace над ней,
+// Delete под ней, неудаляемая пустая строка рядом, шаг на неё вместо слияния.
+// Таблица — тот же зверь с теми же правилами, формула будет третьим. Три копии
+// одних правил — это три места, где они разойдутся; поэтому здесь ОДНО место,
+// которое отвечает на два вопроса:
+//
+//   * какому объекту принадлежит блок документа и где у объекта края;
+//   * что означает нажатие клавиши рядом с объектом.
+//
+// Второй ответ — ЧИСТАЯ ФУНКЦИЯ от положения каретки и соседства, а не ветки
+// внутри обработчика: её можно перебрать набором целиком, чего с ветками в
+// keyPressEvent не сделать никогда (урок этапа 11: до лямбды внутри main()
+// набор не дотягивается, а до функции — вполне).
+//
+// Правила одни на все объекты (решение владельца):
+//
+//   Enter        — править объект (у таблицы исходник, у картинки подпись);
+//   Ctrl+Enter   — параграф после объекта, каретка в нём (как у блока кода);
+//   Backspace,
+//   Delete       — убрать объект целиком;
+//   стрелки      — каретка встаёт НА объект, и он показан выбранным.
+
+#ifndef ZAMETTI_BLOCK_OBJECT_H
+#define ZAMETTI_BLOCK_OBJECT_H
+
+#include <QtCore/qnamespace.h>
+#include <QtGlobal>
+
+class QTextBlock;
+class QTextDocument;
+
+namespace zametti {
+
+enum class ObjectKind {
+    None,
+    Image,
+    Table,
+    // Formula — следующим этапом; слой писался с оглядкой на неё.
+};
+
+// Объект и его края — номерами блоков документа, включая оба конца. У картинки
+// это один блок, у таблицы — все строки её исходника.
+struct BlockObject {
+    ObjectKind kind = ObjectKind::None;
+    int first = -1;
+    int last = -1;
+
+    bool valid() const { return kind != ObjectKind::None; }
+    bool contains(int blockNumber) const {
+        return valid() && blockNumber >= first && blockNumber <= last;
+    }
+    int lines() const { return valid() ? last - first + 1 : 0; }
+};
+
+// Какому объекту принадлежит блок. None — обычный текст.
+BlockObject objectOf(const QTextBlock& block);
+BlockObject objectAt(const QTextDocument& doc, int blockNumber);
+
+// Что делает нажатие рядом с объектом.
+enum class ObjectAction {
+    None,        // объект ни при чём: пусть работает обычная правка
+    Edit,        // править объект: исходник таблицы, подпись картинки
+    LineAfter,   // параграф сразу после объекта, каретка в нём
+    Remove,      // убрать объект целиком
+    Select,      // отказ и шаг: каретка встаёт на объект, он показан выбранным
+};
+
+// Всё, что нужно знать о месте каретки, чтобы ответить. Плоская структура, а не
+// ссылки на документ: так правило проверяется перебором, без единого блока.
+struct ObjectContext {
+    bool onObject = false;      // каретка на самом объекте
+    bool hasSelection = false;
+    bool atBlockStart = false;
+    bool atBlockEnd = false;
+    // Соседи. «Через пустую» означает: рядом пустая строка, а за ней объект, —
+    // ту пустую строку удалять нельзя, иначе объект слипнется с текстом.
+    bool objectAbove = false;
+    bool objectBelow = false;
+    bool objectAboveGap = false;
+    bool objectBelowGap = false;
+    // Каретка стоит на самой пустой строке между объектом и текстом.
+    bool onGap = false;
+};
+
+// key — Qt::Key, mods — модификаторы нажатия.
+ObjectAction actionFor(int key, Qt::KeyboardModifiers mods, const ObjectContext& where);
+
+}  // namespace zametti
+
+#endif  // ZAMETTI_BLOCK_OBJECT_H

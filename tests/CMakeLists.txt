@@ -119,6 +119,13 @@ if(TARGET zametti-view)
                              "QT_QPA_PLATFORM=offscreen")
     endforeach()
 
+    # Слой объекта: опознание краёв и полная матрица правил клавиш.
+    add_executable(object_test object_test.cpp)
+    target_link_libraries(object_test PRIVATE zametti-view zametti-warnings)
+    target_include_directories(object_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME objects COMMAND object_test)
+    set_tests_properties(objects PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     add_executable(save_test save_test.cpp)
     target_link_libraries(save_test PRIVATE zametti-view zametti-warnings)
     target_include_directories(save_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
