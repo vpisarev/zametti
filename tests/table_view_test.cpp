@@ -13,6 +13,10 @@
 #include "test_util.h"
 
 #include <QElapsedTimer>
+#include <QTextLayout>
+
+#include <memory>
+#include <vector>
 #include <QGuiApplication>
 
 #include <string>
@@ -214,6 +218,42 @@ void bench() {
         if (shapeBest < 0 || spent < shapeBest) shapeBest = spent;
     }
 
+    // Из чего складывается раскладка: сколько стоит завести QTextLayout на
+    // ячейку и сколько — разложить её. Догадками тут делать нечего.
+    qint64 buildBest = -1;
+    qint64 shapeOnceBest = -1;
+    {
+        const zametti::Table table = zametti::parseTable(big);
+        const QFont font = zametti::tableFont(1.0, 1.0);
+        QVector<QString> texts;
+        for (int row = 0; row < int(table.rows.size()); ++row)
+            for (int column = 0; column < table.columns; ++column)
+                texts.push_back(QString::fromStdString(std::string(table.cell(row, column))));
+
+        for (int round = 0; round < 5; ++round) {
+            QElapsedTimer timer;
+            timer.start();
+            std::vector<std::unique_ptr<QTextLayout>> made;
+            made.reserve(size_t(texts.size()));
+            for (const QString& text : texts)
+                made.push_back(std::make_unique<QTextLayout>(text, font));
+            const qint64 built = timer.nsecsElapsed() / 1000;
+            for (const std::unique_ptr<QTextLayout>& made_layout : made) {
+                QTextLayout& layout = *made_layout;
+                layout.beginLayout();
+                for (QTextLine line = layout.createLine(); line.isValid();
+                     line = layout.createLine()) {
+                    line.setLineWidth(1e6);
+                    line.setPosition(QPointF(0, 0));
+                }
+                layout.endLayout();
+            }
+            const qint64 shaped = timer.nsecsElapsed() / 1000;
+            if (buildBest < 0 || built < buildBest) buildBest = built;
+            if (shapeOnceBest < 0 || shaped < shapeOnceBest) shapeOnceBest = shaped;
+        }
+    }
+
     qint64 parseBest = -1;
     qint64 wholeBest = -1;
     for (int round = 0; round < 7; ++round) {
@@ -227,10 +267,11 @@ void bench() {
         if (wholeBest < 0 || whole < wholeBest) wholeBest = whole;
         (void)out;
     }
-    std::printf("таблица 50×8: разбор таблицы %lld мкс, разбор 400 ячеек %lld мкс, "
-                "всё вместе %lld мкс (эталон %lld мкс)\n",
-                (long long)parseBest, (long long)shapeBest, (long long)wholeBest,
-                (long long)yard);
+    std::printf("таблица 50×8 (400 ячеек): разбор таблицы %lld, разбор ячеек %lld, "
+                "завести QTextLayout %lld, +разложить один раз %lld, вся раскладка %lld мкс "
+                "(эталон %lld)\n",
+                (long long)parseBest, (long long)shapeBest, (long long)buildBest,
+                (long long)shapeOnceBest, (long long)wholeBest, (long long)yard);
 }
 
 }  // namespace

@@ -1296,7 +1296,7 @@ void NoteView::paintTables(QPainter& painter, const QRectF& visible) {
         for (const TableCellBox& cell : table.layout.cells) {
             if (cell.text == nullptr) continue;
             const QRectF box = cell.rect.translated(area.topLeft());
-            const qreal textWidth = cell.text->boundingRect().width();
+            const qreal textWidth = cell.textWidth;
             qreal x = box.left() + padX;
             if (cell.align == TableAlign::Right)
                 x = box.right() - padX - textWidth;

@@ -35,6 +35,10 @@ namespace zametti {
 struct TableCellBox {
     QRectF rect;                          // прямоугольник ячейки в координатах таблицы
     std::shared_ptr<QTextLayout> text;    // разметка текста ячейки; может быть пустой
+    // Ширина САМОГО ТЕКСТА. Спрашивать её у boundingRect() раскладки нельзя:
+    // там стоит ширина строки, а строку мы при измерении кладём в бесконечную
+    // ширину — и выравнивание вправо уносило текст на километр за экран.
+    qreal textWidth = 0.0;
     TableAlign align = TableAlign::Default;
     int row = 0;
     int column = 0;

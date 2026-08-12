@@ -120,23 +120,22 @@ std::shared_ptr<QTextLayout> layoutOfCell(const CellMarkup& markup, const QFont&
 
 // Ширина ячейки без переноса — то, сколько она просит.
 //
-// У ячейки БЕЗ разметки спрашиваем метрики шрифта, а не раскладку: раскладка
-// текста — это почти вся цена таблицы (см. замер выше), и делать её дважды
-// (сперва ради ширины, потом ради показа) незачем. Метрики дают сумму
-// продвижений без кернинга, то есть чуть больше или столько же; лишний
-// пиксель ширины колонки безвреден, а нехватка вызвала бы ложный перенос.
-//
-// Ячейка с разметкой считается раскладкой честно: у кусков разные шрифты, и
-// суммой одной гарнитуры её не измерить.
-qreal naturalWidth(QTextLayout& layout, bool plain) {
-    if (plain) return QFontMetricsF(layout.font()).horizontalAdvance(layout.text());
+// РАСКЛАДЫВАЕМ СРАЗУ НАБЕЛО. Первая редакция мерила ширину метриками шрифта, а
+// потом раскладывала ячейку заново — то есть шейпила каждую ячейку дважды.
+// Замер (50×8, 400 ячеек): завести QTextLayout 42 мкс, разложить все один раз
+// 1152, вся раскладка 2442 — ровно два прохода. Теперь проход один: ячейка
+// раскладывается в бесконечную ширину, и если колонке её ширины хватило,
+// раскладка так и остаётся годной; переразложить надо только те ячейки,
+// которым досталось меньше запрошенного.
+qreal naturalWidth(QTextLayout& layout, qreal lineHeight) {
     layout.beginLayout();
-    QTextLine line = layout.createLine();
     qreal width = 0.0;
-    while (line.isValid()) {
+    qreal y = 0.0;
+    for (QTextLine line = layout.createLine(); line.isValid(); line = layout.createLine()) {
         line.setLineWidth(1e6);   // без переноса: спрашиваем естественную ширину
+        line.setPosition(QPointF(0, y));
         width = qMax(width, line.naturalTextWidth());
-        line = layout.createLine();
+        y += lineHeight;
     }
     layout.endLayout();
     return width;
@@ -224,6 +223,7 @@ TableLayout layoutTable(const Table& table, const TableSpace& space) {
     // max (естественная ширина без переносов) — как в RFC 1942.
     struct Measure {
         QVector<std::shared_ptr<QTextLayout>> layouts;
+        QVector<qreal> cellWidth;   // естественная ширина КАЖДОЙ ячейки
         QVector<qreal> minWidth;
         QVector<qreal> maxWidth;
         qreal minTotal = 0.0;
@@ -241,14 +241,16 @@ TableLayout layoutTable(const Table& table, const TableSpace& space) {
         m.minWidth.fill(0.0, out.columns);
         m.maxWidth.fill(0.0, out.columns);
         m.layouts.reserve(out.rows * out.columns);
+        m.cellWidth.reserve(out.rows * out.columns);
         for (int row = 0; row < out.rows; ++row) {
             for (int column = 0; column < out.columns; ++column) {
                 QFont cellFont = font;
                 if (row == 0) cellFont.setBold(true);   // шапка
                 const CellMarkup& cell = markup[row * out.columns + column];
                 auto layout = layoutOfCell(cell, cellFont, space.zoom, scale);
-                m.maxWidth[column] = qMax(m.maxWidth[column],
-                                          naturalWidth(*layout, cell.spans.isEmpty()) + 2 * m.padX);
+                const qreal natural = naturalWidth(*layout, m.lineHeight);
+                m.cellWidth.push_back(natural);
+                m.maxWidth[column] = qMax(m.maxWidth[column], natural + 2 * m.padX);
                 m.layouts.push_back(layout);
             }
         }
@@ -337,8 +339,16 @@ TableLayout layoutTable(const Table& table, const TableSpace& space) {
     for (int row = 0; row < out.rows; ++row) {
         qreal tallest = 0.0;
         for (int column = 0; column < out.columns; ++column) {
-            QTextLayout& layout = *m.layouts[row * out.columns + column];
-            const qreal text = layoutInto(layout, widths[column] - 2 * m.padX, m.lineHeight);
+            const int index = row * out.columns + column;
+            QTextLayout& layout = *m.layouts[index];
+            const qreal inner = widths[column] - 2 * m.padX;
+            // Ячейке хватило — её раскладка уже сделана и годна. Переразложить
+            // надо только те, которым досталось меньше запрошенного: это и
+            // есть второй проход, и теперь он идёт не по всем ячейкам, а по
+            // переносимым.
+            const qreal text = m.cellWidth[index] <= inner + 0.5
+                                   ? qMax(m.lineHeight, layout.boundingRect().height())
+                                   : layoutInto(layout, inner, m.lineHeight);
             tallest = qMax(tallest, text + 2 * m.padY);
         }
         rowHeights[row] = std::round(tallest);
@@ -353,6 +363,8 @@ TableLayout layoutTable(const Table& table, const TableSpace& space) {
             TableCellBox box;
             box.rect = QRectF(x, y, widths[column], rowHeights[row]);
             box.text = m.layouts[row * out.columns + column];
+            box.textWidth = qMin(m.cellWidth[row * out.columns + column],
+                                 widths[column] - 2 * m.padX);
             box.align = column < int(table.align.size()) ? table.align[size_t(column)]
                                                          : TableAlign::Default;
             box.row = row;
