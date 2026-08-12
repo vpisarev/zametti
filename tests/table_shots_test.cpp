@@ -322,6 +322,140 @@ void checkMouse() {
     }
 }
 
+// Протокол правки: Enter внутри вставляет строку и правку НЕ прерывает, Esc
+// выходит, уход каретки наружу — тоже.
+void checkEditProtocol() {
+    const QString path = QDir(g_dir).filePath(QStringLiteral("протокол.md"));
+    QFile file(path);
+    if (file.open(QIODevice::WriteOnly))
+        file.write("до\n\n| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\nпосле\n");
+    file.close();
+
+    zametti::NoteEditor editor;
+    editor.resize(900, 700);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(path);
+    QTest::qWait(60);
+
+    int first = -1;
+    for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next())
+        if (editor.tableAt(b.blockNumber()) != nullptr) { first = b.blockNumber(); break; }
+    if (first < 0) {
+        ++zt::g_checks; ++zt::g_failures;
+        std::printf("провал: таблицы нет\n");
+        return;
+    }
+
+    // Входим в правку.
+    editor.setTextCursor(QTextCursor(editor.document()->findBlockByNumber(first + 3)));
+    QTest::qWait(20);
+    QTest::keyClick(&editor, Qt::Key_Return);
+    QTest::qWait(40);
+    ++zt::g_checks;
+    if (editor.editedTable() < 0) {
+        ++zt::g_failures;
+        std::printf("провал: в правку не вошли\n");
+        return;
+    }
+
+    // ENTER ВНУТРИ ПРАВКИ ВСТАВЛЯЕТ СТРОКУ и правку не прерывает: человек
+    // добавляет ряд таблицы, а не выходит. Встаём в конец ПОСЛЕДНЕГО ряда —
+    // именно так ряд и добавляют.
+    const int blocksBefore = editor.document()->blockCount();
+    QTextCursor at(editor.document()->findBlockByNumber(first + 3));
+    at.movePosition(QTextCursor::EndOfBlock);
+    editor.setTextCursor(at);
+    QTest::qWait(10);
+    QTest::keyClick(&editor, Qt::Key_Return);
+    QTest::qWait(60);
+    ++zt::g_checks;
+    if (editor.document()->blockCount() != blocksBefore + 1) {
+        ++zt::g_failures;
+        std::printf("провал: Enter в правке не вставил строку (было %d, стало %d)\n",
+                    blocksBefore, editor.document()->blockCount());
+    }
+    ++zt::g_checks;
+    if (editor.editedTable() < 0) {
+        ++zt::g_failures;
+        std::printf("провал: Enter внутри оборвал правку\n");
+        std::printf("  каретка в блоке %d «%s», рядом таблица %d\n",
+                    editor.textCursor().blockNumber(),
+                    editor.textCursor().block().text().left(20).toUtf8().constData(),
+                    editor.tableNearCaret());
+        int n = 0;
+        for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next(), ++n) {
+            const zametti::BlockObject o = zametti::objectOf(b);
+            std::printf("  блок %d род=%d объект=%d(%d..%d) «%s»\n", n,
+                        int(zametti::kindOf(b)), int(o.kind), o.first, o.last,
+                        b.text().left(24).toUtf8().constData());
+        }
+    }
+
+    // РЯД В СЕРЕДИНУ ТЕЛА. Enter заводит пустую строку внутри таблицы — а
+    // пустая строка таблицу кончает, и кусок на миг перестаёт быть таблицей
+    // вовсе. Правка обязана это пережить: человек как раз набирает новый ряд.
+    //
+    // Ряд ставится после первой строки ТЕЛА, а не после шапки: между шапкой и
+    // строкой-разделителем ряду взяться неоткуда, и таблица от такой вставки
+    // ломается насовсем — это не «промежуточное состояние», а другая заметка.
+    {
+        QTextCursor mid(editor.document()->findBlockByNumber(first + 2));
+        mid.movePosition(QTextCursor::EndOfBlock);
+        editor.setTextCursor(mid);
+        QTest::qWait(10);
+        QTest::keyClick(&editor, Qt::Key_Return);
+        QTest::qWait(60);
+        ++zt::g_checks;
+        if (editor.editedTable() < 0) {
+            ++zt::g_failures;
+            std::printf("провал: Enter в середине таблицы оборвал правку\n");
+        }
+        QTest::keyClicks(&editor, QStringLiteral("| 5 | 6 |"));
+        QTest::qWait(60);
+        ++zt::g_checks;
+        if (editor.editedTable() < 0) {
+            ++zt::g_failures;
+            std::printf("провал: набор нового ряда оборвал правку\n");
+        }
+    }
+
+    // Esc выходит: снова сетка, таблица выбрана.
+    QTest::keyClick(&editor, Qt::Key_Escape);
+    QTest::qWait(60);
+    // Ярлык окна до набора не доходит — зовём то же, что зовёт окно.
+    if (editor.editedTable() >= 0) editor.leaveTableEdit();
+    QTest::qWait(60);
+    ++zt::g_checks;
+    if (editor.editedTable() >= 0) {
+        ++zt::g_failures;
+        std::printf("провал: Esc не вывел из правки\n");
+    }
+    ++zt::g_checks;
+    const zametti::BlockObject after = zametti::objectOf(editor.textCursor().block());
+    if (after.kind != zametti::ObjectKind::Table) {
+        ++zt::g_failures;
+        std::printf("провал: после выхода каретка не на таблице (блок %d)\n",
+                    editor.textCursor().blockNumber());
+    }
+
+    // Входим снова и уходим кареткой наружу — правка кончается сама.
+    QTest::keyClick(&editor, Qt::Key_Return);
+    QTest::qWait(40);
+    ++zt::g_checks;
+    if (editor.editedTable() < 0) {
+        ++zt::g_failures;
+        std::printf("провал: второй вход в правку не сработал\n");
+    }
+    editor.setTextCursor(QTextCursor(editor.document()->firstBlock()));
+    QTest::qWait(60);
+    ++zt::g_checks;
+    if (editor.editedTable() >= 0) {
+        ++zt::g_failures;
+        std::printf("провал: уход каретки не завершил правку\n");
+    }
+}
+
 // ПУТЬ ВЛАДЕЛЬЦА ДОСЛОВНО: живая заметка с двумя таблицами, щелчок по ВТОРОЙ,
 // Enter. Он видел одну последнюю строку и крохотный курсор; выдуманная заметка
 // с одной таблицей эту беду не показывала.
@@ -463,6 +597,7 @@ int main(int argc, char** argv) {
     shoot(QStringLiteral("таблица-узкое"), 620, 700, kNote);
     checkFlip();
     checkMouse();
+    checkEditProtocol();
 
     QStringList sources;
     for (int i = 2; i < argc; ++i) sources << QString::fromLocal8Bit(argv[i]);

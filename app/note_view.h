@@ -21,6 +21,7 @@
 #include <QVector>
 #include <QEvent>
 #include <QTextBrowser>
+#include <QTextCursor>
 #include <QTimer>
 #include <QtGlobal>
 
@@ -110,6 +111,14 @@ public:
     // каретки наружу.
     void setEditedTable(int firstBlockNumber);
     int editedTable() const { return editedTable_; }
+    // Таблица, которую каретка сейчас правит, — или -1.
+    //
+    // Ни номер блока, ни курсор-якорь тут не годятся: любая операция
+    // пересобирает документ целиком (rebuild), и номера съезжают, а курсоры
+    // сбрасываются. Поэтому правка держится не адресом, а БЛИЗОСТЬЮ: каретка
+    // считается «в таблице», пока она в её строках или на пустой строке сразу
+    // за ней — той самой, которую заводит Enter, когда человек добавляет ряд.
+    int tableNearCaret() const;
     // Каретка стоит на спрятанной строке таблицы — подтянуть её на видимую.
     // Каретку по спрятанным блокам Qt водит охотно (пробник), и без этого она
     // пропадала бы из виду.
@@ -368,6 +377,7 @@ private:
     // Таблицы, показанные сеткой: по номеру первого блока.
     QHash<int, TableRender> tables_;
     int editedTable_ = -1;
+
     QTimer copiedFade_;
     QTimer caretBlink_;
     bool caretOn_ = true;

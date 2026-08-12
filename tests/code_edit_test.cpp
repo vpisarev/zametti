@@ -596,13 +596,15 @@ void checkNoCandidates() {
 // Порядок для Esc: сперва закрывается то, что открыто поверх текста.
 void checkEscapeOrder() {
     using zametti::EscapeAction;
-    check(zametti::escapeActionFor(true, true) == EscapeAction::CloseLanguageEditor,
+    check(zametti::escapeActionFor(true, true, true) == EscapeAction::CloseLanguageEditor,
           "при открытом поле языка Esc закрывает его, а не поиск");
-    check(zametti::escapeActionFor(true, false) == EscapeAction::CloseLanguageEditor,
+    check(zametti::escapeActionFor(true, false, false) == EscapeAction::CloseLanguageEditor,
           "поле языка закрывается и без панели поиска");
-    check(zametti::escapeActionFor(false, true) == EscapeAction::CloseFindBar,
-          "без поля языка Esc закрывает панель поиска");
-    check(zametti::escapeActionFor(false, false) == EscapeAction::Nothing,
+    check(zametti::escapeActionFor(false, true, true) == EscapeAction::LeaveTableEdit,
+          "правка таблицы закрывается раньше панели поиска");
+    check(zametti::escapeActionFor(false, false, true) == EscapeAction::CloseFindBar,
+          "без поля языка и правки Esc закрывает панель поиска");
+    check(zametti::escapeActionFor(false, false, false) == EscapeAction::Nothing,
           "когда закрывать нечего, Esc не делает ничего");
 }
 

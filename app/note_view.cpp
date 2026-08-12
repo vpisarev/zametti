@@ -1434,6 +1434,35 @@ void NoteView::setEditedTable(int firstBlockNumber) {
     viewport()->update();
 }
 
+int NoteView::tableNearCaret() const {
+    const QTextBlock block = textCursor().block();
+    const BlockObject own = objectOf(block);
+    if (own.kind == ObjectKind::Table) return own.first;
+
+    // Пустая строка сразу за таблицей — ещё «в таблице»: её заводит Enter,
+    // когда человек добавляет ряд.
+    if (block.text().trimmed().isEmpty()) {
+        const BlockObject above = objectOf(block.previous());
+        if (above.kind == ObjectKind::Table) return above.first;
+    }
+
+    // ТАБЛИЦА МОЖЕТ ВРЕМЕННО ПЕРЕСТАТЬ БЫТЬ ТАБЛИЦЕЙ, и это нормально.
+    //
+    // Enter внутри исходника заводит пустую строку, а пустая строка кончает
+    // таблицу — то есть на миг между двумя нажатиями кусок перестаёт быть
+    // таблицей вовсе (проверено: все блоки становятся абзацами). Обрывать
+    // правку в этот миг значит выкидывать человека из таблицы ровно тогда,
+    // когда он добавляет ряд. Поэтому пока каретка среди строк с палками —
+    // правка продолжается, и показывается исходник, а не сетка.
+    const auto looksLikeRow = [](const QTextBlock& line) {
+        return line.isValid() && line.text().contains(QLatin1Char('|'));
+    };
+    if (looksLikeRow(block) || looksLikeRow(block.previous()) || looksLikeRow(block.next()))
+        return editedTable_;
+
+    return -1;
+}
+
 QRectF NoteView::tableRect(int firstBlockNumber) const {
     const TableRender* table = tableAt(firstBlockNumber);
     if (table == nullptr) return {};

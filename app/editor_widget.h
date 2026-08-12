@@ -355,6 +355,11 @@ public:
     // одно на всех и живёт в block_object.h; здесь — только исполнение.
     // Возвращает true, если нажатие разобрано и дальше его вести не надо.
     bool handleObjectKey(QKeyEvent* event);
+    // Выйти из правки исходника таблицы: снова сетка, таблица выбрана.
+    void leaveTableEdit();
+    // Перечитать заметку после правки таблицы: набор склеивает строки
+    // дословного куска, и таблицей он снова становится только после разбора.
+    void reparseAfterTableEdit();
     LanguageEditor* codeLanguageEditor() const { return languageEditor_; }
     void closeCodeLanguageEditor();
 
@@ -928,9 +933,10 @@ void installHistoryShortcuts(QWidget* window, NoteEditor& editor);
 enum class EscapeAction {
     Nothing,
     CloseLanguageEditor,
+    LeaveTableEdit,
     CloseFindBar,
 };
-EscapeAction escapeActionFor(bool languageEditorOpen, bool findBarVisible);
+EscapeAction escapeActionFor(bool languageEditorOpen, bool editingTable, bool findBarVisible);
 
 }  // namespace zametti
 

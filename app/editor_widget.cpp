@@ -189,17 +189,24 @@ void NoteEditor::onCaretMoved() {
     // стрелки, щелчок, Home/End, поиск.
     if (!inHistory() && snapCaretOutOfHiddenTable()) return;
 
-    // Ушли с таблицы, которую правили исходником, — она снова сетка. Правило
-    // то же, что у поля ввода языка: правка кончается уходом каретки.
-    if (editedTable() >= 0) {
-        const BlockObject object = objectOf(textCursor().block());
-        if (object.kind != ObjectKind::Table || object.first != editedTable())
-            setEditedTable(-1);
-    }
-
     if (tidying_ || recordingSuspended_ || changingLayout()) {
         note_.lastLine = textCursor();
         return;
+    }
+
+    // ПРАВКА КОНЧАЕТСЯ ТОЛЬКО ТОГДА, КОГДА ЧЕЛОВЕК УВЁЛ КАРЕТКУ САМ.
+    //
+    // Проверять состояние таблицы посреди правки нельзя вовсе (правило
+    // владельца): Enter внутри исходника заводит пустую строку, а пустая
+    // строка таблицу кончает — то есть между двумя нажатиями кусок законно
+    // перестаёт быть таблицей. Раньше эта проверка стояла ВЫШЕ защиты «каретку
+    // двигает машина, а не человек», и правка обрывалась на промежуточной
+    // позиции внутри самой операции: владелец увидел это как «выход по
+    // уезжанию работает ненадёжно».
+    if (editedTable() >= 0) {
+        const int near = tableNearCaret();
+        if (near < 0) leaveTableEdit();
+        else setEditedTable(near);
     }
     const QTextCursor now = textCursor();
     if (!note_.lastLine.isNull() && note_.lastLine.document() == document()) {
@@ -3433,10 +3440,49 @@ void NoteEditor::setScrollRatio(double ratio) {
     bar->setValue(int(ratio * bar->maximum()));
 }
 
-EscapeAction escapeActionFor(bool languageEditorOpen, bool findBarVisible) {
+EscapeAction escapeActionFor(bool languageEditorOpen, bool editingTable, bool findBarVisible) {
     if (languageEditorOpen) return EscapeAction::CloseLanguageEditor;
+    // Правка таблицы закрывается раньше панели поиска по той же причине, по
+    // которой раньше неё закрывается поле языка: сперва уходит то, что открыто
+    // ПОВЕРХ текста и держит каретку.
+    if (editingTable) return EscapeAction::LeaveTableEdit;
     if (findBarVisible) return EscapeAction::CloseFindBar;
     return EscapeAction::Nothing;
+}
+
+void NoteEditor::leaveTableEdit() {
+    if (editedTable() < 0) return;
+    setEditedTable(-1);
+    reparseAfterTableEdit();
+}
+
+// ПЕРЕЧИТАТЬ ЗАМЕТКУ ПОСЛЕ ПРАВКИ ТАБЛИЦЫ — и только после неё.
+//
+// Правило владельца: состояние таблицы проверяется на ВЫХОДЕ из правки,
+// промежуточные состояния законно бывают не таблицами. Но есть и вторая
+// причина, техническая: набор внутри дословного куска склеивает его строки в
+// один абзац с мягкими переносами (та же склейка, что нашлась на этапе 11 в
+// блоках кода). В файле от этого ничего не меняется — мягкие переносы
+// сериализуются переводами строк, — а вот в живом документе таблицы больше
+// нет, и сетка не возвращается до перечитывания заметки.
+//
+// Поэтому на выходе из правки заметка перечитывается ровно так, как при
+// открытии файла: текст → parse → сборка. Шага истории это не заводит: текст
+// не изменился ни на байт, изменилось только его разбиение на блоки.
+void NoteEditor::reparseAfterTableEdit() {
+    const int at = textCursor().position();
+    const std::string text = serialize(readDocument(*document()));
+    Document fresh = parse(text);
+
+    recordingSuspended_ = true;
+    rebuild(fresh, at, viewAnchor(), &fresh);
+    recordingSuspended_ = false;
+
+    // Каретка встаёт НА таблицу, если она снова таблица: выйти из правки —
+    // значит вернуться к выбранной таблице, а не улететь в текст.
+    const BlockObject object = objectOf(textCursor().block());
+    if (object.kind == ObjectKind::Table)
+        setTextCursor(QTextCursor(document()->findBlockByNumber(object.last)));
 }
 
 void installHistoryShortcuts(QWidget* window, NoteEditor& editor) {
