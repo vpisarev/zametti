@@ -87,8 +87,21 @@ void checkFreshDir(const QDir& root) {
             report.imagesCopied == 1);
     ZT_TRUE("пропаж нет, а насчитано " + std::to_string(report.imagesMissing),
             report.imagesMissing == 0);
+    // ПО УМОЛЧАНИЮ ШАПКА СРЕЗАНА (галочка выключена, этап 15): наружу уезжает
+    // чистый markdown — его отдают тому, кто про zametti не знает вовсе.
+    const std::string exported = get(target).toStdString();
+    ZT_TRUE("шапки в вывезенном нет", exported.find("<!-- zametti") == std::string::npos);
+    ZT_TRUE("а тело на месте", exported.find("# Заметка с картинкой") != std::string::npos);
+    ZT_EQ("вывезенное — это хвост исходника после шапки",
+          std::string(kNote).substr(std::string(kNote).find("# Заметка")), exported);
+
+    // С ГАЛОЧКОЙ — как есть, байт в байт: такой файл кладут в другое хранилище
+    // zametti, и шапка в нём и есть весь смысл.
+    const QString asIs = out.filePath(QStringLiteral("как-есть.md"));
+    const zametti::ExportReport kept = zametti::exportMarkdown(note, asIs, true);
+    ZT_TRUE("вывоз «как есть» удался: " + kept.error.toStdString(), kept.ok());
     ZT_EQ("markdown байт в байт как в хранилище", std::string(kNote),
-          get(target).toStdString());
+          get(asIs).toStdString());
     ZT_EQ("картинка легла рядом под своим именем", std::string("КАРТИНКА-1"),
           get(out.filePath(QStringLiteral("01n6r08s8wy52h.jxl"))).toStdString());
 }
@@ -108,7 +121,7 @@ void checkSamePicture(const QDir& root) {
             report.imagesCopied == 0);
     ZT_TRUE("прошлая копия признана своей, а насчитано " + std::to_string(report.imagesReused),
             report.imagesReused == 1);
-    ZT_EQ("ссылка не тронута", std::string(kNote),
+    ZT_EQ("ссылка не тронута", std::string(kNote).substr(std::string(kNote).find("# Заметка")),
           get(out.filePath(QStringLiteral("Заметка.md"))).toStdString());
 }
 

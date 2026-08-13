@@ -6,6 +6,8 @@
 #include "document_reader.h"
 #include "editor_widget.h"
 #include "serializer.h"
+#include "times.h"
+
 #include "test_util.h"
 
 #include <QApplication>
@@ -13,6 +15,7 @@
 #include <QFile>
 #include <QScrollBar>
 #include <QSignalSpy>
+#include <QRegularExpression>
 #include <QTest>
 #include <QTextCursor>
 #include <QTextDocument>
@@ -316,8 +319,17 @@ void checkExternalMetaLost() {
     editor.restoreDamagedMeta();
     QTest::qWait(50);
     const QString written = readFile(path);
-    check(written.contains(QStringLiteral("created: 2019-03-03T00:00:00Z")),
-          "created вернулся");
+    // created вернулся ТЕМ ЖЕ МОМЕНТОМ, а не той же строкой: сохранение
+    // переписывает времена в новом виде (ISO-8601 с офсетом, этап 15), и
+    // сравнивать здесь надо моменты — иначе проверка держалась бы за
+    // представление, которое мы же и меняем.
+    const QRegularExpression createdLine(QStringLiteral("created: ([^\n]+)"));
+    const QRegularExpressionMatch got = createdLine.match(written);
+    check(got.hasMatch(), "created в шапке есть");
+    check(got.hasMatch() &&
+              zametti::store::parseNoteTime(got.captured(1)) ==
+                  QDateTime::fromString(QStringLiteral("2019-03-03T00:00:00Z"), Qt::ISODate),
+          "created вернулся тем же моментом");
     check(written.contains(QStringLiteral("parent: 0000000000000p")), "parent вернулся");
     check(written.contains(QStringLiteral("тело правлено снаружи")),
           "правки тела при починке сохранились");
@@ -412,8 +424,14 @@ void checkExternalRoleRefused() {
     const QString written = readFile(path);
     check(!written.contains(QStringLiteral("role:")),
           "вписанный снаружи role снят при первом же сохранении");
-    check(written.contains(QStringLiteral("created: 2021-01-01T00:00:00Z")),
-          "остальная шапка не пострадала");
+    // Момент тот же; вид метки после сохранения новый (ISO-8601 с офсетом) —
+    // это ленивая миграция времён, а не пострадавшая шапка.
+    const QRegularExpressionMatch kept =
+        QRegularExpression(QStringLiteral("created: ([^\n]+)")).match(written);
+    check(kept.hasMatch() &&
+              zametti::store::parseNoteTime(kept.captured(1)) ==
+                  QDateTime::fromString(QStringLiteral("2021-01-01T00:00:00Z"), Qt::ISODate),
+          "остальная шапка не пострадала: created тот же момент");
     check(written.contains(QStringLiteral("тело")), "текст заметки на месте");
 }
 

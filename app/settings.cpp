@@ -891,6 +891,7 @@ Session loadSession() {
     session.panelsHidden = root.value(QStringLiteral("panelsHidden")).toBool(false);
     session.exportDir = root.value(QStringLiteral("exportDir")).toString();
     session.diffPlainView = root.value(QStringLiteral("diffPlainView")).toBool(false);
+    session.exportKeepMeta = root.value(QStringLiteral("exportKeepMeta")).toBool(false);
     for (const QJsonValue& v : root.value(QStringLiteral("expandedDirs")).toArray())
         if (v.isString()) session.expandedDirs.append(v.toString());
     for (const QJsonValue& v : root.value(QStringLiteral("searchHistory")).toArray())
@@ -918,6 +919,7 @@ void saveSession(const Session& session) {
                   {QStringLiteral("panelsHidden"), session.panelsHidden},
                   {QStringLiteral("exportDir"), session.exportDir},
                   {QStringLiteral("diffPlainView"), session.diffPlainView},
+                  {QStringLiteral("exportKeepMeta"), session.exportKeepMeta},
                   {QStringLiteral("expandedDirs"), expanded},
                   {QStringLiteral("searchHistory"), searches},
               });

@@ -20,6 +20,8 @@
 #include "serializer.h"
 #include "settings.h"
 #include "sort_order.h"
+#include "archive.h"
+#include "lost_found.h"
 #include "about_window.h"
 #include "export_note.h"
 #include "export_pdf.h"
@@ -36,6 +38,8 @@
 #include <QListView>
 #include <QMenu>
 #include <QKeyEvent>
+#include <QCheckBox>
+#include <QGridLayout>
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QDesktopServices>
@@ -416,6 +420,40 @@ int main(int argc, char** argv) {
             return 3;
         }
     }
+
+    // РАЗОВАЯ МИГРАЦИЯ СТАРОЙ КОРЗИНЫ — здесь, сразу после замка и до того, как
+    // дерево кто-нибудь увидит. Заметки из корзины переезжают в новый вид
+    // (`archived: yes`, `parent` := прежний родитель), опустевшая
+    // заметка-корзина уходит. Идемпотентно: корзины нет — не делает ничего, и
+    // при каждом следующем запуске это просто один проход по каталогу.
+    if (model.isStore()) {
+        QString migrationError;
+        const int moved = zametti::store::migrateTrashToArchive(
+            model.nodePath(QModelIndex()), &migrationError);
+        if (moved < 0)
+            std::fprintf(stderr, "корзина не переехала в архив: %s\n",
+                         migrationError.toUtf8().constData());
+        else if (moved > 0) {
+            std::fprintf(stderr, "корзина переехала в архив: заметок %d\n", moved);
+            model.refresh();
+        }
+    }
+
+    // БЮРО НАХОДОК — единственное место, где загрузка ПИШЕТ (решение
+    // владельца). Заметка с оборванным parent прописывается в спецпапку: иначе
+    // она чинилась бы в памяти при каждой сборке дерева и оставалась бы
+    // потерянной навсегда. Рамки исключения — в store/lost_found.h.
+    const auto collectOrphans = [&model] {
+        if (!model.isStore()) return;
+        QString why;
+        const int filed = zametti::store::fileOrphans(model.nodePath(QModelIndex()), &why);
+        if (filed < 0)
+            std::fprintf(stderr, "бюро находок не завелось: %s\n", why.toUtf8().constData());
+        else if (filed > 0)
+            std::fprintf(stderr, "в бюро находок прописано заметок: %d\n", filed);
+        if (filed > 0) model.refresh();
+    };
+    collectOrphans();
 
     // Свежая заметка хранилища — первая ОТКРЫВАЕМАЯ (директории не в счёт),
     // поиском в глубину; пустое хранилище получает первую заметку тут же.
@@ -1291,6 +1329,9 @@ int main(int argc, char** argv) {
     // Дверей три, и все зовут одно и то же: F5, Ctrl+R и пункт «Обновить» в
     // контекстных меню.
     const auto reloadStore = [&] {
+        // Тот же проход, что и при открытии: файл могли вернуть из системной
+        // корзины или положить руками, пока программа работала.
+        collectOrphans();
         refreshTree(editor.filePath());
         storeNames = listStore();
         statusBar.setMessage(QStringLiteral("хранилище перечитано"));
@@ -1410,18 +1451,18 @@ int main(int argc, char** argv) {
                                       noteId + QStringLiteral(".md"));
                      });
 
-    // Del: заметка едет в корзину; в корзине — насовсем, с подтверждением.
-    // Корзина — заметка с role: trash, заводится при первом удалении.
-    // Del / «В корзину». Пустая заметка и пустая папка удаляются сразу — в
-    // ФАЙЛОВУЮ корзину ОС (при тестировании их плодится много, гонять их
-    // через заметочную корзину — трата времени). Непустая заметка едет в
-    // заметочную корзину (role: trash; заводится при первом удалении); из
-    // корзины — насовсем, с подтверждением, но тоже через корзину ОС.
-    // Выделение после удаления уходит к соседу: раскрывать корзину и
-    // «показывать» удалённое не надо.
+    // Del / «В архив». Пустая заметка и пустая папка удаляются сразу — в
+    // ФАЙЛОВУЮ корзину ОС (при тестировании их плодится много, гонять их через
+    // архив — трата времени). Непустая уходит В АРХИВ: тело в журнал, файл —
+    // стаб, в шапке пометка `archived: yes`, а `parent` не трогается вовсе.
+    // Из архива — насовсем, с подтверждением, и тогда журнал уезжает вместе с
+    // заметкой: тело живёт в нём и больше нигде.
+    // Выделение после удаления уходит к соседу: раскрывать Архив и
+    // «показывать» убранное не надо.
     const auto deleteNote = [&](const QString& noteId) {
         if (!model.isStore() || noteId.isEmpty() || !model.hasNote(noteId)) return;
-        if (noteId == model.trashId()) return;
+        // Сама строка «Архив» ничему не подлежит: файла за ней нет.
+        if (!model.hasNote(noteId)) return;
         const QString file = model.pathOfId(noteId);
         const bool wasOpen = file == editor.filePath();
 
@@ -1456,7 +1497,7 @@ int main(int argc, char** argv) {
                     }
             }
         }
-        if (empty || model.inTrashId(noteId)) {
+        if (empty || model.inArchiveId(noteId)) {
             if (!empty) {
                 const auto answer = QMessageBox::question(
                     &window, QStringLiteral("zametti"),
@@ -1477,8 +1518,18 @@ int main(int argc, char** argv) {
                 zametti::store::attachmentsLeavingWith(storeRoot, {noteId});
             // Само удаление — в хранилище: там же живёт правило «сначала
             // надгробие, потом файл» и обещание никогда не удалять журнал.
+            //
+            // У АРХИВНОЙ ЗАМЕТКИ ЖУРНАЛ УХОДИТ ВМЕСТЕ С НЕЙ, и это не
+            // непоследовательность: тело архивной живёт в журнале и больше
+            // нигде, файл — стаб в одну строку. Оставить журнал значило бы не
+            // удалить заметку, а спрятать её.
             QString deleteError;
-            if (!zametti::store::deleteNoteFile(storeRoot, noteId, &deleteError)) {
+            const bool wasArchived = model.inArchiveId(noteId);
+            const bool gone = wasArchived
+                                  ? zametti::store::forgetNote(storeRoot, noteId, &deleteError)
+                                  : zametti::store::deleteNoteFile(storeRoot, noteId,
+                                                                   &deleteError);
+            if (!gone) {
                 QMessageBox::warning(&window, QStringLiteral("zametti"), deleteError);
                 return;
             }
@@ -1494,119 +1545,80 @@ int main(int argc, char** argv) {
             return;
         }
 
-        QString trash = model.trashId();
-        if (trash.isEmpty()) {
-            QString newError;
-            const QString made = zametti::store::newNote(
-                model.nodePath(QModelIndex()), QString(), &newError);
-            if (made.isEmpty()) {
-                QMessageBox::warning(&window, QStringLiteral("zametti"), newError);
-                return;
+        // АРХИВАЦИЯ. Никакого переноса: `parent` у заметки остаётся прежним, в
+        // шапке появляется пометка, а тело уезжает в журнал — файл становится
+        // стабом (store/archive.h). Открытую заметку сперва сохраняем: человек
+        // убирает то, что видит, и последние правки обязаны попасть в историю
+        // раньше среза.
+        if (wasOpen) editor.save(false);
+        const QString storeRoot = model.nodePath(QModelIndex());
+        // Папка уезжает вместе с содержимым: пометку получает каждая заметка
+        // поддерева, а не только сама папка. Так каждый файл сам про себя всё
+        // говорит — это условие синхронизации, где файлы приезжают поодиночке.
+        QStringList doomed{noteId};
+        if (model.isFolderId(noteId)) doomed += model.descendantIdsOf(noteId);
+        QStringList failed;
+        for (const QString& victim : doomed) {
+            QString why;
+            if (model.isFolderId(victim)) {
+                // У папки тела нет — только заголовок; журнал ей ни к чему,
+                // хватит пометки.
+                const QString folderFile = model.pathOfId(victim);
+                if (!folderFile.isEmpty())
+                    rewriteNote(folderFile, [](zametti::Document& doc) {
+                        zametti::store::setArchivedMeta(doc.meta, true);
+                    });
+                continue;
             }
-            rewriteNote(made, [](zametti::Document& doc) {
-                doc.meta.set("role", "trash");
-                zametti::Block heading = doc.newBlock(zametti::Kind::Heading, "Корзина");
-                heading.headingLevel = 1;
-                doc.blocks.push_back(heading);
-            });
-            model.refresh();
-            trash = model.trashId();
+            if (!zametti::store::archiveNote(storeRoot, victim,
+                                             zametti::NoteEditor::historyRules(), &why))
+                failed << QStringLiteral("%1: %2").arg(model.titleOfId(victim), why);
         }
-        if (trash.isEmpty()) return;
-
-        // Происхождение — в мету: прежний родитель по id и путь из имён папок
-        // от корня. По ним «Восстановить» вернёт заметку на место, а если
-        // папки уже нет — пересоздаст цепочку по именам. Неизвестные ключи
-        // переживают круг записи, редактору они не видны.
-        const QString originParent = model.parentIdOf(noteId);
-        QString titlePath = model.ancestorTitles(noteId).join(QLatin1Char('/'));
-        titlePath.replace(QStringLiteral("--"), QStringLiteral("-"));   // мета не терпит "--"
-
-        const auto stampTrash = [&](zametti::NoteMeta& meta) {
-            meta.set("parent", trash.toStdString());
-            if (originParent.isEmpty()) meta.unset("trash-parent");
-            else meta.set("trash-parent", originParent.toStdString());
-            if (titlePath.isEmpty()) meta.unset("trash-path");
-            else meta.set("trash-path", titlePath.toUtf8().toStdString());
-        };
-        if (wasOpen) {
-            editor.editMeta(stampTrash);
-        } else {
-            rewriteNote(file, [&](zametti::Document& doc) {
-                doc.meta.present = true;
-                stampTrash(doc.meta);
-            });
-        }
+        if (!failed.isEmpty())
+            QMessageBox::warning(&window, QStringLiteral("zametti"),
+                                 QStringLiteral("Убрать в архив удалось не всё:\n%1")
+                                     .arg(failed.join(QLatin1Char('\n'))));
+        // Открытую заметку перечитываем с диска: на её месте теперь стаб, и
+        // редактор обязан показать то, что в файле, а не то, что помнит.
+        if (wasOpen) editor.openFile(file);
         settleAfter();
     };
 
-    // «Восстановить» из корзины: прежний родитель жив — туда; нет — цепочка
-    // папок пересоздаётся по именам с корня; совсем ничего — в корень.
+    // «Вернуть из архива»: пометка снимается, тело приезжает из головы журнала,
+    // и заметка оказывается ровно там, откуда её убрали, — `parent` всё это
+    // время лежал в её шапке нетронутым. Прежняя корзина ради этого держала два
+    // ключа и умела пересоздавать цепочку папок по именам; архиву не нужно
+    // ничего: родитель умер — заметка станет сиротой и уедет в бюро находок
+    // штатной починкой, как всякая другая.
     const auto restoreNote = [&](const QString& noteId) {
-        if (!model.isStore() || !model.inTrashId(noteId)) return;
-        if (noteId.isEmpty() || noteId == model.trashId()) return;
+        if (!model.isStore() || noteId.isEmpty()) return;
+        if (!model.inArchiveId(noteId)) return;
         const QString root = model.nodePath(QModelIndex());
         const QString file = root + QLatin1Char('/') + noteId + QStringLiteral(".md");
 
-        std::string bytes;
-        if (!readFile(file, bytes)) {
-            // Человек нажал «восстановить», и ничего не произошло бы вовсе.
-            complain(file, QStringLiteral("файл не читается"));
-            return;
-        }
-        zametti::Document doc = zametti::parse(bytes);
-        const QString savedParent =
-            QString::fromStdString(doc.meta.get("trash-parent"));
-        const QString savedPath =
-            QString::fromUtf8(doc.meta.get("trash-path").c_str());
-
-        QString target;   // id папки назначения; пусто — корень
-        if (!savedParent.isEmpty() && model.isFolderId(savedParent) &&
-            !model.inTrashId(savedParent))
-            target = savedParent;
-        if (target.isEmpty() && !savedPath.isEmpty()) {
-            QString parentId;   // идём по цепочке имён, пересоздавая недостающее
-            for (const QString& name :
-                 savedPath.split(QLatin1Char('/'), Qt::SkipEmptyParts)) {
-                QString foundId = model.childFolderByTitle(parentId, name);
-                if (foundId.isEmpty()) {
-                    QString newError;
-                    const QString made =
-                        zametti::store::newNote(root, parentId, &newError);
-                    if (made.isEmpty()) {
-                        QMessageBox::warning(&window, QStringLiteral("zametti"),
-                                             newError);
-                        return;
-                    }
-                    rewriteNote(made, [&](zametti::Document& folderDoc) {
-                        folderDoc.meta.set("role", "folder");
-                        zametti::Block heading = folderDoc.newBlock(
-                            zametti::Kind::Heading, name.toUtf8().toStdString());
-                        heading.headingLevel = 1;
-                        folderDoc.blocks.push_back(heading);
+        QStringList back{noteId};
+        if (model.isFolderId(noteId)) back += model.descendantIdsOf(noteId);
+        QStringList failed;
+        for (const QString& one : back) {
+            QString why;
+            if (model.isFolderId(one)) {
+                const QString folderFile = model.pathOfId(one);
+                if (!folderFile.isEmpty())
+                    rewriteNote(folderFile, [](zametti::Document& doc) {
+                        zametti::store::setArchivedMeta(doc.meta, false);
+                        if (doc.meta.get("role") == "trash") doc.meta.unset("role");
                     });
-                    model.refresh();
-                    foundId = QFileInfo(made).completeBaseName();
-                }
-                parentId = foundId;
+                continue;
             }
-            target = parentId;
+            if (!zametti::store::restoreNote(root, one, &why))
+                failed << QStringLiteral("%1: %2").arg(model.titleOfId(one), why);
         }
-
-        const auto restoreMeta = [&](zametti::NoteMeta& meta) {
-            if (target.isEmpty()) meta.unset("parent");
-            else meta.set("parent", target.toStdString());
-            meta.unset("trash-parent");
-            meta.unset("trash-path");
-        };
-        if (file == editor.filePath()) {
-            editor.editMeta(restoreMeta);
-        } else {
-            rewriteNote(file, [&](zametti::Document& noteDoc) {
-                noteDoc.meta.present = true;
-                restoreMeta(noteDoc.meta);
-            });
-        }
+        if (!failed.isEmpty())
+            QMessageBox::warning(&window, QStringLiteral("zametti"),
+                                 QStringLiteral("Вернуть удалось не всё:\n%1")
+                                     .arg(failed.join(QLatin1Char('\n'))));
+        // Открытая заметка была стабом — перечитываем: тело вернулось.
+        if (file == editor.filePath()) editor.openFile(file);
         refreshTree(file);
 
         // И ПОКАЗАТЬ, КУДА ВЕРНУЛАСЬ. Без этого заметку приходится искать
@@ -1658,7 +1670,7 @@ int main(int argc, char** argv) {
         // уровень (правило владельца).
         QString parentId = requestedParent;
         if (!parentId.isEmpty() &&
-            (!model.hasNote(parentId) || model.inTrashId(parentId)))
+            (!model.hasNote(parentId) || model.inArchiveId(parentId)))
             parentId.clear();
         QString newError;
         const QString made = zametti::store::newNote(
@@ -1736,6 +1748,7 @@ int main(int argc, char** argv) {
     // подряд и в одно место.
     // Каталог вывоза переживает и смену формата, и перезапуск программы.
     QString exportDir = session.exportDir;
+    bool exportKeepMeta = session.exportKeepMeta;
     const auto exportNote = [&](const QString& file) {
         if (file.isEmpty()) return;
         // Пишем ДО вывоза: иначе наружу уехала бы заметка без последних правок,
@@ -1744,9 +1757,16 @@ int main(int argc, char** argv) {
         // заметки из списка её правок не касается.
         if (file == editor.filePath()) editor.save(false);
 
-        const QString title = model.titleOfId(QFileInfo(file).completeBaseName());
-        const QString name = zametti::fileNameFromTitle(
-            title.isEmpty() ? QFileInfo(file).completeBaseName() : title);
+        const QString noteId = QFileInfo(file).completeBaseName();
+        const QString title = model.titleOfId(noteId);
+        // Имя зависит от галочки: чистый вывоз зовётся по заголовку, вывоз «как
+        // есть» — по id, потому что он и предназначен для другого хранилища
+        // zametti, где имя файла это идентификатор.
+        const auto nameFor = [&](bool keepMeta) {
+            return keepMeta ? noteId
+                            : zametti::fileNameFromTitle(title.isEmpty() ? noteId : title);
+        };
+        QString name = nameFor(exportKeepMeta);
         if (exportDir.isEmpty() || !QFileInfo(exportDir).isDir())
             exportDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
 
@@ -1760,11 +1780,35 @@ int main(int argc, char** argv) {
         dialog.setAcceptMode(QFileDialog::AcceptSave);
         dialog.setNameFilters({markdown, pdf});
         dialog.setDefaultSuffix(QStringLiteral("md"));
+        // СВОЙ ДИАЛОГ, А НЕ СИСТЕМНЫЙ: в системный виджет не вставить, а
+        // галочка нужна именно здесь, рядом с именем файла. Qt в этом случае
+        // молча ничего не показывает — поэтому DontUseNativeDialog стоит явно.
+        dialog.setOption(QFileDialog::DontUseNativeDialog, true);
+        auto* keepMetaBox =
+            new QCheckBox(QStringLiteral("Сохранять имя и метаданные"), &dialog);
+        keepMetaBox->setChecked(exportKeepMeta);
+        keepMetaBox->setToolTip(QStringLiteral(
+            "Файл уедет как есть: с шапкой и под именем-идентификатором.\n"
+            "Такой файл, положенный в другое хранилище zametti, попадёт в «Бюро находок».\n"
+            "Без галочки наружу уезжает чистый markdown с человеческим именем."));
+        if (auto* grid = qobject_cast<QGridLayout*>(dialog.layout()))
+            grid->addWidget(keepMetaBox, grid->rowCount(), 0, 1, grid->columnCount());
         // ИМЯ ЦЕЛИКОМ, С КАТАЛОГОМ. selectFile с относительным именем ставит
         // файл в каталог по умолчанию, а не в тот, что задан диалогу: каталог
         // сбрасывался на «Документы» и при открытии, и при каждой смене
         // формата. Владелец наткнулся на оба случая.
         dialog.selectFile(zametti::exportTargetPath(exportDir, name, false));
+        // Галочка меняет ИМЯ: «как есть» зовётся по id, чистый вывоз — по
+        // заголовку. Меняем только имя, каталог человек уже выбрал сам.
+        QObject::connect(keepMetaBox, &QCheckBox::toggled, &dialog,
+                         [&dialog, &nameFor, &name, pdf](bool on) {
+            name = nameFor(on);
+            const QString chosenPath = dialog.selectedFiles().value(0);
+            const QString where = chosenPath.isEmpty() ? dialog.directory().absolutePath()
+                                                       : QFileInfo(chosenPath).absolutePath();
+            dialog.selectFile(zametti::exportTargetPath(
+                where, name, dialog.selectedNameFilter() == pdf));
+        });
         QObject::connect(&dialog, &QFileDialog::filterSelected, &dialog,
                          [&dialog, &name, pdf](const QString& chosen) {
             const bool paper = chosen == pdf;
@@ -1797,7 +1841,8 @@ int main(int argc, char** argv) {
             paper.title = title;
             report = zametti::exportPdf(file, target, paper);
         } else {
-            report = zametti::exportMarkdown(file, target);
+            exportKeepMeta = keepMetaBox->isChecked();
+            report = zametti::exportMarkdown(file, target, exportKeepMeta);
         }
 
         if (!report.ok()) {
@@ -2008,83 +2053,10 @@ int main(int argc, char** argv) {
     // корзина. Тело самой папки открывается отдельным пунктом: в средней
     // колонке папок нет, и иначе до её текста было бы не добраться.
     tree.setContextMenuPolicy(Qt::CustomContextMenu);
-    // Очистить корзину: удалить всё, что в ней лежит, насовсем. Пункт один, а
-    // удалений много, поэтому спрашиваем ОДИН раз и перечисляем, что уйдёт, —
-    // «удалить 47 заметок?» без имён это просьба поверить на слово.
-    const auto emptyTrash = [&] {
-        const QString trash = model.trashId();
-        if (trash.isEmpty()) return;
-        const QStringList doomed = model.descendantIdsOf(trash);
-        if (doomed.isEmpty()) return;
-
-        // Перечисляем не больше двенадцати: длинный список превращает окно в
-        // простыню, которую не читают, а бегло смотрят.
-        const int kShow = 12;
-        QStringList lines;
-        for (const QString& victim : doomed) {
-            if (lines.size() >= kShow) break;
-            const QString title = model.titleOfId(victim);
-            lines << (model.isFolderId(victim)
-                          ? QStringLiteral("• папка «%1»").arg(title)
-                          : QStringLiteral("• %1").arg(title));
-        }
-        QString text = QStringLiteral("Удалить насовсем из корзины (%1):\n\n%2")
-                           .arg(doomed.size())
-                           .arg(lines.join(QLatin1Char('\n')));
-        if (doomed.size() > kShow) text += QStringLiteral("\n…");
-        text += QLatin1Char('?');
-
-        QMessageBox ask(QMessageBox::Question, QStringLiteral("zametti"), text,
-                        QMessageBox::Yes | QMessageBox::No, &window);
-        ask.setDefaultButton(QMessageBox::No);   // необратимое не делается по Enter
-        if (ask.exec() != QMessageBox::Yes) return;
-
-        // Открытая заметка могла лежать в корзине: сохраняем до удаления, иначе
-        // сторож внешних правок увидит пропажу файла под собой.
-        const QString openId = QFileInfo(editor.filePath()).completeBaseName();
-        if (doomed.contains(openId)) editor.save(false);
-
-        // ВЛОЖЕНИЯ СЧИТАЕМ ДО УДАЛЕНИЯ: чтобы узнать, какие картинки были в
-        // очищаемых заметках, надо прочитать сами заметки, а через мгновение
-        // их файлов не будет. Расставание физическое и единственное: корзинность
-        // вложения выводится из заметок, и это тот самый момент, когда
-        // выводить становится не из чего.
-        const QString storeRoot = model.nodePath(QModelIndex());
-        const QStringList doomedFiles =
-            zametti::store::attachmentsLeavingWith(storeRoot, doomed);
-
-        // Порядок из descendantIdsOf: дети раньше родителей, поэтому папка
-        // удаляется уже пустой.
-        QStringList failed;
-        for (const QString& victim : doomed) {
-            QString error;
-            if (!zametti::store::deleteNoteFile(model.nodePath(QModelIndex()), victim, &error)) {
-                failed << (error.isEmpty() ? victim : error);
-                continue;
-            }
-            if (!error.isEmpty()) std::fprintf(stderr, "%s\n", error.toUtf8().constData());
-        }
-        // Картинки — следом за своими заметками, в ту же мусорку ОС.
-        for (const QString& picture : doomedFiles) {
-            QString error;
-            if (!zametti::store::deleteAttachmentFile(storeRoot, picture, &error))
-                failed << (error.isEmpty() ? picture : error);
-        }
-        // Дерево и список перечитываем сами: settleAfter живёт внутри
-        // deleteNote и знает про «какая заметка была открыта», а здесь открытую
-        // мы уже сохранили и, если она лежала в корзине, её файла больше нет.
-        refreshTree(QString());
-        if (doomed.contains(openId)) {
-            const QString next = model.pathOfId(model.firstNoteId());
-            if (!next.isEmpty()) editor.openFile(next);
-        }
-        // Молчать про недоудалённое нельзя: корзина осталась бы непустой, а
-        // человек считал бы, что очистил её.
-        if (!failed.isEmpty())
-            QMessageBox::warning(&window, QStringLiteral("zametti"),
-                                 QStringLiteral("Удалить удалось не всё:\n%1")
-                                     .arg(failed.join(QLatin1Char('\n'))));
-    };
+    // «Очистить корзину» больше нет. Удаление насовсем стало пер-заметочным
+    // (пункт в контекстном меню Архива): у архивной заметки тело живёт в
+    // журнале, и «выкинуть всё разом» — это стереть историю десятков заметок
+    // одним нажатием. Скопом такое не делают.
 
     QObject::connect(&tree, &QWidget::customContextMenuRequested, &window,
                      [&](const QPoint& pos) {
@@ -2150,19 +2122,11 @@ int main(int argc, char** argv) {
             // положено быть только шапке и заголовку, а редактор рано или
             // поздно завёл бы там текст, который никто уже не увидит.
             menu.addAction(QStringLiteral("Переименовать"), [&] { tree.edit(at); });
-            if (model.inTrashId(id) && id != model.trashId())
-                menu.addAction(QStringLiteral("Восстановить"), [&] { restoreNote(id); });
-            menu.addAction(model.inTrashId(id) ? QStringLiteral("Удалить насовсем")
-                                               : QStringLiteral("В корзину"),
+            if (model.inArchiveId(id))
+                menu.addAction(QStringLiteral("Вернуть из архива"), [&] { restoreNote(id); });
+            menu.addAction(model.inArchiveId(id) ? QStringLiteral("Удалить насовсем")
+                                                 : QStringLiteral("В архив"),
                            [&] { deleteNote(id); });
-            if (id == model.trashId()) {
-                menu.addSeparator();
-                QAction* empty = menu.addAction(QStringLiteral("Очистить корзину"),
-                                                [&] { emptyTrash(); });
-                // Пустая корзина — пункт видно, но он ничего не делает: так
-                // человек не ищет глазами то, что «куда-то делось».
-                empty->setEnabled(model.childCountOf(id) > 0);
-            }
         }
         menu.exec(tree.viewport()->mapToGlobal(pos));
     });
@@ -2194,7 +2158,7 @@ int main(int argc, char** argv) {
                 for (int row = 0; row < model.rowCount(parent); ++row) {
                     const QModelIndex folder = model.index(row, 0, parent);
                     const QString folderId = model.idOf(folder);
-                    if (model.inTrashId(folderId)) continue;
+                    if (model.inArchiveId(folderId)) continue;
                     const QString label =
                         QString(depth * 4, QLatin1Char(' ')) + model.titleOf(folder);
                     moveTo->addAction(label, [&, folderId] {
@@ -2213,10 +2177,10 @@ int main(int argc, char** argv) {
         menu.addAction(QStringLiteral("Экспортировать…"),
                        [&] { exportNote(model.pathOfId(id)); });
         menu.addSeparator();
-        if (model.inTrashId(id))
-            menu.addAction(QStringLiteral("Восстановить"), [&] { restoreNote(id); });
-        menu.addAction(model.inTrashId(id) ? QStringLiteral("Удалить насовсем")
-                                           : QStringLiteral("В корзину"),
+        if (model.inArchiveId(id))
+            menu.addAction(QStringLiteral("Вернуть из архива"), [&] { restoreNote(id); });
+        menu.addAction(model.inArchiveId(id) ? QStringLiteral("Удалить насовсем")
+                                             : QStringLiteral("В архив"),
                        [&] { deleteNote(id); });
         menu.exec(listView.viewport()->mapToGlobal(pos));
     });
@@ -2777,6 +2741,7 @@ int main(int argc, char** argv) {
         out.storeRoot = model.isStore() ? model.nodePath(QModelIndex()) : QString();
         out.exportDir = exportDir;
         out.diffPlainView = editor.diffPlainView();
+        out.exportKeepMeta = exportKeepMeta;
         // Переключатель КОРНЯ, а не действующий порядок: последний может быть
         // задан меткой открытой папки, и запиши мы его — чужая метка стала бы
         // общим умолчанием при следующем запуске.

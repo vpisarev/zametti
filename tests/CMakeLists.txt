@@ -380,6 +380,20 @@ if(TARGET zametti-view)
         add_test(NAME search COMMAND search_test)
         set_tests_properties(search PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+        # Архив этапа 15: тело в журнале, файл — стаб, старая корзина переезжает.
+        add_executable(archive_test archive_test.cpp)
+        target_link_libraries(archive_test PRIVATE zametti-store-lib zametti-warnings)
+        target_include_directories(archive_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        add_test(NAME archive COMMAND archive_test)
+
+        # Времена этапа 15: ISO-8601 с офсетом, чтение обоих видов, порядок по
+        # моментам, а не по строкам.
+        add_executable(times_test times_test.cpp)
+        target_link_libraries(times_test PRIVATE zametti-widgets Qt6::Test zametti-warnings)
+        target_include_directories(times_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        add_test(NAME times COMMAND times_test)
+        set_tests_properties(times PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
         # Сортировки этапа 13: чистые правила, дневниковая фикстура, наследование
         # меток и инварианты «показ ничего не пишет».
         add_executable(sort_test sort_test.cpp)

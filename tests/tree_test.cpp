@@ -162,22 +162,21 @@ int main(int argc, char** argv) {
         ZT_TRUE("директория не открывается", model.filePath(folder).isEmpty());
     }
 
-    // Сортировка по имени: директории первыми, корзина всё равно внизу.
+    // Сортировка по имени: директории первыми, Архив всё равно внизу.
     model.setSortOrder(zametti::defaultOrder(zametti::SortKey::Name));
     all = model.index(0, 0, QModelIndex());
     ZT_TRUE("по имени: первая — директория",
             model.isDirectory(model.index(0, 0, all)));
-    ZT_TRUE("по имени: корзина внизу",
-            titleAt(model, all, model.rowCount(all) - 1) ==
-                QStringLiteral("Корзина"));
+    ZT_TRUE("по имени: Архив внизу",
+            titleAt(model, all, model.rowCount(all) - 1) == QStringLiteral("Архив"));
     model.setSortOrder(zametti::defaultOrder(zametti::SortKey::Modified));
     all = model.index(0, 0, QModelIndex());
 
-    // Свежие сверху, корзина — последней, несмотря на свежий modified.
+    // Свежие сверху, Архив — последним, несмотря на свежий modified внутри.
     ZT_TRUE("первый — без заголовка (2025)",
             titleAt(model, all, 0).startsWith(QStringLiteral("просто первая строка")));
-    ZT_TRUE("корзина в самом низу",
-            titleAt(model, all, rootRows - 1) == QStringLiteral("Корзина"));
+    ZT_TRUE("Архив в самом низу",
+            titleAt(model, all, rootRows - 1) == QStringLiteral("Архив"));
     ZT_TRUE("пустая — «Без названия»",
             [&] {
                 for (int i = 0; i < rootRows; ++i)
@@ -218,12 +217,16 @@ int main(int argc, char** argv) {
     ZT_TRUE("свежий ребёнок выше",
             titleAt(model, folder, 0) == QStringLiteral("Свежий ребёнок"));
 
-    // Корзина и её содержимое.
-    ZT_TRUE("id корзины найден", model.trashId() == QStringLiteral("0000000000000t"));
+    // АРХИВ И ЕГО СОДЕРЖИМОЕ. Старая заметка-корзина (`role: trash`) читается
+    // как архивная — псевдоним на чтении для хранилищ, не прошедших разовую
+    // миграцию, — и вместе со своим содержимым лежит в виртуальном «Архиве».
+    ZT_TRUE("в Архиве найдены и корзина, и выброшенная",
+            model.archivedIds().contains(QStringLiteral("0000000000000t")) &&
+                model.archivedIds().contains(QStringLiteral("0000000000000v")));
     const QModelIndex thrown = model.indexForPath(
         g_root + QStringLiteral("/0000000000000v.md"));
-    ZT_TRUE("выброшенная лежит в корзине", model.inTrash(thrown));
-    ZT_TRUE("папка не в корзине", !model.inTrash(folder));
+    ZT_TRUE("выброшенная лежит в Архиве", model.inArchive(thrown));
+    ZT_TRUE("папка не в Архиве", !model.inArchive(folder));
 
     // Запрет переноса в собственное поддерево.
     ZT_TRUE("ребёнок — потомок папки",
@@ -422,9 +425,9 @@ int main(int argc, char** argv) {
     ZT_TRUE("папка не считается заметкой",
             model.isFolderId(QStringLiteral("0000000000000a")) &&
                 !model.isFolderId(QStringLiteral("0000000000000b")));
-    ZT_TRUE("корзина видна по id",
-            model.inTrashId(QStringLiteral("0000000000000v")) &&
-                !model.inTrashId(QStringLiteral("0000000000000b")));
+    ZT_TRUE("архивность видна по id",
+            model.inArchiveId(QStringLiteral("0000000000000v")) &&
+                !model.inArchiveId(QStringLiteral("0000000000000b")));
     ZT_TRUE("первая открываемая заметка — не папка",
             !model.firstNoteId().isEmpty() && !model.isFolderId(model.firstNoteId()));
 

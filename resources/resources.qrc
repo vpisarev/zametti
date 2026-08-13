@@ -23,6 +23,7 @@
 
     <!-- Иконки Lucide, ISC. Происхождение и список — resources/icons/README.md. -->
     <qresource prefix="/icons">
+        <file alias="archive.svg">icons/archive.svg</file>
         <file alias="arrow-down-a-z.svg">icons/arrow-down-a-z.svg</file>
         <file alias="arrow-up-a-z.svg">icons/arrow-up-a-z.svg</file>
         <file alias="calendar-arrow-down.svg">icons/calendar-arrow-down.svg</file>
@@ -39,6 +40,7 @@
         <file alias="file-plus-corner.svg">icons/file-plus-corner.svg</file>
         <file alias="folder-input.svg">icons/folder-input.svg</file>
         <file alias="folder-open.svg">icons/folder-open.svg</file>
+        <file alias="folder-search.svg">icons/folder-search.svg</file>
         <file alias="folder-plus.svg">icons/folder-plus.svg</file>
         <file alias="folder.svg">icons/folder.svg</file>
         <file alias="image-down.svg">icons/image-down.svg</file>
@@ -47,7 +49,6 @@
         <file alias="search.svg">icons/search.svg</file>
         <file alias="settings.svg">icons/settings.svg</file>
         <file alias="square-arrow-out-up-right.svg">icons/square-arrow-out-up-right.svg</file>
-        <file alias="trash-2.svg">icons/trash-2.svg</file>
     </qresource>
 
     <!-- Справка и лицензии. README показывается нашим же ядром и сборщиком —

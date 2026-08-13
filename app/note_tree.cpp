@@ -9,6 +9,9 @@
 #include "note_id.h"
 #include "parser.h"
 #include "settings.h"
+#include "archive.h"
+#include "lost_found.h"
+#include "times.h"
 
 #include <QCollator>
 #include <QDateTime>
@@ -42,8 +45,15 @@ struct NoteTreeModel::Node {
     // Метка сортировки из шапки папки: `sort: created-desc`. Пусто — своей
     // метки нет, порядок наследуется.
     std::optional<SortOrder> sortMark;
-    bool trash = false; // корзина: в самом низу корня
+    // Помечена архивной (`archived: yes` в шапке, или старый `role: trash`).
+    // Пометка НЕ переносит заметку никуда: parent у неё прежний, а показывает
+    // её виртуальный «Архив» — узел ниже.
+    bool archived = false;
+    // Тот самый виртуальный узел: файла за ним нет вовсе, он собирается из
+    // помеченных заметок при каждой сборке дерева. Стоит в самом низу корня.
+    bool archiveBox = false;
     bool folder = false;   // role: folder — директория и без детей
+    bool lostFound = false;   // role: lost — бюро находок, спецпапка
     bool dir = false;
     bool storeRoot = false;   // «All notes»: корень хранилища отдельной строкой
     Node* parent = nullptr;
@@ -132,8 +142,9 @@ struct StoreNote {
     QString modified;
     QString created;
     std::optional<SortOrder> sortMark;
-    bool trash = false;
+    bool archived = false;
     bool folder = false;
+    bool lostFound = false;
 };
 
 // Сколько знаков сниппета держим. Две-три строки списка при любой разумной
@@ -189,8 +200,13 @@ bool readStoreNote(const QString& path, StoreNote& out) {
     const Document doc = parse(std::string_view(bytes.constData(), size_t(bytes.size())));
 
     out.parent = QString::fromStdString(doc.meta.get("parent"));
-    out.modified = QString::fromStdString(doc.meta.get("modified"));
-    out.created = QString::fromStdString(doc.meta.get("created"));
+    // ВРЕМЕНА ПРИВОДЯТСЯ К UTC ПРЯМО ЗДЕСЬ. В шапке они с офсетом
+    // (`…+02:00`), а сравниваются и сортируются строками — лексикографически
+    // «21:40+02:00» больше «19:40Z», хотя это один и тот же момент. Дальше по
+    // дереву ходит только сравнимая форма; показывает даты список, и ему всё
+    // равно, в каком виде их дали, — он переводит в местную зону сам.
+    out.modified = store::comparableTime(doc.meta.get("modified"));
+    out.created = store::comparableTime(doc.meta.get("created"));
     // Метка сортировки. Чужое значение (другая версия, чужая программа, опечатка
     // руками) не должно ни ронять программу, ни молча подменяться на своё:
     // жалуемся в stderr и показываем папку по наследству, будто метки нет.
@@ -202,8 +218,9 @@ bool readStoreNote(const QString& path, StoreNote& out) {
                          sort.c_str(), path.toUtf8().constData());
     }
     const std::string role = doc.meta.get("role");
-    out.trash = role == "trash";
-    out.folder = role == "folder";
+    out.archived = store::isArchivedMeta(doc.meta);
+    out.folder = role == "folder" || role == store::kLostRole;
+    out.lostFound = role == store::kLostRole;
     describeNote(doc, out);
     return true;
 }
@@ -262,14 +279,14 @@ std::unique_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath) {
         node->title = meta.title;
         node->snippet = meta.snippet;
         node->path = info.absoluteFilePath();
-        node->modified =
-            meta.modified.isEmpty()
-                ? info.lastModified().toUTC().toString(Qt::ISODate)
-                : meta.modified;
+        node->modified = meta.modified.isEmpty()
+                             ? info.lastModified().toUTC().toString(Qt::ISODate)
+                             : meta.modified;
         node->created = meta.created.isEmpty() ? node->modified : meta.created;
         node->sortMark = meta.sortMark;
-        node->trash = meta.trash;
+        node->archived = meta.archived;
         node->folder = meta.folder;
+        node->lostFound = meta.lostFound;
         byId.insert(stem, node.get());
         parentOf.insert(stem, meta.parent);
         nodes.push_back(std::move(node));
@@ -293,11 +310,49 @@ std::unique_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath) {
         }
     }
 
+    // АРХИВ — ВИРТУАЛЬНАЯ ПАПКА. Файла за ней нет: она собирается из
+    // помеченных заметок при каждой сборке дерева, и заводится, только если
+    // помеченные есть. Прежняя корзина была настоящей заметкой, куда
+    // переносили детей; архив не переносит ничего — `parent` у заметки
+    // остаётся прежним, и возврат домой поэтому ничего не помнит и не ищет.
+    const auto archivedAbove = [&](const QString& id) {
+        // Помечен ли КТО-ТО ВЫШЕ по цепочке родителей: помеченная заметка
+        // внутри помеченной папки попадает в ящик не сама по себе, а вместе с
+        // папкой — иначе поддерево разъехалось бы на два места.
+        QSet<QString> seen{id};
+        QString at = parentOf.value(id);
+        while (!at.isEmpty() && byId.contains(at) && !seen.contains(at)) {
+            if (byId.value(at)->archived) return true;
+            seen.insert(at);
+            at = parentOf.value(at);
+        }
+        return false;
+    };
+    NoteTreeModel::Node* archiveBox = nullptr;
+    const auto boxFor = [&]() -> NoteTreeModel::Node* {
+        if (archiveBox != nullptr) return archiveBox;
+        auto box = std::make_unique<NoteTreeModel::Node>();
+        box->title = QStringLiteral("Архив");
+        // Путь синтетический: узла-файла за ящиком нет, но путь нужен —
+        // им адресуются раскрытые ветки и выбранная папка (indexForPath).
+        // Точка в начале имени держит его подальше от настоящих заметок:
+        // «<id>.md» так выглядеть не может.
+        box->path = QFileInfo(rootPath).absoluteFilePath() + QStringLiteral("/.archive");
+        box->dir = true;
+        box->archiveBox = true;
+        box->parent = root;
+        archiveBox = box.get();
+        root->children.push_back(std::move(box));
+        return archiveBox;
+    };
+
     // Подвес: parent в никуда — сирота в корне с пометкой.
     for (auto& node : nodes) {
         const QString parent = parentOf.value(node->id);
         NoteTreeModel::Node* home = root;
-        if (!parent.isEmpty()) {
+        if (node->archived && !archivedAbove(node->id)) {
+            home = boxFor();
+        } else if (!parent.isEmpty()) {
             if (byId.contains(parent)) home = byId.value(parent);
             else node->badge = QStringLiteral("сирота");
         }
@@ -311,7 +366,7 @@ std::unique_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath) {
     // позже всех, всплывает вперёд.
     struct Finish {
         static QString run(NoteTreeModel::Node* node) {
-            node->dir = node->dir || node->folder || node->trash ||
+            node->dir = node->dir || node->folder || node->archiveBox ||
                         !node->children.empty();
             node->effectiveModified = node->modified;
             for (auto& child : node->children) {
@@ -341,7 +396,7 @@ std::unique_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath) {
 void sortStore(NoteTreeModel::Node* node, SortOrder order, const QCollator& collator) {
     std::sort(node->children.begin(), node->children.end(),
               [order, &collator](const auto& a, const auto& b) {
-                  if (a->trash != b->trash) return b->trash;
+                  if (a->archiveBox != b->archiveBox) return b->archiveBox;
                   if (order.key == SortKey::Name) {
                       // Папки первыми — только по имени: в хронологии они стоят
                       // наравне с заметками, иначе дневниковая лента
@@ -552,9 +607,12 @@ QVariant NoteTreeModel::data(const QModelIndex& index, int role) const {
         return node->path;
     }
     if (role == Qt::DecorationRole && node->isDir()) {
-        // У корзины свой значок: она не папка, а другое место, и путать их
-        // нельзя — перетаскивание туда означает удаление.
-        if (node->trash) return rowPixmap("trash-2");
+        // У Архива свой значок: это не папка, а другое место, и путать их
+        // нельзя — перетаскивание туда означает архивацию.
+        if (node->archiveBox) return rowPixmap("archive");
+        // Бюро находок — тоже не обычная папка: в неё не кладут, из неё
+        // забирают.
+        if (node->lostFound) return rowPixmap("folder-search");
         // Папка, которую НЕ РАСКРЫТЬ, рисуется открытой: закрытый значок обещает
         // содержимое, которого в дереве нет, и человек тыкает в неё снова и
         // снова, ничего не добившись. Открытая честно говорит «дальше пусто».
@@ -635,18 +693,18 @@ std::vector<NoteRow> NoteTreeModel::notesInSubtree(const QModelIndex& index) con
     if (!store_) return out;
     const Node* node = index.isValid() ? static_cast<const Node*>(index.internalPointer())
                                        : topNode();
-    // Корзина в общий список не попадает: выброшенное не должно всплывать
-    // рядом с живым (так же ведёт себя Apple Notes). Внутри самой корзины —
-    // наоборот, показываем всё её содержимое.
+    // Архив в общий список не попадает: убранное не должно всплывать рядом с
+    // живым (так же ведёт себя Apple Notes). Внутри самого Архива — наоборот,
+    // показываем всё его содержимое.
     const bool insideTrash = [&] {
         for (const Node* up = node; up != nullptr; up = up->parent)
-            if (up->trash) return true;
+            if (up->archiveBox) return true;
         return false;
     }();
     struct Walk {
         static void run(const Node* node, bool insideTrash, std::vector<NoteRow>& out) {
             for (const auto& child : node->children) {
-                if (child->trash && !insideTrash) continue;
+                if (child->archiveBox && !insideTrash) continue;
                 // Папка — структура, а не заметка: в списке ей делать нечего,
                 // и открыть её тело редактором нельзя вовсе.
                 if (!child->isDir())
@@ -756,10 +814,15 @@ bool NoteTreeModel::isFolderId(const QString& id) const {
     return node != nullptr && node->isDir();
 }
 
-bool NoteTreeModel::inTrashId(const QString& id) const {
+bool NoteTreeModel::inArchiveId(const QString& id) const {
     for (const Node* node = nodeById(id); node != nullptr; node = node->parent)
-        if (node->trash) return true;
+        if (node->archived || node->archiveBox) return true;
     return false;
+}
+
+bool NoteTreeModel::isArchivedId(const QString& id) const {
+    const Node* node = nodeById(id);
+    return node != nullptr && node->archived;
 }
 
 QString NoteTreeModel::parentIdOf(const QString& id) const {
@@ -814,7 +877,7 @@ QString NoteTreeModel::childFolderByTitle(const QString& parentId,
     const Node* parent = parentId.isEmpty() ? topNode() : nodeById(parentId);
     if (parent == nullptr) return {};
     for (const auto& child : parent->children) {
-        if (!child->isDir() || child->trash) continue;
+        if (!child->isDir() || child->archiveBox) continue;
         if (child->title == title) return child->id;
     }
     return {};
@@ -898,18 +961,32 @@ QString NoteTreeModel::titleOf(const QModelIndex& index) const {
     return static_cast<const Node*>(index.internalPointer())->title;
 }
 
-QString NoteTreeModel::trashId() const {
+QStringList NoteTreeModel::archivedIds() const {
+    QStringList out;
+    struct Walk {
+        static void run(const Node* node, QStringList& out) {
+            for (const auto& child : node->children) {
+                if (!child->id.isEmpty()) out << child->id;
+                run(child.get(), out);
+            }
+        }
+    };
     for (const auto& child : topNode()->children)
-        if (child->trash) return child->id;
-    return {};
+        if (child->archiveBox) Walk::run(child.get(), out);
+    return out;
 }
 
-bool NoteTreeModel::inTrash(const QModelIndex& index) const {
+bool NoteTreeModel::isArchiveBox(const QModelIndex& index) const {
+    if (!index.isValid()) return false;
+    return static_cast<const Node*>(index.internalPointer())->archiveBox;
+}
+
+bool NoteTreeModel::inArchive(const QModelIndex& index) const {
     for (const Node* node = index.isValid()
                                 ? static_cast<const Node*>(index.internalPointer())
                                 : nullptr;
          node != nullptr; node = node->parent)
-        if (node->trash) return true;
+        if (node->archived || node->archiveBox) return true;
     return false;
 }
 

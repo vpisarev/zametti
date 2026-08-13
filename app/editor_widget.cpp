@@ -15,6 +15,8 @@
 #include "parser.h"
 #include "serializer.h"
 #include "settings.h"
+#include "archive.h"
+#include "times.h"
 
 #include <QDateTime>
 #include <QFileDialog>
@@ -686,7 +688,29 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
     // заметкой: два пути открытия, одно правило.
     activateNote(takeFocus);
     emit fileChanged(note_.path);
+    enterHistoryIfArchived();
     return true;
+}
+
+// АРХИВНАЯ ЗАМЕТКА ОТКРЫВАЕТСЯ ИСТОРИЕЙ. В файле у неё стаб — шапка и строка
+// заголовка, — а тело живёт в журнале, и показывать человеку одну строку было
+// бы враньём: заметка цела, просто лежит в другом месте. Поэтому вместо
+// правки открывается голова журнала: тот же режим истории, что и всегда, со
+// своим баннером, таймлайном и запретом правки.
+//
+// Здесь же и объяснение, почему это в openFile, а не в окне: открыть заметку
+// можно из дерева, из списка, из поиска и восстановлением — правило одно на
+// все двери.
+void NoteEditor::enterHistoryIfArchived() {
+    if (storeRoot_.isEmpty() || note_.path.isEmpty()) return;
+    if (!zametti::store::isArchivedMeta(note_.meta)) return;
+    if (inHistory()) return;
+    if (!enterHistory()) {
+        // Журнала нет вовсе — показать нечего, но и молчать нельзя: человек
+        // видит одну строку вместо заметки и вправе знать, почему.
+        std::fprintf(stderr, "архивная заметка без истории: %s\n",
+                     note_.path.toUtf8().constData());
+    }
 }
 
 void NoteEditor::watchFile() {
@@ -3342,17 +3366,48 @@ void NoteEditor::save(bool interactive, bool force) {
     // разъехалась с той, что лежит на диске.
     const NoteMeta metaBefore = note_.meta;
     if (note_.meta.present && stampModifiedOnSave_)
-        note_.meta.set("modified",
-                  QDateTime::currentDateTimeUtc()
-                      .toString(QStringLiteral("yyyy-MM-ddTHH:mm:ss'Z'"))
-                      .toStdString());
+        note_.meta.set("modified", store::isoNow().toStdString());
 
     Document fileIr;
-    const QByteArray candidate = noteBytes(*document(), note_.meta, nullptr, &fileIr);
+    QByteArray candidate = noteBytes(*document(), note_.meta, nullptr, &fileIr);
     if (!note_.lastSaved.isEmpty() && sameApartFromModified(candidate, note_.lastSaved)) {
         note_.meta = metaBefore;
         document()->setModified(false);
         return;
+    }
+
+    // ЛЕНИВАЯ МИГРАЦИЯ ВРЕМЁН (этап 15) — и она стоит ЗДЕСЬ, ниже решения
+    // «сохранять нечего», а не выше. Метки переписываются в новом виде
+    // (ISO-8601 с офсетом) на всяком сохранении, но САМА миграция сохранения
+    // не вызывает: иначе открытие старой заметки, где человек ничего не
+    // тронул, переписывало бы файл и заводило запись в истории — ровно то, чего
+    // не должно случаться никогда. Я на этом и попался: набор поймал семь
+    // проверок в трёх местах.
+    //
+    // Момент при этом не меняется, меняется представление. Специального
+    // прохода по хранилищу нет: заметки переезжают по мере того, как их правят.
+    //
+    // Метку, у которой офсет УЖЕ ЕСТЬ, не трогаем вовсе: в ней записан
+    // локальный контекст того, кто её ставил («у него было 21:40»), и перевод
+    // в свою зону этот контекст стёр бы — ровно ради него формат и менялся.
+    if (note_.meta.present) {
+        bool moved = false;
+        for (const char* key : {"created", "modified"}) {
+            const std::string had = note_.meta.get(key);
+            if (had.empty()) continue;
+            const QDateTime moment = store::parseNoteTime(had);
+            if (!moment.isValid()) continue;   // чужая строка — не наша забота
+            if (moment.timeSpec() == Qt::OffsetFromUTC || moment.timeSpec() == Qt::TimeZone)
+                continue;
+            const QString fresh = store::isoWithOffset(moment.toLocalTime());
+            if (fresh.isEmpty() || fresh.toStdString() == had) continue;
+            note_.meta.set(key, fresh.toStdString());
+            moved = true;
+        }
+        // Пересобираем байты только если что-то и правда переехало: лишняя
+        // сериализация большой заметки — это миллисекунды на каждое
+        // автосохранение.
+        if (moved) candidate = noteBytes(*document(), note_.meta, nullptr, &fileIr);
     }
 
     // Отпечаток того, что в файле, мы знаем — значит «не изменилось ли»

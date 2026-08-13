@@ -136,7 +136,22 @@ QString fileNameFromTitle(const QString& title) {
     return out;
 }
 
-ExportReport exportMarkdown(const QString& notePath, const QString& targetPath) {
+// Срезать шапку с НАЧАЛА текста, не трогая всего остального. Ищем ровно то, что
+// разобрало ядро: закрывающий «-->» первого комментария и перевод строки за ним,
+// плюс пустую строку, если она там была (meta.blankAfter).
+std::string withoutMeta(const std::string& source, const Document& ir) {
+    if (!ir.meta.present) return source;
+    const size_t open = source.find("<!-- zametti");
+    if (open != 0) return source;   // шапка не в начале — не наша, не трогаем
+    const size_t close = source.find("-->", open);
+    if (close == std::string::npos) return source;
+    size_t at = close + 3;
+    if (at < source.size() && source[at] == '\n') ++at;
+    if (ir.meta.blankAfter && at < source.size() && source[at] == '\n') ++at;
+    return source.substr(at);
+}
+
+ExportReport exportMarkdown(const QString& notePath, const QString& targetPath, bool keepMeta) {
     ExportReport report;
 
     bool read = false;
@@ -242,6 +257,7 @@ ExportReport exportMarkdown(const QString& notePath, const QString& targetPath) 
         }
         outText = serialize(ir);
     }
+    if (!keepMeta) outText = withoutMeta(outText, ir);
 
     if (!writeAll(targetPath, outText, &report.error)) return report;
 

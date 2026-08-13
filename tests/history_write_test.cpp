@@ -16,6 +16,8 @@
 #include "history_rules.h"
 #include "editor_widget.h"
 #include "journal.h"
+#include "times.h"
+
 #include "test_util.h"
 
 #include <QApplication>
@@ -34,14 +36,26 @@ namespace {
 
 QString g_root;
 
+QByteArray fileBytes(const QString& path) {
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return {};
+    return f.readAll();
+}
+
 QString makeNote(const QString& id, const std::string& body) {
     QDir().mkpath(g_root + QStringLiteral("/.zametti"));
     QDir().mkpath(g_root + QStringLiteral("/history"));
     const QString path = g_root + QLatin1Char('/') + id + QStringLiteral(".md");
     QFile file(path);
     if (file.open(QIODevice::WriteOnly)) {
+        // Время в НОВОМ виде — ISO-8601 с офсетом (этап 15). Со старой меткой
+        // («…Z») первое же сохранение переписало бы её ленивой миграцией, и в
+        // журнале появилась бы лишняя запись: опорная с прежним видом шапки и
+        // следующая с новым. Это законное поведение миграции, и проверяется
+        // оно отдельно (checkLazyTimeMigration ниже) — а здешние проверки про
+        // отбор записей, и мешать им переезд формата незачем.
         const std::string text =
-            "<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n-->\n\n" + body;
+            "<!-- zametti\ncreated: 2020-01-01T00:00:00+03:00\n-->\n\n" + body;
         file.write(text.data(), qint64(text.size()));
     }
     return path;
@@ -649,6 +663,57 @@ void checkHistoryNeverWritesToFile() {
     editor.leaveHistory();
 }
 
+// ЛЕНИВАЯ МИГРАЦИЯ ВРЕМЁН (этап 15) на живой заметке старого вида.
+//
+// Метка «…Z» переезжает в ISO-8601 с офсетом при ПЕРВОМ сохранении, момент при
+// этом остаётся тем же. Заодно спрашиваем цену перееза: журнал растёт ровно на
+// одну запись — ту, которой человек и правил заметку. Просто открыть заметку и
+// ничего не трогать — не переписывает ни файла, ни истории.
+void checkLazyTimeMigration() {
+    const QString id = QStringLiteral("01ddeeff001122");
+    const QString path = g_root + QLatin1Char('/') + id + QStringLiteral(".md");
+    {
+        QDir().mkpath(g_root + QStringLiteral("/.zametti"));
+        QFile file(path);
+        if (file.open(QIODevice::WriteOnly)) {
+            const QByteArray text =
+                "<!-- zametti\ncreated: 2019-03-14T09:26:53Z\n"
+                "modified: 2019-03-14T09:26:53Z\n-->\n\n# Старая\n\nТекст.\n";
+            file.write(text);
+        }
+    }
+    const QByteArray was = fileBytes(path);
+
+    zametti::NoteEditor editor;
+    editor.setStoreRoot(g_root);
+    editor.openFile(path);
+    editor.save(false);
+    ZT_TRUE("открытие и сохранение без правок файл не трогают", fileBytes(path) == was);
+    const int base = recordCount(id);
+
+    QTextCursor caret = editor.textCursor();
+    caret.movePosition(QTextCursor::End);
+    editor.setTextCursor(caret);
+    caret.insertText(QStringLiteral(" дописано"));
+    editor.setTextCursor(caret);
+    editor.save(false);
+
+    const QString written = QString::fromUtf8(fileBytes(path));
+    const QRegularExpressionMatch created =
+        QRegularExpression(QStringLiteral("created: ([^\n]+)")).match(written);
+    ZT_TRUE("created на месте", created.hasMatch());
+    ZT_TRUE("created переехал в вид с офсетом: " + created.captured(1).toStdString(),
+            created.captured(1) != QStringLiteral("2019-03-14T09:26:53Z") &&
+                (created.captured(1).contains(QLatin1Char('+')) ||
+                 created.captured(1).contains(QLatin1Char('-'), Qt::CaseSensitive)));
+    ZT_TRUE("и остался тем же моментом",
+            zametti::store::parseNoteTime(created.captured(1)) ==
+                QDateTime::fromString(QStringLiteral("2019-03-14T09:26:53Z"), Qt::ISODate));
+    ZT_TRUE("переезд стоил ровно одной записи журнала — той, что и была правкой: " +
+                std::to_string(recordCount(id) - base),
+            recordCount(id) == base + 1);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -666,6 +731,7 @@ int main(int argc, char** argv) {
     checkRealEditWrites();
     checkSmallEditsReplace();
     checkUndoDoesNotDuplicate();
+    checkLazyTimeMigration();
     checkAcrossRestart();
     checkNoEqualNeighbours();
     checkSaveMigrates();

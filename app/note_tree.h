@@ -113,7 +113,6 @@ public:
     // QModelIndex: индекс скрытого узла был бы враньём для представления.
     bool hasNote(const QString& id) const;
     bool isFolderId(const QString& id) const;
-    bool inTrashId(const QString& id) const;
     QString parentIdOf(const QString& id) const;
     QString titleOfId(const QString& id) const;
     // Заголовки папок от корня до родителя заметки: по ним «Восстановить»
@@ -167,10 +166,17 @@ public:
     // владельца), поэтому «в текущей папке» — единственное место.
     QString folderIdFor(const QModelIndex& index) const;
 
-    // Id заметки-корзины (мета-ключ role: trash); пусто, если её ещё нет.
-    QString trashId() const;
-    // Лежит ли узел в поддереве корзины.
-    bool inTrash(const QModelIndex& index) const;
+    // Всё, что лежит в Архиве, — id заметок и папок, сверху вниз. Архив —
+    // ВИРТУАЛЬНАЯ папка: файла за ней нет, она собирается из помеченных
+    // (`archived: yes` в шапке), а `parent` у заметки остаётся прежним.
+    QStringList archivedIds() const;
+    // Это сама строка «Архив»?
+    bool isArchiveBox(const QModelIndex& index) const;
+    // Лежит ли узел в Архиве (сам помечен или помечен кто-то выше).
+    bool inArchive(const QModelIndex& index) const;
+    bool inArchiveId(const QString& id) const;
+    // Помечена ли архивной именно эта заметка (а не её предок).
+    bool isArchivedId(const QString& id) const;
     // Является ли candidate самим узлом id или его потомком: перенос заметки
     // в собственное поддерево запрещён.
     bool isDescendantOf(const QString& candidateId, const QString& id) const;

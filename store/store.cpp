@@ -1,5 +1,7 @@
 #include "store.h"
 
+#include "times.h"
+
 #include "journal.h"
 
 #include "note_id.h"
@@ -47,17 +49,10 @@ bool readAll(const QString& path, std::string& out) {
     return true;
 }
 
-QString isoUtc(const QDateTime& t) {
-    return t.toUTC().toString(QStringLiteral("yyyy-MM-ddTHH:mm:ss'Z'"));
-}
-
-// ISO-8601 UTC из брифа: YYYY-MM-DDTHH:MM:SSZ. Прочее не признаём — лучше
-// честные fs-времена с пометкой, чем криво разобранная дата.
-QDateTime parseIso(const QString& value) {
-    QDateTime t = QDateTime::fromString(value, QStringLiteral("yyyy-MM-ddTHH:mm:ss'Z'"));
-    if (t.isValid()) t.setTimeZone(QTimeZone::utc());
-    return t;
-}
+// Времена шапки живут одним модулем (store/times.h): запись — ISO-8601 с
+// офсетом, чтение — оба вида. Здесь остались только имена покороче.
+QString isoUtc(const QDateTime& t) { return isoWithOffset(t); }
+QDateTime parseIso(const QString& value) { return parseNoteTime(value); }
 
 std::uint64_t randomPart() {
     std::random_device rd;
@@ -289,7 +284,7 @@ QString newNote(const QString& root, const QString& parentId, QString* error) {
     // в свежей заметке нет — иначе verify честно находил бы дрейф (замерено).
     std::string content = "<!-- zametti\n";
     if (!parentId.isEmpty()) content += "parent: " + toUtf8(parentId) + "\n";
-    content += "created: " + toUtf8(isoUtc(QDateTime::currentDateTimeUtc())) + "\n-->\n";
+    content += "created: " + toUtf8(isoNow()) + "\n-->\n";
 
     std::string path;
     const std::string id = createNoteFile(toUtf8(root), content, &path);
@@ -341,7 +336,7 @@ QString importNote(const QString& root, const QString& parentId, const QString& 
     if (created.isEmpty()) created = fromUtf8(doc.meta.get("modified"));
     if (created.isEmpty())
         created = isoUtc(fsBirth.isValid() && fsBirth <= fsModified ? fsBirth : fsModified);
-    const QString modified = isoUtc(QDateTime::currentDateTimeUtc());
+    const QString modified = isoNow();
 
     // id и role чужого файла не наследуются: id принадлежит этому хранилищу
     // (иначе две заметки с одним id), а role сделал бы из заметки папку.

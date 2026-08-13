@@ -311,7 +311,7 @@ void checkMetaSurvivesEditing() {
     // времени плавает, сверяем всё вокруг неё.
     const QString saved = readFile(path);
     QString stripped = saved;
-    stripped.replace(QRegularExpression(QStringLiteral("modified: [0-9T:Z-]+\\n")),
+    stripped.replace(QRegularExpression(QStringLiteral("modified: [0-9T:Z+-]+\\n")),
                      QString());
     checkEqual(QStringLiteral("<!-- zametti\n"
                               "parent: 01n6x9k2m4qp\n"
