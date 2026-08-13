@@ -191,8 +191,12 @@ void checkTypingEverywhere() {
         ++typed;
     }
     const QString after = editor->document()->toPlainText();
-    ZT_TRUE("буквы напечатались: блоков " + std::to_string(typed),
-            after.count(QLatin1Char('z')) >= typed - 2 && typed > 5);
+    // РОВНО СТОЛЬКО, СКОЛЬКО НАЖАЛИ. Допуск «минус два» я поставил, не разобрав
+    // случай, — это и есть заглушение: проверка перестала бы замечать, что две
+    // буквы куда-то делись.
+    ZT_EQ("букв напечатано столько, сколько блоков", std::to_string(typed),
+          std::to_string(after.count(QLatin1Char('z'))));
+    ZT_TRUE("и блоков было не два-три: " + std::to_string(typed), typed > 5);
     ZT_TRUE("и текст не потерялся", after.size() >= before.size());
     delete editor;
 }

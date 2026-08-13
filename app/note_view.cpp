@@ -829,18 +829,6 @@ void NoteView::syncImageSpace(bool whole) {
         // на первой же правке — блок кода терял нижнее поле, и плашка
         // обрезалась по последней строке. Поймал набор, а не глаз.
         want += ownBottomMargin(block, plate);
-        // Резерв под сетку таблицы: он висит на ПОСЛЕДНЕЙ её строке — перед
-        // спрятанными блоками Qt поле игнорирует (пробник). Высота берётся
-        // из раскладки, а из неё вычитается то, что блок занимает сам.
-        for (const TableRender& table : std::as_const(tables_)) {
-            if (block.blockNumber() != table.last) continue;
-            const qreal allotted =
-                document()->documentLayout()->blockBoundingRect(block).height();
-            want += qMax(0.0, table.layout.height - allotted);
-            break;
-        }
-        // Сравнение с допуском: каждое выставление формата переразмечает
-        // документ.
         // МЕСТО ПОД ВЁРСТКУ — ДВУМЯ РУЧКАМИ, И КАЖДАЯ ТАМ, ГДЕ Qt ЕЙ ВЕРЕН.
         //
         // Замер (а не документация): фиксированную высоту строки Qt соблюдает,
