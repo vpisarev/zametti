@@ -71,11 +71,23 @@ bool codeContinues(const QTextBlock& block) {
            isContinuationBlock(next);
 }
 
+// Первая строка блока кода, в котором лежит эта. Нужна там, где мы пришли к
+// блоку с конца: полоска висит у последней строки, а зовётся блок по первой.
+QTextBlock startOfCodeBlock(const QTextBlock& block) {
+    QTextBlock at = block;
+    while (isContinuationBlock(at)) {
+        const QTextBlock before = at.previous();
+        if (!before.isValid() || isRawBlock(before) || kindOf(before) != Kind::Code) break;
+        at = before;
+    }
+    return at;
+}
+
 // Собственное нижнее поле блока — то, которое стоит в нём НЕ ради картинки.
-// Пока такое одно: поле под скругление у последней строки блока кода.
+// Пока такое одно: полоска с языком и кнопкой у последней строки блока кода.
 qreal ownBottomMargin(const QTextBlock& block, const CodePlate& plate) {
     if (isRawBlock(block) || kindOf(block) != Kind::Code) return 0.0;
-    return codeContinues(block) ? 0.0 : plate.padBottom;
+    return codeContinues(block) ? 0.0 : plate.strip;
 }
 
 QPainterPath platePath(const QRectF& rect, qreal radius, bool roundTop, bool roundBottom) {
@@ -131,6 +143,8 @@ void applyPalette(QWidget& view, bool history) {
     palette.setColor(QPalette::HighlightedText, palette.color(QPalette::Text));
     view.setPalette(palette);
 }
+
+QColor NoteView::pageColour() const { return palette().color(QPalette::Base); }
 
 QFont NoteView::baseFont() const { return baseFontFor(zoom_); }
 
@@ -207,7 +221,7 @@ void NoteView::repaintOverNativeCaret(QPainter& painter) {
     const QRectF clip(col.translated(horizontalScrollBar()->value(),
                                      verticalScrollBar()->value()));
     painter.setClipRect(clip);
-    painter.fillRect(clip, appearance().pageBackground);
+    painter.fillRect(clip, pageColour());
     paintCodeBackground(painter, clip);
 
     QAbstractTextDocumentLayout::PaintContext ctx;
@@ -916,7 +930,7 @@ void NoteView::paintImage(QPainter& painter, const QTextBlock& block) {
     painter.save();
     // Строка хитро-отрисованная: текст закрашивается фоном, фотография встаёт
     // на его место. Каретка рисуется позже и поверх — ей можно.
-    painter.fillRect(geometry.line.adjusted(-2, 0, 2, 0), appearance().pageBackground);
+    painter.fillRect(geometry.line.adjusted(-2, 0, 2, 0), pageColour());
     // Пиксели берутся здесь и только здесь: рисуем — значит нужны.
     const QImage* pixels = entry->framed() ? nullptr : pixelsFor(absoluteImagePath(ref.path));
     if (pixels == nullptr) {
@@ -1070,9 +1084,10 @@ QVector<CodeBand> NoteView::codeBands(const QRectF& visible) const {
     const CodePlate plate = codePlate(zoom_);
 
     QVector<CodeBand> bands;
+    int started = -1;   // начало блока кода, в котором мы сейчас идём
     // Начинаем с блока ВЫШЕ первого видимого: плашка вылезает за прямоугольник
-    // своего блока — вверх на полоску, вниз на поле, — и блок, чей текст ещё не
-    // виден, вполне может показывать сюда свою полоску.
+    // своего блока — вверх на воздух, вниз на полоску, — и блок, чей текст уже
+    // уехал вверх, вполне может показывать сюда свою полоску.
     QTextBlock start = document()->findBlock(firstVisible);
     if (start.isValid() && start.previous().isValid()) start = start.previous();
 
@@ -1085,8 +1100,8 @@ QVector<CodeBand> NoteView::codeBands(const QRectF& visible) const {
         // вовсе: владелец увидел, что при прокрутке она то есть, то нет. Та же
         // беда была у рамок вокруг картинок и лечится тем же — запасом на то,
         // что блок рисует за своими краями.
-        if (rect.top() - plate.strip > visible.bottom()) break;
-        if (rect.bottom() + plate.padBottom < visible.top()) continue;
+        if (rect.top() - plate.padTop > visible.bottom()) break;
+        if (rect.bottom() + plate.strip < visible.top()) continue;
         if (isRawBlock(block) || kindOf(block) != Kind::Code) continue;
 
         // Высоту считаем по числу строк и назначенной высоте строки, а не по
@@ -1109,18 +1124,28 @@ QVector<CodeBand> NoteView::codeBands(const QRectF& visible) const {
         band.first = !isContinuationBlock(block);
         band.last = !codeContinues(block);
         band.info = block.blockFormat().stringProperty(InfoProperty);
+        // Начало блока запоминаем на ходу: обход идёт сверху вниз, и первая его
+        // строка уже прошла — кроме случая, когда обход начался ПОСРЕДИ блока
+        // (длинный блок кода поперёк всего окна). Тогда, и только тогда, идём
+        // назад — один раз на блок, а не на каждую его строку.
+        if (band.first) started = band.blockNumber;
+        if (started < 0) started = startOfCodeBlock(block).blockNumber();
+        band.firstBlockNumber = started;
+        if (band.last) started = -1;
         bands.push_back(band);
     }
     return bands;
 }
 
+// Кнопка копирования — в правом нижнем углу плашки, то есть у ПОСЛЕДНЕЙ полосы
+// блока: полоска висит в её нижнем поле.
 QRectF NoteView::copyButtonRect(const CodeBand& band) const {
     const CodePlate plate = codePlate(zoom_);
-    if (!band.first || plate.strip <= 0.0) return {};
+    if (!band.last || plate.strip <= 0.0) return {};
     const qreal side = qMin(plate.strip * 0.62, 18.0 * zoom_);
     const qreal gap = plate.padLeft + plate.stripPadding;
     return QRectF(band.rect.right() - gap - side,
-                  band.rect.top() - plate.strip + (plate.strip - side) / 2.0, side, side);
+                  band.rect.bottom() + (plate.strip - side) / 2.0, side, side);
 }
 
 void NoteView::setEditedCodeLanguage(int firstBlockNumber) {
@@ -1249,10 +1274,13 @@ void NoteView::paintTables(QPainter& painter, const QRectF& visible) {
         if (area.bottom() < visible.top() || area.top() > visible.bottom()) continue;
 
         // Под сеткой осталась видимой последняя строка исходника — закрываем её
-        // фоном страницы, как фотография закрывает текст своей строки.
+        // фоном страницы, как фотография закрывает текст своей строки. Фон
+        // берётся у палитры вида, а не у облика: справка в окне About показана
+        // тем же вьюером, но палитру ей не правят, и «страничный» цвет вылезал
+        // там молочным пятном под каждой таблицей (заметил владелец).
         painter.fillRect(QRectF(anchorRect.left(), area.top(), qMax(area.width(), anchorRect.width()),
                                 area.height()),
-                         appearance().pageBackground);
+                         pageColour());
 
         // Заливки: тело, зебра, шапка. Прозрачные по умолчанию — тогда просто
         // ничего не рисуется.
@@ -1494,14 +1522,17 @@ const TableRender* NoteView::tableAt(int firstBlockNumber) const {
     return it == tables_.constEnd() ? nullptr : &it.value();
 }
 
+// Место под имя языка: вся полоска слева от кнопки. Надпись в нём прижата
+// ВПРАВО, к кнопке, а прямоугольник остаётся широким нарочно — по нему ловится
+// щелчок, и у блока без языка целиться человеку было бы некуда.
 QRectF NoteView::languageRect(const CodeBand& band) const {
     const CodePlate plate = codePlate(zoom_);
-    if (!band.first || plate.strip <= 0.0) return {};
-    const qreal left = band.rect.left() + plate.padLeft + plate.stripPadding;
+    if (!band.last || plate.strip <= 0.0) return {};
+    const qreal left = band.rect.left() + plate.padLeft;
     const QRectF button = copyButtonRect(band);
-    const qreal right = button.isEmpty() ? band.rect.right() : button.left() - plate.stripPadding;
+    const qreal right = button.isEmpty() ? band.rect.right() : button.left() - plate.langGap;
     if (right <= left) return {};
-    return QRectF(left, band.rect.top() - plate.strip, right - left, plate.strip);
+    return QRectF(left, band.rect.bottom(), right - left, plate.strip);
 }
 
 void NoteView::paintCodeBackground(QPainter& painter, const QRectF& visible) {
@@ -1519,69 +1550,51 @@ void NoteView::paintCodeBackground(QPainter& painter, const QRectF& visible) {
     painter.setRenderHint(QPainter::Antialiasing, true);
 
     for (const CodeBand& band : bands) {
-        // Полоска сверху и поле снизу — это ПОЛЯ БЛОКА, зарезервированные
+        // Воздух сверху и полоска снизу — это ПОЛЯ БЛОКА, зарезервированные
         // сборщиком документа теми же величинами (codePlate в settings.h).
         // Прямоугольник блока полей не включает — замерено пробником, а не
         // взято из документации.
-        const qreal top = band.rect.top() - (band.first ? plate.strip : 0.0);
-        const qreal bottom = band.rect.bottom() + (band.last ? plate.padBottom : 0.0);
+        const qreal top = band.rect.top() - (band.first ? plate.padTop : 0.0);
+        const qreal bottom = band.rect.bottom() + (band.last ? plate.strip : 0.0);
         const QRectF whole(band.rect.left(), top, band.rect.width(), bottom - top);
         const QPainterPath path = platePath(whole, plate.radius, band.first, band.last);
-        const qreal stripHeight = band.first ? plate.strip : 0.0;
 
-        // ДВЕ ЗАЛИВКИ, НЕ НАКЛАДЫВАЮЩИЕСЯ. Полоска и подложка полупрозрачны
-        // (по умолчанию обе — чернота с прозрачностью 14), и нарисованные одна
-        // поверх другой они дают удвоенную плотность: владелец увидел это как
-        // «цвет полоски всё ещё чуть-чуть отличается». Красим каждую область
-        // ровно один раз, а скруглённые углы держит клип по контуру.
+        // ОДНА ЗАЛИВКА НА ВСЮ ПЛАШКУ. Полоска с языком не красится отдельно:
+        // цвет подложки полупрозрачен (по умолчанию чернота с прозрачностью
+        // 14), и две заливки внахлёст давали удвоенную плотность — владелец
+        // дважды видел это как «полоска чуть темнее подложки». Скруглённые углы
+        // держит клип по контуру.
         painter.save();
         painter.setClipPath(path, Qt::IntersectClip);
-        if (stripHeight > 0.0)
-            painter.fillRect(QRectF(whole.left(), whole.top(), whole.width(), stripHeight),
-                             appearance().codeStripBackground);
-        painter.fillRect(QRectF(whole.left(), whole.top() + stripHeight, whole.width(),
-                                whole.height() - stripHeight),
-                         appearance().codeBackground);
+        painter.fillRect(whole, appearance().codeBackground);
         painter.restore();
-        if (!band.first) continue;
+        if (!band.last) continue;
 
-        // Черта НЕ во всю ширину: слева начинается от отступа буквы, справа не
-        // доходит полбуквы до края. Иначе она читается как рамка, а нужна
-        // граница между надписью и кодом.
-        // На бумаге полоски нет вовсе (решение владельца): ни черты, ни имени
+        // На бумаге содержимого полоски нет вовсе (решение владельца): ни имени
         // языка, ни кнопки. Скруглённые углы и поля остаются — плашка на
         // странице выглядит как на экране, только без органов управления.
         if (exportRatio_ > 0.0) continue;
-        if (plate.ruleWidth > 0.0 && plate.strip > 0.0) {
-            const qreal left = whole.left() + plate.padLeft;
-            const qreal right = whole.right() - plate.ruleInset;
-            if (right > left)
-                painter.fillRect(QRectF(left, band.rect.top() - plate.ruleWidth,
-                                        right - left, plate.ruleWidth),
-                                 appearance().codeStripRule);
-        }
         paintCodeStrip(painter, band);
     }
     painter.restore();
 }
 
-// Содержимое полоски: имя языка слева, кнопка копирования справа.
-//
-// Кнопка появляется при наведении на блок — держать её на виду всегда значило
-// бы, что на каждом блоке кода висит серый значок, которого человек не просил.
-// На бумаге её нет вовсе: нажимать там нечего.
+// Содержимое полоски: имя языка и кнопка копирования, оба в ПРАВОМ НИЖНЕМ углу
+// плашки (решение владельца). Надпись прижата вправо, к кнопке: слева от них —
+// пустое поле полоски, и оно же служит мишенью для щелчка по имени языка.
 void NoteView::paintCodeStrip(QPainter& painter, const CodeBand& band) {
     const CodePlate plate = codePlate(zoom_);
     if (plate.strip <= 0.0) return;
-    const QRectF strip(band.rect.left(), band.rect.top() - plate.strip, band.rect.width(),
-                       plate.strip);
+    // Язык лежит на КАЖДОЙ строке блока (сборщик ставит его всем строкам), и
+    // последняя знает его не хуже первой — а рисуем мы именно у последней.
+    const QRectF where = languageRect(band);
 
     painter.save();
-    if (!band.info.isEmpty() && band.blockNumber != editedCodeLanguage_) {
+    if (!band.info.isEmpty() && !where.isEmpty() &&
+        band.firstBlockNumber != editedCodeLanguage_) {
         painter.setFont(codeLangFont(zoom_));
         painter.setPen(appearance().codeLangColor);
-        painter.drawText(strip.adjusted(plate.padLeft + plate.stripPadding, 0, 0, 0),
-                         Qt::AlignVCenter | Qt::AlignLeft, band.info);
+        painter.drawText(where, Qt::AlignVCenter | Qt::AlignRight, band.info);
     }
 
     // Кнопка видна ВСЕГДА, а не по наведению (решение владельца): слежение за
@@ -1590,7 +1603,7 @@ void NoteView::paintCodeStrip(QPainter& painter, const CodeBand& band) {
     // На бумаге кнопки нет: нажимать там нечего.
     if (exportRatio_ <= 0.0) {
         const QRectF box = copyButtonRect(band);
-        const bool done = band.blockNumber == copiedCodeBlock_;
+        const bool done = band.firstBlockNumber == copiedCodeBlock_;
         const QPixmap icon = toolbarIcon(
             done ? QStringLiteral("check") : QStringLiteral("copy"),
             int(std::round(box.width())), appearance().codeLangColor, devicePixelRatioF());
@@ -1613,10 +1626,12 @@ void NoteView::mousePressEvent(QMouseEvent* event) {
         const QRectF visible(0, verticalScrollBar()->value(), viewport()->width(),
                              viewport()->height());
         for (const CodeBand& band : codeBands(visible)) {
-            if (!band.first) continue;
+            // Полоска — у ПОСЛЕДНЕЙ строки блока, там же и оба органа
+            // управления; зовётся блок по первой (band.firstBlockNumber).
+            if (!band.last) continue;
             const QRectF box = copyButtonRect(band);
             if (!box.isEmpty() && box.contains(at)) {
-                copyCodeBlock(band.blockNumber);
+                copyCodeBlock(band.firstBlockNumber);
                 event->accept();
                 return;
             }
@@ -1627,7 +1642,7 @@ void NoteView::mousePressEvent(QMouseEvent* event) {
             const QRect inViewport =
                 where.translated(-horizontalScrollBar()->value(), -verticalScrollBar()->value())
                     .toRect();
-            emit codeStripClicked(band.blockNumber, inViewport);
+            emit codeStripClicked(band.firstBlockNumber, inViewport);
             event->accept();
             return;
         }

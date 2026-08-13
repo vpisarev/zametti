@@ -36,8 +36,8 @@ LanguageEditor::LanguageEditor(const QStringList& candidates, const QString& cur
     // Window, то есть чужим цветом. Владелец увидел усиление артефактов.
     //
     // Своя заливка от стиля не зависит вовсе. Цвет — тот же, каким выглядит
-    // полоска: полупрозрачную полоску складываем с фоном страницы.
-    backdrop_ = blend(appearance().codeStripBackground, appearance().pageBackground);
+    // плашка: полупрозрачную подложку кода складываем с фоном страницы.
+    backdrop_ = blend(appearance().codeBackground, appearance().pageBackground);
     QPalette colours = palette();
     colours.setColor(QPalette::Base, backdrop_);
     colours.setColor(QPalette::Text, appearance().codeLangColor);

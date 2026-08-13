@@ -1167,6 +1167,11 @@ int main(int argc, char** argv) {
     // откуда бы смену ни попросили.
     QObject::connect(&editor, &zametti::NoteEditor::diffViewChanged, &historyBanner,
                      [&](bool plain) { historyBanner.setPlainView(plain); });
+    // Выбранный вид разности переживает и выход из режима истории, и
+    // перезапуск: это привычка человека, а не свойство заметки. Ставится
+    // ПОСЛЕ связок — тогда о нём узнают разом и редактор, и кнопка баннера.
+    // Вне режима истории это только признак: перерисовывать нечего.
+    editor.setDiffPlainView(session.diffPlainView);
 
     // Правка файла хранилища мимо редактора: только для закрытых заметок —
     // открытая правится через редактор, иначе сторож примет запись за чужую.
@@ -2628,6 +2633,7 @@ int main(int argc, char** argv) {
         out.searchHistory = findBar.history();
         out.storeRoot = model.isStore() ? model.nodePath(QModelIndex()) : QString();
         out.exportDir = exportDir;
+        out.diffPlainView = editor.diffPlainView();
         out.treeSort = model.sortMode() == zametti::NoteTreeModel::SortMode::ByName
                            ? QStringLiteral("name")
                            : QStringLiteral("modified");

@@ -11,9 +11,11 @@
 // Каталог печатается в вывод, чтобы не искать.
 
 #include "doc_model.h"
+#include "document_builder.h"
 #include "editor_widget.h"
 #include "lang_editor.h"
 #include "note_view.h"
+#include "parser.h"
 #include "settings.h"
 #include "test_util.h"
 
@@ -167,8 +169,8 @@ void checkPlateGeometry(Peek& editor) {
 
     const zametti::CodePlate plate = zametti::codePlate(editor.zoom());
     check(plate.strip > 0.0, "высота полоски положительна");
-    check(plate.padBottom > 0.0 && plate.padBottom < plate.strip,
-          "поле снизу есть и меньше полоски: " + num(plate.padBottom) + " < " +
+    check(plate.padTop > 0.0 && plate.padTop < plate.strip,
+          "поле сверху есть и меньше полоски: " + num(plate.padTop) + " < " +
               num(plate.strip));
 
     const QAbstractTextDocumentLayout* layout = editor.document()->documentLayout();
@@ -180,13 +182,13 @@ void checkPlateGeometry(Peek& editor) {
         const QTextBlock before = block.previous();
         if (!before.isValid()) continue;
 
-        // Полоска стоит В РЕЗЕРВЕ, который сборщик отвёл верхним полем блока.
-        // Если бы величины разошлись, она налезла бы на предыдущий абзац —
-        // это и спрашиваем.
-        const qreal stripTop = band.rect.top() - plate.strip;
+        // Воздух над плашкой стоит В РЕЗЕРВЕ, который сборщик отвёл верхним
+        // полем блока. Если бы величины разошлись, плашка налезла бы на
+        // предыдущий абзац — это и спрашиваем.
+        const qreal plateTop = band.rect.top() - plate.padTop;
         const qreal aboveBottom = layout->blockBoundingRect(before).bottom();
-        check(stripTop >= aboveBottom - 0.5,
-              "полоска не налезает на блок выше: " + num(stripTop) + " >= " +
+        check(plateTop >= aboveBottom - 0.5,
+              "плашка не налезает на блок выше: " + num(plateTop) + " >= " +
                   num(aboveBottom));
 
         // Левый край плашки — на codeIndent правее абзаца, а код — ещё на
@@ -204,13 +206,59 @@ void checkPlateGeometry(Peek& editor) {
     }
     check(first == 4, "начал блоков ровно четыре (" + std::to_string(first) + ")");
 
-    // Последняя строка блока несёт нижнее поле, и плашка на нём кончается.
+    // Последняя строка блока несёт нижнее поле — ту самую полоску, в которой
+    // стоят язык и кнопка, — и плашка на нём кончается. Заодно спрашиваем, что
+    // полоска не налезает на СЛЕДУЮЩИЙ блок: Qt между соседями берёт из двух
+    // полей максимум, и меньше полоски зазор стать не может.
     for (const zametti::CodeBand& band : bands) {
         if (!band.last) continue;
         const QTextBlock block = editor.document()->findBlockByNumber(band.blockNumber);
-        check(std::fabs(block.blockFormat().bottomMargin() - plate.padBottom) < 0.5,
-              "нижнее поле у последней строки блока");
+        check(std::fabs(block.blockFormat().bottomMargin() - plate.strip) < 0.5,
+              "полоска стоит нижним полем последней строки блока");
+        const QTextBlock after = block.next();
+        if (!after.isValid()) continue;
+        const qreal stripBottom = band.rect.bottom() + plate.strip;
+        const qreal belowTop = layout->blockBoundingRect(after).top();
+        check(stripBottom <= belowTop + 0.5,
+              "полоска не налезает на блок ниже: " + num(stripBottom) + " <= " +
+                  num(belowTop));
     }
+}
+
+// --- резерв ставит САМ СБОРЩИК ----------------------------------------------
+//
+// Проверка выше смотрит на готовое окно, а там поля успел переставить обход
+// syncImageSpace: сборщик мог бы ставить что угодно, и она осталась бы зелёной
+// (убедился, подменив величину в сборщике). Спрашиваем сборщик напрямую — без
+// вида, без обхода: полоску резервирует нижнее поле последней строки блока,
+// воздух под скругление — верхнее поле первой.
+void checkBuilderReservesStrip() {
+    const zametti::CodePlate plate = zametti::codePlate(1.0);
+    QTextDocument doc;
+    zametti::buildDocument(zametti::parse("текст\n\n```python\nx = 1\ny = 2\n```\n"), doc, 1.0);
+
+    int lines = 0;
+    for (QTextBlock b = doc.firstBlock(); b.isValid(); b = b.next()) {
+        if (zametti::isRawBlock(b) || zametti::kindOf(b) != zametti::Kind::Code) continue;
+        ++lines;
+        const bool continues = b.next().isValid() && !zametti::isRawBlock(b.next()) &&
+                               zametti::kindOf(b.next()) == zametti::Kind::Code &&
+                               zametti::isContinuationBlock(b.next());
+        const qreal want = continues ? 0.0 : plate.strip;
+        check(std::fabs(b.blockFormat().bottomMargin() - want) < 0.5,
+              "сборщик: нижнее поле строки кода " + num(b.blockFormat().bottomMargin()) +
+                  ", ждали " + num(want));
+        if (zametti::isContinuationBlock(b)) continue;
+        check(b.blockFormat().topMargin() >= plate.padTop - 0.5,
+              "сборщик: сверху у плашки воздух " + num(b.blockFormat().topMargin()) +
+                  " >= " + num(plate.padTop));
+    }
+    check(lines == 2, "строк кода в собранном документе две (" + std::to_string(lines) + ")");
+
+    // Блок кода в самом конце заметки до полоски долистывается и без своего
+    // поля: нижнее поле страницы (verticalMargin, 27 px) само по себе выше
+    // полоски (21 px) — замерено. Проверки на это нет НАРОЧНО: со снятой
+    // починкой она оставалась зелёной, то есть спрашивала не то, что обещала.
 }
 
 // --- копирование ------------------------------------------------------------
@@ -219,6 +267,7 @@ void checkPlateGeometry(Peek& editor) {
 // и без имени языка.
 void checkCopy(Peek& editor) {
     const QVector<zametti::CodeBand> bands = editor.bands();
+    const zametti::CodePlate plate = zametti::codePlate(editor.zoom());
     int firstBlock = -1;
     for (const zametti::CodeBand& band : bands)
         if (band.first && band.info == QStringLiteral("python")) firstBlock = band.blockNumber;
@@ -237,15 +286,21 @@ void checkCopy(Peek& editor) {
     check(!got.contains(QStringLiteral("```")), "заборов в буфере нет");
     check(!got.contains(QStringLiteral("python")), "языка в буфере нет");
 
-    // Кнопка нарисована в полоске, а не в тексте: её прямоугольник лежит выше
-    // первой строки кода.
+    // Кнопка нарисована в полоске, а не в тексте: её прямоугольник лежит ниже
+    // последней строки кода и у правого края плашки.
     for (const zametti::CodeBand& band : bands) {
-        if (band.blockNumber != firstBlock) continue;
+        if (band.firstBlockNumber != firstBlock || !band.last) continue;
         const QRectF box = editor.button(band);
         check(!box.isEmpty(), "кнопка копирования есть");
-        check(box.bottom() <= band.rect.top() + 0.5,
-              "кнопка стоит над первой строкой кода");
+        check(box.top() >= band.rect.bottom() - 0.5,
+              "кнопка стоит под последней строкой кода");
         check(box.right() <= band.rect.right() + 0.5, "кнопка не вылезает за плашку");
+        // И правее имени языка: оба живут в правом углу, надпись прижата к
+        // кнопке слева.
+        const QRectF where = editor.langRect(band);
+        check(!where.isEmpty() && box.left() - where.right() >= plate.langGap - 0.5,
+              "между надписью и значком просвет в codeLangGap: " +
+                  num(box.left() - where.right()) + " >= " + num(plate.langGap));
 
         // НАСТОЯЩЕЕ НАЖАТИЕ, а не вызов метода: между «функция кладёт в буфер»
         // и «по кнопке кладётся в буфер» лежит вся обработка мыши, и именно
@@ -280,7 +335,7 @@ void checkCornersAreRound(Peek& editor) {
 
     for (const zametti::CodeBand& band : bands) {
         if (!band.first) continue;
-        const int y = int(band.rect.top() - plate.strip) + 1;
+        const int y = int(band.rect.top() - plate.padTop) + 1;
         const int corner = int(band.rect.left()) + 1;
         const int inside = int(band.rect.left() + plate.radius + 4);
         if (y < 0 || y >= shot.height() || inside >= shot.width()) continue;
@@ -293,26 +348,27 @@ void checkCornersAreRound(Peek& editor) {
     }
 }
 
-// --- полоска не темнее подложки ---------------------------------------------
+// --- полоска не отличается от подложки ---------------------------------------
 //
-// Цвета у обеих полупрозрачные, и нарисованные одна поверх другой они дают
-// удвоенную плотность: полоска выходит темнее подложки при одинаковых цветах в
-// конфиге. Владелец заметил это глазами дважды подряд — спрашиваем пикселем.
+// Полоска и подложка — одна заливка, и никакой черты между ними нет (решение
+// владельца). Прежде их красили по отдельности полупрозрачными цветами, и
+// нарисованные внахлёст они давали удвоенную плотность: владелец дважды видел
+// «полоска чуть темнее подложки». Спрашиваем пикселем.
 void checkStripIsNotDarker(Peek& editor) {
     const QVector<zametti::CodeBand> bands = editor.bands();
     if (bands.isEmpty()) return;
     const zametti::CodePlate plate = zametti::codePlate(editor.zoom());
     const QImage shot = editor.grab().toImage();
-    zametti::appearance().codeStripBackground = zametti::appearance().codeBackground;
 
     for (const zametti::CodeBand& band : bands) {
-        if (!band.first) continue;
-        // Точка в полоске и точка в теле плашки — на одной вертикали, подальше
-        // от имени языка и от черты под полоской.
-        const int x = int(band.rect.right() - 40);
-        const int inStrip = int(band.rect.top() - plate.strip / 2);
+        if (!band.last) continue;
+        // Точка в полоске и точка в теле плашки — на одной вертикали, у ЛЕВОГО
+        // края: справа стоят имя языка и кнопка, и попасть в букву значило бы
+        // мерить цвет надписи.
+        const int x = int(band.rect.left() + 20);
+        const int inStrip = int(band.rect.bottom() + plate.strip / 2);
         const int inBody = int(band.rect.top() + band.rect.height() / 2);
-        if (x <= 0 || inStrip <= 0 || inBody >= shot.height()) continue;
+        if (x <= 0 || inBody <= 0 || inStrip >= shot.height()) continue;
         const QRgb strip = shot.pixel(x, inStrip);
         const QRgb body = shot.pixel(x, inBody);
         check(qAbs(qRed(strip) - qRed(body)) <= 1,
@@ -327,13 +383,13 @@ void checkStripIsNotDarker(Peek& editor) {
 // Имя языка и кнопка копирования — органы управления, а не содержание: на
 // странице им делать нечего (решение владельца). Скруглённые углы и поля
 // остаются, поэтому спрашиваем не «плашки нет», а «в полоске пусто»: полоса
-// пикселей над первой строкой кода обязана быть ровной.
+// пикселей под последней строкой кода обязана быть ровной.
 void checkPaperHasNoStrip(Peek& editor) {
     const QVector<zametti::CodeBand> bands = editor.bands();
     const zametti::CodePlate plate = zametti::codePlate(editor.zoom());
     for (const zametti::CodeBand& band : bands) {
-        if (!band.first || band.info.isEmpty()) continue;
-        const QRectF area(0, band.rect.top() - plate.strip - 4, band.rect.right() + 20,
+        if (!band.last || band.info.isEmpty()) continue;
+        const QRectF area(0, band.rect.bottom() - 4, band.rect.right() + 20,
                           plate.strip + 8);
         const QImage sheet = editor.onPaper(area);
 
@@ -360,11 +416,11 @@ void checkPaperHasNoStrip(Peek& editor) {
 // не должно остаться ни одной тёмной точки от прежней надписи.
 void checkEditorHidesOldName(Peek& editor) {
     for (const zametti::CodeBand& band : editor.bands()) {
-        if (!band.first || band.info.isEmpty()) continue;   // блок С языком
+        if (!band.last || band.info.isEmpty()) continue;   // блок С языком
         const QRectF where = editor.langRect(band);
         if (where.isEmpty()) continue;
         const QRect strip = where.translated(0, -editor.verticalScrollBar()->value()).toRect();
-        zametti::LanguageEditor* field = editor.editCodeLanguage(band.blockNumber, strip);
+        zametti::LanguageEditor* field = editor.editCodeLanguage(band.firstBlockNumber, strip);
         if (field == nullptr) return;
         field->clear();   // имя стёрли — от прежнего не должно остаться следа
         QTest::qWait(40);
@@ -407,11 +463,11 @@ void checkEditorHidesOldName(Peek& editor) {
 
 void shootLanguageEditor(Peek& editor) {
     for (const zametti::CodeBand& band : editor.bands()) {
-        if (!band.first || !band.info.isEmpty()) continue;   // блок БЕЗ языка
+        if (!band.last || !band.info.isEmpty()) continue;   // блок БЕЗ языка
         const QRectF where = editor.langRect(band);
         if (where.isEmpty()) continue;
         const QRect strip = where.translated(0, -editor.verticalScrollBar()->value()).toRect();
-        zametti::LanguageEditor* field = editor.editCodeLanguage(band.blockNumber, strip);
+        zametti::LanguageEditor* field = editor.editCodeLanguage(band.firstBlockNumber, strip);
         if (field == nullptr) return;
         QTest::keyClicks(field, QStringLiteral("p"));
         QTest::qWait(30);
@@ -438,8 +494,8 @@ void checkStripSurvivesPartialRepaint(Peek& editor) {
     const QVector<zametti::CodeBand> bands = editor.bands();
     const zametti::CodePlate plate = zametti::codePlate(editor.zoom());
     for (const zametti::CodeBand& band : bands) {
-        if (!band.first || band.info.isEmpty()) continue;
-        const int top = int(band.rect.top() - plate.strip) - editor.verticalScrollBar()->value();
+        if (!band.last || band.info.isEmpty()) continue;
+        const int top = int(band.rect.bottom()) - editor.verticalScrollBar()->value();
         if (top < 0 || top + int(plate.strip) >= editor.viewport()->height()) continue;
 
         // Полоса РОВНО в высоту полоски: текста блока в ней нет ни пикселя.
@@ -511,6 +567,7 @@ void shots(int width, int height, const QString& tag, bool checks) {
     if (checks) {
         checkStripIsNotText(editor);
         checkPlateGeometry(editor);
+        checkBuilderReservesStrip();
         checkCornersAreRound(editor);
         checkStripIsNotDarker(editor);
         checkPaperHasNoStrip(editor);

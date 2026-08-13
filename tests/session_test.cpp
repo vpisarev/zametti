@@ -49,6 +49,7 @@ int main(int argc, char** argv) {
     out.windowGeometry = QByteArray("геометрия", 18);
     out.panelsHidden = true;
     out.exportDir = QStringLiteral("/tmp/куда-вывозили");
+    out.diffPlainView = true;
     zametti::saveSession(out);
 
     const QString path = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) +
@@ -73,6 +74,9 @@ int main(int argc, char** argv) {
     // Каталог вывоза переживает перезапуск: начинать каждый раз с «Документов»
     // — значит каждый раз идти по дереву каталогов заново (замечание владельца).
     ZT_EQ("каталог вывоза", s(out.exportDir), s(back.exportDir));
+    // Вид разности — тоже привычка человека, а не свойство заметки: кто читает
+    // разность как markdown, читает её так всегда (просьба владельца).
+    ZT_EQ("вид разности", b(out.diffPlainView), b(back.diffPlainView));
 
     // Умолчание важно не меньше: у человека, который запускает программу
     // впервые, файла нет вовсе, и панели обязаны быть на месте.
@@ -80,6 +84,7 @@ int main(int argc, char** argv) {
     const zametti::Session fresh = zametti::loadSession();
     ZT_EQ("без файла панели на месте", b(false), b(fresh.panelsHidden));
     ZT_EQ("без файла зум единичный", std::to_string(1.0), std::to_string(fresh.zoom));
+    ZT_EQ("без файла разность полосками", b(false), b(fresh.diffPlainView));
 
     return zt::report("session");
 }

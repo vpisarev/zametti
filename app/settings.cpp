@@ -127,12 +127,11 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("codeIndent"), a.codeIndent},
         {QStringLiteral("codePadLeft"), a.codePadLeft},
         {QStringLiteral("codeStripHeight"), a.codeStripHeight},
-        {QStringLiteral("codePadBottom"), a.codePadBottom},
+        {QStringLiteral("codePadTop"), a.codePadTop},
         {QStringLiteral("codeCornerRadius"), a.codeCornerRadius},
         {QStringLiteral("codeLangPointSize"), a.codeLangPointSize},
         {QStringLiteral("codeStripPadding"), a.codeStripPadding},
-        {QStringLiteral("codeStripRuleWidth"), a.codeStripRuleWidth},
-        {QStringLiteral("codeStripRuleInset"), a.codeStripRuleInset},
+        {QStringLiteral("codeLangGap"), a.codeLangGap},
         {QStringLiteral("quoteIndent"), a.quoteIndent},
         {QStringLiteral("sideMargin"), a.sideMargin},
         {QStringLiteral("verticalMargin"), a.verticalMargin},
@@ -154,8 +153,6 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("rawSource"), colorToString(a.rawColor)},
         {QStringLiteral("divider"), colorToString(a.dividerColor)},
         {QStringLiteral("codeBackground"), colorToString(a.codeBackground)},
-        {QStringLiteral("codeStripBackground"), colorToString(a.codeStripBackground)},
-        {QStringLiteral("codeStripRule"), colorToString(a.codeStripRule)},
         {QStringLiteral("codeLang"), colorToString(a.codeLangColor)},
         {QStringLiteral("caret"), colorToString(a.caretColor)},
     };
@@ -374,12 +371,11 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readReal(layout, "codeIndent", a.codeIndent);
     readReal(layout, "codePadLeft", a.codePadLeft);
     readReal(layout, "codeStripHeight", a.codeStripHeight);
-    readReal(layout, "codePadBottom", a.codePadBottom);
+    readReal(layout, "codePadTop", a.codePadTop);
     readReal(layout, "codeCornerRadius", a.codeCornerRadius);
     readReal(layout, "codeLangPointSize", a.codeLangPointSize);
     readReal(layout, "codeStripPadding", a.codeStripPadding);
-    readReal(layout, "codeStripRuleWidth", a.codeStripRuleWidth);
-    readReal(layout, "codeStripRuleInset", a.codeStripRuleInset);
+    readReal(layout, "codeLangGap", a.codeLangGap);
     readReal(layout, "quoteIndent", a.quoteIndent);
     readReal(layout, "sideMargin", a.sideMargin);
     readReal(layout, "verticalMargin", a.verticalMargin);
@@ -400,8 +396,6 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readColor(colors, "rawSource", a.rawColor);
     readColor(colors, "divider", a.dividerColor);
     readColor(colors, "codeBackground", a.codeBackground);
-    readColor(colors, "codeStripBackground", a.codeStripBackground);
-    readColor(colors, "codeStripRule", a.codeStripRule);
     readColor(colors, "codeLang", a.codeLangColor);
     readColor(colors, "caret", a.caretColor);
 
@@ -609,13 +603,12 @@ CodePlate codePlate(qreal zoom) {
 
     CodePlate plate;
     plate.strip = std::round(g_appearance.codeStripHeight * lineUnit);
-    plate.padBottom = std::round(g_appearance.codePadBottom * lineUnit);
+    plate.padTop = std::round(g_appearance.codePadTop * lineUnit);
     plate.padLeft = g_appearance.codePadLeft * charUnit;
     plate.indent = g_appearance.codeIndent * charUnit;
     plate.radius = g_appearance.codeCornerRadius * zoom;
     plate.stripPadding = g_appearance.codeStripPadding * charUnit;
-    plate.ruleWidth = g_appearance.codeStripRuleWidth * zoom;
-    plate.ruleInset = g_appearance.codeStripRuleInset * charUnit;
+    plate.langGap = g_appearance.codeLangGap * charUnit;
     return plate;
 }
 
@@ -895,6 +888,7 @@ Session loadSession() {
         root.value(QStringLiteral("splitterState")).toString().toLatin1());
     session.panelsHidden = root.value(QStringLiteral("panelsHidden")).toBool(false);
     session.exportDir = root.value(QStringLiteral("exportDir")).toString();
+    session.diffPlainView = root.value(QStringLiteral("diffPlainView")).toBool(false);
     for (const QJsonValue& v : root.value(QStringLiteral("expandedDirs")).toArray())
         if (v.isString()) session.expandedDirs.append(v.toString());
     for (const QJsonValue& v : root.value(QStringLiteral("searchHistory")).toArray())
@@ -921,6 +915,7 @@ void saveSession(const Session& session) {
                    QString::fromLatin1(session.splitterState.toBase64())},
                   {QStringLiteral("panelsHidden"), session.panelsHidden},
                   {QStringLiteral("exportDir"), session.exportDir},
+                  {QStringLiteral("diffPlainView"), session.diffPlainView},
                   {QStringLiteral("expandedDirs"), expanded},
                   {QStringLiteral("searchHistory"), searches},
               });

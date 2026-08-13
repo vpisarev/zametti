@@ -253,11 +253,13 @@ qreal blockTopMargin(Kind kind, bool raw, bool previousIsVSpace, bool first) {
 
 qreal blockTopMarginPx(Kind kind, bool raw, bool previousIsVSpace, bool first,
                        bool continuation, qreal lineUnit, qreal zoom) {
-    // Строки одного литерального блока стоят вплотную: полоска и отбивка есть
+    // Строки одного литерального блока стоят вплотную: воздух и отбивка есть
     // только у первой.
     if (continuation) return 0.0;
     qreal margin = blockTopMargin(kind, raw, previousIsVSpace, first) * lineUnit;
-    if (!raw && kind == Kind::Code) margin += codePlate(zoom).strip;
+    // Сверху у плашки только воздух под скругление: полоска с языком и кнопкой
+    // висит снизу, в нижнем поле последней строки блока.
+    if (!raw && kind == Kind::Code) margin += codePlate(zoom).padTop;
     return margin;
 }
 
@@ -423,13 +425,13 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     }
 
     // Полоска с языком живёт НЕ в тексте, а в поле блока: резерв под неё —
-    // верхнее поле первой строки блока кода, поле снизу — нижнее у последней
-    // (ставится в цикле по строкам). Рисует в этом резерве note_view.cpp теми
-    // же величинами. Резерв не зависит от того, задан язык или нет: пустая
-    // полоска — это ряд, в котором стоит кнопка копирования.
+    // НИЖНЕЕ поле последней строки блока кода (ставится в цикле по строкам), а
+    // верхнее поле первой — воздух под скругление. Рисует в этом резерве
+    // note_view.cpp теми же величинами. Резерв не зависит от того, задан язык
+    // или нет: пустая полоска — это ряд, в котором стоит кнопка копирования.
     const bool code = !raw && b.kind == Kind::Code;
     // Первому блоку документа отбивка не нужна (над ним поле страницы), а вот
-    // резерв под полоску нужен и ему — это и делает blockTopMarginPx.
+    // воздух над плашкой нужен и ему — это и делает blockTopMarginPx.
     blockFmt.setTopMargin(
         blockTopMarginPx(b.kind, raw, prevVSpace, first, false, ctx.lineUnit, ctx.zoom));
     blockFmt.setBottomMargin(0);
@@ -461,7 +463,10 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
         }
         if (line + 1 == count && trailingNewline)
             lineFmt.setProperty(TrailingNewlineProperty, true);
-        if (code && line + 1 == count) lineFmt.setBottomMargin(ctx.plate.padBottom);
+        // Полоска блока кода — это НИЖНЕЕ ПОЛЕ последней его строки. Qt между
+        // соседями берёт из двух полей максимум, и меньше полоски зазор стать
+        // не может: следующий блок в неё не въедет.
+        if (code && line + 1 == count) lineFmt.setBottomMargin(ctx.plate.strip);
         // Язык стоит на каждой строке, хотя читатель берёт его с первой:
         // иначе удаление первой строки роняло бы язык всего блока. Лишних
         // форматов это не плодит — значение у всех строк одно, а

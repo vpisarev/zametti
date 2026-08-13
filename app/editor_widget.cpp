@@ -44,6 +44,7 @@
 #include <QTextDocument>
 #include <QTextDocumentFragment>
 
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
@@ -1873,7 +1874,18 @@ LanguageEditor* NoteEditor::editCodeLanguage(int firstBlockNumber, const QRect& 
     languageEditor_->setFont(codeLangFont(zoom()));
     // Пока правят — своя надпись не рисуется, чтобы под полем ничего не было.
     setEditedCodeLanguage(firstBlockNumber);
-    languageEditor_->setGeometry(strip);
+    // Поле ввода прижато ВПРАВО, к кнопке копирования. Место под имя языка —
+    // вся полоска до кнопки (по ней ловится щелчок, и у блока без языка целить
+    // больше некуда), а сама надпись нарисована у правого края: поле во всю
+    // полоску начиналось бы далеко левее неё, и буквы прыгали бы при входе в
+    // правку. Внутри поля текст остаётся прижатым влево — серое дополнение
+    // дописывается справа от каретки, и правому выравниванию ему расти некуда.
+    QRect box = strip;
+    const int want =
+        qMax(1, int(std::round(
+                   QFontMetricsF(codeLangFont(zoom())).horizontalAdvance(QLatin1Char('A')) * 12)));
+    if (box.width() > want) box.setLeft(box.right() - want);
+    languageEditor_->setGeometry(box);
     languageEditor_->show();
     languageEditor_->setFocus(Qt::MouseFocusReason);
 

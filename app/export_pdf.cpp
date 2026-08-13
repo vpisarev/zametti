@@ -305,7 +305,7 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
         if (!paper.codeFamily.isEmpty()) a.codeFamily = paper.codeFamily;
         if (paper.codePointSize > 0.0) a.codePointSize = paper.codePointSize;
         a.headingScale = paper.headingScale;
-        // И полоска блока кода: на бумаге от неё остаётся только поле сверху,
+        // И полоска блока кода: на бумаге от неё остаётся только поле снизу,
         // чтобы плашка выглядела как на экране — со скруглением и воздухом, но
         // без имени языка и кнопки копирования.
         a.codeStripHeight = paper.codeStripHeight;

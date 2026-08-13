@@ -1,6 +1,8 @@
 // Снимки таблиц: то, что владелец проверяет глазами.
 #include "editor_widget.h"
 #include "block_object.h"
+#include "document_builder.h"
+#include "parser.h"
 #include "note_view.h"
 #include "settings.h"
 #include "test_util.h"
@@ -589,6 +591,62 @@ void checkFilesUntouched(const QStringList& sources) {
     }
 }
 
+// ТАБЛИЦА НА ЧУЖОМ ФОНЕ.
+//
+// Под сеткой остаётся видимой последняя строка исходника, и вид закрывает её
+// заливкой. Красили её «цветом страницы» из облика — а в окне About тот же
+// вьюер показывает справку, палитру ему не правят, и под каждой таблицей
+// вылезало молочное пятно (заметил владелец). Тот же промах был бы в режиме
+// истории, где поле пожелтевшее.
+//
+// Проверка ставит виду заведомо ЧУЖОЙ фон и требует, чтобы цвета страницы из
+// облика на месте таблицы не осталось ни точки.
+void checkTableOnForeignBackground() {
+    zametti::NoteView view;
+    view.setReadOnly(true);
+    const QColor paper(0x30, 0x60, 0x90);
+    QPalette colours = view.palette();
+    colours.setColor(QPalette::Base, paper);
+    view.setPalette(colours);
+    view.resize(800, 500);
+    view.show();
+    QTest::qWait(20);
+
+    auto* document = new QTextDocument(&view);
+    zametti::buildDocument(zametti::parse("| a | b |\n|---|---|\n| 1 | 2 |\n"), *document,
+                           view.zoom());
+    view.setDocument(document);
+    view.applyContentWidth();
+    view.syncTables();
+    QTest::qWait(60);
+
+    int first = -1;
+    for (QTextBlock b = document->firstBlock(); b.isValid(); b = b.next())
+        if (view.tableAt(b.blockNumber()) != nullptr) { first = b.blockNumber(); break; }
+    ++zt::g_checks;
+    if (first < 0) {
+        ++zt::g_failures;
+        std::printf("провал: таблица на чужом фоне не показана сеткой\n");
+        return;
+    }
+
+    const QRectF area = view.tableRect(first);
+    const QImage shot = view.grab().toImage();
+    const QColor page = zametti::appearance().pageBackground;
+    int stale = 0;
+    for (int px = int(area.left()); px < int(area.right()) && px < shot.width(); ++px)
+        for (int py = int(area.top()); py < int(area.bottom()) && py < shot.height(); ++py) {
+            if (px < 0 || py < 0) continue;
+            if (shot.pixelColor(px, py) == page) ++stale;
+        }
+    ++zt::g_checks;
+    if (stale > 0) {
+        ++zt::g_failures;
+        std::printf("провал: под таблицей осталось %d точек цвета страницы из облика "
+                    "вместо фона вида\n", stale);
+    }
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     g_dir = argc > 1 ? QString::fromLocal8Bit(argv[1]) : QDir::tempPath();
@@ -598,6 +656,7 @@ int main(int argc, char** argv) {
     checkFlip();
     checkMouse();
     checkEditProtocol();
+    checkTableOnForeignBackground();
 
     QStringList sources;
     for (int i = 2; i < argc; ++i) sources << QString::fromLocal8Bit(argv[i]);
