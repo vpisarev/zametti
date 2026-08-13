@@ -286,6 +286,45 @@ void takeImageAttribute(const QString& field, qreal& width, ImageAlign& align) {
 
 BlockFormulaRef blockFormulaRef(const QTextBlock& block) {
     if (!block.isValid() || isRawBlock(block)) return {};
+    // ВЫКЛЮЧНАЯ ФОРМУЛА — ЦЕЛЫЙ БЛОК (решение владельца: строчная спаном,
+    // выключная объектом). Текст блока и есть её исходник вместе с долларами,
+    // разметки внутри нет: спрашивать спаны незачем.
+    if (kindOf(block) == Kind::Math) {
+        QString source;
+        for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            if (!fragment.isValid()) continue;
+            QString piece = fragment.text();
+            switch (fragment.charFormat().intProperty(BreakSourceProperty)) {
+                case BreakCarriageReturn:
+                    piece.replace(QChar::LineSeparator, QLatin1Char('\r'));
+                    break;
+                case BreakParagraph:
+                    piece.replace(QChar::LineSeparator, QChar(QChar::ParagraphSeparator));
+                    break;
+                default:
+                    piece.replace(QChar::LineSeparator, QLatin1Char('\n'));
+                    break;
+            }
+            source += piece;
+        }
+        if (source.isEmpty()) return {};
+        const std::string bytes = source.toStdString();
+        const std::vector<MathSpan> found = scanMath(bytes);
+        if (found.size() != 1 || found.front().start != 0 ||
+            size_t(found.front().end) != bytes.size())
+            return {};   // правкой формулу разорвали — это уже не формула
+        const int skip = found.front().display ? 2 : 1;
+        BlockFormulaRef ref;
+        ref.source = source;
+        ref.latex = source.mid(skip, source.size() - 2 * skip);
+        // Блоком показывается ВЫКЛЮЧНАЯ формула, даже если долларов по одному:
+        // отдельной строкой её так и задумывал автор, и все читалки показывают
+        // её выключной.
+        ref.display = true;
+        ref.valid = true;
+        return ref;
+    }
     if (kindOf(block) != Kind::Paragraph) return {};
 
     // Абзац ЦЕЛИКОМ — одна формула. Формула в середине текста объектом не

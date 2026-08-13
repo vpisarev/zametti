@@ -998,14 +998,21 @@ std::string serialize(const Document& doc, std::vector<BlockLines>* map) {
                 // вместе с долларами: ни разметки, ни экранирования внутри нет,
                 // писать нечего, кроме самих байтов. Внутри пункта списка
                 // отступ до колонки содержимого — как у блока кода.
+                // ОТСТУП ТОЛЬКО ПЕРВОЙ СТРОКЕ. Текст блока — дословный
+                // исходник, и у строк продолжения СВОИ ведущие пробелы уже
+                // внутри него: маркер пункта съел отступ только у первой.
+                // Приписав отступ каждой, я удваивал его на каждой записи —
+                // `  a &= b` становилось `    a &= b` (поймал набор корпуса).
                 const std::string pad(indentInsideItem(b, contentCol), ' ');
+                bool firstLine = true;
                 for (size_t at = 0; at < body.size();) {
                     size_t end = body.find('\n', at);
                     if (end == std::string_view::npos) end = body.size();
                     if (end > at) {
-                        out += pad;
+                        if (firstLine) out += pad;
                         out.append(body, at, end - at);
                     }
+                    firstLine = false;
                     out.push_back('\n');
                     at = end + 1;
                 }

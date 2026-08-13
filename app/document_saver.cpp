@@ -297,6 +297,10 @@ Block withEdgesNormalised(Document& doc, Block block) {
         }
         return block;
     }
+    // ФОРМУЛА ЛИТЕРАЛЬНА, как код: ни ведущие пробелы в неразрывные, ни
+    // хвостовые прочь. Это то самое правило, под которое она попадала спаном и
+    // из-за которого заметка владельца уехала в файл с U+00A0.
+    if (block.kind == Kind::Math) return block;
     if (block.raw) return block;
 
     const std::string_view text = doc.text(block);

@@ -35,11 +35,21 @@ void roundTrip(const std::string& what, const std::string& source) {
     ZT_EQ(what, source, serialize(parse(source)));
 }
 
-// Все формулы документа: текст спана как есть, через «|».
+// Все формулы документа: текст как есть, через «|».
+//
+// Формула бывает ДВУХ ВИДОВ, и оба здесь: строчная — спан внутри абзаца,
+// выключная — целый блок (Kind::Math). Это решение владельца: «inline —
+// спан, display — объект». Блоку так же принадлежит литеральный исходник
+// вместе с долларами, поэтому и спрашиваются они одинаково.
 std::string mathSpans(const Document& doc) {
     std::string out;
     for (const zametti::Block& b : doc.blocks) {
         if (b.raw) continue;
+        if (b.kind == zametti::Kind::Math) {
+            if (!out.empty()) out += "|";
+            out += std::string(doc.text(b));
+            continue;
+        }
         for (const Inline& s : doc.inlines(b)) {
             if (!s.math()) continue;
             if (!out.empty()) out += "|";
@@ -232,11 +242,11 @@ void checkCorpus(const std::string& path) {
     int expressed = 0;
     for (const zametti::Block& b : doc.blocks) {
         if (b.raw) continue;
+        if (b.kind == zametti::Kind::Math) { ++expressed; continue; }
         for (const Inline& s : doc.inlines(b))
             if (s.math()) ++expressed;
     }
-    ZT_EQ("все формулы корпуса выражены спанами", std::to_string(98),
-          std::to_string(expressed));
+    ZT_EQ("все формулы корпуса выражены", std::to_string(98), std::to_string(expressed));
 }
 
 }  // namespace

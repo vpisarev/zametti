@@ -1518,6 +1518,34 @@ std::string maskDisplayMath(std::string_view text) {
     return masked;
 }
 
+
+// АБЗАЦ, КОТОРЫЙ ЦЕЛИКОМ ЯВЛЯЕТСЯ ФОРМУЛОЙ, — не абзац, а блок-формула.
+//
+// Решение владельца: строчная формула остаётся спаном, выключная становится
+// объектом. У блока два следствия, и оба нужны:
+//
+//   * литеральное литерально. Спан внутри абзаца попадал под правила
+//     нормализации абзацев, и одно из них (ведущие пробелы → неразрывные)
+//     молча испортило владельцу заметку — матрица уехала в файл с U+00A0;
+//   * объектом на экране становится ровно то, что и должно: формула целиком, а
+//     не строка текста, в которой она случайно оказалась одна.
+//
+// Одиночные доллары сюда тоже попадают: `$f(x) = …$` отдельной строкой — это
+// выключная формула по замыслу автора, и всеми читалками она показывается
+// именно так. БАЙТЫ ПРИ ЭТОМ НЕ МЕНЯЮТСЯ: текст блока — тот же исходник с теми
+// же долларами, и запись отдаёт его дословно.
+void liftMath(Document& doc) {
+    for (Block& b : doc.blocks) {
+        if (b.raw || b.kind != Kind::Paragraph) continue;
+        const std::span<const Inline> spans = doc.inlines(b);
+        if (spans.size() != 1 || !spans[0].math()) continue;
+        // Формула — весь текст блока, без хвостов по краям.
+        if (spans[0].text.start != 0 || spans[0].text.end != b.text.size()) continue;
+        b.kind = Kind::Math;
+        b.inlines = Range{};
+    }
+}
+
 Document parse(std::string_view markdown) {
     Ctx c;
     const std::string masked = maskDisplayMath(markdown);
@@ -1558,6 +1586,7 @@ Document parse(std::string_view markdown) {
     finishExtents(c);
     Document result = std::move(c.ir);
     result.blocks = std::move(c.doc);
+    liftMath(result);
     liftMeta(result);
     result.validate();
     return result;

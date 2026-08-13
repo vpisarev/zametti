@@ -47,9 +47,8 @@ BlockObject objectOf(const QTextBlock& block) {
     if (blockImageRef(block).valid)
         return {ObjectKind::Image, block.blockNumber(), block.blockNumber()};
 
-    // Выключная формула — абзац, который целиком является формулой. Спрашиваем
-    // МОДЕЛЬ (тот же канон, что и в ядре), а не вид: показана она сейчас
-    // вёрсткой или исходником — дело вида.
+    // Выключная формула — целый блок (Kind::Math). Спрашиваем МОДЕЛЬ, а не вид:
+    // показана она сейчас вёрсткой или исходником — дело вида.
     if (const BlockFormulaRef formula = blockFormulaRef(block);
         formula.valid && formula.display)
         return {ObjectKind::Formula, block.blockNumber(), block.blockNumber()};
