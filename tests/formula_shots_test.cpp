@@ -142,10 +142,12 @@ void checkRendered(int width, const QString& name) {
                 std::to_string(int(rightGap)),
             std::abs(leftGap - rightGap) < 0.25 * editor->viewport()->width());
 
-    // ИСХОДНИК НЕ ПРОСТУПАЕТ. Строка под вёрсткой закрашена фоном, и полоса
-    // СЛЕВА от вёрстки (там, где начинался бы текст `$$\frac{a}{b}$$`) обязана
-    // быть чистой. Именно этой беды я и ждал: у картинок текст ссылки
-    // выглядывал из-под фотографии синей полосой.
+    // ИСХОДНИКА НА ЭКРАНЕ НЕТ ВОВСЕ. Он не закрашен фоном поверх — он погашен:
+    // рисовать текст, чтобы тут же закрыть его картинкой, незачем, и следы
+    // `$$…$$` при прокрутке брались именно оттуда (владелец: «зачем ты
+    // рендеришь latex-текст, а потом стираешь фон и рисуешь поверх формулу?»).
+    // Полоса СЛЕВА от вёрстки — там, где начинался бы текст, — обязана быть
+    // чистой.
     if (leftGap > 12) {
         const QRectF stripe(0, box.top(), leftGap - 4, box.height());
         ZT_TRUE("слева от вёрстки исходник не проступает",
@@ -324,6 +326,54 @@ void checkTypingDoesNotEnterFormula() {
     delete editor;
 }
 
+// --- выделение и двойной щелчок не проявляют исходник ------------------------
+//
+// Владелец: «по двойному щелчку появляются странные буквы сбоку, каждый раз
+// разные». Разные — потому что двойной щелчок выделяет каждый раз своё слово, а
+// ВЫДЕЛЕННЫЙ текст Qt рисует своим цветом, не спрашивая наш: погашенный
+// исходник проступает из-под вёрстки.
+void checkSelectionDoesNotRevealSource() {
+    zametti::NoteEditor* editor = openNote(QStringLiteral("выделение"), 900, 700,
+                                           "до\n\n$$\\frac{a}{b}$$\n\nпосле\n");
+    const int first = firstFormula(*editor);
+    ZT_TRUE("формула показана", first >= 0);
+    if (first < 0) {
+        delete editor;
+        return;
+    }
+    const QRectF box = editor->formulaRect(first);
+    const int scroll = editor->verticalScrollBar()->value();
+    const qreal dpr = editor->devicePixelRatioF();
+
+    // Выделяем весь блок формулы — как это делает мышь протяжкой.
+    QTextCursor at(editor->document()->findBlockByNumber(first));
+    at.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+    editor->setTextCursor(at);
+    QTest::qWait(40);
+    const QImage shot = editor->grab().toImage();
+    if (!shot.save(QDir(g_dir).filePath(QStringLiteral("выделение.png"))))
+        std::printf("НЕ СОХРАНИЛСЯ снимок выделения\n");
+
+    // Справа от вёрстки — там, где тянулся бы исходник, — чисто.
+    const qreal right = editor->viewport()->width() - box.right() - 8;
+    if (right > 20) {
+        const QRectF beyond(box.right() + 4, box.top(), right, box.height());
+        ZT_TRUE("под выделением исходник не проступает",
+                inkIn(shot, beyond, scroll, dpr) == 0);
+    }
+
+    // ДВОЙНОЙ ЩЕЛЧОК ПО ФОРМУЛЕ — это правка её исходника, как у таблицы, а не
+    // выделение слова в невидимом тексте.
+    const QPoint middle(int(box.center().x()), int(box.center().y()) - scroll);
+    QTest::mouseDClick(editor->viewport(), Qt::LeftButton, Qt::NoModifier, middle);
+    QTest::qWait(60);
+    ZT_EQ("двойной щелчок открыл правку", std::to_string(first),
+          std::to_string(editor->editedFormula()));
+    ZT_TRUE("и выделения в ней не осталось", !editor->textCursor().hasSelection());
+
+    delete editor;
+}
+
 // --- флип: Enter показывает исходник, уход каретки — вёрстку ----------------
 
 void checkFlip() {
@@ -481,6 +531,7 @@ int main(int argc, char** argv) {
     checkRendered(620, QStringLiteral("формулы-узкое"));
     checkCornersOnSelected();
     checkFormulaFitsItsBlock();
+    checkSelectionDoesNotRevealSource();
     checkTypingDoesNotEnterFormula();
     checkFlip();
     checkEditChangesFormula();

@@ -366,6 +366,17 @@ if(TARGET zametti-view)
                  ${CMAKE_CURRENT_BINARY_DIR}/архив-редактор)
         set_tests_properties(archive-editor PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+        # Геометрия блоков: сколько места занимает каждый объект. Требование
+        # владельца после дня, в котором место под объект просили три куска
+        # кода, каждый по-своему.
+        add_executable(block_geometry_test block_geometry_test.cpp)
+        target_link_libraries(block_geometry_test PRIVATE zametti-widgets Qt6::Test
+                              zametti-warnings)
+        target_include_directories(block_geometry_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        add_test(NAME block-geometry COMMAND block_geometry_test
+                 ${CMAKE_CURRENT_BINARY_DIR}/геометрия)
+        set_tests_properties(block-geometry PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
         # Каретка и обычные нажатия: стрелки по всем видам блоков, буквы,
         # «заметка от открытия не растёт». Требование владельца после дня, в
         # котором каждая беда была не хитрым краем, а обычным действием.

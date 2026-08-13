@@ -1287,6 +1287,36 @@ void NoteView::syncFormulas() {
         }
     }
     formulas_ = fresh;
+
+    // ИСХОДНИК НЕ РИСУЕМ ВОВСЕ. Прежде я закрашивал его фоном и клал вёрстку
+    // сверху — приём фотографии, где иначе нельзя: там блок обязан держать
+    // ссылку на файл. У блока-формулы держать нечего: весь его текст и есть
+    // исходник, и если формула показана вёрсткой, рисовать его незачем.
+    //
+    // Владелец спросил ровно это: «зачем ты рендеришь latex-текст, потом
+    // стираешь фон и рисуешь поверх формулу?» — и был прав: от закраски
+    // оставались следы `$$…$$` при прокрутке, потому что закраска и текст
+    // живут в разных перерисовках.
+    //
+    // Гасим цветом: прятать блок целиком (setVisible) нельзя — вместе с ним
+    // пропадёт и место, на котором стоит вёрстка.
+    const bool wasChanging = changingLayout_;
+    changingLayout_ = true;
+    int dirtyFrom = -1;
+    int dirtyTo = -1;
+    for (QTextBlock block = document()->begin(); block.isValid(); block = block.next()) {
+        if (kindOf(block) != Kind::Math) continue;
+        const bool hide = formulas_.contains(block.blockNumber());
+        QTextCursor cursor(block);
+        cursor.select(QTextCursor::BlockUnderCursor);
+        QTextCharFormat fmt;
+        fmt.setForeground(hide ? QColor(Qt::transparent) : palette().color(QPalette::Text));
+        cursor.mergeCharFormat(fmt);
+        if (dirtyFrom < 0) dirtyFrom = block.position();
+        dirtyTo = block.position() + block.length();
+    }
+    if (dirtyFrom >= 0) document()->markContentsDirty(dirtyFrom, dirtyTo - dirtyFrom);
+    changingLayout_ = wasChanging;
 }
 
 // ОДИН ВОПРОС НА ВСЕ ОБЪЕКТЫ. Показан ли объект вместо своего исходника —
@@ -1353,32 +1383,29 @@ void NoteView::paintFormula(QPainter& painter, const QTextBlock& block) {
     if (layout == nullptr) return;
 
     painter.save();
-    // Строка хитро-отрисованная, как у фотографии: исходник закрашивается
-    // фоном, вёрстка встаёт на его место.
+    // Закрашивать нечего: исходник блока-формулы погашен прозрачным цветом в
+    // syncFormulas — его просто нет на экране.
+    //
+    // КРОМЕ ОДНОГО СЛУЧАЯ: выделения. Выделенный текст Qt рисует СВОИМ цветом,
+    // не спрашивая наш, — и погашенный исходник проступает из-под вёрстки
+    // случайными буквами сбоку (владелец: «появляются странные буквы сбоку,
+    // каждый раз разные» — разные потому, что двойной щелчок выделяет разное
+    // слово). Здесь и только здесь закрашиваем строку фоном.
     const QTextFrameFormat root = document()->rootFrame()->frameFormat();
     const qreal available = viewport()->width() - root.leftMargin() - root.rightMargin() -
                             block.blockFormat().leftMargin();
-    // ДВЕ РАЗНЫЕ ВЫСОТЫ, и путать их нельзя — на этом обжёгся ещё показ
-    // картинок, и я наступил туда же. boundingRect() отдаёт высоту, которую
-    // раскладка ПОСЧИТАЛА, а блоку назначена своя (lineHeight): при кегле 11
-    // это 20 против 22. Закрасив меньшую, я оставил от исходника нижние
-    // половинки букв — на снимке они читались призрачным пунктиром слева от
-    // вёрстки.
-    const qreal assigned = block.blockFormat().lineHeight();
-    const int lines = layout->lineCount() > 0 ? layout->lineCount() : 1;
-    const qreal textHeight = assigned > 0
-                                 ? qMax(layout->boundingRect().height(), lines * assigned)
-                                 : layout->boundingRect().height();
-    // И ВВЕРХ ТОЖЕ. Строке блока-формулы назначена высота вёрстки, а она бывает
-    // НИЖЕ обычной строки текста: у многострочной `\begin{aligned}` исходник
-    // выше своей картинки. Тогда Qt ставит буквы в тесную строку, и их верхушки
-    // торчат выше её прямоугольника — на снимке от исходника оставались две
-    // точки над формулой. Закрашиваем на эту разницу больше.
+    // Прямоугольник строки нужен только рамке ошибки: у неё есть текст, и он
+    // рисуется нами, а не Qt.
     const qreal natural = QFontMetricsF(baseFontFor(zoom_)).height();
-    const qreal spill = assigned > 0 ? qMax(0.0, natural - assigned) : 0.0;
-    const QRectF line(layout->position().x(), layout->position().y() - spill,
-                      qMax(available, layout->boundingRect().width()), textHeight + spill);
-    painter.fillRect(line.adjusted(-2, 0, 2, 1), pageColour());
+    const QRectF line(layout->position().x(), layout->position().y(),
+                      qMax(available, layout->boundingRect().width()),
+                      qMax(natural, layout->boundingRect().height()));
+
+    const QTextCursor caret = textCursor();
+    const bool touched = caret.hasSelection() &&
+                         qMin(caret.anchor(), caret.position()) < block.position() + block.length() &&
+                         qMax(caret.anchor(), caret.position()) > block.position();
+    if (touched) painter.fillRect(line.adjusted(-2, 0, 2, 1), pageColour());
 
     const QRectF box = formulaRect(block.blockNumber());
     if (!render->error.isEmpty() || render->image.isNull()) {
@@ -1409,12 +1436,7 @@ void NoteView::paintFormula(QPainter& painter, const QTextBlock& block) {
     // полоска в углу вёрстки человеку ничего не говорит, и выходит, что слой
     // объекта вроде бы есть, а на экране его нет (владелец так и прочитал:
     // «ничего из этого не работает»).
-    const QTextCursor cursor = textCursor();
-    const bool selected =
-        cursor.hasSelection()
-            ? qMin(cursor.anchor(), cursor.position()) < block.position() + block.length() &&
-                  qMax(cursor.anchor(), cursor.position()) > block.position()
-            : cursor.block() == block;
+    const bool selected = caret.hasSelection() ? touched : caret.block() == block;
     if (selected && exportRatio_ <= 0.0 && block.blockNumber() != editedFormula_) {
         // С небольшим отступом наружу: уголки, впритык обнимающие дробь,
         // читаются как часть формулы, а не как «выбрано».
@@ -1711,6 +1733,19 @@ void NoteView::mouseDoubleClickEvent(QMouseEvent* event) {
     // целились. Одинарный только выбирает таблицу (см. mousePressEvent).
     if (event->button() == Qt::LeftButton && !isReadOnly()) {
         const QPointF at = toDocument(event->position().toPoint());
+        // ПО ФОРМУЛЕ — ТО ЖЕ САМОЕ. Без этой ветки двойной щелчок доставался
+        // QTextBrowser, и тот выделял «слово» в погашенном исходнике: на экране
+        // поперёк вёрстки ложилась синяя полоса выделения, а буква, набранная
+        // следом, уходила прямо в LaTeX — запрет на объекте выделение снимает.
+        const int formula = formulaAtPoint(at);
+        if (formula >= 0) {
+            setEditedFormula(formula);
+            QTextCursor caret(document()->findBlockByNumber(formula));
+            caret.movePosition(QTextCursor::EndOfBlock);
+            setTextCursor(caret);
+            event->accept();
+            return;
+        }
         const int position = sourcePositionAt(at);
         if (position >= 0) {
             const int first = tableAtPoint(at);

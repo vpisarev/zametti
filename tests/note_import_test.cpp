@@ -130,8 +130,11 @@ void checkImportIsVisibleOnTop() {
     ZT_EQ("дата создания взята у исходника", std::string("2023-01-01"),
           metaOf(made, "created").substr(0, 10));
     // А дата правки — сегодняшняя: привоз и есть правка этого хранилища.
+    // МЕСТНАЯ дата, а не UTC: времена пишутся с офсетом (этап 15), и сразу
+    // после полуночи по местному времени UTC-дата ещё вчерашняя — проверка
+    // краснела ровно в этот час по своей же ошибке.
     ZT_EQ("дата правки — сегодняшняя",
-          s(QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyy-MM-dd"))),
+          s(QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd"))),
           metaOf(made, "modified").substr(0, 10));
 }
 

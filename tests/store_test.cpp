@@ -658,7 +658,11 @@ int main(int argc, char** argv) {
         ZT_TRUE("а время правки — сегодняшнее, а не из шапки",
                 back.meta.get("modified") != "2020-01-02T03:04:05Z" &&
                     back.meta.get("modified").rfind(
-                        QDateTime::currentDateTimeUtc()
+                        // МЕСТНАЯ дата, а не UTC: времена мы пишем с офсетом
+                        // (этап 15), и сразу после полуночи по местному времени
+                        // UTC-дата ещё вчерашняя. Проверка краснела ровно в
+                        // этот час — не от кода, а от собственной ошибки.
+                        QDateTime::currentDateTime()
                             .toString(QStringLiteral("yyyy-MM-dd"))
                             .toStdString(),
                         0) == 0);

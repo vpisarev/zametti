@@ -58,8 +58,14 @@ QString documentFingerprint(const QTextDocument& doc, const QList<int>& skip) {
         // сверки значило бы ослепить проверку заплатки там, где она нужна.
         QList<int> blockSkip = skip;
         if (const BlockFormulaRef formula = blockFormulaRef(block);
-            formula.valid && formula.display)
-            blockSkip.append(QTextFormat::BlockBottomMargin), blockSkip.append(int(QTextFormat::LineHeight));
+            formula.valid && formula.display) {
+            blockSkip.append(QTextFormat::BlockBottomMargin);
+            blockSkip.append(int(QTextFormat::LineHeight));
+            // И ЦВЕТ ТЕКСТА. У показанной вёрсткой формулы исходник погашен
+            // прозрачным — это признак ПОКАЗА, а не модели: сборщик о нём не
+            // знает и знать не должен.
+            blockSkip.append(QTextFormat::ForegroundBrush);
+        }
         out += QStringLiteral("%1 %2\n").arg(number).arg(blockFingerprint(block, blockSkip));
     }
     return out;
