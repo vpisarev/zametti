@@ -14,6 +14,8 @@ add_library(zametti-core STATIC
     serializer.cpp
     table.h
     table.cpp
+    math_scan.h
+    math_scan.cpp
     json_dump.h
     json_dump.cpp
     note_id.h

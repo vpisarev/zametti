@@ -380,6 +380,13 @@ if(TARGET zametti-view)
         add_test(NAME search COMMAND search_test)
         set_tests_properties(search PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+        # Границы формул: канон `$` и живой корпус из 98 формул.
+        add_executable(math_scan_test math_scan_test.cpp)
+        target_link_libraries(math_scan_test PRIVATE zametti-core zametti-warnings)
+        target_include_directories(math_scan_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        add_test(NAME math-scan
+                 COMMAND math_scan_test "${CMAKE_SOURCE_DIR}/.testdata/Typesetting Math in Texts.md")
+
         # Формулы этапа 16: пробник базовой линии — первая задача брифа.
         # Линкуется с zametti-widgets ради ресурсов (шрифты в qrc) и настроек.
         add_executable(formula_probe formula_probe.cpp)
