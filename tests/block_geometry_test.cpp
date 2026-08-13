@@ -35,6 +35,8 @@
 #include <QFontMetricsF>
 #include <QTest>
 #include <QTextBlock>
+#include <QImage>
+#include <QScrollBar>
 #include <QTextDocument>
 
 #include <string>
@@ -73,7 +75,12 @@ $$\sum_{k=0}^\infty \frac{x^k}{k!}$$
 
 ___
 
-Хвост заметки.
+Хвост заметки со [ссылкой](https://example.com) — её видно всегда.
+
+$$\lim_{h\to0} \frac{f(x+h)-f(x)}{h}$$
+
+Последние две строки после формулы: ссылка [вторая](https://example.org)
+и обычный текст. Именно они пропадали после возврата на заметку.
 )";
 
 struct Box {
@@ -86,6 +93,10 @@ struct Box {
 };
 
 // Что и сколько занимает. Пусто — обычный текст, его меряет сам Qt.
+const QAbstractTextDocumentLayout* layoutOf(zametti::NoteEditor& editor) {
+    return editor.document()->documentLayout();
+}
+
 std::vector<Box> boxesOf(zametti::NoteEditor& editor) {
     std::vector<Box> out;
     const QAbstractTextDocumentLayout* layout = editor.document()->documentLayout();
@@ -132,6 +143,19 @@ void checkGeometry(int width, const QString& name) {
     editor.openFile(path);
     QTest::qWait(120);
 
+    // УХОД НА ДРУГУЮ ЗАМЕТКУ И ВОЗВРАТ. Заметка откладывается целиком (кэш), и
+    // всё, что вид успел записать в живой документ, возвращается вместе с ней.
+    // Владелец увидел это так: «сразу после загрузки последние две строки
+    // видны, после переключения и возврата — уже нет».
+    const QString other = QDir(g_dir).filePath(name + QStringLiteral("-другая.md"));
+    QFile second(other);
+    if (second.open(QIODevice::WriteOnly | QIODevice::Truncate)) second.write("# Другая\n");
+    second.close();
+    editor.openFile(other);
+    QTest::qWait(60);
+    editor.openFile(path);
+    QTest::qWait(120);
+
     const qreal line = QFontMetricsF(editor.baseFont()).height();
     const qreal column = editor.viewport()->width();
     const std::vector<Box> boxes = boxesOf(editor);
@@ -171,7 +195,36 @@ void checkGeometry(int width, const QString& name) {
                 box.content.isEmpty() || box.content.width() <= column + 1.0);
     }
 
-    // 4. НЕ НАПОЛЗАЮТ ДРУГ НА ДРУГА.
+    // 4. ТЕКСТ ПОСЛЕ ОБЪЕКТА ВИДЕН. Проверка появилась после того, как я
+    //    погасил исходник формулы прозрачным цветом, выделив блок ВМЕСТЕ с
+    //    разделителем: прозрачность перетекла на следующий блок, и под
+    //    последней формулой пропали ссылка и абзац текста.
+    {
+        const QImage shot = editor.grab().toImage();
+        const qreal dpr = editor.devicePixelRatioF();
+        const int scroll = editor.verticalScrollBar()->value();
+        int seen = 0;
+        for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next()) {
+            if (b.text().trimmed().isEmpty()) continue;
+            if (zametti::objectOf(b).valid()) continue;
+            if (editor.formulaAt(b.blockNumber()) != nullptr) continue;
+            const QRectF area = layoutOf(editor)->blockBoundingRect(b);
+            if (area.bottom() - scroll > editor.viewport()->height()) break;
+            int dark = 0;
+            for (int x = 0; x < shot.width(); ++x)
+                for (int y = int((area.top() - scroll) * dpr);
+                     y < int((area.bottom() - scroll) * dpr) && y < shot.height(); ++y)
+                    if (y >= 0 && qGray(shot.pixel(x, y)) < 160) ++dark;
+            ZT_TRUE(name.toStdString() + ": текст блока " + std::to_string(b.blockNumber()) +
+                        " виден («" + b.text().left(20).toStdString() + "»)",
+                    dark > 5);
+            ++seen;
+        }
+        ZT_TRUE(name.toStdString() + ": текстовых блоков проверено " + std::to_string(seen),
+                seen >= 4);
+    }
+
+    // 5. НЕ НАПОЛЗАЮТ ДРУГ НА ДРУГА.
     for (size_t i = 1; i < boxes.size(); ++i)
         ZT_TRUE(name.toStdString() + ": объекты " + std::to_string(i) + " и " +
                     std::to_string(i + 1) + " не наползают",

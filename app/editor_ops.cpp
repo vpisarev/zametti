@@ -1003,6 +1003,57 @@ bool toggleStrike(QTextDocument& doc, QTextCursor& cursor) {
     return toggleInlineStyle(doc, cursor, SpanStrike);
 }
 
+namespace {
+
+// Обернуть или развернуть кусок долларами. Одна механика на строчную и
+// выключную: разница только в числе долларов и в том, что берётся — выделение
+// или весь абзац.
+bool toggleMath(QTextCursor& cursor, const QString& fence, bool wholeBlock) {
+    QTextCursor at = cursor;
+    if (wholeBlock) {
+        at.setPosition(at.block().position());
+        at.setPosition(at.block().position() + at.block().length() - 1,
+                       QTextCursor::KeepAnchor);
+    }
+    const QString text = at.selectedText();
+    if (text.isEmpty() && !wholeBlock) {
+        // Пустая каретка: ставим пару и встаём между ними — дальше человек
+        // просто печатает формулу.
+        at.insertText(fence + fence);
+        at.setPosition(at.position() - fence.size());
+        cursor = at;
+        return true;
+    }
+    if (text.isEmpty()) return false;
+
+    // Уже формула — снимаем доллары. Смотрим на сам текст, а не на признаки
+    // показа: жест обязан работать и на исходнике, который человек набрал
+    // руками минуту назад.
+    if (text.size() > 2 * fence.size() && text.startsWith(fence) && text.endsWith(fence)) {
+        at.insertText(text.mid(fence.size(), text.size() - 2 * fence.size()));
+        cursor = at;
+        return true;
+    }
+    at.insertText(fence + text + fence);
+    cursor = at;
+    return true;
+}
+
+}  // namespace
+
+bool toggleInlineMath(QTextDocument& doc, QTextCursor& cursor) {
+    Q_UNUSED(doc);
+    return toggleMath(cursor, QStringLiteral("$"), false);
+}
+
+bool toggleDisplayMath(QTextDocument& doc, QTextCursor& cursor) {
+    Q_UNUSED(doc);
+    // Пустой абзац выключной формулой не делаем: получились бы четыре доллара
+    // и ничего между ними.
+    if (cursor.block().text().trimmed().isEmpty()) return false;
+    return toggleMath(cursor, QStringLiteral("$$"), true);
+}
+
 QTextCharFormat inlineStyleForTyping(const QTextDocument& doc, const QTextBlock& block,
                                      const QTextCharFormat& current, int style) {
     const int now = current.intProperty(SpanStyleProperty);

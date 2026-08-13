@@ -1276,34 +1276,22 @@ void NoteView::syncFormulas() {
     }
     formulas_ = fresh;
 
-    // ИСХОДНИК НЕ РИСУЕМ ВОВСЕ. Прежде я закрашивал его фоном и клал вёрстку
-    // сверху — приём фотографии, где иначе нельзя: там блок обязан держать
-    // ссылку на файл. У блока-формулы держать нечего: весь его текст и есть
-    // исходник, и если формула показана вёрсткой, рисовать его незачем.
-    //
-    // Владелец спросил ровно это: «зачем ты рендеришь latex-текст, потом
-    // стираешь фон и рисуешь поверх формулу?» — и был прав: от закраски
-    // оставались следы `$$…$$` при прокрутке, потому что закраска и текст
-    // живут в разных перерисовках.
-    //
-    // Гасим цветом: прятать блок целиком (setVisible) нельзя — вместе с ним
-    // пропадёт и место, на котором стоит вёрстка.
+    // Исходник блока-формулы не рисуется вовсе: его цвет прозрачный, и ставит
+    // его СБОРЩИК (document_builder). Виду остаётся показать исходник тому
+    // блоку, который сейчас правят, — и вернуть прозрачность, когда правка
+    // кончилась.
     const bool wasChanging = changingLayout_;
     changingLayout_ = true;
-    int dirtyFrom = -1;
-    int dirtyTo = -1;
     for (QTextBlock block = document()->begin(); block.isValid(); block = block.next()) {
         if (kindOf(block) != Kind::Math) continue;
-        const bool hide = formulas_.contains(block.blockNumber());
+        const bool shown = block.blockNumber() == editedFormula_;
         QTextCursor cursor(block);
-        cursor.select(QTextCursor::BlockUnderCursor);
+        cursor.setPosition(block.position());
+        cursor.setPosition(block.position() + block.length() - 1, QTextCursor::KeepAnchor);
         QTextCharFormat fmt;
-        fmt.setForeground(hide ? QColor(Qt::transparent) : palette().color(QPalette::Text));
+        fmt.setForeground(shown ? palette().color(QPalette::Text) : QColor(Qt::transparent));
         cursor.mergeCharFormat(fmt);
-        if (dirtyFrom < 0) dirtyFrom = block.position();
-        dirtyTo = block.position() + block.length();
     }
-    if (dirtyFrom >= 0) document()->markContentsDirty(dirtyFrom, dirtyTo - dirtyFrom);
     changingLayout_ = wasChanging;
 }
 

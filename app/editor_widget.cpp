@@ -98,6 +98,11 @@ NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
     inlineBindings_.push_back(
         {QKeySequence(QStringLiteral("Ctrl+K")), {SpanStrike, toggleStrike}});
 
+    // Формулы с клавиатуры: строчная и выключная. Сочетания предложены
+    // владельцем и стоят рядом с прочими пометками начертания.
+    bind(QStringLiteral("Ctrl+M"), toggleInlineMath);
+    bind(QStringLiteral("Ctrl+Shift+M"), toggleDisplayMath);
+
     // Автозамены из конфига: сочетание и знак, который оно вставляет.
     // Сочетаний на одну замену может быть несколько, через точку с запятой —
     // как и у любой другой команды.

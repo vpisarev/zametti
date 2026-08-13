@@ -374,6 +374,42 @@ void checkSelectionDoesNotRevealSource() {
     delete editor;
 }
 
+// --- набор формул с клавиатуры ----------------------------------------------
+
+void checkMathHotkeys() {
+    zametti::NoteEditor* editor =
+        openNote(QStringLiteral("клавиши"), 900, 700, "первая строка\n\nвторая строка\n");
+
+    // Ctrl+M на выделении — обернуть в доллары; ещё раз — развернуть.
+    QTextCursor at(editor->document()->firstBlock());
+    at.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+    editor->setTextCursor(at);
+    QTest::keyClick(editor, Qt::Key_M, Qt::ControlModifier);
+    QTest::qWait(40);
+    ZT_TRUE("Ctrl+M обернул выделение: " +
+                editor->document()->firstBlock().text().toStdString(),
+            editor->document()->firstBlock().text() == QStringLiteral("$первая строка$"));
+
+    at = QTextCursor(editor->document()->firstBlock());
+    at.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+    editor->setTextCursor(at);
+    QTest::keyClick(editor, Qt::Key_M, Qt::ControlModifier);
+    QTest::qWait(40);
+    ZT_TRUE("и второй раз развернул обратно",
+            editor->document()->firstBlock().text() == QStringLiteral("первая строка"));
+
+    // Ctrl+Shift+M на абзаце — выключная формула целым блоком.
+    QTextCursor line(editor->document()->findBlockByNumber(2));
+    editor->setTextCursor(line);
+    QTest::keyClick(editor, Qt::Key_M, Qt::ControlModifier | Qt::ShiftModifier);
+    QTest::qWait(80);
+    const QString made = editor->document()->findBlockByNumber(2).text();
+    ZT_TRUE("Ctrl+Shift+M сделал выключную: " + made.toStdString(),
+            made == QStringLiteral("$$вторая строка$$"));
+
+    delete editor;
+}
+
 // --- флип: Enter показывает исходник, уход каретки — вёрстку ----------------
 
 void checkFlip() {
@@ -531,6 +567,7 @@ int main(int argc, char** argv) {
     checkRendered(620, QStringLiteral("формулы-узкое"));
     checkCornersOnSelected();
     checkFormulaFitsItsBlock();
+    checkMathHotkeys();
     checkSelectionDoesNotRevealSource();
     checkTypingDoesNotEnterFormula();
     checkFlip();
