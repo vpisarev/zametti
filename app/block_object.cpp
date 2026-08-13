@@ -93,6 +93,11 @@ ObjectAction actionFor(int key, Qt::KeyboardModifiers mods, const ObjectContext&
         // его текст по буквам.
         if ((key == Qt::Key_Backspace || key == Qt::Key_Delete) && plain)
             return ObjectAction::Remove;
+        // И стрелки его перешагивают, а не ходят внутри: исходник объекта на
+        // экране закрыт вёрсткой, и каретке там негде быть.
+        if (plain && (key == Qt::Key_Left || key == Qt::Key_Right || key == Qt::Key_Up ||
+                      key == Qt::Key_Down))
+            return ObjectAction::StepOver;
         return ObjectAction::None;
     }
 

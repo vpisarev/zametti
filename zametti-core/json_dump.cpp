@@ -14,6 +14,7 @@ const char* kindName(Kind k) {
         case Kind::VSpace:        return "vspace";
         case Kind::ListItem:      return "list-item";
         case Kind::Divider:       return "divider";
+        case Kind::Math:          return "math";
         case Kind::Html:          return "html";
     }
     return "?";

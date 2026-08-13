@@ -1883,6 +1883,22 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
             setEditedFormula(-1);
             return true;
         }
+        case ObjectAction::StepOver: {
+            // ПЕРЕШАГНУТЬ ОБЪЕКТ ЦЕЛИКОМ. Внутри вёрстки каретке негде быть:
+            // она там невидима, и человек жмёт стрелку, пока не проедет весь
+            // исходник. Вниз и вправо — за последний блок объекта, вверх и
+            // влево — перед первым.
+            const bool forward =
+                event->key() == Qt::Key_Down || event->key() == Qt::Key_Right;
+            const QTextBlock target = forward
+                                          ? document()->findBlockByNumber(own.last).next()
+                                          : document()->findBlockByNumber(own.first).previous();
+            if (!target.isValid()) return true;   // край документа: стоим на месте
+            QTextCursor at(target);
+            if (!forward) at.movePosition(QTextCursor::EndOfBlock);
+            setTextCursor(at);
+            return true;
+        }
         case ObjectAction::Select: {
             const BlockObject target = where.objectAbove || where.objectAboveGap
                                            ? (where.objectAbove ? objectAbove

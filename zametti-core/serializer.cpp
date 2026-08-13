@@ -993,6 +993,25 @@ std::string serialize(const Document& doc, std::vector<BlockLines>* map) {
                 break;
             }
 
+            case Kind::Math: {
+                // ВЫКЛЮЧНАЯ ФОРМУЛА — ДОСЛОВНО. Текст блока и есть её исходник
+                // вместе с долларами: ни разметки, ни экранирования внутри нет,
+                // писать нечего, кроме самих байтов. Внутри пункта списка
+                // отступ до колонки содержимого — как у блока кода.
+                const std::string pad(indentInsideItem(b, contentCol), ' ');
+                for (size_t at = 0; at < body.size();) {
+                    size_t end = body.find('\n', at);
+                    if (end == std::string_view::npos) end = body.size();
+                    if (end > at) {
+                        out += pad;
+                        out.append(body, at, end - at);
+                    }
+                    out.push_back('\n');
+                    at = end + 1;
+                }
+                break;
+            }
+
             case Kind::VSpace:
             case Kind::Paragraph: {
                 // Блок внутри пункта: отступ до колонки его содержимого. Ровно

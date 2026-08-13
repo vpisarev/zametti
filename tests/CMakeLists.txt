@@ -366,6 +366,16 @@ if(TARGET zametti-view)
                  ${CMAKE_CURRENT_BINARY_DIR}/архив-редактор)
         set_tests_properties(archive-editor PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+        # Каретка и обычные нажатия: стрелки по всем видам блоков, буквы,
+        # «заметка от открытия не растёт». Требование владельца после дня, в
+        # котором каждая беда была не хитрым краем, а обычным действием.
+        add_executable(caret_matrix_test caret_matrix_test.cpp)
+        target_link_libraries(caret_matrix_test PRIVATE zametti-widgets Qt6::Test
+                              zametti-warnings)
+        target_include_directories(caret_matrix_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        add_test(NAME caret-matrix COMMAND caret_matrix_test ${CMAKE_CURRENT_BINARY_DIR}/каретка)
+        set_tests_properties(caret-matrix PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
         # Круг через живой документ: файл → IR → QTextDocument → IR → файл.
         # Дыра в матрице, найденная владельцем: каждая запись заметки идёт
         # именно этим путём, а проверялся только круг ядра.

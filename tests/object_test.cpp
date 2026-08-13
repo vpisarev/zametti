@@ -48,6 +48,7 @@ std::string nameOf(ObjectAction action) {
         case ObjectAction::LineAfter: return "строка после";
         case ObjectAction::Remove: return "убрать";
         case ObjectAction::Select: return "выбрать";
+        case ObjectAction::StepOver: return "перешагнуть";
     }
     return "?";
 }

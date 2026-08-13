@@ -1547,6 +1547,10 @@ bool toggleCommentAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     if (!block.isValid() || isRawBlock(block)) return false;
 
     switch (kindOf(block)) {
+        case Kind::Math:
+            // Формула комментарием не становится: её текст литерален, и `<!--`
+            // внутри него — часть исходника, а не разметка.
+            return false;
         case Kind::Html:
             // Обратно — целыми блоками: комментарий и так один блок.
             return setBlockKind(doc, cursor, {Kind::Paragraph, Marker::Bullet, false});
@@ -1921,6 +1925,10 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
         // ветка после разреза.
         if (isTaskBlock(block) && !atListStart) next.setProperty(CheckedProperty, false);
         switch (kindOf(block)) {
+            case Kind::Math:
+                // Enter внутри формулы — просто перевод строки в её исходнике:
+                // выключная формула законно занимает несколько строк.
+                break;
             case Kind::Heading:
                 // За заголовком идёт обычный текст, а не второй заголовок.
                 //
@@ -2513,6 +2521,9 @@ void applyListGeometry(QTextDocument& doc, BlockRange range) {
                 // относительно кода. Масштаб восстанавливаем из шрифта
                 // документа: сборщик кладёт в него baseFontPoint × зум.
                 case Kind::Code:  own = plate.indent + plate.padLeft; break;
+                // У формулы собственного отступа нет: она встаёт по центру
+                // колонки, а её исходник виден только в правке.
+                case Kind::Math:  break;
                 case Kind::Quote: own = appearance().quoteIndent * charUnit; break;
                 case Kind::Paragraph:
                 case Kind::Heading:

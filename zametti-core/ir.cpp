@@ -124,6 +124,10 @@ void Document::validate() const {
                "у дословного куска рода нет: он обязан остаться Paragraph");
         assert((!b.raw || b.inlines.empty()) && "внутри дословного куска разметки не бывает");
         assert((!b.raw || b.info.empty()) && "у дословного куска info не бывает");
+        // Формула — литеральный блок: разметки внутри не бывает по определению,
+        // как и у блока кода.
+        assert((b.kind != Kind::Math || b.inlines.empty()) &&
+               "внутри блока-формулы разметки не бывает");
         assert(b.inlines.start >= 0 && b.inlines.end >= b.inlines.start &&
                b.inlines.end <= spanCount && "спаны блока вне spans");
 
