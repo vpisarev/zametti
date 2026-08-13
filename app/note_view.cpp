@@ -1350,6 +1350,24 @@ void NoteView::paintFormula(QPainter& painter, const QTextBlock& block) {
         painter.drawImage(box, render->image,
                           QRectF(QPointF(0, 0), QSizeF(render->image.size())));
     }
+
+    // ВЫБРАННАЯ ФОРМУЛА ПОКАЗАНА УГОЛКАМИ — теми же, что у фотографии и у
+    // таблицы. Без них каретка, вставшая на формулу, не видна вовсе: мигающая
+    // полоска в углу вёрстки человеку ничего не говорит, и выходит, что слой
+    // объекта вроде бы есть, а на экране его нет (владелец так и прочитал:
+    // «ничего из этого не работает»).
+    const QTextCursor cursor = textCursor();
+    const bool selected =
+        cursor.hasSelection()
+            ? qMin(cursor.anchor(), cursor.position()) < block.position() + block.length() &&
+                  qMax(cursor.anchor(), cursor.position()) > block.position()
+            : cursor.block() == block;
+    if (selected && exportRatio_ <= 0.0 && block.blockNumber() != editedFormula_) {
+        // С небольшим отступом наружу: уголки, впритык обнимающие дробь,
+        // читаются как часть формулы, а не как «выбрано».
+        const qreal pad = imageCornerOverhang();
+        paintImageCorners(painter, (box.isEmpty() ? line : box).adjusted(-pad, -pad, pad, pad));
+    }
     painter.restore();
 }
 

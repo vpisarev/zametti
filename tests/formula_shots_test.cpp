@@ -180,6 +180,60 @@ void checkRendered(int width, const QString& name) {
     delete editor;
 }
 
+// --- выбранная формула видна уголками ---------------------------------------
+//
+// Слой объекта у формулы был, а на экране его не было: каретка, вставшая на
+// формулу, ничем не отличалась от каретки в тексте. Владелец так и прочитал —
+// «ничего из этого не работает». Уголки те же, что у фотографии и у таблицы.
+void checkCornersOnSelected() {
+    zametti::NoteEditor* editor =
+        openNote(QStringLiteral("уголки"), 900, 700, "до\n\n$$x^2 + y^2 = z^2$$\n\nпосле\n");
+    const int first = firstFormula(*editor);
+    ZT_TRUE("формула показана", first >= 0);
+    if (first < 0) {
+        delete editor;
+        return;
+    }
+    const QRectF box = editor->formulaRect(first);
+    const int scroll = editor->verticalScrollBar()->value();
+    const qreal dpr = editor->devicePixelRatioF();
+
+    // Каретка в тексте — уголков нет. Считаем точки цвета каретки в рамке
+    // вокруг вёрстки: именно им уголки и рисуются.
+    const auto cornerInk = [&](const QImage& shot) {
+        const QColor mark = zametti::appearance().caretColor;
+        int hits = 0;
+        const QRectF around(box.adjusted(-24, -24, 24, 24));
+        for (int x = int(around.left() * dpr); x < int(around.right() * dpr) && x < shot.width();
+             ++x)
+            for (int y = int((around.top() - scroll) * dpr);
+                 y < int((around.bottom() - scroll) * dpr) && y < shot.height(); ++y) {
+                if (x < 0 || y < 0) continue;
+                const QColor at = shot.pixelColor(x, y);
+                if (std::abs(at.red() - mark.red()) < 40 && std::abs(at.green() - mark.green()) < 40 &&
+                    std::abs(at.blue() - mark.blue()) < 40)
+                    ++hits;
+            }
+        return hits;
+    };
+
+    editor->setTextCursor(QTextCursor(editor->document()->firstBlock()));
+    QTest::qWait(40);
+    const int without = cornerInk(editor->grab().toImage());
+
+    editor->setTextCursor(QTextCursor(editor->document()->findBlockByNumber(first)));
+    QTest::qWait(40);
+    const QImage shot = editor->grab().toImage();
+    const int with = cornerInk(shot);
+    if (!shot.save(QDir(g_dir).filePath(QStringLiteral("уголки-выбрана.png"))))
+        std::printf("НЕ СОХРАНИЛСЯ снимок уголков\n");
+
+    ZT_TRUE("без каретки на формуле уголков нет: " + std::to_string(without), without < 20);
+    ZT_TRUE("с кареткой на формуле уголки видны: " + std::to_string(with), with > 60);
+
+    delete editor;
+}
+
 // --- флип: Enter показывает исходник, уход каретки — вёрстку ----------------
 
 void checkFlip() {
@@ -335,6 +389,7 @@ int main(int argc, char** argv) {
     // (правило проекта, оплаченное таблицей, уехавшей за правый край).
     checkRendered(1000, QStringLiteral("формулы-широкое"));
     checkRendered(620, QStringLiteral("формулы-узкое"));
+    checkCornersOnSelected();
     checkFlip();
     checkEditChangesFormula();
     checkBroken();

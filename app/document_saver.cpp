@@ -303,6 +303,24 @@ Block withEdgesNormalised(Document& doc, Block block) {
     std::vector<int> map(text.size() + 1, 0);
     std::string out;
 
+    // ВНУТРИ ФОРМУЛЫ ПРОБЕЛ — ЛИТЕРАЛЬНЫЙ, как в коде. Здесь я и испортил
+    // владельцу заметку: правило «ведущие пробелы становятся неразрывными»
+    // относится к отступам, которыми рисуют схемы и лесенки, а формула,
+    // записанная в несколько строк, попала под него заодно — её строки
+    // продолжения уехали в файл с U+00A0. Читается такое всюду (KaTeX и MathJax
+    // пробелы юникода игнорируют), но это ПРАВКА ТЕКСТА, которой человек не
+    // просил, и в самом latex такие пробелы значат ровно ничего.
+    std::vector<std::pair<size_t, size_t>> mathAt;
+    for (const Inline& span : doc.inlines(block))
+        if (span.math())
+            mathAt.emplace_back(size_t(qMax(0, int(span.text.start))),
+                                size_t(qMax(0, int(span.text.end))));
+    const auto insideMath = [&](size_t at) {
+        for (const auto& span : mathAt)
+            if (at >= span.first && at < span.second) return true;
+        return false;
+    };
+
     // Именно признаком, а не пустотой out: строка бывает пустой и сама, и по
     // пустоте не отличить «первую строку» от «десятой, но пока пустой». На этом
     // сходились в одну все ведущие пустые строки абзаца.
@@ -314,9 +332,11 @@ Block withEdgesNormalised(Document& doc, Block block) {
         if (last) end = text.size();
 
         size_t start = line;
-        while (start < end && isSpace(text[start])) ++start;
         size_t stop = end;
-        while (stop > start && isSpace(text[stop - 1])) --stop;
+        if (!insideMath(line) && !insideMath(end > line ? end - 1 : line)) {
+            while (start < end && isSpace(text[start])) ++start;
+            while (stop > start && isSpace(text[stop - 1])) --stop;
+        }
 
         // Пустая строка внутри блока — содержимое: в заметках ею отбивают куски
         // текста, и терять её нельзя.

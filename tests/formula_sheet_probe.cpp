@@ -60,6 +60,23 @@ int main(int argc, char** argv) {
                 raw);
     std::printf("рендеров движка %d\n", zametti::Formulas::renders());
 
+    // Каждая выключная формула отдельной картинкой и с исходником рядом: если
+    // в окне видны лишние пробелы, здесь видно, чей это вклад — движка или вида.
+    int n = 0;
+    for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next()) {
+        const zametti::BlockFormulaRef ref = zametti::blockFormulaRef(b);
+        if (!ref.valid || !ref.display) continue;
+        const zametti::FormulaRender* r = editor.formulaAt(b.blockNumber());
+        std::printf("формула %d: вёрстка %.1fx%.1f, картинка %dx%d\n  [%s]\n", n,
+                    r != nullptr ? r->width : 0.0, r != nullptr ? r->height : 0.0,
+                    r != nullptr ? r->image.width() : 0, r != nullptr ? r->image.height() : 0,
+                    ref.latex.toUtf8().constData());
+        if (r != nullptr && !r->image.isNull())
+            r->image.save(QDir(dir).filePath(QStringLiteral("формула-%1.png").arg(n, 2, 10,
+                                                                                  QLatin1Char('0'))));
+        ++n;
+    }
+
     // Страница за страницей, с перекрытием в четверть экрана: так ни одна
     // формула не оказывается разрезанной между снимками во всех кадрах сразу.
     QScrollBar* bar = editor.verticalScrollBar();

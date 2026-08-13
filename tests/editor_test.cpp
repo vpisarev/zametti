@@ -127,6 +127,29 @@ void checkOpenDoesNotTouchFile() {
                        std::to_string(round) + ")");
     }
 
+    // ОТСТУПЫ ВНУТРИ ФОРМУЛЫ ОСТАЮТСЯ ОБЫЧНЫМИ ПРОБЕЛАМИ. Сохранятель делает
+    // ведущие пробелы неразрывными — отступ значим, им рисуют схемы. Формула,
+    // записанная в несколько строк, попала под это правило заодно: её строки
+    // уехали в файл с U+00A0, а движок рисует такие пробелы настоящими —
+    // матрица разъезжается дырами. Владелец нашёл это на своей заметке.
+    const QString matrix = QStringLiteral(
+        "текст\n\n$$D = \\left[\n    \\begin{matrix} a & b \\end{matrix}\n"
+        "    \\right].$$\n\nдальше\n");
+    const QString matrixPath = writeNote("матрица.md", matrix);
+    second.openFile(matrixPath);
+    QTest::qWait(30);
+    QTextCursor typing = second.textCursor();
+    typing.movePosition(QTextCursor::End);
+    second.setTextCursor(typing);
+    QTest::keyClicks(&second, QStringLiteral("x"));
+    QTest::qWait(20);
+    second.save(false, true);
+    QTest::qWait(20);
+    const QString saved = readFile(matrixPath);
+    check(!saved.contains(QChar(0x00A0)), "в формуле не появилось неразрывных пробелов");
+    check(saved.contains(QStringLiteral("    \\begin{matrix}")),
+          "отступ внутри формулы сохранён как есть");
+
     // И ПОМЕТКА АРХИВА ПЕРЕЖИВАЕТ ОТКРЫТИЕ. Стаб архивной заметки — обычный
     // файл, и канонизация при открытии не вправе потерять ни одного ключа
     // шапки: потеряет `archived` — заметка выпадет из архива, а «Архив» в

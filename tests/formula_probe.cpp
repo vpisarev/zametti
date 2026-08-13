@@ -158,6 +158,33 @@ void checkDeviceRatio() {
             std::fabs(two.image.devicePixelRatio() - 1.0) < 0.01);
 }
 
+// ПРОБЕЛЫ ЮНИКОДА ВНУТРИ ФОРМУЛЫ — ОБЫЧНЫЕ ПРОБЕЛЫ.
+//
+// Заметка владельца пришла из Apple Notes, и отступы в ней — неразрывные
+// пробелы (U+00A0). Движок рисует их настоящими пробелами: матрица разъезжается
+// дырами между столбцами, вдвое шире, чем должна быть (376 против 199 точек на
+// нашем кегле). KaTeX и MathJax, которыми эти заметки читают на стороне, такие
+// пробелы просто игнорируют — и мы теперь тоже, но только в том, что уходит в
+// движок: файл не меняется ни на байт.
+void checkUnicodeSpaces() {
+    const QString plain = QStringLiteral(
+        "\\begin{matrix} a & b \\\\ c & d \\end{matrix}");
+    QString exotic = plain;
+    exotic.replace(QLatin1Char(' '), QChar(0x00A0));
+    QString thin = plain;
+    thin.replace(QLatin1Char(' '), QChar(0x2009));
+
+    const zametti::FormulaImage a = zametti::Formulas::render(plain, true, 16.0, Qt::black, 1.0);
+    const zametti::FormulaImage b = zametti::Formulas::render(exotic, true, 16.0, Qt::black, 1.0);
+    const zametti::FormulaImage c = zametti::Formulas::render(thin, true, 16.0, Qt::black, 1.0);
+    ZT_TRUE("все три отрисовались", a.ok() && b.ok() && c.ok());
+    if (!a.ok() || !b.ok() || !c.ok()) return;
+    ZT_TRUE("неразрывные пробелы ширину не меняют: " + num(b.width) + " против " + num(a.width),
+            std::fabs(b.width - a.width) < 1.0);
+    ZT_TRUE("тонкие пробелы тоже: " + num(c.width) + " против " + num(a.width),
+            std::fabs(c.width - a.width) < 1.0);
+}
+
 // СОРАЗМЕРНОСТЬ ЭЙЛЕРА ТЕКСТУ. Разведка предупреждала: при одном кегле Euler
 // компактнее прочих гарнитур — и на первом же снимке это видно глазом, формулы
 // мельче соседних букв. Меряем отношение ростов строчных (x-height): по нему
@@ -363,6 +390,7 @@ int main(int argc, char** argv) {
                 zametti::Formulas::mathFontName().toStdString(),
             !zametti::Formulas::mathFontName().isEmpty());
 
+    checkUnicodeSpaces();
     checkBaselineIsWhereItSays();
     checkDeviceRatio();
     measureXHeight();

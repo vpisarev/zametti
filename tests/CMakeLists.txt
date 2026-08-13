@@ -386,6 +386,10 @@ if(TARGET zametti-view)
                               zametti-warnings)
         target_include_directories(display_scale_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+        add_executable(matrix_probe matrix_probe.cpp)
+        target_link_libraries(matrix_probe PRIVATE zametti-widgets Qt6::Test zametti-warnings)
+        target_include_directories(matrix_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
         add_executable(open_probe open_probe.cpp)
         target_link_libraries(open_probe PRIVATE zametti-widgets Qt6::Test zametti-warnings)
         target_include_directories(open_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
