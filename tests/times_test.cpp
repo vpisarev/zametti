@@ -141,10 +141,10 @@ void checkStoreSortsAcrossZones() {
         return out.join(QLatin1Char('|'));
     };
 
-    model.setSortOrder(SortOrder{SortKey::Created, true});
+    model.setRootSort(SortOrder{SortKey::Created, true});
     ZT_EQ("по созданию: утро → день → вечер, невзирая на зоны и виды меток",
           std::string("Утро|День|Вечер"), s(order()));
-    model.setSortOrder(SortOrder{SortKey::Modified, false});
+    model.setRootSort(SortOrder{SortKey::Modified, false});
     ZT_EQ("по правке в обратную сторону — тот же порядок наоборот",
           std::string("Вечер|День|Утро"), s(order()));
 
@@ -154,7 +154,7 @@ void checkStoreSortsAcrossZones() {
     for (const char* zone : {"Asia/Shanghai", "Europe/Moscow", "America/Los_Angeles", "UTC"}) {
         qputenv("TZ", zone);
         NoteTreeModel elsewhere(g_root);
-        elsewhere.setSortOrder(SortOrder{SortKey::Created, true});
+        elsewhere.setRootSort(SortOrder{SortKey::Created, true});
         QStringList out;
         for (const zametti::NoteRow& row :
              elsewhere.notesInSubtree(elsewhere.indexForPath(elsewhere.pathOfId(folder))))

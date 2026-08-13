@@ -393,7 +393,21 @@ std::unique_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath) {
 // Даты сравниваются строками: записи ISO одной длины и всегда в UTC — так их
 // пишет ядро. Равные даты разводятся именем, иначе порядок в дневнике, где
 // десяток заметок заведён в одну секунду, менялся бы от запуска к запуску.
-void sortStore(NoteTreeModel::Node* node, SortOrder order, const QCollator& collator) {
+// ПОРЯДОК — СВОЙСТВО ПАПКИ, а не всего дерева. Каждая папка упорядочивает своих
+// детей по своей метке; нет метки — по той, что пришла сверху, и так до корня,
+// где действует переключатель тулбара.
+//
+// Прежде здесь был один порядок на всё дерево — «свойство точки обзора», — и
+// это была моя ошибка в устройстве: выбор папки перекладывал ВСЮ левую панель,
+// потому что вместе с выбором менялся действующий порядок. Владелец увидел это
+// так: «тыкаю на OpenCV, а мышка вдруг оказывается на Путешествия→Сочи —
+// причём это не курсор прыгнул, а дерево перестроилось». Теперь выбор папки не
+// трогает дерево вовсе: порядок в нём меняется только от переключателя или от
+// правки метки.
+//
+// inherited — порядок, действующий у РОДИТЕЛЯ этого узла.
+void sortStore(NoteTreeModel::Node* node, SortOrder inherited, const QCollator& collator) {
+    const SortOrder order = node->sortMark.value_or(inherited);
     // СЛУЖЕБНЫЕ ПАПКИ ВНИЗУ, и в своём порядке: сперва всё живое, под ним бюро
     // находок, а в самом низу Архив (просьба владельца — бюро это
     // вспомогательный архив, и стоять оно должно рядом с ним). Ни та, ни другая
@@ -489,7 +503,7 @@ void NoteTreeModel::build() {
     collator.setCaseSensitivity(Qt::CaseInsensitive);
     if (store_) {
         root_ = buildStore(rootPath_);
-        sortStore(root_.get(), sortOrder_, collator);
+        sortStore(root_.get(), rootSort_, collator);
         rebuildShown(root_.get(), foldersOnly_);
         return;
     }
@@ -511,9 +525,9 @@ void NoteTreeModel::setFoldersOnly(bool on) {
     endResetModel();
 }
 
-void NoteTreeModel::setSortOrder(SortOrder order) {
-    if (order == sortOrder_) return;
-    sortOrder_ = order;
+void NoteTreeModel::setRootSort(SortOrder order) {
+    if (order == rootSort_) return;
+    rootSort_ = order;
     // ПЕРЕСОРТИРОВКА, А НЕ ПЕРЕСБОРКА. Прежде здесь стоял refresh(), то есть
     // полный скан хранилища с разбором каждого файла — и это была не мелочь:
     // на 2000 заметках он стоит 24 мс (замер), а порядок теперь меняется на
@@ -524,7 +538,7 @@ void NoteTreeModel::setSortOrder(SortOrder order) {
     collator.setNumericMode(true);
     collator.setCaseSensitivity(Qt::CaseInsensitive);
     beginResetModel();
-    sortStore(root_.get(), sortOrder_, collator);
+    sortStore(root_.get(), rootSort_, collator);
     rebuildShown(root_.get(), foldersOnly_);
     endResetModel();
 }

@@ -485,7 +485,7 @@ int main(int argc, char** argv) {
     // разбором: ключ без направления — законная краткая запись.
     zametti::SortOrder rootSort = zametti::defaultOrder(zametti::SortKey::Modified);
     if (const auto saved = zametti::parseSortOrder(session.treeSort)) rootSort = *saved;
-    model.setSortOrder(rootSort);
+    model.setRootSort(rootSort);
     list.setSortOrder(rootSort);
     tree.setModel(&model);
     tree.setHeaderHidden(true);
@@ -995,14 +995,17 @@ int main(int argc, char** argv) {
     };
 
     // Выбрали папку — сперва её порядок, потом её список. Обратный порядок дал
-    // бы список, отсортированный по прежней папке. Индекс после смены порядка
-    // недействителен (модель перестраивается целиком), поэтому папку находим
-    // заново по пути.
+    // бы список, отсортированный по прежней папке.
+    //
+    // ДЕРЕВО ПРИ ЭТОМ НЕ ТРОГАЕТСЯ ВОВСЕ, и потому индекс остаётся
+    // действительным: порядок в левой панели принадлежит папкам, а не выбранной
+    // строке. Прежде здесь стоял обход «запомнить путь → пересортировать всё →
+    // найти папку заново», потому что модель перестраивалась на каждый щелчок;
+    // владелец увидел, во что это выливается — панель перекладывалась под
+    // курсором.
     const auto folderPicked = [&](const QModelIndex& index) {
-        const QString path = model.nodePath(index);
         if (syncSortToSelection) syncSortToSelection();
-        const QModelIndex folder = model.indexForPath(path);
-        fillList(folder.isValid() ? folder : QModelIndex(), true);
+        fillList(index, true);
     };
 
     QObject::connect(tree.selectionModel(), &QItemSelectionModel::currentChanged, &tree,
@@ -1882,15 +1885,19 @@ int main(int argc, char** argv) {
     shortcut(QKeySequence::New,
              [&] { createNote(model.folderIdFor(tree.currentIndex()), false); });
 
-    // Сортировка одна на обе панели: и папки слева, и заметки в середине
-    // упорядочены одинаково — тем порядком, который действует в ВЫБРАННОЙ папке.
-    const auto applySort = [&](zametti::SortOrder order) {
-        if (order == model.sortOrder()) return;
+    // ПЕРЕКЛАДЫВАНИЕ ЛЕВОЙ ПАНЕЛИ — только от смены переключателя корня.
+    //
+    // Дерево сортируется по папкам: у каждой свой порядок (своя метка →
+    // родительская → этот переключатель), и выбор строки его не меняет.
+    // Прежде здесь стоял «порядок точки обзора», и щелчок по помеченной папке
+    // перекладывал всю панель — владелец увидел, как строка под курсором
+    // становится чужой.
+    const auto applyRootSort = [&](zametti::SortOrder order) {
+        if (order == model.rootSort()) return;
         const QStringList open = expandedDirs();
         const QString folderPath = model.nodePath(tree.currentIndex());
         const QString keep = editor.filePath();
-        model.setSortOrder(order);
-        list.setSortOrder(order);
+        model.setRootSort(order);
         for (const QString& dir : open) {
             const QModelIndex index = model.indexForPath(dir);
             if (index.isValid()) tree.expand(index);
@@ -1921,10 +1928,13 @@ int main(int argc, char** argv) {
         return model.effectiveSortFor(model.folderIdFor(tree.currentIndex()), rootSort,
                                       fromMark);
     };
+    // Смена ВЫБОРА не трогает дерево вовсе: меняются только средняя колонка —
+    // она показывает мир выбранной папки и потому идёт её порядком — и кнопки
+    // тулбара, которые этот порядок называют.
     const auto syncSort = [&] {
         bool fromMark = false;
         const zametti::SortOrder order = currentSort(&fromMark);
-        applySort(order);
+        list.setSortOrder(order);
         toolbar.showSort(order, fromMark);
     };
 
@@ -1942,6 +1952,7 @@ int main(int argc, char** argv) {
                                 std::optional<zametti::SortOrder> order) {
         if (folderId.isEmpty()) {
             rootSort = order.value_or(zametti::defaultOrder(zametti::SortKey::Modified));
+            applyRootSort(rootSort);
             syncSort();
             return;
         }

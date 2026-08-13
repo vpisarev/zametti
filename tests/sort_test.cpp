@@ -214,7 +214,7 @@ void checkDiaryOrder() {
     ZT_TRUE("папка месяца найдена",
             model.indexForPath(model.pathOfId(month)).isValid());
 
-    model.setSortOrder(SortOrder{SortKey::Created, true});
+    model.setRootSort(SortOrder{SortKey::Created, true});
     QStringList expected;
     for (int day = 1; day <= 12; ++day)
         expected << QStringLiteral("%1 августа 2026г").arg(day);
@@ -223,7 +223,7 @@ void checkDiaryOrder() {
     ZT_EQ("по созданию, сначала старые — календарный порядок",
           s(expected.join(QLatin1Char('|'))), s(listOrder(model, month).join(QLatin1Char('|'))));
 
-    model.setSortOrder(SortOrder{SortKey::Created, false});
+    model.setRootSort(SortOrder{SortKey::Created, false});
     QStringList reversed = expected;
     std::reverse(reversed.begin(), reversed.end());
     ZT_EQ("по созданию, новые сверху — обратный календарный",
@@ -234,7 +234,7 @@ void checkDiaryOrder() {
     // появиться записи с человеческим названием, и она уезжает в конец
     // алфавита, а не встаёт на свой день. Именно за этим и нужен третий ключ,
     // и проверять надо это, а не выдуманную беду с ведущими нулями.
-    model.setSortOrder(SortOrder{SortKey::Name, true});
+    model.setRootSort(SortOrder{SortKey::Name, true});
     const QStringList byName = listOrder(model, month);
     ZT_TRUE("по имени хронология ломается",
             byName.join(QLatin1Char('|')) != expected.join(QLatin1Char('|')));
@@ -251,11 +251,11 @@ void checkDiaryOrder() {
          QStringLiteral("# 1 августа 2026г\n"));
     NoteTreeModel edited(g_root);
 
-    edited.setSortOrder(SortOrder{SortKey::Modified, false});
+    edited.setRootSort(SortOrder{SortKey::Modified, false});
     ZT_EQ("по правке поправленная запись всплыла наверх", "1 августа 2026г",
           s(listOrder(edited, month).value(0)));
 
-    edited.setSortOrder(SortOrder{SortKey::Created, false});
+    edited.setRootSort(SortOrder{SortKey::Created, false});
     ZT_EQ("по созданию поправленная запись осталась на своём месте", "12 августа 2026г",
           s(listOrder(edited, month).value(0)));
     ZT_EQ("и внизу по-прежнему первое августа", "1 августа 2026г",
@@ -358,7 +358,7 @@ void checkSortingWritesNothing() {
     const QMap<QString, QString> before = storeHashes();
     for (const SortKey key : {SortKey::Name, SortKey::Modified, SortKey::Created})
         for (const bool ascending : {true, false}) {
-            model.setSortOrder(SortOrder{key, ascending});
+            model.setRootSort(SortOrder{key, ascending});
             (void)model.notesInSubtree(QModelIndex());
         }
     model.refresh();
@@ -436,11 +436,11 @@ void bench(int notes) {
         for (const bool ascending : {false, true}) {
             const SortOrder order{key, ascending};
             const qint64 sorted = micros([&] {
-                model.setSortOrder(order);
+                model.setRootSort(order);
                 // Смена порядка на ТОТ ЖЕ ничего не делает (ранний возврат),
                 // поэтому между замерами порядок сбрасывается.
-                model.setSortOrder(SortOrder{SortKey::Name, !ascending});
-                model.setSortOrder(order);
+                model.setRootSort(SortOrder{SortKey::Name, !ascending});
+                model.setRootSort(order);
             });
             std::printf("  порядок %-14s         %6lld мкс (две пересборки)\n",
                         zametti::sortOrderToString(order).toUtf8().constData(),
@@ -472,7 +472,7 @@ void checkSpecialFoldersStayAtBottom() {
     NoteTreeModel model(g_root);
     for (const SortKey key : {SortKey::Name, SortKey::Modified, SortKey::Created})
         for (const bool ascending : {true, false}) {
-            model.setSortOrder(SortOrder{key, ascending});
+            model.setRootSort(SortOrder{key, ascending});
             const QModelIndex all = model.index(0, 0, QModelIndex());
             const int rows = model.rowCount(all);
             QStringList titles;
@@ -483,6 +483,77 @@ void checkSpecialFoldersStayAtBottom() {
                   std::string("Бюро находок|Архив"),
                   s(titles.mid(rows - 2).join(QLatin1Char('|'))));
         }
+    QDir(g_root).removeRecursively();
+}
+
+// ПОРЯДОК ПРИНАДЛЕЖИТ ПАПКЕ, А НЕ ВЫБРАННОЙ СТРОКЕ.
+//
+// Проверка родилась из беды, которую нашёл владелец: он щёлкал по папке,
+// помеченной «по дате создания», и ВСЯ левая панель перекладывалась — строка
+// под курсором оказывалась чужой. Причина была в устройстве: порядок считался
+// свойством точки обзора, один на всё дерево.
+//
+// Теперь у каждой папки свой: её метка → метка предка → переключатель корня. В
+// одной и той же сборке дерева помеченная папка идёт по-своему, соседняя — по
+// корневому порядку, а смена переключателя помеченную не трогает вовсе.
+void checkEachFolderSortsItsOwnChildren() {
+    QDir(g_root).removeRecursively();
+    QDir().mkpath(g_root + QStringLiteral("/.zametti"));
+
+    // Имена и даты нарочно ПРОТИВОПОЛОЖНЫ: по имени «Ася, Боря, Витя», по
+    // правке — наоборот. Так порядок виден по первому же заголовку.
+    const auto family = [&](const QString& prefix, const QString& parent) {
+        int day = 1;
+        for (const QString& name :
+             {QStringLiteral("Ася"), QStringLiteral("Боря"), QStringLiteral("Витя")}) {
+            const QString when = QStringLiteral("2026-0%1-01T10:00:00+03:00").arg(day);
+            note(prefix + QStringLiteral("%1").arg(day),
+                 QStringLiteral("parent: %1\ncreated: %2\nmodified: %2\n").arg(parent, when),
+                 QStringLiteral("# %1\n").arg(name));
+            ++day;
+        }
+    };
+
+    note("00000000000m01", "role: folder\nsort: name-asc\n"
+                           "created: 2026-01-01T00:00:00+03:00\n"
+                           "modified: 2026-01-01T00:00:00+03:00\n", "# Помеченная\n");
+    family(QStringLiteral("00000000000m1"), QStringLiteral("00000000000m01"));
+    note("00000000000m02", "role: folder\ncreated: 2026-01-01T00:00:00+03:00\n"
+                           "modified: 2026-01-01T00:00:00+03:00\n", "# Обычная\n");
+    family(QStringLiteral("00000000000m2"), QStringLiteral("00000000000m02"));
+    // Подпапка ВНУТРИ помеченной, без своей метки: наследует не от корня, а от
+    // неё.
+    note("00000000000m03", "role: folder\nparent: 00000000000m01\n"
+                           "created: 2026-01-01T00:00:00+03:00\n"
+                           "modified: 2026-01-01T00:00:00+03:00\n", "# Внутри помеченной\n");
+    family(QStringLiteral("00000000000m3"), QStringLiteral("00000000000m03"));
+
+    NoteTreeModel model(g_root);
+    model.setRootSort(SortOrder{SortKey::Modified, false});   // корень: свежие сверху
+
+    const auto children = [&model](const QString& folderId) {
+        QStringList out;
+        const QModelIndex folder = model.indexForPath(model.pathOfId(folderId));
+        for (int row = 0; row < model.rowCount(folder); ++row)
+            out << model.data(model.index(row, 0, folder), Qt::DisplayRole).toString();
+        return out.join(QLatin1Char('|'));
+    };
+
+    ZT_EQ("помеченная папка идёт по СВОЕЙ метке", std::string("Внутри помеченной|Ася|Боря|Витя"),
+          s(children(QStringLiteral("00000000000m01"))));
+    ZT_EQ("соседняя без метки — по корневому порядку", std::string("Витя|Боря|Ася"),
+          s(children(QStringLiteral("00000000000m02"))));
+    ZT_EQ("подпапка наследует от помеченной, а не от корня",
+          std::string("Ася|Боря|Витя"), s(children(QStringLiteral("00000000000m03"))));
+
+    // СМЕНА ПЕРЕКЛЮЧАТЕЛЯ КОРНЯ помеченную папку не трогает.
+    model.setRootSort(SortOrder{SortKey::Created, true});
+    ZT_EQ("после смены корневого порядка помеченная стоит как стояла",
+          std::string("Внутри помеченной|Ася|Боря|Витя"),
+          s(children(QStringLiteral("00000000000m01"))));
+    ZT_EQ("а соседняя без метки перевернулась вместе с корнем",
+          std::string("Ася|Боря|Витя"), s(children(QStringLiteral("00000000000m02"))));
+
     QDir(g_root).removeRecursively();
 }
 
@@ -507,6 +578,7 @@ int main(int argc, char** argv) {
     checkSortingWritesNothing();
     checkJunkMark();
     checkSpecialFoldersStayAtBottom();
+    checkEachFolderSortsItsOwnChildren();
 
     QDir(g_root).removeRecursively();
     return zt::report("сортировки");
