@@ -205,7 +205,10 @@ void shootRuler(int zoom) {
 
     const int pad = 24;
     const qreal baseline = pad + metrics.ascent() + 18;
-    QImage sheet(340 * zoom, int(baseline + metrics.descent() + 48), QImage::Format_RGB32);
+    // Ширина листа растёт вместе с кеглем: строка та же самая, просто крупнее.
+    // Первая редакция брала 340 на единицу зума, и лист ×3 обрезался на слове
+    // «корень» — увидел это только глазами на снимке.
+    QImage sheet(700 * zoom, int(baseline + metrics.descent() + 48), QImage::Format_RGB32);
     sheet.fill(QColor(0xfe, 0xfe, 0xfb));
     {
         QPainter painter(&sheet);

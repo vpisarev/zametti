@@ -385,7 +385,11 @@ if(TARGET zametti-view)
         add_executable(formula_probe formula_probe.cpp)
         target_link_libraries(formula_probe PRIVATE zametti-widgets zametti-warnings)
         target_include_directories(formula_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-        add_test(NAME formula-baseline COMMAND formula_probe ${CMAKE_CURRENT_BINARY_DIR}/shots)
+        # Снимки — в .testdata: каталог владельца, он под .gitignore, и туда же
+        # смотрит приёмка. В build/ их искать неудобно, а в системный /tmp
+        # владельцу может быть и не пройти.
+        add_test(NAME formula-baseline
+                 COMMAND formula_probe ${CMAKE_SOURCE_DIR}/.testdata/formula-shots)
         set_tests_properties(formula-baseline PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
         # Архив этапа 15: тело в журнале, файл — стаб, старая корзина переезжает.
