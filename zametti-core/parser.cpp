@@ -29,6 +29,8 @@
 
 #include "math_scan.h"
 
+#include <utility>
+
 #include "md4c.h"
 
 #include <algorithm>
@@ -75,7 +77,12 @@ struct Frame {
 };
 
 struct Ctx {
+    // buf — ИСХОДНИК, из него берутся все байты для вывода. md — копия, которую
+    // видит md4c: в ней замаскированы строки внутри выключных формул (см.
+    // maskDisplayMath). Длины равны, поэтому смещение в одной есть смещение и в
+    // другой; вычисляются они по md, а читается всегда buf.
     const char* buf = nullptr;
+    const char* md = nullptr;
     size_t len = 0;
 
     Document ir;               // арена и спаны; blocks заполняется в самом конце
@@ -880,8 +887,8 @@ int onText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) 
 
     // Часть колбэков приходит со статическими строками (" ", "\n", отступ кода),
     // указатель в буфер — только у настоящих кусков исходника.
-    if (text >= c.buf && text < c.buf + c.len) {
-        size_t off = static_cast<size_t>(text - c.buf);
+    if (text >= c.md && text < c.md + c.len) {
+        size_t off = static_cast<size_t>(text - c.md);
         if (c.raw)
             mergeOffset(c.rawMin, c.rawMax, off, size);
         else if (c.inLeaf)
@@ -893,9 +900,9 @@ int onText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) 
 
     // Открывающий прогон кавычек стоит перед содержимым, возможно через пробелы
     // и перевод строки.
-    if (c.codeSpanAwaitsText && text >= c.buf && text < c.buf + c.len) {
+    if (c.codeSpanAwaitsText && text >= c.md && text < c.md + c.len) {
         c.codeSpanAwaitsText = false;
-        size_t k = static_cast<size_t>(text - c.buf);
+        size_t k = static_cast<size_t>(text - c.md);
         while (k > 0 && (c.buf[k - 1] == ' ' || c.buf[k - 1] == '\t' || c.buf[k - 1] == '\r' ||
                          c.buf[k - 1] == '\n'))
             --k;
@@ -907,7 +914,13 @@ int onText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) 
         case MD_TEXT_NORMAL:
         case MD_TEXT_ENTITY:
         case MD_TEXT_CODE:
-            c.text.append(text, size);
+            // Из ИСХОДНИКА: указатель может смотреть в замаскированную копию, а
+            // маска — не то, что владелец написал. Сущности (`&amp;`) приходят
+            // отдельной строкой вне буфера, их берём как есть.
+            if (text >= c.md && text < c.md + c.len)
+                c.text.append(c.buf + (text - c.md), size);
+            else
+                c.text.append(text, size);
             break;
         case MD_TEXT_SOFTBR:
             // Содержимое setext-заголовка может занимать несколько строк, а ATX
@@ -949,9 +962,9 @@ int onText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) 
             // которые уже слиты выше. Колбэк md4c для многострочной формулы
             // отдаёт перенос строки пробелом, а нам нужен файл как есть.
             if (!c.inMath) demote(c);
-            else if (text >= c.buf && text < c.buf + c.len)
+            else if (text >= c.md && text < c.md + c.len)
                 mergeOffset(c.mathMin, c.mathMax,
-                            static_cast<size_t>(text - c.buf), size);
+                            static_cast<size_t>(text - c.md), size);
             break;
         case MD_TEXT_NULLCHAR:
             demote(c);
@@ -1362,9 +1375,124 @@ void liftMeta(Document& doc) {
 
 }  // namespace
 
+// Выключная формула и markdown вокруг неё.
+//
+// Строки внутри `$$…$$` markdown разбирает как обычные строки документа — и они
+// запросто оказываются разметкой. В корпусе разведки так и есть:
+//
+//     $$\left((x_1+1)(x_2-1)\right)
+//     =
+//     \bigl((x_1+1)(x_2-1)\bigl).$$
+//
+// Одинокое `=` — setext-подчёркивание, то есть заголовок, и решается это ДО
+// всякой строчной разметки: формулы здесь не видит никто. Абзац уезжал в
+// заголовок, и круг «разбор → запись» отдавал `# $$\left(...` — байты менялись
+// молча. А внутри пункта списка вместе с ними уходил в дословный кусок весь
+// список: девять формул корпуса.
+//
+// Вторая беда с той же стороны: `$$` на СВОЕЙ строке. У md4c границы формулы
+// считаются по флангам, как у выделения, — за открывающими долларами не должно
+// быть пробела. Поэтому
+//
+//     $$
+//     \begin{aligned} … \end{aligned}
+//     $$
+//
+// формулой он не считает вовсе, хотя pandoc и GitHub считают.
+//
+// Обе беды снимает одна маска: md4c показывается КОПИЯ исходника, в которой
+// переносы строк ВНУТРИ выключной формулы заменены буквой. Формула становится
+// для него однострочной: строк внутри нет — нет и разметки в них, а фланги
+// сходятся. Длина не меняется ни на байт, значит смещения остаются смещениями в
+// исходнике; байты для вывода берутся всегда из него (Ctx::buf), а не из копии
+// (Ctx::md).
+//
+// Маскируются только выключные: у строчной, перенесённой через строку, перенос
+// — часть её вида, и трогать его незачем.
+//
+// Замаскировать формулу ВНУТРИ блока кода значило бы разрушить сам блок, а его
+// содержимое буквально. Поэтому огороженные блоки (``` и ~~~) пропускаются:
+// сканер канона про них не знает, а показывать формулу в примере кода никто и
+// не просит. Отступный код (четыре пробела) так не отличить от пункта списка —
+// это остаётся известным краем.
+std::vector<std::pair<size_t, size_t>> fencedRegions(std::string_view text) {
+    std::vector<std::pair<size_t, size_t>> found;
+    size_t line = 0;
+    size_t openAt = std::string_view::npos;
+    char fence = 0;
+    size_t fenceLen = 0;
+    while (line < text.size()) {
+        size_t eol = text.find('\n', line);
+        if (eol == std::string_view::npos) eol = text.size();
+        size_t p = line;
+        size_t indent = 0;
+        while (p < eol && (text[p] == ' ' || text[p] == '\t')) { ++p; ++indent; }
+        if (indent <= 3 && p < eol && (text[p] == '`' || text[p] == '~')) {
+            const char ch = text[p];
+            size_t run = 0;
+            while (p + run < eol && text[p + run] == ch) ++run;
+            if (run >= 3) {
+                if (openAt == std::string_view::npos) {
+                    openAt = line;
+                    fence = ch;
+                    fenceLen = run;
+                } else if (ch == fence && run >= fenceLen) {
+                    found.emplace_back(openAt, eol);
+                    openAt = std::string_view::npos;
+                }
+            }
+        }
+        line = eol + 1;
+    }
+    if (openAt != std::string_view::npos) found.emplace_back(openAt, text.size());
+    return found;
+}
+
+std::string maskDisplayMath(std::string_view text) {
+    std::string masked;
+    std::vector<std::pair<size_t, size_t>> fenced;
+    bool fencedKnown = false;
+    for (const MathSpan& span : scanMath(text)) {
+        if (!span.display) continue;
+        const size_t from = size_t(span.start);
+        const size_t to = size_t(span.end);
+        const std::string_view body = text.substr(from, to - from);
+        if (body.find('\n') == std::string_view::npos) continue;
+        // ПУСТАЯ СТРОКА ВНУТРИ — не маскируем. Канон ищет закрывающие `$$` хоть
+        // через сорок строк, и одинокая пара долларов в разных абзацах даёт
+        // «формулу» в полдокумента. Замаскировать её переносы значило бы слепить
+        // эти абзацы в один и разрушить разметку между ними; формула из двух
+        // абзацев не бывает, а вот случайный доллар — бывает.
+        bool hasBlank = false;
+        for (size_t i = 0; i + 1 < body.size() && !hasBlank; ++i) {
+            if (body[i] != '\n') continue;
+            size_t k = i + 1;
+            while (k < body.size() && (body[k] == ' ' || body[k] == '\t' || body[k] == '\r')) ++k;
+            hasBlank = k < body.size() && body[k] == '\n';
+        }
+        if (hasBlank) continue;
+
+        if (!fencedKnown) {
+            fenced = fencedRegions(text);
+            fencedKnown = true;
+        }
+        bool inCode = false;
+        for (const auto& region : fenced)
+            if (from >= region.first && from < region.second) { inCode = true; break; }
+        if (inCode) continue;
+
+        if (masked.empty()) masked.assign(text);
+        for (size_t i = from; i < to; ++i)
+            if (masked[i] == '\n' || masked[i] == '\r') masked[i] = 'x';
+    }
+    return masked;
+}
+
 Document parse(std::string_view markdown) {
     Ctx c;
+    const std::string masked = maskDisplayMath(markdown);
     c.buf = markdown.data();
+    c.md = masked.empty() ? markdown.data() : masked.data();
     c.len = markdown.size();
 
     MD_PARSER parser{};
@@ -1394,7 +1522,7 @@ Document parse(std::string_view markdown) {
     // избавляет разбор от реаллокаций арены целиком.
     c.ir.chars.reserve(arenaReserveFor(c.len));
 
-    md_parse(c.buf, static_cast<MD_SIZE>(c.len), &parser, &c);
+    md_parse(c.md, static_cast<MD_SIZE>(c.len), &parser, &c);
 
     endLeaf(c);
     finishExtents(c);
