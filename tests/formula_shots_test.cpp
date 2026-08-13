@@ -27,6 +27,7 @@
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QTextLayout>
 
 namespace {
 
@@ -242,6 +243,69 @@ void checkCornersOnSelected() {
     delete editor;
 }
 
+// --- вёрстка помещается в СВОЙ блок ------------------------------------------
+//
+// Владелец: «рендеринг оставляет мусор, особенно при прокрутке — как будто
+// размеры боксов посчитаны неверно». Так и есть, если картинка формулы выше
+// того места, которое ей отвёл Qt: рисуем мы за границей блока, а перерисовку
+// при прокрутке Qt заказывает по границе. Значит проверять надо не «красиво
+// ли», а именно это: вёрстка обязана помещаться в прямоугольник своего блока
+// вместе с его нижним полем.
+void checkFormulaFitsItsBlock() {
+    zametti::NoteEditor* editor = openNote(QStringLiteral("габариты"), 900, 760, kNote);
+    int checked = 0;
+    for (QTextBlock b = editor->document()->firstBlock(); b.isValid(); b = b.next()) {
+        const zametti::FormulaRender* render = editor->formulaAt(b.blockNumber());
+        if (render == nullptr) continue;
+        const QRectF box = editor->formulaRect(b.blockNumber());
+        const QRectF area = editor->document()->documentLayout()->blockBoundingRect(b);
+        const qreal bottom = area.bottom() + b.blockFormat().bottomMargin();
+        ZT_TRUE("вёрстка не вылезает вниз за свой блок: низ " +
+                    std::to_string(int(box.bottom())) + ", блок до " + std::to_string(int(bottom)),
+                box.bottom() <= bottom + 1.0);
+        ZT_TRUE("и не начинается выше него: верх " + std::to_string(int(box.top())) +
+                    ", блок с " + std::to_string(int(area.top())),
+                box.top() >= area.top() - 1.0);
+        ++checked;
+    }
+    ZT_TRUE("проверено формул: " + std::to_string(checked), checked >= 3);
+    delete editor;
+}
+
+// --- буква на выбранной формуле в неё не попадает ---------------------------
+//
+// Владелец: «выделив формулу рамочкой, удаётся нажать букву, и иногда она
+// вставляется прямо в формулу — хотя договаривались, что формула правится
+// только как latex-исходник». Правило одно на все объекты: всё, чего слой
+// объекта не назвал действием, на объекте не делается вовсе.
+void checkTypingDoesNotEnterFormula() {
+    zametti::NoteEditor* editor =
+        openNote(QStringLiteral("буква"), 900, 700, "до\n\n$$x^2$$\n\nпосле\n");
+    const int first = firstFormula(*editor);
+    ZT_TRUE("формула показана", first >= 0);
+    if (first < 0) {
+        delete editor;
+        return;
+    }
+    const QString before = editor->document()->toPlainText();
+    editor->setTextCursor(QTextCursor(editor->document()->findBlockByNumber(first)));
+    QTest::qWait(20);
+    QTest::keyClicks(editor, QStringLiteral("abc"));
+    QTest::qWait(30);
+    ZT_EQ("буквы в формулу не попали", before.toStdString(),
+          editor->document()->toPlainText().toStdString());
+    ZT_TRUE("и вёрстка на месте", firstFormula(*editor) >= 0);
+
+    // А по Enter — правится, и там буквы уже свои.
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTest::qWait(30);
+    QTest::keyClicks(editor, QStringLiteral("+1"));
+    QTest::qWait(30);
+    ZT_TRUE("в правке буквы попадают в исходник",
+            editor->document()->toPlainText().contains(QStringLiteral("+1")));
+    delete editor;
+}
+
 // --- флип: Enter показывает исходник, уход каретки — вёрстку ----------------
 
 void checkFlip() {
@@ -398,6 +462,8 @@ int main(int argc, char** argv) {
     checkRendered(1000, QStringLiteral("формулы-широкое"));
     checkRendered(620, QStringLiteral("формулы-узкое"));
     checkCornersOnSelected();
+    checkFormulaFitsItsBlock();
+    checkTypingDoesNotEnterFormula();
     checkFlip();
     checkEditChangesFormula();
     checkBroken();

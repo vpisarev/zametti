@@ -1798,9 +1798,12 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
     where.atBlockEnd = caret.positionInBlock() == block.length() - 1;
     where.onGap = isVSpaceBlock(block);
     // Каретка «на объекте» — это каретка на любой его строке. У картинки строка
-    // одна, у таблицы их столько, сколько в исходнике; таблица, которую сейчас
-    // правят исходником, объектом для клавиш не считается — там обычный текст.
-    where.onObject = own.valid() && own.first != editedTable();
+    // одна, у таблицы их столько, сколько в исходнике. Объект, который СЕЙЧАС
+    // ПРАВЯТ исходником, объектом для клавиш не считается — там обычный текст,
+    // и буквы обязаны попадать в него как всюду. Список правимых один на все
+    // виды: заведи третий вид со своей проверкой — и он забудет либо про
+    // запрет, либо про правку (мы уже забывали и то, и другое).
+    where.onObject = own.valid() && own.first != editedTable() && own.first != editedFormula();
 
     const QTextBlock above = block.previous();
     const QTextBlock below = block.next();
@@ -1818,7 +1821,25 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
     }
 
     const ObjectAction action = actionFor(event->key(), event->modifiers(), where);
-    if (action == ObjectAction::None) return false;
+    if (action == ObjectAction::None) {
+        // ОБЪЕКТ АТОМАРЕН И ДЛЯ БУКВ. Всё, чего слой объекта не назвал своим
+        // действием, на объекте просто не делается: буква, набранная на
+        // выбранной формуле, не имеет права попасть внутрь её исходника —
+        // формула правится только через Enter, как таблица и подпись картинки.
+        //
+        // Одним местом на все объекты, и это принципиально: владелец трижды
+        // ловил нас на том, что у формулы заводится своя копия правил и своя
+        // же дыра в них. Раньше буква проваливалась в обычную правку и
+        // вписывалась прямо в LaTeX.
+        const bool prints = !event->text().isEmpty() && event->text().at(0).isPrint() &&
+                            (event->modifiers() & ~Qt::ShiftModifier) == Qt::NoModifier;
+        if (where.onObject && prints) {
+            emit importStatus(
+                QStringLiteral("Формула правится по Enter — так же, как таблица"));
+            return true;
+        }
+        return false;
+    }
 
     switch (action) {
         case ObjectAction::Edit: {

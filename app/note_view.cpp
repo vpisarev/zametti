@@ -841,35 +841,27 @@ void NoteView::syncImageSpace(bool whole) {
         }
         // Сравнение с допуском: каждое выставление формата переразмечает
         // документ.
-        // ВЫСОТА БЛОКА-ФОРМУЛЫ ЗАДАЁТСЯ НАПРЯМУЮ, а не полем.
+        // РЕЗЕРВ ПОД ВЁРСТКУ — НИЖНИМ ПОЛЕМ, как у фотографии.
         //
-        // У формулы блок один — даже у многострочной: переносы внутри абзаца
-        // блок не рвут, и прятать строки, как у таблицы, нечего. Зато строк
-        // РАЗМЕТКИ у неё столько же, сколько строк в исходнике, и высота у них
-        // своя. Резерв полем это не лечит: у трёхстрочной `\begin{aligned}`
-        // исходник выше вёрстки, поле выходило нулевым, и под формулой
-        // оставалась пустая полоса в целую строку (видно на снимке).
+        // Я пробовал задавать высоту строки блока напрямую: у многострочной
+        // формулы исходник выше вёрстки, и поле выходило нулевым. Замер показал,
+        // что фиксированную высоту Qt соблюдает как хочет — на однострочной
+        // формуле блок получил 20 точек вместо заказанных 36, и вёрстка
+        // рисовалась ЗА границей своего блока. Перерисовку при прокрутке Qt
+        // заказывает по границе — за формулой оставался мусор (владелец увидел
+        // именно это).
         //
-        // Поэтому строке назначается такая высота, чтобы блок целиком равнялся
-        // вёрстке с зазором. Правится или битая — обычная высота: тогда виден
-        // и правится исходник.
-        qreal wantLine = -1.0;
-        if (const BlockFormulaRef formulaRef = blockFormulaRef(block);
-            formulaRef.valid && formulaRef.display) {
-            const QTextLayout* layout = block.layout();
-            const int lines = layout != nullptr && layout->lineCount() > 0
-                                  ? layout->lineCount() : 1;
-            const FormulaRender* render = formulaAt(block.blockNumber());
+        // Нижнее поле Qt соблюдает точно: на нём годами держатся фотографии.
+        // Плата — пустая полоса под многострочной формулой, у которой исходник
+        // выше вёрстки; это видно глазом, но это не мусор на экране.
+        if (const FormulaRender* render = formulaAt(block.blockNumber())) {
+            const qreal allotted =
+                document()->documentLayout()->blockBoundingRect(block).height();
             const qreal natural = QFontMetricsF(baseFontFor(zoom_)).height();
-            wantLine = render != nullptr
-                           ? std::round((formulaBoxHeight(*render, natural) + gap) / lines)
-                           : std::round(natural * appearance().lineHeightFactor);
+            want += qMax(0.0, formulaBoxHeight(*render, natural) + gap - allotted);
         }
-        const bool marginSame = std::fabs(format.bottomMargin() - want) < 0.5;
-        const bool lineSame = wantLine < 0.0 || std::fabs(format.lineHeight() - wantLine) < 0.5;
-        if (marginSame && lineSame) continue;
+        if (std::fabs(format.bottomMargin() - want) < 0.5) continue;
         format.setBottomMargin(want);
-        if (wantLine >= 0.0) format.setLineHeight(wantLine, QTextBlockFormat::FixedHeight);
         // ВЫСОТА БЛОКА ЦЕЛИКОМ НАША, а не «строка плюс поле». Иначе она
         // складывается из двух слагаемых, одно из которых считает Qt, — и
         // стоит ему дать неразмеченному блоку ноль вместо высоты строки, как
