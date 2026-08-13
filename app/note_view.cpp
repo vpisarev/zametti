@@ -1246,7 +1246,17 @@ void NoteView::syncFormulas() {
 
             const int number = block.blockNumber();
             FormulaRender render;
-            const FormulaRender* had = formulas_.contains(number) ? &formulas_[number] : nullptr;
+            // КЭШ ВЁРСТКИ ВЫКЛЮЧЕН — по решению владельца, чтобы проверить
+            // догадку: не от него ли пропадающие строки и прочие странности,
+            // которые набор не ловит. Пока выключен, движок зовётся на каждую
+            // сверку; это дорого (миллисекунды на формулу), и включать его
+            // обратно надо вместе с проверкой, которая эту догадку закрывает.
+            //
+            // Пометка на завтра: если догадка не подтвердится, кэш вернуть — но
+            // ключом, в котором перечислено ВСЁ, от чего зависит картинка
+            // (исходник, кегль, цвет, плотность), и с проверкой «повторная
+            // сверка движок не зовёт».
+            const FormulaRender* had = nullptr;
             if (had != nullptr && had->source == ref.source && had->colour == colour &&
                 qFuzzyCompare(had->pixelSize, pixelSize) && qFuzzyCompare(had->dpr, dpr)) {
                 render = *had;   // ничего не изменилось — движок звать незачем
