@@ -379,6 +379,13 @@ if(TARGET zametti-view)
         set_tests_properties(document-roundtrip PROPERTIES ENVIRONMENT
                              "QT_QPA_PLATFORM=offscreen")
 
+        # Лист для выбора кегля выключной формулы: одна заметка при трёх
+        # значениях formulas.displayScale. Выбирает владелец глазами.
+        add_executable(display_scale_probe display_scale_probe.cpp)
+        target_link_libraries(display_scale_probe PRIVATE zametti-widgets Qt6::Test
+                              zametti-warnings)
+        target_include_directories(display_scale_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
         add_executable(open_probe open_probe.cpp)
         target_link_libraries(open_probe PRIVATE zametti-widgets Qt6::Test zametti-warnings)
         target_include_directories(open_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
