@@ -131,11 +131,10 @@ QPainterPath platePath(const QRectF& rect, qreal radius, bool roundTop, bool rou
 
 }  // namespace
 
-bool caretShouldBeDrawn(bool focused, bool readOnly, bool hasSelection, bool onImage,
-                        bool inDrawnTable) {
+bool caretShouldBeDrawn(bool focused, bool readOnly, bool hasSelection, bool onDrawnObject) {
     if (!focused || readOnly) return false;
     if (hasSelection) return false;
-    if (onImage || inDrawnTable) return false;
+    if (onDrawnObject) return false;
     return true;
 }
 
@@ -1256,6 +1255,26 @@ void NoteView::syncFormulas() {
     formulas_ = fresh;
 }
 
+// ОДИН ВОПРОС НА ВСЕ ОБЪЕКТЫ. Показан ли объект вместо своего исходника —
+// решает слой объекта плюс признак «его сейчас правят». Разводить это по веткам
+// у каждого вида нельзя: ровно так каретка и осталась мигать сперва в таблице,
+// а потом, слово в слово, у формулы.
+bool NoteView::caretOnDrawnObject() {
+    const QTextBlock block = textCursor().block();
+    const BlockObject object = objectOf(block);
+    switch (object.kind) {
+        case ObjectKind::None:
+            return false;
+        case ObjectKind::Image:
+            return imageGeometry(block).valid;
+        case ObjectKind::Table:
+            return object.first != editedTable_;
+        case ObjectKind::Formula:
+            return object.first != editedFormula_ && formulaAt(object.first) != nullptr;
+    }
+    return false;
+}
+
 const FormulaRender* NoteView::formulaAt(int blockNumber) const {
     const auto it = formulas_.constFind(blockNumber);
     return it == formulas_.constEnd() ? nullptr : &it.value();
@@ -2042,13 +2061,9 @@ void NoteView::paintEvent(QPaintEvent* event) {
     // исходника, и Qt отдаёт под неё огрызок высотой в ничто — владелец увидел
     // «крохотный курсор, мигающий внутри таблицы». Выбранную таблицу показывают
     // уголки, как и выбранную фотографию, а не полоска между ячейками.
-    const BlockObject caretObject = objectOf(textCursor().block());
-    const bool insideDrawnTable = caretObject.kind == ObjectKind::Table &&
-                                  caretObject.first != editedTable_;
     painter.resetTransform();
     if (caretOn_ && caretShouldBeDrawn(hasFocus(), isReadOnly(), textCursor().hasSelection(),
-                                       imageGeometry(textCursor().block()).valid,
-                                       insideDrawnTable)) {
+                                       caretOnDrawnObject())) {
         QRect at = cursorRect();
         at.setWidth(qMax(1, qRound(appearance().caretWidth * zoom_)));
         painter.fillRect(at, appearance().caretColor);

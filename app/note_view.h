@@ -43,8 +43,13 @@ void applyPalette(QWidget& view, bool history = false);
 // строке-фотографии и ВНУТРИ НАРИСОВАННОЙ ТАБЛИЦЫ — в двух последних выбор
 // показывают уголки-мишени, а Qt отдаёт под каретку на спрятанной строке
 // огрызок почти нулевой высоты (владелец увидел его мигающим между ячейками).
-bool caretShouldBeDrawn(bool focused, bool readOnly, bool hasSelection, bool onImage,
-                        bool inDrawnTable);
+// Рисовать ли каретку. Последний вопрос — ОДИН на все объекты: стоит ли она на
+// объекте, показанном вместо своего исходника (фотография, сетка таблицы,
+// вёрстка формулы). Раздельные признаки тут были ошибкой конструкции: каждый
+// новый объект заводил свою ветку, и каждая ветка забывала про каретку —
+// сначала таблица («крохотный курсор внутри таблицы»), потом слово в слово
+// формула.
+bool caretShouldBeDrawn(bool focused, bool readOnly, bool hasSelection, bool onDrawnObject);
 
 // Полоса подложки под одной строкой блока кода — в координатах документа.
 //
@@ -304,6 +309,9 @@ protected:
         qreal allotted = 0.0;
     };
     ImageGeometry imageGeometry(const QTextBlock& block);
+    // Стоит ли каретка на объекте, показанном вместо исходника. Один ответ на
+    // фотографию, таблицу и формулу — см. caretShouldBeDrawn.
+    bool caretOnDrawnObject();
     // Формула на экране: где стоит вёрстка и какую строку закрыть.
     void paintFormula(QPainter& painter, const QTextBlock& block);
 

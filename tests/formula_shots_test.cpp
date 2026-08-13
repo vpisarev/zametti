@@ -231,6 +231,14 @@ void checkCornersOnSelected() {
     ZT_TRUE("без каретки на формуле уголков нет: " + std::to_string(without), without < 20);
     ZT_TRUE("с кареткой на формуле уголки видны: " + std::to_string(with), with > 60);
 
+    // И САМОЙ КАРЕТКИ ТАМ НЕТ. Выбранную формулу показывают уголки, а не
+    // мигающая полоска посреди вёрстки. Ровно та же беда была у таблицы, и это
+    // третья её копия — потому вопрос теперь один на все объекты
+    // (caretShouldBeDrawn принимает «объект показан вместо исходника»).
+    ZT_TRUE("на нарисованной формуле каретка не рисуется",
+            !zametti::caretShouldBeDrawn(true, false, false, true));
+    ZT_TRUE("а в тексте рисуется", zametti::caretShouldBeDrawn(true, false, false, false));
+
     delete editor;
 }
 

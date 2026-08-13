@@ -282,12 +282,12 @@ void checkMouse() {
     // не проверить вовсе — первая редакция проверки была пустышкой и оставалась
     // зелёной со снятой починкой.
     ++zt::g_checks;
-    if (zametti::caretShouldBeDrawn(true, false, false, false, true)) {
+    if (zametti::caretShouldBeDrawn(true, false, false, true)) {
         ++zt::g_failures;
         std::printf("провал: каретка рисуется внутри нарисованной таблицы\n");
     }
     ++zt::g_checks;
-    if (!zametti::caretShouldBeDrawn(true, false, false, false, false)) {
+    if (!zametti::caretShouldBeDrawn(true, false, false, false)) {
         ++zt::g_failures;
         std::printf("провал: в обычном тексте каретка пропала\n");
     }
