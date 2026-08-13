@@ -449,6 +449,43 @@ void bench(int notes) {
     QDir(g_root).removeRecursively();
 }
 
+// СЛУЖЕБНЫЕ ПАПКИ ВНИЗУ И В СВОЁМ ПОРЯДКЕ (просьба владельца): всё живое,
+// под ним бюро находок, в самом низу Архив. Проверяется при обоих направлениях
+// и по всем трём ключам: служебные не участвуют в сортировке вовсе, и
+// переворот направления не должен поднимать их наверх.
+void checkSpecialFoldersStayAtBottom() {
+    QDir(g_root).removeRecursively();
+    QDir().mkpath(g_root + QStringLiteral("/.zametti"));
+    note("00000000000a01", "role: folder\ncreated: 2026-01-01T00:00:00+03:00\n"
+                           "modified: 2026-01-01T00:00:00+03:00\n", "# Ада\n");
+    note("00000000000a02", "role: folder\ncreated: 2026-06-01T00:00:00+03:00\n"
+                           "modified: 2026-06-01T00:00:00+03:00\n", "# Яна\n");
+    // Бюро заведено раньше всех и правлено позже всех — по любому ключу оно
+    // просилось бы то вверх, то вниз.
+    note("00000000000a03", "role: lost\ncreated: 2020-01-01T00:00:00+03:00\n"
+                           "modified: 2026-12-31T00:00:00+03:00\n", "# Бюро находок\n");
+    note("00000000000a04", "parent: 00000000000a03\ncreated: 2026-02-02T00:00:00+03:00\n"
+                           "modified: 2026-02-02T00:00:00+03:00\n", "# Найдёныш\n");
+    note("00000000000a05", "archived: yes\ncreated: 2026-03-03T00:00:00+03:00\n"
+                           "modified: 2026-03-03T00:00:00+03:00\n", "# Убранная\n");
+
+    NoteTreeModel model(g_root);
+    for (const SortKey key : {SortKey::Name, SortKey::Modified, SortKey::Created})
+        for (const bool ascending : {true, false}) {
+            model.setSortOrder(SortOrder{key, ascending});
+            const QModelIndex all = model.index(0, 0, QModelIndex());
+            const int rows = model.rowCount(all);
+            QStringList titles;
+            for (int row = 0; row < rows; ++row)
+                titles << model.data(model.index(row, 0, all), Qt::DisplayRole).toString();
+            ZT_EQ("служебные внизу и в своём порядке (" +
+                      s(zametti::sortOrderToString(SortOrder{key, ascending})) + ")",
+                  std::string("Бюро находок|Архив"),
+                  s(titles.mid(rows - 2).join(QLatin1Char('|'))));
+        }
+    QDir(g_root).removeRecursively();
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -469,6 +506,7 @@ int main(int argc, char** argv) {
     checkInheritance();
     checkSortingWritesNothing();
     checkJunkMark();
+    checkSpecialFoldersStayAtBottom();
 
     QDir(g_root).removeRecursively();
     return zt::report("сортировки");

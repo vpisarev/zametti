@@ -394,9 +394,19 @@ std::unique_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath) {
 // пишет ядро. Равные даты разводятся именем, иначе порядок в дневнике, где
 // десяток заметок заведён в одну секунду, менялся бы от запуска к запуску.
 void sortStore(NoteTreeModel::Node* node, SortOrder order, const QCollator& collator) {
+    // СЛУЖЕБНЫЕ ПАПКИ ВНИЗУ, и в своём порядке: сперва всё живое, под ним бюро
+    // находок, а в самом низу Архив (просьба владельца — бюро это
+    // вспомогательный архив, и стоять оно должно рядом с ним). Ни та, ни другая
+    // в сортировке не участвуют вовсе: это не «самые старые папки», а другие
+    // места, и всплывать от переворота направления им незачем.
+    const auto rank = [](const NoteTreeModel::Node* n) {
+        if (n->archiveBox) return 2;
+        if (n->lostFound) return 1;
+        return 0;
+    };
     std::sort(node->children.begin(), node->children.end(),
-              [order, &collator](const auto& a, const auto& b) {
-                  if (a->archiveBox != b->archiveBox) return b->archiveBox;
+              [order, &collator, &rank](const auto& a, const auto& b) {
+                  if (rank(a.get()) != rank(b.get())) return rank(a.get()) < rank(b.get());
                   if (order.key == SortKey::Name) {
                       // Папки первыми — только по имени: в хронологии они стоят
                       // наравне с заметками, иначе дневниковая лента
