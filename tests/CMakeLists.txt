@@ -357,6 +357,32 @@ if(TARGET zametti-view)
                  ${ZAMETTI_TABLE_NOTE})
         set_tests_properties(table-shots PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+        # Архивация ОТКРЫТОЙ заметки: путь целиком, как в окне.
+        add_executable(archive_editor_test archive_editor_test.cpp)
+        target_link_libraries(archive_editor_test PRIVATE zametti-widgets Qt6::Test
+                              zametti-warnings)
+        target_include_directories(archive_editor_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        add_test(NAME archive-editor COMMAND archive_editor_test
+                 ${CMAKE_CURRENT_BINARY_DIR}/архив-редактор)
+        set_tests_properties(archive-editor PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+        # Круг через живой документ: файл → IR → QTextDocument → IR → файл.
+        # Дыра в матрице, найденная владельцем: каждая запись заметки идёт
+        # именно этим путём, а проверялся только круг ядра.
+        add_executable(document_roundtrip_test document_roundtrip_test.cpp)
+        target_link_libraries(document_roundtrip_test PRIVATE zametti-widgets Qt6::Test
+                              zametti-warnings)
+        target_include_directories(document_roundtrip_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        add_test(NAME document-roundtrip COMMAND document_roundtrip_test
+                 ${CMAKE_SOURCE_DIR}/.testdata/Typesetting\ Math\ in\ Texts.md
+                 ${CMAKE_SOURCE_DIR}/.testdata/corpus)
+        set_tests_properties(document-roundtrip PROPERTIES ENVIRONMENT
+                             "QT_QPA_PLATFORM=offscreen")
+
+        add_executable(open_probe open_probe.cpp)
+        target_link_libraries(open_probe PRIVATE zametti-widgets Qt6::Test zametti-warnings)
+        target_include_directories(open_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
         # Контрольный лист формул: корпус разведки живым окном, снимки
         # страница за страницей. Приёмка глазами, а не набор.
         add_executable(formula_sheet_probe formula_sheet_probe.cpp)

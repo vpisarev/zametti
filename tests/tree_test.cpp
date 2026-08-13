@@ -228,6 +228,26 @@ int main(int argc, char** argv) {
     ZT_TRUE("выброшенная лежит в Архиве", model.inArchive(thrown));
     ZT_TRUE("папка не в Архиве", !model.inArchive(folder));
 
+    // ПУСТОЙ АРХИВ ВСЁ РАВНО ВИДЕН. Он собирается из помеченных заметок, и
+    // раньше исчезал вместе с последней: владелец вернул всё из архива — и
+    // место, куда он привык убирать, пропало из дерева. Прежняя Корзина была
+    // настоящей папкой и стояла всегда; Архив обязан вести себя так же.
+    {
+        const QString root = g_root + QStringLiteral("/пустой-архив");
+        QDir().mkpath(root + QStringLiteral("/.zametti"));
+        QFile note(root + QStringLiteral("/0000000000000a.md"));
+        if (note.open(QIODevice::WriteOnly))
+            note.write("<!-- zametti\ncreated: 2026-01-01T00:00:00Z\n"
+                       "modified: 2026-01-01T00:00:00Z\n-->\n\n# Одна заметка\n");
+        note.close();
+        NoteTreeModel empty(root);
+        bool seen = false;
+        const QModelIndex inside = empty.index(0, 0, QModelIndex());
+        for (int row = 0; row < empty.rowCount(inside); ++row)
+            if (titleAt(empty, inside, row) == QStringLiteral("Архив")) seen = true;
+        ZT_TRUE("в хранилище без архивных заметок Архив всё равно есть", seen);
+    }
+
     // Запрет переноса в собственное поддерево.
     ZT_TRUE("ребёнок — потомок папки",
             model.isDescendantOf(QStringLiteral("00000000000002"),

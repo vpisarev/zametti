@@ -1343,7 +1343,12 @@ void NoteView::paintFormula(QPainter& painter, const QTextBlock& block) {
         painter.drawText(frame.adjusted(6, 4, -6, -4), Qt::AlignLeft | Qt::TextWordWrap,
                          render->source + QLatin1Char('\n') + render->error);
     } else {
-        painter.drawImage(box, render->image);
+        // Прямоугольник — в логических точках, источник — в физических, и
+        // никакой плотности у самой картинки (см. formula.cpp). Так размер
+        // вёрстки не зависит ни от плотности экрана, ни от того, как Qt
+        // толкует пометку плотности: снимки при плотности 1 и 2 сходятся.
+        painter.drawImage(box, render->image,
+                          QRectF(QPointF(0, 0), QSizeF(render->image.size())));
     }
     painter.restore();
 }

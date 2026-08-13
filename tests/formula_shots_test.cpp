@@ -19,6 +19,8 @@
 #include <QApplication>
 #include <QDir>
 #include <QFile>
+#include <QFontInfo>
+#include <QFontMetricsF>
 #include <QImage>
 #include <QScrollBar>
 #include <QTest>
@@ -58,11 +60,16 @@ int firstFormula(zametti::NoteEditor& editor) {
 }
 
 // Сколько тёмных точек в этом прямоугольнике снимка.
-int inkIn(const QImage& shot, const QRectF& box, int scroll) {
+// СНИМОК — В ФИЗИЧЕСКИХ ТОЧКАХ, а прямоугольники — в логических. На экране
+// с плотностью 2 это разные числа вдвое, и первая редакция считала чернила не
+// там, где рисовала: проверка краснела на ровном месте, а я чуть не пошёл чинить
+// отрисовку. Плотность берётся у самого снимка.
+int inkIn(const QImage& shot, const QRectF& box, int scroll, qreal dpr) {
     int dark = 0;
-    for (int x = int(box.left()); x < int(box.right()) && x < shot.width(); ++x)
-        for (int y = int(box.top()) - scroll; y < int(box.bottom()) - scroll && y < shot.height();
-             ++y)
+    const QRectF at((box.left()) * dpr, (box.top() - scroll) * dpr, box.width() * dpr,
+                    box.height() * dpr);
+    for (int x = int(at.left()); x < int(at.right()) && x < shot.width(); ++x)
+        for (int y = int(at.top()); y < int(at.bottom()) && y < shot.height(); ++y)
             if (x >= 0 && y >= 0 && qGray(shot.pixel(x, y)) < 128) ++dark;
     return dark;
 }
@@ -115,10 +122,17 @@ void checkRendered(int width, const QString& name) {
     // цветом, — движок при этом не жалуется.
     const QRectF box = editor->formulaRect(first);
     const int scroll = editor->verticalScrollBar()->value();
+    std::printf("[замер] dpr=%.2f кегль=%d высота строки=%.1f вёрстка=%.1fx%.1f\n",
+                editor->devicePixelRatioF(), QFontInfo(editor->baseFont()).pixelSize(),
+                QFontMetricsF(editor->baseFont()).height(), box.width(), box.height());
     ZT_TRUE("у вёрстки есть размер: " + std::to_string(int(box.width())) + "x" +
                 std::to_string(int(box.height())),
             box.width() > 4 && box.height() > 4);
-    ZT_TRUE("в прямоугольнике вёрстки есть чернила", inkIn(shot, box, scroll) > 20);
+    const int ink = inkIn(shot, box, scroll, editor->devicePixelRatioF());
+    const qreal dprNow = editor->devicePixelRatioF();
+    const qreal area = box.width() * dprNow * box.height() * dprNow;
+    std::printf("[замер] чернил %d из %d точек (%.0f%%)\n", ink, int(area), 100.0 * ink / area);
+    ZT_TRUE("в прямоугольнике вёрстки есть чернила", ink > 20);
 
     // ВЁРСТКА ПО ЦЕНТРУ КОЛОНКИ. Слева от неё поле, справа поле, и они близки.
     const qreal leftGap = box.left();
@@ -134,7 +148,21 @@ void checkRendered(int width, const QString& name) {
     if (leftGap > 12) {
         const QRectF stripe(0, box.top(), leftGap - 4, box.height());
         ZT_TRUE("слева от вёрстки исходник не проступает",
-                inkIn(shot, stripe, scroll) == 0);
+                inkIn(shot, stripe, scroll, editor->devicePixelRatioF()) == 0);
+    }
+
+    // ВЁРСТКА НЕ ВЫЛЕЗАЕТ ЗА СВОЙ ПРЯМОУГОЛЬНИК. Полоса сразу справа от неё
+    // обязана быть чистой. Проверка не придирка: на экране с плотностью 2
+    // формула рисовалась вдвое крупнее и уезжала за колонку — владелец увидел
+    // «на экран влезает только кусок». Числа при этом были верные, врала
+    // отрисовка, и поймать это можно только по снимку.
+    {
+        const qreal right = editor->viewport()->width() - box.right() - 4;
+        if (right > 8) {
+            const QRectF beyond(box.right() + 2, box.top(), right, box.height());
+            ZT_TRUE("справа от вёрстки чисто",
+                    inkIn(shot, beyond, scroll, editor->devicePixelRatioF()) == 0);
+        }
     }
 
     // ФОРМУЛЫ НЕ НАПОЛЗАЮТ ДРУГ НА ДРУГА. Между соседними прямоугольниками
@@ -181,7 +209,7 @@ void checkFlip() {
         const QTextBlock block = editor->document()->findBlockByNumber(first);
         const QRectF line =
             editor->document()->documentLayout()->blockBoundingRect(block);
-        ZT_TRUE("исходник виден", inkIn(shot, line, editor->verticalScrollBar()->value()) > 10);
+        ZT_TRUE("исходник виден", inkIn(shot, line, editor->verticalScrollBar()->value(), editor->devicePixelRatioF()) > 10);
     }
 
     // Увели каретку наружу — снова вёрстка.

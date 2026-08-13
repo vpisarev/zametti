@@ -214,7 +214,12 @@ FormulaImage Formulas::render(const QString& latex, bool display, qreal pixelSiz
     QImage image(int(std::ceil(physicalWidth)), int(std::ceil(physicalHeight)),
                  QImage::Format_ARGB32_Premultiplied);
     image.fill(Qt::transparent);
-    image.setDevicePixelRatio(dpr);
+    // ПЛОТНОСТЬ КАРТИНКЕ НЕ ПРОСТАВЛЯЕМ. С ней «логический» размер картинки
+    // считает Qt, и рисование зависит от того, какой формой drawImage её
+    // попросили нарисовать. Здесь картинка — просто пиксели в физических
+    // точках: кто рисует, тот и задаёт прямоугольник в логических, а источник
+    // в физических (см. note_view.cpp). Тогда ответ один при любой плотности и
+    // не зависит от того, как Qt толкует пометку.
     {
         QPainter painter(&image);
         painter.setRenderHint(QPainter::Antialiasing, true);

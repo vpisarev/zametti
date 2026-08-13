@@ -134,6 +134,12 @@ struct Ctx {
     size_t pendingPrefixOff = kNoOffset;
 };
 
+// Знак препинания ASCII — тот самый набор, перед которым в CommonMark косая
+// является экранированием, а не буквой.
+bool isAsciiPunct(char ch) {
+    return std::strchr("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~", ch) != nullptr && ch != '\0';
+}
+
 void mergeOffset(size_t& lo, size_t& hi, size_t off, size_t size) {
     if (lo == kNoOffset || off < lo) lo = off;
     size_t last = off + (size > 0 ? size - 1 : 0);
@@ -841,16 +847,40 @@ int leaveSpan(MD_SPANTYPE type, void* detail, void* userdata) {
 
         // КАНОН НАШ, А НЕ MD4C. У него границы считаются по флангам, как у
         // выделения, и «$ x + y$» он считает формулой, а pandoc (и GitHub) —
-        // нет. Не прошло канон — те же байты уходят обычным текстом: файл от
-        // показа не меняется ни в одном случае.
+        // нет.
         flushRun(c);
         const size_t at = c.text.size();
-        c.text.append(literal);
-        if (mathBordersOk(source, open, close, c.mathDisplay)) {
+        const bool ours = mathBordersOk(source, open, close, c.mathDisplay);
+        if (ours) {
+            // Формула — дословно: внутри математики markdown не действует.
+            c.text.append(literal);
             Inline s;
             s.text = {int32_t(at), int32_t(c.text.size())};
             s.set(InlineMath, true);
             c.ir.spans.push_back(s);
+        } else {
+            // НЕ ФОРМУЛА — ЗНАЧИТ ОБЫЧНЫЙ ТЕКСТ, И ЭКРАНИРОВАНИЕ НАДО СНЯТЬ.
+            //
+            // Здесь я и посадил беду, которая испортила заметку владельца.
+            // Сперва я клал в текст те же байты, что в файле: «файл от показа
+            // не меняется». Но текст модели — это ТЕКСТ, а не markdown: при
+            // записи `\` в нём экранируется заново. Одно открытие — и
+            // `\gamma` становится `\\gamma`, следующее удваивает опять.
+            // Заметка росла вдвое с каждым открытием, пока не раздулась
+            // втрое от исходной.
+            //
+            // Снимаем экранирование ровно так, как это сделал бы md4c, если бы
+            // не счёл кусок математикой: косая перед знаком препинания ASCII
+            // исчезает, всё прочее буквально.
+            for (size_t i = 0; i < literal.size(); ++i) {
+                const char ch = literal[i];
+                if (ch == '\\' && i + 1 < literal.size() && isAsciiPunct(literal[i + 1])) {
+                    c.text.push_back(literal[i + 1]);
+                    ++i;
+                    continue;
+                }
+                c.text.push_back(ch);
+            }
         }
         c.runStart = c.text.size();
         return 0;

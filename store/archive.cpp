@@ -11,6 +11,10 @@
 #include <QFileInfo>
 #include <QSaveFile>
 
+#include <algorithm>
+#include <string_view>
+#include <utility>
+
 namespace zametti::store {
 namespace {
 
@@ -57,6 +61,99 @@ void setArchivedMeta(NoteMeta& meta, bool archived) {
     else meta.unset(kArchivedKey);
 }
 
+// --- стаб ПО БАЙТАМ, без разбора ---------------------------------------------
+//
+// Правило владельца, записанное после того, как заметка с формулами оказалась
+// испорчена: «пусть .md будет битый-перебитый, случайно или нарочно, — раз
+// шапка на месте, программа обязана убрать его в архив, а разбирать дальше
+// вообще не должна».
+//
+// Оно верное и не только про формулы. Архивация — операция НАД ФАЙЛОМ: тело
+// целиком уезжает в журнал байт в байт, а на его месте остаётся шапка плюс
+// строка заголовка. Ни первое, ни второе разбора не требует, а разбор — это
+// лишняя точка отказа ровно там, где человек спасает то, что уже сломалось.
+//
+// Поэтому здесь ни одного вызова parse. Шапка берётся куском исходных байтов,
+// пометка `archived: yes` дописывается строкой, заголовок ищется как первая
+// содержательная строка после шапки.
+
+// Границы шапки в байтах: [начало, конец) вместе с закрывающей строкой `-->`.
+// Пусто — шапки нет.
+std::pair<size_t, size_t> headerRange(std::string_view bytes) {
+    static constexpr std::string_view kOpen = "<!-- zametti";
+    if (bytes.substr(0, kOpen.size()) != kOpen) return {0, 0};
+    const size_t close = bytes.find("\n-->");
+    if (close == std::string_view::npos) return {0, 0};
+    size_t end = close + 5;   // "\n-->" плюс перевод строки за ним
+    if (end <= bytes.size() && bytes.substr(close, 5) != "\n-->\n") end = close + 4;
+    return {0, std::min(end, bytes.size())};
+}
+
+// Есть ли в шапке пометка архива. Текстом, а не разбором: строка `archived:` со
+// значением, либо старый `role: trash`.
+bool headerSaysArchived(std::string_view header) {
+    for (size_t at = 0; at < header.size();) {
+        const size_t eol = std::min(header.find('\n', at), header.size());
+        const std::string_view line = header.substr(at, eol - at);
+        if (line.rfind("archived:", 0) == 0 && line.find_first_not_of(" \t\r", 9) != std::string_view::npos)
+            return true;
+        if (line.rfind("role:", 0) == 0 && line.find("trash") != std::string_view::npos) return true;
+        at = eol + 1;
+    }
+    return false;
+}
+
+// Шапка с дописанной пометкой. Своя строка перед закрывающей `-->`.
+std::string headerWithArchived(std::string_view header) {
+    const size_t close = header.rfind("-->");
+    if (close == std::string_view::npos) return std::string(header);
+    std::string out(header.substr(0, close));
+    out += "archived: yes\n";
+    out += header.substr(close);
+    return out;
+}
+
+// Шапка без пометки архива: строка `archived:` выбрасывается целиком, старый
+// `role: trash` — тоже. Прочие ключи не трогаются ни один.
+std::string headerWithoutArchived(std::string_view header) {
+    std::string out;
+    for (size_t at = 0; at < header.size();) {
+        const size_t eol = std::min(header.find('\n', at), header.size());
+        const std::string_view line = header.substr(at, eol - at);
+        const bool drop = line.rfind("archived:", 0) == 0 ||
+                          (line.rfind("role:", 0) == 0 && line.find("trash") != std::string_view::npos);
+        if (!drop) {
+            out += line;
+            if (eol < header.size()) out += '\n';
+        }
+        at = eol + 1;
+    }
+    return out;
+}
+
+// Строка заголовка для стаба: первая содержательная строка тела. Уже заголовок
+// — берём как есть, иначе делаем заголовком первого уровня. Ничего не нашли —
+// стаб останется без тела, и это законно: заметка и была пустой.
+std::string titleLine(std::string_view body) {
+    for (size_t at = 0; at < body.size();) {
+        const size_t eol = std::min(body.find('\n', at), body.size());
+        std::string line(body.substr(at, eol - at));
+        while (!line.empty() && (line.back() == ' ' || line.back() == '\t' || line.back() == '\r'))
+            line.pop_back();
+        size_t from = 0;
+        while (from < line.size() && (line[from] == ' ' || line[from] == '\t')) ++from;
+        line = line.substr(from);
+        at = eol + 1;
+        if (line.empty()) continue;
+        // Шапка из HTML-комментария в тело не входит, но заметка могла начаться
+        // с чужого комментария — заголовком он не считается.
+        if (line.rfind("<!--", 0) == 0) continue;
+        if (line.rfind("#", 0) == 0) return line;
+        return "# " + line;
+    }
+    return {};
+}
+
 std::string stubBytes(const Document& doc) {
     Document stub;
     stub.meta = doc.meta;
@@ -87,6 +184,24 @@ std::string stubBytes(const Document& doc) {
     return serialize(stub);
 }
 
+std::string stubFromBytes(std::string_view bytes) {
+    const auto [from, to] = headerRange(bytes);
+    if (to == 0) return {};   // шапки нет — не наша заметка, трогать нечего
+    const std::string_view header = bytes.substr(from, to - from);
+    const std::string_view body = bytes.substr(to);
+
+    std::string out = headerSaysArchived(header) ? std::string(header)
+                                                 : headerWithArchived(header);
+    const std::string title = titleLine(body);
+    if (!title.empty()) {
+        if (out.empty() || out.back() != '\n') out += '\n';
+        out += '\n';
+        out += title;
+        out += '\n';
+    }
+    return out;
+}
+
 bool archiveNote(const QString& root, const QString& noteId, const history::Rules& rules,
                  QString* error) {
     const QString path = noteFile(root, noteId);
@@ -95,11 +210,21 @@ bool archiveNote(const QString& root, const QString& noteId, const history::Rule
         if (error != nullptr) *error = QStringLiteral("заметка %1 не читается").arg(noteId);
         return false;
     }
-    Document doc = parse(bytes);
+    // НИ ОДНОГО РАЗБОРА. Заметка могла быть испорчена чем угодно — правкой в
+    // чужом редакторе, сбойным диском, нашей же ошибкой; раз шапка на месте,
+    // убрать её в архив программа обязана. Тело уедет в журнал побайтово, стаб
+    // соберётся из тех же байтов.
+    const auto [headFrom, headTo] = headerRange(bytes);
+    if (headTo == 0) {
+        if (error != nullptr)
+            *error = QStringLiteral("у заметки %1 нет шапки zametti").arg(noteId);
+        return false;
+    }
     // ИДЕМПОТЕНТНОСТЬ. Повторная архивация — не ошибка: так выглядит второй
     // заход после падения между шагами. Уже помеченную заметку не трогаем
     // вовсе, иначе её стаб уехал бы в журнал поверх настоящего тела.
-    if (isArchivedMeta(doc.meta)) return true;
+    if (headerSaysArchived(std::string_view(bytes).substr(headFrom, headTo - headFrom)))
+        return true;
 
     // ШАГ ПЕРВЫЙ — ЖУРНАЛ. Тело уходит в историю тем же путём, что и живое
     // сохранение: правила отбора решают, ложится ли слепок отдельной записью,
@@ -135,7 +260,7 @@ bool archiveNote(const QString& root, const QString& noteId, const history::Rule
     }
 
     // ШАГ ВТОРОЙ — СТАБ.
-    if (!writeFileBytes(path, stubBytes(doc), error)) return false;
+    if (!writeFileBytes(path, stubFromBytes(bytes), error)) return false;
     return true;
 }
 
@@ -169,25 +294,28 @@ bool restoreNote(const QString& root, const QString& noteId, QString* error) {
         return false;
     }
 
-    // Тело берётся из журнала, а ШАПКА — из стаба: в ней живут parent, sort и
-    // прочее, что человек мог поменять, пока заметка лежала в архиве. Из
-    // журнальной шапки не берём ничего, кроме собственно тела.
-    Document restored = parse(std::string(body.constData(), size_t(body.size())));
-    restored.meta = stub.meta;
-    setArchivedMeta(restored.meta, false);
-    // Старый вид архивности (`role: trash`) снимаем заодно: иначе заметка
-    // вернулась бы домой и тут же уехала обратно в Архив.
-    if (restored.meta.get("role") == "trash") restored.meta.unset("role");
-    restored.meta.blankAfter = !restored.blocks.empty();
-    if (!writeFileBytes(path, serialize(restored), error)) return false;
+    // ТЕЛО — БАЙТ В БАЙТ ИЗ ЖУРНАЛА, ШАПКА — ИЗ СТАБА. Ни одного разбора, по той
+    // же причине, что и при архивации: заметка могла быть испорчена чем угодно,
+    // и вернуть её человек имеет право в любом случае. В шапке стаба живут
+    // parent, sort и всё, что человек мог поменять, пока заметка лежала в
+    // архиве, — поэтому берётся она, а не журнальная; из тела журнальная шапка
+    // просто отрезается.
+    const std::string bodyBytes(body.constData(), size_t(body.size()));
+    const auto [stubFrom, stubTo] = headerRange(bytes);
+    const auto [bodyFrom, bodyTo] = headerRange(bodyBytes);
+    std::string header = stubTo > 0 ? bytes.substr(stubFrom, stubTo - stubFrom)
+                                    : bodyBytes.substr(bodyFrom, bodyTo - bodyFrom);
+    header = headerWithoutArchived(header);
+    std::string out = header;
+    out += bodyBytes.substr(bodyTo);
+    if (!writeFileBytes(path, out, error)) return false;
 
-    // Возврат — вешка в истории, а не тихая подмена файла: журнал отвечает на
-    // вопрос «что с заметкой было», и «вернули из архива» такой же ответ, как
-    // «правили» или «удалили».
+    // ВЕШКА В ИСТОРИИ. Таймлайн отвечает на вопрос «что с заметкой было», и
+    // «вернули из архива» — такой же ответ, как «правили» или «удалили».
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     QString ignored;
-    history.append(noteId, journal::Kind::Restore, now, body,
-                   head >= 0 ? read.entries[head].time : 0, &ignored);
+    history.append(noteId, journal::Kind::Restore, now,
+                   QByteArray(out.data(), qsizetype(out.size())), 0, &ignored);
     return true;
 }
 

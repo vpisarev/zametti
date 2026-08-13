@@ -103,6 +103,44 @@ void checkOpenDoesNotTouchFile() {
     editor.save(false);
 
     checkEqual(source, readFile(path), "открытие заметки не должно её менять");
+
+    // ЗАМЕТКА С ФОРМУЛАМИ — тот же вопрос, но на разметке, которую круг через
+    // документ портил молча. Владелец нашёл это, архивируя `Typesetting Math`:
+    // каждое открытие переписывало файл, `\gamma` уезжал как `\\gamma`, и
+    // косые удваивались с каждым разом.
+    const QString math =
+        QStringLiteral("# Формулы\n\nСтрочная $\\gamma$ и $\\int_0^1 x^2 \\, dx$ в тексте.\n"
+                       "\nВыключная:\n\n$$\\sum_{k=0}^\\infty \\frac{x^k}{k!}$$\n"
+                       "\nИ ещё $\\sqrt{1+\\sqrt{2}}$.\n");
+    const QString mathPath = writeNote("формулы.md", math);
+    zametti::NoteEditor second;
+    second.resize(700, 500);
+    second.show();
+    QTest::qWait(20);
+    for (int round = 1; round <= 3; ++round) {
+        second.openFile(mathPath);
+        QTest::qWait(30);
+        second.save(false);
+        QTest::qWait(20);
+        checkEqual(math, readFile(mathPath),
+                   "заметка с формулами не меняется от открытия (круг " +
+                       std::to_string(round) + ")");
+    }
+
+    // И ПОМЕТКА АРХИВА ПЕРЕЖИВАЕТ ОТКРЫТИЕ. Стаб архивной заметки — обычный
+    // файл, и канонизация при открытии не вправе потерять ни одного ключа
+    // шапки: потеряет `archived` — заметка выпадет из архива, а «Архив» в
+    // дереве собирается из помеченных и исчезнет вместе с ней.
+    const QString stub = QStringLiteral(
+        "<!-- zametti\nid: 01arch\ncreated: 2026-01-01T00:00:00+03:00\n"
+        "modified: 2026-01-02T00:00:00+03:00\narchived: yes\n-->\n\n# Архивная\n");
+    const QString stubPath = writeNote("стаб.md", stub);
+    second.openFile(stubPath);
+    QTest::qWait(30);
+    second.save(false);
+    QTest::qWait(20);
+    check(readFile(stubPath).contains(QStringLiteral("archived: yes")),
+          "пометка архива переживает открытие и запись");
 }
 
 // Слова и строки: когда они верны, когда честно неизвестны и когда снова верны.
