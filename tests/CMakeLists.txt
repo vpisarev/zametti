@@ -380,6 +380,14 @@ if(TARGET zametti-view)
         add_test(NAME search COMMAND search_test)
         set_tests_properties(search PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+        # Формулы этапа 16: пробник базовой линии — первая задача брифа.
+        # Линкуется с zametti-widgets ради ресурсов (шрифты в qrc) и настроек.
+        add_executable(formula_probe formula_probe.cpp)
+        target_link_libraries(formula_probe PRIVATE zametti-widgets zametti-warnings)
+        target_include_directories(formula_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        add_test(NAME formula-baseline COMMAND formula_probe ${CMAKE_CURRENT_BINARY_DIR}/shots)
+        set_tests_properties(formula-baseline PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
         # Архив этапа 15: тело в журнале, файл — стаб, старая корзина переезжает.
         add_executable(archive_test archive_test.cpp)
         target_link_libraries(archive_test PRIVATE zametti-store-lib zametti-warnings)

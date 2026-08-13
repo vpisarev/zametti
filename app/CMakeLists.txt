@@ -73,6 +73,8 @@ add_library(zametti-view STATIC
     settings.cpp
     sort_order.h
     sort_order.cpp
+    formula.h
+    formula.cpp
     table_view.h
     table_view.cpp
     text_stats.h
@@ -86,6 +88,10 @@ target_link_libraries(zametti-view PUBLIC zametti-core zametti-store-lib Qt6::Gu
 # библиотека в публичных зависимостях удорожала бы сборку всем, кто линкует
 # zametti-view.
 target_link_libraries(zametti-view PRIVATE dtl)
+# Движок формул — приватно: его заголовки не должны течь дальше formula.cpp,
+# ветка без релизов, и мы не хотим, чтобы имена вроде Render или Graphics2D
+# расползлись по виджетному слою.
+target_link_libraries(zametti-view PRIVATE microtex-all)
 target_link_libraries(zametti-view PRIVATE zametti-warnings)
 target_include_directories(zametti-view PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 

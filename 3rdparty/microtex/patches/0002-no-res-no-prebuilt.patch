@@ -1,0 +1,30 @@
+Сборка без каталогов res/ и prebuilt/.
+
+Мы вендорим только ядро и Qt-рисовалку (решение владельца): бандла шрифтов
+XITS и генератора .clm2 в дереве нет, свои гарнитуры лежат в
+resources/fonts/math и уезжают в qrc. Их CMakeLists копирует res/ в каталог
+сборки безусловно — `file(COPY res ...)` на отсутствующем каталоге это жёсткая
+ошибка конфигурации, — и ставит оба каталога при install.
+
+Правка снимает ровно эти три строки; ничего другого не трогает.
+
+--- a/CMakeLists.txt	2026-08-13 16:47:04.369728668 +0300
++++ b/CMakeLists.txt	2026-08-13 16:47:04.397903049 +0300
+@@ -46,7 +46,6 @@
+ 
+ add_subdirectory(lib)
+ 
+-file(COPY res DESTINATION .)
+ 
+ #####################
+ # optional features #
+@@ -102,9 +101,3 @@
+ # installation #
+ ################
+ 
+-# install resources
+-install(DIRECTORY res/ DESTINATION share/microtex)
+-
+-# install prebuilt scripts
+-install(FILES prebuilt/otf2clm.py DESTINATION bin)
+-install(PROGRAMS prebuilt/otf2clm.sh DESTINATION bin RENAME otf2clm)

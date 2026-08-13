@@ -149,6 +149,7 @@ endif()
 add_subdirectory(3rdparty/md4c)
 add_subdirectory(3rdparty/blake3)
 add_subdirectory(3rdparty/dtl)
+add_subdirectory(3rdparty/microtex)
 # highway раньше libjxl: та её ищет, а не несёт.
 add_subdirectory(3rdparty/zlib)
 add_subdirectory(3rdparty/libtiff)

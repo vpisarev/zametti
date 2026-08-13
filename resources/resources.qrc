@@ -89,4 +89,28 @@
         <file alias="IBMPlexSans_SemiCondensed-Bold.ttf">fonts/IBMPlexSans_SemiCondensed-Bold.ttf</file>
         <file alias="IBMPlexSans_SemiCondensed-BoldItalic.ttf">fonts/IBMPlexSans_SemiCondensed-BoldItalic.ttf</file>
     </qresource>
+
+    <!-- Шрифты формул: математический Euler Math 0.75 (выбор владельца —
+         прямые буквы Цапфа и Кнута, компактнее конкурентов, что важно для
+         инлайна) и текстовый компаньон Latin Modern, которым набирается
+         \text{…} внутри математики. Рядом с каждым .otf лежит .clm2 —
+         метрики и контуры глифов в формате MicroTeX; чем он сделан, написано
+         в resources/fonts/math/README.md.
+
+         Qt-бэкенд движка читает шрифт прямо из ресурсов: не найдя файла на
+         диске, он приписывает к имени ":/" (upstream/platform/qt/graphic_qt.cpp,
+         Font_qt::loadFont). Поэтому распаковывать во временный каталог ничего
+         не нужно — бинарник остаётся самодостаточным. -->
+    <qresource prefix="/fonts/math">
+        <file alias="EulerMath.otf">fonts/math/EulerMath.otf</file>
+        <file alias="EulerMath.clm2">fonts/math/EulerMath.clm2</file>
+        <file alias="lmroman10-regular.otf">fonts/math/lmroman10-regular.otf</file>
+        <file alias="lmroman10-regular.clm2">fonts/math/lmroman10-regular.clm2</file>
+        <file alias="lmroman10-italic.otf">fonts/math/lmroman10-italic.otf</file>
+        <file alias="lmroman10-italic.clm2">fonts/math/lmroman10-italic.clm2</file>
+        <file alias="lmroman10-bold.otf">fonts/math/lmroman10-bold.otf</file>
+        <file alias="lmroman10-bold.clm2">fonts/math/lmroman10-bold.clm2</file>
+        <file alias="lmroman10-bolditalic.otf">fonts/math/lmroman10-bolditalic.otf</file>
+        <file alias="lmroman10-bolditalic.clm2">fonts/math/lmroman10-bolditalic.clm2</file>
+    </qresource>
 </RCC>

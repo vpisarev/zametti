@@ -1,0 +1,173 @@
+--- a/lib/unimath/uni_symbol.cpp
++++ b/lib/unimath/uni_symbol.cpp
+@@ -532,7 +532,7 @@
+   {0x02050, rel,     "closure"},
+   {0x02663, ord,     "clubsuit"},
+   {0x02233, opt | N, "cntclockoint"},
+-  {0x0003A, puc,     "colon"},
++  {0x0003A, rel,     "colon"},
+   {0x02254, rel,     "coloneq"},
+   {0x02254, rel,     "coloneqq"},
+   {0x0002C, puc,     "comma"},
+@@ -2421,7 +2421,7 @@
+   {0x02A1F, opt,     "semi"},
+   {0x0003B, puc,     "semicolon"},
+   {0x0292D, ord,     "seovnearrow"},
+-  {0x029F5, bin,     "setminus"},
++  {0x02216, bin,     "setminus"},
+   {0x0266F, ord,     "sharp"},
+   {0x02ADF, rel,     "shortdowntack"},
+   {0x02ADE, rel,     "shortlefttack"},
+@@ -2445,7 +2445,7 @@
+   {0x0223F, ord,     "sinewave"},
+   {0x0266C, ord,     "sixteenthnote"},
+   {0x02620, ord,     "skull"},
+-  {0x0002F, bin,     "slash"},
++  {0x0002F, ord,     "slash"},
+   {0x025C2, bin,     "smallblacktriangleleft"},
+   {0x025B8, bin,     "smallblacktriangleright"},
+   {0x0220A, rel,     "smallin"},
+@@ -2838,7 +2838,7 @@
+   {0x029D0, rel,     "vbrtri"},
+   {0x022A2, rel,     "vdash"},
+   {0x022EE, rel,     "vdots"},
+-  {0x020D1, acc,     "vec"},
++  {0x020D7, acc,     "vec"},
+   {0x02A2F, bin,     "vectimes"},
+   {0x02228, bin,     "vee"},
+   {0x022BB, bin,     "veebar"},
+--- a/lib/macro/macro_def.cpp
++++ b/lib/macro/macro_def.cpp
+@@ -380,16 +380,16 @@
+   env(0, "equation", "\\begin{align}", "\\end{align}");
+   // endregion
+   // region Predefined commands
+-  cmd(1, "operatorname", "\\mathop{\\mathrm{#1}}\\nolimits ");
+-  cmd(2, "DeclareMathOperator", "\\newcommand{#1}{\\mathop{\\mathrm{#2}}\\nolimits}");
++  cmd(1, "operatorname", "\\mathop{\\text{#1}}\\nolimits ");
++  cmd(2, "DeclareMathOperator", "\\newcommand{#1}{\\mathop{\\text{#2}}\\nolimits}");
+   cmd(1, "substack", "{\\scriptstyle\\begin{array}{c}#1\\end{array}}");
+   cmd(2, "dfrac", "\\genfrac{}{}{1}{}{#1}{#2}");
+   cmd(2, "tfrac", "\\genfrac{}{}{1}{1}{#1}{#2}");
+   cmd(2, "dbinom", "\\genfrac{(}{)}{0pt}{}{#1}{#2}");
+   cmd(2, "tbinom", "\\genfrac{(}{)}{0pt}{1}{#1}{#2}");
+-  cmd(1, "pmod", "\\qquad\\mathbin{(\\mathrm{mod}\\ #1)}");
+-  cmd(1, "mod", "\\qquad\\mathbin{\\mathrm{mod}\\ #1}");
+-  cmd(1, "pod", "\\qquad\\mathbin{(#1)}");
++  cmd(1, "pmod", "\\qquad(\\text{mod}\\ #1)");
++  cmd(1, "mod", "\\qquad\\text{mod}\\ #1");
++  cmd(1, "pod", "\\qquad(#1)");
+   cmd(0, "spbreve", "^{\\makeatletter\\sp@breve\\makeatother}");
+   cmd(0, "spcheck", "^{\\vee}");
+   cmd(0, "spdot", "^{\\displaystyle.}");
+--- a/lib/core/formula_def.cpp
++++ b/lib/core/formula_def.cpp
+@@ -40,51 +40,51 @@
+   // endregion
+   // region math symbols
+   {"relbar",           "\\mathrel{\\smash-}"},
+-  {"log",              "\\mathop{\\mathrm{log}}\\nolimits"},
+-  {"lg",               "\\mathop{\\mathrm{lg}}\\nolimits"},
+-  {"ln",               "\\mathop{\\mathrm{ln}}\\nolimits"},
+-  {"ln",               "\\mathop{\\mathrm{ln}}\\nolimits"},
+-  {"lim",              "\\mathop{\\mathrm{lim}}"},
+-  {"limsup",           "\\mathop{\\mathrm{lim\\,sup}}"},
+-  {"liminf",           "\\mathop{\\mathrm{lim\\,inf}}"},
+-  {"injlim",           "\\mathop{\\mathrm{inj\\,lim}}"},
+-  {"projlim",          "\\mathop{\\mathrm{proj\\,lim}}"},
++  {"log",              "\\mathop{\\text{log}}\\nolimits"},
++  {"lg",               "\\mathop{\\text{lg}}\\nolimits"},
++  {"ln",               "\\mathop{\\text{ln}}\\nolimits"},
++  {"ln",               "\\mathop{\\text{ln}}\\nolimits"},
++  {"lim",              "\\mathop{\\text{lim}}"},
++  {"limsup",           "\\mathop{\\text{lim\\,sup}}"},
++  {"liminf",           "\\mathop{\\text{lim\\,inf}}"},
++  {"injlim",           "\\mathop{\\text{inj\\,lim}}"},
++  {"projlim",          "\\mathop{\\text{proj\\,lim}}"},
+   {"varinjlim",        "\\mathop{\\underrightarrow{\\mathrm{lim}}}"},
+   {"varprojlim",       "\\mathop{\\underleftarrow{\\mathrm{lim}}}"},
+   {"varliminf",        "\\mathop{\\underline{\\mathrm{lim}}}"},
+   {"varlimsup",        "\\mathop{\\overline{\\mathrm{lim}}}"},
+-  {"sin",              "\\mathop{\\mathrm{sin}}\\nolimits"},
+-  {"arcsin",           "\\mathop{\\mathrm{arcsin}}\\nolimits"},
+-  {"sinh",             "\\mathop{\\mathrm{sinh}}\\nolimits"},
+-  {"cos",              "\\mathop{\\mathrm{cos}}\\nolimits"},
+-  {"arccos",           "\\mathop{\\mathrm{arccos}}\\nolimits"},
+-  {"cot",              "\\mathop{\\mathrm{cot}}\\nolimits"},
+-  {"arccot",           "\\mathop{\\mathrm{arccot}}\\nolimits"},
+-  {"cosh",             "\\mathop{\\mathrm{cosh}}\\nolimits"},
+-  {"tan",              "\\mathop{\\mathrm{tan}}\\nolimits"},
+-  {"arctan",           "\\mathop{\\mathrm{arctan}}\\nolimits"},
+-  {"tanh",             "\\mathop{\\mathrm{tanh}}\\nolimits"},
+-  {"coth",             "\\mathop{\\mathrm{coth}}\\nolimits"},
+-  {"sec",              "\\mathop{\\mathrm{sec}}\\nolimits"},
+-  {"arcsec",           "\\mathop{\\mathrm{arcsec}}\\nolimits"},
+-  {"arccsc",           "\\mathop{\\mathrm{arccsc}}\\nolimits"},
+-  {"sech",             "\\mathop{\\mathrm{sech}}\\nolimits"},
+-  {"csc",              "\\mathop{\\mathrm{csc}}\\nolimits"},
+-  {"csch",             "\\mathop{\\mathrm{csch}}\\nolimits"},
+-  {"max",              "\\mathop{\\mathrm{max}}"},
+-  {"min",              "\\mathop{\\mathrm{min}}"},
+-  {"sup",              "\\mathop{\\mathrm{sup}}"},
+-  {"inf",              "\\mathop{\\mathrm{inf}}"},
+-  {"arg",              "\\mathop{\\mathrm{arg}}\\nolimits"},
+-  {"ker",              "\\mathop{\\mathrm{ker}}\\nolimits"},
+-  {"dim",              "\\mathop{\\mathrm{dim}}\\nolimits"},
+-  {"hom",              "\\mathop{\\mathrm{hom}}\\nolimits"},
+-  {"det",              "\\mathop{\\mathrm{det}}"},
+-  {"exp",              "\\mathop{\\mathrm{exp}}\\nolimits"},
+-  {"Pr",               "\\mathop{\\mathrm{Pr}}"},
+-  {"gcd",              "\\mathop{\\mathrm{gcd}}"},
+-  {"deg",              "\\mathop{\\mathrm{deg}}\\nolimits"},
+-  {"bmod",             "\\:\\mathbin{\\mathrm{mod}}\\:"},
++  {"sin",              "\\mathop{\\text{sin}}\\nolimits"},
++  {"arcsin",           "\\mathop{\\text{arcsin}}\\nolimits"},
++  {"sinh",             "\\mathop{\\text{sinh}}\\nolimits"},
++  {"cos",              "\\mathop{\\text{cos}}\\nolimits"},
++  {"arccos",           "\\mathop{\\text{arccos}}\\nolimits"},
++  {"cot",              "\\mathop{\\text{cot}}\\nolimits"},
++  {"arccot",           "\\mathop{\\text{arccot}}\\nolimits"},
++  {"cosh",             "\\mathop{\\text{cosh}}\\nolimits"},
++  {"tan",              "\\mathop{\\text{tan}}\\nolimits"},
++  {"arctan",           "\\mathop{\\text{arctan}}\\nolimits"},
++  {"tanh",             "\\mathop{\\text{tanh}}\\nolimits"},
++  {"coth",             "\\mathop{\\text{coth}}\\nolimits"},
++  {"sec",              "\\mathop{\\text{sec}}\\nolimits"},
++  {"arcsec",           "\\mathop{\\text{arcsec}}\\nolimits"},
++  {"arccsc",           "\\mathop{\\text{arccsc}}\\nolimits"},
++  {"sech",             "\\mathop{\\text{sech}}\\nolimits"},
++  {"csc",              "\\mathop{\\text{csc}}\\nolimits"},
++  {"csch",             "\\mathop{\\text{csch}}\\nolimits"},
++  {"max",              "\\mathop{\\text{max}}"},
++  {"min",              "\\mathop{\\text{min}}"},
++  {"sup",              "\\mathop{\\text{sup}}"},
++  {"inf",              "\\mathop{\\text{inf}}"},
++  {"arg",              "\\mathop{\\text{arg}}\\nolimits"},
++  {"ker",              "\\mathop{\\text{ker}}\\nolimits"},
++  {"dim",              "\\mathop{\\text{dim}}\\nolimits"},
++  {"hom",              "\\mathop{\\text{hom}}\\nolimits"},
++  {"det",              "\\mathop{\\text{det}}"},
++  {"exp",              "\\mathop{\\text{exp}}\\nolimits"},
++  {"Pr",               "\\mathop{\\text{Pr}}"},
++  {"gcd",              "\\mathop{\\text{gcd}}"},
++  {"deg",              "\\mathop{\\text{deg}}\\nolimits"},
++  {"bmod",             "\\mathbin{\\text{mod}}"},
+   // endregion
+   // region symbol alias
+   {"arrowvert",        "\\vert"},
+--- a/lib/macro/macro_types.h
++++ b/lib/macro/macro_types.h
+@@ -11,7 +11,12 @@
+ 
+ inline macro(mathop) {
+   auto a = _math_type(tp, args, AtomType::bigOperator);
+-  a->_limitsType = LimitsType::noLimits;
++  // ПАТЧ zametti_math: у TeX \mathop даёт \displaylimits — пределы под и над
++  // оператором в выключной формуле и сбоку в строке. Это LimitsType::normal.
++  // Было noLimits, из-за чего \lim в выключной формуле ставил предел сбоку.
++  // Что задумано именно так, видно по определениям: у \sin и \log стоит
++  // явный \nolimits, а у \lim и \limsup — нет.
++  a->_limitsType = LimitsType::normal;
+   return a;
+ }
+ 
