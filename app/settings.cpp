@@ -91,6 +91,11 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("fallbackScale"), a.fallbackScale},
     };
 
+    QJsonObject formulas{
+        {QStringLiteral("inlineScale"), a.formulas.inlineScale},
+        {QStringLiteral("displayScale"), a.formulas.displayScale},
+    };
+
     QJsonObject tables{
         {QStringLiteral("cellPadding"), a.tables.cellPadding},
         {QStringLiteral("cellPaddingY"), a.tables.cellPaddingY},
@@ -320,6 +325,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("find"), find},
         {QStringLiteral("editor"), editor},
         {QStringLiteral("tables"), tables},
+        {QStringLiteral("formulas"), formulas},
         {QStringLiteral("images"), images},
         {QStringLiteral("shortcuts"), shortcuts},
         {QStringLiteral("zoom"), zoom},
@@ -337,6 +343,10 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     const QJsonArray headings = font.value(QStringLiteral("headingScale")).toArray();
     for (int i = 0; i < headings.size() && i < int(a.headingScale.size()); ++i)
         if (headings.at(i).isDouble()) a.headingScale[size_t(i)] = headings.at(i).toDouble();
+
+    const QJsonObject formulas = root.value(QStringLiteral("formulas")).toObject();
+    readReal(formulas, "inlineScale", a.formulas.inlineScale);
+    readReal(formulas, "displayScale", a.formulas.displayScale);
 
     const QJsonObject tables = root.value(QStringLiteral("tables")).toObject();
     readReal(tables, "cellPadding", a.tables.cellPadding);

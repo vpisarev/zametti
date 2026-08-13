@@ -164,14 +164,35 @@ void measureXHeight() {
     font.setPointSizeF(look.baseFontPoint);
     const QFontMetricsF metrics(font);
 
+    // ЧЕМ НАБРАН ТЕКСТ НА ЛИСТЕ. Спрашиваем не настройку, а то, что Qt и
+    // правда выбрала: не окажись гарнитуры среди загруженных, она молча
+    // подставит другую, и лист приёмки будет врать о соразмерности.
+    ZT_EQ("текст на листе набран заказанной гарнитурой", look.fontFamily.toStdString(),
+          QFontInfo(font).family().toStdString());
+    std::printf("гарнитуры: текст «%s», математика «%s»\n",
+                QFontInfo(font).family().toUtf8().constData(),
+                zametti::Formulas::mathFontName().toUtf8().constData());
+
     const zametti::FormulaImage x =
         zametti::Formulas::render(QStringLiteral("x"), false, textPixelSize(), Qt::black, 1.0);
     if (!x.ok()) return;
     const Ink ink = inkRows(x.image);
     const double mathX = double(ink.bottom - ink.top + 1);
     const double textX = metrics.xHeight();
-    std::printf("рост строчных: текст %s, математика %s, отношение %s\n", num(textX).c_str(),
-                num(mathX).c_str(), num(textX / mathX).c_str());
+    std::printf("рост строчных: текст %s, математика %s, отношение %s (в конфиге %s)\n",
+                num(textX).c_str(), num(mathX).c_str(), num(textX / mathX).c_str(),
+                num(zametti::appearance().formulas.inlineScale).c_str());
+    // Коэффициент из конфига обязан и правда равнять рост строчных: если
+    // однажды сменится гарнитура, эта проверка покраснеет первой.
+    const zametti::FormulaImage scaled = zametti::Formulas::render(
+        QStringLiteral("x"), false, textPixelSize() * zametti::appearance().formulas.inlineScale,
+        Qt::black, 1.0);
+    if (scaled.ok()) {
+        const Ink si = inkRows(scaled.image);
+        ZT_TRUE("с коэффициентом из конфига рост строчных сходится с текстом: " +
+                    num(si.bottom - si.top + 1) + " против " + num(textX),
+                std::fabs(double(si.bottom - si.top + 1) - textX) <= 1.0);
+    }
     std::printf("  ширина «x»: текст %s, математика %s\n",
                 num(metrics.horizontalAdvance(QStringLiteral("x"))).c_str(), num(x.width).c_str());
 }
@@ -181,6 +202,78 @@ void measureXHeight() {
 // То, ради чего пробник и затевался: формулы, посаженные в настоящую строку
 // текста тем же кеглем, и красная черта базовой линии ТЕКСТА поверх всего.
 // Совпадение базовых линий видно глазом, а не выводится из чисел.
+// Сравнение двух коэффициентов на одном листе: сверху формулы кегль в кегль с
+// текстом (inlineScale = 1.00), снизу — подтянутые к росту строчных Plex
+// (1.10). Одинаковая строка, одинаковый текст, две базовые линии: разницу
+// видно, только когда они рядом.
+void shootComparison(int zoom) {
+    const zametti::Appearance& look = zametti::appearance();
+    QFont font(look.fontFamily);
+    font.setPointSizeF(look.baseFontPoint * zoom);
+    const QFontMetricsF metrics(font);
+    QFont label(look.sidebarFontFamily);
+    label.setPointSizeF(look.baseFontPoint * zoom * 0.62);
+
+    struct Piece {
+        QString before;
+        QString latex;
+    };
+    const Piece pieces[] = {
+        {QStringLiteral("дробь "), QStringLiteral("\\frac{a}{b}")},
+        {QStringLiteral(" степень "), QStringLiteral("x^2")},
+        {QStringLiteral(" индекс "), QStringLiteral("a_{i+1}")},
+        {QStringLiteral(" корень "), QStringLiteral("\\sqrt{x+1}")},
+        {QStringLiteral(" и текст после."), QString()},
+    };
+    // Сравниваем единицу с тем, что стоит в конфиге: лист обязан показывать
+    // то, чем программа и правда рисует, а не число, вписанное в набор.
+    const double scales[] = {1.00, zametti::appearance().formulas.inlineScale};
+
+    const int pad = 24;
+    const qreal step = metrics.height() * 2.6;
+    QImage sheet(620 * zoom, int(pad * 2 + step * 2 + metrics.height()), QImage::Format_RGB32);
+    sheet.fill(QColor(0xfe, 0xfe, 0xfb));
+    {
+        QPainter painter(&sheet);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+
+        int row = 0;
+        for (const double scale : scales) {
+            const qreal baseline = pad + metrics.ascent() + step * row + metrics.height() * 0.9;
+            painter.setFont(label);
+            painter.setPen(QColor(0x7a, 0x80, 0x88));
+            painter.drawText(QPointF(pad, baseline - metrics.ascent() - 4),
+                             QStringLiteral("inlineScale = %1").arg(scale, 0, 'f', 2));
+
+            painter.setFont(font);
+            painter.setPen(QColor(0x1a, 0x1a, 0x1a));
+            qreal x = pad;
+            for (const Piece& piece : pieces) {
+                painter.drawText(QPointF(x, baseline), piece.before);
+                x += metrics.horizontalAdvance(piece.before);
+                if (piece.latex.isEmpty()) continue;
+                const zametti::FormulaImage formula = zametti::Formulas::render(
+                    piece.latex, false, QFontInfo(font).pixelSize() * scale,
+                    QColor(0x1a, 0x1a, 0x1a), 1.0);
+                if (!formula.ok()) continue;
+                painter.drawImage(QPointF(x, baseline - formula.baseline), formula.image);
+                x += formula.width;
+            }
+
+            QPen pen(QColor(220, 60, 60, 130));
+            painter.setPen(pen);
+            painter.drawLine(QPointF(0, baseline), QPointF(sheet.width(), baseline));
+            pen.setColor(QColor(60, 120, 220, 80));
+            painter.setPen(pen);
+            painter.drawLine(QPointF(0, baseline - metrics.xHeight()),
+                             QPointF(sheet.width(), baseline - metrics.xHeight()));
+            ++row;
+        }
+    }
+    const QString path = QDir(g_shots).filePath(QStringLiteral("сравнение-масштабов-x%1.png").arg(zoom));
+    if (!sheet.save(path)) std::printf("НЕ СОХРАНИЛСЯ снимок %s\n", qPrintable(path));
+}
+
 void shootRuler(int zoom) {
     const zametti::Appearance& look = zametti::appearance();
     QFont font(look.fontFamily);
@@ -222,7 +315,9 @@ void shootRuler(int zoom) {
             x += metrics.horizontalAdvance(piece.before);
             if (piece.latex.isEmpty()) continue;
             const zametti::FormulaImage formula = zametti::Formulas::render(
-                piece.latex, false, QFontInfo(font).pixelSize(), QColor(0x1a, 0x1a, 0x1a), 1.0);
+                piece.latex, false,
+                QFontInfo(font).pixelSize() * zametti::appearance().formulas.inlineScale,
+                QColor(0x1a, 0x1a, 0x1a), 1.0);
             if (!formula.ok()) continue;
             // ВОТ ОНА, ПОСАДКА: верх картинки = базовая линия текста минус
             // подъём формулы над своей базовой линией.
@@ -269,6 +364,7 @@ int main(int argc, char** argv) {
     measureXHeight();
     shootRuler(1);
     shootRuler(3);
+    shootComparison(3);
 
     std::printf("снимки: %s\n", qPrintable(g_shots));
     return zt::report("формулы: базовая линия");
