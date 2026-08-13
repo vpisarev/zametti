@@ -269,6 +269,24 @@ void checkFormulaFitsItsBlock() {
         ++checked;
     }
     ZT_TRUE("проверено формул: " + std::to_string(checked), checked >= 3);
+
+    // И БЛОК НЕ ВЫШЕ САМОЙ ВЁРСТКИ ПЛЮС ОТБИВКА. Резерв, взятый с запасом,
+    // разгоняет заметку: между формулами появляются огромные пустые полосы.
+    // Проверки на это не было вовсе — владелец увидел её отсутствие раньше,
+    // чем я. Мера отбивки — строка текста: больше строки пустоты под формулой
+    // человек читает как дыру. Мера — вёрстка плюс отбивка абзаца (у нас это
+    // около полутора строк): больше — уже полоса пустоты.
+    const qreal lineHeight = QFontMetricsF(editor->baseFont()).height();
+    for (QTextBlock b = editor->document()->firstBlock(); b.isValid(); b = b.next()) {
+        const zametti::FormulaRender* render = editor->formulaAt(b.blockNumber());
+        if (render == nullptr) continue;
+        const QRectF area = editor->document()->documentLayout()->blockBoundingRect(b);
+        const qreal total = area.height() + b.blockFormat().bottomMargin();
+        ZT_TRUE("блок формулы не раздут: " + std::to_string(int(total)) + " при вёрстке " +
+                    std::to_string(int(render->height)) + " и строке " +
+                    std::to_string(int(lineHeight)),
+                total <= render->height + 2.0 * lineHeight + 2.0);
+    }
     delete editor;
 }
 

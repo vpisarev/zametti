@@ -841,6 +841,45 @@ void NoteView::syncImageSpace(bool whole) {
         }
         // Сравнение с допуском: каждое выставление формата переразмечает
         // документ.
+        // МЕСТО ПОД ВЁРСТКУ — ДВУМЯ РУЧКАМИ, И КАЖДАЯ ТАМ, ГДЕ Qt ЕЙ ВЕРЕН.
+        //
+        // Замер (а не документация): фиксированную высоту строки Qt соблюдает,
+        // когда её УМЕНЬШАЮТ, и не соблюдает, когда увеличивают, — на
+        // однострочной формуле блок получил 20 точек вместо заказанных 36.
+        // Нижнее поле, наоборот, соблюдается точно: на нём годами держатся
+        // фотографии.
+        //
+        // Поэтому: строку УЖИМАЕМ (у многострочного исходника он выше своей
+        // вёрстки — без этого между формулами оставались огромные пустые
+        // полосы, владелец увидел именно их), а недостачу добираем ПОЛЕМ.
+        // Отбивка — доля строки текста, а не зазор фотографии: у формулы
+        // соседи — строки, а не картинки.
+        qreal wantLine = -1.0;
+        if (const FormulaRender* render = formulaAt(block.blockNumber())) {
+            const qreal natural = QFontMetricsF(baseFontFor(zoom_)).height();
+            const QTextLayout* layout = block.layout();
+            const int lines = layout != nullptr && layout->lineCount() > 0
+                                  ? layout->lineCount() : 1;
+            const qreal box = formulaBoxHeight(*render, natural);
+            const qreal full = std::round(natural * appearance().lineHeightFactor);
+            // БЕЗ СВОЕГО ЗАЗОРА. Отбивку формуле даёт её собственное нижнее
+            // поле абзаца — то же, что у всякого блока; свой зазор сверх него
+            // складывался с ним, и между формулами вырастали пустые полосы.
+            wantLine = qMin(full, std::ceil(box / lines));
+            want += qMax(0.0, box - lines * wantLine);
+        }
+        // Резерв под сетку таблицы: он висит на ПОСЛЕДНЕЙ её строке — перед
+        // спрятанными блоками Qt поле игнорирует (пробник). Высота берётся
+        // из раскладки, а из неё вычитается то, что блок занимает сам.
+        for (const TableRender& table : std::as_const(tables_)) {
+            if (block.blockNumber() != table.last) continue;
+            const qreal allotted =
+                document()->documentLayout()->blockBoundingRect(block).height();
+            want += qMax(0.0, table.layout.height - allotted);
+            break;
+        }
+        // Сравнение с допуском: каждое выставление формата переразмечает
+        // документ.
         // РЕЗЕРВ ПОД ВЁРСТКУ — НИЖНИМ ПОЛЕМ, как у фотографии.
         //
         // Я пробовал задавать высоту строки блока напрямую: у многострочной
@@ -860,8 +899,11 @@ void NoteView::syncImageSpace(bool whole) {
             const qreal natural = QFontMetricsF(baseFontFor(zoom_)).height();
             want += qMax(0.0, formulaBoxHeight(*render, natural) + gap - allotted);
         }
-        if (std::fabs(format.bottomMargin() - want) < 0.5) continue;
+        const bool marginSame = std::fabs(format.bottomMargin() - want) < 0.5;
+        const bool lineSame = wantLine < 0.0 || std::fabs(format.lineHeight() - wantLine) < 0.5;
+        if (marginSame && lineSame) continue;
         format.setBottomMargin(want);
+        if (wantLine >= 0.0) format.setLineHeight(wantLine, QTextBlockFormat::FixedHeight);
         // ВЫСОТА БЛОКА ЦЕЛИКОМ НАША, а не «строка плюс поле». Иначе она
         // складывается из двух слагаемых, одно из которых считает Qt, — и
         // стоит ему дать неразмеченному блоку ноль вместо высоты строки, как
