@@ -34,6 +34,14 @@ struct NoteTreeModel::Node {
     QString snippet; // начало текста для средней колонки
     QString modified;   // ISO из меты — для сортировки свежие сверху
     QString effectiveModified;   // максимум по поддереву: живые каталоги вперёд
+    // Дата создания из шапки. У папки берётся её собственная, а не максимум по
+    // поддереву: папка «2026/08» заводится один раз и с тех пор стоит на месте
+    // — этим она и хороша для дневника. Пусто — в шапке ключа нет; тогда её
+    // место в хронологии занимает modified (лучше, чем «в начале времён»).
+    QString created;
+    // Метка сортировки из шапки папки: `sort: created-desc`. Пусто — своей
+    // метки нет, порядок наследуется.
+    std::optional<SortOrder> sortMark;
     bool trash = false; // корзина: в самом низу корня
     bool folder = false;   // role: folder — директория и без детей
     bool dir = false;
@@ -122,6 +130,8 @@ struct StoreNote {
     QString title;
     QString snippet;
     QString modified;
+    QString created;
+    std::optional<SortOrder> sortMark;
     bool trash = false;
     bool folder = false;
 };
@@ -180,6 +190,17 @@ bool readStoreNote(const QString& path, StoreNote& out) {
 
     out.parent = QString::fromStdString(doc.meta.get("parent"));
     out.modified = QString::fromStdString(doc.meta.get("modified"));
+    out.created = QString::fromStdString(doc.meta.get("created"));
+    // Метка сортировки. Чужое значение (другая версия, чужая программа, опечатка
+    // руками) не должно ни ронять программу, ни молча подменяться на своё:
+    // жалуемся в stderr и показываем папку по наследству, будто метки нет.
+    const std::string sort = doc.meta.get("sort");
+    if (!sort.empty()) {
+        out.sortMark = parseSortOrder(QString::fromStdString(sort));
+        if (!out.sortMark.has_value())
+            std::fprintf(stderr, "непонятная метка сортировки [%s] в [%s] — папка наследует\n",
+                         sort.c_str(), path.toUtf8().constData());
+    }
     const std::string role = doc.meta.get("role");
     out.trash = role == "trash";
     out.folder = role == "folder";
@@ -245,6 +266,8 @@ std::unique_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath) {
             meta.modified.isEmpty()
                 ? info.lastModified().toUTC().toString(Qt::ISODate)
                 : meta.modified;
+        node->created = meta.created.isEmpty() ? node->modified : meta.created;
+        node->sortMark = meta.sortMark;
         node->trash = meta.trash;
         node->folder = meta.folder;
         byId.insert(stem, node.get());
@@ -306,19 +329,36 @@ std::unique_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath) {
     return hidden;
 }
 
-// Братья: корзина всегда внизу; дальше по режиму.
-void sortStore(NoteTreeModel::Node* node, NoteTreeModel::SortMode mode,
-               const QCollator& collator) {
+// Братья: корзина всегда внизу; дальше по порядку.
+//
+// Корзина не участвует в сортировке ВООБЩЕ, ни в каком направлении: она не
+// «самая старая папка», а ящик под столом, и всплывать наверх от переворота
+// направления ей незачем.
+//
+// Даты сравниваются строками: записи ISO одной длины и всегда в UTC — так их
+// пишет ядро. Равные даты разводятся именем, иначе порядок в дневнике, где
+// десяток заметок заведён в одну секунду, менялся бы от запуска к запуску.
+void sortStore(NoteTreeModel::Node* node, SortOrder order, const QCollator& collator) {
     std::sort(node->children.begin(), node->children.end(),
-              [mode, &collator](const auto& a, const auto& b) {
+              [order, &collator](const auto& a, const auto& b) {
                   if (a->trash != b->trash) return b->trash;
-                  if (mode == NoteTreeModel::SortMode::ByName) {
+                  if (order.key == SortKey::Name) {
+                      // Папки первыми — только по имени: в хронологии они стоят
+                      // наравне с заметками, иначе дневниковая лента
+                      // разваливалась бы на «сначала все папки, потом всё
+                      // остальное».
                       if (a->dir != b->dir) return a->dir;
-                      return collator.compare(a->title, b->title) < 0;
+                      const int cmp = collator.compare(a->title, b->title);
+                      return order.ascending ? cmp < 0 : cmp > 0;
                   }
-                  return a->effectiveModified > b->effectiveModified;
+                  const QString& left =
+                      order.key == SortKey::Created ? a->created : a->effectiveModified;
+                  const QString& right =
+                      order.key == SortKey::Created ? b->created : b->effectiveModified;
+                  if (left != right) return order.ascending ? left < right : left > right;
+                  return collator.compare(a->title, b->title) < 0;
               });
-    for (auto& child : node->children) sortStore(child.get(), mode, collator);
+    for (auto& child : node->children) sortStore(child.get(), order, collator);
 }
 
 // Кого показывать наружу. Пересчитывается после каждой сортировки и после
@@ -384,7 +424,7 @@ void NoteTreeModel::build() {
     collator.setCaseSensitivity(Qt::CaseInsensitive);
     if (store_) {
         root_ = buildStore(rootPath_);
-        sortStore(root_.get(), sortMode_, collator);
+        sortStore(root_.get(), sortOrder_, collator);
         rebuildShown(root_.get(), foldersOnly_);
         return;
     }
@@ -406,10 +446,39 @@ void NoteTreeModel::setFoldersOnly(bool on) {
     endResetModel();
 }
 
-void NoteTreeModel::setSortMode(SortMode mode) {
-    if (mode == sortMode_) return;
-    sortMode_ = mode;
-    refresh();
+void NoteTreeModel::setSortOrder(SortOrder order) {
+    if (order == sortOrder_) return;
+    sortOrder_ = order;
+    // ПЕРЕСОРТИРОВКА, А НЕ ПЕРЕСБОРКА. Прежде здесь стоял refresh(), то есть
+    // полный скан хранилища с разбором каждого файла — и это была не мелочь:
+    // на 2000 заметках он стоит 24 мс (замер), а порядок теперь меняется на
+    // КАЖДОМ переходе между папками с разными метками, а не по нажатию кнопки
+    // раз в день. Узлы уже в памяти, и переупорядочить их стоит 0.9 мс.
+    if (!store_) return;   // вне хранилища дерево идёт по именам файлов
+    QCollator collator;
+    collator.setNumericMode(true);
+    collator.setCaseSensitivity(Qt::CaseInsensitive);
+    beginResetModel();
+    sortStore(root_.get(), sortOrder_, collator);
+    rebuildShown(root_.get(), foldersOnly_);
+    endResetModel();
+}
+
+std::optional<SortOrder> NoteTreeModel::explicitSortOf(const QString& id) const {
+    const Node* node = nodeById(id);
+    return node != nullptr ? node->sortMark : std::nullopt;
+}
+
+SortOrder NoteTreeModel::effectiveSortFor(const QString& id, SortOrder fallback,
+                                          bool* fromMark) const {
+    if (fromMark != nullptr) *fromMark = false;
+    // Корень — не файл, метки на нём быть не может: там действует переключатель.
+    for (const Node* node = nodeById(id); node != nullptr; node = node->parent) {
+        if (!node->sortMark.has_value()) continue;
+        if (fromMark != nullptr) *fromMark = true;
+        return *node->sortMark;
+    }
+    return fallback;
 }
 
 void NoteTreeModel::refresh() {
@@ -582,7 +651,7 @@ std::vector<NoteRow> NoteTreeModel::notesInSubtree(const QModelIndex& index) con
                 // и открыть её тело редактором нельзя вовсе.
                 if (!child->isDir())
                     out.push_back(NoteRow{child->id, child->path, child->title,
-                                          child->snippet, child->modified});
+                                          child->snippet, child->modified, child->created});
                 run(child.get(), insideTrash, out);
             }
         }
@@ -810,7 +879,8 @@ void NoteTreeModel::refreshNote(const QString& path) {
 NoteRow NoteTreeModel::rowOf(const QString& id) const {
     const Node* node = nodeById(id);
     if (node == nullptr) return {};
-    return NoteRow{node->id, node->path, node->title, node->snippet, node->modified};
+    return NoteRow{node->id,      node->path,     node->title,
+                   node->snippet, node->modified, node->created};
 }
 
 QString NoteTreeModel::folderIdFor(const QModelIndex& index) const {

@@ -27,8 +27,11 @@ constexpr Toolbar::Spec kSpecs[] = {
     {B::Cloud, "cloud-sync", "Синхронизация", "", 1, false},
 
     {B::Panels, "columns-3", "Скрыть боковые панели", "", 2, true},
-    {B::SortByName, "arrow-down-a-z", "Сортировать по имени", "", 2, true},
-    {B::SortByDate, "clock-arrow-down", "Сортировать по дате правки", "", 2, true},
+    // Начальные значки и подсказки: направление у сортировок меняется на ходу
+    // (setIcon/setTip), и здесь записано лишь то, с чего они начинают.
+    {B::SortByName, "arrow-down-a-z", "По имени, А→Я", "", 2, true},
+    {B::SortByDate, "clock-arrow-down", "По дате правки, новые сверху", "", 2, true},
+    {B::SortByCreated, "calendar-arrow-down", "По дате создания, новые сверху", "", 2, true},
 
     // На месте трёх прежних кнопок навигации по истории (вернуть, к последней
     // версии, назад к посещённому). Из них вернулась одна — вход в историю;
@@ -45,6 +48,12 @@ constexpr Toolbar::Spec kSpecs[] = {
     {B::Help, "circle-question-mark", "Справка", "", 4, false},
 };
 
+constexpr Toolbar::SortSpec kSortSpecs[] = {
+    {SortKey::Name, B::SortByName, "arrow-down-a-z", "arrow-up-a-z"},
+    {SortKey::Modified, B::SortByDate, "clock-arrow-down", "clock-arrow-up"},
+    {SortKey::Created, B::SortByCreated, "calendar-arrow-down", "calendar-arrow-up"},
+};
+
 QString tipFor(const Toolbar::Spec& spec, const QString& promise) {
     QString tip = QString::fromUtf8(spec.tip);
     const QString shortcut = QString::fromLatin1(spec.shortcut);
@@ -58,6 +67,36 @@ QString tipFor(const Toolbar::Spec& spec, const QString& promise) {
 
 std::span<const Toolbar::Spec> Toolbar::specs() {
     return std::span<const Spec>(kSpecs, std::size(kSpecs));
+}
+
+std::span<const Toolbar::SortSpec> Toolbar::sortSpecs() {
+    return std::span<const SortSpec>(kSortSpecs, std::size(kSortSpecs));
+}
+
+void Toolbar::showSort(SortOrder order, bool fromMark) {
+    for (const SortSpec& item : kSortSpecs) {
+        const bool active = item.key == order.key;
+        // У неактивной кнопки нарисовано её УМОЛЧАНИЕ: значок — обещание того,
+        // что будет по нажатию, а не память о том, как было когда-то.
+        const bool ascending = active ? order.ascending : defaultAscending(item.key);
+        const bool flipped = ascending != defaultAscending(item.key);
+        setChecked(item.button, active);
+        setAccent(item.button, active && fromMark);
+        setIcon(item.button, QString::fromLatin1(flipped ? item.iconFlipped : item.iconDefault));
+        QString tip = sortOrderTitle(SortOrder{item.key, ascending});
+        tip += active ? (fromMark ? QStringLiteral("\nпорядок задан меткой папки")
+                                  : QStringLiteral("\nобщий порядок"))
+                      : QStringLiteral("\nнажать — включить, ещё раз — перевернуть");
+        setTip(item.button, tip);
+    }
+}
+
+QString Toolbar::iconName(Button id) const {
+    const QString set = icons_.value(int(id));
+    if (!set.isEmpty()) return set;
+    for (const Spec& spec : kSpecs)
+        if (spec.id == id) return QString::fromLatin1(spec.icon);
+    return QString();
 }
 
 Toolbar::Toolbar(QWidget* parent) : QWidget(parent) {
@@ -108,7 +147,12 @@ void Toolbar::restyle() {
     for (const Spec& spec : kSpecs) {
         QToolButton* button = buttons_.value(int(spec.id));
         if (!button) continue;
-        const QString name = QString::fromLatin1(spec.icon);
+        // Значок берётся из памяти виджета, а не из списка: направление
+        // сортировки успело смениться, и перерисовка по kSpecs откатила бы
+        // стрелку назад — на смене плотности экрана или после правки конфига.
+        const QString name = icons_.value(int(spec.id), QString::fromLatin1(spec.icon));
+        const QColor onColour = marked_.value(int(spec.id), false) ? a.toolbarIconMarkColor
+                                                                   : a.toolbarIconOnColor;
 
         QIcon icon;
         icon.addPixmap(toolbarIcon(name, a.toolbarIconSize, a.toolbarIconColor, dpr),
@@ -119,9 +163,9 @@ void Toolbar::restyle() {
                        QIcon::Disabled, QIcon::Off);
         // Нажатое состояние переключателя — цветом. Рамка на иконке в двадцать
         // точек спорит с самим рисунком, а цвет виден сразу и издалека.
-        icon.addPixmap(toolbarIcon(name, a.toolbarIconSize, a.toolbarIconOnColor, dpr),
+        icon.addPixmap(toolbarIcon(name, a.toolbarIconSize, onColour, dpr),
                        QIcon::Normal, QIcon::On);
-        icon.addPixmap(toolbarIcon(name, a.toolbarIconSize, a.toolbarIconOnColor, dpr),
+        icon.addPixmap(toolbarIcon(name, a.toolbarIconSize, onColour, dpr),
                        QIcon::Active, QIcon::On);
         icon.addPixmap(toolbarIcon(name, a.toolbarIconSize, a.toolbarIconDisabledColor, dpr),
                        QIcon::Disabled, QIcon::On);
@@ -184,6 +228,22 @@ void Toolbar::setChecked(Button id, bool on) {
 bool Toolbar::isChecked(Button id) const {
     QToolButton* button = buttons_.value(int(id));
     return button && button->isChecked();
+}
+
+void Toolbar::setIcon(Button id, const QString& iconName) {
+    if (icons_.value(int(id)) == iconName) return;
+    icons_.insert(int(id), iconName);
+    restyle();
+}
+
+void Toolbar::setTip(Button id, const QString& tip) {
+    if (QToolButton* button = buttons_.value(int(id))) button->setToolTip(tip);
+}
+
+void Toolbar::setAccent(Button id, bool ownMark) {
+    if (marked_.value(int(id), false) == ownMark) return;
+    marked_.insert(int(id), ownMark);
+    restyle();
 }
 
 void Toolbar::setPromise(Button id, const QString& why) {

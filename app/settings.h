@@ -306,6 +306,10 @@ struct Appearance {
     QColor toolbarIconHoverColor{0x00, 0x00, 0x00};
     // Нажатая кнопка-переключатель (сортировка, панели) — цветом, а не рамкой.
     QColor toolbarIconOnColor{0x32, 0x5c, 0xc0};
+    // Тот же смысл, но порядок задан МЕТКОЙ ПАПКИ, а не общим переключателем
+    // (этап 13). Два цвета вместо надписи: синий — «так у всех», фиолетовый —
+    // «так помечено здесь», и видно это, не открывая ни меню, ни файла.
+    QColor toolbarIconMarkColor{0x7c, 0x3a, 0xed};
     // Задизейбленное обещание видно, но не зовёт: контраст втрое ниже обычного.
     QColor toolbarIconDisabledColor{0xb8, 0xbd, 0xc4};
     QColor toolbarHoverBackground{0, 0, 0, 18};

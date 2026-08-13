@@ -39,8 +39,8 @@ public:
     explicit NoteListModel(QObject* parent = nullptr);
 
     // Сортировка общая с деревом: переключатель один на обе панели.
-    void setSortMode(NoteTreeModel::SortMode mode);
-    NoteTreeModel::SortMode sortMode() const { return sortMode_; }
+    void setSortOrder(SortOrder order);
+    SortOrder sortOrder() const { return sortOrder_; }
 
     // Полная замена содержимого: сменилась выбранная папка или перестроилось
     // дерево.
@@ -70,7 +70,7 @@ private:
     void sortRows();
 
     std::vector<NoteRow> rows_;
-    NoteTreeModel::SortMode sortMode_ = NoteTreeModel::SortMode::ByModified;
+    SortOrder sortOrder_ = defaultOrder(SortKey::Modified);
     QCollator collator_;
 };
 

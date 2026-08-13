@@ -234,6 +234,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("iconColor"), colorToString(a.toolbarIconColor)},
         {QStringLiteral("iconHoverColor"), colorToString(a.toolbarIconHoverColor)},
         {QStringLiteral("iconOnColor"), colorToString(a.toolbarIconOnColor)},
+        {QStringLiteral("iconMarkColor"), colorToString(a.toolbarIconMarkColor)},
         {QStringLiteral("iconDisabledColor"), colorToString(a.toolbarIconDisabledColor)},
         {QStringLiteral("hoverBackground"), colorToString(a.toolbarHoverBackground)},
         {QStringLiteral("separatorColor"), colorToString(a.toolbarSeparatorColor)},
@@ -503,6 +504,7 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readColor(toolbar, "iconColor", a.toolbarIconColor);
     readColor(toolbar, "iconHoverColor", a.toolbarIconHoverColor);
     readColor(toolbar, "iconOnColor", a.toolbarIconOnColor);
+    readColor(toolbar, "iconMarkColor", a.toolbarIconMarkColor);
     readColor(toolbar, "iconDisabledColor", a.toolbarIconDisabledColor);
     readColor(toolbar, "hoverBackground", a.toolbarHoverBackground);
     readColor(toolbar, "separatorColor", a.toolbarSeparatorColor);

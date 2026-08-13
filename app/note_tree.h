@@ -9,6 +9,8 @@
 #ifndef ZAMETTI_NOTE_TREE_H
 #define ZAMETTI_NOTE_TREE_H
 
+#include "sort_order.h"
+
 #include <QAbstractItemModel>
 #include <QMimeData>
 #include <QModelIndex>
@@ -18,6 +20,7 @@
 #include <QTreeView>
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace zametti {
@@ -32,6 +35,9 @@ struct NoteRow {
     QString title;
     QString snippet;
     QString modified;   // ISO из меты; пусто — не знаем
+    // Дата создания — единственная неподвижная хронология заметки: правка
+    // старой записи её не двигает. Ради неё и затевался этап 13 (дневник).
+    QString created;
 };
 
 // Показать строку в дереве, не трогая её собственную раскрытость: раскрываются
@@ -133,12 +139,27 @@ public:
     // дожидаясь ни сохранения, ни пересборки.
     void updateTitle(const QString& filePath, const QString& title);
 
-    // Сортировка братьев: по последней правке (свежие сверху; у каталога —
-    // самая свежая правка в поддереве) или по имени (каталоги первыми).
-    // Корзина всегда в самом низу корня.
-    enum class SortMode { ByModified, ByName };
-    void setSortMode(SortMode mode);
-    SortMode sortMode() const { return sortMode_; }
+    // ДЕЙСТВУЮЩИЙ порядок — один на всё дерево, а не свой у каждой папки.
+    //
+    // Сортировка — свойство ТОЧКИ ОБЗОРА (решение владельца): выбрали папку —
+    // и обе панели показывают её мир так, как помечено у неё. Метки вложенных
+    // папок играют, только когда выбирают их самих. Иначе одна панель шла бы в
+    // одном порядке, другая в другом, и «где эта заметка» становилось бы
+    // вопросом на каждый щелчок.
+    //
+    // Кто выводит порядок из меток — окно (effectiveSortFor ниже): у модели нет
+    // ни выбранной строки, ни переключателя корня.
+    void setSortOrder(SortOrder order);
+    SortOrder sortOrder() const { return sortOrder_; }
+
+    // Метка САМОЙ этой папки, если она есть: ключ `sort` из её шапки. Пусто —
+    // метки нет или значение чужое (тогда о нём уже пожаловались в stderr).
+    std::optional<SortOrder> explicitSortOf(const QString& id) const;
+    // Действующий порядок для папки: своя метка → ближайший помеченный предок →
+    // fallback (переключатель корня). Второе значение — откуда взяли: true,
+    // если порядок задан меткой, false — если это переключатель.
+    SortOrder effectiveSortFor(const QString& id, SortOrder fallback,
+                               bool* fromMark = nullptr) const;
 
     // Ближайшая папка вверх от узла: сам узел, если он папка, иначе его
     // родитель-папка; корень — пустой id. Создание всегда целится сюда:
@@ -219,7 +240,7 @@ private:
     QString rootPath_;
     bool store_ = false;
     bool foldersOnly_ = false;
-    SortMode sortMode_ = SortMode::ByModified;
+    SortOrder sortOrder_ = defaultOrder(SortKey::Modified);
     std::unique_ptr<Node> root_;
     QSet<QString> expanded_;
 };

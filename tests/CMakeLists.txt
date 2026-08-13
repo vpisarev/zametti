@@ -380,6 +380,14 @@ if(TARGET zametti-view)
         add_test(NAME search COMMAND search_test)
         set_tests_properties(search PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+        # Сортировки этапа 13: чистые правила, дневниковая фикстура, наследование
+        # меток и инварианты «показ ничего не пишет».
+        add_executable(sort_test sort_test.cpp)
+        target_link_libraries(sort_test PRIVATE zametti-widgets Qt6::Test zametti-warnings)
+        target_include_directories(sort_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        add_test(NAME sort COMMAND sort_test)
+        set_tests_properties(sort PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
         add_executable(tree_test tree_test.cpp)
         target_link_libraries(tree_test PRIVATE zametti-widgets Qt6::Test zametti-warnings)
         target_include_directories(tree_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

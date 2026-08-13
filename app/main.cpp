@@ -19,6 +19,7 @@
 #include "resources.h"
 #include "serializer.h"
 #include "settings.h"
+#include "sort_order.h"
 #include "about_window.h"
 #include "export_note.h"
 #include "export_pdf.h"
@@ -65,6 +66,7 @@
 #include <cstdio>
 #include <functional>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -436,10 +438,17 @@ int main(int argc, char** argv) {
             return 2;
         }
     }
-    if (session.treeSort == QStringLiteral("name")) {
-        model.setSortMode(zametti::NoteTreeModel::SortMode::ByName);
-        list.setSortMode(zametti::NoteTreeModel::SortMode::ByName);
-    }
+    // ПОРЯДОК КОРНЯ — переключатель интерфейса, а не метка в файле: корень не
+    // заметка, писать метку некуда. Он же — запасной для всякой папки, у
+    // которой нет ни своей метки, ни помеченного предка. Живёт в state.json и
+    // не синхронизируется: у каждого устройства свой вкус по умолчанию.
+    //
+    // Старое состояние («name» / «modified», до этапа 13) читается тем же
+    // разбором: ключ без направления — законная краткая запись.
+    zametti::SortOrder rootSort = zametti::defaultOrder(zametti::SortKey::Modified);
+    if (const auto saved = zametti::parseSortOrder(session.treeSort)) rootSort = *saved;
+    model.setSortOrder(rootSort);
+    list.setSortOrder(rootSort);
     tree.setModel(&model);
     tree.setHeaderHidden(true);
     tree.setEditTriggers(model.isStore() ? QAbstractItemView::EditKeyPressed
@@ -793,6 +802,14 @@ int main(int argc, char** argv) {
     // был бы уже снят.
     QString openedByFolderPick;
 
+    // Порядок сортировки — свойство ВЫБРАННОЙ папки, значит его надо
+    // пересчитывать при каждой смене выбора. Обработчик выбора стоит здесь, а
+    // весь сортировочный обвес — ниже, рядом с кнопками: держать его в двух
+    // местах нельзя, поэтому сюда кладётся ссылка, которая ниже и заполняется.
+    // Пустая до тех пор — до неё доходит только настоящий щелчок, а его в
+    // первые миллисекунды сборки окна быть не может.
+    std::function<void()> syncSortToSelection;
+
     const auto revealOpenNote = [&](const QString& file) {
         if (!model.isStore() || file.isEmpty()) return;
         const QModelIndex folder =
@@ -939,11 +956,22 @@ int main(int argc, char** argv) {
         }
     };
 
+    // Выбрали папку — сперва её порядок, потом её список. Обратный порядок дал
+    // бы список, отсортированный по прежней папке. Индекс после смены порядка
+    // недействителен (модель перестраивается целиком), поэтому папку находим
+    // заново по пути.
+    const auto folderPicked = [&](const QModelIndex& index) {
+        const QString path = model.nodePath(index);
+        if (syncSortToSelection) syncSortToSelection();
+        const QModelIndex folder = model.indexForPath(path);
+        fillList(folder.isValid() ? folder : QModelIndex(), true);
+    };
+
     QObject::connect(tree.selectionModel(), &QItemSelectionModel::currentChanged, &tree,
                      [&](const QModelIndex& index, const QModelIndex&) {
                          if (revealing) return;
                          if (model.isStore()) {
-                             fillList(index, true);
+                             folderPicked(index);
                              return;
                          }
                          // Вне хранилища панель одна: заметки живут в дереве.
@@ -960,7 +988,7 @@ int main(int argc, char** argv) {
     // раскрытия он тоже не приходит.
     QObject::connect(&tree, &QAbstractItemView::clicked, &tree,
                      [&](const QModelIndex& index) {
-                         if (model.isStore()) fillList(index, true);
+                         if (model.isStore()) folderPicked(index);
                      });
 
     // Выбор строки списка открывает заметку. Фокус переезжает в текст — кроме
@@ -1810,14 +1838,14 @@ int main(int argc, char** argv) {
              [&] { createNote(model.folderIdFor(tree.currentIndex()), false); });
 
     // Сортировка одна на обе панели: и папки слева, и заметки в середине
-    // упорядочены одинаково. Переключатель — над средней колонкой.
-    const auto applySort = [&](zametti::NoteTreeModel::SortMode mode) {
-        if (mode == model.sortMode()) return;
+    // упорядочены одинаково — тем порядком, который действует в ВЫБРАННОЙ папке.
+    const auto applySort = [&](zametti::SortOrder order) {
+        if (order == model.sortOrder()) return;
         const QStringList open = expandedDirs();
         const QString folderPath = model.nodePath(tree.currentIndex());
         const QString keep = editor.filePath();
-        model.setSortMode(mode);
-        list.setSortMode(mode);
+        model.setSortOrder(order);
+        list.setSortOrder(order);
         for (const QString& dir : open) {
             const QModelIndex index = model.indexForPath(dir);
             if (index.isValid()) tree.expand(index);
@@ -1834,16 +1862,74 @@ int main(int argc, char** argv) {
             listView.scrollTo(back);
         }
     };
-    // Две кнопки вместо комбобокса — группа с единственным нажатым: нажать
-    // «по имени» значит отжать «по дате». Отжать обе нельзя, поэтому повторное
-    // нажатие уже нажатой возвращает её назад, а не оставляет обе пустыми:
-    // сортировки «никакой» не бывает.
-    const auto showSortMode = [&toolbar](zametti::NoteTreeModel::SortMode mode) {
-        const bool byName = mode == zametti::NoteTreeModel::SortMode::ByName;
-        toolbar.setChecked(zametti::Toolbar::Button::SortByName, byName);
-        toolbar.setChecked(zametti::Toolbar::Button::SortByDate, !byName);
+    // Три кнопки вместо комбобокса — группа с единственной нажатой: включить
+    // одну значит отжать две другие. Отжать все нельзя — сортировки «никакой»
+    // не бывает; поэтому нажатие УЖЕ НАЖАТОЙ переворачивает направление, а не
+    // гасит её (pressedSort в sort_order.h).
+    //
+    // Как это выглядит — дело тулбара (Toolbar::showSort): значок говорит про
+    // направление, цвет — про источник порядка. Окну остаётся решить, ЧТО
+    // показывать.
+    // Порядок, действующий в выбранной папке, и откуда он взялся. Папка — та
+    // же, что у «новой заметки»: ближайшая вверх от строки дерева.
+    const auto currentSort = [&](bool* fromMark) {
+        return model.effectiveSortFor(model.folderIdFor(tree.currentIndex()), rootSort,
+                                      fromMark);
     };
-    showSortMode(model.sortMode());
+    const auto syncSort = [&] {
+        bool fromMark = false;
+        const zametti::SortOrder order = currentSort(&fromMark);
+        applySort(order);
+        toolbar.showSort(order, fromMark);
+    };
+
+    // ЗАПИСЬ ПОРЯДКА. Выбрана папка — метка уходит в её шапку и переживает всё,
+    // включая синхронизацию: это метаданные, а не настройка интерфейса. Выбран
+    // корень — двигается только переключатель, и ни один файл хранилища не
+    // меняется (инвариант A брифа). Пустой order означает «сбросить»: метка
+    // убирается, папка снова наследует.
+    //
+    // modified папки при этом НЕ поднимается: пометка — правка
+    // организационная, как перенос, и всплывать наверх списка от неё папка не
+    // должна (правило этапа 7). Держится это тем, что оба пути записи —
+    // rewriteNote и editMeta — штампа не ставят.
+    const auto setSortFor = [&](const QString& folderId,
+                                std::optional<zametti::SortOrder> order) {
+        if (folderId.isEmpty()) {
+            rootSort = order.value_or(zametti::defaultOrder(zametti::SortKey::Modified));
+            syncSort();
+            return;
+        }
+        const QString file = model.pathOfId(folderId);
+        if (file.isEmpty()) return;
+        const auto change = [&order](zametti::NoteMeta& meta) {
+            zametti::applySortMark(meta, order);
+        };
+        if (file == editor.filePath()) {
+            editor.editMeta(change);
+        } else {
+            rewriteNote(file, [&](zametti::Document& doc) {
+                doc.meta.present = true;
+                change(doc.meta);
+            });
+        }
+        // Метку читает СКАН хранилища — значит дерево надо перечитать, иначе
+        // порядок останется прежним до следующего F5.
+        refreshTree(editor.filePath());
+        syncSort();
+    };
+    syncSort();
+    syncSortToSelection = syncSort;
+
+    // НАЖАТИЕ КНОПКИ. По неактивной — включить её ключ в направлении по
+    // умолчанию; по активной — перевернуть направление. Записывается это туда
+    // же, куда смотрит человек: выбрана папка — в её шапку, выбран корень — в
+    // переключатель.
+    const auto pressSort = [&](zametti::SortKey key) {
+        bool fromMark = false;
+        const zametti::SortOrder now = currentSort(&fromMark);
+        setSortFor(model.folderIdFor(tree.currentIndex()), zametti::pressedSort(now, key));
+    };
 
     // --- внешний редактор ----------------------------------------------------
     //
@@ -2017,6 +2103,45 @@ int main(int argc, char** argv) {
                        [&] { createNote(model.folderIdFor(at), true); });
         menu.addAction(QStringLiteral("Импортировать…"),
                        [&] { importNotes(model.folderIdFor(at)); });
+
+        // «Сортировать по» — вторая дверь туда же, куда ведут три кнопки
+        // тулбара, и единственная, где можно СБРОСИТЬ метку: кнопками порядок
+        // только задают. Пункт «умолчанию» есть у папки и нет у корня —
+        // корневой переключатель не наследует ни от кого.
+        {
+            const QString folderId = model.folderIdFor(at);
+            QMenu* sortMenu = menu.addMenu(QStringLiteral("Сортировать по"));
+            bool fromMark = false;
+            const zametti::SortOrder now =
+                model.effectiveSortFor(folderId, rootSort, &fromMark);
+            const bool own = model.explicitSortOf(folderId).has_value();
+            if (!folderId.isEmpty()) {
+                QAction* reset = sortMenu->addAction(QStringLiteral("умолчанию"), [&, folderId] {
+                    setSortFor(folderId, std::nullopt);
+                });
+                reset->setCheckable(true);
+                reset->setChecked(!own);
+                sortMenu->addSeparator();
+            }
+            for (const zametti::SortOrder order :
+                 {zametti::SortOrder{zametti::SortKey::Name, true},
+                  zametti::SortOrder{zametti::SortKey::Name, false},
+                  zametti::SortOrder{zametti::SortKey::Modified, false},
+                  zametti::SortOrder{zametti::SortKey::Modified, true},
+                  zametti::SortOrder{zametti::SortKey::Created, false},
+                  zametti::SortOrder{zametti::SortKey::Created, true}}) {
+                QAction* item = sortMenu->addAction(zametti::sortOrderTitle(order),
+                                                    [&, folderId, order] {
+                                                        setSortFor(folderId, order);
+                                                    });
+                item->setCheckable(true);
+                // Галочка стоит на ДЕЙСТВУЮЩЕМ порядке, даже если он
+                // унаследован: меню отвечает на вопрос «как сейчас», а «своё
+                // или наследство» видно по пункту «умолчанию».
+                item->setChecked(order == now);
+            }
+        }
+
         if (!id.isEmpty()) {
             menu.addSeparator();
             // «Открыть как заметку» здесь больше нет. Папка — структура, а не
@@ -2396,8 +2521,8 @@ int main(int argc, char** argv) {
             // файла её нет вовсе — это не «пока не сделано», а другое
             // состояние мира.
             for (Button id : {Button::NewNote, Button::NewFolder, Button::ImportNotes,
-                              Button::SortByName, Button::SortByDate, Button::SearchInStore,
-                              Button::History})
+                              Button::SortByName, Button::SortByDate, Button::SortByCreated,
+                              Button::SearchInStore, Button::History})
                 toolbar.setPromise(id, single);
         }
 
@@ -2419,12 +2544,13 @@ int main(int argc, char** argv) {
                 showPanels(toolbar.isChecked(Button::Panels));
                 break;
             case Button::SortByName:
-                applySort(zametti::NoteTreeModel::SortMode::ByName);
-                showSortMode(model.sortMode());
+                pressSort(zametti::SortKey::Name);
                 break;
             case Button::SortByDate:
-                applySort(zametti::NoteTreeModel::SortMode::ByModified);
-                showSortMode(model.sortMode());
+                pressSort(zametti::SortKey::Modified);
+                break;
+            case Button::SortByCreated:
+                pressSort(zametti::SortKey::Created);
                 break;
             case Button::History:
                 // ПЕРЕКЛЮЧАТЕЛЬ: горит — идёт режим истории, нажали снова —
@@ -2588,6 +2714,23 @@ int main(int argc, char** argv) {
             tree.setCurrentIndex(folder);
             tree.scrollTo(folder);
         }
+        // ПОРЯДОК ВЫБРАННОЙ ПАПКИ — И НА СТАРТЕ ТОЖЕ. Курсор сюда поставлен с
+        // заглушенными сигналами (иначе перестановка читалась бы как выбор
+        // человека и переоткрывала заметку), а значит обработчик выбора не
+        // сработал, и метка папки на первом экране не действовала бы: программа
+        // открывалась в общем порядке и чинилась только щелчком по той же
+        // папке. Владелец увидел бы это как «метка работает через раз».
+        //
+        // Индекс после смены порядка недействителен — модель перестраивается
+        // целиком; поэтому папку ищем заново, по пути.
+        const QString folderPath = model.nodePath(folder);
+        if (syncSortToSelection) syncSortToSelection();
+        folder = model.indexForPath(folderPath);
+        if (folder.isValid()) {
+            const QSignalBlocker blocked(tree.selectionModel());
+            tree.setCurrentIndex(folder);
+            tree.scrollTo(folder);
+        }
         list.setRows(model.notesInSubtree(folder));
         const QModelIndex row = list.indexForPath(current);
         if (row.isValid()) {
@@ -2634,9 +2777,10 @@ int main(int argc, char** argv) {
         out.storeRoot = model.isStore() ? model.nodePath(QModelIndex()) : QString();
         out.exportDir = exportDir;
         out.diffPlainView = editor.diffPlainView();
-        out.treeSort = model.sortMode() == zametti::NoteTreeModel::SortMode::ByName
-                           ? QStringLiteral("name")
-                           : QStringLiteral("modified");
+        // Переключатель КОРНЯ, а не действующий порядок: последний может быть
+        // задан меткой открытой папки, и запиши мы его — чужая метка стала бы
+        // общим умолчанием при следующем запуске.
+        out.treeSort = zametti::sortOrderToString(rootSort);
         zametti::saveSession(out);
     });
 

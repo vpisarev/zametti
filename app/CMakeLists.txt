@@ -71,6 +71,8 @@ add_library(zametti-view STATIC
     search.cpp
     settings.h
     settings.cpp
+    sort_order.h
+    sort_order.cpp
     table_view.h
     table_view.cpp
     text_stats.h

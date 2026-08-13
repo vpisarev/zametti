@@ -18,6 +18,8 @@
 #ifndef ZAMETTI_TOOLBAR_H
 #define ZAMETTI_TOOLBAR_H
 
+#include "sort_order.h"
+
 #include <QHash>
 #include <QString>
 #include <QWidget>
@@ -43,8 +45,13 @@ public:
         Export,
         Cloud,
         Panels,
+        // Три сортировки: имя, дата правки, дата создания. У каждой два
+        // направления, и значок с тултипом меняются вместе с ним — отсюда
+        // setIcon/setTip ниже: в списке kSpecs записано только начальное
+        // состояние.
         SortByName,
         SortByDate,
+        SortByCreated,
         // Вход в историю заметки — ВТОРАЯ ДВЕРЬ туда же, куда ведёт Ctrl+Z,
         // доехавший до дна цепочки отмены. Нужна именно вторая: после десятка
         // правок проваливание требует сперва размотать свои же правки, а
@@ -69,6 +76,16 @@ public:
 
     static std::span<const Spec> specs();
 
+    // Кнопка и пара значков для каждого ключа сортировки. ОДНО место, где
+    // сказано, чем показывается какой ключ: и отрисовка, и приёмка ходят сюда.
+    struct SortSpec {
+        SortKey key;
+        Button button;
+        const char* iconDefault;   // направление по умолчанию для этого ключа
+        const char* iconFlipped;   // перевёрнутое
+    };
+    static std::span<const SortSpec> sortSpecs();
+
     explicit Toolbar(QWidget* parent = nullptr);
 
     // Перечитать оформление: цвета, размер иконки, шрифт тултипов.
@@ -76,6 +93,27 @@ public:
 
     void setEnabled(Button id, bool on);
     void setChecked(Button id, bool on);
+    // Значок и подсказка на ходу: у сортировок они говорят про НАПРАВЛЕНИЕ, а
+    // оно меняется нажатием на уже нажатую кнопку.
+    void setIcon(Button id, const QString& iconName);
+    void setTip(Button id, const QString& tip);
+    // Нажатая кнопка красится цветом. Обычный — toolbarIconOnColor; «своим»
+    // цветом (toolbarIconMarkColor) горят сортировки, заданные МЕТКОЙ папки, а
+    // не общим переключателем: по цвету видно, чей это порядок, без всяких
+    // диалогов.
+    void setAccent(Button id, bool ownMark);
+
+    // ПОКАЗАТЬ ДЕЙСТВУЮЩИЙ ПОРЯДОК на всех трёх кнопках разом: нажата одна,
+    // значок говорит про направление, цвет — про источник (метка папки или
+    // общий переключатель), тултип — словами.
+    //
+    // Здесь, а не в окне: правило «какой значок чему отвечает» — часть тулбара,
+    // и набор проверяет ровно то, что видит человек.
+    void showSort(SortOrder order, bool fromMark);
+
+    // Каким значком нарисована кнопка сейчас. Нужно приёмке: направление
+    // сортировки видно только по нему.
+    QString iconName(Button id) const;
     bool isChecked(Button id) const;
     // Кнопка есть в раскладке и доступна для нажатия. Нужно проверкам.
     bool isEnabled(Button id) const;
@@ -106,6 +144,12 @@ private:
 
     QHash<int, QToolButton*> buttons_;
     QHash<int, QString> promises_;
+    // Чем рисовать кнопку сейчас: имя значка (пусто — из kSpecs) и признак
+    // «цвет метки». Держим здесь, потому что restyle() перерисовывает ВСЕ
+    // кнопки — на смене плотности экрана, на перечитанном конфиге, — и без
+    // памяти о нынешнем состоянии значок откатывался бы к начальному.
+    QHash<int, QString> icons_;
+    QHash<int, bool> marked_;
 };
 
 }  // namespace zametti

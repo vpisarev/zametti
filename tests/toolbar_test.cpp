@@ -197,9 +197,106 @@ void checkCacheHolds() {
           std::to_string(zametti::iconCacheSize()));
 }
 
+// Сортировки: три кнопки, шесть состояний, два источника порядка.
+//
+// Смотрим ровно на то, по чему человек и узнаёт порядок: какая кнопка нажата,
+// каким значком она нарисована и какого цвета вышел растр. Значок спрашиваем
+// именем файла — сравнивать пиксели пары «стрелка вниз / стрелка вверх»
+// значило бы мерить сглаживание.
+void checkSortButtons(Toolbar& bar) {
+    for (const Toolbar::SortSpec& spec : Toolbar::sortSpecs()) {
+        ZT_TRUE("значок " + std::string(spec.iconDefault) + " есть в ресурсах",
+                QFile::exists(zametti::iconPath(spec.iconDefault)));
+        ZT_TRUE("парный значок " + std::string(spec.iconFlipped) + " есть в ресурсах",
+                QFile::exists(zametti::iconPath(spec.iconFlipped)));
+    }
+
+    for (const zametti::SortKey key :
+         {zametti::SortKey::Name, zametti::SortKey::Modified, zametti::SortKey::Created})
+        for (const bool ascending : {true, false}) {
+            const zametti::SortOrder order{key, ascending};
+            bar.showSort(order, false);
+
+            int lit = 0;
+            for (const Toolbar::SortSpec& spec : Toolbar::sortSpecs()) {
+                const bool active = spec.key == key;
+                if (bar.isChecked(spec.button)) ++lit;
+                ZT_TRUE("нажата ровно та кнопка, чей ключ действует",
+                        bar.isChecked(spec.button) == active);
+
+                // Значок отвечает НАПРАВЛЕНИЮ: умолчание ключа — стрелка вниз,
+                // перевёрнутое — вверх. У неактивных кнопок нарисовано их
+                // собственное умолчание.
+                const bool flipped =
+                    active && ascending != zametti::defaultAscending(spec.key);
+                ZT_EQ("значок кнопки отвечает направлению",
+                      std::string(flipped ? spec.iconFlipped : spec.iconDefault),
+                      s(bar.iconName(spec.button)));
+
+                QToolButton* button = bar.buttonFor(spec.button);
+                if (button == nullptr) continue;
+                if (!active) continue;
+                ZT_TRUE("тултип называет порядок словами",
+                        button->toolTip().contains(zametti::sortOrderTitle(order)));
+                ZT_TRUE("и говорит, что порядок общий",
+                        button->toolTip().contains(QStringLiteral("общий порядок")));
+            }
+            ZT_EQ("горит ровно одна кнопка сортировки", std::string("1"),
+                  std::to_string(lit));
+        }
+
+    // ЦВЕТ ИСТОЧНИКА. Порядок, заданный меткой папки, горит своим цветом —
+    // иначе «почему тут не так, как везде» отвечать было бы нечем. Спрашиваем
+    // растр: точек цвета метки на кнопке нет, пока метки нет, и они появляются
+    // вместе с ней.
+    const auto countColour = [&bar](Toolbar::Button id, const QColor& want) {
+        QToolButton* button = bar.buttonFor(id);
+        if (button == nullptr) return 0;
+        const QImage shot = button->grab().toImage();
+        int hits = 0;
+        for (int y = 0; y < shot.height(); ++y)
+            for (int x = 0; x < shot.width(); ++x) {
+                const QColor c = shot.pixelColor(x, y);
+                if (c.alpha() < 200) continue;
+                if (qAbs(c.red() - want.red()) <= 8 && qAbs(c.green() - want.green()) <= 8 &&
+                    qAbs(c.blue() - want.blue()) <= 8)
+                    ++hits;
+            }
+        return hits;
+    };
+    const zametti::Appearance& a = zametti::appearance();
+    const zametti::SortOrder created{zametti::SortKey::Created, false};
+
+    bar.showSort(created, false);
+    const int commonBlue = countColour(Toolbar::Button::SortByCreated, a.toolbarIconOnColor);
+    const int commonPurple = countColour(Toolbar::Button::SortByCreated, a.toolbarIconMarkColor);
+    bar.showSort(created, true);
+    const int markBlue = countColour(Toolbar::Button::SortByCreated, a.toolbarIconOnColor);
+    const int markPurple = countColour(Toolbar::Button::SortByCreated, a.toolbarIconMarkColor);
+
+    ZT_TRUE("общий порядок нарисован цветом переключателя (" +
+                std::to_string(commonBlue) + " точек)",
+            commonBlue > 20 && commonPurple == 0);
+    ZT_TRUE("порядок по метке нарисован цветом метки (" + std::to_string(markPurple) +
+                " точек)",
+            markPurple > 20 && markBlue == 0);
+    QToolButton* button = bar.buttonFor(Toolbar::Button::SortByCreated);
+    ZT_TRUE("и тултип говорит, что порядок задан меткой",
+            button != nullptr &&
+                button->toolTip().contains(QStringLiteral("меткой папки")));
+}
+
 void writeShots(Toolbar& bar, const QString& dir) {
     bar.resize(1100, bar.sizeHint().height());
     bar.grab().save(QDir(dir).filePath(QStringLiteral("toolbar.png")));
+    // Снимки сортировок: оба направления и оба источника порядка — то, что
+    // владелец сверяет глазами.
+    bar.showSort(zametti::SortOrder{zametti::SortKey::Created, false}, false);
+    bar.grab().save(QDir(dir).filePath(QStringLiteral("toolbar-создание-новые.png")));
+    bar.showSort(zametti::SortOrder{zametti::SortKey::Created, true}, false);
+    bar.grab().save(QDir(dir).filePath(QStringLiteral("toolbar-создание-старые.png")));
+    bar.showSort(zametti::SortOrder{zametti::SortKey::Name, false}, true);
+    bar.grab().save(QDir(dir).filePath(QStringLiteral("toolbar-метка-папки.png")));
 }
 
 }  // namespace
@@ -217,6 +314,7 @@ int main(int argc, char** argv) {
     checkShortcutsAreShown(bar);
     checkSearchPair(bar);
     checkPromiseExplainsItself(bar);
+    checkSortButtons(bar);
 
     if (argc > 1) writeShots(bar, QString::fromLocal8Bit(argv[1]));
 

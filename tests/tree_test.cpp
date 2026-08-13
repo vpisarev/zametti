@@ -163,14 +163,14 @@ int main(int argc, char** argv) {
     }
 
     // Сортировка по имени: директории первыми, корзина всё равно внизу.
-    model.setSortMode(NoteTreeModel::SortMode::ByName);
+    model.setSortOrder(zametti::defaultOrder(zametti::SortKey::Name));
     all = model.index(0, 0, QModelIndex());
     ZT_TRUE("по имени: первая — директория",
             model.isDirectory(model.index(0, 0, all)));
     ZT_TRUE("по имени: корзина внизу",
             titleAt(model, all, model.rowCount(all) - 1) ==
                 QStringLiteral("Корзина"));
-    model.setSortMode(NoteTreeModel::SortMode::ByModified);
+    model.setSortOrder(zametti::defaultOrder(zametti::SortKey::Modified));
     all = model.index(0, 0, QModelIndex());
 
     // Свежие сверху, корзина — последней, несмотря на свежий modified.
@@ -301,8 +301,8 @@ int main(int argc, char** argv) {
                     .contains(QStringLiteral("parent: 000000000000zz")));
     }
 
-    model.setSortMode(NoteTreeModel::SortMode::ByName);
-    model.setSortMode(NoteTreeModel::SortMode::ByModified);
+    model.setSortOrder(zametti::defaultOrder(zametti::SortKey::Name));
+    model.setSortOrder(zametti::defaultOrder(zametti::SortKey::Modified));
     model.refresh();
     QStringList after;
     for (const QFileInfo& info :

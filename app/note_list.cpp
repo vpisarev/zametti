@@ -45,21 +45,26 @@ NoteListModel::NoteListModel(QObject* parent) : QAbstractListModel(parent) {
     collator_.setCaseSensitivity(Qt::CaseInsensitive);
 }
 
-void NoteListModel::setSortMode(NoteTreeModel::SortMode mode) {
-    if (mode == sortMode_) return;
-    sortMode_ = mode;
+void NoteListModel::setSortOrder(SortOrder order) {
+    if (order == sortOrder_) return;
+    sortOrder_ = order;
     beginResetModel();
     sortRows();
     endResetModel();
 }
 
 void NoteListModel::sortRows() {
-    std::sort(rows_.begin(), rows_.end(), [this](const NoteRow& a, const NoteRow& b) {
-        if (sortMode_ == NoteTreeModel::SortMode::ByName)
-            return collator_.compare(a.title, b.title) < 0;
-        // Свежие сверху. Записи ISO сравниваются как строки: они одной длины и
-        // всегда в UTC — так их пишет ядро.
-        if (a.modified != b.modified) return a.modified > b.modified;
+    // Тот же порядок, что и в дереве, и считается он тем же правилом: даты
+    // строками (ISO одной длины и всегда в UTC), равные разводятся именем.
+    const SortOrder order = sortOrder_;
+    std::sort(rows_.begin(), rows_.end(), [this, order](const NoteRow& a, const NoteRow& b) {
+        if (order.key == SortKey::Name) {
+            const int cmp = collator_.compare(a.title, b.title);
+            return order.ascending ? cmp < 0 : cmp > 0;
+        }
+        const QString& left = order.key == SortKey::Created ? a.created : a.modified;
+        const QString& right = order.key == SortKey::Created ? b.created : b.modified;
+        if (left != right) return order.ascending ? left < right : left > right;
         return collator_.compare(a.title, b.title) < 0;
     });
 }
@@ -74,9 +79,17 @@ void NoteListModel::setRows(std::vector<NoteRow> rows) {
 void NoteListModel::updateRow(const NoteRow& row) {
     for (size_t i = 0; i < rows_.size(); ++i) {
         if (rows_[i].id != row.id) continue;
-        const bool moves = sortMode_ == NoteTreeModel::SortMode::ByModified
-                               ? rows_[i].modified != row.modified
-                               : rows_[i].title != row.title;
+        // Съедет ли строка с места. Смотрим ровно на то, чем сейчас меряем:
+        // в порядке по дате создания правка заметки не двигает НИЧЕГО — ради
+        // этого дневник и затевался.
+        const bool moves = [&] {
+            switch (sortOrder_.key) {
+                case SortKey::Name: return rows_[i].title != row.title;
+                case SortKey::Modified: return rows_[i].modified != row.modified;
+                case SortKey::Created: return rows_[i].created != row.created;
+            }
+            return false;
+        }();
         rows_[i] = row;
         if (!moves) {
             const QModelIndex at = index(int(i), 0);
