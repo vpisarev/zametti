@@ -27,6 +27,8 @@
 
 #include "parser.h"
 
+#include "math_scan.h"
+
 #include "md4c.h"
 
 #include <algorithm>
@@ -100,6 +102,15 @@ struct Ctx {
     bool   curRawAtEnd = false;  // блок разбирается, но уйдёт дословно
     size_t curMin = kNoOffset;
     size_t curMax = kNoOffset;
+
+    // ФОРМУЛА СОБИРАЕТСЯ ПО СМЕЩЕНИЯМ, а не по тексту колбэка. md4c отдаёт
+    // содержимое математики дословно (это и спасает `\,` и `\gamma`), но
+    // перенос строки внутри формулы он превращает в пробел — а нам нужен
+    // исходник байт в байт. Смещения дают его точно.
+    bool   inMath = false;
+    bool   mathDisplay = false;
+    size_t mathMin = kNoOffset;
+    size_t mathMax = kNoOffset;
 
     // Обратные кавычки встроенного кода не приходят ни одним колбэком, а
     // занимать могут отдельные строки ("``\nfoo\n``"). Ждём первого текста
@@ -762,8 +773,24 @@ int enterSpan(MD_SPANTYPE type, void* detail, void* userdata) {
             st.href = href;
             break;
         }
+        case MD_SPAN_LATEXMATH:
+        case MD_SPAN_LATEXMATH_DISPLAY:
+            // Формула атомарна: ни разметки внутри, ни разметки вокруг. Внутри
+            // жирного или ссылки плоским спаном её не выразить — дословно.
+            if (!st.plain()) {
+                demote(c);
+                return 0;
+            }
+            c.inMath = true;
+            c.mathDisplay = type == MD_SPAN_LATEXMATH_DISPLAY;
+            c.mathMin = kNoOffset;
+            c.mathMax = kNoOffset;
+            // Стиль НЕ кладём на стек: спан формулы собирается целиком в
+            // leaveSpan из исходника, и текста «внутри» у него нет.
+            return 0;
+
         default:
-            // LATEXMATH, WIKILINK, U — модели неизвестны.
+            // WIKILINK, U — модели неизвестны.
             demote(c);
             return 0;
     }
@@ -778,6 +805,50 @@ int leaveSpan(MD_SPANTYPE type, void* detail, void* userdata) {
     Ctx& c = *static_cast<Ctx*>(userdata);
     if (c.raw) return 0;
     c.codeSpanAwaitsText = false;
+
+    if (type == MD_SPAN_LATEXMATH || type == MD_SPAN_LATEXMATH_DISPLAY) {
+        if (!c.inMath) return 0;
+        c.inMath = false;
+        if (!c.inLeaf || c.mathMin == kNoOffset) {
+            demote(c);
+            return 0;
+        }
+        // Границы формулы В ИСХОДНИКЕ: тело плюс доллары с обеих сторон.
+        const size_t skip = c.mathDisplay ? 2 : 1;
+        if (c.mathMin < skip || c.mathMax + 1 + skip > c.len) {
+            demote(c);
+            return 0;
+        }
+        const size_t open = c.mathMin - skip;
+        // mathMax — ПОСЛЕДНИЙ байт тела (так считает mergeOffset), значит
+        // закрывающий прогон начинается сразу за ним. Я на этом и попался:
+        // принял mathMax за «за концом», брал не тот байт и деградировал в
+        // дословный кусок весь абзац с формулой.
+        const size_t close = c.mathMax + 1;   // первый доллар закрывающего прогона
+        const std::string_view source(c.buf, c.len);
+        if (source[open] != '$' || source[close] != '$') {
+            demote(c);
+            return 0;
+        }
+        const std::string_view literal = source.substr(open, close + skip - open);
+
+        // КАНОН НАШ, А НЕ MD4C. У него границы считаются по флангам, как у
+        // выделения, и «$ x + y$» он считает формулой, а pandoc (и GitHub) —
+        // нет. Не прошло канон — те же байты уходят обычным текстом: файл от
+        // показа не меняется ни в одном случае.
+        flushRun(c);
+        const size_t at = c.text.size();
+        c.text.append(literal);
+        if (mathBordersOk(source, open, close, c.mathDisplay)) {
+            Inline s;
+            s.text = {int32_t(at), int32_t(c.text.size())};
+            s.set(InlineMath, true);
+            c.ir.spans.push_back(s);
+        }
+        c.runStart = c.text.size();
+        return 0;
+    }
+
     if (!c.inLeaf || c.styles.size() < 2) return 0;
 
     // Закрывающий прогон кавычек: после содержимого, возможно через пробелы и
@@ -873,8 +944,16 @@ int onText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) 
             }
             demote(c);
             break;
-        case MD_TEXT_NULLCHAR:
         case MD_TEXT_LATEXMATH:
+            // Текст формулы не копим: он приедет из исходника по смещениям,
+            // которые уже слиты выше. Колбэк md4c для многострочной формулы
+            // отдаёт перенос строки пробелом, а нам нужен файл как есть.
+            if (!c.inMath) demote(c);
+            else if (text >= c.buf && text < c.buf + c.len)
+                mergeOffset(c.mathMin, c.mathMax,
+                            static_cast<size_t>(text - c.buf), size);
+            break;
+        case MD_TEXT_NULLCHAR:
             demote(c);
             break;
     }
@@ -1292,8 +1371,13 @@ Document parse(std::string_view markdown) {
     parser.abi_version = 0;
     // Голые ссылки (https://…, www.…, почта) — часть диалекта GitHub, и в
     // заметках они встречаются куда чаще, чем размеченные вручную.
+    // LATEXMATHSPANS — ради формул этапа 16. Он даёт содержимое математики
+    // ДОСЛОВНО, и это главное: без него md4c разрешает экранирование внутри
+    // формулы, и `$\int_0^1 x^2 \, dx$` возвращается из круга как
+    // `$\int_0^1 x^2 , dx$` — тонкий пробел исчезает молча. Границы у md4c
+    // при этом свои, и наш канон проверяется поверх (leaveSpan).
     parser.flags = MD_FLAG_TABLES | MD_FLAG_STRIKETHROUGH | MD_FLAG_TASKLISTS |
-                   MD_FLAG_PERMISSIVEAUTOLINKS;
+                   MD_FLAG_PERMISSIVEAUTOLINKS | MD_FLAG_LATEXMATHSPANS;
     parser.enter_block = enterBlock;
     parser.leave_block = leaveBlock;
     parser.enter_span = enterSpan;

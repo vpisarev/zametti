@@ -387,6 +387,13 @@ if(TARGET zametti-view)
         add_test(NAME math-scan
                  COMMAND math_scan_test "${CMAKE_SOURCE_DIR}/.testdata/Typesetting Math in Texts.md")
 
+        # Формула в IR: литеральный спан и побайтовый круг на живом корпусе.
+        add_executable(math_ir_test math_ir_test.cpp)
+        target_link_libraries(math_ir_test PRIVATE zametti-core zametti-warnings)
+        target_include_directories(math_ir_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        add_test(NAME math-ir
+                 COMMAND math_ir_test "${CMAKE_SOURCE_DIR}/.testdata/Typesetting Math in Texts.md")
+
         # Формулы этапа 16: пробник базовой линии — первая задача брифа.
         # Линкуется с zametti-widgets ради ресурсов (шрифты в qrc) и настроек.
         add_executable(formula_probe formula_probe.cpp)

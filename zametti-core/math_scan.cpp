@@ -21,6 +21,17 @@ bool escaped(std::string_view text, size_t at) {
 
 }  // namespace
 
+bool mathBordersOk(std::string_view text, size_t open, size_t close, bool display) {
+    const size_t skip = display ? 2 : 1;
+    if (close <= open + skip) return false;               // пустое тело
+    if (open + skip >= text.size()) return false;
+    if (display) return true;                              // у выключной правил нет
+    if (isSpace(text[open + 1])) return false;             // открывающий перед пробелом
+    if (isSpace(text[close - 1])) return false;            // закрывающий после пробела
+    if (close + 1 < text.size() && isDigit(text[close + 1])) return false;   // «цена $5 и $10»
+    return true;
+}
+
 std::vector<MathSpan> scanMath(std::string_view text) {
     std::vector<MathSpan> found;
     size_t i = 0;
@@ -70,9 +81,7 @@ std::vector<MathSpan> scanMath(std::string_view text) {
                 // Закрывающий не после пробела и не перед цифрой. Второе — то
                 // самое правило про «цена $5 и $10»: без него всё, что между
                 // двумя ценами, оказалось бы математикой.
-                const bool afterSpace = isSpace(text[j - 1]);
-                const bool beforeDigit = j + 1 < text.size() && isDigit(text[j + 1]);
-                if (!afterSpace && !beforeDigit) {
+                if (mathBordersOk(text, open, j, false)) {
                     close = j;
                     break;
                 }

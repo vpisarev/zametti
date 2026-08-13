@@ -14,6 +14,8 @@
 
 #include "serializer.h"
 
+#include "math_scan.h"
+
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
@@ -223,6 +225,15 @@ unsigned char markAt(const TextSink& sink, size_t i) {
 // Кладёт [begin, end) текста в вывод, экранируя ровно то, что иначе изменит
 // разбор. Контекст (соседние символы) берётся из полного текста, чтобы разрез
 // на прогоны стилей не влиял на решения.
+// Начал бы этот доллар формулу, если оставить его голым? Спрашиваем ОБЩИЙ
+// канон (math_scan.h), а не гадаем: у сериализатора и у разбора правило одно,
+// иначе они разойдутся молча.
+bool dollarOpensMath(std::string_view text, size_t at) {
+    for (const MathSpan& span : scanMath(text.substr(at)))
+        return span.start == 0;   // первая найденная либо здесь, либо дальше
+    return false;
+}
+
 void appendEscaped(TextSink& sink, std::string_view text, size_t begin, size_t end) {
     size_t i = begin;
     while (i < end) {
@@ -268,6 +279,16 @@ void appendEscaped(TextSink& sink, std::string_view text, size_t begin, size_t e
             case ']':
                 if ((markAt(sink, i) & kMarkInLink) != 0) sink.out.push_back('\\');
                 sink.out.push_back(']');
+                ++i;
+                continue;
+            case '$':
+                // ДОЛЛАР ЭКРАНИРУЕТСЯ, ТОЛЬКО ЕСЛИ ОН НАЧАЛ БЫ ФОРМУЛУ. Иначе
+                // цены («заплатил $5») обросли бы косыми на ровном месте, а
+                // это тот самый шум в файле, которого формат избегает. Но
+                // молча отдать `\$x\$` обратно как `$x$` нельзя: при чтении
+                // это станет математикой, и текст поменяет смысл.
+                if (dollarOpensMath(text, i)) sink.out.push_back('\\');
+                sink.out.push_back('$');
                 ++i;
                 continue;
             case '<':
@@ -464,10 +485,11 @@ struct Segment {
 
 bool hasAttr(const Inline* s, int a) {
     if (s == nullptr) return false;
-    // Картинка и строчный комментарий выводятся целиком отдельными ветвями;
-    // в ряды соседних признаков их втягивать нельзя.
+    // Картинка, строчный комментарий и формула выводятся целиком отдельными
+    // ветвями; в ряды соседних признаков их втягивать нельзя.
     if (s->image()) return false;
     if (s->comment()) return false;
+    if (s->math()) return false;
     switch (a) {
         case kStrike: return s->strike();
         case kBold:   return s->bold();
@@ -512,6 +534,18 @@ void emitSegments(TextSink& sink, const Document& doc, std::string_view text,
                   std::vector<unsigned char>* marksBuf) {
     size_t i = lo;
     while (i < hi) {
+        // ФОРМУЛА — ДОСЛОВНО И ЦЕЛИКОМ, вместе с долларами. Ни одного
+        // экранирования: внутри математики `\` это команда, `_` индекс, а
+        // `\,` тонкий пробел. Именно здесь и терялось то, что портило файл до
+        // этапа 16: общий путь текста писал `\\` вместо `\` и `,` вместо
+        // `\,`.
+        if (segs[i].span != nullptr && segs[i].span->math()) {
+            sink.out.append(text, segs[i].begin, segs[i].end - segs[i].begin);
+            sink.bol = false;
+            ++i;
+            continue;
+        }
+
         // Строчный комментарий: внутренность буквальна, скобки — структура.
         // Канонические крайние пробелы, как у блочного.
         if (segs[i].span != nullptr && segs[i].span->comment()) {
@@ -703,6 +737,8 @@ void validate([[maybe_unused]] const Document& doc, [[maybe_unused]] const Block
         assert((!s.comment() ||
                 (s.flags == InlineComment && s.href.empty())) &&
                "строчный комментарий не сочетается с другой разметкой");
+        assert((!s.math() || (s.flags == InlineMath && s.href.empty())) &&
+               "формула не сочетается с другой разметкой");
         assert((s.title.empty() || s.image()) && "title осмыслен только у картинки");
         assert((!s.image() ||
                 (s.flags & (InlineBold | InlineItalic | InlineStrike | InlineCode)) == 0) &&
