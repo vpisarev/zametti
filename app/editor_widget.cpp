@@ -206,6 +206,11 @@ void NoteEditor::onCaretMoved() {
     // двигает машина, а не человек», и правка обрывалась на промежуточной
     // позиции внутри самой операции: владелец увидел это как «выход по
     // уезжанию работает ненадёжно».
+    // Правка формулы кончается уходом каретки из её блока. Проще, чем у
+    // таблицы: у формулы блок ОДИН, и «рядом» тут значит «в нём же».
+    if (editedFormula() >= 0 && textCursor().blockNumber() != editedFormula())
+        leaveFormulaEdit();
+
     if (editedTable() >= 0) {
         const int near = tableNearCaret();
         if (near < 0) leaveTableEdit();
@@ -1824,6 +1829,14 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
                 setTextCursor(at);
                 return true;
             }
+            // Править формулу — значит показать исходник и встать в него.
+            if (own.kind == ObjectKind::Formula) {
+                setEditedFormula(own.first);
+                QTextCursor at(document()->findBlockByNumber(own.first));
+                at.movePosition(QTextCursor::EndOfBlock);
+                setTextCursor(at);
+                return true;
+            }
             // У картинки править пока нечего: подпись — следующий заход.
             // Молчать нельзя (правило проекта про молчаливые возвраты).
             if (own.kind == ObjectKind::Image) {
@@ -1867,6 +1880,7 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
                 return true;
             });
             setEditedTable(-1);
+            setEditedFormula(-1);
             return true;
         }
         case ObjectAction::Select: {
@@ -3515,6 +3529,12 @@ EscapeAction escapeActionFor(bool languageEditorOpen, bool editingTable, bool fi
     if (editingTable) return EscapeAction::LeaveTableEdit;
     if (findBarVisible) return EscapeAction::CloseFindBar;
     return EscapeAction::Nothing;
+}
+
+void NoteEditor::leaveFormulaEdit() {
+    if (editedFormula() < 0) return;
+    setEditedFormula(-1);
+    reparseAfterTableEdit();
 }
 
 void NoteEditor::leaveTableEdit() {

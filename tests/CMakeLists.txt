@@ -357,6 +357,22 @@ if(TARGET zametti-view)
                  ${ZAMETTI_TABLE_NOTE})
         set_tests_properties(table-shots PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+        # Контрольный лист формул: корпус разведки живым окном, снимки
+        # страница за страницей. Приёмка глазами, а не набор.
+        add_executable(formula_sheet_probe formula_sheet_probe.cpp)
+        target_link_libraries(formula_sheet_probe PRIVATE zametti-widgets Qt6::Test
+                              zametti-warnings)
+        target_include_directories(formula_sheet_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+        # Снимки формул: приёмка этапа 16 глазами.
+        add_executable(formula_shots_test formula_shots_test.cpp)
+        target_link_libraries(formula_shots_test PRIVATE zametti-widgets Qt6::Test
+                              zametti-warnings)
+        target_include_directories(formula_shots_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+        add_test(NAME formula-shots COMMAND formula_shots_test
+                 ${CMAKE_CURRENT_BINARY_DIR}/снимки-формул)
+        set_tests_properties(formula-shots PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
         # Снимки блоков кода: приёмка этапа 11 глазами.
         add_executable(code_shots_test code_shots_test.cpp)
         target_link_libraries(code_shots_test PRIVATE zametti-widgets Qt6::Test

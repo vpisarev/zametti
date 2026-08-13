@@ -47,6 +47,13 @@ BlockObject objectOf(const QTextBlock& block) {
     if (blockImageRef(block).valid)
         return {ObjectKind::Image, block.blockNumber(), block.blockNumber()};
 
+    // Выключная формула — абзац, который целиком является формулой. Спрашиваем
+    // МОДЕЛЬ (тот же канон, что и в ядре), а не вид: показана она сейчас
+    // вёрсткой или исходником — дело вида.
+    if (const BlockFormulaRef formula = blockFormulaRef(block);
+        formula.valid && formula.display)
+        return {ObjectKind::Formula, block.blockNumber(), block.blockNumber()};
+
     // Таблица — дословный кусок, который выглядит таблицей. Дословным его
     // сделал разбор (md4c назвал таблицей то, что IR выразить не может), а
     // здесь мы только узнаём его в лицо: первая строка с палкой, вторая —

@@ -1,0 +1,317 @@
+// Снимки выключных формул: то, что владелец проверяет глазами, и то немногое,
+// что проверяется по снимку числом.
+//
+// Формула — третье воплощение слоя объекта, и устроена она как показ картинки:
+// строка исходника закрашивается фоном, вёрстка встаёт на её место. Значит и
+// беды у неё те же, что были у картинок: наползание из-за неверного резерва,
+// «текст проступает из-под вёрстки», «после правки вёрстка не вернулась».
+// Каждая из них здесь и спрашивается.
+
+#include "block_object.h"
+#include "doc_model.h"
+#include "editor_widget.h"
+#include "formula.h"
+#include "note_view.h"
+#include "settings.h"
+#include "test_util.h"
+
+#include <QAbstractTextDocumentLayout>
+#include <QApplication>
+#include <QDir>
+#include <QFile>
+#include <QImage>
+#include <QScrollBar>
+#include <QTest>
+#include <QTextBlock>
+#include <QTextCursor>
+#include <QTextDocument>
+
+namespace {
+
+QString g_dir;
+
+const char* kNote = R"(# Формулы
+
+Обычный абзац перед формулой.
+
+$$\frac{a}{b}$$
+
+Абзац между формулами. Дальше многострочная выключная.
+
+$$\begin{aligned}
+  (x-y)^2 &= (x-y)(x-y) \\
+  &= x^2 -2xy +y^2
+\end{aligned}$$
+
+И ещё одна, с корнем и суммой:
+
+$$\sqrt{\sum_{k=0}^\infty \frac{x^k}{k!}}$$
+
+Хвост заметки.
+)";
+
+// Первый блок-формула документа; -1 — ни одной.
+int firstFormula(zametti::NoteEditor& editor) {
+    for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next())
+        if (editor.formulaAt(b.blockNumber()) != nullptr) return b.blockNumber();
+    return -1;
+}
+
+// Сколько тёмных точек в этом прямоугольнике снимка.
+int inkIn(const QImage& shot, const QRectF& box, int scroll) {
+    int dark = 0;
+    for (int x = int(box.left()); x < int(box.right()) && x < shot.width(); ++x)
+        for (int y = int(box.top()) - scroll; y < int(box.bottom()) - scroll && y < shot.height();
+             ++y)
+            if (x >= 0 && y >= 0 && qGray(shot.pixel(x, y)) < 128) ++dark;
+    return dark;
+}
+
+zametti::NoteEditor* openNote(const QString& name, int width, int height, const char* text) {
+    const QString path = QDir(g_dir).filePath(name + QStringLiteral(".md"));
+    QFile file(path);
+    if (file.open(QIODevice::WriteOnly)) file.write(text);
+    file.close();
+
+    auto* editor = new zametti::NoteEditor;
+    editor->resize(width, height);
+    editor->show();
+    QTest::qWait(20);
+    editor->openFile(path);
+    QTest::qWait(80);
+    QTextCursor at = editor->textCursor();
+    at.setPosition(0);
+    editor->setTextCursor(at);
+    QTest::qWait(60);
+    return editor;
+}
+
+// --- вёрстка на месте исходника ---------------------------------------------
+
+void checkRendered(int width, const QString& name) {
+    zametti::NoteEditor* editor = openNote(name, width, 760, kNote);
+    const QImage shot = editor->grab().toImage();
+    if (!shot.save(QDir(g_dir).filePath(name + QStringLiteral(".png"))))
+        std::printf("НЕ СОХРАНИЛСЯ снимок %s\n", qPrintable(name));
+
+    // Все три формулы показаны вёрсткой.
+    int rendered = 0;
+    for (QTextBlock b = editor->document()->firstBlock(); b.isValid(); b = b.next())
+        if (editor->formulaAt(b.blockNumber()) != nullptr) ++rendered;
+    ZT_EQ("формул показано вёрсткой (" + name.toStdString() + ")", "3",
+          std::to_string(rendered));
+
+    const int first = firstFormula(*editor);
+    if (first < 0) {
+        ++zt::g_checks;
+        ++zt::g_failures;
+        std::printf("провал: ни одной формулы не показано\n");
+        delete editor;
+        return;
+    }
+
+    // ВНУТРИ ПРЯМОУГОЛЬНИКА ВЁРСТКИ ЧТО-ТО НАРИСОВАНО. Проверка не придирка:
+    // ровно так выглядит формула, отрисованная нулевым кеглем или прозрачным
+    // цветом, — движок при этом не жалуется.
+    const QRectF box = editor->formulaRect(first);
+    const int scroll = editor->verticalScrollBar()->value();
+    ZT_TRUE("у вёрстки есть размер: " + std::to_string(int(box.width())) + "x" +
+                std::to_string(int(box.height())),
+            box.width() > 4 && box.height() > 4);
+    ZT_TRUE("в прямоугольнике вёрстки есть чернила", inkIn(shot, box, scroll) > 20);
+
+    // ВЁРСТКА ПО ЦЕНТРУ КОЛОНКИ. Слева от неё поле, справа поле, и они близки.
+    const qreal leftGap = box.left();
+    const qreal rightGap = editor->viewport()->width() - box.right();
+    ZT_TRUE("вёрстка по центру: слева " + std::to_string(int(leftGap)) + ", справа " +
+                std::to_string(int(rightGap)),
+            std::abs(leftGap - rightGap) < 0.25 * editor->viewport()->width());
+
+    // ИСХОДНИК НЕ ПРОСТУПАЕТ. Строка под вёрсткой закрашена фоном, и полоса
+    // СЛЕВА от вёрстки (там, где начинался бы текст `$$\frac{a}{b}$$`) обязана
+    // быть чистой. Именно этой беды я и ждал: у картинок текст ссылки
+    // выглядывал из-под фотографии синей полосой.
+    if (leftGap > 12) {
+        const QRectF stripe(0, box.top(), leftGap - 4, box.height());
+        ZT_TRUE("слева от вёрстки исходник не проступает",
+                inkIn(shot, stripe, scroll) == 0);
+    }
+
+    // ФОРМУЛЫ НЕ НАПОЛЗАЮТ ДРУГ НА ДРУГА. Между соседними прямоугольниками
+    // вёрстки должен быть зазор — это та самая беда резерва, которая у картинок
+    // ловилась только глазами и только на повторном открытии.
+    std::vector<QRectF> boxes;
+    for (QTextBlock b = editor->document()->firstBlock(); b.isValid(); b = b.next())
+        if (editor->formulaAt(b.blockNumber()) != nullptr)
+            boxes.push_back(editor->formulaRect(b.blockNumber()));
+    for (size_t i = 1; i < boxes.size(); ++i)
+        ZT_TRUE("формулы " + std::to_string(i) + " и " + std::to_string(i + 1) +
+                    " не наползают",
+                boxes[i].top() >= boxes[i - 1].bottom() - 1.0);
+
+    delete editor;
+}
+
+// --- флип: Enter показывает исходник, уход каретки — вёрстку ----------------
+
+void checkFlip() {
+    zametti::NoteEditor* editor =
+        openNote(QStringLiteral("флип"), 900, 700, "до\n\n$$x^2 + y^2 = z^2$$\n\nпосле\n");
+
+    const int first = firstFormula(*editor);
+    ZT_TRUE("формула показана вёрсткой", first >= 0);
+    if (first < 0) {
+        delete editor;
+        return;
+    }
+
+    // Каретка на формулу — и Enter показывает исходник.
+    editor->setTextCursor(QTextCursor(editor->document()->findBlockByNumber(first)));
+    QTest::qWait(20);
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTest::qWait(40);
+    ZT_EQ("Enter открыл исходник", std::to_string(first),
+          std::to_string(editor->editedFormula()));
+    ZT_TRUE("вёрстки на время правки нет", editor->formulaAt(first) == nullptr);
+
+    // ИСХОДНИК ВИДЕН ЦЕЛИКОМ. Пока он правится, закрашивать строку нечем — и
+    // если бы закраска осталась, человек правил бы вслепую.
+    {
+        const QImage shot = editor->grab().toImage();
+        const QTextBlock block = editor->document()->findBlockByNumber(first);
+        const QRectF line =
+            editor->document()->documentLayout()->blockBoundingRect(block);
+        ZT_TRUE("исходник виден", inkIn(shot, line, editor->verticalScrollBar()->value()) > 10);
+    }
+
+    // Увели каретку наружу — снова вёрстка.
+    editor->setTextCursor(QTextCursor(editor->document()->firstBlock()));
+    QTest::qWait(60);
+    ZT_EQ("уход каретки закрыл правку", "-1", std::to_string(editor->editedFormula()));
+    ZT_TRUE("вёрстка вернулась", firstFormula(*editor) >= 0);
+
+    delete editor;
+}
+
+// --- правка исходника: формула ожила -----------------------------------------
+
+void checkEditChangesFormula() {
+    zametti::NoteEditor* editor =
+        openNote(QStringLiteral("правка"), 900, 700, "до\n\n$$x^2$$\n\nпосле\n");
+    const int first = firstFormula(*editor);
+    ZT_TRUE("формула показана", first >= 0);
+    if (first < 0) {
+        delete editor;
+        return;
+    }
+    const QRectF before = editor->formulaRect(first);
+
+    // Enter — правка, дописали множитель, ушли.
+    editor->setTextCursor(QTextCursor(editor->document()->findBlockByNumber(first)));
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTest::qWait(30);
+    QTextCursor at = editor->textCursor();
+    at.setPosition(at.block().position() + at.block().text().size() - 2);
+    editor->setTextCursor(at);
+    QTest::keyClicks(editor, QStringLiteral(" + y^2"));
+    QTest::qWait(30);
+    editor->setTextCursor(QTextCursor(editor->document()->firstBlock()));
+    QTest::qWait(80);
+
+    const int now = firstFormula(*editor);
+    ZT_TRUE("после правки формула снова показана вёрсткой", now >= 0);
+    if (now >= 0) {
+        const QRectF after = editor->formulaRect(now);
+        // Формула стала длиннее — значит рисуется НОВЫЙ исходник, а не старая
+        // картинка из кэша. Без этой проверки кэш мог бы держать прошлое
+        // изображение вечно, и правка не была бы видна.
+        ZT_TRUE("вёрстка поменялась: было " + std::to_string(int(before.width())) +
+                    ", стало " + std::to_string(int(after.width())),
+                after.width() > before.width() + 4);
+    }
+
+    // И В ФАЙЛ УШЁЛ ИСХОДНИК, а не то, что нарисовано.
+    editor->save(false, true);   // force: за нас признак «изменён» никто не поднимал
+    QTest::qWait(40);
+    QFile file(QDir(g_dir).filePath(QStringLiteral("правка.md")));
+    if (file.open(QIODevice::ReadOnly)) {
+        const QString text = QString::fromUtf8(file.readAll());
+        ZT_TRUE("в файле дословный исходник: " + text.toStdString(),
+                text.contains(QStringLiteral("$$x^2 + y^2$$")));
+    } else {
+        ++zt::g_checks;
+        ++zt::g_failures;
+        std::printf("провал: файл заметки не открылся\n");
+    }
+
+    delete editor;
+}
+
+// --- битая формула: рамка, а не огрызок --------------------------------------
+
+void checkBroken() {
+    zametti::NoteEditor* editor =
+        openNote(QStringLiteral("битая"), 900, 700, "до\n\n$$\\frac{a}{b$$\n\nпосле\n");
+    const int first = firstFormula(*editor);
+    ZT_TRUE("битая формула тоже занимает место объекта", first >= 0);
+    if (first >= 0) {
+        const zametti::FormulaRender* render = editor->formulaAt(first);
+        ZT_TRUE("и помечена ошибкой: " +
+                    (render == nullptr ? std::string("нет вёрстки")
+                                       : render->error.toStdString()),
+                render != nullptr && !render->error.isEmpty());
+    }
+    const QImage shot = editor->grab().toImage();
+    if (!shot.save(QDir(g_dir).filePath(QStringLiteral("битая.png"))))
+        std::printf("НЕ СОХРАНИЛСЯ снимок битой формулы\n");
+    delete editor;
+}
+
+// --- движок зовётся один раз на формулу ---------------------------------------
+
+void checkEngineCalls() {
+    zametti::Formulas::resetRenders();
+    zametti::NoteEditor* editor =
+        openNote(QStringLiteral("счётчик"), 900, 700, "до\n\n$$x^2$$\n\nпосле\n");
+    const int after = zametti::Formulas::renders();
+    ZT_TRUE("на одну формулу рендеров немного: " + std::to_string(after),
+            after >= 1 && after <= 3);
+
+    // ПОВТОРНАЯ СВЕРКА НЕ ЗОВЁТ ДВИЖОК. syncFormulas зовётся на каждую правку
+    // полей и на каждую прокрутку; если бы он рисовал заново, миллисекунды
+    // рендера доставались бы каждому кадру.
+    editor->syncFormulas();
+    editor->syncFormulas();
+    QTest::qWait(20);
+    ZT_EQ("повторная сверка движок не зовёт", std::to_string(after),
+          std::to_string(zametti::Formulas::renders()));
+    delete editor;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    QApplication app(argc, argv);
+    g_dir = argc > 1 ? QString::fromLocal8Bit(argv[1]) : QDir::tempPath();
+    QDir().mkpath(g_dir);
+
+    QString error;
+    if (!zametti::Formulas::init(&error)) {
+        std::printf("движок формул не поднялся: %s\n", qPrintable(error));
+        ++zt::g_checks;
+        ++zt::g_failures;
+        return zt::report("снимки формул");
+    }
+
+    // Окно и широкое, и узкое: целый класс расхождений виден только в узком
+    // (правило проекта, оплаченное таблицей, уехавшей за правый край).
+    checkRendered(1000, QStringLiteral("формулы-широкое"));
+    checkRendered(620, QStringLiteral("формулы-узкое"));
+    checkFlip();
+    checkEditChangesFormula();
+    checkBroken();
+    checkEngineCalls();
+
+    std::printf("снимки: %s\n", qPrintable(g_dir));
+    return zt::report("снимки формул");
+}

@@ -1,5 +1,7 @@
 #include "doc_model.h"
 
+#include "math_scan.h"
+
 #include <QDebug>
 #include <QStringList>
 #include <QTextBlock>
@@ -49,8 +51,17 @@ QString documentFingerprint(const QTextDocument& doc, const QList<int>& skip) {
         out += QStringLiteral("рамка[%1]\n")
                    .arg(formatFingerprint(doc.rootFrame()->frameFormat(), skip));
     int number = 0;
-    for (QTextBlock block = doc.begin(); block.isValid(); block = block.next(), ++number)
-        out += QStringLiteral("%1 %2\n").arg(number).arg(blockFingerprint(block, skip));
+    for (QTextBlock block = doc.begin(); block.isValid(); block = block.next(), ++number) {
+        // ВЫСОТА СТРОКИ У БЛОКА-ФОРМУЛЫ ПРИНАДЛЕЖИТ ВИДУ, как и нижнее поле у
+        // блока с картинкой: вид знает размер вёрстки, а сборщик — нет. У
+        // прочих блоков она сборщикова (заголовки, код), и слепо выкинуть её из
+        // сверки значило бы ослепить проверку заплатки там, где она нужна.
+        QList<int> blockSkip = skip;
+        if (const BlockFormulaRef formula = blockFormulaRef(block);
+            formula.valid && formula.display)
+            blockSkip.append(QTextFormat::BlockBottomMargin), blockSkip.append(int(QTextFormat::LineHeight));
+        out += QStringLiteral("%1 %2\n").arg(number).arg(blockFingerprint(block, blockSkip));
+    }
     return out;
 }
 
@@ -272,6 +283,50 @@ void takeImageAttribute(const QString& field, qreal& width, ImageAlign& align) {
 }
 
 }  // namespace
+
+BlockFormulaRef blockFormulaRef(const QTextBlock& block) {
+    if (!block.isValid() || isRawBlock(block)) return {};
+    if (kindOf(block) != Kind::Paragraph) return {};
+
+    // Абзац ЦЕЛИКОМ — одна формула. Формула в середине текста объектом не
+    // бывает: она живёт внутри строки и рисуется инлайн-объектом.
+    QString source;
+    for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+        const QTextFragment fragment = it.fragment();
+        if (!fragment.isValid() || fragment.text().isEmpty()) continue;
+        const QTextCharFormat format = fragment.charFormat();
+        if ((format.intProperty(SpanStyleProperty) & SpanMath) == 0) return {};
+        QString piece = fragment.text();
+        // Многострочная выключная живёт в ОДНОМ блоке: переносы внутри неё —
+        // разделители строк U+2028, а каким знаком они были в файле, помнит
+        // свойство. Движку и канону нужен файл, а не то, что видит раскладка.
+        switch (format.intProperty(BreakSourceProperty)) {
+            case BreakCarriageReturn: piece.replace(QChar::LineSeparator, QLatin1Char('\r')); break;
+            case BreakParagraph:      piece.replace(QChar::LineSeparator,
+                                                    QChar(QChar::ParagraphSeparator)); break;
+            case BreakNewline:        piece.replace(QChar::LineSeparator, QLatin1Char('\n')); break;
+            default: break;
+        }
+        source += piece;
+    }
+    if (source.isEmpty()) return {};
+
+    // Канон общий, из ядра: «похоже на формулу» и «является формулой» — разные
+    // вопросы, и второй уже решён одним местом.
+    const std::string bytes = source.toStdString();
+    const std::vector<MathSpan> found = scanMath(bytes);
+    if (found.size() != 1 || found.front().start != 0 || size_t(found.front().end) != bytes.size())
+        return {};
+
+    const MathSpan& span = found.front();
+    const int skip = span.display ? 2 : 1;
+    BlockFormulaRef ref;
+    ref.source = source;
+    ref.latex = source.mid(skip, source.size() - 2 * skip);
+    ref.display = span.display;
+    ref.valid = true;
+    return ref;
+}
 
 BlockImageRef blockImageRef(const QTextBlock& block) {
     if (!block.isValid() || isRawBlock(block)) return {};

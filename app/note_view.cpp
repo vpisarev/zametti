@@ -2,6 +2,7 @@
 
 #include "block_object.h"
 #include "doc_model.h"
+#include "formula.h"
 #include "icons.h"
 #include "import_limits.h"
 #include "marker.h"
@@ -41,6 +42,15 @@
 
 namespace zametti {
 namespace {
+
+// Сколько места занимает формула на экране: вёрстка или рамка ошибки. Одним
+// местом — иначе резерв и отрисовка разойдутся, и рамка налезет на текст под
+// собой (я это и получил: рамка в две строки на блоке высотой в одну).
+qreal formulaBoxHeight(const FormulaRender& render, qreal naturalLine) {
+    if (!render.error.isEmpty() || render.image.isNull()) return 2.4 * naturalLine;
+    return render.height;
+}
+
 
 QFont baseFontFor(qreal zoom) {
     QFont font{QString(appearance().fontFamily)};
@@ -733,6 +743,7 @@ void NoteView::syncImageSpace(bool whole) {
     // Таблицы — первыми: они прячут блоки и меняют высоты, и резерв под
     // картинки считается уже по новой раскладке.
     syncTables();
+    syncFormulas();
 
     // Полный обход — когда меняется не текст, а всё сразу: ширина колонки,
     // масштаб, сам документ. Частичный — когда правка задела кусок и её
@@ -831,8 +842,35 @@ void NoteView::syncImageSpace(bool whole) {
         }
         // Сравнение с допуском: каждое выставление формата переразмечает
         // документ.
-        if (std::fabs(format.bottomMargin() - want) < 0.5) continue;
+        // ВЫСОТА БЛОКА-ФОРМУЛЫ ЗАДАЁТСЯ НАПРЯМУЮ, а не полем.
+        //
+        // У формулы блок один — даже у многострочной: переносы внутри абзаца
+        // блок не рвут, и прятать строки, как у таблицы, нечего. Зато строк
+        // РАЗМЕТКИ у неё столько же, сколько строк в исходнике, и высота у них
+        // своя. Резерв полем это не лечит: у трёхстрочной `\begin{aligned}`
+        // исходник выше вёрстки, поле выходило нулевым, и под формулой
+        // оставалась пустая полоса в целую строку (видно на снимке).
+        //
+        // Поэтому строке назначается такая высота, чтобы блок целиком равнялся
+        // вёрстке с зазором. Правится или битая — обычная высота: тогда виден
+        // и правится исходник.
+        qreal wantLine = -1.0;
+        if (const BlockFormulaRef formulaRef = blockFormulaRef(block);
+            formulaRef.valid && formulaRef.display) {
+            const QTextLayout* layout = block.layout();
+            const int lines = layout != nullptr && layout->lineCount() > 0
+                                  ? layout->lineCount() : 1;
+            const FormulaRender* render = formulaAt(block.blockNumber());
+            const qreal natural = QFontMetricsF(baseFontFor(zoom_)).height();
+            wantLine = render != nullptr
+                           ? std::round((formulaBoxHeight(*render, natural) + gap) / lines)
+                           : std::round(natural * appearance().lineHeightFactor);
+        }
+        const bool marginSame = std::fabs(format.bottomMargin() - want) < 0.5;
+        const bool lineSame = wantLine < 0.0 || std::fabs(format.lineHeight() - wantLine) < 0.5;
+        if (marginSame && lineSame) continue;
         format.setBottomMargin(want);
+        if (wantLine >= 0.0) format.setLineHeight(wantLine, QTextBlockFormat::FixedHeight);
         // ВЫСОТА БЛОКА ЦЕЛИКОМ НАША, а не «строка плюс поле». Иначе она
         // складывается из двух слагаемых, одно из которых считает Qt, — и
         // стоит ему дать неразмеченному блоку ноль вместо высоты строки, как
@@ -1021,6 +1059,7 @@ void NoteView::renderSlice(QPainter& painter, const QRectF& documentRect, qreal 
         paintMarker(painter, block, base);
         paintDivider(painter, block, rect, zoom_);
         paintImage(painter, block);
+        paintFormula(painter, block);
     }
 
     painter.restore();
@@ -1152,6 +1191,161 @@ void NoteView::setEditedCodeLanguage(int firstBlockNumber) {
     if (editedCodeLanguage_ == firstBlockNumber) return;
     editedCodeLanguage_ = firstBlockNumber;
     viewport()->update();
+}
+
+// --- выключные формулы -------------------------------------------------------
+//
+// Третье воплощение слоя объекта, и устроено оно как показ картинки: строка
+// исходника закрашивается фоном, вёрстка встаёт на её место, место резервирует
+// нижнее поле блока. Прятать блок, как у таблицы, здесь нельзя и не нужно:
+// многострочная выключная формула живёт в ОДНОМ блоке — переносы внутри абзаца
+// его не рвут.
+//
+// Движок зовётся здесь, а не в отрисовке: рендер стоит миллисекунды, а кадров
+// в секунду шестьдесят.
+void NoteView::syncFormulas() {
+    QHash<int, FormulaRender> fresh;
+    if (Formulas::ready()) {
+        const QFont base = baseFontFor(zoom_);
+        // Кегль движку нужен В ПИКСЕЛЯХ, и спрашивать его надо у Qt: она знает,
+        // во сколько пикселей превратился кегль в пунктах на этом экране.
+        // Пункты сюда передавать нельзя — формула выйдет на треть мельче текста
+        // (обжёгся на этом в пробнике).
+        const qreal pixelSize = QFontInfo(base).pixelSize() * appearance().formulas.displayScale;
+        // Цвет — ПЕРОМ ИЗ ПАЛИТРЫ, а не инверсией картинки: в тёмной теме
+        // формула обязана быть набрана светлым, а не вывернутой наизнанку.
+        const QColor colour = palette().color(QPalette::Text);
+        const qreal dpr = devicePixelRatioF();
+
+        for (QTextBlock block = document()->begin(); block.isValid(); block = block.next()) {
+            const BlockFormulaRef ref = blockFormulaRef(block);
+            if (!ref.valid || !ref.display) continue;
+            // Правят исходником — показываем как есть.
+            if (block.blockNumber() == editedFormula_) continue;
+
+            const int number = block.blockNumber();
+            FormulaRender render;
+            const FormulaRender* had = formulas_.contains(number) ? &formulas_[number] : nullptr;
+            if (had != nullptr && had->source == ref.source && had->colour == colour &&
+                qFuzzyCompare(had->pixelSize, pixelSize) && qFuzzyCompare(had->dpr, dpr)) {
+                render = *had;   // ничего не изменилось — движок звать незачем
+            } else {
+                render.source = ref.source;
+                render.pixelSize = pixelSize;
+                render.colour = colour;
+                render.dpr = dpr;
+                // Предконтроль ДО движка: он молчалив и семь сломанных формул из
+                // десяти дорисовывает огрызком без единой жалобы.
+                render.error = checkLatex(ref.latex);
+                if (render.error.isEmpty()) {
+                    const FormulaImage drawn =
+                        Formulas::render(ref.latex, true, pixelSize, colour, dpr);
+                    if (drawn.ok()) {
+                        render.image = drawn.image;
+                        render.width = drawn.width;
+                        render.height = drawn.height;
+                    } else {
+                        render.error = drawn.error;
+                    }
+                }
+            }
+            render.block = number;
+            fresh.insert(number, render);
+        }
+    }
+    formulas_ = fresh;
+}
+
+const FormulaRender* NoteView::formulaAt(int blockNumber) const {
+    const auto it = formulas_.constFind(blockNumber);
+    return it == formulas_.constEnd() ? nullptr : &it.value();
+}
+
+void NoteView::setEditedFormula(int blockNumber) {
+    if (editedFormula_ == blockNumber) return;
+    editedFormula_ = blockNumber;
+    syncFormulas();
+    syncImageSpace();
+    viewport()->update();
+}
+
+// Где стоит вёрстка: по центру колонки, сразу под верхом строки исходника.
+QRectF NoteView::formulaRect(int blockNumber) const {
+    const FormulaRender* render = formulaAt(blockNumber);
+    if (render == nullptr || render->image.isNull()) return {};
+    const QTextBlock block = document()->findBlockByNumber(blockNumber);
+    const QTextLayout* layout = block.isValid() ? block.layout() : nullptr;
+    if (layout == nullptr) return {};
+
+    const QTextFrameFormat root = document()->rootFrame()->frameFormat();
+    const qreal available = viewport()->width() - root.leftMargin() - root.rightMargin() -
+                            block.blockFormat().leftMargin();
+    const qreal shift = available > render->width ? (available - render->width) / 2.0 : 0.0;
+    return QRectF(layout->position() + QPointF(shift, 0.0),
+                  QSizeF(render->width, render->height));
+}
+
+int NoteView::formulaAtPoint(const QPointF& documentPoint) const {
+    for (const FormulaRender& render : std::as_const(formulas_)) {
+        const QRectF rect = formulaRect(render.block);
+        if (!rect.isEmpty() && rect.contains(documentPoint)) return render.block;
+    }
+    return -1;
+}
+
+void NoteView::paintFormula(QPainter& painter, const QTextBlock& block) {
+    const FormulaRender* render = formulaAt(block.blockNumber());
+    if (render == nullptr) return;
+    const QTextLayout* layout = block.layout();
+    if (layout == nullptr) return;
+
+    painter.save();
+    // Строка хитро-отрисованная, как у фотографии: исходник закрашивается
+    // фоном, вёрстка встаёт на его место.
+    const QTextFrameFormat root = document()->rootFrame()->frameFormat();
+    const qreal available = viewport()->width() - root.leftMargin() - root.rightMargin() -
+                            block.blockFormat().leftMargin();
+    // ДВЕ РАЗНЫЕ ВЫСОТЫ, и путать их нельзя — на этом обжёгся ещё показ
+    // картинок, и я наступил туда же. boundingRect() отдаёт высоту, которую
+    // раскладка ПОСЧИТАЛА, а блоку назначена своя (lineHeight): при кегле 11
+    // это 20 против 22. Закрасив меньшую, я оставил от исходника нижние
+    // половинки букв — на снимке они читались призрачным пунктиром слева от
+    // вёрстки.
+    const qreal assigned = block.blockFormat().lineHeight();
+    const int lines = layout->lineCount() > 0 ? layout->lineCount() : 1;
+    const qreal textHeight = assigned > 0
+                                 ? qMax(layout->boundingRect().height(), lines * assigned)
+                                 : layout->boundingRect().height();
+    // И ВВЕРХ ТОЖЕ. Строке блока-формулы назначена высота вёрстки, а она бывает
+    // НИЖЕ обычной строки текста: у многострочной `\begin{aligned}` исходник
+    // выше своей картинки. Тогда Qt ставит буквы в тесную строку, и их верхушки
+    // торчат выше её прямоугольника — на снимке от исходника оставались две
+    // точки над формулой. Закрашиваем на эту разницу больше.
+    const qreal natural = QFontMetricsF(baseFontFor(zoom_)).height();
+    const qreal spill = assigned > 0 ? qMax(0.0, natural - assigned) : 0.0;
+    const QRectF line(layout->position().x(), layout->position().y() - spill,
+                      qMax(available, layout->boundingRect().width()), textHeight + spill);
+    painter.fillRect(line.adjusted(-2, 0, 2, 1), pageColour());
+
+    const QRectF box = formulaRect(block.blockNumber());
+    if (!render->error.isEmpty() || render->image.isNull()) {
+        // Битая формула — рамка с исходником, родня рамки «файл не найден»:
+        // молчаливый огрызок хуже честной ошибки.
+        QPen pen(appearance().rawColor);
+        pen.setStyle(Qt::DashLine);
+        pen.setWidthF(qMax(1.0, 1.5 * zoom_));
+        painter.setPen(pen);
+        const QRectF frame(line.x(), line.y(), qMax(120.0, available),
+                           formulaBoxHeight(*render, natural));
+        painter.drawRect(frame.adjusted(0.5, 0.5, -0.5, -0.5));
+        painter.setFont(baseFont());
+        painter.setPen(appearance().rawColor);
+        painter.drawText(frame.adjusted(6, 4, -6, -4), Qt::AlignLeft | Qt::TextWordWrap,
+                         render->source + QLatin1Char('\n') + render->error);
+    } else {
+        painter.drawImage(box, render->image);
+    }
+    painter.restore();
 }
 
 // --- таблицы ----------------------------------------------------------------
@@ -1813,6 +2007,7 @@ void NoteView::paintEvent(QPaintEvent* event) {
         paintMarker(painter, block, base);
         paintDivider(painter, block, rect, zoom_);
         paintImage(painter, block);
+        paintFormula(painter, block);
     }
 
     // Каретка — последней и без сдвига на прокрутку: cursorRect уже отдаёт

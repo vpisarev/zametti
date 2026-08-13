@@ -5,6 +5,7 @@
 
 #include "doc_model.h"
 #include "editor_widget.h"
+#include "formula.h"
 #include "find_bar.h"
 #include "history_panel.h"
 #include "note_list.h"
@@ -289,6 +290,17 @@ int main(int argc, char** argv) {
     for (const QString& face : zametti::loadEmbeddedFonts())
         std::fprintf(stderr, "влинкованный шрифт не принят Qt: %s\n",
                      face.toUtf8().constData());
+
+    // Движок формул — здесь же: подъём стоит 22 мс, и они не должны достаться
+    // первой формуле человека (прогревочный рендер внутри init). Не поднялся —
+    // жалуемся и живём дальше: формулы покажутся рамкой ошибки, но заметки
+    // читаются и правятся.
+    {
+        QString formulaError;
+        if (!zametti::Formulas::init(&formulaError))
+            std::fprintf(stderr, "движок формул не поднялся: %s\n",
+                         formulaError.toUtf8().constData());
+    }
 
     // --noconfig нужен, чтобы посмотреть на вид по умолчанию, не убирая свой
     // конфиг: удобно и при правке конфига, и при разговоре о том, «как оно

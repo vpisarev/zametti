@@ -199,6 +199,7 @@ void applySpans(QTextDocument& doc, int textStart, const Document& ir, const Blo
         if (s.strike()) style |= SpanStrike;
         if (s.code()) style |= SpanCode;
         if (s.image()) style |= SpanImage;
+        if (s.math()) style |= SpanMath;
         if (s.comment()) style |= SpanComment;
 
         QTextCharFormat fmt;

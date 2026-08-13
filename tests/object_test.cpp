@@ -36,6 +36,7 @@ std::string nameOf(ObjectKind kind) {
         case ObjectKind::None: return "ничего";
         case ObjectKind::Image: return "картинка";
         case ObjectKind::Table: return "таблица";
+        case ObjectKind::Formula: return "формула";
     }
     return "?";
 }

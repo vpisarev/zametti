@@ -63,6 +63,21 @@ struct TableRender {
     int last = -1;
 };
 
+// Формула, показанная вёрсткой: картинка и то, из чего она посчитана.
+// Пересчёт — только когда изменилось одно из этих «из чего». Ключ здесь тот же,
+// каким формула лежит в кэше битмапов: исходник, кегль, цвет, плотность экрана.
+struct FormulaRender {
+    QImage image;          // готовая картинка с домноженной альфой
+    QString source;        // исходник с долларами — по нему и считали
+    QString error;         // непусто — формула битая, рисуется рамка
+    qreal width = 0.0;     // логические размеры вёрстки
+    qreal height = 0.0;
+    qreal pixelSize = 0.0;
+    QColor colour;
+    qreal dpr = 1.0;
+    int block = -1;
+};
+
 struct CodeBand {
     QRectF rect;
     int blockNumber = 0;
@@ -98,6 +113,26 @@ public:
     // пересборки документа: сборщик ставит поля по умолчанию, ничего не зная
     // о размере окна.
     void applyContentWidth();
+
+    // Выключные формулы: вёрстка вместо исходника. Третье воплощение слоя
+    // объекта, и устроено оно как показ картинки — строка закрашивается фоном,
+    // картинка встаёт на её место, место под неё резервирует поле блока.
+    //
+    // Отдельный проход, а не отрисовка на месте: рендер стоит миллисекунды, и
+    // звать движок на каждый кадр нельзя. Пересобирается при смене документа,
+    // ширины колонки, масштаба и облика.
+    void syncFormulas();
+    // Вёрстка формулы этого блока; nullptr — блок не формула или её сейчас
+    // правят исходником.
+    const FormulaRender* formulaAt(int blockNumber) const;
+    // Какую формулу правят исходником; -1 — все показаны вёрсткой. Включается
+    // Enter или двойным щелчком, кончается уходом каретки.
+    void setEditedFormula(int blockNumber);
+    int editedFormula() const { return editedFormula_; }
+    // Прямоугольник вёрстки в координатах документа; пустой — формулы нет.
+    QRectF formulaRect(int blockNumber) const;
+    // Формула под этой точкой документа; -1 — там не формула.
+    int formulaAtPoint(const QPointF& documentPoint) const;
 
     // Таблицы: показ сеткой вместо строк исходника. Пересобирается при смене
     // документа, ширины колонки и масштаба — не на каждый кадр: раскладка
@@ -269,6 +304,8 @@ protected:
         qreal allotted = 0.0;
     };
     ImageGeometry imageGeometry(const QTextBlock& block);
+    // Формула на экране: где стоит вёрстка и какую строку закрыть.
+    void paintFormula(QPainter& painter, const QTextBlock& block);
 
 private:
     // Каретку рисуем сами: своей Qt цвета не отдаёт (см. caretColor в
@@ -389,6 +426,8 @@ private:
     // Таблицы, показанные сеткой: по номеру первого блока.
     QHash<int, TableRender> tables_;
     int editedTable_ = -1;
+    QHash<int, FormulaRender> formulas_;
+    int editedFormula_ = -1;
 
     QTimer copiedFade_;
     QTimer caretBlink_;

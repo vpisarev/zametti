@@ -1,5 +1,7 @@
 #include "document_reader.h"
 
+#include "math_scan.h"
+
 #include "doc_model.h"
 
 #include <QString>
@@ -10,6 +12,15 @@
 
 namespace zametti {
 namespace {
+// Является ли этот текст ОДНОЙ формулой целиком. Спрашивается общий канон, а не
+// «начинается с доллара»: иначе вид и разбор разошлись бы на первом же краю.
+bool wholeMath(const std::string& text) {
+    const std::vector<MathSpan> found = scanMath(text);
+    return found.size() == 1 && found.front().start == 0 &&
+           size_t(found.front().end) == text.size();
+}
+
+
 
 std::string toUtf8(const QString& text) {
     const QByteArray utf8 = text.toUtf8();
@@ -90,6 +101,21 @@ void readBlock(const QTextBlock& block, Document& doc, std::string& text, int32_
                                     bytes.find("-->") == std::string::npos);
         if (span.comment()) {
             span.flags = InlineComment;
+            span.href = Range{};
+            span.title = Range{};
+        }
+
+        // ФОРМУЛА ОБЯЗАНА ПЕРЕЖИТЬ КРУГ «ДОКУМЕНТ → IR». Не переживёт — файл
+        // испортится молча при первой же записи: сериализатор экранирует
+        // доллар, который начал бы формулу, и `$x^2$` ушло бы на диск как
+        // `\$x^2$`. Поэтому спрашиваем не только бит стиля, но и сам текст:
+        // правка могла разорвать формулу пополам, и тогда это уже не формула, а
+        // текст с долларами (канон — общий, из ядра).
+        span.set(InlineMath, (style & SpanMath) != 0 && !span.image() && !span.comment() &&
+                                 wholeMath(bytes));
+        if (span.math()) {
+            // Плоская, как картинка и комментарий: внутри формулы разметки нет.
+            span.flags = InlineMath;
             span.href = Range{};
             span.title = Range{};
         }
