@@ -116,6 +116,11 @@ qreal assignedLineHeight(const QTextBlock& block) {
     return format.lineHeight(natural, 1.0);
 }
 
+int diffMarkOf(const QTextBlock& block) {
+    const QTextBlockFormat format = block.blockFormat();
+    return format.hasProperty(DiffMarkProperty) ? format.intProperty(DiffMarkProperty) : -1;
+}
+
 bool isRawBlock(const QTextBlock& block) {
     return block.blockFormat().boolProperty(RawProperty);
 }

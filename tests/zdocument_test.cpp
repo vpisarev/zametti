@@ -12,6 +12,7 @@
 // QTextDocument, набор не должен измениться НИ СТРОКОЙ. Если придётся править —
 // интерфейс был плох.
 
+#include "diff.h"
 #include "document.h"
 
 #include "test_util.h"
@@ -21,6 +22,7 @@
 #include <QFile>
 #include <QFileInfo>
 
+#include <algorithm>
 #include <cstdio>
 
 namespace {
@@ -370,4 +372,65 @@ TEST(ZDocument, Comparison) {
     ZDocument other;
     ASSERT_TRUE(other.loadMarkdown("<!-- zametti\n-->\n\n# Другое\n"));
     ZT_TRUE("другое тело не совпадает", !first.sameBody(other));
+}
+
+// Разность двух версий: пара заметок, по одной на сторону.
+//
+// Проверяется главное свойство пары — СТОРОНЫ ЗЕРКАЛЬНЫ. То, что на своей
+// стороне добавлено, на чужой обязано быть удалено, и наоборот; иначе Tab
+// показывал бы не противоположное сравнение, а второе такое же.
+TEST(ZDocument, Diff) {
+    ZDocument before;
+    ZDocument after;
+    ASSERT_TRUE(before.loadMarkdown("<!-- zametti\nmodified: 2026-01-01T00:00:00Z\n-->\n"
+                                    "\n# Заголовок\n\nбыло\n"));
+    ASSERT_TRUE(after.loadMarkdown("<!-- zametti\nmodified: 2026-08-15T00:00:00Z\n-->\n"
+                                   "\n# Заголовок\n\nстало\n\nи ещё строка\n"));
+
+    const auto [mine, theirs] = after.getDiff(before);
+
+    // Метка стоит у каждого блока обеих сторон: документ-разность тем и
+    // отличается от заметки.
+    auto marks = [](const ZDocument& side) {
+        std::vector<int> out;
+        for (int i = 0; i < side.blockCount(); ++i) out.push_back(side.diffMarkAt(i));
+        return out;
+    };
+    const std::vector<int> a = marks(mine);
+    const std::vector<int> b = marks(theirs);
+    ZT_TRUE("метки есть у всех блоков своей стороны",
+            !a.empty() && std::none_of(a.begin(), a.end(), [](int m) { return m < 0; }));
+    ZT_TRUE("метки есть у всех блоков чужой стороны",
+            !b.empty() && std::none_of(b.begin(), b.end(), [](int m) { return m < 0; }));
+
+    // Зеркальность: строк в сравнении поровну, и добавленному отвечает удалённое.
+    ZT_EQ("строк сравнения поровну", std::to_string(a.size()), std::to_string(b.size()));
+    int mirrored = 0;
+    for (size_t i = 0; i < a.size() && i < b.size(); ++i) {
+        const int added = int(zametti::diff::Mark::Added);
+        const int removed = int(zametti::diff::Mark::Removed);
+        if (a[i] == added) {
+            ZT_EQ("добавленному отвечает удалённое", std::to_string(removed),
+                  std::to_string(b[i]));
+            ++mirrored;
+        }
+    }
+    ZT_TRUE("зеркальных строк нашлось хоть сколько-то", mirrored > 0);
+
+    // Шапка в сравнение не идёт: modified у сторон разный, а разностью это не
+    // считается.
+    ZDocument same;
+    ASSERT_TRUE(same.loadMarkdown("<!-- zametti\nmodified: 2026-08-15T09:00:00Z\n-->\n"
+                                  "\n# Заголовок\n\nбыло\n"));
+    const auto [nothing, nothingBack] = before.getDiff(same);
+    bool anyChange = false;
+    for (int i = 0; i < nothing.blockCount(); ++i)
+        if (nothing.diffMarkAt(i) != int(zametti::diff::Mark::Same)) anyChange = true;
+    ZT_TRUE("разная шапка разностью не считается", !anyChange);
+
+    // Та же подпись, но с байтами: слепки в журнале лежат markdown'ом.
+    const auto [byBytes, byBytesBack] =
+        after.getDiff(std::string_view("<!-- zametti\n-->\n\n# Заголовок\n\nбыло\n"));
+    ZT_EQ("байтами и заметкой — одно и то же", std::to_string(mine.blockCount()),
+          std::to_string(byBytes.blockCount()));
 }

@@ -71,6 +71,7 @@ add_library(zametti-core STATIC
     doc/document.h              doc/document.cpp
     doc/document_impl.h
     doc/markdown_writer.cpp
+    doc/document_diff.cpp
     doc/ir_bridge.h             doc/ir_bridge.cpp
     doc/markdown_reader.cpp
     doc/block_object.h          doc/block_object.cpp

@@ -30,9 +30,14 @@
 #include <functional>
 #include <optional>
 #include <memory>
+#include <utility>
 #include <string>
 #include <string_view>
 #include <vector>
+
+namespace zametti::diff {
+struct Result;
+}
 
 namespace zametti {
 
@@ -174,12 +179,30 @@ public:
     // Совпадают ли строение и текст. Разметка внутри строки не сравнивается:
     // голую ссылку человек набирает текстом, а файл читает её ссылкой. На этом
     // стоит самопроверка записи.
+    // СРАВНЕНИЕ С ДРУГОЙ ВЕРСИЕЙ. Возвращает ДВЕ заметки-разности: первая
+    // показывает эту сторону (метки считаны против чужой), вторая — чужую.
+    // Парой, а не по одной: обе стороны идут через канонический markdown, и
+    // записывается каждая ровно один раз на обе (решение владельца).
+    //
+    // Строка сравнения становится блоком, а что с ней стало — свойством блока
+    // (DiffMarkProperty). Шапка в сравнение не идёт: в ней живёт `modified`,
+    // она меняется при каждой записи, и всякая разность начиналась бы с неё.
+    std::pair<ZDocument, ZDocument> getDiff(const ZDocument& other) const;
+    // То же самое с байтами вместо заметки: слепки в журнале лежат markdown'ом,
+    // и заводить ради них заметку снаружи незачем.
+    std::pair<ZDocument, ZDocument> getDiff(std::string_view markdown) const;
+    // Метка разности у блока; -1 — это не документ-разность.
+    int diffMarkAt(int index) const;
+
     bool sameSkeleton(const ZDocument& other) const;
     // То же, но игнорируя шапку целиком: нужен истории, где `modified` меняется
     // при каждой записи и иначе всякая разность начиналась бы с неё.
     bool sameBody(const ZDocument& other) const;
 
 protected:
+    // Одна сторона сравнения как заметка. Внутренняя ступень getDiff.
+    static ZDocument diffSide(const diff::Result& result);
+
     struct Data;
     // shared_ptr, а не unique_ptr: с ним копирование и присваивание работают
     // сразу и правильно, и писать их не нужно вовсе.
