@@ -94,4 +94,4 @@ foreach(lib tiff)
     endif()
 endforeach()
 
-# Чужой код чужими правилами: zametti-warnings сюда не цепляется.
+# Чужой код чужими правилами: zametti-code-rules сюда не цепляется.

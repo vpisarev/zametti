@@ -66,5 +66,5 @@ add_library(libwebp INTERFACE)
 target_link_libraries(libwebp INTERFACE webpdemux webpdecoder)
 target_include_directories(libwebp INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/upstream/src)
 
-# Чужой код чужими правилами: zametti-warnings ему не цепляется, иначе каждая
+# Чужой код чужими правилами: zametti-code-rules ему не цепляется, иначе каждая
 # новая версия libwebp ломала бы нам сборку своими предупреждениями.

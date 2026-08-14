@@ -52,5 +52,5 @@ set(ZLIB_LIBRARY "$<TARGET_FILE:zlib>" CACHE FILEPATH "выставлено zame
 set(ZLIB_LIBRARIES zlib CACHE STRING "выставлено zametti" FORCE)
 set(ZLIB_VERSION_STRING "1.3.1" CACHE STRING "выставлено zametti" FORCE)
 
-# Чужой код чужими правилами: zametti-warnings сюда не цепляется. zlib старая,
+# Чужой код чужими правилами: zametti-code-rules сюда не цепляется. zlib старая,
 # и на нынешних компиляторах предупреждений у неё хватает.

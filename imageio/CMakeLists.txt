@@ -30,7 +30,7 @@
 # принадлежность.
 add_library(zametti-imagemeta STATIC exif.cpp exif.h import_limits.cpp import_limits.h)
 target_include_directories(zametti-imagemeta PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(zametti-imagemeta PRIVATE zametti-warnings)
+target_link_libraries(zametti-imagemeta PRIVATE zametti-code-rules)
 set_target_properties(zametti-imagemeta PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 find_package(Qt6 QUIET COMPONENTS Gui)
@@ -52,7 +52,7 @@ set(CMAKE_AUTOMOC ON)
 # первичным и ошибается втрое (замер: 53/50/42 он переводит в 37/35/28, тогда
 # как littleCMS — в 47/44/36).
 add_library(zametti-color STATIC color.cpp color.h)
-target_link_libraries(zametti-color PUBLIC Qt6::Gui libjxl PRIVATE zametti-warnings)
+target_link_libraries(zametti-color PUBLIC Qt6::Gui libjxl PRIVATE zametti-code-rules)
 target_include_directories(zametti-color PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 qt_add_plugin(zametti-jxl STATIC
@@ -60,7 +60,7 @@ qt_add_plugin(zametti-jxl STATIC
     PLUGIN_TYPE imageformats
 )
 target_sources(zametti-jxl PRIVATE jxl_plugin.cpp jxl_handler.cpp)
-target_link_libraries(zametti-jxl PRIVATE Qt6::Gui libjxl zametti-color zametti-warnings)
+target_link_libraries(zametti-jxl PRIVATE Qt6::Gui libjxl zametti-color zametti-code-rules)
 target_include_directories(zametti-jxl PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # --- AVIF и HEIC -----------------------------------------------------------
@@ -100,7 +100,7 @@ if(WITH_HEIF)
         PLUGIN_TYPE imageformats
     )
     target_sources(zametti-heif PRIVATE heif_plugin.cpp heif_handler.cpp)
-    target_link_libraries(zametti-heif PRIVATE Qt6::Gui PkgConfig::LIBHEIF zametti-warnings)
+    target_link_libraries(zametti-heif PRIVATE Qt6::Gui PkgConfig::LIBHEIF zametti-code-rules)
     target_include_directories(zametti-heif PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     set(ZAMETTI_HAVE_HEIF ON PARENT_SCOPE)
     set(ZAMETTI_HEIF_VERSION "${LIBHEIF_VERSION}" PARENT_SCOPE)
@@ -121,7 +121,7 @@ endif()
 add_library(zametti-jxl-encode STATIC jxl_encoder.cpp jxl_encoder.h
                                      resample.cpp resample.h)
 target_link_libraries(zametti-jxl-encode PUBLIC Qt6::Gui libjxl zametti-color
-                      PRIVATE zametti-warnings)
+                      PRIVATE zametti-code-rules)
 
 # Ресемплер раскладывается по строкам без связей между ними — параллелится
 # даром. OpenMP берём, ТОЛЬКО если компилятор его даёт: на macOS с AppleClang
@@ -142,7 +142,7 @@ add_library(zametti-tiff STATIC tiff_reader.cpp tiff_reader.h)
 # zametti-color — не украшение: CMYK переводится по вложенному профилю тем же
 # движком, что и всё остальное (см. tiff_reader.cpp).
 target_link_libraries(zametti-tiff PUBLIC Qt6::Gui libtiff zametti-color
-                      PRIVATE zametti-warnings)
+                      PRIVATE zametti-code-rules)
 target_include_directories(zametti-tiff PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # --- конвейер вставки ------------------------------------------------------
@@ -160,7 +160,7 @@ add_library(zametti-import STATIC import.cpp import.h ladder.cpp ladder.h
 # libwebp — свой webp: оба вместо чужих плагинов Qt.
 target_link_libraries(zametti-import
     PUBLIC Qt6::Gui zametti-jxl-encode zametti-tiff zametti-imagemeta libjxl
-    PRIVATE zametti-warnings jpegli libwebp)
+    PRIVATE zametti-code-rules jpegli libwebp)
 if(TARGET zametti-heif)
     target_link_libraries(zametti-import PRIVATE zametti-heif)
     target_compile_definitions(zametti-import PRIVATE ZAMETTI_HAVE_HEIF)

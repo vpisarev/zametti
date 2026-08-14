@@ -34,5 +34,5 @@ set_target_properties(zstd PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # выигрышом, оказалось разбросом раскладки процесса: см. отчёт этапа 7.
 
 # Чужой код чужими правилами: наши -Wall -Wextra -Wpedantic -Werror к нему не
-# применяются (zametti-warnings ему не цепляется), иначе каждая новая версия
+# применяются (zametti-code-rules ему не цепляется), иначе каждая новая версия
 # zstd ломала бы нам сборку своими предупреждениями.

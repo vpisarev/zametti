@@ -124,6 +124,6 @@ foreach(lib jxl-internal jxl_threads jxl_cms jxl_ssimulacra2 hwy
     endif()
 endforeach()
 
-# Чужой код чужими правилами: zametti-warnings (-Wall -Wextra -Wpedantic и, по
+# Чужой код чужими правилами: zametti-code-rules (-Wall -Wextra -Wpedantic и, по
 # ключу, -Werror) сюда НЕ цепляется. Иначе каждое обновление libjxl ломало бы
 # нам сборку своими предупреждениями. Тот же уговор, что с md4c, blake3 и zstd.

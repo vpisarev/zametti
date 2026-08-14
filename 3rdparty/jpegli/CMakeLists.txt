@@ -82,6 +82,6 @@ target_include_directories(jpegli SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/upst
 
 target_link_libraries(jpegli PUBLIC hwy)
 
-# Чужой код чужими правилами: zametti-warnings (-Wall -Wextra -Wpedantic и, по
+# Чужой код чужими правилами: zametti-code-rules (-Wall -Wextra -Wpedantic и, по
 # ключу, -Werror) сюда НЕ цепляется. Тот же уговор, что с md4c, blake3, zstd,
 # highway и libjxl.

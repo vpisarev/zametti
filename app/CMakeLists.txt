@@ -92,7 +92,7 @@ target_link_libraries(zametti-view PRIVATE dtl)
 # ветка без релизов, и мы не хотим, чтобы имена вроде Render или Graphics2D
 # расползлись по виджетному слою.
 target_link_libraries(zametti-view PRIVATE microtex-all)
-target_link_libraries(zametti-view PRIVATE zametti-warnings)
+target_link_libraries(zametti-view PRIVATE zametti-code-rules)
 target_include_directories(zametti-view PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Слой окна. Отдельной целью, а не прямо в исполняемом файле: тесту редактора
@@ -157,7 +157,7 @@ set_property(TARGET zametti-widgets APPEND PROPERTY AUTORCC_OPTIONS "--threshold
 # числа, что и окну.
 target_include_directories(zametti-widgets PUBLIC ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(zametti-widgets PUBLIC zametti-view zametti-imageio Qt6::Widgets Qt6::Svg)
-target_link_libraries(zametti-widgets PRIVATE zametti-warnings)
+target_link_libraries(zametti-widgets PRIVATE zametti-code-rules)
 
 # qt_add_executable, а не add_executable: при СТАТИЧЕСКОМ Qt программе нужен
 # ещё и плагин платформы (cocoa, xcb, windows), а он такой же статический
@@ -173,7 +173,7 @@ qt_add_executable(zametti
     main.cpp
 )
 
-target_link_libraries(zametti PRIVATE zametti-widgets zametti-store-lib zametti-warnings)
+target_link_libraries(zametti PRIVATE zametti-widgets zametti-store-lib zametti-code-rules)
 
 # Иконку в доке оболочка ищет не у окна, а по .desktop-файлу с именем, которое
 # приложение сообщает через setDesktopFileName. Без установки этих двух файлов

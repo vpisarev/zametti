@@ -25,5 +25,5 @@ add_library(zametti-core STATIC
 )
 
 target_include_directories(zametti-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(zametti-core PRIVATE md4c blake3 zametti-warnings)
+target_link_libraries(zametti-core PRIVATE md4c blake3 zametti-code-rules)
 set_target_properties(zametti-core PROPERTIES POSITION_INDEPENDENT_CODE ON)

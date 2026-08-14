@@ -69,16 +69,16 @@ option(WITH_STATIC_QT "Требовать статический Qt (иначе 
 # есть `cmake --install` давал бы нерабочий двоичный файл.
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "вендоренное линкуется внутрь программы" FORCE)
 
-add_library(zametti-warnings INTERFACE)
+add_library(zametti-code-rules INTERFACE)
 if(MSVC)
-    target_compile_options(zametti-warnings INTERFACE /W4)
+    target_compile_options(zametti-code-rules INTERFACE /W4)
     if(ZAMETTI_WARNINGS_AS_ERRORS)
-        target_compile_options(zametti-warnings INTERFACE /WX)
+        target_compile_options(zametti-code-rules INTERFACE /WX)
     endif()
 else()
-    target_compile_options(zametti-warnings INTERFACE -Wall -Wextra -Wpedantic)
+    target_compile_options(zametti-code-rules INTERFACE -Wall -Wextra -Wpedantic)
     if(ZAMETTI_WARNINGS_AS_ERRORS)
-        target_compile_options(zametti-warnings INTERFACE -Werror)
+        target_compile_options(zametti-code-rules INTERFACE -Werror)
     endif()
 endif()
 
