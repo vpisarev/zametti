@@ -48,6 +48,8 @@
 
 #include "block_kind.h"
 
+#include "../doc/note_header.h"
+
 #include <cstdint>
 #include <span>
 #include <string>
@@ -132,38 +134,10 @@ inline bool isTask(const Block& b) {
     return !b.raw && b.kind == Kind::ListItem && b.marker == Marker::Task;
 }
 
-// Метаданные заметки — первый блок файла фиксированной формы:
-//
-//   <!-- zametti
-//   parent: 01n6x9k2m4qp
-//   created: 2019-03-14T09:26:53Z
-//   -->
-//
-// Хранятся строками между маркером и закрывающей скобкой — дословно и в своём
-// порядке: неизвестные ключи обязаны пережить круг побайтово, это forward
-// compatibility. Известные ключи читаются и правятся поверх строк.
-//
-// В арену не переезжают: их единицы, они правятся поимённо, и строки здесь
-// удобнее смещений.
-struct NoteMeta {
-    bool present = false;
-    // Стояла ли после "-->" пустая строка. В каноне стоит всегда, но флаг
-    // нужен: файл без неё не должен меняться от простого открытия.
-    bool blankAfter = false;
-    std::vector<std::string> lines;   // без перевода строки
-
-    // Значение ключа, обрезанное по краям; пусто — ключа нет.
-    std::string get(std::string_view key) const;
-    // Правит существующую строку ключа или дописывает новую. Значение не должно
-    // содержать "--" (ломает HTML-комментарий) и перевод строки.
-    void set(std::string_view key, std::string_view value);
-    // Убирает строку ключа; неизвестные строки не трогает. Нужен переносу
-    // заметки в корень: отсутствие parent и означает «в корне».
-    void unset(std::string_view key);
-};
-
+// Шапка заметки живёт своим классом (doc/note_header.h). Здесь она только
+// поле: представление умирает, а шапка остаётся.
 struct Document {
-    NoteMeta meta;
+    NoteHeader meta;
     std::string chars;             // единая арена: текст, дословное, info, href, title
     std::vector<Inline> spans;
     std::vector<Block> blocks;

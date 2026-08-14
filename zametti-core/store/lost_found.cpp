@@ -80,12 +80,12 @@ int fileOrphans(const QString& root, QString* error) {
             return -1;
         }
         Document doc = parse(bytes);
-        doc.meta.present = true;
+        doc.meta.setPresent(true);
         doc.meta.set("role", kLostRole);
         Block heading = doc.newBlock(Kind::Heading, "Бюро находок");
         heading.headingLevel = 1;
         doc.blocks.push_back(heading);
-        doc.meta.blankAfter = true;
+        doc.meta.setBlankAfter(true);
         if (!writeBytes(made, serialize(doc), error)) return -1;
     }
 

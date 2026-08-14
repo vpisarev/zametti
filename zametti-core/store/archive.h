@@ -48,11 +48,11 @@ inline constexpr char kArchivedValue[] = "yes";
 // Помечена ли заметка архивной. Читает и СТАРЫЙ вид — `role: trash`: так
 // выглядела заметка-корзина до этапа 15, и разовая миграция могла ещё не
 // случиться (чужая копия хранилища, откат на прежнюю сборку).
-bool isArchivedMeta(const NoteMeta& meta);
+bool isArchivedMeta(const NoteHeader& meta);
 
 // Пометить/снять пометку в шапке. Ничего, кроме своего ключа, не трогает —
 // `modified` в том числе: архивация не правка содержимого.
-void setArchivedMeta(NoteMeta& meta, bool archived);
+void setArchivedMeta(NoteHeader& meta, bool archived);
 
 // Стаб заметки: та же шапка и одна строка — её заголовок. Чистая функция от
 // разобранного документа, поэтому проверяется кругом «разобрать → записать»

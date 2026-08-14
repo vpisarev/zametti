@@ -517,8 +517,8 @@ void testHtmlComments() {
     // забирает liftMeta, и они неприкосновенны.
     Document m = parse("<!-- zametti\nparent: abc\nx-неведомое:  сырое \n-->\n\nтекст\n");
     ZT_TRUE("шапка метаданных осталась метаданными",
-            m.meta.present && m.meta.lines.size() == 2 &&
-                m.meta.lines[1] == "x-неведомое:  сырое ");
+            m.meta.present() && m.meta.lines().size() == 2 &&
+                m.meta.lines()[1] == "x-неведомое:  сырое ");
 }
 
 void testImages() {
@@ -606,7 +606,7 @@ void testMeta() {
     canonical("метаданные с неизвестным ключом", note);
 
     Document d = parse(note);
-    ZT_TRUE("метаданные подняты из блоков", d.meta.present);
+    ZT_TRUE("метаданные подняты из блоков", d.meta.present());
     ZT_TRUE("блок метаданных и пустая строка ушли из блоков",
             d.blocks.size() == 1 && d.blocks[0].kind == Kind::Heading);
     ZT_EQ("parent читается", "01n6x9k2m4qp", d.meta.get("parent"));
@@ -618,13 +618,13 @@ void testMeta() {
     d.meta.set("modified", "2026-07-29T21:40:00Z");
     ZT_EQ("правка заменяет строку ключа", "0abcdefghjkmnp", d.meta.get("parent"));
     ZT_TRUE("новый ключ дописан в конец",
-            d.meta.lines.size() == 5 && d.meta.lines[4] == "modified: 2026-07-29T21:40:00Z");
+            d.meta.lines().size() == 5 && d.meta.lines()[4] == "modified: 2026-07-29T21:40:00Z");
     ZT_TRUE("порядок чужих строк не тронут",
-            d.meta.lines[0] == "parent: 0abcdefghjkmnp" &&
-                d.meta.lines[2] == "tags: дом, море");
+            d.meta.lines()[0] == "parent: 0abcdefghjkmnp" &&
+                d.meta.lines()[2] == "tags: дом, море");
     d.meta.set("parent", "");
     ZT_TRUE("пустое значение снимает ключ",
-            d.meta.get("parent").empty() && d.meta.lines.size() == 4);
+            d.meta.get("parent").empty() && d.meta.lines().size() == 4);
 
     // Метаданные на пустой заметке появляются вместе с пустой строкой после.
     Document fresh;
@@ -641,19 +641,19 @@ void testMeta() {
     stable("не первым блоком — не метаданные",
            "абзац до\n\n<!-- zametti\nk: v\n-->\n", "абзац до\n\n<!-- zametti\nk: v\n-->\n");
     ZT_TRUE("чужой комментарий не поднимается",
-            !parse("<!-- просто комментарий -->\n\nтекст\n").meta.present);
+            !parse("<!-- просто комментарий -->\n\nтекст\n").meta.present());
     canonical("метаданные без пустой строки после",
               "<!-- zametti\nk: v\n-->\n## сразу заголовок\n");
     // unset: строка ключа исчезает, соседи и порядок целы.
     {
-        NoteMeta meta;
-        meta.lines = {"parent: 01", "trash-path: Дом/Стройка", "x: y"};
+        NoteHeader meta;
+        meta.setLines({"parent: 01", "trash-path: Дом/Стройка", "x: y"});
         meta.unset("trash-path");
         ZT_TRUE("unset убрал ровно свой ключ",
-                meta.lines.size() == 2 && meta.lines[0] == "parent: 01" &&
-                    meta.lines[1] == "x: y");
+                meta.lines().size() == 2 && meta.lines()[0] == "parent: 01" &&
+                    meta.lines()[1] == "x: y");
         meta.unset("нет-такого");
-        ZT_TRUE("unset несуществующего — тишина", meta.lines.size() == 2);
+        ZT_TRUE("unset несуществующего — тишина", meta.lines().size() == 2);
     }
 }
 

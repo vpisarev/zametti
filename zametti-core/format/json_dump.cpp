@@ -64,14 +64,14 @@ std::string toJson(const Document& doc) {
     std::string out;
     // Метаданные — своей секцией и только когда есть: дамп без них читается
     // как раньше, простым списком блоков.
-    if (doc.meta.present) {
+    if (doc.meta.present()) {
         out += "{\"meta\": {\"lines\": [";
-        for (size_t i = 0; i < doc.meta.lines.size(); ++i) {
+        for (size_t i = 0; i < doc.meta.lines().size(); ++i) {
             if (i) out += ", ";
-            appendJsonString(out, doc.meta.lines[i]);
+            appendJsonString(out, doc.meta.lines()[i]);
         }
         out += "], \"blankAfter\": ";
-        out += doc.meta.blankAfter ? "true" : "false";
+        out += doc.meta.blankAfter() ? "true" : "false";
         out += "},\n \"blocks\":\n";
     }
     out += "[\n";
@@ -143,7 +143,7 @@ std::string toJson(const Document& doc) {
         out += "\n";
     }
     out += "]";
-    if (doc.meta.present) out += "}";
+    if (doc.meta.present()) out += "}";
     out += "\n";
     return out;
 }

@@ -1452,7 +1452,7 @@ int main(int argc, char** argv) {
             editor.setMetaParent(parentId);
         } else {
             rewriteNote(file, [&](zametti::Document& doc) {
-                doc.meta.present = true;
+                doc.meta.setPresent(true);
                 if (parentId.isEmpty()) doc.meta.unset("parent");
                 else doc.meta.set("parent", parentId.toStdString());
             });
@@ -1970,14 +1970,14 @@ int main(int argc, char** argv) {
         }
         const QString file = model.pathOfId(folderId);
         if (file.isEmpty()) return;
-        const auto change = [&order](zametti::NoteMeta& meta) {
+        const auto change = [&order](zametti::NoteHeader& meta) {
             zametti::applySortMark(meta, order);
         };
         if (file == editor.filePath()) {
             editor.editMeta(change);
         } else {
             rewriteNote(file, [&](zametti::Document& doc) {
-                doc.meta.present = true;
+                doc.meta.setPresent(true);
                 change(doc.meta);
             });
         }

@@ -794,12 +794,12 @@ void NoteEditor::adoptExternal(const std::string& text) {
     // это нельзя: заметка потеряла бы родителя и дату создания, то есть уехала
     // бы в корень и «постарела». Прежние значения у нас в памяти — предлагаем
     // вернуть их одним действием, а решает человек.
-    const NoteMeta previous = note_.meta;
-    const bool lost = previous.present && !ir.meta.present;
+    const NoteHeader previous = note_.meta;
+    const bool lost = previous.present() && !ir.meta.present();
     // Ключи, которые были и пропали. parent сюда не входит: его правка руками
     // — законный перенос заметки, а не потеря (решение брифа этапа 4).
     QStringList dropped;
-    if (!lost && previous.present && ir.meta.present) {
+    if (!lost && previous.present() && ir.meta.present()) {
         for (const char* key : {"created", "id"}) {
             if (!previous.get(key).empty() && ir.meta.get(key).empty())
                 dropped.append(QString::fromLatin1(key));
@@ -810,7 +810,7 @@ void NoteEditor::adoptExternal(const std::string& text) {
     // а заметка папкой никогда не становится и наоборот. Что бы ни вписал
     // снаружи чужой редактор, ставим обратно своё значение; не было своего —
     // просто снимаем ключ. Спрашивать тут нечего: подмена рода не «правка».
-    if (ir.meta.present && ir.meta.get("role") != previous.get("role"))
+    if (ir.meta.present() && ir.meta.get("role") != previous.get("role"))
         ir.meta.set("role", previous.get("role"));
 
     note_.meta = ir.meta;
@@ -827,15 +827,15 @@ void NoteEditor::adoptExternal(const std::string& text) {
 }
 
 void NoteEditor::restoreDamagedMeta() {
-    if (!note_.lostMeta.present) return;
-    NoteMeta restored = note_.lostMeta;
-    note_.lostMeta = NoteMeta();
+    if (!note_.lostMeta.present()) return;
+    NoteHeader restored = note_.lostMeta;
+    note_.lostMeta = NoteHeader();
     // Правки тела сохраняются: меняется только шапка. Обычная запись — значит
     // и обычная отмена: вернуть всё как было можно тем же Ctrl+Z.
-    editMeta([&restored](NoteMeta& meta) {
+    editMeta([&restored](NoteHeader& meta) {
         // Ключи, которые чужой редактор оставил, важнее прежних: он мог
         // осмысленно поправить parent, и затирать это нельзя.
-        for (const std::string& line : restored.lines) {
+        for (const std::string& line : restored.lines()) {
             const size_t colon = line.find(':');
             if (colon == std::string::npos) continue;
             const std::string key = line.substr(0, colon);
@@ -844,7 +844,7 @@ void NoteEditor::restoreDamagedMeta() {
                               ? std::string()
                               : line.substr(line.find_first_not_of(' ', colon + 1)));
         }
-        meta.present = true;
+        meta.setPresent(true);
     });
 }
 
@@ -2649,8 +2649,8 @@ void NoteEditor::forgetPendingEdit() {
     note_.changeSeparator = false;
 }
 
-void NoteEditor::editMeta(const std::function<void(NoteMeta&)>& change) {
-    note_.meta.present = true;
+void NoteEditor::editMeta(const std::function<void(NoteHeader&)>& change) {
+    note_.meta.setPresent(true);
     change(note_.meta);
     // Правка одной меты не трогает modified: перенос, корзина и
     // восстановление — не редактирование содержимого, и всплывать наверх
@@ -2663,7 +2663,7 @@ void NoteEditor::editMeta(const std::function<void(NoteMeta&)>& change) {
 }
 
 void NoteEditor::setMetaParent(const QString& parentId) {
-    editMeta([&parentId](NoteMeta& meta) {
+    editMeta([&parentId](NoteHeader& meta) {
         if (parentId.isEmpty()) meta.unset("parent");
         else meta.set("parent", parentId.toStdString());
     });
@@ -3420,8 +3420,8 @@ void NoteEditor::save(bool interactive, bool force) {
     // разбирается и сериализуется РОВНО ОДИН РАЗ. Не сошлось — эти же байты и
     // уходят в файл; сошлось — откатываем штамп, чтобы шапка в памяти не
     // разъехалась с той, что лежит на диске.
-    const NoteMeta metaBefore = note_.meta;
-    if (note_.meta.present && stampModifiedOnSave_)
+    const NoteHeader metaBefore = note_.meta;
+    if (note_.meta.present() && stampModifiedOnSave_)
         note_.meta.set("modified", store::isoNow().toStdString());
 
     Document fileIr;
@@ -3446,7 +3446,7 @@ void NoteEditor::save(bool interactive, bool force) {
     // Метку, у которой офсет УЖЕ ЕСТЬ, не трогаем вовсе: в ней записан
     // локальный контекст того, кто её ставил («у него было 21:40»), и перевод
     // в свою зону этот контекст стёр бы — ровно ради него формат и менялся.
-    if (note_.meta.present) {
+    if (note_.meta.present()) {
         bool moved = false;
         for (const char* key : {"created", "modified"}) {
             const std::string had = note_.meta.get(key);

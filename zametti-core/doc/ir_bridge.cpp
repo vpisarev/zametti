@@ -27,9 +27,9 @@ Document parse(std::string_view markdown) {
     parsePieces(markdown, blocks, header);
 
     Document ir;
-    ir.meta.present = header.present();
-    ir.meta.blankAfter = header.blankAfter();
-    ir.meta.lines = header.lines();
+    ir.meta.setPresent(header.present());
+    ir.meta.setBlankAfter(header.blankAfter());
+    ir.meta.setLines(header.lines());
     ir.chars.reserve(draftReserveFor(markdown.size()));
     ir.blocks.reserve(blocks.size());
 
@@ -113,9 +113,9 @@ namespace {
 class IrBridge : public ZDocument {
 public:
     explicit IrBridge(const Document& ir) {
-        d_->header.setLines(ir.meta.lines);
-        d_->header.setPresent(ir.meta.present);
-        d_->header.setBlankAfter(ir.meta.blankAfter);
+        d_->header.setLines(ir.meta.lines());
+        d_->header.setPresent(ir.meta.present());
+        d_->header.setBlankAfter(ir.meta.blankAfter());
         buildDocument(piecesOf(ir), d_->text);
     }
 };

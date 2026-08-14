@@ -69,13 +69,13 @@ SortOrder pressedSort(SortOrder now, SortKey pressed) {
     return SortOrder{pressed, !now.ascending};
 }
 
-void applySortMark(NoteMeta& meta, std::optional<SortOrder> order) {
-    meta.present = true;
+void applySortMark(NoteHeader& header, std::optional<SortOrder> order) {
+    header.setPresent(true);
     if (!order.has_value()) {
-        meta.unset("sort");
+        header.unset("sort");
         return;
     }
-    meta.set("sort", sortOrderToString(*order).toStdString());
+    header.set("sort", sortOrderToString(*order).toStdString());
 }
 
 QString sortOrderTitle(SortOrder order) {

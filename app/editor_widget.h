@@ -128,11 +128,11 @@ public:
     // теряет дату создания.
     // Шапка открытой заметки: полосе сведений нужна дата создания, и брать её
     // у файла нельзя — копирование хранилища отметки файловой системы теряет.
-    const NoteMeta& meta() const { return note_.meta; }
+    const NoteHeader& meta() const { return note_.meta; }
 
-    bool hasDamagedMeta() const { return note_.lostMeta.present; }
+    bool hasDamagedMeta() const { return note_.lostMeta.present(); }
     void restoreDamagedMeta();
-    void forgetDamagedMeta() { note_.lostMeta = NoteMeta(); }
+    void forgetDamagedMeta() { note_.lostMeta = NoteHeader(); }
 
     // Сохранить, если есть что. interactive — показывать ли окно с ошибкой.
     // force — ПОПЫТАТЬСЯ записать, не спрашивая признак «документ изменён».
@@ -279,7 +279,7 @@ public:
     // Правка меты открытой заметки с немедленным сохранением. Здесь, а не
     // снаружи: note_.meta живёт в редакторе, и файл под открытой заметкой
     // переписывать нельзя — сторож примет за чужую правку.
-    void editMeta(const std::function<void(NoteMeta&)>& change);
+    void editMeta(const std::function<void(NoteHeader&)>& change);
     // Перенос: правка parent. Пустой — в корень.
     void setMetaParent(const QString& parentId);
 
@@ -544,9 +544,9 @@ private:
     struct NoteSession {
         QString path;
         std::unique_ptr<QTextDocument> document;
-        NoteMeta meta;
+        NoteHeader meta;
         // Мета, потерянная внешней правкой: показать человеку, что пропало.
-        NoteMeta lostMeta;
+        NoteHeader lostMeta;
         Digest digest;          // каким файл был, когда мы его последний раз видели
         // ПОСЛЕДНЯЯ ЗАПИСАННАЯ КОПИЯ, целиком и в памяти. Ею отвечается вопрос
         // «изменилось ли на самом деле»: сравнение идёт побайтово, не считая

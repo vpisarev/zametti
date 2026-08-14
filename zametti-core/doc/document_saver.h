@@ -78,7 +78,7 @@ Document documentForFile(Document doc);
 // сериализации заново — а это почти вся цена записи: замер на заметке в 233 КБ
 // дал 16.3 мс на запись целиком, 21.0 мс с повторной сериализацией и 23.5 мс с
 // повторным разбором.
-QByteArray noteBytes(const QTextDocument& doc, const NoteMeta& meta,
+QByteArray noteBytes(const QTextDocument& doc, const NoteHeader& meta,
                      DocumentReaderFn reader = {}, Document* fileIr = nullptr);
 
 // `sameApartFromModified` переехала в store/history_rules.h: тем же правилом
@@ -123,7 +123,7 @@ bool canonicaliseNoteFile(const QString& path, std::string& text, Digest& digest
 // одно и то же.
 SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
                          const QString& timestamp, DocumentReaderFn reader = nullptr,
-                         const NoteMeta& meta = {}, const Digest& known = {},
+                         const NoteHeader& meta = {}, const Digest& known = {},
                          const Document* prebuiltIr = nullptr,
                          const QByteArray* prebuiltText = nullptr);
 

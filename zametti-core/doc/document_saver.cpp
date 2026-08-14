@@ -246,7 +246,7 @@ Block withCodeSpansPerLine(Document& doc, Block block) {
 bool sameSkeleton(const Document& a, const Document& b) {
     // Метаданные — строка в строку: потерять parent при записи так же нельзя,
     // как потерять текст.
-    if (a.meta.present != b.meta.present || a.meta.lines != b.meta.lines) return false;
+    if (a.meta.present() != b.meta.present() || a.meta.lines() != b.meta.lines()) return false;
     const std::vector<Block>& x = a.blocks;
     const std::vector<Block>& y = b.blocks;
     if (x.size() != y.size()) return false;
@@ -658,7 +658,7 @@ std::string_view asView(const QByteArray& bytes) {
 
 bool canonicaliseNoteFile(const QString& path, std::string& text, Digest& digest) {
     const Document parsed = parse(normaliseSpaces(text));
-    if (!parsed.meta.present) return false;   // не наша заметка
+    if (!parsed.meta.present()) return false;   // не наша заметка
 
     const std::string canonical = serialize(parsed);
     if (canonical == text) return false;      // и так канон
@@ -677,7 +677,7 @@ bool canonicaliseNoteFile(const QString& path, std::string& text, Digest& digest
     return true;
 }
 
-QByteArray noteBytes(const QTextDocument& doc, const NoteMeta& meta, DocumentReaderFn reader,
+QByteArray noteBytes(const QTextDocument& doc, const NoteHeader& meta, DocumentReaderFn reader,
                      Document* fileIr) {
     Document read = reader ? reader(doc) : readDocument(doc);
     read.meta = meta;
@@ -689,7 +689,7 @@ QByteArray noteBytes(const QTextDocument& doc, const NoteMeta& meta, DocumentRea
 
 SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
                          const QString& timestamp, DocumentReaderFn reader,
-                         const NoteMeta& meta, const Digest& known,
+                         const NoteHeader& meta, const Digest& known,
                          const Document* prebuiltIr, const QByteArray* prebuiltText) {
     const bool ready = prebuiltIr != nullptr && prebuiltText != nullptr;
     Document built;

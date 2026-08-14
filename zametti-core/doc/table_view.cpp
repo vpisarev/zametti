@@ -1,9 +1,9 @@
 #include "table_view.h"
 
 #include "doc_model.h"
+#include "document_pieces.h"
+#include "note_header.h"
 
-#include "ir.h"
-#include "parser.h"
 #include "settings.h"
 
 #include <QFontMetricsF>
@@ -49,35 +49,36 @@ struct CellMarkup {
 
 CellMarkup markupOfCell(std::string_view markdown) {
     CellMarkup out;
-    const Document ir = parse(std::string(markdown));
-    if (ir.blocks.empty()) return out;
+    std::vector<Piece> blocks;
+    NoteHeader header;
+    parsePieces(markdown, blocks, header);
+    if (blocks.empty()) return out;
 
-    const Block& block = ir.blocks.front();
-    const std::string_view body = ir.text(block);
-    out.text = QString::fromUtf8(body.data(), qsizetype(body.size()));
+    const Piece& block = blocks.front();
+    out.text = QString::fromUtf8(block.text.data(), qsizetype(block.text.size()));
     // Переводов строк внутри ячейки в GFM не бывает, но дословный кусок мог
     // принести что угодно: рисуем пробелом, чтобы не рвать разметку.
     out.text.replace(QLatin1Char('\n'), QLatin1Char(' '));
 
-    // Смещения спанов заданы в БАЙТАХ UTF-8, а QString считает в кодовых
+    // Смещения кусков заданы в БАЙТАХ UTF-8, а QString считает в кодовых
     // единицах UTF-16: приравнивать их нельзя, ошибка вылезет на первом же
     // не-ASCII (весь корпус владельца — русский).
-    const auto utf16At = [&body](int byteOffset) {
-        const size_t at = size_t(std::clamp(byteOffset, 0, int(body.size())));
-        return int(QString::fromUtf8(body.data(), qsizetype(at)).size());
+    const auto utf16At = [&block](int byteOffset) {
+        const size_t at = size_t(std::clamp(byteOffset, 0, int(block.text.size())));
+        return int(QString::fromUtf8(block.text.data(), qsizetype(at)).size());
     };
 
-    for (const Inline& span : ir.inlines(block)) {
-        if (span.text.size() <= 0) continue;
+    for (const Run& run : block.runs) {
+        if (run.empty()) continue;
         CellMarkup::Span piece;
-        piece.start = utf16At(span.text.start);
-        piece.length = utf16At(span.text.end) - piece.start;
+        piece.start = utf16At(run.start);
+        piece.length = utf16At(run.end) - piece.start;
         if (piece.length <= 0) continue;
-        piece.bold = span.bold();
-        piece.italic = span.italic();
-        piece.strike = span.strike();
-        piece.code = span.code();
-        piece.link = !span.href.empty();
+        piece.bold = run.bold();
+        piece.italic = run.italic();
+        piece.strike = run.strike();
+        piece.code = run.code();
+        piece.link = !run.href.empty();
         out.spans.push_back(piece);
     }
     return out;

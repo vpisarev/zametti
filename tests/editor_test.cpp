@@ -268,7 +268,7 @@ void checkMetaSurvivesEditing() {
     // трогает: заметка не должна всплывать наверх списка от переноса.
     const QString stamped = readFile(path);
     QTest::qWait(1100);   // чтобы возможный новый штамп отличался секундой
-    editor.editMeta([](zametti::NoteMeta& meta) {
+    editor.editMeta([](zametti::NoteHeader& meta) {
         meta.set("parent", "01n6x9k2m4qp");
     });
     QTest::qWait(10);

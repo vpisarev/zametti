@@ -9,6 +9,7 @@
 #include "note_header.h"
 #include "parser.h"
 #include "serializer.h"
+#include "sort_order.h"
 #include "text_stats.h"
 #include "times.h"
 
@@ -34,16 +35,16 @@ namespace {
 // понимают сериализатор и хранилище.
 Document irOf(const QTextDocument& text, const NoteHeader& header) {
     Document ir = readDocument(text);
-    ir.meta.lines = header.lines();
-    ir.meta.present = header.present();
-    ir.meta.blankAfter = header.blankAfter();
+    ir.meta.setLines(header.lines());
+    ir.meta.setPresent(header.present());
+    ir.meta.setBlankAfter(header.blankAfter());
     return ir;
 }
 
-void headerFrom(const NoteMeta& meta, NoteHeader& out) {
-    out.setLines(meta.lines);
-    out.setPresent(meta.present);
-    out.setBlankAfter(meta.blankAfter);
+void headerFrom(const NoteHeader& meta, NoteHeader& out) {
+    out.setLines(meta.lines());
+    out.setPresent(meta.present());
+    out.setBlankAfter(meta.blankAfter());
 }
 
 // Ключи шапки названы ОДИН раз. До этого «parent», «role», «archived» и прочие
@@ -55,6 +56,7 @@ constexpr char kCreated[] = "created";
 constexpr char kModified[] = "modified";
 constexpr char kFolder[] = "folder";
 constexpr char kLost[] = "lost";
+constexpr char kSort[] = "sort";
 
 }  // namespace
 
@@ -110,17 +112,17 @@ bool ZDocument::isFolder() const { return d_->header.get(kRole) == kFolder; }
 bool ZDocument::isLost() const { return d_->header.get(kRole) == kLost; }
 
 bool ZDocument::isArchived() const {
-    NoteMeta meta;
-    meta.lines = d_->header.lines();
-    meta.present = d_->header.present();
+    NoteHeader meta;
+    meta.setLines(d_->header.lines());
+    meta.setPresent(d_->header.present());
     return store::isArchivedMeta(meta);
 }
 
 void ZDocument::setArchived(bool archived) {
-    NoteMeta meta;
-    meta.lines = d_->header.lines();
-    meta.present = d_->header.present();
-    meta.blankAfter = d_->header.blankAfter();
+    NoteHeader meta;
+    meta.setLines(d_->header.lines());
+    meta.setPresent(d_->header.present());
+    meta.setBlankAfter(d_->header.blankAfter());
     store::setArchivedMeta(meta, archived);
     headerFrom(meta, d_->header);
 }
@@ -146,6 +148,14 @@ void ZDocument::setHeaderValue(const QString& key, const QString& value) {
 }
 
 bool ZDocument::hasHeader() const { return d_->header.present(); }
+
+std::optional<SortOrder> ZDocument::sortOrder() const {
+    return parseSortOrder(QString::fromStdString(d_->header.get(kSort)));
+}
+
+void ZDocument::setSortOrder(std::optional<SortOrder> order) {
+    applySortMark(d_->header, order);
+}
 
 // --- о чём заметка ---------------------------------------------------------
 

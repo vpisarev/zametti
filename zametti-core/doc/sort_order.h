@@ -13,7 +13,7 @@
 #ifndef ZAMETTI_SORT_ORDER_H
 #define ZAMETTI_SORT_ORDER_H
 
-#include "ir.h"
+#include "note_header.h"
 
 #include <QString>
 #include <QStringView>
@@ -81,7 +81,7 @@ SortOrder pressedSort(SortOrder now, SortKey pressed);
 // дословно (это forward compatibility формата), а `modified` не трогается
 // вовсе — пометка порядка не редактирование содержимого, и всплывать наверх
 // списка папка от неё не должна (правило этапа 7).
-void applySortMark(NoteMeta& meta, std::optional<SortOrder> order);
+void applySortMark(NoteHeader& header, std::optional<SortOrder> order);
 
 }  // namespace zametti
 

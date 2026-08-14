@@ -34,7 +34,6 @@ set(CMAKE_AUTOMOC ON)
 add_library(zametti-core STATIC
     # --- формат ---
     format/ir.h                 format/ir.cpp
-    format/meta.cpp
     format/parser.h
     format/serializer.h
     format/table.h              format/table.cpp

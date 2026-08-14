@@ -22,10 +22,12 @@
 #include "block_kind.h"
 #include "hash.h"
 #include "search.h"
+#include "sort_order.h"
 
 #include <QString>
 
 #include <functional>
+#include <optional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -122,6 +124,17 @@ public:
     QString headerValue(const QString& key) const;
     void setHeaderValue(const QString& key, const QString& value);
     bool hasHeader() const;
+
+    // ПОРЯДОК СОРТИРОВКИ ПАПКИ. Метка живёт в шапке ключом `sort`, но наружу
+    // ходит значением: голых литералов ключей за пределами заметки не бывает.
+    // Пустой порядок снимает метку — папка снова наследует порядок родителя.
+    //
+    // Правит только свой ключ: неизвестные строки шапки переживают правку
+    // дословно, а `modified` не трогается вовсе — пометка порядка не
+    // редактирование содержимого, и всплывать наверх списка папка от неё не
+    // должна (правило этапа 7).
+    std::optional<SortOrder> sortOrder() const;
+    void setSortOrder(std::optional<SortOrder> order);
 
     // --- о чём заметка ----------------------------------------------------
 

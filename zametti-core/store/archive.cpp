@@ -48,15 +48,15 @@ QString noteFile(const QString& root, const QString& noteId) {
 
 }  // namespace
 
-bool isArchivedMeta(const NoteMeta& meta) {
+bool isArchivedMeta(const NoteHeader& meta) {
     if (!meta.get(kArchivedKey).empty()) return true;
     // Старый вид: заметка-корзина до этапа 15. Читается как архивная, чтобы
     // хранилище, не прошедшее миграцию, не выглядело поломанным.
     return meta.get("role") == "trash";
 }
 
-void setArchivedMeta(NoteMeta& meta, bool archived) {
-    meta.present = true;
+void setArchivedMeta(NoteHeader& meta, bool archived) {
+    meta.setPresent(true);
     if (archived) meta.set(kArchivedKey, kArchivedValue);
     else meta.unset(kArchivedKey);
 }
@@ -180,7 +180,7 @@ std::string stubBytes(const Document& doc) {
         stub.blocks.push_back(heading);
         break;
     }
-    stub.meta.blankAfter = !stub.blocks.empty();
+    stub.meta.setBlankAfter(!stub.blocks.empty());
     return serialize(stub);
 }
 

@@ -626,7 +626,7 @@ static int ztRunSuite(int argc, char** argv) {
 
         const std::string written = readAll(made);
         const Document doc = parse(written);
-        ZT_TRUE("шапка на месте", doc.meta.present);
+        ZT_TRUE("шапка на месте", doc.meta.present());
         ZT_EQ("родитель проставлен", folderId.toStdString(), doc.meta.get("parent"));
         ZT_TRUE("времена проставлены",
                 !doc.meta.get("created").empty() && !doc.meta.get("modified").empty());

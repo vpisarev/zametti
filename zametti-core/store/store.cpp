@@ -345,10 +345,10 @@ QString importNote(const QString& root, const QString& parentId, const QString& 
     doc.meta.set("parent", toUtf8(parentId));   // пусто снимает ключ — «в корне»
     doc.meta.set("created", toUtf8(created));
     doc.meta.set("modified", toUtf8(modified));
-    doc.meta.present = true;
+    doc.meta.setPresent(true);
     // Пустая строка после "-->" положена перед содержимым; у пустого файла
     // содержимого нет, и она дала бы дрейф.
-    doc.meta.blankAfter = !doc.blocks.empty();
+    doc.meta.setBlankAfter(!doc.blocks.empty());
 
     const std::string content = serialize(doc);
     // Последний рубеж, тот же, что и у сохранения: записанное обязано читаться
@@ -801,8 +801,8 @@ bool importTree(const ImportOptions& options, Report& report) {
         // Метаданные: существующие (при реимпорте) уважаются, наши ключи поверх.
         // Пустая строка после "-->" положена перед контентом; пустой заметке
         // она дала бы дрейф (замерено на «Вещи из Китая.md» — пустом файле).
-        ir.meta.present = true;
-        ir.meta.blankAfter = !ir.blocks.empty();
+        ir.meta.setPresent(true);
+        ir.meta.setBlankAfter(!ir.blocks.empty());
         if (!e.parentRel.isEmpty()) ir.meta.set("parent", dirIds[e.parentRel]);
         ir.meta.set("created", toUtf8(isoUtc(e.created)));
         ir.meta.set("modified", toUtf8(isoUtc(e.modified)));
@@ -911,7 +911,7 @@ bool verifyStore(const QString& root, Report& report) {
     // открытии: иначе привезённая заметка какое-то время лежала бы на диске
     // грязной, и человек, заглянувший в неё чужим редактором, увидел бы сор.
     Document doc = parse(normaliseSpaces(bytes));
-        if (!doc.meta.present)
+        if (!doc.meta.present())
             report.problem(QStringLiteral("нет блока метаданных: %1").arg(name));
         if (serialize(doc) != bytes)
             report.problem(QStringLiteral("дрейф: %1").arg(name));
