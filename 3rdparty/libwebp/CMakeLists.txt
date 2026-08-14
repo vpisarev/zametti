@@ -15,10 +15,19 @@
 # Qt. Своя библиотека дешевле такой зависимости: на фоне libjxl (9.5 МБ),
 # libtiff, highway и microtex декодер webp — крохи.
 #
-# ТОЛЬКО ДЕКОДЕР. Берём цель webpdecoder; webp (с энкодером), webpdemux и
-# webpmux у чужого CMake описаны, но под EXCLUDE_FROM_ALL не собираются
-# никогда. Анимации и разбор чанков нам не нужны: ICC, EXIF и XMP из webp
-# достаёт свой обход RIFF (imageio/exif.cpp), демуксер для этого не требуется.
+# ТОЛЬКО ЧТЕНИЕ: webpdecoder и webpdemux. Цель webp (с энкодером) и webpmux
+# у чужого CMake описаны, но под EXCLUDE_FROM_ALL не собираются никогда —
+# писать webp мы не будем нигде.
+#
+# ДЕМУКСЕР ПОНАДОБИЛСЯ, И ЭТО ВЫЯСНИЛ НАБОР. Сперва я взял один декодер,
+# рассудив, что анимация нам не нужна: заметке нужен кадр, а не кино. Но у
+# анимированного webp (контейнер VP8X) простой WebPDecode* не читает ВООБЩЕ
+# НИЧЕГО — не отдаёт даже первый кадр. В корпусе таких файлов четыре, и Qt их
+# читает; молча потерять их значило бы сузить то, что человек может принести.
+# Первый кадр достаёт демуксер, и он маленький — один src/demux.
+#
+# ICC, EXIF и XMP через него всё равно не берём: их достаёт свой обход чанков
+# RIFF (imageio/exif.cpp), и заводить второй путь к тем же байтам незачем.
 #
 # ПОЧЕМУ ЧУЖОЙ CMake, А НЕ СВОЙ СПИСОК ФАЙЛОВ. Та же причина, что у libtiff:
 # libwebp сам определяет доступные расширения процессора и раздаёт файлам
@@ -54,7 +63,7 @@ add_subdirectory(upstream EXCLUDE_FROM_ALL)
 # Одна цель наружу: потребителю незачем знать, из скольких объектных
 # библиотек чужой CMake складывает свой декодер.
 add_library(libwebp INTERFACE)
-target_link_libraries(libwebp INTERFACE webpdecoder)
+target_link_libraries(libwebp INTERFACE webpdemux webpdecoder)
 target_include_directories(libwebp INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/upstream/src)
 
 # Чужой код чужими правилами: zametti-warnings ему не цепляется, иначе каждая

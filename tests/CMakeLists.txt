@@ -624,6 +624,17 @@ add_executable(import_test import_test.cpp)
     add_test(NAME import COMMAND import_test ${CMAKE_SOURCE_DIR}/.testdata/images/originals)
     set_tests_properties(import PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    # Своя дверь чтения против чужого судьи. Пока плагины Qt в системе есть,
+    # они служат независимой реализацией, с которой сверяются размеры и
+    # пиксели; нет их — набор печатает, что судьи не было.
+    add_executable(image_read_test image_read_test.cpp)
+    target_link_libraries(image_read_test PRIVATE zametti-import zametti-tiff zametti-imageio Qt6::Gui
+                          zametti-warnings)
+    target_include_directories(image_read_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME image-read
+             COMMAND image_read_test ${CMAKE_SOURCE_DIR}/.testdata/images/originals)
+    set_tests_properties(image-read PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     add_executable(color_test color_test.cpp)
     # zametti-tiff — ради настоящего CMYK-профиля печати: сочинить его
     # средствами Qt нельзя, а на выдуманном проверка ничего бы не стоила.
