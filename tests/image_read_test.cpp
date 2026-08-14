@@ -194,8 +194,14 @@ void checkOne(const QString& path) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) return;
     const QByteArray bytes = file.readAll();
-    const QImage eight = decodeJpeg(bytes, {}, JpegDepth::Eight);
-    const QImage deep = decodeJpeg(bytes, {}, JpegDepth::Sixteen);
+    // УМЕНЬШЕННОЕ разжатие, и это не экономия на проверке. Ловится здесь моя
+    // работа — перекладка строк, формат QImage, шаг строки, порядок каналов, —
+    // а она от размера картинки не зависит ВОВСЕ. Полный размер стоил на
+    // шестидесятимегапиксельном снимке по секунде за разжатие, и набор
+    // разбухал до трети всего прогона.
+    const QSize small(800, 800);
+    const QImage eight = decodeJpeg(bytes, small, JpegDepth::Eight);
+    const QImage deep = decodeJpeg(bytes, small, JpegDepth::Sixteen);
     if (eight.isNull() || deep.isNull()) return;
     const Diff own = compare(eight, deep);
     ZT_TRUE(("восемь бит и шестнадцать дают одно: " + name + " (" +
