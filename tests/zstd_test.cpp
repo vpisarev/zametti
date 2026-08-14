@@ -48,6 +48,11 @@ std::string noteLike(int lines) {
 
 bool haveTool() { return std::system("zstd --version > /dev/null 2>&1") == 0; }
 
+// Запуск команды с ответом «получилось ли». Ответ спрашивается обязательно:
+// молча брошенный код возврата превращает «утилита не запустилась» в
+// «распакованное не совпало», и набор врёт о том, что именно сломалось.
+bool runShell(const std::string& command) { return std::system(command.c_str()) == 0; }
+
 std::string readFile(const std::string& path) {
     std::ifstream in(path, std::ios::binary);
     std::ostringstream ss;
@@ -109,17 +114,19 @@ int main() {
                              "совместимость не проверена\n");
     } else {
         const std::string dir = "/tmp/zametti-zstd-test";
-        std::system(("rm -rf " + dir + " && mkdir -p " + dir).c_str());
+        ZT_TRUE("каталог под опыт заведён", runShell("rm -rf " + dir + " && mkdir -p " + dir));
         const std::string source = noteLike(500);
 
         // Наш поток → системная утилита.
         writeFile(dir + "/наш.zst", compress(source, 3));
-        std::system(("zstd -d -q -f " + dir + "/наш.zst -o " + dir + "/наш.out").c_str());
+        ZT_TRUE("утилита распаковала без жалоб",
+                runShell("zstd -d -q -f " + dir + "/наш.zst -o " + dir + "/наш.out"));
         ZT_EQ("системная утилита распаковала наш поток", source, readFile(dir + "/наш.out"));
 
         // Системная утилита → мы.
         writeFile(dir + "/чужой.txt", source);
-        std::system(("zstd -q -f -19 " + dir + "/чужой.txt -o " + dir + "/чужой.zst").c_str());
+        ZT_TRUE("утилита сжала без жалоб",
+                runShell("zstd -q -f -19 " + dir + "/чужой.txt -o " + dir + "/чужой.zst"));
         ZT_EQ("мы распаковали поток системной утилиты", source,
               decompress(readFile(dir + "/чужой.zst"), source.size()));
     }
