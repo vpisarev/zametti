@@ -267,3 +267,107 @@ TEST(ZDocument, DigestAndDrift) {
     ZT_TRUE("отпечаток от канона, а не от исходника",
             doc.digest() == sloppy.digest());
 }
+
+// КОПИРОВАНИЕ ДАРОМ. Внутренность за shared_ptr, поэтому ни конструктор копии,
+// ни присваивание не написаны вовсе — и работают как надо.
+//
+// Копия РАЗДЕЛЯЕТ содержимое: ZDocument это ручка к заметке, а не её слепок.
+// Независимый слепок делает clone(), и разница между ними проверяется здесь,
+// потому что перепутать их — это молча испортить чужую заметку.
+TEST(ZDocument, CopyShares_CloneDoesNot) {
+    const std::string source =
+        "<!-- zametti\nparent: 01aaaaaaaaaaaa\n-->\n\n# Начало\n\nТекст.\n";
+
+    ZDocument original;
+    ASSERT_TRUE(original.loadMarkdown(source));
+
+    ZDocument handle = original;          // ручка к той же заметке
+    ZDocument snapshot = original.clone();  // независимый слепок
+
+    original.setParentId(QStringLiteral("01bbbbbbbbbbbb"));
+
+    ZT_EQ("ручка видит правку", std::string("01bbbbbbbbbbbb"),
+          handle.parentId().toStdString());
+    ZT_EQ("слепок правки не видит", std::string("01aaaaaaaaaaaa"),
+          snapshot.parentId().toStdString());
+
+    // И присваивание тоже даром.
+    ZDocument assigned;
+    assigned = snapshot;
+    ZT_EQ("присваивание работает", std::string("01aaaaaaaaaaaa"),
+          assigned.parentId().toStdString());
+}
+
+// Строение заметки спрашивается ЗНАЧЕНИЯМИ, без ходьбы по внутренностям.
+TEST(ZDocument, BlocksAndLines) {
+    const std::string source =
+        "<!-- zametti\n-->\n"
+        "\n"
+        "# Заголовок\n"
+        "\n"
+        "Абзац.\n"
+        "\n"
+        "- пункт раз\n"
+        "- [x] сделано\n"
+        "\n"
+        "```cpp\n"
+        "int main() {}\n"
+        "```\n";
+
+    ZDocument doc;
+    ASSERT_TRUE(doc.loadMarkdown(source));
+
+    const auto all = doc.blocks();
+    ZT_TRUE("блоки перечислены", all.size() >= 7);
+
+    int headings = 0, items = 0, code = 0, done = 0;
+    QString language;
+    for (const BlockInfo& b : all) {
+        if (b.kind == Kind::Heading) ++headings;
+        if (b.kind == Kind::ListItem) {
+            ++items;
+            if (b.checked) ++done;
+        }
+        if (b.kind == Kind::Code) {
+            ++code;
+            if (!b.info.isEmpty()) language = b.info;
+        }
+    }
+    ZT_EQ("заголовок один", std::string("1"), std::to_string(headings));
+    ZT_EQ("пунктов два", std::string("2"), std::to_string(items));
+    ZT_EQ("отмечен один", std::string("1"), std::to_string(done));
+    ZT_TRUE("блок кода есть", code >= 1);
+    ZT_EQ("язык блока кода взят", std::string("cpp"), language.toStdString());
+
+    // Строки канона с картой блоков — на этом стоит разность версий.
+    const auto lines = doc.sourceLines();
+    ZT_TRUE("строк не меньше, чем блоков", lines.size() >= all.size());
+    bool anyMapped = false;
+    for (const SourceLine& line : lines)
+        if (line.block >= 0) anyMapped = true;
+    ZT_TRUE("строки привязаны к блокам", anyMapped);
+
+    // Счёт слов.
+    const Stats counted = doc.stats();
+    ZT_TRUE("слова посчитаны", counted.valid && counted.words > 0);
+}
+
+// Сравнение двух заметок: строение отдельно, тело отдельно.
+TEST(ZDocument, Comparison) {
+    const std::string a = "<!-- zametti\nmodified: 2026-01-01T00:00:00Z\n-->\n\n# Заголовок\n";
+    const std::string b = "<!-- zametti\nmodified: 2026-08-14T00:00:00Z\n-->\n\n# Заголовок\n";
+
+    ZDocument first;
+    ZDocument second;
+    ASSERT_TRUE(first.loadMarkdown(a));
+    ASSERT_TRUE(second.loadMarkdown(b));
+
+    // Тело одно и то же — шапка в счёт не идёт. Именно на этом стоит история:
+    // иначе всякая разность начиналась бы со строки `modified`.
+    ZT_TRUE("тела совпали", first.sameBody(second));
+    ZT_TRUE("строение не совпало: шапки разные", !first.sameSkeleton(second));
+
+    ZDocument other;
+    ASSERT_TRUE(other.loadMarkdown("<!-- zametti\n-->\n\n# Другое\n"));
+    ZT_TRUE("другое тело не совпадает", !first.sameBody(other));
+}

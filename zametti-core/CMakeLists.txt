@@ -67,6 +67,8 @@ add_library(zametti-core STATIC
     image/recompress.h          image/recompress.cpp
 
     # --- живая модель документа ---
+    doc/block_kind.h
+    doc/note_header.h           doc/note_header.cpp
     doc/document.h              doc/document.cpp
     doc/block_object.h          doc/block_object.cpp
     doc/diff.h                  doc/diff.cpp

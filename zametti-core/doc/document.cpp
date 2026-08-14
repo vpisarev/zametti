@@ -4,56 +4,89 @@
 #include "doc_model.h"
 #include "document_builder.h"
 #include "document_reader.h"
+#include "document_saver.h"
+#include "note_header.h"
 #include "parser.h"
-#include "times.h"
 #include "serializer.h"
+#include "text_stats.h"
+#include "times.h"
 
-#include <QRegularExpression>
+#include <QTextBlock>
+#include <QTextCursor>
+#include <QTextDocument>
 
 namespace zametti {
 
-// РЕАЛИЗАЦИЯ ПЕРЕХОДНАЯ, И ЭТО СКАЗАНО ВСЛУХ.
+// ЖИВАЯ МОДЕЛЬ — QTextDocument, и только он. Шапка живёт рядом: в документе её
+// нет и быть не должно, редактор её не видит.
 //
-// Внутри пока живёт IR: loadMarkdown разбирает в него, toMarkdown из него
-// пишет. Так сделано нарочно — сперва интерфейс и наборы, потом нутро. Когда
-// md4c начнёт строить QTextDocument напрямую, а писатель пойдёт по документу,
-// ЭТОТ ФАЙЛ поменяется целиком, а наборы — ни одной строкой. Если наборы
-// придётся править, значит интерфейс был плох, и это повод остановиться.
+// ПЕРЕХОДНОЕ, И ЭТО СКАЗАНО ВСЛУХ: разбор и запись пока ходят через
+// промежуточное представление — parse() строит его, buildDocument переносит в
+// документ, и обратно тем же путём. Представление при этом ВРЕМЕННОЕ: оно
+// живёт внутри двух функций и наружу не выходит. Заменить эти два мостика на
+// прямой проход md4c → QTextDocument и обратно — следующий шаг, и наборы его
+// сторожат: круг обязан остаться неподвижной точкой.
 struct ZDocument::Data {
-    Document ir;
     QTextDocument text;
-    bool textFresh = false;   // собран ли живой документ из нынешнего IR
+    NoteHeader header;
 
-    void refreshText() {
-        if (textFresh) return;
-        buildDocument(ir, text);
-        textFresh = true;
-    }
+    Data() { text.setLayoutEnabled(false); }
 };
 
-ZDocument::ZDocument() : d_(std::make_unique<Data>()) {
-    // Вёрстка выключена: пока документ не показывают, считать строки и глифы
-    // незачем. Вид включит её сам, когда возьмёт документ себе.
-    d_->text.setLayoutEnabled(false);
+namespace {
+
+// Мостик наружу: документ + шапка как то представление, которое пока ещё
+// понимают сериализатор и хранилище.
+Document irOf(const QTextDocument& text, const NoteHeader& header) {
+    Document ir = readDocument(text);
+    ir.meta.lines = header.lines();
+    ir.meta.present = header.present();
+    ir.meta.blankAfter = header.blankAfter();
+    return ir;
 }
 
-ZDocument::~ZDocument() = default;
-ZDocument::ZDocument(ZDocument&&) noexcept = default;
-ZDocument& ZDocument::operator=(ZDocument&&) noexcept = default;
+void headerFrom(const NoteMeta& meta, NoteHeader& out) {
+    out.setLines(meta.lines);
+    out.setPresent(meta.present);
+    out.setBlankAfter(meta.blankAfter);
+}
+
+// Ключи шапки названы ОДИН раз. До этого «parent», «role», «archived» и прочие
+// жили голыми литералами в девяти файлах, и опечатка в одном никак бы себя не
+// выдала.
+constexpr char kParent[] = "parent";
+constexpr char kRole[] = "role";
+constexpr char kCreated[] = "created";
+constexpr char kModified[] = "modified";
+constexpr char kFolder[] = "folder";
+constexpr char kLost[] = "lost";
+
+}  // namespace
+
+ZDocument::ZDocument() : d_(std::make_shared<Data>()) {}
+
+ZDocument ZDocument::clone() const {
+    ZDocument out;
+    out.d_->header = d_->header;
+    // Содержимое переносим байтами: копировать QTextDocument иначе значило бы
+    // тащить с собой стек отмены и состояние вёрстки, а слепку они не нужны.
+    out.loadMarkdown(toMarkdown());
+    return out;
+}
+
+// --- круг с диском ---------------------------------------------------------
 
 bool ZDocument::loadMarkdown(std::string_view bytes) {
-    // НОРМАЛИЗАЦИЯ ПРОБЕЛОВ — ЧАСТЬ ВВОЗА, а не отдельный шаг.
-    //
-    // Так делают все нынешние места вызова: и ввоз заметки в хранилище, и
-    // причёсывание файла при открытии, и проверка хранилища. Не делать её
-    // здесь значило бы, что ZDocument читает не то же, что читает программа, —
-    // и первый же набор на заметках владельца поймал бы разницу как «дрейф».
-    d_->ir = parse(normaliseSpaces(bytes));
-    d_->textFresh = false;
+    // НОРМАЛИЗАЦИЯ ПРОБЕЛОВ — ЧАСТЬ ВВОЗА, а не отдельный шаг: так делают все
+    // нынешние места вызова, и без неё ZDocument читал бы не то же, что читает
+    // программа.
+    const Document ir = parse(normaliseSpaces(bytes));
+    headerFrom(ir.meta, d_->header);
+    buildDocument(ir, d_->text);
     return true;
 }
 
-std::string ZDocument::toMarkdown() const { return serialize(d_->ir); }
+std::string ZDocument::toMarkdown() const { return serialize(irOf(d_->text, d_->header)); }
 
 Digest ZDocument::digest() const {
     const std::string bytes = toMarkdown();
@@ -62,135 +95,202 @@ Digest ZDocument::digest() const {
 
 bool ZDocument::isCanonical(std::string_view original) const {
     const std::string canonical = toMarkdown();
-    return canonical.size() == original.size() &&
-           std::string_view(canonical) == original;
+    return std::string_view(canonical) == original;
 }
 
-const NoteMeta& ZDocument::meta() const { return d_->ir.meta; }
-NoteMeta& ZDocument::meta() { return d_->ir.meta; }
-
 // --- шапка -----------------------------------------------------------------
-//
-// Ключи названы здесь и только здесь. До этого они жили голыми литералами в
-// девяти файлах, и опечатка в одном из них никак бы себя не выдала.
-namespace {
-constexpr char kParent[] = "parent";
-constexpr char kRole[] = "role";
-constexpr char kCreated[] = "created";
-constexpr char kModified[] = "modified";
-constexpr char kFolder[] = "folder";
-constexpr char kLost[] = "lost";
-}  // namespace
 
 QString ZDocument::parentId() const {
-    return QString::fromStdString(d_->ir.meta.get(kParent));
+    return QString::fromStdString(d_->header.get(kParent));
 }
 
 void ZDocument::setParentId(const QString& id) {
-    // Пусто снимает ключ — «в корне». Так это и записано в справочнике.
-    d_->ir.meta.set(kParent, id.toStdString());
+    d_->header.set(kParent, id.toStdString());
 }
 
-bool ZDocument::isFolder() const { return d_->ir.meta.get(kRole) == kFolder; }
-bool ZDocument::isLost() const { return d_->ir.meta.get(kRole) == kLost; }
+bool ZDocument::isFolder() const { return d_->header.get(kRole) == kFolder; }
+bool ZDocument::isLost() const { return d_->header.get(kRole) == kLost; }
 
-bool ZDocument::isArchived() const { return store::isArchivedMeta(d_->ir.meta); }
+bool ZDocument::isArchived() const {
+    NoteMeta meta;
+    meta.lines = d_->header.lines();
+    meta.present = d_->header.present();
+    return store::isArchivedMeta(meta);
+}
 
 void ZDocument::setArchived(bool archived) {
-    store::setArchivedMeta(d_->ir.meta, archived);
+    NoteMeta meta;
+    meta.lines = d_->header.lines();
+    meta.present = d_->header.present();
+    meta.blankAfter = d_->header.blankAfter();
+    store::setArchivedMeta(meta, archived);
+    headerFrom(meta, d_->header);
 }
 
 QString ZDocument::created() const {
-    return QString::fromStdString(d_->ir.meta.get(kCreated));
+    return QString::fromStdString(d_->header.get(kCreated));
 }
 
 QString ZDocument::modified() const {
-    return QString::fromStdString(d_->ir.meta.get(kModified));
+    return QString::fromStdString(d_->header.get(kModified));
 }
 
 void ZDocument::stampModified() {
-    d_->ir.meta.set(kModified, store::isoNow().toStdString());
+    d_->header.set(kModified, store::isoNow().toStdString());
 }
+
+QString ZDocument::headerValue(const QString& key) const {
+    return QString::fromStdString(d_->header.get(key.toStdString()));
+}
+
+void ZDocument::setHeaderValue(const QString& key, const QString& value) {
+    d_->header.set(key.toStdString(), value.toStdString());
+}
+
+bool ZDocument::hasHeader() const { return d_->header.present(); }
 
 // --- о чём заметка ---------------------------------------------------------
 
 namespace {
 
-// Первый СОДЕРЖАТЕЛЬНЫЙ блок: пустые строки, html-комментарии и шапка не в
-// счёт. Правило было написано трижды — в поиске по хранилищу, в дереве и в
-// стабе архива; здесь оно одно.
-const Block* firstContentBlock(const Document& doc) {
-    for (const Block& b : doc.blocks) {
-        if (b.kind == Kind::VSpace) continue;
-        if (b.kind == Kind::Html) continue;
-        if (b.raw && doc.isClosedHtmlComment(b)) continue;
-        return &b;
+// Первый СОДЕРЖАТЕЛЬНЫЙ блок: пустые строки и html-комментарии не в счёт.
+// Правило было написано ТРИЖДЫ — в поиске по хранилищу, в дереве и в стабе
+// архива; здесь оно одно.
+QTextBlock firstContentBlock(const QTextDocument& doc) {
+    for (QTextBlock b = doc.begin(); b.isValid(); b = b.next()) {
+        const Kind kind = kindOf(b);
+        if (kind == Kind::VSpace || kind == Kind::Html) continue;
+        return b;
     }
-    return nullptr;
+    return {};
 }
 
-QString firstLineOf(const Document& doc, const Block& block) {
-    const QString whole = blockText(doc, block);
-    const qsizetype end = whole.indexOf(QLatin1Char('\n'));
+QString firstLineOf(const QTextBlock& block) {
+    const QString whole = block.text();
+    const qsizetype end = whole.indexOf(QChar::LineSeparator);
     return (end < 0 ? whole : whole.left(end)).simplified();
 }
 
 }  // namespace
 
 QString ZDocument::title() const {
-    const Block* first = firstContentBlock(d_->ir);
-    return first ? firstLineOf(d_->ir, *first).left(64) : QString();
+    const QTextBlock first = firstContentBlock(d_->text);
+    return first.isValid() ? firstLineOf(first).left(64) : QString();
 }
 
 QString ZDocument::snippet(int limit) const {
-    const Block* first = firstContentBlock(d_->ir);
-    if (!first) return {};
+    const QTextBlock first = firstContentBlock(d_->text);
+    if (!first.isValid()) return {};
     QString out;
-    bool afterTitle = false;
-    for (const Block& b : d_->ir.blocks) {
-        if (&b == first) { afterTitle = true; continue; }
-        if (!afterTitle) continue;
-        if (b.kind == Kind::VSpace || b.kind == Kind::Html) continue;
+    for (QTextBlock b = first.next(); b.isValid(); b = b.next()) {
+        const Kind kind = kindOf(b);
+        if (kind == Kind::VSpace || kind == Kind::Html) continue;
         if (!out.isEmpty()) out += QLatin1Char(' ');
-        out += blockText(d_->ir, b).simplified();
+        out += b.text().simplified();
         if (out.size() >= limit) break;
     }
     return out.left(limit);
 }
 
-std::string ZDocument::archiveStub() const { return store::stubBytes(d_->ir); }
+std::string ZDocument::archiveStub() const { return store::stubBytes(irOf(d_->text, d_->header)); }
 
 bool ZDocument::isEmpty() const {
-    for (const Block& b : d_->ir.blocks)
-        if (b.raw || b.kind != Kind::VSpace) return false;
+    for (QTextBlock b = d_->text.begin(); b.isValid(); b = b.next()) {
+        if (isRawBlock(b) || kindOf(b) != Kind::VSpace) return false;
+    }
     return true;
+}
+
+Stats ZDocument::stats() const {
+    const NoteStats counted = documentStats(d_->text);
+    Stats out;
+    out.words = counted.words;
+    out.lines = counted.lines;
+    out.blocks = counted.blocks;
+    out.images = counted.images;
+    out.valid = counted.valid;
+    return out;
+}
+
+// --- блоки -----------------------------------------------------------------
+
+int ZDocument::blockCount() const { return d_->text.blockCount(); }
+
+BlockInfo ZDocument::blockAt(int index) const {
+    BlockInfo out;
+    const QTextBlock block = d_->text.findBlockByNumber(index);
+    if (!block.isValid()) return out;
+    out.index = index;
+    out.kind = kindOf(block);
+    const MarkerStyle style = markerOf(block);
+    out.marker = style.marker;
+    out.level = levelOf(block);
+    out.headingLevel = block.blockFormat().headingLevel();
+    out.checked = style.checked;
+    out.raw = isRawBlock(block);
+    out.continuation = isContinuationBlock(block);
+    out.info = block.blockFormat().stringProperty(InfoProperty);
+    out.text = block.text();
+    return out;
+}
+
+std::vector<BlockInfo> ZDocument::blocks() const {
+    std::vector<BlockInfo> out;
+    out.reserve(size_t(d_->text.blockCount()));
+    int index = 0;
+    for (QTextBlock b = d_->text.begin(); b.isValid(); b = b.next(), ++index)
+        out.push_back(blockAt(index));
+    return out;
+}
+
+std::vector<SourceLine> ZDocument::sourceLines() const {
+    // Тело БЕЗ шапки: в шапке живёт `modified`, она меняется при каждой записи,
+    // и всякая разность начиналась бы с неё — всегда одной и той же строки.
+    Document body = readDocument(d_->text);
+    std::vector<BlockLines> map;
+    const std::string text = serialize(body, &map);
+
+    std::vector<SourceLine> out;
+    const QString whole = QString::fromUtf8(text.data(), qsizetype(text.size()));
+    const QStringList lines = whole.split(QLatin1Char('\n'));
+    out.reserve(size_t(lines.size()));
+    for (const QString& line : lines) out.push_back(SourceLine{line, -1});
+    // Карта блоков: у каждого блока известны первая строка и сколько их.
+    for (size_t block = 0; block < map.size(); ++block) {
+        for (int i = 0; i < map[block].count; ++i) {
+            const int line = map[block].first + i;
+            if (line >= 0 && size_t(line) < out.size()) out[size_t(line)].block = int(block);
+        }
+    }
+    return out;
 }
 
 // --- вложения --------------------------------------------------------------
 
 std::vector<Attachment> ZDocument::attachments() const {
     std::vector<Attachment> out;
-    for (const Block& block : d_->ir.blocks) {
-        for (const Inline& span : d_->ir.inlines(block)) {
-            if (!span.image()) continue;
-            const QString href = QString::fromUtf8(d_->ir.href(span).data(),
-                                                   qsizetype(d_->ir.href(span).size()));
+    for (QTextBlock b = d_->text.begin(); b.isValid(); b = b.next()) {
+        for (auto it = b.begin(); it != b.end(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            if (!fragment.isValid()) continue;
+            const QTextCharFormat format = fragment.charFormat();
+            if ((format.intProperty(SpanStyleProperty) & SpanImage) == 0) continue;
+            const QString href = format.anchorHref();
             if (href.isEmpty()) continue;
+
             Attachment a;
             // Атрибуты живут во фрагменте адреса: «id.webp#w=600&align=left».
             const qsizetype hash = href.indexOf(QLatin1Char('#'));
             a.id = hash < 0 ? href : href.left(hash);
             if (hash >= 0) {
-                const auto parts = href.mid(hash + 1).split(QLatin1Char('&'));
-                for (const QString& part : parts) {
+                for (const QString& part : href.mid(hash + 1).split(QLatin1Char('&'))) {
                     if (part.startsWith(QLatin1String("w=")))
                         a.width = part.mid(2).toInt();
                     else if (part.startsWith(QLatin1String("align=")))
                         a.align = part.mid(6);
                 }
             }
-            a.alt = QString::fromUtf8(d_->ir.text(block, span).data(),
-                                      qsizetype(d_->ir.text(block, span).size()));
+            a.alt = fragment.text();
             out.push_back(std::move(a));
         }
     }
@@ -199,53 +299,54 @@ std::vector<Attachment> ZDocument::attachments() const {
 
 int ZDocument::rewriteAttachments(const std::function<QString(const QString&)>& rename) {
     int changed = 0;
-    for (Block& block : d_->ir.blocks) {
-        for (Inline& span : d_->ir.inlines(block)) {
-            if (!span.image()) continue;
-            const std::string_view href = d_->ir.href(span);
-            if (href.empty()) continue;
-            const QString whole = QString::fromUtf8(href.data(), qsizetype(href.size()));
-            const qsizetype hash = whole.indexOf(QLatin1Char('#'));
-            const QString name = hash < 0 ? whole : whole.left(hash);
+    QTextCursor cursor(&d_->text);
+    cursor.beginEditBlock();
+    for (QTextBlock b = d_->text.begin(); b.isValid(); b = b.next()) {
+        for (auto it = b.begin(); it != b.end(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            if (!fragment.isValid()) continue;
+            QTextCharFormat format = fragment.charFormat();
+            if ((format.intProperty(SpanStyleProperty) & SpanImage) == 0) continue;
+            const QString href = format.anchorHref();
+            if (href.isEmpty()) continue;
+
+            const qsizetype hash = href.indexOf(QLatin1Char('#'));
+            const QString name = hash < 0 ? href : href.left(hash);
             const QString fresh = rename(name);
             if (fresh.isEmpty() || fresh == name) continue;
-            const QString rebuilt = hash < 0 ? fresh : fresh + whole.mid(hash);
-            const QByteArray utf8 = rebuilt.toUtf8();
-            span.href = d_->ir.append(std::string_view(utf8.constData(), size_t(utf8.size())));
+
+            format.setAnchorHref(hash < 0 ? fresh : fresh + href.mid(hash));
+            cursor.setPosition(fragment.position());
+            cursor.setPosition(fragment.position() + fragment.length(),
+                               QTextCursor::KeepAnchor);
+            cursor.setCharFormat(format);
             ++changed;
         }
     }
-    if (changed) d_->textFresh = false;
+    cursor.endEditBlock();
     return changed;
 }
 
 // --- поиск -----------------------------------------------------------------
 
 std::vector<Hit> ZDocument::find(const Query& query) const {
-    return findInDocument(d_->ir, query);
+    return findInDocument(readDocument(d_->text), query);
 }
 
 HitLine ZDocument::hitLine(const Hit& hit, int radius) const {
-    return zametti::hitLine(d_->ir, hit, radius);
+    return zametti::hitLine(readDocument(d_->text), hit, radius);
 }
 
-// --- живой документ --------------------------------------------------------
+// --- сравнение -------------------------------------------------------------
 
-QTextDocument& ZDocument::textDocument() {
-    d_->refreshText();
-    return d_->text;
+bool ZDocument::sameSkeleton(const ZDocument& other) const {
+    return zametti::sameSkeleton(irOf(d_->text, d_->header), irOf(other.d_->text, other.d_->header));
 }
 
-const QTextDocument& ZDocument::textDocument() const {
-    const_cast<Data*>(d_.get())->refreshText();
-    return d_->text;
-}
-
-const Document& ZDocument::ir() const { return d_->ir; }
-
-void ZDocument::setIr(Document doc) {
-    d_->ir = std::move(doc);
-    d_->textFresh = false;
+bool ZDocument::sameBody(const ZDocument& other) const {
+    // Шапку выбрасываем целиком: в ней `modified`, и без этого всякое
+    // сравнение начиналось бы с неё.
+    return serialize(readDocument(d_->text)) == serialize(readDocument(other.d_->text));
 }
 
 }  // namespace zametti
