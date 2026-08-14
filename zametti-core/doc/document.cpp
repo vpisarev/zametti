@@ -209,16 +209,7 @@ bool ZDocument::isEmpty() const {
     return true;
 }
 
-Stats ZDocument::stats() const {
-    const NoteStats counted = documentStats(d_->text);
-    Stats out;
-    out.words = counted.words;
-    out.lines = counted.lines;
-    out.blocks = counted.blocks;
-    out.images = counted.images;
-    out.valid = counted.valid;
-    return out;
-}
+NoteStats ZDocument::getStats() const { return documentStats(d_->text); }
 
 // --- блоки -----------------------------------------------------------------
 

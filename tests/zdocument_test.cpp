@@ -348,7 +348,7 @@ TEST(ZDocument, BlocksAndLines) {
     ZT_TRUE("строки привязаны к блокам", anyMapped);
 
     // Счёт слов.
-    const Stats counted = doc.stats();
+    const NoteStats counted = doc.getStats();
     ZT_TRUE("слова посчитаны", counted.valid && counted.words > 0);
 }
 

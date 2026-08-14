@@ -22,6 +22,7 @@
 #include "block_kind.h"
 #include "hash.h"
 #include "search.h"
+#include "text_stats.h"
 #include "sort_order.h"
 
 #include <QString>
@@ -52,14 +53,6 @@ struct SourceLine {
 };
 
 // Сводка по заметке: слова, строки, блоки, фотографии.
-struct Stats {
-    int words = 0;
-    int lines = 1;
-    int blocks = 1;
-    int images = 0;
-    bool valid = false;
-};
-
 // Один блок глазами того, кто заметку ПОКАЗЫВАЕТ или ПРАВИТ, но не хочет знать
 // про QTextBlock. Значение, а не ручка: сделали снимок — работаете со снимком.
 struct BlockInfo {
@@ -147,7 +140,10 @@ public:
     // Пуста ли заметка по существу: ни одного блока, кроме пустых строк.
     bool isEmpty() const;
 
-    Stats stats() const;
+    // Слова, строки, блоки и картинки. Тип общий с обходом живого документа
+    // (NoteStats): двух видов у одного счёта быть не должно — они разошлись бы
+    // молча.
+    NoteStats getStats() const;
 
     // --- блоки, но БЕЗ ходьбы по ним --------------------------------------
     //
