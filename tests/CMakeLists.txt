@@ -151,6 +151,7 @@ add_executable(zametti-bench
     display_scale_probe.cpp
     matrix_probe.cpp
     open_probe.cpp
+    zoom_probe.cpp
 )
 # gtest здесь не ради проверок, а ради макросов ZT_EQ/ZT_TRUE: некоторые
 # стенды ими же и печатают, что у них сошлось.

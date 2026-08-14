@@ -20,6 +20,7 @@
 //   zametti-bench display-scale плотность экрана и масштаб
 //   zametti-bench matrix        матрица правок
 //   zametti-bench open          открытие заметки
+//   zametti-bench zoom          ВОРОТА к ZDocument: что делает Ctrl+= с документом
 
 #include <QApplication>
 
@@ -37,6 +38,7 @@ int ztCmykProbe(int argc, char** argv);
 int ztDisplayScaleProbe(int argc, char** argv);
 int ztMatrixProbe(int argc, char** argv);
 int ztOpenProbe(int argc, char** argv);
+int ztZoomProbe(int argc, char** argv);
 
 namespace {
 
@@ -57,6 +59,7 @@ const Bench kBenches[] = {
     {"display-scale", ztDisplayScaleProbe},
     {"matrix", ztMatrixProbe},
     {"open", ztOpenProbe},
+    {"zoom", ztZoomProbe},
 };
 
 int usage() {
