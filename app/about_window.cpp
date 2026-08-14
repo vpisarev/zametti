@@ -39,7 +39,7 @@ NoteView* markdownPage(const QString& markdown, QWidget* parent) {
     // Документ принадлежит виду: своей жизни у справки нет, а Qt удалит его
     // вместе с родителем.
     auto* document = new QTextDocument(view);
-    buildDocument(parse(markdown.toStdString()), *document, view->zoom());
+    buildDocument(parse(markdown.toStdString()), *document);
     view->setDocument(document);
     view->applyContentWidth();
     return view;

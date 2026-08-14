@@ -45,7 +45,13 @@ BlockRange expandToRuns(const QTextDocument& doc, BlockRange range) {
 // Шрифт документа — тот самый, которым его собрали, вместе с масштабом окна.
 // Брать его отсюда, а не передавать параметром: иначе операция и отрисовка
 // могли бы разойтись в том, какой сейчас кегль.
-QFont baseFontOf(const QTextDocument& doc) { return doc.defaultFont(); }
+// Ступень кегля, на которой стоит блок. Держит её формат знаков блока — тот
+// самый, что поставил сборщик.
+int blockFontStep(const QTextBlock& block) {
+    return block.blockFormat().hasProperty(QTextFormat::FontSizeAdjustment)
+               ? block.blockFormat().intProperty(QTextFormat::FontSizeAdjustment)
+               : block.charFormat().intProperty(QTextFormat::FontSizeAdjustment);
+}
 
 void setBlockFormat(QTextCursor& cursor, const QTextBlock& block,
                     const QTextBlockFormat& format) {
@@ -552,17 +558,14 @@ std::vector<StyleRun> styleRuns(const QTextDocument& doc, int from, int to,
     return runs;
 }
 
-// Кегль встроенного кода — тот же, каким его собрал бы сборщик документа.
-qreal codePointSize(const QTextDocument& doc) {
-    const qreal base = doc.defaultFont().pointSizeF();
-    if (appearance().codePointSize <= 0.0 || appearance().baseFontPoint <= 0.0) return base;
-    return appearance().codePointSize * base / appearance().baseFontPoint;
-}
-
-// Как выглядит встроенный код: семейство, кегль, подложка. Одно место на всех —
-// правило кавычек и набор с клавиатуры красят одинаково.
-void applyCodeLook(QTextCharFormat& format, const QTextDocument& doc) {
-    format.setFontPointSize(codePointSize(doc));
+// Как выглядит встроенный код: семейство, ступень кегля, подложка. Одно место
+// на всех — правило кавычек и набор с клавиатуры красят одинаково.
+//
+// Ступень отсчитывается от окружения — от того, что стоит в формате самого
+// блока: код внутри заголовка обязан ехать вместе с заголовком, ровно как у
+// сборщика.
+void applyCodeLook(QTextCharFormat& format, int surroundingStep) {
+    setFontStep(format, surroundingStep + appearance().codeStep);
     if (!appearance().codeFamily.isEmpty())
         format.setFontFamilies({QString(appearance().codeFamily)});
     format.setBackground(appearance().codeBackground);
@@ -979,7 +982,7 @@ bool applyCodeSpanRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     edit.setPosition(block.position() + open);
     edit.setPosition(block.position() + end - 2, QTextCursor::KeepAnchor);
     QTextCharFormat code = formatForStyle(SpanCode);
-    applyCodeLook(code, doc);
+    applyCodeLook(code, blockFontStep(cursor.block()));
     edit.mergeCharFormat(code);
     edit.endEditBlock();
 
@@ -1054,8 +1057,8 @@ bool toggleDisplayMath(QTextDocument& doc, QTextCursor& cursor) {
     return toggleMath(cursor, QStringLiteral("$$"), true);
 }
 
-QTextCharFormat inlineStyleForTyping(const QTextDocument& doc, const QTextBlock& block,
-                                     const QTextCharFormat& current, int style) {
+QTextCharFormat inlineStyleForTyping(const QTextBlock& block, const QTextCharFormat& current,
+                                     int style) {
     const int now = current.intProperty(SpanStyleProperty);
     const int next = (now & style) != 0 ? (now & ~style) : (now | style);
 
@@ -1063,7 +1066,7 @@ QTextCharFormat inlineStyleForTyping(const QTextDocument& doc, const QTextBlock&
     // заголовке он крупнее, в пункте обычный. Дальше кладём на него признаки.
     QTextCharFormat format = block.charFormat();
     format.merge(formatForStyle(next));
-    if ((next & SpanCode) != 0) applyCodeLook(format, doc);
+    if ((next & SpanCode) != 0) applyCodeLook(format, blockFontStep(block));
     return format;
 }
 
@@ -2479,13 +2482,12 @@ bool joinAcrossVSpaceForward(QTextDocument& doc, QTextCursor& cursor) {
 
 void applyListGeometry(QTextDocument& doc, BlockRange range) {
     const BlockRange full = expandToRuns(doc, range);
-    const QFont base = baseFontOf(doc);
-    const qreal charUnit = QFontMetricsF(base).horizontalAdvance(QLatin1Char('A'));
+    const QFont base = layoutBaseFont();
+    // Единицы — те же, что у сборщика: геометрия строится в базовом шрифте и
+    // за зумом не идёт (см. layoutCharUnit).
+    const qreal charUnit = layoutCharUnit();
     const qreal indent = appearance().listIndent * charUnit;
-    const qreal zoom = appearance().baseFontPoint > 0.0
-                           ? base.pointSizeF() / appearance().baseFontPoint
-                           : 1.0;
-    const CodePlate plate = codePlate(zoom);
+    const CodePlate plate = codePlate();
 
     // Первый проход: к какой колонке принадлежит каждый блок и какой маркер в
     // ней самый широкий. Задаёт колонку именно он: иначе под "10." текст
@@ -2745,11 +2747,7 @@ int syncGaps(QTextDocument& doc, BlockRange range) {
 
     // Поля сверху: их держит соседство, и после вставки они могли устареть.
     {
-        const QFont base = baseFontOf(doc);
-        const qreal lineUnit = QFontMetricsF(base).height();
-        const qreal zoom = appearance().baseFontPoint > 0.0
-                               ? base.pointSizeF() / appearance().baseFontPoint
-                               : 1.0;
+        const qreal lineUnit = layoutLineUnit();
         int i = qMax(0, range.first);
         const int last = qMin(range.last + 2, doc.blockCount() - 1);
         for (; i <= last; ++i) {
@@ -2760,7 +2758,7 @@ int syncGaps(QTextDocument& doc, BlockRange range) {
             // заново значило бы стирать резерв на каждой операции.
             const qreal want = blockTopMarginPx(kindOf(block), isRawBlock(block),
                                                 isVSpaceBlock(block.previous()), i == 0,
-                                                isContinuationBlock(block), lineUnit, zoom);
+                                                isContinuationBlock(block), lineUnit);
             QTextBlockFormat format = block.blockFormat();
             // Не трогаем формат, если поле и так верное: любая запись помечает
             // документ изменённым и тянет за собой автосохранение.

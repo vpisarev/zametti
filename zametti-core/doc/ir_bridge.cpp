@@ -95,13 +95,13 @@ std::vector<Piece> piecesOf(const Document& ir) {
     return blocks;
 }
 
-void buildDocument(const Document& ir, QTextDocument& target, qreal zoom) {
-    buildDocument(piecesOf(ir), target, zoom);
+void buildDocument(const Document& ir, QTextDocument& target) {
+    buildDocument(piecesOf(ir), target);
 }
 
 bool patchDocument(const Document& built, const Document& now, const Document& to,
-                   QTextDocument& target, qreal zoom) {
-    return patchDocument(piecesOf(built), piecesOf(now), piecesOf(to), target, zoom);
+                   QTextDocument& target) {
+    return patchDocument(piecesOf(built), piecesOf(now), piecesOf(to), target);
 }
 
 // --- запись ----------------------------------------------------------------
@@ -116,7 +116,7 @@ public:
         d_->header.setLines(ir.meta.lines);
         d_->header.setPresent(ir.meta.present);
         d_->header.setBlankAfter(ir.meta.blankAfter);
-        buildDocument(piecesOf(ir), d_->text, 1.0);
+        buildDocument(piecesOf(ir), d_->text);
     }
 };
 

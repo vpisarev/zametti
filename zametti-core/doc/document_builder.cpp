@@ -1,5 +1,15 @@
 // Логические блоки → QTextDocument.
 //
+// АБСОЛЮТНЫХ КЕГЛЕЙ ЗДЕСЬ НЕТ НИ ОДНОГО. Размер знака задаётся ступенью от
+// шрифта документа (лестница в doc_model.h), поэтому Ctrl+= это один
+// setDefaultFont: форматы не трогаются, в стек отмены масштаб не попадает,
+// пересборки нет. По той же причине сборщику не передают zoom — ему нечего с
+// ним делать, а тому, кто масштаб всё-таки меняет, достаточно шрифта
+// документа.
+//
+// Геометрия (поля блоков, отступы, плашка кода) остаётся в пикселях и строится
+// один раз. Это осознанный выбор: em-единиц у QTextBlockFormat нет вовсе.
+//
 // Здесь и только здесь UTF-8 ядра превращается в UTF-16 Qt. Смещения кусков
 // строки заданы в байтах, индексы QString — в кодовых единицах UTF-16;
 // приравнивать их нельзя, ошибка проявится только на не-ASCII. Пересчёт идёт
@@ -140,7 +150,7 @@ bool needsFallback(char32_t cp, const QRawFont& primary) {
 }
 
 void enlargeFallbackGlyphs(QTextDocument& doc, int textStart, const QString& text,
-                           qreal pointSize, const QRawFont& primary) {
+                           int surroundingStep, const QRawFont& primary) {
     QTextCursor cursor(&doc);
     int i = 0;
     while (i < text.size()) {
@@ -165,22 +175,22 @@ void enlargeFallbackGlyphs(QTextDocument& doc, int textStart, const QString& tex
             i += p ? 2 : 1;
         }
 
+        // Ступень отсчитывается ОТ ОКРУЖАЮЩЕГО текста, а не от шрифта
+        // документа: эмодзи внутри заголовка обязан ехать вместе с заголовком.
         QTextCharFormat fmt;
-        fmt.setFontPointSize(pointSize * appearance().fallbackScale);
+        setFontStep(fmt, surroundingStep + appearance().fallbackStep);
         cursor.setPosition(textStart + begin);
         cursor.setPosition(textStart + i, QTextCursor::KeepAnchor);
         cursor.mergeCharFormat(fmt);
     }
 }
 
-// Кегль кода: величина абсолютная, в пунктах, и от кегля окружающего текста не
-// зависит — только от масштаба окна. Ноль — кода не отличать от текста.
-qreal codePoint(qreal surrounding, qreal zoom) {
-    if (appearance().codePointSize <= 0.0) return surrounding;
-    return appearance().codePointSize * zoom;
-}
+// Ступень кода — от ступени окружающего текста. В обычном абзаце окружение
+// нулевое, и код получает ровно appearance().codeStep; в заголовке он едет
+// вместе с заголовком.
+int codeStepIn(int surroundingStep) { return surroundingStep + appearance().codeStep; }
 
-void applySpans(QTextDocument& doc, int textStart, const Piece& b, qreal linePoint, qreal zoom) {
+void applySpans(QTextDocument& doc, int textStart, const Piece& b, int lineStep) {
     OffsetMap map(b.text);
     QTextCursor cursor(&doc);
     for (const Run& s : b.runs) {
@@ -208,7 +218,7 @@ void applySpans(QTextDocument& doc, int textStart, const Piece& b, qreal linePoi
         if (s.strike()) fmt.setFontStrikeOut(true);
         if (s.code()) {
             fmt.setBackground(appearance().codeBackground);
-            fmt.setFontPointSize(codePoint(linePoint, zoom));
+            setFontStep(fmt, codeStepIn(lineStep));
             if (!appearance().codeFamily.isEmpty())
                 fmt.setFontFamilies({QString(appearance().codeFamily)});
         }
@@ -248,14 +258,14 @@ qreal blockTopMargin(Kind kind, bool raw, bool previousIsVSpace, bool first) {
 }
 
 qreal blockTopMarginPx(Kind kind, bool raw, bool previousIsVSpace, bool first,
-                       bool continuation, qreal lineUnit, qreal zoom) {
+                       bool continuation, qreal lineUnit) {
     // Строки одного литерального блока стоят вплотную: воздух и отбивка есть
     // только у первой.
     if (continuation) return 0.0;
     qreal margin = blockTopMargin(kind, raw, previousIsVSpace, first) * lineUnit;
     // Сверху у плашки только воздух под скругление: полоска с языком и кнопкой
     // висит снизу, в нижнем поле последней строки блока.
-    if (!raw && kind == Kind::Code) margin += codePlate(zoom).padTop;
+    if (!raw && kind == Kind::Code) margin += codePlate().padTop;
     return margin;
 }
 
@@ -266,17 +276,53 @@ QTextBlockFormat vspaceBlockFormat(const QTextDocument& doc, bool previousIsVSpa
     format.setTopMargin(blockTopMargin(Kind::VSpace, false, previousIsVSpace, first) *
                         metrics.height());
     format.setBottomMargin(0);
-    format.setLineHeight(std::round(metrics.height() * appearance().lineHeightFactor),
-                         QTextBlockFormat::FixedHeight);
+    applyLineHeight(format, appearance().lineHeightFactor, doc.defaultFont().pointSizeF(),
+                    doc.defaultFont());
     return format;
+}
+
+QFont layoutBaseFont() {
+    QFont base{QString(appearance().fontFamily)};
+    base.setPointSizeF(appearance().baseFontPoint);
+    base.setStyleHint(QFont::Monospace);
+    return base;
+}
+
+qreal layoutLineUnit() { return QFontMetricsF(layoutBaseFont()).height(); }
+
+void applyLineHeight(QTextBlockFormat& format, qreal factor, qreal linePoint,
+                     const QFont& base) {
+    if (factor <= 0.0) return;
+    switch (appearance().lineHeightMode) {
+        case Appearance::LineHeight::Proportional:
+            format.setLineHeight(factor * 100.0, QTextBlockFormat::ProportionalHeight);
+            return;
+        case Appearance::LineHeight::Natural:
+            return;
+        case Appearance::LineHeight::Pixels: {
+            QFont line = base;
+            line.setPointSizeF(linePoint);
+            format.setLineHeight(std::round(QFontMetricsF(line).height() * factor),
+                                 QTextBlockFormat::FixedHeight);
+            return;
+        }
+    }
+}
+
+qreal layoutCharUnit() {
+    return QFontMetricsF(layoutBaseFont()).horizontalAdvance(QLatin1Char('A'));
 }
 
 namespace {
 
 // Всё, что у сборки одно на весь документ: единицы ритма и шрифты. Считается
 // один раз — и полной сборкой, и заплаткой, одинаково.
+//
+// Масштаба здесь нет. Шрифт документа сборщик ставит базовый (1.0), а зум
+// потом кладёт поверх свой setDefaultFont — кегли ступенчатые и поедут за ним
+// сами. Единицы ритма (высота строки, ширина "A") сняты с базового шрифта: они
+// задают ГЕОМЕТРИЮ, а она в пикселях и строится один раз.
 struct BuildContext {
-    qreal zoom = 1.0;
     qreal basePoint = 0.0;
     QFont base;
     QRawFont primaryFont;
@@ -285,21 +331,16 @@ struct BuildContext {
     CodePlate plate;
 };
 
-BuildContext contextFor(qreal zoom) {
+BuildContext contextFor() {
     BuildContext ctx;
-    ctx.zoom = zoom;
-    ctx.basePoint = appearance().baseFontPoint * zoom;
-    ctx.base = QFont{QString(appearance().fontFamily)};
-    ctx.base.setPointSizeF(ctx.basePoint);
-    ctx.base.setStyleHint(QFont::Monospace);
+    ctx.basePoint = appearance().baseFontPoint;
+    ctx.base = layoutBaseFont();
     ctx.primaryFont = QRawFont::fromFont(ctx.base);
-    // Единицы ритма страницы: высота строки по вертикали, ширина "A" по
-    // горизонтали. Метрики сняты с уже отмасштабированного шрифта, поэтому зум
-    // сюда входит сам собой.
     const QFontMetricsF metrics(ctx.base);
     ctx.lineUnit = metrics.height();
     ctx.charUnit = metrics.horizontalAdvance(QLatin1Char('A'));
-    ctx.plate = codePlate(zoom);
+    Q_ASSERT(qFuzzyCompare(ctx.lineUnit, layoutLineUnit()));
+    ctx.plate = codePlate();
     return ctx;
 }
 
@@ -344,13 +385,11 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     // снизу после последней.
     const bool vspace = !raw && b.kind == Kind::VSpace;
 
-    // Высота строки задаётся явно, а не долей от самого высокого знака в
-    // ней: иначе знак из запасного шрифта растягивал бы свою строку, и
-    // пункты одного списка стояли бы с разным шагом.
-    qreal linePoint = ctx.basePoint;
+    // Ступень кегля этого блока. Ноль — вровень со шрифтом документа.
+    int lineStep = 0;
 
     QTextCharFormat charFmt;
-    charFmt.setFontPointSize(ctx.basePoint);
+    setFontStep(charFmt, 0);
 
     // Литеральное содержимое режется построчно, по QTextBlock на строку:
     // Qt переразмечает целиком тот блок, в который пишут, и длинный блок
@@ -371,8 +410,8 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
             case Kind::Heading:
                 blockFmt.setHeadingLevel(b.headingLevel);
                 charFmt.setFontWeight(QFont::Bold);
-                linePoint = ctx.basePoint * appearance().headingScale[b.headingLevel - 1];
-                charFmt.setFontPointSize(linePoint);
+                lineStep = appearance().headingStep[size_t(b.headingLevel - 1)];
+                setFontStep(charFmt, lineStep);
                 break;
 
             case Kind::Code:
@@ -381,8 +420,8 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
                 // вычитая padLeft обратно (см. codePlate в settings.h).
                 blockFmt.setLeftMargin(ctx.plate.indent + ctx.plate.padLeft);
                 blockFmt.setProperty(InfoProperty, QString::fromStdString(b.info));
-                linePoint = codePoint(ctx.basePoint, ctx.zoom);
-                charFmt.setFontPointSize(linePoint);
+                lineStep = codeStepIn(0);
+                setFontStep(charFmt, lineStep);
                 if (!appearance().codeFamily.isEmpty())
                     charFmt.setFontFamilies({QString(appearance().codeFamily)});
                 break;
@@ -440,21 +479,21 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     const bool code = !raw && b.kind == Kind::Code;
     // Первому блоку документа отбивка не нужна (над ним поле страницы), а вот
     // воздух над плашкой нужен и ему — это и делает blockTopMarginPx.
-    blockFmt.setTopMargin(
-        blockTopMarginPx(b.kind, raw, prevVSpace, first, false, ctx.lineUnit, ctx.zoom));
+    blockFmt.setTopMargin(blockTopMarginPx(b.kind, raw, prevVSpace, first, false, ctx.lineUnit));
     blockFmt.setBottomMargin(0);
 
 
-    QFont lineFont = ctx.base;
-    lineFont.setPointSizeF(linePoint);
+    // ВЫСОТА СТРОКИ — ДОЛЕЙ, А НЕ ПИКСЕЛЯМИ. Пиксели были бы абсолютными и на
+    // зуме остались бы на месте: текст вырос, а строки — нет. Доля же считается
+    // от естественной высоты строки, то есть от шрифта, и едет вместе с ним.
+    //
+    // Плата известна и записана: пиксельная высота была ЦЕЛОЙ нарочно — дробная
+    // копилась от строки к строке, и Qt красил выделение с разбегом (между
+    // полосами оставался незакрашенный ряд). С долей округления нет; если
+    // разбег вернётся, лечить его надо подложкой выделения, а не абсолютной
+    // высотой.
     const qreal lineFactor = list ? appearance().listLineHeightFactor : appearance().lineHeightFactor;
-    // Высоту строки округляем до целого пикселя. Дробная копилась от строки
-    // к строке, и Qt красил выделение с разбегом: между полосами оставался
-    // незакрашенный ряд, а на укороченной строке он читался сколом на углу.
-    // С целой высотой полосы сходятся вплотную сами, и подложку выделения
-    // рисовать не надо.
-    blockFmt.setLineHeight(std::round(QFontMetricsF(lineFont).height() * lineFactor),
-                           QTextBlockFormat::FixedHeight);
+    applyLineHeight(blockFmt, lineFactor, ctx.basePoint * fontStepFactor(lineStep), ctx.base);
 
     // Один QTextBlock у обычного блока и по одному на строку у литерального.
     // Все, кроме первого, помечены продолжением: без этого разрезанный блок
@@ -498,23 +537,22 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
         const int textStart = cursor.position();
         cursor.insertText(text, charFmt);
         markBreaks(target, textStart, breaks);
-        if (!literal && !b.runs.empty())
-            applySpans(target, textStart, b, linePoint, ctx.zoom);
-        enlargeFallbackGlyphs(target, textStart, text, linePoint, ctx.primaryFont);
+        if (!literal && !b.runs.empty()) applySpans(target, textStart, b, lineStep);
+        enlargeFallbackGlyphs(target, textStart, text, lineStep, ctx.primaryFont);
     }
     prevVSpace = vspace;
 }
 
 }  // namespace
 
-void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target, qreal zoom) {
+void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target) {
     target.setUndoRedoEnabled(false);
     target.clear();
     // Поля задаются рамкой корневого фрейма, а не documentMargin: тот кладёт
     // одинаковый отступ со всех сторон, а по бокам нужно заметно больше.
     target.setDocumentMargin(0);
 
-    const BuildContext ctx = contextFor(zoom);
+    const BuildContext ctx = contextFor();
     target.setDefaultFont(ctx.base);
     // Стоп табуляции — тот же, которым Tab ставит пробелы (editor.codeTabWidth).
     // Иначе набранное нами и литеральные табы из старых файлов рисовались бы
@@ -526,7 +564,7 @@ void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target, qrea
     // строку (см. про интернирование в doc_model.h).
     {
         QFont codeLine = ctx.base;
-        codeLine.setPointSizeF(codePoint(ctx.basePoint, ctx.zoom));
+        codeLine.setPointSizeF(ctx.basePoint * fontStepFactor(codeStepIn(0)));
         QTextOption option = target.defaultTextOption();
         option.setTabStopDistance(appearance().codeTabWidth *
                                   QFontMetricsF(codeLine).horizontalAdvance(QLatin1Char(' ')));
@@ -557,10 +595,9 @@ void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target, qrea
     // читатель и отличает пустой документ от пустого абзаца.
     if (first) {
         QTextCharFormat charFmt;
-        charFmt.setFontPointSize(ctx.basePoint);
+        setFontStep(charFmt, 0);
         QTextBlockFormat blockFmt;
-        blockFmt.setLineHeight(QFontMetricsF(ctx.base).height() * appearance().lineHeightFactor,
-                               QTextBlockFormat::FixedHeight);
+        applyLineHeight(blockFmt, appearance().lineHeightFactor, ctx.basePoint, ctx.base);
         cursor.setBlockFormat(blockFmt);
         cursor.setBlockCharFormat(charFmt);
     }
@@ -598,10 +635,9 @@ bool sameBlock(const Piece& x, const Piece& y) {
 // Заплатка обязана давать ровно то же, что и полная сборка, — до последнего
 // свойства формата. Проверяется в отладочной сборке после каждой заплатки, то
 // есть на каждой операции всех фаззеров: свойство, а не отдельный случай.
-void checkPatchMatchesBuild(const std::vector<Piece>& to, const QTextDocument& target,
-                            qreal zoom) {
+void checkPatchMatchesBuild(const std::vector<Piece>& to, const QTextDocument& target) {
     QTextDocument reference;
-    buildDocument(to, reference, zoom);
+    buildDocument(to, reference);
     // Поля в сравнении не участвуют: их держит ВИД, а не сборщик, и заплатка
     // их не трогает вовсе — сверять тут нечего.
     //   - нижнее поле блока: в нём живёт высота фотографии (syncImageSpace);
@@ -636,7 +672,7 @@ void checkPatchMatchesBuild(const std::vector<Piece>& to, const QTextDocument& t
 }  // namespace
 
 bool patchDocument(const std::vector<Piece>& built, const std::vector<Piece>& now,
-                   const std::vector<Piece>& to, QTextDocument& target, qreal zoom) {
+                   const std::vector<Piece>& to, QTextDocument& target) {
     const int builtCount = static_cast<int>(built.size());
     const int nowCount = static_cast<int>(now.size());
     const int newCount = static_cast<int>(to.size());
@@ -652,7 +688,7 @@ bool patchDocument(const std::vector<Piece>& built, const std::vector<Piece>& no
         ++head;
     if (head == builtCount && head == nowCount && head == newCount) {
 #ifndef NDEBUG
-        checkPatchMatchesBuild(to, target, zoom);
+        checkPatchMatchesBuild(to, target);
 #endif
         return true;   // не изменилось ничего
     }
@@ -696,7 +732,7 @@ bool patchDocument(const std::vector<Piece>& built, const std::vector<Piece>& no
     // нельзя. Пусть собирает целиком.
     if (!startBlock.isValid() || !endBlock.isValid()) return false;
 
-    const BuildContext ctx = contextFor(zoom);
+    const BuildContext ctx = contextFor();
     const int firstNumber = startBlock.blockNumber();
 
     QTextCursor cursor(&target);
@@ -719,7 +755,7 @@ bool patchDocument(const std::vector<Piece>& built, const std::vector<Piece>& no
     applyListGeometry(target, {firstNumber, cursor.blockNumber()});
     cursor.endEditBlock();
 #ifndef NDEBUG
-    checkPatchMatchesBuild(to, target, zoom);
+    checkPatchMatchesBuild(to, target);
 #endif
     return true;
 }

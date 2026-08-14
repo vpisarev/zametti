@@ -5,6 +5,7 @@
 
 #include <vector>
 
+#include <QFont>
 #include <QTextBlockFormat>
 #include <QtGlobal>
 
@@ -15,10 +16,11 @@ namespace zametti {
 // Логические блоки → QTextDocument. Единственное место во всём приложении, где UTF-8 ядра
 // превращается в UTF-16 Qt.
 //
-// zoom масштабирует кегль и поля. Отдельного «зума» у QTextEdit не хватает:
-// он двигает только шрифт по умолчанию, а у нас кегль задан явно в каждом
-// формате — поэтому при смене масштаба документ собирается заново.
-void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target, qreal zoom = 1.0);
+// Масштаба сборщик не знает и знать не должен: абсолютных кеглей в документе
+// нет, размеры заданы ступенями от его шрифта (см. лестницу в doc_model.h).
+// Зум — это setDefaultFont поверх готового документа, и пересборки он не
+// требует.
+void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target);
 
 // Заплатка вместо полной сборки: target становится таким, каким его собрал бы
 // buildDocument из to, но пересобираются только те блоки, которым это нужно.
@@ -44,7 +46,7 @@ void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target, qrea
 // облик обязаны совпадать с теми, из которых target собран, — от них зависит
 // каждый блок, а не только изменившиеся.
 bool patchDocument(const std::vector<Piece>& built, const std::vector<Piece>& now,
-                   const std::vector<Piece>& to, QTextDocument& target, qreal zoom = 1.0);
+                   const std::vector<Piece>& to, QTextDocument& target);
 
 // Поле сверху у блока, в высотах строки. Зависит только от самого блока и от
 // того, стоит ли перед ним пустая строка.
@@ -56,6 +58,24 @@ bool patchDocument(const std::vector<Piece>& built, const std::vector<Piece>& no
 // собранный документ и поправленный расходились бы в ритме.
 qreal blockTopMargin(Kind kind, bool raw, bool previousIsVSpace, bool first);
 
+// Единицы, которыми меряется ГЕОМЕТРИЯ документа: высота строки и ширина "A"
+// базового шрифта облика.
+//
+// Спрашивать их у самого документа нельзя, и это ловушка, на которой легко
+// обжечься: его шрифт по умолчанию двигает зум, а геометрия строится один раз
+// и с места не сходит. Операции правки, пересчитывающие поля на живом
+// документе, обязаны брать те же единицы, что и сборщик, — иначе поле блока
+// после правки на 200 % оказалось бы вдвое больше собранного.
+// Ставит блоку высоту строки по нынешнему выбору облика (Appearance::LineHeight).
+// Одно место на всех: сборщик, пустая строка и операции правки обязаны задавать
+// её одинаково, иначе поправленный блок разойдётся с собранным.
+void applyLineHeight(QTextBlockFormat& format, qreal factor, qreal linePoint,
+                     const QFont& base);
+
+QFont layoutBaseFont();
+qreal layoutLineUnit();
+qreal layoutCharUnit();
+
 // То же поле, но В ПИКСЕЛЯХ и целиком: отбивка плюс воздух над плашкой блока
 // кода. Спрашивать обязан КАЖДЫЙ, кто поля пересчитывает.
 //
@@ -64,7 +84,7 @@ qreal blockTopMargin(Kind kind, bool raw, bool previousIsVSpace, bool first);
 // Поймала матрица краёв, а до неё — сверка заплатки с полной сборкой в
 // отладочной сборке.
 qreal blockTopMarginPx(Kind kind, bool raw, bool previousIsVSpace, bool first,
-                       bool continuation, qreal lineUnit, qreal zoom);
+                       bool continuation, qreal lineUnit);
 
 // Формат блока пустой строки — ровно такой, каким его собрал бы сборщик. Нужен
 // операциям: пустую строку они заводят на живом документе, и отличаться от

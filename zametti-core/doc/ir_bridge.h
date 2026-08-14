@@ -29,9 +29,9 @@ struct Document;
 std::vector<Piece> piecesOf(const Document& ir);
 
 // Сборка и заплатка, но от представления. Ровно piecesOf + вызов.
-void buildDocument(const Document& ir, QTextDocument& target, qreal zoom = 1.0);
+void buildDocument(const Document& ir, QTextDocument& target);
 bool patchDocument(const Document& built, const Document& now, const Document& to,
-                   QTextDocument& target, qreal zoom = 1.0);
+                   QTextDocument& target);
 
 }  // namespace zametti
 

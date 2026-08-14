@@ -1155,9 +1155,9 @@ void NoteEditor::rebuild(const Document& doc, int cursor, const ViewAnchor& anch
             read = readDocument(*document());
             current = &read;
         }
-        patched = patchDocument(note_.built, *current, doc, *document(), zoom());
+        patched = patchDocument(note_.built, *current, doc, *document());
     }
-    if (!patched) buildDocument(doc, *document(), zoom());
+    if (!patched) buildDocument(doc, *document());
     note_.built = doc;
     note_.builtValid = true;
     note_.builtZoom = zoom();
@@ -1715,7 +1715,7 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
         const QTextBlock block = textCursor().block();
         if (!textCursor().hasSelection() && !isRawBlock(block) && kindOf(block) != Kind::Code)
             setCurrentCharFormat(
-                inlineStyleForTyping(*document(), block, currentCharFormat(), style.bits));
+                inlineStyleForTyping(block, currentCharFormat(), style.bits));
         return;
     }
 
@@ -1951,7 +1951,7 @@ LanguageEditor* NoteEditor::editCodeLanguage(int firstBlockNumber, const QRect& 
     languageEditor_ = new LanguageEditor(codeLanguagesNear(*document(), firstBlockNumber),
                                          block.blockFormat().stringProperty(InfoProperty),
                                          viewport());
-    languageEditor_->setFont(codeLangFont(zoom()));
+    languageEditor_->setFont(codeLangFont());
     // Пока правят — своя надпись не рисуется, чтобы под полем ничего не было.
     setEditedCodeLanguage(firstBlockNumber);
     // Поле ввода прижато ВПРАВО, к кнопке копирования. Место под имя языка —
@@ -1963,7 +1963,7 @@ LanguageEditor* NoteEditor::editCodeLanguage(int firstBlockNumber, const QRect& 
     QRect box = strip;
     const int want =
         qMax(1, int(std::round(
-                   QFontMetricsF(codeLangFont(zoom())).horizontalAdvance(QLatin1Char('A')) * 12)));
+                   QFontMetricsF(codeLangFont()).horizontalAdvance(QLatin1Char('A')) * 12)));
     if (box.width() > want) box.setLeft(box.right() - want);
     languageEditor_->setGeometry(box);
     languageEditor_->show();
@@ -2255,7 +2255,7 @@ void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
     if (pieces.empty()) return;
 
     QTextDocument staging;
-    buildDocument(fragment, staging, zoom());
+    buildDocument(fragment, staging);
 
     // Кусок из одного обычного абзаца вставляется в строку: скопированные слова
     // должны войти в тот блок, куда их кладут. Всё прочее — заголовок, пункт,
@@ -2968,7 +2968,7 @@ std::unique_ptr<QTextDocument> NoteEditor::buildDiffDocument(int slot,
     auto doc = std::make_unique<QTextDocument>();
     source->clear();
     if (plain) {
-        diff::buildPlainDocument(result, *doc, zoom(), marks);
+        diff::buildPlainDocument(result, *doc, marks);
         return doc;   // у этого вида блок и есть строка сравнения
     }
     // ПОКАЗЫВАЕМ ИЛЛЮСТРИРОВАННУЮ КОПИЮ, а не сам слепок. Слепок (snapshotIr,
@@ -2980,7 +2980,7 @@ std::unique_ptr<QTextDocument> NoteEditor::buildDiffDocument(int slot,
         note_.diffReady ? diff::blockMarks(result, front.blocks) : diff::BlockMarks{};
     const diff::Illustrated shown =
         diff::illustrate(base ? note_.baseIr : note_.snapshotIr, blocks);
-    buildDocument(shown.ir, *doc, zoom());
+    buildDocument(shown.ir, *doc);
     // Метка блока документа — из метки блока копии; соответствие «блок IR →
     // блок документа» не один к одному (литеральные блоки лежат построчно).
     marks->clear();

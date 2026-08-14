@@ -303,8 +303,8 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
         if (!paper.fontFamily.isEmpty()) a.fontFamily = paper.fontFamily;
         if (paper.pointSize > 0.0) a.baseFontPoint = paper.pointSize;
         if (!paper.codeFamily.isEmpty()) a.codeFamily = paper.codeFamily;
-        if (paper.codePointSize > 0.0) a.codePointSize = paper.codePointSize;
-        a.headingScale = paper.headingScale;
+        a.codeStep = paper.codeStep;
+        a.headingStep = paper.headingStep;
         // И полоска блока кода: на бумаге от неё остаётся только поле снизу,
         // чтобы плашка выглядела как на экране — со скруглением и воздухом, но
         // без имени языка и кнопки копирования.
@@ -381,7 +381,7 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
                     view.height() + wantHeight - view.viewport()->height());
 
     const Document ir = parse(text);
-    buildDocument(ir, *view.document(), 1.0);
+    buildDocument(ir, *view.document());
     prepareForPaper(*view.document());
     view.applyContentWidth();
     // Ширину разметки ставим явно, хотя показанный виджет ставит её и сам:

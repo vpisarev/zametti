@@ -1,5 +1,7 @@
 #include "settings.h"
 
+#include "doc_model.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFont>
@@ -79,16 +81,16 @@ QJsonObject appearanceToJson(const Appearance& a) {
                                                      : QStringLiteral("disc"));
 
     QJsonArray headings;
-    for (qreal v : a.headingScale) headings.append(v);
+    for (int v : a.headingStep) headings.append(v);
 
     QJsonObject font{
         {QStringLiteral("family"), a.fontFamily},
         {QStringLiteral("pointSize"), a.baseFontPoint},
         {QStringLiteral("symbolFamily"), a.symbolFamily},
         {QStringLiteral("codeFamily"), a.codeFamily},
-        {QStringLiteral("codePointSize"), a.codePointSize},
-        {QStringLiteral("headingScale"), headings},
-        {QStringLiteral("fallbackScale"), a.fallbackScale},
+        {QStringLiteral("codeStep"), a.codeStep},
+        {QStringLiteral("headingStep"), headings},
+        {QStringLiteral("fallbackStep"), a.fallbackStep},
     };
 
     QJsonObject formulas{
@@ -111,13 +113,13 @@ QJsonObject appearanceToJson(const Appearance& a) {
     };
 
     QJsonArray paperHeadings;
-    for (qreal v : a.pdf.headingScale) paperHeadings.append(v);
+    for (int v : a.pdf.headingStep) paperHeadings.append(v);
     QJsonObject pdf{
         {QStringLiteral("fontFamily"), a.pdf.fontFamily},
         {QStringLiteral("pointSize"), a.pdf.pointSize},
         {QStringLiteral("codeFamily"), a.pdf.codeFamily},
-        {QStringLiteral("codePointSize"), a.pdf.codePointSize},
-        {QStringLiteral("headingScale"), paperHeadings},
+        {QStringLiteral("codeStep"), a.pdf.codeStep},
+        {QStringLiteral("headingStep"), paperHeadings},
         {QStringLiteral("marginMm"), a.pdf.marginMm},
         {QStringLiteral("imageDpi"), a.pdf.imageDpi},
         {QStringLiteral("maxExportedImageSize"), a.pdf.maxExportedImageSize},
@@ -338,11 +340,11 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readReal(font, "pointSize", a.baseFontPoint);
     readString(font, "symbolFamily", a.symbolFamily);
     readString(font, "codeFamily", a.codeFamily);
-    readReal(font, "codePointSize", a.codePointSize);
-    readReal(font, "fallbackScale", a.fallbackScale);
-    const QJsonArray headings = font.value(QStringLiteral("headingScale")).toArray();
-    for (int i = 0; i < headings.size() && i < int(a.headingScale.size()); ++i)
-        if (headings.at(i).isDouble()) a.headingScale[size_t(i)] = headings.at(i).toDouble();
+    readInt(font, "codeStep", a.codeStep);
+    readInt(font, "fallbackStep", a.fallbackStep);
+    const QJsonArray headings = font.value(QStringLiteral("headingStep")).toArray();
+    for (int i = 0; i < headings.size() && i < int(a.headingStep.size()); ++i)
+        if (headings.at(i).isDouble()) a.headingStep[size_t(i)] = headings.at(i).toInt();
 
     const QJsonObject formulas = root.value(QStringLiteral("formulas")).toObject();
     readReal(formulas, "inlineScale", a.formulas.inlineScale);
@@ -365,14 +367,14 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readString(paper, "fontFamily", a.pdf.fontFamily);
     readReal(paper, "pointSize", a.pdf.pointSize);
     readString(paper, "codeFamily", a.pdf.codeFamily);
-    readReal(paper, "codePointSize", a.pdf.codePointSize);
+    readInt(paper, "codeStep", a.pdf.codeStep);
     readReal(paper, "marginMm", a.pdf.marginMm);
     readInt(paper, "imageDpi", a.pdf.imageDpi);
     readInt(paper, "maxExportedImageSize", a.pdf.maxExportedImageSize);
     readReal(paper, "codeStripHeight", a.pdf.codeStripHeight);
-    const QJsonArray paperHeads = paper.value(QStringLiteral("headingScale")).toArray();
-    for (int i = 0; i < paperHeads.size() && i < int(a.pdf.headingScale.size()); ++i)
-        if (paperHeads.at(i).isDouble()) a.pdf.headingScale[size_t(i)] = paperHeads.at(i).toDouble();
+    const QJsonArray paperHeads = paper.value(QStringLiteral("headingStep")).toArray();
+    for (int i = 0; i < paperHeads.size() && i < int(a.pdf.headingStep.size()); ++i)
+        if (paperHeads.at(i).isDouble()) a.pdf.headingStep[size_t(i)] = paperHeads.at(i).toInt();
 
     const QJsonObject layout = root.value(QStringLiteral("layout")).toObject();
     readReal(layout, "lineHeightFactor", a.lineHeightFactor);
@@ -597,19 +599,22 @@ bool writeJson(const QString& path, const QJsonObject& root) {
 
 Appearance& appearance() { return g_appearance; }
 
-CodePlate codePlate(qreal zoom) {
+CodePlate codePlate() {
     // Единицы те же, что у сборщика документа: по вертикали — высота строки
     // кода (гарнитура текста в кегле кода, как её считает document_builder),
     // по горизонтали — ширина "A" основного шрифта.
+    //
+    // Масштаба здесь нет и быть не может: геометрия документа строится один раз
+    // и живёт в пикселях, а зум — это шрифт документа. Спрашивать масштаб тут
+    // значило бы разойтись с резервом, который сборщик уже положил в поля
+    // блока.
     QFont base{QString(g_appearance.fontFamily)};
-    base.setPointSizeF(g_appearance.baseFontPoint * zoom);
+    base.setPointSizeF(g_appearance.baseFontPoint);
     base.setStyleHint(QFont::Monospace);
     const qreal charUnit = QFontMetricsF(base).horizontalAdvance(QLatin1Char('A'));
 
     QFont codeLine = base;
-    codeLine.setPointSizeF(g_appearance.codePointSize > 0.0
-                               ? g_appearance.codePointSize * zoom
-                               : g_appearance.baseFontPoint * zoom);
+    codeLine.setPointSizeF(g_appearance.baseFontPoint * fontStepFactor(g_appearance.codeStep));
     const qreal lineUnit =
         std::round(QFontMetricsF(codeLine).height() * g_appearance.lineHeightFactor);
 
@@ -618,18 +623,18 @@ CodePlate codePlate(qreal zoom) {
     plate.padTop = std::round(g_appearance.codePadTop * lineUnit);
     plate.padLeft = g_appearance.codePadLeft * charUnit;
     plate.indent = g_appearance.codeIndent * charUnit;
-    plate.radius = g_appearance.codeCornerRadius * zoom;
+    plate.radius = g_appearance.codeCornerRadius;
     plate.stripPadding = g_appearance.codeStripPadding * charUnit;
     plate.langGap = g_appearance.codeLangGap * charUnit;
     return plate;
 }
 
-QFont codeLangFont(qreal zoom) {
+QFont codeLangFont() {
     QFont font{QString(g_appearance.sidebarFontFamily)};
     const qreal point = g_appearance.codeLangPointSize > 0.0
                             ? g_appearance.codeLangPointSize
                             : g_appearance.sidebarFontPoint;
-    font.setPointSizeF(point * zoom);
+    font.setPointSizeF(point);
     return font;
 }
 

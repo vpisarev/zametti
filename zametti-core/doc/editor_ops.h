@@ -198,7 +198,7 @@ bool toggleDisplayMath(QTextDocument& doc, QTextCursor& cursor);
 // наслоением: снять код — это ещё и вернуть семейство, кегль и подложку, а
 // наслоением их не снять. Отсюда и блок в доводах: он говорит, как выглядит
 // обычный текст в этом месте.
-QTextCharFormat inlineStyleForTyping(const QTextDocument& doc, const QTextBlock& block,
+QTextCharFormat inlineStyleForTyping(const QTextBlock& block,
                                      const QTextCharFormat& current, int style);
 
 // Смена рода блоков в выделении. Семантика «установить», а не «переключить»:

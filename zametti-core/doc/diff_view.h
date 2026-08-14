@@ -58,7 +58,7 @@ Illustrated illustrate(const Document& snapshot, const BlockMarks& marks);
 // Собрать документ вида «как под капотом» — тоже отдельный артефакт, не слепок:
 // в нём строки сравнения, включая те, которых в показанной версии нет.
 // markOfBlock заполняется по номерам блоков.
-void buildPlainDocument(const Result& result, QTextDocument& target, qreal zoom,
+void buildPlainDocument(const Result& result, QTextDocument& target,
                         QVector<Mark>* markOfBlock);
 
 }  // namespace zametti::diff

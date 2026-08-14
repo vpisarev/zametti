@@ -1,5 +1,7 @@
 #include "diff_view.h"
 
+#include "doc_model.h"
+
 #include "settings.h"
 
 #include <QTextBlock>
@@ -84,7 +86,7 @@ Illustrated illustrate(const Document& snapshot, const BlockMarks& marks) {
     return out;
 }
 
-void buildPlainDocument(const Result& result, QTextDocument& target, qreal zoom,
+void buildPlainDocument(const Result& result, QTextDocument& target,
                         QVector<Mark>* markOfBlock) {
     const Appearance& look = appearance();
     target.clear();
@@ -92,11 +94,11 @@ void buildPlainDocument(const Result& result, QTextDocument& target, qreal zoom,
 
     // Поле слева — под полоски разности: без него они легли бы прямо на первый
     // знак строки (видно на снимке приёмки).
-    target.setDocumentMargin(look.diffBarWidth * 4 * zoom);
+    target.setDocumentMargin(look.diffBarWidth * 4);
 
     QTextCharFormat text;
     text.setFontFamilies({look.codeFamily});
-    text.setFontPointSize(look.codePointSize * zoom);
+    setFontStep(text, look.codeStep);
 
     QTextCursor caret(&target);
     bool first = true;

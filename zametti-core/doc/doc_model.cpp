@@ -7,7 +7,12 @@
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextFragment>
+#include <QFontMetricsF>
 #include <QTextFrame>
+#include <QTextLayout>
+
+#include <algorithm>
+#include <cmath>
 
 
 namespace zametti {
@@ -69,6 +74,46 @@ QString documentFingerprint(const QTextDocument& doc, const QList<int>& skip) {
         out += QStringLiteral("%1 %2\n").arg(number).arg(blockFingerprint(block, blockSkip));
     }
     return out;
+}
+
+qreal fontStepFactor(int step) {
+    // Таблица Qt, снятая пробником. Держим её у себя, а не считаем на глаз:
+    // размеры маркеров, формул и плашек обязаны совпадать с тем, во что Qt
+    // разрешит ступень, иначе резерв под них разойдётся с нарисованным.
+    static constexpr qreal kFactor[] = {0.7, 0.8, 1.0, 1.2, 1.5, 2.0, 2.4};
+    const int clamped = std::clamp(step, kFontStepMin, kFontStepMax);
+    return kFactor[clamped - kFontStepMin];
+}
+
+int nearestFontStep(qreal factor) {
+    int best = 0;
+    qreal bestMiss = -1.0;
+    for (int step = kFontStepMin; step <= kFontStepMax; ++step) {
+        // Промах меряем ОТНОСИТЕЛЬНЫЙ: на глаз 0.7 против 0.8 отличается так
+        // же сильно, как 2.0 против 2.4, а разность их — втрое.
+        const qreal miss = std::abs(std::log(fontStepFactor(step) / factor));
+        if (bestMiss < 0.0 || miss < bestMiss) {
+            bestMiss = miss;
+            best = step;
+        }
+    }
+    return best;
+}
+
+void setFontStep(QTextCharFormat& format, int step) {
+    format.setProperty(QTextFormat::FontSizeAdjustment,
+                       std::clamp(step, kFontStepMin, kFontStepMax));
+}
+
+qreal assignedLineHeight(const QTextBlock& block) {
+    const QTextBlockFormat format = block.blockFormat();
+    // Естественная высота строки: её знает разметка. У неразмеченного блока
+    // разметки ещё нет (Qt размечает лениво) — тогда спрашиваем метрики шрифта.
+    qreal natural = 0.0;
+    const QTextLayout* layout = block.layout();
+    if (layout != nullptr && layout->lineCount() > 0) natural = layout->lineAt(0).height();
+    if (natural <= 0.0) natural = QFontMetricsF(block.charFormat().font()).height();
+    return format.lineHeight(natural, 1.0);
 }
 
 bool isRawBlock(const QTextBlock& block) {

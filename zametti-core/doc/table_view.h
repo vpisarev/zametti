@@ -73,10 +73,10 @@ TableLayout layoutTable(const Table& table, const TableSpace& space);
 
 // Шрифт текста таблицы при этом масштабе — тот же, что у обычного текста, с
 // поправкой на усадку.
-QFont tableFont(qreal zoom, qreal scale);
+QFont tableFont(qreal scale);
 // Внутренние поля ячейки по горизонтали и вертикали, в пикселях.
-qreal tableCellPadX(qreal zoom, qreal scale);
-qreal tableCellPadY(qreal zoom, qreal scale);
+qreal tableCellPadX(qreal scale);
+qreal tableCellPadY(qreal scale);
 
 }  // namespace zametti
 
