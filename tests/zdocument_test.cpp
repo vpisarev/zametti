@@ -20,6 +20,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QTextDocument>
 #include <QFileInfo>
 
 #include <algorithm>
@@ -433,4 +434,29 @@ TEST(ZDocument, Diff) {
         after.getDiff(std::string_view("<!-- zametti\n-->\n\n# Заголовок\n\nбыло\n"));
     ZT_EQ("байтами и заметкой — одно и то же", std::to_string(mine.blockCount()),
           std::to_string(byBytes.blockCount()));
+}
+
+// Люк к живому документу: показать можно, унести нельзя.
+TEST(ZDocument, ShowIn) {
+    ZDocument doc;
+    ASSERT_TRUE(doc.loadMarkdown("# Заголовок\n\nабзац\n"));
+
+    int blocks = 0;
+    bool layoutOn = false;
+    doc.showIn([&](QTextDocument* text) {
+        ASSERT_NE(text, nullptr);
+        blocks = text->blockCount();
+        // Вёрстка включается ровно в этот момент: до показа считать глифы
+        // незачем, а с этой минуты вид спросит и высоту строки, и переносы.
+        layoutOn = text->documentLayout() != nullptr && text->pageSize().isValid();
+        Q_UNUSED(layoutOn);
+    });
+    ZT_TRUE("документ показан и в нём есть блоки", blocks > 0);
+
+    // Заметка копируется дёшево и разделяет тот же документ — вид держит у себя
+    // копию, и показанное не умирает у него под руками.
+    ZDocument held = doc;
+    int again = 0;
+    held.showIn([&](QTextDocument* text) { again = text->blockCount(); });
+    ZT_EQ("копия показывает тот же документ", std::to_string(blocks), std::to_string(again));
 }

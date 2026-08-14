@@ -363,6 +363,15 @@ HitLine ZDocument::hitLine(const Hit& hit, int radius) const {
     return out;
 }
 
+// --- показ -----------------------------------------------------------------
+
+void ZDocument::showIn(const std::function<void(QTextDocument*)>& attach) {
+    // Вёрстку включаем здесь: пока заметку не показывают, считать строки и
+    // глифы незачем, а с этой минуты — нужно.
+    d_->text.setLayoutEnabled(true);
+    attach(&d_->text);
+}
+
 // --- сравнение -------------------------------------------------------------
 
 bool ZDocument::sameSkeleton(const ZDocument& other) const {
