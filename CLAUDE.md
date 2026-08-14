@@ -134,7 +134,12 @@ ZamettiDocument (см. `zametti_qtextdocument_design.md`); история — ж
 - `zametti_qtextdocument_design.md` — дизайн единой модели (после
   рефакторинга).
 - `zametti-refactoring1.md` — план рефакторинга и порядок включения тестов;
-  `zametti-refactor1-report.md` — что из него сделано в первую сессию.
+  `zametti-refactor1-report.md` и `zametti-refactor1-report2.md` — что сделано в
+  первую и вторую сессии.
+- `zametti-editing-mvc.md` — кто за что отвечает при правке: вид сообщает о
+  вводе, controller распознаёт намерение, ZDocument выполняет изменение.
+- `zametti_qtexdocument_design_part2.md` — производные кэши: источник истины
+  один, кэш всегда можно выбросить и пересчитать.
 - `zametti-zoom.md` — как зуммировать, не пересобирая документ.
 - `zametti-storage.md` — формат хранилища: шапка, id, журнал, вложения.
 - `docs/*brief*, docs/*report*` — брифы и отчёты всех этапов; `zametti_todo.md` — очередь
