@@ -121,6 +121,15 @@ qt_add_executable(zametti
 
 target_link_libraries(zametti PRIVATE zametti-ui zametti-code-rules)
 
+# ПРОСМОТРЩИК ДЛЯ ГЛАЗ. Один файл, одно окно, никакого хозяйства: markdown из
+# командной строки, прокрутка, Ctrl+= / Ctrl+−, переключатель высоты строки.
+# Заведён, чтобы владелец решил глазами вопрос вертикального ритма, и умрёт
+# вместе с этим вопросом. В приёмку не входит и ничего не проверяет.
+qt_add_executable(zametti-peek
+    peek_main.cpp
+)
+target_link_libraries(zametti-peek PRIVATE zametti-ui zametti-code-rules)
+
 # Иконку в доке оболочка ищет не у окна, а по .desktop-файлу с именем, которое
 # приложение сообщает через setDesktopFileName. Без установки этих двух файлов
 # док показывает заглушку.
