@@ -191,24 +191,23 @@ namespace {
 // являются. Правило то же, что у blockImageRef, только заданное об IR: либо
 // абзац целиком из image-спанов с одним адресом, либо дословный "![[путь]]"
 // (вики-вложение остаётся обычным текстом абзаца — markdown его не трактует).
-bool isImageBlock(const Document& ir, const Block& b) {
+bool isImageBlock(const Piece& b) {
     if (b.raw || b.kind != Kind::Paragraph) return false;
 
-    const std::span<const Inline> spans = ir.inlines(b);
-    if (!spans.empty()) {
+    if (!b.runs.empty()) {
         std::string_view href;
         int32_t covered = 0;
         bool all = true;
-        for (const Inline& s : spans) {
-            if (!s.image() || s.href.empty()) { all = false; break; }
-            if (href.empty()) href = ir.href(s);
-            else if (href != ir.href(s)) { all = false; break; }
-            covered += s.text.size();
+        for (const Run& run : b.runs) {
+            if (!run.image() || run.href.empty()) { all = false; break; }
+            if (href.empty()) href = run.href;
+            else if (href != run.href) { all = false; break; }
+            covered += run.end - run.start;
         }
-        if (all && covered == b.text.size()) return true;
+        if (all && covered == int32_t(b.text.size())) return true;
     }
 
-    std::string_view text = ir.text(b);
+    std::string_view text = b.text;
     while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
     while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) text.remove_suffix(1);
     return text.size() > 5 && text.starts_with("![[") && text.ends_with("]]");
@@ -253,16 +252,15 @@ BlockShape shapeOf(std::string_view text, bool literal) {
 
 }  // namespace
 
-NoteStats irStats(const Document& ir) {
+NoteStats pieceStats(const std::vector<Piece>& blocks) {
     NoteStats out;
     int block = 0;
     int breaks = 0;
-    for (const Block& b : ir.blocks) {
-        const std::string_view text = ir.text(b);
+    for (const Piece& b : blocks) {
         const bool literal = b.raw || b.kind == Kind::Code;
-        const BlockShape shape = shapeOf(text, literal);
-        if (isImageBlock(ir, b)) ++out.images;
-        else out.words += countWords(text);
+        const BlockShape shape = shapeOf(b.text, literal);
+        if (isImageBlock(b)) ++out.images;
+        else out.words += countWords(b.text);
         if (shape.breaks > 0) {
             // Мягкий перенос в литеральном блоке — редкость ('\r' внутри
             // строки кода): приписываем его первой строке блока, точнее по

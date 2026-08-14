@@ -141,7 +141,7 @@ zametti::NoteStats bothCounts(const std::string& markdown, const std::string& wh
     QTextDocument doc;
     zametti::buildDocument(ir, doc);
 
-    const zametti::NoteStats byIr = zametti::irStats(ir);
+    const zametti::NoteStats byIr = zametti::pieceStats(zametti::piecesOf(ir));
     const zametti::NoteStats byDoc = zametti::documentStats(doc);
     ++zt::g_checks;
     if (byIr.words != byDoc.words || byIr.lines != byDoc.lines ||
@@ -235,7 +235,7 @@ void checkDocumentStats() {
 // документу — в КАЖДОМ блоке, а не в одном выбранном.
 void checkCaretEverywhere(const zametti::Document& ir, QTextDocument& doc,
                           const std::string& what) {
-    const zametti::NoteStats s = zametti::irStats(ir);
+    const zametti::NoteStats s = zametti::pieceStats(zametti::piecesOf(ir));
     int line = 1;
     for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {
         QTextCursor caret(block);
@@ -276,7 +276,7 @@ void benchSource(const std::string& source, const std::string& label) {
     // Рабочий путь: тот же счёт по IR.
     const zametti::Document parsed = zametti::parse(source);
     t.restart();
-    for (int i = 0; i < rounds; ++i) stats = zametti::irStats(parsed);
+    for (int i = 0; i < rounds; ++i) stats = zametti::pieceStats(zametti::piecesOf(parsed));
     const qint64 irUs = t.nsecsElapsed() / 1000;
 
     // Сам счёт слов в отрыве от всего прочего: по нему видно цену таблицы.

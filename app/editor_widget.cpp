@@ -2536,7 +2536,7 @@ bool NoteEditor::applyIrEdit(const MoveResult& moved) {
 
 // Пересчёт слов и строк. Зовётся из двух мест — полной сборки и записи на
 // диск, — и оба они и без него стоят миллисекунды.
-void NoteEditor::refreshStats(const Document& ir) { refreshStats(irStats(ir)); }
+void NoteEditor::refreshStats(const Document& ir) { refreshStats(pieceStats(piecesOf(ir))); }
 
 void NoteEditor::refreshStats(const NoteStats& stats) {
     note_.stats = stats;
