@@ -225,7 +225,7 @@ void bench() {
     qint64 shapeOnceBest = -1;
     {
         const zametti::Table table = zametti::parseTable(big);
-        const QFont font = zametti::tableFont(1.0, 1.0);
+        const QFont font = zametti::tableFont(1.0);
         QVector<QString> texts;
         for (int row = 0; row < int(table.rows.size()); ++row)
             for (int column = 0; column < table.columns; ++column)

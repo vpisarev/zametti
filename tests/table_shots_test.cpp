@@ -616,8 +616,7 @@ void checkTableOnForeignBackground() {
     QTest::qWait(20);
 
     auto* document = new QTextDocument(&view);
-    zametti::buildDocument(zametti::parse("| a | b |\n|---|---|\n| 1 | 2 |\n"), *document,
-                           view.zoom());
+    zametti::buildDocument(zametti::parse("| a | b |\n|---|---|\n| 1 | 2 |\n"), *document);
     view.setDocument(document);
     view.applyContentWidth();
     view.syncTables();

@@ -753,10 +753,8 @@ static int ztRunSuite(int argc, char** argv) {
         // нечего, а 1x1000000 растянуло бы её на миллион пикселей.
         ZT_TRUE("рамка меньше самой картинки", roomForFrame < roomForImage);
         ZT_TRUE("но не вырождается: надпись в неё помещается",
-                roomForFrame > 2 * refused.document()
-                                       ->findBlockByNumber(0)
-                                       .blockFormat()
-                                       .lineHeight());
+                roomForFrame > 2 * zametti::assignedLineHeight(
+                                       refused.document()->findBlockByNumber(0)));
         ZT_EQ("веса в кэше она не занимает", std::to_string(0),
               std::to_string(refused.imageCacheBytes()));
 

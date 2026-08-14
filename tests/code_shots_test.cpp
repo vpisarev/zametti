@@ -170,7 +170,7 @@ void checkPlateGeometry(Peek& editor) {
                                  std::to_string(bands.size()) + ")");
     if (bands.isEmpty()) return;
 
-    const zametti::CodePlate plate = zametti::codePlate(editor.zoom());
+    const zametti::CodePlate plate = zametti::codePlate();
     check(plate.strip > 0.0, "высота полоски положительна");
     check(plate.padTop > 0.0 && plate.padTop < plate.strip,
           "поле сверху есть и меньше полоски: " + num(plate.padTop) + " < " +
@@ -236,9 +236,9 @@ void checkPlateGeometry(Peek& editor) {
 // вида, без обхода: полоску резервирует нижнее поле последней строки блока,
 // воздух под скругление — верхнее поле первой.
 void checkBuilderReservesStrip() {
-    const zametti::CodePlate plate = zametti::codePlate(1.0);
+    const zametti::CodePlate plate = zametti::codePlate();
     QTextDocument doc;
-    zametti::buildDocument(zametti::parse("текст\n\n```python\nx = 1\ny = 2\n```\n"), doc, 1.0);
+    zametti::buildDocument(zametti::parse("текст\n\n```python\nx = 1\ny = 2\n```\n"), doc);
 
     int lines = 0;
     for (QTextBlock b = doc.firstBlock(); b.isValid(); b = b.next()) {
@@ -270,7 +270,7 @@ void checkBuilderReservesStrip() {
 // и без имени языка.
 void checkCopy(Peek& editor) {
     const QVector<zametti::CodeBand> bands = editor.bands();
-    const zametti::CodePlate plate = zametti::codePlate(editor.zoom());
+    const zametti::CodePlate plate = zametti::codePlate();
     int firstBlock = -1;
     for (const zametti::CodeBand& band : bands)
         if (band.first && band.info == QStringLiteral("python")) firstBlock = band.blockNumber;
@@ -333,14 +333,19 @@ void checkCopy(Peek& editor) {
 void checkCornersAreRound(Peek& editor) {
     const QVector<zametti::CodeBand> bands = editor.bands();
     if (bands.isEmpty()) return;
-    const zametti::CodePlate plate = zametti::codePlate(editor.zoom());
+    const zametti::CodePlate plate = zametti::codePlate();
     const QImage shot = editor.grab().toImage();
+    // СНИМОК — ВСЕГО ВИДЖЕТА, а полосы кода — в координатах вьюпорта, и между
+    // ними рамка QTextBrowser в один пиксель. Пока плашка стояла на целых
+    // высотах, проба «на пиксель внутрь» попадала в неё и с этим сдвигом;
+    // высота строки стала дробной, и проба уехала на ряд выше плашки.
+    const QPoint origin = editor.viewport()->mapTo(&editor, QPoint(0, 0));
 
     for (const zametti::CodeBand& band : bands) {
         if (!band.first) continue;
-        const int y = int(band.rect.top() - plate.padTop) + 1;
-        const int corner = int(band.rect.left()) + 1;
-        const int inside = int(band.rect.left() + plate.radius + 4);
+        const int y = origin.y() + int(band.rect.top() - plate.padTop) + 1;
+        const int corner = origin.x() + int(band.rect.left()) + 1;
+        const int inside = origin.x() + int(band.rect.left() + plate.radius + 4);
         if (y < 0 || y >= shot.height() || inside >= shot.width()) continue;
         const QRgb atCorner = shot.pixel(corner, y);
         const QRgb atInside = shot.pixel(inside, y);
@@ -360,7 +365,7 @@ void checkCornersAreRound(Peek& editor) {
 void checkStripIsNotDarker(Peek& editor) {
     const QVector<zametti::CodeBand> bands = editor.bands();
     if (bands.isEmpty()) return;
-    const zametti::CodePlate plate = zametti::codePlate(editor.zoom());
+    const zametti::CodePlate plate = zametti::codePlate();
     const QImage shot = editor.grab().toImage();
 
     for (const zametti::CodeBand& band : bands) {
@@ -389,7 +394,7 @@ void checkStripIsNotDarker(Peek& editor) {
 // пикселей под последней строкой кода обязана быть ровной.
 void checkPaperHasNoStrip(Peek& editor) {
     const QVector<zametti::CodeBand> bands = editor.bands();
-    const zametti::CodePlate plate = zametti::codePlate(editor.zoom());
+    const zametti::CodePlate plate = zametti::codePlate();
     for (const zametti::CodeBand& band : bands) {
         if (!band.last || band.info.isEmpty()) continue;
         const QRectF area(0, band.rect.bottom() - 4, band.rect.right() + 20,
@@ -495,7 +500,7 @@ void shootLanguageEditor(Peek& editor) {
 // Проверка перерисовывает ровно такую полосу и смотрит, что в ней нарисовано.
 void checkStripSurvivesPartialRepaint(Peek& editor) {
     const QVector<zametti::CodeBand> bands = editor.bands();
-    const zametti::CodePlate plate = zametti::codePlate(editor.zoom());
+    const zametti::CodePlate plate = zametti::codePlate();
     for (const zametti::CodeBand& band : bands) {
         if (!band.last || band.info.isEmpty()) continue;
         const int top = int(band.rect.bottom()) - editor.verticalScrollBar()->value();
@@ -543,14 +548,14 @@ void checkCompletionSitsAtCaret(Peek& editor) {
     };
 
     zametti::LanguageEditor whole({}, QStringLiteral("cpp"), editor.viewport());
-    whole.setFont(zametti::codeLangFont(editor.zoom()));
+    whole.setFont(zametti::codeLangFont());
     whole.resize(120, 20);
     // Каретку уводим в начало: её столбик правый край не сдвинет.
     whole.setCursorPosition(0);
     const int wholeRight = rightEdge(whole);
 
     zametti::LanguageEditor typed({QStringLiteral("cpp")}, QString(), editor.viewport());
-    typed.setFont(zametti::codeLangFont(editor.zoom()));
+    typed.setFont(zametti::codeLangFont());
     typed.resize(120, 20);
     QTest::keyClicks(&typed, QStringLiteral("c"));
     QTest::qWait(10);

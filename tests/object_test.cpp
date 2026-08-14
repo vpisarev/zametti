@@ -58,7 +58,7 @@ std::string nameOf(ObjectAction action) {
 
 QTextDocument* build(const char* markdown) {
     auto* doc = new QTextDocument;
-    zametti::buildDocument(zametti::parse(markdown), *doc, 1.0);
+    zametti::buildDocument(zametti::parse(markdown), *doc);
     return doc;
 }
 

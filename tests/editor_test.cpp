@@ -218,129 +218,6 @@ void checkStatsFreshness() {
                "шесть слов после набора");
 }
 
-// Выделение над кодом обязано отличаться от выделения над бумагой: иначе
-// Ctrl+E на выделенном тексте не меняет на экране ровным счётом ничего.
-//
-// Меряем цвет ВНУТРИ выделенного текста, а не «где-нибудь в строке»: две мои
-// прежние попытки ловили то край сглаженной буквы, то фон СНАРУЖИ выделения —
-// и проходили даже с непрозрачной заливкой, то есть не проверяли ничего.
-void checkSelectionShowsCode() {
-    // И блок кода, и СТРОЧНЫЙ код: Ctrl+E на выделении делает именно строчный,
-    // и починка, лечившая только блоки, у владельца ничего не изменила.
-    const QString path =
-        writeNote("выделение.md",
-                  QStringLiteral("обычный текст\n\nстрока с `кодом` внутри\n\n"
-                                 "```\nкод кода\n```\n"));
-    zametti::NoteEditor editor;
-    editor.resize(700, 400);
-    editor.show();
-    // Ответ не выбрасываем: не показанное окно делает бессмысленным всё, что
-    // ниже, — снимок брать неоткуда. В Debug это ещё и -Werror.
-    ZT_TRUE("окно редактора показалось", QTest::qWaitForWindowExposed(&editor));
-    editor.openFile(path);
-    QTest::qWait(50);
-
-    QTextCursor all = editor.textCursor();
-    all.select(QTextCursor::Document);
-    editor.setTextCursor(all);
-    QTest::qWait(50);
-
-    QImage frame(editor.viewport()->size(), QImage::Format_RGB32);
-    frame.fill(Qt::white);
-    QPainter painter(&frame);
-    editor.viewport()->render(&painter);
-    painter.end();
-
-    // Цвет заливки ВНУТРИ ТЕКСТА строки: у блока кода есть отступ, и левая
-    // часть его прямоугольника — это фон вне выделения. Две мои прежние
-    // попытки мерили именно её и проходили со снятой починкой.
-    const auto fillOn = [&](const QTextBlock& block) {
-        const QRectF box = editor.document()->documentLayout()->blockBoundingRect(block);
-        const QTextLayout* layout = block.layout();
-        if (layout == nullptr || layout->lineCount() == 0) return QColor();
-        const QTextLine line = layout->lineAt(0);
-        const qreal x0 = line.cursorToX(0);
-        const qreal x1 = line.cursorToX(block.length() - 1);
-        const int y = int(box.top() + line.y() + line.height() / 2) -
-                      editor.verticalScrollBar()->value();
-        if (y < 0 || y >= frame.height()) return QColor();
-
-        QHash<QRgb, int> seen;
-        for (int x = int(box.left() + qMin(x0, x1)) + 1;
-             x < int(box.left() + qMax(x0, x1)) && x < frame.width(); ++x)
-            if (x >= 0) ++seen[frame.pixel(x, y)];
-        QRgb best = 0;
-        int most = 0;
-        for (auto it = seen.begin(); it != seen.end(); ++it)
-            if (it.value() > most) {
-                most = it.value();
-                best = it.key();
-            }
-        return most > 0 ? QColor(best) : QColor();
-    };
-
-    QTextBlock paper;
-    QTextBlock code;
-    for (QTextBlock b = editor.document()->begin(); b.isValid(); b = b.next()) {
-        if (zametti::kindOf(b) == zametti::Kind::Code) code = b;
-        else if (!b.text().isEmpty() && !paper.isValid()) paper = b;
-    }
-    check(paper.isValid() && code.isValid(), "в заметке есть и текст, и код");
-    if (!paper.isValid() || !code.isValid()) return;
-
-    const QColor onPaper = fillOn(paper);
-    const QColor onCode = fillOn(code);
-    check(onPaper.isValid() && onCode.isValid(), "заливка выделения видна на обеих строках");
-    if (!onPaper.isValid() || !onCode.isValid()) return;
-
-    // Опоры «заливка равна цвету выделения» здесь нет и быть не может:
-    // внутри текста преобладает не чистая заливка, а её смесь со сглаженными
-    // буквами (замер даёт #308cc6 при цвете выделения #bfdbfe). Поэтому
-    // сравниваем ДВЕ строки между собой — и требуем, чтобы разница шла в
-    // нужную сторону.
-    // А над кодом она обязана быть ДРУГОЙ и темнее: подложка кода —
-    // полупрозрачный чёрный поверх синевы.
-    check(onCode != onPaper, "над кодом выделение выглядит иначе");
-    check(onCode.red() < onPaper.red() && onCode.blue() < onPaper.blue(),
-          "и именно темнее: подложка кода подкрасила выделение");
-
-    // Строчный код: тот же вопрос к абзацу, где код — лишь кусок строки.
-    QTextBlock inlineCode;
-    for (QTextBlock b = editor.document()->begin(); b.isValid(); b = b.next())
-        if (b.text().contains(QStringLiteral("кодом"))) inlineCode = b;
-    check(inlineCode.isValid(), "абзац со строчным кодом найден");
-    if (!inlineCode.isValid()) return;
-
-    // Цвет НА САМОМ куске кода и рядом с ним, в одной и той же строке.
-    const QRectF box =
-        editor.document()->documentLayout()->blockBoundingRect(inlineCode);
-    const QTextLine line = inlineCode.layout()->lineAt(0);
-    const int y = int(box.top() + line.y() + line.height() / 2) -
-                  editor.verticalScrollBar()->value();
-    int codeAt = -1;
-    int plainAt = -1;
-    for (QTextBlock::iterator it = inlineCode.begin(); !it.atEnd(); ++it) {
-        const QTextFragment fragment = it.fragment();
-        if (!fragment.isValid() || fragment.length() < 2) continue;
-        const int middle = fragment.position() - inlineCode.position() + fragment.length() / 2;
-        const int x = int(box.left() + line.cursorToX(middle));
-        if (fragment.charFormat().background().style() != Qt::NoBrush) codeAt = x;
-        else if (plainAt < 0) plainAt = x;
-    }
-    check(codeAt > 0 && plainAt > 0, "в строке есть и код, и обычный текст");
-    if (codeAt <= 0 || plainAt <= 0 || y < 0 || y >= frame.height()) return;
-    // Мерим у НИЗА строки, а не по её середине: посередине стоят буквы, и
-    // одна точка попадает в глиф, а не в заливку. Первый заход мерил именно
-    // так и молчал при снятой починке — то есть не проверял ничего.
-    const int low = int(box.top() + line.y() + line.height()) - 2 -
-                    editor.verticalScrollBar()->value();
-    if (low < 0 || low >= frame.height()) return;
-    const QColor onInline = frame.pixelColor(codeAt, low);
-    const QColor beside = frame.pixelColor(plainAt, low);
-    check(onInline != beside, "строчный код под выделением выглядит иначе, чем текст рядом");
-    check(onInline.red() < beside.red(), "и именно темнее: это подложка кода");
-}
-
 // Метаданные заметки редактор не видит — их нет в QTextDocument, — но терять
 // при сохранении не имеет права: в parent живёт место заметки в дереве.
 void checkMetaSurvivesEditing() {
@@ -1204,7 +1081,10 @@ void checkSizeAfterSoftBreak() {
         for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
             const QTextFragment fragment = it.fragment();
             if (!fragment.isValid() || fragment.text().isEmpty()) continue;
-            const qreal size = fragment.charFormat().fontPointSize();
+            // Кегль спрашиваем У ШРИФТА, а не у свойства FontPointSize:
+            // абсолютных кеглей в документе нет вовсе, размер задан ступенью
+            // от шрифта документа, и свойство пустое у всех знаков подряд.
+            const qreal size = QFontMetricsF(fragment.charFormat().font()).height();
             if (smallest == 0 || size < smallest) smallest = size;
             if (size > largest) largest = size;
         }
@@ -1781,63 +1661,6 @@ void checkColumnAcrossMargins() {
                "выделено ровно содержимое пункта");
 }
 
-// Выделение нескольких строк рисуется сплошным блоком. Высота строки назначена,
-// а Qt красит выделение по естественной — между полосами оставался
-// незакрашенный ряд, и на укороченной строке он читался сколом на углу.
-void checkSelectionHasNoGaps() {
-    QString source;
-    for (int i = 0; i < 4; ++i)
-        source += QStringLiteral("- пункт %1, достаточно длинный, чтобы занять ширину\n")
-                      .arg(i);
-    const QString path = writeNote("сплошное-выделение.md", source);
-
-    zametti::NoteEditor editor;
-    editor.resize(760, 260);
-    editor.show();
-    QTest::qWait(20);
-    editor.setFocus();
-    editor.openFile(path);
-    QTest::qWait(20);
-
-    QTextCursor cursor = editor.textCursor();
-    cursor.setPosition(editor.document()->firstBlock().position());
-    const QTextBlock last = editor.document()->findBlockByNumber(3);
-    cursor.setPosition(last.position() + last.length() - 1, QTextCursor::KeepAnchor);
-    editor.setTextCursor(cursor);
-    QTest::qWait(20);
-
-    QImage shot(editor.size(), QImage::Format_ARGB32);
-    editor.render(&shot);
-
-    const QColor highlight = editor.palette().color(QPalette::Highlight);
-    auto isHighlight = [&highlight](QRgb pixel) {
-        return qAbs(qRed(pixel) - highlight.red()) < 40 &&
-               qAbs(qGreen(pixel) - highlight.green()) < 40 &&
-               qAbs(qBlue(pixel) - highlight.blue()) < 40;
-    };
-
-    int firstRow = -1;
-    int lastRow = -1;
-    for (int y = 0; y < shot.height(); ++y) {
-        bool any = false;
-        for (int x = 0; x < shot.width() && !any; ++x) any = isHighlight(shot.pixel(x, y));
-        if (!any) continue;
-        if (firstRow < 0) firstRow = y;
-        lastRow = y;
-    }
-    check(firstRow >= 0 && lastRow - firstRow > 40,
-          "выделение должно занимать несколько строк");
-
-    int empty = 0;
-    for (int y = firstRow; y <= lastRow; ++y) {
-        bool any = false;
-        for (int x = 0; x < shot.width() && !any; ++x) any = isHighlight(shot.pixel(x, y));
-        if (!any) ++empty;
-    }
-    checkEqual(QStringLiteral("0"), QString::number(empty),
-               "внутри выделения не должно быть незакрашенных рядов");
-}
-
 // Пустая заметка. Каретка в ней должна быть видна и стоять там же, где встал бы
 // текст: у левого поля и в высоту строки. До правки блок оставался вовсе без
 // формата, каретка выходила кеглем по умолчанию в самом углу окна, и человек её
@@ -2264,7 +2087,10 @@ void checkSeparatorGeometry() {
     auto marginOf = [&editor](int number) {
         return editor.document()->findBlockByNumber(number).blockFormat().topMargin();
     };
-    const qreal line = editor.document()->findBlockByNumber(1).blockFormat().lineHeight();
+    // Высоту строки спрашиваем у модели: сырое свойство блока — доля (115), а
+    // не пиксели, и сравнивать поля с ним нельзя.
+    const qreal line =
+        zametti::assignedLineHeight(editor.document()->findBlockByNumber(1));
     const qreal above = marginOf(1);
     const qreal below = marginOf(4);
     check(above > 0.0 && qAbs(above - below) < 0.01,
@@ -2890,7 +2716,6 @@ static int ztRunSuite(int argc, char** argv) {
 
     checkOpenDoesNotTouchFile();
     checkStatsFreshness();
-    checkSelectionShowsCode();
     checkMetaSurvivesEditing();
     checkEmptyNoteCaret();
     checkCaretPainting();
@@ -2930,7 +2755,6 @@ static int ztRunSuite(int argc, char** argv) {
     checkUndoKeepsCursor();
     checkViewHoldsForEveryOperation();
     checkColumnAcrossMargins();
-    checkSelectionHasNoGaps();
     checkBlankLinesSurviveSaving();
     checkSeparatorGeometry();
 

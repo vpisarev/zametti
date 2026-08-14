@@ -53,7 +53,7 @@ std::string readFile(const std::string& path) {
 // Один круг через документ.
 std::string throughDocument(const std::string& text) {
     QTextDocument doc;
-    buildDocument(parse(text), doc, 1.0);
+    buildDocument(parse(text), doc);
     return serialize(readDocument(doc));
 }
 

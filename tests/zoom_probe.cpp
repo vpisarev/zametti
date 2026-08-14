@@ -34,6 +34,12 @@
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QAbstractTextDocumentLayout>
+#include <QImage>
+#include <QPainter>
+#include <QTextLayout>
+#include <QTextLine>
+#include <cmath>
+#include <string>
 #include <QTextObjectInterface>
 
 #include <algorithm>
@@ -232,6 +238,125 @@ int ztZoomProbe(int argc, char** argv) {
         std::printf("   по документу отдельно.\n");
         ZT_EQ("поля остались прежними", std::to_string(int(marginBefore)),
               std::to_string(int(marginAfter)));
+    }
+
+
+    // --- 6. КРАСИТ ЛИ Qt ВЫДЕЛЕНИЕ ПО ВСЕЙ ОТВЕДЁННОЙ ПОЛОСЕ ----------------
+    //
+    // Вопрос владельца: отрисовка текста отдана Qt, значит и выделение без
+    // разрывов — его работа. Проверяем прямо: один и тот же документ с одной и
+    // той же высотой строки, заданной ТРЕМЯ способами, красится выделением — и
+    // считаем ряды, оставшиеся незакрашенными.
+    {
+        struct Case {
+            const char* name;
+            QTextBlockFormat::LineHeightTypes type;
+            qreal value;
+        };
+
+        // Естественную высоту строки узнаём заранее: от неё считается доля.
+        qreal natural = 0.0;
+        {
+            QTextDocument probe;
+            probe.setTextWidth(400);
+            QTextCursor c(&probe);
+            c.insertText(QStringLiteral("Ы"));
+            probe.documentLayout()->documentSize();   // заставляем разметить
+            const QTextLayout* text = probe.begin().layout();
+            if (text != nullptr && text->lineCount() > 0)
+                natural = text->lineAt(0).height();
+            if (natural <= 0.0) natural = QFontMetricsF(probe.defaultFont()).height();
+        }
+
+        const Case cases[] = {
+            {"естественная (без свойства)", QTextBlockFormat::SingleHeight, 0},
+            {"доля 115 %", QTextBlockFormat::ProportionalHeight, 115},
+            {"пиксели, столько же", QTextBlockFormat::FixedHeight, std::round(natural * 1.15)},
+            {"пиксели, ровно естественная", QTextBlockFormat::FixedHeight, natural},
+        };
+
+        std::printf("\n6. Разрывы в выделении. Естественная высота строки %.3f\n", natural);
+        std::printf("   %-30s %-10s %-12s %-8s\n", "чем задана", "назначено", "полоса", "пусто");
+
+        for (const Case& one : cases) {
+            QTextDocument doc;
+            QTextCursor cursor(&doc);
+            for (int i = 0; i < 4; ++i) {
+                QTextBlockFormat block;
+                block.setLineHeight(one.value, one.type);
+                if (i > 0) cursor.insertBlock(block);
+                else cursor.setBlockFormat(block);
+                cursor.insertText(QStringLiteral("строка выделения"));
+            }
+            doc.setTextWidth(400);
+
+            QImage shot(400, 240, QImage::Format_ARGB32);
+            shot.fill(Qt::white);
+            {
+                QPainter painter(&shot);
+                QAbstractTextDocumentLayout::PaintContext ctx;
+                QAbstractTextDocumentLayout::Selection selection;
+                QTextCursor whole(&doc);
+                whole.movePosition(QTextCursor::End, QTextCursor::KeepAnchor);
+                selection.cursor = whole;
+                selection.format.setBackground(QColor(0, 0, 255));
+                selection.format.setForeground(QColor(255, 255, 255));
+                ctx.selections.append(selection);
+                doc.documentLayout()->draw(&painter, ctx);
+            }
+
+            int first = -1;
+            int last = -1;
+            for (int y = 0; y < shot.height(); ++y)
+                for (int x = 0; x < shot.width(); ++x)
+                    if (qBlue(shot.pixel(x, y)) > 200 && qRed(shot.pixel(x, y)) < 100) {
+                        if (first < 0) first = y;
+                        last = y;
+                        break;
+                    }
+            int empty = 0;
+            for (int y = first; y >= 0 && y <= last; ++y) {
+                bool any = false;
+                for (int x = 0; x < shot.width() && !any; ++x)
+                    any = qBlue(shot.pixel(x, y)) > 200 && qRed(shot.pixel(x, y)) < 100;
+                if (!any) ++empty;
+            }
+            const qreal assigned = doc.begin().blockFormat().lineHeight(natural, 1.0);
+            std::printf("   %-30s %-10.2f %-12s %-8d\n", one.name, assigned,
+                        (std::to_string(first) + ".." + std::to_string(last)).c_str(), empty);
+        }
+        std::printf("   Пусто > 0 значит: Qt оставляет ряды незакрашенными сам.\n");
+
+        // От ЧЕГО Qt считает долю. Спрашивать QTextLine::height() мало: он
+        // отдаёт округлённое вверх, а шаг разметки идёт по неокруглённому.
+        {
+            QTextDocument doc;
+            QTextCursor cursor(&doc);
+            for (int i = 0; i < 3; ++i) {
+                QTextBlockFormat block;
+                block.setLineHeight(115, QTextBlockFormat::ProportionalHeight);
+                if (i > 0) cursor.insertBlock(block);
+                else cursor.setBlockFormat(block);
+                cursor.insertText(QStringLiteral("строка"));
+            }
+            doc.setTextWidth(400);
+            doc.documentLayout()->documentSize();   // заставляем разметить
+            const QTextBlock first = doc.begin();
+            if (first.layout() == nullptr || first.layout()->lineCount() == 0) {
+                std::printf("   от чего доля: разметки нет, замер не вышел\n");
+                return zt::g_failures == 0 ? 0 : 1;
+            }
+            const QTextLine line = first.layout()->lineAt(0);
+            const QFontMetricsF metrics(first.charFormat().font());
+            const qreal step =
+                doc.documentLayout()->blockBoundingRect(first.next()).top() -
+                doc.documentLayout()->blockBoundingRect(first).top();
+            std::printf("   от чего доля: шаг %.3f; line.height %.3f, ascent+descent %.3f,\n"
+                        "                 leading %.3f, метрики height %.3f, lineSpacing %.3f\n",
+                        step, line.height(), line.ascent() + line.descent(), line.leading(),
+                        metrics.height(), metrics.lineSpacing());
+            std::printf("                 шаг / 1.15 = %.3f\n", step / 1.15);
+        }
     }
 
     std::printf("\n");

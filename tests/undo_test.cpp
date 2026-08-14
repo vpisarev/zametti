@@ -57,9 +57,9 @@ void checkAppearanceIsNotContent() {
         const Document ir = parse(source);
 
         QTextDocument small;
-        zametti::buildDocument(ir, small, 1.0);
+        zametti::buildDocument(ir, small);
         QTextDocument large;
-        zametti::buildDocument(ir, large, 2.5);
+        zametti::buildDocument(ir, large);
 
         checkEqual(zametti::toJson(zametti::readDocument(small)),
                    zametti::toJson(zametti::readDocument(large)),

@@ -191,7 +191,7 @@ void checkPaperPrep() {
         "![снимок](01n6vwnr03mxzq.jxl)\n";
 
     QTextDocument doc;
-    zametti::buildDocument(zametti::parse(source), doc, 1.0);
+    zametti::buildDocument(zametti::parse(source), doc);
     zametti::prepareForPaper(doc);
 
     QString all;
