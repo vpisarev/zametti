@@ -81,27 +81,10 @@ bool Document::isClosedHtmlComment(const Block& b) const {
 }
 
 bool Document::wouldMerge(const Block& previous, const Block& next) const {
-    // Законченный HTML-комментарий обрывает себя сам: "-->" завершает блок, и
-    // любой сосед начинается заново — замерено на md4c для кода, абзаца,
-    // черты, таблицы и второго комментария. Он прозрачен для соседства, в
-    // отличие от прочего дословного. Kind::Html (комментарий, понятый
-    // моделью) прозрачен так же; снизу его защищает то, что HTML-блок второго
-    // типа прерывает абзац по спецификации.
-    if (isClosedHtmlComment(previous)) return false;
-    if (!previous.raw && previous.kind == Kind::Html) return false;
-    // Два блока кода подряд: их заборы спарились бы не так, как надо, — канон
-    // ведь дописывает закрывающий забор незакрытому. Два дословных куска
-    // подряд — по той же причине непрозрачности.
-    const bool prevLiteral = previous.raw || previous.kind == Kind::Code;
-    const bool nextLiteral = next.raw || next.kind == Kind::Code;
-    if (prevLiteral && nextLiteral) return true;
-    // Разделитель ("___") стоит вплотную к любому соседу: подчёркивание не
-    // бывает setext-подчёркиванием — замерено для абзаца, пункта, цитаты,
-    // заголовка, комментария и второго разделителя. Ровно ради этого канон и
-    // выбрал "___", а не "---".
-    if (next.kind != Kind::Paragraph) return false;
-    return previous.kind == Kind::Paragraph || previous.kind == Kind::Quote ||
-           isList(previous.kind);
+    // Правило живёт в block_kind.h — одно на разбор, на живой документ и на это
+    // умирающее представление.
+    return zametti::wouldMerge(previous.kind, previous.raw, isClosedHtmlComment(previous),
+                               next.kind, next.raw);
 }
 
 void Document::validate() const {

@@ -130,35 +130,18 @@ bool isVSpaceBlock(const QTextBlock& block) {
 
 bool blocksWouldMerge(const QTextBlock& previous, const QTextBlock& next) {
     if (!previous.isValid() || !next.isValid()) return false;
-    // wouldMerge смотрит только на род и на дословность — большего для этого
-    // вопроса и не нужно, поэтому обходимся заготовками, а не читаем блоки
-    // целиком.
-    Document ir;
-    auto stub = [&ir](const QTextBlock& block, bool asPrevious) {
-        Block out;
-        if (isRawBlock(block)) {
-            // Дословный кусок лежит построчно; для wouldMerge довольно знать,
-            // законченный ли это HTML-комментарий — он прозрачен для соседства
-            // (см. Document::isClosedHtmlComment), прочее дословное непрозрачно.
-            // Первая строка куска — назад по строкам-продолжениям.
-            QTextBlock first = block;
-            while (isContinuationBlock(first) && first.previous().isValid())
-                first = first.previous();
-            const bool closed = asPrevious &&
-                                first.text().startsWith(QStringLiteral("<!--")) &&
-                                block.text().endsWith(QStringLiteral("-->"));
-            // Заготовка дословного куска: точные байты не важны, важно лишь,
-            // законченный ли это комментарий.
-            out.raw = true;
-            out.text = ir.append(closed ? "<!---->\n" : " ");
-        } else {
-            out.kind = kindOf(block);
-        }
-        return out;
-    };
-    const Block first = stub(previous, true);
-    const Block second = stub(next, false);
-    return ir.wouldMerge(first, second);
+    // Законченный ли комментарий предыдущий кусок: дословное лежит построчно,
+    // поэтому начало ищем назад по строкам-продолжениям, а конец берём у самого
+    // блока.
+    bool closedComment = false;
+    if (isRawBlock(previous)) {
+        QTextBlock head = previous;
+        while (isContinuationBlock(head) && head.previous().isValid()) head = head.previous();
+        closedComment = head.text().startsWith(QStringLiteral("<!--")) &&
+                        previous.text().endsWith(QStringLiteral("-->"));
+    }
+    return wouldMerge(kindOf(previous), isRawBlock(previous), closedComment, kindOf(next),
+                      isRawBlock(next));
 }
 
 Kind kindOf(const QTextBlock& block) {
