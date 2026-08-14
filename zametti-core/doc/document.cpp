@@ -365,11 +365,11 @@ HitLine ZDocument::hitLine(const Hit& hit, int radius) const {
 
 // --- показ -----------------------------------------------------------------
 
-void ZDocument::showIn(const std::function<void(QTextDocument*)>& attach) {
+QTextDocument* ZDocument::getDocument() {
     // Вёрстку включаем здесь: пока заметку не показывают, считать строки и
     // глифы незачем, а с этой минуты — нужно.
     d_->text.setLayoutEnabled(true);
-    attach(&d_->text);
+    return &d_->text;
 }
 
 // --- сравнение -------------------------------------------------------------

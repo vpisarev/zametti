@@ -188,6 +188,13 @@ add_test(NAME core-without-widgets
                  -DWIDGETS_DIR=${ZAMETTI_WIDGETS_INCLUDE}
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/no_widgets_check.cmake)
 
+# Живой QTextDocument отдаётся наружу только чтобы его показать. Всё остальное
+# делается методами заметки — см. правило в CLAUDE.md.
+add_test(NAME document-only-for-showing
+         COMMAND ${CMAKE_COMMAND}
+                 "-DSOURCE_DIRS=${CMAKE_SOURCE_DIR}/zametti-core;${CMAKE_SOURCE_DIR}/app;${CMAKE_SOURCE_DIR}/store;${CMAKE_CURRENT_SOURCE_DIR}"
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/get_document_check.cmake)
+
 # При СТАТИЧЕСКОМ Qt исполняемому файлу нужен ещё и плагин платформы, а вписать
 # его в компоновку должен кто-то знающий. Знает Qt.
 if(Qt6_FOUND AND NOT ZAMETTI_QT_SHARED)

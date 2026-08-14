@@ -436,27 +436,23 @@ TEST(ZDocument, Diff) {
           std::to_string(byBytes.blockCount()));
 }
 
-// Люк к живому документу: показать можно, унести нельзя.
-TEST(ZDocument, ShowIn) {
+// Люк к живому документу. Разрешено ровно одно применение — отдать его виду
+// через setDocument; за этим следит отдельный сторож сборки, а здесь проверяем,
+// что отданное и правда та же заметка.
+TEST(ZDocument, GetDocument) {
     ZDocument doc;
     ASSERT_TRUE(doc.loadMarkdown("# Заголовок\n\nабзац\n"));
 
-    int blocks = 0;
-    bool layoutOn = false;
-    doc.showIn([&](QTextDocument* text) {
-        ASSERT_NE(text, nullptr);
-        blocks = text->blockCount();
-        // Вёрстка включается ровно в этот момент: до показа считать глифы
-        // незачем, а с этой минуты вид спросит и высоту строки, и переносы.
-        layoutOn = text->documentLayout() != nullptr && text->pageSize().isValid();
-        Q_UNUSED(layoutOn);
-    });
-    ZT_TRUE("документ показан и в нём есть блоки", blocks > 0);
+    QTextDocument* text = doc.getDocument();
+    ASSERT_NE(text, nullptr);
+    ZT_TRUE("в показанном документе есть блоки", text->blockCount() > 0);
 
     // Заметка копируется дёшево и разделяет тот же документ — вид держит у себя
     // копию, и показанное не умирает у него под руками.
     ZDocument held = doc;
-    int again = 0;
-    held.showIn([&](QTextDocument* text) { again = text->blockCount(); });
-    ZT_EQ("копия показывает тот же документ", std::to_string(blocks), std::to_string(again));
+    ZT_TRUE("копия показывает ТОТ ЖЕ документ", held.getDocument() == text);
+
+    // Клон — другая заметка, и документ у него свой.
+    ZDocument apart = doc.clone();
+    ZT_TRUE("у клона документ свой", apart.getDocument() != text);
 }
