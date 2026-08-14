@@ -35,6 +35,7 @@ add_executable(zametti-tests
     main.cpp
 
     # --- формат ---
+    zdocument_test.cpp
     hash_test.cpp
     id_test.cpp
     roundtrip_test.cpp
