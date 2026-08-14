@@ -120,7 +120,7 @@ const char* const kNeedles[] = {"function", "заметка", "курсив", "r
 
 }  // namespace
 
-int main(int argc, char** argv) {
+int ztIrBench(int argc, char** argv) {
     if (argc < 3) {
         std::fprintf(stderr, "использование: ir_bench <метка> <путь>...\n");
         return 2;

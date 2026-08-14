@@ -200,9 +200,8 @@ Sample measure(zametti::NoteEditor& editor, const QString& path, bool selected =
 
 }  // namespace
 
-int main(int argc, char** argv) {
+int ztRenderBench(int argc, char** argv) {
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) qputenv("QT_QPA_PLATFORM", "offscreen");
-    QApplication app(argc, argv);
     zametti::loadAppearance(nullptr);
 
     zametti::NoteEditor editor;

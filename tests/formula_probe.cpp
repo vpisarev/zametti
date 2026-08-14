@@ -376,8 +376,7 @@ void shootRuler(int zoom) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QGuiApplication app(argc, argv);
+int ztFormulaProbe(int argc, char** argv) {
     g_shots = argc > 1 ? QString::fromLocal8Bit(argv[1]) : QDir::tempPath();
     QDir().mkpath(g_shots);
     zametti::loadEmbeddedFonts();

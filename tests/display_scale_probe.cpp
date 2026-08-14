@@ -12,8 +12,7 @@
 
 #include <cstdio>
 
-int main(int argc, char** argv) {
-    QApplication app(argc, argv);
+int ztDisplayScaleProbe(int argc, char** argv) {
     const QString dir = argc > 1 ? QString::fromLocal8Bit(argv[1]) : QDir::tempPath();
     QDir().mkpath(dir);
     QString error;

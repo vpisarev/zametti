@@ -57,8 +57,7 @@ QByteArray slurp(const QString& path) {
 
 using namespace zametti;
 
-int main(int argc, char** argv) {
-    QGuiApplication app(argc, argv);
+int ztCmykProbe(int argc, char** argv) {
     QImageReader::setAllocationLimit(2048);
     if (argc < 2) {
         std::fprintf(stderr, "нужен каталог с приготовленными файлами\n");

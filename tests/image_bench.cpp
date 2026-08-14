@@ -627,8 +627,7 @@ void collect(const QString& path, QStringList* out) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QGuiApplication app(argc, argv);
+int ztImageBench(int argc, char** argv) {
     if (argc < 2) {
         std::fprintf(stderr, "  taskset -c 0 image_bench <файл-или-каталог> [ещё...]\n");
         return 2;

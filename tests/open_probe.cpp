@@ -3,8 +3,8 @@
 #include <QElapsedTimer>
 #include <QTest>
 #include <cstdio>
-int main(int argc, char** argv) {
-    QApplication app(argc, argv);
+int ztOpenProbe(int argc, char** argv) {
+    (void)argc;
     zametti::NoteEditor editor;
     editor.resize(1000, 800);
     editor.show();

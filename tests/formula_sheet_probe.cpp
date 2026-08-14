@@ -23,8 +23,7 @@
 
 #include <cstdio>
 
-int main(int argc, char** argv) {
-    QApplication app(argc, argv);
+int ztFormulaSheetProbe(int argc, char** argv) {
     if (argc < 3) {
         std::fprintf(stderr, "использование: formula_sheet_probe <заметка.md> <каталог>\n");
         return 2;

@@ -171,8 +171,7 @@ QString human(qint64 bytes) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QApplication app(argc, argv);
+int ztHistoryBench(int argc, char** argv) {
 
     const QString root = QStringLiteral(ZAMETTI_TESTDATA) + QStringLiteral("/history-bench");
     QDir(root).removeRecursively();

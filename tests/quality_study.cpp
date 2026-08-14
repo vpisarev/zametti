@@ -117,8 +117,7 @@ QString sourceOf(const QString& path) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QGuiApplication app(argc, argv);
+int ztQualityStudy(int argc, char** argv) {
     if (argc < 3) {
         std::fprintf(stderr, "quality_study <список> <csv> [quality|restore]\n");
         return 2;

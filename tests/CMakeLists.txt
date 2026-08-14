@@ -134,10 +134,38 @@ target_compile_definitions(zametti-tests PRIVATE
 # делает это лучше, а прогон целиком и есть та самая проверка «один процесс».
 add_test(NAME zametti-tests COMMAND zametti-tests)
 
+# --- стенды и приборы ------------------------------------------------------
+#
+# Не наборы: они меряют, а не проверяют, и в общий процесс не идут. Одной
+# программой с подкомандой, а не одиннадцатью целями — см. bench_main.cpp.
+add_executable(zametti-bench
+    bench_main.cpp
+    ir_bench.cpp
+    history_bench.cpp
+    image_bench.cpp
+    render_bench.cpp
+    quality_study.cpp
+    formula_probe.cpp
+    formula_sheet_probe.cpp
+    cmyk_probe.cpp
+    display_scale_probe.cpp
+    matrix_probe.cpp
+    open_probe.cpp
+)
+# gtest здесь не ради проверок, а ради макросов ZT_EQ/ZT_TRUE: некоторые
+# стенды ими же и печатают, что у них сошлось.
+target_link_libraries(zametti-bench PRIVATE zametti-ui gtest Qt6::Test zametti-code-rules)
+target_include_directories(zametti-bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(zametti-bench PRIVATE
+    ZAMETTI_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    ZAMETTI_BINARY_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+    ZAMETTI_TESTDATA="${CMAKE_SOURCE_DIR}/.testdata")
+
 # Сваливатель markdown в JSON. Отдельная программа, потому что это ИНСТРУМЕНТ:
 # им смотрят на разбор чужого файла руками.
 add_executable(mddump mddump.cpp)
-target_link_libraries(mddump PRIVATE zametti-core zametti-code-rules)
+# gtest — только ради ZT_EQ из общей обвязки; проверок в инструменте нет.
+target_link_libraries(mddump PRIVATE zametti-core gtest zametti-code-rules)
 
 # --- механический сторож ---------------------------------------------------
 #
@@ -162,5 +190,6 @@ add_test(NAME core-without-widgets
 # его в компоновку должен кто-то знающий. Знает Qt.
 if(Qt6_FOUND AND NOT ZAMETTI_QT_SHARED)
     qt_finalize_target(zametti-tests)
+    qt_finalize_target(zametti-bench)
     qt_finalize_target(mddump)
 endif()

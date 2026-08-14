@@ -4,8 +4,8 @@
 #include <QApplication>
 #include <QImage>
 #include <cstdio>
-int main(int argc, char** argv) {
-    QApplication app(argc, argv);
+int ztMatrixProbe(int argc, char** argv) {
+    (void)argc;
     zametti::loadEmbeddedFonts();   // заодно поднимает ресурсы qrc
     QString error;
     if (!zametti::Formulas::init(&error)) { std::printf("движок: %s\n", qPrintable(error)); return 1; }
