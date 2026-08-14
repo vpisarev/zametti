@@ -1,4 +1,4 @@
-#include "document.h"
+#include "document_impl.h"
 
 #include "archive.h"
 #include "doc_model.h"
@@ -26,12 +26,6 @@ namespace zametti {
 // живёт внутри двух функций и наружу не выходит. Заменить эти два мостика на
 // прямой проход md4c → QTextDocument и обратно — следующий шаг, и наборы его
 // сторожат: круг обязан остаться неподвижной точкой.
-struct ZDocument::Data {
-    QTextDocument text;
-    NoteHeader header;
-
-    Data() { text.setLayoutEnabled(false); }
-};
 
 namespace {
 
@@ -86,7 +80,6 @@ bool ZDocument::loadMarkdown(std::string_view bytes) {
     return true;
 }
 
-std::string ZDocument::toMarkdown() const { return serialize(irOf(d_->text, d_->header)); }
 
 Digest ZDocument::digest() const {
     const std::string bytes = toMarkdown();
@@ -243,27 +236,6 @@ std::vector<BlockInfo> ZDocument::blocks() const {
     return out;
 }
 
-std::vector<SourceLine> ZDocument::sourceLines() const {
-    // Тело БЕЗ шапки: в шапке живёт `modified`, она меняется при каждой записи,
-    // и всякая разность начиналась бы с неё — всегда одной и той же строки.
-    Document body = readDocument(d_->text);
-    std::vector<BlockLines> map;
-    const std::string text = serialize(body, &map);
-
-    std::vector<SourceLine> out;
-    const QString whole = QString::fromUtf8(text.data(), qsizetype(text.size()));
-    const QStringList lines = whole.split(QLatin1Char('\n'));
-    out.reserve(size_t(lines.size()));
-    for (const QString& line : lines) out.push_back(SourceLine{line, -1});
-    // Карта блоков: у каждого блока известны первая строка и сколько их.
-    for (size_t block = 0; block < map.size(); ++block) {
-        for (int i = 0; i < map[block].count; ++i) {
-            const int line = map[block].first + i;
-            if (line >= 0 && size_t(line) < out.size()) out[size_t(line)].block = int(block);
-        }
-    }
-    return out;
-}
 
 // --- вложения --------------------------------------------------------------
 

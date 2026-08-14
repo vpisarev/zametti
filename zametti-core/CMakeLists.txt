@@ -36,7 +36,7 @@ add_library(zametti-core STATIC
     format/ir.h                 format/ir.cpp
     format/meta.cpp
     format/parser.h             format/parser.cpp
-    format/serializer.h         format/serializer.cpp
+    format/serializer.h
     format/table.h              format/table.cpp
     format/math_scan.h          format/math_scan.cpp
     format/json_dump.h          format/json_dump.cpp
@@ -70,6 +70,9 @@ add_library(zametti-core STATIC
     doc/block_kind.h
     doc/note_header.h           doc/note_header.cpp
     doc/document.h              doc/document.cpp
+    doc/document_impl.h
+    doc/markdown_writer.cpp
+    doc/ir_bridge.cpp
     doc/block_object.h          doc/block_object.cpp
     doc/diff.h                  doc/diff.cpp
     doc/diff_view.h             doc/diff_view.cpp

@@ -1,31 +1,110 @@
-// IR → markdown.
+// ZDocument → канонический markdown. Часть класса, а не отдельная библиотека:
+// свободной функции «сериализовать документ» больше нет вовсе, и это нарочно —
+// пока она была, все ходили мимо класса.
 //
-// Вывод всегда одинаковый: '-' для маркированных списков, нумерация с 1,
-// ATX-заголовки, огороженный код, strong снаружи emphasis. Подчёркивания нет.
-//
-// Отступ вложенных списков считается не «2 пробела на уровень», а по ширине
-// маркера родителя. Для маркированных списков это те же 2 пробела, но под
-// "1. " содержимое начинается с колонки 3, и вложенный список с отступом 2
-// разорвал бы родительский — CommonMark считает такую строку не продолжением
-// элемента, а новым блоком.
-//
-// Текст блока сюда приходит видом в арену (string_view), а не строкой: копий
-// содержимого при выводе не делается вовсе.
+// КАНОН. Zametti не ставит целью сохранить чужой markdown байт в байт: при
+// первом открытии он приводится к одному виду — заголовки только ATX, буллет
+// «-», нумерация настоящими номерами, курсив «_», хвостовые пробелы прочь,
+// файл кончается одним переводом строки. Отсюда главный инвариант: причесали
+// один раз — дальше ни байта.
 
-#include "serializer.h"
+#include "document_impl.h"
 
+#include "block_kind.h"
+#include "doc_model.h"
 #include "math_scan.h"
 
+#include <QString>
+#include <QTextBlock>
+#include <QTextCharFormat>
+#include <QTextDocument>
+#include <QTextFragment>
+
 #include <algorithm>
-#include <cassert>
-#include <cstdio>
-#include <cctype>
-#include <cstring>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace zametti {
+namespace {
+
+// Какие строки файла занял блок. Нужна разности версий: единица сравнения —
+// строка, а полоски на поле рисуются по блокам.
+struct BlockLines {
+    int first = 0;
+    int count = 0;
+};
+
+// МЕСТНЫЕ структуры писателя. Не представление заметки: они живут внутри одного
+// вызова, покрывают ровно один блок и наружу не выходят. Ареной, сквозными
+// индексами и вторым живым документом здесь не пахнет — есть текст блока и
+// куски строки с начертанием, ровно то, что нужно, чтобы блок записать.
+struct Run {
+    int32_t start = 0;      // байты, от начала текста блока
+    int32_t end = 0;
+    uint8_t flags = 0;      // биты InlineFlag
+    std::string href;
+    std::string title;
+
+    bool bold() const { return (flags & InlineBold) != 0; }
+    bool italic() const { return (flags & InlineItalic) != 0; }
+    bool strike() const { return (flags & InlineStrike) != 0; }
+    bool code() const { return (flags & InlineCode) != 0; }
+    bool image() const { return (flags & InlineImage) != 0; }
+    bool comment() const { return (flags & InlineComment) != 0; }
+    bool math() const { return (flags & InlineMath) != 0; }
+    void set(uint8_t bit, bool on) { flags = uint8_t(on ? (flags | bit) : (flags & ~bit)); }
+};
+
+// Логический блок заметки, готовый к записи. Литеральные куски документа
+// (код, дословное) лежат построчно и здесь уже склеены обратно.
+struct Piece {
+    Kind kind = Kind::Paragraph;
+    Marker marker = Marker::Bullet;
+    HtmlKind html = HtmlKind::Comment;
+    int level = 0;
+    int headingLevel = 0;
+    bool checked = false;
+    bool raw = false;
+    std::string info;       // язык блока кода
+    std::string text;
+    std::vector<Run> runs;
+
+    std::string_view view(const Run& r) const {
+        return std::string_view(text).substr(size_t(r.start), size_t(r.end - r.start));
+    }
+};
+
+// Законченный HTML-комментарий: он обрывает себя сам, и сосед начинается
+// заново — замерено на md4c для кода, абзаца, черты, таблицы и второго
+// комментария.
+bool isClosedHtmlComment(const Piece& b) {
+    if (!b.raw) return false;
+    const std::string_view raw = b.text;
+    if (raw.size() < 8) return false;
+    return raw.compare(0, 4, "<!--") == 0 && raw.compare(raw.size() - 4, 4, "-->\n") == 0;
+}
+
+// Слипнутся ли два блока, окажись они в файле подряд без пустой строки.
+bool wouldMerge(const Piece& previous, const Piece& next) {
+    if (isClosedHtmlComment(previous)) return false;
+    if (!previous.raw && previous.kind == Kind::Html) return false;
+    // Два блока кода подряд: их заборы спарились бы не так, как надо. Два
+    // дословных куска подряд — по той же причине непрозрачности.
+    const bool prevLiteral = previous.raw || previous.kind == Kind::Code;
+    const bool nextLiteral = next.raw || next.kind == Kind::Code;
+    if (prevLiteral && nextLiteral) return true;
+    // Разделитель ("___") стоит вплотную к любому соседу: подчёркивание не
+    // бывает setext-подчёркиванием. Ровно ради этого канон его и выбрал.
+    if (next.kind != Kind::Paragraph) return false;
+    return previous.kind == Kind::Paragraph || previous.kind == Kind::Quote ||
+           isList(previous.kind);
+}
+
+}  // namespace
+
+
 namespace {
 
 bool isAsciiSpace(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
@@ -480,10 +559,10 @@ enum Attr { kStrike = 0, kBold = 1, kItalic = 2, kHref = 3, kCode = 4, kAttrCoun
 struct Segment {
     size_t begin = 0;
     size_t end = 0;
-    const Inline* span = nullptr;   // nullptr → голый текст между спанами
+    const Run* span = nullptr;   // nullptr → голый текст между кусками
 };
 
-bool hasAttr(const Inline* s, int a) {
+bool hasAttr(const Run* s, int a) {
     if (s == nullptr) return false;
     // Картинка, строчный комментарий и формула выводятся целиком отдельными
     // ветвями; в ряды соседних признаков их втягивать нельзя.
@@ -502,13 +581,13 @@ bool hasAttr(const Inline* s, int a) {
 
 // Смещения спанов относительные — от начала текста блока, — поэтому сегменты
 // индексируют ровно этот текст, и пересчитывать ничего не нужно.
-std::vector<Segment> splitIntoSegments(const Document& doc, const Block& b) {
-    const size_t textSize = doc.text(b).size();
+std::vector<Segment> splitIntoSegments(const Piece& b) {
+    const size_t textSize = b.text.size();
     std::vector<Segment> segs;
     size_t pos = 0;
-    for (const Inline& s : doc.inlines(b)) {
-        size_t so = static_cast<size_t>(s.text.start);
-        size_t se = static_cast<size_t>(s.text.end);
+    for (const Run& s : b.runs) {
+        size_t so = static_cast<size_t>(s.start);
+        size_t se = static_cast<size_t>(s.end);
         if (so > textSize || se > textSize || se < so || so < pos) continue;
         if (so > pos) segs.push_back(Segment{pos, so, nullptr});
         segs.push_back(Segment{so, se, &s});
@@ -519,17 +598,16 @@ std::vector<Segment> splitIntoSegments(const Document& doc, const Block& b) {
 }
 
 // Длина ряда соседей, у которых есть этот же признак.
-size_t runLength(const Document& doc, const std::vector<Segment>& segs, size_t i, size_t hi,
-                 int attr) {
-    const std::string_view href = doc.href(*segs[i].span);
+size_t runLength(const std::vector<Segment>& segs, size_t i, size_t hi, int attr) {
+    const std::string_view href = segs[i].span->href;
     size_t j = i;
     while (j < hi && hasAttr(segs[j].span, attr) &&
-           (attr != kHref || doc.href(*segs[j].span) == href))
+           (attr != kHref || segs[j].span->href == href))
         ++j;
     return j - i;
 }
 
-void emitSegments(TextSink& sink, const Document& doc, std::string_view text,
+void emitSegments(TextSink& sink, const Piece& b, std::string_view text,
                   const std::vector<Segment>& segs, size_t lo, size_t hi, unsigned openMask,
                   std::vector<unsigned char>* marksBuf) {
     size_t i = lo;
@@ -561,7 +639,7 @@ void emitSegments(TextSink& sink, const Document& doc, std::string_view text,
         // иначе), поэтому весь спан выводится одним куском. Скобки в подписи
         // экранируются как в тексте ссылки — иначе подпись оборвётся.
         if (segs[i].span != nullptr && segs[i].span->image()) {
-            const Inline& img = *segs[i].span;
+            const Run& img = *segs[i].span;
             if (marksBuf != nullptr)
                 for (size_t k = segs[i].begin; k < segs[i].end; ++k)
                     (*marksBuf)[k] |= kMarkInLink;
@@ -569,8 +647,8 @@ void emitSegments(TextSink& sink, const Document& doc, std::string_view text,
             sink.bol = false;
             appendEscaped(sink, text, segs[i].begin, segs[i].end);
             sink.out += "](";
-            appendHref(sink.out, doc.href(img));
-            const std::string_view imgTitle = doc.title(img);
+            appendHref(sink.out, img.href);
+            const std::string_view imgTitle = img.title;
             if (!imgTitle.empty()) {
                 // Кавычку и перевод строки разбор в title не пускает; обратная
                 // косая экранируется, чтобы не съела закрывающую кавычку.
@@ -593,7 +671,7 @@ void emitSegments(TextSink& sink, const Document& doc, std::string_view text,
         for (int a = 0; a < kAttrCount; ++a) {
             if ((openMask & (1u << a)) != 0) continue;
             if (!hasAttr(segs[i].span, a)) continue;
-            size_t len = runLength(doc, segs, i, hi, a);
+            size_t len = runLength(segs, i, hi, a);
             if (len > best) { best = len; attr = a; }
         }
         if (attr < 0) {
@@ -602,7 +680,7 @@ void emitSegments(TextSink& sink, const Document& doc, std::string_view text,
             continue;
         }
 
-        const std::string_view href = doc.href(*segs[i].span);
+        const std::string_view href = segs[i].span->href;
         size_t j = i + best;
 
         size_t gb = segs[i].begin;
@@ -656,7 +734,7 @@ void emitSegments(TextSink& sink, const Document& doc, std::string_view text,
         }
         sink.bol = false;
 
-        emitSegments(sink, doc, text, segs, i, j, openMask | (1u << attr), marksBuf);
+        emitSegments(sink, b, text, segs, i, j, openMask | (1u << attr), marksBuf);
 
         switch (attr) {
             case kStrike: sink.out += "~~"; break;
@@ -673,9 +751,9 @@ void emitSegments(TextSink& sink, const Document& doc, std::string_view text,
     }
 }
 
-void appendInlineText(TextSink& sink, const Document& doc, const Block& b) {
-    const std::string_view text = doc.text(b);
-    std::vector<Segment> segs = splitIntoSegments(doc, b);
+void appendInlineText(TextSink& sink, const Piece& b) {
+    const std::string_view text = b.text;
+    std::vector<Segment> segs = splitIntoSegments(b);
 
     // Пометки зависят от расстановки ограничителей, а она — от текста. Поэтому
     // первый проход только собирает пометки, а выводит уже второй.
@@ -684,10 +762,10 @@ void appendInlineText(TextSink& sink, const Document& doc, const Block& b) {
     probe.contIndent = sink.contIndent;
     probe.bol = sink.bol;
     probe.hasLinkDefs = sink.hasLinkDefs;
-    emitSegments(probe, doc, text, segs, 0, segs.size(), 0, &marks);
+    emitSegments(probe, b, text, segs, 0, segs.size(), 0, &marks);
 
     sink.marks = &marks;
-    emitSegments(sink, doc, text, segs, 0, segs.size(), 0, nullptr);
+    emitSegments(sink, b, text, segs, 0, segs.size(), 0, nullptr);
     sink.marks = nullptr;
 }
 
@@ -712,7 +790,7 @@ std::string fenceFor(std::string_view code, std::string_view info) {
     return std::string(n, ch);
 }
 
-void validate([[maybe_unused]] const Document& doc, [[maybe_unused]] const Block& b) {
+void validate([[maybe_unused]] const Piece& b) {
     if (b.raw) return;
     assert((b.kind == Kind::Heading) == (b.headingLevel != 0) &&
            "headingLevel осмыслен только у заголовка");
@@ -728,11 +806,11 @@ void validate([[maybe_unused]] const Document& doc, [[maybe_unused]] const Block
     assert((b.kind == Kind::ListItem || !b.checked) && "отметка осмысленна только у задачи");
     assert((b.kind == Kind::Code || b.info.empty()) && "info осмыслена только у блока кода");
     assert(b.level >= -1 && "уровень мельче, чем вне списка");
-    assert((b.kind != Kind::Html || doc.text(b).find("-->") == std::string_view::npos) &&
+    assert((b.kind != Kind::Html || b.text.find("-->") == std::string::npos) &&
            "внутренность комментария не может содержать -->");
     assert((b.kind != Kind::Html || b.inlines.empty()) &&
            "внутри комментария разметки не бывает");
-    for ([[maybe_unused]] const Inline& s : doc.inlines(b)) {
+    for ([[maybe_unused]] const Run& s : b.runs) {
         assert((!s.image() || !s.href.empty()) && "у картинки обязан быть путь");
         assert((!s.comment() ||
                 (s.flags == InlineComment && s.href.empty())) &&
@@ -746,7 +824,7 @@ void validate([[maybe_unused]] const Document& doc, [[maybe_unused]] const Block
     }
 }
 
-std::string markerFor(const Block& b, int ordinal) {
+std::string markerFor(const Piece& b, int ordinal) {
     switch (b.marker) {
         case Marker::Bullet:  return "- ";
         case Marker::Task:    return b.checked ? "- [x] " : "- [ ] ";
@@ -762,7 +840,7 @@ std::string markerFor(const Block& b, int ordinal) {
 // Ширина собственно маркера списка. Чекбокс "[ ] " маркером не является — это
 // уже содержимое элемента, и вложенный список отсчитывается не от него:
 // "- [ ] a" + "  - b" даёт вложенность, а не продолжение текста.
-size_t markerIndentWidth(const Block& b, int ordinal) {
+size_t markerIndentWidth(const Piece& b, int ordinal) {
     if (b.marker != Marker::Ordered) return 2;
     char buf[24];
     std::snprintf(buf, sizeof(buf), "%d. ", ordinal);
@@ -772,7 +850,7 @@ size_t markerIndentWidth(const Block& b, int ordinal) {
 // Отступ блока, стоящего внутри пункта: колонка содержимого того пункта. Вне
 // списка отступа нет. Колонки считает сам обход по пунктам, здесь мы их только
 // читаем — и осторожно: у оторвавшегося блока колонки может и не оказаться.
-size_t indentInsideItem(const Block& b, const std::vector<size_t>& contentCol) {
+size_t indentInsideItem(const Piece& b, const std::vector<size_t>& contentCol) {
     if (b.level < 0) return 0;
     const size_t at = static_cast<size_t>(b.level) + 1;
     return at < contentCol.size() ? contentCol[at] : 0;
@@ -863,48 +941,67 @@ std::string normaliseSpaces(std::string_view text) {
     return out;
 }
 
-std::string serialize(const Document& doc, std::vector<BlockLines>* map) {
-    doc.validate();
-    std::string out;
+namespace {
+
+// ПИСАТЕЛЬ. Класс, а не россыпь функций с общим `out` в параметрах: у записи
+// есть состояние — колонки вложенности, счётчики нумерации, живые прогоны
+// списков, предыдущий блок, — и держать его в классе честнее, чем таскать
+// восемью доводами.
+//
+// Наружу из файла не торчит ничего: единственный вход — метод
+// ZDocument::toMarkdown ниже. Свободной функции «сериализовать документ» больше
+// нет вовсе, и это нарочно: пока она была, все ходили мимо класса.
+class Writer {
+public:
+    Writer(const NoteHeader& header, bool hasLinkDefs, bool wantMap)
+        : hasLinkDefs_(hasLinkDefs), wantMap_(wantMap) {
+        out_ += header.toBytes();
+    }
+
+    // Очередной ЛОГИЧЕСКИЙ блок заметки.
+    void push(const Piece& b);
+
+    std::string finish(std::vector<BlockLines>* map);
+
+protected:
+
+    std::string out_;
     // Где начался каждый блок — пока в БАЙТАХ; в номера строк переведём одним
     // проходом в конце. Так карта не мешает потоку вывода: у него полдюжины
     // мест с `continue`, и считать строки по дороге значило бы не забыть ни
     // одного из них.
-    std::vector<size_t> startsAt;
-    if (map != nullptr) startsAt.reserve(doc.blocks.size());
-
-    if (doc.meta.present) {
-        out += "<!-- zametti\n";
-        for (const std::string& line : doc.meta.lines) {
-            assert(line.find('\n') == std::string::npos && "строка метаданных — одна строка");
-            assert(line.find("-->") == std::string::npos && "'-->' закрыл бы комментарий раньше");
-            out += line;
-            out += '\n';
-        }
-        out += "-->\n";
-        if (doc.meta.blankAfter) out += '\n';
-    }
-
-    bool hasLinkDefs = false;
-    for (const Block& b : doc.blocks)
-        if (b.raw && looksLikeLinkDefinition(doc.text(b))) { hasLinkDefs = true; break; }
-
+    std::vector<size_t> startsAt_;
     // Колонка, с которой начинается содержимое на каждом уровне вложенности,
     // и счётчики нумерации.
-    std::vector<size_t> contentCol{0};
-    std::vector<int> ordinal{0};
-    std::vector<char> runAlive{0};      // на этом уровне прогон ещё идёт
-    std::vector<char> runOrdered{0};    // и он нумерованный
+    std::vector<size_t> contentCol_{0};
+    std::vector<int> ordinal_{0};
+    std::vector<char> runAlive_{0};      // на этом уровне прогон ещё идёт
+    std::vector<char> runOrdered_{0};    // и он нумерованный
+    bool prevWasQuote_ = false;
+    bool hasFirst_ = false;              // хоть один блок уже записан
+    Piece previous_;
+    bool hasLinkDefs_ = false;
+    bool wantMap_ = false;
+    [[maybe_unused]] int prevLevel_ = -1;
+};
 
-    bool prevWasQuote = false;
-    // Нужен только ассерту ниже: в сборке с NDEBUG он исчезает вместе с ним.
-    [[maybe_unused]] int prevLevel = -1;
-
-    for (size_t i = 0; i < doc.blocks.size(); ++i) {
-        const Block& b = doc.blocks[i];
-        if (map != nullptr) startsAt.push_back(out.size());
-        validate(doc, b);
-        const std::string_view body = doc.text(b);
+void Writer::push(const Piece& b) {
+    // Имена по-старому: тело переехало в метод целиком, и переименовывать в нём
+    // каждую переменную значило бы сделать правку, в которой ошибку не увидеть.
+    std::string& out = out_;
+    std::vector<size_t>& startsAt = startsAt_;
+    std::vector<size_t>& contentCol = contentCol_;
+    std::vector<int>& ordinal = ordinal_;
+    std::vector<char>& runAlive = runAlive_;
+    std::vector<char>& runOrdered = runOrdered_;
+    bool& prevWasQuote = prevWasQuote_;
+    const bool hasLinkDefs = hasLinkDefs_;
+    [[maybe_unused]] int& prevLevel = prevLevel_;
+    const size_t i = hasFirst_ ? 1 : 0;   // «не первый» — вот и всё, что нужно
+    {
+        if (wantMap_) startsAt.push_back(out.size());
+        validate(b);
+        const std::string_view body = b.text;
 
         bool thisIsQuote = !b.raw && b.kind == Kind::Quote;
 
@@ -923,7 +1020,9 @@ std::string serialize(const Document& doc, std::vector<BlockLines>* map) {
             // через пустую строку — именно две, и разделять их строкой ">"
             // нельзя, она бы их снова склеила.
             prevWasQuote = false;
-            continue;
+            previous_ = b;
+            hasFirst_ = true;
+            return;
         }
 
         // Абзацы одной цитаты разделяются строкой ">": иначе цитата развалилась
@@ -932,7 +1031,7 @@ std::string serialize(const Document& doc, std::vector<BlockLines>* map) {
         // Последний рубеж инварианта: если между блоками нет VSpace, а без
         // пустой строки они слипнутся, — ставим её. Такое IR неправильно, но
         // испортить файл оно не должно.
-        else if (i > 0 && doc.wouldMerge(doc.blocks[i - 1], b))
+        else if (i > 0 && wouldMerge(previous_, b))
             out += "\n";
 
         if (b.raw) {
@@ -941,7 +1040,9 @@ std::string serialize(const Document& doc, std::vector<BlockLines>* map) {
             std::fill(runAlive.begin(), runAlive.end(), 0);
             prevWasQuote = false;
             prevLevel = -1;
-            continue;
+            previous_ = b;
+            hasFirst_ = true;
+            return;
         }
 
         switch (b.kind) {
@@ -950,7 +1051,7 @@ std::string serialize(const Document& doc, std::vector<BlockLines>* map) {
                 TextSink sink;
                 sink.bol = false;
                 sink.hasLinkDefs = hasLinkDefs;
-                appendInlineText(sink, doc, b);
+                appendInlineText(sink, b);
                 if (!sink.out.empty()) {
                     out.push_back(' ');
                     // Хвостовой прогон '#' Markdown считает закрывающей
@@ -972,10 +1073,10 @@ std::string serialize(const Document& doc, std::vector<BlockLines>* map) {
                 // остаются пустыми: отступ в них дал бы концевые пробелы, а
                 // блоку кода они не нужны.
                 const std::string pad(indentInsideItem(b, contentCol), ' ');
-                const std::string fence = fenceFor(body, doc.info(b));
+                const std::string fence = fenceFor(body, b.info);
                 out += pad;
                 out += fence;
-                out += doc.info(b);
+                out += b.info;
                 out.push_back('\n');
                 for (size_t at = 0; at < body.size();) {
                     size_t end = body.find('\n', at);
@@ -1029,7 +1130,7 @@ std::string serialize(const Document& doc, std::vector<BlockLines>* map) {
                 TextSink sink;
                 sink.contIndent = std::string(indent, ' ');
                 sink.hasLinkDefs = hasLinkDefs;
-                appendInlineText(sink, doc, b);
+                appendInlineText(sink, b);
                 out += sink.out;
                 out.push_back('\n');
                 break;
@@ -1041,7 +1142,7 @@ std::string serialize(const Document& doc, std::vector<BlockLines>* map) {
                 TextSink sink;
                 sink.contIndent = std::string(indent, ' ') + "> ";
                 sink.hasLinkDefs = hasLinkDefs;
-                appendInlineText(sink, doc, b);
+                appendInlineText(sink, b);
                 if (sink.out.empty()) {
                     out.push_back('>');
                 } else {
@@ -1086,7 +1187,7 @@ std::string serialize(const Document& doc, std::vector<BlockLines>* map) {
                 if (!body.empty()) {
                     TextSink sink;
                     sink.hasLinkDefs = hasLinkDefs;
-                    appendInlineText(sink, doc, b);
+                    appendInlineText(sink, b);
                     out += sink.out;
                     out.push_back('\n');
                     break;
@@ -1107,7 +1208,7 @@ std::string serialize(const Document& doc, std::vector<BlockLines>* map) {
 
                 // Прогон на уровне продолжается и через вложенный подсписок:
                 // "1. / 1.1 / 2." — второй пункт верхнего уровня всё ещё второй.
-                bool ord = isOrdered(b);
+                bool ord = b.marker == Marker::Ordered;
                 bool sameRun = runAlive[level] && (runOrdered[level] != 0) == ord;
                 ordinal[level] = sameRun ? ordinal[level] + 1 : 1;
                 runAlive[level] = 1;
@@ -1130,7 +1231,7 @@ std::string serialize(const Document& doc, std::vector<BlockLines>* map) {
                     TextSink sink;
                     sink.contIndent = std::string(childIndent, ' ');
                     sink.hasLinkDefs = hasLinkDefs;
-                    appendInlineText(sink, doc, b);
+                    appendInlineText(sink, b);
                     out += sink.out;
                 }
                 out.push_back('\n');
@@ -1145,9 +1246,15 @@ std::string serialize(const Document& doc, std::vector<BlockLines>* map) {
         prevWasQuote = thisIsQuote;
         prevLevel = insideList ? b.level : -1;
     }
+    previous_ = b;
+    hasFirst_ = true;
+}
 
+std::string Writer::finish(std::vector<BlockLines>* map) {
+    std::string& out = out_;
+    const std::vector<size_t>& startsAt = startsAt_;
     if (map != nullptr) {
-        map->assign(doc.blocks.size(), BlockLines{});
+        map->assign(startsAt.size(), BlockLines{});
         // Смещения не убывают, поэтому строки считаются одним проходом по
         // выводу: идём по нему, отмечая границы блоков там, где они попались.
         size_t at = 0;
@@ -1173,6 +1280,259 @@ std::string serialize(const Document& doc, std::vector<BlockLines>* map) {
     return out;
 }
 
-std::string serialize(const Document& doc) { return serialize(doc, nullptr); }
+
+
+
+}  // namespace
+
+// --- ОБХОД ЖИВОГО ДОКУМЕНТА ------------------------------------------------
+//
+// Логический блок заметки — не то же, что QTextBlock: литеральные куски (код,
+// дословное) лежат в документе ПОСТРОЧНО, по блоку на строку, и склеиваются
+// здесь обратно. Признак продолжения обязателен: без него разрезанный блок кода
+// из двух строк неотличим от двух блоков кода подряд, а это разный markdown.
+
+namespace {
+
+std::string toUtf8(const QString& text) {
+    const QByteArray utf8 = text.toUtf8();
+    return std::string(utf8.constData(), size_t(utf8.size()));
+}
+
+// Является ли этот текст ОДНОЙ формулой целиком. Спрашивается общий канон, а не
+// «начинается с доллара»: иначе вид и разбор разошлись бы на первом же краю.
+bool wholeMath(const std::string& text) {
+    const std::vector<MathSpan> found = scanMath(text);
+    return found.size() == 1 && found.front().start == 0 &&
+           size_t(found.front().end) == text.size();
+}
+
+bool sameStyle(const Run& a, const Run& b) {
+    return a.flags == b.flags && a.href == b.href && a.title == b.title;
+}
+
+// Пустой документ Qt не бывает: один блок в нём есть всегда. Свойств у этого
+// блока нет — их ставит сборщик, а ему нечего было ставить.
+bool isPhantomBlock(const QTextDocument& doc, const QTextBlock& block) {
+    if (doc.blockCount() != 1 || !block.text().isEmpty()) return false;
+    const QTextBlockFormat format = block.blockFormat();
+    return !format.hasProperty(KindProperty) && !format.hasProperty(RawProperty);
+}
+
+// Один QTextBlock: и текст, и куски с начертанием. Смещение копится в байтах —
+// куски идут подряд и покрывают блок целиком.
+//
+// Разделитель строк превращается обратно в исходный знак ТОЛЬКО там, где стоит
+// пометка BreakSourceProperty. Без неё это чужой U+2028 из самого текста
+// заметки — заметки из Apple Notes им кишат, — и трогать его нельзя.
+void gatherLine(const QTextBlock& block, Piece& piece, bool withRuns) {
+    for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+        const QTextFragment fragment = it.fragment();
+        if (!fragment.isValid()) continue;
+
+        const QTextCharFormat format = fragment.charFormat();
+        QString text = fragment.text();
+        switch (format.intProperty(BreakSourceProperty)) {
+            case BreakNewline:
+                text.replace(QChar::LineSeparator, QLatin1Char('\n'));
+                break;
+            case BreakCarriageReturn:
+                text.replace(QChar::LineSeparator, QLatin1Char('\r'));
+                break;
+            case BreakParagraph:
+                text.replace(QChar::LineSeparator, QChar(QChar::ParagraphSeparator));
+                break;
+            default:
+                break;   // чужой U+2028 из самого текста — трогать нельзя
+        }
+
+        const std::string bytes = toUtf8(text);
+        if (bytes.empty()) continue;
+
+        const int32_t offset = int32_t(piece.text.size());
+        piece.text += bytes;
+        if (!withRuns) continue;
+
+        const int style = format.intProperty(SpanStyleProperty);
+        const QString href = format.anchorHref();
+        if (style == 0 && href.isEmpty()) continue;
+
+        Run run;
+        run.start = offset;
+        run.end = offset + int32_t(bytes.size());
+        run.set(InlineBold, (style & SpanBold) != 0);
+        run.set(InlineItalic, (style & SpanItalic) != 0);
+        run.set(InlineStrike, (style & SpanStrike) != 0);
+        run.set(InlineCode, (style & SpanCode) != 0);
+        run.href = toUtf8(href);
+
+        // Подпись картинки плоская по построению: правки могли домешать в
+        // формат другие биты — здесь они гасятся, иначе вышло бы то, что файл
+        // выразить не может. Картинка без пути — не картинка.
+        run.set(InlineImage, (style & SpanImage) != 0 && !run.href.empty());
+        if (run.image()) {
+            run.flags = InlineImage;
+            run.title = toUtf8(format.property(SpanTitleProperty).toString());
+        }
+
+        // Строчный комментарий плоский так же; внутренность с "-->" файл
+        // выразить не может — такой кусок перестаёт быть комментарием и
+        // становится видимым текстом (писатель его экранирует).
+        run.set(InlineComment, (style & SpanComment) != 0 && !run.image() &&
+                                   bytes.find("-->") == std::string::npos);
+        if (run.comment()) {
+            run.flags = InlineComment;
+            run.href.clear();
+            run.title.clear();
+        }
+
+        // ФОРМУЛА ОБЯЗАНА ПЕРЕЖИТЬ КРУГ. Не переживёт — файл испортится молча
+        // при первой же записи: `$\gamma$` перестаёт быть математикой, и
+        // писатель экранирует косую. Каждая запись удваивает, и заметка
+        // обрастает косыми (нашёл владелец, архивируя заметку с формулами).
+        //
+        // Здесь спрашивается ТОЛЬКО бит стиля. Целостность проверяется ПОСЛЕ
+        // склейки кусков: куски рвутся где угодно (мягкий перенос, другой кегль
+        // у эмодзи), и `$\begin{aligned}` в одном куске формулой не выглядит
+        // никогда.
+        run.set(InlineMath, (style & SpanMath) != 0 && !run.image() && !run.comment());
+        if (run.math()) {
+            run.flags = InlineMath;
+            run.href.clear();
+            run.title.clear();
+        }
+
+        // Куски дробятся и без смены начертания: мягкий перенос помечен
+        // отдельно, эмодзи набраны другим кеглем. Такие соседи склеиваются.
+        if (!piece.runs.empty() && sameStyle(piece.runs.back(), run) &&
+            piece.runs.back().end == run.start) {
+            piece.runs.back().end = run.end;
+        } else {
+            piece.runs.push_back(std::move(run));
+        }
+    }
+}
+
+// Склейка позади — теперь канон. Кусок, переставший быть формулой (правка
+// разорвала её пополам, доллар потерялся), становится обычным текстом.
+void settleMath(Piece& piece) {
+    for (Run& run : piece.runs) {
+        if (!run.math()) continue;
+        if (!wholeMath(std::string(piece.view(run)))) run.flags = 0;
+    }
+}
+
+// Комментарий держит свой инвариант на границе документ→файл: разметки внутри
+// не бывает, а внутренность с "-->" файл выразить не может — такой блок
+// перестаёт быть комментарием и становится видимым текстом.
+void settleComment(Piece& piece) {
+    if (piece.raw || piece.kind != Kind::Html) return;
+    if (piece.text.find("-->") != std::string::npos)
+        piece.kind = Kind::Paragraph;
+    else
+        piece.runs.clear();
+}
+
+}  // namespace
+
+namespace {
+
+// Единственное место, где живая заметка превращается в байты. Ходит прямо по
+// внутреннему QTextDocument — ни промежуточного представления, ни второй живой
+// модели.
+std::string writeInto(const QTextDocument& doc, const NoteHeader& header,
+                      std::vector<BlockLines>* map) {
+
+    // Есть ли в заметке ссылочные определения — от этого зависит экранирование
+    // квадратных скобок. Спрашивается ДО записи, потому что ответ нужен уже на
+    // первом блоке. Проверка идёт построчно, поэтому смотреть на несклеенные
+    // строки можно: ответ тот же.
+    bool hasLinkDefs = false;
+    for (QTextBlock b = doc.begin(); b.isValid() && !hasLinkDefs; b = b.next())
+        if (isRawBlock(b) && looksLikeLinkDefinition(toUtf8(b.text()))) hasLinkDefs = true;
+
+    Writer writer(header, hasLinkDefs, map != nullptr);
+
+    Piece piece;
+    bool open = false;
+
+    auto close = [&] {
+        if (!open) return;
+        // У дословного куска рода нет: он остаётся абзацем, а текст блока и есть
+        // его дословные байты.
+        if (piece.raw) {
+            piece.kind = Kind::Paragraph;
+            piece.info.clear();
+        }
+        settleComment(piece);
+        settleMath(piece);
+        writer.push(piece);
+        piece = Piece{};
+        open = false;
+    };
+
+    for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {
+        if (isPhantomBlock(doc, block)) continue;
+
+        const QTextBlockFormat format = block.blockFormat();
+        const bool raw = isRawBlock(block);
+
+        if (isContinuationBlock(block) && open) {
+            piece.text.push_back('\n');
+            gatherLine(block, piece, false);
+        } else {
+            close();
+            open = true;
+            piece.raw = raw;
+            if (!raw) {
+                piece.kind = kindOf(block);
+                if (piece.kind == Kind::Heading) piece.headingLevel = format.headingLevel();
+                if (isList(piece.kind)) {
+                    const MarkerStyle style = markerOf(block);
+                    piece.marker = style.marker;
+                    piece.checked = style.checked;
+                }
+                piece.level = levelOf(block);
+                if (piece.kind == Kind::Code)
+                    piece.info = toUtf8(format.stringProperty(InfoProperty));
+            }
+            // Разметку внутри блока кода не читаем: содержимое там буквальное.
+            gatherLine(block, piece, !raw && piece.kind != Kind::Code);
+        }
+
+        // Признак стоит на последней строке блока — там, где перевод и был.
+        if (format.boolProperty(TrailingNewlineProperty)) piece.text.push_back('\n');
+    }
+    close();
+
+    return writer.finish(map);
+}
+
+}  // namespace
+
+std::string ZDocument::toMarkdown() const {
+    return writeInto(d_->text, d_->header, nullptr);
+}
+
+std::vector<SourceLine> ZDocument::sourceLines() const {
+    // Тело БЕЗ шапки: в ней живёт `modified`, она меняется при каждой записи, и
+    // всякая разность начиналась бы с неё — всегда одной и той же строки.
+    std::vector<BlockLines> map;
+    const std::string text = writeInto(d_->text, NoteHeader{}, &map);
+
+    const QString whole = QString::fromUtf8(text.data(), qsizetype(text.size()));
+    const QStringList lines = whole.split(QLatin1Char('\n'));
+
+    std::vector<SourceLine> out;
+    out.reserve(size_t(lines.size()));
+    for (const QString& line : lines) out.push_back(SourceLine{line, -1});
+    for (size_t block = 0; block < map.size(); ++block) {
+        for (int k = 0; k < map[block].count; ++k) {
+            const int line = map[block].first + k;
+            if (line >= 0 && size_t(line) < out.size()) out[size_t(line)].block = int(block);
+        }
+    }
+    return out;
+}
 
 }  // namespace zametti

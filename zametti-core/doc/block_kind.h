@@ -72,4 +72,20 @@ enum class Marker : uint8_t {
 
 inline bool isList(Kind k) { return k == Kind::ListItem; }
 
+// Начертание куска строки. Битами, а не полями: признаки перечислены в одном
+// месте, а кусок строки остаётся мелким.
+enum InlineFlag : uint8_t {
+    InlineBold    = 1u << 0,
+    InlineItalic  = 1u << 1,
+    InlineStrike  = 1u << 2,
+    // Встроенный код: содержимое буквальное, разметки внутри нет.
+    InlineCode    = 1u << 3,
+    // Картинка: текст куска — подпись (alt), href — путь, title — заголовок.
+    InlineImage   = 1u << 4,
+    // Строчный HTML-комментарий: текст — внутренность без скобок, буквальная.
+    InlineComment = 1u << 5,
+    // Формула: текст — ЛИТЕРАЛЬНЫЙ исходник вместе с долларами, как в файле.
+    InlineMath    = 1u << 6,
+};
+
 }  // namespace zametti
