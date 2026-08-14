@@ -15,6 +15,16 @@ bool looksLikeWebp(const QByteArray& head) {
            std::memcmp(head.constData() + 8, "WEBP", 4) == 0;
 }
 
+int readWebpFrameCount(const QByteArray& bytes) {
+    if (!looksLikeWebp(bytes)) return 1;
+    WebPData data{reinterpret_cast<const uint8_t*>(bytes.constData()), size_t(bytes.size())};
+    WebPDemuxer* demux = WebPDemux(&data);
+    if (demux == nullptr) return 1;
+    const int frames = int(WebPDemuxGetI(demux, WEBP_FF_FRAME_COUNT));
+    WebPDemuxDelete(demux);
+    return frames > 0 ? frames : 1;
+}
+
 QSize readWebpSize(const QByteArray& bytes) {
     if (!looksLikeWebp(bytes)) return {};
     int width = 0;

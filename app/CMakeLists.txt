@@ -165,10 +165,8 @@ target_link_libraries(zametti-widgets PRIVATE zametti-code-rules)
 # занимается «доводка» цели, которую qt_add_executable ставит в очередь.
 # С обычным Qt разницы никакой: та же add_executable внутри.
 #
-# Наши собственные плагины (jxl, heif) в этой доводке не нуждались и не
-# нуждаются: qt_add_plugin STATIC заводит рядом с плагином объектный файл с
-# Q_IMPORT_PLUGIN и цепляет его как INTERFACE-исходник — он приезжает вместе с
-# библиотекой сам.
+# Своих плагинов у нас больше нет вовсе: читатели картинок зовутся напрямую
+# (см. imageio/image_read.h), и реестр Qt в этом не участвует.
 qt_add_executable(zametti
     main.cpp
 )

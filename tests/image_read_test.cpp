@@ -83,7 +83,7 @@ bool weConvertedColour(const QString& path, const ImageProbe& probe) {
     TiffImage tiff;
     QString error;
     if (!readTiff(path, &tiff, &error, 0)) return false;
-    return tiff.converted;
+    return tiff.converted;   // читаем целиком НАРОЧНО: это набор, не горячий путь
 }
 
 // Умеет ли Qt здесь читать этот формат. Без судьи сверять нечего.
@@ -112,11 +112,22 @@ void checkOne(const QString& path) {
     // БОМБЫ ЧИТАТЬ НЕ ПОЛОЖЕНО. В корпусе лежат заведомые бомбы разжатия —
     // файлы в семьдесят байт, объявляющие миллиарды пикселей. Отказ на них не
     // беда, а работа предохранителя; требовать «прочли» значило бы требовать
-    // сломать его. Судья ведёт себя так же, и это сверяется ниже.
-    if (ours.isNull() && theirs.isNull()) return;
+    // сломать его.
+    const bool bomb = ours.isNull() && theirs.isNull();
+    if (bomb) return;
 
-    ZT_TRUE(("прочли то же, что судья: " + name).toStdString(),
-            ours.isNull() == theirs.isNull());
+    // СВЕРЯТЬ «ПРОЧЛИ ИЛИ НЕТ» МОЖНО ТОЛЬКО ТАМ, ГДЕ СУДЬЯ ЗНАЕТ ФОРМАТ.
+    // После отказа от плагинов Qt перестал читать jxl вовсе — и это не беда, а
+    // ровно то, ради чего мы завели свой читатель: формат хранения заметок
+    // больше не зависит от чужой сборки.
+    if (judgeKnows(probe.format)) {
+        ZT_TRUE(("прочли то же, что судья: " + name).toStdString(),
+                ours.isNull() == theirs.isNull());
+    } else {
+        ZT_TRUE(("прочли то, чего судья не умеет: " + name + " [" + probe.format + "]")
+                    .toStdString(),
+                !ours.isNull());
+    }
     if (ours.isNull()) return;
 
     // 1. Размер из шапки обязан совпасть с размером разжатого. Это и есть

@@ -5,6 +5,7 @@
 // пошла путём фото, тоже «сжалась» — только потеряла при этом качество
 // необратимо.
 
+#include "image_read.h"
 #include "import.h"
 
 #include "test_util.h"
@@ -26,11 +27,7 @@ namespace {
 std::string num(long long v) { return std::to_string(v); }
 
 QImage decodeResult(const ImportResult& r) {
-    QBuffer buf;
-    buf.setData(r.bytes);
-    buf.open(QIODevice::ReadOnly);
-    QImageReader reader(&buf);
-    return reader.read();
+    return decodeImage(r.bytes);
 }
 
 void expectRoute(const QString& root, const char* rel, Route want, const char* why,
@@ -48,9 +45,7 @@ void expectRoute(const QString& root, const char* rel, Route want, const char* w
     ZT_TRUE(what + "расширение названо", !r.extension.isEmpty());
     // Апскейла нет ни на каком пути — это правило, и оно проверяется на каждом
     // файле, а не отдельным случаем.
-    QImageReader probe(path);
-    probe.setAutoTransform(true);
-    const QSize src = probe.size();
+    const QSize src = probeImageFile(path).size;
     if (src.isValid() && r.size.width > 0) {
         ZT_TRUE(what + "не растянуто по ширине", r.size.width <= src.width());
         ZT_TRUE(what + "не растянуто по высоте", r.size.height <= src.height());

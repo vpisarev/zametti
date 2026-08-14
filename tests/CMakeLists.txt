@@ -601,7 +601,7 @@ if(TARGET zametti-jxl-encode)
     # Стенд подбора параметров: строит кривую «качество против байтов» на
     # большой выборке. Тестом не заводится — это прибор, и гоняется он долго.
     add_executable(quality_study quality_study.cpp)
-    target_link_libraries(quality_study PRIVATE zametti-jxl-encode zametti-jxl
+    target_link_libraries(quality_study PRIVATE zametti-jxl-encode zametti-import
                           zametti-imagemeta libjxl Qt6::Gui zametti-code-rules)
     target_include_directories(quality_study PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
@@ -638,7 +638,7 @@ add_executable(import_test import_test.cpp)
     add_executable(color_test color_test.cpp)
     # zametti-tiff — ради настоящего CMYK-профиля печати: сочинить его
     # средствами Qt нельзя, а на выдуманном проверка ничего бы не стоила.
-    target_link_libraries(color_test PRIVATE zametti-color zametti-jxl-encode zametti-jxl
+    target_link_libraries(color_test PRIVATE zametti-color zametti-jxl-encode zametti-import
                           zametti-tiff Qt6::Gui zametti-code-rules)
     target_include_directories(color_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     add_test(NAME color COMMAND color_test ${CMAKE_SOURCE_DIR}/.testdata/images/originals)
@@ -651,7 +651,7 @@ add_executable(import_test import_test.cpp)
     set_tests_properties(resample PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
     add_executable(jxl_encode_test jxl_encode_test.cpp)
-    target_link_libraries(jxl_encode_test PRIVATE zametti-jxl-encode zametti-jxl
+    target_link_libraries(jxl_encode_test PRIVATE zametti-jxl-encode zametti-import
                           zametti-imagemeta Qt6::Gui zametti-code-rules)
     target_include_directories(jxl_encode_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     add_test(NAME jxl-encode

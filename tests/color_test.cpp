@@ -9,6 +9,7 @@
 // сходится, потом — что с приведением сходится. Зелёный тест ничего не значит,
 // пока не показано, что он краснеет без починки.
 
+#include "image_read.h"
 #include "color.h"
 #include "tiff_reader.h"
 #include "jxl_encoder.h"
@@ -65,11 +66,8 @@ QImage roundTrip(const QImage& src) {
     QString err;
     const QByteArray jxl = encodeJxl(src, opt, EncodeMeta{}, &err);
     if (jxl.isEmpty()) return {};
-    QBuffer buf;
-    buf.setData(jxl);
-    buf.open(QIODevice::ReadOnly);
-    QImageReader reader(&buf, "jxl");
-    return reader.read();
+    // Читаем СВОИМ читателем: плагинов у нас больше нет вовсе.
+    return decodeImage(jxl);
 }
 
 // Картинка с цветом во всех углах: на однотонной заплате расхождение

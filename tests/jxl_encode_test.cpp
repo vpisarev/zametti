@@ -5,6 +5,7 @@
 // подменённый профиль выглядят точно так же, как успех, а в хранилище это
 // осядет навсегда.
 
+#include "image_read.h"
 #include "jxl_encoder.h"
 #include "exif.h"
 
@@ -57,11 +58,8 @@ QImage gradient(int w, int h, bool deep, bool alpha) {
 }
 
 QImage decodeBack(const QByteArray& jxl) {
-    QBuffer buf;
-    buf.setData(jxl);
-    buf.open(QIODevice::ReadOnly);
-    QImageReader r(&buf, "jxl");
-    return r.read();
+    // Читаем СВОИМ читателем: плагинов у нас больше нет вовсе.
+    return decodeImage(jxl);
 }
 
 void checkRoundtrip() {

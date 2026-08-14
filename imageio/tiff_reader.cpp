@@ -96,6 +96,54 @@ bool looksLikeTiff(const QByteArray& head) {
     return false;
 }
 
+bool readTiffHeader(const QString& path, TiffHeader* out, QString* error) {
+    auto fail = [&](const QString& why) {
+        if (error) *error = why;
+        return false;
+    };
+    if (!out) return fail(QStringLiteral("некуда положить результат"));
+
+    TIFFSetErrorHandler(tiffError);
+    TIFFSetWarningHandler(tiffWarning);
+    g_lastError.clear();
+
+    TIFF* t = TIFFOpen(path.toLocal8Bit().constData(), "r");
+    if (!t)
+        return fail(g_lastError.isEmpty() ? QStringLiteral("файл не открылся как TIFF")
+                                          : g_lastError);
+    struct Closer {
+        TIFF* t;
+        ~Closer() { TIFFClose(t); }
+    } closer{t};
+
+    uint32_t w = 0, h = 0;
+    uint16_t bits = 0, samples = 0, photo = 0, extra = 0;
+    uint16_t* extraTypes = nullptr;
+    TIFFGetField(t, TIFFTAG_IMAGEWIDTH, &w);
+    TIFFGetField(t, TIFFTAG_IMAGELENGTH, &h);
+    TIFFGetFieldDefaulted(t, TIFFTAG_BITSPERSAMPLE, &bits);
+    TIFFGetFieldDefaulted(t, TIFFTAG_SAMPLESPERPIXEL, &samples);
+    TIFFGetFieldDefaulted(t, TIFFTAG_PHOTOMETRIC, &photo);
+    TIFFGetFieldDefaulted(t, TIFFTAG_EXTRASAMPLES, &extra, &extraTypes);
+    if (w == 0 || h == 0) return fail(QStringLiteral("в заголовке нулевой размер"));
+
+    out->size = QSize(int(w), int(h));
+    out->bitsPerSample = int(bits);
+    out->hasAlpha = extra > 0;
+    // Тот же вывод, что и у полного чтения: Lab и CMYK едут шестнадцатибитным
+    // кадром даже при восьмибитном файле (перевод нелинеен). Кто считает место
+    // под разжатую копию, обязан знать это ДО чтения.
+    out->wideFrame = bits > 8 || photo == PHOTOMETRIC_CIELAB ||
+                     photo == PHOTOMETRIC_ICCLAB || photo == PHOTOMETRIC_ITULAB ||
+                     photo == PHOTOMETRIC_SEPARATED;
+
+    uint32_t len = 0;
+    const void* blob = nullptr;
+    if (TIFFGetField(t, TIFFTAG_ICCPROFILE, &len, &blob) == 1 && len > 0)
+        out->icc = QByteArray(static_cast<const char*>(blob), qsizetype(len));
+    return true;
+}
+
 bool readTiff(const QString& path, TiffImage* out, QString* error, qint64 maxDecodeBytes) {
     auto fail = [&](const QString& why) {
         if (error) *error = why;

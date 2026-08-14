@@ -89,6 +89,7 @@ ImageProbe probeImage(const QByteArray& bytes) {
     }
     if (out.format == QLatin1String("webp")) {
         out.size = readWebpSize(bytes);
+        out.frames = readWebpFrameCount(bytes);
         const ImageMeta meta = readImageMeta(std::string_view(bytes.constData(),
                                                               size_t(bytes.size())));
         out.orientation = meta.orientation;
@@ -104,6 +105,9 @@ ImageProbe probeImage(const QByteArray& bytes) {
     buffer.open(QIODevice::ReadOnly);
     QImageReader reader(&buffer);
     out.size = reader.size();
+    // Кадров у неанимированного формата бывает и ноль, и минус один: у каждого
+    // читателя свой ответ. Наружу отдаём «хотя бы один».
+    out.frames = qMax(1, reader.imageCount());
     return out;
 }
 
@@ -115,25 +119,37 @@ ImageProbe probeImageFile(const QString& path) {
 
     if (format == QLatin1String("tiff")) {
         // У TIFF каталог тегов может лежать в конце файла, и по началу его не
-        // прочесть. Свой читатель ходит по файлу сам.
+        // прочесть. Спрашиваем ТОЛЬКО ТЕГИ: полное чтение здесь разжимало бы
+        // всю картинку на каждой раскладке — на этом я уже обжёгся.
         ImageProbe out;
         out.format = format;
-        TiffImage tiff;
+        TiffHeader head;
         QString error;
-        if (readTiff(path, &tiff, &error, 0)) {
-            out.size = tiff.image.size();
-            out.bitsPerSample = tiff.bitsPerSample;
-            out.hasAlpha = tiff.image.hasAlphaChannel();
-            out.icc = tiff.icc;
+        if (readTiffHeader(path, &head, &error)) {
+            out.size = head.size;
+            // Глубина РАБОЧЕГО кадра, а не файла: по ней считается память.
+            out.bitsPerSample = head.wideFrame ? 16 : head.bitsPerSample;
+            out.hasAlpha = head.hasAlpha;
+            out.icc = head.icc;
         }
+        // Размеры не дались (DNG и прочее сырьё в оболочке TIFF) — спрашиваем
+        // Qt: читать это будет он же, значит и мерить ему.
+        if (!out.valid()) out.size = QImageReader(path).size();
         return out;
     }
 
-    // JXL, JPEG и WebP держат всё нужное в начале — хватает прочитанного куска.
-    // Чужим форматам и HEIF отдаём файл целиком: у них шапка бывает где угодно.
-    if (format == QLatin1String("jxl") || format == QLatin1String("jpeg") ||
-        format == QLatin1String("webp"))
-        return probeImage(head);
+    // СНАЧАЛА ПО КУСКУ, И ТОЛЬКО ЕСЛИ НЕ ВЫШЛО — ПО ВСЕМУ ФАЙЛУ.
+    //
+    // Кусок в 64 КБ покрывает подавляющее большинство: у jxl, jpeg и webp всё
+    // нужное лежит в начале. Но не всегда — и на этом я обжёгся. У снимка с
+    // телефона (vivo, Display P3) цветовой профиль в маркере APP2 длиннее
+    // куска, разбор шапки спотыкался о обрыв, размер выходил пустым, и ввоз
+    // молча ОТКАЗЫВАЛ картинке, которую раньше принимал.
+    //
+    // Порядок именно такой, а не «всегда целиком»: пробу зовут на каждой
+    // раскладке для каждой картинки, и читать ради неё сто мегабайт нельзя.
+    const ImageProbe quick = probeImage(head);
+    if (quick.valid()) return quick;
 
     file.seek(0);
     return probeImage(file.readAll());
@@ -223,7 +239,15 @@ QImage decodeImageFile(const QString& path, const DecodeRequest& request) {
     if (sniff(head) == QLatin1String("tiff")) {
         TiffImage tiff;
         QString error;
-        if (!readTiff(path, &tiff, &error, request.memoryLimitBytes)) return {};
+        if (!readTiff(path, &tiff, &error, request.memoryLimitBytes)) {
+            // СВОЙ ЧИТАТЕЛЬ НЕ СМОГ — ПУСТЬ ПРОБУЕТ Qt. В оболочку TIFF
+            // заворачивают не только картинки: DNG с телефона несёт сырые
+            // отсчёты матрицы, и наш читатель честно отказывается их толковать,
+            // а плагин Qt достаёт из файла готовое превью. Отказать человеку
+            // было бы хуже: мы не опираемся на чужие плагины, но и не отвергаем
+            // назло то, что они умеют.
+            return QImage(path);
+        }
         QImage out = std::move(tiff.image);
         if (request.applyOrientation) {
             const ImageMeta meta = readImageMeta(

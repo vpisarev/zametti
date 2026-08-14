@@ -68,4 +68,23 @@ bool readTiff(const QString& path, TiffImage* out, QString* error,
 // Опознать TIFF по подписи, не открывая libtiff.
 bool looksLikeTiff(const QByteArray& head);
 
+// ТОЛЬКО ТЕГИ, без единой прочитанной строки пикселей.
+//
+// Нужен тому, кто считает место под фотографию до отрисовки. Спрашивать это у
+// полного чтения нельзя: у TIFF каталог тегов бывает в конце файла, и наивная
+// «проба» разжимала бы всю картинку — на каждой раскладке, на каждой картинке.
+// Я на это наступил: набор снимков зависал на сорока файлах.
+struct TiffHeader {
+    QSize size;
+    int bitsPerSample = 8;   // как в ФАЙЛЕ
+    bool hasAlpha = false;
+    // Поедет ли картинка шестнадцатибитным кадром: у Lab и CMYK это так даже
+    // при восьмибитном файле, потому что перевод нелинеен.
+    bool wideFrame = false;
+    QByteArray icc;
+
+    bool valid() const { return !size.isEmpty(); }
+};
+bool readTiffHeader(const QString& path, TiffHeader* out, QString* error);
+
 }  // namespace zametti

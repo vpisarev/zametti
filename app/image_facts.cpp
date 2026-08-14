@@ -1,9 +1,10 @@
 #include "image_facts.h"
 
+#include "image_read.h"
+
 #include <QFileInfo>
 #include <QColorSpace>
 #include <QImage>
-#include <QImageReader>
 
 namespace zametti {
 
@@ -16,16 +17,16 @@ void readImageFacts(const QString& absolutePath, ImageFacts& out) {
 
     out.exists = true;
     out.bytes = file.size();
-    QImageReader reader(absolutePath);
-    out.size = reader.size();
-    out.format = QString::fromLatin1(reader.format());
-    // Не всякий читатель называет свой формат: у .jxl Qt отдаёт пустую строку,
-    // и в полосе получалось «имя · разрешение · вес» без слова JXL. Расширение
-    // — запасной ход, а не первый: имя файла врёт легко, заголовок не врёт.
+    // Только шапка: пикселей здесь не надо, а место под фотографию считается
+    // по НАСТОЯЩИМ размерам.
+    const ImageProbe probe = probeImageFile(absolutePath);
+    out.size = probe.size;
+    out.format = probe.format;
+    // Формат опознаётся по подписи, но у чужих его может не оказаться вовсе.
+    // Расширение — запасной ход, а не первый: имя файла врёт легко, заголовок
+    // не врёт.
     if (out.format.isEmpty()) out.format = file.suffix().toLower();
-    // Кадров у неанимированного формата бывает и ноль, и минус один: у каждого
-    // читателя свой ответ. Наружу отдаём «хотя бы один».
-    out.frames = qMax(1, reader.imageCount());
+    out.frames = probe.frames;
 }
 
 void addDecodedFacts(const QImage& image, ImageFacts& out) {

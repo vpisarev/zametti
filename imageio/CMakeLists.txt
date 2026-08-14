@@ -1,15 +1,16 @@
-# Свои читатели картинок: JPEG XL поверх вендоренной libjxl и AVIF/HEIC
-# поверх системной libheif.
+# Свои читатели картинок: jxl (libjxl), jpeg (jpegli), tiff (libtiff),
+# webp (libwebp), heif/avif (системная libheif, по ключу WITH_HEIF).
 #
-# Зачем свои. JXL — основной формат хранения zametti, и его декод обязан быть
-# одинаковым везде; дистрибутивный плагин где-то есть, где-то нет. Для
-# AVIF/HEIC плагина под Qt6 в дистрибутиве нет ВОВСЕ (qt6-image-formats-plugins
-# даёт tiff/webp/tga/mng/icns/wbmp, kimageformats под Qt6 в apt отсутствует), а
-# шесть файлов матрицы перекодирования — как раз avif и heic.
+# ЗАЧЕМ СВОИ И ПОЧЕМУ БЕЗ ПЛАГИНОВ. Формат хранения заметок не имеет права
+# зависеть от того, как собрали чужую библиотеку. Замер: если у Qt отнять
+# каталог плагинов, он читает только bmp, png, p*m и x*m — jpeg, tiff и webp
+# у него тоже плагины, а плагина AVIF/HEIC под Qt6 в дистрибутиве нет вовсе.
 #
-# Плагины СТАТИЧЕСКИЕ. Динамический пришлось бы куда-то устанавливать и
-# надеяться, что Qt его найдёт, — ровно та зависимость от окружения, от которой
-# мы и уходим. Статический линкуется в программу: слинковали — значит работает.
+# Поэтому реестра Qt в наших путях больше нет ни одного: развилка по подписи
+# и прямой вызов (см. image_read.h). Чужие форматы, которых мы не знаем,
+# по-прежнему падают в QImage::fromData — там Qt волен звать свои плагины,
+# если они есть. Мы на них не опираемся, но и не отказываемся назло: чужой
+# файл человек вправе принести любой.
 #
 # Цель отдельная, не внутри app/, потому что читатели нужны троим: просмотрщику,
 # утилите хранилища (recompress разжимает вложения) и наборам тестов.
@@ -55,13 +56,11 @@ add_library(zametti-color STATIC color.cpp color.h)
 target_link_libraries(zametti-color PUBLIC Qt6::Gui libjxl PRIVATE zametti-code-rules)
 target_include_directories(zametti-color PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
-qt_add_plugin(zametti-jxl STATIC
-    CLASS_NAME JxlPlugin
-    PLUGIN_TYPE imageformats
-)
-target_sources(zametti-jxl PRIVATE jxl_plugin.cpp jxl_handler.cpp)
-target_link_libraries(zametti-jxl PRIVATE Qt6::Gui libjxl zametti-color zametti-code-rules)
-target_include_directories(zametti-jxl PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+# Плагинов у нас БОЛЬШЕ НЕТ. Чтение JXL переехало в jxl_read (см. image_read.h):
+# оно и раньше было нашим кодом, а QImageIOHandler вокруг служил только реестру
+# Qt. Реестр же оказался ловушкой: замер показал, что БЕЗ плагинов Qt читает
+# лишь bmp, png, p*m и x*m, то есть формат хранения заметок зависел бы от того,
+# как собрали чужую библиотеку.
 
 # --- AVIF и HEIC -----------------------------------------------------------
 #
@@ -95,11 +94,10 @@ if(WITH_HEIF)
             "  Либо соберите без avif/heic: -DWITH_HEIF=OFF")
     endif()
 
-    qt_add_plugin(zametti-heif STATIC
-        CLASS_NAME HeifPlugin
-        PLUGIN_TYPE imageformats
-    )
-    target_sources(zametti-heif PRIVATE heif_plugin.cpp heif_handler.cpp)
+    # Обычная библиотека, не плагин: обработчик HEIF зовётся напрямую из
+    # image_read, минуя реестр Qt. Разбирать его на probe/decode, как JXL, не
+    # стали — он написан, работает и трогать его ради единообразия незачем.
+    add_library(zametti-heif STATIC heif_handler.cpp heif_handler.h)
     target_link_libraries(zametti-heif PRIVATE Qt6::Gui PkgConfig::LIBHEIF zametti-code-rules)
     target_include_directories(zametti-heif PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     set(ZAMETTI_HAVE_HEIF ON PARENT_SCOPE)
@@ -167,15 +165,15 @@ if(TARGET zametti-heif)
 endif()
 target_include_directories(zametti-import PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
-# Одна цель на всё: потребителю незачем знать, из скольких плагинов состоят
+# Одна цель на всё: потребителю незачем знать, из скольких библиотек состоят
 # наши читатели и какие из них собрались.
 add_library(zametti-imageio INTERFACE)
-target_link_libraries(zametti-imageio INTERFACE zametti-jxl zametti-jxl-encode
+target_link_libraries(zametti-imageio INTERFACE zametti-jxl-encode
                       zametti-color zametti-tiff zametti-imagemeta zametti-import)
 # Спрашиваем ЦЕЛЬ, а не LIBHEIF_FOUND: та переменная приходит из кэша
 # pkg-config и переживает выключение ключа. С ней сборка после
 # `-DWITH_HEIF=OFF` в готовом каталоге падала на `cannot find -lzametti-heif`:
-# плагина уже нет, а строка компоновки его всё ещё звала.
+# цели уже нет, а строка компоновки её всё ещё звала.
 if(TARGET zametti-heif)
     target_link_libraries(zametti-imageio INTERFACE zametti-heif)
 endif()

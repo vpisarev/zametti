@@ -13,6 +13,8 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFileInfo>
+#include "image_read.h"
+
 #include <QImageReader>
 #include <QFontMetricsF>
 #include <QPainter>
@@ -450,7 +452,7 @@ const NoteView::CachedImage* NoteView::imageInfo(const QString& path) {
 
     // Только заголовок: размеры есть, пикселей нет и не надо. Место под
     // фотографию считается по НАСТОЯЩИМ размерам, а не по размеру копии.
-    const QSize declared = QImageReader(abs).size();
+    const QSize declared = probeImageFile(abs).size;
     if (declared.isEmpty()) {
         // Файла нет — рисуем рамку и держим под неё место. Так человек видит,
         // что вложение пропало, а не пустоту; байты ссылки в заметке при этом
@@ -556,7 +558,7 @@ const QImage* NoteView::pixelsFor(const QString& key) {
 
     QElapsedTimer decode;
     decode.start();
-    QImageReader reader(key);
+    DecodeRequest request;
     if (limit > 0 && (declared.width() > limit || declared.height() > limit)) {
         // Предел держит ОБЕ стороны. Только вниз: картинка мельче предела
         // остаётся собой. Просим об этом сам читатель — иные форматы умеют
@@ -566,9 +568,17 @@ const QImage* NoteView::pixelsFor(const QString& key) {
         // картинки нулевой ширины не бывает.
         scaled.setWidth(qMax(1, scaled.width()));
         scaled.setHeight(qMax(1, scaled.height()));
-        reader.setScaledSize(scaled);
+        request.maxSize = scaled;
     }
-    QImage image = reader.read();
+    // Глубина показу не нужна: экран восьмибитный, а шестнадцать бит стоят
+    // четверти времени и вдвое больше памяти в кэше. Ввоз просит их отдельно.
+    QImage image = decodeImageFile(key, request);
+    // Читатель отдал не меньше просимого (у JPEG размер идёт восьмыми долями) —
+    // доводим до предела сами.
+    if (!request.maxSize.isEmpty() && image.size() != request.maxSize &&
+        (image.width() > request.maxSize.width() || image.height() > request.maxSize.height())) {
+        image = image.scaled(request.maxSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
     ++g_imageDecodes;
     g_imageDecodeMicros += decode.nsecsElapsed() / 1000;
 

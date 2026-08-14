@@ -28,6 +28,7 @@
 // владельца): у Lanczos отрицательные лепестки ядра, и на уменьшении они дают
 // ореолы вокруг границ.
 
+#include "image_read.h"
 #include "color.h"
 #include "import_limits.h"
 #include "jxl_encoder.h"
@@ -61,11 +62,7 @@ using namespace zametti;
 namespace {
 
 QImage decodeJxl(const QByteArray& jxl) {
-    QBuffer buf;
-    buf.setData(jxl);
-    buf.open(QIODevice::ReadOnly);
-    QImageReader r(&buf, "jxl");
-    return r.read();
+    return decodeImage(jxl);
 }
 
 std::shared_ptr<jxl::ImageBundle> toBundle(const QImage& src) {
