@@ -3,6 +3,7 @@
 #include "archive.h"
 #include "doc_model.h"
 #include "document_builder.h"
+#include "document_pieces.h"
 #include "document_reader.h"
 #include "document_saver.h"
 #include "note_header.h"
@@ -74,9 +75,13 @@ bool ZDocument::loadMarkdown(std::string_view bytes) {
     // НОРМАЛИЗАЦИЯ ПРОБЕЛОВ — ЧАСТЬ ВВОЗА, а не отдельный шаг: так делают все
     // нынешние места вызова, и без неё ZDocument читал бы не то же, что читает
     // программа.
-    const Document ir = parse(normaliseSpaces(bytes));
-    headerFrom(ir.meta, d_->header);
-    buildDocument(ir, d_->text);
+    //
+    // Промежуточного представления на этом пути больше нет: md4c собирает
+    // логические блоки, сборщик кладёт их в живой документ. Черновик разбора
+    // умирает вместе с вызовом.
+    std::vector<Piece> blocks;
+    parsePieces(normaliseSpaces(bytes), blocks, d_->header);
+    buildDocument(blocks, d_->text);
     return true;
 }
 

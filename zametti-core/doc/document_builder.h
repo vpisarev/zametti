@@ -1,7 +1,9 @@
 #ifndef ZAMETTI_DOCUMENT_BUILDER_H
 #define ZAMETTI_DOCUMENT_BUILDER_H
 
-#include "ir.h"
+#include "document_pieces.h"
+
+#include <vector>
 
 #include <QTextBlockFormat>
 #include <QtGlobal>
@@ -10,22 +12,22 @@ class QTextDocument;
 
 namespace zametti {
 
-// IR → QTextDocument. Единственное место во всём приложении, где UTF-8 ядра
+// Логические блоки → QTextDocument. Единственное место во всём приложении, где UTF-8 ядра
 // превращается в UTF-16 Qt.
 //
 // zoom масштабирует кегль и поля. Отдельного «зума» у QTextEdit не хватает:
 // он двигает только шрифт по умолчанию, а у нас кегль задан явно в каждом
 // формате — поэтому при смене масштаба документ собирается заново.
-void buildDocument(const Document& doc, QTextDocument& target, qreal zoom = 1.0);
+void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target, qreal zoom = 1.0);
 
 // Заплатка вместо полной сборки: target становится таким, каким его собрал бы
 // buildDocument из to, но пересобираются только те блоки, которым это нужно.
 //
 // Участников трое, и каждый отвечает на свой вопрос:
-//   built — IR, из которого target собирали в прошлый раз. Где built и to
+//   built — блоки, из которых target собирали в прошлый раз. Где built и to
 //           совпадают, оформление в документе уже верное: оно вычисляется из
 //           свойств блока, а они не менялись.
-//   now   — IR того, что в target лежит сейчас. Между сборками документ уходит
+//   now   — блоки того, что в target лежит сейчас. Между сборками документ уходит
 //           вперёд от набора и от операций, и только now говорит, какому блоку
 //           документа какой номер соответствует.
 //   to    — чем документ обязан стать.
@@ -34,15 +36,15 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom = 1.0)
 // после операции now и to совпадают, при отмене now и built близки.
 //
 // Замер, на котором это стоит: на заметке в 239 КБ полная сборка — 151 мс,
-// сравнение двух IR поблочно — 64 мкс, и меняется при обычной правке один
+// сравнение двух списков блоков поблочно — 64 мкс, и меняется при обычной правке один
 // блок. Асимптотика та же, множитель меньше в две тысячи раз.
 //
 // Возвращает false, если заплатать нельзя (пустой документ, поменялось всё,
 // документ разошёлся с now): тогда вызывающий обязан собрать целиком. zoom и
 // облик обязаны совпадать с теми, из которых target собран, — от них зависит
 // каждый блок, а не только изменившиеся.
-bool patchDocument(const Document& built, const Document& now, const Document& to,
-                   QTextDocument& target, qreal zoom = 1.0);
+bool patchDocument(const std::vector<Piece>& built, const std::vector<Piece>& now,
+                   const std::vector<Piece>& to, QTextDocument& target, qreal zoom = 1.0);
 
 // Поле сверху у блока, в высотах строки. Зависит только от самого блока и от
 // того, стоит ли перед ним пустая строка.

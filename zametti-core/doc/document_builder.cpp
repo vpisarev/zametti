@@ -1,9 +1,9 @@
-// IR → QTextDocument.
+// Логические блоки → QTextDocument.
 //
-// Здесь и только здесь UTF-8 ядра превращается в UTF-16 Qt. Смещения Span
-// заданы в байтах, индексы QString — в кодовых единицах UTF-16; приравнивать их
-// нельзя, ошибка проявится только на не-ASCII. Пересчёт идёт накопительно по
-// спанам, идущим по порядку.
+// Здесь и только здесь UTF-8 ядра превращается в UTF-16 Qt. Смещения кусков
+// строки заданы в байтах, индексы QString — в кодовых единицах UTF-16;
+// приравнивать их нельзя, ошибка проявится только на не-ASCII. Пересчёт идёт
+// накопительно по кускам, идущим по порядку.
 //
 // Маркеры списков не попадают в документ вовсе: здесь под них только
 // резервируется левое поле, а рисует их NoteView по геометрии строки (см.
@@ -180,14 +180,13 @@ qreal codePoint(qreal surrounding, qreal zoom) {
     return appearance().codePointSize * zoom;
 }
 
-void applySpans(QTextDocument& doc, int textStart, const Document& ir, const Block& b,
-                qreal linePoint, qreal zoom) {
-    OffsetMap map(ir.text(b));
+void applySpans(QTextDocument& doc, int textStart, const Piece& b, qreal linePoint, qreal zoom) {
+    OffsetMap map(b.text);
     QTextCursor cursor(&doc);
-    for (const Inline& s : ir.inlines(b)) {
-        if (s.text.size() <= 0) continue;
-        const int from = map.at(static_cast<size_t>(s.text.start));
-        const int to = map.at(static_cast<size_t>(s.text.end));
+    for (const Run& s : b.runs) {
+        if (s.empty()) continue;
+        const int from = map.at(static_cast<size_t>(s.start));
+        const int to = map.at(static_cast<size_t>(s.end));
         if (to <= from) continue;
 
         // Стиль записывается свойством, а не выводится обратно из оформления:
@@ -214,18 +213,14 @@ void applySpans(QTextDocument& doc, int textStart, const Document& ir, const Blo
                 fmt.setFontFamilies({QString(appearance().codeFamily)});
         }
         if (!s.href.empty()) {
-            const std::string_view href = ir.href(s);
             fmt.setAnchor(true);
-            fmt.setAnchorHref(QString::fromUtf8(href.data(), static_cast<qsizetype>(href.size())));
+            fmt.setAnchorHref(QString::fromStdString(s.href));
             fmt.setForeground(appearance().linkColor);
             fmt.setFontUnderline(true);
         }
         if (s.comment()) fmt.setForeground(appearance().rawColor);
-        if (!s.title.empty()) {
-            const std::string_view title = ir.title(s);
-            fmt.setProperty(SpanTitleProperty,
-                            QString::fromUtf8(title.data(), static_cast<qsizetype>(title.size())));
-        }
+        if (!s.title.empty())
+            fmt.setProperty(SpanTitleProperty, QString::fromStdString(s.title));
         cursor.setPosition(textStart + from);
         cursor.setPosition(textStart + to, QTextCursor::KeepAnchor);
         cursor.mergeCharFormat(fmt);
@@ -315,8 +310,7 @@ BuildContext contextFor(qreal zoom) {
 // курсор, а не заводить новый: и у свежего QTextDocument, и после выреза под
 // заплатку остаётся ровно один пустой блок, который надо занять.
 void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& ctx,
-               const Document& doc, const Block& b, bool documentStart, bool& reuse,
-               bool& prevVSpace) {
+               const Piece& b, bool documentStart, bool& reuse, bool& prevVSpace) {
     const bool first = documentStart && reuse;
     const bool raw = b.raw;
     const bool list = !raw && isList(b.kind);
@@ -362,11 +356,11 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     // Qt переразмечает целиком тот блок, в который пишут, и длинный блок
     // кода делал набор внутри себя ощутимо медленным.
     const bool literal = raw || b.kind == Kind::Code;
-    const std::string_view source = doc.text(b);
+    const std::string_view source = b.text;
     // Один завершающий перевод строки снимаем: иначе внизу висела бы лишняя
     // пустая строка. По виду документа его не восстановить — пустой блок
     // кода и блок из одной пустой строки выглядят одинаково.
-    const bool trailingNewline = literal && !source.empty() && source.back() == '\n';
+    const bool trailingNewline = literal && b.trailingNewline;
 
     QString text;
     std::vector<Break> breaks;
@@ -386,9 +380,7 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
                 // внутреннее поле. Левый край плашки отрисовка находит,
                 // вычитая padLeft обратно (см. codePlate в settings.h).
                 blockFmt.setLeftMargin(ctx.plate.indent + ctx.plate.padLeft);
-                blockFmt.setProperty(
-                    InfoProperty,
-                    QString::fromUtf8(doc.info(b).data(), qsizetype(doc.info(b).size())));
+                blockFmt.setProperty(InfoProperty, QString::fromStdString(b.info));
                 linePoint = codePoint(ctx.basePoint, ctx.zoom);
                 charFmt.setFontPointSize(linePoint);
                 if (!appearance().codeFamily.isEmpty())
@@ -437,7 +429,7 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
                 charFmt.setForeground(appearance().rawColor);
                 break;
         }
-        if (b.kind != Kind::Code) text = toQt(doc.text(b), breaks);
+        if (b.kind != Kind::Code) text = toQt(b.text, breaks);
     }
 
     // Полоска с языком живёт НЕ в тексте, а в поле блока: резерв под неё —
@@ -506,8 +498,8 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
         const int textStart = cursor.position();
         cursor.insertText(text, charFmt);
         markBreaks(target, textStart, breaks);
-        if (!literal && !b.inlines.empty())
-            applySpans(target, textStart, doc, b, linePoint, ctx.zoom);
+        if (!literal && !b.runs.empty())
+            applySpans(target, textStart, b, linePoint, ctx.zoom);
         enlargeFallbackGlyphs(target, textStart, text, linePoint, ctx.primaryFont);
     }
     prevVSpace = vspace;
@@ -515,7 +507,7 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
 
 }  // namespace
 
-void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
+void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target, qreal zoom) {
     target.setUndoRedoEnabled(false);
     target.clear();
     // Поля задаются рамкой корневого фрейма, а не documentMargin: тот кладёт
@@ -556,8 +548,8 @@ void buildDocument(const Document& doc, QTextDocument& target, qreal zoom) {
     bool first = true;
     bool prevVSpace = false;
 
-    for (const Block& b : doc.blocks)
-        emitBlock(cursor, target, ctx, doc, b, true, first, prevVSpace);
+    for (const Piece& b : blocks)
+        emitBlock(cursor, target, ctx, b, true, first, prevVSpace);
 
     // Пустой документ: блоков не было, и единственный блок остался без формата
     // вовсе. Каретка в нём выходила кеглем по умолчанию и в самом углу окна —
@@ -586,18 +578,18 @@ namespace {
 // Одинаковы ли блоки настолько, что сборщик выдал бы за них одно и то же.
 // Сравнивается всё, что блок о себе знает, а не только то, что видно на
 // экране: род, разметка, текст, спаны с их адресами.
-bool sameBlock(const Document& a, const Block& x, const Document& b, const Block& y) {
+bool sameBlock(const Piece& x, const Piece& y) {
     if (x.kind != y.kind || x.marker != y.marker || x.checked != y.checked || x.raw != y.raw ||
         x.headingLevel != y.headingLevel || x.html != y.html || x.level != y.level)
         return false;
-    if (a.text(x) != b.text(y) || a.info(x) != b.info(y)) return false;
-    const std::span<const Inline> xs = a.inlines(x);
-    const std::span<const Inline> ys = b.inlines(y);
-    if (xs.size() != ys.size()) return false;
-    for (size_t i = 0; i < xs.size(); ++i) {
-        if (xs[i].flags != ys[i].flags) return false;
-        if (a.text(x, xs[i]) != b.text(y, ys[i])) return false;
-        if (a.href(xs[i]) != b.href(ys[i]) || a.title(xs[i]) != b.title(ys[i])) return false;
+    if (x.text != y.text || x.info != y.info || x.trailingNewline != y.trailingNewline)
+        return false;
+    if (x.runs.size() != y.runs.size()) return false;
+    for (size_t i = 0; i < x.runs.size(); ++i) {
+        const Run& a = x.runs[i];
+        const Run& b = y.runs[i];
+        if (a.flags != b.flags || a.href != b.href || a.title != b.title) return false;
+        if (x.view(a) != y.view(b)) return false;
     }
     return true;
 }
@@ -606,7 +598,8 @@ bool sameBlock(const Document& a, const Block& x, const Document& b, const Block
 // Заплатка обязана давать ровно то же, что и полная сборка, — до последнего
 // свойства формата. Проверяется в отладочной сборке после каждой заплатки, то
 // есть на каждой операции всех фаззеров: свойство, а не отдельный случай.
-void checkPatchMatchesBuild(const Document& to, const QTextDocument& target, qreal zoom) {
+void checkPatchMatchesBuild(const std::vector<Piece>& to, const QTextDocument& target,
+                            qreal zoom) {
     QTextDocument reference;
     buildDocument(to, reference, zoom);
     // Поля в сравнении не участвуют: их держит ВИД, а не сборщик, и заплатка
@@ -642,11 +635,11 @@ void checkPatchMatchesBuild(const Document& to, const QTextDocument& target, qre
 
 }  // namespace
 
-bool patchDocument(const Document& built, const Document& now, const Document& to,
-                   QTextDocument& target, qreal zoom) {
-    const int builtCount = static_cast<int>(built.blocks.size());
-    const int nowCount = static_cast<int>(now.blocks.size());
-    const int newCount = static_cast<int>(to.blocks.size());
+bool patchDocument(const std::vector<Piece>& built, const std::vector<Piece>& now,
+                   const std::vector<Piece>& to, QTextDocument& target, qreal zoom) {
+    const int builtCount = static_cast<int>(built.size());
+    const int nowCount = static_cast<int>(now.size());
+    const int newCount = static_cast<int>(to.size());
     // Пустой документ собирается особым путём (единственный блок без рода), и
     // выкраивать в нём нечего.
     if (builtCount == 0 || nowCount == 0 || newCount == 0) return false;
@@ -655,8 +648,7 @@ bool patchDocument(const Document& built, const Document& now, const Document& t
     // содержимое на месте, и номер блока в документе тот же самый.
     const int limit = qMin(builtCount, qMin(nowCount, newCount));
     int head = 0;
-    while (head < limit && sameBlock(built, built.blocks[head], to, to.blocks[head]) &&
-           sameBlock(now, now.blocks[head], to, to.blocks[head]))
+    while (head < limit && sameBlock(built[head], to[head]) && sameBlock(now[head], to[head]))
         ++head;
     if (head == builtCount && head == nowCount && head == newCount) {
 #ifndef NDEBUG
@@ -667,9 +659,8 @@ bool patchDocument(const Document& built, const Document& now, const Document& t
 
     int tail = 0;
     while (tail < builtCount - head && tail < nowCount - head && tail < newCount - head &&
-           sameBlock(built, built.blocks[builtCount - 1 - tail], to,
-                     to.blocks[newCount - 1 - tail]) &&
-           sameBlock(now, now.blocks[nowCount - 1 - tail], to, to.blocks[newCount - 1 - tail]))
+           sameBlock(built[size_t(builtCount - 1 - tail)], to[size_t(newCount - 1 - tail)]) &&
+           sameBlock(now[size_t(nowCount - 1 - tail)], to[size_t(newCount - 1 - tail)]))
         ++tail;
 
     // Соседа с каждой стороны берём в заплатку, хотя он и не менялся: верхнее
@@ -717,10 +708,10 @@ bool patchDocument(const Document& built, const Document& now, const Document& t
     cursor.removeSelectedText();
 
     bool reuse = true;
-    bool prevVSpace = head > 0 && !to.blocks[head - 1].raw &&
-                      to.blocks[head - 1].kind == Kind::VSpace;
+    bool prevVSpace = head > 0 && !to[size_t(head - 1)].raw &&
+                      to[size_t(head - 1)].kind == Kind::VSpace;
     for (int i = head; i <= newCount - 1 - tail; ++i)
-        emitBlock(cursor, target, ctx, to, to.blocks[i], head == 0, reuse, prevVSpace);
+        emitBlock(cursor, target, ctx, to[size_t(i)], head == 0, reuse, prevVSpace);
 
     // Геометрия списка считается по прогону целиком, а не по блоку: ширину
     // колонки задаёт самый широкий маркер прогона. Диапазон до прогонов

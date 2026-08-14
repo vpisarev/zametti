@@ -3,6 +3,10 @@
 
 #include "ir.h"
 
+// Умирающие подписи сборки от представления приезжают вместе с этими:
+// потребители у них одни и те же, и менять их до сноса IR незачем.
+#include "../doc/ir_bridge.h"
+
 #include <string>
 #include <string_view>
 #include <vector>

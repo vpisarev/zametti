@@ -14,6 +14,8 @@
 
 #include "block_kind.h"
 
+#include <cstddef>
+
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -47,7 +49,7 @@ struct Piece {
     Kind kind = Kind::Paragraph;
     Marker marker = Marker::Bullet;
     HtmlKind html = HtmlKind::Comment;
-    int level = 0;
+    int level = -1;          // -1 — блок стоит снаружи списка
     int headingLevel = 0;
     bool checked = false;
     bool raw = false;               // выводится дословно
@@ -60,5 +62,23 @@ struct Piece {
         return std::string_view(text).substr(size_t(r.start), size_t(r.end - r.start));
     }
 };
+
+// Сколько байт черновика резервирует разбор под источник этой длины. В черновик
+// уезжают текст блоков, дословные куски, info-строки и адреса — всё это куски
+// исходника, и суммарно они его не превосходят (замер на корпусах: k ≈ 0.9).
+// Запас нужен на переезды при правке текста внутри самого разбора.
+//
+// Значение открыто наружу ради проверки инварианта «ноль перекладываний
+// черновика»: иначе набору не с чем сравнивать.
+constexpr size_t draftReserveFor(size_t sourceLength) {
+    return sourceLength + sourceLength / 8 + 1024;
+}
+
+class NoteHeader;
+
+// Разбор байтов markdown в логические блоки и шапку. Определено в
+// markdown_reader.cpp; ступень внутри ZDocument::loadMarkdown, наружу из ядра
+// не выходит.
+void parsePieces(std::string_view markdown, std::vector<Piece>& blocks, NoteHeader& header);
 
 }  // namespace zametti
