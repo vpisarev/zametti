@@ -114,7 +114,9 @@ ZamettiDocument (см. `zametti_qtextdocument_design.md`); история — ж
 
 - `zametti_qtextdocument_design.md` — дизайн единой модели (после
   рефакторинга).
-- `zametti-refactoring1.md` — план рефакторинга и порядок включения тестов.
+- `zametti-refactoring1.md` — план рефакторинга и порядок включения тестов;
+  `zametti-refactor1-report.md` — что из него сделано в первую сессию.
+- `zametti-zoom.md` — как зуммировать, не пересобирая документ.
 - `zametti-storage.md` — формат хранилища: шапка, id, журнал, вложения.
 - `docs/*brief*, docs/*report*` — брифы и отчёты всех этапов; `zametti_todo.md` — очередь
   владельца.
