@@ -22,15 +22,19 @@
 
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <filesystem>
 #include <fstream>
 
 namespace fs = std::filesystem;
 
-int main(int argc, char** argv) {
+static int ztRunSuite(int argc, char** argv) {
+    (void)argc;
+    (void)argv;
     // До создания QApplication, иначе масштаб не применится.
     qputenv("QT_SCALE_FACTOR", "1.25");
-    QApplication app(argc, argv);
     zametti::loadAppearance(nullptr);
 
     const fs::path dir = fs::temp_directory_path() / "zametti-caret-scale-test";
@@ -104,4 +108,13 @@ int main(int argc, char** argv) {
     ZT_TRUE("после набора", alienFrames() == 0);
 
     return zt::report("каретка на дробном масштабе");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(CaretScale, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("caret_scale_test")};
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

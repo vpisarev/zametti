@@ -19,6 +19,7 @@
 #include "times.h"
 
 #include "test_util.h"
+#include "testdata.h"
 
 #include <QApplication>
 #include <QDir>
@@ -716,8 +717,9 @@ void checkLazyTimeMigration() {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
+    (void)argc;
+    (void)argv;
     QTemporaryDir tmp;
     if (!tmp.isValid()) {
         std::printf("не завёлся временный каталог\n");
@@ -742,4 +744,13 @@ int main(int argc, char** argv) {
     checkHistoryNeverWritesToFile();
 
     return zt::report("что история не пишет");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(HistoryWrite, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("history_write_test")};
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

@@ -30,6 +30,7 @@
 #include "serializer.h"
 
 #include "test_util.h"
+#include "testdata.h"
 
 #include <QGuiApplication>
 #include <QTextBlock>
@@ -247,8 +248,7 @@ void fuzzFile(const fs::path& path, int rounds, uint32_t seed) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QGuiApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
 
     if (argc < 2) {
         std::fprintf(stderr,
@@ -276,4 +276,14 @@ int main(int argc, char** argv) {
 
     std::printf("файлов %d, операций %d\n", g_files, g_operations);
     return zt::report("фаззинг операций");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(FuzzOps, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("fuzz_ops_test")};
+    ztArgs.push_back((zt::TestData::corpus(QStringLiteral("corpus"))).toLocal8Bit());
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

@@ -12,6 +12,9 @@
 
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -27,14 +30,15 @@ std::string b(bool v) { return v ? "да" : "нет"; }
 
 }  // namespace
 
-int main(int argc, char** argv) {
+static int ztRunSuite(int argc, char** argv) {
+    (void)argc;
+    (void)argv;
     // Каталог конфига подменяется ДО QCoreApplication: QStandardPaths смотрит
     // на переменную окружения при каждом обращении, но писать в настоящий
     // конфиг владельца нельзя ни одной проверкой.
     QTemporaryDir home;
     qputenv("XDG_CONFIG_HOME", home.path().toLocal8Bit());
 
-    QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("zametti"));
 
     zametti::Session out;
@@ -92,4 +96,13 @@ int main(int argc, char** argv) {
     ZT_EQ("без файла вывоз чистый", b(false), b(fresh.exportKeepMeta));
 
     return zt::report("session");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(Session, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("session_test")};
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

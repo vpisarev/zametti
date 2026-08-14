@@ -21,6 +21,9 @@
 
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -300,8 +303,7 @@ void checkMemoryGuard(const QString& dir) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QGuiApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
     // Тот же потолок, что у остальных наборов картинок и у самой программы
     // (settings.cpp ставит его из бюджета конфига). Без этого корпусные
     // стомегапиксельные снимки отвергались бы предохранителем, и набор
@@ -323,4 +325,14 @@ int main(int argc, char** argv) {
 
     checkOrientation();
     return zt::report("image-read");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(ImageRead, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("image_read_test")};
+    ztArgs.push_back((zt::TestData::corpus(QStringLiteral("images/originals"))).toLocal8Bit());
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

@@ -15,6 +15,7 @@
 #include "document_builder.h"
 #include "parser.h"
 #include "test_util.h"
+#include "testdata.h"
 
 #include <QGuiApplication>
 #include <QTextBlock>
@@ -241,10 +242,20 @@ void checkNamedRules() {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QGuiApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
+    (void)argc;
+    (void)argv;
     checkRecognition();
     checkRulesMatrix();
     checkNamedRules();
     return zt::report("объекты");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(Object, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("object_test")};
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

@@ -7,6 +7,9 @@
 #include "settings.h"
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QApplication>
 #include <QDir>
 #include <QFileInfo>
@@ -647,8 +650,7 @@ void checkTableOnForeignBackground() {
     }
 }
 
-int main(int argc, char** argv) {
-    QApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
     g_dir = argc > 1 ? QString::fromLocal8Bit(argv[1]) : QDir::tempPath();
     QDir().mkpath(g_dir);
     shoot(QStringLiteral("таблица-широкое"), 1000, 700, kNote);
@@ -667,4 +669,14 @@ int main(int argc, char** argv) {
 
     std::printf("снимки: %s\n", qPrintable(g_dir));
     return zt::report("снимки таблиц");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(TableShots, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("table_shots_test")};
+    ztArgs.push_back((zt::TestData::outDir(QStringLiteral("table-shots"))).toLocal8Bit());
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

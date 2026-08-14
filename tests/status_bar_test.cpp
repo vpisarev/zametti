@@ -10,6 +10,9 @@
 #include "status_bar.h"
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QAbstractTextDocumentLayout>
 #include <QApplication>
 #include <QScrollBar>
@@ -271,8 +274,7 @@ void checkCaretImage() {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
     if (argc < 2) {
         std::printf("использование: status_bar_test <каталог для временных файлов>\n");
         return 2;
@@ -290,4 +292,14 @@ int main(int argc, char** argv) {
     checkCaretImage();
 
     return zt::report("status-bar");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(StatusBar, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("status_bar_test")};
+    ztArgs.push_back((zt::TestData::outDir(QStringLiteral("status-bar"))).toLocal8Bit());
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

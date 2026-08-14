@@ -16,6 +16,9 @@
 
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QBuffer>
 #include <QColorSpace>
 #include <QGuiApplication>
@@ -240,8 +243,7 @@ void checkCanonicalWideGamutSurvives() {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QGuiApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
     QImageReader::setAllocationLimit(2048);
     const QString root = argc > 1 ? QString::fromLocal8Bit(argv[1]) : QString();
     checkCanonicalRecognition();
@@ -251,4 +253,14 @@ int main(int argc, char** argv) {
     checkCanonicalWideGamutSurvives();
     checkRoundTripClosesOnWideGamut(root);
     return zt::report("цвет");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(Color, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("color_test")};
+    ztArgs.push_back((zt::TestData::corpus(QStringLiteral("images/originals"))).toLocal8Bit());
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

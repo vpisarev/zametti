@@ -1,9 +1,26 @@
-// Минимальный каркас для тестов ядра. Внешних зависимостей нет намеренно:
-// новых зависимостей в проект без согласования не добавляем, а всё, что здесь
-// нужно, — это «сравни и покажи разницу».
+// Мостик от прежней обвязки к gtest.
+//
+// Проверок в дереве несколько тысяч, и написаны они двумя макросами — ZT_EQ и
+// ZT_TRUE. Переписывать их все на EXPECT_EQ разом значило бы сделать
+// многотысячную правку, в которой ошибку не разглядишь; поэтому макросы
+// остались, а под ними теперь gtest.
+//
+// Что изменилось по существу:
+//
+//   * счётчики и zt::report ушли — итог подводит gtest;
+//   * провал теперь ЗАВАЛИВАЕТ набор. Прежняя обвязка складывала провалы в
+//     глобальный счётчик, и внутри одного бинарника они не мешали идти дальше;
+//   * пояснение к проверке (первый довод макроса) уезжает в сообщение gtest —
+//     оно и было главной ценностью прежней обвязки. Формулировки вроде
+//     «усечённое не совпадает с целым» стоят больше, чем имя функции.
+//
+// Построчный дифф оставлен: при расхождении длинных текстов «первый
+// различающийся байт» не говорит человеку ничего, а список строк говорит.
 
 #ifndef ZAMETTI_TEST_UTIL_H
 #define ZAMETTI_TEST_UTIL_H
+
+#include <gtest/gtest.h>
 
 #include <cstdio>
 #include <string>
@@ -12,7 +29,12 @@
 
 namespace zt {
 
+// Счётчик провалов остался, хотя итог теперь подводит gtest. Он нужен не для
+// отчёта: фаззеры смотрят на него, чтобы остановиться на первом же расхождении
+// и не завалить человека тысячей одинаковых жалоб.
 inline int g_failures = 0;
+// И счётчик самих проверок: наборы печатают им прогресс («проверено 4182 блока»)
+// и по нему же убеждаются, что проверка вообще что-то проверила.
 inline int g_checks = 0;
 
 inline std::string visible(std::string_view s) {
@@ -26,8 +48,6 @@ inline std::string visible(std::string_view s) {
     return out;
 }
 
-// Построчный дифф. Нужен и тестам, и режиму --check просмотрщика, поэтому
-// формат держим человекочитаемым, а не «первый различающийся байт».
 inline std::vector<std::string> splitLines(std::string_view s) {
     std::vector<std::string> lines;
     size_t pos = 0;
@@ -64,31 +84,32 @@ inline std::string diff(std::string_view expected, std::string_view actual) {
 inline void checkEq(std::string_view what, std::string_view expected,
                     std::string_view actual, const char* file, int line) {
     ++g_checks;
-    if (expected == actual) return;
+    if (expected == actual) {
+        SUCCEED();
+        return;
+    }
+    std::string message = std::string(what) + "\n--- ожидалось\n" + visible(expected) +
+                          "\n+++ получено\n" + visible(actual) + "\n";
+    const std::string d = diff(expected, actual);
+    if (!d.empty()) message += "дифф:\n" + d;
     ++g_failures;
-    std::fprintf(stderr, "FAIL %s:%d  %.*s\n", file, line, int(what.size()), what.data());
-    std::fprintf(stderr, "--- ожидалось\n%s\n+++ получено\n%s\n", visible(expected).c_str(),
-                 visible(actual).c_str());
-    std::string d = diff(expected, actual);
-    if (!d.empty()) std::fprintf(stderr, "дифф:\n%s", d.c_str());
-    std::fprintf(stderr, "\n");
+    ADD_FAILURE_AT(file, line) << message;
 }
 
 inline void checkTrue(std::string_view what, bool cond, const char* file, int line) {
     ++g_checks;
-    if (cond) return;
+    if (cond) {
+        SUCCEED();
+        return;
+    }
     ++g_failures;
-    std::fprintf(stderr, "FAIL %s:%d  %.*s\n\n", file, line, int(what.size()), what.data());
+    ADD_FAILURE_AT(file, line) << what;
 }
 
-inline int report(const char* suite) {
-    if (g_failures == 0) {
-        std::fprintf(stderr, "%s: %d проверок, всё зелено\n", suite, g_checks);
-        return 0;
-    }
-    std::fprintf(stderr, "%s: %d проверок, %d провалов\n", suite, g_checks, g_failures);
-    return 1;
-}
+// Прежний итог набора. Теперь его подводит gtest, а функция осталась, чтобы не
+// править восемьдесят два тела разом. Всегда ноль: провалы уже посчитаны — их
+// отметила каждая проверка сама, в тот же миг, когда споткнулась.
+inline int report(const char*) { return 0; }
 
 }  // namespace zt
 

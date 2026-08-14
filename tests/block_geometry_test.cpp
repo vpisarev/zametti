@@ -27,6 +27,7 @@
 #include "resources.h"
 
 #include "test_util.h"
+#include "testdata.h"
 
 #include <QAbstractTextDocumentLayout>
 #include <QApplication>
@@ -234,8 +235,7 @@ void checkGeometry(int width, const QString& name) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
     g_dir = argc > 1 ? QString::fromLocal8Bit(argv[1]) : QDir::tempPath();
     QDir().mkpath(g_dir);
     zametti::loadEmbeddedFonts();
@@ -248,4 +248,14 @@ int main(int argc, char** argv) {
     checkGeometry(620, QStringLiteral("узкое"));
 
     return zt::report("геометрия блоков");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(BlockGeometry, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("block_geometry_test")};
+    ztArgs.push_back((zt::TestData::outDir(QStringLiteral("block-geometry"))).toLocal8Bit());
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

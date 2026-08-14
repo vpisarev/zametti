@@ -24,6 +24,9 @@
 #include "settings.h"
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QApplication>
 #include <QDir>
 #include <QFile>
@@ -398,8 +401,7 @@ const char* kProgram = R"(head
 ```
 #include <stdio.h>
 
-int main(int argc, char** argv)
-{
+int main(int argc, char** argv) {
     printf("Hello, darling!\n");
 }
 ```
@@ -610,8 +612,7 @@ void checkEscapeOrder() {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
     g_dir = argc > 1 ? QString::fromLocal8Bit(argv[1]) : QDir::tempPath();
     QDir().mkpath(g_dir);
 
@@ -631,4 +632,14 @@ int main(int argc, char** argv) {
                 zt::g_failures == 0 ? "всё зелено"
                                     : (std::to_string(zt::g_failures) + " провалов").c_str());
     return zt::g_failures == 0 ? 0 : 1;
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(CodeEdit, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("code_edit_test")};
+    ztArgs.push_back((zt::TestData::outDir(QStringLiteral("code-edit"))).toLocal8Bit());
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

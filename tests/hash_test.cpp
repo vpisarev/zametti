@@ -65,7 +65,7 @@ const Vector kVectors[] = {
 
 }  // namespace
 
-int main() {
+static int ztRunSuite() {
     for (const Vector& v : kVectors) {
         const std::string hex = zametti::hashOf(patternOf(v.length)).hex();
         ZT_EQ("вектор длины " + std::to_string(v.length), std::string(v.hex), hex);
@@ -88,4 +88,10 @@ int main() {
           std::to_string(zametti::hashOf("что угодно").hex().size()));
 
     return zt::report("blake3");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(Hash, All) {
+    EXPECT_EQ(0, ztRunSuite());
 }

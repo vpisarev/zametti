@@ -155,10 +155,16 @@ void checkTargetSize() {
 
 }  // namespace
 
-int main() {
+static int ztRunSuite() {
     checkBoundaries();
     checkMemoryCeiling();
     checkDefaults();
     checkTargetSize();
     return zt::report("границы входа и бюджет");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(ImportLimits, All) {
+    EXPECT_EQ(0, ztRunSuite());
 }

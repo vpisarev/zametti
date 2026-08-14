@@ -12,6 +12,9 @@
 #include "note_tree.h"
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QApplication>
 #include <QDir>
 #include <QFile>
@@ -47,8 +50,9 @@ QModelIndex findByTitle(const zametti::NoteTreeModel& model, const QModelIndex& 
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
+    (void)argc;
+    (void)argv;
     QTemporaryDir tmp;
     if (!tmp.isValid()) {
         std::printf("не завёлся временный каталог\n");
@@ -232,4 +236,13 @@ int main(int argc, char** argv) {
     }
 
     return zt::report("дерево в виджете");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(TreeView, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("tree_view_test")};
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

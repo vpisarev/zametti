@@ -315,7 +315,7 @@ void checkParsedInvariants() {
 
 }  // namespace
 
-int main() {
+static int ztRunSuite() {
     checkAppend();
     checkNewBlock();
     checkReplaceByAppend();
@@ -325,4 +325,10 @@ int main() {
     checkValidate();
     checkParsedInvariants();
     return zt::report("arena");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(Arena, All) {
+    EXPECT_EQ(0, ztRunSuite());
 }

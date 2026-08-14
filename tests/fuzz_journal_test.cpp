@@ -17,6 +17,9 @@
 
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -45,8 +48,7 @@ QByteArray noteAt(int step, int lines) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QCoreApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
     const uint32_t seed = argc > 1 ? uint32_t(std::stoul(argv[1])) : 20260801u;
     std::fprintf(stderr, "зерно %u\n", seed);
     std::mt19937 rng(seed);
@@ -180,4 +182,13 @@ int main(int argc, char** argv) {
     if (zt::g_failures != 0)
         std::fprintf(stderr, "повторить: fuzz_journal_test %u\n", seed);
     return zt::report("фаззинг журнала");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(FuzzJournal, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("fuzz_journal_test")};
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

@@ -14,6 +14,7 @@
 #include "serializer.h"
 
 #include "test_util.h"
+#include "testdata.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -110,7 +111,7 @@ std::vector<std::string> mutations(const std::string& src, uint64_t seed, int co
 
 }  // namespace
 
-int main(int argc, char** argv) {
+static int ztRunSuite(int argc, char** argv) {
     if (argc < 2) {
         std::fprintf(stderr,
                      "использование: corpus_test <каталог с .md> [мутаций на файл] [куда сохранять падающие]\n");
@@ -155,4 +156,14 @@ int main(int argc, char** argv) {
                  files.size(), g_total, g_canonical,
                  g_total ? 100.0 * g_canonical / g_total : 0.0);
     return zt::report("corpus");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(Corpus, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("corpus_test")};
+    ztArgs.push_back((zt::TestData::corpus(QStringLiteral("corpus"))).toLocal8Bit());
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

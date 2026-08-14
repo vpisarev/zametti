@@ -1,598 +1,156 @@
-# Тесты ядра. Линкуются только с zametti-core: если сюда когда-нибудь заедет
-# Qt, сборка сломается — это и есть механическая проверка независимости ядра.
+# НАБОРЫ — ОДНИМ ПРОЦЕССОМ.
+#
+# Было: восемьдесят два исполняемых файла, у каждого свой main, свой блок из
+# четырёх строк CMake (скопированный восемьдесят два раза) и своё имя в ctest.
+# Стало: один zametti-tests на gtest.
+#
+# Смысл не в удобстве. Восемьдесят два процесса прятали целый класс бед по
+# построению: набор, портящий память или текущий, уносил это с собой в могилу.
+# Теперь следующий набор работает в той же памяти — и если предыдущий её
+# испортил, это станет видно. Решение владельца.
+#
+# Обратное осталось: --gtest_filter='Journal.*' гоняет один набор ровно так же,
+# как раньше гонялся один бинарник.
+#
+# КОРПУСА И КАТАЛОГИ ВЫВОДА больше не приходят через argv (в одном процессе он
+# на всех один) — их знает TestData (testdata.h). Нет корпуса — набор ГРОМКО
+# говорит о пропуске и проходит пустым; молчаливый пропуск неотличим от
+# работающей проверки.
 
+find_package(Qt6 QUIET COMPONENTS Core Gui Widgets Test)
+if(NOT TARGET Qt6::Widgets)
+    message(NOTICE "Qt6 Widgets не найден — наборы собраны не будут.")
+    return()
+endif()
+
+set(CMAKE_AUTOMOC ON)
+
+# Фаззинг: сколько правок делать в каждой заметке и с каким зерном. Зерно
+# задаётся явно, чтобы упавший прогон повторялся дословно.
+set(ZAMETTI_FUZZ_ROUNDS 40 CACHE STRING "Сколько случайных правок делать в каждой заметке")
+set(ZAMETTI_FUZZ_SEED 20260727 CACHE STRING "Зерно фаззинга операций")
+set(ZAMETTI_CORPUS_MUTATIONS 0 CACHE STRING "Сколько мутаций делать из каждого файла")
+
+add_executable(zametti-tests
+    main.cpp
+
+    # --- формат ---
+    hash_test.cpp
+    id_test.cpp
+    roundtrip_test.cpp
+    arena_test.cpp
+    table_test.cpp
+    golden_test.cpp
+    corpus_test.cpp
+    math_scan_test.cpp
+    math_ir_test.cpp
+    zstd_test.cpp
+
+    # --- хранилище и журнал ---
+    store_test.cpp
+    journal_test.cpp
+    history_compress_test.cpp
+    fuzz_journal_test.cpp
+    archive_test.cpp
+    times_test.cpp
+    sort_test.cpp
+    tree_test.cpp
+    note_import_test.cpp
+
+    # --- живая модель документа ---
+    reader_test.cpp
+    object_test.cpp
+    table_view_test.cpp
+    save_test.cpp
+    text_stats_test.cpp
+    spaces_test.cpp
+    export_test.cpp
+    heading_test.cpp
+    config_test.cpp
+    ops_test.cpp
+    fuzz_ops_test.cpp
+    undo_test.cpp
+    diff_test.cpp
+    session_test.cpp
+    search_test.cpp
+    document_roundtrip_test.cpp
+    backspace_flat_test.cpp
+    tidy_fuzz_test.cpp
+
+    # --- картинки ---
+    import_test.cpp
+    image_read_test.cpp
+    color_test.cpp
+    resample_test.cpp
+    jxl_encode_test.cpp
+    tiff_test.cpp
+    import_limits_test.cpp
+    exif_test.cpp
+
+    # --- окно ---
+    history_search_test.cpp
+    diff_view_test.cpp
+    history_write_test.cpp
+    export_pdf_test.cpp
+    tree_view_test.cpp
+    image_edge_test.cpp
+    about_test.cpp
+    status_bar_test.cpp
+    list_test.cpp
+    editor_test.cpp
+    image_insert_test.cpp
+    image_shots_test.cpp
+    code_edit_test.cpp
+    table_shots_test.cpp
+    archive_editor_test.cpp
+    block_geometry_test.cpp
+    caret_matrix_test.cpp
+    formula_shots_test.cpp
+    code_shots_test.cpp
+    image_test.cpp
+    clipboard_test.cpp
+    external_change_test.cpp
+    resources_test.cpp
+    toolbar_test.cpp
+    live_title_test.cpp
+    caret_scale_test.cpp
+)
+# md4c здесь не зависимость, а СУДЬЯ: table_test сверяет наш разбор таблиц с
+# чужой реализацией того же формата.
+target_link_libraries(zametti-tests PRIVATE zametti-ui gtest md4c zstd Qt6::Test
+                      zametti-code-rules)
+target_include_directories(zametti-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# Пути к корпусам и к каталогу сборки — константами, а не через argv: в одном
+# процессе argv на всех один.
+target_compile_definitions(zametti-tests PRIVATE
+    ZAMETTI_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    ZAMETTI_BINARY_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+    ZAMETTI_FUZZ_ROUNDS=${ZAMETTI_FUZZ_ROUNDS}
+    ZAMETTI_FUZZ_SEED=${ZAMETTI_FUZZ_SEED}
+    ZAMETTI_CORPUS_MUTATIONS=${ZAMETTI_CORPUS_MUTATIONS}
+    ZAMETTI_HAVE_HEIF=$<BOOL:${ZAMETTI_HAVE_HEIF}>)
+
+# ОДИН add_test на всё. Дробить на восемьдесят имён ctest незачем: фильтр gtest
+# делает это лучше, а прогон целиком и есть та самая проверка «один процесс».
+add_test(NAME zametti-tests COMMAND zametti-tests)
+
+# Сваливатель markdown в JSON. Отдельная программа, потому что это ИНСТРУМЕНТ:
+# им смотрят на разбор чужого файла руками.
 add_executable(mddump mddump.cpp)
 target_link_libraries(mddump PRIVATE zametti-core zametti-code-rules)
 
-# Пробник представления IR: аллокации, время, память. Тестом не заводится —
-# это прибор, его запускают руками (см. docs/zametti-m5-report.md).
-add_executable(ir_bench ir_bench.cpp)
-target_link_libraries(ir_bench PRIVATE zametti-core zametti-code-rules)
-
-add_executable(zstd_test zstd_test.cpp)
-target_link_libraries(zstd_test PRIVATE zstd zametti-code-rules)
-target_include_directories(zstd_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-add_test(NAME zstd COMMAND zstd_test)
-
-add_executable(hash_test hash_test.cpp)
-target_link_libraries(hash_test PRIVATE zametti-core zametti-code-rules)
-target_include_directories(hash_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-add_test(NAME blake3 COMMAND hash_test)
-
-add_executable(id_test id_test.cpp)
-target_link_libraries(id_test PRIVATE zametti-core zametti-code-rules)
-target_include_directories(id_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-add_test(NAME note-id COMMAND id_test)
-
-add_executable(store_test store_test.cpp)
-target_link_libraries(store_test PRIVATE zametti-core zametti-code-rules)
-target_include_directories(store_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-add_test(NAME store COMMAND store_test)
-
-add_executable(journal_test journal_test.cpp)
-target_link_libraries(journal_test PRIVATE zametti-core zametti-code-rules)
-target_include_directories(journal_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-add_test(NAME journal COMMAND journal_test)
-
-# Ленивая чистка истории. Фикстура — настоящий журнал владельца; она живёт в
-# .testdata/, и без неё набор идёт дальше, громко сказав о пропуске.
-add_executable(history_compress_test history_compress_test.cpp)
-target_link_libraries(history_compress_test PRIVATE zametti-core zametti-code-rules)
-target_include_directories(history_compress_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-add_test(NAME history-compress
-         COMMAND history_compress_test ${CMAKE_SOURCE_DIR}/.testdata/journal-fixture)
-
-add_executable(fuzz_journal_test fuzz_journal_test.cpp)
-target_link_libraries(fuzz_journal_test PRIVATE zametti-core zametti-code-rules)
-target_include_directories(fuzz_journal_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-add_test(NAME fuzz-journal COMMAND fuzz_journal_test)
-
-add_executable(roundtrip_test roundtrip_test.cpp)
-target_link_libraries(roundtrip_test PRIVATE zametti-core zametti-code-rules)
-add_test(NAME roundtrip COMMAND roundtrip_test)
-
-# Арена IR: границы обоих координатных пространств, перенос между документами,
-# независимость копии, резерв без реаллокаций.
-add_executable(arena_test arena_test.cpp)
-target_link_libraries(arena_test PRIVATE zametti-core zametti-code-rules)
-target_include_directories(arena_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-add_test(NAME arena COMMAND arena_test)
-
-# Разбор таблиц для показа. Линкуется ещё и с md4c: он тут не зависимость, а
-# СУДЬЯ — чужая реализация того же формата, с которой сверяется наша.
-add_executable(table_test table_test.cpp)
-target_link_libraries(table_test PRIVATE zametti-core md4c zametti-code-rules)
-target_include_directories(table_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-add_test(NAME tables COMMAND table_test)
-# docs/ — постоянный корпус таблиц: он лежит в репозитории, и таблиц в нём
-# 67 против трёх в хранилище владельца (замер этапа 12). Сверка с md4c идёт
-# на нём всегда, а не только когда подключены внешние корпуса.
-add_test(NAME tables-docs COMMAND table_test ${CMAKE_SOURCE_DIR}/docs)
-foreach(dir ${ZAMETTI_CORPUS})
-    get_filename_component(name "${dir}" NAME)
-    get_filename_component(abs "${dir}" ABSOLUTE BASE_DIR ${CMAKE_SOURCE_DIR})
-    add_test(NAME tables-${name} COMMAND table_test "${abs}")
-endforeach()
-
-add_executable(golden_test golden_test.cpp)
-target_link_libraries(golden_test PRIVATE zametti-core zametti-code-rules)
-add_test(NAME golden COMMAND golden_test ${CMAKE_CURRENT_SOURCE_DIR}/golden)
-
-# Фаззинг по корпусу. Пути к деревьям — параметром: содержимое корпусов в
-# репозиторий не кладётся, и сборка от чужих каталогов зависеть не должна.
-add_executable(corpus_test corpus_test.cpp)
-target_link_libraries(corpus_test PRIVATE zametti-core zametti-code-rules)
-
-# Каталогов может быть несколько: свои заметки, примеры из спецификации
-# CommonMark, примеры из GFM. Их содержимое в репозиторий не кладётся.
-set(ZAMETTI_CORPUS "" CACHE STRING "Каталоги с .md для фаззинга инвариантов, через ';'")
-# По умолчанию мутаций нет: на самих корпусах инварианты держатся полностью, а
-# глубокий фаззинг — отдельный длинный прогон, его запускают руками
-# (см. docs/zametti-core-notes.md, раздел про известные ограничения).
-set(ZAMETTI_CORPUS_MUTATIONS 0 CACHE STRING "Сколько мутаций делать из каждого файла")
-# Фаззинг операций: сколько правок делать в каждой заметке и с каким зерном.
-# Зерно задаётся явно, чтобы упавший прогон повторялся дословно.
-set(ZAMETTI_FUZZ_ROUNDS 40 CACHE STRING "Сколько случайных правок делать в каждой заметке")
-set(ZAMETTI_FUZZ_SEED 20260727 CACHE STRING "Зерно фаззинга операций")
-# Заметка с двумя таблицами для снимков и проверок показа. Не обязательна:
-# без неё набор идёт дальше, проверив то, что можно проверить выдумкой.
-set(ZAMETTI_TABLE_NOTE "" CACHE STRING "Заметка с таблицами для проверок показа")
-foreach(dir ${ZAMETTI_CORPUS})
-    get_filename_component(name "${dir}" NAME)
-    get_filename_component(abs "${dir}" ABSOLUTE BASE_DIR ${CMAKE_SOURCE_DIR})
-    add_test(NAME corpus-${name} COMMAND corpus_test "${abs}" ${ZAMETTI_CORPUS_MUTATIONS})
-endforeach()
-
-# Слой модели документа: сборщик и читатель. Нужен QtGui, но не QtWidgets —
-# если цель не собралась (нет Qt), тесты просто не заводятся.
-if(TARGET zametti-core)
-    add_executable(reader_test reader_test.cpp)
-    target_link_libraries(reader_test PRIVATE zametti-core zametti-code-rules)
-    target_include_directories(reader_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-    add_test(NAME reader COMMAND reader_test)
-    set_tests_properties(reader PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-    # Те же инварианты по корпусам — каталоги те же, что у corpus_test.
-    foreach(dir ${ZAMETTI_CORPUS})
-        get_filename_component(name "${dir}" NAME)
-        get_filename_component(abs "${dir}" ABSOLUTE BASE_DIR ${CMAKE_SOURCE_DIR})
-        add_test(NAME reader-${name} COMMAND reader_test "${abs}")
-        set_tests_properties(reader-${name} PROPERTIES ENVIRONMENT
-                             "QT_QPA_PLATFORM=offscreen")
-    endforeach()
-
-    # Слой объекта: опознание краёв и полная матрица правил клавиш.
-    add_executable(object_test object_test.cpp)
-    target_link_libraries(object_test PRIVATE zametti-core zametti-code-rules)
-    target_include_directories(object_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    add_test(NAME objects COMMAND object_test)
-    set_tests_properties(objects PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-    # Раскладка таблицы: ширины, выравнивания, вписывание. Ключом --bench тот же
-    # бинарник меряет разбор и раскладку 50×8.
-    add_executable(table_view_test table_view_test.cpp)
-    target_link_libraries(table_view_test PRIVATE zametti-core zametti-code-rules)
-    target_include_directories(table_view_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    add_test(NAME table-layout COMMAND table_view_test)
-    set_tests_properties(table-layout PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-    add_executable(save_test save_test.cpp)
-    target_link_libraries(save_test PRIVATE zametti-core zametti-code-rules)
-    target_include_directories(save_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-    add_test(NAME save COMMAND save_test ${CMAKE_CURRENT_BINARY_DIR})
-    set_tests_properties(save PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-    # Счёт слов и строк. Прибор в том же бинарнике: ключ --bench меряет, сколько
-    # стоит пересчёт всего документа против пересчёта одного блока.
-    add_executable(text_stats_test text_stats_test.cpp)
-    target_link_libraries(text_stats_test PRIVATE zametti-core zametti-code-rules)
-    target_include_directories(text_stats_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-    add_test(NAME text-stats COMMAND text_stats_test)
-    set_tests_properties(text-stats PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-    # Та же сверка по корпусам: счёт по IR против обхода документа. Придуманных
-    # руками случаев мало — расхождение нашлось на живых заметках (U+2028 из
-    # Apple Notes), и ловить такое обязан набор, а не глаз.
-    foreach(dir ${ZAMETTI_CORPUS})
-        get_filename_component(name "${dir}" NAME)
-        get_filename_component(abs "${dir}" ABSOLUTE BASE_DIR ${CMAKE_SOURCE_DIR})
-        add_test(NAME text-stats-${name} COMMAND text_stats_test "${abs}")
-        set_tests_properties(text-stats-${name} PROPERTIES ENVIRONMENT
-                             "QT_QPA_PLATFORM=offscreen")
-    endforeach()
-
-    # Пробелы: неразрывные там, где они значат, и обычные там, где не значат.
-    # Три места (загрузка, в код, из кода) обязаны сходиться, иначе одно съедает
-    # то, что поставило другое.
-    add_executable(spaces_test spaces_test.cpp)
-    target_link_libraries(spaces_test PRIVATE zametti-core zametti-core zametti-code-rules)
-    target_include_directories(spaces_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    add_test(NAME spaces COMMAND spaces_test)
-    set_tests_properties(spaces PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-    # Поиск по истории заметки: находит то, чего в живой версии нет.
-    add_executable(history_search_test history_search_test.cpp)
-    target_link_libraries(history_search_test PRIVATE zametti-ui zametti-code-rules)
-    target_include_directories(history_search_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    add_test(NAME history-search COMMAND history_search_test)
-    set_tests_properties(history-search PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-    # Два вида разности. Главное здесь — сверка видов между собой: вид «как
-    # под капотом» служит эталоном виду с полосками. Корпус — первым
-    # аргументом, каталог снимков — вторым.
-    add_executable(diff_view_test diff_view_test.cpp)
-    target_link_libraries(diff_view_test PRIVATE zametti-ui Qt6::Test zametti-code-rules)
-    target_include_directories(diff_view_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    add_test(NAME diff-view COMMAND diff_view_test
-             ${CMAKE_SOURCE_DIR}/.testdata/corpus)
-    set_tests_properties(diff-view PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-    # Когда история обязана молчать: набрали и стёрли — записывать нечего.
-    add_executable(history_write_test history_write_test.cpp)
-    target_link_libraries(history_write_test PRIVATE zametti-ui zametti-code-rules)
-    target_include_directories(history_write_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    add_test(NAME history-write COMMAND history_write_test)
-    set_tests_properties(history-write PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-    # Чего стоит история: сколько раз мы трогаем диск и сколько почти
-    # одинаковых копий заметки заводим. Замер, а не проверка — в набор не
-    # входит. Рабочий каталог на диске (.testdata), а не в tmpfs: QSaveFile
-    # внутри себя зовёт fdatasync, и в tmpfs он стоит ноль.
-    add_executable(history_bench history_bench.cpp)
-    target_link_libraries(history_bench PRIVATE zametti-ui zametti-code-rules)
-    target_include_directories(history_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_compile_definitions(history_bench
-        PRIVATE ZAMETTI_TESTDATA="${CMAKE_SOURCE_DIR}/.testdata")
-
-    # Вывоз заметки наружу. Матрица — про состояния каталога, куда вывозят:
-    # пусто, та же картинка, чужой файл с тем же именем, само хранилище.
-    add_executable(export_test export_test.cpp)
-    target_link_libraries(export_test PRIVATE zametti-core zametti-code-rules)
-    target_include_directories(export_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    add_test(NAME export COMMAND export_test)
-    set_tests_properties(export PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-    # Заметка на бумагу. Спрашивается только то, что бумага добавляет к
-    # отрисовке: разрез страниц, вес уменьшенной картинки, вшитые шрифты.
-    add_executable(export_pdf_test export_pdf_test.cpp)
-    target_link_libraries(export_pdf_test PRIVATE zametti-ui zametti-code-rules)
-    target_include_directories(export_pdf_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    add_test(NAME export-pdf COMMAND export_pdf_test)
-    set_tests_properties(export-pdf PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-    # Дерево папок глазами виджета: то, что видно только когда модель стоит в
-    # живом QTreeView и сигналы ходят по кругу «вид → модель → вид».
-    add_executable(tree_view_test tree_view_test.cpp)
-    target_link_libraries(tree_view_test PRIVATE zametti-ui Qt6::Test zametti-code-rules)
-    target_include_directories(tree_view_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    add_test(NAME tree-view COMMAND tree_view_test)
-    set_tests_properties(tree-view PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-    # Уровень заголовка: матрица «что было × во что превращаем × где стоит».
-    # Проверяется круг через файл: род блока живёт в свойствах, и ошибка в них
-    # видна лишь тогда, когда документ уедет на диск и прочтётся обратно.
-    add_executable(heading_test heading_test.cpp)
-    target_link_libraries(heading_test PRIVATE zametti-core zametti-code-rules)
-    target_include_directories(heading_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    add_test(NAME headings COMMAND heading_test)
-    set_tests_properties(headings PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-    # Края фотографии: матрица «операция × сторона картинки». Три беды владельца
-    # оказались одной, и проверять надо инвариант, а не найденные случаи.
-    add_executable(image_edge_test image_edge_test.cpp)
-    target_link_libraries(image_edge_test PRIVATE zametti-ui Qt6::Test zametti-code-rules)
-    target_include_directories(image_edge_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    add_test(NAME image-edges COMMAND image_edge_test)
-    set_tests_properties(image-edges PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-    # Конфиг: срезатель //-комментариев и сгенерированный шаблон. Шаблон обязан
-    # одновременно разбираться в пустой объект и содержать каждый параметр —
-    # сломать эти два свойства можно порознь.
-    add_executable(config_test config_test.cpp)
-    target_link_libraries(config_test PRIVATE zametti-core zametti-code-rules)
-    target_include_directories(config_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    add_test(NAME config COMMAND config_test)
-    set_tests_properties(config PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-    # Окно «О программе». Главное в нём — лицензии вшитого: их отсутствие
-    # видно только тому, кто откроет вкладку, поэтому спрашивает набор.
-    add_executable(about_test about_test.cpp)
-    target_link_libraries(about_test PRIVATE zametti-ui Qt6::Test zametti-code-rules)
-    target_include_directories(about_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    add_test(NAME about COMMAND about_test)
-    set_tests_properties(about PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-    # Полоса сведений: что она показывает. Нужны виджеты — она из них и состоит.
-    add_executable(status_bar_test status_bar_test.cpp)
-    target_link_libraries(status_bar_test PRIVATE zametti-ui Qt6::Test zametti-code-rules)
-    target_include_directories(status_bar_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    add_test(NAME status-bar COMMAND status_bar_test ${CMAKE_CURRENT_BINARY_DIR})
-    set_tests_properties(status-bar PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-    add_executable(ops_test ops_test.cpp)
-    target_link_libraries(ops_test PRIVATE zametti-core zametti-code-rules)
-    target_include_directories(ops_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-    add_test(NAME ops COMMAND ops_test)
-    set_tests_properties(ops PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-    # Списки правят чаще всего остального, и ошибка здесь дороже любой другой:
-    # отдельный набор, проверяющий их живым набором в настоящем редакторе.
-    add_executable(list_test list_test.cpp)
-    target_link_libraries(list_test PRIVATE zametti-ui Qt6::Test zametti-code-rules)
-    target_include_directories(list_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    add_test(NAME lists COMMAND list_test)
-    set_tests_properties(lists PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-    # Фаззинг операций. Каталоги с заметками — те же, что и у фаззинга ядра:
-    # содержимое в репозиторий не кладётся, и без них тест просто не заводится.
-    add_executable(fuzz_ops_test fuzz_ops_test.cpp)
-    target_link_libraries(fuzz_ops_test PRIVATE zametti-core zametti-code-rules)
-    target_include_directories(fuzz_ops_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    foreach(dir ${ZAMETTI_CORPUS})
-        get_filename_component(name "${dir}" NAME)
-        get_filename_component(abs "${dir}" ABSOLUTE BASE_DIR ${CMAKE_SOURCE_DIR})
-        add_test(NAME fuzz-ops-${name}
-                 COMMAND fuzz_ops_test "${abs}" ${ZAMETTI_FUZZ_ROUNDS} ${ZAMETTI_FUZZ_SEED})
-        set_tests_properties(fuzz-ops-${name}
-                             PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-    endforeach()
-
-    add_executable(undo_test undo_test.cpp)
-    target_link_libraries(undo_test PRIVATE zametti-core zametti-code-rules)
-    target_include_directories(undo_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-    add_test(NAME undo COMMAND undo_test)
-    set_tests_properties(undo PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-    # Единственный тест с QtWidgets: обе ошибки, ради которых он написан, живут
-    # в виджете и над голым QTextDocument не ловятся. Слой модели от виджетов
-    # по-прежнему свободен — за этим следит core-without-widgets ниже.
-    find_package(Qt6 QUIET COMPONENTS Test)
-    if(Qt6Test_FOUND AND TARGET zametti-ui)
-        add_executable(editor_test editor_test.cpp)
-        target_link_libraries(editor_test PRIVATE zametti-ui Qt6::Test zametti-code-rules)
-        target_include_directories(editor_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-        add_test(NAME editor COMMAND editor_test ${CMAKE_CURRENT_BINARY_DIR})
-        set_tests_properties(editor PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-        # Вставка картинок: живое окно плюс настоящий конвейер импорта.
-        add_executable(image_insert_test image_insert_test.cpp)
-        target_link_libraries(image_insert_test PRIVATE zametti-ui Qt6::Test
-                              zametti-code-rules)
-        target_include_directories(image_insert_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-        add_test(NAME image-insert COMMAND image_insert_test)
-        set_tests_properties(image-insert PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-        # Снимки приёмки. Кладёт png в каталог сборки и заодно проверяет то, что
-        # поддаётся числу: поворот, вписанность, порядок блоков.
-        add_executable(image_shots_test image_shots_test.cpp)
-        target_link_libraries(image_shots_test PRIVATE zametti-ui Qt6::Test
-                              zametti-code-rules)
-        target_include_directories(image_shots_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-        add_test(NAME image-shots COMMAND image_shots_test
-                 ${CMAKE_SOURCE_DIR}/.testdata/images/originals
-                 ${CMAKE_CURRENT_BINARY_DIR}/снимки-этапа-8)
-        set_tests_properties(image-shots PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-        # Правка блоков кода: матрица краёв, Ctrl+Enter, табуляция.
-        add_executable(code_edit_test code_edit_test.cpp)
-        target_link_libraries(code_edit_test PRIVATE zametti-ui Qt6::Test
-                              zametti-code-rules)
-        target_include_directories(code_edit_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-        add_test(NAME code-edit COMMAND code_edit_test ${CMAKE_CURRENT_BINARY_DIR}/код-правка)
-        set_tests_properties(code-edit PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-        # Снимки таблиц: приёмка этапа 12 глазами.
-        add_executable(table_shots_test table_shots_test.cpp)
-        target_link_libraries(table_shots_test PRIVATE zametti-ui Qt6::Test zametti-code-rules)
-        target_include_directories(table_shots_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-        # Живая заметка владельца передаётся, если она есть: беда с правкой
-        # ВТОРОЙ таблицы на выдуманной заметке не воспроизводилась.
-        add_test(NAME table-shots COMMAND table_shots_test ${CMAKE_CURRENT_BINARY_DIR}/снимки-таблиц
-                 ${ZAMETTI_TABLE_NOTE})
-        set_tests_properties(table-shots PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-        # Архивация ОТКРЫТОЙ заметки: путь целиком, как в окне.
-        add_executable(archive_editor_test archive_editor_test.cpp)
-        target_link_libraries(archive_editor_test PRIVATE zametti-ui Qt6::Test
-                              zametti-code-rules)
-        target_include_directories(archive_editor_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-        add_test(NAME archive-editor COMMAND archive_editor_test
-                 ${CMAKE_CURRENT_BINARY_DIR}/архив-редактор)
-        set_tests_properties(archive-editor PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-        # Геометрия блоков: сколько места занимает каждый объект. Требование
-        # владельца после дня, в котором место под объект просили три куска
-        # кода, каждый по-своему.
-        add_executable(block_geometry_test block_geometry_test.cpp)
-        target_link_libraries(block_geometry_test PRIVATE zametti-ui Qt6::Test
-                              zametti-code-rules)
-        target_include_directories(block_geometry_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-        add_test(NAME block-geometry COMMAND block_geometry_test
-                 ${CMAKE_CURRENT_BINARY_DIR}/геометрия)
-        set_tests_properties(block-geometry PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-        # Каретка и обычные нажатия: стрелки по всем видам блоков, буквы,
-        # «заметка от открытия не растёт». Требование владельца после дня, в
-        # котором каждая беда была не хитрым краем, а обычным действием.
-        add_executable(caret_matrix_test caret_matrix_test.cpp)
-        target_link_libraries(caret_matrix_test PRIVATE zametti-ui Qt6::Test
-                              zametti-code-rules)
-        target_include_directories(caret_matrix_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-        add_test(NAME caret-matrix COMMAND caret_matrix_test ${CMAKE_CURRENT_BINARY_DIR}/каретка)
-        set_tests_properties(caret-matrix PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-        # Круг через живой документ: файл → IR → QTextDocument → IR → файл.
-        # Дыра в матрице, найденная владельцем: каждая запись заметки идёт
-        # именно этим путём, а проверялся только круг ядра.
-        add_executable(document_roundtrip_test document_roundtrip_test.cpp)
-        target_link_libraries(document_roundtrip_test PRIVATE zametti-ui Qt6::Test
-                              zametti-code-rules)
-        target_include_directories(document_roundtrip_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-        add_test(NAME document-roundtrip COMMAND document_roundtrip_test
-                 ${CMAKE_SOURCE_DIR}/.testdata/Typesetting\ Math\ in\ Texts.md
-                 ${CMAKE_SOURCE_DIR}/.testdata/corpus)
-        set_tests_properties(document-roundtrip PROPERTIES ENVIRONMENT
-                             "QT_QPA_PLATFORM=offscreen")
-
-        # Лист для выбора кегля выключной формулы: одна заметка при трёх
-        # значениях formulas.displayScale. Выбирает владелец глазами.
-        add_executable(display_scale_probe display_scale_probe.cpp)
-        target_link_libraries(display_scale_probe PRIVATE zametti-ui Qt6::Test
-                              zametti-code-rules)
-        target_include_directories(display_scale_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-        add_executable(matrix_probe matrix_probe.cpp)
-        target_link_libraries(matrix_probe PRIVATE zametti-ui Qt6::Test zametti-code-rules)
-        target_include_directories(matrix_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-        add_executable(open_probe open_probe.cpp)
-        target_link_libraries(open_probe PRIVATE zametti-ui Qt6::Test zametti-code-rules)
-        target_include_directories(open_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-        # Контрольный лист формул: корпус разведки живым окном, снимки
-        # страница за страницей. Приёмка глазами, а не набор.
-        add_executable(formula_sheet_probe formula_sheet_probe.cpp)
-        target_link_libraries(formula_sheet_probe PRIVATE zametti-ui Qt6::Test
-                              zametti-code-rules)
-        target_include_directories(formula_sheet_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-        # Снимки формул: приёмка этапа 16 глазами.
-        add_executable(formula_shots_test formula_shots_test.cpp)
-        target_link_libraries(formula_shots_test PRIVATE zametti-ui Qt6::Test
-                              zametti-code-rules)
-        target_include_directories(formula_shots_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-        add_test(NAME formula-shots COMMAND formula_shots_test
-                 ${CMAKE_CURRENT_BINARY_DIR}/снимки-формул)
-        set_tests_properties(formula-shots PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-        # Снимки блоков кода: приёмка этапа 11 глазами.
-        add_executable(code_shots_test code_shots_test.cpp)
-        target_link_libraries(code_shots_test PRIVATE zametti-ui Qt6::Test
-                              zametti-code-rules)
-        target_include_directories(code_shots_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-        add_test(NAME code-shots COMMAND code_shots_test
-                 ${CMAKE_CURRENT_BINARY_DIR}/снимки-этапа-11)
-        set_tests_properties(code-shots PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-        # Разность версий. Виджетов не касается вовсе: сравнение — чистая
-        # логика над строками канонического markdown.
-        add_executable(diff_test diff_test.cpp)
-        target_link_libraries(diff_test PRIVATE zametti-core zametti-code-rules)
-        target_include_directories(diff_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-        add_test(NAME diff COMMAND diff_test)
-        set_tests_properties(diff PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-        add_executable(search_test search_test.cpp)
-        target_link_libraries(search_test PRIVATE zametti-ui Qt6::Test zametti-code-rules)
-        target_include_directories(search_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-        add_test(NAME search COMMAND search_test)
-        set_tests_properties(search PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-        # Границы формул: канон `$` и живой корпус из 98 формул.
-        add_executable(math_scan_test math_scan_test.cpp)
-        target_link_libraries(math_scan_test PRIVATE zametti-core zametti-code-rules)
-        target_include_directories(math_scan_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-        add_test(NAME math-scan
-                 COMMAND math_scan_test "${CMAKE_SOURCE_DIR}/.testdata/Typesetting Math in Texts.md")
-
-        # Формула в IR: литеральный спан и побайтовый круг на живом корпусе.
-        add_executable(math_ir_test math_ir_test.cpp)
-        target_link_libraries(math_ir_test PRIVATE zametti-core zametti-code-rules)
-        target_include_directories(math_ir_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-        add_test(NAME math-ir
-                 COMMAND math_ir_test "${CMAKE_SOURCE_DIR}/.testdata/Typesetting Math in Texts.md")
-
-        # Формулы этапа 16: пробник базовой линии — первая задача брифа.
-        # Линкуется с zametti-ui ради ресурсов (шрифты в qrc) и настроек.
-        add_executable(formula_probe formula_probe.cpp)
-        target_link_libraries(formula_probe PRIVATE zametti-ui zametti-code-rules)
-        target_include_directories(formula_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-        # Снимки — в .testdata: каталог владельца, он под .gitignore, и туда же
-        # смотрит приёмка. В build/ их искать неудобно, а в системный /tmp
-        # владельцу может быть и не пройти.
-        add_test(NAME formula-baseline
-                 COMMAND formula_probe ${CMAKE_SOURCE_DIR}/.testdata/formula-shots)
-        set_tests_properties(formula-baseline PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-        # Архив этапа 15: тело в журнале, файл — стаб, старая корзина переезжает.
-        add_executable(archive_test archive_test.cpp)
-        target_link_libraries(archive_test PRIVATE zametti-core zametti-code-rules)
-        target_include_directories(archive_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-        add_test(NAME archive COMMAND archive_test)
-
-        # Времена этапа 15: ISO-8601 с офсетом, чтение обоих видов, порядок по
-        # моментам, а не по строкам.
-        add_executable(times_test times_test.cpp)
-        target_link_libraries(times_test PRIVATE zametti-ui Qt6::Test zametti-code-rules)
-        target_include_directories(times_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-        add_test(NAME times COMMAND times_test)
-        set_tests_properties(times PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-        # Сортировки этапа 13: чистые правила, дневниковая фикстура, наследование
-        # меток и инварианты «показ ничего не пишет».
-        add_executable(sort_test sort_test.cpp)
-        target_link_libraries(sort_test PRIVATE zametti-ui Qt6::Test zametti-code-rules)
-        target_include_directories(sort_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-        add_test(NAME sort COMMAND sort_test)
-        set_tests_properties(sort PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-        add_executable(tree_test tree_test.cpp)
-        target_link_libraries(tree_test PRIVATE zametti-ui Qt6::Test zametti-code-rules)
-        target_include_directories(tree_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-        add_test(NAME tree COMMAND tree_test)
-        set_tests_properties(tree PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-        add_executable(image_test image_test.cpp)
-        target_link_libraries(image_test PRIVATE zametti-ui Qt6::Test zametti-code-rules)
-        target_include_directories(image_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-        add_test(NAME images COMMAND image_test)
-        set_tests_properties(images PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-        add_executable(clipboard_test clipboard_test.cpp)
-        target_link_libraries(clipboard_test PRIVATE zametti-ui Qt6::Test zametti-code-rules)
-        target_include_directories(clipboard_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-        add_test(NAME clipboard COMMAND clipboard_test ${CMAKE_CURRENT_BINARY_DIR})
-        set_tests_properties(clipboard PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-        add_executable(external_change_test external_change_test.cpp)
-        target_link_libraries(external_change_test
-                              PRIVATE zametti-ui Qt6::Test zametti-code-rules)
-        target_include_directories(external_change_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-        add_test(NAME external-change
-                 COMMAND external_change_test ${CMAKE_CURRENT_BINARY_DIR})
-        set_tests_properties(external-change PROPERTIES ENVIRONMENT
-                             "QT_QPA_PLATFORM=offscreen")
-
-        # Вшитое в бинарник. Набор нужен именно потому, что на этой машине
-        # сломанный qrc неотличим от исправного: IBM Plex стоит в системе, и
-        # программа с пустыми ресурсами выглядит нормально. Сломается она у
-        # другого человека, и уже в первом окне.
-        add_executable(resources_test resources_test.cpp)
-        target_link_libraries(resources_test PRIVATE zametti-ui zametti-code-rules)
-        target_include_directories(resources_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-        add_test(NAME resources COMMAND resources_test ${CMAKE_CURRENT_BINARY_DIR})
-        set_tests_properties(resources PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-        # Тулбар. Кнопка с чужой иконкой, без тултипа или погашенная без
-        # объяснения выглядит ровно как исправная — глазами это не ловится.
-        add_executable(toolbar_test toolbar_test.cpp)
-        target_link_libraries(toolbar_test PRIVATE zametti-ui zametti-code-rules)
-        target_include_directories(toolbar_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-        add_test(NAME toolbar COMMAND toolbar_test ${CMAKE_CURRENT_BINARY_DIR})
-        set_tests_properties(toolbar PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-        # Состояние сеанса. Поле, не попавшее в запись или в чтение, работает до
-        # перезапуска и молча забывается — глазами такое не ловится.
-        add_executable(session_test session_test.cpp)
-        target_link_libraries(session_test PRIVATE zametti-core zametti-code-rules)
-        target_include_directories(session_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-        add_test(NAME session COMMAND session_test)
-        set_tests_properties(session PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-        # Живой заголовок в средней колонке. Цепочка из трёх звеньев, и молчащее
-        # звено посередине глазами не найти: сигнал просто не доходит.
-        add_executable(live_title_test live_title_test.cpp)
-        target_link_libraries(live_title_test PRIVATE zametti-ui Qt6::Test
-                              zametti-code-rules)
-        target_include_directories(live_title_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-        add_test(NAME live-title COMMAND live_title_test)
-        set_tests_properties(live-title PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-        # Импорт .md: в ту ли папку и видно ли привезённое. Жалоба владельца
-        # звучала как одна, а вопросов в ней три, и ответы у них разные.
-        add_executable(note_import_test note_import_test.cpp)
-        target_link_libraries(note_import_test PRIVATE zametti-ui zametti-code-rules)
-        target_include_directories(note_import_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-        add_test(NAME note-import COMMAND note_import_test)
-        set_tests_properties(note-import PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-    endif()
-
-endif()
-
-# Сторож несущего правила. Ядро сознательно зависит от QtGui (там QTextDocument),
-# но виджетов в нём нет и быть не должно: всё, что знает про окна, живёт в
-# zametti-ui, а Android получит своё. Прежний core-without-qt требовал полной
-# независимости от Qt и умер вместе с этим требованием.
-# Каталог заголовков QtWidgets передаётся сторожу: список виджетов он
-# спрашивает у самого Qt, а не перечисляет руками.
+# --- механический сторож ---------------------------------------------------
+#
+# Ядро сознательно зависит от QtGui (там QTextDocument), но виджетов в нём нет
+# и быть не должно: всё, что знает про окна, живёт в zametti-ui, а Android
+# получит своё. Прежний core-without-qt требовал полной независимости от Qt и
+# умер вместе с этим требованием.
+#
+# Список виджетов сторож спрашивает у самого Qt: первая редакция перечисляла
+# имена руками и первым же прогоном объявила виджетом QList.
 set(ZAMETTI_WIDGETS_INCLUDE "")
 if(TARGET Qt6::Widgets)
-    get_target_property(ZAMETTI_WIDGETS_INCLUDE Qt6::Widgets
-                        INTERFACE_INCLUDE_DIRECTORIES)
+    get_target_property(ZAMETTI_WIDGETS_INCLUDE Qt6::Widgets INTERFACE_INCLUDE_DIRECTORIES)
     list(GET ZAMETTI_WIDGETS_INCLUDE 0 ZAMETTI_WIDGETS_INCLUDE)
 endif()
 add_test(NAME core-without-widgets
@@ -600,133 +158,9 @@ add_test(NAME core-without-widgets
                  -DWIDGETS_DIR=${ZAMETTI_WIDGETS_INCLUDE}
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/no_widgets_check.cmake)
 
-# Стенд отрисовки. Цель собирается, но add_test для него НЕТ и не будет: это
-# замер, а не проверка, и смотрят на него тогда, когда есть подозрение, что
-# правка замедлила отрисовку. Запускать руками, см. заголовок файла.
-add_executable(render_bench render_bench.cpp)
-target_link_libraries(render_bench PRIVATE zametti-ui Qt6::Test zametti-code-rules)
-target_include_directories(render_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-if(TARGET zametti-core)
-    # Стенд подбора параметров: строит кривую «качество против байтов» на
-    # большой выборке. Тестом не заводится — это прибор, и гоняется он долго.
-    add_executable(quality_study quality_study.cpp)
-    target_link_libraries(quality_study PRIVATE zametti-core zametti-core
-                          zametti-core libjxl Qt6::Gui zametti-code-rules)
-    target_include_directories(quality_study PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-    # Пробник CMYK: сверяет наш CMS с lcms на профиле 3M Matchprint. Тестом не
-    # заводится — ему нужна выборка, приготовленная отдельно; см. заголовок.
-    add_executable(cmyk_probe cmyk_probe.cpp)
-    target_link_libraries(cmyk_probe PRIVATE zametti-core zametti-core libjxl
-                          Qt6::Gui zametti-code-rules)
-    target_include_directories(cmyk_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-add_executable(import_test import_test.cpp)
-    target_link_libraries(import_test PRIVATE zametti-core zametti-core Qt6::Gui
-                          zametti-code-rules)
-    target_include_directories(import_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    # Два ряда таблицы (avif и heic) держатся на читателе, которого может не
-    # быть: WITH_HEIF по умолчанию выключен. Пропускать их по «файл не открылся»
-    # нельзя — так же выглядела бы и настоящая поломка читателя.
-    target_compile_definitions(import_test PRIVATE
-                               ZAMETTI_HAVE_HEIF=$<BOOL:${ZAMETTI_HAVE_HEIF}>)
-    add_test(NAME import COMMAND import_test ${CMAKE_SOURCE_DIR}/.testdata/images/originals)
-    set_tests_properties(import PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-    # Своя дверь чтения против чужого судьи. Пока плагины Qt в системе есть,
-    # они служат независимой реализацией, с которой сверяются размеры и
-    # пиксели; нет их — набор печатает, что судьи не было.
-    add_executable(image_read_test image_read_test.cpp)
-    target_link_libraries(image_read_test PRIVATE zametti-core zametti-core zametti-core Qt6::Gui
-                          zametti-code-rules)
-    target_include_directories(image_read_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    add_test(NAME image-read
-             COMMAND image_read_test ${CMAKE_SOURCE_DIR}/.testdata/images/originals)
-    set_tests_properties(image-read PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-    add_executable(color_test color_test.cpp)
-    # zametti-core — ради настоящего CMYK-профиля печати: сочинить его
-    # средствами Qt нельзя, а на выдуманном проверка ничего бы не стоила.
-    target_link_libraries(color_test PRIVATE zametti-core zametti-core zametti-core
-                          zametti-core Qt6::Gui zametti-code-rules)
-    target_include_directories(color_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    add_test(NAME color COMMAND color_test ${CMAKE_SOURCE_DIR}/.testdata/images/originals)
-    set_tests_properties(color PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-    add_executable(resample_test resample_test.cpp)
-    target_link_libraries(resample_test PRIVATE zametti-core Qt6::Gui zametti-code-rules)
-    target_include_directories(resample_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    add_test(NAME resample COMMAND resample_test)
-    set_tests_properties(resample PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-    add_executable(jxl_encode_test jxl_encode_test.cpp)
-    target_link_libraries(jxl_encode_test PRIVATE zametti-core zametti-core
-                          zametti-core Qt6::Gui zametti-code-rules)
-    target_include_directories(jxl_encode_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    add_test(NAME jxl-encode
-             COMMAND jxl_encode_test ${CMAKE_SOURCE_DIR}/.testdata/images/originals)
-    set_tests_properties(jxl-encode PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-endif()
-
-if(TARGET zametti-core)
-    add_executable(tiff_test tiff_test.cpp)
-    target_link_libraries(tiff_test PRIVATE zametti-core Qt6::Gui zametti-code-rules)
-    target_include_directories(tiff_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    add_test(NAME tiff COMMAND tiff_test ${CMAKE_SOURCE_DIR}/.testdata/images/originals)
-    set_tests_properties(tiff PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-endif()
-
-add_executable(import_limits_test import_limits_test.cpp)
-target_link_libraries(import_limits_test PRIVATE zametti-core zametti-code-rules)
-target_include_directories(import_limits_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-add_test(NAME import-limits COMMAND import_limits_test)
-
-add_executable(exif_test exif_test.cpp)
-target_link_libraries(exif_test PRIVATE zametti-core zametti-code-rules)
-target_include_directories(exif_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-add_test(NAME exif COMMAND exif_test ${CMAKE_SOURCE_DIR}/.testdata/images/originals)
-
-# Стенд кодеков этапа 8. Тоже замер, а не проверка: add_test для него нет.
-# Запускать под taskset, см. заголовок файла.
-add_executable(image_bench image_bench.cpp)
-target_link_libraries(image_bench PRIVATE libjxl zametti-core Qt6::Gui zametti-code-rules)
-
-add_executable(caret_scale_test caret_scale_test.cpp)
-target_link_libraries(caret_scale_test PRIVATE zametti-ui Qt6::Test zametti-code-rules)
-target_include_directories(caret_scale_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-add_test(NAME caret-scale COMMAND caret_scale_test)
-set_tests_properties(caret-scale PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-add_executable(backspace_flat_test backspace_flat_test.cpp)
-target_link_libraries(backspace_flat_test PRIVATE zametti-ui Qt6::Test zametti-code-rules)
-target_include_directories(backspace_flat_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-add_test(NAME backspace-flat COMMAND backspace_flat_test)
-set_tests_properties(backspace-flat PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-add_executable(tidy_fuzz_test tidy_fuzz_test.cpp)
-target_link_libraries(tidy_fuzz_test PRIVATE zametti-ui Qt6::Test zametti-code-rules)
-target_include_directories(tidy_fuzz_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-add_test(NAME tidy-fuzz COMMAND tidy_fuzz_test)
-set_tests_properties(tidy-fuzz PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
-
-# --- доводка целей под статический Qt ---------------------------------------
-#
-# Наборы заводятся обычной add_executable, и переписывать шесть десятков вызовов
-# ради статического Qt незачем: доводку, которая вписывает в компоновку плагин
-# платформы, можно позвать и потом, по списку уже созданных целей. Без неё
-# набор со статическим Qt собрался бы, но при запуске сказал бы «this
-# application failed to start because no Qt platform plugin could be
-# initialized» — и это выглядело бы как поломка набора, а не сборки.
-#
-# При динамическом Qt делать нечего: плагины лежат отдельными файлами и
-# отыскиваются при запуске.
+# При СТАТИЧЕСКОМ Qt исполняемому файлу нужен ещё и плагин платформы, а вписать
+# его в компоновку должен кто-то знающий. Знает Qt.
 if(Qt6_FOUND AND NOT ZAMETTI_QT_SHARED)
-    get_property(zametti_test_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
-    foreach(target IN LISTS zametti_test_targets)
-        get_target_property(type ${target} TYPE)
-        if(type STREQUAL "EXECUTABLE")
-            qt_finalize_target(${target})
-        endif()
-    endforeach()
+    qt_finalize_target(zametti-tests)
+    qt_finalize_target(mddump)
 endif()

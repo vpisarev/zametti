@@ -10,6 +10,7 @@
 #include "serializer.h"
 
 #include "test_util.h"
+#include "testdata.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -37,7 +38,7 @@ void writeFile(const fs::path& p, const std::string& s) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
+static int ztRunSuite(int argc, char** argv) {
     if (argc < 2) {
         std::fprintf(stderr, "использование: golden_test <каталог> [--update]\n");
         return 2;
@@ -87,4 +88,14 @@ int main(int argc, char** argv) {
         return 0;
     }
     return zt::report("golden");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(Golden, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("golden_test")};
+    ztArgs.push_back((QStringLiteral(ZAMETTI_SOURCE_DIR "/tests/golden")).toLocal8Bit());
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

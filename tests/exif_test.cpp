@@ -12,6 +12,9 @@
 
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -330,7 +333,7 @@ void checkCompressedDataComparison(const std::filesystem::path& root) {
     ZT_TRUE("сверено файлов: " + num(size_t(checked)), checked > 0);
 }
 
-int main(int argc, char** argv) {
+static int ztRunSuite(int argc, char** argv) {
     checkOrientationParsing();
     checkOrientationReset();
     checkFileNameInXmp();
@@ -339,4 +342,14 @@ int main(int argc, char** argv) {
     if (argc > 1) checkAgainstExiftool(std::filesystem::path(argv[1]));
     if (argc > 1) checkCompressedDataComparison(std::filesystem::path(argv[1]));
     return zt::report("метаданные картинок");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(Exif, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("exif_test")};
+    ztArgs.push_back((zt::TestData::corpus(QStringLiteral("images/originals"))).toLocal8Bit());
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

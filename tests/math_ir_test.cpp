@@ -17,6 +17,7 @@
 #include "serializer.h"
 
 #include "test_util.h"
+#include "testdata.h"
 
 #include <fstream>
 #include <sstream>
@@ -251,11 +252,21 @@ void checkCorpus(const std::string& path) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
+static int ztRunSuite(int argc, char** argv) {
     checkNothingIsLost();
     checkFormulaLinesAreNotMarkup();
     checkCanonBorders();
     checkNeighbours();
     checkCorpus(argc > 1 ? argv[1] : "../.testdata/Typesetting Math in Texts.md");
     return zt::report("формулы в IR");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(MathIr, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("math_ir_test")};
+    ztArgs.push_back((zt::TestData::file(QStringLiteral("Typesetting Math in Texts.md"))).toLocal8Bit());
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

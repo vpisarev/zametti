@@ -11,6 +11,9 @@
 
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QColorSpace>
 #include <QCoreApplication>
 #include <QFile>
@@ -250,11 +253,20 @@ void checkTranscode(const QString& root) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QGuiApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
     checkRoundtrip();
     checkColorSpace();
     checkMetadata();
     if (argc > 1) checkTranscode(QString::fromLocal8Bit(argv[1]));
     return zt::report("запись JXL");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(JxlEncode, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("jxl_encode_test")};
+    ztArgs.push_back((zt::TestData::corpus(QStringLiteral("images/originals"))).toLocal8Bit());
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

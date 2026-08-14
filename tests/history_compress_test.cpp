@@ -19,6 +19,9 @@
 
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QByteArray>
 #include <QCoreApplication>
 #include <QDateTime>
@@ -345,8 +348,7 @@ void checkLiveAndMigrationAgree(const QString& root) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QCoreApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
     if (argc > 1) g_fixture = QString::fromLocal8Bit(argv[1]);
 
     QTemporaryDir dir;
@@ -363,4 +365,14 @@ int main(int argc, char** argv) {
     checkLiveAndMigrationAgree(dir.path());
 
     return zt::report("history-compress");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(HistoryCompress, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("history_compress_test")};
+    ztArgs.push_back((zt::TestData::corpus(QStringLiteral("journal-fixture"))).toLocal8Bit());
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

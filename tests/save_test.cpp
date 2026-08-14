@@ -15,6 +15,9 @@
 #include "serializer.h"
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QDir>
 #include <QFile>
 #include <QGuiApplication>
@@ -704,8 +707,7 @@ void surveyGuard(const QString& root) {
     std::printf("сторож: проверено %d, отказов %d\n", checked, refused);
 }
 
-int main(int argc, char** argv) {
-    QGuiApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
     if (argc < 2) {
         std::printf("использование: save_test <каталог для временных файлов>\n");
         return 2;
@@ -739,4 +741,14 @@ int main(int argc, char** argv) {
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(Save, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("save_test")};
+    ztArgs.push_back((zt::TestData::outDir(QStringLiteral("save"))).toLocal8Bit());
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

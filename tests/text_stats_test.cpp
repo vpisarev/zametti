@@ -9,6 +9,7 @@
 #include "parser.h"
 #include "serializer.h"
 #include "test_util.h"
+#include "testdata.h"
 #include "text_stats.h"
 
 #include <QElapsedTimer>
@@ -410,8 +411,7 @@ void survey(const std::filesystem::path& root) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QGuiApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
 
     std::vector<std::string> paths;
     bool benchmark = false;
@@ -456,4 +456,13 @@ int main(int argc, char** argv) {
     }
 
     return zt::report("text-stats");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(TextStats, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("text_stats_test")};
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

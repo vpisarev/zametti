@@ -13,6 +13,9 @@
 
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QApplication>
 #include <QDir>
 #include <QFile>
@@ -140,8 +143,9 @@ void checkImportIsVisibleOnTop() {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
+    (void)argc;
+    (void)argv;
 
     g_root = QDir::tempPath() + QStringLiteral("/zametti-note-import-test");
     g_outside = QDir::tempPath() + QStringLiteral("/zametti-note-import-src");
@@ -161,4 +165,13 @@ int main(int argc, char** argv) {
     checkImportIsVisibleOnTop();
 
     return zt::report("note-import");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(NoteImport, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("note_import_test")};
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

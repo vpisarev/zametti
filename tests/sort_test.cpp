@@ -18,6 +18,9 @@
 #include "serializer.h"
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QApplication>
 #include <QCryptographicHash>
 #include <QElapsedTimer>
@@ -559,8 +562,7 @@ void checkEachFolderSortsItsOwnChildren() {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
     g_root = QDir::tempPath() + QStringLiteral("/zametti-sort-test");
 
     // Замер по просьбе — в набор он не входит: две тысячи файлов на каждом
@@ -582,4 +584,13 @@ int main(int argc, char** argv) {
 
     QDir(g_root).removeRecursively();
     return zt::report("сортировки");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(Sort, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("sort_test")};
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

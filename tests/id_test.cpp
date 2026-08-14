@@ -14,7 +14,7 @@
 namespace fs = std::filesystem;
 using namespace zametti;
 
-int main() {
+static int ztRunSuite() {
     // Известное время из брифа: 2019-03-14T09:26:53Z = 1552555613.
     ZT_EQ("известное время в известный префикс", std::string("01e8m7jx"),
           makeNoteId(1552555613, 0).substr(0, 8));
@@ -78,4 +78,10 @@ int main() {
 
     fs::remove_all(dir);
     return zt::report("генератор id");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(Id, All) {
+    EXPECT_EQ(0, ztRunSuite());
 }

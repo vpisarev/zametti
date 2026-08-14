@@ -21,6 +21,9 @@
 #include <QDateTime>
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QDir>
@@ -498,8 +501,9 @@ void checkBackgroundImport() {
     ZT_TRUE("одна отмена убрала всю пачку", afterUndo.isEmpty());
 }
 
-int main(int argc, char** argv) {
-    QApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
+    (void)argc;
+    (void)argv;
     QTemporaryDir tmp;
     if (!tmp.isValid()) {
         std::printf("не завёлся временный каталог\n");
@@ -520,4 +524,13 @@ int main(int argc, char** argv) {
     checkMultiInsertIsOneUndo();
 
     return zt::report("вставка картинок");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(ImageInsert, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("image_insert_test")};
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

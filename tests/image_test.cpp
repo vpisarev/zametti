@@ -19,6 +19,9 @@
 
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QApplication>
 #include <QClipboard>
 #include <QGuiApplication>
@@ -119,8 +122,9 @@ void checkMissingAttachment() {
     fs::remove_all(dir);
 }
 
-int main(int argc, char** argv) {
-    QApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
+    (void)argc;
+    (void)argv;
     zametti::loadAppearance(nullptr);
 
     const fs::path dir = fs::temp_directory_path() / "zametti-image-test";
@@ -939,4 +943,13 @@ int main(int argc, char** argv) {
     checkMissingAttachment();
 
     return zt::report("картинки в просмотре");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(Image, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("image_test")};
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

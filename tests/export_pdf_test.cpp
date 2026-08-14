@@ -25,6 +25,7 @@
 #include "parser.h"
 #include "settings.h"
 #include "test_util.h"
+#include "testdata.h"
 
 #include <QApplication>
 #include <QDir>
@@ -275,8 +276,7 @@ void checkPaperFont() {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
     QTemporaryDir tmp;
     if (!tmp.isValid()) {
         std::printf("не завёлся временный каталог\n");
@@ -302,4 +302,13 @@ int main(int argc, char** argv) {
     checkShrunkImage();
 
     return zt::report("заметка на бумагу");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(ExportPdf, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("export_pdf_test")};
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

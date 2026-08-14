@@ -67,7 +67,7 @@ void writeFile(const std::string& path, const std::string& data) {
 
 }  // namespace
 
-int main() {
+static int ztRunSuite() {
     ZT_EQ("версия совпадает с вендорингом", std::string("1.5.7"),
           std::string(ZSTD_versionString()));
 
@@ -132,4 +132,10 @@ int main() {
     }
 
     return zt::report("zstd");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(Zstd, All) {
+    EXPECT_EQ(0, ztRunSuite());
 }

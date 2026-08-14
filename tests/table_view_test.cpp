@@ -11,6 +11,7 @@
 #include "table_view.h"
 #include "settings.h"
 #include "test_util.h"
+#include "testdata.h"
 
 #include <QElapsedTimer>
 #include <QTextLayout>
@@ -276,8 +277,7 @@ void bench() {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QGuiApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
     bool wantBench = false;
     for (int i = 1; i < argc; ++i)
         if (std::string(argv[i]) == "--bench") wantBench = true;
@@ -290,4 +290,13 @@ int main(int argc, char** argv) {
     if (wantBench) bench();
 
     return zt::report("раскладка таблиц");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(TableView, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("table_view_test")};
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

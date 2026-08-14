@@ -19,6 +19,9 @@
 #include "settings.h"
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QApplication>
 #include <QClipboard>
 #include <QDir>
@@ -586,8 +589,7 @@ void shots(int width, int height, const QString& tag, bool checks) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
     if (argc < 2) {
         std::printf("code_shots_test <куда класть снимки>\n");
         return 2;
@@ -608,4 +610,14 @@ int main(int argc, char** argv) {
                 zt::g_failures == 0 ? "всё зелено"
                                     : (std::to_string(zt::g_failures) + " провалов").c_str());
     return zt::g_failures == 0 ? 0 : 1;
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(CodeShots, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("code_shots_test")};
+    ztArgs.push_back((zt::TestData::outDir(QStringLiteral("code-shots"))).toLocal8Bit());
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

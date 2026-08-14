@@ -16,6 +16,9 @@
 #include "settings.h"
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QApplication>
 #include <QClipboard>
 #include <QDateTime>
@@ -2868,8 +2871,7 @@ void checkSearchPaintsWithItsOwnColour() {
     zametti::appearance().selectionBackground = keepSelection;
 }
 
-int main(int argc, char** argv) {
-    QApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
     if (argc < 2) {
         std::printf("использование: editor_test <каталог для временных файлов>\n");
         return 2;
@@ -2934,4 +2936,14 @@ int main(int argc, char** argv) {
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(Editor, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("editor_test")};
+    ztArgs.push_back((zt::TestData::outDir(QStringLiteral("editor"))).toLocal8Bit());
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

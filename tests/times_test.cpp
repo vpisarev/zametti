@@ -15,6 +15,9 @@
 #include "serializer.h"
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QApplication>
 #include <QDir>
 #include <QFile>
@@ -199,8 +202,9 @@ void checkCoreKeepsOffsets() {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
+    (void)argc;
+    (void)argv;
     g_root = QDir::tempPath() + QStringLiteral("/zametti-times-test");
 
     checkRoundTrip();
@@ -209,4 +213,13 @@ int main(int argc, char** argv) {
     checkCoreKeepsOffsets();
 
     return zt::report("времена");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(Times, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("times_test")};
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

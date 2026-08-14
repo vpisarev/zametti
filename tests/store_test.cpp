@@ -11,6 +11,9 @@
 
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
@@ -54,8 +57,9 @@ QString idFor(const store::Report& report, const QString& rel) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QCoreApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
+    (void)argc;
+    (void)argv;
     g_base = QDir::tempPath() + QStringLiteral("/zametti-store-test");
     QDir(g_base).removeRecursively();
     QDir().mkpath(g_base);
@@ -689,4 +693,13 @@ int main(int argc, char** argv) {
 
     QDir(g_base).removeRecursively();
     return zt::report("хранилище");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(Store, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("store_test")};
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

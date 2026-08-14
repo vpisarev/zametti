@@ -10,6 +10,9 @@
 
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QBuffer>
 #include <QColorSpace>
 #include <QFileInfo>
@@ -323,8 +326,7 @@ void checkBombs(const QString& root) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QGuiApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
     QImageReader::setAllocationLimit(2048);
     checkPixels();
     if (argc > 1) {
@@ -335,4 +337,14 @@ int main(int argc, char** argv) {
         checkBombs(root);
     }
     return zt::report("конвейер вставки");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(Import, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("import_test")};
+    ztArgs.push_back((zt::TestData::corpus(QStringLiteral("images/originals"))).toLocal8Bit());
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

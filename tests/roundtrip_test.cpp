@@ -657,7 +657,7 @@ void testMeta() {
     }
 }
 
-int main() {
+static int ztRunSuite() {
     testBasics();
     testInline();
     testEscaping();
@@ -677,4 +677,10 @@ int main() {
     testComments();
     testInItemFenceExtents();
     return zt::report("roundtrip");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(Roundtrip, All) {
+    EXPECT_EQ(0, ztRunSuite());
 }

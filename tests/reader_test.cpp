@@ -12,6 +12,7 @@
 #include "json_dump.h"
 #include "parser.h"
 #include "test_util.h"
+#include "testdata.h"
 
 #include <QGuiApplication>
 #include <QTextDocument>
@@ -129,8 +130,7 @@ const char* const kCases[] = {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QGuiApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
 
     for (const char* source : kCases) roundtrip(source, std::string("случай: ") + source);
 
@@ -148,4 +148,13 @@ int main(int argc, char** argv) {
 
     std::printf("проверок %d, провалов %d\n", zt::g_checks, zt::g_failures);
     return zt::g_failures == 0 ? 0 : 1;
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(Reader, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("reader_test")};
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

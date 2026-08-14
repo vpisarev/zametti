@@ -16,6 +16,9 @@
 #include "editor_widget.h"
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QApplication>
 #include <QClipboard>
 #include <QDir>
@@ -155,8 +158,9 @@ void probeClipboard(const std::string& what, const QString& markdown, int caretB
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
+    (void)argc;
+    (void)argv;
     QTemporaryDir tmp;
     if (!tmp.isValid()) {
         std::printf("не завёлся временный каталог\n");
@@ -251,4 +255,13 @@ int main(int argc, char** argv) {
     }
 
     return zt::report("края фотографии");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(ImageEdge, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("image_edge_test")};
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

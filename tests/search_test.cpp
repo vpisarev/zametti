@@ -16,6 +16,9 @@
 #include "store_search.h"
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -377,8 +380,9 @@ void checkShortcutsReachWindow() {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
+    (void)argc;
+    (void)argv;
     g_root = QDir::tempPath() + QStringLiteral("/zametti-search-test");
     QDir(g_root).removeRecursively();
     QDir().mkpath(g_root + QStringLiteral("/.zametti"));
@@ -401,4 +405,13 @@ int main(int argc, char** argv) {
 
     QDir(g_root).removeRecursively();
     return zt::report("поиск");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(Search, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("search_test")};
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

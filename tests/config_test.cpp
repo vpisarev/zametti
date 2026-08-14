@@ -12,6 +12,9 @@
 
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QCoreApplication>
 #include <QColor>
 #include <QFile>
@@ -240,11 +243,12 @@ void checkTablesFromConfig() {
 
 }  // namespace
 
-int main(int argc, char** argv) {
+static int ztRunSuite(int argc, char** argv) {
+    (void)argc;
+    (void)argv;
     QTemporaryDir home;
     qputenv("XDG_CONFIG_HOME", home.path().toLocal8Bit());
 
-    QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("zametti"));
 
     checkStripper();
@@ -254,4 +258,13 @@ int main(int argc, char** argv) {
     checkTablesFromConfig();
 
     return zt::report("config");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(Config, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("config_test")};
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

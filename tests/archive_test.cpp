@@ -17,6 +17,9 @@
 #include "serializer.h"
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
@@ -365,8 +368,9 @@ void checkCleanStoreIsNotTouched() {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QCoreApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
+    (void)argc;
+    (void)argv;
     g_root = QDir::tempPath() + QStringLiteral("/zametti-archive-test");
 
     checkStub();
@@ -382,4 +386,13 @@ int main(int argc, char** argv) {
 
     QDir(g_root).removeRecursively();
     return zt::report("архив и бюро находок");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(Archive, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("archive_test")};
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

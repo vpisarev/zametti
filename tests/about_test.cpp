@@ -10,6 +10,9 @@
 #include "resources.h"
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QApplication>
 #include <QTabWidget>
 #include <QTest>
@@ -206,8 +209,7 @@ void checkWindow() {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
 
     // Снимок окна для глаз: приёмка расположения — дело картинки, а не текста.
     // В ctest не попадает, зовётся руками: about_test --shot <файл> [вкладка].
@@ -229,4 +231,13 @@ int main(int argc, char** argv) {
     checkWindow();
 
     return zt::report("about");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(About, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("about_test")};
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

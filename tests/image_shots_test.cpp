@@ -24,6 +24,9 @@
 #include "settings.h"
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QDir>
@@ -341,8 +344,7 @@ void checkManyImagesDoNotOverlap(const QString& root) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
     if (argc < 3) {
         std::printf("image_shots_test <корпус> <куда класть снимки>\n");
         return 2;
@@ -370,4 +372,15 @@ int main(int argc, char** argv) {
 
     std::printf("снимки сложены в %s\n", qPrintable(g_shots));
     return zt::report("снимки этапа 8");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(ImageShots, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("image_shots_test")};
+    ztArgs.push_back((zt::TestData::corpus(QStringLiteral("images/originals"))).toLocal8Bit());
+    ztArgs.push_back((zt::TestData::outDir(QStringLiteral("image-shots"))).toLocal8Bit());
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }

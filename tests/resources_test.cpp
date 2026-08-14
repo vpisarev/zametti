@@ -11,6 +11,9 @@
 
 #include "test_util.h"
 
+#include <vector>
+#include "testdata.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFont>
@@ -202,8 +205,7 @@ void writeSample(const QString& dir) {
 
 }  // namespace
 
-int main(int argc, char** argv) {
-    QGuiApplication app(argc, argv);
+static int ztRunSuite(int argc, char** argv) {
 
     checkFacesLoad();
     checkLoaderIsQuiet();
@@ -217,4 +219,14 @@ int main(int argc, char** argv) {
     if (argc > 1) writeSample(QString::fromLocal8Bit(argv[1]));
 
     return zt::report("resources");
+}
+
+// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
+// Дробить на отдельные проверки — отдельная работа, по одному набору.
+TEST(Resources, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("resources_test")};
+    ztArgs.push_back((zt::TestData::outDir(QStringLiteral("resources"))).toLocal8Bit());
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
 }
