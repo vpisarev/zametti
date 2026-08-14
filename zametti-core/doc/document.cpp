@@ -307,12 +307,60 @@ int ZDocument::rewriteAttachments(const std::function<QString(const QString&)>& 
 
 // --- поиск -----------------------------------------------------------------
 
+// ПОИСК ИДЁТ ПО ЖИВОМУ ДОКУМЕНТУ, блок за блоком. Никаких копий содержимого:
+// текст блока и так лежит готовым, доставать его вторично незачем.
 std::vector<Hit> ZDocument::find(const Query& query) const {
-    return findInDocument(readDocument(d_->text), query);
+    std::vector<Hit> hits;
+    if (query.isEmpty()) return hits;
+    int ordinal = 0;
+    int index = 0;
+    for (QTextBlock b = d_->text.begin(); b.isValid(); b = b.next(), ++index) {
+        const QString text = b.text();
+        if (text.isEmpty()) continue;
+        qsizetype at = text.indexOf(query.needle, 0, query.sensitivity());
+        while (at >= 0) {
+            hits.push_back(Hit{index, int(at), int(query.needle.size()), ordinal++});
+            // Со следующего знака, а не через длину запроса: перекрывающиеся
+            // вхождения («аа» в «ааа») — тоже вхождения, и счётчик «3/17»
+            // обязан считать их так же, как их потом обойдёт F3.
+            at = text.indexOf(query.needle, at + 1, query.sensitivity());
+        }
+    }
+    return hits;
 }
 
 HitLine ZDocument::hitLine(const Hit& hit, int radius) const {
-    return zametti::hitLine(readDocument(d_->text), hit, radius);
+    HitLine out;
+    const QTextBlock block = d_->text.findBlockByNumber(hit.block);
+    if (!block.isValid()) return out;
+    const QString text = block.text();
+    if (hit.offset < 0 || hit.offset > text.size()) return out;
+
+    // Строка, в которой стоит совпадение: у блока их может быть несколько —
+    // мягкие переносы внутри абзаца стоят разделителем строк, — а в списке
+    // результатов нужна одна.
+    constexpr QChar kBreak = QChar::LineSeparator;
+    qsizetype from = text.lastIndexOf(kBreak, hit.offset > 0 ? hit.offset - 1 : 0);
+    from = from < 0 ? 0 : from + 1;
+    qsizetype to = text.indexOf(kBreak, hit.offset);
+    if (to < 0) to = text.size();
+
+    // Окно вокруг совпадения: длинную строку кода целиком в список не
+    // вместить, а совпадение обязано быть видно.
+    const qsizetype start = qMax(from, qsizetype(hit.offset) - radius);
+    const qsizetype end = qMin(to, qsizetype(hit.offset + hit.length) + radius);
+    QString line = text.mid(start, end - start);
+    int offset = int(hit.offset - start);
+    if (start > from) {
+        line.prepend(QChar(0x2026));
+        ++offset;
+    }
+    if (end < to) line.append(QChar(0x2026));
+
+    out.text = line;
+    out.offset = offset;
+    out.length = hit.length;
+    return out;
 }
 
 // --- сравнение -------------------------------------------------------------

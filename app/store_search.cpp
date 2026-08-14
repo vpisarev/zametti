@@ -1,7 +1,7 @@
 #include "store_search.h"
 
 #include "note_id.h"
-#include "parser.h"
+#include "document.h"
 #include "search.h"
 
 #include <QDir>
@@ -17,19 +17,6 @@ namespace {
 // глазами всё равно не читают, а память и отрисовка не бесконечны. Упёрлись —
 // говорим об этом вслух, молча обрезанный список выглядел бы как полный.
 constexpr int kMaxResults = 2000;
-
-// Заголовок заметки — первый содержательный блок; то же правило, что у
-// дерева. Дублировать разбор незачем: документ уже разобран.
-QString titleOf(const Document& doc) {
-    for (const Block& block : doc.blocks) {
-        if (!block.raw && (block.kind == Kind::VSpace || block.kind == Kind::Html)) continue;
-        const QString text = blockText(doc, block).simplified();
-        if (text.isEmpty()) continue;
-        const qsizetype eol = text.indexOf(QLatin1Char('\n'));
-        return (eol < 0 ? text : text.left(eol)).left(64);
-    }
-    return QStringLiteral("Без названия");
-}
 
 }  // namespace
 
@@ -68,24 +55,24 @@ public slots:
             file.close();
             ++scanned;
 
-            const Document doc =
-                parse(std::string_view(bytes.constData(), size_t(bytes.size())));
+            ZDocument doc;
+            doc.loadMarkdown(std::string_view(bytes.constData(), size_t(bytes.size())));
             // Заметки-папки (и сама корзина) — структура хранилища, а не текст:
             // в среднем списке их нет, и в результатах поиска им делать нечего.
             // Иначе щелчок по находке открыл бы в редакторе файл, который тело
             // иметь не должен.
-            const std::string role = doc.meta.get("role");
-            if (role == "folder" || role == "trash") continue;
-            const std::vector<Hit> hits = findInDocument(doc, query);
+            const QString role = doc.headerValue(QStringLiteral("role"));
+            if (role == QLatin1String("folder") || role == QLatin1String("trash")) continue;
+            const std::vector<Hit> hits = doc.find(query);
             if (hits.empty()) continue;
 
-            const QString title = titleOf(doc);
+            const QString title = doc.title();
             for (const Hit& hit : hits) {
                 if (results.size() >= kMaxResults) {
                     truncated = true;
                     break;
                 }
-                const HitLine line = hitLine(doc, hit);
+                const HitLine line = doc.hitLine(hit);
                 // Поля слепка остаются нулевыми: это находка в живой заметке.
                 results.append(SearchResult{info.completeBaseName(),
                                             info.absoluteFilePath(), title, line.text,

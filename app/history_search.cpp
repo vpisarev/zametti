@@ -1,7 +1,8 @@
 #include "history_search.h"
 
+#include "document.h"
+
 #include "history_panel.h"
-#include "parser.h"
 
 #include <QElapsedTimer>
 
@@ -34,8 +35,9 @@ HistorySearchReport searchNoteHistory(const journal::History& history, const QSt
 
         // Разбираем тем же ядром, что и заметку: поиск обязан видеть ровно то,
         // что видит человек, — текст блоков, без меты и без разметки.
-        const Document doc = parse(std::string(bytes.constData(), size_t(bytes.size())));
-        const std::vector<Hit> hits = findInDocument(doc, query);
+        ZDocument doc;
+        doc.loadMarkdown(std::string_view(bytes.constData(), size_t(bytes.size())));
+        const std::vector<Hit> hits = doc.find(query);
         if (hits.empty()) continue;
         ++report.withHits;
 
@@ -47,7 +49,7 @@ HistorySearchReport searchNoteHistory(const journal::History& history, const QSt
                 report.truncated = true;
                 break;
             }
-            const HitLine line = hitLine(doc, hit);
+            const HitLine line = doc.hitLine(hit);
             SearchResult result;
             result.noteId = noteId + QStringLiteral("@%1").arg(entry.time);   // ключ группы
             result.title = title;

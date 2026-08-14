@@ -11,6 +11,7 @@
 #include "editor_widget.h"
 #include "find_bar.h"
 #include "parser.h"
+#include "document.h"
 #include "search.h"
 #include "settings.h"
 #include "store_search.h"
@@ -48,13 +49,15 @@ void note(const QString& id, const QString& meta, const QString& body) {
     f.write(text.toUtf8());
 }
 
-Document parseText(const QString& text) {
-    const std::string bytes = text.toUtf8().toStdString();
-    return zametti::parse(bytes);
+zametti::ZDocument noteOf(const QString& text) {
+    zametti::ZDocument doc;
+    const QByteArray bytes = text.toUtf8();
+    doc.loadMarkdown(std::string_view(bytes.constData(), size_t(bytes.size())));
+    return doc;
 }
 
 int countIn(const QString& text, const QString& needle) {
-    return int(zametti::findInDocument(parseText(text), zametti::makeQuery(needle)).size());
+    return int(noteOf(text).find(zametti::makeQuery(needle)).size());
 }
 
 QString readFile(const QString& path) {
@@ -126,13 +129,13 @@ void checkSeesWhatUserSees() {
 }
 
 void checkHitLine() {
-    const Document doc = parseText(
+    const zametti::ZDocument doc = noteOf(
         QStringLiteral("```\nочень длинная строка, в середине которой прячется "
                        "искомое слово, и дальше ещё столько же текста подряд\n```\n"));
-    const auto hits = zametti::findInDocument(doc, zametti::makeQuery(QStringLiteral("искомое")));
+    const auto hits = doc.find(zametti::makeQuery(QStringLiteral("искомое")));
     ZT_TRUE("совпадение в длинной строке найдено", hits.size() == 1);
     if (hits.empty()) return;
-    const zametti::HitLine line = zametti::hitLine(doc, hits[0]);
+    const zametti::HitLine line = doc.hitLine(hits[0]);
     ZT_TRUE("строка обрезана по краям", line.text.size() < 130);
     ZT_TRUE("совпадение на своём месте в обрезанной строке",
             line.text.mid(line.offset, line.length) == QStringLiteral("искомое"));
