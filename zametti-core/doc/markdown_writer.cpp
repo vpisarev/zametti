@@ -10,6 +10,8 @@
 
 #include "document_impl.h"
 
+#include "document_pieces.h"
+
 #include "block_kind.h"
 #include "doc_model.h"
 #include "math_scan.h"
@@ -34,46 +36,6 @@ namespace {
 struct BlockLines {
     int first = 0;
     int count = 0;
-};
-
-// МЕСТНЫЕ структуры писателя. Не представление заметки: они живут внутри одного
-// вызова, покрывают ровно один блок и наружу не выходят. Ареной, сквозными
-// индексами и вторым живым документом здесь не пахнет — есть текст блока и
-// куски строки с начертанием, ровно то, что нужно, чтобы блок записать.
-struct Run {
-    int32_t start = 0;      // байты, от начала текста блока
-    int32_t end = 0;
-    uint8_t flags = 0;      // биты InlineFlag
-    std::string href;
-    std::string title;
-
-    bool bold() const { return (flags & InlineBold) != 0; }
-    bool italic() const { return (flags & InlineItalic) != 0; }
-    bool strike() const { return (flags & InlineStrike) != 0; }
-    bool code() const { return (flags & InlineCode) != 0; }
-    bool image() const { return (flags & InlineImage) != 0; }
-    bool comment() const { return (flags & InlineComment) != 0; }
-    bool math() const { return (flags & InlineMath) != 0; }
-    void set(uint8_t bit, bool on) { flags = uint8_t(on ? (flags | bit) : (flags & ~bit)); }
-};
-
-// Логический блок заметки, готовый к записи. Литеральные куски документа
-// (код, дословное) лежат построчно и здесь уже склеены обратно.
-struct Piece {
-    Kind kind = Kind::Paragraph;
-    Marker marker = Marker::Bullet;
-    HtmlKind html = HtmlKind::Comment;
-    int level = 0;
-    int headingLevel = 0;
-    bool checked = false;
-    bool raw = false;
-    std::string info;       // язык блока кода
-    std::string text;
-    std::vector<Run> runs;
-
-    std::string_view view(const Run& r) const {
-        return std::string_view(text).substr(size_t(r.start), size_t(r.end - r.start));
-    }
 };
 
 // Законченный HTML-комментарий: он обрывает себя сам, и сосед начинается
