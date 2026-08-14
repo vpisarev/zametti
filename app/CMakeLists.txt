@@ -41,63 +41,13 @@ set(ZAMETTI_APP_SKIPPED "" CACHE INTERNAL "почему нет программ�
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-# Модель документа и её преобразования в обе стороны. Виджетов здесь нет
-# намеренно: тесты этого слоя гоняются без дисплея и без QtWidgets, и проверяет
-# это тест view-without-widgets.
-add_library(zametti-view STATIC
-    block_object.h
-    block_object.cpp
-    diff.h
-    diff.cpp
-    diff_view.h
-    diff_view.cpp
-    doc_model.h
-    doc_model.cpp
-    document_builder.h
-    document_builder.cpp
-    document_reader.h
-    document_reader.cpp
-    document_saver.h
-    document_saver.cpp
-    edit_history.h
-    edit_history.cpp
-    editor_ops.h
-    editor_ops.cpp
-    export_note.h
-    export_note.cpp
-    marker.h
-    marker.cpp
-    search.h
-    search.cpp
-    settings.h
-    settings.cpp
-    sort_order.h
-    sort_order.cpp
-    formula.h
-    formula.cpp
-    table_view.h
-    table_view.cpp
-    text_stats.h
-    text_stats.cpp
-)
-# История правок живёт в хранилищной библиотеке, а зовёт её редактор — отсюда
-# зависимость слоя модели на zametti-store-lib. Обратной нет и быть не должно:
-# хранилище про виджеты не знает.
-target_link_libraries(zametti-view PUBLIC zametti-core zametti-store-lib Qt6::Gui)
-# dtl нужен ровно одному файлу (diff.cpp) и наружу не течёт: заголовочная
-# библиотека в публичных зависимостях удорожала бы сборку всем, кто линкует
-# zametti-view.
-target_link_libraries(zametti-view PRIVATE dtl)
-# Движок формул — приватно: его заголовки не должны течь дальше formula.cpp,
-# ветка без релизов, и мы не хотим, чтобы имена вроде Render или Graphics2D
-# расползлись по виджетному слою.
-target_link_libraries(zametti-view PRIVATE microtex-all)
-target_link_libraries(zametti-view PRIVATE zametti-code-rules)
-target_include_directories(zametti-view PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-
-# Слой окна. Отдельной целью, а не прямо в исполняемом файле: тесту редактора
-# нужны те же виджеты, а собирать их дважды незачем.
-add_library(zametti-widgets STATIC
+# СЛОЙ ОКНА — и всё, что здесь есть. Настоящий вид: QTextBrowser, дерево,
+# тулбар, панели. Отдельной целью, а не прямо в исполняемом файле: тесту
+# редактора нужны те же виджеты, а собирать их дважды незачем.
+#
+# Позже рядом встанут zametti-ui-android и, может быть, zametti-ui-web. Всё,
+# что им пригодится один в один, лежит не здесь, а в ядре.
+add_library(zametti-ui STATIC
     find_bar.h
     find_bar.cpp
     history_search.h
@@ -148,16 +98,14 @@ add_library(zametti-widgets STATIC
 # бы в бинарник как есть. Замер на нашем qrc: без ключа и с --no-compress
 # одинаковые 1 723 331 байт, с порогом 30 — 852 558. Ниже тридцати ничего не
 # меняется (порог 20 и 5 дают тот же байт), выше сорока начинает расти.
-set_property(TARGET zametti-widgets APPEND PROPERTY AUTORCC_OPTIONS "--threshold;30")
-# Свои читатели картинок (jxl, avif/heic) — статические плагины. Линкуются
-# сюда, а не в исполняемый файл, потому что тестам редактора нужны те же
-# форматы: набор, который не умеет прочитать jxl, проверял бы не то.
+set_property(TARGET zametti-ui APPEND PROPERTY AUTORCC_OPTIONS "--threshold;30")
 # build_facts.h порождает CMake рядом со сводкой настройки — см. корневой
 # CMakeLists.txt. Каталог общий на все цели: тесту «О программе» нужны те же
 # числа, что и окну.
-target_include_directories(zametti-widgets PUBLIC ${CMAKE_BINARY_DIR}/generated)
-target_link_libraries(zametti-widgets PUBLIC zametti-view zametti-imageio Qt6::Widgets Qt6::Svg)
-target_link_libraries(zametti-widgets PRIVATE zametti-code-rules)
+target_include_directories(zametti-ui PUBLIC ${CMAKE_BINARY_DIR}/generated)
+target_include_directories(zametti-ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(zametti-ui PUBLIC zametti-core Qt6::Widgets Qt6::Svg)
+target_link_libraries(zametti-ui PRIVATE zametti-code-rules)
 
 # qt_add_executable, а не add_executable: при СТАТИЧЕСКОМ Qt программе нужен
 # ещё и плагин платформы (cocoa, xcb, windows), а он такой же статический
@@ -171,7 +119,7 @@ qt_add_executable(zametti
     main.cpp
 )
 
-target_link_libraries(zametti PRIVATE zametti-widgets zametti-store-lib zametti-code-rules)
+target_link_libraries(zametti PRIVATE zametti-ui zametti-code-rules)
 
 # Иконку в доке оболочка ищет не у окна, а по .desktop-файлу с именем, которое
 # приложение сообщает через setDesktopFileName. Без установки этих двух файлов

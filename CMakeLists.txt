@@ -29,10 +29,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_C_STANDARD 99)
 
-if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-    set(CMAKE_BUILD_TYPE Debug CACHE STRING "" FORCE)
-endif()
-
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(ZAMETTI_WARNINGS_AS_ERRORS "Считать предупреждения ошибками" OFF)
@@ -158,8 +154,10 @@ add_subdirectory(3rdparty/zstd)
 add_subdirectory(3rdparty/libjxl)
 add_subdirectory(3rdparty/jpegli)
 add_subdirectory(3rdparty/libwebp)
-add_subdirectory(zametti-core)
+# imageio раньше ядра: там заводится необязательная цель zametti-heif, и ядро
+# спрашивает о ней через if(TARGET ...).
 add_subdirectory(imageio)
+add_subdirectory(zametti-core)
 add_subdirectory(store)
 add_subdirectory(app)
 add_subdirectory(tests)

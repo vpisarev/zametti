@@ -11,11 +11,9 @@
 #include "history_rules.h"
 #include "journal.h"
 #include "store.h"
-#ifdef ZAMETTI_HAVE_IMAGEIO
 #include "recompress.h"
-#endif
 
-#include <QCoreApplication>
+#include <QGuiApplication>
 #include <QDateTime>
 #include <QLockFile>
 #include <QFileInfo>
@@ -51,7 +49,16 @@ int usage() {
 }  // namespace
 
 int main(int argc, char** argv) {
-    QCoreApplication app(argc, argv);
+    // ПЛАТФОРМА — ДО СОЗДАНИЯ ПРИЛОЖЕНИЯ. Ядро зависит от QtGui (там живёт
+    // QTextDocument), а QGuiApplication без платформенного плагина не
+    // стартует вовсе. offscreen даёт его там, где нет ни X-сервера, ни
+    // wayland: в контейнере, в эмуляторе, на сборочной машине.
+    //
+    // Под условием, и это не педантизм: заданную снаружи платформу перебивать
+    // нельзя, иначе приёмочные снимки под Xvfb молча уехали бы в offscreen.
+    if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORM"))
+        qputenv("QT_QPA_PLATFORM", "offscreen");
+    QGuiApplication app(argc, argv);
     const QStringList args = app.arguments();
     if (args.size() < 2) return usage();
     const QString command = args[1];
@@ -213,7 +220,6 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-#ifdef ZAMETTI_HAVE_IMAGEIO
     // Пережатие вложений. Числа берутся из ключей, а не из конфига программы:
     // утилита должна уметь то, чего в конфиге нет, — например прогнать с другим
     // качеством и сравнить глазами.
@@ -248,7 +254,6 @@ int main(int argc, char** argv) {
         }
         return ok ? 0 : 1;
     }
-#endif
 
     if (command == QStringLiteral("verify")) {
         if (root.isEmpty()) return usage();
