@@ -282,6 +282,51 @@ public:
     // ГЛАВНОЕ, А НЕ ЧИСЛА: пережил ли круг «документ → файл» смену способа.
     // Разделители U+2028 помечены BreakSourceProperty, и читатель обязан
     // вернуть из них перевод строки — то есть байты файла не меняются вовсе.
+    // ЦЕНА ВТОРОЙ КОПИИ. Обход живого документа сам по себе против обхода с
+    // укладыванием блоков в вектор: разница и есть то, что стоит Piece как
+    // значение, а не как ручка.
+    void weighPieces() {
+        QElapsedTimer timer;
+        qint64 walkUs = 0;
+        qint64 materialiseUs = 0;
+        size_t bytes = 0;
+        size_t count = 0;
+        for (int round = 0; round < 5; ++round) {
+            timer.restart();
+            size_t seen = 0;
+            zametti::walkPieces(*document(), [&](const zametti::Piece& piece) {
+                seen += piece.text.size();   // трогаем, чтобы обход не выбросили
+                return true;
+            });
+            const qint64 bare = timer.nsecsElapsed() / 1000;
+
+            timer.restart();
+            std::vector<zametti::Piece> all;
+            zametti::walkPieces(*document(), [&](const zametti::Piece& piece) {
+                all.push_back(piece);
+                return true;
+            });
+            const qint64 full = timer.nsecsElapsed() / 1000;
+
+            if (round == 0 || bare < walkUs) walkUs = bare;
+            if (round == 0 || full < materialiseUs) materialiseUs = full;
+            count = all.size();
+            bytes = all.size() * sizeof(zametti::Piece);
+            for (const zametti::Piece& one : all) {
+                bytes += one.text.capacity() + one.info.capacity() +
+                         one.runs.capacity() * sizeof(zametti::Run);
+                for (const zametti::Run& r : one.runs) bytes += r.href.capacity() + r.title.capacity();
+            }
+            (void)seen;
+        }
+        std::printf("    обход без копии %5lld мкс, с укладкой в вектор %5lld мкс "
+                    "(+%lld %%), блоков %zu, вторая копия %zu КБ\n",
+                    static_cast<long long>(walkUs), static_cast<long long>(materialiseUs),
+                    static_cast<long long>(walkUs > 0 ? (materialiseUs - walkUs) * 100 / walkUs : 0),
+                    count, bytes / 1024);
+        std::fflush(stdout);
+    }
+
     void checkRoundTrip() {
         std::vector<zametti::Piece> back;
         zametti::walkPieces(*document(), [&](const zametti::Piece& piece) {
@@ -393,6 +438,7 @@ public:
         setScale(1.0);
         rebuild();
         checkRoundTrip();
+        weighPieces();
 
         // Шаги масштаба: пять вверх и пять вниз, по одному замеру на шаг —
         // печатает сам setScale.
