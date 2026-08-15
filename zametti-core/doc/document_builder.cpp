@@ -661,11 +661,18 @@ bool sameBlock(const Piece& x, const Piece& y) {
     return true;
 }
 
+}  // namespace
+
 #ifndef NDEBUG
-// Заплатка обязана давать ровно то же, что и полная сборка, — до последнего
-// свойства формата. Проверяется в отладочной сборке после каждой заплатки, то
-// есть на каждой операции всех фаззеров: свойство, а не отдельный случай.
-void checkPatchMatchesBuild(const std::vector<Piece>& to, const QTextDocument& target) {
+// ДОКУМЕНТ ОБЯЗАН СОВПАДАТЬ С ТЕМ, ЧТО СОБРАЛ БЫ СБОРЩИК, — до последнего
+// свойства формата. Вопрос один и тот же у двоих: у заплатки («я дала то же,
+// что дала бы полная сборка?») и у базиса правки («замена куска не оставила
+// состояния, которого разбор не породил бы?»). Значит и проверка одна.
+//
+// Работает в отладочной сборке после каждой заплатки и после каждой замены
+// куска, то есть на каждой операции всех фаззеров: свойство, а не отдельный
+// случай.
+void checkMatchesBuild(const std::vector<Piece>& to, const QTextDocument& target) {
     QTextDocument reference;
     buildDocument(to, reference);
     // ШРИФТ ДОКУМЕНТА В СРАВНЕНИИ НЕ УЧАСТВУЕТ — по той же причине, что и поля
@@ -715,14 +722,12 @@ void checkPatchMatchesBuild(const std::vector<Piece>& to, const QTextDocument& t
         const QString a = i < wantLines.size() ? wantLines.at(i) : QStringLiteral("<нет строки>");
         const QString b = i < gotLines.size() ? gotLines.at(i) : QStringLiteral("<нет строки>");
         if (a == b) continue;
-        qWarning().noquote() << "строка" << i << "\n  сборка:  " << a.left(90)
-                             << "\n  заплатка:" << b.left(90);
+        qWarning().noquote() << "строка" << i << "\n  сборка:  " << a.left(400)
+                             << "\n  заплатка:" << b.left(400);
     }
-    Q_ASSERT(!"заплатка разошлась с полной сборкой");
+    Q_ASSERT(!"документ разошёлся с полной сборкой");
 }
 #endif
-
-}  // namespace
 
 bool patchDocument(const std::vector<Piece>& built, const std::vector<Piece>& now,
                    const std::vector<Piece>& to, QTextDocument& target) {
@@ -741,7 +746,7 @@ bool patchDocument(const std::vector<Piece>& built, const std::vector<Piece>& no
         ++head;
     if (head == builtCount && head == nowCount && head == newCount) {
 #ifndef NDEBUG
-        checkPatchMatchesBuild(to, target);
+        checkMatchesBuild(to, target);
 #endif
         return true;   // не изменилось ничего
     }
@@ -815,7 +820,7 @@ bool patchDocument(const std::vector<Piece>& built, const std::vector<Piece>& no
     applyListGeometry(target, {firstNumber, cursor.blockNumber()});
     cursor.endEditBlock();
 #ifndef NDEBUG
-    checkPatchMatchesBuild(to, target);
+    checkMatchesBuild(to, target);
 #endif
     return true;
 }

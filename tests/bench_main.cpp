@@ -22,6 +22,7 @@
 //   zametti-bench open          открытие заметки
 //   zametti-bench zoom          ВОРОТА к ZDocument: что делает Ctrl+= с документом
 //   zametti-bench undo          штатный стек отмены: чем именно мы его теряем
+//   zametti-bench paste         цена вставки против размера заметки
 
 #include <QApplication>
 
@@ -41,6 +42,7 @@ int ztMatrixProbe(int argc, char** argv);
 int ztOpenProbe(int argc, char** argv);
 int ztZoomProbe(int argc, char** argv);
 int ztUndoProbe(int argc, char** argv);
+int ztPasteBench(int argc, char** argv);
 
 namespace {
 
@@ -63,6 +65,7 @@ const Bench kBenches[] = {
     {"open", ztOpenProbe},
     {"zoom", ztZoomProbe},
     {"undo", ztUndoProbe},
+    {"paste", ztPasteBench},
 };
 
 int usage() {

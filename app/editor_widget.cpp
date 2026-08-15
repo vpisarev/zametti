@@ -916,10 +916,33 @@ void NoteEditor::applyZoom(qreal value) {
     // стек отмены (замеры — zametti-bench zoom). Ничего из этого масштабу не
     // нужно: абсолютных кеглей в документе нет, размеры знаков заданы ступенями
     // от его шрифта.
+    // ЗА ЧТО ДЕРЖИМСЯ ГЛАЗАМИ. Высота документа от смены кегля меняется, а
+    // прокрутка задана пикселями — и текст уезжает тем сильнее, чем ниже по
+    // заметке человек стоял. Держимся за блок у СЕРЕДИНЫ окна и за его высоту
+    // относительно неё: строка, бывшая в середине, там и остаётся.
+    //
+    // Не за каретку: её на экране может не быть вовсе (человек прокрутил и
+    // смотрит другое место), и тогда вид прыгнул бы к ней.
+    const QAbstractTextDocumentLayout* layout = document()->documentLayout();
+    const int middle = verticalScrollBar()->value() + viewport()->height() / 2;
+    const QTextBlock held = document()->findBlock(layout->hitTest(QPointF(0, middle),
+                                                                 Qt::FuzzyHit));
+    const qreal above = held.isValid()
+                            ? layout->blockBoundingRect(held).top() -
+                                  verticalScrollBar()->value()
+                            : 0.0;
+
     NoteView::setZoom(value);
     applyContentWidth();
     syncTables();
     syncFormulas();
+
+    if (held.isValid()) {
+        // Вёрстку заставляем пересчитаться: без этого прямоугольник блока
+        // отдаётся по старому шрифту, и держаться было бы не за что.
+        (void)layout->documentSize();
+        verticalScrollBar()->setValue(int(layout->blockBoundingRect(held).top() - above));
+    }
 }
 
 void NoteEditor::refreshAppearance() {
@@ -1625,7 +1648,7 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
         QTextCursor line = textCursor();
         line.setPosition(line.block().position());
         line.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
-        QGuiApplication::clipboard()->setText(selectionToMarkdown(line));
+        QGuiApplication::clipboard()->setText(shownAsMarkdown(line));
         if (event->matches(QKeySequence::Cut)) runOperation(cutImageLineAtCursor);
         return;
     }
@@ -2353,8 +2376,22 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
 
 QMimeData* NoteEditor::createMimeDataFromSelection() const {
     QMimeData* data = new QMimeData;
-    data->setText(selectionToMarkdown(textCursor()));
+    data->setText(shownAsMarkdown(textCursor()));
     return data;
+}
+
+// Кусок ПОКАЗАННОГО как markdown.
+//
+// Обычно показана живая заметка, и спрашиваем её саму — глаголом. В режиме
+// истории в поле лежит ЧУЖОЙ документ: иллюстрированная копия слепка, не наша
+// заметка. Копировать из неё заметка не может и не должна — это не она, и
+// второй путь здесь не дубль, а признание факта.
+//
+// Путь исчезнет, когда слепок сам станет заметкой (отделённый ZDocument — см.
+// zametti-editing-basis.md §1); пока он один на всю программу и назван.
+QString NoteEditor::shownAsMarkdown(const QTextCursor& range) const {
+    if (inHistory()) return selectionToMarkdown(range);
+    return note_.note.markdownOf(range);
 }
 
 bool NoteEditor::canInsertFromMimeData(const QMimeData* source) const {
@@ -2397,105 +2434,44 @@ void NoteEditor::insertFromMimeData(const QMimeData* source) {
 }
 
 void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
-    // Вставка — свой шаг истории, и набранное до неё обязано остаться своим.
     const int scrollBefore = verticalScrollBar()->value();
-    if (text.isEmpty()) return;
-    const QByteArray utf8 = text.toUtf8();
-    const std::string source(utf8.constData(), size_t(utf8.size()));
 
-    std::vector<Piece> pieces;
-    if (literal) {
-        // Один абзац с текстом как есть: переводы строк внутри блока сборщик
-        // разметит сам, и они вернутся переводами, а не разметкой.
-        Piece body;
-        body.text = source;
-        while (!body.text.empty() && body.text.back() == '\n') body.text.pop_back();
-        pieces.push_back(std::move(body));
-    } else {
-        // Полным разбором ядра, а не вторым упрощённым: его идемпотентность и
-        // гарантирует, что скопированное вставится без потерь.
-        NoteHeader ignored;
-        parsePieces(source, pieces, ignored);
-    }
-    if (pieces.empty()) return;
-
-    QTextDocument staging;
-    buildDocument(pieces, staging);
-
-    // Кусок из одного обычного абзаца вставляется в строку: скопированные слова
-    // должны войти в тот блок, куда их кладут. Всё прочее — заголовок, пункт,
-    // код, цитата, да и просто несколько блоков — вставляется своими блоками:
-    // род блока это его свойство, и терять его при переносе нельзя.
-    const Piece& head = pieces.front();
-    // Фотография — тоже блочная вещь: абзац из одного image-спана целиком и
-    // вики-вложение "![[...]]" встают своей строкой, а не вклеиваются в текст
-    // (в середине текста фотография не показывается — вклейка её потеряла бы).
-    const std::string_view headText = head.text;
-    const std::vector<Run>& headRuns = head.runs;
-    const bool wholeImage =
-        !head.raw && head.kind == Kind::Paragraph &&
-        ((headRuns.size() == 1 && headRuns[0].image() && headRuns[0].start == 0 &&
-          size_t(headRuns[0].end) == headText.size()) ||
-         (headText.rfind("![[", 0) == 0 && headText.size() > 5 &&
-          headText.compare(headText.size() - 2, 2, "]]") == 0));
-    const bool blockLevel = pieces.size() > 1 || head.raw ||
-                            head.kind != Kind::Paragraph || wholeImage;
-
+    // ВСЯ РАБОТА С СОДЕРЖИМЫМ — У ЗАМЕТКИ. Здесь остаётся только то, что и
+    // должно быть у виджета: один шаг отмены, признак «изменено», показ места
+    // правки и таймер записи.
     recordingSuspended_ = true;
     QTextCursor cursor = textCursor();
-    cursor.beginEditBlock();
-    if (cursor.hasSelection()) cursor.removeSelectedText();
-
-    // Qt вливает первый блок куска в текущий блок, и формат берётся у текущего:
-    // вставленный заголовок становился обычным текстом, а вставка в начало
-    // абзаца, наоборот, делала заголовком сам абзац. Поэтому под блочный кусок
-    // заводим пустой блок и потом ставим ему формат первого блока куска.
-    if (blockLevel && !cursor.block().text().isEmpty()) {
-        QTextBlockFormat plain;
-        plain.setLineHeight(cursor.blockFormat().lineHeight(),
-                            cursor.blockFormat().lineHeightType());
-        if (cursor.atBlockStart()) {
-            // Пустой блок заводим НАД текущим и встаём в него: текст блока
-            // уезжает вниз целиком и остаётся собой.
-            QTextCursor tail(document());
-            tail.setPosition(cursor.position());
-            cursor.insertBlock(cursor.blockFormat());
-            cursor.setPosition(tail.block().previous().position());
-        } else {
-            const bool wasAtEnd = cursor.atBlockEnd();
-            cursor.insertBlock(plain);
-            if (!wasAtEnd) {
-                // Резали посередине: хвост уехал вниз, а вставлять надо между
-                // половинками — заводим ещё один пустой блок и встаём в него.
-                QTextCursor tail(document());
-                tail.setPosition(cursor.position());
-                cursor.insertBlock(plain);
-                cursor.setPosition(tail.block().previous().position());
-            }
-        }
+    QTextCursor group(document());
+    group.beginEditBlock();
+    const bool done = note_.note.replaceRange(
+        cursor, text,
+        literal ? ZDocument::PasteMode::Literal : ZDocument::PasteMode::Markdown);
+    if (!done) {
+        group.endEditBlock();
+        recordingSuspended_ = false;
+        return;
     }
-
-    const QTextBlockFormat headFormat = staging.firstBlock().blockFormat();
-    const int start = cursor.blockNumber();
-    cursor.insertFragment(QTextDocumentFragment(&staging));
-    const int landed = cursor.position();
-    // Формат первого блока куска Qt не донёс — ставим сами.
-    if (blockLevel) {
-        QTextCursor fix(document());
-        fix.setPosition(document()->findBlockByNumber(start).position());
-        fix.setBlockFormat(headFormat);
-    }
-    // Вставленное могло приехать из другого места дерева: шов приводим в
-    // порядок целиком, документ для этого достаточно мал.
-    syncLiteralBlocks(*document(), {0, document()->blockCount() - 1});
-    syncLists(*document(), {0, document()->blockCount() - 1});
-
-    // Пересборка — в ту же скобку: вставка обязана отменяться ОДНИМ Ctrl+Z, а
-    // заплатка, оставленная снаружи, была бы отдельным шагом.
-    std::vector<Piece> ir = piecesOf(*document());
-    rebuild(ir, landed, viewAnchor(), &ir, /*asEdit=*/true);
-    cursor.endEditBlock();
+    setTextCursor(cursor);
+    group.endEditBlock();
     recordingSuspended_ = false;
+
+    // ПЕРЕСБОРКИ ЗДЕСЬ НЕТ, и в этом весь смысл базиса.
+    //
+    // Прежде вставка кончалась обходом всего документа (piecesOf — 1.86 мс на
+    // заметке в 228 КБ) и заплаткой поверх: стоимость правки зависела от
+    // размера заметки. Теперь заметка приводит к канону только ШОВ, а что
+    // получилось ровно то же, что собрал бы сборщик, проверяет ассерт в
+    // отладочной сборке — на каждой вставке всех наборов.
+    //
+    // note_.built от этого устаревает, и это законно: заплатка читает нынешнее
+    // состояние документа сама, а устаревший «из чего собрано» лишь расширяет
+    // ей область работы, не портя результат.
+    current_.runBroken = true;   // вставка кончает серию набора
+    if (note_.statsFresh) {
+        note_.statsFresh = false;
+        emit statsChanged();
+    }
+
     document()->setModified(true);
     showEditPlace(scrollBefore);
     autosave_.start(appearance().autosaveDelayMs);

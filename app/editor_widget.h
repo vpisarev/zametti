@@ -381,6 +381,10 @@ protected:
     // много, и запоминать их никто не обязан.
     void contextMenuEvent(QContextMenuEvent* event) override;
 
+    // Кусок ПОКАЗАННОГО как markdown: у живой заметки спрашиваем её саму, у
+    // слепка истории — чужой документ (см. довод у определения).
+    QString shownAsMarkdown(const QTextCursor& range) const;
+
     QMimeData* createMimeDataFromSelection() const override;
     bool canInsertFromMimeData(const QMimeData* source) const override;
     void insertFromMimeData(const QMimeData* source) override;

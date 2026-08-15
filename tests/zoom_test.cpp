@@ -187,6 +187,54 @@ static int ztRunSuite(int argc, char** argv) {
     editor.applyZoom(1.0);
     QTest::qWait(20);
 
+    // --- 4. ПРОКРУТКА ДЕРЖИТСЯ ---------------------------------------------
+    //
+    // Жалоба владельца: «при Ctrl+= скроллинг уезжает куда-то». Высота документа
+    // от смены кегля меняется, а прокрутка задана пикселями — и текст уезжает
+    // тем сильнее, чем ниже по заметке человек стоял. Правило: строка, бывшая в
+    // середине экрана, там и остаётся.
+    {
+        QString big = QStringLiteral("# Длинная\n\n");
+        for (int i = 0; i < 200; ++i)
+            big += QStringLiteral("Абзац номер %1, в нём достаточно слов.\n\n").arg(i);
+        const QString longPath = writeNote(dir, QStringLiteral("длинная.md"), big);
+        zametti::NoteEditor scrolled;
+        scrolled.resize(800, 600);
+        scrolled.show();
+        QTest::qWait(20);
+        scrolled.openFile(longPath);
+        QTest::qWait(30);
+
+        scrolled.verticalScrollBar()->setValue(scrolled.verticalScrollBar()->maximum() / 2);
+        QTest::qWait(20);
+
+        const auto blockInMiddle = [&scrolled] {
+            const QAbstractTextDocumentLayout* layout = scrolled.document()->documentLayout();
+            const int middle =
+                scrolled.verticalScrollBar()->value() + scrolled.viewport()->height() / 2;
+            return scrolled.document()
+                ->findBlock(layout->hitTest(QPointF(0, middle), Qt::FuzzyHit))
+                .blockNumber();
+        };
+
+        const int before = blockInMiddle();
+        ZT_TRUE("прокрутили в середину длинной заметки: блок " + std::to_string(before),
+                before > 20);
+
+        scrolled.applyZoom(1.5);
+        QTest::qWait(30);
+        const int afterIn = blockInMiddle();
+        ZT_TRUE("после Ctrl+= в середине тот же блок: было " + std::to_string(before) +
+                    ", стало " + std::to_string(afterIn),
+                std::abs(afterIn - before) <= 2);
+
+        scrolled.applyZoom(1.0);
+        QTest::qWait(30);
+        const int afterOut = blockInMiddle();
+        ZT_TRUE("и после Ctrl+- тоже: " + std::to_string(afterOut),
+                std::abs(afterOut - before) <= 2);
+    }
+
     // Ширина колонки: узкое окно, широкое и очень широкое.
     editor.resize(500, 600);
     QTest::qWait(40);
