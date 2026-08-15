@@ -11,9 +11,9 @@
 //   * ПРАВИЛО: что означает нажатие рядом с объектом.
 
 #include "block_object.h"
+#include "pieces.h"
 #include "doc_model.h"
 #include "document_builder.h"
-#include "parser.h"
 #include "test_util.h"
 #include "testdata.h"
 
@@ -58,7 +58,7 @@ std::string nameOf(ObjectAction action) {
 
 QTextDocument* build(const char* markdown) {
     auto* doc = new QTextDocument;
-    zametti::buildDocument(zametti::parse(markdown), *doc);
+    zametti::buildDocument(pieces(markdown), *doc);
     return doc;
 }
 

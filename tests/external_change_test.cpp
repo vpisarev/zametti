@@ -3,9 +3,8 @@
 // Претензия, ради которой всё затевалось: редактор, молча перечитавший файл и
 // потерявший undo, — это провал. Проверяются оба сценария.
 
-#include "document_reader.h"
+#include "pieces.h"
 #include "editor_widget.h"
-#include "serializer.h"
 #include "times.h"
 
 #include "test_util.h"
@@ -58,7 +57,7 @@ void writeFile(const QString& path, const QString& text) {
 
 QString textOf(const zametti::NoteEditor& editor) {
     return QString::fromStdString(
-        zametti::serialize(zametti::readDocument(*editor.document())));
+        markdownOf(blocksOf(*editor.document())));
 }
 
 // Слежение за файлом идёт через операционную систему, и мгновенным оно не

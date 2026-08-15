@@ -10,7 +10,7 @@
 //
 //   ir_bench <метка> <файл-или-каталог> [ещё пути...]
 
-#include "parser.h"
+#include "pieces.h"
 
 #include <chrono>
 #include <cstdio>
@@ -143,37 +143,33 @@ int ztIrBench(int argc, char** argv) {
     }
 
     // --- разбор -------------------------------------------------------------
-    std::vector<zametti::Document> docs;
+    std::vector<std::vector<zametti::Piece>> docs;
     docs.reserve(sources.size());
 
     g_counters = Counters{};
     g_counting = true;
     const Clock::time_point parseStart = Clock::now();
-    for (const std::string& source : sources) docs.push_back(zametti::parse(source));
+    for (const std::string& source : sources) docs.push_back(pieces(source));
     const double parseMs = msSince(parseStart);
     g_counting = false;
     const Counters parseCounters = g_counters;
 
     size_t blocks = 0;
     size_t spans = 0;
-    size_t arena = 0;
-    size_t regrown = 0;   // документов, где арене не хватило резерва
+    size_t arena = 0;    // байты текста всех блоков
     double worstK = 0.0;
     std::string worstFile;
     for (size_t i = 0; i < docs.size(); ++i) {
-        const zametti::Document& doc = docs[i];
-        blocks += doc.blocks.size();
-        arena += doc.chars.size();
-        spans += doc.spans.size();
-        if (doc.chars.capacity() > zametti::arenaReserveFor(sources[i].size())) {
-            ++regrown;
-            if (regrown <= 8)
-                std::printf("    реаллокация арены: %s (%zu Б → %zu Б, резерв %zu Б)\n",
-                            files[i].string().c_str(), sources[i].size(), doc.chars.size(),
-                            zametti::arenaReserveFor(sources[i].size()));
+        const std::vector<zametti::Piece>& doc = docs[i];
+        blocks += doc.size();
+        size_t bytes = 0;
+        for (const zametti::Piece& b : doc) {
+            bytes += b.text.size() + b.info.size();
+            spans += b.runs.size();
         }
+        arena += bytes;
         if (!sources[i].empty()) {
-            const double k = double(doc.chars.size()) / double(sources[i].size());
+            const double k = double(bytes) / double(sources[i].size());
             if (k > worstK) {
                 worstK = k;
                 worstFile = files[i].string();
@@ -188,10 +184,10 @@ int ztIrBench(int argc, char** argv) {
     const Clock::time_point searchStart = Clock::now();
     for (int round = 0; round < 4; ++round) {
         for (const char* needle : kNeedles) {
-            for (const zametti::Document& doc : docs) {
-                for (const zametti::Block& b : doc.blocks) {
-                    // Дословный кусок и обычный текст лежат в арене одинаково.
-                    if (doc.text(b).find(needle) != std::string_view::npos) ++hits;
+            for (const std::vector<zametti::Piece>& doc : docs) {
+                for (const zametti::Piece& b : doc) {
+                    // Дословный кусок и обычный текст лежат в блоке одинаково.
+                    if (b.text.find(needle) != std::string::npos) ++hits;
                 }
             }
         }
@@ -212,10 +208,8 @@ int ztIrBench(int argc, char** argv) {
     std::printf("%-10s поиск:  %8.1f мс  аллокаций %9zu  совпадений %zu\n", "", searchMs,
                 searchCounters.allocations, hits);
     std::printf("%-10s память: RSS %zu КБ, пик RSS %zu КБ\n", "", rssKb, hwmKb);
-    std::printf("%-10s арена: %zu Б на %zu Б исходника (k = %.3f), реаллокаций у %zu "
-                "документов\n",
-                "", arena, sourceBytes, sourceBytes ? double(arena) / double(sourceBytes) : 0.0,
-                regrown);
+    std::printf("%-10s текст блоков: %zu Б на %zu Б исходника (k = %.3f)\n", "", arena,
+                sourceBytes, sourceBytes ? double(arena) / double(sourceBytes) : 0.0);
     std::printf("%-10s худший k = %.3f (%s)\n", "", worstK, worstFile.c_str());
     return 0;
 }

@@ -8,9 +8,7 @@
 // текст, и расхождение читается глазами.
 
 #include "document_builder.h"
-#include "document_reader.h"
-#include "json_dump.h"
-#include "parser.h"
+#include "pieces.h"
 #include "test_util.h"
 #include "testdata.h"
 
@@ -47,14 +45,14 @@ std::vector<std::filesystem::path> markdownFiles(const std::filesystem::path& ro
 // Один прогон: markdown → IR → документ → IR. Сравниваются два IR, исходный
 // текст в проверке не участвует.
 bool roundtrip(const std::string& source, const std::string& label) {
-    const zametti::Document ir = zametti::parse(source);
+    const std::vector<zametti::Piece> ir = pieces(source);
 
     QTextDocument doc;
     zametti::buildDocument(ir, doc);
-    const zametti::Document back = zametti::readDocument(doc);
+    const std::vector<zametti::Piece> back = blocksOf(doc);
 
-    const std::string expected = zametti::toJson(ir);
-    const std::string actual = zametti::toJson(back);
+    const std::string expected = dumpOf(ir);
+    const std::string actual = dumpOf(back);
     ++zt::g_checks;
     if (expected == actual) return true;
 

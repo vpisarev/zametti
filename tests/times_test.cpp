@@ -9,10 +9,9 @@
 // строк и живая фикстура «Китай → Москва» на дереве заметок.
 
 #include "note_tree.h"
+#include "pieces.h"
 #include "times.h"
 
-#include "parser.h"
-#include "serializer.h"
 #include "test_util.h"
 
 #include <vector>
@@ -38,7 +37,7 @@ QString g_root;
 
 std::string s(const QString& q) { return q.toStdString(); }
 
-void note(const QString& id, const QString& meta, const QString& body) {
+void noteOf(const QString& id, const QString& meta, const QString& body) {
     QFile f(g_root + QLatin1Char('/') + id + QStringLiteral(".md"));
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
     QString text = QStringLiteral("<!-- zametti\n") + meta + QStringLiteral("-->\n");
@@ -116,20 +115,20 @@ void checkStoreSortsAcrossZones() {
     QDir(g_root).removeRecursively();
     QDir().mkpath(g_root + QStringLiteral("/.zametti"));
 
-    note("00000000000c01", "created: 2026-01-01T00:00:00Z\nmodified: 2026-01-01T00:00:00Z\n",
+    noteOf("00000000000c01", "created: 2026-01-01T00:00:00Z\nmodified: 2026-01-01T00:00:00Z\n",
          "# Поездка\n");
     // Три записи одного дня, сделанные в разных зонах и в РАЗНОМ виде: первая
     // старым UTC, вторая и третья новым — с китайским и московским офсетом.
     // По моментам порядок: утро (05:00Z) → день (11:00Z) → вечер (17:00Z).
-    note("00000000000c02",
+    noteOf("00000000000c02",
          "parent: 00000000000c01\ncreated: 2026-08-14T05:00:00Z\n"
          "modified: 2026-08-14T05:00:00Z\n",
          "# Утро (старая метка UTC)\n");
-    note("00000000000c03",
+    noteOf("00000000000c03",
          "parent: 00000000000c01\ncreated: 2026-08-14T19:00:00+08:00\n"
          "modified: 2026-08-14T19:00:00+08:00\n",
          "# День (китайский офсет)\n");
-    note("00000000000c04",
+    noteOf("00000000000c04",
          "parent: 00000000000c01\ncreated: 2026-08-14T20:00:00+03:00\n"
          "modified: 2026-08-14T20:00:00+03:00\n",
          "# Вечер (московский офсет)\n");
@@ -184,20 +183,21 @@ void checkCoreKeepsOffsets() {
         "created: 2026-08-14T21:40:00+08:00\n"
         "modified: 2026-08-14T20:00:00+03:00\n"
         "-->\n\n# Заметка\n\nТекст.\n";
-    const zametti::Document doc = zametti::parse(source);
-    ZT_EQ("круг разбор→запись побайтовый", source, zametti::serialize(doc));
-    ZT_EQ("created прочитан как есть", "2026-08-14T21:40:00+08:00", doc.meta.get("created"));
-    ZT_EQ("modified прочитан как есть", "2026-08-14T20:00:00+03:00", doc.meta.get("modified"));
+    zametti::ZDocument doc;
+    doc.loadMarkdown(source);
+    ZT_EQ("круг разбор→запись побайтовый", source, doc.toMarkdown());
+    ZT_EQ("created прочитан как есть", "2026-08-14T21:40:00+08:00", head(doc, "created"));
+    ZT_EQ("modified прочитан как есть", "2026-08-14T20:00:00+03:00", head(doc, "modified"));
 
     // И правка одной метки не трогает соседнюю: у ядра это обещание формата, а
     // офсет в значении для него — обычные знаки.
-    zametti::Document edited = doc;
-    edited.meta.set("modified", "2026-12-31T23:59:00+01:00");
-    const std::string out = zametti::serialize(edited);
+    zametti::ZDocument edited = doc.clone();
+    setHead(edited, "modified", "2026-12-31T23:59:00+01:00");
+    const std::string out = edited.toMarkdown();
     ZT_TRUE("новая метка записалась",
             out.find("modified: 2026-12-31T23:59:00+01:00") != std::string::npos);
     ZT_TRUE("соседняя цела", out.find("created: 2026-08-14T21:40:00+08:00") != std::string::npos);
-    ZT_EQ("и круг всё ещё побайтовый", out, zametti::serialize(zametti::parse(out)));
+    ZT_EQ("и круг всё ещё побайтовый", out, ::noteOf(out).toMarkdown());
 }
 
 }  // namespace

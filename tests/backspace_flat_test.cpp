@@ -20,9 +20,7 @@
 // пронумерованными переводами строк.
 
 #include "doc_model.h"
-#include "document_reader.h"
 #include "editor_widget.h"
-#include "serializer.h"
 #include "settings.h"
 
 #include "test_util.h"

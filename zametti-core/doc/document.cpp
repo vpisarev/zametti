@@ -169,6 +169,10 @@ void ZDocument::setHeaderValue(const QString& key, const QString& value) {
 }
 
 bool ZDocument::hasHeader() const { return d_->header.present(); }
+void ZDocument::setHasHeader(bool present) { d_->header.setPresent(present); }
+
+NoteHeader ZDocument::header() const { return d_->header; }
+void ZDocument::setHeader(const NoteHeader& header) { d_->header = header; }
 
 std::optional<SortOrder> ZDocument::sortOrder() const {
     return parseSortOrder(QString::fromStdString(d_->header.get(kSort)));

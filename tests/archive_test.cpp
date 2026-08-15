@@ -9,12 +9,11 @@
 // `parent` архив не трогает вовсе, поэтому и помнить ему нечего.
 
 #include "archive.h"
+#include "pieces.h"
 #include "lost_found.h"
 #include "journal.h"
 #include "times.h"
 
-#include "parser.h"
-#include "serializer.h"
 #include "test_util.h"
 
 #include <vector>
@@ -99,8 +98,7 @@ const char* kBody =
 // --- стаб ------------------------------------------------------------------
 
 void checkStub() {
-    const zametti::Document doc = zametti::parse(kBody);
-    const std::string stub = stubBytes(doc);
+    const std::string stub = noteOf(kBody).archiveStub();
 
     ZT_TRUE("в стабе есть заголовок", stub.find("# Фототехника") != std::string::npos);
     ZT_TRUE("тела в стабе нет", stub.find("Длинный текст") == std::string::npos);
@@ -114,16 +112,16 @@ void checkStub() {
 
     // СТАБ — ЗАКОННЫЙ MARKDOWN, и это не формальность: его разбирают тем же
     // ядром, показывают в списке и ищут по заголовку.
-    const zametti::Document back = zametti::parse(stub);
-    ZT_EQ("круг разбор→запись у стаба побайтовый", stub, zametti::serialize(back));
-    ZT_TRUE("стаб читается как архивный", isArchivedMeta(back.meta));
+    const zametti::ZDocument back = noteOf(stub);
+    ZT_EQ("круг разбор→запись у стаба побайтовый", stub, back.toMarkdown());
+    ZT_TRUE("стаб читается как архивный", back.isArchived());
     // РАЗМЕР СТАБА НЕ ЗАВИСИТ ОТ ТЕЛА — в этом и смысл. На фикстуре в три
     // строки выигрыш почти не виден (151 байт против 287: шапка и есть почти
     // весь файл), поэтому спрашиваем на большой заметке.
     std::string big = kBody;
     big += std::string(50000, 'x');
     big += "\n";
-    const std::string bigStub = stubBytes(zametti::parse(big));
+    const std::string bigStub = noteOf(big).archiveStub();
     ZT_TRUE("стаб большой заметки того же размера, что и маленькой: " +
                 std::to_string(bigStub.size()) + " байт против тела в " +
                 std::to_string(big.size()),
@@ -277,10 +275,10 @@ void checkTrashMigration() {
 // Старый вид пометки читается как архивный и без миграции: хранилище могло
 // приехать с чужой машины или от прежней сборки.
 void checkOldRoleIsRead() {
-    const zametti::Document old = zametti::parse("<!-- zametti\nrole: trash\n-->\n\n# Корзина\n");
-    ZT_TRUE("role: trash читается как архивность", isArchivedMeta(old.meta));
-    const zametti::Document plain = zametti::parse("<!-- zametti\nparent: x\n-->\n\n# Живая\n");
-    ZT_TRUE("обычная заметка архивной не считается", !isArchivedMeta(plain.meta));
+    const zametti::ZDocument old = noteOf("<!-- zametti\nrole: trash\n-->\n\n# Корзина\n");
+    ZT_TRUE("role: trash читается как архивность", old.isArchived());
+    const zametti::ZDocument plain = noteOf("<!-- zametti\nparent: x\n-->\n\n# Живая\n");
+    ZT_TRUE("обычная заметка архивной не считается", !plain.isArchived());
 }
 
 // --- бюро находок ----------------------------------------------------------
@@ -310,8 +308,8 @@ void checkLostFound() {
     // Само бюро: заводится только под первую находку, и это папка.
     QString bureau;
     for (const QFileInfo& info : QDir(g_root).entryInfoList({QStringLiteral("*.md")}, QDir::Files)) {
-        const zametti::Document doc = zametti::parse(read(info.completeBaseName()));
-        if (doc.meta.get("role") == zametti::store::kLostRole) bureau = info.completeBaseName();
+        const zametti::ZDocument doc = noteOf(read(info.completeBaseName()));
+        if (doc.headerValue(QStringLiteral("role")).toStdString() == zametti::store::kLostRole) bureau = info.completeBaseName();
     }
     ZT_TRUE("бюро заведено", !bureau.isEmpty());
     ZT_TRUE("и это папка с заголовком",
@@ -339,9 +337,9 @@ void checkLostFound() {
 
     // Вытащили обычным переносом — бюро больше её не трогает.
     std::string moved = read(QStringLiteral("01bb22222222bb"));
-    zametti::Document doc = zametti::parse(moved);
-    doc.meta.set("parent", "0000000000000p");
-    write(QStringLiteral("01bb22222222bb"), zametti::serialize(doc));
+    zametti::ZDocument doc = noteOf(moved);
+    setHead(doc, "parent", "0000000000000p");
+    write(QStringLiteral("01bb22222222bb"), doc.toMarkdown());
     ZT_TRUE("после переноса сирот снова нет", zametti::store::fileOrphans(g_root, &error) == 0);
     ZT_TRUE("и заметка осталась там, куда её перенесли",
             read(QStringLiteral("01bb22222222bb")).find("parent: 0000000000000p") !=

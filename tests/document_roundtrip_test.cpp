@@ -11,9 +11,7 @@
 // накоплении — файл портился на каждой записи понемногу.
 
 #include "document_builder.h"
-#include "document_reader.h"
-#include "parser.h"
-#include "serializer.h"
+#include "pieces.h"
 
 #include "test_util.h"
 #include "testdata.h"
@@ -27,10 +25,8 @@
 #include <string>
 #include <vector>
 
+using zametti::Piece;
 using zametti::buildDocument;
-using zametti::parse;
-using zametti::readDocument;
-using zametti::serialize;
 
 namespace {
 
@@ -53,8 +49,8 @@ std::string readFile(const std::string& path) {
 // Один круг через документ.
 std::string throughDocument(const std::string& text) {
     QTextDocument doc;
-    buildDocument(parse(text), doc);
-    return serialize(readDocument(doc));
+    buildDocument(pieces(text), doc);
+    return markdownOf(blocksOf(doc));
 }
 
 // Канон: то, что уже прошло круг ЯДРА. С ним и сравниваем — расхождения самого
@@ -65,7 +61,7 @@ void checkFile(const std::string& path, const std::string& name) {
         std::printf("нет файла %s — пропущено\n", path.c_str());
         return;
     }
-    const std::string canon = serialize(parse(source));
+    const std::string canon = noteOf(source).toMarkdown();
 
     std::string text = canon;
     for (int round = 1; round <= 3; ++round) {

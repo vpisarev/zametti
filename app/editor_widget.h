@@ -245,7 +245,7 @@ public:
     // ИСХОДНЫЙ слепок — тот, что лежит в журнале, без единой нашей дорисовки.
     // По нему работает восстановление; показывается же его иллюстрированная
     // копия. Наружу — ради проверки, что эти двое и правда разные.
-    const Document& shownSnapshotIr() const { return note_.snapshotIr; }
+    const std::vector<Piece>& shownSnapshot() const { return note_.snapshot; }
     const diff::Text& diffShownText() const { return shownText(); }
     // Восстановить показанный слепок в живую заметку. Только явным жестом:
     // печатающая клавиша этого не делает никогда. Возвращает время записи, из
@@ -510,8 +510,8 @@ private:
     // current — IR того, что в документе лежит СЕЙЧАС, если вызывающий его уже
     // прочитал: заплатке он нужен, чтобы понять, какому блоку документа какой
     // номер соответствует. Не передали — прочитаем сами.
-    void rebuild(const Document& doc, int cursor, const ViewAnchor& anchor,
-                 const Document* current = nullptr);
+    void rebuild(const std::vector<Piece>& blocks, int cursor, const ViewAnchor& anchor,
+                 const std::vector<Piece>* current = nullptr);
 
     // --- кэш заметок сессии ---
     //
@@ -576,7 +576,7 @@ private:
         // здесь: у каждой заметки своя цепочка, и заводится она вместе с ней.
         EditHistory undoChain{appearance().undoLimit,
                               size_t(qMax(1, appearance().undoBudgetMb)) * 1024 * 1024};
-        Document built;         // из чего собран документ: нужно заплатке
+        std::vector<Piece> built;   // из чего собран документ: нужно заплатке
         // Слова и строки этой заметки. Живут в объекте заметки, а не в окне:
         // отложенная заметка возвращается со своими числами и пересчитывать их
         // при возврате незачем.
@@ -647,8 +647,8 @@ private:
         // слепок, и база, и само сравнение — про эту заметку, а не про виджет.
         // Обе стороны держим целиком, потому что по Alt показывается вторая, и
         // считать сравнение заново ради мигания нельзя.
-        Document snapshotIr;         // IR показанного слепка
-        Document baseIr;             // IR базы сравнения
+        std::vector<Piece> snapshot;   // блоки показанного слепка
+        std::vector<Piece> base;       // блоки базы сравнения
         diff::Text snapshotText;     // его строки и карта блоков
         diff::Text baseText;
         // ДВА СРАВНЕНИЯ, по одному на сторону. Смотрим на слепок — берём

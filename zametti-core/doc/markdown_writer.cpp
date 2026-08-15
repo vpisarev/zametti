@@ -14,6 +14,7 @@
 
 #include "block_kind.h"
 #include "doc_model.h"
+#include "document_builder.h"
 #include "math_scan.h"
 
 #include <QString>
@@ -30,13 +31,6 @@
 
 namespace zametti {
 namespace {
-
-// Какие строки файла занял блок. Нужна разности версий: единица сравнения —
-// строка, а полоски на поле рисуются по блокам.
-struct BlockLines {
-    int first = 0;
-    int count = 0;
-};
 
 // Слипнутся ли два блока, окажись они в файле подряд без пустой строки.
 bool wouldMerge(const Piece& previous, const Piece& next) {
@@ -1440,7 +1434,16 @@ void walkPieces(const QTextDocument& doc, const std::function<void(const Piece&)
         }
 
         // Признак стоит на последней строке блока — там, где перевод и был.
-        if (format.boolProperty(TrailingNewlineProperty)) piece.text.push_back('\n');
+        //
+        // Кладём его И В ТЕКСТ, И В ПРИЗНАК. В текст — писателю: он печатает
+        // байты и про признак не знает. В признак — сборщику: обход обязан
+        // быть точной обратной стороной разбора, иначе блоки, снятые с живого
+        // документа и положенные обратно, теряли бы этот перевод строки, и
+        // пустая строка в конце блока кода исчезала бы при каждой операции.
+        if (format.boolProperty(TrailingNewlineProperty)) {
+            piece.text.push_back('\n');
+            piece.trailingNewline = true;
+        }
     }
     close();
 }
@@ -1467,6 +1470,16 @@ std::string writeInto(const QTextDocument& doc, const NoteHeader& header,
 }
 
 }  // namespace
+
+// Блоки, заметкой ещё не ставшие, — кусок в буфере обмена. Кладём их в
+// документ-однодневку и записываем тем же писателем: правил записи двух не
+// бывает, а собрать и обойти кусок выделения стоит микросекунды.
+std::string writePieces(const std::vector<Piece>& blocks, const NoteHeader& header,
+                        std::vector<BlockLines>* map) {
+    QTextDocument temp;
+    buildDocument(blocks, temp);
+    return writeInto(temp, header, map);
+}
 
 std::string ZDocument::toMarkdown() const {
     return writeInto(d_->text, d_->header, nullptr);

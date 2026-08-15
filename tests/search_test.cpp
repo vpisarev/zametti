@@ -10,7 +10,6 @@
 
 #include "editor_widget.h"
 #include "find_bar.h"
-#include "parser.h"
 #include "document.h"
 #include "search.h"
 #include "settings.h"
@@ -33,7 +32,7 @@
 
 #include <string>
 
-using zametti::Document;
+using zametti::Piece;
 using zametti::Query;
 using zametti::SearchResult;
 
@@ -92,7 +91,7 @@ void checkSmartCase() {
 }
 
 void checkSeesWhatUserSees() {
-    // Метаданные лежат в Document::meta, а не в блоках, — поиск до них не
+    // Метаданные лежат в std::vector<Piece>::meta, а не в блоках, — поиск до них не
     // добирается по построению.
     const QString withMeta =
         QStringLiteral("<!-- zametti\ncreated: 2019-05-05T00:00:00Z\n-->\n\n"

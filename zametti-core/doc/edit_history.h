@@ -1,4 +1,4 @@
-// История правок — над IR, а не над QTextDocument.
+// История правок — над логическими блоками, а не над QTextDocument.
 //
 // Встроенный стек QTextDocument для нашего правила не годится по двум причинам
 // сразу. Он хранит и смену форматов — то есть новый шрифт или цвет попали бы в
@@ -11,8 +11,8 @@
 // попадает вовсе: документ просто собирается заново из текущего содержимого.
 //
 // Интерфейс намеренно узкий — снимок туда, снимок обратно. Если снимки окажутся
-// дороги (замер: копия IR заметки в 141 КБ — 50 мкс), внутренность можно
-// заменить на разности или общий буфер, не трогая ни операции, ни виджет.
+// дороги (замер: копия заметки в 141 КБ — 50 мкс), внутренность можно заменить
+// на разности или общий буфер, не трогая ни операции, ни виджет.
 //
 // Глубина ограничена с двух сторон: числом шагов и суммарным весом. Одного
 // счёта шагов мало — замер на заметке в 239 КБ дал 361 КБ на шаг, то есть
@@ -22,7 +22,7 @@
 #ifndef ZAMETTI_EDIT_HISTORY_H
 #define ZAMETTI_EDIT_HISTORY_H
 
-#include "ir.h"
+#include "document_pieces.h"
 
 #include <deque>
 
@@ -32,7 +32,7 @@ namespace zametti {
 // документа; маркеры списка в текст не входят, поэтому оно не зависит ни от
 // оформления, ни от нумерации.
 struct HistoryStep {
-    Document doc;
+    std::vector<Piece> blocks;
     int cursor = 0;
 };
 
@@ -42,15 +42,15 @@ public:
         : limit_(limit > 1 ? limit : 2), budget_(budgetBytes) {}
 
     // Начало работы с файлом: история обнуляется, откатывать нечего.
-    void reset(Document doc, int cursor);
+    void reset(std::vector<Piece> blocks, int cursor);
 
     // Новый шаг. Всё, что было впереди (отменённое и не переделанное),
     // отбрасывается — как во всех редакторах.
-    void push(Document doc, int cursor);
+    void push(std::vector<Piece> blocks, int cursor);
 
     // Дописать в текущий шаг вместо нового. Так набор подряд идущих букв
     // остаётся одним шагом: иначе Ctrl+Z возвращал бы по одной букве.
-    void amend(Document doc, int cursor);
+    void amend(std::vector<Piece> blocks, int cursor);
 
     bool canUndo() const { return position_ > 0; }
     bool canRedo() const { return position_ + 1 < steps_.size(); }
@@ -61,7 +61,7 @@ public:
 
     const HistoryStep& current() const { return steps_[position_]; }
     size_t size() const { return steps_.size(); }
-    // Сколько памяти занимают снимки: арена, спаны и блоки каждого шага.
+    // Сколько памяти занимают снимки: текст и куски каждого блока каждого шага.
     size_t bytes() const;
 
 private:

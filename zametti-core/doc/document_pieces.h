@@ -13,6 +13,7 @@
 #pragma once
 
 #include "block_kind.h"
+#include "note_header.h"
 
 #include <cstddef>
 
@@ -87,7 +88,13 @@ constexpr size_t draftReserveFor(size_t sourceLength) {
     return sourceLength + sourceLength / 8 + 1024;
 }
 
-class NoteHeader;
+// Где какой блок оказался в выводе: номер первой строки (с нуля) и сколько
+// строк занял. Блок, не давший ни строки, получает count == 0. Нужна разности
+// версий: единица сравнения — строка, а полоски на поле рисуются по блокам.
+struct BlockLines {
+    int first = 0;
+    int count = 0;
+};
 
 // Разбор байтов markdown в логические блоки и шапку. Определено в
 // markdown_reader.cpp; ступень внутри ZDocument::loadMarkdown, наружу из ядра
@@ -103,5 +110,17 @@ void parsePieces(std::string_view markdown, std::vector<Piece>& blocks, NoteHead
 // построчно и склеиваются здесь обратно, поэтому обход и нужен общий: два
 // потребителя, склеивающих строки каждый по-своему, однажды склеят по-разному.
 void walkPieces(const QTextDocument& doc, const std::function<void(const Piece&)>& sink);
+
+// Байты канонического markdown из логических блоков. Нужна там, где блоки
+// собраны на месте и заметкой ещё не стали, — куску в буфере обмена, стороне
+// сравнения. Идёт тем же писателем, что и запись на диск: второго писателя не
+// бывает.
+std::string writePieces(const std::vector<Piece>& blocks, const NoteHeader& header = {},
+                        std::vector<BlockLines>* map = nullptr);
+
+// Строение блоков в JSON — односторонне, для золотых наборов и отладки. Та же
+// печать, что и у ZDocument::toJson: у дампа один вид, из скольких бы мест его
+// ни просили.
+std::string dumpPieces(const std::vector<Piece>& blocks, const NoteHeader& header = {});
 
 }  // namespace zametti

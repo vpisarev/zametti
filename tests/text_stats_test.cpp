@@ -5,9 +5,7 @@
 // заметкам для сверки с чужими счётчиками.
 
 #include "document_builder.h"
-#include "document_reader.h"
-#include "parser.h"
-#include "serializer.h"
+#include "pieces.h"
 #include "test_util.h"
 #include "testdata.h"
 #include "text_stats.h"
@@ -131,17 +129,17 @@ void checkLineRules() {
 
 std::unique_ptr<QTextDocument> build(const std::string& markdown) {
     auto doc = std::make_unique<QTextDocument>();
-    zametti::buildDocument(zametti::parse(markdown), *doc);
+    zametti::buildDocument(pieces(markdown), *doc);
     return doc;
 }
 
 // Оба счёта разом: числа обязаны совпасть, иначе один из них врёт.
 zametti::NoteStats bothCounts(const std::string& markdown, const std::string& what) {
-    const zametti::Document ir = zametti::parse(markdown);
+    const std::vector<zametti::Piece> ir = pieces(markdown);
     QTextDocument doc;
     zametti::buildDocument(ir, doc);
 
-    const zametti::NoteStats byIr = zametti::pieceStats(zametti::piecesOf(ir));
+    const zametti::NoteStats byIr = zametti::pieceStats(ir);
     const zametti::NoteStats byDoc = zametti::documentStats(doc);
     ++zt::g_checks;
     if (byIr.words != byDoc.words || byIr.lines != byDoc.lines ||
@@ -233,9 +231,9 @@ void checkDocumentStats() {
 
 // Номер строки каретки по указателю обязан совпасть с прямым счётом по всему
 // документу — в КАЖДОМ блоке, а не в одном выбранном.
-void checkCaretEverywhere(const zametti::Document& ir, QTextDocument& doc,
+void checkCaretEverywhere(const std::vector<zametti::Piece>& ir, QTextDocument& doc,
                           const std::string& what) {
-    const zametti::NoteStats s = zametti::pieceStats(zametti::piecesOf(ir));
+    const zametti::NoteStats s = zametti::pieceStats(ir);
     int line = 1;
     for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {
         QTextCursor caret(block);
@@ -274,9 +272,9 @@ void benchSource(const std::string& source, const std::string& label) {
     const qint64 fullUs = t.nsecsElapsed() / 1000;
 
     // Рабочий путь: тот же счёт по IR.
-    const zametti::Document parsed = zametti::parse(source);
+    const std::vector<zametti::Piece> parsed = pieces(source);
     t.restart();
-    for (int i = 0; i < rounds; ++i) stats = zametti::pieceStats(zametti::piecesOf(parsed));
+    for (int i = 0; i < rounds; ++i) stats = zametti::pieceStats(parsed);
     const qint64 irUs = t.nsecsElapsed() / 1000;
 
     // Сам счёт слов в отрыве от всего прочего: по нему видно цену таблицы.
@@ -327,13 +325,13 @@ void benchSource(const std::string& source, const std::string& label) {
     // сама подготовка автосохранения (чтение документа в IR и сериализация).
     // Счёт слов имеет право стоить лишь долю от них.
     t.restart();
-    zametti::Document ir;
-    for (int i = 0; i < 3; ++i) ir = zametti::readDocument(*doc);
+    std::vector<zametti::Piece> ir;
+    for (int i = 0; i < 3; ++i) ir = blocksOf(*doc);
     const qint64 readUs = t.nsecsElapsed() / 1000 / 3;
 
     t.restart();
     std::string bytes;
-    for (int i = 0; i < 3; ++i) bytes = zametti::serialize(ir);
+    for (int i = 0; i < 3; ++i) bytes = markdownOf(ir);
     const qint64 serializeUs = t.nsecsElapsed() / 1000 / 3;
 
     t.restart();
@@ -447,7 +445,7 @@ static int ztRunSuite(int argc, char** argv) {
             const std::string source = readFile(file);
             const std::string what = file.filename().string();
             bothCounts(source, what);
-            const zametti::Document ir = zametti::parse(source);
+            const std::vector<zametti::Piece> ir = pieces(source);
             QTextDocument doc;
             zametti::buildDocument(ir, doc);
             checkCaretEverywhere(ir, doc, what);

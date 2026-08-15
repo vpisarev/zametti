@@ -4,8 +4,7 @@
 // (инвариант B), и verify ловит порчу.
 
 #include "note_id.h"
-#include "parser.h"
-#include "serializer.h"
+#include "pieces.h"
 #include "journal.h"
 #include "store.h"
 
@@ -625,18 +624,18 @@ static int ztRunSuite(int argc, char** argv) {
                     QFileInfo(made).completeBaseName() != folderId);
 
         const std::string written = readAll(made);
-        const Document doc = parse(written);
-        ZT_TRUE("шапка на месте", doc.meta.present());
-        ZT_EQ("родитель проставлен", folderId.toStdString(), doc.meta.get("parent"));
+        const zametti::ZDocument doc = noteOf(written);
+        ZT_TRUE("шапка на месте", doc.hasHeader());
+        ZT_EQ("родитель проставлен", folderId.toStdString(), head(doc, "parent"));
         ZT_TRUE("времена проставлены",
-                !doc.meta.get("created").empty() && !doc.meta.get("modified").empty());
-        ZT_TRUE("role не появился", doc.meta.get("role").empty());
+                !head(doc, "created").empty() && !head(doc, "modified").empty());
+        ZT_TRUE("role не появился", head(doc, "role").empty());
         // Канон: setext-заголовок стал ATX, звёздочки — дефисами, __ — **.
         ZT_TRUE("содержимое канонизировано",
                 written.find("# Заголовок") != std::string::npos &&
                     written.find("- пункт") != std::string::npos &&
                     written.find("**жирным**") != std::string::npos);
-        ZT_EQ("и дрейфа нет", written, serialize(parse(written)));
+        ZT_EQ("и дрейфа нет", written, noteOf(written).toMarkdown());
 
         // Файл из другого хранилища: id и role не наследуются, время СОЗДАНИЯ
         // берётся из шапки, а время правки — сегодняшнее.
@@ -654,14 +653,14 @@ static int ztRunSuite(int argc, char** argv) {
                   "modified: 2020-01-02T03:04:05Z\nx-своё: беречь\n-->\n\n# Вывезенная\n");
         const QString second = store::importNote(root, QString(), exported, &error);
         ZT_TRUE("второй импорт прошёл", !second.isEmpty());
-        const Document back = parse(readAll(second));
-        ZT_TRUE("чужой id не унаследован", back.meta.get("id").empty());
-        ZT_TRUE("чужой role снят", back.meta.get("role").empty());
-        ZT_TRUE("в корень — родителя нет", back.meta.get("parent").empty());
-        ZT_EQ("время создания взято из шапки", "2019-03-14T09:26:53Z", back.meta.get("created"));
+        const zametti::ZDocument back = noteOf(readAll(second));
+        ZT_TRUE("чужой id не унаследован", head(back, "id").empty());
+        ZT_TRUE("чужой role снят", head(back, "role").empty());
+        ZT_TRUE("в корень — родителя нет", head(back, "parent").empty());
+        ZT_EQ("время создания взято из шапки", "2019-03-14T09:26:53Z", head(back, "created"));
         ZT_TRUE("а время правки — сегодняшнее, а не из шапки",
-                back.meta.get("modified") != "2020-01-02T03:04:05Z" &&
-                    back.meta.get("modified").rfind(
+                head(back, "modified") != "2020-01-02T03:04:05Z" &&
+                    head(back, "modified").rfind(
                         // МЕСТНАЯ дата, а не UTC: времена мы пишем с офсетом
                         // (этап 15), и сразу после полуночи по местному времени
                         // UTC-дата ещё вчерашняя. Проверка краснела ровно в
@@ -670,13 +669,13 @@ static int ztRunSuite(int argc, char** argv) {
                             .toString(QStringLiteral("yyyy-MM-dd"))
                             .toStdString(),
                         0) == 0);
-        ZT_EQ("неизвестный ключ уцелел", "беречь", back.meta.get("x-своё"));
+        ZT_EQ("неизвестный ключ уцелел", "беречь", head(back, "x-своё"));
 
         // Пустой файл: пустая строка после "-->" дала бы дрейф.
         const QString empty = write(QStringLiteral("чужие/Пустая.md"), "");
         const QString third = store::importNote(root, QString(), empty, &error);
         ZT_TRUE("пустой файл импортируется", !third.isEmpty());
-        ZT_EQ("и без дрейфа", readAll(third), serialize(parse(readAll(third))));
+        ZT_EQ("и без дрейфа", readAll(third), noteOf(readAll(third)).toMarkdown());
 
         // Отказы.
         ZT_TRUE("несуществующий источник — отказ",

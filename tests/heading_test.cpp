@@ -14,10 +14,8 @@
 // прочтётся обратно. «Выглядит как заголовок» тут не значит ничего.
 
 #include "document_builder.h"
-#include "document_reader.h"
+#include "pieces.h"
 #include "editor_ops.h"
-#include "parser.h"
-#include "serializer.h"
 #include "test_util.h"
 
 #include <vector>
@@ -37,7 +35,7 @@ namespace {
 // переносами это один блок, и внутри него строк несколько.
 std::string apply(const std::string& source, const std::string& onLine, int level,
                   bool selectAll = false) {
-    const zametti::Document ir = zametti::parse(source);
+    const std::vector<zametti::Piece> ir = pieces(source);
     QTextDocument doc;
     zametti::buildDocument(ir, doc);
 
@@ -71,7 +69,7 @@ std::string apply(const std::string& source, const std::string& onLine, int leve
     }
 
     zametti::setHeadingLevel(doc, caret, level);
-    return zametti::serialize(zametti::readDocument(doc));
+    return markdownOf(blocksOf(doc));
 }
 
 void check(const std::string& what, const std::string& expected, const std::string& actual) {
@@ -81,7 +79,7 @@ void check(const std::string& what, const std::string& expected, const std::stri
     // блоков в файле укусила бы молча — «- раз / ## два» читается верно, а
     // что-нибудь похожее могло бы и слипнуться.
     if (expected != actual) return;   // уже красное, второй раз не шумим
-    const std::string again = zametti::serialize(zametti::parse(actual));
+    const std::string again = noteOf(actual).toMarkdown();
     ZT_EQ(what + ": и переживает круг через разбор", actual, again);
 }
 

@@ -12,10 +12,9 @@
 //      меняет файлы, метка переживает перезапуск, modified не поднимается.
 
 #include "note_tree.h"
+#include "pieces.h"
 #include "sort_order.h"
 
-#include "parser.h"
-#include "serializer.h"
 #include "test_util.h"
 
 #include <vector>
@@ -37,6 +36,11 @@ using zametti::SortKey;
 using zametti::SortOrder;
 
 namespace {
+
+// Пометка порядка — глагол самой заметки.
+void setSort(zametti::ZDocument& note, std::optional<zametti::SortOrder> order) {
+    note.setSortOrder(order);
+}
 
 QString g_root;
 
@@ -151,21 +155,21 @@ void checkMetaMark() {
         "чужое: не трогать\n"
         "-->\n\n# Дневник\n";
 
-    zametti::Document doc = zametti::parse(source);
-    zametti::applySortMark(doc.meta, SortOrder{SortKey::Created, false});
-    const std::string marked = zametti::serialize(doc);
+    zametti::ZDocument doc = noteOf(source);
+    setSort(doc, SortOrder{SortKey::Created, false});
+    const std::string marked = doc.toMarkdown();
     ZT_TRUE("метка записалась", marked.find("sort: created-desc") != std::string::npos);
 
-    const zametti::Document back = zametti::parse(marked);
-    ZT_EQ("modified от пометки не изменился", "2021-02-03T04:05:06Z", back.meta.get("modified"));
-    ZT_EQ("created от пометки не изменился", "2020-01-01T00:00:00Z", back.meta.get("created"));
-    ZT_EQ("чужой ключ пережил правку", "не трогать", back.meta.get("чужое"));
+    const zametti::ZDocument back = noteOf(marked);
+    ZT_EQ("modified от пометки не изменился", "2021-02-03T04:05:06Z", head(back, "modified"));
+    ZT_EQ("created от пометки не изменился", "2020-01-01T00:00:00Z", head(back, "created"));
+    ZT_EQ("чужой ключ пережил правку", "не трогать", head(back, "чужое"));
     ZT_TRUE("текст заметки на месте", marked.find("# Дневник") != std::string::npos);
 
     // Сброс убирает ключ и не трогает остальное.
-    zametti::Document reset = zametti::parse(marked);
-    zametti::applySortMark(reset.meta, std::nullopt);
-    const std::string cleared = zametti::serialize(reset);
+    zametti::ZDocument reset = noteOf(marked);
+    setSort(reset, std::nullopt);
+    const std::string cleared = reset.toMarkdown();
     ZT_TRUE("сброс убрал ключ", cleared.find("sort:") == std::string::npos);
     ZT_EQ("сброс вернул файл к исходному", source, cleared);
 }
@@ -272,11 +276,11 @@ void checkInheritance() {
     // Метку ставим руками в файл — ровно так, как её пишет программа.
     const QString monthFile = g_root + QStringLiteral("/00000000000d03.md");
     {
-        zametti::Document doc = zametti::parse(readFile(monthFile).toStdString());
-        zametti::applySortMark(doc.meta, SortOrder{SortKey::Created, true});
+        zametti::ZDocument doc = noteOf(readFile(monthFile).toStdString());
+        setSort(doc, SortOrder{SortKey::Created, true});
         QFile f(monthFile);
         if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            const std::string out = zametti::serialize(doc);
+            const std::string out = doc.toMarkdown();
             f.write(out.data(), qint64(out.size()));
         }
     }
@@ -309,11 +313,11 @@ void checkInheritance() {
     const QMap<QString, QString> before = storeHashes();
     const QString yearFile = g_root + QStringLiteral("/00000000000d02.md");
     {
-        zametti::Document doc = zametti::parse(readFile(yearFile).toStdString());
-        zametti::applySortMark(doc.meta, SortOrder{SortKey::Name, false});   // NOLINT
+        zametti::ZDocument doc = noteOf(readFile(yearFile).toStdString());
+        setSort(doc, SortOrder{SortKey::Name, false});   // NOLINT
         QFile f(yearFile);
         if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            const std::string out = zametti::serialize(doc);
+            const std::string out = doc.toMarkdown();
             f.write(out.data(), qint64(out.size()));
         }
     }
@@ -332,11 +336,11 @@ void checkInheritance() {
 
     // Сброс метки месяца — и он наследует от года.
     {
-        zametti::Document doc = zametti::parse(readFile(monthFile).toStdString());
-        zametti::applySortMark(doc.meta, std::nullopt);
+        zametti::ZDocument doc = noteOf(readFile(monthFile).toStdString());
+        setSort(doc, std::nullopt);
         QFile f(monthFile);
         if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            const std::string out = zametti::serialize(doc);
+            const std::string out = doc.toMarkdown();
             f.write(out.data(), qint64(out.size()));
         }
     }

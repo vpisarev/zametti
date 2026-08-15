@@ -1,18 +1,16 @@
 // Сохранение: инвариант B этапа и последний рубеж перед заменой файла.
 //
-// B. открыть файл и сохранить без правок == serialize(parse(file)),
+// B. открыть файл и сохранить без правок == noteOf(file).toMarkdown(),
 //    для уже канонических файлов — побайтовая идентичность.
 //
 // И отдельно — то, ради чего самопроверка вообще есть: если читатель сломан,
 // старый файл обязан остаться нетронутым.
 
 #include "document_builder.h"
-#include "document_reader.h"
+#include "pieces.h"
 #include "document_saver.h"
 #include "hash.h"
 #include "editor_ops.h"
-#include "parser.h"
-#include "serializer.h"
 #include "test_util.h"
 
 #include <vector>
@@ -65,7 +63,7 @@ QString pathFor(const char* name) { return g_dir + QLatin1Char('/') + QLatin1Str
 // Документ, собранный из файла, — ровно то, что видит пользователь после
 // открытия заметки.
 void buildFrom(const std::string& source, QTextDocument& doc) {
-    zametti::buildDocument(zametti::parse(source), doc);
+    zametti::buildDocument(pieces(source), doc);
 }
 
 // Инвариант B на одном исходнике.
@@ -78,7 +76,7 @@ void checkSave(const std::string& source, const char* name) {
 
     const zametti::SaveOutcome first =
         zametti::saveDocument(doc, path, QStringLiteral("test"));
-    const std::string canonical = zametti::serialize(zametti::parse(source));
+    const std::string canonical = noteOf(source).toMarkdown();
 
     if (source == canonical) {
         check(first.result == zametti::SaveResult::Unchanged,
@@ -161,33 +159,38 @@ const char* const kNonCanonical[] = {
 // недопустимым IR и падает на проверке, не дойдя до самопроверки, а название
 // языка с обратной кавычкой сериализатор сам выводит забором из волнистых
 // черт — и круг сходится.
-// Литералы IR строятся билдером: блок без своей арены — набор смещений в
-// никуда. Строитель держит документ и раздаёт ссылки на блоки в нём.
+// Литералы блоков строятся билдером: он держит список и раздаёт ссылки на
+// блоки в нём. Блок владеет своим текстом и своими кусками, поэтому размечать
+// его можно когда угодно.
 struct Builder {
-    zametti::Document ir;
+    std::vector<zametti::Piece> ir;
 
-    zametti::Block& add(zametti::Kind kind, std::string_view text) {
-        ir.blocks.push_back(ir.newBlock(kind, text));
-        return ir.blocks.back();
+    zametti::Piece& add(zametti::Kind kind, std::string_view text) {
+        zametti::Piece block;
+        block.kind = kind;
+        block.text = text;
+        block.trailingNewline = !block.text.empty() && block.text.back() == '\n';
+        ir.push_back(std::move(block));
+        return ir.back();
     }
-    zametti::Block& addRaw(std::string_view bytes) {
-        ir.blocks.push_back(ir.newRaw(bytes));
-        return ir.blocks.back();
+    zametti::Piece& addRaw(std::string_view bytes) {
+        zametti::Piece block;
+        block.raw = true;
+        block.text = bytes;
+        block.trailingNewline = !block.text.empty() && block.text.back() == '\n';
+        ir.push_back(std::move(block));
+        return ir.back();
     }
-    // Спаны блока обязаны лежать в spans подряд, поэтому размечать блок надо
-    // до того, как заведён следующий.
-    void mark(zametti::Block& block, int from, int length, zametti::InlineFlag flag) {
-        zametti::Inline span;
-        span.text = {from, from + length};
-        span.set(flag, true);
-        const int32_t at = static_cast<int32_t>(ir.spans.size());
-        ir.spans.push_back(span);
-        if (block.inlines.empty()) block.inlines = {at, at + 1};
-        else block.inlines.end = at + 1;
+    void mark(zametti::Piece& block, int from, int length, zametti::InlineFlag flag) {
+        zametti::Run run;
+        run.start = from;
+        run.end = from + length;
+        run.set(flag, true);
+        block.runs.push_back(run);
     }
 };
 
-zametti::Document brokenReader(const QTextDocument&) {
+std::vector<zametti::Piece> brokenReader(const QTextDocument&) {
     Builder b;
     b.addRaw("| это не таблица |\n");
     return std::move(b.ir);
@@ -402,7 +405,7 @@ void checkEdgeSpaces() {
             check(writeFile(path, "заглушка\n"), "не записать исходник");
 
             Builder builder;
-            zametti::Block& block = builder.add(zametti::Kind::Paragraph, c.text);
+            zametti::Piece& block = builder.add(zametti::Kind::Paragraph, c.text);
             builder.mark(block, 0, block.text.size(), zametti::InlineItalic);
             QTextDocument doc;
             zametti::buildDocument(builder.ir, doc);
@@ -436,7 +439,7 @@ void checkEdgeSpaces() {
         const QString path = pathFor("код-через-строку.md");
         check(writeFile(path, "заглушка\n"), "не записать исходник");
         Builder builder;
-        zametti::Block& block = builder.add(zametti::Kind::Paragraph, "раз\nдва");
+        zametti::Piece& block = builder.add(zametti::Kind::Paragraph, "раз\nдва");
         builder.mark(block, 0, block.text.size(), zametti::InlineCode);
         QTextDocument doc;
         zametti::buildDocument(builder.ir, doc);
@@ -492,7 +495,7 @@ void checkEdgeSpaces() {
         check(writeFile(path, "заглушка\n"), "не записать исходник");
         Builder builder;
         const auto item = [&builder](zametti::Marker marker, int level, const char* text) {
-            zametti::Block& block = builder.add(zametti::Kind::ListItem, text);
+            zametti::Piece& block = builder.add(zametti::Kind::ListItem, text);
             block.marker = marker;
             block.level = static_cast<int16_t>(level);
         };
@@ -516,7 +519,7 @@ void checkEdgeSpaces() {
         const QString path = pathFor("зачёркнуто-полслова.md");
         check(writeFile(path, "заглушка\n"), "не записать исходник");
         Builder builder;
-        zametti::Block& block = builder.add(zametti::Kind::Paragraph, "фрукты");
+        zametti::Piece& block = builder.add(zametti::Kind::Paragraph, "фрукты");
         builder.mark(block, 6, 6, zametti::InlineStrike);   // "кты" — вторая половина слова
         QTextDocument doc;
         zametti::buildDocument(builder.ir, doc);
@@ -534,7 +537,7 @@ void checkEdgeSpaces() {
         const QString path = pathFor("неживучая-разметка.md");
         check(writeFile(path, "заглушка\n"), "не записать исходник");
         Builder builder;
-        zametti::Block& block = builder.add(zametti::Kind::Paragraph, "штуки 2-5.");
+        zametti::Piece& block = builder.add(zametti::Kind::Paragraph, "штуки 2-5.");
         builder.mark(block, 9, 1, zametti::InlineBold);   // одна точка, и та в конце
         QTextDocument doc;
         zametti::buildDocument(builder.ir, doc);
@@ -667,39 +670,38 @@ void surveyGuard(const QString& root) {
         const QByteArray bytes = file.readAll();
         file.close();
 
-        const zametti::Document parsed =
-            zametti::parse(std::string(bytes.constData(), size_t(bytes.size())));
+        const std::vector<zametti::Piece> parsed =
+            pieces(std::string(bytes.constData(), size_t(bytes.size())));
         QTextDocument doc;
         zametti::buildDocument(parsed, doc);
 
-        zametti::Document read = zametti::readDocument(doc);
-        read.meta = parsed.meta;
-        const zametti::Document going = zametti::documentForFile(std::move(read));
-        const std::string text = zametti::serialize(going);
-        const zametti::Document back = zametti::parse(text);
+        const std::vector<zametti::Piece> going =
+            zametti::documentForFile(blocksOf(doc));
+        const std::string text = markdownOf(going);
+        const std::vector<zametti::Piece> back = pieces(text);
 
         ++checked;
         // sameSkeleton наружу не выведен — сверяем тем же, чем сверяет он:
         // числом блоков, родом и текстом. Разойдёмся в мелочи — увидим больше,
         // а не меньше, и это честнее.
-        bool same = going.blocks.size() == back.blocks.size();
-        for (size_t i = 0; same && i < going.blocks.size(); ++i) {
-            same = going.blocks[i].raw == back.blocks[i].raw &&
-                   going.blocks[i].kind == back.blocks[i].kind &&
-                   going.text(going.blocks[i]) == back.text(back.blocks[i]);
+        bool same = going.size() == back.size();
+        for (size_t i = 0; same && i < going.size(); ++i) {
+            same = going[i].raw == back[i].raw &&
+                   going[i].kind == back[i].kind &&
+                   going[i].text == back[i].text;
         }
         if (same) continue;
         ++refused;
         if (refused <= 5) {
             std::printf("сторож не даёт записать: %s (блоков %zu против %zu)\n",
-                        name.toUtf8().constData(), going.blocks.size(), back.blocks.size());
-            for (size_t i = 0; i < going.blocks.size() && i < back.blocks.size(); ++i) {
-                if (going.text(going.blocks[i]) == back.text(back.blocks[i]) &&
-                    going.blocks[i].kind == back.blocks[i].kind)
+                        name.toUtf8().constData(), going.size(), back.size());
+            for (size_t i = 0; i < going.size() && i < back.size(); ++i) {
+                if (going[i].text == back[i].text &&
+                    going[i].kind == back[i].kind)
                     continue;
                 std::printf("  блок %zu:\n    ушло:  [%s]\n    вышло: [%s]\n", i,
-                            std::string(going.text(going.blocks[i])).substr(0, 90).c_str(),
-                            std::string(back.text(back.blocks[i])).substr(0, 90).c_str());
+                            going[i].text.substr(0, 90).c_str(),
+                            back[i].text.substr(0, 90).c_str());
                 break;
             }
         }

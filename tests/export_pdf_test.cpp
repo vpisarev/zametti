@@ -20,9 +20,9 @@
 // есть дескриптор с потоком, у невшитого — нет.
 
 #include "document_builder.h"
+#include "pieces.h"
 #include "doc_model.h"
 #include "export_pdf.h"
-#include "parser.h"
 #include "settings.h"
 #include "test_util.h"
 #include "testdata.h"
@@ -191,7 +191,7 @@ void checkPaperPrep() {
         "![снимок](01n6vwnr03mxzq.jxl)\n";
 
     QTextDocument doc;
-    zametti::buildDocument(zametti::parse(source), doc);
+    zametti::buildDocument(pieces(source), doc);
     zametti::prepareForPaper(doc);
 
     QString all;

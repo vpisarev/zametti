@@ -12,7 +12,7 @@
 #define ZAMETTI_EDITOR_OPS_H
 
 #include "doc_model.h"
-#include "ir.h"
+#include "document_pieces.h"
 
 #include <QString>
 
@@ -91,14 +91,15 @@ bool repairAfterTyping(QTextDocument& doc, QTextCursor& cursor);
 // Сосед ищется в пределах непрерывной списочной области: через абзац операция
 // не перепрыгивает. У первого пункта вверх и у последнего вниз — молча ничего.
 //
-// Работает над IR, а не над курсором: переставить два куска вектора надёжнее,
-// чем вырезать и вставлять куски документа, и свойства блоков при этом заведомо
-// сохраняются. Виджет собирает документ из возвращённого IR.
+// Работает над ЛОГИЧЕСКИМИ БЛОКАМИ, а не над курсором: переставить два куска
+// вектора надёжнее, чем вырезать и вставлять куски документа, и свойства блоков
+// при этом заведомо сохраняются. Виджет собирает документ из возвращённых
+// блоков — точнее, заплатывает его ими.
 struct MoveResult {
     bool done = false;
-    Document doc;         // документ целиком, с переставленными пунктами
-    int irBlock = 0;      // куда переехал пункт, номером блока IR
-    int offsetInBlock = 0;   // где в нём стоял курсор, в кодовых единицах UTF-16
+    std::vector<Piece> blocks;   // содержимое целиком, с переставленными пунктами
+    int irBlock = 0;             // куда переехал пункт, номером логического блока
+    int offsetInBlock = 0;       // где в нём стоял курсор, в кодовых единицах UTF-16
 };
 
 MoveResult moveListItem(const QTextDocument& doc, const QTextCursor& cursor, int direction);
@@ -123,7 +124,7 @@ MoveResult toggleCodeBlock(QTextDocument& doc, const QTextCursor& cursor);
 bool indentListItems(QTextDocument& doc, QTextCursor& cursor);
 bool outdentListItems(QTextDocument& doc, QTextCursor& cursor);
 
-// IR-фрагмент выделения. Свойства блоков переносятся через
+// Логические блоки выделения. Свойства блоков переносятся через
 // QTextDocumentFragment — проверено, что род, уровень и признак продолжения его
 // переживают.
 //
@@ -133,7 +134,7 @@ bool outdentListItems(QTextDocument& doc, QTextCursor& cursor);
 //
 // Выделение внутри одного блока — это просто текст: род возвращается только
 // если блок выделен целиком.
-Document selectionToIr(const QTextCursor& cursor);
+std::vector<Piece> selectionPieces(const QTextCursor& cursor);
 
 // Обменный формат — сам markdown, отдельного MIME-типа нет: у нас есть парсер и
 // сериализатор, и их идемпотентность гарантирует, что скопированное внутри

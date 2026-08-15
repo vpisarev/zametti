@@ -2,22 +2,22 @@
 
 namespace zametti {
 
-void EditHistory::reset(Document doc, int cursor) {
+void EditHistory::reset(std::vector<Piece> blocks, int cursor) {
     steps_.clear();
-    steps_.push_back({std::move(doc), cursor});
+    steps_.push_back({std::move(blocks), cursor});
     position_ = 0;
 }
 
-void EditHistory::push(Document doc, int cursor) {
+void EditHistory::push(std::vector<Piece> blocks, int cursor) {
     steps_.erase(steps_.begin() + long(position_) + 1, steps_.end());
-    steps_.push_back({std::move(doc), cursor});
+    steps_.push_back({std::move(blocks), cursor});
     position_ = steps_.size() - 1;
     dropOldestIfNeeded();
 }
 
-void EditHistory::amend(Document doc, int cursor) {
+void EditHistory::amend(std::vector<Piece> blocks, int cursor) {
     steps_.erase(steps_.begin() + long(position_) + 1, steps_.end());
-    steps_[position_] = {std::move(doc), cursor};
+    steps_[position_] = {std::move(blocks), cursor};
 }
 
 const HistoryStep* EditHistory::undo() {
@@ -32,21 +32,25 @@ const HistoryStep* EditHistory::redo() {
     return &steps_[position_];
 }
 
-// Вес шага — то, что снимок держит на самом деле: арена, спаны, блоки.
-// Пересчитываем целиком, а не ведём счётчик: шагов две сотни, сложение
-// дешевле любой ошибки в учёте.
+// Вес шага — то, что снимок держит на самом деле: текст и куски каждого блока.
+// Пересчитываем целиком, а не ведём счётчик: шагов две сотни, сложение дешевле
+// любой ошибки в учёте.
 namespace {
 
-size_t weigh(const Document& doc) {
-    return doc.chars.size() + doc.spans.size() * sizeof(Inline) +
-           doc.blocks.size() * sizeof(Block);
+size_t weigh(const std::vector<Piece>& blocks) {
+    size_t total = blocks.size() * sizeof(Piece);
+    for (const Piece& block : blocks) {
+        total += block.text.size() + block.info.size() + block.runs.size() * sizeof(Run);
+        for (const Run& run : block.runs) total += run.href.size() + run.title.size();
+    }
+    return total;
 }
 
 }  // namespace
 
 size_t EditHistory::bytes() const {
     size_t total = 0;
-    for (const HistoryStep& step : steps_) total += weigh(step.doc);
+    for (const HistoryStep& step : steps_) total += weigh(step.blocks);
     return total;
 }
 

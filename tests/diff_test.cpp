@@ -13,9 +13,8 @@
 //   - заглушка «N строк удалено» встаёт перед тем блоком, который идёт следом.
 
 #include "diff.h"
+#include "pieces.h"
 
-#include "parser.h"
-#include "serializer.h"
 #include "test_util.h"
 
 #include <vector>
@@ -36,7 +35,7 @@ namespace {
 template <typename T>
 std::string num(T value) { return std::to_string(value); }
 
-Document parseOf(const std::string& text) { return parse(text); }
+std::vector<Piece> parseOf(const std::string& text) { return pieces(text); }
 
 // Тело заметки с шапкой: штамп modified у двух версий РАЗНЫЙ нарочно.
 std::string note(const std::string& body, const char* stamp) {
@@ -261,8 +260,8 @@ void bench(const char* path) {
     }
 
     std::printf("эталон до: %lld мкс\n", yardstickMicros());
-    const Document before = parse(text);
-    const Document after = parse(changed);
+    const std::vector<Piece> before = pieces(text);
+    const std::vector<Piece> after = pieces(changed);
     long long best = -1;
     int rows = 0;
     for (int round = 0; round < 5; ++round) {

@@ -39,7 +39,6 @@ add_executable(zametti-tests
     hash_test.cpp
     id_test.cpp
     roundtrip_test.cpp
-    arena_test.cpp
     table_test.cpp
     golden_test.cpp
     corpus_test.cpp

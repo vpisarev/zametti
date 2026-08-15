@@ -140,23 +140,25 @@ void appendPiece(std::string& out, const Piece& b) {
     out += "}";
 }
 
+// Шапка своей секцией и только когда есть: дамп без неё читается как раньше,
+// простым списком блоков.
+void appendHead(std::string& out, const NoteHeader& header) {
+    out += "{\"meta\": {\"lines\": [";
+    for (size_t i = 0; i < header.lines().size(); ++i) {
+        if (i) out += ", ";
+        appendJsonString(out, header.lines()[i]);
+    }
+    out += "], \"blankAfter\": ";
+    out += header.blankAfter() ? "true" : "false";
+    out += "},\n \"blocks\":\n";
+}
+
 }  // namespace
 
 std::string ZDocument::toJson() const {
     std::string out;
-    // Шапка — своей секцией и только когда есть: дамп без неё читается как
-    // раньше, простым списком блоков.
     const bool head = d_->header.present();
-    if (head) {
-        out += "{\"meta\": {\"lines\": [";
-        for (size_t i = 0; i < d_->header.lines().size(); ++i) {
-            if (i) out += ", ";
-            appendJsonString(out, d_->header.lines()[i]);
-        }
-        out += "], \"blankAfter\": ";
-        out += d_->header.blankAfter() ? "true" : "false";
-        out += "},\n \"blocks\":\n";
-    }
+    if (head) appendHead(out, d_->header);
     out += "[\n";
 
     // Запятая ставится ПЕРЕД следующим блоком, а не после предыдущего: сколько
@@ -172,6 +174,21 @@ std::string ZDocument::toJson() const {
 
     out += "]";
     if (head) out += "}";
+    out += "\n";
+    return out;
+}
+
+std::string dumpPieces(const std::vector<Piece>& blocks, const NoteHeader& header) {
+    std::string out;
+    if (header.present()) appendHead(out, header);
+    out += "[\n";
+    for (size_t i = 0; i < blocks.size(); ++i) {
+        appendPiece(out, blocks[i]);
+        if (i + 1 < blocks.size()) out += ",";
+        out += "\n";
+    }
+    out += "]";
+    if (header.present()) out += "}";
     out += "\n";
     return out;
 }

@@ -1,14 +1,12 @@
 // Главный инвариант ядра:
 //
-//   serialize(parse(x)) == x                для x в каноническом виде, побайтово
-//   parse(serialize(parse(x))) == parse(x)  для произвольного x
+//   noteOf(x).toMarkdown() == x                для x в каноническом виде, побайтово
+//   pieces(noteOf(x).toMarkdown()) == pieces(x)  для произвольного x
 //
 // Первый проверяет, что канон — неподвижная точка. Второй — что приведение к
 // канону ничего не теряет и не добавляет.
 
-#include "json_dump.h"
-#include "parser.h"
-#include "serializer.h"
+#include "pieces.h"
 
 #include "test_util.h"
 
@@ -18,21 +16,24 @@ using namespace zametti;
 
 namespace {
 
-// x канонично: сериализация разбора совпадает с исходником байт в байт.
-// Заодно проверяет и второй инвариант — он из первого не следует.
+// ОБА ИНВАРИАНТА СПРАШИВАЮТСЯ У ЗАМЕТКИ, а не у блоков: шапка живёт рядом с
+// содержимым, и круг «прочитали — записали» обязан вернуть её тоже.
+//
+// x канонично: запись прочитанного совпадает с исходником байт в байт.
+// Заодно проверяется и второй инвариант — он из первого не следует.
 void canonical(const char* what, const std::string& src) {
-    Document d = parse(src);
-    ZT_EQ(std::string("канон: ") + what, src, serialize(d));
-    ZT_EQ(std::string("устойчивость: ") + what, toJson(d), toJson(parse(serialize(d))));
+    const zametti::ZDocument d = noteOf(src);
+    ZT_EQ(std::string("канон: ") + what, src, d.toMarkdown());
+    ZT_EQ(std::string("устойчивость: ") + what, d.toJson(), noteOf(d.toMarkdown()).toJson());
 }
 
-// x произволен: приводится к canon, и повторный разбор даёт то же IR.
+// x произволен: приводится к канону, и повторное чтение даёт то же строение.
 void stable(const char* what, const std::string& src, const std::string& expectedCanon) {
-    Document d = parse(src);
-    std::string once = serialize(d);
+    const zametti::ZDocument d = noteOf(src);
+    const std::string once = d.toMarkdown();
     ZT_EQ(std::string("приведение к канону: ") + what, expectedCanon, once);
-    ZT_EQ(std::string("устойчивость: ") + what, toJson(d), toJson(parse(once)));
-    ZT_EQ(std::string("неподвижная точка: ") + what, once, serialize(parse(once)));
+    ZT_EQ(std::string("устойчивость: ") + what, d.toJson(), noteOf(once).toJson());
+    ZT_EQ(std::string("неподвижная точка: ") + what, once, noteOf(once).toMarkdown());
 }
 
 void testBasics() {
@@ -51,11 +52,11 @@ void testBasics() {
 
 // Что именно разбор счёл ссылкой в абзаце из одного спана; пусто — не счёл.
 std::string bareLink(const std::string& text) {
-    Document d = parse(text + "\n");
-    if (d.blocks.size() != 1) return "<не один блок>";
-    const auto spans = d.inlines(d.blocks[0]);
+    std::vector<Piece> d = pieces(text + "\n");
+    if (d.size() != 1) return "<не один блок>";
+    const auto spans = d[0].runs;
     if (spans.empty()) return "";
-    return std::string(d.href(spans[0]));
+    return spans[0].href;
 }
 
 // СТОРОЖ ПРАВКИ md4c. В вендоренном md4c таблица URL_MAP разрешала в якоре
@@ -116,10 +117,10 @@ void testInline() {
     canonical("не-ASCII в адресе остаётся в скобках",
               "смотри <https://example.org/путь> вот\n");
 
-    Document u = parse("см. https://example.org/x дальше\n");
+    std::vector<Piece> u = pieces("см. https://example.org/x дальше\n");
     ZT_TRUE("голая ссылка стала спаном",
-            u.blocks.size() == 1 && u.inlines(u.blocks[0]).size() == 1 &&
-                u.href(u.inlines(u.blocks[0])[0]) == "https://example.org/x");
+            u.size() == 1 && u[0].runs.size() == 1 &&
+                u[0].runs[0].href == "https://example.org/x");
     testAnchorsInBareLinks();
     canonical("жирная ссылка", "**[туда](/a/b)**\n");
 
@@ -128,11 +129,11 @@ void testInline() {
     stable("emphasis снаружи strong перекладывается в канон", "_**оба**_\n", "**_оба_**\n");
 
     // Смещения спанов — в байтах, и на кириллице это видно.
-    Document d = parse("аб **вг** де\n");
-    ZT_TRUE("один спан на кириллице", d.blocks.size() == 1 && d.inlines(d.blocks[0]).size() == 1);
-    if (d.blocks.size() == 1 && d.inlines(d.blocks[0]).size() == 1) {
-        ZT_TRUE("смещение спана в байтах, а не в символах", d.inlines(d.blocks[0])[0].text.start == 5);
-        ZT_TRUE("длина спана в байтах", d.inlines(d.blocks[0])[0].text.size() == 4);
+    std::vector<Piece> d = pieces("аб **вг** де\n");
+    ZT_TRUE("один спан на кириллице", d.size() == 1 && d[0].runs.size() == 1);
+    if (d.size() == 1 && d[0].runs.size() == 1) {
+        ZT_TRUE("смещение спана в байтах, а не в символах", d[0].runs[0].start == 5);
+        ZT_TRUE("длина спана в байтах", d[0].runs[0].end - d[0].runs[0].start == 4);
     }
 }
 
@@ -193,25 +194,25 @@ void testTasksLiteral() {
     canonical("1. [X] сохраняет регистр", "1. [X] текст\n");
     canonical("1. [ ] остаётся текстом", "1. [ ] текст\n");
 
-    Document d = parse("1. [x] текст\n");
+    std::vector<Piece> d = pieces("1. [x] текст\n");
     ZT_TRUE("нумерованный пункт, а не чекбокс",
-            d.blocks.size() == 1 && d.blocks[0].kind == Kind::ListItem && d.blocks[0].marker == Marker::Ordered);
-    if (d.blocks.size() == 1) ZT_EQ("маркер вернулся в текст", "[x] текст", d.text(d.blocks[0]));
+            d.size() == 1 && d[0].kind == Kind::ListItem && d[0].marker == Marker::Ordered);
+    if (d.size() == 1) ZT_EQ("маркер вернулся в текст", "[x] текст", d[0].text);
 
     // Срез берётся из исходника, а не синтезируется: иначе теряются лишние
     // пробелы и разметка, идущая сразу за маркером.
-    d = parse("1. [x]  **жирный** текст\n");
+    d = pieces("1. [x]  **жирный** текст\n");
     ZT_TRUE("жирный не проглочен срезом",
-            d.blocks.size() == 1 && d.inlines(d.blocks[0]).size() == 1 && d.inlines(d.blocks[0])[0].bold());
-    if (d.blocks.size() == 1) ZT_EQ("двойной пробел после маркера сохранён", "[x]  жирный текст", d.text(d.blocks[0]));
+            d.size() == 1 && d[0].runs.size() == 1 && d[0].runs[0].bold());
+    if (d.size() == 1) ZT_EQ("двойной пробел после маркера сохранён", "[x]  жирный текст", d[0].text);
     canonical("1. [x] с двойным пробелом и разметкой", "1. [x]  **жирный** текст\n");
 
     // А вот в маркированном списке это настоящий чекбокс.
-    d = parse("- [x] текст\n");
+    d = pieces("- [x] текст\n");
     ZT_TRUE("маркированный пункт с [x] — чекбокс",
-            d.blocks.size() == 1 && d.blocks[0].kind == Kind::ListItem &&
-                d.blocks[0].marker == Marker::Task && d.blocks[0].checked);
-    if (d.blocks.size() == 1) ZT_EQ("маркер чекбокса в текст не попал", "текст", d.text(d.blocks[0]));
+            d.size() == 1 && d[0].kind == Kind::ListItem &&
+                d[0].marker == Marker::Task && d[0].checked);
+    if (d.size() == 1) ZT_EQ("маркер чекбокса в текст не попал", "текст", d[0].text);
 
     stable("- [X] приводится к нижнему регистру", "- [X] текст\n", "- [x] текст\n");
     stable("- [ ] с двойным пробелом сжимается", "- [ ]  текст\n", "- [ ] текст\n");
@@ -226,11 +227,11 @@ void testCode() {
 
     stable("код с отступом приводится к огороженному", "    код\n", "```\nкод\n```\n");
 
-    // Язык блока кода живёт в Block::info.
-    Document d = parse("```cpp\nint main() {}\n```\n");
+    // Язык блока кода живёт в Piece::info.
+    std::vector<Piece> d = pieces("```cpp\nint main() {}\n```\n");
     ZT_TRUE("код с языком разобран, а не сохранён дословно",
-            d.blocks.size() == 1 && !d.blocks[0].raw && d.blocks[0].kind == Kind::Code);
-    if (d.blocks.size() == 1) ZT_EQ("язык попал в info", "cpp", d.info(d.blocks[0]));
+            d.size() == 1 && !d[0].raw && d[0].kind == Kind::Code);
+    if (d.size() == 1) ZT_EQ("язык попал в info", "cpp", d[0].info);
     canonical("код с языком", "```cpp\nint main() {}\n```\n");
     canonical("забор длиннее содержимого", "````\n```\nвложенный забор\n```\n````\n");
     stable("обратная кавычка в info даёт забор из тильд",
@@ -245,17 +246,17 @@ void testInsideItem() {
     canonical("три абзаца в пункте", "- раз\n\n  два\n\n  три\n");
     canonical("продолжение вложенного пункта", "- раз\n  - вложенный\n\n    продолжение\n");
 
-    Document d = parse("1. раз\n\n   продолжение\n\n2. два\n");
-    ZT_TRUE("пять блоков: два пункта, продолжение и две пустые строки", d.blocks.size() == 5);
-    if (d.blocks.size() == 5) {
+    std::vector<Piece> d = pieces("1. раз\n\n   продолжение\n\n2. два\n");
+    ZT_TRUE("пять блоков: два пункта, продолжение и две пустые строки", d.size() == 5);
+    if (d.size() == 5) {
         ZT_TRUE("первый — пункт нулевого уровня",
-                d.blocks[0].kind == Kind::ListItem && d.blocks[0].level == 0);
+                d[0].kind == Kind::ListItem && d[0].level == 0);
         ZT_TRUE("продолжение — абзац, но с уровнем",
-                d.blocks[2].kind == Kind::Paragraph && d.blocks[2].level == 0);
-        ZT_EQ("текст продолжения", "продолжение", d.text(d.blocks[2]));
+                d[2].kind == Kind::Paragraph && d[2].level == 0);
+        ZT_EQ("текст продолжения", "продолжение", d[2].text);
         // Нумерация через продолжение не сбивается: второй пункт всё ещё второй.
         ZT_TRUE("второй пункт остался пунктом того же списка",
-                d.blocks[4].kind == Kind::ListItem && d.blocks[4].level == 0);
+                d[4].kind == Kind::ListItem && d[4].level == 0);
     }
 
     // Блок кода внутри пункта — тот же случай: код, у которого есть уровень.
@@ -266,21 +267,21 @@ void testInsideItem() {
     canonical("код во вложенном пункте",
               "- раз\n  - вложенный\n\n    ```\n    x\n    ```\n");
 
-    d = parse("- пункт\n\n  ```py\n  x = 1\n  ```\n");
+    d = pieces("- пункт\n\n  ```py\n  x = 1\n  ```\n");
     ZT_TRUE("код в пункте — блок кода с уровнем",
-            d.blocks.size() == 3 && d.blocks[2].kind == Kind::Code && d.blocks[2].level == 0);
+            d.size() == 3 && d[2].kind == Kind::Code && d[2].level == 0);
 
     // А забор прямо на строке маркера остаётся дословным: пункт и код делят одну
     // строку, а границы блоков мы считаем строками.
-    d = parse("- ```\n  x\n  ```\n");
+    d = pieces("- ```\n  x\n  ```\n");
     ZT_TRUE("забор на строке маркера уходит дословно",
-            d.blocks.size() == 1 && d.blocks[0].raw);
+            d.size() == 1 && d[0].raw);
 
     // Обычный абзац за списком уровня не имеет — иначе его нельзя было бы
     // отличить от продолжения пункта.
-    d = parse("- пункт\n\nабзац\n");
+    d = pieces("- пункт\n\nабзац\n");
     ZT_TRUE("абзац за списком стоит снаружи",
-            d.blocks.size() == 3 && d.blocks[2].kind == Kind::Paragraph && d.blocks[2].level == -1);
+            d.size() == 3 && d[2].kind == Kind::Paragraph && d[2].level == -1);
 }
 
 void testRawSource() {
@@ -296,20 +297,20 @@ void testRawSource() {
     canonical("жёсткий перенос делает абзац дословным", "первая  \nвторая\n");
 
 
-    Document d = parse("| a |\n|---|\n| 1 |\n");
-    ZT_TRUE("таблица — один rawSource-блок", d.blocks.size() == 1 && d.blocks[0].raw);
-    if (d.blocks.size() == 1) ZT_EQ("таблица целиком", "| a |\n|---|\n| 1 |\n", d.text(d.blocks[0]));
+    std::vector<Piece> d = pieces("| a |\n|---|\n| 1 |\n");
+    ZT_TRUE("таблица — один rawSource-блок", d.size() == 1 && d[0].raw);
+    if (d.size() == 1) ZT_EQ("таблица целиком", "| a |\n|---|\n| 1 |\n", d[0].text);
 
     // Пустые строки теперь свои блоки, поэтому между тремя кусками стоят ещё
     // два VSpace.
-    d = parse("абзац\n\n| a |\n|---|\n\nещё абзац\n");
-    ZT_TRUE("таблица не съела соседей", d.blocks.size() == 5);
-    if (d.blocks.size() == 5) {
-        ZT_EQ("текст до", "абзац", d.text(d.blocks[0]));
-        ZT_TRUE("между ними пустая строка", d.blocks[1].kind == Kind::VSpace);
-        ZT_EQ("таблица дословно", "| a |\n|---|\n", d.text(d.blocks[2]));
-        ZT_TRUE("и после неё тоже", d.blocks[3].kind == Kind::VSpace);
-        ZT_EQ("текст после", "ещё абзац", d.text(d.blocks[4]));
+    d = pieces("абзац\n\n| a |\n|---|\n\nещё абзац\n");
+    ZT_TRUE("таблица не съела соседей", d.size() == 5);
+    if (d.size() == 5) {
+        ZT_EQ("текст до", "абзац", d[0].text);
+        ZT_TRUE("между ними пустая строка", d[1].kind == Kind::VSpace);
+        ZT_EQ("таблица дословно", "| a |\n|---|\n", d[2].text);
+        ZT_TRUE("и после неё тоже", d[3].kind == Kind::VSpace);
+        ZT_EQ("текст после", "ещё абзац", d[4].text);
     }
 
     // Определение ссылки md4c не отдаёт ни одним колбэком — он её молча
@@ -350,8 +351,8 @@ void testMixed() {
 // мутациям из них. Каждый ломал что-то своё, поэтому лежат отдельно.
 void testSpecEdgeCases() {
     // Спан нулевой длины модель не выражает — иначе ссылка исчезла бы целиком.
-    Document d = parse("[](./target.md)\n");
-    ZT_TRUE("пустая ссылка сохранена дословно", d.blocks.size() == 1 && d.blocks[0].raw);
+    std::vector<Piece> d = pieces("[](./target.md)\n");
+    ZT_TRUE("пустая ссылка сохранена дословно", d.size() == 1 && d[0].raw);
     canonical("ссылка с пустым текстом", "[](./target.md)\n");
 
     // Наружу выносится признак, покрывающий больший кусок.
@@ -403,12 +404,12 @@ void testInlineCode() {
     canonical("встроенный код как текст ссылки", "[`code`](/u)\n");
     canonical("кавычки внутри встроенного кода", "``a ` b``\n");
 
-    Document d = parse("текст `code` дальше\n");
+    std::vector<Piece> d = pieces("текст `code` дальше\n");
     ZT_TRUE("код разобран спаном, а не сохранён дословно",
-            d.blocks.size() == 1 && !d.blocks[0].raw && d.inlines(d.blocks[0]).size() == 1);
-    if (d.blocks.size() == 1 && d.inlines(d.blocks[0]).size() == 1) {
-        ZT_TRUE("флаг code выставлен", d.inlines(d.blocks[0])[0].code());
-        ZT_EQ("кавычки в текст не попали", "текст code дальше", d.text(d.blocks[0]));
+            d.size() == 1 && !d[0].raw && d[0].runs.size() == 1);
+    if (d.size() == 1 && d[0].runs.size() == 1) {
+        ZT_TRUE("флаг code выставлен", d[0].runs[0].code());
+        ZT_EQ("кавычки в текст не попали", "текст code дальше", d[0].text);
     }
 
     // Содержимое кода буквально: экранировать внутри нечего и нельзя.
@@ -423,19 +424,19 @@ void testQuotes() {
     canonical("цитата с разметкой", "> текст **жирный** и [ссылка](/u)\n");
     canonical("цитата между абзацами", "до\n\n> цитата\n\nпосле\n");
 
-    Document d = parse("> цитата\n");
+    std::vector<Piece> d = pieces("> цитата\n");
     ZT_TRUE("цитата разобрана, а не сохранена дословно",
-            d.blocks.size() == 1 && !d.blocks[0].raw && d.blocks[0].kind == Kind::Quote);
-    if (d.blocks.size() == 1) ZT_EQ("маркер цитаты в текст не попал", "цитата", d.text(d.blocks[0]));
+            d.size() == 1 && !d[0].raw && d[0].kind == Kind::Quote);
+    if (d.size() == 1) ZT_EQ("маркер цитаты в текст не попал", "цитата", d[0].text);
 
     // Внутри цитаты у блока нет ни уровня, ни содержимого сложнее абзаца,
     // поэтому всё остальное остаётся дословным.
-    d = parse("> # заголовок\n");
-    ZT_TRUE("заголовок в цитате дословен", d.blocks.size() == 1 && d.blocks[0].raw);
-    d = parse("> - пункт\n");
-    ZT_TRUE("список в цитате дословен", d.blocks.size() == 1 && d.blocks[0].raw);
-    d = parse("> > вложенная\n");
-    ZT_TRUE("вложенная цитата дословна", d.blocks.size() == 1 && d.blocks[0].raw);
+    d = pieces("> # заголовок\n");
+    ZT_TRUE("заголовок в цитате дословен", d.size() == 1 && d[0].raw);
+    d = pieces("> - пункт\n");
+    ZT_TRUE("список в цитате дословен", d.size() == 1 && d[0].raw);
+    d = pieces("> > вложенная\n");
+    ZT_TRUE("вложенная цитата дословна", d.size() == 1 && d[0].raw);
 
     // Строка ">" в начале строки текста должна экранироваться, иначе абзац
     // превратится в цитату.
@@ -462,10 +463,10 @@ void testDivider() {
     stable("длинная черта приводится", "-----\n", "___\n");
     stable("черта с пробелами приводится", "* * *\n", "___\n");
 
-    Document d = parse("___\n");
+    std::vector<Piece> d = pieces("___\n");
     ZT_TRUE("разделитель — свой род, а не дословный кусок",
-            d.blocks.size() == 1 && !d.blocks[0].raw &&
-                d.blocks[0].kind == Kind::Divider);
+            d.size() == 1 && !d[0].raw &&
+                d[0].kind == Kind::Divider);
 
     // Дефисы под текстом — setext-заголовок по спецификации, а не разделитель:
     // канон переписывает его в ATX. Подчёркивание setext не бывает — ровно
@@ -475,8 +476,8 @@ void testDivider() {
     // Внутри пункта и цитаты разделитель плоской моделью не выражается —
     // дословно, как раньше.
     ZT_TRUE("черта внутри пункта уходит дословно",
-            !parse("- пункт\n\n  ---\n").blocks.empty() &&
-                parse("- пункт\n\n  ---\n").blocks[0].raw);
+            !pieces("- пункт\n\n  ---\n").empty() &&
+                pieces("- пункт\n\n  ---\n")[0].raw);
     stable("черта внутри пункта — круг устойчив", "- пункт\n\n  ---\n",
            "- пункт\n\n  ---\n");
 }
@@ -496,29 +497,30 @@ void testHtmlComments() {
     stable("крайние пробелы канонизируются", "<!--    к    -->\n", "<!-- к -->\n");
     stable("совсем без пробелов", "<!--к-->\n", "<!-- к -->\n");
 
-    Document d = parse("<!-- к -->\n");
+    std::vector<Piece> d = pieces("<!-- к -->\n");
     ZT_TRUE("комментарий — свой род, а не дословный кусок",
-            d.blocks.size() == 1 && !d.blocks[0].raw &&
-                d.blocks[0].kind == Kind::Html && d.blocks[0].html == HtmlKind::Comment &&
-                d.text(d.blocks[0]) == "к");
+            d.size() == 1 && !d[0].raw &&
+                d[0].kind == Kind::Html && d[0].html == HtmlKind::Comment &&
+                d[0].text == "к");
 
     // Чего род не выражает — дословно, без потерь.
     ZT_TRUE("незакрытый комментарий дословен",
-            !parse("<!-- не закрыт\n").blocks.empty() &&
-                parse("<!-- не закрыт\n").blocks[0].raw);
+            !pieces("<!-- не закрыт\n").empty() &&
+                pieces("<!-- не закрыт\n")[0].raw);
     ZT_TRUE("два комментария на одной строке дословны",
-            !parse("<!-- а --> и <!-- б -->\n").blocks.empty() &&
-                parse("<!-- а --> и <!-- б -->\n").blocks[0].raw);
-    ZT_TRUE("HTML-тег дословен", !parse("<div>т</div>\n").blocks.empty() &&
-                                     parse("<div>т</div>\n").blocks[0].raw);
+            !pieces("<!-- а --> и <!-- б -->\n").empty() &&
+                pieces("<!-- а --> и <!-- б -->\n")[0].raw);
+    ZT_TRUE("HTML-тег дословен", !pieces("<div>т</div>\n").empty() &&
+                                     pieces("<div>т</div>\n")[0].raw);
     stable("незакрытый — круг устойчив", "<!-- не закрыт\n", "<!-- не закрыт\n");
 
     // Шапка метаданных — не Kind::Html: её байты (включая неизвестные ключи)
     // забирает liftMeta, и они неприкосновенны.
-    Document m = parse("<!-- zametti\nparent: abc\nx-неведомое:  сырое \n-->\n\nтекст\n");
+    NoteHeader meta;
+    pieces("<!-- zametti\nparent: abc\nx-неведомое:  сырое \n-->\n\nтекст\n", meta);
     ZT_TRUE("шапка метаданных осталась метаданными",
-            m.meta.present() && m.meta.lines().size() == 2 &&
-                m.meta.lines()[1] == "x-неведомое:  сырое ");
+            meta.present() && meta.lines().size() == 2 &&
+                meta.lines()[1] == "x-неведомое:  сырое ");
 }
 
 void testImages() {
@@ -536,24 +538,24 @@ void testImages() {
     stable("косая в заголовке выживает", "![а](x.png \"ко\\\\сая\")\n",
            "![а](x.png \"ко\\\\сая\")\n");
 
-    Document d = parse("![алт](путь.png \"Заголовок\")\n");
+    std::vector<Piece> d = pieces("![алт](путь.png \"Заголовок\")\n");
     ZT_TRUE("картинка — плоский спан с путём и заголовком",
-            d.blocks.size() == 1 && d.inlines(d.blocks[0]).size() == 1 &&
-                d.inlines(d.blocks[0])[0].image() && d.href(d.inlines(d.blocks[0])[0]) == "путь.png" &&
-                d.title(d.inlines(d.blocks[0])[0]) == "Заголовок");
+            d.size() == 1 && d[0].runs.size() == 1 &&
+                d[0].runs[0].image() && d[0].runs[0].href == "путь.png" &&
+                d[0].runs[0].title == "Заголовок");
 
     // Чего плоская модель не выражает — дословно, без потерь.
-    ZT_TRUE("пустая подпись уходит дословно", !parse("![](x.png)\n").blocks.empty() &&
-                                                  parse("![](x.png)\n").blocks[0].raw);
+    ZT_TRUE("пустая подпись уходит дословно", !pieces("![](x.png)\n").empty() &&
+                                                  pieces("![](x.png)\n")[0].raw);
     stable("пустая подпись — круг устойчив", "![](x.png)\n", "![](x.png)\n");
     ZT_TRUE("разметка в подписи уходит дословно",
-            !parse("![*курсив*](x.png)\n").blocks.empty() &&
-                parse("![*курсив*](x.png)\n").blocks[0].raw);
+            !pieces("![*курсив*](x.png)\n").empty() &&
+                pieces("![*курсив*](x.png)\n")[0].raw);
     ZT_TRUE("картинка внутри жирного уходит дословно",
-            !parse("**жирная ![а](x.png)**\n").blocks.empty() &&
-                parse("**жирная ![а](x.png)**\n").blocks[0].raw);
-    ZT_TRUE("пустой путь уходит дословно", !parse("![алт]()\n").blocks.empty() &&
-                                               parse("![алт]()\n").blocks[0].raw);
+            !pieces("**жирная ![а](x.png)**\n").empty() &&
+                pieces("**жирная ![а](x.png)**\n")[0].raw);
+    ZT_TRUE("пустой путь уходит дословно", !pieces("![алт]()\n").empty() &&
+                                               pieces("![алт]()\n")[0].raw);
     // Реф-образ md4c разрешает сам — канон переписывает его в строчный вид,
     // определение остаётся дословным куском (та же политика, что у ссылок).
     stable("реф-образ раскрывается", "![а][m]\n\n[m]: /z.png\n",
@@ -581,7 +583,7 @@ void testComments() {
 // содержимое задваивалось дословными огрызками (найдено на ficustut.md).
 void testInItemFenceExtents() {
     const char* src = "```\n```\n * `пункт`:\n\n    ```\nстрока\n```\n";
-    const std::string dump = toJson(parse(src));
+    const std::string dump = noteOf(src).toJson();
     size_t hits = 0;
     for (size_t at = dump.find("строка"); at != std::string::npos;
          at = dump.find("строка", at + 1))
@@ -592,7 +594,7 @@ void testInItemFenceExtents() {
 }
 
 // Метаданные заметки: первый блок "<!-- zametti ... -->" поднимается в
-// Document::meta, круг побайтовый — включая неизвестные ключи и их порядок.
+// std::vector<Piece>::meta, круг побайтовый — включая неизвестные ключи и их порядок.
 void testMeta() {
     const std::string note =
         "<!-- zametti\n"
@@ -605,32 +607,35 @@ void testMeta() {
         "# Заголовок\n";
     canonical("метаданные с неизвестным ключом", note);
 
-    Document d = parse(note);
-    ZT_TRUE("метаданные подняты из блоков", d.meta.present());
+    NoteHeader meta;
+    const std::vector<Piece> d = pieces(note, meta);
+    ZT_TRUE("метаданные подняты из блоков", meta.present());
     ZT_TRUE("блок метаданных и пустая строка ушли из блоков",
-            d.blocks.size() == 1 && d.blocks[0].kind == Kind::Heading);
-    ZT_EQ("parent читается", "01n6x9k2m4qp", d.meta.get("parent"));
-    ZT_EQ("значение обрезается по краям", "значение с   пробелами", d.meta.get("свой-ключ"));
-    ZT_EQ("отсутствующий ключ — пусто", "", d.meta.get("modified"));
+            d.size() == 1 && d[0].kind == Kind::Heading);
+    ZT_EQ("parent читается", "01n6x9k2m4qp", meta.get("parent"));
+    ZT_EQ("значение обрезается по краям", "значение с   пробелами", meta.get("свой-ключ"));
+    ZT_EQ("отсутствующий ключ — пусто", "", meta.get("modified"));
 
     // Правка ключей: своя строка правится, чужие не двигаются.
-    d.meta.set("parent", "0abcdefghjkmnp");
-    d.meta.set("modified", "2026-07-29T21:40:00Z");
-    ZT_EQ("правка заменяет строку ключа", "0abcdefghjkmnp", d.meta.get("parent"));
+    meta.set("parent", "0abcdefghjkmnp");
+    meta.set("modified", "2026-07-29T21:40:00Z");
+    ZT_EQ("правка заменяет строку ключа", "0abcdefghjkmnp", meta.get("parent"));
     ZT_TRUE("новый ключ дописан в конец",
-            d.meta.lines().size() == 5 && d.meta.lines()[4] == "modified: 2026-07-29T21:40:00Z");
+            meta.lines().size() == 5 && meta.lines()[4] == "modified: 2026-07-29T21:40:00Z");
     ZT_TRUE("порядок чужих строк не тронут",
-            d.meta.lines()[0] == "parent: 0abcdefghjkmnp" &&
-                d.meta.lines()[2] == "tags: дом, море");
-    d.meta.set("parent", "");
+            meta.lines()[0] == "parent: 0abcdefghjkmnp" &&
+                meta.lines()[2] == "tags: дом, море");
+    meta.set("parent", "");
     ZT_TRUE("пустое значение снимает ключ",
-            d.meta.get("parent").empty() && d.meta.lines().size() == 4);
+            meta.get("parent").empty() && meta.lines().size() == 4);
 
     // Метаданные на пустой заметке появляются вместе с пустой строкой после.
-    Document fresh;
-    fresh.meta.set("created", "2026-07-29T00:00:00Z");
+    NoteHeader fresh;
+    fresh.setPresent(true);
+    fresh.setBlankAfter(true);
+    fresh.set("created", "2026-07-29T00:00:00Z");
     ZT_EQ("свежие метаданные каноничны",
-          "<!-- zametti\ncreated: 2026-07-29T00:00:00Z\n-->\n\n", serialize(fresh));
+          "<!-- zametti\ncreated: 2026-07-29T00:00:00Z\n-->\n\n", markdownOf({}, fresh));
 
     // Что метаданными НЕ является — остаётся дословным блоком.
     stable("хвост после закрывающей скобки — не метаданные",
@@ -640,8 +645,11 @@ void testMeta() {
            "<!-- zametti k: v -->\n\nтекст\n", "<!-- zametti k: v -->\n\nтекст\n");
     stable("не первым блоком — не метаданные",
            "абзац до\n\n<!-- zametti\nk: v\n-->\n", "абзац до\n\n<!-- zametti\nk: v\n-->\n");
-    ZT_TRUE("чужой комментарий не поднимается",
-            !parse("<!-- просто комментарий -->\n\nтекст\n").meta.present());
+    {
+        NoteHeader plain;
+        pieces("<!-- просто комментарий -->\n\nтекст\n", plain);
+        ZT_TRUE("чужой комментарий не поднимается", !plain.present());
+    }
     canonical("метаданные без пустой строки после",
               "<!-- zametti\nk: v\n-->\n## сразу заголовок\n");
     // unset: строка ключа исчезает, соседи и порядок целы.

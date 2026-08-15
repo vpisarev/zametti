@@ -1,18 +1,19 @@
 // Сохранение заметки.
 //
-// Путь один: QTextDocument → document_reader → IR → serialize. Никакого второго
-// способа получить текст файла нет и быть не должно.
+// Путь один: QTextDocument → логические блоки → приведение к тому, что файл
+// умеет выразить → байты. Никакого второго способа получить текст файла нет и
+// быть не должно.
 //
 // Перед тем как заменить файл, записанный текст разбирается обратно и
-// полученный IR сравнивается с IR документа. Не совпало — старый файл не
+// полученные блоки сравниваются с блоками документа. Не совпало — старый файл не
 // трогается вовсе, а буфер уходит в аварийный файл рядом. Это последний рубеж
 // против потери данных, и он не отключается.
 
 #ifndef ZAMETTI_DOCUMENT_SAVER_H
 #define ZAMETTI_DOCUMENT_SAVER_H
 
+#include "document_pieces.h"
 #include "hash.h"
-#include "ir.h"
 
 #include <QByteArray>
 #include <QString>
@@ -37,7 +38,7 @@ struct SaveOutcome {
     // Как записанное прочтётся обратно. Обычно это ровно то, что было в
     // документе, но не всегда: голую ссылку человек набирает текстом, а файл
     // читает её ссылкой. Виджет догоняет документ этим содержимым.
-    Document reread;
+    std::vector<Piece> reread;
     bool differsFromDocument = false;
     // Отпечаток того, что теперь лежит в файле. Считается здесь, по тому самому
     // буферу, который уходит на диск, — перечитывать файл после записи не надо
@@ -53,12 +54,12 @@ struct SaveOutcome {
 
 // reader подменяется только тестом самопроверки: испортить читателя иначе
 // нечем, а проверять последний рубеж обязательно.
-using DocumentReaderFn = std::function<Document(const QTextDocument&)>;
+using DocumentReaderFn = std::function<std::vector<Piece>(const QTextDocument&)>;
 
 // Что из документа уйдёт в файл: приведение к тому, что markdown умеет
 // выразить. Наружу — ради фаззинга операций: он обязан проверять ровно ту же
 // сверку, что и запись, иначе проверял бы не то.
-Document documentForFile(Document doc);
+std::vector<Piece> documentForFile(std::vector<Piece> blocks);
 
 // Что уйдёт в файл при этих метаданных — сами байты, без всякой записи.
 //
@@ -73,13 +74,13 @@ Document documentForFile(Document doc);
 // Теперь порядок обратный: сперва собрать байты с ТЕМИ ЖЕ метаданными, что
 // есть, сравнить с тем, что лежит, и только если разошлось — ставить штамп и
 // писать.
-// fileIr — куда положить IR В ТОМ ВИДЕ, В КАКОМ ОН УХОДИТ В ФАЙЛ (после
-// documentForFile). С ним saveDocument не делает ни разбора документа, ни
-// сериализации заново — а это почти вся цена записи: замер на заметке в 233 КБ
+// fileBlocks — куда положить блоки В ТОМ ВИДЕ, В КАКОМ ОНИ УХОДЯТ В ФАЙЛ
+// (после documentForFile). С ними saveDocument не делает ни обхода документа,
+// ни записи заново — а это почти вся цена записи: замер на заметке в 233 КБ
 // дал 16.3 мс на запись целиком, 21.0 мс с повторной сериализацией и 23.5 мс с
 // повторным разбором.
 QByteArray noteBytes(const QTextDocument& doc, const NoteHeader& meta,
-                     DocumentReaderFn reader = {}, Document* fileIr = nullptr);
+                     DocumentReaderFn reader = {}, std::vector<Piece>* fileBlocks = nullptr);
 
 // `sameApartFromModified` переехала в store/history_rules.h: тем же правилом
 // живут и запись в историю, и её чистка, а двух реализаций одного правила не
@@ -87,7 +88,7 @@ QByteArray noteBytes(const QTextDocument& doc, const NoteHeader& meta,
 
 // Совпадают ли строение и текст. Разметка внутри строки не сравнивается: голую
 // ссылку человек набирает текстом, а файл читает её ссылкой.
-bool sameSkeleton(const Document& a, const Document& b);
+bool sameSkeleton(const std::vector<Piece>& a, const std::vector<Piece>& b);
 
 // Привести файл заметки к канону прямо на диске. Право на это у программы
 // есть: хранилище наше, и лишние пробелы в конце строк или недостающий перевод
@@ -118,13 +119,13 @@ bool canonicaliseNoteFile(const QString& path, std::string& text, Digest& digest
 // в прошлый раз, — раньше мы бы молча вернули файлу своё, теперь оставляем
 // чужое. Заметит его сторож внешних правок и спросит человека, а это лучше,
 // чем затереть без спросу.
-// prebuiltIr и prebuiltText — готовые IR и байты от noteBytes. Даются только
-// парой: порознь они разъехались бы, а запись стоит на том, что байты и IR —
-// одно и то же.
+// prebuiltBlocks и prebuiltText — готовые блоки и байты от noteBytes. Даются
+// только парой: порознь они разъехались бы, а запись стоит на том, что байты и
+// блоки — одно и то же.
 SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
                          const QString& timestamp, DocumentReaderFn reader = nullptr,
                          const NoteHeader& meta = {}, const Digest& known = {},
-                         const Document* prebuiltIr = nullptr,
+                         const std::vector<Piece>* prebuiltBlocks = nullptr,
                          const QByteArray* prebuiltText = nullptr);
 
 // Отметка времени для имени аварийного файла: вынесена наружу, чтобы тест не

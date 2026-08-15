@@ -3,15 +3,13 @@
 // Первый инвариант на произвольном файле не обязан выполняться: файл может быть
 // не в каноническом виде. Обязательны:
 //
-//   parse(serialize(parse(x))) == parse(x)     — приведение ничего не теряет
-//   serialize(parse(serialize(parse(x)))) == serialize(parse(x))  — канон неподвижен
+//   pieces(noteOf(x).toMarkdown()) == pieces(x)     — приведение ничего не теряет
+//   markdownOf(pieces(noteOf(x).toMarkdown())) == noteOf(x).toMarkdown()  — канон неподвижен
 //
 // Плюс отдельно считается доля файлов, которые уже каноничны: это единственная
 // честная мера того, насколько вывод похож на то, что люди пишут руками.
 
-#include "json_dump.h"
-#include "parser.h"
-#include "serializer.h"
+#include "pieces.h"
 
 #include "test_util.h"
 #include "testdata.h"
@@ -43,12 +41,12 @@ fs::path g_saveDir;   // куда складывать падающие вход
 void checkInvariants(const std::string& what, const std::string& src) {
     ++g_total;
     int before = zt::g_failures;
-    Document d1 = parse(src);
-    std::string once = serialize(d1);
-    Document d2 = parse(once);
-    std::string twice = serialize(d2);
+    std::vector<Piece> d1 = pieces(src);
+    std::string once = markdownOf(d1);
+    std::vector<Piece> d2 = pieces(once);
+    std::string twice = markdownOf(d2);
 
-    ZT_EQ("устойчивость IR: " + what, toJson(d1), toJson(d2));
+    ZT_EQ("устойчивость IR: " + what, dumpOf(d1), dumpOf(d2));
     ZT_EQ("неподвижная точка: " + what, once, twice);
     if (src == once) ++g_canonical;
 

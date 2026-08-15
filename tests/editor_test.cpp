@@ -8,11 +8,10 @@
 // заметке подмешивалась к её исходному состоянию и не отменялась.
 
 #include "doc_model.h"
-#include "document_reader.h"
+#include "pieces.h"
 #include "editor_widget.h"
 #include "journal.h"
 #include "marker.h"
-#include "serializer.h"
 #include "settings.h"
 #include "test_util.h"
 
@@ -412,15 +411,15 @@ void checkKeysAreOperations() {
     editor.undo();
     QTest::qWait(10);
     checkEqual(QStringLiteral("- пункт\n-\n"),
-               QString::fromStdString(zametti::serialize(
-                   zametti::readDocument(*editor.document()))),
+               QString::fromStdString(markdownOf(
+                   blocksOf(*editor.document()))),
                "первый undo снимает набор, но не Enter");
 
     editor.undo();
     QTest::qWait(10);
     checkEqual(QStringLiteral("- пункт\n"),
-               QString::fromStdString(zametti::serialize(
-                   zametti::readDocument(*editor.document()))),
+               QString::fromStdString(markdownOf(
+                   blocksOf(*editor.document()))),
                "второй undo снимает Enter");
 
     // Backspace в начале пункта снимает список — тоже одним шагом.
@@ -458,7 +457,7 @@ void checkListKeys() {
     };
     auto text = [&editor] {
         return QString::fromStdString(
-            zametti::serialize(zametti::readDocument(*editor.document())));
+            markdownOf(blocksOf(*editor.document())));
     };
 
     putCursorIn(1);
@@ -507,7 +506,7 @@ void checkMoveKeys() {
 
     auto text = [&editor] {
         return QString::fromStdString(
-            zametti::serialize(zametti::readDocument(*editor.document())));
+            markdownOf(blocksOf(*editor.document())));
     };
     auto press = [&editor](const QString& keys) {
         const QKeySequence sequence(keys, QKeySequence::PortableText);
@@ -552,7 +551,7 @@ void checkInlineStyle() {
 
     auto text = [&editor] {
         return QString::fromStdString(
-            zametti::serialize(zametti::readDocument(*editor.document())));
+            markdownOf(blocksOf(*editor.document())));
     };
 
     // На выделение.
@@ -593,7 +592,7 @@ void checkInputRules() {
 
     auto text = [&editor] {
         return QString::fromStdString(
-            zametti::serialize(zametti::readDocument(*editor.document())));
+            markdownOf(blocksOf(*editor.document())));
     };
 
     QTextCursor cursor = editor.textCursor();
@@ -635,7 +634,7 @@ void checkSelectionSurvivesOperation() {
 
     auto text = [&editor] {
         return QString::fromStdString(
-            zametti::serialize(zametti::readDocument(*editor.document())));
+            markdownOf(blocksOf(*editor.document())));
     };
 
     QTextCursor cursor = editor.textCursor();
@@ -681,7 +680,7 @@ void checkUndoFromKeyboard() {
 
     auto text = [&editor] {
         return QString::fromStdString(
-            zametti::serialize(zametti::readDocument(*editor.document())));
+            markdownOf(blocksOf(*editor.document())));
     };
 
     QTextCursor cursor = editor.textCursor();
@@ -722,7 +721,7 @@ void checkDeferredSnapshot() {
 
     auto text = [&editor] {
         return QString::fromStdString(
-            zametti::serialize(zametti::readDocument(*editor.document())));
+            markdownOf(blocksOf(*editor.document())));
     };
     auto open = [&](const char* name) {
         editor.openFile(writeNote(name, QStringLiteral("основа\n")));
@@ -852,7 +851,7 @@ void checkNoteCache() {
 
     auto text = [&editor] {
         return QString::fromStdString(
-            zametti::serialize(zametti::readDocument(*editor.document())));
+            markdownOf(blocksOf(*editor.document())));
     };
 
     // Правим первую, сохраняем, уходим и возвращаемся.
@@ -1106,7 +1105,7 @@ void checkCodeTyping() {
 
     auto text = [&editor] {
         return QString::fromStdString(
-            zametti::serialize(zametti::readDocument(*editor.document())));
+            markdownOf(blocksOf(*editor.document())));
     };
 
     // Кавычки делают код, и набор после них идёт обычным текстом.
@@ -1160,7 +1159,7 @@ void checkCodeAtEdge() {
 
     auto text = [&editor] {
         return QString::fromStdString(
-            zametti::serialize(zametti::readDocument(*editor.document())));
+            markdownOf(blocksOf(*editor.document())));
     };
     auto toEnd = [&editor] {
         QTextCursor cursor = editor.textCursor();
@@ -1231,7 +1230,7 @@ void checkUndoReturnsToBlankLine() {
 
     checkEqual(QStringLiteral("а\n\n\n\nб\n"),
                QString::fromStdString(
-                   zametti::serialize(zametti::readDocument(*editor.document()))),
+                   markdownOf(blocksOf(*editor.document()))),
                "отмена вернула документ");
     checkEqual(QStringLiteral("2"), QString::number(editor.textCursor().blockNumber()),
                "каретка вернулась на свою пустую строку");
@@ -1254,7 +1253,7 @@ void checkCheckboxClick() {
 
     auto text = [&editor] {
         return QString::fromStdString(
-            zametti::serialize(zametti::readDocument(*editor.document())));
+            markdownOf(blocksOf(*editor.document())));
     };
 
     auto clickAt = [&editor](const QPointF& point) {
@@ -1417,7 +1416,7 @@ void checkLinkDoesNotGrow() {
 
     auto text = [&editor] {
         return QString::fromStdString(
-            zametti::serialize(zametti::readDocument(*editor.document())));
+            markdownOf(blocksOf(*editor.document())));
     };
 
     QTextCursor cursor = editor.textCursor();
@@ -1465,7 +1464,7 @@ void checkCheckboxClickWithSelection() {
 
     auto text = [&editor] {
         return QString::fromStdString(
-            zametti::serialize(zametti::readDocument(*editor.document())));
+            markdownOf(blocksOf(*editor.document())));
     };
     auto clickBox = [&editor](int number, bool twice) {
         const QRectF box = zametti::checkboxRect(
@@ -1538,7 +1537,7 @@ void checkUndoKeepsCursor() {
 
     checkEqual(QStringLiteral("вступление\n\n- раз\n  - вложенный\n  - ещё вложенный\n- два\n"),
                QString::fromStdString(
-                   zametti::serialize(zametti::readDocument(*editor.document()))),
+                   markdownOf(blocksOf(*editor.document()))),
                "отмена вернула прежний вид списка");
     checkEqual(QString::number(before), QString::number(editor.textCursor().position()),
                "курсор после отмены остался у правки");
@@ -2272,7 +2271,7 @@ void checkHistoryMode() {
 
     auto text = [&editor] {
         return QString::fromStdString(
-            zametti::serialize(zametti::readDocument(*editor.document())));
+            markdownOf(blocksOf(*editor.document())));
     };
 
     editor.openFile(path);

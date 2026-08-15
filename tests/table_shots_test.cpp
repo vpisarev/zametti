@@ -1,8 +1,8 @@
 // Снимки таблиц: то, что владелец проверяет глазами.
 #include "editor_widget.h"
+#include "pieces.h"
 #include "block_object.h"
 #include "document_builder.h"
-#include "parser.h"
 #include "note_view.h"
 #include "settings.h"
 #include "test_util.h"
@@ -616,7 +616,7 @@ void checkTableOnForeignBackground() {
     QTest::qWait(20);
 
     auto* document = new QTextDocument(&view);
-    zametti::buildDocument(zametti::parse("| a | b |\n|---|---|\n| 1 | 2 |\n"), *document);
+    zametti::buildDocument(pieces("| a | b |\n|---|---|\n| 1 | 2 |\n"), *document);
     view.setDocument(document);
     view.applyContentWidth();
     view.syncTables();

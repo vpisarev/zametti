@@ -5,12 +5,10 @@
 // глазами, а не по номерам полей.
 
 #include "doc_model.h"
+#include "pieces.h"
 #include "document_builder.h"
-#include "document_reader.h"
 #include "editor_ops.h"
 #include "marker.h"
-#include "parser.h"
-#include "serializer.h"
 #include "test_util.h"
 #include "testdata.h"
 
@@ -24,34 +22,36 @@
 
 namespace {
 
-using zametti::Block;
-using zametti::Document;
+using zametti::Piece;
 
 using zametti::Kind;
 using zametti::Marker;
 
-// Литерал блока в тесте — описание, а не сам Block: блок без своей арены это
-// набор смещений в никуда. Документ из описаний собирает docOf билдером.
-struct Piece {
+// Набросок блока: короткий литерал для наборов. Настоящий Piece держит ещё
+// куски разметки и признак завершающего перевода строки, а здесь нужен только
+// скелет.
+struct Sketch {
     Kind kind = Kind::Paragraph;
     Marker marker = Marker::Bullet;
     int level = -1;
     const char* text = "";
 };
 
-zametti::Document docOf(const std::vector<Piece>& pieces) {
-    zametti::Document ir;
-    for (const Piece& p : pieces) {
-        Block b = ir.newBlock(p.kind, p.text);
+std::vector<zametti::Piece> docOf(const std::vector<Sketch>& sketches) {
+    std::vector<zametti::Piece> ir;
+    for (const Sketch& p : sketches) {
+        zametti::Piece b;
+        b.kind = p.kind;
+        b.text = p.text;
         b.marker = p.marker;
-        b.level = static_cast<int16_t>(p.level);
-        ir.blocks.push_back(b);
+        b.level = p.level;
+        ir.push_back(std::move(b));
     }
     return ir;
 }
 
-zametti::Document docOf(std::initializer_list<Piece> pieces) {
-    return docOf(std::vector<Piece>(pieces));
+std::vector<zametti::Piece> docOf(std::initializer_list<Sketch> sketches) {
+    return docOf(std::vector<Sketch>(sketches));
 }
 
 void check(bool ok, const std::string& what) {
@@ -69,11 +69,11 @@ void checkEqual(const std::string& expected, const std::string& actual,
     std::printf("провал: %s\n%s", what.c_str(), zt::diff(expected, actual).c_str());
 }
 
-Piece listItem(Marker marker, int level, const char* text) {
+Sketch listItem(Marker marker, int level, const char* text) {
     return {Kind::ListItem, marker, level, text};
 }
 
-Piece paragraph(const char* text) { return {Kind::Paragraph, Marker::Bullet, -1, text}; }
+Sketch paragraph(const char* text) { return {Kind::Paragraph, Marker::Bullet, -1, text}; }
 
 // Уровни, как они лежат в документе, — их и правит syncLists.
 std::vector<int> levelsOf(const QTextDocument& doc) {
@@ -93,7 +93,7 @@ std::string levelsToString(const std::vector<int>& levels) {
 }
 
 // syncLists правит уровни и не трогает текст.
-void checkSync(std::initializer_list<Piece> before, const char* expectedLevels,
+void checkSync(std::initializer_list<Sketch> before, const char* expectedLevels,
                const char* what) {
     QTextDocument doc;
     zametti::buildDocument(docOf(before), doc);
@@ -106,10 +106,10 @@ void checkSync(std::initializer_list<Piece> before, const char* expectedLevels,
           std::string(what) + ": инвариант нарушен — " + problem.toStdString());
 
     // Текст не должен пострадать: операция про уровни.
-    const zametti::Document after = zametti::readDocument(doc);
-    check(after.blocks.size() == before.size(), std::string(what) + ": число блоков изменилось");
-    for (size_t i = 0; i < after.blocks.size() && i < before.size(); ++i)
-        check(after.text(after.blocks[i]) == (before.begin() + i)->text,
+    const std::vector<zametti::Piece> after = blocksOf(doc);
+    check(after.size() == before.size(), std::string(what) + ": число блоков изменилось");
+    for (size_t i = 0; i < after.size() && i < before.size(); ++i)
+        check(after[i].text == (before.begin() + i)->text,
               std::string(what) + ": текст блока изменился");
 }
 
@@ -146,10 +146,10 @@ qreal marginOf(const QTextDocument& doc, int block) {
 // Колонку текста задаёт самый широкий маркер прогона: иначе под "10." текст
 // начинался бы правее, чем под "1.", и левый край списка выходил бы рваным.
 void checkGeometry() {
-    std::vector<Piece> blocks;
+    std::vector<Sketch> blocks;
     for (int i = 0; i < 12; ++i) blocks.push_back(listItem(Marker::Ordered, 0, "пункт"));
     blocks.push_back(listItem(Marker::Ordered, 1, "вложенный"));
-    const Document doc = docOf(blocks);
+    const std::vector<zametti::Piece> doc = docOf(blocks);
 
     QTextDocument text;
     zametti::buildDocument(doc, text);
@@ -199,7 +199,7 @@ void checkGeometry() {
 // прогоном вперёд (для геометрии). Расходиться они не имеют права.
 void checkOrdinalAgreement(const std::string& source, const std::string& label) {
     QTextDocument doc;
-    zametti::buildDocument(zametti::parse(source), doc);
+    zametti::buildDocument(pieces(source), doc);
 
     zametti::ListRuns runs;
     int number = 0;
@@ -244,7 +244,7 @@ const char* const kOrdinalCases[] = {
 // выправляться, а не молча превращаться в другой markdown.
 void checkLiteralInvariant() {
     QTextDocument doc;
-    zametti::buildDocument(zametti::parse("абзац\n\n```py\nодна\nдве\nтри\n```\n"), doc);
+    zametti::buildDocument(pieces("абзац\n\n```py\nодна\nдве\nтри\n```\n"), doc);
 
     QString problem;
     check(zametti::literalInvariantHolds(doc, &problem),
@@ -267,13 +267,13 @@ void checkLiteralInvariant() {
 
     // Признак снят, но содержимое не пострадало: строки просто стали двумя
     // блоками кода, а не одним. Ни байта не потеряно.
-    const Document after = zametti::readDocument(doc);
-    checkEqual("абзац\n\n```py\nдве\nтри\n```\n", zametti::serialize(after),
+    const std::vector<zametti::Piece> after = blocksOf(doc);
+    checkEqual("абзац\n\n```py\nдве\nтри\n```\n", markdownOf(after),
                "содержимое цело, язык блока не потерян");
 
     // Продолжение первым блоком документа быть не может.
     QTextDocument lone;
-    zametti::buildDocument(zametti::parse("```\nодна\nдве\n```\n"), lone);
+    zametti::buildDocument(pieces("```\nодна\nдве\n```\n"), lone);
     QTextCursor head(&lone);
     head.setPosition(0);
     head.movePosition(QTextCursor::NextBlock, QTextCursor::KeepAnchor);
@@ -297,7 +297,7 @@ struct KeyCase {
 
 void checkKey(bool (*op)(QTextDocument&, QTextCursor&), const KeyCase& c) {
     QTextDocument doc;
-    zametti::buildDocument(zametti::parse(c.before), doc);
+    zametti::buildDocument(pieces(c.before), doc);
 
     QTextCursor cursor(&doc);
     const QTextBlock block = doc.findBlockByNumber(c.block);
@@ -306,7 +306,7 @@ void checkKey(bool (*op)(QTextDocument&, QTextCursor&), const KeyCase& c) {
     cursor.setPosition(block.position() + c.offset);
 
     const bool handled = op(doc, cursor);
-    const std::string actual = handled ? zametti::serialize(zametti::readDocument(doc))
+    const std::string actual = handled ? markdownOf(blocksOf(doc))
                                        : std::string("<операция отказалась>");
     checkEqual(c.after, actual, c.what);
 
@@ -440,7 +440,7 @@ struct RangeCase {
 
 void checkRange(bool (*op)(QTextDocument&, QTextCursor&), const RangeCase& c) {
     QTextDocument doc;
-    zametti::buildDocument(zametti::parse(c.before), doc);
+    zametti::buildDocument(pieces(c.before), doc);
 
     QTextCursor cursor(&doc);
     cursor.setPosition(doc.findBlockByNumber(c.firstBlock).position());
@@ -448,7 +448,7 @@ void checkRange(bool (*op)(QTextDocument&, QTextCursor&), const RangeCase& c) {
     cursor.setPosition(last.position() + last.length() - 1, QTextCursor::KeepAnchor);
 
     const bool handled = op(doc, cursor);
-    const std::string actual = handled ? zametti::serialize(zametti::readDocument(doc))
+    const std::string actual = handled ? markdownOf(blocksOf(doc))
                                        : std::string("<операция отказалась>");
     checkEqual(c.after, actual, c.what);
 
@@ -532,7 +532,7 @@ struct CodeSpanCase {
 
 void checkCodeSpan(const CodeSpanCase& c) {
     QTextDocument doc;
-    zametti::buildDocument(zametti::parse(c.before), doc);
+    zametti::buildDocument(pieces(c.before), doc);
 
     QTextCursor typing(&doc);
     typing.movePosition(QTextCursor::End);
@@ -541,7 +541,7 @@ void checkCodeSpan(const CodeSpanCase& c) {
     QTextCursor cursor(&doc);
     cursor.movePosition(QTextCursor::End);
     const bool handled = zametti::applyCodeSpanRuleAtCursor(doc, cursor);
-    const std::string actual = handled ? zametti::serialize(zametti::readDocument(doc))
+    const std::string actual = handled ? markdownOf(blocksOf(doc))
                                        : std::string("<правило не сработало>");
     checkEqual(c.after, actual, c.what);
 }
@@ -565,7 +565,7 @@ struct CodeBlockCase {
 
 void checkCodeBlock(const CodeBlockCase& c) {
     QTextDocument doc;
-    zametti::buildDocument(zametti::parse(c.source), doc);
+    zametti::buildDocument(pieces(c.source), doc);
 
     QTextCursor cursor(&doc);
     cursor.setPosition(doc.findBlockByNumber(c.firstBlock).position());
@@ -574,7 +574,7 @@ void checkCodeBlock(const CodeBlockCase& c) {
 
     const zametti::MoveResult result = zametti::toggleCodeBlock(doc, cursor);
     checkEqual(c.after,
-               result.done ? zametti::serialize(result.doc)
+               result.done ? markdownOf(result.blocks)
                            : std::string("<операция отказалась>"),
                c.what);
 }
@@ -591,7 +591,7 @@ struct PartialCodeCase {
 
 void checkPartialCodeBlock(const PartialCodeCase& c) {
     QTextDocument doc;
-    zametti::buildDocument(zametti::parse(c.source), doc);
+    zametti::buildDocument(pieces(c.source), doc);
 
     QTextCursor cursor(&doc);
     cursor.setPosition(doc.firstBlock().position() + c.from);
@@ -599,7 +599,7 @@ void checkPartialCodeBlock(const PartialCodeCase& c) {
 
     const zametti::MoveResult result = zametti::toggleCodeBlock(doc, cursor);
     checkEqual(c.after,
-               result.done ? zametti::serialize(result.doc)
+               result.done ? markdownOf(result.blocks)
                            : std::string("<операция отказалась>"),
                c.what);
 }
@@ -671,7 +671,7 @@ void checkBulletShapes() {
 // следующего блока — и всякая правка над IR била мимо.
 void checkIrIndex(const char* source) {
     QTextDocument doc;
-    const zametti::Document ir = zametti::parse(source);
+    const std::vector<zametti::Piece> ir = pieces(source);
     zametti::buildDocument(ir, doc);
 
     int expected = -1;
@@ -685,7 +685,7 @@ void checkIrIndex(const char* source) {
         check(back.isValid() && back.blockNumber() <= block.blockNumber(),
               "обратный переход ведёт к своему блоку");
     }
-    checkEqual(std::to_string(int(ir.blocks.size()) - 1), std::to_string(expected),
+    checkEqual(std::to_string(int(ir.size()) - 1), std::to_string(expected),
                std::string("блоков IR столько же, сколько насчитали: ") + source);
 }
 
@@ -699,7 +699,7 @@ struct RuleCase {
 
 void checkRule(const RuleCase& c) {
     QTextDocument doc;
-    zametti::buildDocument(zametti::parse(c.before), doc);
+    zametti::buildDocument(pieces(c.before), doc);
 
     // Набираем в начало первого блока — ровно так, как это делает человек.
     QTextCursor typing(&doc);
@@ -710,7 +710,7 @@ void checkRule(const RuleCase& c) {
     cursor.setPosition(doc.firstBlock().position() + int(QString::fromUtf8(c.typed).size()));
 
     const bool handled = zametti::applyInputRuleAtCursor(doc, cursor);
-    const std::string actual = handled ? zametti::serialize(zametti::readDocument(doc))
+    const std::string actual = handled ? markdownOf(blocksOf(doc))
                                        : std::string("<правило не сработало>");
     checkEqual(c.after, actual, c.what);
 }
@@ -770,7 +770,7 @@ struct StyleCase {
 
 void checkStyle(bool (*op)(QTextDocument&, QTextCursor&), const StyleCase& c) {
     QTextDocument doc;
-    zametti::buildDocument(zametti::parse(c.before), doc);
+    zametti::buildDocument(pieces(c.before), doc);
 
     QTextCursor cursor(&doc);
     const QTextBlock block = doc.findBlockByNumber(c.block);
@@ -779,7 +779,7 @@ void checkStyle(bool (*op)(QTextDocument&, QTextCursor&), const StyleCase& c) {
         cursor.setPosition(block.position() + c.to, QTextCursor::KeepAnchor);
 
     const bool handled = op(doc, cursor);
-    const std::string actual = handled ? zametti::serialize(zametti::readDocument(doc))
+    const std::string actual = handled ? markdownOf(blocksOf(doc))
                                        : std::string("<операция отказалась>");
     checkEqual(c.after, actual, c.what);
 }
@@ -824,21 +824,21 @@ struct MoveCase {
 
 void checkMove(const MoveCase& c) {
     QTextDocument doc;
-    zametti::buildDocument(zametti::parse(c.before), doc);
+    zametti::buildDocument(pieces(c.before), doc);
 
     QTextCursor cursor(&doc);
     cursor.setPosition(doc.findBlockByNumber(c.block).position());
 
     const zametti::MoveResult moved = zametti::moveListItem(doc, cursor, c.direction);
     const std::string actual =
-        moved.done ? zametti::serialize(moved.doc) : std::string("<операция отказалась>");
+        moved.done ? markdownOf(moved.blocks) : std::string("<операция отказалась>");
     checkEqual(c.after, actual, c.what);
     if (!moved.done) return;
 
     // Пункт обязан оказаться там, куда указывает результат: иначе курсор уедет
     // в чужой пункт.
     QTextDocument rebuilt;
-    zametti::buildDocument(moved.doc, rebuilt);
+    zametti::buildDocument(moved.blocks, rebuilt);
     const QTextBlock landed = zametti::blockForIrIndex(rebuilt, moved.irBlock);
     check(landed.isValid(), std::string(c.what) + ": курсор указывает в никуда");
     if (!landed.isValid()) return;
@@ -880,7 +880,7 @@ const MoveCase kMoveCases[] = {
 // не там, где человек его видит.
 void checkCursorAfterSplit() {
     QTextDocument doc;
-    zametti::buildDocument(zametti::parse("- пунктхвост\n"), doc);
+    zametti::buildDocument(pieces("- пунктхвост\n"), doc);
     QTextCursor cursor(&doc);
     cursor.setPosition(doc.findBlockByNumber(0).position() + 5);
     zametti::splitBlockAtCursor(doc, cursor);

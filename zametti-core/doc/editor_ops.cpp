@@ -280,17 +280,33 @@ int lineEndAt(const QTextDocument& doc, int position) {
     return block.position() + block.length() - 1;
 }
 
-// IR куска документа. Тем же приёмом, что и копирование в буфер: кусок кладётся
-// во временный документ, и смещения считать не приходится вовсе.
-//
-// Возвращается Document целиком, а не его блоки: блок без своей арены — просто
-// набор смещений в никуда.
-Document irOfRange(QTextDocument& doc, int from, int to) {
+// Логические блоки куска документа. Тем же приёмом, что и копирование в буфер:
+// кусок кладётся во временный документ, и смещения считать не приходится вовсе.
+std::vector<Piece> piecesOfRange(QTextDocument& doc, int from, int to) {
     if (from >= to) return {};
     QTextCursor range(&doc);
     range.setPosition(from);
     range.setPosition(to, QTextCursor::KeepAnchor);
-    return selectionToIr(range);
+    return selectionPieces(range);
+}
+
+// Логические блоки всего документа. Блок ВЛАДЕЕТ своим текстом, поэтому
+// переставлять, резать и склеивать их можно как обычные значения — ни арены,
+// ни смещений, ни переноса байтов между документами.
+std::vector<Piece> piecesOf(const QTextDocument& doc) {
+    std::vector<Piece> out;
+    walkPieces(doc, [&](const Piece& piece) { out.push_back(piece); });
+    return out;
+}
+
+// Блок кода из готовых байтов. Завершающий перевод строки лежит и в тексте, и
+// в признаке — таков канон логического блока (см. document_pieces.h).
+Piece codePiece(std::string code) {
+    Piece out;
+    out.kind = Kind::Code;
+    out.trailingNewline = !code.empty() && code.back() == '\n';
+    out.text = std::move(code);
+    return out;
 }
 
 }  // namespace
@@ -356,12 +372,11 @@ std::string spacesForProse(std::string_view text) {
 }
 
 MoveResult toggleCodeBlock(QTextDocument& doc, const QTextCursor& cursor) {
-    Document irDoc = readDocument(doc);
-    std::vector<Block>& ir = irDoc.blocks;
+    std::vector<Piece> ir = piecesOf(doc);
     if (ir.empty()) return {};
 
-    // Границы выделения в номерах блоков IR: в документе литеральный блок лежит
-    // построчно, и номера блоков документа с номерами IR не совпадают.
+    // Границы выделения в номерах ЛОГИЧЕСКИХ блоков: в документе литеральный
+    // блок лежит построчно, и номера блоков документа с ними не совпадают.
     const int start = qMin(cursor.selectionStart(), cursor.selectionEnd());
     const int end = qMax(cursor.selectionStart(), cursor.selectionEnd());
     int first = irIndexOfBlock(doc.findBlock(start));
@@ -401,34 +416,33 @@ MoveResult toggleCodeBlock(QTextDocument& doc, const QTextCursor& cursor) {
 
     // Разделители строк на срезах в куски не берём: иначе оставшийся кусок
     // кончался бы пустой строкой, а она блок заканчивает.
-    const Document head = irOfRange(
+    const std::vector<Piece> head = piecesOfRange(
         doc, firstBlock.position(), lineStart > firstBlock.position() ? lineStart - 1 : lineStart);
-    const Document tail =
-        irOfRange(doc, lineEnd < blockEnd ? lineEnd + 1 : lineEnd, blockEnd);
-    const Document chosen = irOfRange(doc, lineStart, lineEnd);
-    if (!head.blocks.empty() || !tail.blocks.empty()) {
-        if (chosen.blocks.empty()) return {};
-        std::vector<Block> result(ir.begin(), ir.begin() + first);
-        // Куски приехали из отдельных документов — значит, только через adopt:
-        // их байты переезжают в нашу арену, и Range перенацеливаются.
-        for (const Block& b : head.blocks) result.push_back(irDoc.adopt(head, b));
+    const std::vector<Piece> tail =
+        piecesOfRange(doc, lineEnd < blockEnd ? lineEnd + 1 : lineEnd, blockEnd);
+    const std::vector<Piece> chosen = piecesOfRange(doc, lineStart, lineEnd);
+    if (!head.empty() || !tail.empty()) {
+        if (chosen.empty()) return {};
+        std::vector<Piece> result(ir.begin(), ir.begin() + first);
+        // Куски приехали из отдельных документов, но блок владеет своим
+        // текстом — переносить байты некуда, обычное копирование значения.
+        result.insert(result.end(), head.begin(), head.end());
 
         std::string code;
-        for (const Block& piece : chosen.blocks) {
+        for (const Piece& piece : chosen) {
             if (!code.empty()) code.push_back('\n');
-            code += chosen.text(piece);
+            code += piece.text;
         }
         if (!code.empty() && code.back() != '\n') code.push_back('\n');
-        result.push_back(irDoc.newBlock(Kind::Code, spacesForCode(code)));
+        result.push_back(codePiece(spacesForCode(code)));
 
         const int landed = int(result.size()) - 1;
-        for (const Block& b : tail.blocks) result.push_back(irDoc.adopt(tail, b));
+        result.insert(result.end(), tail.begin(), tail.end());
         result.insert(result.end(), ir.begin() + last + 1, ir.end());
 
         MoveResult moved;
         moved.done = true;
-        irDoc.blocks = std::move(result);
-        moved.doc = std::move(irDoc);
+        moved.blocks = std::move(result);
         moved.irBlock = landed;
         return moved;
     }
@@ -441,37 +455,32 @@ MoveResult toggleCodeBlock(QTextDocument& doc, const QTextCursor& cursor) {
     for (int i = first; i <= last; ++i)
         if (ir[size_t(i)].kind != Kind::Code) allCode = false;
 
-    std::vector<Block> result(ir.begin(), ir.begin() + first);
+    std::vector<Piece> result(ir.begin(), ir.begin() + first);
     if (allCode) {
         // Обратный ход: каждая строка кода становится строкой обычного текста.
         // Один блок кода — один абзац: переводы строк внутри абзаца жить умеют.
-        // Текст не копируется: абзац смотрит на те же байты арены, только без
-        // хвостовых переводов строки.
         for (int i = first; i <= last; ++i) {
-            std::string_view body = irDoc.text(ir[size_t(i)]);
+            std::string_view body = ir[size_t(i)].text;
             while (!body.empty() && body.back() == '\n') body.remove_suffix(1);
-            // Текст переезжает в хвост арены: пробелы стали другими, и смотреть
-            // на прежние байты больше нельзя.
-            Block plain;
-            plain.text = irDoc.append(spacesForProse(body));
-            result.push_back(plain);
+            Piece plain;
+            plain.text = spacesForProse(body);
+            result.push_back(std::move(plain));
         }
     } else {
         std::string code;
         for (int i = first; i <= last; ++i) {
             if (!code.empty()) code.push_back('\n');
-            code += irDoc.text(ir[size_t(i)]);
+            code += ir[size_t(i)].text;
         }
         if (!code.empty() && code.back() != '\n') code.push_back('\n');
-        result.push_back(irDoc.newBlock(Kind::Code, spacesForCode(code)));
+        result.push_back(codePiece(spacesForCode(code)));
     }
     const int landed = int(result.size()) - 1;
     result.insert(result.end(), ir.begin() + last + 1, ir.end());
 
     MoveResult moved;
     moved.done = true;
-    irDoc.blocks = std::move(result);
-    moved.doc = std::move(irDoc);
+    moved.blocks = std::move(result);
     moved.irBlock = landed;
     return moved;
 }
@@ -500,19 +509,19 @@ MoveResult moveListItem(const QTextDocument& doc, const QTextCursor& cursor, int
     const int wholeSize = upperSize + gapSize + lowerSize;
 
     MoveResult result;
-    result.doc = readDocument(doc);
-    if (firstIr < 0 || firstIr + wholeSize > int(result.doc.blocks.size())) return {};
+    result.blocks = piecesOf(doc);
+    if (firstIr < 0 || firstIr + wholeSize > int(result.blocks.size())) return {};
 
     // Пункты меняются местами, а пустая строка остаётся на месте: она
     // принадлежит стыку, а не пункту, и уехав с ним, порвала бы список там, где
     // человек ничего не трогал.
-    const auto begin = result.doc.blocks.begin() + firstIr;
-    std::vector<Block> reordered;
+    const auto begin = result.blocks.begin() + firstIr;
+    std::vector<Piece> reordered;
     reordered.reserve(size_t(wholeSize));
     reordered.insert(reordered.end(), begin + upperSize + gapSize, begin + wholeSize);
     reordered.insert(reordered.end(), begin + upperSize, begin + upperSize + gapSize);
     reordered.insert(reordered.end(), begin, begin + upperSize);
-    std::copy(reordered.begin(), reordered.end(), begin);
+    std::move(reordered.begin(), reordered.end(), begin);
 
     // Место, куда переехал сам пункт: верхний уходит за пустую строку и соседа,
     // нижний встаёт в самое начало.
@@ -794,7 +803,7 @@ InputRule matchInputRule(const QTextBlock& block, const QString& typed) {
 
 }  // namespace
 
-Document selectionToIr(const QTextCursor& cursor) {
+std::vector<Piece> selectionPieces(const QTextCursor& cursor) {
     if (!cursor.hasSelection() || cursor.document() == nullptr) return {};
 
     QTextDocument temp;
@@ -820,8 +829,7 @@ Document selectionToIr(const QTextCursor& cursor) {
         fix.setBlockFormat(first.blockFormat());
     }
 
-    Document irDoc = readDocument(temp);
-    std::vector<Block>& ir = irDoc.blocks;
+    std::vector<Piece> ir = piecesOf(temp);
 
     // Выделение, кончающееся ровно на начале блока, этого блока не захватывает:
     // человек довёл до него курсор, но не выделял. Qt всё равно кладёт во
@@ -829,29 +837,28 @@ Document selectionToIr(const QTextCursor& cursor) {
     // "- два" копировалось как "- два\n-\n". Раньше он молча слипался при
     // вставке, а как только вставка стала беречь строение, стал виден.
     if (to > from && to == cursor.document()->findBlock(to).position() && !ir.empty()) {
-        const Block& tail = ir.back();
+        const Piece& tail = ir.back();
         if (!tail.raw && tail.text.empty()) ir.pop_back();
     }
 
     int deepest = -1;
-    for (const Block& block : ir)
+    for (const Piece& block : ir)
         if (!block.raw && isList(block.kind))
-            deepest = deepest < 0 ? block.level : qMin(deepest, int(block.level));
+            deepest = deepest < 0 ? block.level : qMin(deepest, block.level);
     if (deepest > 0)
-        for (Block& block : ir)
-            if (!block.raw && isList(block.kind))
-                block.level = static_cast<int16_t>(block.level - deepest);
+        for (Piece& block : ir)
+            if (!block.raw && isList(block.kind)) block.level -= deepest;
 
-    return irDoc;
+    return ir;
 }
 
 QString selectionToMarkdown(const QTextCursor& cursor) {
-    const Document ir = selectionToIr(cursor);
-    if (ir.blocks.empty()) return {};
+    const std::vector<Piece> ir = selectionPieces(cursor);
+    if (ir.empty()) return {};
 
-    std::string text = serialize(ir);
-    const bool inlineOnly = ir.blocks.size() == 1 && !ir.blocks.front().raw &&
-                            ir.blocks.front().kind == Kind::Paragraph;
+    std::string text = writePieces(ir);
+    const bool inlineOnly =
+        ir.size() == 1 && !ir.front().raw && ir.front().kind == Kind::Paragraph;
     if (inlineOnly && !text.empty() && text.back() == '\n') text.pop_back();
     return QString::fromUtf8(text.data(), qsizetype(text.size()));
 }

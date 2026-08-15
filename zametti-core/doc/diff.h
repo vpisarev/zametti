@@ -19,8 +19,7 @@
 #ifndef ZAMETTI_DIFF_H
 #define ZAMETTI_DIFF_H
 
-#include "ir.h"
-#include "serializer.h"
+#include "document_pieces.h"
 
 #include <QHash>
 #include <QString>
@@ -65,12 +64,13 @@ struct Result {
 
 Result compare(const QStringList& base, const QStringList& shown);
 
-// Текст слепка построчно плюс карта блоков: какие строки занял каждый блок IR.
+// Текст слепка построчно плюс карта блоков: какие строки занял каждый
+// логический блок.
 struct Text {
     QStringList lines;
-    QVector<BlockLines> blocks;   // по блоку IR, в том же порядке
+    QVector<BlockLines> blocks;   // по логическому блоку, в том же порядке
 };
-Text textOf(const Document& doc);
+Text textOf(const std::vector<Piece>& blocks);
 
 // Разметка для вида с полосками: что стало с каждым БЛОКОМ ПОКАЗАННОЙ стороны
 // (стороны after этого сравнения) и сколько строк на ней не хватает.

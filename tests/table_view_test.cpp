@@ -6,7 +6,7 @@
 // Инвариант D из брифа («рендер не искажает содержимое») спрашивается прямо:
 // текст, попавший в разметку ячейки, сверяется с текстом разбора.
 
-#include "parser.h"
+#include "pieces.h"
 #include "table.h"
 #include "table_view.h"
 #include "settings.h"
@@ -210,11 +210,11 @@ void bench() {
         const zametti::Table table = zametti::parseTable(big);
         QElapsedTimer timer;
         timer.start();
-        // Только разметка ячеек, без раскладки: столько стоит parse() по всем
+        // Только разметка ячеек, без раскладки: столько стоит pieces() по всем
         // четырёмстам ячейкам.
         for (int row = 0; row < int(table.rows.size()); ++row)
             for (int column = 0; column < table.columns; ++column)
-                (void)zametti::parse(std::string(table.cell(row, column)));
+                (void)pieces(std::string(table.cell(row, column)));
         const qint64 spent = timer.nsecsElapsed() / 1000;
         if (shapeBest < 0 || spent < shapeBest) shapeBest = spent;
     }

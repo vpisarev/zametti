@@ -39,46 +39,59 @@ QString gapLabel(int lines) {
     return QStringLiteral("удалено: %1 %2").arg(lines).arg(word);
 }
 
-Illustrated illustrate(const Document& snapshot, const BlockMarks& marks) {
+namespace {
+
+// Слипнутся ли два блока в файле, стой они подряд без пустой строки. Правило
+// одно на всех — оно живёт в block_kind.h, — и спрашивается здесь потому, что
+// иллюстрированная копия собирается тем же сборщиком, что и заметка: жить по
+// общим правилам ей дешевле, чем объясняться.
+bool merges(const Piece& previous, const Piece& next) {
+    return wouldMerge(previous.kind, previous.raw, previous.isClosedHtmlComment(), next.kind,
+                      next.raw);
+}
+
+Piece vspacePiece() {
+    Piece out;
+    out.kind = Kind::VSpace;
+    return out;
+}
+
+}  // namespace
+
+Illustrated illustrate(const std::vector<Piece>& snapshot, const BlockMarks& marks) {
     Illustrated out;
-    // КОПИЯ ЦЕЛИКОМ, вместе с ареной: дальше мы дописываем в неё свои байты, а
-    // исходный слепок обязан остаться неизменным до последнего байта — по нему
-    // работает восстановление.
-    out.ir = snapshot;
-    out.ir.blocks.clear();
-    out.ir.blocks.reserve(snapshot.blocks.size() + size_t(marks.gapBefore.size()) + 1);
+    out.blocks.reserve(snapshot.size() + size_t(marks.gapBefore.size()) + 1);
 
     // Вспомогательная строка курсивом: она не текст заметки, и выглядеть как
     // текст заметки не должна.
     const auto addLabel = [&](int lines) {
-        Block label = out.ir.newBlock(Kind::Paragraph, gapLabel(lines).toStdString());
-        Inline italic;
-        italic.text = {0, label.text.size()};
+        Piece label;
+        label.text = gapLabel(lines).toStdString();
+        Run italic;
+        italic.start = 0;
+        italic.end = int32_t(label.text.size());
         italic.set(InlineItalic, true);
-        label.inlines = out.ir.appendInlines({&italic, 1});
-        // Инвариант IR: два блока, которые в файле слиплись бы, разделяет
-        // пустая строка. Копия эта на диск не уходит, но собирается тем же
-        // сборщиком, и жить по общим правилам ей дешевле, чем объясняться.
-        if (!out.ir.blocks.empty() && out.ir.wouldMerge(out.ir.blocks.back(), label)) {
-            out.ir.blocks.push_back(out.ir.newBlock(Kind::VSpace));
+        label.runs.push_back(italic);
+        if (!out.blocks.empty() && merges(out.blocks.back(), label)) {
+            out.blocks.push_back(vspacePiece());
             out.blockMark.append(Mark::Same);
             out.sourceBlock.append(-1);
         }
-        out.ir.blocks.push_back(label);
+        out.blocks.push_back(std::move(label));
         out.blockMark.append(Mark::Removed);
         out.sourceBlock.append(-1);
     };
 
-    for (size_t i = 0; i < snapshot.blocks.size(); ++i) {
+    for (size_t i = 0; i < snapshot.size(); ++i) {
         const auto gap = marks.gapBefore.constFind(int(i));
         if (gap != marks.gapBefore.constEnd() && gap.value() > 0) addLabel(gap.value());
-        const Block& block = snapshot.blocks[i];
-        if (!out.ir.blocks.empty() && out.ir.wouldMerge(out.ir.blocks.back(), block)) {
-            out.ir.blocks.push_back(out.ir.newBlock(Kind::VSpace));
+        const Piece& block = snapshot[i];
+        if (!out.blocks.empty() && merges(out.blocks.back(), block)) {
+            out.blocks.push_back(vspacePiece());
             out.blockMark.append(Mark::Same);
             out.sourceBlock.append(-1);
         }
-        out.ir.blocks.push_back(block);
+        out.blocks.push_back(block);
         out.blockMark.append(int(i) < marks.blocks.size() ? marks.blocks[int(i)] : Mark::Same);
         out.sourceBlock.append(int(i));
     }

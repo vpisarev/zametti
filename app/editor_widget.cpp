@@ -416,6 +416,21 @@ void NoteEditor::tidyLeftLine(const QTextCursor& left) {
 //
 // Оба сигнала, и порядок важен: contentsChange приходит первым и приносит
 // границы правки, contentsChanged — следом, и по нему уже подметаем.
+namespace {
+
+// Логические блоки живого документа — местная ступень редактора.
+//
+// Локальная нарочно: наружу из этого файла она не выходит, а всё, что заметка
+// умеет делать сама, она делает своими методами. Здесь же документ ещё не
+// принадлежит ZDocument, и снять с него блоки больше нечем.
+std::vector<Piece> piecesOf(const QTextDocument& doc) {
+    std::vector<Piece> out;
+    walkPieces(doc, [&](const Piece& piece) { out.push_back(piece); });
+    return out;
+}
+
+}  // namespace
+
 void NoteEditor::connectDocument() {
     connect(document(), &QTextDocument::contentsChange, this, &NoteEditor::onContentsChange);
     connect(document(), &QTextDocument::contentsChanged, this, &NoteEditor::onContentsChanged);
@@ -560,9 +575,7 @@ void NoteEditor::stashCurrentNote() {
     // файл: именно приведение и срезает хвост, и со сверкой через него
     // отпечатки сходились бы всегда. Нам нужен другой вопрос — «этот документ
     // и есть файл?», а не «запишется ли он в тот же файл».
-    Document read = readDocument(*document());
-    read.meta = note_.meta;
-    if (hashOf(serialize(read)) != note_.digest) return;
+    if (hashOf(writePieces(piecesOf(*document()), note_.meta)) != note_.digest) return;
 
     const qint64 bytes = estimateDocumentBytes(*document());
     const qint64 budget = qint64(qMax(1, appearance().documentCacheSizeMb)) * 1024 * 1024;
@@ -683,8 +696,8 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
         return true;
     }
 
-    Document doc = parse(text);
-    note_.meta = doc.meta;
+    std::vector<Piece> doc;
+    parsePieces(text, doc, note_.meta);
     const CaretSpot spot = caretMemory_.value(note_.path);
     note_.cursor = spot.cursor;
     note_.anchor = spot.anchor;
@@ -789,19 +802,21 @@ void NoteEditor::resolveExternalConflict(bool takeExternal) {
 
 void NoteEditor::adoptExternal(const std::string& text) {
     flushPendingEdit();
-    Document ir = parse(text);
+    std::vector<Piece> ir;
+    NoteHeader fresh;
+    parsePieces(text, ir, fresh);
     // Чужой редактор мог снести или испортить блок метаданных. Тихо принять
     // это нельзя: заметка потеряла бы родителя и дату создания, то есть уехала
     // бы в корень и «постарела». Прежние значения у нас в памяти — предлагаем
     // вернуть их одним действием, а решает человек.
     const NoteHeader previous = note_.meta;
-    const bool lost = previous.present() && !ir.meta.present();
+    const bool lost = previous.present() && !fresh.present();
     // Ключи, которые были и пропали. parent сюда не входит: его правка руками
     // — законный перенос заметки, а не потеря (решение брифа этапа 4).
     QStringList dropped;
-    if (!lost && previous.present() && ir.meta.present()) {
+    if (!lost && previous.present() && fresh.present()) {
         for (const char* key : {"created", "id"}) {
-            if (!previous.get(key).empty() && ir.meta.get(key).empty())
+            if (!previous.get(key).empty() && fresh.get(key).empty())
                 dropped.append(QString::fromLatin1(key));
         }
     }
@@ -810,10 +825,10 @@ void NoteEditor::adoptExternal(const std::string& text) {
     // а заметка папкой никогда не становится и наоборот. Что бы ни вписал
     // снаружи чужой редактор, ставим обратно своё значение; не было своего —
     // просто снимаем ключ. Спрашивать тут нечего: подмена рода не «правка».
-    if (ir.meta.present() && ir.meta.get("role") != previous.get("role"))
-        ir.meta.set("role", previous.get("role"));
+    if (fresh.present() && fresh.get("role") != previous.get("role"))
+        fresh.set("role", previous.get("role"));
 
-    note_.meta = ir.meta;
+    note_.meta = fresh;
     note_.undoChain.push(ir, textCursor().position());
     note_.typingRun = false;
     rebuild(ir, textCursor().position(), viewAnchor());
@@ -879,7 +894,7 @@ void NoteEditor::refreshAppearance() {
     // Именно собираем: от облика зависит каждый блок, в том числе и те, что не
     // менялись, и заплатка их не тронула бы.
     note_.builtValid = false;
-    rebuild(note_.undoChain.current().doc, textCursor().position(), viewAnchor());
+    rebuild(note_.undoChain.current().blocks, textCursor().position(), viewAnchor());
 }
 
 void NoteEditor::keepCaretOffEdge() {
@@ -1080,7 +1095,7 @@ void NoteEditor::undo() {
         return;
     }
     note_.undoRun = true;
-    rebuild(step->doc, 0, viewAnchor());
+    rebuild(step->blocks, 0, viewAnchor());
     const QString restoredPlain = document()->toPlainText();
 
     const int shared = int(qMin(undonePlain.size(), restoredPlain.size()));
@@ -1122,7 +1137,7 @@ void NoteEditor::redo() {
     const HistoryStep* step = note_.undoChain.redo();
     if (step == nullptr) return;
     note_.undoRun = true;
-    rebuild(step->doc, step->cursor, viewAnchor());
+    rebuild(step->blocks, step->cursor, viewAnchor());
     showEditPlace(scrollBefore);
     document()->setModified(true);
     autosave_.start(appearance().autosaveDelayMs);
@@ -1141,8 +1156,8 @@ NoteEditor::ViewAnchor NoteEditor::viewAnchor() const {
     return {anchorIndex, top - int(layout->blockBoundingRect(at).top())};
 }
 
-void NoteEditor::rebuild(const Document& doc, int cursor, const ViewAnchor& anchor,
-                         const Document* current) {
+void NoteEditor::rebuild(const std::vector<Piece>& doc, int cursor, const ViewAnchor& anchor,
+                         const std::vector<Piece>* current) {
     const bool wasSuspended = recordingSuspended_;
     recordingSuspended_ = true;
     // Заплатка вместо сборки: на большой заметке сборка стоит 151 мс, а
@@ -1150,9 +1165,9 @@ void NoteEditor::rebuild(const Document& doc, int cursor, const ViewAnchor& anch
     // блок, а не только изменившиеся, — при их смене заплатка не годится.
     bool patched = false;
     if (note_.builtValid && note_.builtZoom == zoom()) {
-        Document read;
+        std::vector<Piece> read;
         if (current == nullptr) {
-            read = readDocument(*document());
+            read = piecesOf(*document());
             current = &read;
         }
         patched = patchDocument(note_.built, *current, doc, *document());
@@ -2036,7 +2051,7 @@ bool NoteEditor::runOperation(const std::function<bool(QTextDocument&, QTextCurs
     // курсора переживает пересборку.
     const int anchor = cursor.anchor();
     const int position = cursor.position();
-    Document ir = readDocument(*document());
+    std::vector<Piece> ir = piecesOf(*document());
     note_.undoChain.push(ir, position);
     // Операция — отдельный шаг: следующая набранная буква к ней не приклеится.
     note_.typingRun = false;
@@ -2241,38 +2256,39 @@ void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
     const QByteArray utf8 = text.toUtf8();
     const std::string source(utf8.constData(), size_t(utf8.size()));
 
-    Document fragment;
-    std::vector<Block>& pieces = fragment.blocks;
+    std::vector<Piece> pieces;
     if (literal) {
         // Один абзац с текстом как есть: переводы строк внутри блока сборщик
         // разметит сам, и они вернутся переводами, а не разметкой.
-        std::string body = source;
-        while (!body.empty() && body.back() == '\n') body.pop_back();
-        pieces.push_back(fragment.newBlock(Kind::Paragraph, body));
+        Piece body;
+        body.text = source;
+        while (!body.text.empty() && body.text.back() == '\n') body.text.pop_back();
+        pieces.push_back(std::move(body));
     } else {
-        // Полным парсером ядра, а не вторым упрощённым разбором: их
-        // идемпотентность и гарантирует, что скопированное вставится без потерь.
-        fragment = parse(source);
+        // Полным разбором ядра, а не вторым упрощённым: его идемпотентность и
+        // гарантирует, что скопированное вставится без потерь.
+        NoteHeader ignored;
+        parsePieces(source, pieces, ignored);
     }
     if (pieces.empty()) return;
 
     QTextDocument staging;
-    buildDocument(fragment, staging);
+    buildDocument(pieces, staging);
 
     // Кусок из одного обычного абзаца вставляется в строку: скопированные слова
     // должны войти в тот блок, куда их кладут. Всё прочее — заголовок, пункт,
     // код, цитата, да и просто несколько блоков — вставляется своими блоками:
     // род блока это его свойство, и терять его при переносе нельзя.
-    const Block& head = pieces.front();
+    const Piece& head = pieces.front();
     // Фотография — тоже блочная вещь: абзац из одного image-спана целиком и
     // вики-вложение "![[...]]" встают своей строкой, а не вклеиваются в текст
     // (в середине текста фотография не показывается — вклейка её потеряла бы).
-    const std::string_view headText = fragment.text(head);
-    const std::span<const Inline> headSpans = fragment.inlines(head);
+    const std::string_view headText = head.text;
+    const std::vector<Run>& headRuns = head.runs;
     const bool wholeImage =
         !head.raw && head.kind == Kind::Paragraph &&
-        ((headSpans.size() == 1 && headSpans[0].image() && headSpans[0].text.start == 0 &&
-          size_t(headSpans[0].text.end) == headText.size()) ||
+        ((headRuns.size() == 1 && headRuns[0].image() && headRuns[0].start == 0 &&
+          size_t(headRuns[0].end) == headText.size()) ||
          (headText.rfind("![[", 0) == 0 && headText.size() > 5 &&
           headText.compare(headText.size() - 2, 2, "]]") == 0));
     const bool blockLevel = pieces.size() > 1 || head.raw ||
@@ -2329,7 +2345,7 @@ void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
     cursor.endEditBlock();
     recordingSuspended_ = false;
 
-    Document ir = readDocument(*document());
+    std::vector<Piece> ir = piecesOf(*document());
     note_.undoChain.push(ir, landed);
     note_.typingRun = false;
     rebuild(ir, landed, viewAnchor(), &ir);
@@ -2516,9 +2532,9 @@ bool NoteEditor::applyIrEdit(const MoveResult& moved) {
     if (!moved.done) return false;
     const int scrollBefore = verticalScrollBar()->value();
 
-    note_.undoChain.push(moved.doc, textCursor().position());
+    note_.undoChain.push(moved.blocks, textCursor().position());
     note_.typingRun = false;
-    rebuild(moved.doc, 0, viewAnchor());
+    rebuild(moved.blocks, 0, viewAnchor());
 
     // Курсор ставим по месту в IR: после перестановки или слияния блоков прежняя
     // позиция в тексте указывала бы на чужое место. Вид при этом уже наведён
@@ -2631,7 +2647,7 @@ void NoteEditor::flushPendingEdit() {
     // Набор подряд — один шаг: иначе Ctrl+Z возвращал бы по одной букве. Серия
     // кончается тишиной (сработал таймер) или чем угодно, что заводит
     // собственный шаг, — те сами гасят признак.
-    Document doc = readDocument(*document());
+    std::vector<Piece> doc = piecesOf(*document());
     if (note_.typingRun) note_.undoChain.amend(std::move(doc), note_.pendingCursor);
     else note_.undoChain.push(std::move(doc), note_.pendingCursor);
     note_.typingRun = true;
@@ -2777,7 +2793,10 @@ bool NoteEditor::showSnapshot(int index) {
     const int wasLine = diffLineAtCaret();
     const int wasOnScreen = caretOnScreen();
 
-    note_.snapshotIr = parse(std::string(bytes.constData(), size_t(bytes.size())));
+    note_.snapshot.clear();
+    NoteHeader snapshotHeader;
+    parsePieces(std::string_view(bytes.constData(), size_t(bytes.size())), note_.snapshot,
+                snapshotHeader);
     note_.historyIndex = index;
     computeDiff(index);
     renderDiff({});
@@ -2791,8 +2810,8 @@ bool NoteEditor::showSnapshot(int index) {
 void NoteEditor::computeDiff(int index) {
     dropDiffDocuments();   // собранное относилось к другому слепку или другой базе
     note_.diffReady = false;
-    note_.baseIr = Document{};
-    note_.snapshotText = diff::textOf(note_.snapshotIr);
+    note_.base.clear();
+    note_.snapshotText = diff::textOf(note_.snapshot);
 
     note_.baseTime = 0;
     note_.baseIsLive = diffFromFresh_;
@@ -2822,8 +2841,11 @@ void NoteEditor::computeDiff(int index) {
 
     // Базы нет вовсе (самая первая запись) — сравниваем с пустотой: вся
     // заметка окажется добавленной, и это правда.
-    note_.baseIr = parse(std::string(baseBytes.constData(), size_t(baseBytes.size())));
-    note_.baseText = diff::textOf(note_.baseIr);
+    note_.base.clear();
+    NoteHeader baseHeader;
+    parsePieces(std::string_view(baseBytes.constData(), size_t(baseBytes.size())), note_.base,
+                baseHeader);
+    note_.baseText = diff::textOf(note_.base);
     // ДВА ПРОГОНА, по одному на сторону: показанная сторона всегда «after»
     // своего сравнения, и тогда зелёное с красным не приходится выворачивать
     // наизнанку при переключении — они просто меняются местами сами.
@@ -2971,18 +2993,18 @@ std::unique_ptr<QTextDocument> NoteEditor::buildDiffDocument(int slot,
         diff::buildPlainDocument(result, *doc, marks);
         return doc;   // у этого вида блок и есть строка сравнения
     }
-    // ПОКАЗЫВАЕМ ИЛЛЮСТРИРОВАННУЮ КОПИЮ, а не сам слепок. Слепок (snapshotIr,
-    // baseIr) — истина, он лежит рядом неизменным, и по нему работает
+    // ПОКАЗЫВАЕМ ИЛЛЮСТРИРОВАННУЮ КОПИЮ, а не сам слепок. Слепок (snapshot,
+    // base) — истина, он лежит рядом неизменным, и по нему работает
     // восстановление; копия существует только ради показа, и всё дорисованное
     // живёт в ней.
     const diff::Text& front = base ? note_.baseText : note_.snapshotText;
     const diff::BlockMarks blocks =
         note_.diffReady ? diff::blockMarks(result, front.blocks) : diff::BlockMarks{};
     const diff::Illustrated shown =
-        diff::illustrate(base ? note_.baseIr : note_.snapshotIr, blocks);
-    buildDocument(shown.ir, *doc);
-    // Метка блока документа — из метки блока копии; соответствие «блок IR →
-    // блок документа» не один к одному (литеральные блоки лежат построчно).
+        diff::illustrate(base ? note_.base : note_.snapshot, blocks);
+    buildDocument(shown.blocks, *doc);
+    // Метка блока документа — из метки блока копии; соответствие «логический
+    // блок → блок документа» не один к одному (литеральные лежат построчно).
     marks->clear();
     for (int ir : irIndexOfEveryBlock(*doc)) {
         marks->append(ir >= 0 && ir < shown.blockMark.size() ? shown.blockMark[ir]
@@ -3222,18 +3244,14 @@ qint64 NoteEditor::restoreShownSnapshot(bool* alreadyCurrent) {
     // заглушками «удалено: N строк», вид «как под капотом» построчно или вовсе
     // вторая сторона сравнения по зажатому Alt. Восстанавливать надо ту запись,
     // которую человек выбрал в таймлайне, а не то, чем она сейчас нарисована.
-    Document body = note_.snapshotIr;
+    std::vector<Piece> body = note_.snapshot;
 
     leaveHistory();
 
     // Слепок и есть нынешняя версия — восстанавливать нечего. Сравниваем тела,
     // без меты: восстановление её и не трогает, а штамп modified у слепка свой
     // и разошёлся бы всегда.
-    Document liveBody = readDocument(*document());
-    liveBody.meta = {};
-    Document sameBody = body;
-    sameBody.meta = {};
-    if (serialize(sameBody) == serialize(liveBody)) {
+    if (writePieces(body) == writePieces(piecesOf(*document()))) {
         if (alreadyCurrent != nullptr) *alreadyCurrent = true;
         return 0;
     }
@@ -3424,7 +3442,7 @@ void NoteEditor::save(bool interactive, bool force) {
     if (note_.meta.present() && stampModifiedOnSave_)
         note_.meta.set("modified", store::isoNow().toStdString());
 
-    Document fileIr;
+    std::vector<Piece> fileIr;
     QByteArray candidate = noteBytes(*document(), note_.meta, nullptr, &fileIr);
     if (!note_.lastSaved.isEmpty() && sameApartFromModified(candidate, note_.lastSaved)) {
         note_.meta = metaBefore;
@@ -3593,8 +3611,10 @@ void NoteEditor::leaveTableEdit() {
 // не изменился ни на байт, изменилось только его разбиение на блоки.
 void NoteEditor::reparseAfterTableEdit() {
     const int at = textCursor().position();
-    const std::string text = serialize(readDocument(*document()));
-    Document fresh = parse(text);
+    const std::string text = writePieces(piecesOf(*document()));
+    std::vector<Piece> fresh;
+    NoteHeader ignored;
+    parsePieces(text, fresh, ignored);
 
     recordingSuspended_ = true;
     rebuild(fresh, at, viewAnchor(), &fresh);

@@ -11,11 +11,11 @@
 // Каталог печатается в вывод, чтобы не искать.
 
 #include "doc_model.h"
+#include "pieces.h"
 #include "document_builder.h"
 #include "editor_widget.h"
 #include "lang_editor.h"
 #include "note_view.h"
-#include "parser.h"
 #include "settings.h"
 #include "test_util.h"
 
@@ -238,7 +238,7 @@ void checkPlateGeometry(Peek& editor) {
 void checkBuilderReservesStrip() {
     const zametti::CodePlate plate = zametti::codePlate();
     QTextDocument doc;
-    zametti::buildDocument(zametti::parse("текст\n\n```python\nx = 1\ny = 2\n```\n"), doc);
+    zametti::buildDocument(pieces("текст\n\n```python\nx = 1\ny = 2\n```\n"), doc);
 
     int lines = 0;
     for (QTextBlock b = doc.firstBlock(); b.isValid(); b = b.next()) {

@@ -7,8 +7,8 @@
 // и на каком месте списка стоит.
 
 #include "note_list.h"
+#include "pieces.h"
 #include "note_tree.h"
-#include "parser.h"
 #include "store.h"
 
 #include "test_util.h"
@@ -59,8 +59,8 @@ std::string metaOf(const QString& path, const char* key) {
     std::ifstream in(path.toStdString(), std::ios::binary);
     std::ostringstream all;
     all << in.rdbuf();
-    const zametti::Document doc = zametti::parse(all.str());
-    return std::string(doc.meta.get(key));
+    const zametti::ZDocument doc = noteOf(all.str());
+    return std::string(head(doc, key));
 }
 
 // Место заметки в средней колонке; -1 — её там нет вовсе.

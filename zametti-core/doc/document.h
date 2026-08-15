@@ -21,6 +21,7 @@
 
 #include "block_kind.h"
 #include "hash.h"
+#include "note_header.h"
 #include "search.h"
 #include "text_stats.h"
 #include "sort_order.h"
@@ -124,6 +125,16 @@ public:
     QString headerValue(const QString& key) const;
     void setHeaderValue(const QString& key, const QString& value);
     bool hasHeader() const;
+    void setHasHeader(bool present);
+
+    // ШАПКА ЦЕЛИКОМ, значением. Нужна там, где её берут и кладут разом:
+    // открытие заметки, сверка с перечитанным файлом, возврат из истории. Это
+    // НЕ люк во внутренности — шапка не содержимое, а отдельная сущность
+    // (note_header.h), и она копируется дословно вместе с чужими ключами.
+    // Дороги для одного ключа выше и предпочтительнее: голых литералов ключей
+    // за пределами заметки не бывает.
+    NoteHeader header() const;
+    void setHeader(const NoteHeader& header);
 
     // ПОРЯДОК СОРТИРОВКИ ПАПКИ. Метка живёт в шапке ключом `sort`, но наружу
     // ходит значением: голых литералов ключей за пределами заметки не бывает.

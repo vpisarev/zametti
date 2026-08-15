@@ -101,17 +101,12 @@ Result compare(const QStringList& base, const QStringList& shown) {
     return result;
 }
 
-Text textOf(const Document& doc) {
-    // Тело без меты: штамп modified меняется на каждой записи и изменением
-    // заметки не является. Копия ради этого — не расточительство: у самой
-    // большой заметки владельца это 233 КБ, и сравнение всё равно идёт по
-    // сериализованному тексту.
-    Document body = doc;
-    body.meta = {};
-
+Text textOf(const std::vector<Piece>& blocks) {
+    // Шапки здесь нет вовсе: логические блоки — это тело, а штамп modified
+    // меняется на каждой записи и изменением заметки не является.
     Text out;
     std::vector<BlockLines> map;
-    const std::string text = serialize(body, &map);
+    const std::string text = writePieces(blocks, NoteHeader{}, &map);
     out.blocks.reserve(int(map.size()));
     for (const BlockLines& b : map) out.blocks.append(b);
 

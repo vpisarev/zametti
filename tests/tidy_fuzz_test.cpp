@@ -7,10 +7,8 @@
 // Зерно фиксировано: каждый запуск гоняет одни и те же сценарии.
 
 #include "doc_model.h"
-#include "document_reader.h"
 #include "editor_ops.h"
 #include "editor_widget.h"
-#include "serializer.h"
 #include "settings.h"
 
 #include "test_util.h"

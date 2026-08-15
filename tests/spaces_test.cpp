@@ -11,12 +11,10 @@
 //   из кода    — ведущие и серии становятся неразрывными (markdown их съест).
 
 #include "document_builder.h"
-#include "document_reader.h"
+#include "pieces.h"
 #include "document_saver.h"
 #include "store.h"
 #include "editor_ops.h"
-#include "parser.h"
-#include "serializer.h"
 #include "test_util.h"
 
 #include <vector>
@@ -54,14 +52,14 @@ std::string afterLoad(const std::string& source) {
 // Абзац → код и обратно, через настоящую операцию.
 std::string toggle(const std::string& source) {
     QTextDocument doc;
-    zametti::buildDocument(zametti::parse(source), doc);
+    zametti::buildDocument(pieces(source), doc);
     QTextCursor caret(&doc);
     caret.setPosition(0);
     caret.movePosition(QTextCursor::End, QTextCursor::KeepAnchor);
 
     const zametti::MoveResult moved = zametti::toggleCodeBlock(doc, caret);
     if (!moved.done) return "ОПЕРАЦИЯ НЕ СРАБОТАЛА";
-    return zametti::serialize(moved.doc);
+    return markdownOf(moved.blocks);
 }
 
 // Читаемый вид: неразрывный пробел показываем как «~», иначе провал в отчёте

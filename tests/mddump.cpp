@@ -3,11 +3,9 @@
 //
 //   mddump [файл]           дамп IR
 //   mddump [файл] --md      сериализованный markdown
-//   mddump [файл] --check   дифф serialize(parse(x)) с оригиналом
+//   mddump [файл] --check   дифф noteOf(x).toMarkdown() с оригиналом
 
-#include "json_dump.h"
-#include "parser.h"
-#include "serializer.h"
+#include "pieces.h"
 
 #include "test_util.h"
 
@@ -42,18 +40,18 @@ int main(int argc, char** argv) {
         src = ss.str();
     }
 
-    zametti::Document doc = zametti::parse(src);
+    std::vector<zametti::Piece> doc = pieces(src);
 
     if (mode == "--md") {
-        std::fputs(zametti::serialize(doc).c_str(), stdout);
+        std::fputs(markdownOf(doc).c_str(), stdout);
         return 0;
     }
     if (mode == "--check") {
-        std::string out = zametti::serialize(doc);
+        std::string out = markdownOf(doc);
         if (out == src) return 0;
         std::fputs(zt::diff(src, out).c_str(), stdout);
         return 1;
     }
-    std::fputs(zametti::toJson(doc).c_str(), stdout);
+    std::fputs(dumpOf(doc).c_str(), stdout);
     return 0;
 }

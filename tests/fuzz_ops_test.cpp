@@ -21,13 +21,10 @@
 // поэтому упавший прогон повторяется дословно.
 
 #include "document_builder.h"
-#include "document_reader.h"
+#include "pieces.h"
 #include "document_saver.h"
 #include "doc_model.h"
 #include "editor_ops.h"
-#include "json_dump.h"
-#include "parser.h"
-#include "serializer.h"
 
 #include "test_util.h"
 #include "testdata.h"
@@ -100,14 +97,13 @@ std::string describe(const std::vector<std::string>& steps) {
     return out;
 }
 
-// Один блок в виде строки — для отчёта о расхождении. Блок приезжает из чужого
-// документа, поэтому только через adopt: его Range в чужой арене указывали бы
-// в произвольное место.
-std::string oneLine(const Document& doc, const Block& block) {
-    Document one;
-    one.blocks.push_back(one.adopt(doc, block));
+// Один блок в виде строки — для отчёта о расхождении. Блок владеет своим
+// текстом, поэтому переносится обычным копированием.
+std::string oneLine(const Piece& block) {
+    std::vector<Piece> one;
+    one.push_back(block);
     std::string out;
-    for (char c : toJson(one)) out += (c == '\n') ? ' ' : c;
+    for (char c : dumpOf(one)) out += (c == '\n') ? ' ' : c;
     return out;
 }
 
@@ -117,18 +113,18 @@ std::string oneLine(const Document& doc, const Block& block) {
 // При расхождении показываем первый разошедшийся блок: без этого по одному лишь
 // тексту файла причину искать пришлось бы руками.
 bool savable(const QTextDocument& doc, std::string& report) {
-    const Document ir = documentForFile(readDocument(doc));
-    const std::string written = serialize(ir);
-    const Document reread = parse(written);
+    const std::vector<Piece> ir = documentForFile(blocksOf(doc));
+    const std::string written = markdownOf(ir);
+    const std::vector<Piece> reread = pieces(written);
     if (sameSkeleton(ir, reread)) return true;
 
     report = "\n  вышло бы в файл:\n" + written;
-    report += "\n  блоков: документ " + std::to_string(ir.blocks.size()) + ", обратно " +
-              std::to_string(reread.blocks.size());
-    for (size_t i = 0; i < ir.blocks.size() && i < reread.blocks.size(); ++i) {
-        if (oneLine(ir, ir.blocks[i]) == oneLine(reread, reread.blocks[i])) continue;
+    report += "\n  блоков: документ " + std::to_string(ir.size()) + ", обратно " +
+              std::to_string(reread.size());
+    for (size_t i = 0; i < ir.size() && i < reread.size(); ++i) {
+        if (oneLine(ir[i]) == oneLine(reread[i])) continue;
         report += "\n  блок " + std::to_string(i) + " разошёлся:\n    документ: " +
-                  oneLine(ir, ir.blocks[i]) + "\n    обратно:  " + oneLine(reread, reread.blocks[i]);
+                  oneLine(ir[i]) + "\n    обратно:  " + oneLine(reread[i]);
         break;
     }
     return false;
@@ -143,7 +139,7 @@ void fuzzFile(const fs::path& path, int rounds, uint32_t seed) {
     ++g_files;
 
     QTextDocument doc;
-    buildDocument(parse(source), doc);
+    buildDocument(pieces(source), doc);
 
     std::mt19937 rng(seed);
     std::vector<std::string> steps;
@@ -174,8 +170,8 @@ void fuzzFile(const fs::path& path, int rounds, uint32_t seed) {
             what = std::string("набрать \"") + typed + "\"";
         } else {
             const Operation& op = kOperations[rng() % (sizeof(kOperations) / sizeof(kOperations[0]))];
-            const Document before = readDocument(doc);
-            const std::string beforeJson = toJson(before);
+            const std::vector<Piece> before = blocksOf(doc);
+            const std::string beforeJson = dumpOf(before);
             if (!op.run(doc, cursor)) continue;
             what = op.name;
 
@@ -183,15 +179,15 @@ void fuzzFile(const fs::path& path, int rounds, uint32_t seed) {
             // — пересборка из снимка, ровно как в редакторе.
             QTextDocument undone;
             buildDocument(before, undone);
-            const Document back = readDocument(undone);
-            if (toJson(back) != beforeJson) {
+            const std::vector<Piece> back = blocksOf(undone);
+            if (dumpOf(back) != beforeJson) {
                 steps.push_back(what);
                 std::string diff;
-                for (size_t i = 0; i < before.blocks.size() || i < back.blocks.size(); ++i) {
+                for (size_t i = 0; i < before.size() || i < back.size(); ++i) {
                     const std::string was =
-                        i < before.blocks.size() ? oneLine(before, before.blocks[i]) : "<нет>";
+                        i < before.size() ? oneLine(before[i]) : "<нет>";
                     const std::string now =
-                        i < back.blocks.size() ? oneLine(back, back.blocks[i]) : "<нет>";
+                        i < back.size() ? oneLine(back[i]) : "<нет>";
                     if (was == now) continue;
                     diff = "\n  блок " + std::to_string(i) + " разошёлся:\n    было:  " + was +
                            "\n    стало: " + now;
@@ -210,7 +206,7 @@ void fuzzFile(const fs::path& path, int rounds, uint32_t seed) {
         // стенд заводил бы состояния, которых в приложении не бывает, и ловил бы
         // не ошибки, а собственную неверность.
         if (!fromTyping) {
-            const Document current = readDocument(doc);
+            const std::vector<Piece> current = blocksOf(doc);
             buildDocument(current, doc);
         }
 
@@ -220,7 +216,7 @@ void fuzzFile(const fs::path& path, int rounds, uint32_t seed) {
         ZT_TRUE(std::string("строение списка: ") + path.string() + " (зерно " +
                     std::to_string(seed) + ")" + describe(steps) + "\n  " +
                     listProblem.toStdString() +
-                    (lists ? std::string() : "\n  документ: " + toJson(readDocument(doc))),
+                    (lists ? std::string() : "\n  документ: " + dumpOf(blocksOf(doc))),
                 lists);
         const bool literals = literalInvariantHolds(doc);
         ZT_TRUE(std::string("разбивка литерального блока: ") + path.string() + " (зерно " +
@@ -231,7 +227,7 @@ void fuzzFile(const fs::path& path, int rounds, uint32_t seed) {
         ZT_TRUE(std::string("пустые строки: ") + path.string() + " (зерно " +
                     std::to_string(seed) + ")" + describe(steps) + "\n  " +
                     gapProblem.toStdString() +
-                    (gaps ? std::string() : "\n  документ: " + toJson(readDocument(doc))),
+                    (gaps ? std::string() : "\n  документ: " + dumpOf(blocksOf(doc))),
                 gaps);
         if (!lists || !literals || !gaps) return;
 

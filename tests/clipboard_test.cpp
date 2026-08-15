@@ -5,10 +5,8 @@
 // потерь, а вставленное в чужой редактор окажется валидным markdown.
 
 #include "doc_model.h"
-#include "document_reader.h"
+#include "pieces.h"
 #include "editor_widget.h"
-#include "parser.h"
-#include "serializer.h"
 #include "settings.h"
 #include "test_util.h"
 
@@ -48,7 +46,7 @@ QString writeNote(const char* name, const QString& text) {
 
 QString textOf(const zametti::NoteEditor& editor) {
     return QString::fromStdString(
-        zametti::serialize(zametti::readDocument(*editor.document())));
+        markdownOf(blocksOf(*editor.document())));
 }
 
 // Выделение по блокам и смещениям в них: так случай читается глазами.

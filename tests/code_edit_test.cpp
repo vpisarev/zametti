@@ -15,12 +15,10 @@
 // ломалось у нас до сих пор именно там.
 
 #include "doc_model.h"
-#include "document_reader.h"
+#include "pieces.h"
 #include "editor_ops.h"
 #include "editor_widget.h"
 #include "lang_editor.h"
-#include "parser.h"
-#include "serializer.h"
 #include "settings.h"
 #include "test_util.h"
 
@@ -84,8 +82,8 @@ two
 after
 )";
 
-std::string markdownOf(const zametti::NoteEditor& editor) {
-    return zametti::serialize(zametti::readDocument(*editor.document()));
+std::string editorMarkdown(const zametti::NoteEditor& editor) {
+    return markdownOf(blocksOf(*editor.document()));
 }
 
 // Документ законен: три инварианта плюс чтение файла обратно в то же самое.
@@ -99,8 +97,8 @@ void checkStillLegal(zametti::NoteEditor& editor, const std::string& where) {
           where + ": инвариант списков (" + problem.toStdString() + ")");
 
     // Круг: то, что мы записали бы в файл, читается обратно в тот же markdown.
-    const std::string text = markdownOf(editor);
-    checkEq(text, zametti::serialize(zametti::parse(text)), where + ": файл читается в себя");
+    const std::string text = editorMarkdown(editor);
+    checkEq(text, noteOf(text).toMarkdown(), where + ": файл читается в себя");
 }
 
 class Editor : public zametti::NoteEditor {
@@ -209,7 +207,7 @@ void checkLeaveCodeBlock() {
               std::string("Ctrl+Enter из «") + place.name + "»: строка пустая");
 
         // Код не тронут — ни одной буквой.
-        const std::string text = markdownOf(editor);
+        const std::string text = editorMarkdown(editor);
         check(text.find("one\ntwo\n```") != std::string::npos,
               std::string("Ctrl+Enter из «") + place.name + "»: код цел");
 
@@ -233,20 +231,20 @@ void checkLeaveCodeBlock() {
     // Пустая строка, в которую встала каретка, ПРЕВРАЩАЕТСЯ в набранный абзац
     // — отдельной пустой строки после блока не остаётся, и это верно: между
     // забором и абзацем markdown её не требует.
-    checkEq("head\n\n```py\none\n```\ntail\n", markdownOf(tail),
+    checkEq("head\n\n```py\none\n```\ntail\n", editorMarkdown(tail),
             "блок в конце: после него встал абзац");
 
     // Один Ctrl+Z возвращает всё как было — включая пустую строку.
     Editor undo;
     undo.openText(QStringLiteral("выход-отмена.md"), kNote);
-    const std::string before = markdownOf(undo);
+    const std::string before = editorMarkdown(undo);
     undo.caretTo(QStringLiteral("one"), 3);
     QTest::keyClick(&undo, Qt::Key_Return, Qt::ControlModifier);
     QTest::qWait(5);
-    check(markdownOf(undo) != before, "Ctrl+Enter что-то изменил");
+    check(editorMarkdown(undo) != before, "Ctrl+Enter что-то изменил");
     undo.undo();
     QTest::qWait(5);
-    checkEq(before, markdownOf(undo), "один Ctrl+Z возвращает прежнее");
+    checkEq(before, editorMarkdown(undo), "один Ctrl+Z возвращает прежнее");
 }
 
 // --- табуляция --------------------------------------------------------------
@@ -312,12 +310,12 @@ void checkCodeTabs() {
     }
     QTest::keyClick(&many, Qt::Key_Tab, Qt::NoModifier);
     QTest::qWait(5);
-    check(markdownOf(many).find("    one\n    two") != std::string::npos,
+    check(editorMarkdown(many).find("    one\n    two") != std::string::npos,
           "Tab по выделению отступил обе строки");
     check(many.textCursor().hasSelection(), "выделение пережило правку");
     QTest::keyClick(&many, Qt::Key_Backtab, Qt::ShiftModifier);
     QTest::qWait(5);
-    check(markdownOf(many).find("one\ntwo") != std::string::npos,
+    check(editorMarkdown(many).find("one\ntwo") != std::string::npos,
           "Shift+Tab по выделению вернул как было");
 
     // Вне блока кода Tab по-прежнему живёт списками: правило не должно было
@@ -451,18 +449,18 @@ void checkUndoAfterLeaving() {
     editor.caretTo(QStringLiteral("}"), 1);
     QTest::keyClicks(&editor, QStringLiteral("y"));
     QTest::qWait(10);
-    const std::string afterTyping = markdownOf(editor);
+    const std::string afterTyping = editorMarkdown(editor);
 
     QTest::keyClick(&editor, Qt::Key_Return, Qt::ControlModifier);
     // ЖДЁМ автосохранение: человек между нажатиями думает, и таймер успевает
     // сработать. Без этой паузы набор проверял не то, что делает владелец.
     QTest::qWait(1600);
-    const std::string afterLeaving = markdownOf(editor);
+    const std::string afterLeaving = editorMarkdown(editor);
     check(afterLeaving != afterTyping, "Ctrl+Enter что-то изменил");
 
     QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
     QTest::qWait(10);
-    checkEq(afterTyping, markdownOf(editor), "первый Ctrl+Z отменяет именно выход из блока");
+    checkEq(afterTyping, editorMarkdown(editor), "первый Ctrl+Z отменяет именно выход из блока");
 }
 
 // --- язык блока кода --------------------------------------------------------
@@ -532,24 +530,24 @@ void checkLanguageEditor() {
     QTest::keyClick(field, Qt::Key_Return);
     QTest::qWait(20);
     check(editor.codeLanguageEditor() == nullptr, "после Enter поле закрылось");
-    check(markdownOf(editor).find("```python\nthree") != std::string::npos,
-          "язык уехал в файл: " + markdownOf(editor));
+    check(editorMarkdown(editor).find("```python\nthree") != std::string::npos,
+          "язык уехал в файл: " + editorMarkdown(editor));
 
     // Один Ctrl+Z возвращает прежнее.
     QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
     QTest::qWait(20);
-    check(markdownOf(editor).find("```\nthree") != std::string::npos,
+    check(editorMarkdown(editor).find("```\nthree") != std::string::npos,
           "один Ctrl+Z вернул блок без языка");
 
     // Esc не меняет ничего.
-    const std::string before = markdownOf(editor);
+    const std::string before = editorMarkdown(editor);
     field = editor.editCodeLanguage(third, QRect(10, 10, 120, 20));
     if (field != nullptr) {
         QTest::keyClicks(field, QStringLiteral("py"));
         QTest::keyClick(field, Qt::Key_Escape);
         QTest::qWait(20);
         check(editor.codeLanguageEditor() == nullptr, "после Esc поле закрылось");
-        checkEq(before, markdownOf(editor), "Esc ничего не поменял");
+        checkEq(before, editorMarkdown(editor), "Esc ничего не поменял");
     }
 
     // Пустое имя убирает язык.
@@ -559,8 +557,8 @@ void checkLanguageEditor() {
         field->clear();
         QTest::keyClick(field, Qt::Key_Return);
         QTest::qWait(20);
-        check(markdownOf(editor).find("```\none") != std::string::npos,
-              "пустое имя убрало язык: " + markdownOf(editor));
+        check(editorMarkdown(editor).find("```\none") != std::string::npos,
+              "пустое имя убрало язык: " + editorMarkdown(editor));
     }
 
     // Свободные имена: никаких встроенных списков (владельцу нужны свои).
@@ -569,13 +567,13 @@ void checkLanguageEditor() {
         QTest::keyClicks(field, QStringLiteral("pf"));
         QTest::keyClick(field, Qt::Key_Return);
         QTest::qWait(20);
-        check(markdownOf(editor).find("```pf\none") != std::string::npos,
-              "«pf» принят как есть: " + markdownOf(editor));
+        check(editorMarkdown(editor).find("```pf\none") != std::string::npos,
+              "«pf» принят как есть: " + editorMarkdown(editor));
     }
 
     // Круг: сменённый язык переживает запись и чтение.
-    const std::string text = markdownOf(editor);
-    checkEq(text, zametti::serialize(zametti::parse(text)), "файл с новым языком читается в себя");
+    const std::string text = editorMarkdown(editor);
+    checkEq(text, noteOf(text).toMarkdown(), "файл с новым языком читается в себя");
     checkStillLegal(editor, "после смены языка");
 }
 

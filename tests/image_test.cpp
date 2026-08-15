@@ -11,10 +11,9 @@
 // операцией — вики-вложению в "|ширину", image-спану в "#w=" пути.
 
 #include "doc_model.h"
-#include "document_reader.h"
+#include "pieces.h"
 #include "editor_ops.h"
 #include "editor_widget.h"
-#include "serializer.h"
 #include "settings.h"
 
 #include "test_util.h"
@@ -104,7 +103,7 @@ void checkMissingAttachment() {
             block.blockFormat().bottomMargin() > 0.0);
 
     // Байты ссылки не тронуты.
-    const std::string text = zametti::serialize(zametti::readDocument(*editor.document()));
+    const std::string text = markdownOf(blocksOf(*editor.document()));
     ZT_TRUE("ссылка в заметке цела",
             text.find("01n6cqevh7bbfr.webp#w=300") != std::string::npos);
 
@@ -329,8 +328,8 @@ static int ztRunSuite(int argc, char** argv) {
         ZT_TRUE("ширина image-спана записана",
                 zametti::setImageWidthAtCursor(*editor.document(), cursor, 50));
         QTest::qWait(10);
-        const zametti::Document ir = zametti::readDocument(*editor.document());
-        const std::string out = zametti::serialize(ir);
+        const std::vector<zametti::Piece> ir = blocksOf(*editor.document());
+        const std::string out = markdownOf(ir);
         ZT_TRUE("в файл уходит путь с #w=50",
                 out.find("![фото](img.png#w=50)") != std::string::npos);
         ZT_TRUE("резерв ужался до 50",
@@ -886,8 +885,8 @@ static int ztRunSuite(int argc, char** argv) {
         // Image-спан: то же самое, но во фрагменте пути.
         setAlign(2, zametti::ImageAlign::Left);
         {
-            const zametti::Document ir = zametti::readDocument(*aligned.document());
-            const std::string out = zametti::serialize(ir);
+            const std::vector<zametti::Piece> ir = blocksOf(*aligned.document());
+            const std::string out = markdownOf(ir);
             ZT_TRUE("у image-спана выравнивание уходит во фрагмент пути",
                     out.find("![подпись](м.png#align=left)") != std::string::npos);
         }
@@ -897,8 +896,8 @@ static int ztRunSuite(int argc, char** argv) {
         }
         QTest::qWait(10);
         {
-            const zametti::Document ir = zametti::readDocument(*aligned.document());
-            const std::string out = zametti::serialize(ir);
+            const std::vector<zametti::Piece> ir = blocksOf(*aligned.document());
+            const std::string out = markdownOf(ir);
             ZT_TRUE("ширина встаёт рядом с выравниванием",
                     out.find("![подпись](м.png#w=70&align=left)") != std::string::npos);
         }

@@ -12,12 +12,10 @@
 // правил про списки — это как раз про то, куда он встаёт.
 
 #include "doc_model.h"
-#include "document_reader.h"
+#include "pieces.h"
 #include "document_saver.h"
 #include "editor_widget.h"
 #include "marker.h"
-#include "parser.h"
-#include "serializer.h"
 #include "settings.h"
 
 #include "test_util.h"
@@ -66,7 +64,7 @@ void typeText(zametti::NoteEditor& editor, const QString& text) {
 
 QString textOf(const zametti::NoteEditor& editor) {
     return QString::fromStdString(
-        zametti::serialize(zametti::readDocument(*editor.document())));
+        markdownOf(blocksOf(*editor.document())));
 }
 
 // Нажатие в виде «что человек делает»: сочетание клавиш или набор текста.
@@ -1146,9 +1144,9 @@ void checkBackspaceProperties() {
 
                 // Ровно путь записи: с нормализацией documentForFile — файл,
                 // например, не выражает пустую строку в самом начале.
-                const std::string once = zametti::serialize(
-                    zametti::documentForFile(zametti::readDocument(*editor.document())));
-                const std::string twice = zametti::serialize(zametti::parse(once));
+                const std::string once = markdownOf(
+                    zametti::documentForFile(blocksOf(*editor.document())));
+                const std::string twice = noteOf(once).toMarkdown();
                 ZT_TRUE(tag + "документ записываем", once == twice);
                 // Правки не сохраняем: файл на каждый случай пишется заново, а
                 // сохранение при смене файла может увести в модальный диалог —
@@ -1189,8 +1187,8 @@ void checkBackspaceProperties() {
     ZT_TRUE("забор: текст цел", text1 == text0);
     ZT_TRUE("забор: строк не прибавилось", div1 + blank1 <= div0 + blank0);
     ZT_TRUE("забор: каретка добралась до верха", editor.textCursor().blockNumber() <= 1);
-    const std::string once = zametti::serialize(zametti::readDocument(*editor.document()));
-    ZT_TRUE("забор: документ записываем", once == zametti::serialize(zametti::parse(once)));
+    const std::string once = markdownOf(blocksOf(*editor.document()));
+    ZT_TRUE("забор: документ записываем", once == noteOf(once).toMarkdown());
     editor.document()->setModified(false);
 }
 
@@ -1233,8 +1231,8 @@ void checkCommentOps() {
     ZT_TRUE("Ctrl+/ сделал блок комментарием",
             zametti::kindOf(blockAt(2)) == zametti::Kind::Html);
     {
-        const zametti::Document ir = zametti::readDocument(*editor.document());
-        const std::string out = zametti::serialize(ir);
+        const std::vector<zametti::Piece> ir = blocksOf(*editor.document());
+        const std::string out = markdownOf(ir);
         ZT_TRUE("в файл уходит <!-- ком -->",
                 out.find("<!-- ком -->") != std::string::npos);
     }
@@ -1289,8 +1287,8 @@ void checkCommentOps() {
                 zametti::kindOf(blockAt(2)) == zametti::Kind::Paragraph &&
                     blockAt(2).text().trimmed() == QStringLiteral("третья"));
         {
-            const zametti::Document ir = zametti::readDocument(*editor.document());
-            const std::string out = zametti::serialize(ir);
+            const std::vector<zametti::Piece> ir = blocksOf(*editor.document());
+            const std::string out = markdownOf(ir);
             ZT_TRUE("в файле комментарий с отступом пункта",
                     out.find("  <!-- вторая строка -->") != std::string::npos);
         }
@@ -1517,7 +1515,7 @@ void checkCodeToggleTrimsBlankEdges() {
     QTest::qWait(10);
 
     const std::string out =
-        zametti::serialize(zametti::readDocument(*editor.document()));
+        markdownOf(blocksOf(*editor.document()));
     ZT_TRUE("пустая строка над кодом уцелела",
             out.find("___\n\n```") != std::string::npos);
     ZT_TRUE("в коде ровно программа",
