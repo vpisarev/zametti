@@ -4,10 +4,7 @@
 #include "doc_model.h"
 #include "document_builder.h"
 #include "document_pieces.h"
-#include "document_reader.h"
-#include "document_saver.h"
 #include "note_header.h"
-#include "parser.h"
 #include "serializer.h"
 #include "sort_order.h"
 #include "text_stats.h"
@@ -31,14 +28,38 @@ namespace zametti {
 
 namespace {
 
-// Мостик наружу: документ + шапка как то представление, которое пока ещё
-// понимают сериализатор и хранилище.
-Document irOf(const QTextDocument& text, const NoteHeader& header) {
-    Document ir = readDocument(text);
-    ir.meta.setLines(header.lines());
-    ir.meta.setPresent(header.present());
-    ir.meta.setBlankAfter(header.blankAfter());
-    return ir;
+// СТРОЕНИЕ ЗАМЕТКИ ОДНОЙ СТРОКОЙ: род, уровень, маркер, отметка, язык и текст
+// каждого блока. Разметка внутри строки НЕ входит нарочно — голую ссылку
+// человек набирает текстом, а файл читает её ссылкой, и самопроверка записи
+// обязана считать это одним и тем же.
+//
+// Строкой, а не отпечатком: на этом стоит последний рубеж против потери
+// данных, и мириться там с вероятностью совпадения хешей нельзя.
+std::string skeletonOf(const QTextDocument& text) {
+    std::string out;
+    walkPieces(text, [&](const Piece& piece) {
+        if (piece.raw) {
+            out += "raw\x1f";
+            out += piece.text;
+            out += '\x1e';
+            return;
+        }
+        out += std::to_string(int(piece.kind));
+        out += '\x1f';
+        out += std::to_string(piece.level);
+        out += '\x1f';
+        out += std::to_string(int(piece.marker));
+        out += '\x1f';
+        out += piece.checked ? '1' : '0';
+        out += '\x1f';
+        out += std::to_string(piece.headingLevel);
+        out += '\x1f';
+        out += piece.info;
+        out += '\x1f';
+        out += piece.text;
+        out += '\x1e';
+    });
+    return out;
 }
 
 void headerFrom(const NoteHeader& meta, NoteHeader& out) {
@@ -200,7 +221,46 @@ QString ZDocument::snippet(int limit) const {
     return out.left(limit);
 }
 
-std::string ZDocument::archiveStub() const { return store::stubBytes(irOf(d_->text, d_->header)); }
+// СТАБ АРХИВА: та же шапка с пометкой `archived` плюс одна строка — заголовок.
+// Собирается заметкой-однодневкой и записывается общим писателем: второго
+// способа получить байты заметки не бывает.
+std::string ZDocument::archiveStub() const {
+    ZDocument stub;
+    stub.d_->header = d_->header;
+    stub.setArchived(true);
+
+    // Заголовок ищем так же, как его видит средняя колонка: первый
+    // содержательный блок. Не нашли — стаб остаётся без тела, и это законно:
+    // заметка без единой строки текста и была пустой.
+    Piece heading;
+    bool found = false;
+    walkPieces(d_->text, [&](const Piece& piece) {
+        if (found) return;
+        if (piece.raw) {
+            // Дословный кусок заголовком не считаем; законченный комментарий
+            // пропускаем — он и в дереве заголовком не выглядит.
+            if (!piece.isClosedHtmlComment()) found = true;   // прекращаем поиск
+            return;
+        }
+        if (piece.kind == Kind::VSpace || piece.kind == Kind::Html) return;
+        // Первая строка: заголовок стаба однострочный, а блок может нести
+        // мягкие переносы.
+        std::string line = piece.text.substr(0, piece.text.find('\n'));
+        while (!line.empty() && (line.back() == ' ' || line.back() == '\r')) line.pop_back();
+        if (line.empty()) return;
+        heading.kind = Kind::Heading;
+        heading.headingLevel =
+            piece.kind == Kind::Heading && piece.headingLevel > 0 ? piece.headingLevel : 1;
+        heading.text = std::move(line);
+        found = true;
+    });
+
+    std::vector<Piece> body;
+    if (!heading.text.empty()) body.push_back(std::move(heading));
+    stub.d_->header.setBlankAfter(!body.empty());
+    buildDocument(body, stub.d_->text);
+    return stub.toMarkdown();
+}
 
 bool ZDocument::isEmpty() const {
     for (QTextBlock b = d_->text.begin(); b.isValid(); b = b.next()) {
@@ -375,13 +435,16 @@ QTextDocument* ZDocument::getDocument() {
 // --- сравнение -------------------------------------------------------------
 
 bool ZDocument::sameSkeleton(const ZDocument& other) const {
-    return zametti::sameSkeleton(irOf(d_->text, d_->header), irOf(other.d_->text, other.d_->header));
+    // Шапка — строка в строку: потерять parent при записи так же нельзя, как
+    // потерять текст.
+    if (d_->header.present() != other.d_->header.present() ||
+        d_->header.lines() != other.d_->header.lines())
+        return false;
+    return skeletonOf(d_->text) == skeletonOf(other.d_->text);
 }
 
 bool ZDocument::sameBody(const ZDocument& other) const {
-    // Шапку выбрасываем целиком: в ней `modified`, и без этого всякое
-    // сравнение начиналось бы с неё.
-    return serialize(readDocument(d_->text)) == serialize(readDocument(other.d_->text));
+    return bodyMarkdown() == other.bodyMarkdown();
 }
 
 }  // namespace zametti

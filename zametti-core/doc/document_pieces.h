@@ -17,9 +17,12 @@
 #include <cstddef>
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
+
+class QTextDocument;
 
 namespace zametti {
 
@@ -61,6 +64,16 @@ struct Piece {
     std::string_view view(const Run& r) const {
         return std::string_view(text).substr(size_t(r.start), size_t(r.end - r.start));
     }
+
+    // Законченный HTML-комментарий: он обрывает себя сам, и сосед начинается
+    // заново — замерено на md4c для кода, абзаца, черты, таблицы и второго
+    // комментария. Спрашивают об этом и писатель (можно ли ставить соседа
+    // вплотную), и стаб архива (заголовком такой кусок не считается), поэтому
+    // правило живёт здесь одно.
+    bool isClosedHtmlComment() const {
+        if (!raw || text.size() < 8) return false;
+        return text.compare(0, 4, "<!--") == 0 && text.compare(text.size() - 4, 4, "-->\n") == 0;
+    }
 };
 
 // Сколько байт черновика резервирует разбор под источник этой длины. В черновик
@@ -80,5 +93,15 @@ class NoteHeader;
 // markdown_reader.cpp; ступень внутри ZDocument::loadMarkdown, наружу из ядра
 // не выходит.
 void parsePieces(std::string_view markdown, std::vector<Piece>& blocks, NoteHeader& header);
+
+// Обход ЖИВОГО документа теми же логическими блоками — обратная ступень к
+// parsePieces. Определено в markdown_writer.cpp.
+//
+// Блок отдаётся по одному и живёт только внутри вызова: собирать из них список
+// незачем, а кто соберёт — заведёт ровно ту вторую копию содержимого, от
+// которой мы уходим. Литеральные куски (код, дословное) лежат в документе
+// построчно и склеиваются здесь обратно, поэтому обход и нужен общий: два
+// потребителя, склеивающих строки каждый по-своему, однажды склеят по-разному.
+void walkPieces(const QTextDocument& doc, const std::function<void(const Piece&)>& sink);
 
 }  // namespace zametti

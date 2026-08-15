@@ -1,13 +1,17 @@
-// Golden-тесты: .md рядом с ожидаемым JSON-дампом IR.
+// Golden-тесты: .md рядом с ожидаемым JSON-дампом строения заметки.
 //
 // Дамп односторонний. from_json нет и не будет: иначе он незаметно станет
 // вторым форматом хранения.
 //
+// СУДЯТ ОНИ ТЕПЕРЬ ЖИВОЙ ДОКУМЕНТ. Раньше дампилось промежуточное
+// представление, то есть выход разбора; теперь — обход живого документа, то
+// есть та самая граница «документ → файл», через которую проходят данные
+// владельца. Эталоны при переводе не тронуты ни байтом: это и есть проверка,
+// что живая модель держит ровно то же, что держало представление.
+//
 // Перезаписать эталоны: ./golden_test <каталог> --update
 
-#include "json_dump.h"
-#include "parser.h"
-#include "serializer.h"
+#include "document.h"
 
 #include "test_util.h"
 #include "testdata.h"
@@ -61,8 +65,9 @@ static int ztRunSuite(int argc, char** argv) {
     for (const fs::path& md : cases) {
         std::string name = md.filename().string();
         std::string src = readFile(md);
-        Document doc = parse(src);
-        std::string json = toJson(doc);
+        ZDocument note;
+        note.loadMarkdown(src);
+        std::string json = note.toJson();
 
         fs::path expectedPath = md;
         expectedPath.replace_extension(".json");
@@ -76,11 +81,11 @@ static int ztRunSuite(int argc, char** argv) {
             ZT_TRUE("нет эталона для " + name, false);
             continue;
         }
-        ZT_EQ("IR для " + name, readFile(expectedPath), json);
+        ZT_EQ("строение для " + name, readFile(expectedPath), json);
 
         // Эталоны лежат в каноническом виде, значит первый инвариант обязан
         // выполняться на них побайтово.
-        ZT_EQ("канон для " + name, src, serialize(doc));
+        ZT_EQ("канон для " + name, src, note.toMarkdown());
     }
 
     if (update) {

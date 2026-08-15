@@ -38,19 +38,9 @@ struct BlockLines {
     int count = 0;
 };
 
-// Законченный HTML-комментарий: он обрывает себя сам, и сосед начинается
-// заново — замерено на md4c для кода, абзаца, черты, таблицы и второго
-// комментария.
-bool isClosedHtmlComment(const Piece& b) {
-    if (!b.raw) return false;
-    const std::string_view raw = b.text;
-    if (raw.size() < 8) return false;
-    return raw.compare(0, 4, "<!--") == 0 && raw.compare(raw.size() - 4, 4, "-->\n") == 0;
-}
-
 // Слипнутся ли два блока, окажись они в файле подряд без пустой строки.
 bool wouldMerge(const Piece& previous, const Piece& next) {
-    if (isClosedHtmlComment(previous)) return false;
+    if (previous.isClosedHtmlComment()) return false;
     if (!previous.raw && previous.kind == Kind::Html) return false;
     // Два блока кода подряд: их заборы спарились бы не так, как надо. Два
     // дословных куска подряд — по той же причине непрозрачности.
@@ -770,7 +760,7 @@ void validate([[maybe_unused]] const Piece& b) {
     assert(b.level >= -1 && "уровень мельче, чем вне списка");
     assert((b.kind != Kind::Html || b.text.find("-->") == std::string::npos) &&
            "внутренность комментария не может содержать -->");
-    assert((b.kind != Kind::Html || b.inlines.empty()) &&
+    assert((b.kind != Kind::Html || b.runs.empty()) &&
            "внутри комментария разметки не бывает");
     for ([[maybe_unused]] const Run& s : b.runs) {
         assert((!s.image() || !s.href.empty()) && "у картинки обязан быть путь");
@@ -1397,24 +1387,11 @@ void settleComment(Piece& piece) {
 
 }  // namespace
 
-namespace {
-
-// Единственное место, где живая заметка превращается в байты. Ходит прямо по
-// внутреннему QTextDocument — ни промежуточного представления, ни второй живой
-// модели.
-std::string writeInto(const QTextDocument& doc, const NoteHeader& header,
-                      std::vector<BlockLines>* map) {
-
-    // Есть ли в заметке ссылочные определения — от этого зависит экранирование
-    // квадратных скобок. Спрашивается ДО записи, потому что ответ нужен уже на
-    // первом блоке. Проверка идёт построчно, поэтому смотреть на несклеенные
-    // строки можно: ответ тот же.
-    bool hasLinkDefs = false;
-    for (QTextBlock b = doc.begin(); b.isValid() && !hasLinkDefs; b = b.next())
-        if (isRawBlock(b) && looksLikeLinkDefinition(toUtf8(b.text()))) hasLinkDefs = true;
-
-    Writer writer(header, hasLinkDefs, map != nullptr);
-
+// ОБЩАЯ СТУПЕНЬ «ЖИВОЙ ДОКУМЕНТ → ЛОГИЧЕСКИЕ БЛОКИ». Обратная к parsePieces, и
+// такая же одна на всех: склейка литеральных строк, дословные куски, доводка
+// формул и комментариев — правила границы «документ → файл», и второй их копии
+// быть не должно.
+void walkPieces(const QTextDocument& doc, const std::function<void(const Piece&)>& sink) {
     Piece piece;
     bool open = false;
 
@@ -1428,7 +1405,7 @@ std::string writeInto(const QTextDocument& doc, const NoteHeader& header,
         }
         settleComment(piece);
         settleMath(piece);
-        writer.push(piece);
+        sink(piece);
         piece = Piece{};
         open = false;
     };
@@ -1466,7 +1443,26 @@ std::string writeInto(const QTextDocument& doc, const NoteHeader& header,
         if (format.boolProperty(TrailingNewlineProperty)) piece.text.push_back('\n');
     }
     close();
+}
 
+namespace {
+
+// Единственное место, где живая заметка превращается в байты. Ходит прямо по
+// внутреннему QTextDocument — ни промежуточного представления, ни второй живой
+// модели.
+std::string writeInto(const QTextDocument& doc, const NoteHeader& header,
+                      std::vector<BlockLines>* map) {
+
+    // Есть ли в заметке ссылочные определения — от этого зависит экранирование
+    // квадратных скобок. Спрашивается ДО записи, потому что ответ нужен уже на
+    // первом блоке. Проверка идёт построчно, поэтому смотреть на несклеенные
+    // строки можно: ответ тот же.
+    bool hasLinkDefs = false;
+    for (QTextBlock b = doc.begin(); b.isValid() && !hasLinkDefs; b = b.next())
+        if (isRawBlock(b) && looksLikeLinkDefinition(toUtf8(b.text()))) hasLinkDefs = true;
+
+    Writer writer(header, hasLinkDefs, map != nullptr);
+    walkPieces(doc, [&](const Piece& piece) { writer.push(piece); });
     return writer.finish(map);
 }
 
@@ -1474,6 +1470,10 @@ std::string writeInto(const QTextDocument& doc, const NoteHeader& header,
 
 std::string ZDocument::toMarkdown() const {
     return writeInto(d_->text, d_->header, nullptr);
+}
+
+std::string ZDocument::bodyMarkdown() const {
+    return writeInto(d_->text, NoteHeader{}, nullptr);
 }
 
 std::vector<SourceLine> ZDocument::sourceLines() const {
