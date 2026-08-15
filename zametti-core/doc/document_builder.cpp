@@ -638,9 +638,13 @@ bool sameBlock(const Piece& x, const Piece& y) {
 void checkPatchMatchesBuild(const std::vector<Piece>& to, const QTextDocument& target) {
     QTextDocument reference;
     buildDocument(to, reference);
-    // Поля в сравнении не участвуют: их держит ВИД, а не сборщик, и заплатка
-    // их не трогает вовсе — сверять тут нечего.
+    // РЕЗЕРВЫ ПОКАЗА В СРАВНЕНИИ НЕ УЧАСТВУЮТ: их держит ВИД, а не сборщик, и
+    // заплатка их не трогает вовсе — сверять тут нечего.
     //   - нижнее поле блока: в нём живёт высота фотографии (syncImageSpace);
+    //   - высота строки: ею вид ужимает исходник выключной формулы под её
+    //     вёрстку (note_view, syncFormulas). Сборщик ставит долю от строки
+    //     (ProportionalHeight), вид — точные пиксели (FixedHeight), и на
+    //     формуле они расходятся всегда;
     //   - поля рамки: их пересчитывает applyContentWidth под ширину окна —
     //     колонка в широком окне центрируется, и левое поле у живого документа
     //     87 против 55.99 у только что собранного. Сборщик ставит начальные
@@ -648,8 +652,15 @@ void checkPatchMatchesBuild(const std::vector<Piece>& to, const QTextDocument& t
     // Сравнивать чужое — значит ловить не расхождение заплатки, а порядок
     // вызовов. Ровно на этом проверка и падала: у всех тестовых окон колонка
     // уже колонки не была, центрирование не включалось, и разница не всплывала.
-    const QList<int> skip{QTextFormat::BlockBottomMargin,   QTextFormat::FrameTopMargin,
-                          QTextFormat::FrameBottomMargin,   QTextFormat::FrameLeftMargin,
+    //
+    // ЦЕНА НАЗВАНА ВСЛУХ: вместе с чужим из-под проверки уходит и своё —
+    // высота строки, которую ставит сам сборщик. Заплатка, испортившая её на
+    // обычном блоке, здесь больше не покраснеет. Долг снимается вместе с
+    // переводом объектов на QTextObjectInterface: тогда вид перестанет писать
+    // в документ вовсе, и исключение станет ненужным.
+    const QList<int> skip{QTextFormat::BlockBottomMargin, QTextFormat::LineHeight,
+                          QTextFormat::LineHeightType,    QTextFormat::FrameTopMargin,
+                          QTextFormat::FrameBottomMargin, QTextFormat::FrameLeftMargin,
                           QTextFormat::FrameRightMargin};
     const QString want = documentFingerprint(reference, skip);
     const QString got = documentFingerprint(target, skip);
