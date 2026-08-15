@@ -11,6 +11,7 @@
 #ifndef ZAMETTI_EDITOR_WIDGET_H
 #define ZAMETTI_EDITOR_WIDGET_H
 
+#include "document.h"
 #include "hash.h"
 #include "editor_ops.h"
 #include "image_importer.h"
@@ -103,9 +104,9 @@ public:
     // собой не пересекает границу блока (разделитель блоков в текст не
     // попадает).
     int findMatches(const QString& text, bool caseSensitive);
-    int matchCount() const { return int(note_.matches.size()); }
+    int matchCount() const { return int(current_.matches.size()); }
     // Какое совпадение сейчас текущее, с нуля; -1 — ни одного.
-    int currentMatch() const { return note_.currentMatch; }
+    int currentMatch() const { return current_.currentMatch; }
     // Перейти к совпадению по кругу: -1 подхватывает ближайшее после каретки.
     void goToMatch(int index);
     void stepMatch(int direction);
@@ -118,7 +119,7 @@ public:
 
     // Файл изменился снаружи, а у нас есть несохранённые правки: пока человек
     // не решит, чьё содержимое брать, мы ничего не трогаем.
-    bool hasExternalConflict() const { return note_.externalPending; }
+    bool hasExternalConflict() const { return current_.externalPending; }
     void resolveExternalConflict(bool takeExternal);
 
     // Внешняя правка снесла или обкорнала блок метаданных. Прежние значения
@@ -176,11 +177,11 @@ public:
     bool enterHistory(int index = -1);
     // Вернуться к живой версии. В обычном состоянии ничего не делает.
     void leaveHistory();
-    bool inHistory() const { return note_.live != nullptr; }
+    bool inHistory() const { return current_.live != nullptr; }
     // Какая запись показана; -1 вне режима.
-    int historyIndex() const { return note_.historyIndex; }
+    int historyIndex() const { return current_.historyIndex; }
     // Рамки записей открытой заметки — таймлайну. Читаются при входе в режим.
-    const journal::Journal& timeline() const { return note_.timeline; }
+    const journal::Journal& timeline() const { return current_.timeline; }
     // Шаг к более старому слепку и к более новому. Шаг вперёд с последнего
     // слепка выводит из режима — это и есть «в конце возвращаемся к живой».
     bool historyStepBack();
@@ -226,11 +227,11 @@ public:
     // смене вида и стороны — и ею же проверяется, что оно держится.
     int diffLineOnTop() const { return diffSpotAtCaret().line; }
     // Сколько строк сравнение считает тронутыми. Проверкам и полосе сведений.
-    int diffChangedLines() const { return note_.diffResult.changed; }
+    int diffChangedLines() const { return current_.diffResult.changed; }
     // С чем сравниваем: время той записи и признак «это живая версия».
     // Баннеру — он пишет, какая версия сейчас перед глазами.
-    qint64 diffBaseTime() const { return note_.baseTime; }
-    bool diffBaseIsLive() const { return note_.baseIsLive; }
+    qint64 diffBaseTime() const { return current_.baseTime; }
+    bool diffBaseIsLive() const { return current_.baseIsLive; }
     // Поиск по истории ЭТОЙ заметки: сперва ленивая чистка журнала (обращение
     // к истории — пер-заметочное), потом проход по всем слепкам. Живёт здесь, а
     // не в окне, потому что и хранилище, и id заметки, и правила чистки — уже
@@ -244,7 +245,7 @@ public:
     // ИСХОДНЫЙ слепок — тот, что лежит в журнале, без единой нашей дорисовки.
     // По нему работает восстановление; показывается же его иллюстрированная
     // копия. Наружу — ради проверки, что эти двое и правда разные.
-    const std::vector<Piece>& shownSnapshot() const { return note_.snapshot; }
+    const std::vector<Piece>& shownSnapshot() const { return current_.snapshot; }
     const diff::Text& diffShownText() const { return shownText(); }
     // Восстановить показанный слепок в живую заметку. Только явным жестом:
     // печатающая клавиша этого не делает никогда. Возвращает время записи, из
@@ -552,7 +553,14 @@ private:
     // со своим состоянием, и разница между ними только в том, кто её держит.
     struct NoteSession {
         QString path;
-        std::shared_ptr<QTextDocument> document;
+        // ЖИВАЯ ЗАМЕТКА — ОБЪЕКТ, А НЕ ГОЛЫЙ ДОКУМЕНТ.
+        //
+        // Значением, а не указателем: ZDocument копируется даром (внутренность
+        // за shared_ptr), и копия разделяет ту же заметку — этим же держится
+        // отложенное освобождение при подмене. Всё, что делается с заметкой,
+        // делается её глаголами; наружу документ уходит ровно одним вызовом,
+        // setDocument(note.getDocument()), и стережёт это сборка.
+        ZDocument note;
         NoteHeader meta;
         // Мета, потерянная внешней правкой: показать человеку, что пропало.
         NoteHeader lostMeta;
@@ -608,24 +616,43 @@ private:
         // держали руками вместе с тремя полями состояния, ушли вместе со
         // снимками: подряд идущий набор Qt склеивает в один шаг сам (замер:
         // десять знаков — один шаг отмены).
-        bool undoRun = false;     // идёт серия отмены — см. NoteEditor::undo
 
-        // СЕРИЯ НАБОРА — теперь она задаёт не снимок, а ГРАНИЦУ ШАГА ОТМЕНЫ.
+        // Ближайшее сохранение записать восстановлением: время источника.
+        qint64 restoreSource = 0;
+    };
+
+
+    // СОСТОЯНИЕ ТЕКУЩЕЙ ЗАМЕТКИ — всё, что можно спокойно ВЫБРОСИТЬ, уходя на
+    // другую (правило владельца).
+    //
+    // Граница проходит по одному вопросу: переживёт ли это уход из заметки и
+    // возврат к ней? Место каретки, отпечаток файла, хвост журнала и собранные
+    // блоки — переживают, они в NoteSession и едут в кэш вместе с заметкой.
+    // Всё здешнее — не переживает и не должно: режим истории один на программу,
+    // курсоры уборки указывают в конкретный документ, найденное ищется заново,
+    // серия набора кончается уходом.
+    //
+    // Ради этого разделения оно и заведено: четыре готовых документа разности
+    // весят больше самой заметки, а лежали в её объекте — и уезжали бы с ней в
+    // кэш отложенных.
+    struct CurrentNoteState {
+        // --- серия набора: она задаёт ГРАНИЦУ ШАГА ОТМЕНЫ -------------------
         //
         // Qt склеивает подряд идущие вставки в один шаг и рвать эту склейку не
         // умеет: набранный абзац отменялся бы целиком, а владелец на это уже
         // жаловался («буфера на 200 шагов как будто нет»). Управляем границей
-        // сами — скобкой правки: продолжается серия, значит joinPreviousEditBlock,
-        // кончилась — beginEditBlock. Замер: три слова, каждое в своей скобке, —
-        // ровно три нажатия Ctrl+Z.
+        // сами — скобкой правки: серия продолжается, значит
+        // joinPreviousEditBlock, кончилась — beginEditBlock. Замер: три слова,
+        // каждое в своей скобке, — ровно три нажатия Ctrl+Z.
         //
-        // Правила границы те же три, что и были, и все три взяты у того, как это
-        // ощущается в Apple Notes: набран разделитель (он остаётся в текущем
-        // шаге, следующая буква начинает новый), каретка ушла в другое место,
-        // набрано undoRunChars знаков подряд.
+        // Правил границы четыре, и все взяты у того, как это ощущается в Apple
+        // Notes: набран разделитель (он остаётся в текущем шаге, следующая буква
+        // начинает новый), каретка ушла в другое место, набрано undoRunChars
+        // знаков подряд, наступила тишина.
         int runChars = 0;
         int runCursor = -1;        // где кончилась прошлая набранная буква
         bool runBroken = true;     // следующая буква обязана начать новый шаг
+        bool undoRun = false;      // идёт серия отмены — см. NoteEditor::undo
 
         // Курсоры внутрь документа: живут ровно столько, сколько он.
         QTextCursor lastLine;
@@ -637,8 +664,8 @@ private:
         bool externalEmptyRetried = false;
         QString lastComplaint;    // о чём уже жаловались: не повторяться
 
-        // Найденное в этой заметке. Курсоры смотрят в её документ, поэтому и
-        // хранятся с ним: у чужой заметки они не значат ничего.
+        // Найденное. Курсорами, а не смещениями: смещения поехали бы от первой
+        // же правки, а курсоры Qt двигает сам.
         std::vector<QTextCursor> matches;
         int currentMatch = -1;
         QString matchText;
@@ -679,8 +706,6 @@ private:
         // дорисованного. По ней место каретки переводится в строки слепка.
         std::array<QVector<int>, 4> diffDocSource;
         int diffSlot = -1;   // какой из них сейчас в поле; -1 — ни один
-        // Ближайшее сохранение записать восстановлением: время источника.
-        qint64 restoreSource = 0;
     };
 
     // Оценка веса документа. Точного размера QTextDocument не отдаёт; чем эта
@@ -691,8 +716,12 @@ private:
     // уничтожается синхронно: подмена идёт из обработчиков событий, и Qt может
     // трогать старый документ ещё долю секунды после нас.
     void retireDocument(std::shared_ptr<QTextDocument> previous);
+    // То же для заметки: копия держит внутренность живой до возврата в цикл
+    // событий, а больше ничего и не нужно — ZDocument это ручка.
+    void retireNote(ZDocument previous);
     // Документы, отпущенные, но ещё не умершие: см. retireDocument.
     std::vector<std::shared_ptr<QTextDocument>> retiring_;
+    std::vector<ZDocument> retiringNotes_;
     // Запомнить в объекте заметки, где каретка, что выделено и где прокрутка.
     // Одной функцией: три числа отвечают на один вопрос «где я был», и писать
     // их порознь — способ однажды забыть одно.
@@ -706,7 +735,14 @@ private:
     void activateNote(bool takeFocus);
     // Подменить только документ, оставив ту же заметку: сборка с нуля и показ
     // слепка.
-    void installDocument(std::shared_ptr<QTextDocument> doc);
+    // ЧТО СЕЙЧАС В ПОЛЕ — решает diffSlot, и второго признака нет.
+    //
+    // В обычном состоянии показана живая заметка; в режиме истории — документ
+    // из своего слота разности, и слот же его и держит. Отдельного поля «что
+    // показано» не существует: два признака, обязанных совпадать, однажды
+    // разойдутся, а diffSlot и так есть.
+    void showLiveNote();
+    void showDiffSlot(int slot);
     void connectDocument();
     // Отложить текущую заметку, если её есть смысл откладывать.
     void stashCurrentNote();
@@ -831,10 +867,9 @@ private:
     // держать копию каждой открытой заметки незачем, а после записи он
     // приходит из пути сохранения — перечитывать файл не надо вовсе.
     // Документ, которым владеем: нужен подмене объекта заметки.
-    std::shared_ptr<QTextDocument>& ownedDocument() { return note_.document; }
 
     // Показать слепок записи index в поле редактора. Живая заметка к этому
-    // моменту уже отложена в note_.live.
+    // моменту уже отложена в current_.live.
     bool showSnapshot(int index);
     // Посчитать разность показанного слепка с базой.
     void computeDiff(int index);
@@ -858,10 +893,10 @@ private:
     int lineOnOtherSide(int line, bool fromBase) const;
     // Что сейчас показано: сравнение и текст той стороны, что в поле.
     const diff::Result& shownResult() const {
-        return diffPeek_ ? note_.diffReverse : note_.diffResult;
+        return diffPeek_ ? current_.diffReverse : current_.diffResult;
     }
     const diff::Text& shownText() const {
-        return diffPeek_ ? note_.baseText : note_.snapshotText;
+        return diffPeek_ ? current_.baseText : current_.snapshotText;
     }
     void diffGoToSpot(const DiffSpot& spot);
     // Показать разность нынешним видом, вернувшись на это место.
@@ -918,9 +953,12 @@ private:
     // Документ, установленный сейчас, — наш, а не заведённый Qt: только своими
     // документами и можно меняться. Отложенные лежат в noteCache_, свежайшая
     // заметка первой.
-    // Открытая заметка. Всё её состояние — здесь; смена заметки это смена
-    // этого объекта целиком.
+    // Открытая заметка. Всё, что переживает уход и возврат, — здесь; смена
+    // заметки это смена этого объекта целиком.
     NoteSession note_;
+    // И то, что уход не переживает, — здесь. Выбрасывается при каждой смене
+    // заметки, целиком и без разбора.
+    CurrentNoteState current_;
     // Отложенные заметки: те же объекты, только не показанные.
     std::vector<NoteSession> noteCache_;
     // Ложь на время editMeta без правок текста: мета-правка не трогает
