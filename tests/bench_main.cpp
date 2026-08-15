@@ -21,6 +21,7 @@
 //   zametti-bench matrix        матрица правок
 //   zametti-bench open          открытие заметки
 //   zametti-bench zoom          ВОРОТА к ZDocument: что делает Ctrl+= с документом
+//   zametti-bench undo          штатный стек отмены: чем именно мы его теряем
 
 #include <QApplication>
 
@@ -39,6 +40,7 @@ int ztDisplayScaleProbe(int argc, char** argv);
 int ztMatrixProbe(int argc, char** argv);
 int ztOpenProbe(int argc, char** argv);
 int ztZoomProbe(int argc, char** argv);
+int ztUndoProbe(int argc, char** argv);
 
 namespace {
 
@@ -60,6 +62,7 @@ const Bench kBenches[] = {
     {"matrix", ztMatrixProbe},
     {"open", ztOpenProbe},
     {"zoom", ztZoomProbe},
+    {"undo", ztUndoProbe},
 };
 
 int usage() {
