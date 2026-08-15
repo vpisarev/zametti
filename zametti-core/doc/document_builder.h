@@ -103,7 +103,7 @@ qreal blockTopMarginPx(Kind kind, bool raw, bool previousIsVSpace, bool first,
 // Формат блока пустой строки — ровно такой, каким его собрал бы сборщик. Нужен
 // операциям: пустую строку они заводят на живом документе, и отличаться от
 // собранной она не имеет права.
-QTextBlockFormat vspaceBlockFormat(const QTextDocument& doc, bool previousIsVSpace, bool first);
+QTextBlockFormat vspaceBlockFormat(bool previousIsVSpace, bool first);
 
 }  // namespace zametti
 

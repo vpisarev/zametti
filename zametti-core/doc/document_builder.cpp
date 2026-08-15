@@ -269,15 +269,21 @@ qreal blockTopMarginPx(Kind kind, bool raw, bool previousIsVSpace, bool first,
     return margin;
 }
 
-QTextBlockFormat vspaceBlockFormat(const QTextDocument& doc, bool previousIsVSpace, bool first) {
-    const QFontMetricsF metrics(doc.defaultFont());
+QTextBlockFormat vspaceBlockFormat(bool previousIsVSpace, bool first) {
+    // МЕРА — БАЗОВЫЙ ШРИФТ ОБЛИКА, а не шрифт документа.
+    //
+    // Раньше здесь стоял doc.defaultFont(), и разницы не было: его никто не
+    // двигал. Теперь им задаётся масштаб показа — и пустая строка, заведённая
+    // операцией на 200 %, получила бы вдвое большее поле, чем такая же строка у
+    // сборщика. Вся прочая геометрия документа печётся в единице (layoutLineUnit,
+    // layoutCharUnit); пустая строка не имеет права быть исключением.
+    const QFont base = layoutBaseFont();
     QTextBlockFormat format;
     format.setProperty(KindProperty, int(Kind::VSpace));
     format.setTopMargin(blockTopMargin(Kind::VSpace, false, previousIsVSpace, first) *
-                        metrics.height());
+                        layoutLineUnit());
     format.setBottomMargin(0);
-    applyLineHeight(format, appearance().lineHeightFactor, doc.defaultFont().pointSizeF(),
-                    doc.defaultFont());
+    applyLineHeight(format, appearance().lineHeightFactor, base.pointSizeF(), base);
     return format;
 }
 
@@ -657,6 +663,18 @@ bool sameBlock(const Piece& x, const Piece& y) {
 void checkPatchMatchesBuild(const std::vector<Piece>& to, const QTextDocument& target) {
     QTextDocument reference;
     buildDocument(to, reference);
+    // ШРИФТ ДОКУМЕНТА В СРАВНЕНИИ НЕ УЧАСТВУЕТ — по той же причине, что и поля
+    // рамки ниже: им теперь задаётся МАСШТАБ ПОКАЗА, и держит его вид
+    // (NoteView::setZoom), а не сборщик. Сборщик ставит базовый кегль и о
+    // масштабе не знает вовсе, поэтому у живого документа на 200 % здесь 22, а
+    // у только что собранного эталона — 11, и сравнивать их значит ловить не
+    // расхождение заплатки, а сам факт зума.
+    //
+    // Цена названа вслух: кегль базового шрифта из-под проверки ушёл. Он один
+    // на весь документ и берётся из облика константой, так что испортить его
+    // поблочно заплатка не может; ступени же кегля живут в форматах знаков и
+    // сверяются по-прежнему.
+    reference.setDefaultFont(target.defaultFont());
     // РЕЗЕРВЫ ПОКАЗА В СРАВНЕНИИ НЕ УЧАСТВУЮТ: их держит ВИД, а не сборщик, и
     // заплатка их не трогает вовсе — сверять тут нечего.
     //   - нижнее поле блока: в нём живёт высота фотографии (syncImageSpace);

@@ -157,10 +157,37 @@ void applyPalette(QWidget& view, bool history) {
 
 QColor NoteView::pageColour() const { return palette().color(QPalette::Base); }
 
-QFont NoteView::baseFont() const { return baseFontFor(zoom_); }
+QFont NoteView::baseFont() const {
+    // У документа, а не из zoom_: см. довод в заголовке. Второй меры масштаба
+    // не существует.
+    return document() != nullptr ? document()->defaultFont() : baseFontFor(1.0);
+}
+
+qreal NoteView::displayScale() const {
+    const qreal base = appearance().baseFontPoint;
+    if (base <= 0.0) return 1.0;
+    const qreal shown = baseFont().pointSizeF();
+    return shown > 0.0 ? shown / base : 1.0;
+}
 
 void NoteView::setZoom(qreal zoom) {
     zoom_ = zoom;
+    if (document() == nullptr) return;
+    // ВОТ ЗДЕСЬ МАСШТАБ И ПРИМЕНЯЕТСЯ — единственным местом на всю программу.
+    // Раньше его не применял никто: сборщик ставил документу базовый кегль без
+    // масштаба, а сюда число только записывалось.
+    //
+    // Кегль строится ОТ ОБЛИКА (baseFontFor), а не от нынешнего шрифта
+    // документа: baseFont() отдаёт как раз его, и сравнение вышло бы с самим
+    // собой — масштаб не менялся бы никогда.
+    const QFont want = baseFontFor(zoom_);
+    if (document()->defaultFont() == want) return;
+    // ПОД ФЛАГОМ ОБЛИКА. Смена шрифта документа переразмечает его целиком, и Qt
+    // шлёт contentsChanged — документу она неотличима от набора. Без этой
+    // пометки Ctrl+= заводил бы шаг истории (поймано набором Editor: после
+    // зума в цепочке отмены становилось на шаг больше).
+    const LayoutChange mark(this);
+    document()->setDefaultFont(want);
 }
 
 NoteView::NoteView(QWidget* parent) : QTextBrowser(parent) {
@@ -198,7 +225,7 @@ NoteView::NoteView(QWidget* parent) : QTextBrowser(parent) {
 // иначе от неё остаётся след.
 QRect NoteView::caretRect() const {
     QRect at = cursorRect();
-    at.setWidth(qMax(1, qRound(appearance().caretWidth * zoom_)));
+    at.setWidth(qMax(1, qRound(appearance().caretWidth * displayScale())));
     return at.adjusted(-2, -2, 4, 2);
 }
 
@@ -253,10 +280,16 @@ void NoteView::repaintOverNativeCaret(QPainter& painter) {
 }
 
 void NoteView::applyContentWidth() {
+    // ПОМЕТКА НА ВЕСЬ ВЫЗОВ, а не на одну запись. Первая же запись полей шлёт
+    // contentsChanged, по нему приходит textChanged, по нему зовётся
+    // syncImageSpace — и всё это случается ВНУТРИ нас. Узкая пометка вокруг
+    // одной строки такой вложенности не переживала.
+    const LayoutChange mark(this);
+
     // Поля и предел ширины заданы в ширинах "A" — той же мерой, что и в
     // сборщике документа, иначе при смене гарнитуры они разъехались бы.
     const qreal charUnit =
-        QFontMetricsF(baseFontFor(zoom_)).horizontalAdvance(QLatin1Char('A'));
+        QFontMetricsF(baseFont()).horizontalAdvance(QLatin1Char('A'));
     const qreal side = appearance().sideMargin * charUnit;
     qreal margin = side;
 
@@ -279,7 +312,6 @@ void NoteView::applyContentWidth() {
     }
     format.setLeftMargin(margin);
     format.setRightMargin(margin);
-    changingLayout_ = true;
     root->setFrameFormat(format);
     // Пустой документ от смены полей не переразмечается: размечать в нём нечего.
     // Каретка тогда остаётся у прежнего поля и кеглем по умолчанию — в широком
@@ -290,7 +322,6 @@ void NoteView::applyContentWidth() {
     // show(), в узком окне, и колонку двигает уже первое изменение размера —
     // пересборки при этом нет вовсе.
     document()->markContentsDirty(0, qMax(1, document()->characterCount()));
-    changingLayout_ = false;
 
     // Ширина колонки сменилась — фотографии могли стать шире или уже колонки,
     // и место под них надо перемерить.
@@ -615,7 +646,7 @@ QSizeF NoteView::imageDisplaySize(QSize natural_, qreal widthHint,
     // столько логических, чтобы пиксели легли один в один (HiDPI). Явная
     // ширина ("|315") — уже логическая, как её видит Obsidian.
     const qreal natural = natural_.width() / devicePixelRatioF();
-    qreal width = (widthHint > 0.0 ? widthHint : natural) * zoom_;
+    qreal width = (widthHint > 0.0 ? widthHint : natural) * displayScale();
 
     // Шире колонки фотографии не бывать.
     const QTextFrameFormat root = document()->rootFrame()->frameFormat();
@@ -748,6 +779,10 @@ void NoteView::markImageRegion(int position, int charsAdded) {
 void NoteView::syncImageSpace(bool whole) {
     if (syncingImages_) return;
     syncingImages_ = true;
+    // Пометка на весь вызов: всё, что здесь пишется, — резерв места под объекты,
+    // то есть облик. Узкие пометки вокруг отдельных записей оставляли щели,
+    // в которые проваливался сигнал от предыдущей записи.
+    const LayoutChange mark(this);
 
     // Таблицы — первыми: они прячут блоки и меняют высоты, и резерв под
     // картинки считается уже по новой раскладке.
@@ -788,7 +823,7 @@ void NoteView::syncImageSpace(bool whole) {
     // полном обходе: при частичном мы видим не все картинки заметки, и
     // очистив набор, отдали бы остальные на вытеснение.
     if (!partial) currentNoteImages_.clear();
-    const qreal gap = imageGap(zoom_);
+    const qreal gap = imageGap(displayScale());
     const CodePlate plate = codePlate();
     QTextBlock block = document()->findBlockByNumber(first);
     for (int number = first; number <= afterLast && block.isValid();
@@ -854,7 +889,7 @@ void NoteView::syncImageSpace(bool whole) {
         // соседи — строки, а не картинки.
         qreal wantLine = -1.0;
         if (const FormulaRender* render = formulaAt(block.blockNumber())) {
-            const qreal natural = QFontMetricsF(baseFontFor(zoom_)).height();
+            const qreal natural = QFontMetricsF(baseFont()).height();
             const QTextLayout* layout = block.layout();
             const int lines = layout != nullptr && layout->lineCount() > 0
                                   ? layout->lineCount() : 1;
@@ -894,7 +929,7 @@ void NoteView::syncImageSpace(bool whole) {
         if (const FormulaRender* render = formulaAt(block.blockNumber())) {
             const qreal allotted =
                 document()->documentLayout()->blockBoundingRect(block).height();
-            const qreal natural = QFontMetricsF(baseFontFor(zoom_)).height();
+            const qreal natural = QFontMetricsF(baseFont()).height();
             want += qMax(0.0, formulaBoxHeight(*render, natural) + gap - allotted);
         }
         const bool marginSame = std::fabs(format.bottomMargin() - want) < 0.5;
@@ -908,10 +943,8 @@ void NoteView::syncImageSpace(bool whole) {
         // сумма разъезжается: фотографии наезжают друг на друга ровно на эту
         // высоту. Проявлялось при ПОВТОРНОМ открытии длинной заметки: Qt
         // размечает лениво, и у хвоста разметки ещё нет.
-        changingLayout_ = true;
         QTextCursor cursor(block);
         cursor.setBlockFormat(format);
-        changingLayout_ = false;
     }
 
     // Обход закончен: известны все картинки этой заметки и их размеры. Теперь
@@ -927,14 +960,12 @@ void NoteView::syncImageSpace(bool whole) {
     const QTextBlock last = document()->lastBlock();
     const qreal missing = last.isValid() ? last.blockFormat().bottomMargin() : 0.0;
     const qreal want =
-        appearance().verticalMargin * QFontMetricsF(baseFontFor(zoom_)).height() + missing;
+        appearance().verticalMargin * QFontMetricsF(baseFont()).height() + missing;
     QTextFrameFormat frame = document()->rootFrame()->frameFormat();
     // С допуском: каждое выставление формата рамки переразмечает документ.
     if (std::fabs(frame.bottomMargin() - want) >= 0.5) {
         frame.setBottomMargin(want);
-        changingLayout_ = true;
         document()->rootFrame()->setFrameFormat(frame);
-        changingLayout_ = false;
     }
     syncingImages_ = false;
 }
@@ -979,7 +1010,7 @@ void NoteView::paintTooBigImage(QPainter& painter, const QTextBlock& block,
                                 const ImageGeometry& geometry, const CachedImage& entry) {
     QPen pen(appearance().rawColor);
     pen.setStyle(Qt::DashLine);
-    pen.setWidthF(qMax(1.0, 1.5 * zoom_));
+    pen.setWidthF(qMax(1.0, 1.5 * displayScale()));
     painter.setPen(pen);
     painter.drawRect(geometry.photo.adjusted(0.5, 0.5, -0.5, -0.5));
 
@@ -1078,7 +1109,7 @@ void NoteView::renderSlice(QPainter& painter, const QRectF& documentRect, qreal 
     // Дальше — слово в слово то же, что в paintEvent: маркеры, черты,
     // фотографии. Разошлись бы эти два обхода — бумага перестала бы совпадать
     // с экраном, а заметить это можно было бы только глазами.
-    const QFont base = baseFontFor(zoom_);
+    const QFont base = baseFont();
     const QAbstractTextDocumentLayout* layout = document()->documentLayout();
     const int firstVisible = layout->hitTest(QPointF(0, documentRect.top()), Qt::FuzzyHit);
     QTextBlock start = document()->findBlock(firstVisible);
@@ -1088,7 +1119,7 @@ void NoteView::renderSlice(QPainter& painter, const QRectF& documentRect, qreal 
         if (rect.top() > documentRect.bottom()) break;
         if (rect.bottom() + block.blockFormat().bottomMargin() < documentRect.top()) continue;
         paintMarker(painter, block, base);
-        paintDivider(painter, block, rect, zoom_);
+        paintDivider(painter, block, rect, displayScale());
         paintImage(painter, block);
         paintFormula(painter, block);
     }
@@ -1212,7 +1243,7 @@ QVector<CodeBand> NoteView::codeBands(const QRectF& visible) const {
 QRectF NoteView::copyButtonRect(const CodeBand& band) const {
     const CodePlate plate = codePlate();
     if (!band.last || plate.strip <= 0.0) return {};
-    const qreal side = qMin(plate.strip * 0.62, 18.0 * zoom_);
+    const qreal side = qMin(plate.strip * 0.62, 18.0 * displayScale());
     const qreal gap = plate.padLeft + plate.stripPadding;
     return QRectF(band.rect.right() - gap - side,
                   band.rect.bottom() + (plate.strip - side) / 2.0, side, side);
@@ -1237,7 +1268,7 @@ void NoteView::setEditedCodeLanguage(int firstBlockNumber) {
 void NoteView::syncFormulas() {
     QHash<int, FormulaRender> fresh;
     if (Formulas::ready()) {
-        const QFont base = baseFontFor(zoom_);
+        const QFont base = baseFont();
         // Кегль движку нужен В ПИКСЕЛЯХ, и спрашивать его надо у Qt: она знает,
         // во сколько пикселей превратился кегль в пунктах на этом экране.
         // Пункты сюда передавать нельзя — формула выйдет на треть мельче текста
@@ -1300,8 +1331,7 @@ void NoteView::syncFormulas() {
     // его СБОРЩИК (document_builder). Виду остаётся показать исходник тому
     // блоку, который сейчас правят, — и вернуть прозрачность, когда правка
     // кончилась.
-    const bool wasChanging = changingLayout_;
-    changingLayout_ = true;
+    const LayoutChange mark(this);
     for (QTextBlock block = document()->begin(); block.isValid(); block = block.next()) {
         if (kindOf(block) != Kind::Math) continue;
         const bool shown = block.blockNumber() == editedFormula_;
@@ -1312,7 +1342,6 @@ void NoteView::syncFormulas() {
         fmt.setForeground(shown ? palette().color(QPalette::Text) : QColor(Qt::transparent));
         cursor.mergeCharFormat(fmt);
     }
-    changingLayout_ = wasChanging;
 }
 
 // ОДИН ВОПРОС НА ВСЕ ОБЪЕКТЫ. Показан ли объект вместо своего исходника —
@@ -1392,7 +1421,7 @@ void NoteView::paintFormula(QPainter& painter, const QTextBlock& block) {
                             block.blockFormat().leftMargin();
     // Прямоугольник строки нужен только рамке ошибки: у неё есть текст, и он
     // рисуется нами, а не Qt.
-    const qreal natural = QFontMetricsF(baseFontFor(zoom_)).height();
+    const qreal natural = QFontMetricsF(baseFont()).height();
     const QRectF line(layout->position().x(), layout->position().y(),
                       qMax(available, layout->boundingRect().width()),
                       qMax(natural, layout->boundingRect().height()));
@@ -1409,7 +1438,7 @@ void NoteView::paintFormula(QPainter& painter, const QTextBlock& block) {
         // молчаливый огрызок хуже честной ошибки.
         QPen pen(appearance().rawColor);
         pen.setStyle(Qt::DashLine);
-        pen.setWidthF(qMax(1.0, 1.5 * zoom_));
+        pen.setWidthF(qMax(1.0, 1.5 * displayScale()));
         painter.setPen(pen);
         const QRectF frame(line.x(), line.y(), qMax(120.0, available),
                            formulaBoxHeight(*render, natural));
@@ -1489,17 +1518,17 @@ void NoteView::syncTables() {
         TableRender render;
         const TableRender* had = tables_.contains(object.first) ? &tables_[object.first] : nullptr;
         if (had != nullptr && had->source == source && qFuzzyCompare(had->width, fullWidth) &&
-            qFuzzyCompare(had->zoom, zoom_)) {
+            qFuzzyCompare(had->zoom, displayScale())) {
             render = *had;   // ничего не изменилось — считать заново незачем
         } else {
             TableSpace space;
             space.columnWidth = columnWidth;
             space.fullWidth = fullWidth;
-            space.zoom = zoom_;
+            space.zoom = displayScale();
             render.layout = layoutTable(parseTable(source.toStdString()), space);
             render.source = source;
             render.width = fullWidth;
-            render.zoom = zoom_;
+            render.zoom = displayScale();
         }
         render.first = object.first;
         render.last = object.last;
@@ -1516,8 +1545,7 @@ void NoteView::syncTables() {
     // в историю как настоящие, и одного Ctrl+Z переставало хватать. Поймал
     // набор редактора («смена облика шагов истории не заводит»), и это ровно
     // тот случай, когда беда видна только в чужом наборе.
-    const bool wasChanging = changingLayout_;
-    changingLayout_ = true;
+    const LayoutChange mark(this);
     int dirtyFrom = -1;
     int dirtyTo = -1;
     for (QTextBlock block = document()->begin(); block.isValid(); block = block.next()) {
@@ -1543,7 +1571,6 @@ void NoteView::syncTables() {
     // не было. В моём пробнике markContentsDirty стоял, и потому пробник этой
     // беды не показал — а в syncTables я его не перенёс.
     if (dirtyFrom >= 0) document()->markContentsDirty(dirtyFrom, dirtyTo - dirtyFrom);
-    changingLayout_ = wasChanging;
 }
 
 void NoteView::paintTables(QPainter& painter, const QRectF& visible) {
@@ -1589,30 +1616,30 @@ void NoteView::paintTables(QPainter& painter, const QRectF& visible) {
         const auto line = [&painter, &look, this](const QRectF& rect, qreal width) {
             if (width <= 0.0) return;
             painter.fillRect(QRectF(rect.left(), rect.top(), rect.width(),
-                                    qMax(1.0, width * zoom_)),
+                                    qMax(1.0, width * displayScale())),
                              look.borderColor);
         };
         const auto column = [&painter, &look, this](qreal x, qreal top, qreal height,
                                                     qreal width) {
             if (width <= 0.0) return;
-            painter.fillRect(QRectF(x, top, qMax(1.0, width * zoom_), height),
+            painter.fillRect(QRectF(x, top, qMax(1.0, width * displayScale()), height),
                              look.borderColor);
         };
 
         line(QRectF(area.left(), area.top(), area.width(), 0), look.horizontalBorder);
-        line(QRectF(area.left(), area.bottom() - look.horizontalBorder * zoom_, area.width(), 0),
+        line(QRectF(area.left(), area.bottom() - look.horizontalBorder * displayScale(), area.width(), 0),
              look.horizontalBorder);
         y = area.top();
         for (int row = 0; row < table.layout.rows; ++row) {
             y += table.layout.rowHeight.at(row);
             if (row == 0)
-                line(QRectF(area.left(), y - look.headerSeparator * zoom_ / 2, area.width(), 0),
+                line(QRectF(area.left(), y - look.headerSeparator * displayScale() / 2, area.width(), 0),
                      look.headerSeparator);
             else if (row + 1 < table.layout.rows)
                 line(QRectF(area.left(), y, area.width(), 0), look.rowSeparator);
         }
         column(area.left(), area.top(), area.height(), look.verticalBorder);
-        column(area.right() - look.verticalBorder * zoom_, area.top(), area.height(),
+        column(area.right() - look.verticalBorder * displayScale(), area.top(), area.height(),
                look.verticalBorder);
         qreal x = area.left();
         for (int col = 0; col + 1 < table.layout.columns; ++col) {
@@ -2038,7 +2065,7 @@ void NoteView::paintEvent(QPaintEvent* event) {
     }
     QTextBrowser::paintEvent(event);
 
-    const QFont base = baseFontFor(zoom_);
+    const QFont base = baseFont();
     QPainter painter(viewport());
     repaintOverNativeCaret(painter);
     painter.translate(-horizontalScrollBar()->value(), -verticalScrollBar()->value());
@@ -2069,7 +2096,7 @@ void NoteView::paintEvent(QPaintEvent* event) {
         // строка уже уехала вверх, — поэтому отсечение с запасом на поле.
         if (rect.bottom() + block.blockFormat().bottomMargin() < visible.top()) continue;
         paintMarker(painter, block, base);
-        paintDivider(painter, block, rect, zoom_);
+        paintDivider(painter, block, rect, displayScale());
         paintImage(painter, block);
         paintFormula(painter, block);
     }
@@ -2087,7 +2114,7 @@ void NoteView::paintEvent(QPaintEvent* event) {
     if (caretOn_ && caretShouldBeDrawn(hasFocus(), isReadOnly(), textCursor().hasSelection(),
                                        caretOnDrawnObject())) {
         QRect at = cursorRect();
-        at.setWidth(qMax(1, qRound(appearance().caretWidth * zoom_)));
+        at.setWidth(qMax(1, qRound(appearance().caretWidth * displayScale())));
         painter.fillRect(at, appearance().caretColor);
     }
 }

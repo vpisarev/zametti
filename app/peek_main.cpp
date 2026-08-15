@@ -126,20 +126,20 @@ private:
             return;
         }
         look.baseFontPoint = basePoint_;
-        QFont base{QString(look.fontFamily)};
-        base.setPointSizeF(basePoint_ * scale_);
-        base.setStyleHint(QFont::Monospace);
 
         // ЗАМЕР ЦЕНЫ ШАГА МАСШТАБА. Отдельно шрифт (он же полная переразметка
         // документа) и отдельно то, что делаем мы поверх: ширина колонки,
         // сетки таблиц, места формул.
+        //
+        // Своего setDefaultFont здесь больше нет: масштаб применяет setZoom, и
+        // это одно место на всю программу. Пока их было два — своё у
+        // просмотрщика и никакого у редактора, — зум работал только здесь.
         QElapsedTimer timer;
         timer.start();
-        document()->setDefaultFont(base);
+        setZoom(scale_);
         const qreal size = document()->documentLayout()->documentSize().height();
         const qint64 fontUs = timer.nsecsElapsed() / 1000;
         timer.restart();
-        setZoom(1.0);   // геометрия собрана в единице и за шрифтом не идёт
         applyContentWidth();
         syncTables();
         syncFormulas();
@@ -198,7 +198,10 @@ private:
         if (canonical_.empty()) canonical_ = zametti::writePieces(blocks);
 
         setDocument(fresh);
-        setZoom(byRebuild_ ? scale_ : 1.0);
+        // В режиме пересборки масштаб уже запечён в кегле облика, и вида он не
+        // касается — zoom остаётся единицей. В режиме шрифта его несёт zoom, и
+        // restoreScale ставит документу тот же кегль, что и setScale.
+        setZoom(byRebuild_ ? 1.0 : scale_);
         applyContentWidth();
         syncTables();
         syncFormulas();

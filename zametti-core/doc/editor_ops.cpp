@@ -1337,7 +1337,7 @@ bool newLineAfterImage(QTextDocument& doc, QTextCursor& cursor) {
 
     QTextCursor edit(cursor);
     edit.setPosition(photo.position() + photo.length() - 1);
-    edit.insertBlock(vspaceBlockFormat(*edit.document(), false, false), QTextCharFormat());
+    edit.insertBlock(vspaceBlockFormat(false, false), QTextCharFormat());
     cursor = edit;
     return true;
 }
@@ -1509,6 +1509,7 @@ QStringList codeLanguagesNear(const QTextDocument& doc, int blockNumber) {
 }
 
 bool leaveCodeBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+    (void)doc;   // документ берётся у курсора; подпись общая у всех операций
     if (!isCodeLine(cursor.block())) return false;
 
     // Пустая строка, а не пустой абзац: пустая строка в этой модели — блок
@@ -1517,7 +1518,7 @@ bool leaveCodeBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const QTextBlock last = lastCodeLine(cursor.block());
     QTextCursor edit(cursor);
     edit.setPosition(last.position() + last.length() - 1);
-    edit.insertBlock(vspaceBlockFormat(doc, false, false), QTextCharFormat());
+    edit.insertBlock(vspaceBlockFormat(false, false), QTextCharFormat());
     cursor = edit;
     return true;
 }
@@ -2243,7 +2244,7 @@ bool removeVSpaceAndMaybeJoin(QTextDocument& doc, QTextCursor& cursor, int gapNu
         edit.setPosition(after.position(), QTextCursor::KeepAnchor);
         edit.removeSelectedText();
         edit.setPosition(doc.findBlockByNumber(gapNumber).position());
-        edit.setBlockFormat(vspaceBlockFormat(doc, isVSpaceBlock(before), gapNumber == 0));
+        edit.setBlockFormat(vspaceBlockFormat(isVSpaceBlock(before), gapNumber == 0));
         normalise(doc, around(gapNumber));
         edit.endEditBlock();
         if (caretOnAfter && !fromGap) {
@@ -2711,7 +2712,7 @@ void insertVSpaceBefore(QTextDocument& doc, int number) {
 
     QTextCursor fix(&doc);
     fix.setPosition(doc.findBlockByNumber(number).position());
-    fix.setBlockFormat(vspaceBlockFormat(doc, false, number == 0));
+    fix.setBlockFormat(vspaceBlockFormat(false, number == 0));
 }
 
 }  // namespace

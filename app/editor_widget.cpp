@@ -388,15 +388,14 @@ void NoteEditor::tidyLeftLine(const QTextCursor& left) {
         edit.setPosition(block.position() + from, QTextCursor::KeepAnchor);
         edit.removeSelectedText();
         edit.movePosition(QTextCursor::EndOfBlock);
-        edit.insertBlock(vspaceBlockFormat(*document(), false, false));
+        edit.insertBlock(vspaceBlockFormat(false, false));
         const BlockRange range{qMax(0, block.blockNumber() - 1), block.blockNumber() + 2};
         syncGaps(*document(), range);
         syncLists(*document(), range);
         applyListGeometry(*document(), range);
     } else if (after.text().isEmpty() && kind == Kind::Paragraph) {
         // Строка (и весь блок) опустела: это настоящая пустая строка.
-        edit.setBlockFormat(vspaceBlockFormat(*document(),
-                                              after.previous().isValid() &&
+        edit.setBlockFormat(vspaceBlockFormat(after.previous().isValid() &&
                                                   isVSpaceBlock(after.previous()),
                                               after.blockNumber() == 0));
         const BlockRange range{qMax(0, after.blockNumber() - 1), after.blockNumber() + 1};
@@ -474,6 +473,7 @@ void NoteEditor::installSession(NoteSession session) {
     setDocument(note_.document.get());
     connectDocument();
     retireDocument(std::move(previous));
+    restoreScale();   // документ подменён — масштаб приехал не с ним
     applyContentWidth();
 
     // Каретка и ВЫДЕЛЕНИЕ: сперва свободный конец, потом каретка с
@@ -515,6 +515,7 @@ void NoteEditor::installDocument(std::unique_ptr<QTextDocument> doc) {
     setDocument(note_.document.get());
     connectDocument();
     retireDocument(std::move(previous));
+    restoreScale();   // документ подменён — масштаб приехал не с ним
     // Курсоры, державшиеся за прежний документ, теперь ни на что не указывают.
     note_.lastLine = QTextCursor();
     note_.dirty = QTextCursor();
@@ -866,8 +867,22 @@ void NoteEditor::restoreDamagedMeta() {
 
 void NoteEditor::applyZoom(qreal value) {
     if (value == zoom()) return;
+    // МАСШТАБ — ЭТО ОДИН setDefaultFont, а не пересборка.
+    //
+    // Раньше здесь стоял refreshAppearance(), то есть полная сборка документа
+    // заново — и она же всё ломала: сборщик ставит документу БАЗОВЫЙ кегль,
+    // ничего не зная о масштабе, так что применить его было некому. Текст
+    // стоял, а маркеры и фотографии, которые вид рисует сам, ехали от zoom_ —
+    // отсюда и «зум не работает вообще».
+    //
+    // Пересборка вдобавок стоит 151 мс против 34.7 мс на смену шрифта и чистит
+    // стек отмены (замеры — zametti-bench zoom). Ничего из этого масштабу не
+    // нужно: абсолютных кеглей в документе нет, размеры знаков заданы ступенями
+    // от его шрифта.
     NoteView::setZoom(value);
-    refreshAppearance();
+    applyContentWidth();
+    syncTables();
+    syncFormulas();
 }
 
 void NoteEditor::refreshAppearance() {
@@ -1165,7 +1180,11 @@ void NoteEditor::rebuild(const std::vector<Piece>& doc, int cursor, const ViewAn
     // меняется при обычной правке один блок. Облик и масштаб задают каждый
     // блок, а не только изменившиеся, — при их смене заплатка не годится.
     bool patched = false;
-    if (note_.builtValid && note_.builtZoom == zoom()) {
+    // Масштаба в этом условии больше нет: он не запечён в документе вовсе —
+    // сборщик ставит базовый кегль, а масштаб кладётся поверх шрифтом. Пока
+    // условие помнило про масштаб, первая правка после Ctrl+= отказывалась от
+    // заплатки и шла полной сборкой в 151 мс.
+    if (note_.builtValid) {
         std::vector<Piece> read;
         if (current == nullptr) {
             read = piecesOf(*document());
@@ -1174,9 +1193,12 @@ void NoteEditor::rebuild(const std::vector<Piece>& doc, int cursor, const ViewAn
         patched = patchDocument(note_.built, *current, doc, *document());
     }
     if (!patched) buildDocument(doc, *document());
+    // Сборщик поставил документу базовый кегль — масштаб ему возвращаем мы.
+    // Заплатка шрифта не трогает, но звать здесь всё равно дешевле, чем помнить
+    // о двух путях: setZoom сравнивает шрифт и на совпадении ничего не делает.
+    restoreScale();
     note_.built = doc;
     note_.builtValid = true;
-    note_.builtZoom = zoom();
 
     // Слова и строки — здесь и только здесь (плюс запись на диск). Считаем
     // ОБХОДОМ ЖИВОГО ДОКУМЕНТА: он только что собран, и брать числа больше
@@ -1897,7 +1919,7 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
                 if (!block.isValid()) return false;
                 QTextCursor edit(&doc);
                 edit.setPosition(block.position() + block.length() - 1);
-                edit.insertBlock(vspaceBlockFormat(doc, false, false), QTextCharFormat());
+                edit.insertBlock(vspaceBlockFormat(false, false), QTextCharFormat());
                 at = edit;
                 return true;
             });
