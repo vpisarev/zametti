@@ -194,6 +194,22 @@ add_test(NAME document-only-for-showing
                  "-DSOURCE_DIRS=${CMAKE_SOURCE_DIR}/zametti-core;${CMAKE_SOURCE_DIR}/app;${CMAKE_SOURCE_DIR}/store;${CMAKE_CURRENT_SOURCE_DIR}"
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/get_document_check.cmake)
 
+# ПАДЕНИЙ НЕ БЫВАЕТ. НИКОГДА (правило владельца в CLAUDE.md).
+#
+# `zametti --check` — приведение к канону из командной строки. Оно идёт через
+# сборку живого документа, а сборщик спрашивает метрики шрифта, то есть
+# требует QGuiApplication. Пока в коде стояло обещание «этот режим не требует
+# дисплея», приложение падало с core dump на первом же файле.
+#
+# Юнит-тест этого не поймает: в наборах QApplication есть всегда. Ловить может
+# только запуск самой программы, и именно БЕЗ заданной платформы — иначе
+# проверялась бы переменная окружения, а не программа. Файл заведомо
+# канонический, так что ноль значит «прошло», а не «повезло».
+add_test(NAME canon-without-display
+         COMMAND zametti --check ${CMAKE_CURRENT_SOURCE_DIR}/канон-без-дисплея.md)
+set_tests_properties(canon-without-display PROPERTIES
+                     ENVIRONMENT "QT_QPA_PLATFORM=;WAYLAND_DISPLAY=;DISPLAY=")
+
 # При СТАТИЧЕСКОМ Qt исполняемому файлу нужен ещё и плагин платформы, а вписать
 # его в компоновку должен кто-то знающий. Знает Qt.
 if(Qt6_FOUND AND NOT ZAMETTI_QT_SHARED)

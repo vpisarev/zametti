@@ -265,22 +265,43 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Ни --dump-config, ни --check не должны требовать дисплея: они работают в
-    // конвейерах и в CI.
+    // --dump-config печатает готовый JSON и ни о чём Qt не спрашивает.
     if (dumpConfig) {
         const QByteArray json = zametti::defaultAppearanceJson();
         std::fwrite(json.constData(), 1, size_t(json.size()), stdout);
         return 0;
     }
+
+    // ДИСПЛЕЙ НУЖЕН ДАЖЕ --check. Приведение к канону идёт через сборку живого
+    // документа, а сборщик спрашивает метрики шрифта, то есть требует
+    // QGuiApplication. Раньше здесь стояло обещание «не требует дисплея», и
+    // --check падал с core dump на первом же файле.
+    //
+    // zametti — программа с окном, и это нормально. Ненормально было падение:
+    // в конвейере и в CI дисплея нет, поэтому под --check платформу задаём
+    // сами. ТОЛЬКО под --check: обычному запуску платформу выбирает Qt, и
+    // навязанный offscreen оставил бы человека без окна. Заданную снаружи не
+    // перебиваем и здесь — иначе приёмочные снимки под Xvfb молча уехали бы в
+    // offscreen.
+    // Спрашиваем именно «пуста ли»: qEnvironmentVariableIsSet считает
+    // установленной и ПУСТУЮ переменную, а пустая платформа для Qt не платформа
+    // — он уходит в автоопределение и без дисплея падает. Поймал сторож
+    // canon-without-display.
+    if (check && qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
+        qputenv("QT_QPA_PLATFORM", "offscreen");
+
+    QApplication app(argc, argv);
+
     if (check) {
         if (path.isEmpty()) {
             printUsage();
             return 2;
         }
+        // Шрифты — до сборки: сборщик берёт метрики у семейств из настроек, и
+        // без влинкованных гарнитур Qt молча подставит свои.
+        zametti::loadEmbeddedFonts();
         return runCheck(path);
     }
-
-    QApplication app(argc, argv);
     // Оболочки рабочего стола (в том числе док GNOME) берут иконку не у окна, а
     // из .desktop-файла с этим именем — см. packaging/zametti.desktop.
     QGuiApplication::setDesktopFileName(QStringLiteral("zametti"));

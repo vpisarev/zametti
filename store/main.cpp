@@ -56,7 +56,10 @@ int main(int argc, char** argv) {
     //
     // Под условием, и это не педантизм: заданную снаружи платформу перебивать
     // нельзя, иначе приёмочные снимки под Xvfb молча уехали бы в offscreen.
-    if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORM"))
+    // Спрашиваем «пуста ли», а не «задана ли»: qEnvironmentVariableIsSet
+    // считает установленной и ПУСТУЮ переменную, а пустая платформа для Qt не
+    // платформа — он уходит в автоопределение и без дисплея падает.
+    if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
         qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(argc, argv);
     const QStringList args = app.arguments();
