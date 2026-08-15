@@ -33,6 +33,8 @@
 #include <QTextCharFormat>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QTextFrame>
+#include <QTextFrameFormat>
 #include <QAbstractTextDocumentLayout>
 #include <QImage>
 #include <QPainter>
@@ -357,6 +359,103 @@ int ztZoomProbe(int argc, char** argv) {
                         metrics.height(), metrics.lineSpacing());
             std::printf("                 шаг / 1.15 = %.3f\n", step / 1.15);
         }
+    }
+
+    // --- 7. ЧТО ИЗ НАШИХ ЗАПИСЕЙ ПОПАДАЕТ В СТЕК ОТМЕНЫ ---------------------
+    //
+    // Отмена у нас своя (снимки логических блоков), а штатный стек выключен, и
+    // довод записан один: «мы его загрязняем». Довод не проверен ни разу.
+    // Проверяем поимённо — по одной записи на строку, каждая на чистом
+    // документе, и смотрим, прибавилось ли шагов.
+    //
+    // Список взят не с потолка: это ровно те места, где ВИД пишет в документ,
+    // и каждое из них уже помечено в коде флагом changingLayout_.
+    {
+        std::printf("\n7. Что попадает в стек отмены (шагов было → стало)\n");
+
+        struct Probe {
+            const char* name;
+            void (*apply)(QTextDocument&);
+        };
+
+        const Probe probes[] = {
+            {"setDefaultFont (зум)",
+             [](QTextDocument& d) {
+                 QFont f = d.defaultFont();
+                 f.setPointSizeF(f.pointSizeF() * 1.5);
+                 d.setDefaultFont(f);
+             }},
+            {"setTextWidth (ширина колонки)", [](QTextDocument& d) { d.setTextWidth(300); }},
+            {"markContentsDirty",
+             [](QTextDocument& d) { d.markContentsDirty(0, d.characterCount()); }},
+            {"setIndentWidth", [](QTextDocument& d) { d.setIndentWidth(40); }},
+            {"rootFrame setFrameFormat (поля рамки, applyContentWidth)",
+             [](QTextDocument& d) {
+                 QTextFrameFormat f = d.rootFrame()->frameFormat();
+                 f.setLeftMargin(f.leftMargin() + 10);
+                 d.rootFrame()->setFrameFormat(f);
+             }},
+            {"setBlockFormat, ДРУГОЕ поле (syncImageSpace, syncGaps)",
+             [](QTextDocument& d) {
+                 QTextCursor c(d.firstBlock());
+                 QTextBlockFormat f = c.blockFormat();
+                 f.setBottomMargin(f.bottomMargin() + 10);
+                 c.setBlockFormat(f);
+             }},
+            {"setBlockFormat, ТО ЖЕ значение",
+             [](QTextDocument& d) {
+                 QTextCursor c(d.firstBlock());
+                 c.setBlockFormat(c.blockFormat());
+             }},
+            {"три setBlockFormat в одной скобке begin/endEditBlock",
+             [](QTextDocument& d) {
+                 QTextCursor c(&d);
+                 c.beginEditBlock();
+                 for (QTextBlock b = d.begin(); b.isValid(); b = b.next()) {
+                     QTextCursor at(b);
+                     QTextBlockFormat f = at.blockFormat();
+                     f.setTopMargin(f.topMargin() + 3);
+                     at.setBlockFormat(f);
+                 }
+                 c.endEditBlock();
+             }},
+        };
+
+        for (const Probe& one : probes) {
+            QTextDocument doc;
+            doc.setUndoRedoEnabled(true);
+            QTextCursor cursor(&doc);
+            cursor.insertText(QStringLiteral("первый абзац"));
+            cursor.insertBlock();
+            cursor.insertText(QStringLiteral("второй абзац"));
+            cursor.insertBlock();
+            cursor.insertText(QStringLiteral("третий абзац"));
+            doc.setTextWidth(400);
+            (void)doc.documentLayout()->documentSize();
+
+            const QString whole = doc.toPlainText();
+            const int before = doc.availableUndoSteps();
+            one.apply(doc);
+            const int after = doc.availableUndoSteps();
+
+            // ГЛАВНОЕ ЧИСЛО — не длина стека, а сколько раз человеку придётся
+            // нажать Ctrl+Z, прежде чем отмена доберётся до его собственного
+            // текста. Длина стека у Qt считает команды, а человек считает
+            // нажатия, и это разные числа.
+            int wasted = 0;
+            while (wasted < 20 && doc.isUndoAvailable()) {
+                doc.undo();
+                if (doc.toPlainText() != whole) break;   // добрались до текста
+                ++wasted;
+            }
+
+            std::printf("   %-56s %d → %-3d  %s\n", one.name, before, after,
+                        after > before
+                            ? (std::string("ЗАСОРИЛ: ") + std::to_string(wasted) +
+                               " нажатий Ctrl+Z впустую").c_str()
+                            : "чисто");
+        }
+        std::printf("   «чисто» значит: запись в стек не попала, Ctrl+Z её не видит.\n");
     }
 
     std::printf("\n");
