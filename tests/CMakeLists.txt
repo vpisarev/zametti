@@ -69,7 +69,6 @@ add_executable(zametti-tests
     config_test.cpp
     ops_test.cpp
     fuzz_ops_test.cpp
-    undo_test.cpp
     diff_test.cpp
     session_test.cpp
     search_test.cpp

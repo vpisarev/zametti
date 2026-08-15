@@ -817,8 +817,15 @@ void checkWideWindowOperations() {
     editor.openFile(path);
     QTest::qWait(20);
 
-    const qreal side = editor.document()->rootFrame()->frameFormat().leftMargin();
-    check(side > 60.0, "в широком окне колонка центрируется: поле рамки раздвинуто");
+    // ЦЕНТРИРОВАНИЕ МЕРЯЕТСЯ НА ЭКРАНЕ, а не в документе. Лишняя ширина широкого
+    // окна уходит теперь в поля ВЬЮПОРТА: класть её в документ нельзя, всякая
+    // запись формата попадает в штатный стек отмены, а перекладка окна шагом
+    // отмены быть не должна. В рамке остался только фиксированный отступ облика,
+    // который ставит сборщик.
+    const qreal side = editor.viewport()->x() +
+                       editor.document()->rootFrame()->frameFormat().leftMargin();
+    check(side > 60.0, "в широком окне колонка отодвинута от края: " +
+                           std::to_string(int(side)));
 
     // Enter в конце пункта — та самая операция, на которой падало.
     QTextCursor at(editor.document()->findBlockByNumber(1));
@@ -830,9 +837,10 @@ void checkWideWindowOperations() {
     check(editor.document()->blockCount() == 4, "Enter завёл новый пункт");
     checkEqual(QStringLiteral("15-21 декабря:"), firstLine(editor),
                "текст первой строки цел");
-    // И поля не сбились от заплатки: колонка осталась центрированной.
-    check(std::fabs(editor.document()->rootFrame()->frameFormat().leftMargin() - side) < 0.5,
-          "поля рамки после операции на месте");
+    // И колонка не сбилась от заплатки: осталась центрированной там же.
+    check(std::fabs(editor.viewport()->x() +
+                    editor.document()->rootFrame()->frameFormat().leftMargin() - side) < 0.5,
+          "колонка после операции на месте");
 }
 
 // Кэш заметок сессии. Возвращаясь в недавнюю заметку, человек застаёт её
@@ -1152,13 +1160,20 @@ void checkCodeTyping() {
     checkEqual(QStringLiteral("```\n    if x:\n    return 1\n```\n"), text(),
                "новая строка кода наследует отступ предыдущей");
 
-    // Enter вместе с отступом — один шаг отмены.
+    // ENTER ВМЕСТЕ С ОТСТУПОМ — ОДИН ШАГ ОТМЕНЫ, и спрашивается это прямо: сразу
+    // после Enter, не набирая ничего сверху.
+    //
+    // Прежняя редакция набирала после Enter ещё строку и жала Ctrl+Z дважды,
+    // считая, что второе нажатие дойдёт до Enter. Такой счёт держался на прежней
+    // цепочке снимков; со штатным стеком Qt он проверяет не то, что написано в
+    // заголовке проверки, а гранулярность набора — а её спрашивают отдельно.
+    const QString beforeEnter = text();
+    QTest::keyClick(&editor, Qt::Key_Return);
+    QTest::qWait(10);
+    check(text() != beforeEnter, "Enter в коде что-то изменил");
     QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
     QTest::qWait(10);
-    QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
-    QTest::qWait(10);
-    checkEqual(QStringLiteral("```\n    if x:\n```\n"), text(),
-               "Enter с отступом отменяется одним шагом");
+    checkEqual(beforeEnter, text(), "Enter с отступом отменяется одним шагом");
 }
 
 // Ctrl+E без выделения — не правка документа, а формат следующей буквы. Случай,
@@ -1715,7 +1730,9 @@ void checkEmptyNoteCaret() {
         QTest::qWait(20);
         started.setFocus();
         QTest::qWait(20);
-        check(started.cursorRect().x() > 100,
+        // cursorRect отсчитывается от вьюпорта, а его самого сдвигает
+        // центрирование колонки — складываем, чтобы получить место на экране.
+        check(started.viewport()->x() + started.cursorRect().x() > 100,
               "при запуске каретка пустой заметки стоит в колонке текста");
         check(started.cursorRect().height() > 15,
               "и высотой в строку, а не кеглем по умолчанию");

@@ -280,60 +280,40 @@ void NoteView::repaintOverNativeCaret(QPainter& painter) {
 }
 
 void NoteView::applyContentWidth() {
-    // ПОМЕТКА НА ВЕСЬ ВЫЗОВ, а не на одну запись. Первая же запись полей шлёт
-    // contentsChanged, по нему приходит textChanged, по нему зовётся
-    // syncImageSpace — и всё это случается ВНУТРИ нас. Узкая пометка вокруг
-    // одной строки такой вложенности не переживала.
-    const LayoutChange mark(this);
+    // ЦЕНТРИРОВАНИЕ КОЛОНКИ — ПОЛЯМИ ВЬЮПОРТА, А НЕ ДОКУМЕНТА.
+    //
+    // Боковое поле ставит СБОРЩИК, один раз (rootFrame, sideMargin × ширина
+    // «A»), — это настройка облика, и переделывать её незачем. Виду остаётся
+    // только лишняя ширина широкого окна, и класть её в документ нельзя: всякая
+    // запись формата попадает в штатный стек отмены (замерено: и setFrameFormat,
+    // и setDocumentMargin стоят одного нажатия Ctrl+Z), а перекладка окна шагом
+    // отмены быть не имеет права.
+    //
+    // Поля вьюпорта документа не касаются вовсе: он просто получает меньше
+    // места. Формула «сколько досталось колонке» от этого не меняется — в ней
+    // и так стоит ширина вьюпорта.
+    const qreal charUnit = QFontMetricsF(baseFont()).horizontalAdvance(QLatin1Char('A'));
+    const qreal side = document()->rootFrame()->frameFormat().leftMargin();
 
-    // Поля и предел ширины заданы в ширинах "A" — той же мерой, что и в
-    // сборщике документа, иначе при смене гарнитуры они разъехались бы.
-    const qreal charUnit =
-        QFontMetricsF(baseFont()).horizontalAdvance(QLatin1Char('A'));
-    const qreal side = appearance().sideMargin * charUnit;
-    qreal margin = side;
-
+    // Полная ширина, из которой раздаётся место: нынешний вьюпорт плюс то, что
+    // мы у него уже отняли. Считать по width() виджета нельзя — там ещё рамка и
+    // полоса прокрутки, и вышла бы обратная связь.
+    const int room = viewport()->width() + viewportMargin_ * 2;
+    int extra = 0;
     if (appearance().maxContentWidth > 0.0) {
         const qreal limit = appearance().maxContentWidth * charUnit;
-        const qreal extra = (viewport()->width() - 2 * side - limit) / 2;
-        if (extra > 0.0) margin = side + extra;
+        const qreal spare = (room - 2 * side - limit) / 2;
+        if (spare > 0.0) extra = int(spare);
     }
 
-    QTextFrame* root = document()->rootFrame();
-    QTextFrameFormat format = root->frameFormat();
-    // Сравнение с допуском, а не на равенство: иначе каждый вызов переразмечал
-    // бы документ заново.
-    if (std::fabs(format.leftMargin() - margin) < 0.01) {
-        // Поля на месте, но вызывают нас и после пересборки документа — а
-        // пересборка ставит нижние поля по нулям, и место под фотографии
-        // надо вернуть.
-        syncImageSpace();
-        return;
+    if (extra != viewportMargin_) {
+        viewportMargin_ = extra;
+        setViewportMargins(extra, 0, extra, 0);
+        // Пустой документ от смены полей не переразмечается: размечать в нём
+        // нечего. Каретка тогда остаётся у прежнего поля — в широком окне это
+        // выглядело как «в пустой заметке каретки нет вовсе».
+        document()->markContentsDirty(0, qMax(1, document()->characterCount()));
     }
-    format.setLeftMargin(margin);
-    format.setRightMargin(margin);
-    // ЗАПИСЬ ВИДА СВОЕГО ШАГА ОТМЕНЫ НЕ ЗАВОДИТ. Поля колонки — облик, а не
-    // содержимое, но документу они неотличимы от правки текста, и Qt честно
-    // кладёт их в стек: после Ctrl+= одно нажатие Ctrl+Z уходило на перекладку
-    // полей, не трогая текста.
-    //
-    // joinPreviousEditBlock дописывает их в ту команду, что уже лежит сверху, —
-    // ровно как чинится набор в onContentsChanged. Долг остаётся названным: по
-    // существу поля колонки вообще не должны жить в документе, им место на
-    // стороне вида (setTextWidth в стек не попадает — замерено).
-    QTextCursor join(document());
-    join.joinPreviousEditBlock();
-    root->setFrameFormat(format);
-    // Пустой документ от смены полей не переразмечается: размечать в нём нечего.
-    // Каретка тогда остаётся у прежнего поля и кеглем по умолчанию — в широком
-    // окне это выглядело как «в пустой заметке каретки нет вовсе». Просим
-    // разметить блок явно.
-    //
-    // Именно здесь, а не при пересборке: при запуске заметка открывается ещё до
-    // show(), в узком окне, и колонку двигает уже первое изменение размера —
-    // пересборки при этом нет вовсе.
-    document()->markContentsDirty(0, qMax(1, document()->characterCount()));
-    join.endEditBlock();
 
     // Ширина колонки сменилась — фотографии могли стать шире или уже колонки,
     // и место под них надо перемерить.

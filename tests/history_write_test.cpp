@@ -22,6 +22,7 @@
 #include "testdata.h"
 
 #include <QApplication>
+#include <QKeyEvent>
 #include <QDir>
 #include <QFile>
 #include <QDateTime>
@@ -165,11 +166,16 @@ void checkNoEqualNeighbours() {
 // Печатаем по одной букве курсором РЕДАКТОРА: правка чужим курсором не двигает
 // каретку, и для разбора границ это совсем другой случай (на этом я сперва и
 // намерил ерунду).
+// НАБОР — НАСТОЯЩИМИ НАЖАТИЯМИ, а не вставкой курсором.
+//
+// Прежняя редакция писала прямо в документ через QTextCursor, и это перестало
+// быть набором: граница шага отмены живёт теперь во вводе (NoteEditor::insertTyped),
+// а вставка мимо него — один сплошной шаг Qt. Проверка «отмена по словам» на
+// такой подделке спрашивала не то, что заявлено в её имени.
 void typeText(zametti::NoteEditor& editor, const QString& text) {
     for (const QChar ch : text) {
-        QTextCursor caret = editor.textCursor();
-        caret.insertText(QString(ch));
-        editor.setTextCursor(caret);
+        QKeyEvent press(QEvent::KeyPress, Qt::Key_unknown, Qt::NoModifier, QString(ch));
+        QApplication::sendEvent(&editor, &press);
     }
 }
 
@@ -533,11 +539,11 @@ void checkHistoryLeavesUndoStackAlone() {
     ZT_TRUE("шагов отмены набралось: " + std::to_string(stepsBefore), stepsBefore >= 3);
 
     ZT_TRUE("вошли в историю", editor.enterHistory());
-    // В режиме истории цепочка отмены СВОЯ и пустая: живая отложена целиком.
-    // Пустая — это единица: в цепочке всегда лежит опорный шаг, с которого
-    // отменять уже некуда.
-    ZT_TRUE("в слепке своя пустая цепочка: " + std::to_string(editor.undoSteps()),
-            editor.undoSteps() == 1);
+    // В режиме истории стек отмены СВОЙ и пустой: живая заметка отложена
+    // целиком. Пустой — это ноль: у штатного стека Qt опорного шага нет, он
+    // просто пуст (у прежней цепочки снимков в основании всегда лежал один).
+    ZT_TRUE("в слепке свой пустой стек: " + std::to_string(editor.undoSteps()),
+            editor.undoSteps() == 0);
     editor.leaveHistory();
 
     ZT_TRUE("вернулись с той же цепочкой: было " + std::to_string(stepsBefore) + ", стало " +

@@ -77,7 +77,6 @@ add_library(zametti-core STATIC
     doc/doc_model.h             doc/doc_model.cpp
     doc/document_builder.h      doc/document_builder.cpp
     doc/document_saver.h        doc/document_saver.cpp
-    doc/edit_history.h          doc/edit_history.cpp
     doc/editor_ops.h            doc/editor_ops.cpp
     doc/export_note.h           doc/export_note.cpp
     doc/marker.h                doc/marker.cpp

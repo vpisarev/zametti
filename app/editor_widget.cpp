@@ -145,6 +145,11 @@ NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
 
     autosave_.setSingleShot(true);
     connect(&autosave_, &QTimer::timeout, this, [this] { save(true); });
+    // ТИШИНА ТОЖЕ КОНЧАЕТ СЕРИЮ НАБОРА — четвёртое правило границы, и оно
+    // единственное, которое не выводится из самого текста. Отмерив паузу,
+    // просто помечаем серию оборванной: следующая буква откроет новый шаг.
+    typingPause_.setSingleShot(true);
+    connect(&typingPause_, &QTimer::timeout, this, [this] { note_.runBroken = true; });
     connectDocument();
     connect(&watcher_, &QFileSystemWatcher::fileChanged, this, &NoteEditor::onFileChanged);
     externalSettle_.setSingleShot(true);
@@ -2096,6 +2101,7 @@ bool NoteEditor::insertTyped(const QString& text, Qt::KeyboardModifiers modifier
     note_.runBroken = false;
     for (const QChar c : text)
         if (c.isSpace() || c.isPunct() || c == QChar::ParagraphSeparator) note_.runBroken = true;
+    typingPause_.start(appearance().undoCoalesceMs);
     return true;
 }
 
