@@ -156,9 +156,10 @@ ZamettiDocument (см. `zametti_qtextdocument_design.md`); история — ж
 - `zametti_qtextdocument_design.md` — дизайн единой модели (после
   рефакторинга).
 - `zametti-refactoring1.md` — план рефакторинга и порядок включения тестов;
-  `zametti-refactor1-report.md`, `-report2.md`, `-report3.md` — что сделано в
-  первую, вторую и третью сессии (в третьей снесено промежуточное
-  представление: `ir.h` больше нет).
+  `zametti-refactor1-report.md`, `-report2.md`, `-report3.md`, `-report4.md` —
+  что сделано в первую, вторую, третью и четвёртую сессии (в третьей снесено
+  промежуточное представление: `ir.h` больше нет; в четвёртой починен масштаб и
+  отмена стала штатной, а показ объектов временно снят — см. `kObjectsShown`).
 - `zametti-editing-mvc.md` — кто за что отвечает при правке: вид сообщает о
   вводе, controller распознаёт намерение, ZDocument выполняет изменение.
 - `zametti-editing-basis.md` — **план следующей сессии**: базис из 8 операций
