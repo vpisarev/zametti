@@ -10,12 +10,22 @@
 //
 //   Ctrl+L   доля от естественной → естественная → пиксели → доля …
 //   Ctrl+R   зум шрифтом ↔ зум пересборкой (как сегодня в программе)
+//   Ctrl+B   блок кода: построчно ↔ ОДНИМ QTextBlock (опыт, см. ниже)
 //   Ctrl+=   крупнее      Ctrl+−   мельче      Ctrl+0   сто процентов
 //
 // Ctrl+R и есть главный переключатель. «Шрифтом» — это один setDefaultFont:
 // документ не трогается вовсе, но геометрия (маркеры, отступы, плашка кода)
 // собрана в единице и с места не сходит. «Пересборкой» — сегодняшний путь:
 // едет всё, но документ собирается заново на каждый шаг масштаба.
+//
+// ОПЫТ ПРО БЛОК КОДА (Ctrl+B). Обычно литеральное содержимое режется по
+// QTextBlock на строку — так набор внутри длинного блока кода не заставляет Qt
+// переразмечать его целиком. В просмотрщике набора нет вовсе, и вопрос стоит
+// обратный: во что обходятся тысячи блоков вместо сотен при вёрстке, прокрутке
+// и Ctrl+=. С ключом блок кода становится ОДНИМ QTextBlock, а переводы строк
+// внутри — разделителями U+2028, теми же, какими живёт мягкий перенос в абзаце.
+//
+// Числа печатаются в stdout на каждую пересборку и на каждый шаг масштаба.
 //
 // Способ и масштаб написаны в заголовке окна.
 //
@@ -25,6 +35,7 @@
 #include "note_view.h"
 
 #include "document_builder.h"
+#include "document_pieces.h"
 #include "editor_ops.h"
 #include "serializer.h"
 #include "resources.h"
@@ -37,6 +48,13 @@
 #include <QImage>
 #include <QTextCursor>
 #include <QTextDocument>
+
+#include <QAbstractTextDocumentLayout>
+#include <QElapsedTimer>
+#include <QScrollBar>
+#include <QTextBlock>
+
+#include <algorithm>
 
 #include <cstdio>
 #include <string>
@@ -82,6 +100,10 @@ protected:
                     byRebuild_ = !byRebuild_;
                     rebuild();
                     return;
+                case Qt::Key_B:
+                    codeAsOneBlock_ = !codeAsOneBlock_;
+                    rebuild();
+                    return;
                 default:
                     break;
             }
@@ -107,11 +129,26 @@ private:
         QFont base{QString(look.fontFamily)};
         base.setPointSizeF(basePoint_ * scale_);
         base.setStyleHint(QFont::Monospace);
+
+        // ЗАМЕР ЦЕНЫ ШАГА МАСШТАБА. Отдельно шрифт (он же полная переразметка
+        // документа) и отдельно то, что делаем мы поверх: ширина колонки,
+        // сетки таблиц, места формул.
+        QElapsedTimer timer;
+        timer.start();
         document()->setDefaultFont(base);
+        const qreal size = document()->documentLayout()->documentSize().height();
+        const qint64 fontUs = timer.nsecsElapsed() / 1000;
+        timer.restart();
         setZoom(1.0);   // геометрия собрана в единице и за шрифтом не идёт
         applyContentWidth();
         syncTables();
         syncFormulas();
+        const qint64 afterUs = timer.nsecsElapsed() / 1000;
+        std::printf("масштаб %3d %%: шрифт+вёрстка %6lld мкс, наше поверх %6lld мкс, "
+                    "высота %.0f\n",
+                    int(scale_ * 100.0 + 0.5), static_cast<long long>(fontUs),
+                    static_cast<long long>(afterUs), double(size));
+        std::fflush(stdout);
         showState();
     }
 
@@ -149,23 +186,47 @@ private:
         auto* fresh = new QTextDocument(this);
         std::vector<zametti::Piece> blocks;
         zametti::NoteHeader ignored;
+
+        QElapsedTimer timer;
+        timer.start();
         zametti::parsePieces(source, blocks, ignored);
-        zametti::buildDocument(blocks, *fresh);
+        const qint64 parseUs = timer.nsecsElapsed() / 1000;
+
+        timer.restart();
+        zametti::buildDocument(blocks, *fresh, {codeAsOneBlock_});
+        const qint64 buildUs = timer.nsecsElapsed() / 1000;
+        if (canonical_.empty()) canonical_ = zametti::writePieces(blocks);
+
         setDocument(fresh);
         setZoom(byRebuild_ ? scale_ : 1.0);
         applyContentWidth();
         syncTables();
         syncFormulas();
+
+        timer.restart();
+        const qreal height = document()->documentLayout()->documentSize().height();
+        const qint64 layoutUs = timer.nsecsElapsed() / 1000;
+
+        std::printf("--- блок кода %s: логических блоков %zu, QTextBlock %d, знаков %d\n"
+                    "    разбор %6lld мкс, сборка %6lld мкс, вёрстка %6lld мкс, высота %.0f\n",
+                    codeAsOneBlock_ ? "ОДНИМ QTextBlock" : "построчно", blocks.size(),
+                    document()->blockCount(), document()->characterCount(),
+                    static_cast<long long>(parseUs), static_cast<long long>(buildUs),
+                    static_cast<long long>(layoutUs), double(height));
+        std::fflush(stdout);
+
         showState();
         rebuilding_ = false;
     }
 
     void showState() {
         setWindowTitle(
-            QStringLiteral("%1 — высота строки: %2 — зум: %3 — масштаб %4 %")
+            QStringLiteral("%1 — высота строки: %2 — зум: %3 — код: %4 — масштаб %5 %")
                 .arg(QFileInfo(path_).fileName())
                 .arg(QString::fromUtf8(modeName(zametti::appearance().lineHeightMode)))
                 .arg(byRebuild_ ? QStringLiteral("пересборкой") : QStringLiteral("шрифтом"))
+                .arg(codeAsOneBlock_ ? QStringLiteral("одним блоком")
+                                     : QStringLiteral("построчно"))
                 .arg(int(scale_ * 100.0 + 0.5)));
     }
 
@@ -218,19 +279,167 @@ public:
         }
     }
 
+    // ГЛАВНОЕ, А НЕ ЧИСЛА: пережил ли круг «документ → файл» смену способа.
+    // Разделители U+2028 помечены BreakSourceProperty, и читатель обязан
+    // вернуть из них перевод строки — то есть байты файла не меняются вовсе.
+    void checkRoundTrip() {
+        std::vector<zametti::Piece> back;
+        zametti::walkPieces(*document(), [&](const zametti::Piece& piece) {
+            back.push_back(piece);
+            return true;
+        });
+        const std::string written = zametti::writePieces(back);
+        if (written == canonical_) {
+            std::printf("    круг «документ → файл» сходится побайтово (%zu Б)\n",
+                        written.size());
+            return;
+        }
+        size_t at = 0;
+        while (at < written.size() && at < canonical_.size() && written[at] == canonical_[at]) ++at;
+        std::printf("    КРУГ РАЗОШЁЛСЯ на байте %zu: ждали [%s] вышло [%s]\n", at,
+                    canonical_.substr(at, 40).c_str(), written.substr(at, 40).c_str());
+    }
+
+    // Снимок в память — чтобы сравнить два способа попиксельно.
+    QImage frameNow() {
+        QImage frame(size(), QImage::Format_ARGB32);
+        frame.fill(Qt::white);
+        render(&frame);
+        return frame;
+    }
+
+    // ПОПИКСЕЛЬНАЯ СВЕРКА ДВУХ СПОСОБОВ. Числа числами, а вопрос владельца был
+    // про показ: одинаково ли выглядит. Идём по документу экранами и на каждом
+    // рисуем оба способа в картинку одного размера.
+    void compareModes(const QString& dir) {
+        int worstAt = -1;
+        int worstChannel = 0;
+        qint64 worstPixels = 0;
+        qint64 totalDiff = 0;
+        int frames = 0;
+
+        codeAsOneBlock_ = false;
+        rebuild();
+        const int step = qMax(1, height() - 40);
+        const int last = verticalScrollBar()->maximum();
+
+        for (int at = 0; at <= last; at += step) {
+            codeAsOneBlock_ = false;
+            rebuild();
+            verticalScrollBar()->setValue(at);
+            QCoreApplication::processEvents();
+            const QImage a = frameNow();
+
+            codeAsOneBlock_ = true;
+            rebuild();
+            verticalScrollBar()->setValue(at);
+            QCoreApplication::processEvents();
+            const QImage b = frameNow();
+
+            ++frames;
+            qint64 differing = 0;
+            int maxChannel = 0;
+            for (int y = 0; y < a.height() && y < b.height(); ++y)
+                for (int x = 0; x < a.width() && x < b.width(); ++x) {
+                    const QRgb p = a.pixel(x, y);
+                    const QRgb q = b.pixel(x, y);
+                    if (p == q) continue;
+                    ++differing;
+                    maxChannel = qMax(maxChannel,
+                                      qMax(qAbs(qRed(p) - qRed(q)),
+                                           qMax(qAbs(qGreen(p) - qGreen(q)),
+                                                qAbs(qBlue(p) - qBlue(q)))));
+                }
+            if (differing > 0)
+                std::printf("  прокрутка %6d: точек %5lld, наибольшее отличие канала %d\n", at,
+                            static_cast<long long>(differing), maxChannel);
+            totalDiff += differing;
+            // Худшим считаем экран с самым ЗАМЕТНЫМ отличием, а не с самым
+            // частым: сотня точек, разошедшихся на один уровень серого, — это
+            // сглаживание, а десяток на сто десять видно глазом.
+            if (maxChannel > worstChannel ||
+                (maxChannel == worstChannel && differing > worstPixels)) {
+                worstChannel = maxChannel;
+                worstPixels = differing;
+                worstAt = at;
+                if (!dir.isEmpty()) {
+                    a.save(dir + QStringLiteral("/построчно.png"));
+                    b.save(dir + QStringLiteral("/одним-блоком.png"));
+                }
+            }
+        }
+        const qint64 area = qint64(width()) * height();
+        std::printf("экранов %d, точек на экране %lld: расхождений всего %lld; "
+                    "самое заметное — канал %d, точек %lld (прокрутка %d)\n",
+                    frames, static_cast<long long>(area), static_cast<long long>(totalDiff),
+                    worstChannel, static_cast<long long>(worstPixels), worstAt);
+        std::fflush(stdout);
+    }
+
     void selectAll() {
         QTextCursor whole(document());
         whole.movePosition(QTextCursor::End, QTextCursor::KeepAnchor);
         setTextCursor(whole);
     }
 
+    // ЗАМЕР ОБОИХ СПОСОБОВ НА ОДНОМ ФАЙЛЕ. Меряется то, за что платит
+    // просмотрщик: сборка, вёрстка, шаг масштаба и КАДР ПРОКРУТКИ.
+    //
+    // Кадр — это render() в картинку того же размера, что окно: рисует ровно
+    // тот код, что и на экране. Прокрутка идёт сверху вниз по одному экрану,
+    // чтобы ленивая разметка Qt успела коснуться всего документа.
+    void bench(bool oneBlock) {
+        codeAsOneBlock_ = oneBlock;
+        setScale(1.0);
+        rebuild();
+        checkRoundTrip();
+
+        // Шаги масштаба: пять вверх и пять вниз, по одному замеру на шаг —
+        // печатает сам setScale.
+        std::printf("    шаги масштаба:\n");
+        for (int i = 0; i < 5; ++i) setScale(scale_ * zametti::appearance().zoomStep);
+        for (int i = 0; i < 5; ++i) setScale(scale_ / zametti::appearance().zoomStep);
+        setScale(1.0);
+
+        // Кадры прокрутки.
+        QImage frame(size(), QImage::Format_ARGB32);
+        QScrollBar* bar = verticalScrollBar();
+        const int step = qMax(1, height() - 40);
+        const int last = bar->maximum();
+        QList<qint64> frames;
+        for (int at = 0; at <= last; at += step) {
+            bar->setValue(at);
+            QCoreApplication::processEvents();
+            frame.fill(Qt::white);
+            QElapsedTimer timer;
+            timer.start();
+            render(&frame);
+            frames.append(timer.nsecsElapsed() / 1000);
+        }
+        bar->setValue(0);
+        if (frames.isEmpty()) return;
+        std::sort(frames.begin(), frames.end());
+        qint64 total = 0;
+        for (qint64 one : frames) total += one;
+        std::printf("    кадров %lld: медиана %lld мкс, худший %lld мкс, всего %lld мс\n",
+                    static_cast<long long>(frames.size()),
+                    static_cast<long long>(frames.at(frames.size() / 2)),
+                    static_cast<long long>(frames.last()),
+                    static_cast<long long>(total / 1000));
+        std::fflush(stdout);
+    }
+
 private:
     QString path_;
+    // Канон файла, как его пишет обычный путь: с ним сверяется круг после
+    // смены способа сборки.
+    std::string canonical_;
     qreal scale_ = 1.0;
     // Кегль облика, как он записан в настройках. Зум пересборкой его двигает,
     // и без запомненного значения масштаб копился бы сам на себе.
     qreal basePoint_ = zametti::appearance().baseFontPoint;
     bool byRebuild_ = false;
+    bool codeAsOneBlock_ = false;
     bool rebuilding_ = false;
 };
 
@@ -244,7 +453,10 @@ int main(int argc, char** argv) {
         std::fprintf(stderr,
                      "как звать: zametti-peek <файл.md>\n"
                      "  Ctrl+=/Ctrl+−  масштаб, Ctrl+0 — сто процентов\n"
-                     "  Ctrl+L         чем задана высота строки\n");
+                     "  Ctrl+L         чем задана высота строки\n"
+                     "  Ctrl+R         зум шрифтом ↔ пересборкой\n"
+                     "  Ctrl+B         блок кода построчно ↔ одним QTextBlock\n"
+                     "  --bench        замер обоих способов и выход\n");
         return 2;
     }
 
@@ -279,6 +491,22 @@ int main(int argc, char** argv) {
             }
         }
         std::printf("снимки: %s\n", qPrintable(dir));
+        return 0;
+    }
+
+    // Замером и выйти: zametti-peek файл.md --bench
+    if (argc >= 3 && QString::fromLocal8Bit(argv[2]) == QLatin1String("--bench")) {
+        peek.show();
+        QCoreApplication::processEvents();
+        for (bool oneBlock : {false, true, false, true}) peek.bench(oneBlock);
+        return 0;
+    }
+
+    // Сверкой показа и выйти: zametti-peek файл.md --compare [каталог]
+    if (argc >= 3 && QString::fromLocal8Bit(argv[2]) == QLatin1String("--compare")) {
+        peek.show();
+        QCoreApplication::processEvents();
+        peek.compareModes(argc >= 4 ? QString::fromLocal8Bit(argv[3]) : QString());
         return 0;
     }
 

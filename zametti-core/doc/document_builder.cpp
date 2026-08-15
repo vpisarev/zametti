@@ -329,6 +329,8 @@ struct BuildContext {
     qreal lineUnit = 0.0;
     qreal charUnit = 0.0;
     CodePlate plate;
+    // Опыт просмотрщика, см. BuildOptions в заголовке.
+    bool codeAsOneBlock = false;
 };
 
 BuildContext contextFor() {
@@ -394,7 +396,13 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     // Литеральное содержимое режется построчно, по QTextBlock на строку:
     // Qt переразмечает целиком тот блок, в который пишут, и длинный блок
     // кода делал набор внутри себя ощутимо медленным.
+    //
+    // Ключ опыта снимает это ТОЛЬКО с блока кода: дословный кусок остаётся
+    // построчным. Внутри одного блока строки разделяет U+2028, и это тот же
+    // разделитель, каким живёт мягкий перенос в абзаце, — читатель вернёт из
+    // него перевод строки по пометке BreakSourceProperty.
     const bool literal = raw || b.kind == Kind::Code;
+    const bool wholeCode = ctx.codeAsOneBlock && !raw && b.kind == Kind::Code;
     const std::string_view source = b.text;
     // Один завершающий перевод строки снимаем: иначе внизу висела бы лишняя
     // пустая строка. По виду документа его не восстановить — пустой блок
@@ -499,8 +507,8 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     // Все, кроме первого, помечены продолжением: без этого разрезанный блок
     // кода из двух строк не отличить от двух блоков кода подряд.
     const std::vector<std::string_view> lines =
-        literal ? splitLiteralLines(source) : std::vector<std::string_view>{};
-    const size_t count = literal ? lines.size() : 1;
+        (literal && !wholeCode) ? splitLiteralLines(source) : std::vector<std::string_view>{};
+    const size_t count = (literal && !wholeCode) ? lines.size() : 1;
 
     for (size_t line = 0; line < count; ++line) {
         QTextBlockFormat lineFmt = blockFmt;
@@ -523,7 +531,16 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
         // разметка переносов посчитаны один раз выше, и трогать их нельзя.
         if (literal) {
             breaks.clear();
-            text = toQt(lines[line], breaks);
+            if (wholeCode) {
+                // Тот же завершающий перевод строки, что снимает
+                // splitLiteralLines: он не начинает новую строку, а завершает
+                // последнюю, и держится признаком, а не байтом.
+                std::string_view body = source;
+                if (!body.empty() && body.back() == '\n') body.remove_suffix(1);
+                text = toQt(body, breaks);
+            } else {
+                text = toQt(lines[line], breaks);
+            }
         }
 
         if (reuse) {
@@ -545,14 +562,16 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
 
 }  // namespace
 
-void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target) {
+void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target,
+                   BuildOptions options) {
     target.setUndoRedoEnabled(false);
     target.clear();
     // Поля задаются рамкой корневого фрейма, а не documentMargin: тот кладёт
     // одинаковый отступ со всех сторон, а по бокам нужно заметно больше.
     target.setDocumentMargin(0);
 
-    const BuildContext ctx = contextFor();
+    BuildContext ctx = contextFor();
+    ctx.codeAsOneBlock = options.codeAsOneBlock;
     target.setDefaultFont(ctx.base);
     // Стоп табуляции — тот же, которым Tab ставит пробелы (editor.codeTabWidth).
     // Иначе набранное нами и литеральные табы из старых файлов рисовались бы
