@@ -33,6 +33,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QFile>
+#include <QImage>
 #include <QFontMetricsF>
 #include <QTest>
 #include <QTextBlock>
@@ -87,6 +88,16 @@ qreal documentHeight(const zametti::NoteEditor& editor) {
     return editor.document()->documentLayout()->documentSize().height();
 }
 
+// Снимок как артефакт приёмки. Числа отвечают на вопрос «поехало ли», но не на
+// вопрос «хорошо ли это выглядит»: поля блоков испечены в единице и за шрифтом
+// не идут, и решать, беда это или нет, владелец будет глазами.
+void shoot(zametti::NoteEditor& editor, const QString& dir, const QString& name) {
+    const QImage shot = editor.grab().toImage();
+    const QString path = dir + QLatin1Char('/') + name;
+    if (!shot.save(path)) std::printf("  НЕ СОХРАНИЛСЯ снимок %s\n", qPrintable(path));
+    else std::printf("  снимок: %s\n", qPrintable(path));
+}
+
 }  // namespace
 
 static int ztRunSuite(int argc, char** argv) {
@@ -121,11 +132,13 @@ static int ztRunSuite(int argc, char** argv) {
     ZT_TRUE("на 100 % есть что мерить: высота строки", unitAt100 > 1.0);
     ZT_TRUE("на 100 % есть что мерить: высота документа", heightAt100 > 1.0);
     ZT_TRUE("на 100 % есть что мерить: колонка маркера", markerAt100 > 1.0);
+    shoot(editor, dir, QStringLiteral("масштаб-100.png"));
 
     // --- 1. РАСТЁТ ЛИ ТЕКСТ ------------------------------------------------
     editor.applyZoom(step);
     QTest::qWait(20);
 
+    shoot(editor, dir, QStringLiteral("масштаб-110.png"));
     const qreal unitBig = textUnit(editor);
     const qreal heightBig = documentHeight(editor);
     ZT_TRUE("Ctrl+=: шрифт документа стал крупнее", unitBig > unitAt100 * 1.02);
@@ -161,6 +174,14 @@ static int ztRunSuite(int argc, char** argv) {
     editor.applyZoom(1.0 / step);
     QTest::qWait(20);
     ZT_TRUE("Ctrl+−: шрифт документа стал мельче", textUnit(editor) < unitAt100 * 0.98);
+
+    // Крайние ступени — тоже на снимок: ритм полей виден только на них.
+    editor.applyZoom(1.5);
+    QTest::qWait(20);
+    shoot(editor, dir, QStringLiteral("масштаб-150.png"));
+    editor.applyZoom(2.0);
+    QTest::qWait(20);
+    shoot(editor, dir, QStringLiteral("масштаб-200.png"));
 
     editor.applyZoom(1.0);
     QTest::qWait(20);
