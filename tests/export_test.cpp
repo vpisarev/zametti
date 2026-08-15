@@ -109,6 +109,40 @@ void checkFreshDir(const QDir& root) {
           get(out.filePath(QStringLiteral("01n6r08s8wy52h.jxl"))).toStdString());
 }
 
+// ШИРИНА У КАРТИНКИ. В хранилище владельца ссылки выглядят как
+// «01x.jxl#w=600»: имя файла и атрибуты показа в одном адресе. Вывоз обязан
+// брать оттуда ИМЯ ФАЙЛА, а не весь адрес целиком.
+//
+// Проверка заведена задним числом: пока вывоз разбирал адрес сам, он искал на
+// диске файл «01n6r08s8wy52h.jxl#w=600», не находил его и МОЛЧА вывозил
+// заметку без картинки, засчитав пропажу. Набора на этот случай не было вовсе —
+// во всех фикстурах картинки стояли без ширины.
+void checkPictureWithWidth(const QDir& root) {
+    const QDir store(root.filePath(QStringLiteral("w/хранилище")));
+    QDir().mkpath(store.path());
+    put(store.filePath(QStringLiteral("01n6r08s8wy52h.jxl")), QByteArray("КАРТИНКА-1"));
+    const QString note = store.filePath(QStringLiteral("01aaaaaaaaaaaa.md"));
+    put(note, QByteArray("<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n-->\n\n"
+                         "# С шириной\n\n![снимок](01n6r08s8wy52h.jxl#w=600)\n"));
+
+    const QDir out(root.filePath(QStringLiteral("w/вывоз")));
+    QDir().mkpath(out.path());
+    const zametti::ExportReport report =
+        zametti::exportMarkdown(note, out.filePath(QStringLiteral("Заметка.md")));
+
+    ZT_TRUE("вывоз удался: " + report.error.toStdString(), report.ok());
+    ZT_TRUE("пропаж нет, а насчитано " + std::to_string(report.imagesMissing),
+            report.imagesMissing == 0);
+    ZT_TRUE("картинка скопирована, а насчитано " + std::to_string(report.imagesCopied),
+            report.imagesCopied == 1);
+    ZT_EQ("и легла под своим именем, без атрибутов", std::string("КАРТИНКА-1"),
+          get(out.filePath(QStringLiteral("01n6r08s8wy52h.jxl"))).toStdString());
+    // Ширина остаётся в тексте: она часть заметки, а не имя файла.
+    const std::string text = get(out.filePath(QStringLiteral("Заметка.md"))).toStdString();
+    ZT_TRUE("ширина в ссылке уцелела: " + text,
+            text.find("(01n6r08s8wy52h.jxl#w=600)") != std::string::npos);
+}
+
 // Та же картинка уже лежит: не копируем и не переименовываем.
 void checkSamePicture(const QDir& root) {
     const QString note = makeStore(QDir(root.filePath(QStringLiteral("b"))),
@@ -227,6 +261,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkNames();
     checkExportTargetPath();
     checkFreshDir(root);
+    checkPictureWithWidth(root);
     checkSamePicture(root);
     checkStrangerInTheWay(root);
     checkMissing(root);
