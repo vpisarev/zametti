@@ -140,6 +140,10 @@ int ztUndoProbe(int argc, char** argv) {
     measure(editor, "Ctrl+0 (масштаб обратно)", [&] { editor.applyZoom(1.0); });
     // По отдельности — кто именно засоряет. applyContentWidth пишет поля
     // корневой рамки, и это единственная запись вида в простой заметке.
+    measure(editor, "setZoom сам по себе (только шрифт)",
+            [&] { editor.setZoom(editor.zoom() * 1.3); });
+    measure(editor, "applyContentWidth после смены шрифта",
+            [&] { editor.applyContentWidth(); });
     measure(editor, "applyContentWidth сам по себе",
             [&] { editor.applyContentWidth(); });
     measure(editor, "syncFormulas + syncTables сами по себе", [&] {
@@ -166,6 +170,138 @@ int ztUndoProbe(int argc, char** argv) {
         QTest::qWait(30);
         editor.resize(900, 600);
     });
+
+    // Отдельно — путь ЧЕРЕЗ РЕДАКТОР: Ctrl+Z приходит в NoteEditor::undo, а не
+    // прямо в документ, и по дороге есть и сохранение, и режим истории.
+    editor.openFile(plain);
+    QTest::qWait(50);
+    {
+        const QString before = editor.document()->toPlainText().left(40);
+        typeText(editor, QStringLiteral("СЛОВО"));
+        QTest::qWait(50);
+        const QString typed = editor.document()->toPlainText().left(40);
+        std::printf("\n   через редактор: шагов %d, отмена доступна %s\n",
+                    editor.document()->availableUndoSteps(),
+                    editor.document()->isUndoAvailable() ? "да" : "нет");
+        editor.undo();
+        QTest::qWait(50);
+        const QString after = editor.document()->toPlainText().left(40);
+        std::printf("   было   [%s]\n   набрал [%s]\n   отмена [%s]\n",
+                    qPrintable(before), qPrintable(typed), qPrintable(after));
+        std::printf("   в режиме истории: %s\n", editor.inHistory() ? "ДА" : "нет");
+    }
+
+    // Автозамена: набрано два знака, потом операция. Сколько шагов и что
+    // снимает каждое нажатие.
+    {
+        const QString rule = writeNote(dir, QStringLiteral("правило.md"),
+                                       QStringLiteral("текст\n"));
+        editor.openFile(rule);
+        QTest::qWait(50);
+        QTextCursor at = editor.textCursor();
+        at.setPosition(editor.document()->firstBlock().position());
+        editor.setTextCursor(at);
+        std::printf("\n   автозамена «* »:\n");
+        std::printf("     до набора: шагов %d\n", editor.document()->availableUndoSteps());
+        typeText(editor, QStringLiteral("*"));
+        QTest::qWait(20);
+        std::printf("     после «*»: шагов %d\n", editor.document()->availableUndoSteps());
+        typeText(editor, QStringLiteral(" "));
+        QTest::qWait(50);
+        std::printf("     после пробела: шагов %d, текст [%s]\n",
+                    editor.document()->availableUndoSteps(),
+                    qPrintable(editor.document()->toPlainText().left(30)));
+        for (int i = 1; i <= 4; ++i) {
+            editor.undo();
+            QTest::qWait(20);
+            std::printf("     undo %d: [%s]\n", i,
+                        qPrintable(editor.document()->toPlainText().left(30)));
+        }
+    }
+
+    // МОЖНО ЛИ РВАТЬ СКЛЕЙКУ QT. Владелец однажды уже сказал про слипшийся
+    // набор «буфера на 200 шагов как будто нет», и наши три правила границы
+    // серии написаны ровно из-за этого. Qt склеивает по-своему; вопрос — есть
+    // ли способ поставить границу там, где нам надо.
+    {
+        const QString g = writeNote(dir, QStringLiteral("склейка.md"),
+                                    QStringLiteral("начало\n"));
+        editor.openFile(g);
+        QTest::qWait(50);
+        QTextDocument* d = editor.document();
+
+        typeText(editor, QStringLiteral("мама мыла раму"));
+        QTest::qWait(50);
+        std::printf("\n   склейка набора:\n");
+        std::printf("     без границ: шагов %d\n", d->availableUndoSteps());
+
+        editor.openFile(g);
+        QTest::qWait(50);
+        d = editor.document();
+        typeText(editor, QStringLiteral("мама"));
+        {
+            QTextCursor cut(d);
+            cut.beginEditBlock();
+            cut.endEditBlock();
+        }
+        typeText(editor, QStringLiteral(" мыла"));
+        QTest::qWait(50);
+        std::printf("     пустая скобка посередине: шагов %d\n", d->availableUndoSteps());
+        const QString all = d->toPlainText();
+        editor.undo();
+        QTest::qWait(20);
+        std::printf("     после набора [%s] один undo даёт [%s]\n",
+                    qPrintable(all.left(30)),
+                    qPrintable(d->toPlainText().left(30)));
+    }
+
+    // Чем ставится ГРАНИЦА шага: пробуем вставлять текст самим, в скобке.
+    {
+        QTextDocument d;
+        d.setUndoRedoEnabled(true);
+        QTextCursor c(&d);
+        c.insertText(QStringLiteral("начало"));
+
+        auto steps = [&d] { return d.availableUndoSteps(); };
+        const int base = steps();
+
+        // 1. Подряд, без скобок — Qt склеивает.
+        for (const QChar ch : QStringLiteral("мама"))
+            QTextCursor(&d).insertText(QString(ch));
+        // Осторожно: каждый новый курсор в начале документа. Пишем в конец.
+        d.clear();
+        d.setUndoRedoEnabled(false);
+        d.setUndoRedoEnabled(true);
+        QTextCursor at(&d);
+        at.movePosition(QTextCursor::End);
+        for (const QChar ch : QStringLiteral("мама"))
+            at.insertText(QString(ch));
+        const int plain = steps();
+
+        // 2. Каждое слово — в своей скобке.
+        d.clear();
+        d.setUndoRedoEnabled(false);
+        d.setUndoRedoEnabled(true);
+        QTextCursor at2(&d);
+        for (const QString& word : {QStringLiteral("мама"), QStringLiteral(" мыла"),
+                                    QStringLiteral(" раму")}) {
+            at2.beginEditBlock();
+            for (const QChar ch : word) at2.insertText(QString(ch));
+            at2.endEditBlock();
+        }
+        const int grouped = steps();
+
+        std::printf("\n   границы шага (base %d):\n", base);
+        std::printf("     четыре знака подряд, без скобок: шагов %d\n", plain);
+        std::printf("     три слова, каждое в своей скобке: шагов %d\n", grouped);
+        int presses = 0;
+        while (d.isUndoAvailable() && presses < 10) {
+            d.undo();
+            ++presses;
+            std::printf("     undo %d: [%s]\n", presses,
+                        qPrintable(d.toPlainText()));
+        }
+    }
 
     std::printf("\n");
     return 0;

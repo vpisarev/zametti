@@ -70,7 +70,15 @@ NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
     connect(this, &NoteView::codeStripClicked, this, [this](int block, const QRect& strip) {
         editCodeLanguage(block, strip);
     });
-    setUndoRedoEnabled(false);   // историю ведём сами, см. edit_history.h
+    // СТЕК ОТМЕНЫ — ШТАТНЫЙ, QTextDocument'а. Своих снимков больше нет: Qt
+    // хранит правки на два порядка компактнее (у нас шаг был полной копией
+    // содержимого — 361 КБ на заметке в 239 КБ), сам склеивает подряд идущий
+    // набор в один шаг и сам возвращает каретку на место правки.
+    //
+    // Включить его удалось ровно после того, как вид перестал писать в документ
+    // резерв места под объекты: пока писал, отменённая запись возвращалась
+    // сама, и до текста человека отмена не доходила никогда (замер:
+    // zametti-bench undo).
 
     // Хоткеи разбираем один раз: на каждое нажатие клавиши это было бы разбором
     // строки впустую.
@@ -137,14 +145,6 @@ NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
 
     autosave_.setSingleShot(true);
     connect(&autosave_, &QTimer::timeout, this, [this] { save(true); });
-    snapshot_.setSingleShot(true);
-    // Тишина дольше склейки — серия набора кончилась: записываем шаг и
-    // закрываем серию, следующая буква заведёт новый шаг.
-    connect(&snapshot_, &QTimer::timeout, this, [this] {
-        flushPendingEdit();
-        note_.typingRun = false;
-        note_.runChars = 0;
-    });
     connectDocument();
     connect(&watcher_, &QFileSystemWatcher::fileChanged, this, &NoteEditor::onFileChanged);
     externalSettle_.setSingleShot(true);
@@ -247,18 +247,9 @@ void NoteEditor::onContentsChange(int position, int charsRemoved, int charsAdded
     // Границы шага отмены считаются по ЭТИМ числам, а не по курсору редактора:
     // курсор к моменту разбора может ещё стоять на старом месте (правка пришла
     // не с клавиатуры, а из вставки или из системы ввода).
-    if (!tidying_ && !recordingSuspended_) {
-        note_.changeStart = position;
-        note_.changeEnd = position + charsAdded;
-        note_.changeSeparator = false;
-        for (int i = position; i < position + charsAdded; ++i) {
-            const QChar ch = document()->characterAt(i);
-            if (ch.isSpace() || ch.isPunct() || ch == QChar::ParagraphSeparator) {
-                note_.changeSeparator = true;
-                break;
-            }
-        }
-    }
+    // Границы шага отмены здесь больше не считаются: подряд идущий набор
+    // склеивает в один шаг сам Qt (замер: десять знаков — один шаг). Вместе с
+    // этим ушли и три правила границы серии, которые мы держали руками.
     // Границы нужны не только уборке: место под фотографии тоже перемеряется
     // после каждой правки, и по всему документу это 458 мкс на большой
     // заметке — почти всё, что мы добавляем сверх Qt.
@@ -432,6 +423,12 @@ std::vector<Piece> piecesOf(const QTextDocument& doc) {
 }  // namespace
 
 void NoteEditor::connectDocument() {
+    // ЖИВАЯ ЗАМЕТКА — СО СТЕКОМ. Сборщик гасит его у всякого документа, который
+    // собирает, и правильно делает: у только что собранного отменять нечего, а
+    // временные документы (staging вставки, стороны разности, слепок журнала)
+    // так и остаются без стека. Живой заметке его возвращаем здесь — в одном
+    // месте, через которое проходит каждая подмена документа.
+    document()->setUndoRedoEnabled(true);
     connect(document(), &QTextDocument::contentsChange, this, &NoteEditor::onContentsChange);
     connect(document(), &QTextDocument::contentsChanged, this, &NoteEditor::onContentsChanged);
 }
@@ -500,9 +497,7 @@ void NoteEditor::installSession(NoteSession session) {
     // Таймеры перенастраиваются под новую заметку. Отложенный снимок — её
     // свойство и приехал вместе с ней; висящий от прошлой заметки таймер
     // отменяем, иначе он записал бы шаг в чужую цепочку.
-    snapshot_.stop();
     autosave_.stop();
-    if (note_.pendingEdit) snapshot_.start(appearance().undoCoalesceMs);
     watchFile();
 }
 
@@ -565,7 +560,6 @@ void NoteEditor::stashCurrentNote() {
     // вовсе — потерять правки страшнее, чем пересобрать документ.
     if (note_.path.isEmpty() || note_.document == nullptr) return;
     if (document()->isModified() || note_.digest.empty()) return;
-    flushPendingEdit();
 
     // Инвариант кэша: в нём лежат только документы, чья сериализация БАЙТ В
     // БАЙТ равна файлу. Документ имеет право отличаться от файла: хвост пустых
@@ -677,7 +671,6 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
     watchFile();
     // Серию набора обрываем: иначе первая правка в новой заметке подмешалась бы
     // к её исходному состоянию и отменить её было бы нечем.
-    forgetPendingEdit();
 
     // Опорная запись. Заметки старше журнала: хранилище жило годами, а история
     // заведена только сейчас. Если журнала у заметки ещё нет, кладём в него то,
@@ -703,7 +696,6 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
     const CaretSpot spot = caretMemory_.value(note_.path);
     note_.cursor = spot.cursor;
     note_.anchor = spot.anchor;
-    note_.undoChain.reset(doc, spot.cursor);
     // Открывается другой файл: с прежним документом у нового ничего общего,
     // заплатке не за что зацепиться.
     note_.builtValid = false;
@@ -803,7 +795,6 @@ void NoteEditor::resolveExternalConflict(bool takeExternal) {
 }
 
 void NoteEditor::adoptExternal(const std::string& text) {
-    flushPendingEdit();
     std::vector<Piece> ir;
     NoteHeader fresh;
     parsePieces(text, ir, fresh);
@@ -831,9 +822,15 @@ void NoteEditor::adoptExternal(const std::string& text) {
         fresh.set("role", previous.get("role"));
 
     note_.meta = fresh;
-    note_.undoChain.push(ir, textCursor().position());
-    note_.typingRun = false;
-    rebuild(ir, textCursor().position(), viewAnchor());
+    // ВНЕШНЕЕ СОДЕРЖИМОЕ ПРИНИМАЕТСЯ КАК ОБЫЧНАЯ ПРАВКА, и Ctrl+Z возвращает
+    // то, что было до него (README обещает это прямо). Значит и пересборка
+    // здесь — правка: asEdit, внутри скобки, одним шагом отмены.
+    {
+        QTextCursor group(document());
+        group.beginEditBlock();
+        rebuild(ir, textCursor().position(), viewAnchor(), nullptr, /*asEdit=*/true);
+        group.endEditBlock();
+    }
     document()->setModified(false);
 
     emit externalAdopted(note_.path);
@@ -901,7 +898,6 @@ void NoteEditor::refreshAppearance() {
         renderDiff(keep);
         return;
     }
-    flushPendingEdit();
     // Облик запечён в документах при сборке: всё отложенное протухло разом.
     clearNoteCache();
     // Облик меняется — содержимое нет. Берём его из истории и собираем заново;
@@ -910,7 +906,11 @@ void NoteEditor::refreshAppearance() {
     // Именно собираем: от облика зависит каждый блок, в том числе и те, что не
     // менялись, и заплатка их не тронула бы.
     note_.builtValid = false;
-    rebuild(note_.undoChain.current().blocks, textCursor().position(), viewAnchor());
+    // ИЗ ЖИВОГО ДОКУМЕНТА, а не из снимка. Прежде содержимое бралось из вершины
+    // своей цепочки отмены, и потому смене облика приходилось сперва сбрасывать
+    // отложенный снимок — иначе набранное и не попавшее в цепочку пропадало бы.
+    // Снимков нет, вопрос снят: живой документ и есть единственное содержимое.
+    rebuild(piecesOf(*document()), textCursor().position(), viewAnchor());
 }
 
 void NoteEditor::keepCaretOffEdge() {
@@ -1082,59 +1082,30 @@ void NoteEditor::undo() {
         historyStepBack();
         return;
     }
-    flushPendingEdit();
+    // Дно стека — дальше шагаем в слепки журнала. Режим объявляет себя сам
+    // (баннер, заголовок окна), и это же служит защитой от случайного глубокого
+    // отката.
+    if (!document()->isUndoAvailable()) {
+        enterHistory();
+        return;
+    }
     // Граница серии отмены: первое Ctrl+Z после правок сначала сохраняет.
-    // Иначе вершина цепочки — то, что человек только что набрал, — не попала
-    // бы в историю вовсе: он отменяет её, уходит из заметки, и сохранять уже
-    // нечего. Сохранение само пишет свой шаг истории, отдельной записи тут нет.
+    // Иначе вершина — то, что человек только что набрал, — не попала бы в
+    // историю вовсе: он отменяет её, уходит из заметки, и сохранять уже нечего.
+    // Сохранение само пишет свой шаг истории, отдельной записи тут нет.
     //
     // Только первый шаг: дальше человек идёт по уже записанному прошлому, и
     // складывать в историю промежуточные состояния отката значило бы забивать
     // её ровно тем, от чего он уходит.
     if (document()->isModified() && !note_.undoRun) save(false);
     const int scrollBefore = verticalScrollBar()->value();
-    // Курсор ставим туда, где была отменяемая правка, — но её позиция записана
-    // в координатах ОТМЕНЯЕМОГО документа, а вернём мы другой. Отображаем
-    // через общий префикс и суффикс плоских текстов: до префикса позиции
-    // совпадают, после суффикса сдвинуты на разницу длин, а внутри изменённой
-    // зоны каретка идёт к началу расхождения. Голое записанное смещение
-    // промахивалось: правка добавила знаки выше каретки — и в более коротком
-    // возвращённом документе каретка прыгала на пару строк вниз.
-    const int recorded = note_.undoChain.current().cursor;
-    const QString undonePlain = document()->toPlainText();
-    const HistoryStep* step = note_.undoChain.undo();
-    if (step == nullptr) {
-        // Дно внутридокументной цепочки — дальше шагаем в слепки. Режим
-        // объявляет себя сам (баннер, заголовок окна), и это же служит защитой
-        // от случайного глубокого отката.
-        enterHistory();
-        return;
-    }
     note_.undoRun = true;
-    rebuild(step->blocks, 0, viewAnchor());
-    const QString restoredPlain = document()->toPlainText();
-
-    const int shared = int(qMin(undonePlain.size(), restoredPlain.size()));
-    int prefix = 0;
-    while (prefix < shared && undonePlain.at(prefix) == restoredPlain.at(prefix)) ++prefix;
-    int suffix = 0;
-    while (suffix < shared - prefix &&
-           undonePlain.at(undonePlain.size() - 1 - suffix) ==
-               restoredPlain.at(restoredPlain.size() - 1 - suffix))
-        ++suffix;
-
-    int where = prefix;
-    if (recorded <= prefix) where = recorded;
-    else if (recorded >= int(undonePlain.size()) - suffix) {
-        // Хвостовая зона, но не ниже конца изменённого участка: отмена
-        // возвращает к месту правки, а не туда, куда каретка уехала после неё
-        // (правило черты, например, уводит её на блок ниже).
-        const int mapped = recorded + int(restoredPlain.size()) - int(undonePlain.size());
-        where = qMin(mapped, int(restoredPlain.size()) - suffix);
-    }
-    QTextCursor cursor(document());
-    cursor.setPosition(qBound(0, where, int(document()->characterCount()) - 1));
-    setTextCursor(cursor);
+    // КАРЕТКУ СТАВИТ САМ Qt: команда отмены помнит, где была правка, и ставит
+    // каретку туда. Прежде её приходилось выводить сопоставлением плоских
+    // текстов до и после — снимок помнил смещение в координатах ОТМЕНЯЕМОГО
+    // документа, а возвращался другой, и голое смещение промахивалось на пару
+    // строк. Тридцать строк арифметики ушли вместе со снимками.
+    QTextEdit::undo();
 
     // Вид держится сам, но отменённая правка может оказаться за окном — тогда
     // её надо показать: человек нажал отмену, чтобы увидеть результат.
@@ -1148,12 +1119,10 @@ void NoteEditor::redo() {
         historyStepForward();
         return;
     }
-    flushPendingEdit();
+    if (!document()->isRedoAvailable()) return;
     const int scrollBefore = verticalScrollBar()->value();
-    const HistoryStep* step = note_.undoChain.redo();
-    if (step == nullptr) return;
     note_.undoRun = true;
-    rebuild(step->blocks, step->cursor, viewAnchor());
+    QTextEdit::redo();
     showEditPlace(scrollBefore);
     document()->setModified(true);
     autosave_.start(appearance().autosaveDelayMs);
@@ -1173,7 +1142,7 @@ NoteEditor::ViewAnchor NoteEditor::viewAnchor() const {
 }
 
 void NoteEditor::rebuild(const std::vector<Piece>& doc, int cursor, const ViewAnchor& anchor,
-                         const std::vector<Piece>* current) {
+                         const std::vector<Piece>* current, bool asEdit) {
     const bool wasSuspended = recordingSuspended_;
     recordingSuspended_ = true;
     // Заплатка вместо сборки: на большой заметке сборка стоит 151 мс, а
@@ -1192,7 +1161,43 @@ void NoteEditor::rebuild(const std::vector<Piece>& doc, int cursor, const ViewAn
         }
         patched = patchDocument(note_.built, *current, doc, *document());
     }
-    if (!patched) buildDocument(doc, *document());
+    if (!patched && !asEdit) {
+        // Вне правки — прямая сборка. Она гасит стек отмены, и это честно:
+        // содержимое заменено целиком (заметку открыли, сменили облик, показали
+        // слепок), отменять в нём нечего.
+        buildDocument(doc, *document());
+        document()->setUndoRedoEnabled(true);
+    } else if (!patched) {
+        // ВНУТРИ ПРАВКИ ЧЕЛОВЕКА пересобирать документ на месте нельзя: сборка
+        // начинается с clear(), а он в стек отмены не ложится — один Ctrl+Z
+        // оставлял от заметки пустой лист. Собираем во временный документ и
+        // ЗАМЕНЯЕМ содержимое курсором: замена отменяема и входит в тот же шаг,
+        // что и сама правка.
+        //
+        // ДОЛГ, НАЗВАННЫЙ ВСЛУХ: это O(N) на правку и нарушение главного
+        // правила проекта — стоимость нажатия клавиши не должна зависеть от
+        // размера заметки. Мало того, что переписывается весь текст: в стек
+        // отмены на каждую такую правку ложится копия всего документа.
+        //
+        // Как ВРЕМЕННОЕ решение владелец его принял; как постоянное оно не
+        // годится. Снимается базисом: replaceRange правит РОВНО тот диапазон,
+        // которого касается правка, и тогда сюда попадать перестанут вовсе —
+        // заплатке не придётся отказываться, потому что операции перестанут
+        // менять документ целиком.
+        //
+        // Пока же платим редко: заплатка отказывается только там, где поменялось
+        // всё, — на настоящих заметках это край, на крошечных (наборы) норма.
+        QTextDocument staging;
+        buildDocument(doc, staging);
+        QTextCursor whole(document());
+        whole.select(QTextCursor::Document);
+        whole.insertFragment(QTextDocumentFragment(&staging));
+        // Формат первого блока Qt через фрагмент не доносит — ставим сами.
+        QTextCursor head(document());
+        head.setPosition(document()->firstBlock().position());
+        head.setBlockFormat(staging.firstBlock().blockFormat());
+        head.setBlockCharFormat(staging.firstBlock().charFormat());
+    }
     // Сборщик поставил документу базовый кегль — масштаб ему возвращаем мы.
     // Заплатка шрифта не трогает, но звать здесь всё равно дешевле, чем помнить
     // о двух путях: setZoom сравнивает шрифт и на совпадении ничего не делает.
@@ -1792,7 +1797,9 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     // внутрь неё.
     if (!event->text().isEmpty() && event->text().at(0).isPrint()) dropLinkAtRightEdge();
 
-    NoteView::keyPressEvent(event);
+    // Печатающий знак вставляем САМИ — ради границы шага отмены. Всё прочее
+    // (Enter, Backspace, стрелки, сочетания) ведёт Qt, как и раньше.
+    if (!insertTyped(event->text(), event->modifiers())) NoteView::keyPressEvent(event);
     // Курсор мог уехать к самой кромке — и набор, и перемещение по странице:
     // держим зазор.
     keepCaretOffEdge();
@@ -2043,30 +2050,87 @@ void NoteEditor::closeCodeLanguageEditor() {
     setFocus(Qt::OtherFocusReason);
 }
 
+// Набор — единственная правка, которая идёт мимо операций, и здесь она обретает
+// ГРАНИЦУ ШАГА ОТМЕНЫ. Qt сам склеивает подряд идущие вставки в один шаг и рвать
+// эту склейку не умеет — пустая скобка правки её не разрывает (замерено). Значит
+// границу ставим мы: продолжается серия — дописываемся в прошлый шаг, кончилась —
+// открываем новый.
+bool NoteEditor::insertTyped(const QString& text, Qt::KeyboardModifiers modifiers) {
+    if (text.isEmpty()) return false;
+    const QChar first = text.at(0);
+    // Печатающий знак и только он. Enter приходит как "\r", Backspace пустым —
+    // их ведёт Qt, у них свои правила и свои операции.
+    if (!first.isPrint()) return false;
+
+    // МОДИФИКАТОРЫ ОТСЕКАЕМ, и это не мелочь: Ctrl+S приносит с собой text()
+    // "s", и без этой проверки сохранение печатало букву (поймал набор
+    // редактора: в файл уходило «два twos»). Правило то же, что у самого Qt:
+    // набор — это ввод без модификаторов, кроме Shift и цифрового блока; пара
+    // Ctrl+Alt разрешена особо — так приходит AltGr.
+    const Qt::KeyboardModifiers meaningful =
+        modifiers & ~(Qt::ShiftModifier | Qt::KeypadModifier);
+    const bool altGr = meaningful == (Qt::ControlModifier | Qt::AltModifier);
+    if (meaningful != Qt::NoModifier && !altGr) return false;
+
+    QTextCursor cursor = textCursor();
+    const bool tooLong = note_.runChars >= qMax(1, appearance().undoRunChars);
+    const bool moved = note_.runCursor < 0 || cursor.position() != note_.runCursor;
+    const bool startNew = note_.runBroken || moved || tooLong || cursor.hasSelection();
+
+    if (startNew) {
+        cursor.beginEditBlock();
+        note_.runChars = 0;
+    } else {
+        cursor.joinPreviousEditBlock();
+    }
+    // Формат берём ТОТ, КОТОРЫМ ПЕЧАТАЮТ, а не тот, что у курсора: Ctrl+B без
+    // выделения задаёт начертание для следующей буквы, и оно живёт именно здесь.
+    cursor.insertText(text, currentCharFormat());
+    cursor.endEditBlock();
+    setTextCursor(cursor);
+
+    note_.runChars += int(text.size());
+    note_.runCursor = cursor.position();
+    // Разделитель остаётся в ЭТОМ шаге, а следующая буква начинает новый: так
+    // отмена возвращает «один два три », а не «один два три ч».
+    note_.runBroken = false;
+    for (const QChar c : text)
+        if (c.isSpace() || c.isPunct() || c == QChar::ParagraphSeparator) note_.runBroken = true;
+    return true;
+}
+
 bool NoteEditor::runOperation(bool (*op)(QTextDocument&, QTextCursor&)) {
     return runOperation(std::function<bool(QTextDocument&, QTextCursor&)>(op));
 }
 
 bool NoteEditor::runOperation(const std::function<bool(QTextDocument&, QTextCursor&)>& op) {
-    // Набранное до операции обязано остаться отдельным шагом: Ctrl+Z после
-    // правила черты возвращает голые дефисы, а не съедает их вместе с чертой.
-    // Снимок только один на серию, так что платим за него не чаще раза.
-    flushPendingEdit();
     QTextCursor cursor = textCursor();
     const int scrollBefore = verticalScrollBar()->value();
     // Шаг истории у операции свой; правки, которые она делает по дороге, в
     // историю попадать не должны — иначе одно нажатие даст два шага.
     recordingSuspended_ = true;
+
+    // ОДНА ОПЕРАЦИЯ — ОДИН ШАГ ОТМЕНЫ, и держится это скобкой правки.
+    //
+    // Операция режет и склеивает блоки, уборка снимает хвостовые пробелы,
+    // заплатка доводит форматы — для Qt это три-четыре отдельные правки, и без
+    // скобки Ctrl+Z разбирал бы одно нажатие человека на несколько. Замер до
+    // скобки: Enter давал восемь команд и одно нажатие впустую.
+    //
+    // В скобку входит и пересборка: заплатка доводит форматы своими правками,
+    // и оставленная снаружи она была бы ОТДЕЛЬНЫМ шагом — Ctrl+Z снимал бы
+    // оформление, не трогая текста.
+    QTextCursor group(document());
+    group.beginEditBlock();
     const bool handled = op(*document(), cursor);
     if (!handled) {
+        group.endEditBlock();
         recordingSuspended_ = false;
         return false;
     }
-    // Подметание — внутри транзакции операции, до снимка истории: слияния
-    // внутри операций тоже оставляют хвостовые пробелы, а через
-    // contentsChanged они не проходят.
+    // Подметание — внутри той же скобки: слияния внутри операций тоже оставляют
+    // хвостовые пробелы, а через contentsChanged они не проходят.
     tidySweep(cursor);
-    recordingSuspended_ = false;
 
     // Операция трогает содержимое, род и уровень; всё оформление, которое из
     // них следует, пересчитывает сборщик — так ни одно свойство не отстанет.
@@ -2075,11 +2139,9 @@ bool NoteEditor::runOperation(const std::function<bool(QTextDocument&, QTextCurs
     const int anchor = cursor.anchor();
     const int position = cursor.position();
     std::vector<Piece> ir = piecesOf(*document());
-    note_.undoChain.push(ir, position);
-    // Операция — отдельный шаг: следующая набранная буква к ней не приклеится.
-    note_.typingRun = false;
-
-    rebuild(ir, position, viewAnchor(), &ir);
+    rebuild(ir, position, viewAnchor(), &ir, /*asEdit=*/true);
+    group.endEditBlock();
+    recordingSuspended_ = false;
     // Выделение возвращаем: операция могла тронуть десяток пунктов сразу, и
     // терять его после этого — значит заставлять выделять заново. Текст от
     // смены рода не меняется, поэтому обе границы остаются на своих местах.
@@ -2273,7 +2335,6 @@ void NoteEditor::insertFromMimeData(const QMimeData* source) {
 
 void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
     // Вставка — свой шаг истории, и набранное до неё обязано остаться своим.
-    flushPendingEdit();
     const int scrollBefore = verticalScrollBar()->value();
     if (text.isEmpty()) return;
     const QByteArray utf8 = text.toUtf8();
@@ -2365,13 +2426,13 @@ void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
     // порядок целиком, документ для этого достаточно мал.
     syncLiteralBlocks(*document(), {0, document()->blockCount() - 1});
     syncLists(*document(), {0, document()->blockCount() - 1});
+
+    // Пересборка — в ту же скобку: вставка обязана отменяться ОДНИМ Ctrl+Z, а
+    // заплатка, оставленная снаружи, была бы отдельным шагом.
+    std::vector<Piece> ir = piecesOf(*document());
+    rebuild(ir, landed, viewAnchor(), &ir, /*asEdit=*/true);
     cursor.endEditBlock();
     recordingSuspended_ = false;
-
-    std::vector<Piece> ir = piecesOf(*document());
-    note_.undoChain.push(ir, landed);
-    note_.typingRun = false;
-    rebuild(ir, landed, viewAnchor(), &ir);
     document()->setModified(true);
     showEditPlace(scrollBefore);
     autosave_.start(appearance().autosaveDelayMs);
@@ -2551,13 +2612,15 @@ bool NoteEditor::moveItem(int direction) {
 }
 
 bool NoteEditor::applyIrEdit(const MoveResult& moved) {
-    flushPendingEdit();
     if (!moved.done) return false;
     const int scrollBefore = verticalScrollBar()->value();
 
-    note_.undoChain.push(moved.blocks, textCursor().position());
-    note_.typingRun = false;
-    rebuild(moved.blocks, 0, viewAnchor());
+    // ОДИН ШАГ ОТМЕНЫ на всю правку: заплатка трогает несколько блоков сразу, а
+    // человек нажал один раз.
+    QTextCursor group(document());
+    group.beginEditBlock();
+    rebuild(moved.blocks, 0, viewAnchor(), nullptr, /*asEdit=*/true);
+    group.endEditBlock();
 
     // Курсор ставим по месту в IR: после перестановки или слияния блоков прежняя
     // позиция в тексте указывала бы на чужое место. Вид при этом уже наведён
@@ -2596,16 +2659,27 @@ void NoteEditor::onContentsChanged() {
     //
     // Починка меняет документ и вызывает этот обработчик заново, но признак
     // операции уже поднят, и второй заход сразу возвращается.
+    // ПОЧИНКА ПРИКЛЕИВАЕТСЯ К ТОЙ ПРАВКЕ, КОТОРУЮ ЧИНИТ.
+    //
+    // joinPreviousEditBlock дописывает наши правки в ТУ ЖЕ команду отмены, что
+    // и набранный знак. Без этого одно нажатие клавиши давало два-три шага:
+    // сам знак, починка инварианта пустых строк, снятые хвостовые пробелы, — и
+    // Ctrl+Z снимал не букву, а невидимую уборку.
+    //
+    // Это ровно тот случай, для которого joinPreviousEditBlock в Qt и заведён:
+    // правка вызвана чужой правкой и своим шагом быть не должна.
     QTextCursor cursor = textCursor();
     recordingSuspended_ = true;
+    QTextCursor join(document());
+    join.joinPreviousEditBlock();
     const bool repaired = repairAfterTyping(*document(), cursor);
-    recordingSuspended_ = false;
-    if (repaired) setTextCursor(cursor);
-
     // Правка любого вида могла оставить хвостовые пробелы на строках, где
     // каретки нет, — выделение с удалением, вставка, слияние. Инвариант
     // владельца: таких строк не существует. Чистим после каждой правки.
-    tidySweep(textCursor());
+    tidySweep(repaired ? cursor : textCursor());
+    join.endEditBlock();
+    recordingSuspended_ = false;
+    if (repaired) setTextCursor(cursor);
 
     note_.undoRun = false;   // настоящая правка — серия отмены кончилась
     // Числа отстали от документа. Сам пересчёт будет на ближайшем
@@ -2614,79 +2688,12 @@ void NoteEditor::onContentsChanged() {
         note_.statsFresh = false;
         emit statsChanged();
     }
-    recordEdit();
     autosave_.start(appearance().autosaveDelayMs);
 }
 
 // Правка есть — снимка пока нет. Читать документ целиком на каждую букву
 // незачем: набор подряд всё равно склеивается в один шаг, и все промежуточные
 // снимки этого шага выбрасываются. Ждём конца серии.
-void NoteEditor::recordEdit() {
-    const int at = textCursor().position();
-
-    // СЕРИЯ РВЁТСЯ НЕ ТОЛЬКО ТИШИНОЙ. Пока человек печатает ровно, паузы в
-    // 700 мс не случается вовсе, и весь набор ложился одним шагом: два Ctrl+Z —
-    // и редактор уходил в историю, к чужому слепку. Владелец сказал про это
-    // «буфера на 200 шагов как будто нет», и замер подтвердил: после 150
-    // правок глубина цепочки была единица.
-    //
-    // Шаг — СЛОВО, как в Apple Notes. Границы три: набранный разделитель
-    // (он уходит в тот же шаг, следующая буква начинает новый), уход каретки в
-    // другое место и потолок в undoRunChars знаков — на случай слова, которое
-    // никак не кончается.
-    const int start = note_.changeStart >= 0 ? note_.changeStart : at;
-    const bool near = note_.runCursor < 0 || qAbs(start - note_.runCursor) <= 1;
-    if (!near || note_.runChars >= qMax(1, appearance().undoRunChars)) {
-        // Признак серии гасим ВСЕГДА, а не только когда есть что сбрасывать.
-        // flushPendingEdit оставляет его поднятым — и после сохранения, которое
-        // сбросило накопленное, следующая правка снова дописывалась в тот же
-        // шаг. Так вся сессия и оказывалась одним шагом.
-        if (note_.pendingEdit) flushPendingEdit();
-        note_.typingRun = false;
-        note_.runChars = 0;
-    }
-
-    ++note_.runChars;
-    note_.runCursor = note_.changeEnd >= 0 ? note_.changeEnd : at;
-    note_.pendingCursor = at;
-    note_.pendingEdit = true;
-
-    // Разделитель закрывает шаг ПРЯМО СЕЙЧАС, а не при следующей правке.
-    // Иначе снимок брался бы уже после первой буквы нового слова, и отмена
-    // возвращала бы «один два три ч» вместо «один два три ».
-    if (note_.changeSeparator) {
-        flushPendingEdit();
-        note_.typingRun = false;
-        note_.runChars = 0;
-        return;
-    }
-    snapshot_.start(appearance().undoCoalesceMs);
-}
-
-void NoteEditor::flushPendingEdit() {
-    if (!note_.pendingEdit) return;
-    note_.pendingEdit = false;
-    snapshot_.stop();
-    // Набор подряд — один шаг: иначе Ctrl+Z возвращал бы по одной букве. Серия
-    // кончается тишиной (сработал таймер) или чем угодно, что заводит
-    // собственный шаг, — те сами гасят признак.
-    std::vector<Piece> doc = piecesOf(*document());
-    if (note_.typingRun) note_.undoChain.amend(std::move(doc), note_.pendingCursor);
-    else note_.undoChain.push(std::move(doc), note_.pendingCursor);
-    note_.typingRun = true;
-}
-
-void NoteEditor::forgetPendingEdit() {
-    note_.undoRun = false;   // другой файл — своя серия
-    note_.pendingEdit = false;
-    snapshot_.stop();
-    note_.typingRun = false;
-    note_.runChars = 0;
-    note_.runCursor = -1;
-    note_.changeStart = -1;
-    note_.changeEnd = -1;
-    note_.changeSeparator = false;
-}
 
 void NoteEditor::editMeta(const std::function<void(NoteHeader&)>& change) {
     note_.meta.setPresent(true);
@@ -2728,7 +2735,6 @@ bool NoteEditor::enterHistory(int index) {
     // этом прошлом оказаться. Лишней записи от этого не бывает — все правила
     // отбора внутри save работают: не изменилось, значит записи нет, и вершина
     // таймлайна и так равна живому буферу.
-    flushPendingEdit();
     save(false, true);
 
     // ВТОРОЙ ТРИГГЕР ЛЕНИВОЙ МИГРАЦИИ: первое чтение журнала ради истории этой
@@ -2753,7 +2759,6 @@ bool NoteEditor::enterHistory(int index) {
 
     // Незаписанный снимок принадлежит живой заметке; он уедет вместе с ней, а
     // не в режим истории.
-    flushPendingEdit();
 
     // Живая заметка уезжает целиком в дочерний объект, а на её месте
     // заводится объект слепка — с тем же путём и метой, но со своей цепочкой
@@ -3224,7 +3229,6 @@ bool NoteEditor::diffStep(bool forward) {
 void NoteEditor::leaveHistory() {
     if (!inHistory()) return;
     // Всё, что накопилось на слепке, к живой заметке отношения не имеет.
-    flushPendingEdit();
     // Подглядывание — состояние на время удержания клавиши, и переживать
     // режим оно не должно ни в каком виде.
     diffPeek_ = false;
@@ -3286,13 +3290,9 @@ qint64 NoteEditor::restoreShownSnapshot(bool* alreadyCurrent) {
     // Одной правкой, а не пересозданием документа: восстановление обязано
     // отменяться обычным Ctrl+Z, а для этого оно должно быть шагом нашей
     // цепочки, как всякая другая правка.
-    flushPendingEdit();
     rebuild(body, textCursor().position(), viewAnchor());
     document()->setModified(true);
-    note_.typingRun = false;
     note_.undoRun = false;
-    recordEdit();
-    flushPendingEdit();
 
     // Ближайшее сохранение станет записью restore со ссылкой на источник.
     note_.restoreSource = source;
@@ -3444,7 +3444,6 @@ void NoteEditor::save(bool interactive, bool force) {
     if (!force && !document()->isModified()) return;
     // До записи: сохранение умеет пересобрать документ из перечитанного файла,
     // и шаг серии остался бы без содержимого.
-    flushPendingEdit();
 
     // СРАВНИТЬ, НЕ СЧИТАЯ ШТАМПА. Порядок тут — не вкусовщина.
     //

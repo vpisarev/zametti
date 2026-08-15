@@ -389,6 +389,8 @@ int ztZoomProbe(int argc, char** argv) {
             {"markContentsDirty",
              [](QTextDocument& d) { d.markContentsDirty(0, d.characterCount()); }},
             {"setIndentWidth", [](QTextDocument& d) { d.setIndentWidth(40); }},
+            {"setDocumentMargin (поле документа)",
+             [](QTextDocument& d) { d.setDocumentMargin(40); }},
             {"rootFrame setFrameFormat (поля рамки, applyContentWidth)",
              [](QTextDocument& d) {
                  QTextFrameFormat f = d.rootFrame()->frameFormat();
