@@ -303,6 +303,45 @@ int ztUndoProbe(int argc, char** argv) {
         }
     }
 
+    // REDO ПОСЛЕ СЕРИИ ОТМЕН. Жалоба владельца: набираю с правками Backspace,
+    // несколько Ctrl+Z — хорошо, а повтор возвращает пару слов и встаёт.
+    {
+        const QString r = writeNote(dir, QStringLiteral("повтор.md"),
+                                    QStringLiteral("начало\n"));
+        editor.openFile(r);
+        QTest::qWait(50);
+        QTextCursor at = editor.textCursor();
+        at.movePosition(QTextCursor::End);
+        editor.setTextCursor(at);
+
+        typeText(editor, QStringLiteral("один два тир"));
+        pressKey(editor, Qt::Key_Backspace);
+        pressKey(editor, Qt::Key_Backspace);
+        typeText(editor, QStringLiteral("ри четыре пять"));
+        QTest::qWait(60);
+        const QString full = editor.document()->toPlainText();
+
+        int undos = 0;
+        while (undos < 12 && editor.document()->isUndoAvailable() && !editor.inHistory()) {
+            editor.undo();
+            QTest::qWait(10);
+            ++undos;
+        }
+        const QString bottom = editor.document()->toPlainText();
+        int redos = 0;
+        while (redos < 12 && editor.document()->isRedoAvailable()) {
+            editor.redo();
+            QTest::qWait(10);
+            ++redos;
+        }
+        const QString back = editor.document()->toPlainText();
+        std::printf("\n   повтор после серии отмен: отмен %d, повторов %d\n", undos, redos);
+        std::printf("     набрано  [%s]\n     дно      [%s]\n     вернулось[%s]\n",
+                    qPrintable(full.trimmed()), qPrintable(bottom.trimmed()),
+                    qPrintable(back.trimmed()));
+        std::printf("     повтор вернул всё: %s\n", back == full ? "ДА" : "НЕТ");
+    }
+
     std::printf("\n");
     return 0;
 }

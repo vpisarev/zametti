@@ -152,7 +152,18 @@ void applyPalette(QWidget& view, bool history) {
     // Выделение светлое, поэтому текст в нём остаётся тёмным: белый по
     // умолчанию на таком фоне просто пропал бы.
     palette.setColor(QPalette::HighlightedText, palette.color(QPalette::Text));
+    // СТРАНИЦА ЗАНИМАЕТ ВСЁ ОКНО, а не только вьюпорт. Лишнюю ширину широкого
+    // окна мы теперь отдаём полям вьюпорта (см. applyContentWidth), и полоски
+    // по краям рисует уже не документ, а сам виджет — своим фоном. Без этой
+    // строки они вылезали серыми, и белая колонка выглядела листом, положенным
+    // на стол.
+    palette.setColor(QPalette::Window, palette.color(QPalette::Base));
     view.setPalette(palette);
+    // Заливать фон виджет обязан САМ: по умолчанию у полосы прокрутки красит
+    // только вьюпорт, а рамка вокруг него остаётся стилю — и там проступает
+    // серый цвет окна.
+    view.setBackgroundRole(QPalette::Base);
+    view.setAutoFillBackground(true);
 }
 
 QColor NoteView::pageColour() const { return palette().color(QPalette::Base); }
@@ -293,22 +304,28 @@ void NoteView::applyContentWidth() {
     // места. Формула «сколько досталось колонке» от этого не меняется — в ней
     // и так стоит ширина вьюпорта.
     const qreal charUnit = QFontMetricsF(baseFont()).horizontalAdvance(QLatin1Char('A'));
-    const qreal side = document()->rootFrame()->frameFormat().leftMargin();
+    // Поле, которое колонке ПОЛОЖЕНО сейчас, — от нынешнего шрифта: оно обязано
+    // расти вместе с масштабом, иначе на 200 % текст прижимается к краю окна.
+    const qreal want = appearance().sideMargin * charUnit;
+    // И то, которое уже даёт документ: его поставил сборщик, один раз, базовым
+    // кеглем. Переписывать его нельзя — запись формата попадает в стек отмены.
+    const qreal fromDocument = document()->rootFrame()->frameFormat().leftMargin();
 
     // Полная ширина, из которой раздаётся место: нынешний вьюпорт плюс то, что
     // мы у него уже отняли. Считать по width() виджета нельзя — там ещё рамка и
     // полоса прокрутки, и вышла бы обратная связь.
     const int room = viewport()->width() + viewportMargin_ * 2;
-    int extra = 0;
+    qreal margin = qMax(0.0, want - fromDocument);
     if (appearance().maxContentWidth > 0.0) {
         const qreal limit = appearance().maxContentWidth * charUnit;
-        const qreal spare = (room - 2 * side - limit) / 2;
-        if (spare > 0.0) extra = int(spare);
+        const qreal spare = (room - 2 * want - limit) / 2;
+        if (spare > 0.0) margin += spare;
     }
 
-    if (extra != viewportMargin_) {
-        viewportMargin_ = extra;
-        setViewportMargins(extra, 0, extra, 0);
+    const int wanted = int(margin);
+    if (wanted != viewportMargin_) {
+        viewportMargin_ = wanted;
+        setViewportMargins(wanted, 0, wanted, 0);
         // Пустой документ от смены полей не переразмечается: размечать в нём
         // нечего. Каретка тогда остаётся у прежнего поля — в широком окне это
         // выглядело как «в пустой заметке каретки нет вовсе».

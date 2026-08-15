@@ -35,6 +35,7 @@
 #include <QFile>
 #include <QImage>
 #include <QFontMetricsF>
+#include <QScrollBar>
 #include <QTest>
 #include <QTextBlock>
 #include <QTextDocument>
@@ -185,6 +186,36 @@ static int ztRunSuite(int argc, char** argv) {
 
     editor.applyZoom(1.0);
     QTest::qWait(20);
+
+    // Ширина колонки: узкое окно, широкое и очень широкое.
+    editor.resize(500, 600);
+    QTest::qWait(40);
+    shoot(editor, dir, QStringLiteral("ширина-500.png"));
+    editor.resize(1000, 600);
+    QTest::qWait(40);
+    shoot(editor, dir, QStringLiteral("ширина-1000.png"));
+    editor.resize(1600, 600);
+    QTest::qWait(40);
+    shoot(editor, dir, QStringLiteral("ширина-1600.png"));
+    std::printf("  вьюпорт x=%d ширина=%d при окне 1600\n", editor.viewport()->x(),
+                editor.viewport()->width());
+
+    // ГОРИЗОНТАЛЬНОЙ ПОЛОСЫ ПРОКРУТКИ НЕ БЫВАЕТ. Владелец увидел её при запуске:
+    // поля вьюпорта уже отняли ширину, а документ ещё считает себя прежним.
+    {
+        zametti::NoteEditor fresh;
+        fresh.resize(1600, 600);
+        fresh.show();
+        QTest::qWait(20);
+        fresh.openFile(path);
+        QTest::qWait(20);
+        std::printf("  при запуске: горизонтальная полоса до %d, документ %.0f, вьюпорт %d\n",
+                    fresh.horizontalScrollBar()->maximum(),
+                    double(fresh.document()->documentLayout()->documentSize().width()),
+                    fresh.viewport()->width());
+        ZT_TRUE("при запуске горизонтальной полосы прокрутки нет",
+                fresh.horizontalScrollBar()->maximum() == 0);
+    }
 
     return zt::report("zoom");
 }

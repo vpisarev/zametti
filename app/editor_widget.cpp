@@ -911,6 +911,12 @@ void NoteEditor::refreshAppearance() {
     // Именно собираем: от облика зависит каждый блок, в том числе и те, что не
     // менялись, и заплатка их не тронула бы.
     note_.builtValid = false;
+    // СМЕНА ОБЛИКА СБРАСЫВАЕТ ОТМЕНУ, и это единственное место, где мы на это
+    // идём сознательно (кроме открытия другой заметки). Облик задаёт КАЖДЫЙ
+    // блок, заплатка тут не годится, а полная сборка стек не переживает.
+    // Случается редко — правка config.json, — но цена названа: набранное до
+    // смены облика отменить будет нечем.
+    //
     // ИЗ ЖИВОГО ДОКУМЕНТА, а не из снимка. Прежде содержимое бралось из вершины
     // своей цепочки отмены, и потому смене облика приходилось сперва сбрасывать
     // отложенный снимок — иначе набранное и не попавшее в цепочку пропадало бы.
@@ -1110,7 +1116,20 @@ void NoteEditor::undo() {
     // текстов до и после — снимок помнил смещение в координатах ОТМЕНЯЕМОГО
     // документа, а возвращался другой, и голое смещение промахивалось на пару
     // строк. Тридцать строк арифметики ушли вместе со снимками.
+    // ПОСЛЕ ОТМЕНЫ УБИРАТЬ НЕЧЕГО, и это довод, а не оптимизация.
+    //
+    // Отмена возвращает состояние, которое мы сами и построили — каноническим,
+    // со всеми инвариантами. Значит уборка на нём либо не найдёт ничего (пустая
+    // работа на каждом Ctrl+Z), либо что-то изменит — а это означало бы, что
+    // отмена вернула не то, что было, и уборка эту беду ЗАМАЗЫВАЕТ вместо того,
+    // чтобы дать ей проявиться.
+    //
+    // Симптом, по которому это нашлось: уборка — новая правка, а всякая новая
+    // правка отбрасывает у Qt ветку повтора. Владелец увидел так: «несколько
+    // Ctrl+Z — всё хорошо, а redo возвращает пару слов и встаёт».
+    recordingSuspended_ = true;
     QTextEdit::undo();
+    recordingSuspended_ = false;
 
     // Вид держится сам, но отменённая правка может оказаться за окном — тогда
     // её надо показать: человек нажал отмену, чтобы увидеть результат.
@@ -1127,7 +1146,11 @@ void NoteEditor::redo() {
     if (!document()->isRedoAvailable()) return;
     const int scrollBefore = verticalScrollBar()->value();
     note_.undoRun = true;
+    // По тому же доводу, что и у отмены: возвращённое состояние каноническое,
+    // убирать в нём нечего, а всякая правка обрубила бы следующий повтор.
+    recordingSuspended_ = true;
     QTextEdit::redo();
+    recordingSuspended_ = false;
     showEditPlace(scrollBefore);
     document()->setModified(true);
     autosave_.start(appearance().autosaveDelayMs);
@@ -3296,7 +3319,16 @@ qint64 NoteEditor::restoreShownSnapshot(bool* alreadyCurrent) {
     // Одной правкой, а не пересозданием документа: восстановление обязано
     // отменяться обычным Ctrl+Z, а для этого оно должно быть шагом нашей
     // цепочки, как всякая другая правка.
-    rebuild(body, textCursor().position(), viewAnchor());
+    // ВОССТАНОВЛЕНИЕ — ОБЫЧНАЯ ПРАВКА, и отменяется обычным Ctrl+Z (об этом
+    // сказано и выше по тексту). Значит и пересборка здесь идёт правкой: внутри
+    // скобки, одним шагом. Полная сборка на её месте сбрасывала бы стек — то
+    // есть человек, вернувшийся из истории, терял бы возможность передумать.
+    {
+        QTextCursor group(document());
+        group.beginEditBlock();
+        rebuild(body, textCursor().position(), viewAnchor(), nullptr, /*asEdit=*/true);
+        group.endEditBlock();
+    }
     document()->setModified(true);
     note_.undoRun = false;
 
@@ -3535,7 +3567,14 @@ void NoteEditor::save(bool interactive, bool force) {
         if (outcome.differsFromDocument) {
             const int cursor = textCursor().position();
             const ViewAnchor anchor = viewAnchor();
-            rebuild(outcome.reread, cursor, anchor);
+            // ПРИКЛЕИВАЕТСЯ К ТОЙ ПРАВКЕ, КОТОРУЮ ДОГОНЯЕТ, а не заводит свой
+            // шаг и не сбрасывает стек. Прежде здесь стояла полная пересборка:
+            // она чистила отмену, и человек, записавший заметку, терял всю
+            // историю правок — тем вернее, чем чаще срабатывало автосохранение.
+            QTextCursor join(document());
+            join.joinPreviousEditBlock();
+            rebuild(outcome.reread, cursor, anchor, nullptr, /*asEdit=*/true);
+            join.endEditBlock();
         }
         // Шаг истории — по факту записи, а не по факту нажатия: Unchanged
         // означает, что на диске уже ровно это, и второй одинаковый слепок
@@ -3645,7 +3684,14 @@ void NoteEditor::reparseAfterTableEdit() {
     parsePieces(text, fresh, ignored);
 
     recordingSuspended_ = true;
-    rebuild(fresh, at, viewAnchor(), &fresh);
+    // Перечитывание после правки таблицы — тоже правка: одним шагом отмены и
+    // без сброса стека.
+    {
+        QTextCursor group(document());
+        group.beginEditBlock();
+        rebuild(fresh, at, viewAnchor(), &fresh, /*asEdit=*/true);
+        group.endEditBlock();
+    }
     recordingSuspended_ = false;
 
     // Каретка встаёт НА таблицу, если она снова таблица: выйти из правки —
