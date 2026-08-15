@@ -552,7 +552,7 @@ private:
     // со своим состоянием, и разница между ними только в том, кто её держит.
     struct NoteSession {
         QString path;
-        std::unique_ptr<QTextDocument> document;
+        std::shared_ptr<QTextDocument> document;
         NoteHeader meta;
         // Мета, потерянная внешней правкой: показать человеку, что пропало.
         NoteHeader lostMeta;
@@ -647,7 +647,7 @@ private:
 
         // Режим истории. Открытая заметка подменяется слепком, а сама она
         // уезжает СЮДА и возвращается назад целиком. Непусто — идёт режим.
-        std::unique_ptr<NoteSession> live;
+        std::shared_ptr<NoteSession> live;
         journal::Journal timeline;   // рамки записей: таймлайну
         int historyIndex = -1;       // какая запись показана; -1 вне режима
         // Разность показанного слепка с базой. Живёт в объекте заметки: и
@@ -673,7 +673,7 @@ private:
         // владелец это увидел как «Tab работает около секунды». Слоты живут,
         // пока показан этот слепок с этой базой; сменилось что-то из двух —
         // сбрасываются все.
-        std::array<std::unique_ptr<QTextDocument>, 4> diffDocs;
+        std::array<std::shared_ptr<QTextDocument>, 4> diffDocs;
         std::array<QVector<diff::Mark>, 4> diffDocMarks;
         // Блок ИСХОДНОГО слепка для каждого блока показанного документа; -1 у
         // дорисованного. По ней место каретки переводится в строки слепка.
@@ -690,7 +690,9 @@ private:
     // Отправить прежний документ на отложенное удаление. Ни один документ не
     // уничтожается синхронно: подмена идёт из обработчиков событий, и Qt может
     // трогать старый документ ещё долю секунды после нас.
-    void retireDocument(std::unique_ptr<QTextDocument> previous);
+    void retireDocument(std::shared_ptr<QTextDocument> previous);
+    // Документы, отпущенные, но ещё не умершие: см. retireDocument.
+    std::vector<std::shared_ptr<QTextDocument>> retiring_;
     // Запомнить в объекте заметки, где каретка, что выделено и где прокрутка.
     // Одной функцией: три числа отвечают на один вопрос «где я был», и писать
     // их порознь — способ однажды забыть одно.
@@ -704,7 +706,7 @@ private:
     void activateNote(bool takeFocus);
     // Подменить только документ, оставив ту же заметку: сборка с нуля и показ
     // слепка.
-    void installDocument(std::unique_ptr<QTextDocument> doc);
+    void installDocument(std::shared_ptr<QTextDocument> doc);
     void connectDocument();
     // Отложить текущую заметку, если её есть смысл откладывать.
     void stashCurrentNote();
@@ -829,7 +831,7 @@ private:
     // держать копию каждой открытой заметки незачем, а после записи он
     // приходит из пути сохранения — перечитывать файл не надо вовсе.
     // Документ, которым владеем: нужен подмене объекта заметки.
-    std::unique_ptr<QTextDocument>& ownedDocument() { return note_.document; }
+    std::shared_ptr<QTextDocument>& ownedDocument() { return note_.document; }
 
     // Показать слепок записи index в поле редактора. Живая заметка к этому
     // моменту уже отложена в note_.live.
@@ -868,7 +870,7 @@ private:
     int diffSlotNow() const { return (diffPeek_ ? 1 : 0) + (diffPlainView_ ? 2 : 0); }
     // Собрать документ для слота. Отдельно от показа: собранное кладётся в
     // слот и переживает переключения.
-    std::unique_ptr<QTextDocument> buildDiffDocument(int slot, QVector<diff::Mark>* marks,
+    std::shared_ptr<QTextDocument> buildDiffDocument(int slot, QVector<diff::Mark>* marks,
                                                     QVector<int>* source);
     // Выбросить готовые документы: слепок или база сменились, и всё, что
     // собрано, устарело разом.

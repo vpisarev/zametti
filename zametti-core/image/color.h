@@ -114,7 +114,7 @@ public:
 
 private:
     struct Impl;
-    std::unique_ptr<Impl> impl_;
+    std::shared_ptr<Impl> impl_;
 };
 
 // Главная точка: если профиль картинки описанием не выражается, переводит её в

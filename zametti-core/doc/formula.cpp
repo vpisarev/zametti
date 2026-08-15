@@ -119,8 +119,13 @@ bool Formulas::init(QString* error) {
 
     // Порядок важен: сперва фабрика платформы, потом init — тот уже читает
     // шрифт, а чтение идёт через PlatformFactory::get().
+    // ЕДИНСТВЕННЫЙ unique_ptr в дереве, и он не наш выбор: подпись
+    // registerFactory принадлежит microtex. Правило владельца — «умный
+    // указатель у нас один, shared_ptr» — про наш код; чужому API отдаём то,
+    // что он просит.
     microtex::PlatformFactory::registerFactory(
-        "qt", std::make_unique<microtex::PlatformFactory_qt>());
+        "qt", std::unique_ptr<microtex::PlatformFactory_qt>(
+                  new microtex::PlatformFactory_qt()));
     microtex::PlatformFactory::activate("qt");
 
     if (!loadFontFromResources(QStringLiteral("EulerMath"), true, error)) return false;
@@ -219,7 +224,7 @@ FormulaImage Formulas::render(const QString& latex, bool display, qreal pixelSiz
         if (out.error.isEmpty()) out.error = QStringLiteral("движок формул не собрал вёрстку");
         return out;
     }
-    const std::unique_ptr<microtex::Render> render(raw);
+    const std::shared_ptr<microtex::Render> render(raw);
 
     const qreal physicalWidth = render->getWidth();
     const qreal physicalHeight = render->getHeight();

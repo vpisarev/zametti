@@ -56,7 +56,7 @@ struct NoteTreeModel::Node {
     bool dir = false;
     bool storeRoot = false;   // «All notes»: корень хранилища отдельной строкой
     Node* parent = nullptr;
-    std::vector<std::unique_ptr<Node>> children;
+    std::vector<std::shared_ptr<Node>> children;
     // Кого из детей видно наружу. В режиме «только папки» заметки остаются в
     // children (средняя колонка берёт их оттуда), но в модель не попадают —
     // иначе пришлось бы держать два дерева и синхронизировать их.
@@ -75,7 +75,7 @@ namespace {
 
 // Каталоги идут первыми, дальше по названию с учётом языка: "Ядро" не должно
 // оказываться после "Zoo" только потому, что кириллица дальше в кодировке.
-void sortChildren(std::vector<std::unique_ptr<NoteTreeModel::Node>>& children,
+void sortChildren(std::vector<std::shared_ptr<NoteTreeModel::Node>>& children,
                   const QCollator& collator) {
     std::sort(children.begin(), children.end(),
               [&collator](const auto& a, const auto& b) {
@@ -86,9 +86,9 @@ void sortChildren(std::vector<std::unique_ptr<NoteTreeModel::Node>>& children,
 
 // Собирает поддерево каталога. Возвращает nullptr, если заметок внутри нет:
 // показывать пустые ветки незачем.
-std::unique_ptr<NoteTreeModel::Node> buildDir(const QString& dirPath, const QString& title,
+std::shared_ptr<NoteTreeModel::Node> buildDir(const QString& dirPath, const QString& title,
                                               const QCollator& collator) {
-    auto node = std::make_unique<NoteTreeModel::Node>();
+    auto node = std::make_shared<NoteTreeModel::Node>();
     node->title = title;
     node->path = QFileInfo(dirPath).absoluteFilePath();
     node->dir = true;
@@ -108,7 +108,7 @@ std::unique_ptr<NoteTreeModel::Node> buildDir(const QString& dirPath, const QStr
                 node->children.push_back(std::move(child));
             }
         } else if (entry.suffix().compare(QLatin1String("md"), Qt::CaseInsensitive) == 0) {
-            auto child = std::make_unique<NoteTreeModel::Node>();
+            auto child = std::make_shared<NoteTreeModel::Node>();
             child->title = entry.completeBaseName();
             child->path = entry.absoluteFilePath();
             child->parent = node.get();
@@ -203,16 +203,16 @@ QString storeRootTitle(const QString& root) {
     return name.isEmpty() ? QStringLiteral("All notes") : name;
 }
 
-std::unique_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath) {
+std::shared_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath) {
     // Два корня: невидимый (им отвечает QModelIndex()) и видимый — строка
     // «All notes», которая в левой панели всегда первая и всегда на месте.
     // Держать её узлом, а не рисовать отдельно, дешевле всего: перенос в
     // корень, раскрытие и выделение работают тем же кодом, что и у папок.
-    auto hidden = std::make_unique<NoteTreeModel::Node>();
+    auto hidden = std::make_shared<NoteTreeModel::Node>();
     hidden->path = QFileInfo(rootPath).absoluteFilePath();
     hidden->dir = true;
 
-    auto rootOwned = std::make_unique<NoteTreeModel::Node>();
+    auto rootOwned = std::make_shared<NoteTreeModel::Node>();
     rootOwned->title = storeRootTitle(rootPath);
     rootOwned->path = QFileInfo(rootPath).absoluteFilePath();
     rootOwned->dir = true;
@@ -222,7 +222,7 @@ std::unique_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath) {
     hidden->children.push_back(std::move(rootOwned));
 
     // Скан: только "<id>.md".
-    std::vector<std::unique_ptr<NoteTreeModel::Node>> nodes;
+    std::vector<std::shared_ptr<NoteTreeModel::Node>> nodes;
     QHash<QString, NoteTreeModel::Node*> byId;
     QHash<QString, QString> parentOf;
     for (const QFileInfo& info :
@@ -238,7 +238,7 @@ std::unique_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath) {
                          info.absoluteFilePath().toUtf8().constData());
             continue;
         }
-        auto node = std::make_unique<NoteTreeModel::Node>();
+        auto node = std::make_shared<NoteTreeModel::Node>();
         node->id = stem;
         node->title = meta.title;
         node->snippet = meta.snippet;
@@ -300,7 +300,7 @@ std::unique_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath) {
     NoteTreeModel::Node* archiveBox = nullptr;
     const auto boxFor = [&]() -> NoteTreeModel::Node* {
         if (archiveBox != nullptr) return archiveBox;
-        auto box = std::make_unique<NoteTreeModel::Node>();
+        auto box = std::make_shared<NoteTreeModel::Node>();
         box->title = QStringLiteral("Архив");
         // Путь синтетический: узла-файла за ящиком нет, но путь нужен —
         // им адресуются раскрытые ветки и выбранная папка (indexForPath).
@@ -485,7 +485,7 @@ void NoteTreeModel::build() {
     }
     root_ = buildDir(rootPath_, QFileInfo(rootPath_).fileName(), collator);
     if (root_ == nullptr) {
-        root_ = std::make_unique<Node>();
+        root_ = std::make_shared<Node>();
         root_->title = QFileInfo(rootPath_).fileName();
         root_->path = QFileInfo(rootPath_).absoluteFilePath();
         root_->dir = true;

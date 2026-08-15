@@ -281,7 +281,7 @@ static int ztRunSuite(int argc, char** argv) {
             g_root + QStringLiteral("/0000000000000f.md"));
         const QModelIndex orphan = model.indexForPath(
             g_root + QStringLiteral("/00000000000004.md"));
-        std::unique_ptr<QMimeData> dragNote(model.mimeData({orphan}));
+        std::shared_ptr<QMimeData> dragNote(model.mimeData({orphan}));
         ZT_TRUE("сброс заметки НА ЗАМЕТКУ запрещён",
                 !model.canDropMimeData(dragNote.get(), Qt::MoveAction, -1, -1,
                                        noteInFolder));
@@ -291,14 +291,14 @@ static int ztRunSuite(int argc, char** argv) {
         ZT_TRUE("сброс заметки в корень разрешён",
                 model.canDropMimeData(dragNote.get(), Qt::MoveAction, -1, -1,
                                       QModelIndex()));
-        std::unique_ptr<QMimeData> dragFolder(model.mimeData({folder}));
+        std::shared_ptr<QMimeData> dragFolder(model.mimeData({folder}));
         ZT_TRUE("папку в папку можно",
                 model.canDropMimeData(dragFolder.get(), Qt::MoveAction, -1, -1,
                                       emptyFolder));
         ZT_TRUE("папку в её же заметку нельзя",
                 !model.canDropMimeData(dragFolder.get(), Qt::MoveAction, -1, -1,
                                        noteInFolder));
-        std::unique_ptr<QMimeData> dragEmpty(model.mimeData({emptyFolder}));
+        std::shared_ptr<QMimeData> dragEmpty(model.mimeData({emptyFolder}));
         ZT_TRUE("пустую папку в другую папку можно",
                 model.canDropMimeData(dragEmpty.get(), Qt::MoveAction, -1, -1, folder));
     }

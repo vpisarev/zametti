@@ -193,7 +193,7 @@ RowIccConverter::RowIccConverter(const QByteArray& from, int channels, const QBy
                                  int width)
     : impl_(from.isEmpty() || to.isEmpty() || channels < 1 || channels > 4 || width < 1
                 ? nullptr
-                : std::make_unique<Impl>(from, channels, to, width)) {}
+                : std::make_shared<Impl>(from, channels, to, width)) {}
 
 RowIccConverter::~RowIccConverter() = default;
 

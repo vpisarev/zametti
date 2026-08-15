@@ -234,12 +234,12 @@ void bench() {
         for (int round = 0; round < 5; ++round) {
             QElapsedTimer timer;
             timer.start();
-            std::vector<std::unique_ptr<QTextLayout>> made;
+            std::vector<std::shared_ptr<QTextLayout>> made;
             made.reserve(size_t(texts.size()));
             for (const QString& text : texts)
-                made.push_back(std::make_unique<QTextLayout>(text, font));
+                made.push_back(std::make_shared<QTextLayout>(text, font));
             const qint64 built = timer.nsecsElapsed() / 1000;
-            for (const std::unique_ptr<QTextLayout>& made_layout : made) {
+            for (const std::shared_ptr<QTextLayout>& made_layout : made) {
                 QTextLayout& layout = *made_layout;
                 layout.beginLayout();
                 for (QTextLine line = layout.createLine(); line.isValid();

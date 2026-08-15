@@ -240,9 +240,9 @@ bool readTiff(const QString& path, TiffImage* out, QString* error, qint64 maxDec
     //
     // Профиля нет — остаётся наивный путь: врать нечем, а отказываться от
     // картинки из-за отсутствия профиля хуже, чем показать её приблизительно.
-    std::unique_ptr<RowIccConverter> cmyk;
+    std::shared_ptr<RowIccConverter> cmyk;
     if (photo == PHOTOMETRIC_SEPARATED && !out->icc.isEmpty()) {
-        cmyk = std::make_unique<RowIccConverter>(out->icc, 4, displayP3Icc(), int(w));
+        cmyk = std::make_shared<RowIccConverter>(out->icc, 4, displayP3Icc(), int(w));
         if (!cmyk->valid()) cmyk.reset();
     }
 

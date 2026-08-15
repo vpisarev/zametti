@@ -438,7 +438,7 @@ void NoteEditor::connectDocument() {
     connect(document(), &QTextDocument::contentsChanged, this, &NoteEditor::onContentsChanged);
 }
 
-void NoteEditor::retireDocument(std::unique_ptr<QTextDocument> previous) {
+void NoteEditor::retireDocument(std::shared_ptr<QTextDocument> previous) {
     if (!previous) return;
     // СТАРЫЙ ДОКУМЕНТ НЕ УМИРАЕТ ЗДЕСЬ И СЕЙЧАС — он уезжает в deleteLater.
     //
@@ -449,9 +449,15 @@ void NoteEditor::retireDocument(std::unique_ptr<QTextDocument> previous) {
     // роняет программу. Владелец получил падение по Alt: оконный менеджер
     // забирал фокус, а мы на focusOut сносили документ.
     //
-    // Отложенное удаление стоит ноль (один посланный объект) и снимает целый
-    // класс бед: документ доживает до возврата в цикл событий.
-    previous.release()->deleteLater();
+    // Отложенное удаление стоит ноль и снимает целый класс бед: документ
+    // доживает до возврата в цикл событий.
+    //
+    // Держим его СПИСКОМ ЖИВЫХ, а не deleteLater: у shared_ptr нет release, да и
+    // отпустить владение ради ручного удаления значило бы вернуться к тому, от
+    // чего умный указатель и заводится. Список пустеет на ближайшем возврате в
+    // цикл событий — ровно тогда, когда Qt уже отпустила прежний документ.
+    retiring_.push_back(std::move(previous));
+    QTimer::singleShot(0, this, [this] { retiring_.clear(); });
 }
 
 void NoteEditor::rememberCaretInto(NoteSession& note) const {
@@ -469,7 +475,7 @@ void NoteEditor::installSession(NoteSession session) {
     // документ». Порознь между ними существует миг, когда виджет смотрит на
     // уже разрушенный документ: присваивание объекта убивает старый вместе с
     // ним. Так и падало, пока не свёл в одно место.
-    std::unique_ptr<QTextDocument> previous = std::move(note_.document);
+    std::shared_ptr<QTextDocument> previous = std::move(note_.document);
     if (document() != nullptr) disconnect(document(), nullptr, this, nullptr);
     note_ = std::move(session);
     setDocument(note_.document.get());
@@ -506,10 +512,10 @@ void NoteEditor::installSession(NoteSession session) {
     watchFile();
 }
 
-void NoteEditor::installDocument(std::unique_ptr<QTextDocument> doc) {
+void NoteEditor::installDocument(std::shared_ptr<QTextDocument> doc) {
     // Прежний держим живым до самой подмены: Qt удаляет старый документ только
     // если сам его и заводил, а наши — наши.
-    std::unique_ptr<QTextDocument> previous = std::move(note_.document);
+    std::shared_ptr<QTextDocument> previous = std::move(note_.document);
     if (document() != nullptr) disconnect(document(), nullptr, this, nullptr);
     note_.document = std::move(doc);
     setDocument(note_.document.get());
@@ -704,7 +710,7 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
     // Открывается другой файл: с прежним документом у нового ничего общего,
     // заплатке не за что зацепиться.
     note_.builtValid = false;
-    installDocument(std::make_unique<QTextDocument>());
+    installDocument(std::make_shared<QTextDocument>());
     rebuild(doc, spot.cursor, {});
     // Каретка, выделение, показ места и фокус — общей дорогой с отложенной
     // заметкой: два пути открытия, одно правило.
@@ -2793,7 +2799,7 @@ bool NoteEditor::enterHistory(int index) {
     // заводится объект слепка — с тем же путём и метой, но со своей цепочкой
     // отмены и своим документом. Возврат — обратная подмена, и потерять при
     // ней нечего: переносится объект, а не набор полей.
-    auto live = std::make_unique<NoteSession>(std::move(note_));
+    auto live = std::make_shared<NoteSession>(std::move(note_));
     rememberCaretInto(*live);
     live->modified = live->document && live->document->isModified();
 
@@ -3031,20 +3037,20 @@ void NoteEditor::goToDiffLine(int line, int onScreen) {
 }
 
 void NoteEditor::dropDiffDocuments() {
-    for (std::unique_ptr<QTextDocument>& doc : note_.diffDocs) retireDocument(std::move(doc));
+    for (std::shared_ptr<QTextDocument>& doc : note_.diffDocs) retireDocument(std::move(doc));
     for (QVector<diff::Mark>& marks : note_.diffDocMarks) marks.clear();
     for (QVector<int>& source : note_.diffDocSource) source.clear();
     note_.diffSlot = -1;
 }
 
-std::unique_ptr<QTextDocument> NoteEditor::buildDiffDocument(int slot,
+std::shared_ptr<QTextDocument> NoteEditor::buildDiffDocument(int slot,
                                                              QVector<diff::Mark>* marks,
                                                              QVector<int>* source) {
     const bool base = (slot & 1) != 0;
     const bool plain = (slot & 2) != 0;
     // Сравнение выбирается СТОРОНОЙ: показанная сторона всегда «after».
     const diff::Result& result = base ? note_.diffReverse : note_.diffResult;
-    auto doc = std::make_unique<QTextDocument>();
+    auto doc = std::make_shared<QTextDocument>();
     source->clear();
     if (plain) {
         diff::buildPlainDocument(result, *doc, marks);

@@ -127,8 +127,8 @@ void checkLineRules() {
 
 // --- сводка по документу ----------------------------------------------------
 
-std::unique_ptr<QTextDocument> build(const std::string& markdown) {
-    auto doc = std::make_unique<QTextDocument>();
+std::shared_ptr<QTextDocument> build(const std::string& markdown) {
+    auto doc = std::make_shared<QTextDocument>();
     zametti::buildDocument(pieces(markdown), *doc);
     return doc;
 }

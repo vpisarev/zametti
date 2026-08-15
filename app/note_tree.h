@@ -250,7 +250,7 @@ private:
     bool store_ = false;
     bool foldersOnly_ = false;
     SortOrder rootSort_ = defaultOrder(SortKey::Modified);
-    std::unique_ptr<Node> root_;
+    std::shared_ptr<Node> root_;
     QSet<QString> expanded_;
 };
 
