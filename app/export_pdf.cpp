@@ -3,7 +3,6 @@
 #include "doc_model.h"
 #include "document_builder.h"
 #include "note_view.h"
-#include "parser.h"
 #include "resources.h"
 #include "settings.h"
 
@@ -380,8 +379,10 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
         view.resize(view.width() + wantWidth - view.viewport()->width(),
                     view.height() + wantHeight - view.viewport()->height());
 
-    const Document ir = parse(text);
-    buildDocument(ir, *view.document());
+    std::vector<Piece> blocks;
+    NoteHeader ignored;
+    parsePieces(text, blocks, ignored);
+    buildDocument(blocks, *view.document());
     prepareForPaper(*view.document());
     view.applyContentWidth();
     // Ширину разметки ставим явно, хотя показанный виджет ставит её и сам:

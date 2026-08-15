@@ -1,7 +1,7 @@
 #include "lost_found.h"
 
 #include "note_id.h"
-#include "parser.h"
+#include "document.h"
 #include "serializer.h"
 #include "store.h"
 
@@ -40,17 +40,18 @@ bool writeBytes(const QString& path, const std::string& bytes, QString* error) {
 int fileOrphans(const QString& root, QString* error) {
     // Один проход по каталогу: что за заметки есть и на кого они ссылаются.
     QHash<QString, QString> parents;
-    QHash<QString, Document> docs;
+    QHash<QString, ZDocument> docs;
     QString bureau;
     for (const QFileInfo& info : QDir(root).entryInfoList({QStringLiteral("*.md")}, QDir::Files)) {
         const QString id = info.completeBaseName();
         if (!isValidNoteId(id.toStdString())) continue;
         std::string bytes;
         if (!readBytes(info.absoluteFilePath(), bytes)) continue;
-        Document doc = parse(bytes);
-        parents.insert(id, QString::fromStdString(doc.meta.get("parent")));
-        if (doc.meta.get("role") == kLostRole) bureau = id;
-        docs.insert(id, std::move(doc));
+        ZDocument doc;
+        doc.loadMarkdown(bytes);
+        parents.insert(id, doc.parentId());
+        if (doc.isLost()) bureau = id;
+        docs.insert(id, doc);
     }
 
     // Сироты: parent стоит, а заметки с таким id нет. Сама папка-бюро сиротой
@@ -79,30 +80,35 @@ int fileOrphans(const QString& root, QString* error) {
             if (error != nullptr) *error = QStringLiteral("папка бюро не читается");
             return -1;
         }
-        Document doc = parse(bytes);
-        doc.meta.setPresent(true);
-        doc.meta.set("role", kLostRole);
-        Block heading = doc.newBlock(Kind::Heading, "Бюро находок");
-        heading.headingLevel = 1;
-        doc.blocks.push_back(heading);
-        doc.meta.setBlankAfter(true);
-        if (!writeBytes(made, serialize(doc), error)) return -1;
+        ZDocument doc;
+        doc.loadMarkdown("# Бюро находок\n");
+        NoteHeader head;
+        {
+            ZDocument was;
+            was.loadMarkdown(bytes);
+            head = was.header();
+        }
+        head.setPresent(true);
+        head.set("role", kLostRole);
+        head.setBlankAfter(true);
+        doc.setHeader(head);
+        if (!writeBytes(made, doc.toMarkdown(), error)) return -1;
     }
 
     int filed = 0;
     for (const QString& id : lost) {
-        Document& doc = docs[id];
+        ZDocument& doc = docs[id];
         // ДВА ПОРТА: текущий — бюро, оригинал — то, что было. По второму видно,
         // откуда заметка пришла, и он же переживёт приезд настоящего родителя
         // синхронизацией.
-        const std::string was = doc.meta.get("parent");
-        if (!was.empty() && doc.meta.get(kLostParentKey).empty())
-            doc.meta.set(kLostParentKey, was);
-        doc.meta.set("parent", bureau.toStdString());
+        const QString was = doc.parentId();
+        if (!was.isEmpty() && doc.headerValue(QString::fromLatin1(kLostParentKey)).isEmpty())
+            doc.setHeaderValue(QString::fromLatin1(kLostParentKey), was);
+        doc.setParentId(bureau);
         // `modified` НЕ трогаем: правка организационная, как перенос. Здесь это
         // держится тем, что мы пишем ровно те байты, что прочитали, поменяв
         // две строки шапки, — штампов в этом пути нет вовсе.
-        if (!writeBytes(QDir(root).filePath(id + QStringLiteral(".md")), serialize(doc), error))
+        if (!writeBytes(QDir(root).filePath(id + QStringLiteral(".md")), doc.toMarkdown(), error))
             return -1;
         ++filed;
     }

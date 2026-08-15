@@ -1,22 +1,10 @@
 #ifndef ZAMETTI_SERIALIZER_H
 #define ZAMETTI_SERIALIZER_H
 
-#include "ir.h"
-#include "../doc/document_pieces.h"
-
-// Умирающие подписи сборки от представления приезжают вместе с этими:
-// потребители у них одни и те же, и менять их до сноса IR незачем.
-#include "../doc/ir_bridge.h"
-
 #include <string>
 #include <string_view>
-#include <vector>
 
 namespace zametti {
-
-// IR → markdown. Вывод всегда канонический: '-' для маркированных списков,
-// нумерация с 1, ATX-заголовки, огороженный код.
-std::string serialize(const Document& doc);
 
 // Лишние неразрывные пробелы — обычными.
 //

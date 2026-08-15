@@ -1385,9 +1385,10 @@ void settleComment(Piece& piece) {
 // такая же одна на всех: склейка литеральных строк, дословные куски, доводка
 // формул и комментариев — правила границы «документ → файл», и второй их копии
 // быть не должно.
-void walkPieces(const QTextDocument& doc, const std::function<void(const Piece&)>& sink) {
+void walkPieces(const QTextDocument& doc, const std::function<bool(const Piece&)>& sink) {
     Piece piece;
     bool open = false;
+    bool stop = false;
 
     auto close = [&] {
         if (!open) return;
@@ -1399,12 +1400,12 @@ void walkPieces(const QTextDocument& doc, const std::function<void(const Piece&)
         }
         settleComment(piece);
         settleMath(piece);
-        sink(piece);
+        if (!sink(piece)) stop = true;
         piece = Piece{};
         open = false;
     };
 
-    for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {
+    for (QTextBlock block = doc.begin(); block.isValid() && !stop; block = block.next()) {
         if (isPhantomBlock(doc, block)) continue;
 
         const QTextBlockFormat format = block.blockFormat();
@@ -1465,7 +1466,10 @@ std::string writeInto(const QTextDocument& doc, const NoteHeader& header,
         if (isRawBlock(b) && looksLikeLinkDefinition(toUtf8(b.text()))) hasLinkDefs = true;
 
     Writer writer(header, hasLinkDefs, map != nullptr);
-    walkPieces(doc, [&](const Piece& piece) { writer.push(piece); });
+    walkPieces(doc, [&](const Piece& piece) {
+        writer.push(piece);
+        return true;
+    });
     return writer.finish(map);
 }
 

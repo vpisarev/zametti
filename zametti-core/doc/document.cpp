@@ -18,13 +18,6 @@ namespace zametti {
 
 // ЖИВАЯ МОДЕЛЬ — QTextDocument, и только он. Шапка живёт рядом: в документе её
 // нет и быть не должно, редактор её не видит.
-//
-// ПЕРЕХОДНОЕ, И ЭТО СКАЗАНО ВСЛУХ: разбор и запись пока ходят через
-// промежуточное представление — parse() строит его, buildDocument переносит в
-// документ, и обратно тем же путём. Представление при этом ВРЕМЕННОЕ: оно
-// живёт внутри двух функций и наружу не выходит. Заменить эти два мостика на
-// прямой проход md4c → QTextDocument и обратно — следующий шаг, и наборы его
-// сторожат: круг обязан остаться неподвижной точкой.
 
 namespace {
 
@@ -42,7 +35,7 @@ std::string skeletonOf(const QTextDocument& text) {
             out += "raw\x1f";
             out += piece.text;
             out += '\x1e';
-            return;
+            return true;
         }
         out += std::to_string(int(piece.kind));
         out += '\x1f';
@@ -58,6 +51,7 @@ std::string skeletonOf(const QTextDocument& text) {
         out += '\x1f';
         out += piece.text;
         out += '\x1e';
+        return true;
     });
     return out;
 }
@@ -186,43 +180,103 @@ void ZDocument::setSortOrder(std::optional<SortOrder> order) {
 
 namespace {
 
-// Первый СОДЕРЖАТЕЛЬНЫЙ блок: пустые строки и html-комментарии не в счёт.
-// Правило было написано ТРИЖДЫ — в поиске по хранилищу, в дереве и в стабе
-// архива; здесь оно одно.
-QTextBlock firstContentBlock(const QTextDocument& doc) {
-    for (QTextBlock b = doc.begin(); b.isValid(); b = b.next()) {
-        const Kind kind = kindOf(b);
-        if (kind == Kind::VSpace || kind == Kind::Html) continue;
-        return b;
-    }
-    return {};
+// СОДЕРЖАТЕЛЬНЫЙ ЛИ БЛОК. Правило было написано ТРИЖДЫ — в поиске по хранилищу,
+// в дереве и в стабе архива; здесь оно одно.
+//
+// Пустая строка и html-комментарий не говорят ничего: первая пуста, второй —
+// разметка, а не текст. Законченный дословный комментарий — тот же случай:
+// заметка, начинающаяся с «<!-- набросок -->», называется своим заголовком, а
+// не комментарием.
+bool isMeaningful(const Piece& piece) {
+    if (piece.raw) return !piece.isClosedHtmlComment();
+    return piece.kind != Kind::VSpace && piece.kind != Kind::Html;
 }
 
-QString firstLineOf(const QTextBlock& block) {
-    const QString whole = block.text();
-    const qsizetype end = whole.indexOf(QChar::LineSeparator);
-    return (end < 0 ? whole : whole.left(end)).simplified();
+QString firstLineOf(const QString& text) {
+    const qsizetype end = text.indexOf(QLatin1Char('\n'));
+    return (end < 0 ? text : text.left(end)).simplified();
 }
 
 }  // namespace
 
+// ЗАГОЛОВОК — ПЕРВАЯ СТРОКА ПЕРВОГО СОДЕРЖАТЕЛЬНОГО БЛОКА, и обход обрывается
+// на нём. Цена вопроса названа в document_pieces.h: список заметок спрашивает
+// заголовок у каждой, и платить за него размером самой большой нельзя.
 QString ZDocument::title() const {
-    const QTextBlock first = firstContentBlock(d_->text);
-    return first.isValid() ? firstLineOf(first).left(64) : QString();
+    QString out;
+    walkPieces(d_->text, [&](const Piece& piece) {
+        if (!isMeaningful(piece)) return true;
+        const QString text =
+            QString::fromUtf8(piece.text.data(), qsizetype(piece.text.size())).simplified();
+        if (text.isEmpty()) return true;
+        out = firstLineOf(text).left(64);
+        return false;
+    });
+    return out;
+}
+
+void ZDocument::setTitle(const QString& title) {
+    // Собираем блоки заново: заголовок либо заменяет первый содержательный
+    // блок, либо встаёт перед ним. Заметка при этом пересобирается целиком —
+    // переименование случается по одному разу на действие человека, и платить
+    // за него заплаткой незачем.
+    std::vector<Piece> blocks;
+    bool placed = false;
+    walkPieces(d_->text, [&](const Piece& piece) {
+        if (!placed && isMeaningful(piece)) {
+            placed = true;
+            Piece heading;
+            heading.kind = Kind::Heading;
+            heading.headingLevel =
+                !piece.raw && piece.kind == Kind::Heading && piece.headingLevel > 0
+                    ? piece.headingLevel
+                    : 1;
+            const QByteArray utf8 = title.toUtf8();
+            heading.text.assign(utf8.constData(), size_t(utf8.size()));
+            // Заголовком был — заменяем его; не был — встаёт перед ним, и
+            // между ними обязана стоять пустая строка (инвариант файла).
+            const bool replace = !piece.raw && piece.kind == Kind::Heading;
+            blocks.push_back(std::move(heading));
+            if (!replace) {
+                Piece gap;
+                gap.kind = Kind::VSpace;
+                blocks.push_back(std::move(gap));
+                blocks.push_back(piece);
+            }
+            return true;
+        }
+        blocks.push_back(piece);
+        return true;
+    });
+    if (!placed) {
+        Piece heading;
+        heading.kind = Kind::Heading;
+        heading.headingLevel = 1;
+        const QByteArray utf8 = title.toUtf8();
+        heading.text.assign(utf8.constData(), size_t(utf8.size()));
+        blocks.insert(blocks.begin(), std::move(heading));
+    }
+    buildDocument(blocks, d_->text);
 }
 
 QString ZDocument::snippet(int limit) const {
-    const QTextBlock first = firstContentBlock(d_->text);
-    if (!first.isValid()) return {};
     QString out;
-    for (QTextBlock b = first.next(); b.isValid(); b = b.next()) {
-        const Kind kind = kindOf(b);
-        if (kind == Kind::VSpace || kind == Kind::Html) continue;
+    bool haveTitle = false;
+    walkPieces(d_->text, [&](const Piece& piece) {
+        if (!isMeaningful(piece)) return true;
+        const QString text =
+            QString::fromUtf8(piece.text.data(), qsizetype(piece.text.size())).simplified();
+        if (text.isEmpty()) return true;
+        if (!haveTitle) {
+            haveTitle = true;
+            return true;
+        }
         if (!out.isEmpty()) out += QLatin1Char(' ');
-        out += b.text().simplified();
-        if (out.size() >= limit) break;
-    }
-    return out.left(limit);
+        out += text;
+        return out.size() < limit;
+    });
+    if (out.size() > limit) out = out.left(limit - 1) + QChar(0x2026);
+    return out;
 }
 
 // СТАБ АРХИВА: та же шапка с пометкой `archived` плюс одна строка — заголовок.
@@ -237,26 +291,23 @@ std::string ZDocument::archiveStub() const {
     // содержательный блок. Не нашли — стаб остаётся без тела, и это законно:
     // заметка без единой строки текста и была пустой.
     Piece heading;
-    bool found = false;
     walkPieces(d_->text, [&](const Piece& piece) {
-        if (found) return;
         if (piece.raw) {
             // Дословный кусок заголовком не считаем; законченный комментарий
             // пропускаем — он и в дереве заголовком не выглядит.
-            if (!piece.isClosedHtmlComment()) found = true;   // прекращаем поиск
-            return;
+            return piece.isClosedHtmlComment();
         }
-        if (piece.kind == Kind::VSpace || piece.kind == Kind::Html) return;
+        if (piece.kind == Kind::VSpace || piece.kind == Kind::Html) return true;
         // Первая строка: заголовок стаба однострочный, а блок может нести
         // мягкие переносы.
         std::string line = piece.text.substr(0, piece.text.find('\n'));
         while (!line.empty() && (line.back() == ' ' || line.back() == '\r')) line.pop_back();
-        if (line.empty()) return;
+        if (line.empty()) return true;
         heading.kind = Kind::Heading;
         heading.headingLevel =
             piece.kind == Kind::Heading && piece.headingLevel > 0 ? piece.headingLevel : 1;
         heading.text = std::move(line);
-        found = true;
+        return false;   // заголовок найден, дальше не идём
     });
 
     std::vector<Piece> body;
@@ -266,11 +317,24 @@ std::string ZDocument::archiveStub() const {
     return stub.toMarkdown();
 }
 
+// ПУСТА ЛИ ЗАМЕТКА ПО СУЩЕСТВУ: ни одного блока, кроме пустых строк.
+//
+// Обходом логических блоков, а не блоков документа, и это не вкусовщина. У
+// пустого QTextDocument один блок есть ВСЕГДА, свойств у него нет, и прямой
+// проход считал такую заметку непустой — а от этого ответа зависит пустая
+// строка после шапки, то есть побайтовый круг привезённого файла. Поймал набор
+// ввоза («пустой файл импортируется»), и поймал только после того, как ответ
+// стал спрашиваться у заметки, а не у блоков.
 bool ZDocument::isEmpty() const {
-    for (QTextBlock b = d_->text.begin(); b.isValid(); b = b.next()) {
-        if (isRawBlock(b) || kindOf(b) != Kind::VSpace) return false;
-    }
-    return true;
+    bool empty = true;
+    walkPieces(d_->text, [&](const Piece& piece) {
+        if (piece.raw || piece.kind != Kind::VSpace) {
+            empty = false;
+            return false;
+        }
+        return true;
+    });
+    return empty;
 }
 
 NoteStats ZDocument::getStats() const { return documentStats(d_->text); }

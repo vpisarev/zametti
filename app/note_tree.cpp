@@ -5,9 +5,8 @@
 #include <functional>
 
 #include "icons.h"
-#include "ir.h"
+#include "document.h"
 #include "note_id.h"
-#include "parser.h"
 #include "settings.h"
 #include "archive.h"
 #include "lost_found.h"
@@ -152,76 +151,41 @@ struct StoreNote {
 // делегату, и она меняется вместе с разделителем.
 constexpr int kSnippetChars = 200;
 
-// Текст блока так, как его видит человек: у дословных кусков — сам кусок, он
-// и показан.
-QString blockPlainText(const Document& doc, const Block& block) {
-    const std::string_view text = doc.text(block);
-    return QString::fromUtf8(text.data(), qsizetype(text.size()));
-}
-
-// Первая строка: заголовок в списке однострочный, а текст блока может нести
-// мягкие переносы.
-QString firstLine(const QString& text) {
-    const qsizetype eol = text.indexOf(QLatin1Char('\n'));
-    return (eol < 0 ? text : text.left(eol)).trimmed();
-}
-
-// Заголовок — первый содержательный блок; сниппет — то, что идёт за ним.
-// Пустые строки и HTML-комментарии в сниппет не берутся: первые ничего не
-// говорят, вторые — разметка, а не текст (шапка метаданных блоком и не
-// является — она в doc.meta).
-void describeNote(const Document& doc, StoreNote& out) {
-    bool haveTitle = false;
-    QString snippet;
-    for (const Block& block : doc.blocks) {
-        if (!block.raw && (block.kind == Kind::VSpace || block.kind == Kind::Html)) continue;
-        if (block.raw && doc.isClosedHtmlComment(block)) continue;
-        const QString text = blockPlainText(doc, block).simplified();
-        if (text.isEmpty()) continue;
-        if (!haveTitle) {
-            out.title = firstLine(text).left(64);
-            haveTitle = true;
-            continue;
-        }
-        if (!snippet.isEmpty()) snippet += QLatin1Char(' ');
-        snippet += text;
-        if (snippet.size() >= kSnippetChars) break;
-    }
-    if (snippet.size() > kSnippetChars)
-        snippet = snippet.left(kSnippetChars - 1) + QChar(0x2026);
-    out.snippet = snippet;
-    if (out.title.isEmpty()) out.title = QStringLiteral("Без названия");
-}
-
 bool readStoreNote(const QString& path, StoreNote& out) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) return false;
     const QByteArray bytes = f.readAll();
-    const Document doc = parse(std::string_view(bytes.constData(), size_t(bytes.size())));
+    ZDocument doc;
+    doc.loadMarkdown(std::string_view(bytes.constData(), size_t(bytes.size())));
 
-    out.parent = QString::fromStdString(doc.meta.get("parent"));
+    out.parent = doc.parentId();
     // ВРЕМЕНА ПРИВОДЯТСЯ К UTC ПРЯМО ЗДЕСЬ. В шапке они с офсетом
     // (`…+02:00`), а сравниваются и сортируются строками — лексикографически
     // «21:40+02:00» больше «19:40Z», хотя это один и тот же момент. Дальше по
     // дереву ходит только сравнимая форма; показывает даты список, и ему всё
     // равно, в каком виде их дали, — он переводит в местную зону сам.
-    out.modified = store::comparableTime(doc.meta.get("modified"));
-    out.created = store::comparableTime(doc.meta.get("created"));
+    out.modified = store::comparableTime(doc.modified().toStdString());
+    out.created = store::comparableTime(doc.created().toStdString());
     // Метка сортировки. Чужое значение (другая версия, чужая программа, опечатка
     // руками) не должно ни ронять программу, ни молча подменяться на своё:
     // жалуемся в stderr и показываем папку по наследству, будто метки нет.
-    const std::string sort = doc.meta.get("sort");
-    if (!sort.empty()) {
-        out.sortMark = parseSortOrder(QString::fromStdString(sort));
+    const QString sort = doc.headerValue(QStringLiteral("sort"));
+    if (!sort.isEmpty()) {
+        out.sortMark = doc.sortOrder();
         if (!out.sortMark.has_value())
             std::fprintf(stderr, "непонятная метка сортировки [%s] в [%s] — папка наследует\n",
-                         sort.c_str(), path.toUtf8().constData());
+                         sort.toUtf8().constData(), path.toUtf8().constData());
     }
-    const std::string role = doc.meta.get("role");
-    out.archived = store::isArchivedMeta(doc.meta);
-    out.folder = role == "folder" || role == store::kLostRole;
-    out.lostFound = role == store::kLostRole;
-    describeNote(doc, out);
+    out.archived = doc.isArchived();
+    out.folder = doc.isFolder() || doc.isLost();
+    out.lostFound = doc.isLost();
+
+    // Заголовок и сниппет — глаголы заметки: то же правило «первый
+    // содержательный блок» стоит в поиске по хранилищу и в стабе архива, и
+    // писать его здесь в четвёртый раз незачем.
+    out.title = doc.title();
+    if (out.title.isEmpty()) out.title = QStringLiteral("Без названия");
+    out.snippet = doc.snippet(kSnippetChars);
     return true;
 }
 

@@ -6,13 +6,11 @@
 #include "history_rules.h"
 
 #include "document_builder.h"
-#include "document_reader.h"
 #include "document_saver.h"
 #include "doc_model.h"
 #include "editor_ops.h"
 #include "image_insert.h"
 #include "marker.h"
-#include "parser.h"
 #include "serializer.h"
 #include "settings.h"
 #include "archive.h"
@@ -425,7 +423,10 @@ namespace {
 // принадлежит ZDocument, и снять с него блоки больше нечем.
 std::vector<Piece> piecesOf(const QTextDocument& doc) {
     std::vector<Piece> out;
-    walkPieces(doc, [&](const Piece& piece) { out.push_back(piece); });
+    walkPieces(doc, [&](const Piece& piece) {
+        out.push_back(piece);
+        return true;
+    });
     return out;
 }
 

@@ -24,7 +24,10 @@ namespace {
 // Логические блоки живого документа — местная ступень записи.
 std::vector<Piece> piecesOfDocument(const QTextDocument& doc) {
     std::vector<Piece> out;
-    walkPieces(doc, [&](const Piece& piece) { out.push_back(piece); });
+    walkPieces(doc, [&](const Piece& piece) {
+        out.push_back(piece);
+        return true;
+    });
     return out;
 }
 

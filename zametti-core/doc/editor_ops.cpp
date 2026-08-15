@@ -2,7 +2,6 @@
 
 #include "doc_model.h"
 #include "document_builder.h"
-#include "document_reader.h"
 #include "serializer.h"
 #include "marker.h"
 #include "settings.h"
@@ -295,7 +294,10 @@ std::vector<Piece> piecesOfRange(QTextDocument& doc, int from, int to) {
 // ни смещений, ни переноса байтов между документами.
 std::vector<Piece> piecesOf(const QTextDocument& doc) {
     std::vector<Piece> out;
-    walkPieces(doc, [&](const Piece& piece) { out.push_back(piece); });
+    walkPieces(doc, [&](const Piece& piece) {
+        out.push_back(piece);
+        return true;
+    });
     return out;
 }
 

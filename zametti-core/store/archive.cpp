@@ -1,7 +1,7 @@
 #include "archive.h"
 
 #include "journal.h"
-#include "parser.h"
+#include "document.h"
 #include "serializer.h"
 
 #include <QDateTime>
@@ -154,36 +154,6 @@ std::string titleLine(std::string_view body) {
     return {};
 }
 
-std::string stubBytes(const Document& doc) {
-    Document stub;
-    stub.meta = doc.meta;
-    setArchivedMeta(stub.meta, true);
-
-    // Заголовок ищем так же, как его видит средняя колонка: первый
-    // содержательный блок. Не нашли — стаб остаётся без тела, и это законно:
-    // заметка без единой строки текста и была пустой.
-    for (const Block& b : doc.blocks) {
-        if (b.raw) {
-            if (doc.isClosedHtmlComment(b)) continue;
-            break;   // дословный кусок заголовком не считаем
-        }
-        if (b.kind == Kind::VSpace || b.kind == Kind::Html) continue;
-        const std::string_view text = doc.text(b);
-        if (text.empty()) continue;
-        // Первая строка: заголовок стаба однострочный, а блок может нести
-        // мягкие переносы.
-        std::string line(text.substr(0, text.find('\n')));
-        while (!line.empty() && (line.back() == ' ' || line.back() == '\r')) line.pop_back();
-        if (line.empty()) continue;
-        Block heading = stub.newBlock(Kind::Heading, line);
-        heading.headingLevel = b.kind == Kind::Heading && b.headingLevel > 0 ? b.headingLevel : 1;
-        stub.blocks.push_back(heading);
-        break;
-    }
-    stub.meta.setBlankAfter(!stub.blocks.empty());
-    return serialize(stub);
-}
-
 std::string stubFromBytes(std::string_view bytes) {
     const auto [from, to] = headerRange(bytes);
     if (to == 0) return {};   // шапки нет — не наша заметка, трогать нечего
@@ -271,8 +241,9 @@ bool restoreNote(const QString& root, const QString& noteId, QString* error) {
         if (error != nullptr) *error = QStringLiteral("заметка %1 не читается").arg(noteId);
         return false;
     }
-    Document stub = parse(bytes);
-    if (!isArchivedMeta(stub.meta)) return true;   // уже дома
+    ZDocument stub;
+    stub.loadMarkdown(bytes);
+    if (!stub.isArchived()) return true;   // уже дома
 
     journal::History history(root);
     journal::Journal read;
@@ -322,15 +293,16 @@ bool restoreNote(const QString& root, const QString& noteId, QString* error) {
 int migrateTrashToArchive(const QString& root, QString* error) {
     QString trashId;
     QHash<QString, QString> parents;   // id → parent, по всему хранилищу
-    QHash<QString, Document> docs;
+    QHash<QString, ZDocument> docs;
     for (const QFileInfo& info : QDir(root).entryInfoList({QStringLiteral("*.md")}, QDir::Files)) {
         std::string bytes;
         if (!readFileBytes(info.absoluteFilePath(), bytes)) continue;
-        Document doc = parse(bytes);
+        ZDocument doc;
+        doc.loadMarkdown(bytes);
         const QString id = info.completeBaseName();
-        parents.insert(id, QString::fromStdString(doc.meta.get("parent")));
-        if (doc.meta.get("role") == "trash") trashId = id;
-        docs.insert(id, std::move(doc));
+        parents.insert(id, doc.parentId());
+        if (doc.headerValue(QStringLiteral("role")) == QLatin1String("trash")) trashId = id;
+        docs.insert(id, doc);
     }
     if (trashId.isEmpty()) return 0;
 
@@ -338,14 +310,13 @@ int migrateTrashToArchive(const QString& root, QString* error) {
     for (auto it = docs.begin(); it != docs.end(); ++it) {
         if (it.key() == trashId) continue;
         if (parents.value(it.key()) != trashId) continue;
-        Document& doc = it.value();
-        const std::string home = doc.meta.get("trash-parent");
-        if (home.empty()) doc.meta.unset("parent");
-        else doc.meta.set("parent", home);
-        doc.meta.unset("trash-parent");
-        doc.meta.unset("trash-path");
-        setArchivedMeta(doc.meta, true);
-        if (!writeFileBytes(noteFile(root, it.key()), serialize(doc), error)) return -1;
+        ZDocument& doc = it.value();
+        // Пустое значение снимает ключ — и «домой в корень» выражается ровно им.
+        doc.setParentId(doc.headerValue(QStringLiteral("trash-parent")));
+        doc.setHeaderValue(QStringLiteral("trash-parent"), QString());
+        doc.setHeaderValue(QStringLiteral("trash-path"), QString());
+        doc.setArchived(true);
+        if (!writeFileBytes(noteFile(root, it.key()), doc.toMarkdown(), error)) return -1;
         ++moved;
     }
 

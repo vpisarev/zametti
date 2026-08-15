@@ -16,8 +16,8 @@
 #include "journal.h"
 #include "store.h"
 #include "note_view.h"
-#include "parser.h"
 #include "resources.h"
+#include "document.h"
 #include "serializer.h"
 #include "settings.h"
 #include "sort_order.h"
@@ -112,7 +112,9 @@ int runCheck(const QString& path) {
         return 2;
     }
 
-    std::string out = zametti::serialize(zametti::parse(src));
+    zametti::ZDocument note;
+    note.loadMarkdown(src);
+    const std::string out = note.toMarkdown();
     if (out == src) return 0;
 
     std::vector<std::string> a = splitLines(src);
@@ -1276,9 +1278,10 @@ int main(int argc, char** argv) {
             complain(file, QStringLiteral("файл не читается"));
             return false;
         }
-        zametti::Document doc = zametti::parse(bytes);
+        zametti::ZDocument doc;
+        doc.loadMarkdown(bytes);
         change(doc);
-        const std::string out = zametti::serialize(doc);
+        const std::string out = doc.toMarkdown();
         std::ofstream outFile(file.toStdString(), std::ios::binary | std::ios::trunc);
         if (!outFile) {
             complain(file, QStringLiteral("файл не открывается на запись"));
@@ -1417,25 +1420,7 @@ int main(int argc, char** argv) {
             }
             editor.save(false);
         }
-        rewriteNote(file, [&](zametti::Document& doc) {
-            for (auto& b : doc.blocks) {
-                if (!b.raw && b.kind == zametti::Kind::VSpace) continue;
-                if (!b.raw && b.kind == zametti::Kind::Heading) {
-                    // Правка текста — это дописать байты в хвост арены и
-                    // перенацелить Range: на месте арену не правят.
-                    b.text = doc.append(title.toUtf8().toStdString());
-                    return;
-                }
-                break;
-            }
-            zametti::Block heading =
-                doc.newBlock(zametti::Kind::Heading, title.toUtf8().toStdString());
-            heading.headingLevel = 1;
-            zametti::Block gap;
-            gap.kind = zametti::Kind::VSpace;
-            doc.blocks.insert(doc.blocks.begin(), gap);
-            doc.blocks.insert(doc.blocks.begin(), heading);
-        });
+        rewriteNote(file, [&](zametti::ZDocument& doc) { doc.setTitle(title); });
         if (file == editor.filePath()) editor.openFile(file);
         refreshTree(file);
     });
@@ -1451,10 +1436,9 @@ int main(int argc, char** argv) {
         if (file == editor.filePath()) {
             editor.setMetaParent(parentId);
         } else {
-            rewriteNote(file, [&](zametti::Document& doc) {
-                doc.meta.setPresent(true);
-                if (parentId.isEmpty()) doc.meta.unset("parent");
-                else doc.meta.set("parent", parentId.toStdString());
+            rewriteNote(file, [&](zametti::ZDocument& doc) {
+                doc.setHasHeader(true);
+                doc.setParentId(parentId);
             });
         }
         refreshTree(keepPath);
@@ -1503,13 +1487,9 @@ int main(int argc, char** argv) {
         } else {
             std::string bytes;
             if (readFile(file, bytes)) {
-                const zametti::Document doc = zametti::parse(bytes);
-                empty = true;
-                for (const auto& b : doc.blocks)
-                    if (b.raw || b.kind != zametti::Kind::VSpace) {
-                        empty = false;
-                        break;
-                    }
+                zametti::ZDocument doc;
+                doc.loadMarkdown(bytes);
+                empty = doc.isEmpty();
             }
         }
         if (empty || model.inArchiveId(noteId)) {
@@ -1580,9 +1560,8 @@ int main(int argc, char** argv) {
                 // хватит пометки.
                 const QString folderFile = model.pathOfId(victim);
                 if (!folderFile.isEmpty())
-                    rewriteNote(folderFile, [](zametti::Document& doc) {
-                        zametti::store::setArchivedMeta(doc.meta, true);
-                    });
+                    rewriteNote(folderFile,
+                                [](zametti::ZDocument& doc) { doc.setArchived(true); });
                 continue;
             }
             if (!zametti::store::archiveNote(storeRoot, victim,
@@ -1619,9 +1598,10 @@ int main(int argc, char** argv) {
             if (model.isFolderId(one)) {
                 const QString folderFile = model.pathOfId(one);
                 if (!folderFile.isEmpty())
-                    rewriteNote(folderFile, [](zametti::Document& doc) {
-                        zametti::store::setArchivedMeta(doc.meta, false);
-                        if (doc.meta.get("role") == "trash") doc.meta.unset("role");
+                    rewriteNote(folderFile, [](zametti::ZDocument& doc) {
+                        doc.setArchived(false);
+                        if (doc.headerValue(QStringLiteral("role")) == QLatin1String("trash"))
+                            doc.setHeaderValue(QStringLiteral("role"), QString());
                     });
                 continue;
             }
@@ -1695,11 +1675,9 @@ int main(int argc, char** argv) {
             return;
         }
         if (folder) {
-            rewriteNote(made, [](zametti::Document& doc) {
-                doc.meta.set("role", "folder");
-                zametti::Block heading = doc.newBlock(zametti::Kind::Heading, "Новая папка");
-                heading.headingLevel = 1;
-                doc.blocks.push_back(heading);
+            rewriteNote(made, [](zametti::ZDocument& doc) {
+                doc.setHeaderValue(QStringLiteral("role"), QStringLiteral("folder"));
+                doc.setTitle(QStringLiteral("Новая папка"));
             });
         }
         refreshTree(made);
@@ -1976,9 +1954,11 @@ int main(int argc, char** argv) {
         if (file == editor.filePath()) {
             editor.editMeta(change);
         } else {
-            rewriteNote(file, [&](zametti::Document& doc) {
-                doc.meta.setPresent(true);
-                change(doc.meta);
+            rewriteNote(file, [&](zametti::ZDocument& doc) {
+                doc.setHasHeader(true);
+                zametti::NoteHeader meta = doc.header();
+                change(meta);
+                doc.setHeader(meta);
             });
         }
         // Метку читает СКАН хранилища — значит дерево надо перечитать, иначе

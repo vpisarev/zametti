@@ -5,7 +5,8 @@
 #include "journal.h"
 
 #include "note_id.h"
-#include "parser.h"
+#include "document.h"
+#include "document_pieces.h"
 #include "serializer.h"
 
 #include <QCryptographicHash>
@@ -315,7 +316,8 @@ QString importNote(const QString& root, const QString& parentId, const QString& 
     // Мусорные неразрывные пробелы вычищаются ПРИ ВВОЗЕ, а не при первом
     // открытии: иначе привезённая заметка какое-то время лежала бы на диске
     // грязной, и человек, заглянувший в неё чужим редактором, увидел бы сор.
-    Document doc = parse(normaliseSpaces(bytes));
+    ZDocument doc;
+    doc.loadMarkdown(bytes);
 
     // Времена. СОЗДАНА заметка тогда, когда её написали: своя шапка знает это
     // лучше файловой системы (файл могли скопировать, и mtime стал бы датой
@@ -329,32 +331,40 @@ QString importNote(const QString& root, const QString& parentId, const QString& 
     // «сейчас»; хронология источника при этом не теряется — она в created.
     const QDateTime fsModified = info.lastModified();
     const QDateTime fsBirth = info.birthTime();
-    QString created = fromUtf8(doc.meta.get("created"));
+    QString created = doc.created();
     // Своего created у файла нет — годится и чужая дата правки: заметка точно
     // существовала уже тогда. Это ближе к правде, чем время появления файла на
     // диске, которое у копии равно времени копирования.
-    if (created.isEmpty()) created = fromUtf8(doc.meta.get("modified"));
+    if (created.isEmpty()) created = doc.modified();
     if (created.isEmpty())
         created = isoUtc(fsBirth.isValid() && fsBirth <= fsModified ? fsBirth : fsModified);
     const QString modified = isoNow();
 
     // id и role чужого файла не наследуются: id принадлежит этому хранилищу
     // (иначе две заметки с одним id), а role сделал бы из заметки папку.
-    doc.meta.unset("id");
-    doc.meta.unset("role");
-    doc.meta.set("parent", toUtf8(parentId));   // пусто снимает ключ — «в корне»
-    doc.meta.set("created", toUtf8(created));
-    doc.meta.set("modified", toUtf8(modified));
-    doc.meta.setPresent(true);
+    doc.setHeaderValue(QStringLiteral("id"), QString());
+    doc.setHeaderValue(QStringLiteral("role"), QString());
+    doc.setParentId(parentId);   // пусто снимает ключ — «в корне»
+    doc.setHeaderValue(QStringLiteral("created"), created);
+    doc.setHeaderValue(QStringLiteral("modified"), modified);
+    doc.setHasHeader(true);
     // Пустая строка после "-->" положена перед содержимым; у пустого файла
     // содержимого нет, и она дала бы дрейф.
-    doc.meta.setBlankAfter(!doc.blocks.empty());
+    {
+        NoteHeader head = doc.header();
+        head.setBlankAfter(!doc.isEmpty());
+        doc.setHeader(head);
+    }
 
-    const std::string content = serialize(doc);
+    const std::string content = doc.toMarkdown();
     // Последний рубеж, тот же, что и у сохранения: записанное обязано читаться
     // обратно в себя. Ядро это гарантирует, но файл пришёл снаружи.
-    if (serialize(parse(content)) != content)
-        return fail(QStringLiteral("канонизация не сошлась на %1").arg(info.fileName()));
+    {
+        ZDocument back;
+        back.loadMarkdown(content);
+        if (!back.isCanonical(content))
+            return fail(QStringLiteral("канонизация не сошлась на %1").arg(info.fileName()));
+    }
 
     std::string path;
     if (createNoteFile(toUtf8(root), content, &path).empty())
@@ -624,26 +634,26 @@ bool importTree(const ImportOptions& options, Report& report) {
         return true;
     };
 
-    const auto adoptWikiAttachments = [&](Document& ir, const QString& noteDirRel) {
-        std::vector<Block> out;
-        out.reserve(ir.blocks.size());
-        for (size_t at = 0; at < ir.blocks.size(); ++at) {
-            const Block b = ir.blocks[at];
-            const bool candidate = !b.raw && b.kind == Kind::Paragraph && b.inlines.empty() &&
-                                   ir.text(b).find("[[") != std::string_view::npos;
+    const auto adoptWikiAttachments = [&](std::vector<Piece>& ir, const QString& noteDirRel) {
+        std::vector<Piece> out;
+        out.reserve(ir.size());
+        for (size_t at = 0; at < ir.size(); ++at) {
+            const Piece& b = ir[at];
+            const bool candidate = !b.raw && b.kind == Kind::Paragraph && b.runs.empty() &&
+                                   b.text.find("[[") != std::string::npos;
             if (!candidate) {
                 out.push_back(b);
                 continue;
             }
-            const QStringList lines =
-                fromUtf8(std::string(ir.text(b))).split(QLatin1Char('\n'));
-            std::vector<Block> pieces;
+            const QStringList lines = fromUtf8(b.text).split(QLatin1Char('\n'));
+            std::vector<Piece> pieces;
             QStringList pending;
             const auto flushPending = [&]() {
                 if (pending.isEmpty()) return;
-                Block piece = ir.newBlock(Kind::Paragraph, toUtf8(pending.join(QLatin1Char('\n'))));
+                Piece piece;
+                piece.text = toUtf8(pending.join(QLatin1Char('\n')));
                 piece.level = b.level;
-                pieces.push_back(piece);
+                pieces.push_back(std::move(piece));
                 pending.clear();
             };
             for (const QString& line : lines) {
@@ -662,19 +672,20 @@ bool importTree(const ImportOptions& options, Report& report) {
                     continue;
                 }
                 flushPending();
-                Block image = ir.newBlock(Kind::Paragraph, toUtf8(alt));
+                Piece image;
+                image.text = toUtf8(alt);
                 image.level = b.level;
-                Inline span;
+                Run span;
                 span.set(InlineImage, true);
-                span.href = ir.append(
-                    toUtf8(width.isEmpty() ? name : name + QStringLiteral("#w=") + width));
-                span.text = {0, image.text.size()};
-                image.inlines = ir.appendInlines(std::span<const Inline>(&span, 1));
-                pieces.push_back(image);
+                span.href = toUtf8(width.isEmpty() ? name : name + QStringLiteral("#w=") + width);
+                span.start = 0;
+                span.end = int32_t(image.text.size());
+                image.runs.push_back(std::move(span));
+                pieces.push_back(std::move(image));
             }
             flushPending();
             if (pieces.size() <= 1 && pending.isEmpty() &&
-                (pieces.empty() || pieces[0].inlines.empty())) {
+                (pieces.empty() || pieces[0].runs.empty())) {
                 // Ничего не выкроилось — блок как был.
                 out.push_back(b);
                 continue;
@@ -683,31 +694,34 @@ bool importTree(const ImportOptions& options, Report& report) {
             // (и картинкой) без неё слиплось бы при перечитывании.
             for (size_t i = 0; i < pieces.size(); ++i) {
                 if (i > 0) {
-                    Block gap;
+                    Piece gap;
                     gap.kind = Kind::VSpace;
-                    out.push_back(gap);
+                    out.push_back(std::move(gap));
                 }
-                out.push_back(pieces[i]);
+                out.push_back(std::move(pieces[i]));
             }
         }
-        ir.blocks = std::move(out);
+        ir = std::move(out);
     };
 
 
     for (SrcEntry& e : entries) {
         std::string body;
-        Document ir;
+        std::vector<Piece> ir;
+        NoteHeader meta;
         if (e.isDir) {
             // Заметка-каталог: заголовок — имя каталога, признак — в мете
             // (правило владельца: у любой директории, пустой или нет).
-            Block h = ir.newBlock(Kind::Heading, toUtf8(e.title));
+            Piece h;
+            h.kind = Kind::Heading;
             h.headingLevel = 1;
-            ir.blocks.push_back(h);
-            ir.meta.set("role", "folder");
+            h.text = toUtf8(e.title);
+            ir.push_back(std::move(h));
+            meta.set("role", "folder");
         } else {
             std::string bytes;
             if (!readAll(e.abs, bytes)) continue;   // уже в отчёте
-            ir = parse(bytes);
+            parsePieces(normaliseSpaces(bytes), ir, meta);
         }
 
         // Заголовок заметки: Apple держит его первой строкой, конвертер унёс
@@ -717,25 +731,27 @@ bool importTree(const ImportOptions& options, Report& report) {
         // заголовок ровно с тем же текстом (правило владельца).
         if (!e.isDir) {
             QString firstHeading;
-            for (const Block& b : ir.blocks) {
+            for (const Piece& b : ir) {
                 if (!b.raw && b.kind == Kind::VSpace) continue;
-                if (!b.raw && b.kind == Kind::Heading)
-                    firstHeading = fromUtf8(std::string(ir.text(b))).trimmed();
+                if (!b.raw && b.kind == Kind::Heading) firstHeading = fromUtf8(b.text).trimmed();
                 break;
             }
             const QString title = e.displayTitle.trimmed();
             if (!title.isEmpty() && firstHeading != title) {
-                Block heading = ir.newBlock(Kind::Heading, toUtf8(title));
+                Piece heading;
+                heading.kind = Kind::Heading;
                 heading.headingLevel = 1;
-                std::vector<Block> withTitle;
-                withTitle.push_back(heading);
-                if (!ir.blocks.empty()) {
-                    Block gap;
+                heading.text = toUtf8(title);
+                std::vector<Piece> withTitle;
+                withTitle.push_back(std::move(heading));
+                if (!ir.empty()) {
+                    Piece gap;
                     gap.kind = Kind::VSpace;
-                    withTitle.push_back(gap);
+                    withTitle.push_back(std::move(gap));
                 }
-                withTitle.insert(withTitle.end(), ir.blocks.begin(), ir.blocks.end());
-                ir.blocks = std::move(withTitle);
+                withTitle.insert(withTitle.end(), std::make_move_iterator(ir.begin()),
+                                 std::make_move_iterator(ir.end()));
+                ir = std::move(withTitle);
             }
         }
 
@@ -743,15 +759,15 @@ bool importTree(const ImportOptions& options, Report& report) {
         // wikilinks не переписываются — только счёт.
         const QString noteDirRel = e.parentRel;
         adoptWikiAttachments(ir, noteDirRel);
-        for (Block& b : ir.blocks) {
+        for (Piece& b : ir) {
             if (b.raw) {
-                if (ir.text(b).find("[[") != std::string_view::npos) ++wikilinks;
+                if (b.text.find("[[") != std::string::npos) ++wikilinks;
                 continue;
             }
-            if (ir.text(b).find("[[") != std::string_view::npos) ++wikilinks;
-            for (Inline& s : ir.inlines(b)) {
+            if (b.text.find("[[") != std::string::npos) ++wikilinks;
+            for (Run& s : b.runs) {
                 if (s.href.empty()) continue;
-                QString href = fromUtf8(std::string(ir.href(s)));
+                QString href = fromUtf8(s.href);
                 // Фрагмент (#w=300) — часть нашего канона, не путь.
                 QString fragment;
                 const qsizetype hash = href.lastIndexOf(QLatin1Char('#'));
@@ -781,7 +797,7 @@ bool importTree(const ImportOptions& options, Report& report) {
                             QStringLiteral("вложение не читается: %1").arg(targetRel));
                         continue;
                     }
-                    s.href = ir.append(toUtf8(name + fragment));
+                    s.href = toUtf8(name + fragment);
                 } else if (href.endsWith(QStringLiteral(".md"))) {
                     const QString joined = noteDirRel.isEmpty()
                                                ? href
@@ -793,7 +809,7 @@ bool importTree(const ImportOptions& options, Report& report) {
                                         .arg(href, e.rel));
                         continue;
                     }
-                    s.href = ir.append(entries[found->second].id + ".md");
+                    s.href = entries[found->second].id + ".md";
                 }
             }
         }
@@ -801,13 +817,13 @@ bool importTree(const ImportOptions& options, Report& report) {
         // Метаданные: существующие (при реимпорте) уважаются, наши ключи поверх.
         // Пустая строка после "-->" положена перед контентом; пустой заметке
         // она дала бы дрейф (замерено на «Вещи из Китая.md» — пустом файле).
-        ir.meta.setPresent(true);
-        ir.meta.setBlankAfter(!ir.blocks.empty());
-        if (!e.parentRel.isEmpty()) ir.meta.set("parent", dirIds[e.parentRel]);
-        ir.meta.set("created", toUtf8(isoUtc(e.created)));
-        ir.meta.set("modified", toUtf8(isoUtc(e.modified)));
+        meta.setPresent(true);
+        meta.setBlankAfter(!ir.empty());
+        if (!e.parentRel.isEmpty()) meta.set("parent", dirIds[e.parentRel]);
+        meta.set("created", toUtf8(isoUtc(e.created)));
+        meta.set("modified", toUtf8(isoUtc(e.modified)));
 
-        body = serialize(ir);
+        body = writePieces(ir, meta);
 
         if (!options.dryRun) {
             // O_EXCL с целевым id; коллизия на диске невозможна (id уникальны
@@ -870,7 +886,7 @@ bool verifyStore(const QString& root, Report& report) {
         return false;
     }
 
-    std::map<std::string, Document> notes;
+    std::map<std::string, ZDocument> notes;
     std::set<QString> attachments;         // имена файлов-вложений
     // ДВА множества, а не одно. Доктрина этапа 10: вложение живо, пока на него
     // ссылается хоть одна ЗАМЕТКА — живая или корзинная; упомянутое только из
@@ -910,10 +926,11 @@ bool verifyStore(const QString& root, Report& report) {
         // Мусорные неразрывные пробелы вычищаются ПРИ ВВОЗЕ, а не при первом
     // открытии: иначе привезённая заметка какое-то время лежала бы на диске
     // грязной, и человек, заглянувший в неё чужим редактором, увидел бы сор.
-    Document doc = parse(normaliseSpaces(bytes));
-        if (!doc.meta.present())
+        ZDocument doc;
+        doc.loadMarkdown(bytes);
+        if (!doc.hasHeader())
             report.problem(QStringLiteral("нет блока метаданных: %1").arg(name));
-        if (serialize(doc) != bytes)
+        if (!doc.isCanonical(bytes))
             report.problem(QStringLiteral("дрейф: %1").arg(name));
         notes[toUtf8(stem)] = std::move(doc);
     }
@@ -926,8 +943,9 @@ bool verifyStore(const QString& root, Report& report) {
         for (int depth = 0; depth < 64; ++depth) {
             const auto found = notes.find(at);
             if (found == notes.end()) return false;
-            if (found->second.meta.get("role") == "trash") return true;
-            const std::string parent = found->second.meta.get("parent");
+            if (found->second.headerValue(QStringLiteral("role")) == QLatin1String("trash"))
+                return true;
+            const std::string parent = toUtf8(found->second.parentId());
             if (parent.empty()) return false;
             at = parent;
         }
@@ -936,28 +954,23 @@ bool verifyStore(const QString& root, Report& report) {
 
     // Цели картинок: канонное плоское имя "<id>.<ext>" и существование.
     for (const auto& [id, doc] : notes) {
-        for (const Block& b : doc.blocks)
-            for (const Inline& span : doc.inlines(b)) {
-                if (!span.image()) continue;
-                QString href = fromUtf8(std::string(doc.href(span)));
-                const qsizetype hash = href.lastIndexOf(QLatin1Char('#'));
-                if (hash >= 0) href = href.left(hash);
-                if (!isLocalRelative(href)) continue;
-                const qsizetype dot = href.lastIndexOf(QLatin1Char('.'));
-                const bool canonical =
-                    dot > 0 && !href.contains(QLatin1Char('/')) &&
-                    isValidNoteId(toUtf8(href.left(dot)));
-                if (!canonical) {
-                    report.note(QStringLiteral("картинка мимо канона имён: «%1» в %2.md")
-                                    .arg(href, fromUtf8(id)));
-                    continue;
-                }
-                if (inTrash(id)) referencedTrashed.insert(href);
-                else referencedLive.insert(href);
-                if (!QFileInfo::exists(root + QLatin1Char('/') + href))
-                    report.problem(QStringLiteral("нет вложения «%1» из %2.md")
-                                       .arg(href, fromUtf8(id)));
+        for (const Attachment& image : doc.attachments()) {
+            const QString href = image.id;
+            if (!isLocalRelative(href)) continue;
+            const qsizetype dot = href.lastIndexOf(QLatin1Char('.'));
+            const bool canonical = dot > 0 && !href.contains(QLatin1Char('/')) &&
+                                   isValidNoteId(toUtf8(href.left(dot)));
+            if (!canonical) {
+                report.note(QStringLiteral("картинка мимо канона имён: «%1» в %2.md")
+                                .arg(href, fromUtf8(id)));
+                continue;
             }
+            if (inTrash(id)) referencedTrashed.insert(href);
+            else referencedLive.insert(href);
+            if (!QFileInfo::exists(root + QLatin1Char('/') + href))
+                report.problem(QStringLiteral("нет вложения «%1» из %2.md")
+                                   .arg(href, fromUtf8(id)));
+        }
     }
 
     // Заметка-папка (и сама корзина) — структура, а не текст: в её файле
@@ -966,23 +979,22 @@ bool verifyStore(const QString& root, Report& report) {
     // снаружи — и увидеть его будет негде: список показывает содержимое папки,
     // а не её саму.
     for (const auto& [id, doc] : notes) {
-        const std::string role = doc.meta.get("role");
-        if (role != "folder" && role != "trash") continue;
-        if (doc.blocks.size() == 1 && !doc.blocks[0].raw &&
-            doc.blocks[0].kind == Kind::Heading)
-            continue;
-        if (doc.blocks.empty()) {
+        const QString role = doc.headerValue(QStringLiteral("role"));
+        if (role != QLatin1String("folder") && role != QLatin1String("trash")) continue;
+        if (doc.isEmpty()) {
             report.problem(QStringLiteral("папка без заголовка: %1.md").arg(fromUtf8(id)));
             continue;
         }
+        const BlockInfo first = doc.blockAt(0);
+        if (doc.blockCount() == 1 && !first.raw && first.kind == Kind::Heading) continue;
         report.problem(QStringLiteral("в папке %1.md есть тело сверх заголовка (%2 блоков)")
                            .arg(fromUtf8(id))
-                           .arg(doc.blocks.size()));
+                           .arg(doc.blockCount()));
     }
 
     // parent: существование и циклы.
     for (const auto& [id, doc] : notes) {
-        const std::string parent = doc.meta.get("parent");
+        const std::string parent = toUtf8(doc.parentId());
         if (parent.empty()) continue;
         if (!isValidNoteId(parent) || notes.find(parent) == notes.end()) {
             report.problem(QStringLiteral("parent %1 не существует (из %2)")
@@ -998,7 +1010,7 @@ bool verifyStore(const QString& root, Report& report) {
             }
             const auto next = notes.find(at);
             if (next == notes.end()) break;
-            at = next->second.meta.get("parent");
+            at = toUtf8(next->second.parentId());
         }
     }
 

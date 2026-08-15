@@ -33,12 +33,9 @@ set(CMAKE_AUTOMOC ON)
 
 add_library(zametti-core STATIC
     # --- формат ---
-    format/ir.h                 format/ir.cpp
-    format/parser.h
     format/serializer.h
     format/table.h              format/table.cpp
     format/math_scan.h          format/math_scan.cpp
-    format/json_dump.h          format/json_dump.cpp
     format/note_id.h            format/note_id.cpp
     format/hash.h               format/hash.cpp
 
@@ -73,14 +70,12 @@ add_library(zametti-core STATIC
     doc/markdown_writer.cpp
     doc/document_diff.cpp
     doc/document_json.cpp
-    doc/ir_bridge.h             doc/ir_bridge.cpp
     doc/markdown_reader.cpp
     doc/block_object.h          doc/block_object.cpp
     doc/diff.h                  doc/diff.cpp
     doc/diff_view.h             doc/diff_view.cpp
     doc/doc_model.h             doc/doc_model.cpp
     doc/document_builder.h      doc/document_builder.cpp
-    doc/document_reader.h       doc/document_reader.cpp
     doc/document_saver.h        doc/document_saver.cpp
     doc/edit_history.h          doc/edit_history.cpp
     doc/editor_ops.h            doc/editor_ops.cpp
@@ -94,7 +89,7 @@ add_library(zametti-core STATIC
     doc/text_stats.h            doc/text_stats.cpp
 )
 
-# Четыре каталога — четыре пути поиска, и все ПУБЛИЧНЫЕ. Так `#include "ir.h"`
+# Четыре каталога — четыре пути поиска, и все ПУБЛИЧНЫЕ. Так `#include "document.h"`
 # работает и внутри ядра, и снаружи, а раскладка по подкаталогам остаётся
 # удобством чтения, а не новой границей.
 target_include_directories(zametti-core PUBLIC

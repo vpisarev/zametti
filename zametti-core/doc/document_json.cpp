@@ -169,6 +169,7 @@ std::string ZDocument::toJson() const {
         if (!first) out += ",\n";
         first = false;
         appendPiece(out, piece);
+        return true;
     });
     if (!first) out += "\n";
 

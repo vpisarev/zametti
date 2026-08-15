@@ -29,7 +29,7 @@
 #define ZAMETTI_STORE_ARCHIVE_H
 
 #include "history_rules.h"
-#include "ir.h"
+#include "note_header.h"
 
 #include <QString>
 #include <QStringList>
@@ -54,10 +54,7 @@ bool isArchivedMeta(const NoteHeader& meta);
 // `modified` в том числе: архивация не правка содержимого.
 void setArchivedMeta(NoteHeader& meta, bool archived);
 
-// Стаб заметки: та же шапка и одна строка — её заголовок. Чистая функция от
-// разобранного документа, поэтому проверяется кругом «разобрать → записать»
-// без всяких файлов.
-std::string stubBytes(const Document& doc);
+// Стаб заметки — глагол самой заметки: ZDocument::archiveStub().
 
 // Стаб ПО БАЙТАМ: шапка исходника как есть плюс строка заголовка. Разбора нет
 // ни одного — испорченную заметку убрать в архив программа обязана, раз шапка

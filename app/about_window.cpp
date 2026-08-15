@@ -3,7 +3,6 @@
 #include "build_facts.h"
 #include "document_builder.h"
 #include "note_view.h"
-#include "parser.h"
 #include "resources.h"
 #include "settings.h"
 
@@ -39,7 +38,10 @@ NoteView* markdownPage(const QString& markdown, QWidget* parent) {
     // Документ принадлежит виду: своей жизни у справки нет, а Qt удалит его
     // вместе с родителем.
     auto* document = new QTextDocument(view);
-    buildDocument(parse(markdown.toStdString()), *document);
+    std::vector<Piece> blocks;
+    NoteHeader ignored;
+    parsePieces(markdown.toStdString(), blocks, ignored);
+    buildDocument(blocks, *document);
     view->setDocument(document);
     view->applyContentWidth();
     return view;

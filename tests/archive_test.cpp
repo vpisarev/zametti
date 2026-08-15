@@ -31,7 +31,6 @@ using zametti::store::forgetNote;
 using zametti::store::isArchivedMeta;
 using zametti::store::migrateTrashToArchive;
 using zametti::store::restoreNote;
-using zametti::store::stubBytes;
 
 namespace {
 

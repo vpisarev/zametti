@@ -26,7 +26,6 @@
 
 #include "document_builder.h"
 #include "editor_ops.h"
-#include "parser.h"
 #include "serializer.h"
 #include "resources.h"
 #include "settings.h"
@@ -148,7 +147,10 @@ private:
             std::string_view(bytes.constData(), size_t(bytes.size())));
 
         auto* fresh = new QTextDocument(this);
-        zametti::buildDocument(zametti::parse(source), *fresh);
+        std::vector<zametti::Piece> blocks;
+        zametti::NoteHeader ignored;
+        zametti::parsePieces(source, blocks, ignored);
+        zametti::buildDocument(blocks, *fresh);
         setDocument(fresh);
         setZoom(byRebuild_ ? scale_ : 1.0);
         applyContentWidth();

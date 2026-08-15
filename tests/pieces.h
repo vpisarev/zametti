@@ -51,7 +51,10 @@ inline std::string markdownOf(const std::vector<zametti::Piece>& blocks,
 // Живой документ → логические блоки.
 inline std::vector<zametti::Piece> blocksOf(const QTextDocument& doc) {
     std::vector<zametti::Piece> out;
-    zametti::walkPieces(doc, [&](const zametti::Piece& piece) { out.push_back(piece); });
+    zametti::walkPieces(doc, [&](const zametti::Piece& piece) {
+        out.push_back(piece);
+        return true;
+    });
     return out;
 }
 

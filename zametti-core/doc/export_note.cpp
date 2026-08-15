@@ -1,6 +1,6 @@
 #include "export_note.h"
 
-#include "parser.h"
+#include "document.h"
 #include "serializer.h"
 
 #include <QDir>
@@ -139,15 +139,15 @@ QString fileNameFromTitle(const QString& title) {
 // Срезать шапку с НАЧАЛА текста, не трогая всего остального. Ищем ровно то, что
 // разобрало ядро: закрывающий «-->» первого комментария и перевод строки за ним,
 // плюс пустую строку, если она там была (meta.blankAfter()).
-std::string withoutMeta(const std::string& source, const Document& ir) {
-    if (!ir.meta.present()) return source;
+std::string withoutMeta(const std::string& source, const ZDocument& note) {
+    if (!note.hasHeader()) return source;
     const size_t open = source.find("<!-- zametti");
     if (open != 0) return source;   // шапка не в начале — не наша, не трогаем
     const size_t close = source.find("-->", open);
     if (close == std::string::npos) return source;
     size_t at = close + 3;
     if (at < source.size() && source[at] == '\n') ++at;
-    if (ir.meta.blankAfter() && at < source.size() && source[at] == '\n') ++at;
+    if (note.header().blankAfter() && at < source.size() && source[at] == '\n') ++at;
     return source.substr(at);
 }
 
@@ -176,36 +176,31 @@ ExportReport exportMarkdown(const QString& notePath, const QString& targetPath, 
         return report;
     }
 
-    Document ir = parse(source);
+    ZDocument note;
+    note.loadMarkdown(source);
 
     // Все вложения заметки, по одному разу на имя: одна картинка бывает
     // вставлена дважды, а копировать её дважды незачем.
-    struct Attachment {
-        QString href;      // как написано в заметке
+    struct Carried {
+        QString href;      // имя файла, как оно стоит в заметке (без атрибутов)
         QString outName;   // под каким именем ложится рядом (может отличаться)
         bool renamed = false;
     };
-    std::vector<Attachment> found;
+    std::vector<Carried> found;
     auto indexOf = [&found](const QString& href) -> int {
         for (size_t i = 0; i < found.size(); ++i)
             if (found[i].href == href) return int(i);
         return -1;
     };
 
-    for (const Block& block : ir.blocks) {
-        if (block.raw) continue;
-        for (const Inline& span : ir.inlines(block)) {
-            if (!span.image()) continue;
-            const std::string_view href = ir.href(span);
-            const QString path = QString::fromUtf8(href.data(), qsizetype(href.size()));
-            if (!localReference(path) || indexOf(path) >= 0) continue;
-            found.push_back({path, QFileInfo(path).fileName(), false});
-        }
+    for (const Attachment& image : note.attachments()) {
+        if (!localReference(image.id) || indexOf(image.id) >= 0) continue;
+        found.push_back({image.id, QFileInfo(image.id).fileName(), false});
     }
 
     // Решение по каждому вложению принимается ДО того, как что-то записано:
     // половина вывоза хуже, чем отказ.
-    for (Attachment& item : found) {
+    for (Carried& item : found) {
         const QString from = QDir::isAbsolutePath(item.href) ? item.href
                                                              : storeDir.filePath(item.href);
         if (!QFileInfo::exists(from)) {
@@ -230,38 +225,31 @@ ExportReport exportMarkdown(const QString& notePath, const QString& targetPath, 
     }
 
     const bool renaming = std::any_of(found.begin(), found.end(),
-                                      [](const Attachment& a) { return a.renamed; });
+                                      [](const Carried& a) { return a.renamed; });
 
     std::string outText = source;
     if (renaming) {
         // Круг проверяется на ЭТОЙ заметке и до всякой записи. Если разбор и
         // сборка не дают исходные байты, пересобирать нельзя: наружу уехало бы
         // не то, что лежит в хранилище, и человек об этом не узнал бы.
-        if (serialize(ir) != source) {
+        if (!note.isCanonical(source)) {
             report.error = QStringLiteral(
                 "рядом уже лежит другой файл с именем вложения, а переписать ссылку нельзя: "
                 "разбор этой заметки не сходится с её байтами. Вывезите в пустой каталог.");
             return report;
         }
-        for (Block& block : ir.blocks) {
-            if (block.raw) continue;
-            for (Inline& span : ir.inlines(block)) {
-                if (!span.image()) continue;
-                const std::string_view href = ir.href(span);
-                const QString path = QString::fromUtf8(href.data(), qsizetype(href.size()));
-                const int at = indexOf(path);
-                if (at < 0 || !found[size_t(at)].renamed) continue;
-                const QByteArray fresh = found[size_t(at)].outName.toUtf8();
-                span.href = ir.append(std::string_view(fresh.constData(), size_t(fresh.size())));
-            }
-        }
-        outText = serialize(ir);
+        note.rewriteAttachments([&](const QString& href) {
+            const int at = indexOf(href);
+            if (at < 0 || !found[size_t(at)].renamed) return QString();
+            return found[size_t(at)].outName;
+        });
+        outText = note.toMarkdown();
     }
-    if (!keepMeta) outText = withoutMeta(outText, ir);
+    if (!keepMeta) outText = withoutMeta(outText, note);
 
     if (!writeAll(targetPath, outText, &report.error)) return report;
 
-    for (const Attachment& item : found) {
+    for (const Carried& item : found) {
         if (item.outName.isEmpty()) continue;
         const QString to = outDir.filePath(item.outName);
         if (QFileInfo::exists(to)) continue;   // тот самый побайтово совпавший
