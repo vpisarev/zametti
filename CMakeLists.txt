@@ -142,10 +142,32 @@ if(WITH_STATIC_QT AND Qt6_FOUND AND ZAMETTI_QT_SHARED)
         "  Собирать с обычным Qt — просто снимите ключ.")
 endif()
 
+# --- СКОРОСТЬ ОТЛАДОЧНОЙ СБОРКИ (решение владельца) ------------------------
+#
+# Правило владельца: отладку мы гоняем ради СВОИХ ассертов, а не ради чужих.
+# Кодеки картинок, zstd, highway и прочее проверены суровым продакшном; собирать
+# их без оптимизации — жечь время на каждом прогоне набора и ничего за это не
+# получать. Поэтому:
+#
+#   чужое, кроме microtex   —  всегда -O3, и в отладочной сборке тоже;
+#   наше и microtex         —  в отладке -O1.
+#
+# microtex в исключении назван прямо: это библиотека энтузиаста, она у нас под
+# подозрением (см. zametti-formulas-state), и отлаживать её мы будем.
+#
+# -O1, а не -O0: под ноль сборка идёт заметно дольше, а разница в отладке
+# невелика. Ассерты нигде не гасятся — NDEBUG не появляется ни у кого, и Q_ASSERT
+# в отладке остаётся на месте: тип сборки этим ключом не подменяется.
+if(NOT MSVC)
+    set(ZAMETTI_DEBUG_C_FLAGS "${CMAKE_C_FLAGS_DEBUG}")
+    set(ZAMETTI_DEBUG_CXX_FLAGS "${CMAKE_CXX_FLAGS_DEBUG}")
+    set(CMAKE_C_FLAGS_DEBUG "${ZAMETTI_DEBUG_C_FLAGS} -O3")
+    set(CMAKE_CXX_FLAGS_DEBUG "${ZAMETTI_DEBUG_CXX_FLAGS} -O3")
+endif()
+
 add_subdirectory(3rdparty/md4c)
 add_subdirectory(3rdparty/blake3)
 add_subdirectory(3rdparty/dtl)
-add_subdirectory(3rdparty/microtex)
 # highway раньше libjxl: та её ищет, а не несёт.
 add_subdirectory(3rdparty/zlib)
 add_subdirectory(3rdparty/libtiff)
@@ -155,6 +177,14 @@ add_subdirectory(3rdparty/libjxl)
 add_subdirectory(3rdparty/jpegli)
 add_subdirectory(3rdparty/libwebp)
 add_subdirectory(3rdparty/gtest)
+
+# Дальше — то, что мы отлаживаем: microtex и всё своё.
+if(NOT MSVC)
+    set(CMAKE_C_FLAGS_DEBUG "${ZAMETTI_DEBUG_C_FLAGS} -O1")
+    set(CMAKE_CXX_FLAGS_DEBUG "${ZAMETTI_DEBUG_CXX_FLAGS} -O1")
+endif()
+
+add_subdirectory(3rdparty/microtex)
 # imageio раньше ядра: там заводится необязательная цель zametti-heif, и ядро
 # спрашивает о ней через if(TARGET ...).
 add_subdirectory(imageio)
