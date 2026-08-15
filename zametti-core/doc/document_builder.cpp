@@ -26,6 +26,8 @@
 
 #include "document_builder.h"
 
+#include "doc_model.h"
+
 #include "editor_ops.h"
 #include "marker.h"
 #include "settings.h"
@@ -472,7 +474,10 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
                 // пропадали ссылка и абзац (владелец увидел это ровно так:
                 // «сразу после загрузки видно, после возврата — нет»).
                 // Поставленный сборщиком, цвет одинаков при каждой сборке.
-                charFmt.setForeground(QColor(Qt::transparent));
+                // Пока объекты показаны исходником (kObjectsShown), гасить его
+                // нечем: вёрстки поверх не будет, и прозрачный текст означал бы
+                // пустое место вместо формулы.
+                if (kObjectsShown) charFmt.setForeground(QColor(Qt::transparent));
                 break;
 
             case Kind::Html:

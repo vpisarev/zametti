@@ -777,6 +777,11 @@ void NoteView::markImageRegion(int position, int charsAdded) {
 }
 
 void NoteView::syncImageSpace(bool whole) {
+    // ВРЕМЕННЫЙ ШАГ НАЗАД (kObjectsShown в doc_model.h): резерв места под
+    // объекты — единственная запись вида в документ, которая не даёт включить
+    // штатный стек отмены. Пока объекты показаны исходником, резервировать
+    // нечего.
+    if (!kObjectsShown) return;
     if (syncingImages_) return;
     syncingImages_ = true;
     // Пометка на весь вызов: всё, что здесь пишется, — резерв места под объекты,
@@ -1120,8 +1125,10 @@ void NoteView::renderSlice(QPainter& painter, const QRectF& documentRect, qreal 
         if (rect.bottom() + block.blockFormat().bottomMargin() < documentRect.top()) continue;
         paintMarker(painter, block, base);
         paintDivider(painter, block, rect, displayScale());
-        paintImage(painter, block);
-        paintFormula(painter, block);
+        if (kObjectsShown) {
+            paintImage(painter, block);
+            paintFormula(painter, block);
+        }
     }
 
     painter.restore();
@@ -1266,6 +1273,9 @@ void NoteView::setEditedCodeLanguage(int firstBlockNumber) {
 // Движок зовётся здесь, а не в отрисовке: рендер стоит миллисекунды, а кадров
 // в секунду шестьдесят.
 void NoteView::syncFormulas() {
+    // ВРЕМЕННЫЙ ШАГ НАЗАД (kObjectsShown): формула показана исходником, вёрстки
+    // поверх нет — считать её незачем.
+    if (!kObjectsShown) return;
     QHash<int, FormulaRender> fresh;
     if (Formulas::ready()) {
         const QFont base = baseFont();
@@ -1486,6 +1496,9 @@ void NoteView::paintFormula(QPainter& painter, const QTextBlock& block) {
 //   * каретка по спрятанным блокам ходит: стрелка вниз с видимой строки
 //     приводит её в невидимую. Это придётся ловить отдельно — на слое объекта.
 void NoteView::syncTables() {
+    // ВРЕМЕННЫЙ ШАГ НАЗАД (kObjectsShown): таблица показана строками исходника,
+    // сетки поверх нет — и прятать строки не надо.
+    if (!kObjectsShown) return;
     // Место, в которое вписывается таблица, считается ОТ ЕЁ ЛЕВОГО КРАЯ.
     //
     // Таблица стоит там же, где начинается колонка текста, — то есть уже
@@ -1574,6 +1587,8 @@ void NoteView::syncTables() {
 }
 
 void NoteView::paintTables(QPainter& painter, const QRectF& visible) {
+    // ВРЕМЕННЫЙ ШАГ НАЗАД (kObjectsShown): сетки нет, видны строки исходника.
+    if (!kObjectsShown) return;
     if (tables_.isEmpty()) return;
     const QAbstractTextDocumentLayout* layout = document()->documentLayout();
     const Appearance::Tables& look = appearance().tables;
@@ -2097,8 +2112,10 @@ void NoteView::paintEvent(QPaintEvent* event) {
         if (rect.bottom() + block.blockFormat().bottomMargin() < visible.top()) continue;
         paintMarker(painter, block, base);
         paintDivider(painter, block, rect, displayScale());
-        paintImage(painter, block);
-        paintFormula(painter, block);
+        if (kObjectsShown) {
+            paintImage(painter, block);
+            paintFormula(painter, block);
+        }
     }
 
     // Каретка — последней и без сдвига на прокрутку: cursorRect уже отдаёт

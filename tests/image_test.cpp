@@ -945,6 +945,14 @@ static int ztRunSuite(int argc, char** argv) {
 // Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
 // Дробить на отдельные проверки — отдельная работа, по одному набору.
 TEST(Image, All) {
+    // ВРЕМЕННЫЙ ШАГ НАЗАД: объекты показаны своим исходником, рисовать их
+    // сейчас некому — см. kObjectsShown в doc_model.h и довод там же.
+    //
+    // Пропуск привязан К ТОЙ ЖЕ КОНСТАНТЕ, которой снят показ, а не списком в
+    // голове: вернётся показ — вернётся и набор, сам, без напоминания.
+    if (!zametti::kObjectsShown)
+        GTEST_SKIP() << "объекты показаны исходником (kObjectsShown = false)";
+
     std::vector<QByteArray> ztArgs{QByteArrayLiteral("image_test")};
     std::vector<char*> ztArgv;
     for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
