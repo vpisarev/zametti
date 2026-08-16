@@ -384,6 +384,62 @@ void checkFirstEditAfterOpenIsUndoable() {
                "первая заметка сохранена при переходе ко второй");
 }
 
+// МЕСТО КАРЕТКИ ПЕРЕЖИВАЕТ ПЕРЕЗАПУСК. Владелец: «позиция курсора запоминается
+// неправильно — при следующем запуске я попадаю на тот же документ, но в совсем
+// другое место». Место запоминалось ДОЛЕЙ ПРОКРУТКИ, а высота документа от
+// запуска к запуску другая: окно шире, масштаб иной, картинки и формулы
+// добирают высоту уже после того, как долю применили.
+//
+// Перезапуск изображается вторым редактором: заметка та же, память о каретке
+// приходит снаружи — ровно так её и приносит state.json.
+void checkCaretSurvivesRestart() {
+    QString body = QStringLiteral("# Заголовок\n\n");
+    for (int i = 1; i <= 60; ++i) body += QStringLiteral("Строка номер %1.\n\n").arg(i);
+    const QString path = writeNote("место.md", body);
+
+    zametti::NoteEditor first;
+    first.resize(700, 500);
+    first.show();
+    QTest::qWait(20);
+    first.openFile(path);
+
+    // Каретка — глубоко в тексте, туда, куда с начала документа не видно.
+    QTextCursor deep = first.textCursor();
+    deep.movePosition(QTextCursor::End);
+    deep.movePosition(QTextCursor::PreviousBlock, QTextCursor::MoveAnchor, 10);
+    first.setTextCursor(deep);
+    QTest::qWait(10);
+    const int caret = first.caretPosition();
+    const int anchor = first.caretAnchor();
+    check(caret > 0, "каретка ушла вглубь заметки");
+
+    // Перезапуск: новый редактор, память о каретке приходит снаружи.
+    zametti::NoteEditor second;
+    second.resize(700, 500);
+    second.show();
+    QTest::qWait(20);
+    second.rememberCaretFor(path, caret, anchor);
+    second.openFile(path);
+    QTest::qWait(20);
+
+    checkEqual(QString::number(caret), QString::number(second.caretPosition()),
+               "каретка встала туда же, где была");
+    // И её ВИДНО: место, до которого надо прокручивать, обязано быть прокручено.
+    const QRect visible = second.viewport()->rect();
+    const QRect at = second.cursorRect();
+    check(visible.intersects(at), "каретка после перезапуска видна в окне");
+
+    // Заметка, открытая БЕЗ памяти, начинается с начала: чужое место не
+    // достаётся никому.
+    zametti::NoteEditor fresh;
+    fresh.resize(700, 500);
+    fresh.show();
+    QTest::qWait(20);
+    fresh.openFile(path);
+    checkEqual(QStringLiteral("0"), QString::number(fresh.caretPosition()),
+               "без памяти каретка стоит в начале");
+}
+
 // Клавиши доходят до операций, и каждая операция — ровно один шаг отмены.
 void checkKeysAreOperations() {
     const QString path = writeNote("клавиши.md", QStringLiteral("- пункт\n"));
@@ -2769,6 +2825,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkUndoKeepsAppearance();
     checkAppearanceMakesNoHistoryStep();
     checkFirstEditAfterOpenIsUndoable();
+    checkCaretSurvivesRestart();
     checkKeysAreOperations();
     checkListKeys();
     checkMoveKeys();

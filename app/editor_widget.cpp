@@ -65,6 +65,13 @@ bool readFile(const QString& path, std::string& out) {
 
 NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
     setReadOnly(false);
+    // Вид сдвинул кто-то, кроме нас, — каретку в виду больше не держим. Полоса
+    // прокрутки годится сторожем на всех сразу: её и человек тянет, и зум
+    // ставит по своему якорю, и поиск ведёт к совпадению. Своё же движение мы
+    // отличаем признаком, а не гаданием.
+    connect(verticalScrollBar(), &QScrollBar::valueChanged, this, [this] {
+        if (!movingView_) releaseCaret();
+    });
     // Щелчок по месту языка в полоске заводит поле ввода. Виджет просмотра
     // сам язык не правит: правки документа живут здесь.
     connect(this, &NoteView::codeStripClicked, this, [this](int block, const QRect& strip) {
@@ -347,6 +354,11 @@ void NoteEditor::connectDocument() {
     document()->setUndoRedoEnabled(true);
     connect(document(), &QTextDocument::contentsChange, this, &NoteEditor::onContentsChange);
     connect(document(), &QTextDocument::contentsChanged, this, &NoteEditor::onContentsChanged);
+    // Высота документа поехала — вернуть каретку в вид, если мы её ещё держим.
+    // Здесь же, а не у открытия: подмена документа проходит через это одно
+    // место, и связь заводится ровно на тот документ, который сейчас показан.
+    connect(document()->documentLayout(), &QAbstractTextDocumentLayout::documentSizeChanged, this,
+            [this] { keepCaretInView(); });
 }
 
 void NoteEditor::retireDocument(std::shared_ptr<QTextDocument> previous) {
@@ -567,7 +579,17 @@ void NoteEditor::activateNote(bool takeFocus) {
     place.setPosition(qBound(0, note_.anchor, last));
     place.setPosition(qBound(0, note_.cursor, last), QTextCursor::KeepAnchor);
     setTextCursor(place);
+    movingView_ = true;
     ensureCursorVisible();
+    movingView_ = false;
+
+    // И ДЕРЖИМ ЕЁ В ВИДУ, пока вёрстка не устаканится: высота на этот миг ещё
+    // не окончательная — картинки декодируются в другом потоке, формулы
+    // считаются по первой отрисовке, — и всё, что выше каретки, подрастает уже
+    // после нас, унося текст у человека из-под глаз. Отпускаем при первом же
+    // его прикосновении.
+    holdingCaret_ = true;
+    movingView_ = false;
 
     // Фокус. Каретку Qt рисует ТОЛЬКО в виджете с фокусом ввода, и без этой
     // строки человек видел открытую заметку без каретки: место восстановлено,
@@ -1341,6 +1363,7 @@ void NoteEditor::mouseReleaseEvent(QMouseEvent* event) {
 }
 
 void NoteEditor::mousePressEvent(QMouseEvent* event) {
+    releaseCaret();   // человек тронул — каретку в виду больше не держим
     // Нажатие на ссылке запоминается: отпускание с Ctrl на том же адресе
     // откроет его (см. mouseReleaseEvent).
     pressedAnchor_ = event->button() == Qt::LeftButton
@@ -1477,6 +1500,7 @@ void NoteEditor::keepColumnAcrossMargins(QKeyEvent* event) {
 }
 
 void NoteEditor::keyPressEvent(QKeyEvent* event) {
+    releaseCaret();   // человек тронул — каретку в виду больше не держим
     // Голое нажатие модификатора ничего не редактирует и каретку не двигает, а
     // хвостовой keepCaretOffEdge прокручивал бы вид к ней: нажал Ctrl перед
     // Ctrl+кликом — и текст упрыгал к каретке. Мимо всей обработки.
@@ -3543,14 +3567,21 @@ void NoteEditor::save(bool interactive, bool force) {
     if (mute->isChecked()) mutedComplaints_.insert(note_.path);
 }
 
-double NoteEditor::scrollRatio() const {
-    const QScrollBar* bar = verticalScrollBar();
-    return bar->maximum() > 0 ? double(bar->value()) / bar->maximum() : 0.0;
+void NoteEditor::wheelEvent(QWheelEvent* event) {
+    releaseCaret();
+    NoteView::wheelEvent(event);
 }
 
-void NoteEditor::setScrollRatio(double ratio) {
-    QScrollBar* bar = verticalScrollBar();
-    bar->setValue(int(ratio * bar->maximum()));
+void NoteEditor::keepCaretInView() {
+    if (!holdingCaret_) return;
+    movingView_ = true;
+    ensureCursorVisible();
+    movingView_ = false;
+}
+
+void NoteEditor::rememberCaretFor(const QString& path, int cursor, int anchor) {
+    if (path.isEmpty()) return;
+    caretMemory_[path] = {cursor, anchor};
 }
 
 EscapeAction escapeActionFor(bool languageEditorOpen, bool editingTable, bool findBarVisible) {

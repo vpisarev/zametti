@@ -48,7 +48,8 @@ static int ztRunSuite(int argc, char** argv) {
     out.splitterState = QByteArray("сплиттер", 16);
     out.expandedDirs = {QStringLiteral("/store/a"), QStringLiteral("/store/b")};
     out.searchHistory = {QStringLiteral("айвазовский"), QStringLiteral("cmyk")};
-    out.scrollRatio = 0.375;
+    out.caret = 4321;
+    out.anchor = 4300;
     out.zoom = 1.25;
     out.windowGeometry = QByteArray("геометрия", 18);
     out.panelsHidden = true;
@@ -71,7 +72,9 @@ static int ztRunSuite(int argc, char** argv) {
           s(back.expandedDirs.join(QLatin1Char('|'))));
     ZT_EQ("история поиска", s(out.searchHistory.join(QLatin1Char('|'))),
           s(back.searchHistory.join(QLatin1Char('|'))));
-    ZT_EQ("прокрутка", std::to_string(out.scrollRatio), std::to_string(back.scrollRatio));
+    ZT_EQ("каретка", std::to_string(out.caret), std::to_string(back.caret));
+    ZT_EQ("якорь выделения", std::to_string(out.anchor), std::to_string(back.anchor));
+
     ZT_EQ("зум", std::to_string(out.zoom), std::to_string(back.zoom));
     ZT_EQ("геометрия окна", out.windowGeometry.toBase64().toStdString(),
           back.windowGeometry.toBase64().toStdString());

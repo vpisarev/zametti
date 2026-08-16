@@ -970,6 +970,15 @@ int main(int argc, char** argv) {
     // содержимого. В историю правок это не попадает — облик не содержимое.
     editor.setZoom(std::clamp(session.zoom, zametti::appearance().zoomMin,
                               zametti::appearance().zoomMax));
+
+    // МЕСТО КАРЕТКИ, ПЕРЕЖИВШЕЕ ПЕРЕЗАПУСК, — В ПАМЯТЬ РЕДАКТОРА, до открытия.
+    // Дальше заметка открывается обычной дорогой и встаёт туда же, где её
+    // оставили, — тем же кодом, что возвращает каретку при переходе туда-сюда
+    // между заметками. Отдельного пути «поставить каретку при запуске» нет и
+    // быть не должно: это второе место, где решается «куда встать при
+    // открытии», и оно однажды разойдётся с первым.
+    if (session.lastFile == current)
+        editor.rememberCaretFor(current, session.caret, session.anchor);
     if (!editor.openFile(current)) return 2;
 
     // ХОДЬБА СТРЕЛКАМИ по дереву и по списку — единственный случай, когда
@@ -2744,11 +2753,7 @@ int main(int argc, char** argv) {
     // дерево нужно, чтобы выбрать заметку, а не чтобы в нём находиться.
     editor.setFocus();
 
-    // Прокрутку можно ставить только когда документ уже разложен по размерам
-    // окна, а это происходит после show(), в следующем проходе цикла событий.
-    const double startRatio = session.lastFile == current ? session.scrollRatio : 0.0;
-    if (startRatio > 0.0)
-        QTimer::singleShot(0, &editor, [&editor, startRatio] { editor.setScrollRatio(startRatio); });
+
 
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &window, [&] {
         // На выходе окно с ошибкой показывать поздно: жалуемся в stderr.
@@ -2756,7 +2761,8 @@ int main(int argc, char** argv) {
 
         zametti::Session out;
         out.lastFile = editor.filePath();
-        out.scrollRatio = editor.scrollRatio();
+        out.caret = editor.caretPosition();
+        out.anchor = editor.caretAnchor();
         out.zoom = editor.zoom();
         out.windowGeometry = window.saveGeometry();
         out.splitterState = splitter.saveState();
