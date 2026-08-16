@@ -1296,6 +1296,13 @@ void gatherLine(const QTextBlock& block, Piece& piece, bool withRuns) {
         // знак U+FFFC; наружу — в файл, в буфер обмена, в журнал — уходит то,
         // что написано в файле, и оно лежит тут же, в свойствах формата.
         // Правило железное: U+FFFC не покидает QTextDocument (инцидент №15).
+        if (format.objectType() == FormulaObject) {
+            // Формула отдаёт свой исходник целиком: разметки внутри неё нет, и
+            // куском строки он не помечается — род блока (Kind::Math) говорит
+            // всё сам.
+            piece.text += toUtf8(format.property(ObjectSourceProperty).toString());
+            continue;
+        }
         if (format.objectType() == ImageObject) {
             const int32_t at = int32_t(piece.text.size());
             const QString alt = format.property(ObjectAltProperty).toString();

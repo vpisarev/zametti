@@ -23,11 +23,13 @@
 #include "pieces.h"
 #include "doc_model.h"
 #include "export_pdf.h"
+#include "formula.h"
 #include "settings.h"
 #include "test_util.h"
 #include "testdata.h"
 
 #include <QApplication>
+#include <QProcess>
 #include <QDir>
 #include <QFile>
 #include <QImage>
@@ -177,6 +179,139 @@ void checkShrunkImage() {
             smallSize * 4 < bigSize);
 }
 
+// ОБЪЕКТЫ ДОЛЖНЫ ДОЕХАТЬ ДО БУМАГИ: вёрстка формулы и пиксели снимка.
+//
+// Владелец: «сейчас ни картинки ни формулы не экспортируются нормально в PDF».
+// Причина была одна на обоих: вывоз собирал документ и сразу печатал, ни разу
+// не позвав подготовку объектов, — фотографиям не раздавались пиксели, формулы
+// не считались вовсе, и на страницу уезжали пустое место и рамка «не посчитано».
+//
+// Спрашиваем PDF о КАРТИНКАХ ВНУТРИ НЕГО. И вёрстка формулы, и фотография
+// ложатся на страницу растром, то есть объектом «/Subtype /Image»; у страницы с
+// одним текстом его нет ни одного. Это прямее и надёжнее, чем мерить вес файла:
+// вес зависит от сжатия, а наличие картинки — нет.
+// Есть ли в PDF такой текст. Глифы в файле лежат номерами, поэтому спрашиваем
+// внешний pdftotext — он есть всюду, где есть poppler. Нет его — проверка
+// честно пропускается, а не притворяется пройденной.
+bool pdfHasText(const QString& path, const QString& what) {
+    QProcess tool;
+    tool.start(QStringLiteral("pdftotext"), {path, QStringLiteral("-")});
+    if (!tool.waitForStarted(2000)) {
+        std::printf("  pdftotext не найден — проверку текста пропускаем\n");
+        return true;
+    }
+    tool.waitForFinished(10000);
+    return QString::fromUtf8(tool.readAllStandardOutput()).contains(what);
+}
+
+int imagesInPdf(const QString& path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) return -1;
+    const QByteArray bytes = file.readAll();
+    int found = 0;
+    int at = 0;
+    while ((at = int(bytes.indexOf("/Subtype/Image", at))) >= 0) {
+        ++found;
+        at += 14;
+    }
+    // Qt пишет и с пробелом между ключом и значением — считаем обе формы.
+    at = 0;
+    while ((at = int(bytes.indexOf("/Subtype /Image", at))) >= 0) {
+        ++found;
+        at += 15;
+    }
+    return found;
+}
+
+// СТРОКИ НА БУМАГЕ НЕ ОБРЕЗАЮТСЯ.
+//
+// Владелец: «при экспорте в PDF строки обрезаются, причём иногда довольно
+// сильно». Причина была в ширине вёрстки: подгонка вьюпорта растила ВИДЖЕТ на
+// ширину его полей, applyContentWidth эти поля тут же обнуляла, и виджет
+// оставался шире страницы — вёрстка шла по 765 при странице 679, а всё, что не
+// влезло, страница обрезала на полуслове.
+//
+// Проверяется по САМОМУ PDF: если строка обрезана, её хвоста в файле нет вовсе.
+// Текст в PDF лежит глифами, поэтому спрашиваем не байты, а ширину: сколько
+// места заняла бы строка при нынешней вёрстке. Прямее — сравнить ширину
+// разметки со страницей: она обязана быть НЕ БОЛЬШЕ.
+void checkLinesFitPage() {
+    // УСЛОВИЕ БЕДЫ ЗАДАЁТСЯ ЯВНО. Строки обрезались не всегда, а когда колонка
+    // упирается в ПОТОЛОК СВОЕЙ ШИРИНЫ: тогда вид заводит боковые поля вьюпорта,
+    // подгонка растит под них виджет, и он остаётся шире страницы. С потолком по
+    // умолчанию (90 знаков) на A4 запаса нет, полей не заводится, и проверка
+    // была бы пустышкой — я на этом и попался, пока не задал число сам.
+    const qreal savedWidth = zametti::appearance().maxContentWidth;
+    zametti::appearance().maxContentWidth = 40.0;
+    struct Restore {
+        qreal width;
+        ~Restore() { zametti::appearance().maxContentWidth = width; }
+    } restore{savedWidth};
+
+    std::string source = "# Длинная\n\n";
+    for (int i = 1; i <= 12; ++i) {
+        source += "Абзац номер " + std::to_string(i) +
+                  ". Он достаточно длинный, чтобы занять пару строк на странице и "
+                  "довести содержимое до разреза между страницами.\n\n";
+    }
+    const QString note = makeNote(QStringLiteral("01ffffffffff01.md"), source.c_str());
+    const QString pdf = QDir(g_dir).filePath(QStringLiteral("длинная.pdf"));
+
+    // ПОЛЯ ПОУЖЕ — СТРАНИЦА ПОШИРЕ, и колонка перестаёт помещаться в потолок
+    // ширины (maxContentWidth). Именно тогда вид и заводит боковые поля
+    // вьюпорта, ради которых подгонка растит виджет, — то есть ровно то
+    // условие, при котором строки и обрезались. С полями по умолчанию беда не
+    // всплывает вовсе, и проверка была бы пустышкой.
+    zametti::PdfOptions options;
+    const zametti::ExportReport report = zametti::exportPdf(note, pdf, options);
+    ZT_TRUE("длинная заметка вывезена", report.ok());
+    ZT_TRUE("страниц больше одной: разрез действительно случился", report.pages >= 1);
+
+    // Хвост последней строки абзаца обязан быть в файле. Обрезанная строка
+    // кончается на полуслове, и этих слов в PDF просто нет.
+    // ВЁРСТКА ОБЯЗАНА ИДТИ РОВНО ПО СТРАНИЦЕ. Спрашивать сам PDF бесполезно:
+    // отсечённые глифы в файл всё равно попадают, и pdftotext показывает целый
+    // текст даже там, где на бумаге строка кончается на полуслове. Я на этом и
+    // попался: первая редакция проверки читала текст и не краснела вовсе.
+    ZT_TRUE("вёрстка идёт по ширине страницы: " + std::to_string(int(report.layoutWidth)) +
+                " при странице " + std::to_string(int(report.pageWidth)),
+            report.ok() && std::fabs(report.layoutWidth - report.pageWidth) < 1.0);
+    // И текст доезжает до бумаги целиком.
+    ZT_TRUE("хвост абзаца на месте",
+            report.ok() && pdfHasText(pdf, QStringLiteral("между страницами")));
+}
+
+void checkObjectsOnPaper() {
+    if (!zametti::Formulas::ready()) {
+        QString error;
+        zametti::Formulas::init(&error);
+    }
+
+    makePicture(QDir(g_dir).filePath(QStringLiteral("01ddddddddddd1.png")), 300);
+    const QString plain = makeNote(QStringLiteral("01eeeeeeeeee01.md"),
+                                   "# Только текст\n\nАбзац без объектов.\n");
+    const QString withImage = makeNote(QStringLiteral("01eeeeeeeeee02.md"),
+                                       "# Со снимком\n\n![вид](01ddddddddddd1.png)\n");
+    const QString withMath = makeNote(QStringLiteral("01eeeeeeeeee03.md"),
+                                      "# С формулой\n\n$$\\frac{a}{b}$$\n");
+
+    const QString plainPdf = QDir(g_dir).filePath(QStringLiteral("текст.pdf"));
+    const QString imagePdf = QDir(g_dir).filePath(QStringLiteral("снимок.pdf"));
+    const QString mathPdf = QDir(g_dir).filePath(QStringLiteral("формула.pdf"));
+    ZT_TRUE("текст вывезен", zametti::exportPdf(plain, plainPdf).ok());
+    ZT_TRUE("снимок вывезен", zametti::exportPdf(withImage, imagePdf).ok());
+    ZT_TRUE("формула вывезена", zametti::exportPdf(withMath, mathPdf).ok());
+
+    ZT_EQ("у страницы с одним текстом картинок внутри нет", "0",
+          std::to_string(imagesInPdf(plainPdf)));
+    ZT_TRUE("фотография попала на страницу растром: " +
+                std::to_string(imagesInPdf(imagePdf)),
+            imagesInPdf(imagePdf) > 0);
+    ZT_TRUE("вёрстка формулы попала на страницу растром: " +
+                std::to_string(imagesInPdf(mathPdf)),
+            imagesInPdf(mathPdf) > 0);
+}
+
 // Что бумага делает с документом до отрисовки. Проверяется здесь, а не по
 // готовому PDF: текст в PDF лежит номерами глифов, и «нет ли там комментария»
 // у файла не спросишь.
@@ -295,11 +430,13 @@ static int ztRunSuite(int argc, char** argv) {
         return report.ok() ? 0 : 1;
     }
 
+    checkLinesFitPage();
     checkCuts();
     checkPaperPrep();
     checkPaperFont();
     checkRealFile();
     checkShrunkImage();
+    checkObjectsOnPaper();
 
     return zt::report("заметка на бумагу");
 }

@@ -256,6 +256,10 @@ bool pieceIsImageObject(const Piece& piece) {
            text.compare(text.size() - 2, 2, "]]") == 0;
 }
 
+bool pieceIsFormulaObject(const Piece& piece) {
+    return !piece.raw && piece.kind == Kind::Math && !piece.text.empty();
+}
+
 qreal blockTopMargin(Kind kind, bool raw, bool previousIsVSpace, bool first) {
     // У первого блока отбивке сверху взяться неоткуда: над ним поле страницы.
     if (first) return 0.0;
@@ -492,7 +496,10 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
                 // Пока объекты показаны исходником (kObjectsShown), гасить его
                 // нечем: вёрстки поверх не будет, и прозрачный текст означал бы
                 // пустое место вместо формулы.
-                if (kObjectsShown) charFmt.setForeground(QColor(Qt::transparent));
+                // Гасить исходник больше не нужно: его в тексте блока нет
+                // вовсе — там стоит объект, а исходник живёт в свойстве его
+                // формата. Прозрачный цвет был записью ВИДА в живой документ и
+                // ровно из-за неё формулы и были выключены.
                 break;
 
             case Kind::Html:
@@ -509,6 +516,15 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     // U+FFFC, размер которого Qt спрашивает у QTextObjectInterface, а исходник
     // едет рядом, в свойствах формата: обход документа кладёт обратно ровно
     // его, и U+FFFC не покидает QTextDocument никогда.
+    // ФОРМУЛА — ОБЪЕКТ, как и фотография: один знак U+FFFC, исходник рядом.
+    const bool formulaObject = pieceIsFormulaObject(b);
+    if (formulaObject) {
+        breaks.clear();
+        charFmt.setObjectType(FormulaObject);
+        charFmt.setProperty(ObjectSourceProperty, QString::fromStdString(b.text));
+        text = QString(QChar::ObjectReplacementCharacter);
+    }
+
     const bool imageObject = pieceIsImageObject(b);
     if (imageObject) {
         breaks.clear();
@@ -561,7 +577,7 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     // множится на высоту объекта, а не на высоту буквы: под фотографией в 340
     // точек 140 % оставляли полосу пустоты в полторы сотни точек. Объект сам
     // назвал свой размер — добавлять к нему ритм текста нечего.
-    const qreal lineFactor = pieceIsImageObject(b)
+    const qreal lineFactor = (pieceIsImageObject(b) || pieceIsFormulaObject(b))
                                  ? 1.0
                                  : (list ? appearance().listLineHeightFactor
                                          : appearance().lineHeightFactor);
@@ -618,9 +634,10 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
         const int textStart = cursor.position();
         cursor.insertText(text, charFmt);
         markBreaks(target, textStart, breaks);
-        if (!literal && !imageObject && !b.runs.empty())
+        const bool object = imageObject || formulaObject;
+        if (!literal && !object && !b.runs.empty())
             applySpans(target, textStart, b, lineStep);
-        if (!imageObject)
+        if (!object)
             enlargeFallbackGlyphs(target, textStart, text, lineStep, ctx.primaryFont);
     }
     prevVSpace = vspace;

@@ -47,11 +47,17 @@ BlockObject objectOf(const QTextBlock& block) {
     if (blockImageRef(block).valid)
         return {ObjectKind::Image, block.blockNumber(), block.blockNumber()};
 
-    // Выключная формула — целый блок (Kind::Math). Спрашиваем МОДЕЛЬ, а не вид:
-    // показана она сейчас вёрсткой или исходником — дело вида.
-    if (const BlockFormulaRef formula = blockFormulaRef(block);
-        formula.valid && formula.display)
-        return {ObjectKind::Formula, block.blockNumber(), block.blockNumber()};
+    // Выключная формула — ОБЪЕКТ, то есть блок рода Kind::Math. Раскрытая на
+    // правку формула им не является: это обычный абзац с исходником, и все
+    // правила объекта (Enter правит, буквы не проходят, стрелки перепрыгивают)
+    // ему только мешали бы — набранное в него не попадало вовсе.
+    //
+    // Спрашиваем РОД БЛОКА, а не «показана ли она вёрсткой»: род — это модель,
+    // а показ — дело вида.
+    if (!isRawBlock(block) && kindOf(block) == Kind::Math)
+        if (const BlockFormulaRef formula = blockFormulaRef(block);
+            formula.valid && formula.display)
+            return {ObjectKind::Formula, block.blockNumber(), block.blockNumber()};
 
     // Таблица — дословный кусок, который выглядит таблицей. Дословным его
     // сделал разбор (md4c назвал таблицей то, что IR выразить не может), а

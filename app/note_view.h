@@ -124,6 +124,28 @@ private:
     NoteView* view_ = nullptr;
 };
 
+// ВЫКЛЮЧНАЯ ФОРМУЛА РИСУЕТСЯ КАК ОБЪЕКТ ТЕКСТА — тем же приёмом, что и
+// фотография: полоса во всю ширину колонки, вёрстка по центру внутри неё.
+//
+// Прежде исходник формулы лежал в блоке текстом, погашенным прозрачным цветом,
+// а место под вёрстку добиралось нижним полем блока. И то и другое — записи
+// ВИДА в живой документ, и ровно из-за них показ формул был выключен.
+class FormulaObjectHandler : public QObject, public QTextObjectInterface {
+    Q_OBJECT
+    Q_INTERFACES(QTextObjectInterface)
+
+public:
+    explicit FormulaObjectHandler(NoteView* view);
+
+    QSizeF intrinsicSize(QTextDocument* doc, int posInDocument,
+                         const QTextFormat& format) override;
+    void drawObject(QPainter* painter, const QRectF& rect, QTextDocument* doc,
+                    int posInDocument, const QTextFormat& format) override;
+
+private:
+    NoteView* view_ = nullptr;
+};
+
 class NoteView : public QTextBrowser {
     Q_OBJECT
 
@@ -185,8 +207,6 @@ public:
     const FormulaRender* formulaAt(int blockNumber) const;
     // Какую формулу правят исходником; -1 — все показаны вёрсткой. Включается
     // Enter или двойным щелчком, кончается уходом каретки.
-    void setEditedFormula(int blockNumber);
-    int editedFormula() const { return editedFormula_; }
     // Прямоугольник вёрстки в координатах документа; пустой — формулы нет.
     QRectF formulaRect(int blockNumber) const;
     // Формула под этой точкой документа; -1 — там не формула.
@@ -295,6 +315,11 @@ public:
     // именно у неё. Имя то же нарочно — все места вызова уже написаны так.
     void setDocument(QTextDocument* doc);
 
+    // Зарегистрировать обработчики объектов у вёрстки этого документа. Зовётся
+    // и при подмене документа, и на своём собственном — тот, который Qt завела
+    // виду сама, тоже показывает объекты (вывоз на бумагу собирает в него).
+    void attachObjectHandlers(QTextDocument* doc);
+
     // Перетаскивание угла: пока мышь не отпущена, фотография меряется этой
     // шириной (логические пиксели) вместо записанной. width <= 0 — снять.
     void setImageDragWidth(int blockNumber, qreal width);
@@ -316,6 +341,16 @@ public:
                      int imageBudget = 0);
 
 protected:
+    // ГОТОВИТ ОБЪЕКТЫ К ПОКАЗУ: раздаёт фотографиям пиксели по бюджету кэша,
+    // считает вёрстку формул, просит вёрстку перемерить объекты. В документ при
+    // этом не пишется ничего.
+    //
+    // Не private: его зовёт и ВЫВОЗ НА БУМАГУ. На экране вид делает это сам, по
+    // сигналам документа, а у вывоза сигналов нет — он собирает документ и
+    // сразу печатает; без этого вызова на бумагу уезжали пустые места вместо
+    // снимков и рамка «формула не посчитана».
+    void syncImageSpace(bool whole = true);
+
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
@@ -426,7 +461,9 @@ protected:
     // фотографию, таблицу и формулу — см. caretShouldBeDrawn.
     bool caretOnDrawnObject();
     // Формула на экране: где стоит вёрстка и какую строку закрыть.
-    void paintFormula(QPainter& painter, const QTextBlock& block);
+    // Уголки выбранной формулы — поверх страницы, по тому же доводу, что и
+    // у фотографии.
+    void paintFormulaMarks(QPainter& painter, const QTextBlock& block);
 
 private:
     // Каретку рисуем сами: своей Qt цвета не отдаёт (см. caretColor в
@@ -457,7 +494,6 @@ private:
     // Полный обход стоит 458 мкс на заметке в 4182 блока (замер), а висит он
     // на каждой правке — это почти всё, что мы добавляем сверх Qt. Правка же
     // задевает один блок.
-    void syncImageSpace(bool whole = true);
 
     // Что мы знаем о картинке блока.
     //
@@ -496,6 +532,7 @@ private:
     };
 
     friend class ImageObjectHandler;
+    friend class FormulaObjectHandler;
 
     QString absoluteImagePath(const QString& path) const;
     // Запись кэша для пути: размеры из заголовка, БЕЗ разжатия. nullptr —
@@ -543,6 +580,10 @@ private:
     void paintImageMarks(QPainter& painter, const QTextBlock& block);
     // Место фотографии в координатах документа; пустой — фотографии нет.
     QRectF imageObjectRect(const QTextBlock& block);
+
+    // Полоса формулы: вся ширина колонки, высота вёрстки с воздухом. Вёрстка
+    // внутри неё — по центру.
+    QSizeF formulaBandFor(const QTextBlock& block);
     // Ширина колонки, доступная блоку. Берётся у ДОКУМЕНТА, а не у вьюпорта:
     // на бумаге ширина своя, и мерить надо ту, по которой Qt раскладывает.
     qreal columnWidth(const QTextBlock& block) const;
@@ -581,7 +622,6 @@ private:
     QHash<int, TableRender> tables_;
     int editedTable_ = -1;
     QHash<int, FormulaRender> formulas_;
-    int editedFormula_ = -1;
 
     QTimer copiedFade_;
     QTimer caretBlink_;
@@ -605,6 +645,7 @@ private:
     // Обработчик объектов-фотографий. Один на вид и на всю его жизнь:
     // регистрируется у вёрстки каждого показанного документа.
     ImageObjectHandler* imageObjects_ = nullptr;
+    FormulaObjectHandler* formulaObjects_ = nullptr;
 
     int imageDragBlock_ = -1;             // номер блока с перетаскиваемым углом
     qreal imageDragWidth_ = 0.0;

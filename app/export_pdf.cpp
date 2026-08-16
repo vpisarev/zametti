@@ -41,6 +41,7 @@ public:
     using NoteView::ImageGeometry;
     using NoteView::imageGeometry;
     using NoteView::renderSlice;
+    using NoteView::syncImageSpace;
 };
 
 std::vector<Unbreakable> collectUnbreakables(PaperView& view) {
@@ -385,12 +386,27 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
     buildDocument(blocks, *view.document());
     prepareForPaper(*view.document());
     view.applyContentWidth();
-    // Ширину разметки ставим явно, хотя показанный виджет ставит её и сам:
-    // разметка обязана идти по ширине страницы, и полагаться тут на побочное
-    // действие show() не стоит.
-    view.document()->setTextWidth(view.viewport()->width());
+    // ШИРИНА ВЁРСТКИ — РОВНО СТРАНИЦА, и берётся она у страницы, а не у
+    // вьюпорта.
+    //
+    // Вьюпорту верить нельзя: подгонка выше растит ВИДЖЕТ на ширину полей
+    // вьюпорта, а applyContentWidth эти поля тут же пересчитывает и обнуляет —
+    // и виджет остаётся шире страницы. Замер: страница 679, вьюпорт 765,
+    // вёрстка 765. Всё, что не влезло в 679, страница обрезала — строки
+    // кончались на полуслове (владелец: «при экспорте в PDF строки обрезаются,
+    // причём иногда довольно сильно»).
+    view.document()->setTextWidth(pageWidth);
+    // ОБЪЕКТЫ ГОТОВЯТСЯ И ЗДЕСЬ ТОЖЕ. Фотографиям раздаются пиксели по бюджету
+    // кэша, формулам считается вёрстка; без этого на бумагу уезжала рамка
+    // «формула не посчитана» и пустое место вместо снимков. На экране это
+    // делает вид сам, по сигналам документа, а у вывоза сигналов нет — он
+    // собирает документ и сразу печатает.
+    view.syncImageSpace();
+
     // Разметка целиком нужна ЗДЕСЬ по-настоящему: без неё у блоков нет ни
     // строк, ни высоты, а по ним и ищется место разреза.
+    report.layoutWidth = view.document()->textWidth();
+    report.pageWidth = pageWidth;
     const qreal docHeight = view.document()->documentLayout()->documentSize().height();
     if (docHeight <= 0.0) {
         report.error = QStringLiteral("в заметке нечего печатать");

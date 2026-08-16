@@ -4,6 +4,7 @@
 
 #include "block_object.h"
 #include "doc_model.h"
+#include "math_scan.h"
 #include "document_pieces.h"
 #include "document_builder.h"
 #include "serializer.h"
@@ -3582,6 +3583,82 @@ bool ZDocument::toggleDisplayMath(QTextCursor& at) {
     return runLocalEdit(at, [this](QTextCursor& edit) {
         return zametti::toggleDisplayMath(d_->text, edit);
     });
+}
+
+// --- ПРАВКА ФОРМУЛЫ ---------------------------------------------------------
+
+bool ZDocument::openFormula(QTextCursor& at) {
+    if (at.document() != &d_->text) return false;
+    const QTextBlock block = at.block();
+    const BlockFormulaRef ref = blockFormulaRef(block);
+    if (!ref.valid || !ref.display) return false;
+    // Уже раскрыта: в блоке текст, а не объект — править и так можно.
+    if (block.text().size() != 1 ||
+        block.text().at(0) != QChar::ObjectReplacementCharacter)
+        return false;
+
+    const int number = block.blockNumber();
+    // РАСКРЫТАЯ ФОРМУЛА — АБЗАЦ С КУСКОМ-МАТЕМАТИКОЙ, а не голый текст. Так её
+    // узнаёт blockFormulaRef (и потому её можно свернуть обратно), так же её
+    // прочтёт и файл: `$$…$$` отдельной строкой — это выключная формула.
+    Piece piece;
+    piece.text = ref.source.toStdString();
+    Run run;
+    run.start = 0;
+    run.end = int32_t(piece.text.size());
+    run.flags = InlineMath;
+    piece.runs.push_back(run);
+    QTextCursor edit(at);
+    edit.beginEditBlock();
+    replaceBlocks(number, number, {piece});
+    settleSeam(number, number);
+    edit.endEditBlock();
+
+#ifndef NDEBUG
+    checkCanonical();
+#endif
+    // Каретка — в конец исходника: правят обычно хвост.
+    at = caretAtBlock(number);
+    at.movePosition(QTextCursor::EndOfBlock);
+    return true;
+}
+
+bool ZDocument::closeFormula(QTextCursor& at) {
+    if (at.document() != &d_->text) return false;
+    const QTextBlock block = at.block();
+    if (isRawBlock(block) || kindOf(block) != Kind::Paragraph) return false;
+
+    // СПРАШИВАЕМ ТЕКСТ, А НЕ РАЗМЕТКУ. Пока формула раскрыта, человек в ней
+    // ПЕЧАТАЕТ, и набранные знаки пометки математики не несут: спрашивать
+    // blockFormulaRef здесь значило бы «свернуть можно только то, чего не
+    // трогали» — Esc после правки не делал ничего (нашёл владелец).
+    //
+    // Канон общий, из ядра: формула это то, что scanMath считает формулой.
+    const int number = block.blockNumber();
+    const std::vector<Piece> now = piecesOfBlocks(d_->text, number, number);
+    if (now.size() != 1 || now.front().raw) return false;
+    const std::string& source = now.front().text;
+    const std::vector<MathSpan> found = scanMath(source);
+    // Правкой формулу разорвали — она осталась обычным текстом, и это законно:
+    // в файл уйдёт то, что написано.
+    if (found.size() != 1 || found.front().start != 0 ||
+        size_t(found.front().end) != source.size())
+        return false;
+
+    Piece piece;
+    piece.kind = Kind::Math;
+    piece.text = source;
+    QTextCursor edit(at);
+    edit.beginEditBlock();
+    replaceBlocks(number, number, {piece});
+    settleSeam(number, number);
+    edit.endEditBlock();
+
+#ifndef NDEBUG
+    checkCanonical();
+#endif
+    at = caretAtBlock(number);
+    return true;
 }
 
 // --- БЛОК КОДА ИЗ ВЫДЕЛЕНИЯ И ПЕРЕСТАНОВКА ПУНКТОВ --------------------------

@@ -221,10 +221,15 @@ void NoteEditor::onCaretMoved() {
     // двигает машина, а не человек», и правка обрывалась на промежуточной
     // позиции внутри самой операции: владелец увидел это как «выход по
     // уезжанию работает ненадёжно».
-    // Правка формулы кончается уходом каретки из её блока. Проще, чем у
-    // таблицы: у формулы блок ОДИН, и «рядом» тут значит «в нём же».
-    if (editedFormula() >= 0 && textCursor().blockNumber() != editedFormula())
-        leaveFormulaEdit();
+    // ПРАВКА ФОРМУЛЫ КОНЧАЕТСЯ УХОДОМ КАРЕТКИ ИЗ ЕЁ БЛОКА. Проще, чем у
+    // таблицы: у формулы блок ОДИН, и «рядом» тут значит «в нём же». Какой
+    // блок был раскрыт, помнить не нужно — свернуть надо ТОТ, ИЗ КОТОРОГО
+    // ушли, и его номер мы только что запомнили сами (lastLine).
+    if (!current_.lastLine.isNull() && current_.lastLine.document() == document() &&
+        current_.lastLine.blockNumber() != textCursor().blockNumber()) {
+        QTextCursor left = current_.lastLine;
+        runNoteEdit([&left](ZDocument& note, QTextCursor&) { return note.closeFormula(left); });
+    }
 
     if (editedTable() >= 0) {
         const int near = tableNearCaret();
@@ -1404,6 +1409,21 @@ void NoteEditor::mouseDoubleClickEvent(QMouseEvent* event) {
     // По рамке — молча: первый щелчок уже переключил задачу, а выделять слово
     // под рамкой человек не собирался.
     if (checkboxUnder(*event).isValid()) return;
+
+    // ДВОЙНОЙ ЩЕЛЧОК ПО ФОРМУЛЕ — это правка её исходника, а не выделение слова
+    // в пустоте: текста под вёрсткой нет вовсе, и выделять там нечего. То же
+    // правило, что у Enter на ней, — и то же, что у таблицы.
+    if (!isReadOnly() && !inHistory()) {
+        QTextCursor at = cursorForPosition(event->pos());
+        if (objectOf(at.block()).kind == ObjectKind::Formula) {
+            setTextCursor(at);
+            runNoteEdit([](ZDocument& note, QTextCursor& caret) {
+                return note.openFormula(caret);
+            });
+            event->accept();
+            return;
+        }
+    }
     NoteView::mouseDoubleClickEvent(event);
 }
 
@@ -1557,6 +1577,16 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     // разрезом строки, — и Enter на таблице успевал разрезать её исходник
     // прежде, чем слой о нём узнавал. Поймала проверка флипа; глазами это
     // выглядело бы как «Enter ничего не делает», а на деле резало таблицу.
+    // ESC СВОРАЧИВАЕТ РАСКРЫТУЮ ФОРМУЛУ обратно в объект — так правка и
+    // кончается (решение владельца: Enter провалиться, Esc выйти, Ctrl+Z —
+    // если не понравилось). Стоит ДО слоя объектов: пока формула раскрыта,
+    // объекта в этом блоке нет, и слой о ней ничего не знает.
+    if (event->key() == Qt::Key_Escape && !isReadOnly() &&
+        runNoteEdit([](ZDocument& note, QTextCursor& at) { return note.closeFormula(at); })) {
+        event->accept();
+        return;
+    }
+
     if (handleObjectKey(event)) return;
 
     const bool plainEnter = (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
@@ -1849,7 +1879,7 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
     // и буквы обязаны попадать в него как всюду. Список правимых один на все
     // виды: заведи третий вид со своей проверкой — и он забудет либо про
     // запрет, либо про правку (мы уже забывали и то, и другое).
-    where.onObject = own.valid() && own.first != editedTable() && own.first != editedFormula();
+    where.onObject = own.valid() && own.first != editedTable();
 
     const QTextBlock above = block.previous();
     const QTextBlock below = block.next();
@@ -1896,12 +1926,14 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
                 setTextCursor(at);
                 return true;
             }
-            // Править формулу — значит показать исходник и встать в него.
+            // ПРАВИТЬ ФОРМУЛУ — ЗНАЧИТ РАСКРЫТЬ ЕЁ В ИСХОДНИК. Объект
+            // заменяется настоящим текстом абзаца, и каретка встаёт в него как
+            // во всякий другой; Esc (или уход каретки) сворачивает обратно.
+            // Замена идёт глаголом заметки — вид в документ не пишет.
             if (own.kind == ObjectKind::Formula) {
-                setEditedFormula(own.first);
-                QTextCursor at(document()->findBlockByNumber(own.first));
-                at.movePosition(QTextCursor::EndOfBlock);
-                setTextCursor(at);
+                runNoteEdit([](ZDocument& note, QTextCursor& at) {
+                    return note.openFormula(at);
+                });
                 return true;
             }
             // У картинки править пока нечего: подпись — следующий заход.
@@ -1930,7 +1962,6 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
                 return note.removeBlocks(at, first, last);
             });
             setEditedTable(-1);
-            setEditedFormula(-1);
             return true;
         }
         case ObjectAction::StepOver: {
@@ -3532,10 +3563,14 @@ EscapeAction escapeActionFor(bool languageEditorOpen, bool editingTable, bool fi
     return EscapeAction::Nothing;
 }
 
+// Каретка ушла из раскрытой формулы — сворачиваем её обратно в объект.
+//
+// Своего признака «сейчас правят» у формулы больше нет и не нужно: раскрытая
+// формула — это обычный абзац с исходником, и узнать её можно у самого
+// документа. Прежний editedFormula_ был именно таким признаком, и жил он
+// потому, что исходник лежал в блоке всегда.
 void NoteEditor::leaveFormulaEdit() {
-    if (editedFormula() < 0) return;
-    setEditedFormula(-1);
-    reparseAfterTableEdit();
+    runNoteEdit([](ZDocument& note, QTextCursor& at) { return note.closeFormula(at); });
 }
 
 void NoteEditor::leaveTableEdit() {

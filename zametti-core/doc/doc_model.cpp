@@ -330,7 +330,15 @@ BlockFormulaRef blockFormulaRef(const QTextBlock& block) {
     // разметки внутри нет: спрашивать спаны незачем.
     if (kindOf(block) == Kind::Math) {
         QString source;
-        for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+        // ФОРМУЛА-ОБЪЕКТ: в блоке один знак U+FFFC, а исходник — в свойстве его
+        // формата. Спрашиваем его, а не текст: текста у объекта нет.
+        if (block.text().size() == 1 &&
+            block.text().at(0) == QChar::ObjectReplacementCharacter) {
+            const QTextCharFormat format = block.begin().fragment().charFormat();
+            if (format.objectType() == FormulaObject)
+                source = format.property(ObjectSourceProperty).toString();
+        }
+        for (QTextBlock::iterator it = block.begin(); source.isEmpty() && !it.atEnd(); ++it) {
             const QTextFragment fragment = it.fragment();
             if (!fragment.isValid()) continue;
             QString piece = fragment.text();

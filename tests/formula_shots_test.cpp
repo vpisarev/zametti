@@ -68,10 +68,20 @@ int firstFormula(zametti::NoteEditor& editor) {
 // с плотностью 2 это разные числа вдвое, и первая редакция считала чернила не
 // там, где рисовала: проверка краснела на ровном месте, а я чуть не пошёл чинить
 // отрисовку. Плотность берётся у самого снимка.
-int inkIn(const QImage& shot, const QRectF& box, int scroll, qreal dpr) {
+// Снимок берётся у ВСЕГО виджета, а прямоугольник вёрстки — в координатах
+// документа. Между ними стоит вьюпорт, и в широком окне он СДВИНУТ: колонка
+// текста центрируется полями вьюпорта (NoteView::applyContentWidth). Без этой
+// поправки проверка мерила пустое поле слева и находила ноль чернил там, где
+// формула нарисована прекрасно.
+QPoint viewportOrigin(const zametti::NoteEditor& editor) {
+    return editor.viewport()->mapTo(&const_cast<zametti::NoteEditor&>(editor), QPoint(0, 0));
+}
+
+int inkIn(const QImage& shot, const QRectF& box, int scroll, qreal dpr,
+          QPoint origin = QPoint(0, 0)) {
     int dark = 0;
-    const QRectF at((box.left()) * dpr, (box.top() - scroll) * dpr, box.width() * dpr,
-                    box.height() * dpr);
+    const QRectF at((box.left() + origin.x()) * dpr, (box.top() - scroll + origin.y()) * dpr,
+                    box.width() * dpr, box.height() * dpr);
     for (int x = int(at.left()); x < int(at.right()) && x < shot.width(); ++x)
         for (int y = int(at.top()); y < int(at.bottom()) && y < shot.height(); ++y)
             if (x >= 0 && y >= 0 && qGray(shot.pixel(x, y)) < 128) ++dark;
@@ -132,7 +142,7 @@ void checkRendered(int width, const QString& name) {
     ZT_TRUE("у вёрстки есть размер: " + std::to_string(int(box.width())) + "x" +
                 std::to_string(int(box.height())),
             box.width() > 4 && box.height() > 4);
-    const int ink = inkIn(shot, box, scroll, editor->devicePixelRatioF());
+    const int ink = inkIn(shot, box, scroll, editor->devicePixelRatioF(), viewportOrigin(*editor));
     const qreal dprNow = editor->devicePixelRatioF();
     const qreal area = box.width() * dprNow * box.height() * dprNow;
     std::printf("[замер] чернил %d из %d точек (%.0f%%)\n", ink, int(area), 100.0 * ink / area);
@@ -154,7 +164,7 @@ void checkRendered(int width, const QString& name) {
     if (leftGap > 12) {
         const QRectF stripe(0, box.top(), leftGap - 4, box.height());
         ZT_TRUE("слева от вёрстки исходник не проступает",
-                inkIn(shot, stripe, scroll, editor->devicePixelRatioF()) == 0);
+                inkIn(shot, stripe, scroll, editor->devicePixelRatioF(), viewportOrigin(*editor)) == 0);
     }
 
     // ВЁРСТКА НЕ ВЫЛЕЗАЕТ ЗА СВОЙ ПРЯМОУГОЛЬНИК. Полоса сразу справа от неё
@@ -167,7 +177,7 @@ void checkRendered(int width, const QString& name) {
         if (right > 8) {
             const QRectF beyond(box.right() + 2, box.top(), right, box.height());
             ZT_TRUE("справа от вёрстки чисто",
-                    inkIn(shot, beyond, scroll, editor->devicePixelRatioF()) == 0);
+                    inkIn(shot, beyond, scroll, editor->devicePixelRatioF(), viewportOrigin(*editor)) == 0);
         }
     }
 
@@ -346,7 +356,6 @@ void checkSelectionDoesNotRevealSource() {
     }
     const QRectF box = editor->formulaRect(first);
     const int scroll = editor->verticalScrollBar()->value();
-    const qreal dpr = editor->devicePixelRatioF();
 
     // Выделяем весь блок формулы — как это делает мышь протяжкой.
     QTextCursor at(editor->document()->findBlockByNumber(first));
@@ -357,21 +366,29 @@ void checkSelectionDoesNotRevealSource() {
     if (!shot.save(QDir(g_dir).filePath(QStringLiteral("выделение.png"))))
         std::printf("НЕ СОХРАНИЛСЯ снимок выделения\n");
 
-    // Справа от вёрстки — там, где тянулся бы исходник, — чисто.
-    const qreal right = editor->viewport()->width() - box.right() - 8;
-    if (right > 20) {
-        const QRectF beyond(box.right() + 4, box.top(), right, box.height());
-        ZT_TRUE("под выделением исходник не проступает",
-                inkIn(shot, beyond, scroll, dpr) == 0);
-    }
+    // ИСХОДНИКА ПОД ВЫДЕЛЕНИЕМ НЕТ — и теперь это не вопрос пикселей, а вопрос
+    // строения: формула лежит в документе ОБЪЕКТОМ, одним знаком U+FFFC, и
+    // проступать под выделением просто нечему. Прежняя проверка считала тёмные
+    // точки справа от вёрстки; с объектом она мерила бы саму заливку выделения
+    // (полоса выбрана целиком, как и у выбранной фотографии), то есть отвечала
+    // бы не на тот вопрос.
+    //
+    // Утверждение сильнее прежнего: не «исходник не виден», а «его нет».
+    ZT_TRUE("под выделением исходнику взяться неоткуда: в блоке объект",
+            editor->document()->findBlockByNumber(first).text() ==
+                QString(QChar::ObjectReplacementCharacter));
+
 
     // ДВОЙНОЙ ЩЕЛЧОК ПО ФОРМУЛЕ — это правка её исходника, как у таблицы, а не
     // выделение слова в невидимом тексте.
     const QPoint middle(int(box.center().x()), int(box.center().y()) - scroll);
     QTest::mouseDClick(editor->viewport(), Qt::LeftButton, Qt::NoModifier, middle);
     QTest::qWait(60);
-    ZT_EQ("двойной щелчок открыл правку", std::to_string(first),
-          std::to_string(editor->editedFormula()));
+    // Раскрытая формула — обычный абзац с исходником; своего признака «её
+    // сейчас правят» больше нет, и спрашивать надо сам документ.
+    ZT_TRUE("двойной щелчок открыл правку",
+            editor->document()->findBlockByNumber(first).text().startsWith(
+                QStringLiteral("$$")));
     ZT_TRUE("и выделения в ней не осталось", !editor->textCursor().hasSelection());
 
     delete editor;
@@ -431,8 +448,13 @@ void checkFlip() {
     QTest::qWait(20);
     QTest::keyClick(editor, Qt::Key_Return);
     QTest::qWait(40);
-    ZT_EQ("Enter открыл исходник", std::to_string(first),
-          std::to_string(editor->editedFormula()));
+    // РАСКРЫТАЯ ФОРМУЛА — ЭТО ОБЫЧНЫЙ АБЗАЦ С ИСХОДНИКОМ, а не блок с
+    // признаком «его сейчас правят». Признака больше нет и не нужно: спросить
+    // можно сам документ, а прежний editedFormula_ жил лишь потому, что
+    // исходник лежал в блоке всегда, погашенный прозрачным цветом.
+    ZT_TRUE("Enter открыл исходник",
+            editor->document()->findBlockByNumber(first).text() ==
+                QStringLiteral("$$x^2 + y^2 = z^2$$"));
     ZT_TRUE("вёрстки на время правки нет", editor->formulaAt(first) == nullptr);
 
     // ИСХОДНИК ВИДЕН ЦЕЛИКОМ. Пока он правится, закрашивать строку нечем — и
@@ -442,13 +464,16 @@ void checkFlip() {
         const QTextBlock block = editor->document()->findBlockByNumber(first);
         const QRectF line =
             editor->document()->documentLayout()->blockBoundingRect(block);
-        ZT_TRUE("исходник виден", inkIn(shot, line, editor->verticalScrollBar()->value(), editor->devicePixelRatioF()) > 10);
+        ZT_TRUE("исходник виден",
+                inkIn(shot, line, editor->verticalScrollBar()->value(),
+                      editor->devicePixelRatioF(), viewportOrigin(*editor)) > 10);
     }
 
     // Увели каретку наружу — снова вёрстка.
     editor->setTextCursor(QTextCursor(editor->document()->firstBlock()));
     QTest::qWait(60);
-    ZT_EQ("уход каретки закрыл правку", "-1", std::to_string(editor->editedFormula()));
+    ZT_TRUE("уход каретки закрыл правку",
+            editor->document()->findBlockByNumber(first).text().size() == 1);
     ZT_TRUE("вёрстка вернулась", firstFormula(*editor) >= 0);
 
     delete editor;
@@ -591,14 +616,6 @@ static int ztRunSuite(int argc, char** argv) {
 // Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
 // Дробить на отдельные проверки — отдельная работа, по одному набору.
 TEST(FormulaShots, All) {
-    // ВРЕМЕННЫЙ ШАГ НАЗАД: объекты показаны своим исходником, рисовать их
-    // сейчас некому — см. kObjectsShown в doc_model.h и довод там же.
-    //
-    // Пропуск привязан К ТОЙ ЖЕ КОНСТАНТЕ, которой снят показ, а не списком в
-    // голове: вернётся показ — вернётся и набор, сам, без напоминания.
-    if (!zametti::kObjectsShown)
-        GTEST_SKIP() << "объекты показаны исходником (kObjectsShown = false)";
-
     std::vector<QByteArray> ztArgs{QByteArrayLiteral("formula_shots_test")};
     ztArgs.push_back((zt::TestData::outDir(QStringLiteral("formula-shots"))).toLocal8Bit());
     std::vector<char*> ztArgv;

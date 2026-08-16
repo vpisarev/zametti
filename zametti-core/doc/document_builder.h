@@ -56,6 +56,10 @@ struct BuildOptions {
 // блоками встаёт кусок), — и ответ у них обязан быть один.
 bool pieceIsImageObject(const Piece& piece);
 
+// То же про формулу: выключная (`$$…$$`) занимает абзац целиком и показывается
+// объектом. Род блока у неё свой (Kind::Math), спрашивать разметку не нужно.
+bool pieceIsFormulaObject(const Piece& piece);
+
 void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target,
                    BuildOptions options = {});
 

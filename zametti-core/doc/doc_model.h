@@ -79,6 +79,10 @@ enum DocProperty {
 // принадлежат Qt (её собственные картинки и таблицы).
 enum ObjectKindType {
     ImageObject = QTextFormat::UserObject + 1,
+    // Выключная формула (`$$…$$`) — тот же приём: один знак U+FFFC, исходник в
+    // ObjectSourceProperty. Строчная объектом НЕ бывает: она живёт внутри
+    // строки текста, и правила у неё свои.
+    FormulaObject,
 };
 
 // Три знака Qt в insertText трактует структурно и рвёт на них блок. Замерено
