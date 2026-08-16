@@ -705,14 +705,16 @@ bool convertBlock(QTextDocument& doc, int number, BlockTarget target) {
     int strip = 0;
 
     if (target.kind == Kind::Paragraph) {
-        format.clearProperty(KindProperty);
+        format.setProperty(KindProperty, int(Kind::Paragraph));
         format.clearProperty(MarkerProperty);
         format.clearProperty(CheckedProperty);
         format.clearProperty(LevelProperty);
-        // ЧИСТИМ, А НЕ ПИШЕМ НОЛЬ. Сборщик у обычного блока этих свойств не
-        // ставит ВОВСЕ, и явный ноль делает блок непохожим на собранный. Пока
-        // после каждой операции шла полная пересборка, разницы не было видно;
-        // теперь её ловит сверка со сборкой.
+        // РОД ПИШЕМ, ОСТАЛЬНОЕ ЧИСТИМ — ровно как сборщик. Он ставит род
+        // ВСЕГДА, включая обычный абзац, а маркер, отметку, уровень и поля у
+        // обычного блока не ставит вовсе. И то и другое важно: явный ноль там,
+        // где сборщик молчит, и молчание там, где он пишет ноль, одинаково
+        // делают блок непохожим на собранный. Пока после каждой операции шла
+        // полная пересборка, разницы не было видно; теперь её ловит сверка.
         format.clearProperty(QTextFormat::BlockLeftMargin);
         format.clearProperty(QTextFormat::HeadingLevel);
     } else {
@@ -1257,7 +1259,7 @@ static bool setHeadingLevel(QTextDocument& doc, QTextCursor& cursor, int level) 
 
         QTextBlockFormat format = block.blockFormat();
         if (level == 0) {
-            format.clearProperty(KindProperty);
+            format.setProperty(KindProperty, int(Kind::Paragraph));
             format.clearProperty(MarkerProperty);
             format.clearProperty(CheckedProperty);
             format.clearProperty(LevelProperty);
@@ -1750,7 +1752,7 @@ static bool toggleCommentAtCursor(QTextDocument& doc, QTextCursor& cursor) {
                 const QTextBlock suffix = target.next();
                 if (suffix.isValid()) {
                     QTextBlockFormat sf = suffix.blockFormat();
-                    sf.clearProperty(KindProperty);
+                    sf.setProperty(KindProperty, int(Kind::Paragraph));
                     sf.clearProperty(MarkerProperty);
                     sf.clearProperty(CheckedProperty);
                     edit.setPosition(suffix.position());
@@ -2010,7 +2012,7 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
     // содержимым, пустая строка между пунктами не разделяет ничего.
     if (isListBlock(block) && block.text().isEmpty()) {
         QTextBlockFormat next = block.blockFormat();
-        next.clearProperty(KindProperty);
+        next.setProperty(KindProperty, int(Kind::Paragraph));
         next.clearProperty(MarkerProperty);
         next.clearProperty(CheckedProperty);
         next.clearProperty(LevelProperty);
@@ -2071,19 +2073,19 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
                 // "Редактор" — а человек всего лишь хотел отбить заголовок
                 // сверху пустой строкой.
                 if (cursor.positionInBlock() > 0) {
-                    next.clearProperty(KindProperty);
+                    next.setProperty(KindProperty, int(Kind::Paragraph));
                     next.setHeadingLevel(0);
                 }
                 break;
             case Kind::Divider:
                 // Черта одна, и текста в ней нет: всё, что Enter заводит под
                 // ней, — обычный текст.
-                next.clearProperty(KindProperty);
+                next.setProperty(KindProperty, int(Kind::Paragraph));
                 break;
             case Kind::Html:
                 // Комментарий не расползается: новая строка под ним — обычный
                 // текст, а многострочный комментарий делается Shift+Enter.
-                next.clearProperty(KindProperty);
+                next.setProperty(KindProperty, int(Kind::Paragraph));
                 break;
             case Kind::Paragraph:
             case Kind::Code:
@@ -2160,7 +2162,7 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
     // пустая строка, ради которой Enter и нажали.
     if (atHeadingStart && landed > 0) {
         QTextBlockFormat blank = doc.findBlockByNumber(landed - 1).blockFormat();
-        blank.clearProperty(KindProperty);
+        blank.setProperty(KindProperty, int(Kind::Paragraph));
         blank.setHeadingLevel(0);
         QTextCursor above(&doc);
         above.setPosition(doc.findBlockByNumber(landed - 1).position());
@@ -2216,7 +2218,7 @@ static bool unwrapListItemAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     }
 
     QTextBlockFormat plain = block.blockFormat();
-    plain.clearProperty(KindProperty);
+    plain.setProperty(KindProperty, int(Kind::Paragraph));
     plain.clearProperty(LevelProperty);
     plain.clearProperty(QTextFormat::BlockLeftMargin);
 
@@ -2448,7 +2450,7 @@ static bool applyDividerRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
         edit.setPosition(dividerBlock.position());
         edit.insertBlock();
         QTextBlockFormat plain = edit.blockFormat();
-        plain.clearProperty(KindProperty);
+        plain.setProperty(KindProperty, int(Kind::Paragraph));
         edit.setBlockFormat(plain);
         landing.setPosition(edit.position());
     }
@@ -2506,7 +2508,7 @@ static bool repairAfterTyping(QTextDocument& doc, QTextCursor& cursor) {
     edit.beginEditBlock();
     if (filled) {
         QTextBlockFormat format = block.blockFormat();
-        format.clearProperty(KindProperty);
+        format.setProperty(KindProperty, int(Kind::Paragraph));
         format.clearProperty(LevelProperty);
         format.clearProperty(QTextFormat::BlockLeftMargin);
         setBlockFormat(edit, block, format);
@@ -2812,7 +2814,7 @@ int syncGaps(QTextDocument& doc, BlockRange range) {
             // склеивает соседей (поймал набор списков).
             if (!isVSpaceBlock(block) || block.text().trimmed().isEmpty()) continue;
             QTextBlockFormat format = block.blockFormat();
-            format.clearProperty(KindProperty);
+            format.setProperty(KindProperty, int(Kind::Paragraph));
             format.clearProperty(LevelProperty);
             format.clearProperty(QTextFormat::BlockLeftMargin);
             // И СЛЕДЫ ПУСТОЙ СТРОКИ. Её формат ставит нижнее поле и высоту
@@ -3078,9 +3080,31 @@ bool ZDocument::insertText(QTextCursor& at, const QString& text) {
 bool ZDocument::insertText(QTextCursor& at, const QString& text,
                            const QTextCharFormat& format) {
     if (text.isEmpty() && !at.hasSelection()) return false;
-    return runLocalEdit(at, [this, &text, &format](QTextCursor& edit) {
+    // ПОМЕТКА РАЗДЕЛИТЕЛЯ СТРОК НАБРАННОЙ БУКВЕ НЕ ПРИНАДЛЕЖИТ. Формат для
+    // следующей буквы вид берёт у знака слева от каретки, а слева бывает мягкий
+    // перенос — и набранное за ним наследовало его пометку, то есть само
+    // становилось «переносом» для писателя. Поймала сверка со сборкой.
+    QTextCharFormat clean = format;
+    clean.clearProperty(BreakSourceProperty);
+
+    // БЛОК, КОТОРЫЙ ЗАВЁЛ САМ Qt, свойств не имеет вовсе — так выглядит
+    // единственный блок опустевшей заметки. Набранное в него делает заметку
+    // непустой, и оформить блок должен сборщик: экономить пересборку здесь
+    // нельзя, зато и случается это ровно один раз на заметку.
+    return runLocalEdit(at, [this, &text, &clean](QTextCursor& edit) {
         if (edit.hasSelection()) edit.removeSelectedText();
-        if (!text.isEmpty()) edit.insertText(text, format);
+        if (!text.isEmpty()) {
+            const int from = edit.position();
+            edit.insertText(text, clean);
+            // И ФОРМАТ НАБРАННОГО СТАВИМ ЯВНО. Qt вливает вставленное в соседний
+            // кусок, когда формат «достаточно похож», и набранное за мягким
+            // переносом наследовало его пометку — то есть само становилось
+            // переносом для писателя. Поймала сверка со сборкой.
+            QTextCursor typed(&d_->text);
+            typed.setPosition(from);
+            typed.setPosition(edit.position(), QTextCursor::KeepAnchor);
+            typed.setCharFormat(clean);
+        }
 
         // НАБОР ЛОМАЕТ ИНВАРИАНТЫ ДВУМЯ СПОСОБАМИ: текстом на пустой строке (она
         // перестаёт быть пустой) и выделением, съевшим границу блоков (рядом

@@ -370,11 +370,13 @@ bool ZDocument::runLocalEdit(QTextCursor& at, const std::function<bool(QTextCurs
     const int grew = qMax(0, d_->text.blockCount() - countBefore);
     const int here = d_->text.findBlock(edit.position()).blockNumber();
     const int there = d_->text.findBlock(edit.anchor()).blockNumber();
-    const int first = qMin(qMin(wanted.first, here), there) - 1;
-    const int last = qMax(qMax(wanted.last + grew, here), there) + 1;
+    const int first = qMin(qMin(wanted.first, here), there);
+    const int last = qMax(qMax(wanted.last + grew, here), there);
 
+    // ПЕРЕСОБИРАЕМ РОВНО ТРОНУТОЕ, а соседей чинит шов: их оформление от правки
+    // внутри блока не меняется, а поля сверху пересчитает settleSeam.
     rebuildRange(first, last, &edit);
-    settleSeam(first, last);
+    settleSeam(first - 1, last + 1);
     edit.endEditBlock();
 
 #ifndef NDEBUG
