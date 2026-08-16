@@ -777,6 +777,117 @@ const QImage* NoteView::imageFor(const QString& path) {
     return pixelsFor(absoluteImagePath(path));
 }
 
+// --- ОБЪЕКТ-ФОТОГРАФИЯ ------------------------------------------------------
+
+ImageObjectHandler::ImageObjectHandler(NoteView* view) : QObject(view), view_(view) {}
+
+QSizeF ImageObjectHandler::intrinsicSize(QTextDocument* doc, int posInDocument,
+                                         const QTextFormat& format) {
+    Q_UNUSED(format);
+    if (view_ == nullptr || doc == nullptr) return {};
+    const NoteView::ImageBox box = view_->imageBoxFor(doc->findBlock(posInDocument));
+    return box.valid ? box.band : QSizeF();
+}
+
+void ImageObjectHandler::drawObject(QPainter* painter, const QRectF& rect, QTextDocument* doc,
+                                    int posInDocument, const QTextFormat& format) {
+    Q_UNUSED(format);
+    if (view_ == nullptr || doc == nullptr || painter == nullptr) return;
+    const QTextBlock block = doc->findBlock(posInDocument);
+    NoteView::ImageBox box = view_->imageBoxFor(block);
+    if (!box.valid) return;
+    // Полоса приезжает от Qt уже поставленной на место — переносим в неё своё
+    // внутреннее устройство.
+    box.caption.translate(rect.topLeft());
+
+    // ЗДЕСЬ РИСУЕТСЯ ТОЛЬКО ПОДПИСЬ, а сам снимок — позже, поверх готовой
+    // страницы. Причина замерена: выделение Qt кладёт НА ОБЪЕКТ своим проходом,
+    // уже после drawObject, и выбранная фотография выцветала — красный квадрат
+    // 220,30,30 превращался в 134,85,114. А за цветами на снимок чаще всего и
+    // смотрят (правило владельца: помечаем уголками, а не заливкой).
+    //
+    // Подпись при этом остаётся здесь: она текст, и выделению её красить можно
+    // и нужно — ровно как всякий другой текст.
+    view_->paintImageCaption(*painter, box);
+}
+
+qreal NoteView::columnWidth(const QTextBlock& block) const {
+    const QTextFrameFormat root = document()->rootFrame()->frameFormat();
+    qreal width = document()->textWidth() - root.leftMargin() - root.rightMargin() -
+                  block.blockFormat().leftMargin();
+    // Документ, которому ширину ещё не задали, отдаёт −1: пока её нет, меряем
+    // окном. Это случается ровно один раз — до первой раскладки.
+    if (width < 16.0) width = viewport()->width() - block.blockFormat().leftMargin();
+    return qMax(16.0, width);
+}
+
+QFont NoteView::captionFont() const {
+    QFont font(appearance().imageCaptionFamily);
+    font.setPointSizeF(qMax(1.0, appearance().imageCaptionPoints * displayScale()));
+    return font;
+}
+
+NoteView::ImageBox NoteView::imageBoxFor(const QTextBlock& block) {
+    ImageBox box;
+    const BlockImageRef ref = blockImageRef(block);
+    if (!ref.valid) return box;
+    const CachedImage* entry = imageInfo(ref.path);
+    if (entry == nullptr) return box;
+
+    // ПОЛОСА — ВО ВСЮ ШИРИНУ КОЛОНКИ. Уголки выбранной фотографии рисуются
+    // снаружи её края, а всё, что вылезло за прямоугольник объекта, Qt
+    // отсекает; поэтому сам снимок живёт внутри полосы с отступом на вылет.
+    const qreal over = imageCornerOverhang();
+    const qreal band = columnWidth(block);
+    const qreal room = qMax(1.0, band - 2 * over);
+
+    qreal widthHint = ref.widthHint;
+    if (block.blockNumber() == imageDragBlock_ && imageDragWidth_ > 0.0)
+        widthHint = imageDragWidth_;
+    QSizeF photo = entry->framed() ? frameBoxSize(block, *entry)
+                                   : imageDisplaySize(entry->declared, widthHint, block);
+    if (photo.isEmpty()) return box;
+    if (photo.width() > room) {
+        photo.setHeight(qMax(1.0, photo.height() * room / photo.width()));
+        photo.setWidth(room);
+    }
+
+    // ВЫРАВНИВАНИЕ — НАШЕ ДЕЛО, а не Qt: полоса всегда во всю ширину, и снимок
+    // мы ставим в ней сами. Не убрались — снимок занял всю полосу, и вопрос
+    // выравнивания отпал сам.
+    qreal shift = 0.0;
+    if (room > photo.width()) {
+        switch (ref.align) {
+            case ImageAlign::Center: shift = (room - photo.width()) / 2.0; break;
+            case ImageAlign::Right: shift = room - photo.width(); break;
+            case ImageAlign::Left: break;
+        }
+    }
+    box.photo = QRectF(over + shift, over, photo.width(), photo.height());
+
+    // ПОДПИСЬ. У рамки «файл не найден» её нет: рамка сама и есть надпись.
+    // Переносится по словам в пределах снимка и может занять несколько строк —
+    // её высота входит в высоту полосы.
+    qreal captionHeight = 0.0;
+    if (appearance().imageCaption && !entry->framed() && !ref.alt.isEmpty()) {
+        box.text = ref.alt;
+        box.flags = Qt::TextWordWrap |
+                    (ref.align == ImageAlign::Right ? Qt::AlignRight : Qt::AlignLeft);
+        const QFontMetricsF metrics(captionFont());
+        const qreal width = box.photo.width();
+        const qreal height =
+            metrics.boundingRect(QRectF(0, 0, width, 1e6), box.flags, box.text).height();
+        const qreal gap = appearance().imageCaptionGap * displayScale();
+        box.caption = QRectF(box.photo.left(), box.photo.bottom() + gap, width, height);
+        captionHeight = gap + height;
+    }
+
+    box.band = QSizeF(band, over + photo.height() + captionHeight + over +
+                                imageGap(displayScale()));
+    box.valid = true;
+    return box;
+}
+
 QSizeF NoteView::imageDisplaySize(QSize natural_, qreal widthHint,
                                   const QTextBlock& block) const {
     if (natural_.width() <= 0 || natural_.height() <= 0) return {};
@@ -787,10 +898,8 @@ QSizeF NoteView::imageDisplaySize(QSize natural_, qreal widthHint,
     qreal width = (widthHint > 0.0 ? widthHint : natural) * displayScale();
 
     // Шире колонки фотографии не бывать.
-    const QTextFrameFormat root = document()->rootFrame()->frameFormat();
-    const qreal available = viewport()->width() - root.leftMargin() - root.rightMargin() -
-                            block.blockFormat().leftMargin();
-    if (available > 16.0 && width > available) width = available;
+    const qreal available = columnWidth(block);
+    if (width > available) width = available;
     if (width < 1.0) width = 1.0;
 
     qreal height = width * natural_.height() / natural_.width();
@@ -884,10 +993,9 @@ NoteView::ImageGeometry NoteView::imageGeometry(const QTextBlock& block) {
 }
 
 QRectF NoteView::imageRectInViewport(const QTextBlock& block) {
-    const ImageGeometry geometry = imageGeometry(block);
-    if (!geometry.valid) return {};
-    return geometry.photo.translated(-horizontalScrollBar()->value(),
-                                     -verticalScrollBar()->value());
+    const QRectF box = imageObjectRect(block);
+    if (box.isEmpty()) return {};
+    return box.translated(-horizontalScrollBar()->value(), -verticalScrollBar()->value());
 }
 
 void NoteView::setImageDragWidth(int blockNumber, qreal width) {
@@ -915,10 +1023,48 @@ void NoteView::markImageRegion(int position, int charsAdded) {
 }
 
 void NoteView::syncImageSpace(bool whole) {
+    if (document() == nullptr || document()->documentLayout() == nullptr) return;
+
+    // РАЗМЕР ОБЪЕКТА ЗАВИСИТ ОТ ТОГО, ЧЕГО В ДОКУМЕНТЕ НЕТ: ширины колонки,
+    // масштаба, кэша пикселей. Изменилось это — вёрстке надо сказать
+    // перемерить; САМ ДОКУМЕНТ ПРИ ЭТОМ НЕ МЕНЯЕТСЯ, и в том вся выгода:
+    // markContentsDirty не пишет ни свойства, ни текста, а значит и стек отмены
+    // не трогает. Ради этого объекты и заводились.
+    //
+    // Помечаем ТОЛЬКО ТРОНУТОЕ, когда границы правки нам сказали: пометка на
+    // весь документ означала бы полную переразметку на каждое нажатие клавиши.
+    {
+        const bool partial = !whole && !imageDirty_.isNull();
+        const int last = qMax(0, document()->characterCount() - 1);
+        const int from = partial ? qBound(0, imageDirty_.selectionStart(), last) : 0;
+        const int to = partial ? qBound(from, imageDirty_.selectionEnd(), last) : last;
+        document()->markContentsDirty(from, qMax(1, to - from));
+        if (!partial) {
+            // Набор незащищаемых от вытеснения собирается заново — но только
+            // при полном обходе: при частичном мы видим не все картинки
+            // заметки, и очистив набор, отдали бы остальные на вытеснение.
+            //
+            // Картинки заметки перечисляем САМИ, обходом блоков, а не ждём,
+            // когда о них спросит вёрстка: она размечает лениво и о хвосте
+            // документа может не спросить вовсе, а раздавать пиксели надо по
+            // всей заметке. Обход стоит числа блоков и идёт только на полном
+            // пересчёте — при смене заметки, ширины окна или масштаба.
+            currentNoteImages_.clear();
+            for (QTextBlock b = document()->begin(); b.isValid(); b = b.next())
+                if (const BlockImageRef ref = blockImageRef(b); ref.valid) imageInfo(ref.path);
+        }
+    }
+
+    // Кому из картинок заметки достанутся пиксели — решаем на КАЖДОМ пересчёте,
+    // а не только на полном: заметка растёт правкой, и вставленная картинка
+    // обязана попасть в раздачу сразу, а не после следующего открытия.
+    planNoteImages();
+    imageDirty_ = QTextCursor();
+
     // ВРЕМЕННЫЙ ШАГ НАЗАД (kObjectsShown в doc_model.h): резерв места под
-    // объекты — единственная запись вида в документ, которая не даёт включить
-    // штатный стек отмены. Пока объекты показаны исходником, резервировать
-    // нечего.
+    // ОСТАЛЬНЫЕ объекты — таблицы и формулы — вид всё ещё держит полями блоков,
+    // и пока держит, показывать их нельзя. У фотографии этого резерва больше
+    // нет: её размер знает она сама.
     if (!kObjectsShown) return;
     if (syncingImages_) return;
     syncingImages_ = true;
@@ -962,10 +1108,6 @@ void NoteView::syncImageSpace(bool whole) {
     // QPlainTextDocumentLayout это единственный дешёвый способ.
     document()->documentLayout()->documentSize();
 
-    // Набор незащищаемых от вытеснения собирается заново — но только при
-    // полном обходе: при частичном мы видим не все картинки заметки, и
-    // очистив набор, отдали бы остальные на вытеснение.
-    if (!partial) currentNoteImages_.clear();
     const qreal gap = imageGap(displayScale());
     const CodePlate plate = codePlate();
     QTextBlock block = document()->findBlockByNumber(first);
@@ -1090,11 +1232,6 @@ void NoteView::syncImageSpace(bool whole) {
         cursor.setBlockFormat(format);
     }
 
-    // Обход закончен: известны все картинки этой заметки и их размеры. Теперь
-    // решается, каким достанутся пиксели; само разжатие — лениво, по первому
-    // рисованию.
-    planNoteImages();
-
     // Нижнее поле ПОСЛЕДНЕГО блока Qt в высоту документа не берёт вовсе —
     // замер: поле 500 на последнем блоке даёт +0, а такое же поле рамки даёт
     // +500. Фотография в последней строке из-за этого не пролезала под нижнюю
@@ -1135,10 +1272,8 @@ QSizeF NoteView::frameBoxSize(const QTextBlock& block, const CachedImage& entry)
     box += QSizeF(2 * padding, 2 * padding);
 
     // Ни шире колонки, ни выше экрана — обе стороны, как и у фотографии.
-    const QTextFrameFormat root = document()->rootFrame()->frameFormat();
-    const qreal available = viewport()->width() - root.leftMargin() - root.rightMargin() -
-                            block.blockFormat().leftMargin();
-    if (available > 16.0 && box.width() > available) box.setWidth(available);
+    const qreal available = columnWidth(block);
+    if (box.width() > available) box.setWidth(available);
     const qreal tallest = viewport()->height() > 0 ? viewport()->height() : 1000;
     if (box.height() > tallest) box.setHeight(tallest);
     return box;
@@ -1161,6 +1296,121 @@ void NoteView::paintTooBigImage(QPainter& painter, const QTextBlock& block,
     painter.setPen(appearance().rawColor);
     painter.drawText(geometry.photo, Qt::AlignCenter | Qt::TextWordWrap,
                      frameText(block, entry));
+}
+
+void NoteView::paintImageCaption(QPainter& painter, const ImageBox& geometry) {
+    if (!geometry.valid || geometry.caption.isEmpty() || geometry.text.isEmpty()) return;
+    // ПОДПИСЬ ПОД СНИМКОМ: своим шрифтом и приглушённым цветом — это справка о
+    // снимке, а не содержание заметки. Место под неё уже отведено, оно вошло в
+    // высоту полосы; добирать полями блока ничего не нужно.
+    painter.save();
+    painter.setFont(captionFont());
+    painter.setPen(appearance().imageCaptionColor);
+    painter.drawText(geometry.caption, geometry.flags, geometry.text);
+    painter.restore();
+}
+
+void NoteView::paintImageObject(QPainter& painter, const ImageBox& geometry,
+                                const QTextBlock& block) {
+    const BlockImageRef ref = blockImageRef(block);
+    if (!ref.valid || !geometry.valid) return;
+    const CachedImage* entry = imageInfo(ref.path);
+    if (entry == nullptr) return;
+
+    const QRectF box = geometry.photo;
+    painter.save();
+    // Закрашивать строку под фотографией больше не нужно: текста под ней нет
+    // вовсе — объект и есть тот единственный знак, который стоит в строке.
+    const QImage* pixels = entry->framed() ? nullptr : pixelsFor(absoluteImagePath(ref.path));
+    if (pixels == nullptr) {
+        // Заново: разжатие могло сменить состояние записи, а ссылки в QHash
+        // этого не переживают.
+        const CachedImage* fresh = imageInfo(ref.path);
+        if (fresh != nullptr) {
+            painter.fillRect(box, pageColour());
+            QPen pen(appearance().rawColor);
+            pen.setStyle(Qt::DashLine);
+            pen.setWidthF(qMax(1.0, 1.5 * displayScale()));
+            painter.setPen(pen);
+            painter.drawRect(box.adjusted(0.5, 0.5, -0.5, -0.5));
+            painter.setFont(baseFont());
+            painter.setPen(appearance().rawColor);
+            painter.drawText(box, Qt::AlignCenter | Qt::TextWordWrap, frameText(block, *fresh));
+        }
+    } else {
+        painter.setRenderHint(QPainter::SmoothPixmapTransform);
+        if (exportRatio_ > 0.0) {
+            // НА БУМАГУ КАРТИНКА ЕДЕТ ТОГО РАЗМЕРА, КАКИМ ЕЁ ВИДНО (довод — у
+            // прежнего paintImage, там же и замер).
+            int want = qMax(1, qRound(box.width() * exportRatio_));
+            if (exportImageBudget_ > 0) {
+                ImportLimits budget;
+                budget.maxSize = exportImageBudget_;
+                const int height = qMax(1, qRound(want * qreal(pixels->height()) /
+                                                  qreal(qMax(1, pixels->width()))));
+                want = qMin(want, targetSize({want, height}, budget).width);
+            }
+            painter.drawImage(box, want < pixels->width()
+                                       ? pixels->scaledToWidth(want, Qt::SmoothTransformation)
+                                       : *pixels);
+        } else {
+            painter.drawImage(box, *pixels);
+        }
+    }
+    painter.restore();
+}
+
+// Уголки выбранной фотографии рисуются НЕ в обработчике объекта, а поверх
+// готовой страницы. Причина замерена: выделение Qt кладёт на объект СВОИМ
+// проходом, уже после drawObject, и уголки под ним пропадали.
+void NoteView::paintImageMarks(QPainter& painter, const QTextBlock& block) {
+    const ImageBox box = imageBoxFor(block);
+    if (!box.valid) return;
+    const QTextLayout* layout = block.layout();
+    if (layout == nullptr || layout->lineCount() == 0) return;
+    const QTextLine line = layout->lineAt(0);
+    ImageBox placed = box;
+    placed.photo.translate(layout->position() + QPointF(line.x(), line.y()));
+
+    // САМ СНИМОК — ЗДЕСЬ, поверх выделения (см. довод в drawObject).
+    paintImageObject(painter, placed, block);
+    if (exportRatio_ > 0.0) return;
+
+    // Уголки — выбранной фотографии. Выделение, задевшее объект, и каретка,
+    // вставшая на его строку, — это одно и то же: «вот эта фотография».
+    const QTextCursor caret = textCursor();
+    const bool selected =
+        caret.hasSelection()
+            ? qMin(caret.anchor(), caret.position()) < block.position() + block.length() &&
+                  qMax(caret.anchor(), caret.position()) > block.position()
+            : caret.block() == block;
+    if (!selected) return;
+    painter.save();
+    paintImageCorners(painter, placed.photo);
+    painter.restore();
+}
+
+// Место фотографии в координатах ДОКУМЕНТА. Спрашиваем у вёрстки: объект стоит
+// в строке одним знаком, и где он оказался, знает Qt.
+QRectF NoteView::imageObjectRect(const QTextBlock& block) {
+    const ImageBox box = imageBoxFor(block);
+    if (!box.valid) return {};
+    const QTextLayout* layout = block.layout();
+    if (layout == nullptr || layout->lineCount() == 0) return {};
+    // Полоса объекта стоит на своей строке; где именно — знает Qt. Внутреннее
+    // устройство полосы считает imageBoxFor, и второй копии у него нет.
+    const QTextLine line = layout->lineAt(0);
+    return box.photo.translated(layout->position() + QPointF(line.x(), line.y()));
+}
+
+void NoteView::setDocument(QTextDocument* doc) {
+    QTextBrowser::setDocument(doc);
+    if (doc == nullptr || doc->documentLayout() == nullptr) return;
+    // ОБРАБОТЧИК ОБЪЕКТОВ ЖИВЁТ У ВЁРСТКИ, а вёрстка у документа: подменили
+    // документ — регистрируем заново. Один обработчик на вид, а не на документ:
+    // он ничего не помнит, а спрашивает вид.
+    if (imageObjects_ == nullptr) imageObjects_ = new ImageObjectHandler(this);
+    doc->documentLayout()->registerHandler(ImageObject, imageObjects_);
 }
 
 void NoteView::paintImage(QPainter& painter, const QTextBlock& block) {
@@ -1263,10 +1513,12 @@ void NoteView::renderSlice(QPainter& painter, const QRectF& documentRect, qreal 
         if (rect.bottom() + block.blockFormat().bottomMargin() < documentRect.top()) continue;
         paintMarker(painter, block, base);
         paintDivider(painter, block, rect, displayScale());
-        if (kObjectsShown) {
-            paintImage(painter, block);
-            paintFormula(painter, block);
-        }
+        // Фотографию рисует обработчик объектов (ImageObjectHandler): Qt зовёт
+        // его сама, отведя объекту место в строке. Здесь остаются только уголки
+        // выбранной — они ложатся поверх выделения — и те объекты, которые ещё
+        // не переведены.
+        paintImageMarks(painter, block);
+        if (kObjectsShown) paintFormula(painter, block);
     }
 
     painter.restore();
@@ -2250,10 +2502,12 @@ void NoteView::paintEvent(QPaintEvent* event) {
         if (rect.bottom() + block.blockFormat().bottomMargin() < visible.top()) continue;
         paintMarker(painter, block, base);
         paintDivider(painter, block, rect, displayScale());
-        if (kObjectsShown) {
-            paintImage(painter, block);
-            paintFormula(painter, block);
-        }
+        // Фотографию рисует обработчик объектов (ImageObjectHandler): Qt зовёт
+        // его сама, отведя объекту место в строке. Здесь остаются только уголки
+        // выбранной — они ложатся поверх выделения — и те объекты, которые ещё
+        // не переведены.
+        paintImageMarks(painter, block);
+        if (kObjectsShown) paintFormula(painter, block);
     }
 
     // Каретка — последней и без сдвига на прокрутку: cursorRect уже отдаёт

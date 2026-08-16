@@ -48,6 +48,14 @@ struct BuildOptions {
     bool keepUndo = false;
 };
 
+// ПОКАЗЫВАЕТСЯ ЛИ ЭТОТ БЛОК ОБЪЕКТОМ, а не текстом. Сегодня объектом бывает
+// фотография, занимающая абзац целиком: в документе она — один знак U+FFFC, за
+// которым стоит её исходник (см. ObjectSourceProperty в doc_model.h).
+//
+// Спрашивают об этом ДВОЕ — сборщик (что класть в блок) и вставка (своими ли
+// блоками встаёт кусок), — и ответ у них обязан быть один.
+bool pieceIsImageObject(const Piece& piece);
+
 void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target,
                    BuildOptions options = {});
 

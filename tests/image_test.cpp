@@ -11,6 +11,7 @@
 // операцией — вики-вложению в "|ширину", image-спану в "#w=" пути.
 
 #include "doc_model.h"
+#include "document_builder.h"
 #include "pieces.h"
 #include "editor_ops.h"
 #include "editor_widget.h"
@@ -62,6 +63,23 @@ qreal cornersRoom() {
                   qMax(0.5, zametti::appearance().imageCornerWidth));
 }
 
+// Сколько высоты добирает ПОДПИСЬ под снимком. Числа берём из настроек и
+// меряем тем же шрифтом, что и вид: переписывать сюда формулу вёрстки нельзя —
+// проверка стала бы копией реализации и перестала бы что-либо утверждать.
+// Здесь утверждается другое: подпись занимает столько, сколько занимает её
+// текст, и ни строкой больше.
+qreal captionRoom(const QString& alt, qreal photoWidth) {
+    const zametti::Appearance& look = zametti::appearance();
+    if (!look.imageCaption || alt.isEmpty()) return 0.0;
+    QFont font(look.imageCaptionFamily);
+    font.setPointSizeF(look.imageCaptionPoints);
+    const QFontMetricsF metrics(font);
+    return look.imageCaptionGap +
+           metrics.boundingRect(QRectF(0, 0, photoWidth, 1e6),
+                                Qt::TextWordWrap | Qt::AlignLeft, alt)
+               .height();
+}
+
 }  // namespace
 
 
@@ -99,8 +117,16 @@ void checkMissingAttachment() {
     // Место под рамку держится: строка не схлопнулась в обычную.
     const QTextBlock block = editor.document()->findBlockByNumber(2);
     ZT_TRUE("строка осталась строкой-фотографией", zametti::blockImageRef(block).valid);
-    ZT_TRUE("и под неё отведено место",
-            block.blockFormat().bottomMargin() > 0.0);
+    // Место — это ВЫСОТА БЛОКА: у объекта нет полей, его размер знает он сам.
+    // Мерка — высота ОБЫЧНОЙ строки этой же заметки: рамка обязана быть выше,
+    // иначе строка схлопнулась в текстовую и пропажа выглядит как пустота.
+    // Спрашивать assignedLineHeight у самого блока нельзя: у блока с объектом
+    // Qt назначает высоту строки по объекту, и мерка сравнилась бы сама с собой.
+    const auto heightOf = [&](int n) {
+        return editor.document()->documentLayout()
+            ->blockBoundingRect(editor.document()->findBlockByNumber(n)).height();
+    };
+    ZT_TRUE("и под неё отведено место", heightOf(2) > 2 * heightOf(0));
 
     // Байты ссылки не тронуты.
     const std::string text = markdownOf(blocksOf(*editor.document()));
@@ -119,6 +145,45 @@ void checkMissingAttachment() {
           std::to_string(editor.shownImageCount()));
 
     fs::remove_all(dir);
+}
+
+// Исходник строки-фотографии у любого редактора: текста у объекта нет, а то,
+// что уйдёт в файл, лежит в свойствах формата.
+QString sourceIn(const zametti::NoteEditor& editor, int number) {
+    const QTextBlock block = editor.document()->findBlockByNumber(number);
+    for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+        const QTextCharFormat f = it.fragment().charFormat();
+        if (f.objectType() == zametti::ImageObject)
+            return f.property(zametti::ObjectSourceProperty).toString();
+    }
+    return block.text();
+}
+
+// ФОТОГРАФИЯ — ОБЪЕКТ, И U+FFFC НЕ ПОКИДАЕТ ДОКУМЕНТ.
+//
+// В живом документе фотография занимает один знак U+FFFC, а её исходник лежит
+// рядом, в свойствах формата. Наружу — в файл, в буфер обмена, в журнал —
+// обязан уходить исходник и только он. Правило железное и куплено дорого:
+// инцидент №15, заглушка «удалено: 2 строки» в живой заметке владельца.
+//
+// Снимите починку (перестаньте отдавать исходник в markdown_writer) — и здесь
+// в файл поедет U+FFFC.
+void checkImageObjectRoundTrip() {
+    const char* const cases[] = {
+        "текст\n\n![подпись](фото.jxl)\n\nхвост\n",
+        "![подпись](фото.jxl#w=560&align=left)\n",
+        "![[вложение.png|300]]\n",
+        // Картинка ПОСРЕДИ строки объектом не бывает: она живёт внутри текста.
+        "текст с ![встроенной](в.png) картинкой внутри строки\n",
+    };
+    for (const char* source : cases) {
+        zametti::ZDocument note;
+        note.loadMarkdown(source);
+        const std::string out = note.toMarkdown();
+        ZT_EQ(std::string("круг с фотографией: ") + source, std::string(source), out);
+        ZT_TRUE(std::string("U+FFFC не уходит в файл: ") + source,
+                out.find("\xef\xbf\xbc") == std::string::npos);
+    }
 }
 
 static int ztRunSuite(int argc, char** argv) {
@@ -156,6 +221,17 @@ static int ztRunSuite(int argc, char** argv) {
     QTest::qWait(20);
 
     const auto blockAt = [&](int n) { return editor.document()->findBlockByNumber(n); };
+    // ИСХОДНИК СТРОКИ-ФОТОГРАФИИ. Текста у неё больше нет: в документе стоит
+    // объект (один знак U+FFFC), а то, что уйдёт в файл, лежит в свойствах его
+    // формата. Спрашиваем ровно его — это и есть обещание, а не представление.
+    const auto sourceOf = [&](int n) {
+        for (QTextBlock::iterator it = blockAt(n).begin(); !it.atEnd(); ++it) {
+            const QTextCharFormat f = it.fragment().charFormat();
+            if (f.objectType() == zametti::ImageObject)
+                return f.property(zametti::ObjectSourceProperty).toString();
+        }
+        return blockAt(n).text();
+    };
     const auto marginOf = [&](int n) { return blockAt(n).blockFormat().bottomMargin(); };
     // СКОЛЬКО МЕСТА БЛОК ЗАНЯЛ НА САМОМ ДЕЛЕ — отведённая Qt высота плюс наше
     // поле. Проверять надо это, а не формулу резерва: формула — реализация, а
@@ -170,7 +246,8 @@ static int ztRunSuite(int argc, char** argv) {
     // Скрытая строка: фото стоит на месте текста и торчит из него вниз.
     ZT_TRUE("под фотографию 64 px занято ровно столько, сколько нужно (" +
                 std::to_string(int(takenBy(0))) + ")",
-            std::fabs(takenBy(0) - (64.0 + kGap + cornersRoom())) < 1.5);
+            std::fabs(takenBy(0) - (64.0 + kGap + cornersRoom() +
+                                    captionRoom(QStringLiteral("фото"), 64.0))) < 1.5);
     ZT_TRUE("вики-вложение шириной 40 заняло своё (" +
                 std::to_string(int(takenBy(2))) + ")",
             std::fabs(takenBy(2) - (40.0 + kGap + cornersRoom())) < 1.5);
@@ -178,7 +255,9 @@ static int ztRunSuite(int argc, char** argv) {
     // рамка «файл не найден», и под неё резервируется место. Прежде строка
     // схлопывалась в обычную, и пропажа выглядела как будто картинки тут
     // никогда и не было.
-    ZT_TRUE("под пропавший файл держится место для рамки", marginOf(4) > 0.0);
+    // Место меряем ЗАНЯТЫМ МЕСТОМ, а не нижним полем блока: поля у объекта нет
+    // вовсе — его размер спрашивает Qt, и в этом весь смысл перевода.
+    ZT_TRUE("под пропавший файл держится место для рамки", takenBy(4) > takenBy(6) + 8.0);
     ZT_TRUE("под обычный текст места нет", marginOf(6) == 0.0);
 
     // Цвет в центре фотографии блока: по нему видно, трогает ли выбор сами
@@ -283,19 +362,19 @@ static int ztRunSuite(int argc, char** argv) {
 
         ZT_EQ("ширина записана в вики-вложение",
               QStringLiteral("![[img.png|%1]]").arg(expected).toStdString(),
-              blockAt(2).text().toStdString());
+              sourceOf(2).toStdString());
         ZT_TRUE("резерв пересчитан под новую ширину",
                 std::fabs(takenBy(2) - (expected + kGap + cornersRoom())) < 1.5);
 
         QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
         QTest::qWait(10);
         ZT_EQ("Ctrl-Z вернул прежнюю ширину", std::string("![[img.png|40]]"),
-              blockAt(2).text().toStdString());
+              sourceOf(2).toStdString());
     }
 
     // Esc посреди жеста — отмена без записи: ни текста, ни шага истории.
     {
-        const std::string before = blockAt(2).text().toStdString();
+        const std::string before = sourceOf(2).toStdString();
         const qreal roomBefore = marginOf(2);
         const QRectF photo = editor.imageRectInViewport(blockAt(2));
         const QPointF grip(photo.right() - 4.0, photo.bottom() - 4.0);
@@ -317,7 +396,7 @@ static int ztRunSuite(int argc, char** argv) {
         QTest::mouseRelease(editor.viewport(), Qt::LeftButton, {}, pulled.toPoint());
         QTest::qWait(10);
         ZT_EQ("после Esc отпускание ничего не записывает", before,
-              blockAt(2).text().toStdString());
+              sourceOf(2).toStdString());
         ZT_TRUE("и резерв остался прежним", std::fabs(marginOf(2) - roomBefore) < 1.5);
     }
 
@@ -333,7 +412,8 @@ static int ztRunSuite(int argc, char** argv) {
         ZT_TRUE("в файл уходит путь с #w=50",
                 out.find("![фото](img.png#w=50)") != std::string::npos);
         ZT_TRUE("резерв ужался до 50",
-                std::fabs(takenBy(0) - (50.0 + kGap + cornersRoom())) < 1.5);
+                std::fabs(takenBy(0) - (50.0 + kGap + cornersRoom() +
+                                        captionRoom(QStringLiteral("фото"), 50.0))) < 1.5);
     }
 
     // Правка ломает путь вики-вложения — резерв обязан сняться.
@@ -378,11 +458,12 @@ static int ztRunSuite(int argc, char** argv) {
         QTest::qWait(10);
         int pasted = -1;
         for (QTextBlock b = editor.document()->begin(); b.isValid(); b = b.next())
-            if (b.text() == QStringLiteral("![[img.png|40]]")) pasted = b.blockNumber();
+            if (sourceOf(b.blockNumber()) == QStringLiteral("![[img.png|40]]"))
+                pasted = b.blockNumber();
         ZT_TRUE("Ctrl+V вернул строку-фотографию", pasted >= 0);
         if (pasted >= 0) {
             ZT_TRUE("вставленная строка — своя, не вклейка",
-                    blockAt(pasted).text() == QStringLiteral("![[img.png|40]]"));
+                    sourceOf(pasted) == QStringLiteral("![[img.png|40]]"));
             ZT_TRUE("у вставленной место есть (" +
                         std::to_string(int(takenBy(pasted))) + ")",
                     std::fabs(takenBy(pasted) - (40.0 + kGap + cornersRoom())) < 1.5);
@@ -396,7 +477,7 @@ static int ztRunSuite(int argc, char** argv) {
         QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
         QTest::qWait(10);
         ZT_EQ("Ctrl-Z вернул вырезанную на место", std::string("![[img.png|40]]"),
-              blockAt(2).text().toStdString());
+              sourceOf(2).toStdString());
     }
 
     // Канон image-спана из клипборда тоже встаёт фотографией: полный парсер
@@ -410,7 +491,8 @@ static int ztRunSuite(int argc, char** argv) {
         QTest::qWait(10);
         int pasted = -1;
         for (QTextBlock b = editor.document()->begin(); b.isValid(); b = b.next())
-            if (b.text() == QStringLiteral("пейзаж")) pasted = b.blockNumber();
+            if (zametti::blockImageRef(b).alt == QStringLiteral("пейзаж"))
+                pasted = b.blockNumber();
         ZT_TRUE("канон вставился image-спаном", pasted >= 0);
         if (pasted >= 0) {
             const zametti::BlockImageRef ref = zametti::blockImageRef(blockAt(pasted));
@@ -465,11 +547,11 @@ static int ztRunSuite(int argc, char** argv) {
         QTest::qWait(10);
         ZT_EQ("левый угол растит ширину",
               QStringLiteral("![[img.png|%1]]").arg(expected).toStdString(),
-              blockAt(2).text().toStdString());
+              sourceOf(2).toStdString());
         QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
         QTest::qWait(10);
         ZT_EQ("Ctrl-Z вернул ширину после левого угла", std::string("![[img.png|40]]"),
-              blockAt(2).text().toStdString());
+              sourceOf(2).toStdString());
     }
 
     // Фотография — атом: свежая заметка, чтобы соседство было предсказуемым.
@@ -488,13 +570,16 @@ static int ztRunSuite(int argc, char** argv) {
         editor.openFile(QString::fromStdString((dir / "а.md").string()));
         QTest::qWait(20);
 
-        // Каретка залетела в середину скрытого текста — её сносит к началу.
+        // ВНУТРЬ ФОТОГРАФИИ КАРЕТКЕ ПОПАСТЬ БОЛЬШЕ НЕ ЧЕРЕЗ ЧТО: объект — один
+        // знак, и «середины» у него нет. Рядом с ним осталось одно место —
+        // сразу за объектом; каретка, поставленная туда не шагом вправо,
+        // сводится к началу строки.
         {
             QTextCursor inside(editor.document());
-            inside.setPosition(blockAt(2).position() + 5);
+            inside.setPosition(blockAt(2).position() + 1);
             editor.setTextCursor(inside);
             QTest::qWait(10);
-            ZT_TRUE("каретка внутри фото сведена к началу строки",
+            ZT_TRUE("каретка за объектом сведена к началу строки",
                     editor.textCursor().position() == blockAt(2).position());
         }
         // Вправо с начала — прыжок через всю строку; влево обратно — к началу.
@@ -514,7 +599,7 @@ static int ztRunSuite(int argc, char** argv) {
         QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
         QTest::qWait(10);
         ZT_EQ("Ctrl-Z вернул фото-атом", std::string("![[img.png|40]]"),
-              blockAt(2).text().toStdString());
+              sourceOf(2).toStdString());
 
         // Backspace из-под фотографии: пустую строку под фото удалить нельзя
         // (склеила бы текст со скрытой подписью) — отказ и шаг: каретка встаёт
@@ -527,7 +612,7 @@ static int ztRunSuite(int argc, char** argv) {
         QTest::keyClick(&editor, Qt::Key_Backspace);
         ZT_TRUE("отказ и шаг: каретка встала на фото, документ цел",
                 editor.textCursor().position() == blockAt(2).position() &&
-                    blockAt(2).text() == QStringLiteral("![[img.png|40]]"));
+                    sourceOf(2) == QStringLiteral("![[img.png|40]]"));
         QTest::keyClick(&editor, Qt::Key_Backspace);
         QTest::qWait(10);
         ZT_TRUE("Backspace снизу: фото ушло атомом, соседи целы",
@@ -537,7 +622,7 @@ static int ztRunSuite(int argc, char** argv) {
         QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
         QTest::qWait(10);
         ZT_EQ("история вернула фото", std::string("![[img.png|40]]"),
-              blockAt(2).text().toStdString());
+              sourceOf(2).toStdString());
 
         // Delete сверху: то же правило зеркально — отказ и шаг, затем атом.
         {
@@ -729,8 +814,10 @@ static int ztRunSuite(int argc, char** argv) {
         QTest::qWait(20);
         shown.openFile(note);
         QTest::qWait(20);
-        const qreal roomForImage =
-            shown.document()->findBlockByNumber(0).blockFormat().bottomMargin();
+        // Место меряем ВЫСОТОЙ БЛОКА, а не его нижним полем: полей у объекта
+        // нет вовсе — его размер знает он сам, и в этом весь смысл перевода.
+        const qreal roomForImage = shown.document()->documentLayout()->blockBoundingRect(
+            shown.document()->findBlockByNumber(0)).height();
         ZT_TRUE("картинка разжалась и заняла место", roomForImage > 0.0);
         ZT_TRUE("и заняла вес в кэше", shown.imageCacheBytes() > 0);
 
@@ -745,15 +832,17 @@ static int ztRunSuite(int argc, char** argv) {
         zametti::NoteView::resetImageDecodeCounters();
         refused.openFile(note);
         QTest::qWait(20);
-        const qreal roomForFrame =
-            refused.document()->findBlockByNumber(0).blockFormat().bottomMargin();
+        const qreal roomForFrame = refused.document()->documentLayout()->blockBoundingRect(
+            refused.document()->findBlockByNumber(0)).height();
         // Рамка — не картинка: пропорций оригинала она не повторяет, а занимает
         // ровно столько, сколько нужно надписи. Показывать в ней всё равно
         // нечего, а 1x1000000 растянуло бы её на миллион пикселей.
         ZT_TRUE("рамка меньше самой картинки", roomForFrame < roomForImage);
+        // Мерка — обычная строка текста, а не назначенная высота строки самого
+        // блока: у блока с объектом Qt назначает её по объекту, и проверка
+        // сравнивалась бы сама с собой.
         ZT_TRUE("но не вырождается: надпись в неё помещается",
-                roomForFrame > 2 * zametti::assignedLineHeight(
-                                       refused.document()->findBlockByNumber(0)));
+                roomForFrame > 2 * QFontMetricsF(zametti::layoutBaseFont()).height());
         ZT_EQ("веса в кэше она не занимает", std::to_string(0),
               std::to_string(refused.imageCacheBytes()));
 
@@ -797,8 +886,8 @@ static int ztRunSuite(int argc, char** argv) {
         thinEditor.openFile(QString::fromStdString((thinDir / "з.md").string()));
         QTest::qWait(20);
 
-        const qreal thinRoom =
-            thinEditor.document()->findBlockByNumber(0).blockFormat().bottomMargin();
+        const qreal thinRoom = thinEditor.document()->documentLayout()->blockBoundingRect(
+            thinEditor.document()->findBlockByNumber(0)).height();
         ZT_TRUE("под ленту 1x20000 отведено место, а не двадцать тысяч пикселей",
                 thinRoom > 0.0 && thinRoom < 4.0 * 500 + 50);
         // Худший случай в кэше — квадрат стороной в предел, и обе вырожденные
@@ -842,24 +931,44 @@ static int ztRunSuite(int argc, char** argv) {
         const QRectF centred = photoOf(0);
         ZT_TRUE("по умолчанию фотография по центру", centred.left() > 40.0);
         ZT_EQ("и в тексте про выравнивание ничего не написано",
-              std::string("![[м.png]]"), blockOf(0).text().toStdString());
+              std::string("![[м.png]]"), sourceIn(aligned, 0).toStdString());
 
         ZT_TRUE("выравнивание влево принято", setAlign(0, zametti::ImageAlign::Left));
         const QRectF left = photoOf(0);
         ZT_TRUE("слева фотография уехала левее центра", left.left() < centred.left() - 20.0);
         ZT_EQ("выравнивание записано рядом с шириной",
-              std::string("![[м.png|align=left]]"), blockOf(0).text().toStdString());
+              std::string("![[м.png|align=left]]"), sourceIn(aligned, 0).toStdString());
 
         ZT_TRUE("выравнивание вправо принято", setAlign(0, zametti::ImageAlign::Right));
         const QRectF right = photoOf(0);
         ZT_TRUE("справа фотография уехала правее центра", right.left() > centred.left() + 20.0);
+
+        // ПОЛОСА ОБЪЕКТА — ВО ВСЮ ШИРИНУ КОЛОНКИ, и в этом весь замысел: Qt
+        // отводит фотографии всю ширину, а куда её поставить внутри полосы,
+        // решаем мы сами.
+        //
+        // Спрашиваем об этом САМУ Qt: naturalTextWidth строки — это ширина
+        // того единственного знака, который в ней стоит, то есть объявленный
+        // нами размер объекта. Меряя вместо этого положение снимка, проверка
+        // спрашивала бы наше же вычисление и не могла бы покраснеть вовсе —
+        // на чём я и попался: подменил ширину полосы, а набор не заметил.
+        const QTextBlock block = blockOf(0);
+        const QTextLayout* layout = block.layout();
+        const qreal claimed =
+            layout != nullptr && layout->lineCount() > 0 ? layout->lineAt(0).naturalTextWidth()
+                                                         : 0.0;
+        const qreal column =
+            aligned.document()->documentLayout()->blockBoundingRect(block).width();
+        ZT_TRUE("объект занял всю ширину колонки (" + std::to_string(int(claimed)) + " из " +
+                    std::to_string(int(column)) + ")",
+                claimed > 1.0 && std::fabs(claimed - column) < 2.0);
         ZT_EQ("и записано так же", std::string("![[м.png|align=right]]"),
-              blockOf(0).text().toStdString());
+              sourceIn(aligned, 0).toStdString());
 
         // Возврат к умолчанию стирает запись, а не пишет "align=center".
         ZT_TRUE("возврат к центру принят", setAlign(0, zametti::ImageAlign::Center));
         ZT_EQ("умолчание в файл не пишется", std::string("![[м.png]]"),
-              blockOf(0).text().toStdString());
+              sourceIn(aligned, 0).toStdString());
         ZT_TRUE("и фотография вернулась на середину",
                 std::fabs(photoOf(0).left() - centred.left()) < 1.5);
 
@@ -871,7 +980,7 @@ static int ztRunSuite(int argc, char** argv) {
         QTest::qWait(10);
         setAlign(0, zametti::ImageAlign::Right);
         ZT_EQ("ширина и выравнивание стоят рядом",
-              std::string("![[м.png|50|align=right]]"), blockOf(0).text().toStdString());
+              std::string("![[м.png|50|align=right]]"), sourceIn(aligned, 0).toStdString());
         {
             QTextCursor cursor(blockOf(0));
             ZT_TRUE("ширина меняется, выравнивание цело",
@@ -879,7 +988,7 @@ static int ztRunSuite(int argc, char** argv) {
         }
         QTest::qWait(10);
         ZT_EQ("обе величины на месте", std::string("![[м.png|60|align=right]]"),
-              blockOf(0).text().toStdString());
+              sourceIn(aligned, 0).toStdString());
 
         // Image-спан: то же самое, но во фрагменте пути.
         setAlign(2, zametti::ImageAlign::Left);
@@ -927,7 +1036,8 @@ static int ztRunSuite(int argc, char** argv) {
 
         const QTextBlock lastBlock = tailEditor.document()->lastBlock();
         ZT_TRUE("под картинку в последней строке отведено место",
-                lastBlock.blockFormat().bottomMargin() > 0.0);
+                tailEditor.document()->documentLayout()->blockBoundingRect(lastBlock).height() >
+                    2 * QFontMetricsF(zametti::layoutBaseFont()).height());
 
         tailEditor.verticalScrollBar()->setValue(tailEditor.verticalScrollBar()->maximum());
         QTest::qWait(20);
@@ -943,15 +1053,15 @@ static int ztRunSuite(int argc, char** argv) {
 
 // Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
 // Дробить на отдельные проверки — отдельная работа, по одному набору.
-TEST(Image, All) {
-    // ВРЕМЕННЫЙ ШАГ НАЗАД: объекты показаны своим исходником, рисовать их
-    // сейчас некому — см. kObjectsShown в doc_model.h и довод там же.
-    //
-    // Пропуск привязан К ТОЙ ЖЕ КОНСТАНТЕ, которой снят показ, а не списком в
-    // голове: вернётся показ — вернётся и набор, сам, без напоминания.
-    if (!zametti::kObjectsShown)
-        GTEST_SKIP() << "объекты показаны исходником (kObjectsShown = false)";
+// КРУГ С ОБЪЕКТОМ ОТ ПОКАЗА НЕ ЗАВИСИТ, и потому идёт всегда: рисуют ли
+// фотографию на экране — дело вида, а вот то, что в файл уходит исходник, а не
+// U+FFFC, обязано проверяться при любой настройке.
+TEST(Image, ObjectRoundTrip) {
+    checkImageObjectRoundTrip();
+    EXPECT_EQ(0, zt::g_failures);
+}
 
+TEST(Image, All) {
     std::vector<QByteArray> ztArgs{QByteArrayLiteral("image_test")};
     std::vector<char*> ztArgv;
     for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());

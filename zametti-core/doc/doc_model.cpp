@@ -406,9 +406,82 @@ BlockFormulaRef blockFormulaRef(const QTextBlock& block) {
     return ref;
 }
 
+// Разбор атрибутов из адреса image-спана: "путь#w=560&align=left". Фрагмент
+// остаётся байтами пути (ядро его не трактует), но вид, ресайз и выравнивание
+// читают и пишут ровно его.
+BlockImageRef imageRefOfSpan(const QString& href, const QString& alt) {
+    qreal width = 0.0;
+    ImageAlign align = ImageAlign::Center;
+    QString path = href;
+    const qsizetype hash = href.lastIndexOf(QLatin1Char('#'));
+    if (hash >= 0) {
+        const QStringList pairs =
+            href.mid(hash + 1).split(QLatin1Char('&'), Qt::SkipEmptyParts);
+        bool understood = !pairs.isEmpty();
+        for (const QString& pair : pairs) {
+            if (pair.startsWith(QStringLiteral("w="))) {
+                bool ok = false;
+                const double w = pair.mid(2).toDouble(&ok);
+                if (ok && w > 0.0) width = w;
+                else understood = false;
+            } else {
+                bool ok = false;
+                const ImageAlign parsed = imageAlignFromText(pair, &ok);
+                if (ok) align = parsed;
+                else understood = false;
+            }
+        }
+        // Чужой якорь в пути картинкой не заведует: путь оставляем целиком.
+        if (understood) path = href.left(hash);
+        else {
+            width = 0.0;
+            align = ImageAlign::Center;
+        }
+    }
+    return {path, alt, width, align, false, true};
+}
+
+// Вики-вложение Obsidian: строка целиком "![[путь]]", "![[путь|ширина]]" или
+// "![[путь|ширина|align=left]]".
+BlockImageRef imageRefOfWiki(const QString& source) {
+    const QString text = source.trimmed();
+    if (!text.startsWith(QStringLiteral("![[")) || !text.endsWith(QStringLiteral("]]")))
+        return {};
+    const QString inner = text.mid(3, text.size() - 5);
+    if (inner.isEmpty() || inner.contains(QStringLiteral("]]"))) return {};
+
+    const QStringList fields = inner.split(QLatin1Char('|'));
+    qreal width = 0.0;
+    ImageAlign align = ImageAlign::Center;
+    // Первое поле — путь, остальные атрибуты; подпись (Obsidian её допускает)
+    // фотографии не мешает — просто ни числом, ни выравниванием не окажется.
+    for (qsizetype i = 1; i < fields.size(); ++i) takeImageAttribute(fields.at(i), width, align);
+
+    const QString path = fields.value(0).trimmed();
+    if (path.isEmpty()) return {};
+    return {path, QString(), width, align, true, true};
+}
+
 BlockImageRef blockImageRef(const QTextBlock& block) {
     if (!block.isValid() || isRawBlock(block)) return {};
     if (kindOf(block) != Kind::Paragraph) return {};
+
+    // ФОТОГРАФИЯ-ОБЪЕКТ. В документе она — один знак U+FFFC, а всё о ней лежит
+    // в свойствах его формата: подпись, адрес, дословный исходник. Спрашиваем
+    // их, а не текст блока: текста у объекта нет.
+    //
+    // ОБЪЕКТ ОБЯЗАН БЫТЬ БЛОКОМ ЦЕЛИКОМ. Набранная рядом буква делает строку
+    // обычным текстом — и пока эта проверка отсутствовала, Backspace за такой
+    // буквой считал строку фотографией и сносил её целиком.
+    if (block.text().size() == 1 &&
+        block.text().at(0) == QChar::ObjectReplacementCharacter) {
+        const QTextCharFormat format = block.begin().fragment().charFormat();
+        if (format.objectType() != ImageObject) return {};
+        if (format.hasProperty(ObjectAltProperty))
+            return imageRefOfSpan(format.anchorHref(),
+                               format.property(ObjectAltProperty).toString());
+        return imageRefOfWiki(format.property(ObjectSourceProperty).toString());
+    }
 
     // Image-спан целым абзацем: каждый кусок помечен SpanImage с одним путём.
     // Картинка в середине текста фотографией не показывается — только стилем.
@@ -426,61 +499,9 @@ BlockImageRef blockImageRef(const QTextBlock& block) {
         }
         href = format.anchorHref();
     }
-    if (whole && !href.isEmpty()) {
-        // Атрибуты — во фрагменте пути: "#w=560", "#w=560&align=left".
-        // Фрагмент остаётся байтами пути (ядро его не трактует), но вид,
-        // ресайз и выравнивание читают и пишут ровно его.
-        qreal width = 0.0;
-        ImageAlign align = ImageAlign::Center;
-        QString path = href;
-        const qsizetype hash = href.lastIndexOf(QLatin1Char('#'));
-        if (hash >= 0) {
-            const QStringList pairs =
-                href.mid(hash + 1).split(QLatin1Char('&'), Qt::SkipEmptyParts);
-            bool understood = !pairs.isEmpty();
-            for (const QString& pair : pairs) {
-                if (pair.startsWith(QStringLiteral("w="))) {
-                    bool ok = false;
-                    const double w = pair.mid(2).toDouble(&ok);
-                    if (ok && w > 0.0) width = w;
-                    else understood = false;
-                } else {
-                    bool ok = false;
-                    const ImageAlign parsed = imageAlignFromText(pair, &ok);
-                    if (ok) align = parsed;
-                    else understood = false;
-                }
-            }
-            // Чужой якорь в пути картинкой не заведует: путь оставляем целиком.
-            if (understood) path = href.left(hash);
-            else {
-                width = 0.0;
-                align = ImageAlign::Center;
-            }
-        }
-        return {path, width, align, false, true};
-    }
+    if (whole && !href.isEmpty()) return imageRefOfSpan(href, block.text());
 
-    // Вики-вложение Obsidian: строка целиком "![[путь]]", "![[путь|ширина]]"
-    // или "![[путь|ширина|align=left]]". Модель хранит его дословным текстом
-    // абзаца (wikilinks не переписываются), но фотографию по нему показать
-    // можно и нужно.
-    const QString text = block.text().trimmed();
-    if (!text.startsWith(QStringLiteral("![[")) || !text.endsWith(QStringLiteral("]]")))
-        return {};
-    const QString inner = text.mid(3, text.size() - 5);
-    if (inner.isEmpty() || inner.contains(QStringLiteral("]]"))) return {};
-
-    const QStringList fields = inner.split(QLatin1Char('|'));
-    qreal width = 0.0;
-    ImageAlign align = ImageAlign::Center;
-    // Первое поле — путь, остальные атрибуты; подпись (Obsidian её допускает)
-    // фотографии не мешает — просто ни числом, ни выравниванием не окажется.
-    for (qsizetype i = 1; i < fields.size(); ++i) takeImageAttribute(fields.at(i), width, align);
-
-    const QString path = fields.value(0).trimmed();
-    if (path.isEmpty()) return {};
-    return {path, width, align, true, true};
+    return imageRefOfWiki(block.text());
 }
 
 }  // namespace zametti

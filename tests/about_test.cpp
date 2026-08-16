@@ -237,11 +237,6 @@ static int ztRunSuite(int argc, char** argv) {
 // Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
 // Дробить на отдельные проверки — отдельная работа, по одному набору.
 TEST(About, All) {
-    // ВРЕМЕННЫЙ ШАГ НАЗАД: объекты показаны своим исходником, рисовать их
-    // сейчас некому — см. kObjectsShown в doc_model.h.
-    if (!zametti::kObjectsShown)
-        GTEST_SKIP() << "объекты показаны исходником (kObjectsShown = false)";
-
     std::vector<QByteArray> ztArgs{QByteArrayLiteral("about_test")};
     std::vector<char*> ztArgv;
     for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());

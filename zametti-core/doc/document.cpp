@@ -396,7 +396,11 @@ std::vector<Attachment> ZDocument::attachments() const {
                         a.align = part.mid(6);
                 }
             }
-            a.alt = fragment.text();
+            // У объекта текст фрагмента — это U+FFFC; подпись живёт рядом,
+            // в свойстве (см. ObjectAltProperty в doc_model.h).
+            a.alt = format.hasProperty(ObjectAltProperty)
+                        ? format.property(ObjectAltProperty).toString()
+                        : fragment.text();
             out.push_back(std::move(a));
         }
     }

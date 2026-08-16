@@ -1292,6 +1292,26 @@ void gatherLine(const QTextBlock& block, Piece& piece, bool withRuns) {
                 break;   // чужой U+2028 из самого текста — трогать нельзя
         }
 
+        // ОБЪЕКТ ОТДАЁТ СВОЙ ИСХОДНИК, А НЕ СЕБЯ. В документе он занимает один
+        // знак U+FFFC; наружу — в файл, в буфер обмена, в журнал — уходит то,
+        // что написано в файле, и оно лежит тут же, в свойствах формата.
+        // Правило железное: U+FFFC не покидает QTextDocument (инцидент №15).
+        if (format.objectType() == ImageObject) {
+            const int32_t at = int32_t(piece.text.size());
+            const QString alt = format.property(ObjectAltProperty).toString();
+            const bool wiki = !format.hasProperty(ObjectAltProperty);
+            piece.text += toUtf8(wiki ? format.property(ObjectSourceProperty).toString() : alt);
+            if (!withRuns || wiki) continue;
+            Run run;
+            run.start = at;
+            run.end = int32_t(piece.text.size());
+            run.flags = InlineImage;
+            run.href = toUtf8(format.anchorHref());
+            run.title = toUtf8(format.property(SpanTitleProperty).toString());
+            piece.runs.push_back(std::move(run));
+            continue;
+        }
+
         const std::string bytes = toUtf8(text);
         if (bytes.empty()) continue;
 

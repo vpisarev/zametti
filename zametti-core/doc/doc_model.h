@@ -58,6 +58,27 @@ enum DocProperty {
     SpanStyleProperty,   // int, биты SpanStyle
     BreakSourceProperty, // int(BreakSource) на самом разделителе строк
     SpanTitleProperty,   // QString, заголовок картинки (осмыслен только при SpanImage)
+
+    // --- ОБЪЕКТЫ -----------------------------------------------------------
+    //
+    // Объект занимает в тексте ОДИН знак — U+FFFC, — а чем он на самом деле
+    // является, говорит objectType его формата. Размер объекта Qt спрашивает у
+    // QTextObjectInterface (intrinsicSize), и потому месту под объект не нужно
+    // никакой записи в документ: именно ею вид загрязнял стек отмены.
+    //
+    // U+FFFC НЕ ПОКИДАЕТ QTextDocument. В файл, в буфер обмена и в журнал
+    // уходит настоящий исходник, и хранится он здесь же, рядом с объектом:
+    // обход документа (walkPieces) кладёт обратно ровно его. Инцидент №15
+    // (заглушка «удалено: 2 строки» утекла в живую заметку владельца) стоил
+    // этого правила, и оно железное.
+    ObjectSourceProperty,   // QString, дословный исходник — то, что уйдёт в файл
+    ObjectAltProperty,      // QString, подпись картинки (текст спана)
+};
+
+// Роды объектов. Начинаются с QTextFormat::UserObject: до него номера
+// принадлежат Qt (её собственные картинки и таблицы).
+enum ObjectKindType {
+    ImageObject = QTextFormat::UserObject + 1,
 };
 
 // Три знака Qt в insertText трактует структурно и рвёт на них блок. Замерено
@@ -208,6 +229,7 @@ int levelOf(const QTextBlock& block);
 
 struct BlockImageRef {
     QString path;
+    QString alt;             // подпись; у вики-вложения её нет
     qreal widthHint = 0.0;   // 0 — своя ширина картинки; логические пиксели
     ImageAlign align = ImageAlign::Center;
     bool wiki = false;       // форма записи: вики-вложение или image-спан
@@ -224,6 +246,12 @@ QString imageAlignText(ImageAlign align);
 QString imageRefText(const BlockImageRef& ref);
 
 BlockImageRef blockImageRef(const QTextBlock& block);
+
+// То же самое по ИСХОДНИКУ, до того как блок появился в документе. Нужно
+// сборщику: он ставит объекту выравнивание блока, а выравнивание записано в
+// самом исходнике. Два разбора одного и того же были бы двумя ответами.
+BlockImageRef imageRefOfSpan(const QString& href, const QString& alt);
+BlockImageRef imageRefOfWiki(const QString& source);
 bool isListBlock(const QTextBlock& block);
 
 // Чем помечен пункт: маркер вместе с отметкой выполненности. Двумя полями, а не

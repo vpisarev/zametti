@@ -21,6 +21,7 @@
 #include <QVector>
 #include <QEvent>
 #include <QTextBrowser>
+#include <QTextObjectInterface>
 #include <QTextCursor>
 #include <QTimer>
 #include <QtGlobal>
@@ -93,6 +94,34 @@ struct CodeBand {
     bool first = false;
     bool last = false;
     QString info;
+};
+
+class NoteView;
+
+// ФОТОГРАФИЯ РИСУЕТСЯ КАК ОБЪЕКТ ТЕКСТА.
+//
+// В документе она занимает один знак U+FFFC (см. ImageObject в doc_model.h), и
+// всё остальное делает Qt: спрашивает у нас размер, отводит под него место в
+// строке и зовёт нас рисовать. Ради этого объекты и заводились — пока место
+// резервировал вид, дописывая блокам нижние поля, штатный стек отмены включить
+// было нельзя.
+//
+// Один обработчик на все фотографии документа: он ничего о них не помнит, а
+// спрашивает вид — у того и кэш пикселей, и ширина колонки.
+class ImageObjectHandler : public QObject, public QTextObjectInterface {
+    Q_OBJECT
+    Q_INTERFACES(QTextObjectInterface)
+
+public:
+    explicit ImageObjectHandler(NoteView* view);
+
+    QSizeF intrinsicSize(QTextDocument* doc, int posInDocument,
+                         const QTextFormat& format) override;
+    void drawObject(QPainter* painter, const QRectF& rect, QTextDocument* doc,
+                    int posInDocument, const QTextFormat& format) override;
+
+private:
+    NoteView* view_ = nullptr;
 };
 
 class NoteView : public QTextBrowser {
@@ -240,7 +269,31 @@ public:
 
     // Прямоугольник фотографии блока в координатах вьюпорта; пустой, если
     // фотографии нет. По нему ресайз ловит угол, по нему же смотрят тесты.
+    // ГЕОМЕТРИЯ ОБЪЕКТА-ФОТОГРАФИИ, одна на всех: её спрашивают и размер
+    // (intrinsicSize), и отрисовка, и попадание мышью, и наборы. Двух её копий
+    // быть не должно — разойдутся, и уголки окажутся не там, где снимок.
+    //
+    // ОБЪЕКТ ЗАНИМАЕТ ВСЮ ШИРИНУ КОЛОНКИ (решение владельца), и уже внутри этой
+    // полосы мы распоряжаемся сами: где встанет снимок, куда ляжет подпись. Так
+    // выравнивание перестаёт быть делом Qt, а высота полосы честно включает и
+    // подпись, и воздух вокруг.
+    struct ImageBox {
+        QSizeF band;      // размер полосы: вся ширина колонки × высота с подписью
+        QRectF photo;     // место снимка ВНУТРИ полосы, от её левого верхнего угла
+        QRectF caption;   // место подписи внутри полосы; пустой — подписи нет
+        QString text;     // сама подпись
+        int flags = 0;     // выравнивание текста подписи
+        bool valid = false;
+    };
+    ImageBox imageBoxFor(const QTextBlock& block);
+
     QRectF imageRectInViewport(const QTextBlock& block);
+
+    // ПОДМЕНА ДОКУМЕНТА ИДЁТ ТОЛЬКО ЧЕРЕЗ ЭТОТ ВИД. QTextEdit::setDocument
+    // виртуальным не объявлен, а перехватить подмену обязательно: вместе с
+    // документом меняется его вёрстка, а обработчик объектов регистрируется
+    // именно у неё. Имя то же нарочно — все места вызова уже написаны так.
+    void setDocument(QTextDocument* doc);
 
     // Перетаскивание угла: пока мышь не отпущена, фотография меряется этой
     // шириной (логические пиксели) вместо записанной. width <= 0 — снять.
@@ -442,6 +495,8 @@ private:
         }
     };
 
+    friend class ImageObjectHandler;
+
     QString absoluteImagePath(const QString& path) const;
     // Запись кэша для пути: размеры из заголовка, БЕЗ разжатия. nullptr —
     // файла нет или он не картинка.
@@ -477,6 +532,22 @@ private:
     // Надпись в рамке: по состоянию записи.
     QString frameText(const QTextBlock& block, const CachedImage& entry) const;
     QSizeF frameBoxSize(const QTextBlock& block, const CachedImage& entry) const;
+    // Нарисовать фотографию блока в отведённом ей прямоугольнике. Зовётся из
+    // обработчика объектов: место уже отведено Qt, рисовать остаётся пиксели.
+    void paintImageObject(QPainter& painter, const ImageBox& box, const QTextBlock& block);
+    // Подпись рисуется В обработчике объекта: она текст, и выделению её
+    // красить можно. Снимок — наоборот, поверх страницы.
+    void paintImageCaption(QPainter& painter, const ImageBox& box);
+    // Уголки выбранной фотографии — поверх готовой страницы: выделение Qt
+    // кладёт на объект своим проходом, уже после drawObject.
+    void paintImageMarks(QPainter& painter, const QTextBlock& block);
+    // Место фотографии в координатах документа; пустой — фотографии нет.
+    QRectF imageObjectRect(const QTextBlock& block);
+    // Ширина колонки, доступная блоку. Берётся у ДОКУМЕНТА, а не у вьюпорта:
+    // на бумаге ширина своя, и мерить надо ту, по которой Qt раскладывает.
+    qreal columnWidth(const QTextBlock& block) const;
+    // Шрифт подписи под снимком: свой облик, свой кегль, свой масштаб.
+    QFont captionFont() const;
     void paintTooBigImage(QPainter& painter, const QTextBlock& block,
                           const ImageGeometry& geometry, const CachedImage& entry);
     // Место под картинку на экране. Берёт размеры, а не саму картинку: у
@@ -531,6 +602,10 @@ private:
     // только для блоков текущего документа, так что отдельного прохода по
     // блокам заводить не надо.
     QSet<QString> currentNoteImages_;
+    // Обработчик объектов-фотографий. Один на вид и на всю его жизнь:
+    // регистрируется у вёрстки каждого показанного документа.
+    ImageObjectHandler* imageObjects_ = nullptr;
+
     int imageDragBlock_ = -1;             // номер блока с перетаскиваемым углом
     qreal imageDragWidth_ = 0.0;
     // Ноль — рисуем на экран. Больше нуля — идёт вывоз на бумагу: картинки

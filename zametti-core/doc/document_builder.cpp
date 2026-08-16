@@ -241,6 +241,21 @@ void applySpans(QTextDocument& doc, int textStart, const Piece& b, int lineStep)
 
 }  // namespace
 
+bool pieceIsImageObject(const Piece& piece) {
+    if (piece.raw || piece.kind != Kind::Paragraph) return false;
+    // Image-спан целым абзацем: один кусок, помеченный картинкой, покрывающий
+    // текст блока без остатка. Картинка в середине текста объектом не бывает —
+    // она живёт внутри строки и показывается стилем.
+    const std::string_view text = piece.text;
+    if (piece.runs.size() == 1 && piece.runs[0].image() && piece.runs[0].start == 0 &&
+        size_t(piece.runs[0].end) == text.size())
+        return true;
+    // Вики-вложение Obsidian: строка целиком "![[путь]]". Разметки у неё нет —
+    // это дословный текст абзаца, и объектом он становится целиком.
+    return text.rfind("![[", 0) == 0 && text.size() > 5 &&
+           text.compare(text.size() - 2, 2, "]]") == 0;
+}
+
 qreal blockTopMargin(Kind kind, bool raw, bool previousIsVSpace, bool first) {
     // У первого блока отбивке сверху взяться неоткуда: над ним поле страницы.
     if (first) return 0.0;
@@ -490,6 +505,37 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
         if (b.kind != Kind::Code) text = toQt(b.text, breaks);
     }
 
+    // ФОТОГРАФИЯ — ОБЪЕКТ, А НЕ ТЕКСТ. В документе она занимает один знак
+    // U+FFFC, размер которого Qt спрашивает у QTextObjectInterface, а исходник
+    // едет рядом, в свойствах формата: обход документа кладёт обратно ровно
+    // его, и U+FFFC не покидает QTextDocument никогда.
+    const bool imageObject = pieceIsImageObject(b);
+    if (imageObject) {
+        breaks.clear();
+        const Run& run = b.runs.empty() ? Run{} : b.runs.front();
+        charFmt.setObjectType(ImageObject);
+        charFmt.setProperty(SpanStyleProperty, int(SpanImage));
+        charFmt.setProperty(ObjectSourceProperty, QString::fromStdString(b.text));
+        BlockImageRef ref;
+        if (!b.runs.empty()) {
+            const QString alt = QString::fromStdString(b.text);
+            const QString href = QString::fromStdString(run.href);
+            charFmt.setProperty(ObjectAltProperty, alt);
+            charFmt.setAnchorHref(href);
+            if (!run.title.empty())
+                charFmt.setProperty(SpanTitleProperty, QString::fromStdString(run.title));
+            ref = imageRefOfSpan(href, alt);
+        } else {
+            ref = imageRefOfWiki(QString::fromStdString(b.text));
+        }
+        // ВЫРАВНИВАНИЕМ БЛОКА ФОТОГРАФИЮ НЕ ДВИГАЕМ, и это решение владельца:
+        // объект занимает ВСЮ ширину колонки, а где внутри этой полосы встанет
+        // снимок — дело вида. Тогда и подпись, и уголки, и попадание мышью
+        // считаются от одной геометрии, а не от того, куда Qt поставила знак.
+        (void)ref;
+        text = QString(QChar::ObjectReplacementCharacter);
+    }
+
     // Полоска с языком живёт НЕ в тексте, а в поле блока: резерв под неё —
     // НИЖНЕЕ поле последней строки блока кода (ставится в цикле по строкам), а
     // верхнее поле первой — воздух под скругление. Рисует в этом резерве
@@ -511,7 +557,14 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     // полосами оставался незакрашенный ряд). С долей округления нет; если
     // разбег вернётся, лечить его надо подложкой выделения, а не абсолютной
     // высотой.
-    const qreal lineFactor = list ? appearance().listLineHeightFactor : appearance().lineHeightFactor;
+    // У БЛОКА С ОБЪЕКТОМ ВЫСОТА СТРОКИ РОВНО ЕГО СОБСТВЕННАЯ. Доля здесь
+    // множится на высоту объекта, а не на высоту буквы: под фотографией в 340
+    // точек 140 % оставляли полосу пустоты в полторы сотни точек. Объект сам
+    // назвал свой размер — добавлять к нему ритм текста нечего.
+    const qreal lineFactor = pieceIsImageObject(b)
+                                 ? 1.0
+                                 : (list ? appearance().listLineHeightFactor
+                                         : appearance().lineHeightFactor);
     applyLineHeight(blockFmt, lineFactor, ctx.basePoint * fontStepFactor(lineStep), ctx.base);
 
     // Один QTextBlock у обычного блока и по одному на строку у литерального.
@@ -565,8 +618,10 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
         const int textStart = cursor.position();
         cursor.insertText(text, charFmt);
         markBreaks(target, textStart, breaks);
-        if (!literal && !b.runs.empty()) applySpans(target, textStart, b, lineStep);
-        enlargeFallbackGlyphs(target, textStart, text, lineStep, ctx.primaryFont);
+        if (!literal && !imageObject && !b.runs.empty())
+            applySpans(target, textStart, b, lineStep);
+        if (!imageObject)
+            enlargeFallbackGlyphs(target, textStart, text, lineStep, ctx.primaryFont);
     }
     prevVSpace = vspace;
 }

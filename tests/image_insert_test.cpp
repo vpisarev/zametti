@@ -517,7 +517,7 @@ void checkBackgroundImport() {
     QStringList inserted;
     for (QTextBlock block = editor.document()->begin(); block.isValid(); block = block.next()) {
         const zametti::BlockImageRef ref = zametti::blockImageRef(block);
-        if (ref.valid) inserted << block.text().trimmed();
+        if (ref.valid) inserted << ref.alt;   // текста у объекта нет — есть подпись
     }
     ZT_EQ("порядок вставки — порядок выбора файлов", std::string("кадр-0, кадр-1, кадр-2"),
           inserted.join(QStringLiteral(", ")).toStdString());

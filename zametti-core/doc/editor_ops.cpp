@@ -1303,6 +1303,26 @@ namespace {
 // Ширина и выравнивание идут рядом, умолчания не пишутся; см. imageRefText.
 bool rewriteImageRef(QTextCursor& cursor, const QTextBlock& block, const BlockImageRef& ref) {
     const QString text = imageRefText(ref);
+    // ФОТОГРАФИЯ-ОБЪЕКТ ТЕКСТА НЕ ИМЕЕТ: в блоке стоит один знак U+FFFC, а
+    // исходник лежит в свойствах его формата — его и правим. Пока правился
+    // текст, новая ширина ДОПИСЫВАЛАСЬ рядом с объектом, и в файл уезжали две
+    // картинки вместо одной.
+    if (block.text().size() == 1 &&
+        block.text().at(0) == QChar::ObjectReplacementCharacter) {
+        QTextCursor edit(block);
+        edit.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+        QTextCharFormat format = edit.charFormat();
+        if (ref.wiki) {
+            if (format.property(ObjectSourceProperty).toString() == text) return false;
+            format.setProperty(ObjectSourceProperty, text);
+        } else {
+            if (format.anchorHref() == text) return false;
+            format.setAnchorHref(text);
+        }
+        edit.setCharFormat(format);
+        cursor.setPosition(block.position());
+        return true;
+    }
     if (ref.wiki) {
         if (block.text() == text) return false;
         QTextCursor edit(block);
@@ -3086,6 +3106,14 @@ bool ZDocument::insertText(QTextCursor& at, const QString& text,
     // становилось «переносом» для писателя. Поймала сверка со сборкой.
     QTextCharFormat clean = format;
     clean.clearProperty(BreakSourceProperty);
+    // И ОБЪЕКТОМ НАБРАННАЯ БУКВА НЕ СТАНОВИТСЯ. Формат для следующей буквы вид
+    // берёт у знака слева, а слева бывает объект — фотография. Буква
+    // наследовала его род и его исходник, и обход документа выписывал этот
+    // исходник ВТОРОЙ раз: в файл уехало бы две картинки вместо одной.
+    if (clean.objectType() != QTextFormat::NoObject) {
+        clean = at.block().charFormat();
+        clean.clearProperty(BreakSourceProperty);
+    }
 
     // БЛОК, КОТОРЫЙ ЗАВЁЛ САМ Qt, свойств не имеет вовсе — так выглядит
     // единственный блок опустевшей заметки. Набранное в него делает заметку

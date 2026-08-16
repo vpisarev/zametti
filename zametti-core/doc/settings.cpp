@@ -228,6 +228,14 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("cornerOffset"), a.imageCornerOffset},
     };
 
+    QJsonObject imageCaption{
+        {QStringLiteral("shown"), a.imageCaption},
+        {QStringLiteral("family"), a.imageCaptionFamily},
+        {QStringLiteral("fontPoints"), a.imageCaptionPoints},
+        {QStringLiteral("gap"), a.imageCaptionGap},
+        {QStringLiteral("color"), colorToString(a.imageCaptionColor)},
+    };
+
     QJsonObject statusBar{
         {QStringLiteral("family"), a.statusFamily},
         {QStringLiteral("fontPoints"), a.statusFontPoints},
@@ -334,6 +342,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("toolbar"), toolbar},
         {QStringLiteral("statusBar"), statusBar},
         {QStringLiteral("imageSelection"), imageSelection},
+        {QStringLiteral("imageCaption"), imageCaption},
         {QStringLiteral("find"), find},
         {QStringLiteral("editor"), editor},
         {QStringLiteral("tables"), tables},
@@ -499,6 +508,16 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     if (cornerWidth.isDouble()) a.imageCornerWidth = qMax(0.5, cornerWidth.toDouble());
     const QJsonValue cornerOffset = imageSelection.value(QStringLiteral("cornerOffset"));
     if (cornerOffset.isDouble()) a.imageCornerOffset = qMax(0.0, cornerOffset.toDouble());
+
+    const QJsonObject imageCaption = root.value(QStringLiteral("imageCaption")).toObject();
+    readBool(imageCaption, "shown", a.imageCaption);
+    const QJsonValue captionFamily = imageCaption.value(QStringLiteral("family"));
+    if (captionFamily.isString()) a.imageCaptionFamily = captionFamily.toString();
+    const QJsonValue captionPoints = imageCaption.value(QStringLiteral("fontPoints"));
+    if (captionPoints.isDouble())
+        a.imageCaptionPoints = std::clamp(captionPoints.toDouble(), 6.0, 24.0);
+    readReal(imageCaption, "gap", a.imageCaptionGap);
+    readColor(imageCaption, "color", a.imageCaptionColor);
 
     const QJsonObject statusBar = root.value(QStringLiteral("statusBar")).toObject();
     const QJsonValue statusFamily = statusBar.value(QStringLiteral("family"));
