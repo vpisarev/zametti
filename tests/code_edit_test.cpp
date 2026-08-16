@@ -498,6 +498,39 @@ void checkAutoIndentInRealNote(const QString& source) {
                                          std::to_string(editor.caretColumn()) + ")");
 }
 
+// ТОТ ЖЕ СЛУЧАЙ, НО НА ЖИВОЙ ЗАМЕТКЕ ВЛАДЕЛЬЦА, а не на дистилляте: «About the
+// Scopes» в копии Ficus Tutorial. Дистиллят повторяет строение, но не повторяет
+// ни шапки, ни соседей, ни размера — а ловится обычно как раз на них.
+void checkCodeIntoListItemInRealNote() {
+    const QString source = zt::TestData::root() + QStringLiteral("/owner-copy/01n6r08s8wy52h.md");
+    if (!QFile::exists(source)) return;
+    QFile in(source);
+    if (!in.open(QIODevice::ReadOnly)) return;
+    const QString text = QString::fromUtf8(in.readAll());
+    in.close();
+
+    Editor editor;
+    const QString path = writeNote(QStringLiteral("ficus.md"), text);
+    editor.resize(900, 700);
+    editor.show();
+    QTest::qWait(10);
+    editor.openFile(path);
+    QTest::qWait(60);
+
+    editor.caretTo(QStringLiteral("type Malkovich=string"), 0);
+    check(editor.caretKind() == zametti::Kind::Code, "каретка в блоке кода");
+    QTest::keyClick(&editor, Qt::Key_Tab, Qt::NoModifier);
+    QTest::qWait(10);
+
+    const std::string md = editorMarkdown(editor);
+    const std::string want = "   ```\n   type Malkovich=string\n";
+    check(md.find(want) != std::string::npos,
+          "живая заметка: блок кода ушёл внутрь пункта");
+    // И два списка сошлись в один: пункт за кодом больше не начинает счёт заново.
+    check(md.find("\n1. Functions within the same scope") == std::string::npos,
+          "живая заметка: список за кодом не начинается заново");
+}
+
 void checkUndoAfterLeaving() {
     Editor editor;
     editor.openText(QStringLiteral("отмена.md"), kProgram);
@@ -672,6 +705,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkLeaveCodeBlock();
     checkCodeTabs();
     checkCodeIntoListItem();
+    checkCodeIntoListItemInRealNote();
     checkLiteralTabs();
     checkCodeStaysSliced();
     checkAutoIndent();
