@@ -22,6 +22,9 @@
 #include <QDir>
 #include <QFile>
 #include <QScrollBar>
+#include <QTextBlock>
+#include <QTextCursor>
+#include <QTextDocument>
 #include <QTest>
 #include <QWheelEvent>
 
@@ -110,6 +113,33 @@ static int ztRunSuite(int argc, char** argv) {
 
     ZT_TRUE("без инерции пальцы тоже увели текст: " + std::to_string(stopped), stopped > 0);
     ZT_TRUE("и он встал там же, где отпустили", later == stopped);
+
+    // --- ПРОКРУТКА НЕ ДВИГАЕТ КАРЕТКУ ------------------------------------
+    //
+    // Жалоба владельца: прокрутка вниз уводит курсор вниз, он уезжает за окно, и
+    // прокрутка перестаёт работать. Вверх при этом всё хорошо — значит дело не
+    // в самой прокрутке, а в чём-то, что срабатывает только при движении вниз.
+    zametti::appearance().smoothScroll = true;
+    editor.verticalScrollBar()->setValue(0);
+    QTest::qWait(20);
+    {
+        QTextCursor at(editor.document());
+        at.setPosition(editor.document()->firstBlock().position());
+        editor.setTextCursor(at);
+    }
+    const int caretBefore = editor.textCursor().position();
+
+    for (int i = 0; i < 4; ++i) {
+        swipe(editor);
+        QTest::qWait(zametti::appearance().smoothScrollMs * 4);
+    }
+    const int caretAfter = editor.textCursor().position();
+    const int scrolledTo = editor.verticalScrollBar()->value();
+
+    ZT_TRUE("прокрутка вниз уехала: " + std::to_string(scrolledTo), scrolledTo > 0);
+    ZT_TRUE("каретка от прокрутки НЕ двигается: было " + std::to_string(caretBefore) +
+                ", стало " + std::to_string(caretAfter),
+            caretAfter == caretBefore);
 
     zametti::appearance().smoothScroll = savedSmooth;
     return zt::report("scroll");
