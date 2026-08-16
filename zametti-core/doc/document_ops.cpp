@@ -170,6 +170,114 @@ bool ZDocument::applyCodeSpanRule(QTextCursor& at) {
     });
 }
 
+bool ZDocument::applyDividerRule(QTextCursor& at) {
+    return runLocalEdit(at, [this](QTextCursor& edit) {
+        return applyDividerRuleAtCursor(d_->text, edit);
+    });
+}
+
+// --- ФОТОГРАФИЯ -------------------------------------------------------------
+
+bool ZDocument::setImageWidth(QTextCursor& at, int width) {
+    return runLocalEdit(at, [this, width](QTextCursor& edit) {
+        return setImageWidthAtCursor(d_->text, edit, width);
+    });
+}
+
+bool ZDocument::setImageAlign(QTextCursor& at, ImageAlign align) {
+    return runLocalEdit(at, [this, align](QTextCursor& edit) {
+        return setImageAlignAtCursor(d_->text, edit, align);
+    });
+}
+
+bool ZDocument::cutImageLine(QTextCursor& at) {
+    return runLocalEdit(at, [this](QTextCursor& edit) {
+        return cutImageLineAtCursor(d_->text, edit);
+    });
+}
+
+bool ZDocument::deleteImageAbove(QTextCursor& at) {
+    return runLocalEdit(at, [this](QTextCursor& edit) {
+        return deleteImageLineBackward(d_->text, edit);
+    });
+}
+
+bool ZDocument::deleteImageBelow(QTextCursor& at) {
+    return runLocalEdit(at, [this](QTextCursor& edit) {
+        return deleteImageLineForward(d_->text, edit);
+    });
+}
+
+// --- БЛОК КОДА --------------------------------------------------------------
+
+bool ZDocument::setCodeLanguage(QTextCursor& at, const QString& language) {
+    return runLocalEdit(at, [this, language](QTextCursor& edit) {
+        return zametti::setCodeLanguage(d_->text, edit, language);
+    });
+}
+
+QStringList ZDocument::codeLanguagesNear(int blockNumber) const {
+    return zametti::codeLanguagesNear(d_->text, blockNumber);
+}
+
+// --- СЛОЙ ОБЪЕКТОВ ----------------------------------------------------------
+
+bool ZDocument::insertLineAfter(QTextCursor& at, int blockIndex) {
+    return runLocalEdit(at, [this, blockIndex](QTextCursor& edit) {
+        const QTextBlock block = d_->text.findBlockByNumber(blockIndex);
+        if (!block.isValid()) return false;
+        edit.setPosition(block.position() + block.length() - 1);
+        edit.insertBlock(vspaceBlockFormat(false, false), QTextCharFormat());
+        return true;
+    });
+}
+
+bool ZDocument::removeBlocks(QTextCursor& at, int first, int last) {
+    return runLocalEdit(at, [this, first, last](QTextCursor& edit) {
+        const QTextBlock from = d_->text.findBlockByNumber(first);
+        const QTextBlock to = d_->text.findBlockByNumber(last);
+        if (!from.isValid() || !to.isValid()) return false;
+        edit.setPosition(from.position());
+        // Вместе с разделителем блока: иначе от объекта остаётся пустая строка,
+        // которой в файле не было.
+        const int end = qMin(to.position() + to.length(), d_->text.characterCount() - 1);
+        edit.setPosition(end, QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+        return true;
+    });
+}
+
+// --- ЗАМЕНА ПО ВСЕЙ ЗАМЕТКЕ -------------------------------------------------
+
+int ZDocument::replaceAll(const QString& text, bool caseSensitive, const QString& with) {
+    if (text.isEmpty()) return 0;
+    QTextDocument::FindFlags flags;
+    if (caseSensitive) flags |= QTextDocument::FindCaseSensitively;
+
+    int replaced = 0;
+    QTextCursor group(&d_->text);
+    group.beginEditBlock();
+    QTextCursor at(&d_->text);
+    while (true) {
+        at = d_->text.find(text, at, flags);
+        if (at.isNull()) break;
+        at.insertText(with);
+        ++replaced;
+    }
+    if (replaced > 0) {
+        // ШОВ ПО ВСЕЙ ЗАМЕТКЕ — здесь это законно: вхождения рассыпаны по ней
+        // целиком, и дешевле шва на каждое одно на всё.
+        settleSeam(0, d_->text.blockCount() - 1);
+        rebuildRange(0, d_->text.blockCount() - 1);
+    }
+    group.endEditBlock();
+
+#ifndef NDEBUG
+    if (replaced > 0) checkCanonical();
+#endif
+    return replaced;
+}
+
 // --- СТОРОЖ СТРОЕНИЯ --------------------------------------------------------
 
 QString ZDocument::structureProblem() const {

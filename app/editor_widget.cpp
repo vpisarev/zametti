@@ -1110,15 +1110,17 @@ void NoteEditor::clearMatches() {
 bool NoteEditor::replaceCurrentMatch(const QString& with) {
     if (current_.currentMatch < 0 || size_t(current_.currentMatch) >= current_.matches.size()) return false;
     const QTextCursor target = current_.matches[size_t(current_.currentMatch)];
-    const bool done = runOperation([&](QTextDocument&, QTextCursor& cursor) {
+    // Замена одного вхождения — это НАБОР ПОВЕРХ ВЫДЕЛЕНИЯ, ровно тот же
+    // глагол, что у клавиатуры: заводить ради неё второй путь незачем.
+    const QTextCharFormat format = currentCharFormat();
+    const bool done = runNoteEdit([&](ZDocument& note, QTextCursor& cursor) {
         cursor.setPosition(target.selectionStart());
         cursor.setPosition(target.selectionEnd(), QTextCursor::KeepAnchor);
-        cursor.insertText(with);
-        return true;
+        return note.insertText(cursor, with, format);
     });
     if (!done) return false;
-    // Документ пересобран — прежние курсоры недействительны, ищем заново и
-    // встаём на следующее вхождение.
+    // Прежние курсоры недействительны, ищем заново и встаём на следующее
+    // вхождение.
     const int at = current_.currentMatch;
     findMatches(current_.matchText, current_.matchCaseSensitive);
     if (!current_.matches.empty()) goToMatch(at < int(current_.matches.size()) ? at : 0);
@@ -1129,20 +1131,8 @@ int NoteEditor::replaceAllMatches(const QString& text, bool caseSensitive,
                                   const QString& with) {
     if (text.isEmpty()) return 0;
     int replaced = 0;
-    const bool done = runOperation([&](QTextDocument& doc, QTextCursor& cursor) {
-        QTextDocument::FindFlags flags;
-        if (caseSensitive) flags |= QTextDocument::FindCaseSensitively;
-        // Одна транзакция на всю замену: иначе Ctrl+Z откатывал бы её по
-        // одному вхождению.
-        cursor.beginEditBlock();
-        QTextCursor at(&doc);
-        while (true) {
-            at = doc.find(text, at, flags);
-            if (at.isNull()) break;
-            at.insertText(with);
-            ++replaced;
-        }
-        cursor.endEditBlock();
+    const bool done = runNoteEdit([&](ZDocument& note, QTextCursor&) {
+        replaced = note.replaceAll(text, caseSensitive, with);
         return replaced > 0;
     });
     if (!done) return 0;
@@ -1439,8 +1429,8 @@ void NoteEditor::mouseReleaseEvent(QMouseEvent* event) {
         QTextCursor cursor(block);
         setTextCursor(cursor);
         const int width = qRound(shown);
-        runOperation([width](QTextDocument& doc, QTextCursor& at) {
-            return setImageWidthAtCursor(doc, at, width);
+        runNoteEdit([width](ZDocument& note, QTextCursor& at) {
+            return note.setImageWidth(at, width);
         });
     }
     event->accept();
@@ -1656,7 +1646,8 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
         line.setPosition(line.block().position());
         line.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
         QGuiApplication::clipboard()->setText(shownAsMarkdown(line));
-        if (event->matches(QKeySequence::Cut)) runOperation(cutImageLineAtCursor);
+        if (event->matches(QKeySequence::Cut))
+            runNoteEdit([](ZDocument& note, QTextCursor& at) { return note.cutImageLine(at); });
         return;
     }
 
@@ -1715,17 +1706,21 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
         event->modifiers() == Qt::NoModifier && !textCursor().hasSelection()) {
         const QTextBlock own = textCursor().block();
         if (!imageRectInViewport(own).isEmpty()) {
-            runOperation(cutImageLineAtCursor);
+            runNoteEdit([](ZDocument& note, QTextCursor& at) { return note.cutImageLine(at); });
             return;
         }
         if (event->key() == Qt::Key_Backspace && textCursor().atBlockStart() &&
             own.previous().isValid() &&
             !imageRectInViewport(own.previous()).isEmpty() &&
-            runOperation(deleteImageLineBackward))
+            runNoteEdit([](ZDocument& note, QTextCursor& at) {
+                return note.deleteImageAbove(at);
+            }))
             return;
         if (event->key() == Qt::Key_Delete && own.next().isValid() &&
             !imageRectInViewport(own.next()).isEmpty() &&
-            runOperation(deleteImageLineForward))
+            runNoteEdit([](ZDocument& note, QTextCursor& at) {
+                return note.deleteImageBelow(at);
+            }))
             return;
 
         // Пустая строка, отделяющая фотографию от непустого текста, неудаляема:
@@ -1887,7 +1882,8 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     // "---" и пробел — черта. Правило срабатывает ДО вставки пробела: тогда
     // пробел не попадает в шаг истории, и Ctrl+Z возвращает голые дефисы с
     // кареткой сразу за ними, без хвоста. Enter-путь устроен так же — выше.
-    if (event->text() == QStringLiteral(" ") && runOperation(applyDividerRuleAtCursor))
+    if (event->text() == QStringLiteral(" ") &&
+        runNoteEdit([](ZDocument& note, QTextCursor& at) { return note.applyDividerRule(at); }))
         return;
 
     // Перед самим набором: у правого края ссылки набранное не должно уезжать
@@ -2020,14 +2016,8 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
         }
         case ObjectAction::LineAfter: {
             const int last = own.last;
-            runOperation([last](QTextDocument& doc, QTextCursor& at) {
-                const QTextBlock block = doc.findBlockByNumber(last);
-                if (!block.isValid()) return false;
-                QTextCursor edit(&doc);
-                edit.setPosition(block.position() + block.length() - 1);
-                edit.insertBlock(vspaceBlockFormat(false, false), QTextCharFormat());
-                at = edit;
-                return true;
+            runNoteEdit([last](ZDocument& note, QTextCursor& at) {
+                return note.insertLineAfter(at, last);
             });
             return true;
         }
@@ -2037,19 +2027,8 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
             if (!target.valid()) return false;
             const int first = target.first;
             const int last = target.last;
-            runOperation([first, last](QTextDocument& doc, QTextCursor& at) {
-                const QTextBlock from = doc.findBlockByNumber(first);
-                const QTextBlock to = doc.findBlockByNumber(last);
-                if (!from.isValid() || !to.isValid()) return false;
-                QTextCursor edit(&doc);
-                edit.setPosition(from.position());
-                // Вместе с разделителем блока: иначе от объекта остаётся
-                // пустая строка, которой в файле не было.
-                const int end = qMin(to.position() + to.length(), doc.characterCount() - 1);
-                edit.setPosition(end, QTextCursor::KeepAnchor);
-                edit.removeSelectedText();
-                at = edit;
-                return true;
+            runNoteEdit([first, last](ZDocument& note, QTextCursor& at) {
+                return note.removeBlocks(at, first, last);
             });
             setEditedTable(-1);
             setEditedFormula(-1);
@@ -2094,7 +2073,7 @@ LanguageEditor* NoteEditor::editCodeLanguage(int firstBlockNumber, const QRect& 
     if (languageEditor_ != nullptr) closeCodeLanguageEditor();
 
     languageBlock_ = firstBlockNumber;
-    languageEditor_ = new LanguageEditor(codeLanguagesNear(*document(), firstBlockNumber),
+    languageEditor_ = new LanguageEditor(note_.note.codeLanguagesNear(firstBlockNumber),
                                          block.blockFormat().stringProperty(InfoProperty),
                                          viewport());
     languageEditor_->setFont(codeLangFont());
@@ -2118,16 +2097,14 @@ LanguageEditor* NoteEditor::editCodeLanguage(int firstBlockNumber, const QRect& 
     connect(languageEditor_, &LanguageEditor::accepted, this, [this](const QString& language) {
         const int block = languageBlock_;
         closeCodeLanguageEditor();
-        // Правка идёт ШТАТНЫМ путём: тот же runOperation, что у всех прочих
+        // Правка идёт ШТАТНЫМ путём: тот же глагол заметки, что и у всех прочих
         // операций, — значит и шаг отмены, и запись в журнал, и сериализация
         // в ```lang получаются сами собой.
-        runOperation([block, language](QTextDocument& doc, QTextCursor& at) {
-            const QTextBlock line = doc.findBlockByNumber(block);
-            if (!line.isValid()) return false;
-            QTextCursor edit(&doc);
-            edit.setPosition(line.position());
-            const bool done = setCodeLanguage(doc, edit, language);
-            if (done) at = edit;
+        runNoteEdit([block, language](ZDocument& note, QTextCursor& at) {
+            QTextCursor line = note.caretAtBlock(block);
+            if (line.blockNumber() != block) return false;
+            const bool done = note.setCodeLanguage(line, language);
+            if (done) at = line;
             return done;
         });
     });
@@ -2387,8 +2364,8 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
         const BlockImageRef ref = blockImageRef(textCursor().block());
         const auto addAlign = [this, align, ref](const QString& title, ImageAlign to) {
             QAction* action = align->addAction(title, this, [this, to] {
-                runOperation([to](QTextDocument& doc, QTextCursor& at) {
-                    return setImageAlignAtCursor(doc, at, to);
+                runNoteEdit([to](ZDocument& note, QTextCursor& at) {
+                    return note.setImageAlign(at, to);
                 });
             });
             // Отметка показывает, что стоит сейчас; по центру — и когда в файле
