@@ -380,6 +380,85 @@ bool ZDocument::deleteForward(QTextCursor& at) {
     return done;
 }
 
+void ZDocument::rebuildRange(int firstBlock, int lastBlock, QTextCursor* caret) {
+    const int total = d_->text.blockCount();
+    firstBlock = qBound(0, firstBlock, total - 1);
+    lastBlock = qBound(firstBlock, lastBlock, total - 1);
+
+    // ГРАНИЦЫ — ПО ЛОГИЧЕСКОМУ БЛОКУ. Строки блока кода лежат в документе
+    // отдельными QTextBlock; пересобрав половину блока кода, сборщик сделал бы
+    // из неё самостоятельный блок, а оставшиеся строки повисли бы продолжением
+    // неизвестно чего.
+    while (firstBlock > 0 && isContinuationBlock(d_->text.findBlockByNumber(firstBlock)))
+        --firstBlock;
+    while (lastBlock + 1 < total &&
+           isContinuationBlock(d_->text.findBlockByNumber(lastBlock + 1)))
+        ++lastBlock;
+
+    std::vector<Piece> pieces;
+    walkPieces(
+        d_->text,
+        [&pieces](const Piece& piece) {
+            pieces.push_back(piece);
+            return true;
+        },
+        firstBlock, lastBlock);
+    if (pieces.empty()) return;
+
+    QTextDocument staging;
+    buildDocument(pieces, staging);
+
+    // Каретка и её якорь — номером блока и смещением в нём: позиции внутри
+    // вырезаемого куска вырез не переживут, а номера переживут, потому что
+    // строение после пересборки то же самое.
+    struct Spot {
+        int block = 0;
+        int offset = 0;
+    };
+    auto spotOf = [this](int position) {
+        const QTextBlock block = d_->text.findBlock(position);
+        return Spot{block.blockNumber(), position - block.position()};
+    };
+    const Spot anchor = caret != nullptr ? spotOf(caret->anchor()) : Spot{};
+    const Spot position = caret != nullptr ? spotOf(caret->position()) : Spot{};
+
+    const QTextBlock head = d_->text.findBlockByNumber(firstBlock);
+    const QTextBlock tail = d_->text.findBlockByNumber(lastBlock);
+
+    QTextCursor edit(&d_->text);
+    edit.beginEditBlock();
+    edit.setPosition(head.position());
+    edit.setPosition(tail.position() + tail.length() - 1, QTextCursor::KeepAnchor);
+    edit.removeSelectedText();
+
+    // Формат первого блока и формат его знаков Qt через фрагмент не доносит —
+    // он берёт их у блока, в который вливает. Ставим сами, тем же приёмом, что
+    // и замена куска (см. replaceRange).
+    const QTextBlockFormat headFormat = staging.firstBlock().blockFormat();
+    const QTextCharFormat headCharFormat = staging.firstBlock().charFormat();
+    edit.insertFragment(QTextDocumentFragment(&staging));
+    {
+        QTextCursor fix(&d_->text);
+        fix.setPosition(d_->text.findBlockByNumber(firstBlock).position());
+        fix.setBlockFormat(headFormat);
+        fix.setBlockCharFormat(headCharFormat);
+    }
+    edit.endEditBlock();
+
+    if (caret != nullptr) {
+        auto placeAt = [this](const Spot& spot) {
+            const QTextBlock block = d_->text.findBlockByNumber(spot.block);
+            if (!block.isValid()) return d_->text.characterCount() - 1;
+            return block.position() + qBound(0, spot.offset, block.length() - 1);
+        };
+        QTextCursor moved(&d_->text);
+        moved.setPosition(placeAt(anchor));
+        if (anchor.block != position.block || anchor.offset != position.offset)
+            moved.setPosition(placeAt(position), QTextCursor::KeepAnchor);
+        *caret = moved;
+    }
+}
+
 void ZDocument::settleSeam(int firstBlock, int lastBlock) {
     // ТОЛЬКО ШОВ, а не весь документ. Прежняя вставка чинила инварианты по всему
     // документу — «документ для этого достаточно мал», — и это было прямым

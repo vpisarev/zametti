@@ -69,7 +69,7 @@ add_library(zametti-core STATIC
     doc/document_impl.h
     doc/markdown_writer.cpp
     doc/document_diff.cpp        doc/document_edit.cpp
-    doc/document_json.cpp
+    doc/document_json.cpp        doc/document_ops.cpp
     doc/markdown_reader.cpp
     doc/block_object.h          doc/block_object.cpp
     doc/diff.h                  doc/diff.cpp

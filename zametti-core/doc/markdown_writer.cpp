@@ -1385,7 +1385,8 @@ void settleComment(Piece& piece) {
 // такая же одна на всех: склейка литеральных строк, дословные куски, доводка
 // формул и комментариев — правила границы «документ → файл», и второй их копии
 // быть не должно.
-void walkPieces(const QTextDocument& doc, const std::function<bool(const Piece&)>& sink) {
+void walkPieces(const QTextDocument& doc, const std::function<bool(const Piece&)>& sink,
+                int fromBlock, int toBlock) {
     Piece piece;
     bool open = false;
     bool stop = false;
@@ -1405,7 +1406,10 @@ void walkPieces(const QTextDocument& doc, const std::function<bool(const Piece&)
         open = false;
     };
 
-    for (QTextBlock block = doc.begin(); block.isValid() && !stop; block = block.next()) {
+    QTextBlock start = fromBlock > 0 ? doc.findBlockByNumber(fromBlock) : doc.begin();
+    for (QTextBlock block = start;
+         block.isValid() && !stop && (toBlock < 0 || block.blockNumber() <= toBlock);
+         block = block.next()) {
         if (isPhantomBlock(doc, block)) continue;
 
         const QTextBlockFormat format = block.blockFormat();

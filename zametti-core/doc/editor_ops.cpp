@@ -79,9 +79,8 @@ void normalise(QTextDocument& doc, BlockRange range) {
     syncLists(doc, {range.first, range.last + added});
 }
 
-// Блоки, которых касается курсор, вместе с поддеревьями. Конец выделения,
-// стоящий ровно на начале блока, этот блок не захватывает: человек его не
-// выделял, только довёл до него курсор.
+}  // namespace
+
 BlockRange selectedBlocks(const QTextDocument& doc, const QTextCursor& cursor) {
     const int start = qMin(cursor.anchor(), cursor.position());
     const int end = qMax(cursor.anchor(), cursor.position());
@@ -95,6 +94,8 @@ BlockRange selectedBlocks(const QTextDocument& doc, const QTextCursor& cursor) {
         range.last = subtreeEnd(doc, range.last);
     return range;
 }
+
+namespace {
 
 // Сдвигает уровень списочных блоков диапазона. Несписочные не трогает: выделение
 // могло зацепить и абзац, и его отступ тут ни при чём.
