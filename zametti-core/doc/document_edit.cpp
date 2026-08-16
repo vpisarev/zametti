@@ -128,84 +128,61 @@ bool ZDocument::replaceRange(QTextCursor& at, const QString& markdown, PasteMode
     buildDocument(pieces, staging);
     const bool ownBlocks = needsOwnBlocks(pieces);
 
-    QTextCursor edit(at);
-    edit.beginEditBlock();
-    if (edit.hasSelection()) edit.removeSelectedText();
+    // ВСТАВКА — ТАКАЯ ЖЕ МЕСТНАЯ ПРАВКА, КАК ВСЕ ОСТАЛЬНЫЕ, и идёт тем же
+    // путём: скобка отмены, пересборка тронутого, шов, сверка со сборкой.
+    // Раньше она вела всё это сама, и оттого знала лишнее — какой формат Qt
+    // доносит через фрагмент, а какой нет. Теперь не знает: что бы фрагмент ни
+    // потерял, пересборка поставит верное.
+    return runLocalEdit(at, [this, &staging, ownBlocks](QTextCursor& edit) {
+        if (edit.hasSelection()) edit.removeSelectedText();
 
-    // Qt вливает первый блок куска в текущий блок, и формат берётся у ТЕКУЩЕГО:
-    // вставленный заголовок становился обычным текстом, а вставка в начало
-    // абзаца, наоборот, делала заголовком сам абзац. Поэтому под блочный кусок
-    // заводим пустой блок и потом ставим ему формат первого блока куска.
-    if (ownBlocks && !edit.block().text().isEmpty()) {
-        QTextBlockFormat plain;
-        plain.setLineHeight(edit.blockFormat().lineHeight(), edit.blockFormat().lineHeightType());
-        if (edit.atBlockStart()) {
-            // Пустой блок заводим НАД текущим и встаём в него: текст блока
-            // уезжает вниз целиком и остаётся собой.
-            QTextCursor tail(&d_->text);
-            tail.setPosition(edit.position());
-            edit.insertBlock(edit.blockFormat());
-            edit.setPosition(tail.block().previous().position());
-        } else {
-            // ХВОСТ ОСТАЁТСЯ СОБОЙ. Резали посередине блока — значит его вторая
-            // половина это тот же самый блок и обязана сохранить свой род,
-            // уровень и поля. Прежде оба новых блока получали пустой формат, и
-            // хвост становился безродным абзацем; полная пересборка следом это
-            // чинила, а теперь пересборки нет — и сверка со сборкой поймала.
-            const QTextBlockFormat sourceFormat = edit.blockFormat();
-            const QTextCharFormat sourceChars = edit.blockCharFormat();
-            const bool wasAtEnd = edit.atBlockEnd();
-            edit.insertBlock(plain);
-            if (!wasAtEnd) {
-                // Вставлять надо МЕЖДУ половинками: заводим ещё один блок,
-                // хвосту отдаём формат исходного, и встаём в оставшийся пустой.
+        // Qt вливает первый блок куска в текущий блок. Под БЛОЧНЫЙ кусок
+        // заводим пустой блок: иначе вставленный заголовок сливался бы с
+        // абзацем, в который его кладут.
+        if (ownBlocks && !edit.block().text().isEmpty()) {
+            if (edit.atBlockStart()) {
+                // Пустой блок заводим НАД текущим и встаём в него: текст блока
+                // уезжает вниз целиком и остаётся собой.
                 QTextCursor tail(&d_->text);
                 tail.setPosition(edit.position());
-                edit.insertBlock(sourceFormat, sourceChars);
+                edit.insertBlock(edit.blockFormat());
                 edit.setPosition(tail.block().previous().position());
+            } else {
+                // ХВОСТ ОСТАЁТСЯ СОБОЙ. Резали посередине блока — значит его
+                // вторая половина это тот же самый блок и обязана сохранить свой
+                // род, уровень и поля.
+                const QTextBlockFormat sourceFormat = edit.blockFormat();
+                const QTextCharFormat sourceChars = edit.blockCharFormat();
+                const bool wasAtEnd = edit.atBlockEnd();
+                edit.insertBlock(QTextBlockFormat());
+                if (!wasAtEnd) {
+                    // Вставлять надо МЕЖДУ половинками: заводим ещё один блок,
+                    // хвосту отдаём формат исходного, и встаём в пустой.
+                    QTextCursor tail(&d_->text);
+                    tail.setPosition(edit.position());
+                    edit.insertBlock(sourceFormat, sourceChars);
+                    edit.setPosition(tail.block().previous().position());
+                }
             }
         }
-    }
-
-    const QTextBlockFormat headFormat = staging.firstBlock().blockFormat();
-    // И ФОРМАТ ЗНАКОВ БЛОКА ТОЖЕ. Его Qt через фрагмент не доносит наравне с
-    // форматом блока, а в нём живёт ступень кегля и насыщенность — то, чем
-    // заголовок отличается от абзаца для СЛЕДУЮЩЕЙ набранной буквы. Поймала
-    // отладочная сверка с полной сборкой: текст выглядел верно, а формат
-    // пустого места в блоке был чужой.
-    const QTextCharFormat headCharFormat = staging.firstBlock().charFormat();
-    const int firstBlock = edit.blockNumber();
-    edit.insertFragment(QTextDocumentFragment(&staging));
-    const int landed = edit.position();
-    const int lastBlock = edit.blockNumber();
-    // Формат первого блока куска Qt через фрагмент не доносит — ставим сами.
-    if (ownBlocks) {
-        QTextCursor head(&d_->text);
-        head.setPosition(d_->text.findBlockByNumber(firstBlock).position());
-        head.setBlockFormat(headFormat);
-        head.setBlockCharFormat(headCharFormat);
-    }
-
-    settleSeam(firstBlock, lastBlock);
-    edit.endEditBlock();
-
-#ifndef NDEBUG
-    // ГЛАВНОЕ СВОЙСТВО БАЗИСА, и оно проверяется, а не обещается: после замены
-    // куска документ обязан совпасть с тем, что собрал бы сборщик из его же
-    // блоков. Совпал — значит уборка по всему документу не нужна не на словах.
-    {
-        std::vector<Piece> now;
-        walkPieces(d_->text, [&now](const Piece& piece) {
-            now.push_back(piece);
-            return true;
-        });
-        checkMatchesBuild(now, d_->text);
-    }
-#endif
-
-    at = QTextCursor(&d_->text);
-    at.setPosition(qBound(0, landed, d_->text.characterCount() - 1));
-    return true;
+        // ФОРМАТ ПЕРВОГО БЛОКА КУСКА Qt ЧЕРЕЗ ФРАГМЕНТ НЕ ДОНОСИТ: он вливает
+        // его в тот блок, куда кладёт, и берёт формат у него. Пересборка это не
+        // чинит и не может — она выводит ОФОРМЛЕНИЕ из смысла, а потерян тут
+        // сам смысл: вставленный заголовок приезжал обычным абзацем.
+        const QTextBlockFormat headFormat = staging.firstBlock().blockFormat();
+        // И формат знаков блока тоже: в нём живёт ступень кегля и насыщенность —
+        // то, чем заголовок отличается от абзаца для СЛЕДУЮЩЕЙ набранной буквы.
+        const QTextCharFormat headCharFormat = staging.firstBlock().charFormat();
+        const int firstBlock = edit.blockNumber();
+        edit.insertFragment(QTextDocumentFragment(&staging));
+        if (ownBlocks) {
+            QTextCursor head(&d_->text);
+            head.setPosition(d_->text.findBlockByNumber(firstBlock).position());
+            head.setBlockFormat(headFormat);
+            head.setBlockCharFormat(headCharFormat);
+        }
+        return true;
+    });
 }
 
 // Вставка внутрь литерального блока: текстом, форматом приёмника, строка за
