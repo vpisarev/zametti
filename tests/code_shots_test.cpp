@@ -614,7 +614,7 @@ static int ztRunSuite(int argc, char** argv) {
     std::printf("блоки кода: %d проверок, %s\n", zt::g_checks,
                 zt::g_failures == 0 ? "всё зелено"
                                     : (std::to_string(zt::g_failures) + " провалов").c_str());
-    return zt::g_failures == 0 ? 0 : 1;
+    return zt::freshFailures();
 }
 
 // Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.

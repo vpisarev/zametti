@@ -346,7 +346,7 @@ int ztZoomProbe(int argc, char** argv) {
             const QTextBlock first = doc.begin();
             if (first.layout() == nullptr || first.layout()->lineCount() == 0) {
                 std::printf("   от чего доля: разметки нет, замер не вышел\n");
-                return zt::g_failures == 0 ? 0 : 1;
+                return zt::freshFailures();
             }
             const QTextLine line = first.layout()->lineAt(0);
             const QFontMetricsF metrics(first.charFormat().font());
@@ -461,7 +461,7 @@ int ztZoomProbe(int argc, char** argv) {
     }
 
     std::printf("\n");
-    return zt::g_failures == 0 ? 0 : 1;
+    return zt::freshFailures();
 }
 
 #include "zoom_probe.moc"

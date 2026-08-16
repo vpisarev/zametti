@@ -207,8 +207,10 @@ build/tests/zametti-tests --gtest_list_tests           что вообще ес�
 ```
 build/tests/zametti-bench                   список стендов
 build/tests/zametti-bench zoom              что делает Ctrl+= с документом
-``` Примеры из спецификаций CommonMark и GFM
-разбираются скриптом `tests/extract_spec.py`.
+```
+
+Примеры из спецификаций CommonMark и GFM разбираются скриптом
+`tests/extract_spec.py`.
 
 - [docs/zametti-m1-report.md](docs/zametti-m1-report.md) — итог этапа: что
   сделано, чем проверено, что сломалось по дороге.

@@ -91,7 +91,8 @@ void StatusBar::setImage(const ImageInfo& info) {
                       info.name == image_.name && info.caption == image_.caption &&
                       info.format == image_.format && info.size == image_.size &&
                       info.bytes == image_.bytes && info.frames == image_.frames &&
-                      info.colorSpace == image_.colorSpace && info.bits == image_.bits;
+                      info.colorSpace == image_.colorSpace && info.bits == image_.bits &&
+                      info.taken == image_.taken;
     if (same) return;
     image_ = info;
     showLeft();
@@ -201,9 +202,25 @@ void StatusBar::showImage() {
     if (image_.frames > 1) samples << QStringLiteral("кадров %1").arg(humanCount(image_.frames));
     if (!samples.isEmpty()) head << samples.join(QLatin1Char(' '));
 
+    // КОГДА СНЯТО — тем же словом и тем же видом, что у заметки: «создана
+    // DD.MM.YYYY HH:MM». Правки у снимка мы не показываем: у заметки правка —
+    // её собственная история, а у вложения это время файла, к содержимому
+    // снимка отношения не имеющее.
+    //
+    // Нет метаданных — строки нет вовсе. Придумывать дату из времени файла
+    // нельзя: это было бы время копирования, а сказано «создана».
+    if (image_.taken.isValid())
+        head << QStringLiteral("создана %1").arg(humanDate(image_.taken));
+
     const QString known = head.join(separator);
-    left_->setToolTip(image_.caption.isEmpty() ? known : known + separator + image_.caption);
-    if (image_.caption.isEmpty()) {
+    // ПОДПИСЬ ЗДЕСЬ ТОЛЬКО ТОГДА, КОГДА ЕЁ НЕ ВИДНО ПОД СНИМКОМ. Обычно она
+    // стоит под фотографией (imageCaption), и повторять её в панели — значит
+    // говорить одно и то же дважды. Выключил человек подпись под снимком —
+    // панель остаётся единственным местом, где она вообще есть, и молчать
+    // тогда нельзя.
+    const QString caption = appearance().imageCaption ? QString() : image_.caption;
+    left_->setToolTip(caption.isEmpty() ? known : known + separator + caption);
+    if (caption.isEmpty()) {
         left_->setText(known);
         return;
     }
@@ -213,7 +230,7 @@ void StatusBar::showImage() {
     const QFontMetrics metrics(left_->font());
     const int room =
         qMax(0, left_->width() - metrics.horizontalAdvance(known + separator));
-    const QString shown = metrics.elidedText(image_.caption, Qt::ElideRight, room);
+    const QString shown = metrics.elidedText(caption, Qt::ElideRight, room);
     left_->setText(shown.isEmpty() ? known : known + separator + shown);
 }
 

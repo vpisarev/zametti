@@ -153,11 +153,41 @@ void checkImageLine() {
     check(!leftText(bar).contains(QStringLiteral("WEBP")),
           "формат отдельным словом не пишется: он в имени файла");
     checkHas(leftText(bar), QStringLiteral(".webp"), "расширение видно в имени");
-    checkHas(leftText(bar), QStringLiteral("Drawing"), "подпись картинки");
+    // ПОДПИСЬ В ПАНЕЛИ НЕ ДУБЛИРУЕТСЯ: она видна под самим снимком. Панель
+    // берёт её на себя только тогда, когда подпись под снимком выключена, —
+    // иначе человеку негде было бы её увидеть вовсе.
+    check(!leftText(bar).contains(QStringLiteral("Drawing")),
+          "подпись не повторяется: она под снимком");
+    {
+        const bool saved = zametti::appearance().imageCaption;
+        zametti::appearance().imageCaption = false;
+        // Панель не перерисовывает то, что не менялось; здесь поменялась
+        // настройка, а не сведения, — сбрасываем её показом другого.
+        bar.setImage(zametti::StatusBar::ImageInfo());
+        bar.setImage(image);
+        checkHas(leftText(bar), QStringLiteral("Drawing"),
+                 "с выключенной подписью под снимком её берёт панель");
+        zametti::appearance().imageCaption = saved;
+        bar.setImage(zametti::StatusBar::ImageInfo());
+        bar.setImage(image);
+    }
     check(!leftText(bar).contains(QStringLiteral(".md")),
           "пока каретка на картинке, заметка уступает ей место");
     // Правая половина остаётся про заметку: число слов от картинки не зависит.
     checkHas(rightText(bar), QStringLiteral("100"), "слова заметки на месте");
+
+    // КОГДА СНЯТО. Пишется тем же словом и в том же виде, что дата заметки —
+    // «создана DD.MM.YYYY HH:MM», — а правка снимка не пишется вовсе: у
+    // вложения это время файла, к содержимому снимка отношения не имеющее.
+    check(!leftText(bar).contains(QStringLiteral("создана")),
+          "без метаданных дата не выдумывается");
+    image.taken = QDateTime(QDate(2019, 3, 14), QTime(9, 26));
+    bar.setImage(image);
+    checkHas(leftText(bar), QStringLiteral("создана 14.03.2019 09:26"), "дата съёмки в панели");
+    check(!leftText(bar).contains(QStringLiteral("правлена")),
+          "правку снимка не пишем");
+    image.taken = QDateTime();
+    bar.setImage(image);
 
     // Вложение потерялось — молчать нельзя.
     image.exists = false;

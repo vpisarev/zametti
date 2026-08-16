@@ -345,6 +345,37 @@ bool readPngMeta(std::string_view file, ImageMeta* out) {
     return true;
 }
 
+bool readJxlMeta(std::string_view file, ImageMeta* out) {
+    if (out == nullptr) return false;
+    static constexpr std::string_view kSignature{"\0\0\0\x0CJXL \r\n\x87\n", 12};
+    if (!starts(file, kSignature)) return false;
+
+    size_t at = 0;
+    while (at + 8 <= file.size()) {
+        uint64_t size = read32(bytes(file) + at, true);
+        const std::string_view type = file.substr(at + 4, 4);
+        size_t header = 8;
+        if (size == 1) {   // расширенный размер: 64 бита после типа
+            if (at + 16 > file.size()) break;
+            size = (uint64_t(read32(bytes(file) + at + 8, true)) << 32) |
+                   read32(bytes(file) + at + 12, true);
+            header = 16;
+        } else if (size == 0) {
+            size = file.size() - at;   // «до конца файла»
+        }
+        if (size < header || at + size > file.size()) break;
+        const std::string_view body = file.substr(at + header, size - header);
+        // Бокс Exif начинается с ЧЕТЫРЁХ НУЛЕЙ — смещения до заголовка TIFF
+        // (спецификация JXL, приложение о боксах). Дальше идёт обычный блоб,
+        // такой же, как в APP1 у JPEG.
+        if (type == "Exif" && body.size() > 4) out->exif = std::string(body.substr(4));
+        else if (type == "xml ") out->xmp = std::string(body);
+        at += size;
+    }
+    if (!out->exif.empty()) out->orientation = exifOrientation(out->exif);
+    return !out->exif.empty() || !out->xmp.empty();
+}
+
 ImageMeta readImageMeta(std::string_view file) {
     ImageMeta meta;
     if (file.size() >= 12) {
@@ -355,9 +386,11 @@ ImageMeta readImageMeta(std::string_view file) {
             readWebpMeta(file, &meta);
         } else if (p[0] == 0x89 && std::memcmp(p + 1, "PNG", 3) == 0) {
             readPngMeta(file, &meta);
+        } else {
+            readJxlMeta(file, &meta);
         }
-        // TIFF, HEIF и JXL сюда не попадают намеренно: у каждого метаданные
-        // забирает его собственный читатель.
+        // TIFF и HEIF сюда не попадают намеренно: у каждого метаданные забирает
+        // его собственный читатель.
     }
     return meta;
 }

@@ -595,9 +595,12 @@ ImageFacts NoteView::caretImage() {
     if (entry != nullptr) facts = entry->facts;
     else readImageFacts(absoluteImagePath(ref.path), facts);
     // Подпись — это alt картинки, и в ней живёт имя исходного файла (см.
-    // xmpWithFileName в exif.h). У вики-вложения alt нет: текстом абзаца там
-    // стоит сама запись "![[путь]]", и показывать её вместо подписи незачем.
-    if (!ref.wiki) facts.caption = block.text().trimmed();
+    // xmpWithFileName в exif.h). У вики-вложения alt нет: исходником там стоит
+    // сама запись "![[путь]]", и показывать её вместо подписи незачем.
+    //
+    // Берём её у САМОЙ СПРАВКИ, а не у текста блока: текста у объекта нет —
+    // в блоке стоит один знак U+FFFC. Пока брали текст, в панель уезжал он.
+    if (!ref.wiki) facts.caption = ref.alt.trimmed();
     return facts;
 }
 
@@ -1370,7 +1373,9 @@ void NoteView::paintImageMarks(QPainter& painter, const QTextBlock& block) {
     if (layout == nullptr || layout->lineCount() == 0) return;
     const QTextLine line = layout->lineAt(0);
     ImageBox placed = box;
-    placed.photo.translate(layout->position() + QPointF(line.x(), line.y()));
+    const QPointF at = layout->position() + QPointF(line.x(), line.y());
+    placed.photo.translate(at);
+    placed.caption.translate(at);
 
     // САМ СНИМОК — ЗДЕСЬ, поверх выделения (см. довод в drawObject).
     paintImageObject(painter, placed, block);
@@ -1386,7 +1391,12 @@ void NoteView::paintImageMarks(QPainter& painter, const QTextBlock& block) {
             : caret.block() == block;
     if (!selected) return;
     painter.save();
-    paintImageCorners(painter, placed.photo);
+    // УГОЛКИ ОХВАТЫВАЮТ И ПОДПИСЬ: снимок и подпись — один объект, и выбраны
+    // они вместе. Нижняя пара уголков уходит под подпись, верхняя остаётся у
+    // верхнего края снимка (решение владельца).
+    QRectF marks = placed.photo;
+    if (!placed.caption.isEmpty()) marks |= placed.caption;
+    paintImageCorners(painter, marks);
     painter.restore();
 }
 

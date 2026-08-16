@@ -1,12 +1,44 @@
 #include "image_facts.h"
 
+#include "exif.h"
 #include "image_read.h"
+
+#include <QFile>
 
 #include <QFileInfo>
 #include <QColorSpace>
 #include <QImage>
 
 namespace zametti {
+namespace {
+
+// Когда снимок сделан. Порядок источников тот же, что у ввоза (image_insert.cpp,
+// shotSeconds): EXIF DateTimeOriginal — момент съёмки, XMP xmp:CreateDate —
+// сканы и экспорт из редакторов. Дальше ввоз идёт к датам файла, а мы НЕ идём:
+// в панели сказано «создана», и подсунуть туда время копирования файла значило
+// бы соврать. Нет метаданных — молчим.
+//
+// Читаем НЕ ВЕСЬ файл: метаданные лежат в начале (у нашего JXL боксы Exif и
+// "xml " идут перед кодовым потоком), а снимок бывает и на сорок мегабайт.
+// Мегабайта хватает с запасом; не хватило — блоб не разберётся, и мы просто
+// ничего не покажем.
+QDateTime shotTime(const QString& absolutePath) {
+    QFile file(absolutePath);
+    if (!file.open(QIODevice::ReadOnly)) return {};
+    const QByteArray head = file.read(1024 * 1024);
+    const ImageMeta meta =
+        readImageMeta(std::string_view(head.constData(), size_t(head.size())));
+
+    QString when = QString::fromStdString(exifDateTaken(meta.exif));
+    if (when.isEmpty()) when = QString::fromStdString(xmpCreateDate(meta.xmp));
+    const QDateTime taken = QDateTime::fromString(when, Qt::ISODate);
+    if (!taken.isValid()) return {};
+    // Зоны в EXIF нет — время местное. Собираем его заново из даты и времени,
+    // чтобы Qt не сочла отсутствие зоны за UTC и не сдвинула час.
+    return QDateTime(taken.date(), taken.time());
+}
+
+}  // namespace
 
 void readImageFacts(const QString& absolutePath, ImageFacts& out) {
     out.path = absolutePath;
@@ -27,6 +59,7 @@ void readImageFacts(const QString& absolutePath, ImageFacts& out) {
     // не врёт.
     if (out.format.isEmpty()) out.format = file.suffix().toLower();
     out.frames = probe.frames;
+    out.taken = shotTime(absolutePath);
 }
 
 void addDecodedFacts(const QImage& image, ImageFacts& out) {

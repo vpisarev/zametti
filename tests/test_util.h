@@ -106,10 +106,30 @@ inline void checkTrue(std::string_view what, bool cond, const char* file, int li
     ADD_FAILURE_AT(file, line) << what;
 }
 
-// Прежний итог набора. Теперь его подводит gtest, а функция осталась, чтобы не
-// править восемьдесят два тела разом. Всегда ноль: провалы уже посчитаны — их
-// отметила каждая проверка сама, в тот же миг, когда споткнулась.
-inline int report(const char*) { return 0; }
+// ПРОВАЛЫ ЭТОГО НАБОРА, а не всех подряд.
+//
+// Наборы идут ОДНИМ ПРОЦЕССОМ, и счётчик у них общий: вернув просто
+// g_failures, набор краснел бы за чужой провал, случившийся раньше. Поэтому
+// помним, сколько уже отчитались, и отдаём только прирост.
+inline int freshFailures() {
+    static int reported = 0;
+    const int fresh = g_failures - reported;
+    reported = g_failures;
+    return fresh;
+}
+
+// Итог набора. Провалы, отмеченные ZT_EQ и ZT_TRUE, gtest видит сам — они зовут
+// ADD_FAILURE. А вот у наборов со СВОИМИ check() и checkHas(), которые только
+// печатают «провал», единственный путь наружу — здесь.
+//
+// Так и было: пять наборов (about, status_bar, text_stats и два снимочных)
+// печатали провал и возвращали ноль, то есть покраснеть не могли ВОВСЕ.
+// Проверка, которая не умеет краснеть, — не проверка.
+inline int report(const char* name) {
+    const int fresh = freshFailures();
+    if (fresh > 0) ADD_FAILURE() << "провалов в наборе «" << name << "»: " << fresh;
+    return 0;
+}
 
 }  // namespace zt
 

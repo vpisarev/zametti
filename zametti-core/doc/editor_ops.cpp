@@ -2851,6 +2851,25 @@ int syncGaps(QTextDocument& doc, BlockRange range) {
         }
     }
 
+    // ФОРМАТ ЗНАКОВ ПУСТОЙ СТРОКИ — ЧИСТЫЙ. Блок, ставший пустой строкой (текст
+    // сняла уборка, соседа съело удаление), приносит с собой формат знаков
+    // прежнего содержимого: моноширинный шрифт кода, пометку мягкого переноса.
+    // Сборщик у пустой строки не ставит ничего, кроме ступени кегля, — и
+    // оставленный след делал блок непохожим на собранный.
+    {
+        QTextCharFormat plain;
+        setFontStep(plain, 0);
+        int i = qMax(0, range.first);
+        const int last = qMin(range.last, doc.blockCount() - 1);
+        for (; i <= last; ++i) {
+            const QTextBlock block = doc.findBlockByNumber(i);
+            if (!isVSpaceBlock(block) || block.charFormat() == plain) continue;
+            QTextCursor fix(&doc);
+            fix.setPosition(block.position());
+            fix.setBlockCharFormat(plain);
+        }
+    }
+
     // Между блоками, которые в файле слиплись бы, обязана стоять пустая строка.
     // Смотрим и на стык за концом диапазона: операция могла свести новых соседей.
     {

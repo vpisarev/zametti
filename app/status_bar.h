@@ -66,6 +66,10 @@ public:
         int bits = 0;
         qint64 bytes = 0;
         int frames = 1;
+        // Когда снимок сделан, из его же метаданных. Недействительная — не
+        // ошибка: у снимка может не быть ни EXIF, ни XMP, и тогда сказать
+        // нечего. Молчим, а не пишем «неизвестно».
+        QDateTime taken;
         bool exists = false;
         bool valid = false;
     };
