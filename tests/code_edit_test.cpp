@@ -335,20 +335,22 @@ void checkCodeTabs() {
 
 // --- нарезка блока кода по строкам ------------------------------------------
 //
-// ЗАМЕЧЕНО, НЕ ПОЧИНЕНО. Блок кода лежит в документе построчно, по QTextBlock
-// на строку, и это не прихоть: Qt переразмечает целиком тот блок, в который
-// пишут, и правка внутри блока на 31 480 знаков стоила 4257 мкс против 109 мкс
-// в блоке на сотню (замер этапа 5, doc_model.h).
+// ПОЧИНЕНО. Блок кода лежит в документе построчно, по QTextBlock на строку, и
+// это не прихоть: Qt переразмечает целиком тот блок, в который пишут, и правка
+// внутри блока на 31 480 знаков стоила 4257 мкс против 109 мкс в блоке на сотню
+// (замер этапа 5, doc_model.h).
 //
-// Слияние соседей (repairAfterTyping) ставит на месте границы блоков
-// разделитель строк, и весь блок оказывается одним QTextBlock. Файл от этого
-// не меняется — читается тот же IR, — но нарезка пропадает.
+// Слияние соседей (repairAfterTyping) ставило на месте границы блоков
+// разделитель строк, и весь блок оказывался одним QTextBlock. Файл от этого не
+// менялся — читался тот же набор блоков, — но нарезка пропадала, а вместе с ней
+// и вся выгода построчного хранения.
 //
-// Пробовал двумя способами: не сливать строки одного литерального блока и,
-// наоборот, резать слитое обратно в syncLiteralBlocks. Оба меняют выход трёх
-// давних фаззеров, то есть задевают куда больше, чем видно; решение и разбор —
-// отдельным заходом. Проверка записана как ОПИСАНИЕ нынешнего поведения:
-// когда починим, менять надо будет её, а не выяснять заново, как оно было.
+// Чинит splitLiteralSoftBreaks в шве: мягких переносов внутри литерального
+// блока не бывает, каждая строка — свой блок-продолжение. Прежние два захода
+// (не сливать строки; резать в syncLiteralBlocks) меняли выход трёх фаззеров;
+// этот не меняет — потому что режет только в шве и только литеральные блоки, а
+// сверка со сборкой в отладочной сборке доказывает, что результат совпадает с
+// тем, что собрал бы сборщик.
 void checkCodeStaysSliced() {
     Editor editor;
     editor.openText(QStringLiteral("нарезка.md"), kNote);
@@ -364,7 +366,7 @@ void checkCodeStaysSliced() {
     editor.caretTo(QStringLiteral("two"), 3);
     QTest::keyClicks(&editor, QStringLiteral("x"));
     QTest::qWait(5);
-    check(codeBlocks() == 1, "ПОКА ЧТО: после набора строки блока склеились в одну");
+    check(codeBlocks() == 2, "после набора строки блока остались нарезанными");
     checkStillLegal(editor, "набор в блоке кода");
 }
 
@@ -499,11 +501,10 @@ void checkLanguageEditor() {
 
     // Кандидаты — из самой заметки, ближайший ВЫШЕ первым.
     const int third = firstBlockOf(editor, QStringLiteral("three"));
-    const QStringList near = zametti::codeLanguagesNear(*editor.document(), third);
+    const QStringList near = editor.note().codeLanguagesNear(third);
     checkEq("c++,python", near.join(QLatin1Char(',')).toStdString(),
             "кандидаты — языки этой заметки, ближайший выше первым");
-    check(zametti::codeLanguagesNear(*editor.document(),
-                                     firstBlockOf(editor, QStringLiteral("one")))
+    check(editor.note().codeLanguagesNear(firstBlockOf(editor, QStringLiteral("one")))
               .join(QLatin1Char(',')) == QStringLiteral("c++"),
           "у первого блока кандидат только нижний");
 
@@ -514,8 +515,7 @@ void checkLanguageEditor() {
                    "```python\na\n```\n\nодин\n\nдва\n\n```\ntarget\n```\n\n"
                    "```rust\nb\n```\n");
     checkEq("python,rust",
-            zametti::codeLanguagesNear(*mixed.document(),
-                                       firstBlockOf(mixed, QStringLiteral("target")))
+            mixed.note().codeLanguagesNear(firstBlockOf(mixed, QStringLiteral("target")))
                 .join(QLatin1Char(',')).toStdString(),
             "верхний кандидат идёт первым, даже если он дальше");
 
@@ -582,7 +582,7 @@ void checkNoCandidates() {
     Editor editor;
     editor.openText(QStringLiteral("языков-нет.md"), kNote);
     const int block = firstBlockOf(editor, QStringLiteral("one"));
-    check(zametti::codeLanguagesNear(*editor.document(), block).isEmpty(),
+    check(editor.note().codeLanguagesNear(block).isEmpty(),
           "в заметке без языков кандидатов нет");
     zametti::LanguageEditor* field = editor.editCodeLanguage(block, QRect(10, 10, 120, 20));
     if (field == nullptr) return;

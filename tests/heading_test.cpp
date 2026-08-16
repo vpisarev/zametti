@@ -35,17 +35,16 @@ namespace {
 // переносами это один блок, и внутри него строк несколько.
 std::string apply(const std::string& source, const std::string& onLine, int level,
                   bool selectAll = false) {
-    const std::vector<zametti::Piece> ir = pieces(source);
-    QTextDocument doc;
-    zametti::buildDocument(ir, doc);
+    zametti::ZDocument note = noteOf(source);
 
-    QTextCursor caret(&doc);
+    QTextCursor caret = note.caretAtBlock(0);
     bool found = false;
     const QString want = QString::fromStdString(onLine);
-    for (QTextBlock block = doc.begin(); block.isValid() && !found; block = block.next()) {
-        const QString text = block.text();
+    for (int number = 0; number < note.blockCount() && !found; ++number) {
+        const QString text = note.blockAt(number).text;
+        const QTextCursor start = note.caretAtBlock(number);
         if (text == want) {
-            caret.setPosition(block.position());
+            caret = start;
             found = true;
             break;
         }
@@ -53,8 +52,8 @@ std::string apply(const std::string& source, const std::string& onLine, int leve
         int at = 0;
         for (const QString& line : text.split(QChar::LineSeparator)) {
             if (line == want) {
-                caret.setPosition(block.position() + at);
-                caret.setPosition(block.position() + at + line.size(),
+                caret.setPosition(start.position() + at);
+                caret.setPosition(start.position() + at + line.size(),
                                   QTextCursor::KeepAnchor);
                 found = true;
                 break;
@@ -68,8 +67,8 @@ std::string apply(const std::string& source, const std::string& onLine, int leve
         caret.movePosition(QTextCursor::End, QTextCursor::KeepAnchor);
     }
 
-    zametti::setHeadingLevel(doc, caret, level);
-    return markdownOf(blocksOf(doc));
+    note.setHeadingLevel(caret, level);
+    return note.toMarkdown();
 }
 
 void check(const std::string& what, const std::string& expected, const std::string& actual) {

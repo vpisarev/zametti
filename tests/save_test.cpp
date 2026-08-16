@@ -472,15 +472,15 @@ void checkEdgeSpaces() {
             check(writeFile(path, c.source), "не записать исходник");
 
             QTextDocument doc;
-            buildFrom(c.source, doc);
             // Enter в конце последнего пункта заводит пустой пункт того же
-            // уровня — так это и выходит при живом наборе.
-            QTextCursor cursor(&doc);
+            // уровня — так это и выходит при живом наборе. Через глагол
+            // заметки: другого входа в правку нет.
+            zametti::ZDocument note = noteOf(c.source);
+            QTextCursor cursor = note.caretAtBlock(note.blockCount() - 1);
             cursor.movePosition(QTextCursor::End);
-            zametti::splitBlockAtCursor(doc, cursor);
+            note.breakBlock(cursor, zametti::ZDocument::BreakKind::Plain);
 
-            const zametti::SaveOutcome outcome =
-                zametti::saveDocument(doc, path, QStringLiteral("test"));
+            const zametti::SaveOutcome outcome = note.saveTo(path, QStringLiteral("test"));
             check(outcome.result != zametti::SaveResult::Rescued,
                   std::string(c.what) + ": не должно уводить в аварийный файл");
             checkEqual(c.expected, readFile(path), c.what);
@@ -615,16 +615,14 @@ void checkTrailingSoftBreak() {
     const QString path = pathFor("висящий-перенос.md");
     check(writeFile(path, "текст\n"), "не записать исходник");
 
-    QTextDocument doc;
-    buildFrom("текст\n", doc);
     // Через саму операцию, а не вставкой разделителя: у настоящего переноса есть
     // пометка, по которой читатель узнаёт в нём перевод строки.
-    QTextCursor cursor(&doc);
+    zametti::ZDocument note = noteOf("текст\n");
+    QTextCursor cursor = note.caretAtBlock(0);
     cursor.movePosition(QTextCursor::EndOfBlock);
-    zametti::splitBlockAtCursor(doc, cursor);
+    note.breakBlock(cursor, zametti::ZDocument::BreakKind::Plain);
 
-    const zametti::SaveOutcome outcome =
-        zametti::saveDocument(doc, path, QStringLiteral("test"));
+    const zametti::SaveOutcome outcome = note.saveTo(path, QStringLiteral("test"));
     check(outcome.result != zametti::SaveResult::Rescued,
           "висящий перенос не должен уводить в аварийный файл");
     checkEqual("текст\n", readFile(path), "в файл висящий перенос не идёт");

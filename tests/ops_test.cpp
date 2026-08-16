@@ -530,17 +530,15 @@ struct CodeSpanCase {
 };
 
 void checkCodeSpan(const CodeSpanCase& c) {
-    QTextDocument doc;
-    zametti::buildDocument(pieces(c.before), doc);
+    zametti::ZDocument note = noteOf(c.before);
 
-    QTextCursor typing(&doc);
-    typing.movePosition(QTextCursor::End);
-    typing.insertText(QString::fromUtf8(c.typed));
-
-    QTextCursor cursor(&doc);
+    QTextCursor cursor = note.caretAtBlock(note.blockCount() - 1);
     cursor.movePosition(QTextCursor::End);
-    const bool handled = zametti::applyCodeSpanRuleAtCursor(doc, cursor);
-    const std::string actual = handled ? markdownOf(blocksOf(doc))
+    note.insertText(cursor, QString::fromUtf8(c.typed));
+
+    cursor.movePosition(QTextCursor::End);
+    const bool handled = note.applyCodeSpanRule(cursor);
+    const std::string actual = handled ? note.toMarkdown()
                                        : std::string("<правило не сработало>");
     checkEqual(c.after, actual, c.what);
 }
@@ -563,19 +561,15 @@ struct CodeBlockCase {
 };
 
 void checkCodeBlock(const CodeBlockCase& c) {
-    QTextDocument doc;
-    zametti::buildDocument(pieces(c.source), doc);
+    zametti::ZDocument note = noteOf(c.source);
 
-    QTextCursor cursor(&doc);
-    cursor.setPosition(doc.findBlockByNumber(c.firstBlock).position());
-    const QTextBlock last = doc.findBlockByNumber(c.lastBlock);
-    cursor.setPosition(last.position() + last.length() - 1, QTextCursor::KeepAnchor);
+    QTextCursor cursor = note.caretAtBlock(c.firstBlock);
+    QTextCursor tail = note.caretAtBlock(c.lastBlock);
+    tail.movePosition(QTextCursor::EndOfBlock);
+    cursor.setPosition(tail.position(), QTextCursor::KeepAnchor);
 
-    const zametti::MoveResult result = zametti::toggleCodeBlock(doc, cursor);
-    checkEqual(c.after,
-               result.done ? markdownOf(result.blocks)
-                           : std::string("<операция отказалась>"),
-               c.what);
+    const bool done = note.toggleCodeBlock(cursor);
+    checkEqual(c.after, done ? note.toMarkdown() : std::string("<операция отказалась>"), c.what);
 }
 
 // Выделение частью блока: абзац с мягкими переносами — один блок, а строк в
@@ -589,18 +583,15 @@ struct PartialCodeCase {
 };
 
 void checkPartialCodeBlock(const PartialCodeCase& c) {
-    QTextDocument doc;
-    zametti::buildDocument(pieces(c.source), doc);
+    zametti::ZDocument note = noteOf(c.source);
 
-    QTextCursor cursor(&doc);
-    cursor.setPosition(doc.firstBlock().position() + c.from);
-    cursor.setPosition(doc.firstBlock().position() + c.to, QTextCursor::KeepAnchor);
+    QTextCursor cursor = note.caretAtBlock(0);
+    const int base = cursor.position();
+    cursor.setPosition(base + c.from);
+    cursor.setPosition(base + c.to, QTextCursor::KeepAnchor);
 
-    const zametti::MoveResult result = zametti::toggleCodeBlock(doc, cursor);
-    checkEqual(c.after,
-               result.done ? markdownOf(result.blocks)
-                           : std::string("<операция отказалась>"),
-               c.what);
+    const bool done = note.toggleCodeBlock(cursor);
+    checkEqual(c.after, done ? note.toMarkdown() : std::string("<операция отказалась>"), c.what);
 }
 
 // "первая\nвторая\nтретья" — по семь знаков на строку с разделителем.
@@ -697,19 +688,14 @@ struct RuleCase {
 };
 
 void checkRule(const RuleCase& c) {
-    QTextDocument doc;
-    zametti::buildDocument(pieces(c.before), doc);
+    zametti::ZDocument note = noteOf(c.before);
 
     // Набираем в начало первого блока — ровно так, как это делает человек.
-    QTextCursor typing(&doc);
-    typing.setPosition(doc.firstBlock().position());
-    typing.insertText(QString::fromUtf8(c.typed));
+    QTextCursor cursor = note.caretAtBlock(0);
+    note.insertText(cursor, QString::fromUtf8(c.typed));
 
-    QTextCursor cursor(&doc);
-    cursor.setPosition(doc.firstBlock().position() + int(QString::fromUtf8(c.typed).size()));
-
-    const bool handled = zametti::applyInputRuleAtCursor(doc, cursor);
-    const std::string actual = handled ? markdownOf(blocksOf(doc))
+    const bool handled = note.applyInputRule(cursor);
+    const std::string actual = handled ? note.toMarkdown()
                                        : std::string("<правило не сработало>");
     checkEqual(c.after, actual, c.what);
 }
@@ -819,28 +805,18 @@ struct MoveCase {
 };
 
 void checkMove(const MoveCase& c) {
-    QTextDocument doc;
-    zametti::buildDocument(pieces(c.before), doc);
+    zametti::ZDocument note = noteOf(c.before);
+    const std::string wasText = note.blockAt(c.block).text.toStdString();
 
-    QTextCursor cursor(&doc);
-    cursor.setPosition(doc.findBlockByNumber(c.block).position());
-
-    const zametti::MoveResult moved = zametti::moveListItem(doc, cursor, c.direction);
-    const std::string actual =
-        moved.done ? markdownOf(moved.blocks) : std::string("<операция отказалась>");
+    QTextCursor cursor = note.caretAtBlock(c.block);
+    const bool moved = note.moveListItem(cursor, c.direction);
+    const std::string actual = moved ? note.toMarkdown() : std::string("<операция отказалась>");
     checkEqual(c.after, actual, c.what);
-    if (!moved.done) return;
+    if (!moved) return;
 
-    // Пункт обязан оказаться там, куда указывает результат: иначе курсор уедет
-    // в чужой пункт.
-    QTextDocument rebuilt;
-    zametti::buildDocument(moved.blocks, rebuilt);
-    const QTextBlock landed = zametti::blockForIrIndex(rebuilt, moved.irBlock);
-    check(landed.isValid(), std::string(c.what) + ": курсор указывает в никуда");
-    if (!landed.isValid()) return;
-    checkEqual(doc.findBlockByNumber(c.block).text().toStdString(),
-               landed.text().toStdString(),
-               std::string(c.what) + ": курсор остался в том же пункте");
+    // Каретка обязана уехать вместе с пунктом: иначе она осталась бы в чужом.
+    checkEqual(wasText, note.blockAt(cursor.blockNumber()).text.toStdString(),
+               std::string(c.what) + ": каретка осталась в том же пункте");
 }
 
 const MoveCase kMoveCases[] = {
@@ -875,11 +851,10 @@ const MoveCase kMoveCases[] = {
 // Курсор после разреза обязан оказаться в новом блоке: иначе набор продолжится
 // не там, где человек его видит.
 void checkCursorAfterSplit() {
-    QTextDocument doc;
-    zametti::buildDocument(pieces("- пунктхвост\n"), doc);
-    QTextCursor cursor(&doc);
-    cursor.setPosition(doc.findBlockByNumber(0).position() + 5);
-    zametti::splitBlockAtCursor(doc, cursor);
+    zametti::ZDocument note = noteOf("- пунктхвост\n");
+    QTextCursor cursor = note.caretAtBlock(0);
+    cursor.setPosition(cursor.position() + 5);
+    note.breakBlock(cursor, zametti::ZDocument::BreakKind::Plain);
     check(cursor.blockNumber() == 1 && cursor.positionInBlock() == 0,
           "курсор после разреза стоит в начале нового блока");
 }

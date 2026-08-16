@@ -5,6 +5,7 @@
 // показывается, когда каретка стоит на картинке, и что — когда вложение
 // потерялось.
 
+#include "doc_model.h"
 #include "editor_widget.h"
 #include "image_facts.h"
 #include "status_bar.h"

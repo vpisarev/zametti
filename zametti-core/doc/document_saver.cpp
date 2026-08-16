@@ -1,5 +1,7 @@
 #include "document_saver.h"
 
+#include "document_impl.h"
+
 #include "history_rules.h"
 
 #include "doc_model.h"
@@ -773,6 +775,17 @@ SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
                   rescuePath;
     const bool differs = !sameContent(reread, ir);
     return {SaveResult::Written, message, rescuePath, std::move(reread), differs, digest, text};
+}
+
+// ЗАМЕТКА ПОДАЁТ ПИСАТЕЛЮ СВОЙ ДОКУМЕНТ САМА. Путь записи один и живёт выше;
+// метод нужен затем, чтобы ради записи не приходилось отдавать наружу живой
+// QTextDocument — а он не отдаётся никому и никогда.
+SaveOutcome ZDocument::saveTo(const QString& path, const QString& timestamp,
+                              DocumentReaderFn reader, const NoteHeader& meta,
+                              const Digest& known, const std::vector<Piece>* prebuiltBlocks,
+                              const QByteArray* prebuiltText) {
+    return saveDocument(d_->text, path, timestamp, std::move(reader), meta, known,
+                        prebuiltBlocks, prebuiltText);
 }
 
 }  // namespace zametti

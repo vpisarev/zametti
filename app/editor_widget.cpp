@@ -294,122 +294,21 @@ void NoteEditor::onContentsChange(int position, int charsRemoved, int charsAdded
 // пересборки область забывается, и подметать в ней нечего.
 void NoteEditor::tidySweep(const QTextCursor& caret) {
     if (tidying_ || current_.dirty.isNull()) return;
-    const int first = qMax(0, document()->findBlock(current_.dirty.selectionStart()).blockNumber() - 1);
-    const int afterLast =
-        qMin(document()->blockCount() - 1,
-             document()->findBlock(current_.dirty.selectionEnd()).blockNumber() + 1);
+    const int first = document()->findBlock(current_.dirty.selectionStart()).blockNumber() - 1;
+    const int last = document()->findBlock(current_.dirty.selectionEnd()).blockNumber() + 1;
     current_.dirty = QTextCursor();
 
-    const int caretBlock = caret.blockNumber();
-    int caretLine = 0;
-    {
-        const QString text = caret.block().text();
-        for (int i = 0; i < caret.positionInBlock() && i < text.size(); ++i)
-            if (text.at(i) == QChar::LineSeparator) ++caretLine;
-    }
-
-    // Сначала собрать, потом резать с конца: позиции не плывут.
-    std::vector<std::pair<int, int>> cuts;
-    QTextBlock block = document()->findBlockByNumber(first);
-    for (int number = first; number <= afterLast && block.isValid();
-         ++number, block = block.next()) {
-        if (isRawBlock(block)) continue;
-        const Kind kind = kindOf(block);
-        if (kind == Kind::Code) continue;
-        const QString text = block.text();
-        int line = 0;
-        int lineStart = 0;
-        for (int i = 0; i <= text.size(); ++i) {
-            if (i != text.size() && text.at(i) != QChar::LineSeparator) continue;
-            if (!(block.blockNumber() == caretBlock && line == caretLine)) {
-                int cut = i;
-                while (cut > lineStart && (text.at(cut - 1) == QLatin1Char(' ') ||
-                                           text.at(cut - 1) == QLatin1Char('\t')))
-                    --cut;
-                if (cut < i) cuts.push_back({block.position() + cut, block.position() + i});
-            }
-            lineStart = i + 1;
-            ++line;
-        }
-    }
-    if (cuts.empty()) return;
-
     tidying_ = true;
-    QTextCursor edit(document());
-    edit.beginEditBlock();
-    for (auto it = cuts.rbegin(); it != cuts.rend(); ++it) {
-        edit.setPosition(it->first);
-        edit.setPosition(it->second, QTextCursor::KeepAnchor);
-        edit.removeSelectedText();
-    }
-    edit.endEditBlock();
+    note_.note.tidyRange(first, last, caret);
     tidying_ = false;
 }
 
 void NoteEditor::tidyLeftLine(const QTextCursor& left) {
-    const QTextBlock block = left.block();
-    if (!block.isValid() || isRawBlock(block)) return;
-    const Kind kind = kindOf(block);
-    // Пустую строку и черту чистим тоже: на них могли пожить пробелы, пока
-    // каретка там стояла. Не трогаем только код: там хвостовые пробелы —
-    // содержимое.
-    if (kind == Kind::Code) return;
-
-    const QString text = block.text();
-    // Границы строки, на которой стояла каретка.
-    int from = 0;
-    for (int i = left.positionInBlock() - 1; i >= 0; --i)
-        if (text.at(i) == QChar::LineSeparator) { from = i + 1; break; }
-    int to = text.size();
-    for (int i = left.positionInBlock(); i < text.size(); ++i)
-        if (text.at(i) == QChar::LineSeparator) { to = i; break; }
-    int cut = to;
-    while (cut > from && (text.at(cut - 1) == QLatin1Char(' ') ||
-                          text.at(cut - 1) == QLatin1Char('\t')))
-        --cut;
-    const bool emptied = cut == from;
-    // Пустая ХВОСТОВАЯ строка многострочного блока — мусор от удаления: при
-    // сохранении она затвердела бы в неразрывный пробел. Отрезаем её в
-    // настоящую пустую строку. Серединные пустые не трогаем: ими человек
-    // намеренно отбивает куски внутри блока.
-    const bool tailOfBlock = to == text.size();
-    if (cut == to && !(emptied && tailOfBlock && from > 0)) return;
-
+    if (tidying_) return;
     tidying_ = true;
-    QTextCursor edit(document());
-    edit.beginEditBlock();
-    if (cut < to) {
-        edit.setPosition(block.position() + cut);
-        edit.setPosition(block.position() + to, QTextCursor::KeepAnchor);
-        edit.removeSelectedText();
-    }
-    const QTextBlock after = edit.block();
-    if (emptied && tailOfBlock && from > 0) {
-        // Снять перенос перед опустевшей строкой и завести настоящую пустую
-        // строку после блока.
-        edit.setPosition(block.position() + from - 1);
-        edit.setPosition(block.position() + from, QTextCursor::KeepAnchor);
-        edit.removeSelectedText();
-        edit.movePosition(QTextCursor::EndOfBlock);
-        edit.insertBlock(vspaceBlockFormat(false, false));
-        const BlockRange range{qMax(0, block.blockNumber() - 1), block.blockNumber() + 2};
-        syncGaps(*document(), range);
-        syncLists(*document(), range);
-        applyListGeometry(*document(), range);
-    } else if (after.text().isEmpty() && kind == Kind::Paragraph) {
-        // Строка (и весь блок) опустела: это настоящая пустая строка.
-        edit.setBlockFormat(vspaceBlockFormat(after.previous().isValid() &&
-                                                  isVSpaceBlock(after.previous()),
-                                              after.blockNumber() == 0));
-        const BlockRange range{qMax(0, after.blockNumber() - 1), after.blockNumber() + 1};
-        syncGaps(*document(), range);
-        syncLists(*document(), range);
-        applyListGeometry(*document(), range);
-    }
-    edit.endEditBlock();
+    note_.note.tidyLine(left);
     tidying_ = false;
 }
-
 
 // Сигналы документа подключаются заново на каждой подмене: документ у нас не
 // один на всю жизнь виджета, а свой у каждой заметки.
@@ -1695,7 +1594,7 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     // делает код в строке, этот — блоком.
     if (event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier) &&
         event->key() == Qt::Key_E) {
-        applyIrEdit(toggleCodeBlock(*document(), textCursor()));
+        runNoteEdit([](ZDocument& note, QTextCursor& at) { return note.toggleCodeBlock(at); });
         return;
     }
     // Фотография — атом, как черта: Backspace и Delete не грызут её скрытый
@@ -2221,71 +2120,6 @@ bool NoteEditor::runNoteEdit(const std::function<bool(ZDocument&, QTextCursor&)>
     return true;
 }
 
-bool NoteEditor::runOperation(bool (*op)(QTextDocument&, QTextCursor&)) {
-    return runOperation(std::function<bool(QTextDocument&, QTextCursor&)>(op));
-}
-
-bool NoteEditor::runOperation(const std::function<bool(QTextDocument&, QTextCursor&)>& op) {
-    QTextCursor cursor = textCursor();
-    const int scrollBefore = verticalScrollBar()->value();
-    // Шаг истории у операции свой; правки, которые она делает по дороге, в
-    // историю попадать не должны — иначе одно нажатие даст два шага.
-    recordingSuspended_ = true;
-
-    // ОДНА ОПЕРАЦИЯ — ОДИН ШАГ ОТМЕНЫ, и держится это скобкой правки.
-    //
-    // Операция режет и склеивает блоки, уборка снимает хвостовые пробелы,
-    // заплатка доводит форматы — для Qt это три-четыре отдельные правки, и без
-    // скобки Ctrl+Z разбирал бы одно нажатие человека на несколько. Замер до
-    // скобки: Enter давал восемь команд и одно нажатие впустую.
-    //
-    // В скобку входит и пересборка: заплатка доводит форматы своими правками,
-    // и оставленная снаружи она была бы ОТДЕЛЬНЫМ шагом — Ctrl+Z снимал бы
-    // оформление, не трогая текста.
-    // СКОБКУ ОТКРЫВАЕМ КУРСОРОМ ЧЕЛОВЕКА, а не свежим.
-    //
-    // QTextCursor::beginEditBlock запоминает позицию ТОГО курсора, которым
-    // скобку открыли, и именно туда отмена возвращает каретку. Свежий курсор
-    // стоит в начале документа — и после Enter с Ctrl+Z каретка уезжала в самое
-    // начало заметки (жалоба владельца).
-    QTextCursor group = textCursor();
-    group.beginEditBlock();
-    const bool handled = op(*document(), cursor);
-    if (!handled) {
-        group.endEditBlock();
-        recordingSuspended_ = false;
-        return false;
-    }
-    // Подметание — внутри той же скобки: слияния внутри операций тоже оставляют
-    // хвостовые пробелы, а через contentsChanged они не проходят.
-    tidySweep(cursor);
-
-    // Операция трогает содержимое, род и уровень; всё оформление, которое из
-    // них следует, пересчитывает сборщик — так ни одно свойство не отстанет.
-    // Разбивка на блоки после нормализации уже каноническая, поэтому место
-    // курсора переживает пересборку.
-    const int anchor = cursor.anchor();
-    const int position = cursor.position();
-    std::vector<Piece> ir = piecesOf(*document());
-    rebuild(ir, position, viewAnchor(), &ir, /*asEdit=*/true);
-    group.endEditBlock();
-    recordingSuspended_ = false;
-    // Выделение возвращаем: операция могла тронуть десяток пунктов сразу, и
-    // терять его после этого — значит заставлять выделять заново. Текст от
-    // смены рода не меняется, поэтому обе границы остаются на своих местах.
-    if (anchor != position) {
-        const int last = document()->characterCount() - 1;
-        QTextCursor restored(document());
-        restored.setPosition(qBound(0, anchor, last));
-        restored.setPosition(qBound(0, position, last), QTextCursor::KeepAnchor);
-        setTextCursor(restored);
-    }
-    document()->setModified(true);
-    showEditPlace(scrollBefore);
-    autosave_.start(appearance().autosaveDelayMs);
-    return true;
-}
-
 void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
     // Щелчок правой кнопкой вне выделения переносит курсор туда: иначе команда
     // применилась бы не к тому месту, на которое человек показал.
@@ -2325,7 +2159,11 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
         QAction* action = menu->addAction(QStringLiteral("Блок кода"));
         action->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+E")));
         connect(action, &QAction::triggered, this,
-                [this] { applyIrEdit(toggleCodeBlock(*document(), textCursor())); });
+                [this] {
+                    runNoteEdit([](ZDocument& note, QTextCursor& at) {
+                        return note.toggleCodeBlock(at);
+                    });
+                });
     }
 
     // Уровень заголовка. Подменю, а не семь пунктов вперемешку с прочим:
@@ -2707,40 +2545,9 @@ void NoteEditor::chooseAndInsertImages() {
 }
 
 bool NoteEditor::moveItem(int direction) {
-    return applyIrEdit(moveListItem(*document(), textCursor(), direction));
-}
-
-bool NoteEditor::applyIrEdit(const MoveResult& moved) {
-    if (!moved.done) return false;
-    const int scrollBefore = verticalScrollBar()->value();
-
-    // ОДИН ШАГ ОТМЕНЫ на всю правку: заплатка трогает несколько блоков сразу, а
-    // человек нажал один раз.
-    // СКОБКУ ОТКРЫВАЕМ КУРСОРОМ ЧЕЛОВЕКА, а не свежим.
-    //
-    // QTextCursor::beginEditBlock запоминает позицию ТОГО курсора, которым
-    // скобку открыли, и именно туда отмена возвращает каретку. Свежий курсор
-    // стоит в начале документа — и после Enter с Ctrl+Z каретка уезжала в самое
-    // начало заметки (жалоба владельца).
-    QTextCursor group = textCursor();
-    group.beginEditBlock();
-    rebuild(moved.blocks, 0, viewAnchor(), nullptr, /*asEdit=*/true);
-    group.endEditBlock();
-
-    // Курсор ставим по месту в IR: после перестановки или слияния блоков прежняя
-    // позиция в тексте указывала бы на чужое место. Вид при этом уже наведён
-    // пересборкой, и трогаем его только если курсор из него выпал.
-    const QTextBlock landed = blockForIrIndex(*document(), moved.irBlock);
-    if (landed.isValid()) {
-        QTextCursor place(document());
-        place.setPosition(landed.position() +
-                          qMin(moved.offsetInBlock, landed.length() - 1));
-        setTextCursor(place);
-    }
-    document()->setModified(true);
-    showEditPlace(scrollBefore);
-    autosave_.start(appearance().autosaveDelayMs);
-    return true;
+    return runNoteEdit([direction](ZDocument& note, QTextCursor& at) {
+        return note.moveListItem(at, direction);
+    });
 }
 
 // Пересчёт слов и строк. Зовётся из двух мест — полной сборки и записи на
@@ -2752,7 +2559,6 @@ void NoteEditor::refreshStats(const NoteStats& stats) {
 }
 
 void NoteEditor::onContentsChanged() {
-    if (qEnvironmentVariableIsSet("ZAMETTI_NO_AFTER_EDIT")) return;   // ВРЕМЕННО: бисекция
     // Пересборка и перекладка полей под ширину окна — это облик. Документу они
     // неотличимы от правки текста, и без этих двух признаков ширина окна
     // заводила бы шаг истории.
@@ -2778,7 +2584,7 @@ void NoteEditor::onContentsChanged() {
     recordingSuspended_ = true;
     QTextCursor join(document());
     join.joinPreviousEditBlock();
-    const bool repaired = repairAfterTyping(*document(), cursor);
+    const bool repaired = note_.note.repairAfterEdit(cursor);
     // Правка любого вида могла оставить хвостовые пробелы на строках, где
     // каретки нет, — выделение с удалением, вставка, слияние. Инвариант
     // владельца: таких строк не существует. Чистим после каждой правки.

@@ -1,6 +1,9 @@
 #include "editor_ops.h"
 
+#include "document_impl.h"
+
 #include "doc_model.h"
+#include "document_pieces.h"
 #include "document_builder.h"
 #include "serializer.h"
 #include "marker.h"
@@ -139,7 +142,7 @@ bool setInsideLevel(QTextDocument& doc, BlockRange range, int level) {
         QTextBlockFormat format = block.blockFormat();
         if (level < 0) {
             format.clearProperty(LevelProperty);
-            format.setLeftMargin(0);
+            format.clearProperty(QTextFormat::BlockLeftMargin);
         } else {
             format.setProperty(LevelProperty, level);
         }
@@ -164,7 +167,7 @@ int levelAbove(const QTextDocument& doc, int number) {
 
 }  // namespace
 
-bool indentListItems(QTextDocument& doc, QTextCursor& cursor) {
+static bool indentListItems(QTextDocument& doc, QTextCursor& cursor) {
     const BlockRange range = selectedBlocks(doc, cursor);
     const QTextBlock first = doc.findBlockByNumber(range.first);
 
@@ -187,7 +190,7 @@ bool indentListItems(QTextDocument& doc, QTextCursor& cursor) {
     return true;
 }
 
-bool outdentListItems(QTextDocument& doc, QTextCursor& cursor) {
+static bool outdentListItems(QTextDocument& doc, QTextCursor& cursor) {
     const BlockRange range = selectedBlocks(doc, cursor);
     const QTextBlock first = doc.findBlockByNumber(range.first);
 
@@ -290,16 +293,54 @@ std::vector<Piece> piecesOfRange(QTextDocument& doc, int from, int to) {
     return selectionPieces(range);
 }
 
-// Логические блоки всего документа. Блок ВЛАДЕЕТ своим текстом, поэтому
+// Логические блоки диапазона. Блок ВЛАДЕЕТ своим текстом, поэтому
 // переставлять, резать и склеивать их можно как обычные значения — ни арены,
 // ни смещений, ни переноса байтов между документами.
-std::vector<Piece> piecesOf(const QTextDocument& doc) {
+//
+// ДИАПАЗОНОМ, А НЕ ДОКУМЕНТОМ ЦЕЛИКОМ: правка трогает несколько блоков, и
+// платить за неё размером заметки нельзя.
+std::vector<Piece> piecesOfBlocks(const QTextDocument& doc, int firstBlock, int lastBlock) {
     std::vector<Piece> out;
-    walkPieces(doc, [&](const Piece& piece) {
-        out.push_back(piece);
-        return true;
-    });
+    walkPieces(
+        doc,
+        [&out](const Piece& piece) {
+            out.push_back(piece);
+            return true;
+        },
+        firstBlock, lastBlock);
     return out;
+}
+
+// Сколько QTextBlock займёт этот логический блок: литеральный лежит построчно,
+// остальные — одним блоком. Правило то же, что у сборщика (splitLiteralLines):
+// один завершающий перевод строки не начинает новой строки.
+int docBlocksOf(const Piece& piece) {
+    if (!piece.raw && piece.kind != Kind::Code) return 1;
+    std::string_view body = piece.text;
+    if (!body.empty() && body.back() == '\n') body.remove_suffix(1);
+    int lines = 1;
+    for (char c : body)
+        if (c == '\n') ++lines;
+    return lines;
+}
+
+int docBlocksOf(const std::vector<Piece>& pieces) {
+    int count = 0;
+    for (const Piece& piece : pieces) count += docBlocksOf(piece);
+    return count;
+}
+
+// Границы ЛОГИЧЕСКОГО блока по номеру любой его строки.
+int wholeBlockStart(const QTextDocument& doc, int number) {
+    while (number > 0 && isContinuationBlock(doc.findBlockByNumber(number))) --number;
+    return number;
+}
+
+int wholeBlockEnd(const QTextDocument& doc, int number) {
+    while (number + 1 < doc.blockCount() &&
+           isContinuationBlock(doc.findBlockByNumber(number + 1)))
+        ++number;
+    return number;
 }
 
 // Блок кода из готовых байтов. Завершающий перевод строки лежит и в тексте, и
@@ -374,62 +415,78 @@ std::string spacesForProse(std::string_view text) {
     return out;
 }
 
-MoveResult toggleCodeBlock(QTextDocument& doc, const QTextCursor& cursor) {
-    std::vector<Piece> ir = piecesOf(doc);
-    if (ir.empty()) return {};
+// Выделенное — в блок кода и обратно. Блоки диапазона отдаются вызывающему
+// вместе с его границами: положить их обратно — дело заметки.
+//
+// РАБОТАЕТ ТОЛЬКО НАД ДИАПАЗОНОМ. Прежде операция читала логические блоки ВСЕГО
+// документа и возвращала его целиком; заметка потом собирала его заново. Теперь
+// и читается, и собирается только выделенное с его блоками.
+struct CodeBlockEdit {
+    bool done = false;
+    int firstBlock = 0;         // границы в номерах QTextBlock
+    int lastBlock = 0;
+    std::vector<Piece> blocks;  // чем этот диапазон становится
+    int landed = 0;             // номер блока, куда встать каретке
+};
 
-    // Границы выделения в номерах ЛОГИЧЕСКИХ блоков: в документе литеральный
-    // блок лежит построчно, и номера блоков документа с ними не совпадают.
+static CodeBlockEdit toggleCodeBlock(QTextDocument& doc, const QTextCursor& cursor) {
     const int start = qMin(cursor.selectionStart(), cursor.selectionEnd());
     const int end = qMax(cursor.selectionStart(), cursor.selectionEnd());
-    int first = irIndexOfBlock(doc.findBlock(start));
-    int last = irIndexOfBlock(doc.findBlock(end));
-    if (first < 0 || last >= int(ir.size()) || first > last) return {};
+
+    // Границы выделения — целыми ЛОГИЧЕСКИМИ блоками: в документе литеральный
+    // блок лежит построчно, и половина блока кода блоком не является.
+    int firstBlock = wholeBlockStart(doc, doc.findBlock(start).blockNumber());
+    int lastBlock = wholeBlockEnd(doc, doc.findBlock(end).blockNumber());
 
     // Крайние пустые строки выделения — не код: клавиатурное выделение легко
     // цепляет соседний VSpace (Shift+Down с пустой строки или до неё), и без
     // обрезки блок кода съедал отбивку у соседа (поймано владельцем: черта
     // слипалась с забором). Выделение из одних пустых строк — не операция.
-    while (first <= last && !ir[size_t(first)].raw && ir[size_t(first)].kind == Kind::VSpace)
-        ++first;
-    while (last >= first && !ir[size_t(last)].raw && ir[size_t(last)].kind == Kind::VSpace)
-        --last;
-    if (first > last) return {};
+    while (firstBlock <= lastBlock && isVSpaceBlock(doc.findBlockByNumber(firstBlock)))
+        ++firstBlock;
+    while (lastBlock >= firstBlock && isVSpaceBlock(doc.findBlockByNumber(lastBlock)))
+        lastBlock = wholeBlockStart(doc, lastBlock - 1);
+    if (firstBlock > lastBlock) return {};
+
+    const QTextBlock headBlock = doc.findBlockByNumber(firstBlock);
+    const QTextBlock tailBlock = doc.findBlockByNumber(lastBlock);
+    if (!headBlock.isValid() || !tailBlock.isValid()) return {};
 
     // Позиции выделения — в пределы обрезанного диапазона: край, стоявший на
     // пустой строке, иначе продолжал бы командовать разниманием ниже.
-    const int selStart = qMax(start, blockForIrIndex(doc, first).position());
-    QTextBlock lastDocBlock = blockForIrIndex(doc, last);
-    while (lastDocBlock.next().isValid() && irIndexOfBlock(lastDocBlock.next()) == last)
-        lastDocBlock = lastDocBlock.next();
-    const int selEnd = qMin(end, lastDocBlock.position() + lastDocBlock.length() - 1);
+    const int selStart = qMax(start, headBlock.position());
+    const int selEnd = qMin(end, tailBlock.position() + tailBlock.length() - 1);
 
     // Абзац с мягкими переносами — один блок, а выделить в нём человек может
     // несколько строк из многих. Тогда блок надо разнять: что осталось снаружи,
     // остаётся как было. Границы притягиваются к краям строк.
-    const QTextBlock firstBlock = doc.findBlock(selStart);
-    const QTextBlock lastBlock = doc.findBlock(selEnd);
+    const QTextBlock firstDocBlock = doc.findBlock(selStart);
+    const QTextBlock lastDocBlock = doc.findBlock(selEnd);
     const int lineStart = lineStartAt(doc, selStart);
     // Конец выделения ровно на начале строки: эту строку человек не выделял, и
     // тянуть её в блок кода незачем.
     const int lineEnd = (selEnd > selStart && selEnd == lineStartAt(doc, selEnd))
                             ? selEnd - 1
                             : lineEndAt(doc, selEnd);
-    const int blockEnd = lastBlock.position() + lastBlock.length() - 1;
+    const int blockEnd = lastDocBlock.position() + lastDocBlock.length() - 1;
+
+    CodeBlockEdit out;
+    out.firstBlock = firstBlock;
+    out.lastBlock = lastBlock;
 
     // Разделители строк на срезах в куски не берём: иначе оставшийся кусок
     // кончался бы пустой строкой, а она блок заканчивает.
-    const std::vector<Piece> head = piecesOfRange(
-        doc, firstBlock.position(), lineStart > firstBlock.position() ? lineStart - 1 : lineStart);
+    const std::vector<Piece> head =
+        piecesOfRange(doc, firstDocBlock.position(),
+                      lineStart > firstDocBlock.position() ? lineStart - 1 : lineStart);
     const std::vector<Piece> tail =
         piecesOfRange(doc, lineEnd < blockEnd ? lineEnd + 1 : lineEnd, blockEnd);
     const std::vector<Piece> chosen = piecesOfRange(doc, lineStart, lineEnd);
     if (!head.empty() || !tail.empty()) {
         if (chosen.empty()) return {};
-        std::vector<Piece> result(ir.begin(), ir.begin() + first);
         // Куски приехали из отдельных документов, но блок владеет своим
         // текстом — переносить байты некуда, обычное копирование значения.
-        result.insert(result.end(), head.begin(), head.end());
+        std::vector<Piece> result(head.begin(), head.end());
 
         std::string code;
         for (const Piece& piece : chosen) {
@@ -437,33 +494,32 @@ MoveResult toggleCodeBlock(QTextDocument& doc, const QTextCursor& cursor) {
             code += piece.text;
         }
         if (!code.empty() && code.back() != '\n') code.push_back('\n');
+        out.landed = firstBlock + docBlocksOf(result);
         result.push_back(codePiece(spacesForCode(code)));
-
-        const int landed = int(result.size()) - 1;
         result.insert(result.end(), tail.begin(), tail.end());
-        result.insert(result.end(), ir.begin() + last + 1, ir.end());
 
-        MoveResult moved;
-        moved.done = true;
-        moved.blocks = std::move(result);
-        moved.irBlock = landed;
-        return moved;
+        out.done = true;
+        out.blocks = std::move(result);
+        return out;
     }
 
+    const std::vector<Piece> selected = piecesOfBlocks(doc, firstBlock, lastBlock);
+    if (selected.empty()) return {};
+
     // Дословные куски не трогаем вовсе: их текст выводится как есть.
-    for (int i = first; i <= last; ++i)
-        if (ir[size_t(i)].raw) return {};
+    for (const Piece& piece : selected)
+        if (piece.raw) return {};
 
     bool allCode = true;
-    for (int i = first; i <= last; ++i)
-        if (ir[size_t(i)].kind != Kind::Code) allCode = false;
+    for (const Piece& piece : selected)
+        if (piece.kind != Kind::Code) allCode = false;
 
-    std::vector<Piece> result(ir.begin(), ir.begin() + first);
+    std::vector<Piece> result;
     if (allCode) {
         // Обратный ход: каждая строка кода становится строкой обычного текста.
         // Один блок кода — один абзац: переводы строк внутри абзаца жить умеют.
-        for (int i = first; i <= last; ++i) {
-            std::string_view body = ir[size_t(i)].text;
+        for (const Piece& piece : selected) {
+            std::string_view body = piece.text;
             while (!body.empty() && body.back() == '\n') body.remove_suffix(1);
             Piece plain;
             plain.text = spacesForProse(body);
@@ -471,24 +527,33 @@ MoveResult toggleCodeBlock(QTextDocument& doc, const QTextCursor& cursor) {
         }
     } else {
         std::string code;
-        for (int i = first; i <= last; ++i) {
+        for (const Piece& piece : selected) {
             if (!code.empty()) code.push_back('\n');
-            code += ir[size_t(i)].text;
+            code += piece.text;
         }
         if (!code.empty() && code.back() != '\n') code.push_back('\n');
         result.push_back(codePiece(spacesForCode(code)));
     }
-    const int landed = int(result.size()) - 1;
-    result.insert(result.end(), ir.begin() + last + 1, ir.end());
-
-    MoveResult moved;
-    moved.done = true;
-    moved.blocks = std::move(result);
-    moved.irBlock = landed;
-    return moved;
+    out.landed = firstBlock;
+    out.done = true;
+    out.blocks = std::move(result);
+    return out;
 }
 
-MoveResult moveListItem(const QTextDocument& doc, const QTextCursor& cursor, int direction) {
+// Пункт меняется местами с соседом того же уровня, вместе с поддеревьями.
+// Тоже только над диапазоном: двигаются два поддерева и пустая строка между
+// ними, и больше ничего документ не касается.
+struct MoveEdit {
+    bool done = false;
+    int firstBlock = 0;
+    int lastBlock = 0;
+    std::vector<Piece> blocks;
+    int landed = 0;          // номер блока, куда переехала каретка
+    int offsetInBlock = 0;
+};
+
+static MoveEdit moveListItem(const QTextDocument& doc, const QTextCursor& cursor,
+                             int direction) {
     const QTextBlock block = cursor.block();
     if (!isListBlock(block)) return {};
 
@@ -496,45 +561,40 @@ MoveResult moveListItem(const QTextDocument& doc, const QTextCursor& cursor, int
     const int sibling = direction < 0 ? previousSibling(doc, number) : nextSibling(doc, number);
     if (sibling < 0) return {};
 
-    // Оба куска — пункт с поддеревом; в IR они лежат подряд, потому что
-    // списочные блоки один к одному с блоками IR. Между ними может стоять
-    // пустая строка — просторный список тоже список.
     const bool selfIsUpper = direction > 0;
     const int upperFirst = selfIsUpper ? number : sibling;
     const int lowerFirst = selfIsUpper ? sibling : number;
     const int upperLast = subtreeEnd(doc, upperFirst);
     const int lowerLast = subtreeEnd(doc, lowerFirst);
-
-    const int firstIr = irIndexOfBlock(doc.findBlockByNumber(upperFirst));
-    const int upperSize = upperLast - upperFirst + 1;
-    const int gapSize = lowerFirst - upperLast - 1;
-    const int lowerSize = lowerLast - lowerFirst + 1;
-    const int wholeSize = upperSize + gapSize + lowerSize;
-
-    MoveResult result;
-    result.blocks = piecesOf(doc);
-    if (firstIr < 0 || firstIr + wholeSize > int(result.blocks.size())) return {};
+    if (upperLast + 1 > lowerFirst) return {};
 
     // Пункты меняются местами, а пустая строка остаётся на месте: она
     // принадлежит стыку, а не пункту, и уехав с ним, порвала бы список там, где
     // человек ничего не трогал.
-    const auto begin = result.blocks.begin() + firstIr;
-    std::vector<Piece> reordered;
-    reordered.reserve(size_t(wholeSize));
-    reordered.insert(reordered.end(), begin + upperSize + gapSize, begin + wholeSize);
-    reordered.insert(reordered.end(), begin + upperSize, begin + upperSize + gapSize);
-    reordered.insert(reordered.end(), begin, begin + upperSize);
-    std::move(reordered.begin(), reordered.end(), begin);
+    const std::vector<Piece> upper = piecesOfBlocks(doc, upperFirst, upperLast);
+    const std::vector<Piece> gap = upperLast + 1 <= lowerFirst - 1
+                                       ? piecesOfBlocks(doc, upperLast + 1, lowerFirst - 1)
+                                       : std::vector<Piece>{};
+    const std::vector<Piece> lower = piecesOfBlocks(doc, lowerFirst, lowerLast);
+    if (upper.empty() || lower.empty()) return {};
 
-    // Место, куда переехал сам пункт: верхний уходит за пустую строку и соседа,
-    // нижний встаёт в самое начало.
-    const int selfIr = irIndexOfBlock(block);
-    const int selfStartIr = firstIr + (selfIsUpper ? 0 : upperSize + gapSize);
-    const int landedIr = selfIsUpper ? firstIr + lowerSize + gapSize : firstIr;
-    result.irBlock = landedIr + (selfIr - selfStartIr);
-    result.offsetInBlock = cursor.positionInBlock();
-    result.done = true;
-    return result;
+    MoveEdit out;
+    out.firstBlock = upperFirst;
+    out.lastBlock = lowerLast;
+    out.blocks.insert(out.blocks.end(), lower.begin(), lower.end());
+    out.blocks.insert(out.blocks.end(), gap.begin(), gap.end());
+    out.blocks.insert(out.blocks.end(), upper.begin(), upper.end());
+
+    // Куда уехал сам пункт: верхний уходит за пустую строку и соседа, нижний
+    // встаёт в самое начало. Строки внутри поддерева считаются блоками, а не
+    // логическими блоками: каретка стоит в конкретной строке.
+    const int selfStart = selfIsUpper ? upperFirst : lowerFirst;
+    const int newSelfStart =
+        selfIsUpper ? upperFirst + docBlocksOf(lower) + docBlocksOf(gap) : upperFirst;
+    out.landed = newSelfStart + (number - selfStart);
+    out.offsetInBlock = cursor.positionInBlock();
+    out.done = true;
+    return out;
 }
 
 namespace {
@@ -836,7 +896,7 @@ std::vector<Piece> selectionPieces(const QTextCursor& cursor) {
         fix.setBlockFormat(first.blockFormat());
     }
 
-    std::vector<Piece> ir = piecesOf(temp);
+    std::vector<Piece> ir = piecesOfBlocks(temp, 0, temp.blockCount() - 1);
 
     // Выделение, кончающееся ровно на начале блока, этого блока не захватывает:
     // человек довёл до него курсор, но не выделял. Qt всё равно кладёт во
@@ -870,7 +930,7 @@ QString selectionToMarkdown(const QTextCursor& cursor) {
     return QString::fromUtf8(text.data(), qsizetype(text.size()));
 }
 
-bool applyInputRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+static bool applyInputRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const QTextBlock block = cursor.block();
     if (isRawBlock(block) || kindOf(block) == Kind::Code) return false;
 
@@ -956,7 +1016,7 @@ bool applyInputRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     return true;
 }
 
-bool applyCodeSpanRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+static bool applyCodeSpanRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const QTextBlock block = cursor.block();
     if (isRawBlock(block) || kindOf(block) == Kind::Code) return false;
 
@@ -1004,19 +1064,19 @@ bool applyCodeSpanRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     return true;
 }
 
-bool toggleBold(QTextDocument& doc, QTextCursor& cursor) {
+static bool toggleBold(QTextDocument& doc, QTextCursor& cursor) {
     return toggleInlineStyle(doc, cursor, SpanBold);
 }
 
-bool toggleCode(QTextDocument& doc, QTextCursor& cursor) {
+static bool toggleCode(QTextDocument& doc, QTextCursor& cursor) {
     return toggleInlineStyle(doc, cursor, SpanCode);
 }
 
-bool toggleItalic(QTextDocument& doc, QTextCursor& cursor) {
+static bool toggleItalic(QTextDocument& doc, QTextCursor& cursor) {
     return toggleInlineStyle(doc, cursor, SpanItalic);
 }
 
-bool toggleStrike(QTextDocument& doc, QTextCursor& cursor) {
+static bool toggleStrike(QTextDocument& doc, QTextCursor& cursor) {
     return toggleInlineStyle(doc, cursor, SpanStrike);
 }
 
@@ -1058,12 +1118,12 @@ bool toggleMath(QTextCursor& cursor, const QString& fence, bool wholeBlock) {
 
 }  // namespace
 
-bool toggleInlineMath(QTextDocument& doc, QTextCursor& cursor) {
+static bool toggleInlineMath(QTextDocument& doc, QTextCursor& cursor) {
     Q_UNUSED(doc);
     return toggleMath(cursor, QStringLiteral("$"), false);
 }
 
-bool toggleDisplayMath(QTextDocument& doc, QTextCursor& cursor) {
+static bool toggleDisplayMath(QTextDocument& doc, QTextCursor& cursor) {
     Q_UNUSED(doc);
     // Пустой абзац выключной формулой не делаем: получились бы четыре доллара
     // и ничего между ними.
@@ -1071,7 +1131,7 @@ bool toggleDisplayMath(QTextDocument& doc, QTextCursor& cursor) {
     return toggleMath(cursor, QStringLiteral("$$"), true);
 }
 
-QTextCharFormat inlineStyleForTyping(const QTextBlock& block, const QTextCharFormat& current,
+static QTextCharFormat inlineStyleForTyping(const QTextBlock& block, const QTextCharFormat& current,
                                      int style) {
     const int now = current.intProperty(SpanStyleProperty);
     const int next = (now & style) != 0 ? (now & ~style) : (now | style);
@@ -1084,15 +1144,15 @@ QTextCharFormat inlineStyleForTyping(const QTextBlock& block, const QTextCharFor
     return format;
 }
 
-bool makeBullet(QTextDocument& doc, QTextCursor& cursor) {
+static bool makeBullet(QTextDocument& doc, QTextCursor& cursor) {
     return setBlockKind(doc, cursor, {Kind::ListItem, Marker::Bullet, false});
 }
 
-bool makeOrdered(QTextDocument& doc, QTextCursor& cursor) {
+static bool makeOrdered(QTextDocument& doc, QTextCursor& cursor) {
     return setBlockKind(doc, cursor, {Kind::ListItem, Marker::Ordered, false});
 }
 
-bool makeTask(QTextDocument& doc, QTextCursor& cursor) {
+static bool makeTask(QTextDocument& doc, QTextCursor& cursor) {
     return setBlockKind(doc, cursor, {Kind::ListItem, Marker::Task, false});
 }
 
@@ -1145,7 +1205,7 @@ int isolateLines(QTextDocument& doc, QTextCursor& edit, const QTextBlock& block,
     return doc.findBlock(start).blockNumber();
 }
 
-bool setHeadingLevel(QTextDocument& doc, QTextCursor& cursor, int level) {
+static bool setHeadingLevel(QTextDocument& doc, QTextCursor& cursor, int level) {
     BlockRange range = selectedBlocks(doc, cursor);
     level = std::clamp(level, 0, 6);
 
@@ -1209,7 +1269,7 @@ bool setHeadingLevel(QTextDocument& doc, QTextCursor& cursor, int level) {
             format.clearProperty(MarkerProperty);
             format.clearProperty(CheckedProperty);
             format.clearProperty(LevelProperty);
-            format.setLeftMargin(0);
+            format.clearProperty(QTextFormat::BlockLeftMargin);
             format.setProperty(KindProperty, int(Kind::Heading));
             format.setHeadingLevel(level);
         }
@@ -1231,7 +1291,7 @@ bool setHeadingLevel(QTextDocument& doc, QTextCursor& cursor, int level) {
     return any;
 }
 
-bool makeParagraph(QTextDocument& doc, QTextCursor& cursor) {
+static bool makeParagraph(QTextDocument& doc, QTextCursor& cursor) {
     return setBlockKind(doc, cursor, {Kind::Paragraph, Marker::Bullet, false});
 }
 
@@ -1262,7 +1322,7 @@ bool rewriteImageRef(QTextCursor& cursor, const QTextBlock& block, const BlockIm
 
 }  // namespace
 
-bool setImageWidthAtCursor(QTextDocument& doc, QTextCursor& cursor, int width) {
+static bool setImageWidthAtCursor(QTextDocument& doc, QTextCursor& cursor, int width) {
     Q_UNUSED(doc);
     const QTextBlock block = cursor.block();
     BlockImageRef ref = blockImageRef(block);
@@ -1272,7 +1332,7 @@ bool setImageWidthAtCursor(QTextDocument& doc, QTextCursor& cursor, int width) {
     return rewriteImageRef(cursor, block, ref);
 }
 
-bool setImageAlignAtCursor(QTextDocument& doc, QTextCursor& cursor, ImageAlign align) {
+static bool setImageAlignAtCursor(QTextDocument& doc, QTextCursor& cursor, ImageAlign align) {
     Q_UNUSED(doc);
     const QTextBlock block = cursor.block();
     BlockImageRef ref = blockImageRef(block);
@@ -1315,7 +1375,7 @@ void removeTextLine(QTextCursor& edit, const QTextBlock& block) {
     }
 }
 
-bool cutImageLineAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+static bool cutImageLineAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     Q_UNUSED(doc);
     const QTextBlock block = cursor.block();
     if (!blockImageRef(block).valid) return false;
@@ -1334,7 +1394,7 @@ bool cutImageLineAtCursor(QTextDocument& doc, QTextCursor& cursor) {
 //
 // Это же закрывает «за последней картинкой некуда встать»: нажал Enter —
 // получил строку.
-bool newLineAfterImage(QTextDocument& doc, QTextCursor& cursor) {
+static bool newLineAfterImage(QTextDocument& doc, QTextCursor& cursor) {
     Q_UNUSED(doc);
     if (cursor.hasSelection()) return false;
     const QTextBlock photo = cursor.block();
@@ -1347,7 +1407,7 @@ bool newLineAfterImage(QTextDocument& doc, QTextCursor& cursor) {
     return true;
 }
 
-bool deleteImageLineBackward(QTextDocument& doc, QTextCursor& cursor) {
+static bool deleteImageLineBackward(QTextDocument& doc, QTextCursor& cursor) {
     Q_UNUSED(doc);
     if (cursor.hasSelection() || !cursor.atBlockStart()) return false;
     const QTextBlock photo = cursor.block().previous();
@@ -1359,7 +1419,7 @@ bool deleteImageLineBackward(QTextDocument& doc, QTextCursor& cursor) {
     return true;
 }
 
-bool deleteImageLineForward(QTextDocument& doc, QTextCursor& cursor) {
+static bool deleteImageLineForward(QTextDocument& doc, QTextCursor& cursor) {
     Q_UNUSED(doc);
     if (cursor.hasSelection()) return false;
     const QTextBlock block = cursor.block();
@@ -1457,7 +1517,7 @@ QVector<QTextBlock> touchedCodeLines(const QTextDocument& doc, const QTextCursor
 
 }  // namespace
 
-QString sanitiseCodeLanguage(QString language) {
+static QString sanitiseCodeLanguage(QString language) {
     // Пробелы и заборы — единственное, что в имени языка сломало бы файл:
     // после забора идёт info-строка, и пробел в ней означает конец имени.
     language.remove(QLatin1Char('`'));
@@ -1465,7 +1525,7 @@ QString sanitiseCodeLanguage(QString language) {
     return language.simplified().remove(QLatin1Char(' '));
 }
 
-bool setCodeLanguage(QTextDocument& doc, QTextCursor& cursor, const QString& language) {
+static bool setCodeLanguage(QTextDocument& doc, QTextCursor& cursor, const QString& language) {
     QTextBlock block = cursor.block();
     if (!isCodeLine(block)) return false;
     while (isContinuationBlock(block) && isCodeLine(block.previous())) block = block.previous();
@@ -1487,7 +1547,7 @@ bool setCodeLanguage(QTextDocument& doc, QTextCursor& cursor, const QString& lan
     return true;
 }
 
-QStringList codeLanguagesNear(const QTextDocument& doc, int blockNumber) {
+static QStringList codeLanguagesNear(const QTextDocument& doc, int blockNumber) {
     struct Found {
         QString name;
         int distance = 0;
@@ -1513,7 +1573,7 @@ QStringList codeLanguagesNear(const QTextDocument& doc, int blockNumber) {
     return out;
 }
 
-bool leaveCodeBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+static bool leaveCodeBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     (void)doc;   // документ берётся у курсора; подпись общая у всех операций
     if (!isCodeLine(cursor.block())) return false;
 
@@ -1528,7 +1588,7 @@ bool leaveCodeBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     return true;
 }
 
-bool indentCodeAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+static bool indentCodeAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const QVector<QTextBlock> lines = touchedCodeLines(doc, cursor);
     if (lines.isEmpty()) return false;
     const int width = codeTabWidth();
@@ -1572,7 +1632,7 @@ bool indentCodeAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     return true;
 }
 
-bool outdentCodeAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+static bool outdentCodeAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const QVector<QTextBlock> lines = touchedCodeLines(doc, cursor);
     if (lines.isEmpty()) return false;
     const int width = codeTabWidth();
@@ -1609,7 +1669,7 @@ bool outdentCodeAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     return true;
 }
 
-bool toggleCommentAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+static bool toggleCommentAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const int from = qMin(cursor.anchor(), cursor.position());
     const int to = qMax(cursor.anchor(), cursor.position());
     const QTextBlock block = doc.findBlock(from);
@@ -1709,14 +1769,14 @@ bool toggleCommentAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     return setBlockKind(doc, cursor, {Kind::Html, Marker::Bullet, false});
 }
 
-bool uncommentAtBlockStart(QTextDocument& doc, QTextCursor& cursor) {
+static bool uncommentAtBlockStart(QTextDocument& doc, QTextCursor& cursor) {
     if (!cursor.atBlockStart() || cursor.hasSelection()) return false;
     const QTextBlock block = cursor.block();
     if (!block.isValid() || isRawBlock(block) || kindOf(block) != Kind::Html) return false;
     return setBlockKind(doc, cursor, {Kind::Paragraph, Marker::Bullet, false});
 }
 
-bool toggleTaskAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+static bool toggleTaskAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const BlockRange range = selectedBlocks(doc, cursor);
 
     // Направление задаёт первая задача выделения: остальные идут за ней.
@@ -1814,7 +1874,9 @@ bool acceptsSoftBreak(const QTextBlock& block) {
 
 }  // namespace
 
-bool splitBlockOtherwiseAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+static bool splitBlockAtCursor(QTextDocument& doc, QTextCursor& cursor);
+
+static bool splitBlockOtherwiseAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const QTextBlock block = cursor.block();
     // Где Enter переносит строку — режем; где заводит блок — переносим.
     if (!isRawBlock(block) && kindOf(block) == Kind::Paragraph) return hardSplit(doc, cursor);
@@ -1850,7 +1912,7 @@ bool lastLineOfLiteral(const QTextBlock& block) {
 
 }  // namespace
 
-bool splitBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+static bool splitBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const QTextBlock block = cursor.block();
 
     // Три кавычки и Enter заводят блок кода — так его и пишут в файле. Язык за
@@ -1952,7 +2014,7 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
         next.clearProperty(MarkerProperty);
         next.clearProperty(CheckedProperty);
         next.clearProperty(LevelProperty);
-        next.setLeftMargin(0);
+        next.clearProperty(QTextFormat::BlockLeftMargin);
 
         cursor.beginEditBlock();
         cursor.setPosition(block.position());
@@ -2122,7 +2184,7 @@ namespace {
 void joinWithNext(QTextDocument& doc, QTextCursor& edit, int number);
 }  // namespace
 
-bool unwrapListItemAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+static bool unwrapListItemAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     if (cursor.hasSelection() || !cursor.atBlockStart()) return false;
     const QTextBlock block = cursor.block();
     if (!isListBlock(block)) return false;
@@ -2156,7 +2218,7 @@ bool unwrapListItemAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     QTextBlockFormat plain = block.blockFormat();
     plain.clearProperty(KindProperty);
     plain.clearProperty(LevelProperty);
-    plain.setLeftMargin(0);
+    plain.clearProperty(QTextFormat::BlockLeftMargin);
 
     const int number = block.blockNumber();
     cursor.beginEditBlock();
@@ -2300,7 +2362,7 @@ bool removeVSpaceAndMaybeJoin(QTextDocument& doc, QTextCursor& cursor, int gapNu
 
 }  // namespace
 
-bool deleteDividerAbove(QTextDocument& doc, QTextCursor& cursor) {
+static bool deleteDividerAbove(QTextDocument& doc, QTextCursor& cursor) {
     if (cursor.hasSelection() || !cursor.atBlockStart()) return false;
     const QTextBlock prev = cursor.block().previous();
     if (!prev.isValid() || isRawBlock(prev) || kindOf(prev) != Kind::Divider) return false;
@@ -2322,7 +2384,7 @@ bool deleteDividerAbove(QTextDocument& doc, QTextCursor& cursor) {
     return true;
 }
 
-bool applyDividerRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
+static bool applyDividerRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const QTextBlock block = cursor.block();
     if (isRawBlock(block) || kindOf(block) != Kind::Paragraph) return false;
     if (levelOf(block) >= 0) return false;      // в списке дефисы — текст
@@ -2356,7 +2418,7 @@ bool applyDividerRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
         QTextBlockFormat divider = block.blockFormat();
         divider.setProperty(KindProperty, int(Kind::Divider));
         divider.clearProperty(LevelProperty);
-        divider.setLeftMargin(0);
+        divider.clearProperty(QTextFormat::BlockLeftMargin);
         edit.setBlockFormat(divider);
         dividerBlock = block;
     } else {
@@ -2372,7 +2434,7 @@ bool applyDividerRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
         QTextBlockFormat divider = edit.blockFormat();
         divider.setProperty(KindProperty, int(Kind::Divider));
         divider.clearProperty(LevelProperty);
-        divider.setLeftMargin(0);
+        divider.clearProperty(QTextFormat::BlockLeftMargin);
         edit.setBlockFormat(divider);
         dividerBlock = edit.block();
     }
@@ -2396,7 +2458,7 @@ bool applyDividerRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     return true;
 }
 
-bool repairAfterTyping(QTextDocument& doc, QTextCursor& cursor) {
+static bool repairAfterTyping(QTextDocument& doc, QTextCursor& cursor) {
     const QTextBlock block = cursor.block();
     const int number = block.blockNumber();
     // Набрали прямо на пустой строке или на черте: тем, чем были, они быть
@@ -2446,7 +2508,7 @@ bool repairAfterTyping(QTextDocument& doc, QTextCursor& cursor) {
         QTextBlockFormat format = block.blockFormat();
         format.clearProperty(KindProperty);
         format.clearProperty(LevelProperty);
-        format.setLeftMargin(0);
+        format.clearProperty(QTextFormat::BlockLeftMargin);
         setBlockFormat(edit, block, format);
     }
 
@@ -2469,7 +2531,7 @@ bool repairAfterTyping(QTextDocument& doc, QTextCursor& cursor) {
     return true;
 }
 
-bool joinAcrossVSpaceBackward(QTextDocument& doc, QTextCursor& cursor) {
+static bool joinAcrossVSpaceBackward(QTextDocument& doc, QTextCursor& cursor) {
     if (cursor.hasSelection() || !cursor.atBlockStart()) return false;
     const QTextBlock block = cursor.block();
     // Курсор стоит на самой пустой строке: Backspace убирает её и уводит курсор
@@ -2483,7 +2545,7 @@ bool joinAcrossVSpaceBackward(QTextDocument& doc, QTextCursor& cursor) {
     return removeVSpaceAndMaybeJoin(doc, cursor, gap.blockNumber(), true);
 }
 
-bool joinAcrossVSpaceForward(QTextDocument& doc, QTextCursor& cursor) {
+static bool joinAcrossVSpaceForward(QTextDocument& doc, QTextCursor& cursor) {
     if (cursor.hasSelection() || !cursor.atBlockEnd()) return false;
     const QTextBlock block = cursor.block();
     // На самой пустой строке Delete подтягивает следующую наверх — то же
@@ -2652,7 +2714,7 @@ void syncLists(QTextDocument& doc, BlockRange range) {
             if (block.blockFormat().hasProperty(LevelProperty)) {
                 QTextBlockFormat format = block.blockFormat();
                 format.clearProperty(LevelProperty);
-                format.setLeftMargin(0);
+                format.clearProperty(QTextFormat::BlockLeftMargin);
                 setBlockFormat(cursor, block, format);
             }
             continue;   // просторный список — тот же список
@@ -2670,7 +2732,7 @@ void syncLists(QTextDocument& doc, BlockRange range) {
             QTextBlockFormat format = block.blockFormat();
             if (deepest < 0) {
                 format.clearProperty(LevelProperty);
-                format.setLeftMargin(0);
+                format.clearProperty(QTextFormat::BlockLeftMargin);
             } else {
                 format.setProperty(LevelProperty, deepest);
             }
@@ -2720,6 +2782,13 @@ void insertVSpaceBefore(QTextDocument& doc, int number) {
     QTextCursor fix(&doc);
     fix.setPosition(doc.findBlockByNumber(number).position());
     fix.setBlockFormat(vspaceBlockFormat(false, number == 0));
+    // И ФОРМАТ ЗНАКОВ ТОЖЕ ЧИСТЫЙ. Разрез копирует его у соседа, а сосед бывает
+    // блоком кода — и пустая строка оставалась набранной моноширинным шрифтом.
+    // Пока после каждой операции шла полная пересборка, это чинилось само;
+    // теперь пересборки нет, и поймала сверка со сборкой.
+    QTextCharFormat plain;
+    setFontStep(plain, 0);
+    fix.setBlockCharFormat(plain);
 }
 
 }  // namespace
@@ -2745,7 +2814,7 @@ int syncGaps(QTextDocument& doc, BlockRange range) {
             QTextBlockFormat format = block.blockFormat();
             format.clearProperty(KindProperty);
             format.clearProperty(LevelProperty);
-            format.setLeftMargin(0);
+            format.clearProperty(QTextFormat::BlockLeftMargin);
             // И СЛЕДЫ ПУСТОЙ СТРОКИ. Её формат ставит нижнее поле и высоту
             // строки ЯВНО (vspaceBlockFormat), а у обычного блока сборщик их не
             // ставит вовсе — и оставленные следы делали блок непохожим на
@@ -2855,6 +2924,42 @@ QString tidyProblem(const QTextDocument& doc, const QTextCursor& caret) {
     return {};
 }
 
+int splitLiteralSoftBreaks(QTextDocument& doc, BlockRange range) {
+    int added = 0;
+    QTextCursor edit(&doc);
+    edit.beginEditBlock();
+    for (int i = qMax(0, range.first); i <= range.last && i < doc.blockCount(); ++i) {
+        const QTextBlock block = doc.findBlockByNumber(i);
+        if (!block.isValid()) break;
+        if (!isRawBlock(block) && kindOf(block) != Kind::Code) continue;
+        const int at = block.text().indexOf(QChar::LineSeparator);
+        if (at < 0) continue;
+
+        // Строка после переноса — блок-продолжение; верхнее поле ей пересчитает
+        // шов. Признак завершающего перевода строки уезжает на последнюю
+        // строку: он про конец блока, а не про конец первой его строки.
+        QTextBlockFormat head = block.blockFormat();
+        QTextBlockFormat tail = head;
+        tail.setProperty(ContinuationProperty, true);
+        tail.setTopMargin(0);
+        head.clearProperty(TrailingNewlineProperty);
+
+        QTextCursor fix(&doc);
+        fix.setPosition(block.position());
+        fix.setBlockFormat(head);
+
+        edit.setPosition(block.position() + at);
+        edit.setPosition(block.position() + at + 1, QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+        edit.insertBlock(tail, block.charFormat());
+        ++added;
+        ++range.last;
+        // Следующая строка стала блоком i+1 и попадёт под тот же цикл сама.
+    }
+    edit.endEditBlock();
+    return added;
+}
+
 void syncLiteralBlocks(QTextDocument& doc, BlockRange range) {
     const int count = doc.blockCount();
     const int first = qBound(0, range.first, count - 1);
@@ -2929,5 +3034,524 @@ bool listInvariantHolds(const QTextDocument& doc, QString* problem) {
     }
     return true;
 }
+
+
+// --- ГЛАГОЛЫ ЗАМЕТКИ --------------------------------------------------------
+//
+// Всё, что выше, — РАЗМЕТКА БЛОКОВ: местные функции этого файла, наружу не
+// выходящие. Наружу выходит только то, что ниже, — глаголы самой заметки.
+// Второго входа в правку не бывает: у каждой операции ровно один публичный вид,
+// и он метод ZDocument.
+//
+// Скобку отмены, пересборку тронутого и шов держит runLocalEdit (document_edit.cpp);
+// здесь остаётся только то, ЧТО делает операция.
+
+namespace {
+
+int bitsOf(ZDocument::Style style) {
+    switch (style) {
+        case ZDocument::Style::Bold: return SpanBold;
+        case ZDocument::Style::Italic: return SpanItalic;
+        case ZDocument::Style::Strike: return SpanStrike;
+        case ZDocument::Style::Code: return SpanCode;
+    }
+    return 0;
+}
+
+
+}  // namespace
+
+
+// --- НАБОР, ENTER, BACKSPACE ------------------------------------------------
+//
+// Их объединяет одно: они НЕ ходят через markdown. Обычный ввод — решение
+// владельца («через разбор идут только структурные операции»), а Enter и
+// Backspace структурны по существу: режут и склеивают блоки, а не переписывают
+// их текст. Заметке они нужны затем, чтобы шов приводился к канону здесь — на
+// месте правки, а не потом обходом всего документа.
+
+bool ZDocument::insertText(QTextCursor& at, const QString& text) {
+    if (at.document() != &d_->text) return false;
+    return insertText(at, text, at.block().charFormat());
+}
+
+bool ZDocument::insertText(QTextCursor& at, const QString& text,
+                           const QTextCharFormat& format) {
+    if (text.isEmpty() && !at.hasSelection()) return false;
+    return runLocalEdit(at, [this, &text, &format](QTextCursor& edit) {
+        if (edit.hasSelection()) edit.removeSelectedText();
+        if (!text.isEmpty()) edit.insertText(text, format);
+
+        // НАБОР ЛОМАЕТ ИНВАРИАНТЫ ДВУМЯ СПОСОБАМИ: текстом на пустой строке (она
+        // перестаёт быть пустой) и выделением, съевшим границу блоков (рядом
+        // оказываются соседи, которых markdown раздельно не выражает). Чиним
+        // здесь же, в той же скобке правки, — а не потом и не по всему документу.
+        QTextCursor repair(edit);
+        if (repairAfterTyping(d_->text, repair)) edit = repair;
+        return true;
+    });
+}
+
+bool ZDocument::breakBlock(QTextCursor& at, BreakKind kind) {
+    return runLocalEdit(at, [this, kind](QTextCursor& edit) {
+        switch (kind) {
+            case BreakKind::Plain:
+                // Порядок важен и взят у прежнего обработчика: сперва объект
+                // (фотография — атом), потом правило черты, и только потом
+                // обычный разрез блока.
+                return newLineAfterImage(d_->text, edit) ||
+                       applyDividerRuleAtCursor(d_->text, edit) ||
+                       splitBlockAtCursor(d_->text, edit);
+            case BreakKind::Otherwise:
+                return splitBlockOtherwiseAtCursor(d_->text, edit);
+            case BreakKind::LeaveCode:
+                return leaveCodeBlockAtCursor(d_->text, edit);
+        }
+        return false;
+    });
+}
+
+bool ZDocument::deleteBack(QTextCursor& at) {
+    return runLocalEdit(at, [this](QTextCursor& edit) {
+        // Жесты, у которых своё правило: снять комментарность, снять пункт,
+        // убрать черту над кареткой, склеить через пустую строку, убрать
+        // фотографию целиком.
+        const bool special = uncommentAtBlockStart(d_->text, edit) ||
+                             unwrapListItemAtCursor(d_->text, edit) ||
+                             deleteDividerAbove(d_->text, edit) ||
+                             deleteImageLineBackward(d_->text, edit) ||
+                             joinAcrossVSpaceBackward(d_->text, edit);
+        if (!special) {
+            // НА САМОЙ ЧЕРТЕ УДАЛЯТЬ СЛЕВА НЕЧЕГО. По плоской модели слева от
+            // каретки стоит перевод строки, но черта не живёт в строке текста, и
+            // обычное удаление съело бы не то. Отказываемся — что делать дальше,
+            // решает вызывающий (он уводит каретку в конец строки выше).
+            const QTextBlock here = edit.block();
+            if (!edit.hasSelection() && !isRawBlock(here) && kindOf(here) == Kind::Divider)
+                return false;
+            // Обычное удаление знака. Делаем сами, а не отдаём Qt: тогда починка
+            // шва попадает в тот же шаг отмены, что и само удаление.
+            if (edit.hasSelection()) edit.removeSelectedText();
+            else if (edit.position() > 0) edit.deletePreviousChar();
+            else return false;
+        }
+        QTextCursor repair(edit);
+        if (repairAfterTyping(d_->text, repair)) edit = repair;
+        return true;
+    });
+}
+
+bool ZDocument::deleteForward(QTextCursor& at) {
+    return runLocalEdit(at, [this](QTextCursor& edit) {
+        const bool special = deleteImageLineForward(d_->text, edit) ||
+                             joinAcrossVSpaceForward(d_->text, edit);
+        if (!special) {
+            if (edit.hasSelection()) edit.removeSelectedText();
+            else if (edit.position() < d_->text.characterCount() - 1) edit.deleteChar();
+            else return false;
+        }
+        QTextCursor repair(edit);
+        if (repairAfterTyping(d_->text, repair)) edit = repair;
+        return true;
+    });
+}
+
+// --- НАЧЕРТАНИЕ -------------------------------------------------------------
+
+bool ZDocument::toggleStyle(QTextCursor& at, Style style) {
+    return runLocalEdit(at, [this, style](QTextCursor& edit) {
+        switch (style) {
+            case Style::Bold: return toggleBold(d_->text, edit);
+            case Style::Italic: return toggleItalic(d_->text, edit);
+            case Style::Strike: return toggleStrike(d_->text, edit);
+            case Style::Code: return toggleCode(d_->text, edit);
+        }
+        return false;
+    });
+}
+
+QTextCharFormat ZDocument::styleForTyping(const QTextCursor& at,
+                                          const QTextCharFormat& current, Style style) const {
+    if (at.document() != &d_->text) return current;
+    // В блоке кода и в дословном куске текст буквальный — начертанию там взяться
+    // неоткуда, ровно как и при выделении. Спрашивают об этом заметку, а не
+    // смотрят на блок снаружи: снаружи про блоки кода знать не должны.
+    const QTextBlock block = at.block();
+    if (isRawBlock(block) || kindOf(block) == Kind::Code) return current;
+    return inlineStyleForTyping(block, current, bitsOf(style));
+}
+
+// --- РОД БЛОКА --------------------------------------------------------------
+
+bool ZDocument::setHeadingLevel(QTextCursor& at, int level) {
+    return runLocalEdit(at, [this, level](QTextCursor& edit) {
+        return zametti::setHeadingLevel(d_->text, edit, level);
+    });
+}
+
+bool ZDocument::makeBullet(QTextCursor& at) {
+    return runLocalEdit(at, [this](QTextCursor& edit) {
+        return zametti::makeBullet(d_->text, edit);
+    });
+}
+
+bool ZDocument::makeOrdered(QTextCursor& at) {
+    return runLocalEdit(at, [this](QTextCursor& edit) {
+        return zametti::makeOrdered(d_->text, edit);
+    });
+}
+
+bool ZDocument::makeTask(QTextCursor& at) {
+    return runLocalEdit(at, [this](QTextCursor& edit) {
+        return zametti::makeTask(d_->text, edit);
+    });
+}
+
+bool ZDocument::makeParagraph(QTextCursor& at) {
+    return runLocalEdit(at, [this](QTextCursor& edit) {
+        return zametti::makeParagraph(d_->text, edit);
+    });
+}
+
+bool ZDocument::toggleComment(QTextCursor& at) {
+    return runLocalEdit(at, [this](QTextCursor& edit) {
+        return toggleCommentAtCursor(d_->text, edit);
+    });
+}
+
+bool ZDocument::toggleTask(QTextCursor& at) {
+    return runLocalEdit(at, [this](QTextCursor& edit) {
+        return toggleTaskAtCursor(d_->text, edit);
+    });
+}
+
+// --- АВТОЗАМЕНЫ ПРИ НАБОРЕ --------------------------------------------------
+
+bool ZDocument::applyInputRule(QTextCursor& at) {
+    return runLocalEdit(at, [this](QTextCursor& edit) {
+        return applyInputRuleAtCursor(d_->text, edit);
+    });
+}
+
+bool ZDocument::applyCodeSpanRule(QTextCursor& at) {
+    return runLocalEdit(at, [this](QTextCursor& edit) {
+        return applyCodeSpanRuleAtCursor(d_->text, edit);
+    });
+}
+
+bool ZDocument::applyDividerRule(QTextCursor& at) {
+    return runLocalEdit(at, [this](QTextCursor& edit) {
+        return applyDividerRuleAtCursor(d_->text, edit);
+    });
+}
+
+// --- ФОТОГРАФИЯ -------------------------------------------------------------
+
+bool ZDocument::setImageWidth(QTextCursor& at, int width) {
+    return runLocalEdit(at, [this, width](QTextCursor& edit) {
+        return setImageWidthAtCursor(d_->text, edit, width);
+    });
+}
+
+bool ZDocument::setImageAlign(QTextCursor& at, ImageAlign align) {
+    return runLocalEdit(at, [this, align](QTextCursor& edit) {
+        return setImageAlignAtCursor(d_->text, edit, align);
+    });
+}
+
+bool ZDocument::cutImageLine(QTextCursor& at) {
+    return runLocalEdit(at, [this](QTextCursor& edit) {
+        return cutImageLineAtCursor(d_->text, edit);
+    });
+}
+
+bool ZDocument::deleteImageAbove(QTextCursor& at) {
+    return runLocalEdit(at, [this](QTextCursor& edit) {
+        return deleteImageLineBackward(d_->text, edit);
+    });
+}
+
+bool ZDocument::deleteImageBelow(QTextCursor& at) {
+    return runLocalEdit(at, [this](QTextCursor& edit) {
+        return deleteImageLineForward(d_->text, edit);
+    });
+}
+
+// --- БЛОК КОДА --------------------------------------------------------------
+
+bool ZDocument::setCodeLanguage(QTextCursor& at, const QString& language) {
+    return runLocalEdit(at, [this, language](QTextCursor& edit) {
+        return zametti::setCodeLanguage(d_->text, edit, language);
+    });
+}
+
+QStringList ZDocument::codeLanguagesNear(int blockNumber) const {
+    return zametti::codeLanguagesNear(d_->text, blockNumber);
+}
+
+// --- СЛОЙ ОБЪЕКТОВ ----------------------------------------------------------
+
+bool ZDocument::insertLineAfter(QTextCursor& at, int blockIndex) {
+    return runLocalEdit(at, [this, blockIndex](QTextCursor& edit) {
+        const QTextBlock block = d_->text.findBlockByNumber(blockIndex);
+        if (!block.isValid()) return false;
+        edit.setPosition(block.position() + block.length() - 1);
+        edit.insertBlock(vspaceBlockFormat(false, false), QTextCharFormat());
+        return true;
+    });
+}
+
+bool ZDocument::removeBlocks(QTextCursor& at, int first, int last) {
+    return runLocalEdit(at, [this, first, last](QTextCursor& edit) {
+        const QTextBlock from = d_->text.findBlockByNumber(first);
+        const QTextBlock to = d_->text.findBlockByNumber(last);
+        if (!from.isValid() || !to.isValid()) return false;
+        edit.setPosition(from.position());
+        // Вместе с разделителем блока: иначе от объекта остаётся пустая строка,
+        // которой в файле не было.
+        const int end = qMin(to.position() + to.length(), d_->text.characterCount() - 1);
+        edit.setPosition(end, QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+        return true;
+    });
+}
+
+// --- ЗАМЕНА ПО ВСЕЙ ЗАМЕТКЕ -------------------------------------------------
+
+int ZDocument::replaceAll(const QString& text, bool caseSensitive, const QString& with) {
+    if (text.isEmpty()) return 0;
+    QTextDocument::FindFlags flags;
+    if (caseSensitive) flags |= QTextDocument::FindCaseSensitively;
+
+    int replaced = 0;
+    QTextCursor group(&d_->text);
+    group.beginEditBlock();
+    QTextCursor at(&d_->text);
+    while (true) {
+        at = d_->text.find(text, at, flags);
+        if (at.isNull()) break;
+        at.insertText(with);
+        ++replaced;
+    }
+    if (replaced > 0) {
+        // ШОВ ПО ВСЕЙ ЗАМЕТКЕ — здесь это законно: вхождения рассыпаны по ней
+        // целиком, и дешевле шва на каждое одно на всё.
+        settleSeam(0, d_->text.blockCount() - 1);
+        rebuildRange(0, d_->text.blockCount() - 1);
+    }
+    group.endEditBlock();
+
+#ifndef NDEBUG
+    if (replaced > 0) checkCanonical();
+#endif
+    return replaced;
+}
+
+// --- УБОРКА -----------------------------------------------------------------
+
+bool ZDocument::repairAfterEdit(QTextCursor& at) {
+    if (at.document() != &d_->text) return false;
+    return repairAfterTyping(d_->text, at);
+}
+
+bool ZDocument::tidyRange(int firstBlock, int lastBlock, const QTextCursor& caret) {
+    const int first = qMax(0, firstBlock);
+    const int afterLast = qMin(d_->text.blockCount() - 1, lastBlock);
+
+    const int caretBlock = caret.blockNumber();
+    int caretLine = 0;
+    {
+        const QString text = caret.block().text();
+        for (int i = 0; i < caret.positionInBlock() && i < text.size(); ++i)
+            if (text.at(i) == QChar::LineSeparator) ++caretLine;
+    }
+
+    // Сначала собрать, потом резать с конца: позиции не плывут.
+    std::vector<std::pair<int, int>> cuts;
+    QTextBlock block = d_->text.findBlockByNumber(first);
+    for (int number = first; number <= afterLast && block.isValid();
+         ++number, block = block.next()) {
+        if (isRawBlock(block)) continue;
+        if (kindOf(block) == Kind::Code) continue;
+        const QString text = block.text();
+        int line = 0;
+        int lineStart = 0;
+        for (int i = 0; i <= text.size(); ++i) {
+            if (i != text.size() && text.at(i) != QChar::LineSeparator) continue;
+            if (!(block.blockNumber() == caretBlock && line == caretLine)) {
+                int cut = i;
+                while (cut > lineStart && (text.at(cut - 1) == QLatin1Char(' ') ||
+                                           text.at(cut - 1) == QLatin1Char('\t')))
+                    --cut;
+                if (cut < i) cuts.push_back({block.position() + cut, block.position() + i});
+            }
+            lineStart = i + 1;
+            ++line;
+        }
+    }
+    if (cuts.empty()) return false;
+
+    QTextCursor edit(&d_->text);
+    edit.beginEditBlock();
+    for (auto it = cuts.rbegin(); it != cuts.rend(); ++it) {
+        edit.setPosition(it->first);
+        edit.setPosition(it->second, QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+    }
+    edit.endEditBlock();
+    return true;
+}
+
+bool ZDocument::tidyLine(const QTextCursor& left) {
+    if (left.document() != &d_->text) return false;
+    const QTextBlock block = left.block();
+    if (!block.isValid() || isRawBlock(block)) return false;
+    const Kind kind = kindOf(block);
+    // Пустую строку и черту чистим тоже: на них могли пожить пробелы, пока
+    // каретка там стояла. Не трогаем только код: там хвостовые пробелы —
+    // содержимое.
+    if (kind == Kind::Code) return false;
+
+    const QString text = block.text();
+    // Границы строки, на которой стояла каретка.
+    int from = 0;
+    for (int i = left.positionInBlock() - 1; i >= 0; --i)
+        if (text.at(i) == QChar::LineSeparator) {
+            from = i + 1;
+            break;
+        }
+    int to = text.size();
+    for (int i = left.positionInBlock(); i < text.size(); ++i)
+        if (text.at(i) == QChar::LineSeparator) {
+            to = i;
+            break;
+        }
+    int cut = to;
+    while (cut > from && (text.at(cut - 1) == QLatin1Char(' ') ||
+                          text.at(cut - 1) == QLatin1Char('\t')))
+        --cut;
+    const bool emptied = cut == from;
+    // Пустая ХВОСТОВАЯ строка многострочного блока — мусор от удаления: при
+    // сохранении она затвердела бы в неразрывный пробел. Отрезаем её в
+    // настоящую пустую строку. Серединные пустые не трогаем: ими человек
+    // намеренно отбивает куски внутри блока.
+    const bool tailOfBlock = to == text.size();
+    if (cut == to && !(emptied && tailOfBlock && from > 0)) return false;
+
+    QTextCursor edit(&d_->text);
+    edit.beginEditBlock();
+    if (cut < to) {
+        edit.setPosition(block.position() + cut);
+        edit.setPosition(block.position() + to, QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+    }
+    const QTextBlock after = edit.block();
+    if (emptied && tailOfBlock && from > 0) {
+        // Снять перенос перед опустевшей строкой и завести настоящую пустую
+        // строку после блока.
+        edit.setPosition(block.position() + from - 1);
+        edit.setPosition(block.position() + from, QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+        edit.movePosition(QTextCursor::EndOfBlock);
+        edit.insertBlock(vspaceBlockFormat(false, false));
+        settleSeam(block.blockNumber(), block.blockNumber() + 1);
+    } else if (after.text().isEmpty() && kind == Kind::Paragraph) {
+        // Строка (и весь блок) опустела: это настоящая пустая строка.
+        edit.setBlockFormat(vspaceBlockFormat(
+            after.previous().isValid() && isVSpaceBlock(after.previous()),
+            after.blockNumber() == 0));
+        settleSeam(after.blockNumber(), after.blockNumber());
+    }
+    edit.endEditBlock();
+    return true;
+}
+
+// --- СТОРОЖ СТРОЕНИЯ --------------------------------------------------------
+
+QString ZDocument::structureProblem() const {
+    QString problem;
+    if (!listInvariantHolds(d_->text, &problem)) return QStringLiteral("списки: ") + problem;
+    if (!literalInvariantHolds(d_->text, &problem))
+        return QStringLiteral("продолжения: ") + problem;
+    if (!gapInvariantHolds(d_->text, &problem))
+        return QStringLiteral("пустые строки: ") + problem;
+    return {};
+}
+
+// --- ФОРМУЛА ИЗ-ПОД КЛАВИАТУРЫ ----------------------------------------------
+
+bool ZDocument::toggleInlineMath(QTextCursor& at) {
+    return runLocalEdit(at, [this](QTextCursor& edit) {
+        return zametti::toggleInlineMath(d_->text, edit);
+    });
+}
+
+bool ZDocument::toggleDisplayMath(QTextCursor& at) {
+    return runLocalEdit(at, [this](QTextCursor& edit) {
+        return zametti::toggleDisplayMath(d_->text, edit);
+    });
+}
+
+// --- БЛОК КОДА ИЗ ВЫДЕЛЕНИЯ И ПЕРЕСТАНОВКА ПУНКТОВ --------------------------
+//
+// Обе правки знают, ЧЕМ блоки должны стать, поэтому идут не через
+// runLocalEdit, а прямо через replaceBlocks: пересобирать по их же результату
+// незачем — он уже собран.
+
+bool ZDocument::toggleCodeBlock(QTextCursor& at) {
+    if (at.document() != &d_->text) return false;
+    const CodeBlockEdit edit = zametti::toggleCodeBlock(d_->text, at);
+    if (!edit.done) return false;
+
+    QTextCursor group(&d_->text);
+    group.beginEditBlock();
+    replaceBlocks(edit.firstBlock, edit.lastBlock, edit.blocks);
+    settleSeam(edit.firstBlock, edit.firstBlock + docBlocksOf(edit.blocks));
+    group.endEditBlock();
+
+#ifndef NDEBUG
+    checkCanonical();
+#endif
+    at = caretAtBlock(edit.landed);
+    return true;
+}
+
+bool ZDocument::moveListItem(QTextCursor& at, int direction) {
+    if (at.document() != &d_->text) return false;
+    const MoveEdit edit = zametti::moveListItem(d_->text, at, direction);
+    if (!edit.done) return false;
+
+    QTextCursor group(&d_->text);
+    group.beginEditBlock();
+    replaceBlocks(edit.firstBlock, edit.lastBlock, edit.blocks);
+    settleSeam(edit.firstBlock, edit.lastBlock);
+    group.endEditBlock();
+
+#ifndef NDEBUG
+    checkCanonical();
+#endif
+    at = caretAtBlock(edit.landed);
+    const QTextBlock landed = at.block();
+    at.setPosition(at.position() + qBound(0, edit.offsetInBlock, landed.length() - 1));
+    return true;
+}
+
+// --- ОТСТУП -----------------------------------------------------------------
+//
+// ЧТО ЗНАЧИТ Tab, РЕШАЕТ МЕСТО, и решает его заметка: снаружи спрашивать «а мы
+// сейчас в коде?» некому — там про блоки кода знать не должны вовсе.
+
+bool ZDocument::indent(QTextCursor& at) {
+    return runLocalEdit(at, [this](QTextCursor& edit) {
+        return indentCodeAtCursor(d_->text, edit) || indentListItems(d_->text, edit);
+    });
+}
+
+bool ZDocument::outdent(QTextCursor& at) {
+    return runLocalEdit(at, [this](QTextCursor& edit) {
+        return outdentCodeAtCursor(d_->text, edit) || outdentListItems(d_->text, edit);
+    });
+}
+
 
 }  // namespace zametti

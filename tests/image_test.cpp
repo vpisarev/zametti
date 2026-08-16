@@ -326,7 +326,7 @@ static int ztRunSuite(int argc, char** argv) {
     {
         QTextCursor cursor(blockAt(0));
         ZT_TRUE("ширина image-спана записана",
-                zametti::setImageWidthAtCursor(*editor.document(), cursor, 50));
+                editor.note().setImageWidth(cursor, 50));
         QTest::qWait(10);
         const std::vector<zametti::Piece> ir = blocksOf(*editor.document());
         const std::string out = markdownOf(ir);
@@ -425,7 +425,7 @@ static int ztRunSuite(int argc, char** argv) {
     {
         QTextCursor cursor(blockAt(0));
         editor.setTextCursor(cursor);
-        zametti::setImageWidthAtCursor(*editor.document(), cursor, 400);
+        editor.note().setImageWidth(cursor, 400);
         QTest::qWait(20);
         caretTo(6);   // тонировка от каретки не должна мешать замеру красного
 
@@ -833,7 +833,7 @@ static int ztRunSuite(int argc, char** argv) {
         const auto photoOf = [&](int n) { return aligned.imageRectInViewport(blockOf(n)); };
         const auto setAlign = [&](int n, zametti::ImageAlign to) {
             QTextCursor cursor(blockOf(n));
-            const bool changed = zametti::setImageAlignAtCursor(*aligned.document(), cursor, to);
+            const bool changed = aligned.note().setImageAlign(cursor, to);
             QTest::qWait(10);
             return changed;
         };
@@ -866,8 +866,7 @@ static int ztRunSuite(int argc, char** argv) {
         // Ширина и выравнивание уживаются рядом и не сбивают друг друга.
         {
             QTextCursor cursor(blockOf(0));
-            ZT_TRUE("ширина записана", zametti::setImageWidthAtCursor(*aligned.document(),
-                                                                     cursor, 50));
+            ZT_TRUE("ширина записана", aligned.note().setImageWidth(cursor, 50));
         }
         QTest::qWait(10);
         setAlign(0, zametti::ImageAlign::Right);
@@ -876,7 +875,7 @@ static int ztRunSuite(int argc, char** argv) {
         {
             QTextCursor cursor(blockOf(0));
             ZT_TRUE("ширина меняется, выравнивание цело",
-                    zametti::setImageWidthAtCursor(*aligned.document(), cursor, 60));
+                    aligned.note().setImageWidth(cursor, 60));
         }
         QTest::qWait(10);
         ZT_EQ("обе величины на месте", std::string("![[м.png|60|align=right]]"),
@@ -892,7 +891,7 @@ static int ztRunSuite(int argc, char** argv) {
         }
         {
             QTextCursor cursor(blockOf(2));
-            zametti::setImageWidthAtCursor(*aligned.document(), cursor, 70);
+            aligned.note().setImageWidth(cursor, 70);
         }
         QTest::qWait(10);
         {

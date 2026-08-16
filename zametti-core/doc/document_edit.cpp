@@ -244,156 +244,11 @@ bool ZDocument::replaceInsideLiteral(QTextCursor& at, const QString& markdown) {
     return true;
 }
 
-// --- НАБОР, ENTER, BACKSPACE ------------------------------------------------
-//
-// Их объединяет одно: они НЕ ходят через markdown. Обычный ввод — решение
-// владельца («через разбор идут только структурные операции»), а Enter и
-// Backspace структурны по существу: режут и склеивают блоки, а не переписывают
-// их текст. Заметке они нужны затем, чтобы шов приводился к канону здесь — на
-// месте правки, а не потом обходом всего документа.
-
-bool ZDocument::insertText(QTextCursor& at, const QString& text,
-                           const QTextCharFormat& format) {
-    if (at.document() != &d_->text) return false;
-    if (text.isEmpty() && !at.hasSelection()) return false;
-
-    QTextCursor edit(at);
-    edit.beginEditBlock();
-    const int firstBlock = edit.blockNumber();
-    if (edit.hasSelection()) edit.removeSelectedText();
-    if (!text.isEmpty()) edit.insertText(text, format);
-
-    // НАБОР ЛОМАЕТ ИНВАРИАНТЫ ДВУМЯ СПОСОБАМИ: текстом на пустой строке (она
-    // перестаёт быть пустой) и выделением, съевшим границу блоков (рядом
-    // оказываются соседи, которых markdown раздельно не выражает). Чиним здесь
-    // же, в той же скобке правки, — а не потом и не по всему документу.
-    QTextCursor repair(edit);
-    if (repairAfterTyping(d_->text, repair)) edit = repair;
-    settleSeam(qMin(firstBlock, edit.blockNumber()), edit.blockNumber());
-    edit.endEditBlock();
-
-    at = edit;
-    return true;
-}
-
-bool ZDocument::breakBlock(QTextCursor& at, BreakKind kind) {
-    if (at.document() != &d_->text) return false;
-
-    QTextCursor edit(at);
-    edit.beginEditBlock();
-    const int firstBlock = edit.blockNumber();
-    bool done = false;
-    switch (kind) {
-        case BreakKind::Plain:
-            // Порядок важен и взят у прежнего обработчика: сперва объект
-            // (фотография — атом), потом правило черты, и только потом обычный
-            // разрез блока.
-            done = newLineAfterImage(d_->text, edit) ||
-                   applyDividerRuleAtCursor(d_->text, edit) ||
-                   splitBlockAtCursor(d_->text, edit);
-            break;
-        case BreakKind::Otherwise:
-            done = splitBlockOtherwiseAtCursor(d_->text, edit);
-            break;
-        case BreakKind::LeaveCode:
-            done = leaveCodeBlockAtCursor(d_->text, edit);
-            break;
-    }
-    if (!done) {
-        edit.endEditBlock();
-        return false;
-    }
-    settleSeam(qMin(firstBlock, edit.blockNumber()), qMax(firstBlock, edit.blockNumber()));
-    edit.endEditBlock();
-
-    at = edit;
-    return true;
-}
-
-bool ZDocument::deleteBack(QTextCursor& at) {
-    if (at.document() != &d_->text) return false;
-
-    QTextCursor edit(at);
-    edit.beginEditBlock();
-    const int firstBlock = edit.blockNumber();
-    // Жесты, у которых своё правило: снять комментарность, снять пункт, убрать
-    // черту над кареткой, склеить через пустую строку, убрать фотографию целиком.
-    bool done = uncommentAtBlockStart(d_->text, edit) ||
-                unwrapListItemAtCursor(d_->text, edit) ||
-                deleteDividerAbove(d_->text, edit) ||
-                deleteImageLineBackward(d_->text, edit) ||
-                joinAcrossVSpaceBackward(d_->text, edit);
-    if (!done) {
-        // НА САМОЙ ЧЕРТЕ УДАЛЯТЬ СЛЕВА НЕЧЕГО. По плоской модели слева от каретки
-        // стоит перевод строки, но черта не живёт в строке текста, и обычное
-        // удаление съело бы не то. Отказываемся — что делать дальше, решает
-        // вызывающий (он уводит каретку в конец строки выше).
-        const QTextBlock here = edit.block();
-        if (!edit.hasSelection() && !isRawBlock(here) && kindOf(here) == Kind::Divider) {
-            edit.endEditBlock();
-            return false;
-        }
-        // Обычное удаление знака. Делаем сами, а не отдаём Qt: тогда починка
-        // шва попадает в тот же шаг отмены, что и само удаление.
-        if (edit.hasSelection()) edit.removeSelectedText();
-        else if (edit.position() > 0) edit.deletePreviousChar();
-        else {
-            edit.endEditBlock();
-            return false;
-        }
-        done = true;
-    }
-    const int lastBlock = edit.blockNumber();
-    QTextCursor repair(edit);
-    if (repairAfterTyping(d_->text, repair)) edit = repair;
-    settleSeam(qMin(firstBlock, lastBlock), qMax(firstBlock, lastBlock));
-    edit.endEditBlock();
-
-    at = edit;
-    return done;
-}
-
-bool ZDocument::deleteForward(QTextCursor& at) {
-    if (at.document() != &d_->text) return false;
-
-    QTextCursor edit(at);
-    edit.beginEditBlock();
-    const int firstBlock = edit.blockNumber();
-    bool done = deleteImageLineForward(d_->text, edit) ||
-                joinAcrossVSpaceForward(d_->text, edit);
-    if (!done) {
-        if (edit.hasSelection()) edit.removeSelectedText();
-        else if (edit.position() < d_->text.characterCount() - 1) edit.deleteChar();
-        else {
-            edit.endEditBlock();
-            return false;
-        }
-        done = true;
-    }
-    const int lastBlock = edit.blockNumber();
-    QTextCursor repair(edit);
-    if (repairAfterTyping(d_->text, repair)) edit = repair;
-    settleSeam(qMin(firstBlock, lastBlock), qMax(firstBlock, lastBlock));
-    edit.endEditBlock();
-
-    at = edit;
-    return done;
-}
-
 void ZDocument::rebuildRange(int firstBlock, int lastBlock, QTextCursor* caret) {
     const int total = d_->text.blockCount();
     firstBlock = qBound(0, firstBlock, total - 1);
     lastBlock = qBound(firstBlock, lastBlock, total - 1);
-
-    // ГРАНИЦЫ — ПО ЛОГИЧЕСКОМУ БЛОКУ. Строки блока кода лежат в документе
-    // отдельными QTextBlock; пересобрав половину блока кода, сборщик сделал бы
-    // из неё самостоятельный блок, а оставшиеся строки повисли бы продолжением
-    // неизвестно чего.
-    while (firstBlock > 0 && isContinuationBlock(d_->text.findBlockByNumber(firstBlock)))
-        --firstBlock;
-    while (lastBlock + 1 < total &&
-           isContinuationBlock(d_->text.findBlockByNumber(lastBlock + 1)))
-        ++lastBlock;
+    expandToWholeBlocks(firstBlock, lastBlock);
 
     std::vector<Piece> pieces;
     walkPieces(
@@ -404,13 +259,32 @@ void ZDocument::rebuildRange(int firstBlock, int lastBlock, QTextCursor* caret) 
         },
         firstBlock, lastBlock);
     if (pieces.empty()) return;
+    replaceBlocks(firstBlock, lastBlock, pieces, caret);
+}
 
+void ZDocument::expandToWholeBlocks(int& firstBlock, int& lastBlock) const {
+    // ГРАНИЦЫ — ПО ЛОГИЧЕСКОМУ БЛОКУ. Строки блока кода лежат в документе
+    // отдельными QTextBlock; пересобрав половину блока кода, сборщик сделал бы
+    // из неё самостоятельный блок, а оставшиеся строки повисли бы продолжением
+    // неизвестно чего.
+    const int total = d_->text.blockCount();
+    while (firstBlock > 0 && isContinuationBlock(d_->text.findBlockByNumber(firstBlock)))
+        --firstBlock;
+    while (lastBlock + 1 < total &&
+           isContinuationBlock(d_->text.findBlockByNumber(lastBlock + 1)))
+        ++lastBlock;
+}
+
+void ZDocument::replaceBlocks(int firstBlock, int lastBlock, const std::vector<Piece>& to,
+                              QTextCursor* caret) {
+    if (to.empty()) return;
     QTextDocument staging;
-    buildDocument(pieces, staging);
+    buildDocument(to, staging);
 
     // Каретка и её якорь — номером блока и смещением в нём: позиции внутри
-    // вырезаемого куска вырез не переживут, а номера переживут, потому что
-    // строение после пересборки то же самое.
+    // вырезаемого куска вырез не переживут, а номера переживут. Когда блоков
+    // стало меньше или больше, номер сам упрётся в границу — это и значит
+    // «каретка была в том, чего больше нет».
     struct Spot {
         int block = 0;
         int offset = 0;
@@ -424,6 +298,7 @@ void ZDocument::rebuildRange(int firstBlock, int lastBlock, QTextCursor* caret) 
 
     const QTextBlock head = d_->text.findBlockByNumber(firstBlock);
     const QTextBlock tail = d_->text.findBlockByNumber(lastBlock);
+    if (!head.isValid() || !tail.isValid()) return;
 
     QTextCursor edit(&d_->text);
     edit.beginEditBlock();
@@ -446,8 +321,9 @@ void ZDocument::rebuildRange(int firstBlock, int lastBlock, QTextCursor* caret) 
     edit.endEditBlock();
 
     if (caret != nullptr) {
-        auto placeAt = [this](const Spot& spot) {
-            const QTextBlock block = d_->text.findBlockByNumber(spot.block);
+        const int last = d_->text.blockCount() - 1;
+        auto placeAt = [this, last](const Spot& spot) {
+            const QTextBlock block = d_->text.findBlockByNumber(qBound(0, spot.block, last));
             if (!block.isValid()) return d_->text.characterCount() - 1;
             return block.position() + qBound(0, spot.offset, block.length() - 1);
         };
@@ -457,6 +333,56 @@ void ZDocument::rebuildRange(int firstBlock, int lastBlock, QTextCursor* caret) 
             moved.setPosition(placeAt(position), QTextCursor::KeepAnchor);
         *caret = moved;
     }
+}
+
+#ifndef NDEBUG
+void ZDocument::checkCanonical() const {
+    std::vector<Piece> now;
+    walkPieces(d_->text, [&now](const Piece& piece) {
+        now.push_back(piece);
+        return true;
+    });
+    // ПУСТАЯ ЗАМЕТКА СРАВНЕНИЮ НЕ ПОДЛЕЖИТ. Пустого QTextDocument не бывает:
+    // один блок в нём есть всегда, и этот блок — Qt, а не наш. Обход его не
+    // видит вовсе (isPhantomBlock), и сверять свойства нечего с чем.
+    if (now.empty()) return;
+    checkMatchesBuild(now, d_->text);
+}
+#endif
+
+bool ZDocument::runLocalEdit(QTextCursor& at, const std::function<bool(QTextCursor&)>& body) {
+    if (at.document() != &d_->text) return false;
+
+    // Диапазон СЧИТАЕМ ТАК ЖЕ, КАК ЕГО СЧИТАЕТ САМА ПРАВКА: она трогает блоки
+    // выделения вместе с поддеревьями пунктов, и пересобрать надо ровно их.
+    const BlockRange wanted = selectedBlocks(d_->text, at);
+    const int countBefore = d_->text.blockCount();
+
+    QTextCursor edit(at);
+    edit.beginEditBlock();
+    if (!body(edit)) {
+        edit.endEditBlock();
+        return false;
+    }
+
+    // Правка могла завести блоки (разрез строки в отдельный блок, пустая строка
+    // у заголовка) — на столько же съехало всё, что ниже.
+    const int grew = qMax(0, d_->text.blockCount() - countBefore);
+    const int here = d_->text.findBlock(edit.position()).blockNumber();
+    const int there = d_->text.findBlock(edit.anchor()).blockNumber();
+    const int first = qMin(qMin(wanted.first, here), there) - 1;
+    const int last = qMax(qMax(wanted.last + grew, here), there) + 1;
+
+    rebuildRange(first, last, &edit);
+    settleSeam(first, last);
+    edit.endEditBlock();
+
+#ifndef NDEBUG
+    checkCanonical();
+#endif
+
+    at = edit;
+    return true;
 }
 
 void ZDocument::settleSeam(int firstBlock, int lastBlock) {
@@ -469,7 +395,11 @@ void ZDocument::settleSeam(int firstBlock, int lastBlock) {
     // (он про связь с предыдущим блоком), а нужна ли пустая строка — вопрос про
     // пару соседей. Дальше первого соседа расходиться нечему.
     const int last = d_->text.blockCount() - 1;
-    const BlockRange seam{qBound(0, firstBlock - 1, last), qBound(0, lastBlock + 1, last)};
+    BlockRange seam{qBound(0, firstBlock - 1, last), qBound(0, lastBlock + 1, last)};
+    // Сперва разнять литеральные строки: правка через границу блоков умеет
+    // свести код и абзац в один блок, и мягкий перенос абзаца оказывается
+    // внутри кода — состояние, которого разбор не породил бы никогда.
+    seam.last += splitLiteralSoftBreaks(d_->text, seam);
     syncLiteralBlocks(d_->text, seam);
     // syncGaps сам говорит, сколько пустых строк завёл: на столько же съехали
     // номера ниже, и списки надо мерить уже по новым.

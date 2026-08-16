@@ -36,7 +36,6 @@
 
 #include "document_builder.h"
 #include "document_pieces.h"
-#include "editor_ops.h"
 #include "serializer.h"
 #include "resources.h"
 #include "settings.h"

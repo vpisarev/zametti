@@ -20,24 +20,21 @@
 // Случайность здесь воспроизводимая: зерно печатается и задаётся параметром,
 // поэтому упавший прогон повторяется дословно.
 
-#include "document_builder.h"
+#include "document.h"
 #include "pieces.h"
-#include "document_saver.h"
-#include "doc_model.h"
-#include "editor_ops.h"
 
 #include "test_util.h"
 #include "testdata.h"
 
 #include <QGuiApplication>
-#include <QTextBlock>
+#include <QTextCharFormat>
 #include <QTextCursor>
-#include <QTextDocument>
 
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <random>
 #include <sstream>
 #include <string>
@@ -57,28 +54,41 @@ std::string readFile(const fs::path& path) {
 
 // Операция и её имя. Имя нужно в отчёте о падении: без него по зерну пришлось бы
 // гадать, что именно сломало документ.
+//
+// ГЛАГОЛАМИ ЗАМЕТКИ, а не разметкой блоков: стенд обязан бить в ту же дверь, в
+// которую ходит приложение. Иначе он проверял бы соседний путь, а тот, которым
+// правят на самом деле, оставался бы без фаззинга.
 struct Operation {
     const char* name;
-    bool (*run)(QTextDocument&, QTextCursor&);
+    std::function<bool(ZDocument&, QTextCursor&)> run;
 };
 
+using Z = ZDocument;
+
 const Operation kOperations[] = {
-    {"Enter", splitBlockAtCursor},
-    {"Shift+Enter", splitBlockOtherwiseAtCursor},
-    {"Backspace у маркера", unwrapListItemAtCursor},
-    {"Tab", indentListItems},
-    {"Shift+Tab", outdentListItems},
-    {"переключить задачу", toggleTaskAtCursor},
-    {"в буллет", makeBullet},
-    {"в нумерованный", makeOrdered},
-    {"в задачу", makeTask},
-    {"в абзац", makeParagraph},
-    {"жирный", toggleBold},
-    {"курсив", toggleItalic},
-    {"зачёркнутый", toggleStrike},
-    {"код в строке", toggleCode},
-    {"правило набора", applyInputRuleAtCursor},
-    {"кавычка кода", applyCodeSpanRuleAtCursor},
+    {"Enter", [](Z& n, QTextCursor& at) { return n.breakBlock(at, Z::BreakKind::Plain); }},
+    {"Shift+Enter",
+     [](Z& n, QTextCursor& at) { return n.breakBlock(at, Z::BreakKind::Otherwise); }},
+    {"Backspace", [](Z& n, QTextCursor& at) { return n.deleteBack(at); }},
+    {"Delete", [](Z& n, QTextCursor& at) { return n.deleteForward(at); }},
+    {"Tab", [](Z& n, QTextCursor& at) { return n.indent(at); }},
+    {"Shift+Tab", [](Z& n, QTextCursor& at) { return n.outdent(at); }},
+    {"переключить задачу", [](Z& n, QTextCursor& at) { return n.toggleTask(at); }},
+    {"в буллет", [](Z& n, QTextCursor& at) { return n.makeBullet(at); }},
+    {"в нумерованный", [](Z& n, QTextCursor& at) { return n.makeOrdered(at); }},
+    {"в задачу", [](Z& n, QTextCursor& at) { return n.makeTask(at); }},
+    {"в абзац", [](Z& n, QTextCursor& at) { return n.makeParagraph(at); }},
+    {"заголовок", [](Z& n, QTextCursor& at) { return n.setHeadingLevel(at, 2); }},
+    {"комментарий", [](Z& n, QTextCursor& at) { return n.toggleComment(at); }},
+    {"жирный", [](Z& n, QTextCursor& at) { return n.toggleStyle(at, Z::Style::Bold); }},
+    {"курсив", [](Z& n, QTextCursor& at) { return n.toggleStyle(at, Z::Style::Italic); }},
+    {"зачёркнутый", [](Z& n, QTextCursor& at) { return n.toggleStyle(at, Z::Style::Strike); }},
+    {"код в строке", [](Z& n, QTextCursor& at) { return n.toggleStyle(at, Z::Style::Code); }},
+    {"блок кода", [](Z& n, QTextCursor& at) { return n.toggleCodeBlock(at); }},
+    {"переставить вверх", [](Z& n, QTextCursor& at) { return n.moveListItem(at, -1); }},
+    {"переставить вниз", [](Z& n, QTextCursor& at) { return n.moveListItem(at, 1); }},
+    {"правило набора", [](Z& n, QTextCursor& at) { return n.applyInputRule(at); }},
+    {"кавычка кода", [](Z& n, QTextCursor& at) { return n.applyCodeSpanRule(at); }},
 };
 
 // Что набирают: обычные буквы, знаки разметки и то, на чём уже спотыкались —
@@ -97,36 +107,19 @@ std::string describe(const std::vector<std::string>& steps) {
     return out;
 }
 
-// Один блок в виде строки — для отчёта о расхождении. Блок владеет своим
-// текстом, поэтому переносится обычным копированием.
-std::string oneLine(const Piece& block) {
-    std::vector<Piece> one;
-    one.push_back(block);
-    std::string out;
-    for (char c : dumpOf(one)) out += (c == '\n') ? ' ' : c;
-    return out;
-}
-
-// Записываем ли мы этот документ без аварийного файла. Ровно та же сверка, что
-// и в сохранении: нормализованный IR против разобранного обратно.
+// Записываем ли мы эту заметку без аварийного файла. Ровно та же сверка, что и
+// в сохранении: записали — прочитали обратно — сошлось.
 //
-// При расхождении показываем первый разошедшийся блок: без этого по одному лишь
-// тексту файла причину искать пришлось бы руками.
-bool savable(const QTextDocument& doc, std::string& report) {
-    const std::vector<Piece> ir = documentForFile(blocksOf(doc));
-    const std::string written = markdownOf(ir);
-    const std::vector<Piece> reread = pieces(written);
-    if (sameSkeleton(ir, reread)) return true;
+// Тем же вопросом закрыт и прежний «инвариант C» (операция и отмена дают
+// исходный документ): он спрашивал, обратны ли друг другу обход и сборка, а это
+// и есть неподвижность канона.
+bool savable(const ZDocument& note, std::string& report) {
+    const std::string written = note.toMarkdown();
+    const ZDocument reread = noteOf(written);
+    if (note.sameBody(reread)) return true;
 
     report = "\n  вышло бы в файл:\n" + written;
-    report += "\n  блоков: документ " + std::to_string(ir.size()) + ", обратно " +
-              std::to_string(reread.size());
-    for (size_t i = 0; i < ir.size() && i < reread.size(); ++i) {
-        if (oneLine(ir[i]) == oneLine(reread[i])) continue;
-        report += "\n  блок " + std::to_string(i) + " разошёлся:\n    документ: " +
-                  oneLine(ir[i]) + "\n    обратно:  " + oneLine(reread[i]);
-        break;
-    }
+    report += "\n  а прочиталось бы:\n" + reread.toMarkdown();
     return false;
 }
 
@@ -138,104 +131,58 @@ void fuzzFile(const fs::path& path, int rounds, uint32_t seed) {
     if (source.empty()) return;
     ++g_files;
 
-    QTextDocument doc;
-    buildDocument(pieces(source), doc);
+    ZDocument note = noteOf(source);
 
     std::mt19937 rng(seed);
     std::vector<std::string> steps;
 
     for (int round = 0; round < rounds; ++round) {
-        const int characters = doc.characterCount();
-        if (characters <= 1) break;
+        const int blocks = note.blockCount();
+        if (blocks <= 0) break;
 
-        // Случайное место и, с некоторой вероятностью, выделение.
-        QTextCursor cursor(&doc);
-        const int from = int(rng() % uint32_t(characters));
-        cursor.setPosition(qBound(0, from, characters - 1));
+        // Случайное место и, с некоторой вероятностью, выделение. Место берём
+        // блоком и смещением в нём: позиций заметка наружу не показывает.
+        QTextCursor cursor = note.caretAtBlock(int(rng() % uint32_t(blocks)));
+        cursor.movePosition(QTextCursor::EndOfBlock, QTextCursor::MoveAnchor);
+        const int inBlock = cursor.positionInBlock();
+        cursor.setPosition(cursor.position() - int(rng() % uint32_t(inBlock + 1)));
         if (rng() % 3 == 0) {
-            const int to = int(rng() % uint32_t(characters));
-            cursor.setPosition(qBound(0, to, characters - 1), QTextCursor::KeepAnchor);
+            QTextCursor other = note.caretAtBlock(int(rng() % uint32_t(blocks)));
+            other.movePosition(QTextCursor::EndOfBlock);
+            cursor.setPosition(other.position() - int(rng() % uint32_t(other.positionInBlock() + 1)),
+                               QTextCursor::KeepAnchor);
         }
 
         std::string what;
-        const bool fromTyping = rng() % 4 == 0;
-        if (fromTyping) {
+        if (rng() % 4 == 0) {
             // Набор: он же заводит те состояния, которых операции не дают —
             // висящий перенос, пробел на краю, недописанную разметку.
             const char* typed = kTyped[rng() % (sizeof(kTyped) / sizeof(kTyped[0]))];
-            cursor.insertText(QString::fromUtf8(typed));
-            // Ровно как в редакторе: набор на пустой строке разбирается сразу
-            // после того, как знак введён.
-            repairAfterTyping(doc, cursor);
+            if (!note.insertText(cursor, QString::fromUtf8(typed))) continue;
             what = std::string("набрать \"") + typed + "\"";
         } else {
-            const Operation& op = kOperations[rng() % (sizeof(kOperations) / sizeof(kOperations[0]))];
-            const std::vector<Piece> before = blocksOf(doc);
-            const std::string beforeJson = dumpOf(before);
-            if (!op.run(doc, cursor)) continue;
+            const Operation& op =
+                kOperations[rng() % (sizeof(kOperations) / sizeof(kOperations[0]))];
+            if (!op.run(note, cursor)) continue;
             what = op.name;
-
-            // Инвариант C: операция и отмена дают исходный документ. Отмена у нас
-            // — пересборка из снимка, ровно как в редакторе.
-            QTextDocument undone;
-            buildDocument(before, undone);
-            const std::vector<Piece> back = blocksOf(undone);
-            if (dumpOf(back) != beforeJson) {
-                steps.push_back(what);
-                std::string diff;
-                for (size_t i = 0; i < before.size() || i < back.size(); ++i) {
-                    const std::string was =
-                        i < before.size() ? oneLine(before[i]) : "<нет>";
-                    const std::string now =
-                        i < back.size() ? oneLine(back[i]) : "<нет>";
-                    if (was == now) continue;
-                    diff = "\n  блок " + std::to_string(i) + " разошёлся:\n    было:  " + was +
-                           "\n    стало: " + now;
-                    break;
-                }
-                ZT_TRUE(std::string("отмена не вернула документ: ") + path.string() +
-                                 " (зерно " + std::to_string(seed) + ")" + describe(steps) + diff,
-                        false);
-                return;
-            }
         }
         steps.push_back(what);
         ++g_operations;
 
-        // Редактор после каждой операции пересобирает документ из IR. Без этого
-        // стенд заводил бы состояния, которых в приложении не бывает, и ловил бы
-        // не ошибки, а собственную неверность.
-        if (!fromTyping) {
-            const std::vector<Piece> current = blocksOf(doc);
-            buildDocument(current, doc);
-        }
-
         // Строение обязано остаться правильным.
-        QString listProblem;
-        const bool lists = listInvariantHolds(doc, &listProblem);
-        ZT_TRUE(std::string("строение списка: ") + path.string() + " (зерно " +
+        const QString problem = note.structureProblem();
+        ZT_TRUE(std::string("строение: ") + path.string() + " (зерно " +
                     std::to_string(seed) + ")" + describe(steps) + "\n  " +
-                    listProblem.toStdString() +
-                    (lists ? std::string() : "\n  документ: " + dumpOf(blocksOf(doc))),
-                lists);
-        const bool literals = literalInvariantHolds(doc);
-        ZT_TRUE(std::string("разбивка литерального блока: ") + path.string() + " (зерно " +
-                    std::to_string(seed) + ")" + describe(steps),
-                literals);
-        QString gapProblem;
-        const bool gaps = gapInvariantHolds(doc, &gapProblem);
-        ZT_TRUE(std::string("пустые строки: ") + path.string() + " (зерно " +
-                    std::to_string(seed) + ")" + describe(steps) + "\n  " +
-                    gapProblem.toStdString() +
-                    (gaps ? std::string() : "\n  документ: " + dumpOf(blocksOf(doc))),
-                gaps);
-        if (!lists || !literals || !gaps) return;
+                    problem.toStdString() +
+                    (problem.isEmpty() ? std::string() : "\n  заметка:\n" + note.toMarkdown()),
+                problem.isEmpty());
+        if (!problem.isEmpty()) return;
 
-        // И документ обязан оставаться записываемым: иначе человек получил бы
+        // И заметка обязана оставаться записываемой: иначе человек получил бы
         // аварийный файл вместо сохранения.
         std::string report;
-        const bool ok = savable(doc, report);
-        ZT_TRUE(std::string("документ записывается: ") + path.string() + " (зерно " +
+        const bool ok = savable(note, report);
+        ZT_TRUE(std::string("заметка записывается: ") + path.string() + " (зерно " +
                     std::to_string(seed) + ")" + describe(steps) + report,
                 ok);
         if (!ok) return;

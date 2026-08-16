@@ -51,15 +51,12 @@ std::string afterLoad(const std::string& source) {
 
 // Абзац → код и обратно, через настоящую операцию.
 std::string toggle(const std::string& source) {
-    QTextDocument doc;
-    zametti::buildDocument(pieces(source), doc);
-    QTextCursor caret(&doc);
-    caret.setPosition(0);
+    zametti::ZDocument note = noteOf(source);
+    QTextCursor caret = note.caretAtBlock(0);
     caret.movePosition(QTextCursor::End, QTextCursor::KeepAnchor);
 
-    const zametti::MoveResult moved = zametti::toggleCodeBlock(doc, caret);
-    if (!moved.done) return "ОПЕРАЦИЯ НЕ СРАБОТАЛА";
-    return markdownOf(moved.blocks);
+    if (!note.toggleCodeBlock(caret)) return "ОПЕРАЦИЯ НЕ СРАБОТАЛА";
+    return note.toMarkdown();
 }
 
 // Читаемый вид: неразрывный пробел показываем как «~», иначе провал в отчёте
