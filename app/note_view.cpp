@@ -9,6 +9,8 @@
 #include "settings.h"
 #include "table.h"
 
+#include <QApplication>
+#include <QWheelEvent>
 #include <QAbstractTextDocumentLayout>
 #include <QDir>
 #include <QElapsedTimer>
@@ -25,6 +27,8 @@
 #include <QResizeEvent>
 #include <QPalette>
 #include <QScrollBar>
+#include <QScroller>
+#include <QDateTime>
 #include <QWidget>
 #include <QTextBlock>
 #include <QClipboard>
@@ -222,6 +226,51 @@ NoteView::NoteView(QWidget* parent) : QTextBrowser(parent) {
     connect(this, &QTextEdit::selectionChanged, this,
             [this] { viewport()->update(); });
 
+    // ТАЧ-ЭКРАН — ШТАТНЫМ QScroller (подсказка владельца). Он ловит настоящие
+    // касания и делает всё сам: и разгон, и затухание, и упор в край. Тачпада
+    // это не касается — тот приходит колесом с точными пикселями, и ему инерцию
+    // делаем мы (см. wheelEvent).
+    QScroller::grabGesture(viewport(), QScroller::TouchGesture);
+
+    // БРОСОК ПОСЛЕ ТОГО, КАК ПАЛЬЦЫ ОТНЯЛИ. Ждём тишины: фазы прокрутки под X11
+    // не приходят вовсе, и «пальцы убрали» узнаётся только по тому, что новых
+    // событий больше нет.
+    glideStart_.setSingleShot(true);
+    connect(&glideStart_, &QTimer::timeout, this, [this] {
+        // Скорость меньше пикселя за кадр — это не бросок, а остановка.
+        if (systemGlides_ || std::fabs(glideSpeed_) * 16.0 < 1.0) {
+            glideSpeed_ = 0.0;
+            return;
+        }
+        scrollGlide_.start();
+    });
+
+    // ЗАТУХАНИЕ. Кадр за кадром скорость тает, и текст останавливается сам —
+    // оттого движение и ощущается броском, а не рывком. За smoothScrollMs
+    // скорость падает вчетверо с лишним.
+    scrollGlide_.setInterval(16);   // примерно кадр экрана
+    connect(&scrollGlide_, &QTimer::timeout, this, [this] {
+        QScrollBar* bar = verticalScrollBar();
+        if (bar == nullptr) {
+            stopGlide();
+            return;
+        }
+        const int move = int(glideSpeed_ * scrollGlide_.interval());
+        if (move == 0) {
+            stopGlide();
+            return;
+        }
+        const int now = bar->value();
+        bar->setValue(now + move);
+        // Упёрлись в край — ехать больше некуда.
+        if (bar->value() == now) {
+            stopGlide();
+            return;
+        }
+        const qreal tau = qMax(1, appearance().smoothScrollMs);
+        glideSpeed_ *= std::exp(-scrollGlide_.interval() / tau);
+    });
+
     // Галочка «скопировано» гаснет сама: подтверждение, которое не гаснет,
     // через минуту врёт.
     copiedFade_.setSingleShot(true);
@@ -326,6 +375,14 @@ void NoteView::applyContentWidth() {
     if (wanted != viewportMargin_) {
         viewportMargin_ = wanted;
         setViewportMargins(wanted, 0, wanted, 0);
+        // ШИРИНУ ВЁРСТКИ ДОСЫЛАЕМ САМИ. Поля вьюпорта сузили окно, а документ
+        // остаётся свёрстан по прежней ширине: QTextEdit пересчитывает её на
+        // своём resizeEvent, а тот приходит позже нас. При запуске это и
+        // выглядело как горизонтальная полоса прокрутки, пропадавшая от первого
+        // же изменения размера окна (жалоба владельца).
+        //
+        // setTextWidth в стек отмены не попадает — замерено (zametti-bench zoom).
+        document()->setTextWidth(viewport()->width());
         // Пустой документ от смены полей не переразмечается: размечать в нём
         // нечего. Каретка тогда остаётся у прежнего поля — в широком окне это
         // выглядело как «в пустой заметке каретки нет вовсе».
@@ -335,6 +392,74 @@ void NoteView::applyContentWidth() {
     // Ширина колонки сменилась — фотографии могли стать шире или уже колонки,
     // и место под них надо перемерить.
     syncImageSpace();
+}
+
+void NoteView::wheelEvent(QWheelEvent* event) {
+    QScrollBar* bar = verticalScrollBar();
+    // ИНЕРЦИЯ НУЖНА ТАЧПАДУ, а не колесу. Колесо приходит рывками по «щелчку»
+    // (angleDelta) и своей плавностью владельца устраивает; тачпад присылает
+    // ТОЧНЫЕ ПИКСЕЛИ (pixelDelta) — текст едет за пальцами и встаёт колом,
+    // стоит их отнять.
+    //
+    // Тач-экран сюда не приходит вовсе: он идёт касаниями, и ему заведён
+    // QScroller (см. конструктор).
+    // ФАЗА ВАЖНЕЕ СДВИГА. Событие «пальцы убрали» приходит с НУЛЕВЫМ сдвигом, и
+    // судить по одному pixelDelta нельзя: приняв его за колесо, мы гасили бы
+    // бросок ровно там, где он должен начинаться (поймал набор).
+    const bool sequence = event->phase() != Qt::NoScrollPhase;
+    const bool touchpad = sequence || !event->pixelDelta().isNull();
+    if (!appearance().smoothScroll || !touchpad || bar == nullptr) {
+        stopGlide();
+        QTextBrowser::wheelEvent(event);
+        return;
+    }
+
+    // СИСТЕМА, УМЕЮЩАЯ САМА, — не трогаем. macOS и Wayland присылают фазу
+    // «инерция» и досылают события уже после того, как пальцы убрали; своя
+    // поверх неё удвоила бы разгон.
+    if (event->phase() == Qt::ScrollMomentum) {
+        systemGlides_ = true;
+        stopGlide();
+        QTextBrowser::wheelEvent(event);
+        return;
+    }
+    if (event->phase() == Qt::ScrollBegin) systemGlides_ = false;
+
+    // КОНЕЦ ЖЕСТА — ЭТО МАРКЕР, А НЕ ДВИЖЕНИЕ. Он приходит с нулевым сдвигом, и
+    // мерить по нему скорость нельзя: она обнулилась бы ровно в тот миг, ради
+    // которого копилась.
+    if (event->phase() == Qt::ScrollEnd) {
+        glideStart_.start(0);
+        event->accept();
+        return;
+    }
+
+    // Само движение — как всегда, за пальцами. Мы только запоминаем СКОРОСТЬ:
+    // на сколько пикселей ушёл текст и за сколько времени.
+    const int before = bar->value();
+    QTextBrowser::wheelEvent(event);
+    const int moved = bar->value() - before;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const qint64 passed = glideStamp_ > 0 ? now - glideStamp_ : 0;
+    glideStamp_ = now;
+    if (passed > 0 && passed < 100) {
+        // Скорость сглаживаем: одно случайное дрожание пальца не должно
+        // определять весь бросок. Замерший палец шлёт нули — и скорость тает
+        // сама, так что «остановился и убрал» броском не станет.
+        const qreal fresh = qreal(moved) / qreal(passed);   // пикселей на мс
+        glideSpeed_ = glideSpeed_ * 0.4 + fresh * 0.6;
+    }
+
+    // На X11 фаз нет вовсе, и «пальцы убрали» узнаётся только тишиной.
+    glideStart_.start(50);
+    event->accept();
+}
+
+void NoteView::stopGlide() {
+    scrollGlide_.stop();
+    glideStart_.stop();
+    glideSpeed_ = 0.0;
+    glideStamp_ = 0;
 }
 
 bool NoteView::event(QEvent* e) {

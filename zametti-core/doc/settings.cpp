@@ -43,6 +43,11 @@ void readInt(const QJsonObject& o, const char* key, int& out) {
 }
 
 
+void readBool(const QJsonObject& o, const char* key, bool& out) {
+    const QJsonValue v = o.value(QLatin1String(key));
+    if (v.isBool()) out = v.toBool();
+}
+
 void readString(const QJsonObject& o, const char* key, QString& out) {
     const QJsonValue v = o.value(QLatin1String(key));
     if (v.isString()) out = v.toString();
@@ -305,6 +310,11 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("diffPrevious"), a.diffPreviousKey},
     };
 
+    QJsonObject scroll{
+        {QStringLiteral("smooth"), a.smoothScroll},
+        {QStringLiteral("smoothMs"), a.smoothScrollMs},
+    };
+
     QJsonObject zoom{
         {QStringLiteral("step"), a.zoomStep},
         {QStringLiteral("min"), a.zoomMin},
@@ -330,6 +340,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("formulas"), formulas},
         {QStringLiteral("images"), images},
         {QStringLiteral("shortcuts"), shortcuts},
+        {QStringLiteral("scroll"), scroll},
         {QStringLiteral("zoom"), zoom},
     };
 }
@@ -580,6 +591,10 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     // editor.imageCacheSizeMb под этим именем.
     const QJsonObject importGroup = root.value(QStringLiteral("images")).toObject();
     readInt(importGroup, "maxImportedImageSize", a.images.maxImportedImageSize);
+
+    const QJsonObject scroll = root.value(QStringLiteral("scroll")).toObject();
+    readBool(scroll, "smooth", a.smoothScroll);
+    readInt(scroll, "smoothMs", a.smoothScrollMs);
 
     const QJsonObject zoom = root.value(QStringLiteral("zoom")).toObject();
     readReal(zoom, "step", a.zoomStep);

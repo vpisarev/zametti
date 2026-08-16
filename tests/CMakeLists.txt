@@ -114,6 +114,7 @@ add_executable(zametti-tests
     live_title_test.cpp
     caret_scale_test.cpp
     zoom_test.cpp
+    scroll_test.cpp
 )
 # md4c здесь не зависимость, а СУДЬЯ: table_test сверяет наш разбор таблиц с
 # чужой реализацией того же формата.

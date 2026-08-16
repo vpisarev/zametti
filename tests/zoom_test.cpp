@@ -251,16 +251,23 @@ static int ztRunSuite(int argc, char** argv) {
     // ГОРИЗОНТАЛЬНОЙ ПОЛОСЫ ПРОКРУТКИ НЕ БЫВАЕТ. Владелец увидел её при запуске:
     // поля вьюпорта уже отняли ширину, а документ ещё считает себя прежним.
     {
+        // ПОРЯДОК КАК В ЖИЗНИ: приложение открывает заметку ДО show(), в окне
+        // ещё не своего размера, и только потом окно раскрывается. Прежняя
+        // редакция открывала после show и беды не показывала вовсе.
         zametti::NoteEditor fresh;
+        fresh.openFile(path);
         fresh.resize(1600, 600);
         fresh.show();
-        QTest::qWait(20);
-        fresh.openFile(path);
-        QTest::qWait(20);
-        std::printf("  при запуске: горизонтальная полоса до %d, документ %.0f, вьюпорт %d\n",
+        QTest::qWait(50);
+        std::printf("  при запуске: полоса до %d, textWidth %.0f, вёрстка %.0f, вьюпорт %d\n",
                     fresh.horizontalScrollBar()->maximum(),
+                    double(fresh.document()->textWidth()),
                     double(fresh.document()->documentLayout()->documentSize().width()),
                     fresh.viewport()->width());
+        // ДОКУМЕНТ ВЁРСТАН ПО ВЬЮПОРТУ. Полоса прокрутки — лишь следствие; мерить
+        // надо причину, иначе проверка молчит там, где беда уже есть.
+        ZT_TRUE("ширина вёрстки не больше вьюпорта",
+                fresh.document()->textWidth() <= fresh.viewport()->width() + 1);
         ZT_TRUE("при запуске горизонтальной полосы прокрутки нет",
                 fresh.horizontalScrollBar()->maximum() == 0);
     }
