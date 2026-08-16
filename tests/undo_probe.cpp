@@ -342,6 +342,38 @@ int ztUndoProbe(int argc, char** argv) {
         std::printf("     повтор вернул всё: %s\n", back == full ? "ДА" : "НЕТ");
     }
 
+    // ГДЕ КАРЕТКА ПОСЛЕ Enter И Ctrl+Z. Жалоба владельца: уезжает в начало
+    // документа.
+    {
+        QString big = QStringLiteral("# Заголовок\n\n");
+        for (int i = 0; i < 40; ++i)
+            big += QStringLiteral("Абзац номер %1, в нём достаточно слов.\n\n").arg(i);
+        const QString path = writeNote(dir, QStringLiteral("enter.md"), big);
+        editor.openFile(path);
+        QTest::qWait(50);
+
+        QTextDocument* d = editor.document();
+        const int middle = d->blockCount() / 2;
+        QTextCursor at(d);
+        at.setPosition(d->findBlockByNumber(middle).position() + 5);
+        editor.setTextCursor(at);
+        const int before = editor.textCursor().position();
+
+        pressKey(editor, Qt::Key_Return);
+        QTest::qWait(40);
+        const int afterEnter = editor.textCursor().position();
+
+        editor.undo();
+        QTest::qWait(40);
+        const int afterUndo = editor.textCursor().position();
+
+        std::printf("\n   Enter и Ctrl+Z: каретка была %d, после Enter %d, после отмены %d\n",
+                    before, afterEnter, afterUndo);
+        std::printf("     блок каретки после отмены: %d (был %d)\n",
+                    editor.textCursor().blockNumber(), middle);
+        std::printf("     шагов отмены осталось: %d\n", d->availableUndoSteps());
+    }
+
     std::printf("\n");
     return 0;
 }

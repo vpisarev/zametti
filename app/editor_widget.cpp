@@ -2206,7 +2206,13 @@ bool NoteEditor::runOperation(const std::function<bool(QTextDocument&, QTextCurs
     // В скобку входит и пересборка: заплатка доводит форматы своими правками,
     // и оставленная снаружи она была бы ОТДЕЛЬНЫМ шагом — Ctrl+Z снимал бы
     // оформление, не трогая текста.
-    QTextCursor group(document());
+    // СКОБКУ ОТКРЫВАЕМ КУРСОРОМ ЧЕЛОВЕКА, а не свежим.
+    //
+    // QTextCursor::beginEditBlock запоминает позицию ТОГО курсора, которым
+    // скобку открыли, и именно туда отмена возвращает каретку. Свежий курсор
+    // стоит в начале документа — и после Enter с Ctrl+Z каретка уезжала в самое
+    // начало заметки (жалоба владельца).
+    QTextCursor group = textCursor();
     group.beginEditBlock();
     const bool handled = op(*document(), cursor);
     if (!handled) {
@@ -2441,7 +2447,13 @@ void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
     // правки и таймер записи.
     recordingSuspended_ = true;
     QTextCursor cursor = textCursor();
-    QTextCursor group(document());
+    // СКОБКУ ОТКРЫВАЕМ КУРСОРОМ ЧЕЛОВЕКА, а не свежим.
+    //
+    // QTextCursor::beginEditBlock запоминает позицию ТОГО курсора, которым
+    // скобку открыли, и именно туда отмена возвращает каретку. Свежий курсор
+    // стоит в начале документа — и после Enter с Ctrl+Z каретка уезжала в самое
+    // начало заметки (жалоба владельца).
+    QTextCursor group = textCursor();
     group.beginEditBlock();
     const bool done = note_.note.replaceRange(
         cursor, text,
@@ -2656,7 +2668,13 @@ bool NoteEditor::applyIrEdit(const MoveResult& moved) {
 
     // ОДИН ШАГ ОТМЕНЫ на всю правку: заплатка трогает несколько блоков сразу, а
     // человек нажал один раз.
-    QTextCursor group(document());
+    // СКОБКУ ОТКРЫВАЕМ КУРСОРОМ ЧЕЛОВЕКА, а не свежим.
+    //
+    // QTextCursor::beginEditBlock запоминает позицию ТОГО курсора, которым
+    // скобку открыли, и именно туда отмена возвращает каретку. Свежий курсор
+    // стоит в начале документа — и после Enter с Ctrl+Z каретка уезжала в самое
+    // начало заметки (жалоба владельца).
+    QTextCursor group = textCursor();
     group.beginEditBlock();
     rebuild(moved.blocks, 0, viewAnchor(), nullptr, /*asEdit=*/true);
     group.endEditBlock();
