@@ -3818,33 +3818,51 @@ bool ZDocument::moveListItem(QTextCursor& at, int direction) {
 
 // Двинуть ВЕСЬ блок кода: внутрь пункта выше или обратно наружу.
 //
-// Tab внутри кода занят — там он отступ текста, и это правильно. Свободна ровно
-// одна клетка: САМОЕ НАЧАЛО блока — первая строка, нулевая колонка, без
-// выделения. Там же и у всех прочих блоков Tab значит «сделать блок глубже»,
-// так что правило выходит общим на всех, а не особым случаем кода: в начале
-// блока Tab двигает блок, дальше — то, что в блоке.
+// ЖЕСТ НАЗВАН ВЛАДЕЛЬЦЕМ и взят у внешнего редактора, где он и есть
+// единственный разумный: ВЫДЕЛИТЬ ВСЕ СТРОКИ БЛОКА И НАЖАТЬ Tab. Там выделение
+// захватывает и заборы, и весь кусок уезжает вправо, становясь содержимым
+// пункта; у нас заборов в документе нет, поэтому «весь блок» — это все его
+// строки, от первой до последней.
 //
-// Пунктом код при этом не становится: у кода маркера не бывает. Он становится
-// СОДЕРЖИМЫМ пункта — ровно тем, чем markdown его и делает: отступом до колонки
-// содержимого (см. writePieces, Kind::Code).
+// Второй вход — каретка в самом начале блока без выделения: то же место, где и
+// у всякого другого блока Tab значит «сделать блок глубже».
+//
+// Отступ текста при этом не теряется. Двинуть блок можно ровно один раз: внутри
+// пункта он уже стоит, глубже пункта над ним не бывает — и следующий же Tab по
+// тому же выделению снова отступает код, как и раньше. Некуда двигать (списка
+// над блоком нет) — сразу отступает код.
 static bool moveCodeBlock(QTextDocument& doc, QTextCursor& cursor, int direction) {
-    if (cursor.hasSelection()) return false;
-    const QTextBlock block = cursor.block();
-    if (isRawBlock(block) || kindOf(block) != Kind::Code) return false;
-    if (isContinuationBlock(block) || cursor.positionInBlock() != 0) return false;
+    const QVector<QTextBlock> lines = touchedCodeLines(doc, cursor);
+    if (lines.isEmpty()) return false;
+    const QTextBlock head = lines.front();
+    if (isRawBlock(head) || isContinuationBlock(head)) return false;
+
+    const int first = head.blockNumber();
+    const int last = wholeBlockEnd(doc, first);
+    if (cursor.hasSelection()) {
+        // Блок целиком, а не кусок: выделение обязано задеть все его строки.
+        if (lines.back().blockNumber() != last) return false;
+    } else if (cursor.positionInBlock() != 0) {
+        return false;
+    }
 
     // Уровень принадлежит логическому блоку, а строки его лежат в документе
     // порознь — двигаем все разом.
-    const BlockRange range{block.blockNumber(), wholeBlockEnd(doc, block.blockNumber())};
+    const BlockRange range{first, last};
     if (direction > 0) {
         // Глубже — только под уже существующий пункт: прыжка через уровень в
         // файле не бывает. То же правило, что у абзаца (indentListItems).
-        if (levelOf(block) >= 0) return false;
-        const int level = levelAbove(doc, range.first);
+        if (levelOf(head) >= 0) return false;
+        const int level = levelAbove(doc, first);
         if (level < 0) return false;
         return setInsideLevel(doc, range, level);
     }
-    if (levelOf(block) < 0) return false;
+    if (levelOf(head) < 0) return false;
+    // Есть что снять с самих строк — снимаем сперва их: Shift+Tab по коду с
+    // отступом должен убирать отступ, а не выкидывать блок из пункта.
+    const int width = codeTabWidth();
+    for (const QTextBlock& line : lines)
+        if (leadingIndent(line.text(), width).columns > 0) return false;
     return setInsideLevel(doc, range, -1);
 }
 

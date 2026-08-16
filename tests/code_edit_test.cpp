@@ -516,9 +516,23 @@ void checkCodeIntoListItemInRealNote() {
     QTest::qWait(10);
     editor.openFile(path);
     QTest::qWait(60);
+    const std::string before = editorMarkdown(editor);
 
-    editor.caretTo(QStringLiteral("type Malkovich=string"), 0);
-    check(editor.caretKind() == zametti::Kind::Code, "каретка в блоке кода");
+    // ЖЕСТ ВЛАДЕЛЬЦА: выделить ВСЕ строки блока и нажать Tab — ровно так это
+    // делается во внешнем редакторе, и другого разумного способа нет.
+    {
+        QTextBlock first;
+        QTextBlock last;
+        for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next()) {
+            if (b.text() == QStringLiteral("type Malkovich=string")) first = b;
+            if (b.text() == QStringLiteral("println(Malkovich(\"Malkovich\"))")) last = b;
+        }
+        check(first.isValid() && last.isValid(), "живая заметка: строки блока кода нашлись");
+        QTextCursor at(editor.document());
+        at.setPosition(first.position());
+        at.setPosition(last.position() + last.length() - 1, QTextCursor::KeepAnchor);
+        editor.setTextCursor(at);
+    }
     QTest::keyClick(&editor, Qt::Key_Tab, Qt::NoModifier);
     QTest::qWait(10);
 
@@ -529,6 +543,20 @@ void checkCodeIntoListItemInRealNote() {
     // И два списка сошлись в один: пункт за кодом больше не начинает счёт заново.
     check(md.find("\n1. Functions within the same scope") == std::string::npos,
           "живая заметка: список за кодом не начинается заново");
+
+    // Shift+Tab тем же жестом — обратно. Выделение правку пережило, нажимаем
+    // сразу; блок выходит из пункта, и список за ним снова начинается заново.
+    check(editor.textCursor().hasSelection(), "живая заметка: выделение пережило Tab");
+    QTest::keyClick(&editor, Qt::Key_Backtab, Qt::ShiftModifier);
+    QTest::qWait(10);
+    const std::string back = editorMarkdown(editor);
+    check(back.find("\n```\ntype Malkovich=string\n") != std::string::npos,
+          "живая заметка: Shift+Tab вывел блок кода обратно");
+    check(back.find("\n1. Functions within the same scope") != std::string::npos,
+          "живая заметка: список за кодом снова начинается заново");
+    // И заметка вернулась ровно к тому, с чего начали: Shift+Tab отменяет Tab
+    // (просьба владельца), и больше в заметке не тронуто ничего.
+    checkEq(before, back, "живая заметка: Shift+Tab отменяет Tab до последнего байта");
 }
 
 void checkUndoAfterLeaving() {
