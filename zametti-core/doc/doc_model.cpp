@@ -146,7 +146,7 @@ bool blocksWouldMerge(const QTextBlock& previous, const QTextBlock& next) {
                         previous.text().endsWith(QStringLiteral("-->"));
     }
     return wouldMerge(kindOf(previous), isRawBlock(previous), closedComment, kindOf(next),
-                      isRawBlock(next));
+                      isRawBlock(next), levelOf(next));
 }
 
 Kind kindOf(const QTextBlock& block) {

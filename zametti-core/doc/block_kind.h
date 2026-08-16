@@ -105,9 +105,21 @@ inline bool isList(Kind k) { return k == Kind::ListItem; }
 // "-->" завершает блок сам, и любой сосед начинается заново (замерено на md4c
 // для кода, абзаца, черты, таблицы и второго комментария). Он прозрачен для
 // соседства, в отличие от прочего дословного.
+//
+// nextLevel — уровень следующего блока в списке (-1 снаружи списка). Спрашивается
+// он ради одного случая, найденного замером на md4c: литеральный блок ВНУТРИ
+// пункта прячется за отступ, и отступ этот неотличим от отступа продолжения
+// текста. Строка "   ```" сразу за строкой пункта читается ленивым продолжением
+// пункта, а не забором, и весь кусок падает в дословный. Значит между пунктом и
+// его литеральным содержимым обязана стоять пустая строка. За абзацем внутри
+// пункта тот же забор читается прекрасно — там текст уже стал абзацем, а
+// забор абзац прерывает.
 inline bool wouldMerge(Kind previousKind, bool previousRaw, bool previousClosedComment,
-                       Kind nextKind, bool nextRaw) {
+                       Kind nextKind, bool nextRaw, int nextLevel) {
     if (previousClosedComment) return false;
+    if (nextLevel >= 0 && !nextRaw && (nextKind == Kind::Code || nextKind == Kind::Math) &&
+        isList(previousKind) && !previousRaw)
+        return true;
     // Kind::Html — комментарий, понятый моделью, — прозрачен так же; снизу его
     // защищает то, что HTML-блок второго типа прерывает абзац по спецификации.
     if (!previousRaw && previousKind == Kind::Html) return false;

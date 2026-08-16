@@ -32,20 +32,13 @@
 namespace zametti {
 namespace {
 
-// Слипнутся ли два блока, окажись они в файле подряд без пустой строки.
+// Слипнутся ли два блока, окажись они в файле подряд без пустой строки. Правило
+// ОДНО НА ВСЕХ и живёт в block_kind.h — здесь только перевод вопроса с языка
+// логических блоков. Своя копия правила тут и лежала, слово в слово; копия
+// правила — это правило, которое однажды разойдётся с оригиналом.
 bool wouldMerge(const Piece& previous, const Piece& next) {
-    if (previous.isClosedHtmlComment()) return false;
-    if (!previous.raw && previous.kind == Kind::Html) return false;
-    // Два блока кода подряд: их заборы спарились бы не так, как надо. Два
-    // дословных куска подряд — по той же причине непрозрачности.
-    const bool prevLiteral = previous.raw || previous.kind == Kind::Code;
-    const bool nextLiteral = next.raw || next.kind == Kind::Code;
-    if (prevLiteral && nextLiteral) return true;
-    // Разделитель ("___") стоит вплотную к любому соседу: подчёркивание не
-    // бывает setext-подчёркиванием. Ровно ради этого канон его и выбрал.
-    if (next.kind != Kind::Paragraph) return false;
-    return previous.kind == Kind::Paragraph || previous.kind == Kind::Quote ||
-           isList(previous.kind);
+    return zametti::wouldMerge(previous.kind, previous.raw, previous.isClosedHtmlComment(),
+                               next.kind, next.raw, next.level);
 }
 
 }  // namespace

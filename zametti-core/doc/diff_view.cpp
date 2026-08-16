@@ -47,7 +47,7 @@ namespace {
 // общим правилам ей дешевле, чем объясняться.
 bool merges(const Piece& previous, const Piece& next) {
     return wouldMerge(previous.kind, previous.raw, previous.isClosedHtmlComment(), next.kind,
-                      next.raw);
+                      next.raw, next.level);
 }
 
 Piece vspacePiece() {

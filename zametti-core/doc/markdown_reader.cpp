@@ -135,7 +135,7 @@ struct Draft {
     // только то, чего оно о черновике знать не может.
     bool wouldMerge(const DraftBlock& previous, const DraftBlock& next) const {
         return zametti::wouldMerge(previous.kind, previous.raw, isClosedHtmlComment(previous),
-                                   next.kind, next.raw);
+                                   next.kind, next.raw, next.level);
     }
 };
 

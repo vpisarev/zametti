@@ -313,6 +313,32 @@ std::vector<Piece> piecesOfBlocks(const QTextDocument& doc, int firstBlock, int 
     return out;
 }
 
+// Часть ОДНОГО логического блока — как логические блоки, с сохранением его
+// лица: рода, маркера, уровня, заголовочности. Всё это лежит в формате блока,
+// поэтому лицо и переносится форматом целиком.
+//
+// Отдельно от piecesOfRange, и это не дубль: piecesOfRange живёт по правилам
+// БУФЕРА ОБМЕНА (в буфер уходит законченный markdown, годный сам по себе) и
+// потому нарочно снимает формат с куска строки и схлопывает уровни списка. Здесь
+// кусок остаётся жить в той же заметке, на том же месте, и обязан остаться
+// собой: разрезанный пополам пункт — это тот же пункт, а не два абзаца
+// (владелец: «несколько строк невозможно превратить в блок кода не разрушив
+// весь элемент списка»).
+std::vector<Piece> piecesOfPart(QTextDocument& doc, int from, int to, const QTextBlock& origin) {
+    if (from >= to) return {};
+    QTextCursor range(&doc);
+    range.setPosition(from);
+    range.setPosition(to, QTextCursor::KeepAnchor);
+
+    QTextDocument temp;
+    QTextCursor paste(&temp);
+    paste.insertFragment(range.selection());
+    QTextCursor fix(&temp);
+    fix.setPosition(0);
+    fix.setBlockFormat(origin.blockFormat());
+    return piecesOfBlocks(temp, 0, temp.blockCount() - 1);
+}
+
 // Сколько QTextBlock займёт этот логический блок: литеральный лежит построчно,
 // остальные — одним блоком. Правило то же, что у сборщика (splitLiteralLines):
 // один завершающий перевод строки не начинает новой строки.
@@ -347,12 +373,45 @@ int wholeBlockEnd(const QTextDocument& doc, int number) {
 
 // Блок кода из готовых байтов. Завершающий перевод строки лежит и в тексте, и
 // в признаке — таков канон логического блока (см. document_pieces.h).
-Piece codePiece(std::string code) {
+//
+// УРОВЕНЬ — ТАКАЯ ЖЕ ПРИНАДЛЕЖНОСТЬ БЛОКА, КАК РОД, и передаётся он снаружи
+// обязательно: блок кода, забывший уровень, выпадает из пункта наружу, а список
+// за ним начинает нумерацию заново (нашёл владелец).
+Piece codePiece(std::string code, int level) {
     Piece out;
     out.kind = Kind::Code;
+    out.level = level;
     out.trailingNewline = !code.empty() && code.back() == '\n';
     out.text = std::move(code);
     return out;
+}
+
+// На каком уровне блоку кода СТОЯТЬ ПРАВО ИМЕЕТ. Содержимым пункта код может
+// быть только тогда, когда пункт над ним остался: пункт, ставший кодом целиком,
+// уносит с собой и свой уровень, и код после него оказывается уже ничьим.
+//
+// Не педантизм: единственный пункт заметки, превращённый в код, давал блок кода
+// с уровнем 0 при полном отсутствии списка. Markdown этого не видел (отступать
+// не от чего), а вот геометрия видела — заплатка расходилась с полной сборкой на
+// левом поле, и ассерт в отладочной сборке ловил это сразу.
+//
+// keepsHead — над кодом остаётся голова того же блока: тогда спрашивать соседа
+// сверху незачем, уровень даёт она сама.
+int levelForCode(const QTextDocument& doc, int firstBlock, int wanted, bool keepsHead) {
+    if (wanted < 0 || keepsHead) return wanted;
+    return qMin(wanted, levelAbove(doc, firstBlock));
+}
+
+// Самый внешний уровень среди кусков: наружу списка (-1) внешнее всего. Блок,
+// собранный из нескольких, встаёт туда, где стоял внешний из них.
+int outermostLevel(const std::vector<Piece>& pieces) {
+    int level = -1;
+    bool first = true;
+    for (const Piece& piece : pieces) {
+        if (first || piece.level < level) level = piece.level;
+        first = false;
+    }
+    return level;
 }
 
 }  // namespace
@@ -479,10 +538,11 @@ static CodeBlockEdit toggleCodeBlock(QTextDocument& doc, const QTextCursor& curs
     // Разделители строк на срезах в куски не берём: иначе оставшийся кусок
     // кончался бы пустой строкой, а она блок заканчивает.
     const std::vector<Piece> head =
-        piecesOfRange(doc, firstDocBlock.position(),
-                      lineStart > firstDocBlock.position() ? lineStart - 1 : lineStart);
+        piecesOfPart(doc, firstDocBlock.position(),
+                     lineStart > firstDocBlock.position() ? lineStart - 1 : lineStart,
+                     firstDocBlock);
     const std::vector<Piece> tail =
-        piecesOfRange(doc, lineEnd < blockEnd ? lineEnd + 1 : lineEnd, blockEnd);
+        piecesOfPart(doc, lineEnd < blockEnd ? lineEnd + 1 : lineEnd, blockEnd, lastDocBlock);
     const std::vector<Piece> chosen = piecesOfRange(doc, lineStart, lineEnd);
     if (!head.empty() || !tail.empty()) {
         if (chosen.empty()) return {};
@@ -497,8 +557,19 @@ static CodeBlockEdit toggleCodeBlock(QTextDocument& doc, const QTextCursor& curs
         }
         if (!code.empty() && code.back() != '\n') code.push_back('\n');
         out.landed = firstBlock + docBlocksOf(result);
-        result.push_back(codePiece(spacesForCode(code)));
-        result.insert(result.end(), tail.begin(), tail.end());
+        result.push_back(codePiece(spacesForCode(code), levelForCode(doc, firstBlock,
+                                                                    levelOf(firstDocBlock),
+                                                                    !head.empty())));
+
+        // ПУНКТ ОБЯЗАН УЦЕЛЕТЬ. Голова и хвост приехали из одного блока, и
+        // маркер списка достался обеим — а маркер у пункта один. Достаётся он
+        // тому, кто идёт первым; хвост за ним остаётся продолжением того же
+        // пункта, то есть блоком БЕЗ маркера на его уровне. Прежде хвост
+        // становился НОВЫМ пунктом, и список разъезжался пополам.
+        for (Piece piece : tail) {
+            if (!head.empty() && isList(piece.kind)) piece.kind = Kind::Paragraph;
+            result.push_back(std::move(piece));
+        }
 
         out.done = true;
         out.blocks = std::move(result);
@@ -520,10 +591,13 @@ static CodeBlockEdit toggleCodeBlock(QTextDocument& doc, const QTextCursor& curs
     if (allCode) {
         // Обратный ход: каждая строка кода становится строкой обычного текста.
         // Один блок кода — один абзац: переводы строк внутри абзаца жить умеют.
+        // Уровень остаётся тот же: код, живший внутри пункта, вернётся туда же
+        // абзацем, а не выпадет из списка.
         for (const Piece& piece : selected) {
             std::string_view body = piece.text;
             while (!body.empty() && body.back() == '\n') body.remove_suffix(1);
             Piece plain;
+            plain.level = piece.level;
             plain.text = spacesForProse(body);
             result.push_back(std::move(plain));
         }
@@ -534,7 +608,9 @@ static CodeBlockEdit toggleCodeBlock(QTextDocument& doc, const QTextCursor& curs
             code += piece.text;
         }
         if (!code.empty() && code.back() != '\n') code.push_back('\n');
-        result.push_back(codePiece(spacesForCode(code)));
+        result.push_back(
+            codePiece(spacesForCode(code), levelForCode(doc, firstBlock,
+                                                        outermostLevel(selected), false)));
     }
     out.landed = firstBlock;
     out.done = true;
@@ -2603,6 +2679,48 @@ static bool joinAcrossVSpaceForward(QTextDocument& doc, QTextCursor& cursor) {
     return removeVSpaceAndMaybeJoin(doc, cursor, gap.blockNumber());
 }
 
+// СОБСТВЕННЫЙ отступ блока — тот, что был бы у него вне всякого списка: у кода
+// это плашка со своим внутренним полем, у цитаты её поле, у прочих ноль.
+// Спрашивается он в двух местах — внутри пункта прибавляется к колонке пункта, а
+// снаружи списка он и есть весь отступ, — и потому живёт одной функцией. Числа
+// те же, что кладёт сборщик (document_builder, Kind::Code и Kind::Quote).
+static qreal ownLeftMargin(const QTextBlock& block, const CodePlate& plate, qreal charUnit) {
+    if (isRawBlock(block)) return 0;
+    switch (kindOf(block)) {
+        case Kind::Code:  return plate.indent + plate.padLeft;
+        case Kind::Quote: return appearance().quoteIndent * charUnit;
+        // У формулы собственного отступа нет: она встаёт по центру колонки, а её
+        // исходник виден только в правке.
+        case Kind::Math:
+        case Kind::Paragraph:
+        case Kind::Heading:
+        case Kind::VSpace:
+        case Kind::ListItem:
+        case Kind::Divider:
+        case Kind::Html:
+            break;
+    }
+    return 0;
+}
+
+// Поставить блоку левое поле, а нулевое — снять вовсе: у блока без отступа
+// свойства нет ВООБЩЕ, и свойство со значением 0 — это уже другой формат.
+// Отладочная сверка со сборкой сравнивает свойства поимённо и такую разницу
+// видит (на ней я и поймал, что снятый уровень уносил с собой плашку кода).
+static void setLeftMarginTo(QTextCursor& cursor, const QTextBlock& block, qreal margin) {
+    QTextBlockFormat format = block.blockFormat();
+    const bool has = format.hasProperty(QTextFormat::BlockLeftMargin);
+    if (margin <= 0.0) {
+        if (!has) return;
+        format.clearProperty(QTextFormat::BlockLeftMargin);
+        setBlockFormat(cursor, block, format);
+        return;
+    }
+    if (has && std::fabs(format.leftMargin() - margin) < 0.01) return;
+    format.setLeftMargin(margin);
+    setBlockFormat(cursor, block, format);
+}
+
 void applyListGeometry(QTextDocument& doc, BlockRange range) {
     const BlockRange full = expandToRuns(doc, range);
     const QFont base = layoutBaseFont();
@@ -2682,41 +2800,32 @@ void applyListGeometry(QTextDocument& doc, BlockRange range) {
     QTextBlock block = doc.findBlockByNumber(full.first);
     for (int i = full.first; i <= full.last && block.isValid(); ++i, block = block.next()) {
         const int run = runOf[size_t(i - full.first)];
-        if (run == kSkip) continue;
+        // Пустая строка отступа не имеет никакого — ни своего, ни списочного.
+        if (run == kSkip) {
+            setLeftMarginTo(cursor, block, 0);
+            continue;
+        }
         if (run == kInside) {
             // Колонка своего пункта — та самая, от которой начинается его текст.
             // К ней прибавляется собственный отступ блока: у кода и цитаты он
             // свой, и внутри пункта он тоже нужен.
             const size_t at = size_t(qMax(0, levelOf(block))) + 1;
-            if (at >= contentCol.size()) continue;
-            qreal own = 0;
-            switch (kindOf(block)) {
-                // У кода собственный отступ складывается из двух: плашка от
-                // абзаца и код внутри плашки. Спрашиваем codePlate, а не
-                // считаем сами, — иначе внутри пункта плашка съезжала бы
-                // относительно кода. Масштаб восстанавливаем из шрифта
-                // документа: сборщик кладёт в него baseFontPoint × зум.
-                case Kind::Code:  own = plate.indent + plate.padLeft; break;
-                // У формулы собственного отступа нет: она встаёт по центру
-                // колонки, а её исходник виден только в правке.
-                case Kind::Math:  break;
-                case Kind::Quote: own = appearance().quoteIndent * charUnit; break;
-                case Kind::Paragraph:
-                case Kind::Heading:
-                case Kind::VSpace:
-                case Kind::ListItem:
-                case Kind::Divider:
-                case Kind::Html:
-                    break;
+            // Колонки своего пункта нет — значит пункта над ним в этом прогоне
+            // и нет: блок стоит сам по себе и отступ у него собственный.
+            const qreal own = ownLeftMargin(block, plate, charUnit);
+            if (at >= contentCol.size()) {
+                setLeftMarginTo(cursor, block, own);
+                continue;
             }
-            const qreal margin = indent + contentCol[at] + own;
-            QTextBlockFormat format = block.blockFormat();
-            if (std::fabs(format.leftMargin() - margin) < 0.01) continue;
-            format.setLeftMargin(margin);
-            setBlockFormat(cursor, block, format);
+            setLeftMarginTo(cursor, block, indent + contentCol[at] + own);
             continue;
         }
+        // Блок вне всякого списка: весь его отступ — собственный. Ставит его
+        // ТОЖЕ ЭТА функция, а не только сборщик: правка, снявшая с блока
+        // уровень, уносила вместе с уровнем и левое поле — блок кода терял
+        // плашку, и заплатка расходилась с полной сборкой.
         if (run < 0) {
+            setLeftMarginTo(cursor, block, ownLeftMargin(block, plate, charUnit));
             contentCol.assign(1, 0.0);
             continue;
         }
@@ -2727,13 +2836,10 @@ void applyListGeometry(QTextDocument& doc, BlockRange range) {
         const qreal cell = widest[size_t(run)];
         contentCol[size_t(level) + 1] = contentCol[size_t(level)] + cell;
 
-        const qreal margin = indent + contentCol[size_t(level)] + cell;
-        QTextBlockFormat format = block.blockFormat();
-        // Не трогаем формат, если поле и так верное: любая запись помечает
-        // документ изменённым и тянет за собой автосохранение.
-        if (std::fabs(format.leftMargin() - margin) < 0.01) continue;
-        format.setLeftMargin(margin);
-        setBlockFormat(cursor, block, format);
+        // Формат не трогаем, если поле и так верное: любая запись помечает
+        // документ изменённым и тянет за собой автосохранение (это внутри
+        // setLeftMarginTo).
+        setLeftMarginTo(cursor, block, indent + contentCol[size_t(level)] + cell);
     }
 }
 
@@ -3710,15 +3816,49 @@ bool ZDocument::moveListItem(QTextCursor& at, int direction) {
 // ЧТО ЗНАЧИТ Tab, РЕШАЕТ МЕСТО, и решает его заметка: снаружи спрашивать «а мы
 // сейчас в коде?» некому — там про блоки кода знать не должны вовсе.
 
+// Двинуть ВЕСЬ блок кода: внутрь пункта выше или обратно наружу.
+//
+// Tab внутри кода занят — там он отступ текста, и это правильно. Свободна ровно
+// одна клетка: САМОЕ НАЧАЛО блока — первая строка, нулевая колонка, без
+// выделения. Там же и у всех прочих блоков Tab значит «сделать блок глубже»,
+// так что правило выходит общим на всех, а не особым случаем кода: в начале
+// блока Tab двигает блок, дальше — то, что в блоке.
+//
+// Пунктом код при этом не становится: у кода маркера не бывает. Он становится
+// СОДЕРЖИМЫМ пункта — ровно тем, чем markdown его и делает: отступом до колонки
+// содержимого (см. writePieces, Kind::Code).
+static bool moveCodeBlock(QTextDocument& doc, QTextCursor& cursor, int direction) {
+    if (cursor.hasSelection()) return false;
+    const QTextBlock block = cursor.block();
+    if (isRawBlock(block) || kindOf(block) != Kind::Code) return false;
+    if (isContinuationBlock(block) || cursor.positionInBlock() != 0) return false;
+
+    // Уровень принадлежит логическому блоку, а строки его лежат в документе
+    // порознь — двигаем все разом.
+    const BlockRange range{block.blockNumber(), wholeBlockEnd(doc, block.blockNumber())};
+    if (direction > 0) {
+        // Глубже — только под уже существующий пункт: прыжка через уровень в
+        // файле не бывает. То же правило, что у абзаца (indentListItems).
+        if (levelOf(block) >= 0) return false;
+        const int level = levelAbove(doc, range.first);
+        if (level < 0) return false;
+        return setInsideLevel(doc, range, level);
+    }
+    if (levelOf(block) < 0) return false;
+    return setInsideLevel(doc, range, -1);
+}
+
 bool ZDocument::indent(QTextCursor& at) {
     return runLocalEdit(at, [this](QTextCursor& edit) {
-        return indentCodeAtCursor(d_->text, edit) || indentListItems(d_->text, edit);
+        return moveCodeBlock(d_->text, edit, 1) || indentCodeAtCursor(d_->text, edit) ||
+               indentListItems(d_->text, edit);
     });
 }
 
 bool ZDocument::outdent(QTextCursor& at) {
     return runLocalEdit(at, [this](QTextCursor& edit) {
-        return outdentCodeAtCursor(d_->text, edit) || outdentListItems(d_->text, edit);
+        return moveCodeBlock(d_->text, edit, -1) || outdentCodeAtCursor(d_->text, edit) ||
+               outdentListItems(d_->text, edit);
     });
 }
 

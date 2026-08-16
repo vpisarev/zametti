@@ -9,6 +9,8 @@
 
 #include "test_util.h"
 
+#include <QGuiApplication>
+
 #include <cstdio>
 #include <fstream>
 #include <iostream>
@@ -16,6 +18,18 @@
 #include <string>
 
 int main(int argc, char** argv) {
+    // ПЛАТФОРМА — ДО СОЗДАНИЯ ПРИЛОЖЕНИЯ, и приложение обязательно: приведение
+    // к канону идёт через живой QTextDocument, а сборщик спрашивает метрики
+    // шрифта — без QGuiApplication это падение, а падений у нас не бывает
+    // (`--check` валился в core dump на всякой машине без дисплея).
+    //
+    // Заданную снаружи платформу не перебиваем — под условием, как и в
+    // zametti-store: спрашиваем «пуста ли», потому что пустая платформа для Qt
+    // не платформа, он уходит в автоопределение и падает.
+    if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
+        qputenv("QT_QPA_PLATFORM", "offscreen");
+    QGuiApplication app(argc, argv);
+
     std::string path;
     std::string mode;
     for (int i = 1; i < argc; ++i) {
