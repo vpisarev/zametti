@@ -261,6 +261,18 @@ struct MD_CTX_tag {
     int html_block_type;    /* For checking closing raw HTML condition. */
     int last_line_has_list_loosening_effect;
     int last_list_item_starts_with_two_blank_lines;
+
+    /* ZAMETTI PATCH. Where the block bytes ended right after the last container
+     * header (MD_BLOCK with MD_BLOCK_CONTAINER flags) was pushed; -1 if none.
+     * The "list item starts with two blank lines" hack wants to know whether the
+     * innermost list item is still empty, i.e. whether the item's MD_BLOCK_LI
+     * opener is the last thing in the block bytes. Upstream md4c reads the top
+     * sizeof(MD_BLOCK) bytes blindly and interprets them as MD_BLOCK, but after
+     * a leaf block those bytes are its last MD_LINE / MD_VERBATIMLINE, and the
+     * low byte of a byte OFFSET poses as the block type: whenever it happened to
+     * equal MD_BLOCK_LI (once every 256 offsets), an indented paragraph after a
+     * fenced code block inside a list item silently left the list. */
+    int last_container_end;
 };
 
 enum MD_LINETYPE_tag {
@@ -4964,6 +4976,7 @@ md_process_all_blocks(MD_CTX* ctx)
     }
 
     ctx->n_block_bytes = 0;
+    ctx->last_container_end = -1;   /* ZAMETTI PATCH */
 
 abort:
     return ret;
@@ -5197,9 +5210,23 @@ md_push_container_bytes(MD_CTX* ctx, MD_BLOCKTYPE type, unsigned start,
     block->flags = flags;
     block->data = data;
     block->n_lines = start;
+    ctx->last_container_end = ctx->n_block_bytes;   /* ZAMETTI PATCH */
 
 abort:
     return ret;
+}
+
+/* ZAMETTI PATCH. The container header on top of the block bytes, or NULL when
+ * the top is line data of a leaf block (or nothing at all). This is the only
+ * safe way to look at the top block: see last_container_end. */
+static MD_BLOCK*
+md_top_container_block(MD_CTX* ctx)
+{
+    if(ctx->last_container_end < (int) sizeof(MD_BLOCK))
+        return NULL;
+    if(ctx->n_block_bytes != ctx->last_container_end)
+        return NULL;
+    return (MD_BLOCK*) ((char*)ctx->block_bytes + ctx->last_container_end - sizeof(MD_BLOCK));
 }
 
 
@@ -5959,11 +5986,11 @@ md_analyze_line(MD_CTX* ctx, OFF beg, OFF* p_end,
                  * item can begin with at most one blank line."
                  */
                 if(n_parents > 0  &&  ctx->containers[n_parents-1].ch != _T('>')  &&
-                   n_brothers + n_children == 0  &&  ctx->current_block == NULL  &&
-                   ctx->n_block_bytes > (int) sizeof(MD_BLOCK))
+                   n_brothers + n_children == 0  &&  ctx->current_block == NULL)
                 {
-                    MD_BLOCK* top_block = (MD_BLOCK*) ((char*)ctx->block_bytes + ctx->n_block_bytes - sizeof(MD_BLOCK));
-                    if(top_block->type == MD_BLOCK_LI)
+                    /* ZAMETTI PATCH: was a blind read of the top sizeof(MD_BLOCK) bytes. */
+                    MD_BLOCK* top_block = md_top_container_block(ctx);
+                    if(top_block != NULL  &&  top_block->type == MD_BLOCK_LI)
                         ctx->last_list_item_starts_with_two_blank_lines = TRUE;
                 }
     #endif
@@ -5978,11 +6005,11 @@ md_analyze_line(MD_CTX* ctx, OFF beg, OFF* p_end,
             if(ctx->last_list_item_starts_with_two_blank_lines) {
                 if(n_parents > 0  &&  n_parents == ctx->n_containers  &&
                    ctx->containers[n_parents-1].ch != _T('>')  &&
-                   n_brothers + n_children == 0  &&  ctx->current_block == NULL  &&
-                   ctx->n_block_bytes > (int) sizeof(MD_BLOCK))
+                   n_brothers + n_children == 0  &&  ctx->current_block == NULL)
                 {
-                    MD_BLOCK* top_block = (MD_BLOCK*) ((char*)ctx->block_bytes + ctx->n_block_bytes - sizeof(MD_BLOCK));
-                    if(top_block->type == MD_BLOCK_LI) {
+                    /* ZAMETTI PATCH: was a blind read of the top sizeof(MD_BLOCK) bytes. */
+                    MD_BLOCK* top_block = md_top_container_block(ctx);
+                    if(top_block != NULL  &&  top_block->type == MD_BLOCK_LI) {
                         n_parents--;
 
                         line->indent = total_indent;
@@ -6435,6 +6462,7 @@ md_parse(const MD_CHAR* text, MD_SIZE size, const MD_PARSER* parser, void* userd
 
     /* Setup context structure. */
     memset(&ctx, 0, sizeof(MD_CTX));
+    ctx.last_container_end = -1;    /* ZAMETTI PATCH */
     ctx.text = text;
     ctx.size = size;
     memcpy(&ctx.parser, parser, sizeof(MD_PARSER));
