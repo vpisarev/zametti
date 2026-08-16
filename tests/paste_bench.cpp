@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -340,6 +341,92 @@ int ztPasteBench(int argc, char** argv) {
             each = std::min(each, double(timer.nsecsElapsed()) / 1000.0 / double(chars));
         }
         std::printf("   %-10d %-10.0f %-14.1f\n", blocks, double(source.size()) / 1024.0, each);
+    }
+
+    // ГДЕ ИМЕННО ПРАВИШЬ — ВАЖНО ЛИ ЭТО.
+    //
+    // Вопрос решающий для выбора лечения. Если цена растёт с числом блоков
+    // НИЖЕ места правки, значит Qt разносит геометрию по всему хвосту, и
+    // лечится это индексом высот (docs/zametti-fast-layout.md). Если цена
+    // одинакова везде — дело в другом, и своя вёрстка не поможет.
+    {
+        const std::string source = noteOf(5000);
+        std::printf("ЗАВИСИТ ЛИ ЦЕНА ОТ МЕСТА ПРАВКИ (QTextEdit, 490 КБ, 5000 блоков)\n");
+        std::printf("   %-22s %-14s\n", "где правим", "мкс/знак");
+        for (const auto& where : {std::pair<const char*, double>{"в самом начале", 0.0},
+                                  {"в середине", 0.5},
+                                  {"в самом конце", 0.999}}) {
+            QTextEdit plain;
+            plain.setPlainText(QString::fromUtf8(source.data(), qsizetype(source.size())));
+            plain.resize(800, 600);
+            plain.show();
+            QTest::qWait(30);
+
+            const int block = int(where.second * (plain.document()->blockCount() - 1));
+            QTextCursor at(plain.document());
+            at.setPosition(plain.document()->findBlockByNumber(block).position());
+            plain.setTextCursor(at);
+
+            double each = 1e18;
+            for (int run = 0; run < 3; ++run) {
+                qint64 chars = 0;
+                QElapsedTimer timer;
+                timer.start();
+                for (int i = 0; i < 10; ++i)
+                    for (const QChar ch : phrase) {
+                        QKeyEvent press(QEvent::KeyPress, Qt::Key_unknown, Qt::NoModifier,
+                                        QString(ch));
+                        QApplication::sendEvent(&plain, &press);
+                        ++chars;
+                    }
+                each = std::min(each, double(timer.nsecsElapsed()) / 1000.0 / double(chars));
+            }
+            std::printf("   %-22s %-14.1f\n", where.first, each);
+        }
+        std::printf("   Падение к концу означает: платим за блоки НИЖЕ правки.\n\n");
+    }
+
+    // САМЫЙ ДЕШЁВЫЙ ПРОБНИК ПЕРЕД СВОЕЙ ВЁРСТКОЙ: подсунуть НАШЕМУ документу,
+    // со всеми его форматами, штатную ленивую вёрстку. Рисовать она будет не то,
+    // что нам нужно, — но ответить на вопрос «сколько стоит правка, если
+    // геометрия не разносится по хвосту» она может уже сейчас.
+    {
+        const std::string source = noteOf(5000);
+        std::printf("НАШ ДОКУМЕНТ ПОД ЛЕНИВОЙ ВЁРСТКОЙ (QPlainTextDocumentLayout)\n");
+        zametti::ZDocument note;
+        note.loadMarkdown(source);
+
+        QPlainTextEdit host;
+        host.resize(800, 600);
+        // Документ отдаём тот самый, который собрал наш сборщик, — со ступенями
+        // кеглей, полями блоков и всеми свойствами.
+        QTextDocument* doc = note.getDocument();
+        doc->setDocumentLayout(new QPlainTextDocumentLayout(doc));
+        host.setDocument(doc);
+        host.show();
+        QTest::qWait(30);
+
+        QTextCursor at(doc);
+        at.setPosition(doc->findBlockByNumber(doc->blockCount() / 2).position());
+        host.setTextCursor(at);
+
+        double each = 1e18;
+        for (int run = 0; run < 3; ++run) {
+            qint64 chars = 0;
+            QElapsedTimer timer;
+            timer.start();
+            for (int i = 0; i < 10; ++i)
+                for (const QChar ch : phrase) {
+                    QKeyEvent press(QEvent::KeyPress, Qt::Key_unknown, Qt::NoModifier,
+                                    QString(ch));
+                    QApplication::sendEvent(&host, &press);
+                    ++chars;
+                }
+            each = std::min(each, double(timer.nsecsElapsed()) / 1000.0 / double(chars));
+        }
+        std::printf("   в середине 490 КБ: %.1f мкс/знак\n", each);
+        std::printf("   для сравнения: та же правка под QTextDocumentLayout — 3308 мкс\n");
+        host.setDocument(nullptr);
     }
 
     std::printf("\n");
