@@ -8,9 +8,18 @@
 // Стенд, а не набор: у него ответ — число, на которое надо смотреть.
 
 #include "document.h"
+#include "editor_widget.h"
+
+#include <QApplication>
+#include <QDir>
+#include <QFile>
+#include <QKeyEvent>
+#include <QTest>
 
 #include <QElapsedTimer>
+#include <QTextBlock>
 #include <QTextCursor>
+#include <QTextDocument>
 
 #include <algorithm>
 #include <cstdio>
@@ -66,5 +75,49 @@ int ztPasteBench(int argc, char** argv) {
     }
     std::printf("   «на блок» обязано ПАДАТЬ: если вставка стоит одного и того же,\n"
                 "   на большой заметке доля каждого блока меньше.\n\n");
+
+    // --- А ТЕПЕРЬ ТО, ЧТО ЕЩЁ НЕ НА БАЗИСЕ ----------------------------------
+    //
+    // Enter и Backspace идут прежним путём: операция правит документ, а следом
+    // редактор обходит его ЦЕЛИКОМ (piecesOf) и накладывает заплатку. Здесь
+    // видно, чего это стоит и что даст перевод на базис.
+    std::printf("ЦЕНА Enter ПРЕЖНИМ ПУТЁМ (операция + обход всего документа)\n");
+    std::printf("   %-10s %-10s %-12s %-12s\n", "блоков", "КБ", "Enter, мкс", "на блок, нс");
+
+    const QString dir = QStringLiteral("/tmp/zametti-paste-bench");
+    QDir(dir).removeRecursively();
+    QDir().mkpath(dir);
+    for (const int blocks : {50, 500, 5000}) {
+        const std::string source = noteOf(blocks);
+        const QString path = dir + QStringLiteral("/n%1.md").arg(blocks);
+        {
+            QFile file(path);
+            if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) continue;
+            file.write(QByteArray(source.data(), qsizetype(source.size())));
+        }
+
+        zametti::NoteEditor editor;
+        editor.resize(800, 600);
+        editor.show();
+        QTest::qWait(20);
+        editor.openFile(path);
+        QTest::qWait(30);
+
+        double best = 1e18;
+        for (int run = 0; run < 7; ++run) {
+            QTextCursor at(editor.document());
+            at.setPosition(
+                editor.document()->findBlockByNumber(editor.document()->blockCount() / 2).position());
+            editor.setTextCursor(at);
+            QKeyEvent press(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+            QElapsedTimer timer;
+            timer.start();
+            QApplication::sendEvent(&editor, &press);
+            best = std::min(best, double(timer.nsecsElapsed()) / 1000.0);
+        }
+        std::printf("   %-10d %-10.0f %-12.1f %-12.1f\n", blocks, double(source.size()) / 1024.0,
+                    best, best * 1000.0 / blocks);
+    }
+    std::printf("   Здесь «на блок» обязано СТОЯТЬ: цена растёт вместе с заметкой.\n\n");
     return 0;
 }
