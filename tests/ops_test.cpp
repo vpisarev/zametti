@@ -27,6 +27,11 @@ using zametti::Piece;
 using zametti::Kind;
 using zametti::Marker;
 
+// Правка — ГЛАГОЛОМ ЗАМЕТКИ, ровно тем же, каким её зовёт редактор. Набор
+// стережёт ту дверь, через которую ходит приложение, а не соседнюю: свободные
+// функции разметки живут внутри ядра и наружу не выходят.
+using NoteOp = std::function<bool(zametti::ZDocument&, QTextCursor&)>;
+
 // Набросок блока: короткий литерал для наборов. Настоящий Piece держит ещё
 // куски разметки и признак завершающего перевода строки, а здесь нужен только
 // скелет.
@@ -295,27 +300,20 @@ struct KeyCase {
     const char* what;
 };
 
-void checkKey(bool (*op)(QTextDocument&, QTextCursor&), const KeyCase& c) {
-    QTextDocument doc;
-    zametti::buildDocument(pieces(c.before), doc);
+void checkKey(const NoteOp& op, const KeyCase& c) {
+    zametti::ZDocument note = noteOf(c.before);
 
-    QTextCursor cursor(&doc);
-    const QTextBlock block = doc.findBlockByNumber(c.block);
-    check(block.isValid(), std::string(c.what) + ": нет такого блока");
-    if (!block.isValid()) return;
-    cursor.setPosition(block.position() + c.offset);
+    QTextCursor cursor = note.caretAtBlock(c.block);
+    check(cursor.blockNumber() == c.block, std::string(c.what) + ": нет такого блока");
+    cursor.setPosition(cursor.position() + c.offset);
 
-    const bool handled = op(doc, cursor);
-    const std::string actual = handled ? markdownOf(blocksOf(doc))
-                                       : std::string("<операция отказалась>");
+    const bool handled = op(note, cursor);
+    const std::string actual = handled ? note.toMarkdown() : std::string("<операция отказалась>");
     checkEqual(c.after, actual, c.what);
 
     if (!handled) return;
-    QString problem;
-    check(zametti::listInvariantHolds(doc, &problem),
-          std::string(c.what) + ": инвариант списков — " + problem.toStdString());
-    check(zametti::literalInvariantHolds(doc, &problem),
-          std::string(c.what) + ": инвариант продолжений — " + problem.toStdString());
+    const QString problem = note.structureProblem();
+    check(problem.isEmpty(), std::string(c.what) + ": строение — " + problem.toStdString());
 }
 
 const KeyCase kEnterCases[] = {
@@ -395,9 +393,13 @@ const KeyCase kBackspaceCases[] = {
     {"1. номер\n- буллет\n", 1, 0, "1. номер\n   буллет\n",
      "буллет теряет маркер и пристаёт строкой к номеру"},
     {"- пустой\n- \n", 1, 0, "- пустой\n", "пустой пункт просто исчезает"},
-    {"- пункт\n", 0, 3, "<операция отказалась>", "внутри текста — штатное поведение"},
-    {"абзац\n", 0, 0, "<операция отказалась>", "в абзаце — штатное поведение"},
-    {"```\nкод\n```\n", 0, 0, "<операция отказалась>", "в коде — штатное поведение"},
+    // Дальше — не жесты списка, а обычное удаление знака: набор спрашивает
+    // BACKSPACE ЦЕЛИКОМ (глагол заметки), а не одну его составляющую, как
+    // прежде. Внутри текста он съедает букву, а в самом начале заметки слева
+    // ничего нет и отказывается.
+    {"- пункт\n", 0, 3, "- пукт\n", "внутри текста удаляется знак"},
+    {"абзац\n", 0, 0, "<операция отказалась>", "в начале заметки удалять нечего"},
+    {"```\nкод\n```\n", 0, 0, "<операция отказалась>", "в коде в начале заметки тоже"},
 };
 
 const KeyCase kIndentCases[] = {
@@ -438,24 +440,21 @@ struct RangeCase {
     const char* what;
 };
 
-void checkRange(bool (*op)(QTextDocument&, QTextCursor&), const RangeCase& c) {
-    QTextDocument doc;
-    zametti::buildDocument(pieces(c.before), doc);
+void checkRange(const NoteOp& op, const RangeCase& c) {
+    zametti::ZDocument note = noteOf(c.before);
 
-    QTextCursor cursor(&doc);
-    cursor.setPosition(doc.findBlockByNumber(c.firstBlock).position());
-    const QTextBlock last = doc.findBlockByNumber(c.lastBlock);
-    cursor.setPosition(last.position() + last.length() - 1, QTextCursor::KeepAnchor);
+    QTextCursor cursor = note.caretAtBlock(c.firstBlock);
+    QTextCursor tail = note.caretAtBlock(c.lastBlock);
+    tail.movePosition(QTextCursor::EndOfBlock);
+    cursor.setPosition(tail.position(), QTextCursor::KeepAnchor);
 
-    const bool handled = op(doc, cursor);
-    const std::string actual = handled ? markdownOf(blocksOf(doc))
-                                       : std::string("<операция отказалась>");
+    const bool handled = op(note, cursor);
+    const std::string actual = handled ? note.toMarkdown() : std::string("<операция отказалась>");
     checkEqual(c.after, actual, c.what);
 
     if (!handled) return;
-    QString problem;
-    check(zametti::listInvariantHolds(doc, &problem),
-          std::string(c.what) + ": инвариант списков — " + problem.toStdString());
+    const QString problem = note.structureProblem();
+    check(problem.isEmpty(), std::string(c.what) + ": строение — " + problem.toStdString());
 }
 
 const RangeCase kIndentRanges[] = {
@@ -768,19 +767,16 @@ struct StyleCase {
     const char* what;
 };
 
-void checkStyle(bool (*op)(QTextDocument&, QTextCursor&), const StyleCase& c) {
-    QTextDocument doc;
-    zametti::buildDocument(pieces(c.before), doc);
+void checkStyle(zametti::ZDocument::Style style, const StyleCase& c) {
+    zametti::ZDocument note = noteOf(c.before);
 
-    QTextCursor cursor(&doc);
-    const QTextBlock block = doc.findBlockByNumber(c.block);
-    cursor.setPosition(block.position() + c.from);
-    if (c.to > c.from)
-        cursor.setPosition(block.position() + c.to, QTextCursor::KeepAnchor);
+    QTextCursor cursor = note.caretAtBlock(c.block);
+    const int base = cursor.position();
+    cursor.setPosition(base + c.from);
+    if (c.to > c.from) cursor.setPosition(base + c.to, QTextCursor::KeepAnchor);
 
-    const bool handled = op(doc, cursor);
-    const std::string actual = handled ? markdownOf(blocksOf(doc))
-                                       : std::string("<операция отказалась>");
+    const bool handled = note.toggleStyle(cursor, style);
+    const std::string actual = handled ? note.toMarkdown() : std::string("<операция отказалась>");
     checkEqual(c.after, actual, c.what);
 }
 
@@ -897,24 +893,35 @@ static int ztRunSuite(int argc, char** argv) {
     checkLevelNormalisation();
     checkGeometry();
     checkLiteralInvariant();
-    for (const KeyCase& c : kEnterCases) checkKey(zametti::splitBlockAtCursor, c);
-    for (const KeyCase& c : kBackspaceCases) checkKey(zametti::unwrapListItemAtCursor, c);
-    for (const KeyCase& c : kIndentCases) checkKey(zametti::indentListItems, c);
-    for (const KeyCase& c : kOutdentCases) checkKey(zametti::outdentListItems, c);
-    for (const KeyCase& c : kToggleCases) checkKey(zametti::toggleTaskAtCursor, c);
-    for (const RangeCase& c : kIndentRanges) checkRange(zametti::indentListItems, c);
-    for (const RangeCase& c : kToggleRanges) checkRange(zametti::toggleTaskAtCursor, c);
-    for (const KeyCase& c : kBulletCases) checkKey(zametti::makeBullet, c);
-    for (const KeyCase& c : kOrderedCases) checkKey(zametti::makeOrdered, c);
-    for (const KeyCase& c : kTaskCases) checkKey(zametti::makeTask, c);
-    for (const KeyCase& c : kParagraphCases) checkKey(zametti::makeParagraph, c);
-    for (const RangeCase& c : kConvertRanges) checkRange(zametti::makeBullet, c);
-    for (const RangeCase& c : kOrderedRanges) checkRange(zametti::makeOrdered, c);
+    using Z = zametti::ZDocument;
+    const NoteOp enter = [](Z& n, QTextCursor& at) { return n.breakBlock(at, Z::BreakKind::Plain); };
+    const NoteOp indent = [](Z& n, QTextCursor& at) { return n.indent(at); };
+    const NoteOp outdent = [](Z& n, QTextCursor& at) { return n.outdent(at); };
+    const NoteOp toggleTask = [](Z& n, QTextCursor& at) { return n.toggleTask(at); };
+    const NoteOp bullet = [](Z& n, QTextCursor& at) { return n.makeBullet(at); };
+    const NoteOp ordered = [](Z& n, QTextCursor& at) { return n.makeOrdered(at); };
+
+    for (const KeyCase& c : kEnterCases) checkKey(enter, c);
+    for (const KeyCase& c : kBackspaceCases)
+        checkKey([](Z& n, QTextCursor& at) { return n.deleteBack(at); }, c);
+    for (const KeyCase& c : kIndentCases) checkKey(indent, c);
+    for (const KeyCase& c : kOutdentCases) checkKey(outdent, c);
+    for (const KeyCase& c : kToggleCases) checkKey(toggleTask, c);
+    for (const RangeCase& c : kIndentRanges) checkRange(indent, c);
+    for (const RangeCase& c : kToggleRanges) checkRange(toggleTask, c);
+    for (const KeyCase& c : kBulletCases) checkKey(bullet, c);
+    for (const KeyCase& c : kOrderedCases) checkKey(ordered, c);
+    for (const KeyCase& c : kTaskCases)
+        checkKey([](Z& n, QTextCursor& at) { return n.makeTask(at); }, c);
+    for (const KeyCase& c : kParagraphCases)
+        checkKey([](Z& n, QTextCursor& at) { return n.makeParagraph(at); }, c);
+    for (const RangeCase& c : kConvertRanges) checkRange(bullet, c);
+    for (const RangeCase& c : kOrderedRanges) checkRange(ordered, c);
     for (const RuleCase& c : kRuleCases) checkRule(c);
-    for (const StyleCase& c : kBoldCases) checkStyle(zametti::toggleBold, c);
-    for (const StyleCase& c : kItalicCases) checkStyle(zametti::toggleItalic, c);
-    for (const StyleCase& c : kStrikeCases) checkStyle(zametti::toggleStrike, c);
-    for (const StyleCase& c : kCodeCases) checkStyle(zametti::toggleCode, c);
+    for (const StyleCase& c : kBoldCases) checkStyle(Z::Style::Bold, c);
+    for (const StyleCase& c : kItalicCases) checkStyle(Z::Style::Italic, c);
+    for (const StyleCase& c : kStrikeCases) checkStyle(Z::Style::Strike, c);
+    for (const StyleCase& c : kCodeCases) checkStyle(Z::Style::Code, c);
     for (const CodeSpanCase& c : kCodeSpanCases) checkCodeSpan(c);
     for (const CodeBlockCase& c : kCodeBlockCases) checkCodeBlock(c);
     for (const PartialCodeCase& c : kPartialCodeCases) checkPartialCodeBlock(c);

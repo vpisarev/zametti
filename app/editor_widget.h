@@ -47,6 +47,11 @@ namespace zametti {
 
 class LanguageEditor;
 
+// Правка ГЛАГОЛОМ ЗАМЕТКИ: вид распознаёт намерение, заметка его исполняет.
+// Указателем на функцию это уже не выразить — глаголы у заметки методы, — да и
+// не нужно: замыкание берёт с собой уровень заголовка или ширину фотографии.
+using NoteOp = std::function<bool(ZDocument&, QTextCursor&)>;
+
 class NoteEditor : public NoteView {
     Q_OBJECT
 
@@ -441,7 +446,7 @@ private:
     // Выполняет операцию, доводит документ до вида, который построил бы
     // сборщик, и заводит отдельный шаг истории. Возвращает то же, что операция.
     // Правка через глагол заметки: без обхода документа и без пересборки.
-    bool runNoteEdit(const std::function<bool(ZDocument&, QTextCursor&)>& op);
+    bool runNoteEdit(const NoteOp& op);
 
     bool runOperation(bool (*op)(QTextDocument&, QTextCursor&));
     // То же с замыканием: ресайзу фотографии нужна ширина.
@@ -852,15 +857,11 @@ private:
     // Сочетание и операция, которую оно вызывает. Списком, а не полями: их
     // становится много, и перечислять каждое в keyPressEvent — верный способ
     // однажды забыть одно.
-    std::vector<std::pair<QKeySequence, bool (*)(QTextDocument&, QTextCursor&)>> bindings_;
+    std::vector<std::pair<QKeySequence, NoteOp>> bindings_;
 
     // Начертания живут отдельно: без выделения они меняют не документ, а формат
     // следующей буквы.
-    struct InlineStyle {
-        int bits = 0;
-        bool (*op)(QTextDocument&, QTextCursor&) = nullptr;
-    };
-    std::vector<std::pair<QKeySequence, InlineStyle>> inlineBindings_;
+    std::vector<std::pair<QKeySequence, ZDocument::Style>> inlineBindings_;
     // Следим за файлом. Хеш нам не нужен: заметки маленькие, и содержимое
     // сравнивается побайтово — точнее и короче, чем рассуждать о коллизиях.
     // Время правки файла — только подсказка, ему мы не верим.

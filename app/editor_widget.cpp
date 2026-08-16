@@ -85,29 +85,30 @@ NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
     moveUpKey_ = QKeySequence(appearance().moveUpKey, QKeySequence::PortableText);
     moveDownKey_ = QKeySequence(appearance().moveDownKey, QKeySequence::PortableText);
     // Сочетаний на команду может быть несколько: через точку с запятой.
-    const auto bind = [this](const QString& keys, bool (*op)(QTextDocument&, QTextCursor&)) {
+    const auto bind = [this](const QString& keys, const NoteOp& op) {
         for (const QKeySequence& sequence :
              QKeySequence::listFromString(keys, QKeySequence::PortableText))
             if (!sequence.isEmpty()) bindings_.push_back({sequence, op});
     };
-    const auto bindInline = [this](QKeySequence::StandardKey standard, int bits,
-                                   bool (*op)(QTextDocument&, QTextCursor&)) {
+    const auto bindInline = [this](QKeySequence::StandardKey standard, ZDocument::Style style) {
         for (const QKeySequence& keys : QKeySequence::keyBindings(standard))
-            inlineBindings_.push_back({keys, {bits, op}});
+            inlineBindings_.push_back({keys, style});
     };
-    bindInline(QKeySequence::Bold, SpanBold, toggleBold);
-    bindInline(QKeySequence::Italic, SpanItalic, toggleItalic);
+    bindInline(QKeySequence::Bold, ZDocument::Style::Bold);
+    bindInline(QKeySequence::Italic, ZDocument::Style::Italic);
     // Встроенный код: Ctrl+E — так его помечают всюду, где вообще помечают.
     inlineBindings_.push_back(
-        {QKeySequence(QStringLiteral("Ctrl+E")), {SpanCode, toggleCode}});
+        {QKeySequence(QStringLiteral("Ctrl+E")), ZDocument::Style::Code});
     // Зачёркивание своего стандартного сочетания не имеет; Ctrl+K взят из брифа.
     inlineBindings_.push_back(
-        {QKeySequence(QStringLiteral("Ctrl+K")), {SpanStrike, toggleStrike}});
+        {QKeySequence(QStringLiteral("Ctrl+K")), ZDocument::Style::Strike});
 
     // Формулы с клавиатуры: строчная и выключная. Сочетания предложены
     // владельцем и стоят рядом с прочими пометками начертания.
-    bind(QStringLiteral("Ctrl+M"), toggleInlineMath);
-    bind(QStringLiteral("Ctrl+Shift+M"), toggleDisplayMath);
+    bind(QStringLiteral("Ctrl+M"),
+         [](ZDocument& note, QTextCursor& at) { return note.toggleInlineMath(at); });
+    bind(QStringLiteral("Ctrl+Shift+M"),
+         [](ZDocument& note, QTextCursor& at) { return note.toggleDisplayMath(at); });
 
     // Автозамены из конфига: сочетание и знак, который оно вставляет.
     // Сочетаний на одну замену может быть несколько, через точку с запятой —
@@ -129,19 +130,25 @@ NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
         action->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+%1").arg(level)));
         action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
         connect(action, &QAction::triggered, this, [this, level] {
-            runOperation([level](QTextDocument& doc, QTextCursor& at) {
-                return setHeadingLevel(doc, at, level);
+            runNoteEdit([level](ZDocument& note, QTextCursor& at) {
+                return note.setHeadingLevel(at, level);
             });
         });
         addAction(action);
     }
 
-    bind(appearance().toggleTaskKey, toggleTaskAtCursor);
-    bind(appearance().makeBulletKey, makeBullet);
-    bind(appearance().makeOrderedKey, makeOrdered);
-    bind(appearance().makeTaskKey, makeTask);
-    bind(appearance().makeParagraphKey, makeParagraph);
-    bind(appearance().makeCommentKey, toggleCommentAtCursor);
+    bind(appearance().toggleTaskKey,
+         [](ZDocument& note, QTextCursor& at) { return note.toggleTask(at); });
+    bind(appearance().makeBulletKey,
+         [](ZDocument& note, QTextCursor& at) { return note.makeBullet(at); });
+    bind(appearance().makeOrderedKey,
+         [](ZDocument& note, QTextCursor& at) { return note.makeOrdered(at); });
+    bind(appearance().makeTaskKey,
+         [](ZDocument& note, QTextCursor& at) { return note.makeTask(at); });
+    bind(appearance().makeParagraphKey,
+         [](ZDocument& note, QTextCursor& at) { return note.makeParagraph(at); });
+    bind(appearance().makeCommentKey,
+         [](ZDocument& note, QTextCursor& at) { return note.toggleComment(at); });
 
     autosave_.setSingleShot(true);
     connect(&autosave_, &QTimer::timeout, this, [this] { save(true); });
@@ -1501,7 +1508,7 @@ void NoteEditor::mousePressEvent(QMouseEvent* event) {
         place.setPosition(hit.position());
         setTextCursor(place);
     }
-    runOperation(toggleTaskAtCursor);
+    runNoteEdit([](ZDocument& note, QTextCursor& at) { return note.toggleTask(at); });
 }
 
 void NoteEditor::mouseDoubleClickEvent(QMouseEvent* event) {
@@ -1805,18 +1812,15 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     // Tab и Shift+Tab внутри списка двигают пункт по уровням; вне списка
     // операция отказывается, и Tab остаётся обычным знаком табуляции.
     //
-    // Код спрашивается ПЕРВЫМ: блок кода бывает и внутри пункта списка, и там
-    // Tab должен отступать код, а не углублять пункт.
+    // ЧТО ИМЕННО ОТСТУПАЕТ, решает заметка: блок кода бывает и внутри пункта
+    // списка, и там Tab должен отступать код, а не углублять пункт. Порядок
+    // разбора живёт у неё — снаружи про блоки кода знать не должны.
     if (event->key() == Qt::Key_Tab && event->modifiers() == Qt::NoModifier &&
-        runOperation(indentCodeAtCursor))
-        return;
-    if (event->key() == Qt::Key_Tab && event->modifiers() == Qt::NoModifier &&
-        runOperation(indentListItems))
+        runNoteEdit([](ZDocument& note, QTextCursor& at) { return note.indent(at); }))
         return;
     if (event->key() == Qt::Key_Backtab ||
         (event->key() == Qt::Key_Tab && event->modifiers() == Qt::ShiftModifier)) {
-        if (runOperation(outdentCodeAtCursor)) return;
-        if (runOperation(outdentListItems)) return;
+        runNoteEdit([](ZDocument& note, QTextCursor& at) { return note.outdent(at); });
         return;   // наружу Shift+Tab не отдаём: он увёл бы фокус из окна
     }
 
@@ -1842,18 +1846,23 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     // буквы. Отдельный путь: шага истории здесь нет и быть не должно.
     for (const auto& [keys, style] : inlineBindings_) {
         if (!pressed(keys)) continue;
-        if (runOperation(style.op)) return;
+        const ZDocument::Style want = style;
+        if (runNoteEdit([want](ZDocument& note, QTextCursor& at) {
+                return note.toggleStyle(at, want);
+            }))
+            return;
         // В блоке кода и в дословном куске текст буквальный — начертанию там
-        // взяться неоткуда, как и при выделении.
-        const QTextBlock block = textCursor().block();
-        if (!textCursor().hasSelection() && !isRawBlock(block) && kindOf(block) != Kind::Code)
+        // взяться неоткуда, как и при выделении. Про это знает сама заметка:
+        // без выделения она отдаёт формат для следующей буквы, а в коде
+        // возвращает нынешний нетронутым.
+        if (!textCursor().hasSelection())
             setCurrentCharFormat(
-                inlineStyleForTyping(block, currentCharFormat(), style.bits));
+                note_.note.styleForTyping(textCursor(), currentCharFormat(), want));
         return;
     }
 
     for (const auto& [keys, op] : bindings_)
-        if (pressed(keys) && runOperation(op)) return;
+        if (pressed(keys) && runNoteEdit(op)) return;
 
     // Дальше Tab не идёт НИКОГДА, и это правило шире прежнего.
     //
@@ -1914,11 +1923,13 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     // Автозамена срабатывает по пробелу и уже после того, как он набран: правило
     // смотрит на то, что человек написал. Отдельным шагом истории — первый
     // Ctrl+Z обязан вернуть набранные знаки, а не отменить предыдущую правку.
-    if (event->text() == QStringLiteral(" ")) runOperation(applyInputRuleAtCursor);
+    if (event->text() == QStringLiteral(" "))
+        runNoteEdit([](ZDocument& note, QTextCursor& at) { return note.applyInputRule(at); });
     // Закрывающая кавычка превращает набранное в ней во встроенный код. После
     // этого курсор стоит в конце размеченного куска, и без сброса формата набор
     // продолжался бы кодом — вышло бы `код и всё, что дальше`.
-    if (event->text() == QStringLiteral("`") && runOperation(applyCodeSpanRuleAtCursor))
+    if (event->text() == QStringLiteral("`") &&
+        runNoteEdit([](ZDocument& note, QTextCursor& at) { return note.applyCodeSpanRule(at); }))
         setCurrentCharFormat(textCursor().block().charFormat());
 }
 
@@ -2308,8 +2319,8 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
     menu->setAttribute(Qt::WA_DeleteOnClose);
 
     const auto add = [this, menu](const QString& title, const QString& keys,
-                                  bool (*op)(QTextDocument&, QTextCursor&)) {
-        QAction* action = menu->addAction(title, this, [this, op] { runOperation(op); });
+                                  const NoteOp& op) {
+        QAction* action = menu->addAction(title, this, [this, op] { runNoteEdit(op); });
         const QList<QKeySequence> all =
             QKeySequence::listFromString(keys, QKeySequence::PortableText);
         if (!all.isEmpty()) action->setShortcut(all.first());
@@ -2323,10 +2334,16 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
     }
 
     menu->addSeparator();
-    add(QStringLiteral("Жирный"), QStringLiteral("Ctrl+B"), toggleBold);
-    add(QStringLiteral("Курсив"), QStringLiteral("Ctrl+I"), toggleItalic);
-    add(QStringLiteral("Зачёркнутый"), QStringLiteral("Ctrl+K"), toggleStrike);
-    add(QStringLiteral("Код в строке"), QStringLiteral("Ctrl+E"), toggleCode);
+    const auto style = [](ZDocument::Style want) {
+        return NoteOp([want](ZDocument& note, QTextCursor& at) {
+            return note.toggleStyle(at, want);
+        });
+    };
+    add(QStringLiteral("Жирный"), QStringLiteral("Ctrl+B"), style(ZDocument::Style::Bold));
+    add(QStringLiteral("Курсив"), QStringLiteral("Ctrl+I"), style(ZDocument::Style::Italic));
+    add(QStringLiteral("Зачёркнутый"), QStringLiteral("Ctrl+K"),
+        style(ZDocument::Style::Strike));
+    add(QStringLiteral("Код в строке"), QStringLiteral("Ctrl+E"), style(ZDocument::Style::Code));
     {
         QAction* action = menu->addAction(QStringLiteral("Блок кода"));
         action->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+E")));
@@ -2344,8 +2361,8 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
                             : 0;
         const auto addLevel = [this, heading, now](const QString& title, int level) {
             QAction* action = heading->addAction(title, this, [this, level] {
-                runOperation([level](QTextDocument& doc, QTextCursor& at) {
-                    return setHeadingLevel(doc, at, level);
+                runNoteEdit([level](ZDocument& note, QTextCursor& at) {
+                    return note.setHeadingLevel(at, level);
                 });
             });
             // Отметка показывает, что стоит сейчас: без неё непонятно, какой
@@ -2386,26 +2403,32 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
 
     menu->addSeparator();
     add(QStringLiteral("Переключить задачу"), appearance().toggleTaskKey,
-        toggleTaskAtCursor);
+        [](ZDocument& note, QTextCursor& at) { return note.toggleTask(at); });
 
     QMenu* kinds = menu->addMenu(QStringLiteral("Сделать"));
     const auto addKind = [this, kinds](const QString& title, const QString& keys,
-                                       bool (*op)(QTextDocument&, QTextCursor&)) {
-        QAction* action = kinds->addAction(title, this, [this, op] { runOperation(op); });
+                                       const NoteOp& op) {
+        QAction* action = kinds->addAction(title, this, [this, op] { runNoteEdit(op); });
         const QList<QKeySequence> all =
             QKeySequence::listFromString(keys, QKeySequence::PortableText);
         if (!all.isEmpty()) action->setShortcut(all.first());
     };
-    addKind(QStringLiteral("Маркированным списком"), appearance().makeBulletKey, makeBullet);
-    addKind(QStringLiteral("Нумерованным списком"), appearance().makeOrderedKey, makeOrdered);
-    addKind(QStringLiteral("Списком задач"), appearance().makeTaskKey, makeTask);
+    addKind(QStringLiteral("Маркированным списком"), appearance().makeBulletKey,
+            [](ZDocument& note, QTextCursor& at) { return note.makeBullet(at); });
+    addKind(QStringLiteral("Нумерованным списком"), appearance().makeOrderedKey,
+            [](ZDocument& note, QTextCursor& at) { return note.makeOrdered(at); });
+    addKind(QStringLiteral("Списком задач"), appearance().makeTaskKey,
+            [](ZDocument& note, QTextCursor& at) { return note.makeTask(at); });
     addKind(QStringLiteral("Комментарием"), appearance().makeCommentKey,
-            toggleCommentAtCursor);
-    addKind(QStringLiteral("Обычным текстом"), appearance().makeParagraphKey, makeParagraph);
+            [](ZDocument& note, QTextCursor& at) { return note.toggleComment(at); });
+    addKind(QStringLiteral("Обычным текстом"), appearance().makeParagraphKey,
+            [](ZDocument& note, QTextCursor& at) { return note.makeParagraph(at); });
 
     menu->addSeparator();
-    add(QStringLiteral("Сдвинуть вправо"), QStringLiteral("Tab"), indentListItems);
-    add(QStringLiteral("Сдвинуть влево"), QStringLiteral("Shift+Tab"), outdentListItems);
+    add(QStringLiteral("Сдвинуть вправо"), QStringLiteral("Tab"),
+        [](ZDocument& note, QTextCursor& at) { return note.indent(at); });
+    add(QStringLiteral("Сдвинуть влево"), QStringLiteral("Shift+Tab"),
+        [](ZDocument& note, QTextCursor& at) { return note.outdent(at); });
 
     QAction* up = menu->addAction(QStringLiteral("Переставить вверх"), this,
                                   [this] { moveItem(-1); });
