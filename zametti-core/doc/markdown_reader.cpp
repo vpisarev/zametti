@@ -16,6 +16,8 @@
 #include "document_impl.h"
 
 #include "document_pieces.h"
+
+#include <cstdio>
 #include "math_scan.h"
 #include "note_header.h"
 
@@ -377,10 +379,16 @@ void mergeAdjacentSpans(Ctx& c) {
     size_t write = from;
     for (size_t read = from; read < all.size(); ++read) {
         const DraftRun s = all[read];
-        if (s.text.size() <= 0) continue;
+        // Кусок нулевой длины ничего не помечает и потому не нужен — КРОМЕ
+        // картинки: у неё содержимое не подпись, а сам снимок, и "![](фото)"
+        // это законная запись. Пока и её выбрасывали здесь, такая строка
+        // теряла картинку целиком.
+        if (s.text.size() <= 0 && !s.image()) continue;
         if (write > from) {
             DraftRun& p = all[write - 1];
-            if (p.text.end == s.text.start &&
+            // Картинку не сливаем ни с чем и ни с чем не сливаем: два снимка
+            // подряд с одним адресом склеились бы в один, и второй пропал бы.
+            if (!p.image() && !s.image() && p.text.end == s.text.start &&
                 (p.flags & kStyleMask) == (s.flags & kStyleMask) &&
                 c.draft.view(p.href) == c.draft.view(s.href)) {
                 p.text.end = s.text.end;
@@ -997,8 +1005,32 @@ int leaveSpan(MD_SPANTYPE type, void* detail, void* userdata) {
 
     // Пустой спан ("[](/url)") модель не выражает: спан нулевой длины ничего не
     // помечает и просто исчезнет вместе со ссылкой. Молча терять нельзя.
+    //
+    // КАРТИНКА — ИСКЛЮЧЕНИЕ, и это не поблажка, а разница по существу. У ссылки
+    // содержимое спана и есть то, что видит человек: нет текста — нечего
+    // показать. У картинки содержимое — сам СНИМОК, а подпись необязательна:
+    // "![](фото.jxl)" это законная запись, и к иным снимкам подпись просто не
+    // имеет смысла (правило владельца).
+    //
+    // Пока исключения не было, такая строка деградировала в дословный кусок:
+    // в документ уезжали десять знаков «![](фото.jxl)» текстом, и фотография не
+    // рисовалась вовсе.
     if (c.text.size() == c.styleStart.back()) {
-        demote(c);
+        if ((c.styles.back().flags & InlineImage) == 0) {
+            demote(c);
+            return 0;
+        }
+        // Кусок нулевой длины: подписи нет, а адрес и заголовок есть — в них
+        // вся картинка и заключена.
+        DraftRun s;
+        s.text = {int32_t(c.text.size()), int32_t(c.text.size())};
+        s.flags = c.styles.back().flags;
+        s.href = c.styles.back().href;
+        s.title = c.styles.back().title;
+        c.draft.runs.push_back(s);
+        c.runStart = c.text.size();
+        c.styles.pop_back();
+        c.styleStart.pop_back();
         return 0;
     }
 

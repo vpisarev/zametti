@@ -173,6 +173,14 @@ void checkImageObjectRoundTrip() {
         "текст\n\n![подпись](фото.jxl)\n\nхвост\n",
         "![подпись](фото.jxl#w=560&align=left)\n",
         "![[вложение.png|300]]\n",
+        // ПУСТАЯ ПОДПИСЬ ЗАКОННА: у картинки содержимое — сам снимок, а не
+        // подпись, и к иным снимкам она просто не имеет смысла (правило
+        // владельца). Прежде такая строка деградировала в дословный кусок —
+        // в документ уезжали десять знаков «![](фото.jxl)» текстом, и
+        // фотография не рисовалась вовсе.
+        "![](фото.jxl)\n",
+        "![](фото.jxl#w=560&align=left)\n",
+        "![](а.png)\n\n![](б.png)\n",
         // Картинка ПОСРЕДИ строки объектом не бывает: она живёт внутри текста.
         "текст с ![встроенной](в.png) картинкой внутри строки\n",
     };
@@ -183,6 +191,122 @@ void checkImageObjectRoundTrip() {
         ZT_EQ(std::string("круг с фотографией: ") + source, std::string(source), out);
         ZT_TRUE(std::string("U+FFFC не уходит в файл: ") + source,
                 out.find("\xef\xbf\xbc") == std::string::npos);
+    }
+}
+
+// Пустая подпись: снимок рисуется, а места под подпись не отводится вовсе.
+void checkEmptyCaption() {
+    const fs::path dir = fs::temp_directory_path() / "zametti-пустая-подпись";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+
+    QImage square(64, 64, QImage::Format_RGB32);
+    square.fill(QColor(220, 30, 30));
+    ZT_TRUE("картинка записана",
+            square.save(QString::fromStdString((dir / "img.png").string())));
+    {
+        std::ofstream out(dir / "н.md", std::ios::binary);
+        out << "![](img.png)\n\n![подпись](img.png)\n";
+    }
+
+    zametti::NoteEditor editor;
+    editor.resize(600, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(QString::fromStdString((dir / "н.md").string()));
+    QTest::qWait(50);
+
+    const auto blockAt = [&](int n) { return editor.document()->findBlockByNumber(n); };
+    const auto takenBy = [&](int n) {
+        return editor.document()->documentLayout()->blockBoundingRect(blockAt(n)).height();
+    };
+    ZT_TRUE("снимок без подписи — всё равно фотография",
+            zametti::blockImageRef(blockAt(0)).valid);
+    ZT_TRUE("и он нарисован, а не показан текстом",
+            !editor.imageRectInViewport(blockAt(0)).isEmpty());
+    ZT_TRUE("под пустую подпись места не отведено (" + std::to_string(int(takenBy(0))) + ")",
+            std::fabs(takenBy(0) - (64.0 + kGap + cornersRoom())) < 1.5);
+    ZT_TRUE("а под настоящую — отведено",
+            takenBy(2) > takenBy(0) + 8.0);
+}
+
+// Картинка в конце заметки: Ctrl+Enter заводит абзац под ней, и НАБОР В НЁМ
+// картинку не трогает.
+//
+// Владелец наткнулся ровно так: «нажимаю Ctrl-Enter, курсор переезжает на новый
+// параграф после картинки; нажимаю любую букву — картинка пропадает». Причина:
+// починка после набора сливала соседей, которые в файле слиплись бы, — а
+// фотография атом, слияние делает её строкой обычного текста.
+void checkTypingAfterImage() {
+    const fs::path dir = fs::temp_directory_path() / "zametti-набор-под-фото";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+
+    QImage square(64, 64, QImage::Format_RGB32);
+    square.fill(QColor(220, 30, 30));
+    ZT_TRUE("картинка записана",
+            square.save(QString::fromStdString((dir / "img.png").string())));
+    const QString note = QString::fromStdString((dir / "н.md").string());
+    {
+        std::ofstream out(dir / "н.md", std::ios::binary);
+        out << "текст\n\n![вид](img.png)\n";
+    }
+
+    zametti::NoteEditor editor;
+    editor.resize(600, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(note);
+    QTest::qWait(50);
+
+    const auto imageBlock = [&] {
+        for (QTextBlock b = editor.document()->begin(); b.isValid(); b = b.next())
+            if (zametti::blockImageRef(b).valid) return b.blockNumber();
+        return -1;
+    };
+    const int photo = imageBlock();
+    ZT_TRUE("фотография найдена", photo >= 0);
+    if (photo < 0) return;
+
+    // Ctrl+Enter на фотографии: абзац ПОД ней, каретка в нём.
+    QTextCursor on(editor.document()->findBlockByNumber(photo));
+    editor.setTextCursor(on);
+    QTest::keyClick(&editor, Qt::Key_Return, Qt::ControlModifier);
+    QTest::qWait(20);
+    ZT_TRUE("каретка уехала под фотографию",
+            editor.textCursor().blockNumber() > photo);
+
+    // Латиница нарочно: QTest::keyClicks знает только ASCII и на кириллице
+    // падает ассертом внутри самой Qt.
+    QTest::keyClicks(&editor, QStringLiteral("x"));
+    QTest::qWait(20);
+    ZT_TRUE("после набора фотография на месте", imageBlock() >= 0);
+    ZT_TRUE("и она по-прежнему нарисована",
+            !editor.imageRectInViewport(
+                     editor.document()->findBlockByNumber(imageBlock())).isEmpty());
+    ZT_TRUE("набранное на месте", editor.toPlainText().contains(QStringLiteral("x")));
+
+    // BACKSPACE НА ПУСТОЙ СТРОКЕ НАД ОБЪЕКТОМ. Владелец: «курсор на пустой
+    // строке между текстом и картинкой, нажимаю BACKSPACE — картинка исчезает,
+    // подпись становится гиперссылкой». Пустая строка там ОБЯЗАТЕЛЬНА (без неё
+    // абзацы слиплись бы в файле), а слияние соседей губит объект.
+    //
+    // Правило то же, что у пустой строки ПОД объектом: отказ и шаг.
+    {
+        const int photoNow = imageBlock();
+        ZT_TRUE("фотография на месте перед проверкой", photoNow > 0);
+        if (photoNow > 0) {
+            QTextCursor gap(editor.document()->findBlockByNumber(photoNow - 1));
+            editor.setTextCursor(gap);
+            QTest::keyClick(&editor, Qt::Key_Backspace);
+            QTest::qWait(20);
+            ZT_TRUE("после Backspace над фотографией она цела", imageBlock() >= 0);
+            ZT_TRUE("и осталась нарисованной",
+                    !editor.imageRectInViewport(
+                             editor.document()->findBlockByNumber(imageBlock())).isEmpty());
+            ZT_TRUE("подпись не стала текстом строки",
+                    !editor.toPlainText().contains(QStringLiteral("вид")));
+        }
     }
 }
 
@@ -1047,6 +1171,8 @@ static int ztRunSuite(int argc, char** argv) {
     }
 
     checkMissingAttachment();
+    checkEmptyCaption();
+    checkTypingAfterImage();
 
     return zt::report("картинки в просмотре");
 }

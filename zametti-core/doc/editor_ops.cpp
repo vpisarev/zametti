@@ -2,6 +2,7 @@
 
 #include "document_impl.h"
 
+#include "block_object.h"
 #include "doc_model.h"
 #include "document_pieces.h"
 #include "document_builder.h"
@@ -2349,10 +2350,26 @@ bool removeVSpaceAndMaybeJoin(QTextDocument& doc, QTextCursor& cursor, int gapNu
         return true;
     }
 
+    // ПУСТУЮ СТРОКУ РЯДОМ С ОБЪЕКТОМ УБРАТЬ НЕЛЬЗЯ: она там обязательна — без
+    // неё абзац объекта слипся бы в файле с соседом. Убрав её, мы получили бы
+    // её же обратно от инварианта, и клавиша выглядела бы сломанной; слив
+    // соседей, потеряли бы объект.
+    //
+    // Отказ и шаг: каретка идёт туда, куда её вёл Backspace, а документ цел.
+    // То же правило, что у пустой строки ПОД объектом, — и по той же причине.
+    if ((before.isValid() && objectOf(before).valid()) ||
+        (after.isValid() && objectOf(after).valid())) {
+        if (backspace && before.isValid())
+            cursor.setPosition(before.position() + before.length() - 1);
+        else if (after.isValid())
+            cursor.setPosition(after.position());
+        return true;
+    }
+
     // Жертва всегда одна — сама пустая строка, и слипшиеся после её ухода
     // ТЕКСТЫ сливаются в один блок: это и есть смысл Backspace на стыке.
     // Разделителю особый случай не нужен: канон "___" ни с чем не слипается.
-    const bool join = blocksWouldMerge(before, after);
+    const bool join = blocksMayJoin(before, after);
 
     // Куда встать. Backspace с самой пустой строки — удаление назад: каретка
     // уходит в конец строки выше, какой бы та ни была (текст, пустая, черта).
@@ -2395,7 +2412,7 @@ static bool deleteDividerAbove(QTextDocument& doc, QTextCursor& cursor) {
     // Соседи, оставшиеся без черты между ними, могут слипнуться. Слипшиеся
     // тексты сливаются в один блок — как при удалении пустой строки: убрать
     // строку Backspace-ом и получить взамен новую пустую было бы нелепо.
-    const bool join = blocksWouldMerge(prev.previous(), cursor.block());
+    const bool join = blocksMayJoin(prev.previous(), cursor.block());
     QTextCursor edit(&doc);
     edit.beginEditBlock();
     removeLineBlock(edit, prev);
@@ -2538,10 +2555,14 @@ static bool repairAfterTyping(QTextDocument& doc, QTextCursor& cursor) {
     // раздвигать не должен. Строки как стояли, так и стоят, меняется только
     // строение — три строки подряд без пустой между ними markdown и называет
     // одним абзацем.
-    if (blocksWouldMerge(doc.findBlockByNumber(number), doc.findBlockByNumber(number + 1)))
+    // ОБЪЕКТ НЕ СЛИВАЕТСЯ НИ С ЧЕМ (blocksMayJoin): он атом, и слияние делает
+    // его строкой обычного текста. Раздвинуть соседей пустой строкой — не
+    // «двигать текст на экране» без нужды: в файле они слиплись бы, и пустая
+    // строка там ОБЯЗАНА стоять. Её и поставит инвариант ниже (normalise).
+    if (blocksMayJoin(doc.findBlockByNumber(number), doc.findBlockByNumber(number + 1)))
         joinWithNext(doc, edit, number);
     if (number > 0 &&
-        blocksWouldMerge(doc.findBlockByNumber(number - 1), doc.findBlockByNumber(number)))
+        blocksMayJoin(doc.findBlockByNumber(number - 1), doc.findBlockByNumber(number)))
         joinWithNext(doc, edit, number - 1);
 
     normalise(doc, around(qMax(0, number - 1)));

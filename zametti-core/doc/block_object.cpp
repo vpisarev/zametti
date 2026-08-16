@@ -128,4 +128,9 @@ ObjectAction actionFor(int key, Qt::KeyboardModifiers mods, const ObjectContext&
     return ObjectAction::None;
 }
 
+bool blocksMayJoin(const QTextBlock& previous, const QTextBlock& next) {
+    if (!blocksWouldMerge(previous, next)) return false;
+    return !objectOf(previous).valid() && !objectOf(next).valid();
+}
+
 }  // namespace zametti
