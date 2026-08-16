@@ -119,5 +119,128 @@ int ztPasteBench(int argc, char** argv) {
                     best, best * 1000.0 / blocks);
     }
     std::printf("   Здесь «на блок» обязано СТОЯТЬ: цена растёт вместе с заметкой.\n\n");
+
+    // --- ЦЕНА ОБЫЧНОГО НАБОРА -----------------------------------------------
+    //
+    // Фраза без единой автозамены. Меряется путь целиком: нажатие → insertTyped
+    // → вставка знака → contentsChanged → починка инвариантов и подметание. Это
+    // самая частая работа программы, и её цена важнее всех прочих.
+    //
+    // Два случая нарочно. «Одним абзацем» — вырожденный: Qt переразмечает
+    // ЦЕЛИКОМ тот блок, в который пишут, и цена растёт вместе с длиной абзаца.
+    // «Абзацами» — как пишут люди, и вот это настоящее число.
+    std::printf("ЦЕНА ОБЫЧНОГО НАБОРА\n");
+    std::printf("   %-16s %-10s %-14s %-14s %-14s\n", "как набирают", "знаков", "всё, мкс/знак",
+                "чистый Qt", "наше поверх");
+
+    const QString phrase = QStringLiteral("the quick brown fox jumps over a lazy dog ");
+    for (const bool paragraphs : {false, true}) {
+        const QString path = dir + (paragraphs ? QStringLiteral("/набор-абзацами.md")
+                                              : QStringLiteral("/набор-одним.md"));
+        {
+            QFile file(path);
+            if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) file.write("# Набор\n\n");
+        }
+        // Сколько раз повторить фразу. Вырожденный случай квадратичен, и тысяча
+        // повторов в нём — две с половиной минуты; берём меньше, характер и так
+        // виден.
+        const int times = paragraphs ? 1000 : 100;
+
+        // 1. ПУТЬ ЦЕЛИКОМ — настоящими нажатиями.
+        double whole = 0.0;
+        qint64 chars = 0;
+        int blocks = 0;
+        {
+            zametti::NoteEditor editor;
+            editor.resize(800, 600);
+            editor.show();
+            QTest::qWait(20);
+            editor.openFile(path);
+            QTest::qWait(30);
+            QTextCursor at(editor.document());
+            at.movePosition(QTextCursor::End);
+            editor.setTextCursor(at);
+
+            QElapsedTimer timer;
+            timer.start();
+            for (int i = 0; i < times; ++i) {
+                for (const QChar ch : phrase) {
+                    QKeyEvent press(QEvent::KeyPress, Qt::Key_unknown, Qt::NoModifier, QString(ch));
+                    QApplication::sendEvent(&editor, &press);
+                    ++chars;
+                }
+                if (paragraphs) {
+                    QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+                    QApplication::sendEvent(&editor, &enter);
+                    QApplication::sendEvent(&editor, &enter);
+                }
+            }
+            whole = double(timer.nsecsElapsed()) / 1000.0;
+            blocks = editor.document()->blockCount();
+        }
+
+        // 2. ЧИСТЫЙ Qt — тот же текст, но вставкой прямо в документ, без нашей
+        // обвязки. Разница между этим и путём целиком и есть наша доля.
+        double bare = 0.0;
+        {
+            QTextDocument plain;
+            QTextCursor at(&plain);
+            QElapsedTimer timer;
+            timer.start();
+            for (int i = 0; i < times; ++i) {
+                for (const QChar ch : phrase) at.insertText(QString(ch));
+                if (paragraphs) at.insertBlock();
+            }
+            bare = double(timer.nsecsElapsed()) / 1000.0;
+        }
+
+        std::printf("   %-16s %-10lld %-14.1f %-14.1f %-14.1f\n",
+                    paragraphs ? "абзацами" : "одним абзацем",
+                    static_cast<long long>(chars), whole / double(chars), bare / double(chars),
+                    (whole - bare) / double(chars));
+        std::printf("       блоков к концу: %d\n", blocks);
+    }
+    std::printf("   «одним абзацем» — вырожденный случай: Qt переразмечает блок,\n"
+                "   в который пишут, ЦЕЛИКОМ, и цена растёт вместе с его длиной.\n\n");
+
+    // РАСТЁТ ЛИ ЦЕНА НАЖАТИЯ ВМЕСТЕ С ЗАМЕТКОЙ — главный вопрос правил проекта.
+    std::printf("ЦЕНА НАЖАТИЯ ПРОТИВ РАЗМЕРА ЗАМЕТКИ (набор в середину)\n");
+    std::printf("   %-10s %-10s %-14s\n", "блоков", "КБ", "мкс/знак");
+    for (const int blocks : {50, 500, 5000}) {
+        const std::string source = noteOf(blocks);
+        const QString path = dir + QStringLiteral("/набор%1.md").arg(blocks);
+        {
+            QFile file(path);
+            if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) continue;
+            file.write(QByteArray(source.data(), qsizetype(source.size())));
+        }
+        zametti::NoteEditor editor;
+        editor.resize(800, 600);
+        editor.show();
+        QTest::qWait(20);
+        editor.openFile(path);
+        QTest::qWait(30);
+
+        QTextCursor at(editor.document());
+        at.setPosition(editor.document()
+                           ->findBlockByNumber(editor.document()->blockCount() / 2)
+                           .position());
+        editor.setTextCursor(at);
+
+        qint64 chars = 0;
+        QElapsedTimer timer;
+        timer.start();
+        for (int i = 0; i < 20; ++i)
+            for (const QChar ch : phrase) {
+                QKeyEvent press(QEvent::KeyPress, Qt::Key_unknown, Qt::NoModifier, QString(ch));
+                QApplication::sendEvent(&editor, &press);
+                ++chars;
+            }
+        const double each = double(timer.nsecsElapsed()) / 1000.0 / double(chars);
+        std::printf("   %-10d %-10.0f %-14.1f\n", blocks, double(source.size()) / 1024.0, each);
+    }
+    std::printf("   Обязано СТОЯТЬ: цена нажатия не должна зависеть от размера заметки.\n");
+
+    std::printf("\n");
     return 0;
 }
