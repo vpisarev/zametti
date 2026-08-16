@@ -375,6 +375,60 @@ void checkCodeStaysSliced() {
 // Мы ставим пробелы, но в чужих файлах табы есть, и рисоваться они обязаны тем
 // же стопом: иначе одинаковый на вид отступ на экране разъезжается. Спрашиваем
 // не настройку, а РАССТАНОВКУ — где на экране оказалась буква после таба.
+// СЛУЧАЙ ВЛАДЕЛЬЦА, нажатиями: «About the Scopes» в Ficus Tutorial. Список
+// разорван блоком кода пополам, оттого нумерация за кодом начинается заново.
+// Tab в самом начале блока кода вбирает его в пункт — и два списка сходятся в
+// один.
+//
+// Проверяется здесь именно КЛАВИША, а не глагол: между «операция работает» и
+// «клавиша работает» лежит весь разбор нажатия, и Tab по дороге легко достаётся
+// то отступу кода, то смене фокуса.
+void checkCodeIntoListItem() {
+    Editor editor;
+    editor.openText(QStringLiteral("код-в-пункт.md"),
+                    "6. Names never conflict.\n"
+                    "7. Types never conflict:\n"
+                    "\n"
+                    "```\n"
+                    "type M=string\n"
+                    "```\n"
+                    "\n"
+                    "1. Functions may have the same name.\n"
+                    "2. Values may have the same name.\n");
+    editor.caretTo(QStringLiteral("type M=string"), 0);
+    QTest::keyClick(&editor, Qt::Key_Tab, Qt::NoModifier);
+    QTest::qWait(5);
+
+    // Номера не хранятся — их считает прогон, поэтому счёт идёт с единицы и до
+    // правки: «6.» и «7.» стали первым и вторым пунктом ещё при чтении файла.
+    checkEq("1. Names never conflict.\n"
+            "2. Types never conflict:\n"
+            "\n"
+            "   ```\n"
+            "   type M=string\n"
+            "   ```\n"
+            "\n"
+            "3. Functions may have the same name.\n"
+            "4. Values may have the same name.\n",
+            editorMarkdown(editor), "Tab вбирает блок кода в пункт, список сходится");
+    checkStillLegal(editor, "код внутри пункта");
+
+    // И обратно — тем же Shift+Tab из того же места.
+    QTest::keyClick(&editor, Qt::Key_Backtab, Qt::ShiftModifier);
+    QTest::qWait(5);
+    checkEq("1. Names never conflict.\n"
+            "2. Types never conflict:\n"
+            "\n"
+            "```\n"
+            "type M=string\n"
+            "```\n"
+            "\n"
+            "1. Functions may have the same name.\n"
+            "2. Values may have the same name.\n",
+            editorMarkdown(editor), "Shift+Tab выводит блок кода обратно");
+    checkStillLegal(editor, "код снаружи пункта");
+}
+
 void checkLiteralTabs() {
     Editor editor;
     // Первая строка — таб, вторая — пробелы до того же стопа (ширина 4).
@@ -617,6 +671,7 @@ static int ztRunSuite(int argc, char** argv) {
     runMatrix();
     checkLeaveCodeBlock();
     checkCodeTabs();
+    checkCodeIntoListItem();
     checkLiteralTabs();
     checkCodeStaysSliced();
     checkAutoIndent();
