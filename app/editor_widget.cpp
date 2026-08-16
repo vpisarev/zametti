@@ -2704,6 +2704,7 @@ void NoteEditor::refreshStats(const NoteStats& stats) {
 }
 
 void NoteEditor::onContentsChanged() {
+    if (qEnvironmentVariableIsSet("ZAMETTI_NO_AFTER_EDIT")) return;   // ВРЕМЕННО: бисекция
     // Пересборка и перекладка полей под ширину окна — это облик. Документу они
     // неотличимы от правки текста, и без этих двух признаков ширина окна
     // заводила бы шаг истории.

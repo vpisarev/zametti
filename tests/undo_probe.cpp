@@ -34,6 +34,7 @@
 #include <QScrollBar>
 #include <QTest>
 #include <QTextDocument>
+#include <QTextEdit>
 
 #include <cstdio>
 #include <string>
@@ -372,6 +373,38 @@ int ztUndoProbe(int argc, char** argv) {
         std::printf("     блок каретки после отмены: %d (был %d)\n",
                     editor.textCursor().blockNumber(), middle);
         std::printf("     шагов отмены осталось: %d\n", d->availableUndoSteps());
+    }
+
+    // СКОЛЬКО ШАГОВ ОТМЕНЫ ДЕЛАЕТ САМ Qt на набранной фразе — и ЗАВИСИТ ЛИ ЭТО
+    // ОТ ПАУЗ. Догадка владельца: Qt может резать шаг сам, когда человек
+    // задумался. Меряем НА ЧИСТОМ QTextEdit, без нашего кода вовсе.
+    {
+        const QString text = QStringLiteral("мама мыла раму очень долго и упорно");
+        std::printf("\n   ЧИСТЫЙ QTextEdit: фраза из %d знаков, %d слов\n",
+                    int(text.size()), int(text.split(QLatin1Char(' ')).size()));
+        for (const int pause : {0, 100, 400, 1500}) {
+            QTextEdit plain;
+            plain.resize(800, 600);
+            plain.show();
+            QTest::qWait(20);
+            plain.document()->setUndoRedoEnabled(true);
+
+            for (const QChar ch : text) {
+                QKeyEvent press(QEvent::KeyPress, Qt::Key_unknown, Qt::NoModifier, QString(ch));
+                QApplication::sendEvent(&plain, &press);
+                // Пауза — только между словами: внутри слова человек не думает.
+                if (ch == QLatin1Char(' ') && pause > 0) QTest::qWait(pause);
+            }
+            QTest::qWait(50);
+
+            int presses = 0;
+            while (plain.document()->isUndoAvailable() && presses < 50) {
+                plain.undo();
+                ++presses;
+            }
+            std::printf("     пауза между словами %4d мс → отменяется за %d нажатий\n", pause,
+                        presses);
+        }
     }
 
     std::printf("\n");

@@ -19,6 +19,7 @@
 #include <QElapsedTimer>
 #include <QTextBlock>
 #include <QTextCursor>
+#include <QTextEdit>
 #include <QTextDocument>
 
 #include <algorithm>
@@ -227,19 +228,76 @@ int ztPasteBench(int argc, char** argv) {
                            .position());
         editor.setTextCursor(at);
 
-        qint64 chars = 0;
-        QElapsedTimer timer;
-        timer.start();
-        for (int i = 0; i < 20; ++i)
-            for (const QChar ch : phrase) {
-                QKeyEvent press(QEvent::KeyPress, Qt::Key_unknown, Qt::NoModifier, QString(ch));
-                QApplication::sendEvent(&editor, &press);
-                ++chars;
+        // Лучшее из трёх заходов: разброс на этой машине доходит до пятой части,
+        // и одиночный замер сравнивать не с чем.
+        // КАК ПИШУТ ЛЮДИ: фразы, а каждые десять — Enter. Без него набор
+        // выродился бы в один растущий абзац, а это отдельная беда (Qt
+        // переразмечает блок, в который пишут, целиком) и мерить надо не её.
+        double each = 1e18;
+        for (int run = 0; run < 3; ++run) {
+            qint64 chars = 0;
+            QElapsedTimer timer;
+            timer.start();
+            for (int i = 0; i < 20; ++i) {
+                for (const QChar ch : phrase) {
+                    QKeyEvent press(QEvent::KeyPress, Qt::Key_unknown, Qt::NoModifier,
+                                    QString(ch));
+                    QApplication::sendEvent(&editor, &press);
+                    ++chars;
+                }
+                if ((i + 1) % 10 == 0) {
+                    QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+                    QApplication::sendEvent(&editor, &enter);
+                }
             }
-        const double each = double(timer.nsecsElapsed()) / 1000.0 / double(chars);
+            each = std::min(each, double(timer.nsecsElapsed()) / 1000.0 / double(chars));
+        }
         std::printf("   %-10d %-10.0f %-14.1f\n", blocks, double(source.size()) / 1024.0, each);
     }
-    std::printf("   Обязано СТОЯТЬ: цена нажатия не должна зависеть от размера заметки.\n");
+    std::printf("   Обязано СТОЯТЬ: цена нажатия не должна зависеть от размера заметки.\n\n");
+
+    // А СКОЛЬКО ИЗ ЭТОГО — САМ Qt.
+    //
+    // Сравнивать надо с ЖИВЫМ виджетом, а не с документом без вёрстки: у того
+    // вёрстка выключена вовсе, и он «дёшев» ровно потому, что ничего не считает.
+    // Здесь обычный QTextEdit с тем же текстом, тех же размеров и тоже
+    // показанный: разница между ним и нашим редактором и есть наша доля.
+    std::printf("ТО ЖЕ, НО В ОБЫЧНОМ QTextEdit (Qt со своей вёрсткой)\n");
+    std::printf("   %-10s %-10s %-14s\n", "блоков", "КБ", "мкс/знак");
+    for (const int blocks : {50, 500, 5000}) {
+        const std::string source = noteOf(blocks);
+        QTextEdit plain;
+        plain.setPlainText(QString::fromUtf8(source.data(), qsizetype(source.size())));
+        plain.resize(800, 600);
+        plain.show();
+        QTest::qWait(30);
+
+        QTextCursor at(plain.document());
+        at.setPosition(
+            plain.document()->findBlockByNumber(plain.document()->blockCount() / 2).position());
+        plain.setTextCursor(at);
+
+        double each = 1e18;
+        for (int run = 0; run < 3; ++run) {
+            qint64 chars = 0;
+            QElapsedTimer timer;
+            timer.start();
+            for (int i = 0; i < 20; ++i) {
+                for (const QChar ch : phrase) {
+                    QKeyEvent press(QEvent::KeyPress, Qt::Key_unknown, Qt::NoModifier,
+                                    QString(ch));
+                    QApplication::sendEvent(&plain, &press);
+                    ++chars;
+                }
+                if ((i + 1) % 10 == 0) {
+                    QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+                    QApplication::sendEvent(&plain, &enter);
+                }
+            }
+            each = std::min(each, double(timer.nsecsElapsed()) / 1000.0 / double(chars));
+        }
+        std::printf("   %-10d %-10.0f %-14.1f\n", blocks, double(source.size()) / 1024.0, each);
+    }
 
     std::printf("\n");
     return 0;
