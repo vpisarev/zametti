@@ -1668,21 +1668,30 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     // правило раньше разреза, иначе Enter развёл бы дефисы и новый блок.
     // На фотографии Enter не делит блок, а заводит пустую строку ЗА ней:
     // каретка на картинке считается стоящей сразу за ней (правило владельца).
-    if (plainEnter && runOperation(newLineAfterImage)) return;
-    if (plainEnter && runOperation(applyDividerRuleAtCursor)) return;
-    if (plainEnter && runOperation(splitBlockAtCursor)) return;
+    // ЧЕРЕЗ ГЛАГОЛ ЗАМЕТКИ: порядок правил (объект, черта, разрез) живёт теперь
+    // внутри breakBlock — он про содержимое, а не про клавиши.
+    if (plainEnter && runNoteEdit([](ZDocument& note, QTextCursor& at) {
+            return note.breakBlock(at, ZDocument::BreakKind::Plain);
+        }))
+        return;
 
     // Ctrl+Enter — выход из блока кода вниз. Раньше разреза и раньше правил
     // черты: в коде оба они означали бы другое, а тут нажатие однозначно.
     const bool ctrlEnter = (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
                            (event->modifiers() & ~Qt::KeypadModifier) == Qt::ControlModifier;
-    if (ctrlEnter && runOperation(leaveCodeBlockAtCursor)) return;
+    if (ctrlEnter && runNoteEdit([](ZDocument& note, QTextCursor& at) {
+            return note.breakBlock(at, ZDocument::BreakKind::LeaveCode);
+        }))
+        return;
 
     // Shift+Enter — «другое»: в абзаце разрезает, в списке переносит строку
     // внутри пункта.
     const bool shiftEnter = (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
                             (event->modifiers() & ~Qt::KeypadModifier) == Qt::ShiftModifier;
-    if (shiftEnter && runOperation(splitBlockOtherwiseAtCursor)) return;
+    if (shiftEnter && runNoteEdit([](ZDocument& note, QTextCursor& at) {
+            return note.breakBlock(at, ZDocument::BreakKind::Otherwise);
+        }))
+        return;
 
     // Блок кода из выделенного и обратно. Ctrl+Shift+E рядом с Ctrl+E: тот
     // делает код в строке, этот — блоком.
@@ -1767,20 +1776,15 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     }
 
     if (event->key() == Qt::Key_Backspace && event->modifiers() == Qt::NoModifier) {
-        // Жест снятия комментарности: как у первого пункта списка — сначала
-        // блок становится абзацем, и только следующее нажатие сливает.
-        if (runOperation(uncommentAtBlockStart)) return;
-        if (runOperation(unwrapListItemAtCursor)) return;
-        // Черта прямо над кареткой удаляется — это удаление назад: гибнет то,
-        // что НАД кареткой, а своя строка остаётся под ней. Поэтому раньше
-        // обработки пустых строк: с пустой строки под чертой Backspace убирает
-        // черту, а не пустую.
-        if (runOperation(deleteDividerAbove)) return;
-        if (runOperation(joinAcrossVSpaceBackward)) return;
-        // Каретка на самой черте, выше непустой текст: по плоской модели слева
-        // от каретки стоит перевод строки, но удалить его нельзя — черта не
-        // живёт в строке текста. Отказ, каретка шагает в конец строки выше.
-        // Сама черта под кареткой — дело Delete, Backspace удаляет слева.
+        // ЧЕРЕЗ ГЛАГОЛ ЗАМЕТКИ. Все жесты со своим правилом — снять
+        // комментарность, снять пункт, убрать черту над кареткой, склеить через
+        // пустую строку — живут теперь внутри deleteBack: они про содержимое, а
+        // не про клавишу. Туда же ушло и обычное удаление знака: тогда починка
+        // шва попадает в тот же шаг отмены, что и само удаление.
+        if (runNoteEdit([](ZDocument& note, QTextCursor& at) { return note.deleteBack(at); }))
+            return;
+        // Заметка отказалась — значит каретка на самой черте: удалять слева
+        // нечего, и она просто шагает в конец строки выше.
         const QTextBlock atBlock = textCursor().block();
         if (!textCursor().hasSelection() && !isRawBlock(atBlock) &&
             kindOf(atBlock) == Kind::Divider) {
@@ -1793,10 +1797,9 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
             return;
         }
     }
-    // Delete у пустой строки — то же самое с другой стороны: строка исчезает, а
-    // соседи, которым markdown не даёт стоять раздельно, сливаются.
+    // Delete — то же самое с другой стороны.
     if (event->key() == Qt::Key_Delete && event->modifiers() == Qt::NoModifier &&
-        runOperation(joinAcrossVSpaceForward))
+        runNoteEdit([](ZDocument& note, QTextCursor& at) { return note.deleteForward(at); }))
         return;
 
     // Tab и Shift+Tab внутри списка двигают пункт по уровням; вне списка
@@ -2168,9 +2171,16 @@ bool NoteEditor::insertTyped(const QString& text, Qt::KeyboardModifiers modifier
     } else {
         cursor.joinPreviousEditBlock();
     }
-    // Формат берём ТОТ, КОТОРЫМ ПЕЧАТАЮТ, а не тот, что у курсора: Ctrl+B без
-    // выделения задаёт начертание для следующей буквы, и оно живёт именно здесь.
-    cursor.insertText(text, currentCharFormat());
+    // ВСТАВКУ ДЕЛАЕТ ЗАМЕТКА. Формат берём ТОТ, КОТОРЫМ ПЕЧАТАЮТ, а не тот, что
+    // у курсора: Ctrl+B без выделения задаёт начертание для следующей буквы, и
+    // оно живёт здесь, у вида.
+    //
+    // Заметка заодно приводит к канону ШОВ — набранное на пустой строке, съеденную
+    // выделением границу блоков. Прежде это чинилось после набора обходом
+    // накопленной области; теперь чинить снаружи нечего.
+    recordingSuspended_ = true;
+    note_.note.insertText(cursor, text, currentCharFormat());
+    recordingSuspended_ = false;
     cursor.endEditBlock();
     setTextCursor(cursor);
 
@@ -2182,6 +2192,44 @@ bool NoteEditor::insertTyped(const QString& text, Qt::KeyboardModifiers modifier
     for (const QChar c : text)
         if (c.isSpace() || c.isPunct() || c == QChar::ParagraphSeparator) current_.runBroken = true;
     typingPause_.start(appearance().undoCoalesceMs);
+    return true;
+}
+
+// ПРАВКА ЧЕРЕЗ ГЛАГОЛ ЗАМЕТКИ. От runOperation отличается ровно одним: после
+// неё НЕТ ни обхода документа, ни пересборки — заметка привела шов к канону
+// сама, и что вышло ровно то же, что собрал бы сборщик, стережёт ассерт
+// отладочной сборки.
+//
+// Ради этого базис и затевался: прежде каждая операция платила обходом всего
+// документа (замер: Enter на заметке в 490 КБ стоил 12.7 мс против 3.5 мс у
+// набора, и вся разница была здесь).
+bool NoteEditor::runNoteEdit(const std::function<bool(ZDocument&, QTextCursor&)>& op) {
+    QTextCursor cursor = textCursor();
+    const int scrollBefore = verticalScrollBar()->value();
+    recordingSuspended_ = true;
+
+    // Скобку открывает курсор человека: Qt возвращает каретку туда, где скобку
+    // открыли (см. довод у runOperation).
+    QTextCursor group = textCursor();
+    group.beginEditBlock();
+    const bool handled = op(note_.note, cursor);
+    if (!handled) {
+        group.endEditBlock();
+        recordingSuspended_ = false;
+        return false;
+    }
+    setTextCursor(cursor);
+    group.endEditBlock();
+    recordingSuspended_ = false;
+
+    current_.runBroken = true;   // структурная правка кончает серию набора
+    if (note_.statsFresh) {
+        note_.statsFresh = false;
+        emit statsChanged();
+    }
+    document()->setModified(true);
+    showEditPlace(scrollBefore);
+    autosave_.start(appearance().autosaveDelayMs);
     return true;
 }
 

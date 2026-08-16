@@ -20,6 +20,7 @@
 #include "serializer.h"
 
 #include <QTextBlock>
+#include <QTextCharFormat>
 #include <QTextCursor>
 #include <QTextDocumentFragment>
 
@@ -241,6 +242,142 @@ bool ZDocument::replaceInsideLiteral(QTextCursor& at, const QString& markdown) {
     at = QTextCursor(&d_->text);
     at.setPosition(qBound(0, landed, d_->text.characterCount() - 1));
     return true;
+}
+
+// --- НАБОР, ENTER, BACKSPACE ------------------------------------------------
+//
+// Их объединяет одно: они НЕ ходят через markdown. Обычный ввод — решение
+// владельца («через разбор идут только структурные операции»), а Enter и
+// Backspace структурны по существу: режут и склеивают блоки, а не переписывают
+// их текст. Заметке они нужны затем, чтобы шов приводился к канону здесь — на
+// месте правки, а не потом обходом всего документа.
+
+bool ZDocument::insertText(QTextCursor& at, const QString& text,
+                           const QTextCharFormat& format) {
+    if (at.document() != &d_->text) return false;
+    if (text.isEmpty() && !at.hasSelection()) return false;
+
+    QTextCursor edit(at);
+    edit.beginEditBlock();
+    const int firstBlock = edit.blockNumber();
+    if (edit.hasSelection()) edit.removeSelectedText();
+    if (!text.isEmpty()) edit.insertText(text, format);
+
+    // НАБОР ЛОМАЕТ ИНВАРИАНТЫ ДВУМЯ СПОСОБАМИ: текстом на пустой строке (она
+    // перестаёт быть пустой) и выделением, съевшим границу блоков (рядом
+    // оказываются соседи, которых markdown раздельно не выражает). Чиним здесь
+    // же, в той же скобке правки, — а не потом и не по всему документу.
+    QTextCursor repair(edit);
+    if (repairAfterTyping(d_->text, repair)) edit = repair;
+    settleSeam(qMin(firstBlock, edit.blockNumber()), edit.blockNumber());
+    edit.endEditBlock();
+
+    at = edit;
+    return true;
+}
+
+bool ZDocument::breakBlock(QTextCursor& at, BreakKind kind) {
+    if (at.document() != &d_->text) return false;
+
+    QTextCursor edit(at);
+    edit.beginEditBlock();
+    const int firstBlock = edit.blockNumber();
+    bool done = false;
+    switch (kind) {
+        case BreakKind::Plain:
+            // Порядок важен и взят у прежнего обработчика: сперва объект
+            // (фотография — атом), потом правило черты, и только потом обычный
+            // разрез блока.
+            done = newLineAfterImage(d_->text, edit) ||
+                   applyDividerRuleAtCursor(d_->text, edit) ||
+                   splitBlockAtCursor(d_->text, edit);
+            break;
+        case BreakKind::Otherwise:
+            done = splitBlockOtherwiseAtCursor(d_->text, edit);
+            break;
+        case BreakKind::LeaveCode:
+            done = leaveCodeBlockAtCursor(d_->text, edit);
+            break;
+    }
+    if (!done) {
+        edit.endEditBlock();
+        return false;
+    }
+    settleSeam(qMin(firstBlock, edit.blockNumber()), qMax(firstBlock, edit.blockNumber()));
+    edit.endEditBlock();
+
+    at = edit;
+    return true;
+}
+
+bool ZDocument::deleteBack(QTextCursor& at) {
+    if (at.document() != &d_->text) return false;
+
+    QTextCursor edit(at);
+    edit.beginEditBlock();
+    const int firstBlock = edit.blockNumber();
+    // Жесты, у которых своё правило: снять комментарность, снять пункт, убрать
+    // черту над кареткой, склеить через пустую строку, убрать фотографию целиком.
+    bool done = uncommentAtBlockStart(d_->text, edit) ||
+                unwrapListItemAtCursor(d_->text, edit) ||
+                deleteDividerAbove(d_->text, edit) ||
+                deleteImageLineBackward(d_->text, edit) ||
+                joinAcrossVSpaceBackward(d_->text, edit);
+    if (!done) {
+        // НА САМОЙ ЧЕРТЕ УДАЛЯТЬ СЛЕВА НЕЧЕГО. По плоской модели слева от каретки
+        // стоит перевод строки, но черта не живёт в строке текста, и обычное
+        // удаление съело бы не то. Отказываемся — что делать дальше, решает
+        // вызывающий (он уводит каретку в конец строки выше).
+        const QTextBlock here = edit.block();
+        if (!edit.hasSelection() && !isRawBlock(here) && kindOf(here) == Kind::Divider) {
+            edit.endEditBlock();
+            return false;
+        }
+        // Обычное удаление знака. Делаем сами, а не отдаём Qt: тогда починка
+        // шва попадает в тот же шаг отмены, что и само удаление.
+        if (edit.hasSelection()) edit.removeSelectedText();
+        else if (edit.position() > 0) edit.deletePreviousChar();
+        else {
+            edit.endEditBlock();
+            return false;
+        }
+        done = true;
+    }
+    const int lastBlock = edit.blockNumber();
+    QTextCursor repair(edit);
+    if (repairAfterTyping(d_->text, repair)) edit = repair;
+    settleSeam(qMin(firstBlock, lastBlock), qMax(firstBlock, lastBlock));
+    edit.endEditBlock();
+
+    at = edit;
+    return done;
+}
+
+bool ZDocument::deleteForward(QTextCursor& at) {
+    if (at.document() != &d_->text) return false;
+
+    QTextCursor edit(at);
+    edit.beginEditBlock();
+    const int firstBlock = edit.blockNumber();
+    bool done = deleteImageLineForward(d_->text, edit) ||
+                joinAcrossVSpaceForward(d_->text, edit);
+    if (!done) {
+        if (edit.hasSelection()) edit.removeSelectedText();
+        else if (edit.position() < d_->text.characterCount() - 1) edit.deleteChar();
+        else {
+            edit.endEditBlock();
+            return false;
+        }
+        done = true;
+    }
+    const int lastBlock = edit.blockNumber();
+    QTextCursor repair(edit);
+    if (repairAfterTyping(d_->text, repair)) edit = repair;
+    settleSeam(qMin(firstBlock, lastBlock), qMax(firstBlock, lastBlock));
+    edit.endEditBlock();
+
+    at = edit;
+    return done;
 }
 
 void ZDocument::settleSeam(int firstBlock, int lastBlock) {

@@ -440,6 +440,9 @@ protected:
 private:
     // Выполняет операцию, доводит документ до вида, который построил бы
     // сборщик, и заводит отдельный шаг истории. Возвращает то же, что операция.
+    // Правка через глагол заметки: без обхода документа и без пересборки.
+    bool runNoteEdit(const std::function<bool(ZDocument&, QTextCursor&)>& op);
+
     bool runOperation(bool (*op)(QTextDocument&, QTextCursor&));
     // То же с замыканием: ресайзу фотографии нужна ширина.
     bool runOperation(const std::function<bool(QTextDocument&, QTextCursor&)>& op);

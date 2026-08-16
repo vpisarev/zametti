@@ -19,6 +19,7 @@
 #include <QElapsedTimer>
 #include <QTextBlock>
 #include <QTextCursor>
+#include <QPlainTextEdit>
 #include <QTextEdit>
 #include <QTextDocument>
 
@@ -79,10 +80,10 @@ int ztPasteBench(int argc, char** argv) {
 
     // --- А ТЕПЕРЬ ТО, ЧТО ЕЩЁ НЕ НА БАЗИСЕ ----------------------------------
     //
-    // Enter и Backspace идут прежним путём: операция правит документ, а следом
-    // редактор обходит его ЦЕЛИКОМ (piecesOf) и накладывает заплатку. Здесь
-    // видно, чего это стоит и что даст перевод на базис.
-    std::printf("ЦЕНА Enter ПРЕЖНИМ ПУТЁМ (операция + обход всего документа)\n");
+    // Enter идёт через глагол заметки: правит локально и приводит к канону
+    // только шов. До перевода он платил обходом ВСЕГО документа и заплаткой
+    // поверх — 344 / 1488 / 12729 мкс на тех же трёх размерах.
+    std::printf("ЦЕНА Enter (через глагол заметки)\n");
     std::printf("   %-10s %-10s %-12s %-12s\n", "блоков", "КБ", "Enter, мкс", "на блок, нс");
 
     const QString dir = QStringLiteral("/tmp/zametti-paste-bench");
@@ -267,6 +268,48 @@ int ztPasteBench(int argc, char** argv) {
     for (const int blocks : {50, 500, 5000}) {
         const std::string source = noteOf(blocks);
         QTextEdit plain;
+        plain.setPlainText(QString::fromUtf8(source.data(), qsizetype(source.size())));
+        plain.resize(800, 600);
+        plain.show();
+        QTest::qWait(30);
+
+        QTextCursor at(plain.document());
+        at.setPosition(
+            plain.document()->findBlockByNumber(plain.document()->blockCount() / 2).position());
+        plain.setTextCursor(at);
+
+        double each = 1e18;
+        for (int run = 0; run < 3; ++run) {
+            qint64 chars = 0;
+            QElapsedTimer timer;
+            timer.start();
+            for (int i = 0; i < 20; ++i) {
+                for (const QChar ch : phrase) {
+                    QKeyEvent press(QEvent::KeyPress, Qt::Key_unknown, Qt::NoModifier,
+                                    QString(ch));
+                    QApplication::sendEvent(&plain, &press);
+                    ++chars;
+                }
+                if ((i + 1) % 10 == 0) {
+                    QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+                    QApplication::sendEvent(&plain, &enter);
+                }
+            }
+            each = std::min(each, double(timer.nsecsElapsed()) / 1000.0 / double(chars));
+        }
+        std::printf("   %-10d %-10.0f %-14.1f\n", blocks, double(source.size()) / 1024.0, each);
+    }
+
+
+    // И ТО ЖЕ В QPlainTextEdit (мысль владельца). У него ДРУГАЯ ВЁРСТКА —
+    // QPlainTextDocumentLayout, писанная под большие простые документы: она
+    // считает высоту лениво и не перекладывает весь документ на каждую правку.
+    // Если рост живёт именно там, здесь его быть не должно.
+    std::printf("И ТО ЖЕ В QPlainTextEdit (ленивая вёрстка Qt)\n");
+    std::printf("   %-10s %-10s %-14s\n", "блоков", "КБ", "мкс/знак");
+    for (const int blocks : {50, 500, 5000}) {
+        const std::string source = noteOf(blocks);
+        QPlainTextEdit plain;
         plain.setPlainText(QString::fromUtf8(source.data(), qsizetype(source.size())));
         plain.resize(800, 600);
         plain.show();

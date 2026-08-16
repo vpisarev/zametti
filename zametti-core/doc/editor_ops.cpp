@@ -648,8 +648,12 @@ bool convertBlock(QTextDocument& doc, int number, BlockTarget target) {
         format.clearProperty(MarkerProperty);
         format.clearProperty(CheckedProperty);
         format.clearProperty(LevelProperty);
-        format.setLeftMargin(0);
-        format.setHeadingLevel(0);
+        // ЧИСТИМ, А НЕ ПИШЕМ НОЛЬ. Сборщик у обычного блока этих свойств не
+        // ставит ВОВСЕ, и явный ноль делает блок непохожим на собранный. Пока
+        // после каждой операции шла полная пересборка, разницы не было видно;
+        // теперь её ловит сверка со сборкой.
+        format.clearProperty(QTextFormat::BlockLeftMargin);
+        format.clearProperty(QTextFormat::HeadingLevel);
     } else {
         // Отметка задачи при переходе в другой вид списка просто исчезает.
         // Раньше она переезжала в начало содержимого обычным текстом — чтобы не
@@ -673,7 +677,7 @@ bool convertBlock(QTextDocument& doc, int number, BlockTarget target) {
             }
         }
         format.setProperty(KindProperty, int(target.kind));
-        format.setHeadingLevel(0);
+        format.clearProperty(QTextFormat::HeadingLevel);
         if (target.kind == Kind::ListItem) {
             format.setProperty(MarkerProperty, int(target.marker));
             format.setProperty(CheckedProperty, target.checked);
@@ -936,7 +940,7 @@ bool applyInputRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
         format.setProperty(MarkerProperty, int(rule.target.marker));
         format.setProperty(CheckedProperty, rule.target.checked);
         format.setProperty(LevelProperty, isListBlock(block) ? levelOf(block) : 0);
-        format.setHeadingLevel(0);
+        format.clearProperty(QTextFormat::HeadingLevel);
     }
 
     edit.setPosition(start);
@@ -1196,8 +1200,8 @@ bool setHeadingLevel(QTextDocument& doc, QTextCursor& cursor, int level) {
             format.clearProperty(MarkerProperty);
             format.clearProperty(CheckedProperty);
             format.clearProperty(LevelProperty);
-            format.setLeftMargin(0);
-            format.setHeadingLevel(0);
+            format.clearProperty(QTextFormat::BlockLeftMargin);
+            format.clearProperty(QTextFormat::HeadingLevel);
         } else {
             // Пункт списка, ставший заголовком, перестаёт быть пунктом: свойства
             // списка снимаются целиком, иначе он уехал бы в файл как "- # текст".
@@ -1880,9 +1884,11 @@ bool splitBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
                                lastLineOfLiteral(block) && isContinuationBlock(block) &&
                                fenceLanguage(block.text(), closing) && closing.isEmpty();
     if (closedByFence) {
+        // Высоту строки ставим ТАК ЖЕ, КАК СБОРЩИК, а не копией у соседа: копия
+        // тащит за собой и явные нули там, где сборщик не пишет ничего.
         QTextBlockFormat plain;
-        plain.setLineHeight(block.blockFormat().lineHeight(),
-                            block.blockFormat().lineHeightType());
+        applyLineHeight(plain, appearance().lineHeightFactor, layoutBaseFont().pointSizeF(),
+                        layoutBaseFont());
 
         cursor.beginEditBlock();
         cursor.setPosition(block.position());
@@ -2729,11 +2735,26 @@ int syncGaps(QTextDocument& doc, BlockRange range) {
         const int last = qMin(range.last, doc.blockCount() - 1);
         for (; i <= last; ++i) {
             const QTextBlock block = doc.findBlockByNumber(i);
-            if (!isVSpaceBlock(block) || block.text().isEmpty()) continue;
+            // ПРОБЕЛЫ ТЕКСТОМ НЕ СЧИТАЮТСЯ — так же, как их не считает
+            // сторож инварианта (gapInvariantHolds): пока каретка на строке,
+            // пробелы живут, а уйдёт — их снимет уборка. Считать их текстом
+            // значило бы, что пробел на пустой строке превращает её в абзац и
+            // склеивает соседей (поймал набор списков).
+            if (!isVSpaceBlock(block) || block.text().trimmed().isEmpty()) continue;
             QTextBlockFormat format = block.blockFormat();
             format.clearProperty(KindProperty);
             format.clearProperty(LevelProperty);
             format.setLeftMargin(0);
+            // И СЛЕДЫ ПУСТОЙ СТРОКИ. Её формат ставит нижнее поле и высоту
+            // строки ЯВНО (vspaceBlockFormat), а у обычного блока сборщик их не
+            // ставит вовсе — и оставленные следы делали блок непохожим на
+            // собранный. Прежде это чинила полная пересборка после каждой
+            // правки; её больше нет, и чинить надо здесь.
+            format.clearProperty(QTextFormat::BlockBottomMargin);
+            format.clearProperty(QTextFormat::LineHeight);
+            format.clearProperty(QTextFormat::LineHeightType);
+            applyLineHeight(format, appearance().lineHeightFactor,
+                            layoutBaseFont().pointSizeF(), layoutBaseFont());
             setBlockFormat(edit, block, format);
         }
     }
