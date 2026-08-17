@@ -10,6 +10,7 @@
 // Ресайз: угол фотографии тянется мышью, отпускание записывает ширину
 // операцией — вики-вложению в "|ширину", image-спану в "#w=" пути.
 
+#include "caption_editor.h"
 #include "doc_model.h"
 #include "document_builder.h"
 #include "pieces.h"
@@ -228,6 +229,174 @@ void checkEmptyCaption() {
             std::fabs(takenBy(0) - (64.0 + kGap + cornersRoom())) < 1.5);
     ZT_TRUE("а под настоящую — отведено",
             takenBy(2) > takenBy(0) + 8.0);
+}
+
+// БЕЗЫМЯННАЯ ПОДПИСЬ ПОД СНИМКОМ НЕ ПОКАЗЫВАЕТСЯ и места не занимает — ни имя
+// от камеры («IMG_1234»), ни спрятанная знаком («~подпись»); настоящая —
+// показывается. Решение владельца: «хорошие имена показывать, дурацкие
+// скрывать». В файле все три остаются как есть.
+void checkNonameCaption() {
+    const fs::path dir = fs::temp_directory_path() / "zametti-безымянная-подпись";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+
+    QImage square(64, 64, QImage::Format_RGB32);
+    square.fill(QColor(220, 30, 30));
+    ZT_TRUE("картинка записана",
+            square.save(QString::fromStdString((dir / "img.png").string())));
+    const char* const source =
+        "![IMG_1234](img.png)\n\n![~подпись](img.png)\n\n![подпись](img.png)\n";
+    {
+        std::ofstream out(dir / "н.md", std::ios::binary);
+        out << source;
+    }
+
+    zametti::NoteEditor editor;
+    editor.resize(600, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(QString::fromStdString((dir / "н.md").string()));
+    QTest::qWait(50);
+
+    const auto blockAt = [&](int n) { return editor.document()->findBlockByNumber(n); };
+    const auto takenBy = [&](int n) {
+        return editor.document()->documentLayout()->blockBoundingRect(blockAt(n)).height();
+    };
+    const qreal bare = 64.0 + kGap + cornersRoom();
+    ZT_TRUE("имя от камеры под снимком места не занимает (" +
+                std::to_string(int(takenBy(0))) + ")",
+            std::fabs(takenBy(0) - bare) < 1.5);
+    ZT_TRUE("спрятанная знаком — тоже (" + std::to_string(int(takenBy(2))) + ")",
+            std::fabs(takenBy(2) - bare) < 1.5);
+    ZT_TRUE("а настоящая — занимает", takenBy(4) > bare + 8.0);
+    ZT_EQ("в файле все три подписи целы", std::string(source), editor.note().toMarkdown());
+}
+
+// ПРАВКА ПОДПИСИ ПО ENTER: поле ввода встаёт под снимок, Enter принимает
+// подпись глаголом заметки, Esc отменяет; сочетание переключения (Ctrl+Space)
+// прячет подпись знаком «~» и возвращает обратно; Ctrl+Z отменяет и то, и другое.
+void checkCaptionEditing() {
+    const fs::path dir = fs::temp_directory_path() / "zametti-правка-подписи";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+
+    QImage square(64, 64, QImage::Format_RGB32);
+    square.fill(QColor(220, 30, 30));
+    ZT_TRUE("картинка записана",
+            square.save(QString::fromStdString((dir / "img.png").string())));
+    {
+        std::ofstream out(dir / "н.md", std::ios::binary);
+        out << "текст\n\n![Вид](img.png)\n\nхвост\n";
+    }
+
+    zametti::NoteEditor editor;
+    editor.resize(600, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(QString::fromStdString((dir / "н.md").string()));
+    QTest::qWait(50);
+
+    const auto imageBlock = [&] {
+        for (QTextBlock b = editor.document()->begin(); b.isValid(); b = b.next())
+            if (zametti::blockImageRef(b).valid) return b.blockNumber();
+        return -1;
+    };
+    const auto markdown = [&] { return editor.note().toMarkdown(); };
+    const auto takenBy = [&](int n) {
+        return editor.document()->documentLayout()->blockBoundingRect(
+            editor.document()->findBlockByNumber(n)).height();
+    };
+    const int photo = imageBlock();
+    ZT_TRUE("фотография найдена", photo >= 0);
+    if (photo < 0) return;
+    const qreal shownRoom = takenBy(photo);
+
+    // Enter на снимке — поле с подписью как она есть.
+    editor.setTextCursor(QTextCursor(editor.document()->findBlockByNumber(photo)));
+    QTest::keyClick(&editor, Qt::Key_Return);
+    QTest::qWait(20);
+    ZT_TRUE("Enter открыл поле подписи", editor.imageCaptionEditor() != nullptr);
+    if (editor.imageCaptionEditor() == nullptr) return;
+    ZT_EQ("в поле — нынешняя подпись", "Вид", editor.imageCaptionEditor()->text().toStdString());
+    ZT_TRUE("поле стоит под снимком, а не поверх него",
+            editor.imageCaptionEditor()->geometry().top() + 1 >=
+                editor.imageRectInViewport(editor.document()->findBlockByNumber(photo)).bottom());
+    ZT_EQ("заметка пока не тронута", "текст\n\n![Вид](img.png)\n\nхвост\n", markdown());
+
+    // Латиница нарочно: QTest::keyClicks знает только ASCII.
+    QTest::keyClicks(editor.imageCaptionEditor(), QStringLiteral(" 2"));
+    QTest::keyClick(editor.imageCaptionEditor(), Qt::Key_Return);
+    QTest::qWait(20);
+    ZT_TRUE("Enter в поле закрыл его", editor.imageCaptionEditor() == nullptr);
+    ZT_EQ("подпись записана глаголом заметки", "текст\n\n![Вид 2](img.png)\n\nхвост\n",
+          markdown());
+    ZT_EQ("каретка осталась на снимке", std::to_string(photo),
+          std::to_string(editor.textCursor().blockNumber()));
+    ZT_TRUE("снимок нарисован по-прежнему",
+            !editor.imageRectInViewport(editor.document()->findBlockByNumber(photo)).isEmpty());
+
+    // Esc — отмена: заметка как была.
+    QTest::keyClick(&editor, Qt::Key_Return);
+    QTest::qWait(20);
+    ZT_TRUE("поле открыто снова", editor.imageCaptionEditor() != nullptr);
+    if (editor.imageCaptionEditor() != nullptr) {
+        QTest::keyClicks(editor.imageCaptionEditor(), QStringLiteral("zzz"));
+        QTest::keyClick(editor.imageCaptionEditor(), Qt::Key_Escape);
+        QTest::qWait(20);
+    }
+    ZT_TRUE("Esc закрыл поле", editor.imageCaptionEditor() == nullptr);
+    ZT_EQ("и ничего не записал", "текст\n\n![Вид 2](img.png)\n\nхвост\n", markdown());
+    ZT_TRUE("место под подпись после правки — как у показанной (" +
+                std::to_string(int(takenBy(photo))) + " против " +
+                std::to_string(int(shownRoom)) + ")",
+            std::fabs(takenBy(photo) - shownRoom) < 1.5);
+
+    // Сочетание переключения на снимке — спрятать подпись знаком; место под
+    // неё исчезает, файл хранит подпись со знаком.
+    const QKeySequence toggle(zametti::appearance().toggleTaskKey, QKeySequence::PortableText);
+    ZT_TRUE("хоткей переключателя разобран", toggle.count() == 1);
+    if (toggle.count() != 1) return;
+    QTest::keyClick(&editor, Qt::Key(toggle[0].key()), toggle[0].keyboardModifiers());
+    QTest::qWait(30);
+    ZT_EQ("подпись спрятана знаком", "текст\n\n![~Вид 2](img.png)\n\nхвост\n", markdown());
+    ZT_TRUE("под спрятанную места не отведено (" + std::to_string(int(takenBy(photo))) + ")",
+            takenBy(photo) < shownRoom - 8.0);
+    ZT_TRUE("снимок на месте",
+            !editor.imageRectInViewport(editor.document()->findBlockByNumber(photo)).isEmpty());
+    QTest::keyClick(&editor, Qt::Key(toggle[0].key()), toggle[0].keyboardModifiers());
+    QTest::qWait(30);
+    ZT_EQ("и возвращена", "текст\n\n![Вид 2](img.png)\n\nхвост\n", markdown());
+    ZT_TRUE("место под подпись вернулось", std::fabs(takenBy(photo) - shownRoom) < 1.5);
+
+    // Отмена — штатная: шаг за шагом назад.
+    editor.undo();
+    QTest::qWait(10);
+    ZT_EQ("Ctrl+Z: снова спрятана", "текст\n\n![~Вид 2](img.png)\n\nхвост\n", markdown());
+    editor.undo();
+    QTest::qWait(10);
+    ZT_EQ("Ctrl+Z: снова показана", "текст\n\n![Вид 2](img.png)\n\nхвост\n", markdown());
+    editor.undo();
+    QTest::qWait(10);
+    ZT_EQ("Ctrl+Z: прежняя подпись", "текст\n\n![Вид](img.png)\n\nхвост\n", markdown());
+
+    // Пустая подпись законна: поле очистили — картинка осталась. Отмена
+    // могла увести каретку — ставим её на снимок заново.
+    editor.setTextCursor(QTextCursor(editor.document()->findBlockByNumber(photo)));
+    QTest::keyClick(&editor, Qt::Key_Return);
+    QTest::qWait(20);
+    ZT_TRUE("поле открыто и после отмены", editor.imageCaptionEditor() != nullptr);
+    if (editor.imageCaptionEditor() != nullptr) {
+        editor.imageCaptionEditor()->clear();
+        QTest::keyClick(editor.imageCaptionEditor(), Qt::Key_Return);
+        QTest::qWait(20);
+    }
+    ZT_EQ("пустая подпись — картинка цела", "текст\n\n![](img.png)\n\nхвост\n", markdown());
+    ZT_TRUE("и по-прежнему объект", imageBlock() == photo);
+    // Прятать пустую нечего — сочетание молчит, файл не меняется.
+    QTest::keyClick(&editor, Qt::Key(toggle[0].key()), toggle[0].keyboardModifiers());
+    QTest::qWait(20);
+    ZT_EQ("знак перед пустой подписью не ставится", "текст\n\n![](img.png)\n\nхвост\n",
+          markdown());
 }
 
 // Картинка в конце заметки: Ctrl+Enter заводит абзац под ней, и НАБОР В НЁМ
@@ -1172,6 +1341,8 @@ static int ztRunSuite(int argc, char** argv) {
 
     checkMissingAttachment();
     checkEmptyCaption();
+    checkNonameCaption();
+    checkCaptionEditing();
     checkTypingAfterImage();
 
     return zt::report("картинки в просмотре");
