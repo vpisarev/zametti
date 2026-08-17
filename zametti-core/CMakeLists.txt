@@ -46,6 +46,10 @@ add_library(zametti-core STATIC
     store/times.h               store/times.cpp
     store/archive.h             store/archive.cpp
     store/lost_found.h          store/lost_found.cpp
+    store/znote_history.h       store/znote_history.cpp
+
+    # --- заметка: документ + журнал + всё, что переживает уход и возврат ---
+    note/znote.h                note/znote.cpp
 
     # --- картинки ---
     image/exif.h                image/exif.cpp
@@ -96,6 +100,7 @@ target_include_directories(zametti-core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/store
     ${CMAKE_CURRENT_SOURCE_DIR}/image
     ${CMAKE_CURRENT_SOURCE_DIR}/doc
+    ${CMAKE_CURRENT_SOURCE_DIR}/note
 )
 
 target_link_libraries(zametti-core
