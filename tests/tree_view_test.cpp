@@ -202,37 +202,27 @@ static int ztRunSuite(int argc, char** argv) {
     QCoreApplication::processEvents();
     ZT_TRUE("переход на закрытую папку её раскрывает", tree.isExpanded(a));
 
-    // --- ПРАВИЛО «ДВИГАТЬ ЛИ КУРСОР» ------------------------------------
+    // --- ВТОРИЧНОЕ ВЫДЕЛЕНИЕ ---------------------------------------------
     //
-    // Оно ломалось трижды, каждый раз по-новому, потому что жило россыпью
-    // условий в main(). Теперь оно одно и проверяется здесь по всем восьми
-    // сочетаниям — а не по тому, которое вспомнилось.
+    // Курсор дерева показ открытой заметки не двигает никогда (решение
+    // владельца): первичное выделение — папка, по которой ткнули явно; папка
+    // открытой заметки — вторичное, пунктирной рамкой (роль модели, читает
+    // делегат). Здесь — что роль ставится и снимается ровно у одной строки.
     {
-        // Мы сами открыли заметку, наполнив список по выбранной папке: курсор
-        // не трогаем НИКОГДА. Иначе он уедет в подпапку, где лежит первая
-        // заметка, — беда владельца «кликаю по Tech, курсор скачет на настройку».
-        ZT_TRUE("выбор папки: курсор не двигаем (фокус в дереве, внутри)",
-                !zametti::shouldMoveTreeCursor(true, true, true));
-        ZT_TRUE("выбор папки: и с фокусом в тексте тоже",
-                !zametti::shouldMoveTreeCursor(true, false, true));
-        ZT_TRUE("выбор папки: и когда папка снаружи выбранной ветки",
-                !zametti::shouldMoveTreeCursor(true, false, false));
-        ZT_TRUE("выбор папки: и с фокусом в дереве снаружи ветки",
-                !zametti::shouldMoveTreeCursor(true, true, false));
-
-        // Человек работает в дереве, а заметка и так внутри выбранной ветки —
-        // показывать нечего, курсор его.
-        ZT_TRUE("работает в дереве, заметка внутри — не двигаем",
-                !zametti::shouldMoveTreeCursor(false, true, true));
-
-        // А вот это — «открыли откуда-то ещё»: из поиска, из середины, из
-        // корзины. Где заметка лежит, не видно, и курсор двигать надо.
-        ZT_TRUE("из поиска (фокус не в дереве) — двигаем",
-                zametti::shouldMoveTreeCursor(false, false, true));
-        ZT_TRUE("из поиска, папка снаружи ветки — двигаем",
-                zametti::shouldMoveTreeCursor(false, false, false));
-        ZT_TRUE("фокус в дереве, но папка снаружи ветки — двигаем",
-                zametti::shouldMoveTreeCursor(false, true, false));
+        const QModelIndex c = findByTitle(model, QModelIndex(), QStringLiteral("C"));
+        ZT_TRUE("вторичного нет", !model.data(a, zametti::NoteTreeModel::SecondaryRole).toBool());
+        model.setSecondaryPath(model.nodePath(a));
+        ZT_TRUE("A — вторичное", model.data(a, zametti::NoteTreeModel::SecondaryRole).toBool());
+        ZT_TRUE("а B — нет", !model.data(b, zametti::NoteTreeModel::SecondaryRole).toBool());
+        model.setSecondaryPath(model.nodePath(c));
+        ZT_TRUE("перешло на C", model.data(c, zametti::NoteTreeModel::SecondaryRole).toBool() &&
+                                   !model.data(a, zametti::NoteTreeModel::SecondaryRole).toBool());
+        // Переживает перестройку: хранится путём.
+        model.refresh();
+        QCoreApplication::processEvents();
+        const QModelIndex c2 = findByTitle(model, QModelIndex(), QStringLiteral("C"));
+        ZT_TRUE("после перестройки вторичное там же",
+                c2.isValid() && model.data(c2, zametti::NoteTreeModel::SecondaryRole).toBool());
     }
 
     return zt::report("дерево в виджете");

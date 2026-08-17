@@ -6,8 +6,10 @@
 // наполняется по текущей папке. Значит: создать / переименовать / перенести /
 // убрать в архив / вернуть — и панели ОБЯЗАНЫ показать это сами, ничего не
 // потеряв: ни раскрытых веток, ни выбранной папки, ни выделенной заметки. Плюс
-// правило показа открытой заметки (shouldMoveTreeCursor) на живых панелях и
-// намерения человека сигналами.
+// два выделения — первичное (курсор: папка, по которой ткнули; она задаёт
+// среднюю колонку) и вторичное (папка открытой заметки, пунктирная рамка; показ
+// заметки НЕ двигает курсор и НЕ меняет ни состав, ни порядок списка — решение
+// владельца) — и намерения человека сигналами.
 
 #include "editor_widget.h"
 #include "note_panels.h"
@@ -160,40 +162,55 @@ static int ztRunSuite(int, char**) {
     ZT_TRUE("курсор на «Проекты»", model.titleOf(tree.currentIndex()) == QStringLiteral("Проекты"));
     ZT_TRUE("«Дом» в архиве по модели", model.inArchiveId(home_));
 
-    // Возврат из архива и показ, куда вернулась (force): курсор — на «Дом».
+    // Возврат из архива и показ, куда вернулась: ВТОРИЧНЫМ выделением. Курсор
+    // остаётся на «Проектах», список — их (человек смотрит свою папку), а «Дом»
+    // получает пунктирную рамку и раскрытых предков.
     ZT_TRUE("вернули", storage->restore(home_, &failed) && failed.isEmpty());
     QCoreApplication::processEvents();
     const QString gammaFile = storage->pathOf(gamma);
+    const QStringList listBefore = listTitles(list);
     panels.setCurrentNote(gammaFile);
-    panels.showNote(gammaFile, /*force=*/true);
-    ZT_TRUE("курсор перешёл на «Дом»", model.titleOf(tree.currentIndex()) == QStringLiteral("Дом"));
-    ZT_TRUE("список — по «Дому»", listTitles(list).contains(QStringLiteral("Гамма")));
-    ZT_EQ("выделена возвращённая", s(gammaFile), s(list.pathAt(panels.listView().currentIndex())));
+    panels.showNote(gammaFile);
+    ZT_TRUE("курсор дерева остался на «Проекты»",
+            model.titleOf(tree.currentIndex()) == QStringLiteral("Проекты"));
+    ZT_EQ("состав списка не изменился", s(listBefore.join(QLatin1Char('|'))),
+          s(listTitles(list).join(QLatin1Char('|'))));
+    ZT_EQ("вторичное — на «Дом»", s(storage->pathOf(home_)), s(model.secondaryPath()));
+    ZT_TRUE("роль вторичного у строки «Дом»",
+            model.data(byTitle(model, QModelIndex(), QStringLiteral("Дом")),
+                       zametti::NoteTreeModel::SecondaryRole).toBool());
 
-    // --- показ по правилу: работаем в дереве, заметка внутри ветки — не трогать
-    tree.setFocus();
+    // --- порядок папки принадлежит первичному выделению --------------------------
+    // Человек выбрал «Работу» с меткой порядка по имени; показ заметки из «Дома»
+    // (без метки) порядок списка не трогает — ни состав, ни сортировку.
+    ZT_TRUE("метка порядка на «Работе»",
+            storage->setSortMark(work, zametti::SortOrder{zametti::SortKey::Name, false}, rules(), &error));
+    QCoreApplication::processEvents();
     const QModelIndex workRow = byTitle(model, QModelIndex(), QStringLiteral("Работа"));
     tree.setCurrentIndex(workRow);   // человек выбрал «Работу»: список — всё поддерево
     QCoreApplication::processEvents();
     chosen.clear();
-    const QString alphaFile = storage->pathOf(alpha);
-    panels.setCurrentNote(alphaFile);
-    // hasFocus() под offscreen лжёт — правило проверяет tree_view_test; здесь
-    // проверяем ветку «папка снаружи»: заметка из «Дома» при курсоре на «Работе».
+    ZT_EQ("список идёт порядком «Работы» (по имени)", n(int(zametti::SortKey::Name)),
+          n(int(list.sortOrder().key)));
+    const QStringList workList = listTitles(list);
+    panels.setCurrentNote(gammaFile);
     panels.showNote(gammaFile);
-    ZT_TRUE("заметка снаружи ветки — курсор двигается к её папке",
-            model.titleOf(tree.currentIndex()) == QStringLiteral("Дом"));
+    ZT_TRUE("показ заметки из «Дома» курсор не двигает",
+            model.titleOf(tree.currentIndex()) == QStringLiteral("Работа"));
+    ZT_EQ("порядок списка остался порядком «Работы»", n(int(zametti::SortKey::Name)),
+          n(int(list.sortOrder().key)));
+    ZT_EQ("и состав тот же", s(workList.join(QLatin1Char('|'))), s(listTitles(list).join(QLatin1Char('|'))));
     ZT_EQ("показ ничего не открывает", "0", n(chosen.size()));
 
     // --- порядок корня: сброс модели, курсор и раскрытость целы -----------------
     tree.expand(workRow);
-    panels.setRootSort(zametti::SortOrder{zametti::SortKey::Name, true});
+    panels.setRootSort(zametti::SortOrder{zametti::SortKey::Created, true});
     QCoreApplication::processEvents();
-    ZT_TRUE("после смены порядка курсор на «Дом»",
-            model.titleOf(tree.currentIndex()) == QStringLiteral("Дом"));
+    ZT_TRUE("после смены порядка курсор на «Работе»",
+            model.titleOf(tree.currentIndex()) == QStringLiteral("Работа"));
     ZT_TRUE("«Работа» раскрыта и после смены порядка",
             tree.isExpanded(byTitle(model, QModelIndex(), QStringLiteral("Работа"))));
-    ZT_EQ("порядок списка — корня (метки нет)", n(int(zametti::SortKey::Name)),
+    ZT_EQ("порядок списка — метки «Работы», не корня", n(int(zametti::SortKey::Name)),
           n(int(list.sortOrder().key)));
 
     // --- удаление насовсем: строка ушла, ничего не открыто ------------------------
@@ -215,7 +232,7 @@ static int ztRunSuite(int, char**) {
         seen = model.hasNote(QStringLiteral("01zzzzzzzzzzzz"));
     }
     ZT_TRUE("сторож перечитал каталог, заметка в дереве", seen);
-    ZT_TRUE("и курсор дерева цел", model.titleOf(tree.currentIndex()) == QStringLiteral("Дом"));
+    ZT_TRUE("и курсор дерева цел", model.titleOf(tree.currentIndex()) == QStringLiteral("Работа"));
 
     return zt::report("панели заметок");
 }
@@ -316,9 +333,10 @@ static int ztRunOwnerCopy() {
     ZT_TRUE("вернули", storage->restore(made, &failed) && failed.isEmpty());
     QCoreApplication::processEvents();
     ZT_TRUE("вернулась из архива", !model.inArchiveId(made));
-    panels.showNote(storage->pathOf(made), /*force=*/true);
-    ZT_TRUE("показ возвращённой: строка выделена",
-            list.pathAt(panels.listView().currentIndex()) == storage->pathOf(made));
+    panels.showNote(storage->pathOf(made));
+    ZT_EQ("показ возвращённой: курсор дерева не сдвинут", s(folderPath), s(tree.currentPath()));
+    ZT_EQ("вторичное — на корне (заметка вернулась в корень)",
+          s(model.nodePath(model.indexForPath(model.nodePath(QModelIndex())))), s(model.secondaryPath()));
     ZT_EQ("операции сами ничего не открывали", "1", n(chosen.size()));
 
     return zt::report("панели на копии владельца");
@@ -405,13 +423,22 @@ static int ztRunWired() {
     ZT_EQ("операция каталога ничего не переоткрыла", s(list.pathAt(other)), s(editor.filePath()));
     ZT_EQ("курсор дерева всё на А", "А", s(model.titleOf(tree.currentIndex())));
 
-    // Открыли заметку из Б откуда-то ещё (поиск): курсор дерева перешёл на Б, список — по Б.
+    // Открыли заметку из Б откуда-то ещё (поиск): курсор остался на А, список — А;
+    // Б получила вторичное выделение.
+    const QStringList listA = listTitles(list);
     editor.openFile(storage->pathOf(b1));
     QCoreApplication::processEvents();
     QCoreApplication::processEvents();
-    ZT_EQ("курсор дерева перешёл на Б", "Б", s(model.titleOf(tree.currentIndex())));
-    ZT_EQ("выделена открытая из Б", s(storage->pathOf(b1)), s(list.pathAt(panels.listView().currentIndex())));
-    ZT_TRUE("список — по Б (в нём и свежая)", list.indexForPath(storage->pathOf(fresh)).isValid());
+    ZT_EQ("курсор дерева остался на А", "А", s(model.titleOf(tree.currentIndex())));
+    ZT_EQ("список — по-прежнему А", s(listA.join(QLatin1Char('|'))), s(listTitles(list).join(QLatin1Char('|'))));
+    ZT_EQ("вторичное — Б", s(storage->pathOf(b)), s(model.secondaryPath()));
+    ZT_TRUE("свежая в списке А не появилась", !list.indexForPath(storage->pathOf(fresh)).isValid());
+
+    // Старт: первичного выделения ещё нет — им становится папка открытой заметки.
+    NotePanels fresh2(storage);
+    fresh2.showNote(storage->pathOf(b1), /*primary=*/true);
+    ZT_EQ("на старте курсор — папка открытой", "Б", s(fresh2.model().titleOf(fresh2.tree().currentIndex())));
+    ZT_TRUE("и список — по ней", fresh2.list().indexForPath(storage->pathOf(b1)).isValid());
 
     return zt::report("панели с редактором");
 }
