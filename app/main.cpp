@@ -803,20 +803,7 @@ int main(int argc, char** argv) {
                          // Картинка под кареткой. Только заголовок файла и
                          // только по разу на картинку: сведения кэшируются, а
                          // движение внутри одной картинки панель не трогает.
-                         const zametti::ImageFacts facts = editor.caretImage();
-                         zametti::StatusBar::ImageInfo shown;
-                         shown.valid = facts.valid;
-                         shown.name = facts.name;
-                         shown.caption = facts.caption;
-                         shown.format = facts.format;
-                         shown.size = facts.size;
-                         shown.bytes = facts.bytes;
-                         shown.frames = facts.frames;
-                         shown.taken = facts.taken;
-                         shown.colorSpace = facts.colorSpace;
-                         shown.bits = facts.bits;
-                         shown.exists = facts.exists;
-                         statusBar.setImage(shown);
+                         statusBar.setImage(editor.caretImage());
                      });
 
     // Файл изменился снаружи, а правки не сохранены. Окно неблокирующее: работа

@@ -10,7 +10,8 @@
 #define ZAMETTI_NOTE_VIEW_H
 
 #include <QFont>
-#include "image_facts.h"
+#include "image_metadata.h"
+#include "zimage_cache.h"
 
 #include <QHash>
 #include <QImage>
@@ -158,6 +159,7 @@ signals:
 
 public:
     explicit NoteView(QWidget* parent = nullptr);
+    ~NoteView() override;
 
     // ШРИФТ ДОКУМЕНТА — ЕДИНСТВЕННАЯ МЕРА МАСШТАБА, и отдаётся он здесь.
     //
@@ -278,10 +280,12 @@ public:
     // разжатия. Пусто, если каретка не на картинке. Нужна полосе сведений —
     // и знать, где лежит вложение, обязан именно вид: путь в заметке
     // относительный, а от чего он считается, знает только он.
-    ImageFacts caretImage();
+    ImageMetadata caretImage();
 
-    qint64 imageCacheBytes() const { return imageCacheBytes_; }
-    int cachedImageCount() const { return int(imageCache_.size()); }
+    // Вес — всего кэша приложения; счёт записей/показанных/рамок — по картинкам
+    // ЭТОГО вида (открытой заметки).
+    qint64 imageCacheBytes() const;
+    int cachedImageCount() const;
     // Сколько картинок показывается фотографиями, а сколько рамками с
     // надписью: без этого правило «что не влезло, становится рамкой» не
     // проверить.
@@ -531,35 +535,11 @@ private:
     // место под фотографию, и ради этого разжимать её незачем: замер даёт
     // 0.5 мс на все 25 картинок корпуса против 2737 мс на их декод. Пиксели
     // грузятся отдельно и не всем (см. loadNoteImages).
-    enum class ImageState {
-        Pending,   // размеры знаем, пикселей ещё нет
-        Shown,     // разжата, image непустой
-        TooBig,    // Qt отказался разжимать: больше потолка
-        Crowded,   // в кэш не влезла: заметка тяжелее бюджета
-        Missing,   // файла нет: удалили руками или он ещё не приехал с синком
-    };
-    struct CachedImage {
-        QImage image;
-        QSize declared;      // размеры из заголовка файла; известны всегда
-        // Всё, что показывает полоса сведений: имя, формат, вес, кадры, а
-        // после разжатия — цвет и глубина. Живёт ЗДЕСЬ, а не в своём кэше
-        // рядом: файл уже открыт и заголовок уже прочитан, а второй кэш дал бы
-        // второй ответ на вопрос «что это за файл».
-        ImageFacts facts;
-        qint64 bytes = 0;    // вес разжатой; у Pending, TooBig и Crowded ноль
-        int limit = 0;       // предел стороны, которым ужимали: сменится — перечитаем
-        ImageState state = ImageState::Pending;
-
-        // Рисуется рамка с надписью, а не фотография.
-        // Рамка вместо фотографии. Причины разные, а поведение одно: место
-        // держим, пикселей не спрашиваем, надпись объясняет человеку, что не
-        // так. Ссылка в заметке при этом неприкосновенна: вернётся файл или
-        // поднимется потолок — вернётся и картинка.
-        bool framed() const {
-            return state == ImageState::TooBig || state == ImageState::Crowded ||
-                   state == ImageState::Missing;
-        }
-    };
+    // Кэш картинок — приложения (ZApp::images(), ZImageCache); вид держит лишь
+    // ключи картинок открытой заметки, которые он защищает от вытеснения.
+    using CachedImage = ZImageCache::Entry;
+    using ImageState = ZImageCache::State;
+    ZImageCache& images() const;
 
     friend class ImageObjectHandler;
     friend class FormulaObjectHandler;
@@ -568,8 +548,6 @@ private:
     // Запись кэша для пути: размеры из заголовка, БЕЗ разжатия. nullptr —
     // файла нет или он не картинка.
     const CachedImage* imageInfo(const QString& path);
-    // Сколько займёт разжатая копия этой картинки с нынешним пределом.
-    static qint64 decodedBytes(QSize declared, int limit);
     // Решить, каким картинкам ОТКРЫТОЙ заметки достанутся пиксели.
     //
     // Правило владельца для «Эрмитажа» — заметки, набитой снимками высокого
@@ -586,13 +564,7 @@ private:
     // Пиксели картинки: разжимает по первому спросу, если ей отведено место.
     // nullptr — рисовать надо рамку.
     const QImage* pixelsFor(const QString& key);
-    static qint64 budgetBytes();
     const QImage* imageFor(const QString& path);
-    // Вытесняет с хвоста, пока в бюджет не уложится всё, что уже лежит, ПЛЮС
-    // need байт под то, что собираются добавить. Не трогает картинки открытой
-    // заметки и ключ keep.
-    void trimImageCache(const QString& keep, qint64 need = 0);
-    void touchImage(const QString& key);
     // Надпись на рамке вместо слишком большой картинки и место под неё.
     // Пропорций картинки рамка не повторяет: это не картинка, а сообщение, и
     // растягивать её на экран под стать оригиналу незачем.
@@ -663,9 +635,6 @@ private:
     QTextCursor imageDirty_;
     // Кэш разжатых картинок: абсолютный путь → запись. Живёт всю сессию, а не
     // заметку, поэтому у него есть потолок и вытеснение — см. imageCacheSizeMb.
-    QHash<QString, CachedImage> imageCache_;
-    QList<QString> imageOrder_;           // свежие в начале
-    qint64 imageCacheBytes_ = 0;
     // Картинки открытой заметки: их не вытесняем никогда. Набор чистится в
     // начале syncImageSpace и наполняется самим cachedImage — тот зовётся
     // только для блоков текущего документа, так что отдельного прохода по

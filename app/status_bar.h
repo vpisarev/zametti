@@ -19,6 +19,8 @@
 #include <QDateTime>
 #include <QSize>
 #include <QString>
+#include "image_metadata.h"
+
 #include <QWidget>
 
 class QLabel;
@@ -54,26 +56,9 @@ public:
 
     // Картинка под кареткой. Пока она есть, левая половина показывает её, а не
     // заметку: спрашивают «что это за снимок» именно тогда, когда стоят на нём.
-    struct ImageInfo {
-        QString name;
-        QString caption;
-        QString format;
-        QSize size;
-        // Цветовое пространство и глубина берутся у УЖЕ РАЗЖАТОЙ копии, если
-        // она есть: разжимать снимок ради строчки в панели нельзя. Пусто и
-        // ноль — картинку ещё не показывали, и врать нам нечем.
-        QString colorSpace;
-        int bits = 0;
-        qint64 bytes = 0;
-        int frames = 1;
-        // Когда снимок сделан, из его же метаданных. Недействительная — не
-        // ошибка: у снимка может не быть ни EXIF, ни XMP, и тогда сказать
-        // нечего. Молчим, а не пишем «неизвестно».
-        QDateTime taken;
-        bool exists = false;
-        bool valid = false;
-    };
-    void setImage(const ImageInfo& info);
+    // Картинка под кареткой: сведения о ней приходят готовыми (ImageMetadata из
+    // кэша картинок приложения); своей копии их полей у панели нет.
+    void setImage(const ImageMetadata& info);
     // Место каретки. Отдельно от прочего: меняется на каждое движение, а
     // остальное — раз в полторы секунды.
     void setCaret(int line, int column);
@@ -95,7 +80,7 @@ private:
     QLabel* left_ = nullptr;
     QLabel* right_ = nullptr;
     NoteInfo note_;
-    ImageInfo image_;
+    ImageMetadata image_;
     QString message_;
     int line_ = 1;
     int column_ = 1;

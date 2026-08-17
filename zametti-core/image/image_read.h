@@ -53,6 +53,7 @@ struct ImageProbe {
     bool valid() const { return !size.isEmpty(); }
     // Сколько займёт разжатая копия в памяти, при нашей глубине.
     qint64 decodedBytes() const;
+    bool operator==(const ImageProbe& other) const = default;
 };
 
 // Опознать формат по первым байтам. Пусто — не наш.

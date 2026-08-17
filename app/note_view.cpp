@@ -2,6 +2,7 @@
 
 #include "block_object.h"
 #include "doc_model.h"
+#include "zapp.h"
 #include "document_builder.h"
 #include "formula.h"
 #include "icons.h"
@@ -289,6 +290,12 @@ NoteView::NoteView(QWidget* parent) : QTextBrowser(parent) {
     });
 }
 
+NoteView::~NoteView() {
+    // Защита картинок этого вида снимается вместе с ним: иначе кэш держал бы их
+    // за мёртвого владельца до конца работы.
+    ZApp::instance().images().forget(this);
+}
+
 // Прямоугольник каретки с запасом: перерисовываем чуть больше, чем красим,
 // иначе от неё остаётся след.
 QRect NoteView::caretRect() const {
@@ -510,18 +517,12 @@ void NoteView::setImageBase(const QString& dir) {
     syncImageSpace();
 }
 
-namespace {
-int g_imageDecodes = 0;
-qint64 g_imageDecodeMicros = 0;
-}  // namespace
+ZImageCache& NoteView::images() const { return ZApp::instance().images(); }
 
-int NoteView::imageDecodes() { return g_imageDecodes; }
-qint64 NoteView::imageDecodeMicros() { return g_imageDecodeMicros; }
-
-void NoteView::resetImageDecodeCounters() {
-    g_imageDecodes = 0;
-    g_imageDecodeMicros = 0;
-}
+int NoteView::imageDecodes() { return ZApp::instance().images().decodes(); }
+qint64 NoteView::imageDecodeMicros() { return ZApp::instance().images().decodeMicros(); }
+void NoteView::resetImageDecodeCounters() { ZApp::instance().images().resetCounters(); }
+qint64 NoteView::imageCacheBytes() const { return images().bytes(); }
 
 QString NoteView::absoluteImagePath(const QString& path) const {
     if (path.isEmpty()) return {};
@@ -531,252 +532,63 @@ QString NoteView::absoluteImagePath(const QString& path) const {
     return abs.isEmpty() ? QString() : QDir::cleanPath(abs);
 }
 
-void NoteView::touchImage(const QString& key) {
-    const qsizetype at = imageOrder_.indexOf(key);
-    if (at <= 0) return;   // уже свежайшая или её нет
-    imageOrder_.move(at, 0);
-}
-
-// Порядок именно такой: сначала добавили, потом убираем лишнее. Спрашивать
-// «сколько она весит» до разжатия негде — вес узнаётся из самого декода.
-//
-// Картинки открытой заметки не вытесняются никогда, поэтому потолок мягкий: на
-// одну заметку кэша хватает всегда, пусть она одна и больше бюджета. Так решил
-// владелец, и это правило, а не следствие реализации.
-qint64 NoteView::budgetBytes() {
-    return qint64(qMax(8, settings().cache().imageCacheSizeMb())) * 1024 * 1024;
-}
-
-void NoteView::trimImageCache(const QString& keep, qint64 need) {
-    const qint64 budget = budgetBytes();
-    // need — вес того, что вот-вот добавят. Отдельного прохода по уборке нет и
-    // не надо: вытеснение живёт внутри добавления и срабатывает только когда
-    // места не хватает под КОНКРЕТНУЮ картинку. С need = 0 условие вырождается
-    // в прежнее «пока не уложились».
-    for (qsizetype i = imageOrder_.size() - 1; i >= 0 && imageCacheBytes_ + need > budget; --i) {
-        const QString& key = imageOrder_.at(i);
-        if (key == keep || currentNoteImages_.contains(key)) continue;
-        const auto it = imageCache_.constFind(key);
-        if (it != imageCache_.constEnd()) imageCacheBytes_ -= it->bytes;
-        imageCache_.remove(key);
-        imageOrder_.removeAt(i);
-    }
-}
-
+// Счёт — ПО КАРТИНКАМ ЭТОГО ВИДА (открытой заметки), а не по всему кэшу
+// приложения: кэш один на программу, и в нём лежит чужое.
 int NoteView::shownImageCount() const {
     int count = 0;
-    for (const CachedImage& entry : imageCache_)
-        if (entry.state == ImageState::Shown) ++count;
+    for (const QString& key : currentNoteImages_)
+        if (const CachedImage* e = images().peek(key); e != nullptr && e->state == ImageState::Shown)
+            ++count;
     return count;
 }
 
 int NoteView::framedImageCount() const {
     int count = 0;
-    for (const CachedImage& entry : imageCache_)
-        if (entry.framed()) ++count;
+    for (const QString& key : currentNoteImages_)
+        if (const CachedImage* e = images().peek(key); e != nullptr && e->framed()) ++count;
     return count;
 }
 
-qint64 NoteView::decodedBytes(QSize declared, int limit) {
-    QSize shown = declared;
-    if (limit > 0 && (shown.width() > limit || shown.height() > limit)) {
-        shown = shown.scaled(limit, limit, Qt::KeepAspectRatio);
-        shown.setWidth(qMax(1, shown.width()));
-        shown.setHeight(qMax(1, shown.height()));
-    }
-    // Четыре байта на точку: столько занимает разжатая копия в памяти.
-    return qint64(shown.width()) * shown.height() * 4;
+int NoteView::cachedImageCount() const {
+    int count = 0;
+    for (const QString& key : currentNoteImages_)
+        if (images().peek(key) != nullptr) ++count;
+    return count;
 }
 
-ImageFacts NoteView::caretImage() {
+ImageMetadata NoteView::caretImage() {
     const QTextBlock block = textCursor().block();
     const BlockImageRef ref = blockImageRef(block);
     if (!ref.valid) return {};
     // Спрашиваем тот же кэш, что и показ: он уже читал заголовок этого файла,
     // а если картинку успели разжать — знает и цвет с глубиной.
     const CachedImage* entry = imageInfo(ref.path);
-    ImageFacts facts;
+    ImageMetadata facts;
     if (entry != nullptr) facts = entry->facts;
-    else readImageFacts(absoluteImagePath(ref.path), facts);
+    else facts = ImageMetadata::fromFile(absoluteImagePath(ref.path));
     // Подпись — это alt картинки, и в ней живёт имя исходного файла (см.
     // xmpWithFileName в exif.h). У вики-вложения alt нет: исходником там стоит
     // сама запись "![[путь]]", и показывать её вместо подписи незачем.
     //
     // Берём её у САМОЙ СПРАВКИ, а не у текста блока: текста у объекта нет —
     // в блоке стоит один знак U+FFFC. Пока брали текст, в панель уезжал он.
-    if (!ref.wiki) facts.caption = ref.alt.trimmed();
+    if (!ref.wiki) facts.setCaption(ref.alt.trimmed());
     return facts;
 }
 
 const NoteView::CachedImage* NoteView::imageInfo(const QString& path) {
     const QString abs = absoluteImagePath(path);
     if (abs.isEmpty()) return nullptr;
-    // Всякий спрос идёт от блока открытой заметки — значит эта картинка её.
+    // Всякий спрос идёт от блока открытой заметки — значит эта картинка её:
+    // защищаем от вытеснения, пока заметка открыта.
     currentNoteImages_.insert(abs);
-
-    auto it = imageCache_.find(abs);
-    if (it != imageCache_.end() && it->limit == loadedImageSizeLimit()) {
-        touchImage(abs);
-        return &it.value();
-    }
-    if (it != imageCache_.end()) {
-        // Предел сменили в конфиге: копия в памяти ужата не так, как надо.
-        imageCacheBytes_ -= it->bytes;
-        imageCache_.erase(it);
-        imageOrder_.removeAll(abs);
-    }
-
-    // Только заголовок: размеры есть, пикселей нет и не надо. Место под
-    // фотографию считается по НАСТОЯЩИМ размерам, а не по размеру копии.
-    const QSize declared = probeImageFile(abs).size;
-    if (declared.isEmpty()) {
-        // Файла нет — рисуем рамку и держим под неё место. Так человек видит,
-        // что вложение пропало, а не пустоту; байты ссылки в заметке при этом
-        // не трогаются вовсе: вернётся файл — вернётся картинка. То же самое
-        // штатно бывает в слепке истории, который ссылается на давно удалённое.
-        //
-        // Файл, который есть, но картинкой не является, — не наше дело: строка
-        // остаётся строкой, как и всякий текст, который мы не поняли.
-        if (QFileInfo::exists(abs)) return nullptr;
-        CachedImage gone;
-        readImageFacts(abs, gone.facts);
-        gone.limit = loadedImageSizeLimit();
-        gone.state = ImageState::Missing;
-        imageCache_.insert(abs, std::move(gone));
-        imageOrder_.prepend(abs);
-        const auto lost = imageCache_.constFind(abs);
-        return lost == imageCache_.constEnd() ? nullptr : &lost.value();
-    }
-
-    CachedImage entry;
-    entry.declared = declared;
-    readImageFacts(abs, entry.facts);
-    entry.limit = loadedImageSizeLimit();
-    entry.state = ImageState::Pending;
-    imageCache_.insert(abs, std::move(entry));
-    imageOrder_.prepend(abs);
-    const auto found = imageCache_.constFind(abs);
-    return found == imageCache_.constEnd() ? nullptr : &found.value();
+    images().protect(this, abs);
+    return images().info(abs);
 }
 
-void NoteView::planNoteImages() {
-    // Пропавшие файлы перепроверяем: рамка «файл не найден» не имеет права
-    // застыть навсегда. Вернулся файл — вернётся и картинка, а стоит проверка
-    // одного обращения к файловой системе на картинку, и то не на каждый кадр,
-    // а на пересчёт места.
-    for (auto it = imageCache_.begin(); it != imageCache_.end();) {
-        if (it->state == ImageState::Missing && QFileInfo::exists(it.key())) {
-            imageOrder_.removeAll(it.key());
-            it = imageCache_.erase(it);
-        } else {
-            ++it;
-        }
-    }
+void NoteView::planNoteImages() { images().plan(this); }
 
-    const qint64 budget = qint64(qMax(8, settings().cache().imageCacheSizeMb())) * 1024 * 1024;
-    const int limit = loadedImageSizeLimit();
-
-    // Все картинки этой заметки — от самой лёгкой к самой тяжёлой. Порядок
-    // именно такой: так их покажется больше всего.
-    std::vector<std::pair<qint64, QString>> mine;
-    for (const QString& key : currentNoteImages_) {
-        const auto it = imageCache_.constFind(key);
-        if (it == imageCache_.constEnd()) continue;
-        mine.push_back({decodedBytes(it->declared, limit), key});
-    }
-    std::sort(mine.begin(), mine.end());
-
-    qint64 taken = 0;
-    for (const auto& [cost, key] : mine) {
-        auto it = imageCache_.find(key);
-        if (it == imageCache_.end()) continue;
-        // Отказ Qt разжимать и уже принятое решение «рамка» не пересматриваем:
-        // иначе одна и та же картинка мигала бы туда-сюда при каждой правке.
-        if (it->state == ImageState::TooBig || it->state == ImageState::Crowded) continue;
-
-        // Потолок Qt на разжатие — тоже по заголовку, до всякого чтения
-        // пикселей. Считается он по ПОЛНОМУ размеру: предел стороны тут не
-        // помощник, ужимать Qt всё равно будет уже разжатое. Решить это здесь
-        // важно: место под картинку резервируется до первой отрисовки, и
-        // узнав об отказе только при ней, мы бы держали дырку в тексте
-        // размером с несостоявшуюся фотографию.
-        const qint64 full = qint64(it->declared.width()) * it->declared.height() * 4;
-        if (full > qint64(QImageReader::allocationLimit()) * 1024 * 1024) {
-            it->state = ImageState::TooBig;
-            continue;
-        }
-
-        taken += cost;
-        if (taken > budget) it->state = ImageState::Crowded;
-    }
-}
-
-// Пиксели — лениво, по первому рисованию. Разжимать всю заметку при открытии
-// незачем: замер на 25 снимках дал 2.7 с, а видно из них один-два.
-const QImage* NoteView::pixelsFor(const QString& key) {
-    auto it = imageCache_.find(key);
-    if (it == imageCache_.end()) return nullptr;
-    if (it->state == ImageState::Shown) return &it->image;
-    if (it->state != ImageState::Pending) return nullptr;
-
-    const QSize declared = it->declared;
-    const int limit = loadedImageSizeLimit();
-    const qint64 cost = decodedBytes(declared, limit);
-    // Место под неё — за счёт чужих заметок: свои не трогаем никогда.
-    trimImageCache(key, cost);
-    if (imageCacheBytes_ + cost > budgetBytes()) {
-        // Не влезла даже после вытеснения — рамка. Спрашиваем ДО разжатия:
-        // иначе платили бы памятью ровно за то, чего решили не показывать.
-        it = imageCache_.find(key);
-        if (it != imageCache_.end()) it->state = ImageState::Crowded;
-        return nullptr;
-    }
-
-    QElapsedTimer decode;
-    decode.start();
-    DecodeRequest request;
-    if (limit > 0 && (declared.width() > limit || declared.height() > limit)) {
-        // Предел держит ОБЕ стороны. Только вниз: картинка мельче предела
-        // остаётся собой. Просим об этом сам читатель — иные форматы умеют
-        // разжимать сразу в нужный размер и полной копии не заводят вовсе.
-        QSize scaled = declared.scaled(limit, limit, Qt::KeepAspectRatio);
-        // У вырожденной картинки (1x1000000) короткая сторона уходит в ноль, а
-        // картинки нулевой ширины не бывает.
-        scaled.setWidth(qMax(1, scaled.width()));
-        scaled.setHeight(qMax(1, scaled.height()));
-        request.maxSize = scaled;
-    }
-    // Глубина показу не нужна: экран восьмибитный, а шестнадцать бит стоят
-    // четверти времени и вдвое больше памяти в кэше. Ввоз просит их отдельно.
-    QImage image = decodeImageFile(key, request);
-    // Читатель отдал не меньше просимого (у JPEG размер идёт восьмыми долями) —
-    // доводим до предела сами.
-    if (!request.maxSize.isEmpty() && image.size() != request.maxSize &&
-        (image.width() > request.maxSize.width() || image.height() > request.maxSize.height())) {
-        image = image.scaled(request.maxSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-    }
-    ++g_imageDecodes;
-    g_imageDecodeMicros += decode.nsecsElapsed() / 1000;
-
-    it = imageCache_.find(key);
-    if (it == imageCache_.end()) return nullptr;
-    if (image.isNull()) {
-        // Отказ Qt разжимать: картинка больше потолка (см. settings.cpp).
-        // Запоминаем, чтобы не спрашивать заново на каждом кадре.
-        it->state = ImageState::TooBig;
-        return nullptr;
-    }
-    it->bytes = qint64(image.sizeInBytes());
-    it->image = std::move(image);
-    it->state = ImageState::Shown;
-    // Раз уж картинку всё равно разжали — забираем заодно и то, что видно
-    // только у разжатой копии: цветовое пространство и глубину. Второй раз за
-    // ними никто не пойдёт: они лежат рядом с пикселями, в той же записи кэша.
-    addDecodedFacts(it->image, it->facts);
-    imageCacheBytes_ += it->bytes;
-    touchImage(key);
-    return &it->image;
-}
+const QImage* NoteView::pixelsFor(const QString& key) { return images().pixels(key); }
 
 const QImage* NoteView::imageFor(const QString& path) {
     const CachedImage* entry = imageInfo(path);
@@ -1175,6 +987,7 @@ void NoteView::syncImageSpace(bool whole) {
             // всей заметке. Обход стоит числа блоков и идёт только на полном
             // пересчёте — при смене заметки, ширины окна или масштаба.
             currentNoteImages_.clear();
+            images().release(this);
             for (QTextBlock b = document()->begin(); b.isValid(); b = b.next())
                 if (const BlockImageRef ref = blockImageRef(b); ref.valid) imageInfo(ref.path);
         }

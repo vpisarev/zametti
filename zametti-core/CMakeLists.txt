@@ -69,6 +69,8 @@ add_library(zametti-core STATIC
     image/import.h              image/import.cpp
     image/ladder.h              image/ladder.cpp
     image/recompress.h          image/recompress.cpp
+    image/image_metadata.h      image/image_metadata.cpp
+    image/zimage_cache.h        image/zimage_cache.cpp
 
     # --- живая модель документа ---
     doc/block_kind.h

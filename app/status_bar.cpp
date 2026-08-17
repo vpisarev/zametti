@@ -83,17 +83,12 @@ void StatusBar::setNote(const NoteInfo& info) {
     relayout();
 }
 
-void StatusBar::setImage(const ImageInfo& info) {
+void StatusBar::setImage(const ImageMetadata& info) {
     // Движение каретки внутри одной картинки перекладывать строку не должно —
     // отсюда сравнение. Сравниваются ВСЕ поля, которые видны в строке: первый
     // заход сличал четыре из семи, и пропажа вложения (менялся только признак
     // «файл на месте») на панели не показывалась вовсе. Набор это и поймал.
-    const bool same = info.valid == image_.valid && info.exists == image_.exists &&
-                      info.name == image_.name && info.caption == image_.caption &&
-                      info.format == image_.format && info.size == image_.size &&
-                      info.bytes == image_.bytes && info.frames == image_.frames &&
-                      info.colorSpace == image_.colorSpace && info.bits == image_.bits &&
-                      info.taken == image_.taken;
+    const bool same = info == image_;
     if (same) return;
     image_ = info;
     showLeft();
@@ -117,7 +112,7 @@ void StatusBar::showLeft() {
         left_->setText(message_);
         return;
     }
-    if (image_.valid) {
+    if (image_.valid()) {
         showImage();
         return;
     }
@@ -175,12 +170,12 @@ void StatusBar::showLeft() {
 
 void StatusBar::showImage() {
     const QString separator = QStringLiteral("   ·   ");
-    if (!image_.exists) {
+    if (!image_.exists()) {
         // Вложения нет: об этом и говорим. Заметка на него ссылается, место под
         // рамку держится, и молчать тут нельзя — иначе непонятно, почему вместо
         // снимка рамка.
-        left_->setText(image_.name + separator + QStringLiteral("вложения нет"));
-        left_->setToolTip(image_.name);
+        left_->setText(image_.name() + separator + QStringLiteral("вложения нет"));
+        left_->setToolTip(image_.name());
         return;
     }
 
@@ -190,17 +185,17 @@ void StatusBar::showImage() {
     QStringList head;
     // Формата в строке нет намеренно: расширение в имени файла говорит о нём
     // однозначно, и «01n6….jxl · JXL» — это одно и то же слово дважды.
-    head << image_.name << humanBytes(image_.bytes);
-    if (!image_.size.isEmpty())
-        head << QStringLiteral("%1×%2").arg(image_.size.width()).arg(image_.size.height());
+    head << image_.name() << humanBytes(image_.bytes());
+    if (!image_.size().isEmpty())
+        head << QStringLiteral("%1×%2").arg(image_.size().width()).arg(image_.size().height());
 
     // Цвет и глубина — вместе и отдельной секцией: это про то, как записаны
     // сами отсчёты. Известны они только у разжатой копии; пока картинку не
     // показывали, их просто нет, и придумывать их нельзя.
     QStringList samples;
-    if (!image_.colorSpace.isEmpty()) samples << image_.colorSpace;
-    if (image_.bits > 0) samples << QStringLiteral("%1 бит").arg(image_.bits);
-    if (image_.frames > 1) samples << QStringLiteral("кадров %1").arg(humanCount(image_.frames));
+    if (!image_.colorSpace().isEmpty()) samples << image_.colorSpace();
+    if (image_.bits() > 0) samples << QStringLiteral("%1 бит").arg(image_.bits());
+    if (image_.frames() > 1) samples << QStringLiteral("кадров %1").arg(humanCount(image_.frames()));
     if (!samples.isEmpty()) head << samples.join(QLatin1Char(' '));
 
     // КОГДА СНЯТО — тем же словом и тем же видом, что у заметки: «создана
@@ -210,8 +205,8 @@ void StatusBar::showImage() {
     //
     // Нет метаданных — строки нет вовсе. Придумывать дату из времени файла
     // нельзя: это было бы время копирования, а сказано «создана».
-    if (image_.taken.isValid())
-        head << QStringLiteral("создана %1").arg(humanDate(image_.taken));
+    if (image_.taken().isValid())
+        head << QStringLiteral("создана %1").arg(humanDate(image_.taken()));
 
     const QString known = head.join(separator);
     // ПОДПИСЬ ЗДЕСЬ ТОЛЬКО ТОГДА, КОГДА ЕЁ НЕ ВИДНО ПОД СНИМКОМ. Обычно она
@@ -222,8 +217,8 @@ void StatusBar::showImage() {
     // Безымянную («IMG_1234», «~спрятана») под снимком тоже не видно — а в
     // панели она к месту: это справка о файле, и человеку видно, что подпись
     // у снимка есть и какая.
-    const bool underPhoto = settings().style().imageCaption() && !isNonameCaption(image_.caption);
-    const QString caption = underPhoto ? QString() : image_.caption;
+    const bool underPhoto = settings().style().imageCaption() && !isNonameCaption(image_.caption());
+    const QString caption = underPhoto ? QString() : image_.caption();
     left_->setToolTip(caption.isEmpty() ? known : known + separator + caption);
     if (caption.isEmpty()) {
         left_->setText(known);

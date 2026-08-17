@@ -7,7 +7,7 @@
 
 #include "doc_model.h"
 #include "editor_widget.h"
-#include "image_facts.h"
+#include "image_metadata.h"
 #include "status_bar.h"
 #include "settings_hook.h"
 #include "test_util.h"
@@ -138,14 +138,14 @@ void checkImageLine() {
     note.wordsKnown = true;
     bar.setNote(note);
 
-    zametti::StatusBar::ImageInfo image;
-    image.valid = true;
-    image.exists = true;
-    image.name = QStringLiteral("01n6cqev0s0h1c.webp");
-    image.caption = QStringLiteral("Drawing");
-    image.format = QStringLiteral("webp");
-    image.size = QSize(1920, 1080);
-    image.bytes = 240000;
+    zametti::ImageMetadata image;
+    image.setValid(true);
+    image.setExists(true);
+    image.setName(QStringLiteral("01n6cqev0s0h1c.webp"));
+    image.setCaption(QStringLiteral("Drawing"));
+    image.setFormat(QStringLiteral("webp"));
+    image.setSize(QSize(1920, 1080));
+    image.setBytes(240000);
     bar.setImage(image);
 
     checkHas(leftText(bar), QStringLiteral("1920×1080"), "разрешение картинки");
@@ -164,12 +164,12 @@ void checkImageLine() {
         zametti::mutableSettingsForTests().style().setImageCaption(false);
         // Панель не перерисовывает то, что не менялось; здесь поменялась
         // настройка, а не сведения, — сбрасываем её показом другого.
-        bar.setImage(zametti::StatusBar::ImageInfo());
+        bar.setImage(zametti::ImageMetadata());
         bar.setImage(image);
         checkHas(leftText(bar), QStringLiteral("Drawing"),
                  "с выключенной подписью под снимком её берёт панель");
         zametti::mutableSettingsForTests().style().setImageCaption(saved);
-        bar.setImage(zametti::StatusBar::ImageInfo());
+        bar.setImage(zametti::ImageMetadata());
         bar.setImage(image);
     }
     check(!leftText(bar).contains(QStringLiteral(".md")),
@@ -182,20 +182,20 @@ void checkImageLine() {
     // вложения это время файла, к содержимому снимка отношения не имеющее.
     check(!leftText(bar).contains(QStringLiteral("создана")),
           "без метаданных дата не выдумывается");
-    image.taken = QDateTime(QDate(2019, 3, 14), QTime(9, 26));
+    image.setTaken(QDateTime(QDate(2019, 3, 14), QTime(9, 26)));
     bar.setImage(image);
     checkHas(leftText(bar), QStringLiteral("создана 14.03.2019 09:26"), "дата съёмки в панели");
     check(!leftText(bar).contains(QStringLiteral("правлена")),
           "правку снимка не пишем");
-    image.taken = QDateTime();
+    image.setTaken(QDateTime());
     bar.setImage(image);
 
     // Вложение потерялось — молчать нельзя.
-    image.exists = false;
+    image.setExists(false);
     bar.setImage(image);
     checkHas(leftText(bar), QStringLiteral("вложения нет"), "пропавшее вложение названо");
 
-    zametti::StatusBar::ImageInfo none;
+    zametti::ImageMetadata none;
     bar.setImage(none);
     checkHas(leftText(bar), QStringLiteral("01n6r08s8wy52h.md"),
              "каретка ушла с картинки — вернулась заметка");
@@ -223,7 +223,7 @@ void checkCaretImage() {
     QTextCursor caret = editor.textCursor();
     caret.setPosition(0);
     editor.setTextCursor(caret);
-    check(!editor.caretImage().valid, "в начале заметки каретка не на картинке");
+    check(!editor.caretImage().valid(), "в начале заметки каретка не на картинке");
 
     // Ставим её в блок картинки.
     bool landed = false;
@@ -236,20 +236,20 @@ void checkCaretImage() {
     }
     check(landed, "блок с картинкой в документе есть");
 
-    const zametti::ImageFacts facts = editor.caretImage();
-    check(facts.valid, "каретка на картинке — сведения есть");
-    check(facts.exists, "файл вложения найден");
-    check(facts.size == QSize(320, 200), "разрешение из заголовка файла");
-    check(facts.format == QStringLiteral("png"), "формат из заголовка файла");
-    check(facts.bytes > 0, "размер файла известен");
-    check(facts.caption == QStringLiteral("Снимок с телефона"),
+    const zametti::ImageMetadata facts = editor.caretImage();
+    check(facts.valid(), "каретка на картинке — сведения есть");
+    check(facts.exists(), "файл вложения найден");
+    check(facts.size() == QSize(320, 200), "разрешение из заголовка файла");
+    check(facts.format() == QStringLiteral("png"), "формат из заголовка файла");
+    check(facts.bytes() > 0, "размер файла известен");
+    check(facts.caption() == QStringLiteral("Снимок с телефона"),
           "подпись берётся из заметки, а не из файла");
 
     // Сведения живут в кэше картинок вида, своего кэша у них нет: второй
     // спрос обязан дать ровно то же, не перечитывая файл.
-    const zametti::ImageFacts again = editor.caretImage();
-    check(again.size == facts.size && again.bytes == facts.bytes &&
-              again.format == facts.format,
+    const zametti::ImageMetadata again = editor.caretImage();
+    check(again.size() == facts.size() && again.bytes() == facts.bytes() &&
+              again.format() == facts.format(),
           "повторный спрос даёт то же самое");
 
     // Настоящий путь человека: он не ставит каретку из кода, он ЩЁЛКАЕТ по
@@ -276,9 +276,9 @@ void checkCaretImage() {
         QTest::mouseClick(editor.viewport(), Qt::LeftButton, Qt::NoModifier, at);
         QTest::qWait(50);
 
-        const zametti::ImageFacts clicked = editor.caretImage();
-        check(clicked.valid, "щёлкнули по фотографии — сведения о ней есть");
-        if (!clicked.valid)
+        const zametti::ImageMetadata clicked = editor.caretImage();
+        check(clicked.valid(), "щёлкнули по фотографии — сведения о ней есть");
+        if (!clicked.valid())
             std::printf("  каретка: блок %d, выделение %d..%d, блок фотографии %d\n",
                         editor.textCursor().blockNumber(),
                         editor.textCursor().selectionStart(),
@@ -300,8 +300,8 @@ void checkCaretImage() {
         fresh.setTextCursor(place);
         break;
     }
-    const zametti::ImageFacts gone = fresh.caretImage();
-    check(gone.valid && !gone.exists, "пропавшее вложение видно как пропавшее");
+    const zametti::ImageMetadata gone = fresh.caretImage();
+    check(gone.valid() && !gone.exists(), "пропавшее вложение видно как пропавшее");
 }
 
 }  // namespace

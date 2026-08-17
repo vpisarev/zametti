@@ -18,6 +18,12 @@ size_t qHash(const ZApp::IconKey& k, size_t seed) {
 
 ZApp::ZApp() : state_(ZAppState::load()) {
     if (g_app == nullptr) g_app = this;
+    applySettingsToCaches();
+}
+
+void ZApp::applySettingsToCaches() {
+    const ZSettings::Cache& cache = settings().cache();
+    images_.setLimits(cache.imageCacheSizeMb(), cache.maxLoadedImageSize());
 }
 
 ZApp::~ZApp() {
@@ -35,7 +41,9 @@ ZApp& ZApp::instance() {
 }
 
 bool ZApp::reloadSettings(QString* error, QStringList* unknown) {
-    return loadSettings(error, unknown);
+    const bool ok = loadSettings(error, unknown);
+    applySettingsToCaches();
+    return ok;
 }
 
 QPixmap ZApp::toolbarIcon(const QString& name, int points, const QColor& color, qreal dpr) {

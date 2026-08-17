@@ -16,6 +16,7 @@
 #include "pieces.h"
 #include "editor_ops.h"
 #include "editor_widget.h"
+#include "zapp.h"
 #include "settings.h"
 #include "settings_hook.h"
 
@@ -1007,6 +1008,9 @@ static int ztRunSuite(int argc, char** argv) {
         // Бюджет 16 МБ: в кэш влезает шестнадцать мегабайтных картинок,
         // а всего их двадцать.
         zametti::mutableSettingsForTests().cache().setImageCacheSizeMb(16);
+        zametti::ZApp::instance().applySettingsToCaches();
+        // Кэш один на программу: другие проверки уже клали в него своё.
+        zametti::ZApp::instance().images().clear();
         zametti::applyImageAllocationLimit();
 
         zametti::NoteView::resetImageDecodeCounters();
@@ -1051,6 +1055,14 @@ static int ztRunSuite(int argc, char** argv) {
             for (int i = 10; i < 20; ++i) out << "![[к" << i << ".png]]\n\n";
         }
         zametti::mutableSettingsForTests().cache().setImageCacheSizeMb(1);   // упрётся в нижние 8 МБ
+        zametti::ZApp::instance().applySettingsToCaches();
+        // Кэш один на программу: другие проверки уже клали в него своё, а
+        // прежний редактор с открытой заметкой защищает свои картинки от
+        // вытеснения — прячем его и отпускаем его защиту, чтобы бюджет
+        // достался одной заметке.
+        cacheEditor.hide();
+        zametti::ZApp::instance().images().forget(&cacheEditor);
+        zametti::ZApp::instance().images().clear();
         zametti::NoteEditor heavy;
         heavy.resize(600, 500);
         heavy.show();
@@ -1079,6 +1091,9 @@ static int ztRunSuite(int argc, char** argv) {
               std::to_string(zametti::NoteView::imageDecodes()));
 
         zametti::mutableSettingsForTests().cache().setImageCacheSizeMb(savedBudget);
+        zametti::ZApp::instance().applySettingsToCaches();
+        // Кэш один на программу: другие проверки уже клали в него своё.
+        zametti::ZApp::instance().images().clear();
         zametti::applyImageAllocationLimit();
     }
 
@@ -1101,6 +1116,9 @@ static int ztRunSuite(int argc, char** argv) {
         const int savedBudget = zametti::settings().cache().imageCacheSizeMb();
         // Порог высокий: картинка разжимается, место меряется по ней.
         zametti::mutableSettingsForTests().cache().setImageCacheSizeMb(512);
+        zametti::ZApp::instance().applySettingsToCaches();
+        // Кэш один на программу: другие проверки уже клали в него своё.
+        zametti::ZApp::instance().images().clear();
         zametti::applyImageAllocationLimit();
         zametti::NoteEditor shown;
         shown.resize(600, 500);
@@ -1118,6 +1136,9 @@ static int ztRunSuite(int argc, char** argv) {
         // Порог низкий: та же картинка отвергнута, место то же самое.
         // Четверть от восьми мегабайт — два, а картинка весит три.
         zametti::mutableSettingsForTests().cache().setImageCacheSizeMb(8);
+        zametti::ZApp::instance().applySettingsToCaches();
+        // Кэш один на программу: другие проверки уже клали в него своё.
+        zametti::ZApp::instance().images().clear();
         zametti::applyImageAllocationLimit();
         zametti::NoteEditor refused;
         refused.resize(600, 500);
@@ -1147,6 +1168,9 @@ static int ztRunSuite(int argc, char** argv) {
               std::to_string(zametti::NoteView::imageDecodes()));
 
         zametti::mutableSettingsForTests().cache().setImageCacheSizeMb(savedBudget);
+        zametti::ZApp::instance().applySettingsToCaches();
+        // Кэш один на программу: другие проверки уже клали в него своё.
+        zametti::ZApp::instance().images().clear();
         zametti::applyImageAllocationLimit();
     }
 
@@ -1173,6 +1197,9 @@ static int ztRunSuite(int argc, char** argv) {
 
         const int savedLimit = zametti::settings().cache().maxLoadedImageSize();
         zametti::mutableSettingsForTests().cache().setMaxLoadedImageSize(1024);
+        zametti::ZApp::instance().applySettingsToCaches();
+        // Кэш один на программу: другие проверки уже клали в него своё.
+        zametti::ZApp::instance().images().clear();
         zametti::NoteEditor thinEditor;
         thinEditor.resize(600, 500);
         thinEditor.show();
@@ -1190,6 +1217,9 @@ static int ztRunSuite(int argc, char** argv) {
                 thinEditor.imageCacheBytes() < qint64(1024) * 1024 * 4);
 
         zametti::mutableSettingsForTests().cache().setMaxLoadedImageSize(savedLimit);
+        zametti::ZApp::instance().applySettingsToCaches();
+        // Кэш один на программу: другие проверки уже клали в него своё.
+        zametti::ZApp::instance().images().clear();
     }
 
     // Выравнивание фотографии в колонке. Умолчание — по центру, и в файл ради

@@ -21,6 +21,7 @@
 
 #include "app_state.h"
 #include "settings.h"
+#include "zimage_cache.h"
 
 #include <QColor>
 #include <QHash>
@@ -55,6 +56,14 @@ public:
     const ZAppState& state() const { return state_; }
     void saveState() { state_.save(); }
 
+    // --- кэш картинок --------------------------------------------------------
+    // Один на программу; бюджет и предел стороны — из settings().cache(),
+    // ставятся здесь при старте и при перечитывании конфига.
+    ZImageCache& images() { return images_; }
+    // Применить нынешние настройки к кэшам (бюджеты). Зовётся при старте и при
+    // перечитывании конфига; наборам — после подмены настроек люком.
+    void applySettingsToCaches();
+
     // --- кэш иконок ----------------------------------------------------------
     // Растр иконки name (SVG из ресурсов) кеглем points, цветом color, при
     // плотности dpr; считается один раз на четвёрку и живёт до сброса.
@@ -73,6 +82,7 @@ protected:
     friend size_t qHash(const IconKey& k, size_t seed);
 
     ZAppState state_;
+    ZImageCache images_;
     QHash<IconKey, QPixmap> icons_;
 };
 
