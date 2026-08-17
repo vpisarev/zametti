@@ -225,6 +225,15 @@ ZamettiDocument (см. `zametti_qtextdocument_design.md`); история — ж
   разделы и поля — методами, сеттеры обрезают до диапазона и пишут в лог,
   `settings()` только чтение, `editSettings()` — загрузчик/бумага/наборы),
   `ImageImporter(ImportLimits)`; §5 — вопросы владельцу (имена get*/set*).
+  `zametti-refactor2-report4.md` — четвёртая сессия: `ZDocument` — чистое тело
+  `.md` (шапки в документе нет; конверт `NoteHeader` — параметром `toMarkdown/
+  toJson/saveTo/fileBytes`), `ZNote` склеивает и проверяет круг файла (`load/
+  toMarkdown/save/canonicaliseFile`), `ZNote::Metadata` и глаголы метаданных у
+  заметки, `ZStorage` — QObject с сигналами `catalogChanged/noteChanged` (одна
+  новость на операцию, сторож каталога внутри), `NoteTreeView` бережёт
+  раскрытость и курсор через сброс модели, `NotePanels` — левая и средняя
+  колонки одним объектом (`main.cpp` 2621 → 2121); §3 — мои ошибки, §4 —
+  вопросы владельцу. Экспорт PDF снят с очереди владельцем до отдельной сессии.
   `zametti-refactor2-design.md` — аудит состояния, классы (ZStorage,
   NoteHistory, OpenNote, ImageCache…), матрицы взаимодействия, порядок
   переезда и вопросы владельцу — до кода.
