@@ -61,6 +61,7 @@ add_executable(zametti-tests
     reader_test.cpp
     shift_test.cpp
     object_test.cpp
+    caption_test.cpp
     table_view_test.cpp
     save_test.cpp
     text_stats_test.cpp
