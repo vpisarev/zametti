@@ -97,6 +97,7 @@ add_executable(zametti-tests
     history_write_test.cpp
     export_pdf_test.cpp
     tree_view_test.cpp
+    note_panels_test.cpp
     image_edge_test.cpp
     about_test.cpp
     status_bar_test.cpp
