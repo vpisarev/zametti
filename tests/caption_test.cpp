@@ -43,6 +43,9 @@ void checkRule() {
         "Screenshot 2024-01-01 at 12.00.00", "Screen Shot 2024-01-01 at 12.00.00",
         "Pasted image 20240101120000", "pic", "picture 2", "untitled", "Unnamed", "clipboard",
         "~Вид на море", "~", "-старая подпись", "~IMG_1234",
+        // Имя от камеры без служебного слова и голое число из мессенджера.
+        "0A5A0229_DxO", "P1010234", "DJI_0042", "GOPR1234.JPG", "MVI_1234", "6850343268",
+        "VID_20240101_120000",
     };
     for (const char* text : noname)
         ZT_TRUE(std::string("безымянная: «") + text + "»",
@@ -53,6 +56,7 @@ void checkRule() {
         "Вид на море",   "image of the dog", "photo from Paris", "Схема установки",
         "picture 3 — закат", "IMG_1234 у причала", "фотография 3", "images", "imaginary",
         "Домик", "2024",  "1", "Screenshot of the bug", "фото Маши", "dscription",
+        "iPhone15", "Nokia3310", "room101", "Red-Black Tree", "intro-scalable-arch",
         "— тире",        "Море ~ волны",
         // Русские слова человек пишет сам — это подпись, а не имя от машины
         // (на «фото» и «снимок» стоят и другие наборы).
