@@ -721,7 +721,9 @@ bool importTree(const ImportOptions& options, Report& report) {
         } else {
             std::string bytes;
             if (!readAll(e.abs, bytes)) continue;   // уже в отчёте
-            parsePieces(normaliseSpaces(bytes), ir, meta);
+            // Граница файла: байты → текст, один раз.
+            parsePieces(normaliseSpaces(QString::fromUtf8(bytes.data(), qsizetype(bytes.size()))),
+                        ir, meta);
         }
 
         // Заголовок заметки: Apple держит его первой строкой, конвертер унёс

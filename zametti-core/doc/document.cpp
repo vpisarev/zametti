@@ -94,8 +94,11 @@ bool ZDocument::loadMarkdown(std::string_view bytes) {
     // Промежуточного представления на этом пути больше нет: md4c собирает
     // логические блоки, сборщик кладёт их в живой документ. Черновик разбора
     // умирает вместе с вызовом.
+    // ГРАНИЦА ФАЙЛА: байты становятся текстом ровно здесь, один раз. Дальше —
+    // разбор, черновик, блоки, документ — всё в UTF-16, без единой конверсии.
     std::vector<Piece> blocks;
-    parsePieces(normaliseSpaces(bytes), blocks, d_->header);
+    parsePieces(normaliseSpaces(QString::fromUtf8(bytes.data(), qsizetype(bytes.size()))),
+                blocks, d_->header);
     buildDocument(blocks, d_->text);
     return true;
 }

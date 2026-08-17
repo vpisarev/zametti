@@ -1,8 +1,7 @@
 #ifndef ZAMETTI_SERIALIZER_H
 #define ZAMETTI_SERIALIZER_H
 
-#include <string>
-#include <string_view>
+#include <QString>
 
 namespace zametti {
 
@@ -23,9 +22,10 @@ namespace zametti {
 // одиночных в середине 346, серий — ни одной. Поэтому одиночные в середине
 // заменяются обычными, остальные не трогаются.
 //
-// Живёт в ядре, а не в слое записи, потому что зовут её двое: открытие заметки
-// и ввоз чужого .md. Второй о Qt не знает вовсе.
-std::string normaliseSpaces(std::string_view text);
+// Живёт в ядре, а не в слое записи, потому что зовут её трое: открытие заметки,
+// вставка из буфера и ввоз чужого .md. Текст, не байты: всё, что в памяти, —
+// QString, а байты файла переводятся в текст до неё, один раз.
+QString normaliseSpaces(const QString& text);
 
 }  // namespace zametti
 

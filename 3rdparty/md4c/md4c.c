@@ -57,7 +57,8 @@
     #undef _T
 #endif
 #if defined MD4C_USE_UTF16
-    #define _T(x)           L##x
+    /* ZAMETTI PATCH: char16_t literals, not wchar_t (L"" is 32-bit on Linux). */
+    #define _T(x)           u##x
 #else
     #define _T(x)           x
 #endif
@@ -359,7 +360,15 @@ struct MD_VERBATIMLINE_tag {
 
 
 #if defined MD4C_USE_UTF16
-    #define md_strchr wcschr
+    /* ZAMETTI PATCH: wcschr works on wchar_t; for char16_t a plain loop. */
+    static const MD_CHAR*
+    md_strchr(const MD_CHAR* s, MD_CHAR ch)
+    {
+        for(; *s != _T('\0'); s++)
+            if(*s == ch)
+                return s;
+        return NULL;
+    }
 #else
     #define md_strchr strchr
 #endif
@@ -846,8 +855,8 @@ struct MD_UNICODE_FOLD_INFO_tag {
 
 
 #if defined MD4C_USE_UTF16
-    #define IS_UTF16_SURROGATE_HI(word)     (((WORD)(word) & 0xfc00) == 0xd800)
-    #define IS_UTF16_SURROGATE_LO(word)     (((WORD)(word) & 0xfc00) == 0xdc00)
+    #define IS_UTF16_SURROGATE_HI(word)     (((unsigned)(word) & 0xfc00) == 0xd800)   /* ZAMETTI PATCH: was WORD */
+    #define IS_UTF16_SURROGATE_LO(word)     (((unsigned)(word) & 0xfc00) == 0xdc00)
     #define UTF16_DECODE_SURROGATE(hi, lo)  (0x10000 + ((((unsigned)(hi) & 0x3ff) << 10) | (((unsigned)(lo) & 0x3ff) << 0)))
 
     static unsigned
@@ -4061,7 +4070,7 @@ md_analyze_marks(MD_CTX* ctx, const MD_LINE* lines, MD_SIZE n_lines,
         /* Skip resolved spans. */
         if(mark->flags & MD_MARK_RESOLVED) {
             if((mark->flags & MD_MARK_OPENER)  &&
-               !((flags & MD_ANALYZE_NOSKIP_EMPH) && ISANYOF_(mark->ch, "*_~")))
+               !((flags & MD_ANALYZE_NOSKIP_EMPH) && ISANYOF_(mark->ch, _T("*_~"))   /* ZAMETTI PATCH: _T() как везде */))
             {
                 MD_ASSERT(i < mark->next);
                 i = mark->next + 1;

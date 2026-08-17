@@ -23,6 +23,8 @@
 
 #include "md4c.h"
 
+#include <QString>
+#include <QStringView>
 #include <QTextCursor>
 #include <QTextDocument>
 
@@ -82,28 +84,28 @@ struct DraftBlock {
 
 // Черновик разбора: байты и куски. Живёт один вызов.
 struct Draft {
-    std::string chars;
+    std::u16string chars;
     std::vector<DraftRun> runs;
 
-    DraftRange append(std::string_view bytes) {
+    DraftRange append(std::u16string_view bytes) {
         // Самоперекрытие законно: кусок черновика дописывается в его же конец.
         const int32_t start = int32_t(chars.size());
         chars.append(bytes);
         return DraftRange{start, int32_t(chars.size())};
     }
-    std::string_view view(DraftRange r) const {
+    std::u16string_view view(DraftRange r) const {
         if (r.empty()) return {};
-        return std::string_view(chars).substr(size_t(r.start), size_t(r.size()));
+        return std::u16string_view(chars).substr(size_t(r.start), size_t(r.size()));
     }
-    std::string_view text(const DraftBlock& b) const { return view(b.text); }
-    std::string_view info(const DraftBlock& b) const { return view(b.info); }
-    std::string_view href(const DraftRun& r) const { return view(r.href); }
-    std::string_view title(const DraftRun& r) const { return view(r.title); }
+    std::u16string_view text(const DraftBlock& b) const { return view(b.text); }
+    std::u16string_view info(const DraftBlock& b) const { return view(b.info); }
+    std::u16string_view href(const DraftRun& r) const { return view(r.href); }
+    std::u16string_view title(const DraftRun& r) const { return view(r.title); }
 
     // Дословный кусок. Дословное всегда кончается переводом строки: без него
     // последний блок файла без хвостового перевода не совпал бы сам с собой
     // после круга.
-    DraftBlock newRaw(std::string_view bytes) {
+    DraftBlock newRaw(std::u16string_view bytes) {
         DraftBlock b;
         // Род дословного куска — всегда Paragraph по умолчанию: у дословного
         // рода нет вовсе, а wouldMerge смотрит на род, не спрашивая про raw.
@@ -116,19 +118,19 @@ struct Draft {
         return b;
     }
 
-    // Дословный кусок — законченный HTML-комментарий: начинается с "<!--" и
-    // кончается строкой с "-->" на конце. HTML-блок этого типа по CommonMark
-    // кончается ровно на первой строке с "-->", поэтому такой кусок — один
+    // Дословный кусок — законченный HTML-комментарий: начинается с u"<!--" и
+    // кончается строкой с u"-->" на конце. HTML-блок этого типа по CommonMark
+    // кончается ровно на первой строке с u"-->", поэтому такой кусок — один
     // целый комментарий, и внутри него не прячется ничего незакрытого. Куски с
-    // "-->" в середине (обычные HTML-блоки) сюда не попадают — и не должны:
-    // замерено, что "<div>" с "-->" внутри жадно съедает соседний код при
+    // u"-->" в середине (обычные HTML-блоки) сюда не попадают — и не должны:
+    // замерено, что "<div>" с u"-->" внутри жадно съедает соседний код при
     // следующем чтении.
     bool isClosedHtmlComment(const DraftBlock& b) const {
         if (!b.raw) return false;
-        std::string_view body = text(b);
+        std::u16string_view body = text(b);
         while (!body.empty() && (body.back() == '\n' || body.back() == '\r')) body.remove_suffix(1);
-        return body.size() >= 7 && body.compare(0, 4, "<!--") == 0 &&
-               body.compare(body.size() - 3, 3, "-->") == 0;
+        return body.size() >= 7 && body.compare(0, 4, u"<!--") == 0 &&
+               body.compare(body.size() - 3, 3, u"-->") == 0;
     }
 
     // Слипнутся ли блоки. Само правило общее и живёт в block_kind.h — здесь
@@ -140,6 +142,9 @@ struct Draft {
 };
 
 constexpr size_t kNoOffset = static_cast<size_t>(-1);
+
+// Тот же текст глазами Qt — для общего канона формул (math_scan).
+QStringView qview(std::u16string_view text) { return QStringView(text.data(), qsizetype(text.size())); }
 
 struct Style {
     uint8_t flags = 0;   // InlineBold | InlineItalic | ... | InlineImage
@@ -171,7 +176,7 @@ struct Frame {
     bool ordered = false;   // для UL/OL
     int  childIdx = 0;      // для LI: сколько блочных детей уже видели
     bool isTask = false;    // для LI
-    char taskMark = ' ';    // для LI, осмысленно при isTask
+    char16_t taskMark = ' ';    // для LI, осмысленно при isTask
 };
 
 struct Ctx {
@@ -179,8 +184,8 @@ struct Ctx {
     // видит md4c: в ней замаскированы строки внутри выключных формул (см.
     // maskDisplayMath). Длины равны, поэтому смещение в одной есть смещение и в
     // другой; вычисляются они по md, а читается всегда buf.
-    const char* buf = nullptr;
-    const char* md = nullptr;
+    const char16_t* buf = nullptr;
+    const char16_t* md = nullptr;
     size_t len = 0;
 
     Draft draft;                 // черновик разбора: байты и куски
@@ -200,7 +205,7 @@ struct Ctx {
     // Текущий листовой блок.
     bool   inLeaf = false;
     DraftBlock cur;
-    std::string text;            // текст текущего блока, до переезда в арену
+    std::u16string text;            // текст текущего блока, до переезда в арену
     size_t charsStart = 0;       // рубеж арены на начало текущего блока
     int32_t spanStart = 0;       // первый спан текущего блока в ir.spans
     bool   curFenced = false;
@@ -228,14 +233,15 @@ struct Ctx {
 
     // Литеральный маркер "[x] ", возвращаемый в текст для чекбокса внутри
     // нумерованного списка (правило 2).
-    std::string pendingPrefix;
+    std::u16string pendingPrefix;
     size_t pendingPrefixOff = kNoOffset;
 };
 
 // Знак препинания ASCII — тот самый набор, перед которым в CommonMark косая
 // является экранированием, а не буквой.
-bool isAsciiPunct(char ch) {
-    return std::strchr("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~", ch) != nullptr && ch != '\0';
+bool isAsciiPunct(char16_t ch) {
+    return (ch >= u'!' && ch <= u'/') || (ch >= u':' && ch <= u'@') || (ch >= u'[' && ch <= u'`') ||
+           (ch >= u'{' && ch <= u'~');
 }
 
 void mergeOffset(size_t& lo, size_t& hi, size_t off, size_t size) {
@@ -404,7 +410,7 @@ void mergeAdjacentSpans(Ctx& c) {
 // содержимое встроенного кода md4c синтезировал целиком (перевод строки внутри
 // кода приходит пробелом, без указателя в буфер) и якоря у спана нет вовсе.
 // За пустую строку не заходим: там уже чужой блок.
-size_t backOverTicks(const char* buf, size_t from) {
+size_t backOverTicks(const char16_t* buf, size_t from) {
     size_t k = from;
     for (;;) {
         size_t j = k;
@@ -419,7 +425,7 @@ size_t backOverTicks(const char* buf, size_t from) {
     return k;
 }
 
-size_t forwardOverTicks(const char* buf, size_t len, size_t from) {
+size_t forwardOverTicks(const char16_t* buf, size_t len, size_t from) {
     size_t k = from;
     for (;;) {
         size_t j = k;
@@ -434,9 +440,9 @@ size_t forwardOverTicks(const char* buf, size_t len, size_t from) {
     return k;
 }
 
-bool asciiSpace(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
+bool asciiSpace(char16_t c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
 
-std::string_view trimAscii(std::string_view s) {
+std::u16string_view trimAscii(std::u16string_view s) {
     size_t b = 0;
     while (b < s.size() && asciiSpace(s[b])) ++b;
     size_t e = s.size();
@@ -451,13 +457,13 @@ std::string_view trimAscii(std::string_view s) {
 bool adoptCommentLeaf(Ctx& c) {
     // Шапка метаданных "<!-- zametti" — не Kind::Html: её забирает liftMeta из
     // дословного блока, и её байты (включая неизвестные ключи) неприкосновенны.
-    if (c.text.compare(0, 13, "<!-- zametti\n") == 0) return false;
-    const std::string_view body = trimAscii(c.text);
+    if (c.text.compare(0, 13, u"<!-- zametti\n") == 0) return false;
+    const std::u16string_view body = trimAscii(c.text);
     if (body.size() < 7) return false;
-    if (body.compare(0, 4, "<!--") != 0) return false;
-    if (body.compare(body.size() - 3, 3, "-->") != 0) return false;
-    const std::string_view interior = trimAscii(body.substr(4, body.size() - 7));
-    if (interior.find("-->") != std::string_view::npos) return false;
+    if (body.compare(0, 4, u"<!--") != 0) return false;
+    if (body.compare(body.size() - 3, 3, u"-->") != 0) return false;
+    const std::u16string_view interior = trimAscii(body.substr(4, body.size() - 7));
+    if (interior.find(u"-->") != std::u16string_view::npos) return false;
 
     // Внутренность вырезается на месте: она лежит внутри c.text, и присваивать
     // строке вид на саму себя нельзя.
@@ -527,7 +533,7 @@ bool attrToRange(Ctx& c, const MD_ATTRIBUTE& a, DraftRange& out) {
         for (unsigned i = 0; a.substr_offsets[i] < a.size; ++i)
             if (a.substr_types[i] == MD_TEXT_NULLCHAR) return false;
     }
-    out = c.draft.append(std::string_view(a.text, a.size));
+    out = c.draft.append(std::u16string_view(a.text, a.size));
     return true;
 }
 
@@ -780,7 +786,7 @@ int leaveBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
         case MD_BLOCK_CODE:
             if (c.inLeaf && c.curRawAtEnd) {
                 size_t contentLines = 0;
-                for (char ch : c.text)
+                for (char16_t ch : c.text)
                     if (ch == '\n') ++contentLines;
                 endLeafAsRaw(c, contentLines + (c.curFenced ? 2 : 0));
                 break;
@@ -865,8 +871,8 @@ int enterSpan(MD_SPANTYPE type, void* detail, void* userdata) {
             DraftRange title;
             if (!attrToRange(c, d->src, src) || !attrToRange(c, d->title, title) ||
                 src.empty() || !st.plain() ||
-                c.draft.view(title).find('"') != std::string_view::npos ||
-                c.draft.view(title).find('\n') != std::string_view::npos) {
+                c.draft.view(title).find('"') != std::u16string_view::npos ||
+                c.draft.view(title).find('\n') != std::u16string_view::npos) {
                 demote(c);
                 return 0;
             }
@@ -942,19 +948,19 @@ int leaveSpan(MD_SPANTYPE type, void* detail, void* userdata) {
         // принял mathMax за «за концом», брал не тот байт и деградировал в
         // дословный кусок весь абзац с формулой.
         const size_t close = c.mathMax + 1;   // первый доллар закрывающего прогона
-        const std::string_view source(c.buf, c.len);
+        const std::u16string_view source(c.buf, c.len);
         if (source[open] != '$' || source[close] != '$') {
             demote(c);
             return 0;
         }
-        const std::string_view literal = source.substr(open, close + skip - open);
+        const std::u16string_view literal = source.substr(open, close + skip - open);
 
         // КАНОН НАШ, А НЕ MD4C. У него границы считаются по флангам, как у
         // выделения, и «$ x + y$» он считает формулой, а pandoc (и GitHub) —
         // нет.
         flushRun(c);
         const size_t at = c.text.size();
-        const bool ours = mathBordersOk(source, open, close, c.mathDisplay);
+        const bool ours = mathBordersOk(qview(source), open, close, c.mathDisplay);
         if (ours) {
             // Формула — дословно: внутри математики markdown не действует.
             c.text.append(literal);
@@ -977,7 +983,7 @@ int leaveSpan(MD_SPANTYPE type, void* detail, void* userdata) {
             // не счёл кусок математикой: косая перед знаком препинания ASCII
             // исчезает, всё прочее буквально.
             for (size_t i = 0; i < literal.size(); ++i) {
-                const char ch = literal[i];
+                const char16_t ch = literal[i];
                 if (ch == '\\' && i + 1 < literal.size() && isAsciiPunct(literal[i + 1])) {
                     c.text.push_back(literal[i + 1]);
                     ++i;
@@ -1099,11 +1105,11 @@ int onText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) 
             }
             // Строчный комментарий в абзаце: приходит одним куском. Всё прочее
             // — дословно, как раньше.
-            if (c.inLeaf && size >= 7 && std::strncmp(text, "<!--", 4) == 0 &&
-                std::strncmp(text + size - 3, "-->", 3) == 0 && c.styles.back().plain() &&
-                std::string_view(text + 4, size - 7).find("-->") == std::string_view::npos) {
+            if (c.inLeaf && size >= 7 && std::u16string_view(text, 4) == u"<!--" &&
+                std::u16string_view(text + size - 3, 3) == u"-->" && c.styles.back().plain() &&
+                std::u16string_view(text + 4, size - 7).find(u"-->") == std::u16string_view::npos) {
                 flushRun(c);
-                const std::string_view interior = trimAscii(std::string_view(text + 4, size - 7));
+                const std::u16string_view interior = trimAscii(std::u16string_view(text + 4, size - 7));
                 if (interior.empty()) { demote(c); break; }
                 DraftRun s;
                 s.text = {int32_t(c.text.size()), int32_t(c.text.size() + interior.size())};
@@ -1145,7 +1151,7 @@ struct Lines {
     }
 };
 
-Lines buildLines(const char* buf, size_t len) {
+Lines buildLines(const char16_t* buf, size_t len) {
     Lines l;
     l.len = len;
     l.start.push_back(0);
@@ -1154,7 +1160,7 @@ Lines buildLines(const char* buf, size_t len) {
     return l;
 }
 
-size_t firstNonSpace(const char* buf, const Lines& l, size_t i, size_t& indent) {
+size_t firstNonSpace(const char16_t* buf, const Lines& l, size_t i, size_t& indent) {
     size_t p = l.start[i];
     size_t e = l.end(i);
     indent = 0;
@@ -1166,12 +1172,12 @@ size_t firstNonSpace(const char* buf, const Lines& l, size_t i, size_t& indent) 
 // maxIndent — сколько отступа забор может себе позволить. На верхнем уровне
 // это 3 (глубже — уже отступный код), а внутри пункта списка забор стоит на
 // колонке содержимого пункта плюс те же три: там предел не действует.
-bool fenceLine(const char* buf, const Lines& l, size_t i, size_t maxIndent = 3) {
+bool fenceLine(const char16_t* buf, const Lines& l, size_t i, size_t maxIndent = 3) {
     size_t indent = 0;
     size_t p = firstNonSpace(buf, l, i, indent);
     size_t e = l.end(i);
     if (indent > maxIndent || p >= e) return false;
-    char ch = buf[p];
+    char16_t ch = buf[p];
     if (ch != '`' && ch != '~') return false;
     size_t j = p;
     while (j < e && buf[j] == ch) ++j;
@@ -1179,12 +1185,12 @@ bool fenceLine(const char* buf, const Lines& l, size_t i, size_t maxIndent = 3) 
 }
 
 // Строка с маркером списка: "- ", "+ ", "* " или "12. ", "12) ".
-bool listMarkerLine(const char* buf, const Lines& l, size_t i) {
+bool listMarkerLine(const char16_t* buf, const Lines& l, size_t i) {
     size_t indent = 0;
     size_t p = firstNonSpace(buf, l, i, indent);
     size_t e = l.end(i);
     if (p >= e) return false;
-    char ch = buf[p];
+    char16_t ch = buf[p];
     if (ch == '-' || ch == '+' || ch == '*')
         return p + 1 >= e || buf[p + 1] == ' ' || buf[p + 1] == '\t' || buf[p + 1] == '\n' ||
                buf[p + 1] == '\r';
@@ -1198,7 +1204,7 @@ bool listMarkerLine(const char* buf, const Lines& l, size_t i) {
 
 // Строка "> " без текста: внутри цитаты она разделяет абзацы и принадлежит ей,
 // хотя текстовых колбэков по ней нет.
-bool quoteOnlyLine(const char* buf, const Lines& l, size_t i) {
+bool quoteOnlyLine(const char16_t* buf, const Lines& l, size_t i) {
     size_t indent = 0;
     size_t p = firstNonSpace(buf, l, i, indent);
     size_t e = l.end(i);
@@ -1208,9 +1214,9 @@ bool quoteOnlyLine(const char* buf, const Lines& l, size_t i) {
     return true;
 }
 
-bool blankLine(const char* buf, const Lines& l, size_t i) {
+bool blankLine(const char16_t* buf, const Lines& l, size_t i) {
     for (size_t p = l.start[i], e = l.end(i); p < e; ++p) {
-        char ch = buf[p];
+        char16_t ch = buf[p];
         if (ch != ' ' && ch != '\t' && ch != '\r' && ch != '\n') return false;
     }
     return true;
@@ -1283,7 +1289,7 @@ void finishExtents(Ctx& c) {
             // начинается с пустых строк, колбэков по ним не приходит и забор
             // уезжает вниз.
             size_t contentLines = 0;
-            for (char ch : c.draft.text(c.doc[i]))
+            for (char16_t ch : c.draft.text(c.doc[i]))
                 if (ch == '\n') ++contentLines;
             // Забор ищется по виду строки, а не по «первой непустой после
             // предыдущего блока»: слева может стоять дословный кусок, чьи
@@ -1368,7 +1374,7 @@ void finishExtents(Ctx& c) {
     for (size_t i = 0; i < n; ++i) {
         if (!c.ext[i].raw) continue;
         while (first[i] > 0) {
-            char lead = c.buf[lines.start[first[i]]];
+            char16_t lead = c.buf[lines.start[first[i]]];
             if (lead != ' ' && lead != '\t') break;
             size_t j = i;
             bool found = false;
@@ -1390,7 +1396,7 @@ void finishExtents(Ctx& c) {
             size_t e = lines.end(ln);
             while (p < e && (c.buf[p] == ' ' || c.buf[p] == '\t')) ++p;
             if (p >= e) continue;
-            char ch = c.buf[p];
+            char16_t ch = c.buf[p];
             if ((ch == '-' || ch == '+' || ch == '*') && p + 1 < e &&
                 (c.buf[p + 1] == ' ' || c.buf[p + 1] == '\t'))
                 return true;
@@ -1418,7 +1424,7 @@ void finishExtents(Ctx& c) {
         if (!c.ext[i].raw) continue;
         size_t b = lines.start[first[i]];
         size_t e = lines.end(last[i]);
-        c.doc[i] = c.draft.newRaw(std::string_view(c.buf + b, e - b));
+        c.doc[i] = c.draft.newRaw(std::u16string_view(c.buf + b, e - b));
     }
 
     // Определения ссылок ("[1]: /a") md4c не отдаёт ни одним колбэком: он их
@@ -1430,7 +1436,7 @@ void finishExtents(Ctx& c) {
     // перевода строки не совпал бы сам с собой после круга (это делает newRaw).
     auto rawFromLines = [&](size_t a, size_t b) {
         return c.draft.newRaw(
-            std::string_view(c.buf + lines.start[a], lines.end(b) - lines.start[a]));
+            std::u16string_view(c.buf + lines.start[a], lines.end(b) - lines.start[a]));
     };
 
     std::vector<DraftBlock> out;
@@ -1498,33 +1504,36 @@ void finishExtents(Ctx& c) {
 // Первый блок с маркером zametti — метаданные заметки. Поднимаем их из
 // блоков: редактор метаданные не видит вовсе, курсору встать некуда.
 //
-// Форма фиксированная: первая строка — ровно "<!-- zametti", закрывающая "-->"
-// — своей строкой. Всё прочее — хвост после "-->", маркер в одну строку,
+// Форма фиксированная: первая строка — ровно "<!-- zametti", закрывающая u"-->"
+// — своей строкой. Всё прочее — хвост после u"-->", маркер в одну строку,
 // комментарий не первым блоком — метаданными не является и остаётся дословным
 // блоком (замерено пробником: md4c отдаёт такой комментарий одним блоком).
 void liftMeta(Ctx& c, NoteHeader& header) {
     if (c.doc.empty()) return;
     if (!c.doc.front().raw) return;
-    const std::string_view raw = c.draft.text(c.doc.front());
-    constexpr std::string_view head = "<!-- zametti\n";
-    constexpr std::string_view tail = "-->\n";
+    const std::u16string_view raw = c.draft.text(c.doc.front());
+    constexpr std::u16string_view head = u"<!-- zametti\n";
+    constexpr std::u16string_view tail = u"-->\n";
     if (raw.size() < head.size() + tail.size()) return;
     if (raw.compare(0, head.size(), head) != 0) return;
     if (raw.compare(raw.size() - tail.size(), tail.size(), tail) != 0) return;
     if (raw[raw.size() - tail.size() - 1] != '\n') return;
 
+    // Шапка живёт байтами (NoteHeader — файловая сущность), строки её
+    // переводятся здесь: они короткие, и это разовая работа на открытие.
     std::vector<std::string> lines;
     size_t from = head.size();
     const size_t end = raw.size() - tail.size();
     while (from < end) {
         const size_t eol = raw.find('\n', from);
-        lines.emplace_back(raw.substr(from, eol - from));
+        const std::u16string_view line = raw.substr(from, eol - from);
+        lines.emplace_back(QString::fromUtf16(line.data(), qsizetype(line.size())).toStdString());
         from = eol + 1;
     }
     header.setPresent(true);
     header.setLines(std::move(lines));
     c.doc.erase(c.doc.begin());
-    // Пустую строку после "-->" забираем с собой: в блоках ей стоять не за чем
+    // Пустую строку после u"-->" забираем с собой: в блоках ей стоять не за чем
     // — редактор показал бы пустую первую строку у каждой заметки.
     if (!c.doc.empty() && !c.doc.front().raw && c.doc.front().kind == Kind::VSpace) {
         header.setBlankAfter(true);
@@ -1572,49 +1581,49 @@ void liftMeta(Ctx& c, NoteHeader& header) {
 // сканер канона про них не знает, а показывать формулу в примере кода никто и
 // не просит. Отступный код (четыре пробела) так не отличить от пункта списка —
 // это остаётся известным краем.
-std::vector<std::pair<size_t, size_t>> fencedRegions(std::string_view text) {
+std::vector<std::pair<size_t, size_t>> fencedRegions(std::u16string_view text) {
     std::vector<std::pair<size_t, size_t>> found;
     size_t line = 0;
-    size_t openAt = std::string_view::npos;
-    char fence = 0;
+    size_t openAt = std::u16string_view::npos;
+    char16_t fence = 0;
     size_t fenceLen = 0;
     while (line < text.size()) {
         size_t eol = text.find('\n', line);
-        if (eol == std::string_view::npos) eol = text.size();
+        if (eol == std::u16string_view::npos) eol = text.size();
         size_t p = line;
         size_t indent = 0;
         while (p < eol && (text[p] == ' ' || text[p] == '\t')) { ++p; ++indent; }
         if (indent <= 3 && p < eol && (text[p] == '`' || text[p] == '~')) {
-            const char ch = text[p];
+            const char16_t ch = text[p];
             size_t run = 0;
             while (p + run < eol && text[p + run] == ch) ++run;
             if (run >= 3) {
-                if (openAt == std::string_view::npos) {
+                if (openAt == std::u16string_view::npos) {
                     openAt = line;
                     fence = ch;
                     fenceLen = run;
                 } else if (ch == fence && run >= fenceLen) {
                     found.emplace_back(openAt, eol);
-                    openAt = std::string_view::npos;
+                    openAt = std::u16string_view::npos;
                 }
             }
         }
         line = eol + 1;
     }
-    if (openAt != std::string_view::npos) found.emplace_back(openAt, text.size());
+    if (openAt != std::u16string_view::npos) found.emplace_back(openAt, text.size());
     return found;
 }
 
-std::string maskDisplayMath(std::string_view text) {
-    std::string masked;
+std::u16string maskDisplayMath(std::u16string_view text) {
+    std::u16string masked;
     std::vector<std::pair<size_t, size_t>> fenced;
     bool fencedKnown = false;
-    for (const MathSpan& span : scanMath(text)) {
+    for (const MathSpan& span : scanMath(qview(text))) {
         if (!span.display) continue;
         const size_t from = size_t(span.start);
         const size_t to = size_t(span.end);
-        const std::string_view body = text.substr(from, to - from);
-        if (body.find('\n') == std::string_view::npos) continue;
+        const std::u16string_view body = text.substr(from, to - from);
+        if (body.find('\n') == std::u16string_view::npos) continue;
         // ПУСТАЯ СТРОКА ВНУТРИ — не маскируем. Канон ищет закрывающие `$$` хоть
         // через сорок строк, и одинокая пара долларов в разных абзацах даёт
         // «формулу» в полдокумента. Замаскировать её переносы значило бы слепить
@@ -1678,29 +1687,8 @@ void liftMath(Ctx& c) {
 
 namespace {
 
-QString fromUtf8(std::string_view bytes) {
-    return QString::fromUtf8(bytes.data(), qsizetype(bytes.size()));
-}
-
-// Единица UTF-16, с которой начинается каждый байт текста (плюс одна за
-// концом). Байты внутри многобайтового знака указывают на его первую единицу.
-std::vector<int32_t> utf16OffsetsOf(std::string_view bytes) {
-    std::vector<int32_t> out(bytes.size() + 1, 0);
-    int32_t units = 0;
-    size_t i = 0;
-    while (i < bytes.size()) {
-        const unsigned char c = static_cast<unsigned char>(bytes[i]);
-        size_t width = 1;
-        int32_t adds = 1;
-        if (c >= 0xF0) { width = 4; adds = 2; }        // вне BMP — суррогатная пара
-        else if (c >= 0xE0) width = 3;
-        else if (c >= 0xC0) width = 2;
-        for (size_t k = 0; k < width && i + k < bytes.size(); ++k) out[i + k] = units;
-        units += adds;
-        i += width;
-    }
-    out[bytes.size()] = units;
-    return out;
+QString toQString(std::u16string_view text) {
+    return QString::fromUtf16(text.data(), qsizetype(text.size()));
 }
 
 }  // namespace
@@ -1708,16 +1696,20 @@ std::vector<int32_t> utf16OffsetsOf(std::string_view bytes) {
 // Разбор в логические блоки. Ступень внутренняя: наружу из ядра не выходит, а
 // внутри его зовут двое — ZDocument::loadMarkdown (ниже) и умирающий мостик к
 // представлению.
-void parsePieces(std::string_view markdown, std::vector<Piece>& blocks, NoteHeader& header) {
+void parsePieces(QStringView markdown, std::vector<Piece>& blocks, NoteHeader& header) {
     blocks.clear();
     header = NoteHeader{};
-    if (markdown.empty()) return;
+    if (markdown.isEmpty()) return;
 
+    // Текст — UTF-16, и md4c читает его в UTF-16 (вендоренная копия собрана с
+    // MD4C_USE_UTF16): все смещения — единицы UTF-16, те же, что у QString и у
+    // QTextDocument. Ни одной конверсии на пути разбора.
+    const std::u16string_view source(markdown.utf16(), size_t(markdown.size()));
     Ctx c;
-    const std::string masked = maskDisplayMath(markdown);
-    c.buf = markdown.data();
-    c.md = masked.empty() ? markdown.data() : masked.data();
-    c.len = markdown.size();
+    const std::u16string masked = maskDisplayMath(source);
+    c.buf = source.data();
+    c.md = masked.empty() ? source.data() : masked.data();
+    c.len = source.size();
 
     MD_PARSER parser{};
     parser.abi_version = 0;
@@ -1764,24 +1756,18 @@ void parsePieces(std::string_view markdown, std::vector<Piece>& blocks, NoteHead
         piece.headingLevel = b.headingLevel;
         piece.checked = b.checked;
         piece.raw = b.raw;
-        piece.info = fromUtf8(c.draft.info(b));
-        // Текст блока — QString, смещения кусков — единицы UTF-16. Разбор пока
-        // идёт по байтам (md4c в UTF-8), и границу переводит эта одна точка;
-        // следующий шаг — md4c в UTF-16, и перевод исчезнет вовсе.
-        const std::string_view bytes = c.draft.text(b);
-        piece.text = fromUtf8(bytes);
+        piece.info = toQString(c.draft.info(b));
+        piece.text = toQString(c.draft.text(b));
         piece.trailingNewline = piece.text.endsWith(QLatin1Char('\n'));
         piece.runs.reserve(size_t(b.inlines.size()));
-        std::vector<int32_t> units;   // байт → единица UTF-16, лениво
         for (int32_t i = b.inlines.start; i < b.inlines.end; ++i) {
             const DraftRun& src = c.draft.runs[size_t(i)];
-            if (units.empty()) units = utf16OffsetsOf(bytes);
             Run run;
-            run.start = units[size_t(qBound<int32_t>(0, src.text.start, int32_t(bytes.size())))];
-            run.end = units[size_t(qBound<int32_t>(0, src.text.end, int32_t(bytes.size())))];
+            run.start = src.text.start;
+            run.end = src.text.end;
             run.flags = src.flags;
-            run.href = fromUtf8(c.draft.href(src));
-            run.title = fromUtf8(c.draft.title(src));
+            run.href = toQString(c.draft.href(src));
+            run.title = toQString(c.draft.title(src));
             piece.runs.push_back(std::move(run));
         }
         blocks.push_back(std::move(piece));

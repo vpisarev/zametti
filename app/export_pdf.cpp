@@ -382,7 +382,7 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
 
     std::vector<Piece> blocks;
     NoteHeader ignored;
-    parsePieces(text, blocks, ignored);
+    parsePieces(QString::fromUtf8(text.data(), qsizetype(text.size())), blocks, ignored);
     buildDocument(blocks, *view.document());
     prepareForPaper(*view.document());
     view.applyContentWidth();

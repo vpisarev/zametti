@@ -410,9 +410,7 @@ Piece withMarkupThatSurvives(Piece block) {
 
     std::vector<Piece> back;
     NoteHeader ignored;
-    // Разбор пока идёт по байтам (md4c в UTF-8) — граница переводится здесь.
-    const QByteArray bytes = writePieces({probe}).toUtf8();
-    parsePieces(std::string_view(bytes.constData(), size_t(bytes.size())), back, ignored);
+    parsePieces(writePieces({probe}), back, ignored);
     if (back.size() == 1 && !back[0].raw && back[0].text == block.text) return block;
 
     block.runs.clear();
@@ -690,7 +688,8 @@ SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
     // текст блока обязан совпасть до знака.
     std::vector<Piece> reread;
     NoteHeader rereadHeader;
-    parsePieces(asView(text), reread, rereadHeader);
+    // Читается ровно то, что ляжет в файл: байты → текст, как при открытии.
+    parsePieces(QString::fromUtf8(text), reread, rereadHeader);
     // РАСХОЖДЕНИЕ БОЛЬШЕ НЕ ЗАПРЕЩАЕТ ЗАПИСЬ.
     //
     // Прежде самопроверка отказывалась писать вовсе: файл оставался прежним, а

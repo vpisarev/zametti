@@ -5,12 +5,12 @@
 
 # Версия — одним местом на весь проект: в самом md4c.h её нет, а сводка сборки
 # её показывает. Меняя вендоринг, поправить и здесь.
-set(MD4C_VENDORED_VERSION "0.5.3 + правка якорей + правка пустых строк в пункте" PARENT_SCOPE)
+set(MD4C_VENDORED_VERSION "0.5.3 + якоря + пустые строки в пункте + UTF-16" PARENT_SCOPE)
 
 # --- НАШИ ПРАВКИ -------------------------------------------------------------
 #
-# Правок две, и обе надо переносить при каждом обновлении md4c. Каждая помечена
-# в md4c.c словами ZAMETTI PATCH.
+# Правок три, и все надо переносить при каждом обновлении md4c. Каждая помечена
+# в md4c.c / md4c.h словами ZAMETTI PATCH.
 #
 # ПРАВКА 1. В md_analyze_permissive_autolink, таблица URL_MAP, строка fragment:
 # набор знаков, разрешённых в якоре, расширен с `.-+_` до `.-+_=~:@/&%`.
@@ -67,7 +67,20 @@ set(MD4C_VENDORED_VERSION "0.5.3 + правка якорей + правка пу
 # ЧЕМ ПРОВЕРЕНА. tests/shift_test.cpp: инвариант сдвига — кусок за префиксами
 # всех длин 0..300 разбирается одинаково; восемь фрагментов и копия заметки
 # владельца. Со снятой правкой красны и фрагменты, и заметка.
+#
+# ПРАВКА 3. Режим UTF-16 без Windows: MD_CHAR = char16_t (было WCHAR из
+# <windows.h> и #error на прочих ОС), литералы u"" вместо L"" (wchar_t на
+# Linux четырёхбайтный), свой md_strchr вместо wcschr, unsigned вместо WORD в
+# макросах суррогатов. Сам разбор к платформе не привязан. Зачем: весь текст в
+# памяти — QString (решение владельца), и разбор идёт по нему без единой
+# конверсии, а смещения кусков — единицы UTF-16, те же, что у QTextDocument.
 
 add_library(md4c STATIC md4c.c)
 target_include_directories(md4c PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+# md4c читает UTF-16 (char16_t): всё, что в памяти, — QString, и разбор идёт по
+# нему без конверсий. Определение PUBLIC: заголовок обязан видеть тот же MD_CHAR,
+# что и сама библиотека (правка 3 ниже).
+target_compile_definitions(md4c PUBLIC MD4C_USE_UTF16)
+# char16_t и литералы u"" — C11.
+set_target_properties(md4c PROPERTIES C_STANDARD 11)
 set_target_properties(md4c PROPERTIES POSITION_INDEPENDENT_CODE ON)

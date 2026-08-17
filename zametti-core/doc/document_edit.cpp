@@ -34,9 +34,6 @@ namespace {
 // упрощённым: его идемпотентность и гарантирует, что скопированное вставится
 // без потерь.
 std::vector<Piece> parseIncoming(const QString& markdown, ZDocument::PasteMode mode) {
-    const QByteArray utf8 = markdown.toUtf8();
-    const std::string source(utf8.constData(), size_t(utf8.size()));
-
     std::vector<Piece> pieces;
     if (mode == ZDocument::PasteMode::Literal) {
         // Один абзац с текстом как есть: переводы строк внутри блока сборщик
@@ -52,7 +49,7 @@ std::vector<Piece> parseIncoming(const QString& markdown, ZDocument::PasteMode m
     // звал только loadMarkdown, одни и те же байты из файла и из буфера давали
     // разное.
     NoteHeader ignored;
-    parsePieces(normaliseSpaces(source), pieces, ignored);
+    parsePieces(normaliseSpaces(markdown), pieces, ignored);
     return pieces;
 }
 

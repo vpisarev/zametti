@@ -848,42 +848,44 @@ bool looksLikeLinkDefinition(QStringView raw) {
 //     сами: столбик "int a     = 5" из блока кода, превращённого в абзац,
 //     держится только неразрывными (обычные markdown схлопнет). Трогать её
 //     значило бы ломать то, что сами и поставили.
-std::string normaliseSpaces(std::string_view text) {
-    static const std::string nbsp = "\xC2\xA0";
-    std::string out;
+QString normaliseSpaces(const QString& text) {
+    QString out;
     out.reserve(text.size());
     bool leading = true;    // мы всё ещё в отступе строки
     bool inCode = false;    // между заборами блока кода
-    for (size_t i = 0; i < text.size();) {
+    const qsizetype n = text.size();
+    for (qsizetype i = 0; i < n;) {
         if (leading) {
             // Забор блока кода: три знака и больше, с любым отступом перед
             // ними. Внутри блока НЕРАЗРЫВНЫХ НЕ БЫВАЕТ ВОВСЕ — там значим сам
             // пробел, его копируют в терминал, а неразрывный туда попадает
             // только мусором из чужих выгрузок.
-            size_t at = i;
-            while (at < text.size() && (text[at] == ' ' || text[at] == '\t')) ++at;
-            if (text.compare(at, 3, "```") == 0 || text.compare(at, 3, "~~~") == 0)
+            qsizetype at = i;
+            while (at < n && (text.at(at) == u' ' || text.at(at) == u'\t')) ++at;
+            if (QStringView(text).mid(at, 3) == QLatin1String("```") ||
+                QStringView(text).mid(at, 3) == QLatin1String("~~~"))
                 inCode = !inCode;
         }
-        if (text[i] == '\n') {
-            out.push_back('\n');
+        const QChar c = text.at(i);
+        if (c == u'\n') {
+            out += u'\n';
             leading = true;
             ++i;
             continue;
         }
-        if (text.compare(i, nbsp.size(), nbsp) == 0) {
-            size_t run = 0;
-            while (text.compare(i + run * nbsp.size(), nbsp.size(), nbsp) == 0) ++run;
+        if (c == QChar::Nbsp) {
+            qsizetype run = 0;
+            while (i + run < n && text.at(i + run) == QChar::Nbsp) ++run;
             // Вне кода: ведущие держат отступ, серия из двух и более держит
             // выравнивание, одиночный в середине не значит ничего.
             const bool keep = !inCode && (leading || run > 1);
-            for (size_t k = 0; k < run; ++k) out += keep ? nbsp : std::string(" ");
-            i += run * nbsp.size();
+            out += QString(run, keep ? QChar(QChar::Nbsp) : QChar(u' '));
+            i += run;
             leading = false;
             continue;
         }
-        if (text[i] != ' ' && text[i] != '\t') leading = false;
-        out.push_back(text[i]);
+        if (c != u' ' && c != u'\t') leading = false;
+        out += c;
         ++i;
     }
     return out;

@@ -686,7 +686,8 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
     }
 
     std::vector<Piece> doc;
-    parsePieces(text, doc, note_.meta);
+    // Граница файла: байты → текст, один раз.
+    parsePieces(QString::fromUtf8(text.data(), qsizetype(text.size())), doc, note_.meta);
     const CaretSpot spot = caretMemory_.value(note_.path);
     note_.cursor = spot.cursor;
     note_.anchor = spot.anchor;
@@ -795,7 +796,7 @@ void NoteEditor::resolveExternalConflict(bool takeExternal) {
 void NoteEditor::adoptExternal(const std::string& text) {
     std::vector<Piece> ir;
     NoteHeader fresh;
-    parsePieces(text, ir, fresh);
+    parsePieces(QString::fromUtf8(text.data(), qsizetype(text.size())), ir, fresh);
     // Чужой редактор мог снести или испортить блок метаданных. Тихо принять
     // это нельзя: заметка потеряла бы родителя и дату создания, то есть уехала
     // бы в корень и «постарела». Прежние значения у нас в памяти — предлагаем
@@ -2857,8 +2858,7 @@ bool NoteEditor::showSnapshot(int index) {
 
     current_.snapshot.clear();
     NoteHeader snapshotHeader;
-    parsePieces(std::string_view(bytes.constData(), size_t(bytes.size())), current_.snapshot,
-                snapshotHeader);
+    parsePieces(QString::fromUtf8(bytes), current_.snapshot, snapshotHeader);
     current_.historyIndex = index;
     computeDiff(index);
     renderDiff({});
@@ -2905,8 +2905,7 @@ void NoteEditor::computeDiff(int index) {
     // заметка окажется добавленной, и это правда.
     current_.base.clear();
     NoteHeader baseHeader;
-    parsePieces(std::string_view(baseBytes.constData(), size_t(baseBytes.size())), current_.base,
-                baseHeader);
+    parsePieces(QString::fromUtf8(baseBytes), current_.base, baseHeader);
     current_.baseText = diff::textOf(current_.base);
     // ДВА ПРОГОНА, по одному на сторону: показанная сторона всегда «after»
     // своего сравнения, и тогда зелёное с красным не приходится выворачивать
@@ -3709,11 +3708,9 @@ void NoteEditor::leaveTableEdit() {
 // не изменился ни на байт, изменилось только его разбиение на блоки.
 void NoteEditor::reparseAfterTableEdit() {
     const int at = textCursor().position();
-    // Разбор пока идёт по байтам (md4c в UTF-8) — граница переводится здесь.
-    const QByteArray text = writePieces(piecesOf(*document())).toUtf8();
     std::vector<Piece> fresh;
     NoteHeader ignored;
-    parsePieces(std::string_view(text.constData(), size_t(text.size())), fresh, ignored);
+    parsePieces(writePieces(piecesOf(*document())), fresh, ignored);
 
     recordingSuspended_ = true;
     // Перечитывание после правки таблицы — тоже правка: одним шагом отмены и

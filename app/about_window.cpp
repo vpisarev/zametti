@@ -40,7 +40,7 @@ NoteView* markdownPage(const QString& markdown, QWidget* parent) {
     auto* document = new QTextDocument(view);
     std::vector<Piece> blocks;
     NoteHeader ignored;
-    parsePieces(markdown.toStdString(), blocks, ignored);
+    parsePieces(markdown, blocks, ignored);
     buildDocument(blocks, *document);
     view->setDocument(document);
     view->applyContentWidth();

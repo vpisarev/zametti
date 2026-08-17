@@ -102,10 +102,11 @@ struct BlockLines {
     int count = 0;
 };
 
-// Разбор байтов markdown в логические блоки и шапку. Определено в
-// markdown_reader.cpp; ступень внутри ZDocument::loadMarkdown, наружу из ядра
-// не выходит.
-void parsePieces(std::string_view markdown, std::vector<Piece>& blocks, NoteHeader& header);
+// Разбор текста markdown в логические блоки и шапку. ТЕКСТА, а не байтов:
+// md4c читает UTF-16, смещения — единицы UTF-16, те же, что у QTextDocument.
+// Байты файла переводятся в текст один раз, в ZDocument::loadMarkdown.
+// Определено в markdown_reader.cpp; ступень внутри ядра, наружу не выходит.
+void parsePieces(QStringView markdown, std::vector<Piece>& blocks, NoteHeader& header);
 
 // Обход ЖИВОГО документа теми же логическими блоками — обратная ступень к
 // parsePieces. Определено в markdown_writer.cpp.
