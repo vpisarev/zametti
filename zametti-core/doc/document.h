@@ -398,6 +398,15 @@ public:
 
     bool setImageWidth(QTextCursor& at, int width);
     bool setImageAlign(QTextCursor& at, ImageAlign align);
+
+    // Подпись (alt) картинки под кареткой. Пустая подпись законна: картинка
+    // остаётся картинкой и пишется «![](путь)». Перевод строки внутри подписи
+    // становится пробелом. У вики-вложения подписи нет — ложь.
+    bool setImageCaption(QTextCursor& at, const QString& caption);
+    // Спрятать подпись под снимком одним знаком спереди («~подпись») или
+    // вернуть спрятанную (см. isNonameCaption). mark — `~` или `-`; знак
+    // перед пустой подписью не ставится: прятать нечего.
+    bool toggleImageCaption(QTextCursor& at, QChar mark = QLatin1Char('~'));
     // Убрать строку-фотографию целиком (вторая половина Ctrl+X: что положить в
     // буфер, решает вызывающий).
     bool cutImageLine(QTextCursor& at);

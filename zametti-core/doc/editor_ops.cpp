@@ -1431,6 +1431,33 @@ static bool setImageAlignAtCursor(QTextDocument& doc, QTextCursor& cursor, Image
     return rewriteImageRef(cursor, block, ref);
 }
 
+// Подпись картинки — как и адрес, свойство ОБЪЕКТА (ObjectAltProperty): текста
+// у объекта нет, в блоке один знак U+FFFC. Пустая подпись законна — картинка
+// остаётся картинкой, в файл уходит «![](путь)». У вики-вложения подписи нет.
+static bool setImageCaptionAtCursor(QTextCursor& cursor, const QString& caption) {
+    const QTextBlock block = cursor.block();
+    const BlockImageRef ref = blockImageRef(block);
+    if (!ref.valid || ref.wiki) return false;
+    if (block.text().size() != 1 || block.text().at(0) != QChar::ObjectReplacementCharacter)
+        return false;
+    // Подпись — одна строка: перевод строки в alt в файле развалил бы картинку
+    // на текст, а U+2028 — на две строки на экране.
+    QString alt = caption;
+    alt.replace(QLatin1Char('\n'), QLatin1Char(' '));
+    alt.replace(QLatin1Char('\r'), QLatin1Char(' '));
+    alt.replace(QChar::LineSeparator, QLatin1Char(' '));
+    alt.replace(QChar::ParagraphSeparator, QLatin1Char(' '));
+    if (alt == ref.alt) return false;
+    QTextCursor edit(block);
+    edit.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+    QTextCharFormat format = edit.charFormat();
+    format.setProperty(ObjectAltProperty, alt);
+    format.setProperty(ObjectSourceProperty, alt);
+    edit.setCharFormat(format);
+    cursor.setPosition(block.position());
+    return true;
+}
+
 // Убрать блок-строку с текстом целиком — текст и разделитель, не тронув
 // соседей. Как в removeLineBlock: позиции и формат выжившего — ДО правки
 // (хэндлы протухают), формат выжившего ставится явно (Qt при слиянии
@@ -3504,6 +3531,22 @@ bool ZDocument::setImageAlign(QTextCursor& at, ImageAlign align) {
     return runLocalEdit(at, [this, align](QTextCursor& edit) {
         return setImageAlignAtCursor(d_->text, edit, align);
     });
+}
+
+bool ZDocument::setImageCaption(QTextCursor& at, const QString& caption) {
+    return runLocalEdit(at, [caption](QTextCursor& edit) {
+        return setImageCaptionAtCursor(edit, caption);
+    });
+}
+
+bool ZDocument::toggleImageCaption(QTextCursor& at, QChar mark) {
+    const BlockImageRef ref = blockImageRef(at.block());
+    if (!ref.valid || ref.wiki) return false;
+    // Прятать нечего: пустая подпись и так не показывается, а знак перед
+    // пустотой был бы мусором в файле.
+    if (ref.alt.trimmed().isEmpty()) return false;
+    if (mark != QLatin1Char('~') && mark != QLatin1Char('-')) return false;
+    return setImageCaption(at, captionWithHidingToggled(ref.alt, mark));
 }
 
 bool ZDocument::cutImageLine(QTextCursor& at) {
