@@ -71,6 +71,10 @@ NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
     // — и, отпуская удержание на этом, мы теряли каретку из виду при запуске
     // (владелец: «то слишком высоко, то в самом низу»).
     connect(verticalScrollBar(), &QScrollBar::actionTriggered, this, [this] { releaseCaret(); });
+    // Подсветка поиска лежит только на видимом — при прокрутке перекладывается.
+    connect(verticalScrollBar(), &QScrollBar::valueChanged, this, [this] {
+        if (!current_.matches.empty()) showMatchHighlights();
+    });
     // Щелчок по месту языка в полоске заводит поле ввода. Виджет просмотра
     // сам язык не правит: правки документа живут здесь.
     connect(this, &NoteView::codeStripClicked, this, [this](int block, const QRect& strip) {
@@ -1035,17 +1039,38 @@ int NoteEditor::findMatches(const QString& text, bool caseSensitive) {
 }
 
 void NoteEditor::showMatchHighlights() {
+    // ПОДСВЕЧИВАЕТСЯ ТОЛЬКО ВИДИМОЕ. Совпадений в большой заметке тысячи, а Qt
+    // на каждую подсветку считает прямоугольник (setExtraSelections →
+    // selectionRect → вёрстка строки): «the» в «Карамазовых» стоило 207 мс на
+    // каждое нажатие в поле поиска и столько же на снятие. Цена подсветки
+    // обязана зависеть от объёма ПОКАЗАННОГО (правило проекта), поэтому
+    // берётся окно с запасом по экрану сверху и снизу, а при прокрутке
+    // подсветка перекладывается заново — это O(видимого).
     QList<QTextEdit::ExtraSelection> selections;
-    selections.reserve(int(current_.matches.size()));
+    if (current_.matches.empty()) {
+        setExtraSelections(selections);
+        return;
+    }
+    const int height = viewport()->height();
+    const int from = cursorForPosition(QPoint(0, -height)).position();
+    const int to = cursorForPosition(QPoint(viewport()->width(), 2 * height)).position();
+    // Совпадения идут по возрастанию позиции: границы окна — двоичным поиском.
+    const auto lower = std::lower_bound(
+        current_.matches.begin(), current_.matches.end(), from,
+        [](const QTextCursor& match, int position) { return match.selectionEnd() < position; });
+    const auto upper = std::upper_bound(
+        current_.matches.begin(), current_.matches.end(), to,
+        [](int position, const QTextCursor& match) { return position < match.selectionStart(); });
+    selections.reserve(int(upper - lower) + 1);
     const QColor base = appearance().searchHighlight;
     // Текущее совпадение — контрастнее прочих. Не другим цветом: цвет в
     // оформлении один, а разной должна быть заметность.
     QColor pale = base;
     pale.setAlpha(110);
-    for (size_t i = 0; i < current_.matches.size(); ++i) {
+    for (auto it = lower; it < upper; ++it) {
         QTextEdit::ExtraSelection selection;
-        selection.cursor = current_.matches[i];
-        selection.format.setBackground(int(i) == current_.currentMatch ? base : pale);
+        selection.cursor = *it;
+        selection.format.setBackground(int(it - current_.matches.begin()) == current_.currentMatch ? base : pale);
         selections.append(selection);
     }
     setExtraSelections(selections);
