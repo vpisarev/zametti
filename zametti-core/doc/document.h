@@ -349,6 +349,19 @@ public:
     bool openFormula(QTextCursor& at);
     bool closeFormula(QTextCursor& at);
 
+    // ПРАВКА ТАБЛИЦЫ: объект ⇄ исходник, тем же приёмом (сессия 5). openTable
+    // раскрывает таблицу-объект дословным блоком с её исходником (каретка в
+    // начало или на смещение sourceOffset — в ячейку под щелчком); closeTable
+    // спрашивает судью файла (parsePieces) и заменяет блок тем, что прочёл бы
+    // файл: одна таблица — снова объект, иначе — то, что получилось. Байты
+    // файла от раскрытия не меняются.
+    bool openTable(QTextCursor& at, int sourceOffset = -1);
+    bool closeTable(QTextCursor& at);
+    // Переписать исходник объекта (таблицы, формулы) и рассудить блок заново
+    // тем же судьёй: замена в поиске, будущие глаголы ячеек. Уровень пункта
+    // сохраняется.
+    bool rewriteObjectSource(QTextCursor& at, int blockNumber, const QString& source);
+
     // Выделенное становится блоком кода, а блок кода — обратно обычным текстом.
     // Блоки при этом сливаются в один и разъезжаются обратно, а разметка внутри
     // кода пропадает: в коде её не бывает.
@@ -514,6 +527,8 @@ protected:
 
     // Общее тело insertLineAfter / continueItemAfter.
     bool insertAfterObject(QTextCursor& at, int blockIndex, bool continueItem);
+    // Судья: заменить блок тем, что прочёл бы файл из этого исходника.
+    bool rejudgeBlock(QTextCursor& at, int number, const QString& source);
 
     // ОДНА МЕСТНАЯ ПРАВКА СТРОЕНИЯ ЦЕЛИКОМ: скобка отмены, сама правка,
     // пересборка тронутого сборщиком, шов, сверка со сборкой в отладочной

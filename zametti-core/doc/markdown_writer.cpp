@@ -1330,6 +1330,13 @@ void gatherLine(const QTextBlock& block, Piece& piece, bool withRuns) {
             piece.text += format.property(ObjectSourceProperty).toString();
             continue;
         }
+        if (format.objectType() == TableObject) {
+            // Таблица — дословный кусок: исходник целиком, признак таблицы
+            // едет с ним (сборщику: собрать объект, а не литерал).
+            piece.text += format.property(ObjectSourceProperty).toString();
+            piece.table = true;
+            continue;
+        }
         if (format.objectType() == ImageObject) {
             const int32_t at = int32_t(piece.text.size());
             const QString alt = format.property(ObjectAltProperty).toString();

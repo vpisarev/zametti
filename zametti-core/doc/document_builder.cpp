@@ -25,6 +25,7 @@
 // вложенный подсписок.
 
 #include "document_builder.h"
+#include "table.h"
 
 #include "doc_model.h"
 
@@ -221,6 +222,13 @@ bool pieceIsImageObject(const Piece& piece) {
 
 bool pieceIsFormulaObject(const Piece& piece) {
     return !piece.raw && piece.kind == Kind::Math && !piece.text.isEmpty();
+}
+
+bool pieceIsTableObject(const Piece& piece) {
+    // Признак ставит разбор (md4c) или обход живого документа (объект был);
+    // разбор таблиц для показа обязан согласиться — иначе показывать нечего,
+    // и кусок остаётся дословным текстом.
+    return piece.raw && piece.table && parseTable(piece.text).valid;
 }
 
 qreal blockTopMargin(Kind kind, bool raw, bool previousIsVSpace, bool first,
@@ -508,9 +516,6 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
                 // пропадали ссылка и абзац (владелец увидел это ровно так:
                 // «сразу после загрузки видно, после возврата — нет»).
                 // Поставленный сборщиком, цвет одинаков при каждой сборке.
-                // Пока объекты показаны исходником (kObjectsShown), гасить его
-                // нечем: вёрстки поверх не будет, и прозрачный текст означал бы
-                // пустое место вместо формулы.
                 // Гасить исходник больше не нужно: его в тексте блока нет
                 // вовсе — там стоит объект, а исходник живёт в свойстве его
                 // формата. Прозрачный цвет был записью ВИДА в живой документ и
@@ -537,6 +542,19 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
         breaks.clear();
         charFmt.setObjectType(FormulaObject);
         charFmt.setProperty(ObjectSourceProperty, b.text);
+        text = QString(QChar::ObjectReplacementCharacter);
+    }
+    // ТАБЛИЦА — ОБЪЕКТ (сессия 5): дословный кусок с одним знаком U+FFFC;
+    // исходник в свойстве БЕЗ хвостового перевода строки — тот, как у кода,
+    // держит TrailingNewlineProperty, и обход вернёт его писателю сам.
+    const bool tableObject = pieceIsTableObject(b);
+    if (tableObject) {
+        breaks.clear();
+        QStringView body = b.text;
+        if (body.endsWith(u'\n')) body.chop(1);
+        charFmt.setObjectType(TableObject);
+        charFmt.setProperty(ObjectSourceProperty, body.toString());
+        charFmt.clearForeground();
         text = QString(QChar::ObjectReplacementCharacter);
     }
 
@@ -591,7 +609,7 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     // множится на высоту объекта, а не на высоту буквы: под фотографией в 340
     // точек 140 % оставляли полосу пустоты в полторы сотни точек. Объект сам
     // назвал свой размер — добавлять к нему ритм текста нечего.
-    const qreal lineFactor = (pieceIsImageObject(b) || pieceIsFormulaObject(b))
+    const qreal lineFactor = (imageObject || formulaObject || tableObject)
                                  ? 1.0
                                  : (list ? style.listLineHeightFactor()
                                          : style.lineHeightFactor());
@@ -610,7 +628,8 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     // обычного текст и его разметка переносов посчитаны выше, и трогать их
     // нельзя. Тот же завершающий перевод строки, что помечен признаком, из
     // текста снимается: он не начинает новую строку, а завершает последнюю.
-    if (literal) {
+    // Таблица-объект — исключение: её текст уже один знак.
+    if (literal && !tableObject) {
         breaks.clear();
         QStringView body = source;
         if (body.endsWith(u'\n')) body.chop(1);
@@ -628,7 +647,7 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     const int textStart = cursor.position();
     cursor.insertText(text, charFmt);
     markBreaks(target, textStart, breaks);
-    const bool object = imageObject || formulaObject;
+    const bool object = imageObject || formulaObject || tableObject;
     if (!literal && !object && !b.runs.empty())
         applySpans(target, textStart, b, lineStep, style);
     if (!object)

@@ -10,6 +10,7 @@
 #include "serializer.h"
 #include "marker.h"
 #include "settings.h"
+#include "table.h"
 
 #include <QFont>
 #include <QFontMetricsF>
@@ -3851,6 +3852,100 @@ bool ZDocument::closeFormula(QTextCursor& at) {
 #endif
     at = caretAtBlock(number);
     return true;
+}
+
+// --- ПРАВКА ТАБЛИЦЫ: ОБЪЕКТ ⇄ ИСХОДНИК ---------------------------------------
+//
+// Тот же приём, что у формулы: таблица-объект заменяется дословным блоком с
+// её исходником (обычный литеральный блок — буквы проходят, Enter даёт строку,
+// как в коде), а закрытие спрашивает СУДЬЮ ФАЙЛА: текст блока разбирается
+// parsePieces — ровно тем, чем читается файл, — и блок заменяется тем, что
+// получилось: одна таблица (объект снова), таблица и абзац после пустой
+// строки, или вовсе не таблица. Так «закрыл» == «перечитал файл», и картина
+// после Esc та же, что после ухода-возврата.
+
+bool ZDocument::openTable(QTextCursor& at, int sourceOffset) {
+    if (at.document() != &d_->text) return false;
+    const QTextBlock block = at.block();
+    if (!isTableObjectBlock(block)) return false;
+    const int number = block.blockNumber();
+    const QString source = tableSourceOf(block);
+
+    Piece piece;
+    piece.raw = true;
+    piece.text = source + QLatin1Char('\n');
+    piece.trailingNewline = block.blockFormat().boolProperty(TrailingNewlineProperty);
+    if (!piece.trailingNewline) piece.text.chop(1);
+    // Уровень пункта переживает раскрытие: таблица внутри пункта раскрывается
+    // дословным блоком внутри того же пункта.
+    piece.level = levelOf(block);
+    QTextCursor edit(at);
+    edit.beginEditBlock();
+    replaceBlocks(number, number, {piece});
+    settleSeam(number, number);
+    edit.endEditBlock();
+
+#ifndef NDEBUG
+    checkCanonical();
+#endif
+    // Каретка — в начало исходника (решение владельца) или в указанную ячейку.
+    at = caretAtBlock(number);
+    const QTextBlock opened = d_->text.findBlockByNumber(number);
+    if (sourceOffset > 0 && opened.isValid())
+        at.setPosition(opened.position() + qBound(0, sourceOffset, opened.length() - 1));
+    return true;
+}
+
+// Судья закрытия: блок → то, что прочёл бы файл. Общий для closeTable и для
+// переписывания исходника объекта (rewriteObjectSource).
+bool ZDocument::rejudgeBlock(QTextCursor& at, int number, const QString& source) {
+    const QTextBlock block = d_->text.findBlockByNumber(number);
+    if (!block.isValid()) return false;
+    const int level = levelOf(block);
+
+    std::vector<Piece> pieces;
+    NoteHeader ignored;
+    parsePieces(source.endsWith(QLatin1Char('\n')) ? source : source + QLatin1Char('\n'), pieces,
+                ignored);
+    if (pieces.empty()) {
+        // Пусто — пустая строка: пустого блока в документе не бывает.
+        Piece gap;
+        gap.kind = Kind::VSpace;
+        pieces.push_back(gap);
+    }
+    // Хвостовые пустые строки читатель отбрасывает — как и файл.
+    while (pieces.size() > 1 && !pieces.back().raw && pieces.back().kind == Kind::VSpace)
+        pieces.pop_back();
+    for (Piece& piece : pieces)
+        if (piece.level < 0 && !(piece.kind == Kind::VSpace && !piece.raw)) piece.level = level;
+
+    QTextCursor edit(at);
+    edit.beginEditBlock();
+    replaceBlocks(number, number, pieces);
+    settleSeam(number, number + int(pieces.size()) - 1);
+    edit.endEditBlock();
+
+#ifndef NDEBUG
+    checkCanonical();
+#endif
+    at = caretAtBlock(number);
+    return true;
+}
+
+bool ZDocument::closeTable(QTextCursor& at) {
+    if (at.document() != &d_->text) return false;
+    const QTextBlock block = at.block();
+    // Закрывать есть что только у ДОСЛОВНОГО блока, который таблицей читается:
+    // иначе это просто текст, и трогать его — значит трогать чужое.
+    if (!isRawBlock(block) || isTableObjectBlock(block)) return false;
+    const QString source = sourceTextOf(block);
+    if (!looksLikeTable(source)) return false;
+    return rejudgeBlock(at, block.blockNumber(), source);
+}
+
+bool ZDocument::rewriteObjectSource(QTextCursor& at, int blockNumber, const QString& source) {
+    if (at.document() != &d_->text) return false;
+    return rejudgeBlock(at, blockNumber, source);
 }
 
 // --- БЛОК КОДА ИЗ ВЫДЕЛЕНИЯ И ПЕРЕСТАНОВКА ПУНКТОВ --------------------------

@@ -2013,12 +2013,12 @@ int main(int argc, char** argv) {
             // порядок живёт в escapeActionFor: до лямбды внутри main() набор
             // не дотягивается, а до функции — вполне.
             switch (zametti::escapeActionFor(editor.codeLanguageEditor() != nullptr,
-                                             editor.editedTable() >= 0, !findBar.isHidden())) {
+                                             editor.caretInOpenObject(), !findBar.isHidden())) {
                 case zametti::EscapeAction::CloseLanguageEditor:
                     editor.closeCodeLanguageEditor();
                     return;
-                case zametti::EscapeAction::LeaveTableEdit:
-                    editor.leaveTableEdit();
+                case zametti::EscapeAction::CloseObject:
+                    editor.closeOpenObject();
                     return;
                 case zametti::EscapeAction::CloseFindBar:
                     findBar.hide();

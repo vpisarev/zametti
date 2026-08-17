@@ -74,6 +74,7 @@ struct DraftBlock {
     Marker marker = Marker::Bullet;
     bool checked = false;
     bool raw = false;
+    bool table = false;   // дословный кусок — таблица (сказал md4c)
     int8_t headingLevel = 0;
     HtmlKind html = HtmlKind::Comment;
     int16_t level = -1;
@@ -240,6 +241,7 @@ struct Ctx {
     // получает уровень пункта, а список вокруг живёт дальше.
     size_t rawEndDepth = 1;
     int    rawLevel = -1;
+    bool   rawIsTable = false;   // деградировавший блок — сама таблица
 
     // Текущий листовой блок.
     bool   inLeaf = false;
@@ -341,6 +343,7 @@ void demote(Ctx& c) {
     c.rawWasHeading = c.inLeaf && c.cur.kind == Kind::Heading;
     c.rawEndDepth = 1;
     c.rawLevel = -1;
+    c.rawIsTable = false;
 
     size_t keep = c.stack[1].docSizeAtEnter;
     for (size_t i = keep; i < c.doc.size(); ++i)
@@ -564,6 +567,7 @@ void demoteInsideItem(Ctx& c, int level) {
     c.rawWasHeading = false;
     c.rawEndDepth = c.stack.size() - 1;
     c.rawLevel = level;
+    c.rawIsTable = false;
 }
 
 // Лист уходит дословным куском: содержимое выбрасывается, границы остаются —
@@ -800,11 +804,17 @@ int enterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
                 c.stack.push_back(f);
                 demoteInsideItem(c, listDepthOf(c) - 1);
                 c.rawLines = rows;
+                c.rawIsTable = true;
                 return 0;
             }
             c.stack.push_back(f);
+            // Признак «это таблица» — только когда деградировал сам блок
+            // таблицы (стек: документ и она); таблица внутри цитаты роняет в
+            // дословное всю цитату, и та таблицей не является.
+            const bool tableItself = c.stack.size() == 2 && !c.raw;
             demote(c);
             c.rawLines = rows;
+            c.rawIsTable = tableItself;
             return 0;
         }
 
@@ -855,6 +865,7 @@ int leaveBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
             c.raw = false;
             DraftBlock raw;
             raw.level = int16_t(c.rawLevel);
+            raw.table = c.rawIsTable;
             c.doc.push_back(raw);
             c.ext.push_back(Extent{c.rawMin, c.rawMax, true, false, c.rawLines, c.rawWasHeading});
             c.rawMin = c.rawMax = kNoOffset;
@@ -862,6 +873,7 @@ int leaveBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
             c.rawWasHeading = false;
             c.rawEndDepth = 1;
             c.rawLevel = -1;
+            c.rawIsTable = false;
         }
         return 0;
     }
@@ -1516,8 +1528,10 @@ void finishExtents(Ctx& c) {
         size_t b = lines.start[first[i]];
         size_t e = lines.end(last[i]);
         const int level = c.doc[i].level;
+        const bool table = c.doc[i].table;
         c.doc[i] = level >= 0 ? c.draft.newRawInsideItem(QStringView(c.buf + b, e - b), level)
                               : c.draft.newRaw(QStringView(c.buf + b, e - b));
+        c.doc[i].table = table;
     }
 
     // Определения ссылок ("[1]: /a") md4c не отдаёт ни одним колбэком: он их
@@ -1848,6 +1862,7 @@ void parsePieces(QStringView markdown, std::vector<Piece>& blocks, NoteHeader& h
         piece.headingLevel = b.headingLevel;
         piece.checked = b.checked;
         piece.raw = b.raw;
+        piece.table = b.table;
         piece.info = toQString(c.draft.info(b));
         piece.text = toQString(c.draft.text(b));
         piece.trailingNewline = piece.text.endsWith(QLatin1Char('\n'));

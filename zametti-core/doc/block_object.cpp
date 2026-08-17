@@ -1,7 +1,6 @@
 #include "block_object.h"
 
 #include "doc_model.h"
-#include "table.h"
 
 #include <QTextBlock>
 #include <QTextDocument>
@@ -30,13 +29,14 @@ BlockObject objectOf(const QTextBlock& block) {
             formula.valid && formula.display)
             return {ObjectKind::Formula, block.blockNumber(), block.blockNumber()};
 
-    // Таблица — дословный кусок, который выглядит таблицей. Дословным его
-    // сделал разбор (md4c назвал таблицей то, что IR выразить не может), а
-    // здесь мы только узнаём его в лицо: первая строка с палкой, вторая —
-    // разделитель. Дословный кусок лежит одним блоком — и таблица тоже.
-    if (!isRawBlock(block)) return {};
-    if (!looksLikeTable(sourceTextOf(block))) return {};
-    return {ObjectKind::Table, block.blockNumber(), block.blockNumber()};
+    // Таблица — ОБЪЕКТ (сессия 5): дословный кусок, который md4c назвал
+    // таблицей, лежит одним знаком U+FFFC с исходником в свойстве. Раскрытая на
+    // правку таблица — обычный дословный блок с тем же текстом, и объектом она
+    // не является: буквы в неё проходят, как в раскрытую формулу. Спрашиваем
+    // формат, а не текст: сниффинга «похоже на таблицу» здесь больше нет.
+    if (isTableObjectBlock(block))
+        return {ObjectKind::Table, block.blockNumber(), block.blockNumber()};
+    return {};
 }
 
 BlockObject objectAt(const QTextDocument& doc, int blockNumber) {

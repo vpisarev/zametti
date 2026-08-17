@@ -77,6 +77,9 @@ bool pieceIsImageObject(const Piece& piece);
 // То же про формулу: выключная (`$$…$$`) занимает абзац целиком и показывается
 // объектом. Род блока у неё свой (Kind::Math), спрашивать разметку не нужно.
 bool pieceIsFormulaObject(const Piece& piece);
+// Таблица: дословный кусок, который md4c назвал таблицей и который наш разбор
+// таблиц читает (parseTable). Иначе — литеральный текст, как любой дословный.
+bool pieceIsTableObject(const Piece& piece);
 
 void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target,
                    BuildOptions options = {});

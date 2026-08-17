@@ -66,6 +66,8 @@ add_library(zametti-ui STATIC
     store_search.cpp
     export_pdf.h
     export_pdf.cpp
+    table_object.h
+    table_object.cpp
     note_view.h
     note_view.cpp
     editor_widget.h

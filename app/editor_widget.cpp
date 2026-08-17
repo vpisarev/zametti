@@ -231,12 +231,6 @@ void NoteEditor::snapCaretOffImage() {
 // человек имеет право начать с «   слово». Кода это не касается: там
 // хвостовые пробелы — содержимое.
 void NoteEditor::onCaretMoved() {
-    // Каретка забрела в спрятанную строку таблицы — подтягиваем её на видимую.
-    // Qt по невидимым блокам её водит охотно (пробник), и без этого каретка
-    // пропадала бы из виду посреди сетки. Одно правило на все пути входа:
-    // стрелки, щелчок, Home/End, поиск.
-    if (!inHistory() && snapCaretOutOfHiddenTable()) return;
-
     if (tidying_ || recordingSuspended_ || changingLayout()) {
         current_.lastLine = textCursor();
         return;
@@ -255,17 +249,17 @@ void NoteEditor::onCaretMoved() {
     // таблицы: у формулы блок ОДИН, и «рядом» тут значит «в нём же». Какой
     // блок был раскрыт, помнить не нужно — свернуть надо ТОТ, ИЗ КОТОРОГО
     // ушли, и его номер мы только что запомнили сами (lastLine).
-    if (!current_.lastLine.isNull() && current_.lastLine.document() == document() &&
+    // ТО ЖЕ У ТАБЛИЦЫ: ушли из раскрытого дословного блока — судья файла решает,
+    // что он теперь (closeTable). Оба хука — только в живой заметке: в режиме
+    // истории и в читалке править нечего.
+    if (!inHistory() && !isReadOnly() && !current_.lastLine.isNull() &&
+        current_.lastLine.document() == document() &&
         current_.lastLine.blockNumber() != textCursor().blockNumber()) {
         QTextCursor left = current_.lastLine;
-        runNoteEdit([&left](ZDocument& note, QTextCursor&) { return note.closeFormula(left); });
+        if (!runNoteEdit([&left](ZDocument& note, QTextCursor&) { return note.closeFormula(left); }))
+            runNoteEdit([&left](ZDocument& note, QTextCursor&) { return note.closeTable(left); });
     }
 
-    if (editedTable() >= 0) {
-        const int near = tableNearCaret();
-        if (near < 0) leaveTableEdit();
-        else setEditedTable(near);
-    }
     const QTextCursor now = textCursor();
     if (!current_.lastLine.isNull() && current_.lastLine.document() == document()) {
         const QString text = current_.lastLine.block().text();
@@ -931,7 +925,6 @@ void NoteEditor::applyZoom(qreal value) {
 
     NoteView::setZoom(value);
     applyContentWidth();
-    syncTables();
     syncFormulas();
 
     if (held.isValid()) {
@@ -1560,6 +1553,22 @@ void NoteEditor::mouseDoubleClickEvent(QMouseEvent* event) {
             event->accept();
             return;
         }
+        // ПО ТАБЛИЦЕ — раскрыть исходник, каретка в ячейку под щелчком: ряд по
+        // вертикали, колонка по горизонтали (карта точка → ячейка → смещение —
+        // фундамент будущей правки по ячейкам).
+        if (object.kind == ObjectKind::Table) {
+            const QPointF documentPoint = QPointF(event->position()) +
+                                          QPointF(horizontalScrollBar()->value(),
+                                                  verticalScrollBar()->value());
+            int offset = -1;
+            (void)tableCellAt(documentPoint, nullptr, nullptr, nullptr, &offset);
+            setTextCursor(at);
+            runNoteEdit([offset](ZDocument& note, QTextCursor& caret) {
+                return note.openTable(caret, offset);
+            });
+            event->accept();
+            return;
+        }
     }
     NoteView::mouseDoubleClickEvent(event);
 }
@@ -1719,8 +1728,8 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
     // кончается (решение владельца: Enter провалиться, Esc выйти, Ctrl+Z —
     // если не понравилось). Стоит ДО слоя объектов: пока формула раскрыта,
     // объекта в этом блоке нет, и слой о ней ничего не знает.
-    if (event->key() == Qt::Key_Escape && !isReadOnly() &&
-        runNoteEdit([](ZDocument& note, QTextCursor& at) { return note.closeFormula(at); })) {
+    // И РАСКРЫТУЮ ТАБЛИЦУ — тем же жестом.
+    if (event->key() == Qt::Key_Escape && !isReadOnly() && !inHistory() && closeOpenObject()) {
         event->accept();
         return;
     }
@@ -2020,7 +2029,7 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
     // и буквы обязаны попадать в него как всюду. Список правимых один на все
     // виды: заведи третий вид со своей проверкой — и он забудет либо про
     // запрет, либо про правку (мы уже забывали и то, и другое).
-    where.onObject = own.valid() && own.first != editedTable();
+    where.onObject = own.valid();
     // Сочетание переключения (Ctrl+Space, toggleTaskKey) — настраиваемое, и
     // слой узнаёт его признаком, а не кодом клавиши. Сравнение то же, что у
     // прочих сочетаний в keyPressEvent: Qt сопоставляет с учётом раскладки.
@@ -2034,8 +2043,8 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
     const QTextBlock below = block.next();
     const BlockObject objectAbove = objectOf(above);
     const BlockObject objectBelow = objectOf(below);
-    where.objectAbove = objectAbove.valid() && objectAbove.first != editedTable();
-    where.objectBelow = objectBelow.valid() && objectBelow.first != editedTable();
+    where.objectAbove = objectAbove.valid();
+    where.objectBelow = objectBelow.valid();
     if (isVSpaceBlock(above)) {
         const BlockObject overGap = objectOf(above.previous());
         // «Через пустую» — когда без неё блок слипся бы с объектом; пустой блок
@@ -2084,11 +2093,11 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
 
     switch (action) {
         case ObjectAction::Edit: {
-            // Править таблицу — значит показать её исходник и встать в него.
+            // ПРАВИТЬ ТАБЛИЦУ — ЗНАЧИТ РАСКРЫТЬ ЕЁ В ИСХОДНИК, как формулу:
+            // объект заменяется дословным блоком, каретка — в начало (решение
+            // владельца); Esc или уход каретки сворачивают судьёй файла.
             if (own.kind == ObjectKind::Table) {
-                setEditedTable(own.first);
-                QTextCursor at(document()->findBlockByNumber(own.first));
-                setTextCursor(at);
+                runNoteEdit([](ZDocument& note, QTextCursor& at) { return note.openTable(at); });
                 return true;
             }
             // ПРАВИТЬ ФОРМУЛУ — ЗНАЧИТ РАСКРЫТЬ ЕЁ В ИСХОДНИК. Объект
@@ -2167,7 +2176,6 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
             runNoteEdit([first, last](ZDocument& note, QTextCursor& at) {
                 return note.removeBlocks(at, first, last);
             });
-            setEditedTable(-1);
             return true;
         }
         case ObjectAction::StepOver: {
@@ -3744,67 +3752,36 @@ void NoteEditor::rememberCurrentCaretInApp() const {
         {textCursor().position(), textCursor().anchor(), verticalScrollBar()->value()});
 }
 
-EscapeAction escapeActionFor(bool languageEditorOpen, bool editingTable, bool findBarVisible) {
+EscapeAction escapeActionFor(bool languageEditorOpen, bool caretInOpenObject, bool findBarVisible) {
     if (languageEditorOpen) return EscapeAction::CloseLanguageEditor;
-    // Правка таблицы закрывается раньше панели поиска по той же причине, по
-    // которой раньше неё закрывается поле языка: сперва уходит то, что открыто
-    // ПОВЕРХ текста и держит каретку.
-    if (editingTable) return EscapeAction::LeaveTableEdit;
+    // Раскрытый объект (формула, таблица) сворачивается раньше панели поиска по
+    // той же причине, по которой раньше неё закрывается поле языка: сперва
+    // уходит то, что открыто ПОВЕРХ текста и держит каретку.
+    if (caretInOpenObject) return EscapeAction::CloseObject;
     if (findBarVisible) return EscapeAction::CloseFindBar;
     return EscapeAction::Nothing;
 }
 
-// Каретка ушла из раскрытой формулы — сворачиваем её обратно в объект.
-//
-// Своего признака «сейчас правят» у формулы больше нет и не нужно: раскрытая
-// формула — это обычный абзац с исходником, и узнать её можно у самого
-// документа. Прежний editedFormula_ был именно таким признаком, и жил он
-// потому, что исходник лежал в блоке всегда.
-void NoteEditor::leaveFormulaEdit() {
-    runNoteEdit([](ZDocument& note, QTextCursor& at) { return note.closeFormula(at); });
+
+// СВЕРНУТЬ РАСКРЫТЫЙ ОБЪЕКТ ПОД КАРЕТКОЙ — формулу или таблицу. Один вход для
+// Esc из редактора и из ярлыка окна (EscapeAction::CloseObject): ярлык окна
+// перехватывает Esc раньше виджета, и без общей двери Esc в редакторе не
+// доходил до closeFormula вовсе.
+bool NoteEditor::closeOpenObject() {
+    if (inHistory() || isReadOnly()) return false;
+    if (runNoteEdit([](ZDocument& note, QTextCursor& at) { return note.closeFormula(at); }))
+        return true;
+    return runNoteEdit([](ZDocument& note, QTextCursor& at) { return note.closeTable(at); });
 }
 
-void NoteEditor::leaveTableEdit() {
-    if (editedTable() < 0) return;
-    setEditedTable(-1);
-    reparseAfterTableEdit();
-}
-
-// ПЕРЕЧИТАТЬ ЗАМЕТКУ ПОСЛЕ ПРАВКИ ТАБЛИЦЫ — и только после неё.
-//
-// Правило владельца: состояние таблицы проверяется на ВЫХОДЕ из правки,
-// промежуточные состояния законно бывают не таблицами. Но есть и вторая
-// причина, техническая: набор внутри дословного куска склеивает его строки в
-// один абзац с мягкими переносами (та же склейка, что нашлась на этапе 11 в
-// блоках кода). В файле от этого ничего не меняется — мягкие переносы
-// сериализуются переводами строк, — а вот в живом документе таблицы больше
-// нет, и сетка не возвращается до перечитывания заметки.
-//
-// Поэтому на выходе из правки заметка перечитывается ровно так, как при
-// открытии файла: текст → parse → сборка. Шага истории это не заводит: текст
-// не изменился ни на байт, изменилось только его разбиение на блоки.
-void NoteEditor::reparseAfterTableEdit() {
-    const int at = textCursor().position();
-    std::vector<Piece> fresh;
-    NoteHeader ignored;
-    parsePieces(writePieces(piecesOf(*document())), fresh, ignored);
-
-    recordingSuspended_ = true;
-    // Перечитывание после правки таблицы — тоже правка: одним шагом отмены и
-    // без сброса стека.
-    {
-        QTextCursor group(document());
-        group.beginEditBlock();
-        rebuild(fresh, at, viewAnchor(), &fresh, /*asEdit=*/true);
-        group.endEditBlock();
-    }
-    recordingSuspended_ = false;
-
-    // Каретка встаёт НА таблицу, если она снова таблица: выйти из правки —
-    // значит вернуться к выбранной таблице, а не улететь в текст.
-    const BlockObject object = objectOf(textCursor().block());
-    if (object.kind == ObjectKind::Table)
-        setTextCursor(QTextCursor(document()->findBlockByNumber(object.last)));
+// Каретка стоит в раскрытом объекте (формуле или таблице), который Esc свернёт.
+bool NoteEditor::caretInOpenObject() const {
+    if (inHistory() || isReadOnly()) return false;
+    const QTextBlock block = textCursor().block();
+    if (isRawBlock(block)) return !isTableObjectBlock(block) && looksLikeTable(sourceTextOf(block));
+    if (kindOf(block) != Kind::Paragraph) return false;
+    const BlockFormulaRef ref = blockFormulaRef(block);
+    return ref.valid && ref.display;
 }
 
 void installHistoryShortcuts(QWidget* window, NoteEditor& editor) {

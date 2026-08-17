@@ -81,13 +81,6 @@ qreal imageGap(qreal zoom) { return 6.0 * zoom; }
 // построчных времён и теперь всегда истинны — их читают отрисовка плашки и
 // кнопка копирования.
 
-// Собственное нижнее поле блока — то, которое стоит в нём НЕ ради картинки.
-// Пока такое одно: полоска с языком и кнопкой у блока кода.
-qreal ownBottomMargin(const QTextBlock& block, const CodePlate& plate) {
-    if (isRawBlock(block) || kindOf(block) != Kind::Code) return 0.0;
-    return plate.strip;
-}
-
 QPainterPath platePath(const QRectF& rect, qreal radius, bool roundTop, bool roundBottom) {
     QPainterPath path;
     if (radius <= 0.0 || (!roundTop && !roundBottom)) {
@@ -985,151 +978,9 @@ void NoteView::syncImageSpace(bool whole) {
     // именно у вёрстки объект спросит свою высоту.
     syncFormulas();
 
-    // ВРЕМЕННЫЙ ШАГ НАЗАД (kObjectsShown в doc_model.h): резерв места под
-    // ТАБЛИЦУ вид всё ещё держит полями блоков, и пока держит, показывать её
-    // нельзя. У фотографии и у формулы этого резерва больше нет: их размер
-    // знают они сами.
-    if (!kObjectsShown) return;
-    if (syncingImages_) return;
-    syncingImages_ = true;
-    // Пометка на весь вызов: всё, что здесь пишется, — резерв места под объекты,
-    // то есть облик. Узкие пометки вокруг отдельных записей оставляли щели,
-    // в которые проваливался сигнал от предыдущей записи.
-    const LayoutChange mark(this);
-
-    // Таблицы прячут блоки и меняют высоты — резерв считается уже по новой
-    // раскладке.
-    syncTables();
-
-    // Полный обход — когда меняется не текст, а всё сразу: ширина колонки,
-    // масштаб, сам документ. Частичный — когда правка задела кусок и её
-    // границы нам сказали. Без границ полный: верно всегда, просто дороже.
-    const bool partial = !whole && !imageDirty_.isNull();
-    int first = 0;
-    int afterLast = document()->blockCount() - 1;
-    if (partial) {
-        // Соседний блок с каждой стороны — про запас, как и в уборке: правка
-        // на границе блоков сливает и делит их.
-        first = qMax(0, document()->findBlock(imageDirty_.selectionStart()).blockNumber() - 1);
-        afterLast = qMin(afterLast,
-                         document()->findBlock(imageDirty_.selectionEnd()).blockNumber() + 1);
-    }
-    imageDirty_ = QTextCursor();
-
-    // РАЗМЕТКУ ДОВОДИМ ДО КОНЦА ПЕРЕД ОБХОДОМ. Резерв считается от высоты,
-    // которую Qt блоку ОТВЁЛ, а размечает он лениво — и на свежем документе
-    // отдал бы устаревшие числа либо нули.
-    //
-    // Ошибка от этого выходила плавающая, «через раз»: при запуске заметка
-    // открывается ещё ДО show(), в узком окне, и колонку двигает уже первое
-    // изменение размера. Успела разметка обновиться до нашего обхода — всё
-    // сходилось; не успела — фотографии наезжали друг на друга. Переключение
-    // на другую заметку чинило картину, потому что там обход шёл уже в готовом
-    // окне.
-    //
-    // documentSize() именно доводит разметку, а не спрашивает готовое: у
-    // QPlainTextDocumentLayout это единственный дешёвый способ.
-    document()->documentLayout()->documentSize();
-
-    const qreal gap = imageGap(displayScale());
-    const CodePlate plate = codePlate(docStyle());
-    QTextBlock block = document()->findBlockByNumber(first);
-    for (int number = first; number <= afterLast && block.isValid();
-         ++number, block = block.next()) {
-        // РЕЗЕРВ СЧИТАЕТСЯ БЕЗ РАСКЛАДКИ. Высота фотографии выводится из
-        // размеров файла и ширины колонки — ни то, ни другое к QTextLayout
-        // отношения не имеет. А imageGeometry без раскладки возвращает
-        // пустоту, потому что ей нужно ещё и ПОЛОЖЕНИЕ строки, нужное для
-        // отрисовки, но не для резерва.
-        //
-        // Я связал эти две вещи, и вышло вот что: при распахивании окна на
-        // весь экран колонка выросла с 67 до 268, но раскладку успели получить
-        // не все блоки — резерв поправился у 91 картинки из 118, а остальные
-        // остались с полем от узкого окна и наехали друг на друга. Следующий
-        // полный обход считал, что всё уже верно, и не трогал ничего;
-        // переключение заметки чинило, потому что там документ строился заново
-        // в уже готовом окне.
-        qreal want = 0.0;
-        const BlockImageRef ref = blockImageRef(block);
-        if (ref.valid) {
-            if (const CachedImage* entry = imageInfo(ref.path)) {
-                qreal widthHint = ref.widthHint;
-                if (block.blockNumber() == imageDragBlock_ && imageDragWidth_ > 0.0)
-                    widthHint = imageDragWidth_;
-                const QSizeF size = entry->framed()
-                                        ? frameBoxSize(block, *entry)
-                                        : imageDisplaySize(entry->declared, widthHint, block);
-                if (!size.isEmpty()) {
-                    // Отведённая высота у неразмеченного блока — ноль, и это
-                    // не беда: как только Qt его разметит, поле останется
-                    // верным, а лишняя строка добавится к зазору, а не съест
-                    // фотографию.
-                    const qreal allotted =
-                        document()->documentLayout()->blockBoundingRect(block).height();
-                    // Вылет уголков закладывается сверху и снизу — всегда, а
-                    // не только у выбранной: резерв не должен зависеть от того,
-                    // куда сейчас поставили каретку.
-                    want = qMax(0.0, size.height() + 2 * imageCornerOverhang() + gap -
-                                         allotted);
-                }
-            }
-        }
-        QTextBlockFormat format = block.blockFormat();
-        // СОБСТВЕННОЕ нижнее поле блока прибавляется к резерву, а не стирается
-        // им. Прежде здесь стоял ноль и рядом уговор «нижнее поле всех прочих
-        // блоков — ноль по построению сборщика»; уговор кончился вместе с
-        // плашкой кода, у последней строки которой поле своё. Обход стирал его
-        // на первой же правке — блок кода терял нижнее поле, и плашка
-        // обрезалась по последней строке. Поймал набор, а не глаз.
-        want += ownBottomMargin(block, plate);
-        // Место под вёрстку формулы здесь больше не считается: формула —
-        // объект, её размер называет она сама (formulaBandFor). Прежде тут
-        // стояли две ручки — ужатие высоты строки и добор нижним полем, — и обе
-        // были записями вида в живой документ.
-        const qreal wantLine = -1.0;
-        // Резерв под сетку таблицы: он висит на ПОСЛЕДНЕЙ её строке — перед
-        // спрятанными блоками Qt поле игнорирует (пробник). Высота берётся
-        // из раскладки, а из неё вычитается то, что блок занимает сам.
-        for (const TableRender& table : std::as_const(tables_)) {
-            if (block.blockNumber() != table.last) continue;
-            const qreal allotted =
-                document()->documentLayout()->blockBoundingRect(block).height();
-            want += qMax(0.0, table.layout.height - allotted);
-            break;
-        }
-        // Сравнение с допуском: каждое выставление формата переразмечает
-        // документ.
-        const bool marginSame = std::fabs(format.bottomMargin() - want) < 0.5;
-        const bool lineSame = wantLine < 0.0 || std::fabs(format.lineHeight() - wantLine) < 0.5;
-        if (marginSame && lineSame) continue;
-        format.setBottomMargin(want);
-        if (wantLine >= 0.0) format.setLineHeight(wantLine, QTextBlockFormat::FixedHeight);
-        // ВЫСОТА БЛОКА ЦЕЛИКОМ НАША, а не «строка плюс поле». Иначе она
-        // складывается из двух слагаемых, одно из которых считает Qt, — и
-        // стоит ему дать неразмеченному блоку ноль вместо высоты строки, как
-        // сумма разъезжается: фотографии наезжают друг на друга ровно на эту
-        // высоту. Проявлялось при ПОВТОРНОМ открытии длинной заметки: Qt
-        // размечает лениво, и у хвоста разметки ещё нет.
-        QTextCursor cursor(block);
-        cursor.setBlockFormat(format);
-    }
-
-    // Нижнее поле ПОСЛЕДНЕГО блока Qt в высоту документа не берёт вовсе —
-    // замер: поле 500 на последнем блоке даёт +0, а такое же поле рамки даёт
-    // +500. Фотография в последней строке из-за этого не пролезала под нижнюю
-    // кромку: прокрутка кончалась раньше, чем она. Недостачу добавляем полем
-    // рамки — единственным, которое Qt считает.
-    const QTextBlock last = document()->lastBlock();
-    const qreal missing = last.isValid() ? last.blockFormat().bottomMargin() : 0.0;
-    const qreal want =
-        docStyle().verticalMargin() * QFontMetricsF(baseFont()).height() + missing;
-    QTextFrameFormat frame = document()->rootFrame()->frameFormat();
-    // С допуском: каждое выставление формата рамки переразмечает документ.
-    if (std::fabs(frame.bottomMargin() - want) >= 0.5) {
-        frame.setBottomMargin(want);
-        document()->rootFrame()->setFrameFormat(frame);
-    }
-    syncingImages_ = false;
+    // Места под объекты в документе больше не резервирует никто: фотография,
+    // формула и таблица — объекты, их размер называют они сами (intrinsicSize),
+    // и записей вида в живой документ здесь не осталось ни одной.
 }
 
 QString NoteView::frameText(const QTextBlock& block, const CachedImage& entry) const {
@@ -1245,6 +1096,18 @@ void NoteView::paintImageObject(QPainter& painter, const ImageBox& geometry,
 // Уголки выбранной фотографии рисуются НЕ в обработчике объекта, а поверх
 // готовой страницы. Причина замерена: выделение Qt кладёт на объект СВОИМ
 // проходом, уже после drawObject, и уголки под ним пропадали.
+// ВЫБРАН ЛИ ОБЪЕКТ — ОДНО ПРАВИЛО НА ФОТО, ФОРМУЛУ И ТАБЛИЦУ. Выделение,
+// задевшее объект, и каретка, вставшая на его блок, — это одно и то же: «вот
+// этот объект», и уголки-мишени рисуются ему. Три копии этого условия
+// разошлись бы на третьем объекте.
+bool NoteView::objectSelected(const QTextBlock& block) const {
+    const QTextCursor caret = textCursor();
+    return caret.hasSelection()
+               ? qMin(caret.anchor(), caret.position()) < block.position() + block.length() &&
+                     qMax(caret.anchor(), caret.position()) > block.position()
+               : caret.block() == block;
+}
+
 void NoteView::paintImageMarks(QPainter& painter, const QTextBlock& block) {
     const ImageBox box = imageBoxFor(block);
     if (!box.valid) return;
@@ -1262,13 +1125,7 @@ void NoteView::paintImageMarks(QPainter& painter, const QTextBlock& block) {
 
     // Уголки — выбранной фотографии. Выделение, задевшее объект, и каретка,
     // вставшая на его строку, — это одно и то же: «вот эта фотография».
-    const QTextCursor caret = textCursor();
-    const bool selected =
-        caret.hasSelection()
-            ? qMin(caret.anchor(), caret.position()) < block.position() + block.length() &&
-                  qMax(caret.anchor(), caret.position()) > block.position()
-            : caret.block() == block;
-    if (!selected) return;
+    if (!objectSelected(block)) return;
     painter.save();
     // УГОЛКИ ОХВАТЫВАЮТ И ПОДПИСЬ: снимок и подпись — один объект, и выбраны
     // они вместе. Нижняя пара уголков уходит под подпись, верхняя остаётся у
@@ -1306,6 +1163,8 @@ void NoteView::attachObjectHandlers(QTextDocument* doc) {
     doc->documentLayout()->registerHandler(ImageObject, imageObjects_);
     if (formulaObjects_ == nullptr) formulaObjects_ = new FormulaObjectHandler(this);
     doc->documentLayout()->registerHandler(FormulaObject, formulaObjects_);
+    if (tableObjects_ == nullptr) tableObjects_ = new TableObjectHandler(this);
+    doc->documentLayout()->registerHandler(TableObject, tableObjects_);
 }
 
 void NoteView::setDocument(QTextDocument* doc) {
@@ -1405,7 +1264,6 @@ void NoteView::renderSlice(QPainter& painter, const QRectF& documentRect, qreal 
     context.clip = documentRect;
     document()->documentLayout()->draw(&painter, context);
 
-    paintTables(painter, documentRect);
 
     // Дальше — слово в слово то же, что в paintEvent: маркеры, черты,
     // фотографии. Разошлись бы эти два обхода — бумага перестала бы совпадать
@@ -1427,6 +1285,7 @@ void NoteView::renderSlice(QPainter& painter, const QRectF& documentRect, qreal 
         // не переведены.
         paintImageMarks(painter, block);
         paintFormulaMarks(painter, block);
+        paintTableMarks(painter, block);
     }
 
     painter.restore();
@@ -1634,7 +1493,9 @@ bool NoteView::caretOnDrawnObject() {
         case ObjectKind::Image:
             return imageGeometry(block).valid;
         case ObjectKind::Table:
-            return object.first != editedTable_;
+            // Таблица-объект показана сеткой всегда: раскрытая на правку —
+            // обычный дословный блок, объектом не является и сюда не попадает.
+            return true;
         case ObjectKind::Formula:
             // Формула-ОБЪЕКТ показана вёрсткой всегда: раскрытая на правку
             // формула объектом уже не является (objectOf спрашивает род блока),
@@ -1732,13 +1593,7 @@ void NoteView::paintFormulaMarks(QPainter& painter, const QTextBlock& block) {
     // Уголки — выбранной. С небольшим отступом наружу: впритык обнимающие дробь
     // читаются как часть формулы, а не как «выбрано».
     if (exportRatio_ <= 0.0) {
-        const QTextCursor caret = textCursor();
-        const bool selected =
-            caret.hasSelection()
-                ? qMin(caret.anchor(), caret.position()) < block.position() + block.length() &&
-                      qMax(caret.anchor(), caret.position()) > block.position()
-                : caret.block() == block;
-        if (selected) {
+        if (objectSelected(block)) {
             const qreal pad = imageCornerOverhang();
             paintImageCorners(painter, box.adjusted(-pad, -pad, pad, pad));
         }
@@ -1756,384 +1611,89 @@ int NoteView::formulaAtPoint(const QPointF& documentPoint) {
     return !rect.isEmpty() && rect.contains(documentPoint) ? block.blockNumber() : -1;
 }
 
-// --- таблицы ----------------------------------------------------------------
+// --- таблицы-объекты --------------------------------------------------------
 //
-// Показ таблицы устроен ровно как показ картинки: исходные строки прячутся,
-// место резервируется полем блока, а сетка рисуется по геометрии поверх. Три
-// вещи выяснены пробником, а не документацией:
-//
-//   * QTextBlock::setVisible(false) действительно убирает блок из раскладки:
-//     высота документа падает, блок получает нулевой прямоугольник;
-//   * НИЖНЕЕ ПОЛЕ ПЕРЕД СПРЯТАННЫМИ БЛОКАМИ Qt ИГНОРИРУЕТ. Поле в 120 пикселей
-//     на блоке, за которым идут невидимые, не сдвинуло следующий видимый ни на
-//     пиксель. Поэтому резерв висит на ПОСЛЕДНЕЙ строке таблицы (за ней идёт
-//     видимый блок), а прячутся все, кроме неё;
-//   * каретка по спрятанным блокам ходит: стрелка вниз с видимой строки
-//     приводит её в невидимую. Это придётся ловить отдельно — на слое объекта.
-void NoteView::syncTables() {
-    // ВРЕМЕННЫЙ ШАГ НАЗАД (kObjectsShown): таблица показана строками исходника,
-    // сетки поверх нет — и прятать строки не надо.
-    if (!kObjectsShown) return;
-    // Место, в которое вписывается таблица, считается ОТ ЕЁ ЛЕВОГО КРАЯ.
-    //
-    // Таблица стоит там же, где начинается колонка текста, — то есть уже
-    // отступив левое поле рамки. Первая редакция брала полную ширину вьюпорта,
-    // и в узком окне таблица уезжала за правый край ровно на это поле: текст
-    // обрезался на «в какую коло…». Видно только глазами и только в узком
-    // окне — то самое, ради чего в матрице обязательны оба размера.
+// Таблица — объект (см. table_object.h): один знак U+FFFC, исходник в свойстве,
+// полоса во всю ширину колонки, сетка поверх готовой страницы. Прежняя
+// машинерия — прятание строк исходника, резерв места полями, подтягивание
+// каретки со спрятанных строк, признак «сейчас правят» — снесена вместе с
+// kObjectsShown: правка таблицы теперь флип объект ⇄ исходник, как у формулы.
+
+// Место, в которое вписывается таблица: колонка текста и, если не влезла, поля
+// до ширины окна (правило владельца «как картинки»). Считается ОТ ЛЕВОГО КРАЯ
+// блока — с учётом отступа пункта списка (объект внутри пункта отступает вместе
+// с ним, решение владельца).
+TableSpace NoteView::tableSpaceFor(const QTextBlock& block) const {
+    TableSpace space;
+    space.columnWidth = columnWidth(block);
     const QTextFrameFormat frame = document()->rootFrame()->frameFormat();
-    const qreal columnWidth = document()->textWidth() > 0
-                                  ? document()->textWidth() - frame.leftMargin() -
-                                        frame.rightMargin()
-                                  : viewport()->width();
-    const qreal margin = qMax(0.0, qreal(viewport()->width()) - frame.leftMargin() - 8);
-    const qreal fullWidth = qMax(columnWidth, margin);
-
-    QHash<int, TableRender> fresh;
-    for (QTextBlock block = document()->begin(); block.isValid(); block = block.next()) {
-        const BlockObject object = objectOf(block);
-        if (object.kind != ObjectKind::Table || object.first != block.blockNumber()) continue;
-        // Правят исходником — показываем как есть: строки на месте, сетки нет.
-        if (object.first == editedTable_) continue;
-
-        // Исходник таблицы: строки блоков, как они есть.
-        QString source;
-        for (int number = object.first; number <= object.last; ++number) {
-            source += document()->findBlockByNumber(number).text();
-            source += QLatin1Char('\n');
-        }
-
-        TableRender render;
-        const TableRender* had = tables_.contains(object.first) ? &tables_[object.first] : nullptr;
-        if (had != nullptr && had->source == source && qFuzzyCompare(had->width, fullWidth) &&
-            qFuzzyCompare(had->zoom, displayScale())) {
-            render = *had;   // ничего не изменилось — считать заново незачем
-        } else {
-            TableSpace space;
-            space.columnWidth = columnWidth;
-            space.fullWidth = fullWidth;
-            space.zoom = displayScale();
-            render.layout = layoutTable(parseTable(source), space, docStyle());
-            render.source = source;
-            render.width = fullWidth;
-            render.zoom = displayScale();
-        }
-        render.first = object.first;
-        render.last = object.last;
-        if (render.layout.rows <= 0) continue;
-        fresh.insert(object.first, render);
-    }
-    tables_ = fresh;
-
-    // Прячем всё, кроме последней строки: на ней висит резерв (см. выше).
-    //
-    // ПРИЗНАК ПЕРЕКЛАДКИ ВОЗВРАЩАЕМ, А НЕ ГАСИМ. Он уже мог быть поднят выше
-    // по стеку — пересборкой документа, — и слепое `= false` в конце гасило
-    // чужой признак посреди чужой работы: правки, шедшие следом, записывались
-    // в историю как настоящие, и одного Ctrl+Z переставало хватать. Поймал
-    // набор редактора («смена облика шагов истории не заводит»), и это ровно
-    // тот случай, когда беда видна только в чужом наборе.
-    const LayoutChange mark(this);
-    int dirtyFrom = -1;
-    int dirtyTo = -1;
-    for (QTextBlock block = document()->begin(); block.isValid(); block = block.next()) {
-        bool hide = false;
-        for (const TableRender& table : std::as_const(tables_)) {
-            if (block.blockNumber() >= table.first && block.blockNumber() < table.last) {
-                hide = true;
-                break;
-            }
-        }
-        if (block.isVisible() == !hide) continue;
-        block.setVisible(!hide);
-        if (dirtyFrom < 0) dirtyFrom = block.position();
-        dirtyTo = block.position() + block.length();
-    }
-
-    // ПОСЛЕ СМЕНЫ ВИДИМОСТИ БЛОКИ НАДО ПОМЕТИТЬ ГРЯЗНЫМИ.
-    //
-    // setVisible(true) возвращает блок в документ, но раскладку ему Qt сама не
-    // пересчитывает: он остаётся с нулевой высотой, то есть невидимым на
-    // экране. Владелец увидел ровно это — «щёлкаю по таблице, жму Enter, а
-    // показывается только последняя строка»: строки возвращались, высоты у них
-    // не было. В моём пробнике markContentsDirty стоял, и потому пробник этой
-    // беды не показал — а в syncTables я его не перенёс.
-    if (dirtyFrom >= 0) document()->markContentsDirty(dirtyFrom, dirtyTo - dirtyFrom);
+    const qreal margin = qMax(0.0, qreal(viewport()->width()) - frame.leftMargin() -
+                                       block.blockFormat().leftMargin() - 8);
+    space.fullWidth = qMax(space.columnWidth, margin);
+    space.zoom = displayScale();
+    return space;
 }
 
-void NoteView::paintTables(QPainter& painter, const QRectF& visible) {
-    // ВРЕМЕННЫЙ ШАГ НАЗАД (kObjectsShown): сетки нет, видны строки исходника.
-    if (!kObjectsShown) return;
-    if (tables_.isEmpty()) return;
-    const QAbstractTextDocumentLayout* layout = document()->documentLayout();
-    const ZSettings::Tables& look = settings().tables();
-
-    painter.save();
-    painter.setRenderHint(QPainter::Antialiasing, false);
-    for (const TableRender& table : std::as_const(tables_)) {
-        const QTextBlock last = document()->findBlockByNumber(table.last);
-        if (!last.isValid()) continue;
-        const QRectF anchorRect = layout->blockBoundingRect(last);
-        const QRectF area(anchorRect.left(), anchorRect.top(), table.layout.width,
-                          table.layout.height);
-        if (area.bottom() < visible.top() || area.top() > visible.bottom()) continue;
-
-        // Под сеткой осталась видимой последняя строка исходника — закрываем её
-        // фоном страницы, как фотография закрывает текст своей строки. Фон
-        // берётся у палитры вида, а не у облика: справка в окне About показана
-        // тем же вьюером, но палитру ей не правят, и «страничный» цвет вылезал
-        // там молочным пятном под каждой таблицей (заметил владелец).
-        painter.fillRect(QRectF(anchorRect.left(), area.top(), qMax(area.width(), anchorRect.width()),
-                                area.height()),
-                         pageColour());
-
-        // Заливки: тело, зебра, шапка. Прозрачные по умолчанию — тогда просто
-        // ничего не рисуется.
-        const auto fill = [&painter](const QRectF& rect, const QColor& colour) {
-            if (colour.alpha() > 0) painter.fillRect(rect, colour);
-        };
-        fill(area, look.tableColor());
-        qreal y = area.top();
-        for (int row = 0; row < table.layout.rows; ++row) {
-            const qreal height = table.layout.rowHeight.at(row);
-            const QRectF band(area.left(), y, area.width(), height);
-            if (row == 0) fill(band, look.headerColor());
-            else if ((row % 2) == 0) fill(band, look.altTableColor());
-            y += height;
-        }
-
-        // Линии. Толщины и цвет — из конфига; ноль означает «не рисовать».
-        const auto line = [&painter, &look, this](const QRectF& rect, qreal width) {
-            if (width <= 0.0) return;
-            painter.fillRect(QRectF(rect.left(), rect.top(), rect.width(),
-                                    qMax(1.0, width * displayScale())),
-                             look.borderColor());
-        };
-        const auto column = [&painter, &look, this](qreal x, qreal top, qreal height,
-                                                    qreal width) {
-            if (width <= 0.0) return;
-            painter.fillRect(QRectF(x, top, qMax(1.0, width * displayScale()), height),
-                             look.borderColor());
-        };
-
-        line(QRectF(area.left(), area.top(), area.width(), 0), look.horizontalBorder());
-        line(QRectF(area.left(), area.bottom() - look.horizontalBorder() * displayScale(), area.width(), 0),
-             look.horizontalBorder());
-        y = area.top();
-        for (int row = 0; row < table.layout.rows; ++row) {
-            y += table.layout.rowHeight.at(row);
-            if (row == 0)
-                line(QRectF(area.left(), y - look.headerSeparator() * displayScale() / 2, area.width(), 0),
-                     look.headerSeparator());
-            else if (row + 1 < table.layout.rows)
-                line(QRectF(area.left(), y, area.width(), 0), look.rowSeparator());
-        }
-        column(area.left(), area.top(), area.height(), look.verticalBorder());
-        column(area.right() - look.verticalBorder() * displayScale(), area.top(), area.height(),
-               look.verticalBorder());
-        qreal x = area.left();
-        for (int col = 0; col + 1 < table.layout.columns; ++col) {
-            x += table.layout.columnWidth.at(col);
-            column(x, area.top(), area.height(), look.columnSeparator());
-        }
-
-        // Выбранная таблица — с уголками-мишенями, как выбранная фотография:
-        // объект под кареткой человек видит одинаково, чем бы объект ни был.
-        const QTextCursor caret = textCursor();
-        const bool selected = !caret.hasSelection() &&
-                              caret.blockNumber() >= table.first &&
-                              caret.blockNumber() <= table.last;
-        if (selected && exportRatio_ <= 0.0) paintImageCorners(painter, area);
-
-        // Текст ячеек. Выравнивание — из :---: разбора; по умолчанию влево,
-        // как в GitHub.
-        const qreal padX = tableCellPadX(table.layout.scale, docStyle());
-        const qreal padY = tableCellPadY(table.layout.scale, docStyle());
-        for (const TableCellBox& cell : table.layout.cells) {
-            if (cell.text == nullptr) continue;
-            const QRectF box = cell.rect.translated(area.topLeft());
-            const qreal textWidth = cell.textWidth;
-            qreal x = box.left() + padX;
-            if (cell.align == TableAlign::Right)
-                x = box.right() - padX - textWidth;
-            else if (cell.align == TableAlign::Center)
-                x = box.left() + (box.width() - textWidth) / 2;
-            painter.setPen(palette().color(QPalette::Text));
-            cell.text->draw(&painter, QPointF(x, box.top() + padY));
-        }
-    }
-    painter.restore();
+const TableRender* NoteView::tableRenderFor(const QTextBlock& block) {
+    const QString source = tableSourceOf(block);
+    if (source.isEmpty()) return nullptr;
+    return tables_.renderFor(source, tableSpaceFor(block), docStyle());
 }
 
-int NoteView::tableAtPoint(const QPointF& documentPoint) const {
-    for (const TableRender& table : std::as_const(tables_)) {
-        const QRectF area = tableRect(table.first);
-        if (!area.isEmpty() && area.contains(documentPoint)) return table.first;
-    }
-    return -1;
+QSizeF NoteView::tableBandFor(const QTextBlock& block) {
+    const TableRender* render = tableRenderFor(block);
+    if (render == nullptr) return {};
+    return TableObjects::bandFor(*render, columnWidth(block), imageGap(displayScale()));
 }
 
-int NoteView::sourcePositionAt(const QPointF& documentPoint) const {
-    const int first = tableAtPoint(documentPoint);
-    if (first < 0) return -1;
-    const TableRender* table = tableAt(first);
-    const QRectF area = tableRect(first);
-    if (table == nullptr || area.isEmpty()) return -1;
-
-    // РЯД по вертикали щелчка, КОЛОНКА по горизонтали. Ряд заголовка — первая
-    // строка исходника, ряды тела — со второй, потому что между ними стоит
-    // строка-разделитель, которой на экране нет.
-    int row = 0;
-    qreal y = area.top();
-    for (; row + 1 < table->layout.rows; ++row) {
-        if (documentPoint.y() < y + table->layout.rowHeight.at(row)) break;
-        y += table->layout.rowHeight.at(row);
-    }
-    int column = 0;
-    qreal x = area.left();
-    for (; column + 1 < table->layout.columns; ++column) {
-        if (documentPoint.x() < x + table->layout.columnWidth.at(column)) break;
-        x += table->layout.columnWidth.at(column);
-    }
-
-    const int line = table->first + (row == 0 ? 0 : row + 1);
-    const QTextBlock block = document()->findBlockByNumber(line);
-    if (!block.isValid()) return -1;
-
-    // Начало ячейки в ИСХОДНОЙ строке: считаем неэкранированные палки. Первая
-    // палка строки — оформление, а не пустая ячейка.
-    const QString source = block.text();
-    int at = 0;
-    while (at < source.size() && source.at(at).isSpace()) ++at;
-    if (at < source.size() && source.at(at) == QLatin1Char('|')) ++at;
-    int seen = 0;
-    int cellStart = at;
-    for (; at < source.size() && seen < column; ++at) {
-        if (source.at(at) == QLatin1Char('\\')) { ++at; continue; }
-        if (source.at(at) != QLatin1Char('|')) continue;
-        ++seen;
-        cellStart = at + 1;
-    }
-    if (seen < column) cellStart = source.size();
-    // Пробел после палки в позицию ячейки не входит: человек целился в текст.
-    while (cellStart < source.size() && source.at(cellStart) == QLatin1Char(' ')) ++cellStart;
-
-    // Позиция ВНУТРИ ячейки — по x щелчка. Точна для ячеек без разметки: там
-    // показанный текст и есть исходный. В ячейке с разметкой показанное и
-    // исходное — разные строки (звёздочек на экране нет), и честного отображения
-    // одной в другую у нас пока нет: встаём в начало ячейки, а не наугад.
-    int inside = 0;
-    if (const TableCellBox* cell = table->layout.at(row, column)) {
-        if (cell->text != nullptr && cell->text->lineCount() > 0) {
-            const QString shown = cell->text->text();
-            const QString raw = source.mid(cellStart);
-            const bool plain = raw.startsWith(shown);
-            if (plain) {
-                const qreal padX = tableCellPadX(table->layout.scale, docStyle());
-                const QPointF local(documentPoint.x() - (area.left() + cell->rect.left()) - padX,
-                                    documentPoint.y() - (area.top() + cell->rect.top()));
-                const QTextLine textLine = cell->text->lineForTextPosition(0);
-                inside = textLine.isValid() ? textLine.xToCursor(local.x()) : 0;
-                inside = qBound(0, inside, shown.size());
-            }
-        }
-    }
-    return block.position() + qMin(cellStart + inside, block.length() - 1);
+QRectF NoteView::tableRect(int blockNumber) {
+    const QTextBlock block = document()->findBlockByNumber(blockNumber);
+    const TableRender* render = tableRenderFor(block);
+    if (render == nullptr) return {};
+    return TableObjects::rectFor(block, *render, imageGap(displayScale()));
 }
 
-void NoteView::mouseDoubleClickEvent(QMouseEvent* event) {
-    // Двойной щелчок по сетке — правка исходника, каретка в ту ячейку, куда
-    // целились. Одинарный только выбирает таблицу (см. mousePressEvent).
-    if (event->button() == Qt::LeftButton && !isReadOnly()) {
-        const QPointF at = toDocument(event->position().toPoint());
-        // ПО ФОРМУЛЕ — ТО ЖЕ САМОЕ. Без этой ветки двойной щелчок доставался
-        // QTextBrowser, и тот выделял «слово» в погашенном исходнике: на экране
-        // поперёк вёрстки ложилась синяя полоса выделения, а буква, набранная
-        // следом, уходила прямо в LaTeX — запрет на объекте выделение снимает.
-        // По формуле щелчок больше ничего не делает ЗДЕСЬ: раскрыть её —
-        // правка документа, а вид документ не правит. Это дело редактора
-        // (NoteEditor::mouseDoubleClickEvent → ZDocument::openFormula).
-        
-        const int position = sourcePositionAt(at);
-        if (position >= 0) {
-            const int first = tableAtPoint(at);
-            setEditedTable(first);
-            QTextCursor caret(document());
-            caret.setPosition(qBound(0, position, document()->characterCount() - 1));
-            setTextCursor(caret);
-            event->accept();
-            return;
-        }
-    }
-    QTextBrowser::mouseDoubleClickEvent(event);
+int NoteView::tableAtPoint(const QPointF& documentPoint) {
+    // Без обхода документа: вёрстка сама знает, чей блок под точкой.
+    const int hit = document()->documentLayout()->hitTest(documentPoint, Qt::FuzzyHit);
+    if (hit < 0) return -1;
+    const QTextBlock block = document()->findBlock(hit);
+    if (!block.isValid() || !isTableObjectBlock(block)) return -1;
+    const QRectF rect = tableRect(block.blockNumber());
+    return !rect.isEmpty() && rect.contains(documentPoint) ? block.blockNumber() : -1;
 }
 
-void NoteView::setEditedTable(int firstBlockNumber) {
-    if (editedTable_ == firstBlockNumber) return;
-    editedTable_ = firstBlockNumber;
-    syncImageSpace(true);   // перемерить: строки то прячутся, то возвращаются
-    viewport()->update();
+bool NoteView::tableCellAt(const QPointF& documentPoint, int* blockNumber, int* row, int* column,
+                           int* sourceOffset) {
+    const int number = tableAtPoint(documentPoint);
+    if (number < 0) return false;
+    const QTextBlock block = document()->findBlockByNumber(number);
+    const TableRender* render = tableRenderFor(block);
+    if (render == nullptr) return false;
+    if (blockNumber != nullptr) *blockNumber = number;
+    return TableObjects::cellAt(*render, tableRect(number), documentPoint, row, column, sourceOffset);
 }
 
-int NoteView::tableNearCaret() const {
-    const QTextBlock block = textCursor().block();
-    const BlockObject own = objectOf(block);
-    if (own.kind == ObjectKind::Table) return own.first;
+// СЕТКА И УГОЛКИ ВЫБРАННОЙ ТАБЛИЦЫ — ПОВЕРХ ГОТОВОЙ СТРАНИЦЫ, как у формулы:
+// объект только держит место, а выделение Qt кладётся на объект после
+// drawObject. Фон под сеткой не закрашивается: исходника в тексте блока нет.
+void NoteView::paintTableMarks(QPainter& painter, const QTextBlock& block) {
+    if (!isTableObjectBlock(block)) return;
+    const TableRender* render = tableRenderFor(block);
+    if (render == nullptr) return;
+    const QRectF area = tableRect(block.blockNumber());
+    if (area.isEmpty()) return;
 
-    // Пустая строка сразу за таблицей — ещё «в таблице»: её заводит Enter,
-    // когда человек добавляет ряд.
-    if (block.text().trimmed().isEmpty()) {
-        const BlockObject above = objectOf(block.previous());
-        if (above.kind == ObjectKind::Table) return above.first;
-    }
+    TablePaint how;
+    how.look = settings().tables();
+    how.text = palette().color(QPalette::Text);
+    how.scale = displayScale();
+    how.highlightColour = docStyle().searchHighlight();
+    TableObjects::paint(painter, area, *render, how);
 
-    // ТАБЛИЦА МОЖЕТ ВРЕМЕННО ПЕРЕСТАТЬ БЫТЬ ТАБЛИЦЕЙ, и это нормально.
-    //
-    // Enter внутри исходника заводит пустую строку, а пустая строка кончает
-    // таблицу — то есть на миг между двумя нажатиями кусок перестаёт быть
-    // таблицей вовсе (проверено: все блоки становятся абзацами). Обрывать
-    // правку в этот миг значит выкидывать человека из таблицы ровно тогда,
-    // когда он добавляет ряд. Поэтому пока каретка среди строк с палками —
-    // правка продолжается, и показывается исходник, а не сетка.
-    const auto looksLikeRow = [](const QTextBlock& line) {
-        return line.isValid() && line.text().contains(QLatin1Char('|'));
-    };
-    if (looksLikeRow(block) || looksLikeRow(block.previous()) || looksLikeRow(block.next()))
-        return editedTable_;
-
-    return -1;
+    if (exportRatio_ <= 0.0 && objectSelected(block)) paintImageCorners(painter, area);
 }
 
-QRectF NoteView::tableRect(int firstBlockNumber) const {
-    const TableRender* table = tableAt(firstBlockNumber);
-    if (table == nullptr) return {};
-    const QTextBlock last = document()->findBlockByNumber(table->last);
-    if (!last.isValid()) return {};
-    const QRectF anchorRect = document()->documentLayout()->blockBoundingRect(last);
-    return QRectF(anchorRect.left(), anchorRect.top(), table->layout.width,
-                  table->layout.height);
-}
-
-bool NoteView::snapCaretOutOfHiddenTable() {
-    QTextCursor caret = textCursor();
-    if (caret.hasSelection()) return false;
-    const QTextBlock block = caret.block();
-    if (!block.isValid() || block.isVisible()) return false;
-
-    // Спрятанные строки бывают только у таблицы, показанной сеткой: ставим
-    // каретку на её ВИДИМУЮ строку — ту, на которой висит резерв. Дальше
-    // таблица считается выбранной, как выбрана картинка под кареткой.
-    const BlockObject object = objectOf(block);
-    if (object.kind != ObjectKind::Table) return false;
-    QTextCursor at(document()->findBlockByNumber(object.last));
-    setTextCursor(at);
-    return true;
-}
-
-const TableRender* NoteView::tableAt(int firstBlockNumber) const {
-    const auto it = tables_.constFind(firstBlockNumber);
-    return it == tables_.constEnd() ? nullptr : &it.value();
-}
 
 // Место под имя языка: вся полоска слева от кнопки. Надпись в нём прижата
 // ВПРАВО, к кнопке, а прямоугольник остаётся широким нарочно — по нему ловится
@@ -2289,17 +1849,13 @@ void NoteView::mousePressEvent(QMouseEvent* event) {
             return;
         }
 
-        // Щелчок по сетке таблицы — выбрать её целиком. Пускать сюда Qt нельзя:
-        // про резерв места она не знает и ставит каретку по своим правилам,
-        // случайно попадая то в спрятанную строку, то в соседний абзац.
+        // Щелчок по сетке таблицы — выбрать её целиком: каретка на блок
+        // объекта (в его начало — так стоит каретка на всяком объекте).
         const int table = tableAtPoint(at);
-        if (table >= 0 && table != editedTable_) {
-            const TableRender* render = tableAt(table);
-            if (render != nullptr) {
-                setTextCursor(QTextCursor(document()->findBlockByNumber(render->last)));
-                event->accept();
-                return;
-            }
+        if (table >= 0) {
+            setTextCursor(QTextCursor(document()->findBlockByNumber(table)));
+            event->accept();
+            return;
         }
     }
     QTextBrowser::mousePressEvent(event);
@@ -2357,7 +1913,6 @@ void NoteView::paintEvent(QPaintEvent* event) {
 
     // Сетка таблиц — поверх текста: под ней остаётся видимой последняя строка
     // исходника, и закрыть её может только то, что нарисовано после.
-    paintTables(painter, visible);
 
     // К первому видимому блоку идём поиском по раскладке, а не обходом от
     // начала документа: обход стоит тем дороже, чем ниже прокрутка, и на
@@ -2384,6 +1939,7 @@ void NoteView::paintEvent(QPaintEvent* event) {
         // не переведены.
         paintImageMarks(painter, block);
         paintFormulaMarks(painter, block);
+        paintTableMarks(painter, block);
     }
 
     // Каретка — последней и без сдвига на прокрутку: cursorRect уже отдаёт

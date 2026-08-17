@@ -309,7 +309,19 @@ void takeImageAttribute(const QString& field, qreal& width, ImageAlign& align) {
 
 }  // namespace
 
+bool isTableObjectBlock(const QTextBlock& block) {
+    if (!block.isValid() || !isRawBlock(block)) return false;
+    if (block.length() != 2 || block.text().at(0) != QChar::ObjectReplacementCharacter) return false;
+    return block.begin().fragment().charFormat().objectType() == TableObject;
+}
+
+QString tableSourceOf(const QTextBlock& block) {
+    if (!isTableObjectBlock(block)) return {};
+    return block.begin().fragment().charFormat().property(ObjectSourceProperty).toString();
+}
+
 QString sourceTextOf(const QTextBlock& block) {
+    if (isTableObjectBlock(block)) return tableSourceOf(block);
     QString source;
     for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
         const QTextFragment fragment = it.fragment();

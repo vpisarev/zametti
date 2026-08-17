@@ -379,17 +379,10 @@ public:
     // одно на всех и живёт в block_object.h; здесь — только исполнение.
     // Возвращает true, если нажатие разобрано и дальше его вести не надо.
     bool handleObjectKey(QKeyEvent* event);
-    // Выйти из правки исходника таблицы: снова сетка, таблица выбрана.
-    void leaveTableEdit();
-    // Выйти из правки формулы: перечитать заметку тем же путём, что и после
-    // правки таблицы, и снова показать вёрстку. Перечитывание обязательно —
-    // набор внутри блока мог разнести формулу по кускам с чужим форматом, и
-    // без разбора она осталась бы текстом с долларами до открытия заметки
-    // заново.
-    void leaveFormulaEdit();
-    // Перечитать заметку после правки таблицы: набор склеивает строки
-    // дословного куска, и таблицей он снова становится только после разбора.
-    void reparseAfterTableEdit();
+    // Свернуть раскрытый объект под кареткой — формулу или таблицу (Esc из
+    // редактора и из ярлыка окна). false — каретка не в раскрытом объекте.
+    bool closeOpenObject();
+    bool caretInOpenObject() const;
     LanguageEditor* codeLanguageEditor() const { return languageEditor_; }
     void closeCodeLanguageEditor();
 
@@ -988,10 +981,10 @@ void installHistoryShortcuts(QWidget* window, NoteEditor& editor);
 enum class EscapeAction {
     Nothing,
     CloseLanguageEditor,
-    LeaveTableEdit,
+    CloseObject,   // свернуть раскрытую формулу или таблицу под кареткой
     CloseFindBar,
 };
-EscapeAction escapeActionFor(bool languageEditorOpen, bool editingTable, bool findBarVisible);
+EscapeAction escapeActionFor(bool languageEditorOpen, bool caretInOpenObject, bool findBarVisible);
 
 }  // namespace zametti
 

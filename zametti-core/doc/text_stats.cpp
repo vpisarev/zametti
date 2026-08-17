@@ -115,8 +115,6 @@ int countLineBreaks(QStringView text) {
 BlockStats blockStats(const QTextBlock& block) {
     BlockStats out;
     if (!block.isValid()) return out;
-    const QString text = block.text();
-    out.breaks = countLineBreaks(text);
     // Фотография занимает блок целиком, а её текст — это путь к файлу и
     // подпись вложения. Считать их словами заметки нельзя: "![[img/foo-bar.jpg]]"
     // дало бы четыре слова из ничего.
@@ -124,6 +122,24 @@ BlockStats blockStats(const QTextBlock& block) {
         out.image = true;
         return out;
     }
+    // ОБЪЕКТ СЧИТАЕТСЯ ПО СВОЕМУ ИСХОДНИКУ (таблица, формула): в тексте блока у
+    // него один знак U+FFFC, а слова и строки — в свойстве. Считать надо то же,
+    // что считает разбор по кускам (pieceStats), иначе два независимых счёта
+    // расходятся и заметка показывает «?» вместо числа слов — ровно так было у
+    // владельца на заметке с формулами (known_bugs, №2).
+    QString source = tableSourceOf(block);
+    if (source.isEmpty()) source = blockFormulaRef(block).source;
+    if (!source.isEmpty() && block.length() == 2 &&
+        block.text().at(0) == QChar::ObjectReplacementCharacter) {
+        int newlines = 0;
+        for (const QChar c : source)
+            if (c == u'\n') ++newlines;
+        out.breaks = newlines;
+        out.words = countWords(source);
+        return out;
+    }
+    const QString text = block.text();
+    out.breaks = countLineBreaks(text);
     out.words = countWords(text);
     return out;
 }

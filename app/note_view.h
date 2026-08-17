@@ -15,7 +15,7 @@
 
 #include <QHash>
 #include <QImage>
-#include "table_view.h"
+#include "table_object.h"
 
 #include <QRectF>
 #include <QString>
@@ -54,22 +54,10 @@ void applyPalette(QWidget& view, bool history = false,
 // формула.
 bool caretShouldBeDrawn(bool focused, bool readOnly, bool hasSelection, bool onDrawnObject);
 
-// Полоса подложки под одной строкой блока кода — в координатах документа.
-//
-// Строк в блоке кода столько же, сколько QTextBlock'ов (см. ContinuationProperty),
-// и плашка складывается из таких полос. Первая несёт воздух под скругление,
-// последняя — полоску с языком и кнопкой; по этим двум признакам видно, где блок
-// начался и где кончился, без обхода назад.
-// Таблица, показанная сеткой: её раскладка и то, из чего она посчитана.
-// Пересчёт — только когда изменилось одно из этих «из чего».
-struct TableRender {
-    TableLayout layout;
-    QString source;      // текст исходника, по которому считали
-    qreal width = 0.0;   // ширина места, в которое вписывали
-    qreal zoom = 1.0;
-    int first = -1;      // первый блок документа
-    int last = -1;
-};
+// Полоса подложки под блоком кода — в координатах документа. Блок кода — один
+// QTextBlock, полоса одна: она же несёт воздух под скругление сверху и полоску
+// с языком и кнопкой снизу (first/last у неё всегда истинны — остались от
+// построчных времён).
 
 // Формула, показанная вёрсткой: картинка и то, из чего она посчитана.
 //
@@ -221,43 +209,23 @@ public:
     // Формула под этой точкой документа; -1 — там не формула.
     int formulaAtPoint(const QPointF& documentPoint);
 
-    // Таблицы: показ сеткой вместо строк исходника. Пересобирается при смене
-    // документа, ширины колонки и масштаба — не на каждый кадр: раскладка
-    // таблицы 50×8 стоит 2.5 мс (замер), и делать её в отрисовке нельзя.
-    void syncTables();
-    // Сетка таблиц в этом куске документа. Рисуется ПОСЛЕ текста: под сеткой
-    // остаётся видимой последняя строка исходника, и её надо закрыть — ровно
-    // как фотография закрывает текст своей строки.
-    void paintTables(QPainter& painter, const QRectF& visible);
-    // Раскладка таблицы, показанной сеткой; nullptr — этот блок не таблица или
-    // она показана исходником.
-    const TableRender* tableAt(int firstBlockNumber) const;
-    // Какую таблицу сейчас правят исходником; -1 — все показаны сеткой.
-    // Правка включается двойным щелчком или Enter на таблице, кончается уходом
-    // каретки наружу.
-    void setEditedTable(int firstBlockNumber);
-    int editedTable() const { return editedTable_; }
-    // Таблица, которую каретка сейчас правит, — или -1.
-    //
-    // Ни номер блока, ни курсор-якорь тут не годятся: любая операция
-    // пересобирает документ целиком (rebuild), и номера съезжают, а курсоры
-    // сбрасываются. Поэтому правка держится не адресом, а БЛИЗОСТЬЮ: каретка
-    // считается «в таблице», пока она в её строках или на пустой строке сразу
-    // за ней — той самой, которую заводит Enter, когда человек добавляет ряд.
-    int tableNearCaret() const;
-    // Каретка стоит на спрятанной строке таблицы — подтянуть её на видимую.
-    // Каретку по спрятанным блокам Qt водит охотно (пробник), и без этого она
-    // пропадала бы из виду.
-    bool snapCaretOutOfHiddenTable();
-    // Прямоугольник сетки в координатах документа; пустой — таблицы нет или
-    // она показана исходником.
-    QRectF tableRect(int firstBlockNumber) const;
-    // Куда встать в ИСХОДНИКЕ, если щёлкнули сюда по сетке. Возвращает позицию
-    // в документе; -1 — точка не в таблице. Карта пишется честной сразу: она
-    // фундамент под правку по ячейкам (вариант 2 брифа).
-    int sourcePositionAt(const QPointF& documentPoint) const;
+    // ТАБЛИЦЫ-ОБЪЕКТЫ (сессия 5; см. table_object.h). Раскладка считается
+    // лениво из intrinsicSize и лежит в кэше по исходнику — обхода документа
+    // нет, номера блоков ни при чём (урок формул).
+    // Полоса объекта: вся ширина колонки × высота сетки + воздух.
+    QSizeF tableBandFor(const QTextBlock& block);
+    // Раскладка таблицы этого блока — считается, если её нет; nullptr — блок
+    // не таблица-объект (раскрытая на правку таблица — обычный дословный блок).
+    const TableRender* tableRenderFor(const QTextBlock& block);
+    // Прямоугольник сетки в координатах документа; пустой — не таблица.
+    QRectF tableRect(int blockNumber);
     // Таблица под этой точкой документа; -1 — там не таблица.
-    int tableAtPoint(const QPointF& documentPoint) const;
+    int tableAtPoint(const QPointF& documentPoint);
+    // Ячейка под точкой документа: блок таблицы, ряд, колонка и смещение
+    // начала ячейки в исходнике — сюда встанет каретка при раскрытии таблицы
+    // двойным щелчком. false — точка не в таблице.
+    bool tableCellAt(const QPointF& documentPoint, int* blockNumber, int* row, int* column,
+                     int* sourceOffset);
 
     // Пока язык блока правят полем ввода, СВОЮ надпись вид не рисует вовсе.
     // Закрашивать её фоном поля — надежда на стиль и на попадание пиксель в
@@ -394,7 +362,6 @@ protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
-    void mouseDoubleClickEvent(QMouseEvent* event) override;
     // ИНЕРЦИОННАЯ ПРОКРУТКА КОЛЕСОМ (scroll.smooth).
     //
     // Колесо не швыряет текст рывком на три строки, а разгоняет его к цели и
@@ -504,6 +471,8 @@ protected:
     // Уголки выбранной формулы — поверх страницы, по тому же доводу, что и
     // у фотографии.
     void paintFormulaMarks(QPainter& painter, const QTextBlock& block);
+    // Сетка таблицы и уголки выбранной — поверх готовой страницы, как формула.
+    void paintTableMarks(QPainter& painter, const QTextBlock& block);
 
 private:
     // Каретку рисуем сами: своей Qt цвета не отдаёт (см. caretColor в
@@ -549,6 +518,7 @@ private:
 
     friend class ImageObjectHandler;
     friend class FormulaObjectHandler;
+    friend class TableObjectHandler;
 
     QString absoluteImagePath(const QString& path) const;
     // Запись кэша для пути: размеры из заголовка, БЕЗ разжатия. nullptr —
@@ -595,6 +565,11 @@ private:
     // Ширина колонки, доступная блоку. Берётся у ДОКУМЕНТА, а не у вьюпорта:
     // на бумаге ширина своя, и мерить надо ту, по которой Qt раскладывает.
     qreal columnWidth(const QTextBlock& block) const;
+    // Место таблицы этого блока: колонка, поля до окна, масштаб.
+    TableSpace tableSpaceFor(const QTextBlock& block) const;
+    // Выбран ли объект этого блока (каретка на нём или выделение задело) —
+    // одно правило на фото, формулу и таблицу; по нему рисуются уголки.
+    bool objectSelected(const QTextBlock& block) const;
     void paintTooBigImage(QPainter& painter, const QTextBlock& block,
                           const ImageGeometry& geometry, const CachedImage& entry);
     // Место под картинку на экране. Берёт размеры, а не саму картинку: у
@@ -625,9 +600,9 @@ private:
     int copiedCodeBlock_ = -1;
     int editedCodeLanguage_ = -1;
     int editedImageCaption_ = -1;
-    // Таблицы, показанные сеткой: по номеру первого блока.
-    QHash<int, TableRender> tables_;
-    int editedTable_ = -1;
+    // Кэш раскладок таблиц (по исходнику) и обработчик объекта.
+    TableObjects tables_;
+    TableObjectHandler* tableObjects_ = nullptr;
     // Кэш вёрстки формул по исходнику (см. FormulaRender). Ограничен числом
     // записей: переполнился — выбрасывается целиком, считается заново по мере
     // показа. Условия вёрстки, при которых он собран, — рядом.
