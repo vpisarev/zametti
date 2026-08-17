@@ -26,11 +26,16 @@
 #include <vector>
 
 // Байты markdown → логические блоки. Шапка отбрасывается: её спрашивают у
-// заметки.
+// заметки. Наборы говорят байтовыми литералами; разбор читает текст — граница
+// переводится здесь.
+inline QString textOf(std::string_view markdown) {
+    return QString::fromUtf8(markdown.data(), qsizetype(markdown.size()));
+}
+
 inline std::vector<zametti::Piece> pieces(std::string_view markdown) {
     std::vector<zametti::Piece> out;
     zametti::NoteHeader header;
-    zametti::parsePieces(markdown, out, header);
+    zametti::parsePieces(textOf(markdown), out, header);
     return out;
 }
 
@@ -38,7 +43,7 @@ inline std::vector<zametti::Piece> pieces(std::string_view markdown) {
 inline std::vector<zametti::Piece> pieces(std::string_view markdown,
                                           zametti::NoteHeader& header) {
     std::vector<zametti::Piece> out;
-    zametti::parsePieces(markdown, out, header);
+    zametti::parsePieces(textOf(markdown), out, header);
     return out;
 }
 

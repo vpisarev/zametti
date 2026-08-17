@@ -16,6 +16,8 @@
 
 #include "md4c.h"
 
+#include <QString>
+
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -77,7 +79,7 @@ int judgeText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdat
     Judge& j = *static_cast<Judge*>(userdata);
     if (!j.inCell) return 0;
     if (type == MD_TEXT_BR || type == MD_TEXT_SOFTBR) j.cell += ' ';
-    else j.cell.append(text, size);
+    else j.cell += QString::fromUtf16(text, size).toStdString();   // md4c читает UTF-16
     return 0;
 }
 
@@ -91,7 +93,9 @@ std::vector<MdTable> tablesByMd4c(const std::string& markdown) {
     parser.enter_span = [](MD_SPANTYPE, void*, void*) { return 0; };
     parser.leave_span = [](MD_SPANTYPE, void*, void*) { return 0; };
     parser.text = judgeText;
-    md_parse(markdown.data(), MD_SIZE(markdown.size()), &parser, &judge);
+    // md4c (вендоренная копия) читает UTF-16: судье подаём тот же текст в нём.
+    const QString text = QString::fromStdString(markdown);
+    md_parse(QStringView(text).utf16(), MD_SIZE(text.size()), &parser, &judge);
     return judge.tables;
 }
 
@@ -111,15 +115,15 @@ std::string plainOf(const std::string& markdown) {
     parser.text = [](MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* user) {
         auto& out = static_cast<Sink*>(user)->out;
         if (type == MD_TEXT_BR || type == MD_TEXT_SOFTBR) out += ' ';
-        else out.append(text, size);
+        else out += QString::fromUtf16(text, size).toStdString();
         return 0;
     };
     // Ячейку разбираем В КОНТЕКСТЕ ЯЧЕЙКИ: заворачиваем в таблицу из одной
     // колонки. Иначе "+ раз" внутри ячейки становится списком и теряет
     // маркер, а "> два" — цитатой; md4c внутри ячейки разбирает только
     // строчную разметку, и сравнивать надо с тем же.
-    const std::string wrapped = "| " + markdown + " |\n|---|\n";
-    md_parse(wrapped.data(), MD_SIZE(wrapped.size()), &parser, &sink);
+    const QString wrapped = QString::fromStdString("| " + markdown + " |\n|---|\n");
+    md_parse(QStringView(wrapped).utf16(), MD_SIZE(wrapped.size()), &parser, &sink);
     // Одиночный абзац кончается переводом строки — у md4c в ячейке его нет.
     while (!sink.out.empty() && (sink.out.back() == '\n' || sink.out.back() == ' '))
         sink.out.pop_back();
