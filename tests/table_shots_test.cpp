@@ -1,30 +1,42 @@
-// Снимки таблиц: то, что владелец проверяет глазами.
-#include "doc_model.h"
-#include "editor_widget.h"
-#include "pieces.h"
+// Снимки и протокол таблиц-объектов: то, что владелец проверяет глазами.
+//
+// Таблица — объект (сессия 5): один знак U+FFFC, сетка поверх полосы во всю
+// колонку, правка — флип объект ⇄ исходник (Enter / двойной щелчок раскрывают,
+// Esc / уход каретки сворачивают судьёй файла). Здесь проверяется проводка к
+// редактору и то, что видно на снимке: каждая колонка нарисована, выбранная
+// таблица показана уголками, каретка внутри не рисуется, файл от показа не
+// меняется, геометрия после ухода-возврата та же, что при свежем открытии.
 #include "block_object.h"
+#include "doc_model.h"
 #include "document_builder.h"
+#include "editor_widget.h"
 #include "note_view.h"
+#include "pieces.h"
 #include "settings.h"
+#include "table_object.h"
 #include "test_util.h"
-
-#include <vector>
 #include "testdata.h"
 
+#include <QAbstractTextDocumentLayout>
 #include <QApplication>
 #include <QDir>
-#include <QFileInfo>
+#include <QDirIterator>
 #include <QFile>
+#include <QFileInfo>
 #include <QImage>
-#include <QTest>
 #include <QScrollBar>
+#include <QTest>
 #include <QTextBlock>
 #include <QTextCursor>
-#include <QAbstractTextDocumentLayout>
 #include <QTextDocument>
+
+#include <string>
+#include <vector>
 
 namespace {
 QString g_dir;
+
+std::string n(int v) { return std::to_string(v); }
 
 const char* kNote = R"(# Таблицы
 
@@ -52,32 +64,64 @@ const char* kNote = R"(# Таблицы
 Хвост заметки.
 )";
 
+// Блоки-таблицы документа (объекты), по порядку.
+QVector<int> tableBlocks(const zametti::NoteView& view) {
+    QVector<int> out;
+    for (QTextBlock b = view.document()->firstBlock(); b.isValid(); b = b.next())
+        if (zametti::isTableObjectBlock(b)) out.push_back(b.blockNumber());
+    return out;
+}
+
+// Раскрытая таблица: дословный блок с текстом исходника, объектом не является.
+bool isOpenedTable(const QTextBlock& b) {
+    return zametti::isRawBlock(b) && !zametti::isTableObjectBlock(b) &&
+           zametti::looksLikeTable(zametti::sourceTextOf(b));
+}
+
+std::string markdown(const zametti::NoteView& view) { return markdownOf(blocksOf(*view.document())); }
+
+class Editor : public zametti::NoteEditor {
+public:
+    void openText(const QString& name, const char* text, int width = 900, int height = 700) {
+        const QString path = QDir(g_dir).filePath(name + QStringLiteral(".md"));
+        QFile file(path);
+        if (file.open(QIODevice::WriteOnly | QIODevice::Truncate)) file.write(text);
+        file.close();
+        resize(width, height);
+        show();
+        QTest::qWait(20);
+        openFile(path);
+        QTest::qWait(60);
+    }
+    QPoint viewportPoint(const QPointF& documentPoint) {
+        return QPoint(int(documentPoint.x()) - horizontalScrollBar()->value(),
+                      int(documentPoint.y()) - verticalScrollBar()->value());
+    }
+};
+
 // В КАЖДОЙ КОЛОНКЕ ЧТО-ТО НАРИСОВАНО.
 //
 // Проверка появилась после того, как моя же оптимизация раскладки унесла текст
 // колонок с выравниванием вправо и по центру на километр за экран: ширину
 // текста я спрашивал у boundingRect() раскладки, а там стояла ширина строки —
-// бесконечная, потому что при измерении ячейку кладут в бесконечную ширину.
-// Поймал снимок, глазами. Теперь ловит набор.
-void checkEveryColumnDrawn(zametti::NoteEditor& editor, const QImage& shot) {
-    const zametti::TableRender* table = nullptr;
-    for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next()) {
-        const zametti::TableRender* found = editor.tableAt(b.blockNumber());
-        if (found != nullptr) { table = found; break; }
-    }
-    if (table == nullptr) {
-        ++zt::g_failures;
-        std::printf("провал: ни одной таблицы не показано сеткой\n");
-        return;
-    }
-
-    const QRectF area = editor.tableRect(table->first);
+// бесконечная. Поймал снимок, глазами. Теперь ловит набор. Считаем тёмные
+// точки ВНУТРИ РЯДОВ, отступя от их границ, — иначе линии сетки, идущие через
+// все колонки, делали проверку пустышкой.
+void checkEveryColumnDrawn(zametti::NoteEditor& editor, const QImage& shot, const std::string& tag) {
+    const QVector<int> tables = tableBlocks(editor);
+    ZT_TRUE(tag + ": таблицы показаны объектами", !tables.isEmpty());
+    if (tables.isEmpty()) return;
+    const QTextBlock block = editor.document()->findBlockByNumber(tables.first());
+    const zametti::TableRender* table = editor.tableRenderFor(block);
+    ZT_TRUE(tag + ": у первой таблицы есть раскладка", table != nullptr && table->layout.rows > 0);
+    if (table == nullptr) return;
+    const QRectF area = editor.tableRect(tables.first());
     const int scroll = editor.verticalScrollBar()->value();
+    // Снимок — виджета целиком, а прямоугольник — в координатах документа:
+    // между ними вьюпорт, сдвинутый полями колонки.
+    const QPoint origin = editor.viewport()->mapTo(&editor, QPoint(0, 0));
+    const qreal dpr = shot.devicePixelRatio();
 
-    // Считаем тёмные точки ВНУТРИ РЯДОВ, отступя от их границ. Первая редакция
-    // считала по всей высоте колонки — и находила линии сетки, которые идут
-    // через все колонки насквозь: проверка оставалась зелёной при пустых
-    // колонках. Пустышка страшнее отсутствия проверки (правило проекта).
     qreal x = area.left();
     for (int column = 0; column < table->layout.columns; ++column) {
         const qreal width = table->layout.columnWidth.at(column);
@@ -85,33 +129,23 @@ void checkEveryColumnDrawn(zametti::NoteEditor& editor, const QImage& shot) {
         qreal y = area.top();
         for (int row = 0; row < table->layout.rows; ++row) {
             const qreal height = table->layout.rowHeight.at(row);
-            for (int px = int(x) + 2; px < int(x + width) - 2 && px < shot.width(); ++px)
-                for (int py = int(y - scroll) + 4; py < int(y + height - scroll) - 4 &&
-                                                  py < shot.height(); ++py)
-                    if (py >= 0 && qGray(shot.pixel(px, py)) < 128) ++dark;
+            for (int px = int(x) + 2; px < int(x + width) - 2; ++px)
+                for (int py = int(y - scroll) + 4; py < int(y + height - scroll) - 4; ++py) {
+                    const int sx = int((px + origin.x()) * dpr);
+                    const int sy = int((py + origin.y()) * dpr);
+                    if (sx < 0 || sy < 0 || sx >= shot.width() || sy >= shot.height()) continue;
+                    if (qGray(shot.pixel(sx, sy)) < 128) ++dark;
+                }
             y += height;
         }
-        ++zt::g_checks;
-        if (dark == 0) {
-            ++zt::g_failures;
-            std::printf("провал: в колонке %d ничего не нарисовано\n", column);
-        }
+        ZT_TRUE(tag + ": в колонке " + n(column) + " что-то нарисовано", dark > 0);
         x += width;
     }
 }
 
 void shoot(const QString& name, int width, int height, const char* text) {
-    const QString path = QDir(g_dir).filePath(name + QStringLiteral(".md"));
-    QFile file(path);
-    if (file.open(QIODevice::WriteOnly)) file.write(text);
-    file.close();
-
-    zametti::NoteEditor editor;
-    editor.resize(width, height);
-    editor.show();
-    QTest::qWait(20);
-    editor.openFile(path);
-    QTest::qWait(80);
+    Editor editor;
+    editor.openText(name, text, width, height);
     QTextCursor at = editor.textCursor();
     at.setPosition(0);
     editor.setTextCursor(at);
@@ -119,354 +153,302 @@ void shoot(const QString& name, int width, int height, const char* text) {
     const QImage shot = editor.grab().toImage();
     if (!shot.save(QDir(g_dir).filePath(name + QStringLiteral(".png"))))
         std::printf("НЕ СОХРАНИЛСЯ снимок %s\n", qPrintable(name));
-    checkEveryColumnDrawn(editor, shot);
+    checkEveryColumnDrawn(editor, shot, name.toStdString());
+    ZT_EQ(name.toStdString() + ": в заметке три таблицы-объекта", n(3), n(tableBlocks(editor).size()));
+    // Полоса каждой таблицы не ниже сетки, сетка внутри полосы.
+    for (const int number : tableBlocks(editor)) {
+        const QTextBlock b = editor.document()->findBlockByNumber(number);
+        const QRectF band = editor.document()->documentLayout()->blockBoundingRect(b);
+        const QRectF grid = editor.tableRect(number);
+        ZT_TRUE(name.toStdString() + ": сетка блока " + n(number) + " внутри полосы (низ " +
+                    n(int(grid.bottom())) + ", полоса до " + n(int(band.bottom())) + ")",
+                !grid.isEmpty() && grid.bottom() <= band.bottom() + 1.0 && grid.top() >= band.top() - 1.0);
+    }
 }
-}  // namespace
 
-// Флип: Enter на таблице показывает исходник, уход каретки — снова сетку.
-// Клавиши идут через слой объекта, но проводка к редактору своя, и без этой
-// проверки она держалась бы только на моём слове.
+// --- флип: Enter раскрывает, уход каретки сворачивает --------------------------
+
 void checkFlip() {
-    const QString path = QDir(g_dir).filePath(QStringLiteral("флип.md"));
-    QFile file(path);
-    if (file.open(QIODevice::WriteOnly))
-        file.write("до\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\nпосле\n");
-    file.close();
+    Editor editor;
+    editor.openText(QStringLiteral("флип"), "до\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\nпосле\n");
+    const QVector<int> tables = tableBlocks(editor);
+    ZT_TRUE("таблица показана объектом", tables.size() == 1);
+    if (tables.size() != 1) return;
+    const int number = tables.first();
+    const int blocks = editor.document()->blockCount();
+    const std::string before = markdown(editor);
 
-    zametti::NoteEditor editor;
-    editor.resize(900, 700);
-    editor.show();
-    QTest::qWait(20);
-    editor.openFile(path);
-    QTest::qWait(60);
-
-    const auto tableFirst = [&editor] {
-        for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next())
-            if (editor.tableAt(b.blockNumber()) != nullptr) return b.blockNumber();
-        return -1;
-    };
-    const int first = tableFirst();
-    ++zt::g_checks;
-    if (first < 0) {
-        ++zt::g_failures;
-        std::printf("провал: таблица не показана сеткой\n");
-        return;
-    }
-
-    // Строки исходника спрятаны — кроме последней, на которой висит резерв.
-    int hidden = 0;
-    for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next())
-        if (!b.isVisible()) ++hidden;
-    ++zt::g_checks;
-    if (hidden != 2) {
-        ++zt::g_failures;
-        std::printf("провал: спрятано строк %d, а не 2\n", hidden);
-    }
-
-    // Каретка на таблицу — и Enter показывает исходник.
-    QTextCursor at(editor.document()->findBlockByNumber(first + 2));
-    editor.setTextCursor(at);
+    // Каретка на таблицу — и Enter раскрывает исходник в том же блоке.
+    editor.setTextCursor(QTextCursor(editor.document()->findBlockByNumber(number)));
     QTest::qWait(20);
     QTest::keyClick(&editor, Qt::Key_Return);
     QTest::qWait(40);
-    ++zt::g_checks;
-    if (editor.editedTable() != first) {
-        ++zt::g_failures;
-        std::printf("провал: Enter не открыл исходник (правится %d, ждали %d)\n",
-                    editor.editedTable(), first);
-    }
-    int visibleNow = 0;
-    for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next())
-        if (!b.isVisible()) ++visibleNow;
-    ++zt::g_checks;
-    if (visibleNow != 0) {
-        ++zt::g_failures;
-        std::printf("провал: в правке остались спрятанные строки (%d)\n", visibleNow);
-    }
+    const QTextBlock opened = editor.document()->findBlockByNumber(number);
+    ZT_TRUE("Enter раскрыл таблицу дословным блоком", isOpenedTable(opened));
+    ZT_EQ("исходник раскрытой таблицы", std::string("| a | b |\n|---|---|\n| 1 | 2 |"),
+          zametti::sourceTextOf(opened).toStdString());
+    ZT_EQ("блоков столько же (флип 1 ↔ 1)", n(blocks), n(editor.document()->blockCount()));
+    ZT_EQ("каретка в начале исходника", n(0), n(editor.textCursor().positionInBlock()));
+    ZT_EQ("файл от раскрытия не изменился", before, markdown(editor));
+    ZT_TRUE("раскрытая таблица не объект", !zametti::objectOf(opened).valid());
+    // И у неё есть высота — все строки видны.
+    ZT_TRUE("раскрытая таблица размечена в три строки",
+            editor.document()->documentLayout()->blockBoundingRect(opened).height() >
+                2 * QFontMetricsF(editor.baseFont()).height());
 
-    // И РАСКЛАДКА ВЕРНУЛАСЬ. Одного isVisible() мало: блок может числиться
-    // видимым, а высоты у него так и остаться нулевой — тогда на экране видна
-    // одна строка вместо всей таблицы. Владелец увидел именно это.
-    int zeroHeight = 0;
-    for (int number = first; number <= first + 2; ++number) {
-        const QTextBlock b = editor.document()->findBlockByNumber(number);
-        if (!b.isValid()) continue;
-        if (editor.document()->documentLayout()->blockBoundingRect(b).height() <= 0.5)
-            ++zeroHeight;
-    }
-    ++zt::g_checks;
-    if (zeroHeight != 0) {
-        ++zt::g_failures;
-        std::printf("провал: строк без высоты в правке: %d\n", zeroHeight);
-    }
-
-    // Увели каретку наружу — снова сетка.
+    // Увели каретку наружу — снова объект.
     editor.setTextCursor(QTextCursor(editor.document()->firstBlock()));
     QTest::qWait(60);
-    ++zt::g_checks;
-    if (editor.editedTable() != -1) {
-        ++zt::g_failures;
-        std::printf("провал: уход каретки не вернул сетку\n");
-    }
-    ++zt::g_checks;
-    if (editor.tableAt(first) == nullptr) {
-        ++zt::g_failures;
-        std::printf("провал: сетка не вернулась\n");
-    }
+    ZT_TRUE("уход каретки вернул объект", zametti::isTableObjectBlock(editor.document()->findBlockByNumber(number)));
+    ZT_EQ("файл после сворачивания тот же", before, markdown(editor));
+    ZT_TRUE("сетка снова считается", editor.tableRenderFor(editor.document()->findBlockByNumber(number)) != nullptr);
 }
 
-// Мышь: щелчок по сетке. Ровно тот путь, которым идёт владелец, — и ровно
-// он в первой редакции никуда не приводил: Qt про резерв места не знает и
-// ставит каретку по своим правилам.
+// --- мышь: щелчок выбирает, двойной — раскрывает в ячейку ----------------------
+
 void checkMouse() {
-    const QString path = QDir(g_dir).filePath(QStringLiteral("мышь.md"));
-    QFile file(path);
-    if (file.open(QIODevice::WriteOnly))
-        file.write("до\n\n| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\nпосле\n");
-    file.close();
-
-    zametti::NoteEditor editor;
-    editor.resize(900, 700);
-    editor.show();
-    QTest::qWait(20);
-    editor.openFile(path);
-    QTest::qWait(60);
-
-    int first = -1;
-    for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next())
-        if (editor.tableAt(b.blockNumber()) != nullptr) { first = b.blockNumber(); break; }
-    if (first < 0) {
-        ++zt::g_checks; ++zt::g_failures;
-        std::printf("провал: таблицы нет\n");
-        return;
-    }
-
-    const QRectF area = editor.tableRect(first);
-    const QPoint middle(int(area.center().x()),
-                        int(area.center().y()) - editor.verticalScrollBar()->value());
+    Editor editor;
+    editor.openText(QStringLiteral("мышь"), "до\n\n| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\nпосле\n");
+    const QVector<int> tables = tableBlocks(editor);
+    ZT_TRUE("таблица есть", tables.size() == 1);
+    if (tables.size() != 1) return;
+    const int number = tables.first();
+    const QRectF area = editor.tableRect(number);
+    ZT_TRUE("сетка размечена", !area.isEmpty());
+    const QPoint middle = editor.viewportPoint(area.center());
 
     // Одинарный щелчок по сетке — таблица выбрана.
     QTest::mouseClick(editor.viewport(), Qt::LeftButton, Qt::NoModifier, middle);
     QTest::qWait(30);
-    const zametti::BlockObject picked = zametti::objectOf(editor.textCursor().block());
-    ++zt::g_checks;
-    if (picked.kind != zametti::ObjectKind::Table || picked.first != first) {
-        ++zt::g_failures;
-        std::printf("провал: щелчок по сетке не выбрал таблицу (каретка в блоке %d)\n",
-                    editor.textCursor().blockNumber());
-    }
+    ZT_TRUE("щелчок по сетке выбрал таблицу (каретка в блоке " + n(editor.textCursor().blockNumber()) + ")",
+            zametti::objectOf(editor.textCursor().block()).kind == zametti::ObjectKind::Table);
 
-    // Выбранная таблица показана уголками-мишенями — тем же, чем показана
-    // выбранная фотография.
+    // Выбранная таблица показана уголками-мишенями — тем же, чем фотография.
     {
         const QImage shot = editor.grab().toImage();
         const QColor caretColour = zametti::settings().style().caretColor();
+        const QPoint origin = editor.viewport()->mapTo(&editor, QPoint(0, 0));
+        const int scroll = editor.verticalScrollBar()->value();
         int cornerPixels = 0;
-        for (int px = int(area.left()) - 12; px < int(area.right()) + 12 && px < shot.width();
-             ++px)
-            for (int py = int(area.top()) - 12; py < int(area.bottom()) + 12 && py < shot.height();
-                 ++py) {
-                if (px < 0 || py < 0) continue;
+        for (int px = int(area.left()) - 12; px < int(area.right()) + 12; ++px)
+            for (int py = int(area.top()) - 12; py < int(area.bottom()) + 12; ++py) {
                 if (area.contains(QPointF(px, py))) continue;
-                const QColor at = shot.pixelColor(px, py);
+                const int sx = px + origin.x();
+                const int sy = py - scroll + origin.y();
+                if (sx < 0 || sy < 0 || sx >= shot.width() || sy >= shot.height()) continue;
+                const QColor at = shot.pixelColor(sx, sy);
                 if (qAbs(at.red() - caretColour.red()) < 20 &&
                     qAbs(at.green() - caretColour.green()) < 20 &&
                     qAbs(at.blue() - caretColour.blue()) < 20)
                     ++cornerPixels;
             }
-        ++zt::g_checks;
-        if (cornerPixels == 0) {
-            ++zt::g_failures;
-            std::printf("провал: выбранная таблица не показана уголками\n");
-        }
+        ZT_TRUE("выбранная таблица показана уголками", cornerPixels > 0);
     }
 
-    // А КАРЕТКИ ВНУТРИ НЕТ. Спрашиваем правило, а не картинку: у набора нет
-    // фокуса окна (под Xvfb hasFocus() всегда ложь), и по снимку это условие
-    // не проверить вовсе — первая редакция проверки была пустышкой и оставалась
-    // зелёной со снятой починкой.
-    ++zt::g_checks;
-    if (zametti::caretShouldBeDrawn(true, false, false, true)) {
-        ++zt::g_failures;
-        std::printf("провал: каретка рисуется внутри нарисованной таблицы\n");
-    }
-    ++zt::g_checks;
-    if (!zametti::caretShouldBeDrawn(true, false, false, false)) {
-        ++zt::g_failures;
-        std::printf("провал: в обычном тексте каретка пропала\n");
-    }
+    // А КАРЕТКИ ВНУТРИ НЕТ. Спрашиваем правило, а не картинку: под Xvfb
+    // hasFocus() лжёт, и по снимку это не проверить.
+    ZT_TRUE("каретка не рисуется внутри нарисованной таблицы",
+            !zametti::caretShouldBeDrawn(true, false, false, true));
+    ZT_TRUE("в обычном тексте каретка есть", zametti::caretShouldBeDrawn(true, false, false, false));
 
-    // Щелчок по НИЖНЕЙ части сетки — там, где кончается резерв места: без
-    // перехвата Qt ставит каретку в следующий за таблицей абзац.
-    const QPoint low(int(area.center().x()),
-                     int(area.bottom()) - 4 - editor.verticalScrollBar()->value());
+    // Щелчок по НИЖНЕЙ части сетки — тоже выбор таблицы, а не соседний абзац.
+    const QPoint low = editor.viewportPoint(QPointF(area.center().x(), area.bottom() - 4));
     QTest::mouseClick(editor.viewport(), Qt::LeftButton, Qt::NoModifier, low);
     QTest::qWait(30);
-    ++zt::g_checks;
-    const zametti::BlockObject low_pick = zametti::objectOf(editor.textCursor().block());
-    if (low_pick.kind != zametti::ObjectKind::Table || low_pick.first != first) {
-        ++zt::g_failures;
-        std::printf("провал: щелчок по низу сетки не выбрал таблицу (блок %d)\n",
-                    editor.textCursor().blockNumber());
-    }
+    ZT_TRUE("щелчок по низу сетки выбрал таблицу",
+            zametti::objectOf(editor.textCursor().block()).kind == zametti::ObjectKind::Table);
 
-    // Двойной щелчок — правка исходника, каретка рядом с местом щелчка.
-    QTest::mouseDClick(editor.viewport(), Qt::LeftButton, Qt::NoModifier, middle);
+    // Двойной щелчок по ячейке «3» (последний ряд, первая колонка) — правка
+    // исходника, каретка на этой ячейке.
+    const zametti::TableRender* render = editor.tableRenderFor(editor.document()->findBlockByNumber(number));
+    ZT_TRUE("раскладка есть", render != nullptr);
+    if (render == nullptr) return;
+    const zametti::TableCellBox* cell = render->layout.at(2, 0);
+    ZT_TRUE("ячейка (2,0) есть", cell != nullptr);
+    if (cell == nullptr) return;
+    const QPointF cellPoint = area.topLeft() + cell->rect.center();
+    int hitBlock = -1, hitRow = -1, hitColumn = -1, hitOffset = -1;
+    ZT_TRUE("под точкой ячейка", editor.tableCellAt(cellPoint, &hitBlock, &hitRow, &hitColumn, &hitOffset));
+    ZT_EQ("это ряд 2", n(2), n(hitRow));
+    ZT_EQ("колонка 0", n(0), n(hitColumn));
+    QTest::mouseDClick(editor.viewport(), Qt::LeftButton, Qt::NoModifier, editor.viewportPoint(cellPoint));
     QTest::qWait(40);
-    ++zt::g_checks;
-    if (editor.editedTable() != first) {
-        ++zt::g_failures;
-        std::printf("провал: двойной щелчок не открыл исходник (правится %d)\n",
-                    editor.editedTable());
-    }
-    ++zt::g_checks;
-    const zametti::BlockObject inside = zametti::objectOf(editor.textCursor().block());
-    if (inside.kind != zametti::ObjectKind::Table || inside.first != first) {
-        ++zt::g_failures;
-        std::printf("провал: каретка не в исходнике таблицы (блок %d)\n",
-                    editor.textCursor().blockNumber());
-    }
+    const QTextBlock opened = editor.document()->findBlockByNumber(number);
+    ZT_TRUE("двойной щелчок раскрыл исходник", isOpenedTable(opened));
+    ZT_EQ("каретка на ячейке «3»", n(hitOffset), n(editor.textCursor().positionInBlock()));
+    ZT_TRUE("каретка стоит перед «3»",
+            editor.textCursor().block().text().mid(editor.textCursor().positionInBlock(), 1) == QStringLiteral("3"));
 }
 
-// Протокол правки: Enter внутри вставляет строку и правку НЕ прерывает, Esc
-// выходит, уход каретки наружу — тоже.
+// --- протокол правки: Enter — строка внутри, Esc — свернуть судьёй файла --------
+
 void checkEditProtocol() {
-    const QString path = QDir(g_dir).filePath(QStringLiteral("протокол.md"));
-    QFile file(path);
-    if (file.open(QIODevice::WriteOnly))
-        file.write("до\n\n| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\nпосле\n");
-    file.close();
+    Editor editor;
+    editor.openText(QStringLiteral("протокол"), "до\n\n| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\nпосле\n");
+    QVector<int> tables = tableBlocks(editor);
+    ZT_TRUE("таблица есть", tables.size() == 1);
+    if (tables.size() != 1) return;
+    const int number = tables.first();
 
-    zametti::NoteEditor editor;
-    editor.resize(900, 700);
-    editor.show();
-    QTest::qWait(20);
-    editor.openFile(path);
-    QTest::qWait(60);
-
-    int first = -1;
-    for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next())
-        if (editor.tableAt(b.blockNumber()) != nullptr) { first = b.blockNumber(); break; }
-    if (first < 0) {
-        ++zt::g_checks; ++zt::g_failures;
-        std::printf("провал: таблицы нет\n");
-        return;
-    }
-
-    // Входим в правку.
-    editor.setTextCursor(QTextCursor(editor.document()->findBlockByNumber(first + 3)));
-    QTest::qWait(20);
+    // Входим в правку и встаём в конец первого ряда тела.
+    editor.setTextCursor(QTextCursor(editor.document()->findBlockByNumber(number)));
     QTest::keyClick(&editor, Qt::Key_Return);
     QTest::qWait(40);
-    ++zt::g_checks;
-    if (editor.editedTable() < 0) {
-        ++zt::g_failures;
-        std::printf("провал: в правку не вошли\n");
-        return;
-    }
-
-    // ENTER ВНУТРИ ПРАВКИ ВСТАВЛЯЕТ СТРОКУ и правку не прерывает: человек
-    // добавляет ряд таблицы, а не выходит. Встаём в конец ПОСЛЕДНЕГО ряда —
-    // именно так ряд и добавляют.
-    const int blocksBefore = editor.document()->blockCount();
-    QTextCursor at(editor.document()->findBlockByNumber(first + 3));
-    at.movePosition(QTextCursor::EndOfBlock);
+    QTextBlock opened = editor.document()->findBlockByNumber(number);
+    ZT_TRUE("в правку вошли", isOpenedTable(opened));
+    const int rowStart = int(opened.text().indexOf(QStringLiteral("| 1 |")));
+    QTextCursor at(opened);
+    at.setPosition(opened.position() + rowStart + 9);   // конец «| 1 | 2 |»
     editor.setTextCursor(at);
     QTest::qWait(10);
-    QTest::keyClick(&editor, Qt::Key_Return);
-    QTest::qWait(60);
-    ++zt::g_checks;
-    if (editor.document()->blockCount() != blocksBefore + 1) {
-        ++zt::g_failures;
-        std::printf("провал: Enter в правке не вставил строку (было %d, стало %d)\n",
-                    blocksBefore, editor.document()->blockCount());
-    }
-    ++zt::g_checks;
-    if (editor.editedTable() < 0) {
-        ++zt::g_failures;
-        std::printf("провал: Enter внутри оборвал правку\n");
-        std::printf("  каретка в блоке %d «%s», рядом таблица %d\n",
-                    editor.textCursor().blockNumber(),
-                    editor.textCursor().block().text().left(20).toUtf8().constData(),
-                    editor.tableNearCaret());
-        int n = 0;
-        for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next(), ++n) {
-            const zametti::BlockObject o = zametti::objectOf(b);
-            std::printf("  блок %d род=%d объект=%d(%d..%d) «%s»\n", n,
-                        int(zametti::kindOf(b)), int(o.kind), o.first, o.last,
-                        b.text().left(24).toUtf8().constData());
-        }
-    }
 
-    // РЯД В СЕРЕДИНУ ТЕЛА. Enter заводит пустую строку внутри таблицы — а
-    // пустая строка таблицу кончает, и кусок на миг перестаёт быть таблицей
-    // вовсе. Правка обязана это пережить: человек как раз набирает новый ряд.
-    //
-    // Ряд ставится после первой строки ТЕЛА, а не после шапки: между шапкой и
-    // строкой-разделителем ряду взяться неоткуда, и таблица от такой вставки
-    // ломается насовсем — это не «промежуточное состояние», а другая заметка.
-    {
-        QTextCursor mid(editor.document()->findBlockByNumber(first + 2));
-        mid.movePosition(QTextCursor::EndOfBlock);
-        editor.setTextCursor(mid);
-        QTest::qWait(10);
-        QTest::keyClick(&editor, Qt::Key_Return);
-        QTest::qWait(60);
-        ++zt::g_checks;
-        if (editor.editedTable() < 0) {
-            ++zt::g_failures;
-            std::printf("провал: Enter в середине таблицы оборвал правку\n");
-        }
-        QTest::keyClicks(&editor, QStringLiteral("| 5 | 6 |"));
-        QTest::qWait(60);
-        ++zt::g_checks;
-        if (editor.editedTable() < 0) {
-            ++zt::g_failures;
-            std::printf("провал: набор нового ряда оборвал правку\n");
-        }
-    }
-
-    // Esc выходит: снова сетка, таблица выбрана.
-    QTest::keyClick(&editor, Qt::Key_Escape);
-    QTest::qWait(60);
-    // Ярлык окна до набора не доходит — зовём то же, что зовёт окно.
-    if (editor.editedTable() >= 0) editor.leaveTableEdit();
-    QTest::qWait(60);
-    ++zt::g_checks;
-    if (editor.editedTable() >= 0) {
-        ++zt::g_failures;
-        std::printf("провал: Esc не вывел из правки\n");
-    }
-    ++zt::g_checks;
-    const zametti::BlockObject after = zametti::objectOf(editor.textCursor().block());
-    if (after.kind != zametti::ObjectKind::Table) {
-        ++zt::g_failures;
-        std::printf("провал: после выхода каретка не на таблице (блок %d)\n",
-                    editor.textCursor().blockNumber());
-    }
-
-    // Входим снова и уходим кареткой наружу — правка кончается сама.
+    // ENTER ВНУТРИ ПРАВКИ ВСТАВЛЯЕТ СТРОКУ того же блока и правку не прерывает.
+    const int blocksBefore = editor.document()->blockCount();
     QTest::keyClick(&editor, Qt::Key_Return);
     QTest::qWait(40);
-    ++zt::g_checks;
-    if (editor.editedTable() < 0) {
-        ++zt::g_failures;
-        std::printf("провал: второй вход в правку не сработал\n");
+    ZT_EQ("Enter не завёл нового блока", n(blocksBefore), n(editor.document()->blockCount()));
+    opened = editor.document()->findBlockByNumber(number);
+    ZT_TRUE("после Enter таблица всё ещё раскрыта", zametti::isRawBlock(opened) && !zametti::isTableObjectBlock(opened));
+    QTest::keyClicks(&editor, QStringLiteral("| 5 | 6 |"));
+    QTest::qWait(40);
+    ZT_TRUE("набор ряда не прервал правку",
+            zametti::isRawBlock(editor.textCursor().block()) && !zametti::isTableObjectBlock(editor.textCursor().block()));
+
+    // Esc сворачивает: снова объект, в нём четыре ряда, файл — с новым рядом.
+    QTest::keyClick(&editor, Qt::Key_Escape);
+    QTest::qWait(60);
+    tables = tableBlocks(editor);
+    ZT_TRUE("после Esc таблица снова объект", tables.size() == 1 && tables.first() == number);
+    if (tables.size() == 1) {
+        const zametti::TableRender* render = editor.tableRenderFor(editor.document()->findBlockByNumber(number));
+        ZT_TRUE("в свёрнутой таблице четыре ряда", render != nullptr && render->layout.rows == 4);
     }
+    ZT_EQ("файл после правки", std::string("до\n\n| a | b |\n|---|---|\n| 1 | 2 |\n| 5 | 6 |\n| 3 | 4 |\n\nпосле\n"),
+          markdown(editor));
+    ZT_TRUE("после Esc каретка на таблице",
+            zametti::objectOf(editor.textCursor().block()).kind == zametti::ObjectKind::Table);
+
+    // Ctrl+Z возвращает раскрытую таблицу, а не съедает правку.
+    QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+    QTest::qWait(40);
+    ZT_TRUE("Ctrl+Z после Esc возвращает раскрытую таблицу",
+            isOpenedTable(editor.document()->findBlockByNumber(number)));
+    QTest::keyClick(&editor, Qt::Key_Escape);
+    QTest::qWait(40);
+
+    // Пустая строка ВНУТРИ раскрытой таблицы кончает её, как в файле: после
+    // Esc судья файла отдаёт таблицу и абзац — ровно то, что прочёл бы файл.
+    editor.setTextCursor(QTextCursor(editor.document()->findBlockByNumber(number)));
+    QTest::keyClick(&editor, Qt::Key_Return);
+    QTest::qWait(40);
+    QTextCursor tail(editor.document()->findBlockByNumber(number));
+    tail.movePosition(QTextCursor::EndOfBlock);
+    editor.setTextCursor(tail);
+    QTest::keyClick(&editor, Qt::Key_Return);
+    QTest::keyClick(&editor, Qt::Key_Return);
+    QTest::keyClicks(&editor, QStringLiteral("tail"));
+    QTest::qWait(20);
+    QTest::keyClick(&editor, Qt::Key_Escape);
+    QTest::qWait(60);
+    const std::string afterSplit = markdown(editor);
+    ZT_EQ("после Esc — таблица и абзац, как прочёл бы файл",
+          std::string("до\n\n| a | b |\n|---|---|\n| 1 | 2 |\n| 5 | 6 |\n| 3 | 4 |\n\ntail\n\nпосле\n"),
+          afterSplit);
+    ZT_EQ("и то же самое читается из файла", afterSplit, markdownOf(pieces(afterSplit)));
+    ZT_TRUE("таблица снова объект", zametti::isTableObjectBlock(editor.document()->findBlockByNumber(number)));
+
+    // Уход каретки наружу тоже сворачивает.
+    editor.setTextCursor(QTextCursor(editor.document()->findBlockByNumber(number)));
+    QTest::keyClick(&editor, Qt::Key_Return);
+    QTest::qWait(40);
+    ZT_TRUE("второй вход в правку", isOpenedTable(editor.document()->findBlockByNumber(number)));
     editor.setTextCursor(QTextCursor(editor.document()->firstBlock()));
     QTest::qWait(60);
-    ++zt::g_checks;
-    if (editor.editedTable() >= 0) {
-        ++zt::g_failures;
-        std::printf("провал: уход каретки не завершил правку\n");
+    ZT_TRUE("уход каретки свернул таблицу", zametti::isTableObjectBlock(editor.document()->findBlockByNumber(number)));
+}
+
+// --- switch-and-return == fresh open --------------------------------------------
+
+void checkSwitchAndReturn() {
+    Editor editor;
+    editor.openText(QStringLiteral("возврат"), kNote, 1000, 700);
+    QVector<QRectF> fresh;
+    for (const int number : tableBlocks(editor)) fresh.push_back(editor.tableRect(number));
+    ZT_TRUE("свежее открытие: три таблицы", fresh.size() == 3);
+
+    const QString other = QDir(g_dir).filePath(QStringLiteral("возврат-другая.md"));
+    QFile second(other);
+    if (second.open(QIODevice::WriteOnly | QIODevice::Truncate)) second.write("# Другая\n");
+    second.close();
+    editor.openFile(other);
+    QTest::qWait(60);
+    editor.openFile(QDir(g_dir).filePath(QStringLiteral("возврат.md")));
+    QTest::qWait(120);
+    (void)editor.document()->documentLayout()->documentSize();
+    QVector<QRectF> back;
+    for (const int number : tableBlocks(editor)) back.push_back(editor.tableRect(number));
+    ZT_EQ("после возврата таблиц столько же", n(fresh.size()), n(back.size()));
+    for (int i = 0; i < qMin(fresh.size(), back.size()); ++i)
+        ZT_TRUE("геометрия таблицы " + n(i) + " после возврата та же (" +
+                    n(int(back[i].top())) + "×" + n(int(back[i].height())) + " против " +
+                    n(int(fresh[i].top())) + "×" + n(int(fresh[i].height())) + ")",
+                qAbs(back[i].top() - fresh[i].top()) < 1.5 && qAbs(back[i].height() - fresh[i].height()) < 1.5);
+}
+
+// --- живые заметки владельца: файл не меняется, вторая таблица правится ---------
+
+void checkFilesUntouched(const QStringList& sources) {
+    for (const QString& source : sources) {
+        QFile in(source);
+        if (!in.open(QIODevice::ReadOnly)) continue;
+        const QByteArray original = in.readAll();
+        in.close();
+        const QString copy = QDir(g_dir).filePath(QFileInfo(source).fileName());
+        QFile out(copy);
+        if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) continue;
+        out.write(original);
+        out.close();
+
+        // Открытие приводит файл к канону (это правило хранилища, а не показ):
+        // сперва даём ему причесаться, и только потом меряем — показ и правка
+        // кареткой не имеют права тронуть КАНОНИЧЕСКИЙ файл ни на байт.
+        {
+            zametti::NoteEditor first;
+            first.resize(900, 700);
+            first.show();
+            QTest::qWait(20);
+            first.openFile(copy);
+            QTest::qWait(80);
+        }
+        QFile canon(copy);
+        if (!canon.open(QIODevice::ReadOnly)) continue;
+        const QByteArray before = canon.readAll();
+        canon.close();
+
+        zametti::NoteEditor editor;
+        editor.resize(900, 700);
+        editor.show();
+        QTest::qWait(20);
+        editor.openFile(copy);
+        QTest::qWait(80);
+        for (int i = 0; i < 40; ++i) QTest::keyClick(&editor, Qt::Key_Down);
+        for (int i = 0; i < 10; ++i) QTest::keyClick(&editor, Qt::Key_Up);
+        QTest::qWait(50);
+        QTextCursor top = editor.textCursor();
+        top.setPosition(0);
+        editor.setTextCursor(top);
+        QTest::qWait(60);
+        editor.grab().toImage().save(QDir(g_dir).filePath(QFileInfo(source).completeBaseName() + QStringLiteral(".png")));
+
+        QFile after(copy);
+        ZT_TRUE("копия читается: " + copy.toStdString(), after.open(QIODevice::ReadOnly));
+        const QByteArray now = after.readAll();
+        after.close();
+        ZT_TRUE("файл не изменился при показе — " + QFileInfo(source).fileName().toStdString(), now == before);
     }
 }
 
-// ПУТЬ ВЛАДЕЛЬЦА ДОСЛОВНО: живая заметка с двумя таблицами, щелчок по ВТОРОЙ,
-// Enter. Он видел одну последнюю строку и крохотный курсор; выдуманная заметка
-// с одной таблицей эту беду не показывала.
 void checkSecondTableInLiveNote(const QString& source) {
-    if (source.isEmpty() || !QFile::exists(source)) return;
     QFile in(source);
     if (!in.open(QIODevice::ReadOnly)) return;
     const QByteArray body = in.readAll();
@@ -476,135 +458,40 @@ void checkSecondTableInLiveNote(const QString& source) {
     if (out.open(QIODevice::WriteOnly | QIODevice::Truncate)) out.write(body);
     out.close();
 
-    zametti::NoteEditor editor;
+    Editor editor;
     editor.resize(1100, 800);
     editor.show();
     QTest::qWait(30);
     editor.openFile(copy);
     QTest::qWait(150);
-
-    QVector<int> tables;
-    for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next())
-        if (editor.tableAt(b.blockNumber()) != nullptr) tables.push_back(b.blockNumber());
-    ++zt::g_checks;
-    if (tables.size() < 2) {
-        ++zt::g_failures;
-        std::printf("провал: в живой заметке показано таблиц %d, ждали хотя бы две\n",
-                    int(tables.size()));
-        return;
-    }
-
+    (void)editor.document()->documentLayout()->documentSize();
+    const QVector<int> tables = tableBlocks(editor);
+    ZT_TRUE("в живой заметке хотя бы две таблицы (" + n(tables.size()) + ")", tables.size() >= 2);
+    if (tables.size() < 2) return;
     const int second = tables[1];
-    const zametti::TableRender* render = editor.tableAt(second);
-    const int lines = render->last - render->first + 1;
     const QRectF area = editor.tableRect(second);
-
     editor.verticalScrollBar()->setValue(qMax(0, int(area.top()) - 100));
     QTest::qWait(50);
-    const QPoint at(int(area.center().x()),
-                    int(area.center().y()) - editor.verticalScrollBar()->value());
-    QTest::mouseClick(editor.viewport(), Qt::LeftButton, Qt::NoModifier, at);
+    QTest::mouseClick(editor.viewport(), Qt::LeftButton, Qt::NoModifier, editor.viewportPoint(area.center()));
     QTest::qWait(50);
+    ZT_TRUE("щелчок выбрал вторую таблицу", editor.textCursor().blockNumber() == second);
     QTest::keyClick(&editor, Qt::Key_Return);
     QTest::qWait(100);
-
-    ++zt::g_checks;
-    if (editor.editedTable() != second) {
-        ++zt::g_failures;
-        std::printf("провал: Enter по второй таблице не открыл исходник (правится %d, ждали %d)\n",
-                    editor.editedTable(), second);
-    }
-
-    // Все строки исходника видны И имеют высоту.
-    int hidden = 0;
-    int flat = 0;
-    for (int number = second; number < second + lines; ++number) {
-        const QTextBlock b = editor.document()->findBlockByNumber(number);
-        if (!b.isValid()) continue;
-        if (!b.isVisible()) ++hidden;
-        if (editor.document()->documentLayout()->blockBoundingRect(b).height() <= 0.5) ++flat;
-    }
-    ++zt::g_checks;
-    if (hidden != 0 || flat != 0) {
-        ++zt::g_failures;
-        std::printf("провал: в правке второй таблицы спрятано %d строк, без высоты %d "
-                    "(всего строк %d)\n", hidden, flat, lines);
-    }
+    const QTextBlock opened = editor.document()->findBlockByNumber(second);
+    ZT_TRUE("Enter по второй таблице раскрыл исходник", isOpenedTable(opened));
+    ZT_TRUE("раскрытая таблица имеет высоту",
+            editor.document()->documentLayout()->blockBoundingRect(opened).height() > 0.5);
+    editor.setTextCursor(QTextCursor(editor.document()->firstBlock()));
+    QTest::qWait(60);
+    ZT_TRUE("уход каретки свернул вторую таблицу", zametti::isTableObjectBlock(editor.document()->findBlockByNumber(second)));
 }
 
-// ИНВАРИАНТ A ИЗ БРИФА: показ не меняет файл ни на байт.
+// --- таблица на чужом фоне ------------------------------------------------------
 //
-// Открываем копии настоящих заметок владельца, даём виду их отрисовать, водим
-// кареткой по таблице и сравниваем байты. Показ — чистое чтение, и это
-// единственный способ убедиться в этом, а не понадеяться.
-void checkFilesUntouched(const QStringList& sources) {
-    for (const QString& source : sources) {
-        QFile in(source);
-        if (!in.open(QIODevice::ReadOnly)) continue;
-        const QByteArray before = in.readAll();
-        in.close();
-
-        const QString copy = QDir(g_dir).filePath(QFileInfo(source).fileName());
-        QFile out(copy);
-        if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) continue;
-        out.write(before);
-        out.close();
-
-        zametti::NoteEditor editor;
-        editor.resize(900, 700);
-        editor.show();
-        QTest::qWait(20);
-        editor.openFile(copy);
-        QTest::qWait(80);
-
-        // Ходим кареткой по всему документу: рендер, флип, снимок мест —
-        // всё это не имеет права тронуть файл.
-        for (int i = 0; i < 40; ++i) {
-            QTest::keyClick(&editor, Qt::Key_Down);
-            QTest::qWait(2);
-        }
-        for (int i = 0; i < 10; ++i) {
-            QTest::keyClick(&editor, Qt::Key_Up);
-            QTest::qWait(2);
-        }
-        QTest::qWait(50);
-
-        // Снимок живой заметки — на него смотрит владелец.
-        QTextCursor top = editor.textCursor();
-        top.setPosition(0);
-        editor.setTextCursor(top);
-        QTest::qWait(60);
-        const QImage live = editor.grab().toImage();
-        live.save(QDir(g_dir).filePath(QFileInfo(source).completeBaseName() +
-                                       QStringLiteral(".png")));
-
-        QFile after(copy);
-        ++zt::g_checks;
-        if (!after.open(QIODevice::ReadOnly)) {
-            ++zt::g_failures;
-            std::printf("провал: копия %s не читается\n", qPrintable(copy));
-            continue;
-        }
-        const QByteArray now = after.readAll();
-        after.close();
-        if (now == before) continue;
-        ++zt::g_failures;
-        std::printf("провал: файл изменился при показе — %s (было %lld байт, стало %lld)\n",
-                    qPrintable(QFileInfo(source).fileName()), (long long)before.size(),
-                    (long long)now.size());
-    }
-}
-
-// ТАБЛИЦА НА ЧУЖОМ ФОНЕ.
-//
-// Под сеткой остаётся видимой последняя строка исходника, и вид закрывает её
-// заливкой. Красили её «цветом страницы» из облика — а в окне About тот же
-// вьюер показывает справку, палитру ему не правят, и под каждой таблицей
-// вылезало молочное пятно (заметил владелец). Тот же промах был бы в режиме
-// истории, где поле пожелтевшее.
-//
-// Проверка ставит виду заведомо ЧУЖОЙ фон и требует, чтобы цвета страницы из
-// облика на месте таблицы не осталось ни точки.
+// В окне About тот же вьюер показывает справку, палитру ему не правят, и под
+// каждой таблицей вылезало молочное пятно «цвета страницы» из облика (заметил
+// владелец). У объекта под сеткой закрашивать нечего — но проверка остаётся:
+// цвета страницы из облика на месте таблицы быть не должно ни точки.
 void checkTableOnForeignBackground() {
     zametti::NoteView view;
     view.setReadOnly(true);
@@ -620,35 +507,26 @@ void checkTableOnForeignBackground() {
     zametti::buildDocument(pieces("| a | b |\n|---|---|\n| 1 | 2 |\n"), *document);
     view.setDocument(document);
     view.applyContentWidth();
-    view.syncTables();
     QTest::qWait(60);
-
-    int first = -1;
-    for (QTextBlock b = document->firstBlock(); b.isValid(); b = b.next())
-        if (view.tableAt(b.blockNumber()) != nullptr) { first = b.blockNumber(); break; }
-    ++zt::g_checks;
-    if (first < 0) {
-        ++zt::g_failures;
-        std::printf("провал: таблица на чужом фоне не показана сеткой\n");
-        return;
-    }
-
-    const QRectF area = view.tableRect(first);
+    const QVector<int> tables = tableBlocks(view);
+    ZT_TRUE("таблица на чужом фоне показана объектом", tables.size() == 1);
+    if (tables.size() != 1) return;
+    const QRectF area = view.tableRect(tables.first());
     const QImage shot = view.grab().toImage();
     const QColor page = zametti::settings().style().pageBackground();
+    const QPoint origin = view.viewport()->mapTo(&view, QPoint(0, 0));
     int stale = 0;
-    for (int px = int(area.left()); px < int(area.right()) && px < shot.width(); ++px)
-        for (int py = int(area.top()); py < int(area.bottom()) && py < shot.height(); ++py) {
-            if (px < 0 || py < 0) continue;
-            if (shot.pixelColor(px, py) == page) ++stale;
+    for (int px = int(area.left()); px < int(area.right()); ++px)
+        for (int py = int(area.top()); py < int(area.bottom()); ++py) {
+            const int sx = px + origin.x();
+            const int sy = py + origin.y();
+            if (sx < 0 || sy < 0 || sx >= shot.width() || sy >= shot.height()) continue;
+            if (shot.pixelColor(sx, sy) == page) ++stale;
         }
-    ++zt::g_checks;
-    if (stale > 0) {
-        ++zt::g_failures;
-        std::printf("провал: под таблицей осталось %d точек цвета страницы из облика "
-                    "вместо фона вида\n", stale);
-    }
+    ZT_EQ("под таблицей нет точек цвета страницы из облика", n(0), n(stale));
 }
+
+}  // namespace
 
 static int ztRunSuite(int argc, char** argv) {
     g_dir = argc > 1 ? QString::fromLocal8Bit(argv[1]) : QDir::tempPath();
@@ -658,6 +536,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkFlip();
     checkMouse();
     checkEditProtocol();
+    checkSwitchAndReturn();
     checkTableOnForeignBackground();
 
     QStringList sources;
@@ -665,22 +544,40 @@ static int ztRunSuite(int argc, char** argv) {
     if (!sources.isEmpty()) {
         checkFilesUntouched(sources);
         checkSecondTableInLiveNote(sources.first());
+    } else {
+        std::printf("копий заметок владельца с таблицами нет — живые проверки пропущены\n");
     }
 
     std::printf("снимки: %s\n", qPrintable(g_dir));
     return zt::report("снимки таблиц");
 }
 
-// Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
-// Дробить на отдельные проверки — отдельная работа, по одному набору.
 TEST(TableShots, All) {
-    // ВРЕМЕННЫЙ ШАГ НАЗАД: объекты показаны своим исходником, рисовать их
-    // сейчас некому — см. kObjectsShown в doc_model.h.
-    if (!zametti::kObjectsShown)
-        GTEST_SKIP() << "объекты показаны исходником (kObjectsShown = false)";
-
     std::vector<QByteArray> ztArgs{QByteArrayLiteral("table_shots_test")};
     ztArgs.push_back((zt::TestData::outDir(QStringLiteral("table-shots"))).toLocal8Bit());
+    // Заметки владельца с таблицами — из копии хранилища (.testdata/owner-copy),
+    // оригинал не трогается. Первой идёт та, где таблиц хотя бы две.
+    const QString corpus = zt::TestData::corpus(QStringLiteral("owner-copy"));
+    if (!corpus.isEmpty()) {
+        QStringList withTables;
+        QString twoTables;
+        QDirIterator it(corpus, {QStringLiteral("*.md")}, QDir::Files);
+        while (it.hasNext()) {
+            const QString path = it.next();
+            QFile f(path);
+            if (!f.open(QIODevice::ReadOnly)) continue;
+            // Таблицы считает тот же разбор, что и заметка: «|---» в блоке кода
+            // таблицей не является.
+            int tables = 0;
+            for (const zametti::Piece& piece : pieces(f.readAll().toStdString()))
+                if (piece.raw && piece.table) ++tables;
+            if (tables == 0) continue;
+            if (tables >= 2 && twoTables.isEmpty()) twoTables = path;
+            else if (withTables.size() < 4) withTables << path;
+        }
+        if (!twoTables.isEmpty()) withTables.prepend(twoTables);
+        for (const QString& path : withTables) ztArgs.push_back(path.toLocal8Bit());
+    }
     std::vector<char*> ztArgv;
     for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
     EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));

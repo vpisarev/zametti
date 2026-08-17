@@ -147,8 +147,7 @@ int ztUndoProbe(int argc, char** argv) {
             [&] { editor.applyContentWidth(); });
     measure(editor, "applyContentWidth сам по себе",
             [&] { editor.applyContentWidth(); });
-    measure(editor, "syncFormulas + syncTables сами по себе", [&] {
-        editor.syncTables();
+    measure(editor, "syncFormulas сам по себе (таблицы считаются лениво из intrinsicSize)", [&] {
         editor.syncFormulas();
     });
     measure(editor, "прокрутка", [&] {

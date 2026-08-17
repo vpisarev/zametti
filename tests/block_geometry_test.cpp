@@ -111,18 +111,11 @@ std::vector<Box> boxesOf(zametti::NoteEditor& editor) {
             box.what = QStringLiteral("формула");
             box.content = editor.formulaRect(b.blockNumber());
             box.contentHeight = formula->height;
-        } else if (const zametti::TableRender* table = editor.tableAt(b.blockNumber())) {
+        } else if (const zametti::TableRender* table = editor.tableRenderFor(b)) {
+            // Таблица — объект одним блоком: меряется как формула.
             box.what = QStringLiteral("таблица");
             box.content = editor.tableRect(b.blockNumber());
             box.contentHeight = table->layout.height;
-            // МЕРЯЕМ ПО ПОСЛЕДНЕЙ СТРОКЕ. Строки таблицы, кроме последней,
-            // спрятаны, а спрятанный блок Qt отдаёт нулевым прямоугольником в
-            // начале координат — считать от него значит мерить пустоту (моя
-            // первая редакция получала 406 точек там, где их сотня).
-            const QTextBlock last = editor.document()->findBlockByNumber(table->last);
-            if (!last.isValid()) continue;
-            box.area = layout->blockBoundingRect(last);
-            box.blockHeight = box.area.height() + last.blockFormat().bottomMargin();
         } else {
             continue;
         }
@@ -530,12 +523,8 @@ static int ztRunSuite(int argc, char** argv) {
     checkOwnerRecipe(620, QStringLiteral("узкое"));
 
     // Оба размера окна: целый класс расхождений виден только в узком.
-    if (zametti::kObjectsShown) {
-        checkGeometry(1000, QStringLiteral("широкое"));
-        checkGeometry(620, QStringLiteral("узкое"));
-    } else {
-        std::printf("геометрия таблиц пропущена: таблицы показаны исходником (kObjectsShown = false)\n");
-    }
+    checkGeometry(1000, QStringLiteral("широкое"));
+    checkGeometry(620, QStringLiteral("узкое"));
 
     return zt::report("геометрия блоков");
 }
@@ -544,14 +533,8 @@ static int ztRunSuite(int argc, char** argv) {
 // Дробить на отдельные проверки — отдельная работа, по одному набору.
 TEST(BlockGeometry, All) {
     // Набор меряет геометрию ТАБЛИЦ И ФОРМУЛ (см. boxesOf — фотографий он не
-    // собирает вовсе), а они всё ещё показаны исходником: место под них держит
-    // вид полями блоков. Фотография из-под этой константы уже вышла — она
-    // объект, и её геометрию меряет Image.All.
-    //
-    // Пропуск привязан К ТОЙ ЖЕ КОНСТАНТЕ, которой снят показ, а не списком в
-    // голове: вернётся показ — вернётся и набор, сам, без напоминания.
-    // Пропуск теперь ВНУТРИ набора и только для таблиц: полоса формулы меряется
-    // всегда — она объект.
+    // собирает вовсе: их геометрию меряет Image.All). Оба — объекты, полоса
+    // отдаётся intrinsicSize; набор идёт всегда.
     std::vector<QByteArray> ztArgs{QByteArrayLiteral("block_geometry_test")};
     ztArgs.push_back((zt::TestData::outDir(QStringLiteral("block-geometry"))).toLocal8Bit());
     std::vector<char*> ztArgv;

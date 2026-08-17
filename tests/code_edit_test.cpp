@@ -753,8 +753,8 @@ void checkEscapeOrder() {
           "при открытом поле языка Esc закрывает его, а не поиск");
     check(zametti::escapeActionFor(true, false, false) == EscapeAction::CloseLanguageEditor,
           "поле языка закрывается и без панели поиска");
-    check(zametti::escapeActionFor(false, true, true) == EscapeAction::LeaveTableEdit,
-          "правка таблицы закрывается раньше панели поиска");
+    check(zametti::escapeActionFor(false, true, true) == EscapeAction::CloseObject,
+          "раскрытый объект (формула, таблица) сворачивается раньше панели поиска");
     check(zametti::escapeActionFor(false, false, true) == EscapeAction::CloseFindBar,
           "без поля языка и правки Esc закрывает панель поиска");
     check(zametti::escapeActionFor(false, false, false) == EscapeAction::Nothing,
