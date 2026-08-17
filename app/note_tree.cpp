@@ -396,17 +396,32 @@ NoteTreeModel::NoteTreeModel(std::shared_ptr<ZStorage> storage, QObject* parent)
       store_(storage->isStore()),
       storage_(std::move(storage)) {
     build();
+    // ДЕРЕВО — ПРОЕКЦИЯ КАТАЛОГА, и о переменах каталог говорит сам: строится
+    // заново на структурной новости, обновляет одну строку на новости о заметке.
+    // Кто менял хранилище — окно, редактор, сторож каталога, — дерево не
+    // спрашивает; ему всё равно.
+    connect(storage_.get(), &ZStorage::catalogChanged, this, &NoteTreeModel::rebuild);
+    connect(storage_.get(), &ZStorage::noteChanged, this, &NoteTreeModel::refreshRow);
 }
 
+namespace {
+std::shared_ptr<ZStorage> loadedStorage(const QString& root) {
+    auto storage = std::make_shared<ZStorage>(root);
+    storage->reload();
+    return storage;
+}
+}  // namespace
+
 NoteTreeModel::NoteTreeModel(const QString& root, QObject* parent)
-    : NoteTreeModel(std::make_shared<ZStorage>(root), parent) {}
+    : NoteTreeModel(loadedStorage(root), parent) {}
 
 void NoteTreeModel::build() {
     QCollator collator;
     collator.setNumericMode(true);
     collator.setCaseSensitivity(Qt::CaseInsensitive);
     if (store_) {
-        storage_->reload();
+        // По каталогу, какой он сейчас: перечитывает его хранилище (reload), а
+        // не дерево, и говорит об этом сигналом.
         root_ = buildStore(rootPath_, *storage_);
         sortStore(root_.get(), rootSort_, collator);
         rebuildShown(root_.get(), foldersOnly_);
@@ -466,6 +481,16 @@ SortOrder NoteTreeModel::effectiveSortFor(const QString& id, SortOrder fallback,
 }
 
 void NoteTreeModel::refresh() {
+    // Перечитать хранилище; дерево перестроится по его сигналу. Вне хранилища
+    // сигнала не будет — строимся сами.
+    if (store_) {
+        storage_->reload();
+        return;
+    }
+    rebuild();
+}
+
+void NoteTreeModel::rebuild() {
     beginResetModel();
     build();
     endResetModel();
@@ -849,14 +874,21 @@ void NoteTreeModel::refreshNote(const QString& path) {
                      path.toUtf8().constData());
         return;
     }
+    // Строку обновит сигнал хранилища (noteChanged → refreshRow); сменилось
+    // место — придёт catalogChanged, и дерево построится заново.
     if (!storage_->refreshNote(node->id)) {
         // Строка списка осталась бы показывать прежний заголовок и прежнюю
         // дату — то есть врать о файле, которого мы не прочли.
         std::fprintf(stderr, "строка списка не обновлена: заметка не читается [%s]\n",
                      path.toUtf8().constData());
-        return;
     }
-    const ZStorage::NoteInfo* fresh = storage_->info(node->id);
+}
+
+void NoteTreeModel::refreshRow(const QString& id) {
+    if (!store_) return;
+    Node* node = const_cast<Node*>(nodeById(id));
+    if (node == nullptr) return;
+    const ZStorage::NoteInfo* fresh = storage_->info(id);
     if (fresh == nullptr) return;
     if (node->title == fresh->title() && node->snippet == fresh->snippet() &&
         node->modified == fresh->modified())

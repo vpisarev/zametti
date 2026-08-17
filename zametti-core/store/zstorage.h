@@ -28,10 +28,14 @@
 #include "znote.h"
 #include "znote_history.h"
 
+#include <QFileSystemWatcher>
 #include <QHash>
 #include <QLockFile>
+#include <QObject>
+#include <QSet>
 #include <QString>
 #include <QStringList>
+#include <QTimer>
 
 #include <functional>
 #include <memory>
@@ -39,7 +43,14 @@
 
 namespace zametti {
 
-class ZStorage {
+// QObject РАДИ СИГНАЛОВ: хранилище говорит о переменах каталога само, и дерево
+// со списком подписываются на него, а не окно вспоминает после каждой операции
+// «а теперь обновить панели». Две новости: catalogChanged — что-то появилось,
+// исчезло, переехало, ушло в архив или сменило метку порядка (дерево строится
+// заново); noteChanged(id) — одна заметка изменилась на месте: заголовок,
+// начало текста, время (обновляется одна строка).
+class ZStorage : public QObject {
+    Q_OBJECT
 public:
     // Запись каталога — метаданные заметки (ZNote::Metadata): одно место у
     // самой заметки, здесь — по id.
@@ -77,10 +88,21 @@ public:
 
     // --- каталог ---------------------------------------------------------
     // Перечитать всё хранилище (скан «<id>.md»). Не хранилище — каталог пуст.
+    // Перечитать каталог целиком (каждая заметка — шапка и первый блок; на
+    // корпусе владельца десятки миллисекунд). Испускает catalogChanged.
     void reload();
     // Перечитать одну заметку. Ложь — не читается (запись остаётся прежней)
-    // или файла нет (запись снимается).
+    // или файла нет (запись снимается). Испускает noteChanged, а если у заметки
+    // сменилось место (родитель, архив, род, метка порядка) — catalogChanged.
     bool refreshNote(const QString& id);
+    // СТОРОЖ КАТАЛОГА: следить за появлением и исчезновением файлов (чужая
+    // программа, синхронизация, возврат из системной корзины). Правку
+    // содержимого он не видит — за открытой заметкой следит редактор. Сперва
+    // сверяется СОСТАВ каталога одним чтением оглавления, и только на разнице —
+    // reload: наши собственные записи (QSaveFile пишет во временный файл и
+    // переименовывает) до перечитывания не доходят вовсе.
+    void setWatching(bool on);
+    bool watching() const { return watcher_ != nullptr; }
     const NoteInfo* info(const QString& id) const;
     bool has(const QString& id) const { return notes_.contains(id); }
     QStringList ids() const { return notes_.keys(); }
@@ -155,12 +177,29 @@ public:
     bool rewriteNote(const QString& id, const std::function<void(ZNote&)>& change,
                      const history::Rules& rules, QString* error);
 
+signals:
+    void catalogChanged();
+    void noteChanged(const QString& id);
+
 protected:
+    // Перечитать запись каталога, не сообщая наружу; structural — сменилось ли
+    // место заметки. Общий низ refreshNote и пакетных операций.
+    bool readBack(const QString& id, bool* structural);
+    // Пакет: пока жив, новости копятся, а по концу выходит один catalogChanged
+    // (архивация папки — десятки перезаписей, дерево строится один раз).
+    class Batch;
+    void announce(bool structural, const QString& id);
+    QSet<QString> listNames() const;
+
     QString root_;
     bool store_ = false;
     QHash<QString, NoteInfo> notes_;
     std::shared_ptr<QLockFile> lock_;   // заведён при первом lock()
-
+    int quiet_ = 0;
+    bool pending_ = false;
+    std::shared_ptr<QFileSystemWatcher> watcher_;
+    QTimer settle_;
+    QSet<QString> names_;
 };
 
 }  // namespace zametti

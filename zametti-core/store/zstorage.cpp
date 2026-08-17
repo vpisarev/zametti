@@ -32,7 +32,64 @@ bool ZStorage::isStoreRoot(const QString& dir) {
 }
 
 ZStorage::ZStorage(const QString& root)
-    : root_(QDir::cleanPath(root)), store_(isStoreRoot(QDir::cleanPath(root))) {}
+    : root_(QDir::cleanPath(root)), store_(isStoreRoot(QDir::cleanPath(root))) {
+    settle_.setSingleShot(true);
+    settle_.setInterval(400);
+    connect(&settle_, &QTimer::timeout, this, [this] {
+        // СВЕРКА СОСТАВА — 1.5 мс на корпусе владельца (276 файлов), а полное
+        // перечитывание — 24 мс. Имена те же — молчим.
+        const QSet<QString> now = listNames();
+        if (now == names_) return;
+        names_ = now;
+        reload();
+    });
+}
+
+class ZStorage::Batch {
+public:
+    explicit Batch(ZStorage& s) : s_(s) { ++s_.quiet_; }
+    ~Batch() {
+        if (--s_.quiet_ == 0 && s_.pending_) {
+            s_.pending_ = false;
+            emit s_.catalogChanged();
+        }
+    }
+    Batch(const Batch&) = delete;
+    Batch& operator=(const Batch&) = delete;
+
+private:
+    ZStorage& s_;
+};
+
+void ZStorage::announce(bool structural, const QString& id) {
+    if (quiet_ > 0) {
+        pending_ = true;
+        return;
+    }
+    if (structural) emit catalogChanged();
+    else emit noteChanged(id);
+}
+
+QSet<QString> ZStorage::listNames() const {
+    QSet<QString> names;
+    for (const QString& name : QDir(root_).entryList(QDir::Files | QDir::Hidden)) names.insert(name);
+    return names;
+}
+
+void ZStorage::setWatching(bool on) {
+    if (on == watching()) return;
+    if (!on) {
+        settle_.stop();
+        watcher_.reset();
+        return;
+    }
+    if (!store_) return;
+    names_ = listNames();
+    watcher_ = std::make_shared<QFileSystemWatcher>();
+    watcher_->addPath(root_);
+    connect(watcher_.get(), &QFileSystemWatcher::directoryChanged, this,
+            [this](const QString&) { settle_.start(); });
+}
 
 namespace {
 // Жив ли процесс с таким pid. kill с нулевым сигналом ничего не шлёт, только
@@ -106,6 +163,9 @@ ZNoteHistory ZStorage::historyOf(const QString& id, const history::Rules& rules)
 void ZStorage::reload() {
     notes_.clear();
     if (!store_) return;
+    // Состав каталога сторож сверяет с тем, что мы читали последними: reload по
+    // любой двери — и его точка отсчёта тоже.
+    if (watcher_ != nullptr) names_ = listNames();
     // Скан: только "<id>.md".
     for (const QFileInfo& info :
          QDir(root_).entryInfoList({QStringLiteral("*.md")}, QDir::Files)) {
@@ -121,19 +181,39 @@ void ZStorage::reload() {
         }
         notes_.insert(stem, std::move(note));
     }
+    announce(true, QString());
 }
 
-bool ZStorage::refreshNote(const QString& id) {
+bool ZStorage::readBack(const QString& id, bool* structural) {
+    if (structural != nullptr) *structural = false;
     if (!store_ || id.isEmpty()) return false;
     const QString path = pathOf(id);
+    const auto old = notes_.constFind(id);
     if (!QFileInfo::exists(path)) {
-        notes_.remove(id);
+        if (old != notes_.constEnd()) {
+            notes_.erase(old);
+            if (structural != nullptr) *structural = true;
+        }
         return false;
     }
     NoteInfo fresh = ZNote::Metadata::fromFile(path);
     if (!fresh.valid()) return false;
+    // Место заметки в дереве: появилась, сменила родителя, род, архивность,
+    // метку порядка — дерево строится заново; иначе меняется одна строка.
+    if (structural != nullptr) {
+        *structural = old == notes_.constEnd() || old->parent() != fresh.parent() ||
+                      old->folder() != fresh.folder() || old->archived() != fresh.archived() ||
+                      old->lostFound() != fresh.lostFound() || old->sortMark() != fresh.sortMark();
+    }
     notes_.insert(id, std::move(fresh));
     return true;
+}
+
+bool ZStorage::refreshNote(const QString& id) {
+    bool structural = false;
+    const bool ok = readBack(id, &structural);
+    if (ok || structural) announce(structural, id);
+    return ok;
 }
 
 const ZStorage::NoteInfo* ZStorage::info(const QString& id) const {
@@ -223,7 +303,7 @@ QString ZStorage::importNote(const QString& parentId, const QString& sourcePath,
     const QString made = store::importNote(root_, parentId, sourcePath, error);
     if (made.isEmpty()) return {};
     const QString id = idOfPath(made);
-    refreshNote(id);
+    refreshNote(id);   // новая — структурная новость сама по себе
     return id;
 }
 
@@ -239,6 +319,7 @@ QString ZStorage::createNote(const QString& parentId, bool folder, QString* erro
     const QString made = store::newNote(root_, parent, error);
     if (made.isEmpty()) return {};
     const QString id = idOfPath(made);
+    const Batch batch(*this);   // папка — две записи, новость одна
     if (folder) {
         QString why;
         if (!rewriteNote(id, [](ZNote& note) {
@@ -253,6 +334,7 @@ QString ZStorage::createNote(const QString& parentId, bool folder, QString* erro
 
 bool ZStorage::archive(const QString& id, const history::Rules& rules, QStringList* failed) {
     if (!store_ || !has(id)) return false;
+    const Batch batch(*this);
     QStringList doomed{id};
     if (isFolder(id)) doomed += descendantsOf(id);
     bool ok = true;
@@ -278,6 +360,7 @@ bool ZStorage::archive(const QString& id, const history::Rules& rules, QStringLi
 
 bool ZStorage::restore(const QString& id, QStringList* failed) {
     if (!store_ || !has(id) || !inArchive(id)) return false;
+    const Batch batch(*this);
     QStringList back{id};
     if (isFolder(id)) back += descendantsOf(id);
     bool ok = true;
@@ -329,6 +412,7 @@ bool ZStorage::remove(const QString& id, QString* error) {
             std::fprintf(stderr, "%s\n", pictureError.toUtf8().constData());
     }
     notes_.remove(id);
+    announce(true, id);
     return true;
 }
 
