@@ -43,6 +43,7 @@ int ztOpenProbe(int argc, char** argv);
 int ztZoomProbe(int argc, char** argv);
 int ztUndoProbe(int argc, char** argv);
 int ztPasteBench(int argc, char** argv);
+int ztBigBench(int argc, char** argv);
 
 namespace {
 
@@ -66,6 +67,7 @@ const Bench kBenches[] = {
     {"zoom", ztZoomProbe},
     {"undo", ztUndoProbe},
     {"paste", ztPasteBench},
+    {"big", ztBigBench},
 };
 
 int usage() {
