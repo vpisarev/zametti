@@ -585,17 +585,22 @@ void NoteEditor::activateNote(bool takeFocus) {
     place.setPosition(qBound(0, note_.anchor, last));
     place.setPosition(qBound(0, note_.cursor, last), QTextCursor::KeepAnchor);
     setTextCursor(place);
-    movingView_ = true;
-    ensureCursorVisible();
-    movingView_ = false;
+    // Каретка — в золотом сечении окна, тем же правилом, что и всякое другое
+    // место (просьба владельца: при восстановлении места каретки после запуска
+    // страница листается так, чтобы каретка стояла около середины). Заметке из
+    // кэша вернули её прокрутку, и каретка там уже на виду — правило её и не
+    // тронет.
+    revealInGolden(caretRectInDocument());
 
     // И ДЕРЖИМ ЕЁ В ВИДУ, пока вёрстка не устаканится: высота на этот миг ещё
     // не окончательная — картинки декодируются в другом потоке, формулы
     // считаются по первой отрисовке, — и всё, что выше каретки, подрастает уже
-    // после нас, унося текст у человека из-под глаз. Отпускаем при первом же
-    // его прикосновении.
+    // после нас, унося текст у человека из-под глаз. Держим НА ТОЙ ЖЕ ВЫСОТЕ
+    // ОКНА, где поставили: минимальная прокрутка спускала бы её к нижней кромке
+    // по мере того, как растёт всё, что выше. Отпускаем при первом же
+    // прикосновении человека.
     holdingCaret_ = true;
-    movingView_ = false;
+    heldCaretY_ = cursorRect().top();
 
     // Фокус. Каретку Qt рисует ТОЛЬКО в виджете с фокусом ввода, и без этой
     // строки человек видел открытую заметку без каретки: место восстановлено,
@@ -948,20 +953,57 @@ void NoteEditor::keepCaretOffEdge() {
     else if (at.bottom() > height - gap) bar->setValue(bar->value() + at.bottom() - height + gap);
 }
 
-void NoteEditor::showEditPlace(int scrollBefore) {
-    const int height = viewport()->height();
-    // Место правки в координатах документа. Спрашивать «видно ли сейчас» нельзя:
-    // пересборка ставит курсор через setTextCursor, а он подкручивает вид сам —
-    // к моменту нашего вопроса место уже видно, причём ровно у кромки.
-    const int where = verticalScrollBar()->value() + cursorRect().center().y();
-
-    // Было ли оно видно до правки. Если было — возвращаем вид как стоял: человек
-    // и так смотрит на это место, дёргать картинку незачем.
-    if (where >= scrollBefore && where <= scrollBefore + height) {
-        verticalScrollBar()->setValue(scrollBefore);
+void NoteEditor::showEditPlace(int scrollBefore, bool jump) {
+    // Спрашивать «видно ли сейчас» нельзя: setTextCursor подкручивает вид сам —
+    // к моменту нашего вопроса место уже видно, причём ровно у кромки. Поэтому
+    // сперва вид возвращается туда, где он стоял ДО правки, и только потом
+    // судит правило показа.
+    movingView_ = true;
+    verticalScrollBar()->setValue(scrollBefore);
+    movingView_ = false;
+    if (jump) {
+        // ПЕРЕХОД (F3, Ctrl+Z не у каретки, вставка издалека): место вне
+        // окна или у самой кромки — в золотое сечение.
+        revealInGolden(caretRectInDocument());
         return;
     }
-    verticalScrollBar()->setValue(where - height / 2);
+    // ПРАВКА У КАРЕТКИ (набор, Enter, вставка): пока каретка видна, вид не
+    // трогаем вовсе — иначе набор у нижней кромки дёргал бы окно на каждой
+    // строке; ушла за край — тем же правилом показа, что и переход.
+    const int height = viewport()->height();
+    const int where = scrollBefore + cursorRect().center().y();
+    if (where >= scrollBefore && where <= scrollBefore + height) return;
+    revealInGolden(caretRectInDocument());
+}
+
+QRectF NoteEditor::caretRectInDocument() const {
+    return QRectF(cursorRect()).translated(horizontalScrollBar()->value(),
+                                          verticalScrollBar()->value());
+}
+
+void NoteEditor::revealInGolden(const QRectF& place) {
+    const int height = viewport()->height();
+    // Окна ещё нет (заметка открывается до show(), в узком окне): показать
+    // место сейчас нельзя, покажем на первой же настоящей раскладке.
+    if (height <= 0 || place.isNull()) {
+        revealPending_ = true;
+        return;
+    }
+    revealPending_ = false;
+    const int scroll = verticalScrollBar()->value();
+    const qreal top = place.top() - scroll;
+
+    // Уже на виду и не у самой кромки — вид не трогаем: дёргать картинку под
+    // человеком, когда он и так смотрит на нужное место, хуже, чем не двигать.
+    const qreal edge = height * 0.15;
+    if (top >= edge && place.bottom() - scroll <= height - edge) return;
+
+    // Иначе ставим место в ЗОЛОТОЕ СЕЧЕНИЕ окна (просьба владельца: «в середине
+    // или чуть выше»). ensureCursorVisible здесь не годится — он прокручивает
+    // МИНИМАЛЬНО, то есть кладёт место у самой кромки, где его толком не видно.
+    movingView_ = true;
+    verticalScrollBar()->setValue(int(place.top() - height * qBound(0.0, appearance().focusRatio, 0.9)));
+    movingView_ = false;
 }
 
 int NoteEditor::findMatches(const QString& text, bool caseSensitive) {
@@ -1014,9 +1056,8 @@ void NoteEditor::goToMatch(int index) {
     const int scrollBefore = verticalScrollBar()->value();
     setTextCursor(current_.matches[size_t(current_.currentMatch)]);
     showMatchHighlights();
-    // Тем же правилом, что и правки: пока совпадение в пределах видимости —
-    // картинку не дёргаем, ушло за край — показываем по центру.
-    showEditPlace(scrollBefore);
+    // Переход: совпадение вне окна или у самой кромки — в золотое сечение.
+    showEditPlace(scrollBefore, /*jump=*/true);
 }
 
 void NoteEditor::stepMatch(int direction) {
@@ -1132,7 +1173,7 @@ void NoteEditor::undo() {
 
     // Вид держится сам, но отменённая правка может оказаться за окном — тогда
     // её надо показать: человек нажал отмену, чтобы увидеть результат.
-    showEditPlace(scrollBefore);
+    showEditPlace(scrollBefore, /*jump=*/true);   // отмена может быть далеко от каретки
     document()->setModified(true);
     autosave_.start(appearance().autosaveDelayMs);
 }
@@ -1150,7 +1191,7 @@ void NoteEditor::redo() {
     recordingSuspended_ = true;
     QTextEdit::redo();
     recordingSuspended_ = false;
-    showEditPlace(scrollBefore);
+    showEditPlace(scrollBefore, /*jump=*/true);   // отмена может быть далеко от каретки
     document()->setModified(true);
     autosave_.start(appearance().autosaveDelayMs);
 }
@@ -3141,24 +3182,7 @@ void NoteEditor::showBlockInGolden(const QTextBlock& block) {
     if (!block.isValid()) return;
     QTextCursor place(block);
     setTextCursor(place);
-
-    const int height = viewport()->height();
-    if (height <= 0) return;
-    const QRectF rect = document()->documentLayout()->blockBoundingRect(block);
-    const int scroll = verticalScrollBar()->value();
-    const qreal top = rect.top() - scroll;
-
-    // Уже на виду и не у самой кромки — вид не трогаем: дёргать картинку под
-    // человеком, когда он и так смотрит на нужное место, хуже, чем не двигать.
-    const qreal edge = height * 0.15;
-    if (top >= edge && rect.bottom() - scroll <= height - edge) return;
-
-    // Иначе ставим изменение в ЗОЛОТОЕ СЕЧЕНИЕ окна (просьба владельца:
-    // «в середине или чуть выше»). Прежде тут стоял ensureCursorVisible, а он
-    // прокручивает МИНИМАЛЬНО — то есть кладёт находку у самой нижней кромки,
-    // где её толком и не видно.
-    verticalScrollBar()->setValue(
-        int(rect.top() - height * qBound(0.0, appearance().diffFocusRatio, 0.9)));
+    revealInGolden(document()->documentLayout()->blockBoundingRect(block));
 }
 
 void NoteEditor::paintEvent(QPaintEvent* event) {
@@ -3599,9 +3623,19 @@ void NoteEditor::wheelEvent(QWheelEvent* event) {
 
 void NoteEditor::keepCaretInView() {
     if (!holdingCaret_) return;
+    if (revealPending_) {
+        // Окно наконец есть — показать место так, как просили при открытии.
+        revealInGolden(caretRectInDocument());
+        if (!revealPending_) heldCaretY_ = cursorRect().top();
+        return;
+    }
+    const int dy = cursorRect().top() - heldCaretY_;
+    if (dy == 0) return;
     movingView_ = true;
-    ensureCursorVisible();
+    verticalScrollBar()->setValue(verticalScrollBar()->value() + dy);
     movingView_ = false;
+    // Не смогли (упёрлись в край) — запоминаем, где встала, чтобы не дёргать.
+    heldCaretY_ = cursorRect().top();
 }
 
 void NoteEditor::rememberCaretFor(const QString& path, int cursor, int anchor) {
