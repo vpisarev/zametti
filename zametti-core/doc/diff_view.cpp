@@ -1,6 +1,7 @@
 #include "diff_view.h"
 
 #include "doc_model.h"
+#include "document_builder.h"
 
 #include "settings.h"
 
@@ -13,8 +14,7 @@ namespace {
 
 // Цвет метки. Одинаковый во всех видах: полоска на поле, заливка строки и
 // заглушка обязаны говорить одно и то же.
-QColor colorOf(Mark mark) {
-    const ZSettings::Look& look = settings().look();
+QColor colorOf(Mark mark, const ZDocStyle& look) {
     switch (mark) {
         case Mark::Added: return look.diffAdded();
         case Mark::Removed: return look.diffRemoved();
@@ -101,7 +101,7 @@ Illustrated illustrate(const std::vector<Piece>& snapshot, const BlockMarks& mar
 
 void buildPlainDocument(const Result& result, QTextDocument& target,
                         QVector<Mark>* markOfBlock) {
-    const ZSettings::Look& look = settings().look();
+    const ZDocStyle& look = styleOf(target);
     target.clear();
     if (markOfBlock != nullptr) markOfBlock->clear();
 
@@ -121,7 +121,7 @@ void buildPlainDocument(const Result& result, QTextDocument& target,
         // читаться как markdown, а не как светофор. Само же «сюда смотреть»
         // говорит полоска на поле, она сплошная.
         if (row.mark != Mark::Same) {
-            QColor tint = colorOf(row.mark);
+            QColor tint = colorOf(row.mark, look);
             tint.setAlpha(qBound(0, look.diffTint(), 255));
             block.setBackground(tint);
         }

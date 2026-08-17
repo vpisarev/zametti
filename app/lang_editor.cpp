@@ -37,10 +37,10 @@ LanguageEditor::LanguageEditor(const QStringList& candidates, const QString& cur
     //
     // Своя заливка от стиля не зависит вовсе. Цвет — тот же, каким выглядит
     // плашка: полупрозрачную подложку кода складываем с фоном страницы.
-    backdrop_ = blend(settings().look().codeBackground(), settings().look().pageBackground());
+    backdrop_ = blend(settings().style().codeBackground(), settings().style().pageBackground());
     QPalette colours = palette();
     colours.setColor(QPalette::Base, backdrop_);
-    colours.setColor(QPalette::Text, settings().look().codeLangColor());
+    colours.setColor(QPalette::Text, settings().style().codeLangColor());
     setPalette(colours);
     setAttribute(Qt::WA_MacShowFocusRect, false);
     connect(this, &QLineEdit::textEdited, this, [this] { updateCompletion(); });
@@ -110,7 +110,7 @@ void LanguageEditor::paintEvent(QPaintEvent* event) {
 
     QPainter painter(this);
     painter.setFont(font());
-    QColor grey = settings().look().codeLangColor();
+    QColor grey = settings().style().codeLangColor();
     grey.setAlpha(120);
     painter.setPen(grey);
     // Начало хвоста — ровно там, где стоит каретка. Считать его шириной

@@ -46,11 +46,13 @@ QStringList linesOf(const std::vector<SourceLine>& source) {
 // строками сравнения и блоками не заводится.
 ZDocument ZDocument::diffSide(const diff::Result& result) {
     ZDocument out;
+    // Стиль стороны сравнения — из настроек (метод статический: заметки под
+    // рукой нет); кому нужен свой — ставит setStyle до показа и пересобирает.
+    const ZDocStyle& style = out.style();
 
     QTextCharFormat text;
-    if (!settings().look().codeFamily().isEmpty())
-        text.setFontFamilies({QString(settings().look().codeFamily())});
-    setFontStep(text, settings().look().codeStep());
+    if (!style.codeFamily().isEmpty()) text.setFontFamilies({QString(style.codeFamily())});
+    setFontStep(text, style.codeStep());
 
     QTextCursor caret(&out.d_->text);
     bool first = true;

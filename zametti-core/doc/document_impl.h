@@ -12,6 +12,7 @@
 #pragma once
 
 #include "document.h"
+#include "settings.h"
 #include "note_header.h"
 
 #include <QTextDocument>

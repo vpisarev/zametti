@@ -67,8 +67,8 @@ Ink inkRows(const QImage& image) {
 // вышла бы на треть мельче текста (я на этом и попался — увидел на первом же
 // снимке, что математика мельче букв).
 qreal textPixelSize() {
-    QFont font(zametti::settings().look().fontFamily());
-    font.setPointSizeF(zametti::settings().look().baseFontPoint());
+    QFont font(zametti::settings().style().fontFamily());
+    font.setPointSizeF(zametti::settings().style().baseFontPoint());
     return QFontInfo(font).pixelSize();
 }
 
@@ -190,7 +190,7 @@ void checkUnicodeSpaces() {
 // мельче соседних букв. Меряем отношение ростов строчных (x-height): по нему
 // владелец и выставит formulas.inlineScale.
 void measureXHeight() {
-    const zametti::ZSettings::Look& look = zametti::settings().look();
+    const zametti::ZDocStyle& look = zametti::settings().style();
     QFont font(look.fontFamily());
     font.setPointSizeF(look.baseFontPoint());
     const QFontMetricsF metrics(font);
@@ -238,11 +238,11 @@ void measureXHeight() {
 // (1.10). Одинаковая строка, одинаковый текст, две базовые линии: разницу
 // видно, только когда они рядом.
 void shootComparison(int zoom) {
-    const zametti::ZSettings::Look& look = zametti::settings().look();
+    const zametti::ZDocStyle& look = zametti::settings().style();
     QFont font(look.fontFamily());
     font.setPointSizeF(look.baseFontPoint() * zoom);
     const QFontMetricsF metrics(font);
-    QFont label(look.sidebarFontFamily());
+    QFont label(zametti::settings().ui().sidebarFontFamily());
     label.setPointSizeF(look.baseFontPoint() * zoom * 0.62);
 
     struct Piece {
@@ -306,7 +306,7 @@ void shootComparison(int zoom) {
 }
 
 void shootRuler(int zoom) {
-    const zametti::ZSettings::Look& look = zametti::settings().look();
+    const zametti::ZDocStyle& look = zametti::settings().style();
     QFont font(look.fontFamily());
     // Второй лист рисуется втрое крупнее — и именно РИСУЕТСЯ, а не растягивается:
     // формула векторная, и увеличенная растяжкой она бы мылила ровно там, где

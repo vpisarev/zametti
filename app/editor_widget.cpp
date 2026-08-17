@@ -971,7 +971,7 @@ void NoteEditor::keepCaretOffEdge() {
     // Зазор — то же поле страницы, в высотах строки. Больше половины окна не
     // берём: в узком окне зазор сверху и снизу иначе перекрылись бы.
     const qreal lineUnit = QFontMetricsF(baseFont()).height();
-    const int gap = qBound(0, qRound(settings().look().verticalMargin() * lineUnit), height / 3);
+    const int gap = qBound(0, qRound(docStyle().verticalMargin() * lineUnit), height / 3);
 
     QScrollBar* bar = verticalScrollBar();
     if (at.top() < gap) bar->setValue(bar->value() - (gap - at.top()));
@@ -1024,7 +1024,7 @@ void NoteEditor::revealInGolden(const QRectF& place) {
     // или чуть выше»). ensureCursorVisible здесь не годится — он прокручивает
     // МИНИМАЛЬНО, то есть кладёт место у самой кромки, где его толком не видно.
     movingView_ = true;
-    verticalScrollBar()->setValue(int(place.top() - height * qBound(0.0, settings().look().focusRatio(), 0.9)));
+    verticalScrollBar()->setValue(int(place.top() - height * qBound(0.0, settings().ui().focusRatio(), 0.9)));
     movingView_ = false;
 }
 
@@ -1054,7 +1054,7 @@ void NoteEditor::showMatchHighlights() {
     // Совпадения идут по возрастанию позиции: границы окна — двоичным поиском.
     const auto [first, last] = search.range(from, to);
     selections.reserve(last - first + 1);
-    const QColor base = settings().look().searchHighlight();
+    const QColor base = docStyle().searchHighlight();
     // Текущее совпадение — контрастнее прочих. Не другим цветом: цвет в
     // оформлении один, а разной должна быть заметность.
     QColor pale = base;
@@ -2146,7 +2146,7 @@ LanguageEditor* NoteEditor::editCodeLanguage(int firstBlockNumber, const QRect& 
     languageEditor_ = new LanguageEditor(note_->doc().codeLanguagesNear(firstBlockNumber),
                                          block.blockFormat().stringProperty(InfoProperty),
                                          viewport());
-    languageEditor_->setFont(codeLangFont());
+    languageEditor_->setFont(codeLangFont(docStyle(), settings().ui()));
     // Пока правят — своя надпись не рисуется, чтобы под полем ничего не было.
     setEditedCodeLanguage(firstBlockNumber);
     // Поле ввода прижато ВПРАВО, к кнопке копирования. Место под имя языка —
@@ -2158,7 +2158,7 @@ LanguageEditor* NoteEditor::editCodeLanguage(int firstBlockNumber, const QRect& 
     QRect box = strip;
     const int want =
         qMax(1, int(std::round(
-                   QFontMetricsF(codeLangFont()).horizontalAdvance(QLatin1Char('A')) * 12)));
+                   QFontMetricsF(codeLangFont(docStyle(), settings().ui())).horizontalAdvance(QLatin1Char('A')) * 12)));
     if (box.width() > want) box.setLeft(box.right() - want);
     languageEditor_->setGeometry(box);
     languageEditor_->show();
@@ -3222,7 +3222,7 @@ std::shared_ptr<QTextDocument> NoteEditor::buildDiffDocument(int slot,
             if (number >= source->size() || source->at(number) >= 0) continue;
             if (block.text().isEmpty()) continue;
             QTextCharFormat colour;
-            colour.setForeground(settings().look().diffRemoved());
+            colour.setForeground(docStyle().diffRemoved());
             paint.setPosition(block.position());
             paint.setPosition(block.position() + block.length() - 1, QTextCursor::KeepAnchor);
             paint.mergeCharFormat(colour);
@@ -3334,7 +3334,7 @@ void NoteEditor::paintEvent(QPaintEvent* event) {
     QPainter painter(viewport());
     const QAbstractTextDocumentLayout* layout = document()->documentLayout();
     const int scroll = verticalScrollBar()->value();
-    const qreal width = qMax(1.0, settings().look().diffBarWidth() * zoom());
+    const qreal width = qMax(1.0, docStyle().diffBarWidth() * zoom());
     for (QTextBlock block = document()->begin(); block.isValid(); block = block.next()) {
         const int number = block.blockNumber();
         if (number >= diffMarks_.size()) break;
@@ -3344,9 +3344,9 @@ void NoteEditor::paintEvent(QPaintEvent* event) {
         const qreal top = rect.top() - scroll;
         if (top > viewport()->height()) break;
         if (top + rect.height() < 0) continue;
-        QColor colour = mark == diff::Mark::Added      ? settings().look().diffAdded()
-                        : mark == diff::Mark::Removed  ? settings().look().diffRemoved()
-                                                       : settings().look().diffChanged();
+        QColor colour = mark == diff::Mark::Added      ? docStyle().diffAdded()
+                        : mark == diff::Mark::Removed  ? docStyle().diffRemoved()
+                                                       : docStyle().diffChanged();
         painter.fillRect(QRectF(width, top, width, rect.height()), colour);
     }
 }
@@ -3638,7 +3638,7 @@ void NoteEditor::wheelEvent(QWheelEvent* event) {
 // открытии.
 qreal NoteEditor::heldRatioNow() const {
     const int height = viewport()->height();
-    const qreal golden = qBound(0.0, settings().look().focusRatio(), 0.9);
+    const qreal golden = qBound(0.0, settings().ui().focusRatio(), 0.9);
     if (!isVisible() || height <= 0) return golden;
     const int top = cursorRect().top();
     if (top < 0 || top >= height) return golden;

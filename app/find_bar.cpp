@@ -16,7 +16,7 @@ FindBar::FindBar(QWidget* parent) : QWidget(parent) {
     // История — слева от поля: по сути выпадающий список, только раскрывается
     // вверх (панель у нижней кромки окна, вниз списку некуда).
     historyButton_ = new QToolButton(this);
-    historyButton_->setText(settings().look().findHistoryGlyph());
+    historyButton_->setText(settings().ui().findHistoryGlyph());
     historyButton_->setToolTip(QStringLiteral("Прежние запросы"));
     connect(historyButton_, &QToolButton::clicked, this, &FindBar::showHistory);
 
@@ -27,10 +27,10 @@ FindBar::FindBar(QWidget* parent) : QWidget(parent) {
     status_->setMinimumWidth(70);
 
     auto* previous = new QToolButton(this);
-    previous->setText(settings().look().findPreviousGlyph());
+    previous->setText(settings().ui().findPreviousGlyph());
     previous->setToolTip(QStringLiteral("Предыдущее (Shift+F3)"));
     auto* next = new QToolButton(this);
-    next->setText(settings().look().findNextGlyph());
+    next->setText(settings().ui().findNextGlyph());
     next->setToolTip(QStringLiteral("Следующее (F3)"));
 
     replaceLabel_ = new QLabel(QStringLiteral("на"), this);
@@ -86,10 +86,10 @@ FindBar::FindBar(QWidget* parent) : QWidget(parent) {
 
     // Кегль чуть крупнее панельного: в поле поиска печатают, а не смотрят на
     // него, и мелкий шрифт здесь читается хуже. Прибавка — в конфиге.
-    QFont panelFont(settings().look().sidebarFontFamily().isEmpty()
-                        ? settings().look().fontFamily()
-                        : settings().look().sidebarFontFamily());
-    panelFont.setPointSizeF(settings().look().sidebarFontPoint() + settings().look().findFontDelta());
+    QFont panelFont(settings().ui().sidebarFontFamily().isEmpty()
+                        ? settings().style().fontFamily()
+                        : settings().ui().sidebarFontFamily());
+    panelFont.setPointSizeF(settings().ui().sidebarFontPoint() + settings().ui().findFontDelta());
     setFont(panelFont);
     hide();
 }
@@ -123,7 +123,7 @@ void FindBar::setHistory(const QStringList& items) {
         const QString trimmed = item.trimmed();
         if (trimmed.isEmpty() || history_.contains(trimmed)) continue;
         history_.append(trimmed);
-        if (history_.size() >= settings().look().findHistoryLimit()) break;
+        if (history_.size() >= settings().ui().findHistoryLimit()) break;
     }
 }
 
@@ -134,7 +134,7 @@ void FindBar::rememberQuery() {
     if (text.size() < 2) return;
     history_.removeAll(text);
     history_.prepend(text);   // свежий сверху
-    while (history_.size() > settings().look().findHistoryLimit()) history_.removeLast();
+    while (history_.size() > settings().ui().findHistoryLimit()) history_.removeLast();
 }
 
 void FindBar::stepHistory(int direction) {

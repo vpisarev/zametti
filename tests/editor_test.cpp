@@ -13,6 +13,7 @@
 #include "journal.h"
 #include "marker.h"
 #include "settings.h"
+#include "settings_hook.h"
 #include "test_util.h"
 
 #include <vector>
@@ -1033,7 +1034,7 @@ void checkNoteCache() {
     editor.openFile(first);
     QTest::qWait(20);
     check(editor.document()->defaultFont().pointSizeF() >
-              zametti::settings().look().baseFontPoint() * 1.4,
+              zametti::settings().style().baseFontPoint() * 1.4,
           "заметка из кэша вернулась в нынешнем масштабе");
 
     editor.applyZoom(1.0);
@@ -1059,7 +1060,7 @@ void checkNoteCache() {
 
     // Заметка тяжелее всего бюджета в кэш не идёт.
     const int savedBudget = zametti::settings().cache().documentCacheSizeMb();
-    zametti::editSettings().cache().setDocumentCacheSizeMb(1);
+    zametti::mutableSettingsForTests().cache().setDocumentCacheSizeMb(1);
     editor.clearNoteCache();
     QString big = QStringLiteral("# большая\n\n");
     for (int i = 0; i < 40000; ++i) big += QStringLiteral("строка с текстом %1\n").arg(i);
@@ -1069,7 +1070,7 @@ void checkNoteCache() {
     editor.openFile(second);
     QTest::qWait(20);
     check(editor.cachedNoteCount() == 0, "заметка тяжелее бюджета в кэш не идёт");
-    zametti::editSettings().cache().setDocumentCacheSizeMb(savedBudget);
+    zametti::mutableSettingsForTests().cache().setDocumentCacheSizeMb(savedBudget);
 }
 
 // Канонизация при открытии. Хранилище наше, и сор в нём — лишние пробелы в
@@ -1124,7 +1125,7 @@ void checkCanonicaliseOnOpen() {
 // дошло до диска, дошло не по таймеру.
 void checkSaveWithoutAutosave() {
     const int savedDelay = zametti::settings().editor().autosaveDelayMs();
-    zametti::editSettings().editor().setAutosaveDelayMs(600000);
+    zametti::mutableSettingsForTests().editor().setAutosaveDelayMs(600000);
 
     const QString first = writeNote("без-таймера-раз.md", QStringLiteral("раз\n"));
     const QString second = writeNote("без-таймера-два.md", QStringLiteral("два\n"));
@@ -1176,7 +1177,7 @@ void checkSaveWithoutAutosave() {
                "до таймера набранное на диск не уходит");
     editor.save(false);
 
-    zametti::editSettings().editor().setAutosaveDelayMs(savedDelay);
+    zametti::mutableSettingsForTests().editor().setAutosaveDelayMs(savedDelay);
 }
 
 // Текст после переноса строки обязан набираться тем же кеглем. Разделитель
@@ -1299,7 +1300,7 @@ void checkCodeAtEdge() {
         cursor.movePosition(QTextCursor::End);
         editor.setTextCursor(cursor);
     };
-    const QString mono = zametti::settings().look().codeFamily();
+    const QString mono = zametti::settings().style().codeFamily();
 
     toEnd();
     check((editor.currentCharFormat().intProperty(zametti::SpanStyleProperty) &
@@ -1857,10 +1858,10 @@ void checkCaretPainting() {
     const zametti::ZSettings saved = zametti::settings();
     struct Restore {
         const zametti::ZSettings& from;
-        ~Restore() { zametti::editSettings() = from; }
+        ~Restore() { zametti::mutableSettingsForTests() = from; }
     } restore{saved};
-    zametti::editSettings().look().setCaretWidth(4.0);
-    zametti::editSettings().look().setCaretColor(QColor(220, 30, 30));
+    zametti::mutableSettingsForTests().style().setCaretWidth(4.0);
+    zametti::mutableSettingsForTests().style().setCaretColor(QColor(220, 30, 30));
 
     const QString path = writeNote("каретка-цвет.md", QStringLiteral("первая строка\n"));
     QWidget host;
@@ -1926,9 +1927,9 @@ void checkCaretWidth() {
     const zametti::ZSettings saved = zametti::settings();
     struct Restore {
         const zametti::ZSettings& from;
-        ~Restore() { zametti::editSettings() = from; }
+        ~Restore() { zametti::mutableSettingsForTests() = from; }
     } restore{saved};
-    zametti::editSettings().look().setCaretColor(QColor(220, 30, 30));
+    zametti::mutableSettingsForTests().style().setCaretColor(QColor(220, 30, 30));
 
     const QString path = writeNote("каретка.md", QStringLiteral("текст\n"));
 
@@ -1951,7 +1952,7 @@ void checkCaretWidth() {
 
     for (const auto& [width, zoom, expected] :
          {std::tuple<qreal, qreal, int>{2.0, 1.0, 2}, {5.0, 1.0, 5}, {2.0, 2.0, 4}}) {
-        zametti::editSettings().look().setCaretWidth(width);
+        zametti::mutableSettingsForTests().style().setCaretWidth(width);
         zametti::NoteEditor editor;
         editor.resize(700, 300);
         editor.show();
@@ -1970,7 +1971,7 @@ void checkCaretWidth() {
     }
 
     // Ноль в настройке каретку не прячет: меньше пикселя не бывает.
-    zametti::editSettings().look().setCaretWidth(0.0);
+    zametti::mutableSettingsForTests().style().setCaretWidth(0.0);
     zametti::NoteEditor thin;
     thin.resize(700, 300);
     thin.show();
@@ -2066,9 +2067,9 @@ void checkCaretKeepsOffEdge() {
     const zametti::ZSettings saved = zametti::settings();
     struct Restore {
         const zametti::ZSettings& from;
-        ~Restore() { zametti::editSettings() = from; }
+        ~Restore() { zametti::mutableSettingsForTests() = from; }
     } restore{saved};
-    zametti::editSettings().look().setVerticalMargin(1.5);
+    zametti::mutableSettingsForTests().style().setVerticalMargin(1.5);
 
     QString source;
     for (int i = 0; i < 200; ++i)
@@ -2199,11 +2200,11 @@ void checkBlankLinesSurviveSaving() {
 // сверху, n высот строки, поле снизу. Курсор идёт по его строкам ровным шагом.
 void checkSeparatorGeometry() {
     const zametti::ZSettings saved = zametti::settings();
-    zametti::editSettings().look().setSeparatorSpacingBefore(0.5);
-    zametti::editSettings().look().setSeparatorSpacingAfter(0.5);
+    zametti::mutableSettingsForTests().style().setSeparatorSpacingBefore(0.5);
+    zametti::mutableSettingsForTests().style().setSeparatorSpacingAfter(0.5);
     struct Restore {
         const zametti::ZSettings& from;
-        ~Restore() { zametti::editSettings() = from; }
+        ~Restore() { zametti::mutableSettingsForTests() = from; }
     } restore{saved};
 
     const QString path =
@@ -2781,13 +2782,13 @@ void checkOpenTakesCaretAndFocus() {
 void checkSearchPaintsWithItsOwnColour() {
     const QString path = writeNote("подсветка.md",
                                    QStringLiteral("# заметка\n\nсосна и сосна\n"));
-    const QColor keepSearch = zametti::settings().look().searchHighlight();
-    const QColor keepSelection = zametti::settings().look().selectionBackground();
+    const QColor keepSearch = zametti::settings().style().searchHighlight();
+    const QColor keepSelection = zametti::settings().style().selectionBackground();
     // Цвета нарочно разные и ни на что не похожие: совпади они — проверка
     // прошла бы и на прежнем коде, бравшем цвет выделения. Оба непрозрачные и
     // далёкие от фона страницы, чтобы точки считались без догадок.
-    zametti::editSettings().look().setSearchHighlight(QColor(0x11, 0x99, 0x33));
-    zametti::editSettings().look().setSelectionBackground(QColor(0xcc, 0x22, 0x88));
+    zametti::mutableSettingsForTests().style().setSearchHighlight(QColor(0x11, 0x99, 0x33));
+    zametti::mutableSettingsForTests().style().setSelectionBackground(QColor(0xcc, 0x22, 0x88));
 
     zametti::NoteEditor editor;
     editor.resize(700, 500);
@@ -2808,7 +2809,7 @@ void checkSearchPaintsWithItsOwnColour() {
     // цвет»: доля выясняется по каналу с наибольшим размахом и проверяется по
     // остальным. Цвета выше подобраны так, что отрезки до них расходятся
     // широко, и спутать их нельзя.
-    const QColor page = zametti::settings().look().pageBackground();
+    const QColor page = zametti::settings().style().pageBackground();
     auto count = [&editor, &page](const QColor& want) {
         const QImage shot = editor.viewport()->grab().toImage();
         const int span[3] = {want.red() - page.red(), want.green() - page.green(),
@@ -2836,13 +2837,13 @@ void checkSearchPaintsWithItsOwnColour() {
         return painted;
     };
 
-    const int mine = count(zametti::settings().look().searchHighlight());
-    const int theirs = count(zametti::settings().look().selectionBackground());
+    const int mine = count(zametti::settings().style().searchHighlight());
+    const int theirs = count(zametti::settings().style().selectionBackground());
     check(mine > 200, "находки закрашены цветом поиска (" + std::to_string(mine) + " точек)");
     check(theirs == 0, "и ни одной точки цветом выделения (" + std::to_string(theirs) + ")");
 
-    zametti::editSettings().look().setSearchHighlight(keepSearch);
-    zametti::editSettings().look().setSelectionBackground(keepSelection);
+    zametti::mutableSettingsForTests().style().setSearchHighlight(keepSearch);
+    zametti::mutableSettingsForTests().style().setSelectionBackground(keepSelection);
 }
 
 static int ztRunSuite(int argc, char** argv) {
@@ -2853,7 +2854,7 @@ static int ztRunSuite(int argc, char** argv) {
 
     // Окно слипания набора укорачиваем: иначе пауза в тесте была бы почти
     // секундой на каждую проверку.
-    zametti::editSettings().editor().setUndoCoalesceMs(40);
+    zametti::mutableSettingsForTests().editor().setUndoCoalesceMs(40);
 
     g_dir = QString::fromLocal8Bit(argv[1]) + QStringLiteral("/editor-data");
     QDir(g_dir).removeRecursively();

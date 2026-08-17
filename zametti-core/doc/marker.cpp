@@ -1,5 +1,6 @@
 #include "marker.h"
 
+#include "document_builder.h"
 #include "settings.h"
 
 #include <QFontMetricsF>
@@ -14,12 +15,12 @@
 namespace zametti {
 namespace {
 
-bool drawnCheckbox(MarkerStyle style) {
-    return style.marker == Marker::Task && settings().look().checkboxStyle() == CheckboxStyle::Drawn;
+bool drawnCheckbox(MarkerStyle style, const ZDocStyle& look) {
+    return style.marker == Marker::Task && look.checkboxStyle() == CheckboxStyle::Drawn;
 }
 
-bool drawnBullet(MarkerStyle style) {
-    return style.marker == Marker::Bullet && settings().look().bulletStyle() == BulletStyle::Drawn;
+bool drawnBullet(MarkerStyle style, const ZDocStyle& look) {
+    return style.marker == Marker::Bullet && look.bulletStyle() == BulletStyle::Drawn;
 }
 
 // Буквенный номер: a..z, aa..zz, aaa... — биективная 26-ричная запись,
@@ -38,10 +39,10 @@ QString lettersFor(int ordinal) {
 // Знак маркера — для тех начертаний, где он берётся из шрифта. У нарисованных
 // (кружок, рамка) знака нет. Нумерованный меняет вид по вложенности, как
 // буллет меняет фигуру: 1. 2. 3. → a. b. c. → 1) 2) 3) — и снова по кругу.
-QString markerText(MarkerStyle style, int ordinal, int level) {
+QString markerText(MarkerStyle style, int ordinal, int level, const ZDocStyle& look) {
     switch (style.marker) {
         case Marker::Bullet:
-            return drawnBullet(style) ? QString() : settings().look().bulletGlyph();
+            return drawnBullet(style, look) ? QString() : look.bulletGlyph();
         case Marker::Ordered:
             switch (qMax(0, level) % 3) {
                 case 1:  return lettersFor(ordinal) + QStringLiteral(".");
@@ -49,7 +50,7 @@ QString markerText(MarkerStyle style, int ordinal, int level) {
                 default: return QString::number(ordinal) + QStringLiteral(".");
             }
         case Marker::Task:
-            switch (settings().look().checkboxStyle()) {
+            switch (look.checkboxStyle()) {
                 case CheckboxStyle::Glyph:
                     return style.checked ? QStringLiteral("☑") : QStringLiteral("☐");
                 case CheckboxStyle::Ascii:
@@ -64,13 +65,13 @@ QString markerText(MarkerStyle style, int ordinal, int level) {
 
 namespace {
 
-QFont markerFont(MarkerStyle style, const QFont& base) {
+QFont markerFont(MarkerStyle style, const QFont& base, const ZDocStyle& look) {
     QFont font = base;
-    if (style.marker == Marker::Bullet && settings().look().bulletStyle() == BulletStyle::Glyph)
-        font.setPointSizeF(base.pointSizeF() * settings().look().bulletScale());
-    if (style.marker == Marker::Task && settings().look().checkboxStyle() == CheckboxStyle::Glyph) {
-        font.setFamilies({QString(settings().look().symbolFamily()), QString(settings().look().fontFamily())});
-        font.setPointSizeF(base.pointSizeF() * settings().look().checkboxGlyphScale());
+    if (style.marker == Marker::Bullet && look.bulletStyle() == BulletStyle::Glyph)
+        font.setPointSizeF(base.pointSizeF() * look.bulletScale());
+    if (style.marker == Marker::Task && look.checkboxStyle() == CheckboxStyle::Glyph) {
+        font.setFamilies({QString(look.symbolFamily()), QString(look.fontFamily())});
+        font.setPointSizeF(base.pointSizeF() * look.checkboxGlyphScale());
     }
     return font;
 }
@@ -107,23 +108,24 @@ const BaseMetrics& metricsOf(const QFont& base) {
 
 // Зазор от маркера до текста. В ширинах "A", а не в пробелах: у пропорциональных
 // гарнитур пробел вдвое уже буквы, и колонка на нём выходила бы вплотную.
-qreal gapFor(MarkerStyle style, const QFont& base) {
+qreal gapFor(MarkerStyle style, const QFont& base, const ZDocStyle& look) {
     const qreal unit = metricsOf(base).charUnit;
     switch (style.marker) {
-        case Marker::Task:    return settings().look().checkboxTextGap() * unit;
-        case Marker::Ordered: return settings().look().orderedTextGap() * unit;
-        case Marker::Bullet:  return settings().look().bulletTextGap() * unit;
+        case Marker::Task:    return look.checkboxTextGap() * unit;
+        case Marker::Ordered: return look.orderedTextGap() * unit;
+        case Marker::Bullet:  return look.bulletTextGap() * unit;
     }
-    return settings().look().bulletTextGap() * unit;
+    return look.bulletTextGap() * unit;
 }
 
 qreal checkboxSide(const QFont& base) { return metricsOf(base).checkboxSide; }
 
-qreal glyphWidth(MarkerStyle style, int ordinal, int level, const QFont& base) {
-    if (drawnCheckbox(style)) return checkboxSide(base);
-    if (drawnBullet(style)) return metricsOf(base).xHeight * settings().look().bulletDiameter();
-    return QFontMetricsF(markerFont(style, base))
-        .horizontalAdvance(markerText(style, ordinal, level));
+qreal glyphWidth(MarkerStyle style, int ordinal, int level, const QFont& base,
+                 const ZDocStyle& look) {
+    if (drawnCheckbox(style, look)) return checkboxSide(base);
+    if (drawnBullet(style, look)) return metricsOf(base).xHeight * look.bulletDiameter();
+    return QFontMetricsF(markerFont(style, base, look))
+        .horizontalAdvance(markerText(style, ordinal, level, look));
 }
 
 // Опора маркера в координатах документа: правый край его колонки и базовая
@@ -135,7 +137,8 @@ struct Anchor {
     bool valid = false;
 };
 
-Anchor anchorOf(const QTextBlock& block, MarkerStyle style, const QFont& base) {
+Anchor anchorOf(const QTextBlock& block, MarkerStyle style, const QFont& base,
+                const ZDocStyle& look) {
     const QTextLayout* layout = block.layout();
     if (layout == nullptr || layout->lineCount() == 0) return {};
     const QTextLine line = layout->lineAt(0);
@@ -143,15 +146,15 @@ Anchor anchorOf(const QTextBlock& block, MarkerStyle style, const QFont& base) {
     // Позиция раскладки — левый край содержимого фрейма; левое поле блока в неё
     // не входит, его надо прибавить.
     const qreal textLeft = origin.x() + block.blockFormat().leftMargin();
-    return {textLeft - gapFor(style, base), origin.y() + line.y() + line.ascent(), true};
+    return {textLeft - gapFor(style, base, look), origin.y() + line.y() + line.ascent(), true};
 }
 
 // Буллет рисуется в круге заданного диаметра — какой бы ни была фигура. Место
 // под маркер от фигуры не зависит, иначе текст на разных уровнях вставал бы по
 // разным колонкам без всякой на то причины.
 void paintBullet(QPainter& painter, const QPointF& center, qreal diameter,
-                 BulletShape shape) {
-    const QColor color = settings().look().bulletColor();
+                 BulletShape shape, const ZDocStyle& look) {
+    const QColor color = look.bulletColor();
     switch (shape) {
         case BulletShape::Disc:
             painter.setPen(Qt::NoPen);
@@ -161,7 +164,7 @@ void paintBullet(QPainter& painter, const QPointF& center, qreal diameter,
         case BulletShape::Circle: {
             // Обводка идёт по средней линии, поэтому радиус берём на полтолщины
             // меньше: внешний край кружка совпадает со сплошным того же размера.
-            const qreal pen = qMax(0.5, diameter * settings().look().bulletStrokeWidth());
+            const qreal pen = qMax(0.5, diameter * look.bulletStrokeWidth());
             const qreal radius = (diameter - pen) / 2;
             painter.setPen(QPen(color, pen));
             painter.setBrush(Qt::NoBrush);
@@ -169,7 +172,7 @@ void paintBullet(QPainter& painter, const QPointF& center, qreal diameter,
             return;
         }
         case BulletShape::Square: {
-            const qreal side = diameter * settings().look().bulletSquareSide();
+            const qreal side = diameter * look.bulletSquareSide();
             painter.setPen(Qt::NoPen);
             painter.setBrush(color);
             painter.drawRect(QRectF(center.x() - side / 2, center.y() - side / 2, side, side));
@@ -178,23 +181,23 @@ void paintBullet(QPainter& painter, const QPointF& center, qreal diameter,
     }
 }
 
-void paintCheckbox(QPainter& painter, const QRectF& rect, bool checked) {
+void paintCheckbox(QPainter& painter, const QRectF& rect, bool checked, const ZDocStyle& look) {
     const QColor color =
-        checked ? settings().look().checkboxCheckedColor() : settings().look().checkboxUncheckedColor();
-    const qreal pen = settings().look().checkboxPenWidth();
+        checked ? look.checkboxCheckedColor() : look.checkboxUncheckedColor();
+    const qreal pen = look.checkboxPenWidth();
     const QRectF box = rect.adjusted(pen / 2, pen / 2, -pen / 2, -pen / 2);
 
     QPen outline(color, pen);
     outline.setJoinStyle(Qt::RoundJoin);
     painter.setPen(outline);
     painter.setBrush(checked ? QBrush(color) : QBrush(Qt::NoBrush));
-    painter.drawRoundedRect(box, settings().look().checkboxCornerRadius(),
-                            settings().look().checkboxCornerRadius());
+    painter.drawRoundedRect(box, look.checkboxCornerRadius(),
+                            look.checkboxCornerRadius());
     if (!checked) return;
 
     // Галочка лежит на заливке, поэтому она белая, а не цвета страницы: под
     // выделением фон страницы меняется, а заливка рамки — нет.
-    QPen tick(settings().look().checkboxTickColor(), pen * 1.15);
+    QPen tick(look.checkboxTickColor(), pen * 1.15);
     tick.setCapStyle(Qt::RoundCap);
     tick.setJoinStyle(Qt::RoundJoin);
     painter.setPen(tick);
@@ -208,27 +211,29 @@ void paintCheckbox(QPainter& painter, const QRectF& rect, bool checked) {
 
 }  // namespace
 
-BulletShape bulletShapeFor(int level) {
-    const std::vector<BulletShape>& shapes = settings().look().bulletShapes();
+BulletShape bulletShapeFor(int level, const ZDocStyle& look) {
+    const std::vector<BulletShape>& shapes = look.bulletShapes();
     if (shapes.empty()) return BulletShape::Disc;
     return shapes[size_t(qBound(0, level, int(shapes.size()) - 1))];
 }
 
-qreal markerColumn(MarkerStyle style, int ordinal, int level, const QFont& base) {
-    return glyphWidth(style, ordinal, level, base) + gapFor(style, base);
+qreal markerColumn(MarkerStyle style, int ordinal, int level, const QFont& base,
+                   const ZDocStyle& look) {
+    return glyphWidth(style, ordinal, level, base, look) + gapFor(style, base, look);
 }
 
 QRectF checkboxRect(const QTextBlock& block, const QFont& base) {
+    const ZDocStyle& look = styleOf(*block.document());
     const MarkerStyle style = markerOf(block);
-    if (!isListBlock(block) || !drawnCheckbox(style)) return {};
-    const Anchor anchor = anchorOf(block, style, base);
+    if (!isListBlock(block) || !drawnCheckbox(style, look)) return {};
+    const Anchor anchor = anchorOf(block, style, base, look);
     if (!anchor.valid) return {};
 
     const QRectF ink = QFontMetricsF(base).tightBoundingRect(QStringLiteral("iy"));
     const qreal side = ink.height();
     // ink.top() отрицателен: столько чернил выше базовой линии. Поправка со
     // знаком: больше нуля поднимает рамку.
-    const qreal top = anchor.baseline + ink.top() - settings().look().checkboxOpticalRise() * side;
+    const qreal top = anchor.baseline + ink.top() - look.checkboxOpticalRise() * side;
     return QRectF(anchor.right - side, top, side, side);
 }
 
@@ -254,39 +259,40 @@ QTextBlock blockAtCheckbox(const QTextDocument& doc, const QPointF& point,
 }
 
 void paintMarker(QPainter& painter, const QTextBlock& block, const QFont& base) {
+    const ZDocStyle& look = styleOf(*block.document());
     if (!isListBlock(block)) return;
     const MarkerStyle style = markerOf(block);
-    const Anchor anchor = anchorOf(block, style, base);
+    const Anchor anchor = anchorOf(block, style, base, look);
     if (!anchor.valid) return;
 
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    if (drawnCheckbox(style)) {
-        paintCheckbox(painter, checkboxRect(block, base), style.checked);
-    } else if (drawnBullet(style)) {
+    if (drawnCheckbox(style, look)) {
+        paintCheckbox(painter, checkboxRect(block, base), style.checked, look);
+    } else if (drawnBullet(style, look)) {
         const qreal xHeight = metricsOf(base).xHeight;
-        const qreal diameter = xHeight * settings().look().bulletDiameter();
+        const qreal diameter = xHeight * look.bulletDiameter();
         // Кружок стоит на средней линии строчных: она у любой гарнитуры именно
         // там, где глаз ждёт буллет.
         const QPointF center(anchor.right - diameter / 2,
                              anchor.baseline - xHeight / 2 -
-                                 settings().look().bulletRise() * xHeight);
-        paintBullet(painter, center, diameter, bulletShapeFor(levelOf(block)));
+                                 look.bulletRise() * xHeight);
+        paintBullet(painter, center, diameter, bulletShapeFor(levelOf(block), look), look);
     } else {
-        const QFont font = markerFont(style, base);
-        const QString text = markerText(style, ordinalOf(block), levelOf(block));
+        const QFont font = markerFont(style, base, look);
+        const QString text = markerText(style, ordinalOf(block), levelOf(block), look);
         const QColor color =
             style.marker == Marker::Task
-                ? (style.checked ? settings().look().checkboxCheckedColor()
-                                 : settings().look().checkboxUncheckedColor())
-            : style.marker == Marker::Ordered ? settings().look().orderedColor()
-                                              : settings().look().bulletColor();
+                ? (style.checked ? look.checkboxCheckedColor()
+                                 : look.checkboxUncheckedColor())
+            : style.marker == Marker::Ordered ? look.orderedColor()
+                                              : look.bulletColor();
         // Поправка по вертикали — от высоты строчных основного шрифта, а не
         // маркерного: маркер должен двигаться относительно текста строки.
         qreal rise = 0;
-        if (style.marker == Marker::Ordered) rise = settings().look().orderedRise();
-        else if (style.marker == Marker::Bullet) rise = settings().look().bulletRise();
+        if (style.marker == Marker::Ordered) rise = look.orderedRise();
+        else if (style.marker == Marker::Bullet) rise = look.bulletRise();
         painter.setFont(font);
         painter.setPen(color);
         painter.drawText(QPointF(anchor.right - QFontMetricsF(font).horizontalAdvance(text),
@@ -298,11 +304,12 @@ void paintMarker(QPainter& painter, const QTextBlock& block, const QFont& base) 
 }
 
 void paintDivider(QPainter& painter, const QTextBlock& block, const QRectF& rect, qreal zoom) {
+    const ZDocStyle& look = styleOf(*block.document());
     if (isRawBlock(block) || kindOf(block) != Kind::Divider) return;
     painter.save();
     // Прямоугольник блока и так идёт от поля до поля колонки — не во всё окно.
-    QPen pen(settings().look().dividerColor());
-    pen.setWidthF(qMax(1.0, settings().look().dividerWidth() * zoom));
+    QPen pen(look.dividerColor());
+    pen.setWidthF(qMax(1.0, look.dividerWidth() * zoom));
     pen.setCapStyle(Qt::FlatCap);
     painter.setPen(pen);
     const qreal y = rect.center().y();

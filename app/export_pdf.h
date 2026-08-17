@@ -26,6 +26,7 @@
 #define ZAMETTI_EXPORT_PDF_H
 
 #include "export_note.h"
+#include "settings.h"
 
 #include <QPageSize>
 #include <QString>
@@ -58,19 +59,14 @@ std::vector<qreal> pageCuts(std::vector<Unbreakable> hard, qreal docHeight, qrea
 // проверить это по готовому PDF нельзя — текст в нём лежит номерами глифов.
 void prepareForPaper(QTextDocument& doc);
 
-struct PdfOptions {
-    QPageSize::PageSizeId page = QPageSize::A4;
-    // Ноль — брать из конфига (раздел pdf). Не ноль — так велел вызывающий.
-    qreal marginMm = 0.0;
-    // Ноль — брать из конфига (раздел pdf).
-    int imageDpi = 0;
-    // Заголовок в свойствах файла. Пусто — берётся имя файла.
-    QString title;
-};
-
 // Вывезти заметку на бумагу. Требует QApplication: рисует настоящим виджетом.
+// Настройки бумаги — КОПИЯ раздела pdf: вызывающий берёт settings().pdf(),
+// правит, что нужно (формат листа, поля, dpi), и передаёт; глобальные
+// настройки при этом не трогаются. title — заголовок в свойствах файла;
+// пусто — имя файла.
 ExportReport exportPdf(const QString& notePath, const QString& targetPath,
-                       const PdfOptions& options = {});
+                       const ZSettings::Pdf& paper = settings().pdf(),
+                       const QString& title = {});
 
 }  // namespace zametti
 

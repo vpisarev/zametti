@@ -41,6 +41,7 @@
 #include <QTextCharFormat>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QVariant>
 #include <QTextFrame>
 #include <QTextFrameFormat>
 #include <QTextOption>
@@ -130,7 +131,8 @@ bool needsFallback(char32_t cp, const QRawFont& primary) {
 }
 
 void enlargeFallbackGlyphs(QTextDocument& doc, int textStart, const QString& text,
-                           int surroundingStep, const QRawFont& primary) {
+                           int surroundingStep, const QRawFont& primary,
+                           const ZDocStyle& style) {
     QTextCursor cursor(&doc);
     int i = 0;
     while (i < text.size()) {
@@ -158,7 +160,7 @@ void enlargeFallbackGlyphs(QTextDocument& doc, int textStart, const QString& tex
         // Ступень отсчитывается ОТ ОКРУЖАЮЩЕГО текста, а не от шрифта
         // документа: эмодзи внутри заголовка обязан ехать вместе с заголовком.
         QTextCharFormat fmt;
-        setFontStep(fmt, surroundingStep + settings().look().fallbackStep());
+        setFontStep(fmt, surroundingStep + style.fallbackStep());
         cursor.setPosition(textStart + begin);
         cursor.setPosition(textStart + i, QTextCursor::KeepAnchor);
         cursor.mergeCharFormat(fmt);
@@ -166,11 +168,14 @@ void enlargeFallbackGlyphs(QTextDocument& doc, int textStart, const QString& tex
 }
 
 // Ступень кода — от ступени окружающего текста. В обычном абзаце окружение
-// нулевое, и код получает ровно settings().look().codeStep(); в заголовке он едет
+// нулевое, и код получает ровно settings().style().codeStep(); в заголовке он едет
 // вместе с заголовком.
-int codeStepIn(int surroundingStep) { return surroundingStep + settings().look().codeStep(); }
+int codeStepIn(int surroundingStep, const ZDocStyle& style) {
+    return surroundingStep + style.codeStep();
+}
 
-void applySpans(QTextDocument& doc, int textStart, const Piece& b, int lineStep) {
+void applySpans(QTextDocument& doc, int textStart, const Piece& b, int lineStep,
+                const ZDocStyle& style) {
     QTextCursor cursor(&doc);
     // Смещения кусков — единицы UTF-16 от начала текста блока, те же, что и в
     // документе: пересчитывать нечего.
@@ -184,33 +189,33 @@ void applySpans(QTextDocument& doc, int textStart, const Piece& b, int lineStep)
         // Стиль записывается свойством, а не выводится обратно из оформления:
         // заголовок набран жирным целиком, и «жирный» внутри него по весу
         // шрифта было бы не отличить от самого заголовка.
-        int style = 0;
-        if (s.bold()) style |= SpanBold;
-        if (s.italic()) style |= SpanItalic;
-        if (s.strike()) style |= SpanStrike;
-        if (s.code()) style |= SpanCode;
-        if (s.image()) style |= SpanImage;
-        if (s.math()) style |= SpanMath;
-        if (s.comment()) style |= SpanComment;
+        int bits = 0;
+        if (s.bold()) bits |= SpanBold;
+        if (s.italic()) bits |= SpanItalic;
+        if (s.strike()) bits |= SpanStrike;
+        if (s.code()) bits |= SpanCode;
+        if (s.image()) bits |= SpanImage;
+        if (s.math()) bits |= SpanMath;
+        if (s.comment()) bits |= SpanComment;
 
         QTextCharFormat fmt;
-        if (style != 0) fmt.setProperty(SpanStyleProperty, style);
+        if (bits != 0) fmt.setProperty(SpanStyleProperty, bits);
         if (s.bold()) fmt.setFontWeight(QFont::Bold);
         if (s.italic()) fmt.setFontItalic(true);
         if (s.strike()) fmt.setFontStrikeOut(true);
         if (s.code()) {
-            fmt.setBackground(settings().look().codeBackground());
-            setFontStep(fmt, codeStepIn(lineStep));
-            if (!settings().look().codeFamily().isEmpty())
-                fmt.setFontFamilies({QString(settings().look().codeFamily())});
+            fmt.setBackground(style.codeBackground());
+            setFontStep(fmt, codeStepIn(lineStep, style));
+            if (!style.codeFamily().isEmpty())
+                fmt.setFontFamilies({QString(style.codeFamily())});
         }
         if (!s.href.isEmpty()) {
             fmt.setAnchor(true);
             fmt.setAnchorHref(s.href);
-            fmt.setForeground(settings().look().linkColor());
+            fmt.setForeground(style.linkColor());
             fmt.setFontUnderline(true);
         }
-        if (s.comment()) fmt.setForeground(settings().look().rawColor());
+        if (s.comment()) fmt.setForeground(style.rawColor());
         if (!s.title.isEmpty()) fmt.setProperty(SpanTitleProperty, s.title);
         cursor.setPosition(textStart + from);
         cursor.setPosition(textStart + to, QTextCursor::KeepAnchor);
@@ -239,7 +244,8 @@ bool pieceIsFormulaObject(const Piece& piece) {
     return !piece.raw && piece.kind == Kind::Math && !piece.text.isEmpty();
 }
 
-qreal blockTopMargin(Kind kind, bool raw, bool previousIsVSpace, bool first) {
+qreal blockTopMargin(Kind kind, bool raw, bool previousIsVSpace, bool first,
+                     const ZDocStyle& style) {
     // У первого блока отбивке сверху взяться неоткуда: над ним поле страницы.
     if (first) return 0.0;
 
@@ -247,8 +253,8 @@ qreal blockTopMargin(Kind kind, bool raw, bool previousIsVSpace, bool first) {
     // после последней. Внутри прогона — ничего, иначе высота разделителя из n
     // строк перестала бы быть n высотами строки.
     if (!raw && kind == Kind::VSpace)
-        return previousIsVSpace ? 0.0 : settings().look().separatorSpacingBefore();
-    if (previousIsVSpace) return settings().look().separatorSpacingAfter();
+        return previousIsVSpace ? 0.0 : style.separatorSpacingBefore();
+    if (previousIsVSpace) return style.separatorSpacingAfter();
 
     // Своего воздуха у заголовка нет. Он был — «заголовок отделяет куски текста»,
     // — но выглядел ровно как пустая строка, которой в файле нет, и читался как
@@ -258,18 +264,18 @@ qreal blockTopMargin(Kind kind, bool raw, bool previousIsVSpace, bool first) {
 }
 
 qreal blockTopMarginPx(Kind kind, bool raw, bool previousIsVSpace, bool first,
-                       bool continuation, qreal lineUnit) {
+                       bool continuation, qreal lineUnit, const ZDocStyle& style) {
     // Строки одного литерального блока стоят вплотную: воздух и отбивка есть
     // только у первой.
     if (continuation) return 0.0;
-    qreal margin = blockTopMargin(kind, raw, previousIsVSpace, first) * lineUnit;
+    qreal margin = blockTopMargin(kind, raw, previousIsVSpace, first, style) * lineUnit;
     // Сверху у плашки только воздух под скругление: полоска с языком и кнопкой
     // висит снизу, в нижнем поле последней строки блока.
-    if (!raw && kind == Kind::Code) margin += codePlate().padTop;
+    if (!raw && kind == Kind::Code) margin += codePlate(style).padTop;
     return margin;
 }
 
-QTextBlockFormat vspaceBlockFormat(bool previousIsVSpace, bool first) {
+QTextBlockFormat vspaceBlockFormat(bool previousIsVSpace, bool first, const ZDocStyle& style) {
     // МЕРА — БАЗОВЫЙ ШРИФТ ОБЛИКА, а не шрифт документа.
     //
     // Раньше здесь стоял doc.defaultFont(), и разницы не было: его никто не
@@ -277,35 +283,37 @@ QTextBlockFormat vspaceBlockFormat(bool previousIsVSpace, bool first) {
     // операцией на 200 %, получила бы вдвое большее поле, чем такая же строка у
     // сборщика. Вся прочая геометрия документа печётся в единице (layoutLineUnit,
     // layoutCharUnit); пустая строка не имеет права быть исключением.
-    const QFont base = layoutBaseFont();
+    const QFont base = layoutBaseFont(style);
     QTextBlockFormat format;
     format.setProperty(KindProperty, int(Kind::VSpace));
-    format.setTopMargin(blockTopMargin(Kind::VSpace, false, previousIsVSpace, first) *
-                        layoutLineUnit());
+    format.setTopMargin(blockTopMargin(Kind::VSpace, false, previousIsVSpace, first, style) *
+                        layoutLineUnit(style));
     format.setBottomMargin(0);
-    applyLineHeight(format, settings().look().lineHeightFactor(), base.pointSizeF(), base);
+    applyLineHeight(format, style.lineHeightFactor(), base.pointSizeF(), base, style);
     return format;
 }
 
-QFont layoutBaseFont() {
-    QFont base{QString(settings().look().fontFamily())};
-    base.setPointSizeF(settings().look().baseFontPoint());
+QFont layoutBaseFont(const ZDocStyle& style) {
+    QFont base{QString(style.fontFamily())};
+    base.setPointSizeF(style.baseFontPoint());
     base.setStyleHint(QFont::Monospace);
     return base;
 }
 
-qreal layoutLineUnit() { return QFontMetricsF(layoutBaseFont()).height(); }
+qreal layoutLineUnit(const ZDocStyle& style) {
+    return QFontMetricsF(layoutBaseFont(style)).height();
+}
 
 void applyLineHeight(QTextBlockFormat& format, qreal factor, qreal linePoint,
-                     const QFont& base) {
+                     const QFont& base, const ZDocStyle& style) {
     if (factor <= 0.0) return;
-    switch (settings().look().lineHeightMode()) {
-        case ZSettings::Look::LineHeight::Proportional:
+    switch (style.lineHeightMode()) {
+        case ZDocStyle::LineHeight::Proportional:
             format.setLineHeight(factor * 100.0, QTextBlockFormat::ProportionalHeight);
             return;
-        case ZSettings::Look::LineHeight::Natural:
+        case ZDocStyle::LineHeight::Natural:
             return;
-        case ZSettings::Look::LineHeight::Pixels: {
+        case ZDocStyle::LineHeight::Pixels: {
             QFont line = base;
             line.setPointSizeF(linePoint);
             format.setLineHeight(std::round(QFontMetricsF(line).height() * factor),
@@ -315,8 +323,8 @@ void applyLineHeight(QTextBlockFormat& format, qreal factor, qreal linePoint,
     }
 }
 
-qreal layoutCharUnit() {
-    return QFontMetricsF(layoutBaseFont()).horizontalAdvance(QLatin1Char('A'));
+qreal layoutCharUnit(const ZDocStyle& style) {
+    return QFontMetricsF(layoutBaseFont(style)).horizontalAdvance(QLatin1Char('A'));
 }
 
 namespace {
@@ -329,6 +337,8 @@ namespace {
 // сами. Единицы ритма (высота строки, ширина "A") сняты с базового шрифта: они
 // задают ГЕОМЕТРИЮ, а она в пикселях и строится один раз.
 struct BuildContext {
+    // Стиль, которым собирается документ: параметр сборки, а не глобальное.
+    const ZDocStyle* style = nullptr;
     qreal basePoint = 0.0;
     QFont base;
     QRawFont primaryFont;
@@ -338,16 +348,17 @@ struct BuildContext {
     // Опыт просмотрщика, см. BuildOptions в заголовке.
 };
 
-BuildContext contextFor() {
+BuildContext contextFor(const ZDocStyle& style) {
     BuildContext ctx;
-    ctx.basePoint = settings().look().baseFontPoint();
-    ctx.base = layoutBaseFont();
+    ctx.style = &style;
+    ctx.basePoint = style.baseFontPoint();
+    ctx.base = layoutBaseFont(style);
     ctx.primaryFont = QRawFont::fromFont(ctx.base);
     const QFontMetricsF metrics(ctx.base);
     ctx.lineUnit = metrics.height();
     ctx.charUnit = metrics.horizontalAdvance(QLatin1Char('A'));
-    Q_ASSERT(qFuzzyCompare(ctx.lineUnit, layoutLineUnit()));
-    ctx.plate = codePlate();
+    Q_ASSERT(qFuzzyCompare(ctx.lineUnit, layoutLineUnit(style)));
+    ctx.plate = codePlate(style);
     return ctx;
 }
 
@@ -405,6 +416,7 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
                const Piece& piece, bool documentStart, bool& reuse, bool& prevVSpace) {
     Piece named;
     const Piece& b = withNamedBareImages(piece, named);
+    const ZDocStyle& style = *ctx.style;
     const bool first = documentStart && reuse;
     const bool raw = b.raw;
     const bool list = !raw && isList(b.kind);
@@ -466,13 +478,13 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     QString text;
     std::vector<Break> breaks;
     if (raw) {
-        charFmt.setForeground(settings().look().rawColor());
+        charFmt.setForeground(style.rawColor());
     } else {
         switch (b.kind) {
             case Kind::Heading:
                 blockFmt.setHeadingLevel(b.headingLevel);
                 charFmt.setFontWeight(QFont::Bold);
-                lineStep = settings().look().headingStep()[size_t(b.headingLevel - 1)];
+                lineStep = style.headingStep()[size_t(b.headingLevel - 1)];
                 setFontStep(charFmt, lineStep);
                 break;
 
@@ -482,17 +494,17 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
                 // вычитая padLeft обратно (см. codePlate в settings.h).
                 blockFmt.setLeftMargin(ctx.plate.indent + ctx.plate.padLeft);
                 blockFmt.setProperty(InfoProperty, b.info);
-                lineStep = codeStepIn(0);
+                lineStep = codeStepIn(0, style);
                 setFontStep(charFmt, lineStep);
-                if (!settings().look().codeFamily().isEmpty())
-                    charFmt.setFontFamilies({QString(settings().look().codeFamily())});
+                if (!style.codeFamily().isEmpty())
+                    charFmt.setFontFamilies({QString(style.codeFamily())});
                 break;
 
             case Kind::Quote:
                 // Курсивом цитату не выделяем: тогда настоящий _курсив_
                 // внутри неё стал бы неотличим от остального текста.
-                blockFmt.setLeftMargin(settings().look().quoteIndent() * ctx.charUnit);
-                charFmt.setForeground(settings().look().quoteColor());
+                blockFmt.setLeftMargin(style.quoteIndent() * ctx.charUnit);
+                charFmt.setForeground(style.quoteColor());
                 break;
 
             // Ветки default в switch по роду не место: новый род обязан
@@ -533,7 +545,7 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
                 // Комментарий: в тексте — внутренность без скобок, скобки
                 // — структура. Рисуется тем же серым, что и дословные
                 // куски, но правится как обычный текст.
-                charFmt.setForeground(settings().look().rawColor());
+                charFmt.setForeground(style.rawColor());
                 break;
         }
         if (b.kind != Kind::Code) text = toQt(b.text, breaks);
@@ -586,7 +598,7 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     const bool code = !raw && b.kind == Kind::Code;
     // Первому блоку документа отбивка не нужна (над ним поле страницы), а вот
     // воздух над плашкой нужен и ему — это и делает blockTopMarginPx.
-    blockFmt.setTopMargin(blockTopMarginPx(b.kind, raw, prevVSpace, first, false, ctx.lineUnit));
+    blockFmt.setTopMargin(blockTopMarginPx(b.kind, raw, prevVSpace, first, false, ctx.lineUnit, style));
     blockFmt.setBottomMargin(0);
 
 
@@ -605,9 +617,9 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     // назвал свой размер — добавлять к нему ритм текста нечего.
     const qreal lineFactor = (pieceIsImageObject(b) || pieceIsFormulaObject(b))
                                  ? 1.0
-                                 : (list ? settings().look().listLineHeightFactor()
-                                         : settings().look().lineHeightFactor());
-    applyLineHeight(blockFmt, lineFactor, ctx.basePoint * fontStepFactor(lineStep), ctx.base);
+                                 : (list ? style.listLineHeightFactor()
+                                         : style.lineHeightFactor());
+    applyLineHeight(blockFmt, lineFactor, ctx.basePoint * fontStepFactor(lineStep), ctx.base, style);
 
     // Один QTextBlock у обычного блока и по одному на строку у литерального.
     // Все, кроме первого, помечены продолжением: без этого разрезанный блок
@@ -662,24 +674,48 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
         markBreaks(target, textStart, breaks);
         const bool object = imageObject || formulaObject;
         if (!literal && !object && !b.runs.empty())
-            applySpans(target, textStart, b, lineStep);
+            applySpans(target, textStart, b, lineStep, style);
         if (!object)
-            enlargeFallbackGlyphs(target, textStart, text, lineStep, ctx.primaryFont);
+            enlargeFallbackGlyphs(target, textStart, text, lineStep, ctx.primaryFont, style);
     }
     prevVSpace = vspace;
 }
 
 }  // namespace
 
+namespace {
+const char* const kStyleProperty = "zametti.docStyle";
+}
+
+std::shared_ptr<const ZDocStyle> attachedStyle(const QTextDocument& doc) {
+    const QVariant held = doc.property(kStyleProperty);
+    if (!held.isValid()) return nullptr;
+    return held.value<std::shared_ptr<const ZDocStyle>>();
+}
+
+const ZDocStyle& styleOf(const QTextDocument& doc) {
+    const std::shared_ptr<const ZDocStyle> own = attachedStyle(doc);
+    return own ? *own : settings().style();
+}
+
+void attachStyle(QTextDocument& doc, std::shared_ptr<const ZDocStyle> style) {
+    if (style == nullptr) doc.setProperty(kStyleProperty, QVariant());
+    else doc.setProperty(kStyleProperty, QVariant::fromValue(std::move(style)));
+}
+
 void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target,
                    BuildOptions options) {
     if (!options.keepUndo) target.setUndoRedoEnabled(false);
+    // Стиль сборки прикрепляется к документу: свой — если дали, иначе тот, что
+    // уже прикреплён (пересборка живой заметки), иначе из настроек.
+    if (options.style != nullptr) attachStyle(target, options.style);
     target.clear();
     // Поля задаются рамкой корневого фрейма, а не documentMargin: тот кладёт
     // одинаковый отступ со всех сторон, а по бокам нужно заметно больше.
     target.setDocumentMargin(0);
 
-    BuildContext ctx = contextFor();
+    const ZDocStyle& style = styleOf(target);
+    BuildContext ctx = contextFor(style);
     target.setDefaultFont(ctx.base);
     // Стоп табуляции — тот же, которым Tab ставит пробелы (editor.codeTabWidth).
     // Иначе набранное нами и литеральные табы из старых файлов рисовались бы
@@ -691,7 +727,7 @@ void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target,
     // строку (см. про интернирование в doc_model.h).
     {
         QFont codeLine = ctx.base;
-        codeLine.setPointSizeF(ctx.basePoint * fontStepFactor(codeStepIn(0)));
+        codeLine.setPointSizeF(ctx.basePoint * fontStepFactor(codeStepIn(0, style)));
         QTextOption option = target.defaultTextOption();
         option.setTabStopDistance(settings().editor().codeTabWidth() *
                                   QFontMetricsF(codeLine).horizontalAdvance(QLatin1Char(' ')));
@@ -699,10 +735,10 @@ void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target,
     }
 
     QTextFrameFormat rootFormat = target.rootFrame()->frameFormat();
-    rootFormat.setLeftMargin(settings().look().sideMargin() * ctx.charUnit);
-    rootFormat.setRightMargin(settings().look().sideMargin() * ctx.charUnit);
-    rootFormat.setTopMargin(settings().look().verticalMargin() * ctx.lineUnit);
-    rootFormat.setBottomMargin(settings().look().verticalMargin() * ctx.lineUnit);
+    rootFormat.setLeftMargin(style.sideMargin() * ctx.charUnit);
+    rootFormat.setRightMargin(style.sideMargin() * ctx.charUnit);
+    rootFormat.setTopMargin(style.verticalMargin() * ctx.lineUnit);
+    rootFormat.setBottomMargin(style.verticalMargin() * ctx.lineUnit);
     target.rootFrame()->setFrameFormat(rootFormat);
 
     QTextCursor cursor(&target);
@@ -724,7 +760,7 @@ void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target,
         QTextCharFormat charFmt;
         setFontStep(charFmt, 0);
         QTextBlockFormat blockFmt;
-        applyLineHeight(blockFmt, settings().look().lineHeightFactor(), ctx.basePoint, ctx.base);
+        applyLineHeight(blockFmt, style.lineHeightFactor(), ctx.basePoint, ctx.base, style);
         cursor.setBlockFormat(blockFmt);
         cursor.setBlockCharFormat(charFmt);
     }
@@ -828,6 +864,7 @@ void checkMatchesBuild(const std::vector<Piece>& to, const QTextDocument& target
 
 bool patchDocument(const std::vector<Piece>& built, const std::vector<Piece>& now,
                    const std::vector<Piece>& to, QTextDocument& target) {
+    const ZDocStyle& style = styleOf(target);
     const int builtCount = static_cast<int>(built.size());
     const int nowCount = static_cast<int>(now.size());
     const int newCount = static_cast<int>(to.size());
@@ -894,7 +931,7 @@ bool patchDocument(const std::vector<Piece>& built, const std::vector<Piece>& no
     // нельзя. Пусть собирает целиком.
     if (!startBlock.isValid() || !endBlock.isValid()) return false;
 
-    const BuildContext ctx = contextFor();
+    const BuildContext ctx = contextFor(style);
     const int firstNumber = startBlock.blockNumber();
 
     QTextCursor cursor(&target);

@@ -19,6 +19,7 @@
 #ifndef ZAMETTI_TABLE_VIEW_H
 #define ZAMETTI_TABLE_VIEW_H
 
+#include "settings.h"
 #include "table.h"
 
 #include <QFont>
@@ -69,14 +70,16 @@ struct TableSpace {
 };
 
 // Разложить таблицу. Возвращает пустую раскладку, если таблица не разобрана.
-TableLayout layoutTable(const Table& table, const TableSpace& space);
+// Стиль — тот, которым собран документ (styleOf(doc)); без него — из настроек.
+TableLayout layoutTable(const Table& table, const TableSpace& space,
+                        const ZDocStyle& style = settings().style());
 
 // Шрифт текста таблицы при этом масштабе — тот же, что у обычного текста, с
 // поправкой на усадку.
-QFont tableFont(qreal scale);
+QFont tableFont(qreal scale, const ZDocStyle& style = settings().style());
 // Внутренние поля ячейки по горизонтали и вертикали, в пикселях.
-qreal tableCellPadX(qreal scale);
-qreal tableCellPadY(qreal scale);
+qreal tableCellPadX(qreal scale, const ZDocStyle& style = settings().style());
+qreal tableCellPadY(qreal scale, const ZDocStyle& style = settings().style());
 
 }  // namespace zametti
 

@@ -104,6 +104,14 @@ bool ZDocument::loadMarkdown(std::string_view bytes) {
 }
 
 
+const ZDocStyle& ZDocument::style() const { return styleOf(d_->text); }
+
+void ZDocument::setStyle(std::shared_ptr<const ZDocStyle> style) {
+    attachStyle(d_->text, std::move(style));
+}
+
+std::shared_ptr<const ZDocStyle> ZDocument::stylePtr() const { return attachedStyle(d_->text); }
+
 Digest ZDocument::digest() const {
     const std::string bytes = toMarkdown();
     return hashOf(std::string_view(bytes));
@@ -310,6 +318,7 @@ std::string ZDocument::archiveStub() const {
     std::vector<Piece> body;
     if (!heading.text.isEmpty()) body.push_back(std::move(heading));
     stub.d_->header.setBlankAfter(!body.empty());
+    attachStyle(stub.d_->text, attachedStyle(d_->text));
     buildDocument(body, stub.d_->text);
     return stub.toMarkdown();
 }

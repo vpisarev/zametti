@@ -57,23 +57,23 @@ StatusBar::StatusBar(QWidget* parent) : QWidget(parent) {
 
 void StatusBar::refreshAppearance() {
     const ZSettings& a = settings();
-    QFont font(a.look().statusFamily(), a.look().statusFontPoints());
+    QFont font(a.ui().statusFamily(), a.ui().statusFontPoints());
     left_->setFont(font);
     right_->setFont(font);
 
-    const QString colour = a.look().statusTextColor().name(QColor::HexRgb);
+    const QString colour = a.ui().statusTextColor().name(QColor::HexRgb);
     left_->setStyleSheet(QStringLiteral("color: %1;").arg(colour));
     right_->setStyleSheet(QStringLiteral("color: %1;").arg(colour));
 
     auto* layout = qobject_cast<QHBoxLayout*>(this->layout());
     if (layout != nullptr) {
-        layout->setContentsMargins(a.look().statusPadding(), a.look().statusPaddingTop(), a.look().statusPadding(),
-                                   a.look().statusPaddingTop());
-        layout->setSpacing(a.look().statusPadding());
+        layout->setContentsMargins(a.ui().statusPadding(), a.ui().statusPaddingTop(), a.ui().statusPadding(),
+                                   a.ui().statusPaddingTop());
+        layout->setSpacing(a.ui().statusPadding());
     }
     setAutoFillBackground(true);
     QPalette pal = palette();
-    pal.setColor(QPalette::Window, a.look().statusBackground());
+    pal.setColor(QPalette::Window, a.ui().statusBackground());
     setPalette(pal);
     relayout();
 }
@@ -160,7 +160,7 @@ void StatusBar::showLeft() {
         left_->setTextFormat(Qt::RichText);
         left_->setText(shown.toHtmlEscaped() +
                        QStringLiteral(" <span style=\"color:%1\">*</span>")
-                           .arg(settings().look().statusSuspectColor().name(QColor::HexRgb)) +
+                           .arg(settings().ui().statusSuspectColor().name(QColor::HexRgb)) +
                        QString(separator + rest).toHtmlEscaped());
     }
     left_->setToolTip(note_.suspect
@@ -222,7 +222,7 @@ void StatusBar::showImage() {
     // Безымянную («IMG_1234», «~спрятана») под снимком тоже не видно — а в
     // панели она к месту: это справка о файле, и человеку видно, что подпись
     // у снимка есть и какая.
-    const bool underPhoto = settings().look().imageCaption() && !isNonameCaption(image_.caption);
+    const bool underPhoto = settings().style().imageCaption() && !isNonameCaption(image_.caption);
     const QString caption = underPhoto ? QString() : image_.caption;
     left_->setToolTip(caption.isEmpty() ? known : known + separator + caption);
     if (caption.isEmpty()) {
@@ -266,7 +266,7 @@ void StatusBar::resizeEvent(QResizeEvent* e) {
 void StatusBar::paintEvent(QPaintEvent* e) {
     QWidget::paintEvent(e);
     QPainter painter(this);
-    painter.setPen(settings().look().statusSeparatorColor());
+    painter.setPen(settings().ui().statusSeparatorColor());
     // Ровно одна ЛОГИЧЕСКАЯ точка сверху, как черта под тулбаром.
     painter.drawLine(0, 0, width(), 0);
 }

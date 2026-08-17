@@ -25,6 +25,7 @@
 #include "export_pdf.h"
 #include "formula.h"
 #include "settings.h"
+#include "settings_hook.h"
 #include "test_util.h"
 #include "testdata.h"
 
@@ -241,11 +242,11 @@ void checkLinesFitPage() {
     // подгонка растит под них виджет, и он остаётся шире страницы. С потолком по
     // умолчанию (90 знаков) на A4 запаса нет, полей не заводится, и проверка
     // была бы пустышкой — я на этом и попался, пока не задал число сам.
-    const qreal savedWidth = zametti::settings().look().maxContentWidth();
-    zametti::editSettings().look().setMaxContentWidth(40.0);
+    const qreal savedWidth = zametti::settings().style().maxContentWidth();
+    zametti::mutableSettingsForTests().style().setMaxContentWidth(40.0);
     struct Restore {
         qreal width;
-        ~Restore() { zametti::editSettings().look().setMaxContentWidth(width); }
+        ~Restore() { zametti::mutableSettingsForTests().style().setMaxContentWidth(width); }
     } restore{savedWidth};
 
     std::string source = "# Длинная\n\n";
@@ -262,8 +263,7 @@ void checkLinesFitPage() {
     // вьюпорта, ради которых подгонка растит виджет, — то есть ровно то
     // условие, при котором строки и обрезались. С полями по умолчанию беда не
     // всплывает вовсе, и проверка была бы пустышкой.
-    zametti::PdfOptions options;
-    const zametti::ExportReport report = zametti::exportPdf(note, pdf, options);
+    const zametti::ExportReport report = zametti::exportPdf(note, pdf);
     ZT_TRUE("длинная заметка вывезена", report.ok());
     ZT_TRUE("страниц больше одной: разрез действительно случился", report.pages >= 1);
 
@@ -395,8 +395,8 @@ void checkPaperPrep() {
 void checkPaperFont() {
     const QString note = makeNote(QStringLiteral("01gggggggggggg.md"),
                                   "# Заголовок\n\nАбзац текста.\n\n```\nкод\n```\n");
-    zametti::editSettings().pdf().setFontFamily(QStringLiteral("IBM Plex Sans"));
-    zametti::editSettings().pdf().setCodeFamily(QStringLiteral("IBM Plex Mono"));
+    zametti::mutableSettingsForTests().pdf().setFontFamily(QStringLiteral("IBM Plex Sans"));
+    zametti::mutableSettingsForTests().pdf().setCodeFamily(QStringLiteral("IBM Plex Mono"));
     exportAndSize(note, QStringLiteral("шрифты.pdf"), nullptr);
 
     QFile file(QDir(g_dir).filePath(QStringLiteral("шрифты.pdf")));
@@ -406,7 +406,7 @@ void checkPaperFont() {
     ZT_TRUE("а код — своей", bytes.contains("IBMPlexMono"));
     // Облик возвращается на место: подмена живёт только внутри вывоза.
     ZT_TRUE("экранная гарнитура не тронута вывозом",
-            zametti::settings().look().fontFamily() != QStringLiteral("IBM Plex Sans"));
+            zametti::settings().style().fontFamily() != QStringLiteral("IBM Plex Sans"));
 }
 
 }  // namespace

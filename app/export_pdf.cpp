@@ -276,7 +276,7 @@ bool readAll(const QString& path, std::string& out) {
 }  // namespace
 
 ExportReport exportPdf(const QString& notePath, const QString& targetPath,
-                       const PdfOptions& options) {
+                       const ZSettings::Pdf& paper, const QString& title) {
     ExportReport report;
 
     std::string text;
@@ -285,40 +285,38 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
         return report;
     }
 
-    // ОБЛИК НА ВРЕМЯ ВЫВОЗА ПОДМЕНЯЕТСЯ. Сборщик документа и вид спрашивают
-    // шрифты у глобального settings(), и другого способа сказать им «сейчас
-    // мы на бумаге» нет — кроме как протащить облик параметром через десяток
-    // мест, которые о бумаге знать не должны.
+    // СТИЛЬ БУМАГИ — КОПИЯ ЭКРАННОГО СТИЛЯ С ПОДМЕНЁННЫМИ ШРИФТАМИ, и передаётся
+    // она явно: сборщику (BuildOptions::style, через прикрепление к документу) и
+    // виду (он берёт стиль у документа, styleOf). Глобальные настройки не
+    // трогаются — они только для чтения (решение владельца); прежде тут стоял
+    // люк editSettings, подменявший облик всей программе на время вывоза.
     //
     // Подменяются ТОЛЬКО шрифты и кегли: цвета, поля, ритм страницы у бумаги
-    // те же, что на экране, — она и должна выглядеть как то, что человек
-    // видит. Возвращается облик на месте, чем бы вывоз ни кончился.
-    // Это единственный люк правки настроек в боевом коде (editSettings) — и
-    // ровно тот случай, ради которого настройки стали составными: когда сборщик
-    // и вид возьмут облик параметром, бумага получит свой ZSettings::Look
-    // пресетом, а глобальное трогать перестанет.
-    struct PaperLook {
-        ZSettings saved = settings();
-        ~PaperLook() { editSettings() = saved; }
-    } look;
-    {
-        ZSettings::Look& a = editSettings().look();
-        const ZSettings::Pdf& paper = look.saved.pdf();
-        if (!paper.fontFamily().isEmpty()) a.setFontFamily(paper.fontFamily());
-        if (paper.pointSize() > 0.0) a.setBaseFontPoint(paper.pointSize());
-        if (!paper.codeFamily().isEmpty()) a.setCodeFamily(paper.codeFamily());
-        a.setCodeStep(paper.codeStep());
-        a.setHeadingStep(paper.headingStep());
-        // И полоска блока кода: на бумаге от неё остаётся только поле снизу,
-        // чтобы плашка выглядела как на экране — со скруглением и воздухом, но
-        // без имени языка и кнопки копирования.
-        a.setCodeStripHeight(paper.codeStripHeight());
-    }
-    const ZSettings::Pdf& paper = look.saved.pdf();
+    // те же, что на экране, — она и должна выглядеть как то, что человек видит.
+    auto style = std::make_shared<ZDocStyle>(settings().style());
+    if (!paper.fontFamily().isEmpty()) style->setFontFamily(paper.fontFamily());
+    if (paper.pointSize() > 0.0) style->setBaseFontPoint(paper.pointSize());
+    if (!paper.codeFamily().isEmpty()) style->setCodeFamily(paper.codeFamily());
+    style->setCodeStep(paper.codeStep());
+    style->setHeadingStep(paper.headingStep());
+    // И полоска блока кода: на бумаге от неё остаётся только поле снизу, чтобы
+    // плашка выглядела как на экране — со скруглением и воздухом, но без имени
+    // языка и кнопки копирования.
+    style->setCodeStripHeight(paper.codeStripHeight());
 
     QPdfWriter writer(targetPath);
-    writer.setPageSize(QPageSize(options.page));
-    const qreal margin = options.marginMm > 0.0 ? options.marginMm : paper.marginMm();
+    // Формат листа — по имени; незнакомое имя — A4.
+    QPageSize::PageSizeId pageId = QPageSize::A4;
+    for (int id = 0; id <= int(QPageSize::LastPageSize); ++id) {
+        const auto candidate = static_cast<QPageSize::PageSizeId>(id);
+        if (QPageSize::name(candidate).compare(paper.pageSize(), Qt::CaseInsensitive) == 0 ||
+            QPageSize::key(candidate).compare(paper.pageSize(), Qt::CaseInsensitive) == 0) {
+            pageId = candidate;
+            break;
+        }
+    }
+    writer.setPageSize(QPageSize(pageId));
+    const qreal margin = paper.marginMm();
     writer.setPageMargins(QMarginsF(margin, margin, margin, margin), QPageLayout::Millimeter);
     // РАЗРЕШЕНИЕ PDF РАВНО ЕДИНИЦАМ ВЁРСТКИ, и это не мелочь оформления.
     //
@@ -334,8 +332,7 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
     // координаты вещественные; разрешение картинок задаётся отдельно и от этого
     // числа не зависит.
     writer.setResolution(int(kLayoutDpi));
-    writer.setTitle(options.title.isEmpty() ? QFileInfo(targetPath).completeBaseName()
-                                            : options.title);
+    writer.setTitle(title.isEmpty() ? QFileInfo(targetPath).completeBaseName() : title);
     writer.setCreator(QStringLiteral("zametti"));
 
     const QRectF paint = writer.pageLayout().paintRectPixels(writer.resolution());
@@ -359,7 +356,10 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
     view.setFrameShape(QFrame::NoFrame);
     view.setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     view.setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    applyPalette(view);
+    // Стиль прикрепляется к документу вида ДО палитры и сборки: вид и сборщик
+    // берут его у документа.
+    attachStyle(*view.document(), style);
+    applyPalette(view, false, *style);
     view.setImageBase(QFileInfo(notePath).absolutePath());
     // Вьюпорт обязан стать РОВНО страницей: по нему считаются и ширина колонки,
     // и место под фотографии. У виджета же есть рамка и полосы прокрутки, и он
@@ -429,7 +429,7 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
     // отмерила два сантиметра, фотография ляжет своими пикселями, и их число
     // задаётся здесь и только здесь.
     const qreal marginPx = margin / 25.4 * kLayoutDpi;
-    const int dpi = options.imageDpi > 0 ? options.imageDpi : paper.imageDpi();
+    const int dpi = paper.imageDpi();
     const qreal imageRatio = qMax(1.0, qreal(dpi) / kLayoutDpi);
 
     for (size_t i = 0; i + 1 < cuts.size(); ++i) {
@@ -443,7 +443,7 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
         // карточка на белом листе.
         painter.fillRect(QRectF(-marginPx, -marginPx, pageWidth + 2 * marginPx,
                                 pageHeight + 2 * marginPx),
-                         settings().look().pageBackground());
+                         settings().style().pageBackground());
         painter.translate(0.0, -top);
         view.renderSlice(painter, QRectF(0.0, top, pageWidth, bottom - top), imageRatio,
                          paper.maxExportedImageSize());

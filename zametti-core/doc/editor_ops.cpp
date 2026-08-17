@@ -704,11 +704,10 @@ std::vector<StyleRun> styleRuns(const QTextDocument& doc, int from, int to,
 // Ступень отсчитывается от окружения — от того, что стоит в формате самого
 // блока: код внутри заголовка обязан ехать вместе с заголовком, ровно как у
 // сборщика.
-void applyCodeLook(QTextCharFormat& format, int surroundingStep) {
-    setFontStep(format, surroundingStep + settings().look().codeStep());
-    if (!settings().look().codeFamily().isEmpty())
-        format.setFontFamilies({QString(settings().look().codeFamily())});
-    format.setBackground(settings().look().codeBackground());
+void applyCodeLook(QTextCharFormat& format, int surroundingStep, const ZDocStyle& style) {
+    setFontStep(format, surroundingStep + style.codeStep());
+    if (!style.codeFamily().isEmpty()) format.setFontFamilies({QString(style.codeFamily())});
+    format.setBackground(style.codeBackground());
 }
 
 // Оформление, отвечающее набору признаков. Ставим все три явно: снимать
@@ -1126,7 +1125,7 @@ static bool applyCodeSpanRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     edit.setPosition(block.position() + open);
     edit.setPosition(block.position() + end - 2, QTextCursor::KeepAnchor);
     QTextCharFormat code = formatForStyle(SpanCode);
-    applyCodeLook(code, blockFontStep(cursor.block()));
+    applyCodeLook(code, blockFontStep(cursor.block()), styleOf(*cursor.document()));
     edit.mergeCharFormat(code);
     edit.endEditBlock();
 
@@ -1210,7 +1209,7 @@ static QTextCharFormat inlineStyleForTyping(const QTextBlock& block, const QText
     // заголовке он крупнее, в пункте обычный. Дальше кладём на него признаки.
     QTextCharFormat format = block.charFormat();
     format.merge(formatForStyle(next));
-    if ((next & SpanCode) != 0) applyCodeLook(format, blockFontStep(block));
+    if ((next & SpanCode) != 0) applyCodeLook(format, blockFontStep(block), styleOf(*block.document()));
     return format;
 }
 
@@ -1519,7 +1518,7 @@ static bool newLineAfterImage(QTextDocument& doc, QTextCursor& cursor) {
 
     QTextCursor edit(cursor);
     edit.setPosition(photo.position() + photo.length() - 1);
-    edit.insertBlock(vspaceBlockFormat(false, false), QTextCharFormat());
+    edit.insertBlock(vspaceBlockFormat(false, false, styleOf(*edit.document())), QTextCharFormat());
     cursor = edit;
     return true;
 }
@@ -1721,7 +1720,7 @@ static bool leaveCodeBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const QTextBlock last = cursor.block();
     QTextCursor edit(cursor);
     edit.setPosition(last.position() + last.length() - 1);
-    edit.insertBlock(vspaceBlockFormat(false, false), QTextCharFormat());
+    edit.insertBlock(vspaceBlockFormat(false, false, styleOf(*edit.document())), QTextCharFormat());
     cursor = edit;
     return true;
 }
@@ -2119,8 +2118,9 @@ static bool splitBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
             // Высоту строки ставим ТАК ЖЕ, КАК СБОРЩИК, а не копией у соседа:
             // копия тащит за собой и явные нули там, где сборщик не пишет ничего.
             QTextBlockFormat plain;
-            applyLineHeight(plain, settings().look().lineHeightFactor(), layoutBaseFont().pointSizeF(),
-                            layoutBaseFont());
+            const ZDocStyle& style = styleOf(*cursor.document());
+            applyLineHeight(plain, style.lineHeightFactor(), layoutBaseFont(style).pointSizeF(),
+                            layoutBaseFont(style), style);
 
             cursor.beginEditBlock();
             // Забор в текст не переносим: он был командой закрыть блок, а не
@@ -2486,7 +2486,7 @@ bool removeVSpaceAndMaybeJoin(QTextDocument& doc, QTextCursor& cursor, int gapNu
         edit.setPosition(after.position(), QTextCursor::KeepAnchor);
         edit.removeSelectedText();
         edit.setPosition(doc.findBlockByNumber(gapNumber).position());
-        edit.setBlockFormat(vspaceBlockFormat(isVSpaceBlock(before), gapNumber == 0));
+        edit.setBlockFormat(vspaceBlockFormat(isVSpaceBlock(before), gapNumber == 0, styleOf(doc)));
         normalise(doc, around(gapNumber));
         edit.endEditBlock();
         if (caretOnAfter && !fromGap) {
@@ -2761,7 +2761,7 @@ static qreal ownLeftMargin(const QTextBlock& block, const CodePlate& plate, qrea
     if (isRawBlock(block)) return 0;
     switch (kindOf(block)) {
         case Kind::Code:  return plate.indent + plate.padLeft;
-        case Kind::Quote: return settings().look().quoteIndent() * charUnit;
+        case Kind::Quote: return styleOf(*block.document()).quoteIndent() * charUnit;
         // У формулы собственного отступа нет: она встаёт по центру колонки, а её
         // исходник виден только в правке.
         case Kind::Math:
@@ -2796,12 +2796,13 @@ static void setLeftMarginTo(QTextCursor& cursor, const QTextBlock& block, qreal 
 
 void applyListGeometry(QTextDocument& doc, BlockRange range) {
     const BlockRange full = expandToRuns(doc, range);
-    const QFont base = layoutBaseFont();
+    const ZDocStyle& style = styleOf(doc);
+    const QFont base = layoutBaseFont(style);
     // Единицы — те же, что у сборщика: геометрия строится в базовом шрифте и
     // за зумом не идёт (см. layoutCharUnit).
-    const qreal charUnit = layoutCharUnit();
-    const qreal indent = settings().look().listIndent() * charUnit;
-    const CodePlate plate = codePlate();
+    const qreal charUnit = layoutCharUnit(style);
+    const qreal indent = style.listIndent() * charUnit;
+    const CodePlate plate = codePlate(style);
 
     // Первый проход: к какой колонке принадлежит каждый блок и какой маркер в
     // ней самый широкий. Задаёт колонку именно он: иначе под "10." текст
@@ -3004,7 +3005,7 @@ void insertVSpaceBefore(QTextDocument& doc, int number) {
 
     QTextCursor fix(&doc);
     fix.setPosition(doc.findBlockByNumber(number).position());
-    fix.setBlockFormat(vspaceBlockFormat(false, number == 0));
+    fix.setBlockFormat(vspaceBlockFormat(false, number == 0, styleOf(doc)));
     // И ФОРМАТ ЗНАКОВ ТОЖЕ ЧИСТЫЙ. Разрез копирует его у соседа, а сосед бывает
     // блоком кода — и пустая строка оставалась набранной моноширинным шрифтом.
     // Пока после каждой операции шла полная пересборка, это чинилось само;
@@ -3046,8 +3047,9 @@ int syncGaps(QTextDocument& doc, BlockRange range) {
             format.clearProperty(QTextFormat::BlockBottomMargin);
             format.clearProperty(QTextFormat::LineHeight);
             format.clearProperty(QTextFormat::LineHeightType);
-            applyLineHeight(format, settings().look().lineHeightFactor(),
-                            layoutBaseFont().pointSizeF(), layoutBaseFont());
+            const ZDocStyle& style = styleOf(*edit.document());
+            applyLineHeight(format, style.lineHeightFactor(), layoutBaseFont(style).pointSizeF(),
+                            layoutBaseFont(style), style);
             setBlockFormat(edit, block, format);
         }
     }
@@ -3090,7 +3092,8 @@ int syncGaps(QTextDocument& doc, BlockRange range) {
 
     // Поля сверху: их держит соседство, и после вставки они могли устареть.
     {
-        const qreal lineUnit = layoutLineUnit();
+        const ZDocStyle& style = styleOf(doc);
+        const qreal lineUnit = layoutLineUnit(style);
         int i = qMax(0, range.first);
         const int last = qMin(range.last + 2, doc.blockCount() - 1);
         for (; i <= last; ++i) {
@@ -3101,7 +3104,7 @@ int syncGaps(QTextDocument& doc, BlockRange range) {
             // заново значило бы стирать резерв на каждой операции.
             const qreal want = blockTopMarginPx(kindOf(block), isRawBlock(block),
                                                 isVSpaceBlock(block.previous()), i == 0,
-                                                isContinuationBlock(block), lineUnit);
+                                                isContinuationBlock(block), lineUnit, style);
             QTextBlockFormat format = block.blockFormat();
             // Не трогаем формат, если поле и так верное: любая запись помечает
             // документ изменённым и тянет за собой автосохранение.
@@ -3586,7 +3589,7 @@ bool ZDocument::insertLineAfter(QTextCursor& at, int blockIndex) {
         const QTextBlock block = d_->text.findBlockByNumber(blockIndex);
         if (!block.isValid()) return false;
         edit.setPosition(block.position() + block.length() - 1);
-        edit.insertBlock(vspaceBlockFormat(false, false), QTextCharFormat());
+        edit.insertBlock(vspaceBlockFormat(false, false, styleOf(*edit.document())), QTextCharFormat());
         return true;
     });
 }
@@ -3743,13 +3746,13 @@ bool ZDocument::tidyLine(const QTextCursor& left) {
         edit.setPosition(block.position() + from, QTextCursor::KeepAnchor);
         edit.removeSelectedText();
         edit.movePosition(QTextCursor::EndOfBlock);
-        edit.insertBlock(vspaceBlockFormat(false, false));
+        edit.insertBlock(vspaceBlockFormat(false, false, styleOf(*edit.document())));
         settleSeam(block.blockNumber(), block.blockNumber() + 1);
     } else if (after.text().isEmpty() && kind == Kind::Paragraph) {
         // Строка (и весь блок) опустела: это настоящая пустая строка.
         edit.setBlockFormat(vspaceBlockFormat(
             after.previous().isValid() && isVSpaceBlock(after.previous()),
-            after.blockNumber() == 0));
+            after.blockNumber() == 0, styleOf(*edit.document())));
         settleSeam(after.blockNumber(), after.blockNumber());
     }
     edit.endEditBlock();

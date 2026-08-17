@@ -18,8 +18,8 @@ namespace {
 // Кегль кода внутри ячейки — по тому же правилу, что и везде: ступень от
 // кегля текста. Таблицу рисуем мы сами, ступеней у QPainter нет, поэтому
 // множитель ступени берём числом.
-qreal codePointFor(qreal scale) {
-    return settings().look().baseFontPoint() * fontStepFactor(settings().look().codeStep()) * scale;
+qreal codePointFor(qreal scale, const ZDocStyle& style) {
+    return style.baseFontPoint() * fontStepFactor(style.codeStep()) * scale;
 }
 
 // Разобранная ячейка: текст и куски разметки, БЕЗ шрифтов и размеров.
@@ -83,7 +83,7 @@ CellMarkup markupOfCell(std::string_view markdown) {
 
 // Разметка ячейки при этом шрифте. Разбор уже сделан — здесь только форматы.
 std::shared_ptr<QTextLayout> layoutOfCell(const CellMarkup& markup, const QFont& font,
-                                          qreal scale) {
+                                          qreal scale, const ZDocStyle& style) {
     QList<QTextLayout::FormatRange> formats;
     for (const CellMarkup::Span& piece : markup.spans) {
         QTextLayout::FormatRange range;
@@ -96,13 +96,12 @@ std::shared_ptr<QTextLayout> layoutOfCell(const CellMarkup& markup, const QFont&
         if (piece.italic) fmt.setFontItalic(true);
         if (piece.strike) fmt.setFontStrikeOut(true);
         if (piece.code) {
-            fmt.setBackground(settings().look().codeBackground());
-            fmt.setFontPointSize(codePointFor(scale));
-            if (!settings().look().codeFamily().isEmpty())
-                fmt.setFontFamilies({QString(settings().look().codeFamily())});
+            fmt.setBackground(style.codeBackground());
+            fmt.setFontPointSize(codePointFor(scale, style));
+            if (!style.codeFamily().isEmpty()) fmt.setFontFamilies({QString(style.codeFamily())});
         }
         if (piece.link) {
-            fmt.setForeground(settings().look().linkColor());
+            fmt.setForeground(style.linkColor());
             fmt.setFontUnderline(true);
         }
         range.format = fmt;
@@ -172,23 +171,23 @@ qreal layoutInto(QTextLayout& layout, qreal width, qreal lineHeight) {
 
 }  // namespace
 
-QFont tableFont(qreal scale) {
-    QFont font{QString(settings().look().fontFamily())};
-    font.setPointSizeF(settings().look().baseFontPoint() * scale);
+QFont tableFont(qreal scale, const ZDocStyle& style) {
+    QFont font{QString(style.fontFamily())};
+    font.setPointSizeF(style.baseFontPoint() * scale);
     font.setStyleHint(QFont::Monospace);
     return font;
 }
 
-qreal tableCellPadX(qreal scale) {
+qreal tableCellPadX(qreal scale, const ZDocStyle& style) {
     // Поля ячейки — от кегля, а не в пикселях: с зумом и с усадкой они едут
     // вместе с текстом, иначе ужатая таблица стоит в непропорционально
     // просторных клетках.
-    return QFontMetricsF(tableFont(scale)).horizontalAdvance(QLatin1Char('A')) *
+    return QFontMetricsF(tableFont(scale, style)).horizontalAdvance(QLatin1Char('A')) *
            settings().tables().cellPadding();
 }
 
-qreal tableCellPadY(qreal scale) {
-    return QFontMetricsF(tableFont(scale)).height() * settings().tables().cellPaddingY();
+qreal tableCellPadY(qreal scale, const ZDocStyle& style) {
+    return QFontMetricsF(tableFont(scale, style)).height() * settings().tables().cellPaddingY();
 }
 
 const TableCellBox* TableLayout::at(int row, int column) const {
@@ -197,7 +196,7 @@ const TableCellBox* TableLayout::at(int row, int column) const {
     return index < cells.size() ? &cells[index] : nullptr;
 }
 
-TableLayout layoutTable(const Table& table, const TableSpace& space) {
+TableLayout layoutTable(const Table& table, const TableSpace& space, const ZDocStyle& style) {
     TableLayout out;
     if (!table.valid || table.columns <= 0) return out;
 
@@ -234,10 +233,10 @@ TableLayout layoutTable(const Table& table, const TableSpace& space) {
     };
     const auto measure = [&](qreal scale) {
         Measure m;
-        const QFont font = tableFont(scale);
-        m.padX = tableCellPadX(scale);
-        m.padY = tableCellPadY(scale);
-        m.lineHeight = std::round(QFontMetricsF(font).height() * settings().look().lineHeightFactor());
+        const QFont font = tableFont(scale, style);
+        m.padX = tableCellPadX(scale, style);
+        m.padY = tableCellPadY(scale, style);
+        m.lineHeight = std::round(QFontMetricsF(font).height() * style.lineHeightFactor());
         m.minWidth.fill(0.0, out.columns);
         m.maxWidth.fill(0.0, out.columns);
         m.layouts.reserve(out.rows * out.columns);
@@ -247,7 +246,7 @@ TableLayout layoutTable(const Table& table, const TableSpace& space) {
                 QFont cellFont = font;
                 if (row == 0) cellFont.setBold(true);   // шапка
                 const CellMarkup& cell = markup[row * out.columns + column];
-                auto layout = layoutOfCell(cell, cellFont, scale);
+                auto layout = layoutOfCell(cell, cellFont, scale, style);
                 const qreal natural = naturalWidth(*layout, m.lineHeight);
                 m.cellWidth.push_back(natural);
                 m.maxWidth[column] = qMax(m.maxWidth[column], natural + 2 * m.padX);
@@ -264,7 +263,7 @@ TableLayout layoutTable(const Table& table, const TableSpace& space) {
     // нужны вовсе — а помещается оно у всех таблиц корпуса, кроме самых широких.
     const auto measureMins = [&](Measure& m, qreal scale) {
         if (m.minTotal > 0.0) return;
-        const QFont font = tableFont(scale);
+        const QFont font = tableFont(scale, style);
         for (int row = 0; row < out.rows; ++row) {
             for (int column = 0; column < out.columns; ++column) {
                 QFont cellFont = font;

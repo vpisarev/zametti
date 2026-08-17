@@ -2,7 +2,9 @@
 #define ZAMETTI_DOCUMENT_BUILDER_H
 
 #include "document_pieces.h"
+#include "settings.h"
 
+#include <memory>
 #include <vector>
 
 #include <QFont>
@@ -44,7 +46,23 @@ struct BuildOptions {
     // человеку всю отмену — ровно тот довод, из-за которого штатный стек
     // когда-то и выключили.
     bool keepUndo = false;
+    // СТИЛЬ ДОКУМЕНТА — ПАРАМЕТР СБОРКИ (решение владельца: настройки только для
+    // чтения; нужен другой облик — копия ZDocStyle передаётся явно). nullptr —
+    // стиль из настроек. Тот же стиль обязан быть у вида, который документ
+    // показывает (NoteView::setStyle), и у заметки, которая его правит
+    // (ZDocument::setStyle): формат знаков, поставленный правкой, обязан
+    // совпасть с тем, что положила сборка.
+    std::shared_ptr<const ZDocStyle> style;
 };
+
+// СТИЛЬ ПРИКРЕПЛЁН К ДОКУМЕНТУ. Сборка кладёт стиль в сам QTextDocument
+// (свойством QObject), и всякий, у кого в руках документ, — операции правки,
+// вид, заплатка — спрашивает его здесь, а не в настройках: правка обязана
+// ставить форматы тем же стилем, что и сборка, а вид — рисовать тем же.
+// Не прикреплён — стиль из настроек.
+const ZDocStyle& styleOf(const QTextDocument& doc);
+std::shared_ptr<const ZDocStyle> attachedStyle(const QTextDocument& doc);
+void attachStyle(QTextDocument& doc, std::shared_ptr<const ZDocStyle> style);
 
 // ПОКАЗЫВАЕТСЯ ЛИ ЭТОТ БЛОК ОБЪЕКТОМ, а не текстом. Сегодня объектом бывает
 // фотография, занимающая абзац целиком: в документе она — один знак U+FFFC, за
@@ -120,15 +138,18 @@ qreal blockTopMargin(Kind kind, bool raw, bool previousIsVSpace, bool first);
 // и с места не сходит. Операции правки, пересчитывающие поля на живом
 // документе, обязаны брать те же единицы, что и сборщик, — иначе поле блока
 // после правки на 200 % оказалось бы вдвое больше собранного.
-// Ставит блоку высоту строки по нынешнему выбору облика (ZSettings::Look::LineHeight).
+// Ставит блоку высоту строки по нынешнему выбору облика (ZDocStyle::LineHeight).
 // Одно место на всех: сборщик, пустая строка и операции правки обязаны задавать
 // её одинаково, иначе поправленный блок разойдётся с собранным.
+// ВСЁ НИЖЕ — ПО СТИЛЮ; без стиля — по стилю настроек (settings().style()).
+// Стиль документа принадлежит документу (ZDocument::style()), и правка обязана
+// звать эти функции с ним, а не с глобальным.
 void applyLineHeight(QTextBlockFormat& format, qreal factor, qreal linePoint,
-                     const QFont& base);
+                     const QFont& base, const ZDocStyle& style = settings().style());
 
-QFont layoutBaseFont();
-qreal layoutLineUnit();
-qreal layoutCharUnit();
+QFont layoutBaseFont(const ZDocStyle& style = settings().style());
+qreal layoutLineUnit(const ZDocStyle& style = settings().style());
+qreal layoutCharUnit(const ZDocStyle& style = settings().style());
 
 // То же поле, но В ПИКСЕЛЯХ и целиком: отбивка плюс воздух над плашкой блока
 // кода. Спрашивать обязан КАЖДЫЙ, кто поля пересчитывает.
@@ -138,12 +159,14 @@ qreal layoutCharUnit();
 // Поймала матрица краёв, а до неё — сверка заплатки с полной сборкой в
 // отладочной сборке.
 qreal blockTopMarginPx(Kind kind, bool raw, bool previousIsVSpace, bool first,
-                       bool continuation, qreal lineUnit);
+                       bool continuation, qreal lineUnit,
+                       const ZDocStyle& style = settings().style());
 
 // Формат блока пустой строки — ровно такой, каким его собрал бы сборщик. Нужен
 // операциям: пустую строку они заводят на живом документе, и отличаться от
 // собранной она не имеет права.
-QTextBlockFormat vspaceBlockFormat(bool previousIsVSpace, bool first);
+QTextBlockFormat vspaceBlockFormat(bool previousIsVSpace, bool first,
+                                   const ZDocStyle& style = settings().style());
 
 }  // namespace zametti
 

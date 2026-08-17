@@ -2,6 +2,7 @@
 
 #include "block_object.h"
 #include "doc_model.h"
+#include "document_builder.h"
 #include "formula.h"
 #include "icons.h"
 #include "import_limits.h"
@@ -57,9 +58,9 @@ qreal formulaBoxHeight(const FormulaRender& render, qreal naturalLine) {
 }
 
 
-QFont baseFontFor(qreal zoom) {
-    QFont font{QString(settings().look().fontFamily())};
-    font.setPointSizeF(settings().look().baseFontPoint() * zoom);
+QFont baseFontFor(qreal zoom, const ZDocStyle& style) {
+    QFont font{QString(style.fontFamily())};
+    font.setPointSizeF(style.baseFontPoint() * zoom);
     font.setStyleHint(QFont::Monospace);
     return font;
 }
@@ -143,15 +144,15 @@ bool caretShouldBeDrawn(bool focused, bool readOnly, bool hasSelection, bool onD
     return true;
 }
 
-void applyPalette(QWidget& view, bool history) {
+void applyPalette(QWidget& view, bool history, const ZDocStyle& style) {
     QPalette palette = view.palette();
     // В режиме истории поле тонируется: слегка пожелтевший от времени фон
     // (решение владельца). Прошлое видно ещё до того, как человек прочтёт
     // баннер, а совпадение historyBackground с pageBackground выключает
     // тонировку — это законная настройка, а не поломка.
-    palette.setColor(QPalette::Base, history ? settings().look().historyBackground()
-                                             : settings().look().pageBackground());
-    palette.setColor(QPalette::Highlight, settings().look().selectionBackground());
+    palette.setColor(QPalette::Base, history ? style.historyBackground()
+                                             : style.pageBackground());
+    palette.setColor(QPalette::Highlight, style.selectionBackground());
     // Выделение светлое, поэтому текст в нём остаётся тёмным: белый по
     // умолчанию на таком фоне просто пропал бы.
     palette.setColor(QPalette::HighlightedText, palette.color(QPalette::Text));
@@ -174,11 +175,11 @@ QColor NoteView::pageColour() const { return palette().color(QPalette::Base); }
 QFont NoteView::baseFont() const {
     // У документа, а не из zoom_: см. довод в заголовке. Второй меры масштаба
     // не существует.
-    return document() != nullptr ? document()->defaultFont() : baseFontFor(1.0);
+    return document() != nullptr ? document()->defaultFont() : baseFontFor(1.0, docStyle());
 }
 
 qreal NoteView::displayScale() const {
-    const qreal base = settings().look().baseFontPoint();
+    const qreal base = docStyle().baseFontPoint();
     if (base <= 0.0) return 1.0;
     const qreal shown = baseFont().pointSizeF();
     return shown > 0.0 ? shown / base : 1.0;
@@ -194,7 +195,7 @@ void NoteView::setZoom(qreal zoom) {
     // Кегль строится ОТ ОБЛИКА (baseFontFor), а не от нынешнего шрифта
     // документа: baseFont() отдаёт как раз его, и сравнение вышло бы с самим
     // собой — масштаб не менялся бы никогда.
-    const QFont want = baseFontFor(zoom_);
+    const QFont want = baseFontFor(zoom_, docStyle());
     if (document()->defaultFont() == want) return;
     // ПОД ФЛАГОМ ОБЛИКА. Смена шрифта документа переразмечает его целиком, и Qt
     // шлёт contentsChanged — документу она неотличима от набора. Без этой
@@ -274,7 +275,7 @@ NoteView::NoteView(QWidget* parent) : QTextBrowser(parent) {
             stopGlide();
             return;
         }
-        const qreal tau = qMax(1, settings().look().smoothScrollMs());
+        const qreal tau = qMax(1, settings().ui().smoothScrollMs());
         glideSpeed_ *= std::exp(-scrollGlide_.interval() / tau);
     });
 
@@ -292,7 +293,7 @@ NoteView::NoteView(QWidget* parent) : QTextBrowser(parent) {
 // иначе от неё остаётся след.
 QRect NoteView::caretRect() const {
     QRect at = cursorRect();
-    at.setWidth(qMax(1, qRound(settings().look().caretWidth() * displayScale())));
+    at.setWidth(qMax(1, qRound(docStyle().caretWidth() * displayScale())));
     return at.adjusted(-2, -2, 4, 2);
 }
 
@@ -362,7 +363,7 @@ void NoteView::applyContentWidth() {
     const qreal charUnit = QFontMetricsF(baseFont()).horizontalAdvance(QLatin1Char('A'));
     // Поле, которое колонке ПОЛОЖЕНО сейчас, — от нынешнего шрифта: оно обязано
     // расти вместе с масштабом, иначе на 200 % текст прижимается к краю окна.
-    const qreal want = settings().look().sideMargin() * charUnit;
+    const qreal want = docStyle().sideMargin() * charUnit;
     // И то, которое уже даёт документ: его поставил сборщик, один раз, базовым
     // кеглем. Переписывать его нельзя — запись формата попадает в стек отмены.
     const qreal fromDocument = document()->rootFrame()->frameFormat().leftMargin();
@@ -372,8 +373,8 @@ void NoteView::applyContentWidth() {
     // полоса прокрутки, и вышла бы обратная связь.
     const int room = viewport()->width() + viewportMargin_ * 2;
     qreal margin = qMax(0.0, want - fromDocument);
-    if (settings().look().maxContentWidth() > 0.0) {
-        const qreal limit = settings().look().maxContentWidth() * charUnit;
+    if (docStyle().maxContentWidth() > 0.0) {
+        const qreal limit = docStyle().maxContentWidth() * charUnit;
         const qreal spare = (room - 2 * want - limit) / 2;
         if (spare > 0.0) margin += spare;
     }
@@ -415,7 +416,7 @@ void NoteView::wheelEvent(QWheelEvent* event) {
     // бросок ровно там, где он должен начинаться (поймал набор).
     const bool sequence = event->phase() != Qt::NoScrollPhase;
     const bool touchpad = sequence || !event->pixelDelta().isNull();
-    if (!settings().look().smoothScroll() || !touchpad || bar == nullptr) {
+    if (!settings().ui().smoothScroll() || !touchpad || bar == nullptr) {
         stopGlide();
         QTextBrowser::wheelEvent(event);
         return;
@@ -868,8 +869,8 @@ qreal NoteView::columnWidth(const QTextBlock& block) const {
 }
 
 QFont NoteView::captionFont() const {
-    QFont font(settings().look().imageCaptionFamily());
-    font.setPointSizeF(qMax(1.0, settings().look().imageCaptionPoints() * displayScale()));
+    QFont font(docStyle().imageCaptionFamily());
+    font.setPointSizeF(qMax(1.0, docStyle().imageCaptionPoints() * displayScale()));
     return font;
 }
 
@@ -924,7 +925,7 @@ NoteView::ImageBox NoteView::imageBoxFor(const QTextBlock& block) {
     qreal captionHeight = 0.0;
     const bool editing = block.blockNumber() == editedImageCaption_;
     const QString caption = editing ? QString() : ref.shownCaption();
-    if (settings().look().imageCaption() && !entry->framed() && (!caption.isEmpty() || editing)) {
+    if (docStyle().imageCaption() && !entry->framed() && (!caption.isEmpty() || editing)) {
         box.text = caption;
         box.flags = Qt::TextWordWrap |
                     (ref.align == ImageAlign::Right ? Qt::AlignRight : Qt::AlignLeft);
@@ -934,7 +935,7 @@ NoteView::ImageBox NoteView::imageBoxFor(const QTextBlock& block) {
             editing ? metrics.height()
                     : metrics.boundingRect(QRectF(0, 0, width, 1e6), box.flags, box.text)
                           .height();
-        const qreal gap = settings().look().imageCaptionGap() * displayScale();
+        const qreal gap = docStyle().imageCaptionGap() * displayScale();
         box.caption = QRectF(box.photo.left(), box.photo.bottom() + gap, width, height);
         captionHeight = gap + height;
     }
@@ -1049,6 +1050,10 @@ NoteView::ImageGeometry NoteView::imageGeometry(const QTextBlock& block) {
     return geometry;
 }
 
+const ZDocStyle& NoteView::docStyle() const {
+    return document() != nullptr ? styleOf(*document()) : settings().style();
+}
+
 QRectF NoteView::imageRectInViewport(const QTextBlock& block) {
     const QRectF box = imageObjectRect(block);
     if (box.isEmpty()) return {};
@@ -1066,7 +1071,7 @@ QRectF NoteView::imageCaptionRectInViewport(const QTextBlock& block) {
     // на которой она стояла бы: полю ввода надо где-то встать.
     QRectF caption = box.caption;
     if (caption.isEmpty()) {
-        const qreal gap = settings().look().imageCaptionGap() * displayScale();
+        const qreal gap = docStyle().imageCaptionGap() * displayScale();
         caption = QRectF(box.photo.left(), box.photo.bottom() + gap, box.photo.width(),
                          QFontMetricsF(captionFont()).height());
     }
@@ -1233,7 +1238,7 @@ void NoteView::syncImageSpace(bool whole) {
     document()->documentLayout()->documentSize();
 
     const qreal gap = imageGap(displayScale());
-    const CodePlate plate = codePlate();
+    const CodePlate plate = codePlate(docStyle());
     QTextBlock block = document()->findBlockByNumber(first);
     for (int number = first; number <= afterLast && block.isValid();
          ++number, block = block.next()) {
@@ -1323,7 +1328,7 @@ void NoteView::syncImageSpace(bool whole) {
     const QTextBlock last = document()->lastBlock();
     const qreal missing = last.isValid() ? last.blockFormat().bottomMargin() : 0.0;
     const qreal want =
-        settings().look().verticalMargin() * QFontMetricsF(baseFont()).height() + missing;
+        docStyle().verticalMargin() * QFontMetricsF(baseFont()).height() + missing;
     QTextFrameFormat frame = document()->rootFrame()->frameFormat();
     // С допуском: каждое выставление формата рамки переразмечает документ.
     if (std::fabs(frame.bottomMargin() - want) >= 0.5) {
@@ -1369,14 +1374,14 @@ QSizeF NoteView::frameBoxSize(const QTextBlock& block, const CachedImage& entry)
 // непонятого, имя файла и настоящие размеры из его заголовка.
 void NoteView::paintTooBigImage(QPainter& painter, const QTextBlock& block,
                                 const ImageGeometry& geometry, const CachedImage& entry) {
-    QPen pen(settings().look().rawColor());
+    QPen pen(docStyle().rawColor());
     pen.setStyle(Qt::DashLine);
     pen.setWidthF(qMax(1.0, 1.5 * displayScale()));
     painter.setPen(pen);
     painter.drawRect(geometry.photo.adjusted(0.5, 0.5, -0.5, -0.5));
 
     painter.setFont(baseFont());
-    painter.setPen(settings().look().rawColor());
+    painter.setPen(docStyle().rawColor());
     painter.drawText(geometry.photo, Qt::AlignCenter | Qt::TextWordWrap,
                      frameText(block, entry));
 }
@@ -1388,7 +1393,7 @@ void NoteView::paintImageCaption(QPainter& painter, const ImageBox& geometry) {
     // высоту полосы; добирать полями блока ничего не нужно.
     painter.save();
     painter.setFont(captionFont());
-    painter.setPen(settings().look().imageCaptionColor());
+    painter.setPen(docStyle().imageCaptionColor());
     painter.drawText(geometry.caption, geometry.flags, geometry.text);
     painter.restore();
 }
@@ -1411,13 +1416,13 @@ void NoteView::paintImageObject(QPainter& painter, const ImageBox& geometry,
         const CachedImage* fresh = imageInfo(ref.path);
         if (fresh != nullptr) {
             painter.fillRect(box, pageColour());
-            QPen pen(settings().look().rawColor());
+            QPen pen(docStyle().rawColor());
             pen.setStyle(Qt::DashLine);
             pen.setWidthF(qMax(1.0, 1.5 * displayScale()));
             painter.setPen(pen);
             painter.drawRect(box.adjusted(0.5, 0.5, -0.5, -0.5));
             painter.setFont(baseFont());
-            painter.setPen(settings().look().rawColor());
+            painter.setPen(docStyle().rawColor());
             painter.drawText(box, Qt::AlignCenter | Qt::TextWordWrap, frameText(block, *fresh));
         }
     } else {
@@ -1588,7 +1593,7 @@ void NoteView::renderSlice(QPainter& painter, const QRectF& documentRect, qreal 
     // Фон рисуем сами: у бумаги его нет, а подложка кода и цвет текста заданы
     // относительно него. Белая страница с нашими цветами текста читалась бы
     // иначе, чем то, что человек видит в окне.
-    painter.fillRect(documentRect, settings().look().pageBackground());
+    painter.fillRect(documentRect, docStyle().pageBackground());
     paintCodeBackground(painter, documentRect);
 
     // Текст — тем же слоем, что и на экране, только без каретки и выделения:
@@ -1632,7 +1637,7 @@ void NoteView::renderSlice(QPainter& painter, const QRectF& documentRect, qreal 
 // чаще всего и смотрят; уголки стоят СНАРУЖИ пикселей и не трогают ни один.
 qreal NoteView::imageCornerOverhang() {
     const ZSettings& a = settings();
-    return qMax(0.0, a.look().imageCornerOffset()) + qMax(0.5, a.look().imageCornerWidth());
+    return qMax(0.0, a.style().imageCornerOffset()) + qMax(0.5, a.style().imageCornerWidth());
 }
 
 void NoteView::paintImageCorners(QPainter& painter, const QRectF& photo) {
@@ -1643,21 +1648,21 @@ void NoteView::paintImageCorners(QPainter& painter, const QRectF& photo) {
     // что человек видит на экране. Пол — чтобы на маленькой картинке уголок не
     // выродился в точку, потолок — сама короткая сторона: длиннее ему негде.
     const qreal length =
-        qMin(shortSide, qMax(shortSide * qMax(0.0, a.look().imageCornerShare()),
-                             qreal(a.look().imageCornerMinLength())));
-    const qreal thick = qMax(0.5, a.look().imageCornerWidth());
+        qMin(shortSide, qMax(shortSide * qMax(0.0, a.style().imageCornerShare()),
+                             qreal(a.style().imageCornerMinLength())));
+    const qreal thick = qMax(0.5, a.style().imageCornerWidth());
     if (length <= 0.0) return;
 
     // Каждый уголок — ОДИН многоугольник, а не две линии. Двумя линиями в
     // самом углу выходил заметный артефакт: два прямоугольника накладывались
     // под прямым углом, и стык был виден ступенькой.
-    const qreal out = qMax(0.0, a.look().imageCornerOffset());
+    const qreal out = qMax(0.0, a.style().imageCornerOffset());
     const QRectF box = photo.adjusted(-out - thick, -out - thick, out + thick, out + thick);
 
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setPen(Qt::NoPen);
-    painter.setBrush(a.look().caretColor());
+    painter.setBrush(a.style().caretColor());
     for (int corner = 0; corner < 4; ++corner) {
         const bool right = corner == 1 || corner == 2;
         const bool bottom = corner >= 2;
@@ -1680,7 +1685,7 @@ void NoteView::paintImageCorners(QPainter& painter, const QRectF& photo) {
 QVector<CodeBand> NoteView::codeBands(const QRectF& visible) const {
     const QAbstractTextDocumentLayout* layout = document()->documentLayout();
     const int firstVisible = layout->hitTest(QPointF(0, visible.top()), Qt::FuzzyHit);
-    const CodePlate plate = codePlate();
+    const CodePlate plate = codePlate(docStyle());
 
     QVector<CodeBand> bands;
     int started = -1;   // начало блока кода, в котором мы сейчас идём
@@ -1739,7 +1744,7 @@ QVector<CodeBand> NoteView::codeBands(const QRectF& visible) const {
 // Кнопка копирования — в правом нижнем углу плашки, то есть у ПОСЛЕДНЕЙ полосы
 // блока: полоска висит в её нижнем поле.
 QRectF NoteView::copyButtonRect(const CodeBand& band) const {
-    const CodePlate plate = codePlate();
+    const CodePlate plate = codePlate(docStyle());
     if (!band.last || plate.strip <= 0.0) return {};
     const qreal side = qMin(plate.strip * 0.62, 18.0 * displayScale());
     const qreal gap = plate.padLeft + plate.stripPadding;
@@ -1913,13 +1918,13 @@ void NoteView::paintFormulaMarks(QPainter& painter, const QTextBlock& block) {
                                                                             : *render,
                                                           natural)));
         painter.fillRect(frame, pageColour());
-        QPen pen(settings().look().rawColor());
+        QPen pen(docStyle().rawColor());
         pen.setStyle(Qt::DashLine);
         pen.setWidthF(qMax(1.0, 1.5 * displayScale()));
         painter.setPen(pen);
         painter.drawRect(frame.adjusted(0.5, 0.5, -0.5, -0.5));
         painter.setFont(baseFont());
-        painter.setPen(settings().look().rawColor());
+        painter.setPen(docStyle().rawColor());
         const QString what = render == nullptr ? QString() : render->error;
         painter.drawText(frame.adjusted(6, 4, -6, -4), Qt::AlignLeft | Qt::TextWordWrap,
                          what.isEmpty() ? ref.source : ref.source + QLatin1Char('\n') + what);
@@ -2019,7 +2024,7 @@ void NoteView::syncTables() {
             space.columnWidth = columnWidth;
             space.fullWidth = fullWidth;
             space.zoom = displayScale();
-            render.layout = layoutTable(parseTable(source.toStdString()), space);
+            render.layout = layoutTable(parseTable(source.toStdString()), space, docStyle());
             render.source = source;
             render.width = fullWidth;
             render.zoom = displayScale();
@@ -2153,8 +2158,8 @@ void NoteView::paintTables(QPainter& painter, const QRectF& visible) {
 
         // Текст ячеек. Выравнивание — из :---: разбора; по умолчанию влево,
         // как в GitHub.
-        const qreal padX = tableCellPadX(table.layout.scale);
-        const qreal padY = tableCellPadY(table.layout.scale);
+        const qreal padX = tableCellPadX(table.layout.scale, docStyle());
+        const qreal padY = tableCellPadY(table.layout.scale, docStyle());
         for (const TableCellBox& cell : table.layout.cells) {
             if (cell.text == nullptr) continue;
             const QRectF box = cell.rect.translated(area.topLeft());
@@ -2235,7 +2240,7 @@ int NoteView::sourcePositionAt(const QPointF& documentPoint) const {
             const QString raw = source.mid(cellStart);
             const bool plain = raw.startsWith(shown);
             if (plain) {
-                const qreal padX = tableCellPadX(table->layout.scale);
+                const qreal padX = tableCellPadX(table->layout.scale, docStyle());
                 const QPointF local(documentPoint.x() - (area.left() + cell->rect.left()) - padX,
                                     documentPoint.y() - (area.top() + cell->rect.top()));
                 const QTextLine textLine = cell->text->lineForTextPosition(0);
@@ -2345,7 +2350,7 @@ const TableRender* NoteView::tableAt(int firstBlockNumber) const {
 // ВПРАВО, к кнопке, а прямоугольник остаётся широким нарочно — по нему ловится
 // щелчок, и у блока без языка целиться человеку было бы некуда.
 QRectF NoteView::languageRect(const CodeBand& band) const {
-    const CodePlate plate = codePlate();
+    const CodePlate plate = codePlate(docStyle());
     if (!band.last || plate.strip <= 0.0) return {};
     const qreal left = band.rect.left() + plate.padLeft;
     const QRectF button = copyButtonRect(band);
@@ -2364,7 +2369,7 @@ QRectF NoteView::languageRect(const CodeBand& band) const {
 // дальше кладём готовый непрозрачный цвет.
 QColor NoteView::plateColour() const {
     const QColor page = pageColour();
-    const QColor tint = settings().look().codeBackground();
+    const QColor tint = docStyle().codeBackground();
     const qreal a = tint.alphaF();
     return QColor::fromRgbF(page.redF() * (1 - a) + tint.redF() * a,
                             page.greenF() * (1 - a) + tint.greenF() * a,
@@ -2378,7 +2383,7 @@ QColor NoteView::plateColour() const {
 // ощутимо медленным). Плашка же — одна фигура, и рисовать её надо одной: пока
 // каждая строка красилась своим прямоугольником, между ними оставался шов.
 void NoteView::paintCodeBackground(QPainter& painter, const QRectF& visible) {
-    const CodePlate plate = codePlate();
+    const CodePlate plate = codePlate(docStyle());
     const QVector<CodeBand> bands = codeBands(visible);
 
     // СОСТОЯНИЕ ВОЗВРАЩАЕМ. Оставленная в painter'е кисть на экране безвредна —
@@ -2431,7 +2436,7 @@ void NoteView::paintCodeBackground(QPainter& painter, const QRectF& visible) {
 // плашки (решение владельца). Надпись прижата вправо, к кнопке: слева от них —
 // пустое поле полоски, и оно же служит мишенью для щелчка по имени языка.
 void NoteView::paintCodeStrip(QPainter& painter, const CodeBand& band) {
-    const CodePlate plate = codePlate();
+    const CodePlate plate = codePlate(docStyle());
     if (plate.strip <= 0.0) return;
     // Язык лежит на КАЖДОЙ строке блока (сборщик ставит его всем строкам), и
     // последняя знает его не хуже первой — а рисуем мы именно у последней.
@@ -2440,8 +2445,8 @@ void NoteView::paintCodeStrip(QPainter& painter, const CodeBand& band) {
     painter.save();
     if (!band.info.isEmpty() && !where.isEmpty() &&
         band.firstBlockNumber != editedCodeLanguage_) {
-        painter.setFont(codeLangFont());
-        painter.setPen(settings().look().codeLangColor());
+        painter.setFont(codeLangFont(docStyle(), settings().ui()));
+        painter.setPen(docStyle().codeLangColor());
         painter.drawText(where, Qt::AlignVCenter | Qt::AlignRight, band.info);
     }
 
@@ -2454,7 +2459,7 @@ void NoteView::paintCodeStrip(QPainter& painter, const CodeBand& band) {
         const bool done = band.firstBlockNumber == copiedCodeBlock_;
         const QPixmap icon = toolbarIcon(
             done ? QStringLiteral("check") : QStringLiteral("copy"),
-            int(std::round(box.width())), settings().look().codeLangColor(), devicePixelRatioF());
+            int(std::round(box.width())), docStyle().codeLangColor(), devicePixelRatioF());
         painter.drawPixmap(box.topLeft(), icon);
     }
     painter.restore();
@@ -2605,8 +2610,8 @@ void NoteView::paintEvent(QPaintEvent* event) {
     if (caretOn_ && caretShouldBeDrawn(hasFocus(), isReadOnly(), textCursor().hasSelection(),
                                        caretOnDrawnObject())) {
         QRect at = cursorRect();
-        at.setWidth(qMax(1, qRound(settings().look().caretWidth() * displayScale())));
-        painter.fillRect(at, settings().look().caretColor());
+        at.setWidth(qMax(1, qRound(docStyle().caretWidth() * displayScale())));
+        painter.fillRect(at, docStyle().caretColor());
     }
 }
 

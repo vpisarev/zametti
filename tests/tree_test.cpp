@@ -53,7 +53,7 @@ QString titleAt(const NoteTreeModel& model, const QModelIndex& parent, int row) 
 // folder-open различаются десятком точек, и порог «различаются» прошёл бы и на
 // сглаживании.
 bool iconIs(const NoteTreeModel& model, const QModelIndex& index, const char* name) {
-    const zametti::ZSettings::Look& a = zametti::settings().look();
+    const zametti::ZSettings::Ui& a = zametti::settings().ui();
     QFont font;
     font.setPointSizeF(a.sidebarFontPoint() * a.sidebarFolderScale());
     const int side = QFontMetrics(font).height();

@@ -536,10 +536,10 @@ int main(int argc, char** argv) {
     }
     tree.setUniformRowHeights(true);
 
-    QFont sidebarFont(zametti::settings().look().sidebarFontFamily().isEmpty()
-                          ? zametti::settings().look().fontFamily()
-                          : zametti::settings().look().sidebarFontFamily());
-    sidebarFont.setPointSizeF(zametti::settings().look().sidebarFontPoint());
+    QFont sidebarFont(zametti::settings().ui().sidebarFontFamily().isEmpty()
+                          ? zametti::settings().style().fontFamily()
+                          : zametti::settings().ui().sidebarFontFamily());
+    sidebarFont.setPointSizeF(zametti::settings().ui().sidebarFontPoint());
     tree.setFont(sidebarFont);
 
     zametti::NoteTreeDelegate delegate;
@@ -601,7 +601,7 @@ int main(int argc, char** argv) {
         historyBanner.hide();
         historyTimeline.hide();
         historyTimeline.setFont(sidebarFont);
-        historyTimeline.setFixedWidth(zametti::settings().look().noteListWidth());
+        historyTimeline.setFixedWidth(zametti::settings().ui().noteListWidth());
         auto* middleRow = new QHBoxLayout;
         middleRow->setContentsMargins(0, 0, 0, 0);
         middleRow->setSpacing(0);
@@ -625,15 +625,15 @@ int main(int argc, char** argv) {
     // лету, половина только после перезапуска, и понять, какая именно, было бы
     // нельзя.
     const auto applyAppearance = [&] {
-        QFont font(zametti::settings().look().sidebarFontFamily().isEmpty()
-                       ? zametti::settings().look().fontFamily()
-                       : zametti::settings().look().sidebarFontFamily());
-        font.setPointSizeF(zametti::settings().look().sidebarFontPoint());
+        QFont font(zametti::settings().ui().sidebarFontFamily().isEmpty()
+                       ? zametti::settings().style().fontFamily()
+                       : zametti::settings().ui().sidebarFontFamily());
+        font.setPointSizeF(zametti::settings().ui().sidebarFontPoint());
         tree.setFont(font);
         listView.setFont(font);
         resultsView.setFont(font);
         historyTimeline.setFont(font);
-        historyTimeline.setFixedWidth(zametti::settings().look().noteListWidth());
+        historyTimeline.setFixedWidth(zametti::settings().ui().noteListWidth());
 
         zametti::applyPalette(editor, editor.inHistory());
         zametti::applyPalette(tree);
@@ -968,8 +968,8 @@ int main(int argc, char** argv) {
     // Кегль задан явно в каждом формате, поэтому штатный зум QTextEdit до него
     // не дотягивается: при смене масштаба документ собирается заново из того же
     // содержимого. В историю правок это не попадает — облик не содержимое.
-    editor.setZoom(std::clamp(session.zoom, zametti::settings().look().zoomMin(),
-                              zametti::settings().look().zoomMax()));
+    editor.setZoom(std::clamp(session.zoom, zametti::settings().ui().zoomMin(),
+                              zametti::settings().ui().zoomMax()));
 
     // МЕСТО КАРЕТКИ, ПЕРЕЖИВШЕЕ ПЕРЕЗАПУСК, — В ПАМЯТЬ РЕДАКТОРА, до открытия.
     // Дальше заметка открывается обычной дорогой и встаёт туда же, где её
@@ -1127,16 +1127,16 @@ int main(int argc, char** argv) {
         QObject::connect(new QShortcut(keys, &window), &QShortcut::activated, &window, slot);
     };
     auto stepZoom = [&editor](qreal factor) {
-        editor.applyZoom(std::clamp(editor.zoom() * factor, zametti::settings().look().zoomMin(),
-                                    zametti::settings().look().zoomMax()));
+        editor.applyZoom(std::clamp(editor.zoom() * factor, zametti::settings().ui().zoomMin(),
+                                    zametti::settings().ui().zoomMax()));
     };
     // Ctrl+= рядом с Ctrl++: увеличивают одной и той же клавишей, с шифтом и без.
     shortcut(QKeySequence(QStringLiteral("Ctrl+=")),
-             [&] { stepZoom(zametti::settings().look().zoomStep()); });
+             [&] { stepZoom(zametti::settings().ui().zoomStep()); });
     shortcut(QKeySequence(QStringLiteral("Ctrl++")),
-             [&] { stepZoom(zametti::settings().look().zoomStep()); });
+             [&] { stepZoom(zametti::settings().ui().zoomStep()); });
     shortcut(QKeySequence(QStringLiteral("Ctrl+-")),
-             [&] { stepZoom(1.0 / zametti::settings().look().zoomStep()); });
+             [&] { stepZoom(1.0 / zametti::settings().ui().zoomStep()); });
     shortcut(QKeySequence(QStringLiteral("Ctrl+0")), [&] { editor.applyZoom(1.0); });
 
     // Отмена и повтор живут в самом редакторе: QTextEdit объявляет их своими и
@@ -1861,9 +1861,7 @@ int main(int argc, char** argv) {
         const QString suffix = QFileInfo(target).suffix().toLower();
         zametti::ExportReport report;
         if (suffix == QStringLiteral("pdf")) {
-            zametti::PdfOptions paper;
-            paper.title = title;
-            report = zametti::exportPdf(file, target, paper);
+            report = zametti::exportPdf(file, target, zametti::settings().pdf(), title);
         } else {
             exportKeepMeta = keepMetaBox->isChecked();
             report = zametti::exportMarkdown(file, target, exportKeepMeta);
@@ -2656,10 +2654,10 @@ int main(int argc, char** argv) {
     else window.resize(1150, 780);
     if (!session.splitterState.isEmpty()) splitter.restoreState(session.splitterState);
     else if (model.isStore())
-        splitter.setSizes({zametti::settings().look().sidebarWidth(),
-                           zametti::settings().look().noteListWidth(), 700});
+        splitter.setSizes({zametti::settings().ui().sidebarWidth(),
+                           zametti::settings().ui().noteListWidth(), 700});
     else
-        splitter.setSizes({zametti::settings().look().sidebarWidth(), 800});
+        splitter.setSizes({zametti::settings().ui().sidebarWidth(), 800});
     window.show();
 
     // Прореживание журналов — фоном и один раз за запуск. В отдельном потоке

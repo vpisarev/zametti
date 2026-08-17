@@ -122,6 +122,7 @@ bool ZDocument::replaceRange(QTextCursor& at, const QString& markdown, PasteMode
     // ВРЕМЕННЫЙ ДОКУМЕНТ — БЕЗ СТЕКА ОТМЕНЫ: в слепке одна версия текста,
     // отменять в нём нечего, а команды при сборке — чистая трата.
     QTextDocument staging;
+    attachStyle(staging, attachedStyle(d_->text));
     buildDocument(pieces, staging);
     const bool ownBlocks = needsOwnBlocks(pieces);
 
@@ -261,6 +262,7 @@ void ZDocument::replaceBlocks(int firstBlock, int lastBlock, const std::vector<P
                               QTextCursor* caret) {
     if (to.empty()) return;
     QTextDocument staging;
+    attachStyle(staging, attachedStyle(d_->text));
     buildDocument(to, staging);
 
     // Каретка и её якорь — номером блока и смещением в нём: позиции внутри

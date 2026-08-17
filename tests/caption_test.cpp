@@ -14,6 +14,7 @@
 #include "doc_model.h"
 #include "document.h"
 #include "settings.h"
+#include "settings_hook.h"
 #include "test_util.h"
 
 #include <QTextBlock>
@@ -77,15 +78,15 @@ void checkRule() {
 
     // Регэксп из настроек: битый образец правило не меняет — проверяется на
     // чтении конфига, а здесь — что подмена образца правило и меняет.
-    const QRegularExpression saved = zametti::settings().look().imageNonameCaption();
-    zametti::editSettings().look().setImageNonameCaption(QRegularExpression(QStringLiteral("^дурацк.*$"), QRegularExpression::CaseInsensitiveOption));
+    const QRegularExpression saved = zametti::settings().style().imageNonameCaption();
+    zametti::mutableSettingsForTests().style().setImageNonameCaption(QRegularExpression(QStringLiteral("^дурацк.*$"), QRegularExpression::CaseInsensitiveOption));
     ZT_TRUE("свой регэксп: «дурацкая» безымянна",
             zametti::isNonameCaption(QStringLiteral("Дурацкая подпись")));
     ZT_TRUE("свой регэксп: «IMG_1234» больше не безымянна",
             !zametti::isNonameCaption(QStringLiteral("IMG_1234")));
     ZT_TRUE("знак спереди прячет и при своём регэкспе",
             zametti::isNonameCaption(QStringLiteral("~IMG_1234")));
-    zametti::editSettings().look().setImageNonameCaption(saved);
+    zametti::mutableSettingsForTests().style().setImageNonameCaption(saved);
 }
 
 // --- глаголы -----------------------------------------------------------------

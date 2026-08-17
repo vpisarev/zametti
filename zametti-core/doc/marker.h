@@ -32,11 +32,15 @@ namespace zametti {
 
 // Ширина колонки маркера: сам знак плюс зазор до текста. По ней сборщик
 // документа задаёт левое поле блока.
-qreal markerColumn(MarkerStyle style, int ordinal, int level, const QFont& base);
+// Стиль документа — параметром (у функций с блоком в руках — у самого блока,
+// styleOf); без него — стиль из настроек.
+qreal markerColumn(MarkerStyle style, int ordinal, int level, const QFont& base,
+                   const ZDocStyle& look = settings().style());
 
 // Знак маркера с учётом вложенности: нумерованный идёт по кругу
 // 1. → a. → 1) (буквы биективно: z, aa, ..., zz, aaa). Наружу — для тестов.
-QString markerText(MarkerStyle style, int ordinal, int level);
+QString markerText(MarkerStyle style, int ordinal, int level,
+                   const ZDocStyle& look = settings().style());
 
 // Рамка чекбокса в координатах документа; пустая, если у блока её нет. Одна
 // функция и на отрисовку, и на попадание мышью — двух копий геометрии быть не
@@ -46,7 +50,7 @@ QRectF checkboxRect(const QTextBlock& block, const QFont& base);
 // Фигура буллета по уровню вложенности: так вложенность видна сразу, без счёта
 // отступов глазом. Последняя из настроенных фигур достаётся всем уровням
 // глубже — перечислять их до бесконечности незачем.
-BulletShape bulletShapeFor(int level);
+BulletShape bulletShapeFor(int level, const ZDocStyle& look = settings().style());
 
 // Блок, чей чекбокс накрывает эту точку документа. Недействительный блок —
 // мимо. Геометрия берётся из checkboxRect, то есть та же самая, по которой

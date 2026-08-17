@@ -519,7 +519,7 @@ void checkStripSurvivesPartialRepaint(Peek& editor) {
         const QRgb painted = sheet.pixel(x, y);
         check(painted != qRgb(255, 0, 255), "полоса перерисовалась вообще");
         // Плашка не равна фону страницы — по этому её и опознаём.
-        const QColor page = zametti::settings().look().pageBackground();
+        const QColor page = zametti::settings().style().pageBackground();
         check(qAbs(qRed(painted) - page.red()) > 1 || qAbs(qGreen(painted) - page.green()) > 1,
               "в перерисованной полосе есть плашка, а не голый фон (" +
                   std::to_string(qRed(painted)) + " против " + std::to_string(page.red()) + ")");

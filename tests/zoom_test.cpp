@@ -121,7 +121,7 @@ static int ztRunSuite(int argc, char** argv) {
     editor.openFile(path);
     QTest::qWait(20);
 
-    const qreal step = zametti::settings().look().zoomStep();
+    const qreal step = zametti::settings().ui().zoomStep();
     ZT_TRUE("шаг масштаба задан и больше единицы", step > 1.0);
 
     const qreal unitAt100 = textUnit(editor);

@@ -9,6 +9,7 @@
 #include "document_builder.h"
 #include "editor_ops.h"
 #include "marker.h"
+#include "settings_hook.h"
 #include "test_util.h"
 #include "testdata.h"
 
@@ -702,9 +703,9 @@ const CodeBlockCase kCodeBlockCases[] = {
 // Последняя фигура достаётся всем уровням глубже — иначе на пятом уровне буллет
 // пропал бы вовсе.
 void checkBulletShapes() {
-    const std::vector<zametti::BulletShape> saved = zametti::settings().look().bulletShapes();
+    const std::vector<zametti::BulletShape> saved = zametti::settings().style().bulletShapes();
 
-    zametti::editSettings().look().setBulletShapes({zametti::BulletShape::Disc,
+    zametti::mutableSettingsForTests().style().setBulletShapes({zametti::BulletShape::Disc,
                                                  zametti::BulletShape::Circle,
                                                  zametti::BulletShape::Square});
     check(zametti::bulletShapeFor(0) == zametti::BulletShape::Disc,
@@ -718,11 +719,11 @@ void checkBulletShapes() {
           "уровень ниже нуля не роняет выбор");
 
     // Пустой список фигур оставаться без буллетов не должен.
-    zametti::editSettings().look().setBulletShapes({});
+    zametti::mutableSettingsForTests().style().setBulletShapes({});
     check(zametti::bulletShapeFor(0) == zametti::BulletShape::Disc,
           "без настроенных фигур остаётся сплошной кружок");
 
-    zametti::editSettings().look().setBulletShapes(saved);
+    zametti::mutableSettingsForTests().style().setBulletShapes(saved);
 }
 
 // Номер блока IR и обратный переход. Соответствие не один к одному: литеральный

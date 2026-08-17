@@ -9,6 +9,7 @@
 // настоящий конфиг владельца нельзя ни одной проверкой.
 
 #include "settings.h"
+#include "settings_hook.h"
 
 #include "test_util.h"
 
@@ -254,7 +255,7 @@ void checkClamping() {
     const zametti::ZSettings before = zametti::settings();
     struct Restore {
         const zametti::ZSettings& from;
-        ~Restore() { zametti::editSettings() = from; }
+        ~Restore() { zametti::mutableSettingsForTests() = from; }
     } restore{before};
     QFile file(zametti::configPath());
     ZT_TRUE("файл открывается на запись",
@@ -279,10 +280,10 @@ void checkClamping() {
           std::to_string(a.cache().documentCacheSizeMb()));
     ZT_EQ("значение в границах взято как есть", std::string("7"),
           std::to_string(a.editor().undoLimit()));
-    ZT_EQ("кегль — до потолка", std::to_string(int(a.look().baseFontPointMax())),
-          std::to_string(int(a.look().baseFontPoint())));
-    ZT_EQ("иконка тулбара — до пола", std::to_string(a.look().toolbarIconSizeMin()),
-          std::to_string(a.look().toolbarIconSize()));
+    ZT_EQ("кегль — до потолка", std::to_string(int(a.style().baseFontPointMax())),
+          std::to_string(int(a.style().baseFontPoint())));
+    ZT_EQ("иконка тулбара — до пола", std::to_string(a.ui().toolbarIconSizeMin()),
+          std::to_string(a.ui().toolbarIconSize()));
 
     // Сеттер сам говорит, приняла ли настройка значение как есть.
     zametti::ZSettings own;
@@ -295,7 +296,7 @@ void checkClamping() {
     zametti::ZSettings def;
     ZT_TRUE("умолчание кэша картинок в границах",
             def.cache().setImageCacheSizeMb(def.cache().imageCacheSizeMb()));
-    ZT_TRUE("умолчание кегля в границах", def.look().setBaseFontPoint(def.look().baseFontPoint()));
+    ZT_TRUE("умолчание кегля в границах", def.style().setBaseFontPoint(def.style().baseFontPoint()));
     ZT_TRUE("умолчание автосохранения в границах",
             def.editor().setAutosaveDelayMs(def.editor().autosaveDelayMs()));
     ZT_TRUE("умолчание качества фото в границах",
