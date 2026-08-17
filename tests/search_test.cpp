@@ -25,7 +25,9 @@
 #include <QFile>
 #include <QShortcut>
 #include <QSignalSpy>
+#include <QScrollBar>
 #include <QTest>
+#include <QTextEdit>
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QVBoxLayout>
@@ -212,6 +214,34 @@ void checkEditorSearch() {
 
     // Подсветка живёт вне документа: правок она не делает.
     ZT_TRUE("подсветка не пометила заметку изменённой", !editor.document()->isModified());
+
+    // ПОДСВЕЧИВАЕТСЯ ТОЛЬКО ВИДИМОЕ (правило «цена — от показанного»): в
+    // длинной заметке совпадений тысячи, а на экране — десятки, и подсветок
+    // Qt считает ровно столько, сколько видно; при прокрутке перекладываются.
+    {
+        QString body = QStringLiteral("# Много\n\n");
+        for (int i = 0; i < 1500; ++i) body += QStringLiteral("строка с сено номер %1\n\n").arg(i);
+        const QString longPath = g_root + QStringLiteral("/00000000000010.md");
+        note("00000000000010", "modified: 2025-01-01T00:00:00Z\n", body.toUtf8().constData());
+        zametti::NoteEditor many;
+        many.resize(700, 500);
+        many.show();
+        QTest::qWait(20);
+        many.openFile(longPath);
+        QTest::qWait(20);
+        const int all = many.findMatches(QStringLiteral("сено"), false);
+        ZT_TRUE("найдены все полторы тысячи", all == 1500);
+        const int lit = int(many.extraSelections().size());
+        ZT_TRUE("подсвечено только видимое: " + std::to_string(lit) + " из " + std::to_string(all),
+                lit > 0 && lit < 200);
+        // Прокрутили в конец — подсветка переехала за видом.
+        many.verticalScrollBar()->setValue(many.verticalScrollBar()->maximum());
+        QTest::qWait(10);
+        bool lastLit = false;
+        for (const QTextEdit::ExtraSelection& sel : many.extraSelections())
+            if (sel.cursor.selectionStart() > many.document()->characterCount() - 200) lastLit = true;
+        ZT_TRUE("после прокрутки подсвечены совпадения у конца", lastLit);
+    }
 
     // «Заменить все» — один шаг отмены.
     const QString before = editor.toPlainText();
