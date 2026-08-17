@@ -168,6 +168,13 @@ public:
     // на которые больше никто не ссылается, — следом в ту же мусорку.
     bool remove(const QString& id, QString* error);
 
+    // Именованные правки шапки закрытой заметки — те же rewriteNote, но
+    // вызывающему не надо знать, какими глаголами это делается.
+    bool rename(const QString& id, const QString& title, const history::Rules& rules, QString* error);
+    bool move(const QString& id, const QString& parentId, const history::Rules& rules, QString* error);
+    bool setSortMark(const QString& id, std::optional<SortOrder> order, const history::Rules& rules,
+                     QString* error);
+
     // --- правка шапки закрытой заметки -----------------------------------
     // Разобрать файл, применить change к заметке, записать штатным путём
     // (самопроверка, атомарно, шаг журнала Save), обновить каталог. Ложь —

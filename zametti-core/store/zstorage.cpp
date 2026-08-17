@@ -379,6 +379,27 @@ bool ZStorage::remove(const QString& id, QString* error) {
     return true;
 }
 
+bool ZStorage::rename(const QString& id, const QString& title, const history::Rules& rules,
+                      QString* error) {
+    return rewriteNote(id, [&title](ZDocument& doc) { doc.setTitle(title); }, rules, error);
+}
+
+bool ZStorage::move(const QString& id, const QString& parentId, const history::Rules& rules,
+                    QString* error) {
+    return rewriteNote(id, [&parentId](ZDocument& doc) {
+        doc.setHasHeader(true);
+        doc.setParentId(parentId);
+    }, rules, error);
+}
+
+bool ZStorage::setSortMark(const QString& id, std::optional<SortOrder> order,
+                           const history::Rules& rules, QString* error) {
+    return rewriteNote(id, [order](ZDocument& doc) {
+        doc.setHasHeader(true);
+        doc.setSortOrder(order);
+    }, rules, error);
+}
+
 bool ZStorage::rewriteNote(const QString& id, const std::function<void(ZDocument&)>& change,
                            const history::Rules& rules, QString* error) {
     const QString path = pathOf(id);

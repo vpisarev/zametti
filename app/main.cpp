@@ -1214,31 +1214,17 @@ int main(int argc, char** argv) {
     // Вне режима истории это только признак: перерисовывать нечего.
     editor.setDiffPlainView(session.diffPlainView());
 
-    // Правка файла хранилища мимо редактора: только для закрытых заметок —
-    // открытая правится через редактор, иначе сторож примет запись за чужую.
-    //
-    // ЖАЛУЕТСЯ САМА. Семь мест зовут её — переименование, «в корзину»,
-    // восстановление, назначение роли папки, — и ни одно не смотрело на ответ.
-    // Отказ записи означал бы, что папка на диске осталась заметкой, а
-    // выброшенная заметка — невыброшенной, и оба раза молча. Ответ по-прежнему
-    // возвращается: кому надо ветвиться — ветвится.
+
+    // ПРАВКА ШАПКИ ЗАКРЫТОЙ ЗАМЕТКИ ЖАЛУЕТСЯ САМА. Отказ записи означал бы, что
+    // папка на диске осталась заметкой, а перенесённая — неперенесённой, и оба
+    // раза молча. Пишет хранилище (ZStorage::rename/move/setSortMark — штатный
+    // путь записи и шаг журнала); здесь только слово человеку.
     const auto complain = [&window](const QString& file, const QString& why) {
         std::fprintf(stderr, "правка заметки не удалась: %s — %s\n",
                      file.toUtf8().constData(), why.toUtf8().constData());
         QMessageBox::warning(&window, QStringLiteral("zametti"),
                              QStringLiteral("Не удалось записать %1: %2")
                                  .arg(QFileInfo(file).fileName(), why));
-    };
-    // Правка шапки ЗАКРЫТОЙ заметки — через хранилище: штатный путь записи
-    // (самопроверка, атомарно) и шаг журнала. Прежде здесь стоял std::ofstream
-    // мимо всего этого — единственная обходная запись на диск в программе.
-    const auto rewriteNote = [&](const QString& file, auto&& change) -> bool {
-        QString error;
-        if (zapp.storage()->rewriteNote(zametti::ZStorage::idOfPath(file), change,
-                                        zametti::NoteEditor::historyRules(), &error))
-            return true;
-        complain(file, error);
-        return false;
     };
 
     // Обновить дерево и список, не потеряв ни раскрытых веток, ни выбранной
@@ -1369,7 +1355,12 @@ int main(int argc, char** argv) {
             }
             editor.save(false);
         }
-        rewriteNote(file, [&](zametti::ZDocument& doc) { doc.setTitle(title); });
+        {
+            QString error;
+            if (!zapp.storage()->rename(zametti::ZStorage::idOfPath(file), title,
+                                        zametti::NoteEditor::historyRules(), &error))
+                complain(file, error);
+        }
         if (file == editor.filePath()) editor.openFile(file);
         refreshTree(file);
     });
@@ -1385,10 +1376,10 @@ int main(int argc, char** argv) {
         if (file == editor.filePath()) {
             editor.setMetaParent(parentId);
         } else {
-            rewriteNote(file, [&](zametti::ZDocument& doc) {
-                doc.setHasHeader(true);
-                doc.setParentId(parentId);
-            });
+            QString error;
+            if (!zapp.storage()->move(noteId, parentId, zametti::NoteEditor::historyRules(),
+                                      &error))
+                complain(file, error);
         }
         refreshTree(keepPath);
     };
@@ -1426,10 +1417,9 @@ int main(int argc, char** argv) {
         };
 
         // Пустое — в корзину ОС без разговоров. Пустая папка — без детей;
-        // пустая заметка — без содержательного текста (открытая меряется по
-        // документу: набранное могло ещё не сохраниться).
-        // Открытая меряется по документу (набранное могло ещё не сохраниться),
-        // закрытая — по хранилищу.
+        // пустая заметка — без содержательного текста: открытая меряется по
+        // документу (набранное могло ещё не сохраниться), закрытая — по
+        // хранилищу.
         const bool empty = wasOpen && !model.isFolderId(noteId)
                                ? editor.toPlainText().trimmed().isEmpty()
                                : zapp.storage()->isEmptyNote(noteId);
@@ -1801,7 +1791,7 @@ int main(int argc, char** argv) {
     // modified папки при этом НЕ поднимается: пометка — правка
     // организационная, как перенос, и всплывать наверх списка от неё папка не
     // должна (правило этапа 7). Держится это тем, что оба пути записи —
-    // rewriteNote и editMeta — штампа не ставят.
+    // ZStorage::setSortMark и editMeta — штампа не ставят.
     const auto setSortFor = [&](const QString& folderId,
                                 std::optional<zametti::SortOrder> order) {
         if (folderId.isEmpty()) {
@@ -1818,12 +1808,10 @@ int main(int argc, char** argv) {
         if (file == editor.filePath()) {
             editor.editMeta(change);
         } else {
-            rewriteNote(file, [&](zametti::ZDocument& doc) {
-                doc.setHasHeader(true);
-                zametti::NoteHeader meta = doc.header();
-                change(meta);
-                doc.setHeader(meta);
-            });
+            QString error;
+            if (!zapp.storage()->setSortMark(folderId, order, zametti::NoteEditor::historyRules(),
+                                             &error))
+                complain(file, error);
         }
         // Метку читает СКАН хранилища — значит дерево надо перечитать, иначе
         // порядок останется прежним до следующего F5.
