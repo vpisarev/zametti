@@ -59,7 +59,7 @@ std::string metaOf(const QString& path, const char* key) {
     std::ifstream in(path.toStdString(), std::ios::binary);
     std::ostringstream all;
     all << in.rdbuf();
-    const zametti::ZDocument doc = noteOf(all.str());
+    const zametti::ZNote doc = noteOf(all.str());
     return std::string(head(doc, key));
 }
 

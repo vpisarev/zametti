@@ -111,7 +111,7 @@ void checkStub() {
 
     // СТАБ — ЗАКОННЫЙ MARKDOWN, и это не формальность: его разбирают тем же
     // ядром, показывают в списке и ищут по заголовку.
-    const zametti::ZDocument back = noteOf(stub);
+    const zametti::ZNote back = noteOf(stub);
     ZT_EQ("круг разбор→запись у стаба побайтовый", stub, back.toMarkdown());
     ZT_TRUE("стаб читается как архивный", back.isArchived());
     // РАЗМЕР СТАБА НЕ ЗАВИСИТ ОТ ТЕЛА — в этом и смысл. На фикстуре в три
@@ -274,9 +274,9 @@ void checkTrashMigration() {
 // Старый вид пометки читается как архивный и без миграции: хранилище могло
 // приехать с чужой машины или от прежней сборки.
 void checkOldRoleIsRead() {
-    const zametti::ZDocument old = noteOf("<!-- zametti\nrole: trash\n-->\n\n# Корзина\n");
+    const zametti::ZNote old = noteOf("<!-- zametti\nrole: trash\n-->\n\n# Корзина\n");
     ZT_TRUE("role: trash читается как архивность", old.isArchived());
-    const zametti::ZDocument plain = noteOf("<!-- zametti\nparent: x\n-->\n\n# Живая\n");
+    const zametti::ZNote plain = noteOf("<!-- zametti\nparent: x\n-->\n\n# Живая\n");
     ZT_TRUE("обычная заметка архивной не считается", !plain.isArchived());
 }
 
@@ -307,8 +307,8 @@ void checkLostFound() {
     // Само бюро: заводится только под первую находку, и это папка.
     QString bureau;
     for (const QFileInfo& info : QDir(g_root).entryInfoList({QStringLiteral("*.md")}, QDir::Files)) {
-        const zametti::ZDocument doc = noteOf(read(info.completeBaseName()));
-        if (doc.headerValue(QStringLiteral("role")).toStdString() == zametti::store::kLostRole) bureau = info.completeBaseName();
+        const zametti::ZNote doc = noteOf(read(info.completeBaseName()));
+        if (doc.role().toStdString() == zametti::store::kLostRole) bureau = info.completeBaseName();
     }
     ZT_TRUE("бюро заведено", !bureau.isEmpty());
     ZT_TRUE("и это папка с заголовком",
@@ -336,7 +336,7 @@ void checkLostFound() {
 
     // Вытащили обычным переносом — бюро больше её не трогает.
     std::string moved = read(QStringLiteral("01bb22222222bb"));
-    zametti::ZDocument doc = noteOf(moved);
+    zametti::ZNote doc = noteOf(moved);
     setHead(doc, "parent", "0000000000000p");
     write(QStringLiteral("01bb22222222bb"), doc.toMarkdown());
     ZT_TRUE("после переноса сирот снова нет", zametti::store::fileOrphans(g_root, &error) == 0);

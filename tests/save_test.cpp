@@ -475,7 +475,7 @@ void checkEdgeSpaces() {
             // Enter в конце последнего пункта заводит пустой пункт того же
             // уровня — так это и выходит при живом наборе. Через глагол
             // заметки: другого входа в правку нет.
-            zametti::ZDocument note = noteOf(c.source);
+            zametti::ZDocument note = bodyOf(c.source);
             QTextCursor cursor = note.caretAtBlock(note.blockCount() - 1);
             cursor.movePosition(QTextCursor::End);
             note.breakBlock(cursor, zametti::ZDocument::BreakKind::Plain);
@@ -617,7 +617,7 @@ void checkTrailingSoftBreak() {
 
     // Через саму операцию, а не вставкой разделителя: у настоящего переноса есть
     // пометка, по которой читатель узнаёт в нём перевод строки.
-    zametti::ZDocument note = noteOf("текст\n");
+    zametti::ZDocument note = bodyOf("текст\n");
     QTextCursor cursor = note.caretAtBlock(0);
     cursor.movePosition(QTextCursor::EndOfBlock);
     note.breakBlock(cursor, zametti::ZDocument::BreakKind::Plain);

@@ -115,7 +115,7 @@ std::string describe(const std::vector<std::string>& steps) {
 // и есть неподвижность канона.
 bool savable(const ZDocument& note, std::string& report) {
     const std::string written = note.toMarkdown();
-    const ZDocument reread = noteOf(written);
+    const ZDocument reread = bodyOf(written);
     if (note.sameBody(reread)) return true;
 
     report = "\n  вышло бы в файл:\n" + written;
@@ -131,7 +131,7 @@ void fuzzFile(const fs::path& path, int rounds, uint32_t seed) {
     if (source.empty()) return;
     ++g_files;
 
-    ZDocument note = noteOf(source);
+    ZDocument note = bodyOf(source);
 
     std::mt19937 rng(seed);
     std::vector<std::string> steps;

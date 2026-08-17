@@ -624,7 +624,7 @@ static int ztRunSuite(int argc, char** argv) {
                     QFileInfo(made).completeBaseName() != folderId);
 
         const std::string written = readAll(made);
-        const zametti::ZDocument doc = noteOf(written);
+        const zametti::ZNote doc = noteOf(written);
         ZT_TRUE("шапка на месте", doc.hasHeader());
         ZT_EQ("родитель проставлен", folderId.toStdString(), head(doc, "parent"));
         ZT_TRUE("времена проставлены",
@@ -653,7 +653,7 @@ static int ztRunSuite(int argc, char** argv) {
                   "modified: 2020-01-02T03:04:05Z\nx-своё: беречь\n-->\n\n# Вывезенная\n");
         const QString second = store::importNote(root, QString(), exported, &error);
         ZT_TRUE("второй импорт прошёл", !second.isEmpty());
-        const zametti::ZDocument back = noteOf(readAll(second));
+        const zametti::ZNote back = noteOf(readAll(second));
         ZT_TRUE("чужой id не унаследован", head(back, "id").empty());
         ZT_TRUE("чужой role снят", head(back, "role").empty());
         ZT_TRUE("в корень — родителя нет", head(back, "parent").empty());

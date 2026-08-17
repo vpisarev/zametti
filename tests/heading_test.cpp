@@ -35,14 +35,15 @@ namespace {
 // переносами это один блок, и внутри него строк несколько.
 std::string apply(const std::string& source, const std::string& onLine, int level,
                   bool selectAll = false) {
-    zametti::ZDocument note = noteOf(source);
+    zametti::ZNote note = noteOf(source);
 
-    QTextCursor caret = note.caretAtBlock(0);
+    zametti::ZDocument& body = note.doc();
+    QTextCursor caret = body.caretAtBlock(0);
     bool found = false;
     const QString want = QString::fromStdString(onLine);
-    for (int number = 0; number < note.blockCount() && !found; ++number) {
-        const QString text = note.blockAt(number).text;
-        const QTextCursor start = note.caretAtBlock(number);
+    for (int number = 0; number < body.blockCount() && !found; ++number) {
+        const QString text = body.blockAt(number).text;
+        const QTextCursor start = body.caretAtBlock(number);
         if (text == want) {
             caret = start;
             found = true;
@@ -67,7 +68,7 @@ std::string apply(const std::string& source, const std::string& onLine, int leve
         caret.movePosition(QTextCursor::End, QTextCursor::KeepAnchor);
     }
 
-    note.setHeadingLevel(caret, level);
+    body.setHeadingLevel(caret, level);
     return note.toMarkdown();
 }
 

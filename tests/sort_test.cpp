@@ -38,8 +38,8 @@ using zametti::SortOrder;
 namespace {
 
 // Пометка порядка — глагол самой заметки.
-void setSort(zametti::ZDocument& note, std::optional<zametti::SortOrder> order) {
-    note.setSortOrder(order);
+void setSort(zametti::ZNote& note, std::optional<zametti::SortOrder> order) {
+    note.setSortMark(order);
 }
 
 QString g_root;
@@ -155,19 +155,19 @@ void checkMetaMark() {
         "чужое: не трогать\n"
         "-->\n\n# Дневник\n";
 
-    zametti::ZDocument doc = noteOf(source);
+    zametti::ZNote doc = noteOf(source);
     setSort(doc, SortOrder{SortKey::Created, false});
     const std::string marked = doc.toMarkdown();
     ZT_TRUE("метка записалась", marked.find("sort: created-desc") != std::string::npos);
 
-    const zametti::ZDocument back = noteOf(marked);
+    const zametti::ZNote back = noteOf(marked);
     ZT_EQ("modified от пометки не изменился", "2021-02-03T04:05:06Z", head(back, "modified"));
     ZT_EQ("created от пометки не изменился", "2020-01-01T00:00:00Z", head(back, "created"));
     ZT_EQ("чужой ключ пережил правку", "не трогать", head(back, "чужое"));
     ZT_TRUE("текст заметки на месте", marked.find("# Дневник") != std::string::npos);
 
     // Сброс убирает ключ и не трогает остальное.
-    zametti::ZDocument reset = noteOf(marked);
+    zametti::ZNote reset = noteOf(marked);
     setSort(reset, std::nullopt);
     const std::string cleared = reset.toMarkdown();
     ZT_TRUE("сброс убрал ключ", cleared.find("sort:") == std::string::npos);
@@ -276,7 +276,7 @@ void checkInheritance() {
     // Метку ставим руками в файл — ровно так, как её пишет программа.
     const QString monthFile = g_root + QStringLiteral("/00000000000d03.md");
     {
-        zametti::ZDocument doc = noteOf(readFile(monthFile).toStdString());
+        zametti::ZNote doc = noteOf(readFile(monthFile).toStdString());
         setSort(doc, SortOrder{SortKey::Created, true});
         QFile f(monthFile);
         if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
@@ -313,7 +313,7 @@ void checkInheritance() {
     const QMap<QString, QString> before = storeHashes();
     const QString yearFile = g_root + QStringLiteral("/00000000000d02.md");
     {
-        zametti::ZDocument doc = noteOf(readFile(yearFile).toStdString());
+        zametti::ZNote doc = noteOf(readFile(yearFile).toStdString());
         setSort(doc, SortOrder{SortKey::Name, false});   // NOLINT
         QFile f(yearFile);
         if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
@@ -336,7 +336,7 @@ void checkInheritance() {
 
     // Сброс метки месяца — и он наследует от года.
     {
-        zametti::ZDocument doc = noteOf(readFile(monthFile).toStdString());
+        zametti::ZNote doc = noteOf(readFile(monthFile).toStdString());
         setSort(doc, std::nullopt);
         QFile f(monthFile);
         if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {

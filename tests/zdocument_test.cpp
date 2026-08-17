@@ -14,6 +14,7 @@
 
 #include "diff.h"
 #include "document.h"
+#include "znote.h"
 
 #include "test_util.h"
 #include "testdata.h"
@@ -158,16 +159,21 @@ TEST(ZDocument, HeaderKeys) {
         "\n"
         "Первый абзац после заголовка.\n";
 
-    ZDocument doc;
-    ASSERT_TRUE(doc.loadMarkdown(source));
+    // ШАПКА — У ЗАМЕТКИ, НЕ У ДОКУМЕНТА: документ, поднятый из тех же байтов,
+    // знает только тело; конверт читает и пишет ZNote (znote_test — круг файла).
+    ZDocument body;
+    ASSERT_TRUE(body.loadMarkdown(source));
+    ZT_TRUE("документ шапки не эмитит", body.toMarkdown().rfind("# Заголовок заметки", 0) == 0);
+    ZT_EQ("заголовок взят", std::string("Заголовок заметки"), body.title().toStdString());
+    ZT_TRUE("не пуста", !body.isEmpty());
 
+    ZNote doc;
+    ASSERT_TRUE(doc.load(source));
     ZT_EQ("родитель прочитан", std::string("01n6cqevr3wprw"), doc.parentId().toStdString());
     ZT_EQ("создана прочитана", std::string("2019-06-19T10:54:29+03:00"),
           doc.created().toStdString());
     ZT_TRUE("не папка", !doc.isFolder());
     ZT_TRUE("не в архиве", !doc.isArchived());
-    ZT_EQ("заголовок взят", std::string("Заголовок заметки"), doc.title().toStdString());
-    ZT_TRUE("не пуста", !doc.isEmpty());
 
     // Правка своего ключа не трогает чужой.
     doc.setParentId(QStringLiteral("01aaaaaaaaaaaa"));
@@ -180,8 +186,8 @@ TEST(ZDocument, HeaderKeys) {
     ZT_TRUE("пометка архива записана", written.find("archived: yes") != std::string::npos);
 
     // И круг остаётся кругом.
-    ZDocument back;
-    ASSERT_TRUE(back.loadMarkdown(written));
+    ZNote back;
+    ASSERT_TRUE(back.load(written));
     ZT_EQ("после правки шапки круг держится", written, back.toMarkdown());
     ZT_TRUE("архивность прочиталась обратно", back.isArchived());
 }
@@ -255,20 +261,21 @@ TEST(ZDocument, DigestAndDrift) {
         "\n"
         "Текст.\n";
 
-    ZDocument doc;
-    ASSERT_TRUE(doc.loadMarkdown(canonical));
+    // Дрейф — вопрос к файлу целиком, с шапкой: спрашивается у заметки.
+    ZNote doc;
+    ASSERT_TRUE(doc.load(canonical));
     ZT_TRUE("канонический файл дрейфа не имеет", doc.isCanonical(canonical));
-    ZT_TRUE("отпечаток не пуст", !doc.digest().empty());
+    ZT_TRUE("отпечаток не пуст", !doc.doc().digest().empty());
 
     // Тот же смысл, но записанный иначе: дрейф есть.
-    ZDocument sloppy;
-    ASSERT_TRUE(sloppy.loadMarkdown("<!-- zametti\n-->\n\n# Заголовок\n\nТекст.   \n"));
+    ZNote sloppy;
+    ASSERT_TRUE(sloppy.load("<!-- zametti\n-->\n\n# Заголовок\n\nТекст.   \n"));
     ZT_TRUE("лишние пробелы в конце строки — это дрейф",
             !sloppy.isCanonical("<!-- zametti\n-->\n\n# Заголовок\n\nТекст.   \n"));
 
     // Отпечаток считается от КАНОНИЧЕСКИХ байтов, значит у обоих он один.
     ZT_TRUE("отпечаток от канона, а не от исходника",
-            doc.digest() == sloppy.digest());
+            doc.doc().digest() == sloppy.doc().digest());
 }
 
 // КОПИРОВАНИЕ ДАРОМ. Внутренность за shared_ptr, поэтому ни конструктор копии,
@@ -287,18 +294,15 @@ TEST(ZDocument, CopyShares_CloneDoesNot) {
     ZDocument handle = original;          // ручка к той же заметке
     ZDocument snapshot = original.clone();  // независимый слепок
 
-    original.setParentId(QStringLiteral("01bbbbbbbbbbbb"));
+    original.setTitle(QStringLiteral("Правлено"));
 
-    ZT_EQ("ручка видит правку", std::string("01bbbbbbbbbbbb"),
-          handle.parentId().toStdString());
-    ZT_EQ("слепок правки не видит", std::string("01aaaaaaaaaaaa"),
-          snapshot.parentId().toStdString());
+    ZT_EQ("ручка видит правку", std::string("Правлено"), handle.title().toStdString());
+    ZT_EQ("слепок правки не видит", std::string("Начало"), snapshot.title().toStdString());
 
     // И присваивание тоже даром.
     ZDocument assigned;
     assigned = snapshot;
-    ZT_EQ("присваивание работает", std::string("01aaaaaaaaaaaa"),
-          assigned.parentId().toStdString());
+    ZT_EQ("присваивание работает", std::string("Начало"), assigned.title().toStdString());
 }
 
 // Строение заметки спрашивается ЗНАЧЕНИЯМИ, без ходьбы по внутренностям.
@@ -365,10 +369,10 @@ TEST(ZDocument, Comparison) {
     ASSERT_TRUE(first.loadMarkdown(a));
     ASSERT_TRUE(second.loadMarkdown(b));
 
-    // Тело одно и то же — шапка в счёт не идёт. Именно на этом стоит история:
-    // иначе всякая разность начиналась бы со строки `modified`.
+    // Тело одно и то же — шапки документ не знает вовсе. Именно на этом стоит
+    // история: иначе всякая разность начиналась бы со строки `modified`.
     ZT_TRUE("тела совпали", first.sameBody(second));
-    ZT_TRUE("строение не совпало: шапки разные", !first.sameSkeleton(second));
+    ZT_TRUE("и строение совпало: шапка — не документ", first.sameSkeleton(second));
 
     ZDocument other;
     ASSERT_TRUE(other.loadMarkdown("<!-- zametti\n-->\n\n# Другое\n"));

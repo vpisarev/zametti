@@ -183,15 +183,14 @@ void checkCoreKeepsOffsets() {
         "created: 2026-08-14T21:40:00+08:00\n"
         "modified: 2026-08-14T20:00:00+03:00\n"
         "-->\n\n# Заметка\n\nТекст.\n";
-    zametti::ZDocument doc;
-    doc.loadMarkdown(source);
+    zametti::ZNote doc = ::noteOf(source);
     ZT_EQ("круг разбор→запись побайтовый", source, doc.toMarkdown());
     ZT_EQ("created прочитан как есть", "2026-08-14T21:40:00+08:00", head(doc, "created"));
     ZT_EQ("modified прочитан как есть", "2026-08-14T20:00:00+03:00", head(doc, "modified"));
 
     // И правка одной метки не трогает соседнюю: у ядра это обещание формата, а
     // офсет в значении для него — обычные знаки.
-    zametti::ZDocument edited = doc.clone();
+    zametti::ZNote edited = ::noteOf(source);
     setHead(edited, "modified", "2026-12-31T23:59:00+01:00");
     const std::string out = edited.toMarkdown();
     ZT_TRUE("новая метка записалась",

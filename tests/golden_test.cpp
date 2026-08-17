@@ -12,6 +12,7 @@
 // Перезаписать эталоны: ./golden_test <каталог> --update
 
 #include "document.h"
+#include "znote.h"
 
 #include "test_util.h"
 #include "testdata.h"
@@ -65,8 +66,10 @@ static int ztRunSuite(int argc, char** argv) {
     for (const fs::path& md : cases) {
         std::string name = md.filename().string();
         std::string src = readFile(md);
-        ZDocument note;
-        note.loadMarkdown(src);
+        // Круг файла целиком, с шапкой: эталон стережёт ровно ту границу, через
+        // которую проходят данные владельца, — а конверт держит заметка.
+        ZNote note;
+        note.load(src);
         std::string json = note.toJson();
 
         fs::path expectedPath = md;

@@ -165,10 +165,9 @@ TEST(Shift, OwnerNotesSurviveAnyPrefix) {
         QFile f(dir + QLatin1Char('/') + name);
         ASSERT_TRUE(f.open(QIODevice::ReadOnly)) << name.toStdString();
         const QByteArray bytes = f.readAll();
-        // Шапка заметки обязана остаться первой: префикс встаёт ПОСЛЕ неё.
+        // Шапку заметки документ не знает вовсе — проверяется одно тело.
         ZDocument note;
         ASSERT_TRUE(note.loadMarkdown(std::string_view(bytes.constData(), size_t(bytes.size()))));
-        note.setHasHeader(false);
         const std::string body = note.toMarkdown();
         // 260 длин — больше периода 256; на заметке в четверть мегабайта каждая
         // длина стоит десятки миллисекунд, потому не 300 и один род префикса.

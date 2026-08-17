@@ -17,6 +17,7 @@
 #pragma once
 
 #include "document.h"
+#include "znote.h"
 #include "document_pieces.h"
 
 #include <QTextDocument>
@@ -74,18 +75,24 @@ inline std::string dumpOf(const std::vector<zametti::Piece>& blocks,
     return zametti::dumpPieces(blocks, header);
 }
 
-// Заметка из байтов — там, где предмет проверки сама заметка, а не блоки.
-inline zametti::ZDocument noteOf(std::string_view markdown) {
-    zametti::ZDocument out;
-    out.loadMarkdown(markdown);
+// Заметка из байтов файла — шапка и тело, круг файла целиком (ZNote).
+inline zametti::ZNote noteOf(std::string_view markdown) {
+    zametti::ZNote out;
+    out.load(markdown);
     return out;
 }
 
+// Только тело — документ, каким его видят операции правки. Шапка, если была,
+// отбрасывается: ZDocument её не знает.
+inline zametti::ZDocument bodyOf(std::string_view markdown) {
+    return noteOf(markdown).doc();
+}
+
 // Ключ шапки в UTF-8: наборы сравнивают со std::string-литералами.
-inline std::string head(const zametti::ZDocument& note, const char* key) {
+inline std::string head(const zametti::ZNote& note, const char* key) {
     return note.headerValue(QString::fromUtf8(key)).toStdString();
 }
 
-inline void setHead(zametti::ZDocument& note, const char* key, const std::string& value) {
+inline void setHead(zametti::ZNote& note, const char* key, const std::string& value) {
     note.setHeaderValue(QString::fromUtf8(key), QString::fromStdString(value));
 }

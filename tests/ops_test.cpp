@@ -303,7 +303,7 @@ struct KeyCase {
 };
 
 void checkKey(const NoteOp& op, const KeyCase& c) {
-    zametti::ZDocument note = noteOf(c.before);
+    zametti::ZDocument note = bodyOf(c.before);
 
     QTextCursor cursor = note.caretAtBlock(c.block);
     check(cursor.blockNumber() == c.block, std::string(c.what) + ": нет такого блока");
@@ -484,7 +484,7 @@ struct RangeCase {
 };
 
 void checkRange(const NoteOp& op, const RangeCase& c) {
-    zametti::ZDocument note = noteOf(c.before);
+    zametti::ZDocument note = bodyOf(c.before);
 
     QTextCursor cursor = note.caretAtBlock(c.firstBlock);
     QTextCursor tail = note.caretAtBlock(c.lastBlock);
@@ -573,7 +573,7 @@ struct CodeSpanCase {
 };
 
 void checkCodeSpan(const CodeSpanCase& c) {
-    zametti::ZDocument note = noteOf(c.before);
+    zametti::ZDocument note = bodyOf(c.before);
 
     QTextCursor cursor = note.caretAtBlock(note.blockCount() - 1);
     cursor.movePosition(QTextCursor::End);
@@ -604,7 +604,7 @@ struct CodeBlockCase {
 };
 
 void checkCodeBlock(const CodeBlockCase& c) {
-    zametti::ZDocument note = noteOf(c.source);
+    zametti::ZDocument note = bodyOf(c.source);
 
     QTextCursor cursor = note.caretAtBlock(c.firstBlock);
     QTextCursor tail = note.caretAtBlock(c.lastBlock);
@@ -627,7 +627,7 @@ struct PartialCodeCase {
 };
 
 void checkPartialCodeBlock(const PartialCodeCase& c) {
-    zametti::ZDocument note = noteOf(c.source);
+    zametti::ZDocument note = bodyOf(c.source);
 
     QTextCursor cursor = note.caretAtBlock(c.block);
     const int base = cursor.position();
@@ -759,7 +759,7 @@ struct RuleCase {
 };
 
 void checkRule(const RuleCase& c) {
-    zametti::ZDocument note = noteOf(c.before);
+    zametti::ZDocument note = bodyOf(c.before);
 
     // Набираем в начало первого блока — ровно так, как это делает человек.
     QTextCursor cursor = note.caretAtBlock(0);
@@ -825,7 +825,7 @@ struct StyleCase {
 };
 
 void checkStyle(zametti::ZDocument::Style style, const StyleCase& c) {
-    zametti::ZDocument note = noteOf(c.before);
+    zametti::ZDocument note = bodyOf(c.before);
 
     QTextCursor cursor = note.caretAtBlock(c.block);
     const int base = cursor.position();
@@ -876,7 +876,7 @@ struct MoveCase {
 };
 
 void checkMove(const MoveCase& c) {
-    zametti::ZDocument note = noteOf(c.before);
+    zametti::ZDocument note = bodyOf(c.before);
     const std::string wasText = note.blockAt(c.block).text.toStdString();
 
     QTextCursor cursor = note.caretAtBlock(c.block);
@@ -922,7 +922,7 @@ const MoveCase kMoveCases[] = {
 // Курсор после разреза обязан оказаться в новом блоке: иначе набор продолжится
 // не там, где человек его видит.
 void checkCursorAfterSplit() {
-    zametti::ZDocument note = noteOf("- пунктхвост\n");
+    zametti::ZDocument note = bodyOf("- пунктхвост\n");
     QTextCursor cursor = note.caretAtBlock(0);
     cursor.setPosition(cursor.position() + 5);
     note.breakBlock(cursor, zametti::ZDocument::BreakKind::Plain);

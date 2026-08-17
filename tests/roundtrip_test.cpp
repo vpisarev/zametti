@@ -22,14 +22,14 @@ namespace {
 // x канонично: запись прочитанного совпадает с исходником байт в байт.
 // Заодно проверяется и второй инвариант — он из первого не следует.
 void canonical(const char* what, const std::string& src) {
-    const zametti::ZDocument d = noteOf(src);
+    const zametti::ZNote d = noteOf(src);
     ZT_EQ(std::string("канон: ") + what, src, d.toMarkdown());
     ZT_EQ(std::string("устойчивость: ") + what, d.toJson(), noteOf(d.toMarkdown()).toJson());
 }
 
 // x произволен: приводится к канону, и повторное чтение даёт то же строение.
 void stable(const char* what, const std::string& src, const std::string& expectedCanon) {
-    const zametti::ZDocument d = noteOf(src);
+    const zametti::ZNote d = noteOf(src);
     const std::string once = d.toMarkdown();
     ZT_EQ(std::string("приведение к канону: ") + what, expectedCanon, once);
     ZT_EQ(std::string("устойчивость: ") + what, d.toJson(), noteOf(once).toJson());

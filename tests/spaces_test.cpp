@@ -45,17 +45,17 @@ std::string afterLoad(const std::string& source) {
 
     std::string text = source;
     zametti::Digest digest = zametti::hashOf(text);
-    zametti::canonicaliseNoteFile(path, text, digest);
+    zametti::ZNote::canonicaliseFile(path, text, digest);
     return text;
 }
 
 // Абзац → код и обратно, через настоящую операцию.
 std::string toggle(const std::string& source) {
-    zametti::ZDocument note = noteOf(source);
-    QTextCursor caret = note.caretAtBlock(0);
+    zametti::ZNote note = noteOf(source);
+    QTextCursor caret = note.doc().caretAtBlock(0);
     caret.movePosition(QTextCursor::End, QTextCursor::KeepAnchor);
 
-    if (!note.toggleCodeBlock(caret)) return "ОПЕРАЦИЯ НЕ СРАБОТАЛА";
+    if (!note.doc().toggleCodeBlock(caret)) return "ОПЕРАЦИЯ НЕ СРАБОТАЛА";
     return note.toMarkdown();
 }
 
