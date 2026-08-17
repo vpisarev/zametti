@@ -81,3 +81,5 @@ Testing/
 .testdata/
 # локальный для экспериментов
 sandbox/
+.clangd
+
