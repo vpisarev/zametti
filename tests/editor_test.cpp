@@ -428,6 +428,14 @@ void checkCaretSurvivesRestart() {
     const QRect visible = second.viewport()->rect();
     const QRect at = second.cursorRect();
     check(visible.intersects(at), "каретка после перезапуска видна в окне");
+    // И НЕ У КРОМКИ, а около середины — чуть выше (просьба владельца:
+    // пролистать так, чтобы каретка стояла около середины окна). Минимальная
+    // прокрутка ставила бы её в самый низ. Допуск — полоса в 15 % сверху и
+    // снизу: внутри неё место считается «не на виду», и правило показа туда
+    // каретку не поставит.
+    const int height = visible.height();
+    check(at.top() >= height * 0.15 && at.bottom() <= height * 0.85,
+          "каретка после перезапуска стоит около середины окна, а не у кромки");
 
     // Заметка, открытая БЕЗ памяти, начинается с начала: чужое место не
     // достаётся никому.
@@ -1989,6 +1997,13 @@ void checkUndoShowsEditPlace() {
         // 28830). Курсор при этом уезжает вместе с видом, но отмене он и не
         // нужен: место правки она берёт из истории.
         if (scrollAway) QTest::keyClick(&editor, Qt::Key_End, Qt::ControlModifier);
+        // Иначе — место правки на виду И НЕ У КРОМКИ: setTextCursor прокрутил
+        // минимально, каретка стоит впритык к нижнему краю, а кромка (полоса в
+        // 15 % сверху и снизу) правилом показа считается «не на виду» — туда
+        // отмена вид уведёт законно. Отводим каретку к середине окна.
+        else
+            editor.verticalScrollBar()->setValue(editor.verticalScrollBar()->value() +
+                                                 editor.viewport()->height() / 2);
         QTest::qWait(30);
         const int before = editor.verticalScrollBar()->value();
 
@@ -2008,7 +2023,7 @@ void checkUndoShowsEditPlace() {
 
     edit(false, &percent, &moved);
     checkEqual(QStringLiteral("0"), QString::number(moved),
-               "а правку, которая и так на виду, вид не дёргает");
+               "а правку, которая и так на виду и не у кромки, вид не дёргает");
 }
 
 // Курсор не должен упираться в кромку окна. Qt прокручивает ровно до касания
