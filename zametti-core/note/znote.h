@@ -31,6 +31,7 @@
 #include "hash.h"
 #include "note_header.h"
 #include "text_stats.h"
+#include "caret_spot.h"
 #include "derived.h"
 #include "note_search.h"
 #include "znote_history.h"
@@ -42,14 +43,6 @@
 
 namespace zametti {
 
-// Место человека в заметке — все три числа сразу: «где каретка» и «что
-// выделено» — разные вопросы, и заметка обязана помнить оба (просьба
-// владельца), а прокрутка — где он был на экране.
-struct CaretSpot {
-    int cursor = 0;
-    int anchor = 0;
-    int scroll = 0;
-};
 
 class ZNote {
 public:

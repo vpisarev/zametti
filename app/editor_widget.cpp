@@ -2,6 +2,7 @@
 
 #include "block_object.h"
 #include "caption_editor.h"
+#include "zapp.h"
 #include "lang_editor.h"
 #include "diff_view.h"
 #include "history_rules.h"
@@ -524,7 +525,7 @@ void NoteEditor::trimNoteCache() {
     // карта — это ОСТАТОК объекта, а не второй источник правды о нём.
     while (!noteCache_.empty() && cachedNoteBytes() > budget) {
         const ZNote& going = *noteCache_.back();
-        if (going.hasPath()) caretMemory_[going.path()] = going.caret();
+        if (going.hasPath()) ZApp::instance().state().rememberCaret(going.id(), going.caret());
         noteCache_.pop_back();
     }
 }
@@ -536,8 +537,9 @@ void NoteEditor::stashCurrentNote() {
     // из открытых, от неё остаётся этот лёгкий след. Второй записи в карту в
     // программе нет: иначе появился бы второй источник правды о каретке.
     if (note_->hasPath())
-        caretMemory_[note_->path()] = {textCursor().position(), textCursor().anchor(),
-                                       verticalScrollBar()->value()};
+        ZApp::instance().state().rememberCaret(
+            note_->id(),
+            {textCursor().position(), textCursor().anchor(), verticalScrollBar()->value()});
 
     // Откладываем только ЧИСТОЕ и только то, чей отпечаток мы знаем: иначе при
     // возврате не с чем было бы сверять файл. Несохранённое не откладываем
@@ -728,7 +730,7 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
     NoteHeader meta;
     parsePieces(QString::fromUtf8(text.data(), qsizetype(text.size())), doc, meta);
     fresh->setMeta(std::move(meta));
-    fresh->rememberCaret(caretMemory_.value(path));
+    fresh->rememberCaret(ZApp::instance().state().caretOf(fresh->id()));
     installNote(std::move(fresh));
     watchFile();
     rebuild(doc, note_->caret().cursor, {});
@@ -3698,9 +3700,11 @@ void NoteEditor::showEvent(QShowEvent* event) {
     keepCaretInView();
 }
 
-void NoteEditor::rememberCaretFor(const QString& path, int cursor, int anchor) {
-    if (path.isEmpty()) return;
-    caretMemory_[path] = {cursor, anchor};
+void NoteEditor::rememberCurrentCaretInApp() const {
+    if (!note_->hasPath()) return;
+    ZApp::instance().state().rememberCaret(
+        note_->id(),
+        {textCursor().position(), textCursor().anchor(), verticalScrollBar()->value()});
 }
 
 EscapeAction escapeActionFor(bool languageEditorOpen, bool editingTable, bool findBarVisible) {

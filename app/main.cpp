@@ -28,6 +28,7 @@
 #include "export_pdf.h"
 #include "status_bar.h"
 #include "toolbar.h"
+#include "zapp.h"
 
 #include <QApplication>
 #include <QFileInfo>
@@ -228,7 +229,7 @@ void printHelp() {
         keysFor(zametti::settings().editor().makeParagraphKey()).constData(),
         padFor(zametti::settings().editor().makeParagraphKey()).constData(),
         zametti::configPath().toUtf8().constData(),
-        zametti::statePath().toUtf8().constData());
+        zametti::ZAppState::path().toUtf8().constData());
 }
 
 }  // namespace
@@ -328,30 +329,33 @@ int main(int argc, char** argv) {
     // --noconfig нужен, чтобы посмотреть на вид по умолчанию, не убирая свой
     // конфиг: удобно и при правке конфига, и при разговоре о том, «как оно
     // выглядит из коробки».
+    // ОБЪЕКТ ПРИЛОЖЕНИЯ: настройки, состояние сеанса (единые ворота к state.json),
+    // каретки по заметкам, кэш иконок. Один на процесс.
+    zametti::ZApp zapp;
     QString configError;
     QStringList configUnknown;
-    if (!noConfig && !zametti::loadSettings(&configError, &configUnknown)) {
+    if (!noConfig && !zapp.reloadSettings(&configError, &configUnknown)) {
         // Молча подставить умолчания нельзя: опечатка в конфиге выглядела бы
         // как «настройка не работает».
         std::fprintf(stderr, "конфиг не разобран, взяты значения по умолчанию:\n  %s\n",
                      configError.toUtf8().constData());
     }
 
-    const zametti::Session session = zametti::loadSession();
+    const zametti::ZAppState& session = zapp.state();
 
     // Без аргумента открываем то, что читали в прошлый раз. С --root — свежую
     // заметку хранилища (или прошлую, если она из этого же хранилища).
     // Хранилище прошлого запуска запоминается: без параметров возвращаемся
     // в него, ключ --root каждый раз не нужен.
-    if (path.isEmpty()) path = session.lastFile;
-    if (storeRoot.isEmpty() && path.isEmpty() && !session.storeRoot.isEmpty() &&
-        zametti::NoteTreeModel::isStoreRoot(session.storeRoot))
-        storeRoot = session.storeRoot;
-    if (storeRoot.isEmpty() && !path.isEmpty() && !session.storeRoot.isEmpty() &&
+    if (path.isEmpty()) path = session.lastFile();
+    if (storeRoot.isEmpty() && path.isEmpty() && !session.storeRoot().isEmpty() &&
+        zametti::NoteTreeModel::isStoreRoot(session.storeRoot()))
+        storeRoot = session.storeRoot();
+    if (storeRoot.isEmpty() && !path.isEmpty() && !session.storeRoot().isEmpty() &&
         QFileInfo(path).absoluteFilePath().startsWith(
-            QFileInfo(session.storeRoot).absoluteFilePath()) &&
-        zametti::NoteTreeModel::isStoreRoot(session.storeRoot))
-        storeRoot = session.storeRoot;
+            QFileInfo(session.storeRoot()).absoluteFilePath()) &&
+        zametti::NoteTreeModel::isStoreRoot(session.storeRoot()))
+        storeRoot = session.storeRoot();
     if (!storeRoot.isEmpty()) {
         const QString absRoot = QFileInfo(storeRoot).absoluteFilePath();
         if (!zametti::NoteTreeModel::isStoreRoot(absRoot)) {
@@ -519,7 +523,7 @@ int main(int argc, char** argv) {
     // Старое состояние («name» / «modified», до этапа 13) читается тем же
     // разбором: ключ без направления — законная краткая запись.
     zametti::SortOrder rootSort = zametti::defaultOrder(zametti::SortKey::Modified);
-    if (const auto saved = zametti::parseSortOrder(session.treeSort)) rootSort = *saved;
+    if (const auto saved = zametti::parseSortOrder(session.treeSort())) rootSort = *saved;
     model.setRootSort(rootSort);
     list.setSortOrder(rootSort);
     tree.setModel(&model);
@@ -618,7 +622,7 @@ int main(int argc, char** argv) {
     // любой из них, а набор не тормозит.
     searchDebounce.setSingleShot(true);
     searchDebounce.setInterval(150);
-    findBar.setHistory(session.searchHistory);
+    findBar.setHistory(session.searchHistory());
 
     // Облик применяется ОДНИМ местом — и на старте, и когда конфиг поправили
     // снаружи. Два места разошлись бы: половина настроек подхватывалась бы на
@@ -968,7 +972,7 @@ int main(int argc, char** argv) {
     // Кегль задан явно в каждом формате, поэтому штатный зум QTextEdit до него
     // не дотягивается: при смене масштаба документ собирается заново из того же
     // содержимого. В историю правок это не попадает — облик не содержимое.
-    editor.setZoom(std::clamp(session.zoom, zametti::settings().ui().zoomMin(),
+    editor.setZoom(std::clamp(session.zoom(), zametti::settings().ui().zoomMin(),
                               zametti::settings().ui().zoomMax()));
 
     // МЕСТО КАРЕТКИ, ПЕРЕЖИВШЕЕ ПЕРЕЗАПУСК, — В ПАМЯТЬ РЕДАКТОРА, до открытия.
@@ -977,8 +981,13 @@ int main(int argc, char** argv) {
     // между заметками. Отдельного пути «поставить каретку при запуске» нет и
     // быть не должно: это второе место, где решается «куда встать при
     // открытии», и оно однажды разойдётся с первым.
-    if (session.lastFile == current)
-        editor.rememberCaretFor(current, session.caret, session.anchor);
+    // Каретка по заметке живёт в состоянии приложения по id (ZAppState::carets);
+    // старые state.json помнили её только у последней заметки — подхватываем и
+    // их, если про эту заметку иначе ничего не известно.
+    if (session.lastFile() == current &&
+        !zapp.state().knowsCaret(QFileInfo(current).completeBaseName()))
+        zapp.state().rememberCaret(QFileInfo(current).completeBaseName(),
+                                   {session.caret(), session.anchor(), 0});
     if (!editor.openFile(current)) return 2;
 
     // ХОДЬБА СТРЕЛКАМИ по дереву и по списку — единственный случай, когда
@@ -1285,7 +1294,7 @@ int main(int argc, char** argv) {
     // перезапуск: это привычка человека, а не свойство заметки. Ставится
     // ПОСЛЕ связок — тогда о нём узнают разом и редактор, и кнопка баннера.
     // Вне режима истории это только признак: перерисовывать нечего.
-    editor.setDiffPlainView(session.diffPlainView);
+    editor.setDiffPlainView(session.diffPlainView());
 
     // Правка файла хранилища мимо редактора: только для закрытых заметок —
     // открытая правится через редактор, иначе сторож примет запись за чужую.
@@ -1771,8 +1780,8 @@ int main(int argc, char** argv) {
     // Каталог запоминается на время сеанса: вывозят обычно несколько заметок
     // подряд и в одно место.
     // Каталог вывоза переживает и смену формата, и перезапуск программы.
-    QString exportDir = session.exportDir;
-    bool exportKeepMeta = session.exportKeepMeta;
+    QString exportDir = session.exportDir();
+    bool exportKeepMeta = session.exportKeepMeta();
     const auto exportNote = [&](const QString& file) {
         if (file.isEmpty()) return;
         // Пишем ДО вывоза: иначе наружу уехала бы заметка без последних правок,
@@ -2513,7 +2522,7 @@ int main(int argc, char** argv) {
     {
         // Зовём ВСЕГДА, а не только когда панели спрятаны: кнопка обязана
         // показывать своё состояние с первой секунды, а не с первого нажатия.
-        showPanels(!session.panelsHidden);
+        showPanels(!session.panelsHidden());
 
         // Обещания. Погашенная кнопка без объяснения читается как поломка, а
         // не как «будет позже», поэтому у каждой — своя причина словами.
@@ -2662,9 +2671,9 @@ int main(int argc, char** argv) {
                          if (focused == nullptr) editor.save(false);
                      });
 
-    if (!session.windowGeometry.isEmpty()) window.restoreGeometry(session.windowGeometry);
+    if (!session.windowGeometry().isEmpty()) window.restoreGeometry(session.windowGeometry());
     else window.resize(1150, 780);
-    if (!session.splitterState.isEmpty()) splitter.restoreState(session.splitterState);
+    if (!session.splitterState().isEmpty()) splitter.restoreState(session.splitterState());
     else if (model.isStore())
         splitter.setSizes({zametti::settings().ui().sidebarWidth(),
                            zametti::settings().ui().noteListWidth(), 700});
@@ -2703,7 +2712,7 @@ int main(int argc, char** argv) {
     // того, как показать текущую заметку, иначе её раскрытие затеряется среди
     // прочих. Сигнал глушим — иначе выделение немедленно вызвало бы повторную
     // загрузку того же файла.
-    for (const QString& dir : session.expandedDirs) {
+    for (const QString& dir : session.expandedDirs()) {
         const QModelIndex index = model.indexForPath(dir);
         if (index.isValid() && model.isDirectory(index)) tree.expand(index);
     }
@@ -2769,25 +2778,27 @@ int main(int argc, char** argv) {
         // На выходе окно с ошибкой показывать поздно: жалуемся в stderr.
         editor.save(false, true);   // выходим: пробуем записать, не спрашивая признак
 
-        zametti::Session out;
-        out.lastFile = editor.filePath();
-        out.caret = editor.caretPosition();
-        out.anchor = editor.caretAnchor();
-        out.zoom = editor.zoom();
-        out.windowGeometry = window.saveGeometry();
-        out.splitterState = splitter.saveState();
-        out.panelsHidden = !toolbar.isChecked(zametti::Toolbar::Button::Panels);
-        out.expandedDirs = expandedDirs();
-        out.searchHistory = findBar.history();
-        out.storeRoot = model.isStore() ? model.nodePath(QModelIndex()) : QString();
-        out.exportDir = exportDir;
-        out.diffPlainView = editor.diffPlainView();
-        out.exportKeepMeta = exportKeepMeta;
+        // Каретка открытой заметки — в состояние по id, как у всех остальных.
+        editor.rememberCurrentCaretInApp();
+        zametti::ZAppState& out = zapp.state();
+        out.setLastFile(editor.filePath());
+        out.setCaret(editor.caretPosition());
+        out.setAnchor(editor.caretAnchor());
+        out.setZoom(editor.zoom());
+        out.setWindowGeometry(window.saveGeometry());
+        out.setSplitterState(splitter.saveState());
+        out.setPanelsHidden(!toolbar.isChecked(zametti::Toolbar::Button::Panels));
+        out.setExpandedDirs(expandedDirs());
+        out.setSearchHistory(findBar.history());
+        out.setStoreRoot(model.isStore() ? model.nodePath(QModelIndex()) : QString());
+        out.setExportDir(exportDir);
+        out.setDiffPlainView(editor.diffPlainView());
+        out.setExportKeepMeta(exportKeepMeta);
         // Переключатель КОРНЯ, а не действующий порядок: последний может быть
         // задан меткой открытой папки, и запиши мы его — чужая метка стала бы
         // общим умолчанием при следующем запуске.
-        out.treeSort = zametti::sortOrderToString(rootSort);
-        zametti::saveSession(out);
+        out.setTreeSort(zametti::sortOrderToString(rootSort));
+        zapp.saveState();
     });
 
     return app.exec();

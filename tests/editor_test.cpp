@@ -10,6 +10,7 @@
 #include "doc_model.h"
 #include "pieces.h"
 #include "editor_widget.h"
+#include "zapp.h"
 #include "journal.h"
 #include "marker.h"
 #include "settings.h"
@@ -20,6 +21,7 @@
 #include "testdata.h"
 
 #include <QApplication>
+#include <QFileInfo>
 #include <QClipboard>
 #include <QDateTime>
 #include <QDir>
@@ -419,7 +421,10 @@ void checkCaretSurvivesRestart() {
     second.resize(700, 500);
     second.show();
     QTest::qWait(20);
-    second.rememberCaretFor(path, caret, anchor);
+    // Память о каретке живёт в состоянии приложения по id заметки — второй
+    // редактор её оттуда и берёт (при перезапуске её туда кладёт state.json).
+    zametti::ZApp::instance().state().rememberCaret(QFileInfo(path).completeBaseName(),
+                                                    {caret, anchor, 0});
     second.openFile(path);
     QTest::qWait(20);
 
@@ -454,7 +459,8 @@ void checkCaretSurvivesRestart() {
         const int middle = probe.document()->findBlockByNumber(probe.document()->blockCount() / 2).position();
 
         zametti::NoteEditor startup;
-        startup.rememberCaretFor(longPath, middle, middle);
+        zametti::ZApp::instance().state().rememberCaret(QFileInfo(longPath).completeBaseName(),
+                                                        {middle, middle, 0});
         startup.openFile(longPath);      // окна ещё нет
         startup.resize(600, 300);
         startup.show();
@@ -471,13 +477,15 @@ void checkCaretSurvivesRestart() {
                   std::to_string(at.top()) + " из " + std::to_string(h));
     }
 
-    // Заметка, открытая БЕЗ памяти, начинается с начала: чужое место не
-    // достаётся никому.
+    // Заметка, о которой памяти нет (другой id — память живёт в состоянии
+    // приложения по id заметки), начинается с начала: чужое место не достаётся
+    // никому.
+    const QString other = writeNote("место-другое.md", body);
     zametti::NoteEditor fresh;
     fresh.resize(700, 500);
     fresh.show();
     QTest::qWait(20);
-    fresh.openFile(path);
+    fresh.openFile(other);
     checkEqual(QStringLiteral("0"), QString::number(fresh.caretPosition()),
                "без памяти каретка стоит в начале");
 }

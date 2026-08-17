@@ -631,13 +631,6 @@ void settingsFromJson(const QJsonObject& root, ZSettings& a) {
     readReal(zoom, "max", a.ui(), &ZSettings::Ui::setZoomMax);
 }
 
-bool writeJson(const QString& path, const QJsonObject& root) {
-    QDir().mkpath(QFileInfo(path).absolutePath());
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
-    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-    return true;
-}
 
 }  // namespace
 
@@ -808,10 +801,6 @@ QString configPath() {
            QStringLiteral("/config.json");
 }
 
-QString statePath() {
-    return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) +
-           QStringLiteral("/state.json");
-}
 
 // Потолок на одну разжатую картинку — одна восьмая бюджета кэша. Отдельным
 // ключом в конфиге его не задают: два числа про одно и то же разъехались бы
@@ -930,63 +919,6 @@ bool loadSettings(QString* error, QStringList* unknown) {
     }
     applyImageAllocationLimit();
     return true;
-}
-
-Session loadSession() {
-    Session session;
-    QFile file(statePath());
-    if (!file.open(QIODevice::ReadOnly)) return session;
-
-    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-    if (!doc.isObject()) return session;
-    const QJsonObject root = doc.object();
-
-    session.lastFile = root.value(QStringLiteral("lastFile")).toString();
-    session.storeRoot = root.value(QStringLiteral("storeRoot")).toString();
-    session.treeSort = root.value(QStringLiteral("treeSort")).toString();
-    session.caret = root.value(QStringLiteral("caret")).toInt(0);
-    session.anchor = root.value(QStringLiteral("anchor")).toInt(session.caret);
-    session.zoom = root.value(QStringLiteral("zoom")).toDouble(1.0);
-    session.windowGeometry = QByteArray::fromBase64(
-        root.value(QStringLiteral("windowGeometry")).toString().toLatin1());
-    session.splitterState = QByteArray::fromBase64(
-        root.value(QStringLiteral("splitterState")).toString().toLatin1());
-    session.panelsHidden = root.value(QStringLiteral("panelsHidden")).toBool(false);
-    session.exportDir = root.value(QStringLiteral("exportDir")).toString();
-    session.diffPlainView = root.value(QStringLiteral("diffPlainView")).toBool(false);
-    session.exportKeepMeta = root.value(QStringLiteral("exportKeepMeta")).toBool(false);
-    for (const QJsonValue& v : root.value(QStringLiteral("expandedDirs")).toArray())
-        if (v.isString()) session.expandedDirs.append(v.toString());
-    for (const QJsonValue& v : root.value(QStringLiteral("searchHistory")).toArray())
-        if (v.isString()) session.searchHistory.append(v.toString());
-    return session;
-}
-
-void saveSession(const Session& session) {
-    QJsonArray expanded;
-    for (const QString& dir : session.expandedDirs) expanded.append(dir);
-    QJsonArray searches;
-    for (const QString& query : session.searchHistory) searches.append(query);
-
-    writeJson(statePath(),
-              QJsonObject{
-                  {QStringLiteral("lastFile"), session.lastFile},
-                  {QStringLiteral("storeRoot"), session.storeRoot},
-                  {QStringLiteral("treeSort"), session.treeSort},
-                  {QStringLiteral("caret"), session.caret},
-                  {QStringLiteral("anchor"), session.anchor},
-                  {QStringLiteral("zoom"), session.zoom},
-                  {QStringLiteral("windowGeometry"),
-                   QString::fromLatin1(session.windowGeometry.toBase64())},
-                  {QStringLiteral("splitterState"),
-                   QString::fromLatin1(session.splitterState.toBase64())},
-                  {QStringLiteral("panelsHidden"), session.panelsHidden},
-                  {QStringLiteral("exportDir"), session.exportDir},
-                  {QStringLiteral("diffPlainView"), session.diffPlainView},
-                  {QStringLiteral("exportKeepMeta"), session.exportKeepMeta},
-                  {QStringLiteral("expandedDirs"), expanded},
-                  {QStringLiteral("searchHistory"), searches},
-              });
 }
 
 }  // namespace zametti

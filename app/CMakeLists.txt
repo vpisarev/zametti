@@ -72,6 +72,8 @@ add_library(zametti-ui STATIC
     image_insert.cpp
     icons.h
     icons.cpp
+    zapp.h
+    zapp.cpp
     lang_editor.h
     lang_editor.cpp
     caption_editor.h

@@ -8,6 +8,7 @@
 //
 // Поэтому проверка сравнивает поле за полем, а не «файл непустой».
 
+#include "app_state.h"
 #include "settings.h"
 
 #include "test_util.h"
@@ -41,62 +42,76 @@ static int ztRunSuite(int argc, char** argv) {
 
     QCoreApplication::setApplicationName(QStringLiteral("zametti"));
 
-    zametti::Session out;
-    out.lastFile = QStringLiteral("/store/00000000000042.md");
-    out.storeRoot = QStringLiteral("/store");
-    out.treeSort = QStringLiteral("name");
-    out.splitterState = QByteArray("сплиттер", 16);
-    out.expandedDirs = {QStringLiteral("/store/a"), QStringLiteral("/store/b")};
-    out.searchHistory = {QStringLiteral("айвазовский"), QStringLiteral("cmyk")};
-    out.caret = 4321;
-    out.anchor = 4300;
-    out.zoom = 1.25;
-    out.windowGeometry = QByteArray("геометрия", 18);
-    out.panelsHidden = true;
-    out.exportDir = QStringLiteral("/tmp/куда-вывозили");
-    out.diffPlainView = true;
-    out.exportKeepMeta = true;
-    zametti::saveSession(out);
+    zametti::ZAppState out;
+    out.setLastFile(QStringLiteral("/store/00000000000042.md"));
+    out.setStoreRoot(QStringLiteral("/store"));
+    out.setTreeSort(QStringLiteral("name"));
+    out.setSplitterState(QByteArray("сплиттер", 16));
+    out.setExpandedDirs({QStringLiteral("/store/a"), QStringLiteral("/store/b")});
+    out.setSearchHistory({QStringLiteral("айвазовский"), QStringLiteral("cmyk")});
+    out.setCaret(4321);
+    out.setAnchor(4300);
+    out.setZoom(1.25);
+    out.setWindowGeometry(QByteArray("геометрия", 18));
+    out.setPanelsHidden(true);
+    out.setExportDir(QStringLiteral("/tmp/куда-вывозили"));
+    out.setDiffPlainView(true);
+    out.setExportKeepMeta(true);
+    // Каретки по заметкам — там же, по id, без дублей.
+    out.rememberCaret(QStringLiteral("00000000000042"), {10, 5, 3});
+    out.rememberCaret(QStringLiteral("00000000000007"), {1, 1, 0});
+    out.rememberCaret(QStringLiteral("00000000000042"), {20, 20, 7});   // та же — заменяет
+    out.save();
 
     const QString path = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) +
                          QStringLiteral("/state.json");
     ZT_TRUE("state.json написан рядом с конфигом: " + s(path), QFile::exists(path));
 
-    const zametti::Session back = zametti::loadSession();
-    ZT_EQ("последний файл", s(out.lastFile), s(back.lastFile));
-    ZT_EQ("хранилище", s(out.storeRoot), s(back.storeRoot));
-    ZT_EQ("сортировка дерева", s(out.treeSort), s(back.treeSort));
-    ZT_EQ("состояние сплиттера", out.splitterState.toBase64().toStdString(),
-          back.splitterState.toBase64().toStdString());
-    ZT_EQ("раскрытые ветки", s(out.expandedDirs.join(QLatin1Char('|'))),
-          s(back.expandedDirs.join(QLatin1Char('|'))));
-    ZT_EQ("история поиска", s(out.searchHistory.join(QLatin1Char('|'))),
-          s(back.searchHistory.join(QLatin1Char('|'))));
-    ZT_EQ("каретка", std::to_string(out.caret), std::to_string(back.caret));
-    ZT_EQ("якорь выделения", std::to_string(out.anchor), std::to_string(back.anchor));
+    const zametti::ZAppState back = zametti::ZAppState::load();
+    ZT_EQ("последний файл", s(out.lastFile()), s(back.lastFile()));
+    ZT_EQ("хранилище", s(out.storeRoot()), s(back.storeRoot()));
+    ZT_EQ("сортировка дерева", s(out.treeSort()), s(back.treeSort()));
+    ZT_EQ("состояние сплиттера", out.splitterState().toBase64().toStdString(),
+          back.splitterState().toBase64().toStdString());
+    ZT_EQ("раскрытые ветки", s(out.expandedDirs().join(QLatin1Char('|'))),
+          s(back.expandedDirs().join(QLatin1Char('|'))));
+    ZT_EQ("история поиска", s(out.searchHistory().join(QLatin1Char('|'))),
+          s(back.searchHistory().join(QLatin1Char('|'))));
+    ZT_EQ("каретка", std::to_string(out.caret()), std::to_string(back.caret()));
+    ZT_EQ("якорь выделения", std::to_string(out.anchor()), std::to_string(back.anchor()));
 
-    ZT_EQ("зум", std::to_string(out.zoom), std::to_string(back.zoom));
-    ZT_EQ("геометрия окна", out.windowGeometry.toBase64().toStdString(),
-          back.windowGeometry.toBase64().toStdString());
-    ZT_EQ("панели убраны", b(out.panelsHidden), b(back.panelsHidden));
+    ZT_EQ("зум", std::to_string(out.zoom()), std::to_string(back.zoom()));
+    ZT_EQ("геометрия окна", out.windowGeometry().toBase64().toStdString(),
+          back.windowGeometry().toBase64().toStdString());
+    ZT_EQ("панели убраны", b(out.panelsHidden()), b(back.panelsHidden()));
     // Каталог вывоза переживает перезапуск: начинать каждый раз с «Документов»
     // — значит каждый раз идти по дереву каталогов заново (замечание владельца).
-    ZT_EQ("каталог вывоза", s(out.exportDir), s(back.exportDir));
+    ZT_EQ("каталог вывоза", s(out.exportDir()), s(back.exportDir()));
     // Вид разности — тоже привычка человека, а не свойство заметки: кто читает
     // разность как markdown, читает её так всегда (просьба владельца).
-    ZT_EQ("вид разности", b(out.diffPlainView), b(back.diffPlainView));
+    ZT_EQ("вид разности", b(out.diffPlainView()), b(back.diffPlainView()));
     // Галочка вывоза «как есть» — тоже привычка человека: кто обменивается
     // заметками с другим хранилищем, делает это постоянно.
-    ZT_EQ("галочка вывоза", b(out.exportKeepMeta), b(back.exportKeepMeta));
+    ZT_EQ("галочка вывоза", b(out.exportKeepMeta()), b(back.exportKeepMeta()));
+    ZT_EQ("каретки по заметкам: две записи, без дублей", std::string("2"),
+          std::to_string(back.carets().size()));
+    ZT_TRUE("повтор заменил запись, а не добавил",
+            back.caretOf(QStringLiteral("00000000000042")).cursor == 20 &&
+                back.caretOf(QStringLiteral("00000000000042")).scroll == 7);
+    ZT_TRUE("свежая — впереди", back.carets().first().noteId == QStringLiteral("00000000000042"));
+    ZT_TRUE("неизвестная заметка — начало документа",
+            !back.knowsCaret(QStringLiteral("нет-такой")) &&
+                back.caretOf(QStringLiteral("нет-такой")).cursor == 0 &&
+                back.caretOf(QStringLiteral("нет-такой")).anchor == 0);
 
     // Умолчание важно не меньше: у человека, который запускает программу
     // впервые, файла нет вовсе, и панели обязаны быть на месте.
     QFile::remove(path);
-    const zametti::Session fresh = zametti::loadSession();
-    ZT_EQ("без файла панели на месте", b(false), b(fresh.panelsHidden));
-    ZT_EQ("без файла зум единичный", std::to_string(1.0), std::to_string(fresh.zoom));
-    ZT_EQ("без файла разность полосками", b(false), b(fresh.diffPlainView));
-    ZT_EQ("без файла вывоз чистый", b(false), b(fresh.exportKeepMeta));
+    const zametti::ZAppState fresh = zametti::ZAppState::load();
+    ZT_EQ("без файла панели на месте", b(false), b(fresh.panelsHidden()));
+    ZT_EQ("без файла зум единичный", std::to_string(1.0), std::to_string(fresh.zoom()));
+    ZT_EQ("без файла разность полосками", b(false), b(fresh.diffPlainView()));
+    ZT_EQ("без файла вывоз чистый", b(false), b(fresh.exportKeepMeta()));
 
     return zt::report("session");
 }
