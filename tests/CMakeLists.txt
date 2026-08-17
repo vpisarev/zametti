@@ -61,6 +61,7 @@ add_executable(zametti-tests
     reader_test.cpp
     shift_test.cpp
     object_test.cpp
+    objects_in_lists_test.cpp
     caption_test.cpp
     znote_test.cpp
     docstyle_test.cpp

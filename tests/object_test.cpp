@@ -51,6 +51,8 @@ std::string nameOf(ObjectAction action) {
         case ObjectAction::Select: return "выбрать";
         case ObjectAction::StepOver: return "перешагнуть";
         case ObjectAction::ToggleCaption: return "подпись";
+        case ObjectAction::ContinueAfter: return "продолжить пункт";
+        case ObjectAction::DropEmpty: return "убрать пустой блок";
     }
     return "?";
 }
@@ -136,6 +138,7 @@ void checkRulesMatrix() {
     const Key keys[] = {
         {"Enter", Qt::Key_Return, Qt::NoModifier},
         {"Ctrl+Enter", Qt::Key_Return, Qt::ControlModifier},
+        {"Shift+Enter", Qt::Key_Return, Qt::ShiftModifier},
         {"Backspace", Qt::Key_Backspace, Qt::NoModifier},
         {"Delete", Qt::Key_Delete, Qt::NoModifier},
         {"буква", Qt::Key_A, Qt::NoModifier},
@@ -144,7 +147,7 @@ void checkRulesMatrix() {
     int cells = 0;
     int removes = 0;
     int selects = 0;
-    for (int mask = 0; mask < 512; ++mask) {
+    for (int mask = 0; mask < 1024; ++mask) {
         ObjectContext where;
         where.onObject = (mask & 1) != 0;
         where.hasSelection = (mask & 2) != 0;
@@ -155,6 +158,7 @@ void checkRulesMatrix() {
         where.objectAboveGap = (mask & 64) != 0;
         where.objectBelowGap = (mask & 128) != 0;
         where.onGap = (mask & 256) != 0;
+        where.blockEmpty = (mask & 512) != 0;
 
         for (const Key& k : keys) {
             const ObjectAction action = zametti::actionFor(k.key, k.mods, where);
@@ -171,23 +175,33 @@ void checkRulesMatrix() {
                 ZT_EQ(std::string("буква не трогает объект"),
                       nameOf(ObjectAction::None), nameOf(action));
 
-            // Свойство 3: «править» и «строка после» бывают ТОЛЬКО на самом
-            // объекте. Иначе Enter в обычном тексте вдруг начал бы править
-            // соседнюю таблицу.
-            if (action == ObjectAction::Edit || action == ObjectAction::LineAfter)
+            // Свойство 3: «править», «строка после» и «продолжить пункт»
+            // бывают ТОЛЬКО на самом объекте. Иначе Enter в обычном тексте
+            // вдруг начал бы править соседнюю таблицу.
+            if (action == ObjectAction::Edit || action == ObjectAction::LineAfter ||
+                action == ObjectAction::ContinueAfter)
                 ZT_TRUE(std::string(k.name) + ": править можно только на объекте",
                         where.onObject);
 
-            // Свойство 4: убрать объект может только клавиша удаления.
-            if (action == ObjectAction::Remove)
+            // Свойство 4: убрать объект (или пустой блок под ним) может только
+            // клавиша удаления.
+            if (action == ObjectAction::Remove || action == ObjectAction::DropEmpty)
                 ZT_TRUE(std::string(k.name) + ": убирают только Backspace и Delete",
                         k.key == Qt::Key_Backspace || k.key == Qt::Key_Delete);
+
+            // Свойство 5: объект из-под пустого блока не убирается никогда —
+            // Backspace в начале пустого блока убирает сам блок (беда владельца:
+            // «удаляется и пункт, и формула»).
+            if (k.key == Qt::Key_Backspace && where.blockEmpty && where.atBlockStart &&
+                !where.onObject && !where.hasSelection)
+                ZT_TRUE("Backspace в пустом блоке под объектом объект не трогает",
+                        action != ObjectAction::Remove);
 
             if (action == ObjectAction::Remove) ++removes;
             if (action == ObjectAction::Select) ++selects;
         }
     }
-    ZT_EQ("клеток матрицы", n(2560), n(cells));
+    ZT_EQ("клеток матрицы", n(6144), n(cells));
     ZT_TRUE("удаление в матрице встречается", removes > 0);
     ZT_TRUE("шаг на объект в матрице встречается", selects > 0);
 }
@@ -203,6 +217,8 @@ void checkNamedRules() {
           nameOf(zametti::actionFor(Qt::Key_Return, Qt::NoModifier, on)));
     ZT_EQ("Ctrl+Enter на объекте — строка после", nameOf(ObjectAction::LineAfter),
           nameOf(zametti::actionFor(Qt::Key_Return, Qt::ControlModifier, on)));
+    ZT_EQ("Shift+Enter на объекте — продолжить пункт", nameOf(ObjectAction::ContinueAfter),
+          nameOf(zametti::actionFor(Qt::Key_Return, Qt::ShiftModifier, on)));
     ZT_EQ("Backspace на объекте — убрать", nameOf(ObjectAction::Remove),
           nameOf(zametti::actionFor(Qt::Key_Backspace, Qt::NoModifier, on)));
     ZT_EQ("Delete на объекте — убрать", nameOf(ObjectAction::Remove),
@@ -215,6 +231,20 @@ void checkNamedRules() {
     ZT_EQ("Backspace в начале строки под объектом — убрать его",
           nameOf(ObjectAction::Remove),
           nameOf(zametti::actionFor(Qt::Key_Backspace, Qt::NoModifier, below)));
+    // Пустой пункт (после Ctrl+Enter) под объектом: Backspace убирает ПУНКТ, а
+    // не объект (случай владельца) — и прямо под объектом, и через пустую строку.
+    ObjectContext emptyBelow = below;
+    emptyBelow.blockEmpty = true;
+    ZT_EQ("Backspace в пустом блоке под объектом — убрать пустой блок",
+          nameOf(ObjectAction::DropEmpty),
+          nameOf(zametti::actionFor(Qt::Key_Backspace, Qt::NoModifier, emptyBelow)));
+    ObjectContext emptyBelowGap;
+    emptyBelowGap.atBlockStart = true;
+    emptyBelowGap.objectAboveGap = true;
+    emptyBelowGap.blockEmpty = true;
+    ZT_EQ("и через пустую строку — тоже убрать пустой блок",
+          nameOf(ObjectAction::DropEmpty),
+          nameOf(zametti::actionFor(Qt::Key_Backspace, Qt::NoModifier, emptyBelowGap)));
     // А не в начале строки — обычная правка текста.
     ObjectContext middle = below;
     middle.atBlockStart = false;
