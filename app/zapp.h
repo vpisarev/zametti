@@ -22,6 +22,9 @@
 #include "app_state.h"
 #include "settings.h"
 #include "zimage_cache.h"
+#include "zstorage.h"
+
+#include <memory>
 
 #include <QColor>
 #include <QHash>
@@ -56,6 +59,13 @@ public:
     const ZAppState& state() const { return state_; }
     void saveState() { state_.save(); }
 
+    // --- хранилище -----------------------------------------------------------
+    // Открытое хранилище (или каталог/файл вне хранилища — тогда storage()
+    // отвечает isStore() ложью). Одно на программу; кто-то другой хранилища не
+    // открывает — с его каталогом говорит только ZStorage.
+    std::shared_ptr<ZStorage> openStorage(const QString& root);
+    std::shared_ptr<ZStorage> storage() const { return storage_; }
+
     // --- кэш картинок --------------------------------------------------------
     // Один на программу; бюджет и предел стороны — из settings().cache(),
     // ставятся здесь при старте и при перечитывании конфига.
@@ -82,6 +92,7 @@ protected:
     friend size_t qHash(const IconKey& k, size_t seed);
 
     ZAppState state_;
+    std::shared_ptr<ZStorage> storage_;
     ZImageCache images_;
     QHash<IconKey, QPixmap> icons_;
 };

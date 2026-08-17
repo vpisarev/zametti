@@ -133,62 +133,6 @@ std::shared_ptr<NoteTreeModel::Node> buildDir(const QString& dirPath, const QStr
 // Починка структуры живёт в памяти и только в ней: parent в никуда — заметка
 // в корне с пометкой «сирота»; цикл родителей рвётся, виновник в корень с
 // пометкой «цикл». Загрузчик НИКОГДА не пишет в файлы.
-struct StoreNote {
-    QString id;
-    QString parent;
-    QString title;
-    QString snippet;
-    QString modified;
-    QString created;
-    std::optional<SortOrder> sortMark;
-    bool archived = false;
-    bool folder = false;
-    bool lostFound = false;
-};
-
-// Сколько знаков сниппета держим. Две-три строки списка при любой разумной
-// ширине панели; резать точно по строкам нельзя — ширина известна только
-// делегату, и она меняется вместе с разделителем.
-constexpr int kSnippetChars = 200;
-
-bool readStoreNote(const QString& path, StoreNote& out) {
-    QFile f(path);
-    if (!f.open(QIODevice::ReadOnly)) return false;
-    const QByteArray bytes = f.readAll();
-    ZDocument doc;
-    doc.loadMarkdown(std::string_view(bytes.constData(), size_t(bytes.size())));
-
-    out.parent = doc.parentId();
-    // ВРЕМЕНА ПРИВОДЯТСЯ К UTC ПРЯМО ЗДЕСЬ. В шапке они с офсетом
-    // (`…+02:00`), а сравниваются и сортируются строками — лексикографически
-    // «21:40+02:00» больше «19:40Z», хотя это один и тот же момент. Дальше по
-    // дереву ходит только сравнимая форма; показывает даты список, и ему всё
-    // равно, в каком виде их дали, — он переводит в местную зону сам.
-    out.modified = store::comparableTime(doc.modified().toStdString());
-    out.created = store::comparableTime(doc.created().toStdString());
-    // Метка сортировки. Чужое значение (другая версия, чужая программа, опечатка
-    // руками) не должно ни ронять программу, ни молча подменяться на своё:
-    // жалуемся в stderr и показываем папку по наследству, будто метки нет.
-    const QString sort = doc.headerValue(QStringLiteral("sort"));
-    if (!sort.isEmpty()) {
-        out.sortMark = doc.sortOrder();
-        if (!out.sortMark.has_value())
-            std::fprintf(stderr, "непонятная метка сортировки [%s] в [%s] — папка наследует\n",
-                         sort.toUtf8().constData(), path.toUtf8().constData());
-    }
-    out.archived = doc.isArchived();
-    out.folder = doc.isFolder() || doc.isLost();
-    out.lostFound = doc.isLost();
-
-    // Заголовок и сниппет — глаголы заметки: то же правило «первый
-    // содержательный блок» стоит в поиске по хранилищу и в стабе архива, и
-    // писать его здесь в четвёртый раз незачем.
-    out.title = doc.title();
-    if (out.title.isEmpty()) out.title = QStringLiteral("Без названия");
-    out.snippet = doc.snippet(kSnippetChars);
-    return true;
-}
-
 // Подпись корневой строки левой панели: имя хранилища из конфига, а нет его —
 // ИМЯ КАТАЛОГА хранилища (решение владельца). Прежде здесь стояло «All notes»
 // с обоснованием «имя каталога техническое»; на деле оно как раз и отвечает на
@@ -203,7 +147,7 @@ QString storeRootTitle(const QString& root) {
     return name.isEmpty() ? QStringLiteral("All notes") : name;
 }
 
-std::shared_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath) {
+std::shared_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath, const ZStorage& storage) {
     // Два корня: невидимый (им отвечает QModelIndex()) и видимый — строка
     // «All notes», которая в левой панели всегда первая и всегда на месте.
     // Держать её узлом, а не рисовать отдельно, дешевле всего: перенос в
@@ -221,38 +165,26 @@ std::shared_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath) {
     NoteTreeModel::Node* root = rootOwned.get();
     hidden->children.push_back(std::move(rootOwned));
 
-    // Скан: только "<id>.md".
+    // Узлы — из КАТАЛОГА хранилища; диск читает только оно.
     std::vector<std::shared_ptr<NoteTreeModel::Node>> nodes;
     QHash<QString, NoteTreeModel::Node*> byId;
     QHash<QString, QString> parentOf;
-    for (const QFileInfo& info :
-         QDir(rootPath).entryInfoList({QStringLiteral("*.md")}, QDir::Files)) {
-        const QString stem = info.completeBaseName();
-        if (!isValidNoteId(stem.toStdString())) continue;
-        StoreNote meta;
-        if (!readStoreNote(info.absoluteFilePath(), meta)) {
-            // Заметка есть на диске, но не читается — и молча пропадала из
-            // дерева целиком. Человек видел бы пустое место и не узнал бы, что
-            // файл на месте: жалуемся.
-            std::fprintf(stderr, "заметка не читается, в дереве её не будет: [%s]\n",
-                         info.absoluteFilePath().toUtf8().constData());
-            continue;
-        }
+    for (const QString& id : storage.ids()) {
+        const ZStorage::NoteInfo* meta = storage.info(id);
+        if (meta == nullptr) continue;
         auto node = std::make_shared<NoteTreeModel::Node>();
-        node->id = stem;
-        node->title = meta.title;
-        node->snippet = meta.snippet;
-        node->path = info.absoluteFilePath();
-        node->modified = meta.modified.isEmpty()
-                             ? info.lastModified().toUTC().toString(Qt::ISODate)
-                             : meta.modified;
-        node->created = meta.created.isEmpty() ? node->modified : meta.created;
-        node->sortMark = meta.sortMark;
-        node->archived = meta.archived;
-        node->folder = meta.folder;
-        node->lostFound = meta.lostFound;
-        byId.insert(stem, node.get());
-        parentOf.insert(stem, meta.parent);
+        node->id = id;
+        node->title = meta->title();
+        node->snippet = meta->snippet();
+        node->path = meta->path();
+        node->modified = meta->modified();
+        node->created = meta->created();
+        node->sortMark = meta->sortMark();
+        node->archived = meta->archived();
+        node->folder = meta->folder();
+        node->lostFound = meta->lostFound();
+        byId.insert(id, node.get());
+        parentOf.insert(id, meta->parent());
         nodes.push_back(std::move(node));
     }
 
@@ -455,30 +387,27 @@ const NoteTreeModel::Node* nodeOf(const QModelIndex& index, const NoteTreeModel:
 
 }  // namespace
 
-NoteTreeModel::NoteTreeModel(const QString& root, QObject* parent)
-    // Корень приводится к чистому виду ОДИН РАЗ, у двери. Дальше он расходится
-    // по всей программе: из него собираются пути новых заметок и вложений, он
-    // ложится в state.json, по нему ищется замок хранилища. Завершающая косая
-    // черта (её добавляет дополнение в оболочке: `--root sandbox/vpnotes/`)
-    // давала `vpnotes//<id>.md` — путь рабочий, но НЕ РАВНЫЙ по строке тому,
-    // что видит дерево. Из-за этого переставал обновляться заголовок в средней
-    // колонке. Чистить в месте склейки поздно: строка успевает разойтись.
+NoteTreeModel::NoteTreeModel(std::shared_ptr<ZStorage> storage, QObject* parent)
+    // Корень чистый — его привело к чистому виду хранилище, у двери (см.
+    // ZStorage): «vpnotes//<id>.md» не равен по строке «vpnotes/<id>.md», и на
+    // этом переставал обновляться заголовок в средней колонке.
     : QAbstractItemModel(parent),
-      rootPath_(QDir::cleanPath(root)),
-      store_(isStoreRoot(QDir::cleanPath(root))) {
+      rootPath_(storage->root()),
+      store_(storage->isStore()),
+      storage_(std::move(storage)) {
     build();
 }
 
-bool NoteTreeModel::isStoreRoot(const QString& dir) {
-    return QFileInfo(dir + QStringLiteral("/.zametti")).isDir();
-}
+NoteTreeModel::NoteTreeModel(const QString& root, QObject* parent)
+    : NoteTreeModel(std::make_shared<ZStorage>(root), parent) {}
 
 void NoteTreeModel::build() {
     QCollator collator;
     collator.setNumericMode(true);
     collator.setCaseSensitivity(Qt::CaseInsensitive);
     if (store_) {
-        root_ = buildStore(rootPath_);
+        storage_->reload();
+        root_ = buildStore(rootPath_, *storage_);
         sortStore(root_.get(), rootSort_, collator);
         rebuildShown(root_.get(), foldersOnly_);
         return;
@@ -920,20 +849,21 @@ void NoteTreeModel::refreshNote(const QString& path) {
                      path.toUtf8().constData());
         return;
     }
-    StoreNote fresh;
-    if (!readStoreNote(path, fresh)) {
+    if (!storage_->refreshNote(node->id)) {
         // Строка списка осталась бы показывать прежний заголовок и прежнюю
         // дату — то есть врать о файле, которого мы не прочли.
         std::fprintf(stderr, "строка списка не обновлена: заметка не читается [%s]\n",
                      path.toUtf8().constData());
         return;
     }
-    if (node->title == fresh.title && node->snippet == fresh.snippet &&
-        node->modified == fresh.modified)
+    const ZStorage::NoteInfo* fresh = storage_->info(node->id);
+    if (fresh == nullptr) return;
+    if (node->title == fresh->title() && node->snippet == fresh->snippet() &&
+        node->modified == fresh->modified())
         return;
-    node->title = fresh.title;
-    node->snippet = fresh.snippet;
-    if (!fresh.modified.isEmpty()) node->modified = fresh.modified;
+    node->title = fresh->title();
+    node->snippet = fresh->snippet();
+    if (!fresh->modified().isEmpty()) node->modified = fresh->modified();
     const QModelIndex index = indexForNode(node);
     if (index.isValid()) emit dataChanged(index, index, {Qt::DisplayRole});
     emit noteRowChanged(node->id);

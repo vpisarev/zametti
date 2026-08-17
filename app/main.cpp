@@ -393,10 +393,11 @@ int main(int argc, char** argv) {
     zametti::NoteListModel list;
     QListView listView;
 
-    zametti::NoteTreeModel model(
+    // Хранилище открывает объект приложения; дерево — его проекция.
+    zametti::NoteTreeModel model(zapp.openStorage(
         storeRoot.isEmpty()
             ? zametti::NoteTreeModel::rootFor(current, zametti::settings().store().notesRoot())
-            : QFileInfo(storeRoot).absoluteFilePath());
+            : QFileInfo(storeRoot).absoluteFilePath()));
     // Левая панель — только папки (этап 4). Заметки живут в средней колонке;
     // из дерева они не пропадают, но наружу не показываются.
     model.setFoldersOnly(model.isStore());
@@ -1298,25 +1299,15 @@ int main(int argc, char** argv) {
                              QStringLiteral("Не удалось записать %1: %2")
                                  .arg(QFileInfo(file).fileName(), why));
     };
-    const auto rewriteNote = [&](const QString& file,
-                                 auto&& change) -> bool {
-        std::string bytes;
-        if (!readFile(file, bytes)) {
-            complain(file, QStringLiteral("файл не читается"));
-            return false;
-        }
-        zametti::ZDocument doc;
-        doc.loadMarkdown(bytes);
-        change(doc);
-        const std::string out = doc.toMarkdown();
-        std::ofstream outFile(file.toStdString(), std::ios::binary | std::ios::trunc);
-        if (!outFile) {
-            complain(file, QStringLiteral("файл не открывается на запись"));
-            return false;
-        }
-        outFile.write(out.data(), std::streamsize(out.size()));
-        if (outFile) return true;
-        complain(file, QStringLiteral("запись оборвалась"));
+    // Правка шапки ЗАКРЫТОЙ заметки — через хранилище: штатный путь записи
+    // (самопроверка, атомарно) и шаг журнала. Прежде здесь стоял std::ofstream
+    // мимо всего этого — единственная обходная запись на диск в программе.
+    const auto rewriteNote = [&](const QString& file, auto&& change) -> bool {
+        QString error;
+        if (zapp.storage()->rewriteNote(zametti::ZStorage::idOfPath(file), change,
+                                        zametti::NoteEditor::historyRules(), &error))
+            return true;
+        complain(file, error);
         return false;
     };
 

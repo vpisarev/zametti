@@ -21,6 +21,12 @@ ZApp::ZApp() : state_(ZAppState::load()) {
     applySettingsToCaches();
 }
 
+std::shared_ptr<ZStorage> ZApp::openStorage(const QString& root) {
+    storage_ = std::make_shared<ZStorage>(root);
+    storage_->reload();
+    return storage_;
+}
+
 void ZApp::applySettingsToCaches() {
     const ZSettings::Cache& cache = settings().cache();
     images_.setLimits(cache.imageCacheSizeMb(), cache.maxLoadedImageSize());

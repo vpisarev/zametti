@@ -10,6 +10,7 @@
 #define ZAMETTI_NOTE_TREE_H
 
 #include "sort_order.h"
+#include "zstorage.h"
 
 #include <QAbstractItemModel>
 #include <QMimeData>
@@ -65,13 +66,17 @@ public:
     // функции в note_tree.cpp.
     struct Node;
 
+    // Дерево — ПРОЕКЦИЯ каталога хранилища (ZStorage): диск оно не читает.
+    explicit NoteTreeModel(std::shared_ptr<ZStorage> storage, QObject* parent = nullptr);
+    // Удобство наборов и утилит: заводит хранилище само.
     explicit NoteTreeModel(const QString& root, QObject* parent = nullptr);
+    std::shared_ptr<ZStorage> storage() const { return storage_; }
     ~NoteTreeModel() override;
 
     // Плоское ли это хранилище (метка — каталог .zametti). В нём дерево
     // строится не по файловой системе, а по метаданным: каталог — это обычная
     // заметка, у которой есть дети (parent в мете ребёнка).
-    static bool isStoreRoot(const QString& dir);
+    static bool isStoreRoot(const QString& dir) { return ZStorage::isStoreRoot(dir); }
     bool isStore() const { return store_; }
 
     // Id заметки узла (пусто вне хранилища). Корневой индекс — пустой id.
@@ -250,6 +255,7 @@ private:
     bool store_ = false;
     bool foldersOnly_ = false;
     SortOrder rootSort_ = defaultOrder(SortKey::Modified);
+    std::shared_ptr<ZStorage> storage_;
     std::shared_ptr<Node> root_;
     QSet<QString> expanded_;
 };
