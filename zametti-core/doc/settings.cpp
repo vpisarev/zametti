@@ -234,6 +234,7 @@ QJsonObject appearanceToJson(const Appearance& a) {
         {QStringLiteral("fontPoints"), a.imageCaptionPoints},
         {QStringLiteral("gap"), a.imageCaptionGap},
         {QStringLiteral("color"), colorToString(a.imageCaptionColor)},
+        {QStringLiteral("noname"), a.imageNonameCaption.pattern()},
     };
 
     QJsonObject statusBar{
@@ -518,6 +519,14 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
         a.imageCaptionPoints = std::clamp(captionPoints.toDouble(), 6.0, 24.0);
     readReal(imageCaption, "gap", a.imageCaptionGap);
     readColor(imageCaption, "color", a.imageCaptionColor);
+    // Битый регэксп настройку не меняет: молча прятать все подписи (или ни
+    // одной) из-за опечатки в конфиге нельзя.
+    const QJsonValue noname = imageCaption.value(QStringLiteral("noname"));
+    if (noname.isString()) {
+        const QRegularExpression candidate(noname.toString(),
+                                           QRegularExpression::CaseInsensitiveOption);
+        if (candidate.isValid()) a.imageNonameCaption = candidate;
+    }
 
     const QJsonObject statusBar = root.value(QStringLiteral("statusBar")).toObject();
     const QJsonValue statusFamily = statusBar.value(QStringLiteral("family"));

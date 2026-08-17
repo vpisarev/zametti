@@ -1,6 +1,7 @@
 #include "doc_model.h"
 
 #include "math_scan.h"
+#include "settings.h"
 
 #include <QDebug>
 #include <QStringList>
@@ -301,6 +302,26 @@ QString imageRefText(const BlockImageRef& ref) {
         pairs << QStringLiteral("w=") + QString::number(qRound(ref.widthHint));
     if (!align.isEmpty()) pairs << align;
     return ref.path + QLatin1Char('#') + pairs.join(QLatin1Char('&'));
+}
+
+bool isNonameCaption(const QString& caption) {
+    const QString text = caption.trimmed();
+    if (text.isEmpty()) return true;
+    const QChar first = text.at(0);
+    if (first == QLatin1Char('~') || first == QLatin1Char('-')) return true;
+    return appearance().imageNonameCaption.match(text).hasMatch();
+}
+
+QString captionWithHidingToggled(const QString& caption, QChar mark) {
+    if (!caption.isEmpty() &&
+        (caption.at(0) == QLatin1Char('~') || caption.at(0) == QLatin1Char('-')))
+        return caption.mid(1);
+    return mark + caption;
+}
+
+QString BlockImageRef::shownCaption() const {
+    if (wiki || isNonameCaption(alt)) return {};
+    return alt;
 }
 
 // Атрибуты картинки — ширина и выравнивание — разбираются одинаково в обеих
