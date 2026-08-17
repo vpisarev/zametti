@@ -74,7 +74,7 @@ NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
     connect(verticalScrollBar(), &QScrollBar::actionTriggered, this, [this] { releaseCaret(); });
     // Подсветка поиска лежит только на видимом — при прокрутке перекладывается.
     connect(verticalScrollBar(), &QScrollBar::valueChanged, this, [this] {
-        if (!current_.search.empty()) showMatchHighlights();
+        if (!note_->search().empty()) showMatchHighlights();
     });
     // Щелчок по месту языка в полоске заводит поле ввода. Виджет просмотра
     // сам язык не правит: правки документа живут здесь.
@@ -434,6 +434,13 @@ void NoteEditor::installNote(std::shared_ptr<ZNote> note) {
     // уже разрушенный документ: присваивание объекта убивает старый вместе с
     // ним. Так и падало, пока не свёл в одно место.
     ZDocument previousNote = note_->doc();
+    // ПОДСВЕТКА НАХОДОК СНИМАЕТСЯ ДО ПОДМЕНЫ ДОКУМЕНТА. Она держится курсорами
+    // в прежнем документе, и Qt при следующем setExtraSelections спрашивает у
+    // старых курсоров их прямоугольники — а документа к тому времени уже нет
+    // (падение: поиск в заметке, открытой после другой, где искали). Найденное
+    // при заметке остаётся (кэш поиска), и у той, что пришла, подсветка
+    // ставится заново ниже.
+    setExtraSelections({});
     if (document() != nullptr) disconnect(document(), nullptr, this, nullptr);
     note_ = std::move(note);
     if (note_ == nullptr) note_ = std::make_shared<ZNote>();
@@ -469,6 +476,8 @@ void NoteEditor::installNote(std::shared_ptr<ZNote> note) {
     imageResizeBlock_ = -1;
     imageHoverCorner_ = false;
     pressedAnchor_.clear();
+    // Найденное приехало вместе с заметкой (кэш поиска) — показать его.
+    if (!note_->search().empty()) showMatchHighlights();
 
     // Таймеры перенастраиваются под новую заметку. Отложенный снимок — её
     // свойство и приехал вместе с ней; висящий от прошлой заметки таймер
@@ -481,6 +490,7 @@ void NoteEditor::installNote(std::shared_ptr<ZNote> note) {
 // ради показа значило бы завести второе место, где живёт «что сейчас в поле».
 void NoteEditor::showDiffSlot(int slot) {
     releaseCaret();   // в истории показан слепок, каретки заметки в нём нет
+    setExtraSelections({});   // курсоры подсветки — в прежнем документе
     if (document() != nullptr) disconnect(document(), nullptr, this, nullptr);
     setDocument(current_.diffDocs[size_t(slot)].get());
     connectDocument();
@@ -1029,7 +1039,21 @@ void NoteEditor::revealInGolden(const QRectF& place) {
 }
 
 int NoteEditor::findMatches(const QString& text, bool caseSensitive) {
-    const int found = current_.search.find(*document(), text, caseSensitive);
+    // КЭШ: тот же запрос по неправленному документу — искать заново незачем,
+    // найденное лежит при заметке вместе с номером текущего.
+    NoteSearch& search = note_->search();
+    if (search.isFreshFor(*document(), text, caseSensitive)) {
+        showMatchHighlights();
+        return search.count();
+    }
+    const int found = search.find(*document(), text, caseSensitive);
+    // Каретка уже стоит на находке (вернулись к заметке, где ходили по ним) —
+    // она и текущая: иначе счётчик показывал бы «0/N» при выделенном вхождении.
+    const QTextCursor caret = textCursor();
+    if (caret.hasSelection()) {
+        const int at = search.indexOfSelection(caret.selectionStart(), caret.selectionEnd());
+        if (at >= 0) search.setCurrent(at);
+    }
     showMatchHighlights();
     return found;
 }
@@ -1043,7 +1067,7 @@ void NoteEditor::showMatchHighlights() {
     // берётся окно с запасом по экрану сверху и снизу, а при прокрутке
     // подсветка перекладывается заново — это O(видимого).
     QList<QTextEdit::ExtraSelection> selections;
-    const NoteSearch& search = current_.search;
+    const NoteSearch& search = note_->search();
     if (search.empty()) {
         setExtraSelections(selections);
         return;
@@ -1069,17 +1093,17 @@ void NoteEditor::showMatchHighlights() {
 }
 
 void NoteEditor::goToMatch(int index) {
-    if (current_.search.empty()) return;
-    current_.search.setCurrent(index);
+    if (note_->search().empty()) return;
+    note_->search().setCurrent(index);
     const int scrollBefore = verticalScrollBar()->value();
-    setTextCursor(current_.search.hit(current_.search.current()));
+    setTextCursor(note_->search().hit(note_->search().current()));
     showMatchHighlights();
     // Переход: совпадение вне окна или у самой кромки — в золотое сечение.
     showEditPlace(scrollBefore, /*jump=*/true);
 }
 
 void NoteEditor::stepMatch(int direction) {
-    const NoteSearch& search = current_.search;
+    const NoteSearch& search = note_->search();
     if (search.empty()) return;
     if (search.hasCurrent()) {
         goToMatch(search.current() + direction);
@@ -1094,13 +1118,13 @@ void NoteEditor::stepMatch(int direction) {
 }
 
 void NoteEditor::clearMatches() {
-    current_.search.clear();
+    note_->search().clear();
     setExtraSelections({});
 }
 
 bool NoteEditor::replaceCurrentMatch(const QString& with) {
-    if (!current_.search.hasCurrent()) return false;
-    const QTextCursor target = current_.search.hit(current_.search.current());
+    if (!note_->search().hasCurrent()) return false;
+    const QTextCursor target = note_->search().hit(note_->search().current());
     // Замена одного вхождения — это НАБОР ПОВЕРХ ВЫДЕЛЕНИЯ, ровно тот же
     // глагол, что у клавиатуры: заводить ради неё второй путь незачем.
     const QTextCharFormat format = currentCharFormat();
@@ -1112,9 +1136,9 @@ bool NoteEditor::replaceCurrentMatch(const QString& with) {
     if (!done) return false;
     // Прежние курсоры недействительны, ищем заново и встаём на следующее
     // вхождение.
-    const int at = current_.search.current();
-    findMatches(current_.search.text(), current_.search.caseSensitive());
-    if (!current_.search.empty()) goToMatch(at < current_.search.count() ? at : 0);
+    const int at = note_->search().current();
+    findMatches(note_->search().text(), note_->search().caseSensitive());
+    if (!note_->search().empty()) goToMatch(at < note_->search().count() ? at : 0);
     return true;
 }
 
@@ -2349,7 +2373,7 @@ bool NoteEditor::runNoteEdit(const std::function<bool(ZDocument&, QTextCursor&)>
     recordingSuspended_ = false;
 
     current_.runBroken = true;   // структурная правка кончает серию набора
-    if (note_->statsFresh()) {
+    if (note_->statsCounted()) {
         note_->invalidateStats();
         emit statsChanged();
     }
@@ -2631,7 +2655,7 @@ void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
     // состояние документа сама, а устаревший «из чего собрано» лишь расширяет
     // ей область работы, не портя результат.
     current_.runBroken = true;   // вставка кончает серию набора
-    if (note_->statsFresh()) {
+    if (note_->statsCounted()) {
         note_->invalidateStats();
         emit statsChanged();
     }
@@ -2861,7 +2885,7 @@ void NoteEditor::onContentsChanged() {
     current_.undoRun = false;   // настоящая правка — серия отмены кончилась
     // Числа отстали от документа. Сам пересчёт будет на ближайшем
     // автосохранении: на нажатие клавиши статистику не считаем.
-    if (note_->statsFresh()) {
+    if (note_->statsCounted()) {
         note_->invalidateStats();
         emit statsChanged();
     }
@@ -3239,8 +3263,8 @@ void NoteEditor::renderDiff(const DiffSpot& keep) {
     // Подсветка находок держится курсорами в документе, а документ сейчас
     // сменится: запоминаем запрос и ставим подсветку заново на новом. Без
     // этого смена стороны гасила поиск молча.
-    const QString query = current_.search.text();
-    const bool caseSensitive = current_.search.caseSensitive();
+    const QString query = note_->search().text();
+    const bool caseSensitive = note_->search().caseSensitive();
     clearMatches();
 
     // Показ слепка — не правка человека: цепочки отмены здесь нет вовсе, она

@@ -8,12 +8,15 @@
 //
 //   * ZDocument — живая модель текста; правится только своими глаголами;
 //   * ZNoteHistory — журнал этой заметки ОДНИМ ПОЛЕМ, а не россыпью;
+//   * NoteSearch — найденное в ней (кэш поиска: вернулись — оно при заметке);
 //   * шапка (мета), отпечаток и последняя записанная копия — «изменилось ли»;
-//   * счёт слов и строк, признак самопроверки;
+//   * производное от текста — счёт слов и строк, блоки сборки для заплатки
+//     (Derived<T>, derived.h: значение + ревизия документа; новая кэшируемая
+//     величина заводится тем же шаблоном, а не своим флагом);
 //   * место человека в заметке: каретка, второй конец выделения, прокрутка.
 //
-// Что НЕ переживает ухода (режим истории, найденное, серия набора, курсоры
-// уборки) — здесь не живёт; это состояние текущего вида (см. NoteEditor).
+// Что НЕ переживает ухода (режим истории, серия набора, курсоры уборки) —
+// здесь не живёт; это состояние текущего вида (см. NoteEditor).
 //
 // Держится через std::shared_ptr и не копируется: ZDocument внутри — ручка,
 // и копия объекта разделяла бы документ, но заводила бы второй журнал и
@@ -28,6 +31,8 @@
 #include "hash.h"
 #include "note_header.h"
 #include "text_stats.h"
+#include "derived.h"
+#include "note_search.h"
 #include "znote_history.h"
 
 #include <QByteArray>
@@ -97,13 +102,22 @@ public:
     ZNoteHistory& history() { return history_; }
     const ZNoteHistory& history() const { return history_; }
 
-    // --- слова и строки ---------------------------------------------------
-    // Числа отвечают тому, что в документе сейчас, только пока fresh: ложь тут
-    // дороже молчания — окно показывает «?» вместо числа слов.
-    const NoteStats& stats() const { return stats_; }
-    bool statsFresh() const { return statsFresh_; }
-    void setStats(const NoteStats& stats);
-    void invalidateStats() { statsFresh_ = false; }
+    // --- найденное (кэш поиска) --------------------------------------------
+    // Запрос и вхождения в документе этой заметки; переживают уход и возврат.
+    // Свежесть — по ревизии документа (NoteSearch::isFreshFor).
+    NoteSearch& search() { return search_; }
+    const NoteSearch& search() const { return search_; }
+
+    // --- слова и строки (производное, см. derived.h) ----------------------
+    // Числа отвечают тому, что в документе сейчас, только пока свежи — по
+    // ревизии документа: ложь тут дороже молчания, окно показывает «?».
+    const NoteStats& stats() const { return stats_.value(); }
+    bool statsFresh() const { return stats_.freshFor(doc_.revision()); }
+    // Считались и не сброшены вслух — даже если с тех пор правили. Нужно
+    // тому, кто сообщает «числа устарели» ровно один раз, а не на каждую букву.
+    bool statsCounted() const { return stats_.valid(); }
+    void setStats(const NoteStats& stats) { stats_.set(stats, doc_.revision()); }
+    void invalidateStats() { stats_.invalidate(); }
 
     // --- место человека ---------------------------------------------------
     CaretSpot caret() const { return caret_; }
@@ -120,11 +134,14 @@ public:
 
     // --- из чего собран документ: нужно заплатке -------------------------
     // ДОЛГ, названный вслух: копия содержимого, от которой мы уходим
-    // (zametti-method-not-copy). Пока заплатка pathDocument сравнивает блоки,
-    // они живут здесь; nullptr — заплатке не за что зацепиться.
-    const std::vector<Piece>* builtBlocks() const { return builtValid_ ? &built_ : nullptr; }
-    void setBuiltBlocks(std::vector<Piece> blocks);
-    void invalidateBuilt() { builtValid_ = false; }
+    // (zametti-method-not-copy). Пока заплатка patchDocument сравнивает блоки,
+    // они живут здесь; nullptr — заплатке не за что зацепиться. Свежесть у
+    // них НЕ по ревизии: заплатка как раз сравнивает собранное с правленым.
+    const std::vector<Piece>* builtBlocks() const {
+        return built_.valid() ? &built_.value() : nullptr;
+    }
+    void setBuiltBlocks(std::vector<Piece> blocks) { built_.set(std::move(blocks), doc_.revision()); }
+    void invalidateBuilt() { built_.invalidate(); }
 
 protected:
     QString path_;
@@ -134,14 +151,13 @@ protected:
     Digest digest_;
     QByteArray lastSaved_;
     ZNoteHistory history_;
-    NoteStats stats_;
-    bool statsFresh_ = false;
+    NoteSearch search_;
+    Derived<NoteStats> stats_;
     bool selfCheckFailed_ = false;
     CaretSpot caret_;
     bool wasModified_ = false;
     qint64 cachedBytes_ = 0;
-    std::vector<Piece> built_;
-    bool builtValid_ = false;
+    Derived<std::vector<Piece>> built_;
 };
 
 }  // namespace zametti

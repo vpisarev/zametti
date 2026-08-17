@@ -296,6 +296,74 @@ void checkCaretMemory() {
             editor.textCursor().position() == remembered);
 }
 
+// КЭШ ПОИСКА ПРИ СМЕНЕ ЗАМЕТКИ (сценарий владельца: «Ficus Tutorial», ищем,
+// F3 на первое, уходим на «Карамазовых», возвращаемся — а он пишет „нет
+// совпадений“, хотя стоит на первом»). Найденное живёт при заметке (ZNote):
+// у чужой заметки его нет, у своей — то же с тем же номером текущего; правка
+// делает его несвежим, и поиск идёт заново; заметка, перечитанная с диска, —
+// новый объект, и кэш ушёл вместе со старым, а не подменён на «нет».
+void checkSearchSurvivesSwitch() {
+    const QString first = g_root + QStringLiteral("/00000000000001.md");    // «сено» ×1
+    const QString second = g_root + QStringLiteral("/00000000000002.md");   // «сено» ×3
+    const QString third = g_root + QStringLiteral("/00000000000003.md");    // нет
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(second);
+    QTest::qWait(20);
+    ZT_EQ("три вхождения", std::string("3"),
+          std::to_string(editor.findMatches(QStringLiteral("сено"), false)));
+    editor.goToMatch(0);
+    ZT_EQ("F3 — на первом", std::string("0"), std::to_string(editor.currentMatch()));
+
+    editor.openFile(third);
+    QTest::qWait(20);
+    ZT_EQ("у чужой заметки найденного нет", std::string("0"), std::to_string(editor.matchCount()));
+    ZT_EQ("и поиск в ней честно пуст", std::string("0"),
+          std::to_string(editor.findMatches(QStringLiteral("сено"), false)));
+
+    editor.openFile(second);
+    QTest::qWait(20);
+    ZT_EQ("вернулись — найденное при заметке", std::string("3"),
+          std::to_string(editor.matchCount()));
+    ZT_EQ("и текущее — то же первое", std::string("0"), std::to_string(editor.currentMatch()));
+    // Тот же запрос по неправленной заметке — из кэша: текущее не сбрасывается.
+    ZT_EQ("повторный запрос — те же три", std::string("3"),
+          std::to_string(editor.findMatches(QStringLiteral("сено"), false)));
+    ZT_EQ("текущее пережило повторный запрос", std::string("0"),
+          std::to_string(editor.currentMatch()));
+
+    // Правка делает найденное несвежим: ищется заново, текущего нет.
+    QTextCursor end = editor.textCursor();
+    end.movePosition(QTextCursor::End);
+    editor.setTextCursor(end);
+    QTest::keyClicks(&editor, QStringLiteral(" x"));
+    QTest::qWait(20);
+    ZT_EQ("после правки — заново, вхождений столько же", std::string("3"),
+          std::to_string(editor.findMatches(QStringLiteral("сено"), false)));
+    ZT_EQ("а текущего после пересчёта нет", std::string("-1"),
+          std::to_string(editor.currentMatch()));
+    editor.undo();
+    QTest::qWait(20);
+
+    // Заметка изменилась на диске, пока мы были в другой: вернулись — объект
+    // новый, найденного при нём нет; поиск заново находит уже по новому тексту.
+    editor.openFile(first);
+    QTest::qWait(20);
+    editor.findMatches(QStringLiteral("сено"), false);
+    QTest::qWait(20);
+    note(QStringLiteral("00000000000002"), QStringLiteral("modified: 2021-01-01T00:00:00Z\n"),
+         QStringLiteral("# Сено\n\nтеперь тут только сено\n"));
+    editor.openFile(second);
+    QTest::qWait(20);
+    ZT_EQ("перечитанная с диска — без старого найденного", std::string("0"),
+          std::to_string(editor.matchCount()));
+    ZT_EQ("новый поиск — по новому тексту (заголовок и строка)", std::string("2"),
+          std::to_string(editor.findMatches(QStringLiteral("сено"), false)));
+}
+
 // История ЗАПРОСОВ (не заметок): что попадает в список, в каком порядке и
 // сколько его хранится. Живёт между запусками, поэтому проверяется отдельно от
 // самого поиска.
@@ -432,6 +500,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkStoreSearch();
     checkEditorSearch();
     checkCaretMemory();
+    checkSearchSurvivesSwitch();
     checkQueryHistory();
     checkShortcutsReachWindow();
 

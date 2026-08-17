@@ -104,6 +104,8 @@ bool ZDocument::loadMarkdown(std::string_view bytes) {
 }
 
 
+int ZDocument::revision() const { return d_->text.revision(); }
+
 const ZDocStyle& ZDocument::style() const { return styleOf(d_->text); }
 
 void ZDocument::setStyle(std::shared_ptr<const ZDocStyle> style) {

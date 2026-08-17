@@ -15,8 +15,11 @@ QString ZNote::id() const { return QFileInfo(path_).completeBaseName(); }
 ZDocument ZNote::replaceDoc(ZDocument fresh) {
     ZDocument previous = doc_;
     doc_ = std::move(fresh);
-    builtValid_ = false;
-    statsFresh_ = false;
+    // Другой документ — всё производное от прежнего вслух устарело: ревизия
+    // у нового может совпасть случайно.
+    built_.invalidate();
+    stats_.invalidate();
+    search_.clear();
     return previous;
 }
 
@@ -37,14 +40,5 @@ bool ZNote::setSelfCheckFailed(bool failed) {
     return true;
 }
 
-void ZNote::setStats(const NoteStats& stats) {
-    stats_ = stats;
-    statsFresh_ = true;
-}
-
-void ZNote::setBuiltBlocks(std::vector<Piece> blocks) {
-    built_ = std::move(blocks);
-    builtValid_ = true;
-}
 
 }  // namespace zametti

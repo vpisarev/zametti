@@ -2282,6 +2282,18 @@ int main(int argc, char** argv) {
                               .arg(editor.matchCount()));
     };
 
+    // СМЕНА ЗАМЕТКИ ПРИ ОТКРЫТОМ ПОИСКЕ — ПОИСК ЗАНОВО (решение владельца).
+    // Найденное — курсоры в показанном документе; с новой заметкой они
+    // пропадают, а счётчик оставался старым: «2 вхождения» на чужой заметке
+    // и «нет совпадений» при возврате на ту, где каретка стоит на находке.
+    // Режим истории здесь ни при чём: смена заметки его кончает сама.
+    QObject::connect(&editor, &zametti::NoteEditor::fileChanged, &window, [&](const QString&) {
+        if (findBar.isHidden()) return;
+        if (findBar.mode() == zametti::FindBar::Mode::InNote ||
+            findBar.mode() == zametti::FindBar::Mode::Replace)
+            updateInNoteSearch(findBar.query());
+    });
+
     QObject::connect(&findBar, &zametti::FindBar::queryChanged, &window,
                      [&](const QString& text) {
         if (findBar.mode() == zametti::FindBar::Mode::History) {

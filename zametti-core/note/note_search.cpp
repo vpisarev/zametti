@@ -11,6 +11,8 @@ int NoteSearch::find(const QTextDocument& doc, const QString& text, bool caseSen
     caseSensitive_ = caseSensitive;
     hits_.clear();
     current_ = -1;
+    doc_ = &doc;
+    revision_ = doc.revision();
     if (text.isEmpty()) return 0;
     QTextDocument::FindFlags flags;
     if (caseSensitive) flags |= QTextDocument::FindCaseSensitively;
@@ -33,6 +35,14 @@ void NoteSearch::clear() {
     hits_.clear();
     current_ = -1;
     text_.clear();
+    doc_ = nullptr;
+    revision_ = -1;
+}
+
+bool NoteSearch::isFreshFor(const QTextDocument& doc, const QString& text,
+                            bool caseSensitive) const {
+    return doc_ == &doc && revision_ == doc.revision() && text_ == text &&
+           caseSensitive_ == caseSensitive;
 }
 
 void NoteSearch::setCurrent(int index) {
@@ -53,6 +63,13 @@ int NoteSearch::nearestForward(int position) const {
 int NoteSearch::nearestBackward(int position) const {
     for (size_t i = hits_.size(); i-- > 0;)
         if (hits_[i].selectionEnd() <= position) return int(i);
+    return -1;
+}
+
+int NoteSearch::indexOfSelection(int from, int to) const {
+    if (to <= from) return -1;
+    for (size_t i = 0; i < hits_.size(); ++i)
+        if (hits_[i].selectionStart() == from && hits_[i].selectionEnd() == to) return int(i);
     return -1;
 }
 
