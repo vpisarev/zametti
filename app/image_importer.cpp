@@ -23,8 +23,8 @@ class ImageImporter::Worker : public QObject {
     Q_OBJECT
 
 public:
-    Worker(std::atomic<bool>& cancel, std::atomic<bool>& busy)
-        : cancel_(cancel), busy_(busy) {}
+    Worker(std::atomic<bool>& cancel, std::atomic<bool>& busy, const ImportLimits& limits)
+        : cancel_(cancel), busy_(busy), limits_(limits) {}
 
 public slots:
     // Задание целиком: файлы или готовые пиксели. Пиксели приходят копией —
@@ -72,15 +72,15 @@ signals:
 private:
     std::atomic<bool>& cancel_;
     std::atomic<bool>& busy_;
-    // Границы берутся ОДИН раз, при заведении работника: лезть в настройки из
-    // чужого потока нельзя, а меняются они только при перезагрузке конфига.
-    ImportLimits limits_ = limitsFromSettings();
+    // Границы даны ОДИН раз, при заведении работника, параметром: лезть в
+    // настройки из чужого потока нельзя, да и незачем — они не его.
+    ImportLimits limits_;
 };
 
-ImageImporter::ImageImporter(QObject* parent) : QObject(parent) {
+ImageImporter::ImageImporter(const ImportLimits& limits, QObject* parent) : QObject(parent) {
     qRegisterMetaType<zametti::ImportedImage>("zametti::ImportedImage");
     thread_ = new QThread(this);
-    worker_ = new Worker(cancel_, busy_);
+    worker_ = new Worker(cancel_, busy_, limits);
     worker_->moveToThread(thread_);
     // Работник умирает вместе с потоком, а не с нами: удалить объект, живущий
     // в чужом потоке, из своего — это гонка.

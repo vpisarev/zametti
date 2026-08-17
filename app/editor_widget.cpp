@@ -2671,7 +2671,7 @@ bool NoteEditor::beginImport(int count) {
         return false;
     }
     if (importer_ == nullptr) {
-        importer_ = new ImageImporter(this);
+        importer_ = new ImageImporter(importLimitsFrom(settings().images), this);
         connect(importer_, &ImageImporter::imported, this,
                 [this](const ImportedImage& one) { importedBatch_.push_back(one); });
         connect(importer_, &ImageImporter::finished, this, &NoteEditor::onImportFinished);

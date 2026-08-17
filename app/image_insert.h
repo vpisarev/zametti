@@ -29,6 +29,7 @@
 #pragma once
 
 #include "import_limits.h"
+#include "settings.h"
 
 #include <QImage>
 #include <QString>
@@ -64,9 +65,10 @@ StoredImage storeImagePixels(const QImage& image, const QString& storeDir,
 // её из двух мест, а экранирование скобок в alt забыть легко.
 QString imageMarkdown(const StoredImage& stored);
 
-// Числа конфига → границы импорта. Отдельной функцией и здесь, а не в
-// настройках: настройки описывают ВЕСЬ облик программы и о картинках знать не
-// обязаны, а этот файл ровно про них.
-ImportLimits limitsFromSettings();
+// Раздел настроек о картинках → границы импорта. ЧИСТАЯ ФУНКЦИЯ ОТ РАЗДЕЛА, а
+// не чтение глобального: кто заводит ввоз, тот и отдаёт ему числа (решение
+// владельца — части настроек передаются классам параметрами; так ввоз можно
+// однажды запустить и с другим пресетом, не трогая настройки программы).
+ImportLimits importLimitsFrom(const ZSettings::Images& images);
 
 }  // namespace zametti

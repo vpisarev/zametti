@@ -31,6 +31,8 @@
 
 #include <QImage>
 #include <QMetaType>
+#include "import_limits.h"
+
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -75,7 +77,11 @@ class ImageImporter : public QObject {
     Q_OBJECT
 
 public:
-    explicit ImageImporter(QObject* parent = nullptr);
+    // Границы ввоза — параметром, а не из глобальных настроек: работник в
+    // чужом потоке в настройки не лезет, а тот, кто заводит ввоз, знает, с
+    // какими числами его вести (importLimitsFrom(settings().images) у
+    // редактора; у набора или другого пресета — свои).
+    explicit ImageImporter(const ImportLimits& limits, QObject* parent = nullptr);
     ~ImageImporter() override;
 
     // Задание: файлы (или готовые пиксели) и куда их класть. Кладётся в

@@ -174,8 +174,7 @@ StoredImage storeImagePixels(const QImage& image, const QString& storeDir,
     return finish(importPixels(image, limits), storeDir, QString());
 }
 
-ImportLimits limitsFromSettings() {
-    const ZSettings::Images& s = settings().images;
+ImportLimits importLimitsFrom(const ZSettings::Images& s) {
     ImportLimits limits;
     limits.maxSize = s.maxImportedImageSize;
     limits.quality = s.photoQuality;
