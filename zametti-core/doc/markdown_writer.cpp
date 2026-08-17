@@ -343,6 +343,15 @@ void appendEscaped(TextSink& sink, QStringView text, qsizetype begin, qsizetype 
                 qsizetype j = i;
                 while (j < text.size() && text.at(j) == c) ++j;
                 bool escape = runCanDelimit(text, i, j);
+                // ОДИНОКАЯ ТИЛЬДА ЗАЧЁРКИВАНИЯ НЕ ОТКРОЕТ: ей нужна пара, а
+                // другой тильды в тексте нет. Без этого «~подпись» — спрятанная
+                // подпись картинки (см. isNonameCaption) — уезжала бы в файл
+                // как «\~подпись», и написанное человеком руками менялось бы
+                // при первой же записи. Судья — md4c: пробег без пары читается
+                // буквально (Roundtrip/Corpus стерегут).
+                if (escape && c == u'~' && text.indexOf(c, j) < 0 &&
+                    (i == 0 || text.left(i).indexOf(c) < 0))
+                    escape = false;
                 for (qsizetype k = i; k < j && !escape; ++k)
                     if ((markAt(sink, k) & kMarkDelimEdge) != 0) escape = true;
                 const qsizetype stop = j < end ? j : end;
