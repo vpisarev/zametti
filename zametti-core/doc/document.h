@@ -406,11 +406,20 @@ public:
     // Ctrl+Enter заводит абзац после, Del и Backspace убирают объект целиком.
     // Какие блоки его составляют, знает слой объекта; заметка делает.
 
-    // Пустая строка сразу ПОСЛЕ этого блока, каретка в ней.
+    // Ctrl+Enter на объекте: пустая строка после него и — если объект стоит
+    // внутри пункта — новый пункт на том же уровне; каретка в новом блоке.
     bool insertLineAfter(QTextCursor& at, int blockIndex);
+    // Shift+Enter на объекте (и в конце блока кода): пустая строка и абзац на
+    // уровне объекта — продолжение ТОГО ЖЕ пункта текстом (решение владельца);
+    // вне списка — просто абзац после. Каретка в абзаце.
+    bool continueItemAfter(QTextCursor& at, int blockIndex);
     // Блоки [first..last] целиком, вместе с разделителем: иначе от объекта
     // осталась бы пустая строка, которой в файле не было.
     bool removeBlocks(QTextCursor& at, int first, int last);
+    // Backspace в пустом блоке под объектом (пустой пункт после Ctrl+Enter):
+    // убрать сам блок, а не объект, — и пустую строку над ним, если она больше
+    // ничего не разделяет. Каретку на объект ставит вызывающий.
+    bool dropEmptyBlockAfterObject(QTextCursor& at, int number);
 
     // --- ЗАМЕНА ПО ВСЕЙ ЗАМЕТКЕ -------------------------------------------
 
@@ -502,6 +511,9 @@ protected:
     // как собрал бы с нуля.
     void replaceBlocks(int firstBlock, int lastBlock, const std::vector<Piece>& to,
                        QTextCursor* caret = nullptr);
+
+    // Общее тело insertLineAfter / continueItemAfter.
+    bool insertAfterObject(QTextCursor& at, int blockIndex, bool continueItem);
 
     // ОДНА МЕСТНАЯ ПРАВКА СТРОЕНИЯ ЦЕЛИКОМ: скобка отмены, сама правка,
     // пересборка тронутого сборщиком, шов, сверка со сборкой в отладочной

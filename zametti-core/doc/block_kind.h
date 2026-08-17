@@ -117,7 +117,10 @@ inline bool isList(Kind k) { return k == Kind::ListItem; }
 inline bool wouldMerge(Kind previousKind, bool previousRaw, bool previousClosedComment,
                        Kind nextKind, bool nextRaw, int nextLevel) {
     if (previousClosedComment) return false;
-    if (nextLevel >= 0 && !nextRaw && (nextKind == Kind::Code || nextKind == Kind::Math) &&
+    // Дословный кусок с уровнем (таблица, HTML внутри пункта) — та же
+    // литеральность: строка с палками сразу за строкой пункта читалась бы её
+    // ленивым продолжением, а не таблицей.
+    if (nextLevel >= 0 && (nextRaw || nextKind == Kind::Code || nextKind == Kind::Math) &&
         isList(previousKind) && !previousRaw)
         return true;
     // Kind::Html — комментарий, понятый моделью, — прозрачен так же; снизу его

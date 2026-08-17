@@ -1005,6 +1005,27 @@ void Writer::push(const Piece& b) {
             out += u'\n';
 
         if (b.raw) {
+            if (b.level >= 0) {
+                // Дословный кусок ВНУТРИ ПУНКТА: каждая непустая строка
+                // отступает до колонки содержимого пункта — как строки блока
+                // кода. Читатель этот отступ снял (newRawInsideItem), здесь он
+                // возвращается; пустые строки остаются пустыми.
+                const QString pad(indentInsideItem(b, contentCol), u' ');
+                forEachLine(body, [&](QStringView line, qsizetype, bool) {
+                    if (!line.isEmpty()) {
+                        out += pad;
+                        out += line;
+                    }
+                    out += u'\n';
+                });
+                // Прогон списка кусок внутри пункта не обрывает — как и второй
+                // абзац пункта: нумерация за ним продолжается.
+                prevWasQuote = false;
+                prevLevel = b.level;
+                previous_ = b;
+                hasFirst_ = true;
+                return;
+            }
             out += body;
             if (out.isEmpty() || out.back() != u'\n') out += u'\n';
             std::fill(runAlive.begin(), runAlive.end(), 0);
@@ -1452,6 +1473,8 @@ void walkPieces(const QTextDocument& doc, const std::function<bool(const Piece&)
         close();
         open = true;
         piece.raw = raw;
+        // Уровень есть и у дословного куска внутри пункта.
+        piece.level = levelOf(block);
         if (!raw) {
             piece.kind = kindOf(block);
             if (piece.kind == Kind::Heading) piece.headingLevel = format.headingLevel();
@@ -1460,7 +1483,6 @@ void walkPieces(const QTextDocument& doc, const std::function<bool(const Piece&)
                 piece.marker = style.marker;
                 piece.checked = style.checked;
             }
-            piece.level = levelOf(block);
             if (piece.kind == Kind::Code)
                 piece.info = format.stringProperty(InfoProperty);
         }

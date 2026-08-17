@@ -48,6 +48,7 @@ BlockObject objectAt(const QTextDocument& doc, int blockNumber) {
 ObjectAction actionFor(int key, Qt::KeyboardModifiers mods, const ObjectContext& where) {
     const bool plain = (mods & ~Qt::KeypadModifier) == Qt::NoModifier;
     const bool ctrl = (mods & ~Qt::KeypadModifier) == Qt::ControlModifier;
+    const bool shift = (mods & ~Qt::KeypadModifier) == Qt::ShiftModifier;
     const bool enter = key == Qt::Key_Return || key == Qt::Key_Enter;
 
     // Выделение — не наше дело: человек выделил кусок текста и правит его как
@@ -55,9 +56,11 @@ ObjectAction actionFor(int key, Qt::KeyboardModifiers mods, const ObjectContext&
     // значило бы удивлять на ровном месте.
     if (where.hasSelection) return ObjectAction::None;
 
-    // Ctrl+Enter — параграф после объекта. Одинаково у картинки, таблицы,
-    // формулы и блока кода: жест общий, и это его определение.
+    // Ctrl+Enter — новый пункт (или строка) после объекта. Одинаково у
+    // картинки, таблицы, формулы и блока кода: жест общий, и это его определение.
     if (enter && ctrl && where.onObject) return ObjectAction::LineAfter;
+    // Shift+Enter — продолжить пункт текстом под объектом.
+    if (enter && shift && where.onObject) return ObjectAction::ContinueAfter;
 
     if (where.onObject) {
         // Enter — править объект. У таблицы это исходник с палками, у картинки
@@ -85,6 +88,12 @@ ObjectAction actionFor(int key, Qt::KeyboardModifiers mods, const ObjectContext&
     // с объектом, и удаление «в его сторону» означает удаление объекта, а не
     // слияние строк.
     if (key == Qt::Key_Backspace && where.atBlockStart) {
+        // Пустой блок под объектом (пустой пункт после Ctrl+Enter, пустой
+        // абзац) — своё: Backspace убирает его и ставит каретку на объект.
+        // Убирать вместо него ОБЪЕКТ (как для блока с текстом ниже) — та самая
+        // беда владельца «удаляется и пункт, и формула».
+        if (where.blockEmpty && (where.objectAbove || where.objectAboveGap))
+            return ObjectAction::DropEmpty;
         if (where.objectAbove) return ObjectAction::Remove;
         // Пустая строка между объектом и текстом неудаляема: без неё они
         // слиплись бы в одну строку файла, и объект рассыпался бы в огрызок

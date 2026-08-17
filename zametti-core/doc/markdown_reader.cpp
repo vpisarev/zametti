@@ -118,6 +118,40 @@ struct Draft {
         return b;
     }
 
+    // Дословный кусок ВНУТРИ ПУНКТА СПИСКА: строки исходника отступают до
+    // колонки содержимого пункта, и этот общий отступ — не текст куска, а
+    // место в списке (его выведет писатель заново по уровню). Снимаем со всех
+    // строк наименьший общий отступ пробелами; пустые строки в счёт не идут.
+    DraftBlock newRawInsideItem(QStringView text, int level) {
+        size_t indent = ~size_t(0);
+        qsizetype from = 0;
+        while (from < text.size()) {
+            qsizetype end = text.indexOf(u'\n', from);
+            if (end < 0) end = text.size();
+            size_t lead = 0;
+            while (from + qsizetype(lead) < end && text.at(from + qsizetype(lead)) == u' ') ++lead;
+            if (from + qsizetype(lead) < end) indent = qMin(indent, lead);
+            from = end + 1;
+        }
+        if (indent == ~size_t(0)) indent = 0;
+        QString out;
+        out.reserve(text.size());
+        from = 0;
+        while (from < text.size()) {
+            qsizetype end = text.indexOf(u'\n', from);
+            const bool last = end < 0;
+            if (last) end = text.size();
+            qsizetype cut = from;
+            while (cut < end && cut - from < qsizetype(indent) && text.at(cut) == u' ') ++cut;
+            out += text.mid(cut, end - cut);
+            if (!last) out += u'\n';
+            from = end + 1;
+        }
+        DraftBlock b = newRaw(out);
+        b.level = int16_t(level);
+        return b;
+    }
+
     // Дословный кусок — законченный HTML-комментарий: начинается с u"<!--" и
     // кончается строкой с u"-->" на конце. HTML-блок этого типа по CommonMark
     // кончается ровно на первой строке с u"-->", поэтому такой кусок — один
@@ -200,6 +234,12 @@ struct Ctx {
     size_t rawMax = kNoOffset;
     size_t rawLines = 0;
     bool   rawWasHeading = false;
+    // Где дословный кусок кончается: глубина стека, на которой выход из блока
+    // закрывает деградацию. 1 — внешний блок документа (обычная деградация);
+    // глубже — дословный кусок ВНУТРИ ПУНКТА СПИСКА (таблица, HTML): он
+    // получает уровень пункта, а список вокруг живёт дальше.
+    size_t rawEndDepth = 1;
+    int    rawLevel = -1;
 
     // Текущий листовой блок.
     bool   inLeaf = false;
@@ -299,6 +339,8 @@ void demote(Ctx& c) {
     c.rawMax = kNoOffset;
     c.rawLines = 0;
     c.rawWasHeading = c.inLeaf && c.cur.kind == Kind::Heading;
+    c.rawEndDepth = 1;
+    c.rawLevel = -1;
 
     size_t keep = c.stack[1].docSizeAtEnter;
     for (size_t i = keep; i < c.doc.size(); ++i)
@@ -510,13 +552,31 @@ void endLeaf(Ctx& c) {
     c.styleStart.clear();
 }
 
+// Дословный кусок ВНУТРИ ПУНКТА СПИСКА (таблица, непонятый HTML): только что
+// вошли в его блок, стек глубже пункта. Список вокруг не трогаем — деградирует
+// один этот блок, и на выходе из него ляжет дословный кусок с уровнем пункта.
+void demoteInsideItem(Ctx& c, int level) {
+    if (c.raw) return;
+    c.raw = true;
+    c.rawMin = kNoOffset;
+    c.rawMax = kNoOffset;
+    c.rawLines = 0;
+    c.rawWasHeading = false;
+    c.rawEndDepth = c.stack.size() - 1;
+    c.rawLevel = level;
+}
+
 // Лист уходит дословным куском: содержимое выбрасывается, границы остаются —
-// текст вырежет finishExtents прямо из исходника.
+// текст вырежет finishExtents прямо из исходника. Уровень листа остаётся при
+// нём: дословное внутри пункта — на уровне пункта.
 void endLeafAsRaw(Ctx& c, size_t rawLines) {
     const size_t minOff = c.curMin;
     const size_t maxOff = c.curMax;
+    const int16_t level = c.cur.level;
     dropLeaf(c);
-    c.doc.push_back(DraftBlock{});
+    DraftBlock raw;
+    raw.level = level;
+    c.doc.push_back(raw);
     c.ext.push_back(Extent{minOff, maxOff, true, false, rawLines, false});
     c.charsStart = c.draft.chars.size();
     c.spanStart = int32_t(c.draft.runs.size());
@@ -724,9 +784,27 @@ int enterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
             // Восстанавливать её границы по смещениям нечем — зато высота в
             // строках известна точно: каждый ряд занимает ровно строку.
             const auto* d = static_cast<const MD_BLOCK_TABLE_DETAIL*>(detail);
+            const size_t rows = d->head_row_count + 1 + d->body_row_count;
+            // ТАБЛИЦА ВНУТРИ ПУНКТА СПИСКА — дословный кусок с уровнем пункта
+            // (решение владельца, сессия 5: объекты внутри пунктов любой
+            // глубины). Список вокруг остаётся списком. Прежде деградировал
+            // весь объемлющий список — и от него оставался мёртвый дословный
+            // кусок. Исключение — таблица на строке маркера ("- | a |"): двум
+            // блокам на одной строке взяться неоткуда, как и у кода.
+            Frame* tableLi = (!c.stack.empty() && c.stack.back().type == MD_BLOCK_LI)
+                                 ? &c.stack.back()
+                                 : nullptr;
+            if (tableLi != nullptr && !insideQuote(c) && !(tableLi->childIdx == 0 && c.inLeaf)) {
+                endLeaf(c);
+                tableLi->childIdx++;
+                c.stack.push_back(f);
+                demoteInsideItem(c, listDepthOf(c) - 1);
+                c.rawLines = rows;
+                return 0;
+            }
             c.stack.push_back(f);
             demote(c);
-            c.rawLines = d->head_row_count + 1 + d->body_row_count;
+            c.rawLines = rows;
             return 0;
         }
 
@@ -770,13 +848,20 @@ int leaveBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
     c.stack.pop_back();
 
     if (c.raw) {
-        if (c.stack.size() == 1) {   // вышли из внешнего деградировавшего блока
+        // Вышли из деградировавшего блока: внешнего (стек схлопнулся до
+        // документа) или дословного куска внутри пункта (стек вернулся к
+        // пункту).
+        if (c.stack.size() == c.rawEndDepth) {
             c.raw = false;
-            c.doc.push_back(DraftBlock{});
+            DraftBlock raw;
+            raw.level = int16_t(c.rawLevel);
+            c.doc.push_back(raw);
             c.ext.push_back(Extent{c.rawMin, c.rawMax, true, false, c.rawLines, c.rawWasHeading});
             c.rawMin = c.rawMax = kNoOffset;
             c.rawLines = 0;
             c.rawWasHeading = false;
+            c.rawEndDepth = 1;
+            c.rawLevel = -1;
         }
         return 0;
     }
@@ -801,11 +886,16 @@ int leaveBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
                 endLeaf(c);
                 break;
             }
-            // Не комментарий — дословно. Внутри пункта — деградация всего
-            // пункта, как раньше (demote со стеком глубже документа). На
-            // верхнем уровне стек уже схлопнут и demote бессилен — лист
-            // превращается в дословный кусок руками, по образцу блока кода
-            // с нечитаемой info-строкой.
+            // Не комментарий — дословно. Внутри пункта списка лист уходит
+            // дословным куском НА УРОВНЕ ПУНКТА (сессия 5: объекты внутри
+            // пунктов; прежде деградировал весь список). Внутри цитаты — как
+            // раньше, деградация объемлющего блока. На верхнем уровне стек уже
+            // схлопнут и demote бессилен — лист превращается в дословный кусок
+            // руками, по образцу блока кода с нечитаемой info-строкой.
+            if (c.inLeaf && c.cur.kind == Kind::Html && c.cur.level >= 0 && !insideQuote(c)) {
+                endLeafAsRaw(c, 0);
+                break;
+            }
             if (c.stack.size() >= 2) {
                 demote(c);
                 break;
@@ -1369,9 +1459,11 @@ void finishExtents(Ctx& c) {
     // отступ привяжет его к соседу слева — например, сделает продолжением
     // последнего пункта списка, и после круга разбор поедет. Значит, кусок
     // должен забрать соседа себе, пока не начнётся с нулевой колонки.
+    // Дословный кусок ВНУТРИ ПУНКТА отступать вправе — отступ и есть его место
+    // в списке, и писатель выведет его заново по уровню. Соседей он не забирает.
     std::vector<bool> absorbed(n, false);
     for (size_t i = 0; i < n; ++i) {
-        if (!c.ext[i].raw) continue;
+        if (!c.ext[i].raw || c.doc[i].level >= 0) continue;
         while (first[i] > 0) {
             char16_t lead = c.buf[lines.start[first[i]]];
             if (lead != ' ' && lead != '\t') break;
@@ -1409,7 +1501,7 @@ void finishExtents(Ctx& c) {
     };
 
     for (size_t i = 0; i < n; ++i) {
-        if (!c.ext[i].raw || absorbed[i]) continue;
+        if (!c.ext[i].raw || absorbed[i] || c.doc[i].level >= 0) continue;
         if (!looksLikeList(first[i], last[i])) continue;
         for (size_t j = i + 1; j < n; ++j) {
             if (absorbed[j]) continue;
@@ -1423,7 +1515,9 @@ void finishExtents(Ctx& c) {
         if (!c.ext[i].raw) continue;
         size_t b = lines.start[first[i]];
         size_t e = lines.end(last[i]);
-        c.doc[i] = c.draft.newRaw(QStringView(c.buf + b, e - b));
+        const int level = c.doc[i].level;
+        c.doc[i] = level >= 0 ? c.draft.newRawInsideItem(QStringView(c.buf + b, e - b), level)
+                              : c.draft.newRaw(QStringView(c.buf + b, e - b));
     }
 
     // Определения ссылок ("[1]: /a") md4c не отдаёт ни одним колбэком: он их

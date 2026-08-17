@@ -2011,6 +2011,9 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
     where.atBlockStart = caret.positionInBlock() == 0;
     where.atBlockEnd = caret.positionInBlock() == block.length() - 1;
     where.onGap = isVSpaceBlock(block);
+    // Пустой пункт (после Ctrl+Enter) или пустой абзац под объектом: Backspace
+    // в нём убирает его, а не объект.
+    where.blockEmpty = !isVSpaceBlock(block) && block.text().isEmpty();
     // Каретка «на объекте» — это каретка на любой его строке. У картинки строка
     // одна, у таблицы их столько, сколько в исходнике. Объект, который СЕЙЧАС
     // ПРАВЯТ исходником, объектом для клавиш не считается — там обычный текст,
@@ -2035,7 +2038,11 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
     where.objectBelow = objectBelow.valid() && objectBelow.first != editedTable();
     if (isVSpaceBlock(above)) {
         const BlockObject overGap = objectOf(above.previous());
-        where.objectAboveGap = overGap.valid() && blocksWouldMerge(above.previous(), block);
+        // «Через пустую» — когда без неё блок слипся бы с объектом; пустой блок
+        // под объектом (пункт после Ctrl+Enter) — тоже «через пустую»: пустая
+        // строка заведена вместе с ним, и Backspace убирает их вместе.
+        where.objectAboveGap = overGap.valid() &&
+                               (where.blockEmpty || blocksWouldMerge(above.previous(), block));
     }
     if (isVSpaceBlock(below)) {
         const BlockObject overGap = objectOf(below.next());
@@ -2126,6 +2133,29 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
             runNoteEdit([last](ZDocument& note, QTextCursor& at) {
                 return note.insertLineAfter(at, last);
             });
+            return true;
+        }
+        case ObjectAction::ContinueAfter: {
+            // Shift+Enter на объекте — продолжить пункт текстом под ним.
+            const int last = own.last;
+            runNoteEdit([last](ZDocument& note, QTextCursor& at) {
+                return note.continueItemAfter(at, last);
+            });
+            return true;
+        }
+        case ObjectAction::DropEmpty: {
+            // Пустой блок под объектом убираем целиком и встаём на объект —
+            // тот, что прямо над ним или через пустую строку.
+            const BlockObject target = where.objectAbove ? objectAbove : objectOf(above.previous());
+            const int number = block.blockNumber();
+            runNoteEdit([number](ZDocument& note, QTextCursor& at) {
+                return note.dropEmptyBlockAfterObject(at, number);
+            });
+            if (target.valid()) {
+                // Объект стоял выше убранного — его номер не изменился.
+                const QTextBlock landing = document()->findBlockByNumber(target.last);
+                if (landing.isValid()) setTextCursor(QTextCursor(landing));
+            }
             return true;
         }
         case ObjectAction::Remove: {

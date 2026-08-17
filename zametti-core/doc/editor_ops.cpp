@@ -19,6 +19,7 @@
 #include <QTextDocumentFragment>
 
 #include <algorithm>
+#include <functional>
 #include <cmath>
 #include <vector>
 
@@ -122,12 +123,16 @@ void shiftLevels(QTextDocument& doc, BlockRange range, int delta) {
 namespace {
 
 // Годится ли этот блок на роль содержимого пункта. Заголовок внутри пункта
-// markdown не выражает, пустая строка ничьей вложенности не имеет, дословный
-// кусок мы не трогаем вовсе.
+// markdown не выражает, пустая строка ничьей вложенности не имеет; дословный
+// кусок (таблица), формула, комментарий — годятся: объекты внутри пунктов
+// любой глубины — решение владельца (сессия 5), и Tab/Shift+Tab двигают их
+// уровень так же, как у абзаца.
 bool canLiveInsideItem(const QTextBlock& block) {
-    if (isRawBlock(block) || isVSpaceBlock(block)) return false;
+    if (isVSpaceBlock(block)) return false;
+    if (isRawBlock(block)) return true;
     const Kind kind = kindOf(block);
-    return kind == Kind::Paragraph || kind == Kind::Quote || kind == Kind::Code;
+    return kind == Kind::Paragraph || kind == Kind::Quote || kind == Kind::Code ||
+           kind == Kind::Math || kind == Kind::Html;
 }
 
 // Меняет уровень блоков внутри пункта: привязывает их к пункту выше или
@@ -172,14 +177,18 @@ static bool indentListItems(QTextDocument& doc, QTextCursor& cursor) {
     const BlockRange range = selectedBlocks(doc, cursor);
     const QTextBlock first = doc.findBlockByNumber(range.first);
 
-    // Tab на абзаце сразу под списком привязывает его к пункту: получается
-    // второй абзац этого пункта. Правило Tab при этом одно на всех — «сделать
-    // блок глубже», просто у абзаца и у пункта это значит разное.
+    // Tab на абзаце (объекте, блоке кода) под списком привязывает его к пункту:
+    // получается содержимое этого пункта. Правило Tab при этом одно на всех —
+    // «сделать блок глубже», просто у абзаца и у пункта это значит разное.
+    // Уже привязанный блок уходит НА ОДИН уровень глубже за нажатие, пока
+    // есть куда: под блоком уровня N абзац уровня M < N по Tab идёт к M+1,
+    // M+2, … до N (решение владельца) — глубже пункта над ним не бывает.
     if (!isListBlock(first)) {
-        if (levelOf(first) >= 0 || !canLiveInsideItem(first)) return false;
-        const int level = levelAbove(doc, range.first);
-        if (level < 0) return false;
-        return setInsideLevel(doc, range, level);
+        if (!canLiveInsideItem(first)) return false;
+        const int above = levelAbove(doc, range.first);
+        const int current = levelOf(first);
+        if (above < 0 || current >= above) return false;
+        return setInsideLevel(doc, range, current + 1);
     }
 
     // Отступать можно только под уже существующий пункт: иначе получился бы
@@ -195,10 +204,11 @@ static bool outdentListItems(QTextDocument& doc, QTextCursor& cursor) {
     const BlockRange range = selectedBlocks(doc, cursor);
     const QTextBlock first = doc.findBlockByNumber(range.first);
 
-    // Shift+Tab на втором абзаце пункта отвязывает его обратно в обычный текст.
+    // Shift+Tab на втором абзаце (объекте, коде) пункта — на уровень выше; с
+    // нулевого уровня — отвязывает обратно в обычный текст.
     if (!isListBlock(first)) {
         if (levelOf(first) < 0) return false;
-        return setInsideLevel(doc, range, -1);
+        return setInsideLevel(doc, range, levelOf(first) - 1);
     }
     if (levelOf(first) == 0) return false;
 
@@ -2881,9 +2891,18 @@ void syncLists(QTextDocument& doc, BlockRange range) {
                 continue;
             }
             // Блок внутри пункта: глубже открытого уровня ему быть не с чего, а
-            // без списка вокруг он и вовсе обычный абзац.
+            // без списка вокруг он и вовсе обычный абзац. МЕЛЬЧЕ открытого —
+            // можно: абзац (объект, код) на уровне M под пунктом уровня N > M
+            // принадлежит пункту уровня M и ЗАКРЫВАЕТ вложенные — ровно так
+            // читает файл md4c («  текст» после «  - b» — продолжение «- a»).
+            // Так работают Tab/Shift+Tab по одному уровню (решение владельца,
+            // сессия 5); прежде такой блок прижимался к самому глубокому.
             const int deepest = int(open.size()) - 1;
             if (inside == deepest) continue;
+            if (inside < deepest) {
+                open.resize(size_t(inside) + 1);
+                continue;
+            }
             QTextBlockFormat format = block.blockFormat();
             if (deepest < 0) {
                 format.clearProperty(LevelProperty);
@@ -3217,6 +3236,15 @@ bool ZDocument::insertText(QTextCursor& at, const QString& text,
 }
 
 bool ZDocument::breakBlock(QTextCursor& at, BreakKind kind) {
+    // Shift+Enter В КОНЦЕ ЛИТЕРАЛЬНОГО БЛОКА (код, дословный кусок) — продолжить
+    // текст ПОД ним, на том же уровне пункта (решение владельца, сессия 5): в
+    // пункт кладут код и продолжают пункт словами. Внутри блока Shift+Enter —
+    // как и был, строка внутри блока.
+    if (kind == BreakKind::Otherwise && at.document() == &d_->text && !at.hasSelection()) {
+        const QTextBlock block = at.block();
+        if (isLiteralBlock(block) && at.positionInBlock() == block.length() - 1)
+            return insertAfterObject(at, block.blockNumber(), true);
+    }
     return runLocalEdit(at, [this, kind](QTextCursor& edit) {
         switch (kind) {
             case BreakKind::Plain:
@@ -3431,12 +3459,128 @@ QStringList ZDocument::codeLanguagesNear(int blockNumber) const {
 
 // --- СЛОЙ ОБЪЕКТОВ ----------------------------------------------------------
 
+// Маркер пункта, содержимым которого является этот блок: ближайший пункт выше
+// на том же уровне. Не нашёлся — буллет.
+static Marker markerOfItemAbove(const QTextDocument& doc, int number, int level) {
+    for (int i = number - 1; i >= 0; --i) {
+        const QTextBlock block = doc.findBlockByNumber(i);
+        if (isVSpaceBlock(block)) continue;
+        const int at = levelOf(block);
+        if (at < level) break;
+        if (at == level && isListBlock(block)) return markerOf(block).marker;
+    }
+    return Marker::Bullet;
+}
+
+// ПОСЛЕ ОБЪЕКТА — Ctrl+Enter и Shift+Enter (решение владельца, сессия 5).
+//
+// Оба заводят пустую строку под объектом (в файле она обязана быть: абзац или
+// пункт вплотную к таблице стал бы её рядом, к фотографии — её продолжением),
+// а дальше — что именно:
+//   Ctrl+Enter  — новый ПУНКТ на уровне объекта, если объект стоит внутри
+//                 пункта (маркер — как у пункта над ним); вне списка — только
+//                 пустая строка, набор превратит её в абзац (как всегда);
+//   Shift+Enter — ПРОДОЛЖЕНИЕ ТОГО ЖЕ ПУНКТА: абзац на уровне объекта, без
+//                 маркера. Так в пункт вставляют формулу, таблицу, картинку и
+//                 продолжают пункт текстом, не уходя во внешний редактор.
+// Оба идут через сборщик (replaceBlocks): новые блоки — ровно такие, какими
+// собрал бы их разбор файла.
+namespace {
+
+enum class AfterObject { NewItem, ContinueItem };
+
+// Что встанет после объекта: сам объект (пересобранный сборщиком), пустая
+// строка и — новый пункт или абзац-продолжение. Возвращает блоки и номер того
+// из них (от блока объекта), в который встанет каретка.
+std::vector<Piece> piecesAfterObject(const QTextDocument& doc, int blockIndex, AfterObject what,
+                                     int* landing) {
+    const QTextBlock block = doc.findBlockByNumber(blockIndex);
+    if (!block.isValid()) return {};
+    const int level = levelOf(block);
+    std::vector<Piece> pieces = piecesOfBlocks(doc, blockIndex, blockIndex);
+    if (pieces.size() != 1) return {};
+    Piece gap;
+    gap.kind = Kind::VSpace;
+    pieces.push_back(gap);
+    *landing = 1;
+    if (what == AfterObject::NewItem && level >= 0) {
+        Piece item;
+        item.kind = Kind::ListItem;
+        item.level = level;
+        item.marker = markerOfItemAbove(doc, blockIndex, level);
+        pieces.push_back(item);
+        *landing = 2;
+    } else if (what == AfterObject::ContinueItem) {
+        // Пустой абзац — переходное состояние: набор наполнит его, а уход
+        // каретки (tidyLeftLine) обратит в пустую строку. В файл он и так уходит
+        // пустой строкой.
+        Piece paragraph;
+        paragraph.kind = Kind::Paragraph;
+        paragraph.level = level;
+        pieces.push_back(paragraph);
+        *landing = 2;
+    }
+    return pieces;
+}
+
+}  // namespace
+
 bool ZDocument::insertLineAfter(QTextCursor& at, int blockIndex) {
-    return runLocalEdit(at, [this, blockIndex](QTextCursor& edit) {
-        const QTextBlock block = d_->text.findBlockByNumber(blockIndex);
-        if (!block.isValid()) return false;
-        edit.setPosition(block.position() + block.length() - 1);
-        edit.insertBlock(vspaceBlockFormat(false, false, styleOf(*edit.document())), QTextCharFormat());
+    return insertAfterObject(at, blockIndex, false);
+}
+
+bool ZDocument::continueItemAfter(QTextCursor& at, int blockIndex) {
+    return insertAfterObject(at, blockIndex, true);
+}
+
+bool ZDocument::insertAfterObject(QTextCursor& at, int blockIndex, bool continueItem) {
+    if (at.document() != &d_->text) return false;
+    int landing = 0;
+    const std::vector<Piece> pieces = piecesAfterObject(
+        d_->text, blockIndex, continueItem ? AfterObject::ContinueItem : AfterObject::NewItem,
+        &landing);
+    if (pieces.empty()) return false;
+    QTextCursor edit(at);
+    edit.beginEditBlock();
+    replaceBlocks(blockIndex, blockIndex, pieces);
+    settleSeam(blockIndex, blockIndex + int(pieces.size()) - 1);
+    edit.endEditBlock();
+#ifndef NDEBUG
+    checkCanonical();
+#endif
+    at = caretAtBlock(blockIndex + landing);
+    return true;
+}
+
+bool ZDocument::dropEmptyBlockAfterObject(QTextCursor& at, int number) {
+    return runLocalEdit(at, [this, number](QTextCursor& edit) {
+        const QTextBlock block = d_->text.findBlockByNumber(number);
+        if (!block.isValid() || !block.text().isEmpty()) return false;
+        // Пустая строка над пустым блоком заведена вместе с ним (Ctrl+Enter):
+        // если за блоком ничего нет или снова пустая строка, она больше не
+        // разделяет объект с текстом — убираем и её, возвращая документ к виду
+        // до Ctrl+Enter. Между объектом и текстом ниже пустая строка обязана
+        // остаться — там её не трогаем.
+        const QTextBlock above = block.previous();
+        const QTextBlock below = block.next();
+        const bool dropGap = above.isValid() && isVSpaceBlock(above) &&
+                             objectOf(above.previous()).valid() &&
+                             (!below.isValid() || isVSpaceBlock(below));
+        const QTextBlock from = dropGap ? above : block;
+        // Вместе с разделителем блока — иначе на месте блока остаётся пустая
+        // строка, которой не заказывали. У последнего блока документа
+        // разделителя после нет: убираем разделитель ПЕРЕД ним — тогда хвост
+        // сливается в предыдущий блок, и остаётся его формат, а не пустой
+        // блок в конце.
+        int start = from.position();
+        int end = block.position() + block.length();
+        if (end > d_->text.characterCount() - 1) {
+            end = d_->text.characterCount() - 1;
+            start = qMax(0, start - 1);
+        }
+        edit.setPosition(start);
+        edit.setPosition(end, QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
         return true;
     });
 }
@@ -3648,6 +3792,9 @@ bool ZDocument::openFormula(QTextCursor& at) {
     // прочтёт и файл: `$$…$$` отдельной строкой — это выключная формула.
     Piece piece;
     piece.text = ref.source;
+    // Уровень пункта переживает раскрытие: формула внутри пункта раскрывается
+    // абзацем внутри того же пункта, а не выпадает из списка.
+    piece.level = levelOf(block);
     Run run;
     run.start = 0;
     run.end = int32_t(piece.text.size());
@@ -3662,9 +3809,9 @@ bool ZDocument::openFormula(QTextCursor& at) {
 #ifndef NDEBUG
     checkCanonical();
 #endif
-    // Каретка — в конец исходника: правят обычно хвост.
+    // Каретка — в НАЧАЛО исходника (решение владельца: Enter на объекте ставит
+    // каретку в начало; у таблицы так же).
     at = caretAtBlock(number);
-    at.movePosition(QTextCursor::EndOfBlock);
     return true;
 }
 
@@ -3692,6 +3839,7 @@ bool ZDocument::closeFormula(QTextCursor& at) {
     Piece piece;
     piece.kind = Kind::Math;
     piece.text = source;
+    piece.level = levelOf(block);
     QTextCursor edit(at);
     edit.beginEditBlock();
     replaceBlocks(number, number, {piece});

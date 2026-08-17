@@ -93,6 +93,9 @@ void appendPiece(std::string& out, const Piece& b) {
     if (b.raw) {
         out += "\"raw\": ";
         appendJsonString(out, utf8Of(b.text));
+        // Дословный кусок внутри пункта несёт уровень (сессия 5); у куска вне
+        // списка уровня нет, и печать та же, что была, — голдены целы.
+        if (b.level >= 0) out += ", \"level\": " + std::to_string(b.level);
         out += "}";
         return;
     }

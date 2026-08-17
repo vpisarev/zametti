@@ -406,10 +406,12 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
             blockFmt.setProperty(MarkerProperty, static_cast<int>(b.marker));
             blockFmt.setProperty(CheckedProperty, b.checked);
         }
-        // Уровень — у всякого блока, стоящего внутри пункта, а не только у
-        // самого пункта: второй абзац пункта тоже на уровне.
-        if (b.level >= 0) blockFmt.setProperty(LevelProperty, b.level);
     }
+    // Уровень — у всякого блока, стоящего внутри пункта, а не только у самого
+    // пункта: второй абзац пункта, блок кода, формула, дословный кусок
+    // (таблица) — все на уровне (объекты внутри пунктов любой глубины —
+    // решение владельца, сессия 5).
+    if (b.level >= 0) blockFmt.setProperty(LevelProperty, b.level);
 
     // Отбивку целиком держит верхнее поле, нижнее всегда нулевое. Qt между
     // соседями берёт максимум из двух полей, и при полях с обеих сторон
