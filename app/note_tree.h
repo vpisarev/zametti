@@ -304,6 +304,28 @@ class NoteTreeView : public QTreeView {
 public:
     explicit NoteTreeView(QWidget* parent = nullptr);
 
+    // РАСКРЫТЫЕ ВЕТКИ И ТЕКУЩАЯ СТРОКА ПЕРЕЖИВАЮТ СБРОС МОДЕЛИ. Дерево строится
+    // заново на каждую структурную новость каталога (модель сбрасывается
+    // целиком), а человек не должен видеть, как панель складывается и теряет
+    // курсор. Состояние берётся ПУТЯМИ (nodePath) — индексы после сброса
+    // недействительны — и возвращается с заглушенными сигналами выбора: это
+    // не выбор человека, и заметку переоткрывать не надо. Прежде это делало
+    // окно после каждой операции (refreshTree в main.cpp), и забыть было легко.
+    void setModel(QAbstractItemModel* model) override;
+    // Раскрытые папки путями (для state.json) и обратно.
+    QStringList expandedDirs() const;
+    void restoreExpanded(const QStringList& dirs);
+    // Путь текущей строки (пусто — ничего не выбрано).
+    QString currentPath() const;
+    // Поставить курсор на строку по пути, раскрыв предков; тихо — без сигналов
+    // выбора. Ложь — такой строки нет.
+    bool setCurrentPath(const QString& path, bool quiet);
+
+signals:
+    // Модель перестроена, раскрытость и курсор возвращены: кто наполняет
+    // список по текущей папке — теперь ему пора.
+    void rebuilt();
+
 protected:
     void drawBranches(QPainter* painter, const QRect& rect,
                       const QModelIndex& index) const override;
@@ -337,6 +359,11 @@ private:
     // щелчок по УЖЕ ВЫБРАННОЙ папке переключает раскрытость — то есть закрыть
     // её можно, но для этого надо ткнуть дважды, осознанно.
     bool pressedWasCurrent_ = false;
+
+    // Что бережём через сброс модели.
+    QStringList keptExpanded_;
+    QString keptCurrent_;
+    void collectExpanded(const QModelIndex& parent, QStringList& out) const;
 };
 
 }  // namespace zametti

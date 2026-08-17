@@ -1,8 +1,10 @@
 #include "note_tree.h"
 
 #include <QMouseEvent>
+#include <QSignalBlocker>
 
 #include <functional>
+#include <optional>
 
 #include "icons.h"
 #include "document.h"
@@ -1072,6 +1074,70 @@ NoteTreeView::NoteTreeView(QWidget* parent) : QTreeView(parent) {
         }
         setExpanded(index, !pressedExpanded_);
     });
+}
+
+void NoteTreeView::setModel(QAbstractItemModel* model) {
+    if (this->model() != nullptr) disconnect(this->model(), nullptr, this, nullptr);
+    QTreeView::setModel(model);
+    if (model == nullptr) return;
+    connect(model, &QAbstractItemModel::modelAboutToBeReset, this, [this] {
+        keptExpanded_ = expandedDirs();
+        keptCurrent_ = currentPath();
+    });
+    connect(model, &QAbstractItemModel::modelReset, this, [this] {
+        restoreExpanded(keptExpanded_);
+        setCurrentPath(keptCurrent_, /*quiet=*/true);
+        keptExpanded_.clear();
+        keptCurrent_.clear();
+        emit rebuilt();
+    });
+}
+
+void NoteTreeView::collectExpanded(const QModelIndex& parent, QStringList& out) const {
+    const auto* tree = qobject_cast<const NoteTreeModel*>(model());
+    if (tree == nullptr) return;
+    const int rows = tree->rowCount(parent);
+    for (int i = 0; i < rows; ++i) {
+        const QModelIndex child = tree->index(i, 0, parent);
+        if (!tree->isDirectory(child)) continue;
+        if (isExpanded(child)) out.append(tree->nodePath(child));
+        collectExpanded(child, out);
+    }
+}
+
+QStringList NoteTreeView::expandedDirs() const {
+    // Обходом дерева: у QTreeView нет готового списка, а хранить путь каждой
+    // ветки отдельно незачем — их десятки.
+    QStringList out;
+    collectExpanded(QModelIndex(), out);
+    return out;
+}
+
+void NoteTreeView::restoreExpanded(const QStringList& dirs) {
+    const auto* tree = qobject_cast<const NoteTreeModel*>(model());
+    if (tree == nullptr) return;
+    for (const QString& dir : dirs) {
+        const QModelIndex index = tree->indexForPath(dir);
+        if (index.isValid() && tree->isDirectory(index)) expand(index);
+    }
+}
+
+QString NoteTreeView::currentPath() const {
+    const auto* tree = qobject_cast<const NoteTreeModel*>(model());
+    if (tree == nullptr) return {};
+    return tree->nodePath(currentIndex());
+}
+
+bool NoteTreeView::setCurrentPath(const QString& path, bool quiet) {
+    const auto* tree = qobject_cast<const NoteTreeModel*>(model());
+    if (tree == nullptr || path.isEmpty()) return false;
+    const QModelIndex index = tree->indexForPath(path);
+    if (!index.isValid()) return false;
+    std::optional<QSignalBlocker> blocked;
+    if (quiet) blocked.emplace(selectionModel());
+    expandAncestors(*this, index);
+    setCurrentIndex(index);
+    return true;
 }
 
 void NoteTreeView::mousePressEvent(QMouseEvent* event) {
