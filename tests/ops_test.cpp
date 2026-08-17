@@ -245,49 +245,28 @@ const char* const kOrdinalCases[] = {
     "- раз\n\n  ```\n  код\n  ```\n\n- два\n",
 };
 
-// Блоки-продолжения: признак относительный, он говорит про связь с предыдущим
-// блоком. Операция способна эту связь порвать, и тогда документ обязан
-// выправляться, а не молча превращаться в другой markdown.
-// Построчно теперь лежат только ДОСЛОВНЫЕ куски (блок кода — один QTextBlock),
-// поэтому связь рвётся у таблицы.
-void checkLiteralInvariant() {
+// ДОСЛОВНЫЙ КУСОК — ОДИН QTextBlock (сессия 5 refactor2): его строки — U+2028
+// внутри блока, как у кода. Блок заметки == блок документа, номер IR — номер
+// блока; продолжений больше нет, и рвать нечего. Проверяем строение и круг.
+void checkLiteralOneBlock() {
     QTextDocument doc;
-    zametti::buildDocument(pieces("абзац\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"), doc);
-
-    QString problem;
-    check(zametti::literalInvariantHolds(doc, &problem),
-          "свежесобранный документ обязан быть в порядке: " + problem.toStdString());
-
-    // Ломаем связь: убираем первую строку дословного куска. Продолжение
-    // остаётся без родителя того же рода.
-    QTextCursor cursor(&doc);
-    // Блок 1 — пустая строка, кусок начинается со второго.
-    cursor.setPosition(doc.findBlockByNumber(2).position());
-    cursor.movePosition(QTextCursor::NextBlock, QTextCursor::KeepAnchor);
-    cursor.removeSelectedText();
-
-    check(!zametti::literalInvariantHolds(doc),
-          "разорванная связь обязана ловиться инвариантом");
-
-    zametti::syncLiteralBlocks(doc, {0, doc.blockCount() - 1});
-    check(zametti::literalInvariantHolds(doc, &problem),
-          "после нормализации инвариант обязан держаться: " + problem.toStdString());
-
-    // Признак снят, но содержимое не пострадало: ни байта не потеряно.
-    const std::vector<zametti::Piece> after = blocksOf(doc);
-    checkEqual("абзац\n\n|---|---|\n| 1 | 2 |\n", markdownOf(after),
-               "содержимое цело");
-
-    // Продолжение первым блоком документа быть не может.
-    QTextDocument lone;
-    zametti::buildDocument(pieces("| a |\n|---|\n| 1 |\n"), lone);
-    QTextCursor head(&lone);
-    head.setPosition(0);
-    head.movePosition(QTextCursor::NextBlock, QTextCursor::KeepAnchor);
-    head.removeSelectedText();
-    check(!zametti::literalInvariantHolds(lone), "продолжение в начале документа — нарушение");
-    zametti::syncLiteralBlocks(lone, {0, lone.blockCount() - 1});
-    check(zametti::literalInvariantHolds(lone), "нормализация чинит и этот случай");
+    const std::vector<zametti::Piece> ir =
+        pieces("абзац\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n<div>\nдва\n</div>\n");
+    zametti::buildDocument(ir, doc);
+    checkEqual(std::to_string(ir.size()), std::to_string(doc.blockCount()),
+               "блоков документа столько же, сколько блоков заметки");
+    for (int i = 0; i < doc.blockCount(); ++i) {
+        const QTextBlock block = doc.findBlockByNumber(i);
+        checkEqual(ir[size_t(i)].raw ? "raw" : "kind",
+                   zametti::isRawBlock(block) ? "raw" : "kind",
+                   "блок " + std::to_string(i) + " того же рода");
+    }
+    // Строки дословного куска — внутри одного блока, и текст файла тот же.
+    const QTextBlock table = doc.findBlockByNumber(2);
+    check(zametti::isRawBlock(table) && zametti::sourceTextOf(table).count(u'\n') == 2,
+          "таблица лежит одним блоком с двумя переводами внутри");
+    checkEqual("абзац\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n<div>\nдва\n</div>\n",
+               markdownOf(blocksOf(doc)), "круг через документ байт в байт");
 }
 
 // Enter и Backspace: markdown до, место курсора, markdown после.
@@ -726,30 +705,6 @@ void checkBulletShapes() {
     zametti::mutableSettingsForTests().style().setBulletShapes(saved);
 }
 
-// Номер блока IR и обратный переход. Соответствие не один к одному: литеральный
-// блок лежит построчно, и каждая его строка обязана указывать на СВОЙ блок IR.
-// Пока это считалось по предыдущим блокам, строка-продолжение получала номер
-// следующего блока — и всякая правка над IR била мимо.
-void checkIrIndex(const char* source) {
-    QTextDocument doc;
-    const std::vector<zametti::Piece> ir = pieces(source);
-    zametti::buildDocument(ir, doc);
-
-    int expected = -1;
-    for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {
-        if (!zametti::isContinuationBlock(block)) ++expected;
-        const int actual = zametti::irIndexOfBlock(block);
-        checkEqual(std::to_string(expected), std::to_string(actual),
-                   std::string("номер блока IR для документа ") + source);
-        // И обратный переход обязан вести к началу того же логического блока.
-        const QTextBlock back = zametti::blockForIrIndex(doc, actual);
-        check(back.isValid() && back.blockNumber() <= block.blockNumber(),
-              "обратный переход ведёт к своему блоку");
-    }
-    checkEqual(std::to_string(int(ir.size()) - 1), std::to_string(expected),
-               std::string("блоков IR столько же, сколько насчитали: ") + source);
-}
-
 // Автозамена: набранное в начале блока, положение курсора после пробела.
 struct RuleCase {
     const char* typed;     // что оказалось в блоке к моменту проверки
@@ -938,7 +893,7 @@ static int ztRunSuite(int argc, char** argv) {
 
     checkLevelNormalisation();
     checkGeometry();
-    checkLiteralInvariant();
+    checkLiteralOneBlock();
     using Z = zametti::ZDocument;
     const NoteOp enter = [](Z& n, QTextCursor& at) { return n.breakBlock(at, Z::BreakKind::Plain); };
     const NoteOp indent = [](Z& n, QTextCursor& at) { return n.indent(at); };
@@ -971,9 +926,6 @@ static int ztRunSuite(int argc, char** argv) {
     for (const CodeSpanCase& c : kCodeSpanCases) checkCodeSpan(c);
     for (const CodeBlockCase& c : kCodeBlockCases) checkCodeBlock(c);
     for (const PartialCodeCase& c : kPartialCodeCases) checkPartialCodeBlock(c);
-    for (const char* source : {"абзац\n", "```\nраз\nдва\nтри\n```\n",
-                               "абзац\n\n```\nкод\nещё\n```\n\n- пункт\n"})
-        checkIrIndex(source);
     checkBulletShapes();
     for (const MoveCase& c : kMoveCases) checkMove(c);
     checkCursorAfterSplit();

@@ -86,11 +86,9 @@ std::string editorMarkdown(const zametti::NoteEditor& editor) {
     return markdownOf(blocksOf(*editor.document()));
 }
 
-// Документ законен: три инварианта плюс чтение файла обратно в то же самое.
+// Документ законен: два инварианта плюс чтение файла обратно в то же самое.
 void checkStillLegal(zametti::NoteEditor& editor, const std::string& where) {
     QString problem;
-    check(zametti::literalInvariantHolds(*editor.document(), &problem),
-          where + ": инвариант дословных кусков (" + problem.toStdString() + ")");
     check(zametti::gapInvariantHolds(*editor.document(), &problem),
           where + ": инвариант пустых строк (" + problem.toStdString() + ")");
     check(zametti::listInvariantHolds(*editor.document(), &problem),

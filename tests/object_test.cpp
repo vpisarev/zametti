@@ -64,8 +64,8 @@ QTextDocument* build(const char* markdown) {
 }
 
 void checkRecognition() {
-    // Таблица: дословный кусок, разложенный построчно. Объект обязан накрыть
-    // ВСЕ её строки, включая разделитель, — иначе спрятать её целиком нечем.
+    // Таблица: дословный кусок, лежащий ОДНИМ блоком (строки — внутри). Объект
+    // — этот один блок, и все строки таблицы в нём.
     QTextDocument* doc = build(
         "текст до\n"
         "\n"
@@ -85,15 +85,19 @@ void checkRecognition() {
     ZT_EQ("объект найден один", n(1), n(int(found.size())));
     if (!found.empty()) {
         ZT_EQ("и это таблица", nameOf(ObjectKind::Table), nameOf(found[0].kind));
-        ZT_EQ("строк у неё три", n(3), n(found[0].lines()));
+        ZT_EQ("блок у неё один", n(1), n(found[0].lines()));
+        ZT_EQ("и это блок 2", n(2), n(found[0].first));
     }
 
-    // Каждая строка таблицы принадлежит ей же — и первая, и разделитель, и
-    // последняя. На этом ломался бы показ: спрятать надо все три.
+    // Таблица — один блок документа, и все три строки исходника — в нём.
     int inside = 0;
     for (QTextBlock b = doc->begin(); b.isValid(); b = b.next())
-        if (zametti::objectOf(b).kind == ObjectKind::Table) ++inside;
-    ZT_EQ("все три строки принадлежат таблице", n(3), n(inside));
+        if (zametti::objectOf(b).kind == ObjectKind::Table) {
+            ++inside;
+            ZT_EQ("три строки исходника в одном блоке", n(2),
+                  n(int(zametti::sourceTextOf(b).count(QLatin1Char('\n')))));
+        }
+    ZT_EQ("блок-таблица один", n(1), n(inside));
 
     // Обычный текст объектом не является.
     ZT_EQ("абзац — не объект", nameOf(ObjectKind::None),
