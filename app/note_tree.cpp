@@ -23,6 +23,7 @@
 #include <QGuiApplication>
 #include <QHash>
 #include <QPainter>
+#include <QPen>
 #include <QPixmap>
 
 #include <algorithm>
@@ -555,6 +556,7 @@ QVariant NoteTreeModel::data(const QModelIndex& index, int role) const {
         return node->badge.isEmpty()
                    ? node->title
                    : node->title + QStringLiteral(" [") + node->badge + QLatin1Char(']');
+    if (role == SecondaryRole) return !secondaryPath_.isEmpty() && node->path == secondaryPath_;
     if (role == Qt::ToolTipRole && !node->isDir()) {
         if (node->badge == QStringLiteral("сирота"))
             return QStringLiteral("родитель не найден — показана в корне: ") + node->path;
@@ -633,6 +635,15 @@ void NoteTreeModel::setExpanded(const QModelIndex& index, bool expanded) {
     if (expanded) expanded_.insert(path);
     else expanded_.remove(path);
     if (index.isValid()) emit dataChanged(index, index, {Qt::DecorationRole});
+}
+
+void NoteTreeModel::setSecondaryPath(const QString& path) {
+    if (path == secondaryPath_) return;
+    const QModelIndex was = indexForPath(secondaryPath_);
+    secondaryPath_ = path;
+    const QModelIndex now = indexForPath(secondaryPath_);
+    if (was.isValid()) emit dataChanged(was, was, {SecondaryRole});
+    if (now.isValid()) emit dataChanged(now, now, {SecondaryRole});
 }
 
 bool NoteTreeModel::isEmpty() const { return topNode()->children.empty(); }
@@ -1050,12 +1061,6 @@ QString NoteTreeModel::rootFor(const QString& filePath, const QString& configure
     return best;
 }
 
-bool shouldMoveTreeCursor(bool byFolderPick, bool treeHasFocus, bool insideCurrent) {
-    if (byFolderPick) return false;
-    if (treeHasFocus && insideCurrent) return false;
-    return true;
-}
-
 NoteTreeView::NoteTreeView(QWidget* parent) : QTreeView(parent) {
     // Раз треугольников нет, папка должна раскрываться по обычному щелчку:
     // иначе цели для нажатия не остаётся вовсе.
@@ -1150,6 +1155,23 @@ void NoteTreeView::mousePressEvent(QMouseEvent* event) {
 }
 
 void NoteTreeView::drawBranches(QPainter*, const QRect&, const QModelIndex&) const {}
+
+void NoteTreeDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option,
+                             const QModelIndex& index) const {
+    QStyledItemDelegate::paint(painter, option, index);
+    if (!index.data(NoteTreeModel::SecondaryRole).toBool()) return;
+    // Пунктирная незакрашенная рамка вокруг строки: «открытая заметка лежит
+    // здесь». Цветом текста, чтобы читалась и на выделении, и в тёмной теме.
+    painter->save();
+    QPen pen(option.palette.color(QPalette::Text));
+    pen.setStyle(Qt::DashLine);
+    pen.setWidth(1);
+    painter->setPen(pen);
+    painter->setBrush(Qt::NoBrush);
+    painter->setRenderHint(QPainter::Antialiasing, false);
+    painter->drawRect(option.rect.adjusted(1, 1, -2, -2));
+    painter->restore();
+}
 
 QSize NoteTreeDelegate::sizeHint(const QStyleOptionViewItem& option,
                                  const QModelIndex& index) const {

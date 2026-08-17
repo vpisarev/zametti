@@ -171,10 +171,7 @@ void NotePanels::fillList(const QModelIndex& folder, bool openFirst) {
         listView_.setCurrentIndex(first);
     }
     const QString file = list_.pathAt(first);
-    if (!file.isEmpty() && file != currentNote_) {
-        openedByFolderPick_ = file;
-        emit noteChosen(file, !keyWalk_->walking);
-    }
+    if (!file.isEmpty() && file != currentNote_) emit noteChosen(file, !keyWalk_->walking);
 }
 
 void NotePanels::folderPicked(const QModelIndex& index) {
@@ -197,7 +194,7 @@ void NotePanels::selectNote(const QString& file) {
     listView_.scrollTo(row);
 }
 
-void NotePanels::showNote(const QString& file, bool force) {
+void NotePanels::showNote(const QString& file, bool primary) {
     if (file.isEmpty()) return;
     currentNote_ = file;
     if (!model_.isStore()) {
@@ -208,58 +205,41 @@ void NotePanels::showNote(const QString& file, bool force) {
         revealing_ = false;
         return;
     }
+    // ДВА ВЫДЕЛЕНИЯ (решение владельца). Первичное — курсор дерева — папка, по
+    // которой человек ткнул ЯВНО; она задаёт состав и порядок средней колонки, и
+    // показ открытой заметки её НЕ ТРОГАЕТ: ни курсор, ни список, ни порядок.
+    // Порядок папке критически важен (дневник — по дате создания, «все заметки»
+    // — по правке), и заметка, открытая из поиска или истории, не вправе его
+    // подменить. Папка открытой заметки — вторичное выделение: пунктирная
+    // рамка, предки раскрыты — «лежит здесь; хочешь перейти — ткни».
+    //
+    // primary — только когда первичного выделения ещё нет ни у кого (старт):
+    // им становится папка открытой заметки, и список наполняется по ней.
     QModelIndex folder = model_.folderIndexForNote(QFileInfo(file).completeBaseName());
-    if (!folder.isValid() && force) folder = model_.indexForPath(model_.nodePath(QModelIndex()));
-    bool moved = false;
+    if (!folder.isValid() && primary) folder = model_.indexForPath(model_.nodePath(QModelIndex()));
+    revealing_ = true;
     if (folder.isValid()) {
-        // КУРСОР НЕ ОТБИРАЕМ У ТОГО, КТО ЕГО ТОЛЬКО ЧТО ПОСТАВИЛ. Человек
-        // щёлкнул по папке — курсор встал на неё, средняя колонка показала её
-        // заметки и открыла первую. Заметка эта лежит, случается, в подпапке, и
-        // переставлять курсор туда значит увести его из папки, в которую он
-        // только что ткнул. Поэтому курсор двигается только если он СНАРУЖИ
-        // этой ветки — заметку открыли из поиска, из середины, — и показать,
-        // где она лежит, надо. Само правило — shouldMoveTreeCursor (note_tree.h):
-        // там оно названо, объяснено и проверено набором.
-        const bool byFolderPick = !openedByFolderPick_.isEmpty() && file == openedByFolderPick_;
-        openedByFolderPick_.clear();
-        bool insideCurrent = false;
-        for (QModelIndex up = folder; up.isValid() && !insideCurrent; up = up.parent())
-            insideCurrent = up == tree_.currentIndex();
-        moved = force || shouldMoveTreeCursor(byFolderPick, tree_.hasFocus(), insideCurrent);
-
-        // Не QSignalBlocker: замерено пробником, что с заглушенными сигналами
-        // курсор дерева не переставляется вовсе; поэтому сигнал идёт как
-        // обычно, а его обработчик на время выключен флагом.
-        revealing_ = true;
         expandAncestors(tree_, folder);
-        if (moved) {
-            if (force) tree_.expand(folder);   // человек идёт смотреть, что внутри
+        model_.setSecondaryPath(model_.nodePath(folder));
+        if (primary) {
             tree_.setCurrentIndex(folder);
             tree_.scrollTo(folder);
         }
-        revealing_ = false;
+    }
+    revealing_ = false;
+    if (primary) {
+        syncSort();
+        fillList(folder, false);
     }
 
-    // ПОРЯДОК ВЫБРАННОЙ ПАПКИ — и когда курсор поставили мы. Обработчик выбора
-    // на это время выключен, значит и порядок с кнопками надо догнать здесь;
-    // иначе метка папки на первом экране не действовала бы, и владелец видел
-    // бы «метка работает через раз».
-    if (moved) syncSort();
-
-    // Заметки может не быть в списке вовсе — так бывает, когда из поиска
-    // открыли заметку из другой папки. Тогда список пересобирается по той
-    // папке, где она лежит: пустая средняя колонка рядом с открытым текстом
-    // читалась бы как потеря места.
-    QModelIndex row = list_.indexForPath(file);
-    if (!row.isValid() && folder.isValid()) {
-        list_.setRows(model_.notesInSubtree(folder));
-        row = list_.indexForPath(file);
-    }
+    // В списке — выделить строку, если заметка в нём есть. Нет — значит, человек
+    // смотрит другую папку; список его, и он остаётся.
+    const QModelIndex row = list_.indexForPath(file);
     if (!row.isValid()) return;
     revealing_ = true;
     listView_.setCurrentIndex(row);
-    listView_.scrollTo(row, force ? QAbstractItemView::PositionAtCenter
-                                  : QAbstractItemView::EnsureVisible);
+    listView_.scrollTo(row, primary ? QAbstractItemView::PositionAtCenter
+                                    : QAbstractItemView::EnsureVisible);
     revealing_ = false;
 }
 
