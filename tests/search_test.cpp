@@ -13,6 +13,8 @@
 #include "document.h"
 #include "search.h"
 #include "settings.h"
+#include "doc_model.h"
+#include "pieces.h"
 #include "store_search.h"
 #include "test_util.h"
 
@@ -23,6 +25,8 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QImage>
+#include <QTextBlock>
 #include <QShortcut>
 #include <QSignalSpy>
 #include <QScrollBar>
@@ -127,6 +131,22 @@ void checkSeesWhatUserSees() {
     // Перекрывающиеся вхождения считаются все: F3 обойдёт их так же.
     ZT_TRUE("перекрывающиеся вхождения считаются",
             countIn(QStringLiteral("ааа\n"), "аа") == 2);
+
+    // ОБЪЕКТЫ ИЩУТСЯ ПО ИСХОДНИКУ (решение владельца, сессия 5): таблица и
+    // формула — объекты с U+FFFC в тексте блока, и без этого правила их не
+    // видел бы ни поиск по заметке, ни поиск по хранилищу и истории (все
+    // ходят ZDocument::find).
+    ZT_TRUE("слово в ячейке таблицы находится",
+            countIn(QStringLiteral("| a | сено |\n|---|---|\n| сено | b |\n"), "сено") == 2);
+    ZT_TRUE("формула ищется по исходнику: «gamma» находит \\gamma",
+            countIn(QStringLiteral("$$\\gamma x$$\n"), "gamma") == 1);
+    ZT_TRUE("и хвостовая строка результата берётся из исходника объекта", [] {
+        const zametti::ZDocument doc = noteOf(QStringLiteral("| a | сено |\n|---|---|\n| сено | b |\n"));
+        const std::vector<zametti::Hit> hits = doc.find(zametti::makeQuery(QStringLiteral("сено")));
+        if (hits.size() != 2 || !hits[1].inObject) return false;
+        const zametti::HitLine line = doc.hitLine(hits[1]);
+        return line.text.contains(QStringLiteral("| сено | b |")) && !line.text.contains(QLatin1Char('\n'));
+    }());
 }
 
 void checkHitLine() {
@@ -243,16 +263,68 @@ void checkEditorSearch() {
         ZT_TRUE("после прокрутки подсвечены совпадения у конца", lastLit);
     }
 
-    // «Заменить все» — один шаг отмены.
-    const QString before = editor.toPlainText();
+    // Вхождения в таблице подсвечивает вид на сетке, а не ExtraSelection над
+    // знаком объекта: подсветок Qt три (текст), а на сетке — две ячейки цветом
+    // подсветки.
+    ZT_TRUE("подсветок Qt — только текстовые (" + std::to_string(int(editor.extraSelections().size())) + ")",
+            editor.extraSelections().size() == 3);
+    {
+        int table = -1;
+        for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next())
+            if (zametti::isTableObjectBlock(b)) table = b.blockNumber();
+        ZT_TRUE("таблица — объект", table >= 0);
+        if (table >= 0) {
+            const QRectF area = editor.tableRect(table);
+            const QImage shot = editor.grab().toImage();
+            const QColor mark = zametti::settings().style().searchHighlight();
+            const QPoint origin = editor.viewport()->mapTo(&editor, QPoint(0, 0));
+            const int scroll = editor.verticalScrollBar()->value();
+            int painted = 0;
+            for (int px = int(area.left()); px < int(area.right()); ++px)
+                for (int py = int(area.top()); py < int(area.bottom()); ++py) {
+                    const int sx = px + origin.x();
+                    const int sy = py - scroll + origin.y();
+                    if (sx < 0 || sy < 0 || sx >= shot.width() || sy >= shot.height()) continue;
+                    const QColor at = shot.pixelColor(sx, sy);
+                    // Бледная подсветка (альфа 110) на белом — тот же оттенок.
+                    if (qAbs(at.red() - mark.red()) < 40 && qAbs(at.blue() - mark.blue()) < 60 &&
+                        at.green() < 235)
+                        ++painted;
+                }
+            ZT_TRUE("вхождения в ячейках подсвечены на сетке (" + std::to_string(painted) + " точек)",
+                    painted > 20);
+        }
+    }
+    // F3 доводит до вхождения в таблице и выбирает её.
+    editor.stepMatch(1);
+    editor.stepMatch(1);
+    editor.stepMatch(1);
+    ZT_TRUE("четвёртое вхождение — в таблице", editor.currentMatch() == 3 &&
+                                                zametti::isTableObjectBlock(editor.textCursor().block()));
+
+    // «Заменить все» — один шаг отмены. Сравниваем markdown, а не toPlainText:
+    // в тексте блока-таблицы стоит U+FFFC, и по нему проверка была бы пустышкой.
+    const std::string before = markdownOf(blocksOf(*editor.document()));
     const int replaced =
         editor.replaceAllMatches(QStringLiteral("сено"), false, QStringLiteral("солома"));
     ZT_TRUE("заменены все вхождения", replaced == 5);
-    ZT_TRUE("в тексте не осталось искомого",
-            !editor.toPlainText().contains(QStringLiteral("сено")));
+    ZT_TRUE("в заметке не осталось искомого",
+            markdownOf(blocksOf(*editor.document())).find("сено") == std::string::npos);
     editor.undo();
     QTest::qWait(20);
-    ZT_TRUE("одна отмена возвращает всё", editor.toPlainText() == before);
+    ZT_TRUE("одна отмена возвращает всё", markdownOf(blocksOf(*editor.document())) == before);
+
+    // Замена ОДНОГО вхождения внутри таблицы переписывает исходник объекта.
+    editor.findMatches(QStringLiteral("сено"), false);
+    editor.goToMatch(3);
+    ZT_TRUE("текущее — в таблице", zametti::isTableObjectBlock(editor.textCursor().block()));
+    ZT_TRUE("замена одного вхождения в таблице удалась", editor.replaceCurrentMatch(QStringLiteral("солома")));
+    ZT_TRUE("в таблице заменена одна ячейка",
+            markdownOf(blocksOf(*editor.document())).find("| столбец | солома |") != std::string::npos &&
+                markdownOf(blocksOf(*editor.document())).find("| сено | ещё |") != std::string::npos);
+    editor.undo();
+    QTest::qWait(20);
+    ZT_TRUE("и она отменяется", markdownOf(blocksOf(*editor.document())) == before);
 
     // Дословный кусок остаётся дословным: заменяется только текст, разметка
     // таблицы цела.
