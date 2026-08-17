@@ -529,6 +529,8 @@ protected:
     bool insertAfterObject(QTextCursor& at, int blockIndex, bool continueItem);
     // Судья: заменить блок тем, что прочёл бы файл из этого исходника.
     bool rejudgeBlock(QTextCursor& at, int number, const QString& source);
+    // Tab на выделении из нескольких блоков под списком: новый последний пункт.
+    bool attachRunAsLastItem(QTextCursor& at);
 
     // ОДНА МЕСТНАЯ ПРАВКА СТРОЕНИЯ ЦЕЛИКОМ: скобка отмены, сама правка,
     // пересборка тронутого сборщиком, шов, сверка со сборкой в отладочной

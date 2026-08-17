@@ -4067,7 +4067,56 @@ static bool moveCodeBlock(QTextDocument& doc, QTextCursor& cursor, int direction
     return setInsideLevel(doc, range, -1);
 }
 
+// ВЫДЕЛЕНИЕ ПОД СПИСКОМ + Tab — НОВЫЙ ПОСЛЕДНИЙ ПУНКТ (просьба владельца,
+// сессия 5: «после списка идёт абзац или набор абзацев — текст, код, объекты,
+// списки, лишь бы без заголовков; выделяю всё, жму Tab — и набор добавляется к
+// списку как последний пункт»). Первый абзац выделения становится пунктом
+// (маркер — как у пункта над ним, уровень — его), остальное — содержимым
+// этого пункта: абзацы, код, объекты на уровне пункта, вложенные в выделение
+// списки — уровнем глубже. Заголовок и черта внутри пункта не живут — тогда
+// отказ, ничего не трогаем.
+bool ZDocument::attachRunAsLastItem(QTextCursor& at) {
+    if (at.document() != &d_->text || !at.hasSelection()) return false;
+    const BlockRange range = selectedBlocks(d_->text, at);
+    if (range.last <= range.first) return false;
+    const QTextBlock first = d_->text.findBlockByNumber(range.first);
+    if (!first.isValid() || isRawBlock(first) || kindOf(first) != Kind::Paragraph ||
+        levelOf(first) >= 0)
+        return false;
+    const int level = levelAbove(d_->text, range.first);
+    if (level < 0) return false;
+
+    std::vector<Piece> pieces = piecesOfBlocks(d_->text, range.first, range.last);
+    if (pieces.size() < 2) return false;
+    for (const Piece& piece : pieces)
+        if (!piece.raw && (piece.kind == Kind::Heading || piece.kind == Kind::Divider))
+            return false;
+    pieces.front().kind = Kind::ListItem;
+    pieces.front().marker = markerOfItemAbove(d_->text, range.first, level);
+    pieces.front().checked = false;
+    pieces.front().level = level;
+    for (size_t i = 1; i < pieces.size(); ++i) {
+        Piece& piece = pieces[i];
+        if (!piece.raw && piece.kind == Kind::VSpace) continue;
+        // Всё, что уже стояло в каком-то списке внутри выделения, уезжает
+        // глубже пункта; остальное становится его содержимым.
+        piece.level = piece.level >= 0 ? piece.level + level + 1 : level;
+    }
+
+    QTextCursor edit(at);
+    edit.beginEditBlock();
+    replaceBlocks(range.first, range.last, pieces);
+    settleSeam(range.first, range.first + int(pieces.size()) - 1);
+    edit.endEditBlock();
+#ifndef NDEBUG
+    checkCanonical();
+#endif
+    at = caretAtBlock(range.first);
+    return true;
+}
+
 bool ZDocument::indent(QTextCursor& at) {
+    if (attachRunAsLastItem(at)) return true;
     return runLocalEdit(at, [this](QTextCursor& edit) {
         return moveCodeBlock(d_->text, edit, 1) || indentCodeAtCursor(d_->text, edit) ||
                indentListItems(d_->text, edit);
