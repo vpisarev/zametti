@@ -26,12 +26,6 @@
 
 namespace zametti {
 
-namespace {
-// Сколько знаков сниппета держим. Две-три строки списка при любой разумной
-// ширине панели; резать точно по строкам нельзя — ширина известна только
-// делегату, и она меняется вместе с разделителем.
-constexpr int kSnippetChars = 200;
-}  // namespace
 
 bool ZStorage::isStoreRoot(const QString& dir) {
     return QFileInfo(dir + QStringLiteral("/.zametti")).isDir();
@@ -109,46 +103,6 @@ ZNoteHistory ZStorage::historyOf(const QString& id, const history::Rules& rules)
     return ZNoteHistory(root_, id, rules);
 }
 
-bool ZStorage::readInfo(const QString& path, NoteInfo& out) const {
-    QFile f(path);
-    if (!f.open(QIODevice::ReadOnly)) return false;
-    const QByteArray bytes = f.readAll();
-    ZDocument doc;
-    doc.loadMarkdown(std::string_view(bytes.constData(), size_t(bytes.size())));
-
-    out.id_ = idOfPath(path);
-    out.path_ = QFileInfo(path).absoluteFilePath();
-    out.parent_ = doc.parentId();
-    // ВРЕМЕНА ПРИВОДЯТСЯ К UTC ПРЯМО ЗДЕСЬ. В шапке они с офсетом («…+02:00»),
-    // а сравниваются и сортируются строками — лексикографически «21:40+02:00»
-    // больше «19:40Z», хотя это один момент. Дальше ходит только сравнимая
-    // форма; показывает даты список, и он переводит в местную зону сам.
-    out.modified_ = store::comparableTime(doc.modified().toStdString());
-    out.created_ = store::comparableTime(doc.created().toStdString());
-    if (out.modified_.isEmpty())
-        out.modified_ = QFileInfo(path).lastModified().toUTC().toString(Qt::ISODate);
-    if (out.created_.isEmpty()) out.created_ = out.modified_;
-    // Метка сортировки. Чужое значение не должно ни ронять программу, ни молча
-    // подменяться на своё: жалуемся и показываем папку по наследству.
-    const QString sort = doc.headerValue(QStringLiteral("sort"));
-    out.sortMark_.reset();
-    if (!sort.isEmpty()) {
-        out.sortMark_ = doc.sortOrder();
-        if (!out.sortMark_.has_value())
-            std::fprintf(stderr, "непонятная метка сортировки [%s] в [%s] — папка наследует\n",
-                         sort.toUtf8().constData(), path.toUtf8().constData());
-    }
-    out.archived_ = doc.isArchived();
-    out.folder_ = doc.isFolder() || doc.isLost();
-    out.lostFound_ = doc.isLost();
-    // Заголовок и сниппет — глаголы заметки: то же правило «первый
-    // содержательный блок» стоит в поиске по хранилищу и в стабе архива.
-    out.title_ = doc.title();
-    if (out.title_.isEmpty()) out.title_ = QStringLiteral("Без названия");
-    out.snippet_ = doc.snippet(kSnippetChars);
-    return true;
-}
-
 void ZStorage::reload() {
     notes_.clear();
     if (!store_) return;
@@ -157,8 +111,8 @@ void ZStorage::reload() {
          QDir(root_).entryInfoList({QStringLiteral("*.md")}, QDir::Files)) {
         const QString stem = info.completeBaseName();
         if (!isValidNoteId(stem.toStdString())) continue;
-        NoteInfo note;
-        if (!readInfo(info.absoluteFilePath(), note)) {
+        NoteInfo note = ZNote::Metadata::fromFile(info.absoluteFilePath());
+        if (!note.valid()) {
             // Заметка есть на диске, но не читается — молчать нельзя: человек
             // видел бы пустое место в дереве и не узнал бы, что файл на месте.
             std::fprintf(stderr, "заметка не читается, в каталоге её не будет: [%s]\n",
@@ -176,8 +130,8 @@ bool ZStorage::refreshNote(const QString& id) {
         notes_.remove(id);
         return false;
     }
-    NoteInfo fresh;
-    if (!readInfo(path, fresh)) return false;
+    NoteInfo fresh = ZNote::Metadata::fromFile(path);
+    if (!fresh.valid()) return false;
     notes_.insert(id, std::move(fresh));
     return true;
 }
@@ -229,9 +183,9 @@ bool ZStorage::isEmptyNote(const QString& id) const {
     QFile f(pathOf(id));
     if (!f.open(QIODevice::ReadOnly)) return false;
     const QByteArray bytes = f.readAll();
-    ZDocument doc;
-    doc.loadMarkdown(std::string_view(bytes.constData(), size_t(bytes.size())));
-    return doc.isEmpty();
+    ZNote note;
+    note.load(std::string_view(bytes.constData(), size_t(bytes.size())));
+    return note.doc().isEmpty();
 }
 
 QString ZStorage::titleOf(const QString& id) const {
@@ -287,9 +241,9 @@ QString ZStorage::createNote(const QString& parentId, bool folder, QString* erro
     const QString id = idOfPath(made);
     if (folder) {
         QString why;
-        if (!rewriteNote(id, [](ZDocument& doc) {
-                doc.setHeaderValue(QStringLiteral("role"), QStringLiteral("folder"));
-                doc.setTitle(QStringLiteral("Новая папка"));
+        if (!rewriteNote(id, [](ZNote& note) {
+                note.setRole(QStringLiteral("folder"));
+                note.doc().setTitle(QStringLiteral("Новая папка"));
             }, history::Rules{}, &why))
             std::fprintf(stderr, "новая папка без роли: %s\n", why.toUtf8().constData());
     }
@@ -307,7 +261,7 @@ bool ZStorage::archive(const QString& id, const history::Rules& rules, QStringLi
         if (isFolder(victim)) {
             // У папки тела нет — только заголовок; журнал ей ни к чему, хватит
             // пометки.
-            if (!rewriteNote(victim, [](ZDocument& doc) { doc.setArchived(true); }, rules, &why)) {
+            if (!rewriteNote(victim, [](ZNote& note) { note.setArchived(true); }, rules, &why)) {
                 ok = false;
                 if (failed != nullptr) *failed << QStringLiteral("%1: %2").arg(titleOf(victim), why);
             }
@@ -330,10 +284,9 @@ bool ZStorage::restore(const QString& id, QStringList* failed) {
     for (const QString& one : back) {
         QString why;
         if (isFolder(one)) {
-            if (!rewriteNote(one, [](ZDocument& doc) {
-                    doc.setArchived(false);
-                    if (doc.headerValue(QStringLiteral("role")) == QLatin1String("trash"))
-                        doc.setHeaderValue(QStringLiteral("role"), QString());
+            if (!rewriteNote(one, [](ZNote& note) {
+                    note.setArchived(false);
+                    if (note.role() == QLatin1String("trash")) note.setRole(QString());
                 }, history::Rules{}, &why)) {
                 ok = false;
                 if (failed != nullptr) *failed << QStringLiteral("%1: %2").arg(titleOf(one), why);
@@ -381,26 +334,26 @@ bool ZStorage::remove(const QString& id, QString* error) {
 
 bool ZStorage::rename(const QString& id, const QString& title, const history::Rules& rules,
                       QString* error) {
-    return rewriteNote(id, [&title](ZDocument& doc) { doc.setTitle(title); }, rules, error);
+    return rewriteNote(id, [&title](ZNote& note) { note.doc().setTitle(title); }, rules, error);
 }
 
 bool ZStorage::move(const QString& id, const QString& parentId, const history::Rules& rules,
                     QString* error) {
-    return rewriteNote(id, [&parentId](ZDocument& doc) {
-        doc.setHasHeader(true);
-        doc.setParentId(parentId);
+    return rewriteNote(id, [&parentId](ZNote& note) {
+        note.setHasHeader(true);
+        note.setParentId(parentId);
     }, rules, error);
 }
 
 bool ZStorage::setSortMark(const QString& id, std::optional<SortOrder> order,
                            const history::Rules& rules, QString* error) {
-    return rewriteNote(id, [order](ZDocument& doc) {
-        doc.setHasHeader(true);
-        doc.setSortOrder(order);
+    return rewriteNote(id, [order](ZNote& note) {
+        note.setHasHeader(true);
+        note.setSortMark(order);
     }, rules, error);
 }
 
-bool ZStorage::rewriteNote(const QString& id, const std::function<void(ZDocument&)>& change,
+bool ZStorage::rewriteNote(const QString& id, const std::function<void(ZNote&)>& change,
                            const history::Rules& rules, QString* error) {
     const QString path = pathOf(id);
     QFile f(path);
@@ -410,23 +363,21 @@ bool ZStorage::rewriteNote(const QString& id, const std::function<void(ZDocument
     }
     const QByteArray bytes = f.readAll();
     f.close();
-    ZDocument doc;
-    doc.loadMarkdown(std::string_view(bytes.constData(), size_t(bytes.size())));
-    change(doc);
+    // Заметка поднимается с диска на время операции — та же ZNote, что и у
+    // редактора, только без вида: шапка её, тело её, запись её.
+    ZNote note(path, bytes, hashOf(std::string_view(bytes.constData(), size_t(bytes.size()))),
+               historyOf(id, rules));
+    note.load(std::string_view(bytes.constData(), size_t(bytes.size())));
+    change(note);
     // ШТАТНЫЙ ПУТЬ ЗАПИСИ: самопроверка разбором обратно, атомарная запись,
     // отпечаток — те же правила, что у открытой заметки. Прежде здесь стоял
     // std::ofstream мимо всего этого (аудит refactor2, §1.4).
-    const SaveOutcome outcome =
-        doc.saveTo(path, rescueTimestamp(),
-                   nullptr, doc.header(), hashOf(std::string_view(bytes.constData(), size_t(bytes.size()))));
+    const SaveOutcome outcome = note.save(path, rescueTimestamp(), note.digest());
     if (outcome.result != SaveResult::Written && outcome.result != SaveResult::Unchanged) {
         if (error != nullptr) *error = outcome.message;
         return false;
     }
-    if (outcome.result == SaveResult::Written) {
-        ZNoteHistory history = historyOf(id, rules);
-        history.record(journal::Kind::Save, outcome.written);
-    }
+    if (outcome.result == SaveResult::Written) note.history().record(journal::Kind::Save, outcome.written);
     refreshNote(id);
     return true;
 }

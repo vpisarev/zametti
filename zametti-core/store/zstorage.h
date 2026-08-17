@@ -23,9 +23,9 @@
 #ifndef ZAMETTI_ZSTORAGE_H
 #define ZAMETTI_ZSTORAGE_H
 
-#include "document.h"
 #include "history_rules.h"
 #include "sort_order.h"
+#include "znote.h"
 #include "znote_history.h"
 
 #include <QHash>
@@ -41,38 +41,9 @@ namespace zametti {
 
 class ZStorage {
 public:
-    // Запись каталога — шапка заметки, прочитанная с диска. Только чтение:
-    // наполняет её хранилище.
-    class NoteInfo {
-    public:
-        const QString& id() const { return id_; }
-        const QString& parent() const { return parent_; }
-        const QString& title() const { return title_; }
-        const QString& snippet() const { return snippet_; }
-        // Времена — в СРАВНИМОЙ форме (UTC, ISO): по ним сортируют строками.
-        const QString& modified() const { return modified_; }
-        const QString& created() const { return created_; }
-        const QString& path() const { return path_; }
-        std::optional<SortOrder> sortMark() const { return sortMark_; }
-        bool archived() const { return archived_; }
-        bool folder() const { return folder_; }
-        bool lostFound() const { return lostFound_; }
-        bool valid() const { return !id_.isEmpty(); }
-
-    protected:
-        friend class ZStorage;
-        QString id_;
-        QString parent_;
-        QString title_;
-        QString snippet_;
-        QString modified_;
-        QString created_;
-        QString path_;
-        std::optional<SortOrder> sortMark_;
-        bool archived_ = false;
-        bool folder_ = false;
-        bool lostFound_ = false;
-    };
+    // Запись каталога — метаданные заметки (ZNote::Metadata): одно место у
+    // самой заметки, здесь — по id.
+    using NoteInfo = ZNote::Metadata;
 
     // Плоское ли это хранилище (метка — каталог .zametti).
     static bool isStoreRoot(const QString& dir);
@@ -176,11 +147,12 @@ public:
                      QString* error);
 
     // --- правка шапки закрытой заметки -----------------------------------
-    // Разобрать файл, применить change к заметке, записать штатным путём
-    // (самопроверка, атомарно, шаг журнала Save), обновить каталог. Ложь —
-    // объяснение в error. Открытую в редакторе заметку так править нельзя:
-    // сторож файла примет запись за чужую; для неё — глаголы редактора.
-    bool rewriteNote(const QString& id, const std::function<void(ZDocument&)>& change,
+    // Поднять заметку с диска, применить change (глаголы ZNote: шапка, тело),
+    // записать штатным путём (самопроверка, атомарно, шаг журнала Save),
+    // обновить каталог. Ложь — объяснение в error. Открытую в редакторе заметку
+    // так править нельзя: сторож файла примет запись за чужую; для неё — глаголы
+    // редактора.
+    bool rewriteNote(const QString& id, const std::function<void(ZNote&)>& change,
                      const history::Rules& rules, QString* error);
 
 protected:
@@ -189,7 +161,6 @@ protected:
     QHash<QString, NoteInfo> notes_;
     std::shared_ptr<QLockFile> lock_;   // заведён при первом lock()
 
-    bool readInfo(const QString& path, NoteInfo& out) const;
 };
 
 }  // namespace zametti

@@ -2,6 +2,7 @@
 
 #include "journal.h"
 #include "document.h"
+#include "znote.h"
 #include "serializer.h"
 
 #include <QDateTime>
@@ -241,8 +242,8 @@ bool restoreNote(const QString& root, const QString& noteId, QString* error) {
         if (error != nullptr) *error = QStringLiteral("заметка %1 не читается").arg(noteId);
         return false;
     }
-    ZDocument stub;
-    stub.loadMarkdown(bytes);
+    ZNote stub;
+    stub.load(bytes);
     if (!stub.isArchived()) return true;   // уже дома
 
     journal::History history(root);
@@ -293,15 +294,15 @@ bool restoreNote(const QString& root, const QString& noteId, QString* error) {
 int migrateTrashToArchive(const QString& root, QString* error) {
     QString trashId;
     QHash<QString, QString> parents;   // id → parent, по всему хранилищу
-    QHash<QString, ZDocument> docs;
+    QHash<QString, std::shared_ptr<ZNote>> docs;
     for (const QFileInfo& info : QDir(root).entryInfoList({QStringLiteral("*.md")}, QDir::Files)) {
         std::string bytes;
         if (!readFileBytes(info.absoluteFilePath(), bytes)) continue;
-        ZDocument doc;
-        doc.loadMarkdown(bytes);
+        auto doc = std::make_shared<ZNote>();
+        doc->load(bytes);
         const QString id = info.completeBaseName();
-        parents.insert(id, doc.parentId());
-        if (doc.headerValue(QStringLiteral("role")) == QLatin1String("trash")) trashId = id;
+        parents.insert(id, doc->parentId());
+        if (doc->headerValue(QStringLiteral("role")) == QLatin1String("trash")) trashId = id;
         docs.insert(id, doc);
     }
     if (trashId.isEmpty()) return 0;
@@ -310,7 +311,7 @@ int migrateTrashToArchive(const QString& root, QString* error) {
     for (auto it = docs.begin(); it != docs.end(); ++it) {
         if (it.key() == trashId) continue;
         if (parents.value(it.key()) != trashId) continue;
-        ZDocument& doc = it.value();
+        ZNote& doc = *it.value();
         // Пустое значение снимает ключ — и «домой в корень» выражается ровно им.
         doc.setParentId(doc.headerValue(QStringLiteral("trash-parent")));
         doc.setHeaderValue(QStringLiteral("trash-parent"), QString());

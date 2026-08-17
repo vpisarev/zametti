@@ -6,6 +6,7 @@
 
 #include "note_id.h"
 #include "document.h"
+#include "znote.h"
 #include "document_pieces.h"
 #include "serializer.h"
 
@@ -316,8 +317,8 @@ QString importNote(const QString& root, const QString& parentId, const QString& 
     // Мусорные неразрывные пробелы вычищаются ПРИ ВВОЗЕ, а не при первом
     // открытии: иначе привезённая заметка какое-то время лежала бы на диске
     // грязной, и человек, заглянувший в неё чужим редактором, увидел бы сор.
-    ZDocument doc;
-    doc.loadMarkdown(bytes);
+    ZNote doc;
+    doc.load(bytes);
 
     // Времена. СОЗДАНА заметка тогда, когда её написали: своя шапка знает это
     // лучше файловой системы (файл могли скопировать, и mtime стал бы датой
@@ -350,19 +351,15 @@ QString importNote(const QString& root, const QString& parentId, const QString& 
     doc.setHasHeader(true);
     // Пустая строка после "-->" положена перед содержимым; у пустого файла
     // содержимого нет, и она дала бы дрейф.
-    {
-        NoteHeader head = doc.header();
-        head.setBlankAfter(!doc.isEmpty());
-        doc.setHeader(head);
-    }
+    doc.header().setBlankAfter(!doc.doc().isEmpty());
 
     const std::string content = doc.toMarkdown();
     // Последний рубеж, тот же, что и у сохранения: записанное обязано читаться
     // обратно в себя. Ядро это гарантирует, но файл пришёл снаружи.
     {
-        ZDocument back;
-        back.loadMarkdown(content);
-        if (!back.isCanonical(content))
+        ZNote back;
+        back.load(content);
+        if (back.toMarkdown() != content)
             return fail(QStringLiteral("канонизация не сошлась на %1").arg(info.fileName()));
     }
 

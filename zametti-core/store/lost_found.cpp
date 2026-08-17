@@ -2,6 +2,7 @@
 
 #include "note_id.h"
 #include "document.h"
+#include "znote.h"
 #include "serializer.h"
 #include "store.h"
 
@@ -40,17 +41,17 @@ bool writeBytes(const QString& path, const std::string& bytes, QString* error) {
 int fileOrphans(const QString& root, QString* error) {
     // Один проход по каталогу: что за заметки есть и на кого они ссылаются.
     QHash<QString, QString> parents;
-    QHash<QString, ZDocument> docs;
+    QHash<QString, std::shared_ptr<ZNote>> docs;
     QString bureau;
     for (const QFileInfo& info : QDir(root).entryInfoList({QStringLiteral("*.md")}, QDir::Files)) {
         const QString id = info.completeBaseName();
         if (!isValidNoteId(id.toStdString())) continue;
         std::string bytes;
         if (!readBytes(info.absoluteFilePath(), bytes)) continue;
-        ZDocument doc;
-        doc.loadMarkdown(bytes);
-        parents.insert(id, doc.parentId());
-        if (doc.isLost()) bureau = id;
+        auto doc = std::make_shared<ZNote>();
+        doc->load(bytes);
+        parents.insert(id, doc->parentId());
+        if (doc->isLost()) bureau = id;
         docs.insert(id, doc);
     }
 
@@ -80,12 +81,12 @@ int fileOrphans(const QString& root, QString* error) {
             if (error != nullptr) *error = QStringLiteral("папка бюро не читается");
             return -1;
         }
-        ZDocument doc;
-        doc.loadMarkdown("# Бюро находок\n");
+        ZNote doc;
+        doc.load("# Бюро находок\n");
         NoteHeader head;
         {
-            ZDocument was;
-            was.loadMarkdown(bytes);
+            ZNote was;
+            was.load(bytes);
             head = was.header();
         }
         head.setPresent(true);
@@ -97,7 +98,7 @@ int fileOrphans(const QString& root, QString* error) {
 
     int filed = 0;
     for (const QString& id : lost) {
-        ZDocument& doc = docs[id];
+        ZNote& doc = *docs[id];
         // ДВА ПОРТА: текущий — бюро, оригинал — то, что было. По второму видно,
         // откуда заметка пришла, и он же переживёт приезд настоящего родителя
         // синхронизацией.

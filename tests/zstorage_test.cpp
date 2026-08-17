@@ -82,9 +82,9 @@ void checkCatalog() {
     // Правка шапки закрытой заметки — штатным путём: заголовок и родитель
     // меняются, файл цел и читается, журнал получил запись, каталог обновлён.
     ZT_TRUE("rewriteNote: " + s(error),
-            storage.rewriteNote(noteId, [](zametti::ZDocument& doc) {
-                doc.setTitle(QStringLiteral("Третья"));
-                doc.setParentId(QString());
+            storage.rewriteNote(noteId, [](zametti::ZNote& note) {
+                note.doc().setTitle(QStringLiteral("Третья"));
+                note.setParentId(QString());
             }, rules(), &error));
     ZT_EQ("заголовок после правки", "Третья", s(storage.info(noteId)->title()));
     ZT_TRUE("родитель снят", storage.info(noteId)->parent().isEmpty());
@@ -95,8 +95,8 @@ void checkCatalog() {
         ZT_TRUE("в журнале есть запись о правке", !journal.entries.isEmpty());
     }
     ZT_TRUE("та же правка второй раз — не ошибка (файл не изменился)",
-            storage.rewriteNote(noteId, [](zametti::ZDocument& doc) {
-                doc.setTitle(QStringLiteral("Третья"));
+            storage.rewriteNote(noteId, [](zametti::ZNote& note) {
+                note.doc().setTitle(QStringLiteral("Третья"));
             }, rules(), &error));
 
     // Файл унесли — из каталога уходит.
@@ -104,7 +104,7 @@ void checkCatalog() {
     ZT_TRUE("refreshNote пропавшей — ложь", !storage.refreshNote(noteId));
     ZT_TRUE("и в каталоге её нет", !storage.has(noteId));
     ZT_TRUE("правка пропавшей — ложь с объяснением",
-            !storage.rewriteNote(noteId, [](zametti::ZDocument&) {}, rules(), &error) &&
+            !storage.rewriteNote(noteId, [](zametti::ZNote&) {}, rules(), &error) &&
                 !error.isEmpty());
 
     // Замок: одно хранилище — одна программа. Второй объект на том же корне
@@ -155,8 +155,8 @@ void checkOperations() {
     ZT_EQ("потомки папки", "1", n(storage.descendantsOf(folder).size()));
     // Родитель в архиве — заметка идёт в корень.
     ZT_TRUE("рецепт: правка текста заметки",
-            storage.rewriteNote(inner, [](zametti::ZDocument& doc) {
-                doc.setTitle(QStringLiteral("Внутренняя"));
+            storage.rewriteNote(inner, [](zametti::ZNote& note) {
+                note.doc().setTitle(QStringLiteral("Внутренняя"));
             }, rules(), &error));
 
     QStringList failed;
