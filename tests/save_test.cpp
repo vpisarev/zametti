@@ -643,9 +643,10 @@ void checkTrailingSoftBreak() {
 // пустой подписью. Ловилось только на записи: канон toMarkdown() картинку
 // держал, а файл — нет.
 //
-// Картинка без подписи ПОСРЕДИ ТЕКСТА («до ![](x.png) после») сюда не входит:
-// её теряет уже сборка документа — знаков, на которые лечь формату, у неё нет.
-// Это отдельный дефект (отчёт refactor2, §«найдено, не починено»).
+// Картинка без подписи ПОСРЕДИ ТЕКСТА («до ![](x.png) после») — ниже, отдельно:
+// её теряла уже сборка документа (знаков, на которые лечь формату, у неё нет),
+// и теперь сборка даёт ей безымянное имя «image N» — в файл уходит
+// «![image 1](x.png)», картинка цела (решение владельца).
 void checkTrailingBareImage() {
     for (const char* source : {"---\ntitle: t\n---\n\nтекст\n\n![](x.png)\n",
                                "---\ntitle: t\n---\n\n![](x.png)\n",
@@ -661,6 +662,39 @@ void checkTrailingBareImage() {
               std::string("картинка без подписи пережила запись: ") + source);
         checkEqual(noteOf(source).toMarkdown(), onDisk,
                    "картинка без подписи: канон и файл — одно");
+    }
+}
+
+// Строчная картинка без подписи: не теряется, а получает имя «image N» — оно
+// безымянное (под снимком не показалось бы), а картинка в файле цела. Две
+// картинки в одном абзаце получают разные номера; настоящая подпись соседки
+// не трогается; разметка вокруг не съезжает.
+void checkInlineBareImage() {
+    struct Case {
+        const char* source;
+        const char* expected;
+    };
+    const Case cases[] = {
+        {"до ![](x.png) после\n", "до ![image 1](x.png) после\n"},
+        {"![](a.png) и ![](b.png)\n", "![image 1](a.png) и ![image 2](b.png)\n"},
+        {"текст, *курсив* и ![](x.png), потом **жирный** хвост\n",
+         "текст, _курсив_ и ![image 1](x.png), потом **жирный** хвост\n"},
+        {"- пункт с ![](x.png) внутри\n", "- пункт с ![image 1](x.png) внутри\n"},
+        // Картинка внутри выделения — дословный кусок (так решил разбор), и
+        // дословное не трогается: в файл уходит ровно то, что было.
+        {"*курсив ![](x.png) до конца*\n", "*курсив ![](x.png) до конца*\n"},
+    };
+    for (const Case& c : cases) {
+        const QString path = pathFor("inline-bare-image.md");
+        check(writeFile(path, c.source), "строчная картинка без подписи: не записать исходник");
+        QTextDocument doc;
+        buildFrom(c.source, doc);
+        zametti::saveDocument(doc, path, QStringLiteral("test"));
+        const std::string onDisk = readFile(path);
+        checkEqual(std::string(c.expected), onDisk,
+                   std::string("строчная картинка без подписи пережила запись: ") + c.source);
+        checkEqual(noteOf(c.source).toMarkdown(), onDisk,
+                   "строчная картинка без подписи: канон и файл — одно");
     }
 }
 
@@ -764,6 +798,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkTrailingSoftBreak();
     checkBareLinks();
     checkTrailingBareImage();
+    checkInlineBareImage();
     checkRescue();
     checkFailure();
 
