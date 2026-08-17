@@ -166,7 +166,9 @@ void checkStripIsNotText(Peek& editor) {
 // --- геометрия плашки -------------------------------------------------------
 void checkPlateGeometry(Peek& editor) {
     const QVector<zametti::CodeBand> bands = editor.bands();
-    check(bands.size() >= 9, "полосы собраны по всем строкам кода (" +
+    // Блок кода — один QTextBlock, и полоса у него одна на весь блок; блоков в
+    // образце четыре.
+    check(bands.size() == 4, "полос столько же, сколько блоков кода (" +
                                  std::to_string(bands.size()) + ")");
     if (bands.isEmpty()) return;
 
@@ -240,23 +242,23 @@ void checkBuilderReservesStrip() {
     QTextDocument doc;
     zametti::buildDocument(pieces("текст\n\n```python\nx = 1\ny = 2\n```\n"), doc);
 
+    // Блок кода — ОДИН QTextBlock: полоска висит в его нижнем поле, воздух под
+    // скругление — в верхнем, а строк внутри столько, сколько в файле.
+    int blocks = 0;
     int lines = 0;
     for (QTextBlock b = doc.firstBlock(); b.isValid(); b = b.next()) {
         if (zametti::isRawBlock(b) || zametti::kindOf(b) != zametti::Kind::Code) continue;
-        ++lines;
-        const bool continues = b.next().isValid() && !zametti::isRawBlock(b.next()) &&
-                               zametti::kindOf(b.next()) == zametti::Kind::Code &&
-                               zametti::isContinuationBlock(b.next());
-        const qreal want = continues ? 0.0 : plate.strip;
-        check(std::fabs(b.blockFormat().bottomMargin() - want) < 0.5,
-              "сборщик: нижнее поле строки кода " + num(b.blockFormat().bottomMargin()) +
-                  ", ждали " + num(want));
-        if (zametti::isContinuationBlock(b)) continue;
+        ++blocks;
+        lines += int(b.text().count(QChar::LineSeparator)) + 1;
+        check(std::fabs(b.blockFormat().bottomMargin() - plate.strip) < 0.5,
+              "сборщик: нижнее поле блока кода " + num(b.blockFormat().bottomMargin()) +
+                  ", ждали " + num(plate.strip));
         check(b.blockFormat().topMargin() >= plate.padTop - 0.5,
               "сборщик: сверху у плашки воздух " + num(b.blockFormat().topMargin()) +
                   " >= " + num(plate.padTop));
     }
-    check(lines == 2, "строк кода в собранном документе две (" + std::to_string(lines) + ")");
+    check(blocks == 1, "блок кода в собранном документе один (" + std::to_string(blocks) + ")");
+    check(lines == 2, "а строк в нём две (" + std::to_string(lines) + ")");
 
     // Блок кода в самом конце заметки до полоски долистывается и без своего
     // поля: нижнее поле страницы (verticalMargin, 27 px) само по себе выше

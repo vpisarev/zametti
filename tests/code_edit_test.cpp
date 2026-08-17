@@ -113,20 +113,41 @@ public:
     }
 
     // Каретка в строку с этим текстом; column — сколько знаков от начала строки.
+    // Строка — это строка ФАЙЛА: блок кода лежит одним QTextBlock, и его строки
+    // разделяет U+2028, — так что ищем по строкам внутри блоков, а не по блокам.
     void caretTo(const QString& lineText, int column) {
         for (QTextBlock b = document()->firstBlock(); b.isValid(); b = b.next()) {
-            if (b.text() != lineText) continue;
-            QTextCursor at(b);
-            at.setPosition(b.position() + qMin(column, b.length() - 1));
-            setTextCursor(at);
-            return;
+            const QString text = b.text();
+            int lineStart = 0;
+            for (int i = 0; i <= text.size(); ++i) {
+                if (i != text.size() && text.at(i) != QChar::LineSeparator) continue;
+                if (text.mid(lineStart, i - lineStart) == lineText) {
+                    QTextCursor at(b);
+                    at.setPosition(b.position() + lineStart + qMin(column, i - lineStart));
+                    setTextCursor(at);
+                    return;
+                }
+                lineStart = i + 1;
+            }
         }
         check(false, ("нет строки «" + lineText + "»").toStdString());
     }
 
-    QString caretLine() const { return textCursor().block().text(); }
+    // Строка каретки — тоже строка файла, в пределах своего блока.
+    QString caretLine() const {
+        const QTextCursor c = textCursor();
+        const QString text = c.block().text();
+        const int at = c.positionInBlock();
+        const int start = int(text.lastIndexOf(QChar::LineSeparator, at - 1)) + 1;
+        int end = int(text.indexOf(QChar::LineSeparator, at));
+        if (end < 0) end = text.size();
+        return text.mid(start, end - start);
+    }
     int caretColumn() const {
-        return textCursor().position() - textCursor().block().position();
+        const QTextCursor c = textCursor();
+        const QString text = c.block().text();
+        const int at = c.positionInBlock();
+        return at - (int(text.lastIndexOf(QChar::LineSeparator, at - 1)) + 1);
     }
     zametti::Kind caretKind() const { return zametti::kindOf(textCursor().block()); }
 };
@@ -300,12 +321,14 @@ void checkCodeTabs() {
     Editor many;
     many.openText(QStringLiteral("таб-выделение.md"), kNote);
     {
+        // От второго знака первой строки до второго знака второй — обе строки
+        // одного блока кода.
+        many.caretTo(QStringLiteral("one"), 1);
+        const int from = many.textCursor().position();
+        many.caretTo(QStringLiteral("two"), 1);
         QTextCursor at(many.document());
-        QTextBlock first;
-        for (QTextBlock b = many.document()->firstBlock(); b.isValid(); b = b.next())
-            if (b.text() == QStringLiteral("one")) first = b;
-        at.setPosition(first.position() + 1);
-        at.setPosition(first.next().position() + 1, QTextCursor::KeepAnchor);
+        at.setPosition(from);
+        at.setPosition(many.textCursor().position(), QTextCursor::KeepAnchor);
         many.setTextCursor(at);
     }
     QTest::keyClick(&many, Qt::Key_Tab, Qt::NoModifier);
@@ -333,27 +356,21 @@ void checkCodeTabs() {
     checkStillLegal(editor, "после табуляции");
 }
 
-// --- нарезка блока кода по строкам ------------------------------------------
+// --- блок кода — один QTextBlock -------------------------------------------
 //
-// ПОЧИНЕНО. Блок кода лежит в документе построчно, по QTextBlock на строку, и
-// это не прихоть: Qt переразмечает целиком тот блок, в который пишут, и правка
-// внутри блока на 31 480 знаков стоила 4257 мкс против 109 мкс в блоке на сотню
-// (замер этапа 5, doc_model.h).
+// Решение владельца (сессия refactor2, шаг к модели «1 блок markdown == 1
+// QTextBlock»): блок кода лежит в документе ОДНИМ QTextBlock, строки внутри
+// разделяет U+2028 с пометкой перевода строки. Прежде каждая строка была своим
+// QTextBlock-продолжением, а шов заново резал блок после каждого набора; замер
+// (zametti-bench big loop type-mid) показал, что построчный путь пересобирал
+// логический блок целиком на каждое нажатие — 85 мс в блоке на 3000 строк
+// против 8 одним блоком.
 //
-// Слияние соседей (repairAfterTyping) ставило на месте границы блоков
-// разделитель строк, и весь блок оказывался одним QTextBlock. Файл от этого не
-// менялся — читался тот же набор блоков, — но нарезка пропадала, а вместе с ней
-// и вся выгода построчного хранения.
-//
-// Чинит splitLiteralSoftBreaks в шве: мягких переносов внутри литерального
-// блока не бывает, каждая строка — свой блок-продолжение. Прежние два захода
-// (не сливать строки; резать в syncLiteralBlocks) меняли выход трёх фаззеров;
-// этот не меняет — потому что режет только в шве и только литеральные блоки, а
-// сверка со сборкой в отладочной сборке доказывает, что результат совпадает с
-// тем, что собрал бы сборщик.
-void checkCodeStaysSliced() {
+// Здесь стережётся само строение: и после открытия, и после набора блок кода
+// остаётся одним QTextBlock с двумя строками внутри, а файл читается в себя.
+void checkCodeIsOneBlock() {
     Editor editor;
-    editor.openText(QStringLiteral("нарезка.md"), kNote);
+    editor.openText(QStringLiteral("один-блок.md"), kNote);
 
     const auto codeBlocks = [&editor] {
         int n = 0;
@@ -361,13 +378,28 @@ void checkCodeStaysSliced() {
             if (zametti::kindOf(b) == zametti::Kind::Code) ++n;
         return n;
     };
-    check(codeBlocks() == 2, "после открытия строк кода две");
+    const auto codeLines = [&editor] {
+        for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next())
+            if (zametti::kindOf(b) == zametti::Kind::Code)
+                return int(b.text().count(QChar::LineSeparator)) + 1;
+        return 0;
+    };
+    check(codeBlocks() == 1, "после открытия блок кода — один QTextBlock");
+    check(codeLines() == 2, "и в нём две строки");
 
     editor.caretTo(QStringLiteral("two"), 3);
     QTest::keyClicks(&editor, QStringLiteral("x"));
     QTest::qWait(5);
-    check(codeBlocks() == 2, "после набора строки блока остались нарезанными");
+    check(codeBlocks() == 1, "после набора блок кода остался одним QTextBlock");
+    check(codeLines() == 2, "и строк в нём по-прежнему две");
     checkStillLegal(editor, "набор в блоке кода");
+
+    // Enter внутри — новая строка того же блока, а не новый блок.
+    QTest::keyClick(&editor, Qt::Key_Return);
+    QTest::qWait(5);
+    check(codeBlocks() == 1, "Enter в коде не заводит второй QTextBlock");
+    check(codeLines() == 3, "а заводит третью строку внутри");
+    checkStillLegal(editor, "Enter в блоке кода");
 }
 
 // --- литеральные табы из старых файлов --------------------------------------
@@ -435,13 +467,17 @@ void checkLiteralTabs() {
     editor.openText(QStringLiteral("таб-старый.md"), "head\n\n```py\na\tb\na   b\n```\n");
     QTest::qWait(20);
 
+    // Обе строки — в одном блоке кода: первая — lineAt(0), вторая — lineAt(1),
+    // и позиции второй считаются от начала блока (4 знака первой строки плюс
+    // разделитель).
     qreal withTab = -1;
     qreal withSpaces = -2;
     for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next()) {
         const QTextLayout* layout = b.layout();
-        if (layout == nullptr || layout->lineCount() == 0) continue;
-        if (b.text() == QStringLiteral("a\tb")) withTab = layout->lineAt(0).cursorToX(2);
-        if (b.text() == QStringLiteral("a   b")) withSpaces = layout->lineAt(0).cursorToX(4);
+        if (layout == nullptr || layout->lineCount() < 2) continue;
+        if (b.text() != QStringLiteral("a\tb\u2028a   b")) continue;
+        withTab = layout->lineAt(0).cursorToX(2);
+        withSpaces = layout->lineAt(1).cursorToX(4 + 4);
     }
     check(withTab > 0, "строка с табом разложена");
     check(std::fabs(withTab - withSpaces) < 1.0,
@@ -521,16 +557,18 @@ void checkCodeIntoListItemInRealNote() {
     // ЖЕСТ ВЛАДЕЛЬЦА: выделить ВСЕ строки блока и нажать Tab — ровно так это
     // делается во внешнем редакторе, и другого разумного способа нет.
     {
-        QTextBlock first;
-        QTextBlock last;
+        // Блок кода — один QTextBlock; его строки — строки файла внутри него.
+        QTextBlock block;
         for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next()) {
-            if (b.text() == QStringLiteral("type Malkovich=string")) first = b;
-            if (b.text() == QStringLiteral("println(Malkovich(\"Malkovich\"))")) last = b;
+            const QStringList lines = b.text().split(QChar::LineSeparator);
+            if (lines.first() == QStringLiteral("type Malkovich=string") &&
+                lines.last() == QStringLiteral("println(Malkovich(\"Malkovich\"))"))
+                block = b;
         }
-        check(first.isValid() && last.isValid(), "живая заметка: строки блока кода нашлись");
+        check(block.isValid(), "живая заметка: строки блока кода нашлись");
         QTextCursor at(editor.document());
-        at.setPosition(first.position());
-        at.setPosition(last.position() + last.length() - 1, QTextCursor::KeepAnchor);
+        at.setPosition(block.position());
+        at.setPosition(block.position() + block.length() - 1, QTextCursor::KeepAnchor);
         editor.setTextCursor(at);
     }
     QTest::keyClick(&editor, Qt::Key_Tab, Qt::NoModifier);
@@ -604,9 +642,11 @@ three
 ```
 )";
 
+// Номер блока, в котором есть строка с этим текстом (строка ФАЙЛА: блок кода
+// лежит одним QTextBlock, строки внутри разделяет U+2028).
 int firstBlockOf(Editor& editor, const QString& lineText) {
     for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next())
-        if (b.text() == lineText) return b.blockNumber();
+        if (b.text().split(QChar::LineSeparator).contains(lineText)) return b.blockNumber();
     return -1;
 }
 
@@ -735,7 +775,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkCodeIntoListItem();
     checkCodeIntoListItemInRealNote();
     checkLiteralTabs();
-    checkCodeStaysSliced();
+    checkCodeIsOneBlock();
     checkAutoIndent();
     checkAutoIndentInRealNote(argc > 2 ? QString::fromLocal8Bit(argv[2]) : QString());
     checkUndoAfterLeaving();

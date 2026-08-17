@@ -194,9 +194,10 @@ void checkDocumentStats() {
         check(s.words == 0, "подпись фотографии словами не считается");
     }
     {
-        // Код режется построчно: блоков столько же, сколько строк.
+        // Блок кода — один QTextBlock, а строк в нём три: строка — это строка
+        // ФАЙЛА, и переносы внутри блока считаются как мягкие.
         const zametti::NoteStats s = bothCounts("```\nint main() {\n    return 0;\n}\n```\n", "код");
-        check(s.lines == 3 && s.blocks == 3, "три строки кода — три блока");
+        check(s.lines == 3 && s.blocks == 1, "три строки кода — один блок, три строки");
     }
     {
         const zametti::NoteStats s = bothCounts("| a | b |\n|---|---|\n| 1 | 2 |\n", "таблица");
