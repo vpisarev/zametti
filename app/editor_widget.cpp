@@ -1,6 +1,7 @@
 #include "editor_widget.h"
 
 #include "block_object.h"
+#include "caption_editor.h"
 #include "lang_editor.h"
 #include "diff_view.h"
 #include "history_rules.h"
@@ -174,6 +175,24 @@ NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
     connect(this, &QTextEdit::cursorPositionChanged, this, &NoteEditor::onCaretMoved);
     connect(this, &QTextEdit::cursorPositionChanged, this,
             &NoteEditor::snapCaretOffImage);
+}
+
+// ПЛАВАЮЩИЕ ПОЛЯ ЗАКРЫВАЮТСЯ МОЛЧА И ПЕРВЫМИ. Поле языка и поле подписи живут
+// поверх вьюпорта, и у обоих потеря фокуса значит «отмена». Разбор виджета
+// прячет окно, прятание уводит фокус, уход фокуса зовёт отмену — а отмена лезет
+// в документ и в вид, которых к тому моменту уже нет (падение: ImageEdge
+// закрывал редактор с открытым полем подписи; стек — hide_sys → setFocusWidget →
+// cancelled → setEditedImageCaption → findBlockByNumber на мёртвом документе).
+// Поэтому поля отвязываются и удаляются здесь, пока всё ещё живо.
+NoteEditor::~NoteEditor() {
+    for (QWidget* field : {static_cast<QWidget*>(captionEditor_),
+                           static_cast<QWidget*>(languageEditor_)}) {
+        if (field == nullptr) continue;
+        field->disconnect();
+        delete field;
+    }
+    captionEditor_ = nullptr;
+    languageEditor_ = nullptr;
 }
 
 // Внутри хитро-отрисованной строки-фотографии каретке делать нечего: любой
@@ -1529,13 +1548,21 @@ void NoteEditor::mouseDoubleClickEvent(QMouseEvent* event) {
     // ДВОЙНОЙ ЩЕЛЧОК ПО ФОРМУЛЕ — это правка её исходника, а не выделение слова
     // в пустоте: текста под вёрсткой нет вовсе, и выделять там нечего. То же
     // правило, что у Enter на ней, — и то же, что у таблицы.
+    // ПО КАРТИНКЕ — правка подписи, ровно как Enter на ней.
     if (!isReadOnly() && !inHistory()) {
         QTextCursor at = cursorForPosition(event->pos());
-        if (objectOf(at.block()).kind == ObjectKind::Formula) {
+        const BlockObject object = objectOf(at.block());
+        if (object.kind == ObjectKind::Formula) {
             setTextCursor(at);
             runNoteEdit([](ZDocument& note, QTextCursor& caret) {
                 return note.openFormula(caret);
             });
+            event->accept();
+            return;
+        }
+        if (object.kind == ObjectKind::Image) {
+            setTextCursor(at);
+            editImageCaption(object.first);
             event->accept();
             return;
         }
@@ -1997,6 +2024,14 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
     // виды: заведи третий вид со своей проверкой — и он забудет либо про
     // запрет, либо про правку (мы уже забывали и то, и другое).
     where.onObject = own.valid() && own.first != editedTable();
+    // Сочетание переключения (Ctrl+Space, toggleTaskKey) — настраиваемое, и
+    // слой узнаёт его признаком, а не кодом клавиши. Сравнение то же, что у
+    // прочих сочетаний в keyPressEvent: Qt сопоставляет с учётом раскладки.
+    for (const QKeySequence& keys :
+         QKeySequence::listFromString(appearance().toggleTaskKey, QKeySequence::PortableText))
+        if (!keys.isEmpty() &&
+            QKeySequence(event->keyCombination()).matches(keys) == QKeySequence::ExactMatch)
+            where.toggleKey = true;
 
     const QTextBlock above = block.previous();
     const QTextBlock below = block.next();
@@ -2027,8 +2062,20 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
         const bool prints = !event->text().isEmpty() && event->text().at(0).isPrint() &&
                             (event->modifiers() & ~Qt::ShiftModifier) == Qt::NoModifier;
         if (where.onObject && prints) {
-            emit importStatus(
-                QStringLiteral("Формула правится по Enter — так же, как таблица"));
+            switch (own.kind) {
+                case ObjectKind::Image:
+                    emit importStatus(
+                        QStringLiteral("Подпись картинки правится по Enter; %1 прячет её под снимком")
+                            .arg(appearance().toggleTaskKey));
+                    break;
+                case ObjectKind::Table:
+                    emit importStatus(QStringLiteral("Таблица правится по Enter"));
+                    break;
+                default:
+                    emit importStatus(
+                        QStringLiteral("Формула правится по Enter — так же, как таблица"));
+                    break;
+            }
             return true;
         }
         return false;
@@ -2053,14 +2100,32 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
                 });
                 return true;
             }
-            // У картинки править пока нечего: подпись — следующий заход.
-            // Молчать нельзя (правило проекта про молчаливые возвраты).
+            // ПРАВИТЬ КАРТИНКУ — ЗНАЧИТ ПРАВИТЬ ЕЁ ПОДПИСЬ: поле ввода встаёт
+            // под снимок, на место подписи. Сама заметка при этом не трогается,
+            // пока человек не нажмёт Enter в поле, — тогда идёт глагол
+            // setImageCaption. У вики-вложения подписи нет — сказать вслух.
             if (own.kind == ObjectKind::Image) {
-                emit importStatus(
-                    QStringLiteral("У картинки пока нечего править — подпись появится позже"));
+                if (editImageCaption(own.first) == nullptr)
+                    emit importStatus(
+                        QStringLiteral("У вики-вложения «![[…]]» подписи не бывает"));
                 return true;
             }
             return false;
+        }
+        case ObjectAction::ToggleCaption: {
+            // Ctrl+Space (toggleTaskKey) на картинке: `~` становится первым
+            // знаком подписи, и под снимком её больше не видно
+            // (isNonameCaption); то же сочетание снимает знак обратно. У
+            // таблицы и формулы подписи нет.
+            if (own.kind != ObjectKind::Image) {
+                emit importStatus(QStringLiteral("Подпись бывает только у картинки"));
+                return true;
+            }
+            if (!runNoteEdit([](ZDocument& note, QTextCursor& at) {
+                    return note.toggleImageCaption(at, QLatin1Char('~'));
+                }))
+                emit importStatus(QStringLiteral("Подписи у картинки нет — прятать нечего"));
+            return true;
         }
         case ObjectAction::LineAfter: {
             const int last = own.last;
@@ -2158,6 +2223,74 @@ LanguageEditor* NoteEditor::editCodeLanguage(int firstBlockNumber, const QRect& 
     connect(languageEditor_, &LanguageEditor::cancelled, this,
             [this] { closeCodeLanguageEditor(); });
     return languageEditor_;
+}
+
+CaptionEditor* NoteEditor::editImageCaption(int blockNumber) {
+    if (inHistory() || isReadOnly()) return nullptr;
+    const QTextBlock block = document()->findBlockByNumber(blockNumber);
+    const BlockImageRef ref = blockImageRef(block);
+    if (!ref.valid || ref.wiki) return nullptr;
+    if (captionEditor_ != nullptr) closeImageCaptionEditor();
+
+    captionBlock_ = blockNumber;
+    // В поле — подпись КАК ОНА ЕСТЬ, со знаком «~», если спрятана: так видно,
+    // почему её нет под снимком, и как вернуть.
+    captionEditor_ = new CaptionEditor(ref.alt, viewport());
+    captionEditor_->setFont(captionFont());
+    captionEditor_->setAlignment(ref.align == ImageAlign::Right ? Qt::AlignRight
+                                                                 : Qt::AlignLeft);
+    // Пока правят — место под подпись отведено, а своя надпись не рисуется.
+    setEditedImageCaption(blockNumber);
+    placeCaptionEditor();
+    captionEditor_->show();
+    captionEditor_->setFocus(Qt::OtherFocusReason);
+
+    connect(captionEditor_, &CaptionEditor::accepted, this, [this](const QString& caption) {
+        const int block = captionBlock_;
+        closeImageCaptionEditor();
+        // Штатным путём: глагол заметки — значит шаг отмены, журнал и запись
+        // «![подпись](путь)» получаются сами собой.
+        runNoteEdit([block, caption](ZDocument& note, QTextCursor& at) {
+            QTextCursor line = note.caretAtBlock(block);
+            if (line.blockNumber() != block) return false;
+            const bool done = note.setImageCaption(line, caption);
+            if (done) at = line;
+            return done;
+        });
+    });
+    connect(captionEditor_, &CaptionEditor::cancelled, this,
+            [this] { closeImageCaptionEditor(); });
+    // Прокрутка уводит снимок — поле едет за ним.
+    connect(verticalScrollBar(), &QAbstractSlider::valueChanged, captionEditor_,
+            [this] { placeCaptionEditor(); });
+    return captionEditor_;
+}
+
+void NoteEditor::placeCaptionEditor() {
+    if (captionEditor_ == nullptr) return;
+    const QTextBlock block = document()->findBlockByNumber(captionBlock_);
+    const QRectF place = imageCaptionRectInViewport(block);
+    if (place.isEmpty()) return;
+    // Поле чуть выше строки подписи: у QLineEdit своё внутреннее поле, и
+    // впритык буквы режутся снизу.
+    const int height = qMax(int(std::ceil(place.height())),
+                            captionEditor_->fontMetrics().height() + 4);
+    captionEditor_->setGeometry(QRect(int(std::floor(place.left())),
+                                      int(std::round(place.center().y())) - height / 2,
+                                      int(std::ceil(place.width())), height));
+}
+
+void NoteEditor::closeImageCaptionEditor() {
+    if (captionEditor_ == nullptr) return;
+    CaptionEditor* going = captionEditor_;
+    captionEditor_ = nullptr;
+    captionBlock_ = -1;
+    setEditedImageCaption(-1);
+    going->hide();
+    // deleteLater, а не delete: закрытие приходит из обработчика самого поля
+    // (Esc, потеря фокуса), и убивать виджет под его же стеком нельзя.
+    going->deleteLater();
+    setFocus(Qt::OtherFocusReason);
 }
 
 void NoteEditor::closeCodeLanguageEditor() {
@@ -2362,6 +2495,33 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
         addAlign(QStringLiteral("Слева"), ImageAlign::Left);
         addAlign(QStringLiteral("По центру"), ImageAlign::Center);
         addAlign(QStringLiteral("Справа"), ImageAlign::Right);
+
+        // Подпись: править (Enter на снимке) и спрятать/вернуть (сочетание
+        // переключения). У вики-вложения подписи нет — и пунктов нет.
+        if (!ref.wiki) {
+            const int block = textCursor().blockNumber();
+            QAction* edit = menu->addAction(QStringLiteral("Подпись…"), this,
+                                            [this, block] { editImageCaption(block); });
+            edit->setShortcut(QKeySequence(Qt::Key_Return));
+            // Спрятанная ЗНАКОМ подпись возвращается тем же сочетанием; имя от
+            // камеры («IMG_1234») знаком не вернуть — оно безымянное само по
+            // себе, и пункт тогда ни к чему.
+            const bool marked = !ref.alt.isEmpty() && (ref.alt.at(0) == QLatin1Char('~') ||
+                                                       ref.alt.at(0) == QLatin1Char('-'));
+            QAction* toggle = menu->addAction(
+                marked ? QStringLiteral("Показать подпись под снимком")
+                       : QStringLiteral("Спрятать подпись под снимком"),
+                this, [this] {
+                    runNoteEdit([](ZDocument& note, QTextCursor& at) {
+                        return note.toggleImageCaption(at, QLatin1Char('~'));
+                    });
+                });
+            const QList<QKeySequence> all = QKeySequence::listFromString(
+                appearance().toggleTaskKey, QKeySequence::PortableText);
+            if (!all.isEmpty()) toggle->setShortcut(all.first());
+            toggle->setEnabled(!ref.alt.trimmed().isEmpty() &&
+                               (marked || !isNonameCaption(ref.alt)));
+        }
     }
 
     menu->addSeparator();

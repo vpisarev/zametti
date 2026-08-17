@@ -46,6 +46,7 @@ class QProgressDialog;
 namespace zametti {
 
 class LanguageEditor;
+class CaptionEditor;
 
 // Правка ГЛАГОЛОМ ЗАМЕТКИ: вид распознаёт намерение, заметка его исполняет.
 // Указателем на функцию это уже не выразить — глаголы у заметки методы, — да и
@@ -57,6 +58,7 @@ class NoteEditor : public NoteView {
 
 public:
     explicit NoteEditor(QWidget* parent = nullptr);
+    ~NoteEditor() override;
 
     // Открыть заметку. Прежняя сохраняется, история начинается заново.
     //
@@ -392,6 +394,15 @@ public:
     LanguageEditor* codeLanguageEditor() const { return languageEditor_; }
     void closeCodeLanguageEditor();
 
+    // Правка подписи картинки полем ввода под снимком: Enter на выбранной
+    // картинке (и двойной щелчок по ней). Enter в поле принимает подпись
+    // глаголом заметки (setImageCaption), Esc и уход фокуса отменяют.
+    // Возвращает поле, чтобы приёмка могла в него напечатать; nullptr — блок
+    // не картинка или правка сейчас невозможна.
+    CaptionEditor* editImageCaption(int blockNumber);
+    CaptionEditor* imageCaptionEditor() const { return captionEditor_; }
+    void closeImageCaptionEditor();
+
 protected:
     // Обменный формат — сам markdown. Переопределять обязательно: иначе Qt
     // кладёт в буфер собственный HTML и вставляет чужой HTML прямо в документ,
@@ -513,6 +524,11 @@ private:
     // это падение (урок этапа 10 про retireDocument).
     LanguageEditor* languageEditor_ = nullptr;
     int languageBlock_ = -1;
+    // Открытое поле правки подписи картинки; ноль — закрыто. Живёт так же.
+    CaptionEditor* captionEditor_ = nullptr;
+    int captionBlock_ = -1;
+    // Поставить поле на место подписи (и переставить после прокрутки).
+    void placeCaptionEditor();
 
     // anchorY — экранная высота, на которой должен остаться курсор. Меньше нуля
     // означает "просто покажи курсор".
