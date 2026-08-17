@@ -1,5 +1,6 @@
 #include "status_bar.h"
 
+#include "doc_model.h"
 #include "settings.h"
 
 #include <QFileInfo>
@@ -218,7 +219,11 @@ void StatusBar::showImage() {
     // говорить одно и то же дважды. Выключил человек подпись под снимком —
     // панель остаётся единственным местом, где она вообще есть, и молчать
     // тогда нельзя.
-    const QString caption = appearance().imageCaption ? QString() : image_.caption;
+    // Безымянную («IMG_1234», «~спрятана») под снимком тоже не видно — а в
+    // панели она к месту: это справка о файле, и человеку видно, что подпись
+    // у снимка есть и какая.
+    const bool underPhoto = appearance().imageCaption && !isNonameCaption(image_.caption);
+    const QString caption = underPhoto ? QString() : image_.caption;
     left_->setToolTip(caption.isEmpty() ? known : known + separator + caption);
     if (caption.isEmpty()) {
         left_->setText(known);

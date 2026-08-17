@@ -308,6 +308,17 @@ public:
     ImageBox imageBoxFor(const QTextBlock& block);
 
     QRectF imageRectInViewport(const QTextBlock& block);
+    // Место подписи под снимком в координатах вьюпорта — или, если подписи
+    // нет, та строка, где она стояла бы: сюда встаёт поле правки подписи.
+    QRectF imageCaptionRectInViewport(const QTextBlock& block);
+
+    // Пока подпись картинки правят полем ввода, вид свою надпись под снимком
+    // не рисует, а место под неё держит (хотя бы одну строку). -1 — никого.
+    void setEditedImageCaption(int blockNumber);
+    int editedImageCaption() const { return editedImageCaption_; }
+    // Шрифт подписи под снимком: свой облик, свой кегль, свой масштаб. Им же
+    // пишет поле правки подписи — буквы не прыгают при входе в правку.
+    QFont captionFont() const;
 
     // ПОДМЕНА ДОКУМЕНТА ИДЁТ ТОЛЬКО ЧЕРЕЗ ЭТОТ ВИД. QTextEdit::setDocument
     // виртуальным не объявлен, а перехватить подмену обязательно: вместе с
@@ -600,8 +611,6 @@ private:
     // Ширина колонки, доступная блоку. Берётся у ДОКУМЕНТА, а не у вьюпорта:
     // на бумаге ширина своя, и мерить надо ту, по которой Qt раскладывает.
     qreal columnWidth(const QTextBlock& block) const;
-    // Шрифт подписи под снимком: свой облик, свой кегль, свой масштаб.
-    QFont captionFont() const;
     void paintTooBigImage(QPainter& painter, const QTextBlock& block,
                           const ImageGeometry& geometry, const CachedImage& entry);
     // Место под картинку на экране. Берёт размеры, а не саму картинку: у
@@ -631,6 +640,7 @@ private:
     // узнаёт вовсе.
     int copiedCodeBlock_ = -1;
     int editedCodeLanguage_ = -1;
+    int editedImageCaption_ = -1;
     // Таблицы, показанные сеткой: по номеру первого блока.
     QHash<int, TableRender> tables_;
     int editedTable_ = -1;

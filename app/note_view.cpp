@@ -914,15 +914,26 @@ NoteView::ImageBox NoteView::imageBoxFor(const QTextBlock& block) {
     // ПОДПИСЬ. У рамки «файл не найден» её нет: рамка сама и есть надпись.
     // Переносится по словам в пределах снимка и может занять несколько строк —
     // её высота входит в высоту полосы.
+    // БЕЗЫМЯННАЯ ПОДПИСЬ («IMG_1234», «~спрятана», пустая) под снимком не
+    // показывается и места не занимает — правило одно, в модели
+    // (BlockImageRef::shownCaption); в файл alt уходит как есть.
+    //
+    // ПОКА ПОДПИСЬ ПРАВЯТ ПОЛЕМ ВВОДА, место под неё отведено всегда — хотя бы
+    // одна строка, даже у снимка без подписи, — а своя надпись не рисуется:
+    // поле стоит ровно на этом месте и закрывает его (как у языка блока кода).
     qreal captionHeight = 0.0;
-    if (appearance().imageCaption && !entry->framed() && !ref.alt.isEmpty()) {
-        box.text = ref.alt;
+    const bool editing = block.blockNumber() == editedImageCaption_;
+    const QString caption = editing ? QString() : ref.shownCaption();
+    if (appearance().imageCaption && !entry->framed() && (!caption.isEmpty() || editing)) {
+        box.text = caption;
         box.flags = Qt::TextWordWrap |
                     (ref.align == ImageAlign::Right ? Qt::AlignRight : Qt::AlignLeft);
         const QFontMetricsF metrics(captionFont());
         const qreal width = box.photo.width();
         const qreal height =
-            metrics.boundingRect(QRectF(0, 0, width, 1e6), box.flags, box.text).height();
+            editing ? metrics.height()
+                    : metrics.boundingRect(QRectF(0, 0, width, 1e6), box.flags, box.text)
+                          .height();
         const qreal gap = appearance().imageCaptionGap * displayScale();
         box.caption = QRectF(box.photo.left(), box.photo.bottom() + gap, width, height);
         captionHeight = gap + height;
@@ -1042,6 +1053,41 @@ QRectF NoteView::imageRectInViewport(const QTextBlock& block) {
     const QRectF box = imageObjectRect(block);
     if (box.isEmpty()) return {};
     return box.translated(-horizontalScrollBar()->value(), -verticalScrollBar()->value());
+}
+
+QRectF NoteView::imageCaptionRectInViewport(const QTextBlock& block) {
+    const ImageBox box = imageBoxFor(block);
+    if (!box.valid) return {};
+    const QTextLayout* layout = block.layout();
+    if (layout == nullptr || layout->lineCount() == 0) return {};
+    const QTextLine line = layout->lineAt(0);
+    const QPointF at = layout->position() + QPointF(line.x(), line.y());
+    // Подписи нет и место под неё не отведено — тогда та строка под снимком,
+    // на которой она стояла бы: полю ввода надо где-то встать.
+    QRectF caption = box.caption;
+    if (caption.isEmpty()) {
+        const qreal gap = appearance().imageCaptionGap * displayScale();
+        caption = QRectF(box.photo.left(), box.photo.bottom() + gap, box.photo.width(),
+                         QFontMetricsF(captionFont()).height());
+    }
+    return caption.translated(at).translated(-horizontalScrollBar()->value(),
+                                             -verticalScrollBar()->value());
+}
+
+void NoteView::setEditedImageCaption(int blockNumber) {
+    if (editedImageCaption_ == blockNumber) return;
+    const int was = editedImageCaption_;
+    editedImageCaption_ = blockNumber;
+    // Размер объекта зависит от того, правят ли его подпись (см. imageBoxFor):
+    // вёрстке надо перемерить оба блока — тот, который перестали править, и
+    // тот, который начали. Сам документ при этом не меняется.
+    if (document() != nullptr && document()->documentLayout() != nullptr) {
+        for (const int number : {was, blockNumber}) {
+            const QTextBlock block = document()->findBlockByNumber(number);
+            if (block.isValid()) document()->markContentsDirty(block.position(), block.length());
+        }
+    }
+    viewport()->update();
 }
 
 void NoteView::setImageDragWidth(int blockNumber, qreal width) {
