@@ -357,8 +357,54 @@ BuildContext contextFor() {
 // и своей отбивки сверху у него нет. reuse — писать в блок, на котором стоит
 // курсор, а не заводить новый: и у свежего QTextDocument, и после выреза под
 // заплатку остаётся ровно один пустой блок, который надо занять.
+// СТРОЧНАЯ КАРТИНКА БЕЗ ПОДПИСИ ПОЛУЧАЕТ ИМЯ. В документе картинка посреди
+// текста живёт спаном — форматом на знаках подписи; у «до ![](x.png) после»
+// знаков нет, и держаться ей не на чем: она пропадала при сборке (файл после
+// записи: «до  после»). Владелец: «![](…) мы в любом случае обязаны
+// сохранять… смело бы писали ![image 1](…)». Имя безымянное (см.
+// isNonameCaption), номер — порядковый среди картинок блока: номера не обязаны
+// идти по порядку (решение владельца). Картинка целым абзацем сюда не
+// попадает: она объект, и её пустая подпись живёт в свойстве.
+bool hasBareInlineImage(const Piece& piece) {
+    if (piece.raw || pieceIsImageObject(piece)) return false;
+    for (const Run& run : piece.runs)
+        if (run.image() && run.empty()) return true;
+    return false;
+}
+
+const Piece& withNamedBareImages(const Piece& piece, Piece& storage) {
+    if (!hasBareInlineImage(piece)) return piece;
+    storage = piece;
+    int ordinal = 0;
+    for (size_t i = 0; i < storage.runs.size(); ++i) {
+        if (storage.runs[i].image()) ++ordinal;
+        if (!storage.runs[i].image() || !storage.runs[i].empty()) continue;
+        const QString name = QStringLiteral("image %1").arg(ordinal);
+        const int32_t at = storage.runs[i].start;
+        const int32_t len = int32_t(name.size());
+        storage.text.insert(at, name);
+        storage.runs[i].end = at + len;
+        for (size_t k = 0; k < storage.runs.size(); ++k) {
+            if (k == i) continue;
+            Run& other = storage.runs[k];
+            // Всё, что начинается за вставкой (или на ней же, но идёт позже),
+            // едет целиком; что накрывает вставку — растёт; что кончилось до
+            // неё — стоит на месте.
+            if (other.start > at || (other.start == at && k > i)) {
+                other.start += len;
+                other.end += len;
+            } else if (other.end > at) {
+                other.end += len;
+            }
+        }
+    }
+    return storage;
+}
+
 void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& ctx,
-               const Piece& b, bool documentStart, bool& reuse, bool& prevVSpace) {
+               const Piece& piece, bool documentStart, bool& reuse, bool& prevVSpace) {
+    Piece named;
+    const Piece& b = withNamedBareImages(piece, named);
     const bool first = documentStart && reuse;
     const bool raw = b.raw;
     const bool list = !raw && isList(b.kind);
