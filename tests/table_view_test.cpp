@@ -24,6 +24,11 @@
 
 namespace {
 
+// Разбор берёт текст; придуманные случаи набора — байтами.
+zametti::Table parse(const std::string& markdown) {
+    return zametti::parseTable(QString::fromStdString(markdown));
+}
+
 std::string n(int v) { return std::to_string(v); }
 std::string num(qreal v) {
     char buf[64];
@@ -46,7 +51,7 @@ zametti::TableSpace roomFor(qreal column, qreal full) {
 }
 
 void checkWidths() {
-    const zametti::Table table = zametti::parseTable(kSmall);
+    const zametti::Table table = parse(kSmall);
     const zametti::TableLayout out = zametti::layoutTable(table, roomFor(2000, 2000));
 
     ZT_EQ("колонок", n(3), n(out.columns));
@@ -77,7 +82,7 @@ void checkWidths() {
 
 // Инвариант D: что попало в разметку, то и было в разборе.
 void checkContentKept() {
-    const zametti::Table table = zametti::parseTable(kSmall);
+    const zametti::Table table = parse(kSmall);
     const zametti::TableLayout out = zametti::layoutTable(table, roomFor(2000, 2000));
     for (int row = 0; row < out.rows; ++row) {
         for (int column = 0; column < out.columns; ++column) {
@@ -85,12 +90,12 @@ void checkContentKept() {
             ZT_TRUE("ячейка на месте", box != nullptr && box->text != nullptr);
             if (box == nullptr || box->text == nullptr) continue;
             ZT_EQ("текст ячейки " + n(row) + "," + n(column),
-                  std::string(table.cell(row, column)), box->text->text().toStdString());
+                  table.cell(row, column).toString().toStdString(), box->text->text().toStdString());
         }
     }
 
     // Разметка внутри ячейки разбирается, а не показывается звёздочками.
-    const zametti::Table rich = zametti::parseTable(
+    const zametti::Table rich = parse(
         "| что |\n|---|\n| **жир** и `код` |\n");
     const zametti::TableLayout marked = zametti::layoutTable(rich, roomFor(2000, 2000));
     const zametti::TableCellBox* cell = marked.at(1, 0);
@@ -108,7 +113,7 @@ void checkContentKept() {
 // Первая редакция переносила лишь на полу усадки, и одна длинная ячейка
 // ужимала шрифт всей таблицы — не то лекарство от не той болезни.
 void checkFitting() {
-    const zametti::Table table = zametti::parseTable(kSmall);
+    const zametti::Table table = parse(kSmall);
 
     // Колонка узкая, а окно широкое — таблица занимает поля и не ужимается.
     const zametti::TableLayout roomy = zametti::layoutTable(table, roomFor(200, 2000));
@@ -135,7 +140,7 @@ void checkFitting() {
 // Замечание владельца: одна очень длинная ячейка не должна раздувать свою
 // колонку — её надо переносить по словам, а не ужимать всю таблицу.
 void checkLongCellWraps() {
-    const zametti::Table table = zametti::parseTable(
+    const zametti::Table table = parse(
         "| что | описание |\n"
         "|---|---|\n"
         "| болт | очень длинное описание детали, которое ни в какую колонку "
@@ -163,20 +168,20 @@ void checkLongCellWraps() {
 void checkEdges() {
     // Таблица из одной шапки.
     const zametti::TableLayout head =
-        zametti::layoutTable(zametti::parseTable("| a | b |\n|---|---|\n"), roomFor(500, 500));
+        zametti::layoutTable(parse("| a | b |\n|---|---|\n"), roomFor(500, 500));
     ZT_EQ("рядов один", n(1), n(head.rows));
     ZT_TRUE("высота положительна", head.height > 0);
 
     // Пустые ячейки: место занимают, разметка пустая.
     const zametti::TableLayout empty = zametti::layoutTable(
-        zametti::parseTable("| a | b |\n|---|---|\n|  |  |\n"), roomFor(500, 500));
+        parse("| a | b |\n|---|---|\n|  |  |\n"), roomFor(500, 500));
     ZT_TRUE("пустая ячейка на месте", empty.at(1, 0) != nullptr);
     ZT_EQ("и текст в ней пуст", std::string(), empty.at(1, 0)->text->text().toStdString());
     ZT_TRUE("а ширина колонки не нулевая", empty.columnWidth.at(0) > 0);
 
     // Не таблица — пустая раскладка, без падений.
     const zametti::TableLayout none =
-        zametti::layoutTable(zametti::parseTable("просто текст\n"), roomFor(500, 500));
+        zametti::layoutTable(parse("просто текст\n"), roomFor(500, 500));
     ZT_EQ("не таблица — пустая раскладка", n(0), n(none.rows));
 }
 
@@ -207,14 +212,14 @@ void bench() {
     // проверки было бы ровно тем, от чего предостерегает CLAUDE.md.
     qint64 shapeBest = -1;
     for (int round = 0; round < 5; ++round) {
-        const zametti::Table table = zametti::parseTable(big);
+        const zametti::Table table = parse(big);
         QElapsedTimer timer;
         timer.start();
         // Только разметка ячеек, без раскладки: столько стоит pieces() по всем
         // четырёмстам ячейкам.
         for (int row = 0; row < int(table.rows.size()); ++row)
             for (int column = 0; column < table.columns; ++column)
-                (void)pieces(std::string(table.cell(row, column)));
+                (void)pieces(table.cell(row, column).toString().toStdString());
         const qint64 spent = timer.nsecsElapsed() / 1000;
         if (shapeBest < 0 || spent < shapeBest) shapeBest = spent;
     }
@@ -224,12 +229,12 @@ void bench() {
     qint64 buildBest = -1;
     qint64 shapeOnceBest = -1;
     {
-        const zametti::Table table = zametti::parseTable(big);
+        const zametti::Table table = parse(big);
         const QFont font = zametti::tableFont(1.0);
         QVector<QString> texts;
         for (int row = 0; row < int(table.rows.size()); ++row)
             for (int column = 0; column < table.columns; ++column)
-                texts.push_back(QString::fromStdString(std::string(table.cell(row, column))));
+                texts.push_back(table.cell(row, column).toString());
 
         for (int round = 0; round < 5; ++round) {
             QElapsedTimer timer;
@@ -260,7 +265,7 @@ void bench() {
     for (int round = 0; round < 7; ++round) {
         QElapsedTimer timer;
         timer.start();
-        const zametti::Table table = zametti::parseTable(big);
+        const zametti::Table table = parse(big);
         const qint64 parsed = timer.nsecsElapsed() / 1000;
         const zametti::TableLayout out = zametti::layoutTable(table, roomFor(900, 1400));
         const qint64 whole = timer.nsecsElapsed() / 1000;

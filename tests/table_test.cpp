@@ -29,6 +29,15 @@ namespace {
 std::string s(const std::string& v) { return v; }
 std::string n(int v) { return std::to_string(v); }
 
+// Разбор берёт текст (QStringView, решение владельца: всё в памяти — QString);
+// придуманные случаи набора удобнее держать байтами.
+zametti::Table parse(const std::string& markdown) {
+    return zametti::parseTable(QString::fromStdString(markdown));
+}
+std::string cellText(const zametti::Table& t, int row, int col) {
+    return t.cell(row, col).toString().toStdString();
+}
+
 // --- md4c как независимый судья ---------------------------------------------
 //
 // Собираем из колбэков ровно то, что нужно для сверки: сколько таблиц, сколько
@@ -133,8 +142,7 @@ std::string plainOf(const std::string& markdown) {
 // --- придуманные случаи -----------------------------------------------------
 
 void checkSimple() {
-    const zametti::Table t = zametti::parseTable(
-        "| имя | цена |\n"
+    const zametti::Table t = parse("| имя | цена |\n"
         "|---|---:|\n"
         "| болт | 10 |\n"
         "| гайка | 5 |\n");
@@ -142,16 +150,15 @@ void checkSimple() {
     ZT_EQ("колонок", n(2), n(t.columns));
     ZT_EQ("рядов вместе с шапкой", n(3), n(int(t.rows.size())));
     ZT_EQ("строк исходника", n(4), n(t.lines));
-    ZT_EQ("шапка", s("имя"), std::string(t.cell(0, 0)));
-    ZT_EQ("ячейка тела", s("гайка"), std::string(t.cell(2, 0)));
+    ZT_EQ("шапка", s("имя"), cellText(t, 0, 0));
+    ZT_EQ("ячейка тела", s("гайка"), cellText(t, 2, 0));
     ZT_TRUE("вторая колонка выровнена вправо",
             t.align.at(1) == zametti::TableAlign::Right);
     ZT_TRUE("первая — как придётся", t.align.at(0) == zametti::TableAlign::Default);
 }
 
 void checkAligns() {
-    const zametti::Table t = zametti::parseTable(
-        "| л | ц | п | н |\n"
+    const zametti::Table t = parse("| л | ц | п | н |\n"
         "|:---|:---:|---:|---|\n"
         "| 1 | 2 | 3 | 4 |\n");
     ZT_TRUE("разобрана", t.valid);
@@ -165,72 +172,69 @@ void checkAligns() {
 // таблиц нет ни одной (замер), поэтому случай тут придуманный — и потому он
 // тут и нужен.
 void checkRagged() {
-    const zametti::Table t = zametti::parseTable(
-        "| a | b | c |\n"
+    const zametti::Table t = parse("| a | b | c |\n"
         "|---|---|---|\n"
         "| 1 | 2 |\n"
         "| 1 | 2 | 3 | 4 |\n");
     ZT_TRUE("разобрана", t.valid);
     ZT_EQ("колонок по шапке", n(3), n(t.columns));
-    ZT_EQ("недостающая ячейка пуста", s(""), std::string(t.cell(1, 2)));
+    ZT_EQ("недостающая ячейка пуста", s(""), cellText(t, 1, 2));
     ZT_EQ("лишняя отрезана", n(3), n(int(t.rows.at(2).size())));
-    ZT_EQ("а что было — на месте", s("3"), std::string(t.cell(2, 2)));
+    ZT_EQ("а что было — на месте", s("3"), cellText(t, 2, 2));
 }
 
 void checkEdges() {
     ZT_TRUE("без разделителя — не таблица",
-            !zametti::parseTable("| a | b |\n| 1 | 2 |\n").valid);
+            !parse("| a | b |\n| 1 | 2 |\n").valid);
     ZT_TRUE("без палок — не таблица",
-            !zametti::parseTable("просто текст\n---\nещё текст\n").valid);
+            !parse("просто текст\n---\nещё текст\n").valid);
     // Разделитель короче шапки — таблица ВСЁ РАВНО, и колонок в ней столько,
     // сколько в разделителе. Спецификация GFM говорит «не таблица», md4c —
     // «таблица в одну колонку», и решает здесь он: это его ответ становится
     // дословным куском в хранилище.
-    const zametti::Table narrow = zametti::parseTable("| a | b |\n|---|\n| 1 | 2 |\n");
+    const zametti::Table narrow = parse("| a | b |\n|---|\n| 1 | 2 |\n");
     ZT_TRUE("разделитель короче шапки — всё равно таблица", narrow.valid);
     ZT_EQ("колонок по разделителю", n(1), n(narrow.columns));
-    ZT_EQ("лишняя ячейка шапки отрезана", s("a"), std::string(narrow.cell(0, 0)));
+    ZT_EQ("лишняя ячейка шапки отрезана", s("a"), cellText(narrow, 0, 0));
     ZT_TRUE("пустая ячейка в разделителе — не таблица",
-            !zametti::parseTable("| a | b |\n|---||\n").valid);
+            !parse("| a | b |\n|---||\n").valid);
 
     // Таблица без тела законна — одна шапка.
-    const zametti::Table head = zametti::parseTable("| a | b |\n|---|---|\n");
+    const zametti::Table head = parse("| a | b |\n|---|---|\n");
     ZT_TRUE("одна шапка — уже таблица", head.valid);
     ZT_EQ("рядов тела нет", n(0), n(head.bodyRows()));
 
     // Палки по краям необязательны.
-    const zametti::Table bare = zametti::parseTable("a | b\n--- | ---\n1 | 2\n");
+    const zametti::Table bare = parse("a | b\n--- | ---\n1 | 2\n");
     ZT_TRUE("без внешних палок — таблица", bare.valid);
     ZT_EQ("колонок", n(2), n(bare.columns));
-    ZT_EQ("ячейка", s("1"), std::string(bare.cell(1, 0)));
+    ZT_EQ("ячейка", s("1"), cellText(bare, 1, 0));
 
     // Пустые ячейки — законны и должны остаться пустыми, а не пропасть.
-    const zametti::Table empty = zametti::parseTable("| a | b |\n|---|---|\n|  |  |\n");
+    const zametti::Table empty = parse("| a | b |\n|---|---|\n|  |  |\n");
     ZT_EQ("пустых ячеек две", n(2), n(int(empty.rows.at(1).size())));
-    ZT_EQ("и они пусты", s(""), std::string(empty.cell(1, 1)));
+    ZT_EQ("и они пусты", s(""), cellText(empty, 1, 1));
 
     // Хвост после таблицы в тот же дословный кусок не входит.
-    const zametti::Table tail = zametti::parseTable(
-        "| a |\n|---|\n| 1 |\n\nабзац после\n");
+    const zametti::Table tail = parse("| a |\n|---|\n| 1 |\n\nабзац после\n");
     ZT_EQ("таблица кончилась пустой строкой", n(3), n(tail.lines));
     ZT_EQ("рядов вместе с шапкой", n(2), n(int(tail.rows.size())));
 
     // А строка без палок таблицу НЕ кончает: это ряд из одной ячейки.
-    const zametti::Table bare2 = zametti::parseTable("| a | b |\n|---|---|\n| 1 | 2 |\nхвост\n");
+    const zametti::Table bare2 = parse("| a | b |\n|---|---|\n| 1 | 2 |\nхвост\n");
     ZT_EQ("рядов вместе с шапкой", n(3), n(int(bare2.rows.size())));
-    ZT_EQ("строка без палок — ряд", s("хвост"), std::string(bare2.cell(2, 0)));
-    ZT_EQ("и вторая ячейка в нём пуста", s(""), std::string(bare2.cell(2, 1)));
+    ZT_EQ("строка без палок — ряд", s("хвост"), cellText(bare2, 2, 0));
+    ZT_EQ("и вторая ячейка в нём пуста", s(""), cellText(bare2, 2, 1));
 }
 
 void checkEscapedPipe() {
-    const zametti::Table t = zametti::parseTable(
-        "| код | что |\n"
+    const zametti::Table t = parse("| код | что |\n"
         "|---|---|\n"
         "| `a \\| b` | или |\n");
     ZT_EQ("экранированная палка ряд не рвёт", n(2), n(int(t.rows.at(1).size())));
     // Обратная косая ОСТАЁТСЯ: снимать её — работа разметки, а внутри кода
     // она и не снимается вовсе (так показывает GitHub, так отвечает md4c).
-    ZT_EQ("и экранирование осталось в тексте", s("`a \\| b`"), std::string(t.cell(1, 0)));
+    ZT_EQ("и экранирование осталось в тексте", s("`a \\| b`"), cellText(t, 1, 0));
 }
 
 // --- сверка с md4c ----------------------------------------------------------
@@ -240,30 +244,37 @@ void checkAgainstMd4c(const std::string& markdown, const std::string& where) {
     if (theirs.empty()) return;
 
     // Наш разбор идёт по кускам: находим начала таблиц тем же признаком, что и
-    // показ, — построчно.
+    // показ, — построчно. Текст один раз переводится в QString: разбор ходит по
+    // QStringView, смещения — единицы UTF-16.
+    const QString text = QString::fromStdString(markdown);
+    const QStringView view(text);
     std::vector<zametti::Table> mine;
-    size_t at = 0;
-    std::vector<size_t> starts;
-    for (size_t i = 0; i <= markdown.size(); ++i) {
-        if (i == markdown.size() || markdown[i] == '\n') {
-            if (zametti::looksLikeTable(std::string_view(markdown).substr(at))) {
-                zametti::Table t = zametti::parseTable(std::string_view(markdown).substr(at));
-                if (t.valid) {
-                    mine.push_back(t);
-                    // Пропускаем строки этой таблицы: внутри неё начал нет.
-                    size_t skip = at;
-                    for (int line = 0; line < t.lines && skip < markdown.size(); ++line) {
-                        const size_t next = markdown.find('\n', skip);
-                        if (next == std::string::npos) { skip = markdown.size(); break; }
-                        skip = next + 1;
-                    }
-                    at = skip;
-                    i = at > 0 ? at - 1 : at;
-                    continue;
+    qsizetype at = 0;
+    while (at <= view.size()) {
+        const QStringView rest = view.mid(at);
+        if (zametti::looksLikeTable(rest)) {
+            zametti::Table t = zametti::parseTable(rest);
+            if (t.valid) {
+                // Смещения ячеек указывают на их же текст в исходнике.
+                for (const auto& row : t.rows)
+                    for (const zametti::TableCell& cell : row)
+                        ZT_EQ(where + ": смещение ячейки", cell.text.toStdString(),
+                              rest.mid(cell.start, cell.end - cell.start).toString().toStdString());
+                mine.push_back(t);
+                // Пропускаем строки этой таблицы: внутри неё начал нет.
+                qsizetype skip = at;
+                for (int line = 0; line < t.lines && skip < view.size(); ++line) {
+                    const qsizetype next = view.indexOf(u'\n', skip);
+                    if (next < 0) { skip = view.size(); break; }
+                    skip = next + 1;
                 }
+                at = skip;
+                continue;
             }
-            at = i + 1;
         }
+        const qsizetype next = view.indexOf(u'\n', at);
+        if (next < 0) break;
+        at = next + 1;
     }
 
     ZT_EQ(where + ": число таблиц", n(int(theirs.size())), n(int(mine.size())));
@@ -281,7 +292,7 @@ void checkAgainstMd4c(const std::string& markdown, const std::string& where) {
             const int row = int(k) / mine[i].columns;
             const int col = int(k) % mine[i].columns;
             ZT_EQ(where + ": ячейка " + n(row) + "," + n(col),
-                  theirs[i].cells[k], plainOf(std::string(mine[i].cell(row, col))));
+                  theirs[i].cells[k], plainOf(cellText(mine[i], row, col)));
         }
     }
 }
@@ -321,7 +332,15 @@ static int ztRunSuite(int argc, char** argv) {
 // Набор целиком одним TEST: тело не тронуто, argv ему собран здесь.
 // Дробить на отдельные проверки — отдельная работа, по одному набору.
 TEST(Table, All) {
+    // Корпуса — судье md4c: docs/ репозитория (всегда есть) и внешние, если
+    // подключены. Без них половина набора не запускалась вовсе — доводы
+    // никто не передавал.
     std::vector<QByteArray> ztArgs{QByteArrayLiteral("table_test")};
+    ztArgs.push_back((QStringLiteral(ZAMETTI_SOURCE_DIR) + QStringLiteral("/docs")).toLocal8Bit());
+    for (const char* name : {"corpus", "commonmark", "gfm"}) {
+        const QString dir = zt::TestData::corpus(QString::fromLatin1(name));
+        if (!dir.isEmpty()) ztArgs.push_back(dir.toLocal8Bit());
+    }
     std::vector<char*> ztArgv;
     for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
     EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
