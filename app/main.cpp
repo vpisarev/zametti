@@ -46,7 +46,6 @@
 #include <QMessageBox>
 #include <QDesktopServices>
 #include <QDateTime>
-#include <QLockFile>
 #include <QSysInfo>
 #include <QProcess>
 #include <QThreadPool>
@@ -131,17 +130,6 @@ int runCheck(const QString& path) {
     return 1;
 }
 
-// Жив ли процесс с таким номером. Сигнал 0 ничего не посылает, а только
-// проверяет право послать: единственный переносимый по UNIX способ спросить
-// «этот pid ещё существует?».
-bool processAlive(qint64 pid) {
-#ifdef Q_OS_UNIX
-    return ::kill(pid_t(pid), 0) == 0 || errno == EPERM;
-#else
-    Q_UNUSED(pid);
-    return true;   // на прочих системах не гадаем: пусть решает --unlock
-#endif
-}
 
 const char* kUsage =
     "использование: zametti [--noconfig] [файл.md]\n"
@@ -406,57 +394,22 @@ int main(int argc, char** argv) {
     // (одиночный файл, открытый вне хранилища, журналу негде лежать).
     editor.setStoreRoot(model.isStore() ? model.nodePath(QModelIndex()) : QString());
 
-    // Одно хранилище — одна программа. Второй экземпляр на том же хранилище
-    // писал бы в те же файлы и те же журналы, ничего не зная о первом, поэтому
-    // он просто не запускается. Замок файловый, потому что процессы разные;
-    // внутри процесса потоки разводит замок самого журнала. Стоит это 4.4 мс
-    // один раз за запуск. Другое хранилище открыть вторым окном по-прежнему
-    // можно: замок лежит внутри хранилища.
-    //
-    // Забытый замок после падения программы не беда: QLockFile хранит в нём
-    // pid и имя машины и снимает замок, чей процесс не жив.
-    static QLockFile storeLock(
-        zametti::journal::storeLockPath(model.isStore() ? model.nodePath(QModelIndex())
-                                                        : QDir::tempPath()));
+    // Одно хранилище — одна программа: замок держит само хранилище
+    // (ZStorage::lock, там же снятие забытого замка мёртвого процесса и
+    // --unlock); здесь только слово человеку и код выхода.
     if (model.isStore()) {
-        // --unlock: снять забытый замок. Обычно он снимается сам, но бывает,
-        // что QLockFile судить не берётся — тот же pid достался чужому
-        // процессу, хранилище на сетевой шаре. Тогда ключ решает спор руками.
-        if (unlock) {
-            qint64 pid = 0;
-            QString host, appName;
-            if (storeLock.getLockInfo(&pid, &host, &appName))
-                std::fprintf(stderr, "снимаю замок хранилища (был за pid %lld на «%s»)\n",
-                             (long long)pid, host.toUtf8().constData());
-            else
-                std::fprintf(stderr, "замка на хранилище и не было\n");
-            QFile::remove(zametti::journal::storeLockPath(model.nodePath(QModelIndex())));
-        }
-        // QLockFile сам снимает забытый замок только через полминуты, а
-        // перезапуск сразу после падения — самый частый случай. Поэтому
-        // спрашиваем сами: если замок нашей машины, а процесса с таким pid уже
-        // нет, значит это наш собственный труп — снимаем и продолжаем. Живой
-        // pid не трогаем никогда.
-        if (!storeLock.tryLock(0)) {
-            qint64 pid = 0;
-            QString host, appName;
-            if (storeLock.getLockInfo(&pid, &host, &appName) &&
-                host == QSysInfo::machineHostName() && pid > 0 && !processAlive(pid)) {
-                std::fprintf(stderr, "снимаю забытый замок хранилища (pid %lld не жив)\n",
-                             (long long)pid);
-                QFile::remove(zametti::journal::storeLockPath(model.nodePath(QModelIndex())));
-            }
-        }
-        if (!storeLock.isLocked() && !storeLock.tryLock(0)) {
-            qint64 pid = 0;
-            QString host, appName;
-            storeLock.getLockInfo(&pid, &host, &appName);
+        if (unlock)
+            std::fprintf(stderr, "%s\n", zapp.storage()->forceUnlock().note.toUtf8().constData());
+        const zametti::ZStorage::LockReport locked = zapp.storage()->lock();
+        if (!locked.note.isEmpty())
+            std::fprintf(stderr, "%s\n", locked.note.toUtf8().constData());
+        if (!locked.locked) {
             std::fprintf(stderr,
                          "это хранилище уже открыто другой копией zametti:\n  %s\n"
                          "  замок держит pid %lld на «%s»\n"
                          "Если та копия давно умерла: zametti --root … --unlock\n",
-                         model.nodePath(QModelIndex()).toUtf8().constData(), (long long)pid,
-                         host.toUtf8().constData());
+                         model.nodePath(QModelIndex()).toUtf8().constData(),
+                         (long long)locked.holderPid, locked.holderHost.toUtf8().constData());
             return 3;
         }
     }

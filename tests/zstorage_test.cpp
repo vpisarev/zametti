@@ -10,6 +10,7 @@
 #include "store.h"
 #include "test_util.h"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
@@ -105,6 +106,22 @@ void checkCatalog() {
     ZT_TRUE("правка пропавшей — ложь с объяснением",
             !storage.rewriteNote(noteId, [](zametti::ZDocument&) {}, rules(), &error) &&
                 !error.isEmpty());
+
+    // Замок: одно хранилище — одна программа. Второй объект на том же корне
+    // (как второй процесс) замок не получает и знает, кто держит; --unlock
+    // снимает руками; после этого замок берётся снова.
+    {
+        const ZStorage::LockReport first = storage.lock();
+        ZT_TRUE("замок взят", first.locked && storage.isLocked());
+        ZStorage rival(root);
+        const ZStorage::LockReport second = rival.lock();
+        ZT_TRUE("второй на том же корне замка не получил", !second.locked);
+        ZT_TRUE("и знает, кто держит (мы сами)",
+                second.holderPid == QCoreApplication::applicationPid());
+        const ZStorage::LockReport freed = rival.forceUnlock();
+        ZT_TRUE("--unlock отчитался, кто держал", freed.note.contains(QStringLiteral("pid")));
+        ZT_TRUE("после снятия замок берётся", rival.lock().locked);
+    }
 
     // Не хранилище: каталог пуст, журнала нет, ничего не падает.
     ZStorage plain(home.path());

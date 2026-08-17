@@ -3,10 +3,19 @@
 #include "note_id.h"
 #include "times.h"
 
+#include "journal.h"
+
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QSysInfo>
+
+#ifdef Q_OS_UNIX
+#include <cerrno>
+#include <csignal>
+#include <sys/types.h>
+#endif
 
 #include <cstdio>
 #include <string>
@@ -26,6 +35,62 @@ bool ZStorage::isStoreRoot(const QString& dir) {
 
 ZStorage::ZStorage(const QString& root)
     : root_(QDir::cleanPath(root)), store_(isStoreRoot(QDir::cleanPath(root))) {}
+
+namespace {
+// Жив ли процесс с таким pid. kill с нулевым сигналом ничего не шлёт, только
+// проверяет право послать: единственный переносимый по UNIX способ спросить.
+bool processAlive(qint64 pid) {
+#ifdef Q_OS_UNIX
+    return ::kill(pid_t(pid), 0) == 0 || errno == EPERM;
+#else
+    Q_UNUSED(pid);
+    return true;   // на прочих системах не гадаем: пусть решает --unlock
+#endif
+}
+}  // namespace
+
+QString ZStorage::lockPath() const {
+    return journal::storeLockPath(store_ ? root_ : QDir::tempPath());
+}
+
+bool ZStorage::isLocked() const { return lock_ != nullptr && lock_->isLocked(); }
+
+ZStorage::LockReport ZStorage::forceUnlock() {
+    LockReport report;
+    QLockFile probe(lockPath());
+    if (probe.getLockInfo(&report.holderPid, &report.holderHost, nullptr))
+        report.note = QStringLiteral("снимаю замок хранилища (был за pid %1 на «%2»)")
+                          .arg(report.holderPid)
+                          .arg(report.holderHost);
+    else
+        report.note = QStringLiteral("замка на хранилище и не было");
+    QFile::remove(lockPath());
+    return report;
+}
+
+ZStorage::LockReport ZStorage::lock() {
+    LockReport report;
+    if (lock_ == nullptr) lock_ = std::make_shared<QLockFile>(lockPath());
+    if (lock_->isLocked() || lock_->tryLock(0)) {
+        report.locked = true;
+        return report;
+    }
+    // Труп нашей машины — снимаем и пробуем снова; живой pid не трогаем.
+    qint64 pid = 0;
+    QString host;
+    QString app;
+    if (lock_->getLockInfo(&pid, &host, &app) && host == QSysInfo::machineHostName() &&
+        pid > 0 && !processAlive(pid)) {
+        report.note = QStringLiteral("снимаю забытый замок хранилища (pid %1 не жив)").arg(pid);
+        QFile::remove(lockPath());
+        if (lock_->tryLock(0)) {
+            report.locked = true;
+            return report;
+        }
+    }
+    lock_->getLockInfo(&report.holderPid, &report.holderHost, &app);
+    return report;
+}
 
 QString ZStorage::pathOf(const QString& id) const {
     return root_ + QLatin1Char('/') + id + QStringLiteral(".md");

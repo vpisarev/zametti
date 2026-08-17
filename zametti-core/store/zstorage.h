@@ -29,10 +29,12 @@
 #include "znote_history.h"
 
 #include <QHash>
+#include <QLockFile>
 #include <QString>
 #include <QStringList>
 
 #include <functional>
+#include <memory>
 #include <optional>
 
 namespace zametti {
@@ -82,6 +84,26 @@ public:
     const QString& root() const { return root_; }
     bool isStore() const { return store_; }
 
+    // --- замок --------------------------------------------------------------
+    // Одно хранилище — одна программа: второй экземпляр на том же хранилище
+    // писал бы в те же файлы и журналы, ничего не зная о первом. Замок
+    // файловый (процессы разные), лежит внутри хранилища, стоит 4.4 мс один
+    // раз за запуск. Забытый замок мёртвого процесса нашей машины снимается
+    // сам (QLockFile ждал бы полминуты, а перезапуск сразу после падения —
+    // самый частый случай); живой pid не трогается никогда.
+    struct LockReport {
+        bool locked = false;
+        qint64 holderPid = 0;      // кто держит, если не вышло
+        QString holderHost;
+        QString note;              // что сделали по пути (сняли труп…), для лога
+    };
+    LockReport lock();
+    // --unlock: снять чужой замок руками — когда QLockFile судить не берётся
+    // (тот же pid достался чужому процессу, сетевая шара). Отвечает, был ли он.
+    LockReport forceUnlock();
+    bool isLocked() const;
+    QString lockPath() const;
+
     // --- каталог ---------------------------------------------------------
     // Перечитать всё хранилище (скан «<id>.md»). Не хранилище — каталог пуст.
     void reload();
@@ -110,6 +132,7 @@ protected:
     QString root_;
     bool store_ = false;
     QHash<QString, NoteInfo> notes_;
+    std::shared_ptr<QLockFile> lock_;   // заведён при первом lock()
 
     bool readInfo(const QString& path, NoteInfo& out) const;
 };
