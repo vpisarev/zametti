@@ -58,6 +58,8 @@ add_library(zametti-ui STATIC
     note_tree.cpp
     note_list.h
     note_list.cpp
+    note_panels.h
+    note_panels.cpp
     search_results.h
     search_results.cpp
     store_search.h

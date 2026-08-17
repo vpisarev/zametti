@@ -9,6 +9,7 @@
 #include "find_bar.h"
 #include "history_panel.h"
 #include "note_list.h"
+#include "note_panels.h"
 #include "note_tree.h"
 #include "search.h"
 #include "search_results.h"
@@ -375,22 +376,20 @@ int main(int argc, char** argv) {
     QSplitter splitter(Qt::Horizontal);
     zametti::Toolbar toolbar;
     zametti::StatusBar statusBar;
-    QWidget middle;
     QWidget rightSide;
 
-    zametti::NoteTreeView tree;
     zametti::NoteEditor editor;
-    zametti::NoteListModel list;
-    QListView listView;
 
-    // Хранилище открывает объект приложения; дерево — его проекция.
-    zametti::NoteTreeModel model(zapp.openStorage(
+    // Хранилище открывает объект приложения; левая и средняя колонки — его
+    // проекция (NotePanels: дерево папок, список заметок, показ открытой).
+    zametti::NotePanels panels(zapp.openStorage(
         storeRoot.isEmpty()
             ? zametti::NoteTreeModel::rootFor(current, zametti::settings().store().notesRoot())
             : QFileInfo(storeRoot).absoluteFilePath()));
-    // Левая панель — только папки (этап 4). Заметки живут в средней колонке;
-    // из дерева они не пропадают, но наружу не показываются.
-    model.setFoldersOnly(model.isStore());
+    zametti::NoteTreeModel& model = panels.model();
+    zametti::NoteTreeView& tree = panels.tree();
+    zametti::NoteListModel& list = panels.list();
+    QListView& listView = panels.listView();
 
     // Редактор узнаёт своё хранилище: без него истории правок не будет вовсе
     // (одиночный файл, открытый вне хранилища, журналу негде лежать).
@@ -424,9 +423,9 @@ int main(int argc, char** argv) {
     // Ленивые миграции хранилища — его дело; здесь только слово человеку и
     // перестройка дерева, если что-то переехало.
     if (model.isStore()) {
-        const QStringList done = zapp.storage()->migrate();
-        for (const QString& line : done) std::fprintf(stderr, "%s\n", line.toUtf8().constData());
-        if (!done.isEmpty()) model.refresh();
+        // Дерево перестроится само: каталог перечитан — хранилище сказало.
+        for (const QString& line : zapp.storage()->migrate())
+            std::fprintf(stderr, "%s\n", line.toUtf8().constData());
     }
 
     // Свежая заметка хранилища — первая ОТКРЫВАЕМАЯ (директории не в счёт),
@@ -439,7 +438,6 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "%s\n", newError.toUtf8().constData());
                 return 2;
             }
-            model.refresh();
             first = model.firstNoteId();
         }
         current = model.pathOfId(first);
@@ -455,61 +453,13 @@ int main(int argc, char** argv) {
     //
     // Старое состояние («name» / «modified», до этапа 13) читается тем же
     // разбором: ключ без направления — законная краткая запись.
-    zametti::SortOrder rootSort = zametti::defaultOrder(zametti::SortKey::Modified);
-    if (const auto saved = zametti::parseSortOrder(session.treeSort())) rootSort = *saved;
-    model.setRootSort(rootSort);
-    list.setSortOrder(rootSort);
-    tree.setModel(&model);
-    tree.setHeaderHidden(true);
-    tree.setEditTriggers(model.isStore() ? QAbstractItemView::EditKeyPressed
-                                         : QAbstractItemView::NoEditTriggers);
-    if (model.isStore()) {
-        // Не InternalMove: заметку тащат из средней колонки, а это другая
-        // модель — для дерева такой перенос внешний.
-        tree.setDragDropMode(QAbstractItemView::DragDrop);
-        tree.setDefaultDropAction(Qt::MoveAction);
-        tree.setDropIndicatorShown(true);
-        tree.setAcceptDrops(true);
-    }
-    tree.setUniformRowHeights(true);
+    if (const auto saved = zametti::parseSortOrder(session.treeSort())) panels.setRootSort(*saved);
 
     QFont sidebarFont(zametti::settings().ui().sidebarFontFamily().isEmpty()
                           ? zametti::settings().style().fontFamily()
                           : zametti::settings().ui().sidebarFontFamily());
     sidebarFont.setPointSizeF(zametti::settings().ui().sidebarFontPoint());
-    tree.setFont(sidebarFont);
-
-    zametti::NoteTreeDelegate delegate;
-    tree.setItemDelegate(&delegate);
-
-    QObject::connect(&tree, &QTreeView::expanded, &tree,
-                     [&model](const QModelIndex& i) { model.setExpanded(i, true); });
-    QObject::connect(&tree, &QTreeView::collapsed, &tree,
-                     [&model](const QModelIndex& i) { model.setExpanded(i, false); });
-
-    // Средняя колонка: плоский список заметок целиком. Переключатель сортировки
-    // стоял здесь комбобоксом, а теперь живёт на тулбаре парой кнопок:
-    // сортировка одна на обе панели, и место ей над всем окном, а не над одной
-    // из колонок.
-    zametti::NoteListDelegate listDelegate;
-    {
-        auto* layout = new QVBoxLayout(&middle);
-        layout->setContentsMargins(0, 0, 0, 0);
-        layout->setSpacing(0);
-        listView.setModel(&list);
-        listView.setItemDelegate(&listDelegate);
-        listView.setFont(sidebarFont);
-        listView.setUniformItemSizes(false);   // высота строки зависит от сниппета
-        // Горизонтальной прокрутки в списке быть не должно: строка и так
-        // укорачивается по ширине, а полоса отъедала правый край — даты
-        // обрезались (замерено на снимке).
-        listView.setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        listView.setSelectionMode(QAbstractItemView::SingleSelection);
-        listView.setDragEnabled(true);         // перетащить заметку на папку слева
-        listView.setDragDropMode(QAbstractItemView::DragOnly);
-        listView.setContextMenuPolicy(Qt::CustomContextMenu);
-        layout->addWidget(&listView, 1);
-    }
+    panels.setSidebarFont(sidebarFont);
 
     // Правая сторона — заметка, под ней список найденного (появляется только у
     // поиска по всему хранилищу) и панель поиска у самого низа, как в Sublime.
@@ -566,15 +516,13 @@ int main(int argc, char** argv) {
                        ? zametti::settings().style().fontFamily()
                        : zametti::settings().ui().sidebarFontFamily());
         font.setPointSizeF(zametti::settings().ui().sidebarFontPoint());
-        tree.setFont(font);
-        listView.setFont(font);
+        panels.setSidebarFont(font);
         resultsView.setFont(font);
         historyTimeline.setFont(font);
         historyTimeline.setFixedWidth(zametti::settings().ui().noteListWidth());
 
         zametti::applyPalette(editor, editor.inHistory());
-        zametti::applyPalette(tree);
-        zametti::applyPalette(listView);
+        panels.refreshAppearance();
         zametti::applyPalette(resultsView);
 
         toolbar.refreshAppearance();
@@ -584,8 +532,6 @@ int main(int argc, char** argv) {
         // Делегаты читают настройки прямо при отрисовке — им довольно
         // перерисовки, но размеры строк они считают там же, и без сброса
         // подсказок список остался бы с прежними высотами.
-        tree.doItemsLayout();
-        listView.doItemsLayout();
         resultsView.doItemsLayout();
     };
     applyAppearance();
@@ -655,8 +601,8 @@ int main(int argc, char** argv) {
                                  .arg(configUnknown.join(QStringLiteral(", "))));
     }
 
-    splitter.addWidget(&tree);
-    if (model.isStore()) splitter.addWidget(&middle);
+    splitter.addWidget(&panels.tree());
+    if (panels.isStore()) splitter.addWidget(&panels.listPanel());
     splitter.addWidget(&rightSide);
     splitter.setStretchFactor(splitter.count() - 1, 1);   // растёт текст, а не панели
     splitter.setChildrenCollapsible(false);
@@ -716,8 +662,8 @@ int main(int argc, char** argv) {
                          // проверок два десятка, и забыть одну — вопрос
                          // времени, а цена ошибки — вставка в чужую заметку.
                          const bool locked = !text.isEmpty();
-                         tree.setEnabled(!locked);
-                         listView.setEnabled(!locked);
+                         panels.tree().setEnabled(!locked);
+                         panels.listView().setEnabled(!locked);
                          // Явно QWidget::: у тулбара есть свой setEnabled(кнопка,
                          // да/нет), и он перекрывает виджетный.
                          toolbar.QWidget::setEnabled(!locked);
@@ -777,117 +723,26 @@ int main(int argc, char** argv) {
         }
         return QFileInfo(file).completeBaseName();
     };
-    // Идёт синхронизация боковых колонок с открытой заметкой. Обработчики
-    // выделения на это время молчат: иначе перестановка курсора читалась бы
-    // как выбор человека и открывала бы другую заметку.
-    bool revealing = false;
-
-    // Открытая заметка видна в обеих боковых колонках, откуда бы её ни
-    // открыли: из общего списка «All notes», из результатов поиска, из другой
-    // папки. Слева курсор встаёт на папку, где она лежит, и предки
-    // раскрываются; в середине она становится текущей строкой.
-    //
-    // Сигналы обеих панелей при этом заглушены: курсор здесь указатель, а не
-    // навигация. Иначе перестановка курсора в дереве перезаполняла бы средний
-    // список, и просмотр «всех заметок» схлопывался бы до одной папки при
-    // первом же щелчке.
-    // ЗАМЕТКУ ОТКРЫЛ ВЫБОР ПАПКИ, а не человек. Признак нужен показу: он иначе
-    // переставит курсор дерева на подпапку, в которой лежит первая заметка, —
-    // то есть уведёт его из папки, по которой только что щёлкнули. Владелец
-    // видел это как «кликаю по Tech, а курсор скачет на настройку».
-    //
-    // Именно путь, а не флажок: показ приходит очередью, и к его приходу флажок
-    // был бы уже снят.
-    QString openedByFolderPick;
-
-    // Порядок сортировки — свойство ВЫБРАННОЙ папки, значит его надо
-    // пересчитывать при каждой смене выбора. Обработчик выбора стоит здесь, а
-    // весь сортировочный обвес — ниже, рядом с кнопками: держать его в двух
-    // местах нельзя, поэтому сюда кладётся ссылка, которая ниже и заполняется.
-    // Пустая до тех пор — до неё доходит только настоящий щелчок, а его в
-    // первые миллисекунды сборки окна быть не может.
-    std::function<void()> syncSortToSelection;
-
-    const auto revealOpenNote = [&](const QString& file) {
-        if (!model.isStore() || file.isEmpty()) return;
-        const QModelIndex folder =
-            model.folderIndexForNote(QFileInfo(file).completeBaseName());
-        if (folder.isValid()) {
-            // Не QSignalBlocker: замерено пробником, что с заглушенными
-            // сигналами курсор дерева не переставляется вовсе — «было=All
-            // notes, стало=All notes», — а без глушения встаёт куда надо.
-            // Поэтому сигнал идёт как обычно, а его обработчик на время
-            // синхронизации выключен флагом: курсор здесь указатель, а не
-            // навигация, и средний список от него перезаполняться не должен.
-            // КУРСОР НЕ ОТБИРАЕМ У ТОГО, КТО ЕГО ТОЛЬКО ЧТО ПОСТАВИЛ.
-            //
-            // Человек щёлкнул по папке — курсор встал на неё, средняя колонка
-            // показала её заметки и открыла первую. Заметка эта лежит,
-            // случается, в подпапке, и переставлять курсор туда значит увести
-            // его из папки, в которую он только что ткнул. Владелец увидел
-            // ровно это: «выделяется первый дочерний пункт, а не сама папка».
-            //
-            // Поэтому курсор двигается только если он СНАРУЖИ этой ветки: тогда
-            // заметку открыли откуда-то ещё — из поиска, из середины, — и
-            // показать, где она лежит, надо.
-            // Спрашиваем и про ФОКУС: курсор бережём от того, кто в дереве и
-            // работает. Открыли заметку из поиска или из середины — фокус там,
-            // и показать, где заметка лежит, надо, даже если курсор дерева
-            // стоит на её прародителе (а на корне он стоит почти всегда).
-            //
-            // ФОКУСА ОДНОГО МАЛО, и это стоило владельцу ещё одной беды: щелчок
-            // по папке открывает её первую заметку, а открытие уводит фокус в
-            // текст — к приходу показа дерево фокус уже потеряло, и курсор
-            // уезжал на подпапку. Поэтому спрашиваем прямо: не мы ли сами
-            // открыли эту заметку выбором папки.
-            const bool byFolderPick = !openedByFolderPick.isEmpty() && file == openedByFolderPick;
-            openedByFolderPick.clear();
-            bool insideCurrent = false;
-            for (QModelIndex up = folder; up.isValid() && !insideCurrent; up = up.parent())
-                insideCurrent = up == tree.currentIndex();
-            // Само правило — в note_tree.h: там оно названо, объяснено и
-            // проверено набором. Здесь только три ответа на его вопросы.
-            const bool move =
-                zametti::shouldMoveTreeCursor(byFolderPick, tree.hasFocus(), insideCurrent);
-
-            revealing = true;
-            zametti::expandAncestors(tree, folder);
-            if (move) {
-                tree.setCurrentIndex(folder);
-                tree.scrollTo(folder);
-            }
-            revealing = false;
-        }
-
-        // Заметки может не быть в списке вовсе — так бывает, когда из поиска
-        // открыли заметку из другой папки. Тогда список пересобирается по той
-        // папке, где она лежит: пустая средняя колонка рядом с открытым
-        // текстом читалась бы как потеря места.
-        QModelIndex row = list.indexForPath(file);
-        if (!row.isValid() && folder.isValid()) {
-            list.setRows(model.notesInSubtree(folder));
-            row = list.indexForPath(file);
-        }
-        if (!row.isValid()) return;
-        revealing = true;
-        listView.setCurrentIndex(row);
-        listView.scrollTo(row);
-        revealing = false;
-    };
-
     // Точка одна: заметку открывает только openFile, и он же говорит об этом
     // сигналом. Связь очередью, а не прямым вызовом, — иначе синхронизация
     // выполнялась бы ВНУТРИ ещё не доигранной смены выделения (щелчок по
     // папке открывает первую заметку прямо из обработчика currentChanged), и
     // та, завершившись, возвращала бы курсор дерева на прежнее место.
     // Замерено пробником: папка находилась верно, но выделение откатывалось.
+    QObject::connect(&editor, &zametti::NoteEditor::fileChanged, &panels,
+                     &zametti::NotePanels::setCurrentNote);   // прямо: панели сверяются с ней
     QObject::connect(&editor, &zametti::NoteEditor::fileChanged, &window,
                      [&](const QString& file) {
                          window.setWindowTitle(windowTitleFor(file) +
                                                QStringLiteral(" — zametti"));
-                         revealOpenNote(file);
+                         panels.showNote(file);
                      },
                      Qt::QueuedConnection);
+    // Панели говорят, что человек выбрал; открывает только openFile.
+    QObject::connect(&panels, &zametti::NotePanels::noteChosen, &window,
+                     [&](const QString& file, bool takeFocus) { editor.openFile(file, takeFocus); });
+    QObject::connect(&panels, &zametti::NotePanels::editRequested, &window,
+                     [&] { editor.setFocus(); });
 
     // Кегль задан явно в каждом формате, поэтому штатный зум QTextEdit до него
     // не дотягивается: при смене масштаба документ собирается заново из того же
@@ -910,147 +765,11 @@ int main(int argc, char** argv) {
                                    {session.caret(), session.anchor(), 0});
     if (!editor.openFile(current)) return 2;
 
-    // ХОДЬБА СТРЕЛКАМИ по дереву и по списку — единственный случай, когда
-    // открытая заметка НЕ забирает фокус.
-    //
-    // Уговор простой: открыли заметку — каретка в тексте, печатать можно сразу
-    // (это делает openFile, одним местом на всю программу). Но ↑/↓ в панелях
-    // обязаны листать панель, а не двигать каретку, и если бы фокус уезжал на
-    // первом же нажатии, ходить по списку стало бы нечем.
-    //
-    // Отличаем не «кто в фокусе» — при щелчке мышью панель тоже получает фокус,
-    // — а чем именно человек выбрал: клавишей или мышью. Признак ставится до
-    // того, как панель разберёт нажатие, а выделение меняется прямо внутри
-    // разбора, так что к нашему обработчику он приходит верным.
-    struct KeyWalk : QObject {
-        bool walking = false;
-        bool eventFilter(QObject*, QEvent* event) override {
-            if (event->type() == QEvent::KeyPress) {
-                const int key = static_cast<QKeyEvent*>(event)->key();
-                walking = key == Qt::Key_Up || key == Qt::Key_Down ||
-                          key == Qt::Key_PageUp || key == Qt::Key_PageDown ||
-                          key == Qt::Key_Home || key == Qt::Key_End;
-            } else if (event->type() == QEvent::MouseButtonPress) {
-                walking = false;
-            }
-            return false;
-        }
-    };
-    auto* keyWalk = new KeyWalk;
-    keyWalk->setParent(&window);
-    tree.installEventFilter(keyWalk);
-    listView.installEventFilter(keyWalk);
-
-    // Средняя колонка наполняется по выбранной слева папке. Открытая заметка,
-    // если она в этом поддереве, остаётся выбранной — переключение папки не
-    // должно уводить человека с того, что он читает; иначе открывается первая
-    // заметка списка (так ведёт себя Apple Notes).
-    const auto fillList = [&](const QModelIndex& folder, bool openFirst) {
-        if (!model.isStore()) return;
-        list.setRows(model.notesInSubtree(folder));
-        const QModelIndex keep = list.indexForPath(editor.filePath());
-        if (keep.isValid()) {
-            const QSignalBlocker blocked(listView.selectionModel());
-            listView.setCurrentIndex(keep);
-            listView.scrollTo(keep);
-            return;
-        }
-        if (!openFirst || list.rowCount() == 0) return;
-        const QModelIndex first = list.index(0, 0);
-        {
-            const QSignalBlocker blocked(listView.selectionModel());
-            listView.setCurrentIndex(first);
-        }
-        const QString file = list.pathAt(first);
-        if (!file.isEmpty() && file != editor.filePath()) {
-            openedByFolderPick = file;
-            editor.openFile(file, !keyWalk->walking);
-        }
-    };
-
-    // Выбрали папку — сперва её порядок, потом её список. Обратный порядок дал
-    // бы список, отсортированный по прежней папке.
-    //
-    // ДЕРЕВО ПРИ ЭТОМ НЕ ТРОГАЕТСЯ ВОВСЕ, и потому индекс остаётся
-    // действительным: порядок в левой панели принадлежит папкам, а не выбранной
-    // строке. Прежде здесь стоял обход «запомнить путь → пересортировать всё →
-    // найти папку заново», потому что модель перестраивалась на каждый щелчок;
-    // владелец увидел, во что это выливается — панель перекладывалась под
-    // курсором.
-    const auto folderPicked = [&](const QModelIndex& index) {
-        if (syncSortToSelection) syncSortToSelection();
-        fillList(index, true);
-    };
-
-    QObject::connect(tree.selectionModel(), &QItemSelectionModel::currentChanged, &tree,
-                     [&](const QModelIndex& index, const QModelIndex&) {
-                         if (revealing) return;
-                         if (model.isStore()) {
-                             folderPicked(index);
-                             return;
-                         }
-                         // Вне хранилища панель одна: заметки живут в дереве.
-                         const QString file = model.filePath(index);
-                         if (!file.isEmpty() && file != editor.filePath())
-                             editor.openFile(file, !keyWalk->walking);
-                     });
-
-    // Щелчок по УЖЕ выбранной папке. Курсор мог встать на неё сам — так
-    // работает подсветка открытой заметки, — и тогда currentChanged больше не
-    // сработает, а сузить список надо: человек ткнул в папку явно и ждёт
-    // увидеть только её заметки. Программная перестановка курсора сюда не
-    // попадает: clicked приходит только от настоящего щелчка, и по стрелке
-    // раскрытия он тоже не приходит.
-    QObject::connect(&tree, &QAbstractItemView::clicked, &tree,
-                     [&](const QModelIndex& index) {
-                         if (model.isStore()) folderPicked(index);
-                     });
-
-    // Выбор строки списка открывает заметку. Фокус переезжает в текст — кроме
-    // ходьбы стрелками: ↑/↓ должны листать список, а не двигать каретку
-    // (правило средней колонки).
-    QObject::connect(listView.selectionModel(), &QItemSelectionModel::currentChanged,
-                     &listView, [&](const QModelIndex& index, const QModelIndex&) {
-                         if (revealing) return;
-                         const QString file = list.pathAt(index);
-                         if (!file.isEmpty() && file != editor.filePath())
-                             editor.openFile(file, !keyWalk->walking);
-                     });
-
-    // Enter в списке — перейти к правке: выбор уже сделан, дальше человек
-    // хочет печатать.
-    QObject::connect(&listView, &QAbstractItemView::activated, &listView,
-                     [&](const QModelIndex&) { editor.setFocus(); });
-
     // Сохранение переписало файл — заголовок, начало текста и дата в строке
-    // списка меняются вслед за ним.
+    // списка меняются вслед за ним: хранилище перечитывает заметку и говорит
+    // дереву, дерево — списку.
     QObject::connect(&editor, &zametti::NoteEditor::fileSaved, &window,
                      [&](const QString& file) { model.refreshNote(file); });
-    QObject::connect(&model, &zametti::NoteTreeModel::noteRowChanged, &window,
-                     [&](const QString& id) { list.updateRow(model.rowOf(id)); });
-
-    // Щелчок по заметке в дереве фокуса НЕ переводит: человек работает с
-    // деревом (Del удаляет заметку, а не буквы её заголовка — на этом
-    // поймано). В текст фокус попадает щелчком по самому тексту или после
-    // Ctrl+N.
-
-    // Раскрытые ветки собираем обходом дерева: у QTreeView нет готового списка,
-    // а хранить путь каждой ветки отдельно незачем — их десятки.
-    std::function<void(const QModelIndex&, QStringList&)> collectExpanded =
-        [&](const QModelIndex& parent, QStringList& out) {
-            const int rows = model.rowCount(parent);
-            for (int i = 0; i < rows; ++i) {
-                const QModelIndex child = model.index(i, 0, parent);
-                if (!model.isDirectory(child)) continue;
-                if (tree.isExpanded(child)) out.append(model.nodePath(child));
-                collectExpanded(child, out);
-            }
-        };
-    auto expandedDirs = [&]() {
-        QStringList out;
-        collectExpanded(QModelIndex(), out);
-        return out;
-    };
 
     const auto shortcut = [&window](const QKeySequence& keys, auto&& slot) {
         QObject::connect(new QShortcut(keys, &window), &QShortcut::activated, &window, slot);
@@ -1229,52 +948,6 @@ int main(int argc, char** argv) {
                                  .arg(QFileInfo(file).fileName(), why));
     };
 
-    // Обновить дерево и список, не потеряв ни раскрытых веток, ни выбранной
-    // папки, ни выбранной заметки. Выделение ставится с заглушенными
-    // сигналами: иначе каждое обновление перезагружало бы заметку.
-    const auto refreshTree = [&](const QString& keepPath) {
-        const QStringList open = expandedDirs();
-        const QString folderPath = model.nodePath(tree.currentIndex());
-        model.refresh();
-        for (const QString& dir : open) {
-            const QModelIndex index = model.indexForPath(dir);
-            if (index.isValid()) tree.expand(index);
-        }
-        const QString want = keepPath.isEmpty() ? editor.filePath() : keepPath;
-        if (!model.isStore()) {
-            const QModelIndex keep = model.indexForPath(want);
-            if (keep.isValid()) {
-                const QSignalBlocker blocked(tree.selectionModel());
-                for (QModelIndex up = keep.parent(); up.isValid(); up = up.parent())
-                    tree.expand(up);
-                tree.setCurrentIndex(keep);
-            }
-            return;
-        }
-        QModelIndex folder = model.indexForPath(folderPath);
-        if (folder.isValid()) {
-            const QSignalBlocker blocked(tree.selectionModel());
-            for (QModelIndex up = folder.parent(); up.isValid(); up = up.parent())
-                tree.expand(up);
-            tree.setCurrentIndex(folder);
-        }
-        list.setRows(model.notesInSubtree(folder));
-        const QModelIndex keep = list.indexForPath(want);
-        if (keep.isValid()) {
-            const QSignalBlocker blocked(listView.selectionModel());
-            listView.setCurrentIndex(keep);
-            listView.scrollTo(keep);
-        }
-    };
-
-    QSet<QString> storeNames;
-    const auto listStore = [&] {
-        QSet<QString> names;
-        const QDir dir(model.nodePath(QModelIndex()));
-        for (const QString& name : dir.entryList(QDir::Files | QDir::Hidden)) names.insert(name);
-        return names;
-    };
-
     // ПЕРЕЧИТАТЬ ХРАНИЛИЩЕ. Каталог меняется и мимо нас: файл вернули из
     // системной корзины, положили заметку соседней программой, синхронизация
     // принесла чужое. Раньше это лечилось только перезапуском (владелец
@@ -1287,8 +960,7 @@ int main(int argc, char** argv) {
         // корзины или положить руками, пока программа работала.
         for (const QString& line : zapp.storage()->migrate())
             std::fprintf(stderr, "%s\n", line.toUtf8().constData());
-        refreshTree(editor.filePath());
-        storeNames = listStore();
+        zapp.storage()->reload();   // дерево и список догонят по сигналу
         statusBar.setMessage(QStringLiteral("хранилище перечитано"));
         QTimer::singleShot(1500, &statusBar, [&statusBar] { statusBar.setMessage(QString()); });
     };
@@ -1297,42 +969,10 @@ int main(int argc, char** argv) {
 
     // СТОРОЖ КАТАЛОГА — ПО УМОЛЧАНИЮ ВЫКЛЮЧЕН (`notes.watchFolder`, решение
     // владельца): штатный путь обновить хранилище один и явный — F5, Ctrl+R или
-    // «Обновить» в меню. Включённый сторож сообщает о появившихся и исчезнувших
-    // файлах; правку содержимого он не видит вовсе — за открытой заметкой
-    // следит свой сторож в редакторе.
-    //
-    // ДВЕ ОГОВОРКИ, обе про цену. Первая: срабатывает он и на НАШИ записи —
-    // QSaveFile пишет во временный файл и переименовывает его, а для каталога
-    // это появление и исчезновение файла. Вторая: перечитывание хранилища
-    // читает КАЖДУЮ заметку целиком (заголовок и начало текста для средней
-    // колонки), и на корпусе владельца это десятки миллисекунд.
-    //
-    // Поэтому сторож сперва сверяет СОСТАВ каталога — одно чтение оглавления,
-    // без единого открытия файла, — и молчит, если имена те же. Наши
-    // собственные сохранения до перечитывания не доходят вовсе.
-    QFileSystemWatcher storeWatcher;
-    QTimer storeSettle;
-    storeSettle.setSingleShot(true);
-    storeSettle.setInterval(400);
-    if (model.isStore() && zametti::settings().store().watchStore()) {
-        storeNames = listStore();
-        storeWatcher.addPath(model.nodePath(QModelIndex()));
-        QObject::connect(&storeWatcher, &QFileSystemWatcher::directoryChanged, &window,
-                         [&storeSettle](const QString&) { storeSettle.start(); });
-        QObject::connect(&storeSettle, &QTimer::timeout, &window, [&] {
-            // СВЕРКА СОСТАВА — 1.5 мс на корпусе владельца (276 файлов), а
-            // полное перечитывание — 24 мс: оно читает каждую заметку ради
-            // заголовка и начала текста для средней колонки. Наши собственные
-            // записи (QSaveFile пишет во временный файл и переименовывает его)
-            // до перечитывания не доходят вовсе.
-            const QSet<QString> now = listStore();
-            if (now == storeNames) return;
-            storeNames = now;
-            // Открытую заметку не трогаем: у неё свой сторож, и он умеет
-            // спрашивать человека. Здесь только состав хранилища.
-            refreshTree(editor.filePath());
-        });
-    }
+    // «Обновить» в меню. Сам сторож живёт в хранилище (ZStorage::setWatching):
+    // сверяет состав каталога и перечитывает его на разнице, а панели догоняют
+    // по сигналу. Открытую заметку он не трогает: у неё свой сторож.
+    if (panels.isStore() && zametti::settings().store().watchStore()) zapp.storage()->setWatching(true);
 
     // F2: новый заголовок. Открытая заметка правится через редактор (первый
     // содержательный блок), закрытая — через ядро по файлу.
@@ -1364,7 +1004,7 @@ int main(int argc, char** argv) {
                 complain(file, error);
         }
         if (file == editor.filePath()) editor.openFile(file);
-        refreshTree(file);
+        panels.selectNote(file);
     });
 
     // Перенос: правка parent. Открытая — через редактор, закрытая — по файлу.
@@ -1383,7 +1023,7 @@ int main(int argc, char** argv) {
                                       &error))
                 complain(file, error);
         }
-        refreshTree(keepPath);
+        panels.selectNote(keepPath);
     };
     QObject::connect(&model, &zametti::NoteTreeModel::moveRequested, &window,
                      [&](const QString& noteId, const QString& parentId) {
@@ -1411,7 +1051,7 @@ int main(int argc, char** argv) {
         const QString fallback = model.pathOfId(model.neighbourOf(noteId));
 
         const auto settleAfter = [&] {
-            refreshTree(fallback.isEmpty() ? QString() : fallback);
+            panels.selectNote(fallback);
             if (!wasOpen) return;
             QString open = fallback;
             if (open.isEmpty()) open = model.pathOfId(model.firstNoteId());
@@ -1484,47 +1124,14 @@ int main(int argc, char** argv) {
                                      .arg(failed.join(QLatin1Char('\n'))));
         // Открытая заметка была стабом — перечитываем: тело вернулось.
         if (file == editor.filePath()) editor.openFile(file);
-        refreshTree(file);
-
-        // И ПОКАЗАТЬ, КУДА ВЕРНУЛАСЬ. Без этого заметку приходится искать
-        // глазами: дерево осталось стоять там, где стояло, а средняя колонка
-        // показывает прежнюю папку. Раскрываем папку назначения, ставим на неё
-        // курсор дерева, наполняем список по ней и делаем текущей саму заметку —
-        // а текущая строка списка это и есть открытая заметка.
-        const QModelIndex folder = model.folderIndexForNote(noteId);
-        if (folder.isValid()) {
-            // Курсор дерева здесь указатель, а не навигация: список наполняем
-            // сами, иначе currentChanged открыл бы ПЕРВУЮ заметку папки, а нам
-            // нужна восстановленная.
-            revealing = true;
-            zametti::expandAncestors(tree, folder);
-            tree.expand(folder);   // человек идёт смотреть, что внутри
-            tree.setCurrentIndex(folder);
-            tree.scrollTo(folder);
-            revealing = false;
-            list.setRows(model.notesInSubtree(folder));
-        }
-        const QModelIndex row = list.indexForPath(file);
-        if (row.isValid()) {
-            listView.setCurrentIndex(row);
-            listView.scrollTo(row);
-        }
+        // И ПОКАЗАТЬ, КУДА ВЕРНУЛАСЬ, без вопросов к правилу курсора: иначе
+        // заметку приходится искать глазами — дерево осталось стоять там, где
+        // стояло, а средняя колонка показывает прежнюю папку.
+        panels.showNote(file, /*force=*/true);
     };
-    // Del в дереве бьёт по папке, Del в списке — по заметке. Каждый ярлык
-    // висит на своём виджете: до этого Del из дерева удалял буквы заголовка в
-    // редакторе, и лечится это только привязкой к виджету.
-    {
-        auto* del = new QShortcut(QKeySequence::Delete, &tree);
-        del->setContext(Qt::WidgetWithChildrenShortcut);
-        QObject::connect(del, &QShortcut::activated, &window,
-                         [&] { deleteNote(model.idOf(tree.currentIndex())); });
-    }
-    {
-        auto* del = new QShortcut(QKeySequence::Delete, &listView);
-        del->setContext(Qt::WidgetWithChildrenShortcut);
-        QObject::connect(del, &QShortcut::activated, &window,
-                         [&] { deleteNote(list.idAt(listView.currentIndex())); });
-    }
+    // Del в дереве бьёт по папке, Del в списке — по заметке (ярлыки — у панелей).
+    QObject::connect(&panels, &zametti::NotePanels::deleteRequested, &window,
+                     [&](const QString& id) { deleteNote(id); });
 
     // Новая заметка или папка. Папка — та же заметка, но с role: folder в
     // мете: опустевшая папка не превращается обратно в заметку.
@@ -1538,15 +1145,12 @@ int main(int argc, char** argv) {
             return;
         }
         const QString made = zapp.storage()->pathOf(madeId);
-        refreshTree(made);
-        const QModelIndex fresh = model.indexForPath(made);
+        // Дерево уже перестроено по сигналу хранилища.
         if (folder) {
+            const QModelIndex fresh = model.indexForPath(made);
             if (fresh.isValid()) tree.edit(fresh);   // сразу дать имя
         } else {
-            // Открыть явно: refreshTree выделяет с заглушенными сигналами
-            // (иначе каждое обновление перезагружало бы заметку), так что
-            // на открытие через выделение полагаться нельзя.
-            editor.openFile(made);
+            editor.openFile(made);   // показ в панелях — вслед за открытием
         }
     };
 
@@ -1574,11 +1178,7 @@ int main(int argc, char** argv) {
             if (first.isEmpty()) first = made;
         }
 
-        if (!first.isEmpty()) {
-            refreshTree(first);
-            // Открыть явно: refreshTree выделяет с заглушенными сигналами.
-            editor.openFile(first);
-        }
+        if (!first.isEmpty()) editor.openFile(first);   // дерево уже догнало по сигналу
         if (!failed.isEmpty()) {
             QMessageBox::warning(
                 &window, QStringLiteral("zametti"),
@@ -1726,63 +1326,17 @@ int main(int argc, char** argv) {
     };
     auto* grab = new NewNoteGrab;
     grab->setParent(&window);
-    grab->onNew = [&] { createNote(model.folderIdFor(tree.currentIndex()), false); };
+    grab->onNew = [&] { createNote(panels.currentFolderId(), false); };
     editor.installEventFilter(grab);
     shortcut(QKeySequence::New,
-             [&] { createNote(model.folderIdFor(tree.currentIndex()), false); });
+             [&] { createNote(panels.currentFolderId(), false); });
 
-    // ПЕРЕКЛАДЫВАНИЕ ЛЕВОЙ ПАНЕЛИ — только от смены переключателя корня.
-    //
-    // Дерево сортируется по папкам: у каждой свой порядок (своя метка →
-    // родительская → этот переключатель), и выбор строки его не меняет.
-    // Прежде здесь стоял «порядок точки обзора», и щелчок по помеченной папке
-    // перекладывал всю панель — владелец увидел, как строка под курсором
-    // становится чужой.
-    const auto applyRootSort = [&](zametti::SortOrder order) {
-        if (order == model.rootSort()) return;
-        const QStringList open = expandedDirs();
-        const QString folderPath = model.nodePath(tree.currentIndex());
-        const QString keep = editor.filePath();
-        model.setRootSort(order);
-        for (const QString& dir : open) {
-            const QModelIndex index = model.indexForPath(dir);
-            if (index.isValid()) tree.expand(index);
-        }
-        const QModelIndex folder = model.indexForPath(folderPath);
-        if (folder.isValid()) {
-            const QSignalBlocker blocked(tree.selectionModel());
-            tree.setCurrentIndex(folder);
-        }
-        const QModelIndex back = list.indexForPath(keep);
-        if (back.isValid()) {
-            const QSignalBlocker blocked(listView.selectionModel());
-            listView.setCurrentIndex(back);
-            listView.scrollTo(back);
-        }
-    };
-    // Три кнопки вместо комбобокса — группа с единственной нажатой: включить
-    // одну значит отжать две другие. Отжать все нельзя — сортировки «никакой»
-    // не бывает; поэтому нажатие УЖЕ НАЖАТОЙ переворачивает направление, а не
-    // гасит её (pressedSort в sort_order.h).
-    //
-    // Как это выглядит — дело тулбара (Toolbar::showSort): значок говорит про
-    // направление, цвет — про источник порядка. Окну остаётся решить, ЧТО
-    // показывать.
-    // Порядок, действующий в выбранной папке, и откуда он взялся. Папка — та
-    // же, что у «новой заметки»: ближайшая вверх от строки дерева.
-    const auto currentSort = [&](bool* fromMark) {
-        return model.effectiveSortFor(model.folderIdFor(tree.currentIndex()), rootSort,
-                                      fromMark);
-    };
-    // Смена ВЫБОРА не трогает дерево вовсе: меняются только средняя колонка —
-    // она показывает мир выбранной папки и потому идёт её порядком — и кнопки
-    // тулбара, которые этот порядок называют.
-    const auto syncSort = [&] {
-        bool fromMark = false;
-        const zametti::SortOrder order = currentSort(&fromMark);
-        list.setSortOrder(order);
-        toolbar.showSort(order, fromMark);
-    };
+    // ПОРЯДОК СОРТИРОВКИ — у панелей: дерево сортируется по папкам (своя метка →
+    // родительская → переключатель корня), список идёт порядком выбранной папки,
+    // а кнопкам тулбара панели говорят сигналом, что показывать (Toolbar::showSort:
+    // значок — про направление, цвет — про источник порядка).
+    QObject::connect(&panels, &zametti::NotePanels::sortShown, &window,
+                     [&](zametti::SortOrder order, bool fromMark) { toolbar.showSort(order, fromMark); });
 
     // ЗАПИСЬ ПОРЯДКА. Выбрана папка — метка уходит в её шапку и переживает всё,
     // включая синхронизацию: это метаданные, а не настройка интерфейса. Выбран
@@ -1797,9 +1351,7 @@ int main(int argc, char** argv) {
     const auto setSortFor = [&](const QString& folderId,
                                 std::optional<zametti::SortOrder> order) {
         if (folderId.isEmpty()) {
-            rootSort = order.value_or(zametti::defaultOrder(zametti::SortKey::Modified));
-            applyRootSort(rootSort);
-            syncSort();
+            panels.setRootSort(order.value_or(zametti::defaultOrder(zametti::SortKey::Modified)));
             return;
         }
         const QString file = model.pathOfId(folderId);
@@ -1809,19 +1361,18 @@ int main(int argc, char** argv) {
         };
         if (file == editor.filePath()) {
             editor.editMeta(change);
+            // Метку читает каталог — перечитать заметку; дерево пересортируется
+            // по сигналу (метка — структурная новость).
+            model.refreshNote(file);
         } else {
             QString error;
             if (!zapp.storage()->setSortMark(folderId, order, zametti::NoteEditor::historyRules(),
                                              &error))
                 complain(file, error);
         }
-        // Метку читает СКАН хранилища — значит дерево надо перечитать, иначе
-        // порядок останется прежним до следующего F5.
-        refreshTree(editor.filePath());
-        syncSort();
+        panels.syncSort();
     };
-    syncSort();
-    syncSortToSelection = syncSort;
+    panels.syncSort();
 
     // НАЖАТИЕ КНОПКИ. По неактивной — включить её ключ в направлении по
     // умолчанию; по активной — перевернуть направление. Записывается это туда
@@ -1829,8 +1380,8 @@ int main(int argc, char** argv) {
     // переключатель.
     const auto pressSort = [&](zametti::SortKey key) {
         bool fromMark = false;
-        const zametti::SortOrder now = currentSort(&fromMark);
-        setSortFor(model.folderIdFor(tree.currentIndex()), zametti::pressedSort(now, key));
+        const zametti::SortOrder now = panels.currentSort(&fromMark);
+        setSortFor(panels.currentFolderId(), zametti::pressedSort(now, key));
     };
 
     // --- внешний редактор ----------------------------------------------------
@@ -1887,7 +1438,7 @@ int main(int argc, char** argv) {
         QObject::connect(ask, &QMessageBox::finished, &window, [&, ask, restore] {
             if (ask->clickedButton() == restore) editor.restoreDamagedMeta();
             else editor.forgetDamagedMeta();
-            refreshTree(editor.filePath());
+            model.refreshNote(editor.filePath());
         });
         ask->open();
     });
@@ -1898,12 +1449,12 @@ int main(int argc, char** argv) {
                      [&](const QString& file) { openExternally(file); });
 
     // Внешняя правка могла сменить parent — это законный перенос — или тронуть
-    // заголовок. Дерево и список догоняют файл. Пересканируем всё хранилище, а
-    // не одну строку: перенос меняет структуру, а внешние правки редки (7 мс
-    // по замеру этапа 4 — цена, которую не жалко).
+    // заголовок. Дерево и список догоняют файл: хранилище перечитывает заметку
+    // и само решает, строка это или структура (сменился родитель — дерево
+    // строится заново).
     QObject::connect(&editor, &zametti::NoteEditor::externalAdopted, &window,
                      [&](const QString& file) {
-                         if (model.isStore()) refreshTree(file);
+                         if (model.isStore()) model.refreshNote(file);
                      });
 
     // Контекстное меню левой панели — про папки: создание, переименование,
@@ -1942,7 +1493,7 @@ int main(int argc, char** argv) {
             QMenu* sortMenu = menu.addMenu(QStringLiteral("Сортировать по"));
             bool fromMark = false;
             const zametti::SortOrder now =
-                model.effectiveSortFor(folderId, rootSort, &fromMark);
+                model.effectiveSortFor(folderId, panels.rootSort(), &fromMark);
             const bool own = model.explicitSortOf(folderId).has_value();
             if (!folderId.isEmpty()) {
                 QAction* reset = sortMenu->addAction(QStringLiteral("умолчанию"), [&, folderId] {
@@ -2000,7 +1551,7 @@ int main(int argc, char** argv) {
         // Импорт есть всегда, даже когда щёлкнули мимо строк и заметки под
         // курсором нет вовсе: он про папку, а не про строку.
         menu.addAction(QStringLiteral("Импортировать…"),
-                       [&] { importNotes(model.folderIdFor(tree.currentIndex())); });
+                       [&] { importNotes(panels.currentFolderId()); });
         if (id.isEmpty()) {
             menu.exec(listView.viewport()->mapToGlobal(pos));
             return;
@@ -2324,8 +1875,7 @@ int main(int argc, char** argv) {
     QList<int> keptSizes = splitter.sizes();
     const auto showPanels = [&](bool visible) {
         if (!visible) keptSizes = splitter.sizes();
-        tree.setVisible(visible);
-        if (model.isStore()) middle.setVisible(visible);
+        panels.setVisible(visible);
         if (visible && keptSizes.size() == splitter.count()) splitter.setSizes(keptSizes);
         // Кнопка НАЖАТА, когда панели видны, а не наоборот: нажатый
         // переключатель означает «это включено». Прежде было зеркально —
@@ -2362,13 +1912,13 @@ int main(int argc, char** argv) {
         QObject::connect(&toolbar, &zametti::Toolbar::pressed, &window, [&](Button id) {
             switch (id) {
             case Button::NewNote:
-                createNote(model.folderIdFor(tree.currentIndex()), false);
+                createNote(panels.currentFolderId(), false);
                 break;
             case Button::NewFolder:
-                createNote(model.folderIdFor(tree.currentIndex()), true);
+                createNote(panels.currentFolderId(), true);
                 break;
             case Button::ImportNotes:
-                importNotes(model.folderIdFor(tree.currentIndex()));
+                importNotes(panels.currentFolderId());
                 break;
             case Button::InsertImages:
                 editor.chooseAndInsertImages();
@@ -2526,61 +2076,11 @@ int main(int argc, char** argv) {
     // Показать текущую заметку в дереве надо после show(): раскрытие веток
     // требует уже созданных представлений. Раскрытые ветки восстанавливаем до
     // того, как показать текущую заметку, иначе её раскрытие затеряется среди
-    // прочих. Сигнал глушим — иначе выделение немедленно вызвало бы повторную
-    // загрузку того же файла.
-    for (const QString& dir : session.expandedDirs()) {
-        const QModelIndex index = model.indexForPath(dir);
-        if (index.isValid() && model.isDirectory(index)) tree.expand(index);
-    }
-
-    if (model.isStore()) {
-        // Слева выделяется папка открытой заметки, в середине — сама заметка.
-        // Список наполняется от папки: показать заметку в контексте её соседей
-        // важнее, чем сразу вывалить всё хранилище.
-        const QString noteId = QFileInfo(current).completeBaseName();
-        QModelIndex folder = model.folderIndexForNote(noteId);
-        if (!folder.isValid()) folder = model.indexForPath(model.nodePath(QModelIndex()));
-        if (folder.isValid()) {
-            const QSignalBlocker blocked(tree.selectionModel());
-            for (QModelIndex up = folder.parent(); up.isValid(); up = up.parent())
-                tree.expand(up);
-            tree.setCurrentIndex(folder);
-            tree.scrollTo(folder);
-        }
-        // ПОРЯДОК ВЫБРАННОЙ ПАПКИ — И НА СТАРТЕ ТОЖЕ. Курсор сюда поставлен с
-        // заглушенными сигналами (иначе перестановка читалась бы как выбор
-        // человека и переоткрывала заметку), а значит обработчик выбора не
-        // сработал, и метка папки на первом экране не действовала бы: программа
-        // открывалась в общем порядке и чинилась только щелчком по той же
-        // папке. Владелец увидел бы это как «метка работает через раз».
-        //
-        // Индекс после смены порядка недействителен — модель перестраивается
-        // целиком; поэтому папку ищем заново, по пути.
-        const QString folderPath = model.nodePath(folder);
-        if (syncSortToSelection) syncSortToSelection();
-        folder = model.indexForPath(folderPath);
-        if (folder.isValid()) {
-            const QSignalBlocker blocked(tree.selectionModel());
-            tree.setCurrentIndex(folder);
-            tree.scrollTo(folder);
-        }
-        list.setRows(model.notesInSubtree(folder));
-        const QModelIndex row = list.indexForPath(current);
-        if (row.isValid()) {
-            const QSignalBlocker blocked(listView.selectionModel());
-            listView.setCurrentIndex(row);
-            listView.scrollTo(row, QAbstractItemView::PositionAtCenter);
-        }
-    } else {
-        const QModelIndex currentIndex = model.indexForPath(current);
-        if (currentIndex.isValid()) {
-            const QSignalBlocker blocked(tree.selectionModel());
-            for (QModelIndex up = currentIndex.parent(); up.isValid(); up = up.parent())
-                tree.expand(up);
-            tree.setCurrentIndex(currentIndex);
-            tree.scrollTo(currentIndex, QAbstractItemView::PositionAtCenter);
-        }
-    }
+    // прочих. Показ — без вопросов к правилу курсора: слева выделяется папка
+    // открытой заметки (её порядок — и на старте тоже), в середине — сама
+    // заметка; вне хранилища — строка заметки в дереве.
+    panels.restoreExpanded(session.expandedDirs());
+    panels.showNote(current, /*force=*/true);
 
     // Фокус — после show() и после того, как дерево показало текущую заметку: до
     // show() окно ещё не решило, кому его отдать, и наш выбор затёрся бы первым
@@ -2604,7 +2104,7 @@ int main(int argc, char** argv) {
         out.setWindowGeometry(window.saveGeometry());
         out.setSplitterState(splitter.saveState());
         out.setPanelsHidden(!toolbar.isChecked(zametti::Toolbar::Button::Panels));
-        out.setExpandedDirs(expandedDirs());
+        out.setExpandedDirs(panels.expandedDirs());
         out.setSearchHistory(findBar.history());
         out.setStoreRoot(model.isStore() ? model.nodePath(QModelIndex()) : QString());
         out.setExportDir(exportDir);
@@ -2613,7 +2113,7 @@ int main(int argc, char** argv) {
         // Переключатель КОРНЯ, а не действующий порядок: последний может быть
         // задан меткой открытой папки, и запиши мы его — чужая метка стала бы
         // общим умолчанием при следующем запуске.
-        out.setTreeSort(zametti::sortOrderToString(rootSort));
+        out.setTreeSort(zametti::sortOrderToString(panels.rootSort()));
         zapp.saveState();
     });
 
