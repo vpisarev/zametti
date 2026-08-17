@@ -37,15 +37,21 @@ QString ZNote::id() const { return QFileInfo(path_).completeBaseName(); }
 
 bool ZNote::load(std::string_view bytes) {
     NoteHeader lifted;
-    if (!doc_.loadMarkdown(bytes, &lifted)) return false;
+    std::vector<Piece> built;
+    if (!doc_.loadMarkdown(bytes, &lifted, &built)) return false;
     header_ = lifted;
-    built_.invalidate();
+    // Блоки сборки — заплатке редактора; она сравнивает их с правленым.
+    built_.set(std::move(built), doc_.revision());
     stats_.invalidate();
     search_.clear();
     return true;
 }
 
 std::string ZNote::toMarkdown() const { return doc_.toMarkdown(header_); }
+
+QByteArray ZNote::fileBytes(std::vector<Piece>* fileBlocks) const {
+    return doc_.fileBytes(header_, fileBlocks);
+}
 
 QString ZNote::toMarkdownText() const { return doc_.toMarkdownText(header_); }
 

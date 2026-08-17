@@ -90,6 +90,8 @@ public:
     // Байты файла целиком: конверт + каноническое тело.
     std::string toMarkdown() const;
     QString toMarkdownText() const;
+    // Байты, какими они лягут в файл, — без записи (сравнить с прошлой копией).
+    QByteArray fileBytes(std::vector<Piece>* fileBlocks = nullptr) const;
     // Записать в файл штатным путём (self-check, атомарно) в своём конверте.
     SaveOutcome save(const QString& path, const QString& timestamp, const Digest& known = {},
                      const std::vector<Piece>* prebuiltBlocks = nullptr,

@@ -724,15 +724,13 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
     // собрать новый мы успеем и так. Ставится ОДНОЙ операцией вместе с
     // документом — installNote; ту же дорогу проходит и отложенная.
     auto fresh = std::make_shared<ZNote>(path, fileBytes, digest, std::move(history));
-    std::vector<Piece> doc;
-    // Граница файла: байты → текст, один раз.
-    NoteHeader meta;
-    parsePieces(QString::fromUtf8(text.data(), qsizetype(text.size())), doc, meta);
-    fresh->setHeader(std::move(meta));
+    // Байты → шапка + тело разбирает и собирает сама заметка; документ ещё не
+    // показан, и вёрстки при сборке нет вовсе (её включает getDocument).
+    fresh->load(text);
     fresh->rememberCaret(ZApp::instance().state().caretOf(fresh->id()));
     installNote(std::move(fresh));
     watchFile();
-    rebuild(doc, note_->caret().cursor, {});
+    settleAfterBuild(note_->caret().cursor, {}, /*patched=*/false);
     // Каретка, выделение, показ места и фокус — общей дорогой с отложенной
     // заметкой: два пути открытия, одно правило.
     activateNote(takeFocus);
@@ -1302,11 +1300,16 @@ void NoteEditor::rebuild(const std::vector<Piece>& doc, int cursor, const ViewAn
         head.setBlockFormat(staging.firstBlock().blockFormat());
         head.setBlockCharFormat(staging.firstBlock().charFormat());
     }
+    note_->setBuiltBlocks(doc);
+    settleAfterBuild(cursor, anchor, patched);
+    recordingSuspended_ = wasSuspended;
+}
+
+void NoteEditor::settleAfterBuild(int cursor, const ViewAnchor& anchor, bool patched) {
     // Сборщик поставил документу базовый кегль — масштаб ему возвращаем мы.
     // Заплатка шрифта не трогает, но звать здесь всё равно дешевле, чем помнить
     // о двух путях: setZoom сравнивает шрифт и на совпадении ничего не делает.
     restoreScale();
-    note_->setBuiltBlocks(doc);
 
     // Слова и строки — здесь и только здесь (плюс запись на диск). Считаем
     // ОБХОДОМ ЖИВОГО ДОКУМЕНТА: он только что собран, и брать числа больше
@@ -1342,7 +1345,6 @@ void NoteEditor::rebuild(const std::vector<Piece>& doc, int cursor, const ViewAn
     // считалась бы изменённой и переписывалась бы на диске при выходе, хотя мы
     // её всего лишь показали. Кто пересобрал ради отмены — поднимет флаг сам.
     document()->setModified(false);
-    recordingSuspended_ = wasSuspended;
 }
 
 QTextBlock NoteEditor::checkboxUnder(const QMouseEvent& event) const {
@@ -3527,11 +3529,10 @@ void NoteEditor::save(bool interactive, bool force) {
     // уходят в файл; сошлось — откатываем штамп, чтобы шапка в памяти не
     // разъехалась с той, что лежит на диске.
     const NoteHeader metaBefore = note_->header();
-    if (note_->header().present() && stampModifiedOnSave_)
-        note_->header().set("modified", store::isoNow().toStdString());
+    if (note_->hasHeader() && stampModifiedOnSave_) note_->stampModified();
 
     std::vector<Piece> fileIr;
-    QByteArray candidate = noteBytes(*document(), note_->header(), nullptr, &fileIr);
+    QByteArray candidate = note_->fileBytes(&fileIr);
     if (!note_->lastSaved().isEmpty() && sameApartFromModified(candidate, note_->lastSaved())) {
         note_->setHeader(metaBefore);
         document()->setModified(false);
@@ -3569,14 +3570,13 @@ void NoteEditor::save(bool interactive, bool force) {
         // Пересобираем байты только если что-то и правда переехало: лишняя
         // сериализация большой заметки — это миллисекунды на каждое
         // автосохранение.
-        if (moved) candidate = noteBytes(*document(), note_->header(), nullptr, &fileIr);
+        if (moved) candidate = note_->fileBytes(&fileIr);
     }
 
     // Отпечаток того, что в файле, мы знаем — значит «не изменилось ли»
     // решается без чтения файла.
     const SaveOutcome outcome =
-        saveDocument(*document(), note_->path(), rescueTimestamp(), nullptr, note_->header(),
-                     note_->digest(), &fileIr, &candidate);
+        note_->save(note_->path(), rescueTimestamp(), note_->digest(), &fileIr, &candidate);
     if (outcome.result == SaveResult::Written || outcome.result == SaveResult::Unchanged) {
         document()->setModified(false);
         current_.lastComplaint.clear();

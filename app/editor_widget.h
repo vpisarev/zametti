@@ -560,6 +560,10 @@ private:
     // содержимое заменено целиком, отменять в нём нечего.
     void rebuild(const std::vector<Piece>& blocks, int cursor, const ViewAnchor& anchor,
                  const std::vector<Piece>* current = nullptr, bool asEdit = false);
+    // Что делает вид после того, как документ собран (масштаб, счёт слов, ширина
+    // колонки, каретка, якорь прокрутки): общий хвост rebuild и открытия свежей
+    // заметки, которую разбирает и собирает сама ZNote (load).
+    void settleAfterBuild(int cursor, const ViewAnchor& anchor, bool patched);
 
     // --- кэш заметок сессии ---
     //

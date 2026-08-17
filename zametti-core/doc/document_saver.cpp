@@ -787,4 +787,8 @@ SaveOutcome ZDocument::saveTo(const QString& path, const QString& timestamp,
                         prebuiltBlocks, prebuiltText);
 }
 
+QByteArray ZDocument::fileBytes(const NoteHeader& envelope, std::vector<Piece>* fileBlocks) const {
+    return noteBytes(d_->text, envelope, nullptr, fileBlocks);
+}
+
 }  // namespace zametti

@@ -86,7 +86,7 @@ ZDocument ZDocument::clone() const {
 
 // --- круг с диском ---------------------------------------------------------
 
-bool ZDocument::loadMarkdown(std::string_view bytes, NoteHeader* lifted) {
+bool ZDocument::loadMarkdown(std::string_view bytes, NoteHeader* lifted, std::vector<Piece>* built) {
     // НОРМАЛИЗАЦИЯ ПРОБЕЛОВ — ЧАСТЬ ВВОЗА, а не отдельный шаг: так делают все
     // нынешние места вызова, и без неё ZDocument читал бы не то же, что читает
     // программа.
@@ -101,6 +101,7 @@ bool ZDocument::loadMarkdown(std::string_view bytes, NoteHeader* lifted) {
                 blocks, d_->header);
     if (lifted != nullptr) *lifted = d_->header;
     buildDocument(blocks, d_->text);
+    if (built != nullptr) *built = std::move(blocks);
     return true;
 }
 

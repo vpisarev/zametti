@@ -114,7 +114,10 @@ public:
 
     // Байты файла целиком, вместе с шапкой. Шапка отдаётся наружу через
     // lifted (конверт файла — дело заметки, ZNote); документ строится из тела.
-    bool loadMarkdown(std::string_view bytes, NoteHeader* lifted = nullptr);
+    // built — блоки, из которых собран документ (заплатке; долг, названный в
+    // znote.h): не спросили — черновик умирает вместе с вызовом.
+    bool loadMarkdown(std::string_view bytes, NoteHeader* lifted = nullptr,
+                      std::vector<Piece>* built = nullptr);
 
     // Канонические байты, вместе с шапкой. Это ровно то, что уйдёт в файл —
     // и единственное место, где текст заметки переводится в байты.
@@ -139,6 +142,10 @@ public:
                        const Digest& known = {},
                        const std::vector<Piece>* prebuiltBlocks = nullptr,
                        const QByteArray* prebuiltText = nullptr);
+    // Байты, какими они лягут в файл (тело приведено к тому, что файл умеет
+    // выразить, в конверте envelope) — без записи. fileBlocks — те же блоки:
+    // их потом отдают saveTo как prebuiltBlocks, чтобы не сериализовать дважды.
+    QByteArray fileBytes(const NoteHeader& envelope, std::vector<Piece>* fileBlocks = nullptr) const;
 
     // Отпечаток канонических байтов. Истина — он: mtime и etag лишь подсказки.
     Digest digest() const;
