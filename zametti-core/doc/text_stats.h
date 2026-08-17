@@ -24,7 +24,6 @@
 
 #include <QStringView>
 
-#include <string_view>
 #include <vector>
 
 class QTextBlock;
@@ -48,9 +47,6 @@ namespace zametti {
 // Суррогатные пары разбираются: буквы за пределами BMP считаются буквами.
 int countWords(QStringView text);
 
-// То же самое по UTF-8: правило одно, обходы разные. Нужен счёту по IR — там
-// текст лежит байтами, и переводить его в QString ради счёта незачем.
-int countWords(std::string_view utf8);
 
 // Строки в куске текста ЗА ВЫЧЕТОМ первой: сколько раз текст переведён на
 // новую строку внутри одного блока. Перевод внутри блока — U+2028 (см.

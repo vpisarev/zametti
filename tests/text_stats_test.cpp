@@ -280,10 +280,11 @@ void benchSource(const std::string& source, const std::string& label) {
 
     // Сам счёт слов в отрыве от всего прочего: по нему видно цену таблицы.
     long long onlyWords = 0;
+    const QString sourceText = QString::fromStdString(source);
     t.restart();
-    for (int i = 0; i < rounds; ++i) onlyWords += zametti::countWords(std::string_view(source));
+    for (int i = 0; i < rounds; ++i) onlyWords += zametti::countWords(sourceText);
     const qint64 onlyUs = t.nsecsElapsed() / 1000;
-    std::printf("  только счёт слов по UTF-8: %.0f мкс (%lld)\n", double(onlyUs) / rounds,
+    std::printf("  только счёт слов по тексту: %.0f мкс (%lld)\n", double(onlyUs) / rounds,
                 onlyWords / rounds);
 
     // И место каретки по указателю строк — оно считается на каждое движение.

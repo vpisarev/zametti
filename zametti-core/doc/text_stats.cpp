@@ -104,41 +104,6 @@ int countWords(QStringView text) {
     return words + int(insideWord);   // слово, кончившееся вместе с текстом
 }
 
-int countWords(std::string_view utf8) {
-    int words = 0;
-    bool insideWord = false;
-    const unsigned char* at = reinterpret_cast<const unsigned char*>(utf8.data());
-    const unsigned char* const end = at + utf8.size();
-    while (at != end) {
-        char32_t cp = *at;
-        if (cp < 0x80) {
-            ++at;
-        } else {
-            // Разбор UTF-8. Битый байт — сам себе знак-разделитель: текст,
-            // который до нас дошёл, уже проверен разбором, а падать счётчику
-            // слов на чужом байте всё равно незачем.
-            int extra = 0;
-            if ((cp & 0xE0) == 0xC0) { cp &= 0x1F; extra = 1; }
-            else if ((cp & 0xF0) == 0xE0) { cp &= 0x0F; extra = 2; }
-            else if ((cp & 0xF8) == 0xF0) { cp &= 0x07; extra = 3; }
-            else { cp = 0xFFFD; }
-            ++at;
-            for (int i = 0; i < extra; ++i) {
-                if (at == end || (*at & 0xC0) != 0x80) { cp = 0xFFFD; break; }
-                cp = (cp << 6) | char32_t(*at & 0x3F);
-                ++at;
-            }
-        }
-        const Role role = roleOf(cp);
-        if (role == Role::Letter) {
-            insideWord = true;
-        } else if (role == Role::Separator) {
-            words += int(insideWord);
-            insideWord = false;
-        }
-    }
-    return words + int(insideWord);
-}
 
 int countLineBreaks(QStringView text) {
     int breaks = 0;
