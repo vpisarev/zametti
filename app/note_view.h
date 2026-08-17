@@ -350,6 +350,19 @@ protected:
     // сразу печатает; без этого вызова на бумагу уезжали пустые места вместо
     // снимков и рамка «формула не посчитана».
     void syncImageSpace(bool whole = true);
+    // От чего зависит размер объектов на экране. Полная пометка документа
+    // грязным делается только когда изменилось что-то из этого.
+    struct WholeSyncKey {
+        const QTextDocument* document = nullptr;
+        int width = 0;
+        QFont font;
+        qreal dpr = 0.0;
+        bool operator==(const WholeSyncKey& o) const {
+            return document == o.document && width == o.width && font == o.font &&
+                   qFuzzyCompare(dpr, o.dpr);
+        }
+    };
+    WholeSyncKey lastWholeSync_;
 
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
