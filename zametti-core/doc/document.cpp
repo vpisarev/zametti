@@ -28,29 +28,27 @@ namespace {
 //
 // Строкой, а не отпечатком: на этом стоит последний рубеж против потери
 // данных, и мириться там с вероятностью совпадения хешей нельзя.
-std::string skeletonOf(const QTextDocument& text) {
-    std::string out;
+QString skeletonOf(const QTextDocument& text) {
+    QString out;
     walkPieces(text, [&](const Piece& piece) {
         if (piece.raw) {
-            out += "raw\x1f";
+            out += QLatin1String("raw\x1f");
             out += piece.text;
-            out += '\x1e';
+            out += QChar(0x1e);
             return true;
         }
-        out += std::to_string(int(piece.kind));
-        out += '\x1f';
-        out += std::to_string(piece.level);
-        out += '\x1f';
-        out += std::to_string(int(piece.marker));
-        out += '\x1f';
-        out += piece.checked ? '1' : '0';
-        out += '\x1f';
-        out += std::to_string(piece.headingLevel);
-        out += '\x1f';
+        out += QString::number(int(piece.kind));
+        out += QChar(0x1f);
+        out += QString::number(piece.level);
+        out += QChar(0x1f);
+        out += QString::number(int(piece.marker));
+        out += QChar(0x1f);
+        out += piece.checked ? u'1' : u'0';
+        out += QChar(0x1f);
         out += piece.info;
-        out += '\x1f';
+        out += QChar(0x1f);
         out += piece.text;
-        out += '\x1e';
+        out += QChar(0x1e);
         return true;
     });
     return out;
@@ -206,8 +204,7 @@ QString ZDocument::title() const {
     QString out;
     walkPieces(d_->text, [&](const Piece& piece) {
         if (!isMeaningful(piece)) return true;
-        const QString text =
-            QString::fromUtf8(piece.text.data(), qsizetype(piece.text.size())).simplified();
+        const QString text = piece.text.simplified();
         if (text.isEmpty()) return true;
         out = firstLineOf(text).left(64);
         return false;
@@ -231,8 +228,7 @@ void ZDocument::setTitle(const QString& title) {
                 !piece.raw && piece.kind == Kind::Heading && piece.headingLevel > 0
                     ? piece.headingLevel
                     : 1;
-            const QByteArray utf8 = title.toUtf8();
-            heading.text.assign(utf8.constData(), size_t(utf8.size()));
+            heading.text = title;
             // Заголовком был — заменяем его; не был — встаёт перед ним, и
             // между ними обязана стоять пустая строка (инвариант файла).
             const bool replace = !piece.raw && piece.kind == Kind::Heading;
@@ -252,8 +248,7 @@ void ZDocument::setTitle(const QString& title) {
         Piece heading;
         heading.kind = Kind::Heading;
         heading.headingLevel = 1;
-        const QByteArray utf8 = title.toUtf8();
-        heading.text.assign(utf8.constData(), size_t(utf8.size()));
+        heading.text = title;
         blocks.insert(blocks.begin(), std::move(heading));
     }
     buildDocument(blocks, d_->text);
@@ -264,8 +259,7 @@ QString ZDocument::snippet(int limit) const {
     bool haveTitle = false;
     walkPieces(d_->text, [&](const Piece& piece) {
         if (!isMeaningful(piece)) return true;
-        const QString text =
-            QString::fromUtf8(piece.text.data(), qsizetype(piece.text.size())).simplified();
+        const QString text = piece.text.simplified();
         if (text.isEmpty()) return true;
         if (!haveTitle) {
             haveTitle = true;
@@ -300,9 +294,9 @@ std::string ZDocument::archiveStub() const {
         if (piece.kind == Kind::VSpace || piece.kind == Kind::Html) return true;
         // Первая строка: заголовок стаба однострочный, а блок может нести
         // мягкие переносы.
-        std::string line = piece.text.substr(0, piece.text.find('\n'));
-        while (!line.empty() && (line.back() == ' ' || line.back() == '\r')) line.pop_back();
-        if (line.empty()) return true;
+        QString line = piece.text.left(piece.text.indexOf(QLatin1Char('\n')));
+        while (!line.isEmpty() && (line.back() == u' ' || line.back() == u'\r')) line.chop(1);
+        if (line.isEmpty()) return true;
         heading.kind = Kind::Heading;
         heading.headingLevel =
             piece.kind == Kind::Heading && piece.headingLevel > 0 ? piece.headingLevel : 1;
@@ -311,7 +305,7 @@ std::string ZDocument::archiveStub() const {
     });
 
     std::vector<Piece> body;
-    if (!heading.text.empty()) body.push_back(std::move(heading));
+    if (!heading.text.isEmpty()) body.push_back(std::move(heading));
     stub.d_->header.setBlankAfter(!body.empty());
     buildDocument(body, stub.d_->text);
     return stub.toMarkdown();

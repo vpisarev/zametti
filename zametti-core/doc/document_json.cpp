@@ -14,6 +14,8 @@
 
 #include "document_pieces.h"
 
+#include <QStringView>
+
 #include <cstdio>
 #include <string>
 #include <string_view>
@@ -74,11 +76,23 @@ void appendInt(std::string& out, int v) {
     out += buf;
 }
 
+std::string utf8Of(const QString& text) {
+    const QByteArray bytes = text.toUtf8();
+    return std::string(bytes.constData(), size_t(bytes.size()));
+}
+
+// Смещение куска В БАЙТАХ UTF-8 — так дамп выглядел всегда, и золотые эталоны
+// стерегут именно его. Текст в памяти теперь UTF-16, поэтому байты считаются
+// здесь, на выходе: дамп односторонний, и цена его никого не волнует.
+int byteOffset(const QString& text, int32_t units) {
+    return int(QStringView(text).left(units).toUtf8().size());
+}
+
 void appendPiece(std::string& out, const Piece& b) {
     out += "  {";
     if (b.raw) {
         out += "\"raw\": ";
-        appendJsonString(out, b.text);
+        appendJsonString(out, utf8Of(b.text));
         out += "}";
         return;
     }
@@ -101,12 +115,12 @@ void appendPiece(std::string& out, const Piece& b) {
         out += ", \"level\": ";
         appendInt(out, b.level);
     }
-    if (b.kind == Kind::Code && !b.info.empty()) {
+    if (b.kind == Kind::Code && !b.info.isEmpty()) {
         out += ", \"info\": ";
-        appendJsonString(out, b.info);
+        appendJsonString(out, utf8Of(b.info));
     }
     out += ", \"text\": ";
-    appendJsonString(out, b.text);
+    appendJsonString(out, utf8Of(b.text));
     if (!b.runs.empty()) {
         out += ", \"inlines\": [";
         bool firstRun = true;
@@ -115,23 +129,25 @@ void appendPiece(std::string& out, const Piece& b) {
             firstRun = false;
             // Смещение куска относительное — от начала текста блока, — и в
             // дампе оно таким и было всегда.
+            const int from = byteOffset(b.text, s.start);
+            const int to = byteOffset(b.text, s.end);
             out += "{\"offset\": ";
-            appendInt(out, s.start);
+            appendInt(out, from);
             out += ", \"length\": ";
-            appendInt(out, s.end - s.start);
+            appendInt(out, to - from);
             if (s.bold()) out += ", \"bold\": true";
             if (s.italic()) out += ", \"italic\": true";
             if (s.strike()) out += ", \"strike\": true";
             if (s.code()) out += ", \"code\": true";
             if (s.image()) out += ", \"image\": true";
             if (s.comment()) out += ", \"comment\": true";
-            if (!s.href.empty()) {
+            if (!s.href.isEmpty()) {
                 out += ", \"href\": ";
-                appendJsonString(out, s.href);
+                appendJsonString(out, utf8Of(s.href));
             }
-            if (!s.title.empty()) {
+            if (!s.title.isEmpty()) {
                 out += ", \"title\": ";
-                appendJsonString(out, s.title);
+                appendJsonString(out, utf8Of(s.title));
             }
             out += "}";
         }

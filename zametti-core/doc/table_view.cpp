@@ -55,30 +55,24 @@ CellMarkup markupOfCell(std::string_view markdown) {
     if (blocks.empty()) return out;
 
     const Piece& block = blocks.front();
-    out.text = QString::fromUtf8(block.text.data(), qsizetype(block.text.size()));
+    out.text = block.text;
     // Переводов строк внутри ячейки в GFM не бывает, но дословный кусок мог
     // принести что угодно: рисуем пробелом, чтобы не рвать разметку.
     out.text.replace(QLatin1Char('\n'), QLatin1Char(' '));
 
-    // Смещения кусков заданы в БАЙТАХ UTF-8, а QString считает в кодовых
-    // единицах UTF-16: приравнивать их нельзя, ошибка вылезет на первом же
-    // не-ASCII (весь корпус владельца — русский).
-    const auto utf16At = [&block](int byteOffset) {
-        const size_t at = size_t(std::clamp(byteOffset, 0, int(block.text.size())));
-        return int(QString::fromUtf8(block.text.data(), qsizetype(at)).size());
-    };
-
+    // Смещения кусков — единицы UTF-16, те же, что у QString.
+    const int size = int(block.text.size());
     for (const Run& run : block.runs) {
         if (run.empty()) continue;
         CellMarkup::Span piece;
-        piece.start = utf16At(run.start);
-        piece.length = utf16At(run.end) - piece.start;
+        piece.start = std::clamp(int(run.start), 0, size);
+        piece.length = std::clamp(int(run.end), 0, size) - piece.start;
         if (piece.length <= 0) continue;
         piece.bold = run.bold();
         piece.italic = run.italic();
         piece.strike = run.strike();
         piece.code = run.code();
-        piece.link = !run.href.empty();
+        piece.link = !run.href.isEmpty();
         out.spans.push_back(piece);
     }
     return out;

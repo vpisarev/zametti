@@ -1676,6 +1676,35 @@ void liftMath(Ctx& c) {
 
 }  // namespace
 
+namespace {
+
+QString fromUtf8(std::string_view bytes) {
+    return QString::fromUtf8(bytes.data(), qsizetype(bytes.size()));
+}
+
+// Единица UTF-16, с которой начинается каждый байт текста (плюс одна за
+// концом). Байты внутри многобайтового знака указывают на его первую единицу.
+std::vector<int32_t> utf16OffsetsOf(std::string_view bytes) {
+    std::vector<int32_t> out(bytes.size() + 1, 0);
+    int32_t units = 0;
+    size_t i = 0;
+    while (i < bytes.size()) {
+        const unsigned char c = static_cast<unsigned char>(bytes[i]);
+        size_t width = 1;
+        int32_t adds = 1;
+        if (c >= 0xF0) { width = 4; adds = 2; }        // вне BMP — суррогатная пара
+        else if (c >= 0xE0) width = 3;
+        else if (c >= 0xC0) width = 2;
+        for (size_t k = 0; k < width && i + k < bytes.size(); ++k) out[i + k] = units;
+        units += adds;
+        i += width;
+    }
+    out[bytes.size()] = units;
+    return out;
+}
+
+}  // namespace
+
 // Разбор в логические блоки. Ступень внутренняя: наружу из ядра не выходит, а
 // внутри его зовут двое — ZDocument::loadMarkdown (ниже) и умирающий мостик к
 // представлению.
@@ -1735,18 +1764,24 @@ void parsePieces(std::string_view markdown, std::vector<Piece>& blocks, NoteHead
         piece.headingLevel = b.headingLevel;
         piece.checked = b.checked;
         piece.raw = b.raw;
-        piece.info = std::string(c.draft.info(b));
-        piece.text = std::string(c.draft.text(b));
-        piece.trailingNewline = !piece.text.empty() && piece.text.back() == '\n';
+        piece.info = fromUtf8(c.draft.info(b));
+        // Текст блока — QString, смещения кусков — единицы UTF-16. Разбор пока
+        // идёт по байтам (md4c в UTF-8), и границу переводит эта одна точка;
+        // следующий шаг — md4c в UTF-16, и перевод исчезнет вовсе.
+        const std::string_view bytes = c.draft.text(b);
+        piece.text = fromUtf8(bytes);
+        piece.trailingNewline = piece.text.endsWith(QLatin1Char('\n'));
         piece.runs.reserve(size_t(b.inlines.size()));
+        std::vector<int32_t> units;   // байт → единица UTF-16, лениво
         for (int32_t i = b.inlines.start; i < b.inlines.end; ++i) {
             const DraftRun& src = c.draft.runs[size_t(i)];
+            if (units.empty()) units = utf16OffsetsOf(bytes);
             Run run;
-            run.start = src.text.start;
-            run.end = src.text.end;
+            run.start = units[size_t(qBound<int32_t>(0, src.text.start, int32_t(bytes.size())))];
+            run.end = units[size_t(qBound<int32_t>(0, src.text.end, int32_t(bytes.size())))];
             run.flags = src.flags;
-            run.href = std::string(c.draft.href(src));
-            run.title = std::string(c.draft.title(src));
+            run.href = fromUtf8(c.draft.href(src));
+            run.title = fromUtf8(c.draft.title(src));
             piece.runs.push_back(std::move(run));
         }
         blocks.push_back(std::move(piece));

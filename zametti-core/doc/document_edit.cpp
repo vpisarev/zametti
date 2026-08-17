@@ -42,8 +42,8 @@ std::vector<Piece> parseIncoming(const QString& markdown, ZDocument::PasteMode m
         // Один абзац с текстом как есть: переводы строк внутри блока сборщик
         // разметит сам, и они вернутся переводами, а не разметкой.
         Piece body;
-        body.text = source;
-        while (!body.text.empty() && body.text.back() == '\n') body.text.pop_back();
+        body.text = markdown;
+        while (body.text.endsWith(QLatin1Char('\n'))) body.text.chop(1);
         pieces.push_back(std::move(body));
         return pieces;
     }
@@ -67,14 +67,14 @@ bool needsOwnBlocks(const std::vector<Piece>& pieces) {
     // Фотография — тоже блочная вещь: абзац из одного image-спана целиком и
     // вики-вложение "![[...]]" встают своей строкой, а не вклеиваются в текст
     // (в середине текста фотография не показывается — вклейка её потеряла бы).
-    const std::string_view text = head.text;
+    const QString& text = head.text;
     const std::vector<Run>& runs = head.runs;
     const bool wholeImage =
         !head.raw && head.kind == Kind::Paragraph &&
         ((runs.size() == 1 && runs[0].image() && runs[0].start == 0 &&
-          size_t(runs[0].end) == text.size()) ||
-         (text.rfind("![[", 0) == 0 && text.size() > 5 &&
-          text.compare(text.size() - 2, 2, "]]") == 0));
+          runs[0].end == text.size()) ||
+         (text.startsWith(QLatin1String("![[")) && text.size() > 5 &&
+          text.endsWith(QLatin1String("]]"))));
     return pieces.size() > 1 || head.raw || head.kind != Kind::Paragraph || wholeImage;
 }
 
@@ -92,13 +92,13 @@ QString ZDocument::markdownOf(const QTextCursor& range) const {
     const std::vector<Piece> pieces = selectionPieces(range);
     if (pieces.empty()) return {};
 
-    std::string text = writePieces(pieces);
+    QString text = writePieces(pieces);
     // У ОДИНОЧНОГО АБЗАЦА хвостовой перевод строки снимается: он не часть
     // текста, а разделитель блоков, и в чужом редакторе дал бы лишний перенос.
     const bool inlineOnly =
         pieces.size() == 1 && !pieces.front().raw && pieces.front().kind == Kind::Paragraph;
-    if (inlineOnly && !text.empty() && text.back() == '\n') text.pop_back();
-    return QString::fromUtf8(text.data(), qsizetype(text.size()));
+    if (inlineOnly && text.endsWith(QLatin1Char('\n'))) text.chop(1);
+    return text;
 }
 
 bool ZDocument::replaceRange(QTextCursor& at, const QString& markdown, PasteMode mode) {

@@ -62,8 +62,11 @@ struct Break {
     int source;
 };
 
-QString toQt(std::string_view utf8, std::vector<Break>& breaks) {
-    QString s = QString::fromUtf8(utf8.data(), static_cast<qsizetype>(utf8.size()));
+// Текст блока — в документ: три знака, на которых Qt рвёт блок ('\n', '\r',
+// U+2029), становятся разделителем строк U+2028, а какой знак был — помнит
+// пометка (см. BreakSource в doc_model.h).
+QString toQt(const QString& text, std::vector<Break>& breaks) {
+    QString s = text;
     for (qsizetype i = 0; i < s.size(); ++i) {
         int source = 0;
         if (s[i] == QLatin1Char('\n')) source = BreakNewline;
@@ -79,19 +82,19 @@ QString toQt(std::string_view utf8, std::vector<Break>& breaks) {
 // Литеральный текст по строкам. Один завершающий перевод строки снимается —
 // он не начинает новую строку, а завершает последнюю. Пустой текст даёт одну
 // пустую строку: блок в документе есть всегда, пустых блоков не бывает.
-std::vector<std::string_view> splitLiteralLines(std::string_view text) {
-    std::string_view body = text;
-    if (!body.empty() && body.back() == '\n') body.remove_suffix(1);
+std::vector<QStringView> splitLiteralLines(const QString& text) {
+    QStringView body = text;
+    if (body.endsWith(u'\n')) body.chop(1);
 
-    std::vector<std::string_view> lines;
-    size_t start = 0;
+    std::vector<QStringView> lines;
+    qsizetype start = 0;
     for (;;) {
-        const size_t end = body.find('\n', start);
-        if (end == std::string_view::npos) {
-            lines.push_back(body.substr(start));
+        const qsizetype end = body.indexOf(u'\n', start);
+        if (end < 0) {
+            lines.push_back(body.mid(start));
             break;
         }
-        lines.push_back(body.substr(start, end - start));
+        lines.push_back(body.mid(start, end - start));
         start = end + 1;
     }
     return lines;
@@ -109,31 +112,6 @@ void markBreaks(QTextDocument& doc, int textStart, const std::vector<Break>& bre
         cursor.mergeCharFormat(fmt);
     }
 }
-
-// Байтовое смещение в UTF-8 → индекс в QString. Вызывается по возрастанию
-// смещений, поэтому каждый кусок текста пересчитывается ровно один раз.
-class OffsetMap {
-public:
-    explicit OffsetMap(std::string_view text) : text_(text) {}
-
-    int at(size_t byteOffset) {
-        if (byteOffset < byte_) {   // мусорный спан: назад не отматываем
-            byte_ = 0;
-            utf16_ = 0;
-        }
-        if (byteOffset > text_.size()) byteOffset = text_.size();
-        utf16_ += QString::fromUtf8(text_.data() + byte_,
-                                    static_cast<qsizetype>(byteOffset - byte_))
-                      .size();
-        byte_ = byteOffset;
-        return utf16_;
-    }
-
-private:
-    const std::string_view text_;
-    size_t byte_ = 0;
-    int utf16_ = 0;
-};
 
 // Символы, которых нет в основной гарнитуре, рисуются запасным шрифтом — это
 // прежде всего эмодзи. Опознаём их не по диапазонам кодов, а по факту:
@@ -193,12 +171,14 @@ void enlargeFallbackGlyphs(QTextDocument& doc, int textStart, const QString& tex
 int codeStepIn(int surroundingStep) { return surroundingStep + appearance().codeStep; }
 
 void applySpans(QTextDocument& doc, int textStart, const Piece& b, int lineStep) {
-    OffsetMap map(b.text);
     QTextCursor cursor(&doc);
+    // Смещения кусков — единицы UTF-16 от начала текста блока, те же, что и в
+    // документе: пересчитывать нечего.
+    const int size = int(b.text.size());
     for (const Run& s : b.runs) {
         if (s.empty()) continue;
-        const int from = map.at(static_cast<size_t>(s.start));
-        const int to = map.at(static_cast<size_t>(s.end));
+        const int from = qBound(0, int(s.start), size);
+        const int to = qBound(0, int(s.end), size);
         if (to <= from) continue;
 
         // Стиль записывается свойством, а не выводится обратно из оформления:
@@ -224,15 +204,14 @@ void applySpans(QTextDocument& doc, int textStart, const Piece& b, int lineStep)
             if (!appearance().codeFamily.isEmpty())
                 fmt.setFontFamilies({QString(appearance().codeFamily)});
         }
-        if (!s.href.empty()) {
+        if (!s.href.isEmpty()) {
             fmt.setAnchor(true);
-            fmt.setAnchorHref(QString::fromStdString(s.href));
+            fmt.setAnchorHref(s.href);
             fmt.setForeground(appearance().linkColor);
             fmt.setFontUnderline(true);
         }
         if (s.comment()) fmt.setForeground(appearance().rawColor);
-        if (!s.title.empty())
-            fmt.setProperty(SpanTitleProperty, QString::fromStdString(s.title));
+        if (!s.title.isEmpty()) fmt.setProperty(SpanTitleProperty, s.title);
         cursor.setPosition(textStart + from);
         cursor.setPosition(textStart + to, QTextCursor::KeepAnchor);
         cursor.mergeCharFormat(fmt);
@@ -246,18 +225,18 @@ bool pieceIsImageObject(const Piece& piece) {
     // Image-спан целым абзацем: один кусок, помеченный картинкой, покрывающий
     // текст блока без остатка. Картинка в середине текста объектом не бывает —
     // она живёт внутри строки и показывается стилем.
-    const std::string_view text = piece.text;
+    const QString& text = piece.text;
     if (piece.runs.size() == 1 && piece.runs[0].image() && piece.runs[0].start == 0 &&
-        size_t(piece.runs[0].end) == text.size())
+        piece.runs[0].end == text.size())
         return true;
     // Вики-вложение Obsidian: строка целиком "![[путь]]". Разметки у неё нет —
     // это дословный текст абзаца, и объектом он становится целиком.
-    return text.rfind("![[", 0) == 0 && text.size() > 5 &&
-           text.compare(text.size() - 2, 2, "]]") == 0;
+    return text.startsWith(QLatin1String("![[")) && text.size() > 5 &&
+           text.endsWith(QLatin1String("]]"));
 }
 
 bool pieceIsFormulaObject(const Piece& piece) {
-    return !piece.raw && piece.kind == Kind::Math && !piece.text.empty();
+    return !piece.raw && piece.kind == Kind::Math && !piece.text.isEmpty();
 }
 
 qreal blockTopMargin(Kind kind, bool raw, bool previousIsVSpace, bool first) {
@@ -432,7 +411,7 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     // построчно: построчный путь пересобирал логический блок целиком на каждое
     // нажатие. Дословный кусок (raw) пока остаётся построчным.
     const bool wholeCode = !raw && b.kind == Kind::Code;
-    const std::string_view source = b.text;
+    const QString& source = b.text;
     // Один завершающий перевод строки снимаем: иначе внизу висела бы лишняя
     // пустая строка. По виду документа его не восстановить — пустой блок
     // кода и блок из одной пустой строки выглядят одинаково.
@@ -456,7 +435,7 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
                 // внутреннее поле. Левый край плашки отрисовка находит,
                 // вычитая padLeft обратно (см. codePlate в settings.h).
                 blockFmt.setLeftMargin(ctx.plate.indent + ctx.plate.padLeft);
-                blockFmt.setProperty(InfoProperty, QString::fromStdString(b.info));
+                blockFmt.setProperty(InfoProperty, b.info);
                 lineStep = codeStepIn(0);
                 setFontStep(charFmt, lineStep);
                 if (!appearance().codeFamily.isEmpty())
@@ -523,7 +502,7 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     if (formulaObject) {
         breaks.clear();
         charFmt.setObjectType(FormulaObject);
-        charFmt.setProperty(ObjectSourceProperty, QString::fromStdString(b.text));
+        charFmt.setProperty(ObjectSourceProperty, b.text);
         text = QString(QChar::ObjectReplacementCharacter);
     }
 
@@ -533,18 +512,17 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
         const Run& run = b.runs.empty() ? Run{} : b.runs.front();
         charFmt.setObjectType(ImageObject);
         charFmt.setProperty(SpanStyleProperty, int(SpanImage));
-        charFmt.setProperty(ObjectSourceProperty, QString::fromStdString(b.text));
+        charFmt.setProperty(ObjectSourceProperty, b.text);
         BlockImageRef ref;
         if (!b.runs.empty()) {
-            const QString alt = QString::fromStdString(b.text);
-            const QString href = QString::fromStdString(run.href);
+            const QString& alt = b.text;
+            const QString& href = run.href;
             charFmt.setProperty(ObjectAltProperty, alt);
             charFmt.setAnchorHref(href);
-            if (!run.title.empty())
-                charFmt.setProperty(SpanTitleProperty, QString::fromStdString(run.title));
+            if (!run.title.isEmpty()) charFmt.setProperty(SpanTitleProperty, run.title);
             ref = imageRefOfSpan(href, alt);
         } else {
-            ref = imageRefOfWiki(QString::fromStdString(b.text));
+            ref = imageRefOfWiki(b.text);
         }
         // ВЫРАВНИВАНИЕМ БЛОКА ФОТОГРАФИЮ НЕ ДВИГАЕМ, и это решение владельца:
         // объект занимает ВСЮ ширину колонки, а где внутри этой полосы встанет
@@ -588,8 +566,8 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     // Один QTextBlock у обычного блока и по одному на строку у литерального.
     // Все, кроме первого, помечены продолжением: без этого разрезанный блок
     // кода из двух строк не отличить от двух блоков кода подряд.
-    const std::vector<std::string_view> lines =
-        (literal && !wholeCode) ? splitLiteralLines(source) : std::vector<std::string_view>{};
+    const std::vector<QStringView> lines =
+        (literal && !wholeCode) ? splitLiteralLines(source) : std::vector<QStringView>{};
     const size_t count = (literal && !wholeCode) ? lines.size() : 1;
 
     for (size_t line = 0; line < count; ++line) {
@@ -617,11 +595,11 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
                 // Тот же завершающий перевод строки, что снимает
                 // splitLiteralLines: он не начинает новую строку, а завершает
                 // последнюю, и держится признаком, а не байтом.
-                std::string_view body = source;
-                if (!body.empty() && body.back() == '\n') body.remove_suffix(1);
-                text = toQt(body, breaks);
+                QStringView body = source;
+                if (body.endsWith(u'\n')) body.chop(1);
+                text = toQt(body.toString(), breaks);
             } else {
-                text = toQt(lines[line], breaks);
+                text = toQt(lines[line].toString(), breaks);
             }
         }
 

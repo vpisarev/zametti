@@ -66,7 +66,7 @@ Illustrated illustrate(const std::vector<Piece>& snapshot, const BlockMarks& mar
     // текст заметки не должна.
     const auto addLabel = [&](int lines) {
         Piece label;
-        label.text = gapLabel(lines).toStdString();
+        label.text = gapLabel(lines);
         Run italic;
         italic.start = 0;
         italic.end = int32_t(label.text.size());

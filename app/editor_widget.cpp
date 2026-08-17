@@ -530,7 +530,7 @@ void NoteEditor::stashCurrentNote() {
     // файл: именно приведение и срезает хвост, и со сверкой через него
     // отпечатки сходились бы всегда. Нам нужен другой вопрос — «этот документ
     // и есть файл?», а не «запишется ли он в тот же файл».
-    if (hashOf(writePieces(piecesOf(*document()), note_.meta)) != note_.digest) return;
+    if (hashOf(writePieces(piecesOf(*document()), note_.meta).toUtf8()) != note_.digest) return;
 
     const qint64 bytes = estimateDocumentBytes(*document());
     const qint64 budget = qint64(qMax(1, appearance().documentCacheSizeMb)) * 1024 * 1024;
@@ -3684,10 +3684,11 @@ void NoteEditor::leaveTableEdit() {
 // не изменился ни на байт, изменилось только его разбиение на блоки.
 void NoteEditor::reparseAfterTableEdit() {
     const int at = textCursor().position();
-    const std::string text = writePieces(piecesOf(*document()));
+    // Разбор пока идёт по байтам (md4c в UTF-8) — граница переводится здесь.
+    const QByteArray text = writePieces(piecesOf(*document())).toUtf8();
     std::vector<Piece> fresh;
     NoteHeader ignored;
-    parsePieces(text, fresh, ignored);
+    parsePieces(std::string_view(text.constData(), size_t(text.size())), fresh, ignored);
 
     recordingSuspended_ = true;
     // Перечитывание после правки таблицы — тоже правка: одним шагом отмены и

@@ -19,6 +19,9 @@
 #include "block_kind.h"
 #include "note_header.h"
 
+#include <QString>
+#include <QStringView>
+
 #include <cstddef>
 
 #include <cstdint>
@@ -31,13 +34,15 @@ class QTextDocument;
 
 namespace zametti {
 
-// Кусок строки с одним начертанием. Смещения — байты от начала текста блока.
+// Кусок строки с одним начертанием. Смещения — единицы UTF-16 от начала текста
+// блока (решение владельца, сессия refactor2: всё, что в памяти, — QString;
+// байты — только на границе файла).
 struct Run {
     int32_t start = 0;
     int32_t end = 0;
     uint8_t flags = 0;      // биты InlineFlag
-    std::string href;
-    std::string title;
+    QString href;
+    QString title;
 
     bool bold() const { return (flags & InlineBold) != 0; }
     bool italic() const { return (flags & InlineItalic) != 0; }
@@ -62,12 +67,12 @@ struct Piece {
     bool checked = false;
     bool raw = false;               // выводится дословно
     bool trailingNewline = false;   // текст кончался переводом строки
-    std::string info;               // язык блока кода
-    std::string text;
+    QString info;                   // язык блока кода
+    QString text;
     std::vector<Run> runs;
 
-    std::string_view view(const Run& r) const {
-        return std::string_view(text).substr(size_t(r.start), size_t(r.end - r.start));
+    QStringView view(const Run& r) const {
+        return QStringView(text).mid(r.start, r.end - r.start);
     }
 
     // Законченный HTML-комментарий: он обрывает себя сам, и сосед начинается
@@ -77,7 +82,7 @@ struct Piece {
     // правило живёт здесь одно.
     bool isClosedHtmlComment() const {
         if (!raw || text.size() < 8) return false;
-        return text.compare(0, 4, "<!--") == 0 && text.compare(text.size() - 4, 4, "-->\n") == 0;
+        return text.startsWith(QLatin1String("<!--")) && text.endsWith(QLatin1String("-->\n"));
     }
 };
 
@@ -125,12 +130,13 @@ void parsePieces(std::string_view markdown, std::vector<Piece>& blocks, NoteHead
 void walkPieces(const QTextDocument& doc, const std::function<bool(const Piece&)>& sink,
                 int fromBlock = 0, int toBlock = -1);
 
-// Байты канонического markdown из логических блоков. Нужна там, где блоки
-// собраны на месте и заметкой ещё не стали, — куску в буфере обмена, стороне
-// сравнения. Идёт тем же писателем, что и запись на диск: второго писателя не
-// бывает.
-std::string writePieces(const std::vector<Piece>& blocks, const NoteHeader& header = {},
-                        std::vector<BlockLines>* map = nullptr);
+// Канонический markdown из логических блоков — ТЕКСТОМ (QString), не байтами:
+// байты нужны только файлу, хешу и журналу, и в них текст переводится один раз
+// на той границе. Нужна там, где блоки собраны на месте и заметкой ещё не
+// стали, — куску в буфере обмена, стороне сравнения. Идёт тем же писателем, что
+// и запись на диск: второго писателя не бывает.
+QString writePieces(const std::vector<Piece>& blocks, const NoteHeader& header = {},
+                    std::vector<BlockLines>* map = nullptr);
 
 // Строение блоков в JSON — односторонне, для золотых наборов и отладки. Та же
 // печать, что и у ZDocument::toJson: у дампа один вид, из скольких бы мест его

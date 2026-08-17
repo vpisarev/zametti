@@ -343,11 +343,12 @@ std::vector<Piece> piecesOfPart(QTextDocument& doc, int from, int to, const QTex
 // остальные — одним блоком. Правило то же, что у сборщика (splitLiteralLines):
 // один завершающий перевод строки не начинает новой строки.
 int docBlocksOf(const Piece& piece) {
-    if (!piece.raw && piece.kind != Kind::Code) return 1;
-    std::string_view body = piece.text;
-    if (!body.empty() && body.back() == '\n') body.remove_suffix(1);
+    // Блок кода — один QTextBlock; построчно лежат только дословные куски.
+    if (!piece.raw) return 1;
+    QStringView body = piece.text;
+    if (body.endsWith(u'\n')) body.chop(1);
     int lines = 1;
-    for (char c : body)
+    for (const QChar c : body)
         if (c == '\n') ++lines;
     return lines;
 }
@@ -377,11 +378,11 @@ int wholeBlockEnd(const QTextDocument& doc, int number) {
 // УРОВЕНЬ — ТАКАЯ ЖЕ ПРИНАДЛЕЖНОСТЬ БЛОКА, КАК РОД, и передаётся он снаружи
 // обязательно: блок кода, забывший уровень, выпадает из пункта наружу, а список
 // за ним начинает нумерацию заново (нашёл владелец).
-Piece codePiece(std::string code, int level) {
+Piece codePiece(QString code, int level) {
     Piece out;
     out.kind = Kind::Code;
     out.level = level;
-    out.trailingNewline = !code.empty() && code.back() == '\n';
+    out.trailingNewline = code.endsWith(QLatin1Char('\n'));
     out.text = std::move(code);
     return out;
 }
@@ -428,49 +429,38 @@ int outermostLevel(const std::vector<Piece>& pieces) {
 // ведущие пробелы, и СЕРИИ из двух и более в середине строки. Одиночные не
 // трогаем: между словами неразрывный пробел не нужен, а мусор из чужих
 // выгрузок мы как раз убираем (см. spacesNormalised в document_saver.cpp).
-std::string spacesForCode(std::string_view text) {
-    static const std::string nbsp = "\xC2\xA0";
-    std::string out;
-    out.reserve(text.size());
-    for (size_t i = 0; i < text.size();) {
-        if (text.compare(i, nbsp.size(), nbsp) == 0) {
-            out.push_back(' ');
-            i += nbsp.size();
-            continue;
-        }
-        out.push_back(text[i]);
-        ++i;
-    }
-    return out;
+QString spacesForCode(QString text) {
+    text.replace(QChar::Nbsp, QLatin1Char(' '));
+    return text;
 }
 
-std::string spacesForProse(std::string_view text) {
-    static const std::string nbsp = "\xC2\xA0";
-    std::string out;
+QString spacesForProse(QStringView text) {
+    QString out;
     out.reserve(text.size());
-    size_t i = 0;
+    qsizetype i = 0;
     while (i < text.size()) {
-        const size_t lineEnd = std::min(text.find('\n', i), text.size());
+        qsizetype lineEnd = text.indexOf(u'\n', i);
+        if (lineEnd < 0) lineEnd = text.size();
         bool leading = true;
-        size_t at = i;
+        qsizetype at = i;
         while (at < lineEnd) {
-            if (text[at] != ' ') {
+            if (text.at(at) != u' ') {
                 leading = false;
-                out.push_back(text[at]);
+                out += text.at(at);
                 ++at;
                 continue;
             }
-            size_t run = 0;
-            while (at + run < lineEnd && text[at + run] == ' ') ++run;
+            qsizetype run = 0;
+            while (at + run < lineEnd && text.at(at + run) == u' ') ++run;
             // Ведущие — всегда, серия из двух и более — всегда: и то и другое
             // markdown иначе потеряет. Одиночный пробел между словами остаётся
             // обычным.
             const bool hold = leading || run > 1;
-            for (size_t k = 0; k < run; ++k) out += hold ? nbsp : std::string(" ");
+            out += QString(run, hold ? QChar(QChar::Nbsp) : QChar(u' '));
             at += run;
             leading = false;
         }
-        if (lineEnd < text.size()) out.push_back('\n');
+        if (lineEnd < text.size()) out += u'\n';
         i = lineEnd + 1;
     }
     return out;
@@ -550,12 +540,12 @@ static CodeBlockEdit toggleCodeBlock(QTextDocument& doc, const QTextCursor& curs
         // текстом — переносить байты некуда, обычное копирование значения.
         std::vector<Piece> result(head.begin(), head.end());
 
-        std::string code;
+        QString code;
         for (const Piece& piece : chosen) {
-            if (!code.empty()) code.push_back('\n');
+            if (!code.isEmpty()) code += u'\n';
             code += piece.text;
         }
-        if (!code.empty() && code.back() != '\n') code.push_back('\n');
+        if (!code.isEmpty() && !code.endsWith(u'\n')) code += u'\n';
         out.landed = firstBlock + docBlocksOf(result);
         result.push_back(codePiece(spacesForCode(code), levelForCode(doc, firstBlock,
                                                                     levelOf(firstDocBlock),
@@ -594,20 +584,20 @@ static CodeBlockEdit toggleCodeBlock(QTextDocument& doc, const QTextCursor& curs
         // Уровень остаётся тот же: код, живший внутри пункта, вернётся туда же
         // абзацем, а не выпадет из списка.
         for (const Piece& piece : selected) {
-            std::string_view body = piece.text;
-            while (!body.empty() && body.back() == '\n') body.remove_suffix(1);
+            QStringView body = piece.text;
+            while (body.endsWith(u'\n')) body.chop(1);
             Piece plain;
             plain.level = piece.level;
             plain.text = spacesForProse(body);
             result.push_back(std::move(plain));
         }
     } else {
-        std::string code;
+        QString code;
         for (const Piece& piece : selected) {
-            if (!code.empty()) code.push_back('\n');
+            if (!code.isEmpty()) code += u'\n';
             code += piece.text;
         }
-        if (!code.empty() && code.back() != '\n') code.push_back('\n');
+        if (!code.isEmpty() && !code.endsWith(u'\n')) code += u'\n';
         result.push_back(
             codePiece(spacesForCode(code), levelForCode(doc, firstBlock,
                                                         outermostLevel(selected), false)));
@@ -985,7 +975,7 @@ std::vector<Piece> selectionPieces(const QTextCursor& cursor) {
     // вставке, а как только вставка стала беречь строение, стал виден.
     if (to > from && to == cursor.document()->findBlock(to).position() && !ir.empty()) {
         const Piece& tail = ir.back();
-        if (!tail.raw && tail.text.empty()) ir.pop_back();
+        if (!tail.raw && tail.text.isEmpty()) ir.pop_back();
     }
 
     int deepest = -1;
@@ -1003,11 +993,11 @@ QString selectionToMarkdown(const QTextCursor& cursor) {
     const std::vector<Piece> ir = selectionPieces(cursor);
     if (ir.empty()) return {};
 
-    std::string text = writePieces(ir);
+    QString text = writePieces(ir);
     const bool inlineOnly =
         ir.size() == 1 && !ir.front().raw && ir.front().kind == Kind::Paragraph;
-    if (inlineOnly && !text.empty() && text.back() == '\n') text.pop_back();
-    return QString::fromUtf8(text.data(), qsizetype(text.size()));
+    if (inlineOnly && text.endsWith(QLatin1Char('\n'))) text.chop(1);
+    return text;
 }
 
 static bool applyInputRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
@@ -3766,7 +3756,7 @@ bool ZDocument::openFormula(QTextCursor& at) {
     // узнаёт blockFormulaRef (и потому её можно свернуть обратно), так же её
     // прочтёт и файл: `$$…$$` отдельной строкой — это выключная формула.
     Piece piece;
-    piece.text = ref.source.toStdString();
+    piece.text = ref.source;
     Run run;
     run.start = 0;
     run.end = int32_t(piece.text.size());
@@ -3801,12 +3791,11 @@ bool ZDocument::closeFormula(QTextCursor& at) {
     const int number = block.blockNumber();
     const std::vector<Piece> now = piecesOfBlocks(d_->text, number, number);
     if (now.size() != 1 || now.front().raw) return false;
-    const std::string& source = now.front().text;
+    const QString& source = now.front().text;
     const std::vector<MathSpan> found = scanMath(source);
     // Правкой формулу разорвали — она осталась обычным текстом, и это законно:
     // в файл уйдёт то, что написано.
-    if (found.size() != 1 || found.front().start != 0 ||
-        size_t(found.front().end) != source.size())
+    if (found.size() != 1 || found.front().start != 0 || found.front().end != source.size())
         return false;
 
     Piece piece;

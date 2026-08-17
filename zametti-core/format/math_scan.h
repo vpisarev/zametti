@@ -13,11 +13,16 @@
 //     три (`$N \approx M$` и ещё две), и наивный сканер их теряет. Это урок
 //     разведки, записанный отдельным тестом.
 //
-// Модуль чистый: ни Qt, ни md4c, ни файлов — строка на входе, диапазоны на
-// выходе. Поэтому канон перебирается набором целиком, включая все спорные края.
+// Модуль чистый: ни md4c, ни файлов — строка на входе, диапазоны на выходе.
+// Поэтому канон перебирается набором целиком, включая все спорные края.
+// Работает и над байтами (файл, разбор), и над текстом QString (живой документ):
+// правила ASCII, и им всё равно, в каких единицах лежит текст, — границы
+// отдаются в единицах ПЕРЕДАННОГО текста.
 
 #ifndef ZAMETTI_MATH_SCAN_H
 #define ZAMETTI_MATH_SCAN_H
+
+#include <QStringView>
 
 #include <cstdint>
 #include <string_view>
@@ -25,18 +30,23 @@
 
 namespace zametti {
 
-// Найденная формула. Границы — байты В ПЕРЕДАННОМ ТЕКСТЕ, и они ВКЛЮЧАЮТ сами
-// доллары: в файле формула живёт литеральным текстом всегда, и хранить её
-// иначе значит однажды потерять доллары при записи.
+// Найденная формула. Границы — единицы В ПЕРЕДАННОМ ТЕКСТЕ (байты у байтов,
+// UTF-16 у QString), и они ВКЛЮЧАЮТ сами доллары: в файле формула живёт
+// литеральным текстом всегда, и хранить её иначе значит однажды потерять доллары
+// при записи.
 struct MathSpan {
-    int32_t start = 0;   // первый байт открывающего доллара
-    int32_t end = 0;     // байт ЗА последним долларом
+    int32_t start = 0;   // первый знак открывающего доллара
+    int32_t end = 0;     // знак ЗА последним долларом
     bool display = false;
 
     // Тело без долларов — то, что уходит в движок.
     std::string_view body(std::string_view text) const {
         const int32_t skip = display ? 2 : 1;
         return text.substr(size_t(start + skip), size_t(end - start - 2 * skip));
+    }
+    QStringView body(QStringView text) const {
+        const int32_t skip = display ? 2 : 1;
+        return text.mid(start + skip, end - start - 2 * skip);
     }
 };
 
@@ -47,10 +57,12 @@ struct MathSpan {
 // правила границ (по флангам, как у выделения), и на «$ x + y$» они с нашим
 // каноном расходятся — значит решение обязано приниматься одним кодом.
 bool mathBordersOk(std::string_view text, size_t open, size_t close, bool display);
+bool mathBordersOk(QStringView text, size_t open, size_t close, bool display);
 
 // Все формулы текста по порядку. Вложенных не бывает: найдя формулу, сканер
 // продолжает за её концом.
 std::vector<MathSpan> scanMath(std::string_view text);
+std::vector<MathSpan> scanMath(QStringView text);
 
 }  // namespace zametti
 

@@ -60,6 +60,11 @@ void NoteHeader::unset(std::string_view key) {
     }
 }
 
+QString NoteHeader::toText() const {
+    const std::string bytes = toBytes();
+    return QString::fromUtf8(bytes.data(), qsizetype(bytes.size()));
+}
+
 std::string NoteHeader::toBytes() const {
     if (!present_) return {};
     std::string out = "<!-- zametti\n";

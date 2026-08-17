@@ -10,6 +10,8 @@
 
 #pragma once
 
+#include <QString>
+
 #include <string>
 #include <string_view>
 #include <vector>
@@ -36,6 +38,9 @@ public:
 
     // Байты шапки, как они уйдут в файл. Пусто — шапки нет.
     std::string toBytes() const;
+    // То же текстом (QString): писатель собирает файл текстом и переводит в
+    // байты один раз на границе.
+    QString toText() const;
 
     friend bool operator==(const NoteHeader& a, const NoteHeader& b) {
         return a.present_ == b.present_ && a.blankAfter_ == b.blankAfter_ &&

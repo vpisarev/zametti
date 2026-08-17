@@ -40,10 +40,6 @@ Piece vspacePiece() {
     return out;
 }
 
-QByteArray toBytes(const std::string& text) {
-    return QByteArray(text.data(), static_cast<qsizetype>(text.size()));
-}
-
 // Содержимое файла целиком. Заметки маленькие, и побайтовое сравнение и точнее
 // хеша, и короче: не надо рассуждать о коллизиях. Читаем именно файл, а не
 // помним последнюю запись, — тогда правка снаружи не приводит к «уже сохранено».
@@ -73,34 +69,21 @@ QString rescueTimestamp() {
 
 namespace {
 
-bool isSpace(char c) { return c == ' ' || c == '\t'; }
+bool isSpace(QChar c) { return c == u' ' || c == u'\t'; }
 
-// Начинается ли в этом месте пробельный знак и сколько он занимает байт. Ноль —
-// не пробельный. Неразрывный пробел занимает два байта, и рубить его пополам
-// нельзя.
-int whitespaceAt(std::string_view text, size_t at) {
-    if (at >= text.size()) return 0;
-    const unsigned char c = static_cast<unsigned char>(text[at]);
-    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') return 1;
-    if (c == 0xC2 && at + 1 < text.size() &&
-        static_cast<unsigned char>(text[at + 1]) == 0xA0)
-        return 2;
-    return 0;
+// Пробельный ли знак стоит здесь. Неразрывный пробел — тоже пробельный: в
+// UTF-16 он один знак, U+00A0.
+bool whitespaceAt(QStringView text, qsizetype at) {
+    if (at < 0 || at >= text.size()) return false;
+    const QChar c = text.at(at);
+    return c == u' ' || c == u'\t' || c == u'\n' || c == u'\r' || c == QChar::Nbsp;
 }
 
-int whitespaceBefore(std::string_view text, size_t at) {
-    if (at == 0) return 0;
-    const unsigned char c = static_cast<unsigned char>(text[at - 1]);
-    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') return 1;
-    if (c == 0xA0 && at >= 2 && static_cast<unsigned char>(text[at - 2]) == 0xC2) return 2;
-    return 0;
-}
-
-// Буква или цифра. Многобайтовые знаки считаем буквами целиком: для нашей
-// задачи важно лишь, слово это или граница слова.
-bool wordByte(unsigned char c) {
-    return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-           c >= 0x80;
+// Буква или цифра. Не-ASCII знаки считаем буквами целиком: для нашей задачи
+// важно лишь, слово это или граница слова.
+bool wordChar(QChar c) {
+    return (c >= u'0' && c <= u'9') || (c >= u'A' && c <= u'Z') || (c >= u'a' && c <= u'z') ||
+           c.unicode() >= 0x80;
 }
 
 // Зачёркивание живёт только на целых словах. Проверено на ядре: "фру~~кты~~"
@@ -114,13 +97,14 @@ bool wordByte(unsigned char c) {
 Piece withStrikeOnWholeWords(Piece block) {
     if (block.raw || block.kind == Kind::Code) return block;
 
-    const std::string_view text = block.text;
+    const QString& text = block.text;
+    const qsizetype size = text.size();
     for (Run& span : block.runs) {
         if (!span.strike()) continue;
-        size_t from = size_t(qBound(0, int(span.start), int(text.size())));
-        size_t to = size_t(qBound(int(from), int(span.end), int(text.size())));
-        while (from > 0 && wordByte(static_cast<unsigned char>(text[from - 1]))) --from;
-        while (to < text.size() && wordByte(static_cast<unsigned char>(text[to]))) ++to;
+        qsizetype from = qBound<qsizetype>(0, qsizetype(span.start), size);
+        qsizetype to = qBound<qsizetype>(from, qsizetype(span.end), size);
+        while (from > 0 && wordChar(text.at(from - 1))) --from;
+        while (to < size && wordChar(text.at(to))) ++to;
         span.start = int32_t(from);
         span.end = int32_t(to);
     }
@@ -143,7 +127,7 @@ Piece withStrikeOnWholeWords(Piece block) {
 bool sharesStyle(const Run& a, const Run& b) {
     return (a.bold() && b.bold()) || (a.italic() && b.italic()) ||
            (a.strike() && b.strike()) || (a.code() && b.code()) ||
-           (!a.href.empty() && a.href == b.href);
+           (!a.href.isEmpty() && a.href == b.href);
 }
 
 // Куски блока после правки смещений: схлопнувшиеся выбрасываем.
@@ -167,7 +151,8 @@ void dropRunsPastText(Piece& block) {
 Piece withTrimmedSpans(Piece block) {
     if (block.raw || block.kind == Kind::Code) return block;
 
-    const std::string text = block.text;
+    const QString text = block.text;
+    const qsizetype size = text.size();
     std::vector<Run>& spans = block.runs;
     for (size_t i = 0; i < spans.size(); ++i) {
         Run& span = spans[i];
@@ -188,18 +173,10 @@ Piece withTrimmedSpans(Piece block) {
         const bool joinedRight = i + 1 < spans.size() && span.end == spans[i + 1].start &&
                                  sharesStyle(span, spans[i + 1]);
 
-        size_t from = size_t(qBound(0, int(span.start), int(text.size())));
-        size_t to = size_t(qBound(int(from), int(span.end), int(text.size())));
-        while (!joinedLeft && from < to) {
-            const int width = whitespaceAt(text, from);
-            if (width == 0) break;
-            from += size_t(width);
-        }
-        while (!joinedRight && to > from) {
-            const int width = whitespaceBefore(text, to);
-            if (width == 0) break;
-            to -= size_t(width);
-        }
+        qsizetype from = qBound<qsizetype>(0, qsizetype(span.start), size);
+        qsizetype to = qBound<qsizetype>(from, qsizetype(span.end), size);
+        while (!joinedLeft && from < to && whitespaceAt(text, from)) ++from;
+        while (!joinedRight && to > from && whitespaceAt(text, to - 1)) --to;
         span.start = int32_t(from);
         span.end = int32_t(to);
     }
@@ -209,14 +186,12 @@ Piece withTrimmedSpans(Piece block) {
 
 // Заголовок в одну строку. Перенос строки в заголовке markdown не выражает:
 // разбор возвращает заголовок и отдельный абзац за ним. Заголовок по природе
-// однострочен, поэтому перенос становится пробелом — байт в байт, и смещения
+// однострочен, поэтому перенос становится пробелом — знак в знак, и смещения
 // разметки не съезжают.
 Piece withHeadingOnOneLine(Piece block) {
     if (block.raw || block.kind != Kind::Heading) return block;
-    if (block.text.find('\n') == std::string::npos) return block;
     // Длина та же, поэтому смещения кусков не меняются.
-    for (char& c : block.text)
-        if (c == '\n') c = ' ';
+    block.text.replace(QLatin1Char('\n'), QLatin1Char(' '));
     return block;
 }
 
@@ -227,7 +202,7 @@ Piece withHeadingOnOneLine(Piece block) {
 Piece withCodeSpansPerLine(Piece block) {
     if (block.raw || block.kind == Kind::Code) return block;
 
-    const size_t textSize = block.text.size();
+    const qsizetype textSize = block.text.size();
     std::vector<Run> out;
     out.reserve(block.runs.size());
     for (const Run& span : block.runs) {
@@ -235,11 +210,11 @@ Piece withCodeSpansPerLine(Piece block) {
             out.push_back(span);
             continue;
         }
-        const size_t end = size_t(qBound(0, int(span.end), int(textSize)));
-        size_t from = size_t(qBound(0, int(span.start), int(end)));
+        const qsizetype end = qBound<qsizetype>(0, qsizetype(span.end), textSize);
+        qsizetype from = qBound<qsizetype>(0, qsizetype(span.start), end);
         while (from < end) {
-            const size_t found = block.text.find('\n', from);
-            const size_t stop = (found == std::string::npos || found > end) ? end : found;
+            const qsizetype found = block.text.indexOf(QLatin1Char('\n'), from);
+            const qsizetype stop = (found < 0 || found > end) ? end : found;
             if (stop > from) {
                 Run piece = span;
                 piece.start = int32_t(from);
@@ -292,13 +267,13 @@ bool sameContent(const std::vector<Piece>& x, const std::vector<Piece>& y) {
     return true;
 }
 
-// Неразрывный пробел в UTF-8. Именно им сохраняются отступы: обычный пробел в
-// начале строки markdown съедает, а этот — нет.
+// Неразрывный пробел. Именно им сохраняются отступы: обычный пробел в начале
+// строки markdown съедает, а этот — нет.
 //
 // Совет писать сущность "&nbsp;" не годится: ядро отдаёт её буквальным текстом,
 // и в заметке было бы видно "&nbsp;" вместо отступа. Прямой знак проходит круг
 // целиком — проверено, включая схему из трёх строк.
-const char* const kNbsp = "\xC2\xA0";
+const QChar kNbsp = QChar::Nbsp;
 
 // Края строк. Ведущие пробелы становятся неразрывными — отступ значим, им
 // рисуют схемы и лесенки. Концевые выбрасываются: они как ведущие нули,
@@ -314,8 +289,8 @@ Piece withEdgesNormalised(Piece block) {
     // забор всё равно ставится с новой строки, и без него разбор вернул бы
     // текст с переводом, а самопроверка честно не дала бы записать.
     if (block.kind == Kind::Code && !block.raw) {
-        if (!block.text.empty() && block.text.back() != '\n') {
-            block.text.push_back('\n');
+        if (!block.text.isEmpty() && !block.text.endsWith(QLatin1Char('\n'))) {
+            block.text += QLatin1Char('\n');
             block.trailingNewline = true;
         }
         return block;
@@ -326,9 +301,11 @@ Piece withEdgesNormalised(Piece block) {
     if (block.kind == Kind::Math) return block;
     if (block.raw) return block;
 
-    const std::string text = block.text;
-    std::vector<int> map(text.size() + 1, 0);
-    std::string out;
+    const QString text = block.text;
+    const qsizetype size = text.size();
+    std::vector<int> map(size_t(size) + 1, 0);
+    QString out;
+    out.reserve(size);
 
     // ВНУТРИ ФОРМУЛЫ ПРОБЕЛ — ЛИТЕРАЛЬНЫЙ, как в коде. Здесь я и испортил
     // владельцу заметку: правило «ведущие пробелы становятся неразрывными»
@@ -337,12 +314,11 @@ Piece withEdgesNormalised(Piece block) {
     // продолжения уехали в файл с U+00A0. Читается такое всюду (KaTeX и MathJax
     // пробелы юникода игнорируют), но это ПРАВКА ТЕКСТА, которой человек не
     // просил, и в самом latex такие пробелы значат ровно ничего.
-    std::vector<std::pair<size_t, size_t>> mathAt;
+    std::vector<std::pair<qsizetype, qsizetype>> mathAt;
     for (const Run& span : block.runs)
         if (span.math())
-            mathAt.emplace_back(size_t(qMax(0, int(span.start))),
-                                size_t(qMax(0, int(span.end))));
-    const auto insideMath = [&](size_t at) {
+            mathAt.emplace_back(qMax<qsizetype>(0, span.start), qMax<qsizetype>(0, span.end));
+    const auto insideMath = [&](qsizetype at) {
         for (const auto& span : mathAt)
             if (at >= span.first && at < span.second) return true;
         return false;
@@ -352,17 +328,17 @@ Piece withEdgesNormalised(Piece block) {
     // пустоте не отличить «первую строку» от «десятой, но пока пустой». На этом
     // сходились в одну все ведущие пустые строки абзаца.
     bool firstLine = true;
-    size_t line = 0;
+    qsizetype line = 0;
     for (;;) {
-        size_t end = text.find('\n', line);
-        const bool last = end == std::string::npos;
-        if (last) end = text.size();
+        qsizetype end = text.indexOf(QLatin1Char('\n'), line);
+        const bool last = end < 0;
+        if (last) end = size;
 
-        size_t start = line;
-        size_t stop = end;
+        qsizetype start = line;
+        qsizetype stop = end;
         if (!insideMath(line) && !insideMath(end > line ? end - 1 : line)) {
-            while (start < end && isSpace(text[start])) ++start;
-            while (stop > start && isSpace(text[stop - 1])) --stop;
+            while (start < end && isSpace(text.at(start))) ++start;
+            while (stop > start && isSpace(text.at(stop - 1))) --stop;
         }
 
         // Пустая строка внутри блока — содержимое: в заметках ею отбивают куски
@@ -379,35 +355,35 @@ Piece withEdgesNormalised(Piece block) {
         const bool keepBlank = block.kind == Kind::Paragraph || block.kind == Kind::Quote;
         const bool blank = start >= stop;
         if (!blank || keepBlank) {
-            if (!firstLine) out.push_back('\n');
+            if (!firstLine) out += QLatin1Char('\n');
             firstLine = false;
             if (blank && block.kind == Kind::Quote) out += kNbsp;
         }
 
         // Ведущие пробелы: каждый становится неразрывным. Отступ значим, им
         // рисуют схемы и лесенки.
-        for (size_t k = line; k < start; ++k) {
-            map[k] = int(out.size());
+        for (qsizetype k = line; k < start; ++k) {
+            map[size_t(k)] = int(out.size());
             if (!blank) out += kNbsp;
         }
-        for (size_t k = start; k < stop; ++k) {
-            map[k] = int(out.size());
-            out.push_back(text[k]);
+        for (qsizetype k = start; k < stop; ++k) {
+            map[size_t(k)] = int(out.size());
+            out += text.at(k);
         }
-        for (size_t k = stop; k <= end && k < text.size(); ++k) map[k] = int(out.size());
+        for (qsizetype k = stop; k <= end && k < size; ++k) map[size_t(k)] = int(out.size());
 
         if (last) {
-            map[text.size()] = int(out.size());
+            map[size_t(size)] = int(out.size());
             break;
         }
         line = end + 1;
     }
 
     for (Run& span : block.runs) {
-        const size_t from = size_t(qBound(0, int(span.start), int(text.size())));
-        const size_t to = size_t(qBound(0, int(span.end), int(text.size())));
-        span.start = map[from];
-        span.end = map[to];
+        const qsizetype from = qBound<qsizetype>(0, qsizetype(span.start), size);
+        const qsizetype to = qBound<qsizetype>(0, qsizetype(span.end), size);
+        span.start = map[size_t(from)];
+        span.end = map[size_t(to)];
     }
     compactRuns(block);
     block.text = std::move(out);
@@ -434,7 +410,9 @@ Piece withMarkupThatSurvives(Piece block) {
 
     std::vector<Piece> back;
     NoteHeader ignored;
-    parsePieces(writePieces({probe}), back, ignored);
+    // Разбор пока идёт по байтам (md4c в UTF-8) — граница переводится здесь.
+    const QByteArray bytes = writePieces({probe}).toUtf8();
+    parsePieces(std::string_view(bytes.constData(), size_t(bytes.size())), back, ignored);
     if (back.size() == 1 && !back[0].raw && back[0].text == block.text) return block;
 
     block.runs.clear();
@@ -445,9 +423,9 @@ Piece withMarkupThatSurvives(Piece block) {
 // часть текста. Правка внутри такого блока его снимает, и разбор возвращает
 // текст с переводом, которого в документе нет.
 Piece withRawNewline(Piece block) {
-    if (!block.raw || block.text.empty()) return block;
-    if (block.text.back() == '\n') return block;
-    block.text.push_back('\n');
+    if (!block.raw || block.text.isEmpty()) return block;
+    if (block.text.endsWith(QLatin1Char('\n'))) return block;
+    block.text += QLatin1Char('\n');
     block.trailingNewline = true;
     return block;
 }
@@ -468,7 +446,7 @@ std::vector<Piece> withoutEmptyNested(std::vector<Piece> doc) {
     out.reserve(doc.size());
     for (size_t i = 0; i < doc.size(); ++i) {
         const Piece& block = doc[i];
-        const bool drop = !block.raw && block.text.empty() && block.level > 0 &&
+        const bool drop = !block.raw && block.text.isEmpty() && block.level > 0 &&
                           block.kind == Kind::ListItem && block.marker != Marker::Task;
         if (!drop) {
             out.push_back(std::move(doc[i]));
@@ -496,13 +474,13 @@ void appendSplitOnBlankLines(std::vector<Piece>& out, Piece block) {
     if (block.raw) {
         // Дословный кусок, начинающийся с пустой строки: сама она куском не
         // является — разбор вернул бы её отдельной пустой строкой перед ним.
-        size_t at = 0;
-        while (at < block.text.size() && block.text[at] == '\n') {
+        qsizetype at = 0;
+        while (at < block.text.size() && block.text.at(at) == QLatin1Char('\n')) {
             out.push_back(vspacePiece());
             ++at;
         }
-        block.text.erase(0, at);
-        if (!block.text.empty()) out.push_back(std::move(block));
+        block.text.remove(0, at);
+        if (!block.text.isEmpty()) out.push_back(std::move(block));
         return;
     }
     if (block.kind != Kind::Paragraph) {
@@ -510,20 +488,20 @@ void appendSplitOnBlankLines(std::vector<Piece>& out, Piece block) {
         return;
     }
 
-    const size_t textSize = block.text.size();
-    size_t at = 0;
-    size_t pieceFrom = std::string::npos;
-    auto flush = [&](size_t to) {
-        if (pieceFrom == std::string::npos) return;
+    const qsizetype textSize = block.text.size();
+    qsizetype at = 0;
+    qsizetype pieceFrom = -1;
+    auto flush = [&](qsizetype to) {
+        if (pieceFrom < 0) return;
         Piece piece;
         piece.kind = Kind::Paragraph;
         // Уровень переносим: куски остаются там же, где стоял сам абзац, — то
         // есть внутри своего пункта, если он там стоял.
         piece.level = block.level;
-        piece.text = block.text.substr(pieceFrom, to - pieceFrom);
+        piece.text = block.text.mid(pieceFrom, to - pieceFrom);
         for (const Run& span : block.runs) {
-            const size_t from = std::max(size_t(span.start), pieceFrom);
-            const size_t stop = std::min(size_t(span.end), to);
+            const qsizetype from = qMax<qsizetype>(span.start, pieceFrom);
+            const qsizetype stop = qMin<qsizetype>(span.end, to);
             if (stop <= from) continue;
             Run moved = span;
             moved.start = int32_t(from - pieceFrom);
@@ -531,18 +509,18 @@ void appendSplitOnBlankLines(std::vector<Piece>& out, Piece block) {
             piece.runs.push_back(std::move(moved));
         }
         out.push_back(std::move(piece));
-        pieceFrom = std::string::npos;
+        pieceFrom = -1;
     };
 
     for (;;) {
-        size_t end = block.text.find('\n', at);
-        const bool last = end == std::string::npos;
+        qsizetype end = block.text.indexOf(QLatin1Char('\n'), at);
+        const bool last = end < 0;
         if (last) end = textSize;
 
         if (end == at) {                       // пустая строка
             flush(at > 0 ? at - 1 : at);
             out.push_back(vspacePiece());
-        } else if (pieceFrom == std::string::npos) {
+        } else if (pieceFrom < 0) {
             pieceFrom = at;
         }
 
@@ -560,8 +538,8 @@ std::vector<Piece> documentForFile(std::vector<Piece> doc) {
     for (Piece& block : doc) {
         // Пробельная пустая строка (каретка ещё не ушла с неё) — пустая:
         // markdown пробелы выбросил бы сам, а edges превратили бы их в nbsp.
-        if (!block.raw && block.kind == Kind::VSpace &&
-            block.text.find_first_not_of(" \t") == std::string::npos)
+        if (!block.raw && block.kind == Kind::VSpace && block.text.trimmed().isEmpty() &&
+            block.text.indexOf(QChar::Nbsp) < 0)
             block.text.clear();
         appendSplitOnBlankLines(
             out, withMarkupThatSurvives(withStrikeOnWholeWords(withTrimmedSpans(
@@ -580,26 +558,21 @@ std::vector<Piece> documentForFile(std::vector<Piece> doc) {
     // последнего блока стыка тоже нет.
     while (!out.empty() && !out.back().raw &&
            (out.back().kind == Kind::VSpace ||
-            (out.back().kind == Kind::Paragraph && out.back().text.empty())))
+            (out.back().kind == Kind::Paragraph && out.back().text.isEmpty())))
         out.pop_back();
     if (!out.empty()) {
         Piece& last = out.back();
         if (!last.raw && last.kind != Kind::Code) {
-            const auto tail = [&](size_t width) {
-                return std::string_view(last.text).substr(last.text.size() - width, width);
-            };
-            while (last.text.size() >= 1 && tail(1) == "\n") last.text.pop_back();
+            while (last.text.endsWith(QLatin1Char('\n'))) last.text.chop(1);
             // Хвостовые неразрывные строки последнего блока — тот же случай:
             // пустая строка, которой в файле после последнего блока не бывает.
-            const std::string_view nbsp = kNbsp;
-            while (last.text.size() >= nbsp.size() + 1 && tail(nbsp.size()) == nbsp &&
-                   tail(nbsp.size() + 1).substr(0, 1) == "\n") {
-                last.text.resize(last.text.size() - nbsp.size() - 1);
-            }
-            if (last.text == nbsp) last.text.clear();
+            while (last.text.size() >= 2 && last.text.back() == kNbsp &&
+                   last.text.at(last.text.size() - 2) == QLatin1Char('\n'))
+                last.text.chop(2);
+            if (last.text == QString(kNbsp)) last.text.clear();
             dropRunsPastText(last);
         }
-        if (!out.back().raw && out.back().kind == Kind::Paragraph && out.back().text.empty())
+        if (!out.back().raw && out.back().kind == Kind::Paragraph && out.back().text.isEmpty())
             out.pop_back();
     }
 
@@ -680,7 +653,8 @@ QByteArray noteBytes(const QTextDocument& doc, const NoteHeader& meta, DocumentR
                      std::vector<Piece>* fileBlocks) {
     std::vector<Piece> forFile =
         documentForFile(reader ? reader(doc) : piecesOfDocument(doc));
-    const QByteArray text = toBytes(writePieces(forFile, meta));
+    // ГРАНИЦА ФАЙЛА: текст переводится в байты один раз, здесь.
+    const QByteArray text = writePieces(forFile, meta).toUtf8();
     if (fileBlocks != nullptr) *fileBlocks = std::move(forFile);
     return text;
 }
@@ -694,7 +668,7 @@ SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
     std::vector<Piece> built;
     if (!ready) built = documentForFile(reader ? reader(doc) : piecesOfDocument(doc));
     const std::vector<Piece>& ir = ready ? *prebuiltBlocks : built;
-    const QByteArray text = ready ? *prebuiltText : toBytes(writePieces(ir, meta));
+    const QByteArray text = ready ? *prebuiltText : writePieces(ir, meta).toUtf8();
 
     // Не писать, если не изменилось.
     const Digest digest = hashOf(asView(text));

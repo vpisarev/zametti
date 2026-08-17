@@ -17,7 +17,10 @@
 #include "document_builder.h"
 #include "math_scan.h"
 
+#include <QChar>
+#include <QLatin1String>
 #include <QString>
+#include <QStringView>
 #include <QTextBlock>
 #include <QTextCharFormat>
 #include <QTextDocument>
@@ -46,42 +49,59 @@ bool wouldMerge(const Piece& previous, const Piece& next) {
 
 namespace {
 
-bool isAsciiSpace(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; }
-
-bool isAsciiPunct(char c) {
-    return (c >= '!' && c <= '/') || (c >= ':' && c <= '@') || (c >= '[' && c <= '`') ||
-           (c >= '{' && c <= '~');
+// Писатель работает НАД ТЕКСТОМ (QString), а не над байтами: всё, что в памяти,
+// — UTF-16 (решение владельца, сессия refactor2), и байты появляются только на
+// границе файла. Правила ниже — ASCII-правила CommonMark, и им всё равно, в
+// каких единицах лежит текст: не-ASCII знак — обычная буква.
+bool isAsciiSpace(QChar c) {
+    return c == u' ' || c == u'\t' || c == u'\n' || c == u'\r' || c == u'\v' || c == u'\f';
 }
 
-bool isDigit(char c) { return c >= '0' && c <= '9'; }
+bool isAsciiPunct(QChar c) {
+    const char16_t u = c.unicode();
+    return (u >= u'!' && u <= u'/') || (u >= u':' && u <= u'@') || (u >= u'[' && u <= u'`') ||
+           (u >= u'{' && u <= u'~');
+}
+
+bool isDigit(QChar c) { return c >= u'0' && c <= u'9'; }
+bool isAsciiAlpha(QChar c) { return (c >= u'a' && c <= u'z') || (c >= u'A' && c <= u'Z'); }
+bool isAsciiAlnum(QChar c) { return isAsciiAlpha(c) || isDigit(c); }
+
+// Есть ли этот знак среди перечисленных (ASCII).
+bool oneOf(QChar c, const char* set) {
+    if (c.unicode() >= 0x80) return false;
+    for (; *set != '\0'; ++set)
+        if (c == QLatin1Char(*set)) return true;
+    return false;
+}
 
 // Классы символов для правил «фланкирования» из CommonMark. Не-ASCII считаем
 // обычной буквой: для кириллицы это верно, а редкие случаи юникодной пунктуации
 // приведут лишь к одному лишнему обратному слэшу, а не к потере смысла.
-bool flankWhitespace(std::string_view s, size_t i, bool atEdge) {
+bool flankWhitespace(QStringView s, qsizetype i, bool atEdge) {
     if (atEdge) return true;
-    return isAsciiSpace(s[i]);
+    return isAsciiSpace(s.at(i));
 }
 
-bool flankPunct(std::string_view s, size_t i, bool atEdge) {
+bool flankPunct(QStringView s, qsizetype i, bool atEdge) {
     if (atEdge) return false;
-    return isAsciiPunct(s[i]);
+    return isAsciiPunct(s.at(i));
 }
 
 // Слово с точки зрения markdown: то, что не пробел и не ASCII-пунктуация.
-// Не-ASCII байты сюда попадают целиком — для кириллицы это верно.
-bool isWordByte(char c) { return !isAsciiSpace(c) && !isAsciiPunct(c); }
+// Не-ASCII знаки сюда попадают целиком — для кириллицы это верно.
+bool isWordChar(QChar c) { return !isAsciiSpace(c) && !isAsciiPunct(c); }
 
 // Может ли прогон из delim открыть или закрыть выделение в этом месте.
-bool runCanDelimit(std::string_view s, size_t begin, size_t end) {
+bool runCanDelimit(QStringView s, qsizetype begin, qsizetype end) {
     bool prevEdge = (begin == 0);
     bool nextEdge = (end >= s.size());
-    size_t prev = prevEdge ? 0 : begin - 1;
-    size_t next = nextEdge ? 0 : end;
+    qsizetype prev = prevEdge ? 0 : begin - 1;
+    qsizetype next = nextEdge ? 0 : end;
 
     // Начало и конец строки внутри текста тоже считаем «пробелом».
-    if (!prevEdge && s[prev] == '\n') prevEdge = true;
-    if (!nextEdge && s[next] == '\n') nextEdge = true;
+    if (!prevEdge && s.at(prev) == u'\n') prevEdge = true;
+    if (!nextEdge && s.at(next) == u'\n') nextEdge = true;
 
     bool prevWs = flankWhitespace(s, prev, prevEdge);
     bool nextWs = flankWhitespace(s, next, nextEdge);
@@ -93,7 +113,7 @@ bool runCanDelimit(std::string_view s, size_t begin, size_t end) {
 
     // У '_' правила строже: внутри слова он выделения не образует. Без этого
     // уточнения каждый snake_case в заметках обрастал бы слэшами.
-    if (s[begin] == '_') {
+    if (s.at(begin) == u'_') {
         bool canOpen = leftFlanking && (!rightFlanking || prevPu);
         bool canClose = rightFlanking && (!leftFlanking || nextPu);
         return canOpen || canClose;
@@ -101,84 +121,82 @@ bool runCanDelimit(std::string_view s, size_t begin, size_t end) {
     return leftFlanking || rightFlanking;
 }
 
-bool looksLikeEntity(std::string_view s, size_t i) {
-    size_t j = i + 1;
-    if (j < s.size() && s[j] == '#') {
+bool looksLikeEntity(QStringView s, qsizetype i) {
+    qsizetype j = i + 1;
+    if (j < s.size() && s.at(j) == u'#') {
         ++j;
-        if (j < s.size() && (s[j] == 'x' || s[j] == 'X')) ++j;
+        if (j < s.size() && (s.at(j) == u'x' || s.at(j) == u'X')) ++j;
     }
-    size_t digitsBegin = j;
-    while (j < s.size() && ((s[j] >= 'a' && s[j] <= 'z') || (s[j] >= 'A' && s[j] <= 'Z') ||
-                            isDigit(s[j])))
-        ++j;
-    return j > digitsBegin && j < s.size() && s[j] == ';';
+    qsizetype digitsBegin = j;
+    while (j < s.size() && isAsciiAlnum(s.at(j))) ++j;
+    return j > digitsBegin && j < s.size() && s.at(j) == u';';
 }
 
-bool startsHtmlish(std::string_view s, size_t i) {
-    size_t j = i + 1;
+bool startsHtmlish(QStringView s, qsizetype i) {
+    qsizetype j = i + 1;
     if (j >= s.size()) return false;
-    char c = s[j];
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '/' || c == '!' || c == '?';
+    const QChar c = s.at(j);
+    return isAsciiAlpha(c) || c == u'/' || c == u'!' || c == u'?';
 }
 
 // Скобку надо экранировать только если она действительно открывает ссылку:
 // "[x]" сам по себе — обычный текст, ссылкой он станет лишь при определении
 // вида "[x]: /a", а таких мы не выводим. Экранировать всё подряд нельзя:
 // "1. [x] текст" обязано вернуться байт в байт.
-bool bracketOpensLink(std::string_view s, size_t i) {
+bool bracketOpensLink(QStringView s, qsizetype i) {
     int depth = 0;
-    for (size_t j = i; j < s.size(); ++j) {
-        if (s[j] == '\\') { ++j; continue; }
-        if (s[j] == '\n') return false;
-        if (s[j] == '[') ++depth;
-        else if (s[j] == ']') {
-            if (--depth == 0) return j + 1 < s.size() && s[j + 1] == '(';
+    for (qsizetype j = i; j < s.size(); ++j) {
+        if (s.at(j) == u'\\') { ++j; continue; }
+        if (s.at(j) == u'\n') return false;
+        if (s.at(j) == u'[') ++depth;
+        else if (s.at(j) == u']') {
+            if (--depth == 0) return j + 1 < s.size() && s.at(j + 1) == u'(';
         }
     }
     return false;
 }
 
 // Просто парная скобка, без разбора того, во что она превратится.
-bool bracketPairAt(std::string_view s, size_t i) {
+bool bracketPairAt(QStringView s, qsizetype i) {
     int depth = 0;
-    for (size_t j = i; j < s.size(); ++j) {
-        if (s[j] == '\\') { ++j; continue; }
-        if (s[j] == '\n') return false;
-        if (s[j] == '[') ++depth;
-        else if (s[j] == ']' && --depth == 0) return true;
+    for (qsizetype j = i; j < s.size(); ++j) {
+        if (s.at(j) == u'\\') { ++j; continue; }
+        if (s.at(j) == u'\n') return false;
+        if (s.at(j) == u'[') ++depth;
+        else if (s.at(j) == u']' && --depth == 0) return true;
     }
     return false;
 }
 
-size_t lineEndFrom(std::string_view s, size_t i) {
-    size_t e = s.find('\n', i);
-    return e == std::string_view::npos ? s.size() : e;
+qsizetype lineEndFrom(QStringView s, qsizetype i) {
+    const qsizetype e = s.indexOf(u'\n', i);
+    return e < 0 ? s.size() : e;
 }
 
 // Начало строки: конструкции, которые захватывают всю строку и потому меняют
 // разбор, если их не экранировать.
-bool needsLineStartEscape(std::string_view s, size_t i, size_t& escapeAt) {
-    size_t e = lineEndFrom(s, i);
-    char c = s[i];
+bool needsLineStartEscape(QStringView s, qsizetype i, qsizetype& escapeAt) {
+    const qsizetype e = lineEndFrom(s, i);
+    const QChar c = s.at(i);
 
-    if (c == '>') { escapeAt = i; return true; }
+    if (c == u'>') { escapeAt = i; return true; }
 
-    if (c == '#') {
-        size_t j = i;
-        while (j < e && s[j] == '#') ++j;
-        if (j - i <= 6 && (j == e || s[j] == ' ' || s[j] == '\t')) { escapeAt = i; return true; }
+    if (c == u'#') {
+        qsizetype j = i;
+        while (j < e && s.at(j) == u'#') ++j;
+        if (j - i <= 6 && (j == e || s.at(j) == u' ' || s.at(j) == u'\t')) { escapeAt = i; return true; }
         return false;
     }
 
-    if (c == '-' || c == '+' || c == '*') {
-        if (i + 1 == e || s[i + 1] == ' ' || s[i + 1] == '\t') { escapeAt = i; return true; }
+    if (c == u'-' || c == u'+' || c == u'*') {
+        if (i + 1 == e || s.at(i + 1) == u' ' || s.at(i + 1) == u'\t') { escapeAt = i; return true; }
     }
 
     if (isDigit(c)) {
-        size_t j = i;
-        while (j < e && isDigit(s[j])) ++j;
-        if (j - i <= 9 && j < e && (s[j] == '.' || s[j] == ')') &&
-            (j + 1 == e || s[j + 1] == ' ' || s[j + 1] == '\t')) {
+        qsizetype j = i;
+        while (j < e && isDigit(s.at(j))) ++j;
+        if (j - i <= 9 && j < e && (s.at(j) == u'.' || s.at(j) == u')') &&
+            (j + 1 == e || s.at(j + 1) == u' ' || s.at(j + 1) == u'\t')) {
             escapeAt = j;
             return true;
         }
@@ -186,32 +204,32 @@ bool needsLineStartEscape(std::string_view s, size_t i, size_t& escapeAt) {
 
     // "[метка]: /url" в начале строки — определение ссылки, то есть целый блок,
     // а не текст. Внутри строки та же последовательность безобидна.
-    if (c == '[') {
-        size_t j = i + 1;
-        while (j < e && s[j] != ']') {
-            if (s[j] == '\\') ++j;
+    if (c == u'[') {
+        qsizetype j = i + 1;
+        while (j < e && s.at(j) != u']') {
+            if (s.at(j) == u'\\') ++j;
             ++j;
         }
-        if (j + 1 < e && s[j] == ']' && s[j + 1] == ':') { escapeAt = i; return true; }
+        if (j + 1 < e && s.at(j) == u']' && s.at(j + 1) == u':') { escapeAt = i; return true; }
     }
 
     // Три и больше тильд в начале строки — открывающий забор блока кода.
     // Обычные правила фланкирования этого не ловят: у строки из одних тильд
     // с обеих сторон «пробел», и экранировать её вроде бы не за что.
-    if (c == '~' || c == '`') {
-        size_t j = i;
-        while (j < e && s[j] == c) ++j;
+    if (c == u'~' || c == u'`') {
+        qsizetype j = i;
+        while (j < e && s.at(j) == c) ++j;
         if (j - i >= 3) { escapeAt = i; return true; }
     }
 
     // Строка целиком из '=' или из '-'/'_'/'*' — setext-подчёркивание или
     // тематический разделитель.
-    if (c == '=' || c == '-' || c == '_' || c == '*') {
+    if (c == u'=' || c == u'-' || c == u'_' || c == u'*') {
         bool uniform = true;
-        size_t cnt = 0;
-        for (size_t j = i; j < e; ++j) {
-            if (s[j] == c) { ++cnt; continue; }
-            if (s[j] == ' ' || s[j] == '\t' || s[j] == '\r') continue;
+        qsizetype cnt = 0;
+        for (qsizetype j = i; j < e; ++j) {
+            if (s.at(j) == c) { ++cnt; continue; }
+            if (s.at(j) == u' ' || s.at(j) == u'\t' || s.at(j) == u'\r') continue;
             uniform = false;
             break;
         }
@@ -220,7 +238,7 @@ bool needsLineStartEscape(std::string_view s, size_t i, size_t& escapeAt) {
     return false;
 }
 
-// Пометки по байтам текста, которые нельзя вывести из самого текста: они
+// Пометки по знакам текста, которые нельзя вывести из самого текста: они
 // зависят от того, какие ограничители сериализатор поставит вокруг.
 enum Mark : unsigned char {
     kMarkDelimEdge = 1,   // край выделения: '*'/'_'/'~' здесь слипнется с ограничителем
@@ -228,16 +246,16 @@ enum Mark : unsigned char {
 };
 
 struct TextSink {
-    std::string out;
-    std::string contIndent;   // отступ строк-продолжений
-    bool bol = true;          // стоим в начале строки (после маркера/отступа)
+    QString out;
+    QString contIndent;   // отступ строк-продолжений
+    bool bol = true;      // стоим в начале строки (после маркера/отступа)
     const std::vector<unsigned char>* marks = nullptr;
     bool hasLinkDefs = false; // в документе есть "[x]: /url" — значит любая пара
                               // скобок может внезапно стать ссылкой
 };
 
-unsigned char markAt(const TextSink& sink, size_t i) {
-    return (sink.marks != nullptr && i < sink.marks->size()) ? (*sink.marks)[i] : 0;
+unsigned char markAt(const TextSink& sink, qsizetype i) {
+    return (sink.marks != nullptr && size_t(i) < sink.marks->size()) ? (*sink.marks)[size_t(i)] : 0;
 }
 
 // Кладёт [begin, end) текста в вывод, экранируя ровно то, что иначе изменит
@@ -246,19 +264,19 @@ unsigned char markAt(const TextSink& sink, size_t i) {
 // Начал бы этот доллар формулу, если оставить его голым? Спрашиваем ОБЩИЙ
 // канон (math_scan.h), а не гадаем: у сериализатора и у разбора правило одно,
 // иначе они разойдутся молча.
-bool dollarOpensMath(std::string_view text, size_t at) {
-    for (const MathSpan& span : scanMath(text.substr(at)))
+bool dollarOpensMath(QStringView text, qsizetype at) {
+    for (const MathSpan& span : scanMath(text.mid(at)))
         return span.start == 0;   // первая найденная либо здесь, либо дальше
     return false;
 }
 
-void appendEscaped(TextSink& sink, std::string_view text, size_t begin, size_t end) {
-    size_t i = begin;
+void appendEscaped(TextSink& sink, QStringView text, qsizetype begin, qsizetype end) {
+    qsizetype i = begin;
     while (i < end) {
-        char c = text[i];
+        const QChar c = text.at(i);
 
-        if (c == '\n') {
-            sink.out.push_back('\n');
+        if (c == u'\n') {
+            sink.out += u'\n';
             sink.out += sink.contIndent;
             sink.bol = true;
             ++i;
@@ -266,11 +284,11 @@ void appendEscaped(TextSink& sink, std::string_view text, size_t begin, size_t e
         }
 
         if (sink.bol) {
-            size_t at = 0;
+            qsizetype at = 0;
             if (needsLineStartEscape(text, i, at) && at < end) {
-                sink.out.append(text, i, at - i);
-                sink.out.push_back('\\');
-                sink.out.push_back(text[at]);
+                sink.out += text.mid(i, at - i);
+                sink.out += u'\\';
+                sink.out += text.at(at);
                 i = at + 1;
                 sink.bol = false;
                 continue;
@@ -278,65 +296,65 @@ void appendEscaped(TextSink& sink, std::string_view text, size_t begin, size_t e
             sink.bol = false;
         }
 
-        switch (c) {
-            case '\\':
-                sink.out += "\\\\";
+        switch (c.unicode()) {
+            case u'\\':
+                sink.out += QLatin1String("\\\\");
                 ++i;
                 continue;
-            case '`':
-                sink.out += "\\`";
+            case u'`':
+                sink.out += QLatin1String("\\`");
                 ++i;
                 continue;
-            case '[':
+            case u'[':
                 if (bracketOpensLink(text, i) || (markAt(sink, i) & kMarkInLink) != 0 ||
                     (sink.hasLinkDefs && bracketPairAt(text, i)))
-                    sink.out.push_back('\\');
-                sink.out.push_back('[');
+                    sink.out += u'\\';
+                sink.out += u'[';
                 ++i;
                 continue;
-            case ']':
-                if ((markAt(sink, i) & kMarkInLink) != 0) sink.out.push_back('\\');
-                sink.out.push_back(']');
+            case u']':
+                if ((markAt(sink, i) & kMarkInLink) != 0) sink.out += u'\\';
+                sink.out += u']';
                 ++i;
                 continue;
-            case '$':
+            case u'$':
                 // ДОЛЛАР ЭКРАНИРУЕТСЯ, ТОЛЬКО ЕСЛИ ОН НАЧАЛ БЫ ФОРМУЛУ. Иначе
                 // цены («заплатил $5») обросли бы косыми на ровном месте, а
                 // это тот самый шум в файле, которого формат избегает. Но
                 // молча отдать `\$x\$` обратно как `$x$` нельзя: при чтении
                 // это станет математикой, и текст поменяет смысл.
-                if (dollarOpensMath(text, i)) sink.out.push_back('\\');
-                sink.out.push_back('$');
+                if (dollarOpensMath(text, i)) sink.out += u'\\';
+                sink.out += u'$';
                 ++i;
                 continue;
-            case '<':
-                if (startsHtmlish(text, i)) sink.out.push_back('\\');
-                sink.out.push_back('<');
+            case u'<':
+                if (startsHtmlish(text, i)) sink.out += u'\\';
+                sink.out += u'<';
                 ++i;
                 continue;
-            case '&':
-                if (looksLikeEntity(text, i)) sink.out.push_back('\\');
-                sink.out.push_back('&');
+            case u'&':
+                if (looksLikeEntity(text, i)) sink.out += u'\\';
+                sink.out += u'&';
                 ++i;
                 continue;
-            case '*':
-            case '_':
-            case '~': {
-                size_t j = i;
-                while (j < text.size() && text[j] == c) ++j;
+            case u'*':
+            case u'_':
+            case u'~': {
+                qsizetype j = i;
+                while (j < text.size() && text.at(j) == c) ++j;
                 bool escape = runCanDelimit(text, i, j);
-                for (size_t k = i; k < j && !escape; ++k)
+                for (qsizetype k = i; k < j && !escape; ++k)
                     if ((markAt(sink, k) & kMarkDelimEdge) != 0) escape = true;
-                size_t stop = j < end ? j : end;
-                for (size_t k = i; k < stop; ++k) {
-                    if (escape) sink.out.push_back('\\');
-                    sink.out.push_back(c);
+                const qsizetype stop = j < end ? j : end;
+                for (qsizetype k = i; k < stop; ++k) {
+                    if (escape) sink.out += u'\\';
+                    sink.out += c;
                 }
                 i = stop;
                 continue;
             }
             default:
-                sink.out.push_back(c);
+                sink.out += c;
                 ++i;
                 continue;
         }
@@ -349,37 +367,35 @@ void appendEscaped(TextSink& sink, std::string_view text, size_t begin, size_t e
 // на стыке со словом приходится брать '*'. Иначе "ksize*ksize" из вставленного
 // кода после одного круга превратился бы в "ksize_ksize" и перестал разбираться
 // как выделение — неподвижной точки не будет.
-const char* italicDelim(std::string_view text, size_t begin, size_t end) {
-    bool leftIntraword = begin > 0 && isWordByte(text[begin - 1]);
-    bool rightIntraword = end < text.size() && isWordByte(text[end]);
-    return (leftIntraword || rightIntraword) ? "*" : "_";
+QLatin1String italicDelim(QStringView text, qsizetype begin, qsizetype end) {
+    const bool leftIntraword = begin > 0 && isWordChar(text.at(begin - 1));
+    const bool rightIntraword = end < text.size() && isWordChar(text.at(end));
+    return (leftIntraword || rightIntraword) ? QLatin1String("*") : QLatin1String("_");
 }
 
-bool hrefNeedsBrackets(std::string_view h) {
-    for (char c : h)
-        if (isAsciiSpace(c) || c == '(' || c == ')' || c == '<' || c == '>' ||
-            static_cast<unsigned char>(c) < 0x20)
+bool hrefNeedsBrackets(QStringView h) {
+    for (const QChar c : h)
+        if (isAsciiSpace(c) || c == u'(' || c == u')' || c == u'<' || c == u'>' ||
+            c.unicode() < 0x20)
             return true;
-    return h.empty();
+    return h.isEmpty();
 }
 
-bool looksLikeEmail(std::string_view text) {
-    size_t at = text.find('@');
-    return at != std::string_view::npos && at > 0 && at + 1 < text.size() &&
-           text.find('@', at + 1) == std::string_view::npos &&
-           text.find('.', at) != std::string_view::npos;
+bool looksLikeEmail(QStringView text) {
+    const qsizetype at = text.indexOf(u'@');
+    return at > 0 && at + 1 < text.size() && text.indexOf(u'@', at + 1) < 0 &&
+           text.indexOf(u'.', at) >= 0;
 }
 
-bool hasScheme(std::string_view text, bool requireSlashes) {
-    size_t colon = text.find(':');
-    if (colon == std::string_view::npos || colon == 0) return false;
-    for (size_t i = 0; i < colon; ++i) {
-        char c = text[i];
-        bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || isDigit(c) || c == '+' ||
-                  c == '-' || c == '.';
+bool hasScheme(QStringView text, bool requireSlashes) {
+    const qsizetype colon = text.indexOf(u':');
+    if (colon <= 0) return false;
+    for (qsizetype i = 0; i < colon; ++i) {
+        const QChar c = text.at(i);
+        const bool ok = isAsciiAlnum(c) || c == u'+' || c == u'-' || c == u'.';
         if (!ok) return false;
     }
-    return !requireSlashes || text.compare(colon, 3, "://") == 0;
+    return !requireSlashes || text.mid(colon, 3) == QLatin1String("://");
 }
 
 // Как выводить ссылку, у которой текст и есть адрес.
@@ -392,31 +408,31 @@ enum class LinkShape {
 // Годится ли адрес для вывода без разметки. Разбор подхватывает голую ссылку
 // только пока в ней нет знаков, которые её оборвут или которые пришлось бы
 // экранировать, — а экранировать внутри адреса нельзя, он от этого развалится.
-bool bareSafe(std::string_view text) {
-    if (text.empty()) return false;
-    for (unsigned char c : text) {
+bool bareSafe(QStringView text) {
+    if (text.isEmpty()) return false;
+    for (const QChar c : text) {
         // Не-ASCII в голой ссылке разбор не принимает: "https://x/путь" без
         // угловых скобок остаётся обычным текстом.
-        if (c <= ' ' || c >= 0x80) return false;
-        if (std::strchr("`*_~\\[]<>&()\"'", c) != nullptr) return false;
+        if (c.unicode() <= u' ' || c.unicode() >= 0x80) return false;
+        if (oneOf(c, "`*_~\\[]<>&()\"'")) return false;
     }
     // Хвостовую пунктуацию разбор в ссылку не включает, и голый вывод потерял бы
     // её из адреса.
-    return std::strchr(".,;:!?", text.back()) == nullptr;
+    return !oneOf(text.back(), ".,;:!?");
 }
 
 // Голой ссылкой разбор считает только адрес с настоящим доменом: "https://../"
 // в угловых скобках ссылка, а без них — обычный текст.
-bool hasRealHost(std::string_view text) {
-    size_t begin = text.find("://");
-    if (begin == std::string_view::npos) return false;
+bool hasRealHost(QStringView text) {
+    qsizetype begin = text.indexOf(QLatin1String("://"));
+    if (begin < 0) return false;
     begin += 3;
-    size_t end = text.find_first_of("/?#", begin);
-    if (end == std::string_view::npos) end = text.size();
+    qsizetype end = begin;
+    while (end < text.size() && !oneOf(text.at(end), "/?#")) ++end;
     if (begin >= end) return false;
-    if (!std::isalnum(static_cast<unsigned char>(text[begin]))) return false;
-    for (size_t i = begin; i + 1 < end; ++i)
-        if (text[i] == '.' && std::isalnum(static_cast<unsigned char>(text[i + 1]))) return true;
+    if (!isAsciiAlnum(text.at(begin))) return false;
+    for (qsizetype i = begin; i + 1 < end; ++i)
+        if (text.at(i) == u'.' && isAsciiAlnum(text.at(i + 1))) return true;
     return false;
 }
 
@@ -424,65 +440,65 @@ bool hasRealHost(std::string_view text) {
 // голыми: обернув "https://x" в угловые скобки, мы переписали бы каждую заметку,
 // где ссылка просто набрана в строку. Но опознаёт он не всё подряд — только три
 // схемы, "www." и почту, поэтому список здесь закрытый, а не "любая схема".
-LinkShape linkShape(std::string_view text, std::string_view href) {
-    if (text.empty()) return LinkShape::Inline;
-    for (char c : text)
-        if (isAsciiSpace(c) || c == '<' || c == '>') return LinkShape::Inline;
+LinkShape linkShape(QStringView text, QStringView href) {
+    if (text.isEmpty()) return LinkShape::Inline;
+    for (const QChar c : text)
+        if (isAsciiSpace(c) || c == u'<' || c == u'>') return LinkShape::Inline;
 
     if (href == text) {
-        const bool bareScheme = text.compare(0, 7, "http://") == 0 ||
-                                text.compare(0, 8, "https://") == 0 ||
-                                text.compare(0, 6, "ftp://") == 0;
+        const bool bareScheme = text.startsWith(QLatin1String("http://")) ||
+                                text.startsWith(QLatin1String("https://")) ||
+                                text.startsWith(QLatin1String("ftp://"));
         if (bareScheme && bareSafe(text) && hasRealHost(text)) return LinkShape::Bare;
         if (hasScheme(text, /*requireSlashes=*/false)) return LinkShape::Angle;
         return LinkShape::Inline;
     }
 
-    if (href.size() == text.size() + 7 && href.compare(0, 7, "mailto:") == 0 &&
-        href.compare(7, std::string_view::npos, text) == 0 && looksLikeEmail(text) &&
-        bareSafe(text)) {
+    if (href.size() == text.size() + 7 && href.startsWith(QLatin1String("mailto:")) &&
+        href.mid(7) == text && looksLikeEmail(text) && bareSafe(text)) {
         return LinkShape::Bare;
     }
 
-    if (href.size() == text.size() + 7 && href.compare(0, 7, "http://") == 0 &&
-        href.compare(7, std::string_view::npos, text) == 0 &&
-        text.compare(0, 4, "www.") == 0 && bareSafe(text)) {
+    if (href.size() == text.size() + 7 && href.startsWith(QLatin1String("http://")) &&
+        href.mid(7) == text && text.startsWith(QLatin1String("www.")) && bareSafe(text)) {
         return LinkShape::Bare;
     }
     return LinkShape::Inline;
 }
 
-void appendHref(std::string& out, std::string_view href) {
+void appendHref(QString& out, QStringView href) {
     if (!hrefNeedsBrackets(href)) {
         out += href;
         return;
     }
-    out.push_back('<');
-    for (char c : href) {
-        if (c == '<' || c == '>' || c == '\\') out.push_back('\\');
-        out.push_back(c);
+    out += u'<';
+    for (const QChar c : href) {
+        if (c == u'<' || c == u'>' || c == u'\\') out += u'\\';
+        out += c;
     }
-    out.push_back('>');
+    out += u'>';
 }
 
-void appendCodeSpan(std::string& out, std::string_view content) {
-    size_t longest = 0;
-    size_t run = 0;
-    for (char c : content) {
-        run = (c == '`') ? run + 1 : 0;
+void appendCodeSpan(QString& out, QStringView content) {
+    qsizetype longest = 0;
+    qsizetype run = 0;
+    for (const QChar c : content) {
+        run = (c == u'`') ? run + 1 : 0;
         if (run > longest) longest = run;
     }
-    std::string ticks(longest + 1, '`');
+    const QString ticks(longest + 1, u'`');
 
-    bool pad = !content.empty() &&
-               (content.front() == '`' || content.back() == '`' ||
-                (isAsciiSpace(content.front()) && isAsciiSpace(content.back()) &&
-                 content.find_first_not_of(" \t\n") != std::string_view::npos));
+    bool onlySpace = true;
+    for (const QChar c : content)
+        if (c != u' ' && c != u'\t' && c != u'\n') { onlySpace = false; break; }
+    const bool pad = !content.isEmpty() &&
+                     (content.front() == u'`' || content.back() == u'`' ||
+                      (isAsciiSpace(content.front()) && isAsciiSpace(content.back()) && !onlySpace));
 
     out += ticks;
-    if (pad) out.push_back(' ');
+    if (pad) out += u' ';
     out += content;
-    if (pad) out.push_back(' ');
+    if (pad) out += u' ';
     out += ticks;
 }
 
@@ -496,8 +512,8 @@ void appendCodeSpan(std::string& out, std::string_view content) {
 enum Attr { kStrike = 0, kBold = 1, kItalic = 2, kHref = 3, kCode = 4, kAttrCount = 5 };
 
 struct Segment {
-    size_t begin = 0;
-    size_t end = 0;
+    qsizetype begin = 0;
+    qsizetype end = 0;
     const Run* span = nullptr;   // nullptr → голый текст между кусками
 };
 
@@ -512,7 +528,7 @@ bool hasAttr(const Run* s, int a) {
         case kStrike: return s->strike();
         case kBold:   return s->bold();
         case kItalic: return s->italic();
-        case kHref:   return !s->href.empty();
+        case kHref:   return !s->href.isEmpty();
         case kCode:   return s->code();
         default:      return false;
     }
@@ -521,12 +537,12 @@ bool hasAttr(const Run* s, int a) {
 // Смещения спанов относительные — от начала текста блока, — поэтому сегменты
 // индексируют ровно этот текст, и пересчитывать ничего не нужно.
 std::vector<Segment> splitIntoSegments(const Piece& b) {
-    const size_t textSize = b.text.size();
+    const qsizetype textSize = b.text.size();
     std::vector<Segment> segs;
-    size_t pos = 0;
+    qsizetype pos = 0;
     for (const Run& s : b.runs) {
-        size_t so = static_cast<size_t>(s.start);
-        size_t se = static_cast<size_t>(s.end);
+        const qsizetype so = s.start;
+        const qsizetype se = s.end;
         if (so > textSize || se > textSize || se < so || so < pos) continue;
         if (so > pos) segs.push_back(Segment{pos, so, nullptr});
         segs.push_back(Segment{so, se, &s});
@@ -538,7 +554,7 @@ std::vector<Segment> splitIntoSegments(const Piece& b) {
 
 // Длина ряда соседей, у которых есть этот же признак.
 size_t runLength(const std::vector<Segment>& segs, size_t i, size_t hi, int attr) {
-    const std::string_view href = segs[i].span->href;
+    const QString& href = segs[i].span->href;
     size_t j = i;
     while (j < hi && hasAttr(segs[j].span, attr) &&
            (attr != kHref || segs[j].span->href == href))
@@ -546,7 +562,7 @@ size_t runLength(const std::vector<Segment>& segs, size_t i, size_t hi, int attr
     return j - i;
 }
 
-void emitSegments(TextSink& sink, const Piece& b, std::string_view text,
+void emitSegments(TextSink& sink, const Piece& b, QStringView text,
                   const std::vector<Segment>& segs, size_t lo, size_t hi, unsigned openMask,
                   std::vector<unsigned char>* marksBuf) {
     size_t i = lo;
@@ -557,7 +573,7 @@ void emitSegments(TextSink& sink, const Piece& b, std::string_view text,
         // этапа 16: общий путь текста писал `\\` вместо `\` и `,` вместо
         // `\,`.
         if (segs[i].span != nullptr && segs[i].span->math()) {
-            sink.out.append(text, segs[i].begin, segs[i].end - segs[i].begin);
+            sink.out += text.mid(segs[i].begin, segs[i].end - segs[i].begin);
             sink.bol = false;
             ++i;
             continue;
@@ -566,9 +582,9 @@ void emitSegments(TextSink& sink, const Piece& b, std::string_view text,
         // Строчный комментарий: внутренность буквальна, скобки — структура.
         // Канонические крайние пробелы, как у блочного.
         if (segs[i].span != nullptr && segs[i].span->comment()) {
-            sink.out += "<!-- ";
-            sink.out.append(text, segs[i].begin, segs[i].end - segs[i].begin);
-            sink.out += " -->";
+            sink.out += QLatin1String("<!-- ");
+            sink.out += text.mid(segs[i].begin, segs[i].end - segs[i].begin);
+            sink.out += QLatin1String(" -->");
             sink.bol = false;
             ++i;
             continue;
@@ -580,25 +596,24 @@ void emitSegments(TextSink& sink, const Piece& b, std::string_view text,
         if (segs[i].span != nullptr && segs[i].span->image()) {
             const Run& img = *segs[i].span;
             if (marksBuf != nullptr)
-                for (size_t k = segs[i].begin; k < segs[i].end; ++k)
-                    (*marksBuf)[k] |= kMarkInLink;
-            sink.out += "![";
+                for (qsizetype k = segs[i].begin; k < segs[i].end; ++k)
+                    (*marksBuf)[size_t(k)] |= kMarkInLink;
+            sink.out += QLatin1String("![");
             sink.bol = false;
             appendEscaped(sink, text, segs[i].begin, segs[i].end);
-            sink.out += "](";
+            sink.out += QLatin1String("](");
             appendHref(sink.out, img.href);
-            const std::string_view imgTitle = img.title;
-            if (!imgTitle.empty()) {
+            if (!img.title.isEmpty()) {
                 // Кавычку и перевод строки разбор в title не пускает; обратная
                 // косая экранируется, чтобы не съела закрывающую кавычку.
-                sink.out += " \"";
-                for (char tc : imgTitle) {
-                    if (tc == '\\') sink.out.push_back('\\');
-                    sink.out.push_back(tc);
+                sink.out += QLatin1String(" \"");
+                for (const QChar tc : img.title) {
+                    if (tc == u'\\') sink.out += u'\\';
+                    sink.out += tc;
                 }
-                sink.out.push_back('"');
+                sink.out += u'"';
             }
-            sink.out.push_back(')');
+            sink.out += u')';
             ++i;
             continue;
         }
@@ -619,18 +634,18 @@ void emitSegments(TextSink& sink, const Piece& b, std::string_view text,
             continue;
         }
 
-        const std::string_view href = segs[i].span->href;
-        size_t j = i + best;
+        const QString& href = segs[i].span->href;
+        const size_t j = i + best;
 
-        size_t gb = segs[i].begin;
-        size_t ge = segs[j - 1].end;
+        const qsizetype gb = segs[i].begin;
+        const qsizetype ge = segs[j - 1].end;
 
         // Содержимое встроенного кода буквально: ни экранирования, ни вложенной
         // разметки. Длина ограничителя подбирается так, чтобы он не встретился
         // внутри, а пробелы-подкладки нужны, когда содержимое само начинается
         // или кончается кавычкой.
         if (attr == kCode) {
-            appendCodeSpan(sink.out, text.substr(gb, ge - gb));
+            appendCodeSpan(sink.out, text.mid(gb, ge - gb));
             sink.bol = false;
             i = j;
             continue;
@@ -639,11 +654,11 @@ void emitSegments(TextSink& sink, const Piece& b, std::string_view text,
         // Адрес выводится дословно, без экранирования: подчёркивания и тильды
         // внутри URL экранировать нельзя, иначе ссылка развалится.
         if (attr == kHref && openMask == 0 && j == i + 1) {
-            const LinkShape shape = linkShape(text.substr(gb, ge - gb), href);
+            const LinkShape shape = linkShape(text.mid(gb, ge - gb), href);
             if (shape != LinkShape::Inline) {
-                if (shape == LinkShape::Angle) sink.out.push_back('<');
-                sink.out.append(text, gb, ge - gb);
-                if (shape == LinkShape::Angle) sink.out.push_back('>');
+                if (shape == LinkShape::Angle) sink.out += u'<';
+                sink.out += text.mid(gb, ge - gb);
+                if (shape == LinkShape::Angle) sink.out += u'>';
                 sink.bol = false;
                 i = j;
                 continue;
@@ -656,19 +671,19 @@ void emitSegments(TextSink& sink, const Piece& b, std::string_view text,
         // помечается целиком.
         if (marksBuf != nullptr && ge > gb) {
             if (attr == kHref) {
-                for (size_t k = gb; k < ge; ++k) (*marksBuf)[k] |= kMarkInLink;
+                for (qsizetype k = gb; k < ge; ++k) (*marksBuf)[size_t(k)] |= kMarkInLink;
             } else {
-                (*marksBuf)[gb] |= kMarkDelimEdge;
-                (*marksBuf)[ge - 1] |= kMarkDelimEdge;
+                (*marksBuf)[size_t(gb)] |= kMarkDelimEdge;
+                (*marksBuf)[size_t(ge - 1)] |= kMarkDelimEdge;
             }
         }
 
-        const char* italic = italicDelim(text, gb, ge);
+        const QLatin1String italic = italicDelim(text, gb, ge);
         switch (attr) {
-            case kStrike: sink.out += "~~"; break;
-            case kBold:   sink.out += "**"; break;
+            case kStrike: sink.out += QLatin1String("~~"); break;
+            case kBold:   sink.out += QLatin1String("**"); break;
             case kItalic: sink.out += italic; break;
-            case kHref:   sink.out.push_back('['); break;
+            case kHref:   sink.out += u'['; break;
             default: break;
         }
         sink.bol = false;
@@ -676,13 +691,13 @@ void emitSegments(TextSink& sink, const Piece& b, std::string_view text,
         emitSegments(sink, b, text, segs, i, j, openMask | (1u << attr), marksBuf);
 
         switch (attr) {
-            case kStrike: sink.out += "~~"; break;
-            case kBold:   sink.out += "**"; break;
+            case kStrike: sink.out += QLatin1String("~~"); break;
+            case kBold:   sink.out += QLatin1String("**"); break;
             case kItalic: sink.out += italic; break;
             case kHref:
-                sink.out += "](";
+                sink.out += QLatin1String("](");
                 appendHref(sink.out, href);
-                sink.out.push_back(')');
+                sink.out += u')';
                 break;
             default: break;
         }
@@ -691,12 +706,12 @@ void emitSegments(TextSink& sink, const Piece& b, std::string_view text,
 }
 
 void appendInlineText(TextSink& sink, const Piece& b) {
-    const std::string_view text = b.text;
+    const QStringView text = b.text;
     std::vector<Segment> segs = splitIntoSegments(b);
 
     // Пометки зависят от расстановки ограничителей, а она — от текста. Поэтому
     // первый проход только собирает пометки, а выводит уже второй.
-    std::vector<unsigned char> marks(text.size(), 0);
+    std::vector<unsigned char> marks(size_t(text.size()), 0);
     TextSink probe;
     probe.contIndent = sink.contIndent;
     probe.bol = sink.bol;
@@ -711,22 +726,22 @@ void appendInlineText(TextSink& sink, const Piece& b) {
 // Забор должен быть длиннее самого длинного прогона того же символа в строках
 // содержимого, иначе содержимое закроет блок само. Обратные кавычки в
 // info-строке для них запрещены — тогда забор из тильд.
-std::string fenceFor(std::string_view code, std::string_view info) {
-    char ch = (info.find('`') != std::string_view::npos) ? '~' : '`';
-    size_t longest = 0;
-    size_t run = 0;
+QString fenceFor(QStringView code, QStringView info) {
+    const QChar ch = info.contains(u'`') ? u'~' : u'`';
+    qsizetype longest = 0;
+    qsizetype run = 0;
     bool atBol = true;
-    for (char c : code) {
+    for (const QChar c : code) {
         if (c == ch && atBol) {
             ++run;
             if (run > longest) longest = run;
             continue;
         }
         run = 0;
-        atBol = (c == '\n');
+        atBol = (c == u'\n');
     }
-    size_t n = longest >= 3 ? longest + 1 : 3;
-    return std::string(n, ch);
+    const qsizetype n = longest >= 3 ? longest + 1 : 3;
+    return QString(n, ch);
 }
 
 void validate([[maybe_unused]] const Piece& b) {
@@ -743,35 +758,31 @@ void validate([[maybe_unused]] const Piece& b) {
             b.level == -1) &&
            "этому роду уровень не положен");
     assert((b.kind == Kind::ListItem || !b.checked) && "отметка осмысленна только у задачи");
-    assert((b.kind == Kind::Code || b.info.empty()) && "info осмыслена только у блока кода");
+    assert((b.kind == Kind::Code || b.info.isEmpty()) && "info осмыслена только у блока кода");
     assert(b.level >= -1 && "уровень мельче, чем вне списка");
-    assert((b.kind != Kind::Html || b.text.find("-->") == std::string::npos) &&
+    assert((b.kind != Kind::Html || !b.text.contains(QLatin1String("-->"))) &&
            "внутренность комментария не может содержать -->");
     assert((b.kind != Kind::Html || b.runs.empty()) &&
            "внутри комментария разметки не бывает");
     for ([[maybe_unused]] const Run& s : b.runs) {
-        assert((!s.image() || !s.href.empty()) && "у картинки обязан быть путь");
+        assert((!s.image() || !s.href.isEmpty()) && "у картинки обязан быть путь");
         assert((!s.comment() ||
-                (s.flags == InlineComment && s.href.empty())) &&
+                (s.flags == InlineComment && s.href.isEmpty())) &&
                "строчный комментарий не сочетается с другой разметкой");
-        assert((!s.math() || (s.flags == InlineMath && s.href.empty())) &&
+        assert((!s.math() || (s.flags == InlineMath && s.href.isEmpty())) &&
                "формула не сочетается с другой разметкой");
-        assert((s.title.empty() || s.image()) && "title осмыслен только у картинки");
+        assert((s.title.isEmpty() || s.image()) && "title осмыслен только у картинки");
         assert((!s.image() ||
                 (s.flags & (InlineBold | InlineItalic | InlineStrike | InlineCode)) == 0) &&
                "картинка не сочетается с другой разметкой");
     }
 }
 
-std::string markerFor(const Piece& b, int ordinal) {
+QString markerFor(const Piece& b, int ordinal) {
     switch (b.marker) {
-        case Marker::Bullet:  return "- ";
-        case Marker::Task:    return b.checked ? "- [x] " : "- [ ] ";
-        case Marker::Ordered: {
-            char buf[24];
-            std::snprintf(buf, sizeof(buf), "%d. ", ordinal);
-            return buf;
-        }
+        case Marker::Bullet:  return QStringLiteral("- ");
+        case Marker::Task:    return b.checked ? QStringLiteral("- [x] ") : QStringLiteral("- [ ] ");
+        case Marker::Ordered: return QString::number(ordinal) + QLatin1String(". ");
     }
     return {};
 }
@@ -779,17 +790,15 @@ std::string markerFor(const Piece& b, int ordinal) {
 // Ширина собственно маркера списка. Чекбокс "[ ] " маркером не является — это
 // уже содержимое элемента, и вложенный список отсчитывается не от него:
 // "- [ ] a" + "  - b" даёт вложенность, а не продолжение текста.
-size_t markerIndentWidth(const Piece& b, int ordinal) {
+qsizetype markerIndentWidth(const Piece& b, int ordinal) {
     if (b.marker != Marker::Ordered) return 2;
-    char buf[24];
-    std::snprintf(buf, sizeof(buf), "%d. ", ordinal);
-    return std::string(buf).size();
+    return QString::number(ordinal).size() + 2;
 }
 
 // Отступ блока, стоящего внутри пункта: колонка содержимого того пункта. Вне
 // списка отступа нет. Колонки считает сам обход по пунктам, здесь мы их только
 // читаем — и осторожно: у оторвавшегося блока колонки может и не оказаться.
-size_t indentInsideItem(const Piece& b, const std::vector<size_t>& contentCol) {
+qsizetype indentInsideItem(const Piece& b, const std::vector<qsizetype>& contentCol) {
     if (b.level < 0) return 0;
     const size_t at = static_cast<size_t>(b.level) + 1;
     return at < contentCol.size() ? contentCol[at] : 0;
@@ -798,21 +807,21 @@ size_t indentInsideItem(const Piece& b, const std::vector<size_t>& contentCol) {
 // Определение ссылки в дословном куске: "[метка]: /url". Если такое в документе
 // есть, то любая пара скобок в тексте может при разборе стать ссылкой, и её
 // приходится экранировать.
-bool looksLikeLinkDefinition(std::string_view raw) {
-    size_t i = 0;
+bool looksLikeLinkDefinition(QStringView raw) {
+    qsizetype i = 0;
     while (i < raw.size()) {
-        size_t e = raw.find('\n', i);
-        if (e == std::string_view::npos) e = raw.size();
-        size_t p = i;
-        size_t indent = 0;
-        while (p < e && raw[p] == ' ' && indent < 4) { ++p; ++indent; }
-        if (p < e && raw[p] == '[' && indent < 4) {
-            size_t q = p + 1;
-            while (q < e && raw[q] != ']') {
-                if (raw[q] == '\\') ++q;
+        qsizetype e = raw.indexOf(u'\n', i);
+        if (e < 0) e = raw.size();
+        qsizetype p = i;
+        int indent = 0;
+        while (p < e && raw.at(p) == u' ' && indent < 4) { ++p; ++indent; }
+        if (p < e && raw.at(p) == u'[' && indent < 4) {
+            qsizetype q = p + 1;
+            while (q < e && raw.at(q) != u']') {
+                if (raw.at(q) == u'\\') ++q;
                 ++q;
             }
-            if (q + 1 < e && raw[q] == ']' && raw[q + 1] == ':') return true;
+            if (q + 1 < e && raw.at(q) == u']' && raw.at(q + 1) == u':') return true;
         }
         i = e + 1;
     }
@@ -894,25 +903,25 @@ class Writer {
 public:
     Writer(const NoteHeader& header, bool hasLinkDefs, bool wantMap)
         : hasLinkDefs_(hasLinkDefs), wantMap_(wantMap) {
-        out_ += header.toBytes();
+        out_ += header.toText();
     }
 
     // Очередной ЛОГИЧЕСКИЙ блок заметки.
     void push(const Piece& b);
 
-    std::string finish(std::vector<BlockLines>* map);
+    QString finish(std::vector<BlockLines>* map);
 
 protected:
 
-    std::string out_;
-    // Где начался каждый блок — пока в БАЙТАХ; в номера строк переведём одним
+    QString out_;
+    // Где начался каждый блок — пока в ЗНАКАХ; в номера строк переведём одним
     // проходом в конце. Так карта не мешает потоку вывода: у него полдюжины
     // мест с `continue`, и считать строки по дороге значило бы не забыть ни
     // одного из них.
-    std::vector<size_t> startsAt_;
+    std::vector<qsizetype> startsAt_;
     // Колонка, с которой начинается содержимое на каждом уровне вложенности,
     // и счётчики нумерации.
-    std::vector<size_t> contentCol_{0};
+    std::vector<qsizetype> contentCol_{0};
     std::vector<int> ordinal_{0};
     std::vector<char> runAlive_{0};      // на этом уровне прогон ещё идёт
     std::vector<char> runOrdered_{0};    // и он нумерованный
@@ -924,12 +933,23 @@ protected:
     [[maybe_unused]] int prevLevel_ = -1;
 };
 
+// Строки текста [at, end) без разделителя, одна за другой.
+template <typename Fn>
+void forEachLine(QStringView body, Fn&& fn) {
+    for (qsizetype at = 0; at < body.size();) {
+        qsizetype end = body.indexOf(u'\n', at);
+        if (end < 0) end = body.size();
+        fn(body.mid(at, end - at), at, end < body.size());
+        at = end + 1;
+    }
+}
+
 void Writer::push(const Piece& b) {
     // Имена по-старому: тело переехало в метод целиком, и переименовывать в нём
     // каждую переменную значило бы сделать правку, в которой ошибку не увидеть.
-    std::string& out = out_;
-    std::vector<size_t>& startsAt = startsAt_;
-    std::vector<size_t>& contentCol = contentCol_;
+    QString& out = out_;
+    std::vector<qsizetype>& startsAt = startsAt_;
+    std::vector<qsizetype>& contentCol = contentCol_;
     std::vector<int>& ordinal = ordinal_;
     std::vector<char>& runAlive = runAlive_;
     std::vector<char>& runOrdered = runOrdered_;
@@ -940,7 +960,7 @@ void Writer::push(const Piece& b) {
     {
         if (wantMap_) startsAt.push_back(out.size());
         validate(b);
-        const std::string_view body = b.text;
+        const QStringView body = b.text;
 
         bool thisIsQuote = !b.raw && b.kind == Kind::Quote;
 
@@ -952,8 +972,8 @@ void Writer::push(const Piece& b) {
         // Текст в пустой строке инвариант запрещает, но если он там всё же
         // оказался — печатаем его абзацем. Текст свят; потерять его нельзя ни
         // при каких обстоятельствах.
-        if (!b.raw && b.kind == Kind::VSpace && body.empty()) {
-            out += "\n";
+        if (!b.raw && b.kind == Kind::VSpace && body.isEmpty()) {
+            out += u'\n';
             // Прогон списка пустая строка не обрывает: "- раз\n\n- два" — один
             // список, просто просторный. А вот цитату обрывает: две цитаты
             // через пустую строку — именно две, и разделять их строкой ">"
@@ -966,16 +986,16 @@ void Writer::push(const Piece& b) {
 
         // Абзацы одной цитаты разделяются строкой ">": иначе цитата развалилась
         // бы на две.
-        if (i > 0 && prevWasQuote && thisIsQuote) out += ">\n";
+        if (i > 0 && prevWasQuote && thisIsQuote) out += QLatin1String(">\n");
         // Последний рубеж инварианта: если между блоками нет VSpace, а без
         // пустой строки они слипнутся, — ставим её. Такое IR неправильно, но
         // испортить файл оно не должно.
         else if (i > 0 && wouldMerge(previous_, b))
-            out += "\n";
+            out += u'\n';
 
         if (b.raw) {
             out += body;
-            if (out.empty() || out.back() != '\n') out.push_back('\n');
+            if (out.isEmpty() || out.back() != u'\n') out += u'\n';
             std::fill(runAlive.begin(), runAlive.end(), 0);
             prevWasQuote = false;
             prevLevel = -1;
@@ -986,23 +1006,23 @@ void Writer::push(const Piece& b) {
 
         switch (b.kind) {
             case Kind::Heading: {
-                out.append(static_cast<size_t>(b.headingLevel), '#');
+                out += QString(b.headingLevel, u'#');
                 TextSink sink;
                 sink.bol = false;
                 sink.hasLinkDefs = hasLinkDefs;
                 appendInlineText(sink, b);
-                if (!sink.out.empty()) {
-                    out.push_back(' ');
+                if (!sink.out.isEmpty()) {
+                    out += u' ';
                     // Хвостовой прогон '#' Markdown считает закрывающей
                     // последовательностью и выбрасывает.
-                    size_t hashes = 0;
+                    qsizetype hashes = 0;
                     while (hashes < sink.out.size() &&
-                           sink.out[sink.out.size() - 1 - hashes] == '#')
+                           sink.out.at(sink.out.size() - 1 - hashes) == u'#')
                         ++hashes;
-                    if (hashes > 0) sink.out.insert(sink.out.size() - hashes, "\\");
+                    if (hashes > 0) sink.out.insert(sink.out.size() - hashes, u'\\');
                     out += sink.out;
                 }
-                out.push_back('\n');
+                out += u'\n';
                 break;
             }
 
@@ -1011,51 +1031,45 @@ void Writer::push(const Piece& b) {
                 // и забор, и каждая строка. Пустые строки внутри кода при этом
                 // остаются пустыми: отступ в них дал бы концевые пробелы, а
                 // блоку кода они не нужны.
-                const std::string pad(indentInsideItem(b, contentCol), ' ');
-                const std::string fence = fenceFor(body, b.info);
+                const QString pad(indentInsideItem(b, contentCol), u' ');
+                const QString fence = fenceFor(body, b.info);
                 out += pad;
                 out += fence;
                 out += b.info;
-                out.push_back('\n');
-                for (size_t at = 0; at < body.size();) {
-                    size_t end = body.find('\n', at);
-                    if (end == std::string_view::npos) end = body.size();
-                    if (end > at) {
+                out += u'\n';
+                forEachLine(body, [&](QStringView line, qsizetype, bool) {
+                    if (!line.isEmpty()) {
                         out += pad;
-                        out.append(body, at, end - at);
+                        out += line;
                     }
-                    out.push_back('\n');
-                    at = end + 1;
-                }
+                    out += u'\n';
+                });
                 out += pad;
                 out += fence;
-                out.push_back('\n');
+                out += u'\n';
                 break;
             }
 
             case Kind::Math: {
                 // ВЫКЛЮЧНАЯ ФОРМУЛА — ДОСЛОВНО. Текст блока и есть её исходник
                 // вместе с долларами: ни разметки, ни экранирования внутри нет,
-                // писать нечего, кроме самих байтов. Внутри пункта списка
+                // писать нечего, кроме самого текста. Внутри пункта списка
                 // отступ до колонки содержимого — как у блока кода.
                 // ОТСТУП ТОЛЬКО ПЕРВОЙ СТРОКЕ. Текст блока — дословный
                 // исходник, и у строк продолжения СВОИ ведущие пробелы уже
                 // внутри него: маркер пункта съел отступ только у первой.
                 // Приписав отступ каждой, я удваивал его на каждой записи —
                 // `  a &= b` становилось `    a &= b` (поймал набор корпуса).
-                const std::string pad(indentInsideItem(b, contentCol), ' ');
+                const QString pad(indentInsideItem(b, contentCol), u' ');
                 bool firstLine = true;
-                for (size_t at = 0; at < body.size();) {
-                    size_t end = body.find('\n', at);
-                    if (end == std::string_view::npos) end = body.size();
-                    if (end > at) {
+                forEachLine(body, [&](QStringView line, qsizetype, bool) {
+                    if (!line.isEmpty()) {
                         if (firstLine) out += pad;
-                        out.append(body, at, end - at);
+                        out += line;
                     }
                     firstLine = false;
-                    out.push_back('\n');
-                    at = end + 1;
-                }
+                    out += u'\n';
+                });
                 break;
             }
 
@@ -1064,31 +1078,31 @@ void Writer::push(const Piece& b) {
                 // Блок внутри пункта: отступ до колонки его содержимого. Ровно
                 // этим markdown и отличает второй абзац пункта от нового блока
                 // за списком — маркера у него нет, есть только отступ.
-                const size_t indent = indentInsideItem(b, contentCol);
-                out.append(indent, ' ');
+                const qsizetype indent = indentInsideItem(b, contentCol);
+                out += QString(indent, u' ');
                 TextSink sink;
-                sink.contIndent = std::string(indent, ' ');
+                sink.contIndent = QString(indent, u' ');
                 sink.hasLinkDefs = hasLinkDefs;
                 appendInlineText(sink, b);
                 out += sink.out;
-                out.push_back('\n');
+                out += u'\n';
                 break;
             }
 
             case Kind::Quote: {
-                const size_t indent = indentInsideItem(b, contentCol);
-                out.append(indent, ' ');
+                const qsizetype indent = indentInsideItem(b, contentCol);
+                out += QString(indent, u' ');
                 TextSink sink;
-                sink.contIndent = std::string(indent, ' ') + "> ";
+                sink.contIndent = QString(indent, u' ') + QLatin1String("> ");
                 sink.hasLinkDefs = hasLinkDefs;
                 appendInlineText(sink, b);
-                if (sink.out.empty()) {
-                    out.push_back('>');
+                if (sink.out.isEmpty()) {
+                    out += u'>';
                 } else {
-                    out += "> ";
+                    out += QLatin1String("> ");
                     out += sink.out;
                 }
-                out.push_back('\n');
+                out += u'\n';
                 break;
             }
 
@@ -1098,23 +1112,20 @@ void Writer::push(const Piece& b) {
                 // строки внутри — многострочный комментарий, он законен.
                 switch (b.html) {
                     case HtmlKind::Comment: {
-                        const size_t indent = indentInsideItem(b, contentCol);
-                        out.append(indent, ' ');
-                        if (body.empty()) {
-                            out += "<!-- -->\n";
+                        const qsizetype indent = indentInsideItem(b, contentCol);
+                        out += QString(indent, u' ');
+                        if (body.isEmpty()) {
+                            out += QLatin1String("<!-- -->\n");
                             break;
                         }
-                        out += "<!-- ";
+                        out += QLatin1String("<!-- ");
                         // Строки внутренности с отступом блока — как строки кода.
-                        for (size_t at = 0; at < body.size();) {
-                            size_t end = body.find('\n', at);
-                            if (end == std::string_view::npos) end = body.size();
-                            if (at > 0) out.append(indent, ' ');
-                            out.append(body, at, end - at);
-                            if (end < body.size()) out.push_back('\n');
-                            at = end + 1;
-                        }
-                        out += " -->\n";
+                        forEachLine(body, [&](QStringView line, qsizetype at, bool more) {
+                            if (at > 0) out += QString(indent, u' ');
+                            out += line;
+                            if (more) out += u'\n';
+                        });
+                        out += QLatin1String(" -->\n");
                         break;
                     }
                 }
@@ -1123,15 +1134,15 @@ void Writer::push(const Piece& b) {
             case Kind::Divider:
                 // Текст свят: разделителю он не положен, но если он там всё же
                 // оказался — печатаем абзацем, как это делает пустая строка.
-                if (!body.empty()) {
+                if (!body.isEmpty()) {
                     TextSink sink;
                     sink.hasLinkDefs = hasLinkDefs;
                     appendInlineText(sink, b);
                     out += sink.out;
-                    out.push_back('\n');
+                    out += u'\n';
                     break;
                 }
-                out += "___\n";
+                out += QLatin1String("___\n");
                 break;
 
             case Kind::ListItem: {
@@ -1154,26 +1165,26 @@ void Writer::push(const Piece& b) {
                 runOrdered[level] = ord ? 1 : 0;
                 for (size_t k = level + 1; k < ordinal.size(); ++k) runAlive[k] = 0;
 
-                std::string marker = markerFor(b, ordinal[level]);
-                size_t indent = contentCol[level];
-                size_t childIndent = indent + markerIndentWidth(b, ordinal[level]);
+                QString marker = markerFor(b, ordinal[level]);
+                const qsizetype indent = contentCol[level];
+                const qsizetype childIndent = indent + markerIndentWidth(b, ordinal[level]);
                 contentCol[level + 1] = childIndent;
 
-                out.append(indent, ' ');
-                if (body.empty()) {
+                out += QString(indent, u' ');
+                if (body.isEmpty()) {
                     // "- " с висящим пробелом Markdown бы съел, но глазами это
                     // читается как мусор.
-                    while (!marker.empty() && marker.back() == ' ') marker.pop_back();
+                    while (!marker.isEmpty() && marker.back() == u' ') marker.chop(1);
                     out += marker;
                 } else {
                     out += marker;
                     TextSink sink;
-                    sink.contIndent = std::string(childIndent, ' ');
+                    sink.contIndent = QString(childIndent, u' ');
                     sink.hasLinkDefs = hasLinkDefs;
                     appendInlineText(sink, b);
                     out += sink.out;
                 }
-                out.push_back('\n');
+                out += u'\n';
                 break;
             }
         }
@@ -1189,25 +1200,25 @@ void Writer::push(const Piece& b) {
     hasFirst_ = true;
 }
 
-std::string Writer::finish(std::vector<BlockLines>* map) {
-    std::string& out = out_;
-    const std::vector<size_t>& startsAt = startsAt_;
+QString Writer::finish(std::vector<BlockLines>* map) {
+    QString& out = out_;
+    const std::vector<qsizetype>& startsAt = startsAt_;
     if (map != nullptr) {
         map->assign(startsAt.size(), BlockLines{});
         // Смещения не убывают, поэтому строки считаются одним проходом по
         // выводу: идём по нему, отмечая границы блоков там, где они попались.
-        size_t at = 0;
+        qsizetype at = 0;
         int line = 0;
         std::vector<int> lineAt(startsAt.size() + 1, 0);
         for (size_t k = 0; k < startsAt.size(); ++k) {
             while (at < startsAt[k]) {
-                if (out[at] == '\n') ++line;
+                if (out.at(at) == u'\n') ++line;
                 ++at;
             }
             lineAt[k] = line;
         }
         while (at < out.size()) {
-            if (out[at] == '\n') ++line;
+            if (out.at(at) == u'\n') ++line;
             ++at;
         }
         lineAt[startsAt.size()] = line;
@@ -1219,31 +1230,22 @@ std::string Writer::finish(std::vector<BlockLines>* map) {
     return out;
 }
 
-
-
-
 }  // namespace
 
 // --- ОБХОД ЖИВОГО ДОКУМЕНТА ------------------------------------------------
 //
-// Логический блок заметки — не то же, что QTextBlock: литеральные куски (код,
-// дословное) лежат в документе ПОСТРОЧНО, по блоку на строку, и склеиваются
-// здесь обратно. Признак продолжения обязателен: без него разрезанный блок кода
-// из двух строк неотличим от двух блоков кода подряд, а это разный markdown.
+// Логический блок заметки — не то же, что QTextBlock: дословные куски лежат в
+// документе ПОСТРОЧНО, по блоку на строку, и склеиваются здесь обратно. Признак
+// продолжения обязателен: без него разрезанный кусок из двух строк неотличим от
+// двух кусков подряд, а это разный markdown. Блок кода — один QTextBlock.
 
 namespace {
 
-std::string toUtf8(const QString& text) {
-    const QByteArray utf8 = text.toUtf8();
-    return std::string(utf8.constData(), size_t(utf8.size()));
-}
-
 // Является ли этот текст ОДНОЙ формулой целиком. Спрашивается общий канон, а не
 // «начинается с доллара»: иначе вид и разбор разошлись бы на первом же краю.
-bool wholeMath(const std::string& text) {
+bool wholeMath(QStringView text) {
     const std::vector<MathSpan> found = scanMath(text);
-    return found.size() == 1 && found.front().start == 0 &&
-           size_t(found.front().end) == text.size();
+    return found.size() == 1 && found.front().start == 0 && found.front().end == text.size();
 }
 
 bool sameStyle(const Run& a, const Run& b) {
@@ -1258,8 +1260,8 @@ bool isPhantomBlock(const QTextDocument& doc, const QTextBlock& block) {
     return !format.hasProperty(KindProperty) && !format.hasProperty(RawProperty);
 }
 
-// Один QTextBlock: и текст, и куски с начертанием. Смещение копится в байтах —
-// куски идут подряд и покрывают блок целиком.
+// Один QTextBlock: и текст, и куски с начертанием. Смещение копится в единицах
+// UTF-16 — куски идут подряд и покрывают блок целиком.
 //
 // Разделитель строк превращается обратно в исходный знак ТОЛЬКО там, где стоит
 // пометка BreakSourceProperty. Без неё это чужой U+2028 из самого текста
@@ -1293,30 +1295,29 @@ void gatherLine(const QTextBlock& block, Piece& piece, bool withRuns) {
             // Формула отдаёт свой исходник целиком: разметки внутри неё нет, и
             // куском строки он не помечается — род блока (Kind::Math) говорит
             // всё сам.
-            piece.text += toUtf8(format.property(ObjectSourceProperty).toString());
+            piece.text += format.property(ObjectSourceProperty).toString();
             continue;
         }
         if (format.objectType() == ImageObject) {
             const int32_t at = int32_t(piece.text.size());
             const QString alt = format.property(ObjectAltProperty).toString();
             const bool wiki = !format.hasProperty(ObjectAltProperty);
-            piece.text += toUtf8(wiki ? format.property(ObjectSourceProperty).toString() : alt);
+            piece.text += wiki ? format.property(ObjectSourceProperty).toString() : alt;
             if (!withRuns || wiki) continue;
             Run run;
             run.start = at;
             run.end = int32_t(piece.text.size());
             run.flags = InlineImage;
-            run.href = toUtf8(format.anchorHref());
-            run.title = toUtf8(format.property(SpanTitleProperty).toString());
+            run.href = format.anchorHref();
+            run.title = format.property(SpanTitleProperty).toString();
             piece.runs.push_back(std::move(run));
             continue;
         }
 
-        const std::string bytes = toUtf8(text);
-        if (bytes.empty()) continue;
+        if (text.isEmpty()) continue;
 
         const int32_t offset = int32_t(piece.text.size());
-        piece.text += bytes;
+        piece.text += text;
         if (!withRuns) continue;
 
         const int style = format.intProperty(SpanStyleProperty);
@@ -1325,27 +1326,27 @@ void gatherLine(const QTextBlock& block, Piece& piece, bool withRuns) {
 
         Run run;
         run.start = offset;
-        run.end = offset + int32_t(bytes.size());
+        run.end = offset + int32_t(text.size());
         run.set(InlineBold, (style & SpanBold) != 0);
         run.set(InlineItalic, (style & SpanItalic) != 0);
         run.set(InlineStrike, (style & SpanStrike) != 0);
         run.set(InlineCode, (style & SpanCode) != 0);
-        run.href = toUtf8(href);
+        run.href = href;
 
         // Подпись картинки плоская по построению: правки могли домешать в
         // формат другие биты — здесь они гасятся, иначе вышло бы то, что файл
         // выразить не может. Картинка без пути — не картинка.
-        run.set(InlineImage, (style & SpanImage) != 0 && !run.href.empty());
+        run.set(InlineImage, (style & SpanImage) != 0 && !run.href.isEmpty());
         if (run.image()) {
             run.flags = InlineImage;
-            run.title = toUtf8(format.property(SpanTitleProperty).toString());
+            run.title = format.property(SpanTitleProperty).toString();
         }
 
         // Строчный комментарий плоский так же; внутренность с "-->" файл
         // выразить не может — такой кусок перестаёт быть комментарием и
         // становится видимым текстом (писатель его экранирует).
         run.set(InlineComment, (style & SpanComment) != 0 && !run.image() &&
-                                   bytes.find("-->") == std::string::npos);
+                                   !text.contains(QLatin1String("-->")));
         if (run.comment()) {
             run.flags = InlineComment;
             run.href.clear();
@@ -1384,7 +1385,7 @@ void gatherLine(const QTextBlock& block, Piece& piece, bool withRuns) {
 void settleMath(Piece& piece) {
     for (Run& run : piece.runs) {
         if (!run.math()) continue;
-        if (!wholeMath(std::string(piece.view(run)))) run.flags = 0;
+        if (!wholeMath(piece.view(run))) run.flags = 0;
     }
 }
 
@@ -1393,7 +1394,7 @@ void settleMath(Piece& piece) {
 // перестаёт быть комментарием и становится видимым текстом.
 void settleComment(Piece& piece) {
     if (piece.raw || piece.kind != Kind::Html) return;
-    if (piece.text.find("-->") != std::string::npos)
+    if (piece.text.contains(QLatin1String("-->")))
         piece.kind = Kind::Paragraph;
     else
         piece.runs.clear();
@@ -1436,7 +1437,7 @@ void walkPieces(const QTextDocument& doc, const std::function<bool(const Piece&)
         const bool raw = isRawBlock(block);
 
         if (isContinuationBlock(block) && open) {
-            piece.text.push_back('\n');
+            piece.text += u'\n';
             gatherLine(block, piece, false);
         } else {
             close();
@@ -1452,7 +1453,7 @@ void walkPieces(const QTextDocument& doc, const std::function<bool(const Piece&)
                 }
                 piece.level = levelOf(block);
                 if (piece.kind == Kind::Code)
-                    piece.info = toUtf8(format.stringProperty(InfoProperty));
+                    piece.info = format.stringProperty(InfoProperty);
             }
             // Разметку внутри блока кода не читаем: содержимое там буквальное.
             gatherLine(block, piece, !raw && piece.kind != Kind::Code);
@@ -1466,7 +1467,7 @@ void walkPieces(const QTextDocument& doc, const std::function<bool(const Piece&)
         // документа и положенные обратно, теряли бы этот перевод строки, и
         // пустая строка в конце блока кода исчезала бы при каждой операции.
         if (format.boolProperty(TrailingNewlineProperty)) {
-            piece.text.push_back('\n');
+            piece.text += u'\n';
             piece.trailingNewline = true;
         }
     }
@@ -1475,11 +1476,12 @@ void walkPieces(const QTextDocument& doc, const std::function<bool(const Piece&)
 
 namespace {
 
-// Единственное место, где живая заметка превращается в байты. Ходит прямо по
-// внутреннему QTextDocument — ни промежуточного представления, ни второй живой
-// модели.
-std::string writeInto(const QTextDocument& doc, const NoteHeader& header,
-                      std::vector<BlockLines>* map) {
+// Единственное место, где живая заметка превращается в текст файла. Ходит прямо
+// по внутреннему QTextDocument — ни промежуточного представления, ни второй
+// живой модели. Текст, а не байты: в байты он переводится один раз, на границе
+// файла (toMarkdown), а буферу обмена и разности байты не нужны вовсе.
+QString writeInto(const QTextDocument& doc, const NoteHeader& header,
+                  std::vector<BlockLines>* map) {
 
     // Есть ли в заметке ссылочные определения — от этого зависит экранирование
     // квадратных скобок. Спрашивается ДО записи, потому что ответ нужен уже на
@@ -1487,7 +1489,7 @@ std::string writeInto(const QTextDocument& doc, const NoteHeader& header,
     // строки можно: ответ тот же.
     bool hasLinkDefs = false;
     for (QTextBlock b = doc.begin(); b.isValid() && !hasLinkDefs; b = b.next())
-        if (isRawBlock(b) && looksLikeLinkDefinition(toUtf8(b.text()))) hasLinkDefs = true;
+        if (isRawBlock(b) && looksLikeLinkDefinition(b.text())) hasLinkDefs = true;
 
     Writer writer(header, hasLinkDefs, map != nullptr);
     walkPieces(doc, [&](const Piece& piece) {
@@ -1502,28 +1504,33 @@ std::string writeInto(const QTextDocument& doc, const NoteHeader& header,
 // Блоки, заметкой ещё не ставшие, — кусок в буфере обмена. Кладём их в
 // документ-однодневку и записываем тем же писателем: правил записи двух не
 // бывает, а собрать и обойти кусок выделения стоит микросекунды.
-std::string writePieces(const std::vector<Piece>& blocks, const NoteHeader& header,
-                        std::vector<BlockLines>* map) {
+QString writePieces(const std::vector<Piece>& blocks, const NoteHeader& header,
+                    std::vector<BlockLines>* map) {
     QTextDocument temp;
     buildDocument(blocks, temp);
     return writeInto(temp, header, map);
 }
 
-std::string ZDocument::toMarkdown() const {
+QString ZDocument::toMarkdownText() const {
     return writeInto(d_->text, d_->header, nullptr);
 }
 
+std::string ZDocument::toMarkdown() const {
+    // ГРАНИЦА ФАЙЛА: единственный перевод текста в байты на пути записи.
+    const QByteArray bytes = writeInto(d_->text, d_->header, nullptr).toUtf8();
+    return std::string(bytes.constData(), size_t(bytes.size()));
+}
+
 std::string ZDocument::bodyMarkdown() const {
-    return writeInto(d_->text, NoteHeader{}, nullptr);
+    const QByteArray bytes = writeInto(d_->text, NoteHeader{}, nullptr).toUtf8();
+    return std::string(bytes.constData(), size_t(bytes.size()));
 }
 
 std::vector<SourceLine> ZDocument::sourceLines() const {
     // Тело БЕЗ шапки: в ней живёт `modified`, она меняется при каждой записи, и
     // всякая разность начиналась бы с неё — всегда одной и той же строки.
     std::vector<BlockLines> map;
-    const std::string text = writeInto(d_->text, NoteHeader{}, &map);
-
-    const QString whole = QString::fromUtf8(text.data(), qsizetype(text.size()));
+    const QString whole = writeInto(d_->text, NoteHeader{}, &map);
     const QStringList lines = whole.split(QLatin1Char('\n'));
 
     std::vector<SourceLine> out;

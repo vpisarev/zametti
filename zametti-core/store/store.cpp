@@ -640,18 +640,18 @@ bool importTree(const ImportOptions& options, Report& report) {
         for (size_t at = 0; at < ir.size(); ++at) {
             const Piece& b = ir[at];
             const bool candidate = !b.raw && b.kind == Kind::Paragraph && b.runs.empty() &&
-                                   b.text.find("[[") != std::string::npos;
+                                   b.text.contains(QLatin1String("[["));
             if (!candidate) {
                 out.push_back(b);
                 continue;
             }
-            const QStringList lines = fromUtf8(b.text).split(QLatin1Char('\n'));
+            const QStringList lines = b.text.split(QLatin1Char('\n'));
             std::vector<Piece> pieces;
             QStringList pending;
             const auto flushPending = [&]() {
                 if (pending.isEmpty()) return;
                 Piece piece;
-                piece.text = toUtf8(pending.join(QLatin1Char('\n')));
+                piece.text = pending.join(QLatin1Char('\n'));
                 piece.level = b.level;
                 pieces.push_back(std::move(piece));
                 pending.clear();
@@ -673,11 +673,11 @@ bool importTree(const ImportOptions& options, Report& report) {
                 }
                 flushPending();
                 Piece image;
-                image.text = toUtf8(alt);
+                image.text = alt;
                 image.level = b.level;
                 Run span;
                 span.set(InlineImage, true);
-                span.href = toUtf8(width.isEmpty() ? name : name + QStringLiteral("#w=") + width);
+                span.href = width.isEmpty() ? name : name + QStringLiteral("#w=") + width;
                 span.start = 0;
                 span.end = int32_t(image.text.size());
                 image.runs.push_back(std::move(span));
@@ -715,7 +715,7 @@ bool importTree(const ImportOptions& options, Report& report) {
             Piece h;
             h.kind = Kind::Heading;
             h.headingLevel = 1;
-            h.text = toUtf8(e.title);
+            h.text = e.title;
             ir.push_back(std::move(h));
             meta.set("role", "folder");
         } else {
@@ -733,7 +733,7 @@ bool importTree(const ImportOptions& options, Report& report) {
             QString firstHeading;
             for (const Piece& b : ir) {
                 if (!b.raw && b.kind == Kind::VSpace) continue;
-                if (!b.raw && b.kind == Kind::Heading) firstHeading = fromUtf8(b.text).trimmed();
+                if (!b.raw && b.kind == Kind::Heading) firstHeading = b.text.trimmed();
                 break;
             }
             const QString title = e.displayTitle.trimmed();
@@ -741,7 +741,7 @@ bool importTree(const ImportOptions& options, Report& report) {
                 Piece heading;
                 heading.kind = Kind::Heading;
                 heading.headingLevel = 1;
-                heading.text = toUtf8(title);
+                heading.text = title;
                 std::vector<Piece> withTitle;
                 withTitle.push_back(std::move(heading));
                 if (!ir.empty()) {
@@ -761,13 +761,13 @@ bool importTree(const ImportOptions& options, Report& report) {
         adoptWikiAttachments(ir, noteDirRel);
         for (Piece& b : ir) {
             if (b.raw) {
-                if (b.text.find("[[") != std::string::npos) ++wikilinks;
+                if (b.text.contains(QLatin1String("[["))) ++wikilinks;
                 continue;
             }
-            if (b.text.find("[[") != std::string::npos) ++wikilinks;
+            if (b.text.contains(QLatin1String("[["))) ++wikilinks;
             for (Run& s : b.runs) {
-                if (s.href.empty()) continue;
-                QString href = fromUtf8(s.href);
+                if (s.href.isEmpty()) continue;
+                QString href = s.href;
                 // Фрагмент (#w=300) — часть нашего канона, не путь.
                 QString fragment;
                 const qsizetype hash = href.lastIndexOf(QLatin1Char('#'));
@@ -797,7 +797,7 @@ bool importTree(const ImportOptions& options, Report& report) {
                             QStringLiteral("вложение не читается: %1").arg(targetRel));
                         continue;
                     }
-                    s.href = toUtf8(name + fragment);
+                    s.href = name + fragment;
                 } else if (href.endsWith(QStringLiteral(".md"))) {
                     const QString joined = noteDirRel.isEmpty()
                                                ? href
@@ -809,7 +809,7 @@ bool importTree(const ImportOptions& options, Report& report) {
                                         .arg(href, e.rel));
                         continue;
                     }
-                    s.href = entries[found->second].id + ".md";
+                    s.href = QString::fromStdString(entries[found->second].id + ".md");
                 }
             }
         }
@@ -823,7 +823,7 @@ bool importTree(const ImportOptions& options, Report& report) {
         meta.set("created", toUtf8(isoUtc(e.created)));
         meta.set("modified", toUtf8(isoUtc(e.modified)));
 
-        body = writePieces(ir, meta);
+        body = toUtf8(writePieces(ir, meta));
 
         if (!options.dryRun) {
             // O_EXCL с целевым id; коллизия на диске невозможна (id уникальны

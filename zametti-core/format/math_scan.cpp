@@ -1,47 +1,66 @@
 #include "math_scan.h"
 
+#include <QChar>
+
 namespace zametti {
 namespace {
 
-bool isSpace(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
-bool isDigit(char c) { return c >= '0' && c <= '9'; }
+// Одна реализация над двумя видами текста: байты и QStringView. Правила ASCII,
+// и сравнения с char-литералами верны для обоих (QChar сравнивается с char).
+template <class View>
+bool isSpaceAt(const View& text, size_t i) {
+    const auto c = text[i];
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+}
+template <class View>
+bool isDigitAt(const View& text, size_t i) {
+    const auto c = text[i];
+    return c >= '0' && c <= '9';
+}
 
-// Сколько подряд идущих обратных косых стоит перед этим байтом. Нечётное число
-// означает, что сам байт экранирован: `\$` — литеральный доллар, а `\\$` —
+constexpr size_t kNone = static_cast<size_t>(-1);
+
+template <class View>
+size_t sizeOf(const View& text) { return static_cast<size_t>(text.size()); }
+
+// Сколько подряд идущих обратных косых стоит перед этим знаком. Нечётное число
+// означает, что сам знак экранирован: `\$` — литеральный доллар, а `\\$` —
 // экранированная косая и НАСТОЯЩИЙ доллар.
-size_t backslashesBefore(std::string_view text, size_t at) {
+template <class View>
+size_t backslashesBefore(const View& text, size_t at) {
     size_t count = 0;
     while (at > count && text[at - count - 1] == '\\') ++count;
     return count;
 }
 
-bool escaped(std::string_view text, size_t at) {
+template <class View>
+bool escaped(const View& text, size_t at) {
     return (backslashesBefore(text, at) % 2) == 1;
 }
 
-}  // namespace
-
-bool mathBordersOk(std::string_view text, size_t open, size_t close, bool display) {
+template <class View>
+bool mathBordersOkT(const View& text, size_t open, size_t close, bool display) {
     const size_t skip = display ? 2 : 1;
     if (close <= open + skip) return false;               // пустое тело
-    if (open + skip >= text.size()) return false;
+    if (open + skip >= sizeOf(text)) return false;
     if (display) return true;                              // у выключной правил нет
-    if (isSpace(text[open + 1])) return false;             // открывающий перед пробелом
-    if (isSpace(text[close - 1])) return false;            // закрывающий после пробела
-    if (close + 1 < text.size() && isDigit(text[close + 1])) return false;   // «цена $5 и $10»
+    if (isSpaceAt(text, open + 1)) return false;           // открывающий перед пробелом
+    if (isSpaceAt(text, close - 1)) return false;          // закрывающий после пробела
+    if (close + 1 < sizeOf(text) && isDigitAt(text, close + 1)) return false;   // «цена $5 и $10»
     return true;
 }
 
-std::vector<MathSpan> scanMath(std::string_view text) {
+template <class View>
+std::vector<MathSpan> scanMathT(const View& text) {
     std::vector<MathSpan> found;
     size_t i = 0;
-    while (i < text.size()) {
+    while (i < sizeOf(text)) {
         if (text[i] != '$' || escaped(text, i)) {
             ++i;
             continue;
         }
 
-        const bool display = i + 1 < text.size() && text[i + 1] == '$';
+        const bool display = i + 1 < sizeOf(text) && text[i + 1] == '$';
         const size_t open = i;
         const size_t bodyStart = open + (display ? 2 : 1);
 
@@ -49,15 +68,15 @@ std::vector<MathSpan> scanMath(std::string_view text) {
             // Выключная: ищем закрывающие `$$`, хоть через десять строк. Правил
             // про пробелы у неё нет — она и так стоит отдельно.
             size_t j = bodyStart;
-            size_t close = std::string_view::npos;
-            while (j + 1 < text.size()) {
+            size_t close = kNone;
+            while (j + 1 < sizeOf(text)) {
                 if (text[j] == '$' && text[j + 1] == '$' && !escaped(text, j)) {
                     close = j;
                     break;
                 }
                 ++j;
             }
-            if (close == std::string_view::npos || close == bodyStart) {
+            if (close == kNone || close == bodyStart) {
                 // Пары нет или тело пустое — это не формула, а просто доллары.
                 ++i;
                 continue;
@@ -69,19 +88,19 @@ std::vector<MathSpan> scanMath(std::string_view text) {
 
         // Инлайн. Открывающий доллар не должен стоять перед пробелом: «$ x$» —
         // не формула. Пустое тело («$$» уже разобрано выше) тоже не формула.
-        if (bodyStart >= text.size() || isSpace(text[bodyStart])) {
+        if (bodyStart >= sizeOf(text) || isSpaceAt(text, bodyStart)) {
             ++i;
             continue;
         }
 
         size_t j = bodyStart;
-        size_t close = std::string_view::npos;
-        while (j < text.size()) {
+        size_t close = kNone;
+        while (j < sizeOf(text)) {
             if (text[j] == '$' && !escaped(text, j)) {
                 // Закрывающий не после пробела и не перед цифрой. Второе — то
                 // самое правило про «цена $5 и $10»: без него всё, что между
                 // двумя ценами, оказалось бы математикой.
-                if (mathBordersOk(text, open, j, false)) {
+                if (mathBordersOkT(text, open, j, false)) {
                     close = j;
                     break;
                 }
@@ -94,12 +113,12 @@ std::vector<MathSpan> scanMath(std::string_view text) {
             // иначе одинокий доллар склеивал бы полдокумента в «формулу».
             if (text[j] == '\n') {
                 size_t k = j + 1;
-                while (k < text.size() && (text[k] == ' ' || text[k] == '\t')) ++k;
-                if (k < text.size() && text[k] == '\n') break;
+                while (k < sizeOf(text) && (text[k] == ' ' || text[k] == '\t')) ++k;
+                if (k < sizeOf(text) && text[k] == '\n') break;
             }
             ++j;
         }
-        if (close == std::string_view::npos) {
+        if (close == kNone) {
             ++i;
             continue;
         }
@@ -108,5 +127,16 @@ std::vector<MathSpan> scanMath(std::string_view text) {
     }
     return found;
 }
+
+}  // namespace
+
+bool mathBordersOk(std::string_view text, size_t open, size_t close, bool display) {
+    return mathBordersOkT(text, open, close, display);
+}
+bool mathBordersOk(QStringView text, size_t open, size_t close, bool display) {
+    return mathBordersOkT(text, open, close, display);
+}
+std::vector<MathSpan> scanMath(std::string_view text) { return scanMathT(text); }
+std::vector<MathSpan> scanMath(QStringView text) { return scanMathT(text); }
 
 }  // namespace zametti

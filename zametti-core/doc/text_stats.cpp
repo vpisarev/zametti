@@ -195,22 +195,22 @@ bool isImageBlock(const Piece& b) {
     if (b.raw || b.kind != Kind::Paragraph) return false;
 
     if (!b.runs.empty()) {
-        std::string_view href;
+        QStringView href;
         int32_t covered = 0;
         bool all = true;
         for (const Run& run : b.runs) {
-            if (!run.image() || run.href.empty()) { all = false; break; }
-            if (href.empty()) href = run.href;
+            if (!run.image() || run.href.isEmpty()) { all = false; break; }
+            if (href.isEmpty()) href = run.href;
             else if (href != run.href) { all = false; break; }
             covered += run.end - run.start;
         }
         if (all && covered == int32_t(b.text.size())) return true;
     }
 
-    std::string_view text = b.text;
-    while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
-    while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) text.remove_suffix(1);
-    return text.size() > 5 && text.starts_with("![[") && text.ends_with("]]");
+    QStringView text = b.text;
+    while (!text.isEmpty() && (text.front() == u' ' || text.front() == u'\t')) text = text.mid(1);
+    while (!text.isEmpty() && (text.back() == u' ' || text.back() == u'\t')) text.chop(1);
+    return text.size() > 5 && text.startsWith(QLatin1String("![[")) && text.endsWith(QLatin1String("]]"));
 }
 
 // Во что блок IR превратится в документе: сколько блоков он там займёт и
@@ -226,27 +226,20 @@ struct BlockShape {
     int breaks = 0;
 };
 
-BlockShape shapeOf(std::string_view text, bool literal, bool code = false) {
+BlockShape shapeOf(QStringView text, bool literal, bool code = false) {
     int newlines = 0;
     int others = 0;
-    for (size_t i = 0; i < text.size(); ++i) {
-        const unsigned char c = static_cast<unsigned char>(text[i]);
-        if (c == '\n') ++newlines;
-        else if (c == '\r') ++others;
-        else if (c == 0xE2 && i + 2 < text.size() &&
-                 static_cast<unsigned char>(text[i + 1]) == 0x80 &&
-                 (static_cast<unsigned char>(text[i + 2]) == 0xA9 ||
-                  static_cast<unsigned char>(text[i + 2]) == 0xA8)) {
-            // U+2029 сборщик переводит в мягкий перенос сам, а U+2028 уже им и
-            // является и доезжает до документа как есть. Заметки из Apple Notes
-            // им кишат: без этой ветки счёт по IR разошёлся с документом на трёх
-            // заметках корпуса из 274.
-            ++others;
-            i += 2;
-        }
+    for (const QChar c : text) {
+        if (c == u'\n') ++newlines;
+        else if (c == u'\r') ++others;
+        // U+2029 сборщик переводит в мягкий перенос сам, а U+2028 уже им и
+        // является и доезжает до документа как есть. Заметки из Apple Notes
+        // им кишат: без этой ветки счёт по IR разошёлся с документом на трёх
+        // заметках корпуса из 274.
+        else if (c == QChar::ParagraphSeparator || c == QChar::LineSeparator) ++others;
     }
     if (!literal) return {1, newlines + others};
-    const bool trailing = !text.empty() && text.back() == '\n';
+    const bool trailing = text.endsWith(u'\n');
     // Блок кода — один QTextBlock, его строки — мягкие переносы внутри; один
     // завершающий перевод строки сборщик снимает (см. document_builder.cpp).
     if (code) return {1, newlines - int(trailing) + others};

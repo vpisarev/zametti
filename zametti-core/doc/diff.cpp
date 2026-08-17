@@ -106,15 +106,14 @@ Text textOf(const std::vector<Piece>& blocks) {
     // меняется на каждой записи и изменением заметки не является.
     Text out;
     std::vector<BlockLines> map;
-    const std::string text = writePieces(blocks, NoteHeader{}, &map);
+    const QString text = writePieces(blocks, NoteHeader{}, &map);
     out.blocks.reserve(int(map.size()));
     for (const BlockLines& b : map) out.blocks.append(b);
 
     // split по '\n' даёт лишнюю пустую строку в конце (текст кончается
     // переводом строки) — её убираем: строкой файла она не является, а в дифф
     // лезла бы «изменением» при любой правке хвоста.
-    out.lines = QString::fromUtf8(text.c_str(), qsizetype(text.size()))
-                    .split(QLatin1Char('\n'));
+    out.lines = text.split(QLatin1Char('\n'));
     if (!out.lines.isEmpty() && out.lines.last().isEmpty()) out.lines.removeLast();
     return out;
 }
