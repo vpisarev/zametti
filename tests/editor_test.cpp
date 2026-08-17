@@ -437,6 +437,39 @@ void checkCaretSurvivesRestart() {
     check(at.top() >= height * 0.15 && at.bottom() <= height * 0.85,
           "каретка после перезапуска стоит около середины окна, а не у кромки");
 
+    // КАК ПРИ ЗАПУСКЕ ПРОГРАММЫ: заметка открывается ДО show(), окно потом ещё
+    // меняет размер (restoreGeometry, сплиттер). Каретка обязана оказаться около
+    // середины ОКОНЧАТЕЛЬНОГО окна — не считаться от размера окна-заготовки и не
+    // уезжать к кромке, когда окно вырастет (владелец: «то слишком высоко, то в
+    // самом низу»).
+    {
+        // Заметка подлиннее, каретка в середине: у конца короткой заметки
+        // каретку не поставить к середине окна — документ кончается раньше.
+        QString longBody = QStringLiteral("# Длинная\n\n");
+        for (int i = 1; i <= 300; ++i) longBody += QStringLiteral("Строка номер %1.\n\n").arg(i);
+        const QString longPath = writeNote("место-запуск.md", longBody);
+        zametti::NoteEditor probe;
+        probe.openFile(longPath);
+        const int middle = probe.document()->findBlockByNumber(probe.document()->blockCount() / 2).position();
+
+        zametti::NoteEditor startup;
+        startup.rememberCaretFor(longPath, middle, middle);
+        startup.openFile(longPath);      // окна ещё нет
+        startup.resize(600, 300);
+        startup.show();
+        QTest::qWait(20);
+        startup.resize(900, 700);        // окно приняло свой размер уже после
+        QTest::qWait(60);
+        checkEqual(QString::number(middle), QString::number(startup.caretPosition()),
+                   "при запуске каретка встала туда же");
+        const int h = startup.viewport()->height();
+        const QRect at = startup.cursorRect();
+        check(startup.viewport()->rect().intersects(at), "при запуске каретка видна");
+        check(at.top() >= h * 0.25 && at.bottom() <= h * 0.55,
+              "при запуске каретка стоит около середины окончательного окна: " +
+                  std::to_string(at.top()) + " из " + std::to_string(h));
+    }
+
     // Заметка, открытая БЕЗ памяти, начинается с начала: чужое место не
     // достаётся никому.
     zametti::NoteEditor fresh;
