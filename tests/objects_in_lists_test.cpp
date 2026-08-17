@@ -169,6 +169,9 @@ void checkRoundTripAndLevels() {
         ZT_TRUE("объект глубже — правее",
                 editor.document()->findBlockByNumber(deep).blockFormat().leftMargin() >
                     editor.document()->findBlockByNumber(shallow).blockFormat().leftMargin());
+    // Снимок — артефакт приёмки: маркеры рядом с полосами объектов, отступы по
+    // глубине — на него смотрит владелец.
+    editor.grab().toImage().save(QDir(g_dir).filePath(QStringLiteral("объекты-в-пунктах.png")));
     const int code = editor.codeBlock();
     ZT_TRUE("блок кода найден", code >= 0);
     if (code >= 0)
