@@ -130,21 +130,37 @@ bool sharesStyle(const Run& a, const Run& b) {
            (!a.href.isEmpty() && a.href == b.href);
 }
 
-// Куски блока после правки смещений: схлопнувшиеся выбрасываем.
+// Куски блока после правки смещений: схлопнувшиеся выбрасываем. КРОМЕ КАРТИНКИ:
+// её содержимое — сам снимок, а не подпись, и пустая подпись — законный вид
+// (решение владельца: «к некоторым картинкам подпись не имеет смысла»). Кусок
+// нулевой длины с картинкой — это картинка, а не схлопнувшаяся разметка.
 void compactRuns(Piece& block) {
     std::vector<Run>& runs = block.runs;
     runs.erase(std::remove_if(runs.begin(), runs.end(),
-                              [](const Run& run) { return run.end <= run.start; }),
+                              [](const Run& run) { return run.end <= run.start && !run.image(); }),
                runs.end());
+}
+
+// Есть ли у блока содержимое, которое файл потеряет, если блок выбросить.
+// Пустой текст — ещё не пустота: картинка без подписи стоит на нулевой длине.
+bool hasContent(const Piece& block) {
+    if (!block.text.isEmpty()) return true;
+    for (const Run& run : block.runs)
+        if (run.image()) return true;
+    return false;
 }
 
 // Текст блока укоротили — куски, вылезшие за его конец, выбрасываем. Вывод от
 // этого не меняется: писатель такие куски и так пропускал, а инвариант «кусок
-// внутри текста своего блока» остаётся целым.
+// внутри текста своего блока» остаётся целым. Картинка за концом текста
+// прижимается к его концу: место подписи ушло, снимок — нет.
 void dropRunsPastText(Piece& block) {
     const int32_t size = int32_t(block.text.size());
-    for (Run& run : block.runs)
-        if (run.end > size) run.end = run.start;
+    for (Run& run : block.runs) {
+        if (run.end <= size) continue;
+        run.start = std::min(run.start, size);
+        run.end = run.image() ? size : run.start;
+    }
     compactRuns(block);
 }
 
@@ -444,7 +460,7 @@ std::vector<Piece> withoutEmptyNested(std::vector<Piece> doc) {
     out.reserve(doc.size());
     for (size_t i = 0; i < doc.size(); ++i) {
         const Piece& block = doc[i];
-        const bool drop = !block.raw && block.text.isEmpty() && block.level > 0 &&
+        const bool drop = !block.raw && !hasContent(block) && block.level > 0 &&
                           block.kind == Kind::ListItem && block.marker != Marker::Task;
         if (!drop) {
             out.push_back(std::move(doc[i]));
@@ -485,6 +501,12 @@ void appendSplitOnBlankLines(std::vector<Piece>& out, Piece block) {
         out.push_back(std::move(block));
         return;
     }
+    // Абзац без текста, но с картинкой без подписи, — не пустая строка: он
+    // уходит как есть (пустой абзац без картинки ниже становится VSpace).
+    if (block.text.isEmpty() && hasContent(block)) {
+        out.push_back(std::move(block));
+        return;
+    }
 
     const qsizetype textSize = block.text.size();
     qsizetype at = 0;
@@ -500,7 +522,11 @@ void appendSplitOnBlankLines(std::vector<Piece>& out, Piece block) {
         for (const Run& span : block.runs) {
             const qsizetype from = qMax<qsizetype>(span.start, pieceFrom);
             const qsizetype stop = qMin<qsizetype>(span.end, to);
-            if (stop <= from) continue;
+            // Картинка без подписи — кусок нулевой длины; он свой, если стоит
+            // внутри куска или на его краю.
+            const bool bareImage = span.image() && span.end == span.start &&
+                                   span.start >= pieceFrom && span.start <= to;
+            if (stop <= from && !bareImage) continue;
             Run moved = span;
             moved.start = int32_t(from - pieceFrom);
             moved.end = int32_t(stop - pieceFrom);
@@ -556,7 +582,7 @@ std::vector<Piece> documentForFile(std::vector<Piece> doc) {
     // последнего блока стыка тоже нет.
     while (!out.empty() && !out.back().raw &&
            (out.back().kind == Kind::VSpace ||
-            (out.back().kind == Kind::Paragraph && out.back().text.isEmpty())))
+            (out.back().kind == Kind::Paragraph && !hasContent(out.back()))))
         out.pop_back();
     if (!out.empty()) {
         Piece& last = out.back();
@@ -570,7 +596,7 @@ std::vector<Piece> documentForFile(std::vector<Piece> doc) {
             if (last.text == QString(kNbsp)) last.text.clear();
             dropRunsPastText(last);
         }
-        if (!out.back().raw && out.back().kind == Kind::Paragraph && out.back().text.isEmpty())
+        if (!out.back().raw && out.back().kind == Kind::Paragraph && !hasContent(out.back()))
             out.pop_back();
     }
 
