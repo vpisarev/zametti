@@ -193,6 +193,14 @@ ZamettiDocument (см. `zametti_qtextdocument_design.md`); история — ж
   пункта списка, а место каретки стало переживать перезапуск — и там же
   §4 со списком найденных, но не починенных дефектов). Начатый перевод картинок на
   `QTextObjectInterface` лежит на ветке `objects-wip` — см. §7 отчёта 5.
+- `zametti-refactor2-report.md` — первая сессия refactor2: §4.1 (md4c, период
+  256), стенд `zametti-bench big` и таблица O(N) на «Карамазовых», показ места
+  одним правилом, код одним QTextBlock, UTF-16 в памяти, причина давнего
+  красного FuzzOps (§6: `toMarkdown()` ≠ файл — заготовка починки на ветке
+  `refactor2-tomarkdown-wip`), §9 — план на обсуждение.
+  `zametti-refactor2-design.md` — аудит состояния, классы (ZStorage,
+  NoteHistory, OpenNote, ImageCache…), матрицы взаимодействия, порядок
+  переезда и вопросы владельцу — до кода.
 - `zametti-editing-mvc.md` — кто за что отвечает при правке: вид сообщает о
   вводе, controller распознаёт намерение, ZDocument выполняет изменение.
 - `zametti-editing-basis.md` — план базиса: markdown как единственный обменный
