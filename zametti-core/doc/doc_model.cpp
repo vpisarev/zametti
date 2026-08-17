@@ -126,25 +126,20 @@ bool isRawBlock(const QTextBlock& block) {
     return block.blockFormat().boolProperty(RawProperty);
 }
 
-bool isContinuationBlock(const QTextBlock& block) {
-    return block.blockFormat().boolProperty(ContinuationProperty);
-}
-
 bool isVSpaceBlock(const QTextBlock& block) {
     return !isRawBlock(block) && kindOf(block) == Kind::VSpace;
 }
 
 bool blocksWouldMerge(const QTextBlock& previous, const QTextBlock& next) {
     if (!previous.isValid() || !next.isValid()) return false;
-    // Законченный ли комментарий предыдущий кусок: дословное лежит построчно,
-    // поэтому начало ищем назад по строкам-продолжениям, а конец берём у самого
-    // блока.
+    // Законченный ли комментарий предыдущий кусок. Дословное лежит одним
+    // блоком; текст берём таким, каким он лежит в файле (у объекта-таблицы в
+    // тексте блока стоит U+FFFC, а исходник — в свойстве).
     bool closedComment = false;
     if (isRawBlock(previous)) {
-        QTextBlock head = previous;
-        while (isContinuationBlock(head) && head.previous().isValid()) head = head.previous();
-        closedComment = head.text().startsWith(QStringLiteral("<!--")) &&
-                        previous.text().endsWith(QStringLiteral("-->"));
+        const QString source = sourceTextOf(previous);
+        closedComment = source.startsWith(QStringLiteral("<!--")) &&
+                        source.endsWith(QStringLiteral("-->"));
     }
     return wouldMerge(kindOf(previous), isRawBlock(previous), closedComment, kindOf(next),
                       isRawBlock(next), levelOf(next));
@@ -170,36 +165,6 @@ int levelOf(const QTextBlock& block) {
 
 bool isListBlock(const QTextBlock& block) {
     return !isRawBlock(block) && isList(kindOf(block));
-}
-
-int irIndexOfBlock(const QTextBlock& block) {
-    // Считаем начала логических блоков до этого места включительно, а номер —
-    // на единицу меньше. Начинать с нуля и считать только предыдущие нельзя:
-    // строка-продолжение получила бы номер следующего блока IR, а не своего.
-    int index = isContinuationBlock(block) ? -1 : 0;
-    for (QTextBlock prev = block.previous(); prev.isValid(); prev = prev.previous())
-        if (!isContinuationBlock(prev)) ++index;
-    return index;
-}
-
-QVector<int> irIndexOfEveryBlock(const QTextDocument& doc) {
-    QVector<int> out;
-    int index = -1;
-    for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {
-        if (!isContinuationBlock(block)) ++index;
-        out.append(index);
-    }
-    return out;
-}
-
-QTextBlock blockForIrIndex(const QTextDocument& doc, int index) {
-    int seen = 0;
-    for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {
-        if (isContinuationBlock(block)) continue;
-        if (seen == index) return block;
-        ++seen;
-    }
-    return QTextBlock();
 }
 
 MarkerStyle markerOf(const QTextBlock& block) {

@@ -80,27 +80,6 @@ QString toQt(const QString& text, std::vector<Break>& breaks) {
     return s;
 }
 
-// Литеральный текст по строкам. Один завершающий перевод строки снимается —
-// он не начинает новую строку, а завершает последнюю. Пустой текст даёт одну
-// пустую строку: блок в документе есть всегда, пустых блоков не бывает.
-std::vector<QStringView> splitLiteralLines(const QString& text) {
-    QStringView body = text;
-    if (body.endsWith(u'\n')) body.chop(1);
-
-    std::vector<QStringView> lines;
-    qsizetype start = 0;
-    for (;;) {
-        const qsizetype end = body.indexOf(u'\n', start);
-        if (end < 0) {
-            lines.push_back(body.mid(start));
-            break;
-        }
-        lines.push_back(body.mid(start, end - start));
-        start = end + 1;
-    }
-    return lines;
-}
-
 // Помечает подменённые разделители. Пометка ложится на один знак, поэтому он
 // становится отдельным куском блока — читателю только это и нужно.
 void markBreaks(QTextDocument& doc, int textStart, const std::vector<Break>& breaks) {
@@ -264,10 +243,7 @@ qreal blockTopMargin(Kind kind, bool raw, bool previousIsVSpace, bool first,
 }
 
 qreal blockTopMarginPx(Kind kind, bool raw, bool previousIsVSpace, bool first,
-                       bool continuation, qreal lineUnit, const ZDocStyle& style) {
-    // Строки одного литерального блока стоят вплотную: воздух и отбивка есть
-    // только у первой.
-    if (continuation) return 0.0;
+                       qreal lineUnit, const ZDocStyle& style) {
     qreal margin = blockTopMargin(kind, raw, previousIsVSpace, first, style) * lineUnit;
     // Сверху у плашки только воздух под скругление: полоска с языком и кнопкой
     // висит снизу, в нижнем поле последней строки блока.
@@ -456,19 +432,17 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     QTextCharFormat charFmt;
     setFontStep(charFmt, 0);
 
-    // Дословный кусок режется построчно, по QTextBlock на строку (пока);
-    // блок кода лежит одним блоком, строки внутри разделяет U+2028 — тот же
+    // ЛИТЕРАЛЬНЫЙ БЛОК — ОДИН QTextBlock: и блок кода, и дословный кусок
+    // (решение владельца, сессия refactor2: «1 блок markdown == 1 QTextBlock»).
+    // Строки внутри разделяет U+2028 с пометкой BreakSourceProperty — тот же
     // разделитель, каким живёт мягкий перенос в абзаце, — и читатель вернёт из
-    // него перевод строки по пометке BreakSourceProperty.
+    // него перевод строки. Замер (zametti-bench big loop type-mid): набор внутри
+    // блока кода на 100 / 620 / 3000 строк — 2.5 / 2.7 / 8.3 мс одним блоком
+    // против 7.2 / 13 / 85 мс построчно: построчный путь пересобирал логический
+    // блок целиком на каждое нажатие. Дословный кусок лежал построчно дольше
+    // (ContinuationProperty), пока таблица не стала объектом (сессия 5): теперь
+    // раскрытая таблица — такой же один блок, и флип у неё 1 блок ↔ 1 блок.
     const bool literal = raw || b.kind == Kind::Code;
-    // БЛОК КОДА — ОДИН QTextBlock (решение владельца, сессия refactor2, шаг к
-    // модели «1 блок markdown == 1 QTextBlock»). Строки внутри разделяет
-    // U+2028 с пометкой BreakSourceProperty, как мягкий перенос в абзаце.
-    // Замер (zametti-bench big loop type-mid): набор внутри блока кода на 100 /
-    // 620 / 3000 строк — 2.5 / 2.7 / 8.3 мс одним блоком против 7.2 / 13 / 85 мс
-    // построчно: построчный путь пересобирал логический блок целиком на каждое
-    // нажатие. Дословный кусок (raw) пока остаётся построчным.
-    const bool wholeCode = !raw && b.kind == Kind::Code;
     const QString& source = b.text;
     // Один завершающий перевод строки снимаем: иначе внизу висела бы лишняя
     // пустая строка. По виду документа его не восстановить — пустой блок
@@ -598,7 +572,7 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     const bool code = !raw && b.kind == Kind::Code;
     // Первому блоку документа отбивка не нужна (над ним поле страницы), а вот
     // воздух над плашкой нужен и ему — это и делает blockTopMarginPx.
-    blockFmt.setTopMargin(blockTopMarginPx(b.kind, raw, prevVSpace, first, false, ctx.lineUnit, style));
+    blockFmt.setTopMargin(blockTopMarginPx(b.kind, raw, prevVSpace, first, ctx.lineUnit, style));
     blockFmt.setBottomMargin(0);
 
 
@@ -621,63 +595,42 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
                                          : style.lineHeightFactor());
     applyLineHeight(blockFmt, lineFactor, ctx.basePoint * fontStepFactor(lineStep), ctx.base, style);
 
-    // Один QTextBlock у обычного блока и по одному на строку у литерального.
-    // Все, кроме первого, помечены продолжением: без этого разрезанный блок
-    // кода из двух строк не отличить от двух блоков кода подряд.
-    const std::vector<QStringView> lines =
-        (literal && !wholeCode) ? splitLiteralLines(source) : std::vector<QStringView>{};
-    const size_t count = (literal && !wholeCode) ? lines.size() : 1;
+    // ОДИН QTextBlock на любой блок заметки. Завершающий перевод строки у
+    // литерального держится признаком, а не байтом (TrailingNewlineProperty):
+    // пустой блок кода и блок из одной пустой строки выглядят одинаково.
+    if (trailingNewline) blockFmt.setProperty(TrailingNewlineProperty, true);
+    // Полоска блока кода — это НИЖНЕЕ ПОЛЕ блока. Qt между соседями берёт из
+    // двух полей максимум, и меньше полоски зазор стать не может: следующий
+    // блок в неё не въедет.
+    if (code) blockFmt.setBottomMargin(ctx.plate.strip);
 
-    for (size_t line = 0; line < count; ++line) {
-        QTextBlockFormat lineFmt = blockFmt;
-        if (line > 0) {
-            lineFmt.setProperty(ContinuationProperty, true);
-            lineFmt.setTopMargin(0);
-        }
-        if (line + 1 == count && trailingNewline)
-            lineFmt.setProperty(TrailingNewlineProperty, true);
-        // Полоска блока кода — это НИЖНЕЕ ПОЛЕ последней его строки. Qt между
-        // соседями берёт из двух полей максимум, и меньше полоски зазор стать
-        // не может: следующий блок в неё не въедет.
-        if (code && line + 1 == count) lineFmt.setBottomMargin(ctx.plate.strip);
-        // Язык стоит на каждой строке, хотя читатель берёт его с первой:
-        // иначе удаление первой строки роняло бы язык всего блока. Лишних
-        // форматов это не плодит — значение у всех строк одно, а
-        // QTextFormatCollection их объединяет.
-
-        // У литерального блока каждая строка своя; у обычного текст и его
-        // разметка переносов посчитаны один раз выше, и трогать их нельзя.
-        if (literal) {
-            breaks.clear();
-            if (wholeCode) {
-                // Тот же завершающий перевод строки, что снимает
-                // splitLiteralLines: он не начинает новую строку, а завершает
-                // последнюю, и держится признаком, а не байтом.
-                QStringView body = source;
-                if (body.endsWith(u'\n')) body.chop(1);
-                text = toQt(body.toString(), breaks);
-            } else {
-                text = toQt(lines[line].toString(), breaks);
-            }
-        }
-
-        if (reuse) {
-            cursor.setBlockFormat(lineFmt);
-            cursor.setBlockCharFormat(charFmt);
-            reuse = false;
-        } else {
-            cursor.insertBlock(lineFmt, charFmt);
-        }
-
-        const int textStart = cursor.position();
-        cursor.insertText(text, charFmt);
-        markBreaks(target, textStart, breaks);
-        const bool object = imageObject || formulaObject;
-        if (!literal && !object && !b.runs.empty())
-            applySpans(target, textStart, b, lineStep, style);
-        if (!object)
-            enlargeFallbackGlyphs(target, textStart, text, lineStep, ctx.primaryFont, style);
+    // У литерального блока текст — исходник целиком, строки через U+2028; у
+    // обычного текст и его разметка переносов посчитаны выше, и трогать их
+    // нельзя. Тот же завершающий перевод строки, что помечен признаком, из
+    // текста снимается: он не начинает новую строку, а завершает последнюю.
+    if (literal) {
+        breaks.clear();
+        QStringView body = source;
+        if (body.endsWith(u'\n')) body.chop(1);
+        text = toQt(body.toString(), breaks);
     }
+
+    if (reuse) {
+        cursor.setBlockFormat(blockFmt);
+        cursor.setBlockCharFormat(charFmt);
+        reuse = false;
+    } else {
+        cursor.insertBlock(blockFmt, charFmt);
+    }
+
+    const int textStart = cursor.position();
+    cursor.insertText(text, charFmt);
+    markBreaks(target, textStart, breaks);
+    const bool object = imageObject || formulaObject;
+    if (!literal && !object && !b.runs.empty())
+        applySpans(target, textStart, b, lineStep, style);
+    if (!object)
+        enlargeFallbackGlyphs(target, textStart, text, lineStep, ctx.primaryFont, style);
     prevVSpace = vspace;
 }
 
@@ -914,19 +867,10 @@ bool patchDocument(const std::vector<Piece>& built, const std::vector<Piece>& no
 
     // Границы выреза в самом документе. Один проход: искать блок IR по номеру —
     // это проход по документу, а их нужно два, начало и конец.
-    QTextBlock startBlock;
-    QTextBlock endBlock;
-    {
-        int index = -1;
-        for (QTextBlock block = target.begin(); block.isValid(); block = block.next()) {
-            if (!isContinuationBlock(block)) {
-                ++index;
-                if (index == head) startBlock = block;
-                if (index > oldLast) break;
-            }
-            if (index == oldLast) endBlock = block;   // последняя строка блока IR
-        }
-    }
+    // Блок заметки == QTextBlock (дословные куски и код — одним блоком), и
+    // номер блока IR — это номер блока документа.
+    const QTextBlock startBlock = target.findBlockByNumber(head);
+    const QTextBlock endBlock = target.findBlockByNumber(oldLast);
     // Не нашлись — значит now описывает не этот документ, и резать наугад
     // нельзя. Пусть собирает целиком.
     if (!startBlock.isValid() || !endBlock.isValid()) return false;

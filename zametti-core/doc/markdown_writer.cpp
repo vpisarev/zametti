@@ -1447,28 +1447,25 @@ void walkPieces(const QTextDocument& doc, const std::function<bool(const Piece&)
         const QTextBlockFormat format = block.blockFormat();
         const bool raw = isRawBlock(block);
 
-        if (isContinuationBlock(block) && open) {
-            piece.text += u'\n';
-            gatherLine(block, piece, false);
-        } else {
-            close();
-            open = true;
-            piece.raw = raw;
-            if (!raw) {
-                piece.kind = kindOf(block);
-                if (piece.kind == Kind::Heading) piece.headingLevel = format.headingLevel();
-                if (isList(piece.kind)) {
-                    const MarkerStyle style = markerOf(block);
-                    piece.marker = style.marker;
-                    piece.checked = style.checked;
-                }
-                piece.level = levelOf(block);
-                if (piece.kind == Kind::Code)
-                    piece.info = format.stringProperty(InfoProperty);
+        // Блок документа == блок заметки: дословные куски и код лежат одним
+        // QTextBlock, их строки восстанавливает gatherLine из U+2028.
+        close();
+        open = true;
+        piece.raw = raw;
+        if (!raw) {
+            piece.kind = kindOf(block);
+            if (piece.kind == Kind::Heading) piece.headingLevel = format.headingLevel();
+            if (isList(piece.kind)) {
+                const MarkerStyle style = markerOf(block);
+                piece.marker = style.marker;
+                piece.checked = style.checked;
             }
-            // Разметку внутри блока кода не читаем: содержимое там буквальное.
-            gatherLine(block, piece, !raw && piece.kind != Kind::Code);
+            piece.level = levelOf(block);
+            if (piece.kind == Kind::Code)
+                piece.info = format.stringProperty(InfoProperty);
         }
+        // Разметку внутри блока кода не читаем: содержимое там буквальное.
+        gatherLine(block, piece, !raw && piece.kind != Kind::Code);
 
         // Признак стоит на последней строке блока — там, где перевод и был.
         //
@@ -1496,11 +1493,12 @@ QString writeInto(const QTextDocument& doc, const NoteHeader& header,
 
     // Есть ли в заметке ссылочные определения — от этого зависит экранирование
     // квадратных скобок. Спрашивается ДО записи, потому что ответ нужен уже на
-    // первом блоке. Проверка идёт построчно, поэтому смотреть на несклеенные
-    // строки можно: ответ тот же.
+    // первом блоке. Дословный кусок лежит одним блоком, его строки — U+2028;
+    // спрашиваем текст таким, каким он лежит в файле (sourceTextOf), иначе
+    // вторая и дальнейшие строки куска не увиделись бы вовсе.
     bool hasLinkDefs = false;
     for (QTextBlock b = doc.begin(); b.isValid() && !hasLinkDefs; b = b.next())
-        if (isRawBlock(b) && looksLikeLinkDefinition(b.text())) hasLinkDefs = true;
+        if (isRawBlock(b) && looksLikeLinkDefinition(sourceTextOf(b))) hasLinkDefs = true;
 
     Writer writer(header, hasLinkDefs, map != nullptr);
     walkPieces(doc, [&](const Piece& piece) {

@@ -8,34 +8,6 @@
 
 
 namespace zametti {
-namespace {
-
-// Первая строка дословного куска, считая от этой.
-QTextBlock literalStart(QTextBlock block) {
-    while (isContinuationBlock(block) && block.previous().isValid())
-        block = block.previous();
-    return block;
-}
-
-// Последняя строка того же дословного куска.
-QTextBlock literalEnd(QTextBlock block) {
-    while (block.next().isValid() && isContinuationBlock(block.next()))
-        block = block.next();
-    return block;
-}
-
-// Текст дословного куска целиком, строками через перевод.
-QString literalText(const QTextBlock& first, const QTextBlock& last) {
-    QString out;
-    for (QTextBlock block = first; block.isValid(); block = block.next()) {
-        out += block.text();
-        out += QLatin1Char('\n');
-        if (block == last) break;
-    }
-    return out;
-}
-
-}  // namespace
 
 BlockObject objectOf(const QTextBlock& block) {
     if (!block.isValid()) return {};
@@ -61,12 +33,10 @@ BlockObject objectOf(const QTextBlock& block) {
     // Таблица — дословный кусок, который выглядит таблицей. Дословным его
     // сделал разбор (md4c назвал таблицей то, что IR выразить не может), а
     // здесь мы только узнаём его в лицо: первая строка с палкой, вторая —
-    // разделитель.
+    // разделитель. Дословный кусок лежит одним блоком — и таблица тоже.
     if (!isRawBlock(block)) return {};
-    const QTextBlock first = literalStart(block);
-    const QTextBlock last = literalEnd(first);
-    if (!looksLikeTable(literalText(first, last))) return {};
-    return {ObjectKind::Table, first.blockNumber(), last.blockNumber()};
+    if (!looksLikeTable(sourceTextOf(block))) return {};
+    return {ObjectKind::Table, block.blockNumber(), block.blockNumber()};
 }
 
 BlockObject objectAt(const QTextDocument& doc, int blockNumber) {

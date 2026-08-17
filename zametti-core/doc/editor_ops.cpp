@@ -76,7 +76,6 @@ int subtreeEnd(const QTextDocument& doc, int number);
 BlockRange around(int number) { return {number - 1, number + 1}; }
 
 void normalise(QTextDocument& doc, BlockRange range) {
-    syncLiteralBlocks(doc, range);
     // Заведённые пустые строки сдвигают номера блоков: диапазон для списков
     // раздвигаем ровно на столько же, иначе последний пункт остался бы
     // непроверенным — и осиротевший вложенный пункт так и уехал бы в файл.
@@ -339,38 +338,8 @@ std::vector<Piece> piecesOfPart(QTextDocument& doc, int from, int to, const QTex
     return piecesOfBlocks(temp, 0, temp.blockCount() - 1);
 }
 
-// Сколько QTextBlock займёт этот логический блок: литеральный лежит построчно,
-// остальные — одним блоком. Правило то же, что у сборщика (splitLiteralLines):
-// один завершающий перевод строки не начинает новой строки.
-int docBlocksOf(const Piece& piece) {
-    // Блок кода — один QTextBlock; построчно лежат только дословные куски.
-    if (!piece.raw) return 1;
-    QStringView body = piece.text;
-    if (body.endsWith(u'\n')) body.chop(1);
-    int lines = 1;
-    for (const QChar c : body)
-        if (c == '\n') ++lines;
-    return lines;
-}
-
-int docBlocksOf(const std::vector<Piece>& pieces) {
-    int count = 0;
-    for (const Piece& piece : pieces) count += docBlocksOf(piece);
-    return count;
-}
-
-// Границы ЛОГИЧЕСКОГО блока по номеру любой его строки.
-int wholeBlockStart(const QTextDocument& doc, int number) {
-    while (number > 0 && isContinuationBlock(doc.findBlockByNumber(number))) --number;
-    return number;
-}
-
-int wholeBlockEnd(const QTextDocument& doc, int number) {
-    while (number + 1 < doc.blockCount() &&
-           isContinuationBlock(doc.findBlockByNumber(number + 1)))
-        ++number;
-    return number;
-}
+// Блок заметки == QTextBlock: и код, и дословный кусок лежат одним блоком.
+int docBlocksOf(const std::vector<Piece>& pieces) { return int(pieces.size()); }
 
 // Блок кода из готовых байтов. Завершающий перевод строки лежит и в тексте, и
 // в признаке — таков канон логического блока (см. document_pieces.h).
@@ -484,10 +453,8 @@ static CodeBlockEdit toggleCodeBlock(QTextDocument& doc, const QTextCursor& curs
     const int start = qMin(cursor.selectionStart(), cursor.selectionEnd());
     const int end = qMax(cursor.selectionStart(), cursor.selectionEnd());
 
-    // Границы выделения — целыми ЛОГИЧЕСКИМИ блоками: в документе литеральный
-    // блок лежит построчно, и половина блока кода блоком не является.
-    int firstBlock = wholeBlockStart(doc, doc.findBlock(start).blockNumber());
-    int lastBlock = wholeBlockEnd(doc, doc.findBlock(end).blockNumber());
+    int firstBlock = doc.findBlock(start).blockNumber();
+    int lastBlock = doc.findBlock(end).blockNumber();
 
     // Крайние пустые строки выделения — не код: клавиатурное выделение легко
     // цепляет соседний VSpace (Shift+Down с пустой строки или до неё), и без
@@ -496,7 +463,7 @@ static CodeBlockEdit toggleCodeBlock(QTextDocument& doc, const QTextCursor& curs
     while (firstBlock <= lastBlock && isVSpaceBlock(doc.findBlockByNumber(firstBlock)))
         ++firstBlock;
     while (lastBlock >= firstBlock && isVSpaceBlock(doc.findBlockByNumber(lastBlock)))
-        lastBlock = wholeBlockStart(doc, lastBlock - 1);
+        lastBlock = lastBlock - 1;
     if (firstBlock > lastBlock) return {};
 
     const QTextBlock headBlock = doc.findBlockByNumber(firstBlock);
@@ -1565,6 +1532,13 @@ bool isCodeBlock(const QTextBlock& block) {
     return block.isValid() && !isRawBlock(block) && kindOf(block) == Kind::Code;
 }
 
+// Литеральный блок — код ИЛИ дословный кусок: у обоих строки — отрезки одного
+// блока (сессия 5 refactor2: дословное догнало код), и слой строк — Enter,
+// Tab, Shift+Tab — общий. Забор и язык остаются делом кода: у дословного их нет.
+bool isLiteralBlock(const QTextBlock& block) {
+    return block.isValid() && (isRawBlock(block) || kindOf(block) == Kind::Code);
+}
+
 struct CodeLine {
     int start = 0;   // позиция первого знака строки в документе
     int end = 0;     // позиция за последним знаком (там разделитель или конец блока)
@@ -1632,7 +1606,7 @@ QVector<CodeLine> touchedCodeLines(const QTextDocument& doc, const QTextCursor& 
     const int from = qMin(cursor.anchor(), cursor.position());
     const int to = qMax(cursor.anchor(), cursor.position());
     const QTextBlock block = doc.findBlock(from);
-    if (!isCodeBlock(block)) return lines;
+    if (!isLiteralBlock(block)) return lines;
     const int blockEnd = block.position() + block.length() - 1;
     const int last = qMin(to, blockEnd);
     for (int at = lineStartAt(doc, from);;) {
@@ -2029,13 +2003,7 @@ bool fenceLanguage(const QString& text, QString& language) {
     return !language.contains(QLatin1Char('`'));
 }
 
-// Последняя ли это строка своего литерального блока.
-bool lastLineOfLiteral(const QTextBlock& block) {
-    const QTextBlock next = block.next();
-    return !next.isValid() || !isContinuationBlock(next);
-}
-
-// Enter в блоке кода: новая строка внутри того же блока — разделитель с
+// Enter в литеральном блоке (код, дословный кусок): новая строка внутри того же блока — разделитель с
 // пометкой перевода строки, а за ним отступ предыдущей строки (в коде он почти
 // всегда тот же, и набирать его заново на каждой строке мучительно). Всё одной
 // скобкой: Enter с отступом отменяется одним Ctrl+Z.
@@ -2199,31 +2167,17 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
         return true;
     }
 
-    // Блок кода: Enter — новая СТРОКА того же блока, а не новый блок.
-    if (isCodeBlock(block)) return insertCodeLine(doc, cursor, block);
+    // Литеральный блок (код, дословный кусок): Enter — новая СТРОКА того же
+    // блока, а не новый блок.
+    if (isLiteralBlock(block)) return insertCodeLine(doc, cursor, block);
 
-    const bool literal = isRawBlock(block) || kindOf(block) == Kind::Code;
     // Разрез в начале пункта переставляет половинки ролями: текст целиком
     // уезжает в НИЖНЮЮ, а пустым остаётся верхний блок (подробнее — ниже, там
     // где курсор возвращается наверх). Формат готовится с оглядкой на это.
     const bool atListStart = isListBlock(block) && cursor.positionInBlock() == 0;
     QTextBlockFormat next = format;
 
-    const bool wasLast = literal && lastLineOfLiteral(block);
-    if (literal) {
-        // Строка литерального блока: новая строка того же блока, а не новый
-        // блок кода. Признак завершающего перевода переезжает на неё — она
-        // теперь последняя.
-        //
-        // И ставится, даже если у прежней его не было: без него текст блока
-        // кончался бы одним переводом строки, а такой текст при сборке даёт
-        // одну строку, и только что заведённая пустая строка исчезала бы на
-        // глазах.
-        next.setProperty(ContinuationProperty, true);
-        if (wasLast) next.setProperty(TrailingNewlineProperty, true);
-        else next.clearProperty(TrailingNewlineProperty);
-    } else {
-        next.clearProperty(ContinuationProperty);
+    {
         next.clearProperty(TrailingNewlineProperty);
         // Новый пункт всегда невыполненный: отмечать за человека нечего.
         // В начале пункта новый — это ВЕРХНИЙ блок, а нижнему достаётся весь
@@ -2267,21 +2221,6 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
         }
     }
 
-    // Отступ предыдущей строки — в коде он почти всегда тот же, и набирать его
-    // заново на каждой строке мучительно. Всё внутри одного edit block: Enter с
-    // отступом отменяется одним Ctrl+Z.
-    QString indent;
-    if (literal) {
-        const QString line = block.text();
-        int i = 0;
-        while (i < line.size() && (line.at(i) == QLatin1Char(' ') ||
-                                   line.at(i) == QLatin1Char('\t')))
-            ++i;
-        // Отступ берём только до курсора: если он левее отступа, копировать
-        // нечего.
-        indent = line.left(qMin(i, cursor.positionInBlock()));
-    }
-
     // Enter в начале пункта заводит пустой пункт НАД текущим, и курсор остаётся
     // в нём. Это одно решение сразу для двух задач.
     //
@@ -2299,7 +2238,7 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
     // Enter в начале заголовка отбивает его сверху пустой строкой: заголовок
     // уезжает вниз целиком, а над ним встаёт пустая строка. Курсор остаётся с
     // заголовком — человек двигал именно его.
-    const bool atHeadingStart = !literal && kindOf(block) == Kind::Heading &&
+    const bool atHeadingStart = kindOf(block) == Kind::Heading &&
                                 cursor.positionInBlock() == 0;
 
     cursor.beginEditBlock();
@@ -2307,19 +2246,11 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
     // требует, поставит нормализующий проход — правило записано там одно на все
     // операции, и второй его копии здесь быть не должно.
     cursor.insertBlock(next, block.charFormat());
-    if (!indent.isEmpty()) cursor.insertText(indent, block.charFormat());
 
     // Номера блоков считаем после правки, а не до. При выделении из нескольких
     // блоков разрез его же и съедает, и номера съезжают: взятые заранее
     // указывали бы мимо, и нормализация проходила бы не по тому месту.
     const int landed = cursor.blockNumber();
-    if (literal && format.boolProperty(TrailingNewlineProperty) && landed > 0) {
-        QTextBlockFormat head = format;
-        head.clearProperty(TrailingNewlineProperty);
-        QTextCursor headCursor(&doc);
-        headCursor.setPosition(doc.findBlockByNumber(landed - 1).position());
-        headCursor.setBlockFormat(head);
-    }
     // Верхняя половина пункта пуста — это и есть только что заведённый пункт,
     // и выполненным ему быть не с чего. Отмечено было то, что уехало вниз.
     if (atListStart && landed > 0 && isTaskBlock(block)) {
@@ -2374,7 +2305,7 @@ static bool unwrapListItemAtCursor(QTextDocument& doc, QTextCursor& cursor) {
                           levelOf(previous) == levelOf(block) &&
                           isOrderedBlock(previous) == isOrderedBlock(block) &&
                           isTaskBlock(previous) == isTaskBlock(block);
-    if (sameList && !isContinuationBlock(block)) {
+    if (sameList) {
         const int join = previous.position() + previous.length() - 1;
         QTextCursor edit(&doc);
         edit.beginEditBlock();
@@ -2979,16 +2910,6 @@ void syncLists(QTextDocument& doc, BlockRange range) {
     cursor.endEditBlock();
 }
 
-// Может ли этот блок быть продолжением предыдущего.
-static bool mayContinue(const QTextBlock& block, const QTextBlock& prev) {
-    if (!prev.isValid()) return false;
-    if (isRawBlock(block) != isRawBlock(prev)) return false;
-    if (isRawBlock(block)) return true;
-    // Строки одного блока кода. Заголовок и абзац продолжений не имеют вовсе:
-    // они лежат в документе одним блоком.
-    return kindOf(block) == Kind::Code && kindOf(prev) == Kind::Code;
-}
-
 namespace {
 
 // Заводит пустую строку перед этим блоком. Курсоры, стоящие на его начале,
@@ -3081,7 +3002,6 @@ int syncGaps(QTextDocument& doc, BlockRange range) {
         for (; i <= last && i < doc.blockCount(); ++i) {
             const QTextBlock block = doc.findBlockByNumber(i);
             // Строки одного литерального блока стоят вплотную по своей природе.
-            if (isContinuationBlock(block)) continue;
             if (!blocksWouldMerge(block.previous(), block)) continue;
             insertVSpaceBefore(doc, i);
             ++added;
@@ -3104,7 +3024,7 @@ int syncGaps(QTextDocument& doc, BlockRange range) {
             // заново значило бы стирать резерв на каждой операции.
             const qreal want = blockTopMarginPx(kindOf(block), isRawBlock(block),
                                                 isVSpaceBlock(block.previous()), i == 0,
-                                                isContinuationBlock(block), lineUnit, style);
+                                                lineUnit, style);
             QTextBlockFormat format = block.blockFormat();
             // Не трогаем формат, если поле и так верное: любая запись помечает
             // документ изменённым и тянет за собой автосохранение.
@@ -3121,7 +3041,6 @@ int syncGaps(QTextDocument& doc, BlockRange range) {
 bool gapInvariantHolds(const QTextDocument& doc, QString* problem) {
     int number = 0;
     for (QTextBlock block = doc.begin(); block.isValid(); block = block.next(), ++number) {
-        if (isContinuationBlock(block)) continue;
         if (isVSpaceBlock(block) && !block.text().trimmed().isEmpty()) {
             // Пробельное содержимое допустимо: пока каретка на строке, пробелы
             // живут; уйдёт — их снимет tidyLeftLine.
@@ -3167,78 +3086,6 @@ QString tidyProblem(const QTextDocument& doc, const QTextCursor& caret) {
         }
     }
     return {};
-}
-
-int splitLiteralSoftBreaks(QTextDocument& doc, BlockRange range) {
-    int added = 0;
-    QTextCursor edit(&doc);
-    edit.beginEditBlock();
-    for (int i = qMax(0, range.first); i <= range.last && i < doc.blockCount(); ++i) {
-        const QTextBlock block = doc.findBlockByNumber(i);
-        if (!block.isValid()) break;
-        // Только ДОСЛОВНЫЕ куски лежат построчно; у блока кода перенос внутри —
-        // его законная строка.
-        if (!isRawBlock(block)) continue;
-        const int at = block.text().indexOf(QChar::LineSeparator);
-        if (at < 0) continue;
-
-        // Строка после переноса — блок-продолжение; верхнее поле ей пересчитает
-        // шов. Признак завершающего перевода строки уезжает на последнюю
-        // строку: он про конец блока, а не про конец первой его строки.
-        QTextBlockFormat head = block.blockFormat();
-        QTextBlockFormat tail = head;
-        tail.setProperty(ContinuationProperty, true);
-        tail.setTopMargin(0);
-        head.clearProperty(TrailingNewlineProperty);
-
-        QTextCursor fix(&doc);
-        fix.setPosition(block.position());
-        fix.setBlockFormat(head);
-
-        edit.setPosition(block.position() + at);
-        edit.setPosition(block.position() + at + 1, QTextCursor::KeepAnchor);
-        edit.removeSelectedText();
-        edit.insertBlock(tail, block.charFormat());
-        ++added;
-        ++range.last;
-        // Следующая строка стала блоком i+1 и попадёт под тот же цикл сама.
-    }
-    edit.endEditBlock();
-    return added;
-}
-
-void syncLiteralBlocks(QTextDocument& doc, BlockRange range) {
-    const int count = doc.blockCount();
-    const int first = qBound(0, range.first, count - 1);
-    const int last = qBound(first, range.last, count - 1);
-
-    QTextCursor cursor(&doc);
-    cursor.beginEditBlock();
-    QTextBlock block = doc.findBlockByNumber(first);
-    for (int i = first; i <= last && block.isValid(); ++i, block = block.next()) {
-        if (!isContinuationBlock(block)) continue;
-        if (mayContinue(block, block.previous())) continue;
-        QTextBlockFormat format = block.blockFormat();
-        format.clearProperty(ContinuationProperty);
-        setBlockFormat(cursor, block, format);
-    }
-    cursor.endEditBlock();
-}
-
-bool literalInvariantHolds(const QTextDocument& doc, QString* problem) {
-    int number = 0;
-    for (QTextBlock block = doc.begin(); block.isValid(); block = block.next(), ++number) {
-        if (!isContinuationBlock(block)) continue;
-        if (mayContinue(block, block.previous())) continue;
-        if (problem != nullptr) {
-            *problem = number == 0
-                           ? QStringLiteral("блок 0 помечен продолжением, а продолжать нечего")
-                           : QStringLiteral("блок %1: продолжение при несовместимом предыдущем")
-                                 .arg(number);
-        }
-        return false;
-    }
-    return true;
 }
 
 bool listInvariantHolds(const QTextDocument& doc, QString* problem) {
@@ -3764,8 +3611,6 @@ bool ZDocument::tidyLine(const QTextCursor& left) {
 QString ZDocument::structureProblem() const {
     QString problem;
     if (!listInvariantHolds(d_->text, &problem)) return QStringLiteral("списки: ") + problem;
-    if (!literalInvariantHolds(d_->text, &problem))
-        return QStringLiteral("продолжения: ") + problem;
     if (!gapInvariantHolds(d_->text, &problem))
         return QStringLiteral("пустые строки: ") + problem;
     return {};

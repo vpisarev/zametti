@@ -7,8 +7,8 @@
 // ПОЧЕМУ ЭТО ДЕЛАЕТ РЕДАКТОР КОМПАКТНЕЕ. Не потому, что операций меньше, а
 // потому, что исчезает слой уборки. Правка на месте кусочками способна оставить
 // документ в состоянии, которого разбор никогда бы не породил, — и после каждой
-// приходилось чинить инварианты ПО ВСЕМУ ДОКУМЕНТУ (syncLists, syncLiteralBlocks,
-// syncGaps плюс сторожа к ним). При «заменить кусок markdown'ом» такого
+// приходилось чинить инварианты ПО ВСЕМУ ДОКУМЕНТУ (syncLists, syncGaps плюс
+// сторожа к ним). При «заменить кусок markdown'ом» такого
 // состояния не возникает по построению, и чинить остаётся только ШОВ.
 
 #include "document_impl.h"
@@ -183,10 +183,9 @@ bool ZDocument::replaceRange(QTextCursor& at, const QString& markdown, PasteMode
     });
 }
 
-// Вставка внутрь литерального блока: текстом, форматом приёмника, строка за
-// строкой. В блоке кода новая строка — разделитель U+2028 с пометкой перевода
-// строки внутри того же блока; в дословном куске — блок-продолжение (тот пока
-// лежит построчно, см. ContinuationProperty в doc_model.h).
+// Вставка внутрь литерального блока (код, дословный кусок): текстом, форматом
+// приёмника, строка за строкой. Новая строка — разделитель U+2028 с пометкой
+// перевода строки внутри того же блока; литеральный блок один на весь кусок.
 bool ZDocument::replaceInsideLiteral(QTextCursor& at, const QString& markdown) {
     QString text = markdown;
     while (text.endsWith(QLatin1Char('\n'))) text.chop(1);
@@ -199,21 +198,13 @@ bool ZDocument::replaceInsideLiteral(QTextCursor& at, const QString& markdown) {
     const QTextBlock target = edit.block();
     QTextCharFormat chars = target.charFormat();
     chars.clearProperty(BreakSourceProperty);
-    const bool code = !isRawBlock(target) && kindOf(target) == Kind::Code;
-    QTextBlockFormat lineFormat = target.blockFormat();
-    // Новая строка внутри дословного куска — продолжение предыдущей, а не
-    // начало нового блока. Верхнее поле ей пересчитает шов.
-    lineFormat.setProperty(ContinuationProperty, true);
     QTextCharFormat separator = chars;
     separator.setProperty(BreakSourceProperty, int(BreakNewline));
 
     const int firstBlock = edit.blockNumber();
     const QStringList lines = text.split(QLatin1Char('\n'));
     for (int i = 0; i < lines.size(); ++i) {
-        if (i > 0) {
-            if (code) edit.insertText(QString(QChar::LineSeparator), separator);
-            else edit.insertBlock(lineFormat, chars);
-        }
+        if (i > 0) edit.insertText(QString(QChar::LineSeparator), separator);
         if (!lines.at(i).isEmpty()) edit.insertText(lines.at(i), chars);
     }
     const int landed = edit.position();
@@ -231,7 +222,6 @@ void ZDocument::rebuildRange(int firstBlock, int lastBlock, QTextCursor* caret) 
     const int total = d_->text.blockCount();
     firstBlock = qBound(0, firstBlock, total - 1);
     lastBlock = qBound(firstBlock, lastBlock, total - 1);
-    expandToWholeBlocks(firstBlock, lastBlock);
 
     std::vector<Piece> pieces;
     walkPieces(
@@ -243,19 +233,6 @@ void ZDocument::rebuildRange(int firstBlock, int lastBlock, QTextCursor* caret) 
         firstBlock, lastBlock);
     if (pieces.empty()) return;
     replaceBlocks(firstBlock, lastBlock, pieces, caret);
-}
-
-void ZDocument::expandToWholeBlocks(int& firstBlock, int& lastBlock) const {
-    // ГРАНИЦЫ — ПО ЛОГИЧЕСКОМУ БЛОКУ. Строки блока кода лежат в документе
-    // отдельными QTextBlock; пересобрав половину блока кода, сборщик сделал бы
-    // из неё самостоятельный блок, а оставшиеся строки повисли бы продолжением
-    // неизвестно чего.
-    const int total = d_->text.blockCount();
-    while (firstBlock > 0 && isContinuationBlock(d_->text.findBlockByNumber(firstBlock)))
-        --firstBlock;
-    while (lastBlock + 1 < total &&
-           isContinuationBlock(d_->text.findBlockByNumber(lastBlock + 1)))
-        ++lastBlock;
 }
 
 void ZDocument::replaceBlocks(int firstBlock, int lastBlock, const std::vector<Piece>& to,
@@ -388,16 +365,10 @@ void ZDocument::settleSeam(int firstBlock, int lastBlock) {
     // нарушением главного правила: стоимость правки не должна зависеть от
     // размера заметки.
     //
-    // Соседа с каждой стороны берём нарочно: признак продолжения относителен
-    // (он про связь с предыдущим блоком), а нужна ли пустая строка — вопрос про
-    // пару соседей. Дальше первого соседа расходиться нечему.
+    // Соседа с каждой стороны берём нарочно: нужна ли пустая строка — вопрос
+    // про пару соседей. Дальше первого соседа расходиться нечему.
     const int last = d_->text.blockCount() - 1;
     BlockRange seam{qBound(0, firstBlock - 1, last), qBound(0, lastBlock + 1, last)};
-    // Сперва разнять литеральные строки: правка через границу блоков умеет
-    // свести код и абзац в один блок, и мягкий перенос абзаца оказывается
-    // внутри кода — состояние, которого разбор не породил бы никогда.
-    seam.last += splitLiteralSoftBreaks(d_->text, seam);
-    syncLiteralBlocks(d_->text, seam);
     // syncGaps сам говорит, сколько пустых строк завёл: на столько же съехали
     // номера ниже, и списки надо мерить уже по новым.
     const int added = syncGaps(d_->text, seam);

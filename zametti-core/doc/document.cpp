@@ -272,7 +272,6 @@ BlockInfo ZDocument::blockAt(int index) const {
     out.headingLevel = block.blockFormat().headingLevel();
     out.checked = style.checked;
     out.raw = isRawBlock(block);
-    out.continuation = isContinuationBlock(block);
     out.info = block.blockFormat().stringProperty(InfoProperty);
     out.text = block.text();
     return out;

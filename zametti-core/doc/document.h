@@ -80,7 +80,6 @@ struct BlockInfo {
     int headingLevel = 0;   // 1..6 у заголовка
     bool checked = false;   // отметка задачи
     bool raw = false;       // выводится дословно
-    bool continuation = false;  // продолжает предыдущий блок
     QString info;           // язык блока кода
     QString text;           // текст блока, как его видит человек
 };
@@ -503,11 +502,6 @@ protected:
     // как собрал бы с нуля.
     void replaceBlocks(int firstBlock, int lastBlock, const std::vector<Piece>& to,
                        QTextCursor* caret = nullptr);
-
-    // Раздвинуть границы до целых логических блоков: строки блока кода лежат
-    // в документе отдельными QTextBlock, и половина блока кода блоком не
-    // является.
-    void expandToWholeBlocks(int& firstBlock, int& lastBlock) const;
 
     // ОДНА МЕСТНАЯ ПРАВКА СТРОЕНИЯ ЦЕЛИКОМ: скобка отмены, сама правка,
     // пересборка тронутого сборщиком, шов, сверка со сборкой в отладочной

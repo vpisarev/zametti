@@ -181,9 +181,9 @@ bool isImageBlock(const Piece& b) {
 // Во что блок IR превратится в документе: сколько блоков он там займёт и
 // сколько мягких переносов останется внутри них.
 //
-// Дословные куски сборщик режет построчно, по блоку на строку, и один
-// завершающий перевод снимает; блок кода и всё прочее живут одним блоком, а
-// переводы внутри становятся мягкими (см. splitLiteralLines и toQt в
+// Всякий блок заметки живёт одним QTextBlock; у литерального (код, дословный
+// кусок) один завершающий перевод строки сборщик снимает, а остальные
+// переводы становятся мягкими переносами внутри блока (см. toQt в
 // document_builder.cpp). Разделителями там считаются три знака: '\n', '\r' и
 // U+2029 — ровно те, которые Qt иначе разорвал бы на блоки.
 struct BlockShape {
@@ -191,7 +191,7 @@ struct BlockShape {
     int breaks = 0;
 };
 
-BlockShape shapeOf(QStringView text, bool literal, bool code = false) {
+BlockShape shapeOf(QStringView text, bool literal) {
     int newlines = 0;
     int others = 0;
     for (const QChar c : text) {
@@ -204,11 +204,10 @@ BlockShape shapeOf(QStringView text, bool literal, bool code = false) {
         else if (c == QChar::ParagraphSeparator || c == QChar::LineSeparator) ++others;
     }
     if (!literal) return {1, newlines + others};
+    // Литеральный блок — один QTextBlock, его строки — мягкие переносы внутри;
+    // один завершающий перевод строки сборщик снимает (см. document_builder.cpp).
     const bool trailing = text.endsWith(u'\n');
-    // Блок кода — один QTextBlock, его строки — мягкие переносы внутри; один
-    // завершающий перевод строки сборщик снимает (см. document_builder.cpp).
-    if (code) return {1, newlines - int(trailing) + others};
-    return {newlines + 1 - int(trailing), others};
+    return {1, newlines - int(trailing) + others};
 }
 
 }  // namespace
@@ -219,7 +218,7 @@ NoteStats pieceStats(const std::vector<Piece>& blocks) {
     int breaks = 0;
     for (const Piece& b : blocks) {
         const bool literal = b.raw || b.kind == Kind::Code;
-        const BlockShape shape = shapeOf(b.text, literal, !b.raw && b.kind == Kind::Code);
+        const BlockShape shape = shapeOf(b.text, literal);
         if (isImageBlock(b)) ++out.images;
         else out.words += countWords(b.text);
         if (shape.breaks > 0) {

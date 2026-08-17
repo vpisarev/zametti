@@ -76,35 +76,16 @@ qreal imageGap(qreal zoom) { return 6.0 * zoom; }
 // (см. paintCodeBackground ниже), а полоски с языком в тексте нет вовсе —
 // каретка в неё не попадает, выделение её не берёт, поиск её не видит.
 //
-// Одна ПОЛОСА на строку кода, а не один прямоугольник на блок: строки блока —
-// это отдельные QTextBlock (ContinuationProperty), и обходить их назад до
-// начала блока на каждом кадре значило бы платить длиной блока за прокрутку.
-// Полосы собираются за один проход сверху вниз, и уже по ним видно, где блок
-// начался и где кончился.
-// Следующая строка того же блока кода?
-bool codeContinues(const QTextBlock& block) {
-    const QTextBlock next = block.next();
-    return next.isValid() && !isRawBlock(next) && kindOf(next) == Kind::Code &&
-           isContinuationBlock(next);
-}
-
-// Первая строка блока кода, в котором лежит эта. Нужна там, где мы пришли к
-// блоку с конца: полоска висит у последней строки, а зовётся блок по первой.
-QTextBlock startOfCodeBlock(const QTextBlock& block) {
-    QTextBlock at = block;
-    while (isContinuationBlock(at)) {
-        const QTextBlock before = at.previous();
-        if (!before.isValid() || isRawBlock(before) || kindOf(before) != Kind::Code) break;
-        at = before;
-    }
-    return at;
-}
+// Блок кода — ОДИН QTextBlock (его строки — U+2028 внутри), и полоса у него
+// одна: она же первая и последняя. Поля first/last у CodeBand остались от
+// построчных времён и теперь всегда истинны — их читают отрисовка плашки и
+// кнопка копирования.
 
 // Собственное нижнее поле блока — то, которое стоит в нём НЕ ради картинки.
-// Пока такое одно: полоска с языком и кнопкой у последней строки блока кода.
+// Пока такое одно: полоска с языком и кнопкой у блока кода.
 qreal ownBottomMargin(const QTextBlock& block, const CodePlate& plate) {
     if (isRawBlock(block) || kindOf(block) != Kind::Code) return 0.0;
-    return codeContinues(block) ? 0.0 : plate.strip;
+    return plate.strip;
 }
 
 QPainterPath platePath(const QRectF& rect, qreal radius, bool roundTop, bool roundBottom) {
@@ -1509,7 +1490,6 @@ QVector<CodeBand> NoteView::codeBands(const QRectF& visible) const {
     const CodePlate plate = codePlate(docStyle());
 
     QVector<CodeBand> bands;
-    int started = -1;   // начало блока кода, в котором мы сейчас идём
     // Начинаем с блока ВЫШЕ первого видимого: плашка вылезает за прямоугольник
     // своего блока — вверх на воздух, вниз на полоску, — и блок, чей текст уже
     // уехал вверх, вполне может показывать сюда свою полоску.
@@ -1546,17 +1526,10 @@ QVector<CodeBand> NoteView::codeBands(const QRectF& visible) const {
         CodeBand band;
         band.rect = QRectF(left, rect.top(), rect.right() - left, height);
         band.blockNumber = block.blockNumber();
-        band.first = !isContinuationBlock(block);
-        band.last = !codeContinues(block);
+        band.first = true;
+        band.last = true;
         band.info = block.blockFormat().stringProperty(InfoProperty);
-        // Начало блока запоминаем на ходу: обход идёт сверху вниз, и первая его
-        // строка уже прошла — кроме случая, когда обход начался ПОСРЕДИ блока
-        // (длинный блок кода поперёк всего окна). Тогда, и только тогда, идём
-        // назад — один раз на блок, а не на каждую его строку.
-        if (band.first) started = band.blockNumber;
-        if (started < 0) started = startOfCodeBlock(block).blockNumber();
-        band.firstBlockNumber = started;
-        if (band.last) started = -1;
+        band.firstBlockNumber = band.blockNumber;
         bands.push_back(band);
     }
     return bands;

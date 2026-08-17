@@ -1237,9 +1237,9 @@ NoteEditor::ViewAnchor NoteEditor::viewAnchor() const {
     if (!at.isValid()) return {};
 
     // Держимся только за блок НАД правкой: если правка выше кромки, номера
-    // блоков IR за ней съедут, и якорь показал бы на чужой блок.
-    const int anchorIndex = irIndexOfBlock(at);
-    if (anchorIndex > irIndexOfBlock(textCursor().block())) return {};
+    // блоков за ней съедут, и якорь показал бы на чужой блок.
+    const int anchorIndex = at.blockNumber();
+    if (anchorIndex > textCursor().blockNumber()) return {};
     return {anchorIndex, top - int(layout->blockBoundingRect(at).top())};
 }
 
@@ -1338,7 +1338,7 @@ void NoteEditor::landAfterBuild(int cursor, const ViewAnchor& anchor, bool patch
 
     // Возвращаем блок-якорь на прежнее место относительно кромки. Прокрутка при
     // пересборке сбрасывается в ноль, и без этого документ прыгал бы к началу.
-    const QTextBlock landed = blockForIrIndex(*document(), anchor.irIndex);
+    const QTextBlock landed = document()->findBlockByNumber(anchor.irIndex);
     const bool held = anchor.irIndex >= 0 && landed.isValid();
     if (held) {
         const QRectF rect = document()->documentLayout()->blockBoundingRect(landed);
@@ -3238,13 +3238,12 @@ std::shared_ptr<QTextDocument> NoteEditor::buildDiffDocument(int slot,
     const diff::Illustrated shown =
         diff::illustrate(base ? current_.base : current_.snapshot, blocks);
     buildDocument(shown.blocks, *doc);
-    // Метка блока документа — из метки блока копии; соответствие «логический
-    // блок → блок документа» не один к одному (литеральные лежат построчно).
+    // Метка блока документа — из метки блока копии; блок копии == блок
+    // документа (литеральные лежат одним блоком).
     marks->clear();
-    for (int ir : irIndexOfEveryBlock(*doc)) {
-        marks->append(ir >= 0 && ir < shown.blockMark.size() ? shown.blockMark[ir]
-                                                            : diff::Mark::Same);
-        source->append(ir >= 0 && ir < shown.sourceBlock.size() ? shown.sourceBlock[ir] : -1);
+    for (int ir = 0; ir < doc->blockCount(); ++ir) {
+        marks->append(ir < shown.blockMark.size() ? shown.blockMark[ir] : diff::Mark::Same);
+        source->append(ir < shown.sourceBlock.size() ? shown.sourceBlock[ir] : -1);
     }
 
     // Дорисованные строки — цветом разности: они не текст заметки, и читаться
