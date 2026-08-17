@@ -76,6 +76,8 @@ add_library(zametti-ui STATIC
     lang_editor.cpp
     caption_editor.h
     caption_editor.cpp
+    note_search.h
+    note_search.cpp
     image_facts.h
     image_facts.cpp
     image_importer.h

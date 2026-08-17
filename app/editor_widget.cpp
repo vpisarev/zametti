@@ -74,7 +74,7 @@ NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
     connect(verticalScrollBar(), &QScrollBar::actionTriggered, this, [this] { releaseCaret(); });
     // Подсветка поиска лежит только на видимом — при прокрутке перекладывается.
     connect(verticalScrollBar(), &QScrollBar::valueChanged, this, [this] {
-        if (!current_.matches.empty()) showMatchHighlights();
+        if (!current_.search.empty()) showMatchHighlights();
     });
     // Щелчок по месту языка в полоске заводит поле ввода. Виджет просмотра
     // сам язык не правит: правки документа живут здесь.
@@ -1029,29 +1029,9 @@ void NoteEditor::revealInGolden(const QRectF& place) {
 }
 
 int NoteEditor::findMatches(const QString& text, bool caseSensitive) {
-    current_.matchText = text;
-    current_.matchCaseSensitive = caseSensitive;
-    current_.matches.clear();
-    current_.currentMatch = -1;
-    if (!text.isEmpty()) {
-        QTextDocument::FindFlags flags;
-        if (caseSensitive) flags |= QTextDocument::FindCaseSensitively;
-        QTextCursor at(document());
-        while (true) {
-            at = document()->find(text, at, flags);
-            if (at.isNull()) break;
-            current_.matches.push_back(at);
-            // Со следующего знака после НАЧАЛА совпадения: перекрывающиеся
-            // вхождения тоже вхождения, и счётчик обязан считать их так же,
-            // как их обойдёт F3.
-            QTextCursor next(document());
-            next.setPosition(at.selectionStart() + 1);
-            if (next.position() >= document()->characterCount() - 1) break;
-            at = next;
-        }
-    }
+    const int found = current_.search.find(*document(), text, caseSensitive);
     showMatchHighlights();
-    return int(current_.matches.size());
+    return found;
 }
 
 void NoteEditor::showMatchHighlights() {
@@ -1063,7 +1043,8 @@ void NoteEditor::showMatchHighlights() {
     // берётся окно с запасом по экрану сверху и снизу, а при прокрутке
     // подсветка перекладывается заново — это O(видимого).
     QList<QTextEdit::ExtraSelection> selections;
-    if (current_.matches.empty()) {
+    const NoteSearch& search = current_.search;
+    if (search.empty()) {
         setExtraSelections(selections);
         return;
     }
@@ -1071,74 +1052,55 @@ void NoteEditor::showMatchHighlights() {
     const int from = cursorForPosition(QPoint(0, -height)).position();
     const int to = cursorForPosition(QPoint(viewport()->width(), 2 * height)).position();
     // Совпадения идут по возрастанию позиции: границы окна — двоичным поиском.
-    const auto lower = std::lower_bound(
-        current_.matches.begin(), current_.matches.end(), from,
-        [](const QTextCursor& match, int position) { return match.selectionEnd() < position; });
-    const auto upper = std::upper_bound(
-        current_.matches.begin(), current_.matches.end(), to,
-        [](int position, const QTextCursor& match) { return position < match.selectionStart(); });
-    selections.reserve(int(upper - lower) + 1);
+    const auto [first, last] = search.range(from, to);
+    selections.reserve(last - first + 1);
     const QColor base = appearance().searchHighlight;
     // Текущее совпадение — контрастнее прочих. Не другим цветом: цвет в
     // оформлении один, а разной должна быть заметность.
     QColor pale = base;
     pale.setAlpha(110);
-    for (auto it = lower; it < upper; ++it) {
+    for (int i = first; i < last; ++i) {
         QTextEdit::ExtraSelection selection;
-        selection.cursor = *it;
-        selection.format.setBackground(int(it - current_.matches.begin()) == current_.currentMatch ? base : pale);
+        selection.cursor = search.hit(i);
+        selection.format.setBackground(i == search.current() ? base : pale);
         selections.append(selection);
     }
     setExtraSelections(selections);
 }
 
 void NoteEditor::goToMatch(int index) {
-    if (current_.matches.empty()) return;
-    const int count = int(current_.matches.size());
-    current_.currentMatch = ((index % count) + count) % count;
+    if (current_.search.empty()) return;
+    current_.search.setCurrent(index);
     const int scrollBefore = verticalScrollBar()->value();
-    setTextCursor(current_.matches[size_t(current_.currentMatch)]);
+    setTextCursor(current_.search.hit(current_.search.current()));
     showMatchHighlights();
     // Переход: совпадение вне окна или у самой кромки — в золотое сечение.
     showEditPlace(scrollBefore, /*jump=*/true);
 }
 
 void NoteEditor::stepMatch(int direction) {
-    if (current_.matches.empty()) return;
-    if (current_.currentMatch >= 0) {
-        goToMatch(current_.currentMatch + direction);
+    const NoteSearch& search = current_.search;
+    if (search.empty()) return;
+    if (search.hasCurrent()) {
+        goToMatch(search.current() + direction);
         return;
     }
     // Первый шаг — от каретки, а не с начала заметки: человек только что на
-    // что-то смотрел, и прыжок в начало документа был бы неожиданным.
+    // что-то смотрел, и прыжок в начало документа был бы неожиданным. Дальше
+    // каретки ничего нет — по кругу: с начала (или с конца).
     const int at = textCursor().position();
-    if (direction > 0) {
-        for (size_t i = 0; i < current_.matches.size(); ++i)
-            if (current_.matches[i].selectionStart() >= at) {
-                goToMatch(int(i));
-                return;
-            }
-        goToMatch(0);
-        return;
-    }
-    for (size_t i = current_.matches.size(); i-- > 0;)
-        if (current_.matches[i].selectionEnd() <= at) {
-            goToMatch(int(i));
-            return;
-        }
-    goToMatch(int(current_.matches.size()) - 1);
+    const int nearest = direction > 0 ? search.nearestForward(at) : search.nearestBackward(at);
+    goToMatch(nearest >= 0 ? nearest : (direction > 0 ? 0 : search.count() - 1));
 }
 
 void NoteEditor::clearMatches() {
-    current_.matches.clear();
-    current_.currentMatch = -1;
-    current_.matchText.clear();
+    current_.search.clear();
     setExtraSelections({});
 }
 
 bool NoteEditor::replaceCurrentMatch(const QString& with) {
-    if (current_.currentMatch < 0 || size_t(current_.currentMatch) >= current_.matches.size()) return false;
-    const QTextCursor target = current_.matches[size_t(current_.currentMatch)];
+    if (!current_.search.hasCurrent()) return false;
+    const QTextCursor target = current_.search.hit(current_.search.current());
     // Замена одного вхождения — это НАБОР ПОВЕРХ ВЫДЕЛЕНИЯ, ровно тот же
     // глагол, что у клавиатуры: заводить ради неё второй путь незачем.
     const QTextCharFormat format = currentCharFormat();
@@ -1150,9 +1112,9 @@ bool NoteEditor::replaceCurrentMatch(const QString& with) {
     if (!done) return false;
     // Прежние курсоры недействительны, ищем заново и встаём на следующее
     // вхождение.
-    const int at = current_.currentMatch;
-    findMatches(current_.matchText, current_.matchCaseSensitive);
-    if (!current_.matches.empty()) goToMatch(at < int(current_.matches.size()) ? at : 0);
+    const int at = current_.search.current();
+    findMatches(current_.search.text(), current_.search.caseSensitive());
+    if (!current_.search.empty()) goToMatch(at < current_.search.count() ? at : 0);
     return true;
 }
 
@@ -3277,8 +3239,8 @@ void NoteEditor::renderDiff(const DiffSpot& keep) {
     // Подсветка находок держится курсорами в документе, а документ сейчас
     // сменится: запоминаем запрос и ставим подсветку заново на новом. Без
     // этого смена стороны гасила поиск молча.
-    const QString query = current_.matchText;
-    const bool caseSensitive = current_.matchCaseSensitive;
+    const QString query = current_.search.text();
+    const bool caseSensitive = current_.search.caseSensitive();
     clearMatches();
 
     // Показ слепка — не правка человека: цепочки отмены здесь нет вовсе, она

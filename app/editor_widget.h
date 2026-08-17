@@ -15,6 +15,7 @@
 #include "document.h"
 #include "hash.h"
 #include "image_importer.h"
+#include "note_search.h"
 #include "note_view.h"
 #include "text_stats.h"
 #include "znote.h"
@@ -112,9 +113,9 @@ public:
     // собой не пересекает границу блока (разделитель блоков в текст не
     // попадает).
     int findMatches(const QString& text, bool caseSensitive);
-    int matchCount() const { return int(current_.matches.size()); }
+    int matchCount() const { return current_.search.count(); }
     // Какое совпадение сейчас текущее, с нуля; -1 — ни одного.
-    int currentMatch() const { return current_.currentMatch; }
+    int currentMatch() const { return current_.search.current(); }
     // Перейти к совпадению по кругу: -1 подхватывает ближайшее после каретки.
     void goToMatch(int index);
     void stepMatch(int direction);
@@ -625,12 +626,8 @@ private:
         bool externalEmptyRetried = false;
         QString lastComplaint;    // о чём уже жаловались: не повторяться
 
-        // Найденное. Курсорами, а не смещениями: смещения поехали бы от первой
-        // же правки, а курсоры Qt двигает сам.
-        std::vector<QTextCursor> matches;
-        int currentMatch = -1;
-        QString matchText;
-        bool matchCaseSensitive = false;
+        // Найденное в показанном документе — объектом (note_search.h).
+        NoteSearch search;
         int lastCaretPosition = 0;
 
         // Режим истории. Открытая заметка подменяется слепком, а сама она
