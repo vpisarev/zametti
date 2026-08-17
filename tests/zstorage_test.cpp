@@ -194,10 +194,77 @@ void checkOperations() {
     ZT_TRUE("повторная миграция молчит", storage.migrate().isEmpty());
 }
 
+// СИГНАЛЫ КАТАЛОГА: структурная новость — одна на операцию, какой бы длинной
+// она ни была (архив папки с детьми — одна перестройка дерева, а не по числу
+// перезаписей); правка на месте — noteChanged без catalogChanged.
+void checkSignals() {
+    QTemporaryDir home;
+    const QString root = home.path() + QStringLiteral("/store");
+    QString error;
+    ZT_TRUE("хранилище заведено", zametti::store::initStore(root, &error));
+    ZStorage storage(root);
+    int catalog = 0;
+    QStringList rows;
+    QObject::connect(&storage, &ZStorage::catalogChanged, [&catalog] { ++catalog; });
+    QObject::connect(&storage, &ZStorage::noteChanged, [&rows](const QString& id) { rows << id; });
+
+    storage.reload();
+    ZT_EQ("reload — одна структурная новость", "1", n(catalog));
+    catalog = 0;
+
+    const QString folder = storage.createNote(QString(), true, &error);
+    ZT_EQ("папка создана — одна новость (две записи внутри)", "1", n(catalog));
+    catalog = 0;
+    const QString a = storage.createNote(folder, false, &error);
+    const QString b = storage.createNote(folder, false, &error);
+    ZT_EQ("две заметки — две новости", "2", n(catalog));
+    catalog = 0;
+    rows.clear();
+
+    ZT_TRUE("переименование", storage.rename(a, QStringLiteral("Альфа"), rules(), &error));
+    ZT_EQ("переименование — новость о строке", "1", n(rows.size()));
+    ZT_TRUE("о той самой", rows.value(0) == a);
+    ZT_EQ("и не о каталоге", "0", n(catalog));
+    rows.clear();
+
+    ZT_TRUE("перенос в корень", storage.move(a, QString(), rules(), &error));
+    ZT_EQ("перенос — структурная новость", "1", n(catalog));
+    ZT_EQ("и не строка", "0", n(rows.size()));
+    catalog = 0;
+
+    ZT_TRUE("метка порядка", storage.setSortMark(folder, zametti::SortOrder{zametti::SortKey::Name, true},
+                                                rules(), &error));
+    ZT_EQ("метка — структурная новость (дерево пересортируется)", "1", n(catalog));
+    catalog = 0;
+
+    QStringList failed;
+    ZT_TRUE("папка с ребёнком в архив", storage.archive(folder, rules(), &failed) && failed.isEmpty());
+    ZT_EQ("архив поддерева — ОДНА новость", "1", n(catalog));
+    catalog = 0;
+    ZT_TRUE("возврат", storage.restore(folder, &failed) && failed.isEmpty());
+    ZT_EQ("возврат поддерева — одна новость", "1", n(catalog));
+    catalog = 0;
+    ZT_TRUE("удаление", storage.remove(b, &error));
+    ZT_EQ("удаление — одна новость", "1", n(catalog));
+    catalog = 0;
+
+    // Перечитать заметку, которая на месте, — новость о строке; исчезнувшую —
+    // структурная (строки в дереве больше нет).
+    rows.clear();
+    ZT_TRUE("refreshNote живой", storage.refreshNote(a));
+    ZT_EQ("живая — строка", "1", n(rows.size()));
+    ZT_EQ("живая — не каталог", "0", n(catalog));
+    QFile::remove(storage.pathOf(a));
+    ZT_TRUE("refreshNote исчезнувшей — ложь", !storage.refreshNote(a));
+    ZT_EQ("исчезнувшая — структурная новость", "1", n(catalog));
+    ZT_TRUE("и её нет в каталоге", !storage.has(a));
+}
+
 }  // namespace
 
 TEST(ZStorage, All) {
     checkCatalog();
     checkOperations();
+    checkSignals();
     EXPECT_EQ(0, zt::freshFailures());
 }
