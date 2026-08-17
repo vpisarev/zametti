@@ -86,7 +86,7 @@ ZDocument ZDocument::clone() const {
 
 // --- круг с диском ---------------------------------------------------------
 
-bool ZDocument::loadMarkdown(std::string_view bytes) {
+bool ZDocument::loadMarkdown(std::string_view bytes, NoteHeader* lifted) {
     // НОРМАЛИЗАЦИЯ ПРОБЕЛОВ — ЧАСТЬ ВВОЗА, а не отдельный шаг: так делают все
     // нынешние места вызова, и без неё ZDocument читал бы не то же, что читает
     // программа.
@@ -99,6 +99,7 @@ bool ZDocument::loadMarkdown(std::string_view bytes) {
     std::vector<Piece> blocks;
     parsePieces(normaliseSpaces(QString::fromUtf8(bytes.data(), qsizetype(bytes.size()))),
                 blocks, d_->header);
+    if (lifted != nullptr) *lifted = d_->header;
     buildDocument(blocks, d_->text);
     return true;
 }
@@ -293,7 +294,12 @@ std::string ZDocument::archiveStub() const {
     ZDocument stub;
     stub.d_->header = d_->header;
     stub.setArchived(true);
+    ZDocument body = headingOnly();
+    stub.d_->header.setBlankAfter(!body.isEmpty());
+    return body.toMarkdown(stub.d_->header);
+}
 
+ZDocument ZDocument::headingOnly() const {
     // Заголовок ищем так же, как его видит средняя колонка: первый
     // содержательный блок. Не нашли — стаб остаётся без тела, и это законно:
     // заметка без единой строки текста и была пустой.
@@ -319,10 +325,10 @@ std::string ZDocument::archiveStub() const {
 
     std::vector<Piece> body;
     if (!heading.text.isEmpty()) body.push_back(std::move(heading));
-    stub.d_->header.setBlankAfter(!body.empty());
+    ZDocument stub;
     attachStyle(stub.d_->text, attachedStyle(d_->text));
     buildDocument(body, stub.d_->text);
-    return stub.toMarkdown();
+    return stub;
 }
 
 // ПУСТА ЛИ ЗАМЕТКА ПО СУЩЕСТВУ: ни одного блока, кроме пустых строк.

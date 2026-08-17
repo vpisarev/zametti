@@ -557,7 +557,7 @@ void NoteEditor::stashCurrentNote() {
     // файл: именно приведение и срезает хвост, и со сверкой через него
     // отпечатки сходились бы всегда. Нам нужен другой вопрос — «этот документ
     // и есть файл?», а не «запишется ли он в тот же файл».
-    if (hashOf(writePieces(piecesOf(*document()), note_->meta()).toUtf8()) != note_->digest()) return;
+    if (hashOf(writePieces(piecesOf(*document()), note_->header()).toUtf8()) != note_->digest()) return;
 
     const qint64 bytes = estimateDocumentBytes(*document());
     const qint64 budget = qint64(qMax(1, settings().cache().documentCacheSizeMb())) * 1024 * 1024;
@@ -728,7 +728,7 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
     // Граница файла: байты → текст, один раз.
     NoteHeader meta;
     parsePieces(QString::fromUtf8(text.data(), qsizetype(text.size())), doc, meta);
-    fresh->setMeta(std::move(meta));
+    fresh->setHeader(std::move(meta));
     fresh->rememberCaret(ZApp::instance().state().caretOf(fresh->id()));
     installNote(std::move(fresh));
     watchFile();
@@ -752,7 +752,7 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
 // все двери.
 void NoteEditor::enterHistoryIfArchived() {
     if (storage_ == nullptr || note_->path().isEmpty()) return;
-    if (!zametti::store::isArchivedMeta(note_->meta())) return;
+    if (!zametti::store::isArchivedMeta(note_->header())) return;
     if (inHistory()) return;
     if (!enterHistory()) {
         // Журнала нет вовсе — показать нечего, но и молчать нельзя: человек
@@ -833,7 +833,7 @@ void NoteEditor::adoptExternal(const std::string& text) {
     // это нельзя: заметка потеряла бы родителя и дату создания, то есть уехала
     // бы в корень и «постарела». Прежние значения у нас в памяти — предлагаем
     // вернуть их одним действием, а решает человек.
-    const NoteHeader previous = note_->meta();
+    const NoteHeader previous = note_->header();
     const bool lost = previous.present() && !fresh.present();
     // Ключи, которые были и пропали. parent сюда не входит: его правка руками
     // — законный перенос заметки, а не потеря (решение брифа этапа 4).
@@ -852,7 +852,7 @@ void NoteEditor::adoptExternal(const std::string& text) {
     if (fresh.present() && fresh.get("role") != previous.get("role"))
         fresh.set("role", previous.get("role"));
 
-    note_->setMeta(fresh);
+    note_->setHeader(fresh);
     // ВНЕШНЕЕ СОДЕРЖИМОЕ ПРИНИМАЕТСЯ КАК ОБЫЧНАЯ ПРАВКА, и Ctrl+Z возвращает
     // то, что было до него (README обещает это прямо). Значит и пересборка
     // здесь — правка: asEdit, внутри скобки, одним шагом отмены.
@@ -2898,8 +2898,8 @@ void NoteEditor::onContentsChanged() {
 // снимки этого шага выбрасываются. Ждём конца серии.
 
 void NoteEditor::editMeta(const std::function<void(NoteHeader&)>& change) {
-    note_->meta().setPresent(true);
-    change(note_->meta());
+    note_->header().setPresent(true);
+    change(note_->header());
     // Правка одной меты не трогает modified: перенос, корзина и
     // восстановление — не редактирование содержимого, и всплывать наверх
     // списка заметка от них не должна (правило владельца). Несохранённые
@@ -2972,7 +2972,7 @@ bool NoteEditor::enterHistory(int index) {
     // (пустая) история — в режиме истории журнал не пишется.
     note_ = std::make_shared<ZNote>(live->path(), live->lastSaved(), live->digest(),
                                     ZNoteHistory());
-    note_->setMeta(live->meta());
+    note_->setHeader(live->header());
     current_.timeline = std::move(timeline);
     current_.live = std::move(live);
 
@@ -3526,14 +3526,14 @@ void NoteEditor::save(bool interactive, bool force) {
     // разбирается и сериализуется РОВНО ОДИН РАЗ. Не сошлось — эти же байты и
     // уходят в файл; сошлось — откатываем штамп, чтобы шапка в памяти не
     // разъехалась с той, что лежит на диске.
-    const NoteHeader metaBefore = note_->meta();
-    if (note_->meta().present() && stampModifiedOnSave_)
-        note_->meta().set("modified", store::isoNow().toStdString());
+    const NoteHeader metaBefore = note_->header();
+    if (note_->header().present() && stampModifiedOnSave_)
+        note_->header().set("modified", store::isoNow().toStdString());
 
     std::vector<Piece> fileIr;
-    QByteArray candidate = noteBytes(*document(), note_->meta(), nullptr, &fileIr);
+    QByteArray candidate = noteBytes(*document(), note_->header(), nullptr, &fileIr);
     if (!note_->lastSaved().isEmpty() && sameApartFromModified(candidate, note_->lastSaved())) {
-        note_->setMeta(metaBefore);
+        note_->setHeader(metaBefore);
         document()->setModified(false);
         return;
     }
@@ -3552,10 +3552,10 @@ void NoteEditor::save(bool interactive, bool force) {
     // Метку, у которой офсет УЖЕ ЕСТЬ, не трогаем вовсе: в ней записан
     // локальный контекст того, кто её ставил («у него было 21:40»), и перевод
     // в свою зону этот контекст стёр бы — ровно ради него формат и менялся.
-    if (note_->meta().present()) {
+    if (note_->header().present()) {
         bool moved = false;
         for (const char* key : {"created", "modified"}) {
-            const std::string had = note_->meta().get(key);
+            const std::string had = note_->header().get(key);
             if (had.empty()) continue;
             const QDateTime moment = store::parseNoteTime(had);
             if (!moment.isValid()) continue;   // чужая строка — не наша забота
@@ -3563,19 +3563,19 @@ void NoteEditor::save(bool interactive, bool force) {
                 continue;
             const QString fresh = store::isoWithOffset(moment.toLocalTime());
             if (fresh.isEmpty() || fresh.toStdString() == had) continue;
-            note_->meta().set(key, fresh.toStdString());
+            note_->header().set(key, fresh.toStdString());
             moved = true;
         }
         // Пересобираем байты только если что-то и правда переехало: лишняя
         // сериализация большой заметки — это миллисекунды на каждое
         // автосохранение.
-        if (moved) candidate = noteBytes(*document(), note_->meta(), nullptr, &fileIr);
+        if (moved) candidate = noteBytes(*document(), note_->header(), nullptr, &fileIr);
     }
 
     // Отпечаток того, что в файле, мы знаем — значит «не изменилось ли»
     // решается без чтения файла.
     const SaveOutcome outcome =
-        saveDocument(*document(), note_->path(), rescueTimestamp(), nullptr, note_->meta(),
+        saveDocument(*document(), note_->path(), rescueTimestamp(), nullptr, note_->header(),
                      note_->digest(), &fileIr, &candidate);
     if (outcome.result == SaveResult::Written || outcome.result == SaveResult::Unchanged) {
         document()->setModified(false);

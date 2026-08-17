@@ -1,6 +1,27 @@
 #include "znote.h"
 
+#include "archive.h"
+#include "times.h"
+
+#include <QFile>
 #include <QFileInfo>
+
+namespace zametti {
+namespace {
+// Ключи шапки названы ОДИН раз (прежде — здесь и в document.cpp).
+constexpr char kParent[] = "parent";
+constexpr char kRole[] = "role";
+constexpr char kCreated[] = "created";
+constexpr char kModified[] = "modified";
+constexpr char kFolder[] = "folder";
+constexpr char kLost[] = "lost";
+constexpr char kSort[] = "sort";
+// Сколько знаков сниппета держим в метаданных: две-три строки списка при
+// любой разумной ширине панели.
+constexpr int kSnippetChars = 200;
+}  // namespace
+}  // namespace zametti
+
 
 namespace zametti {
 
@@ -11,6 +32,102 @@ ZNote::ZNote(QString path, QByteArray fileBytes, Digest digest, ZNoteHistory his
       history_(std::move(history)) {}
 
 QString ZNote::id() const { return QFileInfo(path_).completeBaseName(); }
+
+// --- круг файла ---------------------------------------------------------------
+
+bool ZNote::load(std::string_view bytes) {
+    NoteHeader lifted;
+    if (!doc_.loadMarkdown(bytes, &lifted)) return false;
+    header_ = lifted;
+    built_.invalidate();
+    stats_.invalidate();
+    search_.clear();
+    return true;
+}
+
+std::string ZNote::toMarkdown() const { return doc_.toMarkdown(header_); }
+
+QString ZNote::toMarkdownText() const { return doc_.toMarkdownText(header_); }
+
+SaveOutcome ZNote::save(const QString& path, const QString& timestamp, const Digest& known,
+                        const std::vector<Piece>* prebuiltBlocks,
+                        const QByteArray* prebuiltText) {
+    return doc_.saveTo(path, timestamp, nullptr, header_, known, prebuiltBlocks, prebuiltText);
+}
+
+std::string ZNote::archiveStub() const {
+    NoteHeader stub = header_;
+    store::setArchivedMeta(stub, true);
+    const ZDocument body = doc_.headingOnly();
+    stub.setBlankAfter(!body.isEmpty());
+    return body.toMarkdown(stub);
+}
+
+// --- метаданные ---------------------------------------------------------------
+
+ZNote::Metadata ZNote::metadata() const {
+    Metadata m;
+    m.id_ = id();
+    m.path_ = path_.isEmpty() ? QString() : QFileInfo(path_).absoluteFilePath();
+    m.parent_ = parentId();
+    // ВРЕМЕНА ПРИВОДЯТСЯ К UTC ПРЯМО ЗДЕСЬ. В шапке они с офсетом («…+02:00»),
+    // а сравниваются и сортируются строками — лексикографически «21:40+02:00»
+    // больше «19:40Z», хотя это один момент. Показывает даты список, и он
+    // переводит в местную зону сам.
+    m.modified_ = store::comparableTime(modified().toStdString());
+    m.created_ = store::comparableTime(created().toStdString());
+    m.sortMark_ = sortMark();
+    m.archived_ = isArchived();
+    m.folder_ = isFolder() || isLost();
+    m.lostFound_ = isLost();
+    m.title_ = title();
+    m.snippet_ = doc_.snippet(kSnippetChars);
+    return m;
+}
+
+ZNote::Metadata ZNote::Metadata::fromFile(const QString& path) {
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return {};
+    const QByteArray bytes = f.readAll();
+    ZNote note(path, bytes, Digest{}, ZNoteHistory());
+    if (!note.load(std::string_view(bytes.constData(), size_t(bytes.size())))) return {};
+    Metadata m = note.metadata();
+    // Времени в шапке нет — берём у файла (а созданию — время правки: лучше,
+    // чем «в начале времён»).
+    if (m.modified_.isEmpty())
+        m.modified_ = QFileInfo(path).lastModified().toUTC().toString(Qt::ISODate);
+    if (m.created_.isEmpty()) m.created_ = m.modified_;
+    return m;
+}
+
+QString ZNote::parentId() const { return QString::fromStdString(header_.get(kParent)); }
+void ZNote::setParentId(const QString& id) { header_.set(kParent, id.toStdString()); }
+bool ZNote::isFolder() const { return header_.get(kRole) == kFolder; }
+bool ZNote::isLost() const { return header_.get(kRole) == kLost; }
+QString ZNote::role() const { return QString::fromStdString(header_.get(kRole)); }
+void ZNote::setRole(const QString& role) {
+    if (role.isEmpty()) header_.unset(kRole);
+    else header_.set(kRole, role.toStdString());
+}
+bool ZNote::isArchived() const { return store::isArchivedMeta(header_); }
+void ZNote::setArchived(bool archived) { store::setArchivedMeta(header_, archived); }
+QString ZNote::created() const { return QString::fromStdString(header_.get(kCreated)); }
+QString ZNote::modified() const { return QString::fromStdString(header_.get(kModified)); }
+void ZNote::stampModified() { header_.set(kModified, store::isoNow().toStdString()); }
+std::optional<SortOrder> ZNote::sortMark() const {
+    return parseSortOrder(QString::fromStdString(header_.get(kSort)));
+}
+void ZNote::setSortMark(std::optional<SortOrder> order) { applySortMark(header_, order); }
+QString ZNote::headerValue(const QString& key) const {
+    return QString::fromStdString(header_.get(key.toStdString()));
+}
+void ZNote::setHeaderValue(const QString& key, const QString& value) {
+    header_.set(key.toStdString(), value.toStdString());
+}
+QString ZNote::title() const {
+    const QString own = doc_.title();
+    return own.isEmpty() ? QStringLiteral("Без названия") : own;
+}
 
 ZDocument ZNote::replaceDoc(ZDocument fresh) {
     ZDocument previous = doc_;

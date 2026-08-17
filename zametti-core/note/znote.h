@@ -28,8 +28,10 @@
 
 #include "document.h"
 #include "document_pieces.h"
+#include "document_saver.h"
 #include "hash.h"
 #include "note_header.h"
+#include "sort_order.h"
 #include "text_stats.h"
 #include "caret_spot.h"
 #include "derived.h"
@@ -38,6 +40,9 @@
 
 #include <QByteArray>
 #include <QString>
+
+#include <optional>
+#include <string_view>
 
 #include <vector>
 
@@ -50,7 +55,7 @@ public:
     ZNote() = default;
     // Заметка, только что прочитанная с диска: путь, байты файла (они же
     // последняя записанная копия), их отпечаток и её журнал. Документ пуст —
-    // его собирает вид из разобранных блоков; шапка ставится setMeta.
+    // его собирает вид из разобранных блоков; шапка ставится setHeader.
     ZNote(QString path, QByteArray fileBytes, Digest digest, ZNoteHistory history);
 
     ZNote(const ZNote&) = delete;
@@ -69,10 +74,95 @@ public:
     // возвращается: вид держит его живым до возврата в цикл событий.
     ZDocument replaceDoc(ZDocument fresh);
 
-    // --- шапка ------------------------------------------------------------
-    NoteHeader& meta() { return meta_; }
-    const NoteHeader& meta() const { return meta_; }
-    void setMeta(NoteHeader meta) { meta_ = std::move(meta); }
+    // --- круг файла: шапка + тело ------------------------------------------
+    //
+    // ФАЙЛ ЗАМЕТКИ = ШАПКА + ТЕЛО, И СКЛЕИВАЕТ ИХ ЗАМЕТКА (решение владельца:
+    // ZDocument — чистая часть .md, без метаданных; документы заводятся и для
+    // служебных целей — разность, слепок, бумага, — и шапки у них нет). Шапка
+    // (NoteHeader) — конверт файла: чужие ключи и порядок строк — байт в байт.
+    // Круг файл→заметка→файл проверяет тоже заметка (save с самопроверкой).
+    NoteHeader& header() { return header_; }
+    const NoteHeader& header() const { return header_; }
+    void setHeader(NoteHeader header) { header_ = std::move(header); }
+    // Разобрать байты файла: шапка → сюда, тело → документ. Пустая заметка без
+    // шапки — тоже заметка (файл вне хранилища).
+    bool load(std::string_view bytes);
+    // Байты файла целиком: конверт + каноническое тело.
+    std::string toMarkdown() const;
+    QString toMarkdownText() const;
+    // Записать в файл штатным путём (self-check, атомарно) в своём конверте.
+    SaveOutcome save(const QString& path, const QString& timestamp, const Digest& known = {},
+                     const std::vector<Piece>* prebuiltBlocks = nullptr,
+                     const QByteArray* prebuiltText = nullptr);
+    // Стаб архива: шапка с пометкой и первый заголовок; тело живёт в журнале.
+    std::string archiveStub() const;
+
+    // --- метаданные ---------------------------------------------------------
+    //
+    // ОДНО СТРУКТУРИРОВАННОЕ МЕСТО (решение владельца) — то, что о заметке знают
+    // дерево, список, поиск, каталог хранилища: id, путь, родитель, заголовок,
+    // сниппет, времена, метка сортировки, архив, папка, находки. Собирается из
+    // шапки и тела; правится глаголами заметки ниже, которые пишут в шапку.
+    // Позже сюда же — теги, readOnly для ввезённых книг и прочих важных
+    // документов.
+    class Metadata {
+    public:
+        const QString& id() const { return id_; }
+        const QString& path() const { return path_; }
+        const QString& parent() const { return parent_; }
+        const QString& title() const { return title_; }       // «Без названия», если тела нет
+        const QString& snippet() const { return snippet_; }
+        // Времена — в СРАВНИМОЙ форме (UTC, ISO): по ним сортируют строками.
+        const QString& modified() const { return modified_; }
+        const QString& created() const { return created_; }
+        std::optional<SortOrder> sortMark() const { return sortMark_; }
+        bool archived() const { return archived_; }
+        bool folder() const { return folder_; }
+        bool lostFound() const { return lostFound_; }
+        bool valid() const { return !id_.isEmpty(); }
+
+        // Прочитать с диска: шапка и первый блок. Ложь valid() — не читается.
+        static Metadata fromFile(const QString& path);
+
+    protected:
+        friend class ZNote;
+        QString id_;
+        QString path_;
+        QString parent_;
+        QString title_;
+        QString snippet_;
+        QString modified_;
+        QString created_;
+        std::optional<SortOrder> sortMark_;
+        bool archived_ = false;
+        bool folder_ = false;
+        bool lostFound_ = false;
+    };
+    Metadata metadata() const;
+
+    // Глаголы метаданных — пишут в шапку. Ключи шапки названы здесь и в
+    // znote.cpp один раз.
+    QString parentId() const;
+    void setParentId(const QString& id);   // пусто — заметка в корне
+    bool isFolder() const;
+    bool isLost() const;
+    QString role() const;
+    void setRole(const QString& role);     // "folder", "lost", пусто — заметка
+    bool isArchived() const;
+    void setArchived(bool archived);
+    QString created() const;
+    QString modified() const;
+    void stampModified();
+    std::optional<SortOrder> sortMark() const;
+    void setSortMark(std::optional<SortOrder> order);
+    QString headerValue(const QString& key) const;
+    void setHeaderValue(const QString& key, const QString& value);
+    bool hasHeader() const { return header_.present(); }
+    void setHasHeader(bool present) { header_.setPresent(present); }
+    // Заголовок и сниппет — у тела (ZDocument::title/snippet); здесь для
+    // симметрии с каталогом: заголовок с запасным «Без названия».
+    QString title() const;
+
     // Мета, потерянная внешней правкой: показать человеку, что пропало, и
     // дать вернуть одним движением.
     void rememberLostMeta(NoteHeader lost) { lostMeta_ = std::move(lost); }
@@ -139,7 +229,7 @@ public:
 protected:
     QString path_;
     ZDocument doc_;
-    NoteHeader meta_;
+    NoteHeader header_;
     NoteHeader lostMeta_;
     Digest digest_;
     QByteArray lastSaved_;

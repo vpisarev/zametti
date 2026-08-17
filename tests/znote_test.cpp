@@ -138,10 +138,62 @@ void checkNote() {
     ZT_TRUE("и статистика не свежа", !note.statsFresh());
 }
 
+// КРУГ ФАЙЛА У ЗАМЕТКИ: шапка + тело склеиваются и разбираются в ZNote,
+// байты те же; метаданные — из шапки и тела; глаголы пишут в шапку; служебный
+// ZDocument шапки не имеет.
+void checkFileRound() {
+    const std::string source =
+        "<!-- zametti\nparent: 01aaaaaaaaaaaaa\ncreated: 2024-05-01T10:00:00+02:00\n"
+        "modified: 2024-06-01T12:00:00Z\nsort: name-asc\nchужой: ключ\n-->\n\n"
+        "# Заголовок\n\nтело заметки\n";
+    ZNote note(QStringLiteral("/store/01bbbbbbbbbbbbb.md"), QByteArray::fromStdString(source),
+               zametti::hashOf(source), ZNoteHistory());
+    ZT_TRUE("файл разобран", note.load(source));
+    ZT_TRUE("шапка у заметки", note.hasHeader());
+    ZT_EQ("круг файл→заметка→файл побайтовый", source, note.toMarkdown());
+    ZT_EQ("тело документа — без шапки", "# Заголовок\n\nтело заметки\n", note.doc().toMarkdown(zametti::NoteHeader{}));
+    ZT_EQ("чужой ключ шапки цел", "ключ", note.headerValue(QStringLiteral("chужой")).toStdString());
+
+    const ZNote::Metadata m = note.metadata();
+    ZT_EQ("id из пути", "01bbbbbbbbbbbbb", m.id().toStdString());
+    ZT_EQ("родитель из шапки", "01aaaaaaaaaaaaa", m.parent().toStdString());
+    ZT_EQ("заголовок из тела", "Заголовок", m.title().toStdString());
+    ZT_EQ("сниппет из тела", "тело заметки", m.snippet().toStdString());
+    ZT_EQ("modified в сравнимой форме (UTC)", "2024-06-01T12:00:00Z", m.modified().toStdString());
+    ZT_EQ("created приведено к UTC", "2024-05-01T08:00:00Z", m.created().toStdString());
+    ZT_TRUE("метка сортировки прочитана", m.sortMark().has_value());
+    ZT_TRUE("не архив, не папка", !m.archived() && !m.folder());
+
+    // Глаголы пишут в шапку — и в файл.
+    note.setParentId(QString());
+    note.setArchived(true);
+    note.setRole(QStringLiteral("folder"));
+    ZT_TRUE("родитель снят", note.parentId().isEmpty());
+    ZT_TRUE("архив и папка — из шапки", note.metadata().archived() && note.metadata().folder());
+    ZT_TRUE("archived в байтах файла", note.toMarkdown().find("archived: yes") != std::string::npos);
+    ZT_TRUE("role в байтах файла", note.toMarkdown().find("role: folder") != std::string::npos);
+    // Стаб архива: шапка с пометкой и один заголовок.
+    const std::string stub = note.archiveStub();
+    ZT_TRUE("стаб с пометкой", stub.find("archived: yes") != std::string::npos);
+    ZT_TRUE("стаб с заголовком", stub.find("# Заголовок") != std::string::npos);
+    ZT_TRUE("но без тела", stub.find("тело заметки") == std::string::npos);
+
+    // Заметка без шапки — тоже заметка (файл вне хранилища).
+    ZNote plain;
+    ZT_TRUE("тело без шапки разобрано", plain.load("просто текст\n"));
+    ZT_TRUE("шапки нет", !plain.hasHeader());
+    ZT_EQ("круг без шапки", "просто текст\n", plain.toMarkdown());
+    ZT_EQ("заголовок — первый содержательный блок", "просто текст", plain.title().toStdString());
+    ZNote empty;
+    ZT_TRUE("пустая разобрана", empty.load(""));
+    ZT_EQ("у пустой заголовок по умолчанию", "Без названия", empty.title().toStdString());
+}
+
 }  // namespace
 
 TEST(ZNote, All) {
     checkHistory();
     checkNote();
+    checkFileRound();
     EXPECT_EQ(0, zt::freshFailures());
 }

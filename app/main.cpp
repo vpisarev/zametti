@@ -684,7 +684,7 @@ int main(int argc, char** argv) {
             // «правлена» временем копирования). Файл остаётся запасным ходом
             // для заметок без шапки.
             const auto fromMeta = [&editor](const char* key) {
-                const std::string value = editor.meta().get(key);
+                const std::string value = editor.header().get(key);
                 return value.empty() ? QDateTime()
                                      : QDateTime::fromString(QString::fromStdString(value),
                                                              Qt::ISODate);
