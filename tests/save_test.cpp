@@ -637,6 +637,33 @@ void checkTrailingSoftBreak() {
 }
 
 // Записать некуда — старый файл всё равно цел.
+// Картинка без подписи. У неё нет текста — есть только сам снимок, и ни «пустой
+// абзац в конце файла не нужен», ни «схлопнувшийся кусок разметки выбрасываем»
+// к ней не относятся: приведение к файлу обязано различать пустоту и картинку с
+// пустой подписью. Ловилось только на записи: канон toMarkdown() картинку
+// держал, а файл — нет.
+//
+// Картинка без подписи ПОСРЕДИ ТЕКСТА («до ![](x.png) после») сюда не входит:
+// её теряет уже сборка документа — знаков, на которые лечь формату, у неё нет.
+// Это отдельный дефект (отчёт refactor2, §«найдено, не починено»).
+void checkTrailingBareImage() {
+    for (const char* source : {"---\ntitle: t\n---\n\nтекст\n\n![](x.png)\n",
+                               "---\ntitle: t\n---\n\n![](x.png)\n",
+                               "---\ntitle: t\n---\n\n![](x.png)\n\nтекст\n",
+                               "---\ntitle: t\n---\n\n- пункт\n\n  ![](x.png)\n"}) {
+        const QString path = pathFor("bare-image.md");
+        check(writeFile(path, source), "картинка без подписи: не записать исходник");
+        QTextDocument doc;
+        buildFrom(source, doc);
+        zametti::saveDocument(doc, path, QStringLiteral("test"));
+        const std::string onDisk = readFile(path);
+        check(onDisk.find("![](x.png)") != std::string::npos,
+              std::string("картинка без подписи пережила запись: ") + source);
+        checkEqual(noteOf(source).toMarkdown(), onDisk,
+                   "картинка без подписи: канон и файл — одно");
+    }
+}
+
 void checkFailure() {
     const QString path = g_dir + QStringLiteral("/нет-такого-каталога/файл.md");
     QTextDocument doc;
@@ -736,6 +763,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkEdgeSpaces();
     checkTrailingSoftBreak();
     checkBareLinks();
+    checkTrailingBareImage();
     checkRescue();
     checkFailure();
 
