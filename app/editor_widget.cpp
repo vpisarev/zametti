@@ -65,13 +65,12 @@ bool readFile(const QString& path, std::string& out) {
 
 NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
     setReadOnly(false);
-    // Вид сдвинул кто-то, кроме нас, — каретку в виду больше не держим. Полоса
-    // прокрутки годится сторожем на всех сразу: её и человек тянет, и зум
-    // ставит по своему якорю, и поиск ведёт к совпадению. Своё же движение мы
-    // отличаем признаком, а не гаданием.
-    connect(verticalScrollBar(), &QScrollBar::valueChanged, this, [this] {
-        if (!movingView_) releaseCaret();
-    });
+    // Человек взялся за полосу прокрутки — каретку в виду больше не держим.
+    // Именно ДЕЙСТВИЕ человека (actionTriggered), а не всякая смена значения:
+    // значение меняет и сама Qt — при довёрстке документа, при перекладке окна,
+    // — и, отпуская удержание на этом, мы теряли каретку из виду при запуске
+    // (владелец: «то слишком высоко, то в самом низу»).
+    connect(verticalScrollBar(), &QScrollBar::actionTriggered, this, [this] { releaseCaret(); });
     // Щелчок по месту языка в полоске заводит поле ввода. Виджет просмотра
     // сам язык не правит: правки документа живут здесь.
     connect(this, &NoteView::codeStripClicked, this, [this](int block, const QRect& strip) {
@@ -467,6 +466,7 @@ void NoteEditor::showLiveNote() {
 // Документ разности из своего слота. Слот им и владеет: вынимать его оттуда
 // ради показа значило бы завести второе место, где живёт «что сейчас в поле».
 void NoteEditor::showDiffSlot(int slot) {
+    releaseCaret();   // в истории показан слепок, каретки заметки в нём нет
     if (document() != nullptr) disconnect(document(), nullptr, this, nullptr);
     setDocument(current_.diffDocs[size_t(slot)].get());
     connectDocument();
@@ -592,15 +592,16 @@ void NoteEditor::activateNote(bool takeFocus) {
     // тронет.
     revealInGolden(caretRectInDocument());
 
-    // И ДЕРЖИМ ЕЁ В ВИДУ, пока вёрстка не устаканится: высота на этот миг ещё
-    // не окончательная — картинки декодируются в другом потоке, формулы
-    // считаются по первой отрисовке, — и всё, что выше каретки, подрастает уже
-    // после нас, унося текст у человека из-под глаз. Держим НА ТОЙ ЖЕ ВЫСОТЕ
-    // ОКНА, где поставили: минимальная прокрутка спускала бы её к нижней кромке
-    // по мере того, как растёт всё, что выше. Отпускаем при первом же
-    // прикосновении человека.
+    // И ДЕРЖИМ ЕЁ НА ТОЙ ЖЕ ДОЛЕ ВЫСОТЫ ОКНА, пока вёрстка не устаканится и
+    // окно не примет свой размер: высота на этот миг ещё не окончательная —
+    // картинки декодируются в другом потоке, формулы считаются по первой
+    // отрисовке, при запуске заметка открывается ДО show() и окно ещё меняет
+    // размер, — и всё, что выше каретки, подрастает уже после нас, унося текст
+    // у человека из-под глаз. Доля, а не пиксель: окно вырастет — каретка
+    // останется на своём месте в нём, а не уедет к верхней кромке. Отпускаем
+    // при первом же прикосновении человека.
     holdingCaret_ = true;
-    heldCaretY_ = cursorRect().top();
+    heldRatio_ = heldRatioNow();
 
     // Фокус. Каретку Qt рисует ТОЛЬКО в виджете с фокусом ввода, и без этой
     // строки человек видел открытую заметку без каретки: место восстановлено,
@@ -861,6 +862,9 @@ void NoteEditor::restoreDamagedMeta() {
 
 void NoteEditor::applyZoom(qreal value) {
     if (value == zoom()) return;
+    // Масштаб держит вид за свой якорь (блок у середины окна) — удержание
+    // каретки с ним спорить не должно.
+    releaseCaret();
     // МАСШТАБ — ЭТО ОДИН setDefaultFont, а не пересборка.
     //
     // Раньше здесь стоял refreshAppearance(), то есть полная сборка документа
@@ -983,13 +987,10 @@ QRectF NoteEditor::caretRectInDocument() const {
 
 void NoteEditor::revealInGolden(const QRectF& place) {
     const int height = viewport()->height();
-    // Окна ещё нет (заметка открывается до show(), в узком окне): показать
-    // место сейчас нельзя, покажем на первой же настоящей раскладке.
-    if (height <= 0 || place.isNull()) {
-        revealPending_ = true;
-        return;
-    }
-    revealPending_ = false;
+    // Окна ещё нет (заметка открывается до show()): показать место сейчас
+    // нельзя — его поставит удержание каретки на первой же настоящей раскладке
+    // (keepCaretInView по золотому сечению).
+    if (!isVisible() || height <= 0 || place.isNull()) return;
     const int scroll = verticalScrollBar()->value();
     const qreal top = place.top() - scroll;
 
@@ -3621,21 +3622,45 @@ void NoteEditor::wheelEvent(QWheelEvent* event) {
     NoteView::wheelEvent(event);
 }
 
+// Доля высоты окна, на которой сейчас стоит каретка; окна ещё нет (заметка
+// открыта до show()) или каретка вне окна — золотое сечение: там ей и место при
+// открытии.
+qreal NoteEditor::heldRatioNow() const {
+    const int height = viewport()->height();
+    const qreal golden = qBound(0.0, appearance().focusRatio, 0.9);
+    if (!isVisible() || height <= 0) return golden;
+    const int top = cursorRect().top();
+    if (top < 0 || top >= height) return golden;
+    return qreal(top) / height;
+}
+
 void NoteEditor::keepCaretInView() {
     if (!holdingCaret_) return;
-    if (revealPending_) {
-        // Окно наконец есть — показать место так, как просили при открытии.
-        revealInGolden(caretRectInDocument());
-        if (!revealPending_) heldCaretY_ = cursorRect().top();
-        return;
-    }
-    const int dy = cursorRect().top() - heldCaretY_;
+    const int height = viewport()->height();
+    if (height <= 0) return;
+    // Высота может быть и от окна-заготовки (до show()): ставим по ней, а
+    // показ и перекладка окна поставят заново — по настоящей.
+    const qreal wantTop = heldRatio_ * height;
+    const int dy = int(cursorRect().top() - wantTop);
     if (dy == 0) return;
     movingView_ = true;
     verticalScrollBar()->setValue(verticalScrollBar()->value() + dy);
     movingView_ = false;
-    // Не смогли (упёрлись в край) — запоминаем, где встала, чтобы не дёргать.
-    heldCaretY_ = cursorRect().top();
+}
+
+void NoteEditor::resizeEvent(QResizeEvent* event) {
+    NoteView::resizeEvent(event);
+    // Окно поменяло размер (в том числе впервые появилось): каретка — на той же
+    // доле новой высоты.
+    keepCaretInView();
+}
+
+void NoteEditor::showEvent(QShowEvent* event) {
+    // QTextEdit при первом показе сам зовёт ensureCursorVisible — минимальную
+    // прокрутку, которая ставит каретку впритык к нижней кромке. Возвращаем её
+    // на удерживаемую долю окна сразу же.
+    QTextBrowser::showEvent(event);
+    keepCaretInView();
 }
 
 void NoteEditor::rememberCaretFor(const QString& path, int cursor, int anchor) {

@@ -960,9 +960,12 @@ private:
     // появится (revealPending_).
     void revealInGolden(const QRectF& place);
     QRectF caretRectInDocument() const;
-    bool revealPending_ = false;
-    // На какой высоте окна стоит удерживаемая каретка (см. holdingCaret_).
-    int heldCaretY_ = 0;
+    // На какой ДОЛЕ высоты окна держится каретка (см. holdingCaret_): доля, а
+    // не пиксель, чтобы окно, меняющее размер при запуске, не уводило её.
+    qreal heldRatio_ = 0.382;
+    qreal heldRatioNow() const;
+    void resizeEvent(QResizeEvent* event) override;
+    void showEvent(QShowEvent* event) override;
 
     // Идёт ли серия отмены. Сохранением в историю отгораживается только ПЕРВЫЙ
     // шаг серии: он спасает вершину цепочки, то, что человек только что набрал.
