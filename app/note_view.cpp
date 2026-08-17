@@ -1840,7 +1840,7 @@ void NoteView::syncTables() {
             space.columnWidth = columnWidth;
             space.fullWidth = fullWidth;
             space.zoom = displayScale();
-            render.layout = layoutTable(parseTable(source.toStdString()), space, docStyle());
+            render.layout = layoutTable(parseTable(source), space, docStyle());
             render.source = source;
             render.width = fullWidth;
             render.zoom = displayScale();

@@ -6,7 +6,6 @@
 #include <QTextBlock>
 #include <QTextDocument>
 
-#include <string>
 
 namespace zametti {
 namespace {
@@ -26,11 +25,11 @@ QTextBlock literalEnd(QTextBlock block) {
 }
 
 // Текст дословного куска целиком, строками через перевод.
-std::string literalText(const QTextBlock& first, const QTextBlock& last) {
-    std::string out;
+QString literalText(const QTextBlock& first, const QTextBlock& last) {
+    QString out;
     for (QTextBlock block = first; block.isValid(); block = block.next()) {
-        out += block.text().toStdString();
-        out += '\n';
+        out += block.text();
+        out += QLatin1Char('\n');
         if (block == last) break;
     }
     return out;

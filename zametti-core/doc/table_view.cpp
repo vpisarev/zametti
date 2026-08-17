@@ -47,14 +47,11 @@ struct CellMarkup {
     QVector<Span> spans;
 };
 
-CellMarkup markupOfCell(std::string_view markdown) {
+CellMarkup markupOfCell(QStringView markdown) {
     CellMarkup out;
     std::vector<Piece> blocks;
     NoteHeader header;
-    // Разбор таблиц (format/table.h) пока байтовый — переводим ячейку здесь.
-    // Долг сессии refactor2: таблица целиком на QString вместе с дословными
-    // кусками.
-    parsePieces(QString::fromUtf8(markdown.data(), qsizetype(markdown.size())), blocks, header);
+    parsePieces(markdown, blocks, header);
     if (blocks.empty()) return out;
 
     const Piece& block = blocks.front();
