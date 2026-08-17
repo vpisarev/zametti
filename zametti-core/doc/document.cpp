@@ -363,11 +363,14 @@ std::vector<Hit> ZDocument::find(const Query& query) const {
     int ordinal = 0;
     int index = 0;
     for (QTextBlock b = d_->text.begin(); b.isValid(); b = b.next(), ++index) {
-        const QString text = b.text();
+        // У объекта (таблица, формула) ищем по исходнику: в тексте блока один
+        // U+FFFC (см. searchableTextOf).
+        bool inObject = false;
+        const QString text = searchableTextOf(b, &inObject);
         if (text.isEmpty()) continue;
         qsizetype at = text.indexOf(query.needle, 0, query.sensitivity());
         while (at >= 0) {
-            hits.push_back(Hit{index, int(at), int(query.needle.size()), ordinal++});
+            hits.push_back(Hit{index, int(at), int(query.needle.size()), ordinal++, inObject});
             // Со следующего знака, а не через длину запроса: перекрывающиеся
             // вхождения («аа» в «ааа») — тоже вхождения, и счётчик «3/17»
             // обязан считать их так же, как их потом обойдёт F3.
@@ -381,17 +384,18 @@ HitLine ZDocument::hitLine(const Hit& hit, int radius) const {
     HitLine out;
     const QTextBlock block = d_->text.findBlockByNumber(hit.block);
     if (!block.isValid()) return out;
-    const QString text = block.text();
+    // Тот же текст, по которому искали: у объекта — исходник.
+    const QString text = searchableTextOf(block);
     if (hit.offset < 0 || hit.offset > text.size()) return out;
 
     // Строка, в которой стоит совпадение: у блока их может быть несколько —
-    // мягкие переносы внутри абзаца стоят разделителем строк, — а в списке
-    // результатов нужна одна.
-    constexpr QChar kBreak = QChar::LineSeparator;
-    qsizetype from = text.lastIndexOf(kBreak, hit.offset > 0 ? hit.offset - 1 : 0);
-    from = from < 0 ? 0 : from + 1;
-    qsizetype to = text.indexOf(kBreak, hit.offset);
-    if (to < 0) to = text.size();
+    // мягкие переносы внутри абзаца стоят разделителем строк, а в исходнике
+    // объекта — переводы, — а в списке результатов нужна одна.
+    const auto isBreak = [](QChar c) { return c == QChar::LineSeparator || c == QLatin1Char('\n'); };
+    qsizetype from = hit.offset;
+    while (from > 0 && !isBreak(text.at(from - 1))) --from;
+    qsizetype to = hit.offset;
+    while (to < text.size() && !isBreak(text.at(to))) ++to;
 
     // Окно вокруг совпадения: длинную строку кода целиком в список не
     // вместить, а совпадение обязано быть видно.

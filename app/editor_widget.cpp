@@ -1065,9 +1065,11 @@ void NoteEditor::showMatchHighlights() {
     // берётся окно с запасом по экрану сверху и снизу, а при прокрутке
     // подсветка перекладывается заново — это O(видимого).
     QList<QTextEdit::ExtraSelection> selections;
+    QVector<ObjectHighlight> inObjects;
     const NoteSearch& search = note_->search();
     if (search.empty()) {
         setExtraSelections(selections);
+        setObjectHighlights(inObjects);
         return;
     }
     const int height = viewport()->height();
@@ -1082,12 +1084,21 @@ void NoteEditor::showMatchHighlights() {
     QColor pale = base;
     pale.setAlpha(110);
     for (int i = first; i < last; ++i) {
+        const SearchHit& hit = search.hitAt(i);
+        // Вхождение ВНУТРИ ОБЪЕКТА подсвечивает вид сам, на сетке или на
+        // вёрстке: ExtraSelection над знаком объекта закрасила бы всю полосу.
+        if (hit.inObject()) {
+            inObjects.push_back({hit.cursor.selectionStart(), hit.innerOffset, hit.innerLength,
+                                 i == search.current()});
+            continue;
+        }
         QTextEdit::ExtraSelection selection;
-        selection.cursor = search.hit(i);
+        selection.cursor = hit.cursor;
         selection.format.setBackground(i == search.current() ? base : pale);
         selections.append(selection);
     }
     setExtraSelections(selections);
+    setObjectHighlights(inObjects);
 }
 
 void NoteEditor::goToMatch(int index) {
@@ -1096,6 +1107,9 @@ void NoteEditor::goToMatch(int index) {
     const int scrollBefore = verticalScrollBar()->value();
     setTextCursor(note_->search().hit(note_->search().current()));
     showMatchHighlights();
+    // Вхождение внутри объекта — каретка не сдвинулась (два вхождения в одной
+    // таблице), а «текущее» другое: перерисовать надо самим.
+    viewport()->update();
     // Переход: совпадение вне окна или у самой кромки — в золотое сечение.
     showEditPlace(scrollBefore, /*jump=*/true);
 }
@@ -1118,19 +1132,35 @@ void NoteEditor::stepMatch(int direction) {
 void NoteEditor::clearMatches() {
     note_->search().clear();
     setExtraSelections({});
+    setObjectHighlights({});
 }
 
 bool NoteEditor::replaceCurrentMatch(const QString& with) {
     if (!note_->search().hasCurrent()) return false;
-    const QTextCursor target = note_->search().hit(note_->search().current());
-    // Замена одного вхождения — это НАБОР ПОВЕРХ ВЫДЕЛЕНИЯ, ровно тот же
-    // глагол, что у клавиатуры: заводить ради неё второй путь незачем.
-    const QTextCharFormat format = currentCharFormat();
-    const bool done = runNoteEdit([&](ZDocument& note, QTextCursor& cursor) {
-        cursor.setPosition(target.selectionStart());
-        cursor.setPosition(target.selectionEnd(), QTextCursor::KeepAnchor);
-        return note.insertText(cursor, with, format);
-    });
+    const SearchHit hit = note_->search().hitAt(note_->search().current());
+    const QTextCursor target = hit.cursor;
+    bool done = false;
+    if (hit.inObject()) {
+        // Вхождение внутри объекта: переписать исходник и рассудить блок заново
+        // тем же судьёй, что и при сворачивании (таблица могла перестать быть
+        // таблицей, формула — формулой; это законно, в файл уйдёт написанное).
+        const QTextBlock block = target.block();
+        QString source = searchableTextOf(block);
+        source.replace(hit.innerOffset, hit.innerLength, with);
+        const int number = block.blockNumber();
+        done = runNoteEdit([&](ZDocument& note, QTextCursor& cursor) {
+            return note.rewriteObjectSource(cursor, number, source);
+        });
+    } else {
+        // Замена одного вхождения — это НАБОР ПОВЕРХ ВЫДЕЛЕНИЯ, ровно тот же
+        // глагол, что у клавиатуры: заводить ради неё второй путь незачем.
+        const QTextCharFormat format = currentCharFormat();
+        done = runNoteEdit([&](ZDocument& note, QTextCursor& cursor) {
+            cursor.setPosition(target.selectionStart());
+            cursor.setPosition(target.selectionEnd(), QTextCursor::KeepAnchor);
+            return note.insertText(cursor, with, format);
+        });
+    }
     if (!done) return false;
     // Прежние курсоры недействительны, ищем заново и встаём на следующее
     // вхождение.

@@ -29,11 +29,25 @@ class QTextDocument;
 
 namespace zametti {
 
+// Одно вхождение: курсор над найденным (едет с правками, как всякий курсор
+// Qt) и, если вхождение ВНУТРИ ОБЪЕКТА (таблица, формула — в тексте блока один
+// U+FFFC, а искали по исходнику), смещение и длина внутри исходника. Курсор у
+// такого вхождения стоит над самим знаком объекта.
+struct SearchHit {
+    QTextCursor cursor;
+    int innerOffset = -1;   // < 0 — обычное вхождение в тексте
+    int innerLength = 0;
+    bool inObject() const { return innerOffset >= 0; }
+};
+
 class NoteSearch {
 public:
     // Найти все вхождения text в doc, включая перекрывающиеся (счётчик обязан
     // считать их так же, как их обойдёт F3). Пустой запрос — пусто. Текущее
-    // сбрасывается. Возвращает число найденного.
+    // сбрасывается. Возвращает число найденного. Ищется тем же перечислителем,
+    // что и поиск по хранилищу и истории (searchableTextOf): объекты — по
+    // исходнику, и порядок вхождений тот же, что у ZDocument::find (по нему
+    // ходит список результатов).
     int find(const QTextDocument& doc, const QString& text, bool caseSensitive);
     void clear();
     // Найденное свежо для этого документа и запроса: тот же текст, тот же
@@ -44,7 +58,8 @@ public:
     int count() const { return int(hits_.size()); }
     const QString& text() const { return text_; }
     bool caseSensitive() const { return caseSensitive_; }
-    const QTextCursor& hit(int index) const { return hits_[size_t(index)]; }
+    const QTextCursor& hit(int index) const { return hits_[size_t(index)].cursor; }
+    const SearchHit& hitAt(int index) const { return hits_[size_t(index)]; }
 
     // Текущее вхождение: -1 — не выбрано.
     int current() const { return current_; }
@@ -66,7 +81,7 @@ public:
     std::pair<int, int> range(int from, int to) const;
 
 protected:
-    std::vector<QTextCursor> hits_;
+    std::vector<SearchHit> hits_;
     int current_ = -1;
     QString text_;
     bool caseSensitive_ = false;

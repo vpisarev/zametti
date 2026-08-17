@@ -3618,6 +3618,27 @@ int ZDocument::replaceAll(const QString& text, bool caseSensitive, const QString
         at.insertText(with);
         ++replaced;
     }
+    // ОБЪЕКТЫ — ПО ИСХОДНИКУ (таблица, формула): в тексте блока их слов нет,
+    // QTextDocument::find их не видит. Идём с конца: судья может заменить один
+    // блок несколькими, и номера ниже съезжают, а выше — нет.
+    const Qt::CaseSensitivity sensitivity = caseSensitive ? Qt::CaseSensitive : Qt::CaseInsensitive;
+    for (int number = d_->text.blockCount() - 1; number >= 0; --number) {
+        const QTextBlock block = d_->text.findBlockByNumber(number);
+        bool inObject = false;
+        QString source = searchableTextOf(block, &inObject);
+        if (!inObject) continue;
+        int here = 0;
+        qsizetype pos = source.indexOf(text, 0, sensitivity);
+        while (pos >= 0) {
+            source.replace(pos, text.size(), with);
+            ++here;
+            pos = source.indexOf(text, pos + with.size(), sensitivity);
+        }
+        if (here == 0) continue;
+        QTextCursor scratch(&d_->text);
+        scratch.setPosition(block.position());
+        if (rejudgeBlock(scratch, number, source)) replaced += here;
+    }
     if (replaced > 0) {
         // ШОВ ПО ВСЕЙ ЗАМЕТКЕ — здесь это законно: вхождения рассыпаны по ней
         // целиком, и дешевле шва на каждое одно на всё.

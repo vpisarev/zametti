@@ -1167,6 +1167,11 @@ void NoteView::attachObjectHandlers(QTextDocument* doc) {
     doc->documentLayout()->registerHandler(TableObject, tableObjects_);
 }
 
+void NoteView::setObjectHighlights(const QVector<ObjectHighlight>& highlights) {
+    objectHighlights_ = highlights;
+    viewport()->update();
+}
+
 void NoteView::setDocument(QTextDocument* doc) {
     // ОБРАБОТЧИКИ — ДО ПОДМЕНЫ. QTextEdit::setDocument тут же задаёт документу
     // размер страницы, и вёрстка ПЕРВЫЙ РАЗ проходит по нему ещё внутри этого
@@ -1588,6 +1593,15 @@ void NoteView::paintFormulaMarks(QPainter& painter, const QTextBlock& block) {
     // стоит объект. Выделение при этом остаётся видно вокруг формулы, ровно как
     // вокруг фотографии: так и читается «выбрано».
     const QRectF box = formulaRect(block.blockNumber());
+    // Найденное поиском в исходнике формулы — подсветка под всей вёрсткой:
+    // куска исходника на картинке не найти.
+    for (const ObjectHighlight& hit : std::as_const(objectHighlights_)) {
+        if (hit.position != block.position()) continue;
+        QColor colour = docStyle().searchHighlight();
+        if (!hit.current) colour.setAlpha(110);
+        painter.fillRect(box.adjusted(-2, -2, 2, 2), colour);
+        if (hit.current) break;
+    }
     painter.drawImage(box, render->image, QRectF(QPointF(0, 0), QSizeF(render->image.size())));
 
     // Уголки — выбранной. С небольшим отступом наружу: впритык обнимающие дробь
@@ -1689,6 +1703,9 @@ void NoteView::paintTableMarks(QPainter& painter, const QTextBlock& block) {
     how.text = palette().color(QPalette::Text);
     how.scale = displayScale();
     how.highlightColour = docStyle().searchHighlight();
+    for (const ObjectHighlight& hit : std::as_const(objectHighlights_))
+        if (hit.position == block.position())
+            how.highlights.push_back({hit.from, hit.from + hit.length, hit.current});
     TableObjects::paint(painter, area, *render, how);
 
     if (exportRatio_ <= 0.0 && objectSelected(block)) paintImageCorners(painter, area);

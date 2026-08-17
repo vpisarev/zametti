@@ -320,6 +320,20 @@ QString tableSourceOf(const QTextBlock& block) {
     return block.begin().fragment().charFormat().property(ObjectSourceProperty).toString();
 }
 
+QString searchableTextOf(const QTextBlock& block, bool* inObject) {
+    if (inObject != nullptr) *inObject = false;
+    if (!block.isValid()) return {};
+    if (block.length() == 2 && block.text().at(0) == QChar::ObjectReplacementCharacter) {
+        const QTextCharFormat format = block.begin().fragment().charFormat();
+        const int type = format.objectType();
+        if (type == TableObject || type == FormulaObject) {
+            if (inObject != nullptr) *inObject = true;
+            return format.property(ObjectSourceProperty).toString();
+        }
+    }
+    return block.text();
+}
+
 QString sourceTextOf(const QTextBlock& block) {
     if (isTableObjectBlock(block)) return tableSourceOf(block);
     QString source;
