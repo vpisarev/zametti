@@ -216,8 +216,8 @@ bool isImageBlock(const Piece& b) {
 // Во что блок IR превратится в документе: сколько блоков он там займёт и
 // сколько мягких переносов останется внутри них.
 //
-// Литеральное (код и дословные куски) сборщик режет построчно, по блоку на
-// строку, и один завершающий перевод снимает; всё прочее живёт одним блоком, а
+// Дословные куски сборщик режет построчно, по блоку на строку, и один
+// завершающий перевод снимает; блок кода и всё прочее живут одним блоком, а
 // переводы внутри становятся мягкими (см. splitLiteralLines и toQt в
 // document_builder.cpp). Разделителями там считаются три знака: '\n', '\r' и
 // U+2029 — ровно те, которые Qt иначе разорвал бы на блоки.
@@ -226,7 +226,7 @@ struct BlockShape {
     int breaks = 0;
 };
 
-BlockShape shapeOf(std::string_view text, bool literal) {
+BlockShape shapeOf(std::string_view text, bool literal, bool code = false) {
     int newlines = 0;
     int others = 0;
     for (size_t i = 0; i < text.size(); ++i) {
@@ -247,6 +247,9 @@ BlockShape shapeOf(std::string_view text, bool literal) {
     }
     if (!literal) return {1, newlines + others};
     const bool trailing = !text.empty() && text.back() == '\n';
+    // Блок кода — один QTextBlock, его строки — мягкие переносы внутри; один
+    // завершающий перевод строки сборщик снимает (см. document_builder.cpp).
+    if (code) return {1, newlines - int(trailing) + others};
     return {newlines + 1 - int(trailing), others};
 }
 
@@ -258,7 +261,7 @@ NoteStats pieceStats(const std::vector<Piece>& blocks) {
     int breaks = 0;
     for (const Piece& b : blocks) {
         const bool literal = b.raw || b.kind == Kind::Code;
-        const BlockShape shape = shapeOf(b.text, literal);
+        const BlockShape shape = shapeOf(b.text, literal, !b.raw && b.kind == Kind::Code);
         if (isImageBlock(b)) ++out.images;
         else out.words += countWords(b.text);
         if (shape.breaks > 0) {

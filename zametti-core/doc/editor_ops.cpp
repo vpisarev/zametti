@@ -1538,21 +1538,29 @@ static bool deleteImageLineForward(QTextDocument& doc, QTextCursor& cursor) {
 
 namespace {
 
-bool isCodeLine(const QTextBlock& block) {
+// БЛОК КОДА — ОДИН QTextBlock (решение владельца, сессия refactor2). Его строки
+// разделяет U+2028 с пометкой BreakSourceProperty — тот же мягкий перенос, что
+// и в абзаце. «Строка кода» здесь — отрезок [start, end) внутри блока, без
+// разделителя; всё, что делается со строками (Tab, Shift+Tab, Enter, забор),
+// делается с этими отрезками, а не с блоками. Прежде каждая строка лежала
+// отдельным QTextBlock-продолжением, и всякая правка внутри длинного блока
+// пересобирала его целиком (замер: 85 мс на нажатие в блоке на 3000 строк).
+bool isCodeBlock(const QTextBlock& block) {
     return block.isValid() && !isRawBlock(block) && kindOf(block) == Kind::Code;
 }
 
-// Следующая строка того же блока кода?
-bool codeContinuesInDoc(const QTextBlock& block) {
-    const QTextBlock next = block.next();
-    return isCodeLine(next) && isContinuationBlock(next);
+struct CodeLine {
+    int start = 0;   // позиция первого знака строки в документе
+    int end = 0;     // позиция за последним знаком (там разделитель или конец блока)
+};
+
+CodeLine codeLineAt(const QTextDocument& doc, int position) {
+    return {lineStartAt(doc, position), lineEndAt(doc, position)};
 }
 
-// Последняя строка блока кода, считая от этой. Строки блока — отдельные
-// QTextBlock, помеченные продолжением (см. ContinuationProperty).
-QTextBlock lastCodeLine(QTextBlock block) {
-    while (isCodeLine(block.next()) && isContinuationBlock(block.next())) block = block.next();
-    return block;
+QString codeLineText(const QTextDocument& doc, const CodeLine& line) {
+    const QTextBlock block = doc.findBlock(line.start);
+    return block.text().mid(line.start - block.position(), line.end - line.start);
 }
 
 // Видимая колонка позиции в строке: знак табуляции доводит до следующего
@@ -1590,29 +1598,48 @@ int codeTabWidth() { return qMax(1, appearance().codeTabWidth); }
 
 // Переписать отступ строки на columns пробелов. Возвращает, на сколько знаков
 // строка стала длиннее (может быть отрицательным).
-int setLineIndent(QTextCursor& edit, const QTextBlock& block, int columns) {
+int setLineIndent(QTextCursor& edit, const QTextDocument& doc, const CodeLine& line,
+                  int columns) {
     columns = qMax(0, columns);
-    const Lead lead = leadingIndent(block.text(), codeTabWidth());
+    const Lead lead = leadingIndent(codeLineText(doc, line), codeTabWidth());
     if (lead.columns == columns && lead.chars == columns) return 0;
-    edit.setPosition(block.position());
-    edit.setPosition(block.position() + lead.chars, QTextCursor::KeepAnchor);
+    edit.setPosition(line.start);
+    edit.setPosition(line.start + lead.chars, QTextCursor::KeepAnchor);
     edit.insertText(QString(columns, QLatin1Char(' ')));
     return columns - lead.chars;
 }
 
 // Строки блока кода, задетые курсором: от строки начала выделения до строки
-// его конца. Пусто — курсор не в коде.
-QVector<QTextBlock> touchedCodeLines(const QTextDocument& doc, const QTextCursor& cursor) {
-    QVector<QTextBlock> lines;
-    QTextBlock block = doc.findBlock(qMin(cursor.anchor(), cursor.position()));
-    const QTextBlock last = doc.findBlock(qMax(cursor.anchor(), cursor.position()));
-    if (!isCodeLine(block)) return lines;
-    for (;; block = block.next()) {
-        if (!isCodeLine(block)) break;
-        lines.push_back(block);
-        if (block == last || !block.next().isValid()) break;
+// его конца, в пределах одного блока. Пусто — курсор не в коде.
+QVector<CodeLine> touchedCodeLines(const QTextDocument& doc, const QTextCursor& cursor) {
+    QVector<CodeLine> lines;
+    const int from = qMin(cursor.anchor(), cursor.position());
+    const int to = qMax(cursor.anchor(), cursor.position());
+    const QTextBlock block = doc.findBlock(from);
+    if (!isCodeBlock(block)) return lines;
+    const int blockEnd = block.position() + block.length() - 1;
+    const int last = qMin(to, blockEnd);
+    for (int at = lineStartAt(doc, from);;) {
+        const CodeLine line{at, lineEndAt(doc, at)};
+        lines.push_back(line);
+        if (line.end >= last || line.end >= blockEnd) break;
+        at = line.end + 1;
     }
     return lines;
+}
+
+// Позиция «та же колонка той же строки» после того, как строки получили новые
+// отступы: delta[i] — на сколько знаков изменилась строка i, lines — строки до
+// правки. Колонка левее нового начала текста прижимается к началу строки.
+int shiftedPosition(const QVector<CodeLine>& lines, const QVector<int>& delta, int position) {
+    int shift = 0;
+    for (int i = 0; i < lines.size(); ++i) {
+        const CodeLine& line = lines[i];
+        if (position < line.start) break;
+        if (position <= line.end) return line.start + shift + qMax(0, position - line.start + delta[i]);
+        shift += delta[i];
+    }
+    return position + shift;
 }
 
 }  // namespace
@@ -1626,24 +1653,18 @@ static QString sanitiseCodeLanguage(QString language) {
 }
 
 static bool setCodeLanguage(QTextDocument& doc, QTextCursor& cursor, const QString& language) {
-    QTextBlock block = cursor.block();
-    if (!isCodeLine(block)) return false;
-    while (isContinuationBlock(block) && isCodeLine(block.previous())) block = block.previous();
+    const QTextBlock block = cursor.block();
+    if (!isCodeBlock(block)) return false;
 
     const QString want = sanitiseCodeLanguage(language);
     if (block.blockFormat().stringProperty(InfoProperty) == want) return false;
 
+    QTextBlockFormat format = block.blockFormat();
+    if (want.isEmpty()) format.clearProperty(InfoProperty);
+    else format.setProperty(InfoProperty, want);
     QTextCursor edit(&doc);
-    edit.beginEditBlock();
-    for (QTextBlock line = block; line.isValid(); line = line.next()) {
-        QTextBlockFormat format = line.blockFormat();
-        if (want.isEmpty()) format.clearProperty(InfoProperty);
-        else format.setProperty(InfoProperty, want);
-        edit.setPosition(line.position());
-        edit.setBlockFormat(format);
-        if (!codeContinuesInDoc(line)) break;
-    }
-    edit.endEditBlock();
+    edit.setPosition(block.position());
+    edit.setBlockFormat(format);
     return true;
 }
 
@@ -1655,7 +1676,7 @@ static QStringList codeLanguagesNear(const QTextDocument& doc, int blockNumber) 
     };
     std::vector<Found> found;
     for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {
-        if (!isCodeLine(block) || isContinuationBlock(block)) continue;
+        if (!isCodeBlock(block)) continue;
         const QString info = block.blockFormat().stringProperty(InfoProperty);
         if (info.isEmpty()) continue;
         if (block.blockNumber() == blockNumber) continue;
@@ -1675,12 +1696,12 @@ static QStringList codeLanguagesNear(const QTextDocument& doc, int blockNumber) 
 
 static bool leaveCodeBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     (void)doc;   // документ берётся у курсора; подпись общая у всех операций
-    if (!isCodeLine(cursor.block())) return false;
+    if (!isCodeBlock(cursor.block())) return false;
 
     // Пустая строка, а не пустой абзац: пустая строка в этой модели — блок
     // VSpace, и ровно она получается при чтении файла. Абзац без текста был бы
     // состоянием, которого чтение файла не даёт, — а такого у нас не бывает.
-    const QTextBlock last = lastCodeLine(cursor.block());
+    const QTextBlock last = cursor.block();
     QTextCursor edit(cursor);
     edit.setPosition(last.position() + last.length() - 1);
     edit.insertBlock(vspaceBlockFormat(false, false), QTextCharFormat());
@@ -1689,7 +1710,7 @@ static bool leaveCodeBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
 }
 
 static bool indentCodeAtCursor(QTextDocument& doc, QTextCursor& cursor) {
-    const QVector<QTextBlock> lines = touchedCodeLines(doc, cursor);
+    const QVector<CodeLine> lines = touchedCodeLines(doc, cursor);
     if (lines.isEmpty()) return false;
     const int width = codeTabWidth();
 
@@ -1698,9 +1719,9 @@ static bool indentCodeAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     // ровно до ближайшего стопа, а не полной шириной. Всё остальное — отступ
     // строк целиком, на целый стоп каждая.
     if (lines.size() == 1 && !cursor.hasSelection()) {
-        const QTextBlock block = lines.front();
-        const int at = cursor.position() - block.position();
-        const int column = visualColumn(block.text(), at, width);
+        const CodeLine& line = lines.front();
+        const int at = cursor.position() - line.start;
+        const int column = visualColumn(codeLineText(doc, line), at, width);
         const int spaces = width - (column % width);
         edit.setPosition(cursor.position());
         edit.insertText(QString(spaces, QLatin1Char(' ')));
@@ -1709,62 +1730,50 @@ static bool indentCodeAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     }
 
     // Границы выделения держим смещениями в строках: текст под ними едет, а
-    // «та же колонка той же строки» переживает правку.
-    const bool forward = cursor.position() >= cursor.anchor();
-    QTextBlock anchorLine = doc.findBlock(cursor.anchor());
-    QTextBlock positionLine = doc.findBlock(cursor.position());
-    int anchorAt = cursor.anchor() - anchorLine.position();
-    int positionAt = cursor.position() - positionLine.position();
-
-    for (const QTextBlock& block : lines) {
-        const Lead lead = leadingIndent(block.text(), width);
-        const int delta = setLineIndent(edit, block, lead.columns + width);
-        if (block == anchorLine) anchorAt += delta;
-        if (block == positionLine) positionAt += delta;
+    // «та же колонка той же строки» переживает правку. Правим с последней
+    // строки к первой, чтобы позиции ещё не тронутых строк не плыли.
+    const int anchor = cursor.anchor();
+    const int position = cursor.position();
+    QVector<int> delta(lines.size(), 0);
+    for (int i = lines.size() - 1; i >= 0; --i) {
+        const Lead lead = leadingIndent(codeLineText(doc, lines[i]), width);
+        delta[i] = setLineIndent(edit, doc, lines[i], lead.columns + width);
     }
 
     QTextCursor restored(&doc);
-    restored.setPosition(anchorLine.position() + qMax(0, anchorAt));
-    restored.setPosition(positionLine.position() + qMax(0, positionAt),
-                         QTextCursor::KeepAnchor);
-    Q_UNUSED(forward);
+    restored.setPosition(shiftedPosition(lines, delta, anchor));
+    restored.setPosition(shiftedPosition(lines, delta, position), QTextCursor::KeepAnchor);
     cursor = restored;
     return true;
 }
 
 static bool outdentCodeAtCursor(QTextDocument& doc, QTextCursor& cursor) {
-    const QVector<QTextBlock> lines = touchedCodeLines(doc, cursor);
+    const QVector<CodeLine> lines = touchedCodeLines(doc, cursor);
     if (lines.isEmpty()) return false;
     const int width = codeTabWidth();
 
-    QTextBlock anchorLine = doc.findBlock(cursor.anchor());
-    QTextBlock positionLine = doc.findBlock(cursor.position());
-    int anchorAt = cursor.anchor() - anchorLine.position();
-    int positionAt = cursor.position() - positionLine.position();
-
+    const int anchor = cursor.anchor();
+    const int position = cursor.position();
     QTextCursor edit(cursor);
+    QVector<int> delta(lines.size(), 0);
     bool moved = false;
-    for (const QTextBlock& block : lines) {
-        const Lead lead = leadingIndent(block.text(), width);
+    for (int i = lines.size() - 1; i >= 0; --i) {
+        const Lead lead = leadingIndent(codeLineText(doc, lines[i]), width);
         if (lead.columns == 0) continue;
         // До БЛИЖАЙШЕГО стопа вниз, а не на целый стоп: строка, отступившая на
         // шесть пробелов, встаёт на четыре, а не на два.
         const int target = ((lead.columns - 1) / width) * width;
-        const int delta = setLineIndent(edit, block, target);
-        if (delta == 0) continue;
-        moved = true;
-        if (block == anchorLine) anchorAt += delta;
-        if (block == positionLine) positionAt += delta;
+        delta[i] = setLineIndent(edit, doc, lines[i], target);
+        if (delta[i] != 0) moved = true;
     }
     // Снимать нечего — но нажатие всё равно наше: Shift+Tab в коде не должен
     // проваливаться в списки или уводить фокус из окна.
     if (!moved) return true;
 
     QTextCursor restored(&doc);
-    restored.setPosition(anchorLine.position() + qMax(0, anchorAt));
+    restored.setPosition(shiftedPosition(lines, delta, anchor));
     if (cursor.hasSelection())
-        restored.setPosition(positionLine.position() + qMax(0, positionAt),
-                             QTextCursor::KeepAnchor);
+        restored.setPosition(shiftedPosition(lines, delta, position), QTextCursor::KeepAnchor);
     cursor = restored;
     return true;
 }
@@ -2010,6 +2019,43 @@ bool lastLineOfLiteral(const QTextBlock& block) {
     return !next.isValid() || !isContinuationBlock(next);
 }
 
+// Enter в блоке кода: новая строка внутри того же блока — разделитель с
+// пометкой перевода строки, а за ним отступ предыдущей строки (в коде он почти
+// всегда тот же, и набирать его заново на каждой строке мучительно). Всё одной
+// скобкой: Enter с отступом отменяется одним Ctrl+Z.
+bool insertCodeLine(QTextDocument& doc, QTextCursor& cursor, const QTextBlock& block) {
+    const int from = qMin(cursor.anchor(), cursor.position());
+    const CodeLine line = codeLineAt(doc, from);
+    const QString text = codeLineText(doc, line);
+    int i = 0;
+    while (i < text.size() && (text.at(i) == QLatin1Char(' ') || text.at(i) == QLatin1Char('\t')))
+        ++i;
+    // Отступ берём только до каретки: если она левее отступа, копировать нечего.
+    const QString indent = text.left(qMin(i, from - line.start));
+
+    QTextCharFormat separator = block.charFormat();
+    separator.setProperty(BreakSourceProperty, int(BreakNewline));
+    QTextCharFormat plain = block.charFormat();
+    plain.clearProperty(BreakSourceProperty);
+
+    cursor.beginEditBlock();
+    if (cursor.hasSelection()) cursor.removeSelectedText();
+    cursor.insertText(QString(QChar::LineSeparator), separator);
+    if (!indent.isEmpty()) cursor.insertText(indent, plain);
+    // Текст блока кончается переводом строки — признак ставится, даже если у
+    // блока его не было: без него только что заведённая пустая строка исчезала
+    // бы при записи (текст «⏎» без признака — это одна строка, а не две).
+    if (!block.blockFormat().boolProperty(TrailingNewlineProperty)) {
+        QTextBlockFormat format = block.blockFormat();
+        format.setProperty(TrailingNewlineProperty, true);
+        QTextCursor fix(&doc);
+        fix.setPosition(block.position());
+        fix.setBlockFormat(format);
+    }
+    cursor.endEditBlock();
+    return true;
+}
+
 }  // namespace
 
 static bool splitBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
@@ -2042,28 +2088,35 @@ static bool splitBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     // пустые строки разделяют логические части, и выкидывать человека из блока
     // на каждой из них было бы мучением. Забор посреди блока при этом остаётся
     // содержимым: показывать в коде разметку никто не запрещал.
-    QString closing;
-    const bool closedByFence = !isRawBlock(block) && kindOf(block) == Kind::Code &&
-                               lastLineOfLiteral(block) && isContinuationBlock(block) &&
-                               fenceLanguage(block.text(), closing) && closing.isEmpty();
-    if (closedByFence) {
-        // Высоту строки ставим ТАК ЖЕ, КАК СБОРЩИК, а не копией у соседа: копия
-        // тащит за собой и явные нули там, где сборщик не пишет ничего.
-        QTextBlockFormat plain;
-        applyLineHeight(plain, appearance().lineHeightFactor, layoutBaseFont().pointSizeF(),
-                        layoutBaseFont());
+    // Блок кода — один QTextBlock, забор — его ПОСЛЕДНЯЯ СТРОКА (не первая:
+    // блоку с одной строкой-забором закрываться нечем), и каретка стоит на ней.
+    if (isCodeBlock(block)) {
+        const QString text = block.text();
+        const int lastSep = int(text.lastIndexOf(QChar::LineSeparator));
+        QString closing;
+        const bool closedByFence = lastSep >= 0 && cursor.positionInBlock() > lastSep &&
+                                   !cursor.hasSelection() &&
+                                   fenceLanguage(text.mid(lastSep + 1), closing) &&
+                                   closing.isEmpty();
+        if (closedByFence) {
+            // Высоту строки ставим ТАК ЖЕ, КАК СБОРЩИК, а не копией у соседа:
+            // копия тащит за собой и явные нули там, где сборщик не пишет ничего.
+            QTextBlockFormat plain;
+            applyLineHeight(plain, appearance().lineHeightFactor, layoutBaseFont().pointSizeF(),
+                            layoutBaseFont());
 
-        cursor.beginEditBlock();
-        cursor.setPosition(block.position());
-        cursor.setBlockFormat(plain);
-        // Забор в текст не переносим: он был командой закрыть блок, а не
-        // содержимым.
-        cursor.setPosition(block.position());
-        cursor.setPosition(block.position() + block.length() - 1, QTextCursor::KeepAnchor);
-        cursor.removeSelectedText();
-        normalise(doc, around(block.blockNumber()));
-        cursor.endEditBlock();
-        return true;
+            cursor.beginEditBlock();
+            // Забор в текст не переносим: он был командой закрыть блок, а не
+            // содержимым, — уходит вместе со своим разделителем.
+            cursor.setPosition(block.position() + lastSep);
+            cursor.setPosition(block.position() + text.size(), QTextCursor::KeepAnchor);
+            cursor.removeSelectedText();
+            // За блоком — обычный абзац, и каретка в нём.
+            cursor.insertBlock(plain, QTextCharFormat());
+            normalise(doc, around(cursor.blockNumber()));
+            cursor.endEditBlock();
+            return true;
+        }
     }
 
     // Обычный текст и цитата: Enter переносит строку внутри абзаца. Второй
@@ -2128,6 +2181,9 @@ bool hardSplit(QTextDocument& doc, QTextCursor& cursor) {
         cursor.setPosition(landing.position());
         return true;
     }
+
+    // Блок кода: Enter — новая СТРОКА того же блока, а не новый блок.
+    if (isCodeBlock(block)) return insertCodeLine(doc, cursor, block);
 
     const bool literal = isRawBlock(block) || kindOf(block) == Kind::Code;
     // Разрез в начале пункта переставляет половинки ролями: текст целиком
@@ -3100,7 +3156,9 @@ int splitLiteralSoftBreaks(QTextDocument& doc, BlockRange range) {
     for (int i = qMax(0, range.first); i <= range.last && i < doc.blockCount(); ++i) {
         const QTextBlock block = doc.findBlockByNumber(i);
         if (!block.isValid()) break;
-        if (!isRawBlock(block) && kindOf(block) != Kind::Code) continue;
+        // Только ДОСЛОВНЫЕ куски лежат построчно; у блока кода перенос внутри —
+        // его законная строка.
+        if (!isRawBlock(block)) continue;
         const int at = block.text().indexOf(QChar::LineSeparator);
         if (at < 0) continue;
 
@@ -3832,22 +3890,21 @@ bool ZDocument::moveListItem(QTextCursor& at, int direction) {
 // тому же выделению снова отступает код, как и раньше. Некуда двигать (списка
 // над блоком нет) — сразу отступает код.
 static bool moveCodeBlock(QTextDocument& doc, QTextCursor& cursor, int direction) {
-    const QVector<QTextBlock> lines = touchedCodeLines(doc, cursor);
+    const QVector<CodeLine> lines = touchedCodeLines(doc, cursor);
     if (lines.isEmpty()) return false;
-    const QTextBlock head = lines.front();
-    if (isRawBlock(head) || isContinuationBlock(head)) return false;
+    const QTextBlock head = doc.findBlock(lines.front().start);
 
     const int first = head.blockNumber();
-    const int last = wholeBlockEnd(doc, first);
+    const int last = first;   // блок кода — один QTextBlock
     if (cursor.hasSelection()) {
         // Блок целиком, а не кусок: выделение обязано задеть все его строки.
-        if (lines.back().blockNumber() != last) return false;
+        if (lines.front().start != head.position() ||
+            lines.back().end != head.position() + head.length() - 1)
+            return false;
     } else if (cursor.positionInBlock() != 0) {
         return false;
     }
 
-    // Уровень принадлежит логическому блоку, а строки его лежат в документе
-    // порознь — двигаем все разом.
     const BlockRange range{first, last};
     if (direction > 0) {
         // Глубже — только под уже существующий пункт: прыжка через уровень в
@@ -3861,8 +3918,8 @@ static bool moveCodeBlock(QTextDocument& doc, QTextCursor& cursor, int direction
     // Есть что снять с самих строк — снимаем сперва их: Shift+Tab по коду с
     // отступом должен убирать отступ, а не выкидывать блок из пункта.
     const int width = codeTabWidth();
-    for (const QTextBlock& line : lines)
-        if (leadingIndent(line.text(), width).columns > 0) return false;
+    for (const CodeLine& line : lines)
+        if (leadingIndent(codeLineText(doc, line), width).columns > 0) return false;
     return setInsideLevel(doc, range, -1);
 }
 

@@ -323,6 +323,24 @@ void takeImageAttribute(const QString& field, qreal& width, ImageAlign& align) {
 
 }  // namespace
 
+QString sourceTextOf(const QTextBlock& block) {
+    QString source;
+    for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+        const QTextFragment fragment = it.fragment();
+        if (!fragment.isValid()) continue;
+        QString piece = fragment.text();
+        switch (fragment.charFormat().intProperty(BreakSourceProperty)) {
+            case BreakNewline:        piece.replace(QChar::LineSeparator, QLatin1Char('\n')); break;
+            case BreakCarriageReturn: piece.replace(QChar::LineSeparator, QLatin1Char('\r')); break;
+            case BreakParagraph:      piece.replace(QChar::LineSeparator,
+                                                    QChar(QChar::ParagraphSeparator)); break;
+            default: break;   // непомеченный U+2028 — знак самого текста
+        }
+        source += piece;
+    }
+    return source;
+}
+
 BlockFormulaRef blockFormulaRef(const QTextBlock& block) {
     if (!block.isValid() || isRawBlock(block)) return {};
     // ВЫКЛЮЧНАЯ ФОРМУЛА — ЦЕЛЫЙ БЛОК (решение владельца: строчная спаном,

@@ -2466,15 +2466,11 @@ void NoteView::mousePressEvent(QMouseEvent* event) {
 }
 
 QString NoteView::codeTextFrom(int firstBlockNumber) const {
-    QTextBlock block = document()->findBlockByNumber(firstBlockNumber);
+    const QTextBlock block = document()->findBlockByNumber(firstBlockNumber);
     if (!block.isValid() || isRawBlock(block) || kindOf(block) != Kind::Code) return {};
-    QStringList lines;
-    for (;;) {
-        lines << block.text();
-        if (!codeContinues(block)) break;
-        block = block.next();
-    }
-    return lines.join(QLatin1Char('\n'));
+    // Блок кода — один QTextBlock; его строки — переносы внутри, и в буфер они
+    // уходят переводами строк, как лежат в файле.
+    return sourceTextOf(block);
 }
 
 void NoteView::copyCodeBlock(int firstBlockNumber) {

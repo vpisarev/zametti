@@ -134,6 +134,17 @@ int ztBigBench(int argc, char** argv) {
         total.start();
         for (int i = 0; i < repeat; ++i) {
             if (scenario == "type") keyAndFrame(editor, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+            else if (scenario == "type-mid") {
+                // Набор в СЕРЕДИНЕ заметки (в середине её среднего блока).
+                if (i == 0) {
+                    QTextCursor c(editor.document());
+                    const QTextBlock mid = editor.document()->findBlockByNumber(editor.document()->blockCount() / 2);
+                    c.setPosition(mid.position() + mid.length() / 2);
+                    editor.setTextCursor(c);
+                    QApplication::processEvents(QEventLoop::AllEvents);
+                }
+                keyAndFrame(editor, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+            }
             else if (scenario == "shift-up") {
                 keyAndFrame(editor, Qt::Key_Up, Qt::ShiftModifier);
                 if (i % 5 == 4) keyAndFrame(editor, Qt::Key_End, Qt::ControlModifier);

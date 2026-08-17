@@ -186,8 +186,9 @@ bool ZDocument::replaceRange(QTextCursor& at, const QString& markdown, PasteMode
 }
 
 // Вставка внутрь литерального блока: текстом, форматом приёмника, строка за
-// строкой. Каждая новая строка — блок-продолжение: так литеральное содержимое
-// и лежит в документе (см. ContinuationProperty в doc_model.h).
+// строкой. В блоке кода новая строка — разделитель U+2028 с пометкой перевода
+// строки внутри того же блока; в дословном куске — блок-продолжение (тот пока
+// лежит построчно, см. ContinuationProperty в doc_model.h).
 bool ZDocument::replaceInsideLiteral(QTextCursor& at, const QString& markdown) {
     QString text = markdown;
     while (text.endsWith(QLatin1Char('\n'))) text.chop(1);
@@ -198,16 +199,23 @@ bool ZDocument::replaceInsideLiteral(QTextCursor& at, const QString& markdown) {
     if (edit.hasSelection()) edit.removeSelectedText();
 
     const QTextBlock target = edit.block();
-    const QTextCharFormat chars = target.charFormat();
+    QTextCharFormat chars = target.charFormat();
+    chars.clearProperty(BreakSourceProperty);
+    const bool code = !isRawBlock(target) && kindOf(target) == Kind::Code;
     QTextBlockFormat lineFormat = target.blockFormat();
-    // Новая строка внутри литерального блока — продолжение предыдущей, а не
-    // начало нового блока кода. Верхнее поле ей пересчитает шов.
+    // Новая строка внутри дословного куска — продолжение предыдущей, а не
+    // начало нового блока. Верхнее поле ей пересчитает шов.
     lineFormat.setProperty(ContinuationProperty, true);
+    QTextCharFormat separator = chars;
+    separator.setProperty(BreakSourceProperty, int(BreakNewline));
 
     const int firstBlock = edit.blockNumber();
     const QStringList lines = text.split(QLatin1Char('\n'));
     for (int i = 0; i < lines.size(); ++i) {
-        if (i > 0) edit.insertBlock(lineFormat, chars);
+        if (i > 0) {
+            if (code) edit.insertText(QString(QChar::LineSeparator), separator);
+            else edit.insertBlock(lineFormat, chars);
+        }
         if (!lines.at(i).isEmpty()) edit.insertText(lines.at(i), chars);
     }
     const int landed = edit.position();

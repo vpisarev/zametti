@@ -357,7 +357,6 @@ struct BuildContext {
     qreal charUnit = 0.0;
     CodePlate plate;
     // Опыт просмотрщика, см. BuildOptions в заголовке.
-    bool codeAsOneBlock = false;
 };
 
 BuildContext contextFor() {
@@ -420,16 +419,19 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     QTextCharFormat charFmt;
     setFontStep(charFmt, 0);
 
-    // Литеральное содержимое режется построчно, по QTextBlock на строку:
-    // Qt переразмечает целиком тот блок, в который пишут, и длинный блок
-    // кода делал набор внутри себя ощутимо медленным.
-    //
-    // Ключ опыта снимает это ТОЛЬКО с блока кода: дословный кусок остаётся
-    // построчным. Внутри одного блока строки разделяет U+2028, и это тот же
-    // разделитель, каким живёт мягкий перенос в абзаце, — читатель вернёт из
+    // Дословный кусок режется построчно, по QTextBlock на строку (пока);
+    // блок кода лежит одним блоком, строки внутри разделяет U+2028 — тот же
+    // разделитель, каким живёт мягкий перенос в абзаце, — и читатель вернёт из
     // него перевод строки по пометке BreakSourceProperty.
     const bool literal = raw || b.kind == Kind::Code;
-    const bool wholeCode = ctx.codeAsOneBlock && !raw && b.kind == Kind::Code;
+    // БЛОК КОДА — ОДИН QTextBlock (решение владельца, сессия refactor2, шаг к
+    // модели «1 блок markdown == 1 QTextBlock»). Строки внутри разделяет
+    // U+2028 с пометкой BreakSourceProperty, как мягкий перенос в абзаце.
+    // Замер (zametti-bench big loop type-mid): набор внутри блока кода на 100 /
+    // 620 / 3000 строк — 2.5 / 2.7 / 8.3 мс одним блоком против 7.2 / 13 / 85 мс
+    // построчно: построчный путь пересобирал логический блок целиком на каждое
+    // нажатие. Дословный кусок (raw) пока остаётся построчным.
+    const bool wholeCode = !raw && b.kind == Kind::Code;
     const std::string_view source = b.text;
     // Один завершающий перевод строки снимаем: иначе внизу висела бы лишняя
     // пустая строка. По виду документа его не восстановить — пустой блок
@@ -654,7 +656,6 @@ void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target,
     target.setDocumentMargin(0);
 
     BuildContext ctx = contextFor();
-    ctx.codeAsOneBlock = options.codeAsOneBlock;
     target.setDefaultFont(ctx.base);
     // Стоп табуляции — тот же, которым Tab ставит пробелы (editor.codeTabWidth).
     // Иначе набранное нами и литеральные табы из старых файлов рисовались бы
