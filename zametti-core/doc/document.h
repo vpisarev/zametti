@@ -148,9 +148,6 @@ public:
     // их потом отдают saveTo как prebuiltBlocks, чтобы не сериализовать дважды.
     QByteArray fileBytes(const NoteHeader& envelope, std::vector<Piece>* fileBlocks = nullptr) const;
 
-    // Отпечаток канонических байтов. Истина — он: mtime и etag лишь подсказки.
-    Digest digest() const;
-
 
     // --- о чём заметка ----------------------------------------------------
 

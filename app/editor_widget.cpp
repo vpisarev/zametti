@@ -829,7 +829,10 @@ void NoteEditor::resolveExternalConflict(bool takeExternal) {
 void NoteEditor::adoptExternal(const std::string& text) {
     std::vector<Piece> ir;
     NoteHeader fresh;
-    parsePieces(QString::fromUtf8(text.data(), qsizetype(text.size())), ir, fresh);
+    // Пробелы нормализуются, как и при открытии (ZDocument::loadMarkdown): чужой
+    // редактор и внешняя правка — одна и та же граница файла (решение владельца).
+    parsePieces(normaliseSpaces(QString::fromUtf8(text.data(), qsizetype(text.size()))), ir,
+                fresh);
     // Чужой редактор мог снести или испортить блок метаданных. Тихо принять
     // это нельзя: заметка потеряла бы родителя и дату создания, то есть уехала
     // бы в корень и «постарела». Прежние значения у нас в памяти — предлагаем

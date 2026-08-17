@@ -99,11 +99,6 @@ void ZDocument::setStyle(std::shared_ptr<const ZDocStyle> style) {
 
 std::shared_ptr<const ZDocStyle> ZDocument::stylePtr() const { return attachedStyle(d_->text); }
 
-Digest ZDocument::digest() const {
-    const std::string bytes = toMarkdown();
-    return hashOf(std::string_view(bytes));
-}
-
 
 // --- о чём заметка ---------------------------------------------------------
 

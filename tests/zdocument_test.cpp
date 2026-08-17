@@ -253,7 +253,7 @@ TEST(ZDocument, Find) {
 }
 
 // Отпечаток и дрейф.
-TEST(ZDocument, DigestAndDrift) {
+TEST(ZDocument, Drift) {
     const std::string canonical =
         "<!-- zametti\n-->\n"
         "\n"
@@ -265,17 +265,14 @@ TEST(ZDocument, DigestAndDrift) {
     ZNote doc;
     ASSERT_TRUE(doc.load(canonical));
     ZT_TRUE("канонический файл дрейфа не имеет", doc.isCanonical(canonical));
-    ZT_TRUE("отпечаток не пуст", !doc.doc().digest().empty());
 
     // Тот же смысл, но записанный иначе: дрейф есть.
     ZNote sloppy;
     ASSERT_TRUE(sloppy.load("<!-- zametti\n-->\n\n# Заголовок\n\nТекст.   \n"));
     ZT_TRUE("лишние пробелы в конце строки — это дрейф",
             !sloppy.isCanonical("<!-- zametti\n-->\n\n# Заголовок\n\nТекст.   \n"));
-
-    // Отпечаток считается от КАНОНИЧЕСКИХ байтов, значит у обоих он один.
-    ZT_TRUE("отпечаток от канона, а не от исходника",
-            doc.doc().digest() == sloppy.doc().digest());
+    // Канон у обоих один: причёсанные байты совпадают.
+    ZT_EQ("канон от смысла, а не от исходника", sloppy.toMarkdown(), doc.toMarkdown());
 }
 
 // КОПИРОВАНИЕ ДАРОМ. Внутренность за shared_ptr, поэтому ни конструктор копии,
