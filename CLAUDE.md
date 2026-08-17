@@ -198,6 +198,10 @@ ZamettiDocument (см. `zametti_qtextdocument_design.md`); история — ж
   одним правилом, код одним QTextBlock, UTF-16 в памяти, причина давнего
   красного FuzzOps (§6: `toMarkdown()` ≠ файл — заготовка починки на ветке
   `refactor2-tomarkdown-wip`), §9 — план на обсуждение.
+  `zametti-refactor2-report2.md` — вторая сессия: подписи картинок (правило
+  безымянной подписи и регэксп в конфиге, глаголы `setImageCaption` /
+  `toggleImageCaption`, поле подписи по Enter, Ctrl+Space на картинке прячет
+  подпись знаком `~`, строчная картинка без подписи получает `image N`).
   `zametti-refactor2-design.md` — аудит состояния, классы (ZStorage,
   NoteHistory, OpenNote, ImageCache…), матрицы взаимодействия, порядок
   переезда и вопросы владельцу — до кода.
