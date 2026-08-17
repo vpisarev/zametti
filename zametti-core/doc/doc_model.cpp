@@ -309,7 +309,7 @@ bool isNonameCaption(const QString& caption) {
     if (text.isEmpty()) return true;
     const QChar first = text.at(0);
     if (first == QLatin1Char('~') || first == QLatin1Char('-')) return true;
-    return settings().look.imageNonameCaption.match(text).hasMatch();
+    return settings().look().imageNonameCaption().match(text).hasMatch();
 }
 
 QString captionWithHidingToggled(const QString& caption, QChar mark) {

@@ -14,11 +14,11 @@ namespace {
 // Цвет метки. Одинаковый во всех видах: полоска на поле, заливка строки и
 // заглушка обязаны говорить одно и то же.
 QColor colorOf(Mark mark) {
-    const ZSettings::Look& look = settings().look;
+    const ZSettings::Look& look = settings().look();
     switch (mark) {
-        case Mark::Added: return look.diffAdded;
-        case Mark::Removed: return look.diffRemoved;
-        case Mark::Changed: return look.diffChanged;
+        case Mark::Added: return look.diffAdded();
+        case Mark::Removed: return look.diffRemoved();
+        case Mark::Changed: return look.diffChanged();
         case Mark::Same: break;
     }
     return QColor();
@@ -101,17 +101,17 @@ Illustrated illustrate(const std::vector<Piece>& snapshot, const BlockMarks& mar
 
 void buildPlainDocument(const Result& result, QTextDocument& target,
                         QVector<Mark>* markOfBlock) {
-    const ZSettings::Look& look = settings().look;
+    const ZSettings::Look& look = settings().look();
     target.clear();
     if (markOfBlock != nullptr) markOfBlock->clear();
 
     // Поле слева — под полоски разности: без него они легли бы прямо на первый
     // знак строки (видно на снимке приёмки).
-    target.setDocumentMargin(look.diffBarWidth * 4);
+    target.setDocumentMargin(look.diffBarWidth() * 4);
 
     QTextCharFormat text;
-    text.setFontFamilies({look.codeFamily});
-    setFontStep(text, look.codeStep);
+    text.setFontFamilies({look.codeFamily()});
+    setFontStep(text, look.codeStep());
 
     QTextCursor caret(&target);
     bool first = true;
@@ -122,7 +122,7 @@ void buildPlainDocument(const Result& result, QTextDocument& target,
         // говорит полоска на поле, она сплошная.
         if (row.mark != Mark::Same) {
             QColor tint = colorOf(row.mark);
-            tint.setAlpha(qBound(0, look.diffTint, 255));
+            tint.setAlpha(qBound(0, look.diffTint(), 255));
             block.setBackground(tint);
         }
         if (first) {

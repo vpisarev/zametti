@@ -21,6 +21,7 @@
 #include <QStringList>
 #include <QtGlobal>
 
+#include <algorithm>
 #include <array>
 #include <utility>
 #include <vector>
@@ -61,7 +62,46 @@ enum class CheckboxStyle {
 // можно вывезти с другим пресетом бумаги или показать другой темой, не трогая
 // глобальное. Пока части ещё читаются через settings() во многих местах — это
 // переезд, и он идёт по классам.
+// ПОЛЕ НАСТРОЙКИ — ЧТЕНИЕ МЕТОДОМ, ЗАПИСЬ МЕТОДОМ С ОБРЕЗКОЙ (решение владельца).
+//
+// В C++ нельзя сделать член только для чтения: у кого есть ссылка на объект, тот
+// пишет. Поэтому поля закрыты, читаются методом name(), а пишутся setName(),
+// который для чисел ОБРЕЗАЕТ значение до допустимого диапазона: настройки
+// пользователя — пожелания, робастность системы выше них (imageCacheSizeMb =
+// 100000000 не должен ни съесть память, ни уронить программу). setName()
+// отвечает, приняла ли настройка значение как есть; ложь — значение обрезано,
+// и загрузчик пишет об этом в лог.
+//
+// Тип с запятой внутри (std::pair<…,…>, std::array<T, N>) в макрос не
+// передать — для них есть псевдонимы ниже.
+#define ZM_SETTING(Type, name, Name, def, lo, hi)                                   \
+public:                                                                             \
+    Type name() const { return name##_; }                                           \
+    bool set##Name(Type value) {                                                    \
+        name##_ = std::clamp<Type>(value, Type(lo), Type(hi));                       \
+        return name##_ == value;                                                    \
+    }                                                                               \
+    static constexpr Type name##Min() { return Type(lo); }                          \
+    static constexpr Type name##Max() { return Type(hi); }                          \
+                                                                                    \
+private:                                                                            \
+    Type name##_ = def;
+
+#define ZM_SETTING_PLAIN(Type, name, Name, ...)                                     \
+public:                                                                             \
+    const Type& name() const { return name##_; }                                    \
+    bool set##Name(Type value) {                                                    \
+        name##_ = std::move(value);                                                 \
+        return true;                                                                \
+    }                                                                               \
+                                                                                    \
+private:                                                                            \
+    Type name##_{__VA_ARGS__};
+
 struct ZSettings {
+    using HeadingSteps = std::array<int, 6>;
+    using KeyPairs = std::vector<std::pair<QString, QString>>;
+
     // ================================================================
     // ОБЛИК: шрифты, ритм страницы, цвета, маркеры, панели — всё, что видно.
     // Сюда однажды придёт вторая тема (режим чтения с пропорциональным
@@ -69,14 +109,14 @@ struct ZSettings {
     // ================================================================
     struct Look {
         // --- шрифт ---
-        QString fontFamily = QStringLiteral("IBM Plex Mono");
-        qreal baseFontPoint = 11.0;
+        ZM_SETTING_PLAIN(QString, fontFamily, FontFamily, QStringLiteral("IBM Plex Mono"))
+        ZM_SETTING(qreal, baseFontPoint, BaseFontPoint, 11.0, 4.0, 96.0)
         // Нужен только шрифтовым вариантам чекбокса: в IBM Plex Mono нет U+2610.
-        QString symbolFamily = QStringLiteral("DejaVu Sans Mono");
+        ZM_SETTING_PLAIN(QString, symbolFamily, SymbolFamily, QStringLiteral("DejaVu Sans Mono"))
         // Код — блоки и вставки в строке. Гарнитура отдельная: основной шрифт может
         // быть пропорциональным, а код в пропорциональном не читается. Пусто —
         // та же гарнитура, что у текста.
-        QString codeFamily = QStringLiteral("IBM Plex Mono");
+        ZM_SETTING_PLAIN(QString, codeFamily, CodeFamily, QStringLiteral("IBM Plex Mono"))
         // КЕГЛИ ЗАДАЮТСЯ СТУПЕНЯМИ, а не пунктами. Ступень — множитель от шрифта
         // документа (см. лестницу в doc_model.h: −2…+4, то есть 0.7…2.4). Тогда
         // Ctrl+= это один setDefaultFont, а не пересборка документа. Плата названа
@@ -84,7 +124,7 @@ struct ZSettings {
         //
         // Код: ступень относительно текста; 0 — вровень. Гарнитура у кода своя, и
         // при одном кегле он может выглядеть чуть иначе — это принято.
-        int codeStep = 0;
+        ZM_SETTING(int, codeStep, CodeStep, 0, -20, 20)
         // Заголовки 1..6. Вся лестница целиком, сверху вниз: 2.0, 1.5, 1.2, 1.0,
         // 0.8, 0.8. Убавлена на ступень против прежней (решение владельца): H1 в
         // 2.4 раза крупнее текста смотрелся вывеской, а не заголовком.
@@ -94,35 +134,36 @@ struct ZSettings {
         // увидеть его негде, а размер на такой глубине уже ничего не сообщает.
         // Шестой оставлен вровень с пятым: мельче уже нечитаемо, а разница между
         // H5 и H6 в тексте и так не различается.
-        std::array<int, 6> headingStep{3, 2, 1, 0, -1, -1};
+        ZM_SETTING_PLAIN(HeadingSteps, headingStep, HeadingStep, 3, 2, 1, 0, -1, -1)
         // Эмодзи приходят из запасного шрифта и рядом с моноширинным текстом
         // смотрятся мелко. Ступень отсчитывается ОТ ОКРУЖАЮЩЕГО текста: эмодзи
         // внутри заголовка обязан ехать вместе с заголовком.
-        int fallbackStep = 1;
+        ZM_SETTING(int, fallbackStep, FallbackStep, 1, -20, 20)
 
         // --- ритм страницы ---
         // У моноширинных гарнитур собственный межстрочный просвет уже приличный,
         // поэтому множитель нужен маленький. Пункты списка ставим плотно: список
         // читается как один объект. Расстояние между абзацами держат поля блока,
         // а не интерлиньяж — иначе, ужимая строки, мы бы сплющили и абзацы.
-        qreal lineHeightFactor = 1.15;
-        qreal listLineHeightFactor = 1.05;
+        ZM_SETTING(qreal, lineHeightFactor, LineHeightFactor, 1.15, 0.5, 4.0)
+        ZM_SETTING(qreal, listLineHeightFactor, ListLineHeightFactor, 1.05, 0.5, 4.0)
         // ЧЕМ ЗАДАЁТСЯ ВЫСОТА СТРОКИ. Развилка, которую владелец смотрит глазами
         // (см. zametti-peek): доля едет за шрифтом и потому переживает зум, но Qt
         // не красит выделением просвет, который сам же и отвёл; пиксели красятся
         // целиком, но на зуме остаются на месте; естественная высота ни того, ни
         // другого не делает вовсе, но и просвета не даёт.
+    public:
         enum class LineHeight {
             Proportional,   // доля от естественной: lineHeightFactor × 100 %
             Natural,        // ровно естественная, надбавки нет
             Pixels,         // пиксели, как было до перехода на ступени кеглей
         };
-        LineHeight lineHeightMode = LineHeight::Proportional;
+        ZM_SETTING_PLAIN(LineHeight, lineHeightMode, LineHeightMode, LineHeight::Proportional)
         // Отбивки и поля — в высотах строки основного шрифта, а не в пикселях: со
         // сменой гарнитуры и кегля ритм страницы должен идти следом, иначе после
         // каждой правки шрифта их приходится настраивать заново. Горизонталь по той
         // же причине меряется в ширинах буквы "A".
-        qreal blockSpacing = 0.667;
+        ZM_SETTING(qreal, blockSpacing, BlockSpacing, 0.667, 0.0, 10.0)
         // Отбивка на границах списка. Перед списком она заметно меньше межабзацной:
         // список и вводящая его фраза — одно целое, и большой зазор между ними
         // мешает читать. После списка, наоборот, начинается новая мысль, и воздуха
@@ -130,84 +171,84 @@ struct ZSettings {
         // Поля разделителя — куска из пустых строк, поставленного руками. Отдельные
         // от межблочной отбивки: у разделителя своя работа, и высота его должна быть
         // предсказуемой — поле сверху, n высот строки, поле снизу.
-        qreal separatorSpacingBefore = 0.0;
-        qreal separatorSpacingAfter = 0.0;
+        ZM_SETTING(qreal, separatorSpacingBefore, SeparatorSpacingBefore, 0.0, 0.0, 20.0)
+        ZM_SETTING(qreal, separatorSpacingAfter, SeparatorSpacingAfter, 0.0, 0.0, 20.0)
 
         // Отступ слева у списков и у блоков кода, в ширинах "A". Маленький: он не
         // выстраивает иерархию, а только отделяет эти куски от обычного текста,
         // чтобы они не начинались с ним вровень. У списка сдвигается весь блок
         // вместе с маркером, вложенность отсчитывается уже от него; у кода — вместе
         // с подложкой (внутреннего поля у блока в Qt нет, только внешнее).
-        qreal listIndent = 0.5;
+        ZM_SETTING(qreal, listIndent, ListIndent, 0.5, 0.0, 20.0)
         // У блока кода отступов два, и это не придирка. codeIndent отодвигает от
         // абзаца САМУ ПЛАШКУ, codePadLeft — код внутри неё. Второй нужен ради
         // скруглённых углов: прижатый к левому краю код упирался бы в закругление,
         // и снизу оно выглядело бы не так, как сверху (решение владельца).
-        qreal codeIndent = 1.0;
-        qreal codePadLeft = 0.5;
+        ZM_SETTING(qreal, codeIndent, CodeIndent, 1.0, 0.0, 20.0)
+        ZM_SETTING(qreal, codePadLeft, CodePadLeft, 0.5, 0.0, 20.0)
         // У цитаты отступ, наоборот, крупный: он и есть её опознавательный знак,
         // цветом и полосой дело не ограничивается.
-        qreal quoteIndent = 3.0;
+        ZM_SETTING(qreal, quoteIndent, QuoteIndent, 3.0, 0.0, 20.0)
         // Боковые поля (в ширинах "A") заметно больше вертикальных (в высотах
         // строки): строка не должна упираться в край окна, читать так тяжело.
-        qreal sideMargin = 6.222;
-        qreal verticalMargin = 1.5;
+        ZM_SETTING(qreal, sideMargin, SideMargin, 6.222, 0.0, 60.0)
+        ZM_SETTING(qreal, verticalMargin, VerticalMargin, 1.5, 0.0, 30.0)
         // Предельная ширина колонки текста, в ширинах буквы "A". Всё, что шире,
         // уходит в поля: на широком экране длинная строка не читается — глаз теряет
         // начало следующей. Ноль — не ограничивать.
-        qreal maxContentWidth = 90.0;
+        ZM_SETTING(qreal, maxContentWidth, MaxContentWidth, 90.0, 20.0, 400.0)
 
         // --- цвета ---
-        QColor pageBackground{0xfe, 0xfe, 0xfb};
+        ZM_SETTING_PLAIN(QColor, pageBackground, PageBackground, 0xfe, 0xfe, 0xfb)
         // Фон поля в режиме истории: слегка пожелтевший от времени (решение
         // владельца). Тонировка тут не украшение, а часть громкости режима —
         // человек должен видеть, что перед ним прошлое, ещё до того, как прочтёт
         // баннер. Ставить равным pageBackground — законный способ выключить.
-        QColor historyBackground{0xf7, 0xf2, 0xe3};
+        ZM_SETTING_PLAIN(QColor, historyBackground, HistoryBackground, 0xf7, 0xf2, 0xe3)
         // Каретка. Рисуется нами, а не Qt: своей каретке Qt цвета не отдаёт вовсе —
         // ни палитрой виджета, ни вьюпорта, ни приложения, ни явным цветом знаков
         // (проверено замером: во всех пяти случаях каретка остаётся чёрной), а роли
         // TextCursor в палитре Qt 6.10 нет.
         //
         // Ширина в пикселях при единичном масштабе; с зумом растёт.
-        QColor caretColor{0x1e, 0xab, 0xd6};
-        qreal caretWidth = 2.4;
-        qreal dividerWidth = 2.0;   // толщина тематической черты, px (умножается на зум)
+        ZM_SETTING_PLAIN(QColor, caretColor, CaretColor, 0x1e, 0xab, 0xd6)
+        ZM_SETTING(qreal, caretWidth, CaretWidth, 2.4, 0.5, 20.0)
+        ZM_SETTING(qreal, dividerWidth, DividerWidth, 2.0, 0.5, 20.0)   // толщина тематической черты, px (умножается на зум)
         // Выделение непрозрачное, и это нарочно. Полупрозрачным оно было ровно
         // сутки: замысел был показать сквозь него подложку кода, но Qt рисует
         // выделение поверх неё в любом случае, и альфа тут ничего не решала.
         // Подложка кода теперь повторяется ПОВЕРХ выделения (paintCodeOverSelection
         // в note_view.cpp) — это и даёт серо-голубой над кодом.
-        QColor selectionBackground{0xbf, 0xdb, 0xfe};
+        ZM_SETTING_PLAIN(QColor, selectionBackground, SelectionBackground, 0xbf, 0xdb, 0xfe)
         // Найденное поиском — СВОИМ цветом, а не цветом выделения. Выделение
         // отвечает на вопрос «что я сейчас держу», находки — на «где встречается
         // то, что я ищу», и в окне они попадаются рядом: текущая находка ещё и
         // выделена. Одним цветом их было не различить.
-        QColor searchHighlight{0xe0, 0xa8, 0x50};
+        ZM_SETTING_PLAIN(QColor, searchHighlight, SearchHighlight, 0xe0, 0xa8, 0x50)
         // Разность версий в истории. Три цвета на три ответа: появилось, исчезло,
         // поправлено. Оранжевый тот же, что у находок поиска, — и это нарочно: он
         // означает «сюда смотреть», а встретиться в одном окне им негде (поиск по
         // слепку и полоски диффа живут в разных видах).
-        QColor diffAdded{0x3f, 0xa2, 0x55};
-        QColor diffRemoved{0xc0, 0x39, 0x39};
-        QColor diffChanged{0xe0, 0xa8, 0x50};
+        ZM_SETTING_PLAIN(QColor, diffAdded, DiffAdded, 0x3f, 0xa2, 0x55)
+        ZM_SETTING_PLAIN(QColor, diffRemoved, DiffRemoved, 0xc0, 0x39, 0x39)
+        ZM_SETTING_PLAIN(QColor, diffChanged, DiffChanged, 0xe0, 0xa8, 0x50)
         // Заливка строки в виде «как под капотом». Полоска на поле — сплошная, а
         // строка целиком заливается едва-едва: иначе моноширинный текст читается
         // как светофор, а не как markdown.
-        int diffTint = 34;          // прозрачность заливки строки, 0..255
-        qreal diffBarWidth = 3.0;   // ширина полоски на поле, px (умножается на зум)
+        ZM_SETTING(int, diffTint, DiffTint, 34, 0, 255)   // прозрачность заливки строки, 0..255
+        ZM_SETTING(qreal, diffBarWidth, DiffBarWidth, 3.0, 0.5, 40.0)   // ширина полоски на поле, px (умножается на зум)
         // Куда ставить показываемое место — изменение при ходьбе по диффу (F4),
         // совпадение поиска, каретку после правки и при открытии заметки: доля
         // высоты окна сверху. 0.382 — золотое сечение (просьба владельца): «в
         // середине или чуть выше». Прежде звался ensureCursorVisible, и тот
         // прокручивал МИНИМАЛЬНО — то есть ставил находку у самой нижней кромки,
         // где её и не видно толком.
-        qreal focusRatio = 0.382;
-        QColor linkColor{0x32, 0x5c, 0xc0};
-        QColor quoteColor{0x5a, 0x62, 0x6a};
-        QColor rawColor{0x99, 0x9f, 0xa6};      // непонятое, дословный кусок
-        QColor dividerColor{0xc8, 0xcd, 0xd2};  // тематическая черта '---'
-        QColor codeBackground{0, 0, 0, 14};
+        ZM_SETTING(qreal, focusRatio, FocusRatio, 0.382, 0.0, 0.9)
+        ZM_SETTING_PLAIN(QColor, linkColor, LinkColor, 0x32, 0x5c, 0xc0)
+        ZM_SETTING_PLAIN(QColor, quoteColor, QuoteColor, 0x5a, 0x62, 0x6a)
+        ZM_SETTING_PLAIN(QColor, rawColor, RawColor, 0x99, 0x9f, 0xa6)   // непонятое, дословный кусок
+        ZM_SETTING_PLAIN(QColor, dividerColor, DividerColor, 0xc8, 0xcd, 0xd2)   // тематическая черта '---'
+        ZM_SETTING_PLAIN(QColor, codeBackground, CodeBackground, 0, 0, 0, 14)
         // Полоска ПОД блоком кода: в её правом углу стоят имя языка и кнопка
         // копирования (решение владельца — прежде полоска была сверху и отделялась
         // чертой). Черты нет вовсе, и цвет у полоски тот же, что у подложки: это
@@ -215,82 +256,81 @@ struct ZSettings {
         // Высота полоски и верхнее поле — в высотах строки КОДА, а не текста:
         // плашка живёт в ритме своего содержимого. Верхнее поле меньше полоски
         // нарочно — снизу стоит надпись, сверху нужен только воздух под скругление.
-        qreal codeStripHeight = 1.0;
-        qreal codePadTop = 0.4;
-        qreal codeCornerRadius = 6.0;   // px, умножается на зум
+        ZM_SETTING(qreal, codeStripHeight, CodeStripHeight, 1.0, 0.0, 5.0)
+        ZM_SETTING(qreal, codePadTop, CodePadTop, 0.4, 0.0, 5.0)
+        ZM_SETTING(qreal, codeCornerRadius, CodeCornerRadius, 6.0, 0.0, 60.0)   // px, умножается на зум
         // Внутреннее поле полоски: на столько кнопка копирования отступает от
         // правого края плашки, и на столько же имя языка отбито от кнопки. В
         // ширинах "A".
-        qreal codeStripPadding = 0.6;
+        ZM_SETTING(qreal, codeStripPadding, CodeStripPadding, 0.6, 0.0, 10.0)
         // Просвет между именем языка и значком копирования, в ширинах "A".
         // Отдельной величиной, а не полем полоски: поле отвечает за край плашки, а
         // тут нужен воздух между двумя соседями, и владелец просил именно его —
         // «отодвинь надпись от значка на пару пробелов».
-        qreal codeLangGap = 2.0;
+        ZM_SETTING(qreal, codeLangGap, CodeLangGap, 2.0, 0.0, 20.0)
         // Имя языка набирается гарнитурой боковых панелей (просьба владельца): в
         // полоске это подпись, а не код. Ноль в кегле — как у боковой панели.
-        qreal codeLangPointSize = 8.5;
-        QColor codeLangColor{0x7a, 0x80, 0x88};
+        ZM_SETTING(qreal, codeLangPointSize, CodeLangPointSize, 8.5, 4.0, 48.0)
+        ZM_SETTING_PLAIN(QColor, codeLangColor, CodeLangColor, 0x7a, 0x80, 0x88)
 
         // --- маркированный список ---
         // Цвета маркеров раздельные: буллет — фигура, цифра — знак, и уравнивать их
         // в цвете не обязательно.
-        QColor bulletColor{0x30, 0x30, 0x30};
-        QColor orderedColor{0x30, 0x30, 0x30};
+        ZM_SETTING_PLAIN(QColor, bulletColor, BulletColor, 0x30, 0x30, 0x30)
+        ZM_SETTING_PLAIN(QColor, orderedColor, OrderedColor, 0x30, 0x30, 0x30)
 
-        BulletStyle bulletStyle = BulletStyle::Drawn;
+        ZM_SETTING_PLAIN(BulletStyle, bulletStyle, BulletStyle, BulletStyle::Drawn)
         // Для нарисованного: диаметр и поправка по вертикали, обе — доли от высоты
         // строчных. Поправка со знаком: больше нуля поднимает, меньше опускает.
-        qreal bulletDiameter = 0.8;
-        qreal bulletRise = 0.1;
+        ZM_SETTING(qreal, bulletDiameter, BulletDiameter, 0.8, 0.1, 5.0)
+        ZM_SETTING(qreal, bulletRise, BulletRise, 0.1, -2.0, 2.0)
         // Фигура по уровням вложенности. Последняя достаётся всем уровням глубже
         // списка: перечислять их до бесконечности незачем.
-        std::vector<BulletShape> bulletShapes{BulletShape::Disc, BulletShape::Circle,
-                                              BulletShape::Square};
+        ZM_SETTING_PLAIN(std::vector<BulletShape>, bulletShapes, BulletShapes, BulletShape::Disc, BulletShape::Circle, BulletShape::Square)
         // Толщина обводки незаполненного кружка, долей от его диаметра.
-        qreal bulletStrokeWidth = 0.18;
+        ZM_SETTING(qreal, bulletStrokeWidth, BulletStrokeWidth, 0.18, 0.02, 2.0)
         // Сторона квадратика, долей от диаметра кружка: ровно того же размера он
         // выглядит крупнее — у квадрата больше площадь при той же ширине.
-        qreal bulletSquareSide = 0.82;
+        ZM_SETTING(qreal, bulletSquareSide, BulletSquareSide, 0.82, 0.1, 5.0)
         // Поправка по вертикали для цифр нумерованного списка, долей от высоты
         // строчных. Цифра стоит на базовой линии, как ей и положено, но рядом с
         // буллетом и рамкой задачи читается чуть высокой. Больше нуля поднимает.
-        qreal orderedRise = -0.01;
+        ZM_SETTING(qreal, orderedRise, OrderedRise, -0.01, -2.0, 2.0)
         // Для знакового: сам знак и его кегль относительно базового.
-        QString bulletGlyph = QStringLiteral("\u2022");
-        qreal bulletScale = 1.35;
+        ZM_SETTING_PLAIN(QString, bulletGlyph, BulletGlyph, QStringLiteral("\u2022"))
+        ZM_SETTING(qreal, bulletScale, BulletScale, 1.35, 0.2, 5.0)
         // Зазор от маркера до текста, в ширинах буквы "A". Мерить в пробелах
         // нельзя: у пропорциональных гарнитур пробел вдвое уже буквы, и колонка на
         // нём выходила бы вплотную к тексту, а у нумерованного списка вовсе
         // проскакивала до следующей позиции табуляции.
-        qreal bulletTextGap = 1.0;
-        qreal orderedTextGap = 0.75;
+        ZM_SETTING(qreal, bulletTextGap, BulletTextGap, 1.0, 0.0, 10.0)
+        ZM_SETTING(qreal, orderedTextGap, OrderedTextGap, 0.75, 0.0, 10.0)
 
         // --- чекбокс ---
-        CheckboxStyle checkboxStyle = CheckboxStyle::Drawn;
+        ZM_SETTING_PLAIN(CheckboxStyle, checkboxStyle, CheckboxStyle, CheckboxStyle::Drawn)
         //QColor checkboxCheckedColor{0x32, 0x5c, 0xc0};    // заливка и цвет рамки
-        QColor checkboxCheckedColor{0xcc, 0x88, 0x22};    // заливка и цвет рамки
-        QColor checkboxUncheckedColor{0xac, 0xac, 0xac};  // только рамка, без заливки
-        QColor checkboxTickColor{0xff, 0xff, 0xff};
-        qreal checkboxPenWidth = 1.4;
-        qreal checkboxCornerRadius = 2.5;
+        ZM_SETTING_PLAIN(QColor, checkboxCheckedColor, CheckboxCheckedColor, 0xcc, 0x88, 0x22)   // заливка и цвет рамки
+        ZM_SETTING_PLAIN(QColor, checkboxUncheckedColor, CheckboxUncheckedColor, 0xac, 0xac, 0xac)   // только рамка, без заливки
+        ZM_SETTING_PLAIN(QColor, checkboxTickColor, CheckboxTickColor, 0xff, 0xff, 0xff)
+        ZM_SETTING(qreal, checkboxPenWidth, CheckboxPenWidth, 1.4, 0.2, 10.0)
+        ZM_SETTING(qreal, checkboxCornerRadius, CheckboxCornerRadius, 2.5, 0.0, 20.0)
         // Оптическая поправка положения. При нуле рамка точно совпадает с чернилами
         // букв — от хвоста "y" до верхушки "i", — но читается чуть низкой: у
         // сплошного прямоугольника масса распределена равномерно, а у строчных букв
         // собрана выше. Доля от стороны рамки, а не пиксели: должна пережить смену
         // кегля. Больше нуля поднимает.
-        qreal checkboxOpticalRise = 0.075;
+        ZM_SETTING(qreal, checkboxOpticalRise, CheckboxOpticalRise, 0.075, -1.0, 1.0)
         // Кегль шрифтовых вариантов. К нарисованному отношения не имеет.
-        qreal checkboxGlyphScale = 1.8;
+        ZM_SETTING(qreal, checkboxGlyphScale, CheckboxGlyphScale, 1.8, 0.2, 5.0)
         // Зазор между рамкой и текстом задачи, в ширинах буквы "A".
-        qreal checkboxTextGap = 1.1;
+        ZM_SETTING(qreal, checkboxTextGap, CheckboxTextGap, 1.1, 0.0, 10.0)
 
         // --- боковая панель ---
         // Гарнитура панели; пусто — та же, что у текста.
-        QString sidebarFontFamily = QStringLiteral("IBM Plex Sans SemiCondensed");
-        qreal sidebarFontPoint = 12.0;
+        ZM_SETTING_PLAIN(QString, sidebarFontFamily, SidebarFontFamily, QStringLiteral("IBM Plex Sans SemiCondensed"))
+        ZM_SETTING(qreal, sidebarFontPoint, SidebarFontPoint, 12.0, 4.0, 48.0)
         // Высота строки списка, долей от высоты шрифта панели.
-        qreal sidebarLineHeightFactor = 1.6;
+        ZM_SETTING(qreal, sidebarLineHeightFactor, SidebarLineHeightFactor, 1.6, 0.5, 4.0)
         // Значки строк дерева — иконки Lucide из ресурсов (folder, folder-open,
         // trash-2). Прежде здесь стоял знак из шрифта, и ради него в настройках
         // жили три ключа: гарнитура «Noto Emoji», знак закрытой папки и знак
@@ -298,43 +338,43 @@ struct ZSettings {
         // вместо цветного. Всё это была плата за отсутствие своих иконок; иконки
         // появились, ключи убраны. Остались цвет и размер: они про то, КАК значок
         // выглядит, а не про то, ОТКУДА он берётся.
-        QColor sidebarFolderColor{0x1a, 0x1a, 0x1a};
+        ZM_SETTING_PLAIN(QColor, sidebarFolderColor, SidebarFolderColor, 0x1a, 0x1a, 0x1a)
         // Доля от кегля панели: значок растёт вместе со строкой.
-        qreal sidebarFolderScale = 1.05;
+        ZM_SETTING(qreal, sidebarFolderScale, SidebarFolderScale, 1.05, 0.2, 4.0)
         // Ширина при первом запуске, дальше её помнит state.json.
-        int sidebarWidth = 260;
+        ZM_SETTING(int, sidebarWidth, SidebarWidth, 260, 60, 2000)
 
         // --- тулбар ---
         // Сторона иконки в ТОЧКАХ ИНТЕРФЕЙСА, не в пикселях: в пиксели она
         // переводится домножением на devicePixelRatio окна, и рисуется сразу в
         // нужном разрешении. Отрисовать в 20 пикселей и растянуть — то же самое
         // мыло, из-за которого на этапе 8 расползались картинки.
-        int toolbarIconSize = 20;
+        ZM_SETTING(int, toolbarIconSize, ToolbarIconSize, 20, 12, 64)
         // Поле вокруг иконки внутри кнопки и промежуток между смысловыми группами.
         // Группы разделяются пустотой, а не чертой: черта в маленьком тулбаре
         // спорит с самими иконками за внимание.
-        int toolbarButtonPadding = 6;
-        int toolbarGroupSpacing = 16;
-        QColor toolbarBackground{0xf5, 0xf5, 0xf2};
+        ZM_SETTING(int, toolbarButtonPadding, ToolbarButtonPadding, 6, 0, 64)
+        ZM_SETTING(int, toolbarGroupSpacing, ToolbarGroupSpacing, 16, 0, 200)
+        ZM_SETTING_PLAIN(QColor, toolbarBackground, ToolbarBackground, 0xf5, 0xf5, 0xf2)
         // Штрих у Lucide тонкий (2 единицы из 24), и на серо-синем 4a5159 иконка
         // читалась выцветшей — особенно на маке, где та же точка интерфейса крупнее.
         // Цвет здесь ровно один — тот, которым перекрашивается SVG на лету
         // (icons.cpp), так что тёмная тема будет сменой этих ключей, а не новыми
         // файлами: рисунок в ресурсах цвета не имеет вовсе.
-        QColor toolbarIconColor{0x1a, 0x1a, 0x1a};
+        ZM_SETTING_PLAIN(QColor, toolbarIconColor, ToolbarIconColor, 0x1a, 0x1a, 0x1a)
         // Наведение отмечает подложка (toolbarHoverBackground), иконке остаётся
         // добрать последнее — чернее чёрного не бывает.
-        QColor toolbarIconHoverColor{0x00, 0x00, 0x00};
+        ZM_SETTING_PLAIN(QColor, toolbarIconHoverColor, ToolbarIconHoverColor, 0x00, 0x00, 0x00)
         // Нажатая кнопка-переключатель (сортировка, панели) — цветом, а не рамкой.
-        QColor toolbarIconOnColor{0x32, 0x5c, 0xc0};
+        ZM_SETTING_PLAIN(QColor, toolbarIconOnColor, ToolbarIconOnColor, 0x32, 0x5c, 0xc0)
         // Тот же смысл, но порядок задан МЕТКОЙ ПАПКИ, а не общим переключателем
         // (этап 13). Два цвета вместо надписи: синий — «так у всех», фиолетовый —
         // «так помечено здесь», и видно это, не открывая ни меню, ни файла.
-        QColor toolbarIconMarkColor{0x7c, 0x3a, 0xed};
+        ZM_SETTING_PLAIN(QColor, toolbarIconMarkColor, ToolbarIconMarkColor, 0x7c, 0x3a, 0xed)
         // Задизейбленное обещание видно, но не зовёт: контраст втрое ниже обычного.
-        QColor toolbarIconDisabledColor{0xb8, 0xbd, 0xc4};
-        QColor toolbarHoverBackground{0, 0, 0, 18};
-        QColor toolbarSeparatorColor{0xdd, 0xe1, 0xe5};
+        ZM_SETTING_PLAIN(QColor, toolbarIconDisabledColor, ToolbarIconDisabledColor, 0xb8, 0xbd, 0xc4)
+        ZM_SETTING_PLAIN(QColor, toolbarHoverBackground, ToolbarHoverBackground, 0, 0, 0, 18)
+        ZM_SETTING_PLAIN(QColor, toolbarSeparatorColor, ToolbarSeparatorColor, 0xdd, 0xe1, 0xe5)
 
         // Выбранная фотография помечается ЧЕТЫРЬМЯ УГОЛКАМИ, как мишень в
         // видоискателе, а не заливкой поверх. Заливка красила сами цвета снимка, а
@@ -346,14 +386,14 @@ struct ZSettings {
         // Доля КОРОТКОЙ стороны показанного размера. Сомкнуться в рамку уголки при
         // такой доле не могут (две по 10% против 100%), поэтому потолок по
         // умолчанию снят: ноль означает «без потолка».
-        qreal imageCornerShare = 0.15;
+        ZM_SETTING(qreal, imageCornerShare, ImageCornerShare, 0.15, 0.0, 0.5)
         // Пол: на маленькой картинке доля вырождается в точку. Потолок — сама
         // короткая сторона: длиннее уголку быть негде.
-        int imageCornerMinLength = 20;
-        qreal imageCornerWidth = 5.0;
+        ZM_SETTING(int, imageCornerMinLength, ImageCornerMinLength, 20, 0, 200)
+        ZM_SETTING(qreal, imageCornerWidth, ImageCornerWidth, 5.0, 0.5, 40.0)
         // Наружу от края фотографии. Уголки, нарисованные по самому краю,
         // сливались с содержимым снимка — на светлом небе их просто не видно.
-        qreal imageCornerOffset = 4.0;
+        ZM_SETTING(qreal, imageCornerOffset, ImageCornerOffset, 4.0, 0.0, 40.0)
 
         // --- подпись под фотографией ---
         //
@@ -364,7 +404,7 @@ struct ZSettings {
         //
         // У снимка, вместо которого стоит рамка «файл не найден», подписи нет:
         // рамка сама и есть надпись.
-        bool imageCaption = true;
+        ZM_SETTING_PLAIN(bool, imageCaption, ImageCaption, true)
         // Тот же шрифт, что у надписей в колонках и в полосе сведений
         // (sidebarFontFamily): подпись под снимком — из той же семьи справочных
         // надписей, и разнобоя в них быть не должно.
@@ -373,11 +413,11 @@ struct ZSettings {
         // рядом с фотографией и спорить с ней за внимание не должна. Владелец
         // посмотрел на 12 и попросил убавить; берём 10 — тот же кегль, что у полосы
         // сведений, где надпись тоже сопровождает, а не называет.
-        QString imageCaptionFamily{QStringLiteral("IBM Plex Sans SemiCondensed")};
-        qreal imageCaptionPoints = 10.0;
+        ZM_SETTING_PLAIN(QString, imageCaptionFamily, ImageCaptionFamily, QStringLiteral("IBM Plex Sans SemiCondensed"))
+        ZM_SETTING(qreal, imageCaptionPoints, ImageCaptionPoints, 10.0, 6.0, 24.0)
         // Отступ подписи от нижнего края снимка.
-        qreal imageCaptionGap = 4.0;
-        QColor imageCaptionColor{0x77, 0x7e, 0x86};
+        ZM_SETTING(qreal, imageCaptionGap, ImageCaptionGap, 4.0, 0.0, 60.0)
+        ZM_SETTING_PLAIN(QColor, imageCaptionColor, ImageCaptionColor, 0x77, 0x7e, 0x86)
         // БЕЗЫМЯННАЯ ПОДПИСЬ — та, что под снимком не показывается (решение
         // владельца, 17.08.2026: «хорошие имена показывать, дурацкие скрывать»).
         // Это подписи, которые картинке дал не человек, а камера, телефон или
@@ -401,47 +441,47 @@ struct ZSettings {
         // Помимо регэкспа безымянной считается подпись, спрятанная человеком одним
         // знаком спереди: «~подпись» или «-подпись» (см. isNonameCaption) — это
         // правило не настраивается, на нём стоит клавиша «спрятать подпись».
-        QRegularExpression imageNonameCaption{
-            QStringLiteral("^(pasted )?((image|img|pic|picture|photo|dsc[a-z]?|pxl|"
-                           "screen ?shot|снимок экрана|изображение|untitled|unnamed|clipboard)"
-                           "([ _.:-]*(\\d+|at|в))*|[0-9a-z]{1,4}[_-]?\\d{4,}([ _-]\\d+)*|\\d{6,})"
-                           "([_-][a-z0-9]{1,4})?(\\.[a-z0-9]{2,5})?$"),
-            QRegularExpression::CaseInsensitiveOption};
+        ZM_SETTING_PLAIN(QRegularExpression, imageNonameCaption, ImageNonameCaption,
+                         QStringLiteral("^(pasted )?((image|img|pic|picture|photo|dsc[a-z]?|pxl|"
+                                        "screen ?shot|снимок экрана|изображение|untitled|unnamed|clipboard)"
+                                        "([ _.:-]*(\\d+|at|в))*|[0-9a-z]{1,4}[_-]?\\d{4,}([ _-]\\d+)*|\\d{6,})"
+                                        "([_-][a-z0-9]{1,4})?(\\.[a-z0-9]{2,5})?$"),
+                         QRegularExpression::CaseInsensitiveOption)
 
         // --- полоса сведений под окном ---
         // Кегль мельче основного текста: это справка, а не содержание. Шрифт свой
         // (не текстовый): цифры в панели должны стоять столбиком при смене числа,
         // а не прыгать по ширине.
-        QString statusFamily{QStringLiteral("IBM Plex Sans SemiCondensed")};
-        int statusFontPoints = 10;
-        int statusPadding = 10;
-        int statusPaddingTop = 4;
-        QColor statusBackground{0xf5, 0xf5, 0xf2};
-        QColor statusTextColor{0x6b, 0x71, 0x79};
-        QColor statusSeparatorColor{0xdd, 0xe1, 0xe5};
+        ZM_SETTING_PLAIN(QString, statusFamily, StatusFamily, QStringLiteral("IBM Plex Sans SemiCondensed"))
+        ZM_SETTING(int, statusFontPoints, StatusFontPoints, 10, 6, 24)
+        ZM_SETTING(int, statusPadding, StatusPadding, 10, 0, 100)
+        ZM_SETTING(int, statusPaddingTop, StatusPaddingTop, 4, 0, 100)
+        ZM_SETTING_PLAIN(QColor, statusBackground, StatusBackground, 0xf5, 0xf5, 0xf2)
+        ZM_SETTING_PLAIN(QColor, statusTextColor, StatusTextColor, 0x6b, 0x71, 0x79)
+        ZM_SETTING_PLAIN(QColor, statusSeparatorColor, StatusSeparatorColor, 0xdd, 0xe1, 0xe5)
         // Звёздочка у имени заметки, когда самопроверка при записи не сошлась.
-        QColor statusSuspectColor{0xc0, 0x28, 0x28};
+        ZM_SETTING_PLAIN(QColor, statusSuspectColor, StatusSuspectColor, 0xc0, 0x28, 0x28)
 
         // --- средняя колонка: плоский список заметок ---
-        int noteListWidth = 320;
+        ZM_SETTING(int, noteListWidth, NoteListWidth, 320, 60, 2000)
         // Сколько строк сниппета показывать под заголовком.
-        int noteListSnippetLines = 2;
-        QColor noteListSnippetColor{0x77, 0x7d, 0x86};
-        QColor noteListDateColor{0x8a, 0x90, 0x98};
+        ZM_SETTING(int, noteListSnippetLines, NoteListSnippetLines, 2, 0, 20)
+        ZM_SETTING_PLAIN(QColor, noteListSnippetColor, NoteListSnippetColor, 0x77, 0x7d, 0x86)
+        ZM_SETTING_PLAIN(QColor, noteListDateColor, NoteListDateColor, 0x8a, 0x90, 0x98)
 
         // --- панель поиска ---
         // Прибавка к кеглю боковой панели: поле, в которое печатают, читается
         // хуже подписи, на которую только смотрят.
-        qreal findFontDelta = 2.0;
+        ZM_SETTING(qreal, findFontDelta, FindFontDelta, 2.0, -10.0, 20.0)
         // Знаки на кнопках обхода. Настоящие стрелки, а не треугольники
         // проигрывателя. Вверх и вниз, а не влево и вправо: ходим по тексту, а
         // текст идёт сверху вниз.
-        QString findPreviousGlyph = QStringLiteral("↑");
-        QString findNextGlyph = QStringLiteral("↓");
+        ZM_SETTING_PLAIN(QString, findPreviousGlyph, FindPreviousGlyph, QStringLiteral("↑"))
+        ZM_SETTING_PLAIN(QString, findNextGlyph, FindNextGlyph, QStringLiteral("↓"))
         // Кнопка истории запросов — слева от поля; список раскрывается вверх.
-        QString findHistoryGlyph = QStringLiteral("^");
+        ZM_SETTING_PLAIN(QString, findHistoryGlyph, FindHistoryGlyph, QStringLiteral("^"))
         // Сколько прежних запросов помнить между запусками.
-        int findHistoryLimit = 30;
+        ZM_SETTING(int, findHistoryLimit, FindHistoryLimit, 30, 0, 1000)
 
         // --- ПРОКРУТКА ---
         //
@@ -453,15 +493,15 @@ struct ZSettings {
         // владельца устраивает. Тач-экран идёт касаниями — ему заведён штатный
         // QScroller. А система, умеющая инерцию сама (macOS присылает фазу
         // «инерция»), делает её без нас, и своя поверх удвоила бы разгон.
-        bool smoothScroll = true;
+        ZM_SETTING_PLAIN(bool, smoothScroll, SmoothScroll, true)
         // За сколько миллисекунд скорость падает вчетверо с лишним. Больше — дольше
         // и ленивее летит.
-        int smoothScrollMs = 140;
+        ZM_SETTING(int, smoothScrollMs, SmoothScrollMs, 140, 0, 2000)
 
         // --- масштаб ---
-        qreal zoomStep = 1.1;
-        qreal zoomMin = 0.5;
-        qreal zoomMax = 4.0;
+        ZM_SETTING(qreal, zoomStep, ZoomStep, 1.1, 1.01, 2.0)
+        ZM_SETTING(qreal, zoomMin, ZoomMin, 0.5, 0.1, 1.0)
+        ZM_SETTING(qreal, zoomMax, ZoomMax, 4.0, 1.0, 16.0)
     };
 
     // ================================================================
@@ -472,11 +512,11 @@ struct ZSettings {
         // --- дерево заметок ---
         // Корень дерева. Путь относительно домашнего каталога; пусто — определять
         // по открытой заметке (см. NoteTreeModel::rootFor).
-        QString notesRoot;
+        ZM_SETTING_PLAIN(QString, notesRoot, NotesRoot, )
         // Подпись корневой строки левой панели; пусто — «All notes». Имя каталога
         // сюда не подставляется: оно техническое, а строка означает не каталог, а
         // «все заметки хранилища».
-        QString storeTitle;
+        ZM_SETTING_PLAIN(QString, storeTitle, StoreTitle, )
         // Следить ли за каталогом хранилища и перечитывать его самому, когда файлы
         // появляются или исчезают мимо программы (вернули из системной корзины,
         // положила соседняя программа, принесла синхронизация).
@@ -486,7 +526,7 @@ struct ZSettings {
         // дёшев (одна подписка inotify; на срабатывание — 1.5 мс сверки состава
         // каталога на 276 файлах), но за ним стоит полное перечитывание в 24 мс, и
         // случаться оно должно тогда, когда человек этого просит.
-        bool watchStore = false;
+        ZM_SETTING_PLAIN(bool, watchStore, WatchStore, false)
     };
 
     // ================================================================
@@ -519,10 +559,10 @@ struct ZSettings {
         // при закрытии программы, перед вывозом наружу, перед вставкой картинок и
         // перед открытием во внешнем редакторе. Таймер — последний рубеж, а не
         // единственный.
-        int autosaveDelayMs = 60000;
+        ZM_SETTING(int, autosaveDelayMs, AutosaveDelayMs, 60000, 100, 600000)
         // Набор подряд идущих букв — один шаг истории: иначе Ctrl+Z возвращал бы по
         // одной букве. Пауза дольше этой начинает новый шаг.
-        int undoCoalesceMs = 700;
+        ZM_SETTING(int, undoCoalesceMs, UndoCoalesceMs, 700, 0, 60000)
         // Сколько знаков подряд ложатся в ОДИН шаг отмены.
         //
         // Одной паузы мало. Пока человек печатает ровно, тишины в 700 мс не
@@ -534,37 +574,37 @@ struct ZSettings {
         // Восемьдесят знаков — примерно строка текста: отменяется осмысленный
         // кусок, а не буква и не весь абзац. Серия рвётся и когда каретка ушла в
         // другое место: правка в новом месте — это новая правка.
-        int undoRunChars = 80;
+        ZM_SETTING(int, undoRunChars, UndoRunChars, 80, 1, 100000)
         // Сколько шагов истории держим. Шаг — снимок содержимого заметки; замер:
         // копия IR заметки в 141 КБ занимает 250 КБ и делается за 50 мкс.
-        int undoLimit = 200;
+        ZM_SETTING(int, undoLimit, UndoLimit, 200, 1, 100000)
         // Потолок памяти под историю, мегабайты. Одного счёта шагов мало: замер на
         // заметке в 239 КБ дал 361 КБ на шаг, то есть 72 МБ на 200 шагов — за одну
         // заметку. Для медианной заметки в 1.3 КБ бюджет не задевает ничего, и
         // глубина остаётся полной.
-        int undoBudgetMb = 32;
+        ZM_SETTING(int, undoBudgetMb, UndoBudgetMb, 32, 1, 4096)
         // Хоткеи операций. Строкой, как их пишет QKeySequence: сочетание — дело
         // вкуса и раскладки, а не кода. Через точку с запятой их можно перечислить
         // несколько — например, звёздочка на большинстве раскладок и есть Shift+8,
         // и обе записи должны работать. Пустая строка убирает сочетание совсем,
         // команда при этом остаётся в контекстном меню.
-        QString toggleTaskKey = QStringLiteral("Ctrl+Space");
-        QString moveUpKey = QStringLiteral("Ctrl+Up");
-        QString moveDownKey = QStringLiteral("Ctrl+Down");
+        ZM_SETTING_PLAIN(QString, toggleTaskKey, ToggleTaskKey, QStringLiteral("Ctrl+Space"))
+        ZM_SETTING_PLAIN(QString, moveUpKey, MoveUpKey, QStringLiteral("Ctrl+Up"))
+        ZM_SETTING_PLAIN(QString, moveDownKey, MoveDownKey, QStringLiteral("Ctrl+Down"))
         // Смена рода блоков — по знаку, который на клавише: звёздочка живёт на
         // восьмёрке, решётка на тройке. T — task. Абзац остался с Shift: Ctrl+0
         // занят сбросом масштаба, и отбирать его у привычки не стоит.
-        QString makeBulletKey = QStringLiteral("Ctrl+8; Ctrl+*");
-        QString makeOrderedKey = QStringLiteral("Ctrl+3; Ctrl+#");
-        QString makeTaskKey = QStringLiteral("Ctrl+T");
-        QString makeParagraphKey = QStringLiteral("Ctrl+Shift+0");
-        QString makeCommentKey = QStringLiteral("Ctrl+/");
+        ZM_SETTING_PLAIN(QString, makeBulletKey, MakeBulletKey, QStringLiteral("Ctrl+8; Ctrl+*"))
+        ZM_SETTING_PLAIN(QString, makeOrderedKey, MakeOrderedKey, QStringLiteral("Ctrl+3; Ctrl+#"))
+        ZM_SETTING_PLAIN(QString, makeTaskKey, MakeTaskKey, QStringLiteral("Ctrl+T"))
+        ZM_SETTING_PLAIN(QString, makeParagraphKey, MakeParagraphKey, QStringLiteral("Ctrl+Shift+0"))
+        ZM_SETTING_PLAIN(QString, makeCommentKey, MakeCommentKey, QStringLiteral("Ctrl+/"))
 
         // Ширина стопа табуляции в блоке кода, в пробелах. Tab ставит ПРОБЕЛЫ до
         // следующего стопа, а не знак табуляции; этой же величиной рисуются
         // литеральные табы из старых файлов — иначе набранное нами и пришедшее
         // из чужого редактора разъезжалось бы на экране.
-        int codeTabWidth = 4;
+        ZM_SETTING(int, codeTabWidth, CodeTabWidth, 4, 1, 16)
 
         // Ходьба по изменённым местам в режиме истории. Отдельными ключами и в
         // своём разделе конфига (`shortcuts`), потому что тут им придётся
@@ -577,8 +617,8 @@ struct ZSettings {
         // конфиг не вынесены нарочно: Tab в режиме истории занять больше нечем
         // (править нельзя), а Alt — не сочетание, а удержание модификатора, и
         // «настроить» его строкой QKeySequence не выйдет.
-        QString diffNextKey = QStringLiteral("F4");
-        QString diffPreviousKey = QStringLiteral("Shift+F4");
+        ZM_SETTING_PLAIN(QString, diffNextKey, DiffNextKey, QStringLiteral("F4"))
+        ZM_SETTING_PLAIN(QString, diffPreviousKey, DiffPreviousKey, QStringLiteral("Shift+F4"))
 
         // Автозамены по сочетанию: знаки, которых нет на клавиатуре. Пара —
         // сочетание и то, что вставить; вставка идёт обычным набором, то есть
@@ -588,15 +628,13 @@ struct ZSettings {
         // пока она не настроена, знак проще завести здесь. Буквы в сочетаниях
         // пишутся латиницей, как их пишет сам Qt: на любой раскладке клавиша
         // остаётся той же клавишей.
-        std::vector<std::pair<QString, QString>> specialKeys{
-            {QStringLiteral("Alt+-"), QStringLiteral("—")},
-        };
+        ZM_SETTING_PLAIN(KeyPairs, specialKeys, SpecialKeys, {QStringLiteral("Alt+-"), QStringLiteral("—")})
         // Команда «Открыть во внешнем редакторе»: %f — путь к файлу заметки
         // (например "gedit %f" или "code -g %f"). Пусто — xdg-open. Открывается
         // настоящий файл хранилища целиком, вместе с блоком метаданных: инвариант
         // «файл правится чем угодно» — основа формата. Терминальные редакторы —
         // забота человека: он впишет свой запуск терминала.
-        QString externalEditor;
+        ZM_SETTING_PLAIN(QString, externalEditor, ExternalEditor, )
     };
 
     // ================================================================
@@ -615,12 +653,12 @@ struct ZSettings {
         // Мелочь меряется в знаках и абсолютной величиной: сколько текста
         // изменилось между двумя версиями — считая и дописанное, и стёртое.
         // Правил ровно два, и оба обязаны сойтись.
-        int historyMergeChars = 100;
+        ZM_SETTING(int, historyMergeChars, HistoryMergeChars, 100, 0, 1000000)
         // Насколько свежей должна быть заменяемая запись. Владелец сказал
         // «недавно, например сегодня»; сутки — это оно и есть, только без прыжка
         // через полночь. Заменять вчерашнее нельзя: вчерашнее состояние — вешка,
         // к которой человек может захотеть вернуться.
-        int historyMergeHours = 24;
+        ZM_SETTING(int, historyMergeHours, HistoryMergeHours, 24, 1, 8760)
     };
 
     // ================================================================
@@ -634,7 +672,7 @@ struct ZSettings {
         // Потолок мягкий: картинки ОТКРЫТОЙ заметки не вытесняются никогда, так
         // что на одну заметку кэша хватает всегда, даже если она одна больше
         // бюджета. Это правило владельца, а не следствие реализации.
-        int imageCacheSizeMb = 1024;
+        ZM_SETTING(int, imageCacheSizeMb, ImageCacheSizeMb, 1024, 8, 8192)
         // Предел стороны картинки в памяти, пиксели. Прочитанная с диска картинка
         // сразу ужимается так, чтобы ни одна сторона его не превышала; пропорции
         // сохраняются. ВВЕРХ не растягиваем никогда: картинка мельче предела
@@ -650,7 +688,7 @@ struct ZSettings {
         // На вёрстку предел не влияет вовсе: место под картинку меряется её
         // НАСТОЯЩИМ размером из заголовка файла, а не размером копии в памяти, —
         // иначе смена предела двигала бы весь текст.
-        int maxLoadedImageSize = 0;
+        ZM_SETTING(int, maxLoadedImageSize, MaxLoadedImageSize, 0, 0, 32768)
         // Потолок памяти под кэш открытых заметок, мегабайты. В кэше лежат живые
         // документы вместе с историей правок, кареткой и прокруткой: вернувшись в
         // недавнюю заметку, человек застаёт её ровно такой, какой оставил, и Ctrl+Z
@@ -672,7 +710,7 @@ struct ZSettings {
         //
         // Картинки в оценку не входят: в документах лежат общие копии из кэша
         // картинок, и считает их imageCacheSizeMb.
-        int documentCacheSizeMb = 64;
+        ZM_SETTING(int, documentCacheSizeMb, DocumentCacheSizeMb, 64, 1, 4096)
     };
 
 
@@ -719,7 +757,7 @@ struct ZSettings {
         //
         // Размер файла при этих числах (321 картинка шести каталогов): медиана
         // 1.44 МБ, среднее 1.54, σ 0.75, 95-й процентиль 2.97, максимум 3.58.
-        int maxImportedImageSize = 2880;
+        ZM_SETTING(int, maxImportedImageSize, MaxImportedImageSize, 2880, 256, 32768)
         // Качество lossy JXL. Замер предельной цены балла на 290 снимках даёт
         // излом около 88 (до него пункт качества дорожает на 2–10%, после —
         // сразу на 17–19%), но владелец после приёмки глазами выбрал 90:
@@ -738,7 +776,7 @@ struct ZSettings {
         // сети 87.0, Леонардо 87.0, обои 85.9, Vladstudio 85.6, iPhone 85.1,
         // DxO 83.3. Опасение про плёночный шум не подтвердилось — архив
         // оказался самым лёгким, а труднее всех вышло DxO.
-        int photoQuality = 90;
+        ZM_SETTING(int, photoQuality, PhotoQuality, 90, 1, 100)
         // Во сколько раз lossless разрешено быть тяжелее lossy, чтобы мы всё же
         // взяли lossless. Правило владельца: берём его, когда он жмёт не хуже
         // или почти не хуже; полтора-три раза — это уже не «почти».
@@ -764,10 +802,10 @@ struct ZSettings {
         //   * крупнее — проба на копии в 800 пикселей. Она врёт (замер: 1.32 там,
         //     где правда 0.80), но цена ошибки мала: крупное всё равно
         //     уменьшается до бюджета, и буквы плывут прежде всего от уменьшения.
-        double losslessThreshold = 1.15;
+        ZM_SETTING(double, losslessThreshold, LosslessThreshold, 1.15, 1.0, 10.0)
         // Потолок глубины. МЕНЬШАЯ СОХРАНЯЕТСЯ: 10-битный источник остаётся
         // десятибитным, и только 16-битный срезается до этого числа.
-        int maxBitsPerChannel = 12;
+        ZM_SETTING(int, maxBitsPerChannel, MaxBitsPerChannel, 12, 8, 16)
         // Потолок памяти под РАЗЖАТУЮ картинку при импорте, мегабайты.
         //
         // Своим числом, а не долей от кэша (решение владельца): кэш — это то,
@@ -781,7 +819,7 @@ struct ZSettings {
         //
         // Защита от бомб держится не на этом числе, а на границах входа: они
         // считают предполагаемый объём ПО ЗАГОЛОВКУ, до всякого разжатия.
-        int maxDecodeMemoryMb = 1024;
+        ZM_SETTING(int, maxDecodeMemoryMb, MaxDecodeMemoryMb, 1024, 16, 16384)
     };
 
 
@@ -814,32 +852,32 @@ struct ZSettings {
         // столбцами (1.2 знака) читался как обычный пробел между словами, и
         // шапка таблицы разваливалась на слова. Сейчас 0.85 — просвет в 1.7
         // знака, заметно шире слова.
-        qreal cellPadding = 0.85;
+        ZM_SETTING(qreal, cellPadding, CellPadding, 0.85, 0.0, 10.0)
         // Поле ячейки по вертикали — долей от высоты строки.
-        qreal cellPaddingY = 0.25;
+        ZM_SETTING(qreal, cellPaddingY, CellPaddingY, 0.25, 0.0, 10.0)
 
         // Цвет ВСЕХ линий таблицы. Один на все шесть: разноцветная сетка — это
         // уже не настройка, а оформление, и делается она правкой этого файла
         // под конкретную заметку, а не шестью ключами на всякий случай.
-        QColor borderColor{0x00, 0x00, 0x00};
+        ZM_SETTING_PLAIN(QColor, borderColor, BorderColor, 0x00, 0x00, 0x00)
 
         // Внешние линии: горизонтальные (над первой строкой и под последней) и
         // вертикальные (слева от первой колонки и справа от последней).
-        qreal horizontalBorder = 2.0;
-        qreal verticalBorder = 0.0;
+        ZM_SETTING(qreal, horizontalBorder, HorizontalBorder, 2.0, 0.0, 20.0)
+        ZM_SETTING(qreal, verticalBorder, VerticalBorder, 0.0, 0.0, 20.0)
         // Линия под строкой заголовка — та самая, что отделяет шапку от тела.
-        qreal headerSeparator = 2.0;
+        ZM_SETTING(qreal, headerSeparator, HeaderSeparator, 2.0, 0.0, 20.0)
         // Линии внутри тела: между строками и между колонками.
-        qreal rowSeparator = 0.0;
-        qreal columnSeparator = 0.0;
+        ZM_SETTING(qreal, rowSeparator, RowSeparator, 0.0, 0.0, 20.0)
+        ZM_SETTING(qreal, columnSeparator, ColumnSeparator, 0.0, 0.0, 20.0)
 
         // Заливки. Прозрачные по умолчанию — таблица стоит на той же бумаге,
         // что и текст. headerColor красит строку заголовка, tableColor — тело,
         // altTableColor — каждую вторую строку тела (зебра); прозрачный
         // altTableColor означает «зебры нет».
-        QColor headerColor{0, 0, 0, 0};
-        QColor tableColor{0, 0, 0, 0};
-        QColor altTableColor{0, 0, 0, 0};
+        ZM_SETTING_PLAIN(QColor, headerColor, HeaderColor, 0, 0, 0, 0)
+        ZM_SETTING_PLAIN(QColor, tableColor, TableColor, 0, 0, 0, 0)
+        ZM_SETTING_PLAIN(QColor, altTableColor, AltTableColor, 0, 0, 0, 0)
     };
 
 
@@ -858,13 +896,13 @@ struct ZSettings {
         // .testdata/formula-shots/сравнение-масштабов-x3.png), с 1.10 верх «x»
         // ложится ровно на линию роста строчных текста. Значение выбрано
         // владельцем по этому листу.
-        qreal inlineScale = 1.10;
+        ZM_SETTING(qreal, inlineScale, InlineScale, 1.10, 0.2, 5.0)
         // Кегль ВЫКЛЮЧНОЙ формулы. Тот же коэффициент, что и у строчной, и по
         // той же причине: Эйлер компактен, и при единице выключная формула
         // читается мельче окружающего текста, хотя стоит отдельной строкой.
         // Значение выбрано владельцем по листу сравнения
         // (.testdata/formula-scale, три снимка: 1.00, 1.10, 1.25).
-        qreal displayScale = 1.10;
+        ZM_SETTING(qreal, displayScale, DisplayScale, 1.10, 0.2, 5.0)
     };
 
 
@@ -876,22 +914,22 @@ struct ZSettings {
     // пропорциональный. Всё, что здесь не задано, берётся от экрана.
     struct Pdf {
         // Гарнитура и кегль текста. Пусто/ноль — как на экране.
-        QString fontFamily = QStringLiteral("IBM Plex Sans");
-        qreal pointSize = 11.0;
+        ZM_SETTING_PLAIN(QString, fontFamily, FontFamily, QStringLiteral("IBM Plex Sans"))
+        ZM_SETTING(qreal, pointSize, PointSize, 11.0, 4.0, 96.0)
         // Код — и блоки, и вставки в строке. В пропорциональном он не читается,
         // поэтому своя гарнитура нужна даже там, где текст пропорциональный.
-        QString codeFamily = QStringLiteral("IBM Plex Mono");
+        ZM_SETTING_PLAIN(QString, codeFamily, CodeFamily, QStringLiteral("IBM Plex Mono"))
         // Ступени, как и на экране: бумажный документ строится тем же сборщиком,
         // и абсолютных кеглей в нём нет ровно по той же причине. От экранных
         // отличаться могут — бумагу читают иначе.
-        int codeStep = 0;
-        std::array<int, 6> headingStep{3, 2, 1, 0, -1, -1};
+        ZM_SETTING(int, codeStep, CodeStep, 0, -20, 20)
+        ZM_SETTING_PLAIN(HeadingSteps, headingStep, HeadingStep, 3, 2, 1, 0, -1, -1)
 
         // Поля страницы, миллиметры.
-        qreal marginMm = 15.0;
+        ZM_SETTING(qreal, marginMm, MarginMm, 15.0, 0.0, 100.0)
         // Разрешение, в котором картинки уезжают в файл. 200 — печатное
         // качество; выше файл растёт, а глаз не различает.
-        int imageDpi = 200;
+        ZM_SETTING(int, imageDpi, ImageDpi, 200, 36, 1200)
         // Потолок картинки в файле — S, сторона КВАДРАТНОГО БЮДЖЕТА, ровно как
         // maxImportedImageSize при ввозе (решение владельца). То есть предел
         // ставится на площадь S², потолок длинной стороны 3S, пропорции целы,
@@ -903,24 +941,47 @@ struct ZSettings {
         // полстраницы при 200 dpi даёт около 1400 точек по длинной стороне, и
         // этот потолок его не тронет. Он про другое — про картинку во весь
         // лист при высоком imageDpi. Ноль — потолка нет.
-        int maxExportedImageSize = 2000;
+        ZM_SETTING(int, maxExportedImageSize, MaxExportedImageSize, 2000, 256, 32768)
         // Полоска под блоком кода на бумаге не нужна: имя языка и кнопка
         // копирования — органы управления, а не содержание. Величина остаётся
         // ненулевой, чтобы у плашки снизу было такое же небольшое поле, как
         // сверху: скруглённые углы и воздух вокруг кода на странице сохраняются.
         // В высотах строки кода, как и экранная codeStripHeight.
-        qreal codeStripHeight = 0.4;
+        ZM_SETTING(qreal, codeStripHeight, CodeStripHeight, 0.4, 0.0, 5.0)
     };
 
-    Look look;
-    Store store;
-    Editor editor;
-    History history;
-    Cache cache;
-    Images images;
-    Tables tables;
-    Formulas formulas;
-    Pdf pdf;
+    // РАЗДЕЛЫ — методами, как и поля внутри них: только-чтение снаружи
+    // (const ZSettings& из settings()), правка — у того, у кого ZSettings&
+    // (загрузчик, editSettings()).
+    const Look& look() const { return look_; }
+    Look& look() { return look_; }
+    const Store& store() const { return store_; }
+    Store& store() { return store_; }
+    const Editor& editor() const { return editor_; }
+    Editor& editor() { return editor_; }
+    const History& history() const { return history_; }
+    History& history() { return history_; }
+    const Cache& cache() const { return cache_; }
+    Cache& cache() { return cache_; }
+    const Images& images() const { return images_; }
+    Images& images() { return images_; }
+    const Tables& tables() const { return tables_; }
+    Tables& tables() { return tables_; }
+    const Formulas& formulas() const { return formulas_; }
+    Formulas& formulas() { return formulas_; }
+    const Pdf& pdf() const { return pdf_; }
+    Pdf& pdf() { return pdf_; }
+
+private:
+    Look look_;
+    Store store_;
+    Editor editor_;
+    History history_;
+    Cache cache_;
+    Images images_;
+    Tables tables_;
+    Formulas formulas_;
+    Pdf pdf_;
 };
 
 

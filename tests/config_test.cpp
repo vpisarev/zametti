@@ -146,7 +146,7 @@ void checkLoadUnderstandsComments() {
     ZT_TRUE("конфиг с комментариями прочитан: " + s(error),
             zametti::loadSettings(&error));
     ZT_EQ("значение из конфига применено", std::string("1700"),
-          std::to_string(zametti::settings().editor.autosaveDelayMs));
+          std::to_string(zametti::settings().editor().autosaveDelayMs()));
 
     // Битый конфиг обязан жаловаться, а не молча уезжать на умолчания.
     QFile broken(zametti::configPath());
@@ -169,20 +169,20 @@ void checkLoadUnderstandsComments() {
 void checkTablesDefaults() {
     zametti::ZSettings fresh;
     ZT_EQ("цвет линий — чёрный", std::string("#000000"),
-          fresh.tables.borderColor.name(QColor::HexRgb).toStdString());
+          fresh.tables().borderColor().name(QColor::HexRgb).toStdString());
     ZT_EQ("линия над и под таблицей", std::string("2"),
-          std::to_string(int(fresh.tables.horizontalBorder)));
+          std::to_string(int(fresh.tables().horizontalBorder())));
     ZT_EQ("линия под заголовком", std::string("2"),
-          std::to_string(int(fresh.tables.headerSeparator)));
+          std::to_string(int(fresh.tables().headerSeparator())));
     ZT_EQ("вертикальных линий нет", std::string("0"),
-          std::to_string(int(fresh.tables.verticalBorder)));
+          std::to_string(int(fresh.tables().verticalBorder())));
     ZT_EQ("разделителей строк нет", std::string("0"),
-          std::to_string(int(fresh.tables.rowSeparator)));
+          std::to_string(int(fresh.tables().rowSeparator())));
     ZT_EQ("разделителей колонок нет", std::string("0"),
-          std::to_string(int(fresh.tables.columnSeparator)));
-    ZT_TRUE("заливка заголовка прозрачна", fresh.tables.headerColor.alpha() == 0);
-    ZT_TRUE("заливка тела прозрачна", fresh.tables.tableColor.alpha() == 0);
-    ZT_TRUE("зебры нет", fresh.tables.altTableColor.alpha() == 0);
+          std::to_string(int(fresh.tables().columnSeparator())));
+    ZT_TRUE("заливка заголовка прозрачна", fresh.tables().headerColor().alpha() == 0);
+    ZT_TRUE("заливка тела прозрачна", fresh.tables().tableColor().alpha() == 0);
+    ZT_TRUE("зебры нет", fresh.tables().altTableColor().alpha() == 0);
 }
 
 void checkTablesFromConfig() {
@@ -215,19 +215,19 @@ void checkTablesFromConfig() {
 
     const zametti::ZSettings& a = zametti::settings();
     ZT_EQ("цвет линий", std::string("#3355aa"),
-          a.tables.borderColor.name(QColor::HexRgb).toStdString());
+          a.tables().borderColor().name(QColor::HexRgb).toStdString());
     ZT_EQ("толщины прочитаны все шесть", std::string("1 3 4 5 6"),
-          std::to_string(int(a.tables.horizontalBorder)) + " " +
-              std::to_string(int(a.tables.verticalBorder)) + " " +
-              std::to_string(int(a.tables.headerSeparator)) + " " +
-              std::to_string(int(a.tables.rowSeparator)) + " " +
-              std::to_string(int(a.tables.columnSeparator)));
+          std::to_string(int(a.tables().horizontalBorder())) + " " +
+              std::to_string(int(a.tables().verticalBorder())) + " " +
+              std::to_string(int(a.tables().headerSeparator())) + " " +
+              std::to_string(int(a.tables().rowSeparator())) + " " +
+              std::to_string(int(a.tables().columnSeparator())));
     ZT_EQ("заливка заголовка", std::string("#eeeeee"),
-          a.tables.headerColor.name(QColor::HexRgb).toStdString());
+          a.tables().headerColor().name(QColor::HexRgb).toStdString());
     ZT_EQ("полупрозрачная заливка тела", std::string("128"),
-          std::to_string(a.tables.tableColor.alpha()));
+          std::to_string(a.tables().tableColor().alpha()));
     ZT_EQ("зебра с прозрачностью", std::string("17"),
-          std::to_string(a.tables.altTableColor.alpha()));
+          std::to_string(a.tables().altTableColor().alpha()));
 
     // Опечатка в имени ключа не должна проходить молча.
     QFile typo(zametti::configPath());
@@ -243,6 +243,66 @@ void checkTablesFromConfig() {
 
 }  // namespace
 
+// НАСТРОЙКИ — ПОЖЕЛАНИЯ, РОБАСТНОСТЬ ВЫШЕ (решение владельца): число вне
+// допустимого диапазона обрезается сеттером самой настройки (ZM_SETTING в
+// settings.h), а не проверяется где-то ещё. Здесь: абсурдный конфиг
+// (imageCacheSizeMb = 100000000, отрицательная задержка, кегль в тысячу
+// пунктов) не проходит как есть, и умолчания сами лежат в своих границах.
+void checkClamping() {
+    // Наборы идут одним процессом, а настройки — глобальные: обрезанный до
+    // краёв кегль остался бы всем последующим наборам. Возвращаем как было.
+    const zametti::ZSettings before = zametti::settings();
+    struct Restore {
+        const zametti::ZSettings& from;
+        ~Restore() { zametti::editSettings() = from; }
+    } restore{before};
+    QFile file(zametti::configPath());
+    ZT_TRUE("файл открывается на запись",
+            file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    file.write(
+        "{\n"
+        "  \"editor\": { \"imageCacheSizeMb\": 100000000, \"autosaveDelayMs\": -5,\n"
+        "              \"documentCacheSizeMb\": 0, \"undoLimit\": 7 },\n"
+        "  \"font\": { \"pointSize\": 1000 },\n"
+        "  \"toolbar\": { \"iconSize\": 3 }\n"
+        "}\n");
+    file.close();
+    QString error;
+    ZT_TRUE("абсурдный конфиг читается (обрезается, а не отвергается): " + s(error),
+            zametti::loadSettings(&error));
+    const zametti::ZSettings& a = zametti::settings();
+    ZT_EQ("кэш картинок обрезан до потолка", std::to_string(a.cache().imageCacheSizeMbMax()),
+          std::to_string(a.cache().imageCacheSizeMb()));
+    ZT_EQ("задержка автосохранения — до пола", std::to_string(a.editor().autosaveDelayMsMin()),
+          std::to_string(a.editor().autosaveDelayMs()));
+    ZT_EQ("кэш документов — до пола", std::to_string(a.cache().documentCacheSizeMbMin()),
+          std::to_string(a.cache().documentCacheSizeMb()));
+    ZT_EQ("значение в границах взято как есть", std::string("7"),
+          std::to_string(a.editor().undoLimit()));
+    ZT_EQ("кегль — до потолка", std::to_string(int(a.look().baseFontPointMax())),
+          std::to_string(int(a.look().baseFontPoint())));
+    ZT_EQ("иконка тулбара — до пола", std::to_string(a.look().toolbarIconSizeMin()),
+          std::to_string(a.look().toolbarIconSize()));
+
+    // Сеттер сам говорит, приняла ли настройка значение как есть.
+    zametti::ZSettings own;
+    ZT_TRUE("значение в границах принято", own.cache().setImageCacheSizeMb(512));
+    ZT_TRUE("вне границ — обрезано и сказано", !own.cache().setImageCacheSizeMb(100000000));
+    ZT_EQ("и лежит на потолке", std::to_string(own.cache().imageCacheSizeMbMax()),
+          std::to_string(own.cache().imageCacheSizeMb()));
+
+    // Умолчания лежат в своих границах: иначе программа спорила бы сама с собой.
+    zametti::ZSettings def;
+    ZT_TRUE("умолчание кэша картинок в границах",
+            def.cache().setImageCacheSizeMb(def.cache().imageCacheSizeMb()));
+    ZT_TRUE("умолчание кегля в границах", def.look().setBaseFontPoint(def.look().baseFontPoint()));
+    ZT_TRUE("умолчание автосохранения в границах",
+            def.editor().setAutosaveDelayMs(def.editor().autosaveDelayMs()));
+    ZT_TRUE("умолчание качества фото в границах",
+            def.images().setPhotoQuality(def.images().photoQuality()));
+    ZT_TRUE("умолчание полей бумаги в границах", def.pdf().setMarginMm(def.pdf().marginMm()));
+}
+
 static int ztRunSuite(int argc, char** argv) {
     (void)argc;
     (void)argv;
@@ -254,6 +314,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkStripper();
     checkTemplate();
     checkLoadUnderstandsComments();
+    checkClamping();
     checkTablesDefaults();
     checkTablesFromConfig();
 

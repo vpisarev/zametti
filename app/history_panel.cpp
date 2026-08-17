@@ -53,11 +53,11 @@ QString historyKindName(journal::Kind kind) {
 }
 
 HistoryBanner::HistoryBanner(QWidget* parent) : QWidget(parent) {
-    const ZSettings::Look& look = settings().look;
+    const ZSettings::Look& look = settings().look();
     // Баннер тонируется тем же цветом, что и поле в режиме истории: он не
     // сообщение поверх текста, а край того же прошлого.
     setStyleSheet(QStringLiteral("QWidget { background: %1; }")
-                      .arg(look.historyBackground.darker(104).name()));
+                      .arg(look.historyBackground().darker(104).name()));
 
     text_ = new QLabel(this);
 
@@ -158,7 +158,7 @@ void HistoryBanner::flashRestore() {
     text_->setText(QStringLiteral("Слепок только для чтения. "
                                   "Чтобы вернуть его содержимое — «Восстановить эту»."));
     restore_->setStyleSheet(QStringLiteral("QPushButton { border: 2px solid %1; }")
-                                .arg(settings().look.caretColor.name()));
+                                .arg(settings().look().caretColor().name()));
     QTimer::singleShot(1200, this, [this] { restore_->setStyleSheet(restoreStyle_); });
 }
 
@@ -175,7 +175,7 @@ HistoryTimeline::HistoryTimeline(QWidget* parent) : QWidget(parent) {
     // неразличимо; задаём цвет обеим группам.
     QPalette listPalette = list_->palette();
     for (QPalette::ColorGroup group : {QPalette::Active, QPalette::Inactive}) {
-        listPalette.setColor(group, QPalette::Highlight, settings().look.selectionBackground);
+        listPalette.setColor(group, QPalette::Highlight, settings().look().selectionBackground());
         listPalette.setColor(group, QPalette::HighlightedText,
                              listPalette.color(QPalette::Text));
     }

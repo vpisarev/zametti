@@ -241,11 +241,11 @@ void checkLinesFitPage() {
     // подгонка растит под них виджет, и он остаётся шире страницы. С потолком по
     // умолчанию (90 знаков) на A4 запаса нет, полей не заводится, и проверка
     // была бы пустышкой — я на этом и попался, пока не задал число сам.
-    const qreal savedWidth = zametti::settings().look.maxContentWidth;
-    zametti::editSettings().look.maxContentWidth = 40.0;
+    const qreal savedWidth = zametti::settings().look().maxContentWidth();
+    zametti::editSettings().look().setMaxContentWidth(40.0);
     struct Restore {
         qreal width;
-        ~Restore() { zametti::editSettings().look.maxContentWidth = width; }
+        ~Restore() { zametti::editSettings().look().setMaxContentWidth(width); }
     } restore{savedWidth};
 
     std::string source = "# Длинная\n\n";
@@ -395,8 +395,8 @@ void checkPaperPrep() {
 void checkPaperFont() {
     const QString note = makeNote(QStringLiteral("01gggggggggggg.md"),
                                   "# Заголовок\n\nАбзац текста.\n\n```\nкод\n```\n");
-    zametti::editSettings().pdf.fontFamily = QStringLiteral("IBM Plex Sans");
-    zametti::editSettings().pdf.codeFamily = QStringLiteral("IBM Plex Mono");
+    zametti::editSettings().pdf().setFontFamily(QStringLiteral("IBM Plex Sans"));
+    zametti::editSettings().pdf().setCodeFamily(QStringLiteral("IBM Plex Mono"));
     exportAndSize(note, QStringLiteral("шрифты.pdf"), nullptr);
 
     QFile file(QDir(g_dir).filePath(QStringLiteral("шрифты.pdf")));
@@ -406,7 +406,7 @@ void checkPaperFont() {
     ZT_TRUE("а код — своей", bytes.contains("IBMPlexMono"));
     // Облик возвращается на место: подмена живёт только внутри вывоза.
     ZT_TRUE("экранная гарнитура не тронута вывозом",
-            zametti::settings().look.fontFamily != QStringLiteral("IBM Plex Sans"));
+            zametti::settings().look().fontFamily() != QStringLiteral("IBM Plex Sans"));
 }
 
 }  // namespace

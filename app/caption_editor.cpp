@@ -16,10 +16,10 @@ CaptionEditor::CaptionEditor(const QString& current, QWidget* parent) : QLineEdi
     // ФОН ЗАКРАШИВАЕМ САМИ, в paintEvent (см. довод в lang_editor.cpp: без
     // фрейма палитра Base у поля не рисуется, а autoFillBackground красит
     // чужой ролью). Под полем — страница, ею и закрываем.
-    backdrop_ = settings().look.pageBackground;
+    backdrop_ = settings().look().pageBackground();
     QPalette colours = palette();
     colours.setColor(QPalette::Base, backdrop_);
-    colours.setColor(QPalette::Text, settings().look.imageCaptionColor);
+    colours.setColor(QPalette::Text, settings().look().imageCaptionColor());
     setPalette(colours);
     setAttribute(Qt::WA_MacShowFocusRect, false);
 }

@@ -93,8 +93,8 @@ NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
 
     // Хоткеи разбираем один раз: на каждое нажатие клавиши это было бы разбором
     // строки впустую.
-    moveUpKey_ = QKeySequence(settings().editor.moveUpKey, QKeySequence::PortableText);
-    moveDownKey_ = QKeySequence(settings().editor.moveDownKey, QKeySequence::PortableText);
+    moveUpKey_ = QKeySequence(settings().editor().moveUpKey(), QKeySequence::PortableText);
+    moveDownKey_ = QKeySequence(settings().editor().moveDownKey(), QKeySequence::PortableText);
     // Сочетаний на команду может быть несколько: через точку с запятой.
     const auto bind = [this](const QString& keys, const NoteOp& op) {
         for (const QKeySequence& sequence :
@@ -124,7 +124,7 @@ NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
     // Автозамены из конфига: сочетание и знак, который оно вставляет.
     // Сочетаний на одну замену может быть несколько, через точку с запятой —
     // как и у любой другой команды.
-    for (const auto& [keys, text] : settings().editor.specialKeys) {
+    for (const auto& [keys, text] : settings().editor().specialKeys()) {
         if (text.isEmpty()) continue;
         for (const QKeySequence& sequence :
              QKeySequence::listFromString(keys, QKeySequence::PortableText))
@@ -148,17 +148,17 @@ NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
         addAction(action);
     }
 
-    bind(settings().editor.toggleTaskKey,
+    bind(settings().editor().toggleTaskKey(),
          [](ZDocument& note, QTextCursor& at) { return note.toggleTask(at); });
-    bind(settings().editor.makeBulletKey,
+    bind(settings().editor().makeBulletKey(),
          [](ZDocument& note, QTextCursor& at) { return note.makeBullet(at); });
-    bind(settings().editor.makeOrderedKey,
+    bind(settings().editor().makeOrderedKey(),
          [](ZDocument& note, QTextCursor& at) { return note.makeOrdered(at); });
-    bind(settings().editor.makeTaskKey,
+    bind(settings().editor().makeTaskKey(),
          [](ZDocument& note, QTextCursor& at) { return note.makeTask(at); });
-    bind(settings().editor.makeParagraphKey,
+    bind(settings().editor().makeParagraphKey(),
          [](ZDocument& note, QTextCursor& at) { return note.makeParagraph(at); });
-    bind(settings().editor.makeCommentKey,
+    bind(settings().editor().makeCommentKey(),
          [](ZDocument& note, QTextCursor& at) { return note.toggleComment(at); });
 
     autosave_.setSingleShot(true);
@@ -507,7 +507,7 @@ void NoteEditor::clearNoteCache() {
 }
 
 void NoteEditor::trimNoteCache() {
-    const qint64 budget = qint64(qMax(1, settings().cache.documentCacheSizeMb)) * 1024 * 1024;
+    const qint64 budget = qint64(qMax(1, settings().cache().documentCacheSizeMb())) * 1024 * 1024;
     // С хвоста, пока не уложились: самое давнее уходит первым. От вытесненной
     // заметки остаётся только место каретки — вот единственное место, где оно
     // попадает в общую карту. Каретка принадлежит заметке и живёт в её объекте;
@@ -548,7 +548,7 @@ void NoteEditor::stashCurrentNote() {
     if (hashOf(writePieces(piecesOf(*document()), note_->meta()).toUtf8()) != note_->digest()) return;
 
     const qint64 bytes = estimateDocumentBytes(*document());
-    const qint64 budget = qint64(qMax(1, settings().cache.documentCacheSizeMb)) * 1024 * 1024;
+    const qint64 budget = qint64(qMax(1, settings().cache().documentCacheSizeMb())) * 1024 * 1024;
     // Заметка тяжелее всего бюджета в кэш не идёт: она вытеснила бы всё
     // остальное и всё равно осталась бы одна.
     if (bytes > budget) return;
@@ -971,7 +971,7 @@ void NoteEditor::keepCaretOffEdge() {
     // Зазор — то же поле страницы, в высотах строки. Больше половины окна не
     // берём: в узком окне зазор сверху и снизу иначе перекрылись бы.
     const qreal lineUnit = QFontMetricsF(baseFont()).height();
-    const int gap = qBound(0, qRound(settings().look.verticalMargin * lineUnit), height / 3);
+    const int gap = qBound(0, qRound(settings().look().verticalMargin() * lineUnit), height / 3);
 
     QScrollBar* bar = verticalScrollBar();
     if (at.top() < gap) bar->setValue(bar->value() - (gap - at.top()));
@@ -1024,7 +1024,7 @@ void NoteEditor::revealInGolden(const QRectF& place) {
     // или чуть выше»). ensureCursorVisible здесь не годится — он прокручивает
     // МИНИМАЛЬНО, то есть кладёт место у самой кромки, где его толком не видно.
     movingView_ = true;
-    verticalScrollBar()->setValue(int(place.top() - height * qBound(0.0, settings().look.focusRatio, 0.9)));
+    verticalScrollBar()->setValue(int(place.top() - height * qBound(0.0, settings().look().focusRatio(), 0.9)));
     movingView_ = false;
 }
 
@@ -1054,7 +1054,7 @@ void NoteEditor::showMatchHighlights() {
     // Совпадения идут по возрастанию позиции: границы окна — двоичным поиском.
     const auto [first, last] = search.range(from, to);
     selections.reserve(last - first + 1);
-    const QColor base = settings().look.searchHighlight;
+    const QColor base = settings().look().searchHighlight();
     // Текущее совпадение — контрастнее прочих. Не другим цветом: цвет в
     // оформлении один, а разной должна быть заметность.
     QColor pale = base;
@@ -1180,7 +1180,7 @@ void NoteEditor::undo() {
     // её надо показать: человек нажал отмену, чтобы увидеть результат.
     showEditPlace(scrollBefore, /*jump=*/true);   // отмена может быть далеко от каретки
     document()->setModified(true);
-    autosave_.start(settings().editor.autosaveDelayMs);
+    autosave_.start(settings().editor().autosaveDelayMs());
 }
 
 void NoteEditor::redo() {
@@ -1198,7 +1198,7 @@ void NoteEditor::redo() {
     recordingSuspended_ = false;
     showEditPlace(scrollBefore, /*jump=*/true);   // отмена может быть далеко от каретки
     document()->setModified(true);
-    autosave_.start(settings().editor.autosaveDelayMs);
+    autosave_.start(settings().editor().autosaveDelayMs());
 }
 
 NoteEditor::ViewAnchor NoteEditor::viewAnchor() const {
@@ -1986,7 +1986,7 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
     // слой узнаёт его признаком, а не кодом клавиши. Сравнение то же, что у
     // прочих сочетаний в keyPressEvent: Qt сопоставляет с учётом раскладки.
     for (const QKeySequence& keys :
-         QKeySequence::listFromString(settings().editor.toggleTaskKey, QKeySequence::PortableText))
+         QKeySequence::listFromString(settings().editor().toggleTaskKey(), QKeySequence::PortableText))
         if (!keys.isEmpty() &&
             QKeySequence(event->keyCombination()).matches(keys) == QKeySequence::ExactMatch)
             where.toggleKey = true;
@@ -2024,7 +2024,7 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
                 case ObjectKind::Image:
                     emit importStatus(
                         QStringLiteral("Подпись картинки правится по Enter; %1 прячет её под снимком")
-                            .arg(settings().editor.toggleTaskKey));
+                            .arg(settings().editor().toggleTaskKey()));
                     break;
                 case ObjectKind::Table:
                     emit importStatus(QStringLiteral("Таблица правится по Enter"));
@@ -2287,7 +2287,7 @@ bool NoteEditor::insertTyped(const QString& text, Qt::KeyboardModifiers modifier
     if (meaningful != Qt::NoModifier && !altGr) return false;
 
     QTextCursor cursor = textCursor();
-    const bool tooLong = current_.runChars >= qMax(1, settings().editor.undoRunChars);
+    const bool tooLong = current_.runChars >= qMax(1, settings().editor().undoRunChars());
     const bool moved = current_.runCursor < 0 || cursor.position() != current_.runCursor;
     const bool startNew = current_.runBroken || moved || tooLong || cursor.hasSelection();
 
@@ -2317,7 +2317,7 @@ bool NoteEditor::insertTyped(const QString& text, Qt::KeyboardModifiers modifier
     current_.runBroken = false;
     for (const QChar c : text)
         if (c.isSpace() || c.isPunct() || c == QChar::ParagraphSeparator) current_.runBroken = true;
-    typingPause_.start(settings().editor.undoCoalesceMs);
+    typingPause_.start(settings().editor().undoCoalesceMs());
     return true;
 }
 
@@ -2355,7 +2355,7 @@ bool NoteEditor::runNoteEdit(const std::function<bool(ZDocument&, QTextCursor&)>
     }
     document()->setModified(true);
     showEditPlace(scrollBefore);
-    autosave_.start(settings().editor.autosaveDelayMs);
+    autosave_.start(settings().editor().autosaveDelayMs());
     return true;
 }
 
@@ -2475,7 +2475,7 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
                     });
                 });
             const QList<QKeySequence> all = QKeySequence::listFromString(
-                settings().editor.toggleTaskKey, QKeySequence::PortableText);
+                settings().editor().toggleTaskKey(), QKeySequence::PortableText);
             if (!all.isEmpty()) toggle->setShortcut(all.first());
             toggle->setEnabled(!ref.alt.trimmed().isEmpty() &&
                                (marked || !isNonameCaption(ref.alt)));
@@ -2483,7 +2483,7 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
     }
 
     menu->addSeparator();
-    add(QStringLiteral("Переключить задачу"), settings().editor.toggleTaskKey,
+    add(QStringLiteral("Переключить задачу"), settings().editor().toggleTaskKey(),
         [](ZDocument& note, QTextCursor& at) { return note.toggleTask(at); });
 
     QMenu* kinds = menu->addMenu(QStringLiteral("Сделать"));
@@ -2494,15 +2494,15 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
             QKeySequence::listFromString(keys, QKeySequence::PortableText);
         if (!all.isEmpty()) action->setShortcut(all.first());
     };
-    addKind(QStringLiteral("Маркированным списком"), settings().editor.makeBulletKey,
+    addKind(QStringLiteral("Маркированным списком"), settings().editor().makeBulletKey(),
             [](ZDocument& note, QTextCursor& at) { return note.makeBullet(at); });
-    addKind(QStringLiteral("Нумерованным списком"), settings().editor.makeOrderedKey,
+    addKind(QStringLiteral("Нумерованным списком"), settings().editor().makeOrderedKey(),
             [](ZDocument& note, QTextCursor& at) { return note.makeOrdered(at); });
-    addKind(QStringLiteral("Списком задач"), settings().editor.makeTaskKey,
+    addKind(QStringLiteral("Списком задач"), settings().editor().makeTaskKey(),
             [](ZDocument& note, QTextCursor& at) { return note.makeTask(at); });
-    addKind(QStringLiteral("Комментарием"), settings().editor.makeCommentKey,
+    addKind(QStringLiteral("Комментарием"), settings().editor().makeCommentKey(),
             [](ZDocument& note, QTextCursor& at) { return note.toggleComment(at); });
-    addKind(QStringLiteral("Обычным текстом"), settings().editor.makeParagraphKey,
+    addKind(QStringLiteral("Обычным текстом"), settings().editor().makeParagraphKey(),
             [](ZDocument& note, QTextCursor& at) { return note.makeParagraph(at); });
 
     menu->addSeparator();
@@ -2513,10 +2513,10 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
 
     QAction* up = menu->addAction(QStringLiteral("Переставить вверх"), this,
                                   [this] { moveItem(-1); });
-    up->setShortcut(QKeySequence(settings().editor.moveUpKey, QKeySequence::PortableText));
+    up->setShortcut(QKeySequence(settings().editor().moveUpKey(), QKeySequence::PortableText));
     QAction* down = menu->addAction(QStringLiteral("Переставить вниз"), this,
                                     [this] { moveItem(1); });
-    down->setShortcut(QKeySequence(settings().editor.moveDownKey, QKeySequence::PortableText));
+    down->setShortcut(QKeySequence(settings().editor().moveDownKey(), QKeySequence::PortableText));
 
     // Внешний редактор — команда окна, а не редактора: запускать процессы
     // виджету текста не по чину. Пункт здесь, потому что искать его человек
@@ -2638,7 +2638,7 @@ void NoteEditor::pasteMarkdown(const QString& text, bool literal) {
 
     document()->setModified(true);
     showEditPlace(scrollBefore);
-    autosave_.start(settings().editor.autosaveDelayMs);
+    autosave_.start(settings().editor().autosaveDelayMs());
 }
 
 QString NoteEditor::attachmentDir() const {
@@ -2671,7 +2671,7 @@ bool NoteEditor::beginImport(int count) {
         return false;
     }
     if (importer_ == nullptr) {
-        importer_ = new ImageImporter(importLimitsFrom(settings().images), this);
+        importer_ = new ImageImporter(importLimitsFrom(settings().images()), this);
         connect(importer_, &ImageImporter::imported, this,
                 [this](const ImportedImage& one) { importedBatch_.push_back(one); });
         connect(importer_, &ImageImporter::finished, this, &NoteEditor::onImportFinished);
@@ -2865,7 +2865,7 @@ void NoteEditor::onContentsChanged() {
         note_->invalidateStats();
         emit statsChanged();
     }
-    autosave_.start(settings().editor.autosaveDelayMs);
+    autosave_.start(settings().editor().autosaveDelayMs());
 }
 
 // Правка есть — снимка пока нет. Читать документ целиком на каждую букву
@@ -3222,7 +3222,7 @@ std::shared_ptr<QTextDocument> NoteEditor::buildDiffDocument(int slot,
             if (number >= source->size() || source->at(number) >= 0) continue;
             if (block.text().isEmpty()) continue;
             QTextCharFormat colour;
-            colour.setForeground(settings().look.diffRemoved);
+            colour.setForeground(settings().look().diffRemoved());
             paint.setPosition(block.position());
             paint.setPosition(block.position() + block.length() - 1, QTextCursor::KeepAnchor);
             paint.mergeCharFormat(colour);
@@ -3334,7 +3334,7 @@ void NoteEditor::paintEvent(QPaintEvent* event) {
     QPainter painter(viewport());
     const QAbstractTextDocumentLayout* layout = document()->documentLayout();
     const int scroll = verticalScrollBar()->value();
-    const qreal width = qMax(1.0, settings().look.diffBarWidth * zoom());
+    const qreal width = qMax(1.0, settings().look().diffBarWidth() * zoom());
     for (QTextBlock block = document()->begin(); block.isValid(); block = block.next()) {
         const int number = block.blockNumber();
         if (number >= diffMarks_.size()) break;
@@ -3344,9 +3344,9 @@ void NoteEditor::paintEvent(QPaintEvent* event) {
         const qreal top = rect.top() - scroll;
         if (top > viewport()->height()) break;
         if (top + rect.height() < 0) continue;
-        QColor colour = mark == diff::Mark::Added      ? settings().look.diffAdded
-                        : mark == diff::Mark::Removed  ? settings().look.diffRemoved
-                                                       : settings().look.diffChanged;
+        QColor colour = mark == diff::Mark::Added      ? settings().look().diffAdded()
+                        : mark == diff::Mark::Removed  ? settings().look().diffRemoved()
+                                                       : settings().look().diffChanged();
         painter.fillRect(QRectF(width, top, width, rect.height()), colour);
     }
 }
@@ -3464,10 +3464,10 @@ qint64 NoteEditor::restoreShownSnapshot(bool* alreadyCurrent) {
 // Правила отбора записей взяты из общего свода (store/history_rules.h): тем же
 // кодом чистится и старая история. Здесь — только числа из настроек.
 zametti::history::Rules NoteEditor::historyRules() {
-    const ZSettings::History& history = settings().history;
+    const ZSettings::History& history = settings().history();
     zametti::history::Rules rules;
-    rules.mergeChars = qMax(0, history.historyMergeChars);
-    rules.mergeHours = qMax(1, history.historyMergeHours);
+    rules.mergeChars = qMax(0, history.historyMergeChars());
+    rules.mergeHours = qMax(1, history.historyMergeHours());
     rules.ignoreAge = false;   // живая запись смотрит только на свежие записи
     return rules;
 }
@@ -3638,7 +3638,7 @@ void NoteEditor::wheelEvent(QWheelEvent* event) {
 // открытии.
 qreal NoteEditor::heldRatioNow() const {
     const int height = viewport()->height();
-    const qreal golden = qBound(0.0, settings().look.focusRatio, 0.9);
+    const qreal golden = qBound(0.0, settings().look().focusRatio(), 0.9);
     if (!isVisible() || height <= 0) return golden;
     const int top = cursorRect().top();
     if (top < 0 || top >= height) return golden;
@@ -3758,8 +3758,8 @@ void installHistoryShortcuts(QWidget* window, NoteEditor& editor) {
             add(keys, [&editor, forward] { editor.diffStep(forward); });
         }
     };
-    walk(settings().editor.diffPreviousKey, false);
-    walk(settings().editor.diffNextKey, true);
+    walk(settings().editor().diffPreviousKey(), false);
+    walk(settings().editor().diffNextKey(), true);
 
     // Tab меняет сторону сравнения. Ярлык включается ТОЛЬКО в режиме истории:
     // в обычной работе Tab принадлежит переходу фокуса, и отбирать его у всего

@@ -48,9 +48,9 @@ ZDocument ZDocument::diffSide(const diff::Result& result) {
     ZDocument out;
 
     QTextCharFormat text;
-    if (!settings().look.codeFamily.isEmpty())
-        text.setFontFamilies({QString(settings().look.codeFamily)});
-    setFontStep(text, settings().look.codeStep);
+    if (!settings().look().codeFamily().isEmpty())
+        text.setFontFamilies({QString(settings().look().codeFamily())});
+    setFontStep(text, settings().look().codeStep());
 
     QTextCursor caret(&out.d_->text);
     bool first = true;

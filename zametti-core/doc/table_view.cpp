@@ -19,7 +19,7 @@ namespace {
 // кегля текста. Таблицу рисуем мы сами, ступеней у QPainter нет, поэтому
 // множитель ступени берём числом.
 qreal codePointFor(qreal scale) {
-    return settings().look.baseFontPoint * fontStepFactor(settings().look.codeStep) * scale;
+    return settings().look().baseFontPoint() * fontStepFactor(settings().look().codeStep()) * scale;
 }
 
 // Разобранная ячейка: текст и куски разметки, БЕЗ шрифтов и размеров.
@@ -96,13 +96,13 @@ std::shared_ptr<QTextLayout> layoutOfCell(const CellMarkup& markup, const QFont&
         if (piece.italic) fmt.setFontItalic(true);
         if (piece.strike) fmt.setFontStrikeOut(true);
         if (piece.code) {
-            fmt.setBackground(settings().look.codeBackground);
+            fmt.setBackground(settings().look().codeBackground());
             fmt.setFontPointSize(codePointFor(scale));
-            if (!settings().look.codeFamily.isEmpty())
-                fmt.setFontFamilies({QString(settings().look.codeFamily)});
+            if (!settings().look().codeFamily().isEmpty())
+                fmt.setFontFamilies({QString(settings().look().codeFamily())});
         }
         if (piece.link) {
-            fmt.setForeground(settings().look.linkColor);
+            fmt.setForeground(settings().look().linkColor());
             fmt.setFontUnderline(true);
         }
         range.format = fmt;
@@ -173,8 +173,8 @@ qreal layoutInto(QTextLayout& layout, qreal width, qreal lineHeight) {
 }  // namespace
 
 QFont tableFont(qreal scale) {
-    QFont font{QString(settings().look.fontFamily)};
-    font.setPointSizeF(settings().look.baseFontPoint * scale);
+    QFont font{QString(settings().look().fontFamily())};
+    font.setPointSizeF(settings().look().baseFontPoint() * scale);
     font.setStyleHint(QFont::Monospace);
     return font;
 }
@@ -184,11 +184,11 @@ qreal tableCellPadX(qreal scale) {
     // вместе с текстом, иначе ужатая таблица стоит в непропорционально
     // просторных клетках.
     return QFontMetricsF(tableFont(scale)).horizontalAdvance(QLatin1Char('A')) *
-           settings().tables.cellPadding;
+           settings().tables().cellPadding();
 }
 
 qreal tableCellPadY(qreal scale) {
-    return QFontMetricsF(tableFont(scale)).height() * settings().tables.cellPaddingY;
+    return QFontMetricsF(tableFont(scale)).height() * settings().tables().cellPaddingY();
 }
 
 const TableCellBox* TableLayout::at(int row, int column) const {
@@ -237,7 +237,7 @@ TableLayout layoutTable(const Table& table, const TableSpace& space) {
         const QFont font = tableFont(scale);
         m.padX = tableCellPadX(scale);
         m.padY = tableCellPadY(scale);
-        m.lineHeight = std::round(QFontMetricsF(font).height() * settings().look.lineHeightFactor);
+        m.lineHeight = std::round(QFontMetricsF(font).height() * settings().look().lineHeightFactor());
         m.minWidth.fill(0.0, out.columns);
         m.maxWidth.fill(0.0, out.columns);
         m.layouts.reserve(out.rows * out.columns);

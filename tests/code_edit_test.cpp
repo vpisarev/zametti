@@ -270,7 +270,7 @@ void checkLeaveCodeBlock() {
 
 // --- табуляция --------------------------------------------------------------
 void checkCodeTabs() {
-    const int width = zametti::settings().editor.codeTabWidth;
+    const int width = zametti::settings().editor().codeTabWidth();
     check(width == 4, "ширина стопа по умолчанию — четыре");
 
     // Из начала строки Tab даёт ровно стоп пробелов, и это ПРОБЕЛЫ, а не знак

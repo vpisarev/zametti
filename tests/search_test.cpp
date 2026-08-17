@@ -331,7 +331,7 @@ void checkQueryHistory() {
     ZT_TRUE("при загрузке дубли и пустые отброшены", restored.history() == hayAndNeedle);
 
     // Потолок: сколько бы ни искали, помним настроенное число.
-    const int limit = zametti::settings().look.findHistoryLimit;
+    const int limit = zametti::settings().look().findHistoryLimit();
     zametti::FindBar many;
     for (int i = 0; i < limit + 10; ++i) {
         many.open(zametti::FindBar::Mode::InNote, QStringLiteral("запрос%1").arg(i));

@@ -61,7 +61,7 @@ static int ztRunSuite(int argc, char** argv) {
     const auto alienFrames = [&editor] {
         const QRect at = editor.cursorRect();
         const qreal dpr = editor.devicePixelRatioF();
-        const QColor caret = zametti::settings().look.caretColor;
+        const QColor caret = zametti::settings().look().caretColor();
         int frames = 0;
         for (int frame = 0; frame < 20; ++frame) {
             QImage shot = editor.viewport()->grab().toImage();

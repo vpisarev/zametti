@@ -797,7 +797,7 @@ void checkUndo() {
 // хуже — огромный зазор между вводной строкой и первым пунктом.
 void checkListRhythm() {
     const zametti::ZSettings saved = zametti::settings();
-    zametti::editSettings().look.blockSpacing = 0.667;
+    zametti::editSettings().look().setBlockSpacing(0.667);
     struct Restore {
         const zametti::ZSettings& from;
         ~Restore() { zametti::editSettings() = from; }
@@ -858,7 +858,7 @@ void checkListRhythm() {
 // раньше блок, став пунктом, подпрыгивал вверх, и человек видел это как рывок.
 void checkKindRoundTripKeepsPlace() {
     const zametti::ZSettings saved = zametti::settings();
-    zametti::editSettings().look.blockSpacing = 0.667;
+    zametti::editSettings().look().setBlockSpacing(0.667);
     struct Restore {
         const zametti::ZSettings& from;
         ~Restore() { zametti::editSettings() = from; }
@@ -1439,12 +1439,12 @@ void checkNumberSignHeadings() {
 // Список задаётся конфигом; по умолчанию в нём одно длинное тире.
 void checkSpecialKeys() {
     // Список читается редактором при создании — правим оформление ДО него.
-    const auto saved = zametti::settings().editor.specialKeys;
-    zametti::editSettings().editor.specialKeys = {
+    const auto saved = zametti::settings().editor().specialKeys();
+    zametti::editSettings().editor().setSpecialKeys({
         {QStringLiteral("Alt+-"), QStringLiteral("—")},
         {QStringLiteral("Ctrl+Alt+G"), QStringLiteral("→")},
         {QStringLiteral("Ctrl+Alt+T"), QStringLiteral("тчк")},   // замена может быть строкой
-    };
+    });
 
     zametti::NoteEditor editor;
     editor.resize(700, 500);
@@ -1486,7 +1486,7 @@ void checkSpecialKeys() {
             editor.document()->firstBlock().text() ==
                 QStringLiteral("раз — два → три тчк"));
 
-    zametti::editSettings().editor.specialKeys = saved;
+    zametti::editSettings().editor().setSpecialKeys(saved);
 }
 
 // Ctrl+Shift+E: крайние пустые строки выделения не входят в блок кода —

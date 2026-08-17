@@ -53,13 +53,13 @@ QString titleAt(const NoteTreeModel& model, const QModelIndex& parent, int row) 
 // folder-open различаются десятком точек, и порог «различаются» прошёл бы и на
 // сглаживании.
 bool iconIs(const NoteTreeModel& model, const QModelIndex& index, const char* name) {
-    const zametti::ZSettings::Look& a = zametti::settings().look;
+    const zametti::ZSettings::Look& a = zametti::settings().look();
     QFont font;
-    font.setPointSizeF(a.sidebarFontPoint * a.sidebarFolderScale);
+    font.setPointSizeF(a.sidebarFontPoint() * a.sidebarFolderScale());
     const int side = QFontMetrics(font).height();
     const qreal dpr = qGuiApp != nullptr ? qGuiApp->devicePixelRatio() : 1.0;
     const QPixmap want =
-        zametti::toolbarIcon(QString::fromLatin1(name), side, a.sidebarFolderColor, dpr);
+        zametti::toolbarIcon(QString::fromLatin1(name), side, a.sidebarFolderColor(), dpr);
     const QVariant got = model.data(index, Qt::DecorationRole);
     if (want.isNull() || !got.canConvert<QPixmap>()) return false;
     return got.value<QPixmap>().cacheKey() == want.cacheKey();

@@ -194,7 +194,7 @@ bool readStoreNote(const QString& path, StoreNote& out) {
 // с обоснованием «имя каталога техническое»; на деле оно как раз и отвечает на
 // вопрос «а какое хранилище открыто», а у человека их бывает несколько.
 QString storeRootTitle(const QString& root) {
-    const QString configured = settings().store.storeTitle;
+    const QString configured = settings().store().storeTitle();
     if (!configured.isEmpty()) return configured;
     // Голое имя каталога, без пути. Завершающая черта в корне отрезается —
     // иначе dirName() вернул бы пустую строку (тот же лишний слэш из оболочки,
@@ -443,9 +443,9 @@ QPixmap rowPixmap(const char* icon) {
     const qreal dpr = qGuiApp != nullptr ? qGuiApp->devicePixelRatio() : 1.0;
 
     QFont font;
-    font.setPointSizeF(a.look.sidebarFontPoint * a.look.sidebarFolderScale);
+    font.setPointSizeF(a.look().sidebarFontPoint() * a.look().sidebarFolderScale());
     const int side = QFontMetrics(font).height();
-    return toolbarIcon(QString::fromLatin1(icon), side, a.look.sidebarFolderColor, dpr);
+    return toolbarIcon(QString::fromLatin1(icon), side, a.look().sidebarFolderColor(), dpr);
 }
 
 const NoteTreeModel::Node* nodeOf(const QModelIndex& index, const NoteTreeModel::Node* root) {
@@ -1127,7 +1127,7 @@ QSize NoteTreeDelegate::sizeHint(const QStyleOptionViewItem& option,
                                  const QModelIndex& index) const {
     QSize size = QStyledItemDelegate::sizeHint(option, index);
     const qreal height =
-        QFontMetricsF(option.font).height() * settings().look.sidebarLineHeightFactor;
+        QFontMetricsF(option.font).height() * settings().look().sidebarLineHeightFactor();
     size.setHeight(int(height + 0.5));
     return size;
 }

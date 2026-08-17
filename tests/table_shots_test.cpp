@@ -260,7 +260,7 @@ void checkMouse() {
     // выбранная фотография.
     {
         const QImage shot = editor.grab().toImage();
-        const QColor caretColour = zametti::settings().look.caretColor;
+        const QColor caretColour = zametti::settings().look().caretColor();
         int cornerPixels = 0;
         for (int px = int(area.left()) - 12; px < int(area.right()) + 12 && px < shot.width();
              ++px)
@@ -635,7 +635,7 @@ void checkTableOnForeignBackground() {
 
     const QRectF area = view.tableRect(first);
     const QImage shot = view.grab().toImage();
-    const QColor page = zametti::settings().look.pageBackground;
+    const QColor page = zametti::settings().look().pageBackground();
     int stale = 0;
     for (int px = int(area.left()); px < int(area.right()) && px < shot.width(); ++px)
         for (int py = int(area.top()); py < int(area.bottom()) && py < shot.height(); ++py) {

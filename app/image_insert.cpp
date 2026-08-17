@@ -176,11 +176,11 @@ StoredImage storeImagePixels(const QImage& image, const QString& storeDir,
 
 ImportLimits importLimitsFrom(const ZSettings::Images& s) {
     ImportLimits limits;
-    limits.maxSize = s.maxImportedImageSize;
-    limits.quality = s.photoQuality;
-    limits.losslessThreshold = s.losslessThreshold;
-    limits.maxBitsPerChannel = s.maxBitsPerChannel;
-    limits.maxDecodeMemoryMb = s.maxDecodeMemoryMb;
+    limits.maxSize = s.maxImportedImageSize();
+    limits.quality = s.photoQuality();
+    limits.losslessThreshold = s.losslessThreshold();
+    limits.maxBitsPerChannel = s.maxBitsPerChannel();
+    limits.maxDecodeMemoryMb = s.maxDecodeMemoryMb();
     return limits;
 }
 

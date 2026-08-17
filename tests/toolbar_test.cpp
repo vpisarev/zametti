@@ -267,15 +267,15 @@ void checkSortButtons(Toolbar& bar) {
             }
         return hits;
     };
-    const zametti::ZSettings::Look& a = zametti::settings().look;
+    const zametti::ZSettings::Look& a = zametti::settings().look();
     const zametti::SortOrder created{zametti::SortKey::Created, false};
 
     bar.showSort(created, false);
-    const int commonBlue = countColour(Toolbar::Button::SortByCreated, a.toolbarIconOnColor);
-    const int commonPurple = countColour(Toolbar::Button::SortByCreated, a.toolbarIconMarkColor);
+    const int commonBlue = countColour(Toolbar::Button::SortByCreated, a.toolbarIconOnColor());
+    const int commonPurple = countColour(Toolbar::Button::SortByCreated, a.toolbarIconMarkColor());
     bar.showSort(created, true);
-    const int markBlue = countColour(Toolbar::Button::SortByCreated, a.toolbarIconOnColor);
-    const int markPurple = countColour(Toolbar::Button::SortByCreated, a.toolbarIconMarkColor);
+    const int markBlue = countColour(Toolbar::Button::SortByCreated, a.toolbarIconOnColor());
+    const int markPurple = countColour(Toolbar::Button::SortByCreated, a.toolbarIconMarkColor());
 
     ZT_TRUE("общий порядок нарисован цветом переключателя (" +
                 std::to_string(commonBlue) + " точек)",

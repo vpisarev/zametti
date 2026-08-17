@@ -302,23 +302,23 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
         ~PaperLook() { editSettings() = saved; }
     } look;
     {
-        ZSettings::Look& a = editSettings().look;
-        const ZSettings::Pdf& paper = look.saved.pdf;
-        if (!paper.fontFamily.isEmpty()) a.fontFamily = paper.fontFamily;
-        if (paper.pointSize > 0.0) a.baseFontPoint = paper.pointSize;
-        if (!paper.codeFamily.isEmpty()) a.codeFamily = paper.codeFamily;
-        a.codeStep = paper.codeStep;
-        a.headingStep = paper.headingStep;
+        ZSettings::Look& a = editSettings().look();
+        const ZSettings::Pdf& paper = look.saved.pdf();
+        if (!paper.fontFamily().isEmpty()) a.setFontFamily(paper.fontFamily());
+        if (paper.pointSize() > 0.0) a.setBaseFontPoint(paper.pointSize());
+        if (!paper.codeFamily().isEmpty()) a.setCodeFamily(paper.codeFamily());
+        a.setCodeStep(paper.codeStep());
+        a.setHeadingStep(paper.headingStep());
         // И полоска блока кода: на бумаге от неё остаётся только поле снизу,
         // чтобы плашка выглядела как на экране — со скруглением и воздухом, но
         // без имени языка и кнопки копирования.
-        a.codeStripHeight = paper.codeStripHeight;
+        a.setCodeStripHeight(paper.codeStripHeight());
     }
-    const ZSettings::Pdf& paper = look.saved.pdf;
+    const ZSettings::Pdf& paper = look.saved.pdf();
 
     QPdfWriter writer(targetPath);
     writer.setPageSize(QPageSize(options.page));
-    const qreal margin = options.marginMm > 0.0 ? options.marginMm : paper.marginMm;
+    const qreal margin = options.marginMm > 0.0 ? options.marginMm : paper.marginMm();
     writer.setPageMargins(QMarginsF(margin, margin, margin, margin), QPageLayout::Millimeter);
     // РАЗРЕШЕНИЕ PDF РАВНО ЕДИНИЦАМ ВЁРСТКИ, и это не мелочь оформления.
     //
@@ -429,7 +429,7 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
     // отмерила два сантиметра, фотография ляжет своими пикселями, и их число
     // задаётся здесь и только здесь.
     const qreal marginPx = margin / 25.4 * kLayoutDpi;
-    const int dpi = options.imageDpi > 0 ? options.imageDpi : paper.imageDpi;
+    const int dpi = options.imageDpi > 0 ? options.imageDpi : paper.imageDpi();
     const qreal imageRatio = qMax(1.0, qreal(dpi) / kLayoutDpi);
 
     for (size_t i = 0; i + 1 < cuts.size(); ++i) {
@@ -443,10 +443,10 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
         // карточка на белом листе.
         painter.fillRect(QRectF(-marginPx, -marginPx, pageWidth + 2 * marginPx,
                                 pageHeight + 2 * marginPx),
-                         settings().look.pageBackground);
+                         settings().look().pageBackground());
         painter.translate(0.0, -top);
         view.renderSlice(painter, QRectF(0.0, top, pageWidth, bottom - top), imageRatio,
-                         paper.maxExportedImageSize);
+                         paper.maxExportedImageSize());
         painter.restore();
     }
     painter.end();

@@ -159,15 +159,15 @@ void checkImageLine() {
     check(!leftText(bar).contains(QStringLiteral("Drawing")),
           "подпись не повторяется: она под снимком");
     {
-        const bool saved = zametti::settings().look.imageCaption;
-        zametti::editSettings().look.imageCaption = false;
+        const bool saved = zametti::settings().look().imageCaption();
+        zametti::editSettings().look().setImageCaption(false);
         // Панель не перерисовывает то, что не менялось; здесь поменялась
         // настройка, а не сведения, — сбрасываем её показом другого.
         bar.setImage(zametti::StatusBar::ImageInfo());
         bar.setImage(image);
         checkHas(leftText(bar), QStringLiteral("Drawing"),
                  "с выключенной подписью под снимком её берёт панель");
-        zametti::editSettings().look.imageCaption = saved;
+        zametti::editSettings().look().setImageCaption(saved);
         bar.setImage(zametti::StatusBar::ImageInfo());
         bar.setImage(image);
     }

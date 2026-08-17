@@ -146,14 +146,14 @@ void checkNameCarriesShotDate() {
     QDir().mkpath(store);
 
     const zametti::StoredImage first =
-        zametti::storeImageFile(path, store, zametti::importLimitsFrom(zametti::settings().images));
+        zametti::storeImageFile(path, store, zametti::importLimitsFrom(zametti::settings().images()));
     ZT_TRUE("снимок положен: " + first.error.toStdString(), first.ok());
     if (!first.ok()) return;
 
     // Тот же файл второй раз: префикс id (восемь знаков — секунды) обязан
     // совпасть, а случайный хвост — разойтись.
     const zametti::StoredImage second =
-        zametti::storeImageFile(path, store, zametti::importLimitsFrom(zametti::settings().images));
+        zametti::storeImageFile(path, store, zametti::importLimitsFrom(zametti::settings().images()));
     ZT_TRUE("снимок положен второй раз", second.ok());
     if (!second.ok()) return;
 

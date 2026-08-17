@@ -393,7 +393,7 @@ void checkKeysAreWired() {
 
     // F4 — из конфига, поэтому нажимаем не «F4», а то, что там записано. И
     // тоже с фокусом у соседа: это и была жалоба.
-    const QKeySequence next(settings().editor.diffNextKey);
+    const QKeySequence next(settings().editor().diffNextKey());
     ZT_TRUE("сочетание для ходьбы по изменениям задано", next.count() > 0);
     QTextCursor top(editor.document());
     top.setPosition(0);

@@ -58,8 +58,8 @@ qreal formulaBoxHeight(const FormulaRender& render, qreal naturalLine) {
 
 
 QFont baseFontFor(qreal zoom) {
-    QFont font{QString(settings().look.fontFamily)};
-    font.setPointSizeF(settings().look.baseFontPoint * zoom);
+    QFont font{QString(settings().look().fontFamily())};
+    font.setPointSizeF(settings().look().baseFontPoint() * zoom);
     font.setStyleHint(QFont::Monospace);
     return font;
 }
@@ -149,9 +149,9 @@ void applyPalette(QWidget& view, bool history) {
     // (решение владельца). Прошлое видно ещё до того, как человек прочтёт
     // баннер, а совпадение historyBackground с pageBackground выключает
     // тонировку — это законная настройка, а не поломка.
-    palette.setColor(QPalette::Base, history ? settings().look.historyBackground
-                                             : settings().look.pageBackground);
-    palette.setColor(QPalette::Highlight, settings().look.selectionBackground);
+    palette.setColor(QPalette::Base, history ? settings().look().historyBackground()
+                                             : settings().look().pageBackground());
+    palette.setColor(QPalette::Highlight, settings().look().selectionBackground());
     // Выделение светлое, поэтому текст в нём остаётся тёмным: белый по
     // умолчанию на таком фоне просто пропал бы.
     palette.setColor(QPalette::HighlightedText, palette.color(QPalette::Text));
@@ -178,7 +178,7 @@ QFont NoteView::baseFont() const {
 }
 
 qreal NoteView::displayScale() const {
-    const qreal base = settings().look.baseFontPoint;
+    const qreal base = settings().look().baseFontPoint();
     if (base <= 0.0) return 1.0;
     const qreal shown = baseFont().pointSizeF();
     return shown > 0.0 ? shown / base : 1.0;
@@ -274,7 +274,7 @@ NoteView::NoteView(QWidget* parent) : QTextBrowser(parent) {
             stopGlide();
             return;
         }
-        const qreal tau = qMax(1, settings().look.smoothScrollMs);
+        const qreal tau = qMax(1, settings().look().smoothScrollMs());
         glideSpeed_ *= std::exp(-scrollGlide_.interval() / tau);
     });
 
@@ -292,7 +292,7 @@ NoteView::NoteView(QWidget* parent) : QTextBrowser(parent) {
 // иначе от неё остаётся след.
 QRect NoteView::caretRect() const {
     QRect at = cursorRect();
-    at.setWidth(qMax(1, qRound(settings().look.caretWidth * displayScale())));
+    at.setWidth(qMax(1, qRound(settings().look().caretWidth() * displayScale())));
     return at.adjusted(-2, -2, 4, 2);
 }
 
@@ -362,7 +362,7 @@ void NoteView::applyContentWidth() {
     const qreal charUnit = QFontMetricsF(baseFont()).horizontalAdvance(QLatin1Char('A'));
     // Поле, которое колонке ПОЛОЖЕНО сейчас, — от нынешнего шрифта: оно обязано
     // расти вместе с масштабом, иначе на 200 % текст прижимается к краю окна.
-    const qreal want = settings().look.sideMargin * charUnit;
+    const qreal want = settings().look().sideMargin() * charUnit;
     // И то, которое уже даёт документ: его поставил сборщик, один раз, базовым
     // кеглем. Переписывать его нельзя — запись формата попадает в стек отмены.
     const qreal fromDocument = document()->rootFrame()->frameFormat().leftMargin();
@@ -372,8 +372,8 @@ void NoteView::applyContentWidth() {
     // полоса прокрутки, и вышла бы обратная связь.
     const int room = viewport()->width() + viewportMargin_ * 2;
     qreal margin = qMax(0.0, want - fromDocument);
-    if (settings().look.maxContentWidth > 0.0) {
-        const qreal limit = settings().look.maxContentWidth * charUnit;
+    if (settings().look().maxContentWidth() > 0.0) {
+        const qreal limit = settings().look().maxContentWidth() * charUnit;
         const qreal spare = (room - 2 * want - limit) / 2;
         if (spare > 0.0) margin += spare;
     }
@@ -415,7 +415,7 @@ void NoteView::wheelEvent(QWheelEvent* event) {
     // бросок ровно там, где он должен начинаться (поймал набор).
     const bool sequence = event->phase() != Qt::NoScrollPhase;
     const bool touchpad = sequence || !event->pixelDelta().isNull();
-    if (!settings().look.smoothScroll || !touchpad || bar == nullptr) {
+    if (!settings().look().smoothScroll() || !touchpad || bar == nullptr) {
         stopGlide();
         QTextBrowser::wheelEvent(event);
         return;
@@ -543,7 +543,7 @@ void NoteView::touchImage(const QString& key) {
 // одну заметку кэша хватает всегда, пусть она одна и больше бюджета. Так решил
 // владелец, и это правило, а не следствие реализации.
 qint64 NoteView::budgetBytes() {
-    return qint64(qMax(8, settings().cache.imageCacheSizeMb)) * 1024 * 1024;
+    return qint64(qMax(8, settings().cache().imageCacheSizeMb())) * 1024 * 1024;
 }
 
 void NoteView::trimImageCache(const QString& keep, qint64 need) {
@@ -672,7 +672,7 @@ void NoteView::planNoteImages() {
         }
     }
 
-    const qint64 budget = qint64(qMax(8, settings().cache.imageCacheSizeMb)) * 1024 * 1024;
+    const qint64 budget = qint64(qMax(8, settings().cache().imageCacheSizeMb())) * 1024 * 1024;
     const int limit = loadedImageSizeLimit();
 
     // Все картинки этой заметки — от самой лёгкой к самой тяжёлой. Порядок
@@ -868,8 +868,8 @@ qreal NoteView::columnWidth(const QTextBlock& block) const {
 }
 
 QFont NoteView::captionFont() const {
-    QFont font(settings().look.imageCaptionFamily);
-    font.setPointSizeF(qMax(1.0, settings().look.imageCaptionPoints * displayScale()));
+    QFont font(settings().look().imageCaptionFamily());
+    font.setPointSizeF(qMax(1.0, settings().look().imageCaptionPoints() * displayScale()));
     return font;
 }
 
@@ -924,7 +924,7 @@ NoteView::ImageBox NoteView::imageBoxFor(const QTextBlock& block) {
     qreal captionHeight = 0.0;
     const bool editing = block.blockNumber() == editedImageCaption_;
     const QString caption = editing ? QString() : ref.shownCaption();
-    if (settings().look.imageCaption && !entry->framed() && (!caption.isEmpty() || editing)) {
+    if (settings().look().imageCaption() && !entry->framed() && (!caption.isEmpty() || editing)) {
         box.text = caption;
         box.flags = Qt::TextWordWrap |
                     (ref.align == ImageAlign::Right ? Qt::AlignRight : Qt::AlignLeft);
@@ -934,7 +934,7 @@ NoteView::ImageBox NoteView::imageBoxFor(const QTextBlock& block) {
             editing ? metrics.height()
                     : metrics.boundingRect(QRectF(0, 0, width, 1e6), box.flags, box.text)
                           .height();
-        const qreal gap = settings().look.imageCaptionGap * displayScale();
+        const qreal gap = settings().look().imageCaptionGap() * displayScale();
         box.caption = QRectF(box.photo.left(), box.photo.bottom() + gap, width, height);
         captionHeight = gap + height;
     }
@@ -1066,7 +1066,7 @@ QRectF NoteView::imageCaptionRectInViewport(const QTextBlock& block) {
     // на которой она стояла бы: полю ввода надо где-то встать.
     QRectF caption = box.caption;
     if (caption.isEmpty()) {
-        const qreal gap = settings().look.imageCaptionGap * displayScale();
+        const qreal gap = settings().look().imageCaptionGap() * displayScale();
         caption = QRectF(box.photo.left(), box.photo.bottom() + gap, box.photo.width(),
                          QFontMetricsF(captionFont()).height());
     }
@@ -1323,7 +1323,7 @@ void NoteView::syncImageSpace(bool whole) {
     const QTextBlock last = document()->lastBlock();
     const qreal missing = last.isValid() ? last.blockFormat().bottomMargin() : 0.0;
     const qreal want =
-        settings().look.verticalMargin * QFontMetricsF(baseFont()).height() + missing;
+        settings().look().verticalMargin() * QFontMetricsF(baseFont()).height() + missing;
     QTextFrameFormat frame = document()->rootFrame()->frameFormat();
     // С допуском: каждое выставление формата рамки переразмечает документ.
     if (std::fabs(frame.bottomMargin() - want) >= 0.5) {
@@ -1369,14 +1369,14 @@ QSizeF NoteView::frameBoxSize(const QTextBlock& block, const CachedImage& entry)
 // непонятого, имя файла и настоящие размеры из его заголовка.
 void NoteView::paintTooBigImage(QPainter& painter, const QTextBlock& block,
                                 const ImageGeometry& geometry, const CachedImage& entry) {
-    QPen pen(settings().look.rawColor);
+    QPen pen(settings().look().rawColor());
     pen.setStyle(Qt::DashLine);
     pen.setWidthF(qMax(1.0, 1.5 * displayScale()));
     painter.setPen(pen);
     painter.drawRect(geometry.photo.adjusted(0.5, 0.5, -0.5, -0.5));
 
     painter.setFont(baseFont());
-    painter.setPen(settings().look.rawColor);
+    painter.setPen(settings().look().rawColor());
     painter.drawText(geometry.photo, Qt::AlignCenter | Qt::TextWordWrap,
                      frameText(block, entry));
 }
@@ -1388,7 +1388,7 @@ void NoteView::paintImageCaption(QPainter& painter, const ImageBox& geometry) {
     // высоту полосы; добирать полями блока ничего не нужно.
     painter.save();
     painter.setFont(captionFont());
-    painter.setPen(settings().look.imageCaptionColor);
+    painter.setPen(settings().look().imageCaptionColor());
     painter.drawText(geometry.caption, geometry.flags, geometry.text);
     painter.restore();
 }
@@ -1411,13 +1411,13 @@ void NoteView::paintImageObject(QPainter& painter, const ImageBox& geometry,
         const CachedImage* fresh = imageInfo(ref.path);
         if (fresh != nullptr) {
             painter.fillRect(box, pageColour());
-            QPen pen(settings().look.rawColor);
+            QPen pen(settings().look().rawColor());
             pen.setStyle(Qt::DashLine);
             pen.setWidthF(qMax(1.0, 1.5 * displayScale()));
             painter.setPen(pen);
             painter.drawRect(box.adjusted(0.5, 0.5, -0.5, -0.5));
             painter.setFont(baseFont());
-            painter.setPen(settings().look.rawColor);
+            painter.setPen(settings().look().rawColor());
             painter.drawText(box, Qt::AlignCenter | Qt::TextWordWrap, frameText(block, *fresh));
         }
     } else {
@@ -1588,7 +1588,7 @@ void NoteView::renderSlice(QPainter& painter, const QRectF& documentRect, qreal 
     // Фон рисуем сами: у бумаги его нет, а подложка кода и цвет текста заданы
     // относительно него. Белая страница с нашими цветами текста читалась бы
     // иначе, чем то, что человек видит в окне.
-    painter.fillRect(documentRect, settings().look.pageBackground);
+    painter.fillRect(documentRect, settings().look().pageBackground());
     paintCodeBackground(painter, documentRect);
 
     // Текст — тем же слоем, что и на экране, только без каретки и выделения:
@@ -1632,7 +1632,7 @@ void NoteView::renderSlice(QPainter& painter, const QRectF& documentRect, qreal 
 // чаще всего и смотрят; уголки стоят СНАРУЖИ пикселей и не трогают ни один.
 qreal NoteView::imageCornerOverhang() {
     const ZSettings& a = settings();
-    return qMax(0.0, a.look.imageCornerOffset) + qMax(0.5, a.look.imageCornerWidth);
+    return qMax(0.0, a.look().imageCornerOffset()) + qMax(0.5, a.look().imageCornerWidth());
 }
 
 void NoteView::paintImageCorners(QPainter& painter, const QRectF& photo) {
@@ -1643,21 +1643,21 @@ void NoteView::paintImageCorners(QPainter& painter, const QRectF& photo) {
     // что человек видит на экране. Пол — чтобы на маленькой картинке уголок не
     // выродился в точку, потолок — сама короткая сторона: длиннее ему негде.
     const qreal length =
-        qMin(shortSide, qMax(shortSide * qMax(0.0, a.look.imageCornerShare),
-                             qreal(a.look.imageCornerMinLength)));
-    const qreal thick = qMax(0.5, a.look.imageCornerWidth);
+        qMin(shortSide, qMax(shortSide * qMax(0.0, a.look().imageCornerShare()),
+                             qreal(a.look().imageCornerMinLength())));
+    const qreal thick = qMax(0.5, a.look().imageCornerWidth());
     if (length <= 0.0) return;
 
     // Каждый уголок — ОДИН многоугольник, а не две линии. Двумя линиями в
     // самом углу выходил заметный артефакт: два прямоугольника накладывались
     // под прямым углом, и стык был виден ступенькой.
-    const qreal out = qMax(0.0, a.look.imageCornerOffset);
+    const qreal out = qMax(0.0, a.look().imageCornerOffset());
     const QRectF box = photo.adjusted(-out - thick, -out - thick, out + thick, out + thick);
 
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setPen(Qt::NoPen);
-    painter.setBrush(a.look.caretColor);
+    painter.setBrush(a.look().caretColor());
     for (int corner = 0; corner < 4; ++corner) {
         const bool right = corner == 1 || corner == 2;
         const bool bottom = corner >= 2;
@@ -1771,7 +1771,7 @@ void NoteView::syncFormulas() {
         // во сколько пикселей превратился кегль в пунктах на этом экране.
         // Пункты сюда передавать нельзя — формула выйдет на треть мельче текста
         // (обжёгся на этом в пробнике).
-        const qreal pixelSize = QFontInfo(base).pixelSize() * settings().formulas.displayScale;
+        const qreal pixelSize = QFontInfo(base).pixelSize() * settings().formulas().displayScale();
         // Цвет — ПЕРОМ ИЗ ПАЛИТРЫ, а не инверсией картинки: в тёмной теме
         // формула обязана быть набрана светлым, а не вывернутой наизнанку.
         const QColor colour = palette().color(QPalette::Text);
@@ -1913,13 +1913,13 @@ void NoteView::paintFormulaMarks(QPainter& painter, const QTextBlock& block) {
                                                                             : *render,
                                                           natural)));
         painter.fillRect(frame, pageColour());
-        QPen pen(settings().look.rawColor);
+        QPen pen(settings().look().rawColor());
         pen.setStyle(Qt::DashLine);
         pen.setWidthF(qMax(1.0, 1.5 * displayScale()));
         painter.setPen(pen);
         painter.drawRect(frame.adjusted(0.5, 0.5, -0.5, -0.5));
         painter.setFont(baseFont());
-        painter.setPen(settings().look.rawColor);
+        painter.setPen(settings().look().rawColor());
         const QString what = render == nullptr ? QString() : render->error;
         painter.drawText(frame.adjusted(6, 4, -6, -4), Qt::AlignLeft | Qt::TextWordWrap,
                          what.isEmpty() ? ref.source : ref.source + QLatin1Char('\n') + what);
@@ -2072,7 +2072,7 @@ void NoteView::paintTables(QPainter& painter, const QRectF& visible) {
     if (!kObjectsShown) return;
     if (tables_.isEmpty()) return;
     const QAbstractTextDocumentLayout* layout = document()->documentLayout();
-    const ZSettings::Tables& look = settings().tables;
+    const ZSettings::Tables& look = settings().tables();
 
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, false);
@@ -2098,13 +2098,13 @@ void NoteView::paintTables(QPainter& painter, const QRectF& visible) {
         const auto fill = [&painter](const QRectF& rect, const QColor& colour) {
             if (colour.alpha() > 0) painter.fillRect(rect, colour);
         };
-        fill(area, look.tableColor);
+        fill(area, look.tableColor());
         qreal y = area.top();
         for (int row = 0; row < table.layout.rows; ++row) {
             const qreal height = table.layout.rowHeight.at(row);
             const QRectF band(area.left(), y, area.width(), height);
-            if (row == 0) fill(band, look.headerColor);
-            else if ((row % 2) == 0) fill(band, look.altTableColor);
+            if (row == 0) fill(band, look.headerColor());
+            else if ((row % 2) == 0) fill(band, look.altTableColor());
             y += height;
         }
 
@@ -2113,34 +2113,34 @@ void NoteView::paintTables(QPainter& painter, const QRectF& visible) {
             if (width <= 0.0) return;
             painter.fillRect(QRectF(rect.left(), rect.top(), rect.width(),
                                     qMax(1.0, width * displayScale())),
-                             look.borderColor);
+                             look.borderColor());
         };
         const auto column = [&painter, &look, this](qreal x, qreal top, qreal height,
                                                     qreal width) {
             if (width <= 0.0) return;
             painter.fillRect(QRectF(x, top, qMax(1.0, width * displayScale()), height),
-                             look.borderColor);
+                             look.borderColor());
         };
 
-        line(QRectF(area.left(), area.top(), area.width(), 0), look.horizontalBorder);
-        line(QRectF(area.left(), area.bottom() - look.horizontalBorder * displayScale(), area.width(), 0),
-             look.horizontalBorder);
+        line(QRectF(area.left(), area.top(), area.width(), 0), look.horizontalBorder());
+        line(QRectF(area.left(), area.bottom() - look.horizontalBorder() * displayScale(), area.width(), 0),
+             look.horizontalBorder());
         y = area.top();
         for (int row = 0; row < table.layout.rows; ++row) {
             y += table.layout.rowHeight.at(row);
             if (row == 0)
-                line(QRectF(area.left(), y - look.headerSeparator * displayScale() / 2, area.width(), 0),
-                     look.headerSeparator);
+                line(QRectF(area.left(), y - look.headerSeparator() * displayScale() / 2, area.width(), 0),
+                     look.headerSeparator());
             else if (row + 1 < table.layout.rows)
-                line(QRectF(area.left(), y, area.width(), 0), look.rowSeparator);
+                line(QRectF(area.left(), y, area.width(), 0), look.rowSeparator());
         }
-        column(area.left(), area.top(), area.height(), look.verticalBorder);
-        column(area.right() - look.verticalBorder * displayScale(), area.top(), area.height(),
-               look.verticalBorder);
+        column(area.left(), area.top(), area.height(), look.verticalBorder());
+        column(area.right() - look.verticalBorder() * displayScale(), area.top(), area.height(),
+               look.verticalBorder());
         qreal x = area.left();
         for (int col = 0; col + 1 < table.layout.columns; ++col) {
             x += table.layout.columnWidth.at(col);
-            column(x, area.top(), area.height(), look.columnSeparator);
+            column(x, area.top(), area.height(), look.columnSeparator());
         }
 
         // Выбранная таблица — с уголками-мишенями, как выбранная фотография:
@@ -2364,7 +2364,7 @@ QRectF NoteView::languageRect(const CodeBand& band) const {
 // дальше кладём готовый непрозрачный цвет.
 QColor NoteView::plateColour() const {
     const QColor page = pageColour();
-    const QColor tint = settings().look.codeBackground;
+    const QColor tint = settings().look().codeBackground();
     const qreal a = tint.alphaF();
     return QColor::fromRgbF(page.redF() * (1 - a) + tint.redF() * a,
                             page.greenF() * (1 - a) + tint.greenF() * a,
@@ -2441,7 +2441,7 @@ void NoteView::paintCodeStrip(QPainter& painter, const CodeBand& band) {
     if (!band.info.isEmpty() && !where.isEmpty() &&
         band.firstBlockNumber != editedCodeLanguage_) {
         painter.setFont(codeLangFont());
-        painter.setPen(settings().look.codeLangColor);
+        painter.setPen(settings().look().codeLangColor());
         painter.drawText(where, Qt::AlignVCenter | Qt::AlignRight, band.info);
     }
 
@@ -2454,7 +2454,7 @@ void NoteView::paintCodeStrip(QPainter& painter, const CodeBand& band) {
         const bool done = band.firstBlockNumber == copiedCodeBlock_;
         const QPixmap icon = toolbarIcon(
             done ? QStringLiteral("check") : QStringLiteral("copy"),
-            int(std::round(box.width())), settings().look.codeLangColor, devicePixelRatioF());
+            int(std::round(box.width())), settings().look().codeLangColor(), devicePixelRatioF());
         painter.drawPixmap(box.topLeft(), icon);
     }
     painter.restore();
@@ -2605,8 +2605,8 @@ void NoteView::paintEvent(QPaintEvent* event) {
     if (caretOn_ && caretShouldBeDrawn(hasFocus(), isReadOnly(), textCursor().hasSelection(),
                                        caretOnDrawnObject())) {
         QRect at = cursorRect();
-        at.setWidth(qMax(1, qRound(settings().look.caretWidth * displayScale())));
-        painter.fillRect(at, settings().look.caretColor);
+        at.setWidth(qMax(1, qRound(settings().look().caretWidth() * displayScale())));
+        painter.fillRect(at, settings().look().caretColor());
     }
 }
 
