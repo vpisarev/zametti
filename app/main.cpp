@@ -392,7 +392,7 @@ int main(int argc, char** argv) {
 
     // Редактор узнаёт своё хранилище: без него истории правок не будет вовсе
     // (одиночный файл, открытый вне хранилища, журналу негде лежать).
-    editor.setStoreRoot(model.isStore() ? model.nodePath(QModelIndex()) : QString());
+    editor.setStorage(model.isStore() ? zapp.storage() : nullptr);
 
     // Одно хранилище — одна программа: замок держит само хранилище
     // (ZStorage::lock, там же снятие забытого замка мёртвого процесса и
@@ -419,34 +419,13 @@ int main(int argc, char** argv) {
     // (`archived: yes`, `parent` := прежний родитель), опустевшая
     // заметка-корзина уходит. Идемпотентно: корзины нет — не делает ничего, и
     // при каждом следующем запуске это просто один проход по каталогу.
+    // Ленивые миграции хранилища — его дело; здесь только слово человеку и
+    // перестройка дерева, если что-то переехало.
     if (model.isStore()) {
-        QString migrationError;
-        const int moved = zametti::store::migrateTrashToArchive(
-            model.nodePath(QModelIndex()), &migrationError);
-        if (moved < 0)
-            std::fprintf(stderr, "корзина не переехала в архив: %s\n",
-                         migrationError.toUtf8().constData());
-        else if (moved > 0) {
-            std::fprintf(stderr, "корзина переехала в архив: заметок %d\n", moved);
-            model.refresh();
-        }
+        const QStringList done = zapp.storage()->migrate();
+        for (const QString& line : done) std::fprintf(stderr, "%s\n", line.toUtf8().constData());
+        if (!done.isEmpty()) model.refresh();
     }
-
-    // БЮРО НАХОДОК — единственное место, где загрузка ПИШЕТ (решение
-    // владельца). Заметка с оборванным parent прописывается в спецпапку: иначе
-    // она чинилась бы в памяти при каждой сборке дерева и оставалась бы
-    // потерянной навсегда. Рамки исключения — в store/lost_found.h.
-    const auto collectOrphans = [&model] {
-        if (!model.isStore()) return;
-        QString why;
-        const int filed = zametti::store::fileOrphans(model.nodePath(QModelIndex()), &why);
-        if (filed < 0)
-            std::fprintf(stderr, "бюро находок не завелось: %s\n", why.toUtf8().constData());
-        else if (filed > 0)
-            std::fprintf(stderr, "в бюро находок прописано заметок: %d\n", filed);
-        if (filed > 0) model.refresh();
-    };
-    collectOrphans();
 
     // Свежая заметка хранилища — первая ОТКРЫВАЕМАЯ (директории не в счёт),
     // поиском в глубину; пустое хранилище получает первую заметку тут же.
@@ -454,9 +433,7 @@ int main(int argc, char** argv) {
         QString first = model.firstNoteId();
         if (first.isEmpty()) {
             QString newError;
-            const QString made = zametti::store::newNote(
-                QFileInfo(storeRoot).absoluteFilePath(), QString(), &newError);
-            if (made.isEmpty()) {
+            if (zapp.storage()->createNote(QString(), false, &newError).isEmpty()) {
                 std::fprintf(stderr, "%s\n", newError.toUtf8().constData());
                 return 2;
             }
@@ -1320,7 +1297,8 @@ int main(int argc, char** argv) {
     const auto reloadStore = [&] {
         // Тот же проход, что и при открытии: файл могли вернуть из системной
         // корзины или положить руками, пока программа работала.
-        collectOrphans();
+        for (const QString& line : zapp.storage()->migrate())
+            std::fprintf(stderr, "%s\n", line.toUtf8().constData());
         refreshTree(editor.filePath());
         storeNames = listStore();
         statusBar.setMessage(QStringLiteral("хранилище перечитано"));
@@ -1450,19 +1428,11 @@ int main(int argc, char** argv) {
         // Пустое — в корзину ОС без разговоров. Пустая папка — без детей;
         // пустая заметка — без содержательного текста (открытая меряется по
         // документу: набранное могло ещё не сохраниться).
-        bool empty = false;
-        if (model.isFolderId(noteId)) {
-            empty = model.childCountOf(noteId) == 0;
-        } else if (wasOpen) {
-            empty = editor.toPlainText().trimmed().isEmpty();
-        } else {
-            std::string bytes;
-            if (readFile(file, bytes)) {
-                zametti::ZDocument doc;
-                doc.loadMarkdown(bytes);
-                empty = doc.isEmpty();
-            }
-        }
+        // Открытая меряется по документу (набранное могло ещё не сохраниться),
+        // закрытая — по хранилищу.
+        const bool empty = wasOpen && !model.isFolderId(noteId)
+                               ? editor.toPlainText().trimmed().isEmpty()
+                               : zapp.storage()->isEmptyNote(noteId);
         if (empty || model.inArchiveId(noteId)) {
             if (!empty) {
                 const auto answer = QMessageBox::question(
@@ -1473,39 +1443,13 @@ int main(int argc, char** argv) {
             }
             // Если заметка открыта, сначала сохраняем: иначе последним слепком
             // в истории осталось бы состояние до последних правок, а человек
-            // удаляет то, что видит.
+            // удаляет то, что видит. Само удаление — дело хранилища: надгробие
+            // или журнал вместе с архивной, картинки следом.
             if (wasOpen) editor.save(false);
-            // КАРТИНКИ СЧИТАЕМ ДО УДАЛЕНИЯ: чтобы узнать, какие были в заметке,
-            // надо прочитать её саму, а через мгновение файла не будет. Удаление
-            // насовсем — такое же физическое расставание, как очистка корзины:
-            // одна заметка или сорок, правило одно.
-            const QString storeRoot = model.nodePath(QModelIndex());
-            const QStringList doomedFiles =
-                zametti::store::attachmentsLeavingWith(storeRoot, {noteId});
-            // Само удаление — в хранилище: там же живёт правило «сначала
-            // надгробие, потом файл» и обещание никогда не удалять журнал.
-            //
-            // У АРХИВНОЙ ЗАМЕТКИ ЖУРНАЛ УХОДИТ ВМЕСТЕ С НЕЙ, и это не
-            // непоследовательность: тело архивной живёт в журнале и больше
-            // нигде, файл — стаб в одну строку. Оставить журнал значило бы не
-            // удалить заметку, а спрятать её.
             QString deleteError;
-            const bool wasArchived = model.inArchiveId(noteId);
-            const bool gone = wasArchived
-                                  ? zametti::store::forgetNote(storeRoot, noteId, &deleteError)
-                                  : zametti::store::deleteNoteFile(storeRoot, noteId,
-                                                                   &deleteError);
-            if (!gone) {
+            if (!zapp.storage()->remove(noteId, &deleteError)) {
                 QMessageBox::warning(&window, QStringLiteral("zametti"), deleteError);
                 return;
-            }
-            if (!deleteError.isEmpty())
-                std::fprintf(stderr, "%s\n", deleteError.toUtf8().constData());
-            // Картинки — следом, в ту же мусорку ОС.
-            for (const QString& picture : doomedFiles) {
-                QString error;
-                if (!zametti::store::deleteAttachmentFile(storeRoot, picture, &error))
-                    std::fprintf(stderr, "%s\n", error.toUtf8().constData());
             }
             settleAfter();
             return;
@@ -1517,28 +1461,9 @@ int main(int argc, char** argv) {
         // убирает то, что видит, и последние правки обязаны попасть в историю
         // раньше среза.
         if (wasOpen) editor.save(false);
-        const QString storeRoot = model.nodePath(QModelIndex());
-        // Папка уезжает вместе с содержимым: пометку получает каждая заметка
-        // поддерева, а не только сама папка. Так каждый файл сам про себя всё
-        // говорит — это условие синхронизации, где файлы приезжают поодиночке.
-        QStringList doomed{noteId};
-        if (model.isFolderId(noteId)) doomed += model.descendantIdsOf(noteId);
+        // Папка уезжает вместе с содержимым — это знает хранилище.
         QStringList failed;
-        for (const QString& victim : doomed) {
-            QString why;
-            if (model.isFolderId(victim)) {
-                // У папки тела нет — только заголовок; журнал ей ни к чему,
-                // хватит пометки.
-                const QString folderFile = model.pathOfId(victim);
-                if (!folderFile.isEmpty())
-                    rewriteNote(folderFile,
-                                [](zametti::ZDocument& doc) { doc.setArchived(true); });
-                continue;
-            }
-            if (!zametti::store::archiveNote(storeRoot, victim,
-                                             zametti::NoteEditor::historyRules(), &why))
-                failed << QStringLiteral("%1: %2").arg(model.titleOfId(victim), why);
-        }
+        zapp.storage()->archive(noteId, zametti::NoteEditor::historyRules(), &failed);
         if (!failed.isEmpty())
             QMessageBox::warning(&window, QStringLiteral("zametti"),
                                  QStringLiteral("Убрать в архив удалось не всё:\n%1")
@@ -1558,27 +1483,9 @@ int main(int argc, char** argv) {
     const auto restoreNote = [&](const QString& noteId) {
         if (!model.isStore() || noteId.isEmpty()) return;
         if (!model.inArchiveId(noteId)) return;
-        const QString root = model.nodePath(QModelIndex());
-        const QString file = root + QLatin1Char('/') + noteId + QStringLiteral(".md");
-
-        QStringList back{noteId};
-        if (model.isFolderId(noteId)) back += model.descendantIdsOf(noteId);
+        const QString file = zapp.storage()->pathOf(noteId);
         QStringList failed;
-        for (const QString& one : back) {
-            QString why;
-            if (model.isFolderId(one)) {
-                const QString folderFile = model.pathOfId(one);
-                if (!folderFile.isEmpty())
-                    rewriteNote(folderFile, [](zametti::ZDocument& doc) {
-                        doc.setArchived(false);
-                        if (doc.headerValue(QStringLiteral("role")) == QLatin1String("trash"))
-                            doc.setHeaderValue(QStringLiteral("role"), QString());
-                    });
-                continue;
-            }
-            if (!zametti::store::restoreNote(root, one, &why))
-                failed << QStringLiteral("%1: %2").arg(model.titleOfId(one), why);
-        }
+        zapp.storage()->restore(noteId, &failed);
         if (!failed.isEmpty())
             QMessageBox::warning(&window, QStringLiteral("zametti"),
                                  QStringLiteral("Вернуть удалось не всё:\n%1")
@@ -1632,25 +1539,13 @@ int main(int argc, char** argv) {
     const auto createNote = [&](const QString& requestedParent, bool folder) {
         if (!model.isStore()) return;
         editor.save(false);
-        // В корзине ничего не создаётся: Ctrl+N из корзины — на глобальный
-        // уровень (правило владельца).
-        QString parentId = requestedParent;
-        if (!parentId.isEmpty() &&
-            (!model.hasNote(parentId) || model.inArchiveId(parentId)))
-            parentId.clear();
         QString newError;
-        const QString made = zametti::store::newNote(
-            model.nodePath(QModelIndex()), parentId, &newError);
-        if (made.isEmpty()) {
+        const QString madeId = zapp.storage()->createNote(requestedParent, folder, &newError);
+        if (madeId.isEmpty()) {
             QMessageBox::warning(&window, QStringLiteral("zametti"), newError);
             return;
         }
-        if (folder) {
-            rewriteNote(made, [](zametti::ZDocument& doc) {
-                doc.setHeaderValue(QStringLiteral("role"), QStringLiteral("folder"));
-                doc.setTitle(QStringLiteral("Новая папка"));
-            });
-        }
+        const QString made = zapp.storage()->pathOf(madeId);
         refreshTree(made);
         const QModelIndex fresh = model.indexForPath(made);
         if (folder) {
@@ -1678,8 +1573,8 @@ int main(int argc, char** argv) {
         QStringList failed;
         for (const QString& file : files) {
             QString error;
-            const QString made = zametti::store::importNote(
-                model.nodePath(QModelIndex()), parentId, file, &error);
+            const QString madeId = zapp.storage()->importNote(parentId, file, &error);
+            const QString made = madeId.isEmpty() ? QString() : zapp.storage()->pathOf(madeId);
             if (made.isEmpty()) {
                 failed.append(QFileInfo(file).fileName() + QStringLiteral(": ") + error);
                 continue;

@@ -18,6 +18,7 @@
 #include "note_view.h"
 #include "text_stats.h"
 #include "znote.h"
+#include "zstorage.h"
 
 #include <QElapsedTimer>
 #include <QHash>
@@ -169,7 +170,14 @@ public:
 
     // Хранилище, в котором лежит заметка: без него истории нет. Ставится один
     // раз при запуске — заметки из разных хранилищ в одном окне не живут.
-    void setStoreRoot(const QString& root) { storeRoot_ = root; }
+    // Хранилище заметки: журналы, пути. Пустой корень — заметка вне хранилища
+    // (одиночный файл), журнала у неё нет. setStoreRoot — удобство наборов и
+    // одиночного файла: заводит объект хранилища сам; окно отдаёт своё.
+    void setStorage(std::shared_ptr<ZStorage> storage) { storage_ = std::move(storage); }
+    void setStoreRoot(const QString& root) {
+        storage_ = root.isEmpty() ? nullptr : std::make_shared<ZStorage>(root);
+    }
+    std::shared_ptr<ZStorage> storage() const { return storage_; }
 
     // --- режим истории ------------------------------------------------------
     //
@@ -754,7 +762,7 @@ private:
     // заплатке надо пересобрать, так что расхождение здесь не изъян, а смысл.
     // Корень хранилища — ради истории правок. Пусто: файл открыт сам по себе,
     // вне хранилища, и журналу взяться неоткуда.
-    QString storeRoot_;
+    std::shared_ptr<ZStorage> storage_;
 
     // Перетаскивание угла фотографии. Фото прижато к левому краю колонки,
     // поэтому у всех углов работает дельта: от центра — растёт, к центру —

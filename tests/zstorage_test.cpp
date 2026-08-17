@@ -128,12 +128,76 @@ void checkCatalog() {
     ZT_TRUE("каталог — не хранилище", !plain.isStore());
     plain.reload();
     ZT_EQ("каталог пуст", n(0), n(plain.count()));
-    ZT_TRUE("журнала нет", !plain.historyOf(QStringLiteral("x"), rules()).available());
+    // Журнал по id даётся у любого каталога с корнем (так живут наборы на
+    // временном каталоге); нет корня — нет журнала.
+    ZT_TRUE("журнала без корня нет", !ZStorage(QString()).historyOf(QStringLiteral("x"), rules()).available());
+}
+
+// Операции — одна точка правды: создать, архивировать (с поддеревом), вернуть,
+// удалить насовсем; вопросы к каталогу без диска.
+void checkOperations() {
+    QTemporaryDir home;
+    const QString root = home.path() + QStringLiteral("/store");
+    QString error;
+    ZT_TRUE("хранилище заведено", zametti::store::initStore(root, &error));
+    ZStorage storage(root);
+    storage.reload();
+
+    const QString folder = storage.createNote(QString(), true, &error);
+    ZT_TRUE("папка создана: " + s(error), !folder.isEmpty());
+    ZT_TRUE("и она папка в каталоге", storage.isFolder(folder));
+    ZT_EQ("с именем по умолчанию", "Новая папка", s(storage.titleOf(folder)));
+    const QString inner = storage.createNote(folder, false, &error);
+    ZT_TRUE("заметка в папке", !inner.isEmpty() && storage.info(inner)->parent() == folder);
+    ZT_TRUE("пустая заметка пуста", storage.isEmptyNote(inner));
+    ZT_TRUE("папка с ребёнком не пуста", !storage.isEmptyNote(folder));
+    ZT_EQ("дети папки", "1", n(storage.childrenOf(folder).size()));
+    ZT_EQ("потомки папки", "1", n(storage.descendantsOf(folder).size()));
+    // Родитель в архиве — заметка идёт в корень.
+    ZT_TRUE("рецепт: правка текста заметки",
+            storage.rewriteNote(inner, [](zametti::ZDocument& doc) {
+                doc.setTitle(QStringLiteral("Внутренняя"));
+            }, rules(), &error));
+
+    QStringList failed;
+    ZT_TRUE("папка убрана в архив: " + s(failed.join(QStringLiteral("; "))),
+            storage.archive(folder, rules(), &failed));
+    ZT_TRUE("папка в архиве", storage.inArchive(folder));
+    ZT_TRUE("и её ребёнок — по цепочке и сам", storage.inArchive(inner) && storage.info(inner)->archived());
+    const QString stray = storage.createNote(folder, false, &error);
+    ZT_TRUE("создание в архивной папке — в корень", !stray.isEmpty() && storage.info(stray)->parent().isEmpty());
+
+    ZT_TRUE("возврат из архива", storage.restore(folder, &failed) && failed.isEmpty());
+    ZT_TRUE("папка вернулась", !storage.inArchive(folder));
+    ZT_TRUE("ребёнок вернулся туда же с текстом", !storage.inArchive(inner) &&
+                                                       storage.info(inner)->parent() == folder &&
+                                                       storage.info(inner)->title() == QStringLiteral("Внутренняя"));
+
+    ZT_TRUE("удалить насовсем пустую", storage.remove(stray, &error));
+    ZT_TRUE("её нет в каталоге", !storage.has(stray));
+    ZT_TRUE("и файла нет", !QFile::exists(storage.pathOf(stray)));
+    ZT_TRUE("удалить несуществующую — ложь", !storage.remove(stray, &error) && !error.isEmpty());
+
+    // Импорт чужого .md.
+    const QString foreign = home.path() + QStringLiteral("/чужая.md");
+    {
+        QFile f(foreign);
+        ZT_TRUE("чужая записана", f.open(QIODevice::WriteOnly));
+        f.write("# Чужая\n\nтекст\n");
+    }
+    const QString imported = storage.importNote(folder, foreign, &error);
+    ZT_TRUE("импорт: " + s(error), !imported.isEmpty());
+    ZT_EQ("импортированная в каталоге", "Чужая", s(storage.titleOf(imported)));
+    ZT_TRUE("источник цел", QFile::exists(foreign));
+
+    // Миграции идемпотентны: пустой ход ничего не сообщает.
+    ZT_TRUE("повторная миграция молчит", storage.migrate().isEmpty());
 }
 
 }  // namespace
 
 TEST(ZStorage, All) {
     checkCatalog();
+    checkOperations();
     EXPECT_EQ(0, zt::freshFailures());
 }

@@ -700,10 +700,9 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
     //
     // Время берём у файла, а не «сейчас»: содержимое ровно такой давности, и
     // таймлайн не должен утверждать, будто заметка написана в эту минуту.
-    ZNoteHistory history = storeRoot_.isEmpty()
+    ZNoteHistory history = storage_ == nullptr
                                ? ZNoteHistory()
-                               : ZNoteHistory(storeRoot_, QFileInfo(path).completeBaseName(),
-                                              historyRules());
+                               : storage_->historyOf(ZStorage::idOfPath(path), historyRules());
     {
         const QDateTime when = QFileInfo(path).lastModified();
         history.ensureBaseline(fileBytes, when.isValid() ? when.toMSecsSinceEpoch() : 0);
@@ -752,7 +751,7 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
 // можно из дерева, из списка, из поиска и восстановлением — правило одно на
 // все двери.
 void NoteEditor::enterHistoryIfArchived() {
-    if (storeRoot_.isEmpty() || note_->path().isEmpty()) return;
+    if (storage_ == nullptr || note_->path().isEmpty()) return;
     if (!zametti::store::isArchivedMeta(note_->meta())) return;
     if (inHistory()) return;
     if (!enterHistory()) {
@@ -2925,7 +2924,7 @@ bool NoteEditor::enterHistory(int index) {
     // Отдельного метода на это не заводим: снаружи это одно и то же желание —
     // «покажи вот эту запись».
     if (inHistory()) return index >= 0 && showSnapshot(index);
-    if (storeRoot_.isEmpty() || note_->path().isEmpty()) return false;
+    if (storage_ == nullptr || note_->path().isEmpty()) return false;
 
     // Незаписанные правки — в файл, а значит и в журнал: человек пошёл смотреть
     // прошлое, и вершина цепочки обязана в этом прошлом оказаться. Иначе он
