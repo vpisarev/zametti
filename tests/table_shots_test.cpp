@@ -365,6 +365,31 @@ void checkEditProtocol() {
     editor.setTextCursor(QTextCursor(editor.document()->firstBlock()));
     QTest::qWait(60);
     ZT_TRUE("уход каретки свернул таблицу", zametti::isTableObjectBlock(editor.document()->findBlockByNumber(number)));
+
+    // СОХРАНЕНИЕ ПОСРЕДИ ПРАВКИ (Ctrl+S): промежуточное состояние — не таблица
+    // (новая строка «| 7 |» без пары), и файл обязан остаться согласованным:
+    // сохранение сперва сворачивает раскрытое судьёй файла, .rescue не
+    // появляется, в файле — таблица с новым рядом.
+    editor.setTextCursor(QTextCursor(editor.document()->findBlockByNumber(number)));
+    QTest::keyClick(&editor, Qt::Key_Return);
+    QTest::qWait(40);
+    QTextCursor end(editor.document()->findBlockByNumber(number));
+    end.movePosition(QTextCursor::EndOfBlock);
+    editor.setTextCursor(end);
+    QTest::keyClick(&editor, Qt::Key_Return);
+    QTest::keyClicks(&editor, QStringLiteral("| 7 |"));
+    QTest::qWait(20);
+    editor.save(true);
+    QTest::qWait(60);
+    ZT_TRUE("после Ctrl+S таблица свёрнута", zametti::isTableObjectBlock(editor.document()->findBlockByNumber(number)));
+    {
+        QFile written(QDir(g_dir).filePath(QStringLiteral("протокол.md")));
+        ZT_TRUE("файл читается", written.open(QIODevice::ReadOnly));
+        const QString text = QString::fromUtf8(written.readAll());
+        ZT_TRUE("в файле новый ряд «| 7 |»", text.contains(QStringLiteral("| 3 | 4 |\n| 7 |")));
+        ZT_TRUE("rescue-копии нет",
+                QDir(g_dir).entryList({QStringLiteral("протокол.md.rescue-*")}, QDir::Files).isEmpty());
+    }
 }
 
 // --- switch-and-return == fresh open --------------------------------------------
