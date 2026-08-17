@@ -394,6 +394,55 @@ void checkFlipKeepsLevel() {
     checkLegal(editor, "после флипа");
 }
 
+// --- Tab на выделении под списком: новый последний пункт -----------------------
+
+void checkTabAttachesRunAsItem() {
+    Editor editor;
+    editor.openText(QStringLiteral("tab-run"),
+                    "- a\n- b\n\ntext one\n\n```py\ncode\n```\n\n$$q$$\n\n- sub\n\nafter\n");
+    // Выделяем от «text one» до «after» включительно.
+    QTextBlock from;
+    QTextBlock to;
+    for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next()) {
+        if (b.text() == QStringLiteral("text one")) from = b;
+        if (b.text() == QStringLiteral("after")) to = b;
+    }
+    ZT_TRUE("границы выделения найдены", from.isValid() && to.isValid());
+    if (!from.isValid() || !to.isValid()) return;
+    QTextCursor sel(from);
+    sel.setPosition(to.position() + to.length() - 1, QTextCursor::KeepAnchor);
+    editor.setTextCursor(sel);
+    QTest::keyClick(&editor, Qt::Key_Tab);
+    QTest::qWait(30);
+    // Пустая строка перед новым пунктом остаётся: она была в файле (просторный
+    // список — тот же список), а Tab чужих байтов не трогает.
+    ZT_EQ("Tab сделал из выделения последний пункт списка",
+          std::string("- a\n- b\n\n- text one\n\n  ```py\n  code\n  ```\n\n  $$q$$\n\n  - sub\n\n  after\n"),
+          editor.markdown());
+    checkLegal(editor, "после Tab на выделении");
+    ZT_TRUE("формула в новом пункте — объект на уровне 0",
+            zametti::levelOf(editor.document()->findBlockByNumber(
+                editor.objectBlock(zametti::ObjectKind::Formula, QStringLiteral("$$q$$")))) == 0);
+    QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+    QTest::qWait(20);
+    ZT_EQ("Ctrl+Z возвращает исходное",
+          std::string("- a\n- b\n\ntext one\n\n```py\ncode\n```\n\n$$q$$\n\n- sub\n\nafter\n"),
+          editor.markdown());
+
+    // С заголовком внутри пунктом набор не становится (заголовок в пункте не
+    // живёт) — работает прежнее правило Tab: годные блоки выделения
+    // привязываются к пункту над ними, заголовок остаётся снаружи.
+    Editor refuse;
+    refuse.openText(QStringLiteral("tab-run-heading"), "- a\n\ntext\n\n## head\n");
+    QTextCursor all(refuse.document()->findBlockByNumber(2));
+    all.movePosition(QTextCursor::End, QTextCursor::KeepAnchor);
+    refuse.setTextCursor(all);
+    QTest::keyClick(&refuse, Qt::Key_Tab);
+    QTest::qWait(20);
+    ZT_EQ("с заголовком в выделении — только привязка абзаца, заголовок цел",
+          std::string("- a\n\n  text\n\n## head\n"), refuse.markdown());
+}
+
 }  // namespace
 
 static int ztRunSuite(int argc, char** argv) {
@@ -409,6 +458,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkContinueItemAfterObject();
     checkTabMovesObjects();
     checkFlipKeepsLevel();
+    checkTabAttachesRunAsItem();
     return zt::report("объекты внутри списков");
 }
 
