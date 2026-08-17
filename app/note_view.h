@@ -15,6 +15,7 @@
 
 #include <QHash>
 #include <QImage>
+#include "formula_object.h"
 #include "table_object.h"
 
 #include <QRectF>
@@ -59,28 +60,6 @@ bool caretShouldBeDrawn(bool focused, bool readOnly, bool hasSelection, bool onD
 // с языком и кнопкой снизу (first/last у неё всегда истинны — остались от
 // построчных времён).
 
-// Формула, показанная вёрсткой: картинка и то, из чего она посчитана.
-//
-// КЭШ — ПО СОДЕРЖИМОМУ, А НЕ ПО НОМЕРУ БЛОКА. Ключ — исходник; кегль, цвет и
-// плотность лежат внутри и сверяются при выдаче: разошлись — считаем заново.
-// Прежде кэш ключевался номером блока и перестраивался по textChanged, а
-// вёрстка Qt перемеряет объект РАНЬШЕ — внутри contentsChange (Ctrl+Z после
-// удаления формулы, сворачивание раскрытой, набор под ней): в момент перемера
-// вёрстки для этого номера ещё не было, полоса бралась в одну строку, и
-// формула ложилась на текст под собой — «наползают, низ пропадает» у
-// владельца. Теперь размер спрашивают по ИСХОДНИКУ самого объекта и, если
-// вёрстки нет, считают тут же: номера блоков ни при чём.
-struct FormulaRender {
-    QImage image;          // готовая картинка с домноженной альфой
-    QString source;        // исходник с долларами — по нему и считали
-    QString error;         // непусто — формула битая, рисуется рамка
-    qreal width = 0.0;     // логические размеры вёрстки
-    qreal height = 0.0;
-    qreal pixelSize = 0.0;
-    QColor colour;
-    qreal dpr = 1.0;
-};
-
 struct CodeBand {
     QRectF rect;
     int blockNumber = 0;
@@ -111,28 +90,6 @@ class ImageObjectHandler : public QObject, public QTextObjectInterface {
 
 public:
     explicit ImageObjectHandler(NoteView* view);
-
-    QSizeF intrinsicSize(QTextDocument* doc, int posInDocument,
-                         const QTextFormat& format) override;
-    void drawObject(QPainter* painter, const QRectF& rect, QTextDocument* doc,
-                    int posInDocument, const QTextFormat& format) override;
-
-private:
-    NoteView* view_ = nullptr;
-};
-
-// ВЫКЛЮЧНАЯ ФОРМУЛА РИСУЕТСЯ КАК ОБЪЕКТ ТЕКСТА — тем же приёмом, что и
-// фотография: полоса во всю ширину колонки, вёрстка по центру внутри неё.
-//
-// Прежде исходник формулы лежал в блоке текстом, погашенным прозрачным цветом,
-// а место под вёрстку добиралось нижним полем блока. И то и другое — записи
-// ВИДА в живой документ, и ровно из-за них показ формул был выключен.
-class FormulaObjectHandler : public QObject, public QTextObjectInterface {
-    Q_OBJECT
-    Q_INTERFACES(QTextObjectInterface)
-
-public:
-    explicit FormulaObjectHandler(NoteView* view);
 
     QSizeF intrinsicSize(QTextDocument* doc, int posInDocument,
                          const QTextFormat& format) override;
@@ -617,16 +574,8 @@ private:
     TableObjects tables_;
     TableObjectHandler* tableObjects_ = nullptr;
     QVector<ObjectHighlight> objectHighlights_;
-    // Кэш вёрстки формул по исходнику (см. FormulaRender). Ограничен числом
-    // записей: переполнился — выбрасывается целиком, считается заново по мере
-    // показа. Условия вёрстки, при которых он собран, — рядом.
-    QHash<QString, FormulaRender> formulaCache_;
-    qreal formulaPixelSize_ = 0.0;
-    QColor formulaColour_;
-    qreal formulaDpr_ = 0.0;
-    // Вёрстка формулы по исходнику: из кэша или заново. nullptr — движок не
-    // поднят. Единственный вход к движку из вида.
-    const FormulaRender* formulaRenderFor(const QString& source, const QString& latex);
+    // Кэш вёрстки формул по исходнику и условия вёрстки — см. formula_object.h.
+    FormulaObjects formulas_;
 
     QTimer copiedFade_;
     QTimer caretBlink_;
