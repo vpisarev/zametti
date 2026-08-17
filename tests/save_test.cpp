@@ -168,16 +168,16 @@ struct Builder {
     zametti::Piece& add(zametti::Kind kind, std::string_view text) {
         zametti::Piece block;
         block.kind = kind;
-        block.text = text;
-        block.trailingNewline = !block.text.empty() && block.text.back() == '\n';
+        block.text = QString::fromUtf8(text.data(), qsizetype(text.size()));
+        block.trailingNewline = block.text.endsWith(QLatin1Char('\n'));
         ir.push_back(std::move(block));
         return ir.back();
     }
     zametti::Piece& addRaw(std::string_view bytes) {
         zametti::Piece block;
         block.raw = true;
-        block.text = bytes;
-        block.trailingNewline = !block.text.empty() && block.text.back() == '\n';
+        block.text = QString::fromUtf8(bytes.data(), qsizetype(bytes.size()));
+        block.trailingNewline = block.text.endsWith(QLatin1Char('\n'));
         ir.push_back(std::move(block));
         return ir.back();
     }
@@ -520,7 +520,7 @@ void checkEdgeSpaces() {
         check(writeFile(path, "заглушка\n"), "не записать исходник");
         Builder builder;
         zametti::Piece& block = builder.add(zametti::Kind::Paragraph, "фрукты");
-        builder.mark(block, 6, 6, zametti::InlineStrike);   // "кты" — вторая половина слова
+        builder.mark(block, 3, 3, zametti::InlineStrike);   // "кты" — вторая половина слова (единицы UTF-16)
         QTextDocument doc;
         zametti::buildDocument(builder.ir, doc);
         const zametti::SaveOutcome outcome =
@@ -698,8 +698,8 @@ void surveyGuard(const QString& root) {
                     going[i].kind == back[i].kind)
                     continue;
                 std::printf("  блок %zu:\n    ушло:  [%s]\n    вышло: [%s]\n", i,
-                            going[i].text.substr(0, 90).c_str(),
-                            back[i].text.substr(0, 90).c_str());
+                            going[i].text.left(90).toUtf8().constData(),
+                            back[i].text.left(90).toUtf8().constData());
                 break;
             }
         }

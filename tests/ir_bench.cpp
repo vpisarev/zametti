@@ -187,7 +187,7 @@ int ztIrBench(int argc, char** argv) {
             for (const std::vector<zametti::Piece>& doc : docs) {
                 for (const zametti::Piece& b : doc) {
                     // Дословный кусок и обычный текст лежат в блоке одинаково.
-                    if (b.text.find(needle) != std::string::npos) ++hits;
+                    if (b.text.contains(QLatin1String(needle))) ++hits;
                 }
             }
         }

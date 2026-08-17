@@ -44,13 +44,13 @@ std::string mathSpans(const std::vector<Piece>& doc) {
         if (b.raw) continue;
         if (b.kind == zametti::Kind::Math) {
             if (!out.empty()) out += "|";
-            out += b.text;
+            out += b.text.toStdString();
             continue;
         }
         for (const Run& s : b.runs) {
             if (!s.math()) continue;
             if (!out.empty()) out += "|";
-            out += std::string(b.view(s));
+            out += b.view(s).toString().toStdString();
         }
     }
     return out;

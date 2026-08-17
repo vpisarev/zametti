@@ -496,7 +496,7 @@ void checkShownIsACopy() {
             editor.document()->toPlainText().contains(QStringLiteral("удалено:")));
 
     // А сам слепок её не содержит — и восстановление берёт именно его.
-    const std::string snapshot = writePieces(editor.shownSnapshot());
+    const std::string snapshot = writePieces(editor.shownSnapshot()).toStdString();
     ZT_TRUE("в слепке вспомогательной строки нет",
             snapshot.find("удалено:") == std::string::npos);
     ZT_TRUE("а его текст на месте", snapshot.find("первый") != std::string::npos);

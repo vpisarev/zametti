@@ -42,11 +42,16 @@ inline std::vector<zametti::Piece> pieces(std::string_view markdown,
     return out;
 }
 
-// Логические блоки → канонические байты.
+// Логические блоки → канонические байты. Писатель отдаёт текст (QString);
+// наборы сравнивают с байтовыми литералами, и граница переводится здесь.
 inline std::string markdownOf(const std::vector<zametti::Piece>& blocks,
                               const zametti::NoteHeader& header = {}) {
-    return zametti::writePieces(blocks, header);
+    return zametti::writePieces(blocks, header).toStdString();
 }
+
+// Текст блока байтами UTF-8 — для сравнения с литералами наборов: сам текст в
+// памяти QString (решение владельца, refactor2).
+inline std::string utf8(const QString& text) { return text.toStdString(); }
 
 // Живой документ → логические блоки.
 inline std::vector<zametti::Piece> blocksOf(const QTextDocument& doc) {
