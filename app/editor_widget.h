@@ -766,6 +766,9 @@ private:
     void stashCurrentNote();
     // Достать отложенную, если отпечаток файла с ней сходится.
     bool restoreCachedNote(const QString& path, const Digest& digest);
+    // Лежит ли в кэше эта заметка с этим отпечатком — то есть файл на диске
+    // байт в байт равен отложенному документу.
+    bool cachedNoteMatches(const QString& path, const Digest& digest) const;
     void trimNoteCache();
 
 public:

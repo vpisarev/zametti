@@ -552,6 +552,12 @@ void NoteEditor::stashCurrentNote() {
     trimNoteCache();
 }
 
+bool NoteEditor::cachedNoteMatches(const QString& path, const Digest& digest) const {
+    return std::any_of(noteCache_.begin(), noteCache_.end(), [&](const NoteSession& note) {
+        return note.path == path && note.digest == digest;
+    });
+}
+
 bool NoteEditor::restoreCachedNote(const QString& path, const Digest& digest) {
     const auto at = std::find_if(noteCache_.begin(), noteCache_.end(),
                                  [&path](const NoteSession& note) { return note.path == path; });
@@ -603,6 +609,13 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
     // первая же правка записала бы чужое прошлое в новый файл. Найдено
     // пробником: после ухода и возврата режим оставался включён.
     leaveHistory();
+    // Каретку прежней заметки в виду больше не держим: заметка сменяется, и
+    // всё, что дальше делается с документом — сборка, подмена, перекладка
+    // полей, — не должно на каждое изменение высоты гонять каретку в вид.
+    // Замер (zametti-bench big, «Карамазовы»): с поднятым признаком сборка
+    // документа стоила 1940 мс против 396 — каждый вставленный блок менял
+    // высоту, и на каждую высоту ensureCursorVisible заново верстал документ.
+    releaseCaret();
     save(true, true);   // уходим из заметки: пробуем записать, не спрашивая признак
 
     std::string text;
@@ -624,7 +637,13 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
     // и недостающий перевод строки в конце файла причёсываются прямо на диске,
     // не трогая ни одного значения в шапке. Заметку всего лишь открыли —
     // всплывать наверх списка недавних ей не с чего.
-    canonicaliseNoteFile(path, text, digest);
+    //
+    // НО НЕ ТО, ЧТО МЫ САМИ ТОЛЬКО ЧТО ЗАПИСАЛИ. В кэше отложенных лежат только
+    // заметки, чья сериализация байт в байт равна файлу; если байты файла дают
+    // тот же отпечаток, файл и есть канон, и разбирать его целиком ради ответа
+    // «причёсывать нечего» незачем. На «Карамазовых» это 50–100 мс на каждый
+    // возврат к заметке (замер zametti-bench big).
+    if (!cachedNoteMatches(path, digest)) canonicaliseNoteFile(path, text, digest);
     note_.path = path;
     setImageBase(QFileInfo(path).absolutePath());
     current_.lastComplaint.clear();
@@ -1173,7 +1192,13 @@ void NoteEditor::rebuild(const std::vector<Piece>& doc, int cursor, const ViewAn
         // Вне правки — прямая сборка. Она гасит стек отмены, и это честно:
         // содержимое заменено целиком (заметку открыли, сменили облик, показали
         // слепок), отменять в нём нечего.
+        // Пока документ собирается, вёрстку выключаем: иначе Qt верстает по
+        // ходу — на каждый вставленный блок понемногу, а всякий, кто в этот
+        // миг спросит высоту, вынудит доверстать до места. Собранный целиком
+        // документ верстается один раз и лениво, когда его спросят.
+        document()->setLayoutEnabled(false);
         buildDocument(doc, *document());
+        document()->setLayoutEnabled(true);
         document()->setUndoRedoEnabled(true);
     } else if (!patched) {
         // ВНУТРИ ПРАВКИ ЧЕЛОВЕКА пересобирать документ на месте нельзя: сборка
