@@ -4,6 +4,7 @@
 #include "times.h"
 
 #include <QFile>
+#include <QSaveFile>
 #include <QFileInfo>
 
 namespace zametti {
@@ -54,6 +55,37 @@ QByteArray ZNote::fileBytes(std::vector<Piece>* fileBlocks) const {
 }
 
 QString ZNote::toMarkdownText() const { return doc_.toMarkdownText(header_); }
+
+bool ZNote::canonicaliseFile(const QString& path, std::string& text, Digest& digest) {
+    ZNote note;
+    note.load(text);
+    if (!note.hasHeader()) return false;   // не наша заметка
+
+    const std::string canonical = note.toMarkdown();
+    if (canonical == text) return false;   // и так канон
+
+    // Последний рубеж, тот же, что и при записи: причёсанное обязано читаться
+    // обратно той же заметкой — шапка строка в строку, тело — строением.
+    ZNote back;
+    back.load(canonical);
+    if (back.header_.present() != note.header_.present() ||
+        back.header_.lines() != note.header_.lines() || !note.doc_.sameSkeleton(back.doc_))
+        return false;
+
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) return false;
+    file.write(canonical.data(), qint64(canonical.size()));
+    if (!file.commit()) return false;
+
+    text = canonical;
+    digest = hashOf(std::string_view(text));
+    return true;
+}
+
+bool ZNote::isCanonical(std::string_view original) const {
+    const std::string canonical = toMarkdown();
+    return std::string_view(canonical) == original;
+}
 
 SaveOutcome ZNote::save(const QString& path, const QString& timestamp, const Digest& known,
                         const std::vector<Piece>* prebuiltBlocks,

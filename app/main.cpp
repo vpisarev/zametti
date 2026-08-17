@@ -18,6 +18,7 @@
 #include "note_view.h"
 #include "resources.h"
 #include "document.h"
+#include "znote.h"
 #include "serializer.h"
 #include "settings.h"
 #include "sort_order.h"
@@ -112,8 +113,9 @@ int runCheck(const QString& path) {
         return 2;
     }
 
-    zametti::ZDocument note;
-    note.loadMarkdown(src);
+    // Круг файла целиком — шапка и тело: его держит заметка, не документ.
+    zametti::ZNote note;
+    note.load(src);
     const std::string out = note.toMarkdown();
     if (out == src) return 0;
 

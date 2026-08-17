@@ -885,7 +885,7 @@ bool verifyStore(const QString& root, Report& report) {
         return false;
     }
 
-    std::map<std::string, ZDocument> notes;
+    std::map<std::string, std::shared_ptr<ZNote>> notes;
     std::set<QString> attachments;         // имена файлов-вложений
     // ДВА множества, а не одно. Доктрина этапа 10: вложение живо, пока на него
     // ссылается хоть одна ЗАМЕТКА — живая или корзинная; упомянутое только из
@@ -925,13 +925,12 @@ bool verifyStore(const QString& root, Report& report) {
         // Мусорные неразрывные пробелы вычищаются ПРИ ВВОЗЕ, а не при первом
     // открытии: иначе привезённая заметка какое-то время лежала бы на диске
     // грязной, и человек, заглянувший в неё чужим редактором, увидел бы сор.
-        ZDocument doc;
-        doc.loadMarkdown(bytes);
-        if (!doc.hasHeader())
+        auto note = std::make_shared<ZNote>();
+        note->load(bytes);
+        if (!note->hasHeader())
             report.problem(QStringLiteral("нет блока метаданных: %1").arg(name));
-        if (!doc.isCanonical(bytes))
-            report.problem(QStringLiteral("дрейф: %1").arg(name));
-        notes[toUtf8(stem)] = std::move(doc);
+        if (!note->isCanonical(bytes)) report.problem(QStringLiteral("дрейф: %1").arg(name));
+        notes[toUtf8(stem)] = std::move(note);
     }
 
     // Лежит ли заметка в корзине: идём по цепочке родителей до заметки с
@@ -942,9 +941,8 @@ bool verifyStore(const QString& root, Report& report) {
         for (int depth = 0; depth < 64; ++depth) {
             const auto found = notes.find(at);
             if (found == notes.end()) return false;
-            if (found->second.headerValue(QStringLiteral("role")) == QLatin1String("trash"))
-                return true;
-            const std::string parent = toUtf8(found->second.parentId());
+            if (found->second->role() == QLatin1String("trash")) return true;
+            const std::string parent = toUtf8(found->second->parentId());
             if (parent.empty()) return false;
             at = parent;
         }
@@ -952,8 +950,8 @@ bool verifyStore(const QString& root, Report& report) {
     };
 
     // Цели картинок: канонное плоское имя "<id>.<ext>" и существование.
-    for (const auto& [id, doc] : notes) {
-        for (const Attachment& image : doc.attachments()) {
+    for (const auto& [id, note] : notes) {
+        for (const Attachment& image : note->doc().attachments()) {
             const QString href = image.id;
             if (!isLocalRelative(href)) continue;
             const qsizetype dot = href.lastIndexOf(QLatin1Char('.'));
@@ -977,9 +975,10 @@ bool verifyStore(const QString& root, Report& report) {
     // такой файл не открывает вовсе, так что тело в нём может завестись только
     // снаружи — и увидеть его будет негде: список показывает содержимое папки,
     // а не её саму.
-    for (const auto& [id, doc] : notes) {
-        const QString role = doc.headerValue(QStringLiteral("role"));
+    for (const auto& [id, note] : notes) {
+        const QString role = note->role();
         if (role != QLatin1String("folder") && role != QLatin1String("trash")) continue;
+        const ZDocument& doc = note->doc();
         if (doc.isEmpty()) {
             report.problem(QStringLiteral("папка без заголовка: %1.md").arg(fromUtf8(id)));
             continue;
@@ -992,8 +991,8 @@ bool verifyStore(const QString& root, Report& report) {
     }
 
     // parent: существование и циклы.
-    for (const auto& [id, doc] : notes) {
-        const std::string parent = toUtf8(doc.parentId());
+    for (const auto& [id, note] : notes) {
+        const std::string parent = toUtf8(note->parentId());
         if (parent.empty()) continue;
         if (!isValidNoteId(parent) || notes.find(parent) == notes.end()) {
             report.problem(QStringLiteral("parent %1 не существует (из %2)")
@@ -1009,7 +1008,7 @@ bool verifyStore(const QString& root, Report& report) {
             }
             const auto next = notes.find(at);
             if (next == notes.end()) break;
-            at = toUtf8(next->second.parentId());
+            at = toUtf8(next->second->parentId());
         }
     }
 

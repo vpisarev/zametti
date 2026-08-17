@@ -13,17 +13,15 @@
 
 #include "document.h"
 #include "settings.h"
-#include "note_header.h"
 
 #include <QTextDocument>
 
 namespace zametti {
 
-// ЖИВАЯ МОДЕЛЬ — QTextDocument, и только он. Шапка живёт рядом: в документе её
-// нет и быть не должно, редактор её не видит.
+// ЖИВАЯ МОДЕЛЬ — QTextDocument, и только он. Шапки здесь нет: конверт файла
+// держит заметка (ZNote), документ — чистое тело .md.
 struct ZDocument::Data {
     QTextDocument text;
-    NoteHeader header;
 
     Data() {
         // Вёрстка выключена: пока заметку не показывают, считать строки и глифы

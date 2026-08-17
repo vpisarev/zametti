@@ -171,10 +171,10 @@ void appendHead(std::string& out, const NoteHeader& header) {
 
 }  // namespace
 
-std::string ZDocument::toJson() const {
+std::string ZDocument::toJson(const NoteHeader& envelope) const {
     std::string out;
-    const bool head = d_->header.present();
-    if (head) appendHead(out, d_->header);
+    const bool head = envelope.present();
+    if (head) appendHead(out, envelope);
     out += "[\n";
 
     // Запятая ставится ПЕРЕД следующим блоком, а не после предыдущего: сколько

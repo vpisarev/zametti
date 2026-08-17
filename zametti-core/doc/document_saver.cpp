@@ -649,30 +649,6 @@ std::string_view asView(const QByteArray& bytes) {
 
 }  // namespace
 
-bool canonicaliseNoteFile(const QString& path, std::string& text, Digest& digest) {
-    ZDocument note;
-    note.loadMarkdown(text);
-    if (!note.hasHeader()) return false;   // не наша заметка
-
-    const std::string canonical = note.toMarkdown();
-    if (canonical == text) return false;   // и так канон
-
-    // Последний рубеж, тот же, что и при записи: причёсанное обязано читаться
-    // обратно тем же документом. Не сошлось — файл не трогаем вовсе.
-    ZDocument back;
-    back.loadMarkdown(canonical);
-    if (!note.sameSkeleton(back)) return false;
-
-    QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly)) return false;
-    file.write(canonical.data(), qint64(canonical.size()));
-    if (!file.commit()) return false;
-
-    text = canonical;
-    digest = hashOf(text);
-    return true;
-}
-
 QByteArray noteBytes(const QTextDocument& doc, const NoteHeader& meta, DocumentReaderFn reader,
                      std::vector<Piece>* fileBlocks) {
     std::vector<Piece> forFile =

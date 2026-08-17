@@ -1,5 +1,7 @@
 #include "export_note.h"
 
+#include "znote.h"
+
 #include "document.h"
 #include "serializer.h"
 
@@ -139,7 +141,7 @@ QString fileNameFromTitle(const QString& title) {
 // Срезать шапку с НАЧАЛА текста, не трогая всего остального. Ищем ровно то, что
 // разобрало ядро: закрывающий «-->» первого комментария и перевод строки за ним,
 // плюс пустую строку, если она там была (meta.blankAfter()).
-std::string withoutMeta(const std::string& source, const ZDocument& note) {
+std::string withoutMeta(const std::string& source, const ZNote& note) {
     if (!note.hasHeader()) return source;
     const size_t open = source.find("<!-- zametti");
     if (open != 0) return source;   // шапка не в начале — не наша, не трогаем
@@ -176,8 +178,8 @@ ExportReport exportMarkdown(const QString& notePath, const QString& targetPath, 
         return report;
     }
 
-    ZDocument note;
-    note.loadMarkdown(source);
+    ZNote note;
+    note.load(source);
 
     // Все вложения заметки, по одному разу на имя: одна картинка бывает
     // вставлена дважды, а копировать её дважды незачем.
@@ -193,7 +195,7 @@ ExportReport exportMarkdown(const QString& notePath, const QString& targetPath, 
         return -1;
     };
 
-    for (const Attachment& image : note.attachments()) {
+    for (const Attachment& image : note.doc().attachments()) {
         if (!localReference(image.id) || indexOf(image.id) >= 0) continue;
         found.push_back({image.id, QFileInfo(image.id).fileName(), false});
     }
@@ -238,7 +240,7 @@ ExportReport exportMarkdown(const QString& notePath, const QString& targetPath, 
                 "разбор этой заметки не сходится с её байтами. Вывезите в пустой каталог.");
             return report;
         }
-        note.rewriteAttachments([&](const QString& href) {
+        note.doc().rewriteAttachments([&](const QString& href) {
             const int at = indexOf(href);
             if (at < 0 || !found[size_t(at)].renamed) return QString();
             return found[size_t(at)].outName;

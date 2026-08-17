@@ -54,30 +54,12 @@ QString skeletonOf(const QTextDocument& text) {
     return out;
 }
 
-void headerFrom(const NoteHeader& meta, NoteHeader& out) {
-    out.setLines(meta.lines());
-    out.setPresent(meta.present());
-    out.setBlankAfter(meta.blankAfter());
-}
-
-// Ключи шапки названы ОДИН раз. До этого «parent», «role», «archived» и прочие
-// жили голыми литералами в девяти файлах, и опечатка в одном никак бы себя не
-// выдала.
-constexpr char kParent[] = "parent";
-constexpr char kRole[] = "role";
-constexpr char kCreated[] = "created";
-constexpr char kModified[] = "modified";
-constexpr char kFolder[] = "folder";
-constexpr char kLost[] = "lost";
-constexpr char kSort[] = "sort";
-
 }  // namespace
 
 ZDocument::ZDocument() : d_(std::make_shared<Data>()) {}
 
 ZDocument ZDocument::clone() const {
     ZDocument out;
-    out.d_->header = d_->header;
     // Содержимое переносим байтами: копировать QTextDocument иначе значило бы
     // тащить с собой стек отмены и состояние вёрстки, а слепку они не нужны.
     out.loadMarkdown(toMarkdown());
@@ -97,9 +79,10 @@ bool ZDocument::loadMarkdown(std::string_view bytes, NoteHeader* lifted, std::ve
     // ГРАНИЦА ФАЙЛА: байты становятся текстом ровно здесь, один раз. Дальше —
     // разбор, черновик, блоки, документ — всё в UTF-16, без единой конверсии.
     std::vector<Piece> blocks;
+    NoteHeader header;
     parsePieces(normaliseSpaces(QString::fromUtf8(bytes.data(), qsizetype(bytes.size()))),
-                blocks, d_->header);
-    if (lifted != nullptr) *lifted = d_->header;
+                blocks, header);
+    if (lifted != nullptr) *lifted = std::move(header);
     buildDocument(blocks, d_->text);
     if (built != nullptr) *built = std::move(blocks);
     return true;
@@ -121,73 +104,6 @@ Digest ZDocument::digest() const {
     return hashOf(std::string_view(bytes));
 }
 
-bool ZDocument::isCanonical(std::string_view original) const {
-    const std::string canonical = toMarkdown();
-    return std::string_view(canonical) == original;
-}
-
-// --- шапка -----------------------------------------------------------------
-
-QString ZDocument::parentId() const {
-    return QString::fromStdString(d_->header.get(kParent));
-}
-
-void ZDocument::setParentId(const QString& id) {
-    d_->header.set(kParent, id.toStdString());
-}
-
-bool ZDocument::isFolder() const { return d_->header.get(kRole) == kFolder; }
-bool ZDocument::isLost() const { return d_->header.get(kRole) == kLost; }
-
-bool ZDocument::isArchived() const {
-    NoteHeader meta;
-    meta.setLines(d_->header.lines());
-    meta.setPresent(d_->header.present());
-    return store::isArchivedMeta(meta);
-}
-
-void ZDocument::setArchived(bool archived) {
-    NoteHeader meta;
-    meta.setLines(d_->header.lines());
-    meta.setPresent(d_->header.present());
-    meta.setBlankAfter(d_->header.blankAfter());
-    store::setArchivedMeta(meta, archived);
-    headerFrom(meta, d_->header);
-}
-
-QString ZDocument::created() const {
-    return QString::fromStdString(d_->header.get(kCreated));
-}
-
-QString ZDocument::modified() const {
-    return QString::fromStdString(d_->header.get(kModified));
-}
-
-void ZDocument::stampModified() {
-    d_->header.set(kModified, store::isoNow().toStdString());
-}
-
-QString ZDocument::headerValue(const QString& key) const {
-    return QString::fromStdString(d_->header.get(key.toStdString()));
-}
-
-void ZDocument::setHeaderValue(const QString& key, const QString& value) {
-    d_->header.set(key.toStdString(), value.toStdString());
-}
-
-bool ZDocument::hasHeader() const { return d_->header.present(); }
-void ZDocument::setHasHeader(bool present) { d_->header.setPresent(present); }
-
-NoteHeader ZDocument::header() const { return d_->header; }
-void ZDocument::setHeader(const NoteHeader& header) { d_->header = header; }
-
-std::optional<SortOrder> ZDocument::sortOrder() const {
-    return parseSortOrder(QString::fromStdString(d_->header.get(kSort)));
-}
-
-void ZDocument::setSortOrder(std::optional<SortOrder> order) {
-    applySortMark(d_->header, order);
-}
 
 // --- о чём заметка ---------------------------------------------------------
 
@@ -291,15 +207,6 @@ QString ZDocument::snippet(int limit) const {
 // СТАБ АРХИВА: та же шапка с пометкой `archived` плюс одна строка — заголовок.
 // Собирается заметкой-однодневкой и записывается общим писателем: второго
 // способа получить байты заметки не бывает.
-std::string ZDocument::archiveStub() const {
-    ZDocument stub;
-    stub.d_->header = d_->header;
-    stub.setArchived(true);
-    ZDocument body = headingOnly();
-    stub.d_->header.setBlankAfter(!body.isEmpty());
-    return body.toMarkdown(stub.d_->header);
-}
-
 ZDocument ZDocument::headingOnly() const {
     // Заголовок ищем так же, как его видит средняя колонка: первый
     // содержательный блок. Не нашли — стаб остаётся без тела, и это законно:
@@ -522,16 +429,11 @@ QTextDocument* ZDocument::getDocument() {
 // --- сравнение -------------------------------------------------------------
 
 bool ZDocument::sameSkeleton(const ZDocument& other) const {
-    // Шапка — строка в строку: потерять parent при записи так же нельзя, как
-    // потерять текст.
-    if (d_->header.present() != other.d_->header.present() ||
-        d_->header.lines() != other.d_->header.lines())
-        return false;
     return skeletonOf(d_->text) == skeletonOf(other.d_->text);
 }
 
 bool ZDocument::sameBody(const ZDocument& other) const {
-    return bodyMarkdown() == other.bodyMarkdown();
+    return toMarkdown() == other.toMarkdown();
 }
 
 }  // namespace zametti

@@ -2,6 +2,7 @@
 
 #include "note_id.h"
 #include "document.h"
+#include "znote.h"
 #include "search.h"
 
 #include <QDir>
@@ -55,13 +56,14 @@ public slots:
             file.close();
             ++scanned;
 
-            ZDocument doc;
-            doc.loadMarkdown(std::string_view(bytes.constData(), size_t(bytes.size())));
+            ZNote note;
+            note.load(std::string_view(bytes.constData(), size_t(bytes.size())));
+            const ZDocument& doc = note.doc();
             // Заметки-папки (и сама корзина) — структура хранилища, а не текст:
             // в среднем списке их нет, и в результатах поиска им делать нечего.
             // Иначе щелчок по находке открыл бы в редакторе файл, который тело
             // иметь не должен.
-            const QString role = doc.headerValue(QStringLiteral("role"));
+            const QString role = note.role();
             if (role == QLatin1String("folder") || role == QLatin1String("trash")) continue;
             const std::vector<Hit> hits = doc.find(query);
             if (hits.empty()) continue;

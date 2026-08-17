@@ -564,6 +564,9 @@ private:
     // колонки, каретка, якорь прокрутки): общий хвост rebuild и открытия свежей
     // заметки, которую разбирает и собирает сама ZNote (load).
     void settleAfterBuild(int cursor, const ViewAnchor& anchor, bool patched);
+    // Хвост settleAfterBuild без масштаба и ширины колонки: счёт слов, каретка,
+    // якорь прокрутки. Свежей заметке масштаб и ширину уже вернул installNote.
+    void landAfterBuild(int cursor, const ViewAnchor& anchor, bool patched);
 
     // --- кэш заметок сессии ---
     //

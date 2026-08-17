@@ -680,7 +680,7 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
     // тот же отпечаток, файл и есть канон, и разбирать его целиком ради ответа
     // «причёсывать нечего» незачем. На «Карамазовых» это 50–100 мс на каждый
     // возврат к заметке (замер zametti-bench big).
-    if (!cachedNoteMatches(path, digest)) canonicaliseNoteFile(path, text, digest);
+    if (!cachedNoteMatches(path, digest)) ZNote::canonicaliseFile(path, text, digest);
     setImageBase(QFileInfo(path).absolutePath());
     current_.lastComplaint.clear();
     current_.externalPending = false;
@@ -730,7 +730,10 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
     fresh->rememberCaret(ZApp::instance().state().caretOf(fresh->id()));
     installNote(std::move(fresh));
     watchFile();
-    settleAfterBuild(note_->caret().cursor, {}, /*patched=*/false);
+    // Масштаб и ширину колонки свежему документу уже вернул installNote — здесь
+    // только счёт, каретка и якорь. Каждый лишний пересчёт вида на документе с
+    // формулами — лишний вызов движка (набор снимков формул это считает).
+    landAfterBuild(note_->caret().cursor, {}, /*patched=*/false);
     // Каретка, выделение, показ места и фокус — общей дорогой с отложенной
     // заметкой: два пути открытия, одно правило.
     activateNote(takeFocus);
@@ -1310,7 +1313,11 @@ void NoteEditor::settleAfterBuild(int cursor, const ViewAnchor& anchor, bool pat
     // Заплатка шрифта не трогает, но звать здесь всё равно дешевле, чем помнить
     // о двух путях: setZoom сравнивает шрифт и на совпадении ничего не делает.
     restoreScale();
+    applyContentWidth();
+    landAfterBuild(cursor, anchor, patched);
+}
 
+void NoteEditor::landAfterBuild(int cursor, const ViewAnchor& anchor, bool patched) {
     // Слова и строки — здесь и только здесь (плюс запись на диск). Считаем
     // ОБХОДОМ ЖИВОГО ДОКУМЕНТА: он только что собран, и брать числа больше
     // неоткуда — доставать ради счёта вторую копию содержимого было бы работой
@@ -1318,7 +1325,6 @@ void NoteEditor::settleAfterBuild(int cursor, const ViewAnchor& anchor, bool pat
     // самой сборки, в таком соседстве он незаметен. За заплаткой не считаем
     // вовсе: она стоит 64 мкс, и счёт был бы в полсотни раз дороже правки.
     if (!patched) refreshStats(documentStats(*document()));
-    applyContentWidth();
     // Сборка — не правка: подметать за ней нечего, а область от неё вышла бы
     // во весь документ и утащила бы следующую уборку на полный проход.
     current_.dirty = QTextCursor();

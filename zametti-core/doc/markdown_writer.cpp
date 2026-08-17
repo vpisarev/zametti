@@ -1523,12 +1523,12 @@ QString writePieces(const std::vector<Piece>& blocks, const NoteHeader& header,
 }
 
 QString ZDocument::toMarkdownText() const {
-    return writeInto(d_->text, d_->header, nullptr);
+    return writeInto(d_->text, NoteHeader{}, nullptr);
 }
 
 std::string ZDocument::toMarkdown() const {
     // ГРАНИЦА ФАЙЛА: единственный перевод текста в байты на пути записи.
-    const QByteArray bytes = writeInto(d_->text, d_->header, nullptr).toUtf8();
+    const QByteArray bytes = writeInto(d_->text, NoteHeader{}, nullptr).toUtf8();
     return std::string(bytes.constData(), size_t(bytes.size()));
 }
 
@@ -1539,11 +1539,6 @@ std::string ZDocument::toMarkdown(const NoteHeader& envelope) const {
 
 QString ZDocument::toMarkdownText(const NoteHeader& envelope) const {
     return writeInto(d_->text, envelope, nullptr);
-}
-
-std::string ZDocument::bodyMarkdown() const {
-    const QByteArray bytes = writeInto(d_->text, NoteHeader{}, nullptr).toUtf8();
-    return std::string(bytes.constData(), size_t(bytes.size()));
 }
 
 std::vector<SourceLine> ZDocument::sourceLines() const {
