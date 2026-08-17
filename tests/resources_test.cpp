@@ -63,11 +63,11 @@ void checkDefaultsAreEmbedded() {
     for (const zametti::EmbeddedFace& face : zametti::embeddedFaces())
         embedded.insert(QString::fromLatin1(face.family));
 
-    const zametti::Appearance def;
-    ZT_TRUE("шрифт текста из умолчаний влинкован: " + s(def.fontFamily),
-            embedded.contains(def.fontFamily));
-    ZT_TRUE("шрифт панелей из умолчаний влинкован: " + s(def.sidebarFontFamily),
-            embedded.contains(def.sidebarFontFamily));
+    const zametti::ZSettings def;
+    ZT_TRUE("шрифт текста из умолчаний влинкован: " + s(def.look.fontFamily),
+            embedded.contains(def.look.fontFamily));
+    ZT_TRUE("шрифт панелей из умолчаний влинкован: " + s(def.look.sidebarFontFamily),
+            embedded.contains(def.look.sidebarFontFamily));
 }
 
 // Строка из таблицы name шрифта: nameID 1 — семейство, 2 — начертание. Берём

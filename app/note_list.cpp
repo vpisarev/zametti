@@ -171,7 +171,7 @@ void NoteListDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
     QStyle* style = opt.widget != nullptr ? opt.widget->style() : QApplication::style();
     style->drawControl(QStyle::CE_ItemViewItem, &opt, painter, opt.widget);
 
-    const Appearance& a = appearance();
+    const ZSettings& a = settings();
     const QFontMetrics metrics(option.font);
     const int padding = int(metrics.height() * kPaddingFactor);
     const int gap = int(metrics.height() * kGapFactor);
@@ -193,7 +193,7 @@ void NoteListDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
     if (dateWidth > 0) {
         painter->setFont(option.font);
         painter->setPen(selected ? option.palette.color(QPalette::HighlightedText)
-                                 : a.noteListDateColor);
+                                 : a.look.noteListDateColor);
         painter->drawText(QRect(body.right() - dateWidth, body.top(), dateWidth,
                                 titleMetrics.height()),
                           Qt::AlignRight | Qt::AlignVCenter, date);
@@ -206,12 +206,12 @@ void NoteListDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
                       titleMetrics.elidedText(index.data(NoteListModel::TitleRole).toString(),
                                               Qt::ElideRight, titleRect.width()));
 
-    const int lines = a.noteListSnippetLines;
+    const int lines = a.look.noteListSnippetLines;
     const QString snippet = index.data(NoteListModel::SnippetRole).toString();
     if (lines > 0 && !snippet.isEmpty()) {
         painter->setFont(option.font);
         painter->setPen(selected ? option.palette.color(QPalette::HighlightedText)
-                                 : a.noteListSnippetColor);
+                                 : a.look.noteListSnippetColor);
         const QRect snippetRect(body.left(), titleRect.bottom() + gap, body.width(),
                                 metrics.lineSpacing() * lines);
         QTextOption wrap(Qt::AlignLeft | Qt::AlignTop);
@@ -238,7 +238,7 @@ QSize NoteListDelegate::sizeHint(const QStyleOptionViewItem& option,
     const QFontMetrics metrics(option.font);
     const int padding = int(metrics.height() * kPaddingFactor);
     const int gap = int(metrics.height() * kGapFactor);
-    const int lines = appearance().noteListSnippetLines;
+    const int lines = settings().look.noteListSnippetLines;
     const bool hasSnippet =
         lines > 0 && !index.data(NoteListModel::SnippetRole).toString().isEmpty();
     QFont titleFont = option.font;

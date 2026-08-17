@@ -202,7 +202,7 @@ Sample measure(zametti::NoteEditor& editor, const QString& path, bool selected =
 
 int ztRenderBench(int argc, char** argv) {
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) qputenv("QT_QPA_PLATFORM", "offscreen");
-    zametti::loadAppearance(nullptr);
+    zametti::loadSettings(nullptr);
 
     zametti::NoteEditor editor;
     // Размер окна — переменной среды: цена кадра растёт вместе с ним, а у

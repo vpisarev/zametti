@@ -267,7 +267,7 @@ void checkSortButtons(Toolbar& bar) {
             }
         return hits;
     };
-    const zametti::Appearance& a = zametti::appearance();
+    const zametti::ZSettings::Look& a = zametti::settings().look;
     const zametti::SortOrder created{zametti::SortKey::Created, false};
 
     bar.showSort(created, false);

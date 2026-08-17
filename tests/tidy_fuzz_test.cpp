@@ -32,7 +32,7 @@ namespace fs = std::filesystem;
 static int ztRunSuite(int argc, char** argv) {
     (void)argc;
     (void)argv;
-    zametti::loadAppearance(nullptr);
+    zametti::loadSettings(nullptr);
     const fs::path dir = fs::temp_directory_path() / "zametti-tidy-fuzz";
     fs::create_directories(dir);
     const fs::path note = dir / "т.md";

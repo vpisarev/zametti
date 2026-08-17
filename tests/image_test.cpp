@@ -60,8 +60,8 @@ const qreal kGap = 6.0;
 // при прокрутке их откусывало бы чужой перерисовкой. Берём числа из настроек,
 // а не переписываем сюда: разойтись им тогда негде.
 qreal cornersRoom() {
-    return 2.0 * (qMax(0.0, zametti::appearance().imageCornerOffset) +
-                  qMax(0.5, zametti::appearance().imageCornerWidth));
+    return 2.0 * (qMax(0.0, zametti::settings().look.imageCornerOffset) +
+                  qMax(0.5, zametti::settings().look.imageCornerWidth));
 }
 
 // Сколько высоты добирает ПОДПИСЬ под снимком. Числа берём из настроек и
@@ -70,7 +70,7 @@ qreal cornersRoom() {
 // Здесь утверждается другое: подпись занимает столько, сколько занимает её
 // текст, и ни строкой больше.
 qreal captionRoom(const QString& alt, qreal photoWidth) {
-    const zametti::Appearance& look = zametti::appearance();
+    const zametti::ZSettings::Look& look = zametti::settings().look;
     if (!look.imageCaption || alt.isEmpty()) return 0.0;
     QFont font(look.imageCaptionFamily);
     font.setPointSizeF(look.imageCaptionPoints);
@@ -353,7 +353,7 @@ void checkCaptionEditing() {
 
     // Сочетание переключения на снимке — спрятать подпись знаком; место под
     // неё исчезает, файл хранит подпись со знаком.
-    const QKeySequence toggle(zametti::appearance().toggleTaskKey, QKeySequence::PortableText);
+    const QKeySequence toggle(zametti::settings().editor.toggleTaskKey, QKeySequence::PortableText);
     ZT_TRUE("хоткей переключателя разобран", toggle.count() == 1);
     if (toggle.count() != 1) return;
     QTest::keyClick(&editor, Qt::Key(toggle[0].key()), toggle[0].keyboardModifiers());
@@ -482,7 +482,7 @@ void checkTypingAfterImage() {
 static int ztRunSuite(int argc, char** argv) {
     (void)argc;
     (void)argv;
-    zametti::loadAppearance(nullptr);
+    zametti::loadSettings(nullptr);
 
     const fs::path dir = fs::temp_directory_path() / "zametti-image-test";
     fs::create_directories(dir);
@@ -581,7 +581,7 @@ static int ztRunSuite(int argc, char** argv) {
         QPainter painter(&frame);
         editor.viewport()->render(&painter);
         const QRectF photo = editor.imageRectInViewport(blockAt(n));
-        const QColor want = zametti::appearance().caretColor;
+        const QColor want = zametti::settings().look.caretColor;
         int marks = 0;
         // Полоса вдоль верхнего края, захватывающая и то, что СНАРУЖИ: уголки
         // вынесены за край фотографии, чтобы не сливаться с её содержимым.
@@ -1002,10 +1002,10 @@ static int ztRunSuite(int argc, char** argv) {
             showAll(cacheEditor);
         };
 
-        const int savedBudget = zametti::appearance().imageCacheSizeMb;
+        const int savedBudget = zametti::settings().cache.imageCacheSizeMb;
         // Бюджет 16 МБ: в кэш влезает шестнадцать мегабайтных картинок,
         // а всего их двадцать.
-        zametti::appearance().imageCacheSizeMb = 16;
+        zametti::editSettings().cache.imageCacheSizeMb = 16;
         zametti::applyImageAllocationLimit();
 
         zametti::NoteView::resetImageDecodeCounters();
@@ -1049,7 +1049,7 @@ static int ztRunSuite(int argc, char** argv) {
             std::ofstream out(cacheDir / "тяжёлая.md", std::ios::binary);
             for (int i = 10; i < 20; ++i) out << "![[к" << i << ".png]]\n\n";
         }
-        zametti::appearance().imageCacheSizeMb = 1;   // упрётся в нижние 8 МБ
+        zametti::editSettings().cache.imageCacheSizeMb = 1;   // упрётся в нижние 8 МБ
         zametti::NoteEditor heavy;
         heavy.resize(600, 500);
         heavy.show();
@@ -1077,7 +1077,7 @@ static int ztRunSuite(int argc, char** argv) {
         ZT_EQ("и ни одна не разжимается заново", std::to_string(0),
               std::to_string(zametti::NoteView::imageDecodes()));
 
-        zametti::appearance().imageCacheSizeMb = savedBudget;
+        zametti::editSettings().cache.imageCacheSizeMb = savedBudget;
         zametti::applyImageAllocationLimit();
     }
 
@@ -1097,9 +1097,9 @@ static int ztRunSuite(int argc, char** argv) {
             out << "![[б.png]]\n";
         }
         const QString note = QString::fromStdString((bombDir / "з.md").string());
-        const int savedBudget = zametti::appearance().imageCacheSizeMb;
+        const int savedBudget = zametti::settings().cache.imageCacheSizeMb;
         // Порог высокий: картинка разжимается, место меряется по ней.
-        zametti::appearance().imageCacheSizeMb = 512;
+        zametti::editSettings().cache.imageCacheSizeMb = 512;
         zametti::applyImageAllocationLimit();
         zametti::NoteEditor shown;
         shown.resize(600, 500);
@@ -1116,7 +1116,7 @@ static int ztRunSuite(int argc, char** argv) {
 
         // Порог низкий: та же картинка отвергнута, место то же самое.
         // Четверть от восьми мегабайт — два, а картинка весит три.
-        zametti::appearance().imageCacheSizeMb = 8;
+        zametti::editSettings().cache.imageCacheSizeMb = 8;
         zametti::applyImageAllocationLimit();
         zametti::NoteEditor refused;
         refused.resize(600, 500);
@@ -1145,7 +1145,7 @@ static int ztRunSuite(int argc, char** argv) {
         ZT_EQ("отказ не повторяется на каждом кадре", std::to_string(decodes),
               std::to_string(zametti::NoteView::imageDecodes()));
 
-        zametti::appearance().imageCacheSizeMb = savedBudget;
+        zametti::editSettings().cache.imageCacheSizeMb = savedBudget;
         zametti::applyImageAllocationLimit();
     }
 
@@ -1170,8 +1170,8 @@ static int ztRunSuite(int argc, char** argv) {
             out << "![[тонкая.png]]\n\n![[широкая.png]]\n";
         }
 
-        const int savedLimit = zametti::appearance().maxLoadedImageSize;
-        zametti::appearance().maxLoadedImageSize = 1024;
+        const int savedLimit = zametti::settings().cache.maxLoadedImageSize;
+        zametti::editSettings().cache.maxLoadedImageSize = 1024;
         zametti::NoteEditor thinEditor;
         thinEditor.resize(600, 500);
         thinEditor.show();
@@ -1188,7 +1188,7 @@ static int ztRunSuite(int argc, char** argv) {
         ZT_TRUE("вырожденные картинки в кэше — не лента, а мелочь",
                 thinEditor.imageCacheBytes() < qint64(1024) * 1024 * 4);
 
-        zametti::appearance().maxLoadedImageSize = savedLimit;
+        zametti::editSettings().cache.maxLoadedImageSize = savedLimit;
     }
 
     // Выравнивание фотографии в колонке. Умолчание — по центру, и в файл ради

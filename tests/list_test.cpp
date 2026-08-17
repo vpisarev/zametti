@@ -796,11 +796,11 @@ void checkUndo() {
 // все стыки убирала прыжок пункта, ставшего абзацем, но вид от этого стал явно
 // хуже — огромный зазор между вводной строкой и первым пунктом.
 void checkListRhythm() {
-    const zametti::Appearance saved = zametti::appearance();
-    zametti::appearance().blockSpacing = 0.667;
+    const zametti::ZSettings saved = zametti::settings();
+    zametti::editSettings().look.blockSpacing = 0.667;
     struct Restore {
-        const zametti::Appearance& from;
-        ~Restore() { zametti::appearance() = from; }
+        const zametti::ZSettings& from;
+        ~Restore() { zametti::editSettings() = from; }
     } restore{saved};
 
     // Отбивку решает файл, а не род блоков. Список, написанный вплотную под
@@ -857,11 +857,11 @@ void checkListRhythm() {
 // пустые строки из файла, а не поля блоков, и от смены рода она не зависит —
 // раньше блок, став пунктом, подпрыгивал вверх, и человек видел это как рывок.
 void checkKindRoundTripKeepsPlace() {
-    const zametti::Appearance saved = zametti::appearance();
-    zametti::appearance().blockSpacing = 0.667;
+    const zametti::ZSettings saved = zametti::settings();
+    zametti::editSettings().look.blockSpacing = 0.667;
     struct Restore {
-        const zametti::Appearance& from;
-        ~Restore() { zametti::appearance() = from; }
+        const zametti::ZSettings& from;
+        ~Restore() { zametti::editSettings() = from; }
     } restore{saved};
 
     const QString path = writeNote(
@@ -1439,8 +1439,8 @@ void checkNumberSignHeadings() {
 // Список задаётся конфигом; по умолчанию в нём одно длинное тире.
 void checkSpecialKeys() {
     // Список читается редактором при создании — правим оформление ДО него.
-    const auto saved = zametti::appearance().specialKeys;
-    zametti::appearance().specialKeys = {
+    const auto saved = zametti::settings().editor.specialKeys;
+    zametti::editSettings().editor.specialKeys = {
         {QStringLiteral("Alt+-"), QStringLiteral("—")},
         {QStringLiteral("Ctrl+Alt+G"), QStringLiteral("→")},
         {QStringLiteral("Ctrl+Alt+T"), QStringLiteral("тчк")},   // замена может быть строкой
@@ -1486,7 +1486,7 @@ void checkSpecialKeys() {
             editor.document()->firstBlock().text() ==
                 QStringLiteral("раз — два → три тчк"));
 
-    zametti::appearance().specialKeys = saved;
+    zametti::editSettings().editor.specialKeys = saved;
 }
 
 // Ctrl+Shift+E: крайние пустые строки выделения не входят в блок кода —

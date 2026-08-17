@@ -95,7 +95,7 @@ void checkTemplate() {
     // 2. При этом в нём есть КАЖДЫЙ параметр: иначе это не меню, а пустышка.
     //    Сверяем по ключам полного списка умолчаний — тому самому, который
     //    печатает --dump-config.
-    const QJsonDocument defaults = QJsonDocument::fromJson(zametti::defaultAppearanceJson());
+    const QJsonDocument defaults = QJsonDocument::fromJson(zametti::defaultSettingsJson());
     ZT_TRUE("список умолчаний — объект", defaults.isObject());
     int missing = 0;
     const QJsonObject root = defaults.object();
@@ -144,9 +144,9 @@ void checkLoadUnderstandsComments() {
 
     QString error;
     ZT_TRUE("конфиг с комментариями прочитан: " + s(error),
-            zametti::loadAppearance(&error));
+            zametti::loadSettings(&error));
     ZT_EQ("значение из конфига применено", std::string("1700"),
-          std::to_string(zametti::appearance().autosaveDelayMs));
+          std::to_string(zametti::settings().editor.autosaveDelayMs));
 
     // Битый конфиг обязан жаловаться, а не молча уезжать на умолчания.
     QFile broken(zametti::configPath());
@@ -155,7 +155,7 @@ void checkLoadUnderstandsComments() {
     broken.write("{ \"editor\": { \"autosaveDelayMs\": }\n");
     broken.close();
     QString complaint;
-    ZT_TRUE("битый конфиг не принят", !zametti::loadAppearance(&complaint));
+    ZT_TRUE("битый конфиг не принят", !zametti::loadSettings(&complaint));
     ZT_TRUE("и о нём сказано", !complaint.isEmpty());
 }
 
@@ -167,7 +167,7 @@ void checkLoadUnderstandsComments() {
 // придирка к числам, а описание вида: поменяется умолчание — поменяется и
 // таблица во всех заметках сразу, и узнать об этом надо здесь.
 void checkTablesDefaults() {
-    zametti::Appearance fresh;
+    zametti::ZSettings fresh;
     ZT_EQ("цвет линий — чёрный", std::string("#000000"),
           fresh.tables.borderColor.name(QColor::HexRgb).toStdString());
     ZT_EQ("линия над и под таблицей", std::string("2"),
@@ -208,12 +208,12 @@ void checkTablesFromConfig() {
     QString error;
     QStringList unknown;
     ZT_TRUE("конфиг с разделом таблиц прочитан: " + s(error),
-            zametti::loadAppearance(&error, &unknown));
+            zametti::loadSettings(&error, &unknown));
     // Раздел ЗНАКОМ программе: неизвестный ключ — это опечатка, о которой она
     // обязана сказать, и молчание здесь означало бы, что раздел не заведён.
     ZT_EQ("незнакомых ключей нет", std::string(), unknown.join(QLatin1Char(',')).toStdString());
 
-    const zametti::Appearance& a = zametti::appearance();
+    const zametti::ZSettings& a = zametti::settings();
     ZT_EQ("цвет линий", std::string("#3355aa"),
           a.tables.borderColor.name(QColor::HexRgb).toStdString());
     ZT_EQ("толщины прочитаны все шесть", std::string("1 3 4 5 6"),
@@ -236,7 +236,7 @@ void checkTablesFromConfig() {
     typo.write(R"cfg({ "tables": { "borderColour": "#123456" } })cfg");
     typo.close();
     QStringList complaints;
-    zametti::loadAppearance(&error, &complaints);
+    zametti::loadSettings(&error, &complaints);
     ZT_EQ("об опечатке в ключе сказано", std::string("tables.borderColour"),
           complaints.join(QLatin1Char(',')).toStdString());
 }

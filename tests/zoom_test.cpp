@@ -104,7 +104,7 @@ void shoot(zametti::NoteEditor& editor, const QString& dir, const QString& name)
 static int ztRunSuite(int argc, char** argv) {
     (void)argc;
     (void)argv;
-    zametti::loadAppearance(nullptr);
+    zametti::loadSettings(nullptr);
 
     const QString dir = zt::TestData::outDir(QStringLiteral("zoom"));
     const QString path = writeNote(dir, QStringLiteral("масштаб.md"),
@@ -121,7 +121,7 @@ static int ztRunSuite(int argc, char** argv) {
     editor.openFile(path);
     QTest::qWait(20);
 
-    const qreal step = zametti::appearance().zoomStep;
+    const qreal step = zametti::settings().look.zoomStep;
     ZT_TRUE("шаг масштаба задан и больше единицы", step > 1.0);
 
     const qreal unitAt100 = textUnit(editor);

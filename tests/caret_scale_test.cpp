@@ -35,7 +35,7 @@ static int ztRunSuite(int argc, char** argv) {
     (void)argv;
     // До создания QApplication, иначе масштаб не применится.
     qputenv("QT_SCALE_FACTOR", "1.25");
-    zametti::loadAppearance(nullptr);
+    zametti::loadSettings(nullptr);
 
     const fs::path dir = fs::temp_directory_path() / "zametti-caret-scale-test";
     fs::create_directories(dir);
@@ -61,7 +61,7 @@ static int ztRunSuite(int argc, char** argv) {
     const auto alienFrames = [&editor] {
         const QRect at = editor.cursorRect();
         const qreal dpr = editor.devicePixelRatioF();
-        const QColor caret = zametti::appearance().caretColor;
+        const QColor caret = zametti::settings().look.caretColor;
         int frames = 0;
         for (int frame = 0; frame < 20; ++frame) {
             QImage shot = editor.viewport()->grab().toImage();

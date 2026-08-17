@@ -67,7 +67,7 @@ void swipe(zametti::NoteEditor& editor) {
 static int ztRunSuite(int argc, char** argv) {
     (void)argc;
     (void)argv;
-    zametti::loadAppearance(nullptr);
+    zametti::loadSettings(nullptr);
 
     const QString dir = zt::TestData::outDir(QStringLiteral("scroll"));
     QString big = QStringLiteral("# Длинная\n\n");
@@ -84,16 +84,16 @@ static int ztRunSuite(int argc, char** argv) {
     ZT_TRUE("заметка длиннее окна: есть что прокручивать",
             editor.verticalScrollBar()->maximum() > 100);
 
-    const bool savedSmooth = zametti::appearance().smoothScroll;
+    const bool savedSmooth = zametti::settings().look.smoothScroll;
 
     // --- с инерцией: после отрыва пальцев текст ещё едет ------------------
-    zametti::appearance().smoothScroll = true;
+    zametti::editSettings().look.smoothScroll = true;
     editor.verticalScrollBar()->setValue(0);
     QTest::qWait(20);
 
     swipe(editor);
     const int atRelease = editor.verticalScrollBar()->value();
-    QTest::qWait(zametti::appearance().smoothScrollMs * 6);
+    QTest::qWait(zametti::settings().look.smoothScrollMs * 6);
     const int settled = editor.verticalScrollBar()->value();
 
     ZT_TRUE("пальцы увели текст: " + std::to_string(atRelease), atRelease > 0);
@@ -102,13 +102,13 @@ static int ztRunSuite(int argc, char** argv) {
             settled > atRelease);
 
     // --- без инерции: встал там, где отпустили ---------------------------
-    zametti::appearance().smoothScroll = false;
+    zametti::editSettings().look.smoothScroll = false;
     editor.verticalScrollBar()->setValue(0);
     QTest::qWait(20);
 
     swipe(editor);
     const int stopped = editor.verticalScrollBar()->value();
-    QTest::qWait(zametti::appearance().smoothScrollMs * 6);
+    QTest::qWait(zametti::settings().look.smoothScrollMs * 6);
     const int later = editor.verticalScrollBar()->value();
 
     ZT_TRUE("без инерции пальцы тоже увели текст: " + std::to_string(stopped), stopped > 0);
@@ -119,7 +119,7 @@ static int ztRunSuite(int argc, char** argv) {
     // Жалоба владельца: прокрутка вниз уводит курсор вниз, он уезжает за окно, и
     // прокрутка перестаёт работать. Вверх при этом всё хорошо — значит дело не
     // в самой прокрутке, а в чём-то, что срабатывает только при движении вниз.
-    zametti::appearance().smoothScroll = true;
+    zametti::editSettings().look.smoothScroll = true;
     editor.verticalScrollBar()->setValue(0);
     QTest::qWait(20);
     {
@@ -131,7 +131,7 @@ static int ztRunSuite(int argc, char** argv) {
 
     for (int i = 0; i < 4; ++i) {
         swipe(editor);
-        QTest::qWait(zametti::appearance().smoothScrollMs * 4);
+        QTest::qWait(zametti::settings().look.smoothScrollMs * 4);
     }
     const int caretAfter = editor.textCursor().position();
     const int scrolledTo = editor.verticalScrollBar()->value();
@@ -141,7 +141,7 @@ static int ztRunSuite(int argc, char** argv) {
                 ", стало " + std::to_string(caretAfter),
             caretAfter == caretBefore);
 
-    zametti::appearance().smoothScroll = savedSmooth;
+    zametti::editSettings().look.smoothScroll = savedSmooth;
     return zt::report("scroll");
 }
 

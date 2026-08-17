@@ -158,7 +158,7 @@ void enlargeFallbackGlyphs(QTextDocument& doc, int textStart, const QString& tex
         // Ступень отсчитывается ОТ ОКРУЖАЮЩЕГО текста, а не от шрифта
         // документа: эмодзи внутри заголовка обязан ехать вместе с заголовком.
         QTextCharFormat fmt;
-        setFontStep(fmt, surroundingStep + appearance().fallbackStep);
+        setFontStep(fmt, surroundingStep + settings().look.fallbackStep);
         cursor.setPosition(textStart + begin);
         cursor.setPosition(textStart + i, QTextCursor::KeepAnchor);
         cursor.mergeCharFormat(fmt);
@@ -166,9 +166,9 @@ void enlargeFallbackGlyphs(QTextDocument& doc, int textStart, const QString& tex
 }
 
 // Ступень кода — от ступени окружающего текста. В обычном абзаце окружение
-// нулевое, и код получает ровно appearance().codeStep; в заголовке он едет
+// нулевое, и код получает ровно settings().look.codeStep; в заголовке он едет
 // вместе с заголовком.
-int codeStepIn(int surroundingStep) { return surroundingStep + appearance().codeStep; }
+int codeStepIn(int surroundingStep) { return surroundingStep + settings().look.codeStep; }
 
 void applySpans(QTextDocument& doc, int textStart, const Piece& b, int lineStep) {
     QTextCursor cursor(&doc);
@@ -199,18 +199,18 @@ void applySpans(QTextDocument& doc, int textStart, const Piece& b, int lineStep)
         if (s.italic()) fmt.setFontItalic(true);
         if (s.strike()) fmt.setFontStrikeOut(true);
         if (s.code()) {
-            fmt.setBackground(appearance().codeBackground);
+            fmt.setBackground(settings().look.codeBackground);
             setFontStep(fmt, codeStepIn(lineStep));
-            if (!appearance().codeFamily.isEmpty())
-                fmt.setFontFamilies({QString(appearance().codeFamily)});
+            if (!settings().look.codeFamily.isEmpty())
+                fmt.setFontFamilies({QString(settings().look.codeFamily)});
         }
         if (!s.href.isEmpty()) {
             fmt.setAnchor(true);
             fmt.setAnchorHref(s.href);
-            fmt.setForeground(appearance().linkColor);
+            fmt.setForeground(settings().look.linkColor);
             fmt.setFontUnderline(true);
         }
-        if (s.comment()) fmt.setForeground(appearance().rawColor);
+        if (s.comment()) fmt.setForeground(settings().look.rawColor);
         if (!s.title.isEmpty()) fmt.setProperty(SpanTitleProperty, s.title);
         cursor.setPosition(textStart + from);
         cursor.setPosition(textStart + to, QTextCursor::KeepAnchor);
@@ -247,8 +247,8 @@ qreal blockTopMargin(Kind kind, bool raw, bool previousIsVSpace, bool first) {
     // после последней. Внутри прогона — ничего, иначе высота разделителя из n
     // строк перестала бы быть n высотами строки.
     if (!raw && kind == Kind::VSpace)
-        return previousIsVSpace ? 0.0 : appearance().separatorSpacingBefore;
-    if (previousIsVSpace) return appearance().separatorSpacingAfter;
+        return previousIsVSpace ? 0.0 : settings().look.separatorSpacingBefore;
+    if (previousIsVSpace) return settings().look.separatorSpacingAfter;
 
     // Своего воздуха у заголовка нет. Он был — «заголовок отделяет куски текста»,
     // — но выглядел ровно как пустая строка, которой в файле нет, и читался как
@@ -283,13 +283,13 @@ QTextBlockFormat vspaceBlockFormat(bool previousIsVSpace, bool first) {
     format.setTopMargin(blockTopMargin(Kind::VSpace, false, previousIsVSpace, first) *
                         layoutLineUnit());
     format.setBottomMargin(0);
-    applyLineHeight(format, appearance().lineHeightFactor, base.pointSizeF(), base);
+    applyLineHeight(format, settings().look.lineHeightFactor, base.pointSizeF(), base);
     return format;
 }
 
 QFont layoutBaseFont() {
-    QFont base{QString(appearance().fontFamily)};
-    base.setPointSizeF(appearance().baseFontPoint);
+    QFont base{QString(settings().look.fontFamily)};
+    base.setPointSizeF(settings().look.baseFontPoint);
     base.setStyleHint(QFont::Monospace);
     return base;
 }
@@ -299,13 +299,13 @@ qreal layoutLineUnit() { return QFontMetricsF(layoutBaseFont()).height(); }
 void applyLineHeight(QTextBlockFormat& format, qreal factor, qreal linePoint,
                      const QFont& base) {
     if (factor <= 0.0) return;
-    switch (appearance().lineHeightMode) {
-        case Appearance::LineHeight::Proportional:
+    switch (settings().look.lineHeightMode) {
+        case ZSettings::Look::LineHeight::Proportional:
             format.setLineHeight(factor * 100.0, QTextBlockFormat::ProportionalHeight);
             return;
-        case Appearance::LineHeight::Natural:
+        case ZSettings::Look::LineHeight::Natural:
             return;
-        case Appearance::LineHeight::Pixels: {
+        case ZSettings::Look::LineHeight::Pixels: {
             QFont line = base;
             line.setPointSizeF(linePoint);
             format.setLineHeight(std::round(QFontMetricsF(line).height() * factor),
@@ -340,7 +340,7 @@ struct BuildContext {
 
 BuildContext contextFor() {
     BuildContext ctx;
-    ctx.basePoint = appearance().baseFontPoint;
+    ctx.basePoint = settings().look.baseFontPoint;
     ctx.base = layoutBaseFont();
     ctx.primaryFont = QRawFont::fromFont(ctx.base);
     const QFontMetricsF metrics(ctx.base);
@@ -466,13 +466,13 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     QString text;
     std::vector<Break> breaks;
     if (raw) {
-        charFmt.setForeground(appearance().rawColor);
+        charFmt.setForeground(settings().look.rawColor);
     } else {
         switch (b.kind) {
             case Kind::Heading:
                 blockFmt.setHeadingLevel(b.headingLevel);
                 charFmt.setFontWeight(QFont::Bold);
-                lineStep = appearance().headingStep[size_t(b.headingLevel - 1)];
+                lineStep = settings().look.headingStep[size_t(b.headingLevel - 1)];
                 setFontStep(charFmt, lineStep);
                 break;
 
@@ -484,15 +484,15 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
                 blockFmt.setProperty(InfoProperty, b.info);
                 lineStep = codeStepIn(0);
                 setFontStep(charFmt, lineStep);
-                if (!appearance().codeFamily.isEmpty())
-                    charFmt.setFontFamilies({QString(appearance().codeFamily)});
+                if (!settings().look.codeFamily.isEmpty())
+                    charFmt.setFontFamilies({QString(settings().look.codeFamily)});
                 break;
 
             case Kind::Quote:
                 // Курсивом цитату не выделяем: тогда настоящий _курсив_
                 // внутри неё стал бы неотличим от остального текста.
-                blockFmt.setLeftMargin(appearance().quoteIndent * ctx.charUnit);
-                charFmt.setForeground(appearance().quoteColor);
+                blockFmt.setLeftMargin(settings().look.quoteIndent * ctx.charUnit);
+                charFmt.setForeground(settings().look.quoteColor);
                 break;
 
             // Ветки default в switch по роду не место: новый род обязан
@@ -533,7 +533,7 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
                 // Комментарий: в тексте — внутренность без скобок, скобки
                 // — структура. Рисуется тем же серым, что и дословные
                 // куски, но правится как обычный текст.
-                charFmt.setForeground(appearance().rawColor);
+                charFmt.setForeground(settings().look.rawColor);
                 break;
         }
         if (b.kind != Kind::Code) text = toQt(b.text, breaks);
@@ -605,8 +605,8 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     // назвал свой размер — добавлять к нему ритм текста нечего.
     const qreal lineFactor = (pieceIsImageObject(b) || pieceIsFormulaObject(b))
                                  ? 1.0
-                                 : (list ? appearance().listLineHeightFactor
-                                         : appearance().lineHeightFactor);
+                                 : (list ? settings().look.listLineHeightFactor
+                                         : settings().look.lineHeightFactor);
     applyLineHeight(blockFmt, lineFactor, ctx.basePoint * fontStepFactor(lineStep), ctx.base);
 
     // Один QTextBlock у обычного блока и по одному на строку у литерального.
@@ -693,16 +693,16 @@ void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target,
         QFont codeLine = ctx.base;
         codeLine.setPointSizeF(ctx.basePoint * fontStepFactor(codeStepIn(0)));
         QTextOption option = target.defaultTextOption();
-        option.setTabStopDistance(appearance().codeTabWidth *
+        option.setTabStopDistance(settings().editor.codeTabWidth *
                                   QFontMetricsF(codeLine).horizontalAdvance(QLatin1Char(' ')));
         target.setDefaultTextOption(option);
     }
 
     QTextFrameFormat rootFormat = target.rootFrame()->frameFormat();
-    rootFormat.setLeftMargin(appearance().sideMargin * ctx.charUnit);
-    rootFormat.setRightMargin(appearance().sideMargin * ctx.charUnit);
-    rootFormat.setTopMargin(appearance().verticalMargin * ctx.lineUnit);
-    rootFormat.setBottomMargin(appearance().verticalMargin * ctx.lineUnit);
+    rootFormat.setLeftMargin(settings().look.sideMargin * ctx.charUnit);
+    rootFormat.setRightMargin(settings().look.sideMargin * ctx.charUnit);
+    rootFormat.setTopMargin(settings().look.verticalMargin * ctx.lineUnit);
+    rootFormat.setBottomMargin(settings().look.verticalMargin * ctx.lineUnit);
     target.rootFrame()->setFrameFormat(rootFormat);
 
     QTextCursor cursor(&target);
@@ -724,7 +724,7 @@ void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target,
         QTextCharFormat charFmt;
         setFontStep(charFmt, 0);
         QTextBlockFormat blockFmt;
-        applyLineHeight(blockFmt, appearance().lineHeightFactor, ctx.basePoint, ctx.base);
+        applyLineHeight(blockFmt, settings().look.lineHeightFactor, ctx.basePoint, ctx.base);
         cursor.setBlockFormat(blockFmt);
         cursor.setBlockCharFormat(charFmt);
     }

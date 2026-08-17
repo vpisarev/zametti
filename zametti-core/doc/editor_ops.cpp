@@ -705,10 +705,10 @@ std::vector<StyleRun> styleRuns(const QTextDocument& doc, int from, int to,
 // блока: код внутри заголовка обязан ехать вместе с заголовком, ровно как у
 // сборщика.
 void applyCodeLook(QTextCharFormat& format, int surroundingStep) {
-    setFontStep(format, surroundingStep + appearance().codeStep);
-    if (!appearance().codeFamily.isEmpty())
-        format.setFontFamilies({QString(appearance().codeFamily)});
-    format.setBackground(appearance().codeBackground);
+    setFontStep(format, surroundingStep + settings().look.codeStep);
+    if (!settings().look.codeFamily.isEmpty())
+        format.setFontFamilies({QString(settings().look.codeFamily)});
+    format.setBackground(settings().look.codeBackground);
 }
 
 // Оформление, отвечающее набору признаков. Ставим все три явно: снимать
@@ -1611,7 +1611,7 @@ Lead leadingIndent(const QString& text, int width) {
     return lead;
 }
 
-int codeTabWidth() { return qMax(1, appearance().codeTabWidth); }
+int codeTabWidth() { return qMax(1, settings().editor.codeTabWidth); }
 
 // Переписать отступ строки на columns пробелов. Возвращает, на сколько знаков
 // строка стала длиннее (может быть отрицательным).
@@ -2119,7 +2119,7 @@ static bool splitBlockAtCursor(QTextDocument& doc, QTextCursor& cursor) {
             // Высоту строки ставим ТАК ЖЕ, КАК СБОРЩИК, а не копией у соседа:
             // копия тащит за собой и явные нули там, где сборщик не пишет ничего.
             QTextBlockFormat plain;
-            applyLineHeight(plain, appearance().lineHeightFactor, layoutBaseFont().pointSizeF(),
+            applyLineHeight(plain, settings().look.lineHeightFactor, layoutBaseFont().pointSizeF(),
                             layoutBaseFont());
 
             cursor.beginEditBlock();
@@ -2761,7 +2761,7 @@ static qreal ownLeftMargin(const QTextBlock& block, const CodePlate& plate, qrea
     if (isRawBlock(block)) return 0;
     switch (kindOf(block)) {
         case Kind::Code:  return plate.indent + plate.padLeft;
-        case Kind::Quote: return appearance().quoteIndent * charUnit;
+        case Kind::Quote: return settings().look.quoteIndent * charUnit;
         // У формулы собственного отступа нет: она встаёт по центру колонки, а её
         // исходник виден только в правке.
         case Kind::Math:
@@ -2800,7 +2800,7 @@ void applyListGeometry(QTextDocument& doc, BlockRange range) {
     // Единицы — те же, что у сборщика: геометрия строится в базовом шрифте и
     // за зумом не идёт (см. layoutCharUnit).
     const qreal charUnit = layoutCharUnit();
-    const qreal indent = appearance().listIndent * charUnit;
+    const qreal indent = settings().look.listIndent * charUnit;
     const CodePlate plate = codePlate();
 
     // Первый проход: к какой колонке принадлежит каждый блок и какой маркер в
@@ -3046,7 +3046,7 @@ int syncGaps(QTextDocument& doc, BlockRange range) {
             format.clearProperty(QTextFormat::BlockBottomMargin);
             format.clearProperty(QTextFormat::LineHeight);
             format.clearProperty(QTextFormat::LineHeightType);
-            applyLineHeight(format, appearance().lineHeightFactor,
+            applyLineHeight(format, settings().look.lineHeightFactor,
                             layoutBaseFont().pointSizeF(), layoutBaseFont());
             setBlockFormat(edit, block, format);
         }

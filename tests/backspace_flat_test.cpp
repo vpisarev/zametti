@@ -183,7 +183,7 @@ void openSource(zametti::NoteEditor& editor, const QString& source) {
 static int ztRunSuite(int argc, char** argv) {
     (void)argc;
     (void)argv;
-    zametti::loadAppearance(nullptr);
+    zametti::loadSettings(nullptr);
     const fs::path dir = fs::temp_directory_path() / "zametti-backspace-flat";
     fs::create_directories(dir);
     g_dir = dir;

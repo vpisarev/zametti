@@ -77,8 +77,8 @@ void checkRule() {
 
     // Регэксп из настроек: битый образец правило не меняет — проверяется на
     // чтении конфига, а здесь — что подмена образца правило и меняет.
-    const QRegularExpression saved = zametti::appearance().imageNonameCaption;
-    zametti::appearance().imageNonameCaption =
+    const QRegularExpression saved = zametti::settings().look.imageNonameCaption;
+    zametti::editSettings().look.imageNonameCaption =
         QRegularExpression(QStringLiteral("^дурацк.*$"), QRegularExpression::CaseInsensitiveOption);
     ZT_TRUE("свой регэксп: «дурацкая» безымянна",
             zametti::isNonameCaption(QStringLiteral("Дурацкая подпись")));
@@ -86,7 +86,7 @@ void checkRule() {
             !zametti::isNonameCaption(QStringLiteral("IMG_1234")));
     ZT_TRUE("знак спереди прячет и при своём регэкспе",
             zametti::isNonameCaption(QStringLiteral("~IMG_1234")));
-    zametti::appearance().imageNonameCaption = saved;
+    zametti::editSettings().look.imageNonameCaption = saved;
 }
 
 // --- глаголы -----------------------------------------------------------------

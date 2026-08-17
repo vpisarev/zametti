@@ -286,20 +286,24 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
     }
 
     // ОБЛИК НА ВРЕМЯ ВЫВОЗА ПОДМЕНЯЕТСЯ. Сборщик документа и вид спрашивают
-    // шрифты у глобального appearance(), и другого способа сказать им «сейчас
+    // шрифты у глобального settings(), и другого способа сказать им «сейчас
     // мы на бумаге» нет — кроме как протащить облик параметром через десяток
     // мест, которые о бумаге знать не должны.
     //
     // Подменяются ТОЛЬКО шрифты и кегли: цвета, поля, ритм страницы у бумаги
     // те же, что на экране, — она и должна выглядеть как то, что человек
     // видит. Возвращается облик на месте, чем бы вывоз ни кончился.
+    // Это единственный люк правки настроек в боевом коде (editSettings) — и
+    // ровно тот случай, ради которого настройки стали составными: когда сборщик
+    // и вид возьмут облик параметром, бумага получит свой ZSettings::Look
+    // пресетом, а глобальное трогать перестанет.
     struct PaperLook {
-        Appearance saved = appearance();
-        ~PaperLook() { appearance() = saved; }
+        ZSettings saved = settings();
+        ~PaperLook() { editSettings() = saved; }
     } look;
     {
-        Appearance& a = appearance();
-        const Appearance::Pdf& paper = look.saved.pdf;
+        ZSettings::Look& a = editSettings().look;
+        const ZSettings::Pdf& paper = look.saved.pdf;
         if (!paper.fontFamily.isEmpty()) a.fontFamily = paper.fontFamily;
         if (paper.pointSize > 0.0) a.baseFontPoint = paper.pointSize;
         if (!paper.codeFamily.isEmpty()) a.codeFamily = paper.codeFamily;
@@ -310,7 +314,7 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
         // без имени языка и кнопки копирования.
         a.codeStripHeight = paper.codeStripHeight;
     }
-    const Appearance::Pdf& paper = look.saved.pdf;
+    const ZSettings::Pdf& paper = look.saved.pdf;
 
     QPdfWriter writer(targetPath);
     writer.setPageSize(QPageSize(options.page));
@@ -439,7 +443,7 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
         // карточка на белом листе.
         painter.fillRect(QRectF(-marginPx, -marginPx, pageWidth + 2 * marginPx,
                                 pageHeight + 2 * marginPx),
-                         appearance().pageBackground);
+                         settings().look.pageBackground);
         painter.translate(0.0, -top);
         view.renderSlice(painter, QRectF(0.0, top, pageWidth, bottom - top), imageRatio,
                          paper.maxExportedImageSize);

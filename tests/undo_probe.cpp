@@ -106,7 +106,7 @@ void measure(zametti::NoteEditor& editor, const char* what,
 int ztUndoProbe(int argc, char** argv) {
     (void)argc;
     (void)argv;
-    zametti::loadAppearance(nullptr);
+    zametti::loadSettings(nullptr);
 
     const QString dir = QStringLiteral("/tmp/zametti-undo-probe");
     QDir(dir).removeRecursively();

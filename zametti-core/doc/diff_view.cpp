@@ -14,7 +14,7 @@ namespace {
 // Цвет метки. Одинаковый во всех видах: полоска на поле, заливка строки и
 // заглушка обязаны говорить одно и то же.
 QColor colorOf(Mark mark) {
-    const Appearance& look = appearance();
+    const ZSettings::Look& look = settings().look;
     switch (mark) {
         case Mark::Added: return look.diffAdded;
         case Mark::Removed: return look.diffRemoved;
@@ -101,7 +101,7 @@ Illustrated illustrate(const std::vector<Piece>& snapshot, const BlockMarks& mar
 
 void buildPlainDocument(const Result& result, QTextDocument& target,
                         QVector<Mark>* markOfBlock) {
-    const Appearance& look = appearance();
+    const ZSettings::Look& look = settings().look;
     target.clear();
     if (markOfBlock != nullptr) markOfBlock->clear();
 

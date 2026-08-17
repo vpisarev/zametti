@@ -23,7 +23,7 @@
 namespace zametti {
 namespace {
 
-Appearance g_appearance;
+ZSettings g_settings;
 
 QString colorToString(const QColor& c) {
     return c.alpha() == 255 ? c.name(QColor::HexRgb) : c.name(QColor::HexArgb);
@@ -78,24 +78,24 @@ void readStyle(const QJsonObject& o, const char* key, CheckboxStyle& out) {
     else if (s == QLatin1String("drawn")) out = CheckboxStyle::Drawn;
 }
 
-QJsonObject appearanceToJson(const Appearance& a) {
+QJsonObject settingsToJson(const ZSettings& a) {
     QJsonArray shapes;
-    for (BulletShape shape : a.bulletShapes)
+    for (BulletShape shape : a.look.bulletShapes)
         shapes.append(shape == BulletShape::Circle   ? QStringLiteral("circle")
                       : shape == BulletShape::Square ? QStringLiteral("square")
                                                      : QStringLiteral("disc"));
 
     QJsonArray headings;
-    for (int v : a.headingStep) headings.append(v);
+    for (int v : a.look.headingStep) headings.append(v);
 
     QJsonObject font{
-        {QStringLiteral("family"), a.fontFamily},
-        {QStringLiteral("pointSize"), a.baseFontPoint},
-        {QStringLiteral("symbolFamily"), a.symbolFamily},
-        {QStringLiteral("codeFamily"), a.codeFamily},
-        {QStringLiteral("codeStep"), a.codeStep},
+        {QStringLiteral("family"), a.look.fontFamily},
+        {QStringLiteral("pointSize"), a.look.baseFontPoint},
+        {QStringLiteral("symbolFamily"), a.look.symbolFamily},
+        {QStringLiteral("codeFamily"), a.look.codeFamily},
+        {QStringLiteral("codeStep"), a.look.codeStep},
         {QStringLiteral("headingStep"), headings},
-        {QStringLiteral("fallbackStep"), a.fallbackStep},
+        {QStringLiteral("fallbackStep"), a.look.fallbackStep},
     };
 
     QJsonObject formulas{
@@ -132,145 +132,145 @@ QJsonObject appearanceToJson(const Appearance& a) {
     };
 
     QJsonObject layout{
-        {QStringLiteral("lineHeightFactor"), a.lineHeightFactor},
-        {QStringLiteral("listLineHeightFactor"), a.listLineHeightFactor},
-        {QStringLiteral("blockSpacing"), a.blockSpacing},
-        {QStringLiteral("listIndent"), a.listIndent},
-        {QStringLiteral("codeIndent"), a.codeIndent},
-        {QStringLiteral("codePadLeft"), a.codePadLeft},
-        {QStringLiteral("codeStripHeight"), a.codeStripHeight},
-        {QStringLiteral("codePadTop"), a.codePadTop},
-        {QStringLiteral("codeCornerRadius"), a.codeCornerRadius},
-        {QStringLiteral("codeLangPointSize"), a.codeLangPointSize},
-        {QStringLiteral("codeStripPadding"), a.codeStripPadding},
-        {QStringLiteral("codeLangGap"), a.codeLangGap},
-        {QStringLiteral("quoteIndent"), a.quoteIndent},
-        {QStringLiteral("sideMargin"), a.sideMargin},
-        {QStringLiteral("verticalMargin"), a.verticalMargin},
-        {QStringLiteral("maxContentWidth"), a.maxContentWidth},
-        {QStringLiteral("caretWidth"), a.caretWidth},
-        {QStringLiteral("dividerWidth"), a.dividerWidth},
+        {QStringLiteral("lineHeightFactor"), a.look.lineHeightFactor},
+        {QStringLiteral("listLineHeightFactor"), a.look.listLineHeightFactor},
+        {QStringLiteral("blockSpacing"), a.look.blockSpacing},
+        {QStringLiteral("listIndent"), a.look.listIndent},
+        {QStringLiteral("codeIndent"), a.look.codeIndent},
+        {QStringLiteral("codePadLeft"), a.look.codePadLeft},
+        {QStringLiteral("codeStripHeight"), a.look.codeStripHeight},
+        {QStringLiteral("codePadTop"), a.look.codePadTop},
+        {QStringLiteral("codeCornerRadius"), a.look.codeCornerRadius},
+        {QStringLiteral("codeLangPointSize"), a.look.codeLangPointSize},
+        {QStringLiteral("codeStripPadding"), a.look.codeStripPadding},
+        {QStringLiteral("codeLangGap"), a.look.codeLangGap},
+        {QStringLiteral("quoteIndent"), a.look.quoteIndent},
+        {QStringLiteral("sideMargin"), a.look.sideMargin},
+        {QStringLiteral("verticalMargin"), a.look.verticalMargin},
+        {QStringLiteral("maxContentWidth"), a.look.maxContentWidth},
+        {QStringLiteral("caretWidth"), a.look.caretWidth},
+        {QStringLiteral("dividerWidth"), a.look.dividerWidth},
     };
 
     QJsonObject colors{
-        {QStringLiteral("pageBackground"), colorToString(a.pageBackground)},
-        {QStringLiteral("historyBackground"), colorToString(a.historyBackground)},
-        {QStringLiteral("selectionBackground"), colorToString(a.selectionBackground)},
-        {QStringLiteral("searchHighlight"), colorToString(a.searchHighlight)},
-        {QStringLiteral("diffAdded"), colorToString(a.diffAdded)},
-        {QStringLiteral("diffRemoved"), colorToString(a.diffRemoved)},
-        {QStringLiteral("diffChanged"), colorToString(a.diffChanged)},
-        {QStringLiteral("link"), colorToString(a.linkColor)},
-        {QStringLiteral("quote"), colorToString(a.quoteColor)},
-        {QStringLiteral("rawSource"), colorToString(a.rawColor)},
-        {QStringLiteral("divider"), colorToString(a.dividerColor)},
-        {QStringLiteral("codeBackground"), colorToString(a.codeBackground)},
-        {QStringLiteral("codeLang"), colorToString(a.codeLangColor)},
-        {QStringLiteral("caret"), colorToString(a.caretColor)},
+        {QStringLiteral("pageBackground"), colorToString(a.look.pageBackground)},
+        {QStringLiteral("historyBackground"), colorToString(a.look.historyBackground)},
+        {QStringLiteral("selectionBackground"), colorToString(a.look.selectionBackground)},
+        {QStringLiteral("searchHighlight"), colorToString(a.look.searchHighlight)},
+        {QStringLiteral("diffAdded"), colorToString(a.look.diffAdded)},
+        {QStringLiteral("diffRemoved"), colorToString(a.look.diffRemoved)},
+        {QStringLiteral("diffChanged"), colorToString(a.look.diffChanged)},
+        {QStringLiteral("link"), colorToString(a.look.linkColor)},
+        {QStringLiteral("quote"), colorToString(a.look.quoteColor)},
+        {QStringLiteral("rawSource"), colorToString(a.look.rawColor)},
+        {QStringLiteral("divider"), colorToString(a.look.dividerColor)},
+        {QStringLiteral("codeBackground"), colorToString(a.look.codeBackground)},
+        {QStringLiteral("codeLang"), colorToString(a.look.codeLangColor)},
+        {QStringLiteral("caret"), colorToString(a.look.caretColor)},
     };
 
     QJsonObject list{
-        {QStringLiteral("bulletColor"), colorToString(a.bulletColor)},
-        {QStringLiteral("orderedColor"), colorToString(a.orderedColor)},
+        {QStringLiteral("bulletColor"), colorToString(a.look.bulletColor)},
+        {QStringLiteral("orderedColor"), colorToString(a.look.orderedColor)},
         {QStringLiteral("bulletStyle"),
-         a.bulletStyle == BulletStyle::Glyph ? QStringLiteral("glyph")
+         a.look.bulletStyle == BulletStyle::Glyph ? QStringLiteral("glyph")
                                              : QStringLiteral("drawn")},
-        {QStringLiteral("bulletDiameter"), a.bulletDiameter},
-        {QStringLiteral("bulletStrokeWidth"), a.bulletStrokeWidth},
-        {QStringLiteral("bulletSquareSide"), a.bulletSquareSide},
+        {QStringLiteral("bulletDiameter"), a.look.bulletDiameter},
+        {QStringLiteral("bulletStrokeWidth"), a.look.bulletStrokeWidth},
+        {QStringLiteral("bulletSquareSide"), a.look.bulletSquareSide},
         {QStringLiteral("bulletShapes"), shapes},
-        {QStringLiteral("bulletRise"), a.bulletRise},
-        {QStringLiteral("orderedRise"), a.orderedRise},
-        {QStringLiteral("bullet"), a.bulletGlyph},
-        {QStringLiteral("bulletScale"), a.bulletScale},
-        {QStringLiteral("bulletTextGap"), a.bulletTextGap},
-        {QStringLiteral("orderedTextGap"), a.orderedTextGap},
+        {QStringLiteral("bulletRise"), a.look.bulletRise},
+        {QStringLiteral("orderedRise"), a.look.orderedRise},
+        {QStringLiteral("bullet"), a.look.bulletGlyph},
+        {QStringLiteral("bulletScale"), a.look.bulletScale},
+        {QStringLiteral("bulletTextGap"), a.look.bulletTextGap},
+        {QStringLiteral("orderedTextGap"), a.look.orderedTextGap},
     };
 
     QJsonObject checkbox{
-        {QStringLiteral("style"), styleToString(a.checkboxStyle)},
-        {QStringLiteral("checkedColor"), colorToString(a.checkboxCheckedColor)},
-        {QStringLiteral("uncheckedColor"), colorToString(a.checkboxUncheckedColor)},
-        {QStringLiteral("tickColor"), colorToString(a.checkboxTickColor)},
-        {QStringLiteral("penWidth"), a.checkboxPenWidth},
-        {QStringLiteral("cornerRadius"), a.checkboxCornerRadius},
-        {QStringLiteral("opticalRise"), a.checkboxOpticalRise},
-        {QStringLiteral("glyphScale"), a.checkboxGlyphScale},
-        {QStringLiteral("textGap"), a.checkboxTextGap},
+        {QStringLiteral("style"), styleToString(a.look.checkboxStyle)},
+        {QStringLiteral("checkedColor"), colorToString(a.look.checkboxCheckedColor)},
+        {QStringLiteral("uncheckedColor"), colorToString(a.look.checkboxUncheckedColor)},
+        {QStringLiteral("tickColor"), colorToString(a.look.checkboxTickColor)},
+        {QStringLiteral("penWidth"), a.look.checkboxPenWidth},
+        {QStringLiteral("cornerRadius"), a.look.checkboxCornerRadius},
+        {QStringLiteral("opticalRise"), a.look.checkboxOpticalRise},
+        {QStringLiteral("glyphScale"), a.look.checkboxGlyphScale},
+        {QStringLiteral("textGap"), a.look.checkboxTextGap},
     };
 
     QJsonObject notes{
-        {QStringLiteral("root"), a.notesRoot},
-        {QStringLiteral("title"), a.storeTitle},
-        {QStringLiteral("watchFolder"), a.watchStore},
+        {QStringLiteral("root"), a.store.notesRoot},
+        {QStringLiteral("title"), a.store.storeTitle},
+        {QStringLiteral("watchFolder"), a.store.watchStore},
     };
 
     QJsonObject noteList{
-        {QStringLiteral("width"), a.noteListWidth},
-        {QStringLiteral("snippetLines"), a.noteListSnippetLines},
-        {QStringLiteral("snippetColor"), colorToString(a.noteListSnippetColor)},
-        {QStringLiteral("dateColor"), colorToString(a.noteListDateColor)},
+        {QStringLiteral("width"), a.look.noteListWidth},
+        {QStringLiteral("snippetLines"), a.look.noteListSnippetLines},
+        {QStringLiteral("snippetColor"), colorToString(a.look.noteListSnippetColor)},
+        {QStringLiteral("dateColor"), colorToString(a.look.noteListDateColor)},
     };
 
     QJsonObject sidebar{
-        {QStringLiteral("fontFamily"), a.sidebarFontFamily},
-        {QStringLiteral("fontSize"), a.sidebarFontPoint},
-        {QStringLiteral("lineHeightFactor"), a.sidebarLineHeightFactor},
-        {QStringLiteral("width"), a.sidebarWidth},
-        {QStringLiteral("folderColor"), colorToString(a.sidebarFolderColor)},
-        {QStringLiteral("folderScale"), a.sidebarFolderScale},
+        {QStringLiteral("fontFamily"), a.look.sidebarFontFamily},
+        {QStringLiteral("fontSize"), a.look.sidebarFontPoint},
+        {QStringLiteral("lineHeightFactor"), a.look.sidebarLineHeightFactor},
+        {QStringLiteral("width"), a.look.sidebarWidth},
+        {QStringLiteral("folderColor"), colorToString(a.look.sidebarFolderColor)},
+        {QStringLiteral("folderScale"), a.look.sidebarFolderScale},
     };
 
     QJsonObject imageSelection{
-        {QStringLiteral("cornerShare"), a.imageCornerShare},
-        {QStringLiteral("cornerMinLength"), a.imageCornerMinLength},
-        {QStringLiteral("cornerWidth"), a.imageCornerWidth},
-        {QStringLiteral("cornerOffset"), a.imageCornerOffset},
+        {QStringLiteral("cornerShare"), a.look.imageCornerShare},
+        {QStringLiteral("cornerMinLength"), a.look.imageCornerMinLength},
+        {QStringLiteral("cornerWidth"), a.look.imageCornerWidth},
+        {QStringLiteral("cornerOffset"), a.look.imageCornerOffset},
     };
 
     QJsonObject imageCaption{
-        {QStringLiteral("shown"), a.imageCaption},
-        {QStringLiteral("family"), a.imageCaptionFamily},
-        {QStringLiteral("fontPoints"), a.imageCaptionPoints},
-        {QStringLiteral("gap"), a.imageCaptionGap},
-        {QStringLiteral("color"), colorToString(a.imageCaptionColor)},
-        {QStringLiteral("noname"), a.imageNonameCaption.pattern()},
+        {QStringLiteral("shown"), a.look.imageCaption},
+        {QStringLiteral("family"), a.look.imageCaptionFamily},
+        {QStringLiteral("fontPoints"), a.look.imageCaptionPoints},
+        {QStringLiteral("gap"), a.look.imageCaptionGap},
+        {QStringLiteral("color"), colorToString(a.look.imageCaptionColor)},
+        {QStringLiteral("noname"), a.look.imageNonameCaption.pattern()},
     };
 
     QJsonObject statusBar{
-        {QStringLiteral("family"), a.statusFamily},
-        {QStringLiteral("fontPoints"), a.statusFontPoints},
-        {QStringLiteral("padding"), a.statusPadding},
-        {QStringLiteral("paddingTop"), a.statusPaddingTop},
-        {QStringLiteral("background"), colorToString(a.statusBackground)},
-        {QStringLiteral("textColor"), colorToString(a.statusTextColor)},
-        {QStringLiteral("separatorColor"), colorToString(a.statusSeparatorColor)},
+        {QStringLiteral("family"), a.look.statusFamily},
+        {QStringLiteral("fontPoints"), a.look.statusFontPoints},
+        {QStringLiteral("padding"), a.look.statusPadding},
+        {QStringLiteral("paddingTop"), a.look.statusPaddingTop},
+        {QStringLiteral("background"), colorToString(a.look.statusBackground)},
+        {QStringLiteral("textColor"), colorToString(a.look.statusTextColor)},
+        {QStringLiteral("separatorColor"), colorToString(a.look.statusSeparatorColor)},
     };
 
     QJsonObject toolbar{
-        {QStringLiteral("iconSize"), a.toolbarIconSize},
-        {QStringLiteral("buttonPadding"), a.toolbarButtonPadding},
-        {QStringLiteral("groupSpacing"), a.toolbarGroupSpacing},
-        {QStringLiteral("background"), colorToString(a.toolbarBackground)},
-        {QStringLiteral("iconColor"), colorToString(a.toolbarIconColor)},
-        {QStringLiteral("iconHoverColor"), colorToString(a.toolbarIconHoverColor)},
-        {QStringLiteral("iconOnColor"), colorToString(a.toolbarIconOnColor)},
-        {QStringLiteral("iconMarkColor"), colorToString(a.toolbarIconMarkColor)},
-        {QStringLiteral("iconDisabledColor"), colorToString(a.toolbarIconDisabledColor)},
-        {QStringLiteral("hoverBackground"), colorToString(a.toolbarHoverBackground)},
-        {QStringLiteral("separatorColor"), colorToString(a.toolbarSeparatorColor)},
+        {QStringLiteral("iconSize"), a.look.toolbarIconSize},
+        {QStringLiteral("buttonPadding"), a.look.toolbarButtonPadding},
+        {QStringLiteral("groupSpacing"), a.look.toolbarGroupSpacing},
+        {QStringLiteral("background"), colorToString(a.look.toolbarBackground)},
+        {QStringLiteral("iconColor"), colorToString(a.look.toolbarIconColor)},
+        {QStringLiteral("iconHoverColor"), colorToString(a.look.toolbarIconHoverColor)},
+        {QStringLiteral("iconOnColor"), colorToString(a.look.toolbarIconOnColor)},
+        {QStringLiteral("iconMarkColor"), colorToString(a.look.toolbarIconMarkColor)},
+        {QStringLiteral("iconDisabledColor"), colorToString(a.look.toolbarIconDisabledColor)},
+        {QStringLiteral("hoverBackground"), colorToString(a.look.toolbarHoverBackground)},
+        {QStringLiteral("separatorColor"), colorToString(a.look.toolbarSeparatorColor)},
     };
 
     QJsonObject find{
-        {QStringLiteral("fontDelta"), a.findFontDelta},
-        {QStringLiteral("previousGlyph"), a.findPreviousGlyph},
-        {QStringLiteral("nextGlyph"), a.findNextGlyph},
-        {QStringLiteral("historyGlyph"), a.findHistoryGlyph},
-        {QStringLiteral("historyLimit"), a.findHistoryLimit},
+        {QStringLiteral("fontDelta"), a.look.findFontDelta},
+        {QStringLiteral("previousGlyph"), a.look.findPreviousGlyph},
+        {QStringLiteral("nextGlyph"), a.look.findNextGlyph},
+        {QStringLiteral("historyGlyph"), a.look.findHistoryGlyph},
+        {QStringLiteral("historyLimit"), a.look.findHistoryLimit},
     };
 
     QJsonArray special;
-    for (const auto& [keys, text] : a.specialKeys) {
+    for (const auto& [keys, text] : a.editor.specialKeys) {
         QJsonArray pair;
         pair.append(keys);
         pair.append(text);
@@ -278,27 +278,27 @@ QJsonObject appearanceToJson(const Appearance& a) {
     }
 
     QJsonObject editor{
-        {QStringLiteral("autosaveDelayMs"), a.autosaveDelayMs},
-        {QStringLiteral("undoCoalesceMs"), a.undoCoalesceMs},
-        {QStringLiteral("undoLimit"), a.undoLimit},
-        {QStringLiteral("undoRunChars"), a.undoRunChars},
-        {QStringLiteral("historyMergeChars"), a.historyMergeChars},
-        {QStringLiteral("historyMergeHours"), a.historyMergeHours},
-        {QStringLiteral("undoBudgetMb"), a.undoBudgetMb},
-        {QStringLiteral("imageCacheSizeMb"), a.imageCacheSizeMb},
-        {QStringLiteral("maxLoadedImageSize"), a.maxLoadedImageSize},
-        {QStringLiteral("documentCacheSizeMb"), a.documentCacheSizeMb},
-        {QStringLiteral("toggleTaskKey"), a.toggleTaskKey},
-        {QStringLiteral("moveUpKey"), a.moveUpKey},
-        {QStringLiteral("moveDownKey"), a.moveDownKey},
-        {QStringLiteral("makeBulletKey"), a.makeBulletKey},
-        {QStringLiteral("makeOrderedKey"), a.makeOrderedKey},
-        {QStringLiteral("makeTaskKey"), a.makeTaskKey},
-        {QStringLiteral("makeParagraphKey"), a.makeParagraphKey},
-        {QStringLiteral("makeCommentKey"), a.makeCommentKey},
-        {QStringLiteral("codeTabWidth"), a.codeTabWidth},
+        {QStringLiteral("autosaveDelayMs"), a.editor.autosaveDelayMs},
+        {QStringLiteral("undoCoalesceMs"), a.editor.undoCoalesceMs},
+        {QStringLiteral("undoLimit"), a.editor.undoLimit},
+        {QStringLiteral("undoRunChars"), a.editor.undoRunChars},
+        {QStringLiteral("historyMergeChars"), a.history.historyMergeChars},
+        {QStringLiteral("historyMergeHours"), a.history.historyMergeHours},
+        {QStringLiteral("undoBudgetMb"), a.editor.undoBudgetMb},
+        {QStringLiteral("imageCacheSizeMb"), a.cache.imageCacheSizeMb},
+        {QStringLiteral("maxLoadedImageSize"), a.cache.maxLoadedImageSize},
+        {QStringLiteral("documentCacheSizeMb"), a.cache.documentCacheSizeMb},
+        {QStringLiteral("toggleTaskKey"), a.editor.toggleTaskKey},
+        {QStringLiteral("moveUpKey"), a.editor.moveUpKey},
+        {QStringLiteral("moveDownKey"), a.editor.moveDownKey},
+        {QStringLiteral("makeBulletKey"), a.editor.makeBulletKey},
+        {QStringLiteral("makeOrderedKey"), a.editor.makeOrderedKey},
+        {QStringLiteral("makeTaskKey"), a.editor.makeTaskKey},
+        {QStringLiteral("makeParagraphKey"), a.editor.makeParagraphKey},
+        {QStringLiteral("makeCommentKey"), a.editor.makeCommentKey},
+        {QStringLiteral("codeTabWidth"), a.editor.codeTabWidth},
         {QStringLiteral("special"), special},
-        {QStringLiteral("externalEditor"), a.externalEditor},
+        {QStringLiteral("externalEditor"), a.editor.externalEditor},
     };
 
     // ТОЛЬКО S. Остальные числа импорта настройке не подлежат — решение
@@ -315,19 +315,19 @@ QJsonObject appearanceToJson(const Appearance& a) {
     // Сочетания клавиш, которым суждено разойтись по системам. Пока их два —
     // ходьба по изменённым местам в истории: на маке F4 занята системой.
     QJsonObject shortcuts{
-        {QStringLiteral("diffNext"), a.diffNextKey},
-        {QStringLiteral("diffPrevious"), a.diffPreviousKey},
+        {QStringLiteral("diffNext"), a.editor.diffNextKey},
+        {QStringLiteral("diffPrevious"), a.editor.diffPreviousKey},
     };
 
     QJsonObject scroll{
-        {QStringLiteral("smooth"), a.smoothScroll},
-        {QStringLiteral("smoothMs"), a.smoothScrollMs},
+        {QStringLiteral("smooth"), a.look.smoothScroll},
+        {QStringLiteral("smoothMs"), a.look.smoothScrollMs},
     };
 
     QJsonObject zoom{
-        {QStringLiteral("step"), a.zoomStep},
-        {QStringLiteral("min"), a.zoomMin},
-        {QStringLiteral("max"), a.zoomMax},
+        {QStringLiteral("step"), a.look.zoomStep},
+        {QStringLiteral("min"), a.look.zoomMin},
+        {QStringLiteral("max"), a.look.zoomMax},
     };
 
     return QJsonObject{
@@ -355,17 +355,17 @@ QJsonObject appearanceToJson(const Appearance& a) {
     };
 }
 
-void appearanceFromJson(const QJsonObject& root, Appearance& a) {
+void settingsFromJson(const QJsonObject& root, ZSettings& a) {
     const QJsonObject font = root.value(QStringLiteral("font")).toObject();
-    readString(font, "family", a.fontFamily);
-    readReal(font, "pointSize", a.baseFontPoint);
-    readString(font, "symbolFamily", a.symbolFamily);
-    readString(font, "codeFamily", a.codeFamily);
-    readInt(font, "codeStep", a.codeStep);
-    readInt(font, "fallbackStep", a.fallbackStep);
+    readString(font, "family", a.look.fontFamily);
+    readReal(font, "pointSize", a.look.baseFontPoint);
+    readString(font, "symbolFamily", a.look.symbolFamily);
+    readString(font, "codeFamily", a.look.codeFamily);
+    readInt(font, "codeStep", a.look.codeStep);
+    readInt(font, "fallbackStep", a.look.fallbackStep);
     const QJsonArray headings = font.value(QStringLiteral("headingStep")).toArray();
-    for (int i = 0; i < headings.size() && i < int(a.headingStep.size()); ++i)
-        if (headings.at(i).isDouble()) a.headingStep[size_t(i)] = headings.at(i).toInt();
+    for (int i = 0; i < headings.size() && i < int(a.look.headingStep.size()); ++i)
+        if (headings.at(i).isDouble()) a.look.headingStep[size_t(i)] = headings.at(i).toInt();
 
     const QJsonObject formulas = root.value(QStringLiteral("formulas")).toObject();
     readReal(formulas, "inlineScale", a.formulas.inlineScale);
@@ -398,53 +398,53 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
         if (paperHeads.at(i).isDouble()) a.pdf.headingStep[size_t(i)] = paperHeads.at(i).toInt();
 
     const QJsonObject layout = root.value(QStringLiteral("layout")).toObject();
-    readReal(layout, "lineHeightFactor", a.lineHeightFactor);
-    readReal(layout, "listLineHeightFactor", a.listLineHeightFactor);
-    readReal(layout, "blockSpacing", a.blockSpacing);
-    readReal(layout, "listIndent", a.listIndent);
-    readReal(layout, "codeIndent", a.codeIndent);
-    readReal(layout, "codePadLeft", a.codePadLeft);
-    readReal(layout, "codeStripHeight", a.codeStripHeight);
-    readReal(layout, "codePadTop", a.codePadTop);
-    readReal(layout, "codeCornerRadius", a.codeCornerRadius);
-    readReal(layout, "codeLangPointSize", a.codeLangPointSize);
-    readReal(layout, "codeStripPadding", a.codeStripPadding);
-    readReal(layout, "codeLangGap", a.codeLangGap);
-    readReal(layout, "quoteIndent", a.quoteIndent);
-    readReal(layout, "sideMargin", a.sideMargin);
-    readReal(layout, "verticalMargin", a.verticalMargin);
-    readReal(layout, "maxContentWidth", a.maxContentWidth);
-    readReal(layout, "caretWidth", a.caretWidth);
-    readReal(layout, "dividerWidth", a.dividerWidth);
+    readReal(layout, "lineHeightFactor", a.look.lineHeightFactor);
+    readReal(layout, "listLineHeightFactor", a.look.listLineHeightFactor);
+    readReal(layout, "blockSpacing", a.look.blockSpacing);
+    readReal(layout, "listIndent", a.look.listIndent);
+    readReal(layout, "codeIndent", a.look.codeIndent);
+    readReal(layout, "codePadLeft", a.look.codePadLeft);
+    readReal(layout, "codeStripHeight", a.look.codeStripHeight);
+    readReal(layout, "codePadTop", a.look.codePadTop);
+    readReal(layout, "codeCornerRadius", a.look.codeCornerRadius);
+    readReal(layout, "codeLangPointSize", a.look.codeLangPointSize);
+    readReal(layout, "codeStripPadding", a.look.codeStripPadding);
+    readReal(layout, "codeLangGap", a.look.codeLangGap);
+    readReal(layout, "quoteIndent", a.look.quoteIndent);
+    readReal(layout, "sideMargin", a.look.sideMargin);
+    readReal(layout, "verticalMargin", a.look.verticalMargin);
+    readReal(layout, "maxContentWidth", a.look.maxContentWidth);
+    readReal(layout, "caretWidth", a.look.caretWidth);
+    readReal(layout, "dividerWidth", a.look.dividerWidth);
 
     const QJsonObject colors = root.value(QStringLiteral("colors")).toObject();
-    readColor(colors, "pageBackground", a.pageBackground);
-    readColor(colors, "historyBackground", a.historyBackground);
-    readColor(colors, "selectionBackground", a.selectionBackground);
-    readColor(colors, "searchHighlight", a.searchHighlight);
-    readColor(colors, "diffAdded", a.diffAdded);
-    readColor(colors, "diffRemoved", a.diffRemoved);
-    readColor(colors, "diffChanged", a.diffChanged);
-    readColor(colors, "link", a.linkColor);
-    readColor(colors, "quote", a.quoteColor);
-    readColor(colors, "rawSource", a.rawColor);
-    readColor(colors, "divider", a.dividerColor);
-    readColor(colors, "codeBackground", a.codeBackground);
-    readColor(colors, "codeLang", a.codeLangColor);
-    readColor(colors, "caret", a.caretColor);
+    readColor(colors, "pageBackground", a.look.pageBackground);
+    readColor(colors, "historyBackground", a.look.historyBackground);
+    readColor(colors, "selectionBackground", a.look.selectionBackground);
+    readColor(colors, "searchHighlight", a.look.searchHighlight);
+    readColor(colors, "diffAdded", a.look.diffAdded);
+    readColor(colors, "diffRemoved", a.look.diffRemoved);
+    readColor(colors, "diffChanged", a.look.diffChanged);
+    readColor(colors, "link", a.look.linkColor);
+    readColor(colors, "quote", a.look.quoteColor);
+    readColor(colors, "rawSource", a.look.rawColor);
+    readColor(colors, "divider", a.look.dividerColor);
+    readColor(colors, "codeBackground", a.look.codeBackground);
+    readColor(colors, "codeLang", a.look.codeLangColor);
+    readColor(colors, "caret", a.look.caretColor);
 
     const QJsonObject list = root.value(QStringLiteral("list")).toObject();
-    readColor(list, "bulletColor", a.bulletColor);
-    readColor(list, "orderedColor", a.orderedColor);
+    readColor(list, "bulletColor", a.look.bulletColor);
+    readColor(list, "orderedColor", a.look.orderedColor);
     const QJsonValue bulletStyle = list.value(QStringLiteral("bulletStyle"));
     if (bulletStyle.isString()) {
-        a.bulletStyle = bulletStyle.toString() == QLatin1String("glyph") ? BulletStyle::Glyph
+        a.look.bulletStyle = bulletStyle.toString() == QLatin1String("glyph") ? BulletStyle::Glyph
                                                                         : BulletStyle::Drawn;
     }
-    readReal(list, "bulletDiameter", a.bulletDiameter);
-    readReal(list, "bulletRise", a.bulletRise);
-    readReal(list, "bulletStrokeWidth", a.bulletStrokeWidth);
-    readReal(list, "bulletSquareSide", a.bulletSquareSide);
+    readReal(list, "bulletDiameter", a.look.bulletDiameter);
+    readReal(list, "bulletRise", a.look.bulletRise);
+    readReal(list, "bulletStrokeWidth", a.look.bulletStrokeWidth);
+    readReal(list, "bulletSquareSide", a.look.bulletSquareSide);
 
     // Фигуры по уровням — списком строк. Пустой список пропускаем: остаться
     // вовсе без фигур значит остаться без буллетов.
@@ -457,163 +457,163 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
             else if (name == QLatin1String("square")) parsed.push_back(BulletShape::Square);
             else if (name == QLatin1String("disc")) parsed.push_back(BulletShape::Disc);
         }
-        if (!parsed.empty()) a.bulletShapes = std::move(parsed);
+        if (!parsed.empty()) a.look.bulletShapes = std::move(parsed);
     }
-    readReal(list, "orderedRise", a.orderedRise);
-    readString(list, "bullet", a.bulletGlyph);
-    readReal(list, "bulletScale", a.bulletScale);
-    readReal(list, "bulletTextGap", a.bulletTextGap);
-    readReal(list, "orderedTextGap", a.orderedTextGap);
+    readReal(list, "orderedRise", a.look.orderedRise);
+    readString(list, "bullet", a.look.bulletGlyph);
+    readReal(list, "bulletScale", a.look.bulletScale);
+    readReal(list, "bulletTextGap", a.look.bulletTextGap);
+    readReal(list, "orderedTextGap", a.look.orderedTextGap);
 
     const QJsonObject checkbox = root.value(QStringLiteral("checkbox")).toObject();
-    readStyle(checkbox, "style", a.checkboxStyle);
-    readColor(checkbox, "checkedColor", a.checkboxCheckedColor);
-    readColor(checkbox, "uncheckedColor", a.checkboxUncheckedColor);
-    readColor(checkbox, "tickColor", a.checkboxTickColor);
-    readReal(checkbox, "penWidth", a.checkboxPenWidth);
-    readReal(checkbox, "cornerRadius", a.checkboxCornerRadius);
-    readReal(checkbox, "opticalRise", a.checkboxOpticalRise);
-    readReal(checkbox, "glyphScale", a.checkboxGlyphScale);
-    readReal(checkbox, "textGap", a.checkboxTextGap);
+    readStyle(checkbox, "style", a.look.checkboxStyle);
+    readColor(checkbox, "checkedColor", a.look.checkboxCheckedColor);
+    readColor(checkbox, "uncheckedColor", a.look.checkboxUncheckedColor);
+    readColor(checkbox, "tickColor", a.look.checkboxTickColor);
+    readReal(checkbox, "penWidth", a.look.checkboxPenWidth);
+    readReal(checkbox, "cornerRadius", a.look.checkboxCornerRadius);
+    readReal(checkbox, "opticalRise", a.look.checkboxOpticalRise);
+    readReal(checkbox, "glyphScale", a.look.checkboxGlyphScale);
+    readReal(checkbox, "textGap", a.look.checkboxTextGap);
 
     const QJsonObject notes = root.value(QStringLiteral("notes")).toObject();
-    readString(notes, "root", a.notesRoot);
-    readString(notes, "title", a.storeTitle);
+    readString(notes, "root", a.store.notesRoot);
+    readString(notes, "title", a.store.storeTitle);
     const QJsonValue watch = notes.value(QStringLiteral("watchFolder"));
-    if (watch.isBool()) a.watchStore = watch.toBool();
+    if (watch.isBool()) a.store.watchStore = watch.toBool();
 
     const QJsonObject noteList = root.value(QStringLiteral("noteList")).toObject();
     const QJsonValue listWidth = noteList.value(QStringLiteral("width"));
-    if (listWidth.isDouble()) a.noteListWidth = listWidth.toInt();
+    if (listWidth.isDouble()) a.look.noteListWidth = listWidth.toInt();
     const QJsonValue snippetLines = noteList.value(QStringLiteral("snippetLines"));
-    if (snippetLines.isDouble()) a.noteListSnippetLines = qMax(0, snippetLines.toInt());
-    readColor(noteList, "snippetColor", a.noteListSnippetColor);
-    readColor(noteList, "dateColor", a.noteListDateColor);
+    if (snippetLines.isDouble()) a.look.noteListSnippetLines = qMax(0, snippetLines.toInt());
+    readColor(noteList, "snippetColor", a.look.noteListSnippetColor);
+    readColor(noteList, "dateColor", a.look.noteListDateColor);
 
     const QJsonObject sidebar = root.value(QStringLiteral("sidebar")).toObject();
-    readString(sidebar, "fontFamily", a.sidebarFontFamily);
-    readReal(sidebar, "fontSize", a.sidebarFontPoint);
-    readReal(sidebar, "lineHeightFactor", a.sidebarLineHeightFactor);
-    readColor(sidebar, "folderColor", a.sidebarFolderColor);
-    readReal(sidebar, "folderScale", a.sidebarFolderScale);
+    readString(sidebar, "fontFamily", a.look.sidebarFontFamily);
+    readReal(sidebar, "fontSize", a.look.sidebarFontPoint);
+    readReal(sidebar, "lineHeightFactor", a.look.sidebarLineHeightFactor);
+    readColor(sidebar, "folderColor", a.look.sidebarFolderColor);
+    readReal(sidebar, "folderScale", a.look.sidebarFolderScale);
     const QJsonValue width = sidebar.value(QStringLiteral("width"));
-    if (width.isDouble()) a.sidebarWidth = width.toInt();
+    if (width.isDouble()) a.look.sidebarWidth = width.toInt();
 
     const QJsonObject imageSelection =
         root.value(QStringLiteral("imageSelection")).toObject();
     const QJsonValue cornerShare = imageSelection.value(QStringLiteral("cornerShare"));
-    if (cornerShare.isDouble()) a.imageCornerShare = std::clamp(cornerShare.toDouble(), 0.0, 0.5);
+    if (cornerShare.isDouble()) a.look.imageCornerShare = std::clamp(cornerShare.toDouble(), 0.0, 0.5);
     const QJsonValue cornerMin = imageSelection.value(QStringLiteral("cornerMinLength"));
-    if (cornerMin.isDouble()) a.imageCornerMinLength = qMax(0, cornerMin.toInt());
+    if (cornerMin.isDouble()) a.look.imageCornerMinLength = qMax(0, cornerMin.toInt());
     const QJsonValue cornerWidth = imageSelection.value(QStringLiteral("cornerWidth"));
-    if (cornerWidth.isDouble()) a.imageCornerWidth = qMax(0.5, cornerWidth.toDouble());
+    if (cornerWidth.isDouble()) a.look.imageCornerWidth = qMax(0.5, cornerWidth.toDouble());
     const QJsonValue cornerOffset = imageSelection.value(QStringLiteral("cornerOffset"));
-    if (cornerOffset.isDouble()) a.imageCornerOffset = qMax(0.0, cornerOffset.toDouble());
+    if (cornerOffset.isDouble()) a.look.imageCornerOffset = qMax(0.0, cornerOffset.toDouble());
 
     const QJsonObject imageCaption = root.value(QStringLiteral("imageCaption")).toObject();
-    readBool(imageCaption, "shown", a.imageCaption);
+    readBool(imageCaption, "shown", a.look.imageCaption);
     const QJsonValue captionFamily = imageCaption.value(QStringLiteral("family"));
-    if (captionFamily.isString()) a.imageCaptionFamily = captionFamily.toString();
+    if (captionFamily.isString()) a.look.imageCaptionFamily = captionFamily.toString();
     const QJsonValue captionPoints = imageCaption.value(QStringLiteral("fontPoints"));
     if (captionPoints.isDouble())
-        a.imageCaptionPoints = std::clamp(captionPoints.toDouble(), 6.0, 24.0);
-    readReal(imageCaption, "gap", a.imageCaptionGap);
-    readColor(imageCaption, "color", a.imageCaptionColor);
+        a.look.imageCaptionPoints = std::clamp(captionPoints.toDouble(), 6.0, 24.0);
+    readReal(imageCaption, "gap", a.look.imageCaptionGap);
+    readColor(imageCaption, "color", a.look.imageCaptionColor);
     // Битый регэксп настройку не меняет: молча прятать все подписи (или ни
     // одной) из-за опечатки в конфиге нельзя.
     const QJsonValue noname = imageCaption.value(QStringLiteral("noname"));
     if (noname.isString()) {
         const QRegularExpression candidate(noname.toString(),
                                            QRegularExpression::CaseInsensitiveOption);
-        if (candidate.isValid()) a.imageNonameCaption = candidate;
+        if (candidate.isValid()) a.look.imageNonameCaption = candidate;
     }
 
     const QJsonObject statusBar = root.value(QStringLiteral("statusBar")).toObject();
     const QJsonValue statusFamily = statusBar.value(QStringLiteral("family"));
-    if (statusFamily.isString()) a.statusFamily = statusFamily.toString();
+    if (statusFamily.isString()) a.look.statusFamily = statusFamily.toString();
     const QJsonValue statusPoints = statusBar.value(QStringLiteral("fontPoints"));
-    if (statusPoints.isDouble()) a.statusFontPoints = std::clamp(statusPoints.toInt(), 6, 24);
+    if (statusPoints.isDouble()) a.look.statusFontPoints = std::clamp(statusPoints.toInt(), 6, 24);
     const QJsonValue statusPadding = statusBar.value(QStringLiteral("padding"));
-    if (statusPadding.isDouble()) a.statusPadding = qMax(0, statusPadding.toInt());
+    if (statusPadding.isDouble()) a.look.statusPadding = qMax(0, statusPadding.toInt());
     const QJsonValue statusPaddingTop = statusBar.value(QStringLiteral("paddingTop"));
-    if (statusPaddingTop.isDouble()) a.statusPaddingTop = qMax(0, statusPaddingTop.toInt());
-    readColor(statusBar, "background", a.statusBackground);
-    readColor(statusBar, "textColor", a.statusTextColor);
-    readColor(statusBar, "separatorColor", a.statusSeparatorColor);
+    if (statusPaddingTop.isDouble()) a.look.statusPaddingTop = qMax(0, statusPaddingTop.toInt());
+    readColor(statusBar, "background", a.look.statusBackground);
+    readColor(statusBar, "textColor", a.look.statusTextColor);
+    readColor(statusBar, "separatorColor", a.look.statusSeparatorColor);
 
     const QJsonObject toolbar = root.value(QStringLiteral("toolbar")).toObject();
     const QJsonValue iconSize = toolbar.value(QStringLiteral("iconSize"));
     // Иконка меньше двенадцати точек перестаёт читаться, больше шестидесяти
     // ломает высоту тулбара. Границы не вкус, а пределы, за которыми настройка
     // портит окно, а не настраивает его.
-    if (iconSize.isDouble()) a.toolbarIconSize = std::clamp(iconSize.toInt(), 12, 64);
+    if (iconSize.isDouble()) a.look.toolbarIconSize = std::clamp(iconSize.toInt(), 12, 64);
     const QJsonValue buttonPadding = toolbar.value(QStringLiteral("buttonPadding"));
-    if (buttonPadding.isDouble()) a.toolbarButtonPadding = qMax(0, buttonPadding.toInt());
+    if (buttonPadding.isDouble()) a.look.toolbarButtonPadding = qMax(0, buttonPadding.toInt());
     const QJsonValue groupSpacing = toolbar.value(QStringLiteral("groupSpacing"));
-    if (groupSpacing.isDouble()) a.toolbarGroupSpacing = qMax(0, groupSpacing.toInt());
-    readColor(toolbar, "background", a.toolbarBackground);
-    readColor(toolbar, "iconColor", a.toolbarIconColor);
-    readColor(toolbar, "iconHoverColor", a.toolbarIconHoverColor);
-    readColor(toolbar, "iconOnColor", a.toolbarIconOnColor);
-    readColor(toolbar, "iconMarkColor", a.toolbarIconMarkColor);
-    readColor(toolbar, "iconDisabledColor", a.toolbarIconDisabledColor);
-    readColor(toolbar, "hoverBackground", a.toolbarHoverBackground);
-    readColor(toolbar, "separatorColor", a.toolbarSeparatorColor);
+    if (groupSpacing.isDouble()) a.look.toolbarGroupSpacing = qMax(0, groupSpacing.toInt());
+    readColor(toolbar, "background", a.look.toolbarBackground);
+    readColor(toolbar, "iconColor", a.look.toolbarIconColor);
+    readColor(toolbar, "iconHoverColor", a.look.toolbarIconHoverColor);
+    readColor(toolbar, "iconOnColor", a.look.toolbarIconOnColor);
+    readColor(toolbar, "iconMarkColor", a.look.toolbarIconMarkColor);
+    readColor(toolbar, "iconDisabledColor", a.look.toolbarIconDisabledColor);
+    readColor(toolbar, "hoverBackground", a.look.toolbarHoverBackground);
+    readColor(toolbar, "separatorColor", a.look.toolbarSeparatorColor);
 
     const QJsonObject find = root.value(QStringLiteral("find")).toObject();
-    readReal(find, "fontDelta", a.findFontDelta);
-    readString(find, "previousGlyph", a.findPreviousGlyph);
-    readString(find, "nextGlyph", a.findNextGlyph);
-    readString(find, "historyGlyph", a.findHistoryGlyph);
+    readReal(find, "fontDelta", a.look.findFontDelta);
+    readString(find, "previousGlyph", a.look.findPreviousGlyph);
+    readString(find, "nextGlyph", a.look.findNextGlyph);
+    readString(find, "historyGlyph", a.look.findHistoryGlyph);
     const QJsonValue historyLimit = find.value(QStringLiteral("historyLimit"));
-    if (historyLimit.isDouble()) a.findHistoryLimit = qMax(0, historyLimit.toInt());
+    if (historyLimit.isDouble()) a.look.findHistoryLimit = qMax(0, historyLimit.toInt());
 
     const QJsonObject shortcuts = root.value(QStringLiteral("shortcuts")).toObject();
-    readString(shortcuts, "diffNext", a.diffNextKey);
-    readString(shortcuts, "diffPrevious", a.diffPreviousKey);
+    readString(shortcuts, "diffNext", a.editor.diffNextKey);
+    readString(shortcuts, "diffPrevious", a.editor.diffPreviousKey);
 
     const QJsonObject editor = root.value(QStringLiteral("editor")).toObject();
     const QJsonValue delay = editor.value(QStringLiteral("autosaveDelayMs"));
-    if (delay.isDouble()) a.autosaveDelayMs = delay.toInt();
+    if (delay.isDouble()) a.editor.autosaveDelayMs = delay.toInt();
     const QJsonValue coalesce = editor.value(QStringLiteral("undoCoalesceMs"));
-    if (coalesce.isDouble()) a.undoCoalesceMs = coalesce.toInt();
-    readInt(editor, "undoRunChars", a.undoRunChars);
-    readInt(editor, "codeTabWidth", a.codeTabWidth);
-    readInt(editor, "historyMergeChars", a.historyMergeChars);
-    readInt(editor, "historyMergeHours", a.historyMergeHours);
+    if (coalesce.isDouble()) a.editor.undoCoalesceMs = coalesce.toInt();
+    readInt(editor, "undoRunChars", a.editor.undoRunChars);
+    readInt(editor, "codeTabWidth", a.editor.codeTabWidth);
+    readInt(editor, "historyMergeChars", a.history.historyMergeChars);
+    readInt(editor, "historyMergeHours", a.history.historyMergeHours);
     const QJsonValue limit = editor.value(QStringLiteral("undoLimit"));
-    if (limit.isDouble()) a.undoLimit = limit.toInt();
+    if (limit.isDouble()) a.editor.undoLimit = limit.toInt();
     const QJsonValue budget = editor.value(QStringLiteral("undoBudgetMb"));
-    if (budget.isDouble()) a.undoBudgetMb = budget.toInt();
+    if (budget.isDouble()) a.editor.undoBudgetMb = budget.toInt();
     const QJsonValue images = editor.value(QStringLiteral("imageCacheSizeMb"));
-    if (images.isDouble()) a.imageCacheSizeMb = images.toInt();
+    if (images.isDouble()) a.cache.imageCacheSizeMb = images.toInt();
     const QJsonValue loaded = editor.value(QStringLiteral("maxLoadedImageSize"));
-    if (loaded.isDouble()) a.maxLoadedImageSize = loaded.toInt();
+    if (loaded.isDouble()) a.cache.maxLoadedImageSize = loaded.toInt();
     const QJsonValue documents = editor.value(QStringLiteral("documentCacheSizeMb"));
-    if (documents.isDouble()) a.documentCacheSizeMb = documents.toInt();
-    readString(editor, "toggleTaskKey", a.toggleTaskKey);
-    readString(editor, "moveUpKey", a.moveUpKey);
-    readString(editor, "moveDownKey", a.moveDownKey);
-    readString(editor, "makeBulletKey", a.makeBulletKey);
-    readString(editor, "makeOrderedKey", a.makeOrderedKey);
-    readString(editor, "makeTaskKey", a.makeTaskKey);
-    readString(editor, "makeParagraphKey", a.makeParagraphKey);
-    readString(editor, "makeCommentKey", a.makeCommentKey);
+    if (documents.isDouble()) a.cache.documentCacheSizeMb = documents.toInt();
+    readString(editor, "toggleTaskKey", a.editor.toggleTaskKey);
+    readString(editor, "moveUpKey", a.editor.moveUpKey);
+    readString(editor, "moveDownKey", a.editor.moveDownKey);
+    readString(editor, "makeBulletKey", a.editor.makeBulletKey);
+    readString(editor, "makeOrderedKey", a.editor.makeOrderedKey);
+    readString(editor, "makeTaskKey", a.editor.makeTaskKey);
+    readString(editor, "makeParagraphKey", a.editor.makeParagraphKey);
+    readString(editor, "makeCommentKey", a.editor.makeCommentKey);
     // Автозамены: список пар [сочетание, что вставить]. Заданный список
     // заменяет умолчания целиком — иначе от умолчания было бы не избавиться.
     const QJsonValue special = editor.value(QStringLiteral("special"));
     if (special.isArray()) {
-        a.specialKeys.clear();
+        a.editor.specialKeys.clear();
         for (const QJsonValue& entry : special.toArray()) {
             const QJsonArray pair = entry.toArray();
             if (pair.size() != 2 || !pair.at(0).isString() || !pair.at(1).isString())
                 continue;   // битую запись пропускаем, соседние живут
             const QString keys = pair.at(0).toString();
             if (keys.isEmpty()) continue;
-            a.specialKeys.push_back({keys, pair.at(1).toString()});
+            a.editor.specialKeys.push_back({keys, pair.at(1).toString()});
         }
     }
-    readString(editor, "externalEditor", a.externalEditor);
+    readString(editor, "externalEditor", a.editor.externalEditor);
 
     // Имя своё, а не "images": в этой же области уже живёт значение ключа
     // editor.imageCacheSizeMb под этим именем.
@@ -621,13 +621,13 @@ void appearanceFromJson(const QJsonObject& root, Appearance& a) {
     readInt(importGroup, "maxImportedImageSize", a.images.maxImportedImageSize);
 
     const QJsonObject scroll = root.value(QStringLiteral("scroll")).toObject();
-    readBool(scroll, "smooth", a.smoothScroll);
-    readInt(scroll, "smoothMs", a.smoothScrollMs);
+    readBool(scroll, "smooth", a.look.smoothScroll);
+    readInt(scroll, "smoothMs", a.look.smoothScrollMs);
 
     const QJsonObject zoom = root.value(QStringLiteral("zoom")).toObject();
-    readReal(zoom, "step", a.zoomStep);
-    readReal(zoom, "min", a.zoomMin);
-    readReal(zoom, "max", a.zoomMax);
+    readReal(zoom, "step", a.look.zoomStep);
+    readReal(zoom, "min", a.look.zoomMin);
+    readReal(zoom, "max", a.look.zoomMax);
 }
 
 bool writeJson(const QString& path, const QJsonObject& root) {
@@ -640,7 +640,8 @@ bool writeJson(const QString& path, const QJsonObject& root) {
 
 }  // namespace
 
-Appearance& appearance() { return g_appearance; }
+const ZSettings& settings() { return g_settings; }
+ZSettings& editSettings() { return g_settings; }
 
 CodePlate codePlate() {
     // Единицы те же, что у сборщика документа: по вертикали — высота строки
@@ -651,39 +652,39 @@ CodePlate codePlate() {
     // и живёт в пикселях, а зум — это шрифт документа. Спрашивать масштаб тут
     // значило бы разойтись с резервом, который сборщик уже положил в поля
     // блока.
-    QFont base{QString(g_appearance.fontFamily)};
-    base.setPointSizeF(g_appearance.baseFontPoint);
+    QFont base{QString(g_settings.look.fontFamily)};
+    base.setPointSizeF(g_settings.look.baseFontPoint);
     base.setStyleHint(QFont::Monospace);
     const qreal charUnit = QFontMetricsF(base).horizontalAdvance(QLatin1Char('A'));
 
     QFont codeLine = base;
-    codeLine.setPointSizeF(g_appearance.baseFontPoint * fontStepFactor(g_appearance.codeStep));
+    codeLine.setPointSizeF(g_settings.look.baseFontPoint * fontStepFactor(g_settings.look.codeStep));
     const qreal lineUnit =
-        std::round(QFontMetricsF(codeLine).height() * g_appearance.lineHeightFactor);
+        std::round(QFontMetricsF(codeLine).height() * g_settings.look.lineHeightFactor);
 
     CodePlate plate;
-    plate.strip = std::round(g_appearance.codeStripHeight * lineUnit);
-    plate.padTop = std::round(g_appearance.codePadTop * lineUnit);
-    plate.padLeft = g_appearance.codePadLeft * charUnit;
-    plate.indent = g_appearance.codeIndent * charUnit;
-    plate.radius = g_appearance.codeCornerRadius;
-    plate.stripPadding = g_appearance.codeStripPadding * charUnit;
-    plate.langGap = g_appearance.codeLangGap * charUnit;
+    plate.strip = std::round(g_settings.look.codeStripHeight * lineUnit);
+    plate.padTop = std::round(g_settings.look.codePadTop * lineUnit);
+    plate.padLeft = g_settings.look.codePadLeft * charUnit;
+    plate.indent = g_settings.look.codeIndent * charUnit;
+    plate.radius = g_settings.look.codeCornerRadius;
+    plate.stripPadding = g_settings.look.codeStripPadding * charUnit;
+    plate.langGap = g_settings.look.codeLangGap * charUnit;
     return plate;
 }
 
 QFont codeLangFont() {
-    QFont font{QString(g_appearance.sidebarFontFamily)};
-    const qreal point = g_appearance.codeLangPointSize > 0.0
-                            ? g_appearance.codeLangPointSize
-                            : g_appearance.sidebarFontPoint;
+    QFont font{QString(g_settings.look.sidebarFontFamily)};
+    const qreal point = g_settings.look.codeLangPointSize > 0.0
+                            ? g_settings.look.codeLangPointSize
+                            : g_settings.look.sidebarFontPoint;
     font.setPointSizeF(point);
     return font;
 }
 
 
-QByteArray defaultAppearanceJson() {
-    return QJsonDocument(appearanceToJson(Appearance{})).toJson(QJsonDocument::Indented);
+QByteArray defaultSettingsJson() {
+    return QJsonDocument(settingsToJson(ZSettings{})).toJson(QJsonDocument::Indented);
 }
 
 namespace {
@@ -769,7 +770,7 @@ bool writeConfigTemplate(QString* error) {
     // Всё тело — комментарием, снаружи пустой объект. Так файл и остаётся
     // действующим (отклонений нет), и служит меню: раскомментировал строку —
     // получил отклонение.
-    const QList<QByteArray> lines = defaultAppearanceJson().split('\n');
+    const QList<QByteArray> lines = defaultSettingsJson().split('\n');
     QByteArray out =
         "// Конфиг zametti. Здесь перечислено ВСЁ, что можно покрутить, со\n"
         "// значениями по умолчанию, и всё закомментировано: действующий конфиг —\n"
@@ -862,7 +863,7 @@ int g_loadedImageSizeLimit = 0;
 }  // namespace
 
 int loadedImageSizeLimit() {
-    if (g_appearance.maxLoadedImageSize > 0) return g_appearance.maxLoadedImageSize;
+    if (g_settings.cache.maxLoadedImageSize > 0) return g_settings.cache.maxLoadedImageSize;
     if (g_loadedImageSizeLimit == 0) g_loadedImageSizeLimit = derivedImageSizeLimit();
     return g_loadedImageSizeLimit;
 }
@@ -877,14 +878,14 @@ void applyImageAllocationLimit() {
     //
     // Восьмая доля, которую я взял сначала, давала 64 МБ и отвергала как раз
     // обычные телефонные фото.
-    const int budget = qMax(8, g_appearance.imageCacheSizeMb);
+    const int budget = qMax(8, g_settings.cache.imageCacheSizeMb);
     QImageReader::setAllocationLimit(qMax(1, budget / 4));
 }
 
 QStringList unknownConfigKeys(const QJsonObject& root) {
     // Сверяемся с полным списком умолчаний: он и есть словарь всех имён.
     const QJsonObject known =
-        QJsonDocument::fromJson(defaultAppearanceJson()).object();
+        QJsonDocument::fromJson(defaultSettingsJson()).object();
     QStringList out;
     for (auto section = root.begin(); section != root.end(); ++section) {
         if (!known.contains(section.key())) {
@@ -901,7 +902,7 @@ QStringList unknownConfigKeys(const QJsonObject& root) {
     return out;
 }
 
-bool loadAppearance(QString* error, QStringList* unknown) {
+bool loadSettings(QString* error, QStringList* unknown) {
     const QString path = configPath();
     QFile file(path);
 
@@ -922,7 +923,7 @@ bool loadAppearance(QString* error, QStringList* unknown) {
             return false;
         }
         if (unknown != nullptr) *unknown = unknownConfigKeys(doc.object());
-        appearanceFromJson(doc.object(), g_appearance);
+        settingsFromJson(doc.object(), g_settings);
     }
     applyImageAllocationLimit();
     return true;

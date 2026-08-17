@@ -106,14 +106,14 @@ Toolbar::Toolbar(QWidget* parent) : QWidget(parent) {
 
 void Toolbar::build() {
     auto* layout = new QHBoxLayout(this);
-    const Appearance& a = appearance();
-    layout->setContentsMargins(a.toolbarGroupSpacing / 2, 4, a.toolbarGroupSpacing / 2, 4);
+    const ZSettings& a = settings();
+    layout->setContentsMargins(a.look.toolbarGroupSpacing / 2, 4, a.look.toolbarGroupSpacing / 2, 4);
     layout->setSpacing(0);
 
     int previousGroup = -1;
     for (const Spec& spec : kSpecs) {
         if (previousGroup >= 0 && spec.group != previousGroup)
-            layout->addSpacing(a.toolbarGroupSpacing);
+            layout->addSpacing(a.look.toolbarGroupSpacing);
         previousGroup = spec.group;
 
         auto* button = new QToolButton(this);
@@ -134,7 +134,7 @@ void Toolbar::build() {
 }
 
 void Toolbar::restyle() {
-    const Appearance& a = appearance();
+    const ZSettings& a = settings();
     // Плотность берётся у окна, а не у экрана: окно переезжает между экранами
     // разной плотности, и на этапе 8 именно плавающий devicePixelRatio уже
     // портил картинки. Пока окна нет (виджет ещё не показан), берём единицу и
@@ -143,7 +143,7 @@ void Toolbar::restyle() {
                           ? window()->windowHandle()->devicePixelRatio()
                           : devicePixelRatioF();
 
-    const int side = a.toolbarIconSize + 2 * a.toolbarButtonPadding;
+    const int side = a.look.toolbarIconSize + 2 * a.look.toolbarButtonPadding;
     for (const Spec& spec : kSpecs) {
         QToolButton* button = buttons_.value(int(spec.id));
         if (!button) continue;
@@ -151,48 +151,48 @@ void Toolbar::restyle() {
         // сортировки успело смениться, и перерисовка по kSpecs откатила бы
         // стрелку назад — на смене плотности экрана или после правки конфига.
         const QString name = icons_.value(int(spec.id), QString::fromLatin1(spec.icon));
-        const QColor onColour = marked_.value(int(spec.id), false) ? a.toolbarIconMarkColor
-                                                                   : a.toolbarIconOnColor;
+        const QColor onColour = marked_.value(int(spec.id), false) ? a.look.toolbarIconMarkColor
+                                                                   : a.look.toolbarIconOnColor;
 
         QIcon icon;
-        icon.addPixmap(toolbarIcon(name, a.toolbarIconSize, a.toolbarIconColor, dpr),
+        icon.addPixmap(toolbarIcon(name, a.look.toolbarIconSize, a.look.toolbarIconColor, dpr),
                        QIcon::Normal, QIcon::Off);
-        icon.addPixmap(toolbarIcon(name, a.toolbarIconSize, a.toolbarIconHoverColor, dpr),
+        icon.addPixmap(toolbarIcon(name, a.look.toolbarIconSize, a.look.toolbarIconHoverColor, dpr),
                        QIcon::Active, QIcon::Off);
-        icon.addPixmap(toolbarIcon(name, a.toolbarIconSize, a.toolbarIconDisabledColor, dpr),
+        icon.addPixmap(toolbarIcon(name, a.look.toolbarIconSize, a.look.toolbarIconDisabledColor, dpr),
                        QIcon::Disabled, QIcon::Off);
         // Нажатое состояние переключателя — цветом. Рамка на иконке в двадцать
         // точек спорит с самим рисунком, а цвет виден сразу и издалека.
-        icon.addPixmap(toolbarIcon(name, a.toolbarIconSize, onColour, dpr),
+        icon.addPixmap(toolbarIcon(name, a.look.toolbarIconSize, onColour, dpr),
                        QIcon::Normal, QIcon::On);
-        icon.addPixmap(toolbarIcon(name, a.toolbarIconSize, onColour, dpr),
+        icon.addPixmap(toolbarIcon(name, a.look.toolbarIconSize, onColour, dpr),
                        QIcon::Active, QIcon::On);
-        icon.addPixmap(toolbarIcon(name, a.toolbarIconSize, a.toolbarIconDisabledColor, dpr),
+        icon.addPixmap(toolbarIcon(name, a.look.toolbarIconSize, a.look.toolbarIconDisabledColor, dpr),
                        QIcon::Disabled, QIcon::On);
         button->setIcon(icon);
-        button->setIconSize(QSize(a.toolbarIconSize, a.toolbarIconSize));
+        button->setIconSize(QSize(a.look.toolbarIconSize, a.look.toolbarIconSize));
         button->setFixedSize(side, side);
     }
 
     setAutoFillBackground(true);
     QPalette palette = this->palette();
-    palette.setColor(QPalette::Window, a.toolbarBackground);
+    palette.setColor(QPalette::Window, a.look.toolbarBackground);
     setPalette(palette);
 
     setStyleSheet(QStringLiteral("QToolButton { border: none; border-radius: 4px; "
                                  "background: transparent; }"
                                  "QToolButton:hover:enabled { background: rgba(%1,%2,%3,%4); }"
                                  "QToolButton:checked:enabled { background: rgba(%1,%2,%3,%4); }")
-                      .arg(a.toolbarHoverBackground.red())
-                      .arg(a.toolbarHoverBackground.green())
-                      .arg(a.toolbarHoverBackground.blue())
-                      .arg(a.toolbarHoverBackground.alpha()));
+                      .arg(a.look.toolbarHoverBackground.red())
+                      .arg(a.look.toolbarHoverBackground.green())
+                      .arg(a.look.toolbarHoverBackground.blue())
+                      .arg(a.look.toolbarHoverBackground.alpha()));
 }
 
 void Toolbar::paintEvent(QPaintEvent* e) {
     QWidget::paintEvent(e);
     QPainter painter(this);
-    painter.setPen(appearance().toolbarSeparatorColor);
+    painter.setPen(settings().look.toolbarSeparatorColor);
     // Ровно одна ЛОГИЧЕСКАЯ точка: на плотном экране Qt сама положит её в
     // нужное число пикселей, а нарисованная в пикселях черта была бы то
     // толстой, то невидимой.

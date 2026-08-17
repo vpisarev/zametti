@@ -153,7 +153,7 @@ void SearchResultsDelegate::paint(QPainter* painter, const QStyleOptionViewItem&
     const QRect hitRect(x, body.top(), hitWidth, body.height());
     // Тем же цветом, что и находки в самой заметке: перешёл по строке — и
     // увидел на прежнем месте то же самое пятно, только в тексте.
-    painter->fillRect(hitRect.adjusted(0, 1, 0, -1), appearance().searchHighlight);
+    painter->fillRect(hitRect.adjusted(0, 1, 0, -1), settings().look.searchHighlight);
     painter->setPen(option.palette.color(QPalette::Text));
     painter->drawText(hitRect, Qt::AlignLeft | Qt::AlignVCenter, hit);
     x += hitWidth;

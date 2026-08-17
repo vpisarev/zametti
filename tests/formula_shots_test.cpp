@@ -217,7 +217,7 @@ void checkCornersOnSelected() {
     // Каретка в тексте — уголков нет. Считаем точки цвета каретки в рамке
     // вокруг вёрстки: именно им уголки и рисуются.
     const auto cornerInk = [&](const QImage& shot) {
-        const QColor mark = zametti::appearance().caretColor;
+        const QColor mark = zametti::settings().look.caretColor;
         int hits = 0;
         const QRectF around(box.adjusted(-24, -24, 24, 24));
         for (int x = int(around.left() * dpr); x < int(around.right() * dpr) && x < shot.width();

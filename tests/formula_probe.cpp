@@ -67,8 +67,8 @@ Ink inkRows(const QImage& image) {
 // вышла бы на треть мельче текста (я на этом и попался — увидел на первом же
 // снимке, что математика мельче букв).
 qreal textPixelSize() {
-    QFont font(zametti::appearance().fontFamily);
-    font.setPointSizeF(zametti::appearance().baseFontPoint);
+    QFont font(zametti::settings().look.fontFamily);
+    font.setPointSizeF(zametti::settings().look.baseFontPoint);
     return QFontInfo(font).pixelSize();
 }
 
@@ -190,7 +190,7 @@ void checkUnicodeSpaces() {
 // мельче соседних букв. Меряем отношение ростов строчных (x-height): по нему
 // владелец и выставит formulas.inlineScale.
 void measureXHeight() {
-    const zametti::Appearance& look = zametti::appearance();
+    const zametti::ZSettings::Look& look = zametti::settings().look;
     QFont font(look.fontFamily);
     font.setPointSizeF(look.baseFontPoint);
     const QFontMetricsF metrics(font);
@@ -212,11 +212,11 @@ void measureXHeight() {
     const double textX = metrics.xHeight();
     std::printf("рост строчных: текст %s, математика %s, отношение %s (в конфиге %s)\n",
                 num(textX).c_str(), num(mathX).c_str(), num(textX / mathX).c_str(),
-                num(zametti::appearance().formulas.inlineScale).c_str());
+                num(zametti::settings().formulas.inlineScale).c_str());
     // Коэффициент из конфига обязан и правда равнять рост строчных: если
     // однажды сменится гарнитура, эта проверка покраснеет первой.
     const zametti::FormulaImage scaled = zametti::Formulas::render(
-        QStringLiteral("x"), false, textPixelSize() * zametti::appearance().formulas.inlineScale,
+        QStringLiteral("x"), false, textPixelSize() * zametti::settings().formulas.inlineScale,
         Qt::black, 1.0);
     if (scaled.ok()) {
         const Ink si = inkRows(scaled.image);
@@ -238,7 +238,7 @@ void measureXHeight() {
 // (1.10). Одинаковая строка, одинаковый текст, две базовые линии: разницу
 // видно, только когда они рядом.
 void shootComparison(int zoom) {
-    const zametti::Appearance& look = zametti::appearance();
+    const zametti::ZSettings::Look& look = zametti::settings().look;
     QFont font(look.fontFamily);
     font.setPointSizeF(look.baseFontPoint * zoom);
     const QFontMetricsF metrics(font);
@@ -258,7 +258,7 @@ void shootComparison(int zoom) {
     };
     // Сравниваем единицу с тем, что стоит в конфиге: лист обязан показывать
     // то, чем программа и правда рисует, а не число, вписанное в набор.
-    const double scales[] = {1.00, zametti::appearance().formulas.inlineScale};
+    const double scales[] = {1.00, zametti::settings().formulas.inlineScale};
 
     const int pad = 24;
     const qreal step = metrics.height() * 2.6;
@@ -306,7 +306,7 @@ void shootComparison(int zoom) {
 }
 
 void shootRuler(int zoom) {
-    const zametti::Appearance& look = zametti::appearance();
+    const zametti::ZSettings::Look& look = zametti::settings().look;
     QFont font(look.fontFamily);
     // Второй лист рисуется втрое крупнее — и именно РИСУЕТСЯ, а не растягивается:
     // формула векторная, и увеличенная растяжкой она бы мылила ровно там, где
@@ -347,7 +347,7 @@ void shootRuler(int zoom) {
             if (piece.latex.isEmpty()) continue;
             const zametti::FormulaImage formula = zametti::Formulas::render(
                 piece.latex, false,
-                QFontInfo(font).pixelSize() * zametti::appearance().formulas.inlineScale,
+                QFontInfo(font).pixelSize() * zametti::settings().formulas.inlineScale,
                 QColor(0x1a, 0x1a, 0x1a), 1.0);
             if (!formula.ok()) continue;
             // ВОТ ОНА, ПОСАДКА: верх картинки = базовая линия текста минус
