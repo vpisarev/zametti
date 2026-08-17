@@ -1328,6 +1328,14 @@ void NoteView::attachObjectHandlers(QTextDocument* doc) {
 }
 
 void NoteView::setDocument(QTextDocument* doc) {
+    // ОБРАБОТЧИКИ — ДО ПОДМЕНЫ. QTextEdit::setDocument тут же задаёт документу
+    // размер страницы, и вёрстка ПЕРВЫЙ РАЗ проходит по нему ещё внутри этого
+    // вызова: без обработчиков каждый объект получает нулевой размер, а строка
+    // с ним — нулевую высоту. Потом полная пометка перемеряет не всё (вёрстка
+    // ленивая, докладывает кусками), и часть формул так и оставалась в нулевых
+    // полосах — вёрстка ложилась на текст под ними. Регистрируем у вёрстки
+    // раньше, чем она впервые спросит.
+    attachObjectHandlers(doc);
     QTextBrowser::setDocument(doc);
     attachObjectHandlers(doc);
 }
@@ -1571,86 +1579,73 @@ void NoteView::setEditedCodeLanguage(int firstBlockNumber) {
     viewport()->update();
 }
 
-// --- выключные формулы -------------------------------------------------------
+// ВЁРСТКА ФОРМУЛ — ЛЕНИВО И ПО СОДЕРЖИМОМУ.
 //
-// Третье воплощение слоя объекта, и устроено оно как показ картинки: строка
-// исходника закрашивается фоном, вёрстка встаёт на её место, место резервирует
-// нижнее поле блока. Прятать блок, как у таблицы, здесь нельзя и не нужно:
-// многострочная выключная формула живёт в ОДНОМ блоке — переносы внутри абзаца
-// его не рвут.
+// Движок зовётся не отсюда и не на кадр, а тогда, когда объект впервые
+// спрашивают о размере (intrinsicSize) или рисуют, — и результат ложится в
+// кэш по исходнику. Здесь только сверяются условия вёрстки: кегль, цвет пера,
+// плотность экрана. Разошлись с теми, при которых собран кэш, — кэш пуст, и
+// каждая формула посчитается заново, когда до неё дойдёт вёрстка.
 //
-// Движок зовётся здесь, а не в отрисовке: рендер стоит миллисекунды, а кадров
-// в секунду шестьдесят.
+// Прежде здесь стоял обход ВСЕГО документа на каждый textChanged с вызовом
+// движка на каждую формулу (кэш был выключен) — и это ещё полбеды; беда была
+// в том, что вёрстка Qt перемеряет объекты внутри contentsChange, РАНЬШЕ
+// textChanged, и в этот момент кэша для только что вернувшегося (Ctrl+Z) или
+// свёрнутого блока не было: полоса выходила в одну строку, вёрстка ложилась на
+// текст под ней. Замер — BlockGeometry, случай владельца с матрицей и
+// «## Delimiters».
 void NoteView::syncFormulas() {
-    QHash<int, FormulaRender> fresh;
-    if (Formulas::ready()) {
-        const QFont base = baseFont();
-        // Кегль движку нужен В ПИКСЕЛЯХ, и спрашивать его надо у Qt: она знает,
-        // во сколько пикселей превратился кегль в пунктах на этом экране.
-        // Пункты сюда передавать нельзя — формула выйдет на треть мельче текста
-        // (обжёгся на этом в пробнике).
-        const qreal pixelSize = QFontInfo(base).pixelSize() * settings().formulas().displayScale();
-        // Цвет — ПЕРОМ ИЗ ПАЛИТРЫ, а не инверсией картинки: в тёмной теме
-        // формула обязана быть набрана светлым, а не вывернутой наизнанку.
-        const QColor colour = palette().color(QPalette::Text);
-        const qreal dpr = devicePixelRatioF();
+    if (!Formulas::ready()) return;
+    // Кегль движку нужен В ПИКСЕЛЯХ, и спрашивать его надо у Qt: она знает, во
+    // сколько пикселей превратился кегль в пунктах на этом экране. Пункты сюда
+    // передавать нельзя — формула выйдет на треть мельче текста (обжёгся на этом
+    // в пробнике).
+    const qreal pixelSize = QFontInfo(baseFont()).pixelSize() * settings().formulas().displayScale();
+    // Цвет — ПЕРОМ ИЗ ПАЛИТРЫ, а не инверсией картинки: в тёмной теме формула
+    // обязана быть набрана светлым, а не вывернутой наизнанку.
+    const QColor colour = palette().color(QPalette::Text);
+    const qreal dpr = devicePixelRatioF();
+    if (qFuzzyCompare(pixelSize, formulaPixelSize_) && colour == formulaColour_ &&
+        qFuzzyCompare(dpr, formulaDpr_))
+        return;
+    formulaPixelSize_ = pixelSize;
+    formulaColour_ = colour;
+    formulaDpr_ = dpr;
+    formulaCache_.clear();
+}
 
-        for (QTextBlock block = document()->begin(); block.isValid(); block = block.next()) {
-            // ВЁРСТКА СЧИТАЕТСЯ ТОЛЬКО ОБЪЕКТУ. Раскрытая на правку формула —
-            // это обычный абзац с исходником (Kind::Paragraph), и рисовать
-            // поверх него нечего: человек правит то, что видит. Признака «его
-            // сейчас правят» больше нет — род блока говорит всё сам.
-            if (isRawBlock(block) || kindOf(block) != Kind::Math) continue;
-            const BlockFormulaRef ref = blockFormulaRef(block);
-            if (!ref.valid || !ref.display) continue;
+const FormulaRender* NoteView::formulaRenderFor(const QString& source, const QString& latex) {
+    if (!Formulas::ready()) return nullptr;
+    // Условия вёрстки могли смениться без сверки (первый вызов, смена палитры):
+    // сверяем здесь же — это и есть единственный вход.
+    syncFormulas();
+    if (formulaPixelSize_ <= 0.0) return nullptr;
+    const auto it = formulaCache_.constFind(source);
+    if (it != formulaCache_.constEnd()) return &it.value();
 
-            const int number = block.blockNumber();
-            FormulaRender render;
-            // КЭШ ВЁРСТКИ ВЫКЛЮЧЕН — по решению владельца, чтобы проверить
-            // догадку: не от него ли пропадающие строки и прочие странности,
-            // которые набор не ловит. Пока выключен, движок зовётся на каждую
-            // сверку; это дорого (миллисекунды на формулу), и включать его
-            // обратно надо вместе с проверкой, которая эту догадку закрывает.
-            //
-            // Пометка на завтра: если догадка не подтвердится, кэш вернуть — но
-            // ключом, в котором перечислено ВСЁ, от чего зависит картинка
-            // (исходник, кегль, цвет, плотность), и с проверкой «повторная
-            // сверка движок не зовёт».
-            const FormulaRender* had = nullptr;
-            if (had != nullptr && had->source == ref.source && had->colour == colour &&
-                qFuzzyCompare(had->pixelSize, pixelSize) && qFuzzyCompare(had->dpr, dpr)) {
-                render = *had;   // ничего не изменилось — движок звать незачем
-            } else {
-                render.source = ref.source;
-                render.pixelSize = pixelSize;
-                render.colour = colour;
-                render.dpr = dpr;
-                // Предконтроль ДО движка: он молчалив и семь сломанных формул из
-                // десяти дорисовывает огрызком без единой жалобы.
-                render.error = checkLatex(ref.latex);
-                if (render.error.isEmpty()) {
-                    const FormulaImage drawn =
-                        Formulas::render(ref.latex, true, pixelSize, colour, dpr);
-                    if (drawn.ok()) {
-                        render.image = drawn.image;
-                        render.width = drawn.width;
-                        render.height = drawn.height;
-                    } else {
-                        render.error = drawn.error;
-                    }
-                }
-            }
-            render.block = number;
-            fresh.insert(number, render);
+    // Кэш переполнился — выбрасываем целиком: считать заново дешевле, чем
+    // вести очередь вытеснения ради заметки с тысячей формул.
+    if (formulaCache_.size() >= 512) formulaCache_.clear();
+
+    FormulaRender render;
+    render.source = source;
+    render.pixelSize = formulaPixelSize_;
+    render.colour = formulaColour_;
+    render.dpr = formulaDpr_;
+    // Предконтроль ДО движка: он молчалив и семь сломанных формул из десяти
+    // дорисовывает огрызком без единой жалобы.
+    render.error = checkLatex(latex);
+    if (render.error.isEmpty()) {
+        const FormulaImage drawn = Formulas::render(latex, true, formulaPixelSize_, formulaColour_, formulaDpr_);
+        if (drawn.ok()) {
+            render.image = drawn.image;
+            render.width = drawn.width;
+            render.height = drawn.height;
+        } else {
+            render.error = drawn.error;
         }
     }
-    formulas_ = fresh;
-
-    // ИСХОДНИК ГАСИТЬ БОЛЬШЕ НЕЧЕМ И НЕЗАЧЕМ: его в тексте блока нет вовсе —
-    // там стоит объект, а исходник живёт в свойстве его формата. Прежде здесь
-    // стоял проход, красивший исходник прозрачным и возвращавший ему цвет на
-    // время правки; это была запись ВИДА в живой документ, и ровно из-за неё
-    // показ формул был выключен.
+    return &*formulaCache_.insert(source, render);
 }
 
 // ОДИН ВОПРОС НА ВСЕ ОБЪЕКТЫ. Показан ли объект вместо своего исходника —
@@ -1682,14 +1677,20 @@ bool NoteView::caretOnDrawnObject() {
     return false;
 }
 
-const FormulaRender* NoteView::formulaAt(int blockNumber) const {
-    const auto it = formulas_.constFind(blockNumber);
-    return it == formulas_.constEnd() ? nullptr : &it.value();
+const FormulaRender* NoteView::formulaAt(int blockNumber) {
+    const QTextBlock block = document()->findBlockByNumber(blockNumber);
+    // ВЁРСТКА — ТОЛЬКО ОБЪЕКТУ. Раскрытая на правку формула — обычный абзац с
+    // исходником (Kind::Paragraph), и рисовать поверх него нечего: человек
+    // правит то, что видит. Род блока говорит всё сам.
+    if (!block.isValid() || isRawBlock(block) || kindOf(block) != Kind::Math) return nullptr;
+    const BlockFormulaRef ref = blockFormulaRef(block);
+    if (!ref.valid || !ref.display) return nullptr;
+    return formulaRenderFor(ref.source, ref.latex);
 }
 
 
 // Где стоит вёрстка: по центру колонки, сразу под верхом строки исходника.
-QRectF NoteView::formulaRect(int blockNumber) const {
+QRectF NoteView::formulaRect(int blockNumber) {
     const FormulaRender* render = formulaAt(blockNumber);
     if (render == nullptr || render->image.isNull()) return {};
     const QTextBlock block = document()->findBlockByNumber(blockNumber);
@@ -1772,12 +1773,14 @@ void NoteView::paintFormulaMarks(QPainter& painter, const QTextBlock& block) {
     painter.restore();
 }
 
-int NoteView::formulaAtPoint(const QPointF& documentPoint) const {
-    for (const FormulaRender& render : std::as_const(formulas_)) {
-        const QRectF rect = formulaRect(render.block);
-        if (!rect.isEmpty() && rect.contains(documentPoint)) return render.block;
-    }
-    return -1;
+int NoteView::formulaAtPoint(const QPointF& documentPoint) {
+    // Без обхода документа: вёрстка сама знает, чей блок под точкой.
+    const int hit = document()->documentLayout()->hitTest(documentPoint, Qt::FuzzyHit);
+    if (hit < 0) return -1;
+    const QTextBlock block = document()->findBlock(hit);
+    if (!block.isValid()) return -1;
+    const QRectF rect = formulaRect(block.blockNumber());
+    return !rect.isEmpty() && rect.contains(documentPoint) ? block.blockNumber() : -1;
 }
 
 // --- таблицы ----------------------------------------------------------------
