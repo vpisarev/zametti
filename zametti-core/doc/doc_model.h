@@ -172,6 +172,14 @@ QString sourceTextOf(const QTextBlock& block);
 QString tableSourceOf(const QTextBlock& block);
 bool isTableObjectBlock(const QTextBlock& block);
 
+// Есть ли в блоке РАСКРЫТАЯ на правку строчная формула (кусок с SpanMathOpen).
+// По ней Esc и уход каретки зовут судью closeInlineFormula, а сохранение
+// сворачивает раскрытое перед записью.
+bool hasOpenInlineFormula(const QTextBlock& block);
+
+// Стоит ли на этой позиции документа знак строчной формулы-объекта.
+bool isInlineFormulaChar(const QTextDocument& doc, int position);
+
 // ТЕКСТ БЛОКА ДЛЯ ПОИСКА: у обычного блока — его текст, у объекта (таблица,
 // формула) — ИСХОДНИК из свойства (решение владельца: поиск ищет по исходнику).
 // В тексте блока-объекта стоит один U+FFFC, и без этого правила Ctrl+F, поиск

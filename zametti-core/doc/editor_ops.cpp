@@ -1132,6 +1132,21 @@ namespace {
 // Обернуть или развернуть кусок долларами. Одна механика на строчную и
 // выключную: разница только в числе долларов и в том, что берётся — выделение
 // или весь абзац.
+//
+// СТРОЧНАЯ ПАРА ПОМЕЧАЕТСЯ РАСКРЫТОЙ (SpanMathOpen): человек прямо сейчас
+// набирает формулу, и сворачивать её в объект под руками нельзя; уход каретки
+// (или Esc) позовёт судью closeInlineFormula — и обёрнутое станет объектом,
+// если это формула. Это и есть путь «формула с клавиатуры»: набранные без
+// жеста доллары остаются текстом (семантика писателя, math_ir_test).
+void markInlineMathOpen(QTextCursor& at, int from, int to) {
+    QTextCharFormat open;
+    open.setProperty(SpanStyleProperty, SpanMath | SpanMathOpen);
+    QTextCursor range(at);
+    range.setPosition(from);
+    range.setPosition(to, QTextCursor::KeepAnchor);
+    range.mergeCharFormat(open);
+}
+
 bool toggleMath(QTextCursor& cursor, const QString& fence, bool wholeBlock) {
     QTextCursor at = cursor;
     if (wholeBlock) {
@@ -1139,11 +1154,14 @@ bool toggleMath(QTextCursor& cursor, const QString& fence, bool wholeBlock) {
         at.setPosition(at.block().position() + at.block().length() - 1,
                        QTextCursor::KeepAnchor);
     }
+    const bool inlinePair = !wholeBlock && fence.size() == 1;
     const QString text = at.selectedText();
     if (text.isEmpty() && !wholeBlock) {
         // Пустая каретка: ставим пару и встаём между ними — дальше человек
         // просто печатает формулу.
+        const int start = at.position();
         at.insertText(fence + fence);
+        if (inlinePair) markInlineMathOpen(at, start, at.position());
         at.setPosition(at.position() - fence.size());
         cursor = at;
         return true;
@@ -1158,7 +1176,9 @@ bool toggleMath(QTextCursor& cursor, const QString& fence, bool wholeBlock) {
         cursor = at;
         return true;
     }
+    const int start = qMin(at.position(), at.anchor());
     at.insertText(fence + text + fence);
+    if (inlinePair) markInlineMathOpen(at, start, at.position());
     cursor = at;
     return true;
 }
@@ -3864,6 +3884,145 @@ bool ZDocument::closeFormula(QTextCursor& at) {
     piece.kind = Kind::Math;
     piece.text = source;
     piece.level = levelOf(block);
+    QTextCursor edit(at);
+    edit.beginEditBlock();
+    replaceBlocks(number, number, {piece});
+    settleSeam(number, number);
+    edit.endEditBlock();
+
+#ifndef NDEBUG
+    checkCanonical();
+#endif
+    at = caretAtBlock(number);
+    return true;
+}
+
+// --- ПРАВКА СТРОЧНОЙ ФОРМУЛЫ: ФЛИП НА МЕСТЕ ----------------------------------
+//
+// Тот же приём, что у выключной, только внутри строки: знак объекта ⇄ исходник
+// текстом. Раскрытый кусок помечен битом Open (SpanMathOpen/InlineMathOpen):
+// сборщик его не сворачивает, писатель отдаёт литерально, судит его только
+// закрытие. Обе стороны — replaceBlocks одного блока, то есть обычная местная
+// правка: отмена штатная, Ctrl+Z после Esc возвращает раскрытую.
+
+bool ZDocument::openInlineFormula(QTextCursor& at) {
+    if (at.document() != &d_->text) return false;
+    const QTextBlock block = at.block();
+    if (!block.isValid() || isRawBlock(block)) return false;
+
+    // Знак объекта: выделенный (ровно один знак), под кареткой или прямо слева.
+    auto inlineObjectAt = [this](int pos) {
+        if (pos < 0 || pos >= d_->text.characterCount() - 1) return false;
+        QTextCursor probe(&d_->text);
+        probe.setPosition(pos + 1);
+        return probe.charFormat().objectType() == InlineFormulaObject;
+    };
+    int pos = at.hasSelection() && qAbs(at.position() - at.anchor()) == 1
+                  ? qMin(at.position(), at.anchor())
+                  : at.position();
+    if (!inlineObjectAt(pos)) {
+        if (!inlineObjectAt(pos - 1)) return false;
+        --pos;
+    }
+    if (pos < block.position() || pos >= block.position() + block.length() - 1) return false;
+
+    // Порядковый номер знака среди строчных формул блока: им же выбирается
+    // math-кусок в снятом с блока куске (закрытые цельные формулы куска и знаки
+    // объектов в блоке идут одним порядком — это и есть договор сборки).
+    int ordinal = 0;
+    for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+        const QTextFragment fragment = it.fragment();
+        if (!fragment.isValid() || fragment.position() + fragment.length() <= pos) {
+            if (fragment.isValid() &&
+                fragment.charFormat().objectType() == InlineFormulaObject)
+                ordinal += fragment.length();
+            continue;
+        }
+        if (fragment.charFormat().objectType() == InlineFormulaObject)
+            ordinal += pos - fragment.position();
+        break;
+    }
+
+    const int number = block.blockNumber();
+    const std::vector<Piece> now = piecesOfBlocks(d_->text, number, number);
+    if (now.size() != 1 || now.front().raw) return false;
+    Piece piece = now.front();
+
+    int seen = 0;
+    size_t target = piece.runs.size();
+    for (size_t i = 0; i < piece.runs.size(); ++i) {
+        const Run& run = piece.runs[i];
+        if (!run.math() || run.mathOpen() || !wholeMath(piece.view(run))) continue;
+        if (seen++ == ordinal) {
+            target = i;
+            break;
+        }
+    }
+    if (target == piece.runs.size()) return false;
+    piece.runs[target].flags = InlineMath | InlineMathOpen;
+
+    // Смещение начала исходника В ДОКУМЕНТЕ: закрытые формулы левее стоят
+    // одним знаком, а в тексте куска лежат исходником целиком.
+    int docOffset = piece.runs[target].start;
+    for (size_t i = 0; i < target; ++i) {
+        const Run& run = piece.runs[i];
+        if (run.math() && !run.mathOpen() && wholeMath(piece.view(run)))
+            docOffset -= int(run.end - run.start) - 1;
+    }
+
+    QTextCursor edit(at);
+    edit.beginEditBlock();
+    replaceBlocks(number, number, {piece});
+    settleSeam(number, number);
+    edit.endEditBlock();
+
+#ifndef NDEBUG
+    checkCanonical();
+#endif
+    // Каретка — в НАЧАЛО исходника (решение владельца, как у всех объектов).
+    at = caretAtBlock(number);
+    const QTextBlock opened = d_->text.findBlockByNumber(number);
+    if (opened.isValid())
+        at.setPosition(opened.position() + qBound(0, docOffset, opened.length() - 1));
+    return true;
+}
+
+bool ZDocument::closeInlineFormula(QTextCursor& at) {
+    if (at.document() != &d_->text) return false;
+    const QTextBlock block = at.block();
+    if (!block.isValid() || isRawBlock(block) || !hasOpenInlineFormula(block)) return false;
+
+    const int number = block.blockNumber();
+    const std::vector<Piece> now = piecesOfBlocks(d_->text, number, number);
+    if (now.size() != 1 || now.front().raw) return false;
+    Piece piece = now.front();
+
+    // СУДЬЯ: раскрытый кусок — снова формула, если текст между долларами всё
+    // ещё формула (канон scanMath); иначе — законный текст, в файл уйдёт как
+    // написано.
+    bool changed = false;
+    for (Run& run : piece.runs) {
+        if (!run.math() || !run.mathOpen()) continue;
+        run.flags = wholeMath(piece.view(run)) ? InlineMath : 0;
+        changed = true;
+    }
+    if (!changed) return false;
+    piece.runs.erase(std::remove_if(piece.runs.begin(), piece.runs.end(),
+                                    [](const Run& run) {
+                                        return run.flags == 0 && run.href.isEmpty();
+                                    }),
+                     piece.runs.end());
+
+    // Абзац, ставший ЦЕЛИКОМ одной формулой, — выключная (правило liftMath:
+    // «$…$ одиночкой в своей строке — display», ровно то, что прочёл бы файл).
+    if (!piece.raw && piece.kind == Kind::Paragraph && piece.runs.size() == 1) {
+        const Run& only = piece.runs.front();
+        if (only.math() && only.start == 0 && only.end == piece.text.size()) {
+            piece.kind = Kind::Math;
+            piece.runs.clear();
+        }
+    }
+
     QTextCursor edit(at);
     edit.beginEditBlock();
     replaceBlocks(number, number, {piece});

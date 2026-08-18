@@ -188,6 +188,124 @@ void checkDisplayStaysBlock() {
     ZT_EQ("круг цел", "До.\n\n$e = mc^2$\n\nПосле.\n", s.note.doc().toMarkdown());
 }
 
+// --- флип: объект ⇄ исходник на месте -------------------------------------------
+
+void checkFlip() {
+    Shown s;
+    show(s, "До $x^2$ после.\n");
+    // Так делает редактор, взяв документ себе: отмена — штатная, Qt.
+    s.doc->setUndoRedoEnabled(true);
+    zametti::ZDocument& d = s.note.doc();
+
+    const QTextBlock block = s.doc->firstBlock();
+    const int knob = block.text().indexOf(QChar::ObjectReplacementCharacter);
+    ZT_TRUE("знак объекта на месте", knob >= 0);
+
+    QTextCursor at(s.doc);
+    at.setPosition(block.position() + knob);
+    ZT_TRUE("раскрылась", d.openInlineFormula(at));
+    ZT_EQ("исходник на месте, блок тот же", "До $x^2$ после.",
+          utf8(s.doc->firstBlock().text()));
+    ZT_TRUE("кусок помечен раскрытым", zametti::hasOpenInlineFormula(s.doc->firstBlock()));
+    ZT_EQ("каретка в начале исходника", std::to_string(block.position() + int(knob)),
+          std::to_string(at.position()));
+    ZT_EQ("объектов нет, пока раскрыта", "0",
+          std::to_string(sweepInlineObjects(*s.doc).objects));
+    // Запись в раскрытом виде — литеральная: косые не растут (math() истинен).
+    ZT_EQ("запись раскрытой литеральна", "До $x^2$ после.\n", d.toMarkdown());
+
+    // Правка исходника на месте: «$x^2$» → «$x^21$». Формат — как у редактора:
+    // currentCharFormat, то есть формат знака слева (несёт SpanMath|Open —
+    // набранное продолжает раскрытый кусок, а не рвёт его).
+    at.setPosition(block.position() + knob + 4);   // за «2», перед закрывающим $
+    QTextCharFormat typing;
+    {
+        QTextCursor probe(s.doc);
+        probe.setPosition(at.position());
+        typing = probe.charFormat();
+    }
+    ZT_TRUE("буква вошла в исходник", d.insertText(at, QStringLiteral("1"), typing));
+    ZT_TRUE("кусок всё ещё раскрыт", zametti::hasOpenInlineFormula(s.doc->firstBlock()));
+
+    // Судья закрытия: всё ещё формула — объект.
+    ZT_TRUE("свернулась", d.closeInlineFormula(at));
+    const ObjectSweep closed = sweepInlineObjects(*s.doc);
+    ZT_EQ("объект вернулся с правкой", "1", std::to_string(closed.objects));
+    ZT_EQ("исходник поправлен", "$x^21$", closed.sources.toStdString());
+    ZT_EQ("круг цел", "До $x^21$ после.\n", d.toMarkdown());
+
+    // Ctrl+Z после сворачивания — раскрытая вернулась (бит Open в undo).
+    s.doc->undo();
+    ZT_TRUE("отмена вернула раскрытую", zametti::hasOpenInlineFormula(s.doc->firstBlock()));
+    while (s.doc->isUndoAvailable()) s.doc->undo();
+    ZT_EQ("отмена до конца возвращает объект", "$x^2$",
+          sweepInlineObjects(*s.doc).sources.toStdString());
+}
+
+// Судья закрытия: разорванная формула — законный текст.
+void checkBrokenBecomesText() {
+    Shown s;
+    show(s, "До $x^2$ после.\n");
+    zametti::ZDocument& d = s.note.doc();
+    const QTextBlock block = s.doc->firstBlock();
+    const int knob = block.text().indexOf(QChar::ObjectReplacementCharacter);
+
+    QTextCursor at(s.doc);
+    at.setPosition(block.position() + knob);
+    ZT_TRUE("раскрылась", d.openInlineFormula(at));
+    // Стереть закрывающий доллар: «$x^2$» → «$x^2».
+    at.setPosition(block.position() + knob + 4);
+    ZT_TRUE("доллар стёрт", d.deleteForward(at));
+    ZT_TRUE("свернулась в текст", d.closeInlineFormula(at));
+    ZT_EQ("объектов нет", "0", std::to_string(sweepInlineObjects(*s.doc).objects));
+    ZT_TRUE("пометка раскрытости снята", !zametti::hasOpenInlineFormula(s.doc->firstBlock()));
+    // В файл уходит то, что написано; одинокий доллар формулу не открывает и
+    // косой не обрастает.
+    ZT_EQ("запись — законный текст", "До $x^2 после.\n", d.toMarkdown());
+}
+
+// Абзац, ставший целиком одной формулой, после закрытия — выключная (liftMath).
+void checkCloseLiftsWholeParagraph() {
+    Shown s;
+    show(s, "$x^2$ хвост.\n");
+    zametti::ZDocument& d = s.note.doc();
+    const QTextBlock block = s.doc->firstBlock();
+    const int knob = block.text().indexOf(QChar::ObjectReplacementCharacter);
+
+    QTextCursor at(s.doc);
+    at.setPosition(block.position() + knob);
+    ZT_TRUE("раскрылась", d.openInlineFormula(at));
+    // Стереть хвост: остаётся «$x^2$» целым абзацем.
+    at.setPosition(block.position() + 5);
+    at.setPosition(block.position() + int(s.doc->firstBlock().text().size()),
+                   QTextCursor::KeepAnchor);
+    ZT_TRUE("хвост стёрт", d.deleteForward(at));
+    ZT_TRUE("свернулась", d.closeInlineFormula(at));
+    ZT_TRUE("стала выключной (liftMath)",
+            !zametti::isRawBlock(s.doc->firstBlock()) &&
+                zametti::kindOf(s.doc->firstBlock()) == zametti::Kind::Math);
+    ZT_EQ("круг цел", "$x^2$\n", d.toMarkdown());
+}
+
+// Жест математики: обёрнутое долларами помечено раскрытым, судья делает объект.
+void checkToggleGesture() {
+    Shown s;
+    show(s, "Просто икс квадрат тут.\n");
+    zametti::ZDocument& d = s.note.doc();
+    const QTextBlock block = s.doc->firstBlock();
+
+    // Выделить «икс» и обернуть.
+    QTextCursor at(s.doc);
+    at.setPosition(block.position() + 7);
+    at.setPosition(block.position() + 10, QTextCursor::KeepAnchor);
+    ZT_TRUE("жест обернул", d.toggleInlineMath(at));
+    ZT_TRUE("обёрнутое помечено раскрытым",
+            zametti::hasOpenInlineFormula(s.doc->firstBlock()));
+    ZT_TRUE("свернулась судьёй", d.closeInlineFormula(at));
+    ZT_EQ("объект появился", "$икс$", sweepInlineObjects(*s.doc).sources.toStdString());
+    ZT_EQ("круг цел", "Просто $икс$ квадрат тут.\n", d.toMarkdown());
+}
+
 // --- приёмка: заметка владельца ------------------------------------------------
 
 void checkOwnersNote() {
@@ -221,6 +339,10 @@ TEST(InlineFormula, All) {
     checkMultilineSpan();
     checkNonMathStaysText();
     checkDisplayStaysBlock();
+    checkFlip();
+    checkBrokenBecomesText();
+    checkCloseLiftsWholeParagraph();
+    checkToggleGesture();
     checkOwnersNote();
     zt::report("строчные формулы: модель");
 }

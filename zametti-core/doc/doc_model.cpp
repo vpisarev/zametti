@@ -320,6 +320,31 @@ QString tableSourceOf(const QTextBlock& block) {
     return block.begin().fragment().charFormat().property(ObjectSourceProperty).toString();
 }
 
+bool hasOpenInlineFormula(const QTextBlock& block) {
+    if (!block.isValid() || isRawBlock(block)) return false;
+    for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+        const QTextFragment fragment = it.fragment();
+        if (!fragment.isValid()) continue;
+        if ((fragment.charFormat().intProperty(SpanStyleProperty) & SpanMathOpen) != 0)
+            return true;
+    }
+    return false;
+}
+
+bool isInlineFormulaChar(const QTextDocument& doc, int position) {
+    if (position < 0 || position >= doc.characterCount() - 1) return false;
+    const QTextBlock block = doc.findBlock(position);
+    if (!block.isValid()) return false;
+    for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+        const QTextFragment fragment = it.fragment();
+        if (!fragment.isValid()) continue;
+        if (position < fragment.position()) return false;
+        if (position >= fragment.position() + fragment.length()) continue;
+        return fragment.charFormat().objectType() == InlineFormulaObject;
+    }
+    return false;
+}
+
 QString searchableTextOf(const QTextBlock& block, bool* inObject) {
     if (inObject != nullptr) *inObject = false;
     if (!block.isValid()) return {};

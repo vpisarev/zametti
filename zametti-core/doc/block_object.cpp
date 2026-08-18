@@ -121,4 +121,14 @@ bool blocksMayJoin(const QTextBlock& previous, const QTextBlock& next) {
     return !objectOf(previous).valid() && !objectOf(next).valid();
 }
 
+InlineObjectAction inlineObjectActionFor(int key, Qt::KeyboardModifiers mods, bool onObject) {
+    if (!onObject) return InlineObjectAction::None;
+    // Enter на знаке — раскрыть исходник на месте (одно правило с блочными
+    // объектами: Enter = править). Модификаторы — не наше: Ctrl+Enter и
+    // Shift+Enter принадлежат правке абзацев.
+    if ((key == Qt::Key_Return || key == Qt::Key_Enter) && mods == Qt::NoModifier)
+        return InlineObjectAction::Edit;
+    return InlineObjectAction::None;
+}
+
 }  // namespace zametti

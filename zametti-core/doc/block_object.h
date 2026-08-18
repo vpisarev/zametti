@@ -149,6 +149,20 @@ struct ObjectContext {
 // key — Qt::Key, mods — модификаторы нажатия.
 ObjectAction actionFor(int key, Qt::KeyboardModifiers mods, const ObjectContext& where);
 
+// СТРОЧНЫЙ ОБЪЕКТ (формула в строке) — НЕ BlockObject: у него нет блока, он
+// атом внутри строки, и правил ему нужно два. Атомарность каретки, Backspace,
+// Delete и перешагивание стрелками даёт сам Qt (знак один — замер пробника
+// inline), править остаётся только вход в правку.
+enum class InlineObjectAction {
+    None,   // объект ни при чём: пусть работает обычная правка
+    Edit,   // раскрыть исходник на месте (openInlineFormula)
+};
+
+// onObject — знак строчного объекта выделен ровно один (двойной щелчок или
+// Shift+стрелка) ЛИБО каретка стоит вплотную к нему; узнаёт это вызывающий
+// (isInlineFormulaChar), здесь — только правило нажатия.
+InlineObjectAction inlineObjectActionFor(int key, Qt::KeyboardModifiers mods, bool onObject);
+
 }  // namespace zametti
 
 #endif  // ZAMETTI_BLOCK_OBJECT_H

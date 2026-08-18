@@ -265,8 +265,11 @@ void NoteEditor::onCaretMoved() {
         current_.lastLine.document() == document() &&
         current_.lastLine.blockNumber() != textCursor().blockNumber()) {
         QTextCursor left = current_.lastLine;
-        if (!runNoteEdit([&left](ZDocument& note, QTextCursor&) { return note.closeFormula(left); }))
-            runNoteEdit([&left](ZDocument& note, QTextCursor&) { return note.closeTable(left); });
+        if (!runNoteEdit(
+                [&left](ZDocument& note, QTextCursor&) { return note.closeInlineFormula(left); }))
+            if (!runNoteEdit(
+                    [&left](ZDocument& note, QTextCursor&) { return note.closeFormula(left); }))
+                runNoteEdit([&left](ZDocument& note, QTextCursor&) { return note.closeTable(left); });
     }
 
     const QTextCursor now = textCursor();
@@ -1577,6 +1580,25 @@ void NoteEditor::mouseDoubleClickEvent(QMouseEvent* event) {
     // ПО КАРТИНКЕ — правка подписи, ровно как Enter на ней.
     if (!isReadOnly() && !inHistory()) {
         QTextCursor at = cursorForPosition(event->pos());
+        // ПО СТРОЧНОЙ ФОРМУЛЕ — раскрыть её исходник на месте: слова под
+        // вёрсткой нет, выделять нечего. Знак — под щелчком или прямо слева
+        // (cursorForPosition отдаёт ближайшую щель между знаками).
+        {
+            int knob = -1;
+            if (isInlineFormulaChar(*document(), at.position())) knob = at.position();
+            else if (isInlineFormulaChar(*document(), at.position() - 1))
+                knob = at.position() - 1;
+            if (knob >= 0) {
+                QTextCursor place(document());
+                place.setPosition(knob);
+                setTextCursor(place);
+                runNoteEdit([](ZDocument& note, QTextCursor& caret) {
+                    return note.openInlineFormula(caret);
+                });
+                event->accept();
+                return;
+            }
+        }
         const BlockObject object = objectOf(at.block());
         if (object.kind == ObjectKind::Formula) {
             setTextCursor(at);
@@ -2049,6 +2071,30 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
 // здесь только «что делать» и никакого «когда».
 bool NoteEditor::handleObjectKey(QKeyEvent* event) {
     if (inHistory() || isReadOnly()) return false;
+
+    // СТРОЧНАЯ ФОРМУЛА — АТОМ В СТРОКЕ, у неё своё маленькое правило
+    // (inlineObjectActionFor): Enter на ВЫДЕЛЕННОМ знаке (двойной щелчок или
+    // Shift+стрелка выделяют его) раскрывает исходник на месте. Каретка
+    // ВПЛОТНУЮ к знаку правило не включает: Enter рядом с формулой — обычный
+    // разрез абзаца, как рядом с буквой.
+    {
+        const QTextCursor caret = textCursor();
+        int knob = -1;
+        if (caret.hasSelection() && qAbs(caret.position() - caret.anchor()) == 1) {
+            const int at = qMin(caret.position(), caret.anchor());
+            if (isInlineFormulaChar(*document(), at)) knob = at;
+        }
+        if (inlineObjectActionFor(event->key(), event->modifiers(), knob >= 0) ==
+            InlineObjectAction::Edit) {
+            QTextCursor place(document());
+            place.setPosition(knob);
+            setTextCursor(place);
+            if (runNoteEdit([](ZDocument& note, QTextCursor& at) {
+                    return note.openInlineFormula(at);
+                }))
+                return true;
+        }
+    }
 
     const QTextCursor caret = textCursor();
     const QTextBlock block = caret.block();
@@ -3817,6 +3863,10 @@ EscapeAction escapeActionFor(bool languageEditorOpen, bool caretInOpenObject, bo
 // доходил до closeFormula вовсе.
 bool NoteEditor::closeOpenObject() {
     if (inHistory() || isReadOnly()) return false;
+    // Строчная — первой: её блок остаётся абзацем, и до closeFormula/closeTable
+    // дело не дойдёт (те требуют целого блока-формулы или дословного куска).
+    if (runNoteEdit([](ZDocument& note, QTextCursor& at) { return note.closeInlineFormula(at); }))
+        return true;
     if (runNoteEdit([](ZDocument& note, QTextCursor& at) { return note.closeFormula(at); }))
         return true;
     return runNoteEdit([](ZDocument& note, QTextCursor& at) { return note.closeTable(at); });
@@ -3827,6 +3877,9 @@ bool NoteEditor::caretInOpenObject() const {
     if (inHistory() || isReadOnly()) return false;
     const QTextBlock block = textCursor().block();
     if (isRawBlock(block)) return !isTableObjectBlock(block) && looksLikeTable(sourceTextOf(block));
+    // Раскрытая СТРОЧНАЯ формула в блоке каретки: Esc её свернёт, сохранение
+    // свернёт перед записью — как таблицу и выключную.
+    if (hasOpenInlineFormula(block)) return true;
     if (kindOf(block) != Kind::Paragraph) return false;
     const BlockFormulaRef ref = blockFormulaRef(block);
     return ref.valid && ref.display;
