@@ -1134,6 +1134,14 @@ void NoteView::setObjectHighlights(const QVector<ObjectHighlight>& highlights) {
 }
 
 void NoteView::setDocument(QTextDocument* doc) {
+    // ПОДСВЕТКИ — ДОЛОЙ ДО ПОДМЕНЫ. Дополнительные выделения держат курсоры в
+    // прежнем документе; переживи они его — программа падала бы на первой же
+    // отрисовке (так и было при подмене слепков в режиме истории, пока каждое
+    // место подмены чистило их само).
+    if (document() != doc) {
+        setExtraSelections({});
+        setObjectHighlights({});
+    }
     // ОБРАБОТЧИКИ — ДО ПОДМЕНЫ. QTextEdit::setDocument тут же задаёт документу
     // размер страницы, и вёрстка ПЕРВЫЙ РАЗ проходит по нему ещё внутри этого
     // вызова: без обработчиков каждый объект получает нулевой размер, а строка
@@ -1265,6 +1273,7 @@ void NoteView::renderSlice(QPainter& painter, const QRectF& documentRect, qreal 
         paintFormulaMarks(painter, block);
         paintTableMarks(painter, block);
         paintInlineFormulaHighlights(painter, block);
+        paintBlockMargin(painter, block, rect);
     }
 
     painter.restore();
@@ -1833,6 +1842,7 @@ void NoteView::paintEvent(QPaintEvent* event) {
         paintFormulaMarks(painter, block);
         paintTableMarks(painter, block);
         paintInlineFormulaHighlights(painter, block);
+        paintBlockMargin(painter, block, rect);
     }
 
     // Каретка — последней и без сдвига на прокрутку: cursorRect уже отдаёт
@@ -1852,5 +1862,222 @@ void NoteView::paintEvent(QPaintEvent* event) {
         painter.fillRect(at, docStyle().caretColor());
     }
 }
+
+// --- масштаб с удержанием места ---------------------------------------------
+
+void NoteView::applyZoom(qreal value) {
+    if (value == zoom()) return;
+    // МАСШТАБ — ЭТО ОДИН setDefaultFont, а не пересборка.
+    //
+    // Раньше здесь стоял refreshAppearance(), то есть полная сборка документа
+    // заново — и она же всё ломала: сборщик ставит документу БАЗОВЫЙ кегль,
+    // ничего не зная о масштабе, так что применить его было некому. Текст
+    // стоял, а маркеры и фотографии, которые вид рисует сам, ехали от zoom_ —
+    // отсюда и «зум не работает вообще».
+    //
+    // Пересборка вдобавок стоит 151 мс против 34.7 мс на смену шрифта и чистит
+    // стек отмены (замеры — zametti-bench zoom). Ничего из этого масштабу не
+    // нужно: абсолютных кеглей в документе нет, размеры знаков заданы ступенями
+    // от его шрифта.
+    const QAbstractTextDocumentLayout* layout = document()->documentLayout();
+    const int middle = verticalScrollBar()->value() + viewport()->height() / 2;
+    const QTextBlock held = document()->findBlock(layout->hitTest(QPointF(0, middle),
+                                                                 Qt::FuzzyHit));
+    const qreal above = held.isValid()
+                            ? layout->blockBoundingRect(held).top() -
+                                  verticalScrollBar()->value()
+                            : 0.0;
+
+    setZoom(value);
+    applyContentWidth();
+    syncFormulas();
+
+    if (held.isValid()) {
+        // Вёрстку заставляем пересчитаться: без этого прямоугольник блока
+        // отдаётся по старому шрифту, и держаться было бы не за что.
+        (void)layout->documentSize();
+        verticalScrollBar()->setValue(int(layout->blockBoundingRect(held).top() - above));
+    }
+}
+
+// --- показ места ------------------------------------------------------------
+
+QRectF NoteView::caretRectInDocument() const {
+    return QRectF(cursorRect()).translated(horizontalScrollBar()->value(),
+                                          verticalScrollBar()->value());
+}
+
+void NoteView::revealInGolden(const QRectF& place) {
+    const int height = viewport()->height();
+    // Окна ещё нет (заметка открывается до show()): показать место сейчас
+    // нельзя — его поставит удержание каретки на первой же настоящей раскладке
+    // (keepCaretInView по золотому сечению у редактора).
+    if (!isVisible() || height <= 0 || place.isNull()) return;
+    const int scroll = verticalScrollBar()->value();
+    const qreal top = place.top() - scroll;
+
+    // Уже на виду и не у самой кромки — вид не трогаем: дёргать картинку под
+    // человеком, когда он и так смотрит на нужное место, хуже, чем не двигать.
+    const qreal edge = height * 0.15;
+    if (top >= edge && place.bottom() - scroll <= height - edge) return;
+
+    // Иначе ставим место в ЗОЛОТОЕ СЕЧЕНИЕ окна (просьба владельца: «в середине
+    // или чуть выше»). ensureCursorVisible здесь не годится — он прокручивает
+    // МИНИМАЛЬНО, то есть кладёт место у самой кромки, где его толком не видно.
+    verticalScrollBar()->setValue(int(place.top() - height * qBound(0.0, settings().ui().focusRatio(), 0.9)));
+}
+
+void NoteView::showEditPlace(int scrollBefore, bool jump) {
+    // Спрашивать «видно ли сейчас» нельзя: setTextCursor подкручивает вид сам —
+    // к моменту нашего вопроса место уже видно, причём ровно у кромки. Поэтому
+    // сперва вид возвращается туда, где он стоял ДО правки, и только потом
+    // судит правило показа.
+    verticalScrollBar()->setValue(scrollBefore);
+    if (jump) {
+        // ПЕРЕХОД (F3, Ctrl+Z не у каретки, вставка издалека): место вне
+        // окна или у самой кромки — в золотое сечение.
+        revealInGolden(caretRectInDocument());
+        return;
+    }
+    // ПРАВКА У КАРЕТКИ (набор, Enter, вставка): пока каретка видна, вид не
+    // трогаем вовсе — иначе набор у нижней кромки дёргал бы окно на каждой
+    // строке; ушла за край — тем же правилом показа, что и переход.
+    const int height = viewport()->height();
+    const int where = scrollBefore + cursorRect().center().y();
+    if (where >= scrollBefore && where <= scrollBefore + height) return;
+    revealInGolden(caretRectInDocument());
+}
+
+void NoteView::showBlockInGolden(const QTextBlock& block) {
+    if (!block.isValid()) return;
+    QTextCursor place(block);
+    setTextCursor(place);
+    revealInGolden(document()->documentLayout()->blockBoundingRect(block));
+}
+
+NoteView::TopAnchor NoteView::topAnchor() const {
+    TopAnchor anchor;
+    const QAbstractTextDocumentLayout* layout = document()->documentLayout();
+    const int scroll = verticalScrollBar()->value();
+    const int at = layout->hitTest(QPointF(0, scroll), Qt::FuzzyHit);
+    QTextBlock top = document()->findBlock(at);
+    if (!top.isValid()) top = document()->begin();
+    if (!top.isValid()) return anchor;
+    anchor.block = top.blockNumber();
+    anchor.offset = int(layout->blockBoundingRect(top).top()) - scroll;
+    return anchor;
+}
+
+void NoteView::scrollToBlockTop(int block, int offset) {
+    const QTextBlock target = document()->findBlockByNumber(block);
+    if (!target.isValid()) return;
+    // КАРЕТКУ НЕ ТРОГАЕМ: держится вид, а не каретка. Двигаем только прокрутку.
+    const QRectF rect = document()->documentLayout()->blockBoundingRect(target);
+    verticalScrollBar()->setValue(int(rect.top()) - offset);
+}
+
+// --- поиск ------------------------------------------------------------------
+
+int NoteView::findMatches(const QString& text, bool caseSensitive) {
+    // КЭШ: тот же запрос по неправленному документу — искать заново незачем,
+    // найденное лежит при показанном вместе с номером текущего.
+    NoteSearch& search = searchCache();
+    if (search.isFreshFor(*document(), text, caseSensitive)) {
+        showMatchHighlights();
+        return search.count();
+    }
+    const int found = search.find(*document(), text, caseSensitive);
+    // Каретка уже стоит на находке (вернулись к заметке, где ходили по ним) —
+    // она и текущая: иначе счётчик показывал бы «0/N» при выделенном вхождении.
+    const QTextCursor caret = textCursor();
+    if (caret.hasSelection()) {
+        const int at = search.indexOfSelection(caret.selectionStart(), caret.selectionEnd());
+        if (at >= 0) search.setCurrent(at);
+    }
+    showMatchHighlights();
+    return found;
+}
+
+void NoteView::showMatchHighlights() {
+    // ПОДСВЕЧИВАЕТСЯ ТОЛЬКО ВИДИМОЕ. Совпадений в большой заметке тысячи, а Qt
+    // на каждую подсветку считает прямоугольник (setExtraSelections →
+    // selectionRect → вёрстка строки): «the» в «Карамазовых» стоило 207 мс на
+    // каждое нажатие в поле поиска и столько же на снятие. Цена подсветки
+    // обязана зависеть от объёма ПОКАЗАННОГО (правило проекта), поэтому
+    // берётся окно с запасом по экрану сверху и снизу, а при прокрутке
+    // подсветка перекладывается заново — это O(видимого).
+    QList<QTextEdit::ExtraSelection> selections;
+    QVector<ObjectHighlight> inObjects;
+    const NoteSearch& search = searchCache();
+    if (search.empty()) {
+        setExtraSelections(selections);
+        setObjectHighlights(inObjects);
+        return;
+    }
+    const int height = viewport()->height();
+    const int from = cursorForPosition(QPoint(0, -height)).position();
+    const int to = cursorForPosition(QPoint(viewport()->width(), 2 * height)).position();
+    // Совпадения идут по возрастанию позиции: границы окна — двоичным поиском.
+    const auto [first, last] = search.range(from, to);
+    selections.reserve(last - first + 1);
+    const QColor base = docStyle().searchHighlight();
+    // Текущее совпадение — контрастнее прочих. Не другим цветом: цвет в
+    // оформлении один, а разной должна быть заметность.
+    QColor pale = base;
+    pale.setAlpha(110);
+    for (int i = first; i < last; ++i) {
+        const SearchHit& hit = search.hitAt(i);
+        // Вхождение ВНУТРИ ОБЪЕКТА подсвечивает вид сам, на сетке или на
+        // вёрстке: ExtraSelection над знаком объекта закрасила бы всю полосу.
+        if (hit.inObject()) {
+            inObjects.push_back({hit.cursor.selectionStart(), hit.innerOffset, hit.innerLength,
+                                 i == search.current()});
+            continue;
+        }
+        QTextEdit::ExtraSelection selection;
+        selection.cursor = hit.cursor;
+        selection.format.setBackground(i == search.current() ? base : pale);
+        selections.append(selection);
+    }
+    setExtraSelections(selections);
+    setObjectHighlights(inObjects);
+}
+
+void NoteView::goToMatch(int index) {
+    NoteSearch& search = searchCache();
+    if (search.empty()) return;
+    search.setCurrent(index);
+    const int scrollBefore = verticalScrollBar()->value();
+    setTextCursor(search.hit(search.current()));
+    showMatchHighlights();
+    // Вхождение внутри объекта — каретка не сдвинулась (два вхождения в одной
+    // таблице), а «текущее» другое: перерисовать надо самим.
+    viewport()->update();
+    // Переход: совпадение вне окна или у самой кромки — в золотое сечение.
+    showEditPlace(scrollBefore, /*jump=*/true);
+}
+
+void NoteView::stepMatch(int direction) {
+    const NoteSearch& search = searchCache();
+    if (search.empty()) return;
+    if (search.hasCurrent()) {
+        goToMatch(search.current() + direction);
+        return;
+    }
+    // Первый шаг — от каретки, а не с начала заметки: человек только что на
+    // что-то смотрел, и прыжок в начало документа был бы неожиданным. Дальше
+    // каретки ничего нет — по кругу: с начала (или с конца).
+    const int at = textCursor().position();
+    const int nearest = direction > 0 ? search.nearestForward(at) : search.nearestBackward(at);
+    goToMatch(nearest >= 0 ? nearest : (direction > 0 ? 0 : search.count() - 1));
+}
+
+void NoteView::clearMatches() {
+    searchCache().clear();
+    setExtraSelections({});
+    setObjectHighlights({});
+}
+
+void NoteView::paintBlockMargin(QPainter&, const QTextBlock&, const QRectF&) {}
 
 }  // namespace zametti
