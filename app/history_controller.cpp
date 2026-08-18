@@ -8,9 +8,8 @@
 
 namespace zametti {
 
-HistoryController::HistoryController(NoteEditor& editor, HistoryView& view,
-                                     HistoryTimeline& timeline, QObject* parent)
-    : QObject(parent), editor_(editor), view_(view), list_(timeline) {
+HistoryController::HistoryController(NoteEditor& editor, HistoryView& view, QObject* parent)
+    : QObject(parent), editor_(editor), view_(view), list_(view.list()) {
     // Редактор просит в историю: дно цепочки отмены и архивная заметка.
     connect(&editor_, &NoteEditor::historyRequested, this, [this] { enter(); });
     connect(&editor_, &NoteEditor::archivedNoteOpened, this, [this] {

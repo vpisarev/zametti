@@ -2,8 +2,9 @@
 // проверяют редактор, а в историю заходят по дороге (editor_test,
 // history_write_test, history_search_test).
 //
-// Проводка та же, что в окне: HistoryView + HistoryTimeline + HistoryController
-// над данным NoteEditor. Виды живут без родителя и умирают вместе с рамкой.
+// Проводка та же, что в окне: HistoryView (баннер, разность, список записей) +
+// HistoryController над данным NoteEditor. Вид живёт без родителя и умирает
+// вместе с рамкой.
 
 #ifndef ZAMETTI_TESTS_HISTORY_RIG_H
 #define ZAMETTI_TESTS_HISTORY_RIG_H
@@ -20,10 +21,9 @@ namespace zt {
 
 struct HistoryRig {
     zametti::HistoryView view;
-    zametti::HistoryTimeline list;
     zametti::HistoryController controller;
 
-    explicit HistoryRig(zametti::NoteEditor& editor) : controller(editor, view, list) {}
+    explicit HistoryRig(zametti::NoteEditor& editor) : controller(editor, view) {}
 
     bool enter(int index = -1) { return controller.enter(index); }
     void leave() { controller.leave(); }

@@ -317,13 +317,24 @@ QMimeData* DiffTextView::createMimeDataFromSelection() const {
 
 HistoryView::HistoryView(QWidget* parent) : QWidget(parent) {
     banner_ = new HistoryBanner(this);
-    text_ = new DiffTextView(this);
+    split_ = new QSplitter(Qt::Horizontal, this);
+    text_ = new DiffTextView(split_);
+    list_ = new HistoryTimeline(split_);
+    split_->addWidget(text_);
+    split_->addWidget(list_);
+    split_->setChildrenCollapsible(false);
+    split_->setHandleWidth(4);
+    split_->setStretchFactor(0, 1);
+    split_->setStretchFactor(1, 0);
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
     layout->addWidget(banner_);
-    layout->addWidget(text_, 1);
+    layout->addWidget(split_, 1);
     setFocusProxy(text_);
+    connect(split_, &QSplitter::splitterMoved, this, [this](int, int) {
+        emit listWidthChanged(list_->width());
+    });
 
     connect(banner_, &HistoryBanner::leaveRequested, this, &HistoryView::leaveRequested);
     connect(banner_, &HistoryBanner::restoreRequested, this, &HistoryView::restoreRequested);
@@ -343,6 +354,18 @@ void HistoryView::attach(std::shared_ptr<ZNoteTimeline> timeline) {
 }
 
 void HistoryView::detach() { text_->detach(); }
+
+int HistoryView::listWidth() const { return list_->width(); }
+
+void HistoryView::setListWidth(int width, int ceiling) {
+    const int total = split_->width();
+    if (total <= 0) return;
+    // Не задана — по содержимому списка, но не шире потолка (ширины средней
+    // колонки из настроек); и в любом случае тексту — не меньше половины.
+    int list = width > 0 ? width : qMin(list_->contentWidth(), qMax(ceiling, 1));
+    list = qBound(1, list, total / 2);
+    split_->setSizes({total - list, list});
+}
 
 void HistoryView::refresh() {
     text_->attach(text_->timeline());

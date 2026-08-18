@@ -91,20 +91,19 @@ struct Rig {
     QListWidget* neighbour;
     NoteEditor* editor;
     HistoryView* view;
-    HistoryTimeline* list;
+    HistoryTimeline* list;   // список записей — внутри вида истории
     HistoryController controller;
 
     Rig()
         : neighbour(new QListWidget(&window)),
           editor(new NoteEditor(&window)),
           view(new HistoryView(&window)),
-          list(new HistoryTimeline(&window)),
-          controller(*editor, *view, *list) {
+          list(&view->list()),
+          controller(*editor, *view) {
         auto* layout = new QVBoxLayout(&window);
         layout->addWidget(neighbour);
         layout->addWidget(editor, 1);
         layout->addWidget(view, 1);
-        layout->addWidget(list);
         neighbour->addItem(QStringLiteral("сосед, которому достался бы фокус"));
         editor->setStoreRoot(g_root);
         window.resize(900, 700);
@@ -752,7 +751,6 @@ void writeShots(const QString& dir) {
         if (!rig.open(path)) return;
         rig.neighbour->hide();
         rig.editor->hide();
-        rig.list->hide();
         QApplication::processEvents();
         rig.view->grab().save(QDir(dir).filePath(
             QStringLiteral("история-%1.png").arg(width >= 1000 ? QStringLiteral("широко")

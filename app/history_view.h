@@ -18,6 +18,7 @@
 #include "note_view.h"
 #include "znote_timeline.h"
 
+#include <QSplitter>
 #include <QWidget>
 
 #include <memory>
@@ -97,7 +98,11 @@ private:
     void retire(ZDocument previous);
 };
 
-// Баннер + текст. Сигналы баннера и текста — наружу, контроллеру.
+// Баннер над всем, под ним сплиттер «текст разности | список записей».
+// Баннер именно НАД ОБЕИМИ колонками: его кнопкам нужна ширина, и стой он
+// только над текстом — в узком окне он отбирал бы её у списка (проба под
+// Xvfb: списку доставалось 95 px). Ширину списка человек двигает сам, окно
+// хранит её в state.json. Сигналы баннера и текста — наружу, контроллеру.
 class HistoryView : public QWidget {
     Q_OBJECT
 
@@ -113,6 +118,11 @@ public:
 
     DiffTextView& textView() { return *text_; }
     HistoryBanner& banner() { return *banner_; }
+    HistoryTimeline& list() { return *list_; }
+    // Ширина списка записей: та, что сейчас; задать (0 — по содержимому:
+    // столько, сколько нужно самой длинной строке, но не шире потолка).
+    int listWidth() const;
+    void setListWidth(int width, int ceiling);
 
 signals:
     void leaveRequested();
@@ -121,10 +131,14 @@ signals:
     void stepBackRequested();
     void stepForwardRequested();
     void editRefused();
+    // Человек подвинул ручку сплиттера — окно запомнит ширину.
+    void listWidthChanged(int width);
 
 private:
     HistoryBanner* banner_;
+    QSplitter* split_;
     DiffTextView* text_;
+    HistoryTimeline* list_;
     void syncBanner();
 };
 

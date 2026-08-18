@@ -475,7 +475,6 @@ int main(int argc, char** argv) {
     // поиска по всему хранилищу) и панель поиска у самого низа, как в Sublime.
     zametti::FindBar findBar;
     zametti::HistoryView historyView;
-    zametti::HistoryTimeline historyTimeline;
     zametti::SearchResultsModel results;
     zametti::SearchResultsDelegate resultsDelegate;
     QListView resultsView;
@@ -493,22 +492,14 @@ int main(int argc, char** argv) {
         resultsView.setMaximumHeight(240);
         resultsView.hide();
 
-        // Режим истории: вид разности (баннер над текстом) НА МЕСТЕ редактора,
-        // таймлайн СБОКУ. Обе части видны всё время режима и обе спрятаны вне
-        // его — тем режим и громкий.
-        historyTimeline.hide();
-        historyTimeline.setFont(sidebarFont);
-        historyTimeline.setFixedWidth(zametti::settings().ui().noteListWidth());
+        // Режим истории: вид истории (баннер над разностью и списком записей)
+        // НА МЕСТЕ редактора; вне режима его нет вовсе — тем режим и громкий.
+        historyView.list().setFont(sidebarFont);
         textStack.addWidget(&editor);
         textStack.addWidget(&historyView);
         textStack.setCurrentWidget(&editor);
-        auto* middleRow = new QHBoxLayout;
-        middleRow->setContentsMargins(0, 0, 0, 0);
-        middleRow->setSpacing(0);
-        middleRow->addWidget(&textStack, 1);
-        middleRow->addWidget(&historyTimeline);
 
-        layout->addLayout(middleRow, 1);
+        layout->addWidget(&textStack, 1);
         layout->addWidget(&resultsView);
         layout->addWidget(&findBar);
     }
@@ -518,7 +509,7 @@ int main(int argc, char** argv) {
     searchDebounce.setSingleShot(true);
     searchDebounce.setInterval(150);
     findBar.setHistory(session.searchHistory());
-    zametti::HistoryController history(editor, historyView, historyTimeline);
+    zametti::HistoryController history(editor, historyView);
 
     // Облик применяется ОДНИМ местом — и на старте, и когда конфиг поправили
     // снаружи. Два места разошлись бы: половина настроек подхватывалась бы на
@@ -531,8 +522,7 @@ int main(int argc, char** argv) {
         font.setPointSizeF(zametti::settings().ui().sidebarFontPoint());
         panels.setSidebarFont(font);
         resultsView.setFont(font);
-        historyTimeline.setFont(font);
-        historyTimeline.setFixedWidth(zametti::settings().ui().noteListWidth());
+        historyView.list().setFont(font);
 
         zametti::applyPalette(editor);
         panels.refreshAppearance();
@@ -850,6 +840,11 @@ int main(int argc, char** argv) {
     // которое никуда не делось, и выбрасывать её, чтобы через бриф написать
     // заново, незачем.
     QHash<QString, int> visitedSnapshot;
+    // Ширина списка записей: из state.json; человек двигает ручку — запоминаем,
+    // на выходе пишем обратно.
+    int historyListWidth = session.historyListWidth();
+    QObject::connect(&historyView, &zametti::HistoryView::listWidthChanged, &window,
+                     [&](int width) { historyListWidth = width; });
 
     const auto showHistoryState = [&] {
         const std::shared_ptr<zametti::ZNoteTimeline> tl = history.timeline();
@@ -863,7 +858,17 @@ int main(int argc, char** argv) {
         // Вид истории на месте редактора; таймлайн сбоку.
         textStack.setCurrentWidget(on ? static_cast<QWidget*>(&historyView)
                                       : static_cast<QWidget*>(&editor));
-        historyTimeline.setVisible(on);
+        if (on) {
+            // Ширина списка — та, что человек выставил (state.json); не
+            // выставлял — по содержимому списка, не шире средней колонки. Ставится ПОСЛЕ
+            // того, как стек покажет вид (очередью): размеры, заданные до
+            // показа, сплиттер перекладывает по sizeHint детей.
+            const auto applyWidth = [&] {
+                historyView.setListWidth(historyListWidth, zametti::settings().ui().noteListWidth());
+            };
+            applyWidth();
+            QTimer::singleShot(0, &window, applyWidth);
+        }
         // Кнопка тулбара показывает состояние режима, откуда бы в него ни
         // вошли: Ctrl+Z, доехавший до дна цепочки, приводит сюда же, и кнопка
         // обязана загореться.
@@ -2079,6 +2084,7 @@ int main(int argc, char** argv) {
         out.setZoom(editor.zoom());
         out.setWindowGeometry(window.saveGeometry());
         out.setSplitterState(splitter.saveState());
+        out.setHistoryListWidth(historyListWidth);
         out.setPanelsHidden(!toolbar.isChecked(zametti::Toolbar::Button::Panels));
         out.setExpandedDirs(panels.expandedDirs());
         out.setSearchHistory(findBar.history());

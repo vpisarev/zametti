@@ -8,6 +8,8 @@
 #include <QPalette>
 #include <QButtonGroup>
 #include <QSignalBlocker>
+#include <QScrollBar>
+#include <QResizeEvent>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -60,6 +62,10 @@ HistoryBanner::HistoryBanner(QWidget* parent) : QWidget(parent) {
                       .arg(look.historyBackground().darker(104).name()));
 
     text_ = new QLabel(this);
+    // Надпись не диктует ширину баннера: в узком окне она ужимается первой,
+    // иначе минимальная ширина баннера (и всего вида истории) отбирала бы
+    // место у списка записей справа.
+    text_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 
     // ПАРАМИ ЗАЛИПАЮЩИХ КНОПОК, а не одним переключателем с меняющейся
     // надписью (просьба владельца): у одной кнопки второго состояния не видно
@@ -114,6 +120,18 @@ void HistoryBanner::setBaseIsFresh(bool fresh) {
     fromPrevious_->setChecked(!fresh);
 }
 
+void HistoryBanner::showText(const QString& text) {
+    fullText_ = text;
+    const int room = qMax(0, text_->width() - 4);
+    text_->setText(room > 0 ? text_->fontMetrics().elidedText(text, Qt::ElideRight, room) : text);
+    text_->setToolTip(text);
+}
+
+void HistoryBanner::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    if (!fullText_.isEmpty()) showText(fullText_);
+}
+
 void HistoryBanner::setSnapshot(qint64 time, journal::Kind kind, int changed) {
     restore_->setStyleSheet(restoreStyle_);
     // Строка отвечает на ОДИН вопрос: какая версия сейчас перед глазами
@@ -123,14 +141,14 @@ void HistoryBanner::setSnapshot(qint64 time, journal::Kind kind, int changed) {
     if (kind != journal::Kind::Save)
         what += QStringLiteral(" (%1)").arg(historyKindName(kind));
     if (changed >= 0) what += QStringLiteral("  ·  ±%1").arg(changed);
-    text_->setText(what);
+    showText(what);
 }
 
 void HistoryBanner::flashRestore() {
     // Подсветка вместо действия: печатающая клавиша ничего не восстанавливает,
     // но и молчать в ответ нельзя — человек нажал не просто так.
-    text_->setText(QStringLiteral("Слепок только для чтения. "
-                                  "Чтобы вернуть его содержимое — «Восстановить эту»."));
+    showText(QStringLiteral("Слепок только для чтения. "
+                            "Чтобы вернуть его содержимое — «Восстановить эту»."));
     restore_->setStyleSheet(QStringLiteral("QPushButton { border: 2px solid %1; }")
                                 .arg(settings().style().caretColor().name()));
     QTimer::singleShot(1200, this, [this] { restore_->setStyleSheet(restoreStyle_); });
@@ -192,6 +210,11 @@ void HistoryTimeline::setEntries(const QVector<journal::Entry>& entries) {
         if (!entry.hasSnapshot()) item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
     }
     quiet_ = false;
+}
+
+int HistoryTimeline::contentWidth() const {
+    return list_->sizeHintForColumn(0) + list_->verticalScrollBar()->sizeHint().width() +
+           2 * list_->frameWidth() + 8;
 }
 
 void HistoryTimeline::setCurrent(int index) {

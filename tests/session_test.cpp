@@ -54,6 +54,7 @@ static int ztRunSuite(int argc, char** argv) {
     out.setZoom(1.25);
     out.setWindowGeometry(QByteArray("геометрия", 18));
     out.setPanelsHidden(true);
+    out.setHistoryListWidth(233);
     out.setExportDir(QStringLiteral("/tmp/куда-вывозили"));
     out.setExportKeepMeta(true);
     // Каретки по заметкам — там же, по id, без дублей.
@@ -89,6 +90,10 @@ static int ztRunSuite(int argc, char** argv) {
     // Галочка вывоза «как есть» — тоже привычка человека: кто обменивается
     // заметками с другим хранилищем, делает это постоянно.
     ZT_EQ("галочка вывоза", b(out.exportKeepMeta()), b(back.exportKeepMeta()));
+    // Ширина списка записей режима истории — привычка человека, переживает
+    // перезапуск (просьба владельца: список крал место у разности).
+    ZT_EQ("ширина списка истории", std::to_string(out.historyListWidth()),
+          std::to_string(back.historyListWidth()));
     ZT_EQ("каретки по заметкам: две записи, без дублей", std::string("2"),
           std::to_string(back.carets().size()));
     ZT_TRUE("повтор заменил запись, а не добавил",
@@ -107,6 +112,8 @@ static int ztRunSuite(int argc, char** argv) {
     ZT_EQ("без файла панели на месте", b(false), b(fresh.panelsHidden()));
     ZT_EQ("без файла зум единичный", std::to_string(1.0), std::to_string(fresh.zoom()));
     ZT_EQ("без файла вывоз чистый", b(false), b(fresh.exportKeepMeta()));
+    ZT_EQ("без файла ширина списка истории не задана", std::string("0"),
+          std::to_string(fresh.historyListWidth()));
 
     return zt::report("session");
 }

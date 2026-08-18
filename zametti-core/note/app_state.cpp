@@ -57,6 +57,7 @@ ZAppState ZAppState::load() {
     session.setSplitterState(QByteArray::fromBase64(
         root.value(QStringLiteral("splitterState")).toString().toLatin1()));
     session.setPanelsHidden(root.value(QStringLiteral("panelsHidden")).toBool(false));
+    session.setHistoryListWidth(root.value(QStringLiteral("historyListWidth")).toInt(0));
     session.setExportDir(root.value(QStringLiteral("exportDir")).toString());
     session.setExportKeepMeta(root.value(QStringLiteral("exportKeepMeta")).toBool(false));
     for (const QJsonValue& v : root.value(QStringLiteral("carets")).toArray()) {
@@ -105,6 +106,7 @@ void ZAppState::save() const {
                   {QStringLiteral("splitterState"),
                    QString::fromLatin1(session.splitterState().toBase64())},
                   {QStringLiteral("panelsHidden"), session.panelsHidden()},
+                  {QStringLiteral("historyListWidth"), session.historyListWidth()},
                   {QStringLiteral("exportDir"), session.exportDir()},
                   {QStringLiteral("exportKeepMeta"), session.exportKeepMeta()},
                   {QStringLiteral("expandedDirs"), expanded},

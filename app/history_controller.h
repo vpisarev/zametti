@@ -31,8 +31,7 @@ class HistoryController : public QObject {
     Q_OBJECT
 
 public:
-    HistoryController(NoteEditor& editor, HistoryView& view, HistoryTimeline& timeline,
-                      QObject* parent = nullptr);
+    HistoryController(NoteEditor& editor, HistoryView& view, QObject* parent = nullptr);
 
     // Войти в режим на записи index (-1 — последняя со слепком); в режиме —
     // показать другую запись. false — истории нет.
