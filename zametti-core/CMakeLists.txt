@@ -55,6 +55,7 @@ add_library(zametti-core STATIC
     note/derived.h
     note/caret_spot.h
     note/app_state.h            note/app_state.cpp
+    note/znote_timeline.h       note/znote_timeline.cpp
 
     # --- картинки ---
     image/exif.h                image/exif.cpp

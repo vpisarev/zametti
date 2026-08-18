@@ -504,6 +504,9 @@ public:
     bool sameSkeleton(const ZDocument& other) const;
     // Совпадают ли канонические байты тел.
     bool sameBody(const ZDocument& other) const;
+    // Одна и та же ручка: обе смотрят на один живой документ (кэш отдал тот же
+    // объект, а не собрал заново).
+    bool sameHandle(const ZDocument& other) const { return d_ == other.d_; }
 
 protected:
 
