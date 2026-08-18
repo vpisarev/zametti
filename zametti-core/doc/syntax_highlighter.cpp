@@ -38,6 +38,11 @@ ZSyntaxHighlighterMD::ZSyntaxHighlighterMD(QTextDocument* document,
     imageLink_ = QRegularExpression(QStringLiteral("!\\[[^\\]\\n]*\\]\\(([^)\\n]*)\\)"));
     link_re_ = QRegularExpression(QStringLiteral("\\[[^\\]\\n]+\\]\\([^)\\n]*\\)"));
     autoLink_ = QRegularExpression(QStringLiteral("<(https?|ftp|mailto):[^>\\s]+>"));
+    // Голый адрес (автоссылка GFM): до пробела или скобки; хвостовые
+    // `.,;:!?` — не адрес, а конец фразы (владелец: ссылка на ozon в заметке
+    // «Пробуем Obsidian» — без скобок).
+    bareUrl_ = QRegularExpression(
+        QStringLiteral("(?<![\\w/@.])(https?://|www\\.)[^\\s<>()\\[\\]]*[^\\s<>()\\[\\].,;:!?]"));
     displayMath_ = QRegularExpression(QStringLiteral("\\$\\$[^$]+?\\$\\$"));
     // Одиночный $ по канону pandoc: открывающему — непробел справа,
     // закрывающему — непробел слева и не цифра справа (см. правку md4c в
@@ -50,7 +55,8 @@ ZSyntaxHighlighterMD::ZSyntaxHighlighterMD(QTextDocument* document,
     italicStar_ = QRegularExpression(QStringLiteral("(?<![\\w*])\\*(?=[^\\s*])[^*\\n]+?(?<=[^\\s*])\\*(?![\\w*])"));
     italicUnder_ = QRegularExpression(QStringLiteral("(?<![\\w_])_(?=[^\\s_])[^_\\n]+?(?<=[^\\s_])_(?![\\w_])"));
     for (QRegularExpression* re : {&fence_, &heading_re_, &task_, &bullet_, &ordered_, &codeSpan_,
-                                   &imageLink_, &link_re_, &autoLink_, &displayMath_, &inlineMath_,
+                                   &imageLink_, &link_re_, &autoLink_, &bareUrl_, &displayMath_,
+                                   &inlineMath_,
                                    &boldStar_, &boldUnder_, &italicStar_, &italicUnder_})
         re->setPatternOptions(QRegularExpression::UseUnicodePropertiesOption);
 }
@@ -149,6 +155,7 @@ void ZSyntaxHighlighterMD::highlightBlock(const QString& text) {
     }
     applySpans(text, link_re_, link_, taken, base);
     applySpans(text, autoLink_, link_, taken, base);
+    applySpans(text, bareUrl_, link_, taken, base);
     applySpans(text, displayMath_, accent_, taken, base);
     applySpans(text, inlineMath_, accent_, taken, base);
     // Начертания: жирный раньше курсива (** внутри * иначе съел бы одну звезду).

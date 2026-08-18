@@ -97,7 +97,8 @@ void checkRules() {
         "```\n"
         "после забора\n"
         "снова_не_курсив и 2*3*4\n"
-        "ссылка [сюда](https://x.y/z) и <https://a.b/> и ![снимок](img/1.jpg)\n");
+        "ссылка [сюда](https://x.y/z) и <https://a.b/> и ![снимок](img/1.jpg)\n"
+        "голая: https://www.ozon.ru/product/x-1, и www.site.org.\n");
     const QStringList lines = linesOfDoc(doc);
     const auto at = [&](const char* text) { return int(lines.indexOf(QString::fromUtf8(text))); };
     const int h = at("# Заголовок **жирный**");
@@ -147,6 +148,18 @@ void checkRules() {
     ZT_TRUE("а не ссылки", !hasProperty(doc, links, 48, 68, isLink));
     ZT_TRUE("адрес картинки — с подчёркиванием", hasProperty(doc, links, 58, 67, underlined));
     ZT_TRUE("а подпись картинки — без", !hasProperty(doc, links, 50, 56, underlined));
+    const int bare = at("голая: https://www.ozon.ru/product/x-1, и www.site.org.");
+    ZT_TRUE("голый https-адрес — ссылка", hasProperty(doc, bare, 7, 38, isLink));
+    ZT_TRUE("запятая после него — нет", !hasProperty(doc, bare, 38, 39, isLink));
+    ZT_TRUE("www.-адрес — ссылка", hasProperty(doc, bare, 42, 54, isLink));
+    ZT_TRUE("точка в конце фразы — не адрес", !hasProperty(doc, bare, 54, 55, isLink));
+    // Строка владельца дословно («Пробуем Obsidian», ссылка на ozon без скобок).
+    const ZDocument owner = rawDoc(
+        "ссылка на тельняху: https://www.ozon.ru/product/longsliv-telnyashka-beregite-ptits-telnyashka-muzhskaya-858891201\n");
+    const int len = int(linesOfDoc(owner)[0].size());
+    ZT_TRUE("ссылка на ozon из заметки владельца — подсвечена целиком",
+            hasProperty(owner, 0, 20, len, isLink));
+    ZT_TRUE("а слова перед ней — нет", !hasProperty(owner, 0, 0, 6, isLink));
 }
 
 void checkRemovedLinesSkipped() {
