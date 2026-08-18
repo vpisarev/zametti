@@ -3317,10 +3317,29 @@ md_collect_marks(MD_CTX* ctx, const MD_LINE* lines, MD_SIZE n_lines, int table_m
                 if(tmp - off <= 2) {
                     unsigned flags = MD_MARK_POTENTIAL_OPENER | MD_MARK_POTENTIAL_CLOSER;
 
-                    if(off > line->beg  &&  !ISUNICODEWHITESPACEBEFORE(off)  &&  !ISUNICODEPUNCTBEFORE(off))
-                        flags &= ~MD_MARK_POTENTIAL_OPENER;
-                    if(tmp < line->end  &&  !ISUNICODEWHITESPACE(tmp)  &&  !ISUNICODEPUNCT(tmp))
-                        flags &= ~MD_MARK_POTENTIAL_CLOSER;
+                    if(ch == _T('$')  &&  tmp - off == 1) {
+                        /* zametti: границы ОДИНОЧНОГО `$` — по канону pandoc
+                         * (zametti-core/format/math_scan.h), а не по флангам
+                         * эмфазиса: открывающему нужен непробел СПРАВА,
+                         * закрывающему — непробел СЛЕВА и не-цифра справа;
+                         * соседние буквы законны. Родные правила (не после
+                         * буквы / не перед буквой) склеивали
+                         * "$\Pi$иф$\alpha$гор" в один спан "$\Pi$иф$" и не
+                         * видели "слово$\gamma$слово" вовсе — а писатель,
+                         * который судит нашим каноном, при записи оборачивал
+                         * такой текст косыми. `$$` и `~` не тронуты. */
+                        if(tmp >= line->end  ||  ISWHITESPACE(tmp))
+                            flags &= ~MD_MARK_POTENTIAL_OPENER;
+                        if(off == line->beg  ||  ISWHITESPACE(off-1))
+                            flags &= ~MD_MARK_POTENTIAL_CLOSER;
+                        else if(tmp < line->end  &&  ISDIGIT(tmp))
+                            flags &= ~MD_MARK_POTENTIAL_CLOSER;
+                    } else {
+                        if(off > line->beg  &&  !ISUNICODEWHITESPACEBEFORE(off)  &&  !ISUNICODEPUNCTBEFORE(off))
+                            flags &= ~MD_MARK_POTENTIAL_OPENER;
+                        if(tmp < line->end  &&  !ISUNICODEWHITESPACE(tmp)  &&  !ISUNICODEPUNCT(tmp))
+                            flags &= ~MD_MARK_POTENTIAL_CLOSER;
+                    }
                     if(flags != 0)
                         ADD_MARK(ch, off, tmp, flags);
                 }

@@ -283,6 +283,28 @@ void checkZoomAndPaper() {
     delete editor;
 }
 
+// Случай владельца дословно: формулы, приклеенные к буквам, — «$\Pi$иф$\alpha$гор».
+void checkGluedRendered() {
+    zametti::NoteEditor* editor =
+        openNote(QStringLiteral("пифагор"), 700, 300,
+                 QByteArray("\x24\\Pi\x24\xD0\xB8\xD1\x84\x24\\alpha\x24\xD0\xB3\xD0\xBE\xD1\x80"
+                            " \xE2\x80\x94 \xD1\x82\xD0\xB5\xD0\xBE\xD1\x80\xD0\xB5\xD0\xBC\xD0"
+                            "\xB0.\n"));
+    QTextDocument* doc = editor->document();
+    const std::vector<int> objects = inlineObjectPositions(*doc);
+    ZT_EQ("две формулы среди букв", "2", std::to_string(objects.size()));
+    const QImage shot = editor->grab().toImage();
+    shot.save(QDir(g_dir).filePath(QStringLiteral("пифагор.png")));
+    const QPoint origin = editor->viewport()->mapTo(editor, QPoint(0, 0));
+    for (const int position : objects) {
+        const QRectF box = zametti::inlineFormulaRect(*doc, position);
+        ZT_TRUE("вёрстка на месте", !box.isEmpty());
+        ZT_TRUE("и с чернилами",
+                inkIn(shot, box.translated(origin), shot.devicePixelRatio()) > 0);
+    }
+    delete editor;
+}
+
 }  // namespace
 
 static int ztRunSuite(int argc, char** argv) {
@@ -301,6 +323,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkFlipKeys();
     checkDoubleClickOpens();
     checkZoomAndPaper();
+    checkGluedRendered();
 
     // Приёмка на копии заметки владельца — если корпус на месте.
     const QString ownPath = zt::TestData::file(QStringLiteral("typesetting-math.md"));

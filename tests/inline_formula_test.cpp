@@ -178,6 +178,40 @@ void checkNonMathStaysText() {
     }
 }
 
+// ФОРМУЛЫ, ПРИКЛЕЕННЫЕ К БУКВАМ, — законная математика канона (pandoc):
+// «$\Pi$иф$\alpha$гор» — две формулы, «слово$\gamma$слово» — одна. Нашёл
+// владелец: md4c мерил границы `$` по флангам эмфазиса (не после буквы / не
+// перед буквой), склеивал первый случай в один неверный спан «$\Pi$иф$», а
+// второй не видел вовсе — и писатель, судящий нашим каноном, оборачивал такой
+// текст косыми при каждой записи. Вендоренному md4c поправлены границы
+// ОДИНОЧНОГО `$` под канон (math_scan.h); `$$` и `~` не тронуты.
+void checkGluedFormulas() {
+    {
+        Shown s;
+        show(s, "$\\Pi$иф$\\alpha$гор — теорема.\n");
+        const ObjectSweep sweep = sweepInlineObjects(*s.doc);
+        ZT_EQ("две формулы, приклеенные к буквам", "$\\Pi$|$\\alpha$",
+              sweep.sources.toStdString());
+        ZT_EQ("круг байт в байт", "$\\Pi$иф$\\alpha$гор — теорема.\n",
+              s.note.doc().toMarkdown());
+    }
+    {
+        Shown s;
+        show(s, "слово$\\gamma$слово\n");
+        ZT_EQ("формула в середине слова", "$\\gamma$",
+              sweepInlineObjects(*s.doc).sources.toStdString());
+        ZT_EQ("круг байт в байт — косые не растут", "слово$\\gamma$слово\n",
+              s.note.doc().toMarkdown());
+    }
+    {
+        Shown s;
+        show(s, "$a$b и хвост.\n");
+        ZT_EQ("буква сразу за закрывающим долларом законна", "$a$",
+              sweepInlineObjects(*s.doc).sources.toStdString());
+        ZT_EQ("круг цел", "$a$b и хвост.\n", s.note.doc().toMarkdown());
+    }
+}
+
 // Выключная — по-прежнему блочный объект: одиночные доллара своей строкой
 // показываются выключной (liftMath), строчным объектом они не становятся.
 void checkDisplayStaysBlock() {
@@ -390,6 +424,7 @@ TEST(InlineFormula, All) {
     checkBuildsObjects();
     checkMultilineSpan();
     checkNonMathStaysText();
+    checkGluedFormulas();
     checkDisplayStaysBlock();
     checkFlip();
     checkBrokenBecomesText();
