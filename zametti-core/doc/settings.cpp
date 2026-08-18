@@ -366,6 +366,11 @@ QJsonObject settingsToJson(const ZSettings& a) {
         {QStringLiteral("find"), find},
         {QStringLiteral("editor"), editor},
         {QStringLiteral("tables"), tables},
+        {QStringLiteral("markdownHighlighting"),
+         QJsonObject{{QStringLiteral("accent"), colorToString(a.markdownHighlighting().accent())},
+                     {QStringLiteral("codeBackground"),
+                      colorToString(a.markdownHighlighting().codeBackground())},
+                     {QStringLiteral("headingStep"), a.markdownHighlighting().headingStep()}}},
         {QStringLiteral("formulas"), formulas},
         {QStringLiteral("images"), images},
         {QStringLiteral("shortcuts"), shortcuts},
@@ -394,6 +399,13 @@ void settingsFromJson(const QJsonObject& root, ZSettings& a) {
     const QJsonObject formulas = root.value(QStringLiteral("formulas")).toObject();
     readReal(formulas, "inlineScale", a.formulas(), &ZSettings::Formulas::setInlineScale);
     readReal(formulas, "displayScale", a.formulas(), &ZSettings::Formulas::setDisplayScale);
+
+    const QJsonObject markdown = root.value(QStringLiteral("markdownHighlighting")).toObject();
+    readColor(markdown, "accent", a.markdownHighlighting(), &ZSettings::MarkdownHighlighting::setAccent);
+    readColor(markdown, "codeBackground", a.markdownHighlighting(),
+              &ZSettings::MarkdownHighlighting::setCodeBackground);
+    readInt(markdown, "headingStep", a.markdownHighlighting(),
+            &ZSettings::MarkdownHighlighting::setHeadingStep);
 
     const QJsonObject tables = root.value(QStringLiteral("tables")).toObject();
     readReal(tables, "cellPadding", a.tables(), &ZSettings::Tables::setCellPadding);

@@ -18,6 +18,7 @@
 #include "doc_model.h"
 #include "document_builder.h"
 #include "settings.h"
+#include "syntax_highlighter.h"
 
 #include <QFontMetricsF>
 #include <QTextBlock>
@@ -123,7 +124,27 @@ ZDocument ZDocument::fromDiff(const diff::Result& result, std::shared_ptr<const 
     // Пустое сравнение (обе стороны пусты) — один пустой блок с меткой Same,
     // чтобы у документа был хотя бы один блок с ответом.
     if (first) addBlock(diff::Mark::Same, QString(), -1);
+    // Строки — сырой markdown: расцветить (убранные строки подсветчик
+    // пропускает сам — они не часть слепка).
+    out.highlightMarkdown(look.diffStep());
     return out;
+}
+
+void ZDocument::highlightMarkdown(int baseStep) {
+    QTextDocument& target = d_->text;
+    if (target.findChild<ZSyntaxHighlighterMD*>(QString(), Qt::FindDirectChildrenOnly) != nullptr)
+        return;
+    auto* highlighter = new ZSyntaxHighlighterMD(&target, settings().markdownHighlighting(), baseStep);
+    // Сразу, а не отложенно (QSyntaxHighlighter сам красит по первому кругу
+    // событий): показанное обязано быть расцвечено с первого кадра, и проверки
+    // спрашивают документ без цикла событий.
+    highlighter->rehighlight();
+}
+
+QList<QTextLayout::FormatRange> ZDocument::highlightFormats(int block) const {
+    const QTextBlock b = d_->text.findBlockByNumber(block);
+    if (!b.isValid() || b.layout() == nullptr) return {};
+    return b.layout()->formats();
 }
 
 int ZDocument::diffMarkAt(int index) const {

@@ -261,7 +261,9 @@ ZamettiDocument (см. `zametti_qtextdocument_design.md`); история — ж
   поле) и `HistoryController`; `NoteEditor` про историю не знает (сигналы
   `historyRequested`/`archivedNoteOpened`, глагол `restoreBody`), окно —
   `QStackedWidget`; вид полосок и инверсия по Tab сняты; поиск/reveal/зум/якорь
-  переехали в `NoteView`.
+  переехали в `NoteView`; `ZSyntaxHighlighterMD` (`doc/syntax_highlighter`) —
+  подсветка сырого markdown (секция настроек `markdownHighlighting`), первый шаг
+  к режиму правки исходника, сейчас — строки разности.
   `zametti-brief-inline-formulas.md` — бриф шестой сессии (выполнен ею).
   `zametti-refactor2-report6.md` — шестая сессия: строчные формулы объектом на
   каждое вхождение (посадка AlignBaseline по пробнику `zametti-bench inline`:

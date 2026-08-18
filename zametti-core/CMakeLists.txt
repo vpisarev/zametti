@@ -86,6 +86,7 @@ add_library(zametti-core STATIC
     doc/block_object.h          doc/block_object.cpp
     doc/diff.h                  doc/diff.cpp
     doc/diff_view.h             doc/diff_view.cpp
+    doc/syntax_highlighter.h    doc/syntax_highlighter.cpp
     doc/doc_model.h             doc/doc_model.cpp
     doc/document_builder.h      doc/document_builder.cpp
     doc/document_saver.h        doc/document_saver.cpp

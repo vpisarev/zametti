@@ -1792,6 +1792,7 @@ void NoteView::paintEvent(QPaintEvent* event) {
                              verticalScrollBar()->value() + event->rect().y(),
                              event->rect().width(), event->rect().height());
         paintCodeBackground(painter, visible);
+        paintUnderlay(painter, visible);
     }
     QTextBrowser::paintEvent(event);
 
@@ -2079,5 +2080,7 @@ void NoteView::clearMatches() {
 }
 
 void NoteView::paintBlockMargin(QPainter&, const QTextBlock&, const QRectF&) {}
+
+void NoteView::paintUnderlay(QPainter&, const QRectF&) {}
 
 }  // namespace zametti

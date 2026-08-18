@@ -30,6 +30,7 @@
 
 #include <QString>
 #include <QStringList>
+#include <QTextLayout>
 #include <QVector>
 
 #include <functional>
@@ -212,6 +213,16 @@ public:
     static ZDocument fromDiff(const diff::Result& result,
                               std::shared_ptr<const ZDocStyle> style = nullptr,
                               QVector<int>* rowOfBlock = nullptr);
+    // ПОДСВЕТКА СЫРОГО MARKDOWN (ZSyntaxHighlighterMD) поверх документа: цвета
+    // — секция настроек markdownHighlighting; baseStep — ступень кегля строк
+    // (у документа разности diffStep, у сырого markdown 0). Форматы
+    // раскладки, содержимое не меняется. Документ разности получает её при
+    // сборке; режим правки исходника (впереди) позовёт то же. Повторный вызов —
+    // ничего.
+    void highlightMarkdown(int baseStep = 0);
+    // Форматы подсветки блока (наблюдатель для проверок): что нарисовано, иначе
+    // спросить не у чего.
+    QList<QTextLayout::FormatRange> highlightFormats(int block) const;
     // Ширина поля слева от строк — под полосу текущего куска и «+»/«−» (треть
     // на полосу, две трети на глиф); та же мерка, что у сборки (от шрифта строк
     // базового кегля); виду — где рисовать.

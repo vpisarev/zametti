@@ -1,6 +1,7 @@
 #include "history_view.h"
 
 #include "doc_model.h"
+#include "syntax_highlighter.h"
 #include "settings.h"
 
 #include <QAbstractTextDocumentLayout>
@@ -210,6 +211,34 @@ void DiffTextView::paintBlockMargin(QPainter& painter, const QTextBlock& block, 
     painter.setPen(mark == int(diff::Mark::Added) ? look.diffAdded() : look.diffRemoved());
     painter.drawText(cell, Qt::AlignCenter,
                      mark == int(diff::Mark::Added) ? QStringLiteral("+") : QStringLiteral("−"));
+}
+
+void DiffTextView::paintUnderlay(QPainter& painter, const QRectF& visible) {
+    if (timeline_ == nullptr) return;
+    // Забор кода: строка ВНУТРИ забора несёт состояние InFence (его ставит
+    // подсветчик), закрывающая — Plain, но её предшественница — InFence.
+    const auto fenced = [](const QTextBlock& block) {
+        if (block.userState() == ZSyntaxHighlighterMD::InFence) return true;
+        const QTextBlock previous = block.previous();
+        return previous.isValid() && previous.userState() == ZSyntaxHighlighterMD::InFence &&
+               diffMarkOf(block) != int(diff::Mark::Removed);
+    };
+    const QAbstractTextDocumentLayout* layout = document()->documentLayout();
+    QTextBlock block = document()->findBlock(layout->hitTest(QPointF(0, visible.top()), Qt::FuzzyHit));
+    const QColor plate = settings().markdownHighlighting().codeBackground();
+    const qreal width = document()->textWidth() > 0 ? document()->textWidth() : viewport()->width();
+    // Правый край — по правому полю корневой рамки (левое шире на поле глифов).
+    const qreal right = width - document()->rootFrame()->frameFormat().rightMargin();
+    for (; block.isValid(); block = block.next()) {
+        const QRectF rect = layout->blockBoundingRect(block);
+        if (rect.top() > visible.bottom()) break;
+        if (rect.bottom() < visible.top()) continue;
+        if (!fenced(block)) continue;
+        // Убранная строка внутри забора — своим красным, без плашки: она не
+        // часть слепка (подсветчик её тоже пропускает).
+        if (diffMarkOf(block) == int(diff::Mark::Removed)) continue;
+        painter.fillRect(QRectF(rect.left(), rect.top(), right - rect.left(), rect.height()), plate);
+    }
 }
 
 bool DiffTextView::event(QEvent* event) {

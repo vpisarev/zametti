@@ -203,9 +203,11 @@ public:
     // владельца, сессия 7; прежде был бежевый «пожелтевший»). Тонировка тут не
     // украшение, а часть громкости режима — человек должен видеть, что перед
     // ним прошлое, ещё до того, как прочтёт баннер; серый ещё и не спорит с
-    // зелёной и красной заливкой строк разности. Ставить равным pageBackground
-    // — законный способ выключить.
-    ZM_SETTING_PLAIN(QColor, historyBackground, HistoryBackground, 0xf3, 0xf3, 0xf1)
+    // зелёной и красной заливкой строк разности. Светлее подложки кода
+    // (codeBackground поверх страницы ≈ f0f0ee): код в разности идёт на своей
+    // подложке, и она обязана читаться на этом фоне. Ставить равным
+    // pageBackground — законный способ выключить.
+    ZM_SETTING_PLAIN(QColor, historyBackground, HistoryBackground, 0xf7, 0xf7, 0xf5)
     // Каретка. Рисуется нами, а не Qt: своей каретке Qt цвета не отдаёт вовсе —
     // ни палитрой виджета, ни вьюпорта, ни приложения, ни явным цветом знаков
     // (проверено замером: во всех пяти случаях каретка остаётся чёрной), а роли
@@ -906,6 +908,23 @@ struct ZSettings {
     };
 
 
+    // --- подсветка сырого markdown ------------------------------------------
+    //
+    // ZSyntaxHighlighterMD (сессия 7 — первый шаг к режиму правки исходника;
+    // сейчас — строки разности в истории). Своя секция конфига
+    // (markdownHighlighting) — решение владельца: подсветка исходника — не
+    // облик заметки, а отдельный инструмент со своими цветами.
+    struct MarkdownHighlighting {
+        // Маркеры списков, номера, задачи, формулы и `#` заголовков — акцентом
+        // (синий, как ссылки).
+        ZM_SETTING_PLAIN(QColor, accent, Accent, 0x32, 0x5c, 0xc0)
+        // Код — в строке и между заборами — на подложке.
+        ZM_SETTING_PLAIN(QColor, codeBackground, CodeBackground, 0, 0, 0, 14)
+        // Заголовки: все одного кегля, на столько ступеней крупнее строки
+        // (лестница кеглей doc_model.h: +1 это ×1.2). Ноль — не крупнее.
+        ZM_SETTING(int, headingStep, HeadingStep, 1, 0, 3)
+    };
+
     // --- формулы --------------------------------------------------------
     //
     // Движок — вендоренный MicroTeX, гарнитура — Euler Math 0.75 (выбор
@@ -998,6 +1017,8 @@ struct ZSettings {
     Images& images() { return images_; }
     const Tables& tables() const { return tables_; }
     Tables& tables() { return tables_; }
+    const MarkdownHighlighting& markdownHighlighting() const { return markdown_; }
+    MarkdownHighlighting& markdownHighlighting() { return markdown_; }
     const Formulas& formulas() const { return formulas_; }
     Formulas& formulas() { return formulas_; }
     const Pdf& pdf() const { return pdf_; }
@@ -1012,6 +1033,7 @@ private:
     Cache cache_;
     Images images_;
     Tables tables_;
+    MarkdownHighlighting markdown_;
     Formulas formulas_;
     Pdf pdf_;
 };

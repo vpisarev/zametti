@@ -76,6 +76,10 @@ protected:
     const NoteSearch& searchCache() const override;
     // «+»/«−» на поле у каждой видимой добавленной/убранной строки.
     void paintBlockMargin(QPainter& painter, const QTextBlock& block, const QRectF& rect) override;
+    // Плашка под блоками кода сырого markdown (между заборами ``` / ~~~) — во
+    // всю ширину колонки, как у блока кода в редакторе; состояние забора берётся
+    // у подсветчика (userState блока), обход — только видимого.
+    void paintUnderlay(QPainter& painter, const QRectF& visible) override;
     void keyPressEvent(QKeyEvent* event) override;
     bool event(QEvent* event) override;
     // Копия — сырой текст строк: блоки документа разности и есть строки
