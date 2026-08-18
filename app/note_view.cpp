@@ -1,6 +1,7 @@
 #include "note_view.h"
 
 #include "block_object.h"
+#include "object_frame.h"
 #include "doc_model.h"
 #include "zapp.h"
 #include "document_builder.h"
@@ -626,7 +627,7 @@ NoteView::ImageBox NoteView::imageBoxFor(const QTextBlock& block) {
     // ПОЛОСА — ВО ВСЮ ШИРИНУ КОЛОНКИ. Уголки выбранной фотографии рисуются
     // снаружи её края, а всё, что вылезло за прямоугольник объекта, Qt
     // отсекает; поэтому сам снимок живёт внутри полосы с отступом на вылет.
-    const qreal over = imageCornerOverhang();
+    const qreal over = ObjectFrame::overhang();
     const qreal band = columnWidth(block);
     const qreal room = qMax(1.0, band - 2 * over);
 
@@ -788,7 +789,7 @@ NoteView::ImageGeometry NoteView::imageGeometry(const QTextBlock& block) {
     // Фотография опускается на вылет уголков: они рисуются снаружи её края, и
     // без этого верхние уходили бы в полосу предыдущего блока, где их
     // откусывает чужая перерисовка при прокрутке.
-    geometry.photo = QRectF(textTop + QPointF(shift, imageCornerOverhang()), size);
+    geometry.photo = QRectF(textTop + QPointF(shift, ObjectFrame::overhang()), size);
     return geometry;
 }
 
@@ -1088,7 +1089,7 @@ void NoteView::paintImageMarks(QPainter& painter, const QTextBlock& block) {
     // верхнего края снимка (решение владельца).
     QRectF marks = placed.photo;
     if (!placed.caption.isEmpty()) marks |= placed.caption;
-    paintImageCorners(painter, marks);
+    ObjectFrame::paintCorners(painter, marks);
     painter.restore();
 }
 
@@ -1214,7 +1215,7 @@ void NoteView::paintImage(QPainter& painter, const QTextBlock& block) {
                       block.position() + block.length() &&
                   qMax(cursor.anchor(), cursor.position()) > block.position()
             : cursor.block() == block;
-    if (selected && exportRatio_ <= 0.0) paintImageCorners(painter, geometry.photo);
+    if (selected && exportRatio_ <= 0.0) ObjectFrame::paintCorners(painter, geometry.photo);
     painter.restore();
 }
 
@@ -1246,10 +1247,14 @@ void NoteView::renderSlice(QPainter& painter, const QRectF& documentRect, qreal 
     const int firstVisible = layout->hitTest(QPointF(0, documentRect.top()), Qt::FuzzyHit);
     QTextBlock start = document()->findBlock(firstVisible);
     if (start.isValid() && start.previous().isValid()) start = start.previous();
+    // Запас — тот же, что в paintEvent (слово в слово, иначе бумага разойдётся
+    // с экраном): вынос рамки объекта знает ObjectFrame.
+    const qreal sweep = ObjectFrame::sweep() + 2.0;
     for (QTextBlock block = start; block.isValid(); block = block.next()) {
         const QRectF rect = layout->blockBoundingRect(block);
-        if (rect.top() > documentRect.bottom()) break;
-        if (rect.bottom() + block.blockFormat().bottomMargin() < documentRect.top()) continue;
+        if (rect.top() - sweep > documentRect.bottom()) break;
+        if (rect.bottom() + block.blockFormat().bottomMargin() + sweep < documentRect.top())
+            continue;
         paintMarker(painter, block, base);
         paintDivider(painter, block, rect, displayScale());
         // Фотографию рисует обработчик объектов (ImageObjectHandler): Qt зовёт
@@ -1265,56 +1270,6 @@ void NoteView::renderSlice(QPainter& painter, const QRectF& documentRect, qreal 
     painter.restore();
     exportRatio_ = 0.0;
     exportImageBudget_ = 0;
-}
-
-// Четыре уголка по краям фотографии — как мишень в видоискателе. Заливка
-// поверх снимка красила его собственные цвета, а именно за цветами на него
-// чаще всего и смотрят; уголки стоят СНАРУЖИ пикселей и не трогают ни один.
-qreal NoteView::imageCornerOverhang() {
-    const ZSettings& a = settings();
-    return qMax(0.0, a.style().imageCornerOffset()) + qMax(0.5, a.style().imageCornerWidth());
-}
-
-void NoteView::paintImageCorners(QPainter& painter, const QRectF& photo) {
-    if (photo.isEmpty()) return;
-    const ZSettings& a = settings();
-    const qreal shortSide = qMin(photo.width(), photo.height());
-    // Доля от ПОКАЗАННОГО размера, а не от размера файла: уголки — это про то,
-    // что человек видит на экране. Пол — чтобы на маленькой картинке уголок не
-    // выродился в точку, потолок — сама короткая сторона: длиннее ему негде.
-    const qreal length =
-        qMin(shortSide, qMax(shortSide * qMax(0.0, a.style().imageCornerShare()),
-                             qreal(a.style().imageCornerMinLength())));
-    const qreal thick = qMax(0.5, a.style().imageCornerWidth());
-    if (length <= 0.0) return;
-
-    // Каждый уголок — ОДИН многоугольник, а не две линии. Двумя линиями в
-    // самом углу выходил заметный артефакт: два прямоугольника накладывались
-    // под прямым углом, и стык был виден ступенькой.
-    const qreal out = qMax(0.0, a.style().imageCornerOffset());
-    const QRectF box = photo.adjusted(-out - thick, -out - thick, out + thick, out + thick);
-
-    painter.save();
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(a.style().caretColor());
-    for (int corner = 0; corner < 4; ++corner) {
-        const bool right = corner == 1 || corner == 2;
-        const bool bottom = corner >= 2;
-        const QPointF at(right ? box.right() : box.left(), bottom ? box.bottom() : box.top());
-        const qreal dx = right ? -1.0 : 1.0;
-        const qreal dy = bottom ? -1.0 : 1.0;
-        const QPointF points[6] = {
-            at,
-            at + QPointF(dx * length, 0),
-            at + QPointF(dx * length, dy * thick),
-            at + QPointF(dx * thick, dy * thick),
-            at + QPointF(dx * thick, dy * length),
-            at + QPointF(0, dy * length),
-        };
-        painter.drawPolygon(points, 6);
-    }
-    painter.restore();
 }
 
 QVector<CodeBand> NoteView::codeBands(const QRectF& visible) const {
@@ -1505,8 +1460,8 @@ void NoteView::paintFormulaMarks(QPainter& painter, const QTextBlock& block) {
     // дробь читаются как часть формулы, а не как «выбрано». Поверх готовой
     // страницы, как и вёрстка: выделение Qt кладётся на объект после drawObject.
     if (exportRatio_ <= 0.0 && !box.isEmpty() && objectSelected(block)) {
-        const qreal pad = imageCornerOverhang();
-        paintImageCorners(painter, box.adjusted(-pad, -pad, pad, pad));
+        const qreal pad = ObjectFrame::formulaPad();
+        ObjectFrame::paintCorners(painter, box.adjusted(-pad, -pad, pad, pad));
     }
 }
 
@@ -1620,7 +1575,7 @@ void NoteView::paintTableMarks(QPainter& painter, const QTextBlock& block) {
             how.highlights.push_back({hit.from, hit.from + hit.length, hit.current});
     TableObjects::paint(painter, area, *render, how);
 
-    if (exportRatio_ <= 0.0 && objectSelected(block)) paintImageCorners(painter, area);
+    if (exportRatio_ <= 0.0 && objectSelected(block)) ObjectFrame::paintCorners(painter, area);
 }
 
 
@@ -1854,12 +1809,20 @@ void NoteView::paintEvent(QPaintEvent* event) {
     // шага картинка пропадала бы целиком, стоило её верху выйти из кадра.
     // Дальше одного блока поле не тянется: следующий блок начинается под ним.
     if (start.isValid() && start.previous().isValid()) start = start.previous();
+    // ЗАПАС ОТСЕЧЕНИЯ — НА ВЫНОС РАМКИ. Рамка выбранной формулы и таблицы
+    // рисуется ЗА прямоугольником блока (вынос знает ObjectFrame — тот же
+    // класс, что рисует), а Qt при прокрутке перерисовывает только открывшуюся
+    // полосу: без запаса полоса, попавшая на вынос, закрашивалась текстом, и от
+    // рамки оставались обрубки (дефект владельца «рамка частично затирается»).
+    // Плюс два — на перо и сглаживание. Рисование клипом полосы не ограничено
+    // ничем, кроме области перерисовки, — лишний блок стоит дёшево.
+    const qreal sweep = ObjectFrame::sweep() + 2.0;
     for (QTextBlock block = start; block.isValid(); block = block.next()) {
         const QRectF rect = layout->blockBoundingRect(block);
-        if (rect.top() > visible.bottom()) break;
+        if (rect.top() - sweep > visible.bottom()) break;
         // Фотография живёт в нижнем поле блока и может быть видна, когда сама
         // строка уже уехала вверх, — поэтому отсечение с запасом на поле.
-        if (rect.bottom() + block.blockFormat().bottomMargin() < visible.top()) continue;
+        if (rect.bottom() + block.blockFormat().bottomMargin() + sweep < visible.top()) continue;
         paintMarker(painter, block, base);
         paintDivider(painter, block, rect, displayScale());
         // Фотографию рисует обработчик объектов (ImageObjectHandler): Qt зовёт

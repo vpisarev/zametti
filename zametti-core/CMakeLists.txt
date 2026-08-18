@@ -96,6 +96,7 @@ add_library(zametti-core STATIC
     doc/sort_order.h            doc/sort_order.cpp
     doc/formula.h               doc/formula.cpp
     doc/formula_object.h        doc/formula_object.cpp
+    doc/object_frame.h          doc/object_frame.cpp
     doc/table_view.h            doc/table_view.cpp
     doc/text_stats.h            doc/text_stats.cpp
 )

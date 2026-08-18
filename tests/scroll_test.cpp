@@ -13,6 +13,9 @@
 // фазами; на этом набор и стоит.
 
 #include "editor_widget.h"
+#include "doc_model.h"
+#include "formula.h"
+#include "object_frame.h"
 #include "settings.h"
 #include "settings_hook.h"
 
@@ -22,6 +25,8 @@
 #include <QApplication>
 #include <QDir>
 #include <QFile>
+#include <QImage>
+#include <QPainter>
 #include <QScrollBar>
 #include <QTextBlock>
 #include <QTextCursor>
@@ -141,6 +146,64 @@ static int ztRunSuite(int argc, char** argv) {
     ZT_TRUE("каретка от прокрутки НЕ двигается: было " + std::to_string(caretBefore) +
                 ", стало " + std::to_string(caretAfter),
             caretAfter == caretBefore);
+
+    // --- РАМКА ВЫБРАННОГО ОБЪЕКТА ПЕРЕЖИВАЕТ ЧАСТИЧНУЮ ПЕРЕРИСОВКУ ----------
+    //
+    // Дефект владельца: при прокрутке рамка вокруг формулы частично затиралась.
+    // Qt перерисовывает только открывшуюся полосу, а уголки рамки нарисованы ЗА
+    // прямоугольником блока — без запаса отсечения (ObjectFrame::sweep) полоса,
+    // попавшая на вынос, закрашивалась текстом без рамки. Воспроизводим тем же
+    // механизмом, что и прокрутка: render с узкой областью-исходником идёт
+    // через paintEvent с этим клипом.
+    {
+        // Рамка рисуется вокруг ВЁРСТКИ — без движка формул проверять нечего.
+        QString engineError;
+        ZT_TRUE("движок формул поднялся: " + engineError.toStdString(),
+                zametti::Formulas::init(&engineError));
+        const QString mathPath =
+            writeNote(dir, QStringLiteral("формула.md"),
+                      QStringLiteral("Абзац до формулы, довольно обычный.\n\n"
+                                     "$$\\frac{a}{b} + \\sqrt{x + 1}$$\n\n"
+                                     "Абзац после формулы.\n"));
+        editor.openFile(mathPath);
+        QTest::qWait(30);
+        int number = -1;
+        for (QTextBlock b = editor.document()->begin(); b.isValid(); b = b.next())
+            if (!zametti::isRawBlock(b) && zametti::kindOf(b) == zametti::Kind::Math) {
+                number = b.blockNumber();
+                break;
+            }
+        ZT_TRUE("формула в документе есть", number >= 0);
+        // Каретка на блок формулы: объект выбран, рамка рисуется.
+        QTextCursor at(editor.document());
+        at.setPosition(editor.document()->findBlockByNumber(number).position());
+        editor.setTextCursor(at);
+        QTest::qWait(30);
+
+        QImage whole(editor.viewport()->size(), QImage::Format_RGB32);
+        whole.fill(Qt::white);
+        editor.viewport()->render(&whole);
+
+        const QRectF box = editor.formulaRect(number);
+        ZT_TRUE("вёрстка формулы посчитана", !box.isEmpty());
+        // Полоса над вёрсткой — ровно там, где живёт верхняя перекладина рамки.
+        const int sweep = int(zametti::ObjectFrame::sweep()) + 2;
+        const QRect strip(0, int(box.top()) - editor.verticalScrollBar()->value() - sweep,
+                          editor.viewport()->width(), sweep);
+        QImage partial = whole;
+        {
+            QPainter eraser(&partial);
+            eraser.fillRect(strip, Qt::white);
+        }
+        editor.viewport()->render(&partial, strip.topLeft(), QRegion(strip));
+
+        int mismatched = 0;
+        for (int y = qMax(0, strip.top()); y <= qMin(whole.height() - 1, strip.bottom()); ++y)
+            for (int x = strip.left(); x <= qMin(whole.width() - 1, strip.right()); ++x)
+                if (whole.pixel(x, y) != partial.pixel(x, y)) ++mismatched;
+        ZT_EQ("узкая полоса перерисована один в один с целым кадром (рамка цела)", "0",
+              std::to_string(mismatched));
+    }
 
     zametti::mutableSettingsForTests().ui().setSmoothScroll(savedSmooth);
     return zt::report("scroll");
