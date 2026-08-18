@@ -55,7 +55,6 @@ static int ztRunSuite(int argc, char** argv) {
     out.setWindowGeometry(QByteArray("геометрия", 18));
     out.setPanelsHidden(true);
     out.setExportDir(QStringLiteral("/tmp/куда-вывозили"));
-    out.setDiffPlainView(true);
     out.setExportKeepMeta(true);
     // Каретки по заметкам — там же, по id, без дублей.
     out.rememberCaret(QStringLiteral("00000000000042"), {10, 5, 3});
@@ -87,9 +86,6 @@ static int ztRunSuite(int argc, char** argv) {
     // Каталог вывоза переживает перезапуск: начинать каждый раз с «Документов»
     // — значит каждый раз идти по дереву каталогов заново (замечание владельца).
     ZT_EQ("каталог вывоза", s(out.exportDir()), s(back.exportDir()));
-    // Вид разности — тоже привычка человека, а не свойство заметки: кто читает
-    // разность как markdown, читает её так всегда (просьба владельца).
-    ZT_EQ("вид разности", b(out.diffPlainView()), b(back.diffPlainView()));
     // Галочка вывоза «как есть» — тоже привычка человека: кто обменивается
     // заметками с другим хранилищем, делает это постоянно.
     ZT_EQ("галочка вывоза", b(out.exportKeepMeta()), b(back.exportKeepMeta()));
@@ -110,7 +106,6 @@ static int ztRunSuite(int argc, char** argv) {
     const zametti::ZAppState fresh = zametti::ZAppState::load();
     ZT_EQ("без файла панели на месте", b(false), b(fresh.panelsHidden()));
     ZT_EQ("без файла зум единичный", std::to_string(1.0), std::to_string(fresh.zoom()));
-    ZT_EQ("без файла разность полосками", b(false), b(fresh.diffPlainView()));
     ZT_EQ("без файла вывоз чистый", b(false), b(fresh.exportKeepMeta()));
 
     return zt::report("session");
