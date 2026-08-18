@@ -23,6 +23,7 @@
 //   zametti-bench zoom          ВОРОТА к ZDocument: что делает Ctrl+= с документом
 //   zametti-bench undo          штатный стек отмены: чем именно мы его теряем
 //   zametti-bench paste         цена вставки против размера заметки
+//   zametti-bench inline        строчная формула-объект: посадка, дедупликация
 
 #include <QApplication>
 
@@ -44,6 +45,7 @@ int ztZoomProbe(int argc, char** argv);
 int ztUndoProbe(int argc, char** argv);
 int ztPasteBench(int argc, char** argv);
 int ztBigBench(int argc, char** argv);
+int ztInlineFormulaProbe(int argc, char** argv);
 
 namespace {
 
@@ -68,6 +70,7 @@ const Bench kBenches[] = {
     {"undo", ztUndoProbe},
     {"paste", ztPasteBench},
     {"big", ztBigBench},
+    {"inline", ztInlineFormulaProbe},
 };
 
 int usage() {
