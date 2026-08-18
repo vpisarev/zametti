@@ -253,6 +253,15 @@ ZamettiDocument (см. `zametti_qtextdocument_design.md`); история — ж
   `TableObject` с флипом объект ⇄ исходник (судья файла), поиск внутри объектов
   по исходнику, Tab на выделении под списком; код таблиц и формул вида —
   `app/table_object.{h,cpp}`, `app/formula_object.{h,cpp}`.
+  `zametti-refactor2-report7.md` — седьмая сессия: режим истории заново —
+  `ZNoteTimeline` в ядре (read-only аналог `ZNote` над тем же журналом
+  `shared_ptr<ZNoteHistory>`: слепки, две базы «предыдущая/свежая», документы
+  разности `ZDocument::fromDiff` с явными убранными строками и парой «−/+» у
+  изменённой), в app — `HistoryView` (баннер + `DiffTextView` с «+»/«−» на
+  поле) и `HistoryController`; `NoteEditor` про историю не знает (сигналы
+  `historyRequested`/`archivedNoteOpened`, глагол `restoreBody`), окно —
+  `QStackedWidget`; вид полосок и инверсия по Tab сняты; поиск/reveal/зум/якорь
+  переехали в `NoteView`.
   `zametti-brief-inline-formulas.md` — бриф шестой сессии (выполнен ею).
   `zametti-refactor2-report6.md` — шестая сессия: строчные формулы объектом на
   каждое вхождение (посадка AlignBaseline по пробнику `zametti-bench inline`:

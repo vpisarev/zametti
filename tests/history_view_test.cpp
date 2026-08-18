@@ -707,7 +707,15 @@ static int ztRunSuite(int argc, char** argv) {
 
 TEST(HistoryView, All) {
     std::vector<QByteArray> ztArgs{QByteArrayLiteral("history_view_test")};
-    ztArgs.push_back((zt::TestData::corpus(QStringLiteral("corpus"))).toLocal8Bit());
+    // Прибор: ZAMETTI_HISTORY_BENCH=<файл.md> — вместо проверок замер на этом
+    // файле (taskset -c 0 … --gtest_filter=HistoryView.*).
+    const QByteArray bench = qgetenv("ZAMETTI_HISTORY_BENCH");
+    if (!bench.isEmpty()) {
+        ztArgs.push_back(QByteArrayLiteral("--bench"));
+        ztArgs.push_back(bench);
+    } else {
+        ztArgs.push_back((zt::TestData::corpus(QStringLiteral("corpus"))).toLocal8Bit());
+    }
     std::vector<char*> ztArgv;
     for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
     EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));

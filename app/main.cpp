@@ -2098,13 +2098,20 @@ int main(int argc, char** argv) {
     // родители и дети, документы разности) проверялся запуском под Xvfb, а не
     // рассуждением: двойное освобождение на выходе однажды нашёл владелец, а не
     // набор — набор окна целиком не собирает.
+    // ZAMETTI_PROBE_SHOT=<файл.png> — снимок окна перед выходом (приёмка на
+    // копии хранилища владельца, глазами, а не рассуждением).
     if (const QByteArray quitAfter = qgetenv("ZAMETTI_PROBE_QUIT_MS"); !quitAfter.isEmpty()) {
+        const int ms = qMax(0, quitAfter.toInt());
         if (qEnvironmentVariableIsSet("ZAMETTI_PROBE_HISTORY"))
-            QTimer::singleShot(qMax(0, quitAfter.toInt() / 2), &window, [&] {
+            QTimer::singleShot(ms / 2, &window, [&] {
                 std::fprintf(stderr, "пробник: режим истории %s\n",
                              history.enter() ? "включён" : "не включился");
             });
-        QTimer::singleShot(qMax(0, quitAfter.toInt()), &app, &QCoreApplication::quit);
+        if (const QByteArray shot = qgetenv("ZAMETTI_PROBE_SHOT"); !shot.isEmpty())
+            QTimer::singleShot(ms * 3 / 4, &window, [&window, shot] {
+                window.grab().save(QString::fromLocal8Bit(shot));
+            });
+        QTimer::singleShot(ms, &app, &QCoreApplication::quit);
     }
     return app.exec();
 }
