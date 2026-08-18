@@ -7,7 +7,9 @@
 #include "editor_widget.h"
 #include "formula.h"
 #include "find_bar.h"
+#include "history_controller.h"
 #include "history_panel.h"
+#include "history_view.h"
 #include "note_list.h"
 #include "note_panels.h"
 #include "note_tree.h"
@@ -56,6 +58,7 @@
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QSplitter>
+#include <QStackedWidget>
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QFile>
@@ -377,6 +380,13 @@ int main(int argc, char** argv) {
     zametti::Toolbar toolbar;
     zametti::StatusBar statusBar;
     QWidget rightSide;
+    // Редактор и вид истории — на одном месте, по одному за раз: режим истории
+    // показывает не редактор с подменённым документом, а свой вид, а редактор
+    // с живой заметкой на это время просто скрыт (сессия 7). СТЕК ОБЪЯВЛЕН ДО
+    // СВОИХ ДЕТЕЙ: addWidget делает его их родителем, а дети — объекты на
+    // стеке, и умирать они обязаны раньше родителя (иначе тот удалит их сам —
+    // двойное освобождение на выходе; так и вышло в первой примерке).
+    QStackedWidget textStack;
 
     zametti::NoteEditor editor;
 
@@ -464,7 +474,7 @@ int main(int argc, char** argv) {
     // Правая сторона — заметка, под ней список найденного (появляется только у
     // поиска по всему хранилищу) и панель поиска у самого низа, как в Sublime.
     zametti::FindBar findBar;
-    zametti::HistoryBanner historyBanner;
+    zametti::HistoryView historyView;
     zametti::HistoryTimeline historyTimeline;
     zametti::SearchResultsModel results;
     zametti::SearchResultsDelegate resultsDelegate;
@@ -483,19 +493,21 @@ int main(int argc, char** argv) {
         resultsView.setMaximumHeight(240);
         resultsView.hide();
 
-        // Режим истории: баннер НАД текстом, таймлайн СБОКУ. Обе части видны
-        // всё время режима и обе спрятаны вне его — тем режим и громкий.
-        historyBanner.hide();
+        // Режим истории: вид разности (баннер над текстом) НА МЕСТЕ редактора,
+        // таймлайн СБОКУ. Обе части видны всё время режима и обе спрятаны вне
+        // его — тем режим и громкий.
         historyTimeline.hide();
         historyTimeline.setFont(sidebarFont);
         historyTimeline.setFixedWidth(zametti::settings().ui().noteListWidth());
+        textStack.addWidget(&editor);
+        textStack.addWidget(&historyView);
+        textStack.setCurrentWidget(&editor);
         auto* middleRow = new QHBoxLayout;
         middleRow->setContentsMargins(0, 0, 0, 0);
         middleRow->setSpacing(0);
-        middleRow->addWidget(&editor, 1);
+        middleRow->addWidget(&textStack, 1);
         middleRow->addWidget(&historyTimeline);
 
-        layout->addWidget(&historyBanner);
         layout->addLayout(middleRow, 1);
         layout->addWidget(&resultsView);
         layout->addWidget(&findBar);
@@ -506,6 +518,7 @@ int main(int argc, char** argv) {
     searchDebounce.setSingleShot(true);
     searchDebounce.setInterval(150);
     findBar.setHistory(session.searchHistory());
+    zametti::HistoryController history(editor, historyView, historyTimeline);
 
     // Облик применяется ОДНИМ местом — и на старте, и когда конфиг поправили
     // снаружи. Два места разошлись бы: половина настроек подхватывалась бы на
@@ -521,13 +534,14 @@ int main(int argc, char** argv) {
         historyTimeline.setFont(font);
         historyTimeline.setFixedWidth(zametti::settings().ui().noteListWidth());
 
-        zametti::applyPalette(editor, editor.inHistory());
+        zametti::applyPalette(editor);
         panels.refreshAppearance();
         zametti::applyPalette(resultsView);
 
         toolbar.refreshAppearance();
         statusBar.refreshAppearance();
         editor.refreshAppearance();
+        history.refreshAppearance();
 
         // Делегаты читают настройки прямо при отрисовке — им довольно
         // перерисовки, но размеры строк они считают там же, и без сброса
@@ -774,9 +788,15 @@ int main(int argc, char** argv) {
     const auto shortcut = [&window](const QKeySequence& keys, auto&& slot) {
         QObject::connect(new QShortcut(keys, &window), &QShortcut::activated, &window, slot);
     };
-    auto stepZoom = [&editor](qreal factor) {
-        editor.applyZoom(std::clamp(editor.zoom() * factor, zametti::settings().ui().zoomMin(),
-                                    zametti::settings().ui().zoomMax()));
+    // Масштаб один на программу: и у живой заметки, и у вида истории — иначе,
+    // вернувшись из истории, человек увидел бы другой кегль.
+    auto applyZoom = [&](qreal value) {
+        editor.applyZoom(value);
+        historyView.textView().applyZoom(value);
+    };
+    auto stepZoom = [&](qreal factor) {
+        applyZoom(std::clamp(editor.zoom() * factor, zametti::settings().ui().zoomMin(),
+                             zametti::settings().ui().zoomMax()));
     };
     // Ctrl+= рядом с Ctrl++: увеличивают одной и той же клавишей, с шифтом и без.
     shortcut(QKeySequence(QStringLiteral("Ctrl+=")),
@@ -785,7 +805,7 @@ int main(int argc, char** argv) {
              [&] { stepZoom(zametti::settings().ui().zoomStep()); });
     shortcut(QKeySequence(QStringLiteral("Ctrl+-")),
              [&] { stepZoom(1.0 / zametti::settings().ui().zoomStep()); });
-    shortcut(QKeySequence(QStringLiteral("Ctrl+0")), [&] { editor.applyZoom(1.0); });
+    shortcut(QKeySequence(QStringLiteral("Ctrl+0")), [&] { applyZoom(1.0); });
 
     // Отмена и повтор живут в самом редакторе: QTextEdit объявляет их своими и
     // до ярлыка окна они не доходят.
@@ -830,110 +850,51 @@ int main(int argc, char** argv) {
     // которое никуда не делось, и выбрасывать её, чтобы через бриф написать
     // заново, незачем.
     QHash<QString, int> visitedSnapshot;
-    // Какой слепок показан прямо сейчас. Нужен отдельно от editor.historyIndex()
-    // ровно в один момент — при выходе из режима, когда индекс уже обнулён.
-    int lastHistoryIndex = -1;
 
     const auto showHistoryState = [&] {
-        const int at = editor.historyIndex();
-        const auto& entries = editor.timeline().entries;
-        if (at < 0 || at >= entries.size()) return;
-        // Баннер пишет, КАКАЯ ВЕРСИЯ ПЕРЕД ГЛАЗАМИ, а по Tab перед глазами
-        // вторая сторона сравнения — её и называем.
-        if (editor.diffPeek()) {
-            if (editor.diffBaseIsLive()) historyBanner.setLiveVersion();
-            else if (editor.diffBaseTime() > 0)
-                historyBanner.setSnapshot(editor.diffBaseTime(), zametti::journal::Kind::Save);
-            else
-                historyBanner.setSnapshot(entries[at].time, entries[at].kind);
-        } else {
-            historyBanner.setSnapshot(entries[at].time, entries[at].kind);
-        }
-        historyTimeline.setCurrent(at);
+        const std::shared_ptr<zametti::ZNoteTimeline> tl = history.timeline();
+        if (tl == nullptr || !tl->isOpen()) return;
         window.setWindowTitle(windowTitleFor(editor.filePath()) + QStringLiteral(" — ") +
-                              zametti::historyStamp(entries[at].time) +
+                              zametti::historyStamp(tl->snapshotTime()) +
                               QStringLiteral(" — zametti"));
     };
 
-    QObject::connect(&editor, &zametti::NoteEditor::historyModeChanged, &window,
-                     [&](bool on) {
-                         historyBanner.setVisible(on);
-                         historyTimeline.setVisible(on);
-                         // Кнопка тулбара показывает состояние режима, откуда
-                         // бы в него ни вошли: Ctrl+Z, доехавший до дна цепочки,
-                         // приводит сюда же, и кнопка обязана загореться.
-                         toolbar.setChecked(zametti::Toolbar::Button::History, on);
-                         // Тонировка поля: слегка пожелтевший от времени фон,
-                         // чтобы прошлое было видно ещё до чтения баннера.
-                         zametti::applyPalette(editor, on);
-                         if (on) {
-                             // Заголовок и выделение приедут с historyIndexChanged:
-                             // редактор шлёт его следом, уже показав слепок.
-                             historyTimeline.setEntries(editor.timeline().entries);
-                             return;
-                         }
-                         // Список находок по слепкам без режима истории не
-                         // значит ничего: щёлкать в нём стало не по чему.
-                         if (findBar.mode() == zametti::FindBar::Mode::History) {
-                             results.clear();
-                             resultsView.hide();
-                             findBar.hide();
-                         }
-                         // Уходим — запоминаем, откуда: «назад к посещённому»
-                         // вернёт сюда же. Индекс берётся ДО выхода, потому что
-                         // после него historyIndex() уже -1.
-                         if (lastHistoryIndex >= 0 && !editor.filePath().isEmpty())
-                             visitedSnapshot.insert(editor.filePath(), lastHistoryIndex);
-                         window.setWindowTitle(windowTitleFor(editor.filePath()) +
-                                               QStringLiteral(" — zametti"));
-                     });
-    QObject::connect(&editor, &zametti::NoteEditor::historyIndexChanged, &window,
-                     [&](int index) {
-                         lastHistoryIndex = index;
-                         showHistoryState();
-                     });
-    QObject::connect(&editor, &zametti::NoteEditor::diffSideChanged, &window,
-                     [&](bool) { showHistoryState(); });
-    QObject::connect(&editor, &zametti::NoteEditor::historyEditRefused, &historyBanner,
-                     &zametti::HistoryBanner::flashRestore);
-    // Закрытие таймлайна и «К текущей версии» — одна и та же дверь наружу.
-    QObject::connect(&historyBanner, &zametti::HistoryBanner::leaveRequested, &editor,
-                     [&] { editor.leaveHistory(); });
-    QObject::connect(&historyTimeline, &zametti::HistoryTimeline::closeRequested, &editor,
-                     [&] { editor.leaveHistory(); });
-    QObject::connect(&historyTimeline, &zametti::HistoryTimeline::entryChosen, &editor,
-                     [&](int index) { editor.enterHistory(index); });
-    // Восстановление — одно на баннер и на кнопку тулбара. Две копии этого
-    // кода однажды разошлись бы в мелочи вроде текста в статусе, и человек
-    // получил бы два разных ответа на один и тот же жест.
-    const auto restoreFromHistory = [&] {
-        bool alreadyCurrent = false;
-        const qint64 source = editor.restoreShownSnapshot(&alreadyCurrent);
-        if (alreadyCurrent) {
-            findBar.setStatus(QStringLiteral("этот слепок и есть нынешняя версия"));
+    QObject::connect(&history, &zametti::HistoryController::modeChanged, &window, [&](bool on) {
+        // Вид истории на месте редактора; таймлайн сбоку.
+        textStack.setCurrentWidget(on ? static_cast<QWidget*>(&historyView)
+                                      : static_cast<QWidget*>(&editor));
+        historyTimeline.setVisible(on);
+        // Кнопка тулбара показывает состояние режима, откуда бы в него ни
+        // вошли: Ctrl+Z, доехавший до дна цепочки, приводит сюда же, и кнопка
+        // обязана загореться.
+        toolbar.setChecked(zametti::Toolbar::Button::History, on);
+        if (on) {
+            historyView.setFocus();
             return;
         }
-        if (source == 0) return;
+        // Список находок по слепкам без режима истории не значит ничего:
+        // щёлкать в нём стало не по чему.
+        if (findBar.mode() == zametti::FindBar::Mode::History) {
+            results.clear();
+            resultsView.hide();
+            findBar.hide();
+        }
+        // Уходим — запоминаем, откуда: «назад к посещённому» вернёт сюда же.
+        if (history.lastIndex() >= 0 && !editor.filePath().isEmpty())
+            visitedSnapshot.insert(editor.filePath(), history.lastIndex());
+        window.setWindowTitle(windowTitleFor(editor.filePath()) + QStringLiteral(" — zametti"));
+        editor.setFocus();
+    });
+    QObject::connect(&history, &zametti::HistoryController::indexChanged, &window,
+                     [&](int) { showHistoryState(); });
+    // Восстановление — одно на баннер и на кнопку тулбара; статус пишет окно.
+    QObject::connect(&history, &zametti::HistoryController::restored, &window, [&](qint64 source) {
         findBar.setStatus(QStringLiteral("восстановлено из слепка %1")
                               .arg(zametti::historyMoment(source)));
-    };
-    QObject::connect(&historyBanner, &zametti::HistoryBanner::restoreRequested, &window,
-                     [&] { restoreFromHistory(); });
-    // База сравнения. Кнопка знает только про два состояния, весь смысл — в
-    // редакторе: он и читает слепки, и считает разность.
-    QObject::connect(&historyBanner, &zametti::HistoryBanner::baseChanged, &editor,
-                     [&](bool fresh) { editor.setDiffFromFresh(fresh); });
-    QObject::connect(&historyBanner, &zametti::HistoryBanner::viewChanged, &editor,
-                     [&](bool plain) { editor.setDiffPlainView(plain); });
-    // Вид меняют и Tab, и кнопка — баннер обязан показывать, что действует,
-    // откуда бы смену ни попросили.
-    QObject::connect(&editor, &zametti::NoteEditor::diffViewChanged, &historyBanner,
-                     [&](bool plain) { historyBanner.setPlainView(plain); });
-    // Выбранный вид разности переживает и выход из режима истории, и
-    // перезапуск: это привычка человека, а не свойство заметки. Ставится
-    // ПОСЛЕ связок — тогда о нём узнают разом и редактор, и кнопка баннера.
-    // Вне режима истории это только признак: перерисовывать нечего.
-    editor.setDiffPlainView(session.diffPlainView());
+    });
+    QObject::connect(&history, &zametti::HistoryController::restoreWasCurrent, &window, [&] {
+        findBar.setStatus(QStringLiteral("этот слепок и есть нынешняя версия"));
+    });
 
 
     // ПРАВКА ШАПКИ ЗАКРЫТОЙ ЗАМЕТКИ ЖАЛУЕТСЯ САМА. Отказ записи означал бы, что
@@ -1600,18 +1561,26 @@ int main(int argc, char** argv) {
     // построению: панель-то одна.
     const auto searchRoot = [&] { return model.nodePath(QModelIndex()); };
 
+    // ГДЕ ИЩЕМ: в живой заметке или в показанном слепке истории. Механика
+    // поиска у обоих видов одна (NoteView), цель выбирается режимом.
+    const auto searchTarget = [&]() -> zametti::NoteView& {
+        if (history.active()) return historyView.textView();
+        return editor;
+    };
+
     const auto updateInNoteSearch = [&](const QString& text) {
         const zametti::Query query = zametti::makeQuery(text);
+        zametti::NoteView& target = searchTarget();
         if (query.isEmpty()) {
-            editor.clearMatches();
+            target.clearMatches();
             findBar.setStatus(QString());
             return;
         }
-        const int count = editor.findMatches(query.needle, query.caseSensitive);
+        const int count = target.findMatches(query.needle, query.caseSensitive);
         findBar.setStatus(count == 0
                               ? QStringLiteral("нет совпадений")
                               : QStringLiteral("%1/%2")
-                                    .arg(editor.currentMatch() + 1)
+                                    .arg(target.currentMatch() + 1)
                                     .arg(count));
     };
 
@@ -1628,15 +1597,16 @@ int main(int argc, char** argv) {
             if (!query.isEmpty()) findBar.setStatus(QStringLiteral("нужно два знака"));
             return;
         }
-        const zametti::HistorySearchReport report = editor.searchNoteHistory(text);
+        const zametti::HistorySearchReport report = history.searchHistory(text);
         results.setResults(report.hits);
         resultsView.setVisible(!report.hits.isEmpty());
         // Счётчик слепка уже написан updateInNoteSearch; дописываем к нему
         // историю, иначе одно из двух чисел молча пропадёт.
-        const QString inSnapshot = editor.matchCount() > 0
+        zametti::NoteView& target = searchTarget();
+        const QString inSnapshot = target.matchCount() > 0
                                        ? QStringLiteral("%1/%2 в слепке")
-                                             .arg(editor.currentMatch() + 1)
-                                             .arg(editor.matchCount())
+                                             .arg(target.currentMatch() + 1)
+                                             .arg(target.matchCount())
                                        : QStringLiteral("в слепке нет");
         findBar.setStatus(report.hits.isEmpty()
                               ? inSnapshot + QStringLiteral(", в истории тоже")
@@ -1649,13 +1619,14 @@ int main(int argc, char** argv) {
     };
 
     const auto showCounter = [&] {
-        if (editor.matchCount() == 0) {
+        zametti::NoteView& target = searchTarget();
+        if (target.matchCount() == 0) {
             findBar.setStatus(QStringLiteral("нет совпадений"));
             return;
         }
         findBar.setStatus(QStringLiteral("%1/%2")
-                              .arg(editor.currentMatch() + 1)
-                              .arg(editor.matchCount()));
+                              .arg(target.currentMatch() + 1)
+                              .arg(target.matchCount()));
     };
 
     // СМЕНА ЗАМЕТКИ ПРИ ОТКРЫТОМ ПОИСКЕ — ПОИСК ЗАНОВО (решение владельца).
@@ -1740,11 +1711,15 @@ int main(int argc, char** argv) {
             zametti::Digest digest;
             if (raw.size() == qsizetype(digest.bytes.size()))
                 std::memcpy(digest.bytes.data(), raw.constData(), digest.bytes.size());
-            const int at = zametti::journal::indexOfEntry(editor.timeline(), stamp, digest);
-            if (at >= 0) editor.enterHistory(at);
+            const std::shared_ptr<zametti::ZNoteTimeline> tl = history.timeline();
+            const int at = tl != nullptr
+                               ? zametti::journal::indexOfEntry(tl->journal(), stamp, digest)
+                               : -1;
+            if (at >= 0) history.enter(at);
             const zametti::Query query = zametti::makeQuery(findBar.query());
-            editor.findMatches(query.needle, query.caseSensitive);
-            editor.goToMatch(ordinal);
+            zametti::NoteView& target = searchTarget();
+            target.findMatches(query.needle, query.caseSensitive);
+            target.goToMatch(ordinal);
             return;
         }
         if (file.isEmpty()) return;
@@ -1783,7 +1758,7 @@ int main(int argc, char** argv) {
             }
             return;
         }
-        editor.stepMatch(direction);
+        searchTarget().stepMatch(direction);
         showCounter();
     };
     QObject::connect(&findBar, &zametti::FindBar::findNext, &window, [&] { stepSearch(1); });
@@ -1805,19 +1780,20 @@ int main(int argc, char** argv) {
 
     QObject::connect(&findBar, &zametti::FindBar::closed, &window, [&] {
         editor.clearMatches();
+        historyView.textView().clearMatches();
         storeSearch.cancel();
         searchDebounce.stop();
         resultsView.hide();
         results.clear();
-        editor.setFocus();
+        searchTarget().setFocus();
     });
 
     const auto openFind = [&](zametti::FindBar::Mode requested) {
         // В РЕЖИМЕ ИСТОРИИ ЗАМЕНЫ НЕТ ПО ПОСТРОЕНИЮ: слепок только для чтения.
         // Ctrl+H там открывает обычный поиск, а не отказывается молча.
         zametti::FindBar::Mode mode = requested;
-        if (editor.inHistory() && (mode == zametti::FindBar::Mode::InNote ||
-                                   mode == zametti::FindBar::Mode::Replace))
+        if (history.active() && (mode == zametti::FindBar::Mode::InNote ||
+                                 mode == zametti::FindBar::Mode::Replace))
             mode = zametti::FindBar::Mode::History;
         const bool global = mode == zametti::FindBar::Mode::Global ||
                             mode == zametti::FindBar::Mode::History;
@@ -1826,11 +1802,11 @@ int main(int argc, char** argv) {
             results.clear();
             storeSearch.cancel();
         } else {
-            editor.clearMatches();
+            searchTarget().clearMatches();
         }
-        // Выделенное в редакторе — готовый запрос: чаще всего ищут именно то,
-        // на что смотрят.
-        QString preset = editor.textCursor().selectedText();
+        // Выделенное в редакторе (или в слепке) — готовый запрос: чаще всего
+        // ищут именно то, на что смотрят.
+        QString preset = searchTarget().textCursor().selectedText();
         if (preset.contains(QChar::ParagraphSeparator)) preset.clear();
         findBar.open(mode, preset);
     };
@@ -1842,7 +1818,7 @@ int main(int argc, char** argv) {
         // Поиск по истории ВСЕХ заметок в этот этап не входит (решение
         // владельца: пер-заметочный сильно быстрее и востребованнее). Молчать
         // нельзя — человек нажал и не увидел бы ничего.
-        if (editor.inHistory()) {
+        if (history.active()) {
             statusBar.setMessage(
                 QStringLiteral("поиск по истории всех заметок пока не поддерживается"));
             QTimer::singleShot(3000, &statusBar,
@@ -1855,9 +1831,9 @@ int main(int argc, char** argv) {
     shortcut(QKeySequence(Qt::Key_F3), [&] { stepSearch(1); });
     shortcut(QKeySequence(Qt::SHIFT | Qt::Key_F3), [&] { stepSearch(-1); });
 
-    // Клавиши режима истории (ходьба по изменениям и смена стороны сравнения)
-    // ставятся одной функцией — она же зовётся из набора.
-    zametti::installHistoryShortcuts(&window, editor);
+    // Клавиши режима истории (ходьба по изменениям) ставит контроллер — он же
+    // зовётся из набора.
+    history.installShortcuts(&window);
 
 
     // --- тулбар --------------------------------------------------------------
@@ -1942,10 +1918,10 @@ int main(int argc, char** argv) {
                 // она открывает режим, а искать в слепке отдельный жест
                 // (Ctrl+F).
                 if (!toolbar.isChecked(Button::History)) {
-                    editor.leaveHistory();
+                    history.leave();
                     break;
                 }
-                if (!editor.enterHistory()) {
+                if (!history.enter()) {
                     toolbar.setChecked(Button::History, false);
                     // Случай редкий (опорная запись кладётся при открытии
                     // заметки), но молчать нельзя: нажали — не случилось
@@ -2108,7 +2084,6 @@ int main(int argc, char** argv) {
         out.setSearchHistory(findBar.history());
         out.setStoreRoot(model.isStore() ? model.nodePath(QModelIndex()) : QString());
         out.setExportDir(exportDir);
-        out.setDiffPlainView(editor.diffPlainView());
         out.setExportKeepMeta(exportKeepMeta);
         // Переключатель КОРНЯ, а не действующий порядок: последний может быть
         // задан меткой открытой папки, и запиши мы его — чужая метка стала бы
@@ -2117,5 +2092,19 @@ int main(int argc, char** argv) {
         zapp.saveState();
     });
 
+    // ПРОБНИК ВЫХОДА (не пользовательский ключ): ZAMETTI_PROBE_QUIT_MS=N — выйти
+    // через N мс штатным путём, ZAMETTI_PROBE_HISTORY=1 — перед этим войти в
+    // режим истории. Нужен, чтобы порядок разрушения окна (виджеты на стеке,
+    // родители и дети, документы разности) проверялся запуском под Xvfb, а не
+    // рассуждением: двойное освобождение на выходе однажды нашёл владелец, а не
+    // набор — набор окна целиком не собирает.
+    if (const QByteArray quitAfter = qgetenv("ZAMETTI_PROBE_QUIT_MS"); !quitAfter.isEmpty()) {
+        if (qEnvironmentVariableIsSet("ZAMETTI_PROBE_HISTORY"))
+            QTimer::singleShot(qMax(0, quitAfter.toInt() / 2), &window, [&] {
+                std::fprintf(stderr, "пробник: режим истории %s\n",
+                             history.enter() ? "включён" : "не включился");
+            });
+        QTimer::singleShot(qMax(0, quitAfter.toInt()), &app, &QCoreApplication::quit);
+    }
     return app.exec();
 }

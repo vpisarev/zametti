@@ -10,6 +10,7 @@
 #include "doc_model.h"
 #include "pieces.h"
 #include "editor_widget.h"
+#include "history_rig.h"
 #include "zapp.h"
 #include "journal.h"
 #include "marker.h"
@@ -2452,51 +2453,63 @@ void checkHistoryMode() {
     }
     const QString live = text();
 
-    // Вход в режим: показан последний слепок, править нельзя.
-    check(!editor.inHistory(), "до входа режима нет");
-    check(editor.enterHistory(), "вход в режим истории");
-    check(editor.inHistory(), "режим идёт");
-    check(editor.isReadOnly(), "в слепке править нельзя");
+    // Вход в режим: показан последний слепок, живая заметка не тронута.
+    // Режим живёт вне редактора (контроллер + вид истории, сессия 7): редактор
+    // в «только чтение» не переводится и документ не подменяет — на время
+    // режима его просто скрывает окно.
+    zt::HistoryRig rig(editor);
+    check(!rig.active(), "до входа режима нет");
+    check(rig.enter(), "вход в режим истории");
+    check(rig.active(), "режим идёт");
+    check(!editor.isReadOnly(), "редактор остаётся редактором");
+    checkEqual(live, text(), "живой буфер не тронут входом в историю");
     // Записей три: опорная (с чем открыли) и два сохранения.
-    check(editor.timeline().entries.size() == 3, "таймлайн знает про все три записи");
-    check(editor.historyIndex() == 2, "показан последний слепок");
-    checkEqual(live, text(), "последний слепок совпадает с живой версией");
+    check(rig.controller.timeline()->count() == 3, "таймлайн знает про все три записи");
+    check(rig.index() == 2, "показан последний слепок");
+    check(QString::fromStdString(rig.controller.timeline()->snapshotBody()) ==
+              text(),
+          "последний слепок совпадает с живой версией");
 
     // Шаг назад — более старый слепок.
-    check(editor.historyStepBack(), "шаг в прошлое");
-    check(editor.historyIndex() == 1, "показан предыдущий слепок");
-    check(text().contains(QStringLiteral("two")) && !text().contains(QStringLiteral("three")),
-          "в нём нет того, что дописали позже");
-    check(editor.historyStepBack(), "ещё шаг — к опорной записи");
-    check(editor.historyIndex() == 0, "показана опорная запись");
-    check(!text().contains(QStringLiteral("two")),
+    check(rig.controller.stepBack(), "шаг в прошлое");
+    check(rig.index() == 1, "показан предыдущий слепок");
+    {
+        const std::string body = rig.controller.timeline()->snapshotBody();
+        check(body.find("two") != std::string::npos && body.find("three") == std::string::npos,
+              "в нём нет того, что дописали позже");
+    }
+    check(rig.controller.stepBack(), "ещё шаг — к опорной записи");
+    check(rig.index() == 0, "показана опорная запись");
+    check(rig.controller.timeline()->snapshotBody().find("two") == std::string::npos,
           "опорная запись — заметка, какой её открыли");
-    check(!editor.historyStepBack(), "дальше опорной записи ходу нет");
-    check(editor.historyIndex() == 0, "и мы остались на ней же");
+    check(!rig.controller.stepBack(), "дальше опорной записи ходу нет");
+    check(rig.index() == 0, "и мы остались на ней же");
 
     // Печатающая клавиша не восстанавливает и не правит.
     int refusals = 0;
-    QObject::connect(&editor, &zametti::NoteEditor::historyEditRefused,
+    QObject::connect(&rig.controller, &zametti::HistoryController::editRefused,
                      [&refusals] { ++refusals; });
-    const QString beforeTyping = text();
-    QTest::keyClicks(&editor, QStringLiteral("x"));
+    rig.view.show();
     QTest::qWait(10);
-    checkEqual(beforeTyping, text(), "печатающая клавиша слепок не меняет");
+    const QString beforeTyping = rig.shownText();
+    QTest::keyClicks(&rig.view.textView(), QStringLiteral("x"));
+    QTest::qWait(10);
+    checkEqual(beforeTyping, rig.shownText(), "печатающая клавиша слепок не меняет");
     check(refusals == 1, "и про отказ сказано вслух");
 
     // Копировать из прошлого можно — ради этого режим и заведён.
-    editor.selectAll();
-    editor.copy();
+    rig.view.textView().selectAll();
+    rig.view.textView().copy();
     check(!QApplication::clipboard()->text().isEmpty(), "из слепка копируется");
 
     // Шагами вперёд — до последнего слепка и дальше, в живую версию.
-    check(editor.historyStepForward(), "шаг в будущее");
-    check(editor.historyIndex() == 1, "предыдущий слепок");
-    check(editor.historyStepForward(), "ещё шаг");
-    check(editor.historyIndex() == 2, "снова последний слепок");
-    check(editor.historyStepForward(), "шаг дальше последнего");
-    check(!editor.inHistory(), "и он вывел в живую версию");
-    check(!editor.isReadOnly(), "живую версию снова можно править");
+    check(rig.controller.stepForward(), "шаг в будущее");
+    check(rig.index() == 1, "предыдущий слепок");
+    check(rig.controller.stepForward(), "ещё шаг");
+    check(rig.index() == 2, "снова последний слепок");
+    check(rig.controller.stepForward(), "шаг дальше последнего");
+    check(!rig.active(), "и он вывел в живую версию");
+    check(!editor.isReadOnly(), "живую версию можно править");
     checkEqual(live, text(), "живая версия вернулась целой");
 
     // Цепочка отмены пережила поход: Ctrl+Z отменяет правку, сделанную ДО него.
@@ -2523,12 +2536,12 @@ void checkHistoryMode() {
         history.read(noteId, &journal, &error);
         return int(journal.entries.size());
     }();
-    check(editor.enterHistory(0), "вход на первый слепок");
-    const QString old = text();
-    const qint64 source = editor.restoreShownSnapshot();
+    check(rig.enter(0), "вход на первый слепок");
+    const QString old = QString::fromStdString(rig.controller.timeline()->snapshotBody());
+    const qint64 source = rig.controller.restore();
     QTest::qWait(20);
     check(source != 0, "восстановление состоялось");
-    check(!editor.inHistory(), "и режим закрылся");
+    check(!rig.active(), "и режим закрылся");
     checkEqual(old, text(), "в живой заметке теперь содержимое слепка");
 
     zametti::journal::Journal journal;
@@ -2556,12 +2569,12 @@ void checkHistoryMode() {
             return int(journal.entries.size());
         }();
         const int wasUndo = editor.undoSteps();
-        check(editor.enterHistory(), "вход в историю на последний слепок");
+        check(rig.enter(), "вход в историю на последний слепок");
         bool alreadyCurrent = false;
-        const qint64 same = editor.restoreShownSnapshot(&alreadyCurrent);
+        const qint64 same = rig.controller.restore(&alreadyCurrent);
         QTest::qWait(20);
         check(same == 0 && alreadyCurrent, "восстановление того же самого — не восстановление");
-        check(!editor.inHistory(), "и режим всё равно закрылся");
+        check(!rig.active(), "и режим всё равно закрылся");
         const int nowRecords = [&] {
             zametti::journal::Journal journal;
             QString e;
@@ -2652,12 +2665,12 @@ void checkHistoryBaseline() {
 
     // Главное: начальное состояние достижимо. Первый шаг назад из истории
     // приводит к тому, с чего заметка начиналась, а не в пустоту.
-    check(editor.enterHistory(), "вход в историю");
-    check(editor.historyStepBack(), "шаг в прошлое");
-    check(editor.historyIndex() == 0, "и он привёл к самой первой записи");
-    checkEqual(original, snapshot(editor.historyIndex()),
-               "начальное состояние заметки достижимо");
-    editor.leaveHistory();
+    zt::HistoryRig rig(editor);
+    check(rig.enter(), "вход в историю");
+    check(rig.controller.stepBack(), "шаг в прошлое");
+    check(rig.index() == 0, "и он привёл к самой первой записи");
+    checkEqual(original, snapshot(rig.index()), "начальное состояние заметки достижимо");
+    rig.leave();
 }
 
 // Уход в другую заметку обязан выводить из режима истории. Иначе редактор
@@ -2685,12 +2698,13 @@ void checkHistoryLeavesOnOpen() {
 
     editor.openFile(first);
     QTest::qWait(20);
-    check(editor.enterHistory(), "вошли в историю первой заметки");
-    check(editor.inHistory(), "режим идёт");
+    zt::HistoryRig rig(editor);
+    check(rig.enter(), "вошли в историю первой заметки");
+    check(rig.active(), "режим идёт");
 
     editor.openFile(second);
     QTest::qWait(20);
-    check(!editor.inHistory(), "открытие другой заметки вывело из режима");
+    check(!rig.active(), "открытие другой заметки вывело из режима");
     check(!editor.isReadOnly(), "и править её можно");
     check(editor.document()->toPlainText().contains(QStringLiteral("bbf2")),
           "показана именно вторая заметка");

@@ -12,6 +12,7 @@
 //     поиска не должны зависеть от того, где ищут.
 
 #include "editor_widget.h"
+#include "history_rig.h"
 #include "history_search.h"
 #include "journal.h"
 #include "search.h"
@@ -162,7 +163,8 @@ void checkSearchMigratesFirst() {
     NoteEditor editor;
     editor.setStoreRoot(g_root);
     editor.openFile(path);
-    const HistorySearchReport report = editor.searchNoteHistory(QStringLiteral("Кострому"));
+    zt::HistoryRig rig(editor);
+    const HistorySearchReport report = rig.controller.searchHistory(QStringLiteral("Кострому"));
 
     journal::Journal after;
     ZT_TRUE("журнал читается и после", history.read(id, &after, &error));

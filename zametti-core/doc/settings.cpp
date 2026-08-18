@@ -111,6 +111,7 @@ QJsonObject settingsToJson(const ZSettings& a) {
         {QStringLiteral("symbolFamily"), a.style().symbolFamily()},
         {QStringLiteral("codeFamily"), a.style().codeFamily()},
         {QStringLiteral("codeStep"), a.style().codeStep()},
+        {QStringLiteral("diffStep"), a.style().diffStep()},
         {QStringLiteral("headingStep"), headings},
         {QStringLiteral("fallbackStep"), a.style().fallbackStep()},
     };
@@ -380,6 +381,7 @@ void settingsFromJson(const QJsonObject& root, ZSettings& a) {
     readString(font, "symbolFamily", a.style(), &ZDocStyle::setSymbolFamily);
     readString(font, "codeFamily", a.style(), &ZDocStyle::setCodeFamily);
     readInt(font, "codeStep", a.style(), &ZDocStyle::setCodeStep);
+    readInt(font, "diffStep", a.style(), &ZDocStyle::setDiffStep);
     readInt(font, "fallbackStep", a.style(), &ZDocStyle::setFallbackStep);
     const QJsonArray headings = font.value(QStringLiteral("headingStep")).toArray();
     {

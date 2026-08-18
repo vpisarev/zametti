@@ -45,11 +45,12 @@ QColor tintOf(diff::Mark mark, const ZDocStyle& style) {
 }  // namespace
 
 qreal ZDocument::diffGutterWidth(const ZDocStyle& style) {
-    // Два знака кода: под глиф и воздух рядом с ним. Считается ОТ ШРИФТА КОДА
-    // базового кегля — той же меркой, что и поля сборщика (sideMargin × «A»).
+    // Два знака строки разности: под глиф и воздух рядом с ним. Считается ОТ
+    // ШРИФТА СТРОК базового кегля — той же меркой, что и поля сборщика
+    // (sideMargin × «A»).
     QFont code = layoutBaseFont(style);
     if (!style.codeFamily().isEmpty()) code.setFamily(QString(style.codeFamily()));
-    code.setPointSizeF(code.pointSizeF() * fontStepFactor(style.codeStep()));
+    code.setPointSizeF(code.pointSizeF() * fontStepFactor(style.diffStep()));
     return 2.0 * QFontMetricsF(code).horizontalAdvance(QLatin1Char('0'));
 }
 
@@ -76,9 +77,10 @@ ZDocument ZDocument::fromDiff(const diff::Result& result, std::shared_ptr<const 
     rootFormat.setBottomMargin(look.verticalMargin() * lineUnit);
     target.rootFrame()->setFrameFormat(rootFormat);
 
+    // Гарнитура кода (строки — markdown-исходник), кегль — ступенью diffStep.
     QTextCharFormat text;
     if (!look.codeFamily().isEmpty()) text.setFontFamilies({QString(look.codeFamily())});
-    setFontStep(text, look.codeStep());
+    setFontStep(text, look.diffStep());
 
     QTextCursor caret(&target);
     bool first = true;

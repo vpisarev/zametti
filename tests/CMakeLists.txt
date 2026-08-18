@@ -95,7 +95,7 @@ add_executable(zametti-tests
 
     # --- окно ---
     history_search_test.cpp
-    diff_view_test.cpp
+    history_view_test.cpp
     history_write_test.cpp
     export_pdf_test.cpp
     tree_view_test.cpp

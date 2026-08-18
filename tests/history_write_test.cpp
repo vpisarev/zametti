@@ -15,6 +15,7 @@
 #include "document_saver.h"
 #include "history_rules.h"
 #include "editor_widget.h"
+#include "history_rig.h"
 #include "journal.h"
 #include "times.h"
 
@@ -219,13 +220,15 @@ void checkUndoDepth() {
     const int words = 120;
     for (int i = 0; i < words; ++i) typeText(editor, QStringLiteral("слово "));
 
+    // Дно цепочки — просьба уйти в историю; контроллер туда и уходит.
+    zt::HistoryRig rig(editor);
     int steps = 0;
-    while (!editor.inHistory() && steps <= words + 5) {
+    while (!rig.active() && steps <= words + 5) {
         editor.undo();
-        if (editor.inHistory()) break;
+        if (rig.active()) break;
         ++steps;
     }
-    editor.leaveHistory();
+    rig.leave();
     ZT_TRUE("отменилось " + std::to_string(steps) + " слов из " + std::to_string(words) +
                 ", а не свалились в историю",
             steps >= words);
@@ -472,13 +475,14 @@ void checkHistoryReadMigrates() {
     ZT_EQ("до входа в историю журнал не тронут", std::string(),
           cleanVersionOf(id).toStdString());
 
-    ZT_TRUE("вход в историю удался", editor.enterHistory());
+    zt::HistoryRig rig(editor);
+    ZT_TRUE("вход в историю удался", rig.enter());
     ZT_EQ("журнал вычищен входом в историю", std::string("0.1"),
           cleanVersionOf(id).toStdString());
     ZT_TRUE("и таймлайн показывает уже чистую историю: записей " +
-                std::to_string(editor.timeline().entries.size()),
-            editor.timeline().entries.size() == 1);
-    editor.leaveHistory();
+                std::to_string(rig.controller.timeline()->count()),
+            rig.controller.timeline()->count() == 1);
+    rig.leave();
 }
 
 // --- вход в историю ---------------------------------------------------------
@@ -496,8 +500,9 @@ void checkEnterSavesDirtyBuffer() {
     ZT_TRUE("опорная запись есть", base >= 1);
 
     // Чистый буфер: вход записи не добавляет.
-    ZT_TRUE("вошли в историю", editor.enterHistory());
-    editor.leaveHistory();
+    zt::HistoryRig rig(editor);
+    ZT_TRUE("вошли в историю", rig.enter());
+    rig.leave();
     ZT_TRUE("с чистым буфером записи не появилось: было " + std::to_string(base) +
                 ", стало " + std::to_string(recordCount(id)),
             recordCount(id) == base);
@@ -508,7 +513,7 @@ void checkEnterSavesDirtyBuffer() {
     caret.movePosition(QTextCursor::End);
     caret.insertText(QStringLiteral(" длинная дописка, которой хватит на новую запись целиком"));
     editor.setTextCursor(caret);
-    ZT_TRUE("вошли в историю со свежими правками", editor.enterHistory());
+    ZT_TRUE("вошли в историю со свежими правками", rig.enter());
     ZT_TRUE("вершина работы записана: было " + std::to_string(base) + ", стало " +
                 std::to_string(recordCount(id)),
             recordCount(id) == base + 1);
@@ -516,9 +521,9 @@ void checkEnterSavesDirtyBuffer() {
     // И вершина таймлайна — настоящая головная запись, равная живому буферу:
     // «Вернуть» на ней честно отказывается.
     bool alreadyCurrent = false;
-    editor.restoreShownSnapshot(&alreadyCurrent);
+    rig.controller.restore(&alreadyCurrent);
     ZT_TRUE("на вершине восстанавливать нечего", alreadyCurrent);
-    editor.leaveHistory();
+    rig.leave();
 }
 
 // ИМЕНОВАННЫЙ ИНВАРИАНТ: режим истории живого буфера не трогает. Вышли — и
@@ -538,13 +543,14 @@ void checkHistoryLeavesUndoStackAlone() {
     const int stepsBefore = editor.undoSteps();
     ZT_TRUE("шагов отмены набралось: " + std::to_string(stepsBefore), stepsBefore >= 3);
 
-    ZT_TRUE("вошли в историю", editor.enterHistory());
-    // В режиме истории стек отмены СВОЙ и пустой: живая заметка отложена
-    // целиком. Пустой — это ноль: у штатного стека Qt опорного шага нет, он
-    // просто пуст (у прежней цепочки снимков в основании всегда лежал один).
-    ZT_TRUE("в слепке свой пустой стек: " + std::to_string(editor.undoSteps()),
-            editor.undoSteps() == 0);
-    editor.leaveHistory();
+    zt::HistoryRig rig(editor);
+    ZT_TRUE("вошли в историю", rig.enter());
+    // Режим истории живёт вне редактора (сессия 7): цепочка отмены на месте и
+    // в режиме — она НЕ ОБЯЗАНА пустеть, редактор ничего не подменяет. Стережём
+    // это как инвариант: было столько же.
+    ZT_TRUE("в режиме цепочка отмены не тронута: " + std::to_string(editor.undoSteps()),
+            editor.undoSteps() == stepsBefore);
+    rig.leave();
 
     ZT_TRUE("вернулись с той же цепочкой: было " + std::to_string(stepsBefore) + ", стало " +
                 std::to_string(editor.undoSteps()),
@@ -577,8 +583,9 @@ void checkHistoryKeepsCaretAndSelection() {
     ZT_TRUE("каретка не в начале: " + std::to_string(at), at > 0);
     ZT_TRUE("и выделения нет", !editor.textCursor().hasSelection());
 
-    ZT_TRUE("вошли в историю", editor.enterHistory());
-    editor.leaveHistory();
+    zt::HistoryRig rig(editor);
+    ZT_TRUE("вошли в историю", rig.enter());
+    rig.leave();
     ZT_TRUE("вернулись без выделения", !editor.textCursor().hasSelection());
     ZT_TRUE("и каретка на месте: " + std::to_string(editor.textCursor().position()),
             editor.textCursor().position() == at);
@@ -592,8 +599,8 @@ void checkHistoryKeepsCaretAndSelection() {
     const int position = editor.textCursor().position();
     ZT_TRUE("выделение сделано", editor.textCursor().hasSelection());
 
-    ZT_TRUE("снова вошли в историю", editor.enterHistory());
-    editor.leaveHistory();
+    ZT_TRUE("снова вошли в историю", rig.enter());
+    rig.leave();
     ZT_TRUE("выделение вернулось тем же",
             editor.textCursor().anchor() == anchor &&
                 editor.textCursor().position() == position);
@@ -641,16 +648,16 @@ void checkHistoryNeverWritesToFile() {
                    0, &error);
 
     editor.openFile(path);
-    ZT_TRUE("вошли в историю", editor.enterHistory());
-    ZT_TRUE("встали на среднюю запись", editor.enterHistory(1));
-    const bool gapShown = [&] {
-        for (QTextBlock b = editor.document()->begin(); b.isValid(); b = b.next())
-            if (b.text().startsWith(QStringLiteral("удалено:"))) return true;
-        return false;
-    }();
-    ZT_TRUE("вспомогательная строка в поле есть — иначе проверять нечего", gapShown);
+    zt::HistoryRig rig(editor);
+    ZT_TRUE("вошли в историю", rig.enter());
+    ZT_TRUE("встали на среднюю запись", rig.enter(1));
+    // В документе разности убранный абзац «второй» ВИДЕН (своим текстом) —
+    // именно он не имеет права попасть в файл; и слепок отличается от файла —
+    // иначе проверять нечего.
+    ZT_TRUE("убранная строка в виде есть — иначе проверять нечего",
+            rig.shownText().contains(QStringLiteral("второй")));
     ZT_TRUE("и слепок отличается от файла — иначе проверять тоже нечего",
-            !editor.document()->toPlainText().contains(QStringLiteral("четвёртый")));
+            rig.controller.timeline()->snapshotBody().find("четвёртый") == std::string::npos);
 
     QFile before(path);
     ZT_TRUE("файл читается", before.open(QIODevice::ReadOnly));
@@ -666,8 +673,8 @@ void checkHistoryNeverWritesToFile() {
     ZT_TRUE("файл читается и после", after.open(QIODevice::ReadOnly));
     const QByteArray now2 = after.readAll();
     ZT_TRUE("файл заметки не тронут записью из режима истории", now2 == was);
-    ZT_TRUE("и заглушки в нём нет", !now2.contains("удалено:"));
-    editor.leaveHistory();
+    ZT_TRUE("и строки из документа разности в нём нет", !now2.contains("второй"));
+    rig.leave();
 }
 
 // ЛЕНИВАЯ МИГРАЦИЯ ВРЕМЁН (этап 15) на живой заметке старого вида.

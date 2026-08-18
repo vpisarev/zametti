@@ -3,28 +3,7 @@
 #include "doc_model.h"
 #include "document_builder.h"
 
-#include "settings.h"
-
-#include <QTextBlock>
-#include <QTextCursor>
-#include <QTextDocument>
-
 namespace zametti::diff {
-namespace {
-
-// Цвет метки. Одинаковый во всех видах: полоска на поле, заливка строки и
-// заглушка обязаны говорить одно и то же.
-QColor colorOf(Mark mark, const ZDocStyle& look) {
-    switch (mark) {
-        case Mark::Added: return look.diffAdded();
-        case Mark::Removed: return look.diffRemoved();
-        case Mark::Changed: return look.diffChanged();
-        case Mark::Same: break;
-    }
-    return QColor();
-}
-
-}  // namespace
 
 QString gapLabel(int lines) {
     // Безличная форма («удалено: 1 строка», «удалено: 5 строк») — единственная,
@@ -99,46 +78,5 @@ Illustrated illustrate(const std::vector<Piece>& snapshot, const BlockMarks& mar
     return out;
 }
 
-void buildPlainDocument(const Result& result, QTextDocument& target,
-                        QVector<Mark>* markOfBlock) {
-    const ZDocStyle& look = styleOf(target);
-    target.clear();
-    if (markOfBlock != nullptr) markOfBlock->clear();
-
-    // Поле слева — под полоски разности: без него они легли бы прямо на первый
-    // знак строки (видно на снимке приёмки).
-    target.setDocumentMargin(look.diffBarWidth() * 4);
-
-    QTextCharFormat text;
-    text.setFontFamilies({look.codeFamily()});
-    setFontStep(text, look.codeStep());
-
-    QTextCursor caret(&target);
-    bool first = true;
-    for (const Row& row : result.rows) {
-        QTextBlockFormat block;
-        // Заливка строки — едва заметная: моноширинный markdown должен
-        // читаться как markdown, а не как светофор. Само же «сюда смотреть»
-        // говорит полоска на поле, она сплошная.
-        if (row.mark != Mark::Same) {
-            QColor tint = colorOf(row.mark, look);
-            tint.setAlpha(qBound(0, look.diffTint(), 255));
-            block.setBackground(tint);
-        }
-        if (first) {
-            caret.setBlockFormat(block);
-            caret.setCharFormat(text);
-            first = false;
-        } else {
-            caret.insertBlock(block, text);
-        }
-        // Строки, которой на этой стороне нет, не показываем пустой строкой с
-        // выдумкой — она и есть пустая. Место под неё остаётся, и в этом весь
-        // смысл: по Alt текст в ней появляется, а всё вокруг стоит намертво.
-        caret.insertText(row.text());
-        if (markOfBlock != nullptr) markOfBlock->append(row.mark);
-    }
-    if (result.rows.isEmpty() && markOfBlock != nullptr) markOfBlock->append(Mark::Same);
-}
 
 }  // namespace zametti::diff

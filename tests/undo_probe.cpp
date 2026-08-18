@@ -188,7 +188,8 @@ int ztUndoProbe(int argc, char** argv) {
         const QString after = editor.document()->toPlainText().left(40);
         std::printf("   было   [%s]\n   набрал [%s]\n   отмена [%s]\n",
                     qPrintable(before), qPrintable(typed), qPrintable(after));
-        std::printf("   в режиме истории: %s\n", editor.inHistory() ? "ДА" : "нет");
+        std::printf("   дно цепочки (дальше — история): %s\n",
+                    editor.document()->isUndoAvailable() ? "нет" : "ДА");
     }
 
     // Автозамена: набрано два знака, потом операция. Сколько шагов и что
@@ -322,7 +323,7 @@ int ztUndoProbe(int argc, char** argv) {
         const QString full = editor.document()->toPlainText();
 
         int undos = 0;
-        while (undos < 12 && editor.document()->isUndoAvailable() && !editor.inHistory()) {
+        while (undos < 12 && editor.document()->isUndoAvailable()) {
             editor.undo();
             QTest::qWait(10);
             ++undos;

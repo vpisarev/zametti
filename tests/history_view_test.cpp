@@ -1,0 +1,714 @@
+// Режим истории целиком — контроллер, вид разности и список записей поверх
+// ZNoteTimeline, на живом редакторе в окне С СОСЕДОМ.
+//
+// Что здесь проверяется (сессия 7, вид один — markdown построчно):
+//   * вход/выход/шаги: живой буфер редактора не трогается ни на байт;
+//   * убранные строки видны своим текстом, «удалено: N» нет; «+»/«−» на поле
+//     И ПРАВДА НАРИСОВАНЫ (по пикселям), а не только помечены;
+//   * F4 ходит по изменениям и ставит их в золотое сечение — и без фокуса в
+//     тексте; Ctrl+Z/Ctrl+Shift+Z шагают по слепкам; Esc выводит; печатающая
+//     клавиша ничего не восстанавливает и говорит об этом вслух;
+//   * смена базы и переход к другому слепку держат место; масштаб не стирает
+//     слепок; база «со свежей» и «с предыдущей» — разные сравнения;
+//   * восстановление кладёт в заметку слепок, а не документ разности;
+//   * копирование из слепка — сырые строки markdown;
+//   * на корпусе: документ разности согласован со сравнением построчно.
+//
+// Снимки приёмки — в каталог набора (широкое и узкое окно).
+
+#include "diff.h"
+#include "editor_widget.h"
+#include "history_controller.h"
+#include "history_panel.h"
+#include "history_view.h"
+#include "journal.h"
+#include "settings.h"
+
+#include "test_util.h"
+#include "testdata.h"
+
+#include <QAbstractTextDocumentLayout>
+#include <QApplication>
+#include <QClipboard>
+#include <QDir>
+#include <QDirIterator>
+#include <QElapsedTimer>
+#include <QFile>
+#include <QFileInfo>
+#include <QImage>
+#include <QKeyEvent>
+#include <QListWidget>
+#include <QScrollBar>
+#include <QTemporaryDir>
+#include <QTest>
+#include <QTextBlock>
+#include <QTextDocument>
+#include <QTextFrame>
+#include <QVBoxLayout>
+
+#include <set>
+#include <string>
+#include <vector>
+
+using namespace zametti;
+
+namespace {
+
+template <typename T>
+std::string num(T value) { return std::to_string(value); }
+
+QString g_root;
+QString g_corpus;
+
+// Заметка с историей: две версии, обе в журнале, файл — вторая. Возвращает путь.
+QString makeNoteWithHistory(const QString& id, const QByteArray& first,
+                            const QByteArray& second) {
+    QDir().mkpath(g_root + QStringLiteral("/.zametti"));
+    QDir().mkpath(g_root + QStringLiteral("/history"));
+    const QString path = g_root + QLatin1Char('/') + id + QStringLiteral(".md");
+    QFile file(path);
+    if (file.open(QIODevice::WriteOnly)) file.write(second);
+    file.close();
+
+    journal::History history(g_root);
+    QString error;
+    const qint64 now = 1'700'000'000'000LL;
+    history.append(id, journal::Kind::Save, now, first, 0, &error);
+    history.append(id, journal::Kind::Save, now + 60'000, second, 0, &error);
+    return path;
+}
+
+QByteArray note(const char* body, const char* stamp) {
+    return QByteArray("<!-- zametti\ncreated: 2026-01-01T00:00:00Z\nmodified: ") + stamp +
+           "\n-->\n\n" + body;
+}
+
+// Окно режима: редактор, вид истории, список записей и сосед, которому мог бы
+// достаться фокус, — ровно то, что стоит в живом окне. Контроллер связывает
+// их так же, как main().
+struct Rig {
+    QWidget window;
+    QListWidget* neighbour;
+    NoteEditor* editor;
+    HistoryView* view;
+    HistoryTimeline* list;
+    HistoryController controller;
+
+    Rig()
+        : neighbour(new QListWidget(&window)),
+          editor(new NoteEditor(&window)),
+          view(new HistoryView(&window)),
+          list(new HistoryTimeline(&window)),
+          controller(*editor, *view, *list) {
+        auto* layout = new QVBoxLayout(&window);
+        layout->addWidget(neighbour);
+        layout->addWidget(editor, 1);
+        layout->addWidget(view, 1);
+        layout->addWidget(list);
+        neighbour->addItem(QStringLiteral("сосед, которому достался бы фокус"));
+        editor->setStoreRoot(g_root);
+        window.resize(900, 700);
+    }
+    bool open(const QString& path, int index = -1) {
+        editor->openFile(path);
+        return controller.enter(index);
+    }
+    DiffTextView& text() { return view->textView(); }
+    std::shared_ptr<ZNoteTimeline> tl() { return controller.timeline(); }
+    QStringList lines() {
+        QStringList out;
+        for (QTextBlock b = text().document()->begin(); b.isValid(); b = b.next())
+            out.append(b.text());
+        return out;
+    }
+    void show() {
+        window.show();
+        window.activateWindow();
+        window.raise();
+        (void)QTest::qWaitForWindowActive(&window, 1000);
+        QApplication::processEvents();
+    }
+};
+
+void checkBasics() {
+    const QString path = makeNoteWithHistory(
+        QStringLiteral("01dddddddddd01"),
+        note("# Заголовок\n\nПервый абзац.\n\nВторой абзац.\n\n- пункт\n- ещё пункт\n", "a"),
+        note("# Заголовок\n\nПервый абзац поправленный.\n\n- пункт\n- ещё пункт\n"
+             "- третий пункт\n", "b"));
+
+    Rig rig;
+    rig.editor->openFile(path);
+    const QString liveBefore = rig.editor->document()->toPlainText();
+    ZT_TRUE("вошли в историю", rig.controller.enter());
+    ZT_TRUE("режим идёт", rig.controller.active());
+    ZT_TRUE("сравнение нашло изменения: " + num(rig.tl()->changedLines()),
+            rig.tl()->changedLines() > 0);
+    ZT_EQ("живой буфер не тронут", liveBefore.toStdString(),
+          rig.editor->document()->toPlainText().toStdString());
+    ZT_TRUE("редактор не переводился в «только чтение»", !rig.editor->isReadOnly());
+
+    // УБРАННЫЕ СТРОКИ ВИДНЫ СВОИМ ТЕКСТОМ. «Второй абзац.» исчез — он в
+    // документе разности красным, а сводки «удалено: N» нет.
+    const QStringList lines = rig.lines();
+    ZT_TRUE("убранная строка показана", lines.contains(QStringLiteral("Второй абзац.")));
+    ZT_TRUE("сводки «удалено:» нет", lines.filter(QStringLiteral("удалено:")).isEmpty());
+    const int gone = int(lines.indexOf(QStringLiteral("Второй абзац.")));
+    ZT_TRUE("и она помечена убранной",
+            gone >= 0 && rig.tl()->markOfBlock(gone) == diff::Mark::Removed);
+    // Изменённая строка — парой: старая, за ней новая.
+    const int was = int(lines.indexOf(QStringLiteral("Первый абзац.")));
+    const int now = int(lines.indexOf(QStringLiteral("Первый абзац поправленный.")));
+    ZT_TRUE("изменённая строка — пара «− старая / + новая»", was >= 0 && now == was + 1);
+
+    // ХОДЬБА ПО ИЗМЕНЕНИЯМ. Первый шаг обязан привести на изменённый блок,
+    // а круг — вернуть на то же место.
+    QTextCursor top(rig.text().document());
+    top.setPosition(0);
+    rig.text().setTextCursor(top);
+    ZT_TRUE("шаг к изменению удался", rig.text().stepChange(true));
+    const int first = rig.text().textCursor().blockNumber();
+    ZT_TRUE("и он привёл на изменённое место",
+            rig.tl()->markOfBlock(first) != diff::Mark::Same);
+    int steps = 0;
+    while (steps < 20) {
+        rig.text().stepChange(true);
+        ++steps;
+        if (rig.text().textCursor().blockNumber() == first) break;
+    }
+    ZT_TRUE("ходьба идёт по кругу: шагов " + num(steps), steps < 20);
+
+    rig.controller.leave();
+    ZT_TRUE("вышли", !rig.controller.active());
+    ZT_EQ("и живой буфер по-прежнему тот же", liveBefore.toStdString(),
+          rig.editor->document()->toPlainText().toStdString());
+}
+
+// «+»/«−» НАРИСОВАНЫ на поле — по пикселям, а не по меткам: метка без глифа
+// была бы обещанием, которого человек не видит.
+void checkGutterIsPainted() {
+    const QString path = makeNoteWithHistory(
+        QStringLiteral("01dddddddddd02"),
+        note("# Заголовок\n\nбыло вот так\n\nостаётся\n", "a"),
+        note("# Заголовок\n\nстало иначе\n\nостаётся\n", "b"));
+    Rig rig;
+    rig.show();
+    ZT_TRUE("вошли в историю", rig.open(path));
+    rig.editor->hide();
+    rig.neighbour->hide();
+    QApplication::processEvents();
+    DiffTextView& text = rig.text();
+    const QImage shot = text.viewport()->grab().toImage();
+
+    const QAbstractTextDocumentLayout* layout = text.document()->documentLayout();
+    // Поле под глиф — прямо слева от прямоугольника блока (он начинается за
+    // полем корневой рамки).
+    const qreal gutter = ZDocument::diffGutterWidth(text.docStyle());
+    const int scroll = text.verticalScrollBar()->value();
+    // Чернила глифа сглажены и смешаны с фоном: считаем пиксель «своим», если
+    // он ближе к цвету метки, чем к бумаге, — и заметно ближе.
+    const QColor page = text.palette().color(QPalette::Base);
+    const auto distance = [](const QColor& a, const QColor& b) {
+        return qAbs(a.red() - b.red()) + qAbs(a.green() - b.green()) + qAbs(a.blue() - b.blue());
+    };
+    const auto inkOf = [&](int blockNumber, const QColor& want) {
+        const QTextBlock block = text.document()->findBlockByNumber(blockNumber);
+        if (!block.isValid()) return 0;
+        const QRectF rect = layout->blockBoundingRect(block);
+        int hits = 0;
+        for (int y = int(rect.top()) - scroll; y < int(rect.bottom()) - scroll; ++y)
+            for (int x = int(rect.left() - gutter); x < int(rect.left()); ++x) {
+                if (x < 0 || y < 0 || x >= shot.width() || y >= shot.height()) continue;
+                const QColor c = shot.pixelColor(x, y);
+                if (distance(c, want) + 60 < distance(c, page)) ++hits;
+            }
+        return hits;
+    };
+    const QStringList lines = rig.lines();
+    const int gone = int(lines.indexOf(QStringLiteral("было вот так")));
+    const int came = int(lines.indexOf(QStringLiteral("стало иначе")));
+    const int same = int(lines.indexOf(QStringLiteral("остаётся")));
+    ZT_TRUE("у убранной строки на поле красный «−»: пикселей " + num(inkOf(gone, text.docStyle().diffRemoved())),
+            gone >= 0 && inkOf(gone, text.docStyle().diffRemoved()) > 0);
+    ZT_TRUE("у добавленной — зелёный «+»: пикселей " + num(inkOf(came, text.docStyle().diffAdded())),
+            came >= 0 && inkOf(came, text.docStyle().diffAdded()) > 0);
+    ZT_TRUE("у нетронутой поле пустое",
+            same >= 0 && inkOf(same, text.docStyle().diffAdded()) == 0 &&
+                inkOf(same, text.docStyle().diffRemoved()) == 0);
+    rig.controller.leave();
+}
+
+void checkKeysAreWired() {
+    const QString path = makeNoteWithHistory(
+        QStringLiteral("01dddddddddd05"),
+        note("# Заголовок\n\nбыло вот так\n", "a"),
+        note("# Заголовок\n\nстало иначе\n", "b"));
+
+    // ОКНО С СОСЕДОМ и активное: ярлыки окна (QShortcut) срабатывают только в
+    // активном окне; под голым Xvfb, где нет оконного менеджера, окно само
+    // активным не становится, и проверка краснела бы там, где всё в порядке.
+    Rig rig;
+    rig.show();
+    rig.controller.installShortcuts(&rig.window);   // ровно то, что делает окно
+    ZT_TRUE("вошли в историю", rig.open(path));
+    rig.view->setFocus();
+    ZT_TRUE("фокус в тексте разности", rig.window.focusWidget() == &rig.text());
+
+    // F4 — из конфига, поэтому нажимаем не «F4», а то, что там записано. И с
+    // фокусом У СОСЕДА: владелец — «встаёшь на слепок в списке справа — F4 не
+    // работает».
+    const QKeySequence next(settings().editor().diffNextKey());
+    ZT_TRUE("сочетание для ходьбы по изменениям задано", next.count() > 0);
+    QTextCursor top(rig.text().document());
+    top.setPosition(0);
+    rig.text().setTextCursor(top);
+    rig.neighbour->setFocus();
+    ZT_TRUE("фокус у соседа", rig.window.focusWidget() == rig.neighbour);
+    QTest::keyClick(&rig.window, Qt::Key(next[0].key()), next[0].keyboardModifiers());
+    const int at = rig.text().textCursor().blockNumber();
+    ZT_TRUE("шаг по изменениям сработал клавишей и без фокуса в тексте",
+            rig.tl()->markOfBlock(at) != diff::Mark::Same);
+
+    // Ctrl+Z / Ctrl+Shift+Z в тексте разности — шаги по слепкам; Esc — выход.
+    rig.text().setFocus();
+    ZT_EQ("показан последний слепок", num(1), num(rig.controller.index()));
+    QTest::keyClick(&rig.text(), Qt::Key_Z, Qt::ControlModifier);
+    ZT_EQ("Ctrl+Z — шаг в прошлое", num(0), num(rig.controller.index()));
+    QTest::keyClick(&rig.text(), Qt::Key_Z, Qt::ControlModifier | Qt::ShiftModifier);
+    ZT_EQ("Ctrl+Shift+Z — шаг в будущее", num(1), num(rig.controller.index()));
+
+    // Печатающая клавиша не восстанавливает и не правит — говорит вслух.
+    int refusals = 0;
+    QObject::connect(&rig.controller, &HistoryController::editRefused, [&refusals] { ++refusals; });
+    const QString shown = rig.text().document()->toPlainText();
+    QTest::keyClicks(&rig.text(), QStringLiteral("x"));
+    QTest::qWait(10);
+    ZT_EQ("печатающая клавиша слепок не меняет", shown.toStdString(),
+          rig.text().document()->toPlainText().toStdString());
+    ZT_EQ("и про отказ сказано вслух", num(1), num(refusals));
+
+    // Смена базы часто и с прокруткой событий: документ подменяется из
+    // обработчика — старый умирает, пока Qt ещё разбирается с событием
+    // (падение владельца этапа 10). Стучим двенадцать раз.
+    for (int i = 0; i < 12; ++i) {
+        rig.controller.setBaseFresh(i % 2 == 0);
+        QApplication::processEvents();
+    }
+    ZT_TRUE("двенадцать переключений подряд программу не уронили", true);
+
+    QTest::keyClick(&rig.text(), Qt::Key_Escape);
+    ZT_TRUE("Esc вывел из режима", !rig.controller.active());
+    ZT_TRUE("фокус не улетел к соседу", rig.window.focusWidget() != rig.neighbour);
+}
+
+// F4 ставит изменение в ЗОЛОТОЕ СЕЧЕНИЕ окна, а не у нижней кромки
+// (владелец: «скроллится до самой ранней позиции — цветная полоска в самом
+// низу»; ensureCursorVisible прокручивает МИНИМАЛЬНО).
+void checkStepLandsInGolden() {
+    QString before = QStringLiteral("# Длинная\n\n");
+    for (int i = 0; i < 200; ++i) before += QStringLiteral("строка номер %1\n\n").arg(i);
+    QString after = before;
+    after.replace(QStringLiteral("строка номер 150\n"),
+                  QStringLiteral("строка номер 150 поправленная\n"));
+    const QString path = makeNoteWithHistory(
+        QStringLiteral("01dddddddddd06"),
+        note(before.toUtf8().constData(), "a"), note(after.toUtf8().constData(), "b"));
+
+    Rig rig;
+    rig.show();
+    ZT_TRUE("вошли в историю", rig.open(path));
+    rig.editor->hide();   // как в окне: место отдано виду истории
+    QApplication::processEvents();
+    DiffTextView& text = rig.text();
+    QTextCursor top(text.document());
+    top.setPosition(0);
+    text.setTextCursor(top);
+    text.verticalScrollBar()->setValue(0);
+    ZT_TRUE("шаг к изменению удался", text.stepChange(true));
+
+    const QTextBlock block = text.textCursor().block();
+    const qreal y = text.document()->documentLayout()->blockBoundingRect(block).top() -
+                    text.verticalScrollBar()->value();
+    const qreal height = text.viewport()->height();
+    ZT_TRUE("изменение оказалось не у кромки, а около золотого сечения: " +
+                num(int(y)) + " из " + num(int(height)),
+            height > 0 && y > height * 0.2 && y < height * 0.6);
+    rig.controller.leave();
+}
+
+// Переход к ДРУГОМУ слепку держит место примерно там же (просьба владельца).
+void checkSnapshotSwitchKeepsPlace() {
+    QString first = QStringLiteral("# Длинная\n\n");
+    for (int i = 0; i < 150; ++i) first += QStringLiteral("строка номер %1\n\n").arg(i);
+    QString second = first;
+    second.replace(QStringLiteral("строка номер 80\n"),
+                   QStringLiteral("строка номер 80 поправленная\n"));
+    const QString path = makeNoteWithHistory(
+        QStringLiteral("01dddddddddd08"),
+        note(first.toUtf8().constData(), "a"), note(second.toUtf8().constData(), "b"));
+
+    Rig rig;
+    rig.show();
+    ZT_TRUE("вошли в историю", rig.open(path));
+    rig.editor->hide();
+    QApplication::processEvents();
+    DiffTextView& text = rig.text();
+    QTextCursor top(text.document());
+    top.setPosition(0);
+    text.setTextCursor(top);
+    ZT_TRUE("встали на изменение", text.stepChange(true));
+    const int scrollBefore = text.verticalScrollBar()->value();
+    ZT_TRUE("и это не начало: прокрутка " + num(scrollBefore), scrollBefore > 0);
+
+    ZT_TRUE("перешли к другому слепку", rig.controller.select(0));
+    const int scrollAfter = text.verticalScrollBar()->value();
+    ZT_TRUE("вид остался примерно там же: было " + num(scrollBefore) + ", стало " +
+                num(scrollAfter),
+            scrollAfter > scrollBefore / 2);
+    rig.controller.leave();
+}
+
+// СМЕНА БАЗЫ ДЕРЖИТ МЕСТО — ТО, ЧТО НА ЭКРАНЕ, а не каретку: читая, человек
+// крутит колесо, каретка стоит в начале (владелец: «убегает на начало»).
+void checkBaseSwitchKeepsPlace() {
+    QString before = QStringLiteral("# Длинная\n\n");
+    for (int i = 0; i < 150; ++i) before += QStringLiteral("строка номер %1\n\n").arg(i);
+    QString after = before;
+    after.replace(QStringLiteral("строка номер 70\n"),
+                  QStringLiteral("строка номер 70 поправленная\n"));
+    const QString path = makeNoteWithHistory(
+        QStringLiteral("01dddddddddd13"),
+        note(before.toUtf8().constData(), "a"), note(after.toUtf8().constData(), "b"));
+
+    Rig rig;
+    rig.show();
+    ZT_TRUE("вошли в историю", rig.open(path));
+    rig.editor->hide();
+    QApplication::processEvents();
+    DiffTextView& text = rig.text();
+    QTextCursor top(text.document());
+    top.setPosition(0);
+    text.setTextCursor(top);
+    text.verticalScrollBar()->setValue(text.verticalScrollBar()->maximum() / 2);
+    QApplication::processEvents();
+    const int scrollBefore = text.verticalScrollBar()->value();
+    ZT_TRUE("прокрутили в середину: " + num(scrollBefore), scrollBefore > 100);
+    ZT_TRUE("а каретка осталась в начале — это и есть случай владельца",
+            text.textCursor().position() == 0);
+
+    rig.controller.setBaseFresh(true);
+    const int scrollFresh = text.verticalScrollBar()->value();
+    ZT_TRUE("со свежей базой место то же: было " + num(scrollBefore) + ", стало " +
+                num(scrollFresh),
+            qAbs(scrollFresh - scrollBefore) <= 40);
+    rig.controller.setBaseFresh(false);
+    const int scrollBack = text.verticalScrollBar()->value();
+    ZT_TRUE("и обратно на то же место: " + num(scrollBack), qAbs(scrollBack - scrollBefore) <= 40);
+    rig.controller.leave();
+}
+
+// ВОССТАНОВЛЕНИЕ КЛАДЁТ В ЗАМЕТКУ СЛЕПОК, А НЕ ДОКУМЕНТ РАЗНОСТИ. В документе
+// разности убранные строки видны — попади он в заметку, они бы «вернулись»
+// (класс инцидента №15: показанное утекло в живую заметку).
+void checkRestoreWritesSnapshot() {
+    const QString path = makeNoteWithHistory(
+        QStringLiteral("01dddddddddd12"),
+        note("# Заголовок\n\nпервый\n\nвторой\n", "a"),
+        note("# Заголовок\n\nпервый\n", "b"));
+    Rig rig;
+    ZT_TRUE("вошли в историю", rig.open(path));
+    ZT_TRUE("человек видит убранную строку",
+            rig.text().document()->toPlainText().contains(QStringLiteral("второй")));
+    // А сам слепок её не содержит — и восстановление берёт именно его.
+    const std::string snapshot = rig.tl()->snapshotBody();
+    ZT_TRUE("в слепке убранной строки нет", snapshot.find("второй") == std::string::npos);
+    ZT_TRUE("а его текст на месте", snapshot.find("первый") != std::string::npos);
+
+    // Восстановление ПОСЛЕДНЕГО слепка = нынешняя версия: режим закрывается,
+    // а сказано «этот слепок и есть нынешняя версия».
+    bool alreadyCurrent = false;
+    const qint64 same = rig.controller.restore(&alreadyCurrent);
+    ZT_TRUE("последний слепок и есть нынешняя версия", same == 0 && alreadyCurrent);
+    ZT_TRUE("режим закрылся", !rig.controller.active());
+    const QString live = rig.editor->document()->toPlainText();
+    ZT_TRUE("в заметке нет строки из документа разности", !live.contains(QStringLiteral("второй")));
+
+    // Восстановление ПЕРВОГО — тело первой записи, одной правкой.
+    ZT_TRUE("вошли на первый слепок", rig.controller.enter(0));
+    const int undoBefore = rig.editor->undoSteps();
+    const qint64 source = rig.controller.restore(&alreadyCurrent);
+    ZT_TRUE("восстановлено из первой записи", source > 0 && !alreadyCurrent);
+    ZT_TRUE("режим закрылся", !rig.controller.active());
+    ZT_TRUE("в заметке вернулась строка первой записи",
+            rig.editor->document()->toPlainText().contains(QStringLiteral("второй")));
+    ZT_TRUE("цепочка отмены не пуста", rig.editor->undoSteps() > undoBefore);
+    rig.editor->undo();
+    ZT_TRUE("Ctrl+Z отменяет восстановление",
+            !rig.editor->document()->toPlainText().contains(QStringLiteral("второй")));
+}
+
+// Смена масштаба в режиме истории не стирает слепок и не теряет метки.
+void checkZoomKeepsSnapshot() {
+    const QString path = makeNoteWithHistory(
+        QStringLiteral("01dddddddddd07"),
+        note("# Заголовок\n\nбыло вот так\n", "a"),
+        note("# Заголовок\n\nстало иначе\n", "b"));
+    Rig rig;
+    rig.show();
+    ZT_TRUE("вошли в историю", rig.open(path));
+    ZT_TRUE("слепок показан",
+            rig.text().document()->toPlainText().contains(QStringLiteral("стало иначе")));
+    rig.text().applyZoom(1.4);
+    ZT_TRUE("после смены масштаба слепок на месте, а не чистый лист",
+            rig.text().document()->toPlainText().contains(QStringLiteral("стало иначе")));
+    bool anyMark = false;
+    for (int i = 0; i < rig.text().document()->blockCount(); ++i)
+        anyMark = anyMark || rig.tl()->markOfBlock(i) != diff::Mark::Same;
+    ZT_TRUE("и метки не потерялись", anyMark);
+    ZT_TRUE("масштаб применился", rig.text().zoom() > 1.3);
+    rig.text().applyZoom(1.0);
+    rig.controller.leave();
+}
+
+// Переключатель базы и вправду меняет сравнение: со свежей версией у последней
+// записи разницы нет вовсе, а с предыдущей — есть.
+void checkBaseSwitch() {
+    const QString path = makeNoteWithHistory(
+        QStringLiteral("01dddddddddd04"),
+        note("# Заголовок\n\nстарое\n", "a"),
+        note("# Заголовок\n\nновое\n", "b"));
+    Rig rig;
+    ZT_TRUE("вошли в историю", rig.open(path));
+    ZT_TRUE("с предыдущей записью разница есть: " + num(rig.tl()->changedLines()),
+            rig.tl()->changedLines() > 0);
+    ZT_TRUE("баннер показывает базу «с предыдущей»", !rig.tl()->baseIsFresh());
+    rig.controller.setBaseFresh(true);
+    ZT_EQ("со свежей версией у последнего слепка разницы нет", num(0),
+          num(rig.tl()->changedLines()));
+    rig.controller.setBaseFresh(false);
+    ZT_TRUE("вернули базу — вернулась и разница", rig.tl()->changedLines() > 0);
+    rig.controller.leave();
+}
+
+// Копирование из слепка — сырые строки markdown, байт в байт: главный смысл
+// режима — утащить кусок прошлого и вставить в живую заметку.
+void checkCopyIsRawText() {
+    const QString path = makeNoteWithHistory(
+        QStringLiteral("01dddddddddd14"),
+        note("# Заголовок\n\n- пункт\n", "a"),
+        note("# Заголовок\n\n- пункт\n- ещё пункт\n", "b"));
+    Rig rig;
+    ZT_TRUE("вошли в историю", rig.open(path));
+    const QStringList lines = rig.lines();
+    const int at = int(lines.indexOf(QStringLiteral("- ещё пункт")));
+    ZT_TRUE("строка есть", at >= 0);
+    if (at < 0) return;
+    QTextCursor select(rig.text().document()->findBlockByNumber(at));
+    select.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+    rig.text().setTextCursor(select);
+    rig.text().copy();
+    ZT_EQ("в буфере — строка как в файле, без экранирования", std::string("- ещё пункт"),
+          QApplication::clipboard()->text().toStdString());
+    rig.controller.leave();
+}
+
+// Открытие другой заметки выводит из режима (правило одно на все двери).
+void checkOpenLeaves() {
+    const QString first = makeNoteWithHistory(
+        QStringLiteral("01dddddddddd15"), note("# Один\n\nраз\n", "a"), note("# Один\n\nдва\n", "b"));
+    const QString second = makeNoteWithHistory(
+        QStringLiteral("01dddddddddd16"), note("# Два\n\nраз\n", "a"), note("# Два\n\nдва\n", "b"));
+    Rig rig;
+    ZT_TRUE("вошли в историю первой", rig.open(first));
+    rig.editor->openFile(second);
+    ZT_TRUE("открытие другой заметки вывело из режима", !rig.controller.active());
+    ZT_TRUE("вид истории ни на что не смотрит", !rig.view->isAttached());
+}
+
+// На корпусе: документ разности построчно согласован со сравнением — каждая
+// строка сравнения на месте, убранные и добавленные сходятся по счёту.
+void checkCorpus() {
+    if (g_corpus.isEmpty()) {
+        std::fprintf(stderr, "ПРОПУЩЕНО: корпус не задан — согласованность только на придуманных "
+                             "случаях\n");
+        return;
+    }
+    QStringList files;
+    QDirIterator walk(g_corpus, {QStringLiteral("*.md")}, QDir::Files,
+                      QDirIterator::Subdirectories);
+    while (walk.hasNext()) files << walk.next();
+    files.sort();
+
+    int done = 0;
+    for (const QString& name : files) {
+        if (done >= 12) break;   // дюжины хватает: случаи повторяются
+        QFile file(name);
+        if (!file.open(QIODevice::ReadOnly)) continue;
+        const QByteArray text = file.readAll();
+        if (text.size() < 200) continue;
+
+        QList<QByteArray> lines = text.split('\n');
+        QByteArray changed;
+        for (int i = 0; i < lines.size(); ++i) {
+            if (i % 5 == 4) continue;                       // выбросили строку
+            changed += lines[i];
+            if (i % 3 == 0 && !lines[i].trimmed().isEmpty()) changed += " (правка)";
+            if (i + 1 < lines.size()) changed += "\n";
+        }
+        const QString id = QStringLiteral("01ccccccccc%1").arg(done, 3, 10, QLatin1Char('0'));
+        const QString path = makeNoteWithHistory(id, text, changed);
+
+        Rig rig;
+        if (!rig.open(path)) continue;
+        // Вход в историю — точка сохранения: файл корпуса неканоничен, и его
+        // канонический вид ложится третьей записью. Нам нужна пара «правленый
+        // против исходного» — вторая запись против первой.
+        if (!rig.controller.select(1)) continue;
+        const diff::Result& result = rig.tl()->result();
+        int removedRows = 0, addedRows = 0;
+        for (const diff::Row& row : result.rows) {
+            if (row.mark == diff::Mark::Removed || row.mark == diff::Mark::Changed) ++removedRows;
+            if (row.mark == diff::Mark::Added || row.mark == diff::Mark::Changed) ++addedRows;
+        }
+        int removedBlocks = 0, addedBlocks = 0, blocks = rig.text().document()->blockCount();
+        for (int b = 0; b < blocks; ++b) {
+            const diff::Mark mark = rig.tl()->markOfBlock(b);
+            if (mark == diff::Mark::Removed) ++removedBlocks;
+            if (mark == diff::Mark::Added) ++addedBlocks;
+        }
+        const std::string what = QFileInfo(name).fileName().toStdString();
+        ZT_EQ(what + ": убранных строк столько же, сколько блоков «−»", num(removedRows), num(removedBlocks));
+        ZT_EQ(what + ": добавленных — сколько блоков «+»", num(addedRows), num(addedBlocks));
+        ZT_TRUE(what + ": разница ненулевая", result.changed > 0);
+        rig.controller.leave();
+        ++done;
+    }
+    ZT_TRUE("на корпусе проверено файлов: " + num(done), done > 0);
+}
+
+// --- прибор ------------------------------------------------------------------
+//
+// Сколько стоит показать слепок, сменить базу и перейти к другому слепку.
+//   taskset -c 0 ./zametti-tests --gtest_filter=HistoryView.* --bench <файл.md>
+// (в наборе — через ztRunSuite с argv).
+void bench(const QString& file) {
+    QFile source(file);
+    if (!source.open(QIODevice::ReadOnly)) {
+        std::printf("не прочитан: %s\n", file.toUtf8().constData());
+        return;
+    }
+    const QByteArray text = source.readAll();
+    QByteArray changed;
+    int line = 0;
+    for (const QByteArray& one : text.split('\n')) {
+        ++line;
+        if (line % 3 == 0) continue;
+        changed += one;
+        if (line % 5 == 0) changed += " (правка)";
+        changed += "\n";
+    }
+    const QString path = makeNoteWithHistory(QStringLiteral("01bbbbbbbbbb01"), text, changed);
+
+    Rig rig;
+    rig.window.resize(900, 700);
+    rig.show();
+    QElapsedTimer open;
+    open.start();
+    rig.editor->openFile(path);
+    std::printf("открыть заметку: %lld мс\n", (long long)open.elapsed());
+    QApplication::processEvents();
+
+    QElapsedTimer clock;
+    clock.start();
+    const bool ok = rig.controller.enter();
+    std::printf("вход в историю: %lld мс\n", (long long)clock.elapsed());
+    if (!ok) return;
+    for (int i = 0; i < 4; ++i) {
+        clock.restart();
+        rig.controller.setBaseFresh(i % 2 == 0);
+        std::printf("  база %s: %lld мс\n", i % 2 == 0 ? "свежая    " : "предыдущая",
+                    (long long)clock.elapsed());
+    }
+    if (rig.tl()->count() >= 2) {
+        clock.restart();
+        rig.controller.select(0);
+        std::printf("  переход к другому слепку: %lld мс\n", (long long)clock.elapsed());
+        clock.restart();
+        rig.controller.select(1);
+        std::printf("  и обратно: %lld мс\n", (long long)clock.elapsed());
+    }
+    rig.controller.leave();
+}
+
+void writeShots(const QString& dir) {
+    QDir().mkpath(dir);
+    const QString path = makeNoteWithHistory(
+        QStringLiteral("01dddddddddd09"),
+        note("# Список дел\n\nБыло записано так.\n\nЭтот абзац потом исчезнет.\n\n"
+             "- купить хлеб\n- позвонить маме\n",
+             "a"),
+        note("# Список дел\n\nСтало записано иначе.\n\n- купить хлеб\n- позвонить маме\n"
+             "- забрать посылку\n",
+             "b"));
+    // Широкое и узкое окно (правило UI-матрицы: у агента окно узкое, у
+    // владельца широкое).
+    for (const int width : {1100, 640}) {
+        Rig rig;
+        rig.window.resize(width, 600);
+        rig.show();
+        if (!rig.open(path)) return;
+        rig.neighbour->hide();
+        rig.editor->hide();
+        rig.list->hide();
+        QApplication::processEvents();
+        rig.view->grab().save(QDir(dir).filePath(
+            QStringLiteral("история-%1.png").arg(width >= 1000 ? QStringLiteral("широко")
+                                                                 : QStringLiteral("узко"))));
+        rig.controller.setBaseFresh(true);
+        QApplication::processEvents();
+        rig.view->grab().save(QDir(dir).filePath(
+            QStringLiteral("история-со-свежей-%1.png").arg(width >= 1000 ? QStringLiteral("широко")
+                                                                            : QStringLiteral("узко"))));
+        rig.controller.leave();
+    }
+}
+
+}  // namespace
+
+static int ztRunSuite(int argc, char** argv) {
+    QTemporaryDir tmp;
+    if (!tmp.isValid()) {
+        std::printf("не завёлся временный каталог\n");
+        return 2;
+    }
+    g_root = tmp.path();
+    if (argc > 2 && std::string(argv[1]) == "--bench") {
+        bench(QString::fromLocal8Bit(argv[2]));
+        return 0;
+    }
+    if (argc > 1) g_corpus = QString::fromLocal8Bit(argv[1]);
+
+    checkBasics();
+    checkGutterIsPainted();
+    checkKeysAreWired();
+    checkStepLandsInGolden();
+    checkSnapshotSwitchKeepsPlace();
+    checkBaseSwitchKeepsPlace();
+    checkRestoreWritesSnapshot();
+    checkZoomKeepsSnapshot();
+    checkBaseSwitch();
+    checkCopyIsRawText();
+    checkOpenLeaves();
+    checkCorpus();
+    writeShots(zt::TestData::outDir(QStringLiteral("history-view")));
+
+    return zt::report("history-view");
+}
+
+TEST(HistoryView, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("history_view_test")};
+    ztArgs.push_back((zt::TestData::corpus(QStringLiteral("corpus"))).toLocal8Bit());
+    std::vector<char*> ztArgv;
+    for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
+    EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
+}

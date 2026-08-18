@@ -77,22 +77,13 @@ HistoryBanner::HistoryBanner(QWidget* parent) : QWidget(parent) {
                              QStringLiteral("Сравнивать с предыдущей записью истории"));
     fromFresh_ = latching(QStringLiteral("со свежей"),
                           QStringLiteral("Сравнивать с текущей версией заметки"));
-    viewMarks_ = latching(QStringLiteral("полоски"),
-                          QStringLiteral("Обычный вид с полосками на поле"));
-    viewPlain_ = latching(QStringLiteral("markdown"),
-                          QStringLiteral("Моноширинный markdown построчно"));
     // Залипают по одной: QButtonGroup держит это сам, и «оба нажаты» не
     // случится ни при какой последовательности щелчков.
     auto* baseGroup = new QButtonGroup(this);
     baseGroup->setExclusive(true);
     baseGroup->addButton(fromPrevious_);
     baseGroup->addButton(fromFresh_);
-    auto* viewGroup = new QButtonGroup(this);
-    viewGroup->setExclusive(true);
-    viewGroup->addButton(viewMarks_);
-    viewGroup->addButton(viewPlain_);
     setBaseIsFresh(false);
-    setPlainView(false);
 
     leave_ = new QPushButton(QStringLiteral("К текущей версии"), this);
     restore_ = new QPushButton(QStringLiteral("Восстановить эту"), this);
@@ -106,10 +97,6 @@ HistoryBanner::HistoryBanner(QWidget* parent) : QWidget(parent) {
     layout->addWidget(fromPrevious_);
     layout->addWidget(fromFresh_);
     layout->addSpacing(8);
-    layout->addWidget(new QLabel(QStringLiteral("вид:"), this));
-    layout->addWidget(viewMarks_);
-    layout->addWidget(viewPlain_);
-    layout->addSpacing(8);
     layout->addWidget(leave_);
     layout->addWidget(restore_);
 
@@ -117,8 +104,6 @@ HistoryBanner::HistoryBanner(QWidget* parent) : QWidget(parent) {
     connect(restore_, &QPushButton::clicked, this, &HistoryBanner::restoreRequested);
     connect(fromFresh_, &QPushButton::clicked, this, [this] { emit baseChanged(true); });
     connect(fromPrevious_, &QPushButton::clicked, this, [this] { emit baseChanged(false); });
-    connect(viewPlain_, &QPushButton::clicked, this, [this] { emit viewChanged(true); });
-    connect(viewMarks_, &QPushButton::clicked, this, [this] { emit viewChanged(false); });
 }
 
 void HistoryBanner::setBaseIsFresh(bool fresh) {
@@ -129,27 +114,16 @@ void HistoryBanner::setBaseIsFresh(bool fresh) {
     fromPrevious_->setChecked(!fresh);
 }
 
-void HistoryBanner::setPlainView(bool plain) {
-    const QSignalBlocker quietPlain(viewPlain_);
-    const QSignalBlocker quietMarks(viewMarks_);
-    viewPlain_->setChecked(plain);
-    viewMarks_->setChecked(!plain);
-}
-
-void HistoryBanner::setSnapshot(qint64 time, journal::Kind kind) {
+void HistoryBanner::setSnapshot(qint64 time, journal::Kind kind, int changed) {
     restore_->setStyleSheet(restoreStyle_);
-    // Строка отвечает на ОДИН вопрос: какая версия сейчас перед глазами. По Tab
-    // она меняется вместе с показанным — иначе человек смотрит на одно, а
-    // читает про другое (просьба владельца; всё, что было после тире, убрано).
+    // Строка отвечает на ОДИН вопрос: какая версия сейчас перед глазами
+    // (просьба владельца; всё, что было после тире, убрано). Счёт тронутых
+    // строк — тихой добавкой: сколько разница весит, видно до прокрутки.
     QString what = QStringLiteral("Слепок от %1").arg(historyMoment(time));
     if (kind != journal::Kind::Save)
         what += QStringLiteral(" (%1)").arg(historyKindName(kind));
+    if (changed >= 0) what += QStringLiteral("  ·  ±%1").arg(changed);
     text_->setText(what);
-}
-
-void HistoryBanner::setLiveVersion() {
-    restore_->setStyleSheet(restoreStyle_);
-    text_->setText(QStringLiteral("Текущая версия заметки"));
 }
 
 void HistoryBanner::flashRestore() {
