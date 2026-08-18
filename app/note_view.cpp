@@ -600,13 +600,6 @@ void ImageObjectHandler::drawObject(QPainter* painter, const QRectF& rect, QText
 // ПОЛОСА ФОРМУЛЫ — ВО ВСЮ ШИРИНУ КОЛОНКИ, как у фотографии: вёрстку внутри неё
 // мы ставим сами, по центру. Высота — высота вёрстки плюс воздух сверху и
 // снизу, чтобы формула не липла к соседним строкам.
-QSizeF NoteView::formulaBandFor(const QTextBlock& block) {
-    const BlockFormulaRef ref = blockFormulaRef(block);
-    if (!ref.valid || !ref.display) return {};
-    return FormulaObjects::bandFor(formulaAt(block.blockNumber()), columnWidth(block),
-                                   QFontMetricsF(baseFont()).height(), imageGap(displayScale()));
-}
-
 qreal NoteView::columnWidth(const QTextBlock& block) const {
     const QTextFrameFormat root = document()->rootFrame()->frameFormat();
     qreal width = document()->textWidth() - root.leftMargin() - root.rightMargin() -
@@ -1124,8 +1117,12 @@ void NoteView::attachObjectHandlers(QTextDocument* doc) {
     if (doc == nullptr || doc->documentLayout() == nullptr) return;
     if (imageObjects_ == nullptr) imageObjects_ = new ImageObjectHandler(this);
     doc->documentLayout()->registerHandler(ImageObject, imageObjects_);
-    if (formulaObjects_ == nullptr) formulaObjects_ = new FormulaObjectHandler(this);
-    doc->documentLayout()->registerHandler(FormulaObject, formulaObjects_);
+    // Формулы обслуживает ЯДРО: обработчик — ребёнок документа, кэш вёрстки
+    // прикреплён к документу (у заметки его прикрепляет ZDocument; собственному
+    // документу вида — About, вывоз на бумагу — прикрепляем здесь).
+    if (formulaCacheOf(*doc) == nullptr)
+        attachFormulaCache(*doc, std::make_shared<FormulaObjects>());
+    registerFormulaHandlers(*doc);
     if (tableObjects_ == nullptr) tableObjects_ = new TableObjectHandler(this);
     doc->documentLayout()->registerHandler(TableObject, tableObjects_);
 }
@@ -1144,6 +1141,14 @@ void NoteView::setDocument(QTextDocument* doc) {
     // полосах — вёрстка ложилась на текст под ними. Регистрируем у вёрстки
     // раньше, чем она впервые спросит.
     attachObjectHandlers(doc);
+    // УСЛОВИЯ ВЁРСТКИ ФОРМУЛ — ТОЖЕ ДО ПОДМЕНЫ: первый проход вёрстки идёт ещё
+    // внутри setDocument, и без цвета с плотностью кэш не отдал бы ни одной
+    // вёрстки — строчные формулы легли бы рамками до первой сверки.
+    if (doc != nullptr && Formulas::ready()) {
+        if (FormulaObjects* cache = formulaCacheOf(*doc))
+            cache->syncConditions(QFontInfo(doc->defaultFont()).pixelSize(),
+                                  palette().color(QPalette::Text), devicePixelRatioF());
+    }
     QTextBrowser::setDocument(doc);
     attachObjectHandlers(doc);
 }
@@ -1395,13 +1400,17 @@ void NoteView::setEditedCodeLanguage(int firstBlockNumber) {
 // текст под ней. Замер — BlockGeometry, случай владельца с матрицей и
 // «## Delimiters».
 void NoteView::syncFormulas() {
-    if (!Formulas::ready()) return;
+    if (!Formulas::ready() || document() == nullptr) return;
+    FormulaObjects* cache = formulaCacheOf(*document());
+    if (cache == nullptr) return;
     // Кегль движку нужен В ПИКСЕЛЯХ, и спрашивать его надо у Qt: она знает, во
-    // сколько пикселей превратился кегль в пунктах на этом экране. Цвет — ПЕРОМ
-    // ИЗ ПАЛИТРЫ, а не инверсией картинки. Разошлись условия — кэш пуст, и
-    // каждая формула посчитается заново, когда до неё дойдёт вёрстка.
-    formulas_.syncConditions(QFontInfo(baseFont()).pixelSize() * settings().formulas().displayScale(),
-                             palette().color(QPalette::Text), devicePixelRatioF());
+    // сколько пикселей превратился кегль в пунктах на этом экране. Кегль —
+    // ОКРУЖАЮЩЕГО ТЕКСТА: коэффициенты родов (displayScale, inlineScale) кэш
+    // применяет сам. Цвет — ПЕРОМ ИЗ ПАЛИТРЫ, а не инверсией картинки.
+    // Разошлись условия — кэш пуст, и каждая формула посчитается заново, когда
+    // до неё дойдёт вёрстка.
+    cache->syncConditions(QFontInfo(baseFont()).pixelSize(), palette().color(QPalette::Text),
+                          devicePixelRatioF());
 }
 
 // ОДИН ВОПРОС НА ВСЕ ОБЪЕКТЫ. Показан ли объект вместо своего исходника —
@@ -1446,7 +1455,8 @@ const FormulaRender* NoteView::formulaAt(int blockNumber) {
     // Условия вёрстки могли смениться без сверки (первый вызов, смена палитры):
     // сверяем здесь же — это и есть единственный вход к движку из вида.
     syncFormulas();
-    return formulas_.renderFor(ref.source, ref.latex);
+    FormulaObjects* cache = formulaCacheOf(*document());
+    return cache != nullptr ? cache->renderFor(ref.source, ref.latex, true) : nullptr;
 }
 
 

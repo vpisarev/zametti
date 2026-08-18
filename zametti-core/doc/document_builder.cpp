@@ -677,6 +677,13 @@ void attachStyle(QTextDocument& doc, std::shared_ptr<const ZDocStyle> style) {
     else doc.setProperty(kStyleProperty, QVariant::fromValue(std::move(style)));
 }
 
+qreal displayScaleOf(const QTextDocument& doc) {
+    const qreal base = styleOf(doc).baseFontPoint();
+    if (base <= 0.0) return 1.0;
+    const qreal shown = doc.defaultFont().pointSizeF();
+    return shown > 0.0 ? shown / base : 1.0;
+}
+
 void buildDocument(const std::vector<Piece>& blocks, QTextDocument& target,
                    BuildOptions options) {
     if (!options.keepUndo) target.setUndoRedoEnabled(false);

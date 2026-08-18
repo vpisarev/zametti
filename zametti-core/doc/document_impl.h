@@ -12,9 +12,12 @@
 #pragma once
 
 #include "document.h"
+#include "formula_object.h"
 #include "settings.h"
 
 #include <QTextDocument>
+
+#include <memory>
 
 namespace zametti {
 
@@ -27,6 +30,13 @@ struct ZDocument::Data {
         // Вёрстка выключена: пока заметку не показывают, считать строки и глифы
         // незачем. Вид включит её сам, когда возьмёт документ себе.
         text.setLayoutEnabled(false);
+        // Вёрстка формул — часть заметки, а не вида: кэш по содержимому живёт
+        // здесь и прикреплён к документу (как стиль), обработчик объектов —
+        // ребёнок документа. Так формулы рисуются и без окна вовсе (вывоз в
+        // PDF из командной строки); условия вёрстки (кегль, цвет, плотность)
+        // документу сообщает тот, кто показывает.
+        attachFormulaCache(text, std::make_shared<FormulaObjects>());
+        registerFormulaHandlers(text);
     }
 };
 

@@ -66,6 +66,11 @@ const ZDocStyle& styleOf(const QTextDocument& doc);
 std::shared_ptr<const ZDocStyle> attachedStyle(const QTextDocument& doc);
 void attachStyle(QTextDocument& doc, std::shared_ptr<const ZDocStyle> style);
 
+// Во сколько раз показ документа крупнее облика. Масштаб несёт ШРИФТ документа
+// (единственная мера, см. NoteView::setZoom), поэтому спрашивается у него, а
+// не у вида: так его знают и вёрстка объектов, и бумага.
+qreal displayScaleOf(const QTextDocument& doc);
+
 // ПОКАЗЫВАЕТСЯ ЛИ ЭТОТ БЛОК ОБЪЕКТОМ, а не текстом. Сегодня объектом бывает
 // фотография, занимающая абзац целиком: в документе она — один знак U+FFFC, за
 // которым стоит её исходник (см. ObjectSourceProperty в doc_model.h).

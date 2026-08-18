@@ -487,7 +487,6 @@ private:
     ZImageCache& images() const;
 
     friend class ImageObjectHandler;
-    friend class FormulaObjectHandler;
     friend class TableObjectHandler;
 
     QString absoluteImagePath(const QString& path) const;
@@ -529,9 +528,6 @@ private:
     // Место фотографии в координатах документа; пустой — фотографии нет.
     QRectF imageObjectRect(const QTextBlock& block);
 
-    // Полоса формулы: вся ширина колонки, высота вёрстки с воздухом. Вёрстка
-    // внутри неё — по центру.
-    QSizeF formulaBandFor(const QTextBlock& block);
     // Ширина колонки, доступная блоку. Берётся у ДОКУМЕНТА, а не у вьюпорта:
     // на бумаге ширина своя, и мерить надо ту, по которой Qt раскладывает.
     qreal columnWidth(const QTextBlock& block) const;
@@ -574,8 +570,8 @@ private:
     TableObjects tables_;
     TableObjectHandler* tableObjects_ = nullptr;
     QVector<ObjectHighlight> objectHighlights_;
-    // Кэш вёрстки формул по исходнику и условия вёрстки — см. formula_object.h.
-    FormulaObjects formulas_;
+    // Кэша вёрстки формул у вида НЕТ: он принадлежит заметке и прикреплён к её
+    // документу (formulaCacheOf) — вид только сообщает ему условия показа.
 
     QTimer copiedFade_;
     QTimer caretBlink_;
@@ -596,7 +592,6 @@ private:
     // Обработчик объектов-фотографий. Один на вид и на всю его жизнь:
     // регистрируется у вёрстки каждого показанного документа.
     ImageObjectHandler* imageObjects_ = nullptr;
-    FormulaObjectHandler* formulaObjects_ = nullptr;
 
     int imageDragBlock_ = -1;             // номер блока с перетаскиваемым углом
     qreal imageDragWidth_ = 0.0;
