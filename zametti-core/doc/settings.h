@@ -228,8 +228,10 @@ public:
     ZM_SETTING_PLAIN(QColor, searchHighlight, SearchHighlight, 0xe0, 0xa8, 0x50)
     // Разность версий в истории. Появилось — зелёным, исчезло — красным;
     // изменённая строка показывается парой «− старая / + новая» теми же двумя
-    // цветами (сессия 7). Оранжевый (diffChanged) остаётся у вида с полосками
-    // на поле, временно снятого, — там он значил «блок поправлен».
+    // цветами (сессия 7). Оранжевым (diffChanged) рисуется ПОЛОСА ТЕКУЩЕГО
+    // КУСКА — того, к которому привёл F4: левее «+»/«−», вдоль всех его строк
+    // (просьба владельца: выделение забивало бы заливку строк, а выделение
+    // мышью нужно человеку для копирования).
     ZM_SETTING_PLAIN(QColor, diffAdded, DiffAdded, 0x3f, 0xa2, 0x55)
     ZM_SETTING_PLAIN(QColor, diffRemoved, DiffRemoved, 0xc0, 0x39, 0x39)
     ZM_SETTING_PLAIN(QColor, diffChanged, DiffChanged, 0xe0, 0xa8, 0x50)
@@ -237,6 +239,7 @@ public:
     // заливается едва-едва: иначе моноширинный текст читается как светофор, а
     // не как markdown.
     ZM_SETTING(int, diffTint, DiffTint, 34, 0, 255)   // прозрачность заливки строки, 0..255
+    ZM_SETTING(qreal, diffBarWidth, DiffBarWidth, 3.0, 0.5, 40.0)   // полоса текущего куска, px (умножается на зум)
     ZM_SETTING_PLAIN(QColor, linkColor, LinkColor, 0x32, 0x5c, 0xc0)
     ZM_SETTING_PLAIN(QColor, quoteColor, QuoteColor, 0x5a, 0x62, 0x6a)
     ZM_SETTING_PLAIN(QColor, rawColor, RawColor, 0x99, 0x9f, 0xa6)   // непонятое, дословный кусок

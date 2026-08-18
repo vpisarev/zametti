@@ -58,6 +58,7 @@ void DiffTextView::present(int keepLine, int keepOffset) {
     }
     ZDocument next = timeline_ != nullptr ? timeline_->document() : ZDocument();
     if (!next.sameHandle(shown_)) {
+        hunk_ = Hunk{};   // куски другого документа
         ZDocument previous = shown_;
         shown_ = next;
         setDocument(shown_.getDocument());
@@ -90,37 +91,68 @@ int DiffTextView::lineOnTop() {
     return timeline_->afterLineOfBlock(anchor.block);
 }
 
+DiffTextView::Hunk DiffTextView::hunkFrom(int start) const {
+    Hunk hunk;
+    if (timeline_ == nullptr || start < 0) return hunk;
+    const int blocks = document()->blockCount();
+    if (start >= blocks) return hunk;
+    const diff::Mark first = timeline_->markOfBlock(start);
+    if (first == diff::Mark::Same) return hunk;
+    hunk.first = start;
+    hunk.kind = first;
+    int end = start;
+    // Ряд той же метки…
+    while (end + 1 < blocks && timeline_->markOfBlock(end + 1) == first) ++end;
+    // …и ряд другой (не Same) следом: «− старые / + новые» одного места.
+    if (end + 1 < blocks) {
+        const diff::Mark second = timeline_->markOfBlock(end + 1);
+        if (second != diff::Mark::Same && second != first) {
+            while (end + 1 < blocks && timeline_->markOfBlock(end + 1) == second) ++end;
+            hunk.kind = diff::Mark::Changed;   // и убрали, и добавили
+        }
+    }
+    hunk.last = end;
+    return hunk;
+}
+
 bool DiffTextView::stepChange(bool forward) {
     if (timeline_ == nullptr) return false;
     const int blocks = document()->blockCount();
     if (blocks <= 0) return false;
-    const int from = textCursor().blockNumber();
+    // Отсчёт — от текущего куска, а если его нет — от каретки (человек мог
+    // щёлкнуть в текст).
+    const int from = hunk_.valid() ? (forward ? hunk_.last : hunk_.first)
+                                   : textCursor().blockNumber();
     // По кругу: дошли до края — начинаем сначала. Ходьба по изменениям без
     // круга каждый раз упирается в конец и молчит.
     for (int step = 1; step <= blocks; ++step) {
         const int at = ((forward ? from + step : from - step) % blocks + blocks) % blocks;
         if (timeline_->markOfBlock(at) == diff::Mark::Same) continue;
-        // Соседние блоки одного изменения — одно место: встаём на его начало,
-        // иначе F4 шагал бы по строкам внутри одного правленого куска.
+        // Назад — на НАЧАЛО куска, в котором оказались, иначе шаг назад
+        // приземлялся бы на последнюю строку куска и следующий назад — на
+        // предпоследнюю.
         int start = at;
-        if (forward)
-            while (start > 0 && timeline_->markOfBlock(start - 1) != diff::Mark::Same &&
-                   start - 1 != from)
-                --start;
-        int end = start;
-        while (end + 1 < blocks && timeline_->markOfBlock(end + 1) != diff::Mark::Same) ++end;
-        // МЕСТО ПОКАЗЫВАЕТСЯ ВЫДЕЛЕНИЕМ: каретки в поле только для чтения не
-        // видно, и без выделения было непонятно, куда именно привёл F4
-        // (замечание владельца). Выделяется весь кусок — все соседние
-        // тронутые строки; переход — в золотое сечение окна.
-        const QTextBlock first = document()->findBlockByNumber(start);
-        const QTextBlock last = document()->findBlockByNumber(end);
+        if (!forward)
+            while (start > 0 && timeline_->markOfBlock(start - 1) != diff::Mark::Same) --start;
+        // Внутри длинного ряда одной метки куском считается ряд целиком, но
+        // ряд может состоять из двух половин «−»/«+»: подбираем начало так,
+        // чтобы кусок с этого начала накрывал at.
+        Hunk hunk = hunkFrom(start);
+        while (hunk.valid() && hunk.last < at) {
+            start = hunk.last + 1;
+            hunk = hunkFrom(start);
+        }
+        if (!hunk.valid()) continue;
+        hunk_ = hunk;
+        // Каретку ставим на начало куска БЕЗ выделения (от неё считает поиск),
+        // место показываем полосой и переходом в золотое сечение.
+        const QTextBlock first = document()->findBlockByNumber(hunk.first);
+        const QTextBlock last = document()->findBlockByNumber(hunk.last);
         if (!first.isValid() || !last.isValid()) return false;
-        QTextCursor place(first);
-        place.setPosition(last.position() + last.length() - 1, QTextCursor::KeepAnchor);
-        setTextCursor(place);
+        setTextCursor(QTextCursor(first));
         const QAbstractTextDocumentLayout* layout = document()->documentLayout();
         revealInGolden(layout->blockBoundingRect(first).united(layout->blockBoundingRect(last)));
+        viewport()->update();
         return true;
     }
     return false;
@@ -135,15 +167,33 @@ const NoteSearch& DiffTextView::searchCache() const {
 }
 
 void DiffTextView::paintBlockMargin(QPainter& painter, const QTextBlock& block, const QRectF& rect) {
+    const int number = block.blockNumber();
+    const ZDocStyle& look = docStyle();
+    // Прямоугольник блока начинается ПОСЛЕ поля документа (rect.left() — это и
+    // есть левое поле корневой рамки): поле под глиф лежит прямо слева от него.
+    // Треть поля слева — под полосу текущего куска, две трети — под глиф.
+    const qreal gutter = ZDocument::diffGutterWidth(look);
+    const qreal barLane = gutter / 3.0;
+
+    // ПОЛОСА ТЕКУЩЕГО КУСКА (F4) вдоль всех его строк, включая мягкие
+    // переносы (по высоте всего блока). Цвет — по составу куска (просьба
+    // владельца): только добавили — зелёная, только убрали — красная, и то и
+    // другое — оранжевая.
+    if (hunk_.valid() && number >= hunk_.first && number <= hunk_.last) {
+        const qreal width = qMax(1.0, look.diffBarWidth() * displayScale());
+        const QColor colour = hunk_.kind == diff::Mark::Added     ? look.diffAdded()
+                              : hunk_.kind == diff::Mark::Removed ? look.diffRemoved()
+                                                                  : look.diffChanged();
+        painter.fillRect(QRectF(rect.left() - gutter + (barLane - width) / 2.0, rect.top(), width,
+                                rect.height()),
+                         colour);
+    }
+
     const int mark = diffMarkOf(block);
     if (mark != int(diff::Mark::Added) && mark != int(diff::Mark::Removed)) return;
     // Глиф стоит на поле, ПЕРЕД строкой, у её первой физической строки: у
     // логической строки, перенесённой мягко, знак один — она одна.
-    // Прямоугольник блока начинается ПОСЛЕ поля документа (rect.left() — это и
-    // есть левое поле корневой рамки): поле под глиф лежит прямо слева от него.
-    const ZDocStyle& look = docStyle();
-    const qreal gutter = ZDocument::diffGutterWidth(look);
-    const QRectF cell(rect.left() - gutter, rect.top(), gutter,
+    const QRectF cell(rect.left() - gutter + barLane, rect.top(), gutter - barLane,
                       block.layout() != nullptr && block.layout()->lineCount() > 0
                           ? block.layout()->lineAt(0).height()
                           : rect.height());
@@ -154,8 +204,8 @@ void DiffTextView::paintBlockMargin(QPainter& painter, const QTextBlock& block, 
     // Не влезает в поле (крупный масштаб) — ужимаем: поле в пикселях и от
     // масштаба не растёт, а глиф растёт.
     const qreal advance = QFontMetricsF(font).horizontalAdvance(QLatin1Char('+'));
-    if (advance > gutter * 0.8 && advance > 0.0)
-        font.setPointSizeF(qMax(4.0, font.pointSizeF() * gutter * 0.8 / advance));
+    if (advance > cell.width() * 0.8 && advance > 0.0)
+        font.setPointSizeF(qMax(4.0, font.pointSizeF() * cell.width() * 0.8 / advance));
     painter.setFont(font);
     painter.setPen(mark == int(diff::Mark::Added) ? look.diffAdded() : look.diffRemoved());
     painter.drawText(cell, Qt::AlignCenter,

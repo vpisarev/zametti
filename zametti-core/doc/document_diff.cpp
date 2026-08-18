@@ -45,13 +45,13 @@ QColor tintOf(diff::Mark mark, const ZDocStyle& style) {
 }  // namespace
 
 qreal ZDocument::diffGutterWidth(const ZDocStyle& style) {
-    // Два знака строки разности: под глиф и воздух рядом с ним. Считается ОТ
-    // ШРИФТА СТРОК базового кегля — той же меркой, что и поля сборщика
-    // (sideMargin × «A»).
+    // Три знака строки разности: левый — под полосу текущего куска (F4), два
+    // правых — под глиф «+»/«−» и воздух рядом. Считается ОТ ШРИФТА СТРОК
+    // базового кегля — той же меркой, что и поля сборщика (sideMargin × «A»).
     QFont code = layoutBaseFont(style);
     if (!style.codeFamily().isEmpty()) code.setFamily(QString(style.codeFamily()));
     code.setPointSizeF(code.pointSizeF() * fontStepFactor(style.diffStep()));
-    return 2.0 * QFontMetricsF(code).horizontalAdvance(QLatin1Char('0'));
+    return 3.0 * QFontMetricsF(code).horizontalAdvance(QLatin1Char('0'));
 }
 
 ZDocument ZDocument::fromDiff(const diff::Result& result, std::shared_ptr<const ZDocStyle> style,

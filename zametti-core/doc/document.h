@@ -212,8 +212,9 @@ public:
     static ZDocument fromDiff(const diff::Result& result,
                               std::shared_ptr<const ZDocStyle> style = nullptr,
                               QVector<int>* rowOfBlock = nullptr);
-    // Ширина поля под «+»/«−» слева от строк — та же мерка, что у сборки (от
-    // шрифта кода базового кегля); виду — где рисовать глиф.
+    // Ширина поля слева от строк — под полосу текущего куска и «+»/«−» (треть
+    // на полосу, две трети на глиф); та же мерка, что у сборки (от шрифта строк
+    // базового кегля); виду — где рисовать.
     static qreal diffGutterWidth(const ZDocStyle& style);
     // Метка разности у блока; -1 — это не документ-разность.
     int diffMarkAt(int index) const;

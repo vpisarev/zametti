@@ -41,9 +41,22 @@ public:
     void detach();
     std::shared_ptr<ZNoteTimeline> timeline() const { return timeline_; }
 
-    // Шаг к следующему/предыдущему изменённому месту, циклически; соседние
-    // тронутые строки — одно место. false — изменений нет вовсе.
+    // Шаг к следующему/предыдущему изменённому КУСКУ, циклически. Кусок —
+    // непрерывный ряд «−» и следующий за ним ряд «+» (любой из рядов может быть
+    // пуст). Текущий кусок показывается оранжевой полосой на поле, а не
+    // выделением: выделение забивало бы заливку строк, и оно нужно человеку
+    // для копирования (просьба владельца). false — изменений нет вовсе.
     bool stepChange(bool forward);
+    // Текущий кусок — блоки [first, last]; first < 0 — не выбран.
+    struct Hunk {
+        int first = -1;
+        int last = -1;
+        // Из чего состоит: Added — только добавленные, Removed — только
+        // убранные, Changed — и те и другие. Этим же цветом рисуется полоса.
+        diff::Mark kind = diff::Mark::Same;
+        bool valid() const { return first >= 0; }
+    };
+    Hunk currentHunk() const { return hunk_; }
 
     // Строка СЛЕПКА у верхней кромки окна — ею держится место, ею же оно
     // проверяется. -1 — нечего держать.
@@ -73,6 +86,9 @@ private:
     std::shared_ptr<ZNoteTimeline> timeline_;
     ZDocument shown_;                  // показанный документ — держим живым
     std::vector<ZDocument> retiring_;  // отпущенные, но ещё не умершие
+    Hunk hunk_;                        // куда привёл F4
+    // Кусок, начинающийся с блока start: ряд одной метки, за ним ряд другой.
+    Hunk hunkFrom(int start) const;
     void present(int keepLine, int keepOffset);
     void retire(ZDocument previous);
 };

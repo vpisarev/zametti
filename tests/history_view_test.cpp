@@ -235,7 +235,97 @@ void checkGutterIsPainted() {
     ZT_TRUE("у нетронутой поле пустое",
             same >= 0 && inkOf(same, text.docStyle().diffAdded()) == 0 &&
                 inkOf(same, text.docStyle().diffRemoved()) == 0);
+
+    // F4: ТЕКУЩИЙ КУСОК — ОРАНЖЕВОЙ ПОЛОСОЙ левее глифов (просьба владельца:
+    // выделение забивало бы заливку строк, а выделять мышью нужно для
+    // копирования). До F4 полосы нет, после — есть у обеих строк куска и нет у
+    // нетронутой; выделения F4 не делает.
+    const QColor orange = text.docStyle().diffChanged();
+    const auto barOf = [&](const QImage& img, int blockNumber) {
+        const QTextBlock block = text.document()->findBlockByNumber(blockNumber);
+        if (!block.isValid()) return 0;
+        const QRectF rect = layout->blockBoundingRect(block);
+        int hits = 0;
+        for (int y = int(rect.top()) - scroll; y < int(rect.bottom()) - scroll; ++y)
+            for (int x = int(rect.left() - gutter); x < int(rect.left() - gutter + gutter / 3.0); ++x) {
+                if (x < 0 || y < 0 || x >= img.width() || y >= img.height()) continue;
+                const QColor c = img.pixelColor(x, y);
+                if (distance(c, orange) + 60 < distance(c, page)) ++hits;
+            }
+        return hits;
+    };
+    ZT_TRUE("до F4 полосы нет", barOf(shot, gone) == 0 && barOf(shot, came) == 0);
+    QTextCursor top(text.document());
+    top.setPosition(0);
+    text.setTextCursor(top);
+    ZT_TRUE("F4 привёл к куску", text.stepChange(true));
+    ZT_TRUE("выделения F4 не делает", !text.textCursor().hasSelection());
+    const DiffTextView::Hunk hunk = text.currentHunk();
+    ZT_TRUE("кусок — обе строки «− старая / + новая»: " + num(hunk.first) + ".." + num(hunk.last),
+            hunk.first == gone && hunk.last == came);
+    QApplication::processEvents();
+    const QImage after = text.viewport()->grab().toImage();
+    ZT_TRUE("полоса у убранной строки куска: пикселей " + num(barOf(after, gone)), barOf(after, gone) > 0);
+    ZT_TRUE("и у добавленной", barOf(after, came) > 0);
+    ZT_TRUE("а у нетронутой нет", barOf(after, same) == 0);
+    ZT_TRUE("кусок «−/+» — оранжевый", hunk.kind == diff::Mark::Changed);
     rig.controller.leave();
+
+    // Цвет полосы по составу куска: только добавили — зелёная, только убрали —
+    // красная.
+    const QString path2 = makeNoteWithHistory(
+        QStringLiteral("01dddddddddd03"),
+        note("# Заголовок\n\nодин\n\nдва\n\nтри\n\nчетыре\n", "a"),
+        note("# Заголовок\n\nодин\n\nпришло\n\nдва\n\nчетыре\n", "b"));
+    Rig rig2;
+    rig2.show();
+    ZT_TRUE("вошли в историю", rig2.open(path2));
+    rig2.editor->hide();
+    rig2.neighbour->hide();
+    QApplication::processEvents();
+    DiffTextView& text2 = rig2.text();
+    QTextCursor top2(text2.document());
+    top2.setPosition(0);
+    text2.setTextCursor(top2);
+    ZT_TRUE("F4 — к первому куску", text2.stepChange(true));
+    const DiffTextView::Hunk added = text2.currentHunk();
+    ZT_TRUE("первый кусок — только добавленное", added.kind == diff::Mark::Added);
+    ZT_TRUE("F4 — ко второму куску", text2.stepChange(true));
+    const DiffTextView::Hunk removed = text2.currentHunk();
+    ZT_TRUE("второй кусок — только убранное", removed.kind == diff::Mark::Removed);
+    ZT_TRUE("и это другой кусок", removed.first != added.first);
+    // По кругу — назад к первому: пиксели зелёные, красных нет.
+    ZT_TRUE("F4 — по кругу к первому", text2.stepChange(true));
+    ZT_TRUE("снова первый", text2.currentHunk().first == added.first);
+    QApplication::processEvents();
+    const QImage shot2 = text2.viewport()->grab().toImage();
+    const auto barColourOf = [&](int blockNumber, const QColor& want) {
+        const QTextBlock block = text2.document()->findBlockByNumber(blockNumber);
+        if (!block.isValid()) return 0;
+        const QRectF rect = text2.document()->documentLayout()->blockBoundingRect(block);
+        const qreal g = ZDocument::diffGutterWidth(text2.docStyle());
+        const int sc = text2.verticalScrollBar()->value();
+        int hits = 0;
+        for (int y = int(rect.top()) - sc; y < int(rect.bottom()) - sc; ++y)
+            for (int x = int(rect.left() - g); x < int(rect.left() - g + g / 3.0); ++x) {
+                if (x < 0 || y < 0 || x >= shot2.width() || y >= shot2.height()) continue;
+                // Ближайший из четырёх цветов: бумага, зелёный, красный,
+                // оранжевый — иначе зелёный сошёл бы за «ближе к оранжевому,
+                // чем к бумаге».
+                const QColor c = shot2.pixelColor(x, y);
+                const QColor candidates[] = {page, text2.docStyle().diffAdded(),
+                                             text2.docStyle().diffRemoved(),
+                                             text2.docStyle().diffChanged()};
+                QColor best = page;
+                for (const QColor& k : candidates)
+                    if (distance(c, k) < distance(c, best)) best = k;
+                if (best == want && best != page) ++hits;
+            }
+        return hits;
+    };
+    ZT_TRUE("полоса у добавленного — зелёная", barColourOf(added.first, text2.docStyle().diffAdded()) > 0);
+    ZT_TRUE("и не оранжевая", barColourOf(added.first, text2.docStyle().diffChanged()) == 0);
+    rig2.controller.leave();
 }
 
 void checkKeysAreWired() {
