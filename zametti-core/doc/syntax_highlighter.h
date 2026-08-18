@@ -55,8 +55,15 @@ public:
     ZSyntaxHighlighterMD(QTextDocument* document, ZSettings::MarkdownHighlighting rules,
                          int baseStep = 0);
 
-    // Состояния блока (previousBlockState/currentBlockState).
-    enum State { Plain = 0, InFence = 1 };
+    // Состояние блока (previousBlockState/currentBlockState): 0 — обычная
+    // строка; иначе «внутри забора кода», и в состоянии же лежит КОЛОНКА
+    // забора (отступ ```): 1 + колонка. Виду она нужна, чтобы класть плашку
+    // кода с того же отступа, что и забор, — блок кода внутри пункта списка
+    // читается вложенным, а не во всю колонку (просьба владельца).
+    enum State { Plain = 0 };
+    static int fenceState(int column) { return 1 + qMax(0, column); }
+    static bool inFence(int state) { return state >= 1; }
+    static int fenceColumn(int state) { return state >= 1 ? state - 1 : 0; }
 
 protected:
     void highlightBlock(const QString& text) override;

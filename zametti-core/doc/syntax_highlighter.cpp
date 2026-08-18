@@ -27,7 +27,9 @@ ZSyntaxHighlighterMD::ZSyntaxHighlighterMD(QTextDocument* document,
     bold_.setFontWeight(QFont::Bold);
     italic_.setFontItalic(true);
 
-    fence_ = QRegularExpression(QStringLiteral("^\\s{0,3}(```|~~~)"));
+    // Забор с любым отступом (внутри пункта списка он сдвинут); колонка забора
+    // уходит в состояние блока.
+    fence_ = QRegularExpression(QStringLiteral("^(\\s*)(```|~~~)"));
     heading_re_ = QRegularExpression(QStringLiteral("^\\s{0,3}#{1,6}(\\s|$)"));
     // Задача: маркер, пробел (или без — краткая запись автозамены), скобки.
     task_ = QRegularExpression(QStringLiteral("^\\s*[-*+]\\s?\\[[ xX]\\](?=\\s|$)"));
@@ -94,13 +96,14 @@ void ZSyntaxHighlighterMD::highlightBlock(const QString& text) {
     // Забор кода: строка забора и всё между заборами — только состояние; плашку
     // во всю колонку кладёт вид (красить знаки ещё и здесь — фон под ними был
     // бы вдвое темнее плашки, так и вышло в первой примерке).
-    const bool fenceLine = fence_.match(text).hasMatch();
-    if (previous == InFence) {
-        setCurrentBlockState(fenceLine ? Plain : InFence);
+    const QRegularExpressionMatch fence = fence_.match(text);
+    const bool fenceLine = fence.hasMatch();
+    if (inFence(previous)) {
+        setCurrentBlockState(fenceLine ? Plain : previous);
         return;
     }
     if (fenceLine) {
-        setCurrentBlockState(InFence);
+        setCurrentBlockState(fenceState(int(fence.capturedLength(1))));
         return;
     }
     setCurrentBlockState(Plain);

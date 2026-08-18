@@ -215,13 +215,16 @@ void DiffTextView::paintBlockMargin(QPainter& painter, const QTextBlock& block, 
 
 void DiffTextView::paintUnderlay(QPainter& painter, const QRectF& visible) {
     if (timeline_ == nullptr) return;
-    // Забор кода: строка ВНУТРИ забора несёт состояние InFence (его ставит
-    // подсветчик), закрывающая — Plain, но её предшественница — InFence.
-    const auto fenced = [](const QTextBlock& block) {
-        if (block.userState() == ZSyntaxHighlighterMD::InFence) return true;
+    // Забор кода: строка ВНУТРИ забора несёт состояние «в заборе» с колонкой
+    // забора (его ставит подсветчик), закрывающая — Plain, но её
+    // предшественница — в заборе.
+    const auto fenceStateOf = [](const QTextBlock& block) {
+        if (ZSyntaxHighlighterMD::inFence(block.userState())) return block.userState();
         const QTextBlock previous = block.previous();
-        return previous.isValid() && previous.userState() == ZSyntaxHighlighterMD::InFence &&
-               diffMarkOf(block) != int(diff::Mark::Removed);
+        if (previous.isValid() && ZSyntaxHighlighterMD::inFence(previous.userState()) &&
+            diffMarkOf(block) != int(diff::Mark::Removed))
+            return previous.userState();
+        return int(ZSyntaxHighlighterMD::Plain);
     };
     const QAbstractTextDocumentLayout* layout = document()->documentLayout();
     QTextBlock block = document()->findBlock(layout->hitTest(QPointF(0, visible.top()), Qt::FuzzyHit));
@@ -229,15 +232,31 @@ void DiffTextView::paintUnderlay(QPainter& painter, const QRectF& visible) {
     const qreal width = document()->textWidth() > 0 ? document()->textWidth() : viewport()->width();
     // Правый край — по правому полю корневой рамки (левое шире на поле глифов).
     const qreal right = width - document()->rootFrame()->frameFormat().rightMargin();
+    // Ширина знака строк (они моноширинные по построению) — под отступ плашки
+    // у строк, которым не хватает знаков до колонки забора (пустая строка кода).
+    const ZDocStyle& look = docStyle();
+    QFont mono = baseFont();
+    if (!look.codeFamily().isEmpty()) mono.setFamily(QString(look.codeFamily()));
+    mono.setPointSizeF(mono.pointSizeF() * fontStepFactor(look.diffStep()));
+    const qreal space = QFontMetricsF(mono).horizontalAdvance(QLatin1Char(' '));
     for (; block.isValid(); block = block.next()) {
         const QRectF rect = layout->blockBoundingRect(block);
         if (rect.top() > visible.bottom()) break;
         if (rect.bottom() < visible.top()) continue;
-        if (!fenced(block)) continue;
+        const int state = fenceStateOf(block);
+        if (!ZSyntaxHighlighterMD::inFence(state)) continue;
         // Убранная строка внутри забора — своим красным, без плашки: она не
         // часть слепка (подсветчик её тоже пропускает).
         if (diffMarkOf(block) == int(diff::Mark::Removed)) continue;
-        painter.fillRect(QRectF(rect.left(), rect.top(), right - rect.left(), rect.height()), plate);
+        // ПЛАШКА С ОТСТУПА ЗАБОРА (просьба владельца: блок кода в пункте списка
+        // читается вложенным). Колонка — по самой строке, где знаков хватает
+        // (cursorToX точен для любых знаков), иначе — по ширине пробела.
+        const int column = ZSyntaxHighlighterMD::fenceColumn(state);
+        qreal left = rect.left() + column * space;
+        if (column > 0 && block.layout() != nullptr && block.layout()->lineCount() > 0 &&
+            block.length() - 1 >= column)
+            left = rect.left() + block.layout()->lineAt(0).cursorToX(column);
+        painter.fillRect(QRectF(left, rect.top(), right - left, rect.height()), plate);
     }
 }
 

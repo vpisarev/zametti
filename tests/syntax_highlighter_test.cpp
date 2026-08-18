@@ -11,6 +11,7 @@
 #include "diff.h"
 #include "document.h"
 #include "settings.h"
+#include "syntax_highlighter.h"
 #include "test_util.h"
 
 #include <QTextLayout>
@@ -133,8 +134,11 @@ void checkRules() {
     // под знаками вдвое темнее — нашёл владелец), а состояние ставит.
     const int body = at("int main();");
     ZT_TRUE("код между заборами — без подложки на знаках", !hasProperty(doc, body, 0, 11, isCode));
-    ZT_EQ("но в состоянии «в заборе»", n(1), n(doc.blockStateAt(body)));
-    ZT_EQ("открывающий забор — «в заборе»", n(1), n(doc.blockStateAt(at("```"))));
+    ZT_TRUE("но в состоянии «в заборе»", zametti::ZSyntaxHighlighterMD::inFence(doc.blockStateAt(body)));
+    ZT_TRUE("открывающий забор — «в заборе»",
+            zametti::ZSyntaxHighlighterMD::inFence(doc.blockStateAt(at("```"))));
+    ZT_EQ("колонка забора без отступа — 0", n(0),
+          n(zametti::ZSyntaxHighlighterMD::fenceColumn(doc.blockStateAt(body))));
     ZT_EQ("после забора — обычное состояние", n(0), n(doc.blockStateAt(at("после забора"))));
     const int under = at("снова_не_курсив и 2*3*4");
     ZT_TRUE("подчёркивания внутри слова — не курсив", !hasProperty(doc, under, 6, 8, isItalic));
@@ -177,8 +181,8 @@ void checkRemovedLinesSkipped() {
     const QColor code = zametti::settings().markdownHighlighting().codeBackground();
     const auto isCode = [&](const QTextCharFormat& f) { return f.background().color() == code; };
     const int after = int(lines.indexOf(QStringLiteral("три")));
-    ZT_EQ("код ПОСЛЕ убранной строки — по-прежнему в заборе: состояние пронесено сквозь неё",
-          n(1), n(doc.blockStateAt(after)));
+    ZT_TRUE("код ПОСЛЕ убранной строки — по-прежнему в заборе: состояние пронесено сквозь неё",
+            zametti::ZSyntaxHighlighterMD::inFence(doc.blockStateAt(after)));
     ZT_EQ("а хвост за забором — нет", n(0),
           n(doc.blockStateAt(int(lines.indexOf(QStringLiteral("хвост"))))));
     (void)isCode;
@@ -189,10 +193,38 @@ void checkRemovedLinesSkipped() {
           n(again.highlightFormats(after).size()));
 }
 
+// Забор с отступом (блок кода внутри пункта списка): состояние несёт колонку
+// забора — по ней вид кладёт плашку с того же отступа.
+void checkIndentedFence() {
+    const ZDocument doc = rawDoc(
+        "- пункт\n"
+        "  ```\n"
+        "  int a;\n"
+        "\n"
+        "  ```\n"
+        "хвост\n");
+    const QStringList lines = linesOfDoc(doc);
+    const int open = int(lines.indexOf(QStringLiteral("  ```")));
+    ZT_TRUE("забор с отступом опознан", zametti::ZSyntaxHighlighterMD::inFence(doc.blockStateAt(open)));
+    ZT_EQ("и колонка забора — 2", n(2),
+          n(zametti::ZSyntaxHighlighterMD::fenceColumn(doc.blockStateAt(open))));
+    const int body = int(lines.indexOf(QStringLiteral("  int a;")));
+    ZT_EQ("тело — та же колонка", n(2),
+          n(zametti::ZSyntaxHighlighterMD::fenceColumn(doc.blockStateAt(body))));
+    ZT_EQ("пустая строка внутри — тоже", n(2),
+          n(zametti::ZSyntaxHighlighterMD::fenceColumn(doc.blockStateAt(body + 1))));
+    ZT_EQ("после закрывающего забора — обычная строка", n(0),
+          n(doc.blockStateAt(int(lines.indexOf(QStringLiteral("хвост"))))));
+    // Забор с отступом больше трёх пробелов (вложенный список) — тоже забор.
+    const ZDocument deep = rawDoc("    ```\n    x\n    ```\n");
+    ZT_EQ("колонка 4", n(4), n(zametti::ZSyntaxHighlighterMD::fenceColumn(deep.blockStateAt(1))));
+}
+
 }  // namespace
 
 TEST(SyntaxHighlighter, All) {
     checkRules();
     checkRemovedLinesSkipped();
+    checkIndentedFence();
     EXPECT_EQ(0, zt::freshFailures());
 }
