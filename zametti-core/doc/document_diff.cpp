@@ -141,6 +141,11 @@ void ZDocument::highlightMarkdown(int baseStep) {
     highlighter->rehighlight();
 }
 
+int ZDocument::blockStateAt(int block) const {
+    const QTextBlock b = d_->text.findBlockByNumber(block);
+    return b.isValid() ? b.userState() : -1;
+}
+
 QList<QTextLayout::FormatRange> ZDocument::highlightFormats(int block) const {
     const QTextBlock b = d_->text.findBlockByNumber(block);
     if (!b.isValid() || b.layout() == nullptr) return {};

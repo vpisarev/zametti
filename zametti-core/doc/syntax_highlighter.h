@@ -7,14 +7,18 @@
 // QtGui, виджетов не тянет), цвета и ступени берёт из стиля документа.
 //
 // ЧТО РАСЦВЕЧИВАЕТСЯ (правило одно на строку, состояние — только у забора кода):
-//   * заголовки `# …` — на ступень крупнее (headingStep, лестница
+//   * заголовки `# …` — жирным и на ступень крупнее (headingStep, лестница
 //     кеглей: абсолютных размеров в документе нет — масштаб один setDefaultFont);
 //   * маркеры списков `- ` `* ` `+ `, номера `1. ` `1) `, задачи `- [ ] ` /
-//     `-[x] ` — акцентным цветом (accent);
-//   * формулы `$…$` и `$$…$$` в строке — акцентным цветом;
+//     `-[x] ` — акцентным цветом и жирным;
+//   * формулы `$…$` и `$$…$$` в строке — акцентным цветом (не жирным);
+//   * ссылки `[текст](адрес)`, `<адрес>` — цветом link с подчёркиванием;
+//     картинки `![подпись](файл)` — цветом image, адрес — с подчёркиванием;
 //   * `**жирный**` / `__жирный__` — жирным; `_курсив_` / `*курсив*` — курсивом;
-//   * `` `код` `` в строке и блок кода между заборами ``` / ~~~ — на подложке
-//     codeBackground секции; забор — состояние блока, оно живёт между строками.
+//   * `` `код` `` в строке — на подложке codeBackground; блок кода между
+//     заборами ``` / ~~~ — только СОСТОЯНИЕ блока (InFence): плашку во всю
+//     колонку кладёт вид, а знаки подсветчик там не красит — двойная подложка
+//     была вдвое темнее (нашёл владелец).
 //
 // СТРОКИ РАЗНОСТИ «−» (DiffMarkProperty == Removed) НЕ ПОДСВЕЧИВАЮТСЯ: они не
 // часть показанного слепка (решение владельца — просто чёрным по красному), но
@@ -57,9 +61,12 @@ protected:
 
 private:
     ZSettings::MarkdownHighlighting rules_;
-    QTextCharFormat accent_;    // маркеры, номера, задачи, формулы
-    QTextCharFormat code_;      // код — подложка
-    QTextCharFormat heading_;   // заголовки — на ступень крупнее
+    QTextCharFormat accent_;    // формулы — акцентом
+    QTextCharFormat marker_;    // маркеры, номера, задачи, `#` — акцентом и жирным
+    QTextCharFormat code_;      // код в строке — подложка
+    QTextCharFormat heading_;   // заголовки — жирным и на ступень крупнее
+    QTextCharFormat link_;
+    QTextCharFormat image_;
     QTextCharFormat bold_;
     QTextCharFormat italic_;
     QRegularExpression fence_;
@@ -68,6 +75,9 @@ private:
     QRegularExpression bullet_;
     QRegularExpression ordered_;
     QRegularExpression codeSpan_;
+    QRegularExpression imageLink_;
+    QRegularExpression link_re_;
+    QRegularExpression autoLink_;
     QRegularExpression displayMath_;
     QRegularExpression inlineMath_;
     QRegularExpression boldStar_;

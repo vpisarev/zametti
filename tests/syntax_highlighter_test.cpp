@@ -69,6 +69,11 @@ void checkRules() {
     const QColor code = rules.codeBackground();
     const int headingStep = zametti::settings().style().diffStep() + rules.headingStep();
     const auto isAccent = [&](const QTextCharFormat& f) { return f.foreground().color() == accent; };
+    const auto isBoldAccent = [&](const QTextCharFormat& f) {
+        return f.foreground().color() == accent && f.fontWeight() == QFont::Bold;
+    };
+    const auto isLink = [&](const QTextCharFormat& f) { return f.foreground().color() == rules.link(); };
+    const auto isImage = [&](const QTextCharFormat& f) { return f.foreground().color() == rules.image(); };
     const auto isCode = [&](const QTextCharFormat& f) { return f.background().color() == code; };
     const auto isHeading = [&](const QTextCharFormat& f) {
         return f.hasProperty(QTextFormat::FontSizeAdjustment) &&
@@ -91,42 +96,57 @@ void checkRules() {
         "int main();\n"
         "```\n"
         "после забора\n"
-        "снова_не_курсив и 2*3*4\n");
+        "снова_не_курсив и 2*3*4\n"
+        "ссылка [сюда](https://x.y/z) и <https://a.b/> и ![снимок](img/1.jpg)\n");
     const QStringList lines = linesOfDoc(doc);
     const auto at = [&](const char* text) { return int(lines.indexOf(QString::fromUtf8(text))); };
     const int h = at("# Заголовок **жирный**");
     ZT_TRUE("строки на месте", h >= 0);
     ZT_TRUE("заголовок — вся строка на ступень крупнее (" + n(headingStep) + ")",
             hasProperty(doc, h, 2, int(lines[h].size()), isHeading));
-    ZT_TRUE("маркер заголовка — акцентом", hasProperty(doc, h, 0, 1, isAccent));
+    ZT_TRUE("и жирная", hasProperty(doc, h, 2, int(lines[h].size()), isBold));
+    ZT_TRUE("маркер заголовка — акцентом и жирный", hasProperty(doc, h, 0, 1, isBoldAccent));
     ZT_TRUE("жирный внутри заголовка — жирный И крупный",
             hasProperty(doc, h, 12, 22, [&](const QTextCharFormat& f) { return isBold(f) && isHeading(f); }));
 
     const int bullet = at("- пункт");
-    ZT_TRUE("буллет «- » акцентом", hasProperty(doc, bullet, 0, 1, isAccent));
+    ZT_TRUE("буллет «- » акцентом и жирный", hasProperty(doc, bullet, 0, 1, isBoldAccent));
     ZT_TRUE("а текст пункта — нет", !hasProperty(doc, bullet, 2, 7, isAccent));
     const int star = at("* ещё **жирный** и _курсив_ и *тоже курсив*");
-    ZT_TRUE("буллет «* » акцентом", hasProperty(doc, star, 0, 1, isAccent));
+    ZT_TRUE("буллет «* » акцентом и жирный", hasProperty(doc, star, 0, 1, isBoldAccent));
     ZT_TRUE("**жирный** — жирный", hasProperty(doc, star, 6, 16, isBold));
     ZT_TRUE("_курсив_ — курсив", hasProperty(doc, star, 19, 27, isItalic));
     ZT_TRUE("*курсив* — курсив", hasProperty(doc, star, 30, 43, isItalic));
-    ZT_TRUE("«1. » акцентом", hasProperty(doc, at("1. номер"), 0, 2, isAccent));
-    ZT_TRUE("«-[x] » акцентом", hasProperty(doc, at("-[x] задача"), 0, 4, isAccent));
-    ZT_TRUE("«- [ ] » акцентом", hasProperty(doc, at("- [ ] другая"), 0, 5, isAccent));
+    ZT_TRUE("«1. » акцентом и жирный", hasProperty(doc, at("1. номер"), 0, 2, isBoldAccent));
+    ZT_TRUE("«-[x] » акцентом и жирный", hasProperty(doc, at("-[x] задача"), 0, 4, isBoldAccent));
+    ZT_TRUE("«- [ ] » акцентом и жирный", hasProperty(doc, at("- [ ] другая"), 0, 5, isBoldAccent));
     const int inl = at("код `внутри` строки");
     ZT_TRUE("код в строке — на подложке", hasProperty(doc, inl, 4, 12, isCode));
     ZT_TRUE("а слова вокруг — нет", !hasProperty(doc, inl, 0, 3, isCode));
     const int math = at("формула $x^2$ и $$a+b$$ и цена $5 и $7");
     ZT_TRUE("$x^2$ акцентом", hasProperty(doc, math, 8, 13, isAccent));
+    ZT_TRUE("но не жирным", !hasProperty(doc, math, 8, 13, isBold));
     ZT_TRUE("$$a+b$$ акцентом", hasProperty(doc, math, 16, 23, isAccent));
     ZT_TRUE("цена «$5 и $7» — не формула", !hasProperty(doc, math, 31, 33, isAccent));
-    ZT_TRUE("забор — на подложке целиком", hasProperty(doc, at("```"), 0, 3, isCode));
+    // Между заборами подсветчик знаки НЕ красит (плашку кладёт вид, иначе фон
+    // под знаками вдвое темнее — нашёл владелец), а состояние ставит.
     const int body = at("int main();");
-    ZT_TRUE("код между заборами — на подложке целиком", hasProperty(doc, body, 0, 11, isCode));
-    ZT_TRUE("после забора подложки нет", !hasProperty(doc, at("после забора"), 0, 5, isCode));
+    ZT_TRUE("код между заборами — без подложки на знаках", !hasProperty(doc, body, 0, 11, isCode));
+    ZT_EQ("но в состоянии «в заборе»", n(1), n(doc.blockStateAt(body)));
+    ZT_EQ("открывающий забор — «в заборе»", n(1), n(doc.blockStateAt(at("```"))));
+    ZT_EQ("после забора — обычное состояние", n(0), n(doc.blockStateAt(at("после забора"))));
     const int under = at("снова_не_курсив и 2*3*4");
     ZT_TRUE("подчёркивания внутри слова — не курсив", !hasProperty(doc, under, 6, 8, isItalic));
     ZT_TRUE("звёздочки в арифметике — не курсив", !hasProperty(doc, under, 19, 22, isItalic));
+    const int links = at("ссылка [сюда](https://x.y/z) и <https://a.b/> и ![снимок](img/1.jpg)");
+    const auto underlined = [](const QTextCharFormat& f) { return f.fontUnderline(); };
+    ZT_TRUE("[текст](адрес) — цветом ссылки", hasProperty(doc, links, 7, 28, isLink));
+    ZT_TRUE("и с подчёркиванием", hasProperty(doc, links, 7, 28, underlined));
+    ZT_TRUE("<адрес> — цветом ссылки", hasProperty(doc, links, 31, 45, isLink));
+    ZT_TRUE("![подпись](файл) — цветом картинки", hasProperty(doc, links, 48, 68, isImage));
+    ZT_TRUE("а не ссылки", !hasProperty(doc, links, 48, 68, isLink));
+    ZT_TRUE("адрес картинки — с подчёркиванием", hasProperty(doc, links, 58, 67, underlined));
+    ZT_TRUE("а подпись картинки — без", !hasProperty(doc, links, 50, 56, underlined));
 }
 
 void checkRemovedLinesSkipped() {
@@ -144,10 +164,11 @@ void checkRemovedLinesSkipped() {
     const QColor code = zametti::settings().markdownHighlighting().codeBackground();
     const auto isCode = [&](const QTextCharFormat& f) { return f.background().color() == code; };
     const int after = int(lines.indexOf(QStringLiteral("три")));
-    ZT_TRUE("код ПОСЛЕ убранной строки — по-прежнему на подложке: забор пронесён сквозь неё",
-            hasProperty(doc, after, 0, 3, isCode));
-    ZT_TRUE("а хвост за забором — нет",
-            !hasProperty(doc, int(lines.indexOf(QStringLiteral("хвост"))), 0, 5, isCode));
+    ZT_EQ("код ПОСЛЕ убранной строки — по-прежнему в заборе: состояние пронесено сквозь неё",
+          n(1), n(doc.blockStateAt(after)));
+    ZT_EQ("а хвост за забором — нет", n(0),
+          n(doc.blockStateAt(int(lines.indexOf(QStringLiteral("хвост"))))));
+    (void)isCode;
     // Повторный вызов подсветки — ничего не заводит второй раз (тот же ответ).
     ZDocument again = doc;
     again.highlightMarkdown(1);
