@@ -1259,6 +1259,7 @@ void NoteView::renderSlice(QPainter& painter, const QRectF& documentRect, qreal 
         paintImageMarks(painter, block);
         paintFormulaMarks(painter, block);
         paintTableMarks(painter, block);
+        paintInlineFormulaHighlights(painter, block);
     }
 
     painter.restore();
@@ -1506,6 +1507,23 @@ void NoteView::paintFormulaMarks(QPainter& painter, const QTextBlock& block) {
     if (exportRatio_ <= 0.0 && !box.isEmpty() && objectSelected(block)) {
         const qreal pad = imageCornerOverhang();
         paintImageCorners(painter, box.adjusted(-pad, -pad, pad, pad));
+    }
+}
+
+void NoteView::paintInlineFormulaHighlights(QPainter& painter, const QTextBlock& block) {
+    if (objectHighlights_.isEmpty() || !block.isValid()) return;
+    const int from = block.position();
+    const int to = from + block.length();
+    for (const ObjectHighlight& hit : std::as_const(objectHighlights_)) {
+        if (hit.position < from || hit.position >= to) continue;
+        const QRectF box = inlineFormulaRect(*document(), hit.position);
+        if (box.isEmpty()) continue;
+        // Вся вёрстка целиком (решение брифа): куска исходника на картинке не
+        // найти. Тонировка ПОВЕРХ: вёрстка уже нарисована drawObject, а альфа
+        // подсветки оставляет её видимой.
+        QColor colour = docStyle().searchHighlight();
+        colour.setAlpha(hit.current ? 150 : 80);
+        painter.fillRect(box.adjusted(-1, -1, 1, 1), colour);
     }
 }
 
@@ -1851,6 +1869,7 @@ void NoteView::paintEvent(QPaintEvent* event) {
         paintImageMarks(painter, block);
         paintFormulaMarks(painter, block);
         paintTableMarks(painter, block);
+        paintInlineFormulaHighlights(painter, block);
     }
 
     // Каретка — последней и без сдвига на прокрутку: cursorRect уже отдаёт

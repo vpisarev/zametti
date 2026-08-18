@@ -362,15 +362,23 @@ std::vector<Hit> ZDocument::find(const Query& query) const {
     if (query.isEmpty()) return hits;
     int ordinal = 0;
     int index = 0;
+    std::vector<ObjectSpan> objects;
     for (QTextBlock b = d_->text.begin(); b.isValid(); b = b.next(), ++index) {
         // У объекта (таблица, формула) ищем по исходнику: в тексте блока один
-        // U+FFFC (см. searchableTextOf).
+        // U+FFFC (см. searchableTextOf). Строчные формулы подставлены
+        // исходником на местах — карта objects говорит, где они.
         bool inObject = false;
-        const QString text = searchableTextOf(b, &inObject);
+        const QString text = searchableTextOf(b, &inObject, &objects);
         if (text.isEmpty()) continue;
         qsizetype at = text.indexOf(query.needle, 0, query.sensitivity());
         while (at >= 0) {
-            hits.push_back(Hit{index, int(at), int(query.needle.size()), ordinal++, inObject});
+            // Вхождение, пересёкшее границу строчного объекта, не считается:
+            // рядом эти знаки стоят только в тексте поиска (правило одно с
+            // NoteSearch — hitSpanIndex).
+            const int span = hitSpanIndex(objects, int(at), int(at + query.needle.size()));
+            if (span != -2)
+                hits.push_back(Hit{index, int(at), int(query.needle.size()), ordinal++,
+                                   inObject || span >= 0});
             // Со следующего знака, а не через длину запроса: перекрывающиеся
             // вхождения («аа» в «ааа») — тоже вхождения, и счётчик «3/17»
             // обязан считать их так же, как их потом обойдёт F3.

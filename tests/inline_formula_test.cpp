@@ -14,6 +14,9 @@
 
 #include "doc_model.h"
 #include "math_scan.h"
+#include "note_search.h"
+#include "search.h"
+#include "text_stats.h"
 #include "note_view.h"
 #include "pieces.h"
 #include "test_util.h"
@@ -306,6 +309,55 @@ void checkToggleGesture() {
     ZT_EQ("круг цел", "Просто $икс$ квадрат тут.\n", d.toMarkdown());
 }
 
+// --- поиск, счёт, буфер ---------------------------------------------------------
+
+void checkSearchAndFriends() {
+    Shown s;
+    show(s, "Буква $\\gamma$ и снова $\\gamma$, а ещё слово gamma тут.\n");
+    zametti::ZDocument& d = s.note.doc();
+
+    // Поиск ищет по исходнику: «gamma» находит обе формулы и слово.
+    const std::vector<zametti::Hit> hits = d.find(zametti::makeQuery(QStringLiteral("gamma")));
+    ZT_EQ("три вхождения", "3", std::to_string(hits.size()));
+    ZT_TRUE("первые два — в объектах, третье — в тексте",
+            hits.size() == 3 && hits[0].inObject && hits[1].inObject && !hits[2].inObject);
+
+    // Живой поиск: карта смещений даёт верные курсоры.
+    zametti::NoteSearch search;
+    ZT_EQ("живой поиск считает так же", "3",
+          std::to_string(search.find(*s.doc, QStringLiteral("gamma"), false)));
+    const zametti::SearchHit& first = search.hitAt(0);
+    ZT_TRUE("вхождение в формуле — курсор над её знаком",
+            first.inObject() &&
+                zametti::isInlineFormulaChar(*s.doc, first.cursor.selectionStart()));
+    ZT_EQ("смещение — в исходнике объекта", "2", std::to_string(first.innerOffset));
+    const zametti::SearchHit& word = search.hitAt(2);
+    ZT_TRUE("вхождение в тексте — обычное выделение", !word.inObject());
+    ZT_EQ("и стоит на своём слове", "gamma", utf8(word.cursor.selectedText()));
+
+    // Замена в исходнике одной формулы — судьёй.
+    QTextCursor scratch(s.doc);
+    ZT_TRUE("замена внутри формулы",
+            d.rewriteInlineFormula(scratch, first.cursor.selectionStart(),
+                                   QStringLiteral("$\\Gamma$")));
+    ZT_EQ("файл поменялся ровно в ней",
+          "Буква $\\Gamma$ и снова $\\gamma$, а ещё слово gamma тут.\n", d.toMarkdown());
+
+    // Счёт слов: по исходнику, двумя независимыми счётами одинаково.
+    const zametti::NoteStats byDoc = d.getStats();
+    Shown fresh;
+    show(fresh, d.toMarkdown());
+    ZT_EQ("счёт слов не зависит от пути", std::to_string(fresh.note.doc().getStats().words),
+          std::to_string(byDoc.words));
+
+    // Буфер: кусок строки с формулой внутри уносит исходник.
+    QTextCursor range(s.doc);
+    range.setPosition(s.doc->firstBlock().position());
+    range.setPosition(s.doc->firstBlock().position() + 9, QTextCursor::KeepAnchor);
+    ZT_EQ("Ctrl+C куска строки с формулой", "Буква $\\Gamma$ и",
+          utf8(d.markdownOf(range)));
+}
+
 // --- приёмка: заметка владельца ------------------------------------------------
 
 void checkOwnersNote() {
@@ -343,6 +395,7 @@ TEST(InlineFormula, All) {
     checkBrokenBecomesText();
     checkCloseLiftsWholeParagraph();
     checkToggleGesture();
+    checkSearchAndFriends();
     checkOwnersNote();
     zt::report("строчные формулы: модель");
 }

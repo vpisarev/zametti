@@ -3645,8 +3645,30 @@ int ZDocument::replaceAll(const QString& text, bool caseSensitive, const QString
     for (int number = d_->text.blockCount() - 1; number >= 0; --number) {
         const QTextBlock block = d_->text.findBlockByNumber(number);
         bool inObject = false;
-        QString source = searchableTextOf(block, &inObject);
-        if (!inObject) continue;
+        std::vector<ObjectSpan> objects;
+        QString source = searchableTextOf(block, &inObject, &objects);
+        if (!inObject && objects.empty()) continue;
+        if (!inObject) {
+            // СТРОЧНЫЕ формулы блока: замена внутри исходника каждой, справа
+            // налево (перезапись меняет позиции только правее себя). Вхождения
+            // через границу объекта не считаются — как в поиске.
+            for (size_t i = objects.size(); i-- > 0;) {
+                const ObjectSpan& span = objects[i];
+                QString own = source.mid(span.from, span.to - span.from);
+                int here = 0;
+                qsizetype pos = own.indexOf(text, 0, sensitivity);
+                while (pos >= 0) {
+                    own.replace(pos, text.size(), with);
+                    ++here;
+                    pos = own.indexOf(text, pos + with.size(), sensitivity);
+                }
+                if (here == 0) continue;
+                QTextCursor scratch(&d_->text);
+                scratch.setPosition(block.position());
+                if (rewriteInlineFormula(scratch, span.position, own)) replaced += here;
+            }
+            continue;
+        }
         int here = 0;
         qsizetype pos = source.indexOf(text, 0, sensitivity);
         while (pos >= 0) {
@@ -3905,6 +3927,42 @@ bool ZDocument::closeFormula(QTextCursor& at) {
 // закрытие. Обе стороны — replaceBlocks одного блока, то есть обычная местная
 // правка: отмена штатная, Ctrl+Z после Esc возвращает раскрытую.
 
+namespace {
+
+// Порядковый номер знака строчной формулы среди таких же знаков блока: им же
+// выбирается math-кусок в снятом с блока куске (закрытые цельные формулы куска
+// и знаки объектов в блоке идут одним порядком — договор сборки).
+int inlineObjectOrdinal(const QTextBlock& block, int position) {
+    int ordinal = 0;
+    for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+        const QTextFragment fragment = it.fragment();
+        if (!fragment.isValid() ||
+            fragment.charFormat().objectType() != InlineFormulaObject)
+            continue;
+        if (fragment.position() + fragment.length() <= position) {
+            ordinal += fragment.length();
+            continue;
+        }
+        if (fragment.position() <= position) ordinal += position - fragment.position();
+        break;
+    }
+    return ordinal;
+}
+
+// Индекс закрытого цельного math-куска с этим порядковым номером; runs.size()
+// — не нашёлся.
+size_t inlineRunByOrdinal(const Piece& piece, int ordinal) {
+    int seen = 0;
+    for (size_t i = 0; i < piece.runs.size(); ++i) {
+        const Run& run = piece.runs[i];
+        if (!run.math() || run.mathOpen() || !wholeMath(piece.view(run))) continue;
+        if (seen++ == ordinal) return i;
+    }
+    return piece.runs.size();
+}
+
+}  // namespace
+
 bool ZDocument::openInlineFormula(QTextCursor& at) {
     if (at.document() != &d_->text) return false;
     const QTextBlock block = at.block();
@@ -3926,38 +3984,13 @@ bool ZDocument::openInlineFormula(QTextCursor& at) {
     }
     if (pos < block.position() || pos >= block.position() + block.length() - 1) return false;
 
-    // Порядковый номер знака среди строчных формул блока: им же выбирается
-    // math-кусок в снятом с блока куске (закрытые цельные формулы куска и знаки
-    // объектов в блоке идут одним порядком — это и есть договор сборки).
-    int ordinal = 0;
-    for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
-        const QTextFragment fragment = it.fragment();
-        if (!fragment.isValid() || fragment.position() + fragment.length() <= pos) {
-            if (fragment.isValid() &&
-                fragment.charFormat().objectType() == InlineFormulaObject)
-                ordinal += fragment.length();
-            continue;
-        }
-        if (fragment.charFormat().objectType() == InlineFormulaObject)
-            ordinal += pos - fragment.position();
-        break;
-    }
-
+    const int ordinal = inlineObjectOrdinal(block, pos);
     const int number = block.blockNumber();
     const std::vector<Piece> now = piecesOfBlocks(d_->text, number, number);
     if (now.size() != 1 || now.front().raw) return false;
     Piece piece = now.front();
 
-    int seen = 0;
-    size_t target = piece.runs.size();
-    for (size_t i = 0; i < piece.runs.size(); ++i) {
-        const Run& run = piece.runs[i];
-        if (!run.math() || run.mathOpen() || !wholeMath(piece.view(run))) continue;
-        if (seen++ == ordinal) {
-            target = i;
-            break;
-        }
-    }
+    const size_t target = inlineRunByOrdinal(piece, ordinal);
     if (target == piece.runs.size()) return false;
     piece.runs[target].flags = InlineMath | InlineMathOpen;
 
@@ -4021,6 +4054,45 @@ bool ZDocument::closeInlineFormula(QTextCursor& at) {
             piece.kind = Kind::Math;
             piece.runs.clear();
         }
+    }
+
+    QTextCursor edit(at);
+    edit.beginEditBlock();
+    replaceBlocks(number, number, {piece});
+    settleSeam(number, number);
+    edit.endEditBlock();
+
+#ifndef NDEBUG
+    checkCanonical();
+#endif
+    at = caretAtBlock(number);
+    return true;
+}
+
+bool ZDocument::rewriteInlineFormula(QTextCursor& at, int position, const QString& source) {
+    if (at.document() != &d_->text) return false;
+    if (!isInlineFormulaChar(d_->text, position)) return false;
+    const QTextBlock block = d_->text.findBlock(position);
+    if (!block.isValid() || isRawBlock(block)) return false;
+
+    const int ordinal = inlineObjectOrdinal(block, position);
+    const int number = block.blockNumber();
+    const std::vector<Piece> now = piecesOfBlocks(d_->text, number, number);
+    if (now.size() != 1 || now.front().raw) return false;
+    Piece piece = now.front();
+
+    const size_t target = inlineRunByOrdinal(piece, ordinal);
+    if (target == piece.runs.size()) return false;
+    Run& run = piece.runs[target];
+    const int32_t delta = int32_t(source.size()) - (run.end - run.start);
+    piece.text.replace(run.start, run.end - run.start, source);
+    run.end = run.start + int32_t(source.size());
+    // Судья тот же, что у закрытия: не формула — законный текст, в файл уйдёт
+    // написанное.
+    if (!wholeMath(piece.view(run))) run.flags = 0;
+    for (size_t i = target + 1; i < piece.runs.size(); ++i) {
+        piece.runs[i].start += delta;
+        piece.runs[i].end += delta;
     }
 
     QTextCursor edit(at);

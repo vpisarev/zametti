@@ -443,6 +443,10 @@ protected:
     void paintFormulaMarks(QPainter& painter, const QTextBlock& block);
     // Сетка таблицы и уголки выбранной — поверх готовой страницы, как формула.
     void paintTableMarks(QPainter& painter, const QTextBlock& block);
+    // Подсветка поиска на вёрстке СТРОЧНЫХ формул блока: сама вёрстка рисуется
+    // в drawObject (выделение её не закрывает — замер пробника inline), а
+    // подсветка — тонировкой поверх, по списку objectHighlights_.
+    void paintInlineFormulaHighlights(QPainter& painter, const QTextBlock& block);
 
 private:
     // Каретку рисуем сами: своей Qt цвета не отдаёт (см. caretColor в

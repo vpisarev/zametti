@@ -345,8 +345,10 @@ bool isInlineFormulaChar(const QTextDocument& doc, int position) {
     return false;
 }
 
-QString searchableTextOf(const QTextBlock& block, bool* inObject) {
+QString searchableTextOf(const QTextBlock& block, bool* inObject,
+                         std::vector<ObjectSpan>* objects) {
     if (inObject != nullptr) *inObject = false;
+    if (objects != nullptr) objects->clear();
     if (!block.isValid()) return {};
     if (block.length() == 2 && block.text().at(0) == QChar::ObjectReplacementCharacter) {
         const QTextCharFormat format = block.begin().fragment().charFormat();
@@ -356,7 +358,55 @@ QString searchableTextOf(const QTextBlock& block, bool* inObject) {
             return format.property(ObjectSourceProperty).toString();
         }
     }
-    return block.text();
+    // Строчные формулы-объекты подставляются исходником: без этого Ctrl+F и
+    // поиск по хранилищу не видели бы «gamma» внутри $\gamma$. Блоку без
+    // объектов подстановка не стоит ничего — отдаётся его текст как есть.
+    bool plain = true;
+    for (QTextBlock::iterator it = block.begin(); plain && !it.atEnd(); ++it)
+        if (it.fragment().isValid() &&
+            it.fragment().charFormat().objectType() == InlineFormulaObject)
+            plain = false;
+    if (plain) return block.text();
+
+    QString text;
+    for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+        const QTextFragment fragment = it.fragment();
+        if (!fragment.isValid()) continue;
+        if (fragment.charFormat().objectType() == InlineFormulaObject) {
+            const QString source =
+                fragment.charFormat().property(ObjectSourceProperty).toString();
+            for (int n = 0; n < fragment.length(); ++n) {
+                const int from = int(text.size());
+                text += source;
+                if (objects != nullptr)
+                    objects->push_back(
+                        {from, int(text.size()), fragment.position() + n});
+            }
+            continue;
+        }
+        text += fragment.text();
+    }
+    return text;
+}
+
+int hitSpanIndex(const std::vector<ObjectSpan>& objects, int from, int to) {
+    for (size_t i = 0; i < objects.size(); ++i) {
+        const ObjectSpan& span = objects[i];
+        if (from >= span.to) continue;
+        if (to <= span.from) return -1;   // объекты идут по порядку: дальше только правее
+        return (from >= span.from && to <= span.to) ? int(i) : -2;
+    }
+    return -1;
+}
+
+int docPositionOf(const QTextBlock& block, const std::vector<ObjectSpan>& objects,
+                  int textOffset) {
+    int shift = 0;
+    for (const ObjectSpan& span : objects) {
+        if (span.to > textOffset) break;
+        shift += (span.to - span.from) - 1;
+    }
+    return block.position() + textOffset - shift;
 }
 
 QString sourceTextOf(const QTextBlock& block) {

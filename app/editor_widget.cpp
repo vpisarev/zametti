@@ -1152,7 +1152,18 @@ bool NoteEditor::replaceCurrentMatch(const QString& with) {
     const SearchHit hit = note_->search().hitAt(note_->search().current());
     const QTextCursor target = hit.cursor;
     bool done = false;
-    if (hit.inObject()) {
+    if (hit.inObject() && isInlineFormulaChar(*document(), target.selectionStart())) {
+        // Вхождение внутри СТРОЧНОЙ формулы: переписывается исходник ровно
+        // этого объекта; судья тот же, что у закрытия.
+        const int position = target.selectionStart();
+        QTextCursor probe(document());
+        probe.setPosition(position + 1);
+        QString source = probe.charFormat().property(ObjectSourceProperty).toString();
+        source.replace(hit.innerOffset, hit.innerLength, with);
+        done = runNoteEdit([&](ZDocument& note, QTextCursor& cursor) {
+            return note.rewriteInlineFormula(cursor, position, source);
+        });
+    } else if (hit.inObject()) {
         // Вхождение внутри объекта: переписать исходник и рассудить блок заново
         // тем же судьёй, что и при сворачивании (таблица могла перестать быть
         // таблицей, формула — формулой; это законно, в файл уйдёт написанное).

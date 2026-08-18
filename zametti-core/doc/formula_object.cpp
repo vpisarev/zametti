@@ -240,6 +240,43 @@ qreal columnWidthOf(const QTextDocument& doc, const QTextBlock& block) {
     return qMax(16.0, width);
 }
 
+QRectF inlineFormulaRect(const QTextDocument& doc, int position) {
+    const QTextBlock block = doc.findBlock(position);
+    if (!block.isValid()) return {};
+    QString source;
+    bool found = false;
+    for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+        const QTextFragment fragment = it.fragment();
+        if (!fragment.isValid() || position < fragment.position() ||
+            position >= fragment.position() + fragment.length())
+            continue;
+        if (fragment.charFormat().objectType() != InlineFormulaObject) return {};
+        source = fragment.charFormat().property(ObjectSourceProperty).toString();
+        found = true;
+        break;
+    }
+    if (!found) return {};
+
+    FormulaObjects* cache = formulaCacheOf(doc);
+    const QString latex = inlineLatexOf(source);
+    const FormulaRender* render =
+        (cache != nullptr && !latex.isEmpty()) ? cache->renderFor(source, latex, false)
+                                               : nullptr;
+    const QSizeF band = FormulaObjects::inlineBandFor(render, source, doc.defaultFont());
+
+    const QTextLayout* layout = block.layout();
+    if (layout == nullptr || layout->lineCount() == 0) return {};
+    const int rel = position - block.position();
+    const QTextLine line = layout->lineForTextPosition(rel);
+    if (!line.isValid()) return {};
+    // Та же посадка, что у AlignBaseline (замер пробника): низ места — на
+    // базовой линии плюс ЦЕЛЫЙ descent шрифта.
+    const qreal baseline = layout->position().y() + line.y() + line.ascent();
+    const qreal top = baseline - (band.height() - QFontMetrics(doc.defaultFont()).descent());
+    const qreal x = layout->position().x() + line.cursorToX(rel);
+    return QRectF(x, top, band.width(), band.height());
+}
+
 // --- обработчик объекта --------------------------------------------------------
 
 FormulaObjectHandler::FormulaObjectHandler(QTextDocument* doc) : QObject(doc) {}

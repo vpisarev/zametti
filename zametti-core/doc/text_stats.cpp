@@ -139,6 +139,19 @@ BlockStats blockStats(const QTextBlock& block) {
         return out;
     }
     const QString text = block.text();
+    // СТРОЧНЫЕ формулы-объекты считаются по исходнику, как и блочные: на месте
+    // каждой в тексте один U+FFFC, а слова — в свойстве. Счёт обязан совпасть
+    // со счётом по кускам (pieceStats) — тот видит исходник (правило «два
+    // независимых счёта сверяются», known_bugs №2).
+    if (text.contains(QChar::ObjectReplacementCharacter)) {
+        const QString searchable = searchableTextOf(block);
+        out.words = countWords(searchable);
+        for (const QChar c : searchable)
+            if (c == u'\n' || c == u'\r' || c == QChar::LineSeparator ||
+                c == QChar::ParagraphSeparator)
+                ++out.breaks;
+        return out;
+    }
     out.breaks = countLineBreaks(text);
     out.words = countWords(text);
     return out;

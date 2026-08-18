@@ -21,24 +21,41 @@ int NoteSearch::find(const QTextDocument& doc, const QString& text, bool caseSen
     QTextDocument* mutableDoc = const_cast<QTextDocument*>(&doc);
     // Блок за блоком, тем же текстом, что и ZDocument::find: совпадение не
     // пересекает границу блока, а объект отдаёт исходник.
+    std::vector<ObjectSpan> objects;
     for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {
         bool inObject = false;
-        const QString body = searchableTextOf(block, &inObject);
+        const QString body = searchableTextOf(block, &inObject, &objects);
         if (body.isEmpty()) continue;
         qsizetype at = body.indexOf(text, 0, sensitivity);
         while (at >= 0) {
             SearchHit hit;
             hit.cursor = QTextCursor(mutableDoc);
+            const int span = inObject ? -1 : hitSpanIndex(objects, int(at),
+                                                          int(at + text.size()));
             if (inObject) {
                 // Курсор — над самим знаком объекта; место внутри — числами.
                 hit.cursor.setPosition(block.position());
                 hit.cursor.setPosition(block.position() + 1, QTextCursor::KeepAnchor);
                 hit.innerOffset = int(at);
                 hit.innerLength = int(text.size());
+            } else if (span >= 0) {
+                // Внутри СТРОЧНОГО объекта: курсор над его знаком, смещение —
+                // в его исходнике; подсветка ляжет на вёрстку.
+                const ObjectSpan& own = objects[size_t(span)];
+                hit.cursor.setPosition(own.position);
+                hit.cursor.setPosition(own.position + 1, QTextCursor::KeepAnchor);
+                hit.innerOffset = int(at) - own.from;
+                hit.innerLength = int(text.size());
+            } else if (span == -2) {
+                // Пересекло границу объекта — не вхождение (правило одно с
+                // ZDocument::find).
+                at = body.indexOf(text, at + 1, sensitivity);
+                continue;
             } else {
-                hit.cursor.setPosition(block.position() + int(at));
-                hit.cursor.setPosition(block.position() + int(at) + int(text.size()),
-                                       QTextCursor::KeepAnchor);
+                const int from = docPositionOf(block, objects, int(at));
+                const int to = docPositionOf(block, objects, int(at + text.size()));
+                hit.cursor.setPosition(from);
+                hit.cursor.setPosition(to, QTextCursor::KeepAnchor);
             }
             hits_.push_back(hit);
             // Со следующего знака после НАЧАЛА совпадения: перекрывающиеся

@@ -181,6 +181,11 @@ void registerFormulaHandlers(QTextDocument& doc);
 // Qt раскладывает.
 qreal columnWidthOf(const QTextDocument& doc, const QTextBlock& block);
 
+// Прямоугольник строчной формулы по позиции её знака, в координатах документа —
+// подсветке поиска и наборам. Те же числа, что у intrinsicSize (посадка одна с
+// вёрсткой Qt). Пустой — там не строчная формула или строка ещё не сверстана.
+QRectF inlineFormulaRect(const QTextDocument& doc, int position);
+
 }  // namespace zametti
 
 Q_DECLARE_METATYPE(std::shared_ptr<zametti::FormulaObjects>)
