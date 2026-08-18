@@ -159,17 +159,21 @@ void Formulas::resetRenders() { g_renders = 0; }
 
 QString Formulas::mathFontName() { return g_mathFont; }
 
-FormulaImage Formulas::render(const QString& latex, bool display, qreal pixelSize,
-                              const QColor& colour, qreal dpr) {
-    FormulaImage out;
+namespace {
+
+// Общая часть render и paintInto: предконтроль, чистка пробелов, доллары по
+// роду, разбор под мьютексом. nullptr — не разобралось, причина в error.
+std::shared_ptr<microtex::Render> parseFormula(const QString& latex, bool display,
+                                               qreal enginePixels, const QColor& colour,
+                                               QString* error) {
     if (!g_ready) {
-        out.error = QStringLiteral("движок формул не поднялся");
-        return out;
+        *error = QStringLiteral("движок формул не поднялся");
+        return nullptr;
     }
     const QString broken = checkLatex(latex);
     if (!broken.isEmpty()) {
-        out.error = broken;
-        return out;
+        *error = broken;
+        return nullptr;
     }
 
     // ПРОБЕЛЫ ЮНИКОДА — ОБЫЧНЫЕ ПРОБЕЛЫ. Внутри формулы неразрывный пробел
@@ -210,21 +214,31 @@ FormulaImage Formulas::render(const QString& latex, bool display, qreal pixelSiz
             // ширину: формула шириной 43 точки приезжает шириной 779.
             // Ширина здесь — только предел переноса, и он заведомо велик:
             // перенос формул мы не делаем, их ширину меряет вызывающий.
-            raw = microtex::MicroTeX::parse(source, 100000, float(pixelSize * dpr), 0.0f,
+            raw = microtex::MicroTeX::parse(source, 100000, float(enginePixels), 0.0f,
                                             colour.rgba(), /*fillWidth=*/false);
         } catch (const std::exception& e) {
-            out.error = QString::fromUtf8(e.what());
+            *error = QString::fromUtf8(e.what());
         } catch (...) {
             // У MicroTeX ex_tex наследует std::exception, но ловим и всё
             // прочее: падать из-за формулы в заметке программа не имеет права.
-            out.error = QStringLiteral("движок формул бросил неизвестное исключение");
+            *error = QStringLiteral("движок формул бросил неизвестное исключение");
         }
     }
     if (raw == nullptr) {
-        if (out.error.isEmpty()) out.error = QStringLiteral("движок формул не собрал вёрстку");
-        return out;
+        if (error->isEmpty()) *error = QStringLiteral("движок формул не собрал вёрстку");
+        return nullptr;
     }
-    const std::shared_ptr<microtex::Render> render(raw);
+    return std::shared_ptr<microtex::Render>(raw);
+}
+
+}  // namespace
+
+FormulaImage Formulas::render(const QString& latex, bool display, qreal pixelSize,
+                              const QColor& colour, qreal dpr) {
+    FormulaImage out;
+    const std::shared_ptr<microtex::Render> render =
+        parseFormula(latex, display, pixelSize * dpr, colour, &out.error);
+    if (render == nullptr) return out;
 
     const qreal physicalWidth = render->getWidth();
     const qreal physicalHeight = render->getHeight();
@@ -264,6 +278,30 @@ FormulaImage Formulas::render(const QString& latex, bool display, qreal pixelSiz
     out.baseline = physicalBaseline / dpr;
     ++g_renders;
     return out;
+}
+
+QString Formulas::paintInto(QPainter& painter, const QPointF& at, const QString& latex,
+                            bool display, qreal pixelSize, const QColor& colour) {
+    QString error;
+    // Кегль ЛОГИЧЕСКИЙ, без плотности: вёрстка движка детерминирована от
+    // кегля, и геометрия совпадает с той, по которой кэш мерил место.
+    const std::shared_ptr<microtex::Render> render =
+        parseFormula(latex, display, pixelSize, colour, &error);
+    if (render == nullptr) return error;
+    if (render->getWidth() <= 0 || render->getHeight() <= 0)
+        return QStringLiteral("пустая вёрстка");
+
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::TextAntialiasing, true);
+    painter.translate(at);
+    {
+        microtex::Graphics2D_qt g2(&painter);
+        render->draw(g2, 0, 0);
+    }
+    painter.restore();
+    ++g_renders;
+    return {};
 }
 
 }  // namespace zametti

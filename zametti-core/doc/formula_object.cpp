@@ -7,6 +7,7 @@
 #include "settings.h"
 
 #include <QFontInfo>
+#include <QPaintEngine>
 #include <QFontMetrics>
 #include <QFontMetricsF>
 #include <QPen>
@@ -51,7 +52,19 @@ const FormulaRender* FormulaObjects::renderFor(const QString& source, const QStr
 
     FormulaRender render;
     render.source = source;
+    render.latex = latex;
     render.display = display;
+    // Стиль вёрстки движку — по ЗАПИСИ: `$$…$$` просит выключной стиль
+    // пределов и сумм, даже когда стоит внутри строки; `$…$` — строчный,
+    // даже когда liftMath показал его отдельной полосой (кегль полосы при
+    // этом display — его задал род объекта выше).
+    render.displayStyle = display;
+    {
+        const std::vector<MathSpan> spans = scanMath(QStringView(source));
+        if (spans.size() == 1 && spans.front().start == 0 &&
+            spans.front().end == source.size())
+            render.displayStyle = spans.front().display;
+    }
     // Кегль рода: коэффициент из настроек поверх пиксельного кегля текста.
     render.pixelSize = pixelSize_ * (display ? settings().formulas().displayScale()
                                              : settings().formulas().inlineScale());
@@ -61,17 +74,8 @@ const FormulaRender* FormulaObjects::renderFor(const QString& source, const QStr
     // дорисовывает огрызком без единой жалобы.
     render.error = checkLatex(latex);
     if (render.error.isEmpty()) {
-        // Стиль вёрстки движку — по ЗАПИСИ: `$$…$$` просит выключной стиль
-        // пределов и сумм, даже когда стоит внутри строки; `$…$` — строчный,
-        // даже когда liftMath показал его отдельной полосой (кегль полосы при
-        // этом display — его задал род объекта выше).
-        bool engineDisplay = display;
-        const std::vector<MathSpan> spans = scanMath(QStringView(source));
-        if (spans.size() == 1 && spans.front().start == 0 &&
-            spans.front().end == source.size())
-            engineDisplay = spans.front().display;
         const FormulaImage drawn =
-            Formulas::render(latex, engineDisplay, render.pixelSize, colour_, dpr_);
+            Formulas::render(latex, render.displayStyle, render.pixelSize, colour_, dpr_);
         if (drawn.ok()) {
             render.image = drawn.image;
             render.width = drawn.width;
@@ -114,6 +118,47 @@ QRectF FormulaObjects::rectFor(const QTextBlock& block, const FormulaRender& ren
                   QSizeF(render.width, render.height));
 }
 
+// --- отрисовка: вектор на векторном устройстве --------------------------------
+
+namespace {
+
+// Векторное ли устройство под painter'ом. На бумаге (QPdfWriter) и её родне
+// формулу рисует сам движок, кривыми и вшитыми шрифтами полного разрешения, —
+// экранный растр туда не едет. Решается по устройству, а не флагом: флаг
+// однажды забыли бы снять или поставить.
+bool vectorDevice(const QPainter& painter) {
+    const QPaintEngine* engine = painter.paintEngine();
+    if (engine == nullptr) return false;
+    switch (engine->type()) {
+        case QPaintEngine::Pdf:
+        case QPaintEngine::Picture:
+        case QPaintEngine::SVG:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// Нарисовать вёрстку вектором в её прямоугольник. ГЕОМЕТРИЯ ОДНА С КЭШЕМ:
+// движку тот же физический кегль (pixelSize × dpr), поверх — уменьшение на
+// плотность; парсить логическим кеглем нельзя — вёрстка движка линейна по
+// кеглю лишь с точностью до округления метрик глифов, и на плотном экране
+// вектор разошёлся бы с зарезервированным местом на доли пикселя. Ложь — не
+// нарисовалось, пусть вызывающий рисует растр.
+bool paintVector(QPainter& painter, const QPointF& at, const FormulaRender& render) {
+    const qreal dpr = render.dpr > 0.0 ? render.dpr : 1.0;
+    painter.save();
+    painter.translate(at);
+    painter.scale(1.0 / dpr, 1.0 / dpr);
+    const QString error = Formulas::paintInto(painter, QPointF(0, 0), render.latex,
+                                              render.displayStyle, render.pixelSize * dpr,
+                                              render.colour);
+    painter.restore();
+    return error.isEmpty();
+}
+
+}  // namespace
+
 // --- выключная: отрисовка ----------------------------------------------------
 
 void FormulaObjects::paint(QPainter& painter, const QRectF& box, const QRectF& frame,
@@ -143,6 +188,12 @@ void FormulaObjects::paint(QPainter& painter, const QRectF& box, const QRectF& f
         QColor colour = how.highlightColour;
         if (!how.highlightCurrent) colour.setAlpha(110);
         painter.fillRect(box.adjusted(-2, -2, 2, 2), colour);
+    }
+    // НА БУМАГЕ — ВЕКТОРОМ: кривые и вшитые шрифты полного разрешения вместо
+    // экранного растра (просьба владельца). Не вышло — растр, как на экране.
+    if (vectorDevice(painter) && paintVector(painter, box.topLeft(), *render)) {
+        painter.restore();
+        return;
     }
     // ПО ЦЕНТРУ ПОЛОСЫ (решение владельца). Прямоугольник — в логических
     // точках, источник — в физических, и никакой плотности у самой картинки
@@ -192,6 +243,12 @@ void FormulaObjects::paintInline(QPainter& painter, const QRectF& rect,
         QColor colour = how.highlightColour;
         if (!how.highlightCurrent) colour.setAlpha(110);
         painter.fillRect(rect.adjusted(-1, -1, 1, 1), colour);
+    }
+    // НА БУМАГЕ — ВЕКТОРОМ, как у выключной; прищёлкивать к пикселям там
+    // нечего и не к чему.
+    if (vectorDevice(painter) && paintVector(painter, rect.topLeft(), *render)) {
+        painter.restore();
+        return;
     }
     // ВЕРХ КАРТИНКИ — НА ФИЗИЧЕСКИЙ ПИКСЕЛЬ. Дробный верх размазывается
     // сглаживанием на ряд ниже, и вёрстка оказывалась на пиксель ниже буквы

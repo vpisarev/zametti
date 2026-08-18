@@ -55,12 +55,14 @@ namespace zametti {
 struct FormulaRender {
     QImage image;          // готовая картинка с домноженной альфой
     QString source;        // исходник с долларами — по нему и считали
+    QString latex;         // тело без долларов — им зовётся движок (и вектор)
     QString error;         // непусто — формула битая, рисуется рамка
     qreal width = 0.0;     // логические размеры вёрстки
     qreal height = 0.0;
     qreal baseline = 0.0;  // от верха вёрстки до её базовой линии (посадка строчной)
     qreal depth = 0.0;     // сколько вёрстка свисает ниже базовой линии
-    bool display = true;   // род: выключная или строчная
+    bool display = true;   // род ОБЪЕКТА: выключная полосой или строчная в строке
+    bool displayStyle = true;  // стиль вёрстки движку — по записи ($$ или $)
     qreal pixelSize = 0.0;
     QColor colour;
     qreal dpr = 1.0;

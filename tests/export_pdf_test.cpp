@@ -224,6 +224,26 @@ int imagesInPdf(const QString& path) {
     return found;
 }
 
+// Чернила первой страницы PDF — чужим судьёй: pdftoppm растрирует её в PNG, и
+// тёмные точки считаются по нему. −1 — судьи на машине нет (сказать вслух).
+int pdfInk(const QString& path) {
+    const QString prefix = QDir(g_dir).filePath(QStringLiteral("чернила"));
+    QProcess judge;
+    judge.start(QStringLiteral("pdftoppm"),
+                {QStringLiteral("-png"), QStringLiteral("-r"), QStringLiteral("100"),
+                 QStringLiteral("-f"), QStringLiteral("1"), QStringLiteral("-l"),
+                 QStringLiteral("1"), path, prefix});
+    if (!judge.waitForStarted(3000)) return -1;
+    if (!judge.waitForFinished(15000) || judge.exitCode() != 0) return -1;
+    const QImage page(prefix + QStringLiteral("-1.png"));
+    if (page.isNull()) return -1;
+    int dark = 0;
+    for (int y = 0; y < page.height(); ++y)
+        for (int x = 0; x < page.width(); ++x)
+            if (qGray(page.pixel(x, y)) < 128) ++dark;
+    return dark;
+}
+
 // СТРОКИ НА БУМАГЕ НЕ ОБРЕЗАЮТСЯ.
 //
 // Владелец: «при экспорте в PDF строки обрезаются, причём иногда довольно
@@ -293,23 +313,41 @@ void checkObjectsOnPaper() {
     const QString withImage = makeNote(QStringLiteral("01eeeeeeeeee02.md"),
                                        "# Со снимком\n\n![вид](01ddddddddddd1.png)\n");
     const QString withMath = makeNote(QStringLiteral("01eeeeeeeeee03.md"),
-                                      "# С формулой\n\n$$\\frac{a}{b}$$\n");
+                                      "# С формулой\n\nСтрочная $\\alpha+\\beta$ в тексте.\n\n"
+                                      "$$\\frac{a}{b}$$\n");
+    // Заметка из ОДНОЙ формулы, без единой буквы текста: чернила на её
+    // странице могут быть только вёрсткой — этим и проверяется, что вектор
+    // действительно нарисовался, а не «картинок нет, потому что нет ничего».
+    const QString onlyMath = makeNote(QStringLiteral("01eeeeeeeeee04.md"),
+                                      "$$\\frac{a}{b} + \\sqrt{x + 1}$$\n");
 
     const QString plainPdf = QDir(g_dir).filePath(QStringLiteral("текст.pdf"));
     const QString imagePdf = QDir(g_dir).filePath(QStringLiteral("снимок.pdf"));
     const QString mathPdf = QDir(g_dir).filePath(QStringLiteral("формула.pdf"));
+    const QString onlyMathPdf = QDir(g_dir).filePath(QStringLiteral("одна-формула.pdf"));
     ZT_TRUE("текст вывезен", zametti::exportPdf(plain, plainPdf).ok());
     ZT_TRUE("снимок вывезен", zametti::exportPdf(withImage, imagePdf).ok());
     ZT_TRUE("формула вывезена", zametti::exportPdf(withMath, mathPdf).ok());
+    ZT_TRUE("одинокая формула вывезена", zametti::exportPdf(onlyMath, onlyMathPdf).ok());
 
     ZT_EQ("у страницы с одним текстом картинок внутри нет", "0",
           std::to_string(imagesInPdf(plainPdf)));
     ZT_TRUE("фотография попала на страницу растром: " +
                 std::to_string(imagesInPdf(imagePdf)),
             imagesInPdf(imagePdf) > 0);
-    ZT_TRUE("вёрстка формулы попала на страницу растром: " +
-                std::to_string(imagesInPdf(mathPdf)),
-            imagesInPdf(mathPdf) > 0);
+    // ФОРМУЛЫ — ВЕКТОРОМ (просьба владельца): на бумаге движок рисует прямо в
+    // PDF, кривыми и вшитыми подмножествами шрифтов полного разрешения, —
+    // растровой картинки на странице нет ни у выключной, ни у строчной.
+    ZT_EQ("формулы уехали вектором: картинок в PDF нет", "0",
+          std::to_string(imagesInPdf(mathPdf)));
+    ZT_EQ("и у одинокой формулы тоже", "0", std::to_string(imagesInPdf(onlyMathPdf)));
+    // И вектор действительно НАРИСОВАН — чужой судья (pdftoppm) растрирует
+    // страницу, и на ней есть чернила.
+    const int ink = pdfInk(onlyMathPdf);
+    if (ink >= 0)
+        ZT_TRUE("вёрстка на странице, чернил " + std::to_string(ink), ink > 50);
+    else
+        std::printf("ПРОПУСК: pdftoppm не нашёлся — чернила вектора не посчитаны\n");
 }
 
 // Что бумага делает с документом до отрисовки. Проверяется здесь, а не по
@@ -412,12 +450,9 @@ void checkPaperFont() {
 }  // namespace
 
 static int ztRunSuite(int argc, char** argv) {
-    QTemporaryDir tmp;
-    if (!tmp.isValid()) {
-        std::printf("не завёлся временный каталог\n");
-        return 2;
-    }
-    g_dir = tmp.path();
+    // Каталог наборов, а не временный: вывезенные страницы — артефакт приёмки,
+    // на них смотрят глазами (как на снимки других наборов).
+    g_dir = zt::TestData::outDir(QStringLiteral("export-pdf"));
 
     // С путём к заметке набор превращается в инструмент: вывозит её рядом и
     // молчит. Глазами на страницу смотреть всё равно приходится — ни один

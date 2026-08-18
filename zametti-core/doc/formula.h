@@ -29,7 +29,10 @@
 
 #include <QColor>
 #include <QImage>
+#include <QPointF>
 #include <QString>
+
+class QPainter;
 
 namespace zametti {
 
@@ -80,6 +83,16 @@ public:
     // отдаются в логических.
     static FormulaImage render(const QString& latex, bool display, qreal pixelSize,
                                const QColor& colour, qreal dpr);
+
+    // Нарисовать формулу ПРЯМО в painter, вектором, верхним левым углом в at:
+    // движок и так рисует через QPainter (Graphics2D_qt, глифы — QGlyphRun),
+    // и на векторном устройстве (QPdfWriter) в файл уходят кривые и вшитые
+    // подмножества шрифтов, а не растр. Кегль — ЛОГИЧЕСКИЙ (без плотности):
+    // геометрия совпадает с render(..., pixelSize, dpr) один в один — вёрстка
+    // движка детерминирована от кегля. Пусто — нарисовано; иначе почему нет
+    // (вызывающий рисует растр или рамку).
+    static QString paintInto(QPainter& painter, const QPointF& at, const QString& latex,
+                             bool display, qreal pixelSize, const QColor& colour);
 
     // Сколько раз движок и правда рисовал. Счётчик — часть договора, а не
     // отладка: правило «повторный показ заметки не зовёт движок ни разу»
