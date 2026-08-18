@@ -12,6 +12,8 @@
 //   * маркеры списков `- ` `* ` `+ `, номера `1. ` `1) `, задачи `- [ ] ` /
 //     `-[x] ` — акцентным цветом и жирным;
 //   * формулы `$…$` и `$$…$$` в строке — акцентным цветом (не жирным);
+//   * HTML-комментарии `<!-- … -->`, в том числе многострочные, — серым
+//     (comment); внутри них ничего другого не подсвечивается;
 //   * ссылки `[текст](адрес)`, `<адрес>` и голые адреса `https://…`, `www.…`
 //     (автоссылки GFM; хвостовая пунктуация не в счёт) — цветом link с
 //     подчёркиванием;
@@ -60,10 +62,12 @@ public:
     // забора (отступ ```): 1 + колонка. Виду она нужна, чтобы класть плашку
     // кода с того же отступа, что и забор, — блок кода внутри пункта списка
     // читается вложенным, а не во всю колонку (просьба владельца).
-    enum State { Plain = 0 };
+    // Внутри HTML-комментария (`<!--` без `-->` на строке) — InComment.
+    enum State { Plain = 0, InComment = -2 };
     static int fenceState(int column) { return 1 + qMax(0, column); }
     static bool inFence(int state) { return state >= 1; }
     static int fenceColumn(int state) { return state >= 1 ? state - 1 : 0; }
+    static bool inComment(int state) { return state == InComment; }
 
 protected:
     void highlightBlock(const QString& text) override;
@@ -76,6 +80,7 @@ private:
     QTextCharFormat heading_;   // заголовки — жирным и на ступень крупнее
     QTextCharFormat link_;
     QTextCharFormat image_;
+    QTextCharFormat comment_;
     QTextCharFormat bold_;
     QTextCharFormat italic_;
     QRegularExpression fence_;

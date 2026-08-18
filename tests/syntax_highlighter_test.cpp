@@ -220,11 +220,40 @@ void checkIndentedFence() {
     ZT_EQ("колонка 4", n(4), n(zametti::ZSyntaxHighlighterMD::fenceColumn(deep.blockStateAt(1))));
 }
 
+// HTML-комментарии серые, многострочные — состоянием; внутри них маркеры и
+// формулы не подсвечиваются.
+void checkComments() {
+    const QColor grey = zametti::settings().markdownHighlighting().comment();
+    const auto isComment = [&](const QTextCharFormat& f) { return f.foreground().color() == grey; };
+    const ZDocument doc = rawDoc(
+        "текст <!-- скрыто --> и дальше\n"
+        "<!-- начало\n"
+        "- не пункт $x$\n"
+        "конец --> хвост **жирный**\n"
+        "- пункт\n");
+    const QStringList lines = linesOfDoc(doc);
+    ZT_TRUE("комментарий в строке — серый", hasProperty(doc, 0, 6, 21, isComment));
+    ZT_TRUE("а текст вокруг — нет", !hasProperty(doc, 0, 0, 5, isComment) && !hasProperty(doc, 0, 22, 30, isComment));
+    ZT_TRUE("незакрытый — серый до конца строки", hasProperty(doc, 1, 0, int(lines[1].size()), isComment));
+    ZT_TRUE("и состояние «в комментарии»", zametti::ZSyntaxHighlighterMD::inComment(doc.blockStateAt(1)));
+    ZT_TRUE("строка внутри — серая целиком", hasProperty(doc, 2, 0, int(lines[2].size()), isComment));
+    const QColor accent = zametti::settings().markdownHighlighting().accent();
+    ZT_TRUE("маркер внутри комментария — не акцент",
+            !hasProperty(doc, 2, 0, 1, [&](const QTextCharFormat& f) { return f.foreground().color() == accent; }));
+    ZT_TRUE("закрывающая строка: до --> серая", hasProperty(doc, 3, 0, 9, isComment));
+    ZT_TRUE("после --> — обычная подсветка (жирный)",
+            hasProperty(doc, 3, 16, 26, [](const QTextCharFormat& f) { return f.fontWeight() == QFont::Bold; }));
+    ZT_EQ("после закрытия — обычное состояние", n(0), n(doc.blockStateAt(3)));
+    ZT_TRUE("следующий пункт — снова маркер",
+            hasProperty(doc, 4, 0, 1, [&](const QTextCharFormat& f) { return f.foreground().color() == accent; }));
+}
+
 }  // namespace
 
 TEST(SyntaxHighlighter, All) {
     checkRules();
     checkRemovedLinesSkipped();
     checkIndentedFence();
+    checkComments();
     EXPECT_EQ(0, zt::freshFailures());
 }

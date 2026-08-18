@@ -372,6 +372,7 @@ QJsonObject settingsToJson(const ZSettings& a) {
                       colorToString(a.markdownHighlighting().codeBackground())},
                      {QStringLiteral("link"), colorToString(a.markdownHighlighting().link())},
                      {QStringLiteral("image"), colorToString(a.markdownHighlighting().image())},
+                     {QStringLiteral("comment"), colorToString(a.markdownHighlighting().comment())},
                      {QStringLiteral("headingStep"), a.markdownHighlighting().headingStep()}}},
         {QStringLiteral("formulas"), formulas},
         {QStringLiteral("images"), images},
@@ -408,6 +409,7 @@ void settingsFromJson(const QJsonObject& root, ZSettings& a) {
               &ZSettings::MarkdownHighlighting::setCodeBackground);
     readColor(markdown, "link", a.markdownHighlighting(), &ZSettings::MarkdownHighlighting::setLink);
     readColor(markdown, "image", a.markdownHighlighting(), &ZSettings::MarkdownHighlighting::setImage);
+    readColor(markdown, "comment", a.markdownHighlighting(), &ZSettings::MarkdownHighlighting::setComment);
     readInt(markdown, "headingStep", a.markdownHighlighting(),
             &ZSettings::MarkdownHighlighting::setHeadingStep);
 

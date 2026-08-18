@@ -18,6 +18,7 @@ ZSyntaxHighlighterMD::ZSyntaxHighlighterMD(QTextDocument* document,
     link_.setForeground(rules_.link());
     link_.setFontUnderline(true);   // ссылки — с подчёркиванием (просьба владельца)
     image_.setForeground(rules_.image());
+    comment_.setForeground(rules_.comment());
     // Заголовки: НЕ абсолютный кегль, а ступень от шрифта документа — иначе
     // масштаб (setDefaultFont) их не тронул бы. Ступень прибавляется к ступени
     // строки: у строк разности она diffStep, у сырого markdown — 0.
@@ -84,7 +85,8 @@ void ZSyntaxHighlighterMD::applySpans(const QString& text, const QRegularExpress
 }
 
 void ZSyntaxHighlighterMD::highlightBlock(const QString& text) {
-    const int previous = previousBlockState() < 0 ? Plain : previousBlockState();
+    // -1 у Qt значит «состояния нет» — это Plain; InComment (-2) — своё.
+    const int previous = previousBlockState() == -1 ? int(Plain) : previousBlockState();
 
     // Убранная строка разности — не часть слепка: не подсвечиваем, состояние
     // забора проносим сквозь неё.
@@ -107,13 +109,50 @@ void ZSyntaxHighlighterMD::highlightBlock(const QString& text) {
         return;
     }
     setCurrentBlockState(Plain);
-    if (text.isEmpty()) return;
+    if (text.isEmpty()) {
+        if (inComment(previous)) setCurrentBlockState(InComment);
+        return;
+    }
 
     QVector<bool> taken(int(text.size()), false);
     QTextCharFormat base;   // формат строки, поверх которого ложатся спаны
 
-    // Заголовок — вся строка крупнее; маркер `#` — акцентом.
-    if (const QRegularExpressionMatch h = heading_re_.match(text); h.hasMatch()) {
+    // HTML-КОММЕНТАРИИ — прежде всего остального: внутри них ничего не
+    // подсвечивается, а незакрытый тянется на следующие строки состоянием.
+    {
+        const QString open = QStringLiteral("<!--");
+        const QString close = QStringLiteral("-->");
+        int at = 0;
+        bool inside = inComment(previous);
+        while (at < text.size()) {
+            if (!inside) {
+                const int start = int(text.indexOf(open, at));
+                if (start < 0) break;
+                at = start;
+                inside = true;
+            }
+            const int end = int(text.indexOf(close, at));
+            const int to = end < 0 ? int(text.size()) : end + int(close.size());
+            setFormat(at, to - at, comment_);
+            for (int i = at; i < to; ++i) taken[i] = true;
+            if (end < 0) {
+                setCurrentBlockState(InComment);
+                return;
+            }
+            at = to;
+            inside = false;
+        }
+        // Строка целиком в комментарии — маркеров и заголовков в ней нет.
+        if (taken[0]) {
+            bool whole = true;
+            for (bool t : taken) whole = whole && t;
+            if (whole) return;
+        }
+    }
+
+    // Заголовок — вся строка крупнее; маркер `#` — акцентом. (Строка, начатая
+    // комментарием, заголовком не считается.)
+    if (const QRegularExpressionMatch h = heading_re_.match(text); h.hasMatch() && !taken[0]) {
         base = heading_;
         setFormat(0, int(text.size()), heading_);
         int hashes = 0;
@@ -126,6 +165,7 @@ void ZSyntaxHighlighterMD::highlightBlock(const QString& text) {
 
     // Маркеры в начале строки: задача, буллет, номер — акцентом.
     for (const QRegularExpression* re : {&task_, &bullet_, &ordered_}) {
+        if (taken[0]) break;
         const QRegularExpressionMatch m = re->match(text);
         if (!m.hasMatch()) continue;
         const int to = int(m.capturedEnd());

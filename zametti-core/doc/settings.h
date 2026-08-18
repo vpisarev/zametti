@@ -926,6 +926,9 @@ struct ZSettings {
         // `![подпись](файл)` — своим цветом (выбор владельца).
         ZM_SETTING_PLAIN(QColor, link, Link, 0x32, 0x5c, 0xc0)
         ZM_SETTING_PLAIN(QColor, image, Image, 0x7a, 0x3e, 0x9d)
+        // HTML-комментарии `<!-- … -->` (и многострочные) — серым, чтобы было
+        // видно: это не текст заметки.
+        ZM_SETTING_PLAIN(QColor, comment, Comment, 0x40, 0x40, 0x40)
         // Заголовки: все одного кегля, на столько ступеней крупнее строки
         // (лестница кеглей doc_model.h: +1 это ×1.2). Ноль — не крупнее.
         ZM_SETTING(int, headingStep, HeadingStep, 1, 0, 3)

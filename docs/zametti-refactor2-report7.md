@@ -190,6 +190,8 @@ scrollToBlockTop`); хук `paintBlockMargin`; `setDocument` сам снимае
 акцентным синим, маркеры и `#` — ещё и жирным (формулы — нет); ссылки
 `[текст](адрес)`/`<адрес>` — цветом `link` с подчёркиванием, картинки
 `![подпись](файл)` — цветом `image` (`#7a3e9d`), адрес — с подчёркиванием;
+HTML-комментарии `<!-- … -->` (и многострочные — состоянием `InComment`) —
+серым `comment` (`#404040`), внутри них ничего не подсвечивается;
 `**жирный**`/`__жирный__`, `_курсив_`/`*курсив*` (не внутри
 слов: `\w` у QRegularExpression по умолчанию только ASCII — включён
 `UseUnicodeProperties`, иначе «снова_не_курсив» шёл курсивом); `` `код` `` и
@@ -212,7 +214,7 @@ scrollToBlockTop`); хук `paintBlockMargin`; `setDocument` сам снимае
 слепок.
 
 Своя секция настроек `markdownHighlighting` (решение владельца): `accent`,
-`codeBackground`, `link`, `image`, `headingStep`; класс получает её параметром (как
+`codeBackground`, `link`, `image`, `comment`, `headingStep`; класс получает её параметром (как
 `ZNoteHistory(rules)`), плюс ступень строк. Прикрепляется изнутри `ZDocument`
 (`highlightMarkdown(baseStep)` — люк не трогается; `fromDiff` зовёт сам, режим
 правки исходника позовёт то же); `highlightFormats(block)` — наблюдатель для
