@@ -253,10 +253,19 @@ ZamettiDocument (см. `zametti_qtextdocument_design.md`); история — ж
   `TableObject` с флипом объект ⇄ исходник (судья файла), поиск внутри объектов
   по исходнику, Tab на выделении под списком; код таблиц и формул вида —
   `app/table_object.{h,cpp}`, `app/formula_object.{h,cpp}`.
-  `zametti-brief-inline-formulas.md` — бриф следующей сессии: строчные формулы
-  объектом на каждое вхождение (дедупликация — интернирование форматов у Qt и
-  кэш вёрстки по содержимому), пробник базовой линии до кода, флип на месте,
-  поиск с картой смещений.
+  `zametti-brief-inline-formulas.md` — бриф шестой сессии (выполнен ею).
+  `zametti-refactor2-report6.md` — шестая сессия: строчные формулы объектом на
+  каждое вхождение (посадка AlignBaseline по пробнику `zametti-bench inline`:
+  полоса = базовая линия вёрстки + целый descent, ошибка 0.00 px; раскрытая на
+  правку — текст с битом SpanMathOpen, судья закрытия scanMath; поиск с картой
+  смещений ObjectSpan, замена rewriteInlineFormula, счёт по исходнику); ВЕСЬ
+  показ формул — в ядре (`zametti-core/doc/formula_object.{h,cpp}`: кэш вёрстки
+  принадлежит ZDocument и прикреплён к документу как стиль, обработчик один на
+  display и inline — ребёнок документа); рамки выбора одним классом
+  (`doc/object_frame.{h,cpp}`), затирание рамки при прокрутке починено запасом
+  отсечения ObjectFrame::sweep; приёмка — «Typesetting Math in Markdown»
+  (копия) байт в байт, 98 вызовов движка на 98 разных формул, снимки в широком
+  и узком окне.
   `zametti-refactor2-design.md` — аудит состояния, классы (ZStorage,
   NoteHistory, OpenNote, ImageCache…), матрицы взаимодействия, порядок
   переезда и вопросы владельцу — до кода.
