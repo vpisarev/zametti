@@ -64,6 +64,13 @@ bool mathBordersOk(QStringView text, size_t open, size_t close, bool display);
 std::vector<MathSpan> scanMath(std::string_view text);
 std::vector<MathSpan> scanMath(QStringView text);
 
+// Является ли этот текст ОДНОЙ формулой целиком. Спрашивается общий канон, а
+// не «начинается с доллара»: иначе показ, разбор и запись разошлись бы на
+// первом же краю. Спрашивают писатель (кусок, переставший быть формулой, —
+// обычный текст), сборщик (какой math-спан становится объектом) и судья
+// закрытия строчной формулы.
+bool wholeMath(QStringView text);
+
 }  // namespace zametti
 
 #endif  // ZAMETTI_MATH_SCAN_H

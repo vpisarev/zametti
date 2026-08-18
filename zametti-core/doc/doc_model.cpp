@@ -340,6 +340,15 @@ QString sourceTextOf(const QTextBlock& block) {
     for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
         const QTextFragment fragment = it.fragment();
         if (!fragment.isValid()) continue;
+        // Строчная формула-объект: в тексте U+FFFC, в файл (и в буфер, и в
+        // счёт) уходит исходник из свойства — на КАЖДЫЙ знак фрагмента
+        // (соседние одинаковые формулы Qt складывает в один фрагмент).
+        if (fragment.charFormat().objectType() == InlineFormulaObject) {
+            const QString own =
+                fragment.charFormat().property(ObjectSourceProperty).toString();
+            for (int n = 0; n < fragment.length(); ++n) source += own;
+            continue;
+        }
         QString piece = fragment.text();
         switch (fragment.charFormat().intProperty(BreakSourceProperty)) {
             case BreakNewline:        piece.replace(QChar::LineSeparator, QLatin1Char('\n')); break;

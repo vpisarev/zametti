@@ -139,4 +139,9 @@ bool mathBordersOk(QStringView text, size_t open, size_t close, bool display) {
 std::vector<MathSpan> scanMath(std::string_view text) { return scanMathT(text); }
 std::vector<MathSpan> scanMath(QStringView text) { return scanMathT(text); }
 
+bool wholeMath(QStringView text) {
+    const std::vector<MathSpan> found = scanMath(text);
+    return found.size() == 1 && found.front().start == 0 && found.front().end == text.size();
+}
+
 }  // namespace zametti

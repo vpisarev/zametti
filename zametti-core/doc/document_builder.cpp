@@ -25,6 +25,7 @@
 // вложенный подсписок.
 
 #include "document_builder.h"
+#include "math_scan.h"
 #include "table.h"
 
 #include "doc_model.h"
@@ -107,6 +108,10 @@ void markBreaks(QTextDocument& doc, int textStart, const std::vector<Break>& bre
 // формат и выходил крупнее соседей.
 bool needsFallback(char32_t cp, const QRawFont& primary) {
     if (cp == 0x2028 || cp == 0x2029) return false;
+    // Знак объекта (U+FFFC, строчная формула в тексте) глифом не рисуется
+    // вовсе — его размер задаёт обработчик объекта, и увеличивать его как
+    // эмодзи значило бы раздуть формулу ступенью запасного шрифта.
+    if (cp == 0xFFFC) return false;
     return !primary.supportsCharacter(cp);
 }
 
@@ -155,16 +160,33 @@ int codeStepIn(int surroundingStep, const ZDocStyle& style) {
 }
 
 void applySpans(QTextDocument& doc, int textStart, const Piece& b, int lineStep,
-                const ZDocStyle& style) {
+                const ZDocStyle& style, const QStringList* mathSources = nullptr) {
     QTextCursor cursor(&doc);
     // Смещения кусков — единицы UTF-16 от начала текста блока, те же, что и в
     // документе: пересчитывать нечего.
     const int size = int(b.text.size());
+    int mathObject = 0;
     for (const Run& s : b.runs) {
         if (s.empty()) continue;
         const int from = qBound(0, int(s.start), size);
         const int to = qBound(0, int(s.end), size);
         if (to <= from) continue;
+
+        // ЗАКРЫТАЯ СТРОЧНАЯ ФОРМУЛА — ОБЪЕКТ. Кусок уже ужат до одного знака
+        // U+FFFC (withInlineMathObjects), исходник с долларами ждёт в списке;
+        // посадка — AlignBaseline (числа пробника, см. formula_object.h).
+        if (s.math() && !s.mathOpen() && mathSources != nullptr &&
+            mathObject < mathSources->size() && to - from == 1 &&
+            b.text.at(from) == QChar::ObjectReplacementCharacter) {
+            QTextCharFormat fmt;
+            fmt.setObjectType(InlineFormulaObject);
+            fmt.setProperty(ObjectSourceProperty, mathSources->at(mathObject++));
+            fmt.setVerticalAlignment(QTextCharFormat::AlignBaseline);
+            cursor.setPosition(textStart + from);
+            cursor.setPosition(textStart + to, QTextCursor::KeepAnchor);
+            cursor.mergeCharFormat(fmt);
+            continue;
+        }
 
         // Стиль записывается свойством, а не выводится обратно из оформления:
         // заголовок набран жирным целиком, и «жирный» внутри него по весу
@@ -176,6 +198,7 @@ void applySpans(QTextDocument& doc, int textStart, const Piece& b, int lineStep,
         if (s.code()) bits |= SpanCode;
         if (s.image()) bits |= SpanImage;
         if (s.math()) bits |= SpanMath;
+        if (s.mathOpen()) bits |= SpanMathOpen;
         if (s.comment()) bits |= SpanComment;
 
         QTextCharFormat fmt;
@@ -367,6 +390,59 @@ bool hasBareInlineImage(const Piece& piece) {
     return false;
 }
 
+// В каких блоках строчный math-спан становится объектом: там, где спаны вообще
+// показываются оформлением. Заголовок — НЕТ (решение этой сессии, названо в
+// отчёте): его кегль ступенчатый, и формула в нём остаётся литеральным текстом,
+// как и была, — «проверить, что не ломается, отдельно не делать» (бриф §6).
+bool kindTakesInlineMathObjects(const Piece& piece) {
+    if (piece.raw) return false;
+    return piece.kind == Kind::Paragraph || piece.kind == Kind::ListItem ||
+           piece.kind == Kind::Quote;
+}
+
+bool hasClosedInlineMath(const Piece& piece) {
+    if (!kindTakesInlineMathObjects(piece)) return false;
+    for (const Run& run : piece.runs)
+        if (run.math() && !run.mathOpen() && wholeMath(piece.view(run))) return true;
+    return false;
+}
+
+// ЗАКРЫТАЯ ЦЕЛЬНАЯ ФОРМУЛА — ОДИН ЗНАК U+FFFC (объект на КАЖДОЕ вхождение,
+// решение брифа): текст куска ужимается, исходник с долларами уезжает в список
+// sources — по нему applySpans поставит формат объекта. Раскрытая (mathOpen) и
+// разорванная правкой остаются текстом. Дедупликацию не делаем вовсе: одинаковые
+// форматы интернирует QTextFormatCollection, одинаковую вёрстку — кэш по
+// содержимому (замер пробника: 1000 одинаковых — плюс два формата и один вызов
+// движка).
+const Piece& withInlineMathObjects(const Piece& piece, Piece& storage, QStringList& sources) {
+    if (!hasClosedInlineMath(piece)) return piece;
+    // Сдвиги ниже верны только для упорядоченных непересекающихся кусков —
+    // такими их отдают и читатель, и обход. Чужой беспорядок не трогаем:
+    // преобразование детерминировано от куска, и эталонная сборка примет то же
+    // решение.
+    for (size_t i = 1; i < piece.runs.size(); ++i)
+        if (piece.runs[i].start < piece.runs[i - 1].end) return piece;
+    storage = piece;
+    sources.clear();
+    // Сзади наперёд: замена меняет смещения всего, что после неё.
+    for (size_t i = storage.runs.size(); i-- > 0;) {
+        Run& run = storage.runs[i];
+        if (!run.math() || run.mathOpen()) continue;
+        const QString source = storage.text.mid(run.start, run.end - run.start);
+        if (!wholeMath(source)) continue;
+        const int32_t at = run.start;
+        const int32_t removed = run.end - run.start - 1;
+        storage.text.replace(at, run.end - at, QString(QChar::ObjectReplacementCharacter));
+        run.end = at + 1;
+        sources.prepend(source);
+        for (size_t k = i + 1; k < storage.runs.size(); ++k) {
+            storage.runs[k].start -= removed;
+            storage.runs[k].end -= removed;
+        }
+    }
+    return storage;
+}
+
 const Piece& withNamedBareImages(const Piece& piece, Piece& storage) {
     if (!hasBareInlineImage(piece)) return piece;
     storage = piece;
@@ -399,7 +475,10 @@ const Piece& withNamedBareImages(const Piece& piece, Piece& storage) {
 void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& ctx,
                const Piece& piece, bool documentStart, bool& reuse, bool& prevVSpace) {
     Piece named;
-    const Piece& b = withNamedBareImages(piece, named);
+    const Piece& withImages = withNamedBareImages(piece, named);
+    Piece mathed;
+    QStringList mathSources;
+    const Piece& b = withInlineMathObjects(withImages, mathed, mathSources);
     const ZDocStyle& style = *ctx.style;
     const bool first = documentStart && reuse;
     const bool raw = b.raw;
@@ -649,7 +728,7 @@ void emitBlock(QTextCursor& cursor, QTextDocument& target, const BuildContext& c
     markBreaks(target, textStart, breaks);
     const bool object = imageObject || formulaObject || tableObject;
     if (!literal && !object && !b.runs.empty())
-        applySpans(target, textStart, b, lineStep, style);
+        applySpans(target, textStart, b, lineStep, style, &mathSources);
     if (!object)
         enlargeFallbackGlyphs(target, textStart, text, lineStep, ctx.primaryFont, style);
     prevVSpace = vspace;

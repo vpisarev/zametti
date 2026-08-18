@@ -112,6 +112,7 @@ add_executable(zametti-tests
     block_geometry_test.cpp
     caret_matrix_test.cpp
     formula_shots_test.cpp
+    inline_formula_test.cpp
     code_shots_test.cpp
     image_test.cpp
     clipboard_test.cpp

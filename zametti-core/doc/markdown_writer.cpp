@@ -778,7 +778,8 @@ void validate([[maybe_unused]] const Piece& b) {
         assert((!s.comment() ||
                 (s.flags == InlineComment && s.href.isEmpty())) &&
                "строчный комментарий не сочетается с другой разметкой");
-        assert((!s.math() || (s.flags == InlineMath && s.href.isEmpty())) &&
+        assert((!s.math() ||
+                ((s.flags & ~InlineMathOpen) == InlineMath && s.href.isEmpty())) &&
                "формула не сочетается с другой разметкой");
         assert((s.title.isEmpty() || s.image()) && "title осмыслен только у картинки");
         assert((!s.image() ||
@@ -1273,13 +1274,6 @@ QString Writer::finish(std::vector<BlockLines>* map) {
 
 namespace {
 
-// Является ли этот текст ОДНОЙ формулой целиком. Спрашивается общий канон, а не
-// «начинается с доллара»: иначе вид и разбор разошлись бы на первом же краю.
-bool wholeMath(QStringView text) {
-    const std::vector<MathSpan> found = scanMath(text);
-    return found.size() == 1 && found.front().start == 0 && found.front().end == text.size();
-}
-
 bool sameStyle(const Run& a, const Run& b) {
     return a.flags == b.flags && a.href == b.href && a.title == b.title;
 }
@@ -1335,6 +1329,21 @@ void gatherLine(const QTextBlock& block, Piece& piece, bool withRuns) {
             // едет с ним (сборщику: собрать объект, а не литерал).
             piece.text += format.property(ObjectSourceProperty).toString();
             piece.table = true;
+            continue;
+        }
+        if (format.objectType() == InlineFormulaObject) {
+            // Строчная формула отдаёт исходник НА КАЖДЫЙ ЗНАК фрагмента:
+            // соседние одинаковые формулы Qt складывает в один фрагмент из
+            // двух U+FFFC, и один исходник на фрагмент терял бы вторую.
+            const QString source = format.property(ObjectSourceProperty).toString();
+            for (qsizetype n = 0; n < text.size(); ++n) {
+                Run run;
+                run.start = int32_t(piece.text.size());
+                piece.text += source;
+                run.end = int32_t(piece.text.size());
+                run.flags = InlineMath;
+                if (withRuns) piece.runs.push_back(std::move(run));
+            }
             continue;
         }
         if (format.objectType() == ImageObject) {
@@ -1404,6 +1413,9 @@ void gatherLine(const QTextBlock& block, Piece& piece, bool withRuns) {
         run.set(InlineMath, (style & SpanMath) != 0 && !run.image() && !run.comment());
         if (run.math()) {
             run.flags = InlineMath;
+            // Раскрытая на правку — бит едет с куском: сборщик оставит её
+            // текстом, а не свернёт обратно в объект под руками человека.
+            if ((style & SpanMathOpen) != 0) run.flags |= InlineMathOpen;
             run.href.clear();
             run.title.clear();
         }
@@ -1421,9 +1433,12 @@ void gatherLine(const QTextBlock& block, Piece& piece, bool withRuns) {
 
 // Склейка позади — теперь канон. Кусок, переставший быть формулой (правка
 // разорвала её пополам, доллар потерялся), становится обычным текстом.
+// РАСКРЫТУЮ (mathOpen) не трогаем: пока формула раскрыта, человек в ней
+// ПЕЧАТАЕТ, и промежуточные состояния законно не формулы — судит их только
+// закрытие (closeInlineFormula), а не каждый обход.
 void settleMath(Piece& piece) {
     for (Run& run : piece.runs) {
-        if (!run.math()) continue;
+        if (!run.math() || run.mathOpen()) continue;
         if (!wholeMath(piece.view(run))) run.flags = 0;
     }
 }

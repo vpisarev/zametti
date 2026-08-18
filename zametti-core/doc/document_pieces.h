@@ -51,6 +51,7 @@ struct Run {
     bool image() const { return (flags & InlineImage) != 0; }
     bool comment() const { return (flags & InlineComment) != 0; }
     bool math() const { return (flags & InlineMath) != 0; }
+    bool mathOpen() const { return (flags & InlineMathOpen) != 0; }
     void set(uint8_t bit, bool on) { flags = uint8_t(on ? (flags | bit) : (flags & ~bit)); }
     bool empty() const { return end <= start; }
 };

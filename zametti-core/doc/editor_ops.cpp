@@ -3820,7 +3820,9 @@ bool ZDocument::openFormula(QTextCursor& at) {
     Run run;
     run.start = 0;
     run.end = int32_t(piece.text.size());
-    run.flags = InlineMath;
+    // РАСКРЫТАЯ — с битом Open: без него сборщик свернул бы цельный math-спан
+    // обратно в объект (теперь и строчный), и раскрыть формулу стало бы нельзя.
+    run.flags = InlineMath | InlineMathOpen;
     piece.runs.push_back(run);
     QTextCursor edit(at);
     edit.beginEditBlock();
