@@ -41,6 +41,7 @@
 #include <QByteArray>
 #include <QString>
 
+#include <memory>
 #include <optional>
 #include <string_view>
 
@@ -202,8 +203,14 @@ public:
     bool setSelfCheckFailed(bool failed);
 
     // --- журнал -----------------------------------------------------------
-    ZNoteHistory& history() { return history_; }
-    const ZNoteHistory& history() const { return history_; }
+    // Журнал — ОДИН объект на заметку, и держится он умным указателем: режим
+    // истории (ZNoteTimeline) читает тот же журнал, что заметка пишет, — с тем
+    // же разжатым хвостом и тем же признаком «чищен», а не своей копией, у
+    // которой чистка и хвост разошлись бы с заметкой. Ссылка не бывает пустой:
+    // без хранилища это ZNoteHistory(), у которого всё «нет».
+    ZNoteHistory& history() { return *history_; }
+    const ZNoteHistory& history() const { return *history_; }
+    std::shared_ptr<ZNoteHistory> historyPtr() const { return history_; }
 
     // --- найденное (кэш поиска) --------------------------------------------
     // Запрос и вхождения в документе этой заметки; переживают уход и возврат.
@@ -253,7 +260,7 @@ protected:
     NoteHeader lostMeta_;
     Digest digest_;
     QByteArray lastSaved_;
-    ZNoteHistory history_;
+    std::shared_ptr<ZNoteHistory> history_ = std::make_shared<ZNoteHistory>();
     NoteSearch search_;
     Derived<NoteStats> stats_;
     bool selfCheckFailed_ = false;

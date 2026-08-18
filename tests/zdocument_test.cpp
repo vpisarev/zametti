@@ -376,65 +376,75 @@ TEST(ZDocument, Comparison) {
     ZT_TRUE("другое тело не совпадает", !first.sameBody(other));
 }
 
-// Разность двух версий: пара заметок, по одной на сторону.
+// Документ разности: строки сравнения — блоками, метка — свойством блока.
 //
-// Проверяется главное свойство пары — СТОРОНЫ ЗЕРКАЛЬНЫ. То, что на своей
-// стороне добавлено, на чужой обязано быть удалено, и наоборот; иначе Tab
-// показывал бы не противоположное сравнение, а второе такое же.
+// Проверяется то, ради чего строитель переписан (сессия 7): убранная строка
+// показана СВОИМ ТЕКСТОМ, изменённая — парой «− старая / + новая», и у каждого
+// блока есть метка. Шапка в сравнение не идёт.
 TEST(ZDocument, Diff) {
-    ZDocument before;
-    ZDocument after;
-    ASSERT_TRUE(before.loadMarkdown("<!-- zametti\nmodified: 2026-01-01T00:00:00Z\n-->\n"
-                                    "\n# Заголовок\n\nбыло\n"));
-    ASSERT_TRUE(after.loadMarkdown("<!-- zametti\nmodified: 2026-08-15T00:00:00Z\n-->\n"
-                                   "\n# Заголовок\n\nстало\n\nи ещё строка\n"));
+    const std::string before = "<!-- zametti\nmodified: 2026-01-01T00:00:00Z\n-->\n"
+                               "\n# Заголовок\n\nбыло\n\nуйдёт\n";
+    const std::string after = "<!-- zametti\nmodified: 2026-08-15T00:00:00Z\n-->\n"
+                              "\n# Заголовок\n\nстало\n\nи ещё строка\n";
+    const zametti::diff::Result result =
+        zametti::diff::compare(zametti::diff::linesOf(before), zametti::diff::linesOf(after));
+    QVector<int> rowOfBlock;
+    const ZDocument doc = ZDocument::fromDiff(result, nullptr, &rowOfBlock);
 
-    const auto [mine, theirs] = after.getDiff(before);
+    // Метка стоит у каждого блока: документ-разность тем и отличается от заметки.
+    std::vector<int> marks;
+    for (int i = 0; i < doc.blockCount(); ++i) marks.push_back(doc.diffMarkAt(i));
+    ZT_TRUE("метки есть у всех блоков",
+            !marks.empty() && std::none_of(marks.begin(), marks.end(), [](int m) { return m < 0; }));
+    ZT_EQ("карта блок → строка сравнения покрывает все блоки", std::to_string(marks.size()),
+          std::to_string(rowOfBlock.size()));
 
-    // Метка стоит у каждого блока обеих сторон: документ-разность тем и
-    // отличается от заметки.
-    auto marks = [](const ZDocument& side) {
-        std::vector<int> out;
-        for (int i = 0; i < side.blockCount(); ++i) out.push_back(side.diffMarkAt(i));
-        return out;
-    };
-    const std::vector<int> a = marks(mine);
-    const std::vector<int> b = marks(theirs);
-    ZT_TRUE("метки есть у всех блоков своей стороны",
-            !a.empty() && std::none_of(a.begin(), a.end(), [](int m) { return m < 0; }));
-    ZT_TRUE("метки есть у всех блоков чужой стороны",
-            !b.empty() && std::none_of(b.begin(), b.end(), [](int m) { return m < 0; }));
-
-    // Зеркальность: строк в сравнении поровну, и добавленному отвечает удалённое.
-    ZT_EQ("строк сравнения поровну", std::to_string(a.size()), std::to_string(b.size()));
-    int mirrored = 0;
-    for (size_t i = 0; i < a.size() && i < b.size(); ++i) {
-        const int added = int(zametti::diff::Mark::Added);
-        const int removed = int(zametti::diff::Mark::Removed);
-        if (a[i] == added) {
-            ZT_EQ("добавленному отвечает удалённое", std::to_string(removed),
-                  std::to_string(b[i]));
-            ++mirrored;
-        }
+    // Строки документа — текст блоков по порядку.
+    QStringList lines;
+    for (int i = 0; i < doc.blockCount(); ++i) lines.append(doc.blockAt(i).text);
+    const int added = int(zametti::diff::Mark::Added);
+    const int removed = int(zametti::diff::Mark::Removed);
+    // «было» → «стало» — изменённая строка: пара блоков, старая перед новой.
+    const int wasAt = int(lines.indexOf(QStringLiteral("было")));
+    const int nowAt = int(lines.indexOf(QStringLiteral("стало")));
+    ZT_TRUE("старый текст изменённой строки виден", wasAt >= 0);
+    ZT_TRUE("новый текст изменённой строки виден", nowAt >= 0);
+    ZT_TRUE("старая строка стоит прямо перед новой", wasAt >= 0 && nowAt == wasAt + 1);
+    if (wasAt >= 0 && nowAt == wasAt + 1) {
+        ZT_EQ("старая строка помечена убранной", std::to_string(removed), std::to_string(marks[size_t(wasAt)]));
+        ZT_EQ("новая строка помечена добавленной", std::to_string(added), std::to_string(marks[size_t(nowAt)]));
+        ZT_EQ("оба блока — одна строка сравнения", std::to_string(rowOfBlock[wasAt]),
+              std::to_string(rowOfBlock[nowAt]));
     }
-    ZT_TRUE("зеркальных строк нашлось хоть сколько-то", mirrored > 0);
+    // «уйдёт» пропало — показано своим текстом, а не сводкой «удалено: N».
+    const int goneAt = int(lines.indexOf(QStringLiteral("уйдёт")));
+    ZT_TRUE("убранная строка показана своим текстом", goneAt >= 0);
+    if (goneAt >= 0)
+        ZT_EQ("и помечена убранной", std::to_string(removed), std::to_string(marks[size_t(goneAt)]));
+    ZT_TRUE("сводки «удалено:» в документе нет",
+            std::none_of(lines.begin(), lines.end(),
+                         [](const QString& l) { return l.startsWith(QStringLiteral("удалено:")); }));
+    // «и ещё строка» появилось.
+    const int newAt = int(lines.indexOf(QStringLiteral("и ещё строка")));
+    ZT_TRUE("добавленная строка есть", newAt >= 0);
+    if (newAt >= 0)
+        ZT_EQ("и помечена добавленной", std::to_string(added), std::to_string(marks[size_t(newAt)]));
 
-    // Шапка в сравнение не идёт: modified у сторон разный, а разностью это не
-    // считается.
-    ZDocument same;
-    ASSERT_TRUE(same.loadMarkdown("<!-- zametti\nmodified: 2026-08-15T09:00:00Z\n-->\n"
-                                  "\n# Заголовок\n\nбыло\n"));
-    const auto [nothing, nothingBack] = before.getDiff(same);
+    // Шапка в сравнение не идёт: modified разный, а разностью это не считается.
+    const std::string same = "<!-- zametti\nmodified: 2026-08-15T09:00:00Z\n-->\n"
+                             "\n# Заголовок\n\nбыло\n\nуйдёт\n";
+    const zametti::diff::Result nothing =
+        zametti::diff::compare(zametti::diff::linesOf(before), zametti::diff::linesOf(same));
+    ZT_TRUE("разная шапка разностью не считается", nothing.identical());
+    const ZDocument quiet = ZDocument::fromDiff(nothing);
     bool anyChange = false;
-    for (int i = 0; i < nothing.blockCount(); ++i)
-        if (nothing.diffMarkAt(i) != int(zametti::diff::Mark::Same)) anyChange = true;
-    ZT_TRUE("разная шапка разностью не считается", !anyChange);
-
-    // Та же подпись, но с байтами: слепки в журнале лежат markdown'ом.
-    const auto [byBytes, byBytesBack] =
-        after.getDiff(std::string_view("<!-- zametti\n-->\n\n# Заголовок\n\nбыло\n"));
-    ZT_EQ("байтами и заметкой — одно и то же", std::to_string(mine.blockCount()),
-          std::to_string(byBytes.blockCount()));
+    for (int i = 0; i < quiet.blockCount(); ++i)
+        if (quiet.diffMarkAt(i) != int(zametti::diff::Mark::Same)) anyChange = true;
+    ZT_TRUE("и в документе разности всё Same", !anyChange);
+    // Пустое сравнение — один блок, а не ноль: у документа всегда есть ответ.
+    const ZDocument empty = ZDocument::fromDiff(zametti::diff::Result{});
+    ZT_EQ("пустое сравнение — один блок", std::to_string(1), std::to_string(empty.blockCount()));
+    ZT_EQ("и он Same", std::to_string(int(zametti::diff::Mark::Same)), std::to_string(empty.diffMarkAt(0)));
 }
 
 // Люк к живому документу. Разрешено ровно одно применение — отдать его виду

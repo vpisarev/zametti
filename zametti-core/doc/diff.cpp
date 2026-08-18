@@ -1,5 +1,8 @@
 #include "diff.h"
 
+#include "note_header.h"
+#include "serializer.h"
+
 #include "dtl/dtl.hpp"
 
 #include <string>
@@ -116,6 +119,31 @@ Text textOf(const std::vector<Piece>& blocks) {
     out.lines = text.split(QLatin1Char('\n'));
     if (!out.lines.isEmpty() && out.lines.last().isEmpty()) out.lines.removeLast();
     return out;
+}
+
+namespace {
+
+QString canonicalBody(std::string_view fileBytes) {
+    // Тот же ввоз, что у ZDocument::loadMarkdown: нормализация пробелов —
+    // часть чтения, а не отдельный шаг, иначе слепок читался бы не так, как
+    // читает программа.
+    std::vector<Piece> blocks;
+    NoteHeader header;
+    parsePieces(normaliseSpaces(QString::fromUtf8(fileBytes.data(), qsizetype(fileBytes.size()))),
+                blocks, header);
+    return writePieces(blocks, NoteHeader{});
+}
+
+}  // namespace
+
+QStringList linesOf(std::string_view fileBytes) {
+    QStringList lines = canonicalBody(fileBytes).split(QLatin1Char('\n'));
+    if (!lines.isEmpty() && lines.last().isEmpty()) lines.removeLast();
+    return lines;
+}
+
+std::string bodyOf(std::string_view fileBytes) {
+    return canonicalBody(fileBytes).toStdString();
 }
 
 BlockMarks blockMarks(const Result& result, const QVector<BlockLines>& blocks) {

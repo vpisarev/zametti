@@ -30,7 +30,7 @@ ZNote::ZNote(QString path, QByteArray fileBytes, Digest digest, ZNoteHistory his
     : path_(std::move(path)),
       digest_(digest),
       lastSaved_(std::move(fileBytes)),
-      history_(std::move(history)) {}
+      history_(std::make_shared<ZNoteHistory>(std::move(history))) {}
 
 QString ZNote::id() const { return QFileInfo(path_).completeBaseName(); }
 
