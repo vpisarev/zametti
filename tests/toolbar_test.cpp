@@ -112,16 +112,25 @@ void checkSearchPair(Toolbar& bar) {
     ZT_TRUE("и вплотную к нему",
             inStore->x() - (inNote->x() + inNote->width()) < 4);
 
-    // Кнопка истории вернулась — одна, слева от пары поиска и вплотную к ней.
-    // Порядок спрашивается у РАСКЛАДКИ, а не у списка: список его задаёт, но
-    // перепутать местами может и раскладка.
+    // Слева от пары поиска, в той же группе и вплотную, стоят два
+    // переключателя режимов: история заметки и правка исходника. Порядок
+    // спрашивается у РАСКЛАДКИ, а не у списка: список его задаёт, но перепутать
+    // местами может и раскладка.
     QToolButton* history = bar.buttonFor(Button::History);
+    QToolButton* source = bar.buttonFor(Button::MarkdownEdit);
     ZT_TRUE("кнопка истории есть", history != nullptr);
-    if (history == nullptr) return;
+    ZT_TRUE("кнопка правки исходника есть", source != nullptr);
+    if (history == nullptr || source == nullptr) return;
     ZT_TRUE("она про историю заметки",
             history->toolTip().contains(QStringLiteral("История")));
-    ZT_TRUE("и стоит левее поиска", history->x() < inNote->x());
-    ZT_TRUE("вплотную к нему", inNote->x() - (history->x() + history->width()) < 4);
+    ZT_TRUE("а эта про исходник",
+            source->toolTip().contains(QStringLiteral("исходник")));
+    ZT_TRUE("правка исходника называет своё сочетание",
+            source->toolTip().contains(QStringLiteral("Ctrl+M")));
+    ZT_TRUE("история левее правки исходника", history->x() < source->x());
+    ZT_TRUE("и вплотную к ней", source->x() - (history->x() + history->width()) < 4);
+    ZT_TRUE("правка исходника левее поиска", source->x() < inNote->x());
+    ZT_TRUE("и вплотную к нему", inNote->x() - (source->x() + source->width()) < 4);
 }
 
 // Обещание гасит кнопку И объясняет причину. Половина этого — хуже, чем ничего:

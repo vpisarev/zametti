@@ -49,6 +49,7 @@
         <file alias="search.svg">icons/search.svg</file>
         <file alias="settings.svg">icons/settings.svg</file>
         <file alias="square-arrow-out-up-right.svg">icons/square-arrow-out-up-right.svg</file>
+        <file alias="square-m.svg">icons/square-m.svg</file>
     </qresource>
 
     <!-- Справка и лицензии. README показывается нашим же ядром и сборщиком —

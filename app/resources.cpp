@@ -43,6 +43,7 @@ constexpr const char* kIcons[] = {
     "image-down",          "folder-search",              "rewind",
     "rotate-ccw-clock",
     "search",              "settings",             "square-arrow-out-up-right",
+    "square-m",
 };
 
 }  // namespace

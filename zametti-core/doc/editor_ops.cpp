@@ -3212,6 +3212,7 @@ bool ZDocument::insertText(QTextCursor& at, const QString& text) {
 bool ZDocument::insertText(QTextCursor& at, const QString& text,
                            const QTextCharFormat& format) {
     if (text.isEmpty() && !at.hasSelection()) return false;
+    if (d_->sourceEditing) return false;   // см. replaceRange: истина в тексте
     // ПОМЕТКА РАЗДЕЛИТЕЛЯ СТРОК НАБРАННОЙ БУКВЕ НЕ ПРИНАДЛЕЖИТ. Формат для
     // следующей буквы вид берёт у знака слева от каретки, а слева бывает мягкий
     // перенос — и набранное за ним наследовало его пометку, то есть само

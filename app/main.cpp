@@ -8,8 +8,10 @@
 #include "formula.h"
 #include "find_bar.h"
 #include "history_controller.h"
+#include "markdown_controller.h"
 #include "history_panel.h"
 #include "history_view.h"
+#include "markdown_edit_view.h"
 #include "note_list.h"
 #include "note_panels.h"
 #include "note_tree.h"
@@ -475,6 +477,9 @@ int main(int argc, char** argv) {
     // поиска по всему хранилищу) и панель поиска у самого низа, как в Sublime.
     zametti::FindBar findBar;
     zametti::HistoryView historyView;
+    // Третья страница стека: та же заметка сырым markdown. Объявлен ПОСЛЕ
+    // textStack, как и остальные его дети (см. довод у стека).
+    zametti::MarkdownEditView markdownView;
     zametti::SearchResultsModel results;
     zametti::SearchResultsDelegate resultsDelegate;
     QListView resultsView;
@@ -497,6 +502,7 @@ int main(int argc, char** argv) {
         historyView.list().setFont(sidebarFont);
         textStack.addWidget(&editor);
         textStack.addWidget(&historyView);
+        textStack.addWidget(&markdownView);
         textStack.setCurrentWidget(&editor);
 
         layout->addWidget(&textStack, 1);
@@ -510,6 +516,7 @@ int main(int argc, char** argv) {
     searchDebounce.setInterval(150);
     findBar.setHistory(session.searchHistory());
     zametti::HistoryController history(editor, historyView);
+    zametti::MarkdownController markdown(editor, markdownView);
 
     // Облик применяется ОДНИМ местом — и на старте, и когда конфиг поправили
     // снаружи. Два места разошлись бы: половина настроек подхватывалась бы на
@@ -532,6 +539,7 @@ int main(int argc, char** argv) {
         statusBar.refreshAppearance();
         editor.refreshAppearance();
         history.refreshAppearance();
+        markdown.refreshAppearance();
 
         // Делегаты читают настройки прямо при отрисовке — им довольно
         // перерисовки, но размеры строк они считают там же, и без сброса
@@ -799,7 +807,16 @@ int main(int argc, char** argv) {
 
     // Отмена и повтор живут в самом редакторе: QTextEdit объявляет их своими и
     // до ярлыка окна они не доходят.
-    shortcut(QKeySequence::Save, [&] { editor.save(true); });
+    shortcut(QKeySequence::Save, [&] {
+        // В РЕЖИМЕ ИСХОДНИКА истина живёт в тексте: сперва наложить, потом
+        // записывать. Из режима при этом не выходим — человек попросил
+        // сохранить, а не закончить.
+        if (markdown.active()) {
+            markdown.saveWithoutLeaving();
+            return;
+        }
+        editor.save(true);
+    });
 
     // Живой заголовок: правится первый заголовок в редакторе — обновляется и
     // подпись в дереве, не дожидаясь сохранения. Заголовок — первый
@@ -890,6 +907,27 @@ int main(int argc, char** argv) {
         window.setWindowTitle(windowTitleFor(editor.filePath()) + QStringLiteral(" — zametti"));
         editor.setFocus();
     });
+    // РЕЖИМ ПРАВКИ ИСХОДНИКА — третья страница стека, на месте редактора. Как и
+    // у истории, кнопка тулбара показывает состояние режима, откуда бы в него
+    // ни вошли (кнопка, Ctrl+M, восстановление на старте).
+    QObject::connect(&markdown, &zametti::MarkdownController::modeChanged, &window, [&](bool on) {
+        textStack.setCurrentWidget(on ? static_cast<QWidget*>(&markdownView)
+                                      : static_cast<QWidget*>(&editor));
+        toolbar.setChecked(zametti::Toolbar::Button::MarkdownEdit, on);
+        if (on) {
+            markdownView.setFocus();
+            return;
+        }
+        editor.setFocus();
+    });
+    QObject::connect(&markdown, &zametti::MarkdownController::applyRefused, &window, [&](int code) {
+        // Текст не принят — и человек обязан узнать почему, а не гадать, отчего
+        // кнопка не гаснет. Второй случай — дефект, и он назван дефектом.
+        statusBar.setMessage(code == -1
+                            ? QStringLiteral("в исходнике набрана шапка заметки — уберите её")
+                            : QStringLiteral("правка не наложилась и отменена — это дефект"));
+    });
+
     QObject::connect(&history, &zametti::HistoryController::indexChanged, &window,
                      [&](int) { showHistoryState(); });
     // Восстановление — одно на баннер и на кнопку тулбара; статус пишет окно.
@@ -1573,8 +1611,25 @@ int main(int argc, char** argv) {
         return editor;
     };
 
+    // В РЕЖИМЕ ИСХОДНИКА ИЩЕМ ПО ПЛОСКОМУ ТЕКСТУ. Ветка, а не третий случай в
+    // searchTarget: общего у двух поисков ровно ноль, кроме слова «поиск».
+    // Там найденное живёт при заметке и адресуется блоками и объектами, здесь —
+    // смещениями в тексте виджета.
     const auto updateInNoteSearch = [&](const QString& text) {
         const zametti::Query query = zametti::makeQuery(text);
+        if (markdown.active()) {
+            if (query.isEmpty()) {
+                markdownView.clearMatches();
+                findBar.setStatus(QString());
+                return;
+            }
+            const int found = markdownView.findMatches(query.needle, query.caseSensitive);
+            findBar.setStatus(found == 0 ? QStringLiteral("нет совпадений")
+                                         : QStringLiteral("%1/%2")
+                                               .arg(markdownView.currentMatch() + 1)
+                                               .arg(found));
+            return;
+        }
         zametti::NoteView& target = searchTarget();
         if (query.isEmpty()) {
             target.clearMatches();
@@ -1624,6 +1679,14 @@ int main(int argc, char** argv) {
     };
 
     const auto showCounter = [&] {
+        if (markdown.active()) {
+            findBar.setStatus(markdownView.matchCount() == 0
+                                  ? QStringLiteral("нет совпадений")
+                                  : QStringLiteral("%1/%2")
+                                        .arg(markdownView.currentMatch() + 1)
+                                        .arg(markdownView.matchCount()));
+            return;
+        }
         zametti::NoteView& target = searchTarget();
         if (target.matchCount() == 0) {
             findBar.setStatus(QStringLiteral("нет совпадений"));
@@ -1749,6 +1812,11 @@ int main(int argc, char** argv) {
 
     const auto stepSearch = [&](int direction) {
         if (findBar.isHidden()) return;
+        if (markdown.active()) {
+            markdownView.stepMatch(direction);
+            showCounter();
+            return;
+        }
         // В режиме истории F3 ходит по находкам ПОКАЗАННОГО СЛЕПКА: список
         // внизу про другие слепки, и прыгать по нему клавишей означало бы
         // менять показанную запись на каждое нажатие.
@@ -1771,6 +1839,15 @@ int main(int argc, char** argv) {
                      [&] { stepSearch(-1); });
 
     QObject::connect(&findBar, &zametti::FindBar::replaceOne, &window, [&] {
+        if (markdown.active()) {
+            // Замена в режиме — обычная правка текста: она ложится в СВОЙ буфер
+            // отмены режима, а в заметку попадёт одним куском при выходе.
+            markdownView.replaceCurrent(findBar.replacement());
+            const zametti::Query query = zametti::makeQuery(findBar.query());
+            markdownView.findMatches(query.needle, query.caseSensitive);
+            showCounter();
+            return;
+        }
         if (editor.currentMatch() < 0) editor.stepMatch(1);
         editor.replaceCurrentMatch(findBar.replacement());
         showCounter();
@@ -1778,6 +1855,12 @@ int main(int argc, char** argv) {
     QObject::connect(&findBar, &zametti::FindBar::replaceAll, &window, [&] {
         const zametti::Query query = zametti::makeQuery(findBar.query());
         if (query.isEmpty()) return;
+        if (markdown.active()) {
+            findBar.setStatus(QStringLiteral("заменено: %1")
+                                  .arg(markdownView.replaceAll(query.needle, query.caseSensitive,
+                                                               findBar.replacement())));
+            return;
+        }
         const int replaced =
             editor.replaceAllMatches(query.needle, query.caseSensitive, findBar.replacement());
         findBar.setStatus(QStringLiteral("заменено: %1").arg(replaced));
@@ -1785,11 +1868,16 @@ int main(int argc, char** argv) {
 
     QObject::connect(&findBar, &zametti::FindBar::closed, &window, [&] {
         editor.clearMatches();
+        markdownView.clearMatches();
         historyView.textView().clearMatches();
         storeSearch.cancel();
         searchDebounce.stop();
         resultsView.hide();
         results.clear();
+        if (markdown.active()) {
+            markdownView.setFocus();
+            return;
+        }
         searchTarget().setFocus();
     });
 
@@ -1809,9 +1897,10 @@ int main(int argc, char** argv) {
         } else {
             searchTarget().clearMatches();
         }
-        // Выделенное в редакторе (или в слепке) — готовый запрос: чаще всего
-        // ищут именно то, на что смотрят.
-        QString preset = searchTarget().textCursor().selectedText();
+        // Выделенное в редакторе (или в слепке, или в исходнике) — готовый
+        // запрос: чаще всего ищут именно то, на что смотрят.
+        QString preset = markdown.active() ? markdownView.textCursor().selectedText()
+                                           : searchTarget().textCursor().selectedText();
         if (preset.contains(QChar::ParagraphSeparator)) preset.clear();
         findBar.open(mode, preset);
     };
@@ -1833,6 +1922,11 @@ int main(int argc, char** argv) {
         openFind(zametti::FindBar::Mode::Global);
     };
     shortcut(QKeySequence(QStringLiteral("Ctrl+Shift+F")), openStoreFind);
+    // Правка исходника — сочетание из настроек (editor.markdownModeKey), список
+    // через точку с запятой, как у всех прочих команд.
+    for (const QKeySequence& keys : QKeySequence::listFromString(
+             zametti::settings().editor().markdownModeKey(), QKeySequence::PortableText))
+        if (!keys.isEmpty()) shortcut(keys, [&] { markdown.toggle(); });
     shortcut(QKeySequence(Qt::Key_F3), [&] { stepSearch(1); });
     shortcut(QKeySequence(Qt::SHIFT | Qt::Key_F3), [&] { stepSearch(-1); });
 
@@ -1915,6 +2009,12 @@ int main(int argc, char** argv) {
                 break;
             case Button::SortByCreated:
                 pressSort(zametti::SortKey::Created);
+                break;
+            case Button::MarkdownEdit:
+                // ПЕРЕКЛЮЧАТЕЛЬ, как и история: горит — заметка показана
+                // исходником. Кнопку в согласие с режимом приводит modeChanged
+                // (вход бывает и с клавиши), здесь только просьба переключить.
+                markdown.toggle();
                 break;
             case Button::History:
                 // ПЕРЕКЛЮЧАТЕЛЬ: горит — идёт режим истории, нажали снова —
@@ -2069,9 +2169,18 @@ int main(int argc, char** argv) {
     // дерево нужно, чтобы выбрать заметку, а не чтобы в нём находиться.
     editor.setFocus();
 
+    // РЕЖИМ ПРАВКИ ИСХОДНИКА ПЕРЕЖИВАЕТ ПЕРЕЗАПУСК (решение владельца): вышли
+    // из программы с нажатой [M] — вернулись в неё же. После открытия заметки и
+    // после фокуса: входить в режим нечем, пока показывать нечего.
+    if (session.markdownMode()) markdown.enter();
+
 
 
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &window, [&] {
+        // ИСХОДНИК НАКЛАДЫВАЕМ ДО ЗАПИСИ. Пока идёт режим, истина живёт в тексте
+        // вида, и заметка о ней не знает: записать её первой значило бы
+        // потерять всё, что человек набрал перед выходом.
+        if (markdown.active()) markdown.saveWithoutLeaving();
         // На выходе окно с ошибкой показывать поздно: жалуемся в stderr.
         editor.save(false, true);   // выходим: пробуем записать, не спрашивая признак
 
@@ -2086,6 +2195,7 @@ int main(int argc, char** argv) {
         out.setSplitterState(splitter.saveState());
         out.setHistoryListWidth(historyListWidth);
         out.setPanelsHidden(!toolbar.isChecked(zametti::Toolbar::Button::Panels));
+        out.setMarkdownMode(markdown.active());
         out.setExpandedDirs(panels.expandedDirs());
         out.setSearchHistory(findBar.history());
         out.setStoreRoot(model.isStore() ? model.nodePath(QModelIndex()) : QString());

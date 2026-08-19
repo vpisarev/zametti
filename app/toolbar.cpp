@@ -41,6 +41,7 @@ constexpr Toolbar::Spec kSpecs[] = {
     // нажали снова — вернулись к текущей версии (решение владельца). Так у
     // режима есть видимый признак, а не только баннер над текстом.
     {B::History, "rotate-ccw-clock", "История заметки", "", 3, true},
+    {B::MarkdownEdit, "square-m", "Править исходник", "Ctrl+M", 3, true},
     {B::Search, "search", "Найти в заметке", "Ctrl+F", 3, false},
     {B::SearchInStore, "database-search", "Найти по всем заметкам", "Ctrl+Shift+F", 3, false},
 

@@ -1,0 +1,260 @@
+#include "markdown_edit_view.h"
+
+#include "note_view.h"          // applyPalette — палитра у всех видов одна
+#include "syntax_highlighter.h"
+
+#include <QColor>
+#include <QFontMetricsF>
+#include <QKeyEvent>
+#include <QScrollBar>
+#include <QTextBlock>
+#include <QTextCursor>
+
+#include <algorithm>
+
+namespace zametti {
+
+MarkdownEditView::MarkdownEditView(QWidget* parent) : QPlainTextEdit(parent) {
+    setFrameStyle(QFrame::NoFrame);
+    // ПЕРЕНОС ПО ШИРИНЕ ОКНА. Длинную строку markdown (абзац, ссылка, строка
+    // таблицы) человек обязан видеть целиком: горизонтальная полоса в
+    // текстовом редакторе — это чтение в замочную скважину.
+    setLineWrapMode(QPlainTextEdit::WidgetWidth);
+    setTabChangesFocus(false);
+    refreshAppearance();
+}
+
+MarkdownEditView::~MarkdownEditView() = default;
+
+void MarkdownEditView::refreshAppearance() {
+    const ZDocStyle& style = settings().style();
+    // ГАРНИТУРА КОДА: исходник читают как код — по колонкам, и пропорциональный
+    // шрифт сбил бы и таблицы, и отступы списков.
+    QFont font(style.codeFamily());
+    font.setPointSizeF(style.baseFontPoint());
+    setFont(font);
+    document()->setDefaultFont(font);
+    // Стоп табуляции — тот же, которым Tab ставит пробелы: набранное и старые
+    // литеральные табы обязаны рисоваться одинаково.
+    const int stop = qMax(1, settings().editor().codeTabWidth());
+    setTabStopDistance(stop * QFontMetricsF(font).horizontalAdvance(QLatin1Char(' ')));
+    applyPalette(*this, /*history=*/false, style);
+
+    // ПОДСВЕТКА — тот же класс ядра, что расцвечивает строки разности
+    // (ZSyntaxHighlighterMD). Он и писался под этот режим. Прикрепляется к
+    // СВОЕМУ документу: заметка тут ни при чём.
+    highlighter_ = std::make_shared<ZSyntaxHighlighterMD>(
+        document(), settings().markdownHighlighting(), 0);
+    highlighter_->rehighlight();
+}
+
+void MarkdownEditView::showSource(const QString& markdown, SourcePos caret) {
+    clearMatches();
+    setPlainText(markdown);
+    // СВОЯ ИСТОРИЯ ПРАВКИ НАЧИНАЕТСЯ ЗАНОВО: подстановка текста — не правка
+    // человека, и отменять её нечего (иначе первый же Ctrl+Z опустошил бы вид).
+    document()->clearUndoRedoStacks();
+    document()->setModified(false);
+
+    QTextCursor at(document());
+    const QTextBlock line = document()->findBlockByNumber(qMax(0, caret.line));
+    if (line.isValid())
+        at.setPosition(line.position() + qBound(0, caret.column, line.length() - 1));
+    setTextCursor(at);
+    centerCursor();
+}
+
+SourcePos MarkdownEditView::caretPos() const {
+    SourcePos pos;
+    const QTextCursor at = textCursor();
+    pos.line = at.blockNumber();
+    pos.column = at.position() - at.block().position();
+    return pos;
+}
+
+// --- клавиши ---------------------------------------------------------------
+
+namespace {
+
+// Строки выделения целиком: [первая, последняя]. Выделения нет — строка каретки.
+struct LineSpan {
+    int first = 0;
+    int last = 0;
+};
+
+LineSpan spanOf(const QTextCursor& at) {
+    const QTextDocument* doc = at.document();
+    const int from = qMin(at.anchor(), at.position());
+    const int to = qMax(at.anchor(), at.position());
+    LineSpan span;
+    span.first = doc->findBlock(from).blockNumber();
+    span.last = doc->findBlock(to).blockNumber();
+    // Выделение, кончающееся ровно в начале строки, эту строку НЕ ЗАХВАТЫВАЕТ:
+    // человек вёл его до конца предыдущей.
+    if (span.last > span.first && doc->findBlock(to).position() == to) --span.last;
+    return span;
+}
+
+}  // namespace
+
+void MarkdownEditView::keyPressEvent(QKeyEvent* event) {
+    if (event->key() == Qt::Key_Escape) {
+        emit leaveRequested();
+        event->accept();
+        return;
+    }
+
+    const int stop = qMax(1, settings().editor().codeTabWidth());
+    const bool tab = event->key() == Qt::Key_Tab && event->modifiers() == Qt::NoModifier;
+    const bool backtab = event->key() == Qt::Key_Backtab ||
+                         (event->key() == Qt::Key_Tab && event->modifiers() == Qt::ShiftModifier);
+    if (!tab && !backtab) {
+        QPlainTextEdit::keyPressEvent(event);
+        return;
+    }
+
+    QTextCursor at = textCursor();
+    const LineSpan span = spanOf(at);
+    const bool manyLines = span.last > span.first;
+
+    // ОДНА СТРОКА И БЕЗ ВЫДЕЛЕНИЯ — Tab это ОТСТУП ДО СТОПА, а не четыре
+    // пробела: набранное должно вставать в колонку, а не рядом с ней.
+    if (tab && !manyLines && !at.hasSelection()) {
+        const int column = at.position() - at.block().position();
+        at.insertText(QString(stop - column % stop, QLatin1Char(' ')));
+        setTextCursor(at);
+        event->accept();
+        return;
+    }
+
+    // Много строк (или Shift+Tab) — двигаем строки целиком, одним шагом отмены.
+    at.beginEditBlock();
+    for (int number = span.first; number <= span.last; ++number) {
+        const QTextBlock line = document()->findBlockByNumber(number);
+        if (!line.isValid()) continue;
+        QTextCursor edit(line);
+        if (tab) {
+            edit.insertText(QString(stop, QLatin1Char(' ')));
+            continue;
+        }
+        // Снимаем не больше стопа и только пробелы: чужой отступ табами не
+        // трогаем — он значим, и превращать его в свой мы не нанимались.
+        const QString text = line.text();
+        int drop = 0;
+        while (drop < stop && drop < text.size() && text.at(drop) == QLatin1Char(' ')) ++drop;
+        if (drop == 0) continue;
+        edit.setPosition(line.position());
+        edit.setPosition(line.position() + drop, QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+    }
+    at.endEditBlock();
+    event->accept();
+}
+
+// --- поиск ------------------------------------------------------------------
+
+int MarkdownEditView::findMatches(const QString& text, bool caseSensitive) {
+    matches_.clear();
+    current_ = -1;
+    needle_ = int(text.size());
+    if (text.isEmpty()) {
+        showMatchHighlights();
+        return 0;
+    }
+    const QString hay = toPlainText();
+    const Qt::CaseSensitivity how = caseSensitive ? Qt::CaseSensitive : Qt::CaseInsensitive;
+    for (int at = hay.indexOf(text, 0, how); at >= 0; at = hay.indexOf(text, at + 1, how))
+        matches_.push_back(at);
+    // Ближайшее вперёд от каретки — чтобы первый F3 шёл оттуда, где человек
+    // стоит, а не с начала заметки.
+    const int caret = textCursor().position();
+    for (size_t i = 0; i < matches_.size(); ++i)
+        if (matches_[i] >= caret) {
+            current_ = int(i);
+            break;
+        }
+    if (current_ < 0 && !matches_.empty()) current_ = 0;
+    showMatchHighlights();
+    return int(matches_.size());
+}
+
+bool MarkdownEditView::stepMatch(int direction) {
+    if (matches_.empty()) return false;
+    const int count = int(matches_.size());
+    current_ = current_ < 0 ? 0 : (current_ + (direction >= 0 ? 1 : count - 1)) % count;
+    QTextCursor at(document());
+    at.setPosition(matches_[size_t(current_)]);
+    at.setPosition(matches_[size_t(current_)] + needle_, QTextCursor::KeepAnchor);
+    setTextCursor(at);
+    centerCursor();
+    showMatchHighlights();
+    return true;
+}
+
+void MarkdownEditView::clearMatches() {
+    matches_.clear();
+    current_ = -1;
+    needle_ = 0;
+    setExtraSelections({});
+}
+
+void MarkdownEditView::showMatchHighlights() {
+    QList<QTextEdit::ExtraSelection> shown;
+    if (needle_ > 0) {
+        // ТОЛЬКО ВИДИМОЕ. Подсветить все вхождения на заметке в мегабайт —
+        // это тысячи выделений, которые Qt пересчитывает на каждый кадр.
+        const int from = cursorForPosition(QPoint(0, 0)).position();
+        const int to = cursorForPosition(QPoint(viewport()->width(), viewport()->height()))
+                           .position() + needle_;
+        for (size_t i = 0; i < matches_.size(); ++i) {
+            const int at = matches_[i];
+            if (at + needle_ < from || at > to) continue;
+            QTextEdit::ExtraSelection one;
+            one.cursor = QTextCursor(document());
+            one.cursor.setPosition(at);
+            one.cursor.setPosition(at + needle_, QTextCursor::KeepAnchor);
+            // Цвет один на всю программу (searchHighlight); текущее совпадение
+            // не другим цветом, а заметнее — ровно так же, как в NoteView.
+            QColor tint = settings().style().searchHighlight();
+            if (int(i) != current_) tint.setAlpha(110);
+            one.format.setBackground(tint);
+            shown.push_back(one);
+        }
+    }
+    setExtraSelections(shown);
+}
+
+bool MarkdownEditView::replaceCurrent(const QString& with) {
+    if (current_ < 0 || size_t(current_) >= matches_.size()) return false;
+    QTextCursor at(document());
+    at.setPosition(matches_[size_t(current_)]);
+    at.setPosition(matches_[size_t(current_)] + needle_, QTextCursor::KeepAnchor);
+    at.insertText(with);
+    setTextCursor(at);
+    return true;
+}
+
+int MarkdownEditView::replaceAll(const QString& text, bool caseSensitive, const QString& with) {
+    if (text.isEmpty()) return 0;
+    const QString hay = toPlainText();
+    const Qt::CaseSensitivity how = caseSensitive ? Qt::CaseSensitive : Qt::CaseInsensitive;
+    std::vector<int> at;
+    for (int i = hay.indexOf(text, 0, how); i >= 0; i = hay.indexOf(text, i + 1, how))
+        at.push_back(i);
+    if (at.empty()) return 0;
+    // ОДНА СКОБКА НА ВСЁ: иначе откатывать пришлось бы по одному вхождению.
+    // Идём с конца — передние замены не сдвигают ещё не сделанные.
+    QTextCursor edit(document());
+    edit.beginEditBlock();
+    for (auto i = at.rbegin(); i != at.rend(); ++i) {
+        QTextCursor one(document());
+        one.setPosition(*i);
+        one.setPosition(*i + int(text.size()), QTextCursor::KeepAnchor);
+        one.insertText(with);
+    }
+    edit.endEditBlock();
+    clearMatches();
+    return int(at.size());
+}
+
+}  // namespace zametti

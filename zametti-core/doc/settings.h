@@ -625,6 +625,10 @@ struct ZSettings {
         ZM_SETTING_PLAIN(QString, makeOrderedKey, MakeOrderedKey, QStringLiteral("Ctrl+7; Ctrl+Shift+7"))
         ZM_SETTING_PLAIN(QString, makeTaskKey, MakeTaskKey, QStringLiteral("Ctrl+9; Ctrl+Shift+9"))
         ZM_SETTING_PLAIN(QString, makeParagraphKey, MakeParagraphKey, QStringLiteral("Ctrl+Shift+0"))
+        // ПРАВКА ИСХОДНИКА: показать заметку сырым markdown и вернуться. Буква
+        // на клавише та же, что на кнопке, — [M]; сочетание освободилось, когда
+        // формулы уехали на цифры.
+        ZM_SETTING_PLAIN(QString, markdownModeKey, MarkdownModeKey, QStringLiteral("Ctrl+M"))
         ZM_SETTING_PLAIN(QString, makeCommentKey, MakeCommentKey, QStringLiteral("Ctrl+Shift+C"))
 
         // Ширина стопа табуляции в блоке кода, в пробелах. Tab ставит ПРОБЕЛЫ до

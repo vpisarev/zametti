@@ -100,6 +100,10 @@ QString ZDocument::markdownOf(const QTextCursor& range) const {
 
 bool ZDocument::replaceRange(QTextCursor& at, const QString& markdown, PasteMode mode) {
     if (at.document() != &d_->text) return false;
+    // ИСХОДНИК СЕЙЧАС ПРАВЯТ СНАРУЖИ: истина уехала в текст, и принимать правку
+    // здесь значило бы завести вторую точку правки — ту самую, о которой
+    // заметка не знает (см. sourceEditing в document.h).
+    if (d_->sourceEditing) return false;
     if (markdown.isEmpty()) return false;
 
     // ПРИЁМНИК РЕШАЕТ. В блок кода и в дословный кусок вставляется ТОЛЬКО
@@ -313,6 +317,7 @@ void ZDocument::checkCanonical() const {
 
 bool ZDocument::runLocalEdit(QTextCursor& at, const std::function<bool(QTextCursor&)>& body) {
     if (at.document() != &d_->text) return false;
+    if (d_->sourceEditing) return false;   // см. replaceRange выше
 
     // Диапазон СЧИТАЕМ ТАК ЖЕ, КАК ЕГО СЧИТАЕТ САМА ПРАВКА: она трогает блоки
     // выделения вместе с поддеревьями пунктов, и пересобрать надо ровно их.

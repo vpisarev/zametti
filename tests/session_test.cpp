@@ -54,6 +54,7 @@ static int ztRunSuite(int argc, char** argv) {
     out.setZoom(1.25);
     out.setWindowGeometry(QByteArray("геометрия", 18));
     out.setPanelsHidden(true);
+    out.setMarkdownMode(true);
     out.setHistoryListWidth(233);
     out.setExportDir(QStringLiteral("/tmp/куда-вывозили"));
     out.setExportKeepMeta(true);
@@ -84,6 +85,7 @@ static int ztRunSuite(int argc, char** argv) {
     ZT_EQ("геометрия окна", out.windowGeometry().toBase64().toStdString(),
           back.windowGeometry().toBase64().toStdString());
     ZT_EQ("панели убраны", b(out.panelsHidden()), b(back.panelsHidden()));
+    ZT_EQ("режим исходника", b(out.markdownMode()), b(back.markdownMode()));
     // Каталог вывоза переживает перезапуск: начинать каждый раз с «Документов»
     // — значит каждый раз идти по дереву каталогов заново (замечание владельца).
     ZT_EQ("каталог вывоза", s(out.exportDir()), s(back.exportDir()));
@@ -110,6 +112,7 @@ static int ztRunSuite(int argc, char** argv) {
     QFile::remove(path);
     const zametti::ZAppState fresh = zametti::ZAppState::load();
     ZT_EQ("без файла панели на месте", b(false), b(fresh.panelsHidden()));
+    ZT_EQ("без файла режим исходника выключен", b(false), b(fresh.markdownMode()));
     ZT_EQ("без файла зум единичный", std::to_string(1.0), std::to_string(fresh.zoom()));
     ZT_EQ("без файла вывоз чистый", b(false), b(fresh.exportKeepMeta()));
     ZT_EQ("без файла ширина списка истории не задана", std::string("0"),
