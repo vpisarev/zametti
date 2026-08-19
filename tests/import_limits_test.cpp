@@ -7,6 +7,8 @@
 
 #include "import_limits.h"
 
+#include "settings.h"
+
 #include "test_util.h"
 
 #include <cmath>
@@ -95,7 +97,13 @@ void checkMemoryCeiling() {
 // ляжет в хранилище. Пусть такая правка сначала покраснеет здесь.
 void checkDefaults() {
     const ImportLimits d;
-    ZT_EQ("S по умолчанию", num(2880), num(d.maxSize));
+    // S СТОРОЖИТСЯ НЕ ЧИСЛОМ, А СВЯЗЬЮ. Число принадлежит владельцу и меняется
+    // (2880 → 2160), а вот то, что копия в слое без Qt равна настройке, из
+    // которой она скопирована, меняться не должно никогда. Свежий ZSettings —
+    // это умолчания сборки, своя копия: конфига на диске она не касается.
+    const zametti::ZSettings fresh;
+    ZT_EQ("S — копия умолчания настройки", num(fresh.images().maxImportedImageSize()),
+          num(d.maxSize));
     ZT_EQ("качество по умолчанию", num(90), num(d.quality));
     ZT_EQ("потолок глубины по умолчанию", num(12), num(d.maxBitsPerChannel));
 }
