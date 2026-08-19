@@ -77,6 +77,8 @@ add_executable(zametti-tests
     ops_test.cpp
     fuzz_ops_test.cpp
     diff_test.cpp
+    source_apply_test.cpp
+    source_caret_test.cpp
     syntax_highlighter_test.cpp
     session_test.cpp
     search_test.cpp

@@ -379,7 +379,7 @@ void NoteEditor::connectDocument() {
     // временные документы (staging вставки, стороны разности, слепок журнала)
     // так и остаются без стека. Живой заметке его возвращаем здесь — в одном
     // месте, через которое проходит каждая подмена документа.
-    document()->setUndoRedoEnabled(true);
+    note_->doc().setUndoEnabled(true);
     connect(document(), &QTextDocument::contentsChange, this, &NoteEditor::onContentsChange);
     connect(document(), &QTextDocument::contentsChanged, this, &NoteEditor::onContentsChanged);
     // Высота документа поехала — вернуть каретку в вид, если мы её ещё держим.
@@ -1076,7 +1076,7 @@ void NoteEditor::rebuild(const std::vector<Piece>& doc, int cursor, const ViewAn
         document()->setLayoutEnabled(false);
         buildDocument(doc, *document());
         document()->setLayoutEnabled(true);
-        document()->setUndoRedoEnabled(true);
+        note_->doc().setUndoEnabled(true);
     } else if (!patched) {
         // ВНУТРИ ПРАВКИ ЧЕЛОВЕКА пересобирать документ на месте нельзя: сборка
         // начинается с clear(), а он в стек отмены не ложится — один Ctrl+Z

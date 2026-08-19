@@ -1583,11 +1583,15 @@ QString ZDocument::toMarkdownText(const NoteHeader& envelope) const {
     return writeInto(d_->text, envelope, nullptr);
 }
 
-std::vector<SourceLine> ZDocument::sourceLines() const {
+QString ZDocument::canonicalWithMap(std::vector<BlockLines>* map) const {
     // Тело БЕЗ шапки: в ней живёт `modified`, она меняется при каждой записи, и
     // всякая разность начиналась бы с неё — всегда одной и той же строки.
+    return writeInto(d_->text, NoteHeader{}, map);
+}
+
+std::vector<SourceLine> ZDocument::sourceLines() const {
     std::vector<BlockLines> map;
-    const QString whole = writeInto(d_->text, NoteHeader{}, &map);
+    const QString whole = canonicalWithMap(&map);
     const QStringList lines = whole.split(QLatin1Char('\n'));
 
     std::vector<SourceLine> out;
