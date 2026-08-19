@@ -426,7 +426,7 @@ struct ZSettings {
         // --- боковая панель ---
         // Гарнитура панели; пусто — та же, что у текста.
         ZM_SETTING_PLAIN(QString, sidebarFontFamily, SidebarFontFamily, QStringLiteral("IBM Plex Sans SemiCondensed"))
-        ZM_SETTING(qreal, sidebarFontPoint, SidebarFontPoint, 12.0, 4.0, 48.0)
+        ZM_SETTING(qreal, sidebarFontPoint, SidebarFontPoint, 14.0, 4.0, 48.0)
         // Высота строки списка, долей от высоты шрифта панели.
         ZM_SETTING(qreal, sidebarLineHeightFactor, SidebarLineHeightFactor, 1.6, 0.5, 4.0)
         // Значки строк дерева — иконки Lucide из ресурсов (folder, folder-open,
@@ -447,7 +447,7 @@ struct ZSettings {
         // переводится домножением на devicePixelRatio окна, и рисуется сразу в
         // нужном разрешении. Отрисовать в 20 пикселей и растянуть — то же самое
         // мыло, из-за которого на этапе 8 расползались картинки.
-        ZM_SETTING(int, toolbarIconSize, ToolbarIconSize, 20, 12, 64)
+        ZM_SETTING(int, toolbarIconSize, ToolbarIconSize, 24, 12, 64)
         // Поле вокруг иконки внутри кнопки и промежуток между смысловыми группами.
         // Группы разделяются пустотой, а не чертой: черта в маленьком тулбаре
         // спорит с самими иконками за внимание.
@@ -479,7 +479,7 @@ struct ZSettings {
         // (не текстовый): цифры в панели должны стоять столбиком при смене числа,
         // а не прыгать по ширине.
         ZM_SETTING_PLAIN(QString, statusFamily, StatusFamily, QStringLiteral("IBM Plex Sans SemiCondensed"))
-        ZM_SETTING(int, statusFontPoints, StatusFontPoints, 10, 6, 24)
+        ZM_SETTING(int, statusFontPoints, StatusFontPoints, 12, 6, 24)
         ZM_SETTING(int, statusPadding, StatusPadding, 10, 0, 100)
         ZM_SETTING(int, statusPaddingTop, StatusPaddingTop, 4, 0, 100)
         ZM_SETTING_PLAIN(QColor, statusBackground, StatusBackground, 0xf5, 0xf5, 0xf2)
@@ -615,17 +615,17 @@ struct ZSettings {
         // несколько — например, звёздочка на большинстве раскладок и есть Shift+8,
         // и обе записи должны работать. Пустая строка убирает сочетание совсем,
         // команда при этом остаётся в контекстном меню.
-        ZM_SETTING_PLAIN(QString, toggleTaskKey, ToggleTaskKey, QStringLiteral("Ctrl+Space"))
+        ZM_SETTING_PLAIN(QString, toggleTaskKey, ToggleTaskKey, QStringLiteral("Ctrl+D; Ctrl+SPACE"))
         ZM_SETTING_PLAIN(QString, moveUpKey, MoveUpKey, QStringLiteral("Ctrl+Up"))
         ZM_SETTING_PLAIN(QString, moveDownKey, MoveDownKey, QStringLiteral("Ctrl+Down"))
         // Смена рода блоков — по знаку, который на клавише: звёздочка живёт на
         // восьмёрке, решётка на тройке. T — task. Абзац остался с Shift: Ctrl+0
         // занят сбросом масштаба, и отбирать его у привычки не стоит.
-        ZM_SETTING_PLAIN(QString, makeBulletKey, MakeBulletKey, QStringLiteral("Ctrl+8; Ctrl+*"))
-        ZM_SETTING_PLAIN(QString, makeOrderedKey, MakeOrderedKey, QStringLiteral("Ctrl+3; Ctrl+#"))
-        ZM_SETTING_PLAIN(QString, makeTaskKey, MakeTaskKey, QStringLiteral("Ctrl+T"))
+        ZM_SETTING_PLAIN(QString, makeBulletKey, MakeBulletKey, QStringLiteral("Ctrl+8; Ctrl+Shift+8"))
+        ZM_SETTING_PLAIN(QString, makeOrderedKey, MakeOrderedKey, QStringLiteral("Ctrl+7; Ctrl+Shift+7"))
+        ZM_SETTING_PLAIN(QString, makeTaskKey, MakeTaskKey, QStringLiteral("Ctrl+9; Ctrl+Shift+9"))
         ZM_SETTING_PLAIN(QString, makeParagraphKey, MakeParagraphKey, QStringLiteral("Ctrl+Shift+0"))
-        ZM_SETTING_PLAIN(QString, makeCommentKey, MakeCommentKey, QStringLiteral("Ctrl+/"))
+        ZM_SETTING_PLAIN(QString, makeCommentKey, MakeCommentKey, QStringLiteral("Ctrl+Shift+C"))
 
         // Ширина стопа табуляции в блоке кода, в пробелах. Tab ставит ПРОБЕЛЫ до
         // следующего стопа, а не знак табуляции; этой же величиной рисуются
@@ -784,7 +784,7 @@ struct ZSettings {
         //
         // Размер файла при этих числах (321 картинка шести каталогов): медиана
         // 1.44 МБ, среднее 1.54, σ 0.75, 95-й процентиль 2.97, максимум 3.58.
-        ZM_SETTING(int, maxImportedImageSize, MaxImportedImageSize, 2880, 256, 32768)
+        ZM_SETTING(int, maxImportedImageSize, MaxImportedImageSize, 2160, 256, 32768)
         // Качество lossy JXL. Замер предельной цены балла на 290 снимках даёт
         // излом около 88 (до него пункт качества дорожает на 2–10%, после —
         // сразу на 17–19%), но владелец после приёмки глазами выбрал 90:
@@ -890,10 +890,10 @@ struct ZSettings {
 
         // Внешние линии: горизонтальные (над первой строкой и под последней) и
         // вертикальные (слева от первой колонки и справа от последней).
-        ZM_SETTING(qreal, horizontalBorder, HorizontalBorder, 2.0, 0.0, 20.0)
+        ZM_SETTING(qreal, horizontalBorder, HorizontalBorder, 1.0, 0.0, 20.0)
         ZM_SETTING(qreal, verticalBorder, VerticalBorder, 0.0, 0.0, 20.0)
         // Линия под строкой заголовка — та самая, что отделяет шапку от тела.
-        ZM_SETTING(qreal, headerSeparator, HeaderSeparator, 2.0, 0.0, 20.0)
+        ZM_SETTING(qreal, headerSeparator, HeaderSeparator, 1.0, 0.0, 20.0)
         // Линии внутри тела: между строками и между колонками.
         ZM_SETTING(qreal, rowSeparator, RowSeparator, 0.0, 0.0, 20.0)
         ZM_SETTING(qreal, columnSeparator, ColumnSeparator, 0.0, 0.0, 20.0)

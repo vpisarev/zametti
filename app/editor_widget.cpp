@@ -110,15 +110,15 @@ NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
     // Встроенный код: Ctrl+E — так его помечают всюду, где вообще помечают.
     inlineBindings_.push_back(
         {QKeySequence(QStringLiteral("Ctrl+E")), ZDocument::Style::Code});
-    // Зачёркивание своего стандартного сочетания не имеет; Ctrl+K взят из брифа.
+    // Зачёркивание своего стандартного сочетания не имеет; Ctrl+/ взят из брифа.
     inlineBindings_.push_back(
-        {QKeySequence(QStringLiteral("Ctrl+K")), ZDocument::Style::Strike});
+        {QKeySequence(QStringLiteral("Ctrl+/")), ZDocument::Style::Strike});
 
     // Формулы с клавиатуры: строчная и выключная. Сочетания предложены
     // владельцем и стоят рядом с прочими пометками начертания.
-    bind(QStringLiteral("Ctrl+M"),
+    bind(QStringLiteral("Ctrl+4"),
          [](ZDocument& note, QTextCursor& at) { return note.toggleInlineMath(at); });
-    bind(QStringLiteral("Ctrl+Shift+M"),
+    bind(QStringLiteral("Ctrl+Shift+4"),
          [](ZDocument& note, QTextCursor& at) { return note.toggleDisplayMath(at); });
 
     // Автозамены из конфига: сочетание и знак, который оно вставляет.
@@ -2281,7 +2281,7 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
     };
     add(QStringLiteral("Жирный"), QStringLiteral("Ctrl+B"), style(ZDocument::Style::Bold));
     add(QStringLiteral("Курсив"), QStringLiteral("Ctrl+I"), style(ZDocument::Style::Italic));
-    add(QStringLiteral("Зачёркнутый"), QStringLiteral("Ctrl+K"),
+    add(QStringLiteral("Зачёркнутый"), QStringLiteral("Ctrl+/"),
         style(ZDocument::Style::Strike));
     add(QStringLiteral("Код в строке"), QStringLiteral("Ctrl+E"), style(ZDocument::Style::Code));
     {

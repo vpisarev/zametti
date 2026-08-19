@@ -18,18 +18,18 @@
 - [x] Внедрение шрифтов как ресурсов
 - [ ] Упаковка в appImage
 - [x] Тулбар с кнопочками
-  - создание новой заметки (lucide: file-plus-corner)
-  - создание новой папки (lucide: folder-plus)
-  - импорт (lucide: folder-input, image-down)
-  - экспорт (.md, .pdf: lucide: square-arrow-out-up-right)
-  - синхронизация (lucide: cloud-sync)
-  - убрать панели (lucide: columns-3)
-  - режим сортировки (A-Z, new-old; lucide: arrow-down-a-z, clock-arrow-down)
-  - восстановить из истории (lucide: rotate-ccw-clock)
-  - шестерёнка (правка конфига; lucide: settings)
-  - справка (lucide: circle-question-mark)
-  - поиск (справа; lucide: search, database-search)
-  - также использовать lucide: folder, folder-open и trash-2
+  - [x] создание новой заметки (lucide: file-plus-corner)
+  - [x] создание новой папки (lucide: folder-plus)
+  - [x] импорт (lucide: folder-input, image-down)
+  - [x] экспорт (.md, .pdf: lucide: square-arrow-out-up-right)
+  - [ ] синхронизация (lucide: cloud-sync)
+  - [x] убрать панели (lucide: columns-3)
+  - [x] режим сортировки (A-Z, new-old; lucide: arrow-down-a-z, clock-arrow-down)
+  - [x] восстановить из истории (lucide: rotate-ccw-clock)
+  - [x] шестерёнка (правка конфига; lucide: settings)
+  - [x] справка (lucide: circle-question-mark)
+  - [x] поиск (справа; lucide: search, database-search)
+  - [x] также использовать lucide: folder, folder-open и trash-2
 
 ## Редактор
 
@@ -79,7 +79,7 @@
   - [x] выбор lossy/lossless схемы
   - [x] поддержка прозрачного фона
 - [x] Отображение записанных картинок, корректная реакция на ctrl+/ctrl-
-- [ ] Поддержка HiDPi?
+- [x] Поддержка HiDPi?
 - [x] Поддержка масштабирования с помощью мышки (и соотв. аттрибутов в markdown)
 
 ## Глобальный переход на id и единый плоский список

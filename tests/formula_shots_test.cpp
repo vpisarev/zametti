@@ -400,20 +400,20 @@ void checkMathHotkeys() {
     zametti::NoteEditor* editor =
         openNote(QStringLiteral("клавиши"), 900, 700, "первая строка\n\nвторая строка\n");
 
-    // Ctrl+M на выделении — обернуть в доллары; ещё раз — развернуть.
+    // Ctrl+4 на выделении — обернуть в доллары; ещё раз — развернуть.
     QTextCursor at(editor->document()->firstBlock());
     at.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
     editor->setTextCursor(at);
-    QTest::keyClick(editor, Qt::Key_M, Qt::ControlModifier);
+    QTest::keyClick(editor, Qt::Key_4, Qt::ControlModifier);
     QTest::qWait(40);
-    ZT_TRUE("Ctrl+M обернул выделение: " +
+    ZT_TRUE("Ctrl+4 обернул выделение: " +
                 editor->document()->firstBlock().text().toStdString(),
             editor->document()->firstBlock().text() == QStringLiteral("$первая строка$"));
 
     at = QTextCursor(editor->document()->firstBlock());
     at.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
     editor->setTextCursor(at);
-    QTest::keyClick(editor, Qt::Key_M, Qt::ControlModifier);
+    QTest::keyClick(editor, Qt::Key_4, Qt::ControlModifier);
     QTest::qWait(40);
     ZT_TRUE("и второй раз развернул обратно",
             editor->document()->firstBlock().text() == QStringLiteral("первая строка"));
@@ -421,7 +421,7 @@ void checkMathHotkeys() {
     // Ctrl+Shift+M на абзаце — выключная формула целым блоком.
     QTextCursor line(editor->document()->findBlockByNumber(2));
     editor->setTextCursor(line);
-    QTest::keyClick(editor, Qt::Key_M, Qt::ControlModifier | Qt::ShiftModifier);
+    QTest::keyClick(editor, Qt::Key_4, Qt::ControlModifier | Qt::ShiftModifier);
     QTest::qWait(80);
     const QString made = editor->document()->findBlockByNumber(2).text();
     ZT_TRUE("Ctrl+Shift+M сделал выключную: " + made.toStdString(),

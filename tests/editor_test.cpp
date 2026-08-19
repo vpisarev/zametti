@@ -1673,7 +1673,7 @@ void checkUndoKeepsCursor() {
     const int before = editor.textCursor().position();
     check(before > 0, "курсор должен стоять не в начале");
 
-    QTest::keyClick(&editor, Qt::Key_3, Qt::ControlModifier);
+    QTest::keyClick(&editor, Qt::Key_7, Qt::ControlModifier);
     QTest::qWait(10);
     QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
     QTest::qWait(10);
@@ -1706,7 +1706,7 @@ void checkViewHoldsForEveryOperation() {
         {"Enter", Qt::Key_Return, Qt::NoModifier},
         {"Tab", Qt::Key_Tab, Qt::NoModifier},
         {"Ctrl+Space", Qt::Key_Space, Qt::ControlModifier},
-        {"в нумерованный", Qt::Key_3, Qt::ControlModifier},
+        {"в нумерованный", Qt::Key_7, Qt::ControlModifier},
         {"в абзац", Qt::Key_0, Qt::ControlModifier | Qt::ShiftModifier},
         {"жирный", Qt::Key_B, Qt::ControlModifier},
         {"блок кода", Qt::Key_E, Qt::ControlModifier | Qt::ShiftModifier},
