@@ -82,12 +82,33 @@ EncodeMeta metaFor(const QByteArray& file) {
 // никогда не будучи хуже; сплошное пережатие дало бы 41.2 МБ.
 inline constexpr double kRecompressWin = 0.8;
 
-// Фора точной версии: ей разрешено быть на 15% тяжелее, потому что взамен она
-// даёт точные пиксели. Замер на 56 рисунках Леонардо и 24 файлах разных
-// форматов: медиана отношения lossless/lossy 4.65 и 4.80 при минимуме 3.5 —
-// то есть выигрывает точная версия только там, где картинка ДЕЙСТВИТЕЛЬНО
-// плоская.
-inline constexpr double kLosslessEdge = 1.15;
+// ФОРА ТОЧНОЙ ВЕРСИИ: ей разрешено быть ВДВОЕ тяжелее, потому что взамен она
+// даёт точные пиксели.
+//
+// Было 15%, и этого хватало, пока бюджет картинок был 8.3 Мп: скриншот в него
+// влезал целиком, и точная версия просто выигрывала (170 КБ против 212).
+// С бюджетом 4.67 Мп (S=2160) скриншоты стали уменьшаться, а уменьшение
+// помогает lossy заметно больше, чем точной версии, — и скриншоты молча
+// поехали бы в lossy, замылив текст, ради которого их и вставляют.
+//
+// Замер на НАСТОЯЩЕМ целевом размере, отношение lossless/lossy:
+//
+//   скриншот      2558x1824    205 КБ / 297 КБ    1.45
+//   рисунок       600x400      249 КБ / 767 КБ    3.08   <- самая дешёвая из
+//   фотография    800x600       90 КБ / 323 КБ    3.61      непЛоских
+//   фотография   1535x1024     452 КБ / 2.0 МБ    4.53
+//   фотография   2645x1764     1.1 МБ / 5.7 МБ    5.13
+//   фотография   2509x1860     1.2 МБ / 10.1 МБ   8.66
+//   фотография   2453x1902     1.1 МБ / 13.6 МБ   12.59
+//
+// Между 1.45 и 3.08 — вдвое, и порог поставлен ровно посередине этого разрыва
+// (решение владельца: «либо поднять пороги»). Прежний замер на 56 рисунках
+// Леонардо и 24 файлах разных форматов давал минимум 3.5 — то есть запас
+// сохраняется и на нём.
+//
+// Цена решения названа: точный скриншот весит на 45% больше lossy. Это плата
+// за резкий текст, и она осознанная.
+inline constexpr double kLosslessEdge = 2.0;
 
 // Качество кандидата зависит от того, С ЧЕМ ОН СПОРИТ, а не от того, уменьшали
 // ли картинку. Там, где кандидат должен выиграть у исходника пятую часть,
@@ -246,13 +267,25 @@ ImportResult keepOrTranscode(const QByteArray& raw, const SourceInfo& info) {
     return out;
 }
 
-// Путь фото: уменьшить Lanczos до бюджета и сжать. Один энкод.
+// Уменьшить Lanczos до бюджета — и уже НА УМЕНЬШЕННОЙ выбрать, чем её кодировать.
 //
 // УМЕНЬШАЕМ LANCZOS, А НЕ УСРЕДНЕНИЕМ ПО ПЛОЩАДИ. Прежнее правило стоило
 // четырёх-пяти баллов на каждой фотографии: на снимках DxO против оригинала
 // area даёт 49.92 / 38.15 / 50.61, Lanczos — 54.38 / 42.98 / 56.21, ценой семи
 // процентов байт. Ореолов, ради которых правило вводилось, глазами не видно ни
 // на листве, ни на мелком тексте скриншота.
+//
+// СПОР ТОЧНОЙ И LOSSY ВЕРСИЙ ИДЁТ ПОСЛЕ УМЕНЬШЕНИЯ (решение владельца).
+// Прежде уменьшаемая картинка уходила в lossy без разговоров: считалось, что
+// точная версия «заведомо проиграет». Для фотографии это правда, а для
+// СКРИНШОТА — нет: у него плоские заливки и резкий текст, и уменьшенный
+// lossless выходит дешевле. Пока бюджет был 8.3 Мп, скриншоты в него влезали и
+// спор шёл; с бюджетом 4.67 Мп они стали уменьшаться — и молча поехали в lossy,
+// то есть текст на них замылился. Теперь размер решается первым, кодек вторым,
+// и одно другому не мешает.
+//
+// Второй энкод платится ТОЛЬКО за точный источник (PNG, точный WebP, битмап из
+// буфера): у lossy-источника точности уже нет, и предлагать её нечего.
 ImportResult photoPath(const QString& path, const QByteArray& raw, const SourceInfo& info,
                        const ImportLimits& limits) {
     Pixels pixels = readPixels(path, raw, info, limits);
@@ -265,22 +298,19 @@ ImportResult photoPath(const QString& path, const QByteArray& raw, const SourceI
             ? pixels.image
             : resampleLanczos(pixels.image, target.width, target.height);
 
-    EncodeOptions opt;
-    opt.quality = limits.quality;
-    opt.maxBitsPerChannel = limits.maxBitsPerChannel;
-    QString err;
-    const QByteArray jxl = encodeJxl(scaled, opt, pixels.meta, &err);
-    if (jxl.isEmpty())
-        return refuse(Refusal::None, QStringLiteral("не удалось сжать: %1").arg(err));
+    const Candidate best = bestCandidate(scaled, pixels.meta, limits,
+                                         sourceIsLossless(info.format, raw), limits.quality);
+    if (best.bytes.isEmpty())
+        return refuse(Refusal::None, QStringLiteral("не удалось сжать"));
 
     ImportResult out;
-    out.route = Route::Photo;
-    out.bytes = jxl;
+    out.route = best.lossless ? Route::Lossless : Route::Photo;
+    out.bytes = best.bytes;
     out.extension = QStringLiteral("jxl");
     out.size = {scaled.width(), scaled.height()};
     out.bitsPerSample = scaled.depth() > 32 ? std::min(16, limits.maxBitsPerChannel) : 8;
-    out.quality = limits.quality;
-    out.encodes = 1;
+    out.quality = best.quality;
+    out.encodes = best.encodes;
     out.sourceBytes = raw.size();
     if (colorFixed) out.message = QStringLiteral("цвет приведён к Display P3");
     return out;
@@ -338,9 +368,11 @@ ImportResult importImage(const QString& path, const ImportLimits& limits) {
     //
     // Она первая, потому что единственная убирает развилки ЦЕЛИКОМ, а не
     // сужает их. У уменьшаемой картинки транскод невозможен (он сохраняет
-    // размер), сравнивать с исходником бессмысленно (размеры разные), а точная
-    // версия заведомо проиграет. Значит дальше обсуждать нечего: уменьшить и
-    // сжать.
+    // размер), и сравнивать её с исходником бессмысленно — размеры разные.
+    // Значит вопрос «оставить ли как есть» снимается, и остаётся один: чем
+    // кодировать уменьшенную. Его и решает photoPath, спрашивая обоих
+    // кандидатов (решение владельца; прежде уменьшаемое уходило в lossy без
+    // разговоров, и уменьшенные скриншоты молча теряли резкость текста).
     const Size target = targetSize(info.size, limits);
     if (target != info.size) return photoPath(path, raw, info, limits);
 
