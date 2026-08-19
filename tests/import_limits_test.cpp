@@ -104,6 +104,8 @@ void checkDefaults() {
     const zametti::ZSettings fresh;
     ZT_EQ("S — копия умолчания настройки", num(fresh.images().maxImportedImageSize()),
           num(d.maxSize));
+    ZT_TRUE("фора точной версии — копия умолчания настройки",
+            qFuzzyCompare(fresh.images().losslessThreshold(), d.losslessThreshold));
     ZT_EQ("качество по умолчанию", num(90), num(d.quality));
     ZT_EQ("потолок глубины по умолчанию", num(12), num(d.maxBitsPerChannel));
 }

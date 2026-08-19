@@ -27,9 +27,11 @@ struct ImportLimits {
     // картинки не так, как окно. Один раз они уже разъехались молча.
     int maxSize = 2160;
     int quality = 90;              // lossy JXL
-    // Порог пробы: во сколько раз lossless разрешено быть тяжелее lossy, чтобы
-    // мы всё-таки взяли lossless. Обоснование — в app/settings.h.
-    double losslessThreshold = 1.15;
+    // ФОРА ТОЧНОЙ ВЕРСИИ: во сколько раз lossless разрешено быть тяжелее lossy,
+    // чтобы мы всё-таки взяли точную. Обоснование числа — в settings.h, рядом с
+    // настройкой images.losslessThreshold; здесь копия её умолчания, и копия
+    // ОБЯЗАНА с ним совпадать — это сторожит набор.
+    double losslessThreshold = 2.0;
     int maxBitsPerChannel = 12;    // потолок глубины
     int maxDecodeMemoryMb = 1024;  // потолок памяти под разжатую картинку
 
