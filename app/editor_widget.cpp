@@ -131,22 +131,22 @@ NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
             if (!sequence.isEmpty()) specialKeys_.push_back({sequence, text});
     }
 
-    // Уровень заголовка — ДЕЙСТВИЯМИ, а не разбором события. С зажатым Shift
-    // event->key() приходит знаком верхнего регистра ("@" вместо "2" на
-    // латинской раскладке, кавычка на русской), и сравнение с Qt::Key_2 не
-    // срабатывает никогда — владелец нажал Ctrl+Shift+2 и не получил ничего.
-    // Сопоставление сочетаний Qt делает сама и с учётом раскладки.
-    for (int level = 0; level <= 6; ++level) {
-        auto* action = new QAction(this);
-        action->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+%1").arg(level)));
-        action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
-        connect(action, &QAction::triggered, this, [this, level] {
-            runNoteEdit([level](ZDocument& note, QTextCursor& at) {
-                return note.setHeadingLevel(at, level);
-            });
-        });
-        addAction(action);
-    }
+    // СОЧЕТАНИЙ У УРОВНЕЙ ЗАГОЛОВКА БОЛЬШЕ НЕТ (решение владельца): заголовок
+    // набирают автозаменой — «# » и пробел, — а не аккордом, и семь аккордов
+    // Ctrl+Shift+0…6 занимали ряд цифр целиком без всякой нужды. В меню уровни
+    // остались; ушли только клавиши.
+    //
+    // Ушли не просто так: ряд был ЗАНЯТ, и это уже стоило одной команды.
+    // Выключная формула получила Ctrl+Shift+4 — и не работала ни разу, потому
+    // что QAction с сочетанием срабатывает РАНЬШЕ keyPressEvent, и четвёрка
+    // делала заголовок 4-го уровня. Набор снимков формул краснел именно этим.
+    //
+    // Прежний довод в пользу QAction остаётся верным и записан здесь, чтобы не
+    // изобретать его заново: с зажатым Shift event->key() приходит знаком
+    // верхнего регистра («@» вместо «2» на латинской раскладке, кавычка на
+    // русской), и сравнение с Qt::Key_2 не срабатывает никогда. Кому понадобится
+    // Ctrl+Shift+цифра — сопоставлять сочетание обязана Qt (QKeySequence), а не
+    // разбор события руками. Ровно так это и делает bind() ниже.
 
     bind(settings().editor().toggleTaskKey(),
          [](ZDocument& note, QTextCursor& at) { return note.toggleTask(at); });
@@ -2313,7 +2313,11 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
             // ранг у строки, на которой стоишь.
             action->setCheckable(true);
             action->setChecked(now == level);
-            action->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+%1").arg(level)));
+            // Сочетание есть только у «обычного текста» (makeParagraphKey) —
+            // у уровней заголовка клавиш нет вовсе, их набирают автозаменой.
+            if (level == 0)
+                action->setShortcut(QKeySequence(settings().editor().makeParagraphKey(),
+                                                 QKeySequence::PortableText));
         };
         addLevel(QStringLiteral("Обычный текст"), 0);
         for (int level = 1; level <= 3; ++level)
