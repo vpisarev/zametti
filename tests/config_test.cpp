@@ -171,9 +171,9 @@ void checkTablesDefaults() {
     zametti::ZSettings fresh;
     ZT_EQ("цвет линий — чёрный", std::string("#000000"),
           fresh.tables().borderColor().name(QColor::HexRgb).toStdString());
-    ZT_EQ("линия над и под таблицей", std::string("2"),
+    ZT_EQ("линия над и под таблицей", std::string("1"),
           std::to_string(int(fresh.tables().horizontalBorder())));
-    ZT_EQ("линия под заголовком", std::string("2"),
+    ZT_EQ("линия под заголовком", std::string("1"),
           std::to_string(int(fresh.tables().headerSeparator())));
     ZT_EQ("вертикальных линий нет", std::string("0"),
           std::to_string(int(fresh.tables().verticalBorder())));

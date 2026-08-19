@@ -20,6 +20,7 @@
 #include "settings.h"
 #include "settings_hook.h"
 
+#include "keys.h"
 #include "test_util.h"
 
 #include <vector>
@@ -355,17 +356,21 @@ void checkCaptionEditing() {
 
     // Сочетание переключения на снимке — спрятать подпись знаком; место под
     // неё исчезает, файл хранит подпись со знаком.
-    const QKeySequence toggle(zametti::settings().editor().toggleTaskKey(), QKeySequence::PortableText);
-    ZT_TRUE("хоткей переключателя разобран", toggle.count() == 1);
-    if (toggle.count() != 1) return;
-    QTest::keyClick(&editor, Qt::Key(toggle[0].key()), toggle[0].keyboardModifiers());
+    // СПИСОК, А НЕ ОДНО СОЧЕТАНИЕ: настройка допускает несколько через точку с
+    // запятой («Ctrl+D; Ctrl+SPACE»), и разбирает её listFromString — ровно так
+    // же, как в бою (editor_widget.cpp). QKeySequence(QString) точки с запятой
+    // не знает и молча отдавал мусор: набор жал несуществующую клавишу.
+    const QString toggle = zametti::settings().editor().toggleTaskKey();
+    ZT_TRUE("хоткей переключателя разобран", !zt::firstKey(toggle).isEmpty());
+    if (zt::firstKey(toggle).isEmpty()) return;
+    zt::pressKey(&editor, toggle);
     QTest::qWait(30);
     ZT_EQ("подпись спрятана знаком", "текст\n\n![~Вид 2](img.png)\n\nхвост\n", markdown());
     ZT_TRUE("под спрятанную места не отведено (" + std::to_string(int(takenBy(photo))) + ")",
             takenBy(photo) < shownRoom - 8.0);
     ZT_TRUE("снимок на месте",
             !editor.imageRectInViewport(editor.document()->findBlockByNumber(photo)).isEmpty());
-    QTest::keyClick(&editor, Qt::Key(toggle[0].key()), toggle[0].keyboardModifiers());
+    zt::pressKey(&editor, toggle);
     QTest::qWait(30);
     ZT_EQ("и возвращена", "текст\n\n![Вид 2](img.png)\n\nхвост\n", markdown());
     ZT_TRUE("место под подпись вернулось", std::fabs(takenBy(photo) - shownRoom) < 1.5);
@@ -395,7 +400,7 @@ void checkCaptionEditing() {
     ZT_EQ("пустая подпись — картинка цела", "текст\n\n![](img.png)\n\nхвост\n", markdown());
     ZT_TRUE("и по-прежнему объект", imageBlock() == photo);
     // Прятать пустую нечего — сочетание молчит, файл не меняется.
-    QTest::keyClick(&editor, Qt::Key(toggle[0].key()), toggle[0].keyboardModifiers());
+    zt::pressKey(&editor, toggle);
     QTest::qWait(20);
     ZT_EQ("знак перед пустой подписью не ставится", "текст\n\n![](img.png)\n\nхвост\n",
           markdown());

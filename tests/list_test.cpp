@@ -19,6 +19,7 @@
 #include "settings.h"
 #include "settings_hook.h"
 
+#include "keys.h"
 #include "test_util.h"
 #include "testdata.h"
 
@@ -751,15 +752,21 @@ void checkUndo() {
         const char* source;
         int block;
         int offset;
-        const char* keys;
+        QString keys;
     };
+    // Клавиши, которые НАСТРАИВАЮТСЯ, берутся из настроек: вписанный литерал
+    // однажды перестаёт быть привязанным к чему-либо, и тогда набор жмёт
+    // пустоту, документ не меняется, а отмена «возвращает» его к самому себе —
+    // проверка остаётся зелёной, ничего не проверяя. Именно так и случилось с
+    // «Ctrl+3» после переезда нумерованного списка на «Ctrl+7».
+    const zametti::ZSettings::Editor& keys = zametti::settings().editor();
     const Undoable cases[] = {
-        {"Enter в начале", "- раз\n- два\n", 1, 0, "Return"},
-        {"Backspace у маркера", "- раз\n- два\n", 1, 0, "Backspace"},
-        {"отступ", "- раз\n- два\n", 1, 0, "Tab"},
-        {"превращение", "- раз\n- два\n", 1, 0, "Ctrl+3"},
-        {"перестановка", "- раз\n- два\n", 0, 3, "Ctrl+Down"},
-        {"переключение задачи", "- [ ] дело\n", 0, 6, "Ctrl+D"},
+        {"Enter в начале", "- раз\n- два\n", 1, 0, QStringLiteral("Return")},
+        {"Backspace у маркера", "- раз\n- два\n", 1, 0, QStringLiteral("Backspace")},
+        {"отступ", "- раз\n- два\n", 1, 0, QStringLiteral("Tab")},
+        {"превращение", "- раз\n- два\n", 1, 0, keys.makeOrderedKey()},
+        {"перестановка", "- раз\n- два\n", 0, 3, keys.moveDownKey()},
+        {"переключение задачи", "- [ ] дело\n", 0, 6, keys.toggleTaskKey()},
     };
     for (const Undoable& c : cases) {
         const QString path =
@@ -778,9 +785,12 @@ void checkUndo() {
         cursor.setPosition(start.position() + qMin(c.offset, start.length() - 1));
         editor.setTextCursor(cursor);
 
-        const QKeySequence sequence(QString::fromLatin1(c.keys), QKeySequence::PortableText);
-        QTest::keyClick(&editor, sequence[0].key(), sequence[0].keyboardModifiers());
+        ZT_TRUE(std::string("сочетание задано: ") + c.what, zt::pressKey(&editor, c.keys));
         QTest::qWait(10);
+        // ОТМЕНЯТЬ ДОЛЖНО БЫТЬ ЧТО. Без этой проверки набор зелен и тогда, когда
+        // нажатие не сделало ничего: отмена «вернула» документ к самому себе.
+        ZT_TRUE(std::string("правка состоялась: ") + c.what,
+                textOf(editor).toStdString() != std::string(c.source));
         QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
         QTest::qWait(10);
 
@@ -1199,9 +1209,13 @@ void checkBackspaceProperties() {
 
 // Нумерованный маркер меняет вид по вложенности, три вида по кругу:
 // 1. 2. 3. → a. b. c. → 1) 2) 3) → снова цифры. Буквы биективны: z, aa..zz, aaa.
-// Комментарии в редакторе: Ctrl+/ делает блок комментарием и обратно,
-// Backspace в начале комментария — жест снятия комментарности (буфер цел,
-// слияние — только следующим нажатием), как у первого пункта списка.
+// Комментарии в редакторе: сочетание makeCommentKey делает блок комментарием и
+// обратно, Backspace в начале комментария — жест снятия комментарности (буфер
+// цел, слияние — только следующим нажатием), как у первого пункта списка.
+//
+// Сочетание берётся ИЗ НАСТРОЕК, а не литералом: оно принадлежит владельцу и
+// уже переезжало (Ctrl+/ ушёл зачёркиванию). Литерал в этом месте означал бы,
+// что набор жмёт чужую клавишу и молча перестаёт проверять комментарии.
 void checkCommentOps() {
     zametti::NoteEditor editor;
     editor.resize(700, 500);
@@ -1230,10 +1244,11 @@ void checkCommentOps() {
                 blockAt(2).text() == QStringLiteral("ком") &&
                 editor.document()->blockCount() == blocks);
 
-    // Ctrl+/ возвращает комментарность на место.
-    QTest::keyClick(&editor, Qt::Key_Slash, Qt::ControlModifier);
+    // Сочетание возвращает комментарность на место.
+    const QString commentKey = zametti::settings().editor().makeCommentKey();
+    ZT_TRUE("сочетание комментария задано", zt::pressKey(&editor, commentKey));
     QTest::qWait(10);
-    ZT_TRUE("Ctrl+/ сделал блок комментарием",
+    ZT_TRUE("сочетание сделало блок комментарием",
             zametti::kindOf(blockAt(2)) == zametti::Kind::Html);
     {
         const std::vector<zametti::Piece> ir = blocksOf(*editor.document());
@@ -1242,20 +1257,20 @@ void checkCommentOps() {
                 out.find("<!-- ком -->") != std::string::npos);
     }
 
-    // Ctrl+/ на обычном абзаце — комментарий, ещё раз — обратно.
+    // На обычном абзаце — комментарий, ещё раз — обратно.
     editor.setTextCursor(QTextCursor(blockAt(4)));
-    QTest::keyClick(&editor, Qt::Key_Slash, Qt::ControlModifier);
+    zt::pressKey(&editor, commentKey);
     QTest::qWait(10);
     ZT_TRUE("хвост стал комментарием",
             zametti::kindOf(blockAt(4)) == zametti::Kind::Html);
-    QTest::keyClick(&editor, Qt::Key_Slash, Qt::ControlModifier);
+    zt::pressKey(&editor, commentKey);
     QTest::qWait(10);
     ZT_TRUE("и обратно абзацем",
             zametti::kindOf(blockAt(4)) == zametti::Kind::Paragraph &&
                 blockAt(4).text() == QStringLiteral("хвост"));
 
-    // Ctrl+/ построчный: выделение второй строки пункта комментирует только
-    // её — пункт остаётся пунктом, хвост — продолжением без маркера.
+    // ПОСТРОЧНЫЙ комментарий: выделение второй строки пункта комментирует
+    // только её — пункт остаётся пунктом, хвост — продолжением без маркера.
     {
         const QString p2 = writeNote(
             "построчный.md", QStringLiteral("- пункт\n  вторая строка\n  третья\n"));
@@ -1275,7 +1290,7 @@ void checkCommentOps() {
                             int(QStringLiteral("вторая строка").size()),
                         QTextCursor::KeepAnchor);
         editor.setTextCursor(sel);
-        QTest::keyClick(&editor, Qt::Key_Slash, Qt::ControlModifier);
+        zt::pressKey(&editor, commentKey);
         QTest::qWait(10);
 
         const auto blockAt = [&](int n) {

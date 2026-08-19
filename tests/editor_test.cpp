@@ -16,6 +16,7 @@
 #include "marker.h"
 #include "settings.h"
 #include "settings_hook.h"
+#include "keys.h"
 #include "test_util.h"
 
 #include <vector>
@@ -578,17 +579,19 @@ void checkListKeys() {
     checkEqual(QStringLiteral("- раз\n- два\n- [ ] дело\n"), text(),
                "Shift+Tab вернул его обратно");
 
-    // Переключатель задачи — сочетание из конфига.
-    const QKeySequence toggle(zametti::settings().editor().toggleTaskKey(),
-                              QKeySequence::PortableText);
-    check(toggle.count() == 1, "хоткей переключателя разобран");
+    // Переключатель задачи — сочетание из конфига. Настройка — СПИСОК через
+    // точку с запятой, и разбирает его listFromString, как в бою: у
+    // QKeySequence(QString) count() при этом честная единица, а клавиша в ней
+    // Key_unknown — набор жал пустоту и молчал об этом.
+    const QString toggle = zametti::settings().editor().toggleTaskKey();
+    check(!zt::firstKey(toggle).isEmpty(), "хоткей переключателя разобран");
     putCursorIn(2);
-    QTest::keyClick(&editor, Qt::Key(toggle[0].key()), toggle[0].keyboardModifiers());
+    zt::pressKey(&editor, toggle);
     QTest::qWait(10);
     checkEqual(QStringLiteral("- раз\n- два\n- [x] дело\n"), text(),
                "задача отмечена");
 
-    QTest::keyClick(&editor, Qt::Key(toggle[0].key()), toggle[0].keyboardModifiers());
+    zt::pressKey(&editor, toggle);
     QTest::qWait(10);
     checkEqual(QStringLiteral("- раз\n- два\n- [ ] дело\n"), text(),
                "и снята");
@@ -752,9 +755,8 @@ void checkSelectionSurvivesOperation() {
     const int anchor = editor.textCursor().anchor();
     const int position = editor.textCursor().position();
 
-    const QKeySequence toggle(zametti::settings().editor().toggleTaskKey(),
-                              QKeySequence::PortableText);
-    QTest::keyClick(&editor, Qt::Key(toggle[0].key()), toggle[0].keyboardModifiers());
+    const QString toggle = zametti::settings().editor().toggleTaskKey();
+    check(zt::pressKey(&editor, toggle), "хоткей переключателя разобран");
     QTest::qWait(10);
 
     checkEqual(QStringLiteral("- [x] раз\n- [x] два\n- [x] три\n"), text(),
@@ -765,7 +767,7 @@ void checkSelectionSurvivesOperation() {
 
     // Второе нажатие подряд должно снять отметки со всех — то есть выделение
     // действительно живо, а не просто «что-то выделено».
-    QTest::keyClick(&editor, Qt::Key(toggle[0].key()), toggle[0].keyboardModifiers());
+    zt::pressKey(&editor, toggle);
     QTest::qWait(10);
     checkEqual(QStringLiteral("- [ ] раз\n- [ ] два\n- [ ] три\n"), text(),
                "второе нажатие снимает отметки со всех");
