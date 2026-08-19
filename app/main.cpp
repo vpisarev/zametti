@@ -791,12 +791,22 @@ int main(int argc, char** argv) {
     };
     // Масштаб один на программу: и у живой заметки, и у вида истории — иначе,
     // вернувшись из истории, человек увидел бы другой кегль.
+    //
+    // НО У РЕЖИМА ИСХОДНИКА ОН СВОЙ (решение владельца). Исходник читают иначе,
+    // чем заметку — моноширинным, по колонкам, — и кегль ему нужен другой.
+    // Прежде клавиши в режиме молча увеличивали СКРЫТЫЙ обычный вид: отжал [M],
+    // а заметка вдруг крупнее, хотя её масштаб не трогали.
     auto applyZoom = [&](qreal value) {
+        if (markdown.active()) {
+            markdownView.applyZoom(value);
+            return;
+        }
         editor.applyZoom(value);
         historyView.textView().applyZoom(value);
     };
     auto stepZoom = [&](qreal factor) {
-        applyZoom(std::clamp(editor.zoom() * factor, zametti::settings().ui().zoomMin(),
+        const qreal now = markdown.active() ? markdownView.zoom() : editor.zoom();
+        applyZoom(std::clamp(now * factor, zametti::settings().ui().zoomMin(),
                              zametti::settings().ui().zoomMax()));
     };
     // Ctrl+= рядом с Ctrl++: увеличивают одной и той же клавишей, с шифтом и без.
@@ -2175,6 +2185,7 @@ int main(int argc, char** argv) {
     // РЕЖИМ ПРАВКИ ИСХОДНИКА ПЕРЕЖИВАЕТ ПЕРЕЗАПУСК (решение владельца): вышли
     // из программы с нажатой [M] — вернулись в неё же. После открытия заметки и
     // после фокуса: входить в режим нечем, пока показывать нечего.
+    markdownView.applyZoom(session.markdownZoom());
     if (session.markdownMode()) markdown.enter();
 
 
@@ -2199,6 +2210,7 @@ int main(int argc, char** argv) {
         out.setHistoryListWidth(historyListWidth);
         out.setPanelsHidden(!toolbar.isChecked(zametti::Toolbar::Button::Panels));
         out.setMarkdownMode(markdown.active());
+        out.setMarkdownZoom(markdownView.zoom());
         out.setExpandedDirs(panels.expandedDirs());
         out.setSearchHistory(findBar.history());
         out.setStoreRoot(model.isStore() ? model.nodePath(QModelIndex()) : QString());

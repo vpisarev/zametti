@@ -55,6 +55,7 @@ static int ztRunSuite(int argc, char** argv) {
     out.setWindowGeometry(QByteArray("геометрия", 18));
     out.setPanelsHidden(true);
     out.setMarkdownMode(true);
+    out.setMarkdownZoom(1.75);
     out.setHistoryListWidth(233);
     out.setExportDir(QStringLiteral("/tmp/куда-вывозили"));
     out.setExportKeepMeta(true);
@@ -86,6 +87,8 @@ static int ztRunSuite(int argc, char** argv) {
           back.windowGeometry().toBase64().toStdString());
     ZT_EQ("панели убраны", b(out.panelsHidden()), b(back.panelsHidden()));
     ZT_EQ("режим исходника", b(out.markdownMode()), b(back.markdownMode()));
+    ZT_TRUE("масштаб исходника — свой и переживает запись",
+            qFuzzyCompare(out.markdownZoom(), back.markdownZoom()));
     // Каталог вывоза переживает перезапуск: начинать каждый раз с «Документов»
     // — значит каждый раз идти по дереву каталогов заново (замечание владельца).
     ZT_EQ("каталог вывоза", s(out.exportDir()), s(back.exportDir()));

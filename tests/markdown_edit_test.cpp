@@ -19,6 +19,7 @@
 #include <QFile>
 #include <QTest>
 #include <QTextBlock>
+#include <QTextEdit>
 #include <QTextCursor>
 
 #include <cstdio>
@@ -205,6 +206,59 @@ void checkHeaderRefused() {
     ZT_EQ("заметка цела", std::string("раз\n"), textOf(rig.editor));
 }
 
+// ПЛАШКА ПОД БЛОКОМ КОДА и подложка под кодом в строке (просьба владельца:
+// «блоки кода и inline код выводить на светло-сером фоне»). Спрашивается у
+// самих подсветок: сколько полос во всю ширину положено под строки забора.
+void checkCodePlate() {
+    const QString path = writeNote(
+        QStringLiteral("плашка.md"),
+        QStringLiteral("текст с `кодом в строке`\n\n```cpp\nint a = 1;\nint b = 2;\n```\n\n"
+                       "хвост\n"));
+    Rig rig;
+    rig.view.resize(900, 600);
+    rig.editor.openFile(path);
+    QTest::qWait(20);
+    ZT_TRUE("вошли", rig.controller.enter());
+    QTest::qWait(40);
+
+    int bands = 0;
+    for (const QTextEdit::ExtraSelection& one : rig.view.extraSelections())
+        if (one.format.boolProperty(QTextFormat::FullWidthSelection)) ++bands;
+    // Четыре строки: открывающий забор, две строки кода, закрывающий.
+    ZT_EQ("полоса под каждой строкой блока кода", std::string("4"), std::to_string(bands));
+
+    rig.view.grab().save(QDir(g_dir).filePath(QStringLiteral("плашка-кода.png")));
+    rig.controller.leave();
+}
+
+// МАСШТАБ РЕЖИМА — СВОЙ, и это проверяется в обе стороны: клавиши в исходнике
+// не трогают обычный вид, клавиши в обычном виде не трогают исходник.
+void checkOwnZoom() {
+    const QString path = writeNote(QStringLiteral("масштаб.md"), QStringLiteral("раз\n"));
+    Rig rig;
+    rig.editor.openFile(path);
+    QTest::qWait(20);
+
+    const qreal noteZoom = rig.editor.zoom();
+    const qreal sourceZoom = rig.view.zoom();
+    ZT_TRUE("вошли", rig.controller.enter());
+
+    rig.view.applyZoom(2.0);
+    QTest::qWait(10);
+    ZT_TRUE("исходник увеличился", rig.view.zoom() > sourceZoom);
+    ZT_TRUE("а заметка осталась как была", qFuzzyCompare(rig.editor.zoom(), noteZoom));
+    // И кегль настоящий, а не только число.
+    ZT_TRUE("кегль исходника вырос",
+            rig.view.font().pointSizeF() >
+                zametti::settings().style().baseFontPoint() * 1.5);
+
+    rig.controller.leave();
+    rig.editor.applyZoom(1.5);
+    QTest::qWait(10);
+    ZT_TRUE("заметка увеличилась", rig.editor.zoom() > noteZoom);
+    ZT_TRUE("а исходник остался со своим", qFuzzyCompare(rig.view.zoom(), 2.0));
+}
+
 // ЗАМЕТКА ВЛАДЕЛЬЦА, А НЕ ВЫДУМАННЫЙ ДИСТИЛЛЯТ. Берётся ЖИВАЯ копия, а не
 // архивная: у архивной в файле лежит один заголовок-стаб, тело живёт в журнале,
 // и «проверка на настоящей заметке» свелась бы к одной строке — первый снимок
@@ -277,5 +331,7 @@ TEST(MarkdownEdit, All) {
     checkTabIsSpaces();
     checkSurvivesNoteChange();
     checkHeaderRefused();
+    checkOwnZoom();
+    checkCodePlate();
     checkOwnerNote();
 }

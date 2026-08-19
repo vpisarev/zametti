@@ -3,6 +3,8 @@
 #include "note_view.h"          // applyPalette — палитра у всех видов одна
 #include "syntax_highlighter.h"
 
+#include <QAbstractTextDocumentLayout>
+
 #include <QColor>
 #include <QFontMetricsF>
 #include <QKeyEvent>
@@ -21,24 +23,22 @@ MarkdownEditView::MarkdownEditView(QWidget* parent) : QPlainTextEdit(parent) {
     // текстовом редакторе — это чтение в замочную скважину.
     setLineWrapMode(QPlainTextEdit::WidgetWidth);
     setTabChangesFocus(false);
+    // ПОДСВЕТКИ ПЕРЕСЧИТЫВАЮТСЯ ПО ВИДИМОМУ, а не по всей заметке: плашка под
+    // каждым блоком кода мегабайтной заметки — это тысячи выделений, которые Qt
+    // перебирает на каждый кадр. Поводов пересчитать три: прокрутка, правка и
+    // изменение размера (последнее — в resizeEvent).
+    //
+    // ПРОКРУТКА — ПО ПОЛОСЕ, А НЕ ПО updateRequest: сигнал обновления приходит и
+    // от самой setExtraSelections, и получилась бы бесконечная петля.
+    connect(verticalScrollBar(), &QScrollBar::valueChanged, this, [this] { refreshOverlays(); });
+    connect(document(), &QTextDocument::contentsChanged, this, [this] { refreshOverlays(); });
     refreshAppearance();
 }
 
 MarkdownEditView::~MarkdownEditView() = default;
 
 void MarkdownEditView::refreshAppearance() {
-    const ZDocStyle& style = settings().style();
-    // ГАРНИТУРА КОДА: исходник читают как код — по колонкам, и пропорциональный
-    // шрифт сбил бы и таблицы, и отступы списков.
-    QFont font(style.codeFamily());
-    font.setPointSizeF(style.baseFontPoint());
-    setFont(font);
-    document()->setDefaultFont(font);
-    // Стоп табуляции — тот же, которым Tab ставит пробелы: набранное и старые
-    // литеральные табы обязаны рисоваться одинаково.
-    const int stop = qMax(1, settings().editor().codeTabWidth());
-    setTabStopDistance(stop * QFontMetricsF(font).horizontalAdvance(QLatin1Char(' ')));
-    applyPalette(*this, /*history=*/false, style);
+    applyPalette(*this, /*history=*/false, settings().style());
 
     // ПОДСВЕТКА — тот же класс ядра, что расцвечивает строки разности
     // (ZSyntaxHighlighterMD). Он и писался под этот режим. Прикрепляется к
@@ -46,6 +46,60 @@ void MarkdownEditView::refreshAppearance() {
     highlighter_ = std::make_shared<ZSyntaxHighlighterMD>(
         document(), settings().markdownHighlighting(), 0);
     highlighter_->rehighlight();
+
+    applyZoom(zoom_);   // шрифт, стоп табуляции и поля — одним местом
+}
+
+void MarkdownEditView::applyZoom(qreal zoom) {
+    const ZDocStyle& style = settings().style();
+    zoom_ = qBound(settings().ui().zoomMin(), zoom, settings().ui().zoomMax());
+
+    // ГАРНИТУРА КОДА: исходник читают как код — по колонкам, и пропорциональный
+    // шрифт сбил бы и таблицы, и отступы списков.
+    QFont font(style.codeFamily());
+    font.setPointSizeF(style.baseFontPoint() * zoom_);
+    setFont(font);
+    document()->setDefaultFont(font);
+    // Стоп табуляции — тот же, которым Tab ставит пробелы: набранное и старые
+    // литеральные табы обязаны рисоваться одинаково. Считается от НЫНЕШНЕГО
+    // шрифта: с масштабом стоп обязан расти вместе с буквами.
+    const int stop = qMax(1, settings().editor().codeTabWidth());
+    setTabStopDistance(stop * QFontMetricsF(font).horizontalAdvance(QLatin1Char(' ')));
+
+    applyContentWidth();
+    refreshOverlays();
+}
+
+void MarkdownEditView::applyContentWidth() {
+    // ПОЛЯ ВЬЮПОРТА, как в обычном виде: на широком экране длинная строка не
+    // читается — глаз теряет начало следующей. Колонка ограничена той же
+    // настройкой (maxContentWidth в ширинах буквы «A») и теми же боковыми
+    // полями, поэтому исходник и вёрстка стоят на одном месте.
+    const QFontMetricsF metrics(font());
+    const qreal charUnit = metrics.horizontalAdvance(QLatin1Char('A'));
+    const ZDocStyle& style = settings().style();
+    const qreal side = style.sideMargin() * charUnit;
+
+    // Полная ширина, из которой раздаётся место: нынешний вьюпорт плюс то, что
+    // мы у него уже отняли. По width() виджета считать нельзя — там ещё полоса
+    // прокрутки, и вышла бы обратная связь.
+    const int room = viewport()->width() + viewportMargin_ * 2;
+    qreal margin = side;
+    if (style.maxContentWidth() > 0.0) {
+        const qreal limit = style.maxContentWidth() * charUnit;
+        const qreal spare = (room - 2 * side - limit) / 2;
+        if (spare > 0.0) margin += spare;
+    }
+    const int wanted = qMax(0, int(margin));
+    if (wanted == viewportMargin_) return;
+    viewportMargin_ = wanted;
+    setViewportMargins(wanted, 0, wanted, 0);
+}
+
+void MarkdownEditView::resizeEvent(QResizeEvent* event) {
+    QPlainTextEdit::resizeEvent(event);
+    applyContentWidth();
+    refreshOverlays();
 }
 
 void MarkdownEditView::showSource(const QString& markdown, SourcePos caret) {
@@ -158,7 +212,7 @@ int MarkdownEditView::findMatches(const QString& text, bool caseSensitive) {
     current_ = -1;
     needle_ = int(text.size());
     if (text.isEmpty()) {
-        showMatchHighlights();
+        refreshOverlays();
         return 0;
     }
     const QString hay = toPlainText();
@@ -174,7 +228,7 @@ int MarkdownEditView::findMatches(const QString& text, bool caseSensitive) {
             break;
         }
     if (current_ < 0 && !matches_.empty()) current_ = 0;
-    showMatchHighlights();
+    refreshOverlays();
     return int(matches_.size());
 }
 
@@ -187,7 +241,7 @@ bool MarkdownEditView::stepMatch(int direction) {
     at.setPosition(matches_[size_t(current_)] + needle_, QTextCursor::KeepAnchor);
     setTextCursor(at);
     centerCursor();
-    showMatchHighlights();
+    refreshOverlays();
     return true;
 }
 
@@ -198,11 +252,36 @@ void MarkdownEditView::clearMatches() {
     setExtraSelections({});
 }
 
-void MarkdownEditView::showMatchHighlights() {
+void MarkdownEditView::refreshOverlays() {
     QList<QTextEdit::ExtraSelection> shown;
+
+    // 1. ПЛАШКА ПОД БЛОКАМИ КОДА (просьба владельца: код видно и в исходнике).
+    //
+    // Выделением во всю ширину, а не своей отрисовкой: QPlainTextEdit заливает
+    // вьюпорт фоном САМ, перед текстом, и нарисованное до него стёрлось бы, а
+    // нарисованное после — легло бы поверх букв.
+    //
+    // Строка внутри забора несёт состояние «в заборе» (его ставит подсветчик);
+    // у закрывающего забора состояние уже Plain, но его предшественница — в
+    // заборе. Тот же приём, что у вида разности.
+    const QColor plate = settings().markdownHighlighting().codeBackground();
+    const int height = viewport()->height();
+    for (QTextBlock block = firstVisibleBlock(); block.isValid(); block = block.next()) {
+        if (blockBoundingGeometry(block).translated(contentOffset()).top() > height) break;
+        const bool inFence =
+            ZSyntaxHighlighterMD::inFence(block.userState()) ||
+            (block.previous().isValid() &&
+             ZSyntaxHighlighterMD::inFence(block.previous().userState()));
+        if (!inFence) continue;
+        QTextEdit::ExtraSelection band;
+        band.cursor = QTextCursor(block);
+        band.format.setBackground(plate);
+        band.format.setProperty(QTextFormat::FullWidthSelection, true);
+        shown.push_back(band);
+    }
+
+    // 2. НАЙДЕННОЕ — поверх плашки, тоже только видимое.
     if (needle_ > 0) {
-        // ТОЛЬКО ВИДИМОЕ. Подсветить все вхождения на заметке в мегабайт —
-        // это тысячи выделений, которые Qt пересчитывает на каждый кадр.
         const int from = cursorForPosition(QPoint(0, 0)).position();
         const int to = cursorForPosition(QPoint(viewport()->width(), viewport()->height()))
                            .position() + needle_;

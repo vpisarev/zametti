@@ -47,6 +47,15 @@ public:
     // Перечитать оформление: гарнитура, кегль, цвета, подсветка.
     void refreshAppearance();
 
+    // --- МАСШТАБ У РЕЖИМА СВОЙ --------------------------------------------
+    //
+    // Решение владельца: Ctrl+= и Ctrl+- в исходнике не трогают масштаб
+    // обычного вида и наоборот. Иначе выходило вот что: человек увеличивает
+    // текст в исходнике, отжимает [M] — и заметка вдруг стала крупнее, хотя её
+    // масштаб он не трогал. Своё число живёт в state.json (markdownZoom).
+    void applyZoom(qreal zoom);
+    qreal zoom() const { return zoom_; }
+
     // --- поиск (Ctrl+F живёт у окна, механика — здесь) ---------------------
     //
     // Своя, а не общая с NoteView: там найденное живёт при заметке и адресуется
@@ -67,6 +76,9 @@ signals:
     void leaveRequested();   // Esc — выйти из режима
 
 protected:
+    // Поля вьюпорта: колонка исходника не растягивается на всю ширину широкого
+    // окна (просьба владельца), а стоит посередине, как в обычном виде.
+    void resizeEvent(QResizeEvent* event) override;
     // Tab заполняет ПРОБЕЛАМИ до ближайшего стопа (editor.codeTabWidth), а не
     // ставит знак табуляции: таб в markdown значим (в начале строки это блок
     // кода с отступом), и набирать его случайно нельзя. Shift+Tab снимает до
@@ -74,9 +86,15 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
 
 private:
-    void showMatchHighlights();
+    // ПОДСВЕТКИ ОДНИМ СПИСКОМ. У QPlainTextEdit extraSelections один на всех, и
+    // держать их порознь нельзя: кто поставит вторым, сотрёт первого. Плашки
+    // блоков кода и найденное собираются вместе — и только по ВИДИМОМУ.
+    void refreshOverlays();
+    void applyContentWidth();
 
     std::shared_ptr<ZSyntaxHighlighterMD> highlighter_;
+    qreal zoom_ = 1.0;
+    int viewportMargin_ = 0;
     // Найденное — позициями в плоском тексте; текущее — номер в этом списке.
     std::vector<int> matches_;
     int needle_ = 0;
