@@ -170,6 +170,8 @@ bool ZDocument::sourceEditing() const { return d_->sourceEditing; }
 
 void ZDocument::setSourceEditing(bool on) { d_->sourceEditing = on; }
 
+int ZDocument::sourceFallbacks() const { return d_->sourceFallbacks; }
+
 // --- каретка: документ ⇄ исходник -------------------------------------------
 
 SourcePos ZDocument::sourcePosOf(const QTextCursor& at) const {
@@ -374,11 +376,26 @@ int ZDocument::applySourceText(const QString& text, QTextCursor* caret) {
         if (nb >= 0) dirtyNew[size_t(nb)] = 1;
     }
 
-    // ГРЯЗЬ ПЕРЕТЕКАЕТ ЧЕРЕЗ ЦЕЛЫЕ СТРОКИ. Строка могла не измениться, а блок,
-    // в который она попала, — измениться (абзац подрос второй строкой). Тогда
-    // грязен и блок с той стороны: класть половину блока нельзя.
+    // ГРЯЗЬ ПЕРЕТЕКАЕТ ЧЕРЕЗ ЦЕЛЫЕ СТРОКИ, А ЦЕЛАЯ ПАРА ОБЯЗАНА БЫТЬ ВЗАИМНО
+    // ОДНОЗНАЧНОЙ. Два правила в одном проходе, и второе стоило дефекта.
+    //
+    // Первое: строка могла не измениться, а блок, в который она попала, —
+    // измениться (абзац подрос второй строкой). Тогда грязен и блок с той
+    // стороны: класть половину блока нельзя.
+    //
+    // Второе: блок мог СЛИТЬСЯ с соседом или РАЗЪЕХАТЬСЯ надвое, и все его
+    // строки при этом остались целыми. Убрали пустую строку между двумя
+    // абзацами — два блока стали одним, и каждый из двух старых указывает на
+    // один и тот же новый. Куски считаются по ПРОМЕЖУТКАМ между целыми парами,
+    // и такая пара ломает счёт: промежуток выходит пустым с одной стороны и
+    // раздвинуть его некуда. Нашёл фаззер; матрица этого случая не знала, хотя
+    // «убрать пустую строку» — самая обычная человеческая правка.
+    //
+    // Значит блоки, попавшие в неоднозначное соответствие, целыми не считаются.
     for (bool moved = true; moved;) {
         moved = false;
+        std::vector<int> newOf(size_t(qMax(0, oldCount)), -1);
+        std::vector<int> oldOf(size_t(qMax(0, newCount)), -1);
         for (const diff::Row& row : rows.rows) {
             if (row.mark != diff::Mark::Same) continue;
             const int ob = blockOfBefore(row.before);
@@ -392,6 +409,26 @@ int ZDocument::applySourceText(const QString& text, QTextCursor* caret) {
                 dirtyOld[size_t(ob)] = 1;
                 moved = true;
             }
+            if (dirtyOld[size_t(ob)] || dirtyNew[size_t(nb)]) continue;
+
+            const int wasNew = newOf[size_t(ob)];
+            const int wasOld = oldOf[size_t(nb)];
+            if (wasNew >= 0 && wasNew != nb) {   // старый блок разъехался надвое
+                dirtyOld[size_t(ob)] = 1;
+                dirtyNew[size_t(nb)] = 1;
+                dirtyNew[size_t(wasNew)] = 1;
+                moved = true;
+                continue;
+            }
+            if (wasOld >= 0 && wasOld != ob) {   // два старых слились в один
+                dirtyNew[size_t(nb)] = 1;
+                dirtyOld[size_t(ob)] = 1;
+                dirtyOld[size_t(wasOld)] = 1;
+                moved = true;
+                continue;
+            }
+            newOf[size_t(ob)] = nb;
+            oldOf[size_t(nb)] = ob;
         }
     }
 
@@ -486,13 +523,31 @@ int ZDocument::applySourceText(const QString& text, QTextCursor* caret) {
         settleSeam(h->oldFirst - 1, h->oldFirst + int(put.size()));
         firstTouched = h->oldFirst;
     }
+
+    // 10. СВЕРКА, И ОНА НЕ УКРАШЕНИЕ — прямо здесь, ВНУТРИ ТОЙ ЖЕ СКОБКИ.
+    // Расхождение — это молча испорченная заметка владельца, а цена сверки один
+    // проход писателя на редком явном действии.
+    //
+    // РАЗОШЛОСЬ — ПРАВКА ЧЕЛОВЕКА ВСЁ РАВНО ЛОЖИТСЯ, но уже целиком: кладём
+    // весь текст одним куском поверх недоделанного. Терять набранное нельзя ни
+    // при каких обстоятельствах, а для человека разницы нет — обе попытки
+    // лежат в одной скобке, и шаг отмены остаётся один. (Первая редакция
+    // откатывала точечную попытку отдельным undo() и клала текст новой скобкой;
+    // после этого redo() переставал работать — поймал фаззер.)
+    //
+    // И ЭТО НЕ ЗАПЛАТКА, ПОКА ОНА СЧИТАЕТСЯ. Каждое срабатывание — дефект
+    // точечности; счётчик виден наружу (sourceFallbacks), фаззер печатает его
+    // числом, а найденные случаи ложатся в отчёт. Заплаткой это стало бы ровно
+    // в тот день, когда счётчик перестанут спрашивать.
+    bool wholeAgain = false;
+    if (withoutReturns(toMarkdownText()) != withoutReturns(after)) {
+        ++d_->sourceFallbacks;
+        wholeAgain = true;
+        replaceBlocks(0, d_->text.blockCount() - 1, fresh);
+        firstTouched = 0;
+    }
     edit.endEditBlock();
 
-    // 10. СВЕРКА, И ОНА НЕ УКРАШЕНИЕ. Расхождение здесь — это молча испорченная
-    // заметка владельца, а цена сверки — один проход писателя на редком явном
-    // действии. Разошлось — ОТКАТЫВАЕМ СВОЮ ЖЕ ПРАВКУ (мы были под одной
-    // скобкой, откат точен) и говорим об этом числом: заплатки вида «пересобрать
-    // целиком» здесь запрещены, они спрятали бы дефект навсегда.
     if (withoutReturns(toMarkdownText()) != withoutReturns(after)) {
         d_->text.undo();
         return -2;
@@ -502,7 +557,7 @@ int ZDocument::applySourceText(const QString& text, QTextCursor* caret) {
 #endif
 
     if (caret != nullptr && firstTouched >= 0) *caret = caretAtBlock(firstTouched);
-    return int(merged.size());
+    return wholeAgain ? 1 : int(merged.size());
 }
 
 }  // namespace zametti
