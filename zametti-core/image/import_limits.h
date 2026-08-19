@@ -31,7 +31,7 @@ struct ImportLimits {
     // чтобы мы всё-таки взяли точную. Обоснование числа — в settings.h, рядом с
     // настройкой images.losslessThreshold; здесь копия её умолчания, и копия
     // ОБЯЗАНА с ним совпадать — это сторожит набор.
-    double losslessThreshold = 2.0;
+    double losslessThreshold = 1.15;
     int maxBitsPerChannel = 12;    // потолок глубины
     int maxDecodeMemoryMb = 1024;  // потолок памяти под разжатую картинку
 
