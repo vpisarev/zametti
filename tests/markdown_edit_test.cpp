@@ -21,6 +21,7 @@
 #include <QTextBlock>
 #include <QTextCursor>
 
+#include <cstdio>
 #include <string>
 
 namespace {
@@ -204,6 +205,68 @@ void checkHeaderRefused() {
     ZT_EQ("заметка цела", std::string("раз\n"), textOf(rig.editor));
 }
 
+// ЗАМЕТКА ВЛАДЕЛЬЦА, А НЕ ВЫДУМАННЫЙ ДИСТИЛЛЯТ. Берётся ЖИВАЯ копия, а не
+// архивная: у архивной в файле лежит один заголовок-стаб, тело живёт в журнале,
+// и «проверка на настоящей заметке» свелась бы к одной строке — первый снимок
+// именно это и показал. «Typesetting Math in Markdown» —
+// формулы выключные и строчные, картинки, таблицы, блоки кода. Спрашивается
+// главное: исходник, показанный человеку, и есть тело заметки байт в байт, а
+// возврат БЕЗ ПРАВОК не трогает её вовсе (ноль кусков) — иначе режим тихо
+// переписывал бы заметку на каждом заходе.
+//
+// Здесь же — приёмочные снимки в узком и широком окне: у агента окно узкое, у
+// владельца широкое, и три бага этого класса проект уже ловил.
+void checkOwnerNote() {
+    const QString source =
+        zt::TestData::root() + QStringLiteral("/owner-copy/01n7wcv5fkf6ne.md");
+    if (!QFile::exists(source)) {
+        std::printf("owner-copy: корпуса нет, акт пропущен\n");
+        return;
+    }
+    const QString path = QDir(g_dir).filePath(QStringLiteral("формулы.md"));
+    QFile::remove(path);
+    if (!QFile::copy(source, path)) {
+        std::printf("owner-copy: не скопировалось\n");
+        return;
+    }
+    QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner);
+
+    for (const int width : {700, 1600}) {
+        Rig rig;
+        rig.view.resize(width, 900);
+        rig.editor.resize(width, 900);
+        QTest::qWait(20);
+        rig.editor.openFile(path);
+        QTest::qWait(60);
+        const std::string was = textOf(rig.editor);
+
+        ZT_TRUE("вошли в режим на заметке владельца (" + std::to_string(width) + ")",
+                rig.controller.enter());
+        QTest::qWait(40);
+        // «С ТОЧНОСТЬЮ ДО CR», а не побайтово, и это не поблажка: в этой самой
+        // заметке 46 CRLF внутри исходников формул, а плоский виджет их не
+        // держит — человек их не видит и набрать не может. Здесь же
+        // проверяется, что от этого они НЕ ПРОПАДАЮТ (см. ниже): нетронутый
+        // блок не перекладывается вовсе.
+        QString shown = rig.view.source();
+        QString body = QString::fromStdString(was);
+        ZT_EQ("исходник и есть тело заметки (" + std::to_string(width) + ")",
+              body.remove(QLatin1Char('\r')).toStdString(),
+              shown.remove(QLatin1Char('\r')).toStdString());
+        ZT_TRUE("в заметке есть CRLF — есть чему теряться (" + std::to_string(width) + ")",
+                was.find('\r') != std::string::npos);
+
+        rig.view.grab().save(QDir(g_dir).filePath(
+            QStringLiteral("исходник-%1.png").arg(width)));
+
+        ZT_EQ("возврат без правок не трогает заметку (" + std::to_string(width) + ")",
+              std::string("0"), std::to_string(rig.controller.leave()));
+        ZT_EQ("и тело цело до байта, вместе с CRLF (" + std::to_string(width) + ")", was,
+              textOf(rig.editor));
+    }
+    std::printf("снимки режима: %s\n", g_dir.toUtf8().constData());
+}
+
 }  // namespace
 
 TEST(MarkdownEdit, All) {
@@ -214,4 +277,5 @@ TEST(MarkdownEdit, All) {
     checkTabIsSpaces();
     checkSurvivesNoteChange();
     checkHeaderRefused();
+    checkOwnerNote();
 }

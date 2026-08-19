@@ -41,6 +41,28 @@ QStringList linesOf(const QString& canonical) {
     return lines;
 }
 
+// НЕВИДИМЫЙ ЗНАК НЕ СЧИТАЕТСЯ ПРАВКОЙ.
+//
+// В заметках владельца встречаются CRLF внутри блоков — например, в исходнике
+// выключной формулы, приехавшей копированием откуда-то ещё. В файле они лежат
+// дословно (текст свят), а вот в ТЕКСТОВОМ виде их не существует: любой
+// плоский виджет превращает CRLF в LF, и человек не видит их и набрать не
+// может. Сравнивай мы как есть — один заход в режим и выход из него
+// переписывали бы каждый такой блок, молча съедая байты.
+//
+// Поэтому для СРАВНЕНИЯ возврат каретки снимается с обеих сторон. Блок,
+// отличающийся только им, оказывается нетронутым — а нетронутое не
+// перекладывается вовсе, и CR в нём остаются жить. Тронутый блок человек
+// перенабрал сам, и там их законно не станет.
+//
+// Число строк от этого не меняется: CR стоит внутри строки (перед LF), а не
+// вместо неё, — значит карта «строка → блок» остаётся верной.
+QString withoutReturns(const QString& text) {
+    QString out = text;
+    out.remove(QLatin1Char('\r'));
+    return out;
+}
+
 // Карта «строка → номер блока». Блок, не давший ни строки, в ней не участвует.
 std::vector<int> blockOfLine(const std::vector<BlockLines>& map, int lineCount) {
     std::vector<int> out(size_t(qMax(0, lineCount)), -1);
@@ -269,7 +291,7 @@ int ZDocument::applySourceText(const QString& text, QTextCursor* caret) {
     // слов, найденное). Сравнение строк — memcmp, дешевле любого сравнения.
     std::vector<BlockLines> mapBefore;
     const QString before = canonicalWithMap(&mapBefore);
-    if (before == after) return 0;
+    if (withoutReturns(before) == withoutReturns(after)) return 0;
 
     // Весь алгоритм стоит на том, что номер блока в карте — это номер
     // QTextBlock. Так оно и есть с тех пор, как код лёг одним блоком; но
@@ -277,8 +299,8 @@ int ZDocument::applySourceText(const QString& text, QTextCursor* caret) {
     const int liveBlocks = d_->text.blockCount();
     if (!mapBefore.empty() && int(mapBefore.size()) != liveBlocks) return -2;
 
-    const QStringList linesBefore = linesOf(before);
-    const QStringList linesAfter = linesOf(after);
+    const QStringList linesBefore = linesOf(withoutReturns(before));
+    const QStringList linesAfter = linesOf(withoutReturns(after));
     const std::vector<int> ofLineBefore = blockOfLine(mapBefore, int(linesBefore.size()));
     const std::vector<int> ofLineAfter = blockOfLine(mapAfter, int(linesAfter.size()));
 
@@ -316,7 +338,7 @@ int ZDocument::applySourceText(const QString& text, QTextCursor* caret) {
         edit.beginEditBlock();
         replaceBlocks(0, 0, fresh);
         edit.endEditBlock();
-        if (toMarkdownText() != after) {
+        if (withoutReturns(toMarkdownText()) != withoutReturns(after)) {
             d_->text.undo();
             return -2;
         }
@@ -471,7 +493,7 @@ int ZDocument::applySourceText(const QString& text, QTextCursor* caret) {
     // действии. Разошлось — ОТКАТЫВАЕМ СВОЮ ЖЕ ПРАВКУ (мы были под одной
     // скобкой, откат точен) и говорим об этом числом: заплатки вида «пересобрать
     // целиком» здесь запрещены, они спрятали бы дефект навсегда.
-    if (toMarkdownText() != after) {
+    if (withoutReturns(toMarkdownText()) != withoutReturns(after)) {
         d_->text.undo();
         return -2;
     }

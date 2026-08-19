@@ -16,11 +16,15 @@
 #include "document.h"
 
 #include "test_util.h"
+#include "testdata.h"
 
+#include <QDir>
+#include <QFile>
 #include <QString>
 #include <QTextBlock>
 #include <QTextCursor>
 
+#include <cstdio>
 #include <string>
 
 namespace {
@@ -43,6 +47,16 @@ QString canonOf(const QString& text) {
     return probe.toMarkdownText();
 }
 
+// СРАВНИВАЕМ БЕЗ ВОЗВРАТА КАРЕТКИ — ровно там же, где его не считает правкой
+// само наложение. CRLF внутри блока человек в тексте не видит и набрать не
+// может; нетронутый блок сохраняет его, а правленый — законно теряет. Инвариант
+// потому и звучит «с точностью до CR», а не «побайтово».
+std::string same(const QString& text) {
+    QString out = text;
+    out.remove(QLatin1Char('\r'));
+    return out.toStdString();
+}
+
 // Один случай матрицы: исходник до, правленый текст, сколько кусков ждём.
 struct Case {
     const char* what;
@@ -62,8 +76,8 @@ void run(const Case& c) {
     ZT_EQ(std::string(c.what) + ": кусков", std::to_string(c.hunks), std::to_string(hunks));
     if (hunks < 0) return;
 
-    ZT_EQ(std::string(c.what) + ": канон совпал", canonOf(edited).toStdString(),
-          doc.toMarkdownText().toStdString());
+    ZT_EQ(std::string(c.what) + ": канон совпал", same(canonOf(edited)),
+          same(doc.toMarkdownText()));
 
     // ОТМЕНА ОДНИМ НАЖАТИЕМ — И МЕРИТЬ ЕЁ НАДО ПОВЕДЕНИЕМ, А НЕ СЧЁТЧИКОМ.
     // QTextDocument::availableUndoSteps() считает КОМАНДЫ, а не группы: у
@@ -84,8 +98,8 @@ void run(const Case& c) {
     ZT_EQ(std::string(c.what) + ": одним нажатием, без остатка", std::to_string(stepsBefore),
           std::to_string(doc.undoSteps()));
     ZT_TRUE(std::string(c.what) + ": возврат сработал", doc.redo());
-    ZT_EQ(std::string(c.what) + ": и вернул правленое", canonOf(edited).toStdString(),
-          doc.toMarkdownText().toStdString());
+    ZT_EQ(std::string(c.what) + ": и вернул правленое", same(canonOf(edited)),
+          same(doc.toMarkdownText()));
 }
 
 const Case kCases[] = {
@@ -131,12 +145,40 @@ const Case kCases[] = {
     {"заметка опустела", "раз\n\nдва\n", "", 1},
     {"пустая заметка наполнилась", "", "раз\n\nдва\n", 1},
 
+    // --- невидимые знаки ---------------------------------------------------
+    //
+    // CRLF внутри блока человек в тексте не видит и набрать не может: плоский
+    // виджет превращает его в LF. Блок, отличающийся ТОЛЬКО этим, обязан
+    // считаться нетронутым — иначе один заход в режим съедал бы байты.
+    {"CRLF внутри формулы — не правка", "$$\\begin{aligned}\r\na=b\r\n\\end{aligned}$$\n",
+     "$$\\begin{aligned}\na=b\n\\end{aligned}$$\n", 0},
+    {"а рядом с настоящей правкой — кусок один",
+     "текст\n\n$$\\begin{aligned}\r\na=b\r\n\\end{aligned}$$\n",
+     "ТЕКСТ\n\n$$\\begin{aligned}\na=b\n\\end{aligned}$$\n", 1},
+
     // --- шапку молча съедать нельзя ----------------------------------------
     {"шапка в тексте отвергается", "раз\n",
      "<!-- zametti\nparent: x\n-->\n\nраз\n", -1},
 };
 
 // Наложить одно и то же дважды: второй раз менять нечего.
+// И ПРЯМО: возврат каретки в НЕТРОНУТОМ блоке обязан уцелеть, а в тронутом —
+// законно исчезнуть. Без этой проверки «с точностью до CR» звучало бы как
+// разрешение их терять.
+void checkReturnsSurvive() {
+    ZDocument doc = noteOf("текст\n\n$$\\begin{aligned}\r\na=b\r\n\\end{aligned}$$\n");
+    ZT_TRUE("CR в заметке есть", doc.toMarkdownText().contains(QLatin1Char('\r')));
+    doc.applySourceText(QStringLiteral("ТЕКСТ\n\n$$\\begin{aligned}\na=b\n\\end{aligned}$$\n"));
+    ZT_TRUE("CR нетронутого блока уцелел", doc.toMarkdownText().contains(QLatin1Char('\r')));
+    ZT_TRUE("а правка легла", doc.toMarkdownText().contains(QStringLiteral("ТЕКСТ")));
+
+    // Тронули сам блок с CR — и он законно ушёл: человек перенабрал строку.
+    ZDocument other = noteOf("$$\\begin{aligned}\r\na=b\r\n\\end{aligned}$$\n");
+    other.applySourceText(QStringLiteral("$$\\begin{aligned}\na=c\n\\end{aligned}$$\n"));
+    ZT_TRUE("в перенабранном блоке CR не осталось",
+            !other.toMarkdownText().contains(QLatin1Char('\r')));
+}
+
 void checkTwice() {
     ZDocument doc = noteOf("раз\n\nдва\n");
     const QString edited = QStringLiteral("раз\n\nДВА\n");
@@ -175,11 +217,44 @@ void checkUntouchedStaysPut() {
             before.back().text != after.back().text);
 }
 
+// НЕПОДВИЖНАЯ ТОЧКА НА ЗАМЕТКАХ ВЛАДЕЛЬЦА: наложить собственный канон — значит
+// не изменить ничего. Это не украшение матрицы, а её основание: режим правки
+// исходника показывает человеку РОВНО toMarkdownText(), и если такой текст,
+// наложенный обратно, что-то меняет, то один заход в режим и выход из него
+// молча переписывают заметку.
+void checkOwnerNotesAreFixedPoints() {
+    const QString dir = zt::TestData::corpus(QStringLiteral("owner-copy"));
+    if (dir.isEmpty()) {
+        std::printf("owner-copy: корпуса нет, неподвижная точка не проверена\n");
+        return;
+    }
+    QDir d(dir);
+    int checked = 0;
+    for (const QString& name : d.entryList({QStringLiteral("*.md")}, QDir::Files, QDir::Name)) {
+        QFile f(d.filePath(name));
+        if (!f.open(QIODevice::ReadOnly)) continue;
+        const QByteArray bytes = f.readAll();
+        ZDocument doc;
+        doc.loadMarkdown(std::string(bytes.constData(), size_t(bytes.size())));
+        const QString canonical = doc.toMarkdownText();
+        const int hunks = doc.applySourceText(canonical);
+        ZT_EQ("свой канон ничего не меняет: " + name.toStdString(), std::string("0"),
+              std::to_string(hunks));
+        if (hunks != 0)
+            ZT_EQ("  и вот чем разошлось: " + name.toStdString(), canonical.toStdString(),
+                  doc.toMarkdownText().toStdString());
+        ++checked;
+    }
+    std::printf("неподвижная точка проверена на %d заметках владельца\n", checked);
+}
+
 }  // namespace
 
 TEST(SourceApply, All) {
     for (const Case& c : kCases) run(c);
     checkTwice();
+    checkReturnsSurvive();
     checkCaretGoesToFirstHunk();
     checkUntouchedStaysPut();
+    checkOwnerNotesAreFixedPoints();
 }
