@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 
 #include <QApplication>
+#include <QTemporaryDir>
 
 int main(int argc, char** argv) {
     // ПЛАТФОРМА — ДО СОЗДАНИЯ ПРИЛОЖЕНИЯ, иначе Qt её уже выбрал.
@@ -28,6 +29,25 @@ int main(int argc, char** argv) {
     // нельзя — иначе приёмочные снимки под Xvfb молча уехали бы в offscreen.
     if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORM"))
         qputenv("QT_QPA_PLATFORM", "offscreen");
+
+    // КОНФИГ ВЛАДЕЛЬЦА НАБОРАМ НЕ ВИДЕН — ПО ПОСТРОЕНИЮ, А НЕ ПО ВЕЗЕНИЮ.
+    //
+    // Настройки — это пожелания владельца, и они меняются: другая гарнитура,
+    // другой кегль, другое сочетание клавиш, пустое сочетание. Набор, увидевший
+    // их, начинает проверять не то, что написано в коде, а то, что сегодня
+    // лежит в ~/.config/zametti/config.json, — и приёмочные снимки вместе с ним.
+    //
+    // Так и было: config_test подменял XDG_CONFIG_HOME временным каталогом, но
+    // ВНУТРИ своего набора и обратно не возвращал, а loadSettings(nullptr) зовут
+    // ещё четверо (backspace_flat, zoom, caret_scale, tidy_fuzz). Наборы идут
+    // одним процессом, порядок задаёт регистрация — то есть «увидит ли набор
+    // настоящий конфиг» решал случай, и решал по-разному для разных фильтров.
+    //
+    // Здесь, рядом с платформой, и безусловно: набору настройки можно, но
+    // только СВОЕЙ копией. Каталог живёт до конца процесса; кому нужен конфиг —
+    // пишет его сюда же (так делает config_test).
+    static QTemporaryDir configHome;
+    qputenv("XDG_CONFIG_HOME", configHome.path().toLocal8Bit());
 
     // QApplication, а не QGuiApplication и не QCoreApplication: он и тот, и
     // другой сразу. Наборов, которым нужны виджеты, больше половины, а платить
@@ -51,6 +71,7 @@ int main(int argc, char** argv) {
         void OnTestStart(const ::testing::TestInfo&) override {
             zt::g_checks = 0;
             zt::g_failures = 0;
+            zt::g_reported = 0;
         }
     };
     ::testing::UnitTest::GetInstance()->listeners().Append(new Reset);

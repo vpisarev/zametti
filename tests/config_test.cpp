@@ -307,7 +307,13 @@ void checkClamping() {
 static int ztRunSuite(int argc, char** argv) {
     (void)argc;
     (void)argv;
+    // СВОЙ каталог настроек, и прежний ВОЗВРАЩАЕТСЯ на выходе. Общий временный
+    // каталог наборам уже дал main (конфиг владельца не виден никому), но этот
+    // набор — единственный, кто настоящие конфиги ПИШЕТ: с отклонениями, с
+    // опечатками, битые. Оставить их соседям нельзя — наборы идут одним
+    // процессом, и loadSettings(nullptr) у четверых читал бы написанное здесь.
     QTemporaryDir home;
+    const QByteArray previousHome = qgetenv("XDG_CONFIG_HOME");
     qputenv("XDG_CONFIG_HOME", home.path().toLocal8Bit());
 
     QCoreApplication::setApplicationName(QStringLiteral("zametti"));
@@ -319,6 +325,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkTablesDefaults();
     checkTablesFromConfig();
 
+    qputenv("XDG_CONFIG_HOME", previousHome);
     return zt::report("config");
 }
 
