@@ -180,7 +180,7 @@ void checkObjectRule() {
         where.objectBelowGap = (mask & 128) != 0;
         where.onGap = (mask & 256) != 0;
         where.toggleKey = true;
-        const ObjectAction action = zametti::actionFor(Qt::Key_Space, Qt::ControlModifier, where);
+        const ObjectAction action = zametti::actionFor(Qt::Key_D, Qt::ControlModifier, where);
         ++cells;
         if (where.hasSelection || !where.onObject)
             ZT_TRUE("переключение вне объекта (или при выделении) — не дело слоя",
@@ -195,8 +195,8 @@ void checkObjectRule() {
     // Без признака сочетания та же клавиша на объекте — ничего.
     ObjectContext on;
     on.onObject = true;
-    ZT_TRUE("Ctrl+Space без признака — не подпись",
-            zametti::actionFor(Qt::Key_Space, Qt::ControlModifier, on) == ObjectAction::None);
+    ZT_TRUE("Ctrl+D без признака — не подпись",
+            zametti::actionFor(Qt::Key_D, Qt::ControlModifier, on) == ObjectAction::None);
 }
 
 }  // namespace

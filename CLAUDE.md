@@ -228,7 +228,7 @@ ZamettiDocument (см. `zametti_qtextdocument_design.md`); история — ж
   `refactor2-tomarkdown-wip`), §9 — план на обсуждение.
   `zametti-refactor2-report2.md` — вторая сессия: подписи картинок (правило
   безымянной подписи и регэксп в конфиге, глаголы `setImageCaption` /
-  `toggleImageCaption`, поле подписи по Enter, Ctrl+Space на картинке прячет
+  `toggleImageCaption`, поле подписи по Enter, Ctrl+D на картинке прячет
   подпись знаком `~`, строчная картинка без подписи получает `image N`).
   `zametti-refactor2-report3.md` — третья сессия: первый переезд классов —
   `ZNote` (заметка: документ + журнал `ZNoteHistory` одним полем + каретка +

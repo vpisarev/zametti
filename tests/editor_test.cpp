@@ -1591,7 +1591,7 @@ void checkLinkDoesNotGrow() {
 }
 
 // Щелчок по рамке при выделении: переключает всё выделенное разом и выделение
-// сохраняет — ровно как Ctrl+Space. А двойной щелчок не должен выделять строку:
+// сохраняет — ровно как Ctrl+D. А двойной щелчок не должен выделять строку:
 // человек метил в чекбокс, а не в слово под ним.
 void checkCheckboxClickWithSelection() {
     const QString path = writeNote(
@@ -1705,7 +1705,7 @@ void checkViewHoldsForEveryOperation() {
     const Probe probes[] = {
         {"Enter", Qt::Key_Return, Qt::NoModifier},
         {"Tab", Qt::Key_Tab, Qt::NoModifier},
-        {"Ctrl+Space", Qt::Key_Space, Qt::ControlModifier},
+        {"Ctrl+D", Qt::Key_D, Qt::ControlModifier},
         {"в нумерованный", Qt::Key_7, Qt::ControlModifier},
         {"в абзац", Qt::Key_0, Qt::ControlModifier | Qt::ShiftModifier},
         {"жирный", Qt::Key_B, Qt::ControlModifier},

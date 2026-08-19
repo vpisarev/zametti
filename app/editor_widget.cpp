@@ -1321,7 +1321,7 @@ void NoteEditor::mousePressEvent(QMouseEvent* event) {
     }
 
     // Щелчок внутри выделения переключает всё выделенное разом и выделение
-    // сохраняет — ровно как Ctrl+Space. Иначе выделить десяток задач и отметить
+    // сохраняет — ровно как Ctrl+D. Иначе выделить десяток задач и отметить
     // их одним движением было бы нельзя.
     const QTextCursor cursor = textCursor();
     const int from = qMin(cursor.anchor(), cursor.position());
@@ -1846,7 +1846,7 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
     // виды: заведи третий вид со своей проверкой — и он забудет либо про
     // запрет, либо про правку (мы уже забывали и то, и другое).
     where.onObject = own.valid();
-    // Сочетание переключения (Ctrl+Space, toggleTaskKey) — настраиваемое, и
+    // Сочетание переключения (Ctrl+D, toggleTaskKey) — настраиваемое, и
     // слой узнаёт его признаком, а не кодом клавиши. Сравнение то же, что у
     // прочих сочетаний в keyPressEvent: Qt сопоставляет с учётом раскладки.
     for (const QKeySequence& keys :
@@ -1939,7 +1939,7 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
             return false;
         }
         case ObjectAction::ToggleCaption: {
-            // Ctrl+Space (toggleTaskKey) на картинке: `~` становится первым
+            // Ctrl+D (toggleTaskKey) на картинке: `~` становится первым
             // знаком подписи, и под снимком её больше не видно
             // (isNonameCaption); то же сочетание снимает знак обратно. У
             // таблицы и формулы подписи нет.

@@ -75,7 +75,7 @@ ObjectAction actionFor(int key, Qt::KeyboardModifiers mods, const ObjectContext&
         if (plain && (key == Qt::Key_Left || key == Qt::Key_Right || key == Qt::Key_Up ||
                       key == Qt::Key_Down))
             return ObjectAction::StepOver;
-        // Сочетание переключения (Ctrl+Space) на объекте — спрятать подпись
+        // Сочетание переключения (Ctrl+D) на объекте — спрятать подпись
         // под ним или вернуть спрятанную. Какое это сочетание, знает
         // вызывающий: оно настраиваемое (см. ObjectContext::toggleKey).
         if (where.toggleKey) return ObjectAction::ToggleCaption;
