@@ -24,6 +24,7 @@
 //   zametti-bench undo          штатный стек отмены: чем именно мы его теряем
 //   zametti-bench paste         цена вставки против размера заметки
 //   zametti-bench inline        строчная формула-объект: посадка, дедупликация
+//   zametti-bench source        цена выхода из режима правки исходника
 
 #include <QApplication>
 
@@ -46,6 +47,7 @@ int ztUndoProbe(int argc, char** argv);
 int ztPasteBench(int argc, char** argv);
 int ztBigBench(int argc, char** argv);
 int ztInlineFormulaProbe(int argc, char** argv);
+int ztSourceBench(int argc, char** argv);
 
 namespace {
 
@@ -56,6 +58,7 @@ struct Bench {
 
 const Bench kBenches[] = {
     {"ir", ztIrBench},
+    {"source", ztSourceBench},
     {"history", ztHistoryBench},
     {"image", ztImageBench},
     {"render", ztRenderBench},

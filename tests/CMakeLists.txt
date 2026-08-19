@@ -170,6 +170,7 @@ add_executable(zametti-bench
     undo_probe.cpp
     paste_bench.cpp
     big_bench.cpp
+    source_bench.cpp
     inline_formula_probe.cpp
 )
 # gtest здесь не ради проверок, а ради макросов ZT_EQ/ZT_TRUE: некоторые

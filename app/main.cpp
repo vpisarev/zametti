@@ -202,6 +202,7 @@ void printHelp() {
         "  Ctrl+/            зачёркнутый\n"
         "  Ctrl+E            код в строке; он же выходит из кавычек при наборе\n"
         "  Ctrl+Shift+E      выделенное в блок кода и обратно в текст\n"
+        "  %s%s  править исходник markdown (и обратно)\n"
         "\n"
         "Файлы:\n"
         "  %s\n"
@@ -224,6 +225,8 @@ void printHelp() {
         padFor(zametti::settings().editor().makeTaskKey()).constData(),
         keysFor(zametti::settings().editor().makeParagraphKey()).constData(),
         padFor(zametti::settings().editor().makeParagraphKey()).constData(),
+        keysFor(zametti::settings().editor().markdownModeKey()).constData(),
+        padFor(zametti::settings().editor().markdownModeKey()).constData(),
         zametti::configPath().toUtf8().constData(),
         zametti::ZAppState::path().toUtf8().constData());
 }

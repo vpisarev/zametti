@@ -264,6 +264,15 @@ ZamettiDocument (см. `zametti_qtextdocument_design.md`); история — ж
   переехали в `NoteView`; `ZSyntaxHighlighterMD` (`doc/syntax_highlighter`) —
   подсветка сырого markdown (секция настроек `markdownHighlighting`), первый шаг
   к режиму правки исходника, сейчас — строки разности.
+  `zametti-refactor2-report8.md` — восьмая сессия: режим правки исходника
+  markdown (кнопка `[M]`, `Ctrl+M`) — `MarkdownEditView` (QPlainTextEdit со своим
+  буфером отмены и подсветкой `ZSyntaxHighlighterMD`), `MarkdownController`,
+  режим живёт в `state.json` и переживает смену заметки; в ядре — `ZDocument::
+  applySourceText` (точечное наложение правленого исходника одним шагом отмены),
+  `sourcePosOf`/`cursorAtSourcePos`, отмена глаголами заметки; сочетания у
+  уровней заголовка сняты (они съедали `Ctrl+Shift+4` у выключной формулы);
+  наборы больше не видят конфиг владельца, счётчик провалов не течёт между
+  ними. §6 — открытые вопросы, §7 — мои ошибки.
   `zametti-brief-inline-formulas.md` — бриф шестой сессии (выполнен ею).
   `zametti-refactor2-report6.md` — шестая сессия: строчные формулы объектом на
   каждое вхождение (посадка AlignBaseline по пробнику `zametti-bench inline`:
