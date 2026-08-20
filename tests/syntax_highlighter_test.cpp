@@ -12,6 +12,7 @@
 #include "document.h"
 #include "settings.h"
 #include "syntax_highlighter.h"
+#include "settings_hook.h"
 #include "test_util.h"
 
 #include <QTextLayout>
@@ -166,6 +167,44 @@ void checkRules() {
     ZT_TRUE("а слова перед ней — нет", !hasProperty(owner, 0, 0, 6, isLink));
 }
 
+// Глубокие заголовки («###» и ниже по умолчанию) — кеглем текста, жирным
+// курсивом; верхние — крупнее. Порог — настройка, и проверяется ДЕЙСТВИЕМ:
+// подняли до 3 — «###» стал крупным.
+void checkDeepHeadings() {
+    const auto isItalic = [](const QTextCharFormat& f) { return f.fontItalic(); };
+    const auto isBold = [](const QTextCharFormat& f) { return f.fontWeight() == QFont::Bold; };
+    const auto hasSize = [](const QTextCharFormat& f) {
+        return f.hasProperty(QTextFormat::FontSizeAdjustment);
+    };
+    const char* md = "# один\n## два\n### три\n#### четыре\n###### шесть\n";
+    {
+        ZT_EQ("по умолчанию крупных уровней два", n(2),
+              n(zametti::settings().markdownHighlighting().largeHeadingLevels()));
+        const ZDocument doc = rawDoc(md);
+        ZT_TRUE("«#» крупный", hasProperty(doc, 0, 2, 6, hasSize));
+        ZT_TRUE("«#» не курсив", !hasProperty(doc, 0, 2, 6, isItalic));
+        ZT_TRUE("«##» крупный", hasProperty(doc, 1, 3, 6, hasSize));
+        ZT_TRUE("«###» кеглем текста", !hasProperty(doc, 2, 4, 7, hasSize));
+        ZT_TRUE("«###» жирный", hasProperty(doc, 2, 4, 7, isBold));
+        ZT_TRUE("«###» курсивом", hasProperty(doc, 2, 4, 7, isItalic));
+        ZT_TRUE("маркер «###» тоже курсивом и жирным",
+                hasProperty(doc, 2, 0, 3, [&](const QTextCharFormat& f) { return isBold(f) && isItalic(f); }));
+        ZT_TRUE("«####» кеглем текста, курсивом", !hasProperty(doc, 3, 5, 11, hasSize) &&
+                                                      hasProperty(doc, 3, 5, 11, isItalic));
+        ZT_TRUE("«######» кеглем текста, курсивом", !hasProperty(doc, 4, 7, 12, hasSize) &&
+                                                        hasProperty(doc, 4, 7, 12, isItalic));
+    }
+    // Порог действует: три крупных уровня — «###» крупный и прямой, «####» нет.
+    zametti::mutableSettingsForTests().markdownHighlighting().setLargeHeadingLevels(3);
+    {
+        const ZDocument doc = rawDoc(md);
+        ZT_TRUE("с порогом 3 «###» крупный", hasProperty(doc, 2, 4, 7, hasSize));
+        ZT_TRUE("и прямой", !hasProperty(doc, 2, 4, 7, isItalic));
+        ZT_TRUE("а «####» по-прежнему курсивом", hasProperty(doc, 3, 5, 11, isItalic));
+    }
+    zametti::mutableSettingsForTests().markdownHighlighting().setLargeHeadingLevels(2);
+}
+
 void checkRemovedLinesSkipped() {
     // База с кодом внутри забора; в слепке средняя строка кода убрана.
     const QStringList base = diff::linesOf(std::string_view(
@@ -252,6 +291,7 @@ void checkComments() {
 
 TEST(SyntaxHighlighter, All) {
     checkRules();
+    checkDeepHeadings();
     checkRemovedLinesSkipped();
     checkIndentedFence();
     checkComments();
