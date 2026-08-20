@@ -26,6 +26,10 @@ ZSyntaxHighlighterMD::ZSyntaxHighlighterMD(QTextDocument* document,
     heading_.setProperty(QTextFormat::FontSizeAdjustment,
                          std::clamp(baseStep + rules_.headingStep(), kFontStepMin, kFontStepMax));
     heading_.setFontWeight(QFont::Bold);
+    // Глубокие заголовки: размер не трогаем вовсе (строка остаётся своего
+    // кегля — у строк разности diffStep), только начертание.
+    headingSmall_.setFontWeight(QFont::Bold);
+    headingSmall_.setFontItalic(true);
     bold_.setFontWeight(QFont::Bold);
     italic_.setFontItalic(true);
 
@@ -150,14 +154,19 @@ void ZSyntaxHighlighterMD::highlightBlock(const QString& text) {
     // Заголовок — вся строка крупнее; маркер `#` — акцентом. (Строка, начатая
     // комментарием, заголовком не считается.)
     if (const QRegularExpressionMatch h = heading_re_.match(text); h.hasMatch() && !taken[0]) {
-        base = heading_;
-        setFormat(0, int(text.size()), heading_);
         int hashes = 0;
-        while (hashes < text.size() && (text[hashes] == QLatin1Char(' ') || text[hashes] == QLatin1Char('#')))
+        int level = 0;
+        while (hashes < text.size() && (text[hashes] == QLatin1Char(' ') || text[hashes] == QLatin1Char('#'))) {
+            if (text[hashes] == QLatin1Char('#')) ++level;
             ++hashes;
-        QTextCharFormat mark = heading_;
+        }
+        // Верхние уровни — крупнее; глубже largeHeadingLevels — кеглем текста,
+        // жирным курсивом.
+        base = level <= rules_.largeHeadingLevels() ? heading_ : headingSmall_;
+        setFormat(0, int(text.size()), base);
+        QTextCharFormat mark = base;
         mark.setForeground(accent_.foreground());
-        setFormat(0, hashes, mark);   // жирный и крупный уже в heading_
+        setFormat(0, hashes, mark);   // начертание уже в base
     }
 
     // Маркер пункта в начале строки (задача, буллет, номер) — акцентом. Что

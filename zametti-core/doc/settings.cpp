@@ -374,7 +374,9 @@ QJsonObject settingsToJson(const ZSettings& a) {
                      {QStringLiteral("link"), colorToString(a.markdownHighlighting().link())},
                      {QStringLiteral("image"), colorToString(a.markdownHighlighting().image())},
                      {QStringLiteral("comment"), colorToString(a.markdownHighlighting().comment())},
-                     {QStringLiteral("headingStep"), a.markdownHighlighting().headingStep()}}},
+                     {QStringLiteral("headingStep"), a.markdownHighlighting().headingStep()},
+                     {QStringLiteral("largeHeadingLevels"),
+                      a.markdownHighlighting().largeHeadingLevels()}}},
         {QStringLiteral("formulas"), formulas},
         {QStringLiteral("images"), images},
         {QStringLiteral("shortcuts"), shortcuts},
@@ -413,6 +415,8 @@ void settingsFromJson(const QJsonObject& root, ZSettings& a) {
     readColor(markdown, "comment", a.markdownHighlighting(), &ZSettings::MarkdownHighlighting::setComment);
     readInt(markdown, "headingStep", a.markdownHighlighting(),
             &ZSettings::MarkdownHighlighting::setHeadingStep);
+    readInt(markdown, "largeHeadingLevels", a.markdownHighlighting(),
+            &ZSettings::MarkdownHighlighting::setLargeHeadingLevels);
 
     const QJsonObject tables = root.value(QStringLiteral("tables")).toObject();
     readReal(tables, "cellPadding", a.tables(), &ZSettings::Tables::setCellPadding);
