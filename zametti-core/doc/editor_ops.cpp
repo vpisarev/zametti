@@ -103,6 +103,28 @@ BlockRange selectedBlocks(const QTextDocument& doc, const QTextCursor& cursor) {
 
 namespace {
 
+// Блоки выделения РОВНО, без поддерева последнего пункта. Tab/Shift+Tab и
+// переключение задачи двигают и меняют только то, что выделено — а без
+// выделения только строку каретки (решение владельца, сессия 9): дети
+// сдвинутого пункта остаются на своём уровне и становятся его братьями, ровно
+// как прочёл бы файл md4c и как ведёт себя режим исходника. Прыжок через
+// уровень при выступе выправляет syncLists — дети прижимаются на уровень.
+// selectedBlocks с поддеревом остаётся у перестановки пунктов (Ctrl+Up/Down
+// носят пункт вместе с вложенными) и у runLocalEdit (диапазон пересборки —
+// надмножество тронутого, так и надо).
+BlockRange selectedBlocksExact(const QTextDocument& doc, const QTextCursor& cursor) {
+    const int start = qMin(cursor.anchor(), cursor.position());
+    const int end = qMax(cursor.anchor(), cursor.position());
+    BlockRange range{doc.findBlock(start).blockNumber(), doc.findBlock(end).blockNumber()};
+    if (end > start && doc.findBlock(end).position() == end && range.last > range.first)
+        --range.last;
+    return range;
+}
+
+}  // namespace
+
+namespace {
+
 // Сдвигает уровень списочных блоков диапазона. Несписочные не трогает: выделение
 // могло зацепить и абзац, и его отступ тут ни при чём.
 void shiftLevels(QTextDocument& doc, BlockRange range, int delta) {
@@ -175,7 +197,7 @@ int levelAbove(const QTextDocument& doc, int number) {
 }  // namespace
 
 static bool indentListItems(QTextDocument& doc, QTextCursor& cursor) {
-    const BlockRange range = selectedBlocks(doc, cursor);
+    const BlockRange range = selectedBlocksExact(doc, cursor);
     const QTextBlock first = doc.findBlockByNumber(range.first);
 
     // Tab на абзаце (объекте, блоке кода) под списком привязывает его к пункту:
@@ -202,7 +224,7 @@ static bool indentListItems(QTextDocument& doc, QTextCursor& cursor) {
 }
 
 static bool outdentListItems(QTextDocument& doc, QTextCursor& cursor) {
-    const BlockRange range = selectedBlocks(doc, cursor);
+    const BlockRange range = selectedBlocksExact(doc, cursor);
     const QTextBlock first = doc.findBlockByNumber(range.first);
 
     // Shift+Tab на втором абзаце (объекте, коде) пункта — на уровень выше; с
@@ -1907,7 +1929,7 @@ static bool uncommentAtBlockStart(QTextDocument& doc, QTextCursor& cursor) {
 }
 
 static bool toggleTaskAtCursor(QTextDocument& doc, QTextCursor& cursor) {
-    const BlockRange range = selectedBlocks(doc, cursor);
+    const BlockRange range = selectedBlocksExact(doc, cursor);
 
     // Направление задаёт первая задача выделения: остальные идут за ней.
     bool found = false;
