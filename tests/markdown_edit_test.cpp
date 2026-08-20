@@ -21,8 +21,12 @@
 #include <QTextBlock>
 #include <QTextEdit>
 #include <QTextCursor>
+#include <QTextLayout>
+#include <QImage>
 
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 
 namespace {
@@ -231,6 +235,65 @@ void checkCodePlate() {
     rig.controller.leave();
 }
 
+// ПЛАШКА ПОД ПЕРЕНЕСЁННЫМИ СТРОКАМИ (нашёл владелец): длинная строка кода в
+// узком окне ложится в две-три визуальные строки, и полосу получала только
+// первая — остальные шли на подложке обычного текста. Спрашивается пикселем на
+// второй визуальной строке у правого края колонки, а не числом полос: число
+// можно набрать и неверно.
+void checkCodePlateWrapped() {
+    const QString longLine =
+        QStringLiteral("int veryLongIdentifierNumberOne = anotherVeryLongIdentifier + "
+                       "yetAnotherLongIdentifier * theLastLongIdentifierOfThisLine;");
+    const QString path = writeNote(
+        QStringLiteral("плашка-перенос.md"),
+        QStringLiteral("текст\n\n```cpp\n") + longLine + QStringLiteral("\n```\n\nхвост\n"));
+    Rig rig;
+    rig.view.resize(420, 400);
+    rig.editor.openFile(path);
+    QTest::qWait(20);
+    ZT_TRUE("вошли", rig.controller.enter());
+    QTest::qWait(40);
+
+    const QTextBlock code = rig.view.document()->findBlockByNumber(3);
+    ZT_EQ("это та самая строка кода", longLine.toStdString(), code.text().toStdString());
+    const int lines = code.layout() != nullptr ? code.layout()->lineCount() : 0;
+    ZT_TRUE("строка кода перенесена (визуальных строк больше одной)", lines > 1);
+    if (lines < 2) return;
+
+    const QImage shot = rig.view.viewport()->grab().toImage();
+    const QColor page = zametti::settings().style().pageBackground();
+    const auto close = [](const QColor& x, const QColor& y) {
+        return std::abs(x.red() - y.red()) <= 2 && std::abs(x.green() - y.green()) <= 2 &&
+               std::abs(x.blue() - y.blue()) <= 2;
+    };
+    // Первая визуальная строка плашку имела всегда (набор checkCodePlate) — она
+    // и есть образец цвета; остальные обязаны совпасть с ней и отличаться от
+    // страницы. Точный состав плашки не вычисляем: смешение у Qt своё.
+    QColor sample;
+    for (int i = 0; i < lines; ++i) {
+        const QTextLine line = code.layout()->lineAt(i);
+        // Геометрия визуальной строки — через публичный cursorRect её начала
+        // (cursorRect конца у перенесённой строки отдаёт уже начало следующей).
+        // Сразу за естественной шириной текста букв нет: там либо плашка, либо
+        // страница.
+        QTextCursor head(rig.view.document());
+        head.setPosition(code.position() + line.textStart());
+        const QRect headRect = rig.view.cursorRect(head);
+        const int x = qMin(shot.width() - 2, int(headRect.left() + line.naturalTextWidth()) + 3);
+        const QColor pixel = shot.pixelColor(QPoint(x, headRect.center().y()));
+        if (i == 0) {
+            sample = pixel;
+            ZT_TRUE("первая визуальная строка блока кода лежит на плашке (не на странице)",
+                    !close(pixel, page));
+            continue;
+        }
+        ZT_TRUE("визуальная строка " + std::to_string(i) + " блока кода лежит на той же плашке",
+                close(pixel, sample) && !close(pixel, page));
+    }
+    rig.view.grab().save(QDir(g_dir).filePath(QStringLiteral("плашка-кода-перенос.png")));
+    rig.controller.leave();
+}
+
 // МАСШТАБ РЕЖИМА — СВОЙ, и это проверяется в обе стороны: клавиши в исходнике
 // не трогают обычный вид, клавиши в обычном виде не трогают исходник.
 void checkOwnZoom() {
@@ -333,5 +396,6 @@ TEST(MarkdownEdit, All) {
     checkHeaderRefused();
     checkOwnZoom();
     checkCodePlate();
+    checkCodePlateWrapped();
     checkOwnerNote();
 }
