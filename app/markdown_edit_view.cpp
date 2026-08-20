@@ -11,6 +11,7 @@
 #include <QScrollBar>
 #include <QTextBlock>
 #include <QTextCursor>
+#include <QTextLayout>
 
 #include <algorithm>
 
@@ -273,11 +274,22 @@ void MarkdownEditView::refreshOverlays() {
             (block.previous().isValid() &&
              ZSyntaxHighlighterMD::inFence(block.previous().userState()));
         if (!inFence) continue;
-        QTextEdit::ExtraSelection band;
-        band.cursor = QTextCursor(block);
-        band.format.setBackground(plate);
-        band.format.setProperty(QTextFormat::FullWidthSelection, true);
-        shown.push_back(band);
+        // ПОЛОСА НА КАЖДУЮ ВИЗУАЛЬНУЮ СТРОКУ, а не на блок: выделение без
+        // диапазона с FullWidthSelection Qt красит ровно ту визуальную строку,
+        // где стоит позиция курсора. Длинная строка кода в узком окне
+        // переносится — и её хвосты шли на подложке обычного текста (нашёл
+        // владелец). Видимые блоки у QPlainTextEdit свёрстаны всегда.
+        const QTextLayout* layout = block.layout();
+        const int lines = layout != nullptr ? qMax(1, layout->lineCount()) : 1;
+        for (int i = 0; i < lines; ++i) {
+            QTextEdit::ExtraSelection band;
+            band.cursor = QTextCursor(block);
+            if (layout != nullptr && i < layout->lineCount())
+                band.cursor.setPosition(block.position() + layout->lineAt(i).textStart());
+            band.format.setBackground(plate);
+            band.format.setProperty(QTextFormat::FullWidthSelection, true);
+            shown.push_back(band);
+        }
     }
 
     // 2. НАЙДЕННОЕ — поверх плашки, тоже только видимое.
