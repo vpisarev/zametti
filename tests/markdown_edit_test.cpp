@@ -11,10 +11,12 @@
 #include "markdown_edit_view.h"
 #include "pieces.h"
 
+#include "keys.h"
 #include "test_util.h"
 #include "testdata.h"
 
 #include <QApplication>
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QTest>
@@ -384,6 +386,180 @@ void checkOwnerNote() {
     std::printf("снимки режима: %s\n", g_dir.toUtf8().constData());
 }
 
+
+// --- КЛАВИШИ РЕЖИМА: ТАБЛИЦА КРАЁВ ------------------------------------------
+//
+// Enter продолжает пункт (и выходит из списка на пустом), иначе держит отступ;
+// Shift+Enter продолжает пункт строкой содержимого; Tab/Shift+Tab двигают
+// пункт под соседа / на родителя, вне списка — пробелы до стопа; Ctrl+D
+// (toggleTaskKey) переключает задачи строк. Каждый случай — одно нажатие, и
+// ОДИН undo обязан вернуть исходный текст: правило = один шаг отмены.
+//
+// Текст случая — «|» это каретка (ровно одна), «[» и «]» — концы выделения
+// (тогда «|» не нужна: каретка в «]», якорь в «[»).
+struct KeyCase {
+    const char* before;   // с «|» или «[…]»
+    const char* key;      // "Enter", "Shift+Enter", "Tab", "Shift+Tab", "Task"
+    const char* after;    // с «|» — где каретка должна оказаться
+    const char* what;
+};
+
+const KeyCase kKeyCases[] = {
+    // Enter на пункте
+    {"- foo|", "Enter", "- foo\n- |", "буллет продолжается буллетом"},
+    {"- fo|o", "Enter", "- fo\n- |o", "хвост уезжает в новый пункт"},
+    {"- |foo", "Enter", "- \n- |foo", "каретка в начале содержимого — пустой пункт над"},
+    {"-| foo", "Enter", "-\n| foo", "каретка внутри маркера — простой перенос"},
+    {"|- foo", "Enter", "\n|- foo", "каретка в начале строки — строка уезжает"},
+    {"- |", "Enter", "|", "пустой пункт — из списка вон"},
+    {"  - |", "Enter", "|", "пустой вложенный пункт — строка пустеет целиком"},
+    {"- [ ] |", "Enter", "|", "пустая задача — тоже"},
+    {"- [x] done|", "Enter", "- [x] done\n- [ ] |", "задача продолжается незакрытой"},
+    {"-[x] done|", "Enter", "-[x] done\n- [ ] |", "краткая задача — продолжение каноничное"},
+    {"* [ ] a|", "Enter", "* [ ] a\n* [ ] |", "звёздочка остаётся звёздочкой"},
+    {"1. a|", "Enter", "1. a\n2. |", "номер растёт"},
+    {"10. a|", "Enter", "10. a\n11. |", "двузначный номер"},
+    {"7) a|", "Enter", "7) a\n8) |", "скобка остаётся скобкой"},
+    {"  - a|", "Enter", "  - a\n  - |", "отступ пробелами копируется"},
+    {"\t- a|", "Enter", "\t- a\n\t- |", "отступ табом копируется дословно"},
+    {"- a\n  * b|", "Enter", "- a\n  * b\n  * |", "свой знак буллета, не родительский"},
+    {"-|", "Enter", "-\n|", "дефис без пробела — не пункт"},
+    // Enter вне пункта
+    {"    code|", "Enter", "    code\n    |", "автоотступ"},
+    {"  |  - a", "Enter", "  \n  |  - a", "каретка в отступе — отступ обрезан по каретке"},
+    {"```\n- a|\n```", "Enter", "```\n- a\n|\n```", "в заборе пункт — код: простой перенос"},
+    {"- a\n  ```\n  int x;|\n  ```", "Enter", "- a\n  ```\n  int x;\n  |\n  ```", "в заборе — автоотступ"},
+    {"- fo[o\n- b]ar", "Enter", "- fo\n- |ar", "выделение снимается, правило по получившейся строке"},
+    {"# T|", "Enter", "# T\n|", "заголовок — обычный перенос"},
+    // Shift+Enter
+    {"- foo|", "Shift+Enter", "- foo\n  |", "продолжение пункта под содержимым"},
+    {"- fo|o", "Shift+Enter", "- fo\n  |o", "хвост уезжает на строку содержимого"},
+    {"10. foo|", "Shift+Enter", "10. foo\n    |", "колонка содержимого номера — 4"},
+    {"- [ ] foo|", "Shift+Enter", "- [ ] foo\n  |", "у задачи — 2, чекбокс не в счёт"},
+    {"- foo\n  bar|", "Shift+Enter", "- foo\n  bar\n  |", "продолжение продолжения"},
+    {"- a\n  - b\n    c|", "Shift+Enter", "- a\n  - b\n    c\n    |", "продолжение вложенного"},
+    {"para|", "Shift+Enter", "para\n|", "вне списка — как Enter"},
+    {"- a\n\npara|", "Shift+Enter", "- a\n\npara\n|", "абзац после списка — список кончился"},
+    {"|- foo", "Shift+Enter", "\n|- foo", "перед маркером — простой перенос"},
+    // Tab
+    {"- a\n- b|", "Tab", "- a\n  - b|", "пункт уходит под соседа"},
+    {"- a|", "Tab", "- a|", "первый пункт — некуда"},
+    {"- a\n  - b|", "Tab", "- a\n  - b|", "первый ребёнок — некуда"},
+    {"- a\n  - a1\n- b|", "Tab", "- a\n  - a1\n  - b|", "более глубокие пропускаются"},
+    {"- a\n  - a1\n  - a2|", "Tab", "- a\n  - a1\n    - a2|", "вложенный под вложенного"},
+    {"1. a\n2. b|", "Tab", "1. a\n   2. b|", "под номер — три пробела"},
+    {"- [ ] a\n- [ ] b|", "Tab", "- [ ] a\n  - [ ] b|", "под задачу — два, не шесть"},
+    {"\t- a\n\t- b|", "Tab", "\t- a\n\t  - b|", "таб соседа — дословно, плюс два пробела"},
+    {"- a\n\n- b|", "Tab", "- a\n\n  - b|", "пустая строка между — не помеха"},
+    {"- a\n  text\n- b|", "Tab", "- a\n  text\n  - b|", "содержимое пункта выше пропускается"},
+    {"- a\n\npara\n\n- b|", "Tab", "- a\n\npara\n\n- b|", "абзац между — списки разные, некуда"},
+    {"- a\n- |b", "Tab", "- a\n  - |b", "каретка на знаке содержимого остаётся на нём"},
+    {"|- a\n- b", "Tab", "|- a\n- b", "первый пункт с кареткой в начале — некуда"},
+    {"foo|", "Tab", "foo |", "вне списка — пробелы до стопа (колонка 3 → 4)"},
+    {"fo|", "Tab", "fo  |", "до стопа — два пробела с колонки 2"},
+    {"```\n- a|\n```", "Tab", "```\n- a |\n```", "в заборе пункт — код, пробелы до стопа"},
+    // Shift+Tab
+    {"- a\n  - b|", "Shift+Tab", "- a\n- b|", "на отступ родителя"},
+    {"- a\n  - b\n    - c|", "Shift+Tab", "- a\n  - b\n  - c|", "на отступ родителя, не в ноль"},
+    {"- b|", "Shift+Tab", "- b|", "нулевой отступ — ничего"},
+    {"  - b|", "Shift+Tab", "- b|", "родителя нет — в ноль"},
+    {"    foo|", "Shift+Tab", "foo|", "вне списка — снять до стопа"},
+    // Выделение в несколько строк: единый сдвиг по первой строке
+    {"- a\n[- b\n  - c]", "Tab", "- a\n[  - b\n    - c]", "выделение: дельта первой строки-пункта всем"},
+    {"[foo\nbar]", "Tab", "[    foo\n    bar]", "выделение вне списка — по стопу"},
+    {"[    foo\n\n    bar]", "Shift+Tab", "[foo\n\nbar]", "выделение: пустая строка не трогается"},
+    // Ctrl+D
+    {"- [ ] a|", "Task", "- [x] a|", "задача отмечается"},
+    {"- [x] a|", "Task", "- [ ] a|", "и снимается"},
+    {"- [X] a|", "Task", "- [ ] a|", "заглавная тоже снимается"},
+    {"-[ ] a|", "Task", "-[x] a|", "краткая запись сохраняется"},
+    {"- a|", "Task", "- a|", "буллет — ничего"},
+    {"para|", "Task", "para|", "абзац — ничего"},
+    {"1. [ ] a|", "Task", "1. [ ] a|", "чекбокс у номера — текст, ничего"},
+    {"[- [ ] a\n- [x] b\n- c\n- [ ] d]", "Task", "[- [x] a\n- [x] b\n- c\n- [x] d]", "выделение: первая задача задаёт направление"},
+    {"[para\n- [x] b\n- [ ] c]", "Task", "[para\n- [ ] b\n- [ ] c]", "направление от первой ЗАДАЧИ, не первой строки"},
+    {"```\n- [ ] a|\n```", "Task", "```\n- [ ] a|\n```", "в заборе — код, ничего"},
+};
+
+// Разбор «|» / «[…]»: возвращает чистый текст и позиции.
+struct Marked {
+    QString text;
+    int anchor = -1;
+    int caret = -1;
+};
+
+// Выделение размечается иначе, чтобы не путаться с чекбоксами: «[» и «]» стоят
+// ТОЛЬКО в случаях, где чекбоксов в этих местах нет; распознаём так: если в
+// строке есть «|» — выделения нет; иначе первая «[» — якорь, последняя «]» —
+// каретка.
+Marked markedOf(const char* raw) {
+    const QString src = QString::fromUtf8(raw);
+    Marked m;
+    if (src.contains(QLatin1Char('|'))) {
+        for (const QChar c : src) {
+            if (c == QLatin1Char('|')) { m.caret = int(m.text.size()); continue; }
+            m.text.append(c);
+        }
+        return m;
+    }
+    const int open = int(src.indexOf(QLatin1Char('[')));
+    const int close = int(src.lastIndexOf(QLatin1Char(']')));
+    for (int i = 0; i < src.size(); ++i) {
+        if (i == open) { m.anchor = int(m.text.size()); continue; }
+        if (i == close) { m.caret = int(m.text.size()); continue; }
+        m.text.append(src.at(i));
+    }
+    return m;
+}
+
+void checkKeyCases() {
+    const QString path = writeNote(QStringLiteral("клавиши.md"), QStringLiteral("x\n"));
+    Rig rig;
+    rig.editor.openFile(path);
+    QTest::qWait(20);
+    ZT_TRUE("вошли", rig.controller.enter());
+
+    for (const KeyCase& c : kKeyCases) {
+        const Marked before = markedOf(c.before);
+        const Marked after = markedOf(c.after);
+        const std::string what = std::string(c.what) + " [" + c.key + " на «" + c.before + "»]";
+        rig.view.showSource(before.text, {0, 0, true});
+        QCoreApplication::processEvents();   // подсветчик — состояния заборов
+        QTextCursor at(rig.view.document());
+        at.setPosition(before.anchor >= 0 ? before.anchor : before.caret);
+        if (before.anchor >= 0) at.setPosition(before.caret, QTextCursor::KeepAnchor);
+        rig.view.setTextCursor(at);
+
+        const std::string key = c.key;
+        if (key == "Enter") QTest::keyClick(&rig.view, Qt::Key_Return);
+        else if (key == "Shift+Enter") QTest::keyClick(&rig.view, Qt::Key_Return, Qt::ShiftModifier);
+        else if (key == "Tab") QTest::keyClick(&rig.view, Qt::Key_Tab);
+        else if (key == "Shift+Tab") QTest::keyClick(&rig.view, Qt::Key_Backtab);
+        else if (key == "Task") {
+            ZT_TRUE(what + ": у переключения задачи есть сочетание",
+                    zt::pressKey(&rig.view, zametti::settings().editor().toggleTaskKey()));
+        }
+        QCoreApplication::processEvents();
+
+        ZT_EQ(what + ": текст", after.text.toStdString(), rig.view.source().toStdString());
+        const QTextCursor got = rig.view.textCursor();
+        ZT_EQ(what + ": каретка", std::to_string(after.caret), std::to_string(got.position()));
+        if (after.anchor >= 0)
+            ZT_EQ(what + ": якорь", std::to_string(after.anchor), std::to_string(got.anchor()));
+
+        // Один шаг отмены — или нуль шагов, если ничего не менялось.
+        if (after.text != before.text) {
+            rig.view.undo();
+            ZT_EQ(what + ": один undo вернул текст", before.text.toStdString(),
+                  rig.view.source().toStdString());
+        } else {
+            ZT_TRUE(what + ": ничего не менялось — и отменять нечего",
+                    !rig.view.document()->isUndoAvailable());
+        }
+    }
+    rig.controller.leave();
+}
+
 }  // namespace
 
 TEST(MarkdownEdit, All) {
@@ -397,5 +573,6 @@ TEST(MarkdownEdit, All) {
     checkOwnZoom();
     checkCodePlate();
     checkCodePlateWrapped();
+    checkKeyCases();
     checkOwnerNote();
 }
