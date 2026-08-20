@@ -22,6 +22,8 @@
 
 #include "document.h"
 
+#include <QKeySequence>
+#include <QList>
 #include <QPlainTextEdit>
 
 #include <memory>
@@ -79,13 +81,18 @@ protected:
     // Поля вьюпорта: колонка исходника не растягивается на всю ширину широкого
     // окна (просьба владельца), а стоит посередине, как в обычном виде.
     void resizeEvent(QResizeEvent* event) override;
-    // Tab заполняет ПРОБЕЛАМИ до ближайшего стопа (editor.codeTabWidth), а не
-    // ставит знак табуляции: таб в markdown значим (в начале строки это блок
-    // кода с отступом), и набирать его случайно нельзя. Shift+Tab снимает до
-    // предыдущего стопа; на выделении из нескольких строк оба двигают строки.
+    // Клавиши режима (см. раздел «клавиши» в .cpp): Enter продолжает пункт
+    // списка и держит отступ, Shift+Enter продолжает пункт строкой содержимого,
+    // Tab/Shift+Tab двигают пункт (вне списка — пробелы до стопа, не знак
+    // табуляции: таб в markdown значим), toggleTaskKey переключает задачу,
+    // Esc просит выйти. Всё — правки текста, по одному шагу отмены.
     void keyPressEvent(QKeyEvent* event) override;
 
 private:
+    void pressEnter(bool shift);
+    void pressTab(bool back);
+    void toggleTasks();
+
     // ПОДСВЕТКИ ОДНИМ СПИСКОМ. У QPlainTextEdit extraSelections один на всех, и
     // держать их порознь нельзя: кто поставит вторым, сотрёт первого. Плашки
     // блоков кода и найденное собираются вместе — и только по ВИДИМОМУ.
@@ -93,6 +100,7 @@ private:
     void applyContentWidth();
 
     std::shared_ptr<ZSyntaxHighlighterMD> highlighter_;
+    QList<QKeySequence> toggleTaskKeys_;
     qreal zoom_ = 1.0;
     int viewportMargin_ = 0;
     // Найденное — позициями в плоском тексте; текущее — номер в этом списке.

@@ -1,5 +1,7 @@
 #include "markdown_edit_view.h"
 
+#include "key_binding.h"
+#include "list_line.h"
 #include "note_view.h"          // applyPalette — палитра у всех видов одна
 #include "syntax_highlighter.h"
 
@@ -14,6 +16,8 @@
 #include <QTextLayout>
 
 #include <algorithm>
+#include <utility>
+#include <vector>
 
 namespace zametti {
 
@@ -47,6 +51,11 @@ void MarkdownEditView::refreshAppearance() {
     highlighter_ = std::make_shared<ZSyntaxHighlighterMD>(
         document(), settings().markdownHighlighting(), 0);
     highlighter_->rehighlight();
+
+    // Сочетание переключения задачи — из настроек, списком, тем же разборщиком,
+    // что у обычного вида (key_binding.h); разбирается здесь, а не на каждое
+    // нажатие.
+    toggleTaskKeys_ = keySequencesOf(settings().editor().toggleTaskKey());
 
     applyZoom(zoom_);   // шрифт, стоп табуляции и поля — одним местом
 }
@@ -128,6 +137,13 @@ SourcePos MarkdownEditView::caretPos() const {
 }
 
 // --- клавиши ---------------------------------------------------------------
+//
+// ПРАВИЛА — НАД ТЕКСТОМ, и только над ним: заметка в режиме правку не
+// принимает, истина живёт в тексте вида. Что такое «строка пункта», решает
+// parseListLine (list_line.h) — то же правило, которым подсветчик красит
+// маркер. Всё, что надо знать о строках, узнаётся ДО скобки отмены: состояния
+// блоков (в заборе ли) подсветчик перечитывает только на внешнем endEditBlock,
+// и внутри скобки они устарели. Каждое нажатие — одна скобка, один шаг отмены.
 
 namespace {
 
@@ -150,6 +166,93 @@ LineSpan spanOf(const QTextCursor& at) {
     return span;
 }
 
+// Строка внутри забора кода — и сам забор, открывающий и закрывающий. Тот же
+// признак, которым кладётся плашка.
+bool isCodeLine(const QTextBlock& block) {
+    return ZSyntaxHighlighterMD::inFence(block.userState()) ||
+           (block.previous().isValid() && ZSyntaxHighlighterMD::inFence(block.previous().userState()));
+}
+
+// Пункт ли эта строка. Внутри кода пунктов не бывает, как бы строка ни
+// выглядела: «- a» в заборе — это код.
+ListLine itemOf(const QTextBlock& block, int stop) {
+    if (!block.isValid() || isCodeLine(block)) return {};
+    return parseListLine(block.text(), stop);
+}
+
+int indentColumnOf(const QTextBlock& block, int stop) {
+    const QString text = block.text();
+    return columnOf(text, leadingWhitespace(text), stop);
+}
+
+// Отступ строки знаками — дословно, табы вместе с пробелами.
+QString indentStringOf(const QTextBlock& block) {
+    const QString text = block.text();
+    return text.left(leadingWhitespace(text));
+}
+
+// Отступ, которым пункт встаёт ПОД этот пункт: его отступ дословно плюс пробелы
+// до его колонки содержимого. Дословно — чтобы чужие табы остались табами.
+QString childIndentOf(const QTextBlock& parent, const ListLine& item) {
+    return indentStringOf(parent) + QString(qMax(0, item.contentColumn - item.indent), QLatin1Char(' '));
+}
+
+// Предыдущий пункт ТОГО ЖЕ отступа — сосед, под которого пункт уходит по Tab.
+// Пустые строки и более глубокие пункты пропускаются; более мелкий пункт
+// (мы — первый ребёнок) или чужой текст не глубже нашего (список кончился) —
+// соседа нет.
+QTextBlock siblingAbove(const QTextBlock& block, const ListLine& mine, int stop) {
+    for (QTextBlock b = block.previous(); b.isValid(); b = b.previous()) {
+        if (isBlankLine(b.text())) continue;
+        const ListLine other = itemOf(b, stop);
+        if (other.item) {
+            if (other.indent == mine.indent) return b;
+            if (other.indent < mine.indent) return {};
+            continue;
+        }
+        if (indentColumnOf(b, stop) <= mine.indent) return {};
+    }
+    return {};
+}
+
+// Ближайший пункт выше с МЕНЬШИМ отступом — родитель; на его отступ пункт
+// выходит по Shift+Tab. Нет — выходит на нулевой.
+QTextBlock parentAbove(const QTextBlock& block, const ListLine& mine, int stop) {
+    for (QTextBlock b = block.previous(); b.isValid(); b = b.previous()) {
+        if (isBlankLine(b.text())) continue;
+        const ListLine other = itemOf(b, stop);
+        if (other.item && other.indent < mine.indent) return b;
+    }
+    return {};
+}
+
+// Пункт, который продолжает Shift+Enter: ближайший пункт на строке каретки или
+// выше, не глубже неё. Чужой текст мельче строки по дороге — список кончился,
+// продолжать нечего. Пустая строка каретки смотрит на предыдущую непустую.
+struct Continuation {
+    bool found = false;
+    QString indent;   // отступ новой строки — до колонки содержимого пункта
+};
+
+Continuation continuationOf(const QTextBlock& block, int stop) {
+    QTextBlock ref = block;
+    while (ref.isValid() && isBlankLine(ref.text())) ref = ref.previous();
+    if (!ref.isValid()) return {};
+    const int refIndent = indentColumnOf(ref, stop);
+    for (QTextBlock b = ref; b.isValid(); b = b.previous()) {
+        if (isBlankLine(b.text())) continue;
+        const ListLine other = itemOf(b, stop);
+        if (other.item) {
+            if (other.indent > refIndent) continue;
+            // Продолжать можно сам пункт или то, что лежит в его содержимом.
+            if (b != ref && refIndent < other.contentColumn) return {};
+            return {true, childIndentOf(b, other)};
+        }
+        if (indentColumnOf(b, stop) < refIndent) return {};
+    }
+    return {};
+}
+
 }  // namespace
 
 void MarkdownEditView::keyPressEvent(QKeyEvent* event) {
@@ -159,51 +262,237 @@ void MarkdownEditView::keyPressEvent(QKeyEvent* event) {
         return;
     }
 
-    const int stop = qMax(1, settings().editor().codeTabWidth());
-    const bool tab = event->key() == Qt::Key_Tab && event->modifiers() == Qt::NoModifier;
-    const bool backtab = event->key() == Qt::Key_Backtab ||
-                         (event->key() == Qt::Key_Tab && event->modifiers() == Qt::ShiftModifier);
-    if (!tab && !backtab) {
-        QPlainTextEdit::keyPressEvent(event);
-        return;
-    }
-
-    QTextCursor at = textCursor();
-    const LineSpan span = spanOf(at);
-    const bool manyLines = span.last > span.first;
-
-    // ОДНА СТРОКА И БЕЗ ВЫДЕЛЕНИЯ — Tab это ОТСТУП ДО СТОПА, а не четыре
-    // пробела: набранное должно вставать в колонку, а не рядом с ней.
-    if (tab && !manyLines && !at.hasSelection()) {
-        const int column = at.position() - at.block().position();
-        at.insertText(QString(stop - column % stop, QLatin1Char(' ')));
-        setTextCursor(at);
+    const Qt::KeyboardModifiers mods = event->modifiers() & ~Qt::KeypadModifier;
+    const bool enter = event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter;
+    if (enter && (mods == Qt::NoModifier || mods == Qt::ShiftModifier)) {
+        pressEnter(mods == Qt::ShiftModifier);
         event->accept();
         return;
     }
 
-    // Много строк (или Shift+Tab) — двигаем строки целиком, одним шагом отмены.
+    const bool tab = event->key() == Qt::Key_Tab && event->modifiers() == Qt::NoModifier;
+    const bool backtab = event->key() == Qt::Key_Backtab ||
+                         (event->key() == Qt::Key_Tab && event->modifiers() == Qt::ShiftModifier);
+    if (tab || backtab) {
+        pressTab(backtab);
+        event->accept();   // наружу Tab не отдаём: Shift+Tab увёл бы фокус
+        return;
+    }
+
+    if (keyEventMatchesAny(*event, toggleTaskKeys_)) {
+        toggleTasks();
+        event->accept();
+        return;
+    }
+
+    QPlainTextEdit::keyPressEvent(event);
+}
+
+// ENTER: пункт продолжается пунктом (пустой пункт — выходит из списка), всё
+// остальное — переносом с отступом строки. SHIFT+ENTER: продолжение пункта —
+// новая строка под первым знаком содержимого; вне списка — как Enter.
+void MarkdownEditView::pressEnter(bool shift) {
+    const int stop = qMax(1, settings().editor().codeTabWidth());
+    QTextCursor at = textCursor();
+    const int from = qMin(at.anchor(), at.position());
+    const int to = qMax(at.anchor(), at.position());
+    const QTextBlock block = document()->findBlock(from);
+    const QTextBlock endBlock = document()->findBlock(to);
+    const int column = from - block.position();
+    // Строка, какой она станет после удаления выделения: голова до каретки и
+    // хвост за концом выделения. Правила смотрят на неё, а не на нынешнюю.
+    const QString line = block.text().left(column) + endBlock.text().mid(to - endBlock.position());
+    const bool code = isCodeLine(block);
+    const ListLine item = code ? ListLine{} : parseListLine(line, stop);
+
+    QString insert;
+    bool clearLine = false;
+    if (!shift && item.item && column >= item.contentStart) {
+        if (item.emptyBody)
+            clearLine = true;   // пустой пункт + Enter — из списка вон
+        else
+            insert = QLatin1Char('\n') + line.left(item.indentChars) + nextMarker(item);
+    } else {
+        Continuation cont;
+        // Shift+Enter продолжает пункт, если каретка стоит в его содержимом (не
+        // в отступе и не в маркере) и строка не код.
+        if (shift && !code && column >= leadingWhitespace(line) &&
+            (!item.item || column >= item.contentStart))
+            cont = continuationOf(block, stop);
+        if (cont.found) {
+            insert = QLatin1Char('\n') + cont.indent;
+        } else {
+            // Автоотступ: отступ строки, обрезанный по каретке — в колонке 0
+            // строка просто уезжает вниз.
+            const int lead = leadingWhitespace(line);
+            insert = QLatin1Char('\n') + line.left(qMin(lead, column));
+        }
+    }
+
+    at.beginEditBlock();
+    if (at.hasSelection()) at.removeSelectedText();
+    if (clearLine) {
+        at.movePosition(QTextCursor::StartOfBlock);
+        at.movePosition(QTextCursor::EndOfBlock, QTextCursor::KeepAnchor);
+        at.removeSelectedText();
+    } else {
+        at.insertText(insert);
+    }
+    at.endEditBlock();
+    setTextCursor(at);
+    ensureCursorVisible();
+}
+
+// TAB / SHIFT+TAB. На строке пункта (без выделения в несколько строк) — сам
+// пункт: под предыдущего соседа того же отступа / на отступ родителя. В коде и
+// вне списков — пробелы до стопа в месте каретки / снять до стопа. Выделение в
+// несколько строк — единый сдвиг, дельту задаёт ПЕРВАЯ строка (как
+// indentListItems решает по первому блоку): пункт — по своему правилу, иначе
+// стоп; пустые строки не трогаются, табы чужого отступа не трогаются.
+void MarkdownEditView::pressTab(bool back) {
+    const int stop = qMax(1, settings().editor().codeTabWidth());
+    QTextCursor at = textCursor();
+    const LineSpan span = spanOf(at);
+    const bool manyLines = span.last > span.first;
+    const QTextBlock first = document()->findBlockByNumber(span.first);
+    const ListLine item = itemOf(first, stop);
+
+    // Новый отступ первой строки-пункта по правилу списка; пусто в newIndent при
+    // !listMove — правило не применимо (не пункт) или отказало.
+    bool listMove = false;
+    bool refused = false;
+    QString newIndent;
+    if (item.item) {
+        listMove = true;
+        if (!back) {
+            const QTextBlock sibling = siblingAbove(first, item, stop);
+            if (!sibling.isValid()) refused = true;
+            else newIndent = childIndentOf(sibling, itemOf(sibling, stop));
+        } else {
+            if (item.indent == 0) refused = true;
+            else {
+                const QTextBlock parent = parentAbove(first, item, stop);
+                newIndent = parent.isValid() ? indentStringOf(parent) : QString();
+            }
+        }
+    }
+    if (listMove && refused) return;
+
+    // ОДНА СТРОКА, НЕ ПУНКТ: Tab — отступ до стопа в месте каретки (набранное
+    // встаёт в колонку), Shift+Tab — снять до стопа ведущих пробелов.
+    if (!manyLines && !listMove) {
+        if (!back) {
+            if (at.hasSelection()) at.removeSelectedText();
+            const int column = at.position() - at.block().position();
+            at.insertText(QString(stop - column % stop, QLatin1Char(' ')));
+            setTextCursor(at);
+            return;
+        }
+        const QTextBlock line = at.block();
+        const QString text = line.text();
+        int drop = 0;
+        while (drop < stop && drop < text.size() && text.at(drop) == QLatin1Char(' ')) ++drop;
+        if (drop == 0) return;
+        QTextCursor edit(line);
+        edit.setPosition(line.position() + drop, QTextCursor::KeepAnchor);
+        edit.removeSelectedText();
+        return;
+    }
+
+    // Дельта в знаках для остальных строк выделения.
+    const int delta = listMove ? int(newIndent.size()) - item.indentChars : (back ? -stop : stop);
+    const int anchor = at.anchor();
+    const int position = at.position();
+    const int caretColumn = position - at.block().position();
+    const int caretBlock = at.blockNumber();
+
     at.beginEditBlock();
     for (int number = span.first; number <= span.last; ++number) {
         const QTextBlock line = document()->findBlockByNumber(number);
         if (!line.isValid()) continue;
+        const QString text = line.text();
+        if (manyLines && isBlankLine(text)) continue;
         QTextCursor edit(line);
-        if (tab) {
-            edit.insertText(QString(stop, QLatin1Char(' ')));
+        if (number == span.first && listMove) {
+            // Первая строка-пункт: её отступ заменяется целиком на новый.
+            edit.setPosition(line.position() + item.indentChars, QTextCursor::KeepAnchor);
+            edit.insertText(newIndent);
             continue;
         }
-        // Снимаем не больше стопа и только пробелы: чужой отступ табами не
-        // трогаем — он значим, и превращать его в свой мы не нанимались.
-        const QString text = line.text();
+        if (delta > 0) {
+            edit.insertText(QString(delta, QLatin1Char(' ')));
+            continue;
+        }
         int drop = 0;
-        while (drop < stop && drop < text.size() && text.at(drop) == QLatin1Char(' ')) ++drop;
+        while (drop < -delta && drop < text.size() && text.at(drop) == QLatin1Char(' ')) ++drop;
         if (drop == 0) continue;
-        edit.setPosition(line.position());
         edit.setPosition(line.position() + drop, QTextCursor::KeepAnchor);
         edit.removeSelectedText();
     }
     at.endEditBlock();
-    event->accept();
+
+    if (!manyLines) {
+        // Каретка остаётся на своём знаке строки; если стояла в отступе — на
+        // его конце.
+        const QTextBlock line = document()->findBlockByNumber(caretBlock);
+        const int shifted = qMax(int(newIndent.size()), caretColumn + delta);
+        QTextCursor moved(document());
+        moved.setPosition(line.position() + qMin(shifted, qMax(0, line.length() - 1)));
+        setTextCursor(moved);
+        return;
+    }
+    // Выделение в несколько строк после сдвига охватывает те же строки целиком:
+    // концы, которые Qt сдвинул вслед за правкой, человеку ни о чём не говорят,
+    // а строки — говорят: второй Tab двигает их же.
+    const QTextBlock firstLine = document()->findBlockByNumber(span.first);
+    const QTextBlock lastLine = document()->findBlockByNumber(span.last);
+    const int head = firstLine.position();
+    const int tail = lastLine.position() + qMax(0, lastLine.length() - 1);
+    QTextCursor whole(document());
+    whole.setPosition(anchor <= position ? head : tail);
+    whole.setPosition(anchor <= position ? tail : head, QTextCursor::KeepAnchor);
+    setTextCursor(whole);
+}
+
+// ПЕРЕКЛЮЧЕНИЕ ЗАДАЧИ (toggleTaskKey): строки выделения или строка каретки;
+// первая задача задаёт направление, остальные идут за ней; задач нет — ничего
+// (как toggleTask в обычном виде). Длина строк не меняется — выделение цело.
+void MarkdownEditView::toggleTasks() {
+    const int stop = qMax(1, settings().editor().codeTabWidth());
+    QTextCursor at = textCursor();
+    const LineSpan span = spanOf(at);
+
+    bool found = false;
+    bool target = true;
+    std::vector<std::pair<int, bool>> tasks;   // позиция знака в скобках, нынешнее
+    for (int number = span.first; number <= span.last; ++number) {
+        const QTextBlock line = document()->findBlockByNumber(number);
+        const ListLine item = itemOf(line, stop);
+        if (!item.item || item.marker != Marker::Task) continue;
+        if (!found) {
+            found = true;
+            target = !item.checked;
+        }
+        tasks.push_back({line.position() + item.markerEnd - 2, item.checked});
+    }
+    if (!found) return;
+
+    const int anchor = at.anchor();
+    const int position = at.position();
+    QTextCursor edit(document());
+    edit.beginEditBlock();
+    for (const auto& [pos, checked] : tasks) {
+        if (checked == target) continue;
+        edit.setPosition(pos);
+        edit.setPosition(pos + 1, QTextCursor::KeepAnchor);
+        edit.insertText(target ? QStringLiteral("x") : QStringLiteral(" "));
+    }
+    edit.endEditBlock();
+    // Замена знака на знак длину не меняет — концы выделения возвращаем как были.
+    QTextCursor same(document());
+    same.setPosition(anchor);
+    same.setPosition(position, QTextCursor::KeepAnchor);
+    setTextCursor(same);
 }
 
 // --- поиск ------------------------------------------------------------------
