@@ -153,6 +153,7 @@ void printUsage() { std::fputs(kUsage, stderr); }
 // Сочетаний на команду может быть несколько; в конфиге они через точку с
 // запятой, а человеку читать удобнее через запятую.
 QByteArray keysFor(const QString& keys) {
+    if (keys.trimmed().isEmpty()) return QByteArrayLiteral("(нет)");   // сочетание убрано
     return QString(keys).replace(QStringLiteral("; "), QStringLiteral(", ")).toUtf8();
 }
 
@@ -923,7 +924,7 @@ int main(int argc, char** argv) {
     });
     // РЕЖИМ ПРАВКИ ИСХОДНИКА — третья страница стека, на месте редактора. Как и
     // у истории, кнопка тулбара показывает состояние режима, откуда бы в него
-    // ни вошли (кнопка, Ctrl+M, восстановление на старте).
+    // ни вошли (кнопка, сочетание из настроек, восстановление на старте).
     QObject::connect(&markdown, &zametti::MarkdownController::modeChanged, &window, [&](bool on) {
         textStack.setCurrentWidget(on ? static_cast<QWidget*>(&markdownView)
                                       : static_cast<QWidget*>(&editor));

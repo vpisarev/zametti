@@ -41,7 +41,10 @@ constexpr Toolbar::Spec kSpecs[] = {
     // нажали снова — вернулись к текущей версии (решение владельца). Так у
     // режима есть видимый признак, а не только баннер над текстом.
     {B::History, "rotate-ccw-clock", "История заметки", "", 3, true},
-    {B::MarkdownEdit, "square-m", "Править исходник", "Ctrl+M", 3, true},
+    // Сочетание у этой кнопки НАСТРАИВАЕМОЕ (editor.markdownModeKey) и по
+    // умолчанию пустое: в тултип оно подставляется из настроек (tipFor), а не
+    // литералом — иначе тултип врал бы при любой правке конфига.
+    {B::MarkdownEdit, "square-m", "Править исходник", "", 3, true},
     {B::Search, "search", "Найти в заметке", "Ctrl+F", 3, false},
     {B::SearchInStore, "database-search", "Найти по всем заметкам", "Ctrl+Shift+F", 3, false},
 
@@ -55,9 +58,18 @@ constexpr Toolbar::SortSpec kSortSpecs[] = {
     {SortKey::Created, B::SortByCreated, "calendar-arrow-down", "calendar-arrow-up"},
 };
 
+// Сочетание для тултипа: у настраиваемых кнопок — из настроек (список через
+// точку с запятой человеку читается через запятую), у прочих — из спецификации.
+QString shortcutFor(const Toolbar::Spec& spec) {
+    if (spec.id == B::MarkdownEdit)
+        return QString(settings().editor().markdownModeKey())
+            .replace(QStringLiteral("; "), QStringLiteral(", "));
+    return QString::fromLatin1(spec.shortcut);
+}
+
 QString tipFor(const Toolbar::Spec& spec, const QString& promise) {
     QString tip = QString::fromUtf8(spec.tip);
-    const QString shortcut = QString::fromLatin1(spec.shortcut);
+    const QString shortcut = shortcutFor(spec);
     if (!shortcut.isEmpty()) tip += QStringLiteral(" (") + shortcut + QLatin1Char(')');
     // Погашенная кнопка без объяснения читается как поломка, а не как обещание.
     if (!promise.isEmpty()) tip += QStringLiteral("\n") + promise;

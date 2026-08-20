@@ -125,8 +125,16 @@ void checkSearchPair(Toolbar& bar) {
             history->toolTip().contains(QStringLiteral("История")));
     ZT_TRUE("а эта про исходник",
             source->toolTip().contains(QStringLiteral("исходник")));
-    ZT_TRUE("правка исходника называет своё сочетание",
-            source->toolTip().contains(QStringLiteral("Ctrl+M")));
+    // Сочетание у правки исходника — из настроек, и по умолчанию его НЕТ
+    // (Cmd+M на маке сворачивает окно): тултип обязан быть без скобок, а не
+    // врать литералом. Тест краснеет, если настройку перестанут спрашивать.
+    {
+        const QString keys = zametti::settings().editor().markdownModeKey();
+        ZT_TRUE("по умолчанию у правки исходника сочетания нет", keys.isEmpty());
+        ZT_TRUE("и тултип его не называет",
+                !source->toolTip().contains(QLatin1Char('(')) &&
+                !source->toolTip().contains(QStringLiteral("Ctrl+M")));
+    }
     ZT_TRUE("история левее правки исходника", history->x() < source->x());
     ZT_TRUE("и вплотную к ней", source->x() - (history->x() + history->width()) < 4);
     ZT_TRUE("правка исходника левее поиска", source->x() < inNote->x());
