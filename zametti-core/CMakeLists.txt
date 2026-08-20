@@ -76,6 +76,7 @@ add_library(zametti-core STATIC
 
     # --- живая модель документа ---
     doc/block_kind.h
+    doc/key_binding.h
     doc/note_header.h           doc/note_header.cpp
     doc/document.h              doc/document.cpp
     doc/document_impl.h

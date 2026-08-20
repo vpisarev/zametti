@@ -5,6 +5,7 @@
 
 #include "doc_model.h"
 #include "editor_widget.h"
+#include "key_binding.h"
 #include "formula.h"
 #include "find_bar.h"
 #include "history_controller.h"
@@ -1937,9 +1938,9 @@ int main(int argc, char** argv) {
     shortcut(QKeySequence(QStringLiteral("Ctrl+Shift+F")), openStoreFind);
     // Правка исходника — сочетание из настроек (editor.markdownModeKey), список
     // через точку с запятой, как у всех прочих команд.
-    for (const QKeySequence& keys : QKeySequence::listFromString(
-             zametti::settings().editor().markdownModeKey(), QKeySequence::PortableText))
-        if (!keys.isEmpty()) shortcut(keys, [&] { markdown.toggle(); });
+    for (const QKeySequence& keys :
+         zametti::keySequencesOf(zametti::settings().editor().markdownModeKey()))
+        shortcut(keys, [&] { markdown.toggle(); });
     shortcut(QKeySequence(Qt::Key_F3), [&] { stepSearch(1); });
     shortcut(QKeySequence(Qt::SHIFT | Qt::Key_F3), [&] { stepSearch(-1); });
 

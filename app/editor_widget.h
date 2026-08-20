@@ -642,8 +642,8 @@ private:
     NoteSearch& searchCache() override { return note_->search(); }
     const NoteSearch& searchCache() const override { return note_->search(); }
 
-    QKeySequence moveUpKey_;
-    QKeySequence moveDownKey_;
+    QList<QKeySequence> moveUpKeys_;
+    QList<QKeySequence> moveDownKeys_;
     // Автозамены: сочетание и то, что оно вставляет (длинное тире и что там
     // ещё вписал человек).
     std::vector<std::pair<QKeySequence, QString>> specialKeys_;

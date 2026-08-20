@@ -1,5 +1,7 @@
 #include "editor_widget.h"
 
+#include "key_binding.h"
+
 #include "block_object.h"
 #include "caption_editor.h"
 #include "zapp.h"
@@ -93,13 +95,12 @@ NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
 
     // Хоткеи разбираем один раз: на каждое нажатие клавиши это было бы разбором
     // строки впустую.
-    moveUpKey_ = QKeySequence(settings().editor().moveUpKey(), QKeySequence::PortableText);
-    moveDownKey_ = QKeySequence(settings().editor().moveDownKey(), QKeySequence::PortableText);
+    // Разбор настройки-списка — общий для всех режимов (key_binding.h).
+    moveUpKeys_ = keySequencesOf(settings().editor().moveUpKey());
+    moveDownKeys_ = keySequencesOf(settings().editor().moveDownKey());
     // Сочетаний на команду может быть несколько: через точку с запятой.
     const auto bind = [this](const QString& keys, const NoteOp& op) {
-        for (const QKeySequence& sequence :
-             QKeySequence::listFromString(keys, QKeySequence::PortableText))
-            if (!sequence.isEmpty()) bindings_.push_back({sequence, op});
+        for (const QKeySequence& sequence : keySequencesOf(keys)) bindings_.push_back({sequence, op});
     };
     const auto bindInline = [this](QKeySequence::StandardKey standard, ZDocument::Style style) {
         for (const QKeySequence& keys : QKeySequence::keyBindings(standard))
@@ -126,9 +127,7 @@ NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
     // как и у любой другой команды.
     for (const auto& [keys, text] : settings().editor().specialKeys()) {
         if (text.isEmpty()) continue;
-        for (const QKeySequence& sequence :
-             QKeySequence::listFromString(keys, QKeySequence::PortableText))
-            if (!sequence.isEmpty()) specialKeys_.push_back({sequence, text});
+        for (const QKeySequence& sequence : keySequencesOf(keys)) specialKeys_.push_back({sequence, text});
     }
 
     // СОЧЕТАНИЙ У УРОВНЕЙ ЗАГОЛОВКА БОЛЬШЕ НЕТ (решение владельца): заголовок
@@ -1693,12 +1692,9 @@ void NoteEditor::keyPressEvent(QKeyEvent* event) {
         return;   // наружу Shift+Tab не отдаём: он увёл бы фокус из окна
     }
 
-    const auto pressed = [event](const QKeySequence& keys) {
-        return !keys.isEmpty() && QKeySequence(event->keyCombination()).matches(keys) ==
-                                      QKeySequence::ExactMatch;
-    };
-    if (pressed(moveUpKey_) && moveItem(-1)) return;
-    if (pressed(moveDownKey_) && moveItem(1)) return;
+    const auto pressed = [event](const QKeySequence& keys) { return keyEventMatches(*event, keys); };
+    if (keyEventMatchesAny(*event, moveUpKeys_) && moveItem(-1)) return;
+    if (keyEventMatchesAny(*event, moveDownKeys_) && moveItem(1)) return;
 
     // Автозамены. Это не операция над блоками, а тот же набор, только знаком,
     // которого нет на клавиатуре: идёт обычной вставкой, слипается в один шаг
@@ -1855,11 +1851,7 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
     // Сочетание переключения (Ctrl+D, toggleTaskKey) — настраиваемое, и
     // слой узнаёт его признаком, а не кодом клавиши. Сравнение то же, что у
     // прочих сочетаний в keyPressEvent: Qt сопоставляет с учётом раскладки.
-    for (const QKeySequence& keys :
-         QKeySequence::listFromString(settings().editor().toggleTaskKey(), QKeySequence::PortableText))
-        if (!keys.isEmpty() &&
-            QKeySequence(event->keyCombination()).matches(keys) == QKeySequence::ExactMatch)
-            where.toggleKey = true;
+    if (keyEventMatches(*event, settings().editor().toggleTaskKey())) where.toggleKey = true;
 
     const QTextBlock above = block.previous();
     const QTextBlock below = block.next();

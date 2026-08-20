@@ -11,8 +11,13 @@
 // что-либо проверять, когда литерал перестаёт быть привязанным к чему-нибудь.
 // Поэтому там, где сочетание НАСТРАИВАЕТСЯ, набор берёт его из настроек, а
 // литерал остаётся только там, где клавиша вшита в код.
+//
+// Разбирает строку тот же key_binding.h, что и бой: набор и окно не могут
+// разойтись в том, что считается сочетанием.
 #ifndef ZAMETTI_TESTS_KEYS_H
 #define ZAMETTI_TESTS_KEYS_H
+
+#include "key_binding.h"
 
 #include <QKeyCombination>
 #include <QKeySequence>
@@ -25,8 +30,7 @@ namespace zt {
 // Первое сочетание списка. Пустой список — пустое сочетание: клавиши у команды
 // нет вовсе (законный случай — настройка пустой строкой убирает сочетание).
 inline QKeySequence firstKey(const QString& setting) {
-    const QList<QKeySequence> all =
-        QKeySequence::listFromString(setting, QKeySequence::PortableText);
+    const QList<QKeySequence> all = zametti::keySequencesOf(setting);
     return all.isEmpty() ? QKeySequence() : all.first();
 }
 
