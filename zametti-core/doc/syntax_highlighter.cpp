@@ -2,6 +2,7 @@
 
 #include "diff.h"
 #include "doc_model.h"
+#include "list_line.h"
 
 #include <QTextBlock>
 #include <QTextDocument>
@@ -32,10 +33,6 @@ ZSyntaxHighlighterMD::ZSyntaxHighlighterMD(QTextDocument* document,
     // уходит в состояние блока.
     fence_ = QRegularExpression(QStringLiteral("^(\\s*)(```|~~~)"));
     heading_re_ = QRegularExpression(QStringLiteral("^\\s{0,3}#{1,6}(\\s|$)"));
-    // Задача: маркер, пробел (или без — краткая запись автозамены), скобки.
-    task_ = QRegularExpression(QStringLiteral("^\\s*[-*+]\\s?\\[[ xX]\\](?=\\s|$)"));
-    bullet_ = QRegularExpression(QStringLiteral("^\\s*[-*+](?=\\s)"));
-    ordered_ = QRegularExpression(QStringLiteral("^\\s*\\d{1,9}[.)](?=\\s)"));
     codeSpan_ = QRegularExpression(QStringLiteral("`[^`\\n]+`"));
     // Картинка раньше ссылки: `![…](…)` содержит `[…](…)`.
     imageLink_ = QRegularExpression(QStringLiteral("!\\[[^\\]\\n]*\\]\\(([^)\\n]*)\\)"));
@@ -57,7 +54,7 @@ ZSyntaxHighlighterMD::ZSyntaxHighlighterMD(QTextDocument* document,
     boldUnder_ = QRegularExpression(QStringLiteral("(?<![\\w_])__(?=\\S)[^_\\n]+?(?<=\\S)__(?![\\w_])"));
     italicStar_ = QRegularExpression(QStringLiteral("(?<![\\w*])\\*(?=[^\\s*])[^*\\n]+?(?<=[^\\s*])\\*(?![\\w*])"));
     italicUnder_ = QRegularExpression(QStringLiteral("(?<![\\w_])_(?=[^\\s_])[^_\\n]+?(?<=[^\\s_])_(?![\\w_])"));
-    for (QRegularExpression* re : {&fence_, &heading_re_, &task_, &bullet_, &ordered_, &codeSpan_,
+    for (QRegularExpression* re : {&fence_, &heading_re_, &codeSpan_,
                                    &imageLink_, &link_re_, &autoLink_, &bareUrl_, &displayMath_,
                                    &inlineMath_,
                                    &boldStar_, &boldUnder_, &italicStar_, &italicUnder_})
@@ -163,15 +160,13 @@ void ZSyntaxHighlighterMD::highlightBlock(const QString& text) {
         setFormat(0, hashes, mark);   // жирный и крупный уже в heading_
     }
 
-    // Маркеры в начале строки: задача, буллет, номер — акцентом.
-    for (const QRegularExpression* re : {&task_, &bullet_, &ordered_}) {
-        if (taken[0]) break;
-        const QRegularExpressionMatch m = re->match(text);
-        if (!m.hasMatch()) continue;
-        const int to = int(m.capturedEnd());
+    // Маркер пункта в начале строки (задача, буллет, номер) — акцентом. Что
+    // считается маркером, решает parseListLine — одно правило на подсветку и на
+    // клавиши режима исходника.
+    if (const ListLine item = parseListLine(text); item.item && !taken[0]) {
+        const int to = item.markerEnd;
         setFormat(0, to, marker_);
         for (int i = 0; i < to; ++i) taken[i] = true;
-        break;
     }
 
     // Атомарные спаны — код и формулы — первыми: внутри них ничего другого.

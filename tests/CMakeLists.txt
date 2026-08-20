@@ -81,6 +81,7 @@ add_executable(zametti-tests
     source_fuzz_test.cpp
     source_caret_test.cpp
     syntax_highlighter_test.cpp
+    list_line_test.cpp
     session_test.cpp
     search_test.cpp
     document_roundtrip_test.cpp

@@ -10,7 +10,8 @@
 //   * заголовки `# …` — жирным и на ступень крупнее (headingStep, лестница
 //     кеглей: абсолютных размеров в документе нет — масштаб один setDefaultFont);
 //   * маркеры списков `- ` `* ` `+ `, номера `1. ` `1) `, задачи `- [ ] ` /
-//     `-[x] ` — акцентным цветом и жирным;
+//     `-[x] ` — акцентным цветом и жирным (что такое маркер — parseListLine,
+//     list_line.h: то же правило, что у клавиш режима исходника);
 //   * формулы `$…$` и `$$…$$` в строке — акцентным цветом (не жирным);
 //   * HTML-комментарии `<!-- … -->`, в том числе многострочные, — серым
 //     (comment); внутри них ничего другого не подсвечивается;
@@ -85,9 +86,6 @@ private:
     QTextCharFormat italic_;
     QRegularExpression fence_;
     QRegularExpression heading_re_;
-    QRegularExpression task_;
-    QRegularExpression bullet_;
-    QRegularExpression ordered_;
     QRegularExpression codeSpan_;
     QRegularExpression imageLink_;
     QRegularExpression link_re_;

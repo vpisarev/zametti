@@ -94,6 +94,7 @@ add_library(zametti-core STATIC
     doc/editor_ops.h            doc/editor_ops.cpp
     doc/export_note.h           doc/export_note.cpp
     doc/marker.h                doc/marker.cpp
+    doc/list_line.h             doc/list_line.cpp
     doc/search.h                doc/search.cpp
     doc/settings.h              doc/settings.cpp
     doc/sort_order.h            doc/sort_order.cpp
