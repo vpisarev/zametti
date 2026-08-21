@@ -143,6 +143,13 @@ that is an ordinary edit — undone like any other.
 The bullet changes its shape with nesting depth: a solid circle, a hollow
 one, then a square. Configured by the `list.bulletShapes` list.
 
+A code block sits on a plate with a strip along its bottom edge: the language
+name and the copy button live in the strip's right corner. One knob sets its
+size — `layout.codeLangPointSize`, the point size of that caption: the strip
+height (`layout.codeStripHeight`, in caption line heights) and the copy icon
+(`layout.codeCopyIconScale`) follow it, and so does the width of the inline
+field that edits the language. The caption typeface is `font.codeLangFamily`.
+
 Autoreplace works when typing at the start of a block: `- `, `* ` and `+ `
 give a bullet, `1. ` and `1) ` — a numbered item, `# `…`###### ` — a heading.
 
@@ -236,9 +243,29 @@ ln -sf "$PWD/build/app/zametti" ~/.local/bin/zametti
 
 ## Settings
 
-Appearance is read from `~/.config/zametti/config.json`. The application
-**only reads** this file — it is yours, formatting and key order included;
-the file may not exist at all, then the defaults apply.
+Appearance is read from `~/.config/zametti/config.json`. The file is yours,
+formatting and key order included; it may not exist at all, then the defaults
+apply. The config is a list of **deviations** from the defaults, not a copy of
+them: remove a key and the default comes back.
+
+The gear button in the toolbar opens that file **inside the application**, on
+the place of the editor, with JSON highlighting — the same page mechanics as
+the source mode: press the button again or `Esc` to leave, `Ctrl+S` to write,
+`Ctrl+F` and `F3` to search. `Tab` inserts spaces up to the next stop
+(`jsonEditing.tabIndent`, four by default), `Enter` keeps the indent of the
+previous line, `Ctrl+/` (`jsonEditing.commentKey`) comments and uncomments the
+line or the selected lines. Undo and redo are the ordinary ones and live for
+as long as the editing session. The caret is the same one as in a note — its
+color and width come from the same settings.
+
+The file is written on `Ctrl+S`, on leaving the mode and on exit — there are
+no confirmation dialogs anywhere in this program. Text that does not parse is
+still written (it is your file) but is not applied: the status bar says what
+is wrong, and the previous values keep working. Colors of the highlighting are
+the `jsonEditing` section.
+
+Editing the file with an external editor works exactly as before: the
+application watches it and reloads the appearance on the fly.
 
 The full list of parameters with their default values is printed by
 `--dump-config` — that is where to copy them from. Configurable are the
