@@ -266,6 +266,27 @@ void checkBuilderReservesStrip() {
     // починкой она оставалась зелёной, то есть спрашивала не то, что обещала.
 }
 
+// ОДИН РЕГУЛЯТОР — КЕГЛЬ ПОДПИСИ (решение владельца, refactor3): полоска и
+// значок считаются от шрифта подписи; поднять кегль — выше полоска и крупнее
+// значок, ничего больше трогать не надо. Стиль — копией, настройки целы.
+void checkPlateFollowsLangSize() {
+    const zametti::CodePlate base = zametti::codePlate();
+    zametti::ZDocStyle big = zametti::settings().style();
+    big.setCodeLangPointSize(zametti::settings().style().codeLangPointSize() * 2.0);
+    const zametti::CodePlate grown = zametti::codePlate(big);
+    check(grown.strip > base.strip, "полоска выше при крупной подписи: " + num(grown.strip) +
+                                        " > " + num(base.strip));
+    check(grown.iconSide > base.iconSide, "значок крупнее при крупной подписи: " +
+                                              num(grown.iconSide) + " > " + num(base.iconSide));
+    check(base.iconSide <= base.strip && grown.iconSide <= grown.strip,
+          "значок помещается в полоску при обоих кеглях");
+    // Пропорции держатся: вдвое крупнее кегль — примерно вдвое выше полоска.
+    check(std::fabs(grown.strip / base.strip - 2.0) < 0.2,
+          "полоска растёт вместе с кеглем: " + num(grown.strip / base.strip));
+    // Верхнее поле — от строки кода, и от подписи не зависит.
+    check(std::fabs(grown.padTop - base.padTop) < 0.5, "верхнее поле не меняется");
+}
+
 // --- копирование ------------------------------------------------------------
 //
 // Договор из брифа: в буфер уходит текст кода с переводами строк, без заборов
@@ -300,6 +321,11 @@ void checkCopy(Peek& editor) {
         check(box.top() >= band.rect.bottom() - 0.5,
               "кнопка стоит под последней строкой кода");
         check(box.right() <= band.rect.right() + 0.5, "кнопка не вылезает за плашку");
+        // Значок — внутри полоски и стороной от кегля подписи (codePlate).
+        check(box.bottom() <= band.rect.bottom() + plate.strip + 0.5,
+              "кнопка не вылезает ниже полоски");
+        check(std::fabs(box.width() - std::min(plate.iconSide, plate.strip)) < 0.5,
+              "сторона значка — из codePlate: " + num(box.width()) + " vs " + num(plate.iconSide));
         // И правее имени языка: оба живут в правом углу, надпись прижата к
         // кнопке слева.
         const QRectF where = editor.langRect(band);
@@ -578,6 +604,7 @@ void shots(int width, int height, const QString& tag, bool checks) {
         checkStripIsNotText(editor);
         checkPlateGeometry(editor);
         checkBuilderReservesStrip();
+    checkPlateFollowsLangSize();
         checkCornersAreRound(editor);
         checkStripIsNotDarker(editor);
         checkPaperHasNoStrip(editor);
