@@ -158,6 +158,27 @@ void checkLoadUnderstandsComments() {
     QString complaint;
     ZT_TRUE("битый конфиг не принят", !zametti::loadSettings(&complaint));
     ZT_TRUE("и о нём сказано", !complaint.isEmpty());
+    ZT_EQ("и прежнее значение осталось", std::string("1700"),
+          std::to_string(zametti::settings().editor().autosaveDelayMs()));
+
+    // КОНФИГ — ОТКЛОНЕНИЯ ОТ УМОЛЧАНИЙ, И ЧИТАЕТСЯ С ЧИСТОГО ЛИСТА: убрали ключ
+    // — значение вернулось к умолчанию, а не зависло (в редакторе внутри
+    // программы это обычное дело).
+    QFile empty(zametti::configPath());
+    ZT_TRUE("файл открывается на запись", empty.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    empty.write("{}\n");
+    empty.close();
+    ZT_TRUE("пустой конфиг прочитан", zametti::loadSettings(&error));
+    ZT_EQ("убранный ключ вернулся к умолчанию",
+          std::to_string(zametti::ZSettings{}.editor().autosaveDelayMs()),
+          std::to_string(zametti::settings().editor().autosaveDelayMs()));
+
+    // Секция редактора конфига известна словарю ключей.
+    const QJsonObject probe =
+        QJsonDocument::fromJson("{\"jsonEditing\": {\"tabIndent\": 2, \"tabIndnt\": 3}}").object();
+    const QStringList unknown = zametti::unknownConfigKeys(probe);
+    ZT_EQ("опечатка названа, верный ключ — нет", std::string("jsonEditing.tabIndnt"),
+          s(unknown.join(QStringLiteral(", "))));
 }
 
 // Раздел таблиц: умолчания ровно те, о которых договорились с владельцем, и
