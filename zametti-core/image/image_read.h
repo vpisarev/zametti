@@ -32,6 +32,7 @@
 #include <QImage>
 #include <QSize>
 #include <QString>
+#include <QStringList>
 
 namespace zametti {
 
@@ -55,6 +56,20 @@ struct ImageProbe {
     qint64 decodedBytes() const;
     bool operator==(const ImageProbe& other) const = default;
 };
+
+// ЧИТАЕТ ЛИ ЭТА СБОРКА avif и heic. Спрашивать надо ЯДРО, а не Qt (решение
+// владельца): наш читатель HEIF — не плагин Qt, а свой код, и
+// QImageReader::supportedImageFormats про него не знает вовсе. Пока окно
+// спрашивало Qt, перетащенный avif молча вставлялся ссылкой, даже если ядро
+// собрано с WITH_HEIF=ON. Наборы этим же вопросом решают, ОБЯЗАНЫ ли они
+// гонять ряды avif/heic (решение владельца: собрано с поддержкой — значит
+// проверяется).
+bool heifSupported();
+
+// Читаемые нами форматы, расширениями без точки («jxl», «avif»…): для фильтра
+// файлового диалога и для отбора перетащенного. Список наш, а не Qt: у нас свои
+// читатели, и Qt о половине из них не знает.
+QStringList readableImageExtensions();
 
 // Опознать формат по первым байтам. Пусто — не наш.
 QString sniffImageFormat(const QByteArray& head);

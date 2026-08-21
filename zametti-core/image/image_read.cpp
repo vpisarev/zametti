@@ -62,6 +62,26 @@ qint64 ImageProbe::decodedBytes() const {
 
 QString sniffImageFormat(const QByteArray& head) { return sniff(head); }
 
+bool heifSupported() {
+#ifdef ZAMETTI_HAVE_HEIF
+    return true;
+#else
+    return false;
+#endif
+}
+
+QStringList readableImageExtensions() {
+    // Наши читатели (см. sniff выше) плюс то, что умеет сам Qt: png, gif, bmp и
+    // прочая мелочь идут через QImage::fromData запасным путём.
+    QStringList out{QStringLiteral("jxl"),  QStringLiteral("jpg"), QStringLiteral("jpeg"),
+                    QStringLiteral("webp"), QStringLiteral("tif"), QStringLiteral("tiff"),
+                    QStringLiteral("png"),  QStringLiteral("gif"), QStringLiteral("bmp")};
+    if (heifSupported()) {
+        out << QStringLiteral("avif") << QStringLiteral("heic") << QStringLiteral("heif");
+    }
+    return out;
+}
+
 ImageProbe probeImage(const QByteArray& bytes) {
     ImageProbe out;
     out.format = sniff(bytes);
@@ -96,6 +116,33 @@ ImageProbe probeImage(const QByteArray& bytes) {
         out.icc = QByteArray::fromStdString(meta.icc);
         return out;
     }
+
+#ifdef ZAMETTI_HAVE_HEIF
+    if (out.format == QLatin1String("heif")) {
+        // У HEIF СВОЙ ОБРАБОТЧИК, И СПРАШИВАТЬ НАДО ЕГО. Раньше размеры avif и
+        // heic шли к Qt вместе со всеми «чужими» форматами — а Qt про них не
+        // знает вовсе (наш читатель плагином не является), отдавал пустой
+        // размер, проба выходила невалидной, и ввоз отказывал «формат не
+        // поддержан» ещё до нашего декодера. Владелец так и увидел: собрал с
+        // WITH_HEIF=ON, а avif всё равно не ввозится.
+        QByteArray copy = bytes;
+        QBuffer buffer(&copy);
+        buffer.open(QIODevice::ReadOnly);
+        HeifHandler handler;
+        handler.setDevice(&buffer);
+        out.size = handler.option(QImageIOHandler::Size).toSize();
+        // Глубина — из формата кадра, который обещает обработчик: 16 бит на
+        // канал у 10- и 12-битных avif (в корпусе владельца такие есть), иначе
+        // восемь. По ней считается память до разжатия.
+        const QVariant format = handler.option(QImageIOHandler::ImageFormat);
+        const auto shape = format.isValid() ? format.value<QImage::Format>() : QImage::Format_Invalid;
+        out.bitsPerSample =
+            shape == QImage::Format_RGBA64 || shape == QImage::Format_RGBX64 ? 16 : 8;
+        out.hasAlpha = shape == QImage::Format_RGBA64 || shape == QImage::Format_RGBA8888;
+        out.frames = 1;
+        return out;
+    }
+#endif
 
     // Остальные — у Qt: он умеет спросить размер, не разжимая, и для чужих
     // форматов это ровно то, что нужно. TIFF сюда тоже попадает: его шапку
