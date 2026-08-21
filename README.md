@@ -137,6 +137,11 @@ Inline code can also just be typed: backtick, text, backtick — the backticks
 go away, the text becomes code. `Ctrl+Shift+E` turns the selection into a
 code block, and a code block back into plain text.
 
+Clicking the caption under a photo opens it for editing right there — you were
+aiming at the text anyway. Clicking the photo itself selects the photo, as
+before. The caret in that field is the same one as in the note: the colour and
+width from the settings.
+
 The easiest way to mark a task is the mouse: clicking the box toggles it, and
 that is an ordinary edit — undone like any other.
 

@@ -3,6 +3,7 @@
 #include "settings.h"
 
 #include <QFontMetricsF>
+#include <QFocusEvent>
 #include <QKeyEvent>
 #include <QPainter>
 
@@ -43,6 +44,10 @@ LanguageEditor::LanguageEditor(const QStringList& candidates, const QString& cur
     colours.setColor(QPalette::Text, settings().style().codeLangColor());
     setPalette(colours);
     setAttribute(Qt::WA_MacShowFocusRect, false);
+    connect(&caret_, &CaretBlink::phaseChanged, this, [this] { update(); });
+    connect(this, &QLineEdit::cursorPositionChanged, this,
+            [this] { wakeLineCaret(caret_, *this); });
+    connect(this, &QLineEdit::textChanged, this, [this] { wakeLineCaret(caret_, *this); });
     connect(this, &QLineEdit::textEdited, this, [this] { updateCompletion(); });
     updateCompletion();
 }
@@ -106,6 +111,12 @@ void LanguageEditor::paintEvent(QPaintEvent* event) {
         under.fillRect(rect(), backdrop_);
     }
     QLineEdit::paintEvent(event);
+    {
+        // Каретка — своя, поверх штатной (см. line_caret.h); подсказка хвоста
+        // рисуется после неё и её не задевает: она правее места набора.
+        QPainter over(this);
+        paintLineCaret(over, cursorRect(), caret_, hasFocus(), backdrop_);
+    }
     if (completion_.isEmpty()) return;
 
     QPainter painter(this);
@@ -126,8 +137,14 @@ void LanguageEditor::paintEvent(QPaintEvent* event) {
                      Qt::AlignVCenter | Qt::AlignLeft, completion_);
 }
 
+void LanguageEditor::focusInEvent(QFocusEvent* event) {
+    QLineEdit::focusInEvent(event);
+    wakeLineCaret(caret_, *this);
+}
+
 void LanguageEditor::focusOutEvent(QFocusEvent* event) {
     QLineEdit::focusOutEvent(event);
+    caret_.sleep();
     // Ушли мимо — как Esc: молча применять то, чего человек не подтвердил,
     // нельзя, а оставлять поле висеть поверх текста — тем более.
     emit cancelled();

@@ -1302,7 +1302,11 @@ void NoteEditor::mousePressEvent(QMouseEvent* event) {
     }
 
     // Щелчок по фотографии выбирает её: каретка в начало строки, а не в
-    // случайное место скрытого текста.
+    // случайное место скрытого текста. А щелчок по ПОДПИСИ под ней открывает
+    // поле правки подписи (просьба владельца): человек целится в текст, и
+    // ждать от него ещё одного жеста — лишнее. Только по настоящей подписи:
+    // у картинки без неё под снимком пусто, и открывать там нечего — пустую
+    // заводят Enter'ом или из меню.
     if (event->button() == Qt::LeftButton &&
         (event->modifiers() & Qt::ShiftModifier) == 0) {
         const int hitAt = document()->documentLayout()->hitTest(
@@ -1312,6 +1316,18 @@ void NoteEditor::mousePressEvent(QMouseEvent* event) {
         QTextBlock under = hitAt >= 0 ? document()->findBlock(hitAt) : QTextBlock();
         for (int step = 0; step < 2 && under.isValid(); ++step) {
             const QRectF photo = imageRectInViewport(under);
+            // Показанная подпись — та, что человек видит под снимком
+            // (безымянная и вики-вложение её не показывают, целиться там не во
+            // что).
+            const bool hasCaption = !blockImageRef(under).shownCaption().isEmpty();
+            const QRectF caption =
+                hasCaption ? imageCaptionRectInViewport(under) : QRectF();
+            if (!caption.isEmpty() && caption.contains(event->position())) {
+                setTextCursor(QTextCursor(under));
+                editImageCaption(under.blockNumber());
+                event->accept();
+                return;
+            }
             if (!photo.isEmpty() && photo.contains(event->position())) {
                 setTextCursor(QTextCursor(under));
                 event->accept();

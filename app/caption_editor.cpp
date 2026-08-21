@@ -2,6 +2,7 @@
 
 #include "settings.h"
 
+#include <QFocusEvent>
 #include <QKeyEvent>
 #include <QPainter>
 
@@ -22,6 +23,17 @@ CaptionEditor::CaptionEditor(const QString& current, QWidget* parent) : QLineEdi
     colours.setColor(QPalette::Text, settings().style().imageCaptionColor());
     setPalette(colours);
     setAttribute(Qt::WA_MacShowFocusRect, false);
+    // Каретка — своя, как в заметке: мигание будят набор и ход курсора, а
+    // перерисовку заказываем всему полю (оно однострочное и крохотное).
+    connect(&caret_, &CaretBlink::phaseChanged, this, [this] { update(); });
+    connect(this, &QLineEdit::cursorPositionChanged, this,
+            [this] { wakeLineCaret(caret_, *this); });
+    connect(this, &QLineEdit::textChanged, this, [this] { wakeLineCaret(caret_, *this); });
+}
+
+void CaptionEditor::focusInEvent(QFocusEvent* event) {
+    QLineEdit::focusInEvent(event);
+    wakeLineCaret(caret_, *this);
 }
 
 void CaptionEditor::keyPressEvent(QKeyEvent* event) {
@@ -45,10 +57,13 @@ void CaptionEditor::paintEvent(QPaintEvent* event) {
         under.fillRect(rect(), backdrop_);
     }
     QLineEdit::paintEvent(event);
+    QPainter over(this);
+    paintLineCaret(over, cursorRect(), caret_, hasFocus(), backdrop_);
 }
 
 void CaptionEditor::focusOutEvent(QFocusEvent* event) {
     QLineEdit::focusOutEvent(event);
+    caret_.sleep();
     // Ушли мимо — как Esc: молча применять то, чего человек не подтвердил,
     // нельзя, а оставлять поле висеть поверх текста — тем более.
     emit cancelled();

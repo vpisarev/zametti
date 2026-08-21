@@ -11,6 +11,7 @@
 #ifndef ZAMETTI_CAPTION_EDITOR_H
 #define ZAMETTI_CAPTION_EDITOR_H
 
+#include "line_caret.h"
 #include <QColor>
 #include <QLineEdit>
 #include <QString>
@@ -29,10 +30,14 @@ signals:
 
 protected:
     void keyPressEvent(QKeyEvent* event) override;
+    // КАРЕТКА КАК В ЗАМЕТКЕ (просьба владельца): цвет и толщина из настроек,
+    // мигание общим CaretBlink — рисуется поверх штатной (line_caret.h).
+    void focusInEvent(QFocusEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
     void focusOutEvent(QFocusEvent* event) override;
 
 private:
+    CaretBlink caret_;
     // Цвет, которым поле закрывает то, что нарисовано под ним.
     QColor backdrop_;
 };
