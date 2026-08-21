@@ -230,7 +230,13 @@ public:
     //
     // caret, если дали, встаёт на первый наложенный кусок: виду есть куда
     // прокрутить.
-    int applySourceText(const QString& text, QTextCursor* caret = nullptr);
+    // header == nullptr — шапка в тексте запрещена (режим исходника её не
+    // показывает, набранная руками отвергается, −1); иначе шапка, если она
+    // есть, снимается с тела и отдаётся в *header — так принимается внешняя
+    // правка файла (ZNote/NoteEditor: один путь с режимом исходника, разница
+    // только в том, кто распоряжается шапкой).
+    int applySourceText(const QString& text, QTextCursor* caret = nullptr,
+                        NoteHeader* header = nullptr);
 
     // Каретка туда и обратно. Точность названа у SourcePos.
     SourcePos sourcePosOf(const QTextCursor& at) const;

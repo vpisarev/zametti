@@ -273,7 +273,7 @@ QTextCursor ZDocument::cursorAtSourcePos(SourcePos pos) {
 
 // --- наложение правленого исходника -----------------------------------------
 
-int ZDocument::applySourceText(const QString& text, QTextCursor* caret) {
+int ZDocument::applySourceText(const QString& text, QTextCursor* caret, NoteHeader* header) {
     // 1. КАНОН НОВОГО. Разбор — тот же, что у файла (normaliseSpaces + полный
     // разбор ядра): вторым, упрощённым, круг разошёлся бы.
     NoteHeader stray;
@@ -282,8 +282,14 @@ int ZDocument::applySourceText(const QString& text, QTextCursor* caret) {
     // ШАПКУ МОЛЧА СЪЕДАТЬ НЕЛЬЗЯ. В исходнике её человеку не показывают (она у
     // заметки, и modified в ней меняется на каждой записи), но набрать он её
     // может — и разбор поднял бы её из тела вместе со следующей пустой строкой.
-    // Текст свят: отказываемся целиком, документ не трогаем.
-    if (stray.present()) return -1;
+    // Текст свят: отказываемся целиком, документ не трогаем. Внешняя правка
+    // файла — другое дело: там шапка законна, и её забирает вызывающий.
+    if (stray.present()) {
+        if (header == nullptr) return -1;
+        *header = stray;
+    } else if (header != nullptr) {
+        *header = NoteHeader{};
+    }
 
     std::vector<BlockLines> mapAfter;
     const QString after = writePieces(fresh, NoteHeader{}, &mapAfter);

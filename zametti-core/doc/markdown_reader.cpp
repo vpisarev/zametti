@@ -209,6 +209,11 @@ struct Frame {
 
     bool ordered = false;   // для UL/OL
     int  childIdx = 0;      // для LI: сколько блочных детей уже видели
+    // Для LI: колонка содержимого пункта (отступ + маркер + один пробел),
+    // выведенная из строки его первого текста; −1 — ещё не известна. Нужна
+    // ведущим пробелам (см. keepDecorativeIndent): всё, что правее неё, —
+    // отступ автора, а не разметка.
+    int  contentColumn = -1;
     bool isTask = false;    // для LI
     char16_t taskMark = ' ';    // для LI, осмысленно при isTask
 };
@@ -245,6 +250,9 @@ struct Ctx {
 
     // Текущий листовой блок.
     bool   inLeaf = false;
+    // Следующий текст начинает СТРОКУ исходника (начало листа или после мягкого
+    // переноса): у него смотрим ведущие пробелы.
+    bool   atLineStart = false;
     DraftBlock cur;
     QString text;            // текст текущего блока, до переезда в арену
     size_t charsStart = 0;       // рубеж арены на начало текущего блока
@@ -390,6 +398,7 @@ void flushRun(Ctx& c) {
 
 void startLeaf(Ctx& c, Kind kind, int headingLevel, int level) {
     c.inLeaf = true;
+    c.atLineStart = true;
     c.cur = DraftBlock{};
     c.cur.kind = kind;
     c.cur.headingLevel = static_cast<int8_t>(headingLevel);
@@ -1147,8 +1156,78 @@ int leaveSpan(MD_SPANTYPE type, void* detail, void* userdata) {
     return 0;
 }
 
+// ВЕДУЩИЕ ПРОБЕЛЫ СТРОКИ АБЗАЦА СОХРАНЯЮТСЯ (решение владельца, сессия 9):
+// стихотворение с отступами, текст псевдографикой — markdown съедает ведущие
+// пробелы, и у нас они держатся неразрывными (U+00A0; см. normaliseSpaces в
+// писателе). md4c отдаёт текст строки уже без них, поэтому смотрим в исходник:
+// от начала строки до первого знака текста. Структурный отступ — не в счёт:
+// у пункта это его колонка содержимого (отступ + маркер + пробел, у задачи
+// чекбокс не в счёт), у абзаца вне списка — ноль. Всё правее структурного
+// отступа и до текста, если это одни пробелы/табы (таб — до стопа 4), —
+// отступ автора, и он становится неразрывными. Любой другой знак по дороге
+// (`>`, `#`, `[`, обратная кавычка, звёздочка разметки) — отступа нет.
+//
+// Только абзацы, пункты и цитаты: в коде и формуле пробел значим сам, у
+// заголовка ведущих не бывает.
+void keepDecorativeIndent(Ctx& c, const MD_CHAR* text) {
+    if (c.raw || !c.inLeaf || c.inMath) return;
+    if (c.cur.kind != Kind::Paragraph && c.cur.kind != Kind::ListItem && c.cur.kind != Kind::Quote)
+        return;
+    if (!(text >= c.md && text < c.md + c.len)) return;
+    const size_t k = static_cast<size_t>(text - c.md);
+    size_t ls = k;
+    while (ls > 0 && c.buf[ls - 1] != '\n') --ls;
+
+    const auto isWs = [](char16_t ch) { return ch == ' ' || ch == '\t'; };
+    const auto columnAt = [&](size_t to) {
+        int col = 0;
+        for (size_t p = ls; p < to; ++p) col = c.buf[p] == '\t' ? col + 4 - col % 4 : col + 1;
+        return col;
+    };
+
+    // Структурный отступ: колонка содержимого ближайшего пункта.
+    int structural = 0;
+    Frame* li = nullptr;
+    for (size_t i = c.stack.size(); i-- > 0;) {
+        if (c.stack[i].type == MD_BLOCK_LI) { li = &c.stack[i]; break; }
+        if (c.stack[i].type == MD_BLOCK_QUOTE) break;
+    }
+    if (li != nullptr) {
+        if (li->contentColumn < 0) {
+            // Выводим из этой строки: отступ, маркер, пробел. Не вышло (первый
+            // текст пункта стоит не на строке маркера) — отступа у пункта не
+            // знаем, и ведущие пробелы в нём не трогаем.
+            size_t p = ls;
+            while (p < k && isWs(c.buf[p])) ++p;
+            size_t m = p;
+            if (m < k && (c.buf[m] == '-' || c.buf[m] == '*' || c.buf[m] == '+')) {
+                ++m;
+            } else {
+                size_t digits = 0;
+                while (m < k && c.buf[m] >= '0' && c.buf[m] <= '9' && digits < 9) { ++m; ++digits; }
+                if (digits == 0 || m >= k || (c.buf[m] != '.' && c.buf[m] != ')')) return;
+                ++m;
+            }
+            if (m >= k || !isWs(c.buf[m])) return;
+            li->contentColumn = columnAt(m + 1);
+        }
+        structural = li->contentColumn;
+    }
+
+    // От структурного отступа до текста — одни пробелы? Иначе это разметка.
+    int col = 0;
+    for (size_t p = ls; p < k; ++p) {
+        if (col >= structural && !isWs(c.buf[p])) return;
+        col = c.buf[p] == '\t' ? col + 4 - col % 4 : col + 1;
+    }
+    const int decorative = col - structural;
+    if (decorative > 0) c.text.append(QString(decorative, QChar(QChar::Nbsp)));
+}
+
 int onText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) {
     Ctx& c = *static_cast<Ctx*>(userdata);
+    const bool lineStart = c.atLineStart;
+    c.atLineStart = false;
 
     // Часть колбэков приходит со статическими строками (" ", "\n", отступ кода),
     // указатель в буфер — только у настоящих кусков исходника.
@@ -1179,6 +1258,7 @@ int onText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) 
         case MD_TEXT_NORMAL:
         case MD_TEXT_ENTITY:
         case MD_TEXT_CODE:
+            if (lineStart) keepDecorativeIndent(c, text);
             // Из ИСХОДНИКА: указатель может смотреть в замаскированную копию, а
             // маска — не то, что владелец написал. Сущности (`&amp;`) приходят
             // отдельной строкой вне буфера, их берём как есть.
@@ -1192,7 +1272,10 @@ int onText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) 
             // — нет, и переносить его в вывод некуда. Такой заголовок остаётся
             // дословным.
             if (c.cur.kind == Kind::Heading) demote(c);
-            else c.text.push_back('\n');
+            else {
+                c.text.push_back('\n');
+                c.atLineStart = true;
+            }
             break;
         case MD_TEXT_BR:
             // Жёсткий перенос ("  \n" или "\\\n") моделью не выражается.

@@ -804,12 +804,23 @@ void NoteEditor::resolveExternalConflict(bool takeExternal) {
 }
 
 void NoteEditor::adoptExternal(const std::string& text) {
-    std::vector<Piece> ir;
+    // ВНЕШНЯЯ ПРАВКА ПРИНИМАЕТСЯ ТЕМ ЖЕ ПУТЁМ, ЧТО И ВОЗВРАТ ИЗ РЕЖИМА
+    // ИСХОДНИКА (решение владельца, сессия 9): ZDocument::applySourceText —
+    // разбор как у файла, наложение только тронутыми кусками, ОДИН шаг отмены,
+    // и Ctrl+Z возвращает то, что было до внешнего изменения (README обещает
+    // это прямо). Прежде здесь была своя ветка — полная пересборка документа
+    // правкой, — и две ветки разошлись: одна берегла неразрывные отступы,
+    // другая нет. Разница осталась одна: шапку здесь забираем мы.
     NoteHeader fresh;
-    // Пробелы нормализуются, как и при открытии (ZDocument::loadMarkdown): чужой
-    // редактор и внешняя правка — одна и та же граница файла (решение владельца).
-    parsePieces(normaliseSpaces(QString::fromUtf8(text.data(), qsizetype(text.size()))), ir,
-                fresh);
+    ZDocument& doc = note_->doc();
+    // Пока идёт режим исходника, заметка правку не принимает; внешняя — не
+    // правка человека в окне, а новая истина файла, её пропускаем.
+    const bool sourceMode = doc.sourceEditing();
+    doc.setSourceEditing(false);
+    const int hunks = doc.applySourceText(
+        QString::fromUtf8(text.data(), qsizetype(text.size())), nullptr, &fresh);
+    doc.setSourceEditing(sourceMode);
+    Q_UNUSED(hunks);   // < 0 здесь не бывает: шапка разрешена, запасной путь внутри
     // Чужой редактор мог снести или испортить блок метаданных. Тихо принять
     // это нельзя: заметка потеряла бы родителя и дату создания, то есть уехала
     // бы в корень и «постарела». Прежние значения у нас в памяти — предлагаем
@@ -834,15 +845,6 @@ void NoteEditor::adoptExternal(const std::string& text) {
         fresh.set("role", previous.get("role"));
 
     note_->setHeader(fresh);
-    // ВНЕШНЕЕ СОДЕРЖИМОЕ ПРИНИМАЕТСЯ КАК ОБЫЧНАЯ ПРАВКА, и Ctrl+Z возвращает
-    // то, что было до него (README обещает это прямо). Значит и пересборка
-    // здесь — правка: asEdit, внутри скобки, одним шагом отмены.
-    {
-        QTextCursor group(document());
-        group.beginEditBlock();
-        rebuild(ir, textCursor().position(), viewAnchor(), nullptr, /*asEdit=*/true);
-        group.endEditBlock();
-    }
     document()->setModified(false);
 
     emit externalAdopted(note_->path());
