@@ -22,14 +22,14 @@ namespace {
 // чинить не то: наступал.
 const char* encoderError(JxlEncoder* enc) {
     switch (JxlEncoderGetError(enc)) {
-        case JXL_ENC_ERR_OK: return "без ошибки";
-        case JXL_ENC_ERR_GENERIC: return "общая ошибка";
-        case JXL_ENC_ERR_OOM: return "не хватило памяти";
-        case JXL_ENC_ERR_JBRD: return "данные реконструкции JPEG не записать";
-        case JXL_ENC_ERR_BAD_INPUT: return "вход не принят";
-        case JXL_ENC_ERR_NOT_SUPPORTED: return "сочетание настроек не поддерживается";
-        case JXL_ENC_ERR_API_USAGE: return "нарушен порядок вызовов";
-        default: return "неизвестная ошибка";
+        case JXL_ENC_ERR_OK: return "no error";
+        case JXL_ENC_ERR_GENERIC: return "generic error";
+        case JXL_ENC_ERR_OOM: return "out of memory";
+        case JXL_ENC_ERR_JBRD: return "cannot write JPEG reconstruction data";
+        case JXL_ENC_ERR_BAD_INPUT: return "input rejected";
+        case JXL_ENC_ERR_NOT_SUPPORTED: return "settings combination not supported";
+        case JXL_ENC_ERR_API_USAGE: return "API call order violated";
+        default: return "unknown error";
     }
 }
 
@@ -57,7 +57,7 @@ QByteArray drain(JxlEncoder* enc, QString* error) {
     }
     if (st != JXL_ENC_SUCCESS) {
         if (error)
-            *error = QStringLiteral("энкодер JXL отказался писать: %1")
+            *error = QStringLiteral("JXL encoder refused to write: %1")
                          .arg(QString::fromLatin1(encoderError(enc)));
         return {};
     }
@@ -72,7 +72,7 @@ QByteArray drain(JxlEncoder* enc, QString* error) {
 bool addBoxes(JxlEncoder* enc, const EncodeMeta& meta, QString* error) {
     if (meta.exif.isEmpty() && meta.xmp.isEmpty()) return true;
     if (JxlEncoderUseBoxes(enc) != JXL_ENC_SUCCESS) {
-        if (error) *error = QStringLiteral("контейнер JXL не принял боксы");
+        if (error) *error = QStringLiteral("JXL container rejected the boxes");
         return false;
     }
     if (!meta.exif.isEmpty()) {
@@ -80,7 +80,7 @@ bool addBoxes(JxlEncoder* enc, const EncodeMeta& meta, QString* error) {
         box += meta.exif;
         if (JxlEncoderAddBox(enc, "Exif", reinterpret_cast<const uint8_t*>(box.constData()),
                              size_t(box.size()), JXL_FALSE) != JXL_ENC_SUCCESS) {
-            if (error) *error = QStringLiteral("бокс EXIF не записался");
+            if (error) *error = QStringLiteral("EXIF box not written");
             return false;
         }
     }
@@ -88,7 +88,7 @@ bool addBoxes(JxlEncoder* enc, const EncodeMeta& meta, QString* error) {
         if (JxlEncoderAddBox(enc, "xml ",
                              reinterpret_cast<const uint8_t*>(meta.xmp.constData()),
                              size_t(meta.xmp.size()), JXL_FALSE) != JXL_ENC_SUCCESS) {
-            if (error) *error = QStringLiteral("бокс XMP не записался");
+            if (error) *error = QStringLiteral("XMP box not written");
             return false;
         }
     }
@@ -103,7 +103,7 @@ QByteArray encodeJxl(const QImage& image, const EncodeOptions& options, const En
         if (error) *error = why;
         return QByteArray();
     };
-    if (image.isNull()) return fail(QStringLiteral("нечего кодировать"));
+    if (image.isNull()) return fail(QStringLiteral("nothing to encode"));
 
     // Глубина берётся из формата картинки. Шире потолка не пишем: 16-битный
     // источник при потолке 12 объявляется двенадцатибитным, и ужимает libjxl.
@@ -125,10 +125,10 @@ QByteArray encodeJxl(const QImage& image, const EncodeOptions& options, const En
                                      : (alpha ? QImage::Format_RGBA8888
                                               : QImage::Format_RGB888);
     const QImage src = image.format() == want ? image : image.convertToFormat(want);
-    if (src.isNull()) return fail(QStringLiteral("не удалось привести картинку к нужному виду"));
+    if (src.isNull()) return fail(QStringLiteral("cannot convert the image to the required form"));
 
     auto enc = JxlEncoderMake(nullptr);
-    if (!enc) return fail(QStringLiteral("энкодер JXL не создался"));
+    if (!enc) return fail(QStringLiteral("JXL encoder creation failed"));
 
     auto runner = JxlThreadParallelRunnerMake(nullptr, workerCount(options.threads));
     if (runner)
@@ -156,7 +156,7 @@ QByteArray encodeJxl(const QImage& image, const EncodeOptions& options, const En
     // потеряет. Ровно та ловушка, ради которой флаг и существует.
     info.uses_original_profile = options.lossless ? JXL_TRUE : JXL_FALSE;
     if (JxlEncoderSetBasicInfo(enc.get(), &info) != JXL_ENC_SUCCESS)
-        return fail(QStringLiteral("энкодер не принял описание картинки"));
+        return fail(QStringLiteral("encoder rejected the image description"));
 
     // ЦВЕТ. Профиль источника переносим как есть; своего не выдумываем и в
     // sRGB не переводим — это была бы потеря на ровном месте.
@@ -173,7 +173,7 @@ QByteArray encodeJxl(const QImage& image, const EncodeOptions& options, const En
         JxlColorEncoding color = {};
         JxlColorEncodingSetToSRGB(&color, JXL_FALSE);
         if (JxlEncoderSetColorEncoding(enc.get(), &color) != JXL_ENC_SUCCESS)
-            return fail(QStringLiteral("энкодер не принял цветовое пространство"));
+            return fail(QStringLiteral("encoder rejected the color space"));
     }
 
     if (!addBoxes(enc.get(), meta, error)) return {};
@@ -220,7 +220,7 @@ QByteArray encodeJxl(const QImage& image, const EncodeOptions& options, const En
     }
 
     if (JxlEncoderAddImageFrame(fs, &fmt, pixels, pixelBytes) != JXL_ENC_SUCCESS)
-        return fail(QStringLiteral("энкодер не принял пиксели: %1")
+        return fail(QStringLiteral("encoder rejected the pixels: %1")
                         .arg(QString::fromLatin1(encoderError(enc.get()))));
     JxlEncoderCloseInput(enc.get());
 
@@ -230,20 +230,20 @@ QByteArray encodeJxl(const QImage& image, const EncodeOptions& options, const En
 QByteArray transcodeJpegToJxl(const QByteArray& jpeg, QString* error) {
     auto enc = JxlEncoderMake(nullptr);
     if (!enc) {
-        if (error) *error = QStringLiteral("энкодер JXL не создался");
+        if (error) *error = QStringLiteral("JXL encoder creation failed");
         return {};
     }
     // Контейнер обязателен: без него негде хранить данные реконструкции.
     JxlEncoderUseContainer(enc.get(), JXL_TRUE);
     if (JxlEncoderStoreJPEGMetadata(enc.get(), JXL_TRUE) != JXL_ENC_SUCCESS) {
-        if (error) *error = QStringLiteral("libjxl не хранит данные реконструкции");
+        if (error) *error = QStringLiteral("libjxl keeps no reconstruction data");
         return {};
     }
     JxlEncoderFrameSettings* fs = JxlEncoderFrameSettingsCreate(enc.get(), nullptr);
     if (JxlEncoderAddJPEGFrame(fs, reinterpret_cast<const uint8_t*>(jpeg.constData()),
                                size_t(jpeg.size())) != JXL_ENC_SUCCESS) {
         // Обычное дело, а не поломка: не всякий JPEG к транскоду пригоден.
-        if (error) *error = QStringLiteral("этот JPEG к транскоду не пригоден");
+        if (error) *error = QStringLiteral("this JPEG is unsuitable for transcode");
         return {};
     }
     JxlEncoderCloseInput(enc.get());
@@ -253,13 +253,13 @@ QByteArray transcodeJpegToJxl(const QByteArray& jpeg, QString* error) {
 QByteArray reconstructJpeg(const QByteArray& jxl, QString* error) {
     auto dec = JxlDecoderMake(nullptr);
     if (!dec) {
-        if (error) *error = QStringLiteral("декодер JXL не создался");
+        if (error) *error = QStringLiteral("JXL decoder creation failed");
         return {};
     }
     if (JxlDecoderSubscribeEvents(dec.get(),
                                   JXL_DEC_JPEG_RECONSTRUCTION | JXL_DEC_FULL_IMAGE) !=
         JXL_DEC_SUCCESS) {
-        if (error) *error = QStringLiteral("декодер не принял подписку");
+        if (error) *error = QStringLiteral("decoder rejected the event subscription");
         return {};
     }
     JxlDecoderSetInput(dec.get(), reinterpret_cast<const uint8_t*>(jxl.constData()),
@@ -282,14 +282,14 @@ QByteArray reconstructJpeg(const QByteArray& jxl, QString* error) {
                                     size_t(out.size() - used));
         } else if (st == JXL_DEC_FULL_IMAGE || st == JXL_DEC_SUCCESS) {
             if (!armed) {
-                if (error) *error = QStringLiteral("в этом JXL нет данных для сборки JPEG");
+                if (error) *error = QStringLiteral("this JXL has no data to rebuild the JPEG");
                 return {};
             }
             const size_t left = JxlDecoderReleaseJPEGBuffer(dec.get());
             out.resize(out.size() - qsizetype(left));
             return out;
         } else {
-            if (error) *error = QStringLiteral("сборка JPEG не удалась");
+            if (error) *error = QStringLiteral("JPEG rebuild failed");
             return {};
         }
     }

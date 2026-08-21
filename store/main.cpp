@@ -30,19 +30,19 @@ void printLines(const zametti::store::Report& report) {
 
 int usage() {
     std::fprintf(stderr,
-                 "использование:\n"
+                 "usage:\n"
                  "  zametti-store init <dir>\n"
                  "  zametti-store new --root <dir> [--parent <id>]\n"
                  "  zametti-store import --root <dir> --from <srcdir>"
                  " [--apple-manifest <json>] [--dry-run]\n"
                  "  zametti-store verify --root <dir>\n"
                  "  zametti-store thin --root <dir> [--dry-run]\n"
-                 "  zametti-store history compress <id | путь к .md> [--root <dir>]\n"
+                 "  zametti-store history compress <id | path to .md> [--root <dir>]\n"
                  "  zametti-store recompress --root <dir> --id <id|all>\n"
                  "\n"
-                 "  У recompress НЕТ умолчания для --id: пережатие необратимо, и\n"
-                 "  переехать всё хранилище одной забытой опцией быть не должно.\n"
-                 "  Все картинки — только явным «--id all».\n");
+                 "  recompress has NO default for --id: recompression is irreversible,\n"
+                 "  and one forgotten option must not migrate the whole store.\n"
+                 "  All images only with an explicit '--id all'.\n");
     return 2;
 }
 
@@ -143,10 +143,10 @@ int main(int argc, char** argv) {
             // является, и списывать это на занятость было бы враньём.
             if (lock.error() == QLockFile::LockFailedError)
                 std::fprintf(stderr,
-                             "хранилище занято: похоже, открыта программа. "
-                             "Прореживание идёт фоном при её запуске.\n");
+                             "store is busy: the app seems to be open. "
+                             "Thinning runs in the background at app startup.\n");
             else
-                std::fprintf(stderr, "замок хранилища не завести: %s\n",
+                std::fprintf(stderr, "cannot take the store lock: %s\n",
                              zametti::journal::storeLockPath(root).toUtf8().constData());
             return 1;
         }
@@ -154,15 +154,15 @@ int main(int argc, char** argv) {
         const zametti::journal::ThinReport report =
             history.thinAll(QDateTime::currentMSecsSinceEpoch(), dryRun);
         for (const QString& name : report.trimmed)
-            std::printf("%s: оборванный хвост отрезан\n", name.toUtf8().constData());
+            std::printf("%s: truncated tail cut off\n", name.toUtf8().constData());
         for (const QString& line : report.problems)
-            std::fprintf(stderr, "БЕДА: %s\n", line.toUtf8().constData());
-        std::printf("журналов %d, записей %lld -> %lld", report.journals,
+            std::fprintf(stderr, "PROBLEM: %s\n", line.toUtf8().constData());
+        std::printf("journals %d, records %lld -> %lld", report.journals,
                     (long long)report.recordsBefore, (long long)report.recordsAfter);
         if (!dryRun)
-            std::printf(", байт %lld -> %lld", (long long)report.bytesBefore,
+            std::printf(", bytes %lld -> %lld", (long long)report.bytesBefore,
                         (long long)report.bytesAfter);
-        std::printf("%s\n", dryRun ? " (только показ)" : "");
+        std::printf("%s\n", dryRun ? " (dry run)" : "");
         return report.problems.isEmpty() ? 0 : 1;
     }
 
@@ -184,7 +184,7 @@ int main(int argc, char** argv) {
             if (target.isEmpty()) target = info.absolutePath();
         }
         if (target.isEmpty()) {
-            std::fprintf(stderr, "не сказано, какое хранилище: нужен --root или путь к .md\n");
+            std::fprintf(stderr, "no store given: need --root or a path to .md\n");
             return 1;
         }
 
@@ -195,9 +195,9 @@ int main(int argc, char** argv) {
             // Занято и «замок негде завести» — разные беды, и валить вторую на
             // первую значит врать: чаще всего это просто не хранилище.
             if (lock.error() == QLockFile::LockFailedError)
-                std::fprintf(stderr, "хранилище занято: похоже, открыта программа\n");
+                std::fprintf(stderr, "store is busy: the app seems to be open\n");
             else
-                std::fprintf(stderr, "замок хранилища не завести: %s\n",
+                std::fprintf(stderr, "cannot take the store lock: %s\n",
                              zametti::journal::storeLockPath(target).toUtf8().constData());
             return 1;
         }
@@ -212,14 +212,14 @@ int main(int argc, char** argv) {
             return 1;
         }
         const auto name = [](const QString& v) {
-            return v.isEmpty() ? QStringLiteral("0 (не чищен)") : v;
+            return v.isEmpty() ? QStringLiteral("0 (not cleaned)") : v;
         };
-        std::printf("%s: версия %s -> %s\n", noteId.toUtf8().constData(),
+        std::printf("%s: version %s -> %s\n", noteId.toUtf8().constData(),
                     name(report.versionBefore).toUtf8().constData(),
                     name(report.versionAfter).toUtf8().constData());
-        std::printf("записей %d -> %d (дубликатов %d, схлопнуто %d)%s\n", report.recordsBefore,
+        std::printf("records %d -> %d (duplicates %d, merged %d)%s\n", report.recordsBefore,
                     report.recordsAfter, report.duplicates, report.merged,
-                    report.rewritten ? "" : "; файл не тронут");
+                    report.rewritten ? "" : "; file untouched");
         return 0;
     }
 
@@ -237,7 +237,7 @@ int main(int argc, char** argv) {
         if (!bad && !maxFileMb.isEmpty())
         if (!bad && !quality.isEmpty()) options.limits.quality = quality.toInt(&bad), bad = !bad;
         if (bad) {
-            std::fprintf(stderr, "непонятное число в ключах\n");
+            std::fprintf(stderr, "bad number in options\n");
             return 1;
         }
 
@@ -248,12 +248,12 @@ int main(int argc, char** argv) {
         for (const QString& p : report.problems)
             std::fprintf(stderr, "%s\n", p.toUtf8().constData());
         if (report.examined > 0) {
-            std::printf("\nосмотрено %d, переписано %d, оставлено %d, не вышло %d\n",
+            std::printf("\nexamined %d, rewritten %d, left as is %d, failed %d\n",
                         report.examined, report.rewritten, report.untouched, report.failed);
-            std::printf("было %.1f МБ, стало %.1f МБ\n",
+            std::printf("was %.1f MB, now %.1f MB\n",
                         double(report.bytesBefore) / 1048576.0,
                         double(report.bytesAfter) / 1048576.0);
-            if (dryRun) std::printf("(это была примерка, ничего не записано)\n");
+            if (dryRun) std::printf("(dry run, nothing written)\n");
         }
         return ok ? 0 : 1;
     }

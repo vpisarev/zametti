@@ -6,16 +6,9 @@
 namespace zametti::diff {
 
 QString gapLabel(int lines) {
-    // Безличная форма («удалено: 1 строка», «удалено: 5 строк») — единственная,
-    // которая живёт со всеми тремя окончаниями сразу.
-    const int tens = lines % 100;
-    const int ones = lines % 10;
-    QString word = QStringLiteral("строк");
-    if (tens < 11 || tens > 14) {
-        if (ones == 1) word = QStringLiteral("строка");
-        else if (ones >= 2 && ones <= 4) word = QStringLiteral("строки");
-    }
-    return QStringLiteral("удалено: %1 %2").arg(lines).arg(word);
+    // Английские формы: «removed: 1 line», «removed: 5 lines».
+    const QString word = lines == 1 ? QStringLiteral("line") : QStringLiteral("lines");
+    return QStringLiteral("removed: %1 %2").arg(lines).arg(word);
 }
 
 namespace {

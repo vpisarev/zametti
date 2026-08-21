@@ -46,7 +46,7 @@ QString g_mathFont;
 bool loadFontFromResources(const QString& stem, bool asMath, QString* error) {
     QFile clm(QStringLiteral(":/fonts/math/%1.clm2").arg(stem));
     if (!clm.open(QIODevice::ReadOnly)) {
-        if (error != nullptr) *error = QStringLiteral("нет ресурса %1.clm2").arg(stem);
+        if (error != nullptr) *error = QStringLiteral("missing resource %1.clm2").arg(stem);
         return false;
     }
     fontBytes().push_back(clm.readAll());
@@ -61,7 +61,7 @@ bool loadFontFromResources(const QString& stem, bool asMath, QString* error) {
     const microtex::FontMeta meta = asMath ? microtex::MicroTeX::init(src)
                                            : microtex::MicroTeX::addFont(src);
     if (!meta.isValid()) {
-        if (error != nullptr) *error = QStringLiteral("гарнитура %1 не принята движком").arg(stem);
+        if (error != nullptr) *error = QStringLiteral("font %1 rejected by the engine").arg(stem);
         return false;
     }
     if (asMath) g_mathFont = QString::fromStdString(meta.name);
@@ -87,11 +87,11 @@ QString checkLatex(const QString& latex) {
         }
         if (c == QLatin1Char('{')) ++braces;
         else if (c == QLatin1Char('}')) {
-            if (--braces < 0) return QStringLiteral("лишняя закрывающая скобка }");
+            if (--braces < 0) return QStringLiteral("extra closing brace }");
         }
     }
     if (braces > 0)
-        return QStringLiteral("не закрыта фигурная скобка: не хватает %1 «}»").arg(braces);
+        return QStringLiteral("unclosed brace: missing %1 «}»").arg(braces);
 
     // \left…\right и \begin…\end считаем по вхождениям команд: разбирать
     // синтаксис целиком мы не собираемся, а несведённая пара — это ровно то,
@@ -104,11 +104,11 @@ QString checkLatex(const QString& latex) {
         else if (name == QLatin1String("right")) --lefts;
         else if (name == QLatin1String("begin")) ++envs;
         else --envs;
-        if (lefts < 0) return QStringLiteral("\\right без \\left");
-        if (envs < 0) return QStringLiteral("\\end без \\begin");
+        if (lefts < 0) return QStringLiteral("\\right without \\left");
+        if (envs < 0) return QStringLiteral("\\end without \\begin");
     }
-    if (lefts > 0) return QStringLiteral("\\left без \\right");
-    if (envs > 0) return QStringLiteral("\\begin без \\end");
+    if (lefts > 0) return QStringLiteral("\\left without \\right");
+    if (envs > 0) return QStringLiteral("\\begin without \\end");
     return {};
 }
 
@@ -136,7 +136,7 @@ bool Formulas::init(QString* error) {
           QStringLiteral("lmroman10-bold"), QStringLiteral("lmroman10-bolditalic")}) {
         QString why;
         if (!loadFontFromResources(stem, false, &why))
-            std::fprintf(stderr, "текстовая гарнитура формул не загрузилась: %s\n",
+            std::fprintf(stderr, "formula text font failed to load: %s\n",
                          why.toUtf8().constData());
     }
     g_ready = true;
@@ -167,7 +167,7 @@ std::shared_ptr<microtex::Render> parseFormula(const QString& latex, bool displa
                                                qreal enginePixels, const QColor& colour,
                                                QString* error) {
     if (!g_ready) {
-        *error = QStringLiteral("движок формул не поднялся");
+        *error = QStringLiteral("formula engine failed to start");
         return nullptr;
     }
     const QString broken = checkLatex(latex);
@@ -221,11 +221,11 @@ std::shared_ptr<microtex::Render> parseFormula(const QString& latex, bool displa
         } catch (...) {
             // У MicroTeX ex_tex наследует std::exception, но ловим и всё
             // прочее: падать из-за формулы в заметке программа не имеет права.
-            *error = QStringLiteral("движок формул бросил неизвестное исключение");
+            *error = QStringLiteral("formula engine threw an unknown exception");
         }
     }
     if (raw == nullptr) {
-        if (error->isEmpty()) *error = QStringLiteral("движок формул не собрал вёрстку");
+        if (error->isEmpty()) *error = QStringLiteral("formula engine produced no layout");
         return nullptr;
     }
     return std::shared_ptr<microtex::Render>(raw);
@@ -248,7 +248,7 @@ FormulaImage Formulas::render(const QString& latex, bool display, qreal pixelSiz
     if (physicalWidth <= 0.0 || physicalHeight <= 0.0) {
         // Вырожденная вёрстка — тоже ошибка, а не «пустая формула»: так
         // выглядит проглоченная движком поломка.
-        out.error = QStringLiteral("пустая вёрстка %1×%2")
+        out.error = QStringLiteral("empty layout %1×%2")
                         .arg(physicalWidth)
                         .arg(physicalHeight);
         return out;
@@ -289,7 +289,7 @@ QString Formulas::paintInto(QPainter& painter, const QPointF& at, const QString&
         parseFormula(latex, display, pixelSize, colour, &error);
     if (render == nullptr) return error;
     if (render->getWidth() <= 0 || render->getHeight() <= 0)
-        return QStringLiteral("пустая вёрстка");
+        return QStringLiteral("empty layout");
 
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);

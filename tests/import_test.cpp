@@ -193,7 +193,7 @@ void checkTable(const QString& root) {
         if (QFileInfo::exists(loose)) {
             const ImportResult r = importImage(loose, limits);
             ZT_EQ("рыхлый JPEG пережимается, а не транскодируется",
-                  std::string("путь фото"), std::string(routeName(r.route)));
+                  std::string("photo path"), std::string(routeName(r.route)));
             ZT_TRUE("и выигрыш действительно крупный (" +
                         num(100 * r.bytes.size() / QFileInfo(loose).size()) + "%)",
                     r.bytes.size() * 100 <= QFileInfo(loose).size() * 80);
@@ -241,7 +241,7 @@ void checkTable(const QString& root) {
         const QString path = root + "/" + raw;
         if (!QFileInfo::exists(path)) continue;
         const ImportResult r = importImage(path, limits);
-        ZT_EQ(std::string("сырой формат отвергнут: ") + raw, std::string("отказ"),
+        ZT_EQ(std::string("сырой формат отвергнут: ") + raw, std::string("refused"),
               std::string(routeName(r.route)));
         ZT_TRUE(std::string("и сказано почему: ") + raw, !r.message.isEmpty());
     }
@@ -254,7 +254,7 @@ void checkTiffPath(const QString& root) {
     const QString lab = root + "/museum/lab-lzw.tif";
     if (!QFileInfo::exists(lab)) return;
     const ImportResult r = importImage(lab, limits);
-    ZT_EQ("Lab-TIFF идёт путём фото", std::string("путь фото"),
+    ZT_EQ("Lab-TIFF идёт путём фото", std::string("photo path"),
           std::string(routeName(r.route)));
     const QImage back = decodeResult(r);
     ZT_TRUE("и читается обратно", !back.isNull());
@@ -292,7 +292,7 @@ void checkLimitsMatter(const QString& root) {
     // шуме при q90). Значит различать пути должен ОСТАВШИЙСЯ рычаг — S.
     ImportLimits roomy;
     const ImportResult r2 = importImage(path, roomy);
-    ZT_EQ("при обычных числах идёт транскод", std::string("транскод JPEG"),
+    ZT_EQ("при обычных числах идёт транскод", std::string("JPEG transcode"),
           std::string(routeName(r2.route)));
 
     // Транскод возможен только пока картинка не уменьшается: он сохраняет
@@ -301,7 +301,7 @@ void checkLimitsMatter(const QString& root) {
     ImportLimits small;
     small.maxSize = 400;
     const ImportResult r3 = importImage(path, small);
-    ZT_EQ("при тесном S транскод невозможен", std::string("путь фото"),
+    ZT_EQ("при тесном S транскод невозможен", std::string("photo path"),
           std::string(routeName(r3.route)));
     ZT_TRUE("и картинка уменьшена (" + num(r3.size.width) + ")", r3.size.width <= 1200);
 }
@@ -328,10 +328,10 @@ void checkPixels() {
                                              int((seed >> 8) & 0xFF)));
         }
     const ImportResult rough = importPixels(noise, limits);
-    ZT_EQ("шум идёт путём фото", std::string("путь фото"),
+    ZT_EQ("шум идёт путём фото", std::string("photo path"),
           std::string(routeName(rough.route)));
 
-    ZT_EQ("пустая картинка отвергается", std::string("отказ"),
+    ZT_EQ("пустая картинка отвергается", std::string("refused"),
           std::string(routeName(importPixels(QImage(), limits).route)));
 }
 
@@ -343,7 +343,7 @@ void checkBombs(const QString& root) {
         const QString path = root + "/" + bomb;
         if (!QFileInfo::exists(path)) continue;
         const ImportResult r = importImage(path, limits);
-        ZT_EQ(std::string("бомба отвергнута: ") + bomb, std::string("отказ"),
+        ZT_EQ(std::string("бомба отвергнута: ") + bomb, std::string("refused"),
               std::string(routeName(r.route)));
         ZT_TRUE(std::string("и объяснено: ") + bomb, !r.message.isEmpty());
     }

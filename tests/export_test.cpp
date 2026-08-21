@@ -65,7 +65,7 @@ void checkNames() {
           zametti::fileNameFromTitle(QStringLiteral("Отчёт/2026:план")).toStdString());
     ZT_EQ("точка на конце срезана (Windows её съест молча)", std::string("Итог"),
           zametti::fileNameFromTitle(QStringLiteral("Итог...")).toStdString());
-    ZT_EQ("пустой заголовок получает имя", std::string("Без названия"),
+    ZT_EQ("пустой заголовок получает имя", std::string("Untitled"),
           zametti::fileNameFromTitle(QStringLiteral("   ")).toStdString());
     ZT_EQ("имя устройства Windows обезврежено", std::string("_CON"),
           zametti::fileNameFromTitle(QStringLiteral("CON")).toStdString());

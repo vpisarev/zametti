@@ -27,12 +27,12 @@ bool writeBytes(const QString& path, const std::string& bytes, QString* error) {
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly)) {
         if (error != nullptr)
-            *error = QStringLiteral("не открыть на запись: %1").arg(file.errorString());
+            *error = QStringLiteral("cannot open for writing: %1").arg(file.errorString());
         return false;
     }
     file.write(bytes.data(), qint64(bytes.size()));
     if (file.commit()) return true;
-    if (error != nullptr) *error = QStringLiteral("запись не удалась: %1").arg(file.errorString());
+    if (error != nullptr) *error = QStringLiteral("write failed: %1").arg(file.errorString());
     return false;
 }
 
@@ -78,11 +78,11 @@ int fileOrphans(const QString& root, QString* error) {
         bureau = QFileInfo(made).completeBaseName();
         std::string bytes;
         if (!readBytes(made, bytes)) {
-            if (error != nullptr) *error = QStringLiteral("папка бюро не читается");
+            if (error != nullptr) *error = QStringLiteral("cannot read the lost & found folder");
             return -1;
         }
         ZNote doc;
-        doc.load("# Бюро находок\n");
+        doc.load("# Lost & found\n");
         NoteHeader head;
         {
             ZNote was;

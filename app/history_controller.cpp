@@ -16,7 +16,7 @@ HistoryController::HistoryController(NoteEditor& editor, HistoryView& view, QObj
         if (!enter()) {
             // Журнала нет вовсе — показать нечего, но и молчать нельзя: человек
             // видит одну строку вместо заметки и вправе знать, почему.
-            std::fprintf(stderr, "архивная заметка без истории: %s\n",
+            std::fprintf(stderr, "archived note without history: %s\n",
                          editor_.filePath().toUtf8().constData());
         }
     });
@@ -50,7 +50,7 @@ bool HistoryController::enter(int index) {
     QString error;
     if (!timeline->open(index, &error)) {
         if (!error.isEmpty())
-            std::fprintf(stderr, "история не читается: %s\n", error.toUtf8().constData());
+            std::fprintf(stderr, "history unreadable: %s\n", error.toUtf8().constData());
         return false;
     }
     timeline_ = std::move(timeline);

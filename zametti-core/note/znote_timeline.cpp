@@ -12,7 +12,7 @@ ZNoteTimeline::ZNoteTimeline(std::shared_ptr<ZNoteHistory> history, QByteArray f
 
 bool ZNoteTimeline::open(int index, QString* error) {
     if (!history_->available()) {
-        if (error != nullptr) *error = QStringLiteral("у заметки нет журнала");
+        if (error != nullptr) *error = QStringLiteral("note has no journal");
         return false;
     }
     // Чтение рамок — второй триггер ленивой чистки: человек пошёл в прошлое,
@@ -25,7 +25,7 @@ bool ZNoteTimeline::open(int index, QString* error) {
     resetSlots();
     const int at = index < 0 ? lastSnapshotIndex() : index;
     if (at < 0) {
-        if (error != nullptr) *error = QStringLiteral("в журнале нет ни одного слепка");
+        if (error != nullptr) *error = QStringLiteral("journal has no snapshots");
         return false;
     }
     return select(at, error);
@@ -49,7 +49,7 @@ bool ZNoteTimeline::select(int index, QString* error) {
     QByteArray bytes;
     QString why;
     if (!history_->snapshotAt(index, &bytes, &why)) {
-        std::fprintf(stderr, "слепок не собрать: %s\n", why.toUtf8().constData());
+        std::fprintf(stderr, "cannot rebuild snapshot: %s\n", why.toUtf8().constData());
         if (error != nullptr) *error = why;
         return false;
     }
@@ -112,7 +112,7 @@ void ZNoteTimeline::computeSlot(Slot& slot, Base base) {
                 slot.time = journal_.entries[at].time;
                 slot.lines = diff::linesOf(std::string_view(bytes.constData(), size_t(bytes.size())));
             } else {
-                std::fprintf(stderr, "слепок для сравнения не собрать: %s\n",
+                std::fprintf(stderr, "cannot rebuild snapshot for comparison: %s\n",
                              why.toUtf8().constData());
             }
         }

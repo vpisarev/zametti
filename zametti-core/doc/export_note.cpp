@@ -60,12 +60,12 @@ bool writeAll(const QString& path, const std::string& bytes, QString* error) {
     QSaveFile file(path);
     file.setDirectWriteFallback(true);
     if (!file.open(QIODevice::WriteOnly)) {
-        *error = QStringLiteral("не открыть на запись: %1").arg(path);
+        *error = QStringLiteral("cannot open for writing: %1").arg(path);
         return false;
     }
     const qint64 written = file.write(bytes.data(), qint64(bytes.size()));
     if (written != qint64(bytes.size()) || !file.commit()) {
-        *error = QStringLiteral("не записать: %1").arg(path);
+        *error = QStringLiteral("cannot write: %1").arg(path);
         return false;
     }
     return true;
@@ -133,7 +133,7 @@ QString fileNameFromTitle(const QString& title) {
     while (!out.isEmpty() && (out.endsWith(QLatin1Char('.')) || out.endsWith(QLatin1Char(' '))))
         out.chop(1);
 
-    if (out.isEmpty()) return QStringLiteral("Без названия");
+    if (out.isEmpty()) return QStringLiteral("Untitled");
     if (reservedOnWindows(out)) out.prepend(QLatin1Char('_'));
     return out;
 }
@@ -159,14 +159,14 @@ ExportReport exportMarkdown(const QString& notePath, const QString& targetPath, 
     bool read = false;
     const std::string source = readAll(notePath, &read);
     if (!read) {
-        report.error = QStringLiteral("не прочитать заметку: %1").arg(notePath);
+        report.error = QStringLiteral("cannot read note: %1").arg(notePath);
         return report;
     }
 
     const QDir storeDir = QFileInfo(notePath).absoluteDir();
     const QDir outDir = QFileInfo(targetPath).absoluteDir();
     if (!outDir.exists()) {
-        report.error = QStringLiteral("каталога нет: %1").arg(outDir.path());
+        report.error = QStringLiteral("no such directory: %1").arg(outDir.path());
         return report;
     }
     // Вывоз В САМО ХРАНИЛИЩЕ запрещён. Заметка легла бы туда под человеческим
@@ -174,7 +174,7 @@ ExportReport exportMarkdown(const QString& notePath, const QString& targetPath, 
     // стал бы для программы заметкой-самозванцем.
     if (outDir.absolutePath() == storeDir.absolutePath()) {
         report.error = QStringLiteral(
-            "вывоз в само хранилище невозможен: там имя файла — это идентификатор");
+            "cannot export into the store itself: there the file name is the identifier");
         return report;
     }
 
@@ -207,7 +207,7 @@ ExportReport exportMarkdown(const QString& notePath, const QString& targetPath, 
                                                              : storeDir.filePath(item.href);
         if (!QFileInfo::exists(from)) {
             ++report.imagesMissing;
-            report.notes << QStringLiteral("нет вложения: %1").arg(item.href);
+            report.notes << QStringLiteral("attachment missing: %1").arg(item.href);
             item.outName.clear();   // копировать нечего, ссылку не трогаем
             continue;
         }
@@ -219,7 +219,7 @@ ExportReport exportMarkdown(const QString& notePath, const QString& targetPath, 
         }
         const QString fresh = freeName(outDir, item.outName);
         if (fresh.isEmpty()) {
-            report.error = QStringLiteral("не подобрать свободное имя для %1").arg(item.outName);
+            report.error = QStringLiteral("cannot find a free name for %1").arg(item.outName);
             return report;
         }
         item.outName = fresh;
@@ -236,8 +236,9 @@ ExportReport exportMarkdown(const QString& notePath, const QString& targetPath, 
         // не то, что лежит в хранилище, и человек об этом не узнал бы.
         if (!note.isCanonical(source)) {
             report.error = QStringLiteral(
-                "рядом уже лежит другой файл с именем вложения, а переписать ссылку нельзя: "
-                "разбор этой заметки не сходится с её байтами. Вывезите в пустой каталог.");
+                "a different file with the attachment's name is already there, and the link "
+                "cannot be rewritten: parsing this note does not round-trip its bytes. "
+                "Export into an empty directory.");
             return report;
         }
         note.doc().rewriteAttachments([&](const QString& href) {
@@ -258,13 +259,13 @@ ExportReport exportMarkdown(const QString& notePath, const QString& targetPath, 
         const QString from = QDir::isAbsolutePath(item.href) ? item.href
                                                              : storeDir.filePath(item.href);
         if (!QFile::copy(from, to)) {
-            report.error = QStringLiteral("не скопировать вложение: %1").arg(item.href);
+            report.error = QStringLiteral("cannot copy attachment: %1").arg(item.href);
             return report;
         }
         ++report.imagesCopied;
         if (item.renamed)
-            report.notes << QStringLiteral("вложение %1 легло как %2: рядом уже был другой файл "
-                                           "с таким именем")
+            report.notes << QStringLiteral("attachment %1 saved as %2: a different file "
+                                           "with that name was already there")
                                 .arg(item.href, item.outName);
     }
     return report;

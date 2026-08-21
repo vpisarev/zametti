@@ -34,7 +34,7 @@ void assertLocked() {
 #ifndef NDEBUG
     if (gate().tryLock()) {
         gate().unlock();
-        assert(false && "операция истории вызвана без замка");
+        assert(false && "history operation called without the lock");
     }
 #endif
 }
@@ -287,7 +287,7 @@ bool rebuildAt(const QVector<Entry>& entries, const QVector<QByteArray>& packed,
     while (base > 0 && !entries[base].full()) --base;
     if (!entries[base].full()) {
         if (error)
-            *error = QStringLiteral("поколение записи №%1 начинается не с полного слепка")
+            *error = QStringLiteral("generation of record #%1 does not start with a full snapshot")
                          .arg(index);
         return false;
     }
@@ -297,7 +297,7 @@ bool rebuildAt(const QVector<Entry>& entries, const QVector<QByteArray>& packed,
         if (!e.hasSnapshot()) continue;  // надгробие цепочку не рвёт: у него слепка нет
         if (e.codec != Codec::Zstd && e.codec != Codec::None && e.codec != Codec::ZstdDelta) {
             if (error)
-                *error = QStringLiteral("слепок записи №%1 сжат неизвестным кодеком %2")
+                *error = QStringLiteral("snapshot of record #%1 compressed with unknown codec %2")
                              .arg(i)
                              .arg(int(e.codec));
             return false;
@@ -307,7 +307,7 @@ bool rebuildAt(const QVector<Entry>& entries, const QVector<QByteArray>& packed,
             plain = packed[i];
         } else if (!decompressSnapshot(packed[i], e.full() ? QByteArray() : current, e.plainSize,
                                        &plain)) {
-            if (error) *error = QStringLiteral("слепок записи №%1 не распаковывается").arg(i);
+            if (error) *error = QStringLiteral("snapshot of record #%1 does not decompress").arg(i);
             return false;
         }
         if (eachLink || i == index) {
@@ -315,7 +315,7 @@ bool rebuildAt(const QVector<Entry>& entries, const QVector<QByteArray>& packed,
                 hashOf(std::string_view(plain.constData(), size_t(plain.size())));
             if (actual != e.digest) {
                 if (error)
-                    *error = QStringLiteral("слепок записи №%1 не сходится с отпечатком").arg(i);
+                    *error = QStringLiteral("snapshot of record #%1: hash mismatch").arg(i);
                 // Итог не сошёлся — теперь стоит пройти цепочку с проверкой
                 // каждого звена и назвать то, с которого всё пошло не так.
                 if (!eachLink) {
@@ -361,7 +361,7 @@ bool rebuiltBytes(const QVector<Entry>& entries, const QVector<QByteArray>& pack
         const Codec codec = full ? Codec::Zstd : Codec::ZstdDelta;
         const QByteArray body = compressSnapshot(plain, full ? QByteArray() : previous);
         if (body.isEmpty() && !plain.isEmpty()) {
-            if (error) *error = QStringLiteral("не удалось сжать слепок записи №%1").arg(i);
+            if (error) *error = QStringLiteral("cannot compress snapshot of record #%1").arg(i);
             return false;
         }
         *out += recordBytes(e.kind, e.time, e.digest, body, plain.size(), e.source, codec);
@@ -376,12 +376,12 @@ bool rebuiltBytes(const QVector<Entry>& entries, const QVector<QByteArray>& pack
 bool replaceFile(const QString& path, const QByteArray& bytes, QString* error) {
     QSaveFile save(path);
     if (!save.open(QIODevice::WriteOnly)) {
-        if (error) *error = QStringLiteral("журнал не переписать: %1").arg(save.errorString());
+        if (error) *error = QStringLiteral("cannot rewrite journal: %1").arg(save.errorString());
         return false;
     }
     save.write(bytes);
     if (!save.commit()) {
-        if (error) *error = QStringLiteral("журнал не переписать: %1").arg(save.errorString());
+        if (error) *error = QStringLiteral("cannot rewrite journal: %1").arg(save.errorString());
         return false;
     }
     return true;
@@ -423,16 +423,16 @@ bool parseAll(const QByteArray& blob, Journal* out, Want want, int wantIndex,
     QCborStreamReader reader(blob.constData(), blob.size());
     const RawRecord header = readRecord(reader, false);
     if (!header.valid || !header.isHeader) {
-        if (error) *error = QStringLiteral("не журнал zametti: нет шапки");
+        if (error) *error = QStringLiteral("not a zametti journal: no header");
         return false;
     }
     if (header.magic != QLatin1StringView(kMagic)) {
-        if (error) *error = QStringLiteral("не журнал zametti: чужая магия «%1»").arg(header.magic);
+        if (error) *error = QStringLiteral("not a zametti journal: foreign magic '%1'").arg(header.magic);
         return false;
     }
     if (header.version != kFormatVersion) {
         if (error)
-            *error = QStringLiteral("журнал версии %1, а мы знаем только %2")
+            *error = QStringLiteral("journal version %1, but we only know %2")
                          .arg(header.version)
                          .arg(kFormatVersion);
         return false;
@@ -530,7 +530,7 @@ bool History::appendLocked(const QString& path, Kind kind, qint64 time,
     const bool exists = file.exists() && file.size() > 0;
     if (exists) {
         if (!file.open(QIODevice::ReadOnly)) {
-            if (error) *error = QStringLiteral("журнал не прочитать: %1").arg(file.errorString());
+            if (error) *error = QStringLiteral("cannot read journal: %1").arg(file.errorString());
             return false;
         }
         blob = file.readAll();
@@ -571,7 +571,7 @@ bool History::appendLocked(const QString& path, Kind kind, qint64 time,
     if (!tombstone) {
         body = compressSnapshot(snapshot, base);
         if (body.isEmpty() && !snapshot.isEmpty()) {
-            if (error) *error = QStringLiteral("не удалось сжать слепок");
+            if (error) *error = QStringLiteral("cannot compress snapshot");
             return false;
         }
     }
@@ -587,7 +587,7 @@ bool History::appendLocked(const QString& path, Kind kind, qint64 time,
     tail += recordBytes(kind, time, digest, body, snapshot.size(), source, codec);
 
     if (!file.open(QIODevice::WriteOnly | QIODevice::Append)) {
-        if (error) *error = QStringLiteral("журнал не открыть: %1").arg(file.errorString());
+        if (error) *error = QStringLiteral("cannot open journal: %1").arg(file.errorString());
         return false;
     }
     const qint64 wrote = file.write(tail);
@@ -595,7 +595,7 @@ bool History::appendLocked(const QString& path, Kind kind, qint64 time,
     // кончился) читатель отрежет сам, но сказать об этом надо сразу.
     file.close();
     if (wrote != tail.size()) {
-        if (error) *error = QStringLiteral("журнал записан не целиком: %1 из %2 байт")
+        if (error) *error = QStringLiteral("journal written incompletely: %1 of %2 bytes")
                                 .arg(wrote)
                                 .arg(tail.size());
         return false;
@@ -611,7 +611,7 @@ bool History::readLocked(const QString& path, Journal* out, QString* error) cons
         return true;  // журнала ещё нет — это не беда, а «правок не было»
     }
     if (!file.open(QIODevice::ReadOnly)) {
-        if (error) *error = QStringLiteral("журнал не прочитать: %1").arg(file.errorString());
+        if (error) *error = QStringLiteral("cannot read journal: %1").arg(file.errorString());
         return false;
     }
     const QByteArray blob = file.readAll();
@@ -624,7 +624,7 @@ bool History::snapshotAtLocked(const QString& path, int index, QByteArray* out,
     assertLocked();
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
-        if (error) *error = QStringLiteral("журнал не прочитать: %1").arg(file.errorString());
+        if (error) *error = QStringLiteral("cannot read journal: %1").arg(file.errorString());
         return false;
     }
     const QByteArray blob = file.readAll();
@@ -634,13 +634,13 @@ bool History::snapshotAtLocked(const QString& path, int index, QByteArray* out,
     QVector<QByteArray> packed;
     if (!parseAll(blob, &journal, Want::Chain, index, &packed, error)) return false;
     if (index < 0 || index >= journal.entries.size()) {
-        if (error) *error = QStringLiteral("в журнале нет записи №%1").arg(index);
+        if (error) *error = QStringLiteral("journal has no record #%1").arg(index);
         return false;
     }
     const Entry& entry = journal.entries[index];
     if (!entry.hasSnapshot()) {
         if (error)
-            *error = QStringLiteral("у записи №%1 (%2) слепка нет")
+            *error = QStringLiteral("record #%1 (%2) has no snapshot")
                          .arg(index)
                          .arg(describeKind(entry.kind));
         return false;
@@ -653,7 +653,7 @@ bool History::trimTailLocked(const QString& path, QString* error) {
     Journal journal;
     QFile probe(path);
     if (!probe.open(QIODevice::ReadOnly)) {
-        if (error) *error = QStringLiteral("журнал не прочитать: %1").arg(probe.errorString());
+        if (error) *error = QStringLiteral("cannot read journal: %1").arg(probe.errorString());
         return false;
     }
     const QByteArray blob = probe.readAll();
@@ -662,12 +662,12 @@ bool History::trimTailLocked(const QString& path, QString* error) {
     if (!journal.tailTrimmed) return true;
     QFile file(path);
     if (!file.open(QIODevice::ReadWrite)) {
-        if (error) *error = QStringLiteral("журнал не открыть: %1").arg(file.errorString());
+        if (error) *error = QStringLiteral("cannot open journal: %1").arg(file.errorString());
         return false;
     }
     const bool ok = file.resize(journal.goodBytes);
     file.close();
-    if (!ok && error) *error = QStringLiteral("хвост журнала не отрезать");
+    if (!ok && error) *error = QStringLiteral("cannot cut the journal tail");
     return ok;
 }
 
@@ -712,7 +712,7 @@ bool History::thinLocked(const QString& path, qint64 now, QString* error) {
     if (!info.exists()) return true;
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
-        if (error) *error = QStringLiteral("журнал не прочитать: %1").arg(file.errorString());
+        if (error) *error = QStringLiteral("cannot read journal: %1").arg(file.errorString());
         return false;
     }
     const QByteArray blob = file.readAll();
@@ -760,7 +760,7 @@ bool History::compressLocked(const QString& path, const Planner& planner, bool f
     QFile file(path);
     if (!file.exists()) return finish(true);   // журнала нет — и чистить нечего
     if (!file.open(QIODevice::ReadOnly)) {
-        if (error) *error = QStringLiteral("журнал не прочитать: %1").arg(file.errorString());
+        if (error) *error = QStringLiteral("cannot read journal: %1").arg(file.errorString());
         return finish(false);
     }
     const QByteArray blob = file.readAll();
@@ -795,7 +795,7 @@ bool History::compressLocked(const QString& path, const Planner& planner, bool f
     for (int i = 0; i < keep.size(); ++i)
         if (keep[i] < 0 || keep[i] >= journal.entries.size() ||
             (i > 0 && keep[i] <= keep[i - 1])) {
-            if (error) *error = QStringLiteral("правило чистки вернуло негодный список");
+            if (error) *error = QStringLiteral("cleanup rule returned an invalid list");
             return finish(false);
         }
 
@@ -828,7 +828,7 @@ bool History::truncate(const QString& noteId, int keepCount, QString* error) {
     const QString path = pathFor(noteId);
 
     if (keepCount < 1) {
-        if (error) *error = QStringLiteral("первую запись журнала стирать нельзя");
+        if (error) *error = QStringLiteral("the first journal record must not be erased");
         return false;
     }
 
@@ -840,12 +840,12 @@ bool History::truncate(const QString& noteId, int keepCount, QString* error) {
     // и читатель их видит ровно как раньше.
     const qint64 cut = journal.entries[keepCount].offset;
     if (cut <= 0) {
-        if (error) *error = QStringLiteral("непонятно, где кончается запись %1").arg(keepCount);
+        if (error) *error = QStringLiteral("cannot tell where record %1 ends").arg(keepCount);
         return false;
     }
     QFile file(path);
     if (!file.resize(cut)) {
-        if (error) *error = QStringLiteral("журнал не укоротить: %1").arg(file.errorString());
+        if (error) *error = QStringLiteral("cannot truncate journal: %1").arg(file.errorString());
         return false;
     }
     return true;

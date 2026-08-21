@@ -756,35 +756,35 @@ QString fenceFor(QStringView code, QStringView info) {
 void validate([[maybe_unused]] const Piece& b) {
     if (b.raw) return;
     assert((b.kind == Kind::Heading) == (b.headingLevel != 0) &&
-           "headingLevel осмыслен только у заголовка");
+           "headingLevel only meaningful for a heading");
     assert((b.kind != Kind::Heading || (b.headingLevel >= 1 && b.headingLevel <= 6)) &&
-           "уровень заголовка вне 1..6");
-    assert((!isList(b.kind) || b.level >= 0) && "у пункта списка уровень обязателен");
+           "heading level outside 1..6");
+    assert((!isList(b.kind) || b.level >= 0) && "a list item requires a level");
     // Внутри пункта могут стоять абзац, цитата и код — им уровень осмыслен.
     // Заголовку и пустой строке — нет: заголовка внутри пункта markdown не
     // выражает, а пустая строка ничьей вложенности не имеет.
     assert(((b.kind != Kind::Heading && b.kind != Kind::VSpace && b.kind != Kind::Divider) ||
             b.level == -1) &&
-           "этому роду уровень не положен");
-    assert((b.kind == Kind::ListItem || !b.checked) && "отметка осмысленна только у задачи");
-    assert((b.kind == Kind::Code || b.info.isEmpty()) && "info осмыслена только у блока кода");
-    assert(b.level >= -1 && "уровень мельче, чем вне списка");
+           "this kind takes no level");
+    assert((b.kind == Kind::ListItem || !b.checked) && "checked is only meaningful for a task");
+    assert((b.kind == Kind::Code || b.info.isEmpty()) && "info is only meaningful for a code block");
+    assert(b.level >= -1 && "level shallower than outside a list");
     assert((b.kind != Kind::Html || !b.text.contains(QLatin1String("-->"))) &&
-           "внутренность комментария не может содержать -->");
+           "comment body cannot contain -->");
     assert((b.kind != Kind::Html || b.runs.empty()) &&
-           "внутри комментария разметки не бывает");
+           "no markup inside a comment");
     for ([[maybe_unused]] const Run& s : b.runs) {
-        assert((!s.image() || !s.href.isEmpty()) && "у картинки обязан быть путь");
+        assert((!s.image() || !s.href.isEmpty()) && "an image must have a path");
         assert((!s.comment() ||
                 (s.flags == InlineComment && s.href.isEmpty())) &&
-               "строчный комментарий не сочетается с другой разметкой");
+               "an inline comment combines with no other markup");
         assert((!s.math() ||
                 ((s.flags & ~InlineMathOpen) == InlineMath && s.href.isEmpty())) &&
-               "формула не сочетается с другой разметкой");
-        assert((s.title.isEmpty() || s.image()) && "title осмыслен только у картинки");
+               "a formula combines with no other markup");
+        assert((s.title.isEmpty() || s.image()) && "title is only meaningful for an image");
         assert((!s.image() ||
                 (s.flags & (InlineBold | InlineItalic | InlineStrike | InlineCode)) == 0) &&
-               "картинка не сочетается с другой разметкой");
+               "an image combines with no other markup");
     }
 }
 
@@ -1180,7 +1180,7 @@ void Writer::push(const Piece& b) {
 
             case Kind::ListItem: {
                 assert(b.level <= prevLevel + 1 &&
-                       "уровень вложенности перепрыгнут: такого разбор не порождает");
+                       "nesting level skipped: the parser never produces this");
                 size_t level = static_cast<size_t>(b.level);
                 if (contentCol.size() <= level + 1) contentCol.resize(level + 2, 0);
                 if (ordinal.size() <= level) {

@@ -20,7 +20,7 @@ struct Report {
 
     void note(const QString& line) { lines.append(line); }
     void problem(const QString& line) {
-        lines.append(QStringLiteral("БЕДА: ") + line);
+        lines.append(QStringLiteral("PROBLEM: ") + line);
         ++problems;
     }
 };

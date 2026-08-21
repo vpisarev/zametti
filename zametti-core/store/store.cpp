@@ -236,11 +236,11 @@ bool initStore(const QString& dir, QString* error) {
             d.entryList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden);
         if (!entries.isEmpty()) {
             if (error != nullptr)
-                *error = QStringLiteral("каталог не пуст: %1").arg(dir);
+                *error = QStringLiteral("directory not empty: %1").arg(dir);
             return false;
         }
     } else if (!QDir().mkpath(dir)) {
-        if (error != nullptr) *error = QStringLiteral("не создаётся: %1").arg(dir);
+        if (error != nullptr) *error = QStringLiteral("cannot create: %1").arg(dir);
         return false;
     }
     // .zametti — состояние; .rescue — побитые файлы редактора (с точкой: на
@@ -248,14 +248,14 @@ bool initStore(const QString& dir, QString* error) {
     for (const char* sub : {".zametti", ".rescue", "history"}) {
         if (!QDir(dir).mkpath(QString::fromLatin1(sub))) {
             if (error != nullptr)
-                *error = QStringLiteral("не создаётся: %1/%2").arg(dir, sub);
+                *error = QStringLiteral("cannot create: %1/%2").arg(dir, sub);
             return false;
         }
     }
     // Проверка прав — делом: пробный файл, а не флаги.
     QFile probe(dir + QStringLiteral("/.zametti/.probe"));
     if (!probe.open(QIODevice::WriteOnly)) {
-        if (error != nullptr) *error = QStringLiteral("нет прав на запись: %1").arg(dir);
+        if (error != nullptr) *error = QStringLiteral("no write permission: %1").arg(dir);
         return false;
     }
     probe.close();
@@ -265,19 +265,19 @@ bool initStore(const QString& dir, QString* error) {
 
 QString newNote(const QString& root, const QString& parentId, QString* error) {
     if (!QDir(root).exists()) {
-        if (error != nullptr) *error = QStringLiteral("нет каталога: %1").arg(root);
+        if (error != nullptr) *error = QStringLiteral("no such directory: %1").arg(root);
         return {};
     }
     if (!parentId.isEmpty()) {
         if (!isValidNoteId(toUtf8(parentId))) {
             if (error != nullptr)
-                *error = QStringLiteral("родитель не похож на id: %1").arg(parentId);
+                *error = QStringLiteral("parent does not look like an id: %1").arg(parentId);
             return {};
         }
         if (!QFileInfo::exists(root + QLatin1Char('/') + parentId +
                                QStringLiteral(".md"))) {
             if (error != nullptr)
-                *error = QStringLiteral("родителя нет в хранилище: %1").arg(parentId);
+                *error = QStringLiteral("parent is not in the store: %1").arg(parentId);
             return {};
         }
     }
@@ -292,7 +292,7 @@ QString newNote(const QString& root, const QString& parentId, QString* error) {
     std::string path;
     const std::string id = createNoteFile(toUtf8(root), content, &path);
     if (id.empty()) {
-        if (error != nullptr) *error = QStringLiteral("не записалось в %1").arg(root);
+        if (error != nullptr) *error = QStringLiteral("could not write into %1").arg(root);
         return {};
     }
     return fromUtf8(path);
@@ -304,16 +304,16 @@ QString importNote(const QString& root, const QString& parentId, const QString& 
         if (error != nullptr) *error = why;
         return QString();
     };
-    if (!QDir(root).exists()) return fail(QStringLiteral("нет хранилища: %1").arg(root));
+    if (!QDir(root).exists()) return fail(QStringLiteral("no store at: %1").arg(root));
     const QFileInfo info(sourcePath);
-    if (!info.isFile()) return fail(QStringLiteral("не файл: %1").arg(sourcePath));
+    if (!info.isFile()) return fail(QStringLiteral("not a file: %1").arg(sourcePath));
     if (!parentId.isEmpty() &&
         !QFileInfo::exists(root + QLatin1Char('/') + parentId + QStringLiteral(".md")))
-        return fail(QStringLiteral("папки нет в хранилище: %1").arg(parentId));
+        return fail(QStringLiteral("folder is not in the store: %1").arg(parentId));
 
     std::string bytes;
     if (!readAll(sourcePath, bytes))
-        return fail(QStringLiteral("не читается: %1").arg(sourcePath));
+        return fail(QStringLiteral("cannot read: %1").arg(sourcePath));
 
     // Мусорные неразрывные пробелы вычищаются ПРИ ВВОЗЕ, а не при первом
     // открытии: иначе привезённая заметка какое-то время лежала бы на диске
@@ -362,19 +362,19 @@ QString importNote(const QString& root, const QString& parentId, const QString& 
         ZNote back;
         back.load(content);
         if (back.toMarkdown() != content)
-            return fail(QStringLiteral("канонизация не сошлась на %1").arg(info.fileName()));
+            return fail(QStringLiteral("canonical form mismatch on %1").arg(info.fileName()));
     }
 
     std::string path;
     if (createNoteFile(toUtf8(root), content, &path).empty())
-        return fail(QStringLiteral("не записалось в %1").arg(root));
+        return fail(QStringLiteral("could not write into %1").arg(root));
     return fromUtf8(path);
 }
 
 bool importTree(const ImportOptions& options, Report& report) {
     const QString srcRoot = QDir(options.from).absolutePath();
     if (!QDir(srcRoot).exists()) {
-        report.problem(QStringLiteral("нет источника: %1").arg(options.from));
+        report.problem(QStringLiteral("no source: %1").arg(options.from));
         return false;
     }
     const QString root = QDir(options.root).absolutePath();
@@ -390,7 +390,7 @@ bool importTree(const ImportOptions& options, Report& report) {
         while (hidden.hasNext()) {
             hidden.next();
             if (hidden.fileName().startsWith(QLatin1Char('.')))
-                report.note(QStringLiteral("скрытое пропущено: %1")
+                report.note(QStringLiteral("hidden entry skipped: %1")
                                 .arg(QDir(srcRoot).relativeFilePath(hidden.filePath())));
         }
     }
@@ -433,7 +433,7 @@ bool importTree(const ImportOptions& options, Report& report) {
     if (!options.appleManifest.isEmpty()) {
         std::string bytes;
         if (!readAll(options.appleManifest, bytes)) {
-            report.problem(QStringLiteral("манифест не читается: %1")
+            report.problem(QStringLiteral("cannot read manifest: %1")
                                .arg(options.appleManifest));
             return false;
         }
@@ -441,7 +441,7 @@ bool importTree(const ImportOptions& options, Report& report) {
         const QJsonDocument doc = QJsonDocument::fromJson(
             QByteArray(bytes.data(), qsizetype(bytes.size())), &parseError);
         if (!doc.isArray()) {
-            report.problem(QStringLiteral("манифест не JSON-массив: %1")
+            report.problem(QStringLiteral("manifest is not a JSON array: %1")
                                .arg(parseError.errorString()));
             return false;
         }
@@ -483,14 +483,14 @@ bool importTree(const ImportOptions& options, Report& report) {
         }
         if (matches > 1) {
             report.problem(
-                QStringLiteral("манифест неоднозначен для «%1»: %2 записи")
+                QStringLiteral("manifest is ambiguous for '%1': %2 entries")
                     .arg(e.rel)
                     .arg(matches));
             matched = nullptr;
         }
         std::string bytes;
         if (!e.isDir && !readAll(e.abs, bytes)) {
-            report.problem(QStringLiteral("не читается: %1").arg(e.rel));
+            report.problem(QStringLiteral("cannot read: %1").arg(e.rel));
             continue;
         }
 
@@ -509,15 +509,15 @@ bool importTree(const ImportOptions& options, Report& report) {
             if (!modified.isValid()) modified = created;
             if (!created.isValid()) created = modified;
             e.timesFrom = QStringLiteral("front matter");
-            report.note(QStringLiteral("front matter в «%1»: времена взяты, "
-                                       "шапка оставлена как есть")
+            report.note(QStringLiteral("front matter in '%1': times taken, "
+                                       "header left as is")
                             .arg(e.rel));
         } else {
             const QDateTime birth = info.birthTime();
             modified = info.lastModified();
             created = birth.isValid() && birth <= modified ? birth : modified;
             e.timesFrom = QStringLiteral("fs");
-            report.note(QStringLiteral("времена из файловой системы: %1").arg(e.rel));
+            report.note(QStringLiteral("times from the file system: %1").arg(e.rel));
         }
         e.created = created;
         e.modified = modified;
@@ -533,7 +533,7 @@ bool importTree(const ImportOptions& options, Report& report) {
     // Манифест, не нашедший файла, — в отчёт: молчаливых пропусков нет.
     for (const ManifestEntry& m : manifest)
         if (!m.used)
-            report.problem(QStringLiteral("манифест без файла: «%1» / «%2»")
+            report.problem(QStringLiteral("manifest entry without a file: '%1' / '%2'")
                                .arg(m.folder, m.title));
 
     // rel каталога → id заметки-каталога.
@@ -577,7 +577,7 @@ bool importTree(const ImportOptions& options, Report& report) {
         const Converted converted = convertAttachment(targetAbs, temp.path());
         if (converted.bytes.isEmpty()) return {};
         if (converted.degraded)
-            report.problem(QStringLiteral("кодека не нашлось, скопировано как есть: %1")
+            report.problem(QStringLiteral("no codec found, copied as is: %1")
                                .arg(QDir(srcRoot).relativeFilePath(targetAbs)));
 
         std::string id;
@@ -592,7 +592,7 @@ bool importTree(const ImportOptions& options, Report& report) {
             QFile out(root + QLatin1Char('/') + name);
             if (!out.open(QIODevice::WriteOnly) ||
                 out.write(converted.bytes) != converted.bytes.size()) {
-                report.problem(QStringLiteral("вложение не записалось: %1").arg(name));
+                report.problem(QStringLiteral("attachment not written: %1").arg(name));
                 return {};
             }
         }
@@ -665,7 +665,7 @@ bool importTree(const ImportOptions& options, Report& report) {
                 }
                 const QString name = internAttachment(targetAbs);
                 if (name.isEmpty()) {
-                    report.problem(QStringLiteral("вложение не читается: %1")
+                    report.problem(QStringLiteral("cannot read attachment: %1")
                                        .arg(QDir(srcRoot).relativeFilePath(targetAbs)));
                     pending.append(line);
                     continue;
@@ -787,7 +787,7 @@ bool importTree(const ImportOptions& options, Report& report) {
                     const QString targetRel = resolveInside(srcRoot, noteDirRel, href);
                     if (targetRel.isEmpty()) {
                         report.problem(
-                            QStringLiteral("вложение не найдено: «%1» в %2")
+                            QStringLiteral("attachment not found: '%1' in %2")
                                 .arg(href, e.rel));
                         continue;
                     }
@@ -795,7 +795,7 @@ bool importTree(const ImportOptions& options, Report& report) {
                         internAttachment(srcRoot + QLatin1Char('/') + targetRel);
                     if (name.isEmpty()) {
                         report.problem(
-                            QStringLiteral("вложение не читается: %1").arg(targetRel));
+                            QStringLiteral("cannot read attachment: %1").arg(targetRel));
                         continue;
                     }
                     s.href = name + fragment;
@@ -806,7 +806,7 @@ bool importTree(const ImportOptions& options, Report& report) {
                     const QString cleaned = QDir::cleanPath(joined);
                     const auto found = byRel.find(cleaned);
                     if (found == byRel.end()) {
-                        report.note(QStringLiteral("ссылка не разрешилась: «%1» в %2")
+                        report.note(QStringLiteral("link did not resolve: '%1' in %2")
                                         .arg(href, e.rel));
                         continue;
                     }
@@ -840,14 +840,14 @@ bool importTree(const ImportOptions& options, Report& report) {
             std::string path;
             const std::string got = createNoteFile(toUtf8(root), body, &path, generator);
             if (got.empty()) {
-                report.problem(QStringLiteral("не записалась заметка для %1").arg(e.rel));
+                report.problem(QStringLiteral("note for %1 not written").arg(e.rel));
                 continue;
             }
             e.id = got;
         }
         report.note(QStringLiteral("%1 → %2%3")
                         .arg(e.rel, fromUtf8(e.id),
-                             e.isDir ? QStringLiteral(" (каталог)") : QString()));
+                             e.isDir ? QStringLiteral(" (directory)") : QString()));
     }
 
     // Сводка вложений: по расширениям, число и байты — по ней будет
@@ -860,13 +860,13 @@ bool importTree(const ImportOptions& options, Report& report) {
             byExt[ext].second += size;
         }
         for (const auto& [ext, stat] : byExt)
-            report.note(QStringLiteral("вложения .%1: %2 шт, %3 байт")
+            report.note(QStringLiteral("attachments .%1: %2 files, %3 bytes")
                             .arg(ext)
                             .arg(stat.first)
                             .arg(stat.second));
     }
     if (wikilinks > 0)
-        report.note(QStringLiteral("wikilink-блоков не переписано: %1").arg(wikilinks));
+        report.note(QStringLiteral("wikilink blocks not rewritten: %1").arg(wikilinks));
 
     // Отчёт соответствия — рядом с хранилищем, не внутри.
     if (!options.dryRun) {
@@ -875,7 +875,7 @@ bool importTree(const ImportOptions& options, Report& report) {
             for (const QString& line : report.lines)
                 out.write((line + QLatin1Char('\n')).toUtf8());
         } else {
-            report.problem(QStringLiteral("отчёт не записался: %1").arg(out.fileName()));
+            report.problem(QStringLiteral("report not written: %1").arg(out.fileName()));
         }
     }
     return report.problems == 0;
@@ -884,7 +884,7 @@ bool importTree(const ImportOptions& options, Report& report) {
 bool verifyStore(const QString& root, Report& report) {
     QDir d(root);
     if (!d.exists()) {
-        report.problem(QStringLiteral("нет хранилища: %1").arg(root));
+        report.problem(QStringLiteral("no store at: %1").arg(root));
         return false;
     }
 
@@ -906,13 +906,13 @@ bool verifyStore(const QString& root, Report& report) {
             if (name == QStringLiteral(".zametti") || name == QStringLiteral(".rescue") ||
                 name == QStringLiteral("history"))
                 continue;
-            report.problem(QStringLiteral("чужой каталог: %1").arg(name));
+            report.problem(QStringLiteral("foreign directory: %1").arg(name));
             continue;
         }
         const qsizetype dot = name.lastIndexOf(QLatin1Char('.'));
         const QString stem = dot > 0 ? name.left(dot) : name;
         if (dot <= 0 || !isValidNoteId(toUtf8(stem))) {
-            report.problem(QStringLiteral("чужой файл: %1").arg(name));
+            report.problem(QStringLiteral("foreign file: %1").arg(name));
             continue;
         }
         if (!name.endsWith(QStringLiteral(".md"))) {
@@ -922,7 +922,7 @@ bool verifyStore(const QString& root, Report& report) {
 
         std::string bytes;
         if (!readAll(info.filePath(), bytes)) {
-            report.problem(QStringLiteral("не читается: %1").arg(name));
+            report.problem(QStringLiteral("cannot read: %1").arg(name));
             continue;
         }
         // Мусорные неразрывные пробелы вычищаются ПРИ ВВОЗЕ, а не при первом
@@ -931,8 +931,8 @@ bool verifyStore(const QString& root, Report& report) {
         auto note = std::make_shared<ZNote>();
         note->load(bytes);
         if (!note->hasHeader())
-            report.problem(QStringLiteral("нет блока метаданных: %1").arg(name));
-        if (!note->isCanonical(bytes)) report.problem(QStringLiteral("дрейф: %1").arg(name));
+            report.problem(QStringLiteral("no metadata block: %1").arg(name));
+        if (!note->isCanonical(bytes)) report.problem(QStringLiteral("drift: %1").arg(name));
         notes[toUtf8(stem)] = std::move(note);
     }
 
@@ -961,14 +961,14 @@ bool verifyStore(const QString& root, Report& report) {
             const bool canonical = dot > 0 && !href.contains(QLatin1Char('/')) &&
                                    isValidNoteId(toUtf8(href.left(dot)));
             if (!canonical) {
-                report.note(QStringLiteral("картинка мимо канона имён: «%1» в %2.md")
+                report.note(QStringLiteral("image name off canonical form: '%1' in %2.md")
                                 .arg(href, fromUtf8(id)));
                 continue;
             }
             if (inTrash(id)) referencedTrashed.insert(href);
             else referencedLive.insert(href);
             if (!QFileInfo::exists(root + QLatin1Char('/') + href))
-                report.problem(QStringLiteral("нет вложения «%1» из %2.md")
+                report.problem(QStringLiteral("missing attachment '%1' from %2.md")
                                    .arg(href, fromUtf8(id)));
         }
     }
@@ -983,12 +983,12 @@ bool verifyStore(const QString& root, Report& report) {
         if (role != QLatin1String("folder") && role != QLatin1String("trash")) continue;
         const ZDocument& doc = note->doc();
         if (doc.isEmpty()) {
-            report.problem(QStringLiteral("папка без заголовка: %1.md").arg(fromUtf8(id)));
+            report.problem(QStringLiteral("folder without a title: %1.md").arg(fromUtf8(id)));
             continue;
         }
         const BlockInfo first = doc.blockAt(0);
         if (doc.blockCount() == 1 && !first.raw && first.kind == Kind::Heading) continue;
-        report.problem(QStringLiteral("в папке %1.md есть тело сверх заголовка (%2 блоков)")
+        report.problem(QStringLiteral("folder %1.md has body beyond the title (%2 blocks)")
                            .arg(fromUtf8(id))
                            .arg(doc.blockCount()));
     }
@@ -998,7 +998,7 @@ bool verifyStore(const QString& root, Report& report) {
         const std::string parent = toUtf8(note->parentId());
         if (parent.empty()) continue;
         if (!isValidNoteId(parent) || notes.find(parent) == notes.end()) {
-            report.problem(QStringLiteral("parent %1 не существует (из %2)")
+            report.problem(QStringLiteral("parent %1 does not exist (from %2)")
                                .arg(fromUtf8(parent), fromUtf8(id)));
             continue;
         }
@@ -1006,7 +1006,7 @@ bool verifyStore(const QString& root, Report& report) {
         std::string at = parent;
         while (!at.empty()) {
             if (!seen.insert(at).second) {
-                report.problem(QStringLiteral("цикл родителей через %1").arg(fromUtf8(id)));
+                report.problem(QStringLiteral("parent cycle through %1").arg(fromUtf8(id)));
                 break;
             }
             const auto next = notes.find(at);
@@ -1043,27 +1043,27 @@ bool verifyStore(const QString& root, Report& report) {
              historyDir.entryList({QStringLiteral("*.log")}, QDir::Files)) {
             const QString noteId = name.left(name.size() - 4);
             if (!isValidNoteId(toUtf8(noteId))) {
-                report.problem(QStringLiteral("чужой файл в history/: %1").arg(name));
+                report.problem(QStringLiteral("foreign file in history/: %1").arg(name));
                 continue;
             }
             journal::Journal j;
             QString error;
             if (!history.read(noteId, &j, &error)) {
-                report.problem(QStringLiteral("журнал %1: %2").arg(name, error));
+                report.problem(QStringLiteral("journal %1: %2").arg(name, error));
                 continue;
             }
             ++journals;
             records += j.entries.size();
             if (j.tailTrimmed)
-                report.note(QStringLiteral("журнал %1: оборванный хвост "
-                                           "(отрежется при первой дозаписи)")
+                report.note(QStringLiteral("journal %1: truncated tail "
+                                           "(will be cut on the next append)")
                                 .arg(name));
 
             for (int i = 0; i < j.entries.size(); ++i) {
                 if (!j.entries[i].hasSnapshot()) continue;
                 QByteArray body;
                 if (!history.snapshotAt(noteId, i, &body, &error)) {
-                    report.problem(QStringLiteral("журнал %1, запись %2: %3")
+                    report.problem(QStringLiteral("journal %1, record %2: %3")
                                        .arg(name)
                                        .arg(i)
                                        .arg(error));
@@ -1080,10 +1080,10 @@ bool verifyStore(const QString& root, Report& report) {
             if (notes.find(toUtf8(noteId)) != notes.end()) continue;
             const bool buried = !j.entries.isEmpty() &&
                                 j.entries.last().kind == journal::Kind::Tombstone;
-            report.note(buried ? QStringLiteral("журнал удалённой заметки %1 (с надгробием)")
+            report.note(buried ? QStringLiteral("journal of deleted note %1 (with tombstone)")
                                      .arg(noteId)
-                               : QStringLiteral("журнал %1 без заметки и без надгробия: "
-                                                "файл унесли мимо программы")
+                               : QStringLiteral("journal %1 without a note and without a tombstone: "
+                                                "the file was taken outside the app")
                                      .arg(noteId));
         }
     }
@@ -1096,14 +1096,14 @@ bool verifyStore(const QString& root, Report& report) {
     for (const QString& name : attachments) {
         if (referencedLive.find(name) != referencedLive.end()) continue;
         if (referencedTrashed.find(name) != referencedTrashed.end()) {
-            report.note(QStringLiteral("вложение только в корзине: %1 (уйдёт с очисткой)")
+            report.note(QStringLiteral("attachment only in archive: %1 (will go with cleanup)")
                             .arg(name));
             continue;
         }
-        report.note(QStringLiteral("осиротевшее вложение: %1").arg(name));
+        report.note(QStringLiteral("orphan attachment: %1").arg(name));
     }
 
-    report.note(QStringLiteral("заметок: %1, вложений: %2, журналов: %3 (записей %4)")
+    report.note(QStringLiteral("notes: %1, attachments: %2, journals: %3 (records %4)")
                     .arg(notes.size())
                     .arg(attachments.size())
                     .arg(journals)
@@ -1166,7 +1166,7 @@ bool deleteAttachmentFile(const QString& root, const QString& name, QString* err
     const QString file = QDir(root).filePath(name);
     if (!QFile::exists(file)) return true;   // уже нет — и хорошо
     if (!QFile::moveToTrash(file) && !QFile::remove(file)) {
-        if (error) *error = QStringLiteral("файл вложения %1 не удалить").arg(name);
+        if (error) *error = QStringLiteral("cannot delete attachment file %1").arg(name);
         return false;
     }
     return true;
@@ -1175,7 +1175,7 @@ bool deleteAttachmentFile(const QString& root, const QString& name, QString* err
 bool deleteNoteFile(const QString& root, const QString& noteId, QString* error) {
     const QString file = QDir(root).filePath(noteId + QStringLiteral(".md"));
     if (!QFile::exists(file)) {
-        if (error) *error = QStringLiteral("заметки %1 в хранилище нет").arg(noteId);
+        if (error) *error = QStringLiteral("note %1 is not in the store").arg(noteId);
         return false;
     }
 
@@ -1186,10 +1186,10 @@ bool deleteNoteFile(const QString& root, const QString& noteId, QString* error) 
                                        &historyError);
 
     if (!QFile::moveToTrash(file) && !QFile::remove(file)) {
-        if (error) *error = QStringLiteral("файл заметки %1 не удалить").arg(noteId);
+        if (error) *error = QStringLiteral("cannot delete note file %1").arg(noteId);
         return false;
     }
-    if (!marked && error) *error = QStringLiteral("надгробие не записано: %1").arg(historyError);
+    if (!marked && error) *error = QStringLiteral("tombstone not written: %1").arg(historyError);
     return true;
 }
 

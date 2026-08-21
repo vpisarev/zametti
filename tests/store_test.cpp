@@ -172,9 +172,9 @@ static int ztRunSuite(int argc, char** argv) {
         const bool ok = store::verifyStore(root, report);
         ZT_TRUE("проверка проходит", ok);
         const QString all = report.lines.join(QLatin1Char('\n'));
-        ZT_TRUE("журналы посчитаны", all.contains(QStringLiteral("журналов: 1")));
+        ZT_TRUE("журналы посчитаны", all.contains(QStringLiteral("journals: 1")));
         ZT_TRUE("вложение, видное только в прошлом, — сирота",
-                all.contains(QStringLiteral("осиротевшее вложение")));
+                all.contains(QStringLiteral("orphan attachment")));
 
         // Испорченный слепок обязан всплыть бедой, а не молчанием.
         {
@@ -188,7 +188,7 @@ static int ztRunSuite(int argc, char** argv) {
         store::Report broken;
         ZT_TRUE("проверка видит порчу в журнале", !store::verifyStore(root, broken));
         ZT_TRUE("и называет журнал",
-                broken.lines.join(QLatin1Char('\n')).contains(QStringLiteral("журнал")));
+                broken.lines.join(QLatin1Char('\n')).contains(QStringLiteral("journal")));
     }
 
     // --- каскад картинок ------------------------------------------------------
@@ -287,12 +287,12 @@ static int ztRunSuite(int argc, char** argv) {
         ZT_TRUE("проверка проходит", store::verifyStore(root, v));
         const QString all = v.lines.join(QLatin1Char('\n'));
         ZT_TRUE("живая картинка молчит",
-                !all.contains(QStringLiteral("осиротевшее вложение: ") + alive) &&
-                    !all.contains(QStringLiteral("вложение только в корзине: ") + alive));
+                !all.contains(QStringLiteral("orphan attachment: ") + alive) &&
+                    !all.contains(QStringLiteral("attachment only in archive: ") + alive));
         ZT_TRUE("корзинная названа расписанием, а не бедой",
-                all.contains(QStringLiteral("вложение только в корзине: ") + inTrash));
+                all.contains(QStringLiteral("attachment only in archive: ") + inTrash));
         ZT_TRUE("сирота названа сиротой",
-                all.contains(QStringLiteral("осиротевшее вложение: ") + orphan));
+                all.contains(QStringLiteral("orphan attachment: ") + orphan));
     }
 
     // --- ИНВАРИАНТ D: картинки следуют за заметкой сами ------------------------
@@ -329,20 +329,20 @@ static int ztRunSuite(int argc, char** argv) {
         store::Report live;
         ZT_TRUE("проверка проходит", store::verifyStore(root, live));
         ZT_TRUE("у живой заметки картинка живая",
-                !live.lines.join(QLatin1Char('\n')).contains(QStringLiteral("только в корзине")));
+                !live.lines.join(QLatin1Char('\n')).contains(QStringLiteral("only in archive")));
 
         writeNote(trashId);   // «в корзину» — это правка одной строки меты
         store::Report trashed;
         ZT_TRUE("проверка проходит и с корзиной", store::verifyStore(root, trashed));
         ZT_TRUE("картинка уехала в корзину вместе с заметкой — сама",
                 trashed.lines.join(QLatin1Char('\n'))
-                    .contains(QStringLiteral("вложение только в корзине: ") + picture));
+                    .contains(QStringLiteral("attachment only in archive: ") + picture));
 
         writeNote(QString());   // «восстановить» — та же правка обратно
         store::Report back;
         ZT_TRUE("проверка проходит после возврата", store::verifyStore(root, back));
         ZT_TRUE("и картинка вернулась вместе с заметкой",
-                !back.lines.join(QLatin1Char('\n')).contains(QStringLiteral("только в корзине")));
+                !back.lines.join(QLatin1Char('\n')).contains(QStringLiteral("only in archive")));
 
         ZT_TRUE("а файла вложения никто не касался",
                 QFileInfo(file).lastModified() == touched && QFileInfo(file).size() == size);
@@ -433,7 +433,7 @@ static int ztRunSuite(int argc, char** argv) {
         ZT_TRUE("проверка проходит", store::verifyStore(root, buried));
         ZT_TRUE("и надгробие названо нормой",
                 buried.lines.join(QLatin1Char('\n'))
-                    .contains(QStringLiteral("с надгробием")));
+                    .contains(QStringLiteral("with tombstone")));
 
         // А теперь заметку унесли мимо программы: журнал есть, надгробия нет.
         const QString second = store::newNote(root, QString(), &error);
@@ -447,7 +447,7 @@ static int ztRunSuite(int argc, char** argv) {
         ZT_TRUE("проверка всё ещё проходит", store::verifyStore(root, orphan));
         ZT_TRUE("но про унесённую сказано",
                 orphan.lines.join(QLatin1Char('\n'))
-                    .contains(QStringLiteral("мимо программы")));
+                    .contains(QStringLiteral("outside the app")));
     }
 
     // --- new ----------------------------------------------------------------
@@ -586,7 +586,7 @@ static int ztRunSuite(int argc, char** argv) {
         store::Report v;
         ZT_TRUE("verify зелёный на свежем импорте", store::verifyStore(options.root, v));
         ZT_TRUE("сироты не найдены",
-                v.lines.filter(QStringLiteral("осиротев")).isEmpty());
+                v.lines.filter(QStringLiteral("orphan")).isEmpty());
     }
 
     // verify ловит порчу: чужой файл, битый parent, вложение не по хешу, сироту.
@@ -603,7 +603,7 @@ static int ztRunSuite(int argc, char** argv) {
         write(QStringLiteral("хранилище/00000000000009.webp"), "RIFFxxxx");
         store::Report v;
         ZT_TRUE("сирота не беда", store::verifyStore(options.root, v));
-        ZT_TRUE("но в отчёте", v.lines.filter(QStringLiteral("осиротев")).size() == 1);
+        ZT_TRUE("но в отчёте", v.lines.filter(QStringLiteral("orphan")).size() == 1);
         QFile::remove(orphan);
     }
 

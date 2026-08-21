@@ -34,7 +34,7 @@ int ztFormulaSheetProbe(int argc, char** argv) {
 
     QString error;
     if (!zametti::Formulas::init(&error)) {
-        std::fprintf(stderr, "движок формул не поднялся: %s\n", qPrintable(error));
+        std::fprintf(stderr, "formula engine failed to start: %s\n", qPrintable(error));
         return 1;
     }
 

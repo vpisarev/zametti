@@ -423,7 +423,7 @@ TEST(ZDocument, Diff) {
         ZT_EQ("и помечена убранной", std::to_string(removed), std::to_string(marks[size_t(goneAt)]));
     ZT_TRUE("сводки «удалено:» в документе нет",
             std::none_of(lines.begin(), lines.end(),
-                         [](const QString& l) { return l.startsWith(QStringLiteral("удалено:")); }));
+                         [](const QString& l) { return l.startsWith(QStringLiteral("removed:")); }));
     // «и ещё строка» появилось.
     const int newAt = int(lines.indexOf(QStringLiteral("и ещё строка")));
     ZT_TRUE("добавленная строка есть", newAt >= 0);

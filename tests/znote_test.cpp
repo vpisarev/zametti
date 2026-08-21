@@ -186,7 +186,7 @@ void checkFileRound() {
     ZT_EQ("заголовок — первый содержательный блок", "просто текст", plain.title().toStdString());
     ZNote empty;
     ZT_TRUE("пустая разобрана", empty.load(""));
-    ZT_EQ("у пустой заголовок по умолчанию", "Без названия", empty.title().toStdString());
+    ZT_EQ("у пустой заголовок по умолчанию", "Untitled", empty.title().toStdString());
 }
 
 // ВЕРСИЯ ФОРМАТА В ШАПКЕ — ЛЕНИВО (решение владельца, refactor3): `version: 1`

@@ -118,7 +118,7 @@ void checkWindow() {
     check(tabs != nullptr && tabs->count() >= 4, "вкладок в окне не меньше четырёх");
     if (tabs == nullptr) return;
 
-    const int licenses = tabWith(tabs, QStringLiteral("Лицензии"));
+    const int licenses = tabWith(tabs, QStringLiteral("Licenses"));
     check(licenses >= 0, "вкладка лицензий есть");
     if (licenses >= 0) {
         const QString text = pageText(tabs, licenses);
@@ -128,7 +128,7 @@ void checkWindow() {
         check(text.size() > 5000, "тексты лицензий на вкладке, а не одни заголовки");
     }
 
-    const int readme = tabWith(tabs, QStringLiteral("О программе"));
+    const int readme = tabWith(tabs, QStringLiteral("About"));
     check(readme >= 0, "вкладка README есть");
     if (readme >= 0) {
         const QString text = pageText(tabs, readme);
@@ -162,7 +162,7 @@ void checkWindow() {
         if (view == nullptr) continue;
     }
 
-    const int storage = tabWith(tabs, QStringLiteral("Формат хранилища"));
+    const int storage = tabWith(tabs, QStringLiteral("Store format"));
     check(storage >= 0, "вкладка формата хранилища есть");
 
     // И настоящим щелчком по настоящей ссылке — потому что признак можно
@@ -202,7 +202,7 @@ void checkWindow() {
         }
     }
 
-    const int build = tabWith(tabs, QStringLiteral("Сборка"));
+    const int build = tabWith(tabs, QStringLiteral("Build"));
     check(build >= 0, "вкладка сборки есть");
     if (build >= 0) check(pageText(tabs, build).contains(QStringLiteral("md4c")),
                           "версии вшитого видны в окне");

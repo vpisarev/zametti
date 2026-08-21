@@ -37,24 +37,24 @@ QString formatFingerprint(const QTextFormat& format, const QList<int>& skip) {
 }  // namespace
 
 QString blockFingerprint(const QTextBlock& block, const QList<int>& skip) {
-    QString out = QStringLiteral("блок«%1» формат[%2] знаки[%3]")
+    QString out = QStringLiteral("block«%1» format[%2] chars[%3]")
                       .arg(block.text(), formatFingerprint(block.blockFormat(), skip),
                            formatFingerprint(block.charFormat(), skip));
     for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
         const QTextFragment fragment = it.fragment();
         if (!fragment.isValid()) continue;
-        out += QStringLiteral(" кусок«%1»[%2]")
+        out += QStringLiteral(" piece«%1»[%2]")
                    .arg(fragment.text(), formatFingerprint(fragment.charFormat(), skip));
     }
     return out;
 }
 
 QString documentFingerprint(const QTextDocument& doc, const QList<int>& skip) {
-    QString out = QStringLiteral("шрифт[%1] поле[%2]\n")
+    QString out = QStringLiteral("font[%1] margin[%2]\n")
                       .arg(doc.defaultFont().toString())
                       .arg(doc.documentMargin());
     if (doc.rootFrame() != nullptr)
-        out += QStringLiteral("рамка[%1]\n")
+        out += QStringLiteral("frame[%1]\n")
                    .arg(formatFingerprint(doc.rootFrame()->frameFormat(), skip));
     int number = 0;
     for (QTextBlock block = doc.begin(); block.isValid(); block = block.next(), ++number) {

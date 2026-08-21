@@ -180,12 +180,12 @@ void checkImageLine() {
     // КОГДА СНЯТО. Пишется тем же словом и в том же виде, что дата заметки —
     // «создана DD.MM.YYYY HH:MM», — а правка снимка не пишется вовсе: у
     // вложения это время файла, к содержимому снимка отношения не имеющее.
-    check(!leftText(bar).contains(QStringLiteral("создана")),
+    check(!leftText(bar).contains(QStringLiteral("created")),
           "без метаданных дата не выдумывается");
     image.setTaken(QDateTime(QDate(2019, 3, 14), QTime(9, 26)));
     bar.setImage(image);
-    checkHas(leftText(bar), QStringLiteral("создана 14.03.2019 09:26"), "дата съёмки в панели");
-    check(!leftText(bar).contains(QStringLiteral("правлена")),
+    checkHas(leftText(bar), QStringLiteral("created 14.03.2019 09:26"), "дата съёмки в панели");
+    check(!leftText(bar).contains(QStringLiteral("modified")),
           "правку снимка не пишем");
     image.setTaken(QDateTime());
     bar.setImage(image);
@@ -193,7 +193,7 @@ void checkImageLine() {
     // Вложение потерялось — молчать нельзя.
     image.setExists(false);
     bar.setImage(image);
-    checkHas(leftText(bar), QStringLiteral("вложения нет"), "пропавшее вложение названо");
+    checkHas(leftText(bar), QStringLiteral("attachment missing"), "пропавшее вложение названо");
 
     zametti::ImageMetadata none;
     bar.setImage(none);

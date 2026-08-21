@@ -40,7 +40,7 @@ QString colorToString(const QColor& c) {
 // число не взяли.
 void complainClamped(const QJsonObject& o, const char* key, const QJsonValue& v) {
     Q_UNUSED(o);
-    std::fprintf(stderr, "настройка «%s» = %g вне допустимого диапазона — обрезана до края\n",
+    std::fprintf(stderr, "setting «%s» = %g outside the allowed range — clamped to the edge\n",
                  key, v.toDouble());
 }
 
@@ -843,11 +843,11 @@ bool writeConfigTemplate(QString* error) {
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         if (error != nullptr)
-            *error = QStringLiteral("конфиг не записать: %1 (%2)").arg(path, file.errorString());
+            *error = QStringLiteral("cannot write config: %1 (%2)").arg(path, file.errorString());
         return false;
     }
     if (file.write(out) != out.size()) {
-        if (error != nullptr) *error = QStringLiteral("конфиг записан не целиком: ") + path;
+        if (error != nullptr) *error = QStringLiteral("config written incompletely: ") + path;
         return false;
     }
     return true;
@@ -957,7 +957,7 @@ bool loadSettings(QString* error, QStringList* unknown) {
 
     if (file.exists()) {
         if (!file.open(QIODevice::ReadOnly)) {
-            if (error != nullptr) *error = QStringLiteral("не читается: ") + path;
+            if (error != nullptr) *error = QStringLiteral("cannot read: ") + path;
             return false;
         }
         QJsonParseError parseError{};

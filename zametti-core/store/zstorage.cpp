@@ -114,11 +114,11 @@ ZStorage::LockReport ZStorage::forceUnlock() {
     LockReport report;
     QLockFile probe(lockPath());
     if (probe.getLockInfo(&report.holderPid, &report.holderHost, nullptr))
-        report.note = QStringLiteral("снимаю замок хранилища (был за pid %1 на «%2»)")
+        report.note = QStringLiteral("removing the store lock (held by pid %1 on '%2')")
                           .arg(report.holderPid)
                           .arg(report.holderHost);
     else
-        report.note = QStringLiteral("замка на хранилище и не было");
+        report.note = QStringLiteral("the store had no lock");
     QFile::remove(lockPath());
     return report;
 }
@@ -136,7 +136,7 @@ ZStorage::LockReport ZStorage::lock() {
     QString app;
     if (lock_->getLockInfo(&pid, &host, &app) && host == QSysInfo::machineHostName() &&
         pid > 0 && !processAlive(pid)) {
-        report.note = QStringLiteral("снимаю забытый замок хранилища (pid %1 не жив)").arg(pid);
+        report.note = QStringLiteral("removing a stale store lock (pid %1 not alive)").arg(pid);
         QFile::remove(lockPath());
         if (lock_->tryLock(0)) {
             report.locked = true;
@@ -175,7 +175,7 @@ void ZStorage::reload() {
         if (!note.valid()) {
             // Заметка есть на диске, но не читается — молчать нельзя: человек
             // видел бы пустое место в дереве и не узнал бы, что файл на месте.
-            std::fprintf(stderr, "заметка не читается, в каталоге её не будет: [%s]\n",
+            std::fprintf(stderr, "cannot read note, it will not be in the catalog: [%s]\n",
                          info.absoluteFilePath().toUtf8().constData());
             continue;
         }
@@ -279,16 +279,16 @@ QStringList ZStorage::migrate() {
     bool changed = false;
     QString why;
     const int moved = store::migrateTrashToArchive(root_, &why);
-    if (moved < 0) notes << QStringLiteral("корзина не переехала в архив: %1").arg(why);
+    if (moved < 0) notes << QStringLiteral("old trash did not migrate to the archive: %1").arg(why);
     else if (moved > 0) {
-        notes << QStringLiteral("корзина переехала в архив: заметок %1").arg(moved);
+        notes << QStringLiteral("old trash migrated to the archive: %1 notes").arg(moved);
         changed = true;
     }
     why.clear();
     const int filed = store::fileOrphans(root_, &why);
-    if (filed < 0) notes << QStringLiteral("бюро находок не завелось: %1").arg(why);
+    if (filed < 0) notes << QStringLiteral("lost & found not set up: %1").arg(why);
     else if (filed > 0) {
-        notes << QStringLiteral("в бюро находок прописано заметок: %1").arg(filed);
+        notes << QStringLiteral("notes filed into lost & found: %1").arg(filed);
         changed = true;
     }
     if (changed) reload();
@@ -297,7 +297,7 @@ QStringList ZStorage::migrate() {
 
 QString ZStorage::importNote(const QString& parentId, const QString& sourcePath, QString* error) {
     if (!store_) {
-        if (error != nullptr) *error = QStringLiteral("это не хранилище");
+        if (error != nullptr) *error = QStringLiteral("not a store");
         return {};
     }
     const QString made = store::importNote(root_, parentId, sourcePath, error);
@@ -309,7 +309,7 @@ QString ZStorage::importNote(const QString& parentId, const QString& sourcePath,
 
 QString ZStorage::createNote(const QString& parentId, bool folder, QString* error) {
     if (!store_) {
-        if (error != nullptr) *error = QStringLiteral("это не хранилище");
+        if (error != nullptr) *error = QStringLiteral("not a store");
         return {};
     }
     // В архиве ничего не создаётся: Ctrl+N оттуда — на глобальный уровень
@@ -324,9 +324,9 @@ QString ZStorage::createNote(const QString& parentId, bool folder, QString* erro
         QString why;
         if (!rewriteNote(id, [](ZNote& note) {
                 note.setRole(QStringLiteral("folder"));
-                note.doc().setTitle(QStringLiteral("Новая папка"));
+                note.doc().setTitle(QStringLiteral("New folder"));
             }, history::Rules{}, &why))
-            std::fprintf(stderr, "новая папка без роли: %s\n", why.toUtf8().constData());
+            std::fprintf(stderr, "new folder has no role: %s\n", why.toUtf8().constData());
     }
     refreshNote(id);
     return id;
@@ -387,7 +387,7 @@ bool ZStorage::restore(const QString& id, QStringList* failed) {
 
 bool ZStorage::remove(const QString& id, QString* error) {
     if (!store_ || !has(id)) {
-        if (error != nullptr) *error = QStringLiteral("такой заметки нет");
+        if (error != nullptr) *error = QStringLiteral("no such note");
         return false;
     }
     // КАРТИНКИ СЧИТАЕМ ДО УДАЛЕНИЯ: чтобы узнать, какие были в заметке, надо
@@ -442,7 +442,7 @@ bool ZStorage::rewriteNote(const QString& id, const std::function<void(ZNote&)>&
     const QString path = pathOf(id);
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) {
-        if (error != nullptr) *error = QStringLiteral("файл не читается: %1").arg(path);
+        if (error != nullptr) *error = QStringLiteral("cannot read file: %1").arg(path);
         return false;
     }
     const QByteArray bytes = f.readAll();

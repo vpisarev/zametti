@@ -146,7 +146,7 @@ void checkOperations() {
     const QString folder = storage.createNote(QString(), true, &error);
     ZT_TRUE("папка создана: " + s(error), !folder.isEmpty());
     ZT_TRUE("и она папка в каталоге", storage.isFolder(folder));
-    ZT_EQ("с именем по умолчанию", "Новая папка", s(storage.titleOf(folder)));
+    ZT_EQ("с именем по умолчанию", "New folder", s(storage.titleOf(folder)));
     const QString inner = storage.createNote(folder, false, &error);
     ZT_TRUE("заметка в папке", !inner.isEmpty() && storage.info(inner)->parent() == folder);
     ZT_TRUE("пустая заметка пуста", storage.isEmptyNote(inner));

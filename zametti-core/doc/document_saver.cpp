@@ -723,7 +723,7 @@ SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
         // Копия — дело полезное, но не обязательное: не легла, и ладно, запись
         // всё равно состоится. Молчать при этом нельзя.
         if (!writeFile(rescuePath, text, &error)) {
-            std::fprintf(stderr, "аварийная копия не записана: %s\n",
+            std::fprintf(stderr, "emergency copy not written: %s\n",
                          error.toUtf8().constData());
             rescuePath.clear();
         }
@@ -735,20 +735,20 @@ SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly)) {
         return {SaveResult::Failed,
-                QStringLiteral("не открыть на запись: ") + file.errorString(), {}, {},
+                QStringLiteral("cannot open for writing: ") + file.errorString(), {}, {},
                 false, {}, {}};
     }
     file.write(text);
     if (!file.commit()) {
-        return {SaveResult::Failed, QStringLiteral("не записать: ") + file.errorString(), {},
+        return {SaveResult::Failed, QStringLiteral("cannot write: ") + file.errorString(), {},
                 {}, false, {}, {}};
     }
     // Записано. Если самопроверка не сошлась, говорим об этом — но записью, а
     // не отказом: правки человека уже на диске, а копия буфера лежит рядом.
     QString message;
     if (!rescuePath.isEmpty())
-        message = QStringLiteral("самопроверка не сошлась: разобранное обратно отличается от "
-                                 "документа. Заметка записана, копия буфера — в ") +
+        message = QStringLiteral("self-check failed: what parses back differs from the "
+                                 "document. Note written, buffer copy is in ") +
                   rescuePath;
     const bool differs = !sameContent(reread, ir);
     return {SaveResult::Written, message, rescuePath, std::move(reread), differs, digest, text};

@@ -649,7 +649,7 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
 
     std::string text;
     if (!readFile(path, text)) {
-        std::fprintf(stderr, "не читается: %s\n", path.toUtf8().constData());
+        std::fprintf(stderr, "unreadable: %s\n", path.toUtf8().constData());
         return false;
     }
 
@@ -850,7 +850,7 @@ void NoteEditor::adoptExternal(const std::string& text) {
     emit externalAdopted(note_->path());
     if (lost || !dropped.isEmpty()) {
         note_->rememberLostMeta(previous);
-        emit metaDamaged(note_->path(), lost ? QStringList{QStringLiteral("весь блок")} : dropped);
+        emit metaDamaged(note_->path(), lost ? QStringList{QStringLiteral("whole block")} : dropped);
     }
 }
 
@@ -1891,15 +1891,15 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
             switch (own.kind) {
                 case ObjectKind::Image:
                     emit importStatus(
-                        QStringLiteral("Подпись картинки правится по Enter; %1 прячет её под снимком")
+                        QStringLiteral("The image caption is edited with Enter; %1 hides it under the photo")
                             .arg(settings().editor().toggleTaskKey()));
                     break;
                 case ObjectKind::Table:
-                    emit importStatus(QStringLiteral("Таблица правится по Enter"));
+                    emit importStatus(QStringLiteral("A table is edited with Enter"));
                     break;
                 default:
                     emit importStatus(
-                        QStringLiteral("Формула правится по Enter — так же, как таблица"));
+                        QStringLiteral("A formula is edited with Enter — same as a table"));
                     break;
             }
             return true;
@@ -1933,7 +1933,7 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
             if (own.kind == ObjectKind::Image) {
                 if (editImageCaption(own.first) == nullptr)
                     emit importStatus(
-                        QStringLiteral("У вики-вложения «![[…]]» подписи не бывает"));
+                        QStringLiteral("A wiki embed «![[…]]» has no caption"));
                 return true;
             }
             return false;
@@ -1944,13 +1944,13 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
             // (isNonameCaption); то же сочетание снимает знак обратно. У
             // таблицы и формулы подписи нет.
             if (own.kind != ObjectKind::Image) {
-                emit importStatus(QStringLiteral("Подпись бывает только у картинки"));
+                emit importStatus(QStringLiteral("Only an image has a caption"));
                 return true;
             }
             if (!runNoteEdit([](ZDocument& note, QTextCursor& at) {
                     return note.toggleImageCaption(at, QLatin1Char('~'));
                 }))
-                emit importStatus(QStringLiteral("Подписи у картинки нет — прятать нечего"));
+                emit importStatus(QStringLiteral("The image has no caption — nothing to hide"));
             return true;
         }
         case ObjectAction::LineAfter: {
@@ -2268,7 +2268,7 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
 
     menu->addSeparator();
     {
-        QAction* action = menu->addAction(QStringLiteral("Добавить изображения…"), this,
+        QAction* action = menu->addAction(QStringLiteral("Add images…"), this,
                                           &NoteEditor::chooseAndInsertImages);
         action->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+I")));
     }
@@ -2279,13 +2279,13 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
             return note.toggleStyle(at, want);
         });
     };
-    add(QStringLiteral("Жирный"), QStringLiteral("Ctrl+B"), style(ZDocument::Style::Bold));
-    add(QStringLiteral("Курсив"), QStringLiteral("Ctrl+I"), style(ZDocument::Style::Italic));
-    add(QStringLiteral("Зачёркнутый"), QStringLiteral("Ctrl+/"),
+    add(QStringLiteral("Bold"), QStringLiteral("Ctrl+B"), style(ZDocument::Style::Bold));
+    add(QStringLiteral("Italic"), QStringLiteral("Ctrl+I"), style(ZDocument::Style::Italic));
+    add(QStringLiteral("Strikethrough"), QStringLiteral("Ctrl+/"),
         style(ZDocument::Style::Strike));
-    add(QStringLiteral("Код в строке"), QStringLiteral("Ctrl+E"), style(ZDocument::Style::Code));
+    add(QStringLiteral("Inline code"), QStringLiteral("Ctrl+E"), style(ZDocument::Style::Code));
     {
-        QAction* action = menu->addAction(QStringLiteral("Блок кода"));
+        QAction* action = menu->addAction(QStringLiteral("Code block"));
         action->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+E")));
         connect(action, &QAction::triggered, this,
                 [this] {
@@ -2299,7 +2299,7 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
     // строка «Заголовок» в меню — это одна мысль, а какого он ранга — уточнение.
     {
         menu->addSeparator();
-        QMenu* heading = menu->addMenu(QStringLiteral("Заголовок"));
+        QMenu* heading = menu->addMenu(QStringLiteral("Heading"));
         const int now = kindOf(textCursor().block()) == Kind::Heading
                             ? textCursor().blockFormat().headingLevel()
                             : 0;
@@ -2319,19 +2319,19 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
                 action->setShortcut(QKeySequence(settings().editor().makeParagraphKey(),
                                                  QKeySequence::PortableText));
         };
-        addLevel(QStringLiteral("Обычный текст"), 0);
+        addLevel(QStringLiteral("Plain text"), 0);
         for (int level = 1; level <= 3; ++level)
-            addLevel(QStringLiteral("Уровень %1").arg(level), level);
+            addLevel(QStringLiteral("Level %1").arg(level), level);
         heading->addSeparator();
         for (int level = 4; level <= 6; ++level)
-            addLevel(QStringLiteral("Уровень %1").arg(level), level);
+            addLevel(QStringLiteral("Level %1").arg(level), level);
     }
 
     // Выравнивание — только на строке с фотографией: где картинки нет, пункт
     // ничего не значит и в меню ему делать нечего.
     if (blockImageRef(textCursor().block()).valid) {
         menu->addSeparator();
-        QMenu* align = menu->addMenu(QStringLiteral("Выровнять фотографию"));
+        QMenu* align = menu->addMenu(QStringLiteral("Align photo"));
         const BlockImageRef ref = blockImageRef(textCursor().block());
         const auto addAlign = [this, align, ref](const QString& title, ImageAlign to) {
             QAction* action = align->addAction(title, this, [this, to] {
@@ -2344,15 +2344,15 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
             action->setCheckable(true);
             action->setChecked(ref.align == to);
         };
-        addAlign(QStringLiteral("Слева"), ImageAlign::Left);
-        addAlign(QStringLiteral("По центру"), ImageAlign::Center);
-        addAlign(QStringLiteral("Справа"), ImageAlign::Right);
+        addAlign(QStringLiteral("Left"), ImageAlign::Left);
+        addAlign(QStringLiteral("Center"), ImageAlign::Center);
+        addAlign(QStringLiteral("Right"), ImageAlign::Right);
 
         // Подпись: править (Enter на снимке) и спрятать/вернуть (сочетание
         // переключения). У вики-вложения подписи нет — и пунктов нет.
         if (!ref.wiki) {
             const int block = textCursor().blockNumber();
-            QAction* edit = menu->addAction(QStringLiteral("Подпись…"), this,
+            QAction* edit = menu->addAction(QStringLiteral("Caption…"), this,
                                             [this, block] { editImageCaption(block); });
             edit->setShortcut(QKeySequence(Qt::Key_Return));
             // Спрятанная ЗНАКОМ подпись возвращается тем же сочетанием; имя от
@@ -2361,8 +2361,8 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
             const bool marked = !ref.alt.isEmpty() && (ref.alt.at(0) == QLatin1Char('~') ||
                                                        ref.alt.at(0) == QLatin1Char('-'));
             QAction* toggle = menu->addAction(
-                marked ? QStringLiteral("Показать подпись под снимком")
-                       : QStringLiteral("Спрятать подпись под снимком"),
+                marked ? QStringLiteral("Show caption under the photo")
+                       : QStringLiteral("Hide caption under the photo"),
                 this, [this] {
                     runNoteEdit([](ZDocument& note, QTextCursor& at) {
                         return note.toggleImageCaption(at, QLatin1Char('~'));
@@ -2377,10 +2377,10 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
     }
 
     menu->addSeparator();
-    add(QStringLiteral("Переключить задачу"), settings().editor().toggleTaskKey(),
+    add(QStringLiteral("Toggle task"), settings().editor().toggleTaskKey(),
         [](ZDocument& note, QTextCursor& at) { return note.toggleTask(at); });
 
-    QMenu* kinds = menu->addMenu(QStringLiteral("Сделать"));
+    QMenu* kinds = menu->addMenu(QStringLiteral("Make"));
     const auto addKind = [this, kinds](const QString& title, const QString& keys,
                                        const NoteOp& op) {
         QAction* action = kinds->addAction(title, this, [this, op] { runNoteEdit(op); });
@@ -2388,27 +2388,27 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
             QKeySequence::listFromString(keys, QKeySequence::PortableText);
         if (!all.isEmpty()) action->setShortcut(all.first());
     };
-    addKind(QStringLiteral("Маркированным списком"), settings().editor().makeBulletKey(),
+    addKind(QStringLiteral("Bullet list"), settings().editor().makeBulletKey(),
             [](ZDocument& note, QTextCursor& at) { return note.makeBullet(at); });
-    addKind(QStringLiteral("Нумерованным списком"), settings().editor().makeOrderedKey(),
+    addKind(QStringLiteral("Numbered list"), settings().editor().makeOrderedKey(),
             [](ZDocument& note, QTextCursor& at) { return note.makeOrdered(at); });
-    addKind(QStringLiteral("Списком задач"), settings().editor().makeTaskKey(),
+    addKind(QStringLiteral("Task list"), settings().editor().makeTaskKey(),
             [](ZDocument& note, QTextCursor& at) { return note.makeTask(at); });
-    addKind(QStringLiteral("Комментарием"), settings().editor().makeCommentKey(),
+    addKind(QStringLiteral("Comment"), settings().editor().makeCommentKey(),
             [](ZDocument& note, QTextCursor& at) { return note.toggleComment(at); });
-    addKind(QStringLiteral("Обычным текстом"), settings().editor().makeParagraphKey(),
+    addKind(QStringLiteral("Plain text"), settings().editor().makeParagraphKey(),
             [](ZDocument& note, QTextCursor& at) { return note.makeParagraph(at); });
 
     menu->addSeparator();
-    add(QStringLiteral("Сдвинуть вправо"), QStringLiteral("Tab"),
+    add(QStringLiteral("Indent"), QStringLiteral("Tab"),
         [](ZDocument& note, QTextCursor& at) { return note.indent(at); });
-    add(QStringLiteral("Сдвинуть влево"), QStringLiteral("Shift+Tab"),
+    add(QStringLiteral("Outdent"), QStringLiteral("Shift+Tab"),
         [](ZDocument& note, QTextCursor& at) { return note.outdent(at); });
 
-    QAction* up = menu->addAction(QStringLiteral("Переставить вверх"), this,
+    QAction* up = menu->addAction(QStringLiteral("Move up"), this,
                                   [this] { moveItem(-1); });
     up->setShortcut(QKeySequence(settings().editor().moveUpKey(), QKeySequence::PortableText));
-    QAction* down = menu->addAction(QStringLiteral("Переставить вниз"), this,
+    QAction* down = menu->addAction(QStringLiteral("Move down"), this,
                                     [this] { moveItem(1); });
     down->setShortcut(QKeySequence(settings().editor().moveDownKey(), QKeySequence::PortableText));
 
@@ -2416,11 +2416,11 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
     // виджету текста не по чину. Пункт здесь, потому что искать его человек
     // будет там, где смотрит на заметку.
     menu->addSeparator();
-    menu->addAction(QStringLiteral("Открыть во внешнем редакторе"), this,
+    menu->addAction(QStringLiteral("Open in external editor"), this,
                     [this] { emit externalEditorRequested(note_->path()); });
     // Вывоз — тоже команда окна: диалог сохранения и запись PDF виджету текста
     // не по чину, да и заметку перед вывозом надо сперва записать.
-    menu->addAction(QStringLiteral("Экспортировать…"), this,
+    menu->addAction(QStringLiteral("Export…"), this,
                     [this] { emit exportRequested(note_->path()); });
 
     menu->popup(event->globalPos());
@@ -2531,7 +2531,7 @@ int NoteEditor::insertImageFiles(const QStringList& paths) {
     const QString dir = attachmentDir();
     if (dir.isEmpty()) {
         QMessageBox::warning(this, QStringLiteral("zametti"),
-                             QStringLiteral("Заметка ещё не сохранена — вложению некуда лечь."));
+                             QStringLiteral("The note is not saved yet — the attachment has nowhere to go."));
         return 0;
     }
 
@@ -2547,7 +2547,7 @@ bool NoteEditor::beginImport(int count) {
         // Второй пачки разом не бывает: поток один, и очередь в нём — не то,
         // чего человек ждёт от «вставить ещё раз». Говорим прямо.
         QMessageBox::information(this, QStringLiteral("zametti"),
-                                 QStringLiteral("Предыдущие картинки ещё везутся."));
+                                 QStringLiteral("The previous images are still being imported."));
         return false;
     }
     if (importer_ == nullptr) {
@@ -2566,7 +2566,7 @@ bool NoteEditor::beginImport(int count) {
                     // не печатается». Числа рядом: без них «везу» не говорит,
                     // сколько ещё ждать.
                     if (!name.isEmpty())
-                        emit importStatus(QStringLiteral("режим чтения: импортируем %1 (%2 из %3)")
+                        emit importStatus(QStringLiteral("read-only: importing %1 (%2 of %3)")
                                               .arg(name)
                                               .arg(done + 1)
                                               .arg(total));
@@ -2577,8 +2577,8 @@ bool NoteEditor::beginImport(int count) {
     // Окно прогресса неблокирующее: цикл событий крутится, окно перерисовывается,
     // и «программа не отвечает» больше неоткуда взяться.
     delete importProgress_;
-    importProgress_ = new QProgressDialog(QStringLiteral("Ввоз картинок…"),
-                                          QStringLiteral("Отмена"), 0, count, this);
+    importProgress_ = new QProgressDialog(QStringLiteral("Importing images…"),
+                                          QStringLiteral("Cancel"), 0, count, this);
     importProgress_->setWindowModality(Qt::NonModal);
     importProgress_->setAutoClose(false);
     importProgress_->setAutoReset(false);
@@ -2645,7 +2645,7 @@ void NoteEditor::onImportFinished(int done, int total, bool cancelled) {
     // возможного, а прерывать всю пачку из-за одного битого файла незачем.
     if (!failures.isEmpty())
         QMessageBox::warning(this, QStringLiteral("zametti"),
-                             QStringLiteral("Не вставилось:\n") +
+                             QStringLiteral("Not inserted:\n") +
                                  failures.join(QLatin1Char('\n')));
 }
 
@@ -2668,7 +2668,7 @@ void NoteEditor::chooseAndInsertImages() {
     save(false);
     if (attachmentDir().isEmpty()) {
         QMessageBox::warning(this, QStringLiteral("zametti"),
-                             QStringLiteral("Заметка ещё не сохранена — вложению некуда лечь."));
+                             QStringLiteral("The note is not saved yet — the attachment has nowhere to go."));
         return;
     }
     // Фильтр строим из того, что читатели УМЕЮТ на этой машине, а не из
@@ -2678,11 +2678,11 @@ void NoteEditor::chooseAndInsertImages() {
     for (const QByteArray& fmt : QImageReader::supportedImageFormats())
         patterns << QStringLiteral("*.") + QString::fromLatin1(fmt);
     patterns.sort();
-    const QString filter = QStringLiteral("Картинки (%1);;Все файлы (*)")
+    const QString filter = QStringLiteral("Images (%1);;All files (*)")
                                .arg(patterns.join(QLatin1Char(' ')));
 
     const QStringList chosen = QFileDialog::getOpenFileNames(
-        this, QStringLiteral("Добавить изображения"), lastImageDir_, filter);
+        this, QStringLiteral("Add images"), lastImageDir_, filter);
     if (chosen.isEmpty()) return;
     // Следующий раз открываемся там же: складывать картинки обычно приходится
     // из одного каталога, и заставлять человека ходить туда заново невежливо.
@@ -2989,7 +2989,7 @@ void NoteEditor::save(bool interactive, bool force) {
     QMessageBox box(QMessageBox::Warning, QStringLiteral("zametti"), outcome.message,
                     QMessageBox::Ok, this);
     auto* mute = new QCheckBox(
-        QStringLiteral("больше не предупреждать про этот файл в этой сессии"), &box);
+        QStringLiteral("do not warn about this file again in this session"), &box);
     box.setCheckBox(mute);
     box.exec();
     if (mute->isChecked()) mutedComplaints_.insert(note_->path());

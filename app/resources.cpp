@@ -54,23 +54,23 @@ namespace {
 // то, что видно глазом (шрифты, иконки), потом библиотеки в порядке появления
 // в сборке.
 constexpr zametti::EmbeddedLicense kLicenses[] = {
-    {":/licenses/zametti.txt", "zametti", "сама программа", "GPL-3.0"},
-    {":/licenses/ibm-plex.txt", "IBM Plex", "шрифты интерфейса и текста", "OFL 1.1"},
-    {":/licenses/lucide.txt", "Lucide", "иконки тулбара и дерева", "ISC"},
-    {":/licenses/md4c.txt", "md4c", "разбор markdown", "MIT"},
-    {":/licenses/blake3.txt", "BLAKE3", "отпечатки заметок и вложений", "CC0 / Apache-2.0"},
-    {":/licenses/dtl.txt", "DTL", "разность версий в истории", "BSD-3"},
-    {":/licenses/zstd.txt", "zstd", "слепки в журнале правок", "BSD / GPL-2.0"},
-    {":/licenses/zlib.txt", "zlib", "Deflate внутри TIFF", "zlib"},
-    {":/licenses/libtiff.txt", "libtiff", "чтение TIFF при импорте", "libtiff"},
-    {":/licenses/highway.txt", "highway", "SIMD для libjxl и jpegli", "Apache-2.0 / BSD-3"},
-    {":/licenses/libjxl.txt", "libjxl", "картинки: кодек и транскод JPEG", "BSD-3"},
-    {":/licenses/jpegli.txt", "jpegli", "разжатие JPEG в 16 бит", "BSD-3"},
+    {":/licenses/zametti.txt", "zametti", "the program itself", "GPL-3.0"},
+    {":/licenses/ibm-plex.txt", "IBM Plex", "UI and text fonts", "OFL 1.1"},
+    {":/licenses/lucide.txt", "Lucide", "toolbar and tree icons", "ISC"},
+    {":/licenses/md4c.txt", "md4c", "markdown parsing", "MIT"},
+    {":/licenses/blake3.txt", "BLAKE3", "hashes of notes and attachments", "CC0 / Apache-2.0"},
+    {":/licenses/dtl.txt", "DTL", "version diffs in history", "BSD-3"},
+    {":/licenses/zstd.txt", "zstd", "snapshots in the edit journal", "BSD / GPL-2.0"},
+    {":/licenses/zlib.txt", "zlib", "Deflate inside TIFF", "zlib"},
+    {":/licenses/libtiff.txt", "libtiff", "TIFF reading on import", "libtiff"},
+    {":/licenses/highway.txt", "highway", "SIMD for libjxl and jpegli", "Apache-2.0 / BSD-3"},
+    {":/licenses/libjxl.txt", "libjxl", "images: codec and JPEG transcode", "BSD-3"},
+    {":/licenses/jpegli.txt", "jpegli", "16-bit JPEG decode", "BSD-3"},
 };
 
 constexpr zametti::EmbeddedDoc kDocs[] = {
-    {":/docs/README.md", "О программе"},
-    {":/docs/zametti-storage.md", "Формат хранилища"},
+    {":/docs/README.md", "About"},
+    {":/docs/zametti-storage.md", "Store format"},
 };
 
 }  // namespace
@@ -121,7 +121,7 @@ QString embeddedText(const char* path) {
     if (!file.open(QIODevice::ReadOnly)) {
         // Молча пустая вкладка «Лицензии» — это нарушение чужих условий, о
         // котором никто не узнает. Жалуемся.
-        std::fprintf(stderr, "нет вшитого файла: %s\n", path);
+        std::fprintf(stderr, "no embedded file: %s\n", path);
         return {};
     }
     return QString::fromUtf8(file.readAll());

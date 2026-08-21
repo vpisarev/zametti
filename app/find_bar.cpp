@@ -17,33 +17,33 @@ FindBar::FindBar(QWidget* parent) : QWidget(parent) {
     // вверх (панель у нижней кромки окна, вниз списку некуда).
     historyButton_ = new QToolButton(this);
     historyButton_->setText(settings().ui().findHistoryGlyph());
-    historyButton_->setToolTip(QStringLiteral("Прежние запросы"));
+    historyButton_->setToolTip(QStringLiteral("Previous queries"));
     connect(historyButton_, &QToolButton::clicked, this, &FindBar::showHistory);
 
     find_ = new QLineEdit(this);
-    find_->setPlaceholderText(QStringLiteral("Найти"));
+    find_->setPlaceholderText(QStringLiteral("Find"));
     find_->setClearButtonEnabled(true);
     status_ = new QLabel(this);
     status_->setMinimumWidth(70);
 
     auto* previous = new QToolButton(this);
     previous->setText(settings().ui().findPreviousGlyph());
-    previous->setToolTip(QStringLiteral("Предыдущее (Shift+F3)"));
+    previous->setToolTip(QStringLiteral("Previous (Shift+F3)"));
     auto* next = new QToolButton(this);
     next->setText(settings().ui().findNextGlyph());
-    next->setToolTip(QStringLiteral("Следующее (F3)"));
+    next->setToolTip(QStringLiteral("Next (F3)"));
 
-    replaceLabel_ = new QLabel(QStringLiteral("на"), this);
+    replaceLabel_ = new QLabel(QStringLiteral("with"), this);
     replace_ = new QLineEdit(this);
-    replace_->setPlaceholderText(QStringLiteral("Заменить на"));
+    replace_->setPlaceholderText(QStringLiteral("Replace with"));
     replaceButton_ = new QToolButton(this);
-    replaceButton_->setText(QStringLiteral("Заменить"));
+    replaceButton_->setText(QStringLiteral("Replace"));
     replaceAllButton_ = new QToolButton(this);
-    replaceAllButton_->setText(QStringLiteral("Все"));
+    replaceAllButton_->setText(QStringLiteral("All"));
 
     auto* close = new QToolButton(this);
     close->setText(QStringLiteral("✕"));
-    close->setToolTip(QStringLiteral("Закрыть (Esc)"));
+    close->setToolTip(QStringLiteral("Close (Esc)"));
 
     layout->addWidget(historyButton_);
     layout->addWidget(find_, 2);
@@ -101,10 +101,10 @@ void FindBar::open(Mode mode, const QString& preset) {
     replace_->setVisible(replacing);
     replaceButton_->setVisible(replacing);
     replaceAllButton_->setVisible(replacing);
-    find_->setPlaceholderText(mode == Mode::Global ? QStringLiteral("Найти во всех заметках")
+    find_->setPlaceholderText(mode == Mode::Global ? QStringLiteral("Find in all notes")
                               : mode == Mode::History
-                                  ? QStringLiteral("Найти в слепке и в истории заметки")
-                                  : QStringLiteral("Найти в заметке"));
+                                  ? QStringLiteral("Find in snapshot and note history")
+                                  : QStringLiteral("Find in note"));
     if (!preset.isEmpty()) find_->setText(preset);
     historyAt_ = -1;   // каждый заход в панель начинается со своего запроса
     show();
@@ -159,7 +159,7 @@ void FindBar::stepHistory(int direction) {
 void FindBar::showHistory() {
     QMenu menu(this);
     if (history_.isEmpty()) {
-        menu.addAction(QStringLiteral("пока пусто"))->setEnabled(false);
+        menu.addAction(QStringLiteral("nothing yet"))->setEnabled(false);
     } else {
         for (const QString& item : history_) {
             const QString text = item;

@@ -15,13 +15,13 @@ void ZNoteHistory::ensureBaseline(const QByteArray& contents, qint64 fileTimeMs)
     journal::Journal journal;
     QString error;
     if (!history.read(id_, &journal, &error)) {
-        std::fprintf(stderr, "история не читается: %s\n", error.toUtf8().constData());
+        std::fprintf(stderr, "cannot read history: %s\n", error.toUtf8().constData());
         return;
     }
     if (!journal.entries.isEmpty()) return;   // история уже начата
     const qint64 when = fileTimeMs > 0 ? fileTimeMs : QDateTime::currentMSecsSinceEpoch();
     if (!history.append(id_, journal::Kind::Save, when, contents, 0, &error))
-        std::fprintf(stderr, "опорная запись не записана: %s\n", error.toUtf8().constData());
+        std::fprintf(stderr, "baseline record not written: %s\n", error.toUtf8().constData());
 }
 
 void ZNoteHistory::compressOnce() {
@@ -30,7 +30,7 @@ void ZNoteHistory::compressOnce() {
     journal::History history(root_);
     QString error;
     if (!history::compressJournal(history, id_, rules_, false, nullptr, &error))
-        std::fprintf(stderr, "история не вычищена: %s\n", error.toUtf8().constData());
+        std::fprintf(stderr, "history not cleaned: %s\n", error.toUtf8().constData());
     tailKnown_ = false;   // хвост мог переехать
 }
 
@@ -74,7 +74,7 @@ bool ZNoteHistory::record(journal::Kind kind, const QByteArray& snapshot, QStrin
     // правилу слепки и сделать, что сказано.
     journal::Journal read;
     if (!history.read(id_, &read, err)) {
-        std::fprintf(stderr, "история не читается: %s\n", err->toUtf8().constData());
+        std::fprintf(stderr, "cannot read history: %s\n", err->toUtf8().constData());
         tailKnown_ = false;
         return false;
     }
@@ -96,7 +96,7 @@ bool ZNoteHistory::record(journal::Kind kind, const QByteArray& snapshot, QStrin
     if (step.keep < int(read.entries.size())) ok = history.truncate(id_, step.keep, err);
     if (ok && step.writeNew) ok = history.append(id_, kind, now, snapshot, source, err);
     if (!ok) {
-        std::fprintf(stderr, "история не записана: %s\n", err->toUtf8().constData());
+        std::fprintf(stderr, "history not written: %s\n", err->toUtf8().constData());
         tailKnown_ = false;   // что там теперь — неизвестно
         return false;
     }
@@ -107,7 +107,7 @@ bool ZNoteHistory::record(journal::Kind kind, const QByteArray& snapshot, QStrin
 
 bool ZNoteHistory::read(journal::Journal* out, QString* error) {
     if (!available()) {
-        if (error != nullptr) *error = QStringLiteral("у заметки нет журнала");
+        if (error != nullptr) *error = QStringLiteral("note has no journal");
         return false;
     }
     compressOnce();
@@ -116,7 +116,7 @@ bool ZNoteHistory::read(journal::Journal* out, QString* error) {
 
 bool ZNoteHistory::snapshotAt(int index, QByteArray* out, QString* error) const {
     if (!available()) {
-        if (error != nullptr) *error = QStringLiteral("у заметки нет журнала");
+        if (error != nullptr) *error = QStringLiteral("note has no journal");
         return false;
     }
     return journal::History(root_).snapshotAt(id_, index, out, error);

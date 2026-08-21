@@ -81,14 +81,14 @@ void applySortMark(NoteHeader& header, std::optional<SortOrder> order) {
 QString sortOrderTitle(SortOrder order) {
     switch (order.key) {
         case SortKey::Name:
-            return order.ascending ? QStringLiteral("По имени, А→Я")
-                                   : QStringLiteral("По имени, Я→А");
+            return order.ascending ? QStringLiteral("By name, A→Z")
+                                   : QStringLiteral("By name, Z→A");
         case SortKey::Modified:
-            return order.ascending ? QStringLiteral("По дате правки, сначала старые")
-                                   : QStringLiteral("По дате правки, новые сверху");
+            return order.ascending ? QStringLiteral("By modified date, oldest first")
+                                   : QStringLiteral("By modified date, newest first");
         case SortKey::Created:
-            return order.ascending ? QStringLiteral("По дате создания, сначала старые")
-                                   : QStringLiteral("По дате создания, новые сверху");
+            return order.ascending ? QStringLiteral("By created date, oldest first")
+                                   : QStringLiteral("By created date, newest first");
     }
     return QString();
 }

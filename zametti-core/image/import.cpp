@@ -20,11 +20,11 @@ namespace zametti {
 
 const char* routeName(Route route) {
     switch (route) {
-        case Route::Refused: return "отказ";
-        case Route::AsIs: return "как есть";
-        case Route::TranscodedJpeg: return "транскод JPEG";
+        case Route::Refused: return "refused";
+        case Route::AsIs: return "as is";
+        case Route::TranscodedJpeg: return "JPEG transcode";
         case Route::Lossless: return "lossless";
-        case Route::Photo: return "путь фото";
+        case Route::Photo: return "photo path";
     }
     return "?";
 }
@@ -35,16 +35,16 @@ QString refusalText(Refusal r) {
     switch (r) {
         case Refusal::None: return {};
         case Refusal::NoSize:
-            return QStringLiteral("не удалось прочитать размеры — файл повреждён или это не "
-                                  "картинка");
+            return QStringLiteral("cannot read dimensions — the file is corrupt or not "
+                                  "an image");
         case Refusal::Empty:
-            return QStringLiteral("в заголовке нулевой размер");
+            return QStringLiteral("zero size in the header");
         case Refusal::SideTooBig:
-            return QStringLiteral("сторона больше 65535 пикселей");
+            return QStringLiteral("side exceeds 65535 pixels");
         case Refusal::AreaTooBig:
-            return QStringLiteral("площадь больше 512 мегапикселей");
+            return QStringLiteral("area exceeds 512 megapixels");
         case Refusal::TooMuchMemory:
-            return QStringLiteral("разжатая картинка не влезает в отведённую память");
+            return QStringLiteral("decompressed image does not fit in the memory budget");
     }
     return {};
 }
@@ -175,7 +175,7 @@ Pixels readPixels(const QString& path, const QByteArray& raw, const SourceInfo& 
         TiffImage tiff;
         QString err;
         if (!readTiff(path, &tiff, &err, qint64(limits.decodeBudgetBytes()))) {
-            out.error = QStringLiteral("TIFF не прочитан: %1").arg(err);
+            out.error = QStringLiteral("TIFF not read: %1").arg(err);
             return out;
         }
         out.image = tiff.image;
@@ -194,7 +194,7 @@ Pixels readPixels(const QString& path, const QByteArray& raw, const SourceInfo& 
         request.deep = true;
         out.image = decodeImage(raw, request);
         if (out.image.isNull()) {
-            out.error = QStringLiteral("формат не поддерживается");
+            out.error = QStringLiteral("unsupported format");
             return out;
         }
         out.meta = metaFor(raw);
@@ -234,12 +234,12 @@ ImportResult keepOrTranscode(const QByteArray& raw, const SourceInfo& info) {
                 return out;
             }
         }
-        out.message = QStringLiteral("транскод не сошёлся, файл положен как есть");
+        out.message = QStringLiteral("transcode did not round-trip, file stored as is");
         out.extension = QStringLiteral("jpg");
     } else {
         out.extension = info.format == QLatin1String("webp") ? QStringLiteral("webp")
                                                              : QStringLiteral("jxl");
-        out.message = QStringLiteral("пережатие не дало выигрыша");
+        out.message = QStringLiteral("recompression gave no gain");
     }
     out.route = Route::AsIs;
     out.bytes = raw;
@@ -280,7 +280,7 @@ ImportResult photoPath(const QString& path, const QByteArray& raw, const SourceI
     const Candidate best = bestCandidate(scaled, pixels.meta, limits,
                                          sourceIsLossless(info.format, raw), limits.quality);
     if (best.bytes.isEmpty())
-        return refuse(Refusal::None, QStringLiteral("не удалось сжать"));
+        return refuse(Refusal::None, QStringLiteral("compression failed"));
 
     ImportResult out;
     out.route = best.lossless ? Route::Lossless : Route::Photo;
@@ -291,7 +291,7 @@ ImportResult photoPath(const QString& path, const QByteArray& raw, const SourceI
     out.quality = best.quality;
     out.encodes = best.encodes;
     out.sourceBytes = raw.size();
-    if (colorFixed) out.message = QStringLiteral("цвет приведён к Display P3");
+    if (colorFixed) out.message = QStringLiteral("color converted to Display P3");
     return out;
 }
 
@@ -336,7 +336,7 @@ SourceInfo probeSource(const QString& path, const ImportLimits& limits) {
 ImportResult importImage(const QString& path, const ImportLimits& limits) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly))
-        return refuse(Refusal::NoSize, QStringLiteral("файл не открылся"));
+        return refuse(Refusal::NoSize, QStringLiteral("file did not open"));
     const QByteArray raw = f.readAll();
     f.close();
 
@@ -379,7 +379,7 @@ ImportResult importImage(const QString& path, const ImportLimits& limits) {
         bestCandidate(pixels.image, pixels.meta, limits, sourceIsLossless(info.format, raw),
                       quality);
     if (best.bytes.isEmpty())
-        return refuse(Refusal::None, QStringLiteral("не удалось сжать"));
+        return refuse(Refusal::None, QStringLiteral("compression failed"));
 
     // --- ИСХОД -----------------------------------------------------------
     //
@@ -399,10 +399,10 @@ ImportResult importImage(const QString& path, const ImportLimits& limits) {
     out.encodes = best.encodes;
     out.sourceBytes = raw.size();
     if (own)
-        out.message = QStringLiteral("пережат: %1% от исходного")
+        out.message = QStringLiteral("recompressed: %1% of the original")
                           .arg(100 * best.bytes.size() / std::max<qint64>(1, raw.size()));
     if (colorFixed) {
-        const QString note = QStringLiteral("цвет приведён к Display P3");
+        const QString note = QStringLiteral("color converted to Display P3");
         out.message = out.message.isEmpty() ? note : out.message + QStringLiteral("; ") + note;
     }
     return out;
@@ -424,7 +424,7 @@ ImportResult importPixels(const QImage& image, const ImportLimits& limits) {
     const Candidate best = bestCandidate(pixels, EncodeMeta{}, limits,
                                          target == Size{image.width(), image.height()},
                                          limits.quality);
-    if (best.bytes.isEmpty()) return refuse(Refusal::None, QStringLiteral("не удалось сжать"));
+    if (best.bytes.isEmpty()) return refuse(Refusal::None, QStringLiteral("compression failed"));
 
     ImportResult out;
     out.route = best.lossless ? Route::Lossless : Route::Photo;

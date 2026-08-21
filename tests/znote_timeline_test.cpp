@@ -119,7 +119,7 @@ void checkBases() {
     QStringList lines = linesOf(tl);
     ZT_TRUE("убранная строка показана своим текстом",
             lines.contains(QStringLiteral("- ещё пункт")));
-    ZT_TRUE("сводки «удалено:» нет", !lines.filter(QStringLiteral("удалено:")).size());
+    ZT_TRUE("сводки «удалено:» нет", !lines.filter(QStringLiteral("removed:")).size());
     // Метки: убранная — Removed.
     const int gone = int(lines.indexOf(QStringLiteral("- ещё пункт")));
     ZT_TRUE("убранная помечена Removed",

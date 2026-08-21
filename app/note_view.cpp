@@ -943,7 +943,7 @@ void NoteView::syncImageSpace(bool whole) {
 QString NoteView::frameText(const QTextBlock& block, const CachedImage& entry) const {
     const QString name = QFileInfo(blockImageRef(block).path).fileName();
     if (entry.state == ImageState::Missing)
-        return QStringLiteral("%1:\nфайл не найден").arg(name);
+        return QStringLiteral("%1:\nfile not found").arg(name);
     return QStringLiteral("%1:\na big %2x%3 image")
         .arg(name)
         .arg(entry.declared.width())

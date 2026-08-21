@@ -101,7 +101,7 @@ bool readTiffHeader(const QString& path, TiffHeader* out, QString* error) {
         if (error) *error = why;
         return false;
     };
-    if (!out) return fail(QStringLiteral("некуда положить результат"));
+    if (!out) return fail(QStringLiteral("nowhere to put the result"));
 
     TIFFSetErrorHandler(tiffError);
     TIFFSetWarningHandler(tiffWarning);
@@ -109,7 +109,7 @@ bool readTiffHeader(const QString& path, TiffHeader* out, QString* error) {
 
     TIFF* t = TIFFOpen(path.toLocal8Bit().constData(), "r");
     if (!t)
-        return fail(g_lastError.isEmpty() ? QStringLiteral("файл не открылся как TIFF")
+        return fail(g_lastError.isEmpty() ? QStringLiteral("file did not open as TIFF")
                                           : g_lastError);
     struct Closer {
         TIFF* t;
@@ -125,7 +125,7 @@ bool readTiffHeader(const QString& path, TiffHeader* out, QString* error) {
     TIFFGetFieldDefaulted(t, TIFFTAG_SAMPLESPERPIXEL, &samples);
     TIFFGetFieldDefaulted(t, TIFFTAG_PHOTOMETRIC, &photo);
     TIFFGetFieldDefaulted(t, TIFFTAG_EXTRASAMPLES, &extra, &extraTypes);
-    if (w == 0 || h == 0) return fail(QStringLiteral("в заголовке нулевой размер"));
+    if (w == 0 || h == 0) return fail(QStringLiteral("zero size in the header"));
 
     out->size = QSize(int(w), int(h));
     out->bitsPerSample = int(bits);
@@ -149,7 +149,7 @@ bool readTiff(const QString& path, TiffImage* out, QString* error, qint64 maxDec
         if (error) *error = why;
         return false;
     };
-    if (!out) return fail(QStringLiteral("некуда положить результат"));
+    if (!out) return fail(QStringLiteral("nowhere to put the result"));
 
     TIFFSetErrorHandler(tiffError);
     TIFFSetWarningHandler(tiffWarning);
@@ -157,7 +157,7 @@ bool readTiff(const QString& path, TiffImage* out, QString* error, qint64 maxDec
 
     TIFF* t = TIFFOpen(path.toLocal8Bit().constData(), "r");
     if (!t)
-        return fail(g_lastError.isEmpty() ? QStringLiteral("файл не открылся как TIFF")
+        return fail(g_lastError.isEmpty() ? QStringLiteral("file did not open as TIFF")
                                           : g_lastError);
     struct Closer {
         TIFF* t;
@@ -173,13 +173,13 @@ bool readTiff(const QString& path, TiffImage* out, QString* error, qint64 maxDec
     TIFFGetFieldDefaulted(t, TIFFTAG_PHOTOMETRIC, &photo);
     TIFFGetFieldDefaulted(t, TIFFTAG_PLANARCONFIG, &planar);
 
-    if (w == 0 || h == 0) return fail(QStringLiteral("в заголовке нулевой размер"));
+    if (w == 0 || h == 0) return fail(QStringLiteral("zero size in the header"));
     if (bits != 8 && bits != 16)
-        return fail(QStringLiteral("глубина %1 бит не поддерживается — нужны 8 или 16")
+        return fail(QStringLiteral("%1-bit depth not supported — need 8 or 16")
                         .arg(bits));
     if (planar != PLANARCONFIG_CONTIG)
-        return fail(QStringLiteral("каналы разложены по отдельным плоскостям — "
-                                   "такой TIFF не читаем"));
+        return fail(QStringLiteral("channels laid out in separate planes — "
+                                   "such a TIFF is not readable"));
 
     // ГЛУБИНА ВХОДА — bits; глубина РАБОЧЕГО КАДРА может быть больше. Lab и
     // CMYK мы переводим сами, а перевод нелинеен: восьмибитный Lab покрывает
@@ -194,8 +194,8 @@ bool readTiff(const QString& path, TiffImage* out, QString* error, qint64 maxDec
     // Границы ДО чтения хоть одной строки: у TIFF всё нужное известно из
     // заголовка, и выяснять про бомбу после выделения памяти незачем.
     if (maxDecodeBytes > 0 && decodedBytes(w, h, deep) > double(maxDecodeBytes))
-        return fail(QStringLiteral("картинка %1x%2 при %3 битах не влезает в потолок "
-                                   "разжатия")
+        return fail(QStringLiteral("image %1x%2 at %3 bits does not fit the "
+                                   "decompression ceiling")
                         .arg(w)
                         .arg(h)
                         .arg(bits));
@@ -226,7 +226,7 @@ bool readTiff(const QString& path, TiffImage* out, QString* error, qint64 maxDec
                                        : (hasAlpha ? QImage::Format_RGBA8888
                                                    : QImage::Format_RGBX8888);
     QImage img(int(w), int(h), fmt);
-    if (img.isNull()) return fail(QStringLiteral("не хватило памяти под картинку"));
+    if (img.isNull()) return fail(QStringLiteral("out of memory for the image"));
 
     // CMYK ПО ПРОФИЛЮ. Наивная формула (1-C)*(1-K) ниже — не колориметрия, и
     // это видно глазом: на «Девятом вале» Айвазовского (профиль 3M Matchprint,
@@ -247,7 +247,7 @@ bool readTiff(const QString& path, TiffImage* out, QString* error, qint64 maxDec
     }
 
     const tmsize_t rowBytes = TIFFScanlineSize(t);
-    if (rowBytes <= 0) return fail(QStringLiteral("нулевая длина строки"));
+    if (rowBytes <= 0) return fail(QStringLiteral("zero row length"));
     // Скобки фигурные: круглые тут читаются как объявление функции.
     std::vector<uint8_t> row(static_cast<size_t>(rowBytes), 0);
 
@@ -256,7 +256,7 @@ bool readTiff(const QString& path, TiffImage* out, QString* error, qint64 maxDec
     for (uint32_t y = 0; y < h; ++y) {
         if (TIFFReadScanline(t, row.data(), y) != 1)
             return fail(g_lastError.isEmpty()
-                            ? QStringLiteral("строка %1 не прочиталась").arg(y)
+                            ? QStringLiteral("row %1 not read").arg(y)
                             : g_lastError);
         const uint8_t* src8 = row.data();
         const auto* src16 = reinterpret_cast<const uint16_t*>(row.data());
@@ -273,7 +273,7 @@ bool readTiff(const QString& path, TiffImage* out, QString* error, qint64 maxDec
                     in[size_t(x) * 4 + size_t(c)] =
                         float((deep ? double(src16[size_t(x) * samples + size_t(c)])
                                     : double(src8[size_t(x) * samples + size_t(c)])) / m);
-            if (!cmyk->run()) return fail(QStringLiteral("перевод CMYK сорвался на строке %1").arg(y));
+            if (!cmyk->run()) return fail(QStringLiteral("CMYK conversion failed at row %1").arg(y));
             const float* got = cmyk->output();
             // Кадр здесь всегда широкий: у PHOTOMETRIC_SEPARATED wideOut истинно.
             for (uint32_t x = 0; x < w; ++x) {

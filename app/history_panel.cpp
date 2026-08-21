@@ -17,9 +17,9 @@ namespace zametti {
 namespace {
 
 QString sizeText(qint64 bytes) {
-    if (bytes < 1024) return QStringLiteral("%1 Б").arg(bytes);
-    if (bytes < 1024 * 1024) return QStringLiteral("%1 КБ").arg(bytes / 1024);
-    return QStringLiteral("%1 МБ").arg(bytes / (1024 * 1024));
+    if (bytes < 1024) return QStringLiteral("%1 B").arg(bytes);
+    if (bytes < 1024 * 1024) return QStringLiteral("%1 KB").arg(bytes / 1024);
+    return QStringLiteral("%1 MB").arg(bytes / (1024 * 1024));
 }
 
 }  // namespace
@@ -30,7 +30,7 @@ QString historyMoment(qint64 msSinceEpoch) {
     const QLocale locale;
     const QDate today = QDate::currentDate();
     if (when.date() == today)
-        return QStringLiteral("сегодня, %1").arg(locale.toString(when.time(),
+        return QStringLiteral("today, %1").arg(locale.toString(when.time(),
                                                                 QStringLiteral("HH:mm")));
     if (when.date().year() == today.year())
         return locale.toString(when, QStringLiteral("d MMMM, HH:mm"));
@@ -46,10 +46,10 @@ QString historyStamp(qint64 msSinceEpoch) {
 
 QString historyKindName(journal::Kind kind) {
     switch (kind) {
-        case journal::Kind::Save: return QStringLiteral("правка");
-        case journal::Kind::External: return QStringLiteral("извне");
-        case journal::Kind::Restore: return QStringLiteral("восстановлено");
-        case journal::Kind::Tombstone: return QStringLiteral("удалена");
+        case journal::Kind::Save: return QStringLiteral("edit");
+        case journal::Kind::External: return QStringLiteral("external");
+        case journal::Kind::Restore: return QStringLiteral("restored");
+        case journal::Kind::Tombstone: return QStringLiteral("deleted");
     }
     return {};
 }
@@ -79,10 +79,10 @@ HistoryBanner::HistoryBanner(QWidget* parent) : QWidget(parent) {
         button->setToolTip(tip);
         return button;
     };
-    fromPrevious_ = latching(QStringLiteral("с предыдущей"),
-                             QStringLiteral("Сравнивать с предыдущей записью истории"));
-    fromFresh_ = latching(QStringLiteral("со свежей"),
-                          QStringLiteral("Сравнивать с текущей версией заметки"));
+    fromPrevious_ = latching(QStringLiteral("vs previous"),
+                             QStringLiteral("Compare with the previous history entry"));
+    fromFresh_ = latching(QStringLiteral("vs current"),
+                          QStringLiteral("Compare with the current version of the note"));
     // Залипают по одной: QButtonGroup держит это сам, и «оба нажаты» не
     // случится ни при какой последовательности щелчков.
     auto* baseGroup = new QButtonGroup(this);
@@ -91,15 +91,15 @@ HistoryBanner::HistoryBanner(QWidget* parent) : QWidget(parent) {
     baseGroup->addButton(fromFresh_);
     setBaseIsFresh(false);
 
-    leave_ = new QPushButton(QStringLiteral("К текущей версии"), this);
-    restore_ = new QPushButton(QStringLiteral("Восстановить эту"), this);
+    leave_ = new QPushButton(QStringLiteral("To current version"), this);
+    restore_ = new QPushButton(QStringLiteral("Restore this one"), this);
     restoreStyle_ = restore_->styleSheet();
 
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(10, 5, 10, 5);
     layout->setSpacing(8);
     layout->addWidget(text_, 1);
-    layout->addWidget(new QLabel(QStringLiteral("сравнение:"), this));
+    layout->addWidget(new QLabel(QStringLiteral("compare:"), this));
     layout->addWidget(fromPrevious_);
     layout->addWidget(fromFresh_);
     layout->addSpacing(8);
@@ -137,7 +137,7 @@ void HistoryBanner::setSnapshot(qint64 time, journal::Kind kind, int changed) {
     // Строка отвечает на ОДИН вопрос: какая версия сейчас перед глазами
     // (просьба владельца; всё, что было после тире, убрано). Счёт тронутых
     // строк — тихой добавкой: сколько разница весит, видно до прокрутки.
-    QString what = QStringLiteral("Слепок от %1").arg(historyMoment(time));
+    QString what = QStringLiteral("Snapshot from %1").arg(historyMoment(time));
     if (kind != journal::Kind::Save)
         what += QStringLiteral(" (%1)").arg(historyKindName(kind));
     if (changed >= 0) what += QStringLiteral("  ·  ±%1").arg(changed);
@@ -147,18 +147,18 @@ void HistoryBanner::setSnapshot(qint64 time, journal::Kind kind, int changed) {
 void HistoryBanner::flashRestore() {
     // Подсветка вместо действия: печатающая клавиша ничего не восстанавливает,
     // но и молчать в ответ нельзя — человек нажал не просто так.
-    showText(QStringLiteral("Слепок только для чтения. "
-                            "Чтобы вернуть его содержимое — «Восстановить эту»."));
+    showText(QStringLiteral("The snapshot is read-only. "
+                            "To bring its content back — “Restore this one”."));
     restore_->setStyleSheet(QStringLiteral("QPushButton { border: 2px solid %1; }")
                                 .arg(settings().style().caretColor().name()));
     QTimer::singleShot(1200, this, [this] { restore_->setStyleSheet(restoreStyle_); });
 }
 
 HistoryTimeline::HistoryTimeline(QWidget* parent) : QWidget(parent) {
-    auto* title = new QLabel(QStringLiteral("История"), this);
+    auto* title = new QLabel(QStringLiteral("History"), this);
     auto* close = new QPushButton(QStringLiteral("×"), this);
     close->setFixedWidth(24);
-    close->setToolTip(QStringLiteral("Закрыть историю и вернуться к текущей версии"));
+    close->setToolTip(QStringLiteral("Close history and return to the current version"));
     list_ = new QListWidget(this);
     list_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     // Показанная запись обязана быть видна и когда фокус в тексте — а туда он

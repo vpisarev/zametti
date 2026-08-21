@@ -470,7 +470,7 @@ void checkSpecialFoldersStayAtBottom() {
     // Бюро заведено раньше всех и правлено позже всех — по любому ключу оно
     // просилось бы то вверх, то вниз.
     note("00000000000a03", "role: lost\ncreated: 2020-01-01T00:00:00+03:00\n"
-                           "modified: 2026-12-31T00:00:00+03:00\n", "# Бюро находок\n");
+                           "modified: 2026-12-31T00:00:00+03:00\n", "# Lost & found\n");
     note("00000000000a04", "parent: 00000000000a03\ncreated: 2026-02-02T00:00:00+03:00\n"
                            "modified: 2026-02-02T00:00:00+03:00\n", "# Найдёныш\n");
     note("00000000000a05", "archived: yes\ncreated: 2026-03-03T00:00:00+03:00\n"
@@ -487,7 +487,7 @@ void checkSpecialFoldersStayAtBottom() {
                 titles << model.data(model.index(row, 0, all), Qt::DisplayRole).toString();
             ZT_EQ("служебные внизу и в своём порядке (" +
                       s(zametti::sortOrderToString(SortOrder{key, ascending})) + ")",
-                  std::string("Бюро находок|Архив"),
+                  std::string("Lost & found|Archive"),
                   s(titles.mid(rows - 2).join(QLatin1Char('|'))));
         }
     QDir(g_root).removeRecursively();

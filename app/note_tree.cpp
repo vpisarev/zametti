@@ -199,7 +199,7 @@ std::shared_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath, const Z
         while (!at.isEmpty() && byId.contains(at)) {
             if (seen.contains(at)) {
                 if (at == node->id) {
-                    node->badge = QStringLiteral("цикл");
+                    node->badge = QStringLiteral("cycle");
                     parentOf[node->id] = QString();
                 }
                 break;
@@ -236,7 +236,7 @@ std::shared_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath, const Z
     const auto boxFor = [&]() -> NoteTreeModel::Node* {
         if (archiveBox != nullptr) return archiveBox;
         auto box = std::make_shared<NoteTreeModel::Node>();
-        box->title = QStringLiteral("Архив");
+        box->title = QStringLiteral("Archive");
         // Путь синтетический: узла-файла за ящиком нет, но путь нужен —
         // им адресуются раскрытые ветки и выбранная папка (indexForPath).
         // Точка в начале имени держит его подальше от настоящих заметок:
@@ -258,7 +258,7 @@ std::shared_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath, const Z
             home = boxFor();
         } else if (!parent.isEmpty()) {
             if (byId.contains(parent)) home = byId.value(parent);
-            else node->badge = QStringLiteral("сирота");
+            else node->badge = QStringLiteral("orphan");
         }
         node->parent = home;
         home->children.push_back(std::move(node));
@@ -514,8 +514,8 @@ void NoteTreeModel::updateTitle(const QString& filePath, const QString& title) {
     // изнутри было нечем — отказ был беззвучным.
     if (node == nullptr) {
         std::fprintf(stderr,
-                     "живой заголовок: заметки нет в дереве по пути [%s] — "
-                     "строка списка не обновится\n",
+                     "live title: note not in tree at path [%s] — "
+                     "the list row will not update\n",
                      filePath.toUtf8().constData());
         return;
     }
@@ -558,10 +558,10 @@ QVariant NoteTreeModel::data(const QModelIndex& index, int role) const {
                    : node->title + QStringLiteral(" [") + node->badge + QLatin1Char(']');
     if (role == SecondaryRole) return !secondaryPath_.isEmpty() && node->path == secondaryPath_;
     if (role == Qt::ToolTipRole && !node->isDir()) {
-        if (node->badge == QStringLiteral("сирота"))
-            return QStringLiteral("родитель не найден — показана в корне: ") + node->path;
-        if (node->badge == QStringLiteral("цикл"))
-            return QStringLiteral("цикл родителей разорван: ") + node->path;
+        if (node->badge == QStringLiteral("orphan"))
+            return QStringLiteral("parent not found — shown at root: ") + node->path;
+        if (node->badge == QStringLiteral("cycle"))
+            return QStringLiteral("parent cycle broken: ") + node->path;
         return node->path;
     }
     if (role == Qt::DecorationRole && node->isDir()) {
@@ -750,7 +750,7 @@ NoteTreeModel::Node* NoteTreeModel::findByFile(const QString& filePath) {
             if (!told && found->path != filePath) {
                 told = true;
                 std::fprintf(stderr,
-                             "пути заметки расходятся:\n  редактор: [%s]\n  дерево:   [%s]\n",
+                             "note paths diverge:\n  editor: [%s]\n  tree:   [%s]\n",
                              filePath.toUtf8().constData(), found->path.toUtf8().constData());
             }
             return found;
@@ -883,7 +883,7 @@ void NoteTreeModel::refreshNote(const QString& path) {
     if (!store_) return;
     Node* node = findByFile(path);
     if (node == nullptr) {
-        std::fprintf(stderr, "обновление строки: заметки нет в дереве по пути [%s]\n",
+        std::fprintf(stderr, "row update: note not in tree at path [%s]\n",
                      path.toUtf8().constData());
         return;
     }
@@ -892,7 +892,7 @@ void NoteTreeModel::refreshNote(const QString& path) {
     if (!storage_->refreshNote(node->id)) {
         // Строка списка осталась бы показывать прежний заголовок и прежнюю
         // дату — то есть врать о файле, которого мы не прочли.
-        std::fprintf(stderr, "строка списка не обновлена: заметка не читается [%s]\n",
+        std::fprintf(stderr, "list row not updated: note unreadable [%s]\n",
                      path.toUtf8().constData());
     }
 }

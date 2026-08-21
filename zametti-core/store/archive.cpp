@@ -34,12 +34,12 @@ bool writeFileBytes(const QString& path, const std::string& bytes, QString* erro
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly)) {
         if (error != nullptr)
-            *error = QStringLiteral("не открыть на запись: %1").arg(file.errorString());
+            *error = QStringLiteral("cannot open for writing: %1").arg(file.errorString());
         return false;
     }
     file.write(bytes.data(), qint64(bytes.size()));
     if (file.commit()) return true;
-    if (error != nullptr) *error = QStringLiteral("запись не удалась: %1").arg(file.errorString());
+    if (error != nullptr) *error = QStringLiteral("write failed: %1").arg(file.errorString());
     return false;
 }
 
@@ -178,7 +178,7 @@ bool archiveNote(const QString& root, const QString& noteId, const history::Rule
     const QString path = noteFile(root, noteId);
     std::string bytes;
     if (!readFileBytes(path, bytes)) {
-        if (error != nullptr) *error = QStringLiteral("заметка %1 не читается").arg(noteId);
+        if (error != nullptr) *error = QStringLiteral("cannot read note %1").arg(noteId);
         return false;
     }
     // НИ ОДНОГО РАЗБОРА. Заметка могла быть испорчена чем угодно — правкой в
@@ -188,7 +188,7 @@ bool archiveNote(const QString& root, const QString& noteId, const history::Rule
     const auto [headFrom, headTo] = headerRange(bytes);
     if (headTo == 0) {
         if (error != nullptr)
-            *error = QStringLiteral("у заметки %1 нет шапки zametti").arg(noteId);
+            *error = QStringLiteral("note %1 has no zametti header").arg(noteId);
         return false;
     }
     // ИДЕМПОТЕНТНОСТЬ. Повторная архивация — не ошибка: так выглядит второй
@@ -204,7 +204,7 @@ bool archiveNote(const QString& root, const QString& noteId, const history::Rule
     journal::Journal read;
     QString why;
     if (!history.read(noteId, &read, &why)) {
-        if (error != nullptr) *error = QStringLiteral("история не читается: %1").arg(why);
+        if (error != nullptr) *error = QStringLiteral("cannot read history: %1").arg(why);
         return false;
     }
     const QByteArray snapshot(bytes.data(), qsizetype(bytes.size()));
@@ -219,14 +219,14 @@ bool archiveNote(const QString& root, const QString& noteId, const history::Rule
         history::decideStep(read.entries, snapshotOf, snapshot, journal::Kind::Save, now, rules);
     if (step.keep < int(read.entries.size()) &&
         !history.truncate(noteId, qMax(1, step.keep), &why)) {
-        if (error != nullptr) *error = QStringLiteral("журнал не подрезан: %1").arg(why);
+        if (error != nullptr) *error = QStringLiteral("journal not trimmed: %1").arg(why);
         return false;
     }
     if (step.writeNew &&
         !history.append(noteId, journal::Kind::Save, now, snapshot, 0, &why)) {
         // ТЕЛО НЕ ЗАПИСАНО — СТАБ НЕ ПИШЕМ. Это и есть инвариант A: потерять
         // тело нельзя, потому что мы не начинаем второй шаг, не сделав первый.
-        if (error != nullptr) *error = QStringLiteral("тело не записано в историю: %1").arg(why);
+        if (error != nullptr) *error = QStringLiteral("body not written to history: %1").arg(why);
         return false;
     }
 
@@ -239,7 +239,7 @@ bool restoreNote(const QString& root, const QString& noteId, QString* error) {
     const QString path = noteFile(root, noteId);
     std::string bytes;
     if (!readFileBytes(path, bytes)) {
-        if (error != nullptr) *error = QStringLiteral("заметка %1 не читается").arg(noteId);
+        if (error != nullptr) *error = QStringLiteral("cannot read note %1").arg(noteId);
         return false;
     }
     ZNote stub;
@@ -250,7 +250,7 @@ bool restoreNote(const QString& root, const QString& noteId, QString* error) {
     journal::Journal read;
     QString why;
     if (!history.read(noteId, &read, &why)) {
-        if (error != nullptr) *error = QStringLiteral("история не читается: %1").arg(why);
+        if (error != nullptr) *error = QStringLiteral("cannot read history: %1").arg(why);
         return false;
     }
     int head = int(read.entries.size()) - 1;
@@ -261,7 +261,7 @@ bool restoreNote(const QString& root, const QString& noteId, QString* error) {
         // Тела нет — оставляем стаб как есть и говорим вслух. Молча отдать
         // человеку одну строку вместо заметки нельзя ничем.
         if (error != nullptr)
-            *error = QStringLiteral("в истории %1 нет тела — заметка осталась стабом: %2")
+            *error = QStringLiteral("history of %1 has no body — the note remains a stub: %2")
                          .arg(noteId, why);
         return false;
     }
@@ -332,7 +332,7 @@ bool forgetNote(const QString& root, const QString& noteId, QString* error) {
     const QString path = noteFile(root, noteId);
     const bool hadFile = QFile::exists(path);
     if (hadFile && !QFile::moveToTrash(path) && !QFile::remove(path)) {
-        if (error != nullptr) *error = QStringLiteral("файл заметки %1 не удалить").arg(noteId);
+        if (error != nullptr) *error = QStringLiteral("cannot delete note file %1").arg(noteId);
         return false;
     }
 
@@ -342,11 +342,11 @@ bool forgetNote(const QString& root, const QString& noteId, QString* error) {
     // заметку, а человек попросил забыть её насовсем.
     const QString log = journal::History(root).pathFor(noteId);
     if (QFile::exists(log) && !QFile::moveToTrash(log) && !QFile::remove(log)) {
-        if (error != nullptr) *error = QStringLiteral("журнал %1 не удалить").arg(noteId);
+        if (error != nullptr) *error = QStringLiteral("cannot delete journal %1").arg(noteId);
         return false;
     }
     if (!hadFile && error != nullptr)
-        *error = QStringLiteral("файла заметки %1 не было").arg(noteId);
+        *error = QStringLiteral("note file %1 did not exist").arg(noteId);
     return true;
 }
 

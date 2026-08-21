@@ -117,7 +117,7 @@ std::vector<std::string> splitLines(const std::string& s) {
 int runCheck(const QString& path) {
     std::string src;
     if (!readFile(path, src)) {
-        std::fprintf(stderr, "не читается: %s\n", path.toUtf8().constData());
+        std::fprintf(stderr, "cannot read: %s\n", path.toUtf8().constData());
         return 2;
     }
 
@@ -142,11 +142,11 @@ int runCheck(const QString& path) {
 
 
 const char* kUsage =
-    "использование: zametti [--noconfig] [файл.md]\n"
-    "               zametti --root каталог-хранилища\n"
-    "               zametti --check файл.md\n"
-    "               zametti --dump-config\n"
-    "               zametti --root каталог-хранилища --unlock\n";
+    "usage: zametti [--noconfig] [file.md]\n"
+    "       zametti --root store-directory\n"
+    "       zametti --check file.md\n"
+    "       zametti --dump-config\n"
+    "       zametti --root store-directory --unlock\n";
 
 void printUsage() { std::fputs(kUsage, stderr); }
 
@@ -154,7 +154,7 @@ void printUsage() { std::fputs(kUsage, stderr); }
 // Сочетаний на команду может быть несколько; в конфиге они через точку с
 // запятой, а человеку читать удобнее через запятую.
 QByteArray keysFor(const QString& keys) {
-    if (keys.trimmed().isEmpty()) return QByteArrayLiteral("(нет)");   // сочетание убрано
+    if (keys.trimmed().isEmpty()) return QByteArrayLiteral("(none)");   // сочетание убрано
     return QString(keys).replace(QStringLiteral("; "), QStringLiteral(", ")).toUtf8();
 }
 
@@ -166,54 +166,54 @@ void printHelp() {
     std::fputs(kUsage, stdout);
     std::printf(
         "\n"
-        "Просмотрщик заметок в markdown. Слева дерево заметок, справа документ.\n"
-        "Без имени файла открывается тот, что читали в прошлый раз.\n"
+        "Markdown note viewer. Note tree on the left, document on the right.\n"
+        "Without a file name, opens the one read last time.\n"
         "\n"
-        "Хранилище (--root):\n"
-        "  Ctrl+N            новая заметка (ребёнок выбранной в дереве)\n"
-        "  F2                переименовать заметку (правит её первый заголовок)\n"
-        "  Del в дереве      в корзину; в корзине — насовсем, с подтверждением\n"
-        "  перетаскивание    перенос заметки; каталог — это заметка с детьми\n"
+        "Store (--root):\n"
+        "  Ctrl+N            new note (child of the one selected in the tree)\n"
+        "  F2                rename note (edits its first heading)\n"
+        "  Del in tree       to archive; in archive — permanently, with confirmation\n"
+        "  drag and drop     move a note; a folder is a note with children\n"
         "\n"
-        "Ключи:\n"
-        "  --check файл.md   прогнать разбор и обратную запись, показать расхождение\n"
-        "                    с оригиналом; ненулевой код возврата при расхождении.\n"
-        "                    Дисплей не нужен\n"
-        "  --dump-config     напечатать все параметры оформления со значениями\n"
-        "                    по умолчанию, в том же виде, в каком их ждёт конфиг\n"
-        "  --noconfig        не читать конфиг, взять умолчания\n"
-        "  --help, -h        эта справка\n"
+        "Options:\n"
+        "  --check file.md   run parse and write-back, show the difference\n"
+        "                    from the original; non-zero exit code on mismatch.\n"
+        "                    No display needed\n"
+        "  --dump-config     print every appearance parameter with its default\n"
+        "                    value, in the same form the config expects\n"
+        "  --noconfig        skip the config, use defaults\n"
+        "  --help, -h        this help\n"
         "\n"
-        "Клавиши:\n"
-        "  Ctrl+=, Ctrl+-    крупнее, мельче\n"
-        "  Ctrl+0            исходный масштаб\n"
-        "  Ctrl+S            сохранить сейчас\n"
-        "  Ctrl+Z, Ctrl+Y    отменить, вернуть\n"
-        "  Enter             в тексте — перенос строки, второй подряд — новый абзац;\n"
-        "                    в списке — новый пункт, на пустом пункте выйти из него\n"
-        "  Shift+Enter       наоборот: в тексте новый абзац, в пункте перенос строки\n"
-        "  Backspace         в начале пункта — сделать его абзацем\n"
-        "  Tab, Shift+Tab    двигать пункт по уровням вложенности\n"
-        "  %s%s  переключить задачу: сделана или нет\n"
-        "  %s%s  переставить пункт вверх\n"
-        "  %s%s  переставить пункт вниз\n"
-        "  %s%s  сделать маркированным списком\n"
-        "  %s%s  сделать нумерованным списком\n"
-        "  %s%s  сделать списком задач\n"
-        "  %s%s  сделать обычным текстом\n"
-        "  Ctrl+B, Ctrl+I    жирный, курсив\n"
-        "  Ctrl+/            зачёркнутый\n"
-        "  Ctrl+E            код в строке; он же выходит из кавычек при наборе\n"
-        "  Ctrl+Shift+E      выделенное в блок кода и обратно в текст\n"
-        "  %s%s  править исходник markdown (и обратно)\n"
+        "Keys:\n"
+        "  Ctrl+=, Ctrl+-    zoom in, zoom out\n"
+        "  Ctrl+0            reset zoom\n"
+        "  Ctrl+S            save now\n"
+        "  Ctrl+Z, Ctrl+Y    undo, redo\n"
+        "  Enter             in text — line break, twice in a row — new paragraph;\n"
+        "                    in a list — new item, on an empty item leaves the list\n"
+        "  Shift+Enter       the reverse: new paragraph in text, line break in an item\n"
+        "  Backspace         at the start of an item — turn it into a paragraph\n"
+        "  Tab, Shift+Tab    move an item across nesting levels\n"
+        "  %s%s  toggle task: done or not\n"
+        "  %s%s  move item up\n"
+        "  %s%s  move item down\n"
+        "  %s%s  make a bulleted list\n"
+        "  %s%s  make a numbered list\n"
+        "  %s%s  make a task list\n"
+        "  %s%s  make plain text\n"
+        "  Ctrl+B, Ctrl+I    bold, italic\n"
+        "  Ctrl+/            strikethrough\n"
+        "  Ctrl+E            inline code; also steps out of the backticks while typing\n"
+        "  Ctrl+Shift+E      selection to a code block and back to text\n"
+        "  %s%s  edit markdown source (and back)\n"
         "\n"
-        "Файлы:\n"
+        "Files:\n"
         "  %s\n"
-        "      оформление; приложение его только читает, править вручную.\n"
-        "      Полный список параметров — по ключу --dump-config\n"
+        "      appearance; edit it in the app (the gear button) or by hand.\n"
+        "      Full parameter list — see --dump-config\n"
         "  %s\n"
-        "      последняя заметка, прокрутка, зум, геометрия окна, раскрытые ветки;\n"
-        "      переписывается при выходе\n",
+        "      last note, scroll position, zoom, window geometry, expanded branches;\n"
+        "      rewritten on exit\n",
         keysFor(zametti::settings().editor().toggleTaskKey()).constData(),
         padFor(zametti::settings().editor().toggleTaskKey()).constData(),
         keysFor(zametti::settings().editor().moveUpKey()).constData(),
@@ -261,7 +261,7 @@ int main(int argc, char** argv) {
             storeRoot = QString::fromLocal8Bit(argv[++i]);
         }
         else if (arg.rfind("--", 0) == 0) {
-            std::fprintf(stderr, "неизвестный ключ: %s\n", arg.c_str());
+            std::fprintf(stderr, "unknown option: %s\n", arg.c_str());
             return 2;
         } else {
             path = QString::fromLocal8Bit(argv[i]);
@@ -314,7 +314,7 @@ int main(int argc, char** argv) {
     // семейства по имени, и если имя некому отдать, Qt молча подставит своё.
     // Жалуемся, но работаем: без шрифта программа некрасива, а не мертва.
     for (const QString& face : zametti::loadEmbeddedFonts())
-        std::fprintf(stderr, "влинкованный шрифт не принят Qt: %s\n",
+        std::fprintf(stderr, "embedded font rejected by Qt: %s\n",
                      face.toUtf8().constData());
 
     // Движок формул — здесь же: подъём стоит 22 мс, и они не должны достаться
@@ -324,7 +324,7 @@ int main(int argc, char** argv) {
     {
         QString formulaError;
         if (!zametti::Formulas::init(&formulaError))
-            std::fprintf(stderr, "движок формул не поднялся: %s\n",
+            std::fprintf(stderr, "formula engine failed to start: %s\n",
                          formulaError.toUtf8().constData());
     }
 
@@ -339,7 +339,7 @@ int main(int argc, char** argv) {
     if (!noConfig && !zapp.reloadSettings(&configError, &configUnknown)) {
         // Молча подставить умолчания нельзя: опечатка в конфиге выглядела бы
         // как «настройка не работает».
-        std::fprintf(stderr, "конфиг не разобран, взяты значения по умолчанию:\n  %s\n",
+        std::fprintf(stderr, "config not parsed, defaults in use:\n  %s\n",
                      configError.toUtf8().constData());
     }
 
@@ -361,7 +361,7 @@ int main(int argc, char** argv) {
     if (!storeRoot.isEmpty()) {
         const QString absRoot = QFileInfo(storeRoot).absoluteFilePath();
         if (!zametti::NoteTreeModel::isStoreRoot(absRoot)) {
-            std::fprintf(stderr, "не похоже на хранилище (нет .zametti): %s\n",
+            std::fprintf(stderr, "does not look like a store (no .zametti): %s\n",
                          absRoot.toUtf8().constData());
             return 2;
         }
@@ -424,9 +424,9 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "%s\n", locked.note.toUtf8().constData());
         if (!locked.locked) {
             std::fprintf(stderr,
-                         "это хранилище уже открыто другой копией zametti:\n  %s\n"
-                         "  замок держит pid %lld на «%s»\n"
-                         "Если та копия давно умерла: zametti --root … --unlock\n",
+                         "this store is already open by another copy of zametti:\n  %s\n"
+                         "  the lock is held by pid %lld on \"%s\"\n"
+                         "If that copy is long dead: zametti --root … --unlock\n",
                          model.nodePath(QModelIndex()).toUtf8().constData(),
                          (long long)locked.holderPid, locked.holderHost.toUtf8().constData());
             return 3;
@@ -460,7 +460,7 @@ int main(int argc, char** argv) {
         }
         current = model.pathOfId(first);
         if (current.isEmpty()) {
-            std::fprintf(stderr, "в хранилище нет ни одной открываемой заметки\n");
+            std::fprintf(stderr, "the store has no openable notes\n");
             return 2;
         }
     }
@@ -607,14 +607,14 @@ int main(int argc, char** argv) {
         if (!zapp.reloadSettings(&error, &unknown)) {
             // Мусор в конфиге — это не повод перекрашивать окно наугад:
             // работаем на прежних значениях и говорим, что именно не так.
-            std::fprintf(stderr, "конфиг не принят: %s\n", error.toUtf8().constData());
+            std::fprintf(stderr, "config not accepted: %s\n", error.toUtf8().constData());
             // В полосе — причина, а не путь. Путь длиннее всей полосы, и в
             // первом же снимке многоточие съело ровно то, ради чего сообщение
             // и показывают: «object is missing after a comma».
             QString why = error;
             const QString prefix = zametti::configPath() + QStringLiteral(": ");
             if (why.startsWith(prefix)) why = why.mid(prefix.size());
-            statusBar.setMessage(QStringLiteral("конфиг не принят: %1").arg(why));
+            statusBar.setMessage(QStringLiteral("config not accepted: %1").arg(why));
             return;
         }
         applyAppearance();
@@ -623,10 +623,10 @@ int main(int argc, char** argv) {
         // «caretColor» вместо «colors.caret».
         statusBar.setMessage(unknown.isEmpty()
                                  ? QString()
-                                 : QStringLiteral("в конфиге не понято: %1")
+                                 : QStringLiteral("unrecognized in config: %1")
                                        .arg(unknown.join(QStringLiteral(", "))));
         if (!unknown.isEmpty())
-            std::fprintf(stderr, "в конфиге не понято: %s\n",
+            std::fprintf(stderr, "unrecognized in config: %s\n",
                          unknown.join(QStringLiteral(", ")).toUtf8().constData());
     };
     QObject::connect(&configSettle, &QTimer::timeout, &window, [&] {
@@ -637,9 +637,9 @@ int main(int argc, char** argv) {
     // Про конфиг, прочитанный на старте, сказать надо сразу, а не ждать, пока
     // человек его тронет: незнакомый ключ выглядит как «настройка не работает».
     if (!configUnknown.isEmpty()) {
-        std::fprintf(stderr, "в конфиге не понято: %s\n",
+        std::fprintf(stderr, "unrecognized in config: %s\n",
                      configUnknown.join(QStringLiteral(", ")).toUtf8().constData());
-        statusBar.setMessage(QStringLiteral("в конфиге не понято: %1")
+        statusBar.setMessage(QStringLiteral("unrecognized in config: %1")
                                  .arg(configUnknown.join(QStringLiteral(", "))));
     }
 
@@ -736,16 +736,16 @@ int main(int argc, char** argv) {
         ask->setIcon(QMessageBox::Question);
         ask->setWindowTitle(QStringLiteral("zametti"));
         ask->setText(QFileInfo(editor.filePath()).fileName() +
-                     QStringLiteral(" изменилась снаружи, а здесь есть несохранённые "
-                                    "правки."));
+                     QStringLiteral(" changed outside the app, and there are unsaved "
+                                    "edits here."));
         QPushButton* mine =
-            ask->addButton(QStringLiteral("Оставить мои"), QMessageBox::AcceptRole);
+            ask->addButton(QStringLiteral("Keep mine"), QMessageBox::AcceptRole);
         QPushButton* theirs =
-            ask->addButton(QStringLiteral("Взять внешние"), QMessageBox::DestructiveRole);
+            ask->addButton(QStringLiteral("Take external"), QMessageBox::DestructiveRole);
         ask->setDefaultButton(mine);
         ask->setInformativeText(
-            QStringLiteral("Оставить мои — внешняя версия будет перезаписана при "
-                           "сохранении. Взять внешние — правки можно вернуть отменой."));
+            QStringLiteral("Keep mine — the external version will be overwritten on "
+                           "save. Take external — your edits can be brought back with undo."));
         QObject::connect(ask, &QMessageBox::finished, &window, [&editor, ask, theirs] {
             editor.resolveExternalConflict(ask->clickedButton() == theirs);
         });
@@ -886,7 +886,7 @@ int main(int argc, char** argv) {
             title = text.trimmed().left(64);
             break;
         }
-        if (title.isEmpty()) title = QStringLiteral("Без названия");
+        if (title.isEmpty()) title = QStringLiteral("Untitled");
         model.updateTitle(editor.filePath(), title);
         window.setWindowTitle(title + QStringLiteral(" — zametti"));
     });
@@ -989,8 +989,8 @@ int main(int argc, char** argv) {
         // Текст не принят — и человек обязан узнать почему, а не гадать, отчего
         // кнопка не гаснет. Второй случай — дефект, и он назван дефектом.
         statusBar.setMessage(code == -1
-                            ? QStringLiteral("в исходнике набрана шапка заметки — уберите её")
-                            : QStringLiteral("правка не наложилась и отменена — это дефект"));
+                            ? QStringLiteral("the source contains a note header — remove it")
+                            : QStringLiteral("the edit failed to apply and was undone — this is a defect"));
     });
 
     // РЕЖИМ ПРАВКИ НАСТРОЕК — четвёртая страница стека. Кнопка-шестерёнка —
@@ -1014,10 +1014,10 @@ int main(int argc, char** argv) {
     QObject::connect(&settingsMode, &zametti::SettingsController::saved, &window,
                      [&](bool ok, const QString& error) {
                          if (!ok) {
-                             std::fprintf(stderr, "конфиг не записан: %s\n",
+                             std::fprintf(stderr, "config not written: %s\n",
                                           error.toUtf8().constData());
                              statusBar.setMessage(
-                                 QStringLiteral("конфиг не записан: %1").arg(error));
+                                 QStringLiteral("config not written: %1").arg(error));
                              return;
                          }
                          watchConfig();
@@ -1028,11 +1028,11 @@ int main(int argc, char** argv) {
                      [&](int) { showHistoryState(); });
     // Восстановление — одно на баннер и на кнопку тулбара; статус пишет окно.
     QObject::connect(&history, &zametti::HistoryController::restored, &window, [&](qint64 source) {
-        findBar.setStatus(QStringLiteral("восстановлено из слепка %1")
+        findBar.setStatus(QStringLiteral("restored from snapshot %1")
                               .arg(zametti::historyMoment(source)));
     });
     QObject::connect(&history, &zametti::HistoryController::restoreWasCurrent, &window, [&] {
-        findBar.setStatus(QStringLiteral("этот слепок и есть нынешняя версия"));
+        findBar.setStatus(QStringLiteral("this snapshot is already the current version"));
     });
 
 
@@ -1041,10 +1041,10 @@ int main(int argc, char** argv) {
     // раза молча. Пишет хранилище (ZStorage::rename/move/setSortMark — штатный
     // путь записи и шаг журнала); здесь только слово человеку.
     const auto complain = [&window](const QString& file, const QString& why) {
-        std::fprintf(stderr, "правка заметки не удалась: %s — %s\n",
+        std::fprintf(stderr, "note edit failed: %s — %s\n",
                      file.toUtf8().constData(), why.toUtf8().constData());
         QMessageBox::warning(&window, QStringLiteral("zametti"),
-                             QStringLiteral("Не удалось записать %1: %2")
+                             QStringLiteral("Could not write %1: %2")
                                  .arg(QFileInfo(file).fileName(), why));
     };
 
@@ -1061,7 +1061,7 @@ int main(int argc, char** argv) {
         for (const QString& line : zapp.storage()->migrate())
             std::fprintf(stderr, "%s\n", line.toUtf8().constData());
         zapp.storage()->reload();   // дерево и список догонят по сигналу
-        statusBar.setMessage(QStringLiteral("хранилище перечитано"));
+        statusBar.setMessage(QStringLiteral("store reloaded"));
         QTimer::singleShot(1500, &statusBar, [&statusBar] { statusBar.setMessage(QString()); });
     };
     shortcut(QKeySequence(Qt::Key_F5), reloadStore);
@@ -1169,7 +1169,7 @@ int main(int argc, char** argv) {
             if (!empty) {
                 const auto answer = QMessageBox::question(
                     &window, QStringLiteral("zametti"),
-                    QStringLiteral("Удалить насовсем «%1»?")
+                    QStringLiteral("Delete \"%1\" permanently?")
                         .arg(model.titleOfId(noteId)));
                 if (answer != QMessageBox::Yes) return;
             }
@@ -1198,7 +1198,7 @@ int main(int argc, char** argv) {
         zapp.storage()->archive(noteId, zametti::NoteEditor::historyRules(), &failed);
         if (!failed.isEmpty())
             QMessageBox::warning(&window, QStringLiteral("zametti"),
-                                 QStringLiteral("Убрать в архив удалось не всё:\n%1")
+                                 QStringLiteral("Not everything could be archived:\n%1")
                                      .arg(failed.join(QLatin1Char('\n'))));
         // Открытую заметку перечитываем с диска: на её месте теперь стаб, и
         // редактор обязан показать то, что в файле, а не то, что помнит.
@@ -1220,7 +1220,7 @@ int main(int argc, char** argv) {
         zapp.storage()->restore(noteId, &failed);
         if (!failed.isEmpty())
             QMessageBox::warning(&window, QStringLiteral("zametti"),
-                                 QStringLiteral("Вернуть удалось не всё:\n%1")
+                                 QStringLiteral("Not everything could be restored:\n%1")
                                      .arg(failed.join(QLatin1Char('\n'))));
         // Открытая заметка была стабом — перечитываем: тело вернулось.
         if (file == editor.filePath()) editor.openFile(file);
@@ -1261,8 +1261,8 @@ int main(int argc, char** argv) {
     const auto importNotes = [&](const QString& parentId) {
         if (!model.isStore()) return;
         const QStringList files = QFileDialog::getOpenFileNames(
-            &window, QStringLiteral("Импортировать заметки"), QString(),
-            QStringLiteral("Заметки markdown (*.md *.markdown);;Все файлы (*)"));
+            &window, QStringLiteral("Import notes"), QString(),
+            QStringLiteral("Markdown notes (*.md *.markdown);;All files (*)"));
         if (files.isEmpty()) return;
 
         QString first;
@@ -1282,7 +1282,7 @@ int main(int argc, char** argv) {
         if (!failed.isEmpty()) {
             QMessageBox::warning(
                 &window, QStringLiteral("zametti"),
-                QStringLiteral("Не импортировано файлов: %1\n\n%2")
+                QStringLiteral("Files not imported: %1\n\n%2")
                     .arg(failed.size())
                     .arg(failed.join(QLatin1Char('\n'))));
         }
@@ -1321,13 +1321,13 @@ int main(int argc, char** argv) {
         if (exportDir.isEmpty() || !QFileInfo(exportDir).isDir())
             exportDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
 
-        const QString markdown = QStringLiteral("Markdown с картинками (*.md)");
+        const QString markdown = QStringLiteral("Markdown with images (*.md)");
         const QString pdf = QStringLiteral("PDF (*.pdf)");
 
         // Диалог свой, а не getSaveFileName: тому нельзя сказать «сменили
         // фильтр — смени и расширение», а без этого человек, выбрав PDF,
         // сохранял файл с именем «Заметка.md» и получал markdown.
-        QFileDialog dialog(&window, QStringLiteral("Вывезти заметку"), exportDir);
+        QFileDialog dialog(&window, QStringLiteral("Export note"), exportDir);
         dialog.setAcceptMode(QFileDialog::AcceptSave);
         dialog.setNameFilters({markdown, pdf});
         dialog.setDefaultSuffix(QStringLiteral("md"));
@@ -1336,12 +1336,12 @@ int main(int argc, char** argv) {
         // молча ничего не показывает — поэтому DontUseNativeDialog стоит явно.
         dialog.setOption(QFileDialog::DontUseNativeDialog, true);
         auto* keepMetaBox =
-            new QCheckBox(QStringLiteral("Сохранять имя и метаданные"), &dialog);
+            new QCheckBox(QStringLiteral("Keep name and metadata"), &dialog);
         keepMetaBox->setChecked(exportKeepMeta);
         keepMetaBox->setToolTip(QStringLiteral(
-            "Файл уедет как есть: с шапкой и под именем-идентификатором.\n"
-            "Такой файл, положенный в другое хранилище zametti, попадёт в «Бюро находок».\n"
-            "Без галочки наружу уезжает чистый markdown с человеческим именем."));
+            "The file goes out as is: with the header and under its identifier name.\n"
+            "Dropped into another zametti store, such a file lands in Lost & found.\n"
+            "Unchecked, plain markdown goes out under a human-readable name."));
         if (auto* grid = qobject_cast<QGridLayout*>(dialog.layout()))
             grid->addWidget(keepMetaBox, grid->rowCount(), 0, 1, grid->columnCount());
         // ИМЯ ЦЕЛИКОМ, С КАТАЛОГОМ. selectFile с относительным именем ставит
@@ -1396,7 +1396,7 @@ int main(int argc, char** argv) {
 
         if (!report.ok()) {
             QMessageBox::warning(&window, QStringLiteral("zametti"),
-                                 QStringLiteral("Не удалось вывезти заметку.\n%1")
+                                 QStringLiteral("Could not export the note.\n%1")
                                      .arg(report.error));
             return;
         }
@@ -1404,7 +1404,7 @@ int main(int argc, char** argv) {
         // не нашлось. В остальных человек и так видит файл там, где просил.
         if (!report.notes.isEmpty())
             QMessageBox::information(&window, QStringLiteral("zametti"),
-                                     QStringLiteral("Заметка вывезена в %1.\n\n%2")
+                                     QStringLiteral("Note exported to %1.\n\n%2")
                                          .arg(QFileInfo(target).fileName(),
                                               report.notes.join(QStringLiteral("\n"))));
     };
@@ -1512,7 +1512,7 @@ int main(int argc, char** argv) {
         if (!gotPlaceholder) parts.append(file);
         if (!QProcess::startDetached(program, parts))
             QMessageBox::warning(&window, QStringLiteral("zametti"),
-                                 QStringLiteral("не запускается: %1").arg(command));
+                                 QStringLiteral("Failed to start: %1").arg(command));
     };
 
     // Внешний редактор снёс или обкорнал шапку. Молчать нельзя: заметка без
@@ -1525,15 +1525,15 @@ int main(int argc, char** argv) {
         ask->setWindowModality(Qt::NonModal);
         ask->setIcon(QMessageBox::Warning);
         ask->setWindowTitle(QStringLiteral("zametti"));
-        ask->setText(QStringLiteral("Во внешней правке «%1» пропало: %2.")
+        ask->setText(QStringLiteral("The external edit of \"%1\" lost: %2.")
                          .arg(model.titleOfId(QFileInfo(file).completeBaseName()),
                               keys.join(QStringLiteral(", "))));
         ask->setInformativeText(
-            QStringLiteral("Восстановить прежние значения? Правки текста сохранятся, "
-                           "вернуть можно отменой (Ctrl+Z)."));
+            QStringLiteral("Restore the previous values? Text edits will be kept, "
+                           "and the restore can be undone (Ctrl+Z)."));
         QPushButton* restore =
-            ask->addButton(QStringLiteral("Восстановить"), QMessageBox::AcceptRole);
-        ask->addButton(QStringLiteral("Оставить как есть"), QMessageBox::RejectRole);
+            ask->addButton(QStringLiteral("Restore"), QMessageBox::AcceptRole);
+        ask->addButton(QStringLiteral("Leave as is"), QMessageBox::RejectRole);
         ask->setDefaultButton(restore);
         QObject::connect(ask, &QMessageBox::finished, &window, [&, ask, restore] {
             if (ask->clickedButton() == restore) editor.restoreDamagedMeta();
@@ -1575,13 +1575,13 @@ int main(int argc, char** argv) {
         if (!at.isValid()) at = tree.currentIndex();
         const QString id = model.idOf(at);
         QMenu menu(&tree);
-        menu.addAction(QStringLiteral("Обновить (F5)"), [&] { reloadStore(); });
+        menu.addAction(QStringLiteral("Refresh (F5)"), [&] { reloadStore(); });
         menu.addSeparator();
-        menu.addAction(QStringLiteral("Новая заметка"),
+        menu.addAction(QStringLiteral("New note"),
                        [&] { createNote(model.folderIdFor(at), false); });
-        menu.addAction(QStringLiteral("Новая папка"),
+        menu.addAction(QStringLiteral("New folder"),
                        [&] { createNote(model.folderIdFor(at), true); });
-        menu.addAction(QStringLiteral("Импортировать…"),
+        menu.addAction(QStringLiteral("Import…"),
                        [&] { importNotes(model.folderIdFor(at)); });
 
         // «Сортировать по» — вторая дверь туда же, куда ведут три кнопки
@@ -1590,13 +1590,13 @@ int main(int argc, char** argv) {
         // корневой переключатель не наследует ни от кого.
         {
             const QString folderId = model.folderIdFor(at);
-            QMenu* sortMenu = menu.addMenu(QStringLiteral("Сортировать по"));
+            QMenu* sortMenu = menu.addMenu(QStringLiteral("Sort by"));
             bool fromMark = false;
             const zametti::SortOrder now =
                 model.effectiveSortFor(folderId, panels.rootSort(), &fromMark);
             const bool own = model.explicitSortOf(folderId).has_value();
             if (!folderId.isEmpty()) {
-                QAction* reset = sortMenu->addAction(QStringLiteral("умолчанию"), [&, folderId] {
+                QAction* reset = sortMenu->addAction(QStringLiteral("default"), [&, folderId] {
                     setSortFor(folderId, std::nullopt);
                 });
                 reset->setCheckable(true);
@@ -1629,11 +1629,11 @@ int main(int argc, char** argv) {
             // хранения, и наружу её выпускать незачем. В теле такого файла
             // положено быть только шапке и заголовку, а редактор рано или
             // поздно завёл бы там текст, который никто уже не увидит.
-            menu.addAction(QStringLiteral("Переименовать"), [&] { tree.edit(at); });
+            menu.addAction(QStringLiteral("Rename"), [&] { tree.edit(at); });
             if (model.inArchiveId(id))
-                menu.addAction(QStringLiteral("Вернуть из архива"), [&] { restoreNote(id); });
-            menu.addAction(model.inArchiveId(id) ? QStringLiteral("Удалить насовсем")
-                                                 : QStringLiteral("В архив"),
+                menu.addAction(QStringLiteral("Restore from archive"), [&] { restoreNote(id); });
+            menu.addAction(model.inArchiveId(id) ? QStringLiteral("Delete permanently")
+                                                 : QStringLiteral("Archive"),
                            [&] { deleteNote(id); });
         }
         menu.exec(tree.viewport()->mapToGlobal(pos));
@@ -1650,7 +1650,7 @@ int main(int argc, char** argv) {
 
         // Импорт есть всегда, даже когда щёлкнули мимо строк и заметки под
         // курсором нет вовсе: он про папку, а не про строку.
-        menu.addAction(QStringLiteral("Импортировать…"),
+        menu.addAction(QStringLiteral("Import…"),
                        [&] { importNotes(panels.currentFolderId()); });
         if (id.isEmpty()) {
             menu.exec(listView.viewport()->mapToGlobal(pos));
@@ -1660,7 +1660,7 @@ int main(int argc, char** argv) {
 
         // Перенос: список папок плоским перечнем с отступами. Перетаскивание
         // работает и так, но мышью через всё дерево — не для длинного списка.
-        QMenu* moveTo = menu.addMenu(QStringLiteral("Перенести в папку"));
+        QMenu* moveTo = menu.addMenu(QStringLiteral("Move to folder"));
         std::function<void(const QModelIndex&, int)> addFolders =
             [&](const QModelIndex& parent, int depth) {
                 for (int row = 0; row < model.rowCount(parent); ++row) {
@@ -1678,17 +1678,17 @@ int main(int argc, char** argv) {
         addFolders(QModelIndex(), 0);
 
         menu.addSeparator();
-        menu.addAction(QStringLiteral("Обновить (F5)"), [&] { reloadStore(); });
+        menu.addAction(QStringLiteral("Refresh (F5)"), [&] { reloadStore(); });
         menu.addSeparator();
-        menu.addAction(QStringLiteral("Открыть во внешнем редакторе"),
+        menu.addAction(QStringLiteral("Open in external editor"),
                        [&] { openExternally(model.pathOfId(id)); });
-        menu.addAction(QStringLiteral("Экспортировать…"),
+        menu.addAction(QStringLiteral("Export…"),
                        [&] { exportNote(model.pathOfId(id)); });
         menu.addSeparator();
         if (model.inArchiveId(id))
-            menu.addAction(QStringLiteral("Вернуть из архива"), [&] { restoreNote(id); });
-        menu.addAction(model.inArchiveId(id) ? QStringLiteral("Удалить насовсем")
-                                             : QStringLiteral("В архив"),
+            menu.addAction(QStringLiteral("Restore from archive"), [&] { restoreNote(id); });
+        menu.addAction(model.inArchiveId(id) ? QStringLiteral("Delete permanently")
+                                             : QStringLiteral("Archive"),
                        [&] { deleteNote(id); });
         menu.exec(listView.viewport()->mapToGlobal(pos));
     });
@@ -1723,7 +1723,7 @@ int main(int argc, char** argv) {
         }
         const int count = target.findMatches(query.needle, query.caseSensitive);
         findBar.setStatus(count == 0
-                              ? QStringLiteral("нет совпадений")
+                              ? QStringLiteral("no matches")
                               : QStringLiteral("%1/%2")
                                     .arg(target.currentMatch() + 1)
                                     .arg(count));
@@ -1739,7 +1739,7 @@ int main(int argc, char** argv) {
         if (query.isEmpty() || query.tooShort()) {
             results.clear();
             resultsView.hide();
-            if (!query.isEmpty()) findBar.setStatus(QStringLiteral("нужно два знака"));
+            if (!query.isEmpty()) findBar.setStatus(QStringLiteral("need two characters"));
             return;
         }
         const zametti::HistorySearchReport report = history.searchHistory(text);
@@ -1749,24 +1749,24 @@ int main(int argc, char** argv) {
         // историю, иначе одно из двух чисел молча пропадёт.
         zametti::TextSearchTarget& target = searchTarget();
         const QString inSnapshot = target.matchCount() > 0
-                                       ? QStringLiteral("%1/%2 в слепке")
+                                       ? QStringLiteral("%1/%2 in snapshot")
                                              .arg(target.currentMatch() + 1)
                                              .arg(target.matchCount())
-                                       : QStringLiteral("в слепке нет");
+                                       : QStringLiteral("none in snapshot");
         findBar.setStatus(report.hits.isEmpty()
-                              ? inSnapshot + QStringLiteral(", в истории тоже")
-                              : QStringLiteral("%1; в истории %2 в %3 слепках%4")
+                              ? inSnapshot + QStringLiteral(", nothing in history")
+                              : QStringLiteral("%1; in history %2 in %3 snapshots%4")
                                     .arg(inSnapshot)
                                     .arg(report.hits.size())
                                     .arg(report.withHits)
-                                    .arg(report.truncated ? QStringLiteral(", показаны не все")
+                                    .arg(report.truncated ? QStringLiteral(", not all shown")
                                                           : QString()));
     };
 
     const auto showCounter = [&] {
         zametti::TextSearchTarget& target = searchTarget();
         if (target.matchCount() == 0) {
-            findBar.setStatus(QStringLiteral("нет совпадений"));
+            findBar.setStatus(QStringLiteral("no matches"));
             return;
         }
         findBar.setStatus(QStringLiteral("%1/%2")
@@ -1799,7 +1799,7 @@ int main(int argc, char** argv) {
                 searchDebounce.stop();
                 results.clear();
                 findBar.setStatus(query.isEmpty() ? QString()
-                                                  : QStringLiteral("нужно два знака"));
+                                                  : QStringLiteral("need two characters"));
                 return;
             }
             searchDebounce.start();
@@ -1824,14 +1824,14 @@ int main(int argc, char** argv) {
         for (int row = 0; row < results.rowCount(); ++row)
             if (results.isHeader(results.index(row, 0))) ++notes;
         if (found.isEmpty()) {
-            findBar.setStatus(QStringLiteral("ничего"));
+            findBar.setStatus(QStringLiteral("nothing"));
             return;
         }
         findBar.setStatus(truncated
-                              ? QStringLiteral("%1+ в %2, показаны не все")
+                              ? QStringLiteral("%1+ in %2, not all shown")
                                     .arg(found.size())
                                     .arg(notes)
-                              : QStringLiteral("%1 в %2 за %3 мс")
+                              : QStringLiteral("%1 in %2, %3 ms")
                                     .arg(found.size())
                                     .arg(notes)
                                     .arg(elapsedMs));
@@ -1929,7 +1929,7 @@ int main(int argc, char** argv) {
         if (query.isEmpty()) return;
         zametti::TextSearchTarget& target = searchTarget();
         if (!target.canReplace()) return;
-        findBar.setStatus(QStringLiteral("заменено: %1")
+        findBar.setStatus(QStringLiteral("replaced: %1")
                               .arg(target.replaceAllMatches(query.needle, query.caseSensitive,
                                                             findBar.replacement())));
     });
@@ -1978,7 +1978,7 @@ int main(int argc, char** argv) {
         // нельзя — человек нажал и не увидел бы ничего.
         if (history.active()) {
             statusBar.setMessage(
-                QStringLiteral("поиск по истории всех заметок пока не поддерживается"));
+                QStringLiteral("searching the history of all notes is not supported yet"));
             QTimer::singleShot(3000, &statusBar,
                                [&statusBar] { statusBar.setMessage(QString()); });
             return;
@@ -2021,8 +2021,8 @@ int main(int argc, char** argv) {
         // панели пропадали, а кнопка загоралась.
         toolbar.setChecked(Button::Panels, visible);
         toolbar.buttonFor(Button::Panels)
-            ->setToolTip(visible ? QStringLiteral("Скрыть боковые панели")
-                                 : QStringLiteral("Показать боковые панели"));
+            ->setToolTip(visible ? QStringLiteral("Hide side panels")
+                                 : QStringLiteral("Show side panels"));
     };
     {
         // Зовём ВСЕГДА, а не только когда панели спрятаны: кнопка обязана
@@ -2032,13 +2032,13 @@ int main(int argc, char** argv) {
         // Обещания. Погашенная кнопка без объяснения читается как поломка, а
         // не как «будет позже», поэтому у каждой — своя причина словами.
         toolbar.setPromise(Button::Cloud,
-                           QStringLiteral("появится вместе с синхронизацией"));
+                           QStringLiteral("coming with sync"));
 
         if (!model.isStore()) {
             // Открыт одиночный файл, а не хранилище: создавать и сортировать
             // нечего и негде. Это не «пока не сделано», а другое состояние мира.
             // Поиск по всем заметкам сюда же: искать не по чему.
-            const QString single = QStringLiteral("открыт один файл, а не хранилище");
+            const QString single = QStringLiteral("a single file is open, not a store");
             // История живёт в хранилище (history/<id>.log), и у одиночного
             // файла её нет вовсе — это не «пока не сделано», а другое
             // состояние мира.
@@ -2096,7 +2096,7 @@ int main(int argc, char** argv) {
                     // заметки), но молчать нельзя: нажали — не случилось
                     // ничего. Сообщение само уходит: полоса сведений нужна ей
                     // самой, а не нашей жалобе.
-                    statusBar.setMessage(QStringLiteral("у этой заметки истории пока нет"));
+                    statusBar.setMessage(QStringLiteral("this note has no history yet"));
                     QTimer::singleShot(3000, &statusBar,
                                        [&statusBar] { statusBar.setMessage(QString()); });
                 }
@@ -2200,12 +2200,12 @@ int main(int argc, char** argv) {
             const zametti::journal::ThinReport report =
                 history.thinAll(QDateTime::currentMSecsSinceEpoch());
             for (const QString& name : report.trimmed)
-                std::fprintf(stderr, "журнал %s: оборванный хвост отрезан\n",
+                std::fprintf(stderr, "journal %s: torn tail trimmed\n",
                              name.toUtf8().constData());
             for (const QString& line : report.problems)
-                std::fprintf(stderr, "журнал не прорежен: %s\n", line.toUtf8().constData());
+                std::fprintf(stderr, "journal not thinned: %s\n", line.toUtf8().constData());
             if (report.recordsBefore != report.recordsAfter)
-                std::fprintf(stderr, "журналы прорежены: записей %lld -> %lld, байт %lld -> %lld\n",
+                std::fprintf(stderr, "journals thinned: records %lld -> %lld, bytes %lld -> %lld\n",
                              (long long)report.recordsBefore, (long long)report.recordsAfter,
                              (long long)report.bytesBefore, (long long)report.bytesAfter);
         });
@@ -2277,13 +2277,20 @@ int main(int argc, char** argv) {
     // рассуждением: двойное освобождение на выходе однажды нашёл владелец, а не
     // набор — набор окна целиком не собирает.
     // ZAMETTI_PROBE_SHOT=<файл.png> — снимок окна перед выходом (приёмка на
-    // копии хранилища владельца, глазами, а не рассуждением).
+    // копии хранилища владельца, глазами, а не рассуждением),
+    // ZAMETTI_PROBE_SETTINGS=1 — открыть правку настроек до снимка.
     if (const QByteArray quitAfter = qgetenv("ZAMETTI_PROBE_QUIT_MS"); !quitAfter.isEmpty()) {
         const int ms = qMax(0, quitAfter.toInt());
+        // ZAMETTI_PROBE_SETTINGS=1 — открыть правку настроек (приёмка глазами).
+        if (qEnvironmentVariableIsSet("ZAMETTI_PROBE_SETTINGS"))
+            QTimer::singleShot(ms / 2, &window, [&] {
+                std::fprintf(stderr, "probe: settings edit %s\n",
+                             settingsMode.enter() ? "opened" : "did not open");
+            });
         if (qEnvironmentVariableIsSet("ZAMETTI_PROBE_HISTORY"))
             QTimer::singleShot(ms / 2, &window, [&] {
-                std::fprintf(stderr, "пробник: режим истории %s\n",
-                             history.enter() ? "включён" : "не включился");
+                std::fprintf(stderr, "probe: history mode %s\n",
+                             history.enter() ? "entered" : "did not enter");
             });
         if (const QByteArray shot = qgetenv("ZAMETTI_PROBE_SHOT"); !shot.isEmpty())
             QTimer::singleShot(ms * 3 / 4, &window, [&window, shot] {

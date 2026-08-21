@@ -23,12 +23,12 @@ std::string sz(Size s) { return num(s.width) + "x" + num(s.height); }
 
 const char* refusalName(Refusal r) {
     switch (r) {
-        case Refusal::None: return "принято";
-        case Refusal::NoSize: return "размер не назван";
-        case Refusal::Empty: return "нулевой размер";
-        case Refusal::SideTooBig: return "сторона велика";
-        case Refusal::AreaTooBig: return "площадь велика";
-        case Refusal::TooMuchMemory: return "не влезает в память";
+        case Refusal::None: return "accepted";
+        case Refusal::NoSize: return "size not given";
+        case Refusal::Empty: return "zero size";
+        case Refusal::SideTooBig: return "side too large";
+        case Refusal::AreaTooBig: return "area too large";
+        case Refusal::TooMuchMemory: return "does not fit in memory";
     }
     return "?";
 }

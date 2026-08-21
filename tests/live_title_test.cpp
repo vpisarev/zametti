@@ -160,7 +160,7 @@ void checkFreshNoteThroughEditor() {
 
     QObject::connect(&editor, &QTextEdit::textChanged, &editor, [&] {
         QString title = titleFromEditor(editor);
-        if (title.isEmpty()) title = QStringLiteral("Без названия");
+        if (title.isEmpty()) title = QStringLiteral("Untitled");
         model.updateTitle(editor.filePath(), title);
     });
 

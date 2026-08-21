@@ -2,39 +2,40 @@
 
 take notes, organize 'em, encrypt, sync via cloud
 
-Заметки на диске — обычный markdown: их можно править любыми инструментами и
-держать в git. Приложение форматом не владеет, а только читает и пишет его.
+Notes on disk are plain markdown: they can be edited with any tools and kept
+in git. The application does not own the format — it only reads and writes it.
 
-## Состояние
+## Status
 
-Этап 1 закрыт: ядро формата и просмотрщик. Идёт этап 2 — редактирование.
+Stage 1 is closed: the format core and the viewer. Stage 2 — editing — is
+underway.
 
 ```
-3rdparty/          всё чужое: md4c, blake3, zstd, dtl, zlib, libtiff, highway,
+3rdparty/          everything third-party: md4c, blake3, zstd, dtl, zlib, libtiff, highway,
                    libjxl, jpegli, libwebp, microtex, googletest
-zametti-core/      ядро одной целью:
-                     format/  разбор и запись markdown, отпечатки, id
-                     store/   хранилище, журнал правок, архив, времена
-                     image/   чтение и запись картинок, цвет, ввоз
-                     doc/     живая модель документа, поиск, счёт, разность
-app/               zametti-ui: окно, дерево заметок, отрисовка
-store/             zametti-store: утилита хранилища
-tests/             наборы (один процесс) и стенды
-packaging/         .desktop для меню и дока
-docs/              брифы этапов, отчёты и записки по решениям
+zametti-core/      the core as one target:
+                     format/  markdown parsing and writing, hashes, ids
+                     store/   the store, the edit journal, archive, times
+                     image/   image reading and writing, color, import
+                     doc/     the live document model, search, counting, diff
+app/               zametti-ui: the window, the note tree, rendering
+store/             zametti-store: the store utility
+tests/             test suites (one process) and benches
+packaging/         .desktop for the menu and the dock
+docs/              stage briefs, reports and decision notes
 ```
 
-Ядро умеет `markdown → IR → markdown`. Главное его свойство — идемпотентность:
+The core does `markdown → IR → markdown`. Its main property is idempotence:
 
 ```
-serialize(parse(x)) == x                побайтово, для x в каноническом виде
-parse(serialize(parse(x))) == parse(x)  для произвольного x
+serialize(parse(x)) == x                byte-for-byte, for x in canonical form
+parse(serialize(parse(x))) == parse(x)  for arbitrary x
 ```
 
-Всё, что моделью не выражается — таблицы, HTML, сноски, цитаты сложнее абзаца, —
-сохраняется дословно. Потерять байты нельзя.
+Everything the model cannot express — tables, HTML, footnotes, quotes more
+complex than a paragraph — is preserved verbatim. Losing bytes is impossible.
 
-## Сборка
+## Build
 
 ```
 cmake -S . -B build
@@ -42,243 +43,254 @@ cmake --build build -j
 cd build && ctest
 ```
 
-Ядру нужен `qt6-base-dev` (в нём живёт `QTextDocument`), просмотрщику ещё и
-`qt6-svg-dev`. Всё чужое, кроме Qt, линкуется внутрь программы — включая
-читатели картинок: от плагинов Qt не зависит ни один наш формат.
+The core needs `qt6-base-dev` (that is where `QTextDocument` lives), the
+viewer also `qt6-svg-dev`. Everything third-party except Qt is linked into the
+program — including the image readers: none of our formats depends on Qt
+plugins.
 
-Всё чужое, кроме Qt, линкуется внутрь программы. Два ключа:
-
-```
--DWITH_HEIF=ON        читать avif и heic (нужна системная libheif)
--DWITH_STATIC_QT=ON   отказаться собираться, если Qt найден динамический
-```
-
-`WITH_HEIF` выключен по умолчанию: libheif тянет за собой видеокодеки, а
-avif/heic нужны нам только на входе. `WITH_STATIC_QT` ничего не переключает —
-статическим Qt становится не от флагов, а от того, что его так собрали; ключ
-лишь не даёт молча получить обычную сборку там, где просили самодостаточную.
-
-## Запуск
+Everything third-party except Qt is linked into the program. Two switches:
 
 ```
-zametti заметка.md            окно: дерево слева, документ справа
-zametti                       открыть то, что читали в прошлый раз
-zametti --noconfig заметка.md то же, но на умолчаниях
-zametti --check заметка.md    дифф с каноническим видом, без дисплея
-zametti --dump-config         полный список параметров оформления
-zametti --help                справка: ключи, клавиши, пути к файлам
+-DWITH_HEIF=ON        read avif and heic (needs the system libheif)
+-DWITH_STATIC_QT=ON   refuse to build if the Qt found is dynamic
 ```
 
-`Ctrl+=` / `Ctrl+-` / `Ctrl+0` меняют масштаб, `Ctrl+S` сохраняет,
-`Ctrl+Z` / `Ctrl+Shift+Z` отменяют и возвращают. Щелчок по папке в дереве
-раскрывает её, щелчок по заметке — открывает.
+`WITH_HEIF` is off by default: libheif drags video codecs along, and we need
+avif/heic only on input. `WITH_STATIC_QT` switches nothing on — Qt becomes
+static not because of flags but because it was built that way; the switch
+merely refuses to silently produce an ordinary build where a self-contained
+one was asked for.
 
-`Enter` в обычном тексте переносит строку **внутри абзаца**, а не заводит новый
-— заметки пишут так, а не как в текстовом процессоре. Новый абзац получается
-вторым `Enter` подряд, то есть пустой строкой, как и в самом файле.
-`Shift+Enter` делает наоборот.
+## Run
 
-Так пишутся стихи, списки строк и схемы из знаков. Отступы в начале строк
-сохраняются: обычный пробел markdown в начале строки съедает, поэтому при
-записи отступ становится неразрывным пробелом. Концевые пробелы, наоборот,
-выбрасываются — они незначащие.
+```
+zametti note.md               window: tree on the left, document on the right
+zametti                       open what you were reading last time
+zametti --noconfig note.md    the same, but on defaults
+zametti --check note.md       diff against the canonical form, no display
+zametti --dump-config         the full list of appearance parameters
+zametti --help                help: switches, keys, file paths
+```
 
-Пустые строки тоже сохраняются: ими отбивают куски текста. Не сохраняются только
-хвост пустых строк в самом конце заметки и пустые пункты внутри списка.
+`Ctrl+=` / `Ctrl+-` / `Ctrl+0` change the zoom, `Ctrl+S` saves,
+`Ctrl+Z` / `Ctrl+Shift+Z` undo and redo. Clicking a folder in the tree
+expands it, clicking a note opens it.
 
-Отступ сохраняется тот, что набран здесь. Из уже существующего файла его не
-вернуть: там его съедает разбор, и взяться ему неоткуда.
+`Enter` in ordinary text breaks the line **inside the paragraph** instead of
+starting a new one — that is how notes are written, not the word-processor
+way. A new paragraph comes from a second `Enter` in a row, i.e. a blank line,
+just as in the file itself. `Shift+Enter` does the opposite.
 
-Блок кода заводится тремя кавычками (или тильдами) и `Enter`; язык пишется
-сразу за ними, на той же строке. Выйти из блока — забором в последней строке.
-Пустая строка из блока не выводит: в длинном коде они разделяют логические
-части. Внутри блока пробелы обычные, без всяких хитростей: код из заметки
-копируют и вставляют в терминал.
+That is how poems, lists of lines and character diagrams are written. Indents
+at the start of lines are preserved: markdown eats an ordinary leading space,
+so on write the indent becomes a non-breaking space. Trailing spaces, on the
+contrary, are dropped — they are insignificant.
 
-`Enter` в начале пункта заводит пустой пункт над текущим, и курсор остаётся в
-нём: так вставляют пункт между двумя. Нажать `Enter` там же дважды — и пункт
-выйдет из списка, став абзацем: так разлепляют два слипшихся списка. Пустая
-строка для этого не годится — внутри списка она ничего не разделяет.
+Blank lines are preserved too: they set chunks of text apart. The only things
+not preserved are the tail of blank lines at the very end of a note and empty
+items inside a list.
 
-В списках: `Enter` заводит новый пункт, а на пустом пункте выходит из списка;
-`Backspace` в начале пункта делает его абзацем; `Tab` и `Shift+Tab` двигают
-по уровням **только этот пункт** (или выделенные) — вложенные остаются на
-своих уровнях и становятся его братьями, а при выступе прижимаются на
-уровень, чтобы не было прыжка через уровень; `Ctrl+Up` и `Ctrl+Down`
-переставляют пункт среди соседей того же уровня вместе с вложенными;
-`Ctrl+D` переключает задачу — сделана или нет, тоже только эту (или
-выделенные). Все три сочетания настраиваются: `editor.toggleTaskKey`,
-`editor.moveUpKey`, `editor.moveDownKey`.
+The indent preserved is the one typed here. From an already existing file it
+cannot be recovered: parsing eats it there, and it has nowhere to come from.
 
-Род блоков меняют команды в контекстном меню — «Сделать маркированным списком»
-и остальные. Смешанное выделение приводится к одному роду целиком, а не
-переключается. Сочетания взяты по знаку на клавише: `Ctrl+8` или `Ctrl+Shift+8`
-— маркированный список, `Ctrl+7` — нумерованный, `Ctrl+9` — задачи,
-`Ctrl+Shift+0` — обычный текст.
+A code block is started with three backticks (or tildes) and `Enter`; the
+language goes right after them, on the same line. To leave the block — a
+fence on the last line. A blank line does not leave the block: in long code
+blank lines separate logical parts. Inside the block, spaces are ordinary,
+with no tricks whatsoever: code gets copied from a note and pasted into a
+terminal.
 
-У уровней заголовка сочетаний нет: заголовок набирают автозаменой — `# ` и
-пробел. Уровни остались в контекстном меню.
+`Enter` at the start of an item creates an empty item above the current one,
+and the cursor stays in it: that is how an item is inserted between two.
+Press `Enter` there twice — and the item leaves the list, becoming a
+paragraph: that is how two stuck-together lists are pulled apart. A blank
+line will not do here — inside a list it separates nothing.
 
-Все сочетания настраиваются (`editor.makeBulletKey` и прочие); через точку с
-запятой их можно перечислить несколько, а пустая строка убирает сочетание
-совсем — команда при этом остаётся в меню.
+In lists: `Enter` starts a new item, and on an empty item leaves the list;
+`Backspace` at the start of an item turns it into a paragraph; `Tab` and
+`Shift+Tab` move **only this item** (or the selected ones) across levels —
+nested items keep their levels and become its siblings, and on outdent they
+are pulled in by one level so there is no jump across a level; `Ctrl+Up` and
+`Ctrl+Down` move an item among its same-level neighbors together with its
+nested items; `Ctrl+D` toggles a task — done or not, again only this one (or
+the selected ones). All three shortcuts are configurable:
+`editor.toggleTaskKey`, `editor.moveUpKey`, `editor.moveDownKey`.
 
-Начертание: `Ctrl+B` — жирный, `Ctrl+I` — курсив, `Ctrl+/` — зачёркнутый,
-`Ctrl+E` — код в строке. На выделении меняют его, без выделения — задают
-начертание для следующей буквы.
+The kind of blocks is changed by the context-menu commands — "Make bulleted
+list" and the rest. A mixed selection is converted to one kind as a whole,
+not toggled. The shortcuts follow the symbol on the key: `Ctrl+8` or
+`Ctrl+Shift+8` — bulleted list, `Ctrl+7` — numbered, `Ctrl+9` — tasks,
+`Ctrl+Shift+0` — plain text.
 
-Код в строке можно и просто набрать: обратная кавычка, текст, обратная кавычка —
-кавычки уходят, текст становится кодом. `Ctrl+Shift+E` превращает выделенное в
-блок кода, а блок кода — обратно в обычный текст.
+Heading levels have no shortcuts: a heading is typed by autoreplace — `# `,
+hashes and a space. The levels remain in the context menu.
 
-Задачу проще всего отметить мышью: щелчок по рамке переключает её, и это обычная
-правка — отменяется как всякая другая.
+All shortcuts are configurable (`editor.makeBulletKey` and so on); several
+can be listed separated by semicolons, and an empty string removes the
+shortcut entirely — the command still stays in the menu.
 
-Буллет меняет фигуру с глубиной вложенности: сплошной кружок, незаполненный,
-дальше квадратик. Настраивается списком `list.bulletShapes`.
+Text styles: `Ctrl+B` — bold, `Ctrl+I` — italic, `Ctrl+/` — strikethrough,
+`Ctrl+E` — inline code. On a selection they change it; with no selection they
+set the style for the next letter.
 
-При наборе в начале блока работает автозамена: `- `, `* ` и `+ ` дают буллет,
-`1. ` и `1) ` — нумерованный пункт, `# `…`###### ` — заголовок.
+Inline code can also just be typed: backtick, text, backtick — the backticks
+go away, the text becomes code. `Ctrl+Shift+E` turns the selection into a
+code block, and a code block back into plain text.
 
-Список задач заводится двумя способами. Коротко — слитно с маркером: `-[`,
-`-[]`, `-[x]` и пробел; закрывающую скобку дописывать не обязательно. Длинно —
-как в файле: `- `, потом `[ ] ` или `[x] `. Первый `Ctrl+Z` после автозамены
-возвращает набранные знаки, а не отменяет предыдущую правку.
+The easiest way to mark a task is the mouse: clicking the box toggles it, and
+that is an ordinary edit — undone like any other.
 
-## Правка исходника
+The bullet changes its shape with nesting depth: a solid circle, a hollow
+one, then a square. Configured by the `list.bulletShapes` list.
 
-Кнопка `[M]` в полосе кнопок показывает заметку **сырым markdown** —
-таким, каким она лежит в файле, с подсветкой синтаксиса (заголовки `#` и `##`
-крупнее, `###` и глубже — кеглем текста, жирным курсивом;
-`markdownHighlighting.largeHeadingLevels`). Там она правится как обычный
-текст, но списки знает: `Enter` на строке пункта (`- `, `* `, `1. `, `- [ ] `)
-заводит следующий пункт — с тем же отступом, следующим номером, незакрытой
-задачей, — а на пустом пункте выходит из списка; в остальных строках `Enter`
-держит отступ предыдущей (так удобно и в коде, и в многострочных пунктах);
-`Shift+Enter` продолжает пункт строкой содержимого — каретка встаёт под первый
-знак после маркера. `Tab` на строке пункта двигает пункт под предыдущего
-соседа (первый пункт не двигается), `Shift+Tab` — на отступ родителя; вне
-списков `Tab` ставит пробелы до ближайшего стопа, `Shift+Tab` снимает их;
-выделение в несколько строк двигается целиком. `Ctrl+D`
-(`editor.toggleTaskKey`) переключает задачу строки или задачи выделения.
-Маркеры набираются буквально — автозамен в исходнике нет, они и так
-подсвечиваются. `Ctrl+C`/`Ctrl+V`/`Ctrl+X`/`Ctrl+A` и поиск с заменой
-(`Ctrl+F`, `Ctrl+H`, `F3`) — как везде. У режима **свой буфер отмены**: `Ctrl+Z`
-отменяет правку текста шаг за шагом, каждое нажатие из перечисленных — один
-шаг; на дне стека режима `Ctrl+Z` закрывает режим (наложить уже нечего) и
-отдаёт отмену заметке — её стек, а за ним история, как в обычном виде.
-Каретка — того же цвета и толщины, что в обычном виде. У строк, перенесённых
-по ширине окна, на левом поле стоит точка — так видно, где строка исходника
-продолжается, а где начинается новая.
+Autoreplace works when typing at the start of a block: `- `, `* ` and `+ `
+give a bullet, `1. ` and `1) ` — a numbered item, `# `…`###### ` — a heading.
 
-Ведущие пробелы строк абзаца **сохраняются** — стихотворение с отступами или
-текст псевдографикой не расползётся: markdown съел бы их, поэтому при разборе
-они становятся неразрывными (U+00A0), и так же хранятся в файле. Структурный
-отступ (вложенность пункта, колонка содержимого) в счёт не идёт. Хвостовые
-пробелы, как и раньше, чистятся. Правило одно на всё: открытие файла, возврат
-из исходника и правка заметки во внешнем редакторе идут одним путём.
+A task list is started in two ways. The short way — flush with the marker:
+`-[`, `-[]`, `-[x]` and a space; the closing bracket need not be typed. The
+long way — as in the file: `- `, then `[ ] ` or `[x] `. The first `Ctrl+Z`
+after an autoreplace brings back the typed characters rather than undoing the
+previous edit.
 
-`[M]` ещё раз (или `Esc`) возвращает обычный вид. Сочетания у режима по
-умолчанию нет — `Ctrl+M` на маке это `Cmd+M`, «свернуть окно»; кому нужна
-клавиша, впишет её в `editor.markdownModeKey`. Правленый текст приводится
-к канону и накладывается на заметку **только тронутыми кусками** — в стеке
-отмены заметки это один шаг, и `Ctrl+Z` возвращает всё разом. Каретка остаётся
-на той же строке в обе стороны.
+## Editing the source
 
-Режим принадлежит **приложению**, а не заметке: по заметкам можно ходить, не
-выходя из него, — кнопка остаётся нажатой, и каждая следующая заметка
-открывается исходником. Это состояние переживает перезапуск.
+The `[M]` button in the button strip shows the note as **raw markdown** — the
+way it lies in the file, with syntax highlighting (headings `#` and `##`
+larger, `###` and deeper — at text size, in bold italic;
+`markdownHighlighting.largeHeadingLevels`). There it is edited as plain
+text, but lists are understood: `Enter` on an item line (`- `, `* `, `1. `,
+`- [ ] `) starts the next item — with the same indent, the next number, an
+unchecked task — and on an empty item leaves the list; on other lines `Enter`
+keeps the indent of the previous one (handy both in code and in multi-line
+items); `Shift+Enter` continues the item with a content line — the caret
+lands under the first character after the marker. `Tab` on an item line
+moves the item under its previous sibling (the first item does not move),
+`Shift+Tab` — to the parent's indent; outside lists `Tab` inserts spaces up
+to the nearest tab stop, `Shift+Tab` removes them; a multi-line selection
+moves as a whole. `Ctrl+D` (`editor.toggleTaskKey`) toggles the task of the
+line or the tasks of the selection. Markers are typed literally — there are
+no autoreplaces in the source, they get highlighted as they are.
+`Ctrl+C`/`Ctrl+V`/`Ctrl+X`/`Ctrl+A` and search with replace (`Ctrl+F`,
+`Ctrl+H`, `F3`) — as everywhere. The mode has **its own undo stack**:
+`Ctrl+Z` undoes text edits step by step, each of the keystrokes listed above
+being one step; at the bottom of the mode's stack `Ctrl+Z` closes the mode
+(there is nothing left to apply) and hands undo over to the note — its
+stack, and the history after it, as in the normal view. The caret has the
+same color and thickness as in the normal view. Lines wrapped to the window
+width carry a dot in the left margin — so it is visible where a source line
+continues and where a new one begins.
 
-Масштаб у режима **свой**: `Ctrl+=` / `Ctrl+-` / `Ctrl+0` в исходнике не трогают
-масштаб обычного вида, и наоборот. Исходник показывается моноширинным шрифтом,
-колонка ограничена той же шириной, что и в обычном виде (`style.maxContentWidth`),
-блоки кода идут на светло-серой подложке — как код в строке.
+Leading spaces of paragraph lines **are preserved** — a poem with indents or
+text drawn in ASCII art will not fall apart: markdown would eat them, so on
+parsing they become non-breaking spaces (U+00A0) and are stored in the file
+the same way. Structural indent (item nesting, the content column) does not
+count. Trailing spaces are cleaned as before. One rule for everything:
+opening a file, returning from the source and editing the note in an external
+editor all take the same path.
 
-Шапку `<!-- zametti … -->` исходник не показывает — ею владеет само приложение;
-набранная руками, она отвергается вместе со всей правкой, о чём говорит полоса
-сведений.
+`[M]` again (or `Esc`) returns the normal view. The mode has no default
+shortcut — `Ctrl+M` on a Mac is `Cmd+M`, "minimize window"; whoever needs a
+key writes it into `editor.markdownModeKey`. The edited text is brought to
+the canonical form and applied to the note **only in the touched pieces** —
+in the note's undo stack it is one step, and `Ctrl+Z` brings everything back
+at once. The caret stays on the same line in both directions.
 
-Отмена работает над содержимым, а не над обликом: масштаб, шрифт и цвета в
-историю правок не попадают. Набрали текст, увеличили шрифт, нажали `Ctrl+Z` —
-вернётся прежний текст, шрифт останется увеличенным.
+The mode belongs to the **application**, not to the note: you can walk across
+notes without leaving it — the button stays pressed, and every next note
+opens as source. This state survives a restart.
 
-Сохраняется только изменённая заметка: просто открыть файл и посмотреть на него
-безопасно, на диске он не меняется. Перед заменой файла записанный текст
-разбирается обратно и сверяется с документом; не сошлось — файл остаётся
-нетронутым, а буфер уходит в `имя.md.rescue-<отметка времени>`.
+The mode's zoom is **its own**: `Ctrl+=` / `Ctrl+-` / `Ctrl+0` in the source
+do not touch the zoom of the normal view, and vice versa. The source is shown
+in a monospaced font, the column is limited to the same width as in the
+normal view (`style.maxContentWidth`), code blocks go on a light gray backing
+— like inline code.
 
-Чтобы приложение появилось в меню и с иконкой в доке:
+The `<!-- zametti … -->` header is not shown by the source view — the
+application itself owns it; typed in by hand, it is rejected together with
+the whole edit, which the status bar reports.
+
+Undo works on content, not on appearance: zoom, font and colors do not enter
+the edit history. Type some text, enlarge the font, press `Ctrl+Z` — the
+previous text comes back, the font stays enlarged.
+
+Only a changed note is saved: simply opening a file and looking at it is
+safe, on disk it does not change. Before the file is replaced, the written
+text is parsed back and checked against the document; if it does not match —
+the file stays untouched, and the buffer goes to `name.md.rescue-<timestamp>`.
+
+To make the application appear in the menu and with an icon in the dock:
 
 ```
 cmake --install build --prefix ~/.local
 ```
 
-Иконку оболочка берёт не у окна, а из `.desktop`-файла, поэтому без установки
-док показывает заглушку. Если правите код и хотите, чтобы правки действовали
-сразу, замените установленную копию симлинком на сборку — иначе `cmake --install`
-придётся повторять после каждой пересборки:
+The shell takes the icon not from the window but from the `.desktop` file, so
+without installing, the dock shows a placeholder. If you edit the code and
+want the edits to take effect at once, replace the installed copy with a
+symlink to the build — otherwise `cmake --install` has to be repeated after
+every rebuild:
 
 ```
 ln -sf "$PWD/build/app/zametti" ~/.local/bin/zametti
 ```
 
-## Настройки
+## Settings
 
-Оформление читается из `~/.config/zametti/config.json`. Приложение этот файл
-**только читает** — он ваш вместе с форматированием и порядком ключей; файла
-может и не быть, тогда работают умолчания.
+Appearance is read from `~/.config/zametti/config.json`. The application
+**only reads** this file — it is yours, formatting and key order included;
+the file may not exist at all, then the defaults apply.
 
-Полный список параметров со значениями по умолчанию печатается по
-`--dump-config` — оттуда их и копировать к себе. Настраиваются гарнитура и
-кегль (отдельно для текста и для кода), интерлиньяж, отбивки, поля и предельная
-ширина колонки, все цвета, маркеры списков и чекбоксы, дерево заметок, границы
-зума. Отбивки и поля заданы в единицах шрифта — по вертикали в высотах строки,
-по горизонтали в ширинах буквы `A`, — поэтому переживают смену гарнитуры и
-кегля.
+The full list of parameters with their default values is printed by
+`--dump-config` — that is where to copy them from. Configurable are the
+typeface and size (separately for text and for code), line spacing, block
+spacing, margins and the maximum column width, all colors, list markers and
+checkboxes, the note tree, the zoom limits. Spacings and margins are given in
+font units — vertically in line heights, horizontally in widths of the
+letter `A` — so they survive a change of typeface and size.
 
-Если заметку изменили снаружи, а здесь есть несохранённые правки, приложение
-спросит, чью версию брать, и до ответа не тронет ничего. Без несохранённых
-правок внешнее содержимое применяется само — и отменяется `Ctrl+Z`, как обычная
-правка.
+If a note was changed from outside while there are unsaved edits here, the
+application asks whose version to take and touches nothing until answered.
+Without unsaved edits the external content is applied by itself — and is
+undone with `Ctrl+Z`, like an ordinary edit.
 
-`~/.config/zametti/state.json` приложение пишет само при выходе: последняя
-заметка, прокрутка, зум, геометрия окна, раскрытые ветки дерева.
+`~/.config/zametti/state.json` the application writes itself on exit: the
+last note, scroll position, zoom, window geometry, expanded tree branches.
 
-## Тесты
+## Tests
 
-Все наборы живут в ОДНОМ исполняемом файле и гоняются одним процессом. Это не
-для удобства: набор, портящий память или текущий, теперь скажется на следующем —
-будет повод разобраться, а не пожать плечами.
-
-```
-ctest                                       всё скопом
-build/tests/zametti-tests                   то же самое напрямую
-build/tests/zametti-tests --gtest_filter='Journal.*'   один набор
-build/tests/zametti-tests --gtest_list_tests           что вообще есть
-```
-
-Корпуса в репозиторий не кладутся: они берутся из `.testdata/` рядом с
-исходниками либо из каталога, названного в `ZAMETTI_TESTDATA`. Нет корпуса —
-набор громко говорит о пропуске и проходит пустым.
-
-Стенды и пробники — отдельная программа: они меряют, а не проверяют.
+All suites live in ONE executable and run as one process. This is not for
+convenience: a suite that corrupts memory or the current directory will now
+affect the next one — a reason to investigate, not to shrug.
 
 ```
-build/tests/zametti-bench                   список стендов
-build/tests/zametti-bench zoom              что делает Ctrl+= с документом
+ctest                                       everything at once
+build/tests/zametti-tests                   the same, directly
+build/tests/zametti-tests --gtest_filter='Journal.*'   one suite
+build/tests/zametti-tests --gtest_list_tests           what exists at all
 ```
 
-Примеры из спецификаций CommonMark и GFM разбираются скриптом
+Corpora are not checked into the repository: they are taken from `.testdata/`
+next to the sources or from the directory named in `ZAMETTI_TESTDATA`. No
+corpus — the suite loudly reports the skip and passes empty.
+
+Benches and probes are a separate program: they measure, they do not verify.
+
+```
+build/tests/zametti-bench                   the list of benches
+build/tests/zametti-bench zoom              what Ctrl+= does to a document
+```
+
+Examples from the CommonMark and GFM specifications are parsed by the script
 `tests/extract_spec.py`.
 
-- [docs/zametti-m1-report.md](docs/zametti-m1-report.md) — итог этапа: что
-  сделано, чем проверено, что сломалось по дороге.
-- [docs/zametti-core-notes.md](docs/zametti-core-notes.md) — принятые решения,
-  расхождения с брифом, известные ограничения.
-- [docs/zametti-editor-notes.md](docs/zametti-editor-notes.md) — этап 2: модель
-  документа, обратный путь в IR, разделение слоёв.
+- [docs/zametti-m1-report.md](docs/zametti-m1-report.md) — stage summary:
+  what was done, how it was verified, what broke along the way.
+- [docs/zametti-core-notes.md](docs/zametti-core-notes.md) — accepted
+  decisions, deviations from the brief, known limitations.
+- [docs/zametti-editor-notes.md](docs/zametti-editor-notes.md) — stage 2: the
+  document model, the way back into IR, layer separation.
 
-## Лицензия
+## License
 
-GPL-3.0, см. [LICENSE](LICENSE). Вендоренный md4c — MIT, см.
+GPL-3.0, see [LICENSE](LICENSE). The vendored md4c is MIT, see
 [3rdparty/md4c/LICENSE.md](3rdparty/md4c/LICENSE.md).

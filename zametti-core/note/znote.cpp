@@ -164,7 +164,7 @@ void ZNote::setHeaderValue(const QString& key, const QString& value) {
 }
 QString ZNote::title() const {
     const QString own = doc_.title();
-    return own.isEmpty() ? QStringLiteral("Без названия") : own;
+    return own.isEmpty() ? QStringLiteral("Untitled") : own;
 }
 
 ZDocument ZNote::replaceDoc(ZDocument fresh) {

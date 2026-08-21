@@ -20,12 +20,12 @@ const QChar kNbsp(0x00A0);
 }  // namespace
 
 QString humanBytes(qint64 bytes) {
-    if (bytes < 1024) return QStringLiteral("%1%2Б").arg(bytes).arg(kNbsp);
+    if (bytes < 1024) return QStringLiteral("%1%2B").arg(bytes).arg(kNbsp);
     const double kb = double(bytes) / 1024.0;
     if (kb < 1024.0)
-        return QStringLiteral("%1%2КБ").arg(kb, 0, 'f', kb < 10.0 ? 1 : 0).arg(kNbsp);
+        return QStringLiteral("%1%2KB").arg(kb, 0, 'f', kb < 10.0 ? 1 : 0).arg(kNbsp);
     const double mb = kb / 1024.0;
-    return QStringLiteral("%1%2МБ").arg(mb, 0, 'f', mb < 10.0 ? 1 : 0).arg(kNbsp);
+    return QStringLiteral("%1%2MB").arg(mb, 0, 'f', mb < 10.0 ? 1 : 0).arg(kNbsp);
 }
 
 QString humanCount(int value) {
@@ -126,9 +126,9 @@ void StatusBar::showLeft() {
     QStringList tail;
     tail << humanBytes(note_.bytes);
     if (note_.created.isValid())
-        tail << QStringLiteral("создана %1").arg(humanDate(note_.created));
+        tail << QStringLiteral("created %1").arg(humanDate(note_.created));
     if (note_.modified.isValid())
-        tail << QStringLiteral("правлена %1").arg(humanDate(note_.modified));
+        tail << QStringLiteral("modified %1").arg(humanDate(note_.modified));
 
     const QString separator = QStringLiteral("   ·   ");
     const QString rest = tail.join(separator);
@@ -159,11 +159,11 @@ void StatusBar::showLeft() {
                        QString(separator + rest).toHtmlEscaped());
     }
     left_->setToolTip(note_.suspect
-                          ? QStringLiteral("%1\n\nСамопроверка при записи не сошлась: "
-                                           "разобранное обратно отличается от документа. "
-                                           "Заметка записана, копия буфера — в .rescue. "
-                                           "Звёздочка погаснет, как только очередная запись "
-                                           "сойдётся.")
+                          ? QStringLiteral("%1\n\nSelf-check on save did not match: "
+                                           "what was parsed back differs from the document. "
+                                           "The note is saved, a copy of the buffer is in .rescue. "
+                                           "The asterisk goes out as soon as the next save "
+                                           "matches.")
                                 .arg(note_.path)
                           : note_.path);
 }
@@ -174,7 +174,7 @@ void StatusBar::showImage() {
         // Вложения нет: об этом и говорим. Заметка на него ссылается, место под
         // рамку держится, и молчать тут нельзя — иначе непонятно, почему вместо
         // снимка рамка.
-        left_->setText(image_.name() + separator + QStringLiteral("вложения нет"));
+        left_->setText(image_.name() + separator + QStringLiteral("attachment missing"));
         left_->setToolTip(image_.name());
         return;
     }
@@ -194,8 +194,8 @@ void StatusBar::showImage() {
     // показывали, их просто нет, и придумывать их нельзя.
     QStringList samples;
     if (!image_.colorSpace().isEmpty()) samples << image_.colorSpace();
-    if (image_.bits() > 0) samples << QStringLiteral("%1 бит").arg(image_.bits());
-    if (image_.frames() > 1) samples << QStringLiteral("кадров %1").arg(humanCount(image_.frames()));
+    if (image_.bits() > 0) samples << QStringLiteral("%1 bit").arg(image_.bits());
+    if (image_.frames() > 1) samples << QStringLiteral("frames %1").arg(humanCount(image_.frames()));
     if (!samples.isEmpty()) head << samples.join(QLatin1Char(' '));
 
     // КОГДА СНЯТО — тем же словом и тем же видом, что у заметки: «создана
@@ -206,7 +206,7 @@ void StatusBar::showImage() {
     // Нет метаданных — строки нет вовсе. Придумывать дату из времени файла
     // нельзя: это было бы время копирования, а сказано «создана».
     if (image_.taken().isValid())
-        head << QStringLiteral("создана %1").arg(humanDate(image_.taken()));
+        head << QStringLiteral("created %1").arg(humanDate(image_.taken()));
 
     const QString known = head.join(separator);
     // ПОДПИСЬ ЗДЕСЬ ТОЛЬКО ТОГДА, КОГДА ЕЁ НЕ ВИДНО ПОД СНИМКОМ. Обычно она
@@ -246,9 +246,9 @@ void StatusBar::relayout() {
     // «Картинка стоит тысячи слов», а в счёте слов она стоит нуля — поэтому
     // про них говорим отдельно и только когда они есть.
     const QString photos = note_.images > 0
-                               ? QStringLiteral("   ·   изображений %1").arg(humanCount(note_.images))
+                               ? QStringLiteral("   ·   images %1").arg(humanCount(note_.images))
                                : QString();
-    right_->setText(QStringLiteral("слов %1%2   ·   строка %3/%4   ·   кол %5")
+    right_->setText(QStringLiteral("words %1%2   ·   line %3/%4   ·   col %5")
                         .arg(words, photos, humanCount(line_), humanCount(note_.lines),
                              humanCount(column_)));
 }

@@ -18,20 +18,20 @@ using B = Toolbar::Button;
 // Единственное место, где сказано, из чего состоит тулбар. Список владельца из
 // zametti_todo.md, раздел «Тулбар с кнопочками», в его же порядке.
 constexpr Toolbar::Spec kSpecs[] = {
-    {B::NewNote, "file-plus-corner", "Новая заметка", "Ctrl+N", 0, false},
-    {B::NewFolder, "folder-plus", "Новая папка", "", 0, false},
-    {B::ImportNotes, "folder-input", "Импортировать .md", "", 0, false},
-    {B::InsertImages, "image-down", "Вставить картинки", "", 0, false},
+    {B::NewNote, "file-plus-corner", "New note", "Ctrl+N", 0, false},
+    {B::NewFolder, "folder-plus", "New folder", "", 0, false},
+    {B::ImportNotes, "folder-input", "Import .md", "", 0, false},
+    {B::InsertImages, "image-down", "Insert images", "", 0, false},
 
-    {B::Export, "square-arrow-out-up-right", "Экспорт заметки", "", 1, false},
-    {B::Cloud, "cloud-sync", "Синхронизация", "", 1, false},
+    {B::Export, "square-arrow-out-up-right", "Export note", "", 1, false},
+    {B::Cloud, "cloud-sync", "Sync", "", 1, false},
 
-    {B::Panels, "columns-3", "Скрыть боковые панели", "", 2, true},
+    {B::Panels, "columns-3", "Hide side panels", "", 2, true},
     // Начальные значки и подсказки: направление у сортировок меняется на ходу
     // (setIcon/setTip), и здесь записано лишь то, с чего они начинают.
-    {B::SortByName, "arrow-down-a-z", "По имени, А→Я", "", 2, true},
-    {B::SortByDate, "clock-arrow-down", "По дате правки, новые сверху", "", 2, true},
-    {B::SortByCreated, "calendar-arrow-down", "По дате создания, новые сверху", "", 2, true},
+    {B::SortByName, "arrow-down-a-z", "By name, A→Z", "", 2, true},
+    {B::SortByDate, "clock-arrow-down", "By modified date, newest first", "", 2, true},
+    {B::SortByCreated, "calendar-arrow-down", "By created date, newest first", "", 2, true},
 
     // На месте трёх прежних кнопок навигации по истории (вернуть, к последней
     // версии, назад к посещённому). Из них вернулась одна — вход в историю;
@@ -40,18 +40,18 @@ constexpr Toolbar::Spec kSpecs[] = {
     // ПЕРЕКЛЮЧАТЕЛЬ, а не кнопка-действие: пока горит — идёт режим истории,
     // нажали снова — вернулись к текущей версии (решение владельца). Так у
     // режима есть видимый признак, а не только баннер над текстом.
-    {B::History, "rotate-ccw-clock", "История заметки", "", 3, true},
+    {B::History, "rotate-ccw-clock", "Note history", "", 3, true},
     // Сочетание у этой кнопки НАСТРАИВАЕМОЕ (editor.markdownModeKey) и по
     // умолчанию пустое: в тултип оно подставляется из настроек (tipFor), а не
     // литералом — иначе тултип врал бы при любой правке конфига.
-    {B::MarkdownEdit, "square-m", "Править исходник", "", 3, true},
-    {B::Search, "search", "Найти в заметке", "Ctrl+F", 3, false},
-    {B::SearchInStore, "database-search", "Найти по всем заметкам", "Ctrl+Shift+F", 3, false},
+    {B::MarkdownEdit, "square-m", "Edit source", "", 3, true},
+    {B::Search, "search", "Find in note", "Ctrl+F", 3, false},
+    {B::SearchInStore, "database-search", "Find in all notes", "Ctrl+Shift+F", 3, false},
 
     // ПЕРЕКЛЮЧАТЕЛЬ, как история и правка исходника: горит — на месте
     // редактора правится config.json (refactor3).
-    {B::Settings, "settings", "Настройки", "", 4, true},
-    {B::Help, "circle-question-mark", "Справка", "", 4, false},
+    {B::Settings, "settings", "Settings", "", 4, true},
+    {B::Help, "circle-question-mark", "Help", "", 4, false},
 };
 
 constexpr Toolbar::SortSpec kSortSpecs[] = {
@@ -99,9 +99,9 @@ void Toolbar::showSort(SortOrder order, bool fromMark) {
         setAccent(item.button, active && fromMark);
         setIcon(item.button, QString::fromLatin1(flipped ? item.iconFlipped : item.iconDefault));
         QString tip = sortOrderTitle(SortOrder{item.key, ascending});
-        tip += active ? (fromMark ? QStringLiteral("\nпорядок задан меткой папки")
-                                  : QStringLiteral("\nобщий порядок"))
-                      : QStringLiteral("\nнажать — включить, ещё раз — перевернуть");
+        tip += active ? (fromMark ? QStringLiteral("\norder set by the folder mark")
+                                  : QStringLiteral("\ncommon order"))
+                      : QStringLiteral("\nclick to enable, click again to flip");
         setTip(item.button, tip);
     }
 }

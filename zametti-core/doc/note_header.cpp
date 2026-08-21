@@ -31,8 +31,8 @@ std::string NoteHeader::get(std::string_view key) const {
 
 void NoteHeader::set(std::string_view key, std::string_view value) {
     // "--" ломает HTML-комментарий, перевод строки — форму «строка на ключ».
-    assert(value.find("--") == std::string_view::npos && "в значении не место '--'");
-    assert(value.find('\n') == std::string_view::npos && "значение — одна строка");
+    assert(value.find("--") == std::string_view::npos && "'--' has no place in a value");
+    assert(value.find('\n') == std::string_view::npos && "a value is a single line");
 
     if (value.empty()) {
         unset(key);

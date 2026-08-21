@@ -151,7 +151,7 @@ void checkBasics() {
     // документе разности красным, а сводки «удалено: N» нет.
     const QStringList lines = rig.lines();
     ZT_TRUE("убранная строка показана", lines.contains(QStringLiteral("Второй абзац.")));
-    ZT_TRUE("сводки «удалено:» нет", lines.filter(QStringLiteral("удалено:")).isEmpty());
+    ZT_TRUE("сводки «удалено:» нет", lines.filter(QStringLiteral("removed:")).isEmpty());
     const int gone = int(lines.indexOf(QStringLiteral("Второй абзац.")));
     ZT_TRUE("и она помечена убранной",
             gone >= 0 && rig.tl()->markOfBlock(gone) == diff::Mark::Removed);

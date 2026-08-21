@@ -122,9 +122,9 @@ void checkSearchPair(Toolbar& bar) {
     ZT_TRUE("кнопка правки исходника есть", source != nullptr);
     if (history == nullptr || source == nullptr) return;
     ZT_TRUE("она про историю заметки",
-            history->toolTip().contains(QStringLiteral("История")));
+            history->toolTip().contains(QStringLiteral("history")));
     ZT_TRUE("а эта про исходник",
-            source->toolTip().contains(QStringLiteral("исходник")));
+            source->toolTip().contains(QStringLiteral("source")));
     // Сочетание у правки исходника — из настроек, и по умолчанию его НЕТ
     // (Cmd+M на маке сворачивает окно): тултип обязан быть без скобок, а не
     // врать литералом. Тест краснеет, если настройку перестанут спрашивать.
@@ -144,7 +144,7 @@ void checkSearchPair(Toolbar& bar) {
 // Обещание гасит кнопку И объясняет причину. Половина этого — хуже, чем ничего:
 // молча погашенная кнопка читается как поломка.
 void checkPromiseExplainsItself(Toolbar& bar) {
-    const QString why = QStringLiteral("появится вместе с синхронизацией");
+    const QString why = QStringLiteral("will appear together with sync");
     bar.setPromise(Button::Cloud, why);
     ZT_TRUE("обещанная кнопка погашена", !bar.isEnabled(Button::Cloud));
     QToolButton* button = bar.buttonFor(Button::Cloud);
@@ -259,7 +259,7 @@ void checkSortButtons(Toolbar& bar) {
                 ZT_TRUE("тултип называет порядок словами",
                         button->toolTip().contains(zametti::sortOrderTitle(order)));
                 ZT_TRUE("и говорит, что порядок общий",
-                        button->toolTip().contains(QStringLiteral("общий порядок")));
+                        button->toolTip().contains(QStringLiteral("common order")));
             }
             ZT_EQ("горит ровно одна кнопка сортировки", std::string("1"),
                   std::to_string(lit));
@@ -303,7 +303,7 @@ void checkSortButtons(Toolbar& bar) {
     QToolButton* button = bar.buttonFor(Toolbar::Button::SortByCreated);
     ZT_TRUE("и тултип говорит, что порядок задан меткой",
             button != nullptr &&
-                button->toolTip().contains(QStringLiteral("меткой папки")));
+                button->toolTip().contains(QStringLiteral("folder mark")));
 }
 
 void writeShots(Toolbar& bar, const QString& dir) {

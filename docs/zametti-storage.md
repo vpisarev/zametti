@@ -1,80 +1,80 @@
-# Устройство хранилища
+# Store layout
 
-Документ описывает то, что лежит на диске: как устроено хранилище заметок, из
-чего состоит файл заметки, что такое вложение и как записана история. Это
-справочник по формату, а не по коду; всё, что здесь сказано, проверяется
-`zametti-store verify` и наборами тестов.
+This document describes what lies on disk: how the note store is organized,
+what a note file consists of, what an attachment is and how the history is
+recorded. It is a reference for the format, not for the code; everything said
+here is checked by `zametti-store verify` and by the test suites.
 
-Главное свойство: **хранилище читается и правится без программы**. Заметка —
-обычный markdown-файл в UTF-8, история — файл рядом. Пропадёт программа —
-останутся тексты.
+The main property: **the store can be read and edited without the program**.
+A note is a plain markdown file in UTF-8, the history is a file next to it.
+Should the program vanish — the texts remain.
 
 ---
 
-## 1. Каталог
+## 1. The directory
 
-Хранилище плоское. Никаких вложенных папок: иерархия живёт в метаданных, а не
-в файловой системе.
+The store is flat. No nested folders: the hierarchy lives in the metadata,
+not in the file system.
 
 ```
-хранилище/
-    01n6cqevh7bbfr0a.md        заметка
-    01n6cqevsd7v5edf.md        заметка
-    01jd7f0kq2m8xab7.webp      вложение
+store/
+    01n6cqevh7bbfr0a.md        a note
+    01n6cqevsd7v5edf.md        a note
+    01jd7f0kq2m8xab7.webp      an attachment
     history/
-        01n6cqevh7bbfr3v.log   история правок этой заметки
+        01n6cqevh7bbfr3v.log   edit history of this note
     .zametti/
-        store.lock           замок: одно хранилище — одна программа
+        store.lock           the lock: one store — one program
     .rescue/
-        …                    буферы, не прошедшие самопроверку записи
+        …                    buffers that failed the write self-check
 ```
 
-Три служебных имени и их судьба при синхронизации:
+Three reserved names and their fate under synchronization:
 
-| имя | что это | синхронизируется |
+| name | what it is | synchronized |
 |---|---|---|
-| `history/` | история правок | **да**: это данные, а не кэш |
-| `.zametti/` | состояние хранилища | нет |
-| `.rescue/` | спасённые буферы | нет (с точки, локальное) |
+| `history/` | edit history | **yes**: it is data, not a cache |
+| `.zametti/` | store state | no |
+| `.rescue/` | rescued buffers | no (dot-prefixed, local) |
 
-Настройки и состояние окна лежат **не** в хранилище, а в конфиге приложения
-(`config.json` и `state.json` в каталоге настроек пользователя): хранилище
-принадлежит заметкам, а не программе.
+Settings and window state live **not** in the store but in the application
+config (`config.json` and `state.json` in the user's settings directory): the
+store belongs to the notes, not to the program.
 
-Всё остальное в корне — беда, и `verify` о ней скажет: чужой каталог, чужой
-файл, файл с неправильным именем.
-
----
-
-## 2. Имя файла: id заметки
-
-Имя файла — идентификатор заметки, **14 знаков Crockford base32** в нижнем
-регистре (`0-9`, `a-z` без `i l o u`), плюс расширение:
-
-```
-01n6cqevh7bbfr.md      заметка
-01jd7f0kq2m8xa.webp    вложение
-```
-
-Внутри id: 8 знаков — unix-секунды создания big-endian с ведущими нулями, 6 —
-случайные из CSPRNG. В ближайшую тысячу лет все id будут начинаются с `0` — это
-де-факто признак формата.
-
-Два правила, которые важнее устройства:
-
-- **id непрозрачен.** Время из него не разбирается никогда; настоящая дата
-  создания живёт в метаданных. Временной префикс — только чтобы `ls`
-  сортировался по возрасту и чтобы глазу было за что зацепиться при отладке;
-- **имя ничего не значит для человека.** Заголовок заметки — её первая строка,
-  а не имя файла. Поэтому переименование заметки не трогает файл вовсе, а
-  ссылки между заметками не ломаются от смены заголовка.
-
-Файл создаётся строго на свежее имя (`O_EXCL`); совпадение — редчайший случай,
-и тогда id перегенерируется.
+Anything else in the root is trouble, and `verify` will say so: a foreign
+directory, a foreign file, a file with a malformed name.
 
 ---
 
-## 3. Файл заметки
+## 2. The file name: the note id
+
+The file name is the note's identifier, **14 characters of Crockford base32**
+in lower case (`0-9`, `a-z` without `i l o u`), plus the extension:
+
+```
+01n6cqevh7bbfr.md      a note
+01jd7f0kq2m8xa.webp    an attachment
+```
+
+Inside the id: 8 characters are the big-endian unix seconds of creation with
+leading zeros, 6 are random from a CSPRNG. For the next thousand years every
+id will start with `0` — a de-facto marker of the format.
+
+Two rules that matter more than the internals:
+
+- **the id is opaque.** The time is never parsed out of it; the real creation
+  date lives in the metadata. The time prefix is there only so that `ls`
+  sorts by age and the eye has something to hold on to while debugging;
+- **the name means nothing to a human.** A note's title is its first line,
+  not the file name. So renaming a note does not touch the file at all, and
+  links between notes do not break when a title changes.
+
+The file is created strictly under a fresh name (`O_EXCL`); a collision is
+the rarest of cases, and then the id is regenerated.
+
+---
+
+## 3. The note file
 
 ```markdown
 <!-- zametti
@@ -84,257 +84,268 @@ created: 2017-06-19T07:54:29Z
 modified: 2026-07-30T19:26:24Z
 -->
 
-# TODO перед поездкой
+# TODO before the trip
 
-Залить нужную инфу/программы на мак:
+Put the needed info/programs onto the mac:
 - [ ] wechat
-- [ ] свежие версии opencv
+- [ ] fresh versions of opencv
 ```
 
-Шапка — **обычный HTML-комментарий**, поэтому любой markdown-просмотрщик её
-просто не покажет. Первая строка комментария — слово `zametti`, дальше строки
-вида `ключ: значение`.
+The header is an **ordinary HTML comment**, so any markdown viewer will
+simply not show it. The first line of the comment is the word `zametti`, then
+lines of the form `key: value`.
 
-Известные ключи:
+Known keys:
 
-| ключ | что значит |
+| key | meaning |
 |---|---|
-| `version` | версия формата заметки; нет ключа — `1`. Ставится ЛЕНИВО: только заметкам, которые программа пишет сама — свежим, ввезённым и правленым (вместе со штампом `modified`); открыть и посмотреть файл не трогает. Более новая версия не понижается |
-| `parent` | id заметки-родителя; нет ключа — заметка в корне |
-| `created` | когда создана, ISO-8601 с офсетом |
-| `modified` | когда правилось содержимое, ISO-8601 с офсетом |
-| `role` | `folder` — заметка-папка, `lost` — бюро находок |
-| `archived` | `yes` — заметка убрана в Архив; ключа нет — живая |
-| `lost-parent` | прежний родитель находки; ставит бюро находок |
-| `sort` | порядок сортировки внутри папки; нет ключа — наследуется |
+| `version` | note format version; no key — `1`. Set LAZILY: only on notes the program writes itself — fresh, imported and edited ones (together with the `modified` stamp); opening and viewing a file does not touch it. A newer version is never downgraded |
+| `parent` | id of the parent note; no key — the note is at the root |
+| `created` | when it was created, ISO-8601 with an offset |
+| `modified` | when the content was edited, ISO-8601 with an offset |
+| `role` | `folder` — a folder note, `lost` — the Lost & found |
+| `archived` | `yes` — the note is put away into the Archive; no key — alive |
+| `lost-parent` | the find's previous parent; set by the Lost & found |
+| `sort` | sort order inside the folder; no key — inherited |
 
-Правила содержимого шапки:
+Rules for the header content:
 
-- **неизвестные ключи не трогаются никогда.** Круг чтение-запись побайтовый,
-  включая порядок строк и чужие ключи: программа правит только свою строку,
-  заменяя её на канонический вид;
-- `modified` поднимается только при правке **содержимого**. Перенос заметки,
-  уборка в архив, возврат из него и прописка в бюро находок — не
-  редактирование, и всплывать наверх списка недавних от них заметка не должна;
-- **времена — ISO-8601 с офсетом** (`2026-08-14T21:40:00+02:00`): в одной
-  строке и абсолютный момент, и локальный контекст — сколько было на часах у
-  того, кто писал. Читаются три вида: с офсетом, старый UTC (`…Z`) и вовсе без
-  зоны — последний толкуется в зоне ЧИТАЮЩЕЙ машины (другого разумного
-  допущения нет). Миграция ленивая: любое сохранение переписывает метку без
-  зоны или в голом UTC в новый вид, а метку с офсетом не трогает — в ней
-  записан чужой локальный контекст, и переводить её в свою зону значило бы его
-  стереть. Сравнения и сортировки идут ПО МОМЕНТАМ, а не по строкам;
-- **заметка никогда не становится папкой, и наоборот** (правило владельца).
-  `role: folder` ставится при создании и не меняется. У папки в теле ровно один
-  заголовок и больше ничего — `verify` за этим следит;
-- `sort` — метка ПАПКИ: как упорядочены её заметки и подпапки. Значение —
-  `<ключ>-<направление>`, где ключ это `name`, `modified` или `created`, а
-  направление `asc` или `desc`; направление можно опустить (`sort: created`),
-  тогда берётся умолчание ключа — имя А→Я, даты новые сверху. Метка
-  наследуется вниз: папка без своей идёт по ближайшему помеченному предку, а
-  если помеченных нет — по переключателю в тулбаре (тот живёт в `state.json`,
-  в хранилище его нет и синхронизировать нечего). Непонятое значение — не
-  ошибка: программа жалуется в stderr и показывает папку по наследству, ключ
-  в файле при этом остаётся нетронутым. Пометка `modified` НЕ поднимает: это
-  правка организационная, как перенос.
+- **unknown keys are never touched.** The read-write round trip is
+  byte-exact, including line order and foreign keys: the program edits only
+  its own line, replacing it with the canonical form;
+- `modified` is bumped only on a **content** edit. Moving a note, putting it
+  into the archive, bringing it back and registering it in the Lost & found
+  are not editing, and the note must not float to the top of the recent list
+  because of them;
+- **times are ISO-8601 with an offset** (`2026-08-14T21:40:00+02:00`): one
+  line carries both the absolute instant and the local context — what the
+  clock showed for whoever was writing. Three forms are read: with an offset,
+  the old UTC (`…Z`) and with no zone at all — the latter is interpreted in
+  the zone of the READING machine (there is no other reasonable assumption).
+  Migration is lazy: any save rewrites a zone-less or bare-UTC stamp into the
+  new form, and does not touch a stamp with an offset — it records someone
+  else's local context, and converting it into one's own zone would erase
+  that. Comparisons and sorts go BY INSTANTS, not by strings;
+- **a note never becomes a folder, and vice versa** (owner's rule).
+  `role: folder` is set at creation and does not change. A folder's body is
+  exactly one heading and nothing else — `verify` watches over this;
+- `sort` is a label of the FOLDER: how its notes and subfolders are ordered.
+  The value is `<key>-<direction>`, where the key is `name`, `modified` or
+  `created`, and the direction is `asc` or `desc`; the direction may be
+  omitted (`sort: created`), then the key's default is taken — names A→Z,
+  dates newest first. The label is inherited downward: a folder without its
+  own goes by the nearest labeled ancestor, and if none is labeled — by the
+  toolbar switch (that one lives in `state.json`; it is not in the store and
+  there is nothing to synchronize). An unrecognized value is not an error:
+  the program complains to stderr and shows the folder by inheritance, while
+  the key in the file stays untouched. Setting the label does NOT bump
+  `modified`: it is an organizational edit, like a move.
 
-Тело — markdown в каноническом виде: то, что программа записывает, равно
-`serialize(parse(файл))`. Дрейф между этими двумя — беда, и `verify` её ищет.
-При открытии заметка причёсывается прямо на диске (лишние пробелы в конце строк,
-недостающий перевод строки в конце файла), не трогая ни одного значения в
-шапке.
+The body is markdown in canonical form: what the program writes equals
+`serialize(parse(file))`. Drift between the two is trouble, and `verify`
+hunts for it. On open, a note is tidied right on disk (stray spaces at the
+ends of lines, a missing newline at the end of the file) without touching a
+single value in the header.
 
 ---
 
-## 4. Вложения
+## 4. Attachments
 
-Вложение — файл рядом с заметками, с таким же 14-значным id и своим
-расширением: `01jd7f0kq2m8xa.webp`. Отдельного каталога у вложений нет —
-хранилище плоское до конца.
+An attachment is a file next to the notes, with the same 14-character id and
+its own extension: `01jd7f0kq2m8xa.webp`. Attachments have no separate
+directory — the store is flat all the way down.
 
-Ссылка в тексте — обычный markdown-образ, размер показа в фрагменте:
+A link in the text is an ordinary markdown image, the display size in the
+fragment:
 
 ```markdown
-![вид с балкона](01jd7f0kq2m8xa.webp#w=600&align=left)
+![view from the balcony](01jd7f0kq2m8xa.webp#w=600&align=left)
 ```
 
-- атрибуты живут во фрагменте адреса, через `&`: `w=600` — ширина показа в
-  логических пикселях, `align=left|center|right` — выравнивание. Оба
-  необязательны; по умолчанию картинка идёт по центру, по-книжному;
-- понимается и вики-форма: `![[01jd7f0kq2m8xa.webp|600|align=left]]`. При
-  импорте она переписывается в канон выше;
-- одинаковое содержимое — один файл: при импорте вложения дедуплицируются по
+- attributes live in the address fragment, joined by `&`: `w=600` — display
+  width in logical pixels, `align=left|center|right` — alignment. Both are
+  optional; by default the image goes centered, book-style;
+- the wiki form is understood too: `![[01jd7f0kq2m8xa.webp|600|align=left]]`.
+  On import it is rewritten into the canonical form above;
+- identical content — one file: on import attachments are deduplicated by
   sha256.
 
-**Подпись (alt) — что показывать, решает правило, а не файл** (17–17.08.2026,
-решение владельца: «хорошие имена показывать, дурацкие скрывать»). В файле
-подпись лежит как есть всегда; под снимком её НЕ показывают, если она
-безымянная — `isNonameCaption`:
+**Whether to show the caption (alt) is decided by a rule, not by the file**
+(17–17.08.2026, owner's decision: "show good names, hide silly ones"). In
+the file the caption always lies as it is; under the picture it is NOT shown
+when it is nameless — `isNonameCaption`:
 
-- пустая: `![](01jd….webp)` — законная картинка без подписи, обязана
-  сохраняться в любом случае;
-- спрятана человеком одним знаком спереди: `![~вид с балкона](…)` или
-  `![-вид с балкона](…)`. Знак не портит подпись и снимается тем же
-  сочетанием (Ctrl+D на выбранной картинке — `toggleTaskKey`, на объекте
-  оно значит «спрятать/показать подпись»); Enter на картинке правит подпись
-  полем под снимком;
-- имя от камеры, телефона или буфера обмена по регэкспу
-  `imageCaption.noname` из конфига (по умолчанию `IMG_1234`, `DSC…`, `image 3`,
-  `Изображение`, `Screenshot … at …`, `0A5A0229_DxO`, голое число от шести цифр).
+- empty: `![](01jd….webp)` — a legitimate captionless image, must be
+  preserved in any case;
+- hidden by a person with one character in front: `![~view from the
+  balcony](…)` or `![-view from the balcony](…)`. The character does not
+  spoil the caption and is removed by the same shortcut (Ctrl+D on a selected
+  image — `toggleTaskKey`, on an object it means "hide/show the caption");
+  Enter on an image edits the caption in a field under the picture;
+- a name from a camera, phone or clipboard per the `imageCaption.noname`
+  regexp from the config (by default `IMG_1234`, `DSC…`, `image 3`,
+  `Изображение`, `Screenshot … at …`, `0A5A0229_DxO`, a bare number of six
+  or more digits).
 
-Строчной картинке без подписи (`до ![](x.png) после`) в живом документе не на
-чем держаться, поэтому при сборке она получает безымянное имя `image N` (N —
-порядковый среди картинок абзаца, по порядку не обязан) и в файл уходит как
-`![image 1](x.png)`. Картинка целым абзацем — объект, её пустая подпись живёт в
-свойстве и остаётся пустой.
+An inline image without a caption (`before ![](x.png) after`) has nothing to
+hold on to in the live document, so at build time it receives the nameless
+name `image N` (N — ordinal among the paragraph's images, not required to be
+in order) and goes into the file as `![image 1](x.png)`. An image that is a
+whole paragraph is an object; its empty caption lives in a property and stays
+empty.
 
-**Картинки не версионируются.** В историю попадает только текст заметки, а в
-нём от картинки — одна ссылка.
+**Images are not versioned.** Only the note's text goes into the history, and
+in it an image is a single link.
 
-Пропавшее вложение не сильно портит заметку: на его месте рисуется рамка
-`01jd….webp: файл не найден`, место под неё держится, а байты ссылки
-неприкосновенны — вернётся файл, вернётся и картинка.
+A missing attachment does not spoil the note much: in its place a frame
+`01jd….webp: file not found` is drawn, the space for it is kept, and the
+bytes of the link are untouchable — the file comes back, the picture comes
+back.
 
-**Архивность вложения выводится, а не хранится** (этап 10, с этапа 15 — про
-архив):
+**An attachment's archivedness is derived, not stored** (stage 10, since
+stage 15 — about the archive):
 
-    вложение «в архиве» ⇔ все ссылающиеся на него заметки — в архиве
+    an attachment is "in the archive" ⇔ all notes referring to it are in the archive
 
-Поэтому при уборке заметки в архив и при возврате над файлами вложений не
-делается ничего: картинки следуют за заметкой туда и обратно сами собой, и
-рассинхронизироваться тут нечему. Вернувшаяся заметка рендерит свои картинки —
-файлы всё это время лежали на месте.
+So when a note is put into the archive and brought back, nothing is done to
+the attachment files: the images follow the note there and back by
+themselves, and there is nothing here to fall out of sync. A returned note
+renders its images — the files were lying in place the whole time.
 
-Физическое расставание — ровно один момент: **«удалить насовсем»**. Для каждого
-вложения удаляемых заметок делается байтовый поиск его id по всем остающимся
-`.md` (живым и архивным); не нашлось нигде — файл уезжает в мусорку ОС вместе с
-заметками. Ложное срабатывание (id текстом в блоке кода) ошибается в безопасную
-сторону: файл остаётся.
+Physical parting happens at exactly one moment: **"delete forever"**. For
+every attachment of the notes being deleted, a byte search for its id runs
+over all remaining `.md` (live and archived); found nowhere — the file goes
+into the OS trash together with the notes. A false positive (an id as text
+inside a code block) errs on the safe side: the file stays.
 
-История в этом расчёте **не участвует сознательно** (решение владельца):
-удаление радикально, предохранителей два (архив → «удалить насовсем» → мусорка
-ОС), а слепок со ссылкой на исчезнувшее деградирует штатной рамкой «файл не
-найден». Иначе ни одна картинка не покинула бы хранилище никогда — её видит
-прошлое.
+History **deliberately takes no part** in this computation (owner's
+decision): the deletion is radical, there are two safeguards (archive →
+"delete forever" → OS trash), and a snapshot referring to something gone
+degrades into the standard "file not found" frame. Otherwise no image would
+ever leave the store — the past sees it.
 
-Отсюда и три категории у `verify`: вложение живое (на него ссылается хоть одна
-неархивная заметка), «только в архиве» (информационная строка, не аномалия) и
-сирота — не упомянутое ни в одной заметке вовсе.
-
----
-
-## 5. История правок
-
-`history/<id>.log` — append-only журнал одной заметки.
-Подробности формата и обоснования — в `store/journal.h`; здесь то, что нужно
-знать про файл на диске.
-
-### Формат
-
-CBOR-последовательность (RFC 8742). Первая запись — шапка
-`{1: "zametti-journal", 2: версия формата, 8: версия содержимого}`; дальше
-записи, каждая — карта с целочисленными ключами:
-
-| ключ | что |
-|---|---|
-| 1 | вид записи: 1 save, 2 external, 3 restore, 4 tombstone |
-| 2 | время UTC, миллисекунды от эпохи |
-| 3 | BLAKE3 распакованного слепка, 32 байта |
-| 4 | кодек слепка: 1 zstd, 2 zstd относительно предыдущего слепка |
-| 5 | размер слепка до сжатия |
-| 6 | сам слепок, сжатый |
-| 7 | у `restore` — время записи-источника |
-| 8 | *(только в шапке)* версия содержимого: по какому своду правил журнал вычищен |
-
-Слепок — **байты файла заметки целиком**, вместе с шапкой. Не разность строк:
-восстановление обязано быть простым.
-
-### Виды записей
-
-- `save` — обычное сохранение;
-- `external` — файл изменили снаружи, мы это увидели;
-- `restore` — человек вернул старый слепок;
-- `tombstone` — заметку удалили. Своего слепка нет: финальным остаётся
-  предыдущая запись.
-
-### Поколения
-
-На диск слепок ложится относительно предшественника, цепочками по 32 записи:
-каждое поколение начинается полным слепком, остальные — разности (механизм
-`zstd --patch-from`). Так журнал вчетверо-двадцатеро меньше, а цепочка не
-растёт без края: и цена чтения, и урон от порчи ограничены одним поколением.
-
-Числа на самой большой заметке корпуса (239 КБ, 200 правок): полными слепками
-15.8 МБ, поколениями по 32 — 0.57 МБ. Журналы всего корпуса: 28.2 МБ против
-2.1 МБ.
-
-### Версия содержимого и ленивая чистка
-
-Ключ 8 в шапке отвечает на вопрос «чищена ли эта история», а не «сумею ли я её
-прочитать» — на второй отвечает версия формата, и мешать их в одно число нельзя.
-Ключа нет вовсе — это **v0**, журнал, писавшийся до этапа 10; `"0.1"` — история
-вычищена правилами этапа 9 (эквивалентных записей не бывает, мелкая правка
-заменяет прошлую, возврат к записанному состоянию схлопывает хвост).
-
-Чистка **ленивая и пер-заметочная**: журнал приводится к 0.1 при первой записи
-в него и при первом чтении ради истории этой заметки (Ctrl+Z, вход в историю,
-поиск по истории). Просто открыть заметку — журнала не касается. Корпусные
-обходы (`verify` и будущий поиск по всем заметкам) журналы **не переписывают
-никогда**: иначе первый же обход стал бы глобальной утилитой чистки через
-чёрный ход.
-
-Отличие миграции от живой записи ровно одно — **сторож свежести**: живое
-схлопывание трогает только свежие записи (вернуться к состоянию месячной
-давности законно), миграция чистит ретроактивно, на возраст не глядя.
-Неприкосновенны в обоих режимах: опорная запись, надгробие, последняя запись и
-вешки `external`, через которые схлопывание не перепрыгивает.
-
-Руками (для тестирования без UI): `zametti-store history compress <id | путь>` —
-форсирует ту же функцию и печатает, что вышло. Штатного пути чистить историю
-руками у человека нет и не предполагается.
-
-### Правила журнала
-
-- **журнал не удаляется никогда** — даже когда удалена сама заметка. По
-  последнему слепку с надгробием её можно воскресить;
-- **журнал только растёт.** Исключений два — прореживание и ленивая чистка,
-  и оба переписывают файл целиком и атомарно;
-- **restore — новая запись.** Журнал не перематывается: отменить восстановление
-  можно, стереть его из истории — нет;
-- **fsync не зовётся.** Байты уедут штатным writeback-ом; оборванный хвост
-  (падение или отключение питания во время записи) — штатный случай: он
-  отрезается при открытии и при первой дозаписи, и журнал никогда не считается
-  битым из-за последней записи;
-- **дедупликация бесплатна:** сохранение происходит только при смене отпечатка,
-  значит подряд идущих одинаковых слепков не бывает.
-
-### Прореживание
-
-Логарифмическая шкала от текущего момента:
-
-| возраст записи | как часто оставляем |
-|---|---|
-| последний час | все |
-| до суток | не чаще раза в минуту |
-| до недели | раза в час |
-| до месяца | раза в сутки |
-| дальше | раза в месяц, навсегда |
-
-**Последняя запись не прореживается никогда.** Прореживание идемпотентно:
-повторный прогон при том же «сейчас» не меняет ни байта. Идёт фоном при запуске
-программы и по команде `zametti-store thin`.
+Hence the three categories in `verify`: a live attachment (at least one
+non-archived note refers to it), "archive-only" (an informational line, not
+an anomaly) and an orphan — mentioned in no note at all.
 
 ---
 
-## 6. Архив
+## 5. Edit history
 
-Убранная заметка НЕ ПЕРЕЕЗЖАЕТ. В её шапке появляется `archived: yes`, а
-`parent` остаётся прежним — «Архив» в дереве это виртуальная папка, которая
-собирается из помеченных. Отсюда и возврат: снять пометку, и заметка дома, без
-всякой памяти о том, откуда её брали.
+`history/<id>.log` is the append-only journal of one note.
+The format details and the rationale are in `store/journal.h`; here is what
+one needs to know about the file on disk.
 
-Тело при уборке уезжает в журнал, а файл становится **стабом** — шапка плюс
-строка заголовка:
+### Format
+
+A CBOR sequence (RFC 8742). The first record is the header
+`{1: "zametti-journal", 2: format version, 8: content version}`; then come
+records, each a map with integer keys:
+
+| key | what |
+|---|---|
+| 1 | record kind: 1 save, 2 external, 3 restore, 4 tombstone |
+| 2 | UTC time, milliseconds since the epoch |
+| 3 | BLAKE3 of the uncompressed snapshot, 32 bytes |
+| 4 | snapshot codec: 1 zstd, 2 zstd relative to the previous snapshot |
+| 5 | snapshot size before compression |
+| 6 | the snapshot itself, compressed |
+| 7 | for `restore` — the time of the source record |
+| 8 | *(header only)* content version: which rule set the journal was cleaned by |
+
+A snapshot is **the bytes of the note file in full**, header included. Not a
+line diff: restoring must be simple.
+
+### Record kinds
+
+- `save` — an ordinary save;
+- `external` — the file was changed from outside, and we saw it;
+- `restore` — a person brought an old snapshot back;
+- `tombstone` — the note was deleted. It has no snapshot of its own: the
+  previous record remains final.
+
+### Generations
+
+On disk a snapshot lies relative to its predecessor, in chains of 32 records:
+each generation starts with a full snapshot, the rest are diffs (the
+`zstd --patch-from` mechanism). This makes the journal four to twenty times
+smaller, and the chain does not grow without bound: both the cost of reading
+and the damage from corruption are limited to one generation.
+
+The numbers on the corpus's largest note (239 KB, 200 edits): full snapshots
+15.8 MB, generations of 32 — 0.57 MB. The journals of the whole corpus:
+28.2 MB versus 2.1 MB.
+
+### Content version and lazy cleaning
+
+Key 8 in the header answers the question "has this history been cleaned",
+not "will I manage to read it" — the latter is answered by the format
+version, and mixing them into one number is not allowed. No key at all means
+**v0**, a journal written before stage 10; `"0.1"` — the history has been
+cleaned by the stage 9 rules (equivalent records do not exist, a small edit
+replaces the previous one, returning to a recorded state collapses the tail).
+
+Cleaning is **lazy and per-note**: a journal is brought to 0.1 at the first
+write into it and at the first read done for the sake of this note's history
+(Ctrl+Z, entering history, history search). Simply opening a note does not
+touch the journal. Corpus-wide sweeps (`verify` and the future all-notes
+search) **never rewrite** journals: otherwise the very first sweep would
+become a global cleaning utility through the back door.
+
+The migration differs from live writing in exactly one thing — the
+**freshness guard**: live collapsing touches only fresh records (returning to
+a month-old state is legitimate), migration cleans retroactively, paying no
+attention to age. Untouchable in both modes: the anchor record, the
+tombstone, the last record and the `external` marks, across which collapsing
+never jumps.
+
+By hand (for testing without the UI): `zametti-store history compress
+<id | path>` — forces the same function and prints what came out. There is
+no regular way for a person to clean the history by hand, and none is
+planned.
+
+### Journal rules
+
+- **the journal is never deleted** — even when the note itself is deleted.
+  From the last snapshot with a tombstone it can be resurrected;
+- **the journal only grows.** There are two exceptions — thinning and lazy
+  cleaning — and both rewrite the file whole and atomically;
+- **restore is a new record.** The journal does not rewind: a restore can be
+  undone, but not erased from the history;
+- **fsync is not called.** The bytes will leave with the normal writeback; a
+  torn tail (a crash or a power cut during a write) is a normal case: it is
+  cut off on open and on the first append, and the journal is never
+  considered corrupt because of its last record;
+- **deduplication is free:** a save happens only when the hash changes, so
+  there are never two identical snapshots in a row.
+
+### Thinning
+
+A logarithmic scale from the current moment:
+
+| record age | how many we keep |
+|---|---|
+| the last hour | all |
+| up to a day | at most one per minute |
+| up to a week | one per hour |
+| up to a month | one per day |
+| beyond | one per month, forever |
+
+**The last record is never thinned.** Thinning is idempotent: a repeated run
+at the same "now" does not change a byte. It runs in the background at
+program start and on the command `zametti-store thin`.
+
+---
+
+## 6. Archive
+
+A put-away note DOES NOT MOVE. Its header gains `archived: yes`, while
+`parent` stays as it was — the "Archive" in the tree is a virtual folder
+assembled from the marked notes. Hence the return: remove the mark, and the
+note is home, with no memory of where it was taken from.
+
+On put-away the body departs into the journal, and the file becomes a
+**stub** — the header plus the title line:
 
 ```
 <!-- zametti
@@ -344,108 +355,114 @@ modified: 2026-07-30T22:26:24+03:00
 archived: yes
 -->
 
-# Фототехника
+# Photo gear
 ```
 
-Заголовок в стабе не украшение: по нему заметка видна в списке и ищется по
-именам, а файл остаётся законным markdown. Тела в файле больше нет — оно в
-`history/<id>.log`, и открытие архивной заметки показывает голову журнала в
-режиме истории: читать можно, править нельзя.
+The title in the stub is not decoration: through it the note is visible in
+the list and found by name search, and the file remains legitimate markdown.
+The body is no longer in the file — it is in `history/<id>.log`, and opening
+an archived note shows the head of the journal in history mode: reading is
+possible, editing is not.
 
-**Порядок уборки жёсткий, крашеустойчивость растёт из него:**
+**The put-away order is rigid, and crash-resistance grows out of it:**
 
-1. сперва журнал — тело уходит в историю по общим правилам отбора (равно
-   голове — записи нет; почти-дубль заменяет последнюю);
-2. потом стаб — файл заменяется атомарно.
+1. first the journal — the body goes into the history by the common
+   selection rules (equal to the head — no record; a near-duplicate replaces
+   the last one);
+2. then the stub — the file is replaced atomically.
 
-Падение между шагами оставляет полную заметку и запись в журнале: повтор
-идемпотентен, а потерять тело нельзя по построению. Обратный порядок дал бы
-окно, в котором тела нет уже нигде.
+A crash between the steps leaves the full note and a journal record: a retry
+is idempotent, and losing the body is impossible by construction. The
+reverse order would open a window in which the body exists nowhere.
 
-**Удалить насовсем** — единственная операция, которая уносит журнал: у архивной
-заметки тело живёт в нём и больше нигде, и оставить его значило бы не удалить
-заметку, а спрятать. У обычной заметки журнал переживает удаление всегда.
+**Delete forever** is the only operation that takes the journal away: an
+archived note's body lives there and nowhere else, and keeping it would mean
+not deleting the note but hiding it. An ordinary note's journal always
+survives deletion.
 
-**Следствие, названное вслух:** поиск по всем заметкам (Ctrl+Shift+F) тел
-архивных не видит — в файлах их нет. Заголовки ищутся, пер-заметочный поиск по
-истории работает.
+**A consequence, named out loud:** search across all notes (Ctrl+Shift+F)
+does not see archived bodies — they are not in the files. Titles are
+searched, per-note history search works.
 
-**Старая корзина** (`role: trash`, заметки внутри неё с `trash-parent`)
-переезжает разовой миграцией при первом запуске: `parent` := прежний родитель,
-`archived: yes`, ключи корзины уходят, опустевшая заметка-корзина удаляется.
-Тела при этом не трогаются — миграция про структуру. Значение `role: trash`
-по-прежнему ЧИТАЕТСЯ как архивность: хранилище могло приехать с чужой машины
-или от прежней сборки.
-
----
-
-## 7. Бюро находок
-
-Заметка с **неразрешимым `parent`** — файл вернули из системной корзины мимо
-программы, скопировали из чужого хранилища, синхронизация привезла ребёнка
-раньше родителя — прописывается в спецпапку `role: lost`:
-
-    parent := бюро находок,  lost-parent := что было
-
-Это **единственное место, где загрузка хранилища ПИШЕТ** (решение владельца), и
-рамки исключения жёсткие: только заметки с неразрешимым `parent`, только две
-строки шапки, `modified` не поднимается, повтор не пишет ничего, а сама папка
-заводится лишь под первую находку. Вытаскивают из бюро обычным переносом;
-больше папка ничем не управляет.
-
-Коллизии id между хранилищами объявлены пренебрежимыми: id это 8 знаков времени
-и 6 случайных — совпадение означало бы две заметки, заведённые в одну секунду на
-двух машинах, да ещё с одинаковым броском CSPRNG.
+**The old trash bin** (`role: trash`, notes inside it with `trash-parent`)
+is migrated once at the first start: `parent` := the previous parent,
+`archived: yes`, the trash keys go away, the emptied trash note is deleted.
+Bodies are not touched — the migration is about structure. The value
+`role: trash` is still READ as archivedness: the store may have arrived from
+another machine or from an older build.
 
 ---
 
-## 8. Замки и одновременный доступ
+## 7. Lost & found
 
-- **одно хранилище — одна программа.** При запуске берётся файловый замок
-  `.zametti/store.lock`; вторая копия на том же хранилище не стартует и говорит,
-  какой pid держит замок. Забытый после падения замок снимается сам, если
-  процесса с таким pid уже нет; на прочие случаи — ключ
-  `zametti --root … --unlock`;
-- **внутри программы** все операции с историей проходят через один общий замок
-  в памяти: фоновое прореживание и сохранение заметки не пересекаются;
-- `zametti-store thin` при открытой программе честно отказывается работать.
+A note with an **unresolvable `parent`** — the file was brought back from the
+system trash behind the program's back, copied from another store, sync
+delivered the child before the parent — gets registered into the special
+folder `role: lost`:
 
----
+    parent := Lost & found,  lost-parent := what it was
 
-## 9. Что можно делать руками
+This is **the only place where loading the store WRITES** (owner's decision),
+and the bounds of the exception are strict: only notes with an unresolvable
+`parent`, only two header lines, `modified` is not bumped, a repeat writes
+nothing, and the folder itself is created only for the first find. Things
+are taken out of the bureau by an ordinary move; the folder controls nothing
+else.
 
-Можно: читать и править `.md` любым редактором — программа заметит правку и
-запишет её в историю как `external`; копировать хранилище целиком; класть его в
-git.
-
-Нельзя: править `history/*.log` — это двоичный формат с отпечатками; создавать
-файлы с именами не по формату (`verify` посчитает их бедой); держать одно
-хранилище открытым в двух копиях программы.
-
-Стоит помнить: **удаление файла заметки мимо программы не оставляет
-надгробия**. Журнал при этом остаётся, и `verify` скажет «файл унесли мимо
-программы» — это не беда, но и не порядок.
+Id collisions between stores are declared negligible: an id is 8 characters
+of time and 6 random ones — a match would mean two notes created within the
+same second on two machines, and with the same CSPRNG roll on top of that.
 
 ---
 
-## 10. Утилита хранилища
+## 8. Locks and concurrent access
+
+- **one store — one program.** At start the file lock `.zametti/store.lock`
+  is taken; a second copy on the same store does not start and says which pid
+  holds the lock. A lock forgotten after a crash removes itself if no
+  process with that pid exists any more; for the remaining cases — the
+  switch `zametti --root … --unlock`;
+- **inside the program** all history operations go through one shared
+  in-memory lock: background thinning and note saving do not overlap;
+- `zametti-store thin` honestly refuses to work while the program is open.
+
+---
+
+## 9. What can be done by hand
+
+You may: read and edit the `.md` with any editor — the program will notice
+the edit and record it in the history as `external`; copy the store as a
+whole; put it in git.
+
+You may not: edit `history/*.log` — it is a binary format with hashes;
+create files with names outside the format (`verify` will count them as
+trouble); keep one store open in two copies of the program.
+
+Worth remembering: **deleting a note file behind the program's back leaves
+no tombstone**. The journal remains, and `verify` will say "the file was
+taken behind the program's back" — not trouble, but not order either.
+
+---
+
+## 10. The store utility
 
 ```
-zametti-store init <dir>                          пустое хранилище
-zametti-store new --root <dir> [--parent <id>]    пустая заметка
-zametti-store import --root <dir> --from <src>    импорт дерева .md
-zametti-store verify --root <dir>                 полная проверка
-zametti-store thin --root <dir> [--dry-run]       прореживание истории
-zametti-store history compress <id | путь.md>    чистка одного журнала (тестовый люк)
+zametti-store init <dir>                          an empty store
+zametti-store new --root <dir> [--parent <id>]    an empty note
+zametti-store import --root <dir> --from <src>    import a tree of .md
+zametti-store verify --root <dir>                 full check
+zametti-store thin --root <dir> [--dry-run]       history thinning
+zametti-store history compress <id | path.md>    clean one journal (test hatch)
 ```
 
-`verify` проверяет: имена файлов и вложений, шапки, отсутствие дрейфа
-`serialize(parse(x))`, ссылки `parent` и циклы, существование целей
-`![…]`-ссылок, тела заметок-папок, а по журналам — рамки записей, версию
-формата, сборку и отпечаток **каждого** слепка. Вложения он делит на три
-категории (живое, «только в архиве», сирота) и не удаляет никогда: файлы
-уходят одним-единственным путём — «удалить насовсем». Журналы `verify` не правит
-ни байтом: чистка истории пер-заметочная и ленивая.
+`verify` checks: the names of files and attachments, the headers, the
+absence of `serialize(parse(x))` drift, `parent` links and cycles, the
+existence of `![…]`-link targets, the bodies of folder notes, and across
+the journals — record framing, the format version, the reconstruction and
+the hash of **every** snapshot. It divides attachments into three categories
+(live, "archive-only", orphan) and never deletes them: files leave by one
+single path — "delete forever". `verify` does not edit journals by a single
+byte: history cleaning is per-note and lazy.
 
-Импорт **никогда не пишет в источник**: новое хранилище создаётся рядом, старое
-дерево остаётся эталоном.
+Import **never writes into the source**: the new store is created alongside,
+the old tree remains the reference.

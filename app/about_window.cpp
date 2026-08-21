@@ -51,15 +51,15 @@ NoteView* markdownPage(const QString& markdown, QWidget* parent) {
 
 QString buildFactsMarkdown() {
     QString out;
-    out += QStringLiteral("# Из чего собрано\n\n");
+    out += QStringLiteral("# What it is built from\n\n");
     for (const BuildFact& fact : kBuildFacts) {
         out += QStringLiteral("- **%1:** %2\n")
                    .arg(QString::fromUtf8(fact.name), QString::fromUtf8(fact.value));
     }
-    out += QStringLiteral("- **читатели картинок:** %1\n")
+    out += QStringLiteral("- **image readers:** %1\n")
                .arg(QString::fromUtf8(kImageReaders));
 
-    out += QStringLiteral("\n## Вшитые библиотеки\n\n");
+    out += QStringLiteral("\n## Bundled libraries\n\n");
     for (const VendoredFact& fact : kVendoredFacts) {
         out += QStringLiteral("- **%1 %2** — %3\n")
                    .arg(QString::fromUtf8(fact.name), QString::fromUtf8(fact.version),
@@ -70,8 +70,8 @@ QString buildFactsMarkdown() {
     // бинарник, и человек вправе знать, чьи они. Числа берутся из тех же
     // списков, по которым идёт загрузка (resources.h), а не переписаны сюда:
     // разойтись им тогда негде.
-    out += QStringLiteral("\n## Иконки и шрифты\n\n");
-    out += QStringLiteral("- **Lucide** — %1 иконки тулбара и дерева, ISC\n")
+    out += QStringLiteral("\n## Icons and fonts\n\n");
+    out += QStringLiteral("- **Lucide** — %1 toolbar and tree icons, ISC\n")
                .arg(embeddedIcons().size());
 
     QStringList families;
@@ -79,23 +79,23 @@ QString buildFactsMarkdown() {
         const QString family = QString::fromUtf8(face.family);
         if (!families.contains(family)) families << family;
     }
-    out += QStringLiteral("- **%1** — %2 начертаний, OFL 1.1\n")
-               .arg(families.join(QStringLiteral(" и ")))
+    out += QStringLiteral("- **%1** — %2 styles, OFL 1.1\n")
+               .arg(families.join(QStringLiteral(" and ")))
                .arg(embeddedFaces().size());
     out += QStringLiteral(
-        "\nШрифты вшиты нарочно: имя семейства в настройках — это просьба, а не "
-        "обещание. Нет шрифта в системе — Qt молча подставит что найдётся, и вёрстка "
-        "поедет на первом же чужом запуске.\n");
+        "\nThe fonts are bundled on purpose: the family name in settings is a request, "
+        "not a promise. If the font is missing from the system, Qt silently substitutes "
+        "whatever it finds, and the layout drifts on the first foreign machine.\n");
 
     // Данные не заперты — это уговор владельца, и место ему здесь, рядом с
     // версиями: человек, читающий «о программе», как раз и спрашивает, что
     // будет с его заметками, если программа исчезнет.
     out += QStringLiteral(
-        "\n## Данные не заперты\n\n"
-        "Заметка — обычный markdown в UTF-8, вложение — обычный файл рядом. "
-        "Хранилище читается и правится без этой программы: любым редактором, "
-        "любым скриптом, чем угодно. Полное описание формата — во вкладке "
-        "«Формат хранилища».\n");
+        "\n## Your data is not locked in\n\n"
+        "A note is plain markdown in UTF-8, an attachment is a plain file next to it. "
+        "The store can be read and edited without this program: with any editor, "
+        "any script, anything at all. The full format description is in the "
+        "“Store format” tab.\n");
     return out;
 }
 
@@ -108,7 +108,7 @@ AboutWindow::AboutWindow(QWidget* parent) : QDialog(parent) {
         tabs_->addTab(markdownPage(embeddedText(doc.path), tabs_),
                       QString::fromUtf8(doc.title));
 
-    tabs_->addTab(markdownPage(buildFactsMarkdown(), tabs_), QStringLiteral("Сборка"));
+    tabs_->addTab(markdownPage(buildFactsMarkdown(), tabs_), QStringLiteral("Build"));
 
     // Лицензии — одной страницей, а не списком с выбором: их одиннадцать, и
     // человек, который сюда пришёл, ищет либо одну конкретную (поиском по
@@ -119,7 +119,7 @@ AboutWindow::AboutWindow(QWidget* parent) : QDialog(parent) {
                         .arg(QString::fromUtf8(item.name), QString::fromUtf8(item.license),
                              QString::fromUtf8(item.what), embeddedText(item.path).trimmed());
     }
-    tabs_->addTab(markdownPage(licenses, tabs_), QStringLiteral("Лицензии"));
+    tabs_->addTab(markdownPage(licenses, tabs_), QStringLiteral("Licenses"));
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);

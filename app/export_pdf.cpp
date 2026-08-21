@@ -281,7 +281,7 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
 
     std::string text;
     if (!readAll(notePath, text)) {
-        report.error = QStringLiteral("не прочитать заметку: %1").arg(notePath);
+        report.error = QStringLiteral("cannot read note: %1").arg(notePath);
         return report;
     }
 
@@ -339,7 +339,7 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
     const qreal pageWidth = paint.width();
     const qreal pageHeight = paint.height();
     if (pageWidth < 1.0 || pageHeight < 1.0) {
-        report.error = QStringLiteral("поля больше самой страницы");
+        report.error = QStringLiteral("margins are larger than the page itself");
         return report;
     }
 
@@ -413,7 +413,7 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
     report.pageWidth = pageWidth;
     const qreal docHeight = view.document()->documentLayout()->documentSize().height();
     if (docHeight <= 0.0) {
-        report.error = QStringLiteral("в заметке нечего печатать");
+        report.error = QStringLiteral("nothing in the note to print");
         return report;
     }
 
@@ -421,7 +421,7 @@ ExportReport exportPdf(const QString& notePath, const QString& targetPath,
 
     QPainter painter;
     if (!painter.begin(&writer)) {
-        report.error = QStringLiteral("не создать PDF: %1").arg(targetPath);
+        report.error = QStringLiteral("cannot create PDF: %1").arg(targetPath);
         return report;
     }
     // Сколько пикселей самой картинки приходится на логическую единицу

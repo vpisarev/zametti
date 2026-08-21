@@ -909,16 +909,16 @@ void checkMatchesBuild(const std::vector<Piece>& to, const QTextDocument& target
     if (want == got) return;
     const QStringList wantLines = want.split(QLatin1Char('\n'));
     const QStringList gotLines = got.split(QLatin1Char('\n'));
-    qWarning().noquote() << "заплатка разошлась со сборкой: строк у сборки" << wantLines.size()
-                         << "у заплатки" << gotLines.size();
+    qWarning().noquote() << "patch diverged from full build: build lines" << wantLines.size()
+                         << "patch lines" << gotLines.size();
     for (qsizetype i = 0; i < qMax(wantLines.size(), gotLines.size()); ++i) {
-        const QString a = i < wantLines.size() ? wantLines.at(i) : QStringLiteral("<нет строки>");
-        const QString b = i < gotLines.size() ? gotLines.at(i) : QStringLiteral("<нет строки>");
+        const QString a = i < wantLines.size() ? wantLines.at(i) : QStringLiteral("<no line>");
+        const QString b = i < gotLines.size() ? gotLines.at(i) : QStringLiteral("<no line>");
         if (a == b) continue;
-        qWarning().noquote() << "строка" << i << "\n  сборка:  " << a.left(400)
-                             << "\n  заплатка:" << b.left(400);
+        qWarning().noquote() << "line" << i << "\n  build: " << a.left(400)
+                             << "\n  patch: " << b.left(400);
     }
-    Q_ASSERT(!"документ разошёлся с полной сборкой");
+    Q_ASSERT(!"document diverged from a full rebuild");
 }
 #endif
 

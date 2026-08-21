@@ -25,28 +25,28 @@ bool isAttachment(const QString& suffix) {
 
 QString human(qint64 bytes) {
     if (bytes >= 1024 * 1024)
-        return QStringLiteral("%1 МБ").arg(double(bytes) / 1048576.0, 0, 'f', 1);
-    return QStringLiteral("%1 КБ").arg(double(bytes) / 1024.0, 0, 'f', 0);
+        return QStringLiteral("%1 MB").arg(double(bytes) / 1048576.0, 0, 'f', 1);
+    return QStringLiteral("%1 KB").arg(double(bytes) / 1024.0, 0, 'f', 0);
 }
 
 }  // namespace
 
 bool recompressStore(const RecompressOptions& options, RecompressReport& report) {
     if (options.root.isEmpty()) {
-        report.problems << QStringLiteral("не сказано, какое хранилище обрабатывать");
+        report.problems << QStringLiteral("no store named to process");
         return false;
     }
     // Главная защита от опечатки: без явного --id команда не делает НИЧЕГО.
     if (options.id.isEmpty()) {
         report.problems << QStringLiteral(
-            "не сказано, что пережимать. Одну картинку — «--id <id>», все — «--id all». "
-            "Умолчания у этого ключа нет намеренно: пережатие необратимо.");
+            "nothing named to recompress. One image — «--id <id>», all of them — «--id all». "
+            "This key deliberately has no default: recompression is irreversible.");
         return false;
     }
 
     QDir dir(options.root);
     if (!dir.exists()) {
-        report.problems << QStringLiteral("нет каталога %1").arg(options.root);
+        report.problems << QStringLiteral("no directory %1").arg(options.root);
         return false;
     }
 
@@ -59,8 +59,8 @@ bool recompressStore(const RecompressOptions& options, RecompressReport& report)
         names << name;
     }
     if (names.isEmpty()) {
-        report.problems << (all ? QStringLiteral("во что вкладывать нечего: картинок не нашлось")
-                                : QStringLiteral("картинки с id %1 в хранилище нет")
+        report.problems << (all ? QStringLiteral("nothing to work on: no images found")
+                                : QStringLiteral("no image with id %1 in the store")
                                       .arg(options.id));
         return false;
     }
@@ -77,7 +77,7 @@ bool recompressStore(const RecompressOptions& options, RecompressReport& report)
         if (!r.ok()) {
             ++report.failed;
             report.bytesAfter += before;
-            report.lines << QStringLiteral("%1: не тронута — %2").arg(name, r.message);
+            report.lines << QStringLiteral("%1: untouched — %2").arg(name, r.message);
             ok = false;
             continue;
         }
@@ -95,7 +95,7 @@ bool recompressStore(const RecompressOptions& options, RecompressReport& report)
             if (f.open(QIODevice::ReadOnly) && f.readAll() == r.bytes) {
                 ++report.untouched;
                 report.bytesAfter += before;
-                report.lines << QStringLiteral("%1: уже такая, как надо (%2)")
+                report.lines << QStringLiteral("%1: already as it should be (%2)")
                                     .arg(name, routeName(r.route));
                 continue;
             }
@@ -106,7 +106,7 @@ bool recompressStore(const RecompressOptions& options, RecompressReport& report)
         if (r.bytes.size() >= before && r.route != Route::AsIs) {
             ++report.untouched;
             report.bytesAfter += before;
-            report.lines << QStringLiteral("%1: оставлена — пережатие не уменьшило (%2 → %3)")
+            report.lines << QStringLiteral("%1: kept — recompression did not shrink it (%2 → %3)")
                                 .arg(name, human(before), human(r.bytes.size()));
             continue;
         }
@@ -118,7 +118,7 @@ bool recompressStore(const RecompressOptions& options, RecompressReport& report)
                                 human(r.bytes.size()));
         if (r.size.width > 0) what += QStringLiteral(", %1x%2").arg(r.size.width).arg(r.size.height);
         if (!r.message.isEmpty()) what += QStringLiteral(" — %1").arg(r.message);
-        if (!sameFile) what += QStringLiteral(" (стала %1)").arg(newName);
+        if (!sameFile) what += QStringLiteral(" (now %1)").arg(newName);
         report.lines << what;
 
         if (options.dryRun) continue;
@@ -128,20 +128,20 @@ bool recompressStore(const RecompressOptions& options, RecompressReport& report)
         QSaveFile out(newPath);
         if (!out.open(QIODevice::WriteOnly) || out.write(r.bytes) != r.bytes.size() ||
             !out.commit()) {
-            report.problems << QStringLiteral("не записалась %1").arg(newName);
+            report.problems << QStringLiteral("failed to write %1").arg(newName);
             ok = false;
             continue;
         }
         // Старый файл удаляем ТОЛЬКО после того, как новый записан целиком.
         if (!sameFile && !QFile::remove(path))
-            report.problems << QStringLiteral("не удалось убрать прежний %1").arg(name);
+            report.problems << QStringLiteral("failed to remove the old %1").arg(name);
     }
 
     report.lines << QString();
     report.lines << QStringLiteral(
-        "Пережатие необратимо — кроме транскодированных JPEG, которые собираются обратно "
-        "байт в байт. Пока не проверили результат глазами, эталонное дерево импорта стоит "
-        "сохранить.");
+        "Recompression is irreversible — except for transcoded JPEGs, which rebuild "
+        "byte for byte. Until the result has been checked by eye, keep the reference "
+        "import tree.");
     return ok;
 }
 

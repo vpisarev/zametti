@@ -255,7 +255,7 @@ void checkFiles(const QString& root) {
         // 6000x4000 при 16 битах просят 183 МБ; ставим потолок вдвое ниже.
         ZT_TRUE("потолок разжатия сработал",
                 !readTiff(deep, &img, &err, 90LL * 1024 * 1024));
-        ZT_TRUE("и объяснил, почему: " + err.toStdString(), err.contains("потолок"));
+        ZT_TRUE("и объяснил, почему: " + err.toStdString(), err.contains("ceiling"));
         // Проверка обязана срабатывать ДО чтения строк, иначе она бесполезна:
         // память уже была бы занята.
         ZT_TRUE("картинка не создавалась", img.isNull());

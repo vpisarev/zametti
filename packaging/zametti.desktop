@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Zametti
-Comment=Заметки на markdown
+Comment=Notes in markdown
 Exec=zametti %f
 Icon=zametti
 Terminal=false

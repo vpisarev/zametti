@@ -3107,12 +3107,12 @@ bool gapInvariantHolds(const QTextDocument& doc, QString* problem) {
             // Пробельное содержимое допустимо: пока каретка на строке, пробелы
             // живут; уйдёт — их снимет tidyLeftLine.
             if (problem != nullptr)
-                *problem = QStringLiteral("блок %1: пустая строка с текстом").arg(number);
+                *problem = QStringLiteral("block %1: blank line with text").arg(number);
             return false;
         }
         if (!blocksWouldMerge(block.previous(), block)) continue;
         if (problem != nullptr) {
-            *problem = QStringLiteral("блок %1: слипся бы с предыдущим, а пустой строки нет")
+            *problem = QStringLiteral("block %1: would merge with the previous one, and there is no blank line")
                            .arg(number);
         }
         return false;
@@ -3140,7 +3140,7 @@ QString tidyProblem(const QTextDocument& doc, const QTextCursor& caret) {
                 block.blockNumber() == caretBlock && line == caretLine;
             if (!caretHere && i > 0 &&
                 (text.at(i - 1) == QLatin1Char(' ') || text.at(i - 1) == QLatin1Char('\t'))) {
-                return QStringLiteral("блок %1, строка %2: хвостовые пробелы")
+                return QStringLiteral("block %1, line %2: trailing spaces")
                     .arg(block.blockNumber())
                     .arg(line);
             }
@@ -3166,7 +3166,7 @@ bool listInvariantHolds(const QTextDocument& doc, QString* problem) {
             if (inside > prevLevel) {
                 if (problem != nullptr) {
                     *problem =
-                        QStringLiteral("блок %1: уровень %2 внутри пункта при уровне %3 выше")
+                        QStringLiteral("block %1: level %2 inside an item while level %3 is above")
                             .arg(number)
                             .arg(inside)
                             .arg(prevLevel);
@@ -3179,7 +3179,7 @@ bool listInvariantHolds(const QTextDocument& doc, QString* problem) {
         const int level = levelOf(block);
         if (level < 0 || level > prevLevel + 1) {
             if (problem != nullptr) {
-                *problem = QStringLiteral("блок %1: уровень %2 при уровне %3 у предыдущего")
+                *problem = QStringLiteral("block %1: level %2 while the previous one has level %3")
                                .arg(number)
                                .arg(level)
                                .arg(prevLevel);
@@ -3841,9 +3841,9 @@ bool ZDocument::tidyLine(const QTextCursor& left) {
 
 QString ZDocument::structureProblem() const {
     QString problem;
-    if (!listInvariantHolds(d_->text, &problem)) return QStringLiteral("списки: ") + problem;
+    if (!listInvariantHolds(d_->text, &problem)) return QStringLiteral("lists: ") + problem;
     if (!gapInvariantHolds(d_->text, &problem))
-        return QStringLiteral("пустые строки: ") + problem;
+        return QStringLiteral("blank lines: ") + problem;
     return {};
 }
 

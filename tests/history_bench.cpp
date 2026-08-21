@@ -164,9 +164,9 @@ Sample measure(const QString& root, const QString& sourceNote, int saves) {
 }
 
 QString human(qint64 bytes) {
-    if (bytes < 1024) return QStringLiteral("%1 Б").arg(bytes);
-    if (bytes < 1024 * 1024) return QStringLiteral("%1 КБ").arg(double(bytes) / 1024.0, 0, 'f', 1);
-    return QStringLiteral("%1 МБ").arg(double(bytes) / (1024.0 * 1024.0), 0, 'f', 2);
+    if (bytes < 1024) return QStringLiteral("%1 B").arg(bytes);
+    if (bytes < 1024 * 1024) return QStringLiteral("%1 KB").arg(double(bytes) / 1024.0, 0, 'f', 1);
+    return QStringLiteral("%1 MB").arg(double(bytes) / (1024.0 * 1024.0), 0, 'f', 2);
 }
 
 }  // namespace

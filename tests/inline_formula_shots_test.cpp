@@ -314,7 +314,7 @@ static int ztRunSuite(int argc, char** argv) {
 
     QString error;
     if (!zametti::Formulas::init(&error)) {
-        std::printf("движок формул не поднялся: %s\n", qPrintable(error));
+        std::printf("formula engine failed to start: %s\n", qPrintable(error));
         ++zt::g_checks;
         ++zt::g_failures;
         return zt::report("снимки строчных формул");

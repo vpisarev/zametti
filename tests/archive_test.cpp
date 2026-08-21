@@ -312,7 +312,7 @@ void checkLostFound() {
     }
     ZT_TRUE("бюро заведено", !bureau.isEmpty());
     ZT_TRUE("и это папка с заголовком",
-            read(bureau).find("# Бюро находок") != std::string::npos);
+            read(bureau).find("# Lost & found") != std::string::npos);
 
     const std::string found = read(QStringLiteral("01bb22222222bb"));
     ZT_TRUE("текущий порт — бюро",

@@ -172,7 +172,7 @@ static int ztRunSuite(int argc, char** argv) {
     ZT_TRUE("по имени: первая — директория",
             model.isDirectory(model.index(0, 0, all)));
     ZT_TRUE("по имени: Архив внизу",
-            titleAt(model, all, model.rowCount(all) - 1) == QStringLiteral("Архив"));
+            titleAt(model, all, model.rowCount(all) - 1) == QStringLiteral("Archive"));
     model.setRootSort(zametti::defaultOrder(zametti::SortKey::Modified));
     all = model.index(0, 0, QModelIndex());
 
@@ -180,11 +180,11 @@ static int ztRunSuite(int argc, char** argv) {
     ZT_TRUE("первый — без заголовка (2025)",
             titleAt(model, all, 0).startsWith(QStringLiteral("просто первая строка")));
     ZT_TRUE("Архив в самом низу",
-            titleAt(model, all, rootRows - 1) == QStringLiteral("Архив"));
+            titleAt(model, all, rootRows - 1) == QStringLiteral("Archive"));
     ZT_TRUE("пустая — «Без названия»",
             [&] {
                 for (int i = 0; i < rootRows; ++i)
-                    if (titleAt(model, all, i) == QStringLiteral("Без названия")) return true;
+                    if (titleAt(model, all, i) == QStringLiteral("Untitled")) return true;
                 return false;
             }());
 
@@ -194,8 +194,8 @@ static int ztRunSuite(int argc, char** argv) {
     bool cycle = false;
     for (int i = 0; i < rootRows; ++i) {
         const QString t = titleAt(model, all, i);
-        if (t.contains(QStringLiteral("[сирота]"))) { orphan = true; ++badges; }
-        if (t.contains(QStringLiteral("[цикл]"))) { cycle = true; ++badges; }
+        if (t.contains(QStringLiteral("[orphan]"))) { orphan = true; ++badges; }
+        if (t.contains(QStringLiteral("[cycle]"))) { cycle = true; ++badges; }
     }
     ZT_TRUE("сирота помечена", orphan);
     ZT_TRUE("цикл разорван и помечен", cycle);
@@ -248,7 +248,7 @@ static int ztRunSuite(int argc, char** argv) {
         bool seen = false;
         const QModelIndex inside = empty.index(0, 0, QModelIndex());
         for (int row = 0; row < empty.rowCount(inside); ++row)
-            if (titleAt(empty, inside, row) == QStringLiteral("Архив")) seen = true;
+            if (titleAt(empty, inside, row) == QStringLiteral("Archive")) seen = true;
         ZT_TRUE("в хранилище без архивных заметок Архив всё равно есть", seen);
     }
 

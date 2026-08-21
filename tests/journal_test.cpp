@@ -134,8 +134,8 @@ void checkCorruption(const QString& dir) {
     QString error;
     ZT_TRUE("испорченный слепок не отдаётся", !h.snapshotAt(id, 0, &got, &error));
     ZT_TRUE("и сказано, что именно не так",
-            error.contains(QStringLiteral("не распаковывается")) ||
-                error.contains(QStringLiteral("не сходится")));
+            error.contains(QStringLiteral("does not decompress")) ||
+                error.contains(QStringLiteral("mismatch")));
 }
 
 // Главный случай отказа от fsync: питание пропало посреди записи.
@@ -190,7 +190,7 @@ void checkForeignFile(const QString& dir) {
     file.write("это вообще не журнал, а просто текст");
     file.close();
     ZT_TRUE("чужой файл отвергается", !h.read(junkId, &read, &error));
-    ZT_TRUE("и сказано, что он не наш", error.contains(QStringLiteral("не журнал")));
+    ZT_TRUE("и сказано, что он не наш", error.contains(QStringLiteral("not a zametti journal")));
 
     // Пустой файл — это пустой журнал: так выглядит только что созданный.
     const QString blankId = QStringLiteral("пустой");
@@ -214,7 +214,7 @@ void checkForeignFile(const QString& dir) {
     ff.write(blob);
     ff.close();
     ZT_TRUE("журнал незнакомой версии отвергается", !h.read(futureId, &read, &error));
-    ZT_TRUE("и версия названа", error.contains(QStringLiteral("версии 9")));
+    ZT_TRUE("и версия названа", error.contains(QStringLiteral("version 9")));
 }
 
 // Шкала прореживания. Времена задаются напрямую, чтобы проверять правило, а

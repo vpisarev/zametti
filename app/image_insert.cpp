@@ -86,7 +86,7 @@ QString writeFresh(const QString& dir, const QString& suffix, const QByteArray& 
         const int fd = ::open(path.constData(), O_WRONLY | O_CREAT | O_EXCL, 0644);
         if (fd < 0) {
             if (errno == EEXIST) continue;   // редчайшая коллизия — берём другой id
-            *error = QStringLiteral("не удалось создать файл вложения в %1").arg(dir);
+            *error = QStringLiteral("could not create an attachment file in %1").arg(dir);
             return {};
         }
         qsizetype at = 0;
@@ -105,10 +105,10 @@ QString writeFresh(const QString& dir, const QString& suffix, const QByteArray& 
         // Недописанное убираем: половина картинки в хранилище хуже, чем её
         // отсутствие, — она и покажется сломанной, и место займёт.
         ::unlink(path.constData());
-        *error = QStringLiteral("вложение не записалось целиком");
+        *error = QStringLiteral("attachment was not written in full");
         return {};
     }
-    *error = QStringLiteral("не нашлось свободного имени для вложения");
+    *error = QStringLiteral("no free name found for the attachment");
     return {};
 }
 
@@ -116,7 +116,7 @@ StoredImage finish(const ImportResult& r, const QString& storeDir, const QString
                    qint64 takenAt = 0) {
     StoredImage out;
     if (!r.ok()) {
-        out.error = r.message.isEmpty() ? QStringLiteral("картинка не принята") : r.message;
+        out.error = r.message.isEmpty() ? QStringLiteral("image not accepted") : r.message;
         return out;
     }
     out.fileName = writeFresh(storeDir, r.extension, r.bytes, &out.error, takenAt, &out.duplicate);

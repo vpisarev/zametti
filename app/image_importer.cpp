@@ -44,7 +44,7 @@ public slots:
             }
             const QString source = paths.isEmpty() ? QString() : paths.at(i);
             const QString name =
-                source.isEmpty() ? QStringLiteral("из буфера") : QFileInfo(source).fileName();
+                source.isEmpty() ? QStringLiteral("from clipboard") : QFileInfo(source).fileName();
             emit progress(done, total, name);
 
             ImportedImage out;
