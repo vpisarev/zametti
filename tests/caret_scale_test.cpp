@@ -77,6 +77,50 @@ int alienFrames(View& view) {
     return frames;
 }
 
+// ТОЛЩИНА КАРЕТКИ НЕ ЗАВИСИТ ОТ ТОГО, ГДЕ ОНА СТОИТ (нашёл владелец: «курсор
+// разной толщины в зависимости от позиции в строке»). На дробном масштабе
+// целое число ЛОГИЧЕСКИХ пикселей ложится на физическую сетку по-разному, и
+// заливка накрывает то два пикселя, то три; caretBar это лечит привязкой края
+// и ширины к целым физическим. Замер без починки давал 3,2,2,3,3,2… во всех
+// видах сразу.
+//
+// Меряем в фазе «горит»: ход каретки будит мигание, и сразу после стрелки она
+// зажжена. Кадры, где её не видно, в счёт не идут — иначе проверка молча
+// померила бы фазу «погасла» и всегда была бы зелёной.
+template <class View>
+void checkCaretWidthIsSteady(View& view, const std::string& name) {
+    const QColor caret = zametti::settings().style().caretColor();
+    std::vector<int> widths;
+    for (int step = 0; step < 10; ++step) {
+        QTest::keyClick(&view, Qt::Key_Right);
+        QTest::qWait(25);
+        QImage shot = view.viewport()->grab().toImage();
+        shot.setDevicePixelRatio(1.0);
+        const int y = int(view.cursorRect().center().y() * view.devicePixelRatioF());
+        int run = 0;
+        int best = 0;
+        for (int x = 0; x < shot.width(); ++x) {
+            if (y >= 0 && y < shot.height() && shot.pixelColor(x, y) == caret) {
+                ++run;
+                best = qMax(best, run);
+            } else {
+                run = 0;
+            }
+        }
+        if (best > 0) widths.push_back(best);
+    }
+    ZT_TRUE(name + ": каретка видна хотя бы в пяти позициях (" +
+                std::to_string(widths.size()) + ")",
+            widths.size() >= 5);
+    std::string seen;
+    bool steady = true;
+    for (const int w : widths) {
+        seen += (seen.empty() ? "" : ",") + std::to_string(w);
+        if (w != widths.front()) steady = false;
+    }
+    ZT_TRUE(name + ": толщина одна во всех позициях (" + seen + ")", steady);
+}
+
 // Штатную каретку будят по-разному: фокус, стрелки, мышь, набор. Каждый
 // источник проверяется отдельно — фокусом её усыпить удавалось, а клавиши
 // будили снова.
@@ -99,6 +143,8 @@ void checkView(View& view, const std::string& name) {
     view.insertPlainText(QStringLiteral("x"));
     QTest::qWait(30);
     ZT_TRUE(name + ": после набора", alienFrames(view) == 0);
+
+    checkCaretWidthIsSteady(view, name);
 }
 
 int runChild() {
