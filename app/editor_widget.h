@@ -104,8 +104,9 @@ public:
     // заметки (кэш поиска переживает уход и возврат) ---
     // Замена. Обе — одна операция и один шаг отмены; «заменить все» тоже,
     // иначе откатывать пришлось бы по одному вхождению.
-    bool replaceCurrentMatch(const QString& with);
-    int replaceAllMatches(const QString& text, bool caseSensitive, const QString& with);
+    bool canReplace() const override { return !isReadOnly(); }
+    bool replaceCurrentMatch(const QString& with) override;
+    int replaceAllMatches(const QString& text, bool caseSensitive, const QString& with) override;
 
     // Файл изменился снаружи, а у нас есть несохранённые правки: пока человек
     // не решит, чьё содержимое брать, мы ничего не трогаем.

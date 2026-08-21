@@ -19,6 +19,7 @@
 #include "formula_object.h"
 #include "note_search.h"
 #include "table_object.h"
+#include "text_search_target.h"
 
 #include <QRectF>
 #include <QString>
@@ -102,7 +103,7 @@ private:
     NoteView* view_ = nullptr;
 };
 
-class NoteView : public QTextBrowser {
+class NoteView : public QTextBrowser, public TextSearchTarget {
     Q_OBJECT
 
 signals:
@@ -173,14 +174,18 @@ public:
     // маркеров разметки — ровно то, что видит человек, — и совпадение само
     // собой не пересекает границу блока (разделитель блоков в текст не
     // попадает).
-    int findMatches(const QString& text, bool caseSensitive);
-    int matchCount() const { return searchCache().count(); }
+    // Интерфейс «искомого» (TextSearchTarget): окно зовёт эти глаголы у любой
+    // страницы стека одинаково.
+    int findMatches(const QString& text, bool caseSensitive) override;
+    int matchCount() const override { return searchCache().count(); }
     // Какое совпадение сейчас текущее, с нуля; -1 — ни одного.
-    int currentMatch() const { return searchCache().current(); }
+    int currentMatch() const override { return searchCache().current(); }
     // Перейти к совпадению по кругу: -1 подхватывает ближайшее после каретки.
     void goToMatch(int index);
-    void stepMatch(int direction);
-    void clearMatches();
+    void stepMatch(int direction) override;
+    void clearMatches() override;
+    QString searchPreset() const override { return textCursor().selectedText(); }
+    QWidget& searchWidget() override { return *this; }
 
     // ПОКАЗАТЬ МЕСТО В ОКНЕ — ОДНО ПРАВИЛО НА ВСЕХ: F4 по разности, переход к
     // совпадению, каретка после правки, восстановление места при открытии

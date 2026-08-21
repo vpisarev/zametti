@@ -1626,33 +1626,21 @@ int main(int argc, char** argv) {
     // построению: панель-то одна.
     const auto searchRoot = [&] { return model.nodePath(QModelIndex()); };
 
-    // ГДЕ ИЩЕМ: в живой заметке или в показанном слепке истории. Механика
-    // поиска у обоих видов одна (NoteView), цель выбирается режимом.
-    const auto searchTarget = [&]() -> zametti::NoteView& {
+    // ГДЕ ИЩЕМ — ОДИН ВОПРОС НА ВСЕ РЕЖИМЫ. У страницы стека, которая сейчас
+    // на виду, спрашивается одно: «ты искомое» (TextSearchTarget), и дальше
+    // окно зовёт одни и те же глаголы. Прежде здесь ветвилось пять мест по
+    // markdown.active(): у заметки найденное живёт при заметке и адресуется
+    // блоками, у плоских видов — смещениями в тексте, но окну эта разница не
+    // нужна (долг из отчёта девятой сессии).
+    const auto searchTarget = [&]() -> zametti::TextSearchTarget& {
+        if (markdown.active()) return markdownView;
         if (history.active()) return historyView.textView();
         return editor;
     };
 
-    // В РЕЖИМЕ ИСХОДНИКА ИЩЕМ ПО ПЛОСКОМУ ТЕКСТУ. Ветка, а не третий случай в
-    // searchTarget: общего у двух поисков ровно ноль, кроме слова «поиск».
-    // Там найденное живёт при заметке и адресуется блоками и объектами, здесь —
-    // смещениями в тексте виджета.
     const auto updateInNoteSearch = [&](const QString& text) {
         const zametti::Query query = zametti::makeQuery(text);
-        if (markdown.active()) {
-            if (query.isEmpty()) {
-                markdownView.clearMatches();
-                findBar.setStatus(QString());
-                return;
-            }
-            const int found = markdownView.findMatches(query.needle, query.caseSensitive);
-            findBar.setStatus(found == 0 ? QStringLiteral("нет совпадений")
-                                         : QStringLiteral("%1/%2")
-                                               .arg(markdownView.currentMatch() + 1)
-                                               .arg(found));
-            return;
-        }
-        zametti::NoteView& target = searchTarget();
+        zametti::TextSearchTarget& target = searchTarget();
         if (query.isEmpty()) {
             target.clearMatches();
             findBar.setStatus(QString());
@@ -1684,7 +1672,7 @@ int main(int argc, char** argv) {
         resultsView.setVisible(!report.hits.isEmpty());
         // Счётчик слепка уже написан updateInNoteSearch; дописываем к нему
         // историю, иначе одно из двух чисел молча пропадёт.
-        zametti::NoteView& target = searchTarget();
+        zametti::TextSearchTarget& target = searchTarget();
         const QString inSnapshot = target.matchCount() > 0
                                        ? QStringLiteral("%1/%2 в слепке")
                                              .arg(target.currentMatch() + 1)
@@ -1701,15 +1689,7 @@ int main(int argc, char** argv) {
     };
 
     const auto showCounter = [&] {
-        if (markdown.active()) {
-            findBar.setStatus(markdownView.matchCount() == 0
-                                  ? QStringLiteral("нет совпадений")
-                                  : QStringLiteral("%1/%2")
-                                        .arg(markdownView.currentMatch() + 1)
-                                        .arg(markdownView.matchCount()));
-            return;
-        }
-        zametti::NoteView& target = searchTarget();
+        zametti::TextSearchTarget& target = searchTarget();
         if (target.matchCount() == 0) {
             findBar.setStatus(QStringLiteral("нет совпадений"));
             return;
@@ -1806,10 +1786,13 @@ int main(int argc, char** argv) {
                                ? zametti::journal::indexOfEntry(tl->journal(), stamp, digest)
                                : -1;
             if (at >= 0) history.enter(at);
+            // Прыжок на N-е вхождение в СЛЕПКЕ — у вида разности напрямую:
+            // goToMatch знает только он (у плоских видов такого понятия нет),
+            // и мы уже в режиме истории, показан именно он.
             const zametti::Query query = zametti::makeQuery(findBar.query());
-            zametti::NoteView& target = searchTarget();
-            target.findMatches(query.needle, query.caseSensitive);
-            target.goToMatch(ordinal);
+            zametti::NoteView& snapshot = historyView.textView();
+            snapshot.findMatches(query.needle, query.caseSensitive);
+            snapshot.goToMatch(ordinal);
             return;
         }
         if (file.isEmpty()) return;
@@ -1834,11 +1817,6 @@ int main(int argc, char** argv) {
 
     const auto stepSearch = [&](int direction) {
         if (findBar.isHidden()) return;
-        if (markdown.active()) {
-            markdownView.stepMatch(direction);
-            showCounter();
-            return;
-        }
         // В режиме истории F3 ходит по находкам ПОКАЗАННОГО СЛЕПКА: список
         // внизу про другие слепки, и прыгать по нему клавишей означало бы
         // менять показанную запись на каждое нажатие.
@@ -1860,32 +1838,25 @@ int main(int argc, char** argv) {
     QObject::connect(&findBar, &zametti::FindBar::findPrevious, &window,
                      [&] { stepSearch(-1); });
 
+    // ЗАМЕНА — ТОЖЕ У ИСКОМОГО. В режиме исходника это обычная правка текста:
+    // она ложится в СВОЙ буфер отмены режима, а в заметку попадёт одним куском
+    // при выходе. В слепке истории заменять нельзя, и об этом говорит сам
+    // слепок (canReplace), а не особый случай здесь.
     QObject::connect(&findBar, &zametti::FindBar::replaceOne, &window, [&] {
-        if (markdown.active()) {
-            // Замена в режиме — обычная правка текста: она ложится в СВОЙ буфер
-            // отмены режима, а в заметку попадёт одним куском при выходе.
-            markdownView.replaceCurrentMatch(findBar.replacement());
-            const zametti::Query query = zametti::makeQuery(findBar.query());
-            markdownView.findMatches(query.needle, query.caseSensitive);
-            showCounter();
-            return;
-        }
-        if (editor.currentMatch() < 0) editor.stepMatch(1);
-        editor.replaceCurrentMatch(findBar.replacement());
+        zametti::TextSearchTarget& target = searchTarget();
+        if (!target.canReplace()) return;
+        if (target.currentMatch() < 0) target.stepMatch(1);
+        target.replaceCurrentMatch(findBar.replacement());
         showCounter();
     });
     QObject::connect(&findBar, &zametti::FindBar::replaceAll, &window, [&] {
         const zametti::Query query = zametti::makeQuery(findBar.query());
         if (query.isEmpty()) return;
-        if (markdown.active()) {
-            findBar.setStatus(QStringLiteral("заменено: %1")
-                                  .arg(markdownView.replaceAllMatches(query.needle, query.caseSensitive,
-                                                               findBar.replacement())));
-            return;
-        }
-        const int replaced =
-            editor.replaceAllMatches(query.needle, query.caseSensitive, findBar.replacement());
-        findBar.setStatus(QStringLiteral("заменено: %1").arg(replaced));
+        zametti::TextSearchTarget& target = searchTarget();
+        if (!target.canReplace()) return;
+        findBar.setStatus(QStringLiteral("заменено: %1")
+                              .arg(target.replaceAllMatches(query.needle, query.caseSensitive,
+                                                            findBar.replacement())));
     });
 
     QObject::connect(&findBar, &zametti::FindBar::closed, &window, [&] {
@@ -1896,11 +1867,7 @@ int main(int argc, char** argv) {
         searchDebounce.stop();
         resultsView.hide();
         results.clear();
-        if (markdown.active()) {
-            markdownView.setFocus();
-            return;
-        }
-        searchTarget().setFocus();
+        searchTarget().searchWidget().setFocus();
     });
 
     const auto openFind = [&](zametti::FindBar::Mode requested) {
@@ -1921,8 +1888,7 @@ int main(int argc, char** argv) {
         }
         // Выделенное в редакторе (или в слепке, или в исходнике) — готовый
         // запрос: чаще всего ищут именно то, на что смотрят.
-        QString preset = markdown.active() ? markdownView.textCursor().selectedText()
-                                           : searchTarget().textCursor().selectedText();
+        QString preset = searchTarget().searchPreset();
         if (preset.contains(QChar::ParagraphSeparator)) preset.clear();
         findBar.open(mode, preset);
     };
