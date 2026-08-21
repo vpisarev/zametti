@@ -110,6 +110,7 @@ add_executable(zametti-tests
     status_bar_test.cpp
     list_test.cpp
     markdown_edit_test.cpp
+    markdown_history_test.cpp
     editor_test.cpp
     image_insert_test.cpp
     image_shots_test.cpp
