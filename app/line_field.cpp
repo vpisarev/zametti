@@ -156,9 +156,9 @@ void LineField::paintEvent(QPaintEvent* event) {
     if (!caret_.on() ||
         !caretShouldBeDrawn(hasFocus(), isReadOnly(), textCursor().hasSelection(), false))
         return;
-    QRect at = cursorRect();
-    at.setWidth(caretPixelWidth(settings().style().caretWidth(), 1.0));
-    painter.fillRect(at, settings().style().caretColor());
+    painter.fillRect(caretBar(cursorRect(), settings().style().caretWidth(), 1.0,
+                              devicePixelRatioF()),
+                     settings().style().caretColor());
 }
 
 }  // namespace zametti

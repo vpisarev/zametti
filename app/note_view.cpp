@@ -1875,9 +1875,9 @@ void NoteView::paintEvent(QPaintEvent* event) {
     painter.resetTransform();
     if (caretBlink_.on() && caretShouldBeDrawn(hasFocus(), isReadOnly(), textCursor().hasSelection(),
                                                caretOnDrawnObject())) {
-        QRect at = cursorRect();
-        at.setWidth(caretPixelWidth(docStyle().caretWidth(), displayScale()));
-        painter.fillRect(at, docStyle().caretColor());
+        painter.fillRect(caretBar(cursorRect(), docStyle().caretWidth(), displayScale(),
+                                  devicePixelRatioF()),
+                         docStyle().caretColor());
     }
 }
 

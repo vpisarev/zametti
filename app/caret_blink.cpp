@@ -1,5 +1,7 @@
 #include "caret_blink.h"
 
+#include <cmath>
+
 #include <QGuiApplication>
 #include <QStyleHints>
 #include <QtGlobal>
@@ -28,5 +30,12 @@ void CaretBlink::sleep() {
 }
 
 int caretPixelWidth(qreal width, qreal scale) { return qMax(1, qRound(width * scale)); }
+
+QRectF caretBar(const QRect& cursor, qreal width, qreal scale, qreal dpr) {
+    if (!(dpr > 0.0)) dpr = 1.0;
+    const qreal physical = qMax(1.0, std::round(width * scale * dpr));
+    const qreal left = std::round(cursor.left() * dpr) / dpr;
+    return QRectF(left, cursor.top(), physical / dpr, cursor.height());
+}
 
 }  // namespace zametti

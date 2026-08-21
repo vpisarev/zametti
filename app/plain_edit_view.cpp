@@ -174,9 +174,9 @@ void PlainEditView::paintEvent(QPaintEvent* event) {
     if (!caretBlink_.on() ||
         !caretShouldBeDrawn(hasFocus(), isReadOnly(), textCursor().hasSelection(), false))
         return;
-    QRect at = cursorRect();
-    at.setWidth(caretPixelWidth(settings().style().caretWidth(), zoom_));
-    painter.fillRect(at, settings().style().caretColor());
+    painter.fillRect(caretBar(cursorRect(), settings().style().caretWidth(), zoom_,
+                              devicePixelRatioF()),
+                     settings().style().caretColor());
 }
 
 // --- облик, масштаб, поля -----------------------------------------------------
