@@ -702,6 +702,30 @@ void checkNbspSurvives() {
           textOf(rig.editor));
 }
 
+// ESC НЕ ВЫВОДИТ ИЗ РЕЖИМА ИСХОДНИКА (решение владельца, refactor3): выход
+// накладывает всю набранную работу на заметку, и случайное нажатие клавиши под
+// рукой для этого не годится — выходят кнопкой [M]. У правки настроек Esc
+// остался: там выход безвреден.
+void checkEscapeKeepsMode() {
+    const QString path = writeNote(QStringLiteral("эскейп.md"), QStringLiteral("раз\n"));
+    Rig rig;
+    rig.editor.openFile(path);
+    QTest::qWait(20);
+    ZT_TRUE("вошли", rig.controller.enter());
+    QTextCursor edit = rig.view.textCursor();
+    edit.movePosition(QTextCursor::End);
+    edit.insertText(QStringLiteral("\nдва\n"));
+
+    QTest::keyClick(&rig.view, Qt::Key_Escape);
+    QTest::qWait(10);
+    ZT_TRUE("режим идёт после Esc", rig.controller.active());
+    ZT_TRUE("и набранное на месте", rig.view.source().contains(QStringLiteral("два")));
+
+    // Выход — кнопкой (её зовёт окно тем же глаголом).
+    ZT_TRUE("кнопка вывела", rig.controller.leave() > 0);
+    ZT_TRUE("режим кончился", !rig.controller.active());
+}
+
 }  // namespace
 
 TEST(MarkdownEdit, All) {
@@ -719,5 +743,6 @@ TEST(MarkdownEdit, All) {
     checkCaretLook();
     checkUndoAtBottomLeavesToHistory();
     checkNbspSurvives();
+    checkEscapeKeepsMode();
     checkOwnerNote();
 }

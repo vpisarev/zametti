@@ -283,16 +283,16 @@ TEST(SettingsEdit, All) {
 namespace {
 
 void checkEscapeGoesThroughWindowShortcut() {
-    // Порядок в самой функции: выйти из режима — после того, как закрылось всё,
-    // что открыто ПОВЕРХ текста.
+    // Порядок в самой функции: выйти из правки настроек — после того, как
+    // закрылось всё, что открыто ПОВЕРХ текста.
     using zametti::EscapeAction;
-    ZT_TRUE("режим закрывается, когда больше нечего закрывать",
+    ZT_TRUE("правка настроек закрывается, когда больше нечего закрывать",
             zametti::escapeActionFor(false, false, false, true) == EscapeAction::LeaveMode);
-    ZT_TRUE("панель поиска раньше режима",
+    ZT_TRUE("панель поиска раньше неё",
             zametti::escapeActionFor(false, false, true, true) == EscapeAction::CloseFindBar);
     ZT_TRUE("поле языка раньше всех",
             zametti::escapeActionFor(true, false, true, true) == EscapeAction::CloseLanguageEditor);
-    ZT_TRUE("без режима — как было",
+    ZT_TRUE("без правки настроек — как было",
             zametti::escapeActionFor(false, false, false, false) == EscapeAction::Nothing);
 }
 
