@@ -24,7 +24,9 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QApplication>
 #include <QImage>
+#include <QMenu>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTextBlock>
@@ -359,6 +361,40 @@ void checkSelectionForeground() {
           zametti::selectedTextColour(plain, view.palette()).name().toStdString());
 }
 
+// ЦВЕТА ВЫДЕЛЕНИЯ ДЕЙСТВУЮТ И В КОНТЕКСТНЫХ МЕНЮ (просьба владельца): они
+// рисуются палитрой ПРИЛОЖЕНИЯ, и без неё пункт подсвечивался бы системным
+// синим при жёлтом выделении в заметке. Спрашивается действием — палитрой
+// свежесозданного меню, а не чтением кода.
+void checkMenuFollowsSelectionColours() {
+    const QPalette before = QApplication::palette();
+
+    zametti::ZDocStyle look = zametti::settings().style();
+    look.setSelectionBackground(QColor(0x2b, 0x6c, 0xb0));
+    look.setSelectionForeground(QColor(0xff, 0xff, 0xff));
+    zametti::applySelectionPaletteToApp(look);
+
+    QMenu menu;
+    menu.addAction(QStringLiteral("пункт"));
+    ZT_EQ("фон подсветки меню — цвет выделения", std::string("#2b6cb0"),
+          menu.palette().color(QPalette::Highlight).name().toStdString());
+    ZT_EQ("текст подсветки меню — цвет текста выделения", std::string("#ffffff"),
+          menu.palette().color(QPalette::HighlightedText).name().toStdString());
+    ZT_EQ("и у неактивной группы тоже", std::string("#2b6cb0"),
+          menu.palette().color(QPalette::Inactive, QPalette::Highlight).name().toStdString());
+
+    // Прозрачный selectionForeground и тут значит «выведи сам».
+    look.setSelectionForeground(QColor(0, 0, 0, 0));
+    zametti::applySelectionPaletteToApp(look);
+    QMenu plain;
+    ZT_EQ("без настройки — обычный цвет текста",
+          plain.palette().color(QPalette::Text).name().toStdString(),
+          plain.palette().color(QPalette::HighlightedText).name().toStdString());
+
+    // Палитра приложения — общая на процесс: возвращаем как было, наборы идут
+    // одним процессом.
+    QApplication::setPalette(before);
+}
+
 }  // namespace
 
 TEST(SettingsEdit, All) {
@@ -373,6 +409,7 @@ TEST(SettingsEdit, All) {
     checkFontMatchesSourceMode();
     checkNoteOpeningLeavesMode();
     checkSelectionForeground();
+    checkMenuFollowsSelectionColours();
 }
 
 // ЯРЛЫК ОКНА СЪЕДАЕТ Esc (дефект, найденный ревью refactor3). В живом окне
