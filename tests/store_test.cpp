@@ -82,6 +82,14 @@ static int ztRunSuite(int argc, char** argv) {
         ZT_TRUE("хранилище заведено", store::initStore(root, &error));
         const QString path = store::newNote(root, QString(), &error);
         const QString noteId = QFileInfo(path).completeBaseName();
+        {
+            // Свежая заметка — наша с первого байта: версия формата стоит
+            // сразу, первой строкой шапки (refactor3).
+            QFile fresh(path);
+            ZT_TRUE("свежая заметка читается", fresh.open(QIODevice::ReadOnly));
+            ZT_TRUE("и начинается с version: 1",
+                    fresh.readAll().startsWith("<!-- zametti\nversion: 1\ncreated: "));
+        }
 
         // История заметки: пара сохранений, как в жизни.
         journal::History history(root);
@@ -449,7 +457,7 @@ static int ztRunSuite(int argc, char** argv) {
         ZT_TRUE("new создал заметку", !path.isEmpty() && QFileInfo::exists(path));
         const std::string bytes = readAll(path);
         ZT_TRUE("в заметке каркас метаданных — канон без хвостовой пустой",
-                bytes.rfind("<!-- zametti\ncreated: ", 0) == 0 &&
+                bytes.rfind("<!-- zametti\nversion: 1\ncreated: ", 0) == 0 &&
                     bytes.compare(bytes.size() - 4, 4, "-->\n") == 0);
         const QString id = QFileInfo(path).completeBaseName();
         ZT_TRUE("имя — корректный id", isValidNoteId(id.toStdString()));

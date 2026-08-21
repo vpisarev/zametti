@@ -125,6 +125,7 @@ add_executable(zametti-tests
     image_test.cpp
     clipboard_test.cpp
     external_change_test.cpp
+    version_stamp_test.cpp
     resources_test.cpp
     toolbar_test.cpp
     live_title_test.cpp

@@ -189,11 +189,42 @@ void checkFileRound() {
     ZT_EQ("у пустой заголовок по умолчанию", "Без названия", empty.title().toStdString());
 }
 
+// ВЕРСИЯ ФОРМАТА В ШАПКЕ — ЛЕНИВО (решение владельца, refactor3): `version: 1`
+// получает только та заметка, которую программа ПИШЕТ: ставится записью
+// (NoteEditor::save, набор Save), а не штампом modified — штамп ставится и
+// откатывается ещё до решения «сохранять нечего». Здесь — сама операция шапки:
+// первой строкой, более новую версию не понижает и не удваивает.
+void checkVersionStamp() {
+    ZNote note;
+    ZT_TRUE("разобрана", note.load("<!-- zametti\ncreated: 2024-05-01T10:00:00+02:00\n-->\n\nтело\n"));
+    ZT_TRUE("версии в старой заметке нет", note.headerValue(QStringLiteral("version")).isEmpty());
+    note.stampModified();
+    ZT_TRUE("штамп modified версию НЕ ставит", note.headerValue(QStringLiteral("version")).isEmpty());
+    note.header().ensureVersion();
+    ZT_EQ("ensureVersion ставит version: 1", "1", note.headerValue(QStringLiteral("version")).toStdString());
+    ZT_TRUE("и первой строкой шапки",
+            note.toMarkdown().rfind("<!-- zametti\nversion: 1\ncreated: ", 0) == 0);
+
+    ZNote newer;
+    ZT_TRUE("разобрана", newer.load("<!-- zametti\nversion: 2\n-->\n\nтело\n"));
+    newer.header().ensureVersion();
+    ZT_EQ("более новая версия не понижается", "2", newer.headerValue(QStringLiteral("version")).toStdString());
+    ZT_TRUE("и не удваивается", newer.toMarkdown().find("version: 2\nversion") == std::string::npos);
+
+    ZNote bare;
+    ZT_TRUE("без шапки", bare.load("просто текст\n") && !bare.hasHeader());
+    bare.header().ensureVersion();
+    ZT_TRUE("у безшапочной версия заводит шапку", bare.hasHeader());
+    ZT_EQ("шапка из одной строки и пустой строки за ней",
+          "<!-- zametti\nversion: 1\n-->\n\nпросто текст\n", bare.toMarkdown());
+}
+
 }  // namespace
 
 TEST(ZNote, All) {
     checkHistory();
     checkNote();
     checkFileRound();
+    checkVersionStamp();
     EXPECT_EQ(0, zt::freshFailures());
 }
