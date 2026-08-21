@@ -6,18 +6,26 @@
 
 namespace zametti {
 
-// Шапка заметки — HTML-комментарий в начале файла. Строку modified ищем только
-// в ней: слово «modified:» в тексте заметки трогать нельзя.
+// Шапка заметки — HTML-комментарий в начале файла. Строки modified и version
+// ищем только в ней: слово «modified:» в тексте заметки трогать нельзя.
+//
+// `version` — тоже не содержимое (refactor3): версия формата встаёт в шапку
+// лениво, при первой записи правленой заметки, и без этой оговорки возврат
+// отменой к состоянию, записанному ДО неё, считался бы новой записью журнала
+// (набор HistoryWrite это и поймал), а заметка, вернувшаяся к исходному
+// тексту, — изменённой.
 bool sameApartFromModified(const QByteArray& a, const QByteArray& b) {
     const auto stripped = [](const QByteArray& text) {
         const qsizetype head = text.indexOf("-->");
         if (head < 0) return text;
-        const qsizetype at = text.indexOf("\nmodified:");
-        if (at < 0 || at > head) return text;
-        const qsizetype eol = text.indexOf('\n', at + 1);
-        if (eol < 0) return text;
         QByteArray out = text;
-        out.remove(at, eol - at);
+        for (const char* key : {"\nmodified:", "\nversion:"}) {
+            const qsizetype at = out.indexOf(key);
+            if (at < 0 || at > out.indexOf("-->")) continue;
+            const qsizetype eol = out.indexOf('\n', at + 1);
+            if (eol < 0) continue;
+            out.remove(at, eol - at);
+        }
         return out;
     };
     if (a.size() == b.size() && a == b) return true;
