@@ -379,6 +379,15 @@ QJsonObject settingsToJson(const ZSettings& a) {
                      {QStringLiteral("headingStep"), a.markdownHighlighting().headingStep()},
                      {QStringLiteral("largeHeadingLevels"),
                       a.markdownHighlighting().largeHeadingLevels()}}},
+        {QStringLiteral("jsonEditing"),
+         QJsonObject{{QStringLiteral("key"), colorToString(a.jsonEditing().key())},
+                     {QStringLiteral("string"), colorToString(a.jsonEditing().string())},
+                     {QStringLiteral("number"), colorToString(a.jsonEditing().number())},
+                     {QStringLiteral("keyword"), colorToString(a.jsonEditing().keyword())},
+                     {QStringLiteral("comment"), colorToString(a.jsonEditing().comment())},
+                     {QStringLiteral("punctuation"), colorToString(a.jsonEditing().punctuation())},
+                     {QStringLiteral("tabIndent"), a.jsonEditing().tabIndent()},
+                     {QStringLiteral("commentKey"), a.jsonEditing().commentKey()}}},
         {QStringLiteral("formulas"), formulas},
         {QStringLiteral("images"), images},
         {QStringLiteral("shortcuts"), shortcuts},
@@ -420,6 +429,16 @@ void settingsFromJson(const QJsonObject& root, ZSettings& a) {
             &ZSettings::MarkdownHighlighting::setHeadingStep);
     readInt(markdown, "largeHeadingLevels", a.markdownHighlighting(),
             &ZSettings::MarkdownHighlighting::setLargeHeadingLevels);
+
+    const QJsonObject json = root.value(QStringLiteral("jsonEditing")).toObject();
+    readColor(json, "key", a.jsonEditing(), &ZSettings::JsonEditing::setKey);
+    readColor(json, "string", a.jsonEditing(), &ZSettings::JsonEditing::setString);
+    readColor(json, "number", a.jsonEditing(), &ZSettings::JsonEditing::setNumber);
+    readColor(json, "keyword", a.jsonEditing(), &ZSettings::JsonEditing::setKeyword);
+    readColor(json, "comment", a.jsonEditing(), &ZSettings::JsonEditing::setComment);
+    readColor(json, "punctuation", a.jsonEditing(), &ZSettings::JsonEditing::setPunctuation);
+    readInt(json, "tabIndent", a.jsonEditing(), &ZSettings::JsonEditing::setTabIndent);
+    readString(json, "commentKey", a.jsonEditing(), &ZSettings::JsonEditing::setCommentKey);
 
     const QJsonObject tables = root.value(QStringLiteral("tables")).toObject();
     readReal(tables, "cellPadding", a.tables(), &ZSettings::Tables::setCellPadding);
@@ -792,23 +811,19 @@ QByteArray stripJsonSugar(const QByteArray& json) {
     return stripTrailingCommas(stripComments(json));
 }
 
-bool writeConfigTemplate(QString* error) {
-    const QString path = configPath();
-    if (QFile::exists(path)) return true;   // там правки человека
-    QDir().mkpath(QFileInfo(path).absolutePath());
-
+QByteArray configTemplate() {
     // Всё тело — комментарием, снаружи пустой объект. Так файл и остаётся
     // действующим (отклонений нет), и служит меню: раскомментировал строку —
     // получил отклонение.
     const QList<QByteArray> lines = defaultSettingsJson().split('\n');
     QByteArray out =
-        "// Конфиг zametti. Здесь перечислено ВСЁ, что можно покрутить, со\n"
-        "// значениями по умолчанию, и всё закомментировано: действующий конфиг —\n"
-        "// это список ОТКЛОНЕНИЙ от умолчаний, а не их копия. Раскомментируйте\n"
-        "// строку (уберите «//» в начале) — и значение станет вашим.\n"
+        "// zametti configuration. EVERYTHING that can be tuned is listed here with\n"
+        "// its default value, and everything is commented out: the effective config\n"
+        "// is the list of DEVIATIONS from the defaults, not a copy of them.\n"
+        "// Uncomment a line (remove the leading \"//\") to make the value yours.\n"
         "//\n"
-        "// Комментарии понимаются только такие: «//» до конца строки. Внутри\n"
-        "// кавычек они не срезаются, так что «https://» писать можно.\n"
+        "// Only \"//\" comments to the end of line are understood. They are not\n"
+        "// stripped inside quotes, so \"https://\" is fine.\n"
         "{\n";
     for (const QByteArray& line : lines) {
         const QByteArray trimmed = line.trimmed();
@@ -816,7 +831,15 @@ bool writeConfigTemplate(QString* error) {
         out += "    // " + line.trimmed() + "\n";
     }
     out += "}\n";
+    return out;
+}
 
+bool writeConfigTemplate(QString* error) {
+    const QString path = configPath();
+    if (QFile::exists(path)) return true;   // там правки человека
+    QDir().mkpath(QFileInfo(path).absolutePath());
+
+    const QByteArray out = configTemplate();
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         if (error != nullptr)
@@ -949,6 +972,8 @@ bool loadSettings(QString* error, QStringList* unknown) {
             return false;
         }
         if (unknown != nullptr) *unknown = unknownConfigKeys(doc.object());
+        // С чистого листа: конфиг — отклонения от умолчаний (см. заголовок).
+        g_settings = ZSettings{};
         settingsFromJson(doc.object(), g_settings);
     }
     applyImageAllocationLimit();

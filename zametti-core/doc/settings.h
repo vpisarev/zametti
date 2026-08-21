@@ -996,6 +996,30 @@ struct ZSettings {
         ZM_SETTING(int, largeHeadingLevels, LargeHeadingLevels, 2, 0, 6)
     };
 
+    // --- правка конфига внутри программы ------------------------------------
+    //
+    // Редактор config.json в самой программе (refactor3, решение владельца):
+    // подсветка JSON (ZSyntaxHighlighterJSON), стоп табуляции, сочетание
+    // комментирования строк. Своя секция конфига (jsonEditing) — это не облик
+    // заметки и не подсветка markdown, а отдельный инструмент со своими цветами.
+    struct JsonEditing {
+        // Ключи объектов — акцентом (синий, как ссылки); строковые значения —
+        // зелёным; числа — охрой; true/false/null — лиловым; // комментарии —
+        // серым; скобки, двоеточия и запятые — приглушённым.
+        ZM_SETTING_PLAIN(QColor, key, Key, 0x32, 0x5c, 0xc0)
+        ZM_SETTING_PLAIN(QColor, string, String, 0x2e, 0x7d, 0x32)
+        ZM_SETTING_PLAIN(QColor, number, Number, 0xb0, 0x5a, 0x00)
+        ZM_SETTING_PLAIN(QColor, keyword, Keyword, 0x7a, 0x3e, 0x9d)
+        ZM_SETTING_PLAIN(QColor, comment, Comment, 0x80, 0x80, 0x80)
+        ZM_SETTING_PLAIN(QColor, punctuation, Punctuation, 0x50, 0x56, 0x5e)
+        // Tab ставит пробелы до ближайшего стопа этой ширины; Enter держит
+        // отступ предыдущей строки.
+        ZM_SETTING(int, tabIndent, TabIndent, 4, 1, 16)
+        // Закомментировать/раскомментировать строку или выделенные строки
+        // («// » в начале). Список через точку с запятой, как все сочетания.
+        ZM_SETTING_PLAIN(QString, commentKey, CommentKey, QStringLiteral("Ctrl+/"))
+    };
+
     // --- формулы --------------------------------------------------------
     //
     // Движок — вендоренный MicroTeX, гарнитура — Euler Math 0.75 (выбор
@@ -1091,6 +1115,8 @@ struct ZSettings {
     Tables& tables() { return tables_; }
     const MarkdownHighlighting& markdownHighlighting() const { return markdown_; }
     MarkdownHighlighting& markdownHighlighting() { return markdown_; }
+    const JsonEditing& jsonEditing() const { return json_; }
+    JsonEditing& jsonEditing() { return json_; }
     const Formulas& formulas() const { return formulas_; }
     Formulas& formulas() { return formulas_; }
     const Pdf& pdf() const { return pdf_; }
@@ -1106,6 +1132,7 @@ private:
     Images images_;
     Tables tables_;
     MarkdownHighlighting markdown_;
+    JsonEditing json_;
     Formulas formulas_;
     Pdf pdf_;
 };
@@ -1170,6 +1197,12 @@ void applyImageAllocationLimit();
 // Читает конфиг, если он есть. Возвращает false и заполняет error, если файл
 // есть, но не разбирается: молча подставлять умолчания в этом случае нельзя,
 // иначе опечатка выглядела бы как «настройка не работает».
+//
+// КОНФИГ = ОТКЛОНЕНИЯ ОТ УМОЛЧАНИЙ, И ЧИТАЕТСЯ ОН С ЧИСТОГО ЛИСТА: разобранный
+// файл накладывается на свежие умолчания, а не на то, что действовало до
+// этого. Иначе ключ, УБРАННЫЙ из конфига (в редакторе внутри программы это
+// обычное дело), держал бы прежнее значение до перезапуска. Битый файл не
+// трогает ничего: прежние значения остаются.
 bool loadSettings(QString* error, QStringList* unknown = nullptr);
 
 // Ключи конфига, которых мы не знаем. Молчать о них нельзя: опечатка или
@@ -1193,12 +1226,16 @@ QByteArray defaultSettingsJson();
 // строк в сообщении об ошибке разбора указывали бы не туда.
 QByteArray stripJsonSugar(const QByteArray& json);
 
-// Пишет конфиг-шаблон: все параметры со значениями по умолчанию, но целиком
+// Текст конфига-шаблона: все параметры со значениями по умолчанию, но целиком
 // закомментированные. Файл при этом разбирается в пустой объект — то есть
-// «отклонений нет», и философия «конфиг = отклонения» не нарушается.
-//
-// Не перезаписывает существующий файл никогда: там правки человека.
-// Возвращает false и заполняет error, если записать не удалось.
+// «отклонений нет», и философия «конфиг = отклонения» не нарушается. Им
+// пользуются и запись шаблона на диск, и редактор конфига внутри программы
+// (ZConfigFile): текст один.
+QByteArray configTemplate();
+
+// Пишет конфиг-шаблон на диск. Не перезаписывает существующий файл никогда:
+// там правки человека. Возвращает false и заполняет error, если записать не
+// удалось.
 bool writeConfigTemplate(QString* error);
 
 
