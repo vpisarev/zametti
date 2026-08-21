@@ -82,6 +82,9 @@ add_library(zametti-ui STATIC
     image_insert.cpp
     icons.h
     icons.cpp
+    text_search_target.h
+    plain_edit_view.h
+    plain_edit_view.cpp
     markdown_edit_view.h
     markdown_edit_view.cpp
     markdown_controller.h

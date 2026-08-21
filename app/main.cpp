@@ -1864,7 +1864,7 @@ int main(int argc, char** argv) {
         if (markdown.active()) {
             // Замена в режиме — обычная правка текста: она ложится в СВОЙ буфер
             // отмены режима, а в заметку попадёт одним куском при выходе.
-            markdownView.replaceCurrent(findBar.replacement());
+            markdownView.replaceCurrentMatch(findBar.replacement());
             const zametti::Query query = zametti::makeQuery(findBar.query());
             markdownView.findMatches(query.needle, query.caseSensitive);
             showCounter();
@@ -1879,7 +1879,7 @@ int main(int argc, char** argv) {
         if (query.isEmpty()) return;
         if (markdown.active()) {
             findBar.setStatus(QStringLiteral("заменено: %1")
-                                  .arg(markdownView.replaceAll(query.needle, query.caseSensitive,
+                                  .arg(markdownView.replaceAllMatches(query.needle, query.caseSensitive,
                                                                findBar.replacement())));
             return;
         }
