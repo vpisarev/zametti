@@ -258,7 +258,10 @@ void checkMetaSurvivesEditing() {
     QString stripped = saved;
     stripped.replace(QRegularExpression(QStringLiteral("modified: [0-9T:Z+-]+\\n")),
                      QString());
+    // version: 1 — ленивый штамп версии формата: правленую заметку пишем мы
+    // (refactor3), и версия встаёт первой строкой шапки.
     checkEqual(QStringLiteral("<!-- zametti\n"
+                              "version: 1\n"
                               "parent: 01n6x9k2m4qp\n"
                               "неизвестный: ключ\n"
                               "-->\n"
