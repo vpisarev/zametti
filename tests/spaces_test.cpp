@@ -140,8 +140,8 @@ void checkLeadingSpacesKept() {
     ZT_EQ("у задачи чекбокс не в счёт: колонка содержимого 2",
           visible(head + "- [ ] дело\n  " + kNbsp + "хвост\n"),
           visible(afterLoad(head + "- [ ] дело\n   хвост\n")));
-    ZT_EQ("лишние пробелы после маркера — тоже отступ автора",
-          visible(head + "1. " + kNbsp + kNbsp + "номер\n"),
+    ZT_EQ("пробелы за маркером (до четырёх) — маркера, не автора: канон один пробел",
+          visible(head + "1. номер\n"),
           visible(afterLoad(head + "1.   номер\n")));
     ZT_EQ("цитата: за `>` отступа нет",
           visible(head + "> цитата\n> с отступом\n"),
