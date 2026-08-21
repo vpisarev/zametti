@@ -3046,13 +3046,17 @@ void NoteEditor::rememberCurrentCaretInApp() const {
         {textCursor().position(), textCursor().anchor(), verticalScrollBar()->value()});
 }
 
-EscapeAction escapeActionFor(bool languageEditorOpen, bool caretInOpenObject, bool findBarVisible) {
+EscapeAction escapeActionFor(bool languageEditorOpen, bool caretInOpenObject, bool findBarVisible,
+                             bool modeActive) {
     if (languageEditorOpen) return EscapeAction::CloseLanguageEditor;
     // Раскрытый объект (формула, таблица) сворачивается раньше панели поиска по
     // той же причине, по которой раньше неё закрывается поле языка: сперва
     // уходит то, что открыто ПОВЕРХ текста и держит каретку.
     if (caretInOpenObject) return EscapeAction::CloseObject;
     if (findBarVisible) return EscapeAction::CloseFindBar;
+    // Режим — последним: закрывать его, пока над ним открыта панель поиска,
+    // значило бы уносить из-под человека сразу два слоя.
+    if (modeActive) return EscapeAction::LeaveMode;
     return EscapeAction::Nothing;
 }
 

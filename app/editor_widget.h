@@ -734,15 +734,20 @@ private:
 // месте, а не в лямбде внутри main(), куда набор не дотягивается.
 //
 // Сперва закрывается то, что открыто ПОВЕРХ текста: поле ввода языка. Потом
-// панель поиска. Если не открыто ничего — ничего и не делаем: Esc не должен
-// иметь скрытых последствий.
+// панель поиска. Потом — режим на месте редактора (правка исходника, правка
+// настроек): «Esc возвращает обычный вид» обещано README, а до keyPressEvent
+// вида нажатие не доходит вовсе — ярлык окна забирает его раньше (дефект,
+// найденный ревью refactor3: Esc в режиме исходника молча пропадал). Если не
+// открыто ничего — ничего и не делаем: Esc не должен иметь скрытых последствий.
 enum class EscapeAction {
     Nothing,
     CloseLanguageEditor,
     CloseObject,   // свернуть раскрытую формулу или таблицу под кареткой
     CloseFindBar,
+    LeaveMode,     // выйти из режима, показанного на месте редактора
 };
-EscapeAction escapeActionFor(bool languageEditorOpen, bool caretInOpenObject, bool findBarVisible);
+EscapeAction escapeActionFor(bool languageEditorOpen, bool caretInOpenObject, bool findBarVisible,
+                             bool modeActive = false);
 
 }  // namespace zametti
 

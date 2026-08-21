@@ -2145,7 +2145,8 @@ int main(int argc, char** argv) {
             // порядок живёт в escapeActionFor: до лямбды внутри main() набор
             // не дотягивается, а до функции — вполне.
             switch (zametti::escapeActionFor(editor.codeLanguageEditor() != nullptr,
-                                             editor.caretInOpenObject(), !findBar.isHidden())) {
+                                             editor.caretInOpenObject(), !findBar.isHidden(),
+                                             settingsMode.active() || markdown.active())) {
                 case zametti::EscapeAction::CloseLanguageEditor:
                     editor.closeCodeLanguageEditor();
                     return;
@@ -2155,6 +2156,11 @@ int main(int argc, char** argv) {
                 case zametti::EscapeAction::CloseFindBar:
                     findBar.hide();
                     emit findBar.closed();
+                    return;
+                case zametti::EscapeAction::LeaveMode:
+                    // Настройки поверх исходника: закрываем то, что на виду.
+                    if (settingsMode.active()) settingsMode.leave();
+                    else markdown.leave();
                     return;
                 case zametti::EscapeAction::Nothing:
                     return;
