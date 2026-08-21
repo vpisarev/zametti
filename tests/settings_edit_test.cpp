@@ -11,6 +11,7 @@
 #include "config_file.h"
 #include "editor_widget.h"
 #include "json_edit_view.h"
+#include "note_view.h"
 #include "markdown_edit_view.h"
 #include "settings.h"
 #include "settings_controller.h"
@@ -323,6 +324,41 @@ void checkNoteOpeningLeavesMode() {
     ZT_TRUE("заметка открыта", rig.editor.filePath() == note);
 }
 
+// ЦВЕТ ТЕКСТА В ВЫДЕЛЕНИИ — НАСТРОЙКА (просьба владельца, refactor3):
+// colors.selectionForeground. Прозрачный (умолчание) значит «выведи сам» —
+// обычный цвет текста, как было до неё; заданный уходит в палитру, а её
+// спрашивают ВСЕ: заметка, плоские виды, списки заметок и находок, поля
+// подписи и языка. Проверяется действием — палитрой живого вида.
+void checkSelectionForeground() {
+    zametti::ZDocStyle look = zametti::settings().style();
+    ZT_TRUE("умолчание прозрачное — значит «как цвет текста»",
+            look.selectionForeground().alpha() == 0);
+
+    zametti::JsonEditView view;
+    view.resize(400, 200);
+    view.show();
+    QTest::qWait(20);
+
+    zametti::applyPalette(view, /*history=*/false, look);
+    ZT_EQ("без настройки текст выделения — цвет текста",
+          view.palette().color(QPalette::Text).name().toStdString(),
+          view.palette().color(QPalette::HighlightedText).name().toStdString());
+
+    look.setSelectionForeground(QColor(0x20, 0x40, 0x90));
+    zametti::applyPalette(view, /*history=*/false, look);
+    ZT_EQ("заданный цвет уходит в палитру", std::string("#204090"),
+          view.palette().color(QPalette::HighlightedText).name().toStdString());
+
+    // И то же правило одним местом — для тех, кто ставит палитру сам (список
+    // слепков истории).
+    ZT_EQ("правило одно на всех", std::string("#204090"),
+          zametti::selectedTextColour(look, view.palette()).name().toStdString());
+    zametti::ZDocStyle plain = zametti::settings().style();
+    ZT_EQ("и с прозрачным — цвет текста палитры",
+          view.palette().color(QPalette::Text).name().toStdString(),
+          zametti::selectedTextColour(plain, view.palette()).name().toStdString());
+}
+
 }  // namespace
 
 TEST(SettingsEdit, All) {
@@ -336,6 +372,7 @@ TEST(SettingsEdit, All) {
     checkCaretLook();
     checkFontMatchesSourceMode();
     checkNoteOpeningLeavesMode();
+    checkSelectionForeground();
 }
 
 // ЯРЛЫК ОКНА СЪЕДАЕТ Esc (дефект, найденный ревью refactor3). В живом окне
