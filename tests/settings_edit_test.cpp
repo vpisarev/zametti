@@ -332,15 +332,18 @@ void checkNoteOpeningLeavesMode() {
 // спрашивают ВСЕ: заметка, плоские виды, списки заметок и находок, поля
 // подписи и языка. Проверяется действием — палитрой живого вида.
 void checkSelectionForeground() {
+    // УМОЛЧАНИЯ ЦВЕТОВ ПРИНАДЛЕЖАТ ВЛАДЕЛЬЦУ, и утверждать их здесь нельзя:
+    // проверяется ПРАВИЛО (прозрачный — «выведи сам», заданный — берётся), а
+    // не то, каким сегодня выбран цвет. Первая редакция набора требовала
+    // прозрачного умолчания и покраснела, стоило владельцу выбрать свой цвет.
     zametti::ZDocStyle look = zametti::settings().style();
-    ZT_TRUE("умолчание прозрачное — значит «как цвет текста»",
-            look.selectionForeground().alpha() == 0);
 
     zametti::JsonEditView view;
     view.resize(400, 200);
     view.show();
     QTest::qWait(20);
 
+    look.setSelectionForeground(QColor(0, 0, 0, 0));   // прозрачный — «выведи сам»
     zametti::applyPalette(view, /*history=*/false, look);
     ZT_EQ("без настройки текст выделения — цвет текста",
           view.palette().color(QPalette::Text).name().toStdString(),
@@ -356,6 +359,7 @@ void checkSelectionForeground() {
     ZT_EQ("правило одно на всех", std::string("#204090"),
           zametti::selectedTextColour(look, view.palette()).name().toStdString());
     zametti::ZDocStyle plain = zametti::settings().style();
+    plain.setSelectionForeground(QColor(0, 0, 0, 0));
     ZT_EQ("и с прозрачным — цвет текста палитры",
           view.palette().color(QPalette::Text).name().toStdString(),
           zametti::selectedTextColour(plain, view.palette()).name().toStdString());
@@ -385,10 +389,10 @@ void checkMenuFollowsSelectionColours() {
     // Прозрачный selectionForeground и тут значит «выведи сам».
     look.setSelectionForeground(QColor(0, 0, 0, 0));
     zametti::applySelectionPaletteToApp(look);
-    QMenu plain;
+    QMenu plainMenu;
     ZT_EQ("без настройки — обычный цвет текста",
-          plain.palette().color(QPalette::Text).name().toStdString(),
-          plain.palette().color(QPalette::HighlightedText).name().toStdString());
+          plainMenu.palette().color(QPalette::Text).name().toStdString(),
+          plainMenu.palette().color(QPalette::HighlightedText).name().toStdString());
 
     // Палитра приложения — общая на процесс: возвращаем как было, наборы идут
     // одним процессом.
