@@ -1209,7 +1209,15 @@ void keepDecorativeIndent(Ctx& c, const MD_CHAR* text) {
                 ++m;
             }
             if (m >= k || !isWs(c.buf[m])) return;
-            li->contentColumn = columnAt(m + 1);
+            // Пробелы за маркером — ЕГО, не автора: по CommonMark содержимое
+            // начинается после них (от одного до четырёх); от пяти и больше —
+            // после одного, остальное уже содержимое. Иначе «1.  foo» с
+            // вложенным «    - bar» читался бы иначе на втором круге (нашёл
+            // набор идемпотентности на спецификации).
+            size_t w = m;
+            while (w < k && isWs(c.buf[w])) ++w;
+            const int gap = columnAt(w) - columnAt(m);
+            li->contentColumn = gap <= 4 ? columnAt(w) : columnAt(m + 1);
         }
         structural = li->contentColumn;
     }
