@@ -11,6 +11,7 @@
 #include "config_file.h"
 #include "editor_widget.h"
 #include "json_edit_view.h"
+#include "markdown_edit_view.h"
 #include "settings.h"
 #include "settings_controller.h"
 #include "settings_hook.h"
@@ -261,6 +262,40 @@ void checkCaretLook() {
     rig.controller.leave();
 }
 
+// ШРИФТ У ПРАВКИ КОНФИГА — ТОТ ЖЕ, ЧТО У ИСХОДНИКА, И СВОЕЙ НАСТРОЙКИ У НЕГО
+// НЕТ (решение владельца): гарнитура кода и кегль текста, оба из стиля
+// документа. Спрашивается ДЕЙСТВИЕМ — сравнением двух живых видов при одном
+// масштабе, а не чтением кода: заведи кто-нибудь `jsonEditing.fontFamily`,
+// набор покраснеет.
+void checkFontMatchesSourceMode() {
+    Rig rig(QStringLiteral("шрифт/config.json"));
+    ZT_TRUE("вошли", rig.controller.enter());
+    zametti::MarkdownEditView source;
+    source.resize(700, 500);
+    source.show();
+    QTest::qWait(20);
+
+    ZT_EQ("гарнитура та же", source.font().family().toStdString(),
+          rig.view.font().family().toStdString());
+    ZT_EQ("кегль тот же", std::to_string(source.font().pointSizeF()),
+          std::to_string(rig.view.font().pointSizeF()));
+    ZT_EQ("и это гарнитура кода из стиля",
+          zametti::settings().style().codeFamily().toStdString(),
+          rig.view.font().family().toStdString());
+    ZT_EQ("а кегль — базовый кегль текста",
+          std::to_string(zametti::settings().style().baseFontPoint()),
+          std::to_string(rig.view.font().pointSizeF()));
+
+    // И под масштабом: число у плоских видов одно на двоих (его ставит окно,
+    // см. applyZoom в main.cpp), а кегль из него выводится одинаково.
+    rig.view.applyZoom(2.0);
+    source.applyZoom(2.0);
+    ZT_EQ("под масштабом тоже сходятся", std::to_string(source.font().pointSizeF()),
+          std::to_string(rig.view.font().pointSizeF()));
+    rig.view.applyZoom(1.0);
+    rig.controller.leave();
+}
+
 }  // namespace
 
 TEST(SettingsEdit, All) {
@@ -272,6 +307,7 @@ TEST(SettingsEdit, All) {
     checkBrokenIsWrittenButNotApplied();
     checkAppliedAfterSave();
     checkCaretLook();
+    checkFontMatchesSourceMode();
 }
 
 // ЯРЛЫК ОКНА СЪЕДАЕТ Esc (дефект, найденный ревью refactor3). В живом окне

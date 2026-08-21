@@ -18,6 +18,7 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QFileInfo>
 #include <QFile>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -28,6 +29,26 @@ namespace {
 
 std::string s(const QString& q) { return q.toStdString(); }
 std::string b(bool v) { return v ? "да" : "нет"; }
+
+
+// ЛЕНИВАЯ МИГРАЦИЯ МАСШТАБА (refactor3): прежде исходник и правка настроек
+// держали по своему числу (markdownZoom, settingsZoom) и открывались разного
+// размера. Ключ теперь один — plainZoom; старый читается, пока не переписан.
+void checkPlainZoomMigrates() {
+    // Пишем СТАРОЕ состояние на штатное место (каталог настроек уже подменён
+    // обвязкой набора) и читаем штатной загрузкой: проверяется путь, которым
+    // ходит программа, а не отдельная функция.
+    const QString path = zametti::ZAppState::path();
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    {
+        QFile file(path);
+        ZT_TRUE("старое состояние записано", file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        file.write("{ \"markdownZoom\": 1.5, \"settingsZoom\": 1.0 }\n");
+    }
+    const zametti::ZAppState old = zametti::ZAppState::load();
+    ZT_TRUE("масштаб исходника стал общим для обоих плоских видов",
+            qFuzzyCompare(old.plainZoom(), 1.5));
+}
 
 }  // namespace
 
@@ -55,7 +76,7 @@ static int ztRunSuite(int argc, char** argv) {
     out.setWindowGeometry(QByteArray("геометрия", 18));
     out.setPanelsHidden(true);
     out.setMarkdownMode(true);
-    out.setMarkdownZoom(1.75);
+    out.setPlainZoom(1.75);   // масштаб плоских видов — одно число на оба
     out.setHistoryListWidth(233);
     out.setExportDir(QStringLiteral("/tmp/куда-вывозили"));
     out.setExportKeepMeta(true);
@@ -88,7 +109,7 @@ static int ztRunSuite(int argc, char** argv) {
     ZT_EQ("панели убраны", b(out.panelsHidden()), b(back.panelsHidden()));
     ZT_EQ("режим исходника", b(out.markdownMode()), b(back.markdownMode()));
     ZT_TRUE("масштаб исходника — свой и переживает запись",
-            qFuzzyCompare(out.markdownZoom(), back.markdownZoom()));
+            qFuzzyCompare(out.plainZoom(), back.plainZoom()));
     // Каталог вывоза переживает перезапуск: начинать каждый раз с «Документов»
     // — значит каждый раз идти по дереву каталогов заново (замечание владельца).
     ZT_EQ("каталог вывоза", s(out.exportDir()), s(back.exportDir()));
@@ -120,6 +141,9 @@ static int ztRunSuite(int argc, char** argv) {
     ZT_EQ("без файла вывоз чистый", b(false), b(fresh.exportKeepMeta()));
     ZT_EQ("без файла ширина списка истории не задана", std::string("0"),
           std::to_string(fresh.historyListWidth()));
+
+    checkPlainZoomMigrates();
+
 
     return zt::report("session");
 }
