@@ -75,6 +75,7 @@ public:
     QRectF button(const zametti::CodeBand& band) { return copyButtonRect(band); }
     QRectF langRect(const zametti::CodeBand& band) { return languageRect(band); }
     QString codeText(int firstBlock) { return codeTextFrom(firstBlock); }
+    qreal plateScaleForTest() const { return plateScale(); }
     // Кусок документа, нарисованный так же, как он уходит на бумагу.
     QImage onPaper(const QRectF& area) {
         QImage sheet(int(area.width()), int(area.height()), QImage::Format_RGB32);
@@ -285,6 +286,44 @@ void checkPlateFollowsLangSize() {
           "полоска растёт вместе с кеглем: " + num(grown.strip / base.strip));
     // Верхнее поле — от строки кода, и от подписи не зависит.
     check(std::fabs(grown.padTop - base.padTop) < 0.5, "верхнее поле не меняется");
+}
+
+// СОДЕРЖИМОЕ ПОЛОСКИ РАСТЁТ С ЗУМОМ, САМА ПОЛОСКА — НЕТ (нашёл владелец:
+// «размер шрифта языка блока кода не масштабируется с зумом»).
+//
+// Полоска живёт в НИЖНЕМ ПОЛЕ блока — это резерв, поставленный сборщиком в
+// базовом кегле. Переписать его при зуме нельзя: всякая запись формата — шаг в
+// стеке отмены (проверено здесь же: перекладка полей на этой заметке дала 10
+// шагов), а Ctrl+= правкой не является. Поэтому подпись языка и значок растут
+// ровно до высоты резерва — plateScale, — и в него не вылезают.
+void checkPlateFollowsZoom(Peek& editor) {
+    const zametti::ZDocStyle& look = editor.note().style();
+    const zametti::CodePlate one = zametti::codePlate(look, 1.0);
+    check(std::fabs(zametti::codeLangFont(look, 2.0).pointSizeF() -
+                    2 * zametti::codeLangFont(look, 1.0).pointSizeF()) < 0.1,
+          "кегль подписи считается от масштаба");
+
+    const int undoBefore = editor.document()->availableUndoSteps();
+    const qreal plainScale = editor.plateScaleForTest();
+    const QFont plain = zametti::codeLangFont(look, plainScale);
+    editor.applyZoom(2.0);
+    QTest::qWait(20);
+    const qreal zoomedScale = editor.plateScaleForTest();
+    const QFont zoomed = zametti::codeLangFont(look, zoomedScale);
+    check(zoomedScale > plainScale, "под зумом подпись крупнее: " + num(zoomedScale) + " > " +
+                                        num(plainScale));
+    check(zoomed.pointSizeF() > plain.pointSizeF(), "и кегль её и правда вырос");
+    // Но в резерв она помещается: иначе налезла бы на следующий абзац.
+    check(QFontMetricsF(zoomed).height() <= one.strip + 0.5,
+          "подпись не выше полоски: " + num(QFontMetricsF(zoomed).height()) + " <= " +
+              num(one.strip));
+    editor.applyZoom(1.0);
+    QTest::qWait(20);
+    check(std::fabs(editor.plateScaleForTest() - plainScale) < 0.01,
+          "и возвращается вместе с масштабом");
+    check(editor.document()->availableUndoSteps() == undoBefore,
+          "зум шагов отмены не заводит: было " + std::to_string(undoBefore) + ", стало " +
+              std::to_string(editor.document()->availableUndoSteps()));
 }
 
 // --- копирование ------------------------------------------------------------
@@ -615,6 +654,7 @@ void shots(int width, int height, const QString& tag, bool checks) {
         // Снимок — ДО проверки копирования: та оставляет на кнопке галочку
         // «скопировано», и на снимке приёмки она бы озадачивала.
         shoot(editor, tag);
+        checkPlateFollowsZoom(editor);
         checkCopy(editor);
         return;
     }
