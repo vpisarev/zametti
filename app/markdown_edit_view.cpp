@@ -9,17 +9,38 @@
 
 #include <QColor>
 #include <QFontMetricsF>
+#include <QFocusEvent>
 #include <QKeyEvent>
+#include <QPaintEvent>
+#include <QPainter>
 #include <QScrollBar>
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QTextLayout>
+#include <QWidget>
 
 #include <algorithm>
 #include <utility>
 #include <vector>
 
 namespace zametti {
+
+// Поле слева от текста: точки у перенесённых строк. Живёт в отступе вьюпорта
+// (setViewportMargins) — там, где у редакторов кода стоят номера строк, — и
+// перерисовывается по updateRequest вида: прокрутка, правка, смена размера.
+class MarkdownEditView::WrapMarks : public QWidget {
+public:
+    explicit WrapMarks(MarkdownEditView* view) : QWidget(view), view_(view) {}
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter(this);
+        view_->paintWrapMarks(painter, rect());
+    }
+
+private:
+    MarkdownEditView* view_;
+};
 
 MarkdownEditView::MarkdownEditView(QWidget* parent) : QPlainTextEdit(parent) {
     setFrameStyle(QFrame::NoFrame);
@@ -37,10 +58,133 @@ MarkdownEditView::MarkdownEditView(QWidget* parent) : QPlainTextEdit(parent) {
     // от самой setExtraSelections, и получилась бы бесконечная петля.
     connect(verticalScrollBar(), &QScrollBar::valueChanged, this, [this] { refreshOverlays(); });
     connect(document(), &QTextDocument::contentsChanged, this, [this] { refreshOverlays(); });
+
+    // Поле с точками перенесённых строк — перерисовывается вслед за видом.
+    wrapMarks_ = new WrapMarks(this);
+    connect(this, &QPlainTextEdit::updateRequest, this, [this](const QRect&, int) { wrapMarks_->update(); });
+
+    // Штатную каретку гасим: рисуем свою (см. paintEvent). Пока человек
+    // печатает или ведёт курсор, она горит ровно.
+    setCursorWidth(0);
+    connect(&caretBlink_, &CaretBlink::phaseChanged, this,
+            [this] { viewport()->update(caretRect()); });
+    connect(this, &QPlainTextEdit::cursorPositionChanged, this, &MarkdownEditView::showCaret);
+    connect(this, &QPlainTextEdit::textChanged, this, &MarkdownEditView::showCaret);
     refreshAppearance();
 }
 
-MarkdownEditView::~MarkdownEditView() = default;
+// --- каретка ------------------------------------------------------------------
+
+QRect MarkdownEditView::caretRect() const {
+    QRect at = cursorRect();
+    at.setWidth(caretPixelWidth(settings().style().caretWidth(), zoom_));
+    // С запасом: перерисовываем чуть больше, чем красим, иначе остаётся след.
+    return at.adjusted(-2, -2, 4, 2);
+}
+
+void MarkdownEditView::showCaret() {
+    caretBlink_.wake(hasFocus() && !isReadOnly());
+    // Целиком: курсор мог только что уехать, и на прежнем месте осталась бы
+    // нарисованная каретка.
+    viewport()->update();
+}
+
+void MarkdownEditView::focusInEvent(QFocusEvent* event) {
+    QPlainTextEdit::focusInEvent(event);
+    showCaret();
+}
+
+void MarkdownEditView::focusOutEvent(QFocusEvent* event) {
+    QPlainTextEdit::focusOutEvent(event);
+    caretBlink_.sleep();
+    viewport()->update();
+}
+
+// Колонка каретки, перерисованная без штатного курсора — ровно тот же ход,
+// что у NoteView::repaintOverNativeCaret (коммит f48623d): штатную каретку
+// будят клавиши, мышь и набор, погасить её насовсем Qt не даёт (ширина 0 на
+// дробном масштабе экрана становится физическим пикселем, и рядом с нашей
+// мигает чужая чёрная черта). Поэтому после штатной отрисовки колонка
+// рисуется заново — фон, плашка кода, подсветка поиска, текст, — и чужая
+// каретка не переживает ни одного кадра. У QPlainTextEdit documentLayout()
+// не рисует (ленивая вёрстка), блоки он рисует сам: повторяем это для одного
+// блока — блока каретки — через его QTextLayout.
+void MarkdownEditView::repaintOverNativeCaret(QPainter& painter) {
+    if (isReadOnly()) return;
+    const QRect cursor = cursorRect();
+    const QRect col(cursor.left() - 3, cursor.top() - 2, 10, cursor.height() + 4);
+    const QTextBlock block = textCursor().block();
+    if (!block.isValid() || block.layout() == nullptr) return;
+
+    painter.save();
+    painter.setClipRect(col);
+    painter.fillRect(col, palette().color(QPalette::Base));
+
+    // Подсветки этого блока — как их собрал бы сам Qt: плашка во всю ширину
+    // кладётся фоном, найденное — отрезками формата.
+    const int from = block.position();
+    const int to = from + block.length();
+    QList<QTextLayout::FormatRange> ranges;
+    for (const QTextEdit::ExtraSelection& one : extraSelections()) {
+        const int a = qMin(one.cursor.anchor(), one.cursor.position());
+        const int b = qMax(one.cursor.anchor(), one.cursor.position());
+        if (one.format.boolProperty(QTextFormat::FullWidthSelection)) {
+            if (one.cursor.position() >= from && one.cursor.position() < to)
+                painter.fillRect(col, one.format.background());
+            continue;
+        }
+        if (b <= from || a >= to) continue;
+        QTextLayout::FormatRange range;
+        range.start = qMax(a, from) - from;
+        range.length = qMin(b, to) - qMax(a, from);
+        range.format = one.format;
+        ranges.push_back(range);
+    }
+    if (textCursor().hasSelection()) {
+        const int a = qMin(textCursor().anchor(), textCursor().position());
+        const int b = qMax(textCursor().anchor(), textCursor().position());
+        if (b > from && a < to) {
+            QTextLayout::FormatRange range;
+            range.start = qMax(a, from) - from;
+            range.length = qMin(b, to) - qMax(a, from);
+            range.format.setBackground(palette().brush(QPalette::Highlight));
+            range.format.setForeground(palette().brush(QPalette::HighlightedText));
+            ranges.push_back(range);
+        }
+    }
+    const QPointF offset = blockBoundingGeometry(block).translated(contentOffset()).topLeft();
+    painter.setPen(palette().color(QPalette::Text));
+    block.layout()->draw(&painter, offset, ranges, col);
+    painter.restore();
+}
+
+void MarkdownEditView::paintEvent(QPaintEvent* event) {
+    QPlainTextEdit::paintEvent(event);
+    QPainter painter(viewport());
+    repaintOverNativeCaret(painter);
+    // Каретка — последней, поверх текста и плашек; при выделении не рисуется
+    // (там видно и так), без фокуса — тоже. Правило то же, что у NoteView.
+    if (!caretBlink_.on() ||
+        !caretShouldBeDrawn(hasFocus(), isReadOnly(), textCursor().hasSelection(), false))
+        return;
+    QRect at = cursorRect();
+    at.setWidth(caretPixelWidth(settings().style().caretWidth(), zoom_));
+    painter.fillRect(at, settings().style().caretColor());
+}
+
+MarkdownEditView::~MarkdownEditView() {
+    // ПОРЯДОК РАЗРУШЕНИЯ. Члены умирают в обратном порядке объявления, а
+    // сигналы живут до ~QObject — то есть дольше членов. Подсветчик при смерти
+    // отвязывается от документа, документ испускает textChanged, слот showCaret
+    // ещё подключён — и будит уже разрушенный таймер мигания (так и нашлось:
+    // bad_alloc из QObject::startTimer в ~Rig набора). Снимаем свои соединения,
+    // пока всё живо, и отпускаем подсветчик сами.
+    disconnect(this, nullptr, this, nullptr);
+    disconnect(document(), nullptr, this, nullptr);
+    disconnect(verticalScrollBar(), nullptr, this, nullptr);
+    disconnect(&caretBlink_, nullptr, this, nullptr);
+    highlighter_.reset();
+}
 
 void MarkdownEditView::refreshAppearance() {
     applyPalette(*this, /*history=*/false, settings().style());
@@ -104,12 +248,52 @@ void MarkdownEditView::applyContentWidth() {
     if (wanted == viewportMargin_) return;
     viewportMargin_ = wanted;
     setViewportMargins(wanted, 0, wanted, 0);
+    placeWrapMarks();
 }
 
 void MarkdownEditView::resizeEvent(QResizeEvent* event) {
     QPlainTextEdit::resizeEvent(event);
     applyContentWidth();
+    placeWrapMarks();
     refreshOverlays();
+}
+
+// --- точки у перенесённых строк -----------------------------------------------
+
+void MarkdownEditView::placeWrapMarks() {
+    if (wrapMarks_ == nullptr) return;
+    const QRect vp = viewport()->geometry();
+    wrapMarks_->setGeometry(vp.left() - viewportMargin_, vp.top(), viewportMargin_, vp.height());
+    wrapMarks_->update();
+}
+
+void MarkdownEditView::paintWrapMarks(QPainter& painter, const QRect& area) {
+    // Фон — страница, как под текстом: поле не должно читаться рамкой.
+    painter.fillRect(area, palette().color(QPalette::Base));
+
+    // Точка — на половине высоты строчной буквы (как «·»), диаметром от кегля,
+    // не тоньше двух пикселей; цветом комментариев подсветки — она служебная,
+    // а не текст. Стоит на один пробел левее текста.
+    const QFontMetricsF metrics(font());
+    const qreal xHeight = metrics.xHeight();
+    const qreal d = qMax(2.0, xHeight * 0.3);
+    const qreal x = area.right() - metrics.horizontalAdvance(QLatin1Char(' ')) - d;
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(settings().markdownHighlighting().comment());
+
+    const int bottom = area.bottom();
+    for (QTextBlock block = firstVisibleBlock(); block.isValid(); block = block.next()) {
+        const QRectF geometry = blockBoundingGeometry(block).translated(contentOffset());
+        if (geometry.top() > bottom) break;
+        const QTextLayout* layout = block.layout();
+        if (layout == nullptr) continue;
+        for (int i = 1; i < layout->lineCount(); ++i) {
+            const QTextLine line = layout->lineAt(i);
+            const qreal y = geometry.top() + line.y() + line.ascent() - xHeight / 2;
+            painter.drawEllipse(QRectF(x, y - d / 2, d, d));
+        }
+    }
 }
 
 void MarkdownEditView::showSource(const QString& markdown, SourcePos caret) {
@@ -258,6 +442,15 @@ Continuation continuationOf(const QTextBlock& block, int stop) {
 void MarkdownEditView::keyPressEvent(QKeyEvent* event) {
     if (event->key() == Qt::Key_Escape) {
         emit leaveRequested();
+        event->accept();
+        return;
+    }
+
+    // ДНО СТЕКА ОТМЕНЫ. В обычном виде Ctrl+Z на дне ведёт в слепки журнала;
+    // у режима стек свой, и на его дне отмена отдаётся заметке — иначе режим
+    // был бы тупиком, где Ctrl+Z молча ничего не делает.
+    if (event->matches(QKeySequence::Undo) && !document()->isUndoAvailable()) {
+        emit undoExhausted();
         event->accept();
         return;
     }

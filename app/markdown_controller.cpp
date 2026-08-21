@@ -10,6 +10,15 @@ MarkdownController::MarkdownController(NoteEditor& editor, MarkdownEditView& vie
     // Esc из вида — выйти из режима. Вид про режим ничего не знает: он говорит
     // «меня просят уйти», решает контроллер.
     connect(&view_, &MarkdownEditView::leaveRequested, this, [this] { leave(); });
+    // Ctrl+Z на дне стека режима: правок в тексте больше нет (всё отменено —
+    // или их и не было), режим закрывается БЕЗ потерь (наложить нечего), и
+    // отмена уходит заметке — её стек, а за ним слепки журнала, как всегда.
+    // Так у человека один ряд Ctrl+Z: правки исходника → правки заметки →
+    // история.
+    connect(&view_, &MarkdownEditView::undoExhausted, this, [this] {
+        if (leave() < 0) return;   // текст не принят — из режима не выпускаем
+        editor_.undo();
+    });
     // ЗАМЕТКА МЕНЯЕТСЯ, А РЕЖИМ ИДЁТ. Правки живут в тексте вида, и наложить их
     // можно только пока прежняя заметка ещё открыта: сигнал приходит ДО подмены.
     connect(&editor_, &NoteEditor::fileAboutToChange, this, [this](const QString&) {

@@ -15,6 +15,7 @@
 
 #include <QHash>
 #include <QImage>
+#include "caret_blink.h"
 #include "formula_object.h"
 #include "note_search.h"
 #include "table_object.h"
@@ -531,10 +532,9 @@ protected:
 
 private:
     // Каретку рисуем сами: своей Qt цвета не отдаёт (см. caretColor в
-    // settings.h). Раз рисуем сами — сами и мигаем: частота та же, что у
-    // системы, а на каждой правке и на каждом движении курсора каретка
-    // зажигается заново. Мигающая под руками каретка мешает как раз там, где
-    // её важнее всего видеть.
+    // settings.h). Раз рисуем сами — сами и мигаем (CaretBlink, общий с видом
+    // исходника): на каждой правке и на каждом движении курсора каретка
+    // зажигается заново.
     QRect caretRect() const;
     // Колонка каретки, перерисованная без штатного курсора: его будят клавиши,
     // мышь и набор, погасить его насовсем Qt не даёт (ширина 0 на дробном
@@ -659,8 +659,7 @@ private:
     // документу (formulaCacheOf) — вид только сообщает ему условия показа.
 
     QTimer copiedFade_;
-    QTimer caretBlink_;
-    bool caretOn_ = true;
+    CaretBlink caretBlink_;
     QString imageBase_;
     bool syncingImages_ = false;
     // Что менялось в документе с прошлого перемера. Курсором, а не парой

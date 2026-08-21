@@ -20,6 +20,7 @@
 #ifndef ZAMETTI_MARKDOWN_EDIT_VIEW_H
 #define ZAMETTI_MARKDOWN_EDIT_VIEW_H
 
+#include "caret_blink.h"
 #include "document.h"
 
 #include <QKeySequence>
@@ -27,6 +28,8 @@
 #include <QPlainTextEdit>
 
 #include <memory>
+
+class QPainter;
 
 namespace zametti {
 
@@ -76,8 +79,19 @@ public:
 
 signals:
     void leaveRequested();   // Esc — выйти из режима
+    // Ctrl+Z на ДНЕ своего стека отмены: отменять в тексте больше нечего, и
+    // отмена отдаётся заметке — как в обычном виде, где дно стека ведёт в
+    // слепки журнала. Решает контроллер: вид знает только, что стек пуст.
+    void undoExhausted();
 
 protected:
+    // КАРЕТКА — СВОЯ, цвета и толщины из настроек, как в обычном виде (просьба
+    // владельца): штатная рисуется инверсией и не красится (qt-caret-facts),
+    // поэтому она погашена (setCursorWidth(0)), а своя рисуется поверх
+    // штатной отрисовки и мигает общим CaretBlink.
+    void paintEvent(QPaintEvent* event) override;
+    void focusInEvent(QFocusEvent* event) override;
+    void focusOutEvent(QFocusEvent* event) override;
     // Поля вьюпорта: колонка исходника не растягивается на всю ширину широкого
     // окна (просьба владельца), а стоит посередине, как в обычном виде.
     void resizeEvent(QResizeEvent* event) override;
@@ -89,6 +103,19 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
 
 private:
+    // ТОЧКИ У ПЕРЕНЕСЁННЫХ СТРОК (просьба владельца): на левом поле, у начала
+    // каждой визуальной строки, кроме первой в абзаце, — точка на половине
+    // высоты буквы. Поле — отдельный дочерний виджет в отступе вьюпорта (приём
+    // Qt для номеров строк): рисуется сам, от текста и каретки не зависит.
+    class WrapMarks;
+    void paintWrapMarks(QPainter& painter, const QRect& area);
+    void placeWrapMarks();
+
+    void showCaret();
+    QRect caretRect() const;
+    // Колонка каретки заново, без штатного курсора (см. .cpp): тот же ход, что
+    // NoteView::repaintOverNativeCaret.
+    void repaintOverNativeCaret(QPainter& painter);
     void pressEnter(bool shift);
     void pressTab(bool back);
     void toggleTasks();
@@ -100,6 +127,8 @@ private:
     void applyContentWidth();
 
     std::shared_ptr<ZSyntaxHighlighterMD> highlighter_;
+    WrapMarks* wrapMarks_ = nullptr;
+    CaretBlink caretBlink_;
     QList<QKeySequence> toggleTaskKeys_;
     qreal zoom_ = 1.0;
     int viewportMargin_ = 0;

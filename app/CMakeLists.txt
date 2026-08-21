@@ -72,6 +72,8 @@ add_library(zametti-ui STATIC
     export_pdf.cpp
     table_object.h
     table_object.cpp
+    caret_blink.h
+    caret_blink.cpp
     note_view.h
     note_view.cpp
     editor_widget.h

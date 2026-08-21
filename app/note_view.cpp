@@ -180,12 +180,8 @@ NoteView::NoteView(QWidget* parent) : QTextBrowser(parent) {
     attachObjectHandlers(document());
     // Штатную каретку гасим: рисуем свою.
     setCursorWidth(0);
-    caretBlink_.setInterval(
-        qMax(250, QGuiApplication::styleHints()->cursorFlashTime() / 2));
-    connect(&caretBlink_, &QTimer::timeout, this, [this] {
-        caretOn_ = !caretOn_;
-        viewport()->update(caretRect());
-    });
+    connect(&caretBlink_, &CaretBlink::phaseChanged, this,
+            [this] { viewport()->update(caretRect()); });
     // Пока человек печатает или ведёт курсор, каретка горит ровно.
     connect(this, &QTextEdit::cursorPositionChanged, this, &NoteView::showCaret);
     connect(this, &QTextEdit::textChanged, this, &NoteView::showCaret);
@@ -262,19 +258,24 @@ NoteView::~NoteView() {
     // Защита картинок этого вида снимается вместе с ним: иначе кэш держал бы их
     // за мёртвого владельца до конца работы.
     ZApp::instance().images().forget(this);
+    // Свои соединения — долой, пока члены живы: сигналы QTextEdit (textChanged,
+    // cursorPositionChanged) доживают до ~QObject, а слоты трогают члены
+    // (мигание каретки и прочее), которые умирают раньше. Та же беда нашлась у
+    // вида исходника (см. ~MarkdownEditView).
+    disconnect(this, nullptr, this, nullptr);
+    disconnect(&caretBlink_, nullptr, this, nullptr);
 }
 
 // Прямоугольник каретки с запасом: перерисовываем чуть больше, чем красим,
 // иначе от неё остаётся след.
 QRect NoteView::caretRect() const {
     QRect at = cursorRect();
-    at.setWidth(qMax(1, qRound(docStyle().caretWidth() * displayScale())));
+    at.setWidth(caretPixelWidth(docStyle().caretWidth(), displayScale()));
     return at.adjusted(-2, -2, 4, 2);
 }
 
 void NoteView::showCaret() {
-    caretOn_ = true;
-    if (hasFocus() && !isReadOnly()) caretBlink_.start();
+    caretBlink_.wake(hasFocus() && !isReadOnly());
     // Целиком, а не по прямоугольнику: курсор мог только что уехать, и на
     // прежнем месте осталась бы нарисованная каретка.
     viewport()->update();
@@ -287,8 +288,7 @@ void NoteView::focusInEvent(QFocusEvent* event) {
 
 void NoteView::focusOutEvent(QFocusEvent* event) {
     QTextBrowser::focusOutEvent(event);
-    caretBlink_.stop();
-    caretOn_ = false;
+    caretBlink_.sleep();
     viewport()->update();
 }
 
@@ -1856,10 +1856,10 @@ void NoteView::paintEvent(QPaintEvent* event) {
     // «крохотный курсор, мигающий внутри таблицы». Выбранную таблицу показывают
     // уголки, как и выбранную фотографию, а не полоска между ячейками.
     painter.resetTransform();
-    if (caretOn_ && caretShouldBeDrawn(hasFocus(), isReadOnly(), textCursor().hasSelection(),
-                                       caretOnDrawnObject())) {
+    if (caretBlink_.on() && caretShouldBeDrawn(hasFocus(), isReadOnly(), textCursor().hasSelection(),
+                                               caretOnDrawnObject())) {
         QRect at = cursorRect();
-        at.setWidth(qMax(1, qRound(docStyle().caretWidth() * displayScale())));
+        at.setWidth(caretPixelWidth(docStyle().caretWidth(), displayScale()));
         painter.fillRect(at, docStyle().caretColor());
     }
 }

@@ -1,0 +1,53 @@
+// МИГАНИЕ СВОЕЙ КАРЕТКИ — один помощник на все виды.
+//
+// Штатную каретку Qt не покрасить ни одним способом: она рисуется ИНВЕРСИЕЙ
+// пикселей, палитра красит буквы, а черту — нет (замерено, см. память
+// qt-caret-facts). Поэтому каждый вид, которому нужна каретка цвета и толщины
+// из настроек (style.caretColor, style.caretWidth), гасит штатную
+// (setCursorWidth(0)), рисует свою в paintEvent и мигает сам. Обычный вид
+// (NoteView) и вид исходника (MarkdownEditView) — два таких; мигание у них
+// одно, здесь, а не по копии в каждом.
+//
+// Правила, добытые замерами: не рисовать без фокуса и при выделении; зажигать
+// заново на каждом ходе каретки, наборе и приходе фокуса — мигающая под руками
+// каретка мешает как раз там, где её важнее всего видеть; частота — как у
+// системы (cursorFlashTime), но не чаще, чем раз в четверть секунды.
+
+#ifndef ZAMETTI_CARET_BLINK_H
+#define ZAMETTI_CARET_BLINK_H
+
+#include <QObject>
+#include <QTimer>
+
+namespace zametti {
+
+class CaretBlink : public QObject {
+    Q_OBJECT
+
+public:
+    explicit CaretBlink(QObject* parent = nullptr);
+
+    // Горит ли каретка в этой фазе.
+    bool on() const { return on_; }
+    // Зажечь ровно; blink — и начать мигать (у вида фокус и он не только для
+    // чтения). Зовётся на фокус, ход каретки и набор.
+    void wake(bool blink);
+    // Погасить и перестать мигать — фокус ушёл.
+    void sleep();
+
+signals:
+    // Фаза сменилась — виду пора перерисовать место каретки.
+    void phaseChanged();
+
+private:
+    QTimer timer_;
+    bool on_ = true;
+};
+
+// Толщина каретки в пикселях вида: настройка, умноженная на масштаб показа, не
+// тоньше пикселя.
+int caretPixelWidth(qreal width, qreal scale);
+
+}  // namespace zametti
+
+#endif  // ZAMETTI_CARET_BLINK_H
