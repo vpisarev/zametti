@@ -14,15 +14,15 @@
 #ifndef ZAMETTI_LANG_EDITOR_H
 #define ZAMETTI_LANG_EDITOR_H
 
-#include "line_caret.h"
+#include "line_field.h"
+
 #include <QColor>
-#include <QLineEdit>
 #include <QString>
 #include <QStringList>
 
 namespace zametti {
 
-class LanguageEditor : public QLineEdit {
+class LanguageEditor : public LineField {
     Q_OBJECT
 
 public:
@@ -33,23 +33,21 @@ public:
     // Хвост, дописанный серым; пусто — дополнять нечем.
     QString completion() const { return completion_; }
 
-signals:
-    void accepted(const QString& language);
-    void cancelled();
+    // Сигналы accepted/cancelled — БАЗОВЫЕ (LineField). Своих здесь заводить
+    // нельзя: одноимённый сигнал наследника не заменяет базовый, а заводит
+    // второй — тот, на который подписано окно, молчал бы, и Esc переставал
+    // закрывать поле (набор CodeEdit это и поймал). У accepted одна разница:
+    // LanguageEditor шлёт его с ПРИНЯТЫМ ДОПОЛНЕНИЕМ (language()).
 
 protected:
+    // Каретка, заливка и однострочность — у LineField; здесь только своё:
+    // дополнение хвостом и клавиши, которые его принимают.
     void keyPressEvent(QKeyEvent* event) override;
-    // КАРЕТКА КАК В ЗАМЕТКЕ (просьба владельца): цвет и толщина из настроек,
-    // мигание общим CaretBlink — рисуется поверх штатной (line_caret.h).
-    void focusInEvent(QFocusEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
-    void focusOutEvent(QFocusEvent* event) override;
 
 private:
-    CaretBlink caret_;
     void updateCompletion();
-    // Цвет, которым поле закрывает то, что нарисовано под ним.
-    QColor backdrop_;
+    int caretPosition() const;
     // Принять дополнение в сам текст (Tab и стрелка вправо у конца строки).
     bool takeCompletion();
 

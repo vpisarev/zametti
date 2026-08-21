@@ -11,35 +11,19 @@
 #ifndef ZAMETTI_CAPTION_EDITOR_H
 #define ZAMETTI_CAPTION_EDITOR_H
 
-#include "line_caret.h"
-#include <QColor>
-#include <QLineEdit>
+#include "line_field.h"
+
 #include <QString>
 
 namespace zametti {
 
-class CaptionEditor : public QLineEdit {
+// Каретка, заливка, однострочность, Enter/Esc — у LineField (там же довод, по
+// которому поле сделано на QPlainTextEdit, а не на QLineEdit).
+class CaptionEditor : public LineField {
     Q_OBJECT
 
 public:
     CaptionEditor(const QString& current, QWidget* parent);
-
-signals:
-    void accepted(const QString& caption);
-    void cancelled();
-
-protected:
-    void keyPressEvent(QKeyEvent* event) override;
-    // КАРЕТКА КАК В ЗАМЕТКЕ (просьба владельца): цвет и толщина из настроек,
-    // мигание общим CaretBlink — рисуется поверх штатной (line_caret.h).
-    void focusInEvent(QFocusEvent* event) override;
-    void paintEvent(QPaintEvent* event) override;
-    void focusOutEvent(QFocusEvent* event) override;
-
-private:
-    CaretBlink caret_;
-    // Цвет, которым поле закрывает то, что нарисовано под ним.
-    QColor backdrop_;
 };
 
 }  // namespace zametti

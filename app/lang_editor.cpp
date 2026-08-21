@@ -2,6 +2,8 @@
 
 #include "settings.h"
 
+#include <QTextBlock>
+
 #include <QFontMetricsF>
 #include <QFocusEvent>
 #include <QKeyEvent>
@@ -23,8 +25,7 @@ QColor blend(const QColor& over, const QColor& under) {
 
 LanguageEditor::LanguageEditor(const QStringList& candidates, const QString& current,
                                QWidget* parent)
-    : QLineEdit(parent), candidates_(candidates) {
-    setFrame(false);
+    : LineField(parent), candidates_(candidates) {
     setText(current);
     selectAll();
     // ФОН ЗАКРАШИВАЕМ САМИ, в paintEvent, и это не перестраховка.
@@ -38,18 +39,19 @@ LanguageEditor::LanguageEditor(const QStringList& candidates, const QString& cur
     //
     // Своя заливка от стиля не зависит вовсе. Цвет — тот же, каким выглядит
     // плашка: полупрозрачную подложку кода складываем с фоном страницы.
-    backdrop_ = blend(settings().style().codeBackground(), settings().style().pageBackground());
+    setBackdrop(blend(settings().style().codeBackground(), settings().style().pageBackground()));
     QPalette colours = palette();
-    colours.setColor(QPalette::Base, backdrop_);
+    colours.setColor(QPalette::Base, backdrop());
     colours.setColor(QPalette::Text, settings().style().codeLangColor());
     setPalette(colours);
     setAttribute(Qt::WA_MacShowFocusRect, false);
-    connect(&caret_, &CaretBlink::phaseChanged, this, [this] { update(); });
-    connect(this, &QLineEdit::cursorPositionChanged, this,
-            [this] { wakeLineCaret(caret_, *this); });
-    connect(this, &QLineEdit::textChanged, this, [this] { wakeLineCaret(caret_, *this); });
-    connect(this, &QLineEdit::textEdited, this, [this] { updateCompletion(); });
+    connect(this, &LineField::edited, this, [this] { updateCompletion(); });
     updateCompletion();
+}
+
+int LanguageEditor::caretPosition() const {
+    const QTextCursor at = textCursor();
+    return at.position() - at.block().position();
 }
 
 QString LanguageEditor::language() const { return text() + completion_; }
@@ -59,7 +61,7 @@ void LanguageEditor::updateCompletion() {
     const QString typed = text();
     // Дополняем только когда каретка в конце: посреди слова дописанный хвост
     // означал бы не то, что человек правит.
-    if (typed.isEmpty() || cursorPosition() != typed.size()) return;
+    if (typed.isEmpty() || caretPosition() != typed.size()) return;
     for (const QString& candidate : candidates_) {
         if (candidate.size() <= typed.size()) continue;
         if (!candidate.startsWith(typed, Qt::CaseInsensitive)) continue;
@@ -82,72 +84,47 @@ void LanguageEditor::keyPressEvent(QKeyEvent* event) {
     switch (event->key()) {
         case Qt::Key_Return:
         case Qt::Key_Enter:
+            // С дополнением: человек видит хвост и жмёт Enter, соглашаясь с ним.
             emit accepted(language());
-            return;
-        case Qt::Key_Escape:
-            emit cancelled();
+            event->accept();
             return;
         case Qt::Key_Tab:
             // Tab принимает дополнение, а не уводит фокус: поле живёт поверх
             // текста, и уходить ему некуда.
             takeCompletion();
+            event->accept();
             return;
         case Qt::Key_Right:
-            if (cursorPosition() == text().size() && takeCompletion()) return;
+            if (caretPosition() == text().size() && takeCompletion()) return;
             break;
         default:
             break;
     }
-    QLineEdit::keyPressEvent(event);
-    // Забой и стрелки textEdited не шлют, а дополнение от них меняется.
+    LineField::keyPressEvent(event);
+    // Забой и стрелки правкой текста не считаются, а дополнение от них меняется.
     updateCompletion();
-    update();
+    viewport()->update();
 }
 
 void LanguageEditor::paintEvent(QPaintEvent* event) {
-    {
-        // Сперва своя заливка — ею и закрывается всё, что нарисовано под полем.
-        QPainter under(this);
-        under.fillRect(rect(), backdrop_);
-    }
-    QLineEdit::paintEvent(event);
-    {
-        // Каретка — своя, поверх штатной (см. line_caret.h); подсказка хвоста
-        // рисуется после неё и её не задевает: она правее места набора.
-        QPainter over(this);
-        paintLineCaret(over, cursorRect(), caret_, hasFocus(), backdrop_);
-    }
+    // Заливка, текст и своя каретка — у LineField; здесь дописывается серый
+    // хвост дополнения.
+    LineField::paintEvent(event);
     if (completion_.isEmpty()) return;
 
-    QPainter painter(this);
+    QPainter painter(viewport());
     painter.setFont(font());
     QColor grey = settings().style().codeLangColor();
     grey.setAlpha(120);
     painter.setPen(grey);
-    // Начало хвоста — ровно там, где стоит каретка. Считать его шириной
-    // набранного нельзя: у QLineEdit своё внутреннее поле слева, а при длинном
-    // имени текст ещё и уезжает вбок. Но и cursorRect().left() не годится —
-    // Qt отдаёт под каретку прямоугольник ШИРИНОЙ ДЕСЯТЬ ПИКСЕЛЕЙ, посаженный
-    // серединой на позицию каретки (rectForPos: cix - 5, ширина 10). Его левый
-    // край — это пять пикселей ВЛЕВО от места набора, и хвост наезжал на
-    // последнюю набранную букву: «c» + «pp» рисовалось как «(cp)p». Берём
-    // середину — она и есть каретка.
-    const qreal x = cursorRect().center().x();
-    painter.drawText(QRectF(rect()).adjusted(x, 0, 0, 0),
+    // Хвост начинается ровно там, где стоит каретка. У QPlainTextEdit
+    // cursorRect() отдаёт НАСТОЯЩЕЕ её место; у QLineEdit, на котором поле
+    // жило раньше, это была полоса шириной десять пикселей, посаженная
+    // серединой на позицию набора, и хвост наезжал на последнюю букву — «c» +
+    // «pp» рисовалось как «(cp)p». Здесь этой ловушки больше нет.
+    const qreal x = caretRect().left();
+    painter.drawText(QRectF(viewport()->rect()).adjusted(x, 0, 0, 0),
                      Qt::AlignVCenter | Qt::AlignLeft, completion_);
-}
-
-void LanguageEditor::focusInEvent(QFocusEvent* event) {
-    QLineEdit::focusInEvent(event);
-    wakeLineCaret(caret_, *this);
-}
-
-void LanguageEditor::focusOutEvent(QFocusEvent* event) {
-    QLineEdit::focusOutEvent(event);
-    caret_.sleep();
-    // Ушли мимо — как Esc: молча применять то, чего человек не подтвердил,
-    // нельзя, а оставлять поле висеть поверх текста — тем более.
-    emit cancelled();
 }
 
 }  // namespace zametti
