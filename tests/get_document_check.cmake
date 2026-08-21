@@ -45,8 +45,21 @@ foreach(dir ${SOURCE_DIRS})
             continue()
         endif()
         math(EXPR CHECKED "${CHECKED} + 1")
-        file(STRINGS "${src}" LINES REGEX "getDocument[ \t]*\\(")
+        # ENCODING UTF-8 — не украшение: без него file(STRINGS) читает файл как
+        # ASCII и рвёт строку на куски по кириллице, то есть отдаёт «хвост»
+        # комментария без его «//». Ровно на этом сторож и краснел молча.
+        file(STRINGS "${src}" LINES ENCODING UTF-8 REGEX "getDocument[ \t]*\\(")
         foreach(line ${LINES})
+            # КОММЕНТАРИЙ — НЕ ВЫЗОВ. Правило про намерение кода, а объяснить
+            # его словами («ни через люк getDocument(), никак») вправе любой
+            # заголовок — и ровно на такой фразе сторож краснел с сессии 8,
+            # причём молча: набор гоняли напрямую, а не через ctest. Хвост от
+            # «//» отрезается, и решение принимается по остатку.
+            string(REGEX REPLACE "//.*" "" code "${line}")
+            if(NOT code MATCHES "getDocument[ \t]*\\(")
+                continue()
+            endif()
+            set(line "${code}")
             # Разрешено только внутри setDocument(...). Пробелы между именем и
             # скобкой допускаем: форматтер вправе их поставить. Пустые пары
             # скобок по пути — тоже: с сессии 3 законный вид зовётся через
