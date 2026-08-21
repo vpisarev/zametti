@@ -526,7 +526,7 @@ int main(int argc, char** argv) {
     findBar.setHistory(session.searchHistory());
     zametti::HistoryController history(editor, historyView);
     zametti::MarkdownController markdown(editor, markdownView);
-    zametti::SettingsController settingsMode(settingsView,
+    zametti::SettingsController settingsMode(editor, settingsView,
                                              std::make_shared<zametti::ZConfigFile>());
 
     // Облик применяется ОДНИМ местом — и на старте, и когда конфиг поправили

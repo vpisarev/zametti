@@ -265,6 +265,9 @@ line or the selected lines. Undo and redo are the ordinary ones and live for
 as long as the editing session. The caret is the same one as in a note — its
 color and width come from the same settings.
 
+Opening a note leaves the mode: clicking a note in the tree asks for the note,
+not for the config, and the edit is not lost — leaving writes the file.
+
 The file is written on `Ctrl+S`, on leaving the mode and on exit — there are
 no confirmation dialogs anywhere in this program. Text that does not parse is
 still written (it is your file) but is not applied: the status bar says what

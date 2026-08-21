@@ -2,11 +2,16 @@
 
 namespace zametti {
 
-SettingsController::SettingsController(JsonEditView& view, std::shared_ptr<ZConfigFile> model,
-                                       QObject* parent)
-    : QObject(parent), view_(view), model_(std::move(model)) {
+SettingsController::SettingsController(NoteEditor& editor, JsonEditView& view,
+                                       std::shared_ptr<ZConfigFile> model, QObject* parent)
+    : QObject(parent), editor_(editor), view_(view), model_(std::move(model)) {
     // Esc из вида — выйти из режима (и записать). Вид про режим не знает.
     connect(&view_, &JsonEditView::leaveRequested, this, [this] { leave(); });
+    // ОТКРЫЛИ ЗАМЕТКУ — УХОДИМ (см. заголовок): человек ткнул в дерево или в
+    // список, и показать ему надо заметку. Правка конфига уходит в файл тем же
+    // путём, что по Ctrl+S. Сигнал «сменилась», а не «сейчас сменится»: у нас
+    // ничего не живёт в самой заметке, торопиться некуда.
+    connect(&editor_, &NoteEditor::fileChanged, this, [this](const QString&) { leave(); });
 }
 
 bool SettingsController::enter() {

@@ -16,6 +16,7 @@
 #define ZAMETTI_SETTINGS_CONTROLLER_H
 
 #include "config_file.h"
+#include "editor_widget.h"
 #include "json_edit_view.h"
 
 #include <QObject>
@@ -29,8 +30,13 @@ class SettingsController : public QObject {
     Q_OBJECT
 
 public:
-    SettingsController(JsonEditView& view, std::shared_ptr<ZConfigFile> model,
-                       QObject* parent = nullptr);
+    // Редактор нужен затем, чтобы уйти с дороги: ОТКРЫЛИ ЗАМЕТКУ — РЕЖИМ
+    // ЗАКРЫВАЕТСЯ (решение владельца). Щёлкнув по заметке в дереве, человек
+    // просит показать её, а не конфиг; правка при этом не теряется — выход
+    // пишет файл, как Ctrl+S. Режим исходника ведёт себя иначе нарочно: он
+    // принадлежит заметкам и по ним ходят, не выходя из него.
+    SettingsController(NoteEditor& editor, JsonEditView& view,
+                       std::shared_ptr<ZConfigFile> model, QObject* parent = nullptr);
 
     // Открыть конфиг (нет файла — записать шаблон и открыть его). false — файл
     // не читается и не пишется; причина уходит сигналом saved(false, …).
@@ -50,6 +56,7 @@ signals:
     void saved(bool ok, const QString& error);
 
 private:
+    NoteEditor& editor_;
     JsonEditView& view_;
     std::shared_ptr<ZConfigFile> model_;
     bool active_ = false;
