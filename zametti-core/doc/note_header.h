@@ -26,6 +26,16 @@ public:
     void set(std::string_view key, std::string_view value);
     void unset(std::string_view key);
 
+    // ВЕРСИЯ ФОРМАТА ЗАМЕТКИ (refactor3, решение владельца): `version: 1`
+    // ставится ЛЕНИВО — только заметкам, которые мы пишем: свежим, ввезённым и
+    // тем, что правим (штамп modified). Открыть и посмотреть — файл не трогает.
+    // Нет ключа — версия 1 по умолчанию; более новую версию не понижаем и не
+    // трогаем. Встаёт первой строкой шапки: это объявление формата, а не
+    // свойство заметки.
+    void ensureVersion();
+    static constexpr const char* kVersionKey = "version";
+    static constexpr const char* kFormatVersion = "1";
+
     bool present() const { return present_; }
     void setPresent(bool present) { present_ = present; }
 

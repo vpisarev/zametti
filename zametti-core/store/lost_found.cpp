@@ -90,6 +90,7 @@ int fileOrphans(const QString& root, QString* error) {
             head = was.header();
         }
         head.setPresent(true);
+        head.ensureVersion();
         head.set("role", kLostRole);
         head.setBlankAfter(true);
         doc.setHeader(head);

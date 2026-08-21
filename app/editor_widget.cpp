@@ -2887,6 +2887,16 @@ void NoteEditor::save(bool interactive, bool force) {
     // в свою зону этот контекст стёр бы — ровно ради него формат и менялся.
     if (note_->header().present()) {
         bool moved = false;
+        // ВЕРСИЯ ФОРМАТА — ТОЖЕ ЛЕНИВО И ТОЖЕ ЗДЕСЬ (refactor3, решение владельца):
+        // `version: 1` получает только заметка, которую мы и правда пишем.
+        // Выше, в stampModified, ей не место: штамп ставится ДО решения
+        // «сохранять нечего» и откатывается, а новая строка шапки ломала бы
+        // сравнение «не считая modified» — и нетронутая заметка переписывалась
+        // бы (так покраснел ArchiveEditor: стаб оброс версией).
+        if (note_->header().get(NoteHeader::kVersionKey).empty()) {
+            note_->header().ensureVersion();
+            moved = true;
+        }
         for (const char* key : {"created", "modified"}) {
             const std::string had = note_->header().get(key);
             if (had.empty()) continue;

@@ -54,6 +54,18 @@ void NoteHeader::set(std::string_view key, std::string_view value) {
     lines_.push_back(std::move(line));
 }
 
+void NoteHeader::ensureVersion() {
+    if (!get(kVersionKey).empty()) return;   // есть — своя или более новая, не трогаем
+    if (!present_) {
+        present_ = true;
+        blankAfter_ = true;
+    }
+    std::string line(kVersionKey);
+    line += ": ";
+    line += kFormatVersion;
+    lines_.insert(lines_.begin(), std::move(line));
+}
+
 void NoteHeader::unset(std::string_view key) {
     for (auto it = lines_.begin(); it != lines_.end();) {
         it = keyOf(*it) == key ? lines_.erase(it) : it + 1;

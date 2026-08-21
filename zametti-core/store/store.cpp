@@ -285,6 +285,7 @@ QString newNote(const QString& root, const QString& parentId, QString* error) {
     // Без пустой строки после "-->": она положена перед контентом, а контента
     // в свежей заметке нет — иначе verify честно находил бы дрейф (замерено).
     std::string content = "<!-- zametti\n";
+    content += std::string(NoteHeader::kVersionKey) + ": " + NoteHeader::kFormatVersion + "\n";
     if (!parentId.isEmpty()) content += "parent: " + toUtf8(parentId) + "\n";
     content += "created: " + toUtf8(isoNow()) + "\n-->\n";
 
@@ -349,6 +350,7 @@ QString importNote(const QString& root, const QString& parentId, const QString& 
     doc.setHeaderValue(QStringLiteral("created"), created);
     doc.setHeaderValue(QStringLiteral("modified"), modified);
     doc.setHasHeader(true);
+    doc.header().ensureVersion();   // ввезённая — написана нами
     // Пустая строка после "-->" положена перед содержимым; у пустого файла
     // содержимого нет, и она дала бы дрейф.
     doc.header().setBlankAfter(!doc.doc().isEmpty());
@@ -821,6 +823,7 @@ bool importTree(const ImportOptions& options, Report& report) {
         if (!e.parentRel.isEmpty()) meta.set("parent", dirIds[e.parentRel]);
         meta.set("created", toUtf8(isoUtc(e.created)));
         meta.set("modified", toUtf8(isoUtc(e.modified)));
+        meta.ensureVersion();
 
         body = toUtf8(writePieces(ir, meta));
 
