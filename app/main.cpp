@@ -2146,7 +2146,7 @@ int main(int argc, char** argv) {
             // не дотягивается, а до функции — вполне.
             switch (zametti::escapeActionFor(editor.codeLanguageEditor() != nullptr,
                                              editor.caretInOpenObject(), !findBar.isHidden(),
-                                             settingsMode.active() || markdown.active())) {
+                                             settingsMode.active())) {
                 case zametti::EscapeAction::CloseLanguageEditor:
                     editor.closeCodeLanguageEditor();
                     return;
@@ -2158,9 +2158,9 @@ int main(int argc, char** argv) {
                     emit findBar.closed();
                     return;
                 case zametti::EscapeAction::LeaveMode:
-                    // Настройки поверх исходника: закрываем то, что на виду.
-                    if (settingsMode.active()) settingsMode.leave();
-                    else markdown.leave();
+                    // Только правка настроек: из режима исходника Esc не
+                    // выводит (решение владельца) — там выходят кнопкой [M].
+                    settingsMode.leave();
                     return;
                 case zametti::EscapeAction::Nothing:
                     return;

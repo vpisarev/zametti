@@ -195,7 +195,9 @@ count. Trailing spaces are cleaned as before. One rule for everything:
 opening a file, returning from the source and editing the note in an external
 editor all take the same path.
 
-`[M]` again (or `Esc`) returns the normal view. The mode has no default
+`[M]` again returns the normal view — `Esc` deliberately does not: leaving the
+mode applies everything typed here to the note, and that is not something a key
+under your fingers should do by accident. The mode has no default
 shortcut — `Ctrl+M` on a Mac is `Cmd+M`, "minimize window"; whoever needs a
 key writes it into `editor.markdownModeKey`. The edited text is brought to
 the canonical form and applied to the note **only in the touched pieces** —
@@ -250,7 +252,8 @@ them: remove a key and the default comes back.
 
 The gear button in the toolbar opens that file **inside the application**, on
 the place of the editor, with JSON highlighting — the same page mechanics as
-the source mode: press the button again or `Esc` to leave, `Ctrl+S` to write,
+the source mode: press the button again or `Esc` to leave (unlike the source
+mode, `Esc` does work here — leaving only writes the file), `Ctrl+S` to write,
 `Ctrl+F` and `F3` to search. `Tab` inserts spaces up to the next stop
 (`jsonEditing.tabIndent`, four by default), `Enter` keeps the indent of the
 previous line, `Ctrl+/` (`jsonEditing.commentKey`) comments and uncomments the
