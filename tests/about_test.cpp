@@ -15,6 +15,8 @@
 #include "testdata.h"
 
 #include <QApplication>
+#include <QDialogButtonBox>
+#include <QPushButton>
 #include <QTabWidget>
 #include <QTest>
 #include <QTextBlock>
@@ -208,6 +210,25 @@ void checkWindow() {
                           "версии вшитого видны в окне");
 }
 
+
+// КНОПКА ОКНА СПРАВКИ — «OK», А НЕ «CLOSE» (просьба владельца): окно ни о чём
+// не спрашивает, и красный крест на нём выглядит тревожнее, чем повод. Роль
+// кнопки — то, по чему стиль выбирает и подпись, и значок; её и спрашиваем.
+void checkOkButton() {
+    zametti::AboutWindow window;
+    auto* buttons = window.findChild<QDialogButtonBox*>();
+    check(buttons != nullptr, "кнопки окна справки нашлись");
+    if (buttons == nullptr) return;
+    check(buttons->standardButtons() == QDialogButtonBox::Ok,
+          "кнопка одна и это OK");
+    QPushButton* ok = buttons->button(QDialogButtonBox::Ok);
+    check(ok != nullptr && !ok->text().isEmpty(), "у неё есть подпись");
+    // И БЕЗ ЗНАЧКА (просьба владельца): значок ставит стиль системы, и на
+    // разных стилях он разный — здесь его нет вовсе.
+    check(ok != nullptr && ok->icon().isNull(), "и нет значка — только надпись");
+    check(buttons->button(QDialogButtonBox::Close) == nullptr, "кнопки Close больше нет");
+}
+
 }  // namespace
 
 static int ztRunSuite(int argc, char** argv) {
@@ -230,6 +251,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkDocsEmbedded();
     checkBuildFacts();
     checkWindow();
+    checkOkButton();
 
     return zt::report("about");
 }
@@ -241,4 +263,16 @@ TEST(About, All) {
     std::vector<char*> ztArgv;
     for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
     EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
+}
+
+// Снимок окна справки — артефакт приёмки (владелец смотрит глазами на кнопку и
+// на вкладки). Не проверка: набор им ничего не решает.
+TEST(AboutShot, All) {
+    zametti::AboutWindow window;
+    window.resize(900, 640);
+    window.show();
+    QTest::qWait(200);
+    const QString path = zt::TestData::outDir(QStringLiteral("about")) +
+                         QStringLiteral("/окно-справки.png");
+    if (window.grab().save(path)) std::printf("снимок справки: %s\n", qPrintable(path));
 }

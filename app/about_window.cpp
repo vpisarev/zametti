@@ -8,6 +8,8 @@
 
 #include <QDesktopServices>
 #include <QDialogButtonBox>
+#include <QIcon>
+#include <QPushButton>
 #include <QTextBrowser>
 #include <QUrl>
 #include <QStringList>
@@ -121,7 +123,15 @@ AboutWindow::AboutWindow(QWidget* parent) : QDialog(parent) {
     }
     tabs_->addTab(markdownPage(licenses, tabs_), QStringLiteral("Licenses"));
 
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
+    // «OK», а не «Close» с красным крестом (просьба владельца): окно ни о чём
+    // не спрашивает и ничего не отменяет — это справка, и кнопка в ней значит
+    // «посмотрел», а не «закрой, пока не поздно». Значок ей стиль подставляет
+    // сам по роли, поэтому роль и меняем, а не подпись.
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok, this);
+    // БЕЗ ЗНАЧКА, ОДНА НАДПИСЬ (просьба владельца): значок кнопке подставляет
+    // стиль системы, и он тут ни о чём не говорит — «OK» и так однозначно.
+    if (QPushButton* ok = buttons->button(QDialogButtonBox::Ok); ok != nullptr)
+        ok->setIcon(QIcon());
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
 
