@@ -312,6 +312,19 @@ void MarkdownEditView::showSource(const QString& markdown, SourcePos caret) {
     centerCursor();
 }
 
+QString MarkdownEditView::source() const {
+    QString out;
+    out.reserve(document()->characterCount());
+    for (QTextBlock block = document()->begin(); block.isValid(); block = block.next()) {
+        if (block.blockNumber() > 0) out += QLatin1Char('\n');
+        out += block.text();
+    }
+    // Разделитель строк внутри блока (приехал из буфера обмена) — это перевод
+    // строки исходника; в файле ему делать нечего.
+    out.replace(QChar(QChar::LineSeparator), QLatin1Char('\n'));
+    return out;
+}
+
 SourcePos MarkdownEditView::caretPos() const {
     SourcePos pos;
     const QTextCursor at = textCursor();
