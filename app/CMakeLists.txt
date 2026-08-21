@@ -89,6 +89,10 @@ add_library(zametti-ui STATIC
     markdown_edit_view.cpp
     markdown_controller.h
     markdown_controller.cpp
+    json_edit_view.h
+    json_edit_view.cpp
+    settings_controller.h
+    settings_controller.cpp
     zapp.h
     zapp.cpp
     lang_editor.h
