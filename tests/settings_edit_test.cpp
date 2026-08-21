@@ -9,6 +9,7 @@
 // здесь проверяется через loadSettings своим каталогом настроек).
 
 #include "config_file.h"
+#include "editor_widget.h"
 #include "json_edit_view.h"
 #include "settings.h"
 #include "settings_controller.h"
@@ -272,3 +273,29 @@ TEST(SettingsEdit, All) {
     checkAppliedAfterSave();
     checkCaretLook();
 }
+
+// ЯРЛЫК ОКНА СЪЕДАЕТ Esc (дефект, найденный ревью refactor3). В живом окне
+// Esc — QShortcut на окне (main.cpp), а он срабатывает РАНЬШЕ, чем нажатие
+// доходит до виджета с фокусом: значит keyPressEvent вида его не видит вовсе,
+// и обещанный README выход из режима по Esc не работал бы. Порядок решает
+// escapeActionFor — одно место на все режимы (там же ловится Esc у поля языка
+// и панели поиска).
+namespace {
+
+void checkEscapeGoesThroughWindowShortcut() {
+    // Порядок в самой функции: выйти из режима — после того, как закрылось всё,
+    // что открыто ПОВЕРХ текста.
+    using zametti::EscapeAction;
+    ZT_TRUE("режим закрывается, когда больше нечего закрывать",
+            zametti::escapeActionFor(false, false, false, true) == EscapeAction::LeaveMode);
+    ZT_TRUE("панель поиска раньше режима",
+            zametti::escapeActionFor(false, false, true, true) == EscapeAction::CloseFindBar);
+    ZT_TRUE("поле языка раньше всех",
+            zametti::escapeActionFor(true, false, true, true) == EscapeAction::CloseLanguageEditor);
+    ZT_TRUE("без режима — как было",
+            zametti::escapeActionFor(false, false, false, false) == EscapeAction::Nothing);
+}
+
+}  // namespace
+
+TEST(SettingsEscape, All) { checkEscapeGoesThroughWindowShortcut(); }
