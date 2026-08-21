@@ -23,6 +23,8 @@
 
 namespace zametti {
 
+class HistoryController;
+
 class MarkdownController : public QObject {
     Q_OBJECT
 
@@ -48,6 +50,18 @@ public:
 
     void refreshAppearance();
 
+    // РЕЖИМ ПЕРЕЖИВАЕТ ПОХОД В ИСТОРИЮ (просьба владельца, refactor3): markdown
+    // знает историю (одна сторона; история про markdown не знает). Вход в
+    // историю при идущем режиме — наложить и отложить (suspended_); выход из
+    // истории — вернуть режим с ТЕКУЩИМ исходником заметки (после
+    // восстановления из слепка — восстановленным: restore — обычная правка
+    // заметки, одним шагом отмены, и переключение обратно без правок стек не
+    // трогает). Ctrl+Z на дне стека режима, ушедший в историю, — тот же путь;
+    // отменивший шаг самой заметки — остаётся в обычном виде (сценарий A
+    // владельца: там лежит атомарная правка, собранная из прошлого захода).
+    // Окно и набор зовут одно и то же.
+    void attachHistory(HistoryController& history);
+
 signals:
     void modeChanged(bool on);
     // Текст не принят: −1 — в исходнике набрана шапка `<!-- zametti`,
@@ -56,10 +70,13 @@ signals:
 
 private:
     int apply();
+    void resume();
 
     NoteEditor& editor_;
     MarkdownEditView& view_;
+    HistoryController* history_ = nullptr;
     bool active_ = false;
+    bool suspended_ = false;
 };
 
 }  // namespace zametti

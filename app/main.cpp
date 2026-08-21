@@ -887,9 +887,12 @@ int main(int argc, char** argv) {
     };
 
     QObject::connect(&history, &zametti::HistoryController::modeChanged, &window, [&](bool on) {
-        // Вид истории на месте редактора; таймлайн сбоку.
+        // Вид истории на месте редактора; таймлайн сбоку. Из истории
+        // возвращаемся туда, откуда пришли: в исходник, если режим исходника
+        // идёт (его возобновляет сам MarkdownController), иначе в редактор.
         textStack.setCurrentWidget(on ? static_cast<QWidget*>(&historyView)
-                                      : static_cast<QWidget*>(&editor));
+                                      : markdown.active() ? static_cast<QWidget*>(&markdownView)
+                                                          : static_cast<QWidget*>(&editor));
         if (on) {
             // Ширина списка — та, что человек выставил (state.json); не
             // выставлял — по содержимому списка, не шире средней колонки. Ставится ПОСЛЕ
@@ -920,7 +923,7 @@ int main(int argc, char** argv) {
         if (history.lastIndex() >= 0 && !editor.filePath().isEmpty())
             visitedSnapshot.insert(editor.filePath(), history.lastIndex());
         window.setWindowTitle(windowTitleFor(editor.filePath()) + QStringLiteral(" — zametti"));
-        editor.setFocus();
+        if (!markdown.active()) editor.setFocus();
     });
     // РЕЖИМ ПРАВКИ ИСХОДНИКА — третья страница стека, на месте редактора. Как и
     // у истории, кнопка тулбара показывает состояние режима, откуда бы в него
@@ -935,6 +938,10 @@ int main(int argc, char** argv) {
         }
         editor.setFocus();
     });
+    // РЕЖИМ ИСХОДНИКА ПЕРЕЖИВАЕТ ПОХОД В ИСТОРИЮ (см. MarkdownController).
+    // Подключается ПОСЛЕ обработчиков стека выше: возобновление режима на выходе
+    // из истории обязано идти последним, чтобы страница и фокус остались за ним.
+    markdown.attachHistory(history);
     QObject::connect(&markdown, &zametti::MarkdownController::applyRefused, &window, [&](int code) {
         // Текст не принят — и человек обязан узнать почему, а не гадать, отчего
         // кнопка не гаснет. Второй случай — дефект, и он назван дефектом.

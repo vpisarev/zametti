@@ -1,5 +1,7 @@
 #include "markdown_controller.h"
 
+#include "history_controller.h"
+
 #include <QTextCursor>
 
 namespace zametti {
@@ -18,6 +20,10 @@ MarkdownController::MarkdownController(NoteEditor& editor, MarkdownEditView& vie
     connect(&view_, &MarkdownEditView::undoExhausted, this, [this] {
         if (leave() < 0) return;   // текст не принят — из режима не выпускаем
         editor_.undo();
+        // Отмена ушла в историю (стек заметки был пуст) — режим отложен и
+        // вернётся по выходу из неё. Отменила шаг заметки — остаёмся в обычном
+        // виде (сценарий A владельца).
+        if (history_ != nullptr && history_->active()) suspended_ = true;
     });
     // ЗАМЕТКА МЕНЯЕТСЯ, А РЕЖИМ ИДЁТ. Правки живут в тексте вида, и наложить их
     // можно только пока прежняя заметка ещё открыта: сигнал приходит ДО подмены.
@@ -29,9 +35,34 @@ MarkdownController::MarkdownController(NoteEditor& editor, MarkdownEditView& vie
     connect(&editor_, &NoteEditor::fileChanged, this, [this](const QString&) { refill(); });
 }
 
+void MarkdownController::attachHistory(HistoryController& history) {
+    history_ = &history;
+    connect(&history, &HistoryController::modeChanged, this, [this](bool on) {
+        if (on) {
+            // Идущий режим откладывается: наложить и записать — вершина работы
+            // обязана оказаться в истории, куда человек идёт смотреть.
+            if (!active_) return;
+            if (leave() < 0) return;   // текст не принят — режим не отложен
+            suspended_ = true;
+            return;
+        }
+        resume();
+    });
+}
+
+void MarkdownController::resume() {
+    if (!suspended_) return;
+    suspended_ = false;
+    enter();   // текущий исходник заметки — после restore он восстановленный
+}
+
 bool MarkdownController::enter() {
+    suspended_ = false;   // явный вход — не возобновление
     if (active_) return true;
     if (editor_.filePath().isEmpty()) return false;
+    // В режим — из истории, а не поверх неё: две страницы стека разом быть
+    // активными не должны.
+    if (history_ != nullptr && history_->active()) history_->leave();
 
     // ТОЧКА СОХРАНЕНИЯ. Человек уходит править исходник — вершина его работы
     // обязана оказаться в файле и в журнале до того, как истина переедет в

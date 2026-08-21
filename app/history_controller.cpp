@@ -125,9 +125,13 @@ qint64 HistoryController::restore(bool* alreadyCurrent) {
     // показывает и убранные строки, и на диск не уходит ни по какому пути.
     const std::string body = timeline_->snapshotBody();
     const qint64 source = timeline_->snapshotTime();
-    leave();
+    // СПЕРВА ВОССТАНОВИТЬ, ПОТОМ ВЫЙТИ. По выходу из режима (modeChanged(false))
+    // возобновляется отложенный markdown-режим и заливает вид исходником
+    // заметки — он обязан быть уже восстановленным. restoreBody от режима
+    // истории не зависит: пишет заметку и журнал штатным save.
     bool current = false;
     const qint64 done = editor_.restoreBody(body, source, &current);
+    leave();
     if (alreadyCurrent != nullptr) *alreadyCurrent = current;
     if (current) emit restoreWasCurrent();
     else if (done > 0) emit restored(done);
