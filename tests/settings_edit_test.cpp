@@ -22,6 +22,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QImage>
 #include <QTemporaryDir>
 #include <QTest>
@@ -45,13 +46,16 @@ std::string readFile(const QString& path) {
 struct Rig {
     QString path;
     std::shared_ptr<zametti::ZConfigFile> model;
+    zametti::NoteEditor editor;
     zametti::JsonEditView view;
     zametti::SettingsController controller;
 
     explicit Rig(const QString& name)
         : path(QDir(g_dir).filePath(name)),
           model(std::make_shared<zametti::ZConfigFile>(path)),
-          controller(view, model) {
+          controller(editor, view, model) {
+        editor.resize(700, 500);
+        editor.show();
         view.resize(700, 500);
         view.show();
         QTest::qWait(20);
@@ -212,9 +216,10 @@ void checkAppliedAfterSave() {
     const QByteArray previousHome = qgetenv("XDG_CONFIG_HOME");
     qputenv("XDG_CONFIG_HOME", home.path().toLocal8Bit());
 
+    zametti::NoteEditor editor;
     zametti::JsonEditView view;
     auto model = std::make_shared<zametti::ZConfigFile>(zametti::configPath());
-    zametti::SettingsController controller(view, model);
+    zametti::SettingsController controller(editor, view, model);
     view.resize(700, 500);
     view.show();
     QTest::qWait(20);
@@ -296,6 +301,28 @@ void checkFontMatchesSourceMode() {
     rig.controller.leave();
 }
 
+// ОТКРЫЛИ ЗАМЕТКУ — РЕЖИМ ЗАКРЫЛСЯ, А ПРАВКА КОНФИГА ЗАПИСАНА (решение
+// владельца): щелчок по заметке в дереве просит показать заметку, а не конфиг.
+void checkNoteOpeningLeavesMode() {
+    Rig rig(QStringLiteral("уход/config.json"));
+    const QString note = QDir(g_dir).filePath(QStringLiteral("уход/заметка.md"));
+    {
+        QDir().mkpath(QFileInfo(note).absolutePath());
+        QFile file(note);
+        ZT_TRUE("заметка записана", file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        file.write("# Заголовок\n\nтекст\n");
+    }
+    ZT_TRUE("вошли", rig.controller.enter());
+    rig.view.setText(QStringLiteral("{ \"font\": { \"pointSize\": 14 } }\n"), 0, 0);
+
+    rig.editor.openFile(note);
+    QTest::qWait(20);
+    ZT_TRUE("режим закрылся сам", !rig.controller.active());
+    ZT_EQ("и правка конфига записана", std::string("{ \"font\": { \"pointSize\": 14 } }\n"),
+          readFile(rig.path));
+    ZT_TRUE("заметка открыта", rig.editor.filePath() == note);
+}
+
 }  // namespace
 
 TEST(SettingsEdit, All) {
@@ -308,6 +335,7 @@ TEST(SettingsEdit, All) {
     checkAppliedAfterSave();
     checkCaretLook();
     checkFontMatchesSourceMode();
+    checkNoteOpeningLeavesMode();
 }
 
 // ЯРЛЫК ОКНА СЪЕДАЕТ Esc (дефект, найденный ревью refactor3). В живом окне
