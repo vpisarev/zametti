@@ -679,6 +679,29 @@ void checkUndoAtBottomLeavesToHistory() {
           std::string("1"), std::to_string(historyAsked));
 }
 
+
+// НЕРАЗРЫВНЫЕ ПРОБЕЛЫ В НАЧАЛЕ СТРОК ПЕРЕЖИВАЮТ РЕЖИМ (нашёл владелец:
+// стихотворение с отступами U+00A0 теряло их на выходе из исходника, хотя
+// внешний редактор их сохранял). QTextDocument::toPlainText() подменяет U+00A0
+// обычным пробелом — а обычный пробел в начале строки markdown съедает.
+void checkNbspSurvives() {
+    const QString body = QStringLiteral("   стих\n   второй\n\nобычный\n");
+    const QString path = writeNote(QStringLiteral("нбсп.md"), body);
+    Rig rig;
+    rig.editor.openFile(path);
+    QTest::qWait(20);
+    ZT_TRUE("вошли", rig.controller.enter());
+    ZT_TRUE("вид показывает неразрывные как есть", rig.view.source().contains(QChar(0xa0)));
+    // Правка в другом месте — чтобы наложение вообще состоялось.
+    QTextCursor edit = rig.view.textCursor();
+    edit.movePosition(QTextCursor::End);
+    edit.insertText(QStringLiteral("хвост\n"));
+    ZT_TRUE("вышли, наложив", rig.controller.leave() > 0);
+    ZT_EQ("неразрывные отступы целы, хвост на месте",
+          (QStringLiteral("   стих\n   второй\n\nобычный\nхвост\n")).toStdString(),
+          textOf(rig.editor));
+}
+
 }  // namespace
 
 TEST(MarkdownEdit, All) {
@@ -695,5 +718,6 @@ TEST(MarkdownEdit, All) {
     checkKeyCases();
     checkCaretLook();
     checkUndoAtBottomLeavesToHistory();
+    checkNbspSurvives();
     checkOwnerNote();
 }
