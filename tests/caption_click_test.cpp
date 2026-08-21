@@ -115,6 +115,36 @@ TEST(CaptionClick, All) {
     ZT_EQ("каретка цвета caretColor и толщиной caretWidth", std::to_string(wide),
           std::to_string(run));
 
+    // 3а. И ЧУЖОЙ КАРЕТКИ РЯДОМ НЕТ — НИ В ОДНОЙ ФАЗЕ МИГАНИЯ. Владелец
+    // увидел в первой редакции ровно это: «мигают обе, тонкая штатная и
+    // цветная, с рассинхроном». Поле сделано на QPlainTextEdit ради
+    // setCursorWidth(0), а колонка каретки ещё и перерисовывается поверх —
+    // на дробном масштабе экрана нулевая ширина становится физическим
+    // пикселем. Смотрим серию кадров: тёмных пикселей в поле нет ни разу.
+    {
+        int frames = 0;
+        int litFrames = 0;
+        int strangers = 0;
+        for (int i = 0; i < 12; ++i) {
+            QTest::qWait(120);
+            const QImage frame = field->grab().toImage();
+            const int row = frame.height() / 2;
+            int lit = 0;
+            int dark = 0;
+            for (int x = 0; x < frame.width(); ++x) {
+                const QColor c = frame.pixelColor(x, row);
+                if (c == want) ++lit;
+                else if (c.lightness() < 90) ++dark;
+            }
+            ++frames;
+            if (lit > 0) ++litFrames;
+            strangers += dark;
+        }
+        ZT_EQ("чужой каретки нет ни в одном кадре", std::string("0"), std::to_string(strangers));
+        ZT_TRUE("а своя мигает: горит не всегда и не никогда",
+                litFrames > 0 && litFrames < frames);
+    }
+
     // 4. Подпись правится и уходит в заметку — поле работает, а не только видно.
     field->setText(QStringLiteral("Балкон, вечер"));
     QTest::keyClick(field, Qt::Key_Return);
