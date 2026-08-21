@@ -147,6 +147,20 @@ QFont NoteView::baseFont() const {
     return document() != nullptr ? document()->defaultFont() : baseFontFor(1.0, docStyle());
 }
 
+// Масштаб содержимого полоски: не больше, чем позволяет её высота. Резерв
+// поставлен сборщиком в базовом кегле, и вылезти из него нельзя — подпись
+// налезла бы на следующий абзац.
+qreal NoteView::plateScale() const {
+    const qreal wanted = displayScale();
+    if (wanted <= 1.0) return wanted;
+    const CodePlate base = codePlate(docStyle(), 1.0);
+    if (base.strip <= 0.0) return 1.0;
+    const qreal langUnit = QFontMetricsF(codeLangFont(docStyle(), 1.0)).height();
+    if (langUnit <= 0.0) return 1.0;
+    // В резерв высотой strip помещается подпись высотой strip: дальше не растём.
+    return qBound(1.0, base.strip / langUnit, wanted);
+}
+
 qreal NoteView::displayScale() const {
     const qreal base = docStyle().baseFontPoint();
     if (base <= 0.0) return 1.0;
@@ -1339,7 +1353,8 @@ QRectF NoteView::copyButtonRect(const CodeBand& band) const {
     if (!band.last || plate.strip <= 0.0) return {};
     // Сторона значка — от кегля подписи (codePlate), но не выше полоски: в
     // неё он обязан влезть при любых настройках.
-    const qreal side = qMin(plate.iconSide, plate.strip);
+    // Значок растёт с текстом, но из полоски не вылезает: она — резерв.
+    const qreal side = qMin(plate.iconSide * plateScale(), plate.strip);
     const qreal gap = plate.padLeft + plate.stripPadding;
     return QRectF(band.rect.right() - gap - side,
                   band.rect.bottom() + (plate.strip - side) / 2.0, side, side);
@@ -1689,7 +1704,7 @@ void NoteView::paintCodeStrip(QPainter& painter, const CodeBand& band) {
     painter.save();
     if (!band.info.isEmpty() && !where.isEmpty() &&
         band.firstBlockNumber != editedCodeLanguage_) {
-        painter.setFont(codeLangFont(docStyle()));
+        painter.setFont(codeLangFont(docStyle(), plateScale()));
         painter.setPen(docStyle().codeLangColor());
         painter.drawText(where, Qt::AlignVCenter | Qt::AlignRight, band.info);
     }

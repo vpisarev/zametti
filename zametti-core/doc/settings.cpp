@@ -688,7 +688,8 @@ const ZSettings& settings() { return g_settings; }
 // Люк наборов (tests/settings_hook.h): в боевых заголовках его нет.
 ZSettings& mutableSettingsForTests() { return g_settings; }
 
-CodePlate codePlate(const ZDocStyle& look) {
+CodePlate codePlate(const ZDocStyle& look, qreal scale) {
+    if (!(scale > 0.0)) scale = 1.0;
     // Единицы те же, что у сборщика документа: по вертикали — высота строки
     // кода (гарнитура текста в кегле кода, как её считает document_builder),
     // по горизонтали — ширина "A" основного шрифта.
@@ -698,18 +699,18 @@ CodePlate codePlate(const ZDocStyle& look) {
     // значило бы разойтись с резервом, который сборщик уже положил в поля
     // блока.
     QFont base{QString(look.fontFamily())};
-    base.setPointSizeF(look.baseFontPoint());
+    base.setPointSizeF(look.baseFontPoint() * scale);
     base.setStyleHint(QFont::Monospace);
     const qreal charUnit = QFontMetricsF(base).horizontalAdvance(QLatin1Char('A'));
 
     QFont codeLine = base;
-    codeLine.setPointSizeF(look.baseFontPoint() * fontStepFactor(look.codeStep()));
+    codeLine.setPointSizeF(look.baseFontPoint() * scale * fontStepFactor(look.codeStep()));
     const qreal lineUnit =
         std::round(QFontMetricsF(codeLine).height() * look.lineHeightFactor());
 
     // Полоска и значок — от ШРИФТА ПОДПИСИ (см. codeStripHeight в settings.h):
     // один регулятор — кегль подписи.
-    const qreal langUnit = QFontMetricsF(codeLangFont(look)).height();
+    const qreal langUnit = QFontMetricsF(codeLangFont(look, scale)).height();
 
     CodePlate plate;
     plate.strip = std::round(look.codeStripHeight() * langUnit);
@@ -717,15 +718,15 @@ CodePlate codePlate(const ZDocStyle& look) {
     plate.iconSide = std::round(look.codeCopyIconScale() * langUnit);
     plate.padLeft = look.codePadLeft() * charUnit;
     plate.indent = look.codeIndent() * charUnit;
-    plate.radius = look.codeCornerRadius();
+    plate.radius = look.codeCornerRadius() * scale;
     plate.stripPadding = look.codeStripPadding() * charUnit;
     plate.langGap = look.codeLangGap() * charUnit;
     return plate;
 }
 
-QFont codeLangFont(const ZDocStyle& style) {
+QFont codeLangFont(const ZDocStyle& style, qreal scale) {
     QFont font{QString(style.codeLangFamily())};
-    font.setPointSizeF(style.codeLangPointSize());
+    font.setPointSizeF(style.codeLangPointSize() * (scale > 0.0 ? scale : 1.0));
     return font;
 }
 
