@@ -208,11 +208,15 @@ The mode belongs to the **application**, not to the note: you can walk across
 notes without leaving it — the button stays pressed, and every next note
 opens as source. This state survives a restart.
 
-The mode's zoom is **its own**: `Ctrl+=` / `Ctrl+-` / `Ctrl+0` in the source
-do not touch the zoom of the normal view, and vice versa. The source is shown
-in a monospaced font, the column is limited to the same width as in the
-normal view (`style.maxContentWidth`), code blocks go on a light gray backing
-— like inline code.
+The zoom of the plain-text views is **their own, and it is one**: `Ctrl+=` /
+`Ctrl+-` / `Ctrl+0` in the source do not touch the zoom of the normal view and
+vice versa, while the source and the settings editor always share the same
+size — they are the same text in the same font, and opening one of them
+smaller than the other would make no sense. The source is shown in the code
+font (`font.codeFamily` at `font.pointSize` — no separate setting of its own),
+the column is limited to the same width as in the normal view
+(`style.maxContentWidth`), code blocks go on a light gray backing — like
+inline code.
 
 The `<!-- zametti … -->` header is not shown by the source view — the
 application itself owns it; typed in by hand, it is rejected together with

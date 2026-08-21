@@ -58,8 +58,10 @@ ZAppState ZAppState::load() {
         root.value(QStringLiteral("splitterState")).toString().toLatin1()));
     session.setPanelsHidden(root.value(QStringLiteral("panelsHidden")).toBool(false));
     session.setMarkdownMode(root.value(QStringLiteral("markdownMode")).toBool(false));
-    session.setMarkdownZoom(root.value(QStringLiteral("markdownZoom")).toDouble(1.0));
-    session.setSettingsZoom(root.value(QStringLiteral("settingsZoom")).toDouble(1.0));
+    // Ленивая миграция: прежде масштаб исходника звался markdownZoom, а у
+    // правки настроек был свой. Новый ключ один; нет его — берём старый.
+    session.setPlainZoom(root.value(QStringLiteral("plainZoom"))
+                             .toDouble(root.value(QStringLiteral("markdownZoom")).toDouble(1.0)));
     session.setHistoryListWidth(root.value(QStringLiteral("historyListWidth")).toInt(0));
     session.setExportDir(root.value(QStringLiteral("exportDir")).toString());
     session.setExportKeepMeta(root.value(QStringLiteral("exportKeepMeta")).toBool(false));
@@ -110,8 +112,7 @@ void ZAppState::save() const {
                    QString::fromLatin1(session.splitterState().toBase64())},
                   {QStringLiteral("panelsHidden"), session.panelsHidden()},
                   {QStringLiteral("markdownMode"), session.markdownMode()},
-                  {QStringLiteral("markdownZoom"), session.markdownZoom()},
-                  {QStringLiteral("settingsZoom"), session.settingsZoom()},
+                  {QStringLiteral("plainZoom"), session.plainZoom()},
                   {QStringLiteral("historyListWidth"), session.historyListWidth()},
                   {QStringLiteral("exportDir"), session.exportDir()},
                   {QStringLiteral("exportKeepMeta"), session.exportKeepMeta()},

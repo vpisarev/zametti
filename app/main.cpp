@@ -824,12 +824,13 @@ int main(int argc, char** argv) {
     // Прежде клавиши в режиме молча увеличивали СКРЫТЫЙ обычный вид: отжал [M],
     // а заметка вдруг крупнее, хотя её масштаб не трогали.
     auto applyZoom = [&](qreal value) {
-        if (settingsMode.active()) {
-            settingsView.applyZoom(value);
-            return;
-        }
-        if (markdown.active()) {
+        // ПЛОСКИЕ ВИДЫ ДЕРЖАТ ОДИН МАСШТАБ (решение владельца): исходник и
+        // конфиг — один и тот же текст тем же шрифтом, и открываться разного
+        // размера они не должны. Ставим обоим сразу, какой бы из них ни был на
+        // виду.
+        if (settingsMode.active() || markdown.active()) {
             markdownView.applyZoom(value);
+            settingsView.applyZoom(value);
             return;
         }
         editor.applyZoom(value);
@@ -839,6 +840,7 @@ int main(int argc, char** argv) {
         const qreal now = settingsMode.active() ? settingsView.zoom()
                           : markdown.active()    ? markdownView.zoom()
                                                  : editor.zoom();
+
         applyZoom(std::clamp(now * factor, zametti::settings().ui().zoomMin(),
                              zametti::settings().ui().zoomMax()));
     };
@@ -2229,8 +2231,8 @@ int main(int argc, char** argv) {
     // РЕЖИМ ПРАВКИ ИСХОДНИКА ПЕРЕЖИВАЕТ ПЕРЕЗАПУСК (решение владельца): вышли
     // из программы с нажатой [M] — вернулись в неё же. После открытия заметки и
     // после фокуса: входить в режим нечем, пока показывать нечего.
-    markdownView.applyZoom(session.markdownZoom());
-    settingsView.applyZoom(session.settingsZoom());
+    markdownView.applyZoom(session.plainZoom());
+    settingsView.applyZoom(session.plainZoom());
     if (session.markdownMode()) markdown.enter();
 
 
@@ -2256,8 +2258,8 @@ int main(int argc, char** argv) {
         out.setHistoryListWidth(historyListWidth);
         out.setPanelsHidden(!toolbar.isChecked(zametti::Toolbar::Button::Panels));
         out.setMarkdownMode(markdown.active());
-        out.setMarkdownZoom(markdownView.zoom());
-        out.setSettingsZoom(settingsView.zoom());
+        // Число одно на оба плоских вида — берём у любого из них.
+        out.setPlainZoom(markdownView.zoom());
         out.setExpandedDirs(panels.expandedDirs());
         out.setSearchHistory(findBar.history());
         out.setStoreRoot(model.isStore() ? model.nodePath(QModelIndex()) : QString());
