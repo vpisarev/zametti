@@ -177,6 +177,7 @@ QJsonObject settingsToJson(const ZSettings& a) {
         {QStringLiteral("pageBackground"), colorToString(a.style().pageBackground())},
         {QStringLiteral("historyBackground"), colorToString(a.style().historyBackground())},
         {QStringLiteral("selectionBackground"), colorToString(a.style().selectionBackground())},
+        {QStringLiteral("selectionForeground"), colorToString(a.style().selectionForeground())},
         {QStringLiteral("searchHighlight"), colorToString(a.style().searchHighlight())},
         {QStringLiteral("diffAdded"), colorToString(a.style().diffAdded())},
         {QStringLiteral("diffRemoved"), colorToString(a.style().diffRemoved())},
@@ -496,6 +497,7 @@ void settingsFromJson(const QJsonObject& root, ZSettings& a) {
     readColor(colors, "pageBackground", a.style(), &ZDocStyle::setPageBackground);
     readColor(colors, "historyBackground", a.style(), &ZDocStyle::setHistoryBackground);
     readColor(colors, "selectionBackground", a.style(), &ZDocStyle::setSelectionBackground);
+    readColor(colors, "selectionForeground", a.style(), &ZDocStyle::setSelectionForeground);
     readColor(colors, "searchHighlight", a.style(), &ZDocStyle::setSearchHighlight);
     readColor(colors, "diffAdded", a.style(), &ZDocStyle::setDiffAdded);
     readColor(colors, "diffRemoved", a.style(), &ZDocStyle::setDiffRemoved);

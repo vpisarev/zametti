@@ -1,5 +1,6 @@
 #include "history_panel.h"
 
+#include "note_view.h"
 #include "settings.h"
 
 #include <QDateTime>
@@ -169,7 +170,7 @@ HistoryTimeline::HistoryTimeline(QWidget* parent) : QWidget(parent) {
     for (QPalette::ColorGroup group : {QPalette::Active, QPalette::Inactive}) {
         listPalette.setColor(group, QPalette::Highlight, settings().style().selectionBackground());
         listPalette.setColor(group, QPalette::HighlightedText,
-                             listPalette.color(QPalette::Text));
+                             selectedTextColour(settings().style(), listPalette));
     }
     list_->setPalette(listPalette);
 

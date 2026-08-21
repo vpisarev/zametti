@@ -214,7 +214,8 @@ public:
     // TextCursor в палитре Qt 6.10 нет.
     //
     // Ширина в пикселях при единичном масштабе; с зумом растёт.
-    ZM_SETTING_PLAIN(QColor, caretColor, CaretColor, 0x1e, 0xab, 0xd6)
+    //ZM_SETTING_PLAIN(QColor, caretColor, CaretColor, 0x1e, 0xab, 0xd6)
+    ZM_SETTING_PLAIN(QColor, caretColor, CaretColor, 0xda, 0x91, 0x00)
     ZM_SETTING(qreal, caretWidth, CaretWidth, 2.4, 0.5, 20.0)
     ZM_SETTING(qreal, dividerWidth, DividerWidth, 2.0, 0.5, 20.0)   // толщина тематической черты, px (умножается на зум)
     // Выделение непрозрачное, и это нарочно. Полупрозрачным оно было ровно
@@ -222,7 +223,15 @@ public:
     // выделение поверх неё в любом случае, и альфа тут ничего не решала.
     // Подложка кода теперь повторяется ПОВЕРХ выделения (paintCodeOverSelection
     // в note_view.cpp) — это и даёт серо-голубой над кодом.
-    ZM_SETTING_PLAIN(QColor, selectionBackground, SelectionBackground, 0xbf, 0xdb, 0xfe)
+    //ZM_SETTING_PLAIN(QColor, selectionBackground, SelectionBackground, 0xbf, 0xdb, 0xfe)
+    ZM_SETTING_PLAIN(QColor, selectionBackground, SelectionBackground, 0xf8, 0xde, 0x7e)
+    // Текст ВНУТРИ выделения. ПРОЗРАЧНЫЙ ЦВЕТ ЗНАЧИТ «ВЫВЕСТИ САМИМ» — взять
+    // обычный цвет текста, как было до появления этой настройки: выделение у
+    // нас светлое, и белый по умолчанию на нём просто пропал бы. Задали свой —
+    // берётся он, и одинаково везде: в заметке, в списках заметок и находок, в
+    // слепке истории, в полях подписи и языка (все спрашивают палитру, а
+    // палитру ставит одно место — applyPalette).
+    ZM_SETTING_PLAIN(QColor, selectionForeground, SelectionForeground, 0, 0, 0, 0)
     // Найденное поиском — СВОИМ цветом, а не цветом выделения. Выделение
     // отвечает на вопрос «что я сейчас держу», находки — на «где встречается
     // то, что я ищу», и в окне они попадаются рядом: текущая находка ещё и
@@ -282,7 +291,7 @@ public:
     // боковой панели, и геометрия плашки зависела от настроек окна); умолчание
     // то же, что у панели. Кегль — главный регулятор полоски (см. выше).
     ZM_SETTING_PLAIN(QString, codeLangFamily, CodeLangFamily, QStringLiteral("IBM Plex Sans SemiCondensed"))
-    ZM_SETTING(qreal, codeLangPointSize, CodeLangPointSize, 12, 4.0, 48.0)
+    ZM_SETTING(qreal, codeLangPointSize, CodeLangPointSize, 11, 4.0, 48.0)
     ZM_SETTING_PLAIN(QColor, codeLangColor, CodeLangColor, 0x7a, 0x80, 0x88)
 
     // --- маркированный список ---
@@ -321,7 +330,7 @@ public:
     // --- чекбокс ---
     ZM_SETTING_PLAIN(CheckboxStyle, checkboxStyle, CheckboxStyle, CheckboxStyle::Drawn)
     //QColor checkboxCheckedColor{0x32, 0x5c, 0xc0};    // заливка и цвет рамки
-    ZM_SETTING_PLAIN(QColor, checkboxCheckedColor, CheckboxCheckedColor, 0xcc, 0x88, 0x22)   // заливка и цвет рамки
+    ZM_SETTING_PLAIN(QColor, checkboxCheckedColor, CheckboxCheckedColor, 0xda, 0x91, 0x00)   // заливка и цвет рамки
     ZM_SETTING_PLAIN(QColor, checkboxUncheckedColor, CheckboxUncheckedColor, 0xac, 0xac, 0xac)   // только рамка, без заливки
     ZM_SETTING_PLAIN(QColor, checkboxTickColor, CheckboxTickColor, 0xff, 0xff, 0xff)
     ZM_SETTING(qreal, checkboxPenWidth, CheckboxPenWidth, 1.4, 0.2, 10.0)
@@ -1007,7 +1016,7 @@ struct ZSettings {
         // зелёным; числа — охрой; true/false/null — лиловым; // комментарии —
         // серым; скобки, двоеточия и запятые — приглушённым.
         ZM_SETTING_PLAIN(QColor, key, Key, 0x32, 0x5c, 0xc0)
-        ZM_SETTING_PLAIN(QColor, string, String, 0x2e, 0x7d, 0x32)
+        ZM_SETTING_PLAIN(QColor, string, String, 0x80, 0x20, 0x50)
         ZM_SETTING_PLAIN(QColor, number, Number, 0xb0, 0x5a, 0x00)
         ZM_SETTING_PLAIN(QColor, keyword, Keyword, 0x7a, 0x3e, 0x9d)
         ZM_SETTING_PLAIN(QColor, comment, Comment, 0x80, 0x80, 0x80)

@@ -10,6 +10,7 @@
 #define ZAMETTI_NOTE_VIEW_H
 
 #include <QFont>
+#include <QPalette>
 #include "image_metadata.h"
 #include "zimage_cache.h"
 
@@ -40,6 +41,12 @@ namespace zametti {
 // history — тонировать поле как прошлое (см. historyBackground).
 void applyPalette(QWidget& view, bool history = false,
                   const ZDocStyle& style = settings().style());
+
+// Цвет текста ВНУТРИ выделения: colors.selectionForeground, а если он
+// прозрачный — обычный цвет текста этой палитры («выведи сам»). Одно правило на
+// все виды и списки; отдельно нужен тем, кто ставит палитру не через
+// applyPalette (список слепков истории — у него свой фон).
+QColor selectedTextColour(const ZDocStyle& style, const QPalette& palette);
 
 // Рисовать ли каретку. Вынесено функцией, а не оставлено условием в отрисовке:
 // у набора нет фокуса окна (под Xvfb hasFocus() всегда ложь), и проверить

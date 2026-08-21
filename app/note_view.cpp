@@ -113,6 +113,11 @@ bool caretShouldBeDrawn(bool focused, bool readOnly, bool hasSelection, bool onD
     return true;
 }
 
+QColor selectedTextColour(const ZDocStyle& style, const QPalette& palette) {
+    const QColor own = style.selectionForeground();
+    return own.alpha() > 0 ? own : palette.color(QPalette::Text);
+}
+
 void applyPalette(QWidget& view, bool history, const ZDocStyle& style) {
     QPalette palette = view.palette();
     // В режиме истории поле тонируется: слегка пожелтевший от времени фон
@@ -122,9 +127,10 @@ void applyPalette(QWidget& view, bool history, const ZDocStyle& style) {
     palette.setColor(QPalette::Base, history ? style.historyBackground()
                                              : style.pageBackground());
     palette.setColor(QPalette::Highlight, style.selectionBackground());
-    // Выделение светлое, поэтому текст в нём остаётся тёмным: белый по
-    // умолчанию на таком фоне просто пропал бы.
-    palette.setColor(QPalette::HighlightedText, palette.color(QPalette::Text));
+    // Текст в выделении: свой цвет, если задан, иначе обычный цвет текста —
+    // выделение у нас светлое, и белый по умолчанию на нём просто пропал бы.
+    // Прозрачный в настройке и значит «выведи сам» (colors.selectionForeground).
+    palette.setColor(QPalette::HighlightedText, selectedTextColour(style, palette));
     // СТРАНИЦА ЗАНИМАЕТ ВСЁ ОКНО, а не только вьюпорт. Лишнюю ширину широкого
     // окна мы теперь отдаём полям вьюпорта (см. applyContentWidth), и полоски
     // по краям рисует уже не документ, а сам виджет — своим фоном. Без этой
