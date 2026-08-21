@@ -1,5 +1,7 @@
 #include "editor_widget.h"
 
+#include "image_read.h"
+
 #include "key_binding.h"
 
 #include "block_object.h"
@@ -2468,9 +2470,15 @@ void NoteEditor::insertFromMimeData(const QMimeData* source) {
             if (url.isLocalFile()) files << url.toLocalFile();
         // Из принесённого берём только то, что вообще читается как картинка:
         // перетащенный pdf должен вставиться ссылкой, а не притвориться фото.
+        //
+        // СПРАШИВАЕМ ЯДРО, А НЕ QT. Наши читатели — не плагины Qt, их зовут
+        // напрямую, и QImageReader про avif/heic не знает даже в сборке с
+        // WITH_HEIF=ON: перетащенный avif молча вставлялся ссылкой (нашёл
+        // владелец). probeImageFile читает только начало файла и опознаёт по
+        // байтам, а не по расширению.
         QStringList images;
         for (const QString& f : files)
-            if (!QImageReader(f).format().isEmpty()) images << f;
+            if (probeImageFile(f).valid()) images << f;
         if (!images.isEmpty()) {
             insertImageFiles(images);
             return;
@@ -2687,12 +2695,13 @@ void NoteEditor::chooseAndInsertImages() {
                              QStringLiteral("The note is not saved yet — the attachment has nowhere to go."));
         return;
     }
-    // Фильтр строим из того, что читатели УМЕЮТ на этой машине, а не из
-    // списка в коде: без libheif heic не прочтётся, и предлагать его было бы
-    // обманом.
+    // Фильтр строим из того, что читатели УМЕЮТ на этой машине, а не из списка
+    // в коде: без libheif heic не прочтётся, и предлагать его было бы обманом.
+    // Спрашиваем ЯДРО (readableImageExtensions): у Qt свой список, и наших
+    // читателей — jxl, avif, heic — в нём нет.
     QStringList patterns;
-    for (const QByteArray& fmt : QImageReader::supportedImageFormats())
-        patterns << QStringLiteral("*.") + QString::fromLatin1(fmt);
+    for (const QString& ext : readableImageExtensions())
+        patterns << QStringLiteral("*.") + ext;
     patterns.sort();
     const QString filter = QStringLiteral("Images (%1);;All files (*)")
                                .arg(patterns.join(QLatin1Char(' ')));
