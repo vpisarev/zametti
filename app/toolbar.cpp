@@ -48,7 +48,9 @@ constexpr Toolbar::Spec kSpecs[] = {
     {B::Search, "search", "Найти в заметке", "Ctrl+F", 3, false},
     {B::SearchInStore, "database-search", "Найти по всем заметкам", "Ctrl+Shift+F", 3, false},
 
-    {B::Settings, "settings", "Настройки", "", 4, false},
+    // ПЕРЕКЛЮЧАТЕЛЬ, как история и правка исходника: горит — на месте
+    // редактора правится config.json (refactor3).
+    {B::Settings, "settings", "Настройки", "", 4, true},
     {B::Help, "circle-question-mark", "Справка", "", 4, false},
 };
 

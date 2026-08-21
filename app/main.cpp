@@ -10,6 +10,7 @@
 #include "find_bar.h"
 #include "history_controller.h"
 #include "markdown_controller.h"
+#include "settings_controller.h"
 #include "history_panel.h"
 #include "history_view.h"
 #include "markdown_edit_view.h"
@@ -485,6 +486,8 @@ int main(int argc, char** argv) {
     // Третья страница стека: та же заметка сырым markdown. Объявлен ПОСЛЕ
     // textStack, как и остальные его дети (см. довод у стека).
     zametti::MarkdownEditView markdownView;
+    // Правка настроек — четвёртая страница стека, на месте редактора.
+    zametti::JsonEditView settingsView;
     zametti::SearchResultsModel results;
     zametti::SearchResultsDelegate resultsDelegate;
     QListView resultsView;
@@ -508,6 +511,7 @@ int main(int argc, char** argv) {
         textStack.addWidget(&editor);
         textStack.addWidget(&historyView);
         textStack.addWidget(&markdownView);
+        textStack.addWidget(&settingsView);
         textStack.setCurrentWidget(&editor);
 
         layout->addWidget(&textStack, 1);
@@ -522,6 +526,8 @@ int main(int argc, char** argv) {
     findBar.setHistory(session.searchHistory());
     zametti::HistoryController history(editor, historyView);
     zametti::MarkdownController markdown(editor, markdownView);
+    zametti::SettingsController settingsMode(settingsView,
+                                             std::make_shared<zametti::ZConfigFile>());
 
     // Облик применяется ОДНИМ местом — и на старте, и когда конфиг поправили
     // снаружи. Два места разошлись бы: половина настроек подхватывалась бы на
@@ -545,6 +551,7 @@ int main(int argc, char** argv) {
         editor.refreshAppearance();
         history.refreshAppearance();
         markdown.refreshAppearance();
+        settingsMode.refreshAppearance();
 
         // Делегаты читают настройки прямо при отрисовке — им довольно
         // перерисовки, но размеры строк они считают там же, и без сброса
@@ -575,15 +582,29 @@ int main(int argc, char** argv) {
                          watchConfig();
                          configSettle.start();
                      });
-    QObject::connect(&configSettle, &QTimer::timeout, &window, [&] {
-        watchConfig();
+    // ПЕРЕЧИТАТЬ КОНФИГ И ПРИМЕНИТЬ — ОДНО МЕСТО: и когда файл поправили
+    // снаружи (сторож выше), и когда его записал внутренний редактор настроек.
+    // Дедуп по байтам: запись изнутри зовёт перечитывание сама, а следом
+    // приходит сигнал сторожа о том же самом файле — второй раз пересобирать
+    // документ незачем.
+    QByteArray appliedConfigBytes;
+    const auto reloadConfig = [&] {
+        {
+            QFile file(zametti::configPath());
+            const QByteArray now =
+                file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+            if (now == appliedConfigBytes) return;
+            appliedConfigBytes = now;
+        }
         // Несохранённое — на диск до перезагрузки облика: пересборка документа
         // проходит через всю модель, и терять правки на ней недопустимо.
         editor.save(true);
 
         QString error;
         QStringList unknown;
-        if (!zametti::loadSettings(&error, &unknown)) {
+        // Через ZApp: он перечитывает настройки и заодно раздаёт бюджеты кэшам
+        // (сторож прежде звал loadSettings напрямую и кэши не трогал).
+        if (!zapp.reloadSettings(&error, &unknown)) {
             // Мусор в конфиге — это не повод перекрашивать окно наугад:
             // работаем на прежних значениях и говорим, что именно не так.
             std::fprintf(stderr, "конфиг не принят: %s\n", error.toUtf8().constData());
@@ -607,6 +628,10 @@ int main(int argc, char** argv) {
         if (!unknown.isEmpty())
             std::fprintf(stderr, "в конфиге не понято: %s\n",
                          unknown.join(QStringLiteral(", ")).toUtf8().constData());
+    };
+    QObject::connect(&configSettle, &QTimer::timeout, &window, [&] {
+        watchConfig();
+        reloadConfig();
     });
     watchConfig();
     // Про конфиг, прочитанный на старте, сказать надо сразу, а не ждать, пока
@@ -799,6 +824,10 @@ int main(int argc, char** argv) {
     // Прежде клавиши в режиме молча увеличивали СКРЫТЫЙ обычный вид: отжал [M],
     // а заметка вдруг крупнее, хотя её масштаб не трогали.
     auto applyZoom = [&](qreal value) {
+        if (settingsMode.active()) {
+            settingsView.applyZoom(value);
+            return;
+        }
         if (markdown.active()) {
             markdownView.applyZoom(value);
             return;
@@ -807,7 +836,9 @@ int main(int argc, char** argv) {
         historyView.textView().applyZoom(value);
     };
     auto stepZoom = [&](qreal factor) {
-        const qreal now = markdown.active() ? markdownView.zoom() : editor.zoom();
+        const qreal now = settingsMode.active() ? settingsView.zoom()
+                          : markdown.active()    ? markdownView.zoom()
+                                                 : editor.zoom();
         applyZoom(std::clamp(now * factor, zametti::settings().ui().zoomMin(),
                              zametti::settings().ui().zoomMax()));
     };
@@ -823,6 +854,11 @@ int main(int argc, char** argv) {
     // Отмена и повтор живут в самом редакторе: QTextEdit объявляет их своими и
     // до ярлыка окна они не доходят.
     shortcut(QKeySequence::Save, [&] {
+        // В РЕЖИМЕ ПРАВКИ НАСТРОЕК Ctrl+S пишет конфиг (и окно его применяет).
+        if (settingsMode.active()) {
+            settingsMode.save();
+            return;
+        }
         // В РЕЖИМЕ ИСХОДНИКА истина живёт в тексте: сперва наложить, потом
         // записывать. Из режима при этом не выходим — человек попросил
         // сохранить, а не закончить.
@@ -886,13 +922,20 @@ int main(int argc, char** argv) {
                               QStringLiteral(" — zametti"));
     };
 
+    // КАКАЯ СТРАНИЦА СТЕКА НА ВИДУ — ОДНО МЕСТО НА ВСЕ РЕЖИМЫ, иначе каждый
+    // режим решал бы это по-своему и они разошлись бы (так и было: из истории
+    // человек возвращался в обычный вид, хотя ушёл из исходника). Порядок:
+    // настройки > история > исходник > редактор.
+    const auto showPage = [&] {
+        textStack.setCurrentWidget(settingsMode.active() ? static_cast<QWidget*>(&settingsView)
+                                   : history.active()    ? static_cast<QWidget*>(&historyView)
+                                   : markdown.active()   ? static_cast<QWidget*>(&markdownView)
+                                                         : static_cast<QWidget*>(&editor));
+    };
+
     QObject::connect(&history, &zametti::HistoryController::modeChanged, &window, [&](bool on) {
-        // Вид истории на месте редактора; таймлайн сбоку. Из истории
-        // возвращаемся туда, откуда пришли: в исходник, если режим исходника
-        // идёт (его возобновляет сам MarkdownController), иначе в редактор.
-        textStack.setCurrentWidget(on ? static_cast<QWidget*>(&historyView)
-                                      : markdown.active() ? static_cast<QWidget*>(&markdownView)
-                                                          : static_cast<QWidget*>(&editor));
+        // Вид истории на месте редактора; таймлайн сбоку.
+        showPage();
         if (on) {
             // Ширина списка — та, что человек выставил (state.json); не
             // выставлял — по содержимому списка, не шире средней колонки. Ставится ПОСЛЕ
@@ -929,9 +972,9 @@ int main(int argc, char** argv) {
     // у истории, кнопка тулбара показывает состояние режима, откуда бы в него
     // ни вошли (кнопка, сочетание из настроек, восстановление на старте).
     QObject::connect(&markdown, &zametti::MarkdownController::modeChanged, &window, [&](bool on) {
-        textStack.setCurrentWidget(on ? static_cast<QWidget*>(&markdownView)
-                                      : static_cast<QWidget*>(&editor));
+        showPage();
         toolbar.setChecked(zametti::Toolbar::Button::MarkdownEdit, on);
+        if (settingsMode.active()) return;   // на виду настройки — фокус их
         if (on) {
             markdownView.setFocus();
             return;
@@ -949,6 +992,37 @@ int main(int argc, char** argv) {
                             ? QStringLiteral("в исходнике набрана шапка заметки — уберите её")
                             : QStringLiteral("правка не наложилась и отменена — это дефект"));
     });
+
+    // РЕЖИМ ПРАВКИ НАСТРОЕК — четвёртая страница стека. Кнопка-шестерёнка —
+    // переключатель, как [M] и история.
+    QObject::connect(&settingsMode, &zametti::SettingsController::modeChanged, &window,
+                     [&](bool on) {
+                         showPage();
+                         toolbar.setChecked(zametti::Toolbar::Button::Settings, on);
+                         if (on) {
+                             settingsView.setFocus();
+                             return;
+                         }
+                         // Вышли — фокус тому, кто снова на виду.
+                         if (markdown.active()) markdownView.setFocus();
+                         else if (history.active()) historyView.setFocus();
+                         else editor.setFocus();
+                     });
+
+    // ЗАПИСАЛИ КОНФИГ ИЗНУТРИ — ПРИМЕНЯЕМ ТЕМ ЖЕ ПУТЁМ, что и внешнюю правку:
+    // одно место (reloadConfig), одна жалоба в полосе, если файл не принят.
+    QObject::connect(&settingsMode, &zametti::SettingsController::saved, &window,
+                     [&](bool ok, const QString& error) {
+                         if (!ok) {
+                             std::fprintf(stderr, "конфиг не записан: %s\n",
+                                          error.toUtf8().constData());
+                             statusBar.setMessage(
+                                 QStringLiteral("конфиг не записан: %1").arg(error));
+                             return;
+                         }
+                         watchConfig();
+                         reloadConfig();
+                     });
 
     QObject::connect(&history, &zametti::HistoryController::indexChanged, &window,
                      [&](int) { showHistoryState(); });
@@ -1633,6 +1707,7 @@ int main(int argc, char** argv) {
     // блоками, у плоских видов — смещениями в тексте, но окну эта разница не
     // нужна (долг из отчёта девятой сессии).
     const auto searchTarget = [&]() -> zametti::TextSearchTarget& {
+        if (settingsMode.active()) return settingsView;
         if (markdown.active()) return markdownView;
         if (history.active()) return historyView.textView();
         return editor;
@@ -1862,6 +1937,7 @@ int main(int argc, char** argv) {
     QObject::connect(&findBar, &zametti::FindBar::closed, &window, [&] {
         editor.clearMatches();
         markdownView.clearMatches();
+        settingsView.clearMatches();
         historyView.textView().clearMatches();
         storeSearch.cancel();
         searchDebounce.stop();
@@ -2043,26 +2119,13 @@ int main(int argc, char** argv) {
                 about->activateWindow();
                 break;
             }
-            case Button::Settings: {
-                // Конфига может не быть вовсе: тогда пишем шаблон — весь
-                // список параметров, целиком закомментированный. Открывать
-                // человеку пустоту и предлагать «наберите сами» нельзя.
-                QString error;
-                if (!zametti::writeConfigTemplate(&error)) {
-                    QMessageBox::warning(&window, QStringLiteral("zametti"), error);
-                    break;
-                }
-                const QString path = zametti::configPath();
-                if (!QDesktopServices::openUrl(QUrl::fromLocalFile(path))) {
-                    // Внешнего редактора не нашлось — молчать нельзя: человек
-                    // нажал кнопку и не увидел бы ничего.
-                    QMessageBox::warning(
-                        &window, QStringLiteral("zametti"),
-                        QStringLiteral("Не удалось открыть конфиг во внешнем редакторе.\n%1")
-                            .arg(path));
-                }
+            case Button::Settings:
+                // ПЕРЕКЛЮЧАТЕЛЬ, как история и правка исходника: конфиг
+                // правится ВНУТРИ программы (решение владельца, refactor3;
+                // прежде кнопка открывала config.json во внешнем редакторе).
+                // Нет файла — модель пишет шаблон со всеми параметрами.
+                settingsMode.toggle();
                 break;
-            }
             case Button::Export:
                 exportNote(editor.filePath());
                 break;
@@ -2161,6 +2224,7 @@ int main(int argc, char** argv) {
     // из программы с нажатой [M] — вернулись в неё же. После открытия заметки и
     // после фокуса: входить в режим нечем, пока показывать нечего.
     markdownView.applyZoom(session.markdownZoom());
+    settingsView.applyZoom(session.settingsZoom());
     if (session.markdownMode()) markdown.enter();
 
 
@@ -2169,6 +2233,7 @@ int main(int argc, char** argv) {
         // ИСХОДНИК НАКЛАДЫВАЕМ ДО ЗАПИСИ. Пока идёт режим, истина живёт в тексте
         // вида, и заметка о ней не знает: записать её первой значило бы
         // потерять всё, что человек набрал перед выходом.
+        if (settingsMode.active()) settingsMode.save();
         if (markdown.active()) markdown.saveWithoutLeaving();
         // На выходе окно с ошибкой показывать поздно: жалуемся в stderr.
         editor.save(false, true);   // выходим: пробуем записать, не спрашивая признак
@@ -2186,6 +2251,7 @@ int main(int argc, char** argv) {
         out.setPanelsHidden(!toolbar.isChecked(zametti::Toolbar::Button::Panels));
         out.setMarkdownMode(markdown.active());
         out.setMarkdownZoom(markdownView.zoom());
+        out.setSettingsZoom(settingsView.zoom());
         out.setExpandedDirs(panels.expandedDirs());
         out.setSearchHistory(findBar.history());
         out.setStoreRoot(model.isStore() ? model.nodePath(QModelIndex()) : QString());

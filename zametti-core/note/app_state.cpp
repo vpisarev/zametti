@@ -59,6 +59,7 @@ ZAppState ZAppState::load() {
     session.setPanelsHidden(root.value(QStringLiteral("panelsHidden")).toBool(false));
     session.setMarkdownMode(root.value(QStringLiteral("markdownMode")).toBool(false));
     session.setMarkdownZoom(root.value(QStringLiteral("markdownZoom")).toDouble(1.0));
+    session.setSettingsZoom(root.value(QStringLiteral("settingsZoom")).toDouble(1.0));
     session.setHistoryListWidth(root.value(QStringLiteral("historyListWidth")).toInt(0));
     session.setExportDir(root.value(QStringLiteral("exportDir")).toString());
     session.setExportKeepMeta(root.value(QStringLiteral("exportKeepMeta")).toBool(false));
@@ -110,6 +111,7 @@ void ZAppState::save() const {
                   {QStringLiteral("panelsHidden"), session.panelsHidden()},
                   {QStringLiteral("markdownMode"), session.markdownMode()},
                   {QStringLiteral("markdownZoom"), session.markdownZoom()},
+                  {QStringLiteral("settingsZoom"), session.settingsZoom()},
                   {QStringLiteral("historyListWidth"), session.historyListWidth()},
                   {QStringLiteral("exportDir"), session.exportDir()},
                   {QStringLiteral("exportKeepMeta"), session.exportKeepMeta()},
