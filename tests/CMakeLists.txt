@@ -63,6 +63,7 @@ add_executable(zametti-tests
     object_test.cpp
     objects_in_lists_test.cpp
     caption_test.cpp
+    caption_click_test.cpp
     znote_test.cpp
     znote_timeline_test.cpp
     docstyle_test.cpp
