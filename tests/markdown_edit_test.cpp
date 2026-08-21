@@ -292,6 +292,44 @@ void checkCodePlateWrapped() {
         ZT_TRUE("визуальная строка " + std::to_string(i) + " блока кода лежит на той же плашке",
                 close(pixel, sample) && !close(pixel, page));
     }
+    // ТОЧКИ У ПЕРЕНЕСЁННЫХ СТРОК (просьба владельца): на левом поле, у начала
+    // каждой визуальной строки, кроме первой, — точка цвета комментариев;
+    // у первой строки — нет. Смотрим снимок всего вида: поле — вне вьюпорта.
+    {
+        const QImage whole = rig.view.grab().toImage();
+        const QRect vp = rig.view.viewport()->geometry();
+        const QColor dot = zametti::settings().markdownHighlighting().comment();
+        const auto dotAt = [&](int yInViewport) {
+            const int y = vp.top() + yInViewport;
+            for (int x = qMax(0, vp.left() - 40); x < vp.left(); ++x) {
+                const QColor c = whole.pixelColor(x, y);
+                // Сглаженный край светлее точки; спрашиваем «заметно темнее страницы».
+                if (c.lightness() < (page.lightness() + dot.lightness()) / 2) return true;
+            }
+            return false;
+        };
+        for (int i = 0; i < lines; ++i) {
+            QTextCursor head(rig.view.document());
+            head.setPosition(code.position() + code.layout()->lineAt(i).textStart());
+            const QRect headRect = rig.view.cursorRect(head);
+            // Точка — на половине высоты строчной буквы: чуть выше середины строки
+            // проверяем столбик в несколько пикселей.
+            bool found = false;
+            for (int dy = -3; dy <= 3 && !found; ++dy) found = dotAt(headRect.center().y() + dy);
+            if (i == 0)
+                ZT_TRUE("у первой визуальной строки точки на поле нет", !found);
+            else
+                ZT_TRUE("у перенесённой строки " + std::to_string(i) + " точка на поле", found);
+        }
+        // И у обычной строки («хвост») её нет.
+        const QTextBlock tail = rig.view.document()->findBlockByNumber(7);
+        QTextCursor at(rig.view.document());
+        at.setPosition(tail.position());
+        bool found = false;
+        for (int dy = -3; dy <= 3 && !found; ++dy) found = dotAt(rig.view.cursorRect(at).center().y() + dy);
+        ZT_TRUE("у обычной строки точки нет", !found);
+    }
+
     rig.view.grab().save(QDir(g_dir).filePath(QStringLiteral("плашка-кода-перенос.png")));
     rig.controller.leave();
 }
@@ -560,6 +598,87 @@ void checkKeyCases() {
     rig.controller.leave();
 }
 
+
+// КАРЕТКА В ИСХОДНИКЕ — ТОГО ЖЕ ЦВЕТА И ТОЛЩИНЫ, что в обычном виде (просьба
+// владельца). Снимок вьюпорта сразу после движения каретки (она мигает —
+// берём сразу после wake): в cursorRect() пиксели цвета caretColor ровно на
+// толщину caretWidth × масштаб.
+void checkCaretLook() {
+    const QString path = writeNote(QStringLiteral("каретка.md"),
+                                   QStringLiteral("давайте напишем немного текста\n"));
+    Rig rig;
+    rig.editor.openFile(path);
+    QTest::qWait(20);
+    ZT_TRUE("вошли", rig.controller.enter());
+    rig.view.setFocus();
+    QTest::qWait(20);
+    ZT_TRUE("фокус у вида исходника", rig.view.hasFocus());
+
+    QTextCursor at(rig.view.document());
+    at.setPosition(5);
+    rig.view.setTextCursor(at);
+    QCoreApplication::processEvents();
+
+    const QColor caret = zametti::settings().style().caretColor();
+    const int want = qMax(1, qRound(zametti::settings().style().caretWidth() * rig.view.zoom()));
+    const QRect r = rig.view.cursorRect();
+    const QImage shot = rig.view.viewport()->grab().toImage();
+    const int y = r.center().y();
+    int run = 0;
+    for (int x = r.left(); x < shot.width() && shot.pixelColor(x, y) == caret; ++x) ++run;
+    ZT_EQ("каретка цвета caretColor и толщиной caretWidth", std::to_string(want),
+          std::to_string(run));
+    ZT_TRUE("левее каретки — не её цвет", r.left() == 0 || shot.pixelColor(r.left() - 1, y) != caret);
+    // Та же мера в обычном виде — чтобы сравнение было не с числом, а с ним.
+    QTextCursor editorAt(rig.editor.document());
+    editorAt.setPosition(rig.editor.document()->firstBlock().position() + 5);
+    rig.controller.leave();
+    rig.editor.activateWindow();
+    rig.editor.setFocus();
+    QTest::qWait(20);
+    rig.editor.setTextCursor(editorAt);
+    QCoreApplication::processEvents();
+    ZT_TRUE("фокус у редактора", rig.editor.hasFocus());
+    const QRect er = rig.editor.cursorRect();
+    const QImage eshot = rig.editor.viewport()->grab().toImage();
+    int erun = 0;
+    for (int x = er.left(); x < eshot.width() && eshot.pixelColor(x, er.center().y()) == caret; ++x) ++erun;
+    ZT_EQ("в обычном виде каретка той же толщины", std::to_string(want), std::to_string(erun));
+}
+
+
+// ДНО СТЕКА ОТМЕНЫ В РЕЖИМЕ (нашёл владелец): Ctrl+Z, когда в тексте отменять
+// больше нечего, не должен быть тупиком — режим закрывается (наложить нечего:
+// всё отменено), и отмена уходит заметке, а с её дна — в историю, как в
+// обычном виде. Один ряд Ctrl+Z: правки исходника → правки заметки → история.
+void checkUndoAtBottomLeavesToHistory() {
+    const QString path = writeNote(QStringLiteral("дно.md"), QStringLiteral("раз\n\nдва\n"));
+    Rig rig;
+    rig.editor.openFile(path);
+    QTest::qWait(20);
+    int historyAsked = 0;
+    QObject::connect(&rig.editor, &zametti::NoteEditor::historyRequested, &rig.editor,
+                     [&historyAsked] { ++historyAsked; });
+    ZT_TRUE("вошли", rig.controller.enter());
+
+    QTextCursor edit = rig.view.textCursor();
+    edit.movePosition(QTextCursor::End);
+    edit.insertText(QStringLiteral("три"));
+    QTest::keyClick(&rig.view, Qt::Key_Z, Qt::ControlModifier);
+    QTest::qWait(10);
+    ZT_EQ("первый Ctrl+Z отменил правку текста", std::string("раз\n\nдва\n"),
+          rig.view.source().toStdString());
+    ZT_TRUE("режим ещё идёт", rig.controller.active());
+    ZT_EQ("в историю пока не просились", std::string("0"), std::to_string(historyAsked));
+
+    QTest::keyClick(&rig.view, Qt::Key_Z, Qt::ControlModifier);
+    QTest::qWait(10);
+    ZT_TRUE("на дне стека режим закрылся", !rig.controller.active());
+    ZT_EQ("заметка цела", std::string("раз\n\nдва\n"), textOf(rig.editor));
+    ZT_EQ("и отмена ушла заметке — у свежей заметки это просьба об истории",
+          std::string("1"), std::to_string(historyAsked));
+}
+
 }  // namespace
 
 TEST(MarkdownEdit, All) {
@@ -574,5 +693,7 @@ TEST(MarkdownEdit, All) {
     checkCodePlate();
     checkCodePlateWrapped();
     checkKeyCases();
+    checkCaretLook();
+    checkUndoAtBottomLeavesToHistory();
     checkOwnerNote();
 }
