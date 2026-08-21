@@ -282,12 +282,13 @@ the `jsonEditing` section.
 Editing the file with an external editor works exactly as before: the
 application watches it and reloads the appearance on the fly.
 
-Selection colours are one pair for the whole program — the note, both side
-columns, the search results, the history snapshot, the source and config views:
-`colors.selectionBackground` and `colors.selectionForeground`. The second one is
-transparent by default, and that means "work it out yourself" — the ordinary
-text colour, which is what a light selection needs; set it and the selected
-text takes it everywhere at once.
+Selection colours are one pair for the whole program: `colors.selectionBackground`
+and `colors.selectionForeground`. They apply to the note, both side columns, the
+search results, the history snapshot, the source and config views — and to the
+context menus, the tooltips and everything else Qt paints from the application
+palette. The foreground is transparent by default, and that means "work it out
+yourself" — the ordinary text colour, which is what a light selection needs;
+set it and the selected text takes it everywhere at once.
 
 The full list of parameters with their default values is printed by
 `--dump-config` — that is where to copy them from. Configurable are the

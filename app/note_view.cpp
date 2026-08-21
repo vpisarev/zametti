@@ -118,6 +118,18 @@ QColor selectedTextColour(const ZDocStyle& style, const QPalette& palette) {
     return own.alpha() > 0 ? own : palette.color(QPalette::Text);
 }
 
+void applySelectionPaletteToApp(const ZDocStyle& style) {
+    QPalette palette = QApplication::palette();
+    palette.setColor(QPalette::Highlight, style.selectionBackground());
+    palette.setColor(QPalette::HighlightedText, selectedTextColour(style, palette));
+    // Неактивная группа тоже: у меню и списков она своя, и без неё подсветка
+    // «уезжала» в системный цвет, стоило окну потерять фокус.
+    palette.setColor(QPalette::Inactive, QPalette::Highlight, style.selectionBackground());
+    palette.setColor(QPalette::Inactive, QPalette::HighlightedText,
+                     selectedTextColour(style, palette));
+    QApplication::setPalette(palette);
+}
+
 void applyPalette(QWidget& view, bool history, const ZDocStyle& style) {
     QPalette palette = view.palette();
     // В режиме истории поле тонируется: слегка пожелтевший от времени фон

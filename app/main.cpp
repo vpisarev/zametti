@@ -534,6 +534,10 @@ int main(int argc, char** argv) {
     // лету, половина только после перезапуска, и понять, какая именно, было бы
     // нельзя.
     const auto applyAppearance = [&] {
+        // Цвета выделения — всей программе (контекстные меню и прочие виджеты
+        // Qt рисуют подсветку палитрой приложения). Первым делом: виды ниже
+        // ставят поверх свои палитры, и они должны лечь на уже верный фон.
+        zametti::applySelectionPaletteToApp(zametti::settings().style());
         QFont font(zametti::settings().ui().sidebarFontFamily().isEmpty()
                        ? zametti::settings().style().fontFamily()
                        : zametti::settings().ui().sidebarFontFamily());
