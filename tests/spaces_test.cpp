@@ -121,6 +121,36 @@ void checkLoad() {
           visible(afterLoad(head + "int a" + kNbsp + kNbsp + kNbsp + "= 5\n")));
 }
 
+// ВЕДУЩИЕ ОБЫЧНЫЕ ПРОБЕЛЫ СТРОК АБЗАЦА СОХРАНЯЮТСЯ неразрывными (решение
+// владельца, сессия 9: стихотворение с отступами, псевдографика). Структурный
+// отступ — колонка содержимого пункта — не в счёт; разметка по дороге (`>`,
+// `#`) — отступа нет; в коде пробел значим сам и остаётся обычным.
+void checkLeadingSpacesKept() {
+    const std::string head = "<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n-->\n\n";
+    const std::string n3 = kNbsp + kNbsp + kNbsp;
+    ZT_EQ("ведущие пробелы абзаца — неразрывными, на каждой строке",
+          visible(head + n3 + "стих\n" + n3 + "второй\n"),
+          visible(afterLoad(head + "   стих\n   второй\n")));
+    ZT_EQ("внутри пункта — сверх колонки содержимого",
+          visible(head + "- пункт\n  " + kNbsp + kNbsp + "стих\n"),
+          visible(afterLoad(head + "- пункт\n    стих\n")));
+    ZT_EQ("обычное продолжение пункта отступа не получает",
+          visible(head + "- пункт\n  продолжение\n"),
+          visible(afterLoad(head + "- пункт\n  продолжение\n")));
+    ZT_EQ("у задачи чекбокс не в счёт: колонка содержимого 2",
+          visible(head + "- [ ] дело\n  " + kNbsp + "хвост\n"),
+          visible(afterLoad(head + "- [ ] дело\n   хвост\n")));
+    ZT_EQ("лишние пробелы после маркера — тоже отступ автора",
+          visible(head + "1. " + kNbsp + kNbsp + "номер\n"),
+          visible(afterLoad(head + "1.   номер\n")));
+    ZT_EQ("цитата: за `>` отступа нет",
+          visible(head + "> цитата\n> с отступом\n"),
+          visible(afterLoad(head + "> цитата\n>   с отступом\n")));
+    ZT_EQ("в коде пробелы обычные",
+          visible(head + "```\n    код\n```\n"),
+          visible(afterLoad(head + "```\n    код\n```\n")));
+}
+
 // В блоке кода неразрывных быть не должно ни одного — даже ведущих. Владелец
 // нашёл это на «type exp_t = ...»: отступы внутри забора так и остались
 // заполнены неразрывными.
@@ -188,6 +218,7 @@ static int ztRunSuite(int argc, char** argv) {
 
     checkImport();
     checkLoad();
+    checkLeadingSpacesKept();
     checkCodeFenceOnLoad();
     checkToCode();
     checkFromCode();

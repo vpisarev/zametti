@@ -296,6 +296,32 @@ void checkExternalBodyEdit() {
     check(!editor.hasDamagedMeta(), "чинить нечего");
 }
 
+// ВНЕШНЯЯ ПРАВКА И ВОЗВРАТ ИЗ РЕЖИМА ИСХОДНИКА — ОДИН ПУТЬ (applySourceText):
+// неразрывные отступы целы, ведущие обычные пробелы становятся неразрывными,
+// нетронутые блоки не перекладываются, а undo возвращает всё одним шагом.
+void checkExternalKeepsIndent() {
+    const QString nbsp(QChar(0xa0));
+    const QString path = g_dir + QStringLiteral("/отступы.md");
+    writeFile(path, nbsp + nbsp + QStringLiteral("стих\n\nобычный\n"));
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    writeFile(path, nbsp + nbsp + QStringLiteral("стих\n   второй\n\nобычный\n"));
+    const QString expected = nbsp + nbsp + QStringLiteral("стих\n") + nbsp + nbsp + nbsp +
+                             QStringLiteral("второй\n\nобычный\n");
+    waitForWatcher(editor, expected);
+    checkEqual(expected, textOf(editor),
+               "неразрывные целы, ведущие пробелы стали неразрывными");
+    editor.undo();
+    QTest::qWait(20);
+    checkEqual(nbsp + nbsp + QStringLiteral("стих\n\nобычный\n"), textOf(editor),
+               "undo возвращает состояние до внешнего изменения одним шагом");
+}
+
 // Шапку снесли целиком: предложено восстановление, тело при этом сохраняется.
 void checkExternalMetaLost() {
     const QString path = g_dir + QStringLiteral("/00000000000002.md");
@@ -457,6 +483,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkShrunkFromOutside();
     checkTruncateWriteRace();
     checkExternalBodyEdit();
+    checkExternalKeepsIndent();
     checkExternalMetaLost();
     checkExternalMetaRefused();
     checkExternalParentChange();
