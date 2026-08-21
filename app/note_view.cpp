@@ -1337,7 +1337,9 @@ QVector<CodeBand> NoteView::codeBands(const QRectF& visible) const {
 QRectF NoteView::copyButtonRect(const CodeBand& band) const {
     const CodePlate plate = codePlate(docStyle());
     if (!band.last || plate.strip <= 0.0) return {};
-    const qreal side = qMin(plate.strip * 0.62, 18.0 * displayScale());
+    // Сторона значка — от кегля подписи (codePlate), но не выше полоски: в
+    // неё он обязан влезть при любых настройках.
+    const qreal side = qMin(plate.iconSide, plate.strip);
     const qreal gap = plate.padLeft + plate.stripPadding;
     return QRectF(band.rect.right() - gap - side,
                   band.rect.bottom() + (plate.strip - side) / 2.0, side, side);
@@ -1687,7 +1689,7 @@ void NoteView::paintCodeStrip(QPainter& painter, const CodeBand& band) {
     painter.save();
     if (!band.info.isEmpty() && !where.isEmpty() &&
         band.firstBlockNumber != editedCodeLanguage_) {
-        painter.setFont(codeLangFont(docStyle(), settings().ui()));
+        painter.setFont(codeLangFont(docStyle()));
         painter.setPen(docStyle().codeLangColor());
         painter.drawText(where, Qt::AlignVCenter | Qt::AlignRight, band.info);
     }

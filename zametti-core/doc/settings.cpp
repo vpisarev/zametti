@@ -110,6 +110,7 @@ QJsonObject settingsToJson(const ZSettings& a) {
         {QStringLiteral("pointSize"), a.style().baseFontPoint()},
         {QStringLiteral("symbolFamily"), a.style().symbolFamily()},
         {QStringLiteral("codeFamily"), a.style().codeFamily()},
+        {QStringLiteral("codeLangFamily"), a.style().codeLangFamily()},
         {QStringLiteral("codeStep"), a.style().codeStep()},
         {QStringLiteral("diffStep"), a.style().diffStep()},
         {QStringLiteral("headingStep"), headings},
@@ -160,6 +161,7 @@ QJsonObject settingsToJson(const ZSettings& a) {
         {QStringLiteral("codeStripHeight"), a.style().codeStripHeight()},
         {QStringLiteral("codePadTop"), a.style().codePadTop()},
         {QStringLiteral("codeCornerRadius"), a.style().codeCornerRadius()},
+        {QStringLiteral("codeCopyIconScale"), a.style().codeCopyIconScale()},
         {QStringLiteral("codeLangPointSize"), a.style().codeLangPointSize()},
         {QStringLiteral("codeStripPadding"), a.style().codeStripPadding()},
         {QStringLiteral("codeLangGap"), a.style().codeLangGap()},
@@ -391,6 +393,7 @@ void settingsFromJson(const QJsonObject& root, ZSettings& a) {
     readReal(font, "pointSize", a.style(), &ZDocStyle::setBaseFontPoint);
     readString(font, "symbolFamily", a.style(), &ZDocStyle::setSymbolFamily);
     readString(font, "codeFamily", a.style(), &ZDocStyle::setCodeFamily);
+    readString(font, "codeLangFamily", a.style(), &ZDocStyle::setCodeLangFamily);
     readInt(font, "codeStep", a.style(), &ZDocStyle::setCodeStep);
     readInt(font, "diffStep", a.style(), &ZDocStyle::setDiffStep);
     readInt(font, "fallbackStep", a.style(), &ZDocStyle::setFallbackStep);
@@ -459,6 +462,7 @@ void settingsFromJson(const QJsonObject& root, ZSettings& a) {
     readReal(layout, "codeStripHeight", a.style(), &ZDocStyle::setCodeStripHeight);
     readReal(layout, "codePadTop", a.style(), &ZDocStyle::setCodePadTop);
     readReal(layout, "codeCornerRadius", a.style(), &ZDocStyle::setCodeCornerRadius);
+    readReal(layout, "codeCopyIconScale", a.style(), &ZDocStyle::setCodeCopyIconScale);
     readReal(layout, "codeLangPointSize", a.style(), &ZDocStyle::setCodeLangPointSize);
     readReal(layout, "codeStripPadding", a.style(), &ZDocStyle::setCodeStripPadding);
     readReal(layout, "codeLangGap", a.style(), &ZDocStyle::setCodeLangGap);
@@ -684,9 +688,14 @@ CodePlate codePlate(const ZDocStyle& look) {
     const qreal lineUnit =
         std::round(QFontMetricsF(codeLine).height() * look.lineHeightFactor());
 
+    // Полоска и значок — от ШРИФТА ПОДПИСИ (см. codeStripHeight в settings.h):
+    // один регулятор — кегль подписи.
+    const qreal langUnit = QFontMetricsF(codeLangFont(look)).height();
+
     CodePlate plate;
-    plate.strip = std::round(look.codeStripHeight() * lineUnit);
+    plate.strip = std::round(look.codeStripHeight() * langUnit);
     plate.padTop = std::round(look.codePadTop() * lineUnit);
+    plate.iconSide = std::round(look.codeCopyIconScale() * langUnit);
     plate.padLeft = look.codePadLeft() * charUnit;
     plate.indent = look.codeIndent() * charUnit;
     plate.radius = look.codeCornerRadius();
@@ -695,15 +704,13 @@ CodePlate codePlate(const ZDocStyle& look) {
     return plate;
 }
 
-QFont codeLangFont(const ZDocStyle& style, const ZSettings::Ui& ui) {
-    QFont font{QString(ui.sidebarFontFamily())};
-    const qreal point = style.codeLangPointSize() > 0.0 ? style.codeLangPointSize()
-                                                        : ui.sidebarFontPoint();
-    font.setPointSizeF(point);
+QFont codeLangFont(const ZDocStyle& style) {
+    QFont font{QString(style.codeLangFamily())};
+    font.setPointSizeF(style.codeLangPointSize());
     return font;
 }
 
-QFont codeLangFont() { return codeLangFont(g_settings.style(), g_settings.ui()); }
+QFont codeLangFont() { return codeLangFont(g_settings.style()); }
 
 
 QByteArray defaultSettingsJson() {
