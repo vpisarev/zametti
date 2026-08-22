@@ -391,6 +391,12 @@ QJsonObject settingsToJson(const ZSettings& a) {
                      {QStringLiteral("punctuation"), colorToString(a.jsonEditing().punctuation())},
                      {QStringLiteral("tabIndent"), a.jsonEditing().tabIndent()},
                      {QStringLiteral("commentKey"), a.jsonEditing().commentKey()}}},
+        {QStringLiteral("imageViewer"),
+         QJsonObject{{QStringLiteral("background"), colorToString(a.imageViewer().background())},
+                     {QStringLiteral("captionColor"), colorToString(a.imageViewer().captionColor())},
+                     {QStringLiteral("captionPoints"), a.imageViewer().captionPoints()},
+                     {QStringLiteral("maxZoomPercent"), a.imageViewer().maxZoomPercent()},
+                     {QStringLiteral("margin"), a.imageViewer().margin()}}},
         {QStringLiteral("formulas"), formulas},
         {QStringLiteral("images"), images},
         {QStringLiteral("shortcuts"), shortcuts},
@@ -432,6 +438,13 @@ void settingsFromJson(const QJsonObject& root, ZSettings& a) {
             &ZSettings::MarkdownHighlighting::setHeadingStep);
     readInt(markdown, "largeHeadingLevels", a.markdownHighlighting(),
             &ZSettings::MarkdownHighlighting::setLargeHeadingLevels);
+
+    const QJsonObject viewer = root.value(QStringLiteral("imageViewer")).toObject();
+    readColor(viewer, "background", a.imageViewer(), &ZSettings::ImageViewer::setBackground);
+    readColor(viewer, "captionColor", a.imageViewer(), &ZSettings::ImageViewer::setCaptionColor);
+    readReal(viewer, "captionPoints", a.imageViewer(), &ZSettings::ImageViewer::setCaptionPoints);
+    readInt(viewer, "maxZoomPercent", a.imageViewer(), &ZSettings::ImageViewer::setMaxZoomPercent);
+    readInt(viewer, "margin", a.imageViewer(), &ZSettings::ImageViewer::setMargin);
 
     const QJsonObject json = root.value(QStringLiteral("jsonEditing")).toObject();
     readColor(json, "key", a.jsonEditing(), &ZSettings::JsonEditing::setKey);

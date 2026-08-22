@@ -599,7 +599,13 @@ private:
     friend class ImageObjectHandler;
     friend class TableObjectHandler;
 
+protected:
+    // Путь картинки, каким его видит вид: относительный — от каталога заметки.
+    // Открыт наследнику (редактор собирает по нему список снимков заметки для
+    // полноэкранного показа), но не всему свету: базу знает вид.
     QString absoluteImagePath(const QString& path) const;
+
+private:
     // Запись кэша для пути: размеры из заголовка, БЕЗ разжатия. nullptr —
     // файла нет или он не картинка.
     const CachedImage* imageInfo(const QString& path);

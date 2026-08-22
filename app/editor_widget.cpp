@@ -989,6 +989,23 @@ int NoteEditor::replaceAllMatches(const QString& text, bool caseSensitive,
     return replaced;
 }
 
+NoteEditor::ShotList NoteEditor::noteShots() const {
+    ShotList out;
+    const int caretBlock = textCursor().blockNumber();
+    for (QTextBlock b = document()->begin(); b.isValid(); b = b.next()) {
+        const BlockImageRef ref = blockImageRef(b);
+        if (!ref.valid) continue;
+        const QString abs = absoluteImagePath(ref.path);
+        if (abs.isEmpty()) continue;
+        if (b.blockNumber() == caretBlock) out.atCaret = int(out.paths.size());
+        out.paths << abs;
+        // Подпись — ПОКАЗАННАЯ: безымянную («image 3», имя от камеры) человек
+        // под снимком не видит, и в просмотре ей тоже делать нечего.
+        out.captions << ref.shownCaption();
+    }
+    return out;
+}
+
 void NoteEditor::undo() {
     // Дно стека — дальше шагаем в слепки журнала. Режим истории заводит
     // контроллер по этому сигналу; режим объявляет себя сам (баннер, заголовок
@@ -2351,6 +2368,13 @@ void NoteEditor::contextMenuEvent(QContextMenuEvent* event) {
         heading->addSeparator();
         for (int level = 4; level <= 6; ++level)
             addLevel(QStringLiteral("Level %1").arg(level), level);
+    }
+
+    // Показать во весь экран — тоже только на строке с фотографией.
+    if (blockImageRef(textCursor().block()).valid) {
+        menu->addSeparator();
+        menu->addAction(QStringLiteral("View full screen"), this,
+                        [this] { emit fullscreenShotRequested(); });
     }
 
     // Выравнивание — только на строке с фотографией: где картинки нет, пункт

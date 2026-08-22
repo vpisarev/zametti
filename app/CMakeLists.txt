@@ -82,6 +82,8 @@ add_library(zametti-ui STATIC
     editor_widget.cpp
     image_insert.h
     image_insert.cpp
+    image_viewer.h
+    image_viewer.cpp
     icons.h
     icons.cpp
     text_search_target.h

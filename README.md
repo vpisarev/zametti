@@ -78,6 +78,14 @@ the system menu bar and the dock — and what stays is the note and the status
 bar. The same key, or `Esc`, brings the window back with the panels as they
 were.
 
+With the caret on a photo, the same key opens **that photo full screen**
+instead: arrows (or clicks on the left and right half) walk the photos of this
+note, the caption and the counter sit at the bottom, `Esc` returns. The
+background, the caption and how far a small picture may be enlarged are the
+`imageViewer` section — by default a near-black backdrop and three times at
+most, because a stretched thumbnail is mush, not a photo. The same is in the
+context menu of a photo, "View full screen".
+
 `Ctrl+=` / `Ctrl+-` / `Ctrl+0` change the zoom, `Ctrl+S` saves,
 `Ctrl+Z` / `Ctrl+Shift+Z` undo and redo. Clicking a folder in the tree
 expands it, clicking a note opens it.

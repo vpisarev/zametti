@@ -1045,6 +1045,23 @@ struct ZSettings {
         ZM_SETTING_PLAIN(QString, commentKey, CommentKey, QStringLiteral("Ctrl+/"))
     };
 
+    // --- просмотр картинок во весь экран -----------------------------------
+    //
+    // Отдельный режим (решение владельца): картинка на весь экран, стрелки
+    // листают снимки ЭТОЙ заметки, снизу — подпись. Фон свой: снимок смотрят
+    // на тёмном, а не на белом листе заметки.
+    struct ImageViewer {
+        ZM_SETTING_PLAIN(QColor, background, Background, 0x10, 0x10, 0x10)
+        ZM_SETTING_PLAIN(QColor, captionColor, CaptionColor, 0xd0, 0xd0, 0xd0)
+        ZM_SETTING(qreal, captionPoints, CaptionPoints, 12.0, 6.0, 48.0)
+        // Насколько МАКСИМУМ увеличивать картинку, мельче экрана. Проценты:
+        // 100 — не увеличивать вовсе, 300 — втрое (решение владельца). Крупные
+        // снимки ужимаются по экрану всегда, потолок их не касается.
+        ZM_SETTING(int, maxZoomPercent, MaxZoomPercent, 300, 100, 1000)
+        // Поле вокруг картинки, в пикселях: снимок не должен упираться в край.
+        ZM_SETTING(int, margin, Margin, 24, 0, 400)
+    };
+
     // --- формулы --------------------------------------------------------
     //
     // Движок — вендоренный MicroTeX, гарнитура — Euler Math 0.75 (выбор
@@ -1142,6 +1159,8 @@ struct ZSettings {
     MarkdownHighlighting& markdownHighlighting() { return markdown_; }
     const JsonEditing& jsonEditing() const { return json_; }
     JsonEditing& jsonEditing() { return json_; }
+    const ImageViewer& imageViewer() const { return viewer_; }
+    ImageViewer& imageViewer() { return viewer_; }
     const Formulas& formulas() const { return formulas_; }
     Formulas& formulas() { return formulas_; }
     const Pdf& pdf() const { return pdf_; }
@@ -1158,6 +1177,7 @@ private:
     Tables tables_;
     MarkdownHighlighting markdown_;
     JsonEditing json_;
+    ImageViewer viewer_;
     Formulas formulas_;
     Pdf pdf_;
 };

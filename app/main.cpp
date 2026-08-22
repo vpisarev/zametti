@@ -13,6 +13,7 @@
 #include "settings_controller.h"
 #include "history_panel.h"
 #include "history_view.h"
+#include "image_viewer.h"
 #include "markdown_edit_view.h"
 #include "note_list.h"
 #include "note_panels.h"
@@ -2140,6 +2141,28 @@ int main(int argc, char** argv) {
             }
         });
     }
+    // ПОЛНОЭКРАННЫЙ ПРОСМОТР КАРТИНОК (решение владельца): F11, когда каретка
+    // стоит на снимке, показывает его на весь экран, а стрелки листают снимки
+    // ЭТОЙ заметки. Двойной щелчок занят правкой подписи, поэтому дверь —
+    // клавиша и пункт меню, а не жест мышью.
+    zametti::ImageViewer imageViewer(&window);
+    const auto viewShotAtCaret = [&] {
+        if (markdown.active() || settingsMode.active() || history.active()) return false;
+        const zametti::NoteEditor::ShotList shots = editor.noteShots();
+        if (shots.atCaret < 0) return false;
+        std::vector<zametti::ImageViewer::Shot> list;
+        for (int i = 0; i < shots.paths.size(); ++i)
+            list.push_back({shots.paths.at(i), shots.captions.value(i)});
+        return imageViewer.show(std::move(list), shots.atCaret);
+    };
+    QObject::connect(&editor, &zametti::NoteEditor::fullscreenShotRequested, &window,
+                     [&] { viewShotAtCaret(); });
+    QObject::connect(&imageViewer, &zametti::ImageViewer::closed, &window, [&] {
+        window.raise();
+        window.activateWindow();
+        editor.setFocus();
+    });
+
     // ПОЛНОЭКРАННАЯ ПРАВКА (решение владельца): остаются текст и полоса
     // сведений, уходят тулбар, боковые панели и рамка окна — вместе с меню и
     // доком системы, это делает сам оконный менеджер по showFullScreen.
@@ -2172,7 +2195,13 @@ int main(int argc, char** argv) {
     };
     for (const QKeySequence& keys :
          zametti::keySequencesOf(zametti::settings().editor().fullscreenKey()))
-        shortcut(keys, [&] { setFullscreen(!window.isFullScreen()); });
+        shortcut(keys, [&] {
+            // Каретка на снимке — во весь экран уходит СНИМОК, а не текст: это
+            // то, на что человек смотрит. Не на снимке — обычная полноэкранная
+            // правка.
+            if (viewShotAtCaret()) return;
+            setFullscreen(!window.isFullScreen());
+        });
 
     {
         // Esc закрывает панель, откуда бы ни нажали: в самой панели его ловит
