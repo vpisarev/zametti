@@ -548,7 +548,7 @@ bool ZJournal::toBytes(const QVector<int>& keep, const QString& clean, QByteArra
 // clean — по какому своду правил журнал вычищен; пусто — ключа в шапке нет
 // вовсе, и это v0. Новый журнал заводится сразу чистым: он пишется нынешними
 // правилами, чистить в нём нечего по построению.
-History::History(QString root) : root_(std::move(root)) {}
+History::History(QString root) : root_(std::move(root)), clock_(root_) {}
 
 bool Entry::isBefore(const Entry& other) const {
     if (seq_ != other.seq_) return seq_ < other.seq_;
@@ -559,9 +559,27 @@ bool Entry::isBefore(const Entry& other) const {
                                         other.digest_.bytes.begin(), other.digest_.bytes.end());
 }
 
-bool ZJournal::composeRecord(Kind kind, qint64 time, qint64 source, const QByteArray& snapshot,
-                             Entry* frame, QByteArray* bytes, QString* error) const {
+qint64 ZJournal::latestTime() const {
+    qint64 latest = 0;
+    for (const Entry& e : entries_) latest = qMax(latest, e.time());
+    return latest;
+}
+
+Stamp Stamp::now() { return Stamp(QDateTime::currentMSecsSinceEpoch(), true); }
+
+qint64 ZJournal::stampFor(Stamp when, qint64 deviceFloor) const {
+    qint64 stamp = when.requested();
+    if (when.guarded() && deviceFloor > 0) stamp = qMax(stamp, deviceFloor + 1);
+    const qint64 own = latestTime();
+    if (own > 0) stamp = qMax(stamp, own + 1);
+    return stamp;
+}
+
+bool ZJournal::composeRecord(Kind kind, Stamp when, qint64 deviceFloor, qint64 source,
+                             const QByteArray& snapshot, Entry* frame, QByteArray* bytes,
+                             QString* error) const {
     const bool tombstone = kind == Kind::Tombstone;
+    const qint64 time = stampFor(when, deviceFloor);
 
     // Предшественник, относительно которого сожмётся слепок. Пусто — запись
     // начинает новое поколение и ложится полным слепком.
@@ -670,7 +688,7 @@ QString History::lockPathFor(const QString& root) {
     return QDir(root).filePath(QStringLiteral(".zametti/store.lock"));
 }
 
-bool History::appendLocked(const QString& path, Kind kind, qint64 time,
+bool History::appendLocked(const QString& path, Kind kind, Stamp when,
                            const QByteArray& snapshot, qint64 source, QString* error) {
     assertLocked();
 
@@ -707,7 +725,9 @@ bool History::appendLocked(const QString& path, Kind kind, qint64 time,
         tail = ZJournal::headerBytes(QString::fromLatin1(kCleanVersion));
     }
     QByteArray record;
-    if (!journal.composeRecord(kind, time, source, snapshot, nullptr, &record, error)) return false;
+    Entry made;
+    if (!journal.composeRecord(kind, when, clock_.floor(), source, snapshot, &made, &record, error))
+        return false;
     tail += record;
 
     if (!file.open(QIODevice::WriteOnly | QIODevice::Append)) {
@@ -724,6 +744,9 @@ bool History::appendLocked(const QString& path, Kind kind, qint64 time,
                                 .arg(tail.size());
         return false;
     }
+    // Пол устройства поднимаем ПОСЛЕ удачной записи: число обещает «столько уже
+    // записано», и обещать это заранее нельзя.
+    clock_.advanceTo(made.time());
     return true;
 }
 
@@ -938,10 +961,10 @@ bool History::compressLocked(const QString& path, const Planner& planner, bool f
 
 // Открытые методы: замок и ничего больше. Ни одной строки работы с файлами
 // здесь нет и быть не должно — на этом стоит обещание «всё под замком».
-bool History::append(const QString& noteId, Kind kind, qint64 time, const QByteArray& snapshot,
+bool History::append(const QString& noteId, Kind kind, Stamp when, const QByteArray& snapshot,
                      qint64 source, QString* error) {
     const QMutexLocker locked(&gate());
-    return appendLocked(pathFor(noteId), kind, time, snapshot, source, error);
+    return appendLocked(pathFor(noteId), kind, when, snapshot, source, error);
 }
 
 bool History::truncate(const QString& noteId, int keepCount, QString* error) {

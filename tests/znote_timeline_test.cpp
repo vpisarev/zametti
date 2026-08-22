@@ -60,9 +60,10 @@ struct Fixture {
         QDir().mkpath(root.path() + QStringLiteral("/history"));
         journal::History file(root.path());
         QString error;
-        file.append(id, journal::Kind::Save, kNow, note(kV0, "a"), 0, &error);
-        file.append(id, journal::Kind::Save, kNow + kMinute, note(kV1, "b"), 0, &error);
-        file.append(id, journal::Kind::Save, kNow + 2 * kMinute, note(kV2, "c"), 0, &error);
+        file.append(id, journal::Kind::Save, zametti::journal::Stamp::at(kNow), note(kV0, "a"), 0, &error);
+        file.append(id, journal::Kind::Save, zametti::journal::Stamp::at(kNow + kMinute), note(kV1, "b"), 0, &error);
+        file.append(id, journal::Kind::Save, zametti::journal::Stamp::at(kNow + 2 * kMinute),
+                    note(kV2, "c"), 0, &error);
         history = std::make_shared<ZNoteHistory>(root.path(), id, rules());
     }
 };

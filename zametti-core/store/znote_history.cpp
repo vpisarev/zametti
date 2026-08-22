@@ -19,7 +19,11 @@ void ZNoteHistory::ensureBaseline(const QByteArray& contents, qint64 fileTimeMs)
         return;
     }
     if (!journal.isEmpty()) return;   // история уже начата
-    const qint64 when = fileTimeMs > 0 ? fileTimeMs : QDateTime::currentMSecsSinceEpoch();
+    // Опорной записи отдают время ФАЙЛА: заметка, лежавшая с 2017 года,
+    // обязана и в истории начинаться 2017 годом. Поэтому момент назван, а не
+    // «сейчас», и страж монотонности его не поднимает.
+    const journal::Stamp when = fileTimeMs > 0 ? journal::Stamp::at(fileTimeMs)
+                                               : journal::Stamp::now();
     if (!history.append(id_, journal::Kind::Save, when, contents, 0, &error))
         std::fprintf(stderr, "baseline record not written: %s\n", error.toUtf8().constData());
 }
@@ -98,7 +102,8 @@ bool ZNoteHistory::record(journal::Kind kind, const QByteArray& snapshot, QStrin
 
     bool ok = true;
     if (step.keep < read.size()) ok = history.truncate(id_, step.keep, err);
-    if (ok && step.writeNew) ok = history.append(id_, kind, now, snapshot, source, err);
+    if (ok && step.writeNew)
+        ok = history.append(id_, kind, journal::Stamp::now(), snapshot, source, err);
     if (!ok) {
         std::fprintf(stderr, "history not written: %s\n", err->toUtf8().constData());
         tailKnown_ = false;   // что там теперь — неизвестно

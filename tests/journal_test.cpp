@@ -55,7 +55,7 @@ constexpr qint64 kDay = 24 * kHour;
 QString append(journal::History& h, const QString& id, Kind kind, qint64 time,
                const QByteArray& body, qint64 source = 0) {
     QString error;
-    if (!h.append(id, kind, time, body, source, &error)) return error;
+    if (!h.append(id, kind, journal::Stamp::at(time), body, source, &error)) return error;
     return {};
 }
 

@@ -58,11 +58,11 @@ QString makeNote(const QString& id) {
     journal::History history(g_root);
     QString error;
     const qint64 now = 1'700'000'000'000LL;
-    history.append(id, journal::Kind::Save, now, note("# Планы\n\nПока ничего.\n", "a"), 0,
+    history.append(id, journal::Kind::Save, journal::Stamp::at(now), note("# Планы\n\nПока ничего.\n", "a"), 0,
                    &error);
-    history.append(id, journal::Kind::Save, now + 60'000,
+    history.append(id, journal::Kind::Save, journal::Stamp::at(now + 60'000),
                    note("# Планы\n\nПоехали в Кострому.\n", "b"), 0, &error);
-    history.append(id, journal::Kind::Save, now + 120'000, last, 0, &error);
+    history.append(id, journal::Kind::Save, journal::Stamp::at(now + 120'000), last, 0, &error);
     return path;
 }
 
@@ -139,9 +139,9 @@ void checkSearchMigratesFirst() {
     journal::History history(g_root);
     QString error;
     const qint64 now = 1'700'000'000'000LL;
-    history.append(id, journal::Kind::Save, now, a, 0, &error);
-    history.append(id, journal::Kind::Save, now + 60'000, b, 0, &error);
-    history.append(id, journal::Kind::Save, now + 120'000, a2, 0, &error);
+    history.append(id, journal::Kind::Save, journal::Stamp::at(now), a, 0, &error);
+    history.append(id, journal::Kind::Save, journal::Stamp::at(now + 60'000), b, 0, &error);
+    history.append(id, journal::Kind::Save, journal::Stamp::at(now + 120'000), a2, 0, &error);
     // Шапку — на старый лад: иначе журнал уже считается чищеным.
     {
         QFile file(history.pathFor(id));

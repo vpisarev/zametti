@@ -1184,9 +1184,8 @@ bool deleteNoteFile(const QString& root, const QString& noteId, QString* error) 
 
     journal::History history(root);
     QString historyError;
-    const bool marked = history.append(noteId, journal::Kind::Tombstone,
-                                       QDateTime::currentMSecsSinceEpoch(), QByteArray(), 0,
-                                       &historyError);
+    const bool marked = history.append(noteId, journal::Kind::Tombstone, journal::Stamp::now(),
+                                       QByteArray(), 0, &historyError);
 
     if (!QFile::moveToTrash(file) && !QFile::remove(file)) {
         if (error) *error = QStringLiteral("cannot delete note file %1").arg(noteId);

@@ -73,8 +73,8 @@ QString makeNoteWithHistory(const QString& id, const QByteArray& first,
     journal::History history(g_root);
     QString error;
     const qint64 now = 1'700'000'000'000LL;
-    history.append(id, journal::Kind::Save, now, first, 0, &error);
-    history.append(id, journal::Kind::Save, now + 60'000, second, 0, &error);
+    history.append(id, journal::Kind::Save, journal::Stamp::at(now), first, 0, &error);
+    history.append(id, journal::Kind::Save, journal::Stamp::at(now + 60'000), second, 0, &error);
     return path;
 }
 

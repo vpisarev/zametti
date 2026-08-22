@@ -94,10 +94,10 @@ static int ztRunSuite(int argc, char** argv) {
         // История заметки: пара сохранений, как в жизни.
         journal::History history(root);
         ZT_TRUE("первый слепок",
-                history.append(noteId, journal::Kind::Save, 1'700'000'000'000LL,
+                history.append(noteId, journal::Kind::Save, journal::Stamp::at(1'700'000'000'000LL),
                                QByteArray("# заметка\n\nраз\n"), 0, &error));
         ZT_TRUE("второй слепок",
-                history.append(noteId, journal::Kind::Save, 1'700'000'060'000LL,
+                history.append(noteId, journal::Kind::Save, journal::Stamp::at(1'700'000'060'000LL),
                                QByteArray("# заметка\n\nраз\nдва\n"), 0, &error));
 
         ZT_TRUE("заметка удалена", store::deleteNoteFile(root, noteId, &error));
@@ -157,10 +157,10 @@ static int ztRunSuite(int argc, char** argv) {
             QStringLiteral("<!-- zametti\ncreated: 2023-01-01T00:00:00Z\n-->\n\n"
                            "# стало\n\nбез картинки\n").toUtf8();
         ZT_TRUE("слепок с картинкой",
-                history.append(noteId, journal::Kind::Save, 1'700'000'000'000LL, withPicture, 0,
+                history.append(noteId, journal::Kind::Save, journal::Stamp::at(1'700'000'000'000LL), withPicture, 0,
                                &error));
         ZT_TRUE("слепок без картинки",
-                history.append(noteId, journal::Kind::Save, 1'700'000'060'000LL, withoutPicture,
+                history.append(noteId, journal::Kind::Save, journal::Stamp::at(1'700'000'060'000LL), withoutPicture,
                                0, &error));
         {
             QFile f(path);
@@ -368,8 +368,8 @@ static int ztRunSuite(int argc, char** argv) {
             const QString path = store::newNote(root, QString(), &error);
             const QString id = QFileInfo(path).completeBaseName();
             ids << id;
-            history.append(id, journal::Kind::Save, 1'700'000'000'000LL, text, 0, &error);
-            history.append(id, journal::Kind::Save, 1'700'000'060'000LL, same, 0, &error);
+            history.append(id, journal::Kind::Save, zametti::journal::Stamp::at(1'700'000'000'000LL), text, 0, &error);
+            history.append(id, journal::Kind::Save, zametti::journal::Stamp::at(1'700'000'060'000LL), same, 0, &error);
         }
         // Первый журнал делаем старым (v0): именно такому чистка и полагается —
         // но не от verify.
@@ -422,7 +422,7 @@ static int ztRunSuite(int argc, char** argv) {
         const QString path = store::newNote(root, QString(), &error);
         const QString noteId = QFileInfo(path).completeBaseName();
         journal::History history(root);
-        history.append(noteId, journal::Kind::Save, 1'700'000'000'000LL,
+        history.append(noteId, journal::Kind::Save, journal::Stamp::at(1'700'000'000'000LL),
                        QByteArray("<!-- zametti\ncreated: 2023-01-01T00:00:00Z\n-->\n\n"
                                   "# была\n"),
                        0, &error);
@@ -438,7 +438,7 @@ static int ztRunSuite(int argc, char** argv) {
         // А теперь заметку унесли мимо программы: журнал есть, надгробия нет.
         const QString second = store::newNote(root, QString(), &error);
         const QString secondId = QFileInfo(second).completeBaseName();
-        history.append(secondId, journal::Kind::Save, 1'700'000'000'000LL,
+        history.append(secondId, journal::Kind::Save, zametti::journal::Stamp::at(1'700'000'000'000LL),
                        QByteArray("<!-- zametti\ncreated: 2023-01-01T00:00:00Z\n-->\n\n"
                                   "# унесли\n"),
                        0, &error);

@@ -408,9 +408,9 @@ void makeDirtyJournal(const QString& id, qint64 when) {
     const QByteArray a2 = "<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n"
                           "modified: 2020-01-01T00:00:03Z\n-->\n\n# Грязь\n\nодин\n";
     QString error;
-    history.append(id, zametti::journal::Kind::Save, when, a, 0, &error);
-    history.append(id, zametti::journal::Kind::Save, when + 1000, b, 0, &error);
-    history.append(id, zametti::journal::Kind::Save, when + 2000, a2, 0, &error);
+    history.append(id, zametti::journal::Kind::Save, zametti::journal::Stamp::at(when), a, 0, &error);
+    history.append(id, zametti::journal::Kind::Save, zametti::journal::Stamp::at(when + 1000), b, 0, &error);
+    history.append(id, zametti::journal::Kind::Save, zametti::journal::Stamp::at(when + 2000), a2, 0, &error);
 
     // Шапку — на старый лад, иначе чистить нечего: нынешний append заводит
     // журнал сразу чищеным.
@@ -637,12 +637,12 @@ void checkHistoryNeverWritesToFile() {
     // Времена ПОСЛЕ опорной записи: её время — время файла, то есть «сейчас».
     // Поставь я записи в прошлое — и слепок оказался бы старше своей базы, а
     // подпись сменилась бы на «добавлено» (на этом я и попался).
-    history.append(id, zametti::journal::Kind::Save, now + 60'000,
+    history.append(id, zametti::journal::Kind::Save, zametti::journal::Stamp::at(now + 60'000),
                    QByteArray("<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n-->\n\n"
                               "# Заметка\n\nпервый\n\nтретий\n"),
                    0, &error);
     write("# Заметка\n\nпервый\n\nтретий\n\nчетвёртый\n");
-    history.append(id, zametti::journal::Kind::Save, now + 120'000,
+    history.append(id, zametti::journal::Kind::Save, zametti::journal::Stamp::at(now + 120'000),
                    QByteArray("<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n-->\n\n"
                               "# Заметка\n\nпервый\n\nтретий\n\nчетвёртый\n"),
                    0, &error);

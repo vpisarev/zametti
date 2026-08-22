@@ -43,6 +43,7 @@
 #ifndef ZAMETTI_JOURNAL_H
 #define ZAMETTI_JOURNAL_H
 
+#include "device_clock.h"
 #include "hash.h"
 
 #include <QByteArray>
@@ -114,6 +115,36 @@ enum class Codec {
 // восстановление в ней растёт без границы, а порча одного звена уносит всё,
 // что после. Длина поколения — та самая граница: и цены чтения, и урона.
 inline constexpr int kGeneration = 32;
+
+// ВРЕМЯ НОВОЙ ЗАПИСИ — намерение, а не число.
+//
+// Два случая, и путать их нельзя. «Сейчас» — обычная запись: сохранение,
+// внешняя правка, архивация, надгробие; её время берётся с часов и проходит
+// через страж монотонности, потому что часы врут (dual-boot с локальным RTC,
+// поправка NTP, ручная переводка), а записанное время не лечится задним
+// числом. НАЗВАННЫЙ МОМЕНТ — опорная запись, которой отдают время файла:
+// заметка, лежавшая с 2017 года, обязана и в истории начинаться 2017 годом,
+// и поднимать её до «сейчас» стражем нельзя ни в коем случае.
+//
+// Поэтому вызывающий не подаёт число — он подаёт намерение, и часы спрашивают
+// здесь, в одном месте на всю программу.
+class Stamp {
+public:
+    // Обычная запись: время с часов, страж применяется.
+    static Stamp now();
+    // Названный момент из прошлого: время файла у опорной записи, заданное
+    // время у наборов. Пол устройства к нему не применяется — он назван.
+    static Stamp at(qint64 utcMs) { return Stamp(utcMs, false); }
+
+    qint64 requested() const { return time_; }
+    bool guarded() const { return guarded_; }
+
+protected:
+    Stamp(qint64 time, bool guarded) : time_(time), guarded_(guarded) {}
+
+    qint64 time_ = 0;
+    bool guarded_ = true;
+};
 
 // ЗАПИСЬ ЖУРНАЛА — рамка (всё, кроме самих байтов слепка) плюс её место в
 // файле. Таймлайн строится по рамкам, и ради него слепки не распаковываются: у
@@ -267,8 +298,13 @@ public:
     // Именно поэтому History не строит Entry сам: ревизия и кодек — те две
     // величины, которые обязаны совпадать на всех устройствах, и выбирать их
     // должно одно место.
-    bool composeRecord(Kind kind, qint64 time, qint64 source, const QByteArray& snapshot,
-                       Entry* frame, QByteArray* bytes, QString* error) const;
+    // deviceFloor — последнее время, записанное ЭТИМ устройством (0, если
+    // неизвестно). Время записи journal выбирает сам: не раньше, чем на
+    // миллисекунду позже и пола устройства, и самой поздней записи, которую он
+    // знает. Готовое время видно в отданной рамке.
+    bool composeRecord(Kind kind, Stamp when, qint64 deviceFloor, qint64 source,
+                       const QByteArray& snapshot, Entry* frame, QByteArray* bytes,
+                       QString* error) const;
 
     // Пересобрать файл из выживших записей: прореживание и чистка обе делают
     // это, и держать пересборку двумя кусками кода — прямой путь к тому, что
@@ -330,6 +366,18 @@ protected:
     static QByteArray recordBytes(const Entry& e, const QByteArray& packed);
     // Последняя ПО ФАЙЛУ запись со слепком — предшественник для дельты.
     int lastInFileWithSnapshot() const;
+    // Самое позднее время среди записей — половина пола времени.
+    qint64 latestTime() const;
+    // ВРЕМЯ НОВОЙ ЗАПИСИ — одно место на всю программу.
+    //
+    //   сейчас:  t = max(часы, пол устройства + 1мс, поздняя запись + 1мс)
+    //   назван:  t = max(названное,                  поздняя запись + 1мс)
+    //
+    // Часы, прыгнувшие назад, не могут инвертировать порядок: ни в пределах
+    // хранилища (пол устройства), ни в пределах заметки (пол журнала). Второе
+    // слагаемое бесплатно и переживает потерю первого — журнал помнит себя сам,
+    // и оно же держит инвариант порядка у названного момента.
+    qint64 stampFor(Stamp when, qint64 deviceFloor) const;
     // Кодек по месту в поколении — один ответ на двоих: рождение записи и
     // пересборку файла.
     static Codec codecFor(bool startsGeneration) {
@@ -409,7 +457,7 @@ public:
     // восстанавливает сама: звать с расжатой базой на руках не нужно, а лишний
     // параметр, который легко передать неверно, дороже сэкономленных долей
     // миллисекунды.
-    bool append(const QString& noteId, Kind kind, qint64 time, const QByteArray& snapshot,
+    bool append(const QString& noteId, Kind kind, Stamp when, const QByteArray& snapshot,
                 qint64 source, QString* error);
 
     // Оставить в журнале первые keepCount записей, хвост отбросить.
@@ -488,7 +536,7 @@ public:
 
 private:
     // Всё, что трогает файлы, живёт здесь и зовётся только из-под замка.
-    bool appendLocked(const QString& path, Kind kind, qint64 time, const QByteArray& snapshot,
+    bool appendLocked(const QString& path, Kind kind, Stamp when, const QByteArray& snapshot,
                       qint64 source, QString* error);
     bool readLocked(const QString& path, ZJournal* out, QString* error) const;
     bool snapshotAtLocked(const QString& path, int index, QByteArray* out, QString* error) const;
@@ -498,6 +546,10 @@ private:
                         CompressOutcome* outcome, QString* error);
 
     QString root_;
+    // Пол времени записей этого устройства. Живёт рядом с журналами, поэтому
+    // окно, CLI и наборы получают страж одинаково и ни одна подпись не
+    // обрастает лишним параметром.
+    store::DeviceClock clock_;
 };
 
 }  // namespace zametti::journal

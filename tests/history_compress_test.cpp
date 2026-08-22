@@ -82,7 +82,7 @@ void makeV0(const QString& path) {
 QString append(journal::History& h, const QString& id, Kind kind, qint64 time,
                const QByteArray& snapshot, qint64 source = 0) {
     QString error;
-    if (!h.append(id, kind, time, snapshot, source, &error)) return error;
+    if (!h.append(id, kind, journal::Stamp::at(time), snapshot, source, &error)) return error;
     return {};
 }
 

@@ -223,7 +223,7 @@ bool archiveNote(const QString& root, const QString& noteId, const history::Rule
         return false;
     }
     if (step.writeNew &&
-        !history.append(noteId, journal::Kind::Save, now, snapshot, 0, &why)) {
+        !history.append(noteId, journal::Kind::Save, journal::Stamp::now(), snapshot, 0, &why)) {
         // ТЕЛО НЕ ЗАПИСАНО — СТАБ НЕ ПИШЕМ. Это и есть инвариант A: потерять
         // тело нельзя, потому что мы не начинаем второй шаг, не сделав первый.
         if (error != nullptr) *error = QStringLiteral("body not written to history: %1").arg(why);
@@ -283,9 +283,8 @@ bool restoreNote(const QString& root, const QString& noteId, QString* error) {
 
     // ВЕШКА В ИСТОРИИ. Таймлайн отвечает на вопрос «что с заметкой было», и
     // «вернули из архива» — такой же ответ, как «правили» или «удалили».
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
     QString ignored;
-    history.append(noteId, journal::Kind::Restore, now,
+    history.append(noteId, journal::Kind::Restore, journal::Stamp::now(),
                    QByteArray(out.data(), qsizetype(out.size())), 0, &ignored);
     return true;
 }
