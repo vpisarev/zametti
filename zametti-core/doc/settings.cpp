@@ -335,6 +335,7 @@ QJsonObject settingsToJson(const ZSettings& a) {
     // можно только правкой кода, то есть осознанно и с новым замером.
     QJsonObject images{
         {QStringLiteral("maxImportedImageSize"), a.images().maxImportedImageSize()},
+        {QStringLiteral("maxDeletedImageSize"), a.images().maxDeletedImageSize()},
     };
 
     // Сочетания клавиш, которым суждено разойтись по системам. Пока их два —
@@ -689,6 +690,7 @@ void settingsFromJson(const QJsonObject& root, ZSettings& a) {
     // editor.imageCacheSizeMb под этим именем.
     const QJsonObject importGroup = root.value(QStringLiteral("images")).toObject();
     readInt(importGroup, "maxImportedImageSize", a.images(), &ZSettings::Images::setMaxImportedImageSize);
+    readInt(importGroup, "maxDeletedImageSize", a.images(), &ZSettings::Images::setMaxDeletedImageSize);
 
     const QJsonObject scroll = root.value(QStringLiteral("scroll")).toObject();
     readBool(scroll, "smooth", a.ui(), &ZSettings::Ui::setSmoothScroll);

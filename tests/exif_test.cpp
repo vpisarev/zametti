@@ -25,6 +25,16 @@ using namespace zametti;
 
 namespace {
 
+// Сколько раз подстрока встречается — нужно, чтобы поймать накопление блоков.
+int countOf(std::string_view where, std::string_view what) {
+    int count = 0;
+    for (size_t at = where.find(what); at != std::string_view::npos;
+         at = where.find(what, at + what.size()))
+        ++count;
+    return count;
+}
+
+
 std::string readFile(const std::filesystem::path& p) {
     std::ifstream in(p, std::ios::binary);
     if (!in) return {};
@@ -239,6 +249,50 @@ void checkWebpFlavour(const std::filesystem::path& root) {
     ZT_TRUE("обрывок — не lossless", !webpIsLossless(cut));
 }
 
+
+// НАШИ ПОЛЯ В XMP: ревизия и пометка «удалено».
+//
+// Ревизия и удалённость ОРТОГОНАЛЬНЫ: rev растёт при любой правке картинки
+// (ретушь, пережатие, геометки), а Deleted — отдельная величина. Поэтому
+// проверяем обе оси и, главное, повторную запись: свой блок обязан заменяться,
+// а не накапливаться — читатель берёт ПЕРВОЕ вхождение, и второй Description
+// заставил бы метку врать, застряв на первой записанной.
+void checkZamettiXmp() {
+    using zametti::xmpValue;
+    using zametti::xmpWithZamettiState;
+    using zametti::xmpZamettiDeleted;
+    using zametti::xmpZamettiRev;
+
+    ZT_EQ("у пустого XMP ревизии нет", std::string("0"), std::to_string(xmpZamettiRev("")));
+    ZT_TRUE("и пометки удаления тоже", !xmpZamettiDeleted(""));
+
+    const std::string fresh = xmpWithZamettiState("", 1, false);
+    ZT_EQ("ревизия записалась", std::string("1"), std::to_string(xmpZamettiRev(fresh)));
+    ZT_TRUE("удалённой не помечена", !xmpZamettiDeleted(fresh));
+
+    const std::string buried = xmpWithZamettiState(fresh, 2, true);
+    ZT_EQ("ревизия выросла", std::string("2"), std::to_string(xmpZamettiRev(buried)));
+    ZT_TRUE("и пометка стоит", xmpZamettiDeleted(buried));
+    ZT_EQ("а Description ровно один", std::string("1"),
+          std::to_string(countOf(buried, "<zametti:Rev>")));
+
+    // Ещё раз, уже без пометки: величины независимы, и вторая запись обязана
+    // снимать то, чего больше нет.
+    const std::string retouched = xmpWithZamettiState(buried, 3, false);
+    ZT_EQ("ревизия снова выросла", std::string("3"), std::to_string(xmpZamettiRev(retouched)));
+    ZT_TRUE("пометка снята", !xmpZamettiDeleted(retouched));
+    ZT_EQ("и Description по-прежнему один", std::string("1"),
+          std::to_string(countOf(retouched, "<zametti:Rev>")));
+
+    // ЧУЖИЕ ПОЛЯ НЕ ТРОГАЕМ: в XMP приходит всё что угодно, и наша вставка
+    // обязана быть добавкой, а не переписыванием.
+    const std::string foreign = zametti::xmpWithFileName("", "DSC_0001.NEF");
+    const std::string mixed = xmpWithZamettiState(foreign, 1, false);
+    ZT_EQ("чужое поле на месте", std::string("DSC_0001.NEF"),
+          xmpValue(mixed, "xmpMM:PreservedFileName"));
+    ZT_EQ("и наше тоже", std::string("1"), std::to_string(xmpZamettiRev(mixed)));
+}
+
 }  // namespace
 
 // Сверка с ЧУЖОЙ реализацией. Свой разбор смещений EXIF ошибается тише всего:
@@ -337,6 +391,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkOrientationParsing();
     checkOrientationReset();
     checkFileNameInXmp();
+    checkZamettiXmp();
     if (argc > 1) checkWebpFlavour(std::filesystem::path(argv[1]));
     if (argc > 1) checkRealFiles(std::filesystem::path(argv[1]));
     if (argc > 1) checkAgainstExiftool(std::filesystem::path(argv[1]));

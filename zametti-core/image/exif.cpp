@@ -551,22 +551,6 @@ namespace {
 // Значение свойства XMP: либо элементом <ns:имя>значение</ns:имя>, либо
 // атрибутом ns:имя="значение". Оба вида встречаются в живых файлах, и который
 // именно — зависит от программы, которая писала.
-std::string xmpValue(std::string_view xmp, std::string_view name) {
-    const std::string element = "<" + std::string(name) + ">";
-    size_t at = xmp.find(element);
-    if (at != std::string_view::npos) {
-        const size_t from = at + element.size();
-        const size_t to = xmp.find('<', from);
-        if (to != std::string_view::npos) return std::string(xmp.substr(from, to - from));
-    }
-    const std::string attribute = std::string(name) + "=\"";
-    at = xmp.find(attribute);
-    if (at == std::string_view::npos) return {};
-    const size_t from = at + attribute.size();
-    const size_t to = xmp.find('"', from);
-    if (to == std::string_view::npos) return {};
-    return std::string(xmp.substr(from, to - from));
-}
 
 }  // namespace
 
@@ -584,6 +568,92 @@ std::string xmpCreateDate(std::string_view xmp) {
     // имя, и она обязана совпасть с той, что даёт EXIF.
     if (value.size() > 19) value.resize(19);
     return value;
+}
+
+std::string xmpValue(std::string_view xmp, std::string_view name) {
+    const std::string element = "<" + std::string(name) + ">";
+    size_t at = xmp.find(element);
+    if (at != std::string_view::npos) {
+        const size_t from = at + element.size();
+        const size_t to = xmp.find('<', from);
+        if (to != std::string_view::npos) return std::string(xmp.substr(from, to - from));
+    }
+    const std::string attribute = std::string(name) + "=\"";
+    at = xmp.find(attribute);
+    if (at == std::string_view::npos) return {};
+    const size_t from = at + attribute.size();
+    const size_t to = xmp.find('"', from);
+    if (to == std::string_view::npos) return {};
+    return std::string(xmp.substr(from, to - from));
+}
+
+
+namespace {
+
+// Наш блок в XMP — один на файл. Ищем его по открывающему тегу пространства
+// имён и вырезаем до ближайшего закрытия Description: разбирать чужой XML ради
+// двух полей незачем, а свой блок мы сами и написали.
+std::string withoutZamettiBlock(std::string_view xmp) {
+    const std::string mark = std::string("xmlns:zametti=\"") + kZamettiXmpNs + "\"";
+    const size_t at = xmp.find(mark);
+    if (at == std::string_view::npos) return std::string(xmp);
+    const size_t from = xmp.rfind("<rdf:Description", at);
+    if (from == std::string_view::npos) return std::string(xmp);
+    const std::string_view close = "</rdf:Description>";
+    size_t to = xmp.find(close, at);
+    if (to == std::string_view::npos) return std::string(xmp);
+    to += close.size();
+    while (to < xmp.size() && (xmp[to] == '\n' || xmp[to] == '\r')) ++to;
+    std::string out;
+    out.append(xmp.substr(0, from));
+    out.append(xmp.substr(to));
+    return out;
+}
+
+}  // namespace
+
+int xmpZamettiRev(std::string_view xmp) {
+    const std::string value = xmpValue(xmp, "zametti:Rev");
+    if (value.empty()) return 0;
+    try {
+        return std::stoi(value);
+    } catch (...) {
+        return 0;
+    }
+}
+
+bool xmpZamettiDeleted(std::string_view xmp) {
+    const std::string value = xmpValue(xmp, "zametti:Deleted");
+    return value == "True" || value == "true" || value == "1";
+}
+
+std::string xmpWithZamettiState(std::string_view existing, int rev, bool deleted) {
+    const std::string clean = withoutZamettiBlock(existing);
+    std::string block =
+        "  <rdf:Description rdf:about=\"\" xmlns:zametti=\"" + std::string(kZamettiXmpNs) +
+        "\">\n"
+        "   <zametti:Rev>" + std::to_string(rev) + "</zametti:Rev>\n";
+    if (deleted) block += "   <zametti:Deleted>True</zametti:Deleted>\n";
+    block += "  </rdf:Description>\n";
+
+    const std::string_view close = "</rdf:RDF>";
+    const size_t at = clean.rfind(close);
+    if (at != std::string::npos) {
+        std::string out;
+        out.reserve(clean.size() + block.size());
+        out.append(clean.substr(0, at));
+        out.append(block);
+        out.append(clean.substr(at));
+        return out;
+    }
+    return
+        "<?xpacket begin=\"\xEF\xBB\xBF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n"
+        "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\n"
+        " <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n" +
+        block +
+        " </rdf:RDF>\n"
+        "</x:xmpmeta>\n"
+        "<?xpacket end=\"w\"?>";
 }
 
 std::string xmpWithFileName(std::string_view existing, std::string_view fileName) {
