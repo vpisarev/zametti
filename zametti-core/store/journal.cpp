@@ -63,31 +63,38 @@ enum Key {
 
 constexpr int kZstdLevel = 3;
 
-QByteArray recordBytes(Kind kind, qint64 time, const Digest& digest, const QByteArray& packed,
-                       qint64 plainSize, qint64 source, Codec codec) {
-    const bool tombstone = kind == Kind::Tombstone;
-    const bool restore = kind == Kind::Restore;
+// Байты одной записи. Рамка приходит ЦЕЛИКОМ, отдельными параметрами не
+// разбирается: у записи два писателя — дозапись и пересборка файла, — и
+// поле, добавленное в рамку, обязано попасть в оба. Со списком параметров
+// это держалось на внимательности (забыл в пересборке — прореживание молча
+// обнуляет поле во всём журнале); с Entry оно попадает туда по построению.
+//
+// packed — сжатый слепок, отдельно: он не свойство рамки, а её содержимое, и
+// при пересборке он другой, чем был в файле, хотя рамка та же.
+QByteArray recordBytes(const Entry& e, const QByteArray& packed) {
+    const bool tombstone = e.kind == Kind::Tombstone;
+    const bool restore = e.kind == Kind::Restore;
     QByteArray out;
     QCborStreamWriter writer(&out);
     writer.startMap(quint64(3 + (tombstone ? 0 : 3) + (restore ? 1 : 0)));
     writer.append(KeyKind);
-    writer.append(int(kind));
+    writer.append(int(e.kind));
     writer.append(KeyTime);
-    writer.append(time);
+    writer.append(e.time);
     writer.append(KeyDigest);
-    writer.append(QByteArray(reinterpret_cast<const char*>(digest.bytes.data()),
-                             qsizetype(digest.bytes.size())));
+    writer.append(QByteArray(reinterpret_cast<const char*>(e.digest.bytes.data()),
+                             qsizetype(e.digest.bytes.size())));
     if (!tombstone) {
         writer.append(KeyCodec);
-        writer.append(int(codec));
+        writer.append(int(e.codec));
         writer.append(KeyPlainSize);
-        writer.append(plainSize);
+        writer.append(e.plainSize);
         writer.append(KeySnapshot);
         writer.append(packed);
     }
     if (restore) {
         writer.append(KeySource);
-        writer.append(source);
+        writer.append(e.source);
     }
     writer.endMap();
     return out;
@@ -352,7 +359,10 @@ bool rebuiltBytes(const QVector<Entry>& entries, const QVector<QByteArray>& pack
         const Entry& e = entries[i];
         if (!e.hasSnapshot()) {
             // Надгробие поколения не начинает и не рвёт: слепка у него нет.
-            *out += recordBytes(e.kind, e.time, e.digest, QByteArray(), 0, e.source, Codec::Zstd);
+            Entry frame = e;
+            frame.codec = Codec::Zstd;
+            frame.plainSize = 0;
+            *out += recordBytes(frame, QByteArray());
             continue;
         }
         QByteArray plain;
@@ -364,7 +374,13 @@ bool rebuiltBytes(const QVector<Entry>& entries, const QVector<QByteArray>& pack
             if (error) *error = QStringLiteral("cannot compress snapshot of record #%1").arg(i);
             return false;
         }
-        *out += recordBytes(e.kind, e.time, e.digest, body, plain.size(), e.source, codec);
+        // Меняется только укладка: кодек и размер до сжатия. Всё остальное —
+        // род, время, отпечаток, source и любое будущее поле рамки — едет из
+        // прежней записи неприкосновенным.
+        Entry frame = e;
+        frame.codec = codec;
+        frame.plainSize = plain.size();
+        *out += recordBytes(frame, body);
         previous = plain;
         ++written;
     }
@@ -584,7 +600,14 @@ bool History::appendLocked(const QString& path, Kind kind, qint64 time,
         // заметка приезжала бы на чистку зря.
         tail = headerBytesFor(QString::fromLatin1(kCleanVersion));
     }
-    tail += recordBytes(kind, time, digest, body, snapshot.size(), source, codec);
+    Entry frame;
+    frame.kind = kind;
+    frame.time = time;
+    frame.digest = digest;
+    frame.codec = codec;
+    frame.plainSize = snapshot.size();
+    frame.source = source;
+    tail += recordBytes(frame, body);
 
     if (!file.open(QIODevice::WriteOnly | QIODevice::Append)) {
         if (error) *error = QStringLiteral("cannot open journal: %1").arg(file.errorString());
