@@ -42,6 +42,9 @@ QString g_root;
 
 std::string s(const QString& q) { return q.toStdString(); }
 
+template <typename T>
+std::string num(T value) { return std::to_string(value); }
+
 zametti::history::Rules rules() {
     zametti::history::Rules r;
     r.mergeChars = 100;
@@ -241,6 +244,61 @@ void checkForget() {
     ZT_TRUE("и журнала тоже нет", !QFile::exists(log));
 }
 
+// --- разворачивание стабов прошлых сборок -----------------------------------
+
+// В хранилище, которое пожило на прежней сборке, архивные заметки лежат
+// стабами: шапка плюс строка заголовка, а тело — в журнале. Разворачивание
+// возвращает тело в файл, оставляя пометку. Без него у таких заметок так и не
+// будет ни ссылок на вложения, ни текста для поиска.
+void checkUnfoldStubs() {
+    freshStore();
+    const QString id = QStringLiteral("01ff00000000ff");
+    const QString noHistory = QStringLiteral("01ff00000000fe");
+    const QString alive = QStringLiteral("01ff00000000fd");
+
+    // Заметка, убранная в архив ПРЕЖНЕЙ сборкой: в журнале тело, в файле стаб.
+    QString error;
+    const QByteArray body(kBody);
+    ZT_TRUE("тело записано в журнал",
+            zametti::journal::History(g_root).append(
+                id, zametti::journal::NewRecord::save(body, zametti::journal::Stamp::now()),
+                &error));
+    write(id,
+          "<!-- zametti\nparent: 0000000000000p\ncreated: 2020-01-01T00:00:00+03:00\n"
+          "modified: 2020-05-05T12:00:00+03:00\narchived: yes\nsort: created\n-->\n"
+          "\n# Фототехника\n");
+    // Стаб без журнала: приехал с чужой машины, разворачивать не из чего.
+    write(noHistory, "<!-- zametti\narchived: yes\n-->\n\n# Без истории\n");
+    // Живая заметка — её трогать нельзя ничем.
+    write(alive, kBody);
+    const std::string aliveWas = read(alive);
+
+    QStringList leftAlone;
+    const int done = zametti::store::unfoldArchivedStubs(g_root, &leftAlone, &error);
+    ZT_EQ("развёрнута одна", num(1), num(done));
+
+    const std::string now = read(id);
+    ZT_TRUE("тело вернулось в файл", now.find("Длинный текст") != std::string::npos);
+    ZT_TRUE("и ссылка на картинку тоже", now.find("01jd7f0kq2m8xab7") != std::string::npos);
+    ZT_TRUE("пометка архива на месте", now.find("archived: yes") != std::string::npos);
+    ZT_TRUE("ключи, добавленные ПОСЛЕ архивации, целы: шапка берётся из файла",
+            now.find("sort: created") != std::string::npos);
+    ZT_TRUE("modified не тронут",
+            now.find("modified: 2020-05-05T12:00:00+03:00") != std::string::npos);
+
+    ZT_EQ("стаб без журнала не тронут",
+          std::string("<!-- zametti\narchived: yes\n-->\n\n# Без истории\n"), read(noHistory));
+    ZT_TRUE("и назван в отчёте", leftAlone.size() == 1 && leftAlone.first().contains(noHistory));
+    ZT_EQ("живая заметка не тронута", aliveWas, read(alive));
+
+    // ИДЕМПОТЕНТНОСТЬ: второй заход не находит работы и не пишет ни байта.
+    const std::string after = read(id);
+    QStringList again;
+    ZT_EQ("второй заход разворачивает ноль", num(0),
+          num(zametti::store::unfoldArchivedStubs(g_root, &again, &error)));
+    ZT_EQ("и файл не изменился", after, read(id));
+}
+
 // --- старая корзина --------------------------------------------------------
 
 void checkTrashMigration() {
@@ -377,6 +435,7 @@ static int ztRunSuite(int argc, char** argv) {
     (void)argv;
     g_root = QDir::tempPath() + QStringLiteral("/zametti-archive-test");
 
+    checkUnfoldStubs();
     checkArchiveKeepsBody();
     checkArchiveObeysHistoryRules();
     checkRestore();

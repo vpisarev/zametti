@@ -239,6 +239,77 @@ bool restoreNote(const QString& root, const QString& noteId, QString* error) {
     return true;
 }
 
+namespace {
+
+// Похоже ли тело на стаб: не больше одной непустой строки, и та — заголовок.
+// Консервативно: любое сомнение трактуется как «не стаб».
+bool looksLikeStub(std::string_view body) {
+    int lines = 0;
+    size_t at = 0;
+    while (at < body.size()) {
+        size_t end = body.find('\n', at);
+        if (end == std::string_view::npos) end = body.size();
+        std::string_view line = body.substr(at, end - at);
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.remove_suffix(1);
+        if (!line.empty()) {
+            if (++lines > 1) return false;
+            if (line.front() != '#') return false;
+        }
+        at = end + 1;
+    }
+    return lines == 1;
+}
+
+}  // namespace
+
+int unfoldArchivedStubs(const QString& root, QStringList* leftAlone, QString* error) {
+    journal::History history(root);
+    int unfolded = 0;
+    for (const QFileInfo& info : QDir(root).entryInfoList({QStringLiteral("*.md")}, QDir::Files)) {
+        const QString id = info.completeBaseName();
+        std::string bytes;
+        if (!readFileBytes(info.absoluteFilePath(), bytes)) continue;
+        const auto [headFrom, headTo] = headerRange(bytes);
+        if (headTo == 0) continue;   // не наша заметка
+        const std::string_view header = std::string_view(bytes).substr(headFrom, headTo - headFrom);
+        if (!headerSaysArchived(header)) continue;
+        if (!looksLikeStub(std::string_view(bytes).substr(headTo))) continue;
+
+        journal::ZJournal read;
+        QString why;
+        QByteArray body;
+        const int head = history.read(id, &read, &why) ? read.lastSnapshotIndex() : -1;
+        if (head >= 0 && !history.snapshotAt(id, head, &body, &why)) body.clear();
+        if (body.isEmpty()) {
+            if (leftAlone != nullptr)
+                leftAlone->append(QStringLiteral("%1: archived stub without a body in the history")
+                                      .arg(id));
+            continue;
+        }
+
+        // Шапка — из ФАЙЛА (в ней всё, что человек менял, пока заметка лежала в
+        // архиве), тело — из журнала, журнальная шапка отрезается.
+        const std::string snapshot(body.constData(), size_t(body.size()));
+        const auto [snapFrom, snapTo] = headerRange(snapshot);
+        if (looksLikeStub(std::string_view(snapshot).substr(snapTo))) {
+            // В журнале тоже стаб — разворачивать не из чего.
+            if (leftAlone != nullptr)
+                leftAlone->append(QStringLiteral("%1: the history holds a stub too").arg(id));
+            continue;
+        }
+        std::string out(header);
+        out += snapshot.substr(snapTo);
+        if (out == bytes) continue;   // и так уже развёрнута
+        QString writeError;
+        if (!writeFileBytes(info.absoluteFilePath(), out, &writeError)) {
+            if (error != nullptr) *error = writeError;
+            return -1;
+        }
+        ++unfolded;
+    }
+    return unfolded;
+}
+
 int migrateTrashToArchive(const QString& root, QString* error) {
     QString trashId;
     QHash<QString, QString> parents;   // id → parent, по всему хранилищу

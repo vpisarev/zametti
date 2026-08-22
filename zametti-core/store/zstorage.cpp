@@ -284,6 +284,19 @@ QStringList ZStorage::migrate() {
         notes << QStringLiteral("old trash migrated to the archive: %1 notes").arg(moved);
         changed = true;
     }
+    // РАЗВЕРНУТЬ АРХИВНЫЕ СТАБЫ прежних сборок: тело из журнала — обратно в
+    // файл. Пока они стабы, у них нет ни ссылок на вложения (по ним считается,
+    // чему уходить при удалении насовсем), ни текста для поиска.
+    why.clear();
+    QStringList leftAlone;
+    const int unfolded = store::unfoldArchivedStubs(root_, &leftAlone, &why);
+    if (unfolded < 0) notes << QStringLiteral("archived stubs did not unfold: %1").arg(why);
+    else if (unfolded > 0) {
+        notes << QStringLiteral("archived stubs unfolded: %1 notes").arg(unfolded);
+        changed = true;
+    }
+    notes << leftAlone;
+
     why.clear();
     const int filed = store::fileOrphans(root_, &why);
     if (filed < 0) notes << QStringLiteral("lost & found not set up: %1").arg(why);
