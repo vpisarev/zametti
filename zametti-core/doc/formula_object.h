@@ -61,6 +61,8 @@ struct FormulaRender {
     qreal height = 0.0;
     qreal baseline = 0.0;  // от верха вёрстки до её базовой линии (посадка строчной)
     qreal depth = 0.0;     // сколько вёрстка свисает ниже базовой линии
+    qreal padTop = 0.0;    // поле сверху, добавленное под свисающие чернила
+    qreal padLeft = 0.0;   // и слева
     bool display = true;   // род ОБЪЕКТА: выключная полосой или строчная в строке
     bool displayStyle = true;  // стиль вёрстки движку — по записи ($$ или $)
     qreal pixelSize = 0.0;

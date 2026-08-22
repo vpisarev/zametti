@@ -82,6 +82,8 @@ const FormulaRender* FormulaObjects::renderFor(const QString& source, const QStr
             render.height = drawn.height;
             render.baseline = drawn.baseline;
             render.depth = drawn.depth;
+            render.padTop = drawn.padTop;
+            render.padLeft = drawn.padLeft;
         } else {
             render.error = drawn.error;
         }
@@ -148,7 +150,11 @@ bool vectorDevice(const QPainter& painter) {
 bool paintVector(QPainter& painter, const QPointF& at, const FormulaRender& render) {
     const qreal dpr = render.dpr > 0.0 ? render.dpr : 1.0;
     painter.save();
-    painter.translate(at);
+    // Верх и левый край РАСТРА выходят за коробку движка на padTop/padLeft
+    // (там живут свисающие чернила), а вектор рисуется от самой коробки —
+    // сдвигаем его на те же доли, иначе бумага показала бы формулу выше и
+    // левее, чем экран.
+    painter.translate(at + QPointF(render.padLeft, render.padTop));
     painter.scale(1.0 / dpr, 1.0 / dpr);
     const QString error = Formulas::paintInto(painter, QPointF(0, 0), render.latex,
                                               render.displayStyle, render.pixelSize * dpr,

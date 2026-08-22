@@ -254,28 +254,71 @@ FormulaImage Formulas::render(const QString& latex, bool display, qreal pixelSiz
         return out;
     }
 
-    QImage image(int(std::ceil(physicalWidth)), int(std::ceil(physicalHeight)),
-                 QImage::Format_ARGB32_Premultiplied);
-    image.fill(Qt::transparent);
+    // КОРОБКА ДВИЖКА ЧЕРНИЛА НЕ ДЕРЖИТ. getHeight() — логическая высота
+    // вёрстки, а глифы рисуются за неё: хвост «γ», скобки, знак корня, круглый
+    // низ «e» и нижний индекс свисают ниже на пиксель-другой, и по левому и
+    // правому краю бывает то же. Растр ровно по коробке эти хвосты СРЕЗАЛ —
+    // владелец видел это как «на некоторых масштабах низ формул явно режется»
+    // ($e^{-x}$, $x_0^2$ в «Typesetting Math in Markdown»); замер: из 190
+    // вёрсток на кеглях 12…30 свисают 172.
+    //
+    // Поэтому рисуем на холсте с полями, находим настоящие границы чернил и
+    // РАСШИРЯЕМ КОРОБКУ до них. Расширение согласованно уезжает в геометрию:
+    // baseline растёт на добавленное сверху, depth — на добавленное снизу,
+    // поэтому посадка на базовую линию строки остаётся прежней, а места под
+    // формулу становится ровно столько, сколько она занимает чернилами.
+    // Влево расширяем тоже: чернила выходят и за левый край (курсивные буквы,
+    // знак корня). Формула при этом сдвигается вправо на добавленное — не
+    // больше пикселя, — и это дешевле, чем срезанный край.
+    const int boxWidth = int(std::ceil(physicalWidth));
+    const int boxHeight = int(std::ceil(physicalHeight));
+    const int pad = std::max(3, int(std::ceil(physicalHeight * 0.3)));
+    QImage canvas(boxWidth + 2 * pad, boxHeight + 2 * pad, QImage::Format_ARGB32_Premultiplied);
+    canvas.fill(Qt::transparent);
+    {
+        QPainter painter(&canvas);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setRenderHint(QPainter::TextAntialiasing, true);
+        painter.translate(pad, pad);
+        microtex::Graphics2D_qt g2(&painter);
+        render->draw(g2, 0, 0);
+    }
+    int inkTop = -1;
+    int inkBottom = -1;
+    int inkLeft = -1;
+    int inkRight = -1;
+    for (int y = 0; y < canvas.height(); ++y) {
+        const auto* row = reinterpret_cast<const QRgb*>(canvas.constScanLine(y));
+        for (int x = 0; x < canvas.width(); ++x) {
+            if (qAlpha(row[x]) == 0) continue;
+            if (inkTop < 0) inkTop = y;
+            inkBottom = y;
+            if (inkLeft < 0 || x < inkLeft) inkLeft = x;
+            if (x > inkRight) inkRight = x;
+        }
+    }
+    const int extraTop = inkTop < 0 ? 0 : std::max(0, pad - inkTop);
+    const int extraBottom = inkBottom < 0 ? 0 : std::max(0, inkBottom + 1 - (pad + boxHeight));
+    const int extraLeft = inkLeft < 0 ? 0 : std::max(0, pad - inkLeft);
+    const int extraRight = inkRight < 0 ? 0 : std::max(0, inkRight + 1 - (pad + boxWidth));
+    QImage image = canvas.copy(QRect(pad - extraLeft, pad - extraTop, boxWidth + extraLeft + extraRight,
+                                     boxHeight + extraTop + extraBottom));
     // ПЛОТНОСТЬ КАРТИНКЕ НЕ ПРОСТАВЛЯЕМ. С ней «логический» размер картинки
     // считает Qt, и рисование зависит от того, какой формой drawImage её
     // попросили нарисовать. Здесь картинка — просто пиксели в физических
     // точках: кто рисует, тот и задаёт прямоугольник в логических, а источник
     // в физических (см. note_view.cpp). Тогда ответ один при любой плотности и
     // не зависит от того, как Qt толкует пометку.
-    {
-        QPainter painter(&image);
-        painter.setRenderHint(QPainter::Antialiasing, true);
-        painter.setRenderHint(QPainter::TextAntialiasing, true);
-        microtex::Graphics2D_qt g2(&painter);
-        render->draw(g2, 0, 0);
-    }
-
     out.image = image;
-    out.width = physicalWidth / dpr;
-    out.height = physicalHeight / dpr;
-    out.depth = render->getDepth() / dpr;
-    out.baseline = physicalBaseline / dpr;
+    out.width = (physicalWidth + extraLeft + extraRight) / dpr;
+    out.height = (physicalHeight + extraTop + extraBottom) / dpr;
+    out.depth = (render->getDepth() + extraBottom) / dpr;
+    out.baseline = (physicalBaseline + extraTop) / dpr;
+    // Насколько верх и левый край картинки выходят за коробку движка: вектору
+    // на бумаге рисовать от того же угла, что и растру, значит его надо
+    // сдвинуть на эти доли.
+    out.padTop = extraTop / dpr;
+    out.padLeft = extraLeft / dpr;
     ++g_renders;
     return out;
 }

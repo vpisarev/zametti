@@ -43,6 +43,11 @@ struct FormulaImage {
     qreal width = 0.0;     // логические размеры вёрстки, без полей
     qreal height = 0.0;
     qreal depth = 0.0;     // сколько вёрстка свисает ниже базовой линии
+    // Поле, добавленное СВЕРХУ к коробке движка, чтобы вместить чернила
+    // (глифы рисуются за коробку). Растр уже с ним; вектор рисуется от
+    // коробки, поэтому его опускают на padTop.
+    qreal padTop = 0.0;
+    qreal padLeft = 0.0;
     QString error;
 
     bool ok() const { return error.isEmpty() && !image.isNull(); }
