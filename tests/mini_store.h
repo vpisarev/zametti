@@ -67,7 +67,7 @@ public:
     // Время файла — им, среди прочего, датируется опорная запись журнала.
     void setFileTime(const QString& id, qint64 utcMs) const {
         QFile file(pathOf(id));
-        file.open(QIODevice::ReadWrite);
+        (void)file.open(QIODevice::ReadWrite);
         file.setFileTime(QDateTime::fromMSecsSinceEpoch(utcMs), QFileDevice::FileModificationTime);
         file.close();
     }
@@ -125,7 +125,7 @@ public:
         writer.endMap();
 
         QFile file(path);
-        file.open(QIODevice::WriteOnly | QIODevice::Append);
+        (void)file.open(QIODevice::WriteOnly | QIODevice::Append);
         file.write(blob + record);
         file.close();
     }
@@ -133,7 +133,7 @@ public:
     // Перевернуть бит в файле — порча, которую обязана заметить целостность.
     void flipByte(const QString& path, qint64 offset, unsigned char mask = 0x01) const {
         QFile file(path);
-        file.open(QIODevice::ReadWrite);
+        (void)file.open(QIODevice::ReadWrite);
         QByteArray all = file.readAll();
         if (offset >= 0 && offset < all.size()) all[offset] = char(all[offset] ^ mask);
         file.seek(0);
@@ -145,7 +145,7 @@ protected:
     static void write(const QString& path, const QByteArray& bytes) {
         QDir().mkpath(QFileInfo(path).absolutePath());
         QFile file(path);
-        file.open(QIODevice::WriteOnly | QIODevice::Truncate);
+        (void)file.open(QIODevice::WriteOnly | QIODevice::Truncate);
         file.write(bytes);
         file.close();
     }

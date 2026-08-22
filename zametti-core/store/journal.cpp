@@ -343,6 +343,7 @@ QString describeKind(Kind kind) {
         case Kind::External: return QStringLiteral("external");
         case Kind::Restore: return QStringLiteral("restore");
         case Kind::Tombstone: return QStringLiteral("tombstone");
+        case Kind::Amendment: return QStringLiteral("amendment");
     }
     return QStringLiteral("?");
 }

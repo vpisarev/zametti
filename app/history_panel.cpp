@@ -51,6 +51,8 @@ QString historyKindName(journal::Kind kind) {
         case journal::Kind::External: return QStringLiteral("external");
         case journal::Kind::Restore: return QStringLiteral("restored");
         case journal::Kind::Tombstone: return QStringLiteral("deleted");
+        // Гашение человеку не показывается вовсе — в список оно не попадает.
+        case journal::Kind::Amendment: return {};
     }
     return {};
 }

@@ -3,7 +3,6 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QSaveFile>
 
 namespace zametti::store {
 
@@ -28,13 +27,21 @@ void DeviceClock::advanceTo(qint64 time) const {
     if (time <= floor()) return;
     const QString path = pathFor(root_);
     QDir().mkpath(QFileInfo(path).absolutePath());
-    // Атомарно: порванного числа не бывает по построению, а порванное число —
-    // это пол в далёком будущем, от которого потом не избавиться.
-    QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly)) return;
+    // ОБЫЧНАЯ ЗАПИСЬ, БЕЗ FSYNC — и это замер, а не вкус. QSaveFile внутри
+    // себя зовёт fdatasync, и на каждом автосохранении он стоил 5 мс из 13
+    // (замер на Release, ext4): столько же, сколько вся запись самой заметки.
+    // Журнал fsync не зовёт по той же причине и с тем же обоснованием.
+    //
+    // Порванного числа при этом не бывает: четырнадцать байт ложатся одной
+    // записью в один сектор, а сектор попадает на диск целиком — либо старый,
+    // либо новый. Потерять обновление можно (питание выдернули до сброса
+    // страниц), и это штатная деградация: пол опустится до пола журнала, а тот
+    // выводится из записей и потеряться не может.
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
     file.write(QByteArray::number(time));
     file.write("\n");
-    file.commit();
+    file.close();
 }
 
 }  // namespace zametti::store

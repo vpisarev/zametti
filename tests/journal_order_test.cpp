@@ -439,7 +439,7 @@ void checkBrokenFrameIsNotADeletion() {
     // заметка одна.
     const qint64 kindAt = read.at(1).offset() + 2;
     QFile file(store.journalOf(id));
-    file.open(QIODevice::ReadOnly);
+    (void)file.open(QIODevice::ReadOnly);
     const QByteArray blob = file.readAll();
     file.close();
     ZT_EQ("на этом месте действительно род «сохранение»", num(1),
