@@ -206,6 +206,47 @@ void checkStoreSearch() {
     spy.wait(5000);
 }
 
+// СЦЕНАРИЙ ВЛАДЕЛЬЦА: находим вхождения и удаляем их по очереди, чередуя
+// Delete и F3 («Новая классная заметочка», запрос «од»).
+//
+// Два правила разом, и оба — общие для вёрстки и исходника: после правки поиск
+// повторяется целиком («смещения изменились и количество изменилось»), а
+// следующий шаг идёт к БЛИЖАЙШЕЙ находке от каретки, а не через одну.
+void checkDeleteEveryMatchOneByOne() {
+    const QString source = zt::TestData::file(QStringLiteral("search-steps-fixture.md"));
+    if (source.isEmpty()) {
+        std::printf("  (фикстуры search-steps-fixture.md нет — проверка пропущена)\n");
+        return;
+    }
+
+    zametti::NoteEditor editor;
+    editor.resize(1000, 800);
+    editor.show();
+    QTest::qWait(20);
+    ZT_TRUE("заметка открылась", editor.openFile(source));
+    QTest::qWait(60);
+
+    const QString needle = QStringLiteral("од");
+    const int found = editor.findMatches(needle, false);
+    ZT_TRUE("вхождения нашлись (" + std::to_string(found) + ")", found > 1);
+
+    QTextCursor home(editor.document());
+    editor.setTextCursor(home);
+    for (int done = 0; done < found; ++done) {
+        editor.stepMatch(1);
+        QTextCursor at = editor.textCursor();
+        ZT_EQ("шаг встал на вхождение", needle.toStdString(), at.selectedText().toStdString());
+        at.removeSelectedText();
+        const int want = found - done - 1;
+        for (int waited = 0; waited < 3000 && editor.matchCount() != want; waited += 50)
+            QTest::qWait(50);
+        ZT_EQ("после удаления вхождений стало меньше", std::to_string(want),
+              std::to_string(editor.matchCount()));
+    }
+    ZT_TRUE("удалены все — в тексте вхождений не осталось",
+            !editor.document()->toPlainText().contains(needle));
+}
+
 // --- 3. Поиск и замена в открытой заметке -----------------------------------
 
 void checkEditorSearch() {
@@ -571,6 +612,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkHitLine();
     checkStoreSearch();
     checkEditorSearch();
+    checkDeleteEveryMatchOneByOne();
     checkCaretMemory();
     checkSearchSurvivesSwitch();
     checkQueryHistory();

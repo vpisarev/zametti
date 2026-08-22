@@ -220,6 +220,50 @@ void checkContextMenuHasModeActions() {
     delete menu;
 }
 
+// СЦЕНАРИЙ ВЛАДЕЛЬЦА ДОСЛОВНО: находим все вхождения и удаляем их по очереди,
+// чередуя Delete и F3 («Новая классная заметочка», запрос «од»).
+//
+// Два правила разом: после правки поиск повторяется целиком, и следующий шаг
+// идёт к БЛИЖАЙШЕЙ находке от каретки, а не через одну. Пока «текущую»
+// назначал сам поиск, шаг после правки её проскакивал — владелец так и сказал:
+// «не перехожу на ближайшее вхождение, а перепрыгиваю».
+void checkDeleteEveryMatchOneByOne() {
+    const QString path = zt::TestData::file(QStringLiteral("search-steps-fixture.md"));
+    if (path.isEmpty()) {
+        std::printf("  (фикстуры search-steps-fixture.md нет — проверка пропущена)\n");
+        return;
+    }
+    Rig rig;
+    rig.editor.openFile(path);
+    QTest::qWait(40);
+    ZT_TRUE("вошли в режим исходника", rig.controller.enter());
+    QTest::qWait(40);
+
+    const QString needle = QStringLiteral("од");
+    const int found = rig.view.findMatches(needle, false);
+    ZT_TRUE("вхождения нашлись (" + std::to_string(found) + ")", found > 1);
+
+    // Каретку в начало: идём по заметке сверху вниз, как человек.
+    QTextCursor home(rig.view.document());
+    rig.view.setTextCursor(home);
+
+    for (int done = 0; done < found; ++done) {
+        rig.view.stepMatch(1);
+        QTextCursor at = rig.view.textCursor();
+        ZT_EQ("шаг встал на вхождение", needle.toStdString(),
+              at.selectedText().toStdString());
+        at.removeSelectedText();   // Delete по выделенному вхождению
+        // Поиск повторяется сам — ждём, пока догонит текст.
+        const int want = found - done - 1;
+        for (int waited = 0; waited < 3000 && rig.view.matchCount() != want; waited += 50)
+            QTest::qWait(50);
+        ZT_EQ("после удаления вхождений стало меньше", std::to_string(want),
+              std::to_string(rig.view.matchCount()));
+    }
+    ZT_TRUE("удалены все — искать больше нечего",
+            !rig.view.toPlainText().contains(needle));
+}
+
 // Вошли, поправили слово, вышли: заметка приняла правку, каретка на месте, а
 // отмена возвращает всё ОДНИМ нажатием.
 void checkRoundTrip() {
@@ -891,6 +935,7 @@ TEST(MarkdownEdit, All) {
     checkSearchRepeatsAfterEdit();
     checkSearchDiffersBetweenModes();
     checkContextMenuHasModeActions();
+    checkDeleteEveryMatchOneByOne();
     checkRoundTrip();
     checkOwnUndo();
     checkNoteRefusesEdits();
