@@ -273,6 +273,20 @@ void checkUnfoldStubs() {
     write(alive, kBody);
     const std::string aliveWas = read(alive);
 
+    // АРХИВНАЯ С ТЕЛОМ — та, что убрана уже новым путём. В журнале у неё лежит
+    // СТАРЫЙ текст, и разворачивание обязано пройти мимо: иначе оно откатило бы
+    // заметку к прошлой версии. Ею и приколот детектор стаба.
+    const QString full = QStringLiteral("01ff00000000fc");
+    QByteArray older(kBody);
+    older.replace("Длинный текст", "Старый текст");
+    ZT_TRUE("старая версия записана в журнал",
+            zametti::journal::History(g_root).append(
+                full, zametti::journal::NewRecord::save(older, zametti::journal::Stamp::now()),
+                &error));
+    std::string fullBytes = kBody;
+    fullBytes.insert(fullBytes.find("-->"), "archived: yes\n");
+    write(full, fullBytes);
+
     QStringList leftAlone;
     const int done = zametti::store::unfoldArchivedStubs(g_root, &leftAlone, &error);
     ZT_EQ("развёрнута одна", num(1), num(done));
@@ -290,6 +304,8 @@ void checkUnfoldStubs() {
           std::string("<!-- zametti\narchived: yes\n-->\n\n# Без истории\n"), read(noHistory));
     ZT_TRUE("и назван в отчёте", leftAlone.size() == 1 && leftAlone.first().contains(noHistory));
     ZT_EQ("живая заметка не тронута", aliveWas, read(alive));
+    ZT_EQ("архивная С ТЕЛОМ не тронута: она не стаб, и откатывать её к журналу нельзя",
+          fullBytes, read(full));
 
     // ИДЕМПОТЕНТНОСТЬ: второй заход не находит работы и не пишет ни байта.
     const std::string after = read(id);
