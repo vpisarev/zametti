@@ -275,9 +275,14 @@ void NoteEditor::onCaretMoved() {
     // ТО ЖЕ У ТАБЛИЦЫ: ушли из раскрытого дословного блока — судья файла решает,
     // что он теперь (closeTable). Оба хука — только в живой заметке: в режиме
     // истории и в читалке править нечего.
+    // Спрашиваем заметку ДО правки: пустая скобка правки поднимает ревизию
+    // документа (замер Qt), а по ревизии судят кэши — счёт слов, найденное,
+    // собранные блоки. Пока вопроса не было, три холостых захода на каждый ход
+    // каретки протухали их все.
     if (!isReadOnly() && !current_.lastLine.isNull() &&
         current_.lastLine.document() == document() &&
-        current_.lastLine.blockNumber() != textCursor().blockNumber()) {
+        current_.lastLine.blockNumber() != textCursor().blockNumber() &&
+        note_->doc().mayHaveOpenObject(current_.lastLine)) {
         QTextCursor left = current_.lastLine;
         if (!runNoteEdit(
                 [&left](ZDocument& note, QTextCursor&) { return note.closeInlineFormula(left); }))

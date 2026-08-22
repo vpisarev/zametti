@@ -4209,6 +4209,19 @@ bool ZDocument::rejudgeBlock(QTextCursor& at, int number, const QString& source)
     return true;
 }
 
+bool ZDocument::mayHaveOpenObject(const QTextCursor& at) const {
+    if (at.document() != &d_->text) return false;
+    const QTextBlock block = at.block();
+    if (!block.isValid()) return false;
+    // Дословный блок: его судит closeTable (таблица-объект уже свёрнута).
+    if (isRawBlock(block)) return !isTableObjectBlock(block);
+    // Раскрытая строчная формула помечена прямо в куске блока.
+    if (hasOpenInlineFormula(block)) return true;
+    // Выключную формулу закрывать есть смысл только в абзаце с долларом:
+    // формулой scanMath считает лишь то, что в доллары обёрнуто.
+    return kindOf(block) == Kind::Paragraph && block.text().contains(QLatin1Char('$'));
+}
+
 bool ZDocument::closeTable(QTextCursor& at) {
     if (at.document() != &d_->text) return false;
     const QTextBlock block = at.block();
