@@ -212,8 +212,25 @@ QSizeF FormulaObjects::inlineBandFor(const FormulaRender* render, const QString&
     // AlignBaseline; дробный сажал бы картинку ниже на дробную часть (замер
     // пробника: +4.00 при descent 4.12).
     const int descent = QFontMetrics(textFont).descent();
-    if (render != nullptr && render->error.isEmpty() && !render->image.isNull())
-        return QSizeF(render->width, render->baseline + descent);
+    if (render != nullptr && render->error.isEmpty() && !render->image.isNull()) {
+        // МЕСТО ВМЕЩАЕТ ВСЮ ВЁРСТКУ, А НЕ ТОЛЬКО ЕЁ ВЕРХ (нашёл владелец:
+        // «строчные формулы немного обрезаются снизу»).
+        //
+        // При AlignBaseline низ места всегда садится на базовую линию плюс
+        // descent ТЕКСТА — сколько бы ни было у формулы глубины. Пока высота
+        // считалась как `baseline + descent`, всё, что у вёрстки ниже
+        // собственной базовой линии глубже descent, оказывалось за краем места
+        // и срезалось клипом объекта. Замер: у `\frac{a}{b}` глубина 5.6–7.9 px
+        // при descent 4–6 — резалось на любом масштабе; у `e^{-x}` глубина 0.2,
+        // и там срезался один ряд пикселей от прищёлкивания верха к физической
+        // сетке (см. paintInline).
+        //
+        // Берём наибольшее из двух и добавляем пиксель на это самое
+        // прищёлкивание. Формула с глубиной при этом слегка приподнимается над
+        // строкой — так дробь в строке и набирают.
+        const qreal wanted = qMax(render->baseline + descent, render->height + 1.0);
+        return QSizeF(render->width, std::ceil(wanted));
+    }
     // Битая формула или движок не поднят: место под исходник текстом в рамке —
     // сидит в строке как текст.
     const QFontMetricsF metrics(textFont);
