@@ -1186,7 +1186,8 @@ int main(int argc, char** argv) {
             // или журнал вместе с архивной, картинки следом.
             if (wasOpen) editor.save(false);
             QString deleteError;
-            if (!zapp.storage()->remove(noteId, &deleteError)) {
+            if (!zapp.storage()->remove(
+                    noteId, zametti::deletedImageLimitsFrom(zametti::settings().images()), &deleteError)) {
                 QMessageBox::warning(&window, QStringLiteral("zametti"), deleteError);
                 return;
             }

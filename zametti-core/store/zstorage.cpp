@@ -398,7 +398,7 @@ bool ZStorage::restore(const QString& id, QStringList* failed) {
     return ok;
 }
 
-bool ZStorage::remove(const QString& id, QString* error) {
+bool ZStorage::remove(const QString& id, const ImportLimits& limits, QString* error) {
     if (!store_ || !has(id)) {
         if (error != nullptr) *error = QStringLiteral("no such note");
         return false;
@@ -439,10 +439,14 @@ bool ZStorage::remove(const QString& id, QString* error) {
         return false;
     }
 
-    // Картинки — следом, в ту же мусорку ОС.
+    // КАРТИНКИ ХОРОНЯТСЯ, А НЕ СТИРАЮТСЯ: на месте файла остаётся посмертная
+    // мини-версия с меткой «удалено». «Файла нет» не доезжает до других
+    // устройств — чтобы сказать «его больше нет», нужен файл, который это
+    // говорит.
     for (const QString& picture : doomedFiles) {
         QString pictureError;
-        if (!store::deleteAttachmentFile(root_, picture, &pictureError))
+        if (!store::retireAttachmentFile(root_, picture, limits, &pictureError) ||
+            !pictureError.isEmpty())
             std::fprintf(stderr, "%s\n", pictureError.toUtf8().constData());
     }
     for (const QString& victim : std::as_const(doomed)) notes_.remove(victim);

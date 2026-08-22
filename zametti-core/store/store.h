@@ -7,6 +7,8 @@
 #ifndef ZAMETTI_STORE_H
 #define ZAMETTI_STORE_H
 
+#include "import_limits.h"
+
 #include <QString>
 #include <QStringList>
 
@@ -99,6 +101,23 @@ QStringList attachmentsLeavingWith(const QString& root, const QStringList& noteI
 
 // Убрать файл вложения из хранилища — в корзину ОС, как и заметки.
 bool deleteAttachmentFile(const QString& root, const QString& name, QString* error);
+
+// ПОХОРОНИТЬ ВЛОЖЕНИЕ: на месте файла остаётся посмертная мини-версия с меткой
+// «удалено» и выросшей ревизией (см. image/deleted_image.h).
+//
+// Стереть файл было бы проще — и неверно: удаление обязано ДОЕХАТЬ до других
+// устройств, а «файла нет» доехать не может. Чтобы сказать «его больше нет»,
+// нужен файл, который это говорит.
+//
+// Формат превью всегда JXL (писатель у нас один), поэтому `<id>.webp`
+// превращается в `<id>.jxl`, а исходник уходит в корзину ОС. Идемпотентно: уже
+// помеченный файл не трогается ни байтом — иначе ревизия росла бы вечно, а
+// картинка ужималась при каждом заходе.
+//
+// Не смогли прочесть картинку (чужой формат, битый файл) — старое поведение:
+// файл уходит в корзину ОС, а причина остаётся в error.
+bool retireAttachmentFile(const QString& root, const QString& name, const ImportLimits& limits,
+                          QString* error);
 
 // Удалить файл заметки насовсем.
 //

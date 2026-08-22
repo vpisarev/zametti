@@ -71,4 +71,10 @@ QString imageMarkdown(const StoredImage& stored);
 // однажды запустить и с другим пресетом, не трогая настройки программы).
 ImportLimits importLimitsFrom(const ZSettings::Images& images);
 
+// Пределы ПОСМЕРТНОГО ПРЕВЬЮ: те же правила площади и качества, что у ввоза,
+// только сторона бюджета своя (images().maxDeletedImageSize()). Отдельная
+// функция, а не подмена поля у вызывающего: «чем меряется посмертная копия» —
+// вопрос один на всю программу, и ответ у него обязан быть один.
+ImportLimits deletedImageLimitsFrom(const ZSettings::Images& images);
+
 }  // namespace zametti

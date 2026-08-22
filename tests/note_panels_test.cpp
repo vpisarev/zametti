@@ -214,7 +214,7 @@ static int ztRunSuite(int, char**) {
           n(int(list.sortOrder().key)));
 
     // --- удаление насовсем: строка ушла, ничего не открыто ------------------------
-    ZT_TRUE("удалили Гамму", storage->remove(gamma, &error));
+    ZT_TRUE("удалили Гамму", storage->remove(gamma, zametti::ImportLimits{}, &error));
     QCoreApplication::processEvents();
     ZT_TRUE("Гаммы нет в списке", !listTitles(list).contains(QStringLiteral("Гамма")));
     ZT_EQ("удаление ничего не открывает", "0", n(chosen.size()));

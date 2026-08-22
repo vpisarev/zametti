@@ -184,6 +184,12 @@ ImportLimits importLimitsFrom(const ZSettings::Images& s) {
     return limits;
 }
 
+ImportLimits deletedImageLimitsFrom(const ZSettings::Images& s) {
+    ImportLimits limits = importLimitsFrom(s);
+    limits.maxSize = s.maxDeletedImageSize();
+    return limits;
+}
+
 QString imageMarkdown(const StoredImage& stored) {
     if (!stored.ok()) return {};
     QString alt = stored.alt;

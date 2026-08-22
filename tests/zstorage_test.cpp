@@ -9,6 +9,11 @@
 #include "zstorage.h"
 #include "store.h"
 #include "journal.h"
+#include "exif.h"
+#include "jxl_encoder.h"
+#include "image_read.h"
+
+#include <QImage>
 #include "test_util.h"
 
 #include <QCoreApplication>
@@ -174,10 +179,10 @@ void checkOperations() {
                                                        storage.info(inner)->parent() == folder &&
                                                        storage.info(inner)->title() == QStringLiteral("Внутренняя"));
 
-    ZT_TRUE("удалить насовсем пустую", storage.remove(stray, &error));
+    ZT_TRUE("удалить насовсем пустую", storage.remove(stray, zametti::ImportLimits{}, &error));
     ZT_TRUE("её нет в каталоге", !storage.has(stray));
     ZT_TRUE("и файла нет", !QFile::exists(storage.pathOf(stray)));
-    ZT_TRUE("удалить несуществующую — ложь", !storage.remove(stray, &error) && !error.isEmpty());
+    ZT_TRUE("удалить несуществующую — ложь", !storage.remove(stray, zametti::ImportLimits{}, &error) && !error.isEmpty());
 
     // Импорт чужого .md.
     const QString foreign = home.path() + QStringLiteral("/чужая.md");
@@ -220,7 +225,7 @@ void checkDeleteCascade() {
     ZT_TRUE("внук в архиве", storage.archive(grand, rules(), &failed) && failed.isEmpty());
 
     const QString childLog = zametti::journal::History(root).pathFor(child);
-    ZT_TRUE("удаление папки прошло", storage.remove(folder, &error));
+    ZT_TRUE("удаление папки прошло", storage.remove(folder, zametti::ImportLimits{}, &error));
 
     ZT_TRUE("папки нет в каталоге", !storage.has(folder));
     ZT_TRUE("ребёнка тоже", !storage.has(child));
@@ -236,6 +241,79 @@ void checkDeleteCascade() {
     ZT_TRUE("журнал внука читается", history.read(grand, &read, &error));
     ZT_TRUE("и голова у него — надгробие",
             !read.isEmpty() && read.at(read.headIndex()).kind() == zametti::journal::Kind::Tombstone);
+}
+
+// ВЛОЖЕНИЕ ХОРОНИТСЯ, А НЕ СТИРАЕТСЯ. Прежде оно уходило в мусорку ОС — и
+// удаление не доезжало никуда: «файла нет» не расскажешь другому устройству.
+// Теперь на месте файла остаётся посмертное превью с меткой.
+void checkAttachmentBurial() {
+    QTemporaryDir home;
+    const QString root = home.path() + QStringLiteral("/store");
+    QString error;
+    ZT_TRUE("хранилище заведено", zametti::store::initStore(root, &error));
+    ZStorage storage(root);
+    storage.reload();
+
+    // Картинка покрупнее бюджета посмертного превью, чтобы было чему ужиматься.
+    // Картинка НЕ однотонная: ровная заливка сжимается в двести байт, и тогда
+    // превью с метаданными выходит больше исходника — сравнение потеряло бы
+    // смысл, а не поймало бы беду.
+    QImage picture(800, 600, QImage::Format_RGB32);
+    for (int y = 0; y < picture.height(); ++y)
+        for (int x = 0; x < picture.width(); ++x)
+            picture.setPixel(x, y, qRgb((x * 255) / 799, (y * 255) / 599, (x ^ y) & 0xff));
+    zametti::EncodeOptions options;
+    options.quality = 90;
+    options.effort = 3;
+    const QByteArray jxl = zametti::encodeJxl(picture, options, {}, &error);
+    ZT_TRUE("картинка закодирована", !jxl.isEmpty());
+    const QString attachment = QStringLiteral("01jd7f0kq2m8xa.jxl");
+    {
+        QFile f(QDir(root).filePath(attachment));
+        ZT_TRUE("вложение записано", f.open(QIODevice::WriteOnly));
+        f.write(jxl);
+    }
+    const qint64 fat = QFileInfo(QDir(root).filePath(attachment)).size();
+
+    const QString note = storage.createNote(QString(), false, &error);
+    ZT_TRUE("заметка создана", !note.isEmpty());
+    {
+        QFile f(storage.pathOf(note));
+        ZT_TRUE("заметка открыта", f.open(QIODevice::Append));
+        f.write("# Со снимком\n\n![вид](01jd7f0kq2m8xa.jxl#w=600)\n");
+    }
+    storage.refreshNote(note);
+
+    zametti::ImportLimits limits;
+    limits.maxSize = 100;
+    limits.quality = 90;
+    ZT_TRUE("удаление прошло", storage.remove(note, limits, &error));
+
+    const QString buried = QDir(root).filePath(attachment);
+    ZT_TRUE("файл вложения на месте", QFile::exists(buried));
+    ZT_TRUE("и файл меньше исходного: " + n(QFileInfo(buried).size()) + " против " + n(fat),
+            QFileInfo(buried).size() < fat);
+
+    QFile f(buried);
+    ZT_TRUE("превью читается", f.open(QIODevice::ReadOnly));
+    const QByteArray bytes = f.readAll();
+    const zametti::ImageMeta meta =
+        zametti::readImageMeta(std::string_view(bytes.constData(), size_t(bytes.size())));
+    ZT_TRUE("и помечено удалённым", zametti::xmpZamettiDeleted(meta.xmp));
+    // Главное — не байты файла, а пиксели: превью обязано влезать в бюджет S².
+    const QImage back = zametti::decodeImage(bytes);
+    ZT_TRUE("и влезает в бюджет: " + n(back.width()) + "×" + n(back.height()),
+            !back.isNull() && back.width() * back.height() <= 101 * 101);
+
+    // ИДЕМПОТЕНТНОСТЬ: повторные похороны не трогают файл ни байтом — иначе
+    // ревизия росла бы вечно, а картинка ужималась заново.
+    const QByteArray was = bytes;
+    QString why;
+    ZT_TRUE("повторные похороны молчат",
+            zametti::store::retireAttachmentFile(root, attachment, limits, &why));
+    QFile again(buried);
+    ZT_TRUE("файл читается", again.open(QIODevice::ReadOnly));
+    ZT_TRUE("и не изменился ни байтом", again.readAll() == was);
 }
 
 void checkSignals() {
@@ -285,7 +363,7 @@ void checkSignals() {
     ZT_TRUE("возврат", storage.restore(folder, &failed) && failed.isEmpty());
     ZT_EQ("возврат поддерева — одна новость", "1", n(catalog));
     catalog = 0;
-    ZT_TRUE("удаление", storage.remove(b, &error));
+    ZT_TRUE("удаление", storage.remove(b, zametti::ImportLimits{}, &error));
     ZT_EQ("удаление — одна новость", "1", n(catalog));
     catalog = 0;
 
@@ -307,6 +385,7 @@ TEST(ZStorage, All) {
     checkCatalog();
     checkOperations();
     checkDeleteCascade();
+    checkAttachmentBurial();
     checkSignals();
     EXPECT_EQ(0, zt::freshFailures());
 }

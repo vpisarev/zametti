@@ -1,5 +1,9 @@
 #include "store.h"
 
+#include "exif.h"
+
+#include "deleted_image.h"
+
 #include "times.h"
 
 #include "journal.h"
@@ -12,6 +16,7 @@
 
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QSaveFile>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -1098,17 +1103,34 @@ bool verifyStore(const QString& root, Report& report) {
         }
     }
 
-    // ТРИ КАТЕГОРИИ ВЛОЖЕНИЙ, и разница между ними — не косметика:
-    //   живое      — на него ссылается хоть одна незакорзиненная заметка;
-    //   «в корзине» — только корзинные; уйдёт вместе с очисткой корзины, и это
-    //                 не аномалия, а расписание;
-    //   сирота     — не упомянуто НИ В ОДНОЙ заметке вовсе. Вот это отчёт.
+    // ЧЕТЫРЕ КАТЕГОРИИ ВЛОЖЕНИЙ, и разница между ними — не косметика:
+    //   живое      — на него ссылается хоть одна неархивная заметка;
+    //   «в архиве» — только архивные; это расписание, а не аномалия;
+    //   ПОСМЕРТНОЕ — на него не ссылается никто, но в нём стоит метка
+    //                «удалено»: это не сирота, а надгробие вложения, и оно
+    //                обязано лежать в хранилище, чтобы удаление доехало до
+    //                других устройств;
+    //   сирота     — не упомянуто НИ В ОДНОЙ заметке и метки не несёт. Вот
+    //                это отчёт.
     for (const QString& name : attachments) {
         if (referencedLive.find(name) != referencedLive.end()) continue;
         if (referencedTrashed.find(name) != referencedTrashed.end()) {
             report.note(QStringLiteral("attachment only in archive: %1 (will go with cleanup)")
                             .arg(name));
             continue;
+        }
+        // Метку читаем только у кандидатов в сироты — их единицы, и чтение
+        // заголовка стоит копейки.
+        QFile file(QDir(root).filePath(name));
+        if (file.open(QIODevice::ReadOnly)) {
+            const QByteArray bytes = file.read(64 * 1024);
+            file.close();
+            const ImageMeta meta =
+                readImageMeta(std::string_view(bytes.constData(), size_t(bytes.size())));
+            if (xmpZamettiDeleted(meta.xmp)) {
+                report.note(QStringLiteral("deleted attachment (a mini preview): %1").arg(name));
+                continue;
+            }
         }
         report.note(QStringLiteral("orphan attachment: %1").arg(name));
     }
@@ -1177,6 +1199,52 @@ bool deleteAttachmentFile(const QString& root, const QString& name, QString* err
     if (!QFile::exists(file)) return true;   // уже нет — и хорошо
     if (!QFile::moveToTrash(file) && !QFile::remove(file)) {
         if (error) *error = QStringLiteral("cannot delete attachment file %1").arg(name);
+        return false;
+    }
+    return true;
+}
+
+bool retireAttachmentFile(const QString& root, const QString& name, const ImportLimits& limits,
+                          QString* error) {
+    const QString path = QDir(root).filePath(name);
+    QFile file(path);
+    if (!file.exists()) return true;   // уже нет — и хорошо
+    if (!file.open(QIODevice::ReadOnly)) {
+        if (error) *error = QStringLiteral("cannot read attachment %1").arg(name);
+        return false;
+    }
+    const QByteArray bytes = file.readAll();
+    file.close();
+
+    // ИДЕМПОТЕНТНОСТЬ: уже похороненное не трогаем ни байтом. Иначе ревизия
+    // росла бы при каждом заходе, а картинка ужималась заново.
+    const ImageMeta meta = readImageMeta(std::string_view(bytes.constData(), size_t(bytes.size())));
+    if (xmpZamettiDeleted(meta.xmp)) return true;
+
+    QString why;
+    const QByteArray preview = makeDeletedImage(bytes, limits, &why);
+    if (preview.isEmpty()) {
+        // Не прочли картинку — старое поведение, и причина названа вслух.
+        if (error) *error = QStringLiteral("attachment %1 not buried (%2), deleted instead")
+                                .arg(name, why);
+        return deleteAttachmentFile(root, name, nullptr);
+    }
+
+    // Превью всегда JXL: `<id>.webp` становится `<id>.jxl`, исходник уходит.
+    const QString id = QFileInfo(path).completeBaseName();
+    const QString target = QDir(root).filePath(id + QStringLiteral(".jxl"));
+    QSaveFile out(target);
+    if (!out.open(QIODevice::WriteOnly)) {
+        if (error) *error = QStringLiteral("cannot write the deleted preview of %1").arg(name);
+        return false;
+    }
+    out.write(preview);
+    if (!out.commit()) {
+        if (error) *error = QStringLiteral("cannot write the deleted preview of %1").arg(name);
+        return false;
+    }
+    if (target != path && !deleteAttachmentFile(root, name, &why)) {
+        if (error) *error = why;
         return false;
     }
     return true;
