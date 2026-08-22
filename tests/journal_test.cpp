@@ -93,6 +93,10 @@ void checkRoundTrip(const QString& dir) {
     ZT_EQ("вид третьей", num(int(Kind::Restore)), num(int(read.entries[2].kind)));
     ZT_EQ("вид четвёртой", num(int(Kind::Tombstone)), num(int(read.entries[3].kind)));
     ZT_EQ("время второй", num(kNow - 2 * kHour), num(read.entries[1].time));
+    ZT_EQ("ревизия первой", num(1LL), num(read.entries[0].seq));
+    ZT_EQ("ревизия второй", num(2LL), num(read.entries[1].seq));
+    ZT_EQ("ревизия третьей", num(3LL), num(read.entries[2].seq));
+    ZT_EQ("ревизия есть и у надгробия", num(4LL), num(read.entries[3].seq));
     ZT_EQ("источник восстановления", num(kNow - 3 * kHour), num(read.entries[2].source));
     ZT_EQ("источник обычной записи не пишется", num(0LL), num(read.entries[0].source));
     ZT_EQ("размер до сжатия", num(qint64(second.size())), num(read.entries[1].plainSize));
@@ -111,6 +115,43 @@ void checkRoundTrip(const QString& dir) {
     // Отпечаток считается от распакованных байтов и сверяется всегда.
     ZT_EQ("отпечаток первой", hashOf(std::string_view(first.constData(), size_t(first.size()))).hex(),
           read.entries[0].digest.hex());
+}
+
+// Ревизия переживает переписывание файла целиком. Прореживание и чистка — это
+// пересборка всех выживших записей с нуля, и поле рамки, которое там потеряется,
+// потеряется молча: круг «записал — прочитал» идёт через дозапись и такой потери
+// не увидит. Поэтому спрашиваем отдельно.
+void checkRevisionsSurviveThinning(const QString& dir) {
+    journal::History h(dir);
+    const QString id = QStringLiteral("ревизии");
+    // Правки редкие и старые — прореживание обязано что-то выбросить.
+    for (int i = 0; i < 12; ++i)
+        append(h, id, Kind::Save, kNow - 300 * kDay + i * kMinute, noteBody(i + 1, "р"));
+
+    journal::Journal before;
+    QString error;
+    ZT_TRUE("журнал читается", h.read(id, &before, &error));
+    ZT_EQ("ревизии подряд", num(12LL), num(before.entries.last().seq));
+
+    // Кто выживет — знаем заранее: та же чистая функция, что и у прореживания.
+    QVector<int> keep = journal::survivors(before.entries, kNow);
+    ZT_TRUE("прореживанию есть что выбросить", keep.size() < before.entries.size());
+    ZT_TRUE("прореживание проходит", h.thin(id, kNow, &error));
+
+    journal::Journal after;
+    ZT_TRUE("и журнал читается", h.read(id, &after, &error));
+    ZT_EQ("выживших столько, сколько обещано", num(keep.size()), num(after.entries.size()));
+    bool same = after.entries.size() == keep.size();
+    for (int i = 0; i < after.entries.size() && same; ++i)
+        same = after.entries[i].seq == before.entries[keep[i]].seq;
+    ZT_TRUE("и ревизия каждого — прежняя, а не пересчитанная", same);
+
+    // Номера не переиспользуются: следующая запись продолжает максимум.
+    ZT_EQ("дозапись после прореживания", std::string(),
+          str(append(h, id, Kind::Save, kNow, noteBody(20, "р"))));
+    journal::Journal grown;
+    h.read(id, &grown, &error);
+    ZT_EQ("новая ревизия — на единицу больше максимума", num(13LL), num(grown.entries.last().seq));
 }
 
 // Порча в середине слепка обязана быть замечена: молча отданные не те байты
@@ -521,6 +562,7 @@ static int ztRunSuite(int argc, char** argv) {
     QDir().mkpath(QDir(dir.path()).filePath(QStringLiteral("history")));
 
     checkRoundTrip(dir.path());
+    checkRevisionsSurviveThinning(dir.path());
     checkCorruption(dir.path());
     checkTornTail(dir.path());
     checkForeignFile(dir.path());
