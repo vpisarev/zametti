@@ -8,6 +8,8 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+
+#include <algorithm>
 #include <QFileInfo>
 
 namespace zametti {
@@ -65,6 +67,7 @@ public slots:
             // иметь не должен.
             const QString role = note.role();
             if (role == QLatin1String("folder") || role == QLatin1String("trash")) continue;
+            const bool archived = note.isArchived();
             const std::vector<Hit> hits = doc.find(query);
             if (hits.empty()) continue;
 
@@ -78,10 +81,19 @@ public slots:
                 // Поля слепка остаются нулевыми: это находка в живой заметке.
                 results.append(SearchResult{info.completeBaseName(),
                                             info.absoluteFilePath(), title, line.text,
-                                            line.offset, line.length, hit.ordinal, 0, {}});
+                                            line.offset, line.length, hit.ordinal, 0, {},
+                                            archived});
             }
             if (truncated) break;
         }
+
+        // АРХИВНЫЕ — ПОСЛЕ ВСЕХ ЖИВЫХ, и порядок внутри каждой половины
+        // остаётся прежним (устойчивая сортировка): человек ищет среди того,
+        // чем пользуется, а убранное — это ответ на «а не было ли где-то ещё».
+        std::stable_sort(results.begin(), results.end(),
+                         [](const SearchResult& a, const SearchResult& b) {
+                             return !a.archived && b.archived;
+                         });
 
         if (latest_->load() != generation) return;
         emit done(text, results, truncated, timer.elapsed(), scanned);

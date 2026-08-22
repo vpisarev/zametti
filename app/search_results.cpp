@@ -25,7 +25,12 @@ void SearchResultsModel::setResults(const QVector<SearchResult>& results) {
             lastNote = result.noteId;
             Row header;
             header.header = true;
-            header.title = result.title;
+            // АРХИВНАЯ ЗАМЕТКА НАЗЫВАЕТСЯ ТАКОЙ ПРЯМО В ЗАГОЛОВКЕ ГРУППЫ.
+            // Иначе человек, нашедший убранное, узнал бы об этом только
+            // открыв находку — и удивился бы серому полю без каретки.
+            header.title = result.archived
+                               ? result.title + QStringLiteral("  ·  archived")
+                               : result.title;
             header.path = result.path;
             header.snapshotTime = result.snapshotTime;
             rows_.push_back(header);

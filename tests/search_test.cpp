@@ -184,6 +184,26 @@ void checkStoreSearch() {
                         QStringLiteral("иголка"));
     }
 
+    // АРХИВНЫЕ НАХОДЯТСЯ, ПОМЕЧЕНЫ И ИДУТ ПОСЛЕ ЖИВЫХ. До этапа 17 таких
+    // находок не бывало вовсе: у архивной в файле лежал стаб, и текста для
+    // поиска в ней не было. Теперь тело на месте — и человек обязан видеть,
+    // что нашёл убранное, а искать среди убранного не обязан.
+    spy.clear();
+    note("00000000000004", "archived: yes\nmodified: 2023-01-01T00:00:00Z\n",
+         "# Убранная\n\nздесь тоже иголка, но заметка в архиве\n");
+    search.search(g_root, QStringLiteral("иголка"));
+    ZT_TRUE("ответ пришёл", spy.wait(5000));
+    {
+        const auto results = spy.at(spy.count() - 1).at(1).value<QVector<SearchResult>>();
+        ZT_TRUE("нашлись обе: " + std::to_string(results.size()), results.size() == 2);
+        if (results.size() == 2) {
+            ZT_TRUE("живая первой", !results[0].archived);
+            ZT_TRUE("архивная второй", results[1].archived);
+            ZT_TRUE("и это та самая", results[1].title == QStringLiteral("Убранная"));
+        }
+    }
+    QFile::remove(g_root + QStringLiteral("/00000000000004.md"));
+
     // Отмена: пускаем запрос и тут же перебиваем другим. В списке должен
     // оказаться ответ только на второй — первый отменяется между файлами.
     spy.clear();
