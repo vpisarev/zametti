@@ -17,6 +17,7 @@
 #include "settings.h"
 #include "settings_hook.h"
 #include "keys.h"
+#include "text_stats.h"
 #include "test_util.h"
 
 #include <vector>
@@ -231,6 +232,107 @@ void checkStatsFreshness() {
     check(editor.statsFresh(), "после записи число слов снова известно");
     checkEqual(QStringLiteral("6"), QString::number(editor.stats().words),
                "шесть слов после набора");
+}
+
+// ОТМЕНА И ПОВТОР ТОЖЕ МЕНЯЮТ ЧИСЛА (жалоба владельца: «undo/redo не обновляют
+// счётчик корректно»).
+//
+// Ctrl+Z и Ctrl+Shift+Z идут под признаком «правку не записывать» — обработчик
+// правок на них выходит первой же строкой, — и полоса сведений застревала на
+// «?»: числа привязаны к ревизии документа, ревизия выросла, а пересчитать
+// было некому до следующего нажатия клавиши.
+void checkStatsFollowUndoRedo() {
+    const QString path = writeNote("счёт-отмена.md", QStringLiteral("раз два три\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+    editor.openFile(path);
+    QTest::qWait(30);
+    checkEqual(QStringLiteral("3"), QString::number(editor.stats().words), "три слова вначале");
+
+    QTextCursor caret = editor.textCursor();
+    caret.movePosition(QTextCursor::End);
+    editor.setTextCursor(caret);
+    QTest::keyClicks(&editor, QStringLiteral(" chetyre pyat"));
+
+    const int pause = zametti::settings().editor().statsDelayMs();
+    const auto waitFresh = [&] {
+        for (int waited = 0; waited < pause * 3 && !editor.statsFresh(); waited += 50)
+            QTest::qWait(50);
+    };
+    waitFresh();
+    checkEqual(QStringLiteral("5"), QString::number(editor.stats().words), "после набора пять слов");
+
+    // Сколько слов вышло после отмены — вопрос к склейке набора у Qt, а не к
+    // счётчику. Спрашиваем то, что важно: числа отвечают ТОМУ ДОКУМЕНТУ,
+    // который сейчас на экране.
+    editor.undo();
+    QTest::qWait(20);
+    waitFresh();
+    check(editor.statsFresh(), "после отмены числа сосчитаны, а не оставлены с «?»");
+    checkEqual(QString::number(zametti::documentStats(*editor.document()).words),
+               QString::number(editor.stats().words), "и они отвечают отменённому тексту");
+    check(editor.stats().words < 5, "слов стало меньше — отмена и правда убрала набранное");
+
+    editor.redo();
+    QTest::qWait(20);
+    waitFresh();
+    check(editor.statsFresh(), "после повтора числа тоже сосчитаны");
+    checkEqual(QString::number(zametti::documentStats(*editor.document()).words),
+               QString::number(editor.stats().words), "и они отвечают повторённому тексту");
+    checkEqual(QStringLiteral("5"), QString::number(editor.stats().words),
+               "повтор вернул все пять слов");
+}
+
+// ПЕРЕКЛЮЧЕНИЕ ЗАМЕТКИ СЧИТАЕТ СЛОВА ЗАНОВО — ВСЕГДА (решение владельца:
+// «при переключении на заметку всегда нужно обновлять счётчик слов»).
+//
+// Почему это отдельное требование, а не следствие сборки: возврат к недавней
+// заметке идёт МИМО сборки — она приезжает из кэша целиком, вместе со своими
+// числами. Числа привязаны к ревизии документа, а ревизия растёт и от того,
+// что правкой текста не является, — и заметка возвращалась с «?» в полосе
+// сведений до первой правки. Спрашиваем ДЕЙСТВИЕМ: сигнал о числах приходит
+// на каждое открытие, включая возврат из кэша, и числа отвечают документу.
+void checkStatsRecountedOnNoteSwitch() {
+    const QString first = writeNote("переключение-А.md", QStringLiteral("раз два три\n"));
+    const QString second = writeNote("переключение-Б.md", QStringLiteral("четыре пять\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(700, 500);
+    editor.show();
+    QTest::qWait(20);
+
+    int notified = 0;
+    QObject::connect(&editor, &zametti::NoteEditor::statsChanged, &editor, [&] { ++notified; });
+
+    editor.openFile(first);
+    QTest::qWait(30);
+    check(notified > 0, "открытие заметки говорит о числах сигналом");
+    checkEqual(QStringLiteral("3"), QString::number(editor.stats().words), "три слова в А");
+
+    editor.openFile(second);
+    QTest::qWait(30);
+    checkEqual(QStringLiteral("2"), QString::number(editor.stats().words), "два слова в Б");
+
+    // А чистая и нетронутая — значит уехала в кэш целиком; возврат к ней
+    // сборки не делает вовсе.
+    checkEqual(QStringLiteral("1"), QString::number(editor.cachedNoteCount()),
+               "заметка А отложена в кэш");
+
+    notified = 0;
+    editor.openFile(first);
+    QTest::qWait(30);
+    // Возврат ПРОШЁЛ КЭШЕМ: А из кэша ушла, на её место легла Б. Собери мы А
+    // заново — в кэше лежали бы обе, и проверка ниже спрашивала бы обычную
+    // сборку, где числа считались и до этой починки.
+    checkEqual(QStringLiteral("1"), QString::number(editor.cachedNoteCount()),
+               "возврат к А прошёл кэшем, а не сборкой");
+    check(notified > 0, "возврат к заметке из кэша тоже говорит о числах");
+    check(editor.statsFresh(), "и числа объявлены свежими");
+    checkEqual(QStringLiteral("3"), QString::number(editor.stats().words),
+               "три слова у вернувшейся А");
 }
 
 // Метаданные заметки редактор не видит — их нет в QTextDocument, — но терять
@@ -2903,6 +3005,8 @@ static int ztRunSuite(int argc, char** argv) {
 
     checkOpenDoesNotTouchFile();
     checkStatsFreshness();
+    checkStatsRecountedOnNoteSwitch();
+    checkStatsFollowUndoRedo();
     checkMetaSurvivesEditing();
     checkEmptyNoteCaret();
     checkCaretPainting();
