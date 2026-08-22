@@ -14,6 +14,7 @@
 
 #include "archive.h"
 #include "archive_view.h"
+#include "jxl_encoder.h"
 #include "editor_widget.h"
 #include "journal.h"
 
@@ -25,6 +26,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QFile>
+#include <QImage>
 #include <QTest>
 
 #include <string>
@@ -226,6 +228,137 @@ static int ztRunSuite(int argc, char** argv) {
         editor.openFile(path);
         QTest::qWait(40);
         ZT_TRUE("после возврата признак прежний", editor.isArchivedNote());
+
+        // ЗАМЕТКА ИЗ ОДНИХ СНИМКОВ — вот на чём вид и попался, и вот чем это
+        // приколото. Ссылка в тексте ОТНОСИТЕЛЬНАЯ, и виджет обязан знать, от
+        // какого каталога её считать. Редактору это говорят при открытии; вид
+        // архива той же функции не звал — база была пуста, картинки не
+        // рисовались, и заметка выглядела как один заголовок.
+        //
+        // Проверка идёт ПО ПИКСЕЛЯМ, а не по путям: спрашивать «правильно ли
+        // выставлена база» значит проверять свою же реализацию, а спрашивать
+        // «нарисовалась ли картинка» — то, что видит человек.
+        {
+            const QString shotId = QStringLiteral("01n7arcshot00");
+            const QString shotPath = g_root + QLatin1Char('/') + shotId + QStringLiteral(".md");
+            // Настоящий файл вложения рядом с заметкой: ярко-красный квадрат,
+            // которого в тексте нет и быть не может.
+            QImage picture(160, 120, QImage::Format_RGB32);
+            picture.fill(qRgb(220, 30, 40));
+            zametti::EncodeOptions options;
+            options.quality = 90;
+            options.effort = 3;
+            QString encodeError;
+            const QByteArray jxl = zametti::encodeJxl(picture, options, {}, &encodeError);
+            ZT_TRUE("вложение закодировано", !jxl.isEmpty());
+            {
+                QFile f(g_root + QStringLiteral("/01jd7f0kq2m8xa.jxl"));
+                ZT_TRUE("вложение записано", f.open(QIODevice::WriteOnly));
+                f.write(jxl);
+            }
+            writeFile(shotPath,
+                      QStringLiteral("<!-- zametti\nversion: 1\n-->\n\n# Со снимком\n\n"
+                                     "![вид](01jd7f0kq2m8xa.jxl)\n"));
+            ZT_TRUE("архивация прошла", zametti::store::archiveNote(g_root, shotId, rules(), &why));
+
+            zametti::ArchiveView shotView;
+            shotView.resize(700, 500);
+            shotView.show();
+            ZT_TRUE("вид показал файл", shotView.showFile(shotPath));
+            QTest::qWait(300);   // картинки читаются в другом потоке
+            const QImage rendered = shotView.grab().toImage();
+            int red = 0;
+            for (int y = 0; y < rendered.height(); ++y)
+                for (int x = 0; x < rendered.width(); ++x) {
+                    const QColor c = rendered.pixelColor(x, y);
+                    if (c.red() > 150 && c.green() < 100 && c.blue() < 100) ++red;
+                }
+            ZT_TRUE("снимок заметки НАРИСОВАН: красных точек " + std::to_string(red),
+                    red > 1000);
+        }
+
+        // ЗАМЕТКА ИЗ ОДНИХ СНИМКОВ — ДВЕ ОШИБКИ РАЗОМ, и приколоты они порознь.
+        //
+        // Первая: вид не звал общую функцию «что вид обязан знать о заметке», и
+        // база относительных ссылок оставалась пустой. Вторая, опаснее:
+        // неразрешённый путь рисовался НИЧЕМ — вся отрисовка молча пропускала
+        // объект, поэтому первую ошибку не было видно вовсе. Правило проекта
+        // «нет файла — рамка с именем» обязано работать и здесь.
+        {
+            const QString shotId = QStringLiteral("01n7arcshot00");
+            const QString shotPath = g_root + QLatin1Char('/') + shotId + QStringLiteral(".md");
+            // Настоящий файл вложения рядом с заметкой: ярко-красный квадрат,
+            // которого в тексте нет и быть не может.
+            QImage picture(200, 150, QImage::Format_RGB32);
+            picture.fill(qRgb(220, 30, 40));
+            zametti::EncodeOptions encodeOptions;
+            encodeOptions.quality = 90;
+            encodeOptions.effort = 3;
+            QString encodeError;
+            const QByteArray jxl = zametti::encodeJxl(picture, encodeOptions, {}, &encodeError);
+            ZT_TRUE("вложение закодировано", !jxl.isEmpty());
+            {
+                QFile f(g_root + QStringLiteral("/01jd7f0kq2m8xa.jxl"));
+                ZT_TRUE("вложение записано", f.open(QIODevice::WriteOnly));
+                f.write(jxl);
+            }
+            writeFile(shotPath,
+                      QStringLiteral("<!-- zametti\nversion: 1\n-->\n\n# Со снимком\n\n"
+                                     "![вид](01jd7f0kq2m8xa.jxl)\n"));
+            ZT_TRUE("архивация прошла", zametti::store::archiveNote(g_root, shotId, rules(), &why));
+
+            const auto redPixels = [](const QImage& image) {
+                int count = 0;
+                for (int y = 0; y < image.height(); ++y)
+                    for (int x = 0; x < image.width(); ++x) {
+                        const QColor c = image.pixelColor(x, y);
+                        if (c.red() > 150 && c.green() < 110 && c.blue() < 110) ++count;
+                    }
+                return count;
+            };
+
+            zametti::ArchiveView shotView;
+            shotView.resize(700, 500);
+            shotView.show();
+            ZT_TRUE("вид показал файл", shotView.showFile(shotPath));
+            QTest::qWait(400);   // картинки читаются в другом потоке
+            ZT_TRUE("СНИМОК ЗАМЕТКИ НАРИСОВАН", redPixels(shotView.grab().toImage()) > 2000);
+
+            // ТРЕТЬЯ ОШИБКА, найденная владельцем: щелчок по картинке опустошал
+            // заметку. NoteView — это QTextBrowser, а браузер в режиме
+            // только-для-чтения активирует ссылки САМ: адрес картинки в
+            // документе и есть ссылка, и «переход» по ней подменял документ
+            // пустым. В редакторе не видно — в редактируемом виджете Qt ссылок
+            // не активирует вовсе.
+            {
+                const QString before = shotView.toPlainText();
+                ZT_TRUE("до щелчка заметка не пуста", !before.trimmed().isEmpty());
+                QTest::mouseClick(shotView.viewport(), Qt::LeftButton, {},
+                                  QPoint(shotView.viewport()->width() / 2,
+                                         shotView.viewport()->height() / 2));
+                QTest::qWait(200);
+                ZT_EQ("щелчок по картинке заметку не опустошает", before.toStdString(),
+                      shotView.toPlainText().toStdString());
+            }
+
+            // ВТОРАЯ ОШИБКА ПОРОЗНЬ: ссылка, чей путь не разрешился, обязана
+            // стать РАМКОЙ «файл не найден», а не пустотой. Спрашиваем у вида
+            // напрямую — пиксели тут не годятся: пустота и рамка отличаются
+            // десятком точек, и такая проверка была бы пустышкой (она ею и
+            // оказалась с первого раза).
+            struct Probe : zametti::ArchiveView {
+                // true — вид нарисует РАМКУ (файла нет или путь не разрешился).
+                bool framed(const QString& path) {
+                    const CachedImage* entry = imageInfo(path);
+                    return entry != nullptr && entry->framed();
+                }
+                bool known(const QString& path) { return imageInfo(path) != nullptr; }
+            };
+            Probe blind;
+            ZT_TRUE("неразрешённый путь даёт запись, а не пустоту",
+                    blind.known(QStringLiteral("01jd7f0kq2m8xa.jxl")));
+            ZT_TRUE("и запись эта — рамка", blind.framed(QStringLiteral("01jd7f0kq2m8xa.jxl")));
+        }
 
         // СНИМОК ДЛЯ ПРИЁМКИ ГЛАЗАМИ: серое поле, тело на месте, каретки нет.
         // Под Xvfb это артефакт приёмки; под offscreen — просто картинка.

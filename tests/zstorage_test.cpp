@@ -28,6 +28,12 @@ namespace {
 using zametti::ZStorage;
 
 std::string s(const QString& q) { return q.toStdString(); }
+
+QString readFile(const QString& path) {
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return {};
+    return QString::fromUtf8(f.readAll());
+}
 std::string n(long long v) { return std::to_string(v); }
 
 zametti::history::Rules rules() { return zametti::history::Rules{}; }
@@ -166,8 +172,20 @@ void checkOperations() {
             }, rules(), &error));
 
     QStringList failed;
+    // ТЕЛО ЗАМЕТКИ ОБЯЗАНО ПЕРЕЖИТЬ АРХИВАЦИЮ, и спрашивается это на БОЕВОМ
+    // пути окна — ZStorage::archive, а не store::archiveNote напрямую: у папки
+    // и у заметки внутри неё пути разные, и проверять надо тот, которым ходит
+    // человек.
+    const QString innerBefore = readFile(storage.pathOf(inner));
     ZT_TRUE("папка убрана в архив: " + s(failed.join(QStringLiteral("; "))),
             storage.archive(folder, rules(), &failed));
+    const QString innerAfter = readFile(storage.pathOf(inner));
+    ZT_TRUE("тело заметки в архивной папке на месте: " + s(innerAfter),
+            innerAfter.contains(QStringLiteral("Внутренняя")));
+    ZT_EQ("и отличается от прежнего ровно пометкой",
+          s(QString(innerBefore).replace(QStringLiteral("-->"),
+                                         QStringLiteral("archived: yes\n-->"))),
+          s(innerAfter));
     ZT_TRUE("папка в архиве", storage.inArchive(folder));
     ZT_TRUE("и её ребёнок — по цепочке и сам", storage.inArchive(inner) && storage.info(inner)->archived());
     const QString stray = storage.createNote(folder, false, &error);

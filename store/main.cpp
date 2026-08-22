@@ -8,10 +8,12 @@
 //   zametti-store history compress <id | путь к .md> [--root <dir>]
 //   zametti-store recompress --root <dir> --id <id|all> [--max-size N]
 //   zametti-store resurrect --root <dir> --id <id>
+//   zametti-store archive --root <dir> --id <id> [--restore]
 
 #include "history_rules.h"
 #include "journal.h"
 #include "store.h"
+#include "zstorage.h"
 #include "recompress.h"
 
 #include <QGuiApplication>
@@ -41,6 +43,7 @@ int usage() {
                  "  zametti-store history compress <id | path to .md> [--root <dir>]\n"
                  "  zametti-store recompress --root <dir> --id <id|all>\n"
                  "  zametti-store resurrect --root <dir> --id <id>\n"
+                 "  zametti-store archive --root <dir> --id <id> [--restore]\n"
                  "\n"
                  "  recompress has NO default for --id: recompression is irreversible,\n"
                  "  and one forgotten option must not migrate the whole store.\n"
@@ -129,6 +132,31 @@ int main(int argc, char** argv) {
         const bool ok = zametti::store::importTree(options, report);
         printLines(report);
         return ok ? 0 : 1;
+    }
+
+    // УБРАТЬ В АРХИВ И ВЕРНУТЬ ОТТУДА. Тем же путём, что окно: хранилище
+    // знает про папки с содержимым, про пометку и про запись в журнал. Нужно
+    // и человеку (скрипты), и наборам приёмки: воспроизвести жалобу владельца
+    // без окна иначе нечем.
+    if (command == QStringLiteral("archive")) {
+        if (root.isEmpty() || id.isEmpty()) return usage();
+        QLockFile lock(zametti::journal::History::lockPathFor(root));
+        if (!lock.tryLock(0)) {
+            std::fprintf(stderr, "store is busy: the app seems to be open.\n");
+            return 1;
+        }
+        zametti::ZStorage storage(root);
+        storage.reload();
+        QStringList failed;
+        const bool back = args.contains(QStringLiteral("--restore"));
+        const bool ok = back ? storage.restore(id, &failed)
+                             : storage.archive(id, zametti::history::Rules{}, &failed);
+        if (!ok || !failed.isEmpty()) {
+            std::fprintf(stderr, "%s\n", failed.join(QLatin1Char('\n')).toUtf8().constData());
+            return 1;
+        }
+        std::printf("%s %s\n", id.toUtf8().constData(), back ? "is back" : "is archived");
+        return 0;
     }
 
     // ПОДНЯТЬ УДАЛЁННУЮ ЗАМЕТКУ. Удаление насовсем — второе осознанное решение

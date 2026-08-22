@@ -847,6 +847,9 @@ int main(int argc, char** argv) {
         }
         editor.applyZoom(value);
         historyView.textView().applyZoom(value);
+        // Архивная заметка — тот же документ теми же глазами: масштаб у неё
+        // общий с обычным видом, а не свой.
+        archiveView.applyZoom(value);
     };
     auto stepZoom = [&](qreal factor) {
         const qreal now = settingsMode.active() ? settingsView.zoom()
@@ -955,8 +958,15 @@ int main(int argc, char** argv) {
     // восстанавливает это ОДНА функция: её зовут все двери, через которые
     // заметка сменяется.
     const auto refreshArchivePage = [&] {
-        if (editor.isArchivedNote()) archiveView.showFile(editor.filePath());
-        else archiveView.clear();
+        if (editor.isArchivedNote()) {
+            archiveView.showFile(editor.filePath());
+            // Масштаб — общий с обычным видом: это тот же документ и те же
+            // глаза. Ставится ПОСЛЕ показа: документ подменён, а масштаб несёт
+            // шрифт документа.
+            archiveView.applyZoom(editor.zoom());
+        } else {
+            archiveView.clear();
+        }
         showPage();
     };
 

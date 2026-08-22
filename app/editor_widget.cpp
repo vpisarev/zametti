@@ -743,7 +743,7 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
     // «причёсывать нечего» незачем. На «Карамазовых» это 50–100 мс на каждый
     // возврат к заметке (замер zametti-bench big).
     if (!cachedNoteMatches(path, digest)) ZNote::canonicaliseFile(path, text, digest);
-    setImageBase(QFileInfo(path).absolutePath());
+    adoptNoteAt(path);   // одна функция на оба пути показа: см. NoteView
     current_.lastComplaint.clear();
     current_.externalPending = false;
     current_.externalText.clear();

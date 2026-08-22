@@ -19,6 +19,7 @@
 #include <QAbstractTextDocumentLayout>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QDesktopServices>
 #include <QFileInfo>
 #include "image_read.h"
 
@@ -212,6 +213,28 @@ NoteView::NoteView(QWidget* parent) : QTextBrowser(parent) {
     // Свой документ у вида уже есть — его завела Qt; объекты в нём тоже надо
     // уметь показывать (в него собирает вывоз на бумагу).
     attachObjectHandlers(document());
+    // ВИД ЗАМЕТКИ НЕ ПОДМЕНЯЕТ СЕБЕ ДОКУМЕНТ. QTextBrowser в режиме
+    // только-для-чтения ходит по ссылкам САМ: щелчок по картинке — а её адрес
+    // в документе и есть ссылка — заставлял браузер «перейти» по нему, то есть
+    // загрузить на месте заметки другой документ. Заметка на экране становилась
+    // ПУСТОЙ от одного клика.
+    //
+    // В редакторе этого не видно: в редактируемом виджете Qt ссылок не
+    // активирует вовсе (проверено пробником), и Ctrl+клик редактор
+    // обрабатывает сам. Значит правило ставится ЗДЕСЬ, в общем предке, — чтобы
+    // поведение не зависело от того, редактируемый вид или нет.
+    //
+    // ЩЁЛКАТЬ ПО ССЫЛКАМ ПРИ ЭТОМ МОЖНО (решение владельца): запрещён не
+    // щелчок, а переход виджета. Адрес открывает приложение — тем же способом,
+    // что и Ctrl+клик в редакторе.
+    setOpenLinks(false);
+    connect(this, &QTextBrowser::anchorClicked, this, [](const QUrl& url) {
+        // Относительный адрес — это ссылка ВНУТРИ хранилища (картинка,
+        // заметка): открывать её в браузере нельзя, а что делать — решит
+        // приложение, когда мы до этого дойдём.
+        if (url.isRelative() || url.scheme().isEmpty()) return;
+        QDesktopServices::openUrl(url);
+    });
     // Штатную каретку гасим: рисуем свою.
     setCursorWidth(0);
     connect(&caretBlink_, &CaretBlink::phaseChanged, this,
@@ -524,6 +547,10 @@ qint64 NoteView::imageDecodeMicros() { return ZApp::instance().images().decodeMi
 void NoteView::resetImageDecodeCounters() { ZApp::instance().images().resetCounters(); }
 qint64 NoteView::imageCacheBytes() const { return images().bytes(); }
 
+void NoteView::adoptNoteAt(const QString& notePath) {
+    setImageBase(QFileInfo(notePath).absolutePath());
+}
+
 QString NoteView::absoluteImagePath(const QString& path) const {
     if (path.isEmpty()) return {};
     const QString abs = QDir::isAbsolutePath(path)
@@ -578,7 +605,21 @@ ImageMetadata NoteView::caretImage() {
 
 const NoteView::CachedImage* NoteView::imageInfo(const QString& path) {
     const QString abs = absoluteImagePath(path);
-    if (abs.isEmpty()) return nullptr;
+    if (abs.isEmpty()) {
+        // ПУТЬ НЕ РАЗРЕШИЛСЯ — РАМКА, А НЕ ПУСТОТА. Ссылка в заметке
+        // относительная, и разрешить её можно только от каталога заметки; если
+        // виду его не сказали, картинку рисовать неоткуда. Прежде здесь
+        // возвращался nullptr, и ВСЯ отрисовка молча пропускала объект: место
+        // не держалось, надписи не было, заметка из одних снимков выглядела
+        // пустой — с одним заголовком.
+        //
+        // Молчание тут хуже всего: человеку кажется, что содержимое пропало, а
+        // на самом деле пропала настройка вида. Правило «нет файла — рамка с
+        // именем» обязано работать и здесь: причина другая, а ответ тот же.
+        unresolved_ = CachedImage{};
+        unresolved_.state = ImageState::Missing;
+        return &unresolved_;
+    }
     // Всякий спрос идёт от блока открытой заметки — значит эта картинка её:
     // защищаем от вытеснения, пока заметка открыта.
     currentNoteImages_.insert(abs);

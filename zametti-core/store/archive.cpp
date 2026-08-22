@@ -277,10 +277,31 @@ int unfoldArchivedStubs(const QString& root, QStringList* leftAlone, QString* er
 
         journal::ZJournal read;
         QString why;
-        QByteArray body;
-        const int head = history.read(id, &read, &why) ? read.lastSnapshotIndex() : -1;
-        if (head >= 0 && !history.snapshotAt(id, head, &body, &why)) body.clear();
-        if (body.isEmpty()) {
+        if (!history.read(id, &read, &why)) {
+            if (leftAlone != nullptr)
+                leftAlone->append(QStringLiteral("%1: history unreadable (%2)").arg(id, why));
+            continue;
+        }
+
+        // ИДЁМ ПО ЖУРНАЛУ НАЗАД, А НЕ БЕРЁМ ГОЛОВУ. У заметки, которую после
+        // архивации ещё раз сохранили (прежняя беда: человек выходил из режима
+        // истории и получал стаб, доступный для правки), головой журнала тоже
+        // стаб — и по голове тело не нашлось бы вовсе. Настоящее тело лежит
+        // глубже; ищем ПОСЛЕДНИЙ слепок, который стабом не является.
+        std::string snapshot;
+        size_t snapTo = 0;
+        for (int at = read.lastSnapshotIndex(); at >= 0; at = read.previousSnapshotIndex(at)) {
+            QByteArray body;
+            if (!history.snapshotAt(id, at, &body, &why) || body.isEmpty()) continue;
+            const std::string candidate(body.constData(), size_t(body.size()));
+            const auto [from, to] = headerRange(candidate);
+            (void)from;
+            if (looksLikeStub(std::string_view(candidate).substr(to))) continue;
+            snapshot = candidate;
+            snapTo = to;
+            break;
+        }
+        if (snapshot.empty()) {
             if (leftAlone != nullptr)
                 leftAlone->append(QStringLiteral("%1: archived stub without a body in the history")
                                       .arg(id));
@@ -289,14 +310,6 @@ int unfoldArchivedStubs(const QString& root, QStringList* leftAlone, QString* er
 
         // Шапка — из ФАЙЛА (в ней всё, что человек менял, пока заметка лежала в
         // архиве), тело — из журнала, журнальная шапка отрезается.
-        const std::string snapshot(body.constData(), size_t(body.size()));
-        const auto [snapFrom, snapTo] = headerRange(snapshot);
-        if (looksLikeStub(std::string_view(snapshot).substr(snapTo))) {
-            // В журнале тоже стаб — разворачивать не из чего.
-            if (leftAlone != nullptr)
-                leftAlone->append(QStringLiteral("%1: the history holds a stub too").arg(id));
-            continue;
-        }
         std::string out(header);
         out += snapshot.substr(snapTo);
         if (out == bytes) continue;   // и так уже развёрнута

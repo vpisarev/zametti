@@ -321,9 +321,26 @@ void checkUnfoldStubs() {
     fullBytes.insert(fullBytes.find("-->"), "archived: yes\n");
     write(full, fullBytes);
 
+    // СТАБ, СОХРАНЁННЫЙ ПОВЕРХ СЕБЯ. Так выглядит заметка, которую после
+    // архивации ещё раз записали прежней сборкой: в журнале за стабом лежит
+    // настоящее тело, но ГОЛОВА журнала — стаб. По голове тело не нашлось бы.
+    const QString twiceSaved = QStringLiteral("01ff0000twice0");
+    const QByteArray realBody(kBody);
+    ZT_TRUE("тело записано",
+            zametti::journal::History(g_root).append(
+                twiceSaved, zametti::journal::NewRecord::save(realBody), &error));
+    const QByteArray stubBytes(
+        "<!-- zametti\nparent: 0000000000000p\narchived: yes\n-->\n\n# Фототехника\n");
+    ZT_TRUE("а поверх него — стаб",
+            zametti::journal::History(g_root).append(
+                twiceSaved, zametti::journal::NewRecord::save(stubBytes), &error));
+    write(twiceSaved, std::string(stubBytes.constData(), size_t(stubBytes.size())));
+
     QStringList leftAlone;
     const int done = zametti::store::unfoldArchivedStubs(g_root, &leftAlone, &error);
-    ZT_EQ("развёрнута одна", num(1), num(done));
+    ZT_EQ("развёрнуты две", num(2), num(done));
+    ZT_TRUE("и та, у которой стаб лежал головой журнала, тоже: " + read(twiceSaved),
+            read(twiceSaved).find("Длинный текст") != std::string::npos);
 
     const std::string now = read(id);
     ZT_TRUE("тело вернулось в файл", now.find("Длинный текст") != std::string::npos);
