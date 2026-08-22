@@ -7,6 +7,7 @@
 //   zametti-store thin --root <dir> [--dry-run]
 //   zametti-store history compress <id | путь к .md> [--root <dir>]
 //   zametti-store recompress --root <dir> --id <id|all> [--max-size N]
+//   zametti-store resurrect --root <dir> --id <id>
 
 #include "history_rules.h"
 #include "journal.h"
@@ -39,6 +40,7 @@ int usage() {
                  "  zametti-store thin --root <dir> [--dry-run]\n"
                  "  zametti-store history compress <id | path to .md> [--root <dir>]\n"
                  "  zametti-store recompress --root <dir> --id <id|all>\n"
+                 "  zametti-store resurrect --root <dir> --id <id>\n"
                  "\n"
                  "  recompress has NO default for --id: recompression is irreversible,\n"
                  "  and one forgotten option must not migrate the whole store.\n"
@@ -127,6 +129,27 @@ int main(int argc, char** argv) {
         const bool ok = zametti::store::importTree(options, report);
         printLines(report);
         return ok ? 0 : 1;
+    }
+
+    // ПОДНЯТЬ УДАЛЁННУЮ ЗАМЕТКУ. Удаление насовсем — второе осознанное решение
+    // подряд, поэтому в окне такой команды нет и не будет: это работа с
+    // журналом, а не с деревом заметок. Заметка возвращается В АРХИВ, как и
+    // лежала, с посмертными (уменьшенными) картинками.
+    if (command == QStringLiteral("resurrect")) {
+        if (root.isEmpty() || id.isEmpty()) return usage();
+        QLockFile lock(zametti::journal::History::lockPathFor(root));
+        if (!lock.tryLock(0)) {
+            std::fprintf(stderr, "store is busy: the app seems to be open.\n");
+            return 1;
+        }
+        QString error;
+        if (!zametti::store::resurrectNote(root, id, &error)) {
+            std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+            return 1;
+        }
+        if (!error.isEmpty()) std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+        std::printf("%s is back in the archive\n", id.toUtf8().constData());
+        return 0;
     }
 
     // Прореживание журналов. Отдельной командой, а не только фоном при старте:

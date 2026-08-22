@@ -1204,6 +1204,55 @@ bool deleteAttachmentFile(const QString& root, const QString& name, QString* err
     return true;
 }
 
+bool resurrectNote(const QString& root, const QString& noteId, QString* error) {
+    const QString file = QDir(root).filePath(noteId + QStringLiteral(".md"));
+    if (QFile::exists(file)) {
+        if (error) *error = QStringLiteral("note %1 is in the store — nothing to resurrect")
+                                .arg(noteId);
+        return false;
+    }
+
+    journal::History history(root);
+    journal::ZJournal journal;
+    QString why;
+    if (!history.read(noteId, &journal, &why) || journal.isEmpty()) {
+        if (error) *error = QStringLiteral("no history for %1: %2").arg(noteId, why);
+        return false;
+    }
+    const int head = journal.headIndex();
+    if (head < 0 || journal.at(head).kind() != journal::Kind::Tombstone) {
+        if (error) *error = QStringLiteral("note %1 was not deleted (no tombstone at the head)")
+                                .arg(noteId);
+        return false;
+    }
+    const int content = journal.lastSnapshotIndex();
+    QByteArray body;
+    if (content < 0 || !history.snapshotAt(noteId, content, &body, &why)) {
+        if (error) *error = QStringLiteral("history of %1 has no body: %2").arg(noteId, why);
+        return false;
+    }
+
+    QSaveFile out(file);
+    if (!out.open(QIODevice::WriteOnly)) {
+        if (error) *error = QStringLiteral("cannot write %1").arg(file);
+        return false;
+    }
+    out.write(body);
+    if (!out.commit()) {
+        if (error) *error = QStringLiteral("cannot write %1").arg(file);
+        return false;
+    }
+
+    // ЗАПИСЬ ПОВЕРХ НАДГРОБИЯ: заметка снова жива, и голова обязана это
+    // сказать. Вид — «восстановление», источник — время того слепка, из
+    // которого её подняли.
+    if (!history.append(noteId, journal::NewRecord::restore(body, journal.at(content).time()),
+                        &why) &&
+        error != nullptr)
+        *error = QStringLiteral("resurrection not written to history: %1").arg(why);
+    return true;
+}
+
 bool retireAttachmentFile(const QString& root, const QString& name, const ImportLimits& limits,
                           QString* error) {
     const QString path = QDir(root).filePath(name);

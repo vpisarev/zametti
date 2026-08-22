@@ -349,6 +349,44 @@ void checkUnfoldStubs() {
     ZT_EQ("и файл не изменился", after, read(id));
 }
 
+// --- поднять удалённую -----------------------------------------------------
+
+// Удаление насовсем — второе осознанное решение подряд, поэтому полной истории
+// после него нет. Но последнего слепка и надгробия хватает, чтобы заметку
+// вернуть, и вот этим она и возвращается — В АРХИВ, как и лежала.
+void checkResurrect() {
+    freshStore();
+    const QString id = QStringLiteral("01ff0000resur0");
+    write(id, kBody);
+    QString error;
+    ZT_TRUE("архивация прошла", archiveNote(g_root, id, rules(), &error));
+    ZT_TRUE("удалили насовсем", zametti::store::deleteNoteFile(g_root, id, &error));
+    ZT_TRUE("файла нет", !QFile::exists(notePath(id)));
+
+    ZT_TRUE("подняли: " + s(error), zametti::store::resurrectNote(g_root, id, &error));
+    const std::string back = read(id);
+    ZT_TRUE("файл на месте", !back.empty());
+    ZT_TRUE("тело вернулось", back.find("Длинный текст") != std::string::npos);
+    ZT_TRUE("и она снова в архиве: отменяется одно решение из двух, а не оба",
+            back.find("archived: yes") != std::string::npos);
+
+    zametti::journal::ZJournal read;
+    ZT_TRUE("журнал читается", zametti::journal::History(g_root).read(id, &read, &error));
+    ZT_TRUE("голова больше не надгробие",
+            read.at(read.headIndex()).kind() == zametti::journal::Kind::Restore);
+
+    // Повтор — честный отказ: заметка на месте, перетирать её нечем.
+    ZT_TRUE("повторный подъём отказывает", !zametti::store::resurrectNote(g_root, id, &error));
+    ZT_TRUE("и объясняет почему", !error.isEmpty());
+
+    // Живая заметка не поднимается: надгробия у неё нет.
+    const QString alive = QStringLiteral("01ff0000alive0");
+    write(alive, kBody);
+    QFile::remove(notePath(alive));   // файл унесли мимо программы, надгробия нет
+    ZT_TRUE("без надгробия подъём отказывает",
+            !zametti::store::resurrectNote(g_root, alive, &error));
+}
+
 // --- старая корзина --------------------------------------------------------
 
 void checkTrashMigration() {
@@ -491,6 +529,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkRestore();
     checkRestoreWithoutJournal();
     checkForget();
+    checkResurrect();
     checkTrashMigration();
     checkOldRoleIsRead();
     checkLostFound();
