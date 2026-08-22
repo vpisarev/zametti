@@ -2140,6 +2140,40 @@ int main(int argc, char** argv) {
             }
         });
     }
+    // ПОЛНОЭКРАННАЯ ПРАВКА (решение владельца): остаются текст и полоса
+    // сведений, уходят тулбар, боковые панели и рамка окна — вместе с меню и
+    // доком системы, это делает сам оконный менеджер по showFullScreen.
+    //
+    // Панели прячутся ТЕМ ЖЕ showPanels, что и кнопка тулбара: два способа
+    // прятать одно и то же разошлись бы (у кнопки — память ширин, у нас бы её
+    // не было). Что было видно до перехода, помним и возвращаем.
+    bool panelsBeforeFullscreen = true;
+    const auto setFullscreen = [&](bool on) {
+        if (on == window.isFullScreen()) return;
+        if (on) {
+            panelsBeforeFullscreen = toolbar.isChecked(Button::Panels);
+            showPanels(false);
+            // СПЕРВА ОКНО, ПОТОМ ТУЛБАР: showFullScreen перепоказывает окно, и
+            // спрятанный до него ребёнок успевал показаться обратно (замер
+            // пробника: «тулбар=1» сразу после входа).
+            window.showFullScreen();
+            toolbar.hide();
+        } else {
+            window.showNormal();
+            toolbar.show();
+            showPanels(panelsBeforeFullscreen);
+        }
+        // Фокус — тому, в чём человек работает: полноэкранный режим просят
+        // ради текста.
+        if (settingsMode.active()) settingsView.setFocus();
+        else if (markdown.active()) markdownView.setFocus();
+        else if (history.active()) historyView.setFocus();
+        else editor.setFocus();
+    };
+    for (const QKeySequence& keys :
+         zametti::keySequencesOf(zametti::settings().editor().fullscreenKey()))
+        shortcut(keys, [&] { setFullscreen(!window.isFullScreen()); });
+
     {
         // Esc закрывает панель, откуда бы ни нажали: в самой панели его ловит
         // её keyPressEvent, а из редактора — этот ярлык.
@@ -2150,6 +2184,14 @@ int main(int argc, char** argv) {
             // языка не отменял ввод, а просто пропадал (нашёл владелец). Сам
             // порядок живёт в escapeActionFor: до лямбды внутри main() набор
             // не дотягивается, а до функции — вполне.
+            // ПОЛНОЭКРАННЫЙ РЕЖИМ ЗАКРЫВАЕТСЯ ПЕРВЫМ: он самый верхний слой, и
+            // человек, нажавший Esc, ждёт обратно окно, а не закрытую панель
+            // поиска под ним. Дальше — общий порядок (escapeActionFor).
+            if (window.isFullScreen() && findBar.isHidden() &&
+                editor.codeLanguageEditor() == nullptr && !editor.caretInOpenObject()) {
+                setFullscreen(false);
+                return;
+            }
             switch (zametti::escapeActionFor(editor.codeLanguageEditor() != nullptr,
                                              editor.caretInOpenObject(), !findBar.isHidden(),
                                              settingsMode.active())) {
@@ -2183,13 +2225,31 @@ int main(int argc, char** argv) {
 
     if (!session.windowGeometry().isEmpty()) window.restoreGeometry(session.windowGeometry());
     else window.resize(1150, 780);
-    if (!session.splitterState().isEmpty()) splitter.restoreState(session.splitterState());
-    else if (model.isStore())
-        splitter.setSizes({zametti::settings().ui().sidebarWidth(),
-                           zametti::settings().ui().noteListWidth(), 700});
-    else
-        splitter.setSizes({zametti::settings().ui().sidebarWidth(), 800});
+    // ШИРИНЫ КОЛОНОК — ПОСЛЕ ПОКАЗА ОКНА, а не до него. Сплиттер раздаёт место
+    // по тому, что видит СЕЙЧАС: до show() у него нет ни своей ширины, ни
+    // померенных детей, и просимые 260/320 схлопывались до минимума — при
+    // первом запуске (когда в state.json ещё нет своего splitterState) обе
+    // панели открывались полосками в 70 px. Найдено пробником полноэкранного
+    // режима: «запомнили ширины 70,70». Ставим и сразу, и очередью — первое
+    // задаёт пропорции до первой отрисовки, второе выправляет их, когда окно
+    // уже знает свой размер.
+    const auto applyStartWidths = [&] {
+        if (!session.splitterState().isEmpty()) {
+            splitter.restoreState(session.splitterState());
+            return;
+        }
+        if (model.isStore())
+            splitter.setSizes({zametti::settings().ui().sidebarWidth(),
+                               zametti::settings().ui().noteListWidth(),
+                               qMax(400, window.width() - zametti::settings().ui().sidebarWidth() -
+                                             zametti::settings().ui().noteListWidth())});
+        else
+            splitter.setSizes({zametti::settings().ui().sidebarWidth(),
+                               qMax(400, window.width() - zametti::settings().ui().sidebarWidth())});
+    };
+    applyStartWidths();
     window.show();
+    QTimer::singleShot(0, &window, applyStartWidths);
 
     // Прореживание журналов — фоном и один раз за запуск. В отдельном потоке
     // потому, что полный проход по корпусу владельца стоит 1.6 секунды, а
@@ -2287,6 +2347,22 @@ int main(int argc, char** argv) {
     // ZAMETTI_PROBE_SETTINGS=1 — открыть правку настроек до снимка.
     if (const QByteArray quitAfter = qgetenv("ZAMETTI_PROBE_QUIT_MS"); !quitAfter.isEmpty()) {
         const int ms = qMax(0, quitAfter.toInt());
+        // ZAMETTI_PROBE_FULLSCREEN=1 — полноэкранная правка (приёмка глазами).
+        if (qEnvironmentVariableIsSet("ZAMETTI_PROBE_FULLSCREEN"))
+            QTimer::singleShot(ms / 2, &window, [&] {
+                setFullscreen(true);
+                // Состояние строкой — ПОСЛЕ цикла событий: показ окна у
+                // оконного менеджера не мгновенный, и сразу после вызова
+                // «тулбар ещё виден» ничего не значит. По этой строке и судят
+                // глазами: полноэкранно ли окно, ушли ли тулбар и панели,
+                // осталась ли полоса сведений.
+                QTimer::singleShot(200, &window, [&] {
+                    std::fprintf(stderr,
+                                 "пробник: полный экран=%d тулбар=%d панели=%d полоса=%d\n",
+                                 int(window.isFullScreen()), int(toolbar.isVisible()),
+                                 int(panels.tree().isVisible()), int(statusBar.isVisible()));
+                });
+            });
         // ZAMETTI_PROBE_SETTINGS=1 — открыть правку настроек (приёмка глазами).
         if (qEnvironmentVariableIsSet("ZAMETTI_PROBE_SETTINGS"))
             QTimer::singleShot(ms / 2, &window, [&] {

@@ -320,6 +320,7 @@ QJsonObject settingsToJson(const ZSettings& a) {
         {QStringLiteral("makeParagraphKey"), a.editor().makeParagraphKey()},
         {QStringLiteral("makeCommentKey"), a.editor().makeCommentKey()},
         {QStringLiteral("markdownModeKey"), a.editor().markdownModeKey()},
+        {QStringLiteral("fullscreenKey"), a.editor().fullscreenKey()},
         {QStringLiteral("codeTabWidth"), a.editor().codeTabWidth()},
         {QStringLiteral("special"), special},
         {QStringLiteral("externalEditor"), a.editor().externalEditor()},
@@ -653,6 +654,7 @@ void settingsFromJson(const QJsonObject& root, ZSettings& a) {
     readString(editor, "makeCommentKey", a.editor(), &ZSettings::Editor::setMakeCommentKey);
     readString(editor, "markdownModeKey", a.editor(),
                &ZSettings::Editor::setMarkdownModeKey);
+    readString(editor, "fullscreenKey", a.editor(), &ZSettings::Editor::setFullscreenKey);
     // Автозамены: список пар [сочетание, что вставить]. Заданный список
     // заменяет умолчания целиком — иначе от умолчания было бы не избавиться.
     const QJsonValue special = editor.value(QStringLiteral("special"));

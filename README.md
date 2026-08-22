@@ -72,6 +72,12 @@ zametti --dump-config         the full list of appearance parameters
 zametti --help                help: switches, keys, file paths
 ```
 
+`F11` (on macOS `Ctrl+Cmd+F`, `editor.fullscreenKey`) gives the text the whole
+screen: the toolbar, the side panels and the window frame go away — with them
+the system menu bar and the dock — and what stays is the note and the status
+bar. The same key, or `Esc`, brings the window back with the panels as they
+were.
+
 `Ctrl+=` / `Ctrl+-` / `Ctrl+0` change the zoom, `Ctrl+S` saves,
 `Ctrl+Z` / `Ctrl+Shift+Z` undo and redo. Clicking a folder in the tree
 expands it, clicking a note opens it.

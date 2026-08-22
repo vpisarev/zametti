@@ -663,6 +663,13 @@ struct ZSettings {
         // включает кнопка [M] и выключает она же или Esc; кому нужна клавиша —
         // впишет её сюда («Ctrl+Shift+M»), список через точку с запятой.
         ZM_SETTING_PLAIN(QString, markdownModeKey, MarkdownModeKey, QString())
+        // ПОЛНОЭКРАННАЯ ПРАВКА: остаются текст и полоса сведений, всё остальное
+        // — тулбар, боковые панели, рамка окна — уходит. Список через точку с
+        // запятой: на маке F11 занята системой (Mission Control / показ рабочего
+        // стола), и там штатное сочетание — Ctrl+Cmd+F, ровно как у всех
+        // маковских программ. Оба и записаны: на каждой системе сработает своё.
+        ZM_SETTING_PLAIN(QString, fullscreenKey, FullscreenKey,
+                         QStringLiteral("F11; Ctrl+Meta+F"))
         ZM_SETTING_PLAIN(QString, makeCommentKey, MakeCommentKey, QStringLiteral("Ctrl+Shift+C"))
 
         // Ширина стопа табуляции в блоке кода, в пробелах. Tab ставит ПРОБЕЛЫ до
