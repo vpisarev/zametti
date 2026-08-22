@@ -305,6 +305,59 @@ void checkGluedRendered() {
     delete editor;
 }
 
+// МЕСТО ПОД СТРОЧНОЙ ФОРМУЛОЙ ВМЕЩАЕТ ВСЮ ВЁРСТКУ (нашёл владелец: «строчные
+// формулы немного обрезаются снизу»).
+//
+// Высота места считалась как «базовая линия вёрстки + descent ТЕКСТА», а при
+// AlignBaseline низ места садится ровно на базовую линию плюс этот descent —
+// значит всё, что у формулы глубже, уходило за край и срезалось клипом
+// объекта. Замер в живом редакторе: у `\frac{a}{b}` глубина 5.6 px при descent
+// 4 (резалось на любом масштабе), у `e^{-x}` глубина 0.2 — там уходил один ряд
+// пикселей от прищёлкивания верха к физической сетке.
+//
+// Спрашивается на ЖИВОМ документе (кэш вёрстки принадлежит ему) и на нескольких
+// масштабах: место обязано быть не меньше вёрстки.
+void checkBandFitsRender() {
+    zametti::NoteEditor* editor = openNote(
+        QStringLiteral("глубина"), 900, 500,
+        QByteArray("тут $e^{-x}$, тут $x_i$, тут $\\frac{a}{b}$ и тут $\\sqrt{2}$\n"));
+
+    int checked = 0;
+    for (const qreal zoom : {1.0, 1.25, 1.5, 2.0}) {
+        editor->applyZoom(zoom);
+        QTest::qWait(40);
+        auto* cache = zametti::formulaCacheOf(*editor->document());
+        ZT_TRUE("кэш вёрстки у документа", cache != nullptr);
+        if (cache == nullptr) { delete editor; return; }
+        const QFont font = editor->document()->defaultFont();
+        for (QTextBlock b = editor->document()->begin(); b.isValid(); b = b.next()) {
+            for (QTextCursor c(b); !c.atEnd() && c.block() == b;
+                 c.movePosition(QTextCursor::NextCharacter)) {
+                if (c.charFormat().objectType() != zametti::InlineFormulaObject) continue;
+                const QString source = c.charFormat().stringProperty(zametti::ObjectSourceProperty);
+                if (source.isEmpty()) continue;
+                const zametti::FormulaRender* render =
+                    cache->renderFor(source, source.mid(1, source.size() - 2), false);
+                if (render == nullptr || !render->error.isEmpty() || render->image.isNull())
+                    continue;
+                const QSizeF band = zametti::FormulaObjects::inlineBandFor(render, source, font);
+                ++checked;
+                ZT_TRUE(source.toStdString() + " на масштабе " + std::to_string(zoom).substr(0, 4) +
+                            ": место не ниже вёрстки (" + std::to_string(int(band.height())) +
+                            " >= " + std::to_string(int(render->height)) + ")",
+                        band.height() >= render->height);
+            }
+        }
+    }
+    // Три формулы из четырёх дают вёрстку на каждом масштабе (у одной движок
+    // отдаёт пустую — это не предмет этой проверки, и подменять её здесь
+    // догадкой нельзя): требуем именно столько, сколько насчитали, — по три на
+    // каждый из четырёх масштабов.
+    ZT_TRUE("формулы проверены на всех масштабах (" + std::to_string(checked) + ")",
+            checked >= 12);
+    delete editor;
+}
+
 }  // namespace
 
 static int ztRunSuite(int argc, char** argv) {
@@ -320,6 +373,7 @@ static int ztRunSuite(int argc, char** argv) {
         return zt::report("снимки строчных формул");
     }
 
+    checkBandFitsRender();
     checkFlipKeys();
     checkDoubleClickOpens();
     checkZoomAndPaper();

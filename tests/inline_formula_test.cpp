@@ -13,6 +13,9 @@
 // экранированные доллары объектами не стали.
 
 #include "doc_model.h"
+#include "settings.h"
+#include "formula_object.h"
+#include "formula.h"
 #include "math_scan.h"
 #include "note_search.h"
 #include "search.h"
@@ -23,6 +26,8 @@
 #include "testdata.h"
 
 #include <QTextBlock>
+
+#include <memory>
 #include <QTextCharFormat>
 #include <QTextDocument>
 #include <QTextFragment>
