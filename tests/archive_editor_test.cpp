@@ -163,19 +163,22 @@ static int ztRunSuite(int argc, char** argv) {
         QString why;
         ZT_TRUE("битая заметка убирается в архив",
                 zametti::store::archiveNote(g_root, brokenId, rules(), &why));
-        const QString stub = readFile(brokenPath);
-        ZT_TRUE("она помечена архивной", stub.contains(QStringLiteral("archived: yes")));
-        ZT_TRUE("и содержит заголовок", stub.contains(QStringLiteral("# Битая")));
-        ZT_TRUE("и не содержит тела", !stub.contains(QStringLiteral("не закрыт забор")));
+        const QString marked = readFile(brokenPath);
+        ZT_TRUE("она помечена архивной", marked.contains(QStringLiteral("archived: yes")));
+        ZT_TRUE("и содержит заголовок", marked.contains(QStringLiteral("# Битая")));
+        // ТЕЛО ЦЕЛО ПОБАЙТОВО, И ЦЕЛО В ФАЙЛЕ: битую заметку архивация обязана
+        // убрать, ни во что её не разбирая и ничего в ней не поправляя.
+        ZT_TRUE("и тело битой заметки на месте, как было",
+                marked.contains(QStringLiteral("не закрыт забор")));
 
-        // ТЕЛО ЦЕЛО ПОБАЙТОВО: в журнале лежит ровно то, что было в файле.
+        // ГОЛОВА ЖУРНАЛА РАВНА ФАЙЛУ — и у битой тоже.
         zametti::journal::History history(g_root);
         zametti::journal::ZJournal read;
         QByteArray head;
         if (history.read(brokenId, &read, &why) && !read.isEmpty())
-            history.snapshotAt(brokenId, int(read.size()) - 1, &head, &why);
-        ZT_TRUE("тело битой заметки уехало в журнал байт в байт",
-                QString::fromUtf8(head) == body);
+            history.snapshotAt(brokenId, read.lastSnapshotIndex(), &head, &why);
+        ZT_TRUE("голова журнала — помеченный файл байт в байт",
+                QString::fromUtf8(head) == marked);
 
         // И ВОЗВРАТ ОТДАЁТ ТЕ ЖЕ БАЙТЫ.
         ZT_TRUE("возврат битой прошёл", zametti::store::restoreNote(g_root, brokenId, &why));

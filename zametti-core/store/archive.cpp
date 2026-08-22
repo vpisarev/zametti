@@ -132,46 +132,7 @@ std::string headerWithoutArchived(std::string_view header) {
     return out;
 }
 
-// Строка заголовка для стаба: первая содержательная строка тела. Уже заголовок
-// — берём как есть, иначе делаем заголовком первого уровня. Ничего не нашли —
-// стаб останется без тела, и это законно: заметка и была пустой.
-std::string titleLine(std::string_view body) {
-    for (size_t at = 0; at < body.size();) {
-        const size_t eol = std::min(body.find('\n', at), body.size());
-        std::string line(body.substr(at, eol - at));
-        while (!line.empty() && (line.back() == ' ' || line.back() == '\t' || line.back() == '\r'))
-            line.pop_back();
-        size_t from = 0;
-        while (from < line.size() && (line[from] == ' ' || line[from] == '\t')) ++from;
-        line = line.substr(from);
-        at = eol + 1;
-        if (line.empty()) continue;
-        // Шапка из HTML-комментария в тело не входит, но заметка могла начаться
-        // с чужого комментария — заголовком он не считается.
-        if (line.rfind("<!--", 0) == 0) continue;
-        if (line.rfind("#", 0) == 0) return line;
-        return "# " + line;
-    }
-    return {};
-}
 
-std::string stubFromBytes(std::string_view bytes) {
-    const auto [from, to] = headerRange(bytes);
-    if (to == 0) return {};   // шапки нет — не наша заметка, трогать нечего
-    const std::string_view header = bytes.substr(from, to - from);
-    const std::string_view body = bytes.substr(to);
-
-    std::string out = headerSaysArchived(header) ? std::string(header)
-                                                 : headerWithArchived(header);
-    const std::string title = titleLine(body);
-    if (!title.empty()) {
-        if (out.empty() || out.back() != '\n') out += '\n';
-        out += '\n';
-        out += title;
-        out += '\n';
-    }
-    return out;
-}
 
 bool archiveNote(const QString& root, const QString& noteId, const history::Rules& rules,
                  QString* error) {
@@ -181,10 +142,11 @@ bool archiveNote(const QString& root, const QString& noteId, const history::Rule
         if (error != nullptr) *error = QStringLiteral("cannot read note %1").arg(noteId);
         return false;
     }
-    // НИ ОДНОГО РАЗБОРА. Заметка могла быть испорчена чем угодно — правкой в
-    // чужом редакторе, сбойным диском, нашей же ошибкой; раз шапка на месте,
-    // убрать её в архив программа обязана. Тело уедет в журнал побайтово, стаб
-    // соберётся из тех же байтов.
+    // НИ ОДНОГО РАЗБОРА, и это правило владельца, а не экономия: заметка могла
+    // быть испорчена чем угодно — правкой в чужом редакторе, сбойным диском,
+    // нашей же ошибкой; раз шапка на месте, убрать её в архив программа
+    // обязана. Отсюда же запрет сводить архивацию к ZStorage::rewriteNote: тот
+    // заметку разбирает.
     const auto [headFrom, headTo] = headerRange(bytes);
     if (headTo == 0) {
         if (error != nullptr)
@@ -193,43 +155,51 @@ bool archiveNote(const QString& root, const QString& noteId, const history::Rule
     }
     // ИДЕМПОТЕНТНОСТЬ. Повторная архивация — не ошибка: так выглядит второй
     // заход после падения между шагами. Уже помеченную заметку не трогаем
-    // вовсе, иначе её стаб уехал бы в журнал поверх настоящего тела.
+    // вовсе, чтобы не заводить в журнале запись, ничего не меняющую.
     if (headerSaysArchived(std::string_view(bytes).substr(headFrom, headTo - headFrom)))
         return true;
 
-    // ШАГ ПЕРВЫЙ — ЖУРНАЛ. Тело уходит в историю тем же путём, что и живое
-    // сохранение: правила отбора решают, ложится ли слепок отдельной записью,
-    // заменяет ли последнюю или не пишется вовсе (равен голове).
+    // АРХИВ — ЭТО ОДНА СТРОКА В ШАПКЕ. Тело остаётся в файле: вместе с ним
+    // остаются и ссылки на вложения, по которым считается, чему уходить при
+    // удалении насовсем, и текст, который находит поиск по хранилищу.
+    std::string out = headerWithArchived(std::string_view(bytes).substr(headFrom, headTo - headFrom));
+    out += bytes.substr(headTo);
+    if (!writeFileBytes(path, out, error)) return false;
+
+    // ЖУРНАЛ ПОСЛЕ ФАЙЛА, а не до. Прежний порядок (сперва журнал) держал
+    // инвариант «тело не должно исчезнуть отовсюду» — теперь тело никуда не
+    // девается, зато появляется другое требование: не объявлять заметку
+    // архивной раньше, чем она такой стала.
+    //
+    // Запись ложится по общим правилам отбора: пометка мелкая, значит гасит
+    // прошлую запись, а не встаёт рядом. Голова журнала обязана сойтись с
+    // файлом — на этом стоит вся синхронизация.
     journal::History history(root);
     journal::ZJournal read;
     QString why;
     if (!history.read(noteId, &read, &why)) {
         if (error != nullptr) *error = QStringLiteral("cannot read history: %1").arg(why);
-        return false;
+        return true;   // файл уже помечен: архивация состоялась
     }
-    const QByteArray snapshot(bytes.data(), qsizetype(bytes.size()));
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    const auto snapshotOf = [&](int i) {
+    const QByteArray snapshot(out.data(), qsizetype(out.size()));
+    const auto snapshotOf = [&](int at) {
         QByteArray older;
         QString ignored;
-        if (!history.snapshotAt(noteId, i, &older, &ignored)) return QByteArray();
+        if (!history.snapshotAt(noteId, at, &older, &ignored)) return QByteArray();
         return older;
     };
-    const history::Step step =
-        history::decideStep(read, snapshotOf, snapshot, journal::Kind::Save, now, rules);
+    const history::Step step = history::decideStep(read, snapshotOf, snapshot, journal::Kind::Save,
+                                                   QDateTime::currentMSecsSinceEpoch(), rules);
     QVector<journal::EntryRef> voids;
     voids.reserve(step.voided.size());
-    for (int i : step.voided) voids.append(journal::EntryRef(read.at(i).time(), read.at(i).digest()));
+    for (int at : step.voided)
+        voids.append(journal::EntryRef(read.at(at).time(), read.at(at).digest()));
     if (step.writeNew &&
         !history.append(noteId, journal::NewRecord::save(snapshot).voiding(voids), &why)) {
-        // ТЕЛО НЕ ЗАПИСАНО — СТАБ НЕ ПИШЕМ. Это и есть инвариант A: потерять
-        // тело нельзя, потому что мы не начинаем второй шаг, не сделав первый.
-        if (error != nullptr) *error = QStringLiteral("body not written to history: %1").arg(why);
-        return false;
+        // Файл уже помечен — архивация состоялась; но расхождение головы с
+        // файлом надо назвать вслух, а не проглотить.
+        if (error != nullptr) *error = QStringLiteral("mark not written to history: %1").arg(why);
     }
-
-    // ШАГ ВТОРОЙ — СТАБ.
-    if (!writeFileBytes(path, stubFromBytes(bytes), error)) return false;
     return true;
 }
 
@@ -240,47 +210,28 @@ bool restoreNote(const QString& root, const QString& noteId, QString* error) {
         if (error != nullptr) *error = QStringLiteral("cannot read note %1").arg(noteId);
         return false;
     }
-    ZNote stub;
-    stub.load(bytes);
-    if (!stub.isArchived()) return true;   // уже дома
-
-    journal::History history(root);
-    journal::ZJournal read;
-    QString why;
-    if (!history.read(noteId, &read, &why)) {
-        if (error != nullptr) *error = QStringLiteral("cannot read history: %1").arg(why);
-        return false;
-    }
-    const int head = read.lastSnapshotIndex();
-    QByteArray body;
-    if (head >= 0 && !history.snapshotAt(noteId, head, &body, &why)) body.clear();
-    if (body.isEmpty()) {
-        // Тела нет — оставляем стаб как есть и говорим вслух. Молча отдать
-        // человеку одну строку вместо заметки нельзя ничем.
+    // Разбора нет и здесь, по той же причине: вернуть заметку человек вправе,
+    // какой бы она ни была.
+    const auto [headFrom, headTo] = headerRange(bytes);
+    if (headTo == 0) {
         if (error != nullptr)
-            *error = QStringLiteral("history of %1 has no body — the note remains a stub: %2")
-                         .arg(noteId, why);
+            *error = QStringLiteral("note %1 has no zametti header").arg(noteId);
         return false;
     }
+    const std::string_view header = std::string_view(bytes).substr(headFrom, headTo - headFrom);
+    if (!headerSaysArchived(header)) return true;   // уже дома
 
-    // ТЕЛО — БАЙТ В БАЙТ ИЗ ЖУРНАЛА, ШАПКА — ИЗ СТАБА. Ни одного разбора, по той
-    // же причине, что и при архивации: заметка могла быть испорчена чем угодно,
-    // и вернуть её человек имеет право в любом случае. В шапке стаба живут
-    // parent, sort и всё, что человек мог поменять, пока заметка лежала в
-    // архиве, — поэтому берётся она, а не журнальная; из тела журнальная шапка
-    // просто отрезается.
-    const std::string bodyBytes(body.constData(), size_t(body.size()));
-    const auto [stubFrom, stubTo] = headerRange(bytes);
-    const auto [bodyFrom, bodyTo] = headerRange(bodyBytes);
-    std::string header = stubTo > 0 ? bytes.substr(stubFrom, stubTo - stubFrom)
-                                    : bodyBytes.substr(bodyFrom, bodyTo - bodyFrom);
-    header = headerWithoutArchived(header);
-    std::string out = header;
-    out += bodyBytes.substr(bodyTo);
+    // ВОЗВРАТ — СНЯТЬ СТРОКУ, и больше ничего. Журнал для этого не нужен вовсе:
+    // тело всё это время лежало в файле. Раньше оно бралось из головы журнала,
+    // и архивная заметка без истории — приехавшая с чужой машины, потерявшая
+    // журнал — возвращалась стабом, то есть не возвращалась.
+    std::string out = headerWithoutArchived(header);
+    out += bytes.substr(headTo);
     if (!writeFileBytes(path, out, error)) return false;
 
     // ВЕШКА В ИСТОРИИ. Таймлайн отвечает на вопрос «что с заметкой было», и
     // «вернули из архива» — такой же ответ, как «правили» или «удалили».
+    journal::History history(root);
     QString ignored;
     history.append(noteId,
                    journal::NewRecord::restore(QByteArray(out.data(), qsizetype(out.size())), 0),

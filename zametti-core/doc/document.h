@@ -147,9 +147,6 @@ public:
     // держит заметка). Так пишется файл заметки: ZNote::toMarkdown/save.
     std::string toMarkdown(const NoteHeader& envelope) const;
     QString toMarkdownText(const NoteHeader& envelope) const;
-    // Документ из одного первого заголовка (как его видит средняя колонка):
-    // из него заметка делает стаб архива. Пуст, если заголовка нет.
-    ZDocument headingOnly() const;
 
     // ЗАПИСАТЬ В ФАЙЛ. Путь записи один и живёт в document_saver.h: блоки →
     // приведение к тому, что файл умеет выразить → байты → самопроверка

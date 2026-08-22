@@ -154,10 +154,20 @@ void checkArchiveObeysHistoryRules() {
 
     QString error;
     const QByteArray body(kBody);
-    ZT_TRUE("голова записана руками",
-            zametti::journal::History(g_root).append(
-                id, zametti::journal::NewRecord::save(body, zametti::journal::Stamp::now()),
-                &error));
+    zametti::journal::History history(g_root);
+    // ДВЕ записи, а не одна: опорную правило не гасит никогда — после замены в
+    // журнале обязана остаться хотя бы одна запись, а первая это то, с чего
+    // заметка начиналась.
+    ZT_TRUE("опорная записана руками",
+            history.append(id, zametti::journal::NewRecord::save(body, zametti::journal::Stamp::now()),
+                           &error));
+    QByteArray grown(kBody);
+    grown += "\nещё абзац, чтобы вторая запись не слилась с опорной: " +
+             QByteArray(200, 'y') + "\n";
+    write(id, std::string(grown.constData(), size_t(grown.size())));
+    ZT_TRUE("и вторая",
+            history.append(id, zametti::journal::NewRecord::save(grown, zametti::journal::Stamp::now()),
+                           &error));
     const int before = waypoints(id);
     ZT_TRUE("архивация прошла", archiveNote(g_root, id, rules(), &error));
     ZT_TRUE("вешек не прибавилось: правка мелкая (" + std::to_string(waypoints(id)) +

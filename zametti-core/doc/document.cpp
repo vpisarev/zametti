@@ -199,40 +199,6 @@ QString ZDocument::snippet(int limit) const {
     return out;
 }
 
-// СТАБ АРХИВА: та же шапка с пометкой `archived` плюс одна строка — заголовок.
-// Собирается заметкой-однодневкой и записывается общим писателем: второго
-// способа получить байты заметки не бывает.
-ZDocument ZDocument::headingOnly() const {
-    // Заголовок ищем так же, как его видит средняя колонка: первый
-    // содержательный блок. Не нашли — стаб остаётся без тела, и это законно:
-    // заметка без единой строки текста и была пустой.
-    Piece heading;
-    walkPieces(d_->text, [&](const Piece& piece) {
-        if (piece.raw) {
-            // Дословный кусок заголовком не считаем; законченный комментарий
-            // пропускаем — он и в дереве заголовком не выглядит.
-            return piece.isClosedHtmlComment();
-        }
-        if (piece.kind == Kind::VSpace || piece.kind == Kind::Html) return true;
-        // Первая строка: заголовок стаба однострочный, а блок может нести
-        // мягкие переносы.
-        QString line = piece.text.left(piece.text.indexOf(QLatin1Char('\n')));
-        while (!line.isEmpty() && (line.back() == u' ' || line.back() == u'\r')) line.chop(1);
-        if (line.isEmpty()) return true;
-        heading.kind = Kind::Heading;
-        heading.headingLevel =
-            piece.kind == Kind::Heading && piece.headingLevel > 0 ? piece.headingLevel : 1;
-        heading.text = std::move(line);
-        return false;   // заголовок найден, дальше не идём
-    });
-
-    std::vector<Piece> body;
-    if (!heading.text.isEmpty()) body.push_back(std::move(heading));
-    ZDocument stub;
-    attachStyle(stub.d_->text, attachedStyle(d_->text));
-    buildDocument(body, stub.d_->text);
-    return stub;
-}
 
 // ПУСТА ЛИ ЗАМЕТКА ПО СУЩЕСТВУ: ни одного блока, кроме пустых строк.
 //

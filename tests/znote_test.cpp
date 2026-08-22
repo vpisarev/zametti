@@ -172,12 +172,6 @@ void checkFileRound() {
     ZT_TRUE("архив и папка — из шапки", note.metadata().archived() && note.metadata().folder());
     ZT_TRUE("archived в байтах файла", note.toMarkdown().find("archived: yes") != std::string::npos);
     ZT_TRUE("role в байтах файла", note.toMarkdown().find("role: folder") != std::string::npos);
-    // Стаб архива: шапка с пометкой и один заголовок.
-    const std::string stub = note.archiveStub();
-    ZT_TRUE("стаб с пометкой", stub.find("archived: yes") != std::string::npos);
-    ZT_TRUE("стаб с заголовком", stub.find("# Заголовок") != std::string::npos);
-    ZT_TRUE("но без тела", stub.find("тело заметки") == std::string::npos);
-
     // Заметка без шапки — тоже заметка (файл вне хранилища).
     ZNote plain;
     ZT_TRUE("тело без шапки разобрано", plain.load("просто текст\n"));

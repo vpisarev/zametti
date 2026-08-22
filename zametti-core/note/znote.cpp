@@ -23,7 +23,6 @@ constexpr int kSnippetChars = 200;
 }  // namespace
 }  // namespace zametti
 
-
 namespace zametti {
 
 ZNote::ZNote(QString path, QByteArray fileBytes, Digest digest, ZNoteHistory history)
@@ -91,14 +90,6 @@ SaveOutcome ZNote::save(const QString& path, const QString& timestamp, const Dig
                         const std::vector<Piece>* prebuiltBlocks,
                         const QByteArray* prebuiltText) {
     return doc_.saveTo(path, timestamp, nullptr, header_, known, prebuiltBlocks, prebuiltText);
-}
-
-std::string ZNote::archiveStub() const {
-    NoteHeader stub = header_;
-    store::setArchivedMeta(stub, true);
-    const ZDocument body = doc_.headingOnly();
-    stub.setBlankAfter(!body.isEmpty());
-    return body.toMarkdown(stub);
 }
 
 // --- метаданные ---------------------------------------------------------------
@@ -194,6 +185,5 @@ bool ZNote::setSelfCheckFailed(bool failed) {
     selfCheckFailed_ = failed;
     return true;
 }
-
 
 }  // namespace zametti
