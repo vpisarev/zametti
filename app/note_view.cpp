@@ -1,5 +1,7 @@
 #include "note_view.h"
 
+#include "content_column.h"
+
 #include "block_object.h"
 #include "object_frame.h"
 #include "doc_model.h"
@@ -367,26 +369,14 @@ void NoteView::applyContentWidth() {
     // Поля вьюпорта документа не касаются вовсе: он просто получает меньше
     // места. Формула «сколько досталось колонке» от этого не меняется — в ней
     // и так стоит ширина вьюпорта.
+    // САМ РАСЧЁТ — ОБЩИЙ (content_column.h): его же считают плоские виды
+    // исходника и настроек. Здесь остаётся только то, что своё: боковое поле,
+    // которое документу уже поставил сборщик (переписывать его нельзя — запись
+    // формата попадает в стек отмены).
     const qreal charUnit = QFontMetricsF(baseFont()).horizontalAdvance(QLatin1Char('A'));
-    // Поле, которое колонке ПОЛОЖЕНО сейчас, — от нынешнего шрифта: оно обязано
-    // расти вместе с масштабом, иначе на 200 % текст прижимается к краю окна.
-    const qreal want = docStyle().sideMargin() * charUnit;
-    // И то, которое уже даёт документ: его поставил сборщик, один раз, базовым
-    // кеглем. Переписывать его нельзя — запись формата попадает в стек отмены.
     const qreal fromDocument = document()->rootFrame()->frameFormat().leftMargin();
-
-    // Полная ширина, из которой раздаётся место: нынешний вьюпорт плюс то, что
-    // мы у него уже отняли. Считать по width() виджета нельзя — там ещё рамка и
-    // полоса прокрутки, и вышла бы обратная связь.
     const int room = viewport()->width() + viewportMargin_ * 2;
-    qreal margin = qMax(0.0, want - fromDocument);
-    if (docStyle().maxContentWidth() > 0.0) {
-        const qreal limit = docStyle().maxContentWidth() * charUnit;
-        const qreal spare = (room - 2 * want - limit) / 2;
-        if (spare > 0.0) margin += spare;
-    }
-
-    const int wanted = int(margin);
+    const int wanted = contentColumnMargin(docStyle(), charUnit, room, fromDocument);
     if (wanted != viewportMargin_) {
         viewportMargin_ = wanted;
         setViewportMargins(wanted, 0, wanted, 0);

@@ -1,5 +1,9 @@
 #include "plain_edit_view.h"
 
+#include "content_column.h"
+
+#include <cstdio>
+
 #include "note_view.h"   // applyPalette, caretShouldBeDrawn — правила у всех видов одни
 #include "settings.h"
 
@@ -214,31 +218,42 @@ void PlainEditView::applyContentWidth() {
     // читается — глаз теряет начало следующей. Колонка ограничена той же
     // настройкой (maxContentWidth в ширинах буквы «A») и теми же боковыми
     // полями, поэтому исходник и вёрстка стоят на одном месте.
-    const QFontMetricsF metrics(font());
-    const qreal charUnit = metrics.horizontalAdvance(QLatin1Char('A'));
-    const ZDocStyle& style = settings().style();
-    const qreal side = style.sideMargin() * charUnit;
-
-    // Полная ширина, из которой раздаётся место: нынешний вьюпорт плюс то, что
-    // мы у него уже отняли. По width() виджета считать нельзя — там ещё полоса
-    // прокрутки, и вышла бы обратная связь.
+    // САМ РАСЧЁТ — ОБЩИЙ (content_column.h): тот же, по которому колонку
+    // считает вид заметки. Своего бокового поля у плоского вида нет — весь
+    // отступ идёт полями вьюпорта, поэтому fromDocument здесь ноль.
+    const qreal charUnit = QFontMetricsF(font()).horizontalAdvance(QLatin1Char('A'));
     const int room = viewport()->width() + viewportMargin_ * 2;
-    qreal margin = side;
-    if (style.maxContentWidth() > 0.0) {
-        const qreal limit = style.maxContentWidth() * charUnit;
-        const qreal spare = (room - 2 * side - limit) / 2;
-        if (spare > 0.0) margin += spare;
-    }
-    const int wanted = qMax(0, int(margin));
+    const int wanted = contentColumnMargin(settings().style(), charUnit, room);
     if (wanted == viewportMargin_) return;
     viewportMargin_ = wanted;
     setViewportMargins(wanted, 0, wanted, 0);
+    // И ПЕРЕСЧЁТ ВЁРСТКИ — как вид заметки досылает setTextWidth. Поля меняются
+    // не только от размера окна: масштаб меняет ширину буквы «A», а по ней
+    // считается колонка. Своего setTextWidth у QPlainTextEdit нет — ширину
+    // вёрстки он берёт у вьюпорта сам и только в своём resizeEvent; дверь к
+    // пересчёту одна — режим переноса, причём ТО ЖЕ значение Qt пропускает,
+    // поэтому переключаем через соседнее.
+    const QPlainTextEdit::LineWrapMode wrap = lineWrapMode();
+    setLineWrapMode(wrap == QPlainTextEdit::NoWrap ? QPlainTextEdit::WidgetWidth
+                                                   : QPlainTextEdit::NoWrap);
+    setLineWrapMode(wrap);
     placeWrapMarks();
 }
 
 void PlainEditView::resizeEvent(QResizeEvent* event) {
-    QPlainTextEdit::resizeEvent(event);
+    // ПОЛЯ — ДО БАЗОВОГО ОБРАБОТЧИКА, и это не вкус, а починка.
+    //
+    // Ширину переноса QPlainTextEdit считает по своему вьюпорту, и считает её
+    // ровно здесь — в QPlainTextEdit::resizeEvent. Поля вьюпорта ставим мы, и
+    // пока мы ставили их ПОСЛЕ, документ оставался свёрстан по прежней,
+    // БОЛЬШЕЙ ширине: строки переносились позже, чем кончалась видимая область,
+    // и хвосты уезжали за правый край. Владелец увидел это, открыв заметку
+    // сразу в режиме [M]: «концы длинных строк не отображаются, пропадает
+    // несколько слов», а от первого же изменения ширины окна всё чинилось само
+    // (второй resize приходил уже с верными полями). Замер в живом окне:
+    // вьюпорт 812, а строки свёрстаны по 1017.
     applyContentWidth();
+    QPlainTextEdit::resizeEvent(event);
     placeWrapMarks();
     refreshOverlays();
 }
