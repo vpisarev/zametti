@@ -1,12 +1,16 @@
-// Архив: тело в журнале, файл — стаб.
+// Архив — ПОМЕТКА, и ничего кроме.
 //
-// Главный инвариант этапа (A из брифа): архивация НЕ ТЕРЯЕТ НИ БАЙТА тела.
-// Держится он порядком шагов — сперва журнал, потом срез, — и проверяется тремя
-// способами: тело есть в журнале, повтор ничего не портит, а обрыв между
-// шагами оставляет полную заметку.
+// Так было не всегда: до этапа 17 архивация срезала тело в журнал, оставляя от
+// заметки стаб из шапки и заголовка. Стоило это дорого — вместе с телом из
+// файла исчезали ссылки на картинки, и «удалить насовсем» не уносило ни одной
+// (искать их было негде), а картинку, которую держала только архивная заметка,
+// уносило удаление СОСЕДНЕЙ. Плюс поиск по хранилищу переставал видеть
+// архивные тела, а вышедший из режима истории человек получал стаб, полностью
+// доступный для правки.
 //
-// Второе (B): возврат отдаёт ровно то, что было, и туда же, откуда убрали, —
-// `parent` архив не трогает вовсе, поэтому и помнить ему нечего.
+// Теперь тело остаётся в файле, а в шапке появляется одна строка. Отсюда и
+// проверки: файл после архивации отличается от исходного ровно этой строкой,
+// голова журнала равна файлу, а возврат не зависит от журнала вовсе.
 
 #include "archive.h"
 #include "pieces.h"
@@ -75,14 +79,27 @@ int records(const QString& id) {
     return int(read.size());
 }
 
+// Голова журнала — по общей формуле порядка, а не по месту в файле.
 QByteArray head(const QString& id) {
     zametti::journal::History history(g_root);
     zametti::journal::ZJournal read;
     QString error;
     if (!history.read(id, &read, &error) || read.isEmpty()) return {};
+    const int at = read.lastSnapshotIndex();
     QByteArray body;
-    if (!history.snapshotAt(id, int(read.size()) - 1, &body, &error)) return {};
+    if (at < 0 || !history.snapshotAt(id, at, &body, &error)) return {};
     return body;
+}
+
+// Сколько вешек видит человек: записи о содержимом, не погашенные.
+int waypoints(const QString& id) {
+    zametti::journal::ZJournal read;
+    QString error;
+    if (!zametti::journal::History(g_root).read(id, &read, &error)) return -1;
+    int count = 0;
+    for (int i = 0; i < read.size(); ++i)
+        if (read.at(i).statesContent() && !read.isVoided(i)) ++count;
+    return count;
 }
 
 const char* kBody =
@@ -93,39 +110,6 @@ const char* kBody =
     "-->\n"
     "\n# Фототехника\n\nДлинный текст заметки, который и составляет всё её тело.\n"
     "\n![снимок](01jd7f0kq2m8xab7.webp#w=600)\n";
-
-// --- стаб ------------------------------------------------------------------
-
-void checkStub() {
-    const std::string stub = noteOf(kBody).archiveStub();
-
-    ZT_TRUE("в стабе есть заголовок", stub.find("# Фототехника") != std::string::npos);
-    ZT_TRUE("тела в стабе нет", stub.find("Длинный текст") == std::string::npos);
-    ZT_TRUE("ссылки на картинку в стабе нет", stub.find("01jd7f0kq2m8xab7") == std::string::npos);
-    ZT_TRUE("стаб помечен архивным", stub.find("archived: yes") != std::string::npos);
-    ZT_TRUE("parent НЕ тронут: архив не переносит",
-            stub.find("parent: 0000000000000p") != std::string::npos);
-    ZT_TRUE("created на месте", stub.find("created: 2020-01-01T00:00:00+03:00") != std::string::npos);
-    ZT_TRUE("modified на месте",
-            stub.find("modified: 2020-05-05T12:00:00+03:00") != std::string::npos);
-
-    // СТАБ — ЗАКОННЫЙ MARKDOWN, и это не формальность: его разбирают тем же
-    // ядром, показывают в списке и ищут по заголовку.
-    const zametti::ZNote back = noteOf(stub);
-    ZT_EQ("круг разбор→запись у стаба побайтовый", stub, back.toMarkdown());
-    ZT_TRUE("стаб читается как архивный", back.isArchived());
-    // РАЗМЕР СТАБА НЕ ЗАВИСИТ ОТ ТЕЛА — в этом и смысл. На фикстуре в три
-    // строки выигрыш почти не виден (151 байт против 287: шапка и есть почти
-    // весь файл), поэтому спрашиваем на большой заметке.
-    std::string big = kBody;
-    big += std::string(50000, 'x');
-    big += "\n";
-    const std::string bigStub = noteOf(big).archiveStub();
-    ZT_TRUE("стаб большой заметки того же размера, что и маленькой: " +
-                std::to_string(bigStub.size()) + " байт против тела в " +
-                std::to_string(big.size()),
-            bigStub.size() < 400 && big.size() > 50000);
-}
 
 // --- архивация -------------------------------------------------------------
 
@@ -138,23 +122,31 @@ void checkArchiveKeepsBody() {
     QString error;
     ZT_TRUE("архивация прошла: " + s(error), archiveNote(g_root, id, rules(), &error));
 
-    // ИНВАРИАНТ A: тело целиком лежит в журнале, и это те самые байты.
-    ZT_EQ("в голове журнала — тело ДО среза", was,
-          std::string(head(id).constData(), size_t(head(id).size())));
     const std::string now = read(id);
-    ZT_TRUE("файл стал стабом", now.find("Длинный текст") == std::string::npos);
-    ZT_TRUE("и помечен архивным", now.find("archived: yes") != std::string::npos);
+    // ТЕЛО ОСТАЛОСЬ В ФАЙЛЕ — вот главное, ради чего всё и переделано.
+    ZT_TRUE("тело на месте", now.find("Длинный текст") != std::string::npos);
+    ZT_TRUE("ссылка на картинку на месте: по ней и считаются вложения при "
+            "удалении насовсем",
+            now.find("01jd7f0kq2m8xab7") != std::string::npos);
+    ZT_TRUE("и файл помечен архивным", now.find("archived: yes") != std::string::npos);
+    ZT_EQ("а отличие от исходного — ровно одна строка шапки",
+          was.substr(0, was.find("-->")) + "archived: yes\n" + was.substr(was.find("-->")), now);
 
-    // ИДЕМПОТЕНТНОСТЬ: повтор ничего не портит — ни файла, ни журнала. Так
-    // выглядит второй заход после падения между шагами.
+    // ГОЛОВА ЖУРНАЛА РАВНА ФАЙЛУ: файл изменился на строку, значит запись
+    // положена. На этом инварианте стоит вся синхронизация.
+    ZT_EQ("голова журнала равна файлу", now,
+          std::string(head(id).constData(), size_t(head(id).size())));
+
+    // ИДЕМПОТЕНТНОСТЬ: повтор ничего не портит — ни файла, ни журнала.
     const int before = records(id);
     ZT_TRUE("повторная архивация не жалуется", archiveNote(g_root, id, rules(), &error));
     ZT_EQ("файл не изменился", now, read(id));
     ZT_TRUE("и записей не прибавилось", records(id) == before);
 }
 
-// Тело в журнал ложится ПО ОБЩИМ ПРАВИЛАМ ОТБОРА: только что сохранённая
-// заметка (голова журнала уже равна файлу) новой записи не заводит.
+// Пометка ложится в журнал ПО ОБЩИМ ПРАВИЛАМ ОТБОРА: она мелкая (одна строка),
+// значит гасит прошлую запись, а не встаёт рядом с ней. Вешек не прибавляется,
+// но голова обязана сойтись с файлом.
 void checkArchiveObeysHistoryRules() {
     freshStore();
     const QString id = QStringLiteral("01bb00000000bb");
@@ -163,14 +155,16 @@ void checkArchiveObeysHistoryRules() {
     QString error;
     const QByteArray body(kBody);
     ZT_TRUE("голова записана руками",
-            zametti::journal::History(g_root).append(id, zametti::journal::NewRecord::save(body, zametti::journal::Stamp::now()), &error));
-    const int before = records(id);
+            zametti::journal::History(g_root).append(
+                id, zametti::journal::NewRecord::save(body, zametti::journal::Stamp::now()),
+                &error));
+    const int before = waypoints(id);
     ZT_TRUE("архивация прошла", archiveNote(g_root, id, rules(), &error));
-    ZT_TRUE("записи не прибавилось: голова и так равна телу (" +
-                std::to_string(records(id)) + " против " + std::to_string(before) + ")",
-            records(id) == before);
-    ZT_TRUE("а файл всё равно стал стабом",
-            read(id).find("Длинный текст") == std::string::npos);
+    ZT_TRUE("вешек не прибавилось: правка мелкая (" + std::to_string(waypoints(id)) +
+                " против " + std::to_string(before) + ")",
+            waypoints(id) == before);
+    ZT_EQ("а голова журнала — уже помеченный файл", read(id),
+          std::string(head(id).constData(), size_t(head(id).size())));
 }
 
 // --- возврат ---------------------------------------------------------------
@@ -187,7 +181,8 @@ void checkRestore() {
     ZT_TRUE("возврат прошёл: " + s(error), restoreNote(g_root, id, &error));
 
     const std::string now = read(id);
-    ZT_TRUE("тело вернулось", now.find("Длинный текст") != std::string::npos);
+    ZT_TRUE("тело на месте: оно никуда и не уходило",
+            now.find("Длинный текст") != std::string::npos);
     ZT_TRUE("пометки архивности нет", now.find("archived") == std::string::npos);
     ZT_TRUE("parent тот же — заметка дома",
             now.find("parent: 0000000000000p") != std::string::npos);
@@ -201,16 +196,20 @@ void checkRestore() {
     ZT_EQ("и файл не изменился", now, read(id));
 }
 
-// Стаб без журнала — единственный случай, когда возврат отказывает. Молча
-// оставить человека с одной строкой вместо заметки нельзя.
+// ВОЗВРАТ БОЛЬШЕ НЕ ЗАВИСИТ ОТ ЖУРНАЛА. Раньше тело брали из головы, и
+// архивная заметка без истории возвращалась стабом — то есть не возвращалась
+// вовсе. Теперь тело всё это время лежало в файле, и снять пометку можно даже
+// у заметки, приехавшей с чужой машины без журнала.
 void checkRestoreWithoutJournal() {
     freshStore();
     const QString id = QStringLiteral("01dd00000000dd");
-    write(id, "<!-- zametti\narchived: yes\n-->\n\n# Стаб без истории\n");
+    write(id,
+          "<!-- zametti\narchived: yes\n-->\n\n# Без истории\n\nА тело у неё есть.\n");
     QString error;
-    ZT_TRUE("возврат отказал", !restoreNote(g_root, id, &error));
-    ZT_TRUE("и объяснил почему: " + s(error), !error.isEmpty());
-    ZT_TRUE("стаб на месте", read(id).find("# Стаб без истории") != std::string::npos);
+    ZT_TRUE("возврат прошёл: " + s(error), restoreNote(g_root, id, &error));
+    const std::string now = read(id);
+    ZT_TRUE("пометки нет", now.find("archived") == std::string::npos);
+    ZT_TRUE("тело на месте", now.find("А тело у неё есть") != std::string::npos);
 }
 
 // --- удалить насовсем ------------------------------------------------------
@@ -368,7 +367,6 @@ static int ztRunSuite(int argc, char** argv) {
     (void)argv;
     g_root = QDir::tempPath() + QStringLiteral("/zametti-archive-test");
 
-    checkStub();
     checkArchiveKeepsBody();
     checkArchiveObeysHistoryRules();
     checkRestore();

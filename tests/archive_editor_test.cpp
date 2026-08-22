@@ -8,7 +8,7 @@
 // заново. Каждый заход удваивал их.
 //
 // Поэтому здесь проверяется весь путь целиком, ровно так, как он идёт в окне:
-// открыли → сохранили → в архив → перечитали стаб → сохранили ещё раз →
+// открыли → сохранили → в архив → перечитали → сохранили ещё раз →
 // вернули из архива. И так три раза подряд: беда была не в первом заходе, а в
 // накоплении.
 
@@ -113,12 +113,12 @@ static int ztRunSuite(int argc, char** argv) {
         QString why;
         ZT_TRUE("архивация прошла" + tag,
                 zametti::store::archiveNote(g_root, id, rules(), &why));
-        const QString stub = readFile(path);
-        ZT_TRUE("файл стал стабом" + tag,
-                stub.contains(QStringLiteral("archived: yes")) &&
-                    !stub.contains(QStringLiteral("\\gamma")));
+        const QString marked = readFile(path);
+        ZT_TRUE("файл помечен архивным, а тело осталось" + tag,
+                marked.contains(QStringLiteral("archived: yes")) &&
+                    marked.contains(QStringLiteral("\\gamma")));
 
-        // 3. Перечитали стаб и сохранили — окно делает ровно это, а закрытие
+        // 3. Перечитали и сохранили — окно делает ровно это, а закрытие
         //    заметки зовёт запись принудительно.
         editor.openFile(path);
         QTest::qWait(40);
@@ -127,7 +127,8 @@ static int ztRunSuite(int argc, char** argv) {
         const QString afterSave = readFile(path);
         ZT_TRUE("пометка архива пережила запись" + tag,
                 afterSave.contains(QStringLiteral("archived: yes")));
-        ZT_TRUE("стаб не оброс телом" + tag, !afterSave.contains(QStringLiteral("\\gamma")));
+        ZT_TRUE("тело не потерялось от перезаписи" + tag,
+                afterSave.contains(QStringLiteral("\\gamma")));
 
         // 4. Вернули из архива — тело обязано вернуться БАЙТ В БАЙТ.
         ZT_TRUE("возврат прошёл" + tag, zametti::store::restoreNote(g_root, id, &why));
@@ -163,7 +164,7 @@ static int ztRunSuite(int argc, char** argv) {
         ZT_TRUE("битая заметка убирается в архив",
                 zametti::store::archiveNote(g_root, brokenId, rules(), &why));
         const QString stub = readFile(brokenPath);
-        ZT_TRUE("её стаб помечен архивным", stub.contains(QStringLiteral("archived: yes")));
+        ZT_TRUE("она помечена архивной", stub.contains(QStringLiteral("archived: yes")));
         ZT_TRUE("и содержит заголовок", stub.contains(QStringLiteral("# Битая")));
         ZT_TRUE("и не содержит тела", !stub.contains(QStringLiteral("не закрыт забор")));
 
