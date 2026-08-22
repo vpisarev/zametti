@@ -315,6 +315,16 @@ void NoteEditor::onCaretMoved() {
 // Свои же вырезы копить незачем: уборка только удаляет пробелы и новых не
 // заводит.
 void NoteEditor::onContentsChange(int position, int charsRemoved, int charsAdded) {
+    // ГДЕ ОТМЕНИЛОСЬ. Пока идёт Ctrl+Z или Ctrl+Shift+Z, копим границы того,
+    // что Qt вернул: туда и поедет каретка (см. undo/redo). Своей позиции у
+    // команды отмены нет — Qt ставит каретку в КОНЕЦ отменённого куска, и на
+    // переключении задачи это оказывалась строка НИЖЕ той, где человек щёлкал
+    // (жалоба владельца: «курсор прыгает на строку вниз, хотя бы там и не
+    // были»).
+    if (undoTouch_.watching && (charsRemoved != 0 || charsAdded != 0)) {
+        undoTouch_.from = undoTouch_.from < 0 ? position : qMin(undoTouch_.from, position);
+        undoTouch_.to = qMax(undoTouch_.to, position + charsAdded);
+    }
     Q_UNUSED(charsRemoved);
     // Границы шага отмены считаются по ЭТИМ числам, а не по курсору редактора:
     // курсор к моменту разбора может ещё стоять на старом месте (правка пришла
@@ -1070,8 +1080,11 @@ void NoteEditor::undo() {
     // правка отбрасывает у Qt ветку повтора. Владелец увидел так: «несколько
     // Ctrl+Z — всё хорошо, а redo возвращает пару слов и встаёт».
     recordingSuspended_ = true;
+    undoTouch_.watch();
     QTextEdit::undo();
+    undoTouch_.stop();
     recordingSuspended_ = false;
+    landCaretWhereUndone();
 
     // Вид держится сам, но отменённая правка может оказаться за окном — тогда
     // её надо показать: человек нажал отмену, чтобы увидеть результат.
@@ -1087,11 +1100,46 @@ void NoteEditor::redo() {
     // По тому же доводу, что и у отмены: возвращённое состояние каноническое,
     // убирать в нём нечего, а всякая правка обрубила бы следующий повтор.
     recordingSuspended_ = true;
+    undoTouch_.watch();
     QTextEdit::redo();
+    undoTouch_.stop();
     recordingSuspended_ = false;
+    landCaretWhereUndone();
     showEditPlace(scrollBefore, /*jump=*/true);   // отмена может быть далеко от каретки
     document()->setModified(true);
     autosave_.start(settings().editor().autosaveDelayMs());
+}
+
+// КАРЕТКА ПОСЛЕ ОТМЕНЫ И ПОВТОРА — В НАЧАЛЕ ТОГО, ЧТО ВЕРНУЛОСЬ.
+//
+// Своей позиции у команды отмены нет: Qt ставит каретку в конец отменённого
+// куска. Для набора это почти всегда то же место, а для правки, которая
+// кончается на границе блоков (переключение задачи, смена маркера), — строка
+// НИЖЕ той, где человек работал. Владелец сказал прямо: вниз — нелогично,
+// пусть остаётся на своей строке или уходит вверх.
+//
+// Начало правки этому правилу и отвечает: оно не ниже строки, которую
+// отменили. Границы принёс contentsChange — тот же сигнал, по которому мы
+// узнаём о любой правке; выдумывать позицию не приходится.
+void NoteEditor::landCaretWhereUndone() {
+    if (undoTouch_.from < 0) return;
+    const int last = qMax(0, document()->characterCount() - 1);
+    // Последняя строка, которую отмена и правда тронула. Берём to − 1: сам to
+    // стоит уже ЗА возвращённым куском, и по нему строка вышла бы соседней.
+    const QTextBlock touched = document()->findBlock(qBound(0, undoTouch_.to - 1, last));
+    if (!touched.isValid()) return;
+    // Каретка внутри тронутого — не трогаем её вовсе: там её оставил человек,
+    // и это ровно то место, где он работал (операция над выделением, набор).
+    if (textCursor().blockNumber() <= touched.blockNumber()) return;
+    // А НИЖЕ ТРОНУТОГО ЕЙ ДЕЛАТЬ НЕЧЕГО. Замена целого блока (переключение
+    // задачи, смена маркера) приходит от Qt как правка, кончающаяся на начале
+    // следующего блока, и каретка по ней вставала строкой НИЖЕ той, где
+    // человек щёлкал (жалоба владельца: «курсор прыгает на строку вниз, хотя
+    // бы там и не были; вниз — очень нелогично»). Возвращаем её в начало
+    // изменённой строки.
+    QTextCursor place(document());
+    place.setPosition(qBound(0, touched.position(), last));
+    setTextCursor(place);
 }
 
 NoteEditor::ViewAnchor NoteEditor::viewAnchor() const {

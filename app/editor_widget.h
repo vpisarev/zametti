@@ -598,6 +598,8 @@ private:
     void onImportFinished(int done, int total, bool cancelled);
     void refreshStats(const NoteStats& stats);
     void onContentsChange(int position, int charsRemoved, int charsAdded);
+    // Каретка после отмены и повтора — в начале того, что вернулось.
+    void landCaretWhereUndone();
     void onCaretMoved();
     void tidyLeftLine(const QTextCursor& left);
     // Подметает не весь документ, а область, накопленную с прошлой уборки.
@@ -735,6 +737,16 @@ private:
     // Пересчёт статистики документа (слова, строки, картинки) через паузу
     // после правки (editor.statsDelayMs). Заводится в onContentsChanged —
     // единственном месте, куда приходит любая правка документа.
+    // Границы того, что вернула отмена (или повтор): по ним ставится каретка.
+    // Собираются из contentsChange, пока идёт сама команда.
+    struct UndoTouch {
+        bool watching = false;
+        int from = -1;
+        int to = -1;
+        void watch() { watching = true; from = -1; to = -1; }
+        void stop() { watching = false; }
+    } undoTouch_;
+
     QTimer statsRecount_;
     // Шаг истории уже заведён этой серией: следующий снимок дописывает его, а
     // не заводит новый.
