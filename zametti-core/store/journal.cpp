@@ -70,7 +70,16 @@ enum Key {
     // Список погашенных записей: массив пар [время, отпечаток]. Пусто — ключа
     // нет вовсе, и это подавляющее большинство записей.
     KeyVoids = 10,
+
+    // Контрольная сумма рамки: BLAKE3, первые 16 байт. Нет ключа — запись
+    // написана до этапа 17, и проверять нечего.
+    KeyFrameHash = 11,
 };
+
+// Сколько байт отпечатка кладём в сумму рамки. Шестнадцать: рамка живёт рядом
+// со своим слепком, у которого полные 32, и удваивать эту цену незачем — 128
+// бит хватит, чтобы случайная порча не совпала никогда.
+constexpr int kFrameHashBytes = 16;
 
 constexpr int kZstdLevel = 3;
 
@@ -132,6 +141,8 @@ bool decompressSnapshot(const QByteArray& packed, const QByteArray& base, qint64
 // один слепок из журнала на 16 МБ стоило 18.8 мс, пока сюда тащились все
 // двести (после правки — 2.6 мс).
 struct RawRecord {
+    // Разобралась, но сумма рамки не сошлась: запись есть, верить ей нельзя.
+    bool damaged = false;
     bool valid = false;
     Entry entry;
     QByteArray packed;
@@ -188,6 +199,7 @@ RawRecord readRecord(QCborStreamReader& reader, bool wantSnapshot) {
     qint64 plainSize = 0;
     qint64 packedSize = 0;
     qint64 source = 0;
+    QByteArray frameHash;
     QVector<EntryRef> voids;
     reader.enterContainer();
     while (reader.lastError() == QCborError::NoError && reader.hasNext()) {
@@ -256,6 +268,10 @@ RawRecord readRecord(QCborStreamReader& reader, bool wantSnapshot) {
                 seq = v;
                 break;
             }
+            case KeyFrameHash: {
+                if (!readValueAsBytes(reader, &frameHash)) return out;
+                break;
+            }
             case KeyVoids: {
                 if (!reader.isArray()) return out;
                 reader.enterContainer();
@@ -289,6 +305,18 @@ RawRecord readRecord(QCborStreamReader& reader, bool wantSnapshot) {
     out.entry = Entry(kind, time, seq, digest, source, std::move(voids));
     out.entry.layAs(codec, plainSize);
     out.entry.placeAt(0, packedSize);   // смещение проставит разбор всей ленты
+
+    // ЦЕЛОСТНОСТЬ РАМКИ. Нет ключа — запись написана до этапа 17, и проверять
+    // нечего; это единственная законная ветка «без суммы». Не сошлась — запись
+    // невалидна, и разбор обходится с ней как с оборванным хвостом: молча
+    // отдавать не тот род или не то время хуже, чем не отдать ничего.
+    if (!frameHash.isEmpty()) {
+        const QByteArray frame = ZJournal::frameBytes(out.entry);
+        const Digest sum = hashOf(std::string_view(frame.constData(), size_t(frame.size())));
+        if (frameHash != QByteArray(reinterpret_cast<const char*>(sum.bytes.data()),
+                                    kFrameHashBytes))
+            out.damaged = true;
+    }
     out.valid = true;
     return out;
 }
@@ -353,6 +381,32 @@ QByteArray ZJournal::headerBytes(const QString& clean) {
 //
 // packed — сжатый слепок, отдельно: он не свойство рамки, а её содержимое, и
 // при пересборке он другой, чем был в файле, хотя рамка та же.
+QByteArray ZJournal::frameBytes(const Entry& e) {
+    // Ширины фиксированные и порядок жёсткий: сумма обязана считаться
+    // одинаково на любой машине, поэтому ни QDataStream с его версиями, ни
+    // порядок байтов машины здесь не участвуют.
+    QByteArray out("zframe1");
+    const auto put64 = [&out](qint64 v) {
+        for (int i = 0; i < 8; ++i) out.append(char((quint64(v) >> (8 * i)) & 0xff));
+    };
+    const auto putDigest = [&out](const Digest& d) {
+        out.append(reinterpret_cast<const char*>(d.bytes.data()), qsizetype(d.bytes.size()));
+    };
+    out.append(char(int(e.kind())));
+    put64(e.time());
+    put64(e.seq());
+    put64(e.source());
+    out.append(char(int(e.codec())));
+    put64(e.plainSize());
+    putDigest(e.digest());
+    put64(e.voids().size());
+    for (const EntryRef& ref : e.voids()) {
+        put64(ref.time());
+        putDigest(ref.digest());
+    }
+    return out;
+}
+
 QByteArray ZJournal::recordBytes(const Entry& e, const QByteArray& packed) {
     const bool bodyless = !e.hasSnapshot();   // надгробие и гашение
     const bool restore = e.kind() == Kind::Restore;
@@ -364,7 +418,7 @@ QByteArray ZJournal::recordBytes(const Entry& e, const QByteArray& packed) {
     const bool hasVoids = !e.voids().isEmpty();
     QByteArray out;
     QCborStreamWriter writer(&out);
-    writer.startMap(quint64(3 + (bodyless ? 0 : 3) + (restore ? 1 : 0) + (hasSeq ? 1 : 0) +
+    writer.startMap(quint64(4 + (bodyless ? 0 : 3) + (restore ? 1 : 0) + (hasSeq ? 1 : 0) +
                             (hasVoids ? 1 : 0)));
     writer.append(KeyKind);
     writer.append(int(e.kind()));
@@ -401,6 +455,13 @@ QByteArray ZJournal::recordBytes(const Entry& e, const QByteArray& packed) {
         }
         writer.endArray();
     }
+    {
+        const QByteArray frame = frameBytes(e);
+        const Digest sum = hashOf(std::string_view(frame.constData(), size_t(frame.size())));
+        writer.append(KeyFrameHash);
+        writer.append(QByteArray(reinterpret_cast<const char*>(sum.bytes.data()),
+                                 kFrameHashBytes));
+    }
     writer.endMap();
     return out;
 }
@@ -411,6 +472,7 @@ bool ZJournal::parse(const QByteArray& blob, Want want, int wantIndex, QString* 
     QVector<QByteArray>* const packed = &packed_;
     entries_.clear();
     packed_.clear();
+    damaged_.clear();
     tailTrimmed_ = false;
     goodBytes_ = 0;
     cleanVersion_.clear();
@@ -459,6 +521,7 @@ bool ZJournal::parse(const QByteArray& blob, Want want, int wantIndex, QString* 
         if (want == Want::Chain && packed && record.entry.full() &&
             out->entries_.size() <= wantIndex)
             for (QByteArray& old : *packed) old.clear();
+        if (record.damaged) out->damaged_.append(int(out->entries_.size()));
         out->entries_.append(record.entry);
         Entry& placed = out->entries_.last();
         placed.placeAt(qint64(offset), placed.packedSize());
@@ -481,6 +544,13 @@ bool ZJournal::parse(const QByteArray& blob, Want want, int wantIndex, QString* 
 bool ZJournal::rebuildAt(int index, QByteArray* out, QString* error, bool eachLink) const {
     const QVector<Entry>& entries = entries_;
     const QVector<QByteArray>& packed = packed_;
+    // Испорченной рамке верить нельзя ни в чём — ни ей самой, ни звеньям,
+    // которые на неё опираются.
+    if (isDamaged(index)) {
+        if (error)
+            *error = QStringLiteral("record #%1: the frame checksum does not match").arg(index);
+        return false;
+    }
     int base = index;
     while (base > 0 && !entries[base].full()) --base;
     if (!entries[base].full()) {
@@ -492,6 +562,11 @@ bool ZJournal::rebuildAt(int index, QByteArray* out, QString* error, bool eachLi
     QByteArray current;
     for (int i = base; i <= index; ++i) {
         const Entry& e = entries[i];
+        if (isDamaged(i)) {
+            if (error)
+                *error = QStringLiteral("record #%1: the frame checksum does not match").arg(i);
+            return false;
+        }
         if (!e.hasSnapshot()) continue;  // надгробие цепочку не рвёт: у него слепка нет
         if (e.codec() != Codec::Zstd && e.codec() != Codec::None && e.codec() != Codec::ZstdDelta) {
             if (error)
@@ -702,7 +777,7 @@ int ZJournal::headIndex() const {
     for (int i = 0; i < entries_.size(); ++i) {
         // Гашение головой быть не может: оно ничего не говорит о содержимом, а
         // погашенная запись не в счёт вовсе.
-        if (!entries_[i].statesContent() || isVoided(i)) continue;
+        if (!entries_[i].statesContent() || isVoided(i) || isDamaged(i)) continue;
         if (best < 0 || entries_[best].isBefore(entries_[i])) best = i;
     }
     return best;
@@ -711,7 +786,7 @@ int ZJournal::headIndex() const {
 int ZJournal::lastSnapshotIndex() const {
     int best = -1;
     for (int i = 0; i < entries_.size(); ++i) {
-        if (!entries_[i].hasSnapshot() || isVoided(i)) continue;
+        if (!entries_[i].hasSnapshot() || isVoided(i) || isDamaged(i)) continue;
         if (best < 0 || entries_[best].isBefore(entries_[i])) best = i;
     }
     return best;
@@ -719,7 +794,7 @@ int ZJournal::lastSnapshotIndex() const {
 
 int ZJournal::previousSnapshotIndex(int from) const {
     int at = from - 1;
-    while (at >= 0 && (!entries_[at].hasSnapshot() || isVoided(at))) --at;
+    while (at >= 0 && (!entries_[at].hasSnapshot() || isVoided(at) || isDamaged(at))) --at;
     return at;
 }
 

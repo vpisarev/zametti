@@ -254,6 +254,7 @@ records, each a map with integer keys:
 | 8 | *(header only)* content version: which rule set the journal was cleaned by |
 | 9 | revision (a Lamport counter); no key — `0`, a record written before stage 17 |
 | 10 | the records this one voids: an array of `[time, fingerprint]` pairs; no key — it voids nothing |
+| 11 | checksum of the frame: BLAKE3, the first 16 bytes; no key — a record written before stage 17 |
 
 A snapshot is **the bytes of the note file in full**, header included. Not a
 line diff: restoring must be simple.
@@ -324,6 +325,41 @@ break "an edit beats a deletion". And a threshold is catastrophically sensitive
 to corruption: one flipped bit turns 16 into 4096 and mows down a range, while a
 damaged address matches nothing at all and is simply not applied — to hit
 another live fingerprint one would have to search 2^256.
+
+### Integrity, and what can actually corrupt a record
+
+The fingerprint (key 3) covers **the snapshot** and nothing else. The kind, the
+time, the revision, the source, the layout and the list of voided records were
+covered by nothing at all — and a record's kind is a single byte. Two flipped
+bits turn a save (1) into a tombstone (4); the snapshot is then ignored, the
+note looks deleted, and the deletion travels to the other machines as a
+perfectly legitimate one. The mass-deletion safeguard does not fire either:
+it is one note.
+
+Hence key 11, the checksum of the frame. It is computed when a record is
+written and verified when it is read, both through the same function — if the
+two sides disagreed about what is covered, the checksum would start lying.
+
+Three paths of corruption and what catches each:
+
+- **on the wire and in the cloud** — the AEAD tag of the encrypted blob
+  (XChaCha20-Poly1305, 128 bits; the chance of corruption passing unnoticed is
+  about 2⁻¹²⁸). A blob is rejected **whole**, never decrypted into "almost the
+  same thing"; the format version, the blob type, the store id and the blob name
+  go into the associated data, so a swapped or mixed-up blob is caught by the
+  same tag;
+- **on disk** — the drive's own ECC; a silent flip is a few per 10¹⁵…10¹⁶ bits
+  read, which on a half-megabyte journal is about 10⁻⁹ per read;
+- **in memory without ECC** — the dominant term, and the only one that matters
+  here, because it happens **before** encryption: the AEAD will faithfully sign
+  whatever it is given. That is exactly what key 11 is for, and it is why
+  integrity has to be checked before uploading rather than after downloading.
+
+A record whose checksum does not match **stays where it is** and is skipped: it
+is not shown, not chosen as the head, and not used as a link in a delta chain,
+while its neighbours are read as usual. One flipped bit must not cost the rest
+of the journal. (A torn tail is a different thing: there the record is simply
+not there, and the tail is cut.) `verify` reports such records as trouble.
 
 ### Generations
 

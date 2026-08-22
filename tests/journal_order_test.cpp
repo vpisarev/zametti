@@ -21,6 +21,7 @@
 
 #include <QByteArray>
 #include <QDateTime>
+#include <QFile>
 #include <QFileInfo>
 #include <string>
 #include <vector>
@@ -415,6 +416,63 @@ void checkUnnamedConcurrentEditSurvives() {
     ZT_EQ("вешки — все, кроме погашенной", std::string("0 2 3"), waypoints(j));
 }
 
+// --- 10. Целостность рамки --------------------------------------------------
+
+void checkBrokenFrameIsNotADeletion() {
+    zt::MiniStore store;
+    journal::History history(store.root());
+    const QString id = QStringLiteral("01n7frame00000");
+    QString error;
+
+    history.append(id, NewRecord::save(note("раз"), Stamp::at(kNow)), &error);
+    history.append(id, NewRecord::save(note("два"), Stamp::at(kNow + 1000)), &error);
+
+    ZJournal read;
+    ZT_TRUE("журнал читается", history.read(id, &read, &error));
+    ZT_EQ("записей две", num(2), num(read.size()));
+    ZT_EQ("голова — вторая", num(1), num(read.headIndex()));
+
+    // РОД ЗАПИСИ ЛЕЖИТ ОДНИМ БАЙТОМ. В карте он первый: заголовок карты, ключ
+    // 1, значение. Перевернуть в нём два бита — и правка (1) становится
+    // надгробием (4). Без контрольной суммы рамки это уехало бы в облако как
+    // законное удаление, а предохранитель массового удаления не сработал бы:
+    // заметка одна.
+    const qint64 kindAt = read.at(1).offset() + 2;
+    QFile file(store.journalOf(id));
+    file.open(QIODevice::ReadOnly);
+    const QByteArray blob = file.readAll();
+    file.close();
+    ZT_EQ("на этом месте действительно род «сохранение»", num(1),
+          num(int(blob[qsizetype(kindAt)])));
+
+    store.flipByte(store.journalOf(id), kindAt, 0x05);   // 1 → 4, надгробие
+
+    ZT_TRUE("журнал по-прежнему читается", history.read(id, &read, &error));
+    ZT_EQ("записей всё ещё две: порча не отрезала остаток", num(2), num(read.size()));
+    ZT_EQ("испорченная названа", num(1), num(read.damagedCount()));
+    ZT_TRUE("и это она", read.isDamaged(1));
+    ZT_EQ("голова — уцелевшая первая", num(0), num(read.headIndex()));
+    ZT_TRUE("а не надгробие", read.at(read.headIndex()).kind() == Kind::Save);
+
+    QByteArray got;
+    ZT_TRUE("испорченная запись слепка не отдаёт", !history.snapshotAt(id, 1, &got, &error));
+    ZT_TRUE("а целая отдаёт", history.snapshotAt(id, 0, &got, &error));
+    ZT_EQ("и он тот самый", str(QString::fromUtf8(note("раз"))), str(QString::fromUtf8(got)));
+}
+
+void checkUnknownVoidAddressDoesNothing() {
+    // Испорченный адрес гашения не совпадает ни с чем — и просто не
+    // применяется. Порог по ревизии на его месте выкосил бы диапазон.
+    ZJournal j(QVector<Entry>{
+        entry(Kind::Save, kNow, 1, "раз"),
+        entry(Kind::Save, kNow + 1000, 2, "два"),
+        Entry(Kind::Save, kNow + 2000, 3, digestOf("три"), 0,
+              QVector<journal::EntryRef>{journal::EntryRef(kNow + 1000, digestOf("чужой"))})});
+    ZT_TRUE("первая жива", !j.isVoided(0));
+    ZT_TRUE("вторая жива: адрес не совпал", !j.isVoided(1));
+    ZT_EQ("вешки все", std::string("0 1 2"), waypoints(j));
+}
+
 }  // namespace
 
 static int ztRunSuite(int argc, char** argv) {
@@ -434,6 +492,8 @@ static int ztRunSuite(int argc, char** argv) {
     checkVoidedRecordStaysVoidedWhenItComesBack();
     checkAmendmentHidesWithoutStatingContent();
     checkUnnamedConcurrentEditSurvives();
+    checkBrokenFrameIsNotADeletion();
+    checkUnknownVoidAddressDoesNothing();
     return zt::report("journal_order");
 }
 

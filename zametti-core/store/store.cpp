@@ -1054,6 +1054,13 @@ bool verifyStore(const QString& root, Report& report) {
             }
             ++journals;
             records += j.size();
+            // Испорченная рамка — беда, а не примечание: роду, времени и
+            // ревизии такой записи верить нельзя, и молчать об этом нельзя.
+            if (j.damagedCount() > 0)
+                report.problem(QStringLiteral("journal %1: %2 record(s) with a broken frame "
+                                              "checksum")
+                                   .arg(name)
+                                   .arg(j.damagedCount()));
             if (j.tailTrimmed())
                 report.note(QStringLiteral("journal %1: truncated tail "
                                            "(will be cut on the next append)")
