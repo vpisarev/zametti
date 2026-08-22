@@ -286,6 +286,60 @@ void checkStatsFollowUndoRedo() {
                "повтор вернул все пять слов");
 }
 
+// ОТМЕНА НЕ УВОДИТ КАРЕТКУ ВНИЗ (случай владельца: список задач, отмечаем все
+// пять щелчками мыши, потом Ctrl+Z — «курсор прыгает на строку вниз, хотя бы
+// там и не были; вниз — очень нелогично»).
+//
+// Своей позиции у команды отмены нет: Qt ставит каретку в конец возвращённого
+// куска. Переключение задачи — замена целого блока, и такой кусок кончается
+// на начале СЛЕДУЮЩЕГО блока: каретка вставала строкой ниже той, где человек
+// щёлкал. Правило владельца: та же строка или выше, но не ниже.
+void checkUndoKeepsCaretOffNextLine() {
+    const QString path = writeNote(
+        "задачи.md",
+        QStringLiteral("вступление\n\n- [ ] раз\n- [ ] два\n- [ ] три\n\nхвост заметки\n"));
+
+    zametti::NoteEditor editor;
+    editor.resize(800, 600);
+    editor.show();
+    QTest::qWait(30);
+    editor.setFocus();
+    editor.openFile(path);
+    QTest::qWait(40);
+
+    // Три щелчка по рамкам — ровно так, как это делает человек: щелчок и
+    // переключает задачу, и переставляет каретку.
+    std::vector<int> clicked;
+    for (int n = 2; n <= 4; ++n) {
+        const QTextBlock block = editor.document()->findBlockByNumber(n);
+        const QRectF rect = editor.document()->documentLayout()->blockBoundingRect(block);
+        const QPoint at(int(rect.left()) + 8,
+                        int(rect.center().y()) - editor.verticalScrollBar()->value());
+        QTest::mouseClick(editor.viewport(), Qt::LeftButton, Qt::NoModifier, at);
+        QTest::qWait(30);
+        clicked.push_back(editor.textCursor().blockNumber());
+    }
+    checkEqual(QStringLiteral("4"), QString::number(clicked.back()),
+               "третий щелчок оставил каретку на третьей задаче");
+    check(markdownOf(blocksOf(*editor.document())).find("- [x] три") != std::string::npos,
+          "и задача отмечена");
+
+    // Ctrl+Z за Ctrl+Z: каретка идёт по тем же строкам ВВЕРХ и ни разу не
+    // оказывается ниже строки, которую отменили.
+    int was = editor.textCursor().blockNumber();
+    for (int step = 0; step < 3; ++step) {
+        editor.undo();
+        QTest::qWait(30);
+        const int now = editor.textCursor().blockNumber();
+        check(now <= was, "отмена " + std::to_string(step) + ": каретка не ушла вниз (была на " +
+                              std::to_string(was) + ", стала на " + std::to_string(now) + ")");
+        was = now;
+    }
+    checkEqual(QStringLiteral("вступление\n\n- [ ] раз\n- [ ] два\n- [ ] три\n\nхвост заметки\n"),
+               QString::fromStdString(markdownOf(blocksOf(*editor.document()))),
+               "и все три отметки сняты");
+}
+
 // ПЕРЕКЛЮЧЕНИЕ ЗАМЕТКИ СЧИТАЕТ СЛОВА ЗАНОВО — ВСЕГДА (решение владельца:
 // «при переключении на заметку всегда нужно обновлять счётчик слов»).
 //
@@ -3005,6 +3059,7 @@ static int ztRunSuite(int argc, char** argv) {
 
     checkOpenDoesNotTouchFile();
     checkStatsFreshness();
+    checkUndoKeepsCaretOffNextLine();
     checkStatsRecountedOnNoteSwitch();
     checkStatsFollowUndoRedo();
     checkMetaSurvivesEditing();
