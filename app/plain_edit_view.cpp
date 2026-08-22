@@ -213,7 +213,7 @@ void PlainEditView::applyZoom(qreal zoom) {
     refreshOverlays();
 }
 
-void PlainEditView::applyContentWidth() {
+void PlainEditView::applyContentWidth(bool fromResize) {
     // ПОЛЯ ВЬЮПОРТА, как в обычном виде: на широком экране длинная строка не
     // читается — глаз теряет начало следующей. Колонка ограничена той же
     // настройкой (maxContentWidth в ширинах буквы «A») и теми же боковыми
@@ -233,10 +233,18 @@ void PlainEditView::applyContentWidth() {
     // вёрстки он берёт у вьюпорта сам и только в своём resizeEvent; дверь к
     // пересчёту одна — режим переноса, причём ТО ЖЕ значение Qt пропускает,
     // поэтому переключаем через соседнее.
-    const QPlainTextEdit::LineWrapMode wrap = lineWrapMode();
-    setLineWrapMode(wrap == QPlainTextEdit::NoWrap ? QPlainTextEdit::WidgetWidth
-                                                   : QPlainTextEdit::NoWrap);
-    setLineWrapMode(wrap);
+    // Внутри ресайза этого делать НЕЛЬЗЯ и НЕ НУЖНО: базовый обработчик идёт
+    // следом и посчитает вёрстку сам, по уже поставленным полям, а
+    // переключение режима посреди чужой перекладки — переверстка внутри
+    // переверстки.
+    if (!fromResize && !rewrapping_) {
+        rewrapping_ = true;
+        const QPlainTextEdit::LineWrapMode wrap = lineWrapMode();
+        setLineWrapMode(wrap == QPlainTextEdit::NoWrap ? QPlainTextEdit::WidgetWidth
+                                                       : QPlainTextEdit::NoWrap);
+        setLineWrapMode(wrap);
+        rewrapping_ = false;
+    }
     placeWrapMarks();
 }
 
@@ -252,7 +260,7 @@ void PlainEditView::resizeEvent(QResizeEvent* event) {
     // несколько слов», а от первого же изменения ширины окна всё чинилось само
     // (второй resize приходил уже с верными полями). Замер в живом окне:
     // вьюпорт 812, а строки свёрстаны по 1017.
-    applyContentWidth();
+    applyContentWidth(/*fromResize=*/true);
     QPlainTextEdit::resizeEvent(event);
     placeWrapMarks();
     refreshOverlays();

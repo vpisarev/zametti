@@ -133,12 +133,16 @@ private:
     void showCaret();
     QRect caretRect() const;
     void repaintOverNativeCaret(QPainter& painter);
-    void applyContentWidth();
+    // fromResize — зовёт resizeEvent: пересчитывать вёрстку не нужно, базовый
+    // обработчик идёт следом и сделает это сам.
+    void applyContentWidth(bool fromResize = false);
 
     WrapMarks* wrapMarks_ = nullptr;
     CaretBlink caretBlink_;
     qreal zoom_ = 1.0;
     int viewportMargin_ = 0;
+    // Идёт пересчёт вёрстки: защита от входа в него из его же сигналов.
+    bool rewrapping_ = false;
     // Найденное — позициями в плоском тексте; текущее — номер в этом списке.
     // Запрос помнится: замена перезапускает поиск сама.
     std::vector<int> matches_;
