@@ -290,6 +290,11 @@ palette. The foreground is transparent by default, and that means "work it out
 yourself" — the ordinary text colour, which is what a light selection needs;
 set it and the selected text takes it everywhere at once.
 
+Word and line counts catch up a few seconds after you stop typing
+(`editor.statsDelayMs`, three seconds by default) — not on the next autosave.
+While you type they are honestly shown as unknown: a full recount costs a few
+milliseconds on a large note, and doing it per keystroke would be felt.
+
 The full list of parameters with their default values is printed by
 `--dump-config` — that is where to copy them from. Configurable are the
 typeface and size (separately for text and for code), line spacing, block

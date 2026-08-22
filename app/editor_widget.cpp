@@ -178,6 +178,14 @@ NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
     // просто помечаем серию оборванной: следующая буква откроет новый шаг.
     typingPause_.setSingleShot(true);
     connect(&typingPause_, &QTimer::timeout, this, [this] { current_.runBroken = true; });
+    // ЧИСЛА ДОГОНЯЮТ ДОКУМЕНТ ЧЕРЕЗ ПАУЗУ, а не на ближайшей записи (просьба
+    // владельца). Считаем ТОЛЬКО если с прошлого счёта и правда правили: у
+    // свежих чисел обход отнял бы миллисекунды впустую.
+    statsSoon_.setSingleShot(true);
+    connect(&statsSoon_, &QTimer::timeout, this, [this] {
+        if (note_->statsFresh()) return;
+        refreshStats(documentStats(*document()));
+    });
     connectDocument();
     connect(&watcher_, &QFileSystemWatcher::fileChanged, this, &NoteEditor::onFileChanged);
     externalSettle_.setSingleShot(true);
@@ -2771,6 +2779,8 @@ void NoteEditor::onContentsChanged() {
         emit statsChanged();
     }
     autosave_.start(settings().editor().autosaveDelayMs());
+    // И пересчёт через паузу: числа догоняют документ, не дожидаясь записи.
+    statsSoon_.start(settings().editor().statsDelayMs());
 }
 
 // Правка есть — снимка пока нет. Читать документ целиком на каждую букву

@@ -302,6 +302,7 @@ QJsonObject settingsToJson(const ZSettings& a) {
     QJsonObject editor{
         {QStringLiteral("autosaveDelayMs"), a.editor().autosaveDelayMs()},
         {QStringLiteral("undoCoalesceMs"), a.editor().undoCoalesceMs()},
+        {QStringLiteral("statsDelayMs"), a.editor().statsDelayMs()},
         {QStringLiteral("undoLimit"), a.editor().undoLimit()},
         {QStringLiteral("undoRunChars"), a.editor().undoRunChars()},
         {QStringLiteral("historyMergeChars"), a.history().historyMergeChars()},
@@ -632,6 +633,7 @@ void settingsFromJson(const QJsonObject& root, ZSettings& a) {
     const QJsonObject editor = root.value(QStringLiteral("editor")).toObject();
     readInt(editor, "autosaveDelayMs", a.editor(), &ZSettings::Editor::setAutosaveDelayMs);
     readInt(editor, "undoCoalesceMs", a.editor(), &ZSettings::Editor::setUndoCoalesceMs);
+    readInt(editor, "statsDelayMs", a.editor(), &ZSettings::Editor::setStatsDelayMs);
     readInt(editor, "undoRunChars", a.editor(), &ZSettings::Editor::setUndoRunChars);
     readInt(editor, "codeTabWidth", a.editor(), &ZSettings::Editor::setCodeTabWidth);
     readInt(editor, "historyMergeChars", a.history(), &ZSettings::History::setHistoryMergeChars);
