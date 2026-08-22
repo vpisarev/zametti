@@ -101,6 +101,7 @@ add_executable(zametti-tests
     tiff_test.cpp
     import_limits_test.cpp
     exif_test.cpp
+    deleted_image_test.cpp
 
     # --- окно ---
     history_search_test.cpp

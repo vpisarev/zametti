@@ -70,6 +70,7 @@ add_library(zametti-core STATIC
     image/jxl_encoder.h         image/jxl_encoder.cpp
     image/resample.h            image/resample.cpp
     image/import.h              image/import.cpp
+    image/deleted_image.h       image/deleted_image.cpp
     image/ladder.h              image/ladder.cpp
     image/recompress.h          image/recompress.cpp
     image/image_metadata.h      image/image_metadata.cpp
