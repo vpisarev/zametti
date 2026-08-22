@@ -194,8 +194,26 @@ in order) and goes into the file as `![image 1](x.png)`. An image that is a
 whole paragraph is an object; its empty caption lives in a property and stays
 empty.
 
-**Images are not versioned.** Only the note's text goes into the history, and
-in it an image is a single link.
+**The note's history does not version images.** Only the note's text goes into
+`history/<id>.log`, and in it an image is a single link. The image's own
+version lives **in the file**, in XMP:
+
+- `zametti:Rev` — a revision, born as `1` when the image is imported and
+  growing on **any** change to the picture: a retouch, a re-compression, added
+  geotags or keywords. So `Rev == 2` means "this picture was changed", not
+  "this picture was deleted";
+- `zametti:Deleted` — a separate flag, set when the image is buried (below).
+
+The two are orthogonal on purpose. Attachments have no journals, and the file
+is the only thing that travels between machines; the bookkeeping can be lost,
+and then there is nothing to compare two copies of a picture by except the
+copies themselves. When they disagree, the larger `Rev` wins — the same rule
+for a retouch and for a burial.
+
+A file taken into the store **as it is** (the byte-exact JPEG→JXL transcode, a
+JXL we decided not to touch) carries no mark, and its absence honestly reads as
+revision `1`: the file on disk is the first version. Prising open a container we
+deliberately do not rebuild would be worse.
 
 A missing attachment does not spoil the note much: in its place a frame
 `01jd….webp: file not found` is drawn, the space for it is kept, and the
@@ -209,24 +227,41 @@ stage 15 — about the archive):
 
 So when a note is put into the archive and brought back, nothing is done to
 the attachment files: the images follow the note there and back by
-themselves, and there is nothing here to fall out of sync. A returned note
-renders its images — the files were lying in place the whole time.
+themselves, and there is nothing here to fall out of sync.
 
-Physical parting happens at exactly one moment: **"delete forever"**. For
-every attachment of the notes being deleted, a byte search for its id runs
-over all remaining `.md` (live and archived); found nowhere — the file goes
-into the OS trash together with the notes. A false positive (an id as text
-inside a code block) errs on the safe side: the file stays.
+### Burial: a deleted attachment is not erased
 
-History **deliberately takes no part** in this computation (owner's
-decision): the deletion is radical, there are two safeguards (archive →
-"delete forever" → OS trash), and a snapshot referring to something gone
-degrades into the standard "file not found" frame. Otherwise no image would
-ever leave the store — the past sees it.
+**"Delete forever"** is still the one moment when an attachment parts with the
+notes. For every attachment of the notes being deleted, a byte search for its id
+runs over all remaining `.md` (live and archived); found nowhere — the file is
+**buried**. A false positive (an id as text inside a code block) errs on the
+safe side: the file stays as it was.
 
-Hence the three categories in `verify`: a live attachment (at least one
-non-archived note refers to it), "archive-only" (an informational line, not
-an anomaly) and an orphan — mentioned in no note at all.
+Burying is not deleting. In place of the file there remains a **mini preview**:
+the same picture downscaled by the area rule (`images.maxDeletedImageSize`,
+`100` by default — that is, at most 10 000 pixels), carrying `zametti:Deleted`
+and one more revision. Erasing would have been simpler and wrong: a deletion has
+to **reach** the other machines, and "there is no file" cannot travel. To say
+"it is gone" one needs a file that says so.
+
+The preview is always JXL — we write exactly one format — so `<id>.webp` becomes
+`<id>.jxl` and the original goes into the OS trash. Burying is idempotent: an
+already marked file is not touched by a single byte, or the revision would grow
+for ever and the picture would be squeezed again on every pass. An image we
+cannot read at all (a foreign format, a broken file) falls back to the old
+behaviour — the OS trash — and the reason is said out loud.
+
+The note's history **deliberately takes no part** in the computation (owner's
+decision): the deletion is radical, there are two safeguards before it (archive
+→ "delete forever"), and a snapshot referring to a buried image shows its ghost
+instead of the photo. Otherwise no image would ever leave the store — the past
+sees it.
+
+Hence the four categories in `verify`: a live attachment (at least one
+non-archived note refers to it), "archive-only" (an informational line, not an
+anomaly), **a deleted one** (nobody refers to it, but it carries the mark — that
+is a headstone, not an orphan, and it belongs in the store) and an orphan —
+mentioned in no note at all and carrying no mark.
 
 ---
 
@@ -437,50 +472,86 @@ program start and on the command `zametti-store thin`.
 
 ## 6. Archive
 
-A put-away note DOES NOT MOVE. Its header gains `archived: yes`, while
-`parent` stays as it was — the "Archive" in the tree is a virtual folder
-assembled from the marked notes. Hence the return: remove the mark, and the
-note is home, with no memory of where it was taken from.
+A put-away note DOES NOT MOVE, and **nothing is taken out of it**. Its header
+gains one line, `archived: yes`, while `parent` stays as it was — the "Archive"
+in the tree is a virtual folder assembled from the marked notes. Hence the
+return: remove the line, and the note is home, with no memory of where it was
+taken from. Restoring does not need the journal at all — the body never left the
+file, so a note that arrived from another machine without its history comes back
+just the same.
 
-On put-away the body departs into the journal, and the file becomes a
-**stub** — the header plus the title line:
+The order is: **first the file, then the journal**. The journal entry is written
+by the ordinary rules of selection — the mark is a small change, so it voids the
+previous record rather than standing next to it — and the head of the journal
+must agree with the file. That agreement is what the whole synchronization
+stands on.
 
-```
-<!-- zametti
-parent: 01n6cqevr3wprw
-created: 2019-06-19T10:54:29+03:00
-modified: 2026-07-30T22:26:24+03:00
-archived: yes
--->
+Archiving **parses nothing** (owner's rule). A note may be broken by anything —
+an edit in a foreign editor, a bad disk, a mistake of ours; as long as the
+header is in place, the program is obliged to put it away. That is also why
+archiving cannot be reduced to the ordinary rewrite path: that one parses.
 
-# Photo gear
-```
+### Why it used to be different
 
-The title in the stub is not decoration: through it the note is visible in
-the list and found by name search, and the file remains legitimate markdown.
-The body is no longer in the file — it is in `history/<id>.log`, and opening
-an archived note shows the head of the journal in history mode: reading is
-possible, editing is not.
+Until stage 17 archiving **cut the body out** into the journal, leaving a stub
+of the header plus the title line. The saving on disk was considerable, and it
+was paid for four times over, silently every time:
 
-**The put-away order is rigid, and crash-resistance grows out of it:**
+- along with the body, the **links to attachments** left the file — and it is by
+  those links that we count what should go when a note is deleted for ever. The
+  images of archived notes were therefore never deleted at all;
+- an image held **only** by an archived note was taken away by the deletion of a
+  *neighbouring* one: a stub did not "hold" it;
+- search across the store stopped seeing archived bodies — they were not in the
+  files;
+- a person leaving history mode got the stub, fully editable, and the first save
+  put the stub into the journal on top of the body.
 
-1. first the journal — the body goes into the history by the common
-   selection rules (equal to the head — no record; a near-duplicate replaces
-   the last one);
-2. then the stub — the file is replaced atomically.
+A store that lived through those builds is **unfolded on opening**: the body
+comes back from the head of the journal into the file, the mark stays. The
+header is taken from the file (it holds `parent`, `sort` and everything a person
+could have changed while the note lay in the archive), `modified` is not
+touched, nothing is written into the journal. The stub detector is byte-based
+and conservative — a body counts as a stub only if, after dropping empty lines,
+at most one non-empty line is left and it starts with `#`. In doubt, don't
+touch: a mistake here means a damaged note.
 
-A crash between the steps leaves the full note and a journal record: a retry
-is idempotent, and losing the body is impossible by construction. The
-reverse order would open a window in which the body exists nowhere.
+### An archived note is shown, not edited
 
-**Delete forever** is the only operation that takes the journal away: an
-archived note's body lives there and nowhere else, and keeping it would mean
-not deleting the note but hiding it. An ordinary note's journal always
-survives deletion.
+It opens in an ordinary view, as WYSIWYG or as source — with the body, the
+images and everything else. Two things differ: it cannot be edited until it is
+brought back, and the field is tinted with the same grey as history
+(`colors.historyBackground`). There is no caret in a view, and that is all a
+person needs to be told — no banners and no warnings (owner's decision; the
+"About" window works the same way).
 
-**A consequence, named out loud:** search across all notes (Ctrl+Shift+F)
-does not see archived bodies — they are not in the files. Titles are
-searched, per-note history search works.
+Search across the store finds archived bodies now that they are in the files.
+Such hits are **marked** and go **after** all the live ones: one searches among
+what one uses, and the put-away is an answer to "wasn't it somewhere else?".
+
+### Delete forever
+
+The path is one and the same for archived and live notes: a tombstone into the
+journal, the file into the OS trash, the subtree if it is a folder, and the
+exclusive attachments buried (see §4).
+
+**The journal survives, always.** It is the only carrier of the fact of the
+deletion: the note is gone, the file is gone, and the only thing that can tell
+the other machines "it is no more" is the tombstone. Taking the journal away
+would not delete the note but hide it locally — the first sync would bring it
+back from any machine where it is still whole.
+
+What the journal keeps is the **last snapshot and the tombstone**: a full
+history after two deliberate decisions in a row (into the archive, then delete
+from the archive) is dead weight, and the last state is enough to bring the note
+back. The tombstone names the voided records, so the other machines' copies of
+the journal lose them too rather than growing back through the merge.
+
+Bringing it back is `zametti-store resurrect <id>`: the snapshot is written into
+the file as it is, and since it carries `archived: yes` — the note was deleted
+*from the archive* — the note returns **into the archive**. Exactly one of the
+two decisions is undone; whether to take it out of the archive is for the person
+to decide. Its images are the buried ones, downscaled.
 
 **The old trash bin** (`role: trash`, notes inside it with `trash-parent`)
 is migrated once at the first start: `parent` := the previous parent,
@@ -551,16 +622,20 @@ zametti-store import --root <dir> --from <src>    import a tree of .md
 zametti-store verify --root <dir>                 full check
 zametti-store thin --root <dir> [--dry-run]       history thinning
 zametti-store history compress <id | path.md>    clean one journal (test hatch)
+zametti-store recompress --root <dir> --id <id|all>   re-encode attachments
+zametti-store resurrect --root <dir> --id <id>        bring a deleted note back
 ```
 
 `verify` checks: the names of files and attachments, the headers, the
 absence of `serialize(parse(x))` drift, `parent` links and cycles, the
 existence of `![…]`-link targets, the bodies of folder notes, and across
 the journals — record framing, the format version, the reconstruction and
-the hash of **every** snapshot. It divides attachments into three categories
-(live, "archive-only", orphan) and never deletes them: files leave by one
-single path — "delete forever". `verify` does not edit journals by a single
-byte: history cleaning is per-note and lazy.
+the hash of **every** snapshot. It divides attachments into four categories
+(live, "archive-only", deleted — a mini preview carrying the mark — and orphan)
+and never touches them: an attachment leaves by one single path, "delete
+forever", and even then it is buried rather than erased. `verify` does not edit
+journals by a single byte: history cleaning is per-note and lazy. A record whose
+frame checksum does not match is reported as trouble.
 
 Import **never writes into the source**: the new store is created alongside,
 the old tree remains the reference.
