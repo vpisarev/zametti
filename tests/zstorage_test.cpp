@@ -334,6 +334,78 @@ void checkAttachmentBurial() {
     ZT_TRUE("и не изменился ни байтом", again.readAll() == was);
 }
 
+// КАРТИНКА, ПОДЕЛЁННАЯ ДВУМЯ ЗАМЕТКАМИ, переживает удаление одной из них — и
+// это ровно тот случай, который ломался, пока архивация срезала тело: у
+// архивной заметки в файле не оставалось ссылок, она картинку «не держала», и
+// удаление СОСЕДНЕЙ уносило снимок, который на самом деле был нужен.
+void checkSharedAttachmentSurvives() {
+    QTemporaryDir home;
+    const QString root = home.path() + QStringLiteral("/store");
+    QString error;
+    ZT_TRUE("хранилище заведено", zametti::store::initStore(root, &error));
+    ZStorage storage(root);
+    storage.reload();
+
+    QImage picture(400, 300, QImage::Format_RGB32);
+    for (int y = 0; y < picture.height(); ++y)
+        for (int x = 0; x < picture.width(); ++x)
+            picture.setPixel(x, y, qRgb((x * 255) / 399, (y * 255) / 299, (x ^ y) & 0xff));
+    zametti::EncodeOptions options;
+    options.quality = 90;
+    options.effort = 3;
+    const QByteArray jxl = zametti::encodeJxl(picture, options, {}, &error);
+    const QString attachment = QStringLiteral("01jd7f0kq2m8xa.jxl");
+    {
+        QFile f(QDir(root).filePath(attachment));
+        ZT_TRUE("вложение записано", f.open(QIODevice::WriteOnly));
+        f.write(jxl);
+    }
+    const QByteArray was = jxl;
+
+    const auto noteWithPicture = [&](const QString& title) {
+        const QString id = storage.createNote(QString(), false, &error);
+        QFile f(storage.pathOf(id));
+        f.open(QIODevice::Append);
+        f.write(("# " + title + "\n\n![вид](01jd7f0kq2m8xa.jxl)\n").toUtf8());
+        f.close();
+        storage.refreshNote(id);
+        return id;
+    };
+    const QString a = noteWithPicture(QStringLiteral("Заметка A"));
+    const QString b = noteWithPicture(QStringLiteral("Заметка B"));
+    ZT_TRUE("обе заметки заведены", !a.isEmpty() && !b.isEmpty());
+
+    // A уходит в архив, потом удаляется насовсем.
+    QStringList failed;
+    ZT_TRUE("A в архиве", storage.archive(a, rules(), &failed) && failed.isEmpty());
+    zametti::ImportLimits limits;
+    limits.maxSize = 100;
+    limits.quality = 90;
+    ZT_TRUE("A удалена насовсем", storage.remove(a, limits, &error));
+
+    // КАРТИНКА ЦЕЛА И НЕ ПОХОРОНЕНА: её держит живая B.
+    const QString path = QDir(root).filePath(attachment);
+    ZT_TRUE("файл вложения на месте", QFile::exists(path));
+    QFile f(path);
+    ZT_TRUE("и читается", f.open(QIODevice::ReadOnly));
+    const QByteArray now = f.readAll();
+    ZT_TRUE("и не тронут ни байтом: она нужна заметке B", now == was);
+    const zametti::ImageMeta meta =
+        zametti::readImageMeta(std::string_view(now.constData(), size_t(now.size())));
+    ZT_TRUE("и не помечена удалённой", !zametti::xmpZamettiDeleted(meta.xmp));
+
+    // А когда уйдёт и B — вот тогда похороны.
+    ZT_TRUE("B в архиве", storage.archive(b, rules(), &failed) && failed.isEmpty());
+    ZT_TRUE("B удалена насовсем", storage.remove(b, limits, &error));
+    QFile after(path);
+    ZT_TRUE("файл всё ещё на месте", after.open(QIODevice::ReadOnly));
+    const QByteArray buried = after.readAll();
+    const zametti::ImageMeta grave =
+        zametti::readImageMeta(std::string_view(buried.constData(), size_t(buried.size())));
+    ZT_TRUE("теперь она похоронена", zametti::xmpZamettiDeleted(grave.xmp));
+    ZT_TRUE("и ужалась", buried.size() < was.size());
+}
+
 void checkSignals() {
     QTemporaryDir home;
     const QString root = home.path() + QStringLiteral("/store");
@@ -404,6 +476,7 @@ TEST(ZStorage, All) {
     checkOperations();
     checkDeleteCascade();
     checkAttachmentBurial();
+    checkSharedAttachmentSurvives();
     checkSignals();
     EXPECT_EQ(0, zt::freshFailures());
 }
