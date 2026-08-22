@@ -403,28 +403,49 @@ bool ZStorage::remove(const QString& id, QString* error) {
         if (error != nullptr) *error = QStringLiteral("no such note");
         return false;
     }
-    // КАРТИНКИ СЧИТАЕМ ДО УДАЛЕНИЯ: чтобы узнать, какие были в заметке, надо
-    // прочитать её саму, а через мгновение файла не будет.
-    const QStringList doomedFiles = store::attachmentsLeavingWith(root_, {id});
-    // У АРХИВНОЙ ЗАМЕТКИ ЖУРНАЛ УХОДИТ ВМЕСТЕ С НЕЙ: тело архивной живёт в
-    // журнале и больше нигде, файл — стаб в одну строку. Оставить журнал
-    // значило бы не удалить заметку, а спрятать её. У прочих остаётся
-    // надгробие («сначала надгробие, потом файл» — правило хранилища).
+    // ПАПКА УНОСИТ ПОДДЕРЕВО. Прежде уносило только её файл, а дети оставались с
+    // оборванным parent — и при следующем открытии уезжали в бюро находок.
+    // Дети идут первыми: если что-то не заладится, осиротевших не остаётся.
+    QStringList doomed;
+    if (isFolder(id)) doomed = descendantsOf(id);
+    doomed << id;
+
+    // КАРТИНКИ СЧИТАЕМ ДО УДАЛЕНИЯ и СРАЗУ НА ВЕСЬ ПАКЕТ: чтобы узнать, какие
+    // были в заметках, надо прочитать их самих, а через мгновение файлов не
+    // будет. Пакетом — потому что картинка, поделённая двумя удаляемыми
+    // заметками, при поштучном счёте не ушла бы никогда: каждая «держалась» бы
+    // другой.
+    const QStringList doomedFiles = store::attachmentsLeavingWith(root_, doomed);
+
+    // ПУТЬ УДАЛЕНИЯ ОДИН для архивных и живых: надгробие в журнал, файл в
+    // мусорку ОС. Прежде у архивной журнал уносился вместе с ней — тело жило
+    // только там, и оставить его значило бы спрятать заметку, а не удалить. С
+    // архивом-пометкой тело лежит в файле, и журнал обязан пережить удаление:
+    // он единственный носитель самого факта, и без него первый же синк привёз
+    // бы заметку обратно с другого устройства.
+    bool ok = true;
     QString why;
-    const bool gone = inArchive(id) ? store::forgetNote(root_, id, &why)
-                                    : store::deleteNoteFile(root_, id, &why);
-    if (!gone) {
+    for (const QString& victim : std::as_const(doomed)) {
+        QString one;
+        if (!store::deleteNoteFile(root_, victim, &one)) {
+            ok = false;
+            if (why.isEmpty()) why = one;
+            continue;
+        }
+        if (!one.isEmpty()) std::fprintf(stderr, "%s\n", one.toUtf8().constData());
+    }
+    if (!ok) {
         if (error != nullptr) *error = why;
         return false;
     }
-    if (!why.isEmpty()) std::fprintf(stderr, "%s\n", why.toUtf8().constData());
+
     // Картинки — следом, в ту же мусорку ОС.
     for (const QString& picture : doomedFiles) {
         QString pictureError;
         if (!store::deleteAttachmentFile(root_, picture, &pictureError))
             std::fprintf(stderr, "%s\n", pictureError.toUtf8().constData());
     }
-    notes_.remove(id);
+    for (const QString& victim : std::as_const(doomed)) notes_.remove(victim);
     announce(true, id);
     return true;
 }

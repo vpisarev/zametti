@@ -8,6 +8,7 @@
 
 #include "zstorage.h"
 #include "store.h"
+#include "journal.h"
 #include "test_util.h"
 
 #include <QCoreApplication>
@@ -197,6 +198,46 @@ void checkOperations() {
 // СИГНАЛЫ КАТАЛОГА: структурная новость — одна на операцию, какой бы длинной
 // она ни была (архив папки с детьми — одна перестройка дерева, а не по числу
 // перезаписей); правка на месте — noteChanged без catalogChanged.
+// УДАЛЕНИЕ ПАПКИ УНОСИТ ПОДДЕРЕВО. Прежде уносило только её файл, а дети
+// оставались с оборванным parent — и уезжали в бюро находок при следующем
+// открытии. Заодно: путь удаления один для архивных и живых, журнал у всех
+// переживает удаление надгробием.
+void checkDeleteCascade() {
+    QTemporaryDir home;
+    const QString root = home.path() + QStringLiteral("/store");
+    QString error;
+    ZT_TRUE("хранилище заведено", zametti::store::initStore(root, &error));
+    ZStorage storage(root);
+    storage.reload();
+
+    const QString folder = storage.createNote(QString(), true, &error);
+    const QString child = storage.createNote(folder, false, &error);
+    const QString grand = storage.createNote(child, false, &error);
+    ZT_TRUE("дерево создано", !folder.isEmpty() && !child.isEmpty() && !grand.isEmpty());
+
+    // Внук уходит в архив — путь удаления обязан быть одним для обоих.
+    QStringList failed;
+    ZT_TRUE("внук в архиве", storage.archive(grand, rules(), &failed) && failed.isEmpty());
+
+    const QString childLog = zametti::journal::History(root).pathFor(child);
+    ZT_TRUE("удаление папки прошло", storage.remove(folder, &error));
+
+    ZT_TRUE("папки нет в каталоге", !storage.has(folder));
+    ZT_TRUE("ребёнка тоже", !storage.has(child));
+    ZT_TRUE("и внука", !storage.has(grand));
+    ZT_TRUE("файла ребёнка нет", !QFile::exists(storage.pathOf(child)));
+    ZT_TRUE("файла внука нет", !QFile::exists(storage.pathOf(grand)));
+
+    // ЖУРНАЛ ПЕРЕЖИВАЕТ УДАЛЕНИЕ — и у архивного внука тоже: надгробие обязано
+    // доехать до других устройств, иначе синк привезёт заметку обратно.
+    ZT_TRUE("журнал ребёнка на месте", QFile::exists(childLog));
+    zametti::journal::ZJournal read;
+    zametti::journal::History history(root);
+    ZT_TRUE("журнал внука читается", history.read(grand, &read, &error));
+    ZT_TRUE("и голова у него — надгробие",
+            !read.isEmpty() && read.at(read.headIndex()).kind() == zametti::journal::Kind::Tombstone);
+}
+
 void checkSignals() {
     QTemporaryDir home;
     const QString root = home.path() + QStringLiteral("/store");
@@ -265,6 +306,7 @@ void checkSignals() {
 TEST(ZStorage, All) {
     checkCatalog();
     checkOperations();
+    checkDeleteCascade();
     checkSignals();
     EXPECT_EQ(0, zt::freshFailures());
 }

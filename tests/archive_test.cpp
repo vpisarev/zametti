@@ -13,6 +13,7 @@
 // голова журнала равна файлу, а возврат не зависит от журнала вовсе.
 
 #include "archive.h"
+#include "store.h"
 #include "pieces.h"
 #include "lost_found.h"
 #include "journal.h"
@@ -31,7 +32,6 @@
 #include <string>
 
 using zametti::store::archiveNote;
-using zametti::store::forgetNote;
 using zametti::store::isArchivedMeta;
 using zametti::store::migrateTrashToArchive;
 using zametti::store::restoreNote;
@@ -230,18 +230,52 @@ void checkRestoreWithoutJournal() {
 void checkForget() {
     freshStore();
     const QString id = QStringLiteral("01ee00000000ee");
-    write(id, kBody);
     QString error;
+    // История побогаче: четыре разных состояния, чтобы было чему схлопываться.
+    zametti::journal::History history(g_root);
+    for (int i = 0; i < 4; ++i) {
+        QByteArray version(kBody);
+        version += "\nверсия " + QByteArray::number(i) + " " + QByteArray(300, 'z') + "\n";
+        write(id, std::string(version.constData(), size_t(version.size())));
+        ZT_TRUE("версия записана",
+                history.append(id, zametti::journal::NewRecord::save(version), &error));
+    }
+    ZT_TRUE("вешек четыре", waypoints(id) == 4);
     ZT_TRUE("архивация прошла", archiveNote(g_root, id, rules(), &error));
     const QString log = zametti::journal::History(g_root).pathFor(id);
     ZT_TRUE("журнал есть", QFile::exists(log));
+    const qint64 fatLog = QFileInfo(log).size();
 
-    ZT_TRUE("забыли насовсем", forgetNote(g_root, id, &error));
+    ZT_TRUE("удалили насовсем", zametti::store::deleteNoteFile(g_root, id, &error));
     ZT_TRUE("файла нет", !QFile::exists(notePath(id)));
-    // ЖУРНАЛ УЕХАЛ ВМЕСТЕ С ЗАМЕТКОЙ — и только здесь. У архивной тело живёт в
-    // журнале и больше нигде: оставить его значило бы не удалить заметку, а
-    // спрятать.
-    ZT_TRUE("и журнала тоже нет", !QFile::exists(log));
+
+    // ЖУРНАЛ ПЕРЕЖИВАЕТ УДАЛЕНИЕ ВСЕГДА. Он единственный носитель самого факта:
+    // заметки нет, файла нет, и сказать другим устройствам «её больше нет»
+    // может только надгробие. Снести журнал значило бы не удалить заметку, а
+    // спрятать её локально — первый же синк привёз бы её обратно.
+    ZT_TRUE("а журнал на месте", QFile::exists(log));
+
+    zametti::journal::ZJournal read;
+    ZT_TRUE("журнал читается", zametti::journal::History(g_root).read(id, &read, &error));
+    // ОСТАЛОСЬ ДВОЕ: последний слепок и надгробие. Полная история после двух
+    // осознанных решений человека (в архив, потом удалить из архива) — мёртвый
+    // груз; поднять заметку хватает и последнего состояния.
+    ZT_EQ("в журнале две записи", num(2), num(read.size()));
+    ZT_TRUE("голова — надгробие",
+            read.at(read.headIndex()).kind() == zametti::journal::Kind::Tombstone);
+    ZT_TRUE("и файл ужался: " + std::to_string(QFileInfo(log).size()) + " против " +
+                std::to_string(fatLog),
+            QFileInfo(log).size() < fatLog);
+
+    // ПО ПОСЛЕДНЕМУ СЛЕПКУ ЗАМЕТКУ МОЖНО ПОДНЯТЬ — на этом стоит resurrect.
+    QByteArray body;
+    ZT_TRUE("последний слепок достаётся",
+            zametti::journal::History(g_root).snapshotAt(id, read.lastSnapshotIndex(), &body,
+                                                         &error));
+    ZT_TRUE("и в нём тело заметки",
+            QString::fromUtf8(body).contains(QStringLiteral("Длинный текст")));
+    ZT_TRUE("и пометка архива, из которого её удаляли",
+            QString::fromUtf8(body).contains(QStringLiteral("archived: yes")));
 }
 
 // --- разворачивание стабов прошлых сборок -----------------------------------

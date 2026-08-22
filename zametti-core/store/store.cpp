@@ -1189,10 +1189,30 @@ bool deleteNoteFile(const QString& root, const QString& noteId, QString* error) 
         return false;
     }
 
+    // НАДГРОБИЕ — ПОСЛЕДНЯЯ ЗАПИСЬ ЖУРНАЛА, И ЖУРНАЛ ОСТАЁТСЯ. Он единственный
+    // носитель самого факта: заметки нет, файла нет, и сказать другим
+    // устройствам «её больше нет» может только надгробие. Снести журнал значило
+    // бы не удалить заметку, а спрятать её локально — первый же синк привёз бы
+    // её обратно с любой машины, где она ещё цела.
+    //
+    // Но полная история после ДВУХ осознанных решений человека (в архив, потом
+    // удалить из архива) — мёртвый груз, поэтому надгробие гасит всё, кроме
+    // последнего слепка. Его хватает, чтобы поднять заметку (zametti-store
+    // resurrect), и гашение адресное — значит и на других устройствах журнал
+    // похудеет так же, а не разрастётся обратно объединением.
     journal::History history(root);
     QString historyError;
+    journal::ZJournal read;
+    QVector<journal::EntryRef> voids;
+    if (history.read(noteId, &read, &historyError)) {
+        const int keep = read.lastSnapshotIndex();
+        for (int i = 0; i < read.size(); ++i) {
+            if (i == keep || read.isVoided(i) || read.isDamaged(i)) continue;
+            voids.append(journal::EntryRef(read.at(i).time(), read.at(i).digest()));
+        }
+    }
     const bool marked =
-        history.append(noteId, journal::NewRecord::tombstone(), &historyError);
+        history.append(noteId, journal::NewRecord::tombstone().voiding(voids), &historyError);
 
     if (!QFile::moveToTrash(file) && !QFile::remove(file)) {
         if (error) *error = QStringLiteral("cannot delete note file %1").arg(noteId);
