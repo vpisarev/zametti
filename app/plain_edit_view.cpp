@@ -76,6 +76,30 @@ PlainEditView::PlainEditView(QWidget* parent) : QPlainTextEdit(parent) {
     connect(verticalScrollBar(), &QScrollBar::valueChanged, this,
             [this] { overlaysSoon_.start(); });
     connect(document(), &QTextDocument::contentsChanged, this, [this] { overlaysSoon_.start(); });
+    // ПОСЛЕ ПРАВКИ ПОИСК ПОВТОРЯЕТСЯ ЦЕЛИКОМ (решение владельца: «смещения
+    // изменились и количество изменилось»). Находки — числа в тексте, и всякая
+    // правка их обесценивает: подсветка оставалась стоять там, где текста уже
+    // нет, а счётчик показывал старое число.
+    //
+    // Пока не пересчитали — подсветки нет вовсе: врать хуже, чем молчать.
+    // Сам пересчёт через короткую паузу, а не на каждую букву: он читает весь
+    // текст, и на заметке в мегабайт это была бы работа на каждое нажатие.
+    connect(document(), &QTextDocument::contentsChange, this,
+            [this](int, int removed, int added) {
+                if (removed == 0 && added == 0) return;   // правка формата
+                if (needleText_.isEmpty()) return;
+                matches_.clear();
+                current_ = -1;
+                overlaysSoon_.start();
+                searchSoon_.start();
+            });
+    searchSoon_.setSingleShot(true);
+    searchSoon_.setInterval(300);
+    connect(&searchSoon_, &QTimer::timeout, this, [this] {
+        if (needleText_.isEmpty()) return;
+        findMatches(needleText_, caseSensitive_);
+        emit matchesChanged();   // полосе поиска пора показать новое число
+    });
 
     // Поле с точками перенесённых строк — перерисовывается вслед за видом.
     wrapMarks_ = new WrapMarks(this);
@@ -547,6 +571,7 @@ void PlainEditView::stepMatch(int direction) {
 }
 
 void PlainEditView::clearMatches() {
+    searchSoon_.stop();
     matches_.clear();
     current_ = -1;
     needle_ = 0;

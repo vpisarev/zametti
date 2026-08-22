@@ -1793,6 +1793,28 @@ int main(int argc, char** argv) {
             updateInNoteSearch(findBar.query());
     });
 
+    // СМЕНА РЕЖИМА ПРИ ОТКРЫТОМ ПОИСКЕ — ТОЖЕ ПОИСК ЗАНОВО (решение владельца).
+    // Искомое то же, а текст другой: в исходнике видна разметка, которой в
+    // вёрстке нет вовсе, — значит и число вхождений, и их места другие. Тем же
+    // путём, что смена заметки: одна лямбда на оба повода.
+    const auto researchOnModeChange = [&](bool) {
+        if (findBar.isHidden()) return;
+        if (findBar.mode() == zametti::FindBar::Mode::InNote ||
+            findBar.mode() == zametti::FindBar::Mode::Replace)
+            updateInNoteSearch(findBar.query());
+    };
+    QObject::connect(&markdown, &zametti::MarkdownController::modeChanged, &window,
+                     researchOnModeChange);
+    QObject::connect(&history, &zametti::HistoryController::modeChanged, &window,
+                     researchOnModeChange);
+
+    // Найденное пересчиталось само после правки исходника — полосе пора
+    // показать новое число (иначе счётчик остался бы от прошлого поиска).
+    QObject::connect(&markdownView, &zametti::MarkdownEditView::matchesChanged, &window,
+                     [&] { showCounter(); });
+    QObject::connect(&settingsView, &zametti::JsonEditView::matchesChanged, &window,
+                     [&] { showCounter(); });
+
     QObject::connect(&findBar, &zametti::FindBar::queryChanged, &window,
                      [&](const QString& text) {
         if (findBar.mode() == zametti::FindBar::Mode::History) {
