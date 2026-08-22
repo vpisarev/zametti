@@ -59,6 +59,12 @@ enum Key {
     // пары Magic/Kind, и хватит: каждая такая пара это ловушка для того, кто
     // добавит поле следующим.
     KeyClean = 8,
+
+    // Ревизия записи (счётчик Лампорта). Нового номера формата не требует:
+    // читатель незнакомые ключи пропускает молча — обещание с этапа 7, — и
+    // старая сборка такой журнал по-прежнему прочтёт, просто не увидит
+    // ревизий.
+    KeySeq = 9,
 };
 
 constexpr int kZstdLevel = 3;
@@ -74,13 +80,22 @@ constexpr int kZstdLevel = 3;
 QByteArray recordBytes(const Entry& e, const QByteArray& packed) {
     const bool tombstone = e.kind == Kind::Tombstone;
     const bool restore = e.kind == Kind::Restore;
+    // Нулевую ревизию не пишем вовсе: «нет ключа = 0» — уже принятый в этом
+    // файле уговор (так же читается отсутствующий KeyClean). Плата за это не
+    // два байта, а обещание идемпотентности: журнал, написанный до этапа 17,
+    // после перекодировки прореживанием остаётся байт в байт прежним.
+    const bool hasSeq = e.seq != 0;
     QByteArray out;
     QCborStreamWriter writer(&out);
-    writer.startMap(quint64(3 + (tombstone ? 0 : 3) + (restore ? 1 : 0)));
+    writer.startMap(quint64(3 + (tombstone ? 0 : 3) + (restore ? 1 : 0) + (hasSeq ? 1 : 0)));
     writer.append(KeyKind);
     writer.append(int(e.kind));
     writer.append(KeyTime);
     writer.append(e.time);
+    if (hasSeq) {
+        writer.append(KeySeq);
+        writer.append(e.seq);
+    }
     writer.append(KeyDigest);
     writer.append(QByteArray(reinterpret_cast<const char*>(e.digest.bytes.data()),
                              qsizetype(e.digest.bytes.size())));
@@ -264,6 +279,12 @@ RawRecord readRecord(QCborStreamReader& reader, bool wantSnapshot) {
                 qint64 v = 0;
                 if (!readValueAsInt(reader, &v)) return out;
                 out.entry.source = v;
+                break;
+            }
+            case KeySeq: {
+                qint64 v = 0;
+                if (!readValueAsInt(reader, &v)) return out;
+                out.entry.seq = v;
                 break;
             }
             case KeyClean:
@@ -600,9 +621,24 @@ bool History::appendLocked(const QString& path, Kind kind, qint64 time,
         // заметка приезжала бы на чистку зря.
         tail = headerBytesFor(QString::fromLatin1(kCleanVersion));
     }
+    // РЕВИЗИЯ: на единицу больше всех известных этому журналу. Считается
+    // здесь, а не у вызывающего: ревизия — свойство журнала, и ни архив, ни
+    // удаление, ни редактор про неё знать не должны.
+    //
+    // Края закрыты сами собой: пустой журнал даёт 1; рваный хвост уже отрезан
+    // выше, и запись, которой не существовало, свой номер не резервирует;
+    // приехавший с чужого устройства журнал с большими номерами просто
+    // продолжается с них; дыры в нумерации безразличны. Надгробие участвует в
+    // максимуме наравне с прочими — иначе правка поверх удаления получила бы
+    // номер МЕНЬШЕ надгробия и проиграла бы ему, а правка обязана побеждать.
+    qint64 seq = 0;
+    for (const Entry& e : journal.entries) seq = qMax(seq, e.seq);
+    ++seq;
+
     Entry frame;
     frame.kind = kind;
     frame.time = time;
+    frame.seq = seq;
     frame.digest = digest;
     frame.codec = codec;
     frame.plainSize = snapshot.size();

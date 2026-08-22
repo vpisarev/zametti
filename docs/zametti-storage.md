@@ -252,6 +252,7 @@ records, each a map with integer keys:
 | 6 | the snapshot itself, compressed |
 | 7 | for `restore` — the time of the source record |
 | 8 | *(header only)* content version: which rule set the journal was cleaned by |
+| 9 | revision (a Lamport counter); no key — `0`, a record written before stage 17 |
 
 A snapshot is **the bytes of the note file in full**, header included. Not a
 line diff: restoring must be simple.
@@ -263,6 +264,29 @@ line diff: restoring must be simple.
 - `restore` — a person brought an old snapshot back;
 - `tombstone` — the note was deleted. It has no snapshot of its own: the
   previous record remains final.
+
+### The revision
+
+Key 9 is the record's **revision**: a Lamport counter the journal assigns
+itself on append — `seq = max(all revisions it knows) + 1`. Nobody outside
+passes it in: the revision is a property of the journal, not of the intention
+of whoever writes.
+
+It exists so that the order of records stops depending on clocks. A machine
+whose time ran ahead leaves a record "from the future", and by time alone that
+record would stay the head until the date it claims; by revision it is beaten
+by the first causally later edit made anywhere. A tombstone gets a revision
+like any other record — that is exactly what makes an edit win over a deletion
+that happened before it.
+
+**No key at all means 0** — a record written before stage 17. Such records
+compare among themselves by time, as they always did, and the first new edit
+legitimately becomes the head. A zero revision is not written into the file, so
+an old journal that goes through thinning comes out byte for byte the same.
+
+Adding the key did not raise the format version: an unknown key is skipped
+silently (the promise from stage 7), so an older build still reads a journal
+written by a newer one — it just does not see the revisions.
 
 ### Generations
 
