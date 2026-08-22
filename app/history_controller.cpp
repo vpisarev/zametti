@@ -10,16 +10,8 @@ namespace zametti {
 
 HistoryController::HistoryController(NoteEditor& editor, HistoryView& view, QObject* parent)
     : QObject(parent), editor_(editor), view_(view), list_(view.list()) {
-    // Редактор просит в историю: дно цепочки отмены и архивная заметка.
+    // Редактор просит в историю: дно цепочки отмены.
     connect(&editor_, &NoteEditor::historyRequested, this, [this] { enter(); });
-    connect(&editor_, &NoteEditor::archivedNoteOpened, this, [this] {
-        if (!enter()) {
-            // Журнала нет вовсе — показать нечего, но и молчать нельзя: человек
-            // видит одну строку вместо заметки и вправе знать, почему.
-            std::fprintf(stderr, "archived note without history: %s\n",
-                         editor_.filePath().toUtf8().constData());
-        }
-    });
     // Открытие другой заметки выводит из режима. Без этого вид остался бы
     // показывать слепок ПРЕЖНЕЙ заметки при открытой новой (найдено пробником
     // этапа 10: после ухода и возврата режим оставался включён).

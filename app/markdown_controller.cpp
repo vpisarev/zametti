@@ -78,6 +78,10 @@ bool MarkdownController::enter() {
     // каждой записи: в исходнике ей делать нечего — она мигала бы под руками.
     view_.showSource(note.toMarkdownText(), caret);
     note.setSourceEditing(true);
+    // АРХИВНУЮ ПОКАЗЫВАЕМ, НО НЕ ПРАВИМ. Посмотреть её markdown человек вправе;
+    // править — нет, пока не вернёт из архива. Флаг ставится здесь, а не в
+    // виде: только контроллер знает, чья заметка сейчас на экране.
+    view_.setReadOnly(editor_.isArchivedNote());
 
     active_ = true;
     emit modeChanged(true);
@@ -86,6 +90,9 @@ bool MarkdownController::enter() {
 }
 
 int MarkdownController::apply() {
+    // Архивную не накладываем вовсе: править её нельзя, а значит и наложению
+    // взяться неоткуда — вид её только показывал.
+    if (editor_.isArchivedNote()) return 0;
     ZDocument& note = editor_.note();
     // ФЛАГ СНИМАЕТСЯ ДО НАЛОЖЕНИЯ: пока он стоит, заметка правку не принимает
     // вовсе — тем он и полезен. Не приняли текст — ставим обратно.
@@ -136,6 +143,7 @@ void MarkdownController::refill() {
     const SourcePos caret = note.sourcePosOf(editor_.textCursor());
     view_.showSource(note.toMarkdownText(), caret);
     note.setSourceEditing(true);
+    view_.setReadOnly(editor_.isArchivedNote());
     view_.setFocus();
 }
 

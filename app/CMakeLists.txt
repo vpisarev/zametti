@@ -55,9 +55,11 @@ add_library(zametti-ui STATIC
     history_panel.h
     history_view.h
     history_controller.h
+    archive_view.h
     history_panel.cpp
     history_view.cpp
     history_controller.cpp
+    archive_view.cpp
     note_tree.h
     note_tree.cpp
     note_list.h

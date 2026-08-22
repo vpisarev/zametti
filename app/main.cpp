@@ -12,6 +12,7 @@
 #include "markdown_controller.h"
 #include "settings_controller.h"
 #include "history_panel.h"
+#include "archive_view.h"
 #include "history_view.h"
 #include "image_viewer.h"
 #include "markdown_edit_view.h"
@@ -396,6 +397,10 @@ int main(int argc, char** argv) {
     // стеке, и умирать они обязаны раньше родителя (иначе тот удалит их сам —
     // двойное освобождение на выходе; так и вышло в первой примерке).
     QStackedWidget textStack;
+    // АРХИВНАЯ ЗАМЕТКА ПОКАЗЫВАЕТСЯ ВИДОМ, а не редактором: править её нельзя,
+    // пока не вернут из архива, и редактор обещал бы правку, которой не будет.
+    // Каретки в виде нет — этого человеку и достаточно.
+    zametti::ArchiveView archiveView;
 
     zametti::NoteEditor editor;
 
@@ -510,6 +515,7 @@ int main(int argc, char** argv) {
         // НА МЕСТЕ редактора; вне режима его нет вовсе — тем режим и громкий.
         historyView.list().setFont(sidebarFont);
         textStack.addWidget(&editor);
+        textStack.addWidget(&archiveView);
         textStack.addWidget(&historyView);
         textStack.addWidget(&markdownView);
         textStack.addWidget(&settingsView);
@@ -548,6 +554,7 @@ int main(int argc, char** argv) {
         historyView.list().setFont(font);
 
         zametti::applyPalette(editor);
+        archiveView.refreshAppearance();
         panels.refreshAppearance();
         zametti::applyPalette(resultsView);
 
@@ -932,13 +939,32 @@ int main(int argc, char** argv) {
     // КАКАЯ СТРАНИЦА СТЕКА НА ВИДУ — ОДНО МЕСТО НА ВСЕ РЕЖИМЫ, иначе каждый
     // режим решал бы это по-своему и они разошлись бы (так и было: из истории
     // человек возвращался в обычный вид, хотя ушёл из исходника). Порядок:
-    // настройки > история > исходник > редактор.
+    // настройки > история > исходник > архивная > редактор.
+    //
+    // Архивная стоит ПОД исходником сознательно: посмотреть её markdown человек
+    // вправе (там она тоже только для чтения), а вот править — нет.
     const auto showPage = [&] {
+        const bool archived = editor.isArchivedNote();
         textStack.setCurrentWidget(settingsMode.active() ? static_cast<QWidget*>(&settingsView)
                                    : history.active()    ? static_cast<QWidget*>(&historyView)
                                    : markdown.active()   ? static_cast<QWidget*>(&markdownView)
+                                   : archived            ? static_cast<QWidget*>(&archiveView)
                                                          : static_cast<QWidget*>(&editor));
     };
+    // Что показывает страница архива — производное от открытой заметки, и
+    // восстанавливает это ОДНА функция: её зовут все двери, через которые
+    // заметка сменяется.
+    const auto refreshArchivePage = [&] {
+        if (editor.isArchivedNote()) archiveView.showFile(editor.filePath());
+        else archiveView.clear();
+        showPage();
+    };
+
+    // СМЕНА ЗАМЕТКИ — единственный источник правды для страницы архива.
+    // Подписка идёт на fileChanged, потому что дверей много (дерево, список,
+    // поиск, восстановление, старт), а правило одно.
+    QObject::connect(&editor, &zametti::NoteEditor::fileChanged, &window,
+                     [&](const QString&) { refreshArchivePage(); });
 
     QObject::connect(&history, &zametti::HistoryController::modeChanged, &window, [&](bool on) {
         // Вид истории на месте редактора; таймлайн сбоку.

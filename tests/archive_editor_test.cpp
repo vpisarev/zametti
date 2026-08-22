@@ -13,6 +13,7 @@
 // накоплении.
 
 #include "archive.h"
+#include "archive_view.h"
 #include "editor_widget.h"
 #include "journal.h"
 
@@ -183,6 +184,48 @@ static int ztRunSuite(int argc, char** argv) {
         // И ВОЗВРАТ ОТДАЁТ ТЕ ЖЕ БАЙТЫ.
         ZT_TRUE("возврат битой прошёл", zametti::store::restoreNote(g_root, brokenId, &why));
         ZT_TRUE("битая вернулась байт в байт", readFile(brokenPath) == body);
+    }
+
+
+    // --- АРХИВНУЮ ПОКАЗЫВАЕТ ВИД, А НЕ РЕДАКТОР ------------------------------
+    //
+    // Тело её лежит в файле, как у живой, и документ у неё обычный — собранный
+    // тем же кодом. Разница в том, кому он отдан: виду, где каретки нет вовсе,
+    // а не редактору, который обещал бы правку.
+    {
+        const QString id = QStringLiteral("01n7arcview00");
+        const QString path = g_root + QLatin1Char('/') + id + QStringLiteral(".md");
+        writeFile(path, QStringLiteral("<!-- zametti\nversion: 1\n-->\n\n# Убранная\n\n"
+                                       "Тело её никуда не делось.\n"));
+        QString why;
+        ZT_TRUE("архивация прошла", zametti::store::archiveNote(g_root, id, rules(), &why));
+
+        editor.openFile(path);
+        QTest::qWait(40);
+        ZT_TRUE("редактор знает, что заметка архивная", editor.isArchivedNote());
+
+        zametti::ArchiveView view;
+        ZT_TRUE("вид показал файл", view.showFile(path));
+        ZT_TRUE("и в нём тело заметки",
+                view.toPlainText().contains(QStringLiteral("Тело её никуда не делось")));
+        ZT_TRUE("вид — только для чтения", view.isReadOnly());
+        // ПОЛЕ ТОНИРОВАНО КАК ПРОШЛОЕ: тем же серым, что и режим истории.
+        ZT_EQ("фон — серый истории",
+              zametti::settings().style().historyBackground().name().toStdString(),
+              view.palette().color(QPalette::Base).name().toStdString());
+
+        // ЖИВАЯ ЗАМЕТКА ВИДОМ НЕ ПОКАЗЫВАЕТСЯ: признак обязан различать их.
+        const QString alive = g_root + QStringLiteral("/01n7arclive00.md");
+        writeFile(alive, QStringLiteral("<!-- zametti\nversion: 1\n-->\n\n# Живая\n"));
+        editor.openFile(alive);
+        QTest::qWait(40);
+        ZT_TRUE("живая архивной не считается", !editor.isArchivedNote());
+
+        // ВЕРНУЛИСЬ К АРХИВНОЙ — признак тот же: производное состояние
+        // восстанавливают ОБА пути открытия, и возврат из кэша тоже.
+        editor.openFile(path);
+        QTest::qWait(40);
+        ZT_TRUE("после возврата признак прежний", editor.isArchivedNote());
     }
 
     return zt::report("архивация открытой заметки");
