@@ -2335,6 +2335,12 @@ int main(int argc, char** argv) {
                                qMax(400, window.width() - zametti::settings().ui().sidebarWidth())});
     };
     applyStartWidths();
+    // ПЕРВАЯ ЗАМЕТКА ОТКРЫВАЕТСЯ ДО ТОГО, как встают подписки, — значит про
+    // страницу архива её надо спросить отдельно, здесь. Иначе архивная,
+    // открытая при запуске, показывалась бы редактором до первого перехода на
+    // другую заметку (так и было; поймано снимком окна под Xvfb, а не набором:
+    // проводка окна наборами не покрыта).
+    refreshArchivePage();
     window.show();
     QTimer::singleShot(0, &window, applyStartWidths);
 

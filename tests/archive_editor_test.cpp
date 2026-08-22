@@ -226,6 +226,16 @@ static int ztRunSuite(int argc, char** argv) {
         editor.openFile(path);
         QTest::qWait(40);
         ZT_TRUE("после возврата признак прежний", editor.isArchivedNote());
+
+        // СНИМОК ДЛЯ ПРИЁМКИ ГЛАЗАМИ: серое поле, тело на месте, каретки нет.
+        // Под Xvfb это артефакт приёмки; под offscreen — просто картинка.
+        view.resize(700, 420);
+        view.show();
+        QTest::qWait(60);
+        const QString shots = zt::TestData::outDir(QStringLiteral("архив"));
+        const QImage shot = view.grab().toImage();
+        ZT_TRUE("снимок сделан", !shot.isNull());
+        shot.save(QDir(shots).filePath(QStringLiteral("архивная-заметка.png")));
     }
 
     return zt::report("архивация открытой заметки");
