@@ -372,6 +372,9 @@ public:
     // пишет поле правки подписи — буквы не прыгают при входе в правку.
     QFont captionFont() const;
 
+    // Свернуть выделение одного знака объекта в каретку: см. .cpp.
+    void collapseObjectSelection();
+
     // ВСЁ, ЧТО ВИД ОБЯЗАН ЗНАТЬ О ЗАМЕТКЕ, КРОМЕ САМОГО ДОКУМЕНТА, — здесь, и
     // зовут это ВСЕ пути показа: редактор при открытии файла и вид архива.
     //
@@ -461,6 +464,7 @@ protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
     // ИНЕРЦИОННАЯ ПРОКРУТКА КОЛЕСОМ (scroll.smooth).
     //
     // Колесо не швыряет текст рывком на три строки, а разгоняет его к цели и

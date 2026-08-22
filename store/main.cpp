@@ -81,6 +81,7 @@ int main(int argc, char** argv) {
     QString id;
     QString maxSize, maxFileMb, quality;
     bool dryRun = false;
+    bool restore = false;
     for (qsizetype i = 2; i < args.size(); ++i) {
         const QString& a = args[i];
         const auto next = [&]() -> QString {
@@ -94,6 +95,7 @@ int main(int argc, char** argv) {
         else if (a == QStringLiteral("--max-size")) maxSize = next();
         else if (a == QStringLiteral("--quality")) quality = next();
         else if (a == QStringLiteral("--dry-run")) dryRun = true;
+        else if (a == QStringLiteral("--restore")) restore = true;
         else if (!a.startsWith(QStringLiteral("--")) && positional.isEmpty()) positional = a;
         else if (!a.startsWith(QStringLiteral("--")) && positional2.isEmpty()) positional2 = a;
         else return usage();
@@ -148,7 +150,7 @@ int main(int argc, char** argv) {
         zametti::ZStorage storage(root);
         storage.reload();
         QStringList failed;
-        const bool back = args.contains(QStringLiteral("--restore"));
+        const bool back = restore;
         const bool ok = back ? storage.restore(id, &failed)
                              : storage.archive(id, zametti::history::Rules{}, &failed);
         if (!ok || !failed.isEmpty()) {

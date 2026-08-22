@@ -1828,6 +1828,38 @@ void NoteView::mousePressEvent(QMouseEvent* event) {
         }
     }
     QTextBrowser::mousePressEvent(event);
+
+    collapseObjectSelection();
+}
+
+// ЩЕЛЧОК ПО ОБЪЕКТУ СТАВИТ КАРЕТКУ, А НЕ ВЫДЕЛЯЕТ ЕГО — и в виде тоже.
+//
+// Qt в режиме правки ставит каретку, а в режиме просмотра ВЫДЕЛЯЕТ знак объекта
+// (U+FFFC) и рисует вокруг выделенного свою пунктирную рамку. Получалось, что
+// один и тот же снимок в архивной заметке обведён дважды — нашими уголками и
+// пунктиром Qt, — а в живой только уголками. Разное поведение на одном и том же
+// документе, и это не оправдать ничем.
+//
+// Сворачиваем выделение ровно в одном случае: выделен один знак, и он объект.
+// Обычное выделение текста мышью не задето.
+void NoteView::collapseObjectSelection() {
+    if (!isReadOnly()) return;
+    QTextCursor cursor = textCursor();
+    if (!cursor.hasSelection()) return;
+    const int from = qMin(cursor.anchor(), cursor.position());
+    const int to = qMax(cursor.anchor(), cursor.position());
+    if (to - from != 1) return;
+    QTextCursor probe(document());
+    probe.setPosition(from);
+    probe.setPosition(to, QTextCursor::KeepAnchor);
+    if (probe.selectedText() != QString(QChar::ObjectReplacementCharacter)) return;
+    cursor.setPosition(to);
+    setTextCursor(cursor);
+}
+
+void NoteView::mouseReleaseEvent(QMouseEvent* event) {
+    QTextBrowser::mouseReleaseEvent(event);
+    collapseObjectSelection();
 }
 
 QString NoteView::codeTextFrom(int firstBlockNumber) const {

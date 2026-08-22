@@ -341,6 +341,46 @@ static int ztRunSuite(int argc, char** argv) {
                       shotView.toPlainText().toStdString());
             }
 
+            // ЩЕЛЧОК ПО КАРТИНКЕ РИСУЕТ ТО ЖЕ, ЧТО И В ЖИВОЙ ЗАМЕТКЕ. Жалоба
+            // владельца: в архивной вокруг выбранного снимка появляется вторая
+            // рамка, которой в обычной заметке нет. Сравниваем не с описанием,
+            // а с самим редактором — на той же заметке, тем же щелчком.
+            {
+                // Сравниваем с ТЕМ ЖЕ редактором, что и работает в наборе:
+                // заводить второй значило бы сравнивать со своей же догадкой о
+                // том, как он настроен.
+                zametti::NoteEditor& twin = editor;
+                twin.resize(shotView.size());
+                twin.show();
+                twin.openFile(shotPath);
+                QTest::qWait(400);
+                const QPoint at(shotView.viewport()->width() / 2,
+                                shotView.viewport()->height() / 2);
+                QTest::mouseClick(shotView.viewport(), Qt::LeftButton, {}, at);
+                QTest::mouseClick(twin.viewport(), Qt::LeftButton, {}, at);
+                QTest::qWait(300);
+                const QImage archived = shotView.grab().toImage();
+                const QImage live = twin.grab().toImage();
+                int differ = 0;
+                for (int y = 0; y < qMin(archived.height(), live.height()); ++y)
+                    for (int x = 0; x < qMin(archived.width(), live.width()); ++x) {
+                        const QColor a = archived.pixelColor(x, y);
+                        const QColor b = live.pixelColor(x, y);
+                        if (qAbs(a.red() - b.red()) > 20 || qAbs(a.green() - b.green()) > 20 ||
+                            qAbs(a.blue() - b.blue()) > 20)
+                            ++differ;
+                    }
+                if (differ >= 400) {
+                    const QString dir = zt::TestData::outDir(QStringLiteral("архив-щелчок"));
+                    archived.save(QDir(dir).filePath(QStringLiteral("архивная.png")));
+                    live.save(QDir(dir).filePath(QStringLiteral("живая.png")));
+                    std::fprintf(stderr, "DBG снимки в %s\n", dir.toUtf8().constData());
+                }
+                ZT_TRUE("выбранная картинка в архиве рисуется как в живой заметке: "
+                        "разошлось точек " + std::to_string(differ),
+                        differ < 400);
+            }
+
             // ВТОРАЯ ОШИБКА ПОРОЗНЬ: ссылка, чей путь не разрешился, обязана
             // стать РАМКОЙ «файл не найден», а не пустотой. Спрашиваем у вида
             // напрямую — пиксели тут не годятся: пустота и рамка отличаются
