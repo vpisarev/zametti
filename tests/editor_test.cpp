@@ -215,6 +215,17 @@ void checkStatsFreshness() {
     QTest::qWait(20);
     check(notified == afterFirstKey, "на каждое нажатие сигнала нет");
 
+    // ЧИСЛА ДОГОНЯЮТ ДОКУМЕНТ ЧЕРЕЗ ПАУЗУ, А НЕ НА ЗАПИСИ (просьба владельца:
+    // «обновление количества слов заставляет себя очень долго ждать» — раньше
+    // ждали автосохранения, то есть минуту). Ждём паузу из настроек с запасом
+    // и спрашиваем, не сохраняя ничего.
+    const int pause = zametti::settings().editor().statsDelayMs();
+    for (int waited = 0; waited < pause * 3 && !editor.statsFresh(); waited += 50)
+        QTest::qWait(50);
+    check(editor.statsFresh(), "через паузу числа сосчитаны сами, без записи");
+    checkEqual(QStringLiteral("6"), QString::number(editor.stats().words),
+               "и это шесть слов, как в документе");
+
     editor.save(false);
     QTest::qWait(20);
     check(editor.statsFresh(), "после записи число слов снова известно");
