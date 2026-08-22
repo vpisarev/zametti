@@ -79,10 +79,24 @@ void makeV0(const QString& path) {
     file.close();
 }
 
+// Что дописать — по роду записи. Наборам удобно перечислять роды, а
+// именованные создатели не дают собрать неверное сочетание.
+journal::NewRecord recordFor(Kind kind, qint64 time, const QByteArray& body, qint64 source) {
+    const journal::Stamp when = journal::Stamp::at(time);
+    switch (kind) {
+        case Kind::External: return journal::NewRecord::external(body, when);
+        case Kind::Restore: return journal::NewRecord::restore(body, source, when);
+        case Kind::Tombstone: return journal::NewRecord::tombstone(when);
+        case Kind::Amendment: return journal::NewRecord::amendment(when);
+        case Kind::Save: break;
+    }
+    return journal::NewRecord::save(body, when);
+}
+
 QString append(journal::History& h, const QString& id, Kind kind, qint64 time,
                const QByteArray& snapshot, qint64 source = 0) {
     QString error;
-    if (!h.append(id, kind, journal::Stamp::at(time), snapshot, source, &error)) return error;
+    if (!h.append(id, recordFor(kind, time, snapshot, source), &error)) return error;
     return {};
 }
 
@@ -92,7 +106,8 @@ std::string timesOf(journal::History& h, const QString& id, qint64 base) {
     QString error;
     if (!h.read(id, &j, &error)) return str(error);
     std::string out;
-    for (const journal::Entry& e : j.entries()) {
+    for (int i = 0; i < j.size(); ++i) {
+        const journal::Entry& e = j.at(i);
         if (!out.empty()) out += " ";
         out += std::to_string((e.time() - base) / kMinute);
         if (e.kind() != Kind::Save) out += e.kind() == Kind::Tombstone ? "T" : "X";
@@ -333,8 +348,15 @@ void checkLiveAndMigrationAgree(const QString& root) {
         };
         const history::Step step =
             history::decideStep(j, snapshotOf, steps[i], Kind::Save, when, rules);
-        if (step.keep < j.size()) h.truncate(live, step.keep, &error);
-        if (step.writeNew) append(h, live, Kind::Save, when, steps[i]);
+        // Живой путь гасит адресом — ровно то же, что делает запись заметки.
+        QVector<journal::EntryRef> voids;
+        for (int at : step.voided) voids.append(journal::EntryRef(j.at(at).time(), j.at(at).digest()));
+        if (step.writeNew)
+            h.append(live, journal::NewRecord::save(steps[i], journal::Stamp::at(when)).voiding(voids),
+                     &error);
+        else if (!voids.isEmpty())
+            h.append(live, journal::NewRecord::amendment(journal::Stamp::at(when)).voiding(voids),
+                     &error);
     }
 
     // Сырой путь: всё подряд, как писала программа до этапа 9.

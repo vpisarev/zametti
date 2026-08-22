@@ -24,7 +24,7 @@ void ZNoteHistory::ensureBaseline(const QByteArray& contents, qint64 fileTimeMs)
     // «сейчас», и страж монотонности его не поднимает.
     const journal::Stamp when = fileTimeMs > 0 ? journal::Stamp::at(fileTimeMs)
                                                : journal::Stamp::now();
-    if (!history.append(id_, journal::Kind::Save, when, contents, 0, &error))
+    if (!history.append(id_, journal::NewRecord::save(contents, when), &error))
         std::fprintf(stderr, "baseline record not written: %s\n", error.toUtf8().constData());
 }
 
@@ -100,10 +100,28 @@ bool ZNoteHistory::record(journal::Kind kind, const QByteArray& snapshot, QStrin
     const history::Step step =
         history::decideStep(read, snapshotOf, snapshot, kind, now, rules_);
 
+    // ГАШЕНИЕ ВМЕСТО СТИРАНИЯ. Записи, которые правило объявило лишними,
+    // адресуются парой (время, отпечаток) и едут этим адресом в новой записи:
+    // их байты выкидываются здесь же, а другое устройство, увидев новую запись,
+    // погасит те же у себя. Стирание без адреса не доезжало никуда — уехавшая
+    // запись возвращалась объединением и возвращалась бы вечно.
+    QVector<journal::EntryRef> voids;
+    voids.reserve(step.voided.size());
+    for (int i : step.voided) voids.append(journal::EntryRef(read.at(i).time(), read.at(i).digest()));
+
     bool ok = true;
-    if (step.keep < read.size()) ok = history.truncate(id_, step.keep, err);
-    if (ok && step.writeNew)
-        ok = history.append(id_, kind, journal::Stamp::now(), snapshot, source, err);
+    if (step.writeNew) {
+        journal::NewRecord what = kind == journal::Kind::Restore
+                                      ? journal::NewRecord::restore(snapshot, source)
+                                      : (kind == journal::Kind::External
+                                             ? journal::NewRecord::external(snapshot)
+                                             : journal::NewRecord::save(snapshot));
+        ok = history.append(id_, what.voiding(voids), err);
+    } else if (!voids.isEmpty()) {
+        // Человек вернулся к уже записанному состоянию: нового слепка нет, а
+        // сказать «того, что между, больше нет» надо.
+        ok = history.append(id_, journal::NewRecord::amendment().voiding(voids), err);
+    }
     if (!ok) {
         std::fprintf(stderr, "history not written: %s\n", err->toUtf8().constData());
         tailKnown_ = false;   // что там теперь — неизвестно

@@ -48,7 +48,6 @@ Step decideStep(const journal::ZJournal& journal, const SnapshotOf& snapshotOf,
                 const QByteArray& fresh, journal::Kind kind, qint64 now, const Rules& rules) {
     using journal::Kind;
     Step step;
-    step.keep = journal.size();
 
     // Вот он, сторож свежести, и он тут ровно один — на оба правила сразу.
     const qint64 window = qint64(qMax(1, rules.mergeHours)) * 3600 * 1000;
@@ -82,9 +81,9 @@ Step decideStep(const journal::ZJournal& journal, const SnapshotOf& snapshotOf,
         if (entry.kind() != Kind::Save) break;           // чужую вешку не перепрыгиваем
     }
     if (sameAs >= 0) {
-        step.keep = sameAs + 1;
+        for (int i = sameAs + 1; i < journal.size(); ++i) step.voided.append(i);
         step.writeNew = false;
-        step.dropped = journal.size() - step.keep + 1;   // хвост и сама новая
+        step.dropped = step.voided.size() + 1;   // хвост и сама новая
         return step;
     }
 
@@ -102,7 +101,7 @@ Step decideStep(const journal::ZJournal& journal, const SnapshotOf& snapshotOf,
     const QByteArray tail = snapshotOf(journal.size() - 1);
     if (tail.isNull() || tail.isEmpty()) return step;
     if (changedChars(tail, fresh) > qMax(0, rules.mergeChars)) return step;
-    --step.keep;
+    step.voided.append(journal.size() - 1);
     step.merged = 1;
     return step;
 }
@@ -142,8 +141,13 @@ Plan planFor(const journal::ZJournal& journal, const QVector<QByteArray>& snapsh
                                          entry.kind(), entry.time(), rules);
             duplicates += step.dropped;
             merged += step.merged;
-            acc.resize(step.keep);
-            accepted.resize(step.keep);
+            // Пересборка чистит журнал НАСОВСЕМ: это разовая миграция старых
+            // журналов, которых ещё не было в облаке, и там гасить нечего —
+            // погашенное просто не попадает в новый файл.
+            for (int i = step.voided.size() - 1; i >= 0; --i) {
+                acc.removeAt(step.voided[i]);
+                accepted.removeAt(step.voided[i]);
+            }
             if (!step.writeNew) continue;
             acc.append(entry);
             accepted.append(idx);

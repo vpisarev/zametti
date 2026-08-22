@@ -72,6 +72,21 @@ int recordCount(const QString& id) {
     return int(journal.size());
 }
 
+// Сколько записей ГОВОРЯТ О СОДЕРЖИМОМ и не погашены — то есть сколько вешек
+// человек видит в истории. Отличается от recordCount на записи гашения: возврат
+// к уже записанному состоянию оставляет такую запись, и она обязана уехать в
+// облако, но вешкой не является.
+int contentRecordCount(const QString& id) {
+    zametti::journal::History history(g_root);
+    zametti::journal::ZJournal journal;
+    QString error;
+    if (!history.read(id, &journal, &error)) return -1;
+    int count = 0;
+    for (int i = 0; i < journal.size(); ++i)
+        if (journal.at(i).statesContent() && !journal.isVoided(i)) ++count;
+    return count;
+}
+
 // Все слепки журнала по порядку: ими и проверяется «нет двух одинаковых».
 std::vector<QByteArray> snapshots(const QString& id) {
     std::vector<QByteArray> out;
@@ -408,9 +423,9 @@ void makeDirtyJournal(const QString& id, qint64 when) {
     const QByteArray a2 = "<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n"
                           "modified: 2020-01-01T00:00:03Z\n-->\n\n# Грязь\n\nодин\n";
     QString error;
-    history.append(id, zametti::journal::Kind::Save, zametti::journal::Stamp::at(when), a, 0, &error);
-    history.append(id, zametti::journal::Kind::Save, zametti::journal::Stamp::at(when + 1000), b, 0, &error);
-    history.append(id, zametti::journal::Kind::Save, zametti::journal::Stamp::at(when + 2000), a2, 0, &error);
+    history.append(id, zametti::journal::NewRecord::save(a, zametti::journal::Stamp::at(when)), &error);
+    history.append(id, zametti::journal::NewRecord::save(b, zametti::journal::Stamp::at(when + 1000)), &error);
+    history.append(id, zametti::journal::NewRecord::save(a2, zametti::journal::Stamp::at(when + 2000)), &error);
 
     // Шапку — на старый лад, иначе чистить нечего: нынешний append заводит
     // журнал сразу чищеным.
@@ -637,15 +652,11 @@ void checkHistoryNeverWritesToFile() {
     // Времена ПОСЛЕ опорной записи: её время — время файла, то есть «сейчас».
     // Поставь я записи в прошлое — и слепок оказался бы старше своей базы, а
     // подпись сменилась бы на «добавлено» (на этом я и попался).
-    history.append(id, zametti::journal::Kind::Save, zametti::journal::Stamp::at(now + 60'000),
-                   QByteArray("<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n-->\n\n"
-                              "# Заметка\n\nпервый\n\nтретий\n"),
-                   0, &error);
+    history.append(id, zametti::journal::NewRecord::save(QByteArray("<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n-->\n\n"
+                              "# Заметка\n\nпервый\n\nтретий\n"), zametti::journal::Stamp::at(now + 60'000)), &error);
     write("# Заметка\n\nпервый\n\nтретий\n\nчетвёртый\n");
-    history.append(id, zametti::journal::Kind::Save, zametti::journal::Stamp::at(now + 120'000),
-                   QByteArray("<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n-->\n\n"
-                              "# Заметка\n\nпервый\n\nтретий\n\nчетвёртый\n"),
-                   0, &error);
+    history.append(id, zametti::journal::NewRecord::save(QByteArray("<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n-->\n\n"
+                              "# Заметка\n\nпервый\n\nтретий\n\nчетвёртый\n"), zametti::journal::Stamp::at(now + 120'000)), &error);
 
     editor.openFile(path);
     zt::HistoryRig rig(editor);

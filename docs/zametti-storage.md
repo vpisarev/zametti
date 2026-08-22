@@ -253,6 +253,7 @@ records, each a map with integer keys:
 | 7 | for `restore` — the time of the source record |
 | 8 | *(header only)* content version: which rule set the journal was cleaned by |
 | 9 | revision (a Lamport counter); no key — `0`, a record written before stage 17 |
+| 10 | the records this one voids: an array of `[time, fingerprint]` pairs; no key — it voids nothing |
 
 A snapshot is **the bytes of the note file in full**, header included. Not a
 line diff: restoring must be simple.
@@ -263,7 +264,11 @@ line diff: restoring must be simple.
 - `external` — the file was changed from outside, and we saw it;
 - `restore` — a person brought an old snapshot back;
 - `tombstone` — the note was deleted. It has no snapshot of its own: the
-  previous record remains final.
+  previous record remains final;
+- `amendment` — no new content, only a list of voided records. This is how "I
+  typed something and undid it" is written down: the person came back to a
+  state that is already in the journal, so there is no new snapshot to write,
+  yet the records in between have to be declared out of the count.
 
 ### The revision
 
@@ -287,6 +292,38 @@ an old journal that goes through thinning comes out byte for byte the same.
 Adding the key did not raise the format version: an unknown key is skipped
 silently (the promise from stage 7), so an older build still reads a journal
 written by a newer one — it just does not see the revisions.
+
+### Voiding: the journal does not erase, it declares out of the count
+
+A small edit does not deserve a waypoint of its own, and neither does a stretch
+of work that the person undid on the spot. Both used to be handled by cutting
+the tail of the file off. That works on one machine and stops working the
+moment there are two: cutting leaves no trace, so a record that had already
+travelled comes back at the next merge — and comes back for ever, because
+nothing in the cloud says why it went away.
+
+So the tail is not cut on its own any more. The new record **names** the ones
+that are no longer in the count, by the same address the merge uses — time plus
+fingerprint (key 10). What that gives:
+
+- the bytes of a voided record are dropped locally right away — if they lie at
+  the end of the file it is simply shortened, otherwise the file is rebuilt;
+- any machine that sees the new record voids the same records at its end, so
+  the cloud copy loses them too;
+- a record that comes back from an older copy is voided again and never
+  surfaces.
+
+Voided records are shown nowhere — not in the timeline, not in the search over
+history, and they are never chosen as the head. A record that voids without
+adding content is an `amendment`.
+
+**The address is a name, not a threshold**, and that is deliberate twice over. A
+threshold ("void everything below revision N") would also void a concurrent
+edit from another machine that happened to fall below it — that is, it would
+break "an edit beats a deletion". And a threshold is catastrophically sensitive
+to corruption: one flipped bit turns 16 into 4096 and mows down a range, while a
+damaged address matches nothing at all and is simply not applied — to hit
+another live fingerprint one would have to search 2^256.
 
 ### Generations
 
@@ -332,8 +369,9 @@ planned.
 
 - **the journal is never deleted** — even when the note itself is deleted.
   From the last snapshot with a tombstone it can be resurrected;
-- **the journal only grows.** There are two exceptions — thinning and lazy
-  cleaning — and both rewrite the file whole and atomically;
+- **the journal only grows.** The file does get shorter — but never on its own:
+  only as a consequence of voiding (see above), and in the two whole-file
+  rewrites, thinning and lazy cleaning, both of which are atomic;
 - **restore is a new record.** The journal does not rewind: a restore can be
   undone, but not erased from the history;
 - **fsync is not called.** The bytes will leave with the normal writeback; a

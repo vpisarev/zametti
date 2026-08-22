@@ -217,13 +217,11 @@ bool archiveNote(const QString& root, const QString& noteId, const history::Rule
     };
     const history::Step step =
         history::decideStep(read, snapshotOf, snapshot, journal::Kind::Save, now, rules);
-    if (step.keep < read.size() &&
-        !history.truncate(noteId, qMax(1, step.keep), &why)) {
-        if (error != nullptr) *error = QStringLiteral("journal not trimmed: %1").arg(why);
-        return false;
-    }
+    QVector<journal::EntryRef> voids;
+    voids.reserve(step.voided.size());
+    for (int i : step.voided) voids.append(journal::EntryRef(read.at(i).time(), read.at(i).digest()));
     if (step.writeNew &&
-        !history.append(noteId, journal::Kind::Save, journal::Stamp::now(), snapshot, 0, &why)) {
+        !history.append(noteId, journal::NewRecord::save(snapshot).voiding(voids), &why)) {
         // ТЕЛО НЕ ЗАПИСАНО — СТАБ НЕ ПИШЕМ. Это и есть инвариант A: потерять
         // тело нельзя, потому что мы не начинаем второй шаг, не сделав первый.
         if (error != nullptr) *error = QStringLiteral("body not written to history: %1").arg(why);
@@ -284,8 +282,9 @@ bool restoreNote(const QString& root, const QString& noteId, QString* error) {
     // ВЕШКА В ИСТОРИИ. Таймлайн отвечает на вопрос «что с заметкой было», и
     // «вернули из архива» — такой же ответ, как «правили» или «удалили».
     QString ignored;
-    history.append(noteId, journal::Kind::Restore, journal::Stamp::now(),
-                   QByteArray(out.data(), qsizetype(out.size())), 0, &ignored);
+    history.append(noteId,
+                   journal::NewRecord::restore(QByteArray(out.data(), qsizetype(out.size())), 0),
+                   &ignored);
     return true;
 }
 

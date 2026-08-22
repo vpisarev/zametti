@@ -26,6 +26,7 @@
 using namespace zametti;
 using zametti::journal::Entry;
 using zametti::journal::Kind;
+using zametti::journal::NewRecord;
 using zametti::journal::Stamp;
 using zametti::journal::ZJournal;
 
@@ -151,7 +152,7 @@ void checkClockBackDoesNotInvert() {
     store.setDeviceClock(nowReal + 3 * kHour);
 
     ZT_TRUE("запись проходит",
-            history.append(id, Kind::Save, Stamp::now(), note("после перевода"), 0, &error));
+            history.append(id, NewRecord::save(note("после перевода"), Stamp::now()), &error));
 
     ZJournal read;
     ZT_TRUE("журнал читается", history.read(id, &read, &error));
@@ -162,7 +163,7 @@ void checkClockBackDoesNotInvert() {
 
     // Вторая запись — тем же перевёрнутым часам вопреки — обязана лечь позже.
     ZT_TRUE("вторая запись проходит",
-            history.append(id, Kind::Save, Stamp::now(), note("ещё правка"), 0, &error));
+            history.append(id, NewRecord::save(note("ещё правка"), Stamp::now()), &error));
     ZT_TRUE("журнал читается", history.read(id, &read, &error));
     ZT_TRUE("порядок не инвертирован", read.at(0).isBefore(read.at(1)));
     ZT_EQ("и голова — свежая правка", num(1), num(read.headIndex()));
@@ -176,12 +177,12 @@ void checkLostDeviceClockStillWorks() {
     const QString id = QStringLiteral("01n7clocklost0");
     QString error;
 
-    ZT_TRUE("первая запись", history.append(id, Kind::Save, Stamp::now(), note("раз"), 0, &error));
+    ZT_TRUE("первая запись", history.append(id, NewRecord::save(note("раз"), Stamp::now()), &error));
     store.dropDeviceClock();   // число потеряли: чужая копия каталога, чистка, что угодно
     ZT_EQ("пола нет", num(0LL), num(store.deviceClock()));
 
     ZT_TRUE("вторая запись проходит и без пола",
-            history.append(id, Kind::Save, Stamp::now(), note("два"), 0, &error));
+            history.append(id, NewRecord::save(note("два"), Stamp::now()), &error));
 
     ZJournal read;
     ZT_TRUE("журнал читается", history.read(id, &read, &error));
@@ -200,12 +201,12 @@ void checkJournalFloorHoldsNamedMoments() {
     QString error;
 
     ZT_TRUE("первая запись",
-            history.append(id, Kind::Save, Stamp::at(kNow), note("раз"), 0, &error));
+            history.append(id, NewRecord::save(note("раз"), Stamp::at(kNow)), &error));
     // Названный момент ИЗ ПРОШЛОГО в непустой журнал: пол устройства к нему не
     // применяется, а пол самого журнала — применяется, иначе запись легла бы в
     // файл раньше своей предшественницы и порядок разошёлся бы с укладкой.
     ZT_TRUE("вторая запись с временем из прошлого",
-            history.append(id, Kind::Save, Stamp::at(kNow - kHour), note("два"), 0, &error));
+            history.append(id, NewRecord::save(note("два"), Stamp::at(kNow - kHour)), &error));
 
     ZJournal read;
     ZT_TRUE("журнал читается", history.read(id, &read, &error));
@@ -227,7 +228,7 @@ void checkNamedMomentSurvivesGuard() {
     // А опорной записи отдают время ФАЙЛА — заметка лежит с 2017 года.
     const qint64 y2017 = 1'497'859'669'000LL;
     ZT_TRUE("опорная запись проходит",
-            history.append(id, Kind::Save, Stamp::at(y2017), note("старая"), 0, &error));
+            history.append(id, NewRecord::save(note("старая"), Stamp::at(y2017)), &error));
 
     ZJournal read;
     ZT_TRUE("журнал читается", history.read(id, &read, &error));
@@ -255,7 +256,7 @@ void checkLegacyJournalOnDisk() {
 
     // Первая новая правка законно становится головой.
     ZT_TRUE("новая запись проходит",
-            history.append(id, Kind::Save, Stamp::at(kNow + 120'000), note("три"), 0, &error));
+            history.append(id, NewRecord::save(note("три"), Stamp::at(kNow + 120'000)), &error));
     ZT_TRUE("журнал читается", history.read(id, &read, &error));
     ZT_EQ("у новой записи ревизия первая", num(1LL), num(read.at(2).seq()));
     ZT_EQ("и голова теперь она", num(2), num(read.headIndex()));

@@ -4,7 +4,11 @@
 // файлов заметок, переживает удаление заметки и однажды поедет в
 // синхронизацию. Отсюда три жёстких правила, вынесенные в тесты:
 //
-//   A. журнал только дописывается; между прореживаниями файл строго растёт;
+//   A. журнал только ДОПИСЫВАЕТСЯ. Укорачивание файла бывает — но не само по
+//      себе, а следствием ГАШЕНИЯ: новая запись называет адреса тех, что
+//      больше не в счёт, и их байты выкидываются. Отдельного права «отрезать
+//      хвост» у журнала нет вовсе, и это не формальность: стирание без адреса
+//      не доезжает никуда, а уехавшая запись возвращается объединением;
 //   B. восстановление из истории — НОВАЯ запись; ни одна операция журнал не
 //      укорачивает и не перематывает;
 //   C. последняя запись не прореживается никогда — для удалённой заметки это
@@ -86,6 +90,11 @@ enum class Kind {
     External = 2,   // файл изменили снаружи, мы это увидели
     Restore = 3,    // человек вернул старый слепок
     Tombstone = 4,  // заметку удалили; слепка нет — им остаётся предыдущая запись
+    // ГАШЕНИЕ без нового содержимого: слепка нет, есть только список
+    // погашенных записей. Так выражается «набрал и отменил» — человек вернулся
+    // к уже записанному состоянию, и новому слепку взяться неоткуда, а сказать
+    // «того, что между, больше нет» надо.
+    Amendment = 5,
 };
 
 // Кодек слепка указан в самой записи: читатель обязан уметь встретить в старом
@@ -115,6 +124,34 @@ enum class Codec {
 // восстановление в ней растёт без границы, а порча одного звена уносит всё,
 // что после. Длина поколения — та самая граница: и цены чтения, и урона.
 inline constexpr int kGeneration = 32;
+
+// АДРЕС ЗАПИСИ — время плюс отпечаток. Тот же ключ, которым записи
+// адресуются снаружи и по которому их узнают при слиянии: номер в файле для
+// этого не годится, он меняется от чистки и от прихода чужих записей.
+//
+// Именно адресом, а не порогом («погасить всё до ревизии N»), выражается
+// гашение — по двум независимым причинам. Порог погасил бы и конкурентную
+// правку с другого устройства, случайно оказавшуюся ниже него, то есть убил бы
+// правило «правка побеждает удаление». И порог катастрофически чувствителен к
+// порче: один перевёрнутый бит превращает 16 в 4096 и выкашивает диапазон,
+// тогда как испорченный адрес не совпадает ни с чем и просто не применяется —
+// чтобы попасть в чужой живой отпечаток, нужен перебор 2^256.
+class EntryRef {
+public:
+    EntryRef() = default;
+    EntryRef(qint64 time, const Digest& digest) : time_(time), digest_(digest) {}
+
+    qint64 time() const { return time_; }
+    const Digest& digest() const { return digest_; }
+
+    friend bool operator==(const EntryRef& a, const EntryRef& b) {
+        return a.time_ == b.time_ && a.digest_ == b.digest_;
+    }
+
+protected:
+    qint64 time_ = 0;
+    Digest digest_;
+};
 
 // ВРЕМЯ НОВОЙ ЗАПИСИ — намерение, а не число.
 //
@@ -146,6 +183,64 @@ protected:
     bool guarded_ = true;
 };
 
+// ЧТО ДОПИСАТЬ В ЖУРНАЛ — значение, а не пять параметров подряд.
+//
+// У записи уже пять признаков (род, момент, слепок, источник, список гашения),
+// и они не независимы: источник осмыслен только у восстановления, слепка нет у
+// надгробия и у гашения. Списком параметров это держалось бы на внимательности
+// вызывающего; здесь неверные сочетания просто нельзя выразить — вход только
+// через именованные создатели.
+class NewRecord {
+public:
+    // Обычное сохранение.
+    static NewRecord save(QByteArray snapshot, Stamp when = Stamp::now()) {
+        return NewRecord(Kind::Save, when, std::move(snapshot), 0);
+    }
+    // Файл изменили снаружи, и мы это увидели.
+    static NewRecord external(QByteArray snapshot, Stamp when = Stamp::now()) {
+        return NewRecord(Kind::External, when, std::move(snapshot), 0);
+    }
+    // Человек вернул старый слепок; sourceTime — время записи-источника.
+    static NewRecord restore(QByteArray snapshot, qint64 sourceTime,
+                             Stamp when = Stamp::now()) {
+        return NewRecord(Kind::Restore, when, std::move(snapshot), sourceTime);
+    }
+    // Заметку удалили. Слепка нет: финальным содержимым остаётся предыдущая
+    // запись, по ней заметку и воскрешают.
+    static NewRecord tombstone(Stamp when = Stamp::now()) {
+        return NewRecord(Kind::Tombstone, when, QByteArray(), 0);
+    }
+    // Только гашение: содержимого не прибавилось, но записи между «тогда» и
+    // «сейчас» больше не в счёт.
+    static NewRecord amendment(Stamp when = Stamp::now()) {
+        return NewRecord(Kind::Amendment, when, QByteArray(), 0);
+    }
+
+    // Кого эта запись гасит. Гашение — свойство записи, а не отдельная
+    // операция: оно едет в облако вместе с ней и применяется всюду, куда
+    // доедет.
+    NewRecord& voiding(QVector<EntryRef> refs) {
+        voids_ = std::move(refs);
+        return *this;
+    }
+
+    Kind kind() const { return kind_; }
+    Stamp when() const { return when_; }
+    const QByteArray& snapshot() const { return snapshot_; }
+    qint64 source() const { return source_; }
+    const QVector<EntryRef>& voids() const { return voids_; }
+
+protected:
+    NewRecord(Kind kind, Stamp when, QByteArray snapshot, qint64 source)
+        : kind_(kind), when_(when), snapshot_(std::move(snapshot)), source_(source) {}
+
+    Kind kind_ = Kind::Save;
+    Stamp when_ = Stamp::at(0);
+    QByteArray snapshot_;
+    qint64 source_ = 0;
+    QVector<EntryRef> voids_;
+};
+
 // ЗАПИСЬ ЖУРНАЛА — рамка (всё, кроме самих байтов слепка) плюс её место в
 // файле. Таймлайн строится по рамкам, и ради него слепки не распаковываются: у
 // богатой заметки их могут быть сотни.
@@ -161,8 +256,10 @@ protected:
 class Entry {
 public:
     Entry() = default;
-    Entry(Kind kind, qint64 time, qint64 seq, const Digest& digest, qint64 source = 0)
-        : kind_(kind), time_(time), seq_(seq), digest_(digest), source_(source) {}
+    Entry(Kind kind, qint64 time, qint64 seq, const Digest& digest, qint64 source = 0,
+          QVector<EntryRef> voids = {})
+        : kind_(kind), time_(time), seq_(seq), digest_(digest), source_(source),
+          voids_(std::move(voids)) {}
 
     Kind kind() const { return kind_; }
     qint64 time() const { return time_; }       // UTC, миллисекунды от эпохи
@@ -184,7 +281,20 @@ public:
     qint64 source() const { return source_; }          // Restore: время источника; иначе 0
 
     bool isTombstone() const { return kind_ == Kind::Tombstone; }
-    bool hasSnapshot() const { return !isTombstone(); }
+    bool hasSnapshot() const { return kind_ != Kind::Tombstone && kind_ != Kind::Amendment; }
+    // Говорит ли запись что-нибудь о СОДЕРЖИМОМ заметки. Гашение не говорит:
+    // оно только объявляет прежние записи не в счёт, поэтому головой быть не
+    // может — иначе «жива ли заметка» отвечало бы не то.
+    bool statesContent() const { return kind_ != Kind::Amendment; }
+
+    // Кого гасит эта запись. Погашенные не показываются нигде и не участвуют в
+    // выборе головы, а их байты выкидываются из файла при первой возможности.
+    const QVector<EntryRef>& voids() const { return voids_; }
+    bool voidsEntry(const Entry& other) const {
+        for (const EntryRef& ref : voids_)
+            if (other.isAddressedBy(ref.time(), ref.digest())) return true;
+        return false;
+    }
     // Начало поколения: слепок читается сам по себе, без предшественников.
     // У записи без слепка (надгробие) поколения нет — она стоит в стороне от
     // цепочки и не рвёт её: кодека в ней не записано вовсе, и без этой оговорки
@@ -248,6 +358,7 @@ protected:
     qint64 packedSize_ = 0;
     qint64 offset_ = 0;
     qint64 source_ = 0;
+    QVector<EntryRef> voids_;
 };
 
 // ЖУРНАЛ ОДНОЙ ЗАМЕТКИ как объект: набор записей плюс формат — разбор, сборка,
@@ -302,8 +413,7 @@ public:
     // неизвестно). Время записи journal выбирает сам: не раньше, чем на
     // миллисекунду позже и пола устройства, и самой поздней записи, которую он
     // знает. Готовое время видно в отданной рамке.
-    bool composeRecord(Kind kind, Stamp when, qint64 deviceFloor, qint64 source,
-                       const QByteArray& snapshot, Entry* frame, QByteArray* bytes,
+    bool composeRecord(const NewRecord& what, qint64 deviceFloor, Entry* frame, QByteArray* bytes,
                        QString* error) const;
 
     // Пересобрать файл из выживших записей: прореживание и чистка обе делают
@@ -320,7 +430,18 @@ public:
     const Entry& at(int index) const { return entries_[index]; }
     const QVector<Entry>& entries() const { return entries_; }
 
-    // Голова — максимум по порядку записей. -1 у пустого журнала.
+    // ПОГАШЕНА ЛИ запись: нашлась ли та, что назвала её адрес. Погашенные не
+    // показываются нигде, не выбираются головой и подлежат выкидыванию из
+    // файла — а пока они в файле, вернувшаяся с чужой копии запись гасится
+    // повторно и больше не всплывает. В этом и сходимость.
+    bool isVoided(int index) const;
+    // Номера погашенных записей по возрастанию.
+    QVector<int> voidedIndexes() const;
+    // Номера записей по их адресам — тех, что нашлись; по возрастанию.
+    QVector<int> indexesOf(const QVector<EntryRef>& refs) const;
+
+    // Голова — максимум по порядку среди записей, которые говорят о
+    // содержимом и не погашены. -1 у пустого журнала.
     int headIndex() const;
     // Максимум среди записей СО СЛЕПКОМ. Надгробие головой быть может, а
     // показать его нечем: хвосту заметки, таймлайну и возврату из архива нужна
@@ -457,25 +578,17 @@ public:
     // восстанавливает сама: звать с расжатой базой на руках не нужно, а лишний
     // параметр, который легко передать неверно, дороже сэкономленных долей
     // миллисекунды.
-    bool append(const QString& noteId, Kind kind, Stamp when, const QByteArray& snapshot,
-                qint64 source, QString* error);
+    // Дописать запись. Что именно — говорит NewRecord: род, момент, слепок,
+    // источник и кого эта запись гасит.
+    //
+    // Гашение выполняется здесь же: байты погашенных записей выкидываются из
+    // файла сразу — если они лежат хвостом (обычный случай слияния мелкой
+    // правки), файл просто укорачивается, иначе переписывается целиком. Сам
+    // список гашения при этом остаётся в новой записи и едет с ней: другое
+    // устройство, увидев её, погасит те же записи у себя, а вернувшаяся с
+    // чужой копии запись гасится повторно и больше не всплывает.
+    bool append(const QString& noteId, const NewRecord& what, QString* error);
 
-    // Оставить в журнале первые keepCount записей, хвост отбросить.
-    //
-    // ЭТО ОГОВОРКА К ПРАВИЛУ A («журнал только дописывается»), и сделана она по
-    // решению владельца. Причина: пока человек правит одну заметку, каждое
-    // сохранение оставляло в таймлайне ещё одну почти такую же вешку, а набор с
-    // последующей отменой — и вовсе вторую копию того же состояния. Полезного в
-    // них нет, есть шум, сквозь который не видно настоящих вешек.
-    //
-    // Механика и только механика: КАКОЙ хвост лишний, журнал не знает и знать не
-    // может — «эквивалентны ли два слепка» это вопрос про заметку (у неё в шапке
-    // есть строка modified, которая меняется всегда), а здесь лежат безымянные
-    // байты. Решает вызывающий; здесь только режется файл.
-    //
-    // keepCount < 1 отвергается: первая запись — то, с чего заметка начиналась,
-    // и стереть её нельзя ничем. keepCount >= числа записей не делает ничего.
-    bool truncate(const QString& noteId, int keepCount, QString* error);
 
     // Прочитать рамки всех записей. Слепки не распаковываются.
     // false — журнал не открыть или он не наш (магия, версия); отсутствующий и
@@ -536,8 +649,11 @@ public:
 
 private:
     // Всё, что трогает файлы, живёт здесь и зовётся только из-под замка.
-    bool appendLocked(const QString& path, Kind kind, Stamp when, const QByteArray& snapshot,
-                      qint64 source, QString* error);
+    bool appendLocked(const QString& path, const NewRecord& what, QString* error);
+    // Выкинуть байты погашенных записей: хвост — усечением, середину —
+    // пересборкой файла целиком.
+    bool dropVoidedLocked(const QString& path, const ZJournal& journal, const QVector<int>& voided,
+                          QString* error);
     bool readLocked(const QString& path, ZJournal* out, QString* error) const;
     bool snapshotAtLocked(const QString& path, int index, QByteArray* out, QString* error) const;
     bool trimTailLocked(const QString& path, QString* error);

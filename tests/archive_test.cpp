@@ -163,9 +163,7 @@ void checkArchiveObeysHistoryRules() {
     QString error;
     const QByteArray body(kBody);
     ZT_TRUE("голова записана руками",
-            zametti::journal::History(g_root).append(id, zametti::journal::Kind::Save,
-                                                     zametti::journal::Stamp::now(), body, 0,
-                                                     &error));
+            zametti::journal::History(g_root).append(id, zametti::journal::NewRecord::save(body, zametti::journal::Stamp::now()), &error));
     const int before = records(id);
     ZT_TRUE("архивация прошла", archiveNote(g_root, id, rules(), &error));
     ZT_TRUE("записи не прибавилось: голова и так равна телу (" +

@@ -52,10 +52,24 @@ constexpr qint64 kMinute = 60 * 1000;
 constexpr qint64 kHour = 60 * kMinute;
 constexpr qint64 kDay = 24 * kHour;
 
+// Что дописать — по роду записи. Наборам удобно перечислять роды, а
+// именованные создатели не дают собрать неверное сочетание.
+journal::NewRecord recordFor(Kind kind, qint64 time, const QByteArray& body, qint64 source) {
+    const journal::Stamp when = journal::Stamp::at(time);
+    switch (kind) {
+        case Kind::External: return journal::NewRecord::external(body, when);
+        case Kind::Restore: return journal::NewRecord::restore(body, source, when);
+        case Kind::Tombstone: return journal::NewRecord::tombstone(when);
+        case Kind::Amendment: return journal::NewRecord::amendment(when);
+        case Kind::Save: break;
+    }
+    return journal::NewRecord::save(body, when);
+}
+
 QString append(journal::History& h, const QString& id, Kind kind, qint64 time,
                const QByteArray& body, qint64 source = 0) {
     QString error;
-    if (!h.append(id, kind, journal::Stamp::at(time), body, source, &error)) return error;
+    if (!h.append(id, recordFor(kind, time, body, source), &error)) return error;
     return {};
 }
 

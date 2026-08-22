@@ -113,7 +113,7 @@ static int ztRunSuite(int argc, char** argv) {
         } else if (what < 12 && !expected.isEmpty() && !buried) {
             // Надгробие: заметку удалили. Слепка у записи нет.
             ZT_TRUE("надгробие пишется",
-                    history.append(id, Kind::Tombstone, journal::Stamp::at(clock), QByteArray(), 0, &error));
+                    history.append(id, journal::NewRecord::tombstone(journal::Stamp::at(clock)), &error));
             expected.append(QByteArray());
             times.append(clock);
             buried = true;
@@ -124,7 +124,9 @@ static int ztRunSuite(int argc, char** argv) {
             while (from > 0 && expected[from].isEmpty()) --from;
             if (!expected[from].isEmpty()) {
                 ZT_TRUE("восстановление пишется",
-                        history.append(id, Kind::Restore, journal::Stamp::at(clock), expected[from], times[from],
+                        history.append(id,
+                                       journal::NewRecord::restore(expected[from], times[from],
+                                                                   journal::Stamp::at(clock)),
                                        &error));
                 expected.append(expected[from]);
                 times.append(clock);
@@ -134,7 +136,11 @@ static int ztRunSuite(int argc, char** argv) {
             // Обычная правка: сохранение или внешнее изменение.
             const Kind kind = (rng() % 5) == 0 ? Kind::External : Kind::Save;
             const QByteArray body = noteAt(round, 20 + int(rng() % 400));
-            ZT_TRUE("запись проходит", history.append(id, kind, journal::Stamp::at(clock), body, 0, &error));
+            ZT_TRUE("запись проходит", history.append(id,
+                                   kind == Kind::External
+                                       ? journal::NewRecord::external(body, journal::Stamp::at(clock))
+                                       : journal::NewRecord::save(body, journal::Stamp::at(clock)),
+                                   &error));
             expected.append(body);
             times.append(clock);
             buried = false;
