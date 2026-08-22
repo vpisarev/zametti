@@ -108,6 +108,85 @@ void checkSearchStepSurvivesScrolling() {
     ZT_TRUE("после ходьбы по найденному программа жива", true);
 }
 
+// ПОСЛЕ ПРАВКИ ПОИСК ПОВТОРЯЕТСЯ ЦЕЛИКОМ (решение владельца: «смещения
+// изменились и количество изменилось»).
+//
+// Находки в исходнике — числа в тексте, и всякая правка их обесценивает:
+// подсветка оставалась стоять там, где текста уже нет, а счётчик показывал
+// старое число. Спрашивается ДЕЙСТВИЕМ: сколько находок видит вид и где они.
+void checkSearchRepeatsAfterEdit() {
+    const QString path = writeNote(
+        QStringLiteral("поиск-правка.md"),
+        QStringLiteral("needle one\n\n**needle** two\n\nhay\n"));
+    Rig rig;
+    rig.editor.openFile(path);
+    QTest::qWait(20);
+    ZT_TRUE("вошли в режим исходника", rig.controller.enter());
+    QTest::qWait(30);
+
+    ZT_EQ("нашлись обе иголки", std::string("2"),
+          std::to_string(rig.view.findMatches(QStringLiteral("needle"), false)));
+
+    // Правка ЗАВОДИТ третью: поиск обязан её увидеть сам.
+    QTextCursor at = rig.view.textCursor();
+    at.movePosition(QTextCursor::End);
+    at.insertText(QStringLiteral("\nneedle three\n"));
+    for (int waited = 0; waited < 3000 && rig.view.matchCount() != 3; waited += 50)
+        QTest::qWait(50);
+    ZT_EQ("после правки иголок стало три", std::string("3"),
+          std::to_string(rig.view.matchCount()));
+
+    // И правка, УБИРАЮЩАЯ находку, тоже видна.
+    const int where = rig.view.toPlainText().indexOf(QStringLiteral("needle"));
+    ZT_TRUE("первая иголка на месте", where >= 0);
+    QTextCursor kill(rig.view.document());
+    kill.setPosition(where);
+    kill.setPosition(where + 6, QTextCursor::KeepAnchor);
+    kill.removeSelectedText();
+    for (int waited = 0; waited < 3000 && rig.view.matchCount() != 2; waited += 50)
+        QTest::qWait(50);
+    ZT_EQ("после удаления иголок стало две", std::string("2"),
+          std::to_string(rig.view.matchCount()));
+
+    // Места находок отвечают тексту: подсветка не стоит там, где текста нет.
+    const QString now = rig.view.toPlainText();
+    for (int i = 0; i < rig.view.matchCount(); ++i) {
+        rig.view.stepMatch(1);
+        ZT_EQ("находка стоит на слове", std::string("needle"),
+              rig.view.textCursor().selectedText().toStdString());
+        ZT_TRUE("и это место есть в тексте",
+                now.mid(rig.view.textCursor().selectionStart(), 6) ==
+                    QStringLiteral("needle"));
+    }
+}
+
+// РАЗМЕТКУ ИЩУТ В ИСХОДНИКЕ, И ТАМ ЕЁ БОЛЬШЕ (случай владельца: «я могу искать
+// фрагменты разметки, **strong** например»).
+//
+// Один и тот же запрос даёт в вёрстке и в исходнике РАЗНОЕ: звёздочек в
+// показанном тексте нет вовсе. Поэтому смена режима при открытом поиске —
+// повод искать заново, тем же правилом, что и смена заметки.
+void checkSearchDiffersBetweenModes() {
+    const QString path = writeNote(QStringLiteral("разметка.md"),
+                                   QStringLiteral("тут **strong** и ещё **strong**\n"));
+    Rig rig;
+    rig.editor.openFile(path);
+    QTest::qWait(20);
+
+    ZT_EQ("в вёрстке звёздочек нет", std::string("0"),
+          std::to_string(rig.editor.findMatches(QStringLiteral("**strong**"), false)));
+
+    ZT_TRUE("вошли в режим исходника", rig.controller.enter());
+    QTest::qWait(30);
+    ZT_EQ("в исходнике разметка находится", std::string("2"),
+          std::to_string(rig.view.findMatches(QStringLiteral("**strong**"), false)));
+
+    rig.controller.leave();
+    QTest::qWait(30);
+    ZT_EQ("вернулись в вёрстку — снова ноль", std::string("0"),
+          std::to_string(rig.editor.findMatches(QStringLiteral("**strong**"), false)));
+}
+
 // Вошли, поправили слово, вышли: заметка приняла правку, каретка на месте, а
 // отмена возвращает всё ОДНИМ нажатием.
 void checkRoundTrip() {
@@ -776,6 +855,8 @@ void checkEscapeKeepsMode() {
 TEST(MarkdownEdit, All) {
     g_dir = zt::TestData::outDir(QStringLiteral("markdown-edit"));
     checkSearchStepSurvivesScrolling();
+    checkSearchRepeatsAfterEdit();
+    checkSearchDiffersBetweenModes();
     checkRoundTrip();
     checkOwnUndo();
     checkNoteRefusesEdits();

@@ -532,12 +532,20 @@ void checkAutoIndentInRealNote(const QString& source) {
                                          std::to_string(editor.caretColumn()) + ")");
 }
 
-// ТОТ ЖЕ СЛУЧАЙ, НО НА ЖИВОЙ ЗАМЕТКЕ ВЛАДЕЛЬЦА, а не на дистилляте: «About the
-// Scopes» в копии Ficus Tutorial. Дистиллят повторяет строение, но не повторяет
-// ни шапки, ни соседей, ни размера — а ловится обычно как раз на них.
+// ТОТ ЖЕ СЛУЧАЙ, НО НА НАСТОЯЩЕЙ ЗАМЕТКЕ, а не на дистилляте: дистиллят
+// повторяет строение, но не повторяет ни шапки, ни соседей, ни размера — а
+// ловится обычно как раз на них.
+//
+// ФИКСТУРА, А НЕ КОПИЯ ЖИВОГО ХРАНИЛИЩА (замечание владельца): заметка лежит в
+// .testdata отдельным файлом и не меняется. Раньше тест брал owner-copy и
+// держался за конкретные строки «Malkovich» — в день, когда копию обновили, он
+// покраснел, хотя в коде ничего не менялось.
+//
+// И место ищется ПО СТРОЕНИЮ, а не по тексту: первый блок кода, у которого и
+// сверху, и снизу пункты списка. Так тест переживёт и правку самой заметки.
 void checkCodeIntoListItemInRealNote() {
-    const QString source = zt::TestData::root() + QStringLiteral("/owner-copy/01n6r08s8wy52h.md");
-    if (!QFile::exists(source)) return;
+    const QString source = zt::TestData::file(QStringLiteral("code-in-list-fixture.md"));
+    if (source.isEmpty()) return;
     QFile in(source);
     if (!in.open(QIODevice::ReadOnly)) return;
     const QString text = QString::fromUtf8(in.readAll());
@@ -552,18 +560,32 @@ void checkCodeIntoListItemInRealNote() {
     QTest::qWait(60);
     const std::string before = editorMarkdown(editor);
 
+    // Блок кода между двумя пунктами списка: именно его владелец и убирает
+    // внутрь пункта.
+    // Пустые строки между блоками — тоже блоки (VSpace), их перешагиваем.
+    const auto meaningful = [](QTextBlock b, int step) {
+        while (b.isValid() && zametti::kindOf(b) == zametti::Kind::VSpace)
+            b = step > 0 ? b.next() : b.previous();
+        return b;
+    };
+    QTextBlock block;
+    for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next()) {
+        if (zametti::kindOf(b) != zametti::Kind::Code) continue;
+        const QTextBlock above = meaningful(b.previous(), -1);
+        const QTextBlock below = meaningful(b.next(), 1);
+        if (!above.isValid() || !below.isValid()) continue;
+        if (zametti::kindOf(above) != zametti::Kind::ListItem) continue;
+        if (zametti::kindOf(below) != zametti::Kind::ListItem) continue;
+        block = b;
+        break;
+    }
+    check(block.isValid(), "живая заметка: блок кода между пунктами нашёлся");
+    if (!block.isValid()) return;
+    const QString firstLine = block.text().split(QChar::LineSeparator).first();
+
     // ЖЕСТ ВЛАДЕЛЬЦА: выделить ВСЕ строки блока и нажать Tab — ровно так это
     // делается во внешнем редакторе, и другого разумного способа нет.
     {
-        // Блок кода — один QTextBlock; его строки — строки файла внутри него.
-        QTextBlock block;
-        for (QTextBlock b = editor.document()->firstBlock(); b.isValid(); b = b.next()) {
-            const QStringList lines = b.text().split(QChar::LineSeparator);
-            if (lines.first() == QStringLiteral("type Malkovich=string") &&
-                lines.last() == QStringLiteral("println(Malkovich(\"Malkovich\"))"))
-                block = b;
-        }
-        check(block.isValid(), "живая заметка: строки блока кода нашлись");
         QTextCursor at(editor.document());
         at.setPosition(block.position());
         at.setPosition(block.position() + block.length() - 1, QTextCursor::KeepAnchor);
@@ -572,26 +594,37 @@ void checkCodeIntoListItemInRealNote() {
     QTest::keyClick(&editor, Qt::Key_Tab, Qt::NoModifier);
     QTest::qWait(10);
 
-    const std::string md = editorMarkdown(editor);
-    const std::string want = "   ```\n   type Malkovich=string\n";
-    check(md.find(want) != std::string::npos,
-          "живая заметка: блок кода ушёл внутрь пункта");
-    // И два списка сошлись в один: пункт за кодом больше не начинает счёт заново.
-    check(md.find("\n1. Functions within the same scope") == std::string::npos,
-          "живая заметка: список за кодом не начинается заново");
+    // ЧТО ЗНАЧИТ «УШЁЛ ВНУТРЬ ПУНКТА» В ФАЙЛЕ: забор и строки кода получили
+    // отступ под содержимое пункта. Сколько именно пробелов — дело маркера
+    // («- » это два, «1. » — три), и держаться за число значило бы держаться за
+    // то, каким списком владелец записал это место.
+    const QStringList after = QString::fromStdString(editorMarkdown(editor))
+                                  .split(QLatin1Char('\n'));
+    int fenced = -1;
+    for (int i = 0; i + 1 < after.size(); ++i) {
+        if (after.at(i).trimmed() != QStringLiteral("```")) continue;
+        if (after.at(i + 1).trimmed() != firstLine.trimmed()) continue;
+        fenced = i;
+        break;
+    }
+    check(fenced >= 0, "живая заметка: забор блока кода на месте");
+    if (fenced >= 0) {
+        const QString fence = after.at(fenced);
+        const QString first = after.at(fenced + 1);
+        const int indent = int(fence.size() - fence.trimmed().size());
+        check(indent > 0, "живая заметка: блок кода ушёл внутрь пункта (отступ " +
+                              std::to_string(indent) + ")");
+        check(first.startsWith(fence.left(indent)),
+              "живая заметка: строки кода уехали вместе с забором");
+    }
 
-    // Shift+Tab тем же жестом — обратно. Выделение правку пережило, нажимаем
-    // сразу; блок выходит из пункта, и список за ним снова начинается заново.
+    // Shift+Tab тем же жестом — обратно, и заметка возвращается ровно к тому, с
+    // чего начали: Shift+Tab отменяет Tab (просьба владельца), и больше в
+    // заметке не тронуто ничего.
     check(editor.textCursor().hasSelection(), "живая заметка: выделение пережило Tab");
     QTest::keyClick(&editor, Qt::Key_Backtab, Qt::ShiftModifier);
     QTest::qWait(10);
     const std::string back = editorMarkdown(editor);
-    check(back.find("\n```\ntype Malkovich=string\n") != std::string::npos,
-          "живая заметка: Shift+Tab вывел блок кода обратно");
-    check(back.find("\n1. Functions within the same scope") != std::string::npos,
-          "живая заметка: список за кодом снова начинается заново");
-    // И заметка вернулась ровно к тому, с чего начали: Shift+Tab отменяет Tab
-    // (просьба владельца), и больше в заметке не тронуто ничего.
     checkEq(before, back, "живая заметка: Shift+Tab отменяет Tab до последнего байта");
 }
 
