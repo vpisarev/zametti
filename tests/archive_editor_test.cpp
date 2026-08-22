@@ -169,10 +169,10 @@ static int ztRunSuite(int argc, char** argv) {
 
         // ТЕЛО ЦЕЛО ПОБАЙТОВО: в журнале лежит ровно то, что было в файле.
         zametti::journal::History history(g_root);
-        zametti::journal::Journal read;
+        zametti::journal::ZJournal read;
         QByteArray head;
-        if (history.read(brokenId, &read, &why) && !read.entries.isEmpty())
-            history.snapshotAt(brokenId, int(read.entries.size()) - 1, &head, &why);
+        if (history.read(brokenId, &read, &why) && !read.isEmpty())
+            history.snapshotAt(brokenId, int(read.size()) - 1, &head, &why);
         ZT_TRUE("тело битой заметки уехало в журнал байт в байт",
                 QString::fromUtf8(head) == body);
 

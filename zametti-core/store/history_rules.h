@@ -71,7 +71,7 @@ struct Step {
     int merged = 0;        // ушло слиянием мелкой правки (0 или 1)
 };
 
-Step decideStep(const QVector<journal::Entry>& entries, const SnapshotOf& snapshotOf,
+Step decideStep(const journal::ZJournal& journal, const SnapshotOf& snapshotOf,
                 const QByteArray& fresh, journal::Kind kind, qint64 now, const Rules& rules);
 
 // Полная пересборка журнала: те же решения, прогнанные по всем записям подряд,
@@ -82,7 +82,7 @@ struct Plan {
     int merged = 0;        // сколько ушло слиянием мелкой правки
     int passes = 0;        // сколько проходов понадобилось до неподвижности
 };
-Plan planFor(const QVector<journal::Entry>& entries, const QVector<QByteArray>& snapshots,
+Plan planFor(const journal::ZJournal& journal, const QVector<QByteArray>& snapshots,
              const Rules& rules);
 
 // Что сделала чистка — для люка и для отчётов.

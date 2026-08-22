@@ -65,10 +65,10 @@ void checkRoundTrip(const QString& dir) {
     const QString path = h.pathFor(id);
     ZT_EQ("пути журнала", str(QDir(dir).filePath("history/01n6r08s8wy52h.log")), str(path));
 
-    journal::Journal empty;
+    journal::ZJournal empty;
     QString error;
     ZT_TRUE("журнала ещё нет — это не беда", h.read(id, &empty, &error));
-    ZT_EQ("и записей в нём ноль", num(0), num(empty.entries.size()));
+    ZT_EQ("и записей в нём ноль", num(0), num(empty.size()));
 
     const QByteArray first = noteBody(10, "раз");
     const QByteArray second = noteBody(12, "два");
@@ -82,26 +82,26 @@ void checkRoundTrip(const QString& dir) {
     ZT_EQ("надгробие", std::string(),
           str(append(h, id, Kind::Tombstone, kNow - kMinute, QByteArray())));
 
-    journal::Journal read;
+    journal::ZJournal read;
     ZT_TRUE("журнал читается", h.read(id, &read, &error));
     ZT_EQ("ошибки нет", std::string(), str(error));
-    ZT_EQ("записей четыре", num(4), num(read.entries.size()));
-    ZT_TRUE("хвост цел", !read.tailTrimmed);
+    ZT_EQ("записей четыре", num(4), num(read.size()));
+    ZT_TRUE("хвост цел", !read.tailTrimmed());
 
-    ZT_EQ("вид первой", num(int(Kind::Save)), num(int(read.entries[0].kind())));
-    ZT_EQ("вид второй", num(int(Kind::External)), num(int(read.entries[1].kind())));
-    ZT_EQ("вид третьей", num(int(Kind::Restore)), num(int(read.entries[2].kind())));
-    ZT_EQ("вид четвёртой", num(int(Kind::Tombstone)), num(int(read.entries[3].kind())));
-    ZT_EQ("время второй", num(kNow - 2 * kHour), num(read.entries[1].time()));
-    ZT_EQ("ревизия первой", num(1LL), num(read.entries[0].seq()));
-    ZT_EQ("ревизия второй", num(2LL), num(read.entries[1].seq()));
-    ZT_EQ("ревизия третьей", num(3LL), num(read.entries[2].seq()));
-    ZT_EQ("ревизия есть и у надгробия", num(4LL), num(read.entries[3].seq()));
-    ZT_EQ("источник восстановления", num(kNow - 3 * kHour), num(read.entries[2].source()));
-    ZT_EQ("источник обычной записи не пишется", num(0LL), num(read.entries[0].source()));
-    ZT_EQ("размер до сжатия", num(qint64(second.size())), num(read.entries[1].plainSize()));
-    ZT_TRUE("слепок в файле меньше исходного", read.entries[1].packedSize() < second.size());
-    ZT_TRUE("у надгробия слепка нет", !read.entries[3].hasSnapshot());
+    ZT_EQ("вид первой", num(int(Kind::Save)), num(int(read.at(0).kind())));
+    ZT_EQ("вид второй", num(int(Kind::External)), num(int(read.at(1).kind())));
+    ZT_EQ("вид третьей", num(int(Kind::Restore)), num(int(read.at(2).kind())));
+    ZT_EQ("вид четвёртой", num(int(Kind::Tombstone)), num(int(read.at(3).kind())));
+    ZT_EQ("время второй", num(kNow - 2 * kHour), num(read.at(1).time()));
+    ZT_EQ("ревизия первой", num(1LL), num(read.at(0).seq()));
+    ZT_EQ("ревизия второй", num(2LL), num(read.at(1).seq()));
+    ZT_EQ("ревизия третьей", num(3LL), num(read.at(2).seq()));
+    ZT_EQ("ревизия есть и у надгробия", num(4LL), num(read.at(3).seq()));
+    ZT_EQ("источник восстановления", num(kNow - 3 * kHour), num(read.at(2).source()));
+    ZT_EQ("источник обычной записи не пишется", num(0LL), num(read.at(0).source()));
+    ZT_EQ("размер до сжатия", num(qint64(second.size())), num(read.at(1).plainSize()));
+    ZT_TRUE("слепок в файле меньше исходного", read.at(1).packedSize() < second.size());
+    ZT_TRUE("у надгробия слепка нет", !read.at(3).hasSnapshot());
 
     QByteArray got;
     ZT_TRUE("слепок первой достаётся", h.snapshotAt(id, 0, &got, &error));
@@ -114,7 +114,7 @@ void checkRoundTrip(const QString& dir) {
 
     // Отпечаток считается от распакованных байтов и сверяется всегда.
     ZT_EQ("отпечаток первой", hashOf(std::string_view(first.constData(), size_t(first.size()))).hex(),
-          read.entries[0].digest().hex());
+          read.at(0).digest().hex());
 }
 
 // Ревизия переживает переписывание файла целиком. Прореживание и чистка — это
@@ -128,30 +128,30 @@ void checkRevisionsSurviveThinning(const QString& dir) {
     for (int i = 0; i < 12; ++i)
         append(h, id, Kind::Save, kNow - 300 * kDay + i * kMinute, noteBody(i + 1, "р"));
 
-    journal::Journal before;
+    journal::ZJournal before;
     QString error;
     ZT_TRUE("журнал читается", h.read(id, &before, &error));
-    ZT_EQ("ревизии подряд", num(12LL), num(before.entries.last().seq()));
+    ZT_EQ("ревизии подряд", num(12LL), num(before.at(before.size() - 1).seq()));
 
     // Кто выживет — знаем заранее: та же чистая функция, что и у прореживания.
-    QVector<int> keep = journal::survivors(before.entries, kNow);
-    ZT_TRUE("прореживанию есть что выбросить", keep.size() < before.entries.size());
+    QVector<int> keep = before.survivors(kNow);
+    ZT_TRUE("прореживанию есть что выбросить", keep.size() < before.size());
     ZT_TRUE("прореживание проходит", h.thin(id, kNow, &error));
 
-    journal::Journal after;
+    journal::ZJournal after;
     ZT_TRUE("и журнал читается", h.read(id, &after, &error));
-    ZT_EQ("выживших столько, сколько обещано", num(keep.size()), num(after.entries.size()));
-    bool same = after.entries.size() == keep.size();
-    for (int i = 0; i < after.entries.size() && same; ++i)
-        same = after.entries[i].seq() == before.entries[keep[i]].seq();
+    ZT_EQ("выживших столько, сколько обещано", num(keep.size()), num(after.size()));
+    bool same = after.size() == keep.size();
+    for (int i = 0; i < after.size() && same; ++i)
+        same = after.at(i).seq() == before.at(keep[i]).seq();
     ZT_TRUE("и ревизия каждого — прежняя, а не пересчитанная", same);
 
     // Номера не переиспользуются: следующая запись продолжает максимум.
     ZT_EQ("дозапись после прореживания", std::string(),
           str(append(h, id, Kind::Save, kNow, noteBody(20, "р"))));
-    journal::Journal grown;
+    journal::ZJournal grown;
     h.read(id, &grown, &error);
-    ZT_EQ("новая ревизия — на единицу больше максимума", num(13LL), num(grown.entries.last().seq()));
+    ZT_EQ("новая ревизия — на единицу больше максимума", num(13LL), num(grown.at(grown.size() - 1).seq()));
 }
 
 // Порча в середине слепка обязана быть замечена: молча отданные не те байты
@@ -197,12 +197,12 @@ void checkTornTail(const QString& dir) {
     ZT_TRUE("хвост обрезан руками", file.resize(whole + (both - whole) / 2));
     file.close();
 
-    journal::Journal read;
+    journal::ZJournal read;
     QString error;
     ZT_TRUE("журнал с оборванным хвостом открывается", h.read(id, &read, &error));
-    ZT_EQ("целая часть цела", num(1), num(read.entries.size()));
-    ZT_TRUE("и про хвост сказано", read.tailTrimmed);
-    ZT_EQ("граница целого — конец первой записи", num(whole), num(read.goodBytes));
+    ZT_EQ("целая часть цела", num(1), num(read.size()));
+    ZT_TRUE("и про хвост сказано", read.tailTrimmed());
+    ZT_EQ("граница целого — конец первой записи", num(whole), num(read.goodBytes()));
 
     QByteArray got;
     ZT_TRUE("слепок целой записи достаётся", h.snapshotAt(id, 0, &got, &error));
@@ -211,18 +211,18 @@ void checkTornTail(const QString& dir) {
     ZT_TRUE("хвост отрезается", h.trimTail(id, &error));
     ZT_EQ("файл укоротился до целого", num(whole), num(QFile(path).size()));
     ZT_TRUE("после обрезки читается начисто", h.read(id, &read, &error));
-    ZT_TRUE("и хвоста больше нет", !read.tailTrimmed);
+    ZT_TRUE("и хвоста больше нет", !read.tailTrimmed());
 
     // Дописывать после обрезки можно как ни в чём не бывало.
     ZT_EQ("дозапись после обрыва", std::string(), str(append(h, id, Kind::Save, kNow, b)));
     h.read(id, &read, &error);
-    ZT_EQ("записей снова две", num(2), num(read.entries.size()));
+    ZT_EQ("записей снова две", num(2), num(read.size()));
 }
 
 void checkForeignFile(const QString& dir) {
     journal::History h(dir);
     QString error;
-    journal::Journal read;
+    journal::ZJournal read;
 
     const QString junkId = QStringLiteral("мусор");
     const QString junk = h.pathFor(junkId);
@@ -238,7 +238,7 @@ void checkForeignFile(const QString& dir) {
     const QString blank = h.pathFor(blankId);
     { QFile f(blank); ZT_TRUE("пустой файл создан", f.open(QIODevice::WriteOnly)); }
     ZT_TRUE("пустой файл — пустой журнал", h.read(blankId, &read, &error));
-    ZT_EQ("и записей ноль", num(0), num(read.entries.size()));
+    ZT_EQ("и записей ноль", num(0), num(read.size()));
 
     // Журнал из будущего: версия, которой мы не знаем. Молча пропустить чужую
     // историю хуже, чем сказать вслух.
@@ -268,7 +268,7 @@ void checkThinningScale() {
 
     // Последний час — всё до единой.
     for (int i = 10; i >= 1; --i) add(kNow - i * kMinute);
-    ZT_EQ("последний час не прореживается", num(10), num(journal::survivors(entries, kNow).size()));
+    ZT_EQ("последний час не прореживается", num(10), num(journal::ZJournal(entries).survivors(kNow).size()));
 
     // Сутки — не чаще раза в минуту: три записи внутри одной минуты схлопнутся
     // в одну, и это будет последняя из них.
@@ -278,7 +278,7 @@ void checkThinningScale() {
     add(kNow - 5 * kHour + 2000);
     add(kNow - 5 * kHour + 3 * kMinute);
     add(kNow - kMinute);
-    QVector<int> keep = journal::survivors(entries, kNow);
+    QVector<int> keep = journal::ZJournal(entries).survivors(kNow);
     ZT_EQ("минута схлопывается в одну запись", num(3), num(keep.size()));
     ZT_EQ("остаётся последняя в минуте", num(2), num(keep[0]));
 
@@ -287,13 +287,13 @@ void checkThinningScale() {
     entries.clear();
     for (int i = 0; i < 6; ++i) add(kNow - 3 * kDay + i * 30 * kMinute);
     add(kNow);
-    keep = journal::survivors(entries, kNow);
+    keep = journal::ZJournal(entries).survivors(kNow);
     ZT_EQ("три часа дают три записи плюс последняя", num(4), num(keep.size()));
 
     // Дальше месяца — раз в месяц; и последняя запись выживает всегда.
     entries.clear();
     for (int i = 0; i < 40; ++i) add(kNow - 400 * kDay + i * kDay);
-    keep = journal::survivors(entries, kNow);
+    keep = journal::ZJournal(entries).survivors(kNow);
     ZT_TRUE("год назад остаётся горстка", keep.size() <= 3);
     ZT_EQ("последняя запись на месте", num(entries.size() - 1), num(keep.last()));
 
@@ -301,7 +301,7 @@ void checkThinningScale() {
     // заметки это её вечный финальный слепок.
     entries.clear();
     add(kNow - 4000 * kDay);
-    ZT_EQ("единственная запись вечна", num(1), num(journal::survivors(entries, kNow).size()));
+    ZT_EQ("единственная запись вечна", num(1), num(journal::ZJournal(entries).survivors(kNow).size()));
 }
 
 void checkThinningFile(const QString& dir) {
@@ -312,25 +312,25 @@ void checkThinningFile(const QString& dir) {
     for (int i = 0; i < 200; ++i)
         append(h, id, Kind::Save, kNow - 365 * kDay + i * (365 * kDay / 200), noteBody(i + 1, "п"));
 
-    journal::Journal before;
+    journal::ZJournal before;
     QString error;
     h.read(id, &before, &error);
-    ZT_EQ("записей двести", num(200), num(before.entries.size()));
+    ZT_EQ("записей двести", num(200), num(before.size()));
     const qint64 sizeBefore = QFile(path).size();
 
     ZT_TRUE("прореживание проходит", h.thin(id, kNow, &error));
-    journal::Journal after;
+    journal::ZJournal after;
     ZT_TRUE("и журнал остаётся читаемым", h.read(id, &after, &error));
-    ZT_TRUE("записей стало меньше", after.entries.size() < before.entries.size());
+    ZT_TRUE("записей стало меньше", after.size() < before.size());
     ZT_TRUE("файл ужался", QFile(path).size() < sizeBefore);
-    ZT_EQ("последняя запись та же", num(before.entries.last().time()), num(after.entries.last().time()));
-    ZT_EQ("и её отпечаток тот же", before.entries.last().digest().hex(),
-          after.entries.last().digest().hex());
+    ZT_EQ("последняя запись та же", num(before.at(before.size() - 1).time()), num(after.at(after.size() - 1).time()));
+    ZT_EQ("и её отпечаток тот же", before.at(before.size() - 1).digest().hex(),
+          after.at(after.size() - 1).digest().hex());
 
     // Слепки переживают переписывание файла.
     QByteArray got;
     ZT_TRUE("слепок после прореживания цел",
-            h.snapshotAt(id, int(after.entries.size()) - 1, &got, &error));
+            h.snapshotAt(id, int(after.size()) - 1, &got, &error));
     ZT_EQ("и он тот самый", str(QString::fromUtf8(noteBody(200, "п"))),
           str(QString::fromUtf8(got)));
 
@@ -359,12 +359,12 @@ void checkFirstStepBack(const QString& dir) {
 
     QString error;
     ZT_TRUE("прореживание проходит", h.thin(id, kNow, &error));
-    journal::Journal read;
+    journal::ZJournal read;
     h.read(id, &read, &error);
 
     QByteArray got;
     ZT_TRUE("предпоследняя запись достаётся",
-            h.snapshotAt(id, int(read.entries.size()) - 2, &got, &error));
+            h.snapshotAt(id, int(read.size()) - 2, &got, &error));
     ZT_EQ("шаг назад ведёт в состояние до моих правок",
           str(QString::fromUtf8(beforeMyEdits)), str(QString::fromUtf8(got)));
 }
@@ -387,19 +387,19 @@ void checkGenerations(const QString& dir) {
               str(append(h, id, Kind::Save, kNow - (count - i) * kMinute, body)));
     }
 
-    journal::Journal read;
+    journal::ZJournal read;
     QString error;
     ZT_TRUE("журнал читается", h.read(id, &read, &error));
-    ZT_EQ("записей столько, сколько писали", num(count), num(read.entries.size()));
+    ZT_EQ("записей столько, сколько писали", num(count), num(read.size()));
 
     int fullCount = 0;
-    for (int i = 0; i < read.entries.size(); ++i) {
+    for (int i = 0; i < read.size(); ++i) {
         const bool shouldBeFull = i % journal::kGeneration == 0;
         ZT_EQ(shouldBeFull ? "начало поколения — полный слепок"
                            : "внутри поколения — звено цепочки",
               num(int(shouldBeFull ? journal::Codec::Zstd : journal::Codec::ZstdDelta)),
-              num(int(read.entries[i].codec())));
-        if (read.entries[i].full()) ++fullCount;
+              num(int(read.at(i).codec())));
+        if (read.at(i).full()) ++fullCount;
     }
     ZT_EQ("полных слепков ровно по числу поколений", num(4), num(fullCount));
 
@@ -436,7 +436,7 @@ void checkDamageContained(const QString& dir) {
         body.replace(QByteArray("- пункт 50 "), QByteArray("- ПУНКТ " + QByteArray::number(i)));
         append(h, id, Kind::Save, kNow - (count - i) * kMinute, body);
     }
-    journal::Journal read;
+    journal::ZJournal read;
     QString error;
     h.read(id, &read, &error);
 
@@ -444,7 +444,7 @@ void checkDamageContained(const QString& dir) {
     // поколения. Рамку не трогаем: если испортить длину, CBOR потеряет всё,
     // что дальше, и это уже не про цепочку.
     const int victim = 3;
-    const qint64 at = read.entries[victim + 1].offset() - 3;
+    const qint64 at = read.at(victim + 1).offset() - 3;
     QFile file(path);
     ZT_TRUE("файл открылся", file.open(QIODevice::ReadWrite));
     QByteArray blob = file.readAll();
@@ -478,18 +478,18 @@ void checkThinRebuildsGenerations(const QString& dir) {
     QString error;
     ZT_TRUE("прореживание проходит", h.thin(id, kNow, &error));
 
-    journal::Journal after;
+    journal::ZJournal after;
     ZT_TRUE("журнал читается", h.read(id, &after, &error));
-    ZT_TRUE("записей стало меньше", after.entries.size() < count);
-    for (int i = 0; i < after.entries.size(); ++i)
+    ZT_TRUE("записей стало меньше", after.size() < count);
+    for (int i = 0; i < after.size(); ++i)
         ZT_EQ("поколения после прореживания ровные",
               num(int(i % journal::kGeneration == 0 ? journal::Codec::Zstd
                                                     : journal::Codec::ZstdDelta)),
-              num(int(after.entries[i].codec())));
+              num(int(after.at(i).codec())));
 
     // И слепки по-прежнему те же самые байты, что писались.
     bool allGood = true;
-    for (int i = 0; i < after.entries.size() && allGood; ++i) {
+    for (int i = 0; i < after.size() && allGood; ++i) {
         QByteArray got;
         allGood = h.snapshotAt(id, i, &got, &error) && bodies.contains(got);
     }
@@ -532,21 +532,21 @@ void checkConcurrency(const QString& dir) {
     thinner.join();
     ZT_TRUE("прореживание отработало", thinRuns.load() == 30);
 
-    journal::Journal read;
+    journal::ZJournal read;
     QString error;
     ZT_TRUE("журнал цел после совместной работы", h.read(id, &read, &error));
-    ZT_TRUE("хвост не оборван", !read.tailTrimmed);
-    ZT_TRUE("записи на месте", read.entries.size() > 0);
+    ZT_TRUE("хвост не оборван", !read.tailTrimmed());
+    ZT_TRUE("записи на месте", read.size() > 0);
 
     QByteArray got;
     ZT_TRUE("последний слепок достаётся",
-            h.snapshotAt(id, int(read.entries.size()) - 1, &got, &error));
+            h.snapshotAt(id, int(read.size()) - 1, &got, &error));
     ZT_EQ("и это то, что дописали последним", str(QString::fromUtf8(last)),
           str(QString::fromUtf8(got)));
 
     // И ни одна уцелевшая запись не должна разъехаться со своим отпечатком.
     bool allGood = true;
-    for (int i = 0; i < read.entries.size() && allGood; ++i)
+    for (int i = 0; i < read.size() && allGood; ++i)
         allGood = h.snapshotAt(id, i, &got, &error);
     ZT_TRUE("все уцелевшие слепки собираются", allGood);
 }

@@ -89,10 +89,10 @@ void checkCatalog() {
     ZT_EQ("заголовок после правки", "Третья", s(storage.info(noteId)->title()));
     ZT_TRUE("родитель снят", storage.info(noteId)->parent().isEmpty());
     {
-        zametti::journal::Journal journal;
+        zametti::journal::ZJournal journal;
         zametti::ZNoteHistory history = storage.historyOf(noteId, rules());
         ZT_TRUE("журнал читается", history.read(&journal, &error));
-        ZT_TRUE("в журнале есть запись о правке", !journal.entries.isEmpty());
+        ZT_TRUE("в журнале есть запись о правке", !journal.isEmpty());
     }
     ZT_TRUE("та же правка второй раз — не ошибка (файл не изменился)",
             storage.rewriteNote(noteId, [](zametti::ZNote& note) {

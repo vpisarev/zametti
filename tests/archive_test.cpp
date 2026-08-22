@@ -69,19 +69,19 @@ std::string read(const QString& id) {
 }
 
 int records(const QString& id) {
-    zametti::journal::Journal read;
+    zametti::journal::ZJournal read;
     QString error;
     if (!zametti::journal::History(g_root).read(id, &read, &error)) return -1;
-    return int(read.entries.size());
+    return int(read.size());
 }
 
 QByteArray head(const QString& id) {
     zametti::journal::History history(g_root);
-    zametti::journal::Journal read;
+    zametti::journal::ZJournal read;
     QString error;
-    if (!history.read(id, &read, &error) || read.entries.isEmpty()) return {};
+    if (!history.read(id, &read, &error) || read.isEmpty()) return {};
     QByteArray body;
-    if (!history.snapshotAt(id, int(read.entries.size()) - 1, &body, &error)) return {};
+    if (!history.snapshotAt(id, int(read.size()) - 1, &body, &error)) return {};
     return body;
 }
 

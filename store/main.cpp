@@ -136,7 +136,7 @@ int main(int argc, char** argv) {
         // Межпроцессный замок: пока открыта программа, прореживание руками не
         // запускается. Внутрипроцессный замок журнала от чужого процесса не
         // бережёт, а ставить файловый на каждую запись — 4.4 мс на ровном месте.
-        QLockFile lock(zametti::journal::storeLockPath(root));
+        QLockFile lock(zametti::journal::History::lockPathFor(root));
         if (!lock.tryLock(0)) {
             // Различаем два разных отказа: замок держат — и замок не завести
             // вовсе. Второе случается на каталоге, который хранилищем не
@@ -147,7 +147,7 @@ int main(int argc, char** argv) {
                              "Thinning runs in the background at app startup.\n");
             else
                 std::fprintf(stderr, "cannot take the store lock: %s\n",
-                             zametti::journal::storeLockPath(root).toUtf8().constData());
+                             zametti::journal::History::lockPathFor(root).toUtf8().constData());
             return 1;
         }
         zametti::journal::History history(root);
@@ -190,7 +190,7 @@ int main(int argc, char** argv) {
 
         // Тот же межпроцессный замок, что у thin: пока открыта программа,
         // журналы правит она.
-        QLockFile lock(zametti::journal::storeLockPath(target));
+        QLockFile lock(zametti::journal::History::lockPathFor(target));
         if (!lock.tryLock(0)) {
             // Занято и «замок негде завести» — разные беды, и валить вторую на
             // первую значит врать: чаще всего это просто не хранилище.
@@ -198,7 +198,7 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "store is busy: the app seems to be open\n");
             else
                 std::fprintf(stderr, "cannot take the store lock: %s\n",
-                             zametti::journal::storeLockPath(target).toUtf8().constData());
+                             zametti::journal::History::lockPathFor(target).toUtf8().constData());
             return 1;
         }
 

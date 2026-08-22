@@ -44,11 +44,11 @@ int changedChars(const QByteArray& a, const QByteArray& b) {
 
 namespace history {
 
-Step decideStep(const QVector<journal::Entry>& entries, const SnapshotOf& snapshotOf,
+Step decideStep(const journal::ZJournal& journal, const SnapshotOf& snapshotOf,
                 const QByteArray& fresh, journal::Kind kind, qint64 now, const Rules& rules) {
     using journal::Kind;
     Step step;
-    step.keep = int(entries.size());
+    step.keep = journal.size();
 
     // Вот он, сторож свежести, и он тут ровно один — на оба правила сразу.
     const qint64 window = qint64(qMax(1, rules.mergeHours)) * 3600 * 1000;
@@ -68,8 +68,8 @@ Step decideStep(const QVector<journal::Entry>& entries, const SnapshotOf& snapsh
     // перепрыгивает: восстановление из истории и приход правки снаружи —
     // вешки, поставленные не набором, и стирать их нельзя ничем.
     int sameAs = -1;
-    for (int i = kind == Kind::Save ? int(entries.size()) - 1 : -1; i >= 0; --i) {
-        const journal::Entry& entry = entries[i];
+    for (int i = kind == Kind::Save ? journal.size() - 1 : -1; i >= 0; --i) {
+        const journal::Entry& entry = journal.at(i);
         if (stale(entry.time())) break;      // дальше история старая, её не трогаем
         if (!entry.hasSnapshot()) break;   // надгробие: за него не заглядываем
         const QByteArray older = snapshotOf(i);
@@ -84,7 +84,7 @@ Step decideStep(const QVector<journal::Entry>& entries, const SnapshotOf& snapsh
     if (sameAs >= 0) {
         step.keep = sameAs + 1;
         step.writeNew = false;
-        step.dropped = int(entries.size()) - step.keep + 1;   // хвост и сама новая
+        step.dropped = journal.size() - step.keep + 1;   // хвост и сама новая
         return step;
     }
 
@@ -93,13 +93,13 @@ Step decideStep(const QVector<journal::Entry>& entries, const SnapshotOf& snapsh
     // поздно переписать), она тоже обычное сохранение, и версии разошлись на
     // мелочь.
     //
-    // entries.size() < 2 — это защита опорной записи: после замены в журнале
-    // обязана остаться хотя бы одна запись, а первая — то, с чего заметка
-    // начиналась, и стереть её нельзя ничем.
-    if (kind != Kind::Save || entries.size() < 2) return step;
-    const journal::Entry& back = entries.back();
+    // Меньше двух записей — это защита опорной: после замены в журнале
+    // обязана остаться хотя бы одна, а первая — то, с чего заметка начиналась,
+    // и стереть её нельзя ничем.
+    if (kind != Kind::Save || journal.size() < 2) return step;
+    const journal::Entry& back = journal.at(journal.size() - 1);
     if (back.kind() != Kind::Save || !back.hasSnapshot() || stale(back.time())) return step;
-    const QByteArray tail = snapshotOf(int(entries.size()) - 1);
+    const QByteArray tail = snapshotOf(journal.size() - 1);
     if (tail.isNull() || tail.isEmpty()) return step;
     if (changedChars(tail, fresh) > qMax(0, rules.mergeChars)) return step;
     --step.keep;
@@ -107,11 +107,11 @@ Step decideStep(const QVector<journal::Entry>& entries, const SnapshotOf& snapsh
     return step;
 }
 
-Plan planFor(const QVector<journal::Entry>& entries, const QVector<QByteArray>& snapshots,
+Plan planFor(const journal::ZJournal& journal, const QVector<QByteArray>& snapshots,
              const Rules& rules) {
     Plan plan;
-    for (int i = 0; i < entries.size(); ++i) plan.keep.append(i);
-    if (entries.isEmpty()) return plan;
+    for (int i = 0; i < journal.size(); ++i) plan.keep.append(i);
+    if (journal.isEmpty()) return plan;
 
     // ПОЧЕМУ ПРОХОДОВ МОЖЕТ БЫТЬ НЕСКОЛЬКО. Один проход — это «как если бы
     // записи дописывали по одной», и неподвижной точкой он сам по себе не
@@ -123,7 +123,7 @@ Plan planFor(const QVector<journal::Entry>& entries, const QVector<QByteArray>& 
     //
     // Каждый проход, который что-то меняет, укорачивает список хотя бы на
     // одну запись, так что проходов не больше, чем записей.
-    for (int pass = 0; pass <= entries.size(); ++pass) {
+    for (int pass = 0; pass <= journal.size(); ++pass) {
         QVector<int> accepted;      // номера принятых записей
         QVector<journal::Entry> acc;  // их рамки — их и видит правило
         const SnapshotOf snapshotOf = [&](int i) { return snapshots[accepted[i]]; };
@@ -131,13 +131,15 @@ Plan planFor(const QVector<journal::Entry>& entries, const QVector<QByteArray>& 
         int merged = 0;
 
         for (int idx : std::as_const(plan.keep)) {
-            const journal::Entry& entry = entries[idx];
+            const journal::Entry& entry = journal.at(idx);
             // «Сейчас» для записи — время её самой: пересборка проигрывает
             // историю заново, и свежесть в ней меряется от момента записи, а не
             // от сегодняшнего дня. Миграции это безразлично (она на возраст не
             // глядит), а вот показу чистой истории корпусным читателем — нет.
-            const Step step = decideStep(acc, snapshotOf, snapshots[idx], entry.kind(),
-                                         entry.time(), rules);
+            // Правило видит НАКОПЛЕННЫЙ журнал: пересборка проигрывает
+            // историю заново, запись за записью.
+            const Step step = decideStep(journal::ZJournal(acc), snapshotOf, snapshots[idx],
+                                         entry.kind(), entry.time(), rules);
             duplicates += step.dropped;
             merged += step.merged;
             acc.resize(step.keep);
@@ -168,8 +170,8 @@ bool compressJournal(journal::History& history, const QString& noteId, const Rul
     journal::CompressOutcome outcome;
     const bool ok = history.compress(
         noteId,
-        [&](const QVector<journal::Entry>& entries, const QVector<QByteArray>& snapshots) {
-            plan = planFor(entries, snapshots, retro);
+        [&](const journal::ZJournal& journal, const QVector<QByteArray>& snapshots) {
+            plan = planFor(journal, snapshots, retro);
             return plan.keep;
         },
         force, &outcome, error);

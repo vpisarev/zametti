@@ -16,7 +16,7 @@ HistorySearchReport searchNoteHistory(const journal::History& history, const QSt
     QElapsedTimer clock;
     clock.start();
 
-    journal::Journal journal;
+    journal::ZJournal journal;
     QString error;
     if (!history.read(noteId, &journal, &error)) {
         report.elapsedMs = clock.elapsed();
@@ -26,8 +26,8 @@ HistorySearchReport searchNoteHistory(const journal::History& history, const QSt
     // СВЕЖИЕ СЛЕПКИ ПЕРВЫМИ: человек ищет «где это было», и ближайшее прошлое
     // ему нужнее давнего. Список поиска по хранилищу устроен так же — сперва
     // то, что вероятнее нужно.
-    for (int i = int(journal.entries.size()) - 1; i >= 0; --i) {
-        const journal::Entry& entry = journal.entries[i];
+    for (int i = int(journal.size()) - 1; i >= 0; --i) {
+        const journal::Entry& entry = journal.at(i);
         if (!entry.hasSnapshot()) continue;   // у надгробия смотреть нечего
         QByteArray bytes;
         if (!history.snapshotAt(noteId, i, &bytes, &error)) continue;

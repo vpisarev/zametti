@@ -78,13 +78,11 @@ static int ztRunSuite(int argc, char** argv) {
             // Прореживание — единственное, что имеет право укорачивать журнал.
             const qint64 lastBefore = times.isEmpty() ? 0 : times.last();
             const qint64 now = clock + qint64(rng() % (30 * 24 * 3600 * 1000LL));
-            const QVector<int> keep = journal::survivors(
-                [&] {
-                    journal::Journal j;
-                    history.read(id, &j, &error);
-                    return j.entries;
-                }(),
-                now);
+            const QVector<int> keep = [&] {
+                journal::ZJournal j;
+                history.read(id, &j, &error);
+                return j.survivors(now);
+            }();
             ZT_TRUE("прореживание проходит", history.thin(id, now, &error));
 
             // Ожидания подрезаем ровно так же, как обещает survivors.
@@ -143,11 +141,11 @@ static int ztRunSuite(int argc, char** argv) {
         }
 
         // --- инварианты после каждого шага ----------------------------------
-        journal::Journal j;
+        journal::ZJournal j;
         ZT_TRUE("журнал читается", history.read(id, &j, &error));
-        ZT_TRUE("хвост цел", !j.tailTrimmed);
+        ZT_TRUE("хвост цел", !j.tailTrimmed());
         ZT_EQ("записей столько, сколько мы написали", num(expected.size()),
-              num(j.entries.size()));
+              num(j.size()));
 
         const qint64 size = QFileInfo(path).size();
         if (what >= 8) {
@@ -158,10 +156,10 @@ static int ztRunSuite(int argc, char** argv) {
 
         // Каждый слепок собирается и сходится с отпечатком. Дорого, но это и
         // есть предмет проверки: цепочка поколений не имеет права разъехаться.
-        for (int i = 0; i < j.entries.size() && zt::g_failures == 0; ++i) {
-            ZT_EQ("время записи на месте", num(times[i]), num(j.entries[i].time()));
+        for (int i = 0; i < j.size() && zt::g_failures == 0; ++i) {
+            ZT_EQ("время записи на месте", num(times[i]), num(j.at(i).time()));
             if (expected[i].isEmpty()) {
-                ZT_TRUE("у надгробия слепка нет", !j.entries[i].hasSnapshot());
+                ZT_TRUE("у надгробия слепка нет", !j.at(i).hasSnapshot());
                 continue;
             }
             QByteArray got;

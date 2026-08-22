@@ -12,13 +12,13 @@ ZNoteHistory::ZNoteHistory(QString storeRoot, QString noteId, history::Rules rul
 void ZNoteHistory::ensureBaseline(const QByteArray& contents, qint64 fileTimeMs) {
     if (!available()) return;
     journal::History history(root_);
-    journal::Journal journal;
+    journal::ZJournal journal;
     QString error;
     if (!history.read(id_, &journal, &error)) {
         std::fprintf(stderr, "cannot read history: %s\n", error.toUtf8().constData());
         return;
     }
-    if (!journal.entries.isEmpty()) return;   // история уже начата
+    if (!journal.isEmpty()) return;   // история уже начата
     const qint64 when = fileTimeMs > 0 ? fileTimeMs : QDateTime::currentMSecsSinceEpoch();
     if (!history.append(id_, journal::Kind::Save, when, contents, 0, &error))
         std::fprintf(stderr, "baseline record not written: %s\n", error.toUtf8().constData());
@@ -39,16 +39,16 @@ void ZNoteHistory::loadTail(journal::History& history) {
     tailKnown_ = true;
     tail_.clear();
     tailTime_ = 0;
-    journal::Journal read;
+    journal::ZJournal read;
     QString error;
-    if (history.read(id_, &read, &error) && !read.entries.isEmpty()) {
+    if (history.read(id_, &read, &error) && !read.isEmpty()) {
         // Голова, а не последняя по файлу: с чем сравнивать свежий слепок,
         // решает ПОРЯДОК записей, а не их укладка. Разойтись эти две вещи
         // могут только у журнала, побывавшего в синхронизации, — и тогда
         // мелкая правка слилась бы не с той записью.
-        const int last = journal::lastSnapshotIndex(read.entries);
+        const int last = read.lastSnapshotIndex();
         if (last >= 0 && history.snapshotAt(id_, last, &tail_, &error))
-            tailTime_ = read.entries[last].time();
+            tailTime_ = read.at(last).time();
     }
 }
 
@@ -76,7 +76,7 @@ bool ZNoteHistory::record(journal::Kind kind, const QByteArray& snapshot, QStrin
     // РЕШЕНИЕ ПРИНИМАЕТ ОБЩИЙ СВОД ПРАВИЛ (history_rules.h) — тот же, что
     // чистит старую историю. Здесь остаётся механика: прочитать журнал, отдать
     // правилу слепки и сделать, что сказано.
-    journal::Journal read;
+    journal::ZJournal read;
     if (!history.read(id_, &read, err)) {
         std::fprintf(stderr, "cannot read history: %s\n", err->toUtf8().constData());
         tailKnown_ = false;
@@ -85,7 +85,7 @@ bool ZNoteHistory::record(journal::Kind kind, const QByteArray& snapshot, QStrin
     // Слепки правило спрашивает по одному и только те, до которых дошло: у
     // хвоста они уже в памяти (ради этого журнал не разжимается), за
     // остальными идём в журнал.
-    const int lastIndex = int(read.entries.size()) - 1;
+    const int lastIndex = read.size() - 1;
     const auto snapshotOf = [&](int i) -> QByteArray {
         if (i == lastIndex && tailTime_ > 0) return tail_;
         QByteArray older;
@@ -94,10 +94,10 @@ bool ZNoteHistory::record(journal::Kind kind, const QByteArray& snapshot, QStrin
         return older;
     };
     const history::Step step =
-        history::decideStep(read.entries, snapshotOf, snapshot, kind, now, rules_);
+        history::decideStep(read, snapshotOf, snapshot, kind, now, rules_);
 
     bool ok = true;
-    if (step.keep < int(read.entries.size())) ok = history.truncate(id_, step.keep, err);
+    if (step.keep < read.size()) ok = history.truncate(id_, step.keep, err);
     if (ok && step.writeNew) ok = history.append(id_, kind, now, snapshot, source, err);
     if (!ok) {
         std::fprintf(stderr, "history not written: %s\n", err->toUtf8().constData());
@@ -109,7 +109,7 @@ bool ZNoteHistory::record(journal::Kind kind, const QByteArray& snapshot, QStrin
     return true;
 }
 
-bool ZNoteHistory::read(journal::Journal* out, QString* error) {
+bool ZNoteHistory::read(journal::ZJournal* out, QString* error) {
     if (!available()) {
         if (error != nullptr) *error = QStringLiteral("note has no journal");
         return false;

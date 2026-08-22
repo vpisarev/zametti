@@ -1046,21 +1046,21 @@ bool verifyStore(const QString& root, Report& report) {
                 report.problem(QStringLiteral("foreign file in history/: %1").arg(name));
                 continue;
             }
-            journal::Journal j;
+            journal::ZJournal j;
             QString error;
             if (!history.read(noteId, &j, &error)) {
                 report.problem(QStringLiteral("journal %1: %2").arg(name, error));
                 continue;
             }
             ++journals;
-            records += j.entries.size();
-            if (j.tailTrimmed)
+            records += j.size();
+            if (j.tailTrimmed())
                 report.note(QStringLiteral("journal %1: truncated tail "
                                            "(will be cut on the next append)")
                                 .arg(name));
 
-            for (int i = 0; i < j.entries.size(); ++i) {
-                if (!j.entries[i].hasSnapshot()) continue;
+            for (int i = 0; i < j.size(); ++i) {
+                if (!j.at(i).hasSnapshot()) continue;
                 QByteArray body;
                 if (!history.snapshotAt(noteId, i, &body, &error)) {
                     report.problem(QStringLiteral("journal %1, record %2: %3")
@@ -1081,8 +1081,8 @@ bool verifyStore(const QString& root, Report& report) {
             // Похоронена ли — спрашиваем у ГОЛОВЫ, а не у последней по файлу:
             // диагноз обязан считаться по тому же порядку, по которому
             // программа выбирает состояние заметки.
-            const int head = journal::headIndex(j.entries);
-            const bool buried = head >= 0 && j.entries[head].kind() == journal::Kind::Tombstone;
+            const int head = j.headIndex();
+            const bool buried = head >= 0 && j.at(head).kind() == journal::Kind::Tombstone;
             report.note(buried ? QStringLiteral("journal of deleted note %1 (with tombstone)")
                                      .arg(noteId)
                                : QStringLiteral("journal %1 without a note and without a tombstone: "

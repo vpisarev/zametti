@@ -83,10 +83,10 @@ void checkFindsWhatIsGone() {
     ZT_TRUE("и отпечаток", !report.hits[0].snapshotDigest.empty());
 
     // Адресация: по паре (время, отпечаток) находится ровно та запись.
-    journal::Journal journal;
+    journal::ZJournal journal;
     QString error;
     ZT_TRUE("журнал читается", history.read(id, &journal, &error));
-    const int at = journal::indexOfEntry(journal, report.hits[0].snapshotTime,
+    const int at = journal.indexOf(report.hits[0].snapshotTime,
                                          report.hits[0].snapshotDigest);
     ZT_EQ("вешка ведёт к средней записи", num(1), num(at));
     QByteArray body;
@@ -149,16 +149,16 @@ void checkSearchMigratesFirst() {
         QByteArray blob = file.readAll();
         file.close();
         const QByteArray clean =
-            journal::headerBytesFor(QString::fromLatin1(journal::kCleanVersion));
-        blob = journal::headerBytesFor(QString()) + blob.mid(clean.size());
+            journal::ZJournal::headerBytes(QString::fromLatin1(journal::kCleanVersion));
+        blob = journal::ZJournal::headerBytes(QString()) + blob.mid(clean.size());
         QFile out(history.pathFor(id));
         ZT_TRUE("журнал переписан", out.open(QIODevice::WriteOnly | QIODevice::Truncate));
         out.write(blob);
     }
 
-    journal::Journal before;
+    journal::ZJournal before;
     ZT_TRUE("грязный журнал читается", history.read(id, &before, &error));
-    ZT_EQ("в нём три записи", num(3), num(before.entries.size()));
+    ZT_EQ("в нём три записи", num(3), num(before.size()));
 
     NoteEditor editor;
     editor.setStoreRoot(g_root);
@@ -166,9 +166,9 @@ void checkSearchMigratesFirst() {
     zt::HistoryRig rig(editor);
     const HistorySearchReport report = rig.controller.searchHistory(QStringLiteral("Кострому"));
 
-    journal::Journal after;
+    journal::ZJournal after;
     ZT_TRUE("журнал читается и после", history.read(id, &after, &error));
-    ZT_EQ("поиск вычистил дубликат", num(1), num(after.entries.size()));
+    ZT_EQ("поиск вычистил дубликат", num(1), num(after.size()));
     ZT_EQ("и находка одна, а не три", num(1), num(report.hits.size()));
 }
 

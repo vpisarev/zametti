@@ -105,7 +105,7 @@ bool processAlive(qint64 pid) {
 }  // namespace
 
 QString ZStorage::lockPath() const {
-    return journal::storeLockPath(store_ ? root_ : QDir::tempPath());
+    return journal::History::lockPathFor(store_ ? root_ : QDir::tempPath());
 }
 
 bool ZStorage::isLocked() const { return lock_ != nullptr && lock_->isLocked(); }

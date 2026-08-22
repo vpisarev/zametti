@@ -1889,7 +1889,7 @@ int main(int argc, char** argv) {
                 std::memcpy(digest.bytes.data(), raw.constData(), digest.bytes.size());
             const std::shared_ptr<zametti::ZNoteTimeline> tl = history.timeline();
             const int at = tl != nullptr
-                               ? zametti::journal::indexOfEntry(tl->journal(), stamp, digest)
+                               ? tl->journal().indexOf(stamp, digest)
                                : -1;
             if (at >= 0) history.enter(at);
             // Прыжок на N-е вхождение в СЛЕПКЕ — у вида разности напрямую:

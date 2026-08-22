@@ -71,7 +71,7 @@ public:
     // дубликаты, которые всё равно уйдут при первой правке, незачем. Слепок по
     // номеру чистки НЕ зовёт: номера относятся к прочитанным рамкам, и сдвигать
     // их между read и snapshotAt нельзя.
-    bool read(journal::Journal* out, QString* error);
+    bool read(journal::ZJournal* out, QString* error);
     bool snapshotAt(int index, QByteArray* out, QString* error) const;
 
     // Механика файла — тем, кому нужен сам журнал (поиск по истории). Чистку

@@ -2485,10 +2485,10 @@ void checkHistoryPoints() {
     editor.setFocus();
 
     auto records = [&history, &noteId] {
-        zametti::journal::Journal journal;
+        zametti::journal::ZJournal journal;
         QString error;
         history.read(noteId, &journal, &error);
-        return journal.entries;
+        return journal.entries();
     };
     auto snapshot = [&history, &noteId](int index) {
         QByteArray got;
@@ -2703,10 +2703,10 @@ void checkHistoryMode() {
 
     // Восстановление: новая запись, отдельным шагом отмены.
     const int recordsBefore = [&] {
-        zametti::journal::Journal journal;
+        zametti::journal::ZJournal journal;
         QString error;
         history.read(noteId, &journal, &error);
-        return int(journal.entries.size());
+        return int(journal.size());
     }();
     check(rig.enter(0), "вход на первый слепок");
     const QString old = QString::fromStdString(rig.controller.timeline()->snapshotBody());
@@ -2716,29 +2716,29 @@ void checkHistoryMode() {
     check(!rig.active(), "и режим закрылся");
     checkEqual(old, text(), "в живой заметке теперь содержимое слепка");
 
-    zametti::journal::Journal journal;
+    zametti::journal::ZJournal journal;
     QString error;
     history.read(noteId, &journal, &error);
-    check(int(journal.entries.size()) == recordsBefore + 1,
+    check(int(journal.size()) == recordsBefore + 1,
           "восстановление дописало ровно одну запись");
-    check(!journal.entries.isEmpty() &&
-              journal.entries.last().kind() == zametti::journal::Kind::Restore,
+    check(!journal.isEmpty() &&
+              journal.at(journal.size() - 1).kind() == zametti::journal::Kind::Restore,
           "и это запись restore");
-    check(!journal.entries.isEmpty() && journal.entries.last().source() == source,
+    check(!journal.isEmpty() && journal.at(journal.size() - 1).source() == source,
           "в записи назван источник");
 
     // Инвариант C: журнал не укоротился.
-    check(int(journal.entries.size()) > recordsBefore, "журнал только вырос");
+    check(int(journal.size()) > recordsBefore, "журнал только вырос");
 
     // Слепок, совпадающий с нынешней версией, не восстанавливается: журнал не
     // растёт, цепочка отмены не засоряется пустым шагом, и человеку говорят
     // правду, а не «восстановлено».
     {
         const int wasRecords = [&] {
-            zametti::journal::Journal journal;
+            zametti::journal::ZJournal journal;
             QString e;
             history.read(noteId, &journal, &e);
-            return int(journal.entries.size());
+            return int(journal.size());
         }();
         const int wasUndo = editor.undoSteps();
         check(rig.enter(), "вход в историю на последний слепок");
@@ -2748,10 +2748,10 @@ void checkHistoryMode() {
         check(same == 0 && alreadyCurrent, "восстановление того же самого — не восстановление");
         check(!rig.active(), "и режим всё равно закрылся");
         const int nowRecords = [&] {
-            zametti::journal::Journal journal;
+            zametti::journal::ZJournal journal;
             QString e;
             history.read(noteId, &journal, &e);
-            return int(journal.entries.size());
+            return int(journal.size());
         }();
         check(nowRecords == wasRecords, "журнал не вырос");
         check(editor.undoSteps() == wasUndo, "и пустого шага отмены не добавилось");
@@ -2796,10 +2796,10 @@ void checkHistoryBaseline() {
     editor.setFocus();
 
     auto records = [&history, &noteId] {
-        zametti::journal::Journal journal;
+        zametti::journal::ZJournal journal;
         QString error;
         history.read(noteId, &journal, &error);
-        return journal.entries;
+        return journal.entries();
     };
     auto snapshot = [&history, &noteId](int index) {
         QByteArray got;

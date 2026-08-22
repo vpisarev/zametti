@@ -66,20 +66,20 @@ QString makeNote(const QString& id, const std::string& body) {
 
 int recordCount(const QString& id) {
     zametti::journal::History history(g_root);
-    zametti::journal::Journal journal;
+    zametti::journal::ZJournal journal;
     QString error;
     if (!history.read(id, &journal, &error)) return -1;
-    return int(journal.entries.size());
+    return int(journal.size());
 }
 
 // Все слепки журнала по порядку: ими и проверяется «нет двух одинаковых».
 std::vector<QByteArray> snapshots(const QString& id) {
     std::vector<QByteArray> out;
     zametti::journal::History history(g_root);
-    zametti::journal::Journal journal;
+    zametti::journal::ZJournal journal;
     QString error;
     if (!history.read(id, &journal, &error)) return out;
-    for (int i = 0; i < journal.entries.size(); ++i) {
+    for (int i = 0; i < journal.size(); ++i) {
         QByteArray blob;
         if (history.snapshotAt(id, i, &blob, &error)) out.push_back(blob);
     }
@@ -420,8 +420,8 @@ void makeDirtyJournal(const QString& id, qint64 when) {
     QByteArray bytes = file.readAll();
     file.close();
     const QByteArray clean =
-        zametti::journal::headerBytesFor(QString::fromLatin1(zametti::journal::kCleanVersion));
-    bytes = zametti::journal::headerBytesFor(QString()) + bytes.mid(clean.size());
+        zametti::journal::ZJournal::headerBytes(QString::fromLatin1(zametti::journal::kCleanVersion));
+    bytes = zametti::journal::ZJournal::headerBytes(QString()) + bytes.mid(clean.size());
     QFile out(path);
     ZT_TRUE("грязный журнал переписан", out.open(QIODevice::WriteOnly | QIODevice::Truncate));
     out.write(bytes);
@@ -430,10 +430,10 @@ void makeDirtyJournal(const QString& id, qint64 when) {
 
 QString cleanVersionOf(const QString& id) {
     zametti::journal::History history(g_root);
-    zametti::journal::Journal journal;
+    zametti::journal::ZJournal journal;
     QString error;
     if (!history.read(id, &journal, &error)) return QStringLiteral("не читается");
-    return journal.cleanVersion;
+    return journal.cleanVersion();
 }
 
 // Триггер первый: первая запись в журнал.

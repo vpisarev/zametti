@@ -69,8 +69,8 @@ QByteArray fileBytes(const QString& path) {
 // нынешний append заводит журнал сразу чищеным.
 void makeV0(const QString& path) {
     QByteArray bytes = fileBytes(path);
-    const QByteArray clean = journal::headerBytesFor(QString::fromLatin1(journal::kCleanVersion));
-    const QByteArray old = journal::headerBytesFor(QString());
+    const QByteArray clean = journal::ZJournal::headerBytes(QString::fromLatin1(journal::kCleanVersion));
+    const QByteArray old = journal::ZJournal::headerBytes(QString());
     ZT_TRUE("журнал начинается нынешней шапкой", bytes.startsWith(clean));
     bytes = old + bytes.mid(clean.size());
     QFile file(path);
@@ -88,11 +88,11 @@ QString append(journal::History& h, const QString& id, Kind kind, qint64 time,
 
 // Времена уцелевших записей — то, чем удобнее всего описать «что осталось».
 std::string timesOf(journal::History& h, const QString& id, qint64 base) {
-    journal::Journal j;
+    journal::ZJournal j;
     QString error;
     if (!h.read(id, &j, &error)) return str(error);
     std::string out;
-    for (const journal::Entry& e : j.entries) {
+    for (const journal::Entry& e : j.entries()) {
         if (!out.empty()) out += " ";
         out += std::to_string((e.time() - base) / kMinute);
         if (e.kind() != Kind::Save) out += e.kind() == Kind::Tombstone ? "T" : "X";
@@ -126,15 +126,15 @@ void checkRealJournal() {
     QFile::copy(QDir(g_fixture).filePath(id + QStringLiteral(".log")), path);
 
     journal::History h(dir.path());
-    journal::Journal before;
+    journal::ZJournal before;
     QString error;
     ZT_TRUE("журнал владельца читается", h.read(id, &before, &error));
-    ZT_EQ("он не чищен (v0)", std::string(), str(before.cleanVersion));
-    ZT_EQ("записей в нём", num(11), num(before.entries.size()));
+    ZT_EQ("он не чищен (v0)", std::string(), str(before.cleanVersion()));
+    ZT_EQ("записей в нём", num(11), num(before.size()));
 
     QByteArray lastBefore;
     ZT_TRUE("последний слепок собирается",
-            h.snapshotAt(id, int(before.entries.size()) - 1, &lastBefore, &error));
+            h.snapshotAt(id, int(before.size()) - 1, &lastBefore, &error));
 
     const history::Report report = compress(h, id, false);
     ZT_EQ("версия была", std::string(), str(report.versionBefore));
@@ -148,25 +148,25 @@ void checkRealJournal() {
     ZT_EQ("схлопнутых мелких правок нет", num(0), num(report.merged));
     ZT_TRUE("файл переписан", report.rewritten);
 
-    journal::Journal after;
+    journal::ZJournal after;
     ZT_TRUE("чищеный журнал читается", h.read(id, &after, &error));
-    ZT_EQ("версия в шапке", std::string("0.1"), str(after.cleanVersion));
+    ZT_EQ("версия в шапке", std::string("0.1"), str(after.cleanVersion()));
     ZT_EQ("уцелевшие записи (минуты от первой)", std::string("0 15680 15850 15872 15880"),
-          timesOf(h, id, before.entries.first().time()));
+          timesOf(h, id, before.at(0).time()));
 
     // СОСТОЯНИЕ ЗАМЕТКИ НЕ ПОТЕРЯНО. Именно состояние, а не байты: из пары
     // одинаковых записей остаётся САМАЯ СТАРАЯ, и штамп modified в ней —
     // её собственный, на 39 секунд раньше. Текст при этом тот же до знака.
     QByteArray lastAfter;
     ZT_TRUE("последний слепок собирается и после",
-            h.snapshotAt(id, int(after.entries.size()) - 1, &lastAfter, &error));
+            h.snapshotAt(id, int(after.size()) - 1, &lastAfter, &error));
     ZT_TRUE("последнее состояние то же самое", sameApartFromModified(lastBefore, lastAfter));
     ZT_TRUE("а байты — от старшей из равных записей", lastBefore != lastAfter);
 
     // Равных записей в чищеном журнале не осталось ни одной пары.
     bool anyEqual = false;
-    for (int i = 0; i < after.entries.size(); ++i)
-        for (int j = i + 1; j < after.entries.size(); ++j) {
+    for (int i = 0; i < after.size(); ++i)
+        for (int j = i + 1; j < after.size(); ++j) {
             QByteArray a, b;
             if (h.snapshotAt(id, i, &a, &error) && h.snapshotAt(id, j, &b, &error))
                 anyEqual = anyEqual || sameApartFromModified(a, b);
@@ -266,25 +266,25 @@ void checkAddressByTimeAndHash(const QString& root) {
     append(h, id, Kind::Save, kNow + kMinute, body("два больше на много знаков и ещё", 2));
     append(h, id, Kind::Save, kNow + 2 * kMinute, body("раз", 3));
 
-    journal::Journal before;
+    journal::ZJournal before;
     QString error;
     ZT_TRUE("журнал читается", h.read(id, &before, &error));
     // Вешка на последнюю запись — ту самую, которую чистка и выкинет.
-    const qint64 markTime = before.entries.last().time();
-    const Digest markDigest = before.entries.last().digest();
+    const qint64 markTime = before.at(before.size() - 1).time();
+    const Digest markDigest = before.at(before.size() - 1).digest();
     ZT_EQ("до чистки вешка ведёт к ней самой", num(2),
-          num(journal::indexOfEntry(before, markTime, markDigest)));
+          num(before.indexOf(markTime, markDigest)));
 
     makeV0(h.pathFor(id));
     compress(h, id, false);
 
-    journal::Journal after;
+    journal::ZJournal after;
     ZT_TRUE("и после чистки читается", h.read(id, &after, &error));
     ZT_EQ("после чистки — к выжившей равной", num(0),
-          num(journal::indexOfEntry(after, markTime, markDigest)));
+          num(after.indexOf(markTime, markDigest)));
     QByteArray target;
     ZT_TRUE("слепок по этой вешке собирается",
-            h.snapshotAt(id, journal::indexOfEntry(after, markTime, markDigest), &target, &error));
+            h.snapshotAt(id, after.indexOf(markTime, markDigest), &target, &error));
     ZT_TRUE("и содержимое у него то самое", sameApartFromModified(target, body("раз", 3)));
 }
 
@@ -322,7 +322,7 @@ void checkLiveAndMigrationAgree(const QString& root) {
     history::Rules rules;
     for (int i = 0; i < steps.size(); ++i) {
         const qint64 when = kNow + i * kMinute;
-        journal::Journal j;
+        journal::ZJournal j;
         QString error;
         h.read(live, &j, &error);
         const auto snapshotOf = [&](int at) {
@@ -332,8 +332,8 @@ void checkLiveAndMigrationAgree(const QString& root) {
             return out;
         };
         const history::Step step =
-            history::decideStep(j.entries, snapshotOf, steps[i], Kind::Save, when, rules);
-        if (step.keep < j.entries.size()) h.truncate(live, step.keep, &error);
+            history::decideStep(j, snapshotOf, steps[i], Kind::Save, when, rules);
+        if (step.keep < j.size()) h.truncate(live, step.keep, &error);
         if (step.writeNew) append(h, live, Kind::Save, when, steps[i]);
     }
 

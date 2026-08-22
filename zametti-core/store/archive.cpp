@@ -201,7 +201,7 @@ bool archiveNote(const QString& root, const QString& noteId, const history::Rule
     // сохранение: правила отбора решают, ложится ли слепок отдельной записью,
     // заменяет ли последнюю или не пишется вовсе (равен голове).
     journal::History history(root);
-    journal::Journal read;
+    journal::ZJournal read;
     QString why;
     if (!history.read(noteId, &read, &why)) {
         if (error != nullptr) *error = QStringLiteral("cannot read history: %1").arg(why);
@@ -216,8 +216,8 @@ bool archiveNote(const QString& root, const QString& noteId, const history::Rule
         return older;
     };
     const history::Step step =
-        history::decideStep(read.entries, snapshotOf, snapshot, journal::Kind::Save, now, rules);
-    if (step.keep < int(read.entries.size()) &&
+        history::decideStep(read, snapshotOf, snapshot, journal::Kind::Save, now, rules);
+    if (step.keep < read.size() &&
         !history.truncate(noteId, qMax(1, step.keep), &why)) {
         if (error != nullptr) *error = QStringLiteral("journal not trimmed: %1").arg(why);
         return false;
@@ -247,13 +247,13 @@ bool restoreNote(const QString& root, const QString& noteId, QString* error) {
     if (!stub.isArchived()) return true;   // уже дома
 
     journal::History history(root);
-    journal::Journal read;
+    journal::ZJournal read;
     QString why;
     if (!history.read(noteId, &read, &why)) {
         if (error != nullptr) *error = QStringLiteral("cannot read history: %1").arg(why);
         return false;
     }
-    const int head = journal::lastSnapshotIndex(read.entries);
+    const int head = read.lastSnapshotIndex();
     QByteArray body;
     if (head >= 0 && !history.snapshotAt(noteId, head, &body, &why)) body.clear();
     if (body.isEmpty()) {

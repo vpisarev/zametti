@@ -104,24 +104,24 @@ static int ztRunSuite(int argc, char** argv) {
         ZT_EQ("и без жалоб", std::string(), error.toStdString());
         ZT_TRUE("файла заметки больше нет", !QFileInfo::exists(path));
 
-        journal::Journal journal;
+        journal::ZJournal journal;
         ZT_TRUE("журнал на месте", history.read(noteId, &journal, &error));
         ZT_EQ("и в нём три записи", std::string("3"),
-              std::to_string(journal.entries.size()));
+              std::to_string(journal.size()));
         // Пустой журнал здесь — не «не сошлось число», а «журнал удалили
         // вместе с заметкой»; спрашивать у него последнюю запись нельзя.
-        const bool haveRecords = !journal.entries.isEmpty();
+        const bool haveRecords = !journal.isEmpty();
         ZT_TRUE("журнал не удалён вместе с заметкой", haveRecords);
         ZT_TRUE("последняя — надгробие",
-                haveRecords && journal.entries.last().kind() == journal::Kind::Tombstone);
+                haveRecords && journal.at(journal.size() - 1).kind() == journal::Kind::Tombstone);
         ZT_TRUE("у надгробия своего слепка нет",
-                haveRecords && !journal.entries.last().hasSnapshot());
+                haveRecords && !journal.at(journal.size() - 1).hasSnapshot());
 
         // Главное обещание: по журналу удалённую заметку можно воскресить.
         QByteArray last;
         ZT_TRUE("предпоследний слепок достаётся",
-                journal.entries.size() >= 2 &&
-                    history.snapshotAt(noteId, int(journal.entries.size()) - 2, &last, &error));
+                journal.size() >= 2 &&
+                    history.snapshotAt(noteId, int(journal.size()) - 2, &last, &error));
         ZT_EQ("и это её последнее содержимое", std::string("# заметка\n\nраз\nдва\n"),
               std::string(last.constData(), size_t(last.size())));
 
@@ -380,8 +380,8 @@ static int ztRunSuite(int argc, char** argv) {
             QByteArray blob = file.readAll();
             file.close();
             const QByteArray clean =
-                journal::headerBytesFor(QString::fromLatin1(journal::kCleanVersion));
-            blob = journal::headerBytesFor(QString()) + blob.mid(clean.size());
+                journal::ZJournal::headerBytes(QString::fromLatin1(journal::kCleanVersion));
+            blob = journal::ZJournal::headerBytes(QString()) + blob.mid(clean.size());
             QFile out(path);
             ZT_TRUE("журнал переписан на старый лад",
                     out.open(QIODevice::WriteOnly | QIODevice::Truncate));
@@ -408,10 +408,10 @@ static int ztRunSuite(int argc, char** argv) {
         }
         ZT_TRUE("ни один журнал не тронут: ни байтом, ни временем", untouched);
 
-        journal::Journal still;
+        journal::ZJournal still;
         ZT_TRUE("старый журнал читается", history.read(ids[0], &still, &error));
-        ZT_EQ("и остался старым", std::string(), still.cleanVersion.toStdString());
-        ZT_TRUE("с дубликатом внутри", still.entries.size() == 2);
+        ZT_EQ("и остался старым", std::string(), still.cleanVersion().toStdString());
+        ZT_TRUE("с дубликатом внутри", still.size() == 2);
     }
 
     // --- verify: журнал без заметки -----------------------------------------

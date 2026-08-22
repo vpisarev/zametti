@@ -68,9 +68,9 @@ public:
     bool isOpen() const { return index_ >= 0; }
 
     // --- список записей ---------------------------------------------------
-    const journal::Journal& journal() const { return journal_; }
-    const QVector<journal::Entry>& entries() const { return journal_.entries; }
-    int count() const { return int(journal_.entries.size()); }
+    const journal::ZJournal& journal() const { return journal_; }
+    const QVector<journal::Entry>& entries() const { return journal_.entries(); }
+    int count() const { return journal_.size(); }
     int index() const { return index_; }
     // Последняя запись со слепком; -1 — таких нет (надгробия пропущены).
     int lastSnapshotIndex() const;
@@ -126,7 +126,7 @@ protected:
     std::shared_ptr<ZNoteHistory> history_;
     QByteArray fresh_;
     std::shared_ptr<const ZDocStyle> style_;
-    journal::Journal journal_;
+    journal::ZJournal journal_;
     int index_ = -1;
     QByteArray snapshotBytes_;
     QStringList snapshotLines_;
