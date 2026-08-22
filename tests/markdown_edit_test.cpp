@@ -19,6 +19,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QTest>
 #include <QTextBlock>
 #include <QTextEdit>
@@ -62,6 +63,52 @@ struct Rig {
         QTest::qWait(20);
     }
 };
+
+// ХОД ПОИСКА В ИСХОДНИКЕ НЕ УБИВАЕТ ПРОГРАММУ (падение, найденное владельцем:
+// большая заметка, Ctrl+F, F3 — и core dump; в WYSIWYG того же не было).
+//
+// Переход к найденному прокручивает вид, прокрутка двигает полосу, а по её
+// сигналу пересчитывались подсветки — то есть setExtraSelections звался
+// ИЗНУТРИ QWidgetTextControl::setTextCursor, посреди чужой работы. Qt при этом
+// спрашивает геометрию выделений у ещё не достроенного состояния документа:
+// стек падения — setTextCursor → valueChanged → refreshOverlays →
+// setExtraSelections → QTextCursor::hasComplexSelection →
+// QTextFrame::childFrames → SIGSEGV.
+//
+// Заметка нарочно длинная и с находками по краям: падение приходит там, где
+// переход прокручивает далеко.
+void checkSearchStepSurvivesScrolling() {
+    // Заметка владельца из корпуса: разметка в ней сложная (комментарии,
+    // таблицы, код), а находки разбросаны по всей длине — именно там переход
+    // прокручивает далеко. На синтетике падение не воспроизводится: прыжки
+    // короткие, и прокрутка при переходе не случается.
+    const QString store = zt::TestData::corpus(QStringLiteral("owner-copy"));
+    if (store.isEmpty()) {
+        std::printf("  (корпуса owner-copy нет — проверка хода поиска пропущена)\n");
+        return;
+    }
+    const QString path = store + QStringLiteral("/01n6r08s8wy52h.md");
+    if (!QFileInfo::exists(path)) {
+        std::printf("  (заметки для проверки хода поиска нет — пропущено)\n");
+        return;
+    }
+
+    Rig rig;
+    rig.editor.openFile(path);
+    QTest::qWait(80);
+    ZT_TRUE("вошли в режим исходника", rig.controller.enter());
+    QTest::qWait(80);
+
+    const int found = rig.view.findMatches(QStringLiteral("<!-"), false);
+    ZT_TRUE("находки есть (" + std::to_string(found) + ")", found > 0);
+    // Каждый шаг РИСУЕТСЯ — как в жизни: падение приходило именно на отрисовке
+    // подсветок, вызванной изнутри перехода.
+    for (int i = 0; i < qMin(found, 60) + 2; ++i) {
+        rig.view.stepMatch(1);
+        (void)rig.view.grab();
+    }
+    ZT_TRUE("после ходьбы по найденному программа жива", true);
+}
 
 // Вошли, поправили слово, вышли: заметка приняла правку, каретка на месте, а
 // отмена возвращает всё ОДНИМ нажатием.
@@ -730,6 +777,7 @@ void checkEscapeKeepsMode() {
 
 TEST(MarkdownEdit, All) {
     g_dir = zt::TestData::outDir(QStringLiteral("markdown-edit"));
+    checkSearchStepSurvivesScrolling();
     checkRoundTrip();
     checkOwnUndo();
     checkNoteRefusesEdits();
