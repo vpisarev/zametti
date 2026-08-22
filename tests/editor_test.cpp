@@ -2518,7 +2518,7 @@ void checkHistoryPoints() {
     QTest::qWait(20);
     auto after = records();
     check(after.size() == 2, "сохранение записало шаг поверх опорного");
-    check(after.size() == 2 && after[1].kind == zametti::journal::Kind::Save,
+    check(after.size() == 2 && after[1].kind() == zametti::journal::Kind::Save,
           "и это шаг save");
     checkEqual(fileText(), snapshot(1), "слепок — ровно то, что легло в файл");
 
@@ -2539,7 +2539,7 @@ void checkHistoryPoints() {
     for (int i = 0; i < 100 && records().size() < 3; ++i) QTest::qWait(20);
     after = records();
     check(after.size() == 3, "внешняя правка записала шаг");
-    check(after.size() == 3 && after[2].kind == zametti::journal::Kind::External,
+    check(after.size() == 3 && after[2].kind() == zametti::journal::Kind::External,
           "и это шаг external");
     checkEqual(outside, snapshot(2), "слепок — чужие байты, как они есть на диске");
 
@@ -2559,7 +2559,7 @@ void checkHistoryPoints() {
     check(after.size() == before + 1, "первое Ctrl+Z после правок записало шаг");
     check(snapshot(int(after.size()) - 1).contains(QStringLiteral("before undo")),
           "первое Ctrl+Z после правок записало набранное");
-    check(!after.isEmpty() && after.last().kind == zametti::journal::Kind::Save,
+    check(!after.isEmpty() && after.last().kind() == zametti::journal::Kind::Save,
           "и это обычное сохранение, а не особая запись");
     check(snapshot(int(after.size()) - 1).contains(QStringLiteral("before undo")),
           "в истории осталось то, что отменили");
@@ -2722,9 +2722,9 @@ void checkHistoryMode() {
     check(int(journal.entries.size()) == recordsBefore + 1,
           "восстановление дописало ровно одну запись");
     check(!journal.entries.isEmpty() &&
-              journal.entries.last().kind == zametti::journal::Kind::Restore,
+              journal.entries.last().kind() == zametti::journal::Kind::Restore,
           "и это запись restore");
-    check(!journal.entries.isEmpty() && journal.entries.last().source == source,
+    check(!journal.entries.isEmpty() && journal.entries.last().source() == source,
           "в записи назван источник");
 
     // Инвариант C: журнал не укоротился.
@@ -2818,7 +2818,7 @@ void checkHistoryBaseline() {
     // Время опорной записи — файла, а не «сейчас»: содержимое ровно такой
     // давности, и таймлайн не должен утверждать, будто оно свежее.
     check(!after.isEmpty() &&
-              qAbs(after[0].time - QFileInfo(path).lastModified().toMSecsSinceEpoch()) < 2000,
+              qAbs(after[0].time() - QFileInfo(path).lastModified().toMSecsSinceEpoch()) < 2000,
           "время опорной записи взято у файла");
 
     // Повторное открытие второй опорной не плодит.

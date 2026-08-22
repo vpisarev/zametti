@@ -152,7 +152,7 @@ Sample measure(const QString& root, const QString& sourceNote, int saves) {
     if (history.read(noteId, &read, &error)) {
         sample.records = read.entries.size();
         for (const zametti::journal::Entry& entry : read.entries)
-            sample.plainTotal += entry.plainSize;
+            sample.plainTotal += entry.plainSize();
     }
 
     std::sort(times.begin(), times.end());

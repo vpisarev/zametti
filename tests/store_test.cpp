@@ -113,7 +113,7 @@ static int ztRunSuite(int argc, char** argv) {
         const bool haveRecords = !journal.entries.isEmpty();
         ZT_TRUE("журнал не удалён вместе с заметкой", haveRecords);
         ZT_TRUE("последняя — надгробие",
-                haveRecords && journal.entries.last().kind == journal::Kind::Tombstone);
+                haveRecords && journal.entries.last().kind() == journal::Kind::Tombstone);
         ZT_TRUE("у надгробия своего слепка нет",
                 haveRecords && !journal.entries.last().hasSnapshot());
 

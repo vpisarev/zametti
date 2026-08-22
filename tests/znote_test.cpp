@@ -43,7 +43,7 @@ void checkHistory() {
     ZT_TRUE("журнал читается", history.read(&read, &error));
     ZT_EQ("опорная запись одна", n(1), n(read.entries.size()));
     if (!read.entries.isEmpty()) {
-        ZT_EQ("временем файла, а не «сейчас»", n(1000), n(read.entries[0].time));
+        ZT_EQ("временем файла, а не «сейчас»", n(1000), n(read.entries[0].time()));
         QByteArray bytes;
         ZT_TRUE("слепок собирается", history.snapshotAt(0, &bytes, &error));
         ZT_EQ("и это то, с чем открыли", "первое\n", bytes.toStdString());
@@ -65,8 +65,8 @@ void checkHistory() {
     ZT_TRUE("журнал читается в третий раз", history.read(&read, &error));
     if (!read.entries.isEmpty()) {
         const journal::Entry& last = read.entries.back();
-        ZT_TRUE("последняя запись — восстановление", last.kind == journal::Kind::Restore);
-        ZT_EQ("со временем источника", n(1000), n(last.source));
+        ZT_TRUE("последняя запись — восстановление", last.kind() == journal::Kind::Restore);
+        ZT_EQ("со временем источника", n(1000), n(last.source()));
     }
     // Внешняя правка — своим родом, признак восстановления не трогает.
     history.markNextSaveAsRestore(2000);

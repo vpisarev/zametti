@@ -12,6 +12,7 @@
 #include <QFileInfo>
 #include <QSaveFile>
 
+#include <algorithm>
 #include <cassert>
 #include <cstring>
 #include <limits>
@@ -78,38 +79,38 @@ constexpr int kZstdLevel = 3;
 // packed — сжатый слепок, отдельно: он не свойство рамки, а её содержимое, и
 // при пересборке он другой, чем был в файле, хотя рамка та же.
 QByteArray recordBytes(const Entry& e, const QByteArray& packed) {
-    const bool tombstone = e.kind == Kind::Tombstone;
-    const bool restore = e.kind == Kind::Restore;
+    const bool tombstone = e.kind() == Kind::Tombstone;
+    const bool restore = e.kind() == Kind::Restore;
     // Нулевую ревизию не пишем вовсе: «нет ключа = 0» — уже принятый в этом
     // файле уговор (так же читается отсутствующий KeyClean). Плата за это не
     // два байта, а обещание идемпотентности: журнал, написанный до этапа 17,
     // после перекодировки прореживанием остаётся байт в байт прежним.
-    const bool hasSeq = e.seq != 0;
+    const bool hasSeq = e.seq() != 0;
     QByteArray out;
     QCborStreamWriter writer(&out);
     writer.startMap(quint64(3 + (tombstone ? 0 : 3) + (restore ? 1 : 0) + (hasSeq ? 1 : 0)));
     writer.append(KeyKind);
-    writer.append(int(e.kind));
+    writer.append(int(e.kind()));
     writer.append(KeyTime);
-    writer.append(e.time);
+    writer.append(e.time());
     if (hasSeq) {
         writer.append(KeySeq);
-        writer.append(e.seq);
+        writer.append(e.seq());
     }
     writer.append(KeyDigest);
-    writer.append(QByteArray(reinterpret_cast<const char*>(e.digest.bytes.data()),
-                             qsizetype(e.digest.bytes.size())));
+    writer.append(QByteArray(reinterpret_cast<const char*>(e.digest().bytes.data()),
+                             qsizetype(e.digest().bytes.size())));
     if (!tombstone) {
         writer.append(KeyCodec);
-        writer.append(int(e.codec));
+        writer.append(int(e.codec()));
         writer.append(KeyPlainSize);
-        writer.append(e.plainSize);
+        writer.append(e.plainSize());
         writer.append(KeySnapshot);
         writer.append(packed);
     }
     if (restore) {
         writer.append(KeySource);
-        writer.append(e.source);
+        writer.append(e.source());
     }
     writer.endMap();
     return out;
@@ -219,6 +220,16 @@ bool readValueAsBytes(QCborStreamReader& reader, QByteArray* value) {
 RawRecord readRecord(QCborStreamReader& reader, bool wantSnapshot) {
     RawRecord out;
     if (!reader.isMap()) return out;
+    // Значения копятся в локальных: ключи в карте идут в любом порядке, а
+    // рамка записи неизменяема — она рождается один раз, когда прочитано всё.
+    Kind kind = Kind::Save;
+    qint64 time = 0;
+    qint64 seq = 0;
+    Digest digest;
+    Codec codec = Codec::Zstd;
+    qint64 plainSize = 0;
+    qint64 packedSize = 0;
+    qint64 source = 0;
     reader.enterContainer();
     while (reader.lastError() == QCborError::NoError && reader.hasNext()) {
         if (!reader.isInteger()) return out;  // ключ обязан быть целым
@@ -232,45 +243,44 @@ RawRecord readRecord(QCborStreamReader& reader, bool wantSnapshot) {
                 } else {
                     qint64 v = 0;
                     if (!readValueAsInt(reader, &v)) return out;
-                    out.entry.kind = Kind(v);
+                    kind = Kind(v);
                 }
                 break;
             case KeyTime: {  // он же KeyVersion
                 qint64 v = 0;
                 if (!readValueAsInt(reader, &v)) return out;
-                out.entry.time = v;
+                time = v;
                 out.version = int(v);
                 break;
             }
             case KeyDigest: {
                 QByteArray bytes;
                 if (!readValueAsBytes(reader, &bytes)) return out;
-                if (bytes.size() != qsizetype(out.entry.digest.bytes.size())) return out;
-                std::memcpy(out.entry.digest.bytes.data(), bytes.constData(),
-                            size_t(bytes.size()));
+                if (bytes.size() != qsizetype(digest.bytes.size())) return out;
+                std::memcpy(digest.bytes.data(), bytes.constData(), size_t(bytes.size()));
                 break;
             }
             case KeyCodec: {
                 qint64 v = 0;
                 if (!readValueAsInt(reader, &v)) return out;
-                out.entry.codec = Codec(v);
+                codec = Codec(v);
                 break;
             }
             case KeyPlainSize: {
                 qint64 v = 0;
                 if (!readValueAsInt(reader, &v)) return out;
-                out.entry.plainSize = v;
+                plainSize = v;
                 break;
             }
             case KeySnapshot: {
                 if (!reader.isByteArray()) return out;
                 if (wantSnapshot) {
                     if (!readValueAsBytes(reader, &out.packed)) return out;
-                    out.entry.packedSize = out.packed.size();
+                    packedSize = out.packed.size();
                 } else {
                     // Слепок пропускаем: у богатой заметки их сотни, и
                     // таймлайну нужны времена, а не мегабайты.
-                    out.entry.packedSize = reader.length() > 0 ? qint64(reader.length()) : 0;
+                    packedSize = reader.length() > 0 ? qint64(reader.length()) : 0;
                     reader.next();
                 }
                 break;
@@ -278,13 +288,13 @@ RawRecord readRecord(QCborStreamReader& reader, bool wantSnapshot) {
             case KeySource: {
                 qint64 v = 0;
                 if (!readValueAsInt(reader, &v)) return out;
-                out.entry.source = v;
+                source = v;
                 break;
             }
             case KeySeq: {
                 qint64 v = 0;
                 if (!readValueAsInt(reader, &v)) return out;
-                out.entry.seq = v;
+                seq = v;
                 break;
             }
             case KeyClean:
@@ -297,6 +307,9 @@ RawRecord readRecord(QCborStreamReader& reader, bool wantSnapshot) {
     }
     if (reader.lastError() != QCborError::NoError) return out;
     if (!reader.leaveContainer()) return out;
+    out.entry = Entry(kind, time, seq, digest, source);
+    out.entry.layAs(codec, plainSize);
+    out.entry.placeAt(0, packedSize);   // смещение проставит разбор всей ленты
     out.valid = true;
     return out;
 }
@@ -323,17 +336,17 @@ bool rebuildAt(const QVector<Entry>& entries, const QVector<QByteArray>& packed,
     for (int i = base; i <= index; ++i) {
         const Entry& e = entries[i];
         if (!e.hasSnapshot()) continue;  // надгробие цепочку не рвёт: у него слепка нет
-        if (e.codec != Codec::Zstd && e.codec != Codec::None && e.codec != Codec::ZstdDelta) {
+        if (e.codec() != Codec::Zstd && e.codec() != Codec::None && e.codec() != Codec::ZstdDelta) {
             if (error)
                 *error = QStringLiteral("snapshot of record #%1 compressed with unknown codec %2")
                              .arg(i)
-                             .arg(int(e.codec));
+                             .arg(int(e.codec()));
             return false;
         }
         QByteArray plain;
-        if (e.codec == Codec::None) {
+        if (e.codec() == Codec::None) {
             plain = packed[i];
-        } else if (!decompressSnapshot(packed[i], e.full() ? QByteArray() : current, e.plainSize,
+        } else if (!decompressSnapshot(packed[i], e.full() ? QByteArray() : current, e.plainSize(),
                                        &plain)) {
             if (error) *error = QStringLiteral("snapshot of record #%1 does not decompress").arg(i);
             return false;
@@ -341,7 +354,7 @@ bool rebuildAt(const QVector<Entry>& entries, const QVector<QByteArray>& packed,
         if (eachLink || i == index) {
             const Digest actual =
                 hashOf(std::string_view(plain.constData(), size_t(plain.size())));
-            if (actual != e.digest) {
+            if (actual != e.digest()) {
                 if (error)
                     *error = QStringLiteral("snapshot of record #%1: hash mismatch").arg(i);
                 // Итог не сошёлся — теперь стоит пройти цепочку с проверкой
@@ -381,8 +394,7 @@ bool rebuiltBytes(const QVector<Entry>& entries, const QVector<QByteArray>& pack
         if (!e.hasSnapshot()) {
             // Надгробие поколения не начинает и не рвёт: слепка у него нет.
             Entry frame = e;
-            frame.codec = Codec::Zstd;
-            frame.plainSize = 0;
+            frame.layAs(Codec::Zstd, 0);
             *out += recordBytes(frame, QByteArray());
             continue;
         }
@@ -399,8 +411,7 @@ bool rebuiltBytes(const QVector<Entry>& entries, const QVector<QByteArray>& pack
         // род, время, отпечаток, source и любое будущее поле рамки — едет из
         // прежней записи неприкосновенным.
         Entry frame = e;
-        frame.codec = codec;
-        frame.plainSize = plain.size();
+        frame.layAs(codec, plain.size());
         *out += recordBytes(frame, body);
         previous = plain;
         ++written;
@@ -495,7 +506,8 @@ bool parseAll(const QByteArray& blob, Journal* out, Want want, int wantIndex,
             out->entries.size() <= wantIndex)
             for (QByteArray& old : *packed) old.clear();
         out->entries.append(record.entry);
-        out->entries.last().offset = qint64(offset);
+        Entry& placed = out->entries.last();
+        placed.placeAt(qint64(offset), placed.packedSize());
         if (packed) packed->append(record.packed);
         offset += next.currentOffset();
         out->goodBytes = qint64(offset);
@@ -529,16 +541,41 @@ QByteArray headerBytesFor(const QString& clean) {
 
 History::History(QString root) : root_(std::move(root)) {}
 
+bool Entry::isBefore(const Entry& other) const {
+    if (seq_ != other.seq_) return seq_ < other.seq_;
+    if (time_ != other.time_) return time_ < other.time_;
+    // Контент старше надгробия: при равном ключе правка побеждает удаление.
+    if (hasSnapshot() != other.hasSnapshot()) return hasSnapshot();
+    return std::lexicographical_compare(digest_.bytes.begin(), digest_.bytes.end(),
+                                        other.digest_.bytes.begin(), other.digest_.bytes.end());
+}
+
+int headIndex(const QVector<Entry>& entries) {
+    int best = -1;
+    for (int i = 0; i < entries.size(); ++i)
+        if (best < 0 || entries[best].isBefore(entries[i])) best = i;
+    return best;
+}
+
+int lastSnapshotIndex(const QVector<Entry>& entries) {
+    int best = -1;
+    for (int i = 0; i < entries.size(); ++i) {
+        if (!entries[i].hasSnapshot()) continue;
+        if (best < 0 || entries[best].isBefore(entries[i])) best = i;
+    }
+    return best;
+}
+
 int indexOfEntry(const Journal& journal, qint64 time, const Digest& digest) {
     int nearest = -1;
     for (int i = 0; i < journal.entries.size(); ++i) {
         const Entry& e = journal.entries[i];
-        if (e.time == time && e.digest == digest) return i;
-        if (e.hasSnapshot() && e.time <= time) nearest = i;
+        if (e.isAddressedBy(time, digest)) return i;
+        if (e.hasSnapshot() && e.time() <= time) nearest = i;
     }
     // Точной нет. Может, она просто переехала во времени — ищем по отпечатку.
     for (int i = 0; i < journal.entries.size(); ++i)
-        if (journal.entries[i].digest == digest && journal.entries[i].hasSnapshot()) return i;
+        if (journal.entries[i].digest() == digest && journal.entries[i].hasSnapshot()) return i;
     // И этого нет: запись вычистили. Ближайшая не позже искомой — то самое
     // состояние, которое к тому моменту в журнале и осталось.
     return nearest;
@@ -632,17 +669,11 @@ bool History::appendLocked(const QString& path, Kind kind, qint64 time,
     // максимуме наравне с прочими — иначе правка поверх удаления получила бы
     // номер МЕНЬШЕ надгробия и проиграла бы ему, а правка обязана побеждать.
     qint64 seq = 0;
-    for (const Entry& e : journal.entries) seq = qMax(seq, e.seq);
+    for (const Entry& e : journal.entries) seq = qMax(seq, e.seq());
     ++seq;
 
-    Entry frame;
-    frame.kind = kind;
-    frame.time = time;
-    frame.seq = seq;
-    frame.digest = digest;
-    frame.codec = codec;
-    frame.plainSize = snapshot.size();
-    frame.source = source;
+    Entry frame(kind, time, seq, digest, source);
+    frame.layAs(codec, snapshot.size());
     tail += recordBytes(frame, body);
 
     if (!file.open(QIODevice::WriteOnly | QIODevice::Append)) {
@@ -701,7 +732,7 @@ bool History::snapshotAtLocked(const QString& path, int index, QByteArray* out,
         if (error)
             *error = QStringLiteral("record #%1 (%2) has no snapshot")
                          .arg(index)
-                         .arg(describeKind(entry.kind));
+                         .arg(describeKind(entry.kind()));
         return false;
     }
     return rebuildAt(journal.entries, packed, index, out, error);
@@ -760,7 +791,7 @@ QVector<int> survivors(const QVector<Entry>& entries, qint64 now) {
             keep.append(i);
             continue;
         }
-        if (bucketOf(entries[i].time, now) != bucketOf(entries[i + 1].time, now)) keep.append(i);
+        if (bucketOf(entries[i].time(), now) != bucketOf(entries[i + 1].time(), now)) keep.append(i);
     }
     return keep;
 }
@@ -897,7 +928,7 @@ bool History::truncate(const QString& noteId, int keepCount, QString* error) {
 
     // Режем по НАЧАЛУ первой лишней записи: всё, что до него, — целые записи,
     // и читатель их видит ровно как раньше.
-    const qint64 cut = journal.entries[keepCount].offset;
+    const qint64 cut = journal.entries[keepCount].offset();
     if (cut <= 0) {
         if (error) *error = QStringLiteral("cannot tell where record %1 ends").arg(keepCount);
         return false;

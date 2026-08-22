@@ -43,7 +43,7 @@ HistorySearchReport searchNoteHistory(const journal::History& history, const QSt
 
         // Заголовок группы — дата слепка: заголовок заметки у всех слепков
         // один и тот же, и по нему их не различить.
-        const QString title = historyMoment(entry.time);
+        const QString title = historyMoment(entry.time());
         for (const Hit& hit : hits) {
             if (report.hits.size() >= limit) {
                 report.truncated = true;
@@ -51,14 +51,14 @@ HistorySearchReport searchNoteHistory(const journal::History& history, const QSt
             }
             const HitLine line = doc.hitLine(hit);
             SearchResult result;
-            result.noteId = noteId + QStringLiteral("@%1").arg(entry.time);   // ключ группы
+            result.noteId = noteId + QStringLiteral("@%1").arg(entry.time());   // ключ группы
             result.title = title;
             result.line = line.text;
             result.lineOffset = line.offset;
             result.lineLength = line.length;
             result.ordinal = hit.ordinal;
-            result.snapshotTime = entry.time;
-            result.snapshotDigest = entry.digest;
+            result.snapshotTime = entry.time();
+            result.snapshotDigest = entry.digest();
             report.hits.append(result);
         }
         if (report.truncated) break;

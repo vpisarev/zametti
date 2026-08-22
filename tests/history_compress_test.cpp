@@ -94,8 +94,8 @@ std::string timesOf(journal::History& h, const QString& id, qint64 base) {
     std::string out;
     for (const journal::Entry& e : j.entries) {
         if (!out.empty()) out += " ";
-        out += std::to_string((e.time - base) / kMinute);
-        if (e.kind != Kind::Save) out += e.kind == Kind::Tombstone ? "T" : "X";
+        out += std::to_string((e.time() - base) / kMinute);
+        if (e.kind() != Kind::Save) out += e.kind() == Kind::Tombstone ? "T" : "X";
     }
     return out;
 }
@@ -152,7 +152,7 @@ void checkRealJournal() {
     ZT_TRUE("чищеный журнал читается", h.read(id, &after, &error));
     ZT_EQ("версия в шапке", std::string("0.1"), str(after.cleanVersion));
     ZT_EQ("уцелевшие записи (минуты от первой)", std::string("0 15680 15850 15872 15880"),
-          timesOf(h, id, before.entries.first().time));
+          timesOf(h, id, before.entries.first().time()));
 
     // СОСТОЯНИЕ ЗАМЕТКИ НЕ ПОТЕРЯНО. Именно состояние, а не байты: из пары
     // одинаковых записей остаётся САМАЯ СТАРАЯ, и штамп modified в ней —
@@ -270,8 +270,8 @@ void checkAddressByTimeAndHash(const QString& root) {
     QString error;
     ZT_TRUE("журнал читается", h.read(id, &before, &error));
     // Вешка на последнюю запись — ту самую, которую чистка и выкинет.
-    const qint64 markTime = before.entries.last().time;
-    const Digest markDigest = before.entries.last().digest;
+    const qint64 markTime = before.entries.last().time();
+    const Digest markDigest = before.entries.last().digest();
     ZT_EQ("до чистки вешка ведёт к ней самой", num(2),
           num(journal::indexOfEntry(before, markTime, markDigest)));
 

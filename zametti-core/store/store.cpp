@@ -1078,8 +1078,11 @@ bool verifyStore(const QString& root, Report& report) {
             // надгробия — заметку унесли мимо программы, и сказать об этом
             // надо, но бедой это не считаем: файл мог убрать сам человек.
             if (notes.find(toUtf8(noteId)) != notes.end()) continue;
-            const bool buried = !j.entries.isEmpty() &&
-                                j.entries.last().kind == journal::Kind::Tombstone;
+            // Похоронена ли — спрашиваем у ГОЛОВЫ, а не у последней по файлу:
+            // диагноз обязан считаться по тому же порядку, по которому
+            // программа выбирает состояние заметки.
+            const int head = journal::headIndex(j.entries);
+            const bool buried = head >= 0 && j.entries[head].kind() == journal::Kind::Tombstone;
             report.note(buried ? QStringLiteral("journal of deleted note %1 (with tombstone)")
                                      .arg(noteId)
                                : QStringLiteral("journal %1 without a note and without a tombstone: "

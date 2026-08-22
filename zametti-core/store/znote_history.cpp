@@ -42,9 +42,13 @@ void ZNoteHistory::loadTail(journal::History& history) {
     journal::Journal read;
     QString error;
     if (history.read(id_, &read, &error) && !read.entries.isEmpty()) {
-        const int last = int(read.entries.size()) - 1;
-        if (read.entries[last].hasSnapshot() && history.snapshotAt(id_, last, &tail_, &error))
-            tailTime_ = read.entries[last].time;
+        // Голова, а не последняя по файлу: с чем сравнивать свежий слепок,
+        // решает ПОРЯДОК записей, а не их укладка. Разойтись эти две вещи
+        // могут только у журнала, побывавшего в синхронизации, — и тогда
+        // мелкая правка слилась бы не с той записью.
+        const int last = journal::lastSnapshotIndex(read.entries);
+        if (last >= 0 && history.snapshotAt(id_, last, &tail_, &error))
+            tailTime_ = read.entries[last].time();
     }
 }
 

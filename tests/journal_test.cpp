@@ -88,19 +88,19 @@ void checkRoundTrip(const QString& dir) {
     ZT_EQ("записей четыре", num(4), num(read.entries.size()));
     ZT_TRUE("хвост цел", !read.tailTrimmed);
 
-    ZT_EQ("вид первой", num(int(Kind::Save)), num(int(read.entries[0].kind)));
-    ZT_EQ("вид второй", num(int(Kind::External)), num(int(read.entries[1].kind)));
-    ZT_EQ("вид третьей", num(int(Kind::Restore)), num(int(read.entries[2].kind)));
-    ZT_EQ("вид четвёртой", num(int(Kind::Tombstone)), num(int(read.entries[3].kind)));
-    ZT_EQ("время второй", num(kNow - 2 * kHour), num(read.entries[1].time));
-    ZT_EQ("ревизия первой", num(1LL), num(read.entries[0].seq));
-    ZT_EQ("ревизия второй", num(2LL), num(read.entries[1].seq));
-    ZT_EQ("ревизия третьей", num(3LL), num(read.entries[2].seq));
-    ZT_EQ("ревизия есть и у надгробия", num(4LL), num(read.entries[3].seq));
-    ZT_EQ("источник восстановления", num(kNow - 3 * kHour), num(read.entries[2].source));
-    ZT_EQ("источник обычной записи не пишется", num(0LL), num(read.entries[0].source));
-    ZT_EQ("размер до сжатия", num(qint64(second.size())), num(read.entries[1].plainSize));
-    ZT_TRUE("слепок в файле меньше исходного", read.entries[1].packedSize < second.size());
+    ZT_EQ("вид первой", num(int(Kind::Save)), num(int(read.entries[0].kind())));
+    ZT_EQ("вид второй", num(int(Kind::External)), num(int(read.entries[1].kind())));
+    ZT_EQ("вид третьей", num(int(Kind::Restore)), num(int(read.entries[2].kind())));
+    ZT_EQ("вид четвёртой", num(int(Kind::Tombstone)), num(int(read.entries[3].kind())));
+    ZT_EQ("время второй", num(kNow - 2 * kHour), num(read.entries[1].time()));
+    ZT_EQ("ревизия первой", num(1LL), num(read.entries[0].seq()));
+    ZT_EQ("ревизия второй", num(2LL), num(read.entries[1].seq()));
+    ZT_EQ("ревизия третьей", num(3LL), num(read.entries[2].seq()));
+    ZT_EQ("ревизия есть и у надгробия", num(4LL), num(read.entries[3].seq()));
+    ZT_EQ("источник восстановления", num(kNow - 3 * kHour), num(read.entries[2].source()));
+    ZT_EQ("источник обычной записи не пишется", num(0LL), num(read.entries[0].source()));
+    ZT_EQ("размер до сжатия", num(qint64(second.size())), num(read.entries[1].plainSize()));
+    ZT_TRUE("слепок в файле меньше исходного", read.entries[1].packedSize() < second.size());
     ZT_TRUE("у надгробия слепка нет", !read.entries[3].hasSnapshot());
 
     QByteArray got;
@@ -114,7 +114,7 @@ void checkRoundTrip(const QString& dir) {
 
     // Отпечаток считается от распакованных байтов и сверяется всегда.
     ZT_EQ("отпечаток первой", hashOf(std::string_view(first.constData(), size_t(first.size()))).hex(),
-          read.entries[0].digest.hex());
+          read.entries[0].digest().hex());
 }
 
 // Ревизия переживает переписывание файла целиком. Прореживание и чистка — это
@@ -131,7 +131,7 @@ void checkRevisionsSurviveThinning(const QString& dir) {
     journal::Journal before;
     QString error;
     ZT_TRUE("журнал читается", h.read(id, &before, &error));
-    ZT_EQ("ревизии подряд", num(12LL), num(before.entries.last().seq));
+    ZT_EQ("ревизии подряд", num(12LL), num(before.entries.last().seq()));
 
     // Кто выживет — знаем заранее: та же чистая функция, что и у прореживания.
     QVector<int> keep = journal::survivors(before.entries, kNow);
@@ -143,7 +143,7 @@ void checkRevisionsSurviveThinning(const QString& dir) {
     ZT_EQ("выживших столько, сколько обещано", num(keep.size()), num(after.entries.size()));
     bool same = after.entries.size() == keep.size();
     for (int i = 0; i < after.entries.size() && same; ++i)
-        same = after.entries[i].seq == before.entries[keep[i]].seq;
+        same = after.entries[i].seq() == before.entries[keep[i]].seq();
     ZT_TRUE("и ревизия каждого — прежняя, а не пересчитанная", same);
 
     // Номера не переиспользуются: следующая запись продолжает максимум.
@@ -151,7 +151,7 @@ void checkRevisionsSurviveThinning(const QString& dir) {
           str(append(h, id, Kind::Save, kNow, noteBody(20, "р"))));
     journal::Journal grown;
     h.read(id, &grown, &error);
-    ZT_EQ("новая ревизия — на единицу больше максимума", num(13LL), num(grown.entries.last().seq));
+    ZT_EQ("новая ревизия — на единицу больше максимума", num(13LL), num(grown.entries.last().seq()));
 }
 
 // Порча в середине слепка обязана быть замечена: молча отданные не те байты
@@ -263,9 +263,7 @@ void checkForeignFile(const QString& dir) {
 void checkThinningScale() {
     QVector<journal::Entry> entries;
     auto add = [&entries](qint64 time) {
-        journal::Entry e;
-        e.time = time;
-        entries.append(e);
+        entries.append(journal::Entry(Kind::Save, time, 0, Digest{}));
     };
 
     // Последний час — всё до единой.
@@ -325,9 +323,9 @@ void checkThinningFile(const QString& dir) {
     ZT_TRUE("и журнал остаётся читаемым", h.read(id, &after, &error));
     ZT_TRUE("записей стало меньше", after.entries.size() < before.entries.size());
     ZT_TRUE("файл ужался", QFile(path).size() < sizeBefore);
-    ZT_EQ("последняя запись та же", num(before.entries.last().time), num(after.entries.last().time));
-    ZT_EQ("и её отпечаток тот же", before.entries.last().digest.hex(),
-          after.entries.last().digest.hex());
+    ZT_EQ("последняя запись та же", num(before.entries.last().time()), num(after.entries.last().time()));
+    ZT_EQ("и её отпечаток тот же", before.entries.last().digest().hex(),
+          after.entries.last().digest().hex());
 
     // Слепки переживают переписывание файла.
     QByteArray got;
@@ -400,7 +398,7 @@ void checkGenerations(const QString& dir) {
         ZT_EQ(shouldBeFull ? "начало поколения — полный слепок"
                            : "внутри поколения — звено цепочки",
               num(int(shouldBeFull ? journal::Codec::Zstd : journal::Codec::ZstdDelta)),
-              num(int(read.entries[i].codec)));
+              num(int(read.entries[i].codec())));
         if (read.entries[i].full()) ++fullCount;
     }
     ZT_EQ("полных слепков ровно по числу поколений", num(4), num(fullCount));
@@ -446,7 +444,7 @@ void checkDamageContained(const QString& dir) {
     // поколения. Рамку не трогаем: если испортить длину, CBOR потеряет всё,
     // что дальше, и это уже не про цепочку.
     const int victim = 3;
-    const qint64 at = read.entries[victim + 1].offset - 3;
+    const qint64 at = read.entries[victim + 1].offset() - 3;
     QFile file(path);
     ZT_TRUE("файл открылся", file.open(QIODevice::ReadWrite));
     QByteArray blob = file.readAll();
@@ -487,7 +485,7 @@ void checkThinRebuildsGenerations(const QString& dir) {
         ZT_EQ("поколения после прореживания ровные",
               num(int(i % journal::kGeneration == 0 ? journal::Codec::Zstd
                                                     : journal::Codec::ZstdDelta)),
-              num(int(after.entries[i].codec)));
+              num(int(after.entries[i].codec())));
 
     // И слепки по-прежнему те же самые байты, что писались.
     bool allGood = true;

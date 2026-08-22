@@ -159,7 +159,7 @@ static int ztRunSuite(int argc, char** argv) {
         // Каждый слепок собирается и сходится с отпечатком. Дорого, но это и
         // есть предмет проверки: цепочка поколений не имеет права разъехаться.
         for (int i = 0; i < j.entries.size() && zt::g_failures == 0; ++i) {
-            ZT_EQ("время записи на месте", num(times[i]), num(j.entries[i].time));
+            ZT_EQ("время записи на месте", num(times[i]), num(j.entries[i].time()));
             if (expected[i].isEmpty()) {
                 ZT_TRUE("у надгробия слепка нет", !j.entries[i].hasSnapshot());
                 continue;

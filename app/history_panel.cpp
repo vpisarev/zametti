@@ -199,10 +199,10 @@ void HistoryTimeline::setEntries(const QVector<journal::Entry>& entries) {
     // Свежие сверху — как в списке заметок: в прошлое человек идёт сверху вниз.
     for (int i = entries.size() - 1; i >= 0; --i) {
         const journal::Entry& entry = entries[i];
-        QString line = historyMoment(entry.time);
-        if (entry.kind != journal::Kind::Save)
-            line += QStringLiteral("  ·  %1").arg(historyKindName(entry.kind));
-        if (entry.hasSnapshot()) line += QStringLiteral("  ·  %1").arg(sizeText(entry.plainSize));
+        QString line = historyMoment(entry.time());
+        if (entry.kind() != journal::Kind::Save)
+            line += QStringLiteral("  ·  %1").arg(historyKindName(entry.kind()));
+        if (entry.hasSnapshot()) line += QStringLiteral("  ·  %1").arg(sizeText(entry.plainSize()));
         auto* item = new QListWidgetItem(line, list_);
         item->setData(Qt::UserRole, i);
         // У надгробия смотреть нечего: заметка удалена, слепок — предыдущая

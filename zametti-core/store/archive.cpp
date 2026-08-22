@@ -253,8 +253,7 @@ bool restoreNote(const QString& root, const QString& noteId, QString* error) {
         if (error != nullptr) *error = QStringLiteral("cannot read history: %1").arg(why);
         return false;
     }
-    int head = int(read.entries.size()) - 1;
-    while (head >= 0 && !read.entries[head].hasSnapshot()) --head;
+    const int head = journal::lastSnapshotIndex(read.entries);
     QByteArray body;
     if (head >= 0 && !history.snapshotAt(noteId, head, &body, &why)) body.clear();
     if (body.isEmpty()) {

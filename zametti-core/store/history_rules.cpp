@@ -70,7 +70,7 @@ Step decideStep(const QVector<journal::Entry>& entries, const SnapshotOf& snapsh
     int sameAs = -1;
     for (int i = kind == Kind::Save ? int(entries.size()) - 1 : -1; i >= 0; --i) {
         const journal::Entry& entry = entries[i];
-        if (stale(entry.time)) break;      // дальше история старая, её не трогаем
+        if (stale(entry.time())) break;      // дальше история старая, её не трогаем
         if (!entry.hasSnapshot()) break;   // надгробие: за него не заглядываем
         const QByteArray older = snapshotOf(i);
         if (older.isNull()) break;         // слепок не собрался — дальше не идём
@@ -79,7 +79,7 @@ Step decideStep(const QVector<journal::Entry>& entries, const SnapshotOf& snapsh
             continue;
         }
         if (sameAs >= 0) break;                        // старее — уже другое состояние
-        if (entry.kind != Kind::Save) break;           // чужую вешку не перепрыгиваем
+        if (entry.kind() != Kind::Save) break;           // чужую вешку не перепрыгиваем
     }
     if (sameAs >= 0) {
         step.keep = sameAs + 1;
@@ -98,7 +98,7 @@ Step decideStep(const QVector<journal::Entry>& entries, const SnapshotOf& snapsh
     // начиналась, и стереть её нельзя ничем.
     if (kind != Kind::Save || entries.size() < 2) return step;
     const journal::Entry& back = entries.back();
-    if (back.kind != Kind::Save || !back.hasSnapshot() || stale(back.time)) return step;
+    if (back.kind() != Kind::Save || !back.hasSnapshot() || stale(back.time())) return step;
     const QByteArray tail = snapshotOf(int(entries.size()) - 1);
     if (tail.isNull() || tail.isEmpty()) return step;
     if (changedChars(tail, fresh) > qMax(0, rules.mergeChars)) return step;
@@ -136,8 +136,8 @@ Plan planFor(const QVector<journal::Entry>& entries, const QVector<QByteArray>& 
             // историю заново, и свежесть в ней меряется от момента записи, а не
             // от сегодняшнего дня. Миграции это безразлично (она на возраст не
             // глядит), а вот показу чистой истории корпусным читателем — нет.
-            const Step step = decideStep(acc, snapshotOf, snapshots[idx], entry.kind,
-                                         entry.time, rules);
+            const Step step = decideStep(acc, snapshotOf, snapshots[idx], entry.kind(),
+                                         entry.time(), rules);
             duplicates += step.dropped;
             merged += step.merged;
             acc.resize(step.keep);
