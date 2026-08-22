@@ -117,6 +117,7 @@ add_executable(zametti-tests
     settings_edit_test.cpp
     editor_test.cpp
     image_insert_test.cpp
+    image_viewer_test.cpp
     image_shots_test.cpp
     code_edit_test.cpp
     table_shots_test.cpp
