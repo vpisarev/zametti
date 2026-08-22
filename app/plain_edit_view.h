@@ -34,6 +34,7 @@
 
 #include <QList>
 #include <QPlainTextEdit>
+#include <QTimer>
 #include <QTextEdit>
 
 #include <vector>
@@ -143,6 +144,9 @@ private:
     int viewportMargin_ = 0;
     // Идёт пересчёт вёрстки: защита от входа в него из его же сигналов.
     bool rewrapping_ = false;
+    // Пересчёт подсветок, отложенный до возврата в цикл событий: сигналы,
+    // по которым он нужен, приходят изнутри чужой работы (см. конструктор).
+    QTimer overlaysSoon_;
     // Найденное — позициями в плоском тексте; текущее — номер в этом списке.
     // Запрос помнится: замена перезапускает поиск сама.
     std::vector<int> matches_;

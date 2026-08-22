@@ -55,8 +55,27 @@ PlainEditView::PlainEditView(QWidget* parent) : QPlainTextEdit(parent) {
     //
     // ПРОКРУТКА — ПО ПОЛОСЕ, А НЕ ПО updateRequest: сигнал обновления приходит и
     // от самой setExtraSelections, и получилась бы бесконечная петля.
-    connect(verticalScrollBar(), &QScrollBar::valueChanged, this, [this] { refreshOverlays(); });
-    connect(document(), &QTextDocument::contentsChanged, this, [this] { refreshOverlays(); });
+    //
+    // И ОБА ЭТИХ ПОВОДА — ЧЕРЕЗ ОЧЕРЕДЬ, а не прямым вызовом. Оба сигнала
+    // приходят ИЗНУТРИ чужой работы: полоса двигается посреди
+    // QWidgetTextControl::setTextCursor (переход к найденному прокручивает вид
+    // сам), а contentsChanged — посреди правки документа. Пересчёт подсветок
+    // зовёт setExtraSelections, а тот спрашивает у Qt геометрию выделений —
+    // и, попав в середину setTextCursor, читает ещё не достроенное состояние
+    // документа. Это не «иногда мигает», а ПАДЕНИЕ: владелец ловил его в
+    // режиме [M] шагом поиска по большой заметке (F3 после Ctrl+F), стек —
+    // setTextCursor → valueChanged → refreshOverlays → setExtraSelections →
+    // QTextCursor::hasComplexSelection → QTextFrame::childFrames → SIGSEGV.
+    //
+    // Очередь снимает это по построению: пересчёт случится, когда Qt доделает
+    // своё и вернётся в цикл событий. Задержки человек не видит — кадр всё
+    // равно рисуется после возврата в цикл.
+    overlaysSoon_.setSingleShot(true);
+    overlaysSoon_.setInterval(0);
+    connect(&overlaysSoon_, &QTimer::timeout, this, [this] { refreshOverlays(); });
+    connect(verticalScrollBar(), &QScrollBar::valueChanged, this,
+            [this] { overlaysSoon_.start(); });
+    connect(document(), &QTextDocument::contentsChanged, this, [this] { overlaysSoon_.start(); });
 
     // Поле с точками перенесённых строк — перерисовывается вслед за видом.
     wrapMarks_ = new WrapMarks(this);
