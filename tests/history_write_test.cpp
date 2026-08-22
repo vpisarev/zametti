@@ -390,9 +390,14 @@ void checkUndoDoesNotDuplicate() {
     editor.undo();
     editor.save(false, true);
 
-    ZT_TRUE("после отмены записей стало " + std::to_string(recordCount(id)) + ", а ждали " +
+    // Вешек снова столько, сколько было: набранное и отменённое погашено.
+    ZT_TRUE("после отмены вешек стало " + std::to_string(contentRecordCount(id)) + ", а ждали " +
                 std::to_string(base),
-            recordCount(id) == base);
+            contentRecordCount(id) == base);
+    // А в файле осталась запись гашения — ей и ехать в облако, чтобы «набрал и
+    // отменил» доехало до других устройств, а не воскресло объединением.
+    ZT_TRUE("гашение записано отдельной записью: " + std::to_string(recordCount(id)),
+            recordCount(id) == base + 1);
     const std::vector<QByteArray> all = snapshots(id);
     ZT_TRUE("и последняя запись — та самая старая",
             !all.empty() && zametti::sameApartFromModified(all.back(), before));

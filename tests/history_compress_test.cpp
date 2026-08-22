@@ -108,6 +108,12 @@ std::string timesOf(journal::History& h, const QString& id, qint64 base) {
     std::string out;
     for (int i = 0; i < j.size(); ++i) {
         const journal::Entry& e = j.at(i);
+        // Вешки, а не записи: гашение и погашенное человеку не показываются, и
+        // сходиться живому пути с миграцией положено именно по вешкам. Живой
+        // путь гасит адресом (запись гашения остаётся и едет в облако),
+        // миграция чистит насовсем — это разовая уборка журналов, которых в
+        // облаке ещё не было.
+        if (!e.statesContent() || j.isVoided(i)) continue;
         if (!out.empty()) out += " ";
         out += std::to_string((e.time() - base) / kMinute);
         if (e.kind() != Kind::Save) out += e.kind() == Kind::Tombstone ? "T" : "X";
