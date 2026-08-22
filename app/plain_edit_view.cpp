@@ -545,15 +545,25 @@ int PlainEditView::findMatches(const QString& text, bool caseSensitive) {
     const Qt::CaseSensitivity how = caseSensitive ? Qt::CaseSensitive : Qt::CaseInsensitive;
     for (int at = hay.indexOf(text, 0, how); at >= 0; at = hay.indexOf(text, at + 1, how))
         matches_.push_back(at);
-    // Ближайшее вперёд от каретки — чтобы первый F3 шёл оттуда, где человек
-    // стоит, а не с начала текста.
-    const int caret = textCursor().position();
-    for (size_t i = 0; i < matches_.size(); ++i)
-        if (matches_[i] >= caret) {
-            current_ = int(i);
-            break;
-        }
-    if (current_ < 0 && !matches_.empty()) current_ = 0;
+    // ТЕКУЩЕГО ПОКА НЕТ — и это не забывчивость, а правило (то же, что в виде
+    // заметки). Куда шагнуть, решает сам шаг: он идёт к ближайшей находке ОТ
+    // КАРЕТКИ. Стоило поставить «текущую» здесь — и первый F3 её проскакивал:
+    // владелец увидел это после правки («не перехожу на ближайшее вхождение, а
+    // перепрыгиваю»), потому что после правки поиск повторяется и «текущая»
+    // назначалась заново.
+    //
+    // Исключение — каретка уже стоит НА находке (вернулись к ней, выделив
+    // текст): тогда она и есть текущая, иначе счётчик показывал бы «0/N» при
+    // выделенном вхождении.
+    const QTextCursor caret = textCursor();
+    if (caret.hasSelection()) {
+        const int from = qMin(caret.selectionStart(), caret.selectionEnd());
+        for (size_t i = 0; i < matches_.size(); ++i)
+            if (matches_[i] == from && caret.selectedText() == text) {
+                current_ = int(i);
+                break;
+            }
+    }
     refreshOverlays();
     return int(matches_.size());
 }
@@ -561,7 +571,24 @@ int PlainEditView::findMatches(const QString& text, bool caseSensitive) {
 void PlainEditView::stepMatch(int direction) {
     if (matches_.empty()) return;
     const int count = int(matches_.size());
-    current_ = current_ < 0 ? 0 : (current_ + (direction >= 0 ? 1 : count - 1)) % count;
+    if (current_ < 0) {
+        // Текущей нет — шаг идёт от КАРЕТКИ: человек только что на что-то
+        // смотрел, и прыжок в начало текста был бы неожиданным. Дальше каретки
+        // ничего нет — по кругу.
+        const int at = textCursor().position();
+        int nearest = -1;
+        if (direction >= 0) {
+            for (int i = 0; i < count; ++i)
+                if (matches_[size_t(i)] >= at) { nearest = i; break; }
+            current_ = nearest >= 0 ? nearest : 0;
+        } else {
+            for (int i = count - 1; i >= 0; --i)
+                if (matches_[size_t(i)] + needle_ <= at) { nearest = i; break; }
+            current_ = nearest >= 0 ? nearest : count - 1;
+        }
+    } else {
+        current_ = (current_ + (direction >= 0 ? 1 : count - 1)) % count;
+    }
     QTextCursor at(document());
     at.setPosition(matches_[size_t(current_)]);
     at.setPosition(matches_[size_t(current_)] + needle_, QTextCursor::KeepAnchor);

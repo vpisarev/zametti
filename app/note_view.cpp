@@ -218,6 +218,16 @@ NoteView::NoteView(QWidget* parent) : QTextBrowser(parent) {
             [this] { viewport()->update(caretRect()); });
     // Пока человек печатает или ведёт курсор, каретка горит ровно.
     connect(this, &QTextEdit::cursorPositionChanged, this, &NoteView::showCaret);
+    // Повтор поиска после правки — через паузу: он читает весь документ, и
+    // делать это на каждую букву нельзя (см. scheduleResearch).
+    researchSoon_.setSingleShot(true);
+    researchSoon_.setInterval(300);
+    connect(&researchSoon_, &QTimer::timeout, this, [this] {
+        NoteSearch& again = searchCache();
+        if (again.text().isEmpty()) return;
+        findMatches(again.text(), again.caseSensitive());
+        emit matchesChanged();
+    });
     connect(this, &QTextEdit::textChanged, this, &NoteView::showCaret);
     // Правка могла родить или убить строку с картинкой — место перемеряется
     // после каждой. Свои же выставления полей отсекает syncingImages_.
@@ -2096,6 +2106,11 @@ void NoteView::stepMatch(int direction) {
     const int at = textCursor().position();
     const int nearest = direction > 0 ? search.nearestForward(at) : search.nearestBackward(at);
     goToMatch(nearest >= 0 ? nearest : (direction > 0 ? 0 : search.count() - 1));
+}
+
+void NoteView::scheduleResearch() {
+    if (searchCache().text().isEmpty()) return;
+    researchSoon_.start();
 }
 
 void NoteView::clearMatches() {

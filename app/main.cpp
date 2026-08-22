@@ -1810,6 +1810,8 @@ int main(int argc, char** argv) {
 
     // Найденное пересчиталось само после правки исходника — полосе пора
     // показать новое число (иначе счётчик остался бы от прошлого поиска).
+    QObject::connect(&editor, &zametti::NoteEditor::matchesChanged, &window,
+                     [&] { showCounter(); });
     QObject::connect(&markdownView, &zametti::MarkdownEditView::matchesChanged, &window,
                      [&] { showCounter(); });
     QObject::connect(&settingsView, &zametti::JsonEditView::matchesChanged, &window,
@@ -1935,8 +1937,15 @@ int main(int argc, char** argv) {
             }
             return;
         }
-        searchTarget().stepMatch(direction);
+        zametti::TextSearchTarget& target = searchTarget();
+        target.stepMatch(direction);
         showCounter();
+        // ШАГ ПО НАЙДЕННОМУ ОТДАЁТ ФОКУС ТЕКСТУ (решение владельца). Человек
+        // ищет фразу, чтобы её ПРАВИТЬ: попав на вхождение, он жмёт Backspace —
+        // и до этой правки буква стиралась в поле поиска, потому что фокус
+        // оставался там. Каретка уже стоит на находке (её ставит сам шаг), так
+        // что тексту остаётся только принять ввод.
+        target.searchWidget().setFocus(Qt::OtherFocusReason);
     };
     QObject::connect(&findBar, &zametti::FindBar::findNext, &window, [&] { stepSearch(1); });
     QObject::connect(&findBar, &zametti::FindBar::findPrevious, &window,

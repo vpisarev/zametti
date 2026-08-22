@@ -325,7 +325,11 @@ void NoteEditor::onContentsChange(int position, int charsRemoved, int charsAdded
         undoTouch_.from = undoTouch_.from < 0 ? position : qMin(undoTouch_.from, position);
         undoTouch_.to = qMax(undoTouch_.to, position + charsAdded);
     }
-    Q_UNUSED(charsRemoved);
+    // НАЙДЕННОЕ ПОСЛЕ ПРАВКИ ПРОТУХЛО — поиск повторится сам. То же правило,
+    // что в режиме исходника (решение владельца: «смещения изменились и
+    // количество изменилось»), и заводится тем же признаком: изменился ТЕКСТ,
+    // а не формат.
+    if (charsRemoved != 0 || charsAdded != 0) scheduleResearch();
     // Границы шага отмены считаются по ЭТИМ числам, а не по курсору редактора:
     // курсор к моменту разбора может ещё стоять на старом месте (правка пришла
     // не с клавиатуры, а из вставки или из системы ввода).
