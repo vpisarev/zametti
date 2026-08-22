@@ -58,7 +58,7 @@ ImportResult refuse(Refusal r, const QString& extra = {}) {
 }
 
 // Метаданные для записи: EXIF со сброшенным поворотом (пиксели мы уже
-// повернули), XMP как есть.
+// повернули), XMP с нашей ревизией.
 EncodeMeta metaFor(const QByteArray& file) {
     const ImageMeta src =
         readImageMeta(std::string_view(file.constData(), size_t(file.size())));
@@ -70,7 +70,12 @@ EncodeMeta metaFor(const QByteArray& file) {
         resetExifOrientation(&exif);
         out.exif = QByteArray(exif.data(), qsizetype(exif.size()));
     }
-    if (!src.xmp.empty()) out.xmp = QByteArray(src.xmp.data(), qsizetype(src.xmp.size()));
+    // РЕВИЗИЯ РОЖДАЕТСЯ ЗДЕСЬ, ЕДИНИЦЕЙ. У вложений нет журналов, и версия
+    // обязана жить В ФАЙЛЕ: файл — единственное, что путешествует. Ревизия и
+    // удалённость ортогональны: rev растёт при ЛЮБОЙ правке картинки (ретушь,
+    // пережатие, геометки), а метка «удалено» — отдельная величина.
+    const std::string xmp = xmpWithZamettiState(src.xmp, 1, false);
+    out.xmp = QByteArray(xmp.data(), qsizetype(xmp.size()));
     return out;
 }
 
@@ -416,12 +421,18 @@ ImportResult importPixels(const QImage& image, const ImportLimits& limits) {
 
     // Из буфера обмена формата нет, значит и спорить не с чем: качество
     // обычное, а точная версия участвует всегда — пиксели пришли точными.
+    // Метаданных у пикселей тоже нет — кроме нашей ревизии, которая рождается
+    // при ввозе на любом пути, где файл пишем мы.
+    EncodeMeta fresh;
+    const std::string freshXmp = xmpWithZamettiState({}, 1, false);
+    fresh.xmp = QByteArray(freshXmp.data(), qsizetype(freshXmp.size()));
+
     QImage pixels = image;
     const Size target = targetSize({image.width(), image.height()}, limits);
     if (target.width != image.width() || target.height != image.height())
         pixels = resampleLanczos(image, target.width, target.height);
 
-    const Candidate best = bestCandidate(pixels, EncodeMeta{}, limits,
+    const Candidate best = bestCandidate(pixels, fresh, limits,
                                          target == Size{image.width(), image.height()},
                                          limits.quality);
     if (best.bytes.isEmpty()) return refuse(Refusal::None, QStringLiteral("compression failed"));

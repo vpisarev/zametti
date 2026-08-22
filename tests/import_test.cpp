@@ -7,6 +7,7 @@
 
 #include "image_read.h"
 #include "import.h"
+#include "exif.h"
 
 #include "test_util.h"
 
@@ -362,6 +363,26 @@ void checkPixels() {
           std::string(routeName(importPixels(QImage(), limits).route)));
 }
 
+// РЕВИЗИЯ РОЖДАЕТСЯ ПРИ ВВОЗЕ. У вложений нет журналов, и версия обязана жить
+// в самом файле: он единственный, что путешествует между устройствами.
+// Проверяется на пиксельном пути, где мы файл пишем сами и метаданные наши.
+void checkRevisionOnImport() {
+    QImage picture(600, 400, QImage::Format_RGB32);
+    for (int y = 0; y < picture.height(); ++y)
+        for (int x = 0; x < picture.width(); ++x)
+            picture.setPixel(x, y, qRgb((x * 255) / 599, (y * 255) / 399, (x ^ y) & 0xff));
+
+    ImportLimits limits;
+    limits.maxSize = 300;
+    const ImportResult r = importPixels(picture, limits);
+    ZT_TRUE("ввоз прошёл: " + r.message.toStdString(), !r.bytes.isEmpty());
+
+    const ImageMeta meta =
+        readImageMeta(std::string_view(r.bytes.constData(), size_t(r.bytes.size())));
+    ZT_EQ("ревизия ввезённой картинки — единица", num(1), num(xmpZamettiRev(meta.xmp)));
+    ZT_TRUE("удалённой она не помечена", !xmpZamettiDeleted(meta.xmp));
+}
+
 void checkBombs(const QString& root) {
     ImportLimits limits;
     for (const char* bomb : {"bombs/бомба-миллиард-на-один.png", "bombs/бомба-сторона.png",
@@ -386,7 +407,8 @@ static int ztRunSuite(int argc, char** argv) {
         checkTable(root);
         checkTiffPath(root);
         checkLimitsMatter(root);
-        checkBombs(root);
+        checkRevisionOnImport();
+    checkBombs(root);
     }
     return zt::report("конвейер вставки");
 }
