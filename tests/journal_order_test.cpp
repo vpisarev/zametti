@@ -21,6 +21,8 @@
 
 #include <QByteArray>
 #include <QDateTime>
+#include <QFileInfo>
+#include <string>
 #include <vector>
 
 using namespace zametti;
@@ -268,6 +270,151 @@ void checkLegacyJournalOnDisk() {
     ZT_EQ("и он тот самый", str(QString::fromUtf8(note("раз"))), str(QString::fromUtf8(got)));
 }
 
+// --- 9. Гашение: хвостом, серединой, повторно -------------------------------
+
+// Кого видно человеку: записи, которые говорят о содержимом и не погашены.
+std::string waypoints(const ZJournal& j) {
+    std::string out;
+    for (int i = 0; i < j.size(); ++i) {
+        if (!j.at(i).statesContent() || j.isVoided(i)) continue;
+        if (!out.empty()) out += " ";
+        out += std::to_string(i);
+    }
+    return out;
+}
+
+void checkVoidingTail() {
+    zt::MiniStore store;
+    journal::History history(store.root());
+    const QString id = QStringLiteral("01n7voidtail00");
+    QString error;
+
+    ZT_TRUE("первая", history.append(id, NewRecord::save(note("раз"), Stamp::at(kNow)), &error));
+    ZT_TRUE("вторая",
+            history.append(id, NewRecord::save(note("два"), Stamp::at(kNow + 1000)), &error));
+
+    ZJournal read;
+    history.read(id, &read, &error);
+    const journal::EntryRef doomed(read.at(1).time(), read.at(1).digest());
+    const qint64 sizeBefore = QFileInfo(store.journalOf(id)).size();
+
+    // Третья запись гасит вторую — та лежит хвостом, значит её байты уходят.
+    ZT_TRUE("третья гасит вторую",
+            history.append(id,
+                           NewRecord::save(note("три"), Stamp::at(kNow + 2000))
+                               .voiding({doomed}),
+                           &error));
+
+    ZT_TRUE("журнал читается", history.read(id, &read, &error));
+    ZT_EQ("записей две: погашенная выкинута из файла", num(2), num(read.size()));
+    ZT_TRUE("файл не вырос", QFileInfo(store.journalOf(id)).size() <= sizeBefore * 2);
+    ZT_EQ("вешки — обе оставшиеся", std::string("0 1"), waypoints(read));
+    ZT_EQ("голова — третья", num(1), num(read.headIndex()));
+    ZT_EQ("и адрес погашенной она несёт", num(1), num(read.at(1).voids().size()));
+
+    // Слепок оставшейся собирается: цепочка поколений не порвана.
+    QByteArray got;
+    ZT_TRUE("слепок головы собирается", history.snapshotAt(id, 1, &got, &error));
+    ZT_EQ("и он тот самый", str(QString::fromUtf8(note("три"))), str(QString::fromUtf8(got)));
+}
+
+void checkVoidingMiddle() {
+    zt::MiniStore store;
+    journal::History history(store.root());
+    const QString id = QStringLiteral("01n7voidmid000");
+    QString error;
+
+    for (const char* mark : {"раз", "два", "три"})
+        history.append(id, NewRecord::save(note(mark), Stamp::at(kNow + 1000 * (*mark))), &error);
+
+    ZJournal read;
+    history.read(id, &read, &error);
+    ZT_EQ("записей три", num(3), num(read.size()));
+    const journal::EntryRef middle(read.at(1).time(), read.at(1).digest());
+
+    // Гасим СЕРЕДИНУ — так будет выглядеть гашение записи, приехавшей со
+    // стороны. Вырезать её на месте нельзя: звенья поколения считаются от
+    // предыдущего слепка, поэтому файл пересобирается целиком.
+    ZT_TRUE("четвёртая гасит середину",
+            history.append(id, NewRecord::save(note("четыре"), Stamp::at(kNow + 9000))
+                                   .voiding({middle}),
+                           &error));
+
+    ZT_TRUE("журнал читается", history.read(id, &read, &error));
+    ZT_EQ("записей три: середина ушла, новая пришла", num(3), num(read.size()));
+    QByteArray got;
+    ZT_TRUE("слепок первой цел", history.snapshotAt(id, 0, &got, &error));
+    ZT_EQ("и он тот самый", str(QString::fromUtf8(note("раз"))), str(QString::fromUtf8(got)));
+    ZT_TRUE("слепок бывшей третьей цел", history.snapshotAt(id, 1, &got, &error));
+    ZT_EQ("и он тот самый", str(QString::fromUtf8(note("три"))), str(QString::fromUtf8(got)));
+}
+
+void checkVoidedRecordStaysVoidedWhenItComesBack() {
+    zt::MiniStore store;
+    journal::History history(store.root());
+    const QString id = QStringLiteral("01n7voidback00");
+    QString error;
+
+    history.append(id, NewRecord::save(note("раз"), Stamp::at(kNow)), &error);
+    history.append(id, NewRecord::save(note("два"), Stamp::at(kNow + 1000)), &error);
+    ZJournal read;
+    history.read(id, &read, &error);
+    const journal::EntryRef doomed(read.at(1).time(), read.at(1).digest());
+    history.append(id, NewRecord::save(note("три"), Stamp::at(kNow + 2000)).voiding({doomed}),
+                   &error);
+
+    // ТАК ВЫГЛЯДИТ ОБЪЕДИНЕНИЕ: погашенная запись приезжает обратно с копии,
+    // которая про гашение ещё не знала. Адрес у неё тот же — значит она
+    // гасится повторно и человеку не показывается.
+    store.appendLegacyRecord(id, Kind::Save, doomed.time(), note("два"));
+
+    ZT_TRUE("журнал читается", history.read(id, &read, &error));
+    ZT_EQ("записей стало три", num(3), num(read.size()));
+    ZT_TRUE("вернувшаяся погашена", read.isVoided(2));
+    ZT_EQ("вешки прежние", std::string("0 1"), waypoints(read));
+    ZT_EQ("и голова прежняя", num(1), num(read.headIndex()));
+}
+
+void checkAmendmentHidesWithoutStatingContent() {
+    zt::MiniStore store;
+    journal::History history(store.root());
+    const QString id = QStringLiteral("01n7amend00000");
+    QString error;
+
+    history.append(id, NewRecord::save(note("раз"), Stamp::at(kNow)), &error);
+    history.append(id, NewRecord::save(note("два"), Stamp::at(kNow + 1000)), &error);
+    ZJournal read;
+    history.read(id, &read, &error);
+    const journal::EntryRef doomed(read.at(1).time(), read.at(1).digest());
+
+    // «Набрал и отменил»: нового слепка нет, а сказать «того, что между, больше
+    // нет» надо.
+    ZT_TRUE("гашение пишется",
+            history.append(id, NewRecord::amendment(Stamp::at(kNow + 2000)).voiding({doomed}),
+                           &error));
+
+    ZT_TRUE("журнал читается", history.read(id, &read, &error));
+    ZT_EQ("в файле две записи: первая и гашение", num(2), num(read.size()));
+    ZT_EQ("вешка одна — первая", std::string("0"), waypoints(read));
+    ZT_EQ("голова — первая, гашение головой быть не может", num(0), num(read.headIndex()));
+    ZT_EQ("и последний слепок — её же", num(0), num(read.lastSnapshotIndex()));
+    ZT_TRUE("у гашения слепка нет", !read.at(1).hasSnapshot());
+}
+
+void checkUnnamedConcurrentEditSurvives() {
+    // Конкурентная правка с другого устройства НЕ названа в списке гашения —
+    // значит она жива. Это то, что порог по ревизии убил бы молча.
+    ZJournal j(QVector<Entry>{entry(Kind::Save, kNow, 1, "раз"),
+                              entry(Kind::Save, kNow + 1000, 2, "два"),
+                              Entry(Kind::Save, kNow + 1500, 2, digestOf("чужая")),
+                              Entry(Kind::Save, kNow + 2000, 3, digestOf("три"), 0,
+                                    QVector<journal::EntryRef>{
+                                        journal::EntryRef(kNow + 1000, digestOf("два"))})});
+    ZT_TRUE("названная погашена", j.isVoided(1));
+    ZT_TRUE("чужая, не названная, жива", !j.isVoided(2));
+    ZT_EQ("вешки — все, кроме погашенной", std::string("0 2 3"), waypoints(j));
+}
+
 }  // namespace
 
 static int ztRunSuite(int argc, char** argv) {
@@ -282,6 +429,11 @@ static int ztRunSuite(int argc, char** argv) {
     checkJournalFloorHoldsNamedMoments();
     checkNamedMomentSurvivesGuard();
     checkLegacyJournalOnDisk();
+    checkVoidingTail();
+    checkVoidingMiddle();
+    checkVoidedRecordStaysVoidedWhenItComesBack();
+    checkAmendmentHidesWithoutStatingContent();
+    checkUnnamedConcurrentEditSurvives();
     return zt::report("journal_order");
 }
 
