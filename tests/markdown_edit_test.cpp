@@ -20,6 +20,9 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QApplication>
+#include <QContextMenuEvent>
+#include <QMenu>
 #include <QTest>
 #include <QTextBlock>
 #include <QTextEdit>
@@ -185,6 +188,36 @@ void checkSearchDiffersBetweenModes() {
     QTest::qWait(30);
     ZT_EQ("вернулись в вёрстку — снова ноль", std::string("0"),
           std::to_string(rig.editor.findMatches(QStringLiteral("**strong**"), false)));
+}
+
+// МЕНЮ ПРАВОЙ КНОПКИ В РЕЖИМЕ ИСХОДНИКА (жалоба владельца: «контекстное меню
+// сильно усохло»). Операций разметки здесь быть не может — её пишут руками, —
+// но то, что вид умеет сам, в меню обязано быть.
+void checkContextMenuHasModeActions() {
+    const QString path = writeNote(QStringLiteral("меню.md"),
+                                   QStringLiteral("- [ ] задача\n- пункт\n"));
+    Rig rig;
+    rig.editor.openFile(path);
+    QTest::qWait(20);
+    ZT_TRUE("вошли в режим исходника", rig.controller.enter());
+    QTest::qWait(30);
+
+    // Спрашиваем СОСТАВ меню, а не ловим всплывшее окно: под offscreen оно не
+    // становится видимым, а важно здесь именно то, что в нём есть.
+    QMenu* menu = rig.view.buildContextMenu(QPoint(20, 20));
+    ZT_TRUE("меню собралось", menu != nullptr);
+    if (menu == nullptr) return;
+
+    QStringList titles;
+    for (QAction* action : menu->actions())
+        if (!action->isSeparator()) titles << action->text();
+    const QString all = titles.join(QLatin1Char('|'));
+    ZT_TRUE("штатное на месте (буфер, выделение): " + all.toStdString(),
+            all.contains(QStringLiteral("Copy")) && all.contains(QStringLiteral("Paste")));
+    ZT_TRUE("сдвиг пункта в меню есть", all.contains(QStringLiteral("Indent")));
+    ZT_TRUE("обратный сдвиг тоже", all.contains(QStringLiteral("Outdent")));
+    ZT_TRUE("переключение задачи в меню есть", all.contains(QStringLiteral("Toggle task")));
+    delete menu;
 }
 
 // Вошли, поправили слово, вышли: заметка приняла правку, каретка на месте, а
@@ -857,6 +890,7 @@ TEST(MarkdownEdit, All) {
     checkSearchStepSurvivesScrolling();
     checkSearchRepeatsAfterEdit();
     checkSearchDiffersBetweenModes();
+    checkContextMenuHasModeActions();
     checkRoundTrip();
     checkOwnUndo();
     checkNoteRefusesEdits();

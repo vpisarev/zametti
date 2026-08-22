@@ -48,6 +48,10 @@ public:
     SourcePos caretPos() const;
 
     void refreshAppearance() override;
+    // Меню правой кнопки: штатное (отмена, буфер, выделить всё) плюс операции
+    // режима, которые вид умеет сам. Наружу — чтобы его состав спрашивал набор,
+    // а не ловил всплывшее окно.
+    QMenu* buildContextMenu(const QPoint& at);
 
 protected:
     // Клавиши режима (см. раздел «клавиши» в .cpp): Enter продолжает пункт
@@ -60,6 +64,9 @@ protected:
     void pressTab(bool back) override;
     // Плашки под блоками кода — подложкой под найденным.
     void extraOverlays(QList<QTextEdit::ExtraSelection>& shown) override;
+    // Меню правой кнопки: к штатному (отмена, буфер, выделить всё) добавлены
+    // те операции режима, которые вид умеет САМ.
+    void contextMenuEvent(QContextMenuEvent* event) override;
 
 private:
     void toggleTasks();

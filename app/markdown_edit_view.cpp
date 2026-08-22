@@ -5,7 +5,9 @@
 #include "settings.h"
 #include "syntax_highlighter.h"
 
+#include <QContextMenuEvent>
 #include <QKeyEvent>
+#include <QMenu>
 #include <QTextBlock>
 #include <QTextCursor>
 #include <QTextLayout>
@@ -318,6 +320,38 @@ void MarkdownEditView::toggleTasks() {
 }
 
 // --- плашки под блоками кода --------------------------------------------------
+
+// МЕНЮ ПРАВОЙ КНОПКИ В РЕЖИМЕ ИСХОДНИКА (жалоба владельца: «контекстное меню
+// сильно усохло, оттуда пропала большая часть опций»).
+//
+// Усохло оно не сегодня: меню заметки живёт у NoteEditor, а исходник правит
+// другой вид, и ему доставалось штатное меню Qt. Операций разметки здесь и не
+// может быть — человек пишет её руками, — но то, что вид УМЕЕТ САМ, в меню
+// быть обязано: сдвиг пункта и переключение задачи. Клавиши те же, что и в
+// заметке, и подписаны рядом.
+QMenu* MarkdownEditView::buildContextMenu(const QPoint& at) {
+    QMenu* menu = createStandardContextMenu(at);
+    if (menu == nullptr) return nullptr;
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    menu->addSeparator();
+
+    QAction* indent = menu->addAction(QStringLiteral("Indent"), this, [this] { pressTab(false); });
+    indent->setShortcut(QKeySequence(Qt::Key_Tab));
+    QAction* outdent =
+        menu->addAction(QStringLiteral("Outdent"), this, [this] { pressTab(true); });
+    outdent->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Backtab));
+
+    QAction* task = menu->addAction(QStringLiteral("Toggle task"), this, [this] { toggleTasks(); });
+    if (!toggleTaskKeys_.isEmpty()) task->setShortcut(toggleTaskKeys_.first());
+    return menu;
+}
+
+void MarkdownEditView::contextMenuEvent(QContextMenuEvent* event) {
+    QMenu* menu = buildContextMenu(event->pos());
+    if (menu == nullptr) return;
+    menu->popup(event->globalPos());
+    event->accept();
+}
 
 void MarkdownEditView::extraOverlays(QList<QTextEdit::ExtraSelection>& shown) {
     // ПЛАШКА ПОД БЛОКАМИ КОДА (просьба владельца: код видно и в исходнике).
