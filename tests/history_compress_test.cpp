@@ -107,7 +107,7 @@ std::string timesOf(journal::History& h, const QString& id, qint64 base) {
     if (!h.read(id, &j, &error)) return str(error);
     std::string out;
     for (int i = 0; i < j.size(); ++i) {
-        const journal::Entry& e = j.at(i);
+        const journal::ZJournal::Entry& e = j.at(i);
         // Вешки, а не записи: гашение и погашенное человеку не показываются, и
         // сходиться живому пути с миграцией положено именно по вешкам. Живой
         // путь гасит адресом (запись гашения остаётся и едет в облако),

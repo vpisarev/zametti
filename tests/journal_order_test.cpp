@@ -27,7 +27,7 @@
 #include <vector>
 
 using namespace zametti;
-using zametti::journal::Entry;
+using Entry = zametti::journal::ZJournal::Entry;
 using zametti::journal::Kind;
 using zametti::journal::NewRecord;
 using zametti::journal::Stamp;

@@ -68,7 +68,7 @@ Step decideStep(const journal::ZJournal& journal, const SnapshotOf& snapshotOf,
     // вешки, поставленные не набором, и стирать их нельзя ничем.
     int sameAs = -1;
     for (int i = kind == Kind::Save ? journal.size() - 1 : -1; i >= 0; --i) {
-        const journal::Entry& entry = journal.at(i);
+        const journal::ZJournal::Entry& entry = journal.at(i);
         if (stale(entry.time())) break;      // дальше история старая, её не трогаем
         if (!entry.hasSnapshot()) break;   // надгробие: за него не заглядываем
         const QByteArray older = snapshotOf(i);
@@ -96,7 +96,7 @@ Step decideStep(const journal::ZJournal& journal, const SnapshotOf& snapshotOf,
     // обязана остаться хотя бы одна, а первая — то, с чего заметка начиналась,
     // и стереть её нельзя ничем.
     if (kind != Kind::Save || journal.size() < 2) return step;
-    const journal::Entry& back = journal.at(journal.size() - 1);
+    const journal::ZJournal::Entry& back = journal.at(journal.size() - 1);
     if (back.kind() != Kind::Save || !back.hasSnapshot() || stale(back.time())) return step;
     const QByteArray tail = snapshotOf(journal.size() - 1);
     if (tail.isNull() || tail.isEmpty()) return step;
@@ -124,13 +124,13 @@ Plan planFor(const journal::ZJournal& journal, const QVector<QByteArray>& snapsh
     // одну запись, так что проходов не больше, чем записей.
     for (int pass = 0; pass <= journal.size(); ++pass) {
         QVector<int> accepted;      // номера принятых записей
-        QVector<journal::Entry> acc;  // их рамки — их и видит правило
+        QVector<journal::ZJournal::Entry> acc;  // их рамки — их и видит правило
         const SnapshotOf snapshotOf = [&](int i) { return snapshots[accepted[i]]; };
         int duplicates = 0;
         int merged = 0;
 
         for (int idx : std::as_const(plan.keep)) {
-            const journal::Entry& entry = journal.at(idx);
+            const journal::ZJournal::Entry& entry = journal.at(idx);
             // «Сейчас» для записи — время её самой: пересборка проигрывает
             // историю заново, и свежесть в ней меряется от момента записи, а не
             // от сегодняшнего дня. Миграции это безразлично (она на возраст не

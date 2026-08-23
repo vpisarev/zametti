@@ -27,7 +27,7 @@ HistorySearchReport searchNoteHistory(const journal::History& history, const QSt
     // ему нужнее давнего. Список поиска по хранилищу устроен так же — сперва
     // то, что вероятнее нужно.
     for (int i = int(journal.size()) - 1; i >= 0; --i) {
-        const journal::Entry& entry = journal.at(i);
+        const journal::ZJournal::Entry& entry = journal.at(i);
         if (!entry.hasSnapshot()) continue;   // у надгробия смотреть нечего
         QByteArray bytes;
         if (!history.snapshotAt(noteId, i, &bytes, &error)) continue;

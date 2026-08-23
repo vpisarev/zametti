@@ -275,9 +275,9 @@ void checkForeignFile(const QString& dir) {
 // Шкала прореживания. Времена задаются напрямую, чтобы проверять правило, а
 // не сжатие.
 void checkThinningScale() {
-    QVector<journal::Entry> entries;
+    QVector<journal::ZJournal::Entry> entries;
     auto add = [&entries](qint64 time) {
-        entries.append(journal::Entry(Kind::Save, time, 0, Digest{}));
+        entries.append(journal::ZJournal::Entry(Kind::Save, time, 0, Digest{}));
     };
 
     // Последний час — всё до единой.

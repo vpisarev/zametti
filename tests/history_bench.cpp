@@ -151,7 +151,7 @@ Sample measure(const QString& root, const QString& sourceNote, int saves) {
     QString error;
     if (history.read(noteId, &read, &error)) {
         sample.records = read.size();
-        for (const zametti::journal::Entry& entry : read.entries())
+        for (const zametti::journal::ZJournal::Entry& entry : read.entries())
             sample.plainTotal += entry.plainSize();
     }
 
