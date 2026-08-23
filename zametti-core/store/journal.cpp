@@ -1,4 +1,6 @@
 #include "journal.h"
+#include <cstdio>
+#include "zstorage.h"
 
 #include "history_rules.h"   // sameApartFromModified, changedChars — про формат заметки
 
@@ -893,6 +895,153 @@ ZJournal::Plan ZJournal::planCompress(const QVector<QByteArray>& snapshots,
         if (settled) break;
     }
     return plan;
+}
+
+// --- журнал заметки: то, что делается через хранилище ------------------------
+
+ZJournal::ZJournal(ZStorage* store, QString noteId, Rules rules)
+    : store_(store), id_(std::move(noteId)), rules_(rules) {}
+
+void ZJournal::ensureBaseline(const QByteArray& contents, qint64 fileTimeMs) {
+    if (!available()) return;
+    ZJournal have;
+    QString error;
+    if (!store_->readJournal(id_, &have, &error)) {
+        std::fprintf(stderr, "cannot read history: %s\n", error.toUtf8().constData());
+        return;
+    }
+    if (!have.isEmpty()) return;   // история уже начата
+    // Опорной записи отдают время ФАЙЛА: заметка, лежавшая с 2017 года, обязана
+    // и в истории начинаться 2017 годом. Поэтому момент назван, а не «сейчас»,
+    // и страж монотонности его не поднимает.
+    const Stamp when = fileTimeMs > 0 ? Stamp::at(fileTimeMs) : Stamp::now();
+    if (!store_->appendToJournal(id_, NewRecord::save(contents, when), &error))
+        std::fprintf(stderr, "baseline record not written: %s\n", error.toUtf8().constData());
+}
+
+void ZJournal::compressOnce() {
+    if (!available() || compressed_) return;   // за один заход в заметку — один раз
+    compressed_ = true;
+    QString error;
+    if (!store_->compressJournal(id_, rules_, false, nullptr, &error))
+        std::fprintf(stderr, "history not cleaned: %s\n", error.toUtf8().constData());
+    tailKnown_ = false;   // хвост мог переехать
+}
+
+void ZJournal::loadTail() {
+    if (tailKnown_) return;
+    tailKnown_ = true;
+    tail_.clear();
+    tailTime_ = 0;
+    ZJournal read;
+    QString error;
+    if (store_->readJournal(id_, &read, &error) && !read.isEmpty()) {
+        // Голова, а не последняя по файлу: с чем сравнивать свежий слепок,
+        // решает ПОРЯДОК записей, а не их укладка. Разойтись эти две вещи могут
+        // только у журнала, побывавшего в синхронизации, — и тогда мелкая
+        // правка слилась бы не с той записью.
+        const int last = read.lastSnapshotIndex();
+        if (last >= 0 && store_->journalSnapshot(id_, last, &tail_, &error))
+            tailTime_ = read.at(last).time();
+    }
+}
+
+bool ZJournal::record(Kind kind, const QByteArray& snapshot, QString* error) {
+    qint64 source = 0;
+    if (kind == Kind::Save && restoreSource_ != 0) {
+        kind = Kind::Restore;
+        source = restoreSource_;
+    }
+    if (kind == Kind::Save || kind == Kind::Restore) restoreSource_ = 0;
+    if (!available()) return false;
+
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    QString why;
+    QString* err = error != nullptr ? error : &why;
+
+    // ПЕРВАЯ ЗАПИСЬ В ЖУРНАЛ — первый из двух триггеров ленивой миграции.
+    // Старый журнал чистится ДО того, как правило отбора начнёт сравнивать
+    // новый слепок с хвостом: иначе оно работало бы поверх дубликатов, которых
+    // призвано не допускать. Хвост после чистки разжимается заново.
+    compressOnce();
+    loadTail();
+
+    ZJournal read;
+    if (!store_->readJournal(id_, &read, err)) {
+        std::fprintf(stderr, "cannot read history: %s\n", err->toUtf8().constData());
+        tailKnown_ = false;
+        return false;
+    }
+    // Слепки правило спрашивает по одному и только те, до которых дошло: у
+    // хвоста они уже в памяти (ради этого журнал не разжимается), за
+    // остальными идём в журнал.
+    const int lastIndex = read.size() - 1;
+    const auto snapshotOf = [&](int i) -> QByteArray {
+        if (i == lastIndex && tailTime_ > 0) return tail_;
+        QByteArray older;
+        QString ignored;
+        if (!store_->journalSnapshot(id_, i, &older, &ignored)) return {};
+        return older;
+    };
+    const Step step = read.planStep(snapshotOf, snapshot, kind, now, rules_);
+
+    // ГАШЕНИЕ ВМЕСТО СТИРАНИЯ. Записи, которые правило объявило лишними,
+    // адресуются парой (время, отпечаток) и едут этим адресом в новой записи:
+    // их байты выкидываются здесь же, а другое устройство, увидев новую запись,
+    // погасит те же у себя. Стирание без адреса не доезжало никуда — уехавшая
+    // запись возвращалась объединением и возвращалась бы вечно.
+    QVector<EntryRef> voids;
+    voids.reserve(step.voided.size());
+    for (int i : step.voided) voids.append(EntryRef(read.at(i).time(), read.at(i).digest()));
+
+    bool ok = true;
+    if (step.writeNew) {
+        NewRecord what = kind == Kind::Restore
+                             ? NewRecord::restore(snapshot, source)
+                             : (kind == Kind::External ? NewRecord::external(snapshot)
+                                                       : NewRecord::save(snapshot));
+        ok = store_->appendToJournal(id_, what.voiding(voids), err);
+    } else if (!voids.isEmpty()) {
+        // Человек вернулся к уже записанному состоянию: нового слепка нет, а
+        // сказать «того, что между, больше нет» надо.
+        ok = store_->appendToJournal(id_, NewRecord::amendment().voiding(voids), err);
+    }
+    if (!ok) {
+        std::fprintf(stderr, "history not written: %s\n", err->toUtf8().constData());
+        tailKnown_ = false;   // что там теперь — неизвестно
+        return false;
+    }
+    tail_ = snapshot;
+    tailTime_ = now;
+    return true;
+}
+
+bool ZJournal::refresh(QString* error) {
+    if (!available()) {
+        if (error != nullptr) *error = QStringLiteral("note has no journal");
+        return false;
+    }
+    compressOnce();
+    // Хранилище наполняет НАС ЖЕ: рамки читаются в собственные записи, а кэш
+    // захода (хвост, признаки) переживает чтение — он про заметку, а не про
+    // конкретный разбор.
+    ZJournal read;
+    if (!store_->readJournal(id_, &read, error)) return false;
+    entries_ = std::move(read.entries_);
+    packed_ = std::move(read.packed_);
+    damaged_ = std::move(read.damaged_);
+    tailTrimmed_ = read.tailTrimmed_;
+    goodBytes_ = read.goodBytes_;
+    cleanVersion_ = read.cleanVersion_;
+    return true;
+}
+
+bool ZJournal::snapshotAt(int index, QByteArray* out, QString* error) const {
+    if (!available()) {
+        if (error != nullptr) *error = QStringLiteral("note has no journal");
+        return false;
+    }
+    return store_->journalSnapshot(id_, index, out, error);
 }
 
 }  // namespace zametti::journal

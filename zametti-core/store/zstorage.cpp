@@ -157,11 +157,12 @@ QString ZStorage::pathOf(const QString& id) const {
 
 QString ZStorage::idOfPath(const QString& path) { return QFileInfo(path).completeBaseName(); }
 
-ZNoteHistory ZStorage::historyOf(const QString& id, const journal::ZJournal::Rules& rules) {
+std::shared_ptr<journal::ZJournal> ZStorage::journalFor(const QString& id,
+                                                        const journal::ZJournal::Rules& rules) {
     // Журналы лежат под корнем (history/); каталогу .zametti для этого быть не
     // обязательно — так живут наборы на временном каталоге.
-    if (root_.isEmpty() || id.isEmpty()) return ZNoteHistory();
-    return ZNoteHistory(this, id, rules);
+    if (root_.isEmpty() || id.isEmpty()) return std::make_shared<journal::ZJournal>();
+    return std::make_shared<journal::ZJournal>(this, id, rules);
 }
 
 void ZStorage::reload() {
@@ -511,7 +512,7 @@ bool ZStorage::rewriteNote(const QString& id, const std::function<void(ZNote&)>&
     // Заметка поднимается с диска на время операции — та же ZNote, что и у
     // редактора, только без вида: шапка её, тело её, запись её.
     ZNote note(path, bytes, hashOf(std::string_view(bytes.constData(), size_t(bytes.size()))),
-               historyOf(id, rules));
+               journalFor(id, rules));
     note.load(std::string_view(bytes.constData(), size_t(bytes.size())));
     const bool wasRoot = note.isRoot();
     change(note);
@@ -531,7 +532,7 @@ bool ZStorage::rewriteNote(const QString& id, const std::function<void(ZNote&)>&
         if (error != nullptr) *error = outcome.message;
         return false;
     }
-    if (outcome.result == SaveResult::Written) note.history().record(journal::Kind::Save, outcome.written);
+    if (outcome.result == SaveResult::Written) note.journal().record(journal::Kind::Save, outcome.written);
     refreshNote(id);
     return true;
 }

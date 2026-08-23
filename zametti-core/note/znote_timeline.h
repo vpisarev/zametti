@@ -9,8 +9,8 @@
 // знает вовсе: живой буфер из него не уезжает.
 //
 // ЧТО ВНУТРИ:
-//   * журнал заметки — ТОТ ЖЕ объект, что у ZNote (shared_ptr): разжатый хвост
-//     и признак «чищен» у заметки и у истории общие;
+//   * журнал заметки — ТОТ ЖЕ объект ZJournal, что у ZNote (shared_ptr):
+//     разжатый хвост и признак «чищен» у заметки и у истории общие;
 //   * рамки записей (таймлайн) и номер показанной;
 //   * показанный слепок — байты, как в журнале, и его строки сравнения;
 //   * база сравнения — предыдущая запись ЛИБО свежая версия из буфера (два
@@ -34,7 +34,7 @@
 #include "document.h"
 #include "journal.h"
 #include "note_search.h"
-#include "znote_history.h"
+#include "journal.h"
 
 #include <QByteArray>
 #include <QString>
@@ -52,10 +52,11 @@ class ZNoteTimeline {
 public:
     enum class Base { Previous, Fresh };
 
-    // history — журнал заметки (тот же объект, что у ZNote); fresh — байты файла
-    // живой заметки СЕЙЧАС (ZNote::fileBytes()); style — облик документа
-    // разности (nullptr — из настроек).
-    ZNoteTimeline(std::shared_ptr<ZNoteHistory> history, QByteArray fresh,
+    // journal — журнал заметки (ТОТ ЖЕ объект, что у ZNote: разжатый хвост и
+    // «чищено за этот заход» у них общие); fresh — байты файла живой заметки
+    // СЕЙЧАС (ZNote::fileBytes()); style — облик документа разности (nullptr —
+    // из настроек).
+    ZNoteTimeline(std::shared_ptr<journal::ZJournal> journal, QByteArray fresh,
                   std::shared_ptr<const ZDocStyle> style);
 
     ZNoteTimeline(const ZNoteTimeline&) = delete;
@@ -68,9 +69,9 @@ public:
     bool isOpen() const { return index_ >= 0; }
 
     // --- список записей ---------------------------------------------------
-    const journal::ZJournal& journal() const { return journal_; }
-    const QVector<journal::ZJournal::Entry>& entries() const { return journal_.entries(); }
-    int count() const { return journal_.size(); }
+    const journal::ZJournal& journal() const { return *journal_; }
+    const QVector<journal::ZJournal::Entry>& entries() const { return journal_->entries(); }
+    int count() const { return journal_->size(); }
     int index() const { return index_; }
     // Последняя запись со слепком; -1 — таких нет (надгробия пропущены).
     int lastSnapshotIndex() const;
@@ -114,7 +115,7 @@ public:
 
     // --- поиск ------------------------------------------------------------
     NoteSearch& search() { return search_; }
-    std::shared_ptr<ZNoteHistory> history() const { return history_; }
+    std::shared_ptr<journal::ZJournal> journalPtr() const { return journal_; }
 
     // --- облик ------------------------------------------------------------
     // Облик сменился: документы разности выбрасываются и соберутся заново.
@@ -122,10 +123,10 @@ public:
     void dropDocuments();
 
 protected:
-    std::shared_ptr<ZNoteHistory> history_;
+    // Журнал заметки: тот же объект, что у ZNote.
+    std::shared_ptr<journal::ZJournal> journal_;
     QByteArray fresh_;
     std::shared_ptr<const ZDocStyle> style_;
-    journal::ZJournal journal_;
     int index_ = -1;
     QByteArray snapshotBytes_;
     QStringList snapshotLines_;

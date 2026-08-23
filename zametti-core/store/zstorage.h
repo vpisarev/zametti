@@ -10,7 +10,7 @@
 //     заголовок, сниппет, времена, метка сортировки, архив, папка, находки) и
 //     путь файла. Читается сканом (reload) и по одной заметке (refreshNote);
 //     дерево и список — проекции каталога, диск сами не читают;
-//   * ПУТИ И ЖУРНАЛЫ — по id: pathOf(id), historyOf(id, rules);
+//   * ПУТИ И ЖУРНАЛЫ — по id: pathOf(id), journalFor(id, rules);
 //   * ПРАВКА ШАПКИ ЗАКРЫТОЙ ЗАМЕТКИ (rename/move/sort у заметки, которой нет в
 //     редакторе) — ШТАТНЫМ путём записи: разбор, правка глаголами ZDocument,
 //     saveTo с самопроверкой и атомарной записью, шаг журнала. Обходной записи
@@ -29,7 +29,6 @@
 #include "store_identity.h"
 #include "import_limits.h"
 #include "znote.h"
-#include "znote_history.h"
 
 #include <QFileSystemWatcher>
 #include <QHash>
@@ -138,7 +137,10 @@ public:
     // --- пути и журнал -----------------------------------------------------
     QString pathOf(const QString& id) const;
     static QString idOfPath(const QString& path);
-    ZNoteHistory historyOf(const QString& id, const journal::ZJournal::Rules& rules);
+    // Журнал заметки: объект, который заметка держит полем. Указатель на
+    // хранилище внутри него обычный — журнал живёт меньше хранилища.
+    std::shared_ptr<journal::ZJournal> journalFor(const QString& id,
+                                                  const journal::ZJournal::Rules& rules);
 
     // --- ЖУРНАЛЫ ЗАМЕТОК ---------------------------------------------------
     //

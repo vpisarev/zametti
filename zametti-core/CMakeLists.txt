@@ -48,7 +48,6 @@ add_library(zametti-core STATIC
     store/times.h               store/times.cpp
     store/archive.h             store/archive.cpp
     store/lost_found.h          store/lost_found.cpp
-    store/znote_history.h       store/znote_history.cpp
     store/zstorage.h            store/zstorage.cpp
 
     # --- заметка: документ + журнал + всё, что переживает уход и возврат ---

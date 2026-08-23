@@ -26,11 +26,12 @@ constexpr int kSnippetChars = 200;
 
 namespace zametti {
 
-ZNote::ZNote(QString path, QByteArray fileBytes, Digest digest, ZNoteHistory history)
+ZNote::ZNote(QString path, QByteArray fileBytes, Digest digest,
+             std::shared_ptr<journal::ZJournal> journal)
     : path_(std::move(path)),
       digest_(digest),
       lastSaved_(std::move(fileBytes)),
-      history_(std::make_shared<ZNoteHistory>(std::move(history))) {}
+      journal_(journal != nullptr ? std::move(journal) : std::make_shared<journal::ZJournal>()) {}
 
 QString ZNote::id() const { return QFileInfo(path_).completeBaseName(); }
 
@@ -119,7 +120,7 @@ ZNote::Metadata ZNote::Metadata::fromFile(const QString& path) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) return {};
     const QByteArray bytes = f.readAll();
-    ZNote note(path, bytes, Digest{}, ZNoteHistory());
+    ZNote note(path, bytes, Digest{}, nullptr);
     if (!note.load(std::string_view(bytes.constData(), size_t(bytes.size())))) return {};
     Metadata m = note.metadata();
     // Времени в шапке нет — берём у файла (а созданию — время правки: лучше,

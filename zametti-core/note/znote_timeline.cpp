@@ -4,23 +4,21 @@
 
 namespace zametti {
 
-ZNoteTimeline::ZNoteTimeline(std::shared_ptr<ZNoteHistory> history, QByteArray fresh,
+ZNoteTimeline::ZNoteTimeline(std::shared_ptr<journal::ZJournal> journal, QByteArray fresh,
                              std::shared_ptr<const ZDocStyle> style)
-    : history_(std::move(history)), fresh_(std::move(fresh)), style_(std::move(style)) {
-    if (history_ == nullptr) history_ = std::make_shared<ZNoteHistory>();
+    : journal_(std::move(journal)), fresh_(std::move(fresh)), style_(std::move(style)) {
+    if (journal_ == nullptr) journal_ = std::make_shared<journal::ZJournal>();
 }
 
 bool ZNoteTimeline::open(int index, QString* error) {
-    if (!history_->available()) {
+    if (!journal_->available()) {
         if (error != nullptr) *error = QStringLiteral("note has no journal");
         return false;
     }
     // Чтение рамок — второй триггер ленивой чистки: человек пошёл в прошлое,
     // и прошлое обязано быть уже чистым (дубликаты, которые всё равно уйдут при
     // первой правке, показывать незачем).
-    journal::ZJournal read;
-    if (!history_->read(&read, error)) return false;
-    journal_ = std::move(read);
+    if (!journal_->refresh(error)) return false;
     index_ = -1;
     resetSlots();
     const int at = index < 0 ? lastSnapshotIndex() : index;
@@ -34,19 +32,19 @@ bool ZNoteTimeline::open(int index, QString* error) {
 int ZNoteTimeline::lastSnapshotIndex() const {
     // Формула головы одна на всю программу и живёт в журнале: хвост заметки,
     // таймлайн и возврат из архива обязаны согласиться, какая запись позже.
-    return journal_.lastSnapshotIndex();
+    return journal_->lastSnapshotIndex();
 }
 
 int ZNoteTimeline::previousSnapshotIndex(int from) const {
-    return journal_.previousSnapshotIndex(from);
+    return journal_->previousSnapshotIndex(from);
 }
 
 bool ZNoteTimeline::select(int index, QString* error) {
-    if (index < 0 || index >= journal_.size()) return false;
-    if (!journal_.entries()[index].hasSnapshot()) return false;
+    if (index < 0 || index >= journal_->size()) return false;
+    if (!journal_->entries()[index].hasSnapshot()) return false;
     QByteArray bytes;
     QString why;
-    if (!history_->snapshotAt(index, &bytes, &why)) {
+    if (!journal_->snapshotAt(index, &bytes, &why)) {
         std::fprintf(stderr, "cannot rebuild snapshot: %s\n", why.toUtf8().constData());
         if (error != nullptr) *error = why;
         return false;
@@ -70,8 +68,8 @@ bool ZNoteTimeline::stepBack() {
 bool ZNoteTimeline::stepForward() {
     if (!isOpen()) return false;
     int at = index_ + 1;
-    while (at < journal_.size() && !journal_.at(at).hasSnapshot()) ++at;
-    if (at >= journal_.size()) return false;
+    while (at < journal_->size() && !journal_->at(at).hasSnapshot()) ++at;
+    if (at >= journal_->size()) return false;
     return select(at);
 }
 
@@ -80,7 +78,7 @@ void ZNoteTimeline::setBase(Base base) { base_ = base; }
 qint64 ZNoteTimeline::baseTime() const {
     if (!isOpen() || base_ == Base::Fresh) return 0;
     const int at = previousSnapshotIndex(index_);
-    return at >= 0 ? journal_.at(at).time() : 0;
+    return at >= 0 ? journal_->at(at).time() : 0;
 }
 
 // --- разность ---------------------------------------------------------------
@@ -106,8 +104,8 @@ void ZNoteTimeline::computeSlot(Slot& slot, Base base) {
         if (at >= 0) {
             QByteArray bytes;
             QString why;
-            if (history_->snapshotAt(at, &bytes, &why)) {
-                slot.time = journal_.at(at).time();
+            if (journal_->snapshotAt(at, &bytes, &why)) {
+                slot.time = journal_->at(at).time();
                 slot.lines = diff::linesOf(std::string_view(bytes.constData(), size_t(bytes.size())));
             } else {
                 std::fprintf(stderr, "cannot rebuild snapshot for comparison: %s\n",
@@ -189,11 +187,11 @@ std::string ZNoteTimeline::snapshotBody() const {
 }
 
 qint64 ZNoteTimeline::snapshotTime() const {
-    return isOpen() ? journal_.at(index_).time() : 0;
+    return isOpen() ? journal_->at(index_).time() : 0;
 }
 
 journal::Kind ZNoteTimeline::snapshotKind() const {
-    return isOpen() ? journal_.at(index_).kind() : journal::Kind::Save;
+    return isOpen() ? journal_->at(index_).kind() : journal::Kind::Save;
 }
 
 // --- облик ------------------------------------------------------------------

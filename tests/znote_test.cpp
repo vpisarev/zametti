@@ -18,7 +18,6 @@
 namespace {
 
 using zametti::ZNote;
-using zametti::ZNoteHistory;
 namespace journal = zametti::journal;
 
 std::string n(long long v) { return std::to_string(v); }
@@ -34,15 +33,15 @@ void checkHistory() {
     QTemporaryDir root;
     ZT_TRUE("временное хранилище", root.isValid());
     zametti::ZStorage store(root.path());
-    ZNoteHistory history(&store, QStringLiteral("01test000000000"), rules());
+    journal::ZJournal history(&store, QStringLiteral("01test000000000"), rules());
     ZT_TRUE("журнал доступен", history.available());
 
     // Опорная запись — один раз, временем файла.
     history.ensureBaseline("первое\n", 1000);
     history.ensureBaseline("второе\n", 2000);   // журнал уже начат — молчит
-    journal::ZJournal read;
     QString error;
-    ZT_TRUE("журнал читается", history.read(&read, &error));
+    ZT_TRUE("журнал читается", history.refresh(&error));
+    const journal::ZJournal& read = history;
     ZT_EQ("опорная запись одна", n(1), n(read.size()));
     if (!read.isEmpty()) {
         ZT_EQ("временем файла, а не «сейчас»", n(1000), n(read.at(0).time()));
@@ -55,7 +54,7 @@ void checkHistory() {
     const QByteArray far(2000, 'x');
     ZT_TRUE("далёкая правка записана", history.record(journal::Kind::Save, far, &error));
     ZT_TRUE("тот же слепок записывается без ошибки", history.record(journal::Kind::Save, far, &error));
-    ZT_TRUE("журнал читается снова", history.read(&read, &error));
+    ZT_TRUE("журнал читается снова", history.refresh(&error));
     ZT_EQ("две записи: опорная и далёкая; повтор не лёг рядом", n(2), n(read.size()));
 
     // Восстановление: следующая Save становится Restore с источником; признак
@@ -64,7 +63,7 @@ void checkHistory() {
     ZT_EQ("признак поставлен", n(1000), n(history.pendingRestoreSource()));
     ZT_TRUE("запись восстановления", history.record(journal::Kind::Save, "первое\n", &error));
     ZT_EQ("признак погашен записью", n(0), n(history.pendingRestoreSource()));
-    ZT_TRUE("журнал читается в третий раз", history.read(&read, &error));
+    ZT_TRUE("журнал читается в третий раз", history.refresh(&error));
     if (!read.isEmpty()) {
         const journal::ZJournal::Entry& last = read.entries().back();
         ZT_TRUE("последняя запись — восстановление", last.kind() == journal::Kind::Restore);
@@ -78,11 +77,11 @@ void checkHistory() {
     ZT_EQ("погашен явно", n(0), n(history.pendingRestoreSource()));
 
     // Без хранилища — всё «нет», и ничего не падает.
-    ZNoteHistory none;
+    journal::ZJournal none;
     ZT_TRUE("без хранилища журнала нет", !none.available());
     none.ensureBaseline("x", 1);
     ZT_TRUE("запись без хранилища — ложь", !none.record(journal::Kind::Save, "x", &error));
-    ZT_TRUE("чтение без хранилища — ложь", !none.read(&read, &error));
+    ZT_TRUE("чтение без хранилища — ложь", !none.refresh(&error));
     QByteArray bytes;
     ZT_TRUE("слепок без хранилища — ложь", !none.snapshotAt(0, &bytes, &error));
     none.compressOnce();
@@ -91,12 +90,12 @@ void checkHistory() {
 void checkNote() {
     ZNote empty;
     ZT_TRUE("пустая заметка без пути", !empty.hasPath());
-    ZT_TRUE("и без журнала", !empty.history().available());
+    ZT_TRUE("и без журнала", !empty.journal().available());
     ZT_TRUE("статистика не свежа", !empty.statsFresh());
 
     const QByteArray bytes("# Заголовок\n\nтекст\n");
     ZNote note(QStringLiteral("/tmp/store/01abcdefghijkl.md"), bytes, zametti::hashOf(bytes),
-               ZNoteHistory());
+               nullptr);
     ZT_EQ("id — имя файла без расширения", "01abcdefghijkl", note.id().toStdString());
     ZT_EQ("последняя записанная копия — байты файла", bytes.toStdString(),
           note.lastSaved().toStdString());
@@ -149,7 +148,7 @@ void checkFileRound() {
         "modified: 2024-06-01T12:00:00Z\nsort: name-asc\nchужой: ключ\n-->\n\n"
         "# Заголовок\n\nтело заметки\n";
     ZNote note(QStringLiteral("/store/01bbbbbbbbbbbbb.md"), QByteArray::fromStdString(source),
-               zametti::hashOf(source), ZNoteHistory());
+               zametti::hashOf(source), nullptr);
     ZT_TRUE("файл разобран", note.load(source));
     ZT_TRUE("шапка у заметки", note.hasHeader());
     ZT_EQ("круг файл→заметка→файл побайтовый", source, note.toMarkdown());

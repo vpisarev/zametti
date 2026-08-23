@@ -23,7 +23,6 @@
 
 namespace {
 
-using zametti::ZNoteHistory;
 using zametti::ZNoteTimeline;
 namespace journal = zametti::journal;
 namespace diff = zametti::diff;
@@ -56,7 +55,7 @@ struct Fixture {
     QString id = QStringLiteral("01timeline00001");
     // Хранилище живёт дольше журнала заметки: журнал держит на него указатель.
     std::shared_ptr<zametti::ZStorage> store;
-    std::shared_ptr<ZNoteHistory> history;
+    std::shared_ptr<journal::ZJournal> journal;
 
     Fixture() {
         QDir().mkpath(root.path() + QStringLiteral("/.zametti"));
@@ -67,7 +66,7 @@ struct Fixture {
         file.appendToJournal(id, zametti::journal::NewRecord::save(note(kV0, "a"), zametti::journal::Stamp::at(kNow)), &error);
         file.appendToJournal(id, zametti::journal::NewRecord::save(note(kV1, "b"), zametti::journal::Stamp::at(kNow + kMinute)), &error);
         file.appendToJournal(id, zametti::journal::NewRecord::save(note(kV2, "c"), zametti::journal::Stamp::at(kNow + 2 * kMinute)), &error);
-        history = std::make_shared<ZNoteHistory>(store.get(), id, rules());
+        journal = std::make_shared<journal::ZJournal>(store.get(), id, rules());
     }
 };
 
@@ -80,7 +79,7 @@ QStringList linesOf(ZNoteTimeline& tl) {
 
 void checkOpenAndSteps() {
     Fixture f;
-    ZNoteTimeline tl(f.history, note(kV3, "d"), nullptr);
+    ZNoteTimeline tl(f.journal, note(kV3, "d"), nullptr);
     ZT_TRUE("до open не открыт", !tl.isOpen());
     QString error;
     ZT_TRUE("открылся", tl.open(-1, &error));
@@ -112,7 +111,7 @@ void checkOpenAndSteps() {
 
 void checkBases() {
     Fixture f;
-    ZNoteTimeline tl(f.history, note(kV3, "d"), nullptr);
+    ZNoteTimeline tl(f.journal, note(kV3, "d"), nullptr);
     ZT_TRUE("открылся", tl.open());
     // По умолчанию — с предыдущей записью.
     ZT_TRUE("база по умолчанию — предыдущая", !tl.baseIsFresh());
@@ -162,7 +161,7 @@ void checkBases() {
 
 void checkDocumentCache() {
     Fixture f;
-    ZNoteTimeline tl(f.history, note(kV3, "d"), nullptr);
+    ZNoteTimeline tl(f.journal, note(kV3, "d"), nullptr);
     ZT_TRUE("открылся", tl.open());
     const zametti::ZDocument a = tl.document();
     const zametti::ZDocument b = tl.document();
@@ -183,7 +182,7 @@ void checkDocumentCache() {
 
 void checkBlockLineMap() {
     Fixture f;
-    ZNoteTimeline tl(f.history, note(kV3, "d"), nullptr);
+    ZNoteTimeline tl(f.journal, note(kV3, "d"), nullptr);
     ZT_TRUE("открылся", tl.open());
     const diff::Result& result = tl.result();
     const int blocks = tl.document().blockCount();
@@ -215,13 +214,14 @@ void checkSharedJournalAndNoHistory() {
     Fixture f;
     // Журнал разделяется с заметкой: чистка и хвост — одни на двоих.
     zametti::ZNote note(f.root.path() + QLatin1Char('/') + f.id + QStringLiteral(".md"),
-                        ::note(kV2, "c"), zametti::Digest{}, ZNoteHistory(f.store.get(), f.id, rules()));
-    ZNoteTimeline tl(note.historyPtr(), note.fileBytes(), nullptr);
-    ZT_TRUE("тот же объект журнала", tl.history().get() == &note.history());
+                        ::note(kV2, "c"), zametti::Digest{},
+                        std::make_shared<journal::ZJournal>(f.store.get(), f.id, rules()));
+    ZNoteTimeline tl(note.journalPtr(), note.fileBytes(), nullptr);
+    ZT_TRUE("тот же объект журнала", tl.journalPtr().get() == &note.journal());
     ZT_TRUE("открылся по журналу заметки", tl.open());
 
     // Без хранилища — «истории нет», и ничего не падает.
-    ZNoteTimeline none(std::make_shared<ZNoteHistory>(), QByteArray(), nullptr);
+    ZNoteTimeline none(std::make_shared<journal::ZJournal>(), QByteArray(), nullptr);
     QString error;
     ZT_TRUE("без журнала open ложь", !none.open(-1, &error));
     ZT_TRUE("и объяснение есть", !error.isEmpty());

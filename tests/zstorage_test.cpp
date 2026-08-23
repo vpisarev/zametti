@@ -77,7 +77,7 @@ void checkCatalog() {
     ZT_TRUE("заметка в каталоге с родителем", note != nullptr && note->parent() == folderId);
     ZT_EQ("заголовок заметки", "Первая", s(note != nullptr ? note->title() : QString()));
     ZT_EQ("путь по id", s(QDir::cleanPath(notePath)), s(storage.pathOf(noteId)));
-    ZT_TRUE("журнал заметки доступен", storage.historyOf(noteId, rules()).available());
+    ZT_TRUE("журнал заметки доступен", storage.journalFor(noteId, rules())->available());
 
     // Файл поменяли снаружи — refreshNote видит новый заголовок.
     {
@@ -101,10 +101,10 @@ void checkCatalog() {
     ZT_EQ("заголовок после правки", "Третья", s(storage.info(noteId)->title()));
     ZT_TRUE("родитель снят", storage.info(noteId)->parent().isEmpty());
     {
-        zametti::journal::ZJournal journal;
-        zametti::ZNoteHistory history = storage.historyOf(noteId, rules());
-        ZT_TRUE("журнал читается", history.read(&journal, &error));
-        ZT_TRUE("в журнале есть запись о правке", !journal.isEmpty());
+        const std::shared_ptr<zametti::journal::ZJournal> journal =
+            storage.journalFor(noteId, rules());
+        ZT_TRUE("журнал читается", journal->refresh(&error));
+        ZT_TRUE("в журнале есть запись о правке", !journal->isEmpty());
     }
     ZT_TRUE("та же правка второй раз — не ошибка (файл не изменился)",
             storage.rewriteNote(noteId, [](zametti::ZNote& note) {
@@ -142,7 +142,8 @@ void checkCatalog() {
     ZT_EQ("каталог пуст", n(0), n(plain.count()));
     // Журнал по id даётся у любого каталога с корнем (так живут наборы на
     // временном каталоге); нет корня — нет журнала.
-    ZT_TRUE("журнала без корня нет", !ZStorage(QString()).historyOf(QStringLiteral("x"), rules()).available());
+    ZT_TRUE("журнала без корня нет",
+            !ZStorage(QString()).journalFor(QStringLiteral("x"), rules())->available());
 }
 
 // Операции — одна точка правды: создать, архивировать (с поддеревом), вернуть,

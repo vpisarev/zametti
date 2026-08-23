@@ -762,12 +762,12 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
     //
     // Время берём у файла, а не «сейчас»: содержимое ровно такой давности, и
     // таймлайн не должен утверждать, будто заметка написана в эту минуту.
-    ZNoteHistory history = storage_ == nullptr
-                               ? ZNoteHistory()
-                               : storage_->historyOf(ZStorage::idOfPath(path), historyRules());
+    std::shared_ptr<journal::ZJournal> noteJournal =
+        storage_ == nullptr ? std::make_shared<journal::ZJournal>()
+                            : storage_->journalFor(ZStorage::idOfPath(path), historyRules());
     {
         const QDateTime when = QFileInfo(path).lastModified();
-        history.ensureBaseline(fileBytes, when.isValid() ? when.toMSecsSinceEpoch() : 0);
+        noteJournal->ensureBaseline(fileBytes, when.isValid() ? when.toMSecsSinceEpoch() : 0);
     }
 
     // Отложенная заметка: файл не разбираем и документ не собираем вовсе —
@@ -785,7 +785,7 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
     // живой до возврата в цикл событий: виджет на её документ ещё смотрит, а
     // собрать новый мы успеем и так. Ставится ОДНОЙ операцией вместе с
     // документом — installNote; ту же дорогу проходит и отложенная.
-    auto fresh = std::make_shared<ZNote>(path, fileBytes, digest, std::move(history));
+    auto fresh = std::make_shared<ZNote>(path, fileBytes, digest, std::move(noteJournal));
     // Байты → шапка + тело разбирает и собирает сама заметка; документ ещё не
     // показан, и вёрстки при сборке нет вовсе (её включает getDocument).
     fresh->load(text);
@@ -847,7 +847,7 @@ void NoteEditor::onExternalSettled() {
     // Шаг истории пишется здесь, а не после ответа человека: файл на диске уже
     // изменился, и это случилось независимо от того, примем мы чужую версию
     // или перезапишем своей. «Оставить моё» тогда ляжет следующей записью.
-    note_->history().record(journal::Kind::External, note_->lastSaved());
+    note_->journal().record(journal::Kind::External, note_->lastSaved());
 
     // Без несохранённых правок внешнее содержимое — просто ещё один шаг
     // истории: undo вернёт то, что было до него.
@@ -2981,7 +2981,7 @@ qint64 NoteEditor::restoreBody(const std::string& body, qint64 sourceTime, bool*
     current_.undoRun = false;
 
     // Ближайшее сохранение станет записью restore со ссылкой на источник.
-    note_->history().markNextSaveAsRestore(sourceTime);
+    note_->journal().markNextSaveAsRestore(sourceTime);
     save(false);
     return sourceTime;
 }
@@ -3117,10 +3117,10 @@ void NoteEditor::save(bool interactive, bool force) {
         // подряд в журнале не нужен (дедупликация тут бесплатна, потому что
         // сравнение отпечатков уже сделано выше).
         if (outcome.result == SaveResult::Written)
-            note_->history().record(journal::Kind::Save, outcome.written);
+            note_->journal().record(journal::Kind::Save, outcome.written);
         // Признак «восстановление» гасим при любом исходе записи: он относится
         // к одному ближайшему сохранению, а не «пока не сработает».
-        note_->history().clearPendingRestore();
+        note_->journal().clearPendingRestore();
 
         // Самопроверка. Окна с вопросом нет и не будет: оно повторялось на
         // каждом автосохранении, и человек его выключал — а вместе с ним

@@ -7,7 +7,7 @@
 // нельзя, потому что переносится сам объект. Внутри:
 //
 //   * ZDocument — живая модель текста; правится только своими глаголами;
-//   * ZNoteHistory — журнал этой заметки ОДНИМ ПОЛЕМ, а не россыпью;
+//   * ZJournal — журнал этой заметки ОДНИМ ПОЛЕМ, а не россыпью;
 //   * NoteSearch — найденное в ней (кэш поиска: вернулись — оно при заметке);
 //   * шапка (мета), отпечаток и последняя записанная копия — «изменилось ли»;
 //   * производное от текста — счёт слов и строк, блоки сборки для заплатки
@@ -37,7 +37,7 @@
 #include "caret_spot.h"
 #include "derived.h"
 #include "note_search.h"
-#include "znote_history.h"
+#include "journal.h"
 
 #include <QByteArray>
 #include <QString>
@@ -58,7 +58,7 @@ public:
     // Заметка, только что прочитанная с диска: путь, байты файла (они же
     // последняя записанная копия), их отпечаток и её журнал. Документ пуст —
     // его собирает вид из разобранных блоков; шапка ставится setHeader.
-    ZNote(QString path, QByteArray fileBytes, Digest digest, ZNoteHistory history);
+    ZNote(QString path, QByteArray fileBytes, Digest digest, std::shared_ptr<journal::ZJournal> journal);
 
     ZNote(const ZNote&) = delete;
     ZNote& operator=(const ZNote&) = delete;
@@ -216,10 +216,12 @@ public:
     // истории (ZNoteTimeline) читает тот же журнал, что заметка пишет, — с тем
     // же разжатым хвостом и тем же признаком «чищен», а не своей копией, у
     // которой чистка и хвост разошлись бы с заметкой. Ссылка не бывает пустой:
-    // без хранилища это ZNoteHistory(), у которого всё «нет».
-    ZNoteHistory& history() { return *history_; }
-    const ZNoteHistory& history() const { return *history_; }
-    std::shared_ptr<ZNoteHistory> historyPtr() const { return history_; }
+    // без хранилища это пустой ZJournal, у которого все файловые глаголы «нет».
+    journal::ZJournal& journal() { return *journal_; }
+    const journal::ZJournal& journal() const { return *journal_; }
+    // Тот же объект разделяет режим истории: разжатый хвост и «чищено за этот
+    // заход» у заметки и у её истории общие.
+    std::shared_ptr<journal::ZJournal> journalPtr() const { return journal_; }
 
     // --- найденное (кэш поиска) --------------------------------------------
     // Запрос и вхождения в документе этой заметки; переживают уход и возврат.
@@ -269,7 +271,7 @@ protected:
     NoteHeader lostMeta_;
     Digest digest_;
     QByteArray lastSaved_;
-    std::shared_ptr<ZNoteHistory> history_ = std::make_shared<ZNoteHistory>();
+    std::shared_ptr<journal::ZJournal> journal_ = std::make_shared<journal::ZJournal>();
     NoteSearch search_;
     Derived<NoteStats> stats_;
     bool selfCheckFailed_ = false;

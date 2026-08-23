@@ -37,7 +37,7 @@ bool HistoryController::enter(int index) {
     // Таймлайн — тот же журнал, что у заметки (один объект: чистка и хвост
     // общие), свежая версия — байты живой заметки СЕЙЧАС, облик — стиль
     // документа редактора.
-    auto timeline = std::make_shared<ZNoteTimeline>(editor_.noteHistory(), editor_.noteFileBytes(),
+    auto timeline = std::make_shared<ZNoteTimeline>(editor_.noteJournal(), editor_.noteFileBytes(),
                                                     editor_.note().stylePtr());
     QString error;
     if (!timeline->open(index, &error)) {
@@ -132,12 +132,12 @@ qint64 HistoryController::restore(bool* alreadyCurrent) {
 
 HistorySearchReport HistoryController::searchHistory(const QString& text) {
     HistorySearchReport report;
-    const std::shared_ptr<ZNoteHistory> history = editor_.noteHistory();
-    if (history == nullptr || !history->available()) return report;
+    const std::shared_ptr<journal::ZJournal> journal = editor_.noteJournal();
+    if (journal == nullptr || !journal->available()) return report;
     // Обращение к истории — значит и чистка: искать надо по уже вычищенному
     // журналу, иначе один и тот же текст найдётся в трёх дубликатах.
-    history->compressOnce();
-    return searchNoteHistory(*history->store(), history->noteId(), makeQuery(text));
+    journal->compressOnce();
+    return searchNoteHistory(*journal->store(), journal->noteId(), makeQuery(text));
 }
 
 void HistoryController::installShortcuts(QWidget* window) {
