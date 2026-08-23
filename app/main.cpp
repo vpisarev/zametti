@@ -487,6 +487,32 @@ int main(int argc, char** argv) {
     // разбором: ключ без направления — законная краткая запись.
     if (const auto saved = zametti::parseSortOrder(session.treeSort())) panels.setRootSort(*saved);
 
+    // ПОРЯДОК «ВСЕХ ЗАМЕТОК» ЖИВЁТ В ШАПКЕ КОРНЕВОЙ ЗАМЕТКИ, а не в state.json:
+    // он про хранилище, а не про устройство, и обязан ехать вместе с ним. Метка
+    // в шапке старше state.json; её нет, а в state.json порядок был — это
+    // хранилище прежней сборки, и порядок переезжает в шапку разово (modified
+    // при этом не бампится: setSortMark штампа не ставит).
+    //
+    // treeSort продолжаем писать ещё релиз: откат на прежнюю сборку не должен
+    // сбивать человеку порядок.
+    if (model.isStore()) {
+        const QString rootNote = zapp.storage()->rootId();
+        if (!rootNote.isEmpty()) {
+            const zametti::ZStorage::NoteInfo* info = zapp.storage()->info(rootNote);
+            const std::optional<zametti::SortOrder> mark =
+                info != nullptr ? info->sortMark() : std::nullopt;
+            if (mark.has_value()) {
+                panels.setRootSort(*mark);
+            } else if (const auto saved = zametti::parseSortOrder(session.treeSort())) {
+                QString sortError;
+                if (!zapp.storage()->setSortMark(rootNote, *saved,
+                                                 zametti::NoteEditor::historyRules(), &sortError))
+                    std::fprintf(stderr, "root sort not migrated: %s\n",
+                                 sortError.toUtf8().constData());
+            }
+        }
+    }
+
     QFont sidebarFont(zametti::settings().ui().sidebarFontFamily().isEmpty()
                           ? zametti::settings().style().fontFamily()
                           : zametti::settings().ui().sidebarFontFamily());
@@ -1503,7 +1529,19 @@ int main(int argc, char** argv) {
     const auto setSortFor = [&](const QString& folderId,
                                 std::optional<zametti::SortOrder> order) {
         if (folderId.isEmpty()) {
-            panels.setRootSort(order.value_or(zametti::defaultOrder(zametti::SortKey::Modified)));
+            const zametti::SortOrder chosen =
+                order.value_or(zametti::defaultOrder(zametti::SortKey::Modified));
+            panels.setRootSort(chosen);
+            // И в шапку корня: порядок «всех заметок» принадлежит хранилищу.
+            if (model.isStore()) {
+                const QString rootNote = zapp.storage()->rootId();
+                QString sortError;
+                if (!rootNote.isEmpty() &&
+                    !zapp.storage()->setSortMark(rootNote, chosen,
+                                                 zametti::NoteEditor::historyRules(), &sortError))
+                    std::fprintf(stderr, "root sort not saved: %s\n",
+                                 sortError.toUtf8().constData());
+            }
             return;
         }
         const QString file = model.pathOfId(folderId);
