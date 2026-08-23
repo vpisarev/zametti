@@ -1,6 +1,5 @@
 #include "znote.h"
 
-#include "archive.h"
 #include "times.h"
 
 #include <QFile>
@@ -148,8 +147,8 @@ void ZNote::setRole(const QString& role) {
     if (role.isEmpty()) header_.unset(kRole);
     else header_.set(kRole, role.toStdString());
 }
-bool ZNote::isArchived() const { return store::isArchivedMeta(header_); }
-void ZNote::setArchived(bool archived) { store::setArchivedMeta(header_, archived); }
+bool ZNote::isArchived() const { return header_.archived(); }
+void ZNote::setArchived(bool archived) { header_.setArchived(archived); }
 QString ZNote::created() const { return QString::fromStdString(header_.get(kCreated)); }
 QString ZNote::modified() const { return QString::fromStdString(header_.get(kModified)); }
 void ZNote::stampModified() { header_.set(kModified, store::isoNow().toStdString()); }

@@ -117,4 +117,17 @@ bool NoteHeader::sameFileApartFromStamps(const QByteArray& a, const QByteArray& 
     return stripped(a) == stripped(b);
 }
 
+bool NoteHeader::archived() const {
+    if (!get(kArchivedKey).empty()) return true;
+    // Старый вид: заметка-корзина до этапа 15. Читается как архивная, чтобы
+    // хранилище, не прошедшее миграцию, не выглядело поломанным.
+    return get("role") == "trash";
+}
+
+void NoteHeader::setArchived(bool archived) {
+    present_ = true;
+    if (archived) set(kArchivedKey, kArchivedValue);
+    else unset(kArchivedKey);
+}
+
 }  // namespace zametti

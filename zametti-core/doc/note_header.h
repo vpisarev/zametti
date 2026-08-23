@@ -53,6 +53,21 @@ public:
     // него безымянные байты.
     static bool sameFileApartFromStamps(const QByteArray& a, const QByteArray& b);
 
+    // АРХИВ — ПОМЕТКА В ШАПКЕ, и ничего кроме (этап 15). Отдельным ключом, а
+    // НЕ значением `role`: роль у заметки уже может быть занята (`folder`), а
+    // заархивировать папку человек вправе — и она обязана остаться папкой.
+    // Железное правило владельца «заметка никогда не станет папкой, и
+    // наоборот» этим и держится.
+    static constexpr const char* kArchivedKey = "archived";
+    static constexpr const char* kArchivedValue = "yes";
+    // Помечена ли архивной. Читает и СТАРЫЙ вид — `role: trash`: так выглядела
+    // заметка-корзина до этапа 15, и разовая миграция могла ещё не случиться
+    // (чужая копия хранилища, откат на прежнюю сборку).
+    bool archived() const;
+    // Пометить/снять пометку. Ничего, кроме своего ключа, не трогает —
+    // `modified` в том числе: архивация не правка содержимого.
+    void setArchived(bool archived);
+
     bool present() const { return present_; }
     void setPresent(bool present) { present_ = present; }
 

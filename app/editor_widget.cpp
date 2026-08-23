@@ -17,7 +17,6 @@
 #include "marker.h"
 #include "serializer.h"
 #include "settings.h"
-#include "archive.h"
 #include "times.h"
 
 #include <QDateTime>
@@ -632,8 +631,7 @@ bool NoteEditor::restoreCachedNote(const QString& path, const Digest& digest) {
 }
 
 bool NoteEditor::isArchivedNote() const {
-    return note_ != nullptr && !note_->path().isEmpty() &&
-           zametti::store::isArchivedMeta(note_->header());
+    return note_ != nullptr && !note_->path().isEmpty() && note_->isArchived();
 }
 
 // РЕЖИМ ЗАМЕТКИ — производное состояние показа, и восстанавливает его ОДНА

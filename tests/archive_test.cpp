@@ -33,7 +33,6 @@
 #include <string>
 
 using zametti::store::archiveNote;
-using zametti::store::isArchivedMeta;
 using zametti::store::migrateTrashToArchive;
 using zametti::store::restoreNote;
 
