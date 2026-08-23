@@ -48,6 +48,7 @@ add_executable(zametti-tests
 
     # --- хранилище и журнал ---
     store_test.cpp
+    store_identity_test.cpp
     journal_test.cpp
     journal_order_test.cpp
     history_compress_test.cpp

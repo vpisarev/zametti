@@ -266,6 +266,16 @@ bool initStore(const QString& dir, QString* error) {
     }
     probe.close();
     probe.remove();
+
+    // ИДЕНТИЧНОСТЬ — при рождении хранилища, а не при первом синке: id
+    // чеканится один раз, и лучший момент для этого тот, когда каталог заведомо
+    // наш и пуст.
+    ZStorage storage(dir);
+    QString why;
+    if (storage.ensureIdentity(&why).isEmpty()) {
+        if (error != nullptr) *error = why;
+        return false;
+    }
     return true;
 }
 
@@ -894,6 +904,25 @@ bool verifyStore(const QString& root, Report& report) {
         return false;
     }
 
+    // ИДЕНТИЧНОСТЬ. Файла может не быть — так выглядит хранилище, заведённое
+    // прежней сборкой; это не беда, а работа для `zametti-store root init`.
+    // А вот версия новее нашей — беда: сборка, не знающая половины ключей,
+    // перепишет файл без них и потеряет данные молча.
+    {
+        ZStorage storage(root);
+        QString why;
+        const store::StoreIdentity identity = storage.identity(&why);
+        if (!why.isEmpty()) report.problem(why);
+        if (identity.isEmpty() && why.isEmpty())
+            report.note(QStringLiteral("no %1 yet (run: zametti-store root init)")
+                            .arg(QLatin1String(store::kIdentityFile)));
+        if (identity.tooNew())
+            report.problem(QStringLiteral("%1: format version %2 is newer than mine (%3)")
+                               .arg(QLatin1String(store::kIdentityFile))
+                               .arg(identity.formatVersion())
+                               .arg(store::kStoreFormatVersion));
+    }
+
     std::map<std::string, std::shared_ptr<ZNote>> notes;
     std::set<QString> attachments;         // имена файлов-вложений
     // ДВА множества, а не одно. Доктрина этапа 10: вложение живо, пока на него
@@ -915,6 +944,9 @@ bool verifyStore(const QString& root, Report& report) {
             report.problem(QStringLiteral("foreign directory: %1").arg(name));
             continue;
         }
+        // Идентичность хранилища — свой файл, а не заметка: имя у него
+        // человеческое, и чужим он не считается.
+        if (name == QLatin1String(store::kIdentityFile)) continue;
         const qsizetype dot = name.lastIndexOf(QLatin1Char('.'));
         const QString stem = dot > 0 ? name.left(dot) : name;
         if (dot <= 0 || !isValidNoteId(toUtf8(stem))) {

@@ -26,6 +26,7 @@
 #include "device_clock.h"
 #include "history_rules.h"
 #include "sort_order.h"
+#include "store_identity.h"
 #include "import_limits.h"
 #include "znote.h"
 #include "znote_history.h"
@@ -87,6 +88,30 @@ public:
     LockReport forceUnlock();
     bool isLocked() const;
     QString lockPath() const;
+
+    // --- ИДЕНТИЧНОСТЬ ХРАНИЛИЩА (zametti.json) ------------------------------
+    //
+    // Кто это хранилище: свой id, версия формата, когда заведено и где его
+    // корневая заметка. Файл лежит РЯДОМ С ЗАМЕТКАМИ (не в настройках): копия
+    // каталога обязана знать, чьё она облако, а в облаке он же служит
+    // манифестом для сверки ДО ввода пароля.
+
+    // Прочитать. Пусто (isEmpty) — файла нет, он не читается или он не наш;
+    // объяснение в error. Ошибкой отсутствие файла не считается: хранилища
+    // старых сборок его не имеют, и чеканит его ensureIdentity.
+    store::StoreIdentity identity(QString* error = nullptr) const;
+
+    // Прочитать, а если файла нет — ВЫЧЕКАНИТЬ и записать. Единственное место,
+    // где рождается storeId, и рождается он ровно один раз за жизнь хранилища.
+    // Пусто — не хранилище или записать не удалось.
+    //
+    // Это САНКЦИОНИРОВАННОЕ исключение из правила «загрузка не пишет»: без
+    // идентичности хранилище нельзя синхронизировать, а спрашивать человека
+    // тут не о чем.
+    store::StoreIdentity ensureIdentity(QString* error = nullptr);
+
+    // Назвать корневую заметку. Остальные поля файла неизменны после чеканки.
+    bool setRootNote(const QString& noteId, QString* error = nullptr);
 
     // --- каталог ---------------------------------------------------------
     // Перечитать всё хранилище (скан «<id>.md»). Не хранилище — каталог пуст.
@@ -276,6 +301,9 @@ protected:
     bool store_ = false;
     QHash<QString, NoteInfo> notes_;
     std::shared_ptr<QLockFile> lock_;   // заведён при первом lock()
+
+    // Записать идентичность целиком (атомарно). Зовётся только отсюда.
+    bool writeIdentity(const store::StoreIdentity& identity, QString* error);
 
     // Всё, что трогает файлы журналов, живёт здесь и зовётся только из-под замка.
     bool appendJournalLocked(const QString& path, const journal::NewRecord& what, QString* error);
