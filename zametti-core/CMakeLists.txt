@@ -71,7 +71,6 @@ add_library(zametti-core STATIC
     image/resample.h            image/resample.cpp
     image/import.h              image/import.cpp
     image/deleted_image.h       image/deleted_image.cpp
-    image/ladder.h              image/ladder.cpp
     image/recompress.h          image/recompress.cpp
     image/image_metadata.h      image/image_metadata.cpp
     image/zimage_cache.h        image/zimage_cache.cpp
@@ -89,7 +88,6 @@ add_library(zametti-core STATIC
     doc/markdown_reader.cpp
     doc/block_object.h          doc/block_object.cpp
     doc/diff.h                  doc/diff.cpp
-    doc/diff_view.h             doc/diff_view.cpp
     doc/syntax_highlighter.h    doc/syntax_highlighter.cpp
     doc/json_highlighter.h      doc/json_highlighter.cpp
     doc/config_file.h           doc/config_file.cpp

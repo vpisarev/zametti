@@ -5,7 +5,6 @@
 #include "color.h"
 #include "exif.h"
 #include "jxl_encoder.h"
-#include "ladder.h"
 #include "resample.h"
 #include "tiff_reader.h"
 
