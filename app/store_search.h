@@ -60,10 +60,6 @@ public:
     // Бросить текущий поиск и ничего не искать.
     void cancel();
 
-    // Сколько заметок было прочитано в последнем завершённом проходе — для
-    // отчёта и замеров.
-    int lastScanned() const { return scanned_; }
-
 signals:
     // Результаты последнего актуального запроса. truncated — упёрлись в
     // потолок и показали не всё: молча обрезать список нельзя.
@@ -77,7 +73,6 @@ private:
     Worker* worker_ = nullptr;
     std::shared_ptr<std::atomic<quint64>> latest_;
     quint64 generation_ = 0;
-    int scanned_ = 0;
 };
 
 }  // namespace zametti

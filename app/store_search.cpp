@@ -115,10 +115,7 @@ StoreSearch::StoreSearch(QObject* parent)
     connect(&thread_, &QThread::finished, worker_, &QObject::deleteLater);
     connect(worker_, &Worker::done, this,
             [this](const QString& text, const QVector<SearchResult>& results, bool truncated,
-                   qint64 elapsedMs, int scanned) {
-                scanned_ = scanned;
-                emit found(text, results, truncated, elapsedMs);
-            });
+                   qint64 elapsedMs, int) { emit found(text, results, truncated, elapsedMs); });
     thread_.start();
 }
 

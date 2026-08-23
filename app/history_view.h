@@ -117,7 +117,6 @@ public:
     void refresh();
 
     DiffTextView& textView() { return *text_; }
-    HistoryBanner& banner() { return *banner_; }
     HistoryTimeline& list() { return *list_; }
     // Ширина списка записей: та, что сейчас; задать (0 — по содержимому:
     // столько, сколько нужно самой длинной строке, но не шире потолка).

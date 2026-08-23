@@ -367,7 +367,6 @@ public:
     // Пока подпись картинки правят полем ввода, вид свою надпись под снимком
     // не рисует, а место под неё держит (хотя бы одну строку). -1 — никого.
     void setEditedImageCaption(int blockNumber);
-    int editedImageCaption() const { return editedImageCaption_; }
     // Шрифт подписи под снимком: свой облик, свой кегль, свой масштаб. Им же
     // пишет поле правки подписи — буквы не прыгают при входе в правку.
     QFont captionFont() const;
