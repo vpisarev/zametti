@@ -142,16 +142,21 @@ merge(B,A)`, `union ⊇ A`) обязаны идти без единого фай
 
 ## 6. Порядок работ (каждый шаг — свой коммит, наборы зелёные после каждого)
 
-1. `journal::Entry` → `ZJournal::Entry` (механическая правка имён, ~25 файлов).
-2. `decideStep`/`planFor` → `ZJournal::planStep`/`planCompress`; `history_rules.h`
-   ужимается до пассивной `Rules` (и переезжает в `journal.h`).
-3. `journal::History` → методы `ZStorage`; `DeviceClock` — поле `ZStorage`;
-   замки сливаются в один.
-4. `ZNoteHistory` растворяется: кэш хвоста и признак восстановления — в
-   `ZStorage` (по id открытой заметки), `ensureBaseline`/`record` — пара
-   «`ZJournal` решает / `ZStorage` пишет».
-5. `ZNote` перестаёт держать `ZNoteHistory` полем и получает ссылку на
-   `ZStorage` (либо nullptr — файл вне хранилища).
+1. **СДЕЛАНО** `journal::Entry` → `ZJournal::Entry` (десять файлов снаружи).
+2. **СДЕЛАНО** `decideStep`/`planFor` → `ZJournal::planStep`/`planCompress`
+   вместе с `Rules`, `SnapshotOf`, `Step`, `Plan`; в `history_rules.h` остались
+   две функции про байты заметки, отчёт чистки и псевдоним `Rules`.
+3. **СДЕЛАНО** `journal::History` растворён в `ZStorage`: `journalPath`,
+   `appendToJournal`, `readJournal`, `journalSnapshot`, `trimJournalTail`,
+   `thinJournal`, `rewriteJournal`, `thinAllJournals`, `compressJournal`, общий
+   замок журналов, атомарная подмена, `DeviceClock` — поле. `ZNoteHistory`
+   держит `ZStorage*` вместо корня.
+4. `ZNoteHistory` — ОСТАВЛЕН как сессионное состояние открытой заметки (хвост,
+   «чищено за заход», «ближайшее сохранение — восстановление»). Растворять его
+   в `ZStorage` пришлось бы картой по id — то есть заводить в хранилище
+   состояние ЧУЖОГО объекта; вопрос владельцу вместе с §5.
+5. `ZNote` держит `ZNoteHistory` полем — менять не потребовалось: журнал
+   заметки теперь сам знает хранилище.
 6. `ZNoteTimeline` — по ответу владельца (§5).
 7. Справочник `zametti-storage.md` — в том же коммите, что и формат.
 
