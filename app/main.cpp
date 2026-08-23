@@ -450,6 +450,14 @@ int main(int argc, char** argv) {
         // Дерево перестроится само: каталог перечитан — хранилище сказало.
         for (const QString& line : zapp.storage()->migrate())
             std::fprintf(stderr, "%s\n", line.toUtf8().constData());
+
+        // КОРНЕВАЯ ЗАМЕТКА — здесь же, и это третье санкционированное
+        // исключение из «загрузка не пишет»: у хранилища без неё нет ни имени,
+        // ни порядка «всех заметок», а спрашивать человека тут не о чем.
+        // Идемпотентно: корень есть — не делает ничего.
+        QString rootError;
+        if (zapp.storage()->ensureRootNote(&rootError).isEmpty())
+            std::fprintf(stderr, "no root note: %s\n", rootError.toUtf8().constData());
     }
 
     // Свежая заметка хранилища — первая ОТКРЫВАЕМАЯ (директории не в счёт),
