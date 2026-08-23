@@ -77,44 +77,6 @@ std::vector<Taps> buildTaps(int srcLen, int dstLen) {
     return taps;
 }
 
-// --- усреднение по площади -------------------------------------------------
-//
-// Веса для одной оси: доля перекрытия каждого входного пикселя со следом
-// выходного. Сумма долей равна ширине следа, поэтому нормируем на неё.
-std::vector<Taps> buildAreaTaps(int srcLen, int dstLen) {
-    std::vector<Taps> taps{static_cast<size_t>(dstLen)};
-    const double ratio = double(srcLen) / double(dstLen);
-    for (int i = 0; i < dstLen; ++i) {
-        // След выходного пикселя во входных координатах — отрезок [lo, hi).
-        const double lo = double(i) * ratio;
-        const double hi = std::min(lo + ratio, double(srcLen));
-        const int from = std::max(0, int(std::floor(lo)));
-        const int to = std::min(srcLen - 1, int(std::ceil(hi)) - 1);
-
-        Taps t;
-        t.first = from;
-        t.weight.resize(size_t(std::max(0, to - from) + 1));
-        double sum = 0.0;
-        for (int k = from; k <= to; ++k) {
-            // Дробное перекрытие по краям — то, чем это отличается от простого
-            // «взять каждый n-й» и от целочисленного усреднения.
-            const double left = std::max(lo, double(k));
-            const double right = std::min(hi, double(k) + 1.0);
-            const double w = std::max(0.0, right - left);
-            t.weight[size_t(k - from)] = float(w);
-            sum += w;
-        }
-        if (sum > 0.0) {
-            for (float& w : t.weight) w = float(double(w) / sum);
-        } else {
-            std::fill(t.weight.begin(), t.weight.end(), 0.0f);
-            t.weight[0] = 1.0f;
-        }
-        taps[size_t(i)] = std::move(t);
-    }
-    return taps;
-}
-
 // Общий проход: два раздельных этапа по осям с готовыми весами.
 QImage runTaps(const QImage& in, int width, int height, const std::vector<Taps>& tapsX,
                const std::vector<Taps>& tapsY) {
@@ -197,23 +159,6 @@ QImage normalized(const QImage& src) {
 
 }  // namespace
 
-QImage resampleArea(const QImage& src, int width, int height) {
-    if (src.isNull() || width <= 0 || height <= 0) return {};
-    if (src.width() == width && src.height() == height) return src;
-    const QImage in = normalized(src);
-    if (in.isNull()) return {};
-    return runTaps(in, width, height, buildAreaTaps(in.width(), width),
-                   buildAreaTaps(in.height(), height));
-}
-
-QImage resample(const QImage& src, int width, int height) {
-    if (src.isNull()) return {};
-    // Уменьшение — площадью, увеличение — Lanczos. Смешанного случая в
-    // конвейере не бывает: пропорции мы сохраняем.
-    const bool smaller = width <= src.width() && height <= src.height();
-    return smaller ? resampleArea(src, width, height) : resampleLanczos(src, width, height);
-}
-
 QImage resampleLanczos(const QImage& src, int width, int height) {
     if (src.isNull() || width <= 0 || height <= 0) return {};
     if (src.width() == width && src.height() == height) return src;
@@ -223,6 +168,5 @@ QImage resampleLanczos(const QImage& src, int width, int height) {
     return runTaps(in, width, height, buildTaps(in.width(), width),
                    buildTaps(in.height(), height));
 }
-
 
 }  // namespace zametti

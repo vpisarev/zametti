@@ -184,7 +184,7 @@ int ztQualityStudy(int argc, char** argv) {
             const QImage scaled =
                 (target.width == src.width() && target.height == src.height())
                     ? src
-                    : resampleArea(src, target.width, target.height);
+                    : resampleLanczos(src, target.width, target.height);
             const bool shrunk = target.width != src.width() || target.height != src.height();
 
             for (int q : qualities) {
