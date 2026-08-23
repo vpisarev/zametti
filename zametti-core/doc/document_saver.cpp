@@ -246,6 +246,10 @@ Piece withCodeSpansPerLine(Piece block) {
 
 }  // namespace
 
+// НАРУЖУ НЕ ВЫХОДЯТ. Запись — глаголы заметки (ZDocument::saveTo, fileBytes,
+// ZNote::save); всё, из чего они собраны, живёт здесь и только здесь.
+namespace {
+
 bool sameSkeleton(const std::vector<Piece>& x, const std::vector<Piece>& y) {
     if (x.size() != y.size()) return false;
     for (size_t i = 0; i < x.size(); ++i) {
@@ -643,13 +647,9 @@ std::vector<Piece> documentForFile(std::vector<Piece> doc) {
     return withoutEmptyNested(std::move(spaced));
 }
 
-namespace {
-
 std::string_view asView(const QByteArray& bytes) {
     return std::string_view(bytes.constData(), static_cast<size_t>(bytes.size()));
 }
-
-}  // namespace
 
 QByteArray noteBytes(const QTextDocument& doc, const NoteHeader& meta, DocumentReaderFn reader,
                      std::vector<Piece>* fileBlocks) {
@@ -757,6 +757,8 @@ SaveOutcome saveDocument(const QTextDocument& doc, const QString& path,
 // ЗАМЕТКА ПОДАЁТ ПИСАТЕЛЮ СВОЙ ДОКУМЕНТ САМА. Путь записи один и живёт выше;
 // метод нужен затем, чтобы ради записи не приходилось отдавать наружу живой
 // QTextDocument — а он не отдаётся никому и никогда.
+}  // namespace
+
 SaveOutcome ZDocument::saveTo(const QString& path, const QString& timestamp,
                               DocumentReaderFn reader, const NoteHeader& meta,
                               const Digest& known, const std::vector<Piece>* prebuiltBlocks,

@@ -1159,10 +1159,12 @@ void checkBackspaceProperties() {
                 // структурным нажатием стоит в блоке под тем же номером.
                 ZT_TRUE(tag + "каретка не уехала вниз", landed <= block);
 
-                // Ровно путь записи: с нормализацией documentForFile — файл,
-                // например, не выражает пустую строку в самом начале.
-                const std::string once = markdownOf(
-                    zametti::documentForFile(blocksOf(*editor.document())));
+                // Ровно путь записи: байты, какими они лягут в файл (у них
+                // своя нормализация — файл, например, не выражает пустую
+                // строку в самом начале). Глаголом заметки, не сборкой пути
+                // руками.
+                const QByteArray bytes = editor.note().fileBytes({});
+                const std::string once(bytes.constData(), size_t(bytes.size()));
                 const std::string twice = noteOf(once).toMarkdown();
                 ZT_TRUE(tag + "документ записываем", once == twice);
                 // Правки не сохраняем: файл на каждый случай пишется заново, а
