@@ -139,6 +139,8 @@ public:
         bool archived() const { return archived_; }
         bool folder() const { return folder_; }
         bool lostFound() const { return lostFound_; }
+        // Корневая заметка хранилища: она же его имя и его настройки показа.
+        bool root() const { return root_; }
         bool valid() const { return !id_.isEmpty(); }
 
         // Прочитать с диска: шапка и первый блок. Ложь valid() — не читается.
@@ -157,6 +159,7 @@ public:
         bool archived_ = false;
         bool folder_ = false;
         bool lostFound_ = false;
+        bool root_ = false;
     };
     Metadata metadata() const;
 
@@ -164,10 +167,17 @@ public:
     // znote.cpp один раз.
     QString parentId() const;
     void setParentId(const QString& id);   // пусто — заметка в корне
+    // Папка: role folder ИЛИ root — корень тоже папка, см. znote.cpp.
     bool isFolder() const;
     bool isLost() const;
+    // КОРНЕВАЯ ЗАМЕТКА ХРАНИЛИЩА (role: root). Её заголовок — имя хранилища,
+    // её метка sort — порядок «всех заметок». parent у корневых заметок
+    // остаётся ПУСТЫМ: 282 переписанные шапки — это 282 записи в журналы и
+    // первый синк ценой всего хранилища, а бюро находок держится ровно на
+    // различии «пустой parent» против «неразрешимый parent».
+    bool isRoot() const;
     QString role() const;
-    void setRole(const QString& role);     // "folder", "lost", пусто — заметка
+    void setRole(const QString& role);     // "folder", "lost", "root", пусто — заметка
     bool isArchived() const;
     void setArchived(bool archived);
     QString created() const;

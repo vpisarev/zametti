@@ -166,6 +166,7 @@ ZNoteHistory ZStorage::historyOf(const QString& id, const journal::ZJournal::Rul
 
 void ZStorage::reload() {
     notes_.clear();
+    loaded_ = true;
     if (!store_) return;
     // Состав каталога сторож сверяет с тем, что мы читали последними: reload по
     // любой двери — и его точка отсчёта тоже.
@@ -351,6 +352,13 @@ QString ZStorage::createNote(const QString& parentId, bool folder, QString* erro
 
 bool ZStorage::archive(const QString& id, const history::Rules& rules, QStringList* failed) {
     if (!store_ || !has(id)) return false;
+    // КОРЕНЬ НЕ АРХИВИРУЕТСЯ: он папка, а значит descendantsOf унесло бы в
+    // архив всё хранилище разом.
+    if (isRootNote(id)) {
+        if (failed != nullptr)
+            failed->append(QStringLiteral("%1: the root note cannot be archived").arg(titleOf(id)));
+        return false;
+    }
     const Batch batch(*this);
     QStringList doomed{id};
     if (isFolder(id)) doomed += descendantsOf(id);
@@ -405,6 +413,12 @@ bool ZStorage::restore(const QString& id, QStringList* failed) {
 bool ZStorage::remove(const QString& id, const ImportLimits& limits, QString* error) {
     if (!store_ || !has(id)) {
         if (error != nullptr) *error = QStringLiteral("no such note");
+        return false;
+    }
+    // КОРЕНЬ НЕ УДАЛЯЕТСЯ. Без него у хранилища нет ни имени, ни порядка «всех
+    // заметок», а поддеревом он унёс бы вообще всё.
+    if (isRootNote(id)) {
+        if (error != nullptr) *error = QStringLiteral("the root note cannot be deleted");
         return false;
     }
     // ПАПКА УНОСИТ ПОДДЕРЕВО. Прежде уносило только её файл, а дети оставались с
@@ -465,6 +479,11 @@ bool ZStorage::rename(const QString& id, const QString& title, const history::Ru
 
 bool ZStorage::move(const QString& id, const QString& parentId, const history::Rules& rules,
                     QString* error) {
+    // КОРЕНЬ НЕ ПЕРЕНОСИТСЯ: он и есть верх дерева.
+    if (isRootNote(id)) {
+        if (error != nullptr) *error = QStringLiteral("the root note cannot be moved");
+        return false;
+    }
     return rewriteNote(id, [&parentId](ZNote& note) {
         note.setHasHeader(true);
         note.setParentId(parentId);
@@ -494,7 +513,16 @@ bool ZStorage::rewriteNote(const QString& id, const std::function<void(ZNote&)>&
     ZNote note(path, bytes, hashOf(std::string_view(bytes.constData(), size_t(bytes.size()))),
                historyOf(id, rules));
     note.load(std::string_view(bytes.constData(), size_t(bytes.size())));
+    const bool wasRoot = note.isRoot();
     change(note);
+    // КОРЕНЬ НЕ РАЗЖАЛУЕТСЯ. Это единственная дверь к шапке закрытой заметки,
+    // и стеречь роль надо здесь, а не в каждом вызывающем: правка, снявшая бы
+    // role: root, отвергается целиком, а не «частично применяется».
+    if (wasRoot && !note.isRoot()) {
+        if (error != nullptr)
+            *error = QStringLiteral("the root note cannot lose its role");
+        return false;
+    }
     // ШТАТНЫЙ ПУТЬ ЗАПИСИ: самопроверка разбором обратно, атомарная запись,
     // отпечаток — те же правила, что у открытой заметки. Прежде здесь стоял
     // std::ofstream мимо всего этого (аудит refactor2, §1.4).
@@ -1065,6 +1093,59 @@ bool ZStorage::writeIdentity(const store::StoreIdentity& identity, QString* erro
         return false;
     }
     return true;
+}
+
+// --- корневая заметка -------------------------------------------------------
+
+bool ZStorage::isRootNote(const QString& id) const {
+    const auto it = notes_.constFind(id);
+    return it != notes_.constEnd() && it.value().root();
+}
+
+QString ZStorage::rootId() const {
+    if (!store_) return {};
+    // КАТАЛОГ ОБЯЗАН БЫТЬ ПРОЧИТАН. Иначе «корня нет» ответил бы всякий свежий
+    // объект хранилища — и ensureRootNote завёл бы ВТОРОЙ корень. Ошибка
+    // дорогая и тихая, поэтому дверь одна и сторож в ней.
+    if (!loaded_) const_cast<ZStorage*>(this)->reload();
+    // Сперва адрес из zametti.json: это дёшево и это истина, названная явно.
+    const QString named = identity().rootNote();
+    if (!named.isEmpty() && has(named)) return named;
+    // Не назван или назван неверно — ищем по РОЛИ: две записи одного факта, и
+    // расхождение лечится (`zametti-store root fix`), а не роняет программу.
+    for (auto it = notes_.constBegin(); it != notes_.constEnd(); ++it)
+        if (it.value().root()) return it.key();
+    return {};
+}
+
+QString ZStorage::ensureRootNote(QString* error) {
+    if (!store_) {
+        if (error != nullptr) *error = QStringLiteral("not a store");
+        return {};
+    }
+    const QString have = rootId();
+    if (!have.isEmpty()) {
+        // Роль есть, а в файле адреса нет (или он устарел) — назовём.
+        if (identity().rootNote() != have) setRootNote(have, error);
+        return have;
+    }
+    // РОЖДЕНИЕ КОРНЯ. Имя хранилища по умолчанию — имя каталога: человек
+    // узнаёт своё хранилище с первого взгляда, а переименовать сможет по F2.
+    const Batch batch(*this);
+    const QString id = idOfPath(store::newNote(root_, QString(), error));
+    if (id.isEmpty()) return {};
+    const QString name = QDir(root_).dirName();
+    QString why;
+    if (!rewriteNote(id, [&name](ZNote& note) {
+            note.setRole(QStringLiteral("root"));
+            note.doc().setTitle(name.isEmpty() ? QStringLiteral("Notes") : name);
+        }, journal::ZJournal::Rules{}, &why)) {
+        if (error != nullptr) *error = why;
+        return {};
+    }
+    refreshNote(id);
+    if (!setRootNote(id, error)) return {};
+    return id;
 }
 
 }  // namespace zametti

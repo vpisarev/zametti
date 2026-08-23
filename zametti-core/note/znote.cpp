@@ -16,6 +16,7 @@ constexpr char kCreated[] = "created";
 constexpr char kModified[] = "modified";
 constexpr char kFolder[] = "folder";
 constexpr char kLost[] = "lost";
+constexpr char kRoot[] = "root";
 constexpr char kSort[] = "sort";
 // Сколько знаков сниппета держим в метаданных: две-три строки списка при
 // любой разумной ширине панели.
@@ -107,6 +108,7 @@ ZNote::Metadata ZNote::metadata() const {
     m.sortMark_ = sortMark();
     m.archived_ = isArchived();
     m.folder_ = isFolder() || isLost();
+    m.root_ = isRoot();
     m.lostFound_ = isLost();
     m.title_ = title();
     m.snippet_ = doc_.snippet(kSnippetChars);
@@ -130,7 +132,15 @@ ZNote::Metadata ZNote::Metadata::fromFile(const QString& path) {
 
 QString ZNote::parentId() const { return QString::fromStdString(header_.get(kParent)); }
 void ZNote::setParentId(const QString& id) { header_.set(kParent, id.toStdString()); }
-bool ZNote::isFolder() const { return header_.get(kRole) == kFolder; }
+// КОРЕНЬ — ПАПКА. Тогда правило «тело папки — ровно один заголовок» и все
+// правила дерева применяются к нему без единой оговорки: имя хранилища это и
+// есть заголовок корневой заметки, а переименование по F2 — то, как оно
+// меняется.
+bool ZNote::isFolder() const {
+    const std::string role = header_.get(kRole);
+    return role == kFolder || role == kRoot;
+}
+bool ZNote::isRoot() const { return header_.get(kRole) == kRoot; }
 bool ZNote::isLost() const { return header_.get(kRole) == kLost; }
 QString ZNote::role() const { return QString::fromStdString(header_.get(kRole)); }
 void ZNote::setRole(const QString& role) {
