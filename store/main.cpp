@@ -44,6 +44,7 @@ int usage() {
                  "  zametti-store recompress --root <dir> --id <id|all>\n"
                  "  zametti-store resurrect --root <dir> --id <id>\n"
                  "  zametti-store archive --root <dir> --id <id> [--restore]\n"
+                 "  zametti-store root show|init|fix --root <dir>\n"
                  "\n"
                  "  recompress has NO default for --id: recompression is irreversible,\n"
                  "  and one forgotten option must not migrate the whole store.\n"
@@ -109,6 +110,57 @@ int main(int argc, char** argv) {
             return 1;
         }
         return 0;
+    }
+
+    // КОРНЕВАЯ ЗАМЕТКА: посмотреть, завести, вылечить расхождение. Он же
+    // тестовый люк: адрес в zametti.json и роль в шапке — две независимые
+    // записи одного факта, и разъехаться они могут (файл приехал с другой
+    // машины, шапку правили руками).
+    if (command == QStringLiteral("root")) {
+        if (root.isEmpty() || positional.isEmpty()) return usage();
+        zametti::ZStorage storage(root);
+        if (!storage.isStore()) {
+            std::fprintf(stderr, "not a store: %s\n", root.toUtf8().constData());
+            return 1;
+        }
+        storage.reload();
+        QString error;
+        const auto show = [&storage] {
+            const zametti::store::StoreIdentity identity = storage.identity();
+            const QString byRole = storage.rootId();
+            std::printf("storeId:      %s\n",
+                        identity.storeId().isEmpty() ? "(none)"
+                                                     : identity.storeId().toUtf8().constData());
+            std::printf("format:       %d\n", identity.formatVersion());
+            std::printf("created:      %s\n", identity.created().toUtf8().constData());
+            std::printf("rootNote:     %s\n",
+                        identity.rootNote().isEmpty() ? "(none)"
+                                                      : identity.rootNote().toUtf8().constData());
+            std::printf("by role:      %s\n",
+                        byRole.isEmpty() ? "(none)" : byRole.toUtf8().constData());
+            if (!byRole.isEmpty())
+                std::printf("store name:   %s\n", storage.titleOf(byRole).toUtf8().constData());
+            if (identity.rootNote() != byRole)
+                std::printf("MISMATCH: the json and the role disagree (run: root fix)\n");
+        };
+
+        if (positional == QStringLiteral("show")) {
+            show();
+            return 0;
+        }
+        if (positional == QStringLiteral("init") || positional == QStringLiteral("fix")) {
+            // Одно и то же действие с разных сторон: init заводит, если нет;
+            // fix называет в json тот корень, который нашёлся по роли. Обе
+            // дороги ведут в ensureRootNote — параллельной реализации нет.
+            const QString id = storage.ensureRootNote(&error);
+            if (id.isEmpty()) {
+                std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+                return 1;
+            }
+            show();
+            return 0;
+        }
+        return usage();
     }
 
     if (command == QStringLiteral("new")) {
