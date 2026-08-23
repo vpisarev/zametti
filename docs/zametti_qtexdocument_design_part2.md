@@ -2,11 +2,11 @@
 
 ## Вопрос
 
-Всё таки появляется риск рассинхрона, когда ZamettiDocument может содержать еще какие-то данные, которые разойдутся с содержимым QTextDocument, тот же кэш номеров для нумерованных списков. Разве что каким-то образом перехватывать любое редактирование QTextDocument и инвалидировать кэш.
+Всё таки появляется риск рассинхрона, когда ZDocument может содержать еще какие-то данные, которые разойдутся с содержимым QTextDocument, тот же кэш номеров для нумерованных списков. Разве что каким-то образом перехватывать любое редактирование QTextDocument и инвалидировать кэш.
 
 ## Ответ
 
-Да. И я бы именно так и строил `ZamettiDocument`: **`QTextDocument` — единственное изменяемое semantic state; всё остальное либо независимые metadata/config, либо полностью disposable derived cache.**
+Да. И я бы именно так и строил `ZDocument`: **`QTextDocument` — единственное изменяемое semantic state; всё остальное либо независимые metadata/config, либо полностью disposable derived cache.**
 
 Тогда наличие кэша само по себе не создаёт второй модели. Инвариант должен быть:
 
@@ -25,10 +25,10 @@ QTextDocument  ←→  listNumberCache
 
 ### И да — подписаться на `contentsChange()`
 
-Я бы прямо в конструкторе `ZamettiDocument` сделал:
+Я бы прямо в конструкторе `ZDocument` сделал:
 
 ```cpp
-ZamettiDocument::ZamettiDocument()
+ZDocument::ZDocument()
 {
     connect(&document_, &QTextDocument::contentsChange,
             this,
@@ -51,7 +51,7 @@ ZamettiDocument::ZamettiDocument()
 ```text
 QTextEdit
 QTextCursor
-ZamettiDocument methods
+ZDocument methods
 paste
 undo
 redo
@@ -67,7 +67,7 @@ external replacement
 ## Я бы даже сделал это фундаментальным правилом
 
 ```cpp
-class ZamettiDocument
+class ZDocument
 {
     QTextDocument document_;       // SOURCE OF TRUTH
 
@@ -80,7 +80,7 @@ class ZamettiDocument
 Причём:
 
 ```cpp
-void ZamettiDocument::clearDerivedState()
+void ZDocument::clearDerivedState()
 {
     listCache_.clear();
     ...
@@ -95,7 +95,7 @@ void ZamettiDocument::clearDerivedState()
 clearDerivedState();
 ```
 
-ZamettiDocument перестал работать — значит в cache случайно попала semantic information, которой там быть не должно.
+ZDocument перестал работать — значит в cache случайно попала semantic information, которой там быть не должно.
 
 Это хороший тест архитектуры.
 
@@ -228,13 +228,13 @@ struct ListCacheEntry {
 Наши собственные операции точно знают, что произошло:
 
 ```cpp
-void ZamettiDocument::convertToListItem(...)
+void ZDocument::convertToListItem(...)
 {
     ...
     invalidateListStructure();
 }
 
-void ZamettiDocument::indentListItem(...)
+void ZDocument::indentListItem(...)
 {
     ...
     invalidateListStructure();
@@ -448,7 +448,7 @@ public:
                 └──────── disposable ─────────┘
 ```
 
-И `ZamettiDocument` в этом смысле не вторая модель, а скорее:
+И `ZDocument` в этом смысле не вторая модель, а скорее:
 
 ```text
 QTextDocument
@@ -464,7 +464,7 @@ resource management
 
 ### Я бы ввёл очень простой архитектурный invariant
 
-**Никогда не хранить в поле `ZamettiDocument` то, что можно считать semantic свойством конкретного block/fragment/table и что может изменяться при редактировании.**
+**Никогда не хранить в поле `ZDocument` то, что можно считать semantic свойством конкретного block/fragment/table и что может изменяться при редактировании.**
 
 Такое значение должно жить **в `QTextDocument`**.
 

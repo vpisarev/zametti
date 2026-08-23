@@ -2,16 +2,158 @@
 
 take notes, organize 'em, encrypt, sync via cloud
 
-Notes on disk are plain markdown: they can be edited with any tools and kept
-in git. The application does not own the format — it only reads and writes it.
+Notes on disk are plain markdown: they can be edited with any tools and kept in git. The application does not own the format — it only reads and writes it.
 
-## Status
+## License
 
-Stage 1 is closed: the format core and the viewer. Stage 2 — editing — is
-underway.
+The project is licensed under GPL-3.0, see [LICENSE](LICENSE).The vendored or linked 3rdparty packages are distributed under their
+respective licenses, see `3rdparty/*` and **How to build** below.
+
+## Disclaimer
+
+The license and the fact that we use open formats and open libraries, open standards (markdown, json, jpegxl, zstd, webdav ...) implies that the program will always stay open-source and you can always access your notes from virtually any computer, so don't worry about being locked-in or separated from your content.
+
+On the other hand, use the software at your own risk (or don't use it at all). We don't provide any guarantees and will not be responsible for any damage that the software can make. Do periodical backups, it's always a good practice.
+
+## Canonical markdown
+
+When a markdown note is imported into the storage or is created by the user from scratch, it's stored in the storage in so-called canonical form:
+
+- the note is given a 14-symbol [base-32](https://www.crockford.com/base32.html) name that consists of 8-symbol prefix (encoded seconds since 'Unix epoch', 01.01.1970 UTC when the note is created) and 6-symbol random suffix. The real name becomes the title (e.g. `# some verbose name of the note`)  This 14-symbol id is like a social id number, it keeps the note identity even if the displayed name changes. And the name can then contain any symbols, even emoji. See [zametti-storage](docs/zametti-storage.md) for details.
+- each markdown file starts with a html comment (which are supported by markdown parsers) with meta-information about the note. _Don't touch it if you edit the note with an external editor!_
+- trailing whitespaces are erased. New-line symbol `\n` is added in the end.
+- at the same time, user-added spaces in the beginning of each line, as well as extra empty lines are all preserved! So you can type unusually-formatted poems - the formatting will be preserved.
+- each heading starts with one or more `#`. We don't use under-the-heading `-----`.
+- `-` is used for unordered lists. In WYSIWYG mode bullets of 3 different forms are used for unordered lists of different level, but it's just visualization
+- ordered lists use `1.`, `2.` etc. enumeration. You can put `1.` everywhere, but it will likely be restored to `1.`, `2.` etc. on the next auto-save.In WYSIWYG mode nested lists use `a., b., c. ...` and `1), 2), 3) ...`, but it's just visualization.
+- italic text is surrounded by `_`, e.g. `_emphasized words_` will be displayed as _emphasized words_.
+- bold text is surrounded by `**`: `**that was a bold statement!**` -\> **that was a bold statement!**.
+- strikethrough text is surrounded by `~~`. `~~zametti is yet another entry-level note taking app~~` -\> ~~zametti is yet another entry-level note taking app~~
+- inline code fragments use orginary back quotes, `print('hello world')`. Code blocks use explicit ` ```...``` ` instead of indentation.
+- `$...$` surround inline formulas: $\text{circle area}=\pi r^2$; `$$...$$` are used for display formulas. However, it's possible to use `$...$` for display formulas as well - just place inline formula alone, separated from the rest of the next by empty lines.
+- we don't use a 'standard' 4-space indent for lists. Instead, we use 2-space indentation for unordered lists and 3-space indentation for ordered lists.
+- syntax for images is extended. There is a base `![alt-text](url)` standard notation, into which we add some extra stuff:
+  - `(url)` may include the current picture size in pixels, which changes as user changes the picture size by dragging on of the corners.
+  - it also may include optional alignment, which is center alignment by default.
+  - if alt-text starts with `~` or if its name is too dull, e.g. `image 5` or `IMG_...` or `DSC...` or `Screenshot ...`,
+    this text is not displayed under the picture. To display it, type `Ctrl+D` and edit it - make it more descriptive.
+- all the referenced images (many different formats are supported by the application) are put into the storage (also under 14-symbol base32 names) in the (re)compressed form. Most of the time they become `.jxl` (JpegXL) files, but sometimes `.jpeg's` and `.webp's` are preserved if they cannot be recompressed into JpegXL accurately enough and/or with substantial savings in occupied space. Big images are downscaled with high-quality algorithm. There is user parameter `maxImportedImageSize` (see 'Settings' below) that controls the downscaling. Note that JpegXL files can:
+  - store up to 16 bits-per-channel images
+  - support various color spaces (including sRGB, Display P3, AdobeRGB),
+  - they preserve transparency information
+  - they can even store lossless-transcoded jpeg images, so if you want to put a small jpeg into the note, don't worry, there will be no extra lossy recompression step.
+
+The markdown notes are also transformed to a canonical form each time they are read from disk and each time they are written to disk. That is, the two variants are preserved and verified by the multiple tests:
 
 ```
-3rdparty/          everything third-party: md4c, blake3, zstd, dtl, zlib, libtiff, highway,
+// x ~ .md file
+serialize(parse(x)) == x   // byte-for-byte, for x in the
+                           // canonical form in the storage
+parse(serialize(parse(x))) == parse(x)  // for arbitrary x
+```
+
+Everything the program does not support (yet) — HTML, footnotes, quotes more complex than a paragraph — is preserved verbatim. Losing bytes is impossible.
+
+## Preserving history
+
+Note for mac users: read `Cmd` when you see `Ctrl`.
+- Each note comes with its editing 'journal'. The latest changes, as you type, become a part of in-memory undo/redo stack (`Ctrl+Z/Ctrl+Shift+Z`). The size of this undo/redo stack is only limited by memory. You can edit several notes at once, undo/redo stack for each of the notes is preserved within one editing session (i.e. until you quit the program)
+- No need to press `Ctrl+S`, all notes are automatically saved.
+- All your modified notes are periodically auto-saved to disk, to `history/note_id.log`, where `note_id` is the same as the respective note `id`. They are well-compressed, see [storage description](docs/zametti-storage.md) for details, so don't worry about the space.
+- You can navigate through the note history by pressing `Note history` button on the toolbar or if you press `Ctrl+Z` when you reached the bottom of undo/redo stack. From the history you can choose whatever snapshot you like and restore it (think of it as of a super-simple alternative to git) or you can grab a piece of text from it and place into the current note.
+- If some process changes your note on disk (or if you edit your note in the external editor yourself), the program detects it and replaces the current note with the fresh content from disk, but this replacement becomes yet another operation, which you can undo.
+- If you setup a cloud storage synchronization (webdav is supported, S3 will likely be supported in the future), your notes (the journals, actually) will be encrypted and stored there, so you can access them from another computer or restore them if your local copies are erased or damanged.
+  - locally we always store all the content unencrypted for more convenience, safety and compatibility with external tools (vscode, grep, vim, ...).
+  - we always encrypt all the notes and all the images when we store them in cloud.
+
+## Settings
+
+There are several types of user settings, stored in different places:
+- `~/.config/zametti/config.json` - this is the file where you can configure how zametti looks and partially how it works. For the program it's a read-only file, only you edit it. To edit it, press `Settings` button on the toolbar or edit that file directly. It's not convenient to start with an empty file, so you can run `zametti --dump-config` to get the initial fully-commented-off config, in which you can then uncomment and edit the sections and items that you want to alter.
+- `~/.config/zametti/state.json` - this is the inter-session state that you want to preserve:
+  - windows geometry. Some window managers don't let us to store the absolute position, they prefer to place windows as they wish. But the size is stored and then restored.
+  - zoom factor: press `Ctrl+=`, `Ctrl+-` to increase/decrease scale of the edited note view.
+  - name of the recently viewed notes and cursor positions there.
+  - etc.
+
+## Running
+
+```bash
+zametti                # open what you were reading or editing last time
+zametti --help         # help: switches, keys, file paths
+zametti --dump-config  # get the initial .json, which can be put to
+                       # ~/.config/zametti/config.json and edited to taste
+zametti --root <storage_dir>  # switch to another storage,
+                       # you can have as many storages as you want
+```
+
+## Using
+
+The program uses a popular 3-panel interface:
+- the left panel displays a tree of folders, initially it's just the root, more folders can be added by pressing `New folder` button.
+- the middle panel displays all notes that belong to the selected folder and its subfolders.
+  - the notes can be sorted in alphabetic order, by modification time or by creation time, press the corresponding button to change the order. The program remembers sorting order of the selected folder (it's highlighted with magenta color). You can reset the sorting order to the default order (sorting order of root folder, which is normally 'most recently edited first' and is highlighted with a blue color).
+- the right panel usually displays the viewed/edited note, however it can also display the currently observed snapshot when navigating through the note history, or the program config when you edit it (`Settings` button)
+
+The left and middle panel and be hidden and then shown again by pressing `Hide side panels/Show side panels` button.
+
+You can also press `F11` (or `Ctrl+Cmd+F` on macOS) to hide most of the content and concentrate on the note.
+
+A new empty note can be created with `New note` button (or `Ctrl+N`) or imported from a markdown file from disk.
+
+Editing a note is mostly intuitive, you can do it in the default WYSIWYG mode or raw 'markdown mode', press `[M]` (`edit source`) button on the toolbar.
+
+For your convenience, there are some auto-replacements and actions in WYSIWYG mode:
+- `#SPACE`, `##SPACE` etc. start the new header (where `SPACE` means one press of the SPACE key)
+- `*SPACE`, `-SPACE` start a new unordered list
+- `1.SPACE` starts an ordered list
+- `-[SPACE` starts a new task list
+- `ENTER` on a list item adds a new item of the same kind below
+- `ENTER` or double-click on selected formula or table enters raw-editing mode just for this object, `ESC` exists this raw-editing mode.
+- `ENTER` on the selected picture enters image description editing mode, `ESC` exists it.
+- `TAB`, `shift-TAB` increases/decreases indentation level of the current list item or selection
+
+Here is the list of keyboard shortcuts that are supported (mac users: read `Cmd+` when you see `Ctrl+`, except for the fullscreen shortcut):
+
+| Key | Action |
+|:---:|--------|
+| Ctrl+Z | undo the last editing operation; enter the note history if no more available undo ops |
+| Ctrl+Shift+Z | redo the last editing operation |
+| F11/Ctrl+Cmd+F | enter/quit fullscreen |
+| Ctrl+= | increase zoom of the view |
+| Ctrl+- | decrease zoom of the view |
+| Ctrl+0 | reset zoom of the view to 1x |
+| Ctrl+F | start search in the current note |
+| Ctrl+H | replace one text with another in the current note |
+| Ctrl+Shift+F | start search over all notes |
+| F3/Ctrl+G | find next |
+| F4 | find the next difference in the history diff view |
+| Ctrl+A | select all |
+| Ctrl+C | copy |
+| Ctrl+X | cut |
+| Ctrl+V | paste |
+| Ctrl+B | make the selected text bold or not |
+| Ctrl+I | make the selected text italic or not |
+| Ctrl+/ | make the selected text strikethrough or not |
+| Ctrl+E | convert the selected text to inline code or backwards |
+| Alt+'-' | Enter long dash |
+| Ctrl+ENTER | start a new paragraph after the current object (picture, formula, table, code block) |
+| Shift+ENTER | continue the current list item after the current object (picture etc.) |
+| Ctrl+D | toggle task(s) (done/undone) or edit picture description |
+| Ctrl+Up | move the current list element up |
+| Ctrl+Down | move the current list element down |
+| Ctrl+7 | Convert the current list to ordered |
+| Ctrl+8 | Convert the current list to unordered |
+| Ctrl+9 | Convert the current list to task list |
+| Ctrl+Shift+E | Convert the selected text block to code block |
+| Ctrl+Shift+0 | Convert the selected text to normal text |
+
+
+## Project structure
+
+```
+3rdparty/          everything third-party:
+                   md4c, blake3, zstd, dtl, zlib, libtiff, highway,
                    libjxl, jpegli, libwebp, microtex, googletest
 zametti-core/      the core as one target:
                      format/  markdown parsing and writing, hashes, ids
@@ -25,230 +167,32 @@ packaging/         .desktop for the menu and the dock
 docs/              stage briefs, reports and decision notes
 ```
 
-The core does `markdown → IR → markdown`. Its main property is idempotence:
+## How to build and install
+
+The application supports and was tested on Linux (Ubuntu), Windows and macos. Support for Android is planned.
+
+You need to have development environment with Qt6 and a few other libraries. Many of the dependencies the application brings with itself (see 3rdparty), but not everything.
+
+- On Debian/Ubuntu use something like:
+
+  ```bash
+  sudo apt update
+  sudo apt install build-essential git cmake qt6-base-dev \
+       qt6-base-dev-tools qt6-svg-dev libheif-dev libsodium-dev
+  ```
+
+- On macos you will need Xcode and brew,
+  install necessary packages (Qt6 etc.) using brew.
+
+- On windows: TBD
+
+After everything is installed, use
 
 ```
-serialize(parse(x)) == x                byte-for-byte, for x in canonical form
-parse(serialize(parse(x))) == parse(x)  for arbitrary x
-```
-
-Everything the model cannot express — tables, HTML, footnotes, quotes more
-complex than a paragraph — is preserved verbatim. Losing bytes is impossible.
-
-## Build
-
-```
-cmake -S . -B build
-cmake --build build -j
+cmake -DWITH_HEIF=ON -S . -B build
+cmake --build build -j16
 cd build && ctest
 ```
-
-The core needs `qt6-base-dev` (that is where `QTextDocument` lives), the
-viewer also `qt6-svg-dev`. Everything third-party except Qt is linked into the
-program — including the image readers: none of our formats depends on Qt
-plugins.
-
-Everything third-party except Qt is linked into the program. Two switches:
-
-```
--DWITH_HEIF=ON        read avif and heic (needs the system libheif)
--DWITH_STATIC_QT=ON   refuse to build if the Qt found is dynamic
-```
-
-`WITH_HEIF` is off by default: libheif drags video codecs along, and we need
-avif/heic only on input. `WITH_STATIC_QT` switches nothing on — Qt becomes
-static not because of flags but because it was built that way; the switch
-merely refuses to silently produce an ordinary build where a self-contained
-one was asked for.
-
-## Run
-
-```
-zametti note.md               window: tree on the left, document on the right
-zametti                       open what you were reading last time
-zametti --noconfig note.md    the same, but on defaults
-zametti --check note.md       diff against the canonical form, no display
-zametti --dump-config         the full list of appearance parameters
-zametti --help                help: switches, keys, file paths
-```
-
-`F11` (on macOS `Ctrl+Cmd+F`, `editor.fullscreenKey`) gives the text the whole
-screen: the toolbar, the side panels and the window frame go away — with them
-the system menu bar and the dock — and what stays is the note and the status
-bar. The same key, or `Esc`, brings the window back with the panels as they
-were.
-
-With the caret on a photo, the same key opens **that photo full screen**
-instead: arrows (or clicks on the left and right half) walk the photos of this
-note, the caption and the counter sit at the bottom, `Esc` returns. The
-background, the caption and how far a small picture may be enlarged are the
-`imageViewer` section — by default a near-black backdrop and three times at
-most, because a stretched thumbnail is mush, not a photo. The same is in the
-context menu of a photo, "View full screen".
-
-`Ctrl+=` / `Ctrl+-` / `Ctrl+0` change the zoom, `Ctrl+S` saves,
-`Ctrl+Z` / `Ctrl+Shift+Z` undo and redo. Clicking a folder in the tree
-expands it, clicking a note opens it.
-
-`Enter` in ordinary text breaks the line **inside the paragraph** instead of
-starting a new one — that is how notes are written, not the word-processor
-way. A new paragraph comes from a second `Enter` in a row, i.e. a blank line,
-just as in the file itself. `Shift+Enter` does the opposite.
-
-That is how poems, lists of lines and character diagrams are written. Indents
-at the start of lines are preserved: markdown eats an ordinary leading space,
-so on write the indent becomes a non-breaking space. Trailing spaces, on the
-contrary, are dropped — they are insignificant.
-
-Blank lines are preserved too: they set chunks of text apart. The only things
-not preserved are the tail of blank lines at the very end of a note and empty
-items inside a list.
-
-The indent preserved is the one typed here. From an already existing file it
-cannot be recovered: parsing eats it there, and it has nowhere to come from.
-
-A code block is started with three backticks (or tildes) and `Enter`; the
-language goes right after them, on the same line. To leave the block — a
-fence on the last line. A blank line does not leave the block: in long code
-blank lines separate logical parts. Inside the block, spaces are ordinary,
-with no tricks whatsoever: code gets copied from a note and pasted into a
-terminal.
-
-`Enter` at the start of an item creates an empty item above the current one,
-and the cursor stays in it: that is how an item is inserted between two.
-Press `Enter` there twice — and the item leaves the list, becoming a
-paragraph: that is how two stuck-together lists are pulled apart. A blank
-line will not do here — inside a list it separates nothing.
-
-In lists: `Enter` starts a new item, and on an empty item leaves the list;
-`Backspace` at the start of an item turns it into a paragraph; `Tab` and
-`Shift+Tab` move **only this item** (or the selected ones) across levels —
-nested items keep their levels and become its siblings, and on outdent they
-are pulled in by one level so there is no jump across a level; `Ctrl+Up` and
-`Ctrl+Down` move an item among its same-level neighbors together with its
-nested items; `Ctrl+D` toggles a task — done or not, again only this one (or
-the selected ones). All three shortcuts are configurable:
-`editor.toggleTaskKey`, `editor.moveUpKey`, `editor.moveDownKey`.
-
-The kind of blocks is changed by the context-menu commands — "Make bulleted
-list" and the rest. A mixed selection is converted to one kind as a whole,
-not toggled. The shortcuts follow the symbol on the key: `Ctrl+8` or
-`Ctrl+Shift+8` — bulleted list, `Ctrl+7` — numbered, `Ctrl+9` — tasks,
-`Ctrl+Shift+0` — plain text.
-
-Heading levels have no shortcuts: a heading is typed by autoreplace — `# `,
-hashes and a space. The levels remain in the context menu.
-
-All shortcuts are configurable (`editor.makeBulletKey` and so on); several
-can be listed separated by semicolons, and an empty string removes the
-shortcut entirely — the command still stays in the menu.
-
-Text styles: `Ctrl+B` — bold, `Ctrl+I` — italic, `Ctrl+/` — strikethrough,
-`Ctrl+E` — inline code. On a selection they change it; with no selection they
-set the style for the next letter.
-
-Inline code can also just be typed: backtick, text, backtick — the backticks
-go away, the text becomes code. `Ctrl+Shift+E` turns the selection into a
-code block, and a code block back into plain text.
-
-Clicking the caption under a photo opens it for editing right there — you were
-aiming at the text anyway. Clicking the photo itself selects the photo, as
-before. The caret in that field is the same one as in the note: the colour and
-width from the settings.
-
-The easiest way to mark a task is the mouse: clicking the box toggles it, and
-that is an ordinary edit — undone like any other.
-
-The bullet changes its shape with nesting depth: a solid circle, a hollow
-one, then a square. Configured by the `list.bulletShapes` list.
-
-A code block sits on a plate with a strip along its bottom edge: the language
-name and the copy button live in the strip's right corner. One knob sets its
-size — `layout.codeLangPointSize`, the point size of that caption: the strip
-height (`layout.codeStripHeight`, in caption line heights) and the copy icon
-(`layout.codeCopyIconScale`) follow it, and so does the width of the inline
-field that edits the language. The caption typeface is `font.codeLangFamily`.
-
-Autoreplace works when typing at the start of a block: `- `, `* ` and `+ `
-give a bullet, `1. ` and `1) ` — a numbered item, `# `…`###### ` — a heading.
-
-A task list is started in two ways. The short way — flush with the marker:
-`-[`, `-[]`, `-[x]` and a space; the closing bracket need not be typed. The
-long way — as in the file: `- `, then `[ ] ` or `[x] `. The first `Ctrl+Z`
-after an autoreplace brings back the typed characters rather than undoing the
-previous edit.
-
-## Editing the source
-
-The `[M]` button in the button strip shows the note as **raw markdown** — the
-way it lies in the file, with syntax highlighting (headings `#` and `##`
-larger, `###` and deeper — at text size, in bold italic;
-`markdownHighlighting.largeHeadingLevels`). There it is edited as plain
-text, but lists are understood: `Enter` on an item line (`- `, `* `, `1. `,
-`- [ ] `) starts the next item — with the same indent, the next number, an
-unchecked task — and on an empty item leaves the list; on other lines `Enter`
-keeps the indent of the previous one (handy both in code and in multi-line
-items); `Shift+Enter` continues the item with a content line — the caret
-lands under the first character after the marker. `Tab` on an item line
-moves the item under its previous sibling (the first item does not move),
-`Shift+Tab` — to the parent's indent; outside lists `Tab` inserts spaces up
-to the nearest tab stop, `Shift+Tab` removes them; a multi-line selection
-moves as a whole. `Ctrl+D` (`editor.toggleTaskKey`) toggles the task of the
-line or the tasks of the selection. Markers are typed literally — there are
-no autoreplaces in the source, they get highlighted as they are.
-`Ctrl+C`/`Ctrl+V`/`Ctrl+X`/`Ctrl+A` and search with replace (`Ctrl+F`,
-`Ctrl+H`, `F3`) — as everywhere. The mode has **its own undo stack**:
-`Ctrl+Z` undoes text edits step by step, each of the keystrokes listed above
-being one step; at the bottom of the mode's stack `Ctrl+Z` closes the mode
-(there is nothing left to apply) and hands undo over to the note — its
-stack, and the history after it, as in the normal view. The caret has the
-same color and thickness as in the normal view. Lines wrapped to the window
-width carry a dot in the left margin — so it is visible where a source line
-continues and where a new one begins.
-
-Leading spaces of paragraph lines **are preserved** — a poem with indents or
-text drawn in ASCII art will not fall apart: markdown would eat them, so on
-parsing they become non-breaking spaces (U+00A0) and are stored in the file
-the same way. Structural indent (item nesting, the content column) does not
-count. Trailing spaces are cleaned as before. One rule for everything:
-opening a file, returning from the source and editing the note in an external
-editor all take the same path.
-
-`[M]` again returns the normal view — `Esc` deliberately does not: leaving the
-mode applies everything typed here to the note, and that is not something a key
-under your fingers should do by accident. The mode has no default
-shortcut — `Ctrl+M` on a Mac is `Cmd+M`, "minimize window"; whoever needs a
-key writes it into `editor.markdownModeKey`. The edited text is brought to
-the canonical form and applied to the note **only in the touched pieces** —
-in the note's undo stack it is one step, and `Ctrl+Z` brings everything back
-at once. The caret stays on the same line in both directions.
-
-The mode belongs to the **application**, not to the note: you can walk across
-notes without leaving it — the button stays pressed, and every next note
-opens as source. This state survives a restart.
-
-The zoom of the plain-text views is **their own, and it is one**: `Ctrl+=` /
-`Ctrl+-` / `Ctrl+0` in the source do not touch the zoom of the normal view and
-vice versa, while the source and the settings editor always share the same
-size — they are the same text in the same font, and opening one of them
-smaller than the other would make no sense. The source is shown in the code
-font (`font.codeFamily` at `font.pointSize` — no separate setting of its own),
-the column is limited to the same width as in the normal view
-(`style.maxContentWidth`), code blocks go on a light gray backing — like
-inline code.
-
-The `<!-- zametti … -->` header is not shown by the source view — the
-application itself owns it; typed in by hand, it is rejected together with
-the whole edit, which the status bar reports.
-
-Undo works on content, not on appearance: zoom, font and colors do not enter
-the edit history. Type some text, enlarge the font, press `Ctrl+Z` — the
-previous text comes back, the font stays enlarged.
-
-Only a changed note is saved: simply opening a file and looking at it is
-safe, on disk it does not change. Before the file is replaced, the written
-text is parsed back and checked against the document; if it does not match —
-the file stays untouched, and the buffer goes to `name.md.rescue-<timestamp>`.
 
 To make the application appear in the menu and with an icon in the dock:
 
@@ -256,80 +200,15 @@ To make the application appear in the menu and with an icon in the dock:
 cmake --install build --prefix ~/.local
 ```
 
-The shell takes the icon not from the window but from the `.desktop` file, so
-without installing, the dock shows a placeholder. If you edit the code and
-want the edits to take effect at once, replace the installed copy with a
-symlink to the build — otherwise `cmake --install` has to be repeated after
-every rebuild:
+The shell takes the icon not from the window but from the `.desktop` file, so without installing, the dock shows a placeholder. If you edit the code and want the edits to take effect at once, replace the installed copy with a symlink to the build — otherwise `cmake --install` has to be repeated after every rebuild:
 
 ```
 ln -sf "$PWD/build/app/zametti" ~/.local/bin/zametti
 ```
 
-## Settings
-
-Appearance is read from `~/.config/zametti/config.json`. The file is yours,
-formatting and key order included; it may not exist at all, then the defaults
-apply. The config is a list of **deviations** from the defaults, not a copy of
-them: remove a key and the default comes back.
-
-The gear button in the toolbar opens that file **inside the application**, on
-the place of the editor, with JSON highlighting — the same page mechanics as
-the source mode: press the button again or `Esc` to leave (unlike the source
-mode, `Esc` does work here — leaving only writes the file), `Ctrl+S` to write,
-`Ctrl+F` and `F3` to search. `Tab` inserts spaces up to the next stop
-(`jsonEditing.tabIndent`, four by default), `Enter` keeps the indent of the
-previous line, `Ctrl+/` (`jsonEditing.commentKey`) comments and uncomments the
-line or the selected lines. Undo and redo are the ordinary ones and live for
-as long as the editing session. The caret is the same one as in a note — its
-color and width come from the same settings.
-
-Opening a note leaves the mode: clicking a note in the tree asks for the note,
-not for the config, and the edit is not lost — leaving writes the file.
-
-The file is written on `Ctrl+S`, on leaving the mode and on exit — there are
-no confirmation dialogs anywhere in this program. Text that does not parse is
-still written (it is your file) but is not applied: the status bar says what
-is wrong, and the previous values keep working. Colors of the highlighting are
-the `jsonEditing` section.
-
-Editing the file with an external editor works exactly as before: the
-application watches it and reloads the appearance on the fly.
-
-Selection colours are one pair for the whole program: `colors.selectionBackground`
-and `colors.selectionForeground`. They apply to the note, both side columns, the
-search results, the history snapshot, the source and config views — and to the
-context menus, the tooltips and everything else Qt paints from the application
-palette. The foreground is transparent by default, and that means "work it out
-yourself" — the ordinary text colour, which is what a light selection needs;
-set it and the selected text takes it everywhere at once.
-
-Word and line counts catch up a few seconds after you stop typing
-(`editor.statsDelayMs`, three seconds by default) — not on the next autosave.
-While you type they are honestly shown as unknown: a full recount costs a few
-milliseconds on a large note, and doing it per keystroke would be felt.
-
-The full list of parameters with their default values is printed by
-`--dump-config` — that is where to copy them from. Configurable are the
-typeface and size (separately for text and for code), line spacing, block
-spacing, margins and the maximum column width, all colors, list markers and
-checkboxes, the note tree, the zoom limits. Spacings and margins are given in
-font units — vertically in line heights, horizontally in widths of the
-letter `A` — so they survive a change of typeface and size.
-
-If a note was changed from outside while there are unsaved edits here, the
-application asks whose version to take and touches nothing until answered.
-Without unsaved edits the external content is applied by itself — and is
-undone with `Ctrl+Z`, like an ordinary edit.
-
-`~/.config/zametti/state.json` the application writes itself on exit: the
-last note, scroll position, zoom, window geometry, expanded tree branches.
-
 ## Tests
 
-All suites live in ONE executable and run as one process. This is not for
-convenience: a suite that corrupts memory or the current directory will now
-affect the next one — a reason to investigate, not to shrug.
+All suites live in ONE executable and run as one process. This is not for convenience: a suite that corrupts memory or the current directory will now affect the next one — a reason to investigate, not to shrug.
 
 ```
 ctest                                       everything at once
@@ -338,8 +217,7 @@ build/tests/zametti-tests --gtest_filter='Journal.*'   one suite
 build/tests/zametti-tests --gtest_list_tests           what exists at all
 ```
 
-Corpora are not checked into the repository: they are taken from `.testdata/`
-next to the sources or from the directory named in `ZAMETTI_TESTDATA`. No
+Corpora are not checked into the repository: they are taken from `.testdata/` next to the sources or from the directory named in `ZAMETTI_TESTDATA`. No
 corpus — the suite loudly reports the skip and passes empty.
 
 Benches and probes are a separate program: they measure, they do not verify.
@@ -349,17 +227,4 @@ build/tests/zametti-bench                   the list of benches
 build/tests/zametti-bench zoom              what Ctrl+= does to a document
 ```
 
-Examples from the CommonMark and GFM specifications are parsed by the script
-`tests/extract_spec.py`.
-
-- [docs/zametti-m1-report.md](docs/zametti-m1-report.md) — stage summary:
-  what was done, how it was verified, what broke along the way.
-- [docs/zametti-core-notes.md](docs/zametti-core-notes.md) — accepted
-  decisions, deviations from the brief, known limitations.
-- [docs/zametti-editor-notes.md](docs/zametti-editor-notes.md) — stage 2: the
-  document model, the way back into IR, layer separation.
-
-## License
-
-GPL-3.0, see [LICENSE](LICENSE). The vendored md4c is MIT, see
-[3rdparty/md4c/LICENSE.md](3rdparty/md4c/LICENSE.md).
+Enjoy the program! :)

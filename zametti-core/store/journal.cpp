@@ -715,7 +715,7 @@ QVector<int> ZJournal::indexesOf(const QVector<ZJournal::RecordRef>& refs) const
     QVector<int> out;
     for (int i = 0; i < entries_.size(); ++i)
         for (const ZJournal::RecordRef& ref : refs)
-            if (entries_[i].isAddressedBy(ref.time(), ref.digest())) {
+            if (entries_[i].isAddressedBy(ref)) {
                 out.append(i);
                 break;
             }
@@ -763,9 +763,10 @@ qint64 ZJournal::nextSeq() const {
 
 int ZJournal::indexOf(qint64 time, const Digest& digest) const {
     int nearest = -1;
+    RecordRef ref(time, digest);
     for (int i = 0; i < entries_.size(); ++i) {
         const ZJournal::Record& e = entries_[i];
-        if (e.isAddressedBy(time, digest)) return i;
+        if (e.isAddressedBy(ref)) return i;
         if (e.hasSnapshot() && e.time() <= time) nearest = i;
     }
     // Точной нет. Может, она просто переехала во времени — ищем по отпечатку.

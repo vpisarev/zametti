@@ -45,7 +45,7 @@ Markdown IR  ↔  QTextDocument
 ```text
                      md4c
                       ↓
-.md  ───────────► ZamettiDocument
+.md  ───────────► ZDocument
                       │
                       ├── metadata
                       ├── QTextDocument
@@ -55,7 +55,7 @@ Markdown IR  ↔  QTextDocument
                       ▼
                UI / CLI tools
 
-ZamettiDocument
+ZDocument
       │
       ▼
 canonical Markdown writer
@@ -142,14 +142,14 @@ canonicalize(canonicalize(x)) == canonicalize(x)
 
 ---
 
-# 3. `ZamettiDocument`: композиция вместо наследования
+# 3. `ZDocument`: композиция вместо наследования
 
 Предпочтительный дизайн — **не наследоваться от `QTextDocument`**, а владеть им.
 
 Например:
 
 ```cpp
-class ZamettiDocument
+class ZDocument
 {
 public:
     QTextDocument& textDocument() noexcept { return document_; }
@@ -179,7 +179,7 @@ private:
 QTextDocument& doc = note.textDocument();
 ```
 
-а `ZamettiDocument` отвечает за семантически значимые операции уровня приложения.
+а `ZDocument` отвечает за семантически значимые операции уровня приложения.
 
 Например:
 
@@ -193,7 +193,7 @@ applyExternalFileChange(...);
 
 ## Почему композиция лучше наследования
 
-`ZamettiDocument` содержит данные и службы, которые не являются частью rich-text документа:
+`ZDocument` содержит данные и службы, которые не являются частью rich-text документа:
 
 - metadata из HTML-шапки;
 - ID заметки;
@@ -1089,13 +1089,13 @@ Full replacement остаётся fallback для радикально изме�
 
 # 12. CLI utilities
 
-После отказа от собственного IR CLI работает с тем же `ZamettiDocument`.
+После отказа от собственного IR CLI работает с тем же `ZDocument`.
 
 ```text
 CLI
  │
  ├── md4c parser
- ├── ZamettiDocument
+ ├── ZDocument
  │      └── QTextDocument(layout OFF)
  │
  └── Markdown writer / transforms
@@ -1130,7 +1130,7 @@ QGuiApplication
 Архитектурно:
 
 ```text
-                    ZamettiDocument
+                    ZDocument
                           │
                     QTextDocument
                     /             \
@@ -1171,7 +1171,7 @@ QFont
 Не всё состояние Zametti следует помещать внутрь документа.
 
 ```text
-ZamettiDocument
+ZDocument
 │
 ├── NoteMetadata
 │     id
@@ -1279,7 +1279,7 @@ QTextBlock/QTextCharFormat/QTextTable/custom object
 
 ### Этап 3
 
-Перенести command-line transforms с IR на `ZamettiDocument`.
+Перенести command-line transforms с IR на `ZDocument`.
 
 ### Этап 4
 
@@ -1320,7 +1320,7 @@ compare semantics
         │ md4c                              │
         ▼                                   │
 ┌──────────────────────────────────────────────┐
-│               ZamettiDocument                │
+│               ZDocument                │
 │                                              │
 │  NoteMetadata                                │
 │                                              │
@@ -1401,4 +1401,3 @@ QGuiApplication
 - `QTextTable`: https://doc.qt.io/qt-6/qtexttable.html
 - `QFont`: https://doc.qt.io/qt-6/qfont.html
 - `QGuiApplication`: https://doc.qt.io/qt-6/qguiapplication.html
-

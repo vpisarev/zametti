@@ -405,7 +405,7 @@ public:
         const QVector<RecordRef>& voids() const { return voids_; }
         bool voidsRecord(const Record& other) const {
             for (const RecordRef& ref : voids_)
-                if (other.isAddressedBy(ref.time(), ref.digest())) return true;
+                if (other.isAddressedBy(ref)) return true;
             return false;
         }
         // Начало поколения: слепок читается сам по себе, без предшественников.
@@ -445,8 +445,8 @@ public:
         // Ключ идентичности, которым запись адресуют снаружи и по которому её
         // узнают при слиянии: время плюс отпечаток. Номер в файле для этого не
         // годится — он меняется от чистки и от прихода чужих записей.
-        bool isAddressedBy(qint64 time, const Digest& digest) const {
-            return time_ == time && digest_ == digest;
+        bool isAddressedBy(const RecordRef& ref) const {
+            return time_ == ref.time() && digest_ == ref.digest();
         }
 
         // Укладка на диске. Зовёт только журнал: «полным слепком или звеном

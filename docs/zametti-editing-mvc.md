@@ -6,7 +6,7 @@
 
 ## Ответ
 
-Да. Я бы здесь сделал именно **controller/editor-command слой между `QTextEdit` и `ZamettiDocument`**. Причём довольно тонкий: не надо строить вокруг Qt академический MVC.
+Да. Я бы здесь сделал именно **controller/editor-command слой между `QTextEdit` и `ZDocument`**. Причём довольно тонкий: не надо строить вокруг Qt академический MVC.
 
 Схема примерно такая:
 
@@ -14,7 +14,7 @@
               raw user input
                    │
                    ▼
-          ZamettiTextEdit
+          QTextEdit
           keyPressEvent()
           inputMethodEvent()
                    │
@@ -28,7 +28,7 @@
    обычный ввод       semantic command
           │                 │
           ▼                 ▼
- QTextEdit default    ZamettiDocument
+ QTextEdit default    ZDocument
  behaviour            edit operations
                             │
                             ▼
@@ -37,7 +37,7 @@
 
 ### Что относится к какому слою
 
-`ZamettiDocument` должен знать:
+`ZDocument` должен знать:
 
 ```cpp
 bool isListItem(const QTextBlock&) const;
@@ -85,7 +85,7 @@ QTextEdit::keyPressEvent()
 Вот здесь controller смотрит на состояние **до вставки пробела**:
 
 ```cpp
-void ZamettiTextEdit::keyPressEvent(QKeyEvent *e)
+void QTextEdit::keyPressEvent(QKeyEvent *e)
 {
     if (controller_.handleKeyPress(e))
         return;
@@ -210,7 +210,7 @@ document_->splitListItem(cursor);
 • |
 ```
 
-Причём именно `ZamettiDocument::splitListItem()` должен знать детали твоего внутреннего представления:
+Причём именно `ZDocument::splitListItem()` должен знать детали твоего внутреннего представления:
 
 ```text
 ListId
@@ -295,7 +295,7 @@ if (document_->needsCustomParagraphBreak(c)) {
 }
 ```
 
-Но я бы не делал `ZamettiDocument::handleEnter()` — это уже имя, привязанное к UI. `insertParagraphBreak()` остаётся нормальной document-edit operation.
+Но я бы не делал `ZDocument::handleEnter()` — это уже имя, привязанное к UI. `insertParagraphBreak()` остаётся нормальной document-edit operation.
 
 ---
 
@@ -304,7 +304,7 @@ if (document_->needsCustomParagraphBreak(c)) {
 Не обязательно классическую Command hierarchy. Просто методы:
 
 ```cpp
-class ZamettiDocument {
+class ZDocument {
 public:
     // queries
     BlockKind blockKind(const QTextBlock&) const;
@@ -570,14 +570,14 @@ public:
 
 private:
     ZamettiEditor *view_;
-    ZamettiDocument *document_;
+    ZDocument *document_;
 };
 ```
 
 и:
 
 ```cpp
-class ZamettiDocument
+class ZDocument
 {
 public:
     QTextDocument &textDocument();
@@ -595,10 +595,10 @@ public:
 };
 ```
 
-При этом `ZamettiDocument` остаётся полностью **headless**: никакого `QTextEdit`, `QKeyEvent`, QWidget или desktop-specific кода. И те же document operations можно будет использовать из QML/Android frontend.
+При этом `ZDocument` остаётся полностью **headless**: никакого `QTextEdit`, `QKeyEvent`, QWidget или desktop-specific кода. И те же document operations можно будет использовать из QML/Android frontend.
 
 Самое главное правило я бы сформулировал так:
 
-> **View сообщает о пользовательском вводе; controller распознаёт editing intent; `ZamettiDocument` выполняет структурное изменение через `QTextCursor`.**
+> **View сообщает о пользовательском вводе; controller распознаёт editing intent; `ZDocument` выполняет структурное изменение через `QTextCursor`.**
 
 Для нашей нынешней архитектуры это, по-моему, очень естественная граница.
