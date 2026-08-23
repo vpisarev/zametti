@@ -8,6 +8,7 @@
 #include "pieces.h"
 #include "journal.h"
 #include "store.h"
+#include "store_identity.h"
 
 #include "test_util.h"
 
@@ -557,8 +558,13 @@ static int ztRunSuite(int argc, char** argv) {
     // Вложение одно на двоих (дедупликация), лежит плоско под своим id и —
     // раз кодек стоит — пережато в webp без потерь.
     QStringList files;
-    for (const QFileInfo& info : QDir(options.root).entryInfoList(QDir::Files))
-        if (!info.fileName().endsWith(QStringLiteral(".md"))) files.append(info.fileName());
+    for (const QFileInfo& info : QDir(options.root).entryInfoList(QDir::Files)) {
+        const QString name = info.fileName();
+        // zametti.json — идентичность хранилища, а не вложение: она появляется
+        // при заведении хранилища и к ввозу отношения не имеет.
+        if (name == QLatin1String(zametti::store::kIdentityFile)) continue;
+        if (!name.endsWith(QStringLiteral(".md"))) files.append(name);
+    }
     ZT_TRUE("вложение ровно одно и плоско", files.size() == 1);
     if (files.size() == 1) {
         const std::string name = files.first().toStdString();
