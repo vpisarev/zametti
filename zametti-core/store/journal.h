@@ -57,7 +57,6 @@
 #ifndef ZAMETTI_JOURNAL_H
 #define ZAMETTI_JOURNAL_H
 
-#include "device_clock.h"
 #include "hash.h"
 
 #include <QByteArray>

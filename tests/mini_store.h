@@ -12,8 +12,8 @@
 #ifndef ZAMETTI_TESTS_MINI_STORE_H
 #define ZAMETTI_TESTS_MINI_STORE_H
 
-#include "device_clock.h"
 #include "journal.h"
+#include "zstorage.h"
 
 #include <QByteArray>
 #include <QCborStreamWriter>
@@ -44,10 +44,10 @@ public:
     // --- пол времени устройства --------------------------------------------
 
     void setDeviceClock(qint64 utcMs) const {
-        write(zametti::store::DeviceClock::pathFor(root()), QByteArray::number(utcMs) + "\n");
+        write(zametti::ZStorage(root()).deviceClockPath(), QByteArray::number(utcMs) + "\n");
     }
-    void dropDeviceClock() const { QFile::remove(zametti::store::DeviceClock::pathFor(root())); }
-    qint64 deviceClock() const { return zametti::store::DeviceClock(root()).floor(); }
+    void dropDeviceClock() const { QFile::remove(zametti::ZStorage(root()).deviceClockPath()); }
+    qint64 deviceClock() const { return zametti::ZStorage(root()).deviceClockFloor(); }
 
     // --- журналы -----------------------------------------------------------
 

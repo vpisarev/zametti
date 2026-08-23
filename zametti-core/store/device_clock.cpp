@@ -1,17 +1,20 @@
-#include "device_clock.h"
+// Пол времени записей устройства — `.zametti/last-written`. Что это и зачем —
+// в zstorage.h, у объявления deviceClockFloor.
+
+#include "zstorage.h"
 
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 
-namespace zametti::store {
+namespace zametti {
 
-QString DeviceClock::pathFor(const QString& root) {
-    return QDir(root).filePath(QStringLiteral(".zametti/last-written"));
+QString ZStorage::deviceClockPath() const {
+    return QDir(root_).filePath(QStringLiteral(".zametti/last-written"));
 }
 
-qint64 DeviceClock::floor() const {
-    QFile file(pathFor(root_));
+qint64 ZStorage::deviceClockFloor() const {
+    QFile file(deviceClockPath());
     if (!file.open(QIODevice::ReadOnly)) return 0;
     // Число десятичным текстом, а не восемью байтами: его видно глазом в
     // отладке, и оно не зависит от порядка байтов машины. Читаем с потолком,
@@ -23,9 +26,9 @@ qint64 DeviceClock::floor() const {
     return ok && value > 0 ? value : 0;
 }
 
-void DeviceClock::advanceTo(qint64 time) const {
-    if (time <= floor()) return;
-    const QString path = pathFor(root_);
+void ZStorage::advanceDeviceClock(qint64 time) const {
+    if (time <= deviceClockFloor()) return;
+    const QString path = deviceClockPath();
     QDir().mkpath(QFileInfo(path).absolutePath());
     // ОБЫЧНАЯ ЗАПИСЬ, БЕЗ FSYNC — и это замер, а не вкус. QSaveFile внутри
     // себя зовёт fdatasync, и на каждом автосохранении он стоил 5 мс из 13
@@ -44,4 +47,4 @@ void DeviceClock::advanceTo(qint64 time) const {
     file.close();
 }
 
-}  // namespace zametti::store
+}  // namespace zametti

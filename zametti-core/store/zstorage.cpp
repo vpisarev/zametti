@@ -694,7 +694,7 @@ bool ZStorage::appendJournalLocked(const QString& path, const ZJournal::NewRecor
     }
     QByteArray record;
     ZJournal::Record made;
-    if (!jrn.composeRecord(what, clock_.floor(), &made, &record, error)) return false;
+    if (!jrn.composeRecord(what, deviceClockFloor(), &made, &record, error)) return false;
     tail += record;
 
     QFile file(path);
@@ -714,7 +714,7 @@ bool ZStorage::appendJournalLocked(const QString& path, const ZJournal::NewRecor
     }
     // Пол устройства поднимаем ПОСЛЕ удачной записи: число обещает «столько уже
     // записано», и обещать это заранее нельзя.
-    clock_.advanceTo(made.time());
+    advanceDeviceClock(made.time());
     return true;
 }
 
