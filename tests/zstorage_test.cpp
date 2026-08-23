@@ -365,7 +365,7 @@ void checkSharedAttachmentSurvives() {
     const auto noteWithPicture = [&](const QString& title) {
         const QString id = storage.createNote(QString(), false, &error);
         QFile f(storage.pathOf(id));
-        f.open(QIODevice::Append);
+        ZT_TRUE("заметка открыта на дозапись", f.open(QIODevice::Append));
         f.write(("# " + title + "\n\n![вид](01jd7f0kq2m8xa.jxl)\n").toUtf8());
         f.close();
         storage.refreshNote(id);
