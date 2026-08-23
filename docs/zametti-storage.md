@@ -18,6 +18,7 @@ not in the file system.
 
 ```
 store/
+    zametti.json               the store identity: who this store is
     01n6cqevh7bbfr0a.md        a note
     01n6cqevsd7v5edf.md        a note
     01jd7f0kq2m8xab7.webp      an attachment
@@ -25,17 +26,66 @@ store/
         01n6cqevh7bbfr3v.log   edit history of this note
     .zametti/
         store.lock           the lock: one store — one program
+        last-written         the device time floor (journal stamps)
     .rescue/
         …                    buffers that failed the write self-check
 ```
 
-Three reserved names and their fate under synchronization:
+Reserved names and their fate under synchronization:
 
 | name | what it is | synchronized |
 |---|---|---|
+| `zametti.json` | the store identity | **yes**: in the cloud it is the manifest |
 | `history/` | edit history | **yes**: it is data, not a cache |
 | `.zametti/` | store state | no |
 | `.rescue/` | rescued buffers | no (dot-prefixed, local) |
+
+### `zametti.json` — the store identity
+
+```json
+{ "storeId": "01n6cqevh7bbfr", "formatVersion": 1,
+  "created": "2026-08-23T00:00:00+03:00", "rootNote": "01n6cqevsd7v5e" }
+```
+
+- `storeId` — minted **once**, when the store is created, and never changes.
+  Same alphabet as note ids: one look tells you it is ours;
+- `formatVersion` — the version of the DIRECTORY layout (not of a note and not
+  of a journal). A version newer than the program's own means: do not work,
+  rather than corrupt. A build that does not know half the keys would rewrite
+  the file without them and lose data silently. Unknown keys **within** a known
+  version, on the contrary, survive the rewrite;
+- `created` — when the store was created, ISO-8601 with an offset;
+- `rootNote` — id of the root note (see below). The only field that changes.
+
+It lives **next to the data**, not in the settings: a copy of the directory
+must know whose cloud it is, and in the cloud this same file serves as the
+manifest — "is this the same store" is answered BEFORE a password is entered
+and before a single blob is decrypted.
+
+The file may be missing: that is what a store created by an older build looks
+like. It is minted on the first run (`zametti-store root init` does it too),
+and `verify` says so out loud rather than treating it as trouble.
+
+### The root note
+
+The top row of the tree is a REAL NOTE with `role: root`, not a caption:
+
+- its heading is the **name of the store**, and renaming that row with F2 is
+  how the name changes;
+- its `sort` mark is the order of "all notes" — the order belongs to the store
+  and travels with it, rather than staying on one machine;
+- it is a folder (`isFolder()` is true for it), so the rule "a folder's body is
+  exactly one heading" and all the tree rules apply to it without exceptions;
+- `parent` of root-level notes stays EMPTY. They are not re-parented onto the
+  root note: rewriting 282 headers would mean 282 journal records and a first
+  sync at the price of the whole store — and the Lost & found rests exactly on
+  the difference between "empty parent" and "unresolvable parent";
+- it cannot be archived (its subtree is the whole store), deleted, moved or
+  stripped of its role. Renaming is allowed — that is the point of it.
+
+Its address is written in `zametti.json`, and its role is in its own header:
+two independent records of the same fact. When they disagree —
+`zametti-store root fix` names in the json whatever was found by role.
 
 Settings and window state live **not** in the store but in the application
 config (`config.json` and `state.json` in the user's settings directory): the
@@ -103,7 +153,7 @@ Known keys:
 | `parent` | id of the parent note; no key — the note is at the root |
 | `created` | when it was created, ISO-8601 with an offset |
 | `modified` | when the content was edited, ISO-8601 with an offset |
-| `role` | `folder` — a folder note, `lost` — the Lost & found |
+| `role` | `folder` — a folder note, `lost` — the Lost & found, `root` — the store's root note (exactly one per store) |
 | `archived` | `yes` — the note is put away into the Archive; no key — alive |
 | `lost-parent` | the find's previous parent; set by the Lost & found |
 | `sort` | sort order inside the folder; no key — inherited |
@@ -129,7 +179,9 @@ Rules for the header content:
 - **a note never becomes a folder, and vice versa** (owner's rule).
   `role: folder` is set at creation and does not change. A folder's body is
   exactly one heading and nothing else — `verify` watches over this;
-- `sort` is a label of the FOLDER: how its notes and subfolders are ordered.
+- `sort` on the ROOT note is the order of "all notes"; on any other folder it
+  is the order inside that folder. A label of the FOLDER: how its notes and
+  subfolders are ordered.
   The value is `<key>-<direction>`, where the key is `name`, `modified` or
   `created`, and the direction is `asc` or `desc`; the direction may be
   omitted (`sort: created`), then the key's default is taken — names A→Z,
@@ -624,7 +676,14 @@ zametti-store thin --root <dir> [--dry-run]       history thinning
 zametti-store history compress <id | path.md>    clean one journal (test hatch)
 zametti-store recompress --root <dir> --id <id|all>   re-encode attachments
 zametti-store resurrect --root <dir> --id <id>        bring a deleted note back
+zametti-store root show|init|fix --root <dir>         the identity and the root note
 ```
+
+`root show` prints the identity and both records of the root note's address —
+the one in `zametti.json` and the one found by role — and says `MISMATCH` when
+they disagree. `root init` and `root fix` are the same action from two sides:
+find the root note or create it, then name it in the json. Both go through one
+`ZStorage::ensureRootNote` — there is no parallel implementation.
 
 `verify` checks: the names of files and attachments, the headers, the
 absence of `serialize(parse(x))` drift, `parent` links and cycles, the
