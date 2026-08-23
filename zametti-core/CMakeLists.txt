@@ -11,7 +11,7 @@
 #
 #   format/  разбор и запись markdown, отпечатки, id, таблицы, математика.
 #            Единственная часть, которой Qt не нужен вовсе;
-#   store/   плоское хранилище, журнал правок, архив, бюро находок, времена;
+#   store/   плоское хранилище (ZStorage), журнал правок (ZJournal), времена;
 #   image/   чтение и запись картинок: jxl, jpeg, tiff, webp, heif, цвет,
 #            ресемплер, конвейер ввоза;
 #   doc/     живая модель документа: сборщик, читатель, сохранятель, операции
@@ -40,14 +40,19 @@ add_library(zametti-core STATIC
     format/hash.h               format/hash.cpp
 
     # --- хранилище ---
-    store/store.h               store/store.cpp
-    store/store_identity.cpp
-    store/journal.h             store/journal.cpp
-    store/device_clock.cpp
-    store/times.h               store/times.cpp
-    store/archive.h             store/archive.cpp
-    store/lost_found.h          store/lost_found.cpp
+    # ZStorage — один класс, реализация по файлам: заведение, ввоз, проверка,
+    # вложения, удаление (store.cpp); ввоз дерева (import_tree.cpp); архив и
+    # миграции (archive.cpp); бюро находок (lost_found.cpp); идентичность
+    # (store_identity.cpp); пол времени устройства (device_clock.cpp).
     store/zstorage.h            store/zstorage.cpp
+    store/store.cpp
+    store/import_tree.cpp
+    store/archive.cpp
+    store/lost_found.cpp
+    store/store_identity.cpp
+    store/device_clock.cpp
+    store/journal.h             store/journal.cpp
+    store/times.h               store/times.cpp
 
     # --- заметка: документ + журнал + всё, что переживает уход и возврат ---
     note/znote.h                note/znote.cpp

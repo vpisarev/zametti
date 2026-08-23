@@ -10,9 +10,6 @@
 #include "document.h"
 #include "note_id.h"
 #include "settings.h"
-#include "archive.h"
-#include "lost_found.h"
-#include "times.h"
 
 #include <QCollator>
 #include <QDateTime>

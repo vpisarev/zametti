@@ -2,16 +2,13 @@
 
 #include "note_id.h"
 #include "times.h"
-
-#include "archive.h"
 #include "journal.h"
+
 #include <cassert>
-#include <QMutexLocker>
-#include <QMutex>
-#include "lost_found.h"
-#include "store.h"
 
 #include <QDateTime>
+#include <QMutex>
+#include <QMutexLocker>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -284,7 +281,7 @@ QStringList ZStorage::migrate() {
     if (!store_) return notes;
     bool changed = false;
     QString why;
-    const int moved = store::migrateTrashToArchive(root_, &why);
+    const int moved = migrateTrashToArchive(&why);
     if (moved < 0) notes << QStringLiteral("old trash did not migrate to the archive: %1").arg(why);
     else if (moved > 0) {
         notes << QStringLiteral("old trash migrated to the archive: %1 notes").arg(moved);
@@ -295,7 +292,7 @@ QStringList ZStorage::migrate() {
     // чему уходить при удалении насовсем), ни текста для поиска.
     why.clear();
     QStringList leftAlone;
-    const int unfolded = store::unfoldArchivedStubs(root_, &leftAlone, &why);
+    const int unfolded = unfoldArchivedStubs(&leftAlone, &why);
     if (unfolded < 0) notes << QStringLiteral("archived stubs did not unfold: %1").arg(why);
     else if (unfolded > 0) {
         notes << QStringLiteral("archived stubs unfolded: %1 notes").arg(unfolded);
@@ -304,7 +301,7 @@ QStringList ZStorage::migrate() {
     notes << leftAlone;
 
     why.clear();
-    const int filed = store::fileOrphans(root_, &why);
+    const int filed = fileOrphans(&why);
     if (filed < 0) notes << QStringLiteral("lost & found not set up: %1").arg(why);
     else if (filed > 0) {
         notes << QStringLiteral("notes filed into lost & found: %1").arg(filed);
@@ -314,28 +311,20 @@ QStringList ZStorage::migrate() {
     return notes;
 }
 
-QString ZStorage::importNote(const QString& parentId, const QString& sourcePath, QString* error) {
-    if (!store_) {
-        if (error != nullptr) *error = QStringLiteral("not a store");
-        return {};
-    }
-    const QString made = store::importNote(root_, parentId, sourcePath, error);
-    if (made.isEmpty()) return {};
-    const QString id = idOfPath(made);
-    refreshNote(id);   // новая — структурная новость сама по себе
-    return id;
-}
-
 QString ZStorage::createNote(const QString& parentId, bool folder, QString* error) {
     if (!store_) {
         if (error != nullptr) *error = QStringLiteral("not a store");
         return {};
     }
+    // Родитель проверяется по каталогу — значит, каталог обязан быть прочитан,
+    // иначе всякий родитель выглядел бы отсутствующим и заметка молча ложилась
+    // бы в корень (см. rootId про ту же ловушку).
+    if (!loaded_) reload();
     // В архиве ничего не создаётся: Ctrl+N оттуда — на глобальный уровень
     // (правило владельца).
     QString parent = parentId;
     if (!parent.isEmpty() && (!has(parent) || inArchive(parent))) parent.clear();
-    const QString made = store::newNote(root_, parent, error);
+    const QString made = newNoteFile(parent, error);
     if (made.isEmpty()) return {};
     const QString id = idOfPath(made);
     const Batch batch(*this);   // папка — две записи, новость одна
@@ -375,7 +364,7 @@ bool ZStorage::archive(const QString& id, const ZJournal::Rules& rules, QStringL
             }
             continue;
         }
-        if (!store::archiveNote(root_, victim, rules, &why)) {
+        if (!archiveOne(victim, rules, &why)) {
             ok = false;
             if (failed != nullptr) *failed << QStringLiteral("%1: %2").arg(titleOf(victim), why);
         }
@@ -402,7 +391,7 @@ bool ZStorage::restore(const QString& id, QStringList* failed) {
             }
             continue;
         }
-        if (!store::restoreNote(root_, one, &why)) {
+        if (!restoreOne(one, &why)) {
             ok = false;
             if (failed != nullptr) *failed << QStringLiteral("%1: %2").arg(titleOf(one), why);
         }
@@ -434,7 +423,7 @@ bool ZStorage::remove(const QString& id, const ImportLimits& limits, QString* er
     // будет. Пакетом — потому что картинка, поделённая двумя удаляемыми
     // заметками, при поштучном счёте не ушла бы никогда: каждая «держалась» бы
     // другой.
-    const QStringList doomedFiles = store::attachmentsLeavingWith(root_, doomed);
+    const QStringList doomedFiles = attachmentsLeavingWith(doomed);
 
     // ПУТЬ УДАЛЕНИЯ ОДИН для архивных и живых: надгробие в журнал, файл в
     // мусорку ОС. Прежде у архивной журнал уносился вместе с ней — тело жило
@@ -446,7 +435,7 @@ bool ZStorage::remove(const QString& id, const ImportLimits& limits, QString* er
     QString why;
     for (const QString& victim : std::as_const(doomed)) {
         QString one;
-        if (!store::deleteNoteFile(root_, victim, &one)) {
+        if (!deleteNoteFile(victim, &one)) {
             ok = false;
             if (why.isEmpty()) why = one;
             continue;
@@ -464,7 +453,7 @@ bool ZStorage::remove(const QString& id, const ImportLimits& limits, QString* er
     // говорит.
     for (const QString& picture : doomedFiles) {
         QString pictureError;
-        if (!store::retireAttachmentFile(root_, picture, limits, &pictureError) ||
+        if (!retireAttachment(picture, limits, &pictureError) ||
             !pictureError.isEmpty())
             std::fprintf(stderr, "%s\n", pictureError.toUtf8().constData());
     }
@@ -568,11 +557,8 @@ QString describeKind(ZJournal::Kind kind) {
     return QStringLiteral("?");
 }
 
-}  // namespace
-
-
-// Тот самый единый замок (см. jrn.h). Один на все журналы и на все
-// экземпляры History: история у хранилища одна.
+// Тот самый единый замок (см. zstorage.h, «Единая точка синхронизации»). Один
+// на все журналы и на все экземпляры хранилища: история у хранилища одна.
 QMutex& gate() {
     static QMutex mutex;
     return mutex;
@@ -589,6 +575,8 @@ void assertLocked() {
     }
 #endif
 }
+
+}  // namespace
 
 
 QString ZStorage::journalPath(const QString& noteId) const {
@@ -716,6 +704,14 @@ bool ZStorage::appendJournalLocked(const QString& path, const ZJournal::NewRecor
     // записано», и обещать это заранее нельзя.
     advanceDeviceClock(made.time());
     return true;
+}
+
+bool ZStorage::removeJournalLocked(const QString& path, QString* error) {
+    assertLocked();
+    if (!QFile::exists(path)) return true;
+    if (QFile::moveToTrash(path) || QFile::remove(path)) return true;
+    if (error) *error = QStringLiteral("cannot delete journal %1").arg(path);
+    return false;
 }
 
 bool ZStorage::readJournalLocked(const QString& path, ZJournal* out, QString* error) const {
@@ -951,6 +947,11 @@ bool ZStorage::trimJournalTail(const QString& noteId, QString* error) {
     return trimJournalTailLocked(journalPath(noteId), error);
 }
 
+bool ZStorage::removeJournal(const QString& noteId, QString* error) {
+    const QMutexLocker locked(&gate());
+    return removeJournalLocked(journalPath(noteId), error);
+}
+
 bool ZStorage::thinJournal(const QString& noteId, qint64 now, QString* error) {
     const QMutexLocker locked(&gate());
     return thinJournalLocked(journalPath(noteId), now, error);
@@ -1130,7 +1131,7 @@ QString ZStorage::ensureRootNote(QString* error) {
     // РОЖДЕНИЕ КОРНЯ. Имя хранилища по умолчанию — имя каталога: человек
     // узнаёт своё хранилище с первого взгляда, а переименовать сможет по F2.
     const Batch batch(*this);
-    const QString id = idOfPath(store::newNote(root_, QString(), error));
+    const QString id = idOfPath(newNoteFile(QString(), error));
     if (id.isEmpty()) return {};
     const QString name = QDir(root_).dirName();
     QString why;

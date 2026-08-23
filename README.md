@@ -51,14 +51,14 @@ serialize(parse(x)) == x   // byte-for-byte, for x in the
 parse(serialize(parse(x))) == parse(x)  // for arbitrary x
 ```
 
-Everything the program does not support (yet) — HTML, footnotes, quotes more complex than a paragraph — is preserved verbatim. Losing bytes is impossible.
+Everything the program does not support (yet) — HTML, footnotes, quotes more complex than a paragraph — is preserved verbatim. Losing bytes is impossible, in theory at least, and it's verified by a bunch of tests.
 
 ## Preserving history
 
 Note for mac users: read `Cmd` when you see `Ctrl`.
 - Each note comes with its editing 'journal'. The latest changes, as you type, become a part of in-memory undo/redo stack (`Ctrl+Z/Ctrl+Shift+Z`). The size of this undo/redo stack is only limited by memory. You can edit several notes at once, undo/redo stack for each of the notes is preserved within one editing session (i.e. until you quit the program)
 - No need to press `Ctrl+S`, all notes are automatically saved.
-- All your modified notes are periodically auto-saved to disk, to `history/note_id.log`, where `note_id` is the same as the respective note `id`. They are well-compressed, see [storage description](docs/zametti-storage.md) for details, so don't worry about the space.
+- All your modified notes are periodically auto-saved to disk, to `history/note_id.log` on-disk journals, where `note_id` is the same as the respective note `id`. They are well-compressed, see [storage description](docs/zametti-storage.md) for details, so don't worry about the space.
 - You can navigate through the note history by pressing `Note history` button on the toolbar or if you press `Ctrl+Z` when you reached the bottom of undo/redo stack. From the history you can choose whatever snapshot you like and restore it (think of it as of a super-simple alternative to git) or you can grab a piece of text from it and place into the current note.
 - If some process changes your note on disk (or if you edit your note in the external editor yourself), the program detects it and replaces the current note with the fresh content from disk, but this replacement becomes yet another operation, which you can undo.
 - If you setup a cloud storage synchronization (webdav is supported, S3 will likely be supported in the future), your notes (the journals, actually) will be encrypted and stored there, so you can access them from another computer or restore them if your local copies are erased or damanged.

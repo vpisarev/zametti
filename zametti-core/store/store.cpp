@@ -1,43 +1,29 @@
-#include "store.h"
+// ZStorage: заведение хранилища, рождение и ввоз заметки, проверка, вложения,
+// удаление насовсем и воскрешение. Ввоз дерева — в import_tree.cpp, архив и
+// миграции — в archive.cpp, бюро находок — в lost_found.cpp.
 
-#include "exif.h"
-
-#include "deleted_image.h"
-
-#include "times.h"
-
-#include "journal.h"
 #include "zstorage.h"
 
+#include "exif.h"
+#include "deleted_image.h"
+#include "times.h"
+#include "journal.h"
 #include "note_id.h"
 #include "document.h"
 #include "znote.h"
-#include "document_pieces.h"
-#include "serializer.h"
 
-#include <QCryptographicHash>
 #include <QDateTime>
-#include <QSaveFile>
 #include <QDir>
-#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QProcess>
-#include <QTemporaryDir>
-#include <QTimeZone>
+#include <QSaveFile>
+#include <QSet>
 
-#include <algorithm>
-#include <iterator>
 #include <map>
-#include <random>
 #include <set>
 #include <string>
-#include <vector>
 
-namespace zametti::store {
+namespace zametti {
 namespace {
 
 QString fromUtf8(const std::string& s) {
@@ -49,7 +35,15 @@ std::string toUtf8(const QString& s) {
     return std::string(b.constData(), size_t(b.size()));
 }
 
-bool readAll(const QString& path, std::string& out) {
+}  // namespace
+
+// --- общие помощники файлов --------------------------------------------------
+
+QString ZStorage::attachmentPath(const QString& name) const {
+    return root_ + QLatin1Char('/') + name;
+}
+
+bool ZStorage::readFileBytes(const QString& path, std::string& out) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) return false;
     const QByteArray bytes = f.readAll();
@@ -57,152 +51,20 @@ bool readAll(const QString& path, std::string& out) {
     return true;
 }
 
-// Времена шапки живут одним модулем (store/times.h): запись — ISO-8601 с
-// офсетом, чтение — оба вида. Здесь остались только имена покороче.
-QString isoUtc(const QDateTime& t) { return isoWithOffset(t); }
-QDateTime parseIso(const QString& value) { return parseNoteTime(value); }
-
-std::uint64_t randomPart() {
-    std::random_device rd;
-    return (std::uint64_t(rd()) << 32) | rd();
-}
-
-// --- import ------------------------------------------------------------
-
-struct SrcEntry {
-    QString rel;        // путь от корня источника, '/'-разделители; для файла — с ".md"
-    QString abs;
-    bool isDir = false;
-    QString title;      // для каталога — его имя
-    QString parentRel;  // rel родительского каталога; пусто — корень
-    QDateTime created;
-    QDateTime modified;
-    QString timesFrom;  // "manifest" | "front matter" | "fs"
-    QString displayTitle;   // настоящий заголовок: из манифеста, иначе имя файла
-    std::string id;
-};
-
-struct ManifestEntry {
-    QString folder;
-    QString title;
-    QDateTime created;
-    QDateTime modified;
-    bool used = false;
-};
-
-// Времена из YAML-шапки источника, если она есть. Сама шапка остаётся в
-// содержимом как есть (в корпусе таких файлов нет — замерено; крючок
-// минимальный, факт попадает в отчёт).
-bool frontMatterTimes(const std::string& bytes, QDateTime& created, QDateTime& modified) {
-    if (bytes.compare(0, 4, "---\n") != 0) return false;
-    const size_t end = bytes.find("\n---\n", 4);
-    if (end == std::string::npos) return false;
-    const QString head = fromUtf8(bytes.substr(4, end - 4));
-    bool any = false;
-    for (const QString& line : head.split(QLatin1Char('\n'))) {
-        const qsizetype colon = line.indexOf(QLatin1Char(':'));
-        if (colon <= 0) continue;
-        const QString key = line.left(colon).trimmed().toLower();
-        const QDateTime value = parseIso(line.mid(colon + 1).trimmed());
-        if (!value.isValid()) continue;
-        if (key == QStringLiteral("created")) { created = value; any = true; }
-        if (key == QStringLiteral("modified") || key == QStringLiteral("updated")) {
-            modified = value;
-            any = true;
-        }
-    }
-    return any;
-}
-
-// Запуск утилиты; пустой вывод не интересен, важен только код возврата.
-bool runTool(const QString& program, const QStringList& args) {
-    QProcess process;
-    process.start(program, args);
-    if (!process.waitForStarted(5000)) return false;
-    if (!process.waitForFinished(120000)) {
-        process.kill();
+bool ZStorage::writeFileBytes(const QString& path, const std::string& bytes, QString* error) {
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        if (error != nullptr)
+            *error = QStringLiteral("cannot open for writing: %1").arg(file.errorString());
         return false;
     }
-    return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+    file.write(bytes.data(), qint64(bytes.size()));
+    if (file.commit()) return true;
+    if (error != nullptr) *error = QStringLiteral("write failed: %1").arg(file.errorString());
+    return false;
 }
 
-// Пережатие вложения по правилам владельца: png → webp без потерь, heic →
-// webp q90 (heif-convert + cwebp), jpeg и webp — байт в байт. EXIF/ICC/XMP
-// переезжают целиком: у png/jpeg-источников — cwebp -metadata all, у heic —
-// exiftool копирует из исходника прямо в webp. Без кодеков — копия как есть
-// и беда в отчёте (байты не теряются никогда).
-struct Converted {
-    QByteArray bytes;
-    QString ext;        // конечное расширение
-    bool degraded = false;   // кодека не нашлось, скопировано как есть
-};
-
-Converted convertAttachment(const QString& srcAbs, const QString& tempDir) {
-    Converted out;
-    const QString ext = QFileInfo(srcAbs).suffix().toLower();
-    out.ext = ext.isEmpty() ? QStringLiteral("bin") : ext;
-
-    const auto readBack = [&out](const QString& path) {
-        QFile f(path);
-        if (!f.open(QIODevice::ReadOnly)) return false;
-        out.bytes = f.readAll();
-        return true;
-    };
-    const auto copyAsIs = [&]() {
-        QFile f(srcAbs);
-        if (f.open(QIODevice::ReadOnly)) out.bytes = f.readAll();
-        return out;
-    };
-
-    if (ext == QStringLiteral("png")) {
-        const QString dst = tempDir + QStringLiteral("/out.webp");
-        if (runTool(QStringLiteral("cwebp"),
-                    {QStringLiteral("-lossless"), QStringLiteral("-metadata"),
-                     QStringLiteral("all"), srcAbs, QStringLiteral("-o"), dst}) &&
-            readBack(dst)) {
-            out.ext = QStringLiteral("webp");
-            return out;
-        }
-        out.degraded = true;
-        return copyAsIs();
-    }
-
-    if (ext == QStringLiteral("heic") || ext == QStringLiteral("heif")) {
-        const QString mid = tempDir + QStringLiteral("/mid.png");
-        const QString dst = tempDir + QStringLiteral("/out.webp");
-        bool ok = runTool(QStringLiteral("heif-convert"), {srcAbs, mid});
-        QString midPath = mid;
-        if (ok && !QFileInfo::exists(mid)) {
-            // Много-картиночный heic: heif-convert пишет mid-1.png и далее.
-            const QStringList parts = QDir(tempDir).entryList(
-                {QStringLiteral("mid*.png")}, QDir::Files, QDir::Name);
-            if (parts.isEmpty()) ok = false;
-            else midPath = tempDir + QLatin1Char('/') + parts.first();
-        }
-        ok = ok && runTool(QStringLiteral("cwebp"),
-                           {QStringLiteral("-q"), QStringLiteral("90"), midPath,
-                            QStringLiteral("-o"), dst});
-        if (ok) {
-            // Метаданные heic живут в контейнере — копируются из исходника.
-            // Неудача exiftool не роняет пережатие: картинка дороже тегов.
-            runTool(QStringLiteral("exiftool"),
-                    {QStringLiteral("-overwrite_original"),
-                     QStringLiteral("-TagsFromFile"), srcAbs,
-                     QStringLiteral("-all:all"), dst});
-            if (readBack(dst)) {
-                out.ext = QStringLiteral("webp");
-                return out;
-            }
-        }
-        out.degraded = true;
-        return copyAsIs();
-    }
-
-    return copyAsIs();
-}
-
-// Ссылка локальная? Схемы, абсолютные пути и якоря — нет.
-bool isLocalRelative(const QString& href) {
+bool ZStorage::isLocalRelative(const QString& href) {
     if (href.isEmpty()) return false;
     if (href.startsWith(QLatin1Char('/')) || href.startsWith(QLatin1Char('#'))) return false;
     if (href.contains(QStringLiteral("://"))) return false;
@@ -211,77 +73,56 @@ bool isLocalRelative(const QString& href) {
     return true;
 }
 
-// Путь цели относительно корня источника; пусто — вышли за корень.
-QString resolveInside(const QString& srcRoot, const QString& noteDirRel, const QString& href) {
-    const QString joined =
-        noteDirRel.isEmpty() ? href : noteDirRel + QLatin1Char('/') + href;
-    const QString cleaned = QDir::cleanPath(joined);
-    if (cleaned.startsWith(QStringLiteral("../")) || cleaned == QStringLiteral("..")) return {};
-    if (!QFileInfo::exists(srcRoot + QLatin1Char('/') + cleaned)) return {};
-    return cleaned;
-}
+// --- заведение ---------------------------------------------------------------
 
-// Заголовок так, как его чистит конвертер под имя файла (замерено на
-// корпусе): '#' и ':' удаляются, '/' становится '-', неразрывный пробел —
-// обычным, края обрезаются.
-QString sanitizedTitle(QString title) {
-    title.remove(QLatin1Char('#'));
-    title.remove(QLatin1Char(':'));
-    title.remove(QLatin1Char('"'));
-    title.replace(QLatin1Char('/'), QLatin1Char('-'));
-    title.replace(QChar(0x00A0), QLatin1Char(' '));
-    return title.trimmed();
-}
-
-}  // namespace
-
-bool initStore(const QString& dir, QString* error) {
-    QDir d(dir);
+bool ZStorage::init(QString* error) {
+    QDir d(root_);
     if (d.exists()) {
         const QStringList entries =
             d.entryList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden);
         if (!entries.isEmpty()) {
             if (error != nullptr)
-                *error = QStringLiteral("directory not empty: %1").arg(dir);
+                *error = QStringLiteral("directory not empty: %1").arg(root_);
             return false;
         }
-    } else if (!QDir().mkpath(dir)) {
-        if (error != nullptr) *error = QStringLiteral("cannot create: %1").arg(dir);
+    } else if (!QDir().mkpath(root_)) {
+        if (error != nullptr) *error = QStringLiteral("cannot create: %1").arg(root_);
         return false;
     }
     // .zametti — состояние; .rescue — побитые файлы редактора (с точкой: на
     // сервер не синхронизируется); history — история заметок (синхронизируется).
     for (const char* sub : {".zametti", ".rescue", "history"}) {
-        if (!QDir(dir).mkpath(QString::fromLatin1(sub))) {
+        if (!QDir(root_).mkpath(QString::fromLatin1(sub))) {
             if (error != nullptr)
-                *error = QStringLiteral("cannot create: %1/%2").arg(dir, sub);
+                *error = QStringLiteral("cannot create: %1/%2").arg(root_, sub);
             return false;
         }
     }
     // Проверка прав — делом: пробный файл, а не флаги.
-    QFile probe(dir + QStringLiteral("/.zametti/.probe"));
+    QFile probe(root_ + QStringLiteral("/.zametti/.probe"));
     if (!probe.open(QIODevice::WriteOnly)) {
-        if (error != nullptr) *error = QStringLiteral("no write permission: %1").arg(dir);
+        if (error != nullptr) *error = QStringLiteral("no write permission: %1").arg(root_);
         return false;
     }
     probe.close();
     probe.remove();
+    // С этого мгновения объект — хранилище: метка на месте.
+    store_ = isStoreRoot(root_);
 
     // ИДЕНТИЧНОСТЬ — при рождении хранилища, а не при первом синке: id
     // чеканится один раз, и лучший момент для этого тот, когда каталог заведомо
     // наш и пуст.
-    ZStorage storage(dir);
     QString why;
-    if (storage.ensureIdentity(&why).isEmpty()) {
+    if (ensureIdentity(&why).isEmpty()) {
         if (error != nullptr) *error = why;
         return false;
     }
     return true;
 }
 
-QString newNote(const QString& root, const QString& parentId, QString* error) {
-    if (!QDir(root).exists()) {
-        if (error != nullptr) *error = QStringLiteral("no such directory: %1").arg(root);
+QString ZStorage::newNoteFile(const QString& parentId, QString* error) {
+    if (!QDir(root_).exists()) {
+        if (error != nullptr) *error = QStringLiteral("no such directory: %1").arg(root_);
         return {};
     }
     if (!parentId.isEmpty()) {
@@ -290,8 +131,7 @@ QString newNote(const QString& root, const QString& parentId, QString* error) {
                 *error = QStringLiteral("parent does not look like an id: %1").arg(parentId);
             return {};
         }
-        if (!QFileInfo::exists(root + QLatin1Char('/') + parentId +
-                               QStringLiteral(".md"))) {
+        if (!QFileInfo::exists(pathOf(parentId))) {
             if (error != nullptr)
                 *error = QStringLiteral("parent is not in the store: %1").arg(parentId);
             return {};
@@ -303,32 +143,30 @@ QString newNote(const QString& root, const QString& parentId, QString* error) {
     std::string content = "<!-- zametti\n";
     content += std::string(NoteHeader::kVersionKey) + ": " + NoteHeader::kFormatVersion + "\n";
     if (!parentId.isEmpty()) content += "parent: " + toUtf8(parentId) + "\n";
-    content += "created: " + toUtf8(isoNow()) + "\n-->\n";
+    content += "created: " + toUtf8(store::isoNow()) + "\n-->\n";
 
     std::string path;
-    const std::string id = createNoteFile(toUtf8(root), content, &path);
+    const std::string id = createNoteFile(toUtf8(root_), content, &path);
     if (id.empty()) {
-        if (error != nullptr) *error = QStringLiteral("could not write into %1").arg(root);
+        if (error != nullptr) *error = QStringLiteral("could not write into %1").arg(root_);
         return {};
     }
     return fromUtf8(path);
 }
 
-QString importNote(const QString& root, const QString& parentId, const QString& sourcePath,
-                   QString* error) {
+QString ZStorage::importNote(const QString& parentId, const QString& sourcePath, QString* error) {
     const auto fail = [&](const QString& why) {
         if (error != nullptr) *error = why;
         return QString();
     };
-    if (!QDir(root).exists()) return fail(QStringLiteral("no store at: %1").arg(root));
+    if (!store_) return fail(QStringLiteral("not a store"));
     const QFileInfo info(sourcePath);
     if (!info.isFile()) return fail(QStringLiteral("not a file: %1").arg(sourcePath));
-    if (!parentId.isEmpty() &&
-        !QFileInfo::exists(root + QLatin1Char('/') + parentId + QStringLiteral(".md")))
+    if (!parentId.isEmpty() && !QFileInfo::exists(pathOf(parentId)))
         return fail(QStringLiteral("folder is not in the store: %1").arg(parentId));
 
     std::string bytes;
-    if (!readAll(sourcePath, bytes))
+    if (!readFileBytes(sourcePath, bytes))
         return fail(QStringLiteral("cannot read: %1").arg(sourcePath));
 
     // Мусорные неразрывные пробелы вычищаются ПРИ ВВОЗЕ, а не при первом
@@ -355,8 +193,9 @@ QString importNote(const QString& root, const QString& parentId, const QString& 
     // диске, которое у копии равно времени копирования.
     if (created.isEmpty()) created = doc.modified();
     if (created.isEmpty())
-        created = isoUtc(fsBirth.isValid() && fsBirth <= fsModified ? fsBirth : fsModified);
-    const QString modified = isoNow();
+        created = store::isoWithOffset(fsBirth.isValid() && fsBirth <= fsModified ? fsBirth
+                                                                                   : fsModified);
+    const QString modified = store::isoNow();
 
     // id и role чужого файла не наследуются: id принадлежит этому хранилищу
     // (иначе две заметки с одним id), а role сделал бы из заметки папку.
@@ -382,525 +221,19 @@ QString importNote(const QString& root, const QString& parentId, const QString& 
     }
 
     std::string path;
-    if (createNoteFile(toUtf8(root), content, &path).empty())
-        return fail(QStringLiteral("could not write into %1").arg(root));
-    return fromUtf8(path);
+    if (createNoteFile(toUtf8(root_), content, &path).empty())
+        return fail(QStringLiteral("could not write into %1").arg(root_));
+    const QString id = idOfPath(fromUtf8(path));
+    refreshNote(id);   // новая — структурная новость сама по себе
+    return id;
 }
 
-bool importTree(const ImportOptions& options, Report& report) {
-    const QString srcRoot = QDir(options.from).absolutePath();
-    if (!QDir(srcRoot).exists()) {
-        report.problem(QStringLiteral("no source: %1").arg(options.from));
-        return false;
-    }
-    const QString root = QDir(options.root).absolutePath();
+// --- проверка ----------------------------------------------------------------
 
-    // --- скан источника --------------------------------------------------
-    std::vector<SrcEntry> entries;
-    // Скрытое (".obsidian" и прочий служебный мусор) не импортируется — но и
-    // не молчком: пропуск виден в отчёте.
-    {
-        QDirIterator hidden(srcRoot,
-                            QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot | QDir::Hidden,
-                            QDirIterator::Subdirectories);
-        while (hidden.hasNext()) {
-            hidden.next();
-            if (hidden.fileName().startsWith(QLatin1Char('.')))
-                report.note(QStringLiteral("hidden entry skipped: %1")
-                                .arg(QDir(srcRoot).relativeFilePath(hidden.filePath())));
-        }
-    }
-    {
-        QDirIterator it(srcRoot, QDir::Dirs | QDir::NoDotAndDotDot,
-                        QDirIterator::Subdirectories);
-        while (it.hasNext()) {
-            it.next();
-            SrcEntry e;
-            e.abs = it.filePath();
-            e.rel = QDir(srcRoot).relativeFilePath(e.abs);
-            e.isDir = true;
-            e.title = it.fileName();
-            const QString parent = QFileInfo(e.rel).path();
-            e.parentRel = parent == QStringLiteral(".") ? QString() : parent;
-            entries.push_back(std::move(e));
-        }
-    }
-    {
-        QDirIterator it(srcRoot, {QStringLiteral("*.md")}, QDir::Files,
-                        QDirIterator::Subdirectories);
-        while (it.hasNext()) {
-            it.next();
-            SrcEntry e;
-            e.abs = it.filePath();
-            e.rel = QDir(srcRoot).relativeFilePath(e.abs);
-            e.isDir = false;
-            e.title = QFileInfo(e.abs).completeBaseName();
-            const QString parent = QFileInfo(e.rel).path();
-            e.parentRel = parent == QStringLiteral(".") ? QString() : parent;
-            entries.push_back(std::move(e));
-        }
-    }
-    // Устойчивый порядок: сначала по глубине неважно, важно детерминированно.
-    std::sort(entries.begin(), entries.end(),
-              [](const SrcEntry& a, const SrcEntry& b) { return a.rel < b.rel; });
-
-    // --- манифест Apple Notes --------------------------------------------
-    std::vector<ManifestEntry> manifest;
-    if (!options.appleManifest.isEmpty()) {
-        std::string bytes;
-        if (!readAll(options.appleManifest, bytes)) {
-            report.problem(QStringLiteral("cannot read manifest: %1")
-                               .arg(options.appleManifest));
-            return false;
-        }
-        QJsonParseError parseError{};
-        const QJsonDocument doc = QJsonDocument::fromJson(
-            QByteArray(bytes.data(), qsizetype(bytes.size())), &parseError);
-        if (!doc.isArray()) {
-            report.problem(QStringLiteral("manifest is not a JSON array: %1")
-                               .arg(parseError.errorString()));
-            return false;
-        }
-        for (const QJsonValue& value : doc.array()) {
-            const QJsonObject o = value.toObject();
-            ManifestEntry m;
-            m.folder = o.value(QStringLiteral("folder")).toString();
-            m.title = o.value(QStringLiteral("title")).toString();
-            m.created = parseIso(o.value(QStringLiteral("created")).toString());
-            m.modified = parseIso(o.value(QStringLiteral("modified")).toString());
-            manifest.push_back(std::move(m));
-        }
-    }
-
-    // --- времена и id ------------------------------------------------------
-    std::set<std::string> takenIds;
-    std::map<QString, size_t> byRel;   // rel .md-файла → индекс entry
-    for (size_t i = 0; i < entries.size(); ++i) {
-        SrcEntry& e = entries[i];
-        const QFileInfo info(e.abs);
-
-        // Приоритет: манифест → front matter → fs-времена с пометкой.
-        ManifestEntry* matched = nullptr;
-        int matches = 0;
-        if (!e.isDir) {
-            for (ManifestEntry& m : manifest)
-                if (m.folder == e.parentRel && m.title == e.title) {
-                    ++matches;
-                    matched = &m;
-                }
-            // Конвертер чистил заголовки под имена файлов — второй заход по
-            // очищенному ключу, только если точный не нашёлся.
-            if (matches == 0)
-                for (ManifestEntry& m : manifest)
-                    if (m.folder == e.parentRel && sanitizedTitle(m.title) == e.title) {
-                        ++matches;
-                        matched = &m;
-                    }
-        }
-        if (matches > 1) {
-            report.problem(
-                QStringLiteral("manifest is ambiguous for '%1': %2 entries")
-                    .arg(e.rel)
-                    .arg(matches));
-            matched = nullptr;
-        }
-        std::string bytes;
-        if (!e.isDir && !readAll(e.abs, bytes)) {
-            report.problem(QStringLiteral("cannot read: %1").arg(e.rel));
-            continue;
-        }
-
-        QDateTime created;
-        QDateTime modified;
-        e.displayTitle = e.title;
-        if (matched != nullptr && matched->created.isValid()) {
-            matched->used = true;
-            created = matched->created;
-            modified = matched->modified.isValid() ? matched->modified : matched->created;
-            e.timesFrom = QStringLiteral("manifest");
-            // Заголовок из манифеста — настоящий: конвертер чистил его под
-            // имя файла ('#', ':', кавычки), манифест хранит как было.
-            e.displayTitle = matched->title;
-        } else if (!e.isDir && frontMatterTimes(bytes, created, modified)) {
-            if (!modified.isValid()) modified = created;
-            if (!created.isValid()) created = modified;
-            e.timesFrom = QStringLiteral("front matter");
-            report.note(QStringLiteral("front matter in '%1': times taken, "
-                                       "header left as is")
-                            .arg(e.rel));
-        } else {
-            const QDateTime birth = info.birthTime();
-            modified = info.lastModified();
-            created = birth.isValid() && birth <= modified ? birth : modified;
-            e.timesFrom = QStringLiteral("fs");
-            report.note(QStringLiteral("times from the file system: %1").arg(e.rel));
-        }
-        e.created = created;
-        e.modified = modified;
-
-        // created кодируется в id; случайная часть уникальна в пределах партии.
-        for (;;) {
-            e.id = makeNoteId(std::uint64_t(created.toSecsSinceEpoch()), randomPart());
-            if (takenIds.insert(e.id).second) break;
-        }
-        if (!e.isDir) byRel[e.rel] = i;
-    }
-
-    // Манифест, не нашедший файла, — в отчёт: молчаливых пропусков нет.
-    for (const ManifestEntry& m : manifest)
-        if (!m.used)
-            report.problem(QStringLiteral("manifest entry without a file: '%1' / '%2'")
-                               .arg(m.folder, m.title));
-
-    // rel каталога → id заметки-каталога.
-    std::map<QString, std::string> dirIds;
-    for (const SrcEntry& e : entries)
-        if (e.isDir) dirIds[e.rel] = e.id;
-
-    // --- запись ------------------------------------------------------------
-    if (!options.dryRun) {
-        QString initError;
-        if (!initStore(root, &initError)) {
-            report.problem(initError);
-            return false;
-        }
-    }
-
-    QTemporaryDir temp;
-    std::map<QByteArray, QString> attachmentByHash;   // содержимое исходника → имя
-    std::map<QString, QString> attachmentByAbs;       // абсолютный путь → имя
-    std::map<QString, qint64> attachmentSizes;        // имя → байты
-    int wikilinks = 0;
-
-    // Вложение → "<id>.<ext>" в том же плоском каталоге. Возвращает пустое имя
-    // при ошибке чтения; про деградацию (нет кодека) отчитывается само.
-    const auto internAttachment = [&](const QString& targetAbs) -> QString {
-        const auto cached = attachmentByAbs.find(targetAbs);
-        if (cached != attachmentByAbs.end()) return cached->second;
-
-        QFile src(targetAbs);
-        if (!src.open(QIODevice::ReadOnly)) return {};
-        const QByteArray sourceBytes = src.readAll();
-        src.close();
-        const QByteArray key =
-            QCryptographicHash::hash(sourceBytes, QCryptographicHash::Sha256);
-        const auto known = attachmentByHash.find(key);
-        if (known != attachmentByHash.end()) {
-            attachmentByAbs[targetAbs] = known->second;
-            return known->second;
-        }
-
-        const Converted converted = convertAttachment(targetAbs, temp.path());
-        if (converted.bytes.isEmpty()) return {};
-        if (converted.degraded)
-            report.problem(QStringLiteral("no codec found, copied as is: %1")
-                               .arg(QDir(srcRoot).relativeFilePath(targetAbs)));
-
-        std::string id;
-        do {
-            id = makeNoteId(
-                std::uint64_t(QFileInfo(targetAbs).lastModified().toSecsSinceEpoch()),
-                randomPart());
-        } while (!takenIds.insert(id).second);
-        const QString name = fromUtf8(id) + QLatin1Char('.') + converted.ext;
-
-        if (!options.dryRun) {
-            QFile out(root + QLatin1Char('/') + name);
-            if (!out.open(QIODevice::WriteOnly) ||
-                out.write(converted.bytes) != converted.bytes.size()) {
-                report.problem(QStringLiteral("attachment not written: %1").arg(name));
-                return {};
-            }
-        }
-        attachmentByHash[key] = name;
-        attachmentByAbs[targetAbs] = name;
-        attachmentSizes[name] = converted.bytes.size();
-        report.note(QStringLiteral("%1 → %2")
-                        .arg(QDir(srcRoot).relativeFilePath(targetAbs), name));
-        return name;
-    };
-
-    // Вики-вложение строкой абзаца: "![[путь|W]]", "[[путь]]" и родня.
-    // Работает построчно, как Ctrl+/ в редакторе: строка-вложение
-    // выкраивается из блока в свой блок-картинку (подпись — родное имя,
-    // ширина — в "#w="), соседние строки остаются абзацем, уровень
-    // наследуется. Прочие wikilinks не трогаются, только считаются.
-    const auto wikiTarget = [&](const QString& line, const QString& noteDirRel,
-                                QString* targetAbs, QString* width,
-                                QString* alt) -> bool {
-        QString text = line.trimmed();
-        if (text.startsWith(QLatin1Char('!'))) text = text.mid(1);
-        if (!text.startsWith(QStringLiteral("[[")) || !text.endsWith(QStringLiteral("]]")))
-            return false;
-        QString inner = text.mid(2, text.size() - 4);
-        const qsizetype bar = inner.lastIndexOf(QLatin1Char('|'));
-        if (bar >= 0) {
-            bool ok = false;
-            const int w = inner.mid(bar + 1).trimmed().toInt(&ok);
-            if (ok && w > 0) *width = QString::number(w);
-            inner = inner.left(bar);
-        }
-        inner = inner.trimmed();
-        if (inner.isEmpty() || inner.endsWith(QStringLiteral(".md"))) return false;
-        const QString rel = resolveInside(srcRoot, noteDirRel, inner);
-        if (rel.isEmpty()) return false;   // не файл — обычный wikilink
-        *targetAbs = srcRoot + QLatin1Char('/') + rel;
-        *alt = QFileInfo(inner).completeBaseName();
-        return true;
-    };
-
-    const auto adoptWikiAttachments = [&](std::vector<Piece>& ir, const QString& noteDirRel) {
-        std::vector<Piece> out;
-        out.reserve(ir.size());
-        for (size_t at = 0; at < ir.size(); ++at) {
-            const Piece& b = ir[at];
-            const bool candidate = !b.raw && b.kind == Kind::Paragraph && b.runs.empty() &&
-                                   b.text.contains(QLatin1String("[["));
-            if (!candidate) {
-                out.push_back(b);
-                continue;
-            }
-            const QStringList lines = b.text.split(QLatin1Char('\n'));
-            std::vector<Piece> pieces;
-            QStringList pending;
-            const auto flushPending = [&]() {
-                if (pending.isEmpty()) return;
-                Piece piece;
-                piece.text = pending.join(QLatin1Char('\n'));
-                piece.level = b.level;
-                pieces.push_back(std::move(piece));
-                pending.clear();
-            };
-            for (const QString& line : lines) {
-                QString targetAbs;
-                QString width;
-                QString alt;
-                if (!wikiTarget(line, noteDirRel, &targetAbs, &width, &alt)) {
-                    pending.append(line);
-                    continue;
-                }
-                const QString name = internAttachment(targetAbs);
-                if (name.isEmpty()) {
-                    report.problem(QStringLiteral("cannot read attachment: %1")
-                                       .arg(QDir(srcRoot).relativeFilePath(targetAbs)));
-                    pending.append(line);
-                    continue;
-                }
-                flushPending();
-                Piece image;
-                image.text = alt;
-                image.level = b.level;
-                Run span;
-                span.set(InlineImage, true);
-                span.href = width.isEmpty() ? name : name + QStringLiteral("#w=") + width;
-                span.start = 0;
-                span.end = int32_t(image.text.size());
-                image.runs.push_back(std::move(span));
-                pieces.push_back(std::move(image));
-            }
-            flushPending();
-            if (pieces.size() <= 1 && pending.isEmpty() &&
-                (pieces.empty() || pieces[0].runs.empty())) {
-                // Ничего не выкроилось — блок как был.
-                out.push_back(b);
-                continue;
-            }
-            // Куски разделяются пустой строкой: соседство абзаца с абзацем
-            // (и картинкой) без неё слиплось бы при перечитывании.
-            for (size_t i = 0; i < pieces.size(); ++i) {
-                if (i > 0) {
-                    Piece gap;
-                    gap.kind = Kind::VSpace;
-                    out.push_back(std::move(gap));
-                }
-                out.push_back(std::move(pieces[i]));
-            }
-        }
-        ir = std::move(out);
-    };
-
-
-    for (SrcEntry& e : entries) {
-        std::string body;
-        std::vector<Piece> ir;
-        NoteHeader meta;
-        if (e.isDir) {
-            // Заметка-каталог: заголовок — имя каталога, признак — в мете
-            // (правило владельца: у любой директории, пустой или нет).
-            Piece h;
-            h.kind = Kind::Heading;
-            h.headingLevel = 1;
-            h.text = e.title;
-            ir.push_back(std::move(h));
-            meta.set("role", "folder");
-        } else {
-            std::string bytes;
-            if (!readAll(e.abs, bytes)) continue;   // уже в отчёте
-            // Граница файла: байты → текст, один раз.
-            parsePieces(normaliseSpaces(QString::fromUtf8(bytes.data(), qsizetype(bytes.size()))),
-                        ir, meta);
-        }
-
-        // Заголовок заметки: Apple держит его первой строкой, конвертер унёс
-        // в имя файла, а имя файла становится непрозрачным id — без возврата
-        // заголовка в тело заметка осталась бы безымянной. Заголовок получают
-        // ВСЕ заметки; не трогаем только те, где первый содержательный блок —
-        // заголовок ровно с тем же текстом (правило владельца).
-        if (!e.isDir) {
-            QString firstHeading;
-            for (const Piece& b : ir) {
-                if (!b.raw && b.kind == Kind::VSpace) continue;
-                if (!b.raw && b.kind == Kind::Heading) firstHeading = b.text.trimmed();
-                break;
-            }
-            const QString title = e.displayTitle.trimmed();
-            if (!title.isEmpty() && firstHeading != title) {
-                Piece heading;
-                heading.kind = Kind::Heading;
-                heading.headingLevel = 1;
-                heading.text = title;
-                std::vector<Piece> withTitle;
-                withTitle.push_back(std::move(heading));
-                if (!ir.empty()) {
-                    Piece gap;
-                    gap.kind = Kind::VSpace;
-                    withTitle.push_back(std::move(gap));
-                }
-                withTitle.insert(withTitle.end(), std::make_move_iterator(ir.begin()),
-                                 std::make_move_iterator(ir.end()));
-                ir = std::move(withTitle);
-            }
-        }
-
-        // Вложения и ссылки. Вики-вложения усыновляются в канон, прочие
-        // wikilinks не переписываются — только счёт.
-        const QString noteDirRel = e.parentRel;
-        adoptWikiAttachments(ir, noteDirRel);
-        for (Piece& b : ir) {
-            if (b.raw) {
-                if (b.text.contains(QLatin1String("[["))) ++wikilinks;
-                continue;
-            }
-            if (b.text.contains(QLatin1String("[["))) ++wikilinks;
-            for (Run& s : b.runs) {
-                if (s.href.isEmpty()) continue;
-                QString href = s.href;
-                // Фрагмент (#w=300) — часть нашего канона, не путь.
-                QString fragment;
-                const qsizetype hash = href.lastIndexOf(QLatin1Char('#'));
-                if (hash >= 0) {
-                    fragment = href.mid(hash);
-                    href = href.left(hash);
-                }
-                if (!isLocalRelative(href)) continue;
-
-                if (s.image()) {
-                    // Уже канонное плоское имя — вложение усыновлено выше.
-                    const qsizetype dot = href.lastIndexOf(QLatin1Char('.'));
-                    if (dot > 0 && !href.contains(QLatin1Char('/')) &&
-                        isValidNoteId(toUtf8(href.left(dot))))
-                        continue;
-                    const QString targetRel = resolveInside(srcRoot, noteDirRel, href);
-                    if (targetRel.isEmpty()) {
-                        report.problem(
-                            QStringLiteral("attachment not found: '%1' in %2")
-                                .arg(href, e.rel));
-                        continue;
-                    }
-                    const QString name =
-                        internAttachment(srcRoot + QLatin1Char('/') + targetRel);
-                    if (name.isEmpty()) {
-                        report.problem(
-                            QStringLiteral("cannot read attachment: %1").arg(targetRel));
-                        continue;
-                    }
-                    s.href = name + fragment;
-                } else if (href.endsWith(QStringLiteral(".md"))) {
-                    const QString joined = noteDirRel.isEmpty()
-                                               ? href
-                                               : noteDirRel + QLatin1Char('/') + href;
-                    const QString cleaned = QDir::cleanPath(joined);
-                    const auto found = byRel.find(cleaned);
-                    if (found == byRel.end()) {
-                        report.note(QStringLiteral("link did not resolve: '%1' in %2")
-                                        .arg(href, e.rel));
-                        continue;
-                    }
-                    s.href = QString::fromStdString(entries[found->second].id + ".md");
-                }
-            }
-        }
-
-        // Метаданные: существующие (при реимпорте) уважаются, наши ключи поверх.
-        // Пустая строка после "-->" положена перед контентом; пустой заметке
-        // она дала бы дрейф (замерено на «Вещи из Китая.md» — пустом файле).
-        meta.setPresent(true);
-        meta.setBlankAfter(!ir.empty());
-        if (!e.parentRel.isEmpty()) meta.set("parent", dirIds[e.parentRel]);
-        meta.set("created", toUtf8(isoUtc(e.created)));
-        meta.set("modified", toUtf8(isoUtc(e.modified)));
-        meta.ensureVersion();
-
-        body = toUtf8(writePieces(ir, meta));
-
-        if (!options.dryRun) {
-            // O_EXCL с целевым id; коллизия на диске невозможна (id уникальны
-            // в партии, хранилище свежее), но честность дешева.
-            const std::string want = e.id;
-            const QDateTime created = e.created;
-            int extra = 0;
-            const auto generator = [&want, &created, &extra]() {
-                if (extra++ == 0) return want;
-                return makeNoteId(std::uint64_t(created.toSecsSinceEpoch()), randomPart());
-            };
-            std::string path;
-            const std::string got = createNoteFile(toUtf8(root), body, &path, generator);
-            if (got.empty()) {
-                report.problem(QStringLiteral("note for %1 not written").arg(e.rel));
-                continue;
-            }
-            e.id = got;
-        }
-        report.note(QStringLiteral("%1 → %2%3")
-                        .arg(e.rel, fromUtf8(e.id),
-                             e.isDir ? QStringLiteral(" (directory)") : QString()));
-    }
-
-    // Сводка вложений: по расширениям, число и байты — по ней будет
-    // настраиваться пережатие.
-    if (!attachmentSizes.empty()) {
-        std::map<QString, std::pair<int, qint64>> byExt;
-        for (const auto& [name, size] : attachmentSizes) {
-            const QString ext = QFileInfo(name).suffix();
-            byExt[ext].first++;
-            byExt[ext].second += size;
-        }
-        for (const auto& [ext, stat] : byExt)
-            report.note(QStringLiteral("attachments .%1: %2 files, %3 bytes")
-                            .arg(ext)
-                            .arg(stat.first)
-                            .arg(stat.second));
-    }
-    if (wikilinks > 0)
-        report.note(QStringLiteral("wikilink blocks not rewritten: %1").arg(wikilinks));
-
-    // Отчёт соответствия — рядом с хранилищем, не внутри.
-    if (!options.dryRun) {
-        QFile out(root + QStringLiteral(".import-report.txt"));
-        if (out.open(QIODevice::WriteOnly)) {
-            for (const QString& line : report.lines)
-                out.write((line + QLatin1Char('\n')).toUtf8());
-        } else {
-            report.problem(QStringLiteral("report not written: %1").arg(out.fileName()));
-        }
-    }
-    return report.problems == 0;
-}
-
-bool verifyStore(const QString& root, Report& report) {
-    QDir d(root);
+bool ZStorage::verify(Report& report) {
+    QDir d(root_);
     if (!d.exists()) {
-        report.problem(QStringLiteral("no store at: %1").arg(root));
+        report.problem(QStringLiteral("no store at: %1").arg(root_));
         return false;
     }
 
@@ -909,25 +242,24 @@ bool verifyStore(const QString& root, Report& report) {
     // А вот версия новее нашей — беда: сборка, не знающая половины ключей,
     // перепишет файл без них и потеряет данные молча.
     {
-        ZStorage storage(root);
         QString why;
-        const ZStorage::Identity identity = storage.identity(&why);
+        const Identity identity = this->identity(&why);
         if (!why.isEmpty()) report.problem(why);
         if (identity.isEmpty() && why.isEmpty())
             report.note(QStringLiteral("no %1 yet (run: zametti-store root init)")
-                            .arg(QLatin1String(ZStorage::Identity::kFile)));
+                            .arg(QLatin1String(Identity::kFile)));
         if (identity.tooNew())
             report.problem(QStringLiteral("%1: format version %2 is newer than mine (%3)")
-                               .arg(QLatin1String(ZStorage::Identity::kFile))
+                               .arg(QLatin1String(Identity::kFile))
                                .arg(identity.formatVersion())
-                               .arg(ZStorage::Identity::kFormatVersion));
+                               .arg(Identity::kFormatVersion));
     }
 
     std::map<std::string, std::shared_ptr<ZNote>> notes;
     std::set<QString> attachments;         // имена файлов-вложений
     // ДВА множества, а не одно. Доктрина этапа 10: вложение живо, пока на него
-    // ссылается хоть одна ЗАМЕТКА — живая или корзинная; упомянутое только из
-    // корзины не аномалия, а «уйдёт при очистке». Слепки истории на живость
+    // ссылается хоть одна ЗАМЕТКА — живая или архивная; упомянутое только из
+    // архива не аномалия, а «уйдёт при удалении». Слепки истории на живость
     // вложения больше не влияют вовсе (см. ниже).
     std::set<QString> referencedLive;
     std::set<QString> referencedTrashed;
@@ -946,7 +278,7 @@ bool verifyStore(const QString& root, Report& report) {
         }
         // Идентичность хранилища — свой файл, а не заметка: имя у него
         // человеческое, и чужим он не считается.
-        if (name == QLatin1String(ZStorage::Identity::kFile)) continue;
+        if (name == QLatin1String(Identity::kFile)) continue;
         const qsizetype dot = name.lastIndexOf(QLatin1Char('.'));
         const QString stem = dot > 0 ? name.left(dot) : name;
         if (dot <= 0 || !isValidNoteId(toUtf8(stem))) {
@@ -959,13 +291,10 @@ bool verifyStore(const QString& root, Report& report) {
         }
 
         std::string bytes;
-        if (!readAll(info.filePath(), bytes)) {
+        if (!readFileBytes(info.filePath(), bytes)) {
             report.problem(QStringLiteral("cannot read: %1").arg(name));
             continue;
         }
-        // Мусорные неразрывные пробелы вычищаются ПРИ ВВОЗЕ, а не при первом
-    // открытии: иначе привезённая заметка какое-то время лежала бы на диске
-    // грязной, и человек, заглянувший в неё чужим редактором, увидел бы сор.
         auto note = std::make_shared<ZNote>();
         note->load(bytes);
         if (!note->hasHeader())
@@ -974,9 +303,10 @@ bool verifyStore(const QString& root, Report& report) {
         notes[toUtf8(stem)] = std::move(note);
     }
 
-    // Лежит ли заметка в корзине: идём по цепочке родителей до заметки с
-    // role: trash. Циклы уже проверены ниже, но на всякий случай ограничиваем
-    // глубину — verify не имеет права зациклиться на битом хранилище.
+    // Лежит ли заметка в корзине прежних версий: идём по цепочке родителей до
+    // заметки с role: trash. Циклы уже проверены ниже, но на всякий случай
+    // ограничиваем глубину — verify не имеет права зациклиться на битом
+    // хранилище.
     const auto inTrash = [&notes](const std::string& id) {
         std::string at = id;
         for (int depth = 0; depth < 64; ++depth) {
@@ -1005,7 +335,7 @@ bool verifyStore(const QString& root, Report& report) {
             }
             if (inTrash(id)) referencedTrashed.insert(href);
             else referencedLive.insert(href);
-            if (!QFileInfo::exists(root + QLatin1Char('/') + href))
+            if (!QFileInfo::exists(attachmentPath(href)))
                 report.problem(QStringLiteral("missing attachment '%1' from %2.md")
                                    .arg(href, fromUtf8(id)));
         }
@@ -1064,8 +394,8 @@ bool verifyStore(const QString& root, Report& report) {
     //
     // ВЛОЖЕНИЯ ОТСЮДА БОЛЬШЕ НЕ БЕРУТСЯ. До этапа 10 картинка считалась живой,
     // пока её видел хоть один слепок истории; с этапа 10 доктрина другая
-    // (решение владельца): удаление радикально, предохранителей три (корзина →
-    // очистка корзины → мусорка ОС), а слепок со ссылкой на исчезнувшее
+    // (решение владельца): удаление радикально, предохранителей три (архив →
+    // удаление из архива → мусорка ОС), а слепок со ссылкой на исчезнувшее
     // деградирует штатной рамкой «файл не найден». Иначе ни одна картинка не
     // ушла бы из хранилища никогда: её видит прошлое.
     //
@@ -1076,7 +406,6 @@ bool verifyStore(const QString& root, Report& report) {
     int journals = 0;
     qint64 records = 0;
     if (historyDir.exists()) {
-        ZStorage storage(root);
         for (const QString& name :
              historyDir.entryList({QStringLiteral("*.log")}, QDir::Files)) {
             const QString noteId = name.left(name.size() - 4);
@@ -1086,7 +415,7 @@ bool verifyStore(const QString& root, Report& report) {
             }
             ZJournal j;
             QString error;
-            if (!storage.readJournal(noteId, &j, &error)) {
+            if (!readJournal(noteId, &j, &error)) {
                 report.problem(QStringLiteral("journal %1: %2").arg(name, error));
                 continue;
             }
@@ -1107,7 +436,7 @@ bool verifyStore(const QString& root, Report& report) {
             for (int i = 0; i < j.size(); ++i) {
                 if (!j.at(i).hasSnapshot()) continue;
                 QByteArray body;
-                if (!storage.journalSnapshot(noteId, i, &body, &error)) {
+                if (!journalSnapshot(noteId, i, &body, &error)) {
                     report.problem(QStringLiteral("journal %1, record %2: %3")
                                        .arg(name)
                                        .arg(i)
@@ -1154,7 +483,7 @@ bool verifyStore(const QString& root, Report& report) {
         }
         // Метку читаем только у кандидатов в сироты — их единицы, и чтение
         // заголовка стоит копейки.
-        QFile file(QDir(root).filePath(name));
+        QFile file(attachmentPath(name));
         if (file.open(QIODevice::ReadOnly)) {
             const QByteArray bytes = file.read(64 * 1024);
             file.close();
@@ -1176,8 +505,10 @@ bool verifyStore(const QString& root, Report& report) {
     return report.problems == 0;
 }
 
-QStringList attachmentsLeavingWith(const QString& root, const QStringList& noteIds) {
-    const QDir dir(root);
+// --- вложения ----------------------------------------------------------------
+
+QStringList ZStorage::attachmentsLeavingWith(const QStringList& noteIds) const {
+    const QDir dir(root_);
     const QSet<QString> doomed(noteIds.begin(), noteIds.end());
 
     // Все вложения хранилища: всё, что не .md и носит наш id.
@@ -1191,13 +522,13 @@ QStringList attachmentsLeavingWith(const QString& root, const QStringList& noteI
     }
     if (attachments.isEmpty()) return {};
 
-    // Кандидаты — те, что упомянуты в очищаемых заметках. Иначе очистка
-    // корзины уносила бы заодно всех сирот, а решение про сирот владелец
-    // отложил («дальше придумаем»).
+    // Кандидаты — те, что упомянуты в уходящих заметках. Иначе удаление
+    // уносило бы заодно всех сирот, а решение про сирот владелец отложил
+    // («дальше придумаем»).
     QSet<QString> candidates;
     for (const QString& id : noteIds) {
         std::string bytes;
-        if (!readAll(dir.filePath(id + QStringLiteral(".md")), bytes)) continue;
+        if (!readFileBytes(pathOf(id), bytes)) continue;
         const QByteArray text = QByteArray::fromStdString(bytes);
         for (const QString& name : attachments)
             if (!candidates.contains(name) &&
@@ -1209,10 +540,10 @@ QStringList attachmentsLeavingWith(const QString& root, const QStringList& noteI
     // И вычёркиваем всё, что упомянуто в ОСТАЮЩИХСЯ заметках. Внешний цикл по
     // заметкам, внутренний по картинкам: каждая заметка читается один раз.
     for (const QString& name : dir.entryList({QStringLiteral("*.md")}, QDir::Files)) {
-        const QString id = name.left(name.size() - 3);
+        const QString id = idOfPath(name);
         if (doomed.contains(id)) continue;
         std::string bytes;
-        if (!readAll(dir.filePath(name), bytes)) continue;
+        if (!readFileBytes(dir.filePath(name), bytes)) continue;
         const QByteArray text = QByteArray::fromStdString(bytes);
         for (auto it = candidates.begin(); it != candidates.end();) {
             const QString stem = it->left(it->lastIndexOf(QLatin1Char('.')));
@@ -1227,8 +558,8 @@ QStringList attachmentsLeavingWith(const QString& root, const QStringList& noteI
     return out;
 }
 
-bool deleteAttachmentFile(const QString& root, const QString& name, QString* error) {
-    const QString file = QDir(root).filePath(name);
+bool ZStorage::deleteAttachmentFile(const QString& name, QString* error) {
+    const QString file = attachmentPath(name);
     if (!QFile::exists(file)) return true;   // уже нет — и хорошо
     if (!QFile::moveToTrash(file) && !QFile::remove(file)) {
         if (error) *error = QStringLiteral("cannot delete attachment file %1").arg(name);
@@ -1237,58 +568,8 @@ bool deleteAttachmentFile(const QString& root, const QString& name, QString* err
     return true;
 }
 
-bool resurrectNote(const QString& root, const QString& noteId, QString* error) {
-    const QString file = QDir(root).filePath(noteId + QStringLiteral(".md"));
-    if (QFile::exists(file)) {
-        if (error) *error = QStringLiteral("note %1 is in the store — nothing to resurrect")
-                                .arg(noteId);
-        return false;
-    }
-
-    ZStorage storage(root);
-    ZJournal journal;
-    QString why;
-    if (!storage.readJournal(noteId, &journal, &why) || journal.isEmpty()) {
-        if (error) *error = QStringLiteral("no history for %1: %2").arg(noteId, why);
-        return false;
-    }
-    const int head = journal.headIndex();
-    if (head < 0 || journal.at(head).kind() != ZJournal::Kind::Tombstone) {
-        if (error) *error = QStringLiteral("note %1 was not deleted (no tombstone at the head)")
-                                .arg(noteId);
-        return false;
-    }
-    const int content = journal.lastSnapshotIndex();
-    QByteArray body;
-    if (content < 0 || !storage.journalSnapshot(noteId, content, &body, &why)) {
-        if (error) *error = QStringLiteral("history of %1 has no body: %2").arg(noteId, why);
-        return false;
-    }
-
-    QSaveFile out(file);
-    if (!out.open(QIODevice::WriteOnly)) {
-        if (error) *error = QStringLiteral("cannot write %1").arg(file);
-        return false;
-    }
-    out.write(body);
-    if (!out.commit()) {
-        if (error) *error = QStringLiteral("cannot write %1").arg(file);
-        return false;
-    }
-
-    // ЗАПИСЬ ПОВЕРХ НАДГРОБИЯ: заметка снова жива, и голова обязана это
-    // сказать. Вид — «восстановление», источник — время того слепка, из
-    // которого её подняли.
-    if (!storage.appendToJournal(noteId, ZJournal::NewRecord::restore(body, journal.at(content).time()),
-                        &why) &&
-        error != nullptr)
-        *error = QStringLiteral("resurrection not written to history: %1").arg(why);
-    return true;
-}
-
-bool retireAttachmentFile(const QString& root, const QString& name, const ImportLimits& limits,
-                          QString* error) {
-    const QString path = QDir(root).filePath(name);
+bool ZStorage::retireAttachment(const QString& name, const ImportLimits& limits, QString* error) {
+    const QString path = attachmentPath(name);
     QFile file(path);
     if (!file.exists()) return true;   // уже нет — и хорошо
     if (!file.open(QIODevice::ReadOnly)) {
@@ -1309,12 +590,12 @@ bool retireAttachmentFile(const QString& root, const QString& name, const Import
         // Не прочли картинку — старое поведение, и причина названа вслух.
         if (error) *error = QStringLiteral("attachment %1 not buried (%2), deleted instead")
                                 .arg(name, why);
-        return deleteAttachmentFile(root, name, nullptr);
+        return deleteAttachmentFile(name, nullptr);
     }
 
     // Превью всегда JXL: `<id>.webp` становится `<id>.jxl`, исходник уходит.
     const QString id = QFileInfo(path).completeBaseName();
-    const QString target = QDir(root).filePath(id + QStringLiteral(".jxl"));
+    const QString target = attachmentPath(id + QStringLiteral(".jxl"));
     QSaveFile out(target);
     if (!out.open(QIODevice::WriteOnly)) {
         if (error) *error = QStringLiteral("cannot write the deleted preview of %1").arg(name);
@@ -1325,17 +606,19 @@ bool retireAttachmentFile(const QString& root, const QString& name, const Import
         if (error) *error = QStringLiteral("cannot write the deleted preview of %1").arg(name);
         return false;
     }
-    if (target != path && !deleteAttachmentFile(root, name, &why)) {
+    if (target != path && !deleteAttachmentFile(name, &why)) {
         if (error) *error = why;
         return false;
     }
     return true;
 }
 
-bool deleteNoteFile(const QString& root, const QString& noteId, QString* error) {
-    const QString file = QDir(root).filePath(noteId + QStringLiteral(".md"));
+// --- удаление насовсем и воскрешение -----------------------------------------
+
+bool ZStorage::deleteNoteFile(const QString& id, QString* error) {
+    const QString file = pathOf(id);
     if (!QFile::exists(file)) {
-        if (error) *error = QStringLiteral("note %1 is not in the store").arg(noteId);
+        if (error) *error = QStringLiteral("note %1 is not in the store").arg(id);
         return false;
     }
 
@@ -1350,11 +633,10 @@ bool deleteNoteFile(const QString& root, const QString& noteId, QString* error) 
     // последнего слепка. Его хватает, чтобы поднять заметку (zametti-store
     // resurrect), и гашение адресное — значит и на других устройствах журнал
     // похудеет так же, а не разрастётся обратно объединением.
-    ZStorage storage(root);
     QString historyError;
     ZJournal read;
     QVector<ZJournal::RecordRef> voids;
-    if (storage.readJournal(noteId, &read, &historyError)) {
+    if (readJournal(id, &read, &historyError)) {
         const int keep = read.lastSnapshotIndex();
         for (int i = 0; i < read.size(); ++i) {
             if (i == keep || read.isVoided(i) || read.isDamaged(i)) continue;
@@ -1362,14 +644,52 @@ bool deleteNoteFile(const QString& root, const QString& noteId, QString* error) 
         }
     }
     const bool marked =
-        storage.appendToJournal(noteId, ZJournal::NewRecord::tombstone().voiding(voids), &historyError);
+        appendToJournal(id, ZJournal::NewRecord::tombstone().voiding(voids), &historyError);
 
     if (!QFile::moveToTrash(file) && !QFile::remove(file)) {
-        if (error) *error = QStringLiteral("cannot delete note file %1").arg(noteId);
+        if (error) *error = QStringLiteral("cannot delete note file %1").arg(id);
         return false;
     }
     if (!marked && error) *error = QStringLiteral("tombstone not written: %1").arg(historyError);
     return true;
 }
 
-}  // namespace zametti::store
+bool ZStorage::resurrect(const QString& id, QString* error) {
+    const QString file = pathOf(id);
+    if (QFile::exists(file)) {
+        if (error) *error = QStringLiteral("note %1 is in the store — nothing to resurrect").arg(id);
+        return false;
+    }
+
+    ZJournal journal;
+    QString why;
+    if (!readJournal(id, &journal, &why) || journal.isEmpty()) {
+        if (error) *error = QStringLiteral("no history for %1: %2").arg(id, why);
+        return false;
+    }
+    const int head = journal.headIndex();
+    if (head < 0 || journal.at(head).kind() != ZJournal::Kind::Tombstone) {
+        if (error) *error = QStringLiteral("note %1 was not deleted (no tombstone at the head)").arg(id);
+        return false;
+    }
+    const int content = journal.lastSnapshotIndex();
+    QByteArray body;
+    if (content < 0 || !journalSnapshot(id, content, &body, &why)) {
+        if (error) *error = QStringLiteral("history of %1 has no body: %2").arg(id, why);
+        return false;
+    }
+
+    if (!writeFileBytes(file, std::string(body.constData(), size_t(body.size())), error))
+        return false;
+
+    // ЗАПИСЬ ПОВЕРХ НАДГРОБИЯ: заметка снова жива, и голова обязана это
+    // сказать. Вид — «восстановление», источник — время того слепка, из
+    // которого её подняли.
+    if (!appendToJournal(id, ZJournal::NewRecord::restore(body, journal.at(content).time()), &why) &&
+        error != nullptr)
+        *error = QStringLiteral("resurrection not written to history: %1").arg(why);
+    if (loaded_) refreshNote(id);
+    return true;
+}
+
+}  // namespace zametti

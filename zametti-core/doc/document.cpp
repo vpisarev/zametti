@@ -1,6 +1,5 @@
 #include "document_impl.h"
 
-#include "archive.h"
 #include "doc_model.h"
 #include "document_builder.h"
 #include "document_pieces.h"
@@ -8,7 +7,6 @@
 #include "serializer.h"
 #include "sort_order.h"
 #include "text_stats.h"
-#include "times.h"
 
 #include <QTextBlock>
 #include <QTextCursor>

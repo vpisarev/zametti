@@ -1,53 +1,44 @@
-#include "lost_found.h"
+// ZStorage::fileOrphans — бюро находок: куда попадает заметка с оборванным
+// родителем.
+//
+// Раньше такая заметка просто показывалась в корне с пометкой «сирота» — то
+// есть чинилась В ПАМЯТИ, при каждой сборке дерева заново. Теперь она
+// прописывается в спецпапку, и это одно из САНКЦИОНИРОВАННЫХ ИСКЛЮЧЕНИЙ из
+// правила «загрузка ничего не пишет» (решение владельца; список — у
+// ZStorage::migrate). Рамки исключения жёсткие, и они же — предмет проверок:
+//
+//   * пишем ТОЛЬКО заметкам с неразрешимым parent;
+//   * запись двухпортовая: текущий порт (`parent`) := бюро, оригинал
+//     (`lost-parent`) := что было;
+//   * идемпотентно: заметка, уже лежащая в бюро, не трогается вовсе;
+//   * `modified` НЕ поднимается — правка организационная, как перенос;
+//   * само бюро заводится, только когда есть первая находка.
+//
+// Коллизии id между хранилищами объявлены владельцем пренебрежимыми: id — это
+// 8 знаков времени и 6 случайных, и совпадение означало бы, что две заметки
+// заведены в одну секунду на двух машинах, да ещё с одинаковым броском CSPRNG.
+
+#include "zstorage.h"
 
 #include "note_id.h"
-#include "document.h"
 #include "znote.h"
-#include "serializer.h"
-#include "store.h"
 
 #include <QDir>
-#include <QFile>
 #include <QFileInfo>
 #include <QHash>
-#include <QSaveFile>
 
-namespace zametti::store {
-namespace {
+namespace zametti {
 
-bool readBytes(const QString& path, std::string& out) {
-    QFile f(path);
-    if (!f.open(QIODevice::ReadOnly)) return false;
-    const QByteArray bytes = f.readAll();
-    out.assign(bytes.constData(), size_t(bytes.size()));
-    return true;
-}
-
-bool writeBytes(const QString& path, const std::string& bytes, QString* error) {
-    QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly)) {
-        if (error != nullptr)
-            *error = QStringLiteral("cannot open for writing: %1").arg(file.errorString());
-        return false;
-    }
-    file.write(bytes.data(), qint64(bytes.size()));
-    if (file.commit()) return true;
-    if (error != nullptr) *error = QStringLiteral("write failed: %1").arg(file.errorString());
-    return false;
-}
-
-}  // namespace
-
-int fileOrphans(const QString& root, QString* error) {
+int ZStorage::fileOrphans(QString* error) {
     // Один проход по каталогу: что за заметки есть и на кого они ссылаются.
     QHash<QString, QString> parents;
     QHash<QString, std::shared_ptr<ZNote>> docs;
     QString bureau;
-    for (const QFileInfo& info : QDir(root).entryInfoList({QStringLiteral("*.md")}, QDir::Files)) {
+    for (const QFileInfo& info : QDir(root_).entryInfoList({QStringLiteral("*.md")}, QDir::Files)) {
         const QString id = info.completeBaseName();
         if (!isValidNoteId(id.toStdString())) continue;
         std::string bytes;
-        if (!readBytes(info.absoluteFilePath(), bytes)) continue;
+        if (!readFileBytes(info.absoluteFilePath(), bytes)) continue;
         auto doc = std::make_shared<ZNote>();
         doc->load(bytes);
         parents.insert(id, doc->parentId());
@@ -70,14 +61,14 @@ int fileOrphans(const QString& root, QString* error) {
     // дереве человек не заказывал.
     if (bureau.isEmpty()) {
         QString why;
-        const QString made = newNote(root, QString(), &why);
+        const QString made = newNoteFile(QString(), &why);
         if (made.isEmpty()) {
             if (error != nullptr) *error = why;
             return -1;
         }
         bureau = QFileInfo(made).completeBaseName();
         std::string bytes;
-        if (!readBytes(made, bytes)) {
+        if (!readFileBytes(made, bytes)) {
             if (error != nullptr) *error = QStringLiteral("cannot read the lost & found folder");
             return -1;
         }
@@ -94,7 +85,7 @@ int fileOrphans(const QString& root, QString* error) {
         head.set("role", kLostRole);
         head.setBlankAfter(true);
         doc.setHeader(head);
-        if (!writeBytes(made, doc.toMarkdown(), error)) return -1;
+        if (!writeFileBytes(made, doc.toMarkdown(), error)) return -1;
     }
 
     int filed = 0;
@@ -110,11 +101,10 @@ int fileOrphans(const QString& root, QString* error) {
         // `modified` НЕ трогаем: правка организационная, как перенос. Здесь это
         // держится тем, что мы пишем ровно те байты, что прочитали, поменяв
         // две строки шапки, — штампов в этом пути нет вовсе.
-        if (!writeBytes(QDir(root).filePath(id + QStringLiteral(".md")), doc.toMarkdown(), error))
-            return -1;
+        if (!writeFileBytes(pathOf(id), doc.toMarkdown(), error)) return -1;
         ++filed;
     }
     return filed;
 }
 
-}  // namespace zametti::store
+}  // namespace zametti

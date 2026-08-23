@@ -11,7 +11,6 @@
 //   zametti-store archive --root <dir> --id <id> [--restore]
 
 #include "journal.h"
-#include "store.h"
 #include "zstorage.h"
 #include "recompress.h"
 
@@ -25,7 +24,7 @@
 
 namespace {
 
-void printLines(const zametti::store::Report& report) {
+void printLines(const zametti::ZStorage::Report& report) {
     for (const QString& line : report.lines)
         std::printf("%s\n", line.toUtf8().constData());
 }
@@ -104,7 +103,7 @@ int main(int argc, char** argv) {
     if (command == QStringLiteral("init")) {
         if (positional.isEmpty()) return usage();
         QString error;
-        if (!zametti::store::initStore(positional, &error)) {
+        if (!zametti::ZStorage(positional).init(&error)) {
             std::fprintf(stderr, "%s\n", error.toUtf8().constData());
             return 1;
         }
@@ -164,25 +163,37 @@ int main(int argc, char** argv) {
 
     if (command == QStringLiteral("new")) {
         if (root.isEmpty()) return usage();
+        zametti::ZStorage storage(root);
+        if (!storage.isStore()) {
+            std::fprintf(stderr, "not a store: %s\n", root.toUtf8().constData());
+            return 1;
+        }
+        storage.reload();
+        // Названный родитель обязан существовать: окно уводит несуществующего
+        // родителя в корень молча (правило владельца для Ctrl+N), а утилите с
+        // явным --parent молчать нельзя — опечатка в id должна быть видна.
+        if (!parent.isEmpty() && !storage.has(parent)) {
+            std::fprintf(stderr, "parent is not in the store: %s\n", parent.toUtf8().constData());
+            return 1;
+        }
         QString error;
-        const QString path = zametti::store::newNote(root, parent, &error);
-        if (path.isEmpty()) {
+        const QString id = storage.createNote(parent, false, &error);
+        if (id.isEmpty()) {
             std::fprintf(stderr, "%s\n", error.toUtf8().constData());
             return 1;
         }
-        std::printf("%s\n", path.toUtf8().constData());
+        std::printf("%s\n", storage.pathOf(id).toUtf8().constData());
         return 0;
     }
 
     if (command == QStringLiteral("import")) {
         if (root.isEmpty() || from.isEmpty()) return usage();
-        zametti::store::ImportOptions options;
-        options.root = root;
+        zametti::ZStorage::ImportOptions options;
         options.from = from;
         options.appleManifest = manifest;
         options.dryRun = dryRun;
-        zametti::store::Report report;
-        const bool ok = zametti::store::importTree(options, report);
+        zametti::ZStorage::Report report;
+        const bool ok = zametti::ZStorage(root).importTree(options, report);
         printLines(report);
         return ok ? 0 : 1;
     }
@@ -224,7 +235,7 @@ int main(int argc, char** argv) {
             return 1;
         }
         QString error;
-        if (!zametti::store::resurrectNote(root, id, &error)) {
+        if (!zametti::ZStorage(root).resurrect(id, &error)) {
             std::fprintf(stderr, "%s\n", error.toUtf8().constData());
             return 1;
         }
@@ -364,8 +375,8 @@ int main(int argc, char** argv) {
 
     if (command == QStringLiteral("verify")) {
         if (root.isEmpty()) return usage();
-        zametti::store::Report report;
-        const bool ok = zametti::store::verifyStore(root, report);
+        zametti::ZStorage::Report report;
+        const bool ok = zametti::ZStorage(root).verify(report);
         printLines(report);
         return ok ? 0 : 1;
     }

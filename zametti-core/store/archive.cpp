@@ -1,70 +1,42 @@
-#include "archive.h"
+// ZStorage: архив и миграции прежних видов хранилища.
+//
+// Архив — ПОМЕТКА В ШАПКЕ (NoteHeader::kArchivedKey), и ничего кроме. Пришёл
+// на место корзины (этап 15): корзина была ПАПКОЙ, куда заметку переносили, а
+// архив — пометка; `parent` не трогается, «Архив» в дереве собирается сам из
+// помеченных, восстановление — снять пометку.
+//
+// ДО ЭТАПА 17 АРХИВАЦИЯ СРЕЗАЛА ТЕЛО в журнал, оставляя стаб. Платили за это
+// четырежды и молча: из файла исчезали ссылки на вложения (по ним считается,
+// чему уходить при удалении насовсем); картинку, которую держала только
+// архивная заметка, уносило удаление соседней; поиск переставал видеть
+// архивные тела; человек, вышедший из режима истории, получал стаб для правки.
+// Теперь тело остаётся в файле, а стабы прежних сборок разворачивает
+// unfoldArchivedStubs при открытии.
+//
+// Всё здесь — ПО БАЙТАМ, без разбора (правило владельца, записанное после
+// того, как заметка с формулами оказалась испорчена: «пусть .md будет
+// битый-перебитый — раз шапка на месте, программа обязана убрать его в
+// архив, а разбирать дальше вообще не должна»). Шапка берётся куском
+// исходных байтов, пометка дописывается строкой. Исключение одно —
+// migrateTrashToArchive: там правятся три ключа, и заметка разбирается.
+
+#include "zstorage.h"
 
 #include "journal.h"
-#include "zstorage.h"
-#include "document.h"
 #include "znote.h"
-#include "serializer.h"
 
 #include <QDateTime>
-#include <QHash>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QSaveFile>
+#include <QHash>
 
 #include <algorithm>
 #include <string_view>
 #include <utility>
 
-namespace zametti::store {
+namespace zametti {
 namespace {
-
-bool readFileBytes(const QString& path, std::string& out) {
-    QFile f(path);
-    if (!f.open(QIODevice::ReadOnly)) return false;
-    const QByteArray bytes = f.readAll();
-    out.assign(bytes.constData(), size_t(bytes.size()));
-    return true;
-}
-
-// Запись файла заметки целиком и разом. QSaveFile пишет во временный файл рядом
-// и переименовывает его поверх — на месте старого файла либо прежние байты,
-// либо новые, и никогда половина. Тем же способом пишет и редактор.
-bool writeFileBytes(const QString& path, const std::string& bytes, QString* error) {
-    QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly)) {
-        if (error != nullptr)
-            *error = QStringLiteral("cannot open for writing: %1").arg(file.errorString());
-        return false;
-    }
-    file.write(bytes.data(), qint64(bytes.size()));
-    if (file.commit()) return true;
-    if (error != nullptr) *error = QStringLiteral("write failed: %1").arg(file.errorString());
-    return false;
-}
-
-QString noteFile(const QString& root, const QString& noteId) {
-    return QDir(root).filePath(noteId + QStringLiteral(".md"));
-}
-
-}  // namespace
-
-// --- стаб ПО БАЙТАМ, без разбора ---------------------------------------------
-//
-// Правило владельца, записанное после того, как заметка с формулами оказалась
-// испорчена: «пусть .md будет битый-перебитый, случайно или нарочно, — раз
-// шапка на месте, программа обязана убрать его в архив, а разбирать дальше
-// вообще не должна».
-//
-// Оно верное и не только про формулы. Архивация — операция НАД ФАЙЛОМ: тело
-// целиком уезжает в журнал байт в байт, а на его месте остаётся шапка плюс
-// строка заголовка. Ни первое, ни второе разбора не требует, а разбор — это
-// лишняя точка отказа ровно там, где человек спасает то, что уже сломалось.
-//
-// Поэтому здесь ни одного вызова parse. Шапка берётся куском исходных байтов,
-// пометка `archived: yes` дописывается строкой, заголовок ищется как первая
-// содержательная строка после шапки.
 
 // Границы шапки в байтах: [начало, конец) вместе с закрывающей строкой `-->`.
 // Пусто — шапки нет.
@@ -120,25 +92,37 @@ std::string headerWithoutArchived(std::string_view header) {
     return out;
 }
 
+// Похоже ли тело на стаб: не больше одной непустой строки, и та — заголовок.
+// Консервативно: любое сомнение трактуется как «не стаб».
+bool looksLikeStub(std::string_view body) {
+    int lines = 0;
+    size_t at = 0;
+    while (at < body.size()) {
+        size_t end = body.find('\n', at);
+        if (end == std::string_view::npos) end = body.size();
+        std::string_view line = body.substr(at, end - at);
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.remove_suffix(1);
+        if (!line.empty()) {
+            if (++lines > 1) return false;
+            if (line.front() != '#') return false;
+        }
+        at = end + 1;
+    }
+    return lines == 1;
+}
 
+}  // namespace
 
-bool archiveNote(const QString& root, const QString& noteId, const ZJournal::Rules& rules,
-                 QString* error) {
-    const QString path = noteFile(root, noteId);
+bool ZStorage::archiveOne(const QString& id, const ZJournal::Rules& rules, QString* error) {
+    const QString path = pathOf(id);
     std::string bytes;
     if (!readFileBytes(path, bytes)) {
-        if (error != nullptr) *error = QStringLiteral("cannot read note %1").arg(noteId);
+        if (error != nullptr) *error = QStringLiteral("cannot read note %1").arg(id);
         return false;
     }
-    // НИ ОДНОГО РАЗБОРА, и это правило владельца, а не экономия: заметка могла
-    // быть испорчена чем угодно — правкой в чужом редакторе, сбойным диском,
-    // нашей же ошибкой; раз шапка на месте, убрать её в архив программа
-    // обязана. Отсюда же запрет сводить архивацию к ZStorage::rewriteNote: тот
-    // заметку разбирает.
     const auto [headFrom, headTo] = headerRange(bytes);
     if (headTo == 0) {
-        if (error != nullptr)
-            *error = QStringLiteral("note %1 has no zametti header").arg(noteId);
+        if (error != nullptr) *error = QStringLiteral("note %1 has no zametti header").arg(id);
         return false;
     }
     // ИДЕМПОТЕНТНОСТЬ. Повторная архивация — не ошибка: так выглядит второй
@@ -162,10 +146,9 @@ bool archiveNote(const QString& root, const QString& noteId, const ZJournal::Rul
     // Запись ложится по общим правилам отбора: пометка мелкая, значит гасит
     // прошлую запись, а не встаёт рядом. Голова журнала обязана сойтись с
     // файлом — на этом стоит вся синхронизация.
-    ZStorage storage(root);
     ZJournal read;
     QString why;
-    if (!storage.readJournal(noteId, &read, &why)) {
+    if (!readJournal(id, &read, &why)) {
         if (error != nullptr) *error = QStringLiteral("cannot read history: %1").arg(why);
         return true;   // файл уже помечен: архивация состоялась
     }
@@ -173,7 +156,7 @@ bool archiveNote(const QString& root, const QString& noteId, const ZJournal::Rul
     const auto snapshotOf = [&](int at) {
         QByteArray older;
         QString ignored;
-        if (!storage.journalSnapshot(noteId, at, &older, &ignored)) return QByteArray();
+        if (!journalSnapshot(id, at, &older, &ignored)) return QByteArray();
         return older;
     };
     const ZJournal::Step step = read.planStep(
@@ -183,7 +166,7 @@ bool archiveNote(const QString& root, const QString& noteId, const ZJournal::Rul
     for (int at : step.voided)
         voids.append(ZJournal::RecordRef(read.at(at).time(), read.at(at).digest()));
     if (step.writeNew &&
-        !storage.appendToJournal(noteId, ZJournal::NewRecord::save(snapshot).voiding(voids), &why)) {
+        !appendToJournal(id, ZJournal::NewRecord::save(snapshot).voiding(voids), &why)) {
         // Файл уже помечен — архивация состоялась; но расхождение головы с
         // файлом надо назвать вслух, а не проглотить.
         if (error != nullptr) *error = QStringLiteral("mark not written to history: %1").arg(why);
@@ -191,19 +174,18 @@ bool archiveNote(const QString& root, const QString& noteId, const ZJournal::Rul
     return true;
 }
 
-bool restoreNote(const QString& root, const QString& noteId, QString* error) {
-    const QString path = noteFile(root, noteId);
+bool ZStorage::restoreOne(const QString& id, QString* error) {
+    const QString path = pathOf(id);
     std::string bytes;
     if (!readFileBytes(path, bytes)) {
-        if (error != nullptr) *error = QStringLiteral("cannot read note %1").arg(noteId);
+        if (error != nullptr) *error = QStringLiteral("cannot read note %1").arg(id);
         return false;
     }
     // Разбора нет и здесь, по той же причине: вернуть заметку человек вправе,
     // какой бы она ни была.
     const auto [headFrom, headTo] = headerRange(bytes);
     if (headTo == 0) {
-        if (error != nullptr)
-            *error = QStringLiteral("note %1 has no zametti header").arg(noteId);
+        if (error != nullptr) *error = QStringLiteral("note %1 has no zametti header").arg(id);
         return false;
     }
     const std::string_view header = std::string_view(bytes).substr(headFrom, headTo - headFrom);
@@ -219,41 +201,15 @@ bool restoreNote(const QString& root, const QString& noteId, QString* error) {
 
     // ВЕШКА В ИСТОРИИ. Таймлайн отвечает на вопрос «что с заметкой было», и
     // «вернули из архива» — такой же ответ, как «правили» или «удалили».
-    ZStorage storage(root);
     QString ignored;
-    storage.appendToJournal(noteId,
-                   ZJournal::NewRecord::restore(QByteArray(out.data(), qsizetype(out.size())), 0),
-                   &ignored);
+    appendToJournal(id, ZJournal::NewRecord::restore(QByteArray(out.data(), qsizetype(out.size())), 0),
+                    &ignored);
     return true;
 }
 
-namespace {
-
-// Похоже ли тело на стаб: не больше одной непустой строки, и та — заголовок.
-// Консервативно: любое сомнение трактуется как «не стаб».
-bool looksLikeStub(std::string_view body) {
-    int lines = 0;
-    size_t at = 0;
-    while (at < body.size()) {
-        size_t end = body.find('\n', at);
-        if (end == std::string_view::npos) end = body.size();
-        std::string_view line = body.substr(at, end - at);
-        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.remove_suffix(1);
-        if (!line.empty()) {
-            if (++lines > 1) return false;
-            if (line.front() != '#') return false;
-        }
-        at = end + 1;
-    }
-    return lines == 1;
-}
-
-}  // namespace
-
-int unfoldArchivedStubs(const QString& root, QStringList* leftAlone, QString* error) {
-    ZStorage storage(root);
+int ZStorage::unfoldArchivedStubs(QStringList* leftAlone, QString* error) {
     int unfolded = 0;
-    for (const QFileInfo& info : QDir(root).entryInfoList({QStringLiteral("*.md")}, QDir::Files)) {
+    for (const QFileInfo& info : QDir(root_).entryInfoList({QStringLiteral("*.md")}, QDir::Files)) {
         const QString id = info.completeBaseName();
         std::string bytes;
         if (!readFileBytes(info.absoluteFilePath(), bytes)) continue;
@@ -265,7 +221,7 @@ int unfoldArchivedStubs(const QString& root, QStringList* leftAlone, QString* er
 
         ZJournal read;
         QString why;
-        if (!storage.readJournal(id, &read, &why)) {
+        if (!readJournal(id, &read, &why)) {
             if (leftAlone != nullptr)
                 leftAlone->append(QStringLiteral("%1: history unreadable (%2)").arg(id, why));
             continue;
@@ -280,7 +236,7 @@ int unfoldArchivedStubs(const QString& root, QStringList* leftAlone, QString* er
         size_t snapTo = 0;
         for (int at = read.lastSnapshotIndex(); at >= 0; at = read.previousSnapshotIndex(at)) {
             QByteArray body;
-            if (!storage.journalSnapshot(id, at, &body, &why) || body.isEmpty()) continue;
+            if (!journalSnapshot(id, at, &body, &why) || body.isEmpty()) continue;
             const std::string candidate(body.constData(), size_t(body.size()));
             const auto [from, to] = headerRange(candidate);
             (void)from;
@@ -311,11 +267,11 @@ int unfoldArchivedStubs(const QString& root, QStringList* leftAlone, QString* er
     return unfolded;
 }
 
-int migrateTrashToArchive(const QString& root, QString* error) {
+int ZStorage::migrateTrashToArchive(QString* error) {
     QString trashId;
     QHash<QString, QString> parents;   // id → parent, по всему хранилищу
     QHash<QString, std::shared_ptr<ZNote>> docs;
-    for (const QFileInfo& info : QDir(root).entryInfoList({QStringLiteral("*.md")}, QDir::Files)) {
+    for (const QFileInfo& info : QDir(root_).entryInfoList({QStringLiteral("*.md")}, QDir::Files)) {
         std::string bytes;
         if (!readFileBytes(info.absoluteFilePath(), bytes)) continue;
         auto doc = std::make_shared<ZNote>();
@@ -337,37 +293,32 @@ int migrateTrashToArchive(const QString& root, QString* error) {
         doc.setHeaderValue(QStringLiteral("trash-parent"), QString());
         doc.setHeaderValue(QStringLiteral("trash-path"), QString());
         doc.setArchived(true);
-        if (!writeFileBytes(noteFile(root, it.key()), doc.toMarkdown(), error)) return -1;
+        if (!writeFileBytes(pathOf(it.key()), doc.toMarkdown(), error)) return -1;
         ++moved;
     }
 
     // Опустевшая корзина уходит вместе со своим журналом: заметкой она не была
     // никогда, и место в Архиве ей ни к чему.
     QString ignored;
-    forgetNote(root, trashId, &ignored);
+    forgetNote(trashId, &ignored);
     return moved;
 }
 
-bool forgetNote(const QString& root, const QString& noteId, QString* error) {
-    const QString path = noteFile(root, noteId);
+bool ZStorage::forgetNote(const QString& id, QString* error) {
+    const QString path = pathOf(id);
     const bool hadFile = QFile::exists(path);
     if (hadFile && !QFile::moveToTrash(path) && !QFile::remove(path)) {
-        if (error != nullptr) *error = QStringLiteral("cannot delete note file %1").arg(noteId);
+        if (error != nullptr) *error = QStringLiteral("cannot delete note file %1").arg(id);
         return false;
     }
 
     // ЖУРНАЛ УХОДИТ ВМЕСТЕ С ЗАМЕТКОЙ — и только здесь. Обычное удаление
-    // журнал бережёт (по нему заметку можно воскресить), но у архивной тело
-    // живёт в журнале и больше нигде: оставить его значило бы оставить и саму
-    // заметку, а человек попросил забыть её насовсем.
-    const QString log = ZStorage(root).journalPath(noteId);
-    if (QFile::exists(log) && !QFile::moveToTrash(log) && !QFile::remove(log)) {
-        if (error != nullptr) *error = QStringLiteral("cannot delete journal %1").arg(noteId);
-        return false;
-    }
+    // журнал бережёт (по нему заметку можно воскресить), но у заметки-корзины
+    // истории нет по смыслу, и её журналу место в мусорке.
+    if (!removeJournal(id, error)) return false;
     if (!hadFile && error != nullptr)
-        *error = QStringLiteral("note file %1 did not exist").arg(noteId);
+        *error = QStringLiteral("note file %1 did not exist").arg(id);
     return true;
 }
 
-}  // namespace zametti::store
+}  // namespace zametti
