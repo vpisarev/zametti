@@ -214,17 +214,18 @@ void checkCaretGoesToFirstHunk() {
 // РЕВИЗИЯ документа выросла бы одинаково, и по ней это не различить.
 void checkUntouchedStaysPut() {
     ZDocument doc = noteOf("# заголовок\n\nраз\n\nдва\n");
-    const std::vector<BlockInfo> before = doc.blocks();
+    std::vector<BlockInfo> before;
+    for (int i = 0; i < doc.blockCount(); ++i) before.push_back(doc.blockAt(i));
     ZT_EQ("кусок один", std::string("1"),
           std::to_string(doc.applySourceText(QStringLiteral("# заголовок\n\nраз\n\nДВА\n"))));
-    const std::vector<BlockInfo> after = doc.blocks();
-    ZT_EQ("блоков столько же", std::to_string(before.size()), std::to_string(after.size()));
-    if (before.size() != after.size()) return;
+    ZT_EQ("блоков столько же", std::to_string(before.size()),
+          std::to_string(size_t(doc.blockCount())));
+    if (int(before.size()) != doc.blockCount()) return;
     for (size_t i = 0; i + 1 < before.size(); ++i)
         ZT_EQ("нетронутый блок " + std::to_string(i) + " цел",
-              before[i].text.toStdString(), after[i].text.toStdString());
+              before[i].text.toStdString(), doc.blockAt(int(i)).text.toStdString());
     ZT_TRUE("а последний правда изменился",
-            before.back().text != after.back().text);
+            before.back().text != doc.blockAt(doc.blockCount() - 1).text);
 }
 
 // НЕПОДВИЖНАЯ ТОЧКА НА ЗАМЕТКАХ ВЛАДЕЛЬЦА: наложить собственный канон — значит

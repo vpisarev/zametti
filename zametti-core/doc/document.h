@@ -225,7 +225,6 @@ public:
 
     int blockCount() const;
     BlockInfo blockAt(int index) const;
-    std::vector<BlockInfo> blocks() const;
 
     // Канонический текст построчно, с картой «строка → блок». На этом стоит
     // разность версий.

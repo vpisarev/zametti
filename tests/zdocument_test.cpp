@@ -321,12 +321,12 @@ TEST(ZDocument, BlocksAndLines) {
     ZDocument doc;
     ASSERT_TRUE(doc.loadMarkdown(source));
 
-    const auto all = doc.blocks();
-    ZT_TRUE("блоки перечислены", all.size() >= 7);
+    ZT_TRUE("блоки перечислены", doc.blockCount() >= 7);
 
     int headings = 0, items = 0, code = 0, done = 0;
     QString language;
-    for (const BlockInfo& b : all) {
+    for (int i = 0; i < doc.blockCount(); ++i) {
+        const BlockInfo b = doc.blockAt(i);
         if (b.kind == Kind::Heading) ++headings;
         if (b.kind == Kind::ListItem) {
             ++items;
@@ -345,7 +345,7 @@ TEST(ZDocument, BlocksAndLines) {
 
     // Строки канона с картой блоков — на этом стоит разность версий.
     const auto lines = doc.sourceLines();
-    ZT_TRUE("строк не меньше, чем блоков", lines.size() >= all.size());
+    ZT_TRUE("строк не меньше, чем блоков", int(lines.size()) >= doc.blockCount());
     bool anyMapped = false;
     for (const SourceLine& line : lines)
         if (line.block >= 0) anyMapped = true;

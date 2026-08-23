@@ -251,15 +251,6 @@ BlockInfo ZDocument::blockAt(int index) const {
     return out;
 }
 
-std::vector<BlockInfo> ZDocument::blocks() const {
-    std::vector<BlockInfo> out;
-    out.reserve(size_t(d_->text.blockCount()));
-    int index = 0;
-    for (QTextBlock b = d_->text.begin(); b.isValid(); b = b.next(), ++index)
-        out.push_back(blockAt(index));
-    return out;
-}
-
 
 // --- вложения --------------------------------------------------------------
 
