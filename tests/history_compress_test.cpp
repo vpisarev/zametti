@@ -352,8 +352,8 @@ void checkLiveAndMigrationAgree(const QString& root) {
             if (!h.snapshotAt(live, at, &out, &why)) return QByteArray();
             return out;
         };
-        const history::Step step =
-            history::decideStep(j, snapshotOf, steps[i], Kind::Save, when, rules);
+        const journal::ZJournal::Step step =
+            j.planStep(snapshotOf, steps[i], Kind::Save, when, rules);
         // Живой путь гасит адресом — ровно то же, что делает запись заметки.
         QVector<journal::EntryRef> voids;
         for (int at : step.voided) voids.append(journal::EntryRef(j.at(at).time(), j.at(at).digest()));

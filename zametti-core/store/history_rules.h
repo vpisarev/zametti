@@ -50,43 +50,10 @@ int changedChars(const QByteArray& a, const QByteArray& b);
 
 namespace history {
 
-struct Rules {
-    // Мелкая свежая правка заменяет прошлую запись, а не ложится рядом.
-    int mergeChars = 100;
-    int mergeHours = 24;
-    // СТОРОЖ СВЕЖЕСТИ — единственное, чем миграция отличается от живой записи.
-    // Ставится не руками вызывающего: `compressJournal` включает его сам.
-    bool ignoreAge = false;
-};
-
-// Слепок записи по номеру; пусто (isNull) — не собрался, дальше не заглядывать.
-using SnapshotOf = std::function<QByteArray(int)>;
-
-// Решение об ОДНОЙ новой записи против журнала, уже вычищенного этими же
-// правилами. Это и есть весь свод правил этапа 9 в одном месте.
-struct Step {
-    // Кого новая запись ГАСИТ — номера в поданном журнале, по возрастанию.
-    // Не «сколько оставить»: гашение адресное, потому что уехавшую запись
-    // стереть уже нельзя, а сказать «она не в счёт» — можно, и это доедет.
-    QVector<int> voided;
-    bool writeNew = true;  // писать ли новую запись со слепком
-    int dropped = 0;       // ушло возвратом к уже записанному состоянию
-    int merged = 0;        // ушло слиянием мелкой правки (0 или 1)
-};
-
-Step decideStep(const journal::ZJournal& journal, const SnapshotOf& snapshotOf,
-                const QByteArray& fresh, journal::Kind kind, qint64 now, const Rules& rules);
-
-// Полная пересборка журнала: те же решения, прогнанные по всем записям подряд,
-// как будто их дописывали по одной в уже чистый журнал.
-struct Plan {
-    QVector<int> keep;     // номера остающихся записей по возрастанию
-    int duplicates = 0;    // сколько ушло возвратом к уже записанному
-    int merged = 0;        // сколько ушло слиянием мелкой правки
-    int passes = 0;        // сколько проходов понадобилось до неподвижности
-};
-Plan planFor(const journal::ZJournal& journal, const QVector<QByteArray>& snapshots,
-             const Rules& rules);
+// Правила отбора и его решения переехали в ZJournal (Rules, Step, Plan,
+// planStep, planCompress): «писать ли запись и кого погасить» — вопрос к
+// набору записей, а не к отдельному своду функций над ним.
+using Rules = journal::ZJournal::Rules;
 
 // Что сделала чистка — для люка и для отчётов.
 struct Report {

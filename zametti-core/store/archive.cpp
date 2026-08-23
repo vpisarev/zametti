@@ -188,8 +188,8 @@ bool archiveNote(const QString& root, const QString& noteId, const history::Rule
         if (!history.snapshotAt(noteId, at, &older, &ignored)) return QByteArray();
         return older;
     };
-    const history::Step step = history::decideStep(read, snapshotOf, snapshot, journal::Kind::Save,
-                                                   QDateTime::currentMSecsSinceEpoch(), rules);
+    const journal::ZJournal::Step step = read.planStep(
+        snapshotOf, snapshot, journal::Kind::Save, QDateTime::currentMSecsSinceEpoch(), rules);
     QVector<journal::EntryRef> voids;
     voids.reserve(step.voided.size());
     for (int at : step.voided)

@@ -97,8 +97,7 @@ bool ZNoteHistory::record(journal::Kind kind, const QByteArray& snapshot, QStrin
         if (!history.snapshotAt(id_, i, &older, &ignored)) return {};
         return older;
     };
-    const history::Step step =
-        history::decideStep(read, snapshotOf, snapshot, kind, now, rules_);
+    const journal::ZJournal::Step step = read.planStep(snapshotOf, snapshot, kind, now, rules_);
 
     // ГАШЕНИЕ ВМЕСТО СТИРАНИЯ. Записи, которые правило объявило лишними,
     // адресуются парой (время, отпечаток) и едут этим адресом в новой записи:
