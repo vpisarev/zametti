@@ -8,6 +8,8 @@
 #include "znote.h"
 #include "zstorage.h"
 
+#include "note_tree.h"
+
 #include "test_util.h"
 #include "testdata.h"
 
@@ -136,6 +138,39 @@ void checkGuards() {
     ZT_TRUE("папку рядом архивировать можно", f.storage.archive(other, {}, &failed));
 }
 
+// --- дерево: верхняя строка это корневая заметка ---------------------------
+
+void checkTreeRow() {
+    Fixture f;
+    QString error;
+    const QString id = f.storage.ensureRootNote(&error);
+    ZT_TRUE("корень заведён", !id.isEmpty());
+    ZT_TRUE("переименован", f.storage.rename(id, QStringLiteral("Мысли"), {}, &error));
+
+    zametti::NoteTreeModel model(f.root);
+    const QModelIndex top = model.index(0, 0, QModelIndex());
+    ZT_TRUE("верхняя строка есть", top.isValid());
+    ZT_EQ("и подписана заголовком корневой заметки", std::string("Мысли"),
+          s(model.data(top, Qt::DisplayRole).toString()));
+    // САМА ЗАМЕТКА В ДЕРЕВО НЕ ИДЁТ: строкой внутри себя ей быть незачем.
+    // Под верхней строкой только виртуальный «Архив»: самой корневой заметки
+    // там нет — строкой внутри себя ей быть незачем.
+    int notes = 0;
+    for (int i = 0; i < model.rowCount(top); ++i)
+        if (!model.idOf(model.index(i, 0, top)).isEmpty()) ++notes;
+    ZT_EQ("настоящих детей у верхней строки нет", std::string("0"), std::to_string(notes));
+    // И в средней колонке её тоже нет.
+    ZT_TRUE("список пуст", model.notesInSubtree(top).empty());
+
+    // F2 по верхней строке переименовывает корневую заметку, а не что-то ещё.
+    QString renamedFile;
+    QObject::connect(&model, &zametti::NoteTreeModel::renameRequested,
+                     [&renamedFile](const QString& file, const QString&) { renamedFile = file; });
+    ZT_TRUE("правка принята",
+            model.setData(top, QStringLiteral("Дневник"), Qt::EditRole));
+    ZT_EQ("и адресована файлу корневой заметки", s(f.storage.pathOf(id)), s(renamedFile));
+}
+
 }  // namespace
 
 TEST(RootNote, All) {
@@ -143,5 +178,6 @@ TEST(RootNote, All) {
     checkBirth();
     checkFoundByRole();
     checkGuards();
+    checkTreeRow();
     EXPECT_EQ(0, zt::freshFailures());
 }

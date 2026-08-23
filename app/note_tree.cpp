@@ -140,7 +140,18 @@ std::shared_ptr<NoteTreeModel::Node> buildDir(const QString& dirPath, const QStr
 // ИМЯ КАТАЛОГА хранилища (решение владельца). Прежде здесь стояло «All notes»
 // с обоснованием «имя каталога техническое»; на деле оно как раз и отвечает на
 // вопрос «а какое хранилище открыто», а у человека их бывает несколько.
-QString storeRootTitle(const QString& root) {
+QString storeRootTitle(const QString& root, const ZStorage* storage) {
+    // ИМЯ ХРАНИЛИЩА ЖИВЁТ В КОРНЕВОЙ ЗАМЕТКЕ (этап 17): её заголовок и есть
+    // подпись верхней строки, а переименование строки по F2 — то, как имя
+    // меняется. Настройка storeTitle остаётся старшинством для того, кто её
+    // задал руками; имя каталога — последний запасной ход.
+    if (storage != nullptr) {
+        const QString rootNote = storage->rootId();
+        if (!rootNote.isEmpty()) {
+            const QString title = storage->titleOf(rootNote);
+            if (!title.isEmpty()) return title;
+        }
+    }
     const QString configured = settings().store().storeTitle();
     if (!configured.isEmpty()) return configured;
     // Голое имя каталога, без пути. Завершающая черта в корне отрезается —
@@ -160,7 +171,7 @@ std::shared_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath, const Z
     hidden->dir = true;
 
     auto rootOwned = std::make_shared<NoteTreeModel::Node>();
-    rootOwned->title = storeRootTitle(rootPath);
+    rootOwned->title = storeRootTitle(rootPath, &storage);
     rootOwned->path = QFileInfo(rootPath).absoluteFilePath();
     rootOwned->dir = true;
     rootOwned->storeRoot = true;
@@ -172,7 +183,11 @@ std::shared_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath, const Z
     std::vector<std::shared_ptr<NoteTreeModel::Node>> nodes;
     QHash<QString, NoteTreeModel::Node*> byId;
     QHash<QString, QString> parentOf;
+    // КОРНЕВАЯ ЗАМЕТКА В ДЕРЕВО НЕ ИДЁТ: она и есть верхняя строка, а строкой
+    // внутри самой себя ей быть незачем.
+    const QString rootNoteId = storage.rootId();
     for (const QString& id : storage.ids()) {
+        if (!rootNoteId.isEmpty() && id == rootNoteId) continue;
         const ZStorage::NoteInfo* meta = storage.info(id);
         if (meta == nullptr) continue;
         auto node = std::make_shared<NoteTreeModel::Node>();
@@ -994,7 +1009,18 @@ bool NoteTreeModel::setData(const QModelIndex& index, const QVariant& value, int
     if (!store_ || !index.isValid() || role != Qt::EditRole) return false;
     const QString title = value.toString().trimmed();
     if (title.isEmpty()) return false;
-    emit renameRequested(static_cast<const Node*>(index.internalPointer())->path, title);
+    const Node* node = static_cast<const Node*>(index.internalPointer());
+    // ВЕРХНЯЯ СТРОКА — ЭТО КОРНЕВАЯ ЗАМЕТКА: переименовать её значит сменить имя
+    // хранилища, и делается это тем же путём, что у любой другой заметки — по
+    // файлу. Корня ещё нет (хранилище прежней сборки) — переименовывать нечего.
+    if (node->storeRoot) {
+        if (storage_ == nullptr) return false;
+        const QString rootNote = storage_->rootId();
+        if (rootNote.isEmpty()) return false;
+        emit renameRequested(storage_->pathOf(rootNote), title);
+        return true;
+    }
+    emit renameRequested(node->path, title);
     return true;
 }
 
