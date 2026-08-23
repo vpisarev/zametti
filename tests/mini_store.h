@@ -37,39 +37,8 @@ public:
     }
 
     QString root() const { return dir_.path(); }
-    QString pathOf(const QString& id) const {
-        return dir_.filePath(id + QStringLiteral(".md"));
-    }
     QString journalOf(const QString& id) const {
         return dir_.filePath(QStringLiteral("history/%1.log").arg(id));
-    }
-
-    // --- заметки и вложения ------------------------------------------------
-
-    // Заметка с шапкой и телом. Возвращает те же байты, что легли в файл.
-    QByteArray addNote(const QString& id, const QString& title, const QString& body,
-                       const QString& parent = {}, bool archived = false) const {
-        QByteArray out = "<!-- zametti\nversion: 1\n";
-        if (!parent.isEmpty()) out += "parent: " + parent.toUtf8() + "\n";
-        out += "created: 2026-01-01T00:00:00+03:00\n";
-        out += "modified: 2026-01-02T00:00:00+03:00\n";
-        if (archived) out += "archived: yes\n";
-        out += "-->\n\n# " + title.toUtf8() + "\n";
-        if (!body.isEmpty()) out += "\n" + body.toUtf8();
-        write(pathOf(id), out);
-        return out;
-    }
-
-    void addAttachment(const QString& name, const QByteArray& bytes) const {
-        write(dir_.filePath(name), bytes);
-    }
-
-    // Время файла — им, среди прочего, датируется опорная запись журнала.
-    void setFileTime(const QString& id, qint64 utcMs) const {
-        QFile file(pathOf(id));
-        (void)file.open(QIODevice::ReadWrite);
-        file.setFileTime(QDateTime::fromMSecsSinceEpoch(utcMs), QFileDevice::FileModificationTime);
-        file.close();
     }
 
     // --- пол времени устройства --------------------------------------------
