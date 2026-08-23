@@ -12,6 +12,7 @@
 //     поиска не должны зависеть от того, где ищут.
 
 #include "editor_widget.h"
+#include "zstorage.h"
 #include "history_rig.h"
 #include "history_search.h"
 #include "journal.h"
@@ -55,25 +56,25 @@ QString makeNote(const QString& id) {
     if (file.open(QIODevice::WriteOnly)) file.write(last);
     file.close();
 
-    journal::History history(g_root);
+    ZStorage history(g_root);
     QString error;
     const qint64 now = 1'700'000'000'000LL;
-    history.append(id,
+    history.appendToJournal(id,
                    journal::NewRecord::save(note("# Планы\n\nПока ничего.\n", "a"),
                                             journal::Stamp::at(now)),
                    &error);
-    history.append(id,
+    history.appendToJournal(id,
                    journal::NewRecord::save(note("# Планы\n\nПоехали в Кострому.\n", "b"),
                                             journal::Stamp::at(now + 60'000)),
                    &error);
-    history.append(id, zametti::journal::NewRecord::save(last, journal::Stamp::at(now + 120'000)), &error);
+    history.appendToJournal(id, zametti::journal::NewRecord::save(last, journal::Stamp::at(now + 120'000)), &error);
     return path;
 }
 
 void checkFindsWhatIsGone() {
     const QString id = QStringLiteral("01ssssssssss01");
     makeNote(id);
-    const journal::History history(g_root);
+    ZStorage history(g_root);
     const HistorySearchReport report =
         searchNoteHistory(history, id, makeQuery(QStringLiteral("Кострому")));
 
@@ -89,12 +90,12 @@ void checkFindsWhatIsGone() {
     // Адресация: по паре (время, отпечаток) находится ровно та запись.
     journal::ZJournal journal;
     QString error;
-    ZT_TRUE("журнал читается", history.read(id, &journal, &error));
+    ZT_TRUE("журнал читается", history.readJournal(id, &journal, &error));
     const int at = journal.indexOf(report.hits[0].snapshotTime,
                                          report.hits[0].snapshotDigest);
     ZT_EQ("вешка ведёт к средней записи", num(1), num(at));
     QByteArray body;
-    ZT_TRUE("слепок собирается", history.snapshotAt(id, at, &body, &error));
+    ZT_TRUE("слепок собирается", history.journalSnapshot(id, at, &body, &error));
     ZT_TRUE("и в нём то самое слово", body.contains("Кострому"));
 }
 
@@ -102,7 +103,7 @@ void checkFindsWhatIsGone() {
 void checkFreshFirst() {
     const QString id = QStringLiteral("01ssssssssss02");
     makeNote(id);
-    const journal::History history(g_root);
+    ZStorage history(g_root);
     const HistorySearchReport report =
         searchNoteHistory(history, id, makeQuery(QStringLiteral("Планы")));
     ZT_TRUE("нашлось во всех трёх: " + num(report.withHits), report.withHits == 3);
@@ -116,7 +117,7 @@ void checkFreshFirst() {
 void checkQueryRules() {
     const QString id = QStringLiteral("01ssssssssss03");
     makeNote(id);
-    const journal::History history(g_root);
+    ZStorage history(g_root);
     ZT_TRUE("один знак не ищется",
             searchNoteHistory(history, id, makeQuery(QStringLiteral("П"))).hits.isEmpty());
     ZT_TRUE("строчными находит и с заглавной",
@@ -140,28 +141,28 @@ void checkSearchMigratesFirst() {
         QFile file(path);
         if (file.open(QIODevice::WriteOnly)) file.write(a2);
     }
-    journal::History history(g_root);
+    ZStorage history(g_root);
     QString error;
     const qint64 now = 1'700'000'000'000LL;
-    history.append(id, zametti::journal::NewRecord::save(a, journal::Stamp::at(now)), &error);
-    history.append(id, zametti::journal::NewRecord::save(b, journal::Stamp::at(now + 60'000)), &error);
-    history.append(id, zametti::journal::NewRecord::save(a2, journal::Stamp::at(now + 120'000)), &error);
+    history.appendToJournal(id, zametti::journal::NewRecord::save(a, journal::Stamp::at(now)), &error);
+    history.appendToJournal(id, zametti::journal::NewRecord::save(b, journal::Stamp::at(now + 60'000)), &error);
+    history.appendToJournal(id, zametti::journal::NewRecord::save(a2, journal::Stamp::at(now + 120'000)), &error);
     // Шапку — на старый лад: иначе журнал уже считается чищеным.
     {
-        QFile file(history.pathFor(id));
+        QFile file(history.journalPath(id));
         ZT_TRUE("журнал открыт", file.open(QIODevice::ReadOnly));
         QByteArray blob = file.readAll();
         file.close();
         const QByteArray clean =
             journal::ZJournal::headerBytes(QString::fromLatin1(journal::kCleanVersion));
         blob = journal::ZJournal::headerBytes(QString()) + blob.mid(clean.size());
-        QFile out(history.pathFor(id));
+        QFile out(history.journalPath(id));
         ZT_TRUE("журнал переписан", out.open(QIODevice::WriteOnly | QIODevice::Truncate));
         out.write(blob);
     }
 
     journal::ZJournal before;
-    ZT_TRUE("грязный журнал читается", history.read(id, &before, &error));
+    ZT_TRUE("грязный журнал читается", history.readJournal(id, &before, &error));
     ZT_EQ("в нём три записи", num(3), num(before.size()));
 
     NoteEditor editor;
@@ -171,7 +172,7 @@ void checkSearchMigratesFirst() {
     const HistorySearchReport report = rig.controller.searchHistory(QStringLiteral("Кострому"));
 
     journal::ZJournal after;
-    ZT_TRUE("журнал читается и после", history.read(id, &after, &error));
+    ZT_TRUE("журнал читается и после", history.readJournal(id, &after, &error));
     ZT_EQ("поиск вычистил дубликат", num(1), num(after.size()));
     ZT_EQ("и находка одна, а не три", num(1), num(report.hits.size()));
 }
@@ -195,7 +196,7 @@ qint64 yardstick() {
 }
 
 void bench(const QString& root, const QString& needle) {
-    const journal::History history(root);
+    ZStorage history(root);
     const QDir dir(QDir(root).filePath(QStringLiteral("history")));
     const QStringList files = dir.entryList({QStringLiteral("*.log")}, QDir::Files, QDir::Name);
     const Query query = makeQuery(needle);

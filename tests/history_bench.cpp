@@ -40,6 +40,7 @@
 // заходит раз в запуск программы.
 
 #include "editor_widget.h"
+#include "zstorage.h"
 #include "journal.h"
 #include "settings.h"
 
@@ -146,10 +147,10 @@ Sample measure(const QString& root, const QString& sourceNote, int saves) {
     const QString log = root + QStringLiteral("/history/") + noteId + QStringLiteral(".log");
     sample.journalBytes = QFileInfo(log).size();
 
-    zametti::journal::History history(root);
+    zametti::ZStorage history(root);
     zametti::journal::ZJournal read;
     QString error;
-    if (history.read(noteId, &read, &error)) {
+    if (history.readJournal(noteId, &read, &error)) {
         sample.records = read.size();
         for (const zametti::journal::ZJournal::Entry& entry : read.entries())
             sample.plainTotal += entry.plainSize();

@@ -242,7 +242,7 @@ void checkDeleteCascade() {
     QStringList failed;
     ZT_TRUE("внук в архиве", storage.archive(grand, rules(), &failed) && failed.isEmpty());
 
-    const QString childLog = zametti::journal::History(root).pathFor(child);
+    const QString childLog = zametti::ZStorage(root).journalPath(child);
     ZT_TRUE("удаление папки прошло", storage.remove(folder, zametti::ImportLimits{}, &error));
 
     ZT_TRUE("папки нет в каталоге", !storage.has(folder));
@@ -255,8 +255,8 @@ void checkDeleteCascade() {
     // доехать до других устройств, иначе синк привезёт заметку обратно.
     ZT_TRUE("журнал ребёнка на месте", QFile::exists(childLog));
     zametti::journal::ZJournal read;
-    zametti::journal::History history(root);
-    ZT_TRUE("журнал внука читается", history.read(grand, &read, &error));
+    zametti::ZStorage history(root);
+    ZT_TRUE("журнал внука читается", history.readJournal(grand, &read, &error));
     ZT_TRUE("и голова у него — надгробие",
             !read.isEmpty() && read.at(read.headIndex()).kind() == zametti::journal::Kind::Tombstone);
 }

@@ -44,37 +44,5 @@ int changedChars(const QByteArray& a, const QByteArray& b) {
 
 namespace history {
 
-bool compressJournal(journal::History& history, const QString& noteId, const Rules& rules,
-                     bool force, Report* report, QString* error) {
-    // ВОТ ЗДЕСЬ МИГРАЦИЯ И РАСХОДИТСЯ С ЖИВОЙ ЗАПИСЬЮ, и больше нигде: она
-    // чистит ретроактивно. Ставится сторож здесь, а не вызывающим, чтобы
-    // «забыть выключить возраст» было негде.
-    journal::ZJournal::Rules retro = rules;
-    retro.ignoreAge = true;
-
-    journal::ZJournal::Plan plan;
-    journal::CompressOutcome outcome;
-    const bool ok = history.compress(
-        noteId,
-        [&](const journal::ZJournal& journal, const QVector<QByteArray>& snapshots) {
-            plan = journal.planCompress(snapshots, retro);
-            return plan.keep;
-        },
-        force, &outcome, error);
-
-    if (report != nullptr) {
-        report->versionBefore = outcome.versionBefore;
-        report->versionAfter = outcome.versionAfter;
-        report->recordsBefore = outcome.recordsBefore;
-        report->recordsAfter = outcome.recordsAfter;
-        report->rewritten = outcome.rewritten;
-        // Считанное правилом годится, только если правило вообще спрашивали:
-        // у чищеного журнала механика до плана не доходит.
-        report->duplicates = outcome.rewritten ? plan.duplicates : 0;
-        report->merged = outcome.rewritten ? plan.merged : 0;
-    }
-    return ok;
-}
-
 }  // namespace history
 }  // namespace zametti

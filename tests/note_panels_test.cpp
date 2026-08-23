@@ -12,6 +12,7 @@
 // владельца) — и намерения человека сигналами.
 
 #include "editor_widget.h"
+#include "zstorage.h"
 #include "note_panels.h"
 #include "store.h"
 #include "test_util.h"

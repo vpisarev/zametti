@@ -2365,9 +2365,9 @@ int main(int argc, char** argv) {
     if (model.isStore()) {
         const QString storePath = model.nodePath(QModelIndex());
         QThreadPool::globalInstance()->start([storePath] {
-            zametti::journal::History history(storePath);
+            zametti::ZStorage storage(storePath);
             const zametti::journal::ThinReport report =
-                history.thinAll(QDateTime::currentMSecsSinceEpoch());
+                storage.thinAllJournals(QDateTime::currentMSecsSinceEpoch());
             for (const QString& name : report.trimmed)
                 std::fprintf(stderr, "journal %s: torn tail trimmed\n",
                              name.toUtf8().constData());

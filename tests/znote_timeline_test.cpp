@@ -12,6 +12,7 @@
 //   * журнал разделяется с заметкой (тот же объект).
 
 #include "znote.h"
+#include "zstorage.h"
 #include "znote_timeline.h"
 #include "test_util.h"
 
@@ -53,17 +54,20 @@ const char* kV3 = "# Заголовок\n\nСовсем новый абзац.\n
 struct Fixture {
     QTemporaryDir root;
     QString id = QStringLiteral("01timeline00001");
+    // Хранилище живёт дольше журнала заметки: журнал держит на него указатель.
+    std::shared_ptr<zametti::ZStorage> store;
     std::shared_ptr<ZNoteHistory> history;
 
     Fixture() {
         QDir().mkpath(root.path() + QStringLiteral("/.zametti"));
         QDir().mkpath(root.path() + QStringLiteral("/history"));
-        journal::History file(root.path());
+        store = std::make_shared<zametti::ZStorage>(root.path());
+        zametti::ZStorage& file = *store;
         QString error;
-        file.append(id, zametti::journal::NewRecord::save(note(kV0, "a"), zametti::journal::Stamp::at(kNow)), &error);
-        file.append(id, zametti::journal::NewRecord::save(note(kV1, "b"), zametti::journal::Stamp::at(kNow + kMinute)), &error);
-        file.append(id, zametti::journal::NewRecord::save(note(kV2, "c"), zametti::journal::Stamp::at(kNow + 2 * kMinute)), &error);
-        history = std::make_shared<ZNoteHistory>(root.path(), id, rules());
+        file.appendToJournal(id, zametti::journal::NewRecord::save(note(kV0, "a"), zametti::journal::Stamp::at(kNow)), &error);
+        file.appendToJournal(id, zametti::journal::NewRecord::save(note(kV1, "b"), zametti::journal::Stamp::at(kNow + kMinute)), &error);
+        file.appendToJournal(id, zametti::journal::NewRecord::save(note(kV2, "c"), zametti::journal::Stamp::at(kNow + 2 * kMinute)), &error);
+        history = std::make_shared<ZNoteHistory>(store.get(), id, rules());
     }
 };
 
@@ -211,7 +215,7 @@ void checkSharedJournalAndNoHistory() {
     Fixture f;
     // Журнал разделяется с заметкой: чистка и хвост — одни на двоих.
     zametti::ZNote note(f.root.path() + QLatin1Char('/') + f.id + QStringLiteral(".md"),
-                        ::note(kV2, "c"), zametti::Digest{}, ZNoteHistory(f.root.path(), f.id, rules()));
+                        ::note(kV2, "c"), zametti::Digest{}, ZNoteHistory(f.store.get(), f.id, rules()));
     ZNoteTimeline tl(note.historyPtr(), note.fileBytes(), nullptr);
     ZT_TRUE("тот же объект журнала", tl.history().get() == &note.history());
     ZT_TRUE("открылся по журналу заметки", tl.open());

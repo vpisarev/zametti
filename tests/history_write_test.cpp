@@ -13,6 +13,7 @@
 // памяти, — файл ради этого не читается.
 
 #include "document_saver.h"
+#include "zstorage.h"
 #include "history_rules.h"
 #include "editor_widget.h"
 #include "history_rig.h"
@@ -65,10 +66,10 @@ QString makeNote(const QString& id, const std::string& body) {
 }
 
 int recordCount(const QString& id) {
-    zametti::journal::History history(g_root);
+    zametti::ZStorage history(g_root);
     zametti::journal::ZJournal journal;
     QString error;
-    if (!history.read(id, &journal, &error)) return -1;
+    if (!history.readJournal(id, &journal, &error)) return -1;
     return int(journal.size());
 }
 
@@ -77,10 +78,10 @@ int recordCount(const QString& id) {
 // к уже записанному состоянию оставляет такую запись, и она обязана уехать в
 // облако, но вешкой не является.
 int contentRecordCount(const QString& id) {
-    zametti::journal::History history(g_root);
+    zametti::ZStorage history(g_root);
     zametti::journal::ZJournal journal;
     QString error;
-    if (!history.read(id, &journal, &error)) return -1;
+    if (!history.readJournal(id, &journal, &error)) return -1;
     int count = 0;
     for (int i = 0; i < journal.size(); ++i)
         if (journal.at(i).statesContent() && !journal.isVoided(i)) ++count;
@@ -90,13 +91,13 @@ int contentRecordCount(const QString& id) {
 // Все слепки журнала по порядку: ими и проверяется «нет двух одинаковых».
 std::vector<QByteArray> snapshots(const QString& id) {
     std::vector<QByteArray> out;
-    zametti::journal::History history(g_root);
+    zametti::ZStorage history(g_root);
     zametti::journal::ZJournal journal;
     QString error;
-    if (!history.read(id, &journal, &error)) return out;
+    if (!history.readJournal(id, &journal, &error)) return out;
     for (int i = 0; i < journal.size(); ++i) {
         QByteArray blob;
-        if (history.snapshotAt(id, i, &blob, &error)) out.push_back(blob);
+        if (history.journalSnapshot(id, i, &blob, &error)) out.push_back(blob);
     }
     return out;
 }
@@ -419,7 +420,7 @@ void checkUndoDoesNotDuplicate() {
 // Журнал с дубликатами, каким его писала программа до этапа 10: записи в обход
 // правил отбора и шапка без версии содержимого.
 void makeDirtyJournal(const QString& id, qint64 when) {
-    zametti::journal::History history(g_root);
+    zametti::ZStorage history(g_root);
     const QByteArray a = "<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n"
                          "modified: 2020-01-01T00:00:01Z\n-->\n\n# Грязь\n\nодин\n";
     const QByteArray b = "<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n"
@@ -428,13 +429,13 @@ void makeDirtyJournal(const QString& id, qint64 when) {
     const QByteArray a2 = "<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n"
                           "modified: 2020-01-01T00:00:03Z\n-->\n\n# Грязь\n\nодин\n";
     QString error;
-    history.append(id, zametti::journal::NewRecord::save(a, zametti::journal::Stamp::at(when)), &error);
-    history.append(id, zametti::journal::NewRecord::save(b, zametti::journal::Stamp::at(when + 1000)), &error);
-    history.append(id, zametti::journal::NewRecord::save(a2, zametti::journal::Stamp::at(when + 2000)), &error);
+    history.appendToJournal(id, zametti::journal::NewRecord::save(a, zametti::journal::Stamp::at(when)), &error);
+    history.appendToJournal(id, zametti::journal::NewRecord::save(b, zametti::journal::Stamp::at(when + 1000)), &error);
+    history.appendToJournal(id, zametti::journal::NewRecord::save(a2, zametti::journal::Stamp::at(when + 2000)), &error);
 
     // Шапку — на старый лад, иначе чистить нечего: нынешний append заводит
     // журнал сразу чищеным.
-    const QString path = history.pathFor(id);
+    const QString path = history.journalPath(id);
     QFile file(path);
     ZT_TRUE("грязный журнал открыт", file.open(QIODevice::ReadOnly));
     QByteArray bytes = file.readAll();
@@ -449,10 +450,10 @@ void makeDirtyJournal(const QString& id, qint64 when) {
 }
 
 QString cleanVersionOf(const QString& id) {
-    zametti::journal::History history(g_root);
+    zametti::ZStorage history(g_root);
     zametti::journal::ZJournal journal;
     QString error;
-    if (!history.read(id, &journal, &error)) return QStringLiteral("не читается");
+    if (!history.readJournal(id, &journal, &error)) return QStringLiteral("не читается");
     return journal.cleanVersion();
 }
 
@@ -649,7 +650,7 @@ void checkHistoryNeverWritesToFile() {
         if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
         file.write(QByteArray("<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n-->\n\n") + body);
     };
-    zametti::journal::History history(g_root);
+    zametti::ZStorage history(g_root);
     QString error;
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     // Опорная запись с исходным содержимым уже есть — её положило открытие
@@ -657,10 +658,10 @@ void checkHistoryNeverWritesToFile() {
     // Времена ПОСЛЕ опорной записи: её время — время файла, то есть «сейчас».
     // Поставь я записи в прошлое — и слепок оказался бы старше своей базы, а
     // подпись сменилась бы на «добавлено» (на этом я и попался).
-    history.append(id, zametti::journal::NewRecord::save(QByteArray("<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n-->\n\n"
+    history.appendToJournal(id, zametti::journal::NewRecord::save(QByteArray("<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n-->\n\n"
                               "# Заметка\n\nпервый\n\nтретий\n"), zametti::journal::Stamp::at(now + 60'000)), &error);
     write("# Заметка\n\nпервый\n\nтретий\n\nчетвёртый\n");
-    history.append(id, zametti::journal::NewRecord::save(QByteArray("<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n-->\n\n"
+    history.appendToJournal(id, zametti::journal::NewRecord::save(QByteArray("<!-- zametti\ncreated: 2020-01-01T00:00:00Z\n-->\n\n"
                               "# Заметка\n\nпервый\n\nтретий\n\nчетвёртый\n"), zametti::journal::Stamp::at(now + 120'000)), &error);
 
     editor.openFile(path);

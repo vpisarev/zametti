@@ -7,6 +7,7 @@
 // гасится записью; заметка без хранилища молчит и не падает.
 
 #include "znote.h"
+#include "zstorage.h"
 #include "test_util.h"
 
 #include <QDir>
@@ -32,7 +33,8 @@ zametti::history::Rules rules() {
 void checkHistory() {
     QTemporaryDir root;
     ZT_TRUE("временное хранилище", root.isValid());
-    ZNoteHistory history(root.path(), QStringLiteral("01test000000000"), rules());
+    zametti::ZStorage store(root.path());
+    ZNoteHistory history(&store, QStringLiteral("01test000000000"), rules());
     ZT_TRUE("журнал доступен", history.available());
 
     // Опорная запись — один раз, временем файла.

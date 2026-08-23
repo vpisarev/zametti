@@ -8,7 +8,7 @@
 
 namespace zametti {
 
-HistorySearchReport searchNoteHistory(const journal::History& history, const QString& noteId,
+HistorySearchReport searchNoteHistory(ZStorage& storage, const QString& noteId,
                                       const Query& query, int limit) {
     HistorySearchReport report;
     if (query.isEmpty() || query.tooShort()) return report;
@@ -18,7 +18,7 @@ HistorySearchReport searchNoteHistory(const journal::History& history, const QSt
 
     journal::ZJournal journal;
     QString error;
-    if (!history.read(noteId, &journal, &error)) {
+    if (!storage.readJournal(noteId, &journal, &error)) {
         report.elapsedMs = clock.elapsed();
         return report;
     }
@@ -30,7 +30,7 @@ HistorySearchReport searchNoteHistory(const journal::History& history, const QSt
         const journal::ZJournal::Entry& entry = journal.at(i);
         if (!entry.hasSnapshot()) continue;   // у надгробия смотреть нечего
         QByteArray bytes;
-        if (!history.snapshotAt(noteId, i, &bytes, &error)) continue;
+        if (!storage.journalSnapshot(noteId, i, &bytes, &error)) continue;
         ++report.snapshots;
 
         // Разбираем тем же ядром, что и заметку: поиск обязан видеть ровно то,

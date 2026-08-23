@@ -23,6 +23,7 @@
 #ifndef ZAMETTI_ZSTORAGE_H
 #define ZAMETTI_ZSTORAGE_H
 
+#include "device_clock.h"
 #include "history_rules.h"
 #include "sort_order.h"
 #include "import_limits.h"
@@ -112,7 +113,80 @@ public:
     // --- пути и журнал -----------------------------------------------------
     QString pathOf(const QString& id) const;
     static QString idOfPath(const QString& path);
-    ZNoteHistory historyOf(const QString& id, const history::Rules& rules) const;
+    ZNoteHistory historyOf(const QString& id, const journal::ZJournal::Rules& rules);
+
+    // --- ЖУРНАЛЫ ЗАМЕТОК ---------------------------------------------------
+    //
+    // ФАЙЛЫ ЖУРНАЛОВ ТРОГАЕТ ТОЛЬКО ХРАНИЛИЩЕ. ZJournal — память: он знает
+    // формат, порядок и отбор, но ни путей, ни QFile, ни замка. Здесь всё
+    // обратное: пути, чтение, дозапись, атомарная подмена, обход history/.
+    //
+    // **Единая точка синхронизации.** Каждый открытый метод устроен одинаково:
+    // берёт общий замок и зовёт свой закрытый ...Locked. Работы с файлами в
+    // открытых методах нет вовсе, поэтому «все ли операции под замком» видно
+    // глазом, а не проверяется памятью. Под замком и запись, и ЧТЕНИЕ: читатель,
+    // поймавший середину переписывания, — та же беда, только тише.
+    //
+    // Замок один на все журналы и общий для всех экземпляров класса: журналов
+    // сотни, операции короткие, спорят они за диск, а не друг с другом. Цена
+    // замера: QMutex — 14.2 нс, то есть на фоне записи в 30 мкс его нет.
+    // Замок именно в памяти: QLockFile стоит 4.4 мс, и от другого ПРОЦЕССА
+    // беречь не надо — хранилище открыто ровно одной программой, а стережёт
+    // это файловый замок lock() выше.
+
+    // Путь журнала заметки.
+    QString journalPath(const QString& noteId) const;
+
+    // Дописать запись. Что именно — говорит NewRecord: род, момент, слепок,
+    // источник и кого эта запись гасит. Полным слепком или звеном цепочки она
+    // станет — решает журнал, по месту в поколении.
+    //
+    // Гашение выполняется здесь же: байты погашенных записей выкидываются из
+    // файла сразу — хвост усечением, середина пересборкой. Сам список гашения
+    // едет в новой записи: другое устройство погасит те же записи у себя, а
+    // вернувшаяся с чужой копии запись гасится повторно и больше не всплывает.
+    bool appendToJournal(const QString& noteId, const journal::NewRecord& what, QString* error);
+
+    // Прочитать рамки всех записей. Слепки не распаковываются. false — журнал
+    // не открыть или он не наш (магия, версия); отсутствующий и пустой файл —
+    // это пустая история, а не беда.
+    bool readJournal(const QString& noteId, journal::ZJournal* out, QString* error) const;
+
+    // Достать и собрать слепок записи index: если запись — звено цепочки,
+    // читается всё её поколение. Отпечаток сверяется на каждом звене: история,
+    // которая молча отдаёт не те байты, хуже истории, которой нет.
+    bool journalSnapshot(const QString& noteId, int index, QByteArray* out, QString* error) const;
+
+    // Отрезать оборванный хвост, если он есть. Отдельной командой, а не внутри
+    // чтения: чтение обязано работать и на журнале, открытом только для чтения.
+    bool trimJournalTail(const QString& noteId, QString* error);
+
+    // Прореживание одного журнала по шкале ZJournal::survivors. Идемпотентно;
+    // переписывает файл целиком и атомарно, а если выкидывать нечего — не
+    // трогает вовсе.
+    bool thinJournal(const QString& noteId, qint64 now, QString* error);
+
+    // Чистка одного журнала: прочитать, спросить правило (Planner), переписать
+    // атомарно. Файл переписывается, ТОЛЬКО если что-то поменялось.
+    // force — чистить и уже чищенный журнал (люк).
+    bool rewriteJournal(const QString& noteId, const journal::Planner& planner, bool force,
+                        journal::CompressOutcome* outcome, QString* error);
+
+    // Прореживание всех журналов хранилища. Годится для отдельного потока:
+    // замок берётся на каждый журнал в отдельности. dryRun — только посчитать.
+    journal::ThinReport thinAllJournals(qint64 now, bool dryRun = false);
+
+    // ЛЕНИВАЯ ЧИСТКА ЖУРНАЛА ЗАМЕТКИ — единственный путь чистки во всей
+    // программе: и автосохранение, и вход в историю, и тестовый люк зовут её.
+    // Параллельной реализации нет нигде — люк форсирует боевой путь, а не свой.
+    //
+    // force — чистить и уже чищенный журнал (люк); без него журнал версии
+    // kCleanVersion не трогается вовсе. Зовётся ТОЛЬКО ПЕР-ЗАМЕТОЧНО: корпусные
+    // читатели (verify, поиск по всем заметкам) журналы не переписывают никогда,
+    // чистоту показа они получают тем же planCompress, применённым в памяти.
+    bool compressJournal(const QString& noteId, const journal::ZJournal::Rules& rules, bool force,
+                         history::Report* report, QString* error);
+
 
     // --- вопросы к каталогу ------------------------------------------------
     // Всё — по каталогу в памяти, диск не трогается.
@@ -202,6 +276,25 @@ protected:
     bool store_ = false;
     QHash<QString, NoteInfo> notes_;
     std::shared_ptr<QLockFile> lock_;   // заведён при первом lock()
+
+    // Всё, что трогает файлы журналов, живёт здесь и зовётся только из-под замка.
+    bool appendJournalLocked(const QString& path, const journal::NewRecord& what, QString* error);
+    // Выкинуть байты погашенных записей: хвост — усечением, середину —
+    // пересборкой файла целиком.
+    bool dropVoidedLocked(const QString& path, const journal::ZJournal& journal,
+                          const QVector<int>& voided, QString* error);
+    bool readJournalLocked(const QString& path, journal::ZJournal* out, QString* error) const;
+    bool journalSnapshotLocked(const QString& path, int index, QByteArray* out,
+                               QString* error) const;
+    bool trimJournalTailLocked(const QString& path, QString* error);
+    bool thinJournalLocked(const QString& path, qint64 now, QString* error);
+    bool rewriteJournalLocked(const QString& path, const journal::Planner& planner, bool force,
+                              journal::CompressOutcome* outcome, QString* error);
+
+    // Пол времени записей ЭТОГО устройства: не даёт времени идти назад, когда
+    // часы машины съехали. Живёт в .zametti/last-written, в облако не едет.
+    store::DeviceClock clock_{root_};
+
     int quiet_ = 0;
     bool pending_ = false;
     std::shared_ptr<QFileSystemWatcher> watcher_;

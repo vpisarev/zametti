@@ -13,6 +13,7 @@
 // голова журнала равна файлу, а возврат не зависит от журнала вовсе.
 
 #include "archive.h"
+#include "zstorage.h"
 #include "store.h"
 #include "pieces.h"
 #include "lost_found.h"
@@ -78,19 +79,19 @@ std::string read(const QString& id) {
 int records(const QString& id) {
     zametti::journal::ZJournal read;
     QString error;
-    if (!zametti::journal::History(g_root).read(id, &read, &error)) return -1;
+    if (!zametti::ZStorage(g_root).readJournal(id, &read, &error)) return -1;
     return int(read.size());
 }
 
 // Голова журнала — по общей формуле порядка, а не по месту в файле.
 QByteArray head(const QString& id) {
-    zametti::journal::History history(g_root);
+    zametti::ZStorage history(g_root);
     zametti::journal::ZJournal read;
     QString error;
-    if (!history.read(id, &read, &error) || read.isEmpty()) return {};
+    if (!history.readJournal(id, &read, &error) || read.isEmpty()) return {};
     const int at = read.lastSnapshotIndex();
     QByteArray body;
-    if (at < 0 || !history.snapshotAt(id, at, &body, &error)) return {};
+    if (at < 0 || !history.journalSnapshot(id, at, &body, &error)) return {};
     return body;
 }
 
@@ -98,7 +99,7 @@ QByteArray head(const QString& id) {
 int waypoints(const QString& id) {
     zametti::journal::ZJournal read;
     QString error;
-    if (!zametti::journal::History(g_root).read(id, &read, &error)) return -1;
+    if (!zametti::ZStorage(g_root).readJournal(id, &read, &error)) return -1;
     int count = 0;
     for (int i = 0; i < read.size(); ++i)
         if (read.at(i).statesContent() && !read.isVoided(i)) ++count;
@@ -157,19 +158,19 @@ void checkArchiveObeysHistoryRules() {
 
     QString error;
     const QByteArray body(kBody);
-    zametti::journal::History history(g_root);
+    zametti::ZStorage history(g_root);
     // ДВЕ записи, а не одна: опорную правило не гасит никогда — после замены в
     // журнале обязана остаться хотя бы одна запись, а первая это то, с чего
     // заметка начиналась.
     ZT_TRUE("опорная записана руками",
-            history.append(id, zametti::journal::NewRecord::save(body, zametti::journal::Stamp::now()),
+            history.appendToJournal(id, zametti::journal::NewRecord::save(body, zametti::journal::Stamp::now()),
                            &error));
     QByteArray grown(kBody);
     grown += "\nещё абзац, чтобы вторая запись не слилась с опорной: " +
              QByteArray(200, 'y') + "\n";
     write(id, std::string(grown.constData(), size_t(grown.size())));
     ZT_TRUE("и вторая",
-            history.append(id, zametti::journal::NewRecord::save(grown, zametti::journal::Stamp::now()),
+            history.appendToJournal(id, zametti::journal::NewRecord::save(grown, zametti::journal::Stamp::now()),
                            &error));
     const int before = waypoints(id);
     ZT_TRUE("архивация прошла", archiveNote(g_root, id, rules(), &error));
@@ -232,17 +233,17 @@ void checkForget() {
     const QString id = QStringLiteral("01ee00000000ee");
     QString error;
     // История побогаче: четыре разных состояния, чтобы было чему схлопываться.
-    zametti::journal::History history(g_root);
+    zametti::ZStorage history(g_root);
     for (int i = 0; i < 4; ++i) {
         QByteArray version(kBody);
         version += "\nверсия " + QByteArray::number(i) + " " + QByteArray(300, 'z') + "\n";
         write(id, std::string(version.constData(), size_t(version.size())));
         ZT_TRUE("версия записана",
-                history.append(id, zametti::journal::NewRecord::save(version), &error));
+                history.appendToJournal(id, zametti::journal::NewRecord::save(version), &error));
     }
     ZT_TRUE("вешек четыре", waypoints(id) == 4);
     ZT_TRUE("архивация прошла", archiveNote(g_root, id, rules(), &error));
-    const QString log = zametti::journal::History(g_root).pathFor(id);
+    const QString log = zametti::ZStorage(g_root).journalPath(id);
     ZT_TRUE("журнал есть", QFile::exists(log));
     const qint64 fatLog = QFileInfo(log).size();
 
@@ -256,7 +257,7 @@ void checkForget() {
     ZT_TRUE("а журнал на месте", QFile::exists(log));
 
     zametti::journal::ZJournal read;
-    ZT_TRUE("журнал читается", zametti::journal::History(g_root).read(id, &read, &error));
+    ZT_TRUE("журнал читается", zametti::ZStorage(g_root).readJournal(id, &read, &error));
     // ОСТАЛОСЬ ДВОЕ: последний слепок и надгробие. Полная история после двух
     // осознанных решений человека (в архив, потом удалить из архива) — мёртвый
     // груз; поднять заметку хватает и последнего состояния.
@@ -270,7 +271,7 @@ void checkForget() {
     // ПО ПОСЛЕДНЕМУ СЛЕПКУ ЗАМЕТКУ МОЖНО ПОДНЯТЬ — на этом стоит resurrect.
     QByteArray body;
     ZT_TRUE("последний слепок достаётся",
-            zametti::journal::History(g_root).snapshotAt(id, read.lastSnapshotIndex(), &body,
+            zametti::ZStorage(g_root).journalSnapshot(id, read.lastSnapshotIndex(), &body,
                                                          &error));
     ZT_TRUE("и в нём тело заметки",
             QString::fromUtf8(body).contains(QStringLiteral("Длинный текст")));
@@ -294,7 +295,7 @@ void checkUnfoldStubs() {
     QString error;
     const QByteArray body(kBody);
     ZT_TRUE("тело записано в журнал",
-            zametti::journal::History(g_root).append(
+            zametti::ZStorage(g_root).appendToJournal(
                 id, zametti::journal::NewRecord::save(body, zametti::journal::Stamp::now()),
                 &error));
     write(id,
@@ -314,7 +315,7 @@ void checkUnfoldStubs() {
     QByteArray older(kBody);
     older.replace("Длинный текст", "Старый текст");
     ZT_TRUE("старая версия записана в журнал",
-            zametti::journal::History(g_root).append(
+            zametti::ZStorage(g_root).appendToJournal(
                 full, zametti::journal::NewRecord::save(older, zametti::journal::Stamp::now()),
                 &error));
     std::string fullBytes = kBody;
@@ -327,12 +328,12 @@ void checkUnfoldStubs() {
     const QString twiceSaved = QStringLiteral("01ff0000twice0");
     const QByteArray realBody(kBody);
     ZT_TRUE("тело записано",
-            zametti::journal::History(g_root).append(
+            zametti::ZStorage(g_root).appendToJournal(
                 twiceSaved, zametti::journal::NewRecord::save(realBody), &error));
     const QByteArray stubBytes(
         "<!-- zametti\nparent: 0000000000000p\narchived: yes\n-->\n\n# Фототехника\n");
     ZT_TRUE("а поверх него — стаб",
-            zametti::journal::History(g_root).append(
+            zametti::ZStorage(g_root).appendToJournal(
                 twiceSaved, zametti::journal::NewRecord::save(stubBytes), &error));
     write(twiceSaved, std::string(stubBytes.constData(), size_t(stubBytes.size())));
 
@@ -388,7 +389,7 @@ void checkResurrect() {
             back.find("archived: yes") != std::string::npos);
 
     zametti::journal::ZJournal read;
-    ZT_TRUE("журнал читается", zametti::journal::History(g_root).read(id, &read, &error));
+    ZT_TRUE("журнал читается", zametti::ZStorage(g_root).readJournal(id, &read, &error));
     ZT_TRUE("голова больше не надгробие",
             read.at(read.headIndex()).kind() == zametti::journal::Kind::Restore);
 

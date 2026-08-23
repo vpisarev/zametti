@@ -21,6 +21,7 @@
 #define ZAMETTI_HISTORY_SEARCH_H
 
 #include "journal.h"
+#include "zstorage.h"
 #include "search.h"
 #include "store_search.h"
 
@@ -44,7 +45,7 @@ struct HistorySearchReport {
 
 // Найти запрос во всех слепках журнала заметки. Свежие слепки идут первыми:
 // человек ищет «где это было», и ближайшее прошлое ему нужнее давнего.
-HistorySearchReport searchNoteHistory(const journal::History& history, const QString& noteId,
+HistorySearchReport searchNoteHistory(ZStorage& storage, const QString& noteId,
                                       const Query& query, int limit = kHistoryHitLimit);
 
 }  // namespace zametti

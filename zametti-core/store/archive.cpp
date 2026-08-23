@@ -1,6 +1,7 @@
 #include "archive.h"
 
 #include "journal.h"
+#include "zstorage.h"
 #include "document.h"
 #include "znote.h"
 #include "serializer.h"
@@ -174,10 +175,10 @@ bool archiveNote(const QString& root, const QString& noteId, const history::Rule
     // Запись ложится по общим правилам отбора: пометка мелкая, значит гасит
     // прошлую запись, а не встаёт рядом. Голова журнала обязана сойтись с
     // файлом — на этом стоит вся синхронизация.
-    journal::History history(root);
+    ZStorage storage(root);
     journal::ZJournal read;
     QString why;
-    if (!history.read(noteId, &read, &why)) {
+    if (!storage.readJournal(noteId, &read, &why)) {
         if (error != nullptr) *error = QStringLiteral("cannot read history: %1").arg(why);
         return true;   // файл уже помечен: архивация состоялась
     }
@@ -185,7 +186,7 @@ bool archiveNote(const QString& root, const QString& noteId, const history::Rule
     const auto snapshotOf = [&](int at) {
         QByteArray older;
         QString ignored;
-        if (!history.snapshotAt(noteId, at, &older, &ignored)) return QByteArray();
+        if (!storage.journalSnapshot(noteId, at, &older, &ignored)) return QByteArray();
         return older;
     };
     const journal::ZJournal::Step step = read.planStep(
@@ -195,7 +196,7 @@ bool archiveNote(const QString& root, const QString& noteId, const history::Rule
     for (int at : step.voided)
         voids.append(journal::EntryRef(read.at(at).time(), read.at(at).digest()));
     if (step.writeNew &&
-        !history.append(noteId, journal::NewRecord::save(snapshot).voiding(voids), &why)) {
+        !storage.appendToJournal(noteId, journal::NewRecord::save(snapshot).voiding(voids), &why)) {
         // Файл уже помечен — архивация состоялась; но расхождение головы с
         // файлом надо назвать вслух, а не проглотить.
         if (error != nullptr) *error = QStringLiteral("mark not written to history: %1").arg(why);
@@ -231,9 +232,9 @@ bool restoreNote(const QString& root, const QString& noteId, QString* error) {
 
     // ВЕШКА В ИСТОРИИ. Таймлайн отвечает на вопрос «что с заметкой было», и
     // «вернули из архива» — такой же ответ, как «правили» или «удалили».
-    journal::History history(root);
+    ZStorage storage(root);
     QString ignored;
-    history.append(noteId,
+    storage.appendToJournal(noteId,
                    journal::NewRecord::restore(QByteArray(out.data(), qsizetype(out.size())), 0),
                    &ignored);
     return true;
@@ -263,7 +264,7 @@ bool looksLikeStub(std::string_view body) {
 }  // namespace
 
 int unfoldArchivedStubs(const QString& root, QStringList* leftAlone, QString* error) {
-    journal::History history(root);
+    ZStorage storage(root);
     int unfolded = 0;
     for (const QFileInfo& info : QDir(root).entryInfoList({QStringLiteral("*.md")}, QDir::Files)) {
         const QString id = info.completeBaseName();
@@ -277,7 +278,7 @@ int unfoldArchivedStubs(const QString& root, QStringList* leftAlone, QString* er
 
         journal::ZJournal read;
         QString why;
-        if (!history.read(id, &read, &why)) {
+        if (!storage.readJournal(id, &read, &why)) {
             if (leftAlone != nullptr)
                 leftAlone->append(QStringLiteral("%1: history unreadable (%2)").arg(id, why));
             continue;
@@ -292,7 +293,7 @@ int unfoldArchivedStubs(const QString& root, QStringList* leftAlone, QString* er
         size_t snapTo = 0;
         for (int at = read.lastSnapshotIndex(); at >= 0; at = read.previousSnapshotIndex(at)) {
             QByteArray body;
-            if (!history.snapshotAt(id, at, &body, &why) || body.isEmpty()) continue;
+            if (!storage.journalSnapshot(id, at, &body, &why) || body.isEmpty()) continue;
             const std::string candidate(body.constData(), size_t(body.size()));
             const auto [from, to] = headerRange(candidate);
             (void)from;
@@ -372,7 +373,7 @@ bool forgetNote(const QString& root, const QString& noteId, QString* error) {
     // журнал бережёт (по нему заметку можно воскресить), но у архивной тело
     // живёт в журнале и больше нигде: оставить его значило бы оставить и саму
     // заметку, а человек попросил забыть её насовсем.
-    const QString log = journal::History(root).pathFor(noteId);
+    const QString log = ZStorage(root).journalPath(noteId);
     if (QFile::exists(log) && !QFile::moveToTrash(log) && !QFile::remove(log)) {
         if (error != nullptr) *error = QStringLiteral("cannot delete journal %1").arg(noteId);
         return false;

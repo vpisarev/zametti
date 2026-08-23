@@ -7,6 +7,7 @@
 #include "times.h"
 
 #include "journal.h"
+#include "zstorage.h"
 
 #include "note_id.h"
 #include "document.h"
@@ -1043,7 +1044,7 @@ bool verifyStore(const QString& root, Report& report) {
     int journals = 0;
     qint64 records = 0;
     if (historyDir.exists()) {
-        journal::History history(root);
+        ZStorage storage(root);
         for (const QString& name :
              historyDir.entryList({QStringLiteral("*.log")}, QDir::Files)) {
             const QString noteId = name.left(name.size() - 4);
@@ -1053,7 +1054,7 @@ bool verifyStore(const QString& root, Report& report) {
             }
             journal::ZJournal j;
             QString error;
-            if (!history.read(noteId, &j, &error)) {
+            if (!storage.readJournal(noteId, &j, &error)) {
                 report.problem(QStringLiteral("journal %1: %2").arg(name, error));
                 continue;
             }
@@ -1074,7 +1075,7 @@ bool verifyStore(const QString& root, Report& report) {
             for (int i = 0; i < j.size(); ++i) {
                 if (!j.at(i).hasSnapshot()) continue;
                 QByteArray body;
-                if (!history.snapshotAt(noteId, i, &body, &error)) {
+                if (!storage.journalSnapshot(noteId, i, &body, &error)) {
                     report.problem(QStringLiteral("journal %1, record %2: %3")
                                        .arg(name)
                                        .arg(i)
@@ -1212,10 +1213,10 @@ bool resurrectNote(const QString& root, const QString& noteId, QString* error) {
         return false;
     }
 
-    journal::History history(root);
+    ZStorage storage(root);
     journal::ZJournal journal;
     QString why;
-    if (!history.read(noteId, &journal, &why) || journal.isEmpty()) {
+    if (!storage.readJournal(noteId, &journal, &why) || journal.isEmpty()) {
         if (error) *error = QStringLiteral("no history for %1: %2").arg(noteId, why);
         return false;
     }
@@ -1227,7 +1228,7 @@ bool resurrectNote(const QString& root, const QString& noteId, QString* error) {
     }
     const int content = journal.lastSnapshotIndex();
     QByteArray body;
-    if (content < 0 || !history.snapshotAt(noteId, content, &body, &why)) {
+    if (content < 0 || !storage.journalSnapshot(noteId, content, &body, &why)) {
         if (error) *error = QStringLiteral("history of %1 has no body: %2").arg(noteId, why);
         return false;
     }
@@ -1246,7 +1247,7 @@ bool resurrectNote(const QString& root, const QString& noteId, QString* error) {
     // ЗАПИСЬ ПОВЕРХ НАДГРОБИЯ: заметка снова жива, и голова обязана это
     // сказать. Вид — «восстановление», источник — время того слепка, из
     // которого её подняли.
-    if (!history.append(noteId, journal::NewRecord::restore(body, journal.at(content).time()),
+    if (!storage.appendToJournal(noteId, journal::NewRecord::restore(body, journal.at(content).time()),
                         &why) &&
         error != nullptr)
         *error = QStringLiteral("resurrection not written to history: %1").arg(why);
@@ -1317,11 +1318,11 @@ bool deleteNoteFile(const QString& root, const QString& noteId, QString* error) 
     // последнего слепка. Его хватает, чтобы поднять заметку (zametti-store
     // resurrect), и гашение адресное — значит и на других устройствах журнал
     // похудеет так же, а не разрастётся обратно объединением.
-    journal::History history(root);
+    ZStorage storage(root);
     QString historyError;
     journal::ZJournal read;
     QVector<journal::EntryRef> voids;
-    if (history.read(noteId, &read, &historyError)) {
+    if (storage.readJournal(noteId, &read, &historyError)) {
         const int keep = read.lastSnapshotIndex();
         for (int i = 0; i < read.size(); ++i) {
             if (i == keep || read.isVoided(i) || read.isDamaged(i)) continue;
@@ -1329,7 +1330,7 @@ bool deleteNoteFile(const QString& root, const QString& noteId, QString* error) 
         }
     }
     const bool marked =
-        history.append(noteId, journal::NewRecord::tombstone().voiding(voids), &historyError);
+        storage.appendToJournal(noteId, journal::NewRecord::tombstone().voiding(voids), &historyError);
 
     if (!QFile::moveToTrash(file) && !QFile::remove(file)) {
         if (error) *error = QStringLiteral("cannot delete note file %1").arg(noteId);

@@ -137,7 +137,7 @@ HistorySearchReport HistoryController::searchHistory(const QString& text) {
     // Обращение к истории — значит и чистка: искать надо по уже вычищенному
     // журналу, иначе один и тот же текст найдётся в трёх дубликатах.
     history->compressOnce();
-    return searchNoteHistory(history->file(), history->noteId(), makeQuery(text));
+    return searchNoteHistory(*history->store(), history->noteId(), makeQuery(text));
 }
 
 void HistoryController::installShortcuts(QWidget* window) {

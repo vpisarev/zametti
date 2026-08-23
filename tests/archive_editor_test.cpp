@@ -13,6 +13,7 @@
 // накоплении.
 
 #include "archive.h"
+#include "zstorage.h"
 #include "archive_view.h"
 #include "jxl_encoder.h"
 #include "editor_widget.h"
@@ -175,11 +176,11 @@ static int ztRunSuite(int argc, char** argv) {
                 marked.contains(QStringLiteral("не закрыт забор")));
 
         // ГОЛОВА ЖУРНАЛА РАВНА ФАЙЛУ — и у битой тоже.
-        zametti::journal::History history(g_root);
+        zametti::ZStorage history(g_root);
         zametti::journal::ZJournal read;
         QByteArray head;
-        if (history.read(brokenId, &read, &why) && !read.isEmpty())
-            history.snapshotAt(brokenId, read.lastSnapshotIndex(), &head, &why);
+        if (history.readJournal(brokenId, &read, &why) && !read.isEmpty())
+            history.journalSnapshot(brokenId, read.lastSnapshotIndex(), &head, &why);
         ZT_TRUE("голова журнала — помеченный файл байт в байт",
                 QString::fromUtf8(head) == marked);
 

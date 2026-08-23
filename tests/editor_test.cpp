@@ -8,6 +8,7 @@
 // заметке подмешивалась к её исходному состоянию и не отменялась.
 
 #include "doc_model.h"
+#include "zstorage.h"
 #include "pieces.h"
 #include "editor_widget.h"
 #include "history_rig.h"
@@ -2476,7 +2477,7 @@ void checkHistoryPoints() {
         file.write(QStringLiteral("# заметка\n\nстрока раз\n").toUtf8());
     }
 
-    zametti::journal::History history(root);
+    zametti::ZStorage history(root);
     zametti::NoteEditor editor;
     editor.setStoreRoot(root);
     editor.resize(700, 500);
@@ -2487,13 +2488,13 @@ void checkHistoryPoints() {
     auto records = [&history, &noteId] {
         zametti::journal::ZJournal journal;
         QString error;
-        history.read(noteId, &journal, &error);
+        history.readJournal(noteId, &journal, &error);
         return journal.entries();
     };
     auto snapshot = [&history, &noteId](int index) {
         QByteArray got;
         QString error;
-        if (!history.snapshotAt(noteId, index, &got, &error)) return QString();
+        if (!history.journalSnapshot(noteId, index, &got, &error)) return QString();
         return QString::fromUtf8(got);
     };
     auto fileText = [&path] {
@@ -2587,7 +2588,7 @@ void checkHistoryMode() {
         file.write(QStringLiteral("# заметка\n\nодин\n").toUtf8());
     }
 
-    zametti::journal::History history(root);
+    zametti::ZStorage history(root);
     zametti::NoteEditor editor;
     editor.setStoreRoot(root);
     editor.resize(700, 500);
@@ -2705,7 +2706,7 @@ void checkHistoryMode() {
     const int recordsBefore = [&] {
         zametti::journal::ZJournal journal;
         QString error;
-        history.read(noteId, &journal, &error);
+        history.readJournal(noteId, &journal, &error);
         return int(journal.size());
     }();
     check(rig.enter(0), "вход на первый слепок");
@@ -2718,7 +2719,7 @@ void checkHistoryMode() {
 
     zametti::journal::ZJournal journal;
     QString error;
-    history.read(noteId, &journal, &error);
+    history.readJournal(noteId, &journal, &error);
     check(int(journal.size()) == recordsBefore + 1,
           "восстановление дописало ровно одну запись");
     check(!journal.isEmpty() &&
@@ -2737,7 +2738,7 @@ void checkHistoryMode() {
         const int wasRecords = [&] {
             zametti::journal::ZJournal journal;
             QString e;
-            history.read(noteId, &journal, &e);
+            history.readJournal(noteId, &journal, &e);
             return int(journal.size());
         }();
         const int wasUndo = editor.undoSteps();
@@ -2750,7 +2751,7 @@ void checkHistoryMode() {
         const int nowRecords = [&] {
             zametti::journal::ZJournal journal;
             QString e;
-            history.read(noteId, &journal, &e);
+            history.readJournal(noteId, &journal, &e);
             return int(journal.size());
         }();
         check(nowRecords == wasRecords, "журнал не вырос");
@@ -2787,7 +2788,7 @@ void checkHistoryBaseline() {
         file.write(original.toUtf8());
     }
 
-    zametti::journal::History history(root);
+    zametti::ZStorage history(root);
     zametti::NoteEditor editor;
     editor.setStoreRoot(root);
     editor.resize(700, 500);
@@ -2798,13 +2799,13 @@ void checkHistoryBaseline() {
     auto records = [&history, &noteId] {
         zametti::journal::ZJournal journal;
         QString error;
-        history.read(noteId, &journal, &error);
+        history.readJournal(noteId, &journal, &error);
         return journal.entries();
     };
     auto snapshot = [&history, &noteId](int index) {
         QByteArray got;
         QString error;
-        if (!history.snapshotAt(noteId, index, &got, &error)) return QString();
+        if (!history.journalSnapshot(noteId, index, &got, &error)) return QString();
         return QString::fromUtf8(got);
     };
 

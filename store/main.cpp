@@ -142,7 +142,7 @@ int main(int argc, char** argv) {
     // без окна иначе нечем.
     if (command == QStringLiteral("archive")) {
         if (root.isEmpty() || id.isEmpty()) return usage();
-        QLockFile lock(zametti::journal::History::lockPathFor(root));
+        QLockFile lock(zametti::ZStorage(root).lockPath());
         if (!lock.tryLock(0)) {
             std::fprintf(stderr, "store is busy: the app seems to be open.\n");
             return 1;
@@ -167,7 +167,7 @@ int main(int argc, char** argv) {
     // лежала, с посмертными (уменьшенными) картинками.
     if (command == QStringLiteral("resurrect")) {
         if (root.isEmpty() || id.isEmpty()) return usage();
-        QLockFile lock(zametti::journal::History::lockPathFor(root));
+        QLockFile lock(zametti::ZStorage(root).lockPath());
         if (!lock.tryLock(0)) {
             std::fprintf(stderr, "store is busy: the app seems to be open.\n");
             return 1;
@@ -189,7 +189,7 @@ int main(int argc, char** argv) {
         // Межпроцессный замок: пока открыта программа, прореживание руками не
         // запускается. Внутрипроцессный замок журнала от чужого процесса не
         // бережёт, а ставить файловый на каждую запись — 4.4 мс на ровном месте.
-        QLockFile lock(zametti::journal::History::lockPathFor(root));
+        QLockFile lock(zametti::ZStorage(root).lockPath());
         if (!lock.tryLock(0)) {
             // Различаем два разных отказа: замок держат — и замок не завести
             // вовсе. Второе случается на каталоге, который хранилищем не
@@ -200,12 +200,12 @@ int main(int argc, char** argv) {
                              "Thinning runs in the background at app startup.\n");
             else
                 std::fprintf(stderr, "cannot take the store lock: %s\n",
-                             zametti::journal::History::lockPathFor(root).toUtf8().constData());
+                             zametti::ZStorage(root).lockPath().toUtf8().constData());
             return 1;
         }
-        zametti::journal::History history(root);
+        zametti::ZStorage storage(root);
         const zametti::journal::ThinReport report =
-            history.thinAll(QDateTime::currentMSecsSinceEpoch(), dryRun);
+            storage.thinAllJournals(QDateTime::currentMSecsSinceEpoch(), dryRun);
         for (const QString& name : report.trimmed)
             std::printf("%s: truncated tail cut off\n", name.toUtf8().constData());
         for (const QString& line : report.problems)
@@ -243,7 +243,7 @@ int main(int argc, char** argv) {
 
         // Тот же межпроцессный замок, что у thin: пока открыта программа,
         // журналы правит она.
-        QLockFile lock(zametti::journal::History::lockPathFor(target));
+        QLockFile lock(zametti::ZStorage(target).lockPath());
         if (!lock.tryLock(0)) {
             // Занято и «замок негде завести» — разные беды, и валить вторую на
             // первую значит врать: чаще всего это просто не хранилище.
@@ -251,16 +251,16 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "store is busy: the app seems to be open\n");
             else
                 std::fprintf(stderr, "cannot take the store lock: %s\n",
-                             zametti::journal::History::lockPathFor(target).toUtf8().constData());
+                             zametti::ZStorage(target).lockPath().toUtf8().constData());
             return 1;
         }
 
-        zametti::journal::History history(target);
+        zametti::ZStorage storage(target);
         zametti::history::Report report;
         QString error;
         // force: люк на то и люк, чтобы прогонять чистку и по уже чищеному
         // журналу — так проверяется идемпотентность.
-        if (!zametti::history::compressJournal(history, noteId, {}, true, &report, &error)) {
+        if (!storage.compressJournal(noteId, {}, true, &report, &error)) {
             std::fprintf(stderr, "%s\n", error.toUtf8().constData());
             return 1;
         }

@@ -15,6 +15,7 @@
 // проверка по ней громко пропускается, остальные идут.
 
 #include "history_rules.h"
+#include "zstorage.h"
 #include "journal.h"
 
 #include "test_util.h"
@@ -33,7 +34,7 @@
 #include <string>
 
 using namespace zametti;
-using zametti::journal::Kind;
+
 
 namespace {
 
@@ -81,30 +82,30 @@ void makeV0(const QString& path) {
 
 // Что дописать — по роду записи. Наборам удобно перечислять роды, а
 // именованные создатели не дают собрать неверное сочетание.
-journal::NewRecord recordFor(Kind kind, qint64 time, const QByteArray& body, qint64 source) {
+journal::NewRecord recordFor(journal::Kind kind, qint64 time, const QByteArray& body, qint64 source) {
     const journal::Stamp when = journal::Stamp::at(time);
     switch (kind) {
-        case Kind::External: return journal::NewRecord::external(body, when);
-        case Kind::Restore: return journal::NewRecord::restore(body, source, when);
-        case Kind::Tombstone: return journal::NewRecord::tombstone(when);
-        case Kind::Amendment: return journal::NewRecord::amendment(when);
-        case Kind::Save: break;
+        case journal::Kind::External: return journal::NewRecord::external(body, when);
+        case journal::Kind::Restore: return journal::NewRecord::restore(body, source, when);
+        case journal::Kind::Tombstone: return journal::NewRecord::tombstone(when);
+        case journal::Kind::Amendment: return journal::NewRecord::amendment(when);
+        case journal::Kind::Save: break;
     }
     return journal::NewRecord::save(body, when);
 }
 
-QString append(journal::History& h, const QString& id, Kind kind, qint64 time,
+QString append(ZStorage& h, const QString& id, journal::Kind kind, qint64 time,
                const QByteArray& snapshot, qint64 source = 0) {
     QString error;
-    if (!h.append(id, recordFor(kind, time, snapshot, source), &error)) return error;
+    if (!h.appendToJournal(id, recordFor(kind, time, snapshot, source), &error)) return error;
     return {};
 }
 
 // Времена уцелевших записей — то, чем удобнее всего описать «что осталось».
-std::string timesOf(journal::History& h, const QString& id, qint64 base) {
+std::string timesOf(ZStorage& h, const QString& id, qint64 base) {
     journal::ZJournal j;
     QString error;
-    if (!h.read(id, &j, &error)) return str(error);
+    if (!h.readJournal(id, &j, &error)) return str(error);
     std::string out;
     for (int i = 0; i < j.size(); ++i) {
         const journal::ZJournal::Entry& e = j.at(i);
@@ -116,16 +117,16 @@ std::string timesOf(journal::History& h, const QString& id, qint64 base) {
         if (!e.statesContent() || j.isVoided(i)) continue;
         if (!out.empty()) out += " ";
         out += std::to_string((e.time() - base) / kMinute);
-        if (e.kind() != Kind::Save) out += e.kind() == Kind::Tombstone ? "T" : "X";
+        if (e.kind() != journal::Kind::Save) out += e.kind() == journal::Kind::Tombstone ? "T" : "X";
     }
     return out;
 }
 
 // Прогнать чистку и сказать, что вышло.
-history::Report compress(journal::History& h, const QString& id, bool force) {
+history::Report compress(ZStorage& h, const QString& id, bool force) {
     history::Report report;
     QString error;
-    ZT_TRUE("чистка прошла", history::compressJournal(h, id, {}, force, &report, &error));
+    ZT_TRUE("чистка прошла", h.compressJournal(id, {}, force, &report, &error));
     if (!error.isEmpty()) std::fprintf(stderr, "  (%s)\n", error.toUtf8().constData());
     return report;
 }
@@ -146,16 +147,16 @@ void checkRealJournal() {
     const QString path = QDir(dir.path()).filePath(QStringLiteral("history/%1.log").arg(id));
     QFile::copy(QDir(g_fixture).filePath(id + QStringLiteral(".log")), path);
 
-    journal::History h(dir.path());
+    ZStorage h(dir.path());
     journal::ZJournal before;
     QString error;
-    ZT_TRUE("журнал владельца читается", h.read(id, &before, &error));
+    ZT_TRUE("журнал владельца читается", h.readJournal(id, &before, &error));
     ZT_EQ("он не чищен (v0)", std::string(), str(before.cleanVersion()));
     ZT_EQ("записей в нём", num(11), num(before.size()));
 
     QByteArray lastBefore;
     ZT_TRUE("последний слепок собирается",
-            h.snapshotAt(id, int(before.size()) - 1, &lastBefore, &error));
+            h.journalSnapshot(id, int(before.size()) - 1, &lastBefore, &error));
 
     const history::Report report = compress(h, id, false);
     ZT_EQ("версия была", std::string(), str(report.versionBefore));
@@ -170,7 +171,7 @@ void checkRealJournal() {
     ZT_TRUE("файл переписан", report.rewritten);
 
     journal::ZJournal after;
-    ZT_TRUE("чищеный журнал читается", h.read(id, &after, &error));
+    ZT_TRUE("чищеный журнал читается", h.readJournal(id, &after, &error));
     ZT_EQ("версия в шапке", std::string("0.1"), str(after.cleanVersion()));
     ZT_EQ("уцелевшие записи (минуты от первой)", std::string("0 15680 15850 15872 15880"),
           timesOf(h, id, before.at(0).time()));
@@ -180,7 +181,7 @@ void checkRealJournal() {
     // её собственный, на 39 секунд раньше. Текст при этом тот же до знака.
     QByteArray lastAfter;
     ZT_TRUE("последний слепок собирается и после",
-            h.snapshotAt(id, int(after.size()) - 1, &lastAfter, &error));
+            h.journalSnapshot(id, int(after.size()) - 1, &lastAfter, &error));
     ZT_TRUE("последнее состояние то же самое", sameApartFromModified(lastBefore, lastAfter));
     ZT_TRUE("а байты — от старшей из равных записей", lastBefore != lastAfter);
 
@@ -189,7 +190,7 @@ void checkRealJournal() {
     for (int i = 0; i < after.size(); ++i)
         for (int j = i + 1; j < after.size(); ++j) {
             QByteArray a, b;
-            if (h.snapshotAt(id, i, &a, &error) && h.snapshotAt(id, j, &b, &error))
+            if (h.journalSnapshot(id, i, &a, &error) && h.journalSnapshot(id, j, &b, &error))
                 anyEqual = anyEqual || sameApartFromModified(a, b);
         }
     ZT_TRUE("равных записей не осталось", !anyEqual);
@@ -205,12 +206,12 @@ void checkRealJournal() {
 
 // Возврат к уже записанному состоянию: A, B, A' → остаётся A.
 void checkReturnCollapses(const QString& root) {
-    journal::History h(root);
+    ZStorage h(root);
     const QString id = QStringLiteral("01n6r08s8wy52a");
-    append(h, id, Kind::Save, kNow, body("раз", 1));
-    append(h, id, Kind::Save, kNow + kMinute, body("два больше на много знаков и ещё", 2));
-    append(h, id, Kind::Save, kNow + 2 * kMinute, body("раз", 3));
-    makeV0(h.pathFor(id));
+    append(h, id, journal::Kind::Save, kNow, body("раз", 1));
+    append(h, id, journal::Kind::Save, kNow + kMinute, body("два больше на много знаков и ещё", 2));
+    append(h, id, journal::Kind::Save, kNow + 2 * kMinute, body("раз", 3));
+    makeV0(h.journalPath(id));
 
     const history::Report report = compress(h, id, false);
     ZT_EQ("три записи сошлись к одной", num(1), num(report.recordsAfter));
@@ -220,13 +221,13 @@ void checkReturnCollapses(const QString& root) {
 // Та же тройка, но между дубликатами стоит чужая вешка: схлопывания нет.
 // Проверка парная к предыдущей — без неё не видно, что дело именно в вешке.
 void checkExternalStops(const QString& root) {
-    journal::History h(root);
+    ZStorage h(root);
     const QString id = QStringLiteral("01n6r08s8wy52b");
-    append(h, id, Kind::Save, kNow, body("раз", 1));
-    append(h, id, Kind::External, kNow + kMinute,
+    append(h, id, journal::Kind::Save, kNow, body("раз", 1));
+    append(h, id, journal::Kind::External, kNow + kMinute,
            body("два больше на много знаков и ещё", 2));
-    append(h, id, Kind::Save, kNow + 2 * kMinute, body("раз", 3));
-    makeV0(h.pathFor(id));
+    append(h, id, journal::Kind::Save, kNow + 2 * kMinute, body("раз", 3));
+    makeV0(h.journalPath(id));
 
     const history::Report report = compress(h, id, false);
     ZT_EQ("через External не схлопывается", num(3), num(report.recordsAfter));
@@ -235,13 +236,13 @@ void checkExternalStops(const QString& root) {
 
 // Надгробие и последняя запись неприкосновенны.
 void checkTombstoneSurvives(const QString& root) {
-    journal::History h(root);
+    ZStorage h(root);
     const QString id = QStringLiteral("01n6r08s8wy52c");
-    append(h, id, Kind::Save, kNow, body("раз", 1));
-    append(h, id, Kind::Save, kNow + kMinute, body("два больше на много знаков и ещё", 2));
-    append(h, id, Kind::Save, kNow + 2 * kMinute, body("раз", 3));
-    append(h, id, Kind::Tombstone, kNow + 3 * kMinute, QByteArray());
-    makeV0(h.pathFor(id));
+    append(h, id, journal::Kind::Save, kNow, body("раз", 1));
+    append(h, id, journal::Kind::Save, kNow + kMinute, body("два больше на много знаков и ещё", 2));
+    append(h, id, journal::Kind::Save, kNow + 2 * kMinute, body("раз", 3));
+    append(h, id, journal::Kind::Tombstone, kNow + 3 * kMinute, QByteArray());
+    makeV0(h.journalPath(id));
 
     compress(h, id, false);
     ZT_EQ("надгробие и опорная запись целы", std::string("0 3T"), timesOf(h, id, kNow));
@@ -249,12 +250,12 @@ void checkTombstoneSurvives(const QString& root) {
 
 // Мелкая правка схлопывается, но опорную запись не съедает.
 void checkMergeKeepsBaseline(const QString& root) {
-    journal::History h(root);
+    ZStorage h(root);
     const QString id = QStringLiteral("01n6r08s8wy52d");
-    append(h, id, Kind::Save, kNow, body("текст", 1));
-    append(h, id, Kind::Save, kNow + kHour, body("текст с добавкой", 2));
-    append(h, id, Kind::Save, kNow + 2 * kHour, body("текст с добавкой и ещё", 3));
-    makeV0(h.pathFor(id));
+    append(h, id, journal::Kind::Save, kNow, body("текст", 1));
+    append(h, id, journal::Kind::Save, kNow + kHour, body("текст с добавкой", 2));
+    append(h, id, journal::Kind::Save, kNow + 2 * kHour, body("текст с добавкой и ещё", 3));
+    makeV0(h.journalPath(id));
 
     const history::Report report = compress(h, id, false);
     ZT_EQ("мелкие правки схлопнулись в одну", num(2), num(report.recordsAfter));
@@ -265,13 +266,13 @@ void checkMergeKeepsBaseline(const QString& root) {
 // Миграция чистит РЕТРОАКТИВНО: те же три записи, разнесённые на годы.
 // Живое схлопывание их бы не тронуло — вот он, единственный разошедшийся сторож.
 void checkAgeIgnored(const QString& root) {
-    journal::History h(root);
+    ZStorage h(root);
     const QString id = QStringLiteral("01n6r08s8wy52e");
     const qint64 year = 365LL * 24 * kHour;
-    append(h, id, Kind::Save, kNow - 3 * year, body("текст", 1));
-    append(h, id, Kind::Save, kNow - 2 * year, body("текст с добавкой", 2));
-    append(h, id, Kind::Save, kNow - year, body("текст", 3));
-    makeV0(h.pathFor(id));
+    append(h, id, journal::Kind::Save, kNow - 3 * year, body("текст", 1));
+    append(h, id, journal::Kind::Save, kNow - 2 * year, body("текст с добавкой", 2));
+    append(h, id, journal::Kind::Save, kNow - year, body("текст", 3));
+    makeV0(h.journalPath(id));
 
     const history::Report report = compress(h, id, false);
     ZT_EQ("старые дубликаты тоже вычищены", num(1), num(report.recordsAfter));
@@ -281,46 +282,46 @@ void checkAgeIgnored(const QString& root) {
 // выкидывает дубликаты, и номера съезжают. Вешка на вычищенную запись обязана
 // приводить к выжившей равной ей.
 void checkAddressByTimeAndHash(const QString& root) {
-    journal::History h(root);
+    ZStorage h(root);
     const QString id = QStringLiteral("01n6r08s8wy52g");
-    append(h, id, Kind::Save, kNow, body("раз", 1));
-    append(h, id, Kind::Save, kNow + kMinute, body("два больше на много знаков и ещё", 2));
-    append(h, id, Kind::Save, kNow + 2 * kMinute, body("раз", 3));
+    append(h, id, journal::Kind::Save, kNow, body("раз", 1));
+    append(h, id, journal::Kind::Save, kNow + kMinute, body("два больше на много знаков и ещё", 2));
+    append(h, id, journal::Kind::Save, kNow + 2 * kMinute, body("раз", 3));
 
     journal::ZJournal before;
     QString error;
-    ZT_TRUE("журнал читается", h.read(id, &before, &error));
+    ZT_TRUE("журнал читается", h.readJournal(id, &before, &error));
     // Вешка на последнюю запись — ту самую, которую чистка и выкинет.
     const qint64 markTime = before.at(before.size() - 1).time();
     const Digest markDigest = before.at(before.size() - 1).digest();
     ZT_EQ("до чистки вешка ведёт к ней самой", num(2),
           num(before.indexOf(markTime, markDigest)));
 
-    makeV0(h.pathFor(id));
+    makeV0(h.journalPath(id));
     compress(h, id, false);
 
     journal::ZJournal after;
-    ZT_TRUE("и после чистки читается", h.read(id, &after, &error));
+    ZT_TRUE("и после чистки читается", h.readJournal(id, &after, &error));
     ZT_EQ("после чистки — к выжившей равной", num(0),
           num(after.indexOf(markTime, markDigest)));
     QByteArray target;
     ZT_TRUE("слепок по этой вешке собирается",
-            h.snapshotAt(id, after.indexOf(markTime, markDigest), &target, &error));
+            h.journalSnapshot(id, after.indexOf(markTime, markDigest), &target, &error));
     ZT_TRUE("и содержимое у него то самое", sameApartFromModified(target, body("раз", 3)));
 }
 
 // Ленивость: чищеный журнал без форса не трогается ни байтом.
 void checkCleanLeftAlone(const QString& root) {
-    journal::History h(root);
+    ZStorage h(root);
     const QString id = QStringLiteral("01n6r08s8wy52f");
-    append(h, id, Kind::Save, kNow, body("раз", 1));
-    append(h, id, Kind::Save, kNow + kMinute, body("два больше на много знаков и ещё", 2));
-    const QByteArray bytes = fileBytes(h.pathFor(id));
+    append(h, id, journal::Kind::Save, kNow, body("раз", 1));
+    append(h, id, journal::Kind::Save, kNow + kMinute, body("два больше на много знаков и ещё", 2));
+    const QByteArray bytes = fileBytes(h.journalPath(id));
 
     const history::Report report = compress(h, id, false);
     ZT_EQ("новый журнал заведён сразу чищеным", std::string("0.1"), str(report.versionBefore));
     ZT_TRUE("и не переписан", !report.rewritten);
-    ZT_TRUE("байт в байт тот же", fileBytes(h.pathFor(id)) == bytes);
+    ZT_TRUE("байт в байт тот же", fileBytes(h.journalPath(id)) == bytes);
 }
 
 // Живая запись и миграция расходятся ТОЛЬКО сторожем свежести. Одни и те же
@@ -335,7 +336,7 @@ void checkLiveAndMigrationAgree(const QString& root) {
         body("совсем другое содержимое, ни на что не похожее вовсе", 5),
     };
 
-    journal::History h(root);
+    ZStorage h(root);
     const QString live = QStringLiteral("01n6r08s8wy521");
     const QString raw = QStringLiteral("01n6r08s8wy522");
 
@@ -345,30 +346,30 @@ void checkLiveAndMigrationAgree(const QString& root) {
         const qint64 when = kNow + i * kMinute;
         journal::ZJournal j;
         QString error;
-        h.read(live, &j, &error);
+        h.readJournal(live, &j, &error);
         const auto snapshotOf = [&](int at) {
             QByteArray out;
             QString why;
-            if (!h.snapshotAt(live, at, &out, &why)) return QByteArray();
+            if (!h.journalSnapshot(live, at, &out, &why)) return QByteArray();
             return out;
         };
         const journal::ZJournal::Step step =
-            j.planStep(snapshotOf, steps[i], Kind::Save, when, rules);
+            j.planStep(snapshotOf, steps[i], journal::Kind::Save, when, rules);
         // Живой путь гасит адресом — ровно то же, что делает запись заметки.
         QVector<journal::EntryRef> voids;
         for (int at : step.voided) voids.append(journal::EntryRef(j.at(at).time(), j.at(at).digest()));
         if (step.writeNew)
-            h.append(live, journal::NewRecord::save(steps[i], journal::Stamp::at(when)).voiding(voids),
+            h.appendToJournal(live, journal::NewRecord::save(steps[i], journal::Stamp::at(when)).voiding(voids),
                      &error);
         else if (!voids.isEmpty())
-            h.append(live, journal::NewRecord::amendment(journal::Stamp::at(when)).voiding(voids),
+            h.appendToJournal(live, journal::NewRecord::amendment(journal::Stamp::at(when)).voiding(voids),
                      &error);
     }
 
     // Сырой путь: всё подряд, как писала программа до этапа 9.
     for (int i = 0; i < steps.size(); ++i)
-        append(h, raw, Kind::Save, kNow + i * kMinute, steps[i]);
-    makeV0(h.pathFor(raw));
+        append(h, raw, journal::Kind::Save, kNow + i * kMinute, steps[i]);
+    makeV0(h.journalPath(raw));
     compress(h, raw, false);
 
     ZT_EQ("живая запись и миграция сошлись", timesOf(h, live, kNow), timesOf(h, raw, kNow));

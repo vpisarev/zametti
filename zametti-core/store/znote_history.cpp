@@ -1,20 +1,21 @@
 #include "znote_history.h"
 
+#include "zstorage.h"
+
 #include <QDateTime>
 
 #include <cstdio>
 
 namespace zametti {
 
-ZNoteHistory::ZNoteHistory(QString storeRoot, QString noteId, history::Rules rules)
-    : root_(std::move(storeRoot)), id_(std::move(noteId)), rules_(rules) {}
+ZNoteHistory::ZNoteHistory(ZStorage* store, QString noteId, journal::ZJournal::Rules rules)
+    : store_(store), id_(std::move(noteId)), rules_(rules) {}
 
 void ZNoteHistory::ensureBaseline(const QByteArray& contents, qint64 fileTimeMs) {
     if (!available()) return;
-    journal::History history(root_);
     journal::ZJournal journal;
     QString error;
-    if (!history.read(id_, &journal, &error)) {
+    if (!store_->readJournal(id_, &journal, &error)) {
         std::fprintf(stderr, "cannot read history: %s\n", error.toUtf8().constData());
         return;
     }
@@ -24,34 +25,33 @@ void ZNoteHistory::ensureBaseline(const QByteArray& contents, qint64 fileTimeMs)
     // «сейчас», и страж монотонности его не поднимает.
     const journal::Stamp when = fileTimeMs > 0 ? journal::Stamp::at(fileTimeMs)
                                                : journal::Stamp::now();
-    if (!history.append(id_, journal::NewRecord::save(contents, when), &error))
+    if (!store_->appendToJournal(id_, journal::NewRecord::save(contents, when), &error))
         std::fprintf(stderr, "baseline record not written: %s\n", error.toUtf8().constData());
 }
 
 void ZNoteHistory::compressOnce() {
     if (!available() || compressed_) return;   // за один заход в заметку — один раз
     compressed_ = true;
-    journal::History history(root_);
     QString error;
-    if (!history::compressJournal(history, id_, rules_, false, nullptr, &error))
+    if (!store_->compressJournal(id_, rules_, false, nullptr, &error))
         std::fprintf(stderr, "history not cleaned: %s\n", error.toUtf8().constData());
     tailKnown_ = false;   // хвост мог переехать
 }
 
-void ZNoteHistory::loadTail(journal::History& history) {
+void ZNoteHistory::loadTail() {
     if (tailKnown_) return;
     tailKnown_ = true;
     tail_.clear();
     tailTime_ = 0;
     journal::ZJournal read;
     QString error;
-    if (history.read(id_, &read, &error) && !read.isEmpty()) {
+    if (store_->readJournal(id_, &read, &error) && !read.isEmpty()) {
         // Голова, а не последняя по файлу: с чем сравнивать свежий слепок,
         // решает ПОРЯДОК записей, а не их укладка. Разойтись эти две вещи
         // могут только у журнала, побывавшего в синхронизации, — и тогда
         // мелкая правка слилась бы не с той записью.
         const int last = read.lastSnapshotIndex();
-        if (last >= 0 && history.snapshotAt(id_, last, &tail_, &error))
+        if (last >= 0 && store_->journalSnapshot(id_, last, &tail_, &error))
             tailTime_ = read.at(last).time();
     }
 }
@@ -65,7 +65,6 @@ bool ZNoteHistory::record(journal::Kind kind, const QByteArray& snapshot, QStrin
     if (kind == journal::Kind::Save || kind == journal::Kind::Restore) restoreSource_ = 0;
     if (!available()) return false;
 
-    journal::History history(root_);
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     QString why;
     QString* err = error != nullptr ? error : &why;
@@ -75,13 +74,13 @@ bool ZNoteHistory::record(journal::Kind kind, const QByteArray& snapshot, QStrin
     // новый слепок с хвостом: иначе оно работало бы поверх дубликатов, которых
     // призвано не допускать. Хвост после чистки разжимается заново.
     compressOnce();
-    loadTail(history);
+    loadTail();
 
     // РЕШЕНИЕ ПРИНИМАЕТ ОБЩИЙ СВОД ПРАВИЛ (history_rules.h) — тот же, что
     // чистит старую историю. Здесь остаётся механика: прочитать журнал, отдать
     // правилу слепки и сделать, что сказано.
     journal::ZJournal read;
-    if (!history.read(id_, &read, err)) {
+    if (!store_->readJournal(id_, &read, err)) {
         std::fprintf(stderr, "cannot read history: %s\n", err->toUtf8().constData());
         tailKnown_ = false;
         return false;
@@ -94,7 +93,7 @@ bool ZNoteHistory::record(journal::Kind kind, const QByteArray& snapshot, QStrin
         if (i == lastIndex && tailTime_ > 0) return tail_;
         QByteArray older;
         QString ignored;
-        if (!history.snapshotAt(id_, i, &older, &ignored)) return {};
+        if (!store_->journalSnapshot(id_, i, &older, &ignored)) return {};
         return older;
     };
     const journal::ZJournal::Step step = read.planStep(snapshotOf, snapshot, kind, now, rules_);
@@ -115,11 +114,11 @@ bool ZNoteHistory::record(journal::Kind kind, const QByteArray& snapshot, QStrin
                                       : (kind == journal::Kind::External
                                              ? journal::NewRecord::external(snapshot)
                                              : journal::NewRecord::save(snapshot));
-        ok = history.append(id_, what.voiding(voids), err);
+        ok = store_->appendToJournal(id_, what.voiding(voids), err);
     } else if (!voids.isEmpty()) {
         // Человек вернулся к уже записанному состоянию: нового слепка нет, а
         // сказать «того, что между, больше нет» надо.
-        ok = history.append(id_, journal::NewRecord::amendment().voiding(voids), err);
+        ok = store_->appendToJournal(id_, journal::NewRecord::amendment().voiding(voids), err);
     }
     if (!ok) {
         std::fprintf(stderr, "history not written: %s\n", err->toUtf8().constData());
@@ -137,7 +136,7 @@ bool ZNoteHistory::read(journal::ZJournal* out, QString* error) {
         return false;
     }
     compressOnce();
-    return journal::History(root_).read(id_, out, error);
+    return store_->readJournal(id_, out, error);
 }
 
 bool ZNoteHistory::snapshotAt(int index, QByteArray* out, QString* error) const {
@@ -145,7 +144,7 @@ bool ZNoteHistory::snapshotAt(int index, QByteArray* out, QString* error) const 
         if (error != nullptr) *error = QStringLiteral("note has no journal");
         return false;
     }
-    return journal::History(root_).snapshotAt(id_, index, out, error);
+    return store_->journalSnapshot(id_, index, out, error);
 }
 
 }  // namespace zametti

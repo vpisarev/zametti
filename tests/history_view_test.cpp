@@ -17,6 +17,7 @@
 // Снимки приёмки — в каталог набора (широкое и узкое окно).
 
 #include "diff.h"
+#include "zstorage.h"
 #include "editor_widget.h"
 #include "history_controller.h"
 #include "history_panel.h"
@@ -70,11 +71,11 @@ QString makeNoteWithHistory(const QString& id, const QByteArray& first,
     if (file.open(QIODevice::WriteOnly)) file.write(second);
     file.close();
 
-    journal::History history(g_root);
+    ZStorage history(g_root);
     QString error;
     const qint64 now = 1'700'000'000'000LL;
-    history.append(id, zametti::journal::NewRecord::save(first, journal::Stamp::at(now)), &error);
-    history.append(id, zametti::journal::NewRecord::save(second, journal::Stamp::at(now + 60'000)), &error);
+    history.appendToJournal(id, zametti::journal::NewRecord::save(first, journal::Stamp::at(now)), &error);
+    history.appendToJournal(id, zametti::journal::NewRecord::save(second, journal::Stamp::at(now + 60'000)), &error);
     return path;
 }
 
