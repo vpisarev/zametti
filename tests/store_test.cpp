@@ -96,15 +96,15 @@ static int ztRunSuite(int argc, char** argv) {
         // История заметки: пара сохранений, как в жизни.
         ZStorage history(root);
         ZT_TRUE("первый слепок",
-                history.appendToJournal(noteId, zametti::journal::NewRecord::save(QByteArray("# заметка\n\nраз\n"), journal::Stamp::at(1'700'000'000'000LL)), &error));
+                history.appendToJournal(noteId, zametti::ZJournal::NewRecord::save(QByteArray("# заметка\n\nраз\n"), ZJournal::Stamp::at(1'700'000'000'000LL)), &error));
         ZT_TRUE("второй слепок",
-                history.appendToJournal(noteId, zametti::journal::NewRecord::save(QByteArray("# заметка\n\nраз\nдва\n"), journal::Stamp::at(1'700'000'060'000LL)), &error));
+                history.appendToJournal(noteId, zametti::ZJournal::NewRecord::save(QByteArray("# заметка\n\nраз\nдва\n"), ZJournal::Stamp::at(1'700'000'060'000LL)), &error));
 
         ZT_TRUE("заметка удалена", store::deleteNoteFile(root, noteId, &error));
         ZT_EQ("и без жалоб", std::string(), error.toStdString());
         ZT_TRUE("файла заметки больше нет", !QFileInfo::exists(path));
 
-        journal::ZJournal journal;
+        ZJournal journal;
         ZT_TRUE("журнал на месте", history.readJournal(noteId, &journal, &error));
         // ДВЕ, а не три: надгробие гасит всё, кроме последнего слепка. Полная
         // история после удаления — мёртвый груз, а последнего состояния хватает,
@@ -116,7 +116,7 @@ static int ztRunSuite(int argc, char** argv) {
         const bool haveRecords = !journal.isEmpty();
         ZT_TRUE("журнал не удалён вместе с заметкой", haveRecords);
         ZT_TRUE("последняя — надгробие",
-                haveRecords && journal.at(journal.size() - 1).kind() == journal::Kind::Tombstone);
+                haveRecords && journal.at(journal.size() - 1).kind() == ZJournal::Kind::Tombstone);
         ZT_TRUE("у надгробия своего слепка нет",
                 haveRecords && !journal.at(journal.size() - 1).hasSnapshot());
 
@@ -160,9 +160,9 @@ static int ztRunSuite(int argc, char** argv) {
             QStringLiteral("<!-- zametti\ncreated: 2023-01-01T00:00:00Z\n-->\n\n"
                            "# стало\n\nбез картинки\n").toUtf8();
         ZT_TRUE("слепок с картинкой",
-                history.appendToJournal(noteId, zametti::journal::NewRecord::save(withPicture, journal::Stamp::at(1'700'000'000'000LL)), &error));
+                history.appendToJournal(noteId, zametti::ZJournal::NewRecord::save(withPicture, ZJournal::Stamp::at(1'700'000'000'000LL)), &error));
         ZT_TRUE("слепок без картинки",
-                history.appendToJournal(noteId, zametti::journal::NewRecord::save(withoutPicture, journal::Stamp::at(1'700'000'060'000LL)), &error));
+                history.appendToJournal(noteId, zametti::ZJournal::NewRecord::save(withoutPicture, ZJournal::Stamp::at(1'700'000'060'000LL)), &error));
         {
             QFile f(path);
             ZT_TRUE("живая заметка — без картинки", f.open(QIODevice::WriteOnly));
@@ -369,8 +369,8 @@ static int ztRunSuite(int argc, char** argv) {
             const QString path = store::newNote(root, QString(), &error);
             const QString id = QFileInfo(path).completeBaseName();
             ids << id;
-            history.appendToJournal(id, zametti::journal::NewRecord::save(text, zametti::journal::Stamp::at(1'700'000'000'000LL)), &error);
-            history.appendToJournal(id, zametti::journal::NewRecord::save(same, zametti::journal::Stamp::at(1'700'000'060'000LL)), &error);
+            history.appendToJournal(id, zametti::ZJournal::NewRecord::save(text, zametti::ZJournal::Stamp::at(1'700'000'000'000LL)), &error);
+            history.appendToJournal(id, zametti::ZJournal::NewRecord::save(same, zametti::ZJournal::Stamp::at(1'700'000'060'000LL)), &error);
         }
         // Первый журнал делаем старым (v0): именно такому чистка и полагается —
         // но не от verify.
@@ -381,8 +381,8 @@ static int ztRunSuite(int argc, char** argv) {
             QByteArray blob = file.readAll();
             file.close();
             const QByteArray clean =
-                journal::ZJournal::headerBytes(QString::fromLatin1(journal::kCleanVersion));
-            blob = journal::ZJournal::headerBytes(QString()) + blob.mid(clean.size());
+                ZJournal::headerBytes(QString::fromLatin1(ZJournal::kCleanVersion));
+            blob = ZJournal::headerBytes(QString()) + blob.mid(clean.size());
             QFile out(path);
             ZT_TRUE("журнал переписан на старый лад",
                     out.open(QIODevice::WriteOnly | QIODevice::Truncate));
@@ -409,7 +409,7 @@ static int ztRunSuite(int argc, char** argv) {
         }
         ZT_TRUE("ни один журнал не тронут: ни байтом, ни временем", untouched);
 
-        journal::ZJournal still;
+        ZJournal still;
         ZT_TRUE("старый журнал читается", history.readJournal(ids[0], &still, &error));
         ZT_EQ("и остался старым", std::string(), still.cleanVersion().toStdString());
         ZT_TRUE("с дубликатом внутри", still.size() == 2);
@@ -423,8 +423,8 @@ static int ztRunSuite(int argc, char** argv) {
         const QString path = store::newNote(root, QString(), &error);
         const QString noteId = QFileInfo(path).completeBaseName();
         ZStorage history(root);
-        history.appendToJournal(noteId, zametti::journal::NewRecord::save(QByteArray("<!-- zametti\ncreated: 2023-01-01T00:00:00Z\n-->\n\n"
-                                  "# была\n"), journal::Stamp::at(1'700'000'000'000LL)), &error);
+        history.appendToJournal(noteId, zametti::ZJournal::NewRecord::save(QByteArray("<!-- zametti\ncreated: 2023-01-01T00:00:00Z\n-->\n\n"
+                                  "# была\n"), ZJournal::Stamp::at(1'700'000'000'000LL)), &error);
 
         // Удалили как положено — надгробие есть, история осталась намеренно.
         ZT_TRUE("заметка удалена", store::deleteNoteFile(root, noteId, &error));
@@ -437,8 +437,8 @@ static int ztRunSuite(int argc, char** argv) {
         // А теперь заметку унесли мимо программы: журнал есть, надгробия нет.
         const QString second = store::newNote(root, QString(), &error);
         const QString secondId = QFileInfo(second).completeBaseName();
-        history.appendToJournal(secondId, zametti::journal::NewRecord::save(QByteArray("<!-- zametti\ncreated: 2023-01-01T00:00:00Z\n-->\n\n"
-                                  "# унесли\n"), zametti::journal::Stamp::at(1'700'000'000'000LL)), &error);
+        history.appendToJournal(secondId, zametti::ZJournal::NewRecord::save(QByteArray("<!-- zametti\ncreated: 2023-01-01T00:00:00Z\n-->\n\n"
+                                  "# унесли\n"), zametti::ZJournal::Stamp::at(1'700'000'000'000LL)), &error);
         ZT_TRUE("файл унесён мимо программы", QFile::remove(second));
         store::Report orphan;
         ZT_TRUE("проверка всё ещё проходит", store::verifyStore(root, orphan));

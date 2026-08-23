@@ -176,7 +176,7 @@ bool archiveNote(const QString& root, const QString& noteId, const history::Rule
     // прошлую запись, а не встаёт рядом. Голова журнала обязана сойтись с
     // файлом — на этом стоит вся синхронизация.
     ZStorage storage(root);
-    journal::ZJournal read;
+    ZJournal read;
     QString why;
     if (!storage.readJournal(noteId, &read, &why)) {
         if (error != nullptr) *error = QStringLiteral("cannot read history: %1").arg(why);
@@ -189,14 +189,14 @@ bool archiveNote(const QString& root, const QString& noteId, const history::Rule
         if (!storage.journalSnapshot(noteId, at, &older, &ignored)) return QByteArray();
         return older;
     };
-    const journal::ZJournal::Step step = read.planStep(
-        snapshotOf, snapshot, journal::Kind::Save, QDateTime::currentMSecsSinceEpoch(), rules);
-    QVector<journal::EntryRef> voids;
+    const ZJournal::Step step = read.planStep(
+        snapshotOf, snapshot, ZJournal::Kind::Save, QDateTime::currentMSecsSinceEpoch(), rules);
+    QVector<ZJournal::EntryRef> voids;
     voids.reserve(step.voided.size());
     for (int at : step.voided)
-        voids.append(journal::EntryRef(read.at(at).time(), read.at(at).digest()));
+        voids.append(ZJournal::EntryRef(read.at(at).time(), read.at(at).digest()));
     if (step.writeNew &&
-        !storage.appendToJournal(noteId, journal::NewRecord::save(snapshot).voiding(voids), &why)) {
+        !storage.appendToJournal(noteId, ZJournal::NewRecord::save(snapshot).voiding(voids), &why)) {
         // Файл уже помечен — архивация состоялась; но расхождение головы с
         // файлом надо назвать вслух, а не проглотить.
         if (error != nullptr) *error = QStringLiteral("mark not written to history: %1").arg(why);
@@ -235,7 +235,7 @@ bool restoreNote(const QString& root, const QString& noteId, QString* error) {
     ZStorage storage(root);
     QString ignored;
     storage.appendToJournal(noteId,
-                   journal::NewRecord::restore(QByteArray(out.data(), qsizetype(out.size())), 0),
+                   ZJournal::NewRecord::restore(QByteArray(out.data(), qsizetype(out.size())), 0),
                    &ignored);
     return true;
 }
@@ -276,7 +276,7 @@ int unfoldArchivedStubs(const QString& root, QStringList* leftAlone, QString* er
         if (!headerSaysArchived(header)) continue;
         if (!looksLikeStub(std::string_view(bytes).substr(headTo))) continue;
 
-        journal::ZJournal read;
+        ZJournal read;
         QString why;
         if (!storage.readJournal(id, &read, &why)) {
             if (leftAlone != nullptr)

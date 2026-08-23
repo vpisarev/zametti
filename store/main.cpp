@@ -256,7 +256,7 @@ int main(int argc, char** argv) {
             return 1;
         }
         zametti::ZStorage storage(root);
-        const zametti::journal::ThinReport report =
+        const zametti::ZJournal::ThinReport report =
             storage.thinAllJournals(QDateTime::currentMSecsSinceEpoch(), dryRun);
         for (const QString& name : report.trimmed)
             std::printf("%s: truncated tail cut off\n", name.toUtf8().constData());

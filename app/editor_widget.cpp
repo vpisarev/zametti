@@ -762,8 +762,8 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
     //
     // Время берём у файла, а не «сейчас»: содержимое ровно такой давности, и
     // таймлайн не должен утверждать, будто заметка написана в эту минуту.
-    std::shared_ptr<journal::ZJournal> noteJournal =
-        storage_ == nullptr ? std::make_shared<journal::ZJournal>()
+    std::shared_ptr<ZJournal> noteJournal =
+        storage_ == nullptr ? std::make_shared<ZJournal>()
                             : storage_->journalFor(ZStorage::idOfPath(path), historyRules());
     {
         const QDateTime when = QFileInfo(path).lastModified();
@@ -847,7 +847,7 @@ void NoteEditor::onExternalSettled() {
     // Шаг истории пишется здесь, а не после ответа человека: файл на диске уже
     // изменился, и это случилось независимо от того, примем мы чужую версию
     // или перезапишем своей. «Оставить моё» тогда ляжет следующей записью.
-    note_->journal().record(journal::Kind::External, note_->lastSaved());
+    note_->journal().record(ZJournal::Kind::External, note_->lastSaved());
 
     // Без несохранённых правок внешнее содержимое — просто ещё один шаг
     // истории: undo вернёт то, что было до него.
@@ -3117,7 +3117,7 @@ void NoteEditor::save(bool interactive, bool force) {
         // подряд в журнале не нужен (дедупликация тут бесплатна, потому что
         // сравнение отпечатков уже сделано выше).
         if (outcome.result == SaveResult::Written)
-            note_->journal().record(journal::Kind::Save, outcome.written);
+            note_->journal().record(ZJournal::Kind::Save, outcome.written);
         // Признак «восстановление» гасим при любом исходе записи: он относится
         // к одному ближайшему сохранению, а не «пока не сработает».
         note_->journal().clearPendingRestore();

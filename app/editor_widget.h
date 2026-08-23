@@ -195,7 +195,7 @@ public:
     // буфер из редактора никуда не уезжает, readOnly не переключается. Здесь
     // остаются: журнал и байты заметки — тому, кто заводит таймлайн; глагол
     // восстановления; сигналы «пора в историю».
-    std::shared_ptr<journal::ZJournal> noteJournal() const { return note_->journalPtr(); }
+    std::shared_ptr<ZJournal> noteJournal() const { return note_->journalPtr(); }
     // Байты файла живой заметки СЕЙЧАС (шапка + каноническое тело) — свежая
     // версия для сравнения из истории.
     QByteArray noteFileBytes() const { return note_->fileBytes(); }

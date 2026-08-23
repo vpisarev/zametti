@@ -58,12 +58,12 @@ public:
     //
     // Запись собирается здесь руками ровно по формату: карта с ключами
     // 1 род, 2 время, 3 отпечаток, 4 кодек, 5 размер до сжатия, 6 слепок.
-    void appendLegacyRecord(const QString& id, zametti::journal::Kind kind, qint64 time,
+    void appendLegacyRecord(const QString& id, zametti::ZJournal::Kind kind, qint64 time,
                             const QByteArray& snapshot) const {
         const QString path = journalOf(id);
         QByteArray blob;
         if (!QFileInfo::exists(path))
-            blob = zametti::journal::ZJournal::headerBytes(QStringLiteral("0.1"));
+            blob = zametti::ZJournal::headerBytes(QStringLiteral("0.1"));
 
         const zametti::Digest digest =
             zametti::hashOf(std::string_view(snapshot.constData(), size_t(snapshot.size())));
@@ -74,7 +74,7 @@ public:
 
         QByteArray record;
         QCborStreamWriter writer(&record);
-        const bool tombstone = kind == zametti::journal::Kind::Tombstone;
+        const bool tombstone = kind == zametti::ZJournal::Kind::Tombstone;
         writer.startMap(quint64(tombstone ? 3 : 6));
         writer.append(1);
         writer.append(int(kind));

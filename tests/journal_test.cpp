@@ -55,19 +55,19 @@ constexpr qint64 kDay = 24 * kHour;
 
 // Что дописать — по роду записи. Наборам удобно перечислять роды, а
 // именованные создатели не дают собрать неверное сочетание.
-journal::NewRecord recordFor(journal::Kind kind, qint64 time, const QByteArray& body, qint64 source) {
-    const journal::Stamp when = journal::Stamp::at(time);
+ZJournal::NewRecord recordFor(ZJournal::Kind kind, qint64 time, const QByteArray& body, qint64 source) {
+    const ZJournal::Stamp when = ZJournal::Stamp::at(time);
     switch (kind) {
-        case journal::Kind::External: return journal::NewRecord::external(body, when);
-        case journal::Kind::Restore: return journal::NewRecord::restore(body, source, when);
-        case journal::Kind::Tombstone: return journal::NewRecord::tombstone(when);
-        case journal::Kind::Amendment: return journal::NewRecord::amendment(when);
-        case journal::Kind::Save: break;
+        case ZJournal::Kind::External: return ZJournal::NewRecord::external(body, when);
+        case ZJournal::Kind::Restore: return ZJournal::NewRecord::restore(body, source, when);
+        case ZJournal::Kind::Tombstone: return ZJournal::NewRecord::tombstone(when);
+        case ZJournal::Kind::Amendment: return ZJournal::NewRecord::amendment(when);
+        case ZJournal::Kind::Save: break;
     }
-    return journal::NewRecord::save(body, when);
+    return ZJournal::NewRecord::save(body, when);
 }
 
-QString append(ZStorage& h, const QString& id, journal::Kind kind, qint64 time,
+QString append(ZStorage& h, const QString& id, ZJournal::Kind kind, qint64 time,
                const QByteArray& body, qint64 source = 0) {
     QString error;
     if (!h.appendToJournal(id, recordFor(kind, time, body, source), &error)) return error;
@@ -80,33 +80,33 @@ void checkRoundTrip(const QString& dir) {
     const QString path = h.journalPath(id);
     ZT_EQ("пути журнала", str(QDir(dir).filePath("history/01n6r08s8wy52h.log")), str(path));
 
-    journal::ZJournal empty;
+    ZJournal empty;
     QString error;
     ZT_TRUE("журнала ещё нет — это не беда", h.readJournal(id, &empty, &error));
     ZT_EQ("и записей в нём ноль", num(0), num(empty.size()));
 
     const QByteArray first = noteBody(10, "раз");
     const QByteArray second = noteBody(12, "два");
-    ZT_EQ("первая запись", std::string(), str(append(h, id, journal::Kind::Save, kNow - 3 * kHour, first)));
+    ZT_EQ("первая запись", std::string(), str(append(h, id, ZJournal::Kind::Save, kNow - 3 * kHour, first)));
     const qint64 afterFirst = QFile(path).size();
     ZT_EQ("вторая запись", std::string(),
-          str(append(h, id, journal::Kind::External, kNow - 2 * kHour, second)));
+          str(append(h, id, ZJournal::Kind::External, kNow - 2 * kHour, second)));
     ZT_TRUE("инвариант B: файл вырос", QFile(path).size() > afterFirst);
     ZT_EQ("восстановление", std::string(),
-          str(append(h, id, journal::Kind::Restore, kNow - kHour, first, kNow - 3 * kHour)));
+          str(append(h, id, ZJournal::Kind::Restore, kNow - kHour, first, kNow - 3 * kHour)));
     ZT_EQ("надгробие", std::string(),
-          str(append(h, id, journal::Kind::Tombstone, kNow - kMinute, QByteArray())));
+          str(append(h, id, ZJournal::Kind::Tombstone, kNow - kMinute, QByteArray())));
 
-    journal::ZJournal read;
+    ZJournal read;
     ZT_TRUE("журнал читается", h.readJournal(id, &read, &error));
     ZT_EQ("ошибки нет", std::string(), str(error));
     ZT_EQ("записей четыре", num(4), num(read.size()));
     ZT_TRUE("хвост цел", !read.tailTrimmed());
 
-    ZT_EQ("вид первой", num(int(journal::Kind::Save)), num(int(read.at(0).kind())));
-    ZT_EQ("вид второй", num(int(journal::Kind::External)), num(int(read.at(1).kind())));
-    ZT_EQ("вид третьей", num(int(journal::Kind::Restore)), num(int(read.at(2).kind())));
-    ZT_EQ("вид четвёртой", num(int(journal::Kind::Tombstone)), num(int(read.at(3).kind())));
+    ZT_EQ("вид первой", num(int(ZJournal::Kind::Save)), num(int(read.at(0).kind())));
+    ZT_EQ("вид второй", num(int(ZJournal::Kind::External)), num(int(read.at(1).kind())));
+    ZT_EQ("вид третьей", num(int(ZJournal::Kind::Restore)), num(int(read.at(2).kind())));
+    ZT_EQ("вид четвёртой", num(int(ZJournal::Kind::Tombstone)), num(int(read.at(3).kind())));
     ZT_EQ("время второй", num(kNow - 2 * kHour), num(read.at(1).time()));
     ZT_EQ("ревизия первой", num(1LL), num(read.at(0).seq()));
     ZT_EQ("ревизия второй", num(2LL), num(read.at(1).seq()));
@@ -141,9 +141,9 @@ void checkRevisionsSurviveThinning(const QString& dir) {
     const QString id = QStringLiteral("ревизии");
     // Правки редкие и старые — прореживание обязано что-то выбросить.
     for (int i = 0; i < 12; ++i)
-        append(h, id, journal::Kind::Save, kNow - 300 * kDay + i * kMinute, noteBody(i + 1, "р"));
+        append(h, id, ZJournal::Kind::Save, kNow - 300 * kDay + i * kMinute, noteBody(i + 1, "р"));
 
-    journal::ZJournal before;
+    ZJournal before;
     QString error;
     ZT_TRUE("журнал читается", h.readJournal(id, &before, &error));
     ZT_EQ("ревизии подряд", num(12LL), num(before.at(before.size() - 1).seq()));
@@ -153,7 +153,7 @@ void checkRevisionsSurviveThinning(const QString& dir) {
     ZT_TRUE("прореживанию есть что выбросить", keep.size() < before.size());
     ZT_TRUE("прореживание проходит", h.thinJournal(id, kNow, &error));
 
-    journal::ZJournal after;
+    ZJournal after;
     ZT_TRUE("и журнал читается", h.readJournal(id, &after, &error));
     ZT_EQ("выживших столько, сколько обещано", num(keep.size()), num(after.size()));
     bool same = after.size() == keep.size();
@@ -163,8 +163,8 @@ void checkRevisionsSurviveThinning(const QString& dir) {
 
     // Номера не переиспользуются: следующая запись продолжает максимум.
     ZT_EQ("дозапись после прореживания", std::string(),
-          str(append(h, id, journal::Kind::Save, kNow, noteBody(20, "р"))));
-    journal::ZJournal grown;
+          str(append(h, id, ZJournal::Kind::Save, kNow, noteBody(20, "р"))));
+    ZJournal grown;
     h.readJournal(id, &grown, &error);
     ZT_EQ("новая ревизия — на единицу больше максимума", num(13LL), num(grown.at(grown.size() - 1).seq()));
 }
@@ -176,7 +176,7 @@ void checkCorruption(const QString& dir) {
     const QString id = QStringLiteral("порча");
     const QString path = h.journalPath(id);
     const QByteArray body = noteBody(200, "текст");
-    append(h, id, journal::Kind::Save, kNow - kHour, body);
+    append(h, id, ZJournal::Kind::Save, kNow - kHour, body);
 
     QFile file(path);
     ZT_TRUE("файл открылся", file.open(QIODevice::ReadWrite));
@@ -201,9 +201,9 @@ void checkTornTail(const QString& dir) {
     const QString path = h.journalPath(id);
     const QByteArray a = noteBody(10, "а");
     const QByteArray b = noteBody(20, "б");
-    append(h, id, journal::Kind::Save, kNow - 2 * kHour, a);
+    append(h, id, ZJournal::Kind::Save, kNow - 2 * kHour, a);
     const qint64 whole = QFile(path).size();
-    append(h, id, journal::Kind::Save, kNow - kHour, b);
+    append(h, id, ZJournal::Kind::Save, kNow - kHour, b);
     const qint64 both = QFile(path).size();
 
     // Обрываем вторую запись на середине — так и выглядит падение.
@@ -212,7 +212,7 @@ void checkTornTail(const QString& dir) {
     ZT_TRUE("хвост обрезан руками", file.resize(whole + (both - whole) / 2));
     file.close();
 
-    journal::ZJournal read;
+    ZJournal read;
     QString error;
     ZT_TRUE("журнал с оборванным хвостом открывается", h.readJournal(id, &read, &error));
     ZT_EQ("целая часть цела", num(1), num(read.size()));
@@ -229,7 +229,7 @@ void checkTornTail(const QString& dir) {
     ZT_TRUE("и хвоста больше нет", !read.tailTrimmed());
 
     // Дописывать после обрезки можно как ни в чём не бывало.
-    ZT_EQ("дозапись после обрыва", std::string(), str(append(h, id, journal::Kind::Save, kNow, b)));
+    ZT_EQ("дозапись после обрыва", std::string(), str(append(h, id, ZJournal::Kind::Save, kNow, b)));
     h.readJournal(id, &read, &error);
     ZT_EQ("записей снова две", num(2), num(read.size()));
 }
@@ -237,7 +237,7 @@ void checkTornTail(const QString& dir) {
 void checkForeignFile(const QString& dir) {
     ZStorage h(dir);
     QString error;
-    journal::ZJournal read;
+    ZJournal read;
 
     const QString junkId = QStringLiteral("мусор");
     const QString junk = h.journalPath(junkId);
@@ -259,7 +259,7 @@ void checkForeignFile(const QString& dir) {
     // историю хуже, чем сказать вслух.
     const QString futureId = QStringLiteral("будущее");
     const QString future = h.journalPath(futureId);
-    append(h, futureId, journal::Kind::Save, kNow, noteBody(3, "будущее"));
+    append(h, futureId, ZJournal::Kind::Save, kNow, noteBody(3, "будущее"));
     QFile ff(future);
     ZT_TRUE("файл открылся", ff.open(QIODevice::ReadWrite));
     QByteArray blob = ff.readAll();
@@ -276,14 +276,14 @@ void checkForeignFile(const QString& dir) {
 // Шкала прореживания. Времена задаются напрямую, чтобы проверять правило, а
 // не сжатие.
 void checkThinningScale() {
-    QVector<journal::ZJournal::Entry> entries;
+    QVector<ZJournal::Entry> entries;
     auto add = [&entries](qint64 time) {
-        entries.append(journal::ZJournal::Entry(journal::Kind::Save, time, 0, Digest{}));
+        entries.append(ZJournal::Entry(ZJournal::Kind::Save, time, 0, Digest{}));
     };
 
     // Последний час — всё до единой.
     for (int i = 10; i >= 1; --i) add(kNow - i * kMinute);
-    ZT_EQ("последний час не прореживается", num(10), num(journal::ZJournal(entries).survivors(kNow).size()));
+    ZT_EQ("последний час не прореживается", num(10), num(ZJournal(entries).survivors(kNow).size()));
 
     // Сутки — не чаще раза в минуту: три записи внутри одной минуты схлопнутся
     // в одну, и это будет последняя из них.
@@ -293,7 +293,7 @@ void checkThinningScale() {
     add(kNow - 5 * kHour + 2000);
     add(kNow - 5 * kHour + 3 * kMinute);
     add(kNow - kMinute);
-    QVector<int> keep = journal::ZJournal(entries).survivors(kNow);
+    QVector<int> keep = ZJournal(entries).survivors(kNow);
     ZT_EQ("минута схлопывается в одну запись", num(3), num(keep.size()));
     ZT_EQ("остаётся последняя в минуте", num(2), num(keep[0]));
 
@@ -302,13 +302,13 @@ void checkThinningScale() {
     entries.clear();
     for (int i = 0; i < 6; ++i) add(kNow - 3 * kDay + i * 30 * kMinute);
     add(kNow);
-    keep = journal::ZJournal(entries).survivors(kNow);
+    keep = ZJournal(entries).survivors(kNow);
     ZT_EQ("три часа дают три записи плюс последняя", num(4), num(keep.size()));
 
     // Дальше месяца — раз в месяц; и последняя запись выживает всегда.
     entries.clear();
     for (int i = 0; i < 40; ++i) add(kNow - 400 * kDay + i * kDay);
-    keep = journal::ZJournal(entries).survivors(kNow);
+    keep = ZJournal(entries).survivors(kNow);
     ZT_TRUE("год назад остаётся горстка", keep.size() <= 3);
     ZT_EQ("последняя запись на месте", num(entries.size() - 1), num(keep.last()));
 
@@ -316,7 +316,7 @@ void checkThinningScale() {
     // заметки это её вечный финальный слепок.
     entries.clear();
     add(kNow - 4000 * kDay);
-    ZT_EQ("единственная запись вечна", num(1), num(journal::ZJournal(entries).survivors(kNow).size()));
+    ZT_EQ("единственная запись вечна", num(1), num(ZJournal(entries).survivors(kNow).size()));
 }
 
 void checkThinningFile(const QString& dir) {
@@ -325,16 +325,16 @@ void checkThinningFile(const QString& dir) {
     const QString path = h.journalPath(id);
     // Двести правок за год — случай из брифа.
     for (int i = 0; i < 200; ++i)
-        append(h, id, journal::Kind::Save, kNow - 365 * kDay + i * (365 * kDay / 200), noteBody(i + 1, "п"));
+        append(h, id, ZJournal::Kind::Save, kNow - 365 * kDay + i * (365 * kDay / 200), noteBody(i + 1, "п"));
 
-    journal::ZJournal before;
+    ZJournal before;
     QString error;
     h.readJournal(id, &before, &error);
     ZT_EQ("записей двести", num(200), num(before.size()));
     const qint64 sizeBefore = QFile(path).size();
 
     ZT_TRUE("прореживание проходит", h.thinJournal(id, kNow, &error));
-    journal::ZJournal after;
+    ZJournal after;
     ZT_TRUE("и журнал остаётся читаемым", h.readJournal(id, &after, &error));
     ZT_TRUE("записей стало меньше", after.size() < before.size());
     ZT_TRUE("файл ужался", QFile(path).size() < sizeBefore);
@@ -367,14 +367,14 @@ void checkFirstStepBack(const QString& dir) {
     const QString id = QStringLiteral("шаг-назад");
     const QString path = h.journalPath(id);
     // Старая история, потом сегодняшняя правка, потом моя свежая.
-    for (int i = 0; i < 50; ++i) append(h, id, journal::Kind::Save, kNow - 300 * kDay + i * kDay, noteBody(i + 1, "старое"));
+    for (int i = 0; i < 50; ++i) append(h, id, ZJournal::Kind::Save, kNow - 300 * kDay + i * kDay, noteBody(i + 1, "старое"));
     const QByteArray beforeMyEdits = noteBody(80, "до моих правок");
-    append(h, id, journal::Kind::Save, kNow - 20 * kMinute, beforeMyEdits);
-    append(h, id, journal::Kind::Save, kNow - kMinute, noteBody(90, "мои правки"));
+    append(h, id, ZJournal::Kind::Save, kNow - 20 * kMinute, beforeMyEdits);
+    append(h, id, ZJournal::Kind::Save, kNow - kMinute, noteBody(90, "мои правки"));
 
     QString error;
     ZT_TRUE("прореживание проходит", h.thinJournal(id, kNow, &error));
-    journal::ZJournal read;
+    ZJournal read;
     h.readJournal(id, &read, &error);
 
     QByteArray got;
@@ -391,7 +391,7 @@ void checkGenerations(const QString& dir) {
     ZStorage h(dir);
     const QString id = QStringLiteral("поколения");
     const QString path = h.journalPath(id);
-    const int count = journal::kGeneration * 3 + 5;
+    const int count = ZJournal::kGeneration * 3 + 5;
     QVector<QByteArray> bodies;
     QByteArray body = noteBody(300, "начало");
     for (int i = 0; i < count; ++i) {
@@ -399,20 +399,20 @@ void checkGenerations(const QString& dir) {
         body.replace(QByteArray("- пункт 100 "), QByteArray("- ПУНКТ " + QByteArray::number(i)));
         bodies.append(body);
         ZT_EQ("запись прошла", std::string(),
-              str(append(h, id, journal::Kind::Save, kNow - (count - i) * kMinute, body)));
+              str(append(h, id, ZJournal::Kind::Save, kNow - (count - i) * kMinute, body)));
     }
 
-    journal::ZJournal read;
+    ZJournal read;
     QString error;
     ZT_TRUE("журнал читается", h.readJournal(id, &read, &error));
     ZT_EQ("записей столько, сколько писали", num(count), num(read.size()));
 
     int fullCount = 0;
     for (int i = 0; i < read.size(); ++i) {
-        const bool shouldBeFull = i % journal::kGeneration == 0;
+        const bool shouldBeFull = i % ZJournal::kGeneration == 0;
         ZT_EQ(shouldBeFull ? "начало поколения — полный слепок"
                            : "внутри поколения — звено цепочки",
-              num(int(shouldBeFull ? journal::Codec::Zstd : journal::Codec::ZstdDelta)),
+              num(int(shouldBeFull ? ZJournal::Codec::Zstd : ZJournal::Codec::ZstdDelta)),
               num(int(read.at(i).codec())));
         if (read.at(i).full()) ++fullCount;
     }
@@ -445,13 +445,13 @@ void checkDamageContained(const QString& dir) {
     ZStorage h(dir);
     const QString id = QStringLiteral("урон");
     const QString path = h.journalPath(id);
-    const int count = journal::kGeneration * 2 + 4;
+    const int count = ZJournal::kGeneration * 2 + 4;
     QByteArray body = noteBody(200, "цел");
     for (int i = 0; i < count; ++i) {
         body.replace(QByteArray("- пункт 50 "), QByteArray("- ПУНКТ " + QByteArray::number(i)));
-        append(h, id, journal::Kind::Save, kNow - (count - i) * kMinute, body);
+        append(h, id, ZJournal::Kind::Save, kNow - (count - i) * kMinute, body);
     }
-    journal::ZJournal read;
+    ZJournal read;
     QString error;
     h.readJournal(id, &read, &error);
 
@@ -471,7 +471,7 @@ void checkDamageContained(const QString& dir) {
     QByteArray got;
     ZT_TRUE("испорченное звено отказывается", !h.journalSnapshot(id, victim, &got, &error));
     ZT_TRUE("следующее поколение читается",
-            h.journalSnapshot(id, journal::kGeneration, &got, &error));
+            h.journalSnapshot(id, ZJournal::kGeneration, &got, &error));
     ZT_TRUE("и последняя запись читается", h.journalSnapshot(id, count - 1, &got, &error));
     ZT_TRUE("до испорченного звена тоже читается",
             h.journalSnapshot(id, victim - 1, &got, &error));
@@ -488,18 +488,18 @@ void checkThinRebuildsGenerations(const QString& dir) {
     for (int i = 0; i < count; ++i) {
         body.replace(QByteArray("- пункт 40 "), QByteArray("- ПУНКТ " + QByteArray::number(i)));
         bodies.append(body);
-        append(h, id, journal::Kind::Save, kNow - 365 * kDay + i * (365 * kDay / count), body);
+        append(h, id, ZJournal::Kind::Save, kNow - 365 * kDay + i * (365 * kDay / count), body);
     }
     QString error;
     ZT_TRUE("прореживание проходит", h.thinJournal(id, kNow, &error));
 
-    journal::ZJournal after;
+    ZJournal after;
     ZT_TRUE("журнал читается", h.readJournal(id, &after, &error));
     ZT_TRUE("записей стало меньше", after.size() < count);
     for (int i = 0; i < after.size(); ++i)
         ZT_EQ("поколения после прореживания ровные",
-              num(int(i % journal::kGeneration == 0 ? journal::Codec::Zstd
-                                                    : journal::Codec::ZstdDelta)),
+              num(int(i % ZJournal::kGeneration == 0 ? ZJournal::Codec::Zstd
+                                                    : ZJournal::Codec::ZstdDelta)),
               num(int(after.at(i).codec())));
 
     // И слепки по-прежнему те же самые байты, что писались.
@@ -522,7 +522,7 @@ void checkConcurrency(const QString& dir) {
     QByteArray body = noteBody(150, "начало");
     for (int i = 0; i < 120; ++i) {
         body.replace(QByteArray("- пункт 70 "), QByteArray("- ПУНКТ " + QByteArray::number(i)));
-        append(h, id, journal::Kind::Save, kNow - 400 * kDay + i * kDay, body);
+        append(h, id, ZJournal::Kind::Save, kNow - 400 * kDay + i * kDay, body);
     }
 
     std::atomic<int> thinRuns{0};
@@ -538,7 +538,7 @@ void checkConcurrency(const QString& dir) {
     for (int i = 0; i < 60; ++i) {
         body.replace(QByteArray("- пункт 20 "), QByteArray("- СВЕЖЕЕ " + QByteArray::number(i)));
         last = body;
-        const QString error = append(h, id, journal::Kind::Save, kNow + kHour + i * 1000, body);
+        const QString error = append(h, id, ZJournal::Kind::Save, kNow + kHour + i * 1000, body);
         if (!error.isEmpty()) {
             ZT_EQ("дозапись рядом с прореживанием", std::string(), str(error));
             break;
@@ -547,7 +547,7 @@ void checkConcurrency(const QString& dir) {
     thinner.join();
     ZT_TRUE("прореживание отработало", thinRuns.load() == 30);
 
-    journal::ZJournal read;
+    ZJournal read;
     QString error;
     ZT_TRUE("журнал цел после совместной работы", h.readJournal(id, &read, &error));
     ZT_TRUE("хвост не оборван", !read.tailTrimmed());

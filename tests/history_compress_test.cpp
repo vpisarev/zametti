@@ -70,8 +70,8 @@ QByteArray fileBytes(const QString& path) {
 // нынешний append заводит журнал сразу чищеным.
 void makeV0(const QString& path) {
     QByteArray bytes = fileBytes(path);
-    const QByteArray clean = journal::ZJournal::headerBytes(QString::fromLatin1(journal::kCleanVersion));
-    const QByteArray old = journal::ZJournal::headerBytes(QString());
+    const QByteArray clean = ZJournal::headerBytes(QString::fromLatin1(ZJournal::kCleanVersion));
+    const QByteArray old = ZJournal::headerBytes(QString());
     ZT_TRUE("журнал начинается нынешней шапкой", bytes.startsWith(clean));
     bytes = old + bytes.mid(clean.size());
     QFile file(path);
@@ -82,19 +82,19 @@ void makeV0(const QString& path) {
 
 // Что дописать — по роду записи. Наборам удобно перечислять роды, а
 // именованные создатели не дают собрать неверное сочетание.
-journal::NewRecord recordFor(journal::Kind kind, qint64 time, const QByteArray& body, qint64 source) {
-    const journal::Stamp when = journal::Stamp::at(time);
+ZJournal::NewRecord recordFor(ZJournal::Kind kind, qint64 time, const QByteArray& body, qint64 source) {
+    const ZJournal::Stamp when = ZJournal::Stamp::at(time);
     switch (kind) {
-        case journal::Kind::External: return journal::NewRecord::external(body, when);
-        case journal::Kind::Restore: return journal::NewRecord::restore(body, source, when);
-        case journal::Kind::Tombstone: return journal::NewRecord::tombstone(when);
-        case journal::Kind::Amendment: return journal::NewRecord::amendment(when);
-        case journal::Kind::Save: break;
+        case ZJournal::Kind::External: return ZJournal::NewRecord::external(body, when);
+        case ZJournal::Kind::Restore: return ZJournal::NewRecord::restore(body, source, when);
+        case ZJournal::Kind::Tombstone: return ZJournal::NewRecord::tombstone(when);
+        case ZJournal::Kind::Amendment: return ZJournal::NewRecord::amendment(when);
+        case ZJournal::Kind::Save: break;
     }
-    return journal::NewRecord::save(body, when);
+    return ZJournal::NewRecord::save(body, when);
 }
 
-QString append(ZStorage& h, const QString& id, journal::Kind kind, qint64 time,
+QString append(ZStorage& h, const QString& id, ZJournal::Kind kind, qint64 time,
                const QByteArray& snapshot, qint64 source = 0) {
     QString error;
     if (!h.appendToJournal(id, recordFor(kind, time, snapshot, source), &error)) return error;
@@ -103,12 +103,12 @@ QString append(ZStorage& h, const QString& id, journal::Kind kind, qint64 time,
 
 // Времена уцелевших записей — то, чем удобнее всего описать «что осталось».
 std::string timesOf(ZStorage& h, const QString& id, qint64 base) {
-    journal::ZJournal j;
+    ZJournal j;
     QString error;
     if (!h.readJournal(id, &j, &error)) return str(error);
     std::string out;
     for (int i = 0; i < j.size(); ++i) {
-        const journal::ZJournal::Entry& e = j.at(i);
+        const ZJournal::Entry& e = j.at(i);
         // Вешки, а не записи: гашение и погашенное человеку не показываются, и
         // сходиться живому пути с миграцией положено именно по вешкам. Живой
         // путь гасит адресом (запись гашения остаётся и едет в облако),
@@ -117,7 +117,7 @@ std::string timesOf(ZStorage& h, const QString& id, qint64 base) {
         if (!e.statesContent() || j.isVoided(i)) continue;
         if (!out.empty()) out += " ";
         out += std::to_string((e.time() - base) / kMinute);
-        if (e.kind() != journal::Kind::Save) out += e.kind() == journal::Kind::Tombstone ? "T" : "X";
+        if (e.kind() != ZJournal::Kind::Save) out += e.kind() == ZJournal::Kind::Tombstone ? "T" : "X";
     }
     return out;
 }
@@ -148,7 +148,7 @@ void checkRealJournal() {
     QFile::copy(QDir(g_fixture).filePath(id + QStringLiteral(".log")), path);
 
     ZStorage h(dir.path());
-    journal::ZJournal before;
+    ZJournal before;
     QString error;
     ZT_TRUE("журнал владельца читается", h.readJournal(id, &before, &error));
     ZT_EQ("он не чищен (v0)", std::string(), str(before.cleanVersion()));
@@ -170,7 +170,7 @@ void checkRealJournal() {
     ZT_EQ("схлопнутых мелких правок нет", num(0), num(report.merged));
     ZT_TRUE("файл переписан", report.rewritten);
 
-    journal::ZJournal after;
+    ZJournal after;
     ZT_TRUE("чищеный журнал читается", h.readJournal(id, &after, &error));
     ZT_EQ("версия в шапке", std::string("0.1"), str(after.cleanVersion()));
     ZT_EQ("уцелевшие записи (минуты от первой)", std::string("0 15680 15850 15872 15880"),
@@ -208,9 +208,9 @@ void checkRealJournal() {
 void checkReturnCollapses(const QString& root) {
     ZStorage h(root);
     const QString id = QStringLiteral("01n6r08s8wy52a");
-    append(h, id, journal::Kind::Save, kNow, body("раз", 1));
-    append(h, id, journal::Kind::Save, kNow + kMinute, body("два больше на много знаков и ещё", 2));
-    append(h, id, journal::Kind::Save, kNow + 2 * kMinute, body("раз", 3));
+    append(h, id, ZJournal::Kind::Save, kNow, body("раз", 1));
+    append(h, id, ZJournal::Kind::Save, kNow + kMinute, body("два больше на много знаков и ещё", 2));
+    append(h, id, ZJournal::Kind::Save, kNow + 2 * kMinute, body("раз", 3));
     makeV0(h.journalPath(id));
 
     const history::Report report = compress(h, id, false);
@@ -223,10 +223,10 @@ void checkReturnCollapses(const QString& root) {
 void checkExternalStops(const QString& root) {
     ZStorage h(root);
     const QString id = QStringLiteral("01n6r08s8wy52b");
-    append(h, id, journal::Kind::Save, kNow, body("раз", 1));
-    append(h, id, journal::Kind::External, kNow + kMinute,
+    append(h, id, ZJournal::Kind::Save, kNow, body("раз", 1));
+    append(h, id, ZJournal::Kind::External, kNow + kMinute,
            body("два больше на много знаков и ещё", 2));
-    append(h, id, journal::Kind::Save, kNow + 2 * kMinute, body("раз", 3));
+    append(h, id, ZJournal::Kind::Save, kNow + 2 * kMinute, body("раз", 3));
     makeV0(h.journalPath(id));
 
     const history::Report report = compress(h, id, false);
@@ -238,10 +238,10 @@ void checkExternalStops(const QString& root) {
 void checkTombstoneSurvives(const QString& root) {
     ZStorage h(root);
     const QString id = QStringLiteral("01n6r08s8wy52c");
-    append(h, id, journal::Kind::Save, kNow, body("раз", 1));
-    append(h, id, journal::Kind::Save, kNow + kMinute, body("два больше на много знаков и ещё", 2));
-    append(h, id, journal::Kind::Save, kNow + 2 * kMinute, body("раз", 3));
-    append(h, id, journal::Kind::Tombstone, kNow + 3 * kMinute, QByteArray());
+    append(h, id, ZJournal::Kind::Save, kNow, body("раз", 1));
+    append(h, id, ZJournal::Kind::Save, kNow + kMinute, body("два больше на много знаков и ещё", 2));
+    append(h, id, ZJournal::Kind::Save, kNow + 2 * kMinute, body("раз", 3));
+    append(h, id, ZJournal::Kind::Tombstone, kNow + 3 * kMinute, QByteArray());
     makeV0(h.journalPath(id));
 
     compress(h, id, false);
@@ -252,9 +252,9 @@ void checkTombstoneSurvives(const QString& root) {
 void checkMergeKeepsBaseline(const QString& root) {
     ZStorage h(root);
     const QString id = QStringLiteral("01n6r08s8wy52d");
-    append(h, id, journal::Kind::Save, kNow, body("текст", 1));
-    append(h, id, journal::Kind::Save, kNow + kHour, body("текст с добавкой", 2));
-    append(h, id, journal::Kind::Save, kNow + 2 * kHour, body("текст с добавкой и ещё", 3));
+    append(h, id, ZJournal::Kind::Save, kNow, body("текст", 1));
+    append(h, id, ZJournal::Kind::Save, kNow + kHour, body("текст с добавкой", 2));
+    append(h, id, ZJournal::Kind::Save, kNow + 2 * kHour, body("текст с добавкой и ещё", 3));
     makeV0(h.journalPath(id));
 
     const history::Report report = compress(h, id, false);
@@ -269,9 +269,9 @@ void checkAgeIgnored(const QString& root) {
     ZStorage h(root);
     const QString id = QStringLiteral("01n6r08s8wy52e");
     const qint64 year = 365LL * 24 * kHour;
-    append(h, id, journal::Kind::Save, kNow - 3 * year, body("текст", 1));
-    append(h, id, journal::Kind::Save, kNow - 2 * year, body("текст с добавкой", 2));
-    append(h, id, journal::Kind::Save, kNow - year, body("текст", 3));
+    append(h, id, ZJournal::Kind::Save, kNow - 3 * year, body("текст", 1));
+    append(h, id, ZJournal::Kind::Save, kNow - 2 * year, body("текст с добавкой", 2));
+    append(h, id, ZJournal::Kind::Save, kNow - year, body("текст", 3));
     makeV0(h.journalPath(id));
 
     const history::Report report = compress(h, id, false);
@@ -284,11 +284,11 @@ void checkAgeIgnored(const QString& root) {
 void checkAddressByTimeAndHash(const QString& root) {
     ZStorage h(root);
     const QString id = QStringLiteral("01n6r08s8wy52g");
-    append(h, id, journal::Kind::Save, kNow, body("раз", 1));
-    append(h, id, journal::Kind::Save, kNow + kMinute, body("два больше на много знаков и ещё", 2));
-    append(h, id, journal::Kind::Save, kNow + 2 * kMinute, body("раз", 3));
+    append(h, id, ZJournal::Kind::Save, kNow, body("раз", 1));
+    append(h, id, ZJournal::Kind::Save, kNow + kMinute, body("два больше на много знаков и ещё", 2));
+    append(h, id, ZJournal::Kind::Save, kNow + 2 * kMinute, body("раз", 3));
 
-    journal::ZJournal before;
+    ZJournal before;
     QString error;
     ZT_TRUE("журнал читается", h.readJournal(id, &before, &error));
     // Вешка на последнюю запись — ту самую, которую чистка и выкинет.
@@ -300,7 +300,7 @@ void checkAddressByTimeAndHash(const QString& root) {
     makeV0(h.journalPath(id));
     compress(h, id, false);
 
-    journal::ZJournal after;
+    ZJournal after;
     ZT_TRUE("и после чистки читается", h.readJournal(id, &after, &error));
     ZT_EQ("после чистки — к выжившей равной", num(0),
           num(after.indexOf(markTime, markDigest)));
@@ -314,8 +314,8 @@ void checkAddressByTimeAndHash(const QString& root) {
 void checkCleanLeftAlone(const QString& root) {
     ZStorage h(root);
     const QString id = QStringLiteral("01n6r08s8wy52f");
-    append(h, id, journal::Kind::Save, kNow, body("раз", 1));
-    append(h, id, journal::Kind::Save, kNow + kMinute, body("два больше на много знаков и ещё", 2));
+    append(h, id, ZJournal::Kind::Save, kNow, body("раз", 1));
+    append(h, id, ZJournal::Kind::Save, kNow + kMinute, body("два больше на много знаков и ещё", 2));
     const QByteArray bytes = fileBytes(h.journalPath(id));
 
     const history::Report report = compress(h, id, false);
@@ -344,7 +344,7 @@ void checkLiveAndMigrationAgree(const QString& root) {
     history::Rules rules;
     for (int i = 0; i < steps.size(); ++i) {
         const qint64 when = kNow + i * kMinute;
-        journal::ZJournal j;
+        ZJournal j;
         QString error;
         h.readJournal(live, &j, &error);
         const auto snapshotOf = [&](int at) {
@@ -353,22 +353,22 @@ void checkLiveAndMigrationAgree(const QString& root) {
             if (!h.journalSnapshot(live, at, &out, &why)) return QByteArray();
             return out;
         };
-        const journal::ZJournal::Step step =
-            j.planStep(snapshotOf, steps[i], journal::Kind::Save, when, rules);
+        const ZJournal::Step step =
+            j.planStep(snapshotOf, steps[i], ZJournal::Kind::Save, when, rules);
         // Живой путь гасит адресом — ровно то же, что делает запись заметки.
-        QVector<journal::EntryRef> voids;
-        for (int at : step.voided) voids.append(journal::EntryRef(j.at(at).time(), j.at(at).digest()));
+        QVector<ZJournal::EntryRef> voids;
+        for (int at : step.voided) voids.append(ZJournal::EntryRef(j.at(at).time(), j.at(at).digest()));
         if (step.writeNew)
-            h.appendToJournal(live, journal::NewRecord::save(steps[i], journal::Stamp::at(when)).voiding(voids),
+            h.appendToJournal(live, ZJournal::NewRecord::save(steps[i], ZJournal::Stamp::at(when)).voiding(voids),
                      &error);
         else if (!voids.isEmpty())
-            h.appendToJournal(live, journal::NewRecord::amendment(journal::Stamp::at(when)).voiding(voids),
+            h.appendToJournal(live, ZJournal::NewRecord::amendment(ZJournal::Stamp::at(when)).voiding(voids),
                      &error);
     }
 
     // Сырой путь: всё подряд, как писала программа до этапа 9.
     for (int i = 0; i < steps.size(); ++i)
-        append(h, raw, journal::Kind::Save, kNow + i * kMinute, steps[i]);
+        append(h, raw, ZJournal::Kind::Save, kNow + i * kMinute, steps[i]);
     makeV0(h.journalPath(raw));
     compress(h, raw, false);
 

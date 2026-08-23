@@ -22,7 +22,7 @@
 #include <limits>
 #include <utility>
 
-namespace zametti::journal {
+namespace zametti {
 namespace {
 
 // Ключи карт — целые: короче текстовых и не зависят от языка. Номера навсегда;
@@ -42,7 +42,7 @@ enum Key {
     // Версия содержимого (шапка). Номер взят СВОБОДНЫЙ, а не 3: читатель у
     // шапки и у записи один, и ключи их живут в общем пространстве. Совпасть с
     // KeyDigest значило бы различать их по типу значения — так уже сделано у
-    // пары Magic/Kind, и хватит: каждая такая пара это ловушка для того, кто
+    // пары Magic/ZJournal::Kind, и хватит: каждая такая пара это ловушка для того, кто
     // добавит поле следующим.
     KeyClean = 8,
 
@@ -176,16 +176,16 @@ RawRecord readRecord(QCborStreamReader& reader, bool wantSnapshot) {
     if (!reader.isMap()) return out;
     // Значения копятся в локальных: ключи в карте идут в любом порядке, а
     // рамка записи неизменяема — она рождается один раз, когда прочитано всё.
-    Kind kind = Kind::Save;
+    ZJournal::Kind kind = ZJournal::Kind::Save;
     qint64 time = 0;
     qint64 seq = 0;
     Digest digest;
-    Codec codec = Codec::Zstd;
+    ZJournal::Codec codec = ZJournal::Codec::Zstd;
     qint64 plainSize = 0;
     qint64 packedSize = 0;
     qint64 source = 0;
     QByteArray frameHash;
-    QVector<EntryRef> voids;
+    QVector<ZJournal::EntryRef> voids;
     reader.enterContainer();
     while (reader.lastError() == QCborError::NoError && reader.hasNext()) {
         if (!reader.isInteger()) return out;  // ключ обязан быть целым
@@ -199,7 +199,7 @@ RawRecord readRecord(QCborStreamReader& reader, bool wantSnapshot) {
                 } else {
                     qint64 v = 0;
                     if (!readValueAsInt(reader, &v)) return out;
-                    kind = Kind(v);
+                    kind = ZJournal::Kind(v);
                 }
                 break;
             case KeyTime: {  // он же KeyVersion
@@ -219,7 +219,7 @@ RawRecord readRecord(QCborStreamReader& reader, bool wantSnapshot) {
             case KeyCodec: {
                 qint64 v = 0;
                 if (!readValueAsInt(reader, &v)) return out;
-                codec = Codec(v);
+                codec = ZJournal::Codec(v);
                 break;
             }
             case KeyPlainSize: {
@@ -271,7 +271,7 @@ RawRecord readRecord(QCborStreamReader& reader, bool wantSnapshot) {
                     if (bytes.size() != qsizetype(ref.bytes.size())) return out;
                     std::memcpy(ref.bytes.data(), bytes.constData(), size_t(bytes.size()));
                     if (!reader.leaveContainer()) return out;
-                    voids.append(EntryRef(when, ref));
+                    voids.append(ZJournal::EntryRef(when, ref));
                 }
                 if (reader.lastError() != QCborError::NoError) return out;
                 if (!reader.leaveContainer()) return out;
@@ -320,9 +320,9 @@ QByteArray ZJournal::headerBytes(const QString& clean) {
     QCborStreamWriter writer(&out);
     writer.startMap(clean.isEmpty() ? 2 : 3);
     writer.append(KeyMagic);
-    writer.append(QLatin1StringView(kMagic));
+    writer.append(QLatin1StringView(ZJournal::kMagic));
     writer.append(KeyVersion);
-    writer.append(kFormatVersion);
+    writer.append(ZJournal::kFormatVersion);
     if (!clean.isEmpty()) {
         writer.append(KeyClean);
         writer.append(clean);
@@ -359,7 +359,7 @@ QByteArray ZJournal::frameBytes(const ZJournal::Entry& e) {
     put64(e.plainSize());
     putDigest(e.digest());
     put64(e.voids().size());
-    for (const EntryRef& ref : e.voids()) {
+    for (const ZJournal::EntryRef& ref : e.voids()) {
         put64(ref.time());
         putDigest(ref.digest());
     }
@@ -368,7 +368,7 @@ QByteArray ZJournal::frameBytes(const ZJournal::Entry& e) {
 
 QByteArray ZJournal::recordBytes(const ZJournal::Entry& e, const QByteArray& packed) {
     const bool bodyless = !e.hasSnapshot();   // надгробие и гашение
-    const bool restore = e.kind() == Kind::Restore;
+    const bool restore = e.kind() == ZJournal::Kind::Restore;
     // Нулевую ревизию не пишем вовсе: «нет ключа = 0» — уже принятый в этом
     // файле уговор (так же читается отсутствующий KeyClean). Плата за это не
     // два байта, а обещание идемпотентности: журнал, написанный до этапа 17,
@@ -405,7 +405,7 @@ QByteArray ZJournal::recordBytes(const ZJournal::Entry& e, const QByteArray& pac
     if (hasVoids) {
         writer.append(KeyVoids);
         writer.startArray(quint64(e.voids().size()));
-        for (const EntryRef& ref : e.voids()) {
+        for (const ZJournal::EntryRef& ref : e.voids()) {
             writer.startArray(2);
             writer.append(ref.time());
             writer.append(QByteArray(reinterpret_cast<const char*>(ref.digest().bytes.data()),
@@ -449,15 +449,15 @@ bool ZJournal::parse(const QByteArray& blob, Want want, int wantIndex, QString* 
         if (error) *error = QStringLiteral("not a zametti journal: no header");
         return false;
     }
-    if (header.magic != QLatin1StringView(kMagic)) {
+    if (header.magic != QLatin1StringView(ZJournal::kMagic)) {
         if (error) *error = QStringLiteral("not a zametti journal: foreign magic '%1'").arg(header.magic);
         return false;
     }
-    if (header.version != kFormatVersion) {
+    if (header.version != ZJournal::kFormatVersion) {
         if (error)
             *error = QStringLiteral("journal version %1, but we only know %2")
                          .arg(header.version)
-                         .arg(kFormatVersion);
+                         .arg(ZJournal::kFormatVersion);
         return false;
     }
     out->cleanVersion_ = header.clean;
@@ -527,7 +527,7 @@ bool ZJournal::rebuildAt(int index, QByteArray* out, QString* error, bool eachLi
             return false;
         }
         if (!e.hasSnapshot()) continue;  // надгробие цепочку не рвёт: у него слепка нет
-        if (e.codec() != Codec::Zstd && e.codec() != Codec::None && e.codec() != Codec::ZstdDelta) {
+        if (e.codec() != ZJournal::Codec::Zstd && e.codec() != ZJournal::Codec::None && e.codec() != ZJournal::Codec::ZstdDelta) {
             if (error)
                 *error = QStringLiteral("snapshot of record #%1 compressed with unknown codec %2")
                              .arg(i)
@@ -535,7 +535,7 @@ bool ZJournal::rebuildAt(int index, QByteArray* out, QString* error, bool eachLi
             return false;
         }
         QByteArray plain;
-        if (e.codec() == Codec::None) {
+        if (e.codec() == ZJournal::Codec::None) {
             plain = packed[i];
         } else if (!decompressSnapshot(packed[i], e.full() ? QByteArray() : current, e.plainSize(),
                                        &plain)) {
@@ -586,14 +586,14 @@ bool ZJournal::toBytes(const QVector<int>& keep, const QString& clean, QByteArra
         if (!e.hasSnapshot()) {
             // Надгробие поколения не начинает и не рвёт: слепка у него нет.
             ZJournal::Entry frame = e;
-            frame.layAs(Codec::Zstd, 0);
+            frame.layAs(ZJournal::Codec::Zstd, 0);
             *out += recordBytes(frame, QByteArray());
             continue;
         }
         QByteArray plain;
         if (!rebuildAt(i, &plain, error)) return false;
-        const bool full = written % kGeneration == 0;
-        const Codec codec = codecFor(full);
+        const bool full = written % ZJournal::kGeneration == 0;
+        const ZJournal::Codec codec = codecFor(full);
         const QByteArray body = compressSnapshot(plain, full ? QByteArray() : previous);
         if (body.isEmpty() && !plain.isEmpty()) {
             if (error) *error = QStringLiteral("cannot compress snapshot of record #%1").arg(i);
@@ -636,9 +636,9 @@ qint64 ZJournal::latestTime() const {
     return latest;
 }
 
-Stamp Stamp::now() { return Stamp(QDateTime::currentMSecsSinceEpoch(), true); }
+ZJournal::Stamp ZJournal::Stamp::now() { return ZJournal::Stamp(QDateTime::currentMSecsSinceEpoch(), true); }
 
-qint64 ZJournal::stampFor(Stamp when, qint64 deviceFloor) const {
+qint64 ZJournal::stampFor(ZJournal::Stamp when, qint64 deviceFloor) const {
     qint64 stamp = when.requested();
     if (when.guarded() && deviceFloor > 0) stamp = qMax(stamp, deviceFloor + 1);
     const qint64 own = latestTime();
@@ -646,13 +646,13 @@ qint64 ZJournal::stampFor(Stamp when, qint64 deviceFloor) const {
     return stamp;
 }
 
-bool ZJournal::composeRecord(const NewRecord& what, qint64 deviceFloor, ZJournal::Entry* frame,
+bool ZJournal::composeRecord(const ZJournal::NewRecord& what, qint64 deviceFloor, ZJournal::Entry* frame,
                              QByteArray* bytes, QString* error) const {
-    const Kind kind = what.kind();
+    const ZJournal::Kind kind = what.kind();
     const QByteArray& snapshot = what.snapshot();
     // Слепка нет у надгробия и у гашения; всё, что ниже, спрашивает про это
     // одинаково.
-    const bool bodyless = kind == Kind::Tombstone || kind == Kind::Amendment;
+    const bool bodyless = kind == ZJournal::Kind::Tombstone || kind == ZJournal::Kind::Amendment;
     const qint64 time = stampFor(what.when(), deviceFloor);
 
     // Предшественник, относительно которого сожмётся слепок. Пусто — запись
@@ -667,7 +667,7 @@ bool ZJournal::composeRecord(const NewRecord& what, qint64 deviceFloor, ZJournal
             int from = last;
             while (from > 0 && !entries_[from].full()) --from;
             const int inGeneration = last - from + 1;
-            if (inGeneration < kGeneration) {
+            if (inGeneration < ZJournal::kGeneration) {
                 QString why;
                 // Не собрался предшественник — начинаем новое поколение. Это
                 // строго лучше отказа: беда в старом поколении не мешает
@@ -711,10 +711,10 @@ bool ZJournal::isVoided(int index) const {
     return false;
 }
 
-QVector<int> ZJournal::indexesOf(const QVector<EntryRef>& refs) const {
+QVector<int> ZJournal::indexesOf(const QVector<ZJournal::EntryRef>& refs) const {
     QVector<int> out;
     for (int i = 0; i < entries_.size(); ++i)
-        for (const EntryRef& ref : refs)
+        for (const ZJournal::EntryRef& ref : refs)
             if (entries_[i].isAddressedBy(ref.time(), ref.digest())) {
                 out.append(i);
                 break;
@@ -778,7 +778,7 @@ int ZJournal::indexOf(qint64 time, const Digest& digest) const {
 
 // --- отбор: что писать, кого гасить ----------------------------------------
 
-ZJournal::Step ZJournal::planStep(const SnapshotOf& snapshotOf, const QByteArray& fresh, Kind kind,
+ZJournal::Step ZJournal::planStep(const SnapshotOf& snapshotOf, const QByteArray& fresh, ZJournal::Kind kind,
                                   qint64 now, const Rules& rules) const {
     const ZJournal& journal = *this;
     Step step;
@@ -801,8 +801,8 @@ ZJournal::Step ZJournal::planStep(const SnapshotOf& snapshotOf, const QByteArray
     // перепрыгивает: восстановление из истории и приход правки снаружи —
     // вешки, поставленные не набором, и стирать их нельзя ничем.
     int sameAs = -1;
-    for (int i = kind == Kind::Save ? journal.size() - 1 : -1; i >= 0; --i) {
-        const Entry& entry = journal.at(i);
+    for (int i = kind == ZJournal::Kind::Save ? journal.size() - 1 : -1; i >= 0; --i) {
+        const ZJournal::Entry& entry = journal.at(i);
         if (stale(entry.time())) break;      // дальше история старая, её не трогаем
         if (!entry.hasSnapshot()) break;   // надгробие: за него не заглядываем
         const QByteArray older = snapshotOf(i);
@@ -812,7 +812,7 @@ ZJournal::Step ZJournal::planStep(const SnapshotOf& snapshotOf, const QByteArray
             continue;
         }
         if (sameAs >= 0) break;                        // старее — уже другое состояние
-        if (entry.kind() != Kind::Save) break;           // чужую вешку не перепрыгиваем
+        if (entry.kind() != ZJournal::Kind::Save) break;           // чужую вешку не перепрыгиваем
     }
     if (sameAs >= 0) {
         for (int i = sameAs + 1; i < journal.size(); ++i) step.voided.append(i);
@@ -829,9 +829,9 @@ ZJournal::Step ZJournal::planStep(const SnapshotOf& snapshotOf, const QByteArray
     // Меньше двух записей — это защита опорной: после замены в журнале
     // обязана остаться хотя бы одна, а первая — то, с чего заметка начиналась,
     // и стереть её нельзя ничем.
-    if (kind != Kind::Save || journal.size() < 2) return step;
-    const Entry& back = journal.at(journal.size() - 1);
-    if (back.kind() != Kind::Save || !back.hasSnapshot() || stale(back.time())) return step;
+    if (kind != ZJournal::Kind::Save || journal.size() < 2) return step;
+    const ZJournal::Entry& back = journal.at(journal.size() - 1);
+    if (back.kind() != ZJournal::Kind::Save || !back.hasSnapshot() || stale(back.time())) return step;
     const QByteArray tail = snapshotOf(journal.size() - 1);
     if (tail.isNull() || tail.isEmpty()) return step;
     if (changedChars(tail, fresh) > qMax(0, rules.mergeChars)) return step;
@@ -859,13 +859,13 @@ ZJournal::Plan ZJournal::planCompress(const QVector<QByteArray>& snapshots,
     // одну запись, так что проходов не больше, чем записей.
     for (int pass = 0; pass <= journal.size(); ++pass) {
         QVector<int> accepted;      // номера принятых записей
-        QVector<Entry> acc;  // их рамки — их и видит правило
+        QVector<ZJournal::Entry> acc;  // их рамки — их и видит правило
         const SnapshotOf snapshotOf = [&](int i) { return snapshots[accepted[i]]; };
         int duplicates = 0;
         int merged = 0;
 
         for (int idx : std::as_const(plan.keep)) {
-            const Entry& entry = journal.at(idx);
+            const ZJournal::Entry& entry = journal.at(idx);
             // «Сейчас» для записи — время её самой: пересборка проигрывает
             // историю заново, и свежесть в ней меряется от момента записи, а не
             // от сегодняшнего дня. Миграции это безразлично (она на возраст не
@@ -914,8 +914,8 @@ void ZJournal::ensureBaseline(const QByteArray& contents, qint64 fileTimeMs) {
     // Опорной записи отдают время ФАЙЛА: заметка, лежавшая с 2017 года, обязана
     // и в истории начинаться 2017 годом. Поэтому момент назван, а не «сейчас»,
     // и страж монотонности его не поднимает.
-    const Stamp when = fileTimeMs > 0 ? Stamp::at(fileTimeMs) : Stamp::now();
-    if (!store_->appendToJournal(id_, NewRecord::save(contents, when), &error))
+    const ZJournal::Stamp when = fileTimeMs > 0 ? ZJournal::Stamp::at(fileTimeMs) : ZJournal::Stamp::now();
+    if (!store_->appendToJournal(id_, ZJournal::NewRecord::save(contents, when), &error))
         std::fprintf(stderr, "baseline record not written: %s\n", error.toUtf8().constData());
 }
 
@@ -946,13 +946,13 @@ void ZJournal::loadTail() {
     }
 }
 
-bool ZJournal::record(Kind kind, const QByteArray& snapshot, QString* error) {
+bool ZJournal::record(ZJournal::Kind kind, const QByteArray& snapshot, QString* error) {
     qint64 source = 0;
-    if (kind == Kind::Save && restoreSource_ != 0) {
-        kind = Kind::Restore;
+    if (kind == ZJournal::Kind::Save && restoreSource_ != 0) {
+        kind = ZJournal::Kind::Restore;
         source = restoreSource_;
     }
-    if (kind == Kind::Save || kind == Kind::Restore) restoreSource_ = 0;
+    if (kind == ZJournal::Kind::Save || kind == ZJournal::Kind::Restore) restoreSource_ = 0;
     if (!available()) return false;
 
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
@@ -990,21 +990,21 @@ bool ZJournal::record(Kind kind, const QByteArray& snapshot, QString* error) {
     // их байты выкидываются здесь же, а другое устройство, увидев новую запись,
     // погасит те же у себя. Стирание без адреса не доезжало никуда — уехавшая
     // запись возвращалась объединением и возвращалась бы вечно.
-    QVector<EntryRef> voids;
+    QVector<ZJournal::EntryRef> voids;
     voids.reserve(step.voided.size());
-    for (int i : step.voided) voids.append(EntryRef(read.at(i).time(), read.at(i).digest()));
+    for (int i : step.voided) voids.append(ZJournal::EntryRef(read.at(i).time(), read.at(i).digest()));
 
     bool ok = true;
     if (step.writeNew) {
-        NewRecord what = kind == Kind::Restore
-                             ? NewRecord::restore(snapshot, source)
-                             : (kind == Kind::External ? NewRecord::external(snapshot)
-                                                       : NewRecord::save(snapshot));
+        ZJournal::NewRecord what = kind == ZJournal::Kind::Restore
+                             ? ZJournal::NewRecord::restore(snapshot, source)
+                             : (kind == ZJournal::Kind::External ? ZJournal::NewRecord::external(snapshot)
+                                                       : ZJournal::NewRecord::save(snapshot));
         ok = store_->appendToJournal(id_, what.voiding(voids), err);
     } else if (!voids.isEmpty()) {
         // Человек вернулся к уже записанному состоянию: нового слепка нет, а
         // сказать «того, что между, больше нет» надо.
-        ok = store_->appendToJournal(id_, NewRecord::amendment().voiding(voids), err);
+        ok = store_->appendToJournal(id_, ZJournal::NewRecord::amendment().voiding(voids), err);
     }
     if (!ok) {
         std::fprintf(stderr, "history not written: %s\n", err->toUtf8().constData());
@@ -1044,4 +1044,4 @@ bool ZJournal::snapshotAt(int index, QByteArray* out, QString* error) const {
     return store_->journalSnapshot(id_, index, out, error);
 }
 
-}  // namespace zametti::journal
+}  // namespace zametti

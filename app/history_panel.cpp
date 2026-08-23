@@ -45,14 +45,14 @@ QString historyStamp(qint64 msSinceEpoch) {
                .toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
 }
 
-QString historyKindName(journal::Kind kind) {
+QString historyKindName(ZJournal::Kind kind) {
     switch (kind) {
-        case journal::Kind::Save: return QStringLiteral("edit");
-        case journal::Kind::External: return QStringLiteral("external");
-        case journal::Kind::Restore: return QStringLiteral("restored");
-        case journal::Kind::Tombstone: return QStringLiteral("deleted");
+        case ZJournal::Kind::Save: return QStringLiteral("edit");
+        case ZJournal::Kind::External: return QStringLiteral("external");
+        case ZJournal::Kind::Restore: return QStringLiteral("restored");
+        case ZJournal::Kind::Tombstone: return QStringLiteral("deleted");
         // Гашение человеку не показывается вовсе — в список оно не попадает.
-        case journal::Kind::Amendment: return {};
+        case ZJournal::Kind::Amendment: return {};
     }
     return {};
 }
@@ -135,13 +135,13 @@ void HistoryBanner::resizeEvent(QResizeEvent* event) {
     if (!fullText_.isEmpty()) showText(fullText_);
 }
 
-void HistoryBanner::setSnapshot(qint64 time, journal::Kind kind, int changed) {
+void HistoryBanner::setSnapshot(qint64 time, ZJournal::Kind kind, int changed) {
     restore_->setStyleSheet(restoreStyle_);
     // Строка отвечает на ОДИН вопрос: какая версия сейчас перед глазами
     // (просьба владельца; всё, что было после тире, убрано). Счёт тронутых
     // строк — тихой добавкой: сколько разница весит, видно до прокрутки.
     QString what = QStringLiteral("Snapshot from %1").arg(historyMoment(time));
-    if (kind != journal::Kind::Save)
+    if (kind != ZJournal::Kind::Save)
         what += QStringLiteral(" (%1)").arg(historyKindName(kind));
     if (changed >= 0) what += QStringLiteral("  ·  ±%1").arg(changed);
     showText(what);
@@ -194,15 +194,15 @@ HistoryTimeline::HistoryTimeline(QWidget* parent) : QWidget(parent) {
     });
 }
 
-void HistoryTimeline::setEntries(const QVector<journal::ZJournal::Entry>& entries) {
+void HistoryTimeline::setEntries(const QVector<ZJournal::Entry>& entries) {
     entries_ = entries;
     quiet_ = true;
     list_->clear();
     // Свежие сверху — как в списке заметок: в прошлое человек идёт сверху вниз.
     for (int i = entries.size() - 1; i >= 0; --i) {
-        const journal::ZJournal::Entry& entry = entries[i];
+        const ZJournal::Entry& entry = entries[i];
         QString line = historyMoment(entry.time());
-        if (entry.kind() != journal::Kind::Save)
+        if (entry.kind() != ZJournal::Kind::Save)
             line += QStringLiteral("  ·  %1").arg(historyKindName(entry.kind()));
         if (entry.hasSnapshot()) line += QStringLiteral("  ·  %1").arg(sizeText(entry.plainSize()));
         auto* item = new QListWidgetItem(line, list_);

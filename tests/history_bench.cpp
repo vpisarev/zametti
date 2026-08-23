@@ -148,11 +148,11 @@ Sample measure(const QString& root, const QString& sourceNote, int saves) {
     sample.journalBytes = QFileInfo(log).size();
 
     zametti::ZStorage history(root);
-    zametti::journal::ZJournal read;
+    zametti::ZJournal read;
     QString error;
     if (history.readJournal(noteId, &read, &error)) {
         sample.records = read.size();
-        for (const zametti::journal::ZJournal::Entry& entry : read.entries())
+        for (const zametti::ZJournal::Entry& entry : read.entries())
             sample.plainTotal += entry.plainSize();
     }
 

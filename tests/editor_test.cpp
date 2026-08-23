@@ -2486,7 +2486,7 @@ void checkHistoryPoints() {
     editor.setFocus();
 
     auto records = [&history, &noteId] {
-        zametti::journal::ZJournal journal;
+        zametti::ZJournal journal;
         QString error;
         history.readJournal(noteId, &journal, &error);
         return journal.entries();
@@ -2519,7 +2519,7 @@ void checkHistoryPoints() {
     QTest::qWait(20);
     auto after = records();
     check(after.size() == 2, "сохранение записало шаг поверх опорного");
-    check(after.size() == 2 && after[1].kind() == zametti::journal::Kind::Save,
+    check(after.size() == 2 && after[1].kind() == zametti::ZJournal::Kind::Save,
           "и это шаг save");
     checkEqual(fileText(), snapshot(1), "слепок — ровно то, что легло в файл");
 
@@ -2540,7 +2540,7 @@ void checkHistoryPoints() {
     for (int i = 0; i < 100 && records().size() < 3; ++i) QTest::qWait(20);
     after = records();
     check(after.size() == 3, "внешняя правка записала шаг");
-    check(after.size() == 3 && after[2].kind() == zametti::journal::Kind::External,
+    check(after.size() == 3 && after[2].kind() == zametti::ZJournal::Kind::External,
           "и это шаг external");
     checkEqual(outside, snapshot(2), "слепок — чужие байты, как они есть на диске");
 
@@ -2560,7 +2560,7 @@ void checkHistoryPoints() {
     check(after.size() == before + 1, "первое Ctrl+Z после правок записало шаг");
     check(snapshot(int(after.size()) - 1).contains(QStringLiteral("before undo")),
           "первое Ctrl+Z после правок записало набранное");
-    check(!after.isEmpty() && after.last().kind() == zametti::journal::Kind::Save,
+    check(!after.isEmpty() && after.last().kind() == zametti::ZJournal::Kind::Save,
           "и это обычное сохранение, а не особая запись");
     check(snapshot(int(after.size()) - 1).contains(QStringLiteral("before undo")),
           "в истории осталось то, что отменили");
@@ -2704,7 +2704,7 @@ void checkHistoryMode() {
 
     // Восстановление: новая запись, отдельным шагом отмены.
     const int recordsBefore = [&] {
-        zametti::journal::ZJournal journal;
+        zametti::ZJournal journal;
         QString error;
         history.readJournal(noteId, &journal, &error);
         return int(journal.size());
@@ -2717,13 +2717,13 @@ void checkHistoryMode() {
     check(!rig.active(), "и режим закрылся");
     checkEqual(old, text(), "в живой заметке теперь содержимое слепка");
 
-    zametti::journal::ZJournal journal;
+    zametti::ZJournal journal;
     QString error;
     history.readJournal(noteId, &journal, &error);
     check(int(journal.size()) == recordsBefore + 1,
           "восстановление дописало ровно одну запись");
     check(!journal.isEmpty() &&
-              journal.at(journal.size() - 1).kind() == zametti::journal::Kind::Restore,
+              journal.at(journal.size() - 1).kind() == zametti::ZJournal::Kind::Restore,
           "и это запись restore");
     check(!journal.isEmpty() && journal.at(journal.size() - 1).source() == source,
           "в записи назван источник");
@@ -2736,7 +2736,7 @@ void checkHistoryMode() {
     // правду, а не «восстановлено».
     {
         const int wasRecords = [&] {
-            zametti::journal::ZJournal journal;
+            zametti::ZJournal journal;
             QString e;
             history.readJournal(noteId, &journal, &e);
             return int(journal.size());
@@ -2749,7 +2749,7 @@ void checkHistoryMode() {
         check(same == 0 && alreadyCurrent, "восстановление того же самого — не восстановление");
         check(!rig.active(), "и режим всё равно закрылся");
         const int nowRecords = [&] {
-            zametti::journal::ZJournal journal;
+            zametti::ZJournal journal;
             QString e;
             history.readJournal(noteId, &journal, &e);
             return int(journal.size());
@@ -2797,7 +2797,7 @@ void checkHistoryBaseline() {
     editor.setFocus();
 
     auto records = [&history, &noteId] {
-        zametti::journal::ZJournal journal;
+        zametti::ZJournal journal;
         QString error;
         history.readJournal(noteId, &journal, &error);
         return journal.entries();

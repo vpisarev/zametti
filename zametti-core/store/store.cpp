@@ -1084,7 +1084,7 @@ bool verifyStore(const QString& root, Report& report) {
                 report.problem(QStringLiteral("foreign file in history/: %1").arg(name));
                 continue;
             }
-            journal::ZJournal j;
+            ZJournal j;
             QString error;
             if (!storage.readJournal(noteId, &j, &error)) {
                 report.problem(QStringLiteral("journal %1: %2").arg(name, error));
@@ -1127,7 +1127,7 @@ bool verifyStore(const QString& root, Report& report) {
             // диагноз обязан считаться по тому же порядку, по которому
             // программа выбирает состояние заметки.
             const int head = j.headIndex();
-            const bool buried = head >= 0 && j.at(head).kind() == journal::Kind::Tombstone;
+            const bool buried = head >= 0 && j.at(head).kind() == ZJournal::Kind::Tombstone;
             report.note(buried ? QStringLiteral("journal of deleted note %1 (with tombstone)")
                                      .arg(noteId)
                                : QStringLiteral("journal %1 without a note and without a tombstone: "
@@ -1246,14 +1246,14 @@ bool resurrectNote(const QString& root, const QString& noteId, QString* error) {
     }
 
     ZStorage storage(root);
-    journal::ZJournal journal;
+    ZJournal journal;
     QString why;
     if (!storage.readJournal(noteId, &journal, &why) || journal.isEmpty()) {
         if (error) *error = QStringLiteral("no history for %1: %2").arg(noteId, why);
         return false;
     }
     const int head = journal.headIndex();
-    if (head < 0 || journal.at(head).kind() != journal::Kind::Tombstone) {
+    if (head < 0 || journal.at(head).kind() != ZJournal::Kind::Tombstone) {
         if (error) *error = QStringLiteral("note %1 was not deleted (no tombstone at the head)")
                                 .arg(noteId);
         return false;
@@ -1279,7 +1279,7 @@ bool resurrectNote(const QString& root, const QString& noteId, QString* error) {
     // ЗАПИСЬ ПОВЕРХ НАДГРОБИЯ: заметка снова жива, и голова обязана это
     // сказать. Вид — «восстановление», источник — время того слепка, из
     // которого её подняли.
-    if (!storage.appendToJournal(noteId, journal::NewRecord::restore(body, journal.at(content).time()),
+    if (!storage.appendToJournal(noteId, ZJournal::NewRecord::restore(body, journal.at(content).time()),
                         &why) &&
         error != nullptr)
         *error = QStringLiteral("resurrection not written to history: %1").arg(why);
@@ -1352,17 +1352,17 @@ bool deleteNoteFile(const QString& root, const QString& noteId, QString* error) 
     // похудеет так же, а не разрастётся обратно объединением.
     ZStorage storage(root);
     QString historyError;
-    journal::ZJournal read;
-    QVector<journal::EntryRef> voids;
+    ZJournal read;
+    QVector<ZJournal::EntryRef> voids;
     if (storage.readJournal(noteId, &read, &historyError)) {
         const int keep = read.lastSnapshotIndex();
         for (int i = 0; i < read.size(); ++i) {
             if (i == keep || read.isVoided(i) || read.isDamaged(i)) continue;
-            voids.append(journal::EntryRef(read.at(i).time(), read.at(i).digest()));
+            voids.append(ZJournal::EntryRef(read.at(i).time(), read.at(i).digest()));
         }
     }
     const bool marked =
-        storage.appendToJournal(noteId, journal::NewRecord::tombstone().voiding(voids), &historyError);
+        storage.appendToJournal(noteId, ZJournal::NewRecord::tombstone().voiding(voids), &historyError);
 
     if (!QFile::moveToTrash(file) && !QFile::remove(file)) {
         if (error) *error = QStringLiteral("cannot delete note file %1").arg(noteId);

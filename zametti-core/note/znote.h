@@ -58,7 +58,7 @@ public:
     // Заметка, только что прочитанная с диска: путь, байты файла (они же
     // последняя записанная копия), их отпечаток и её журнал. Документ пуст —
     // его собирает вид из разобранных блоков; шапка ставится setHeader.
-    ZNote(QString path, QByteArray fileBytes, Digest digest, std::shared_ptr<journal::ZJournal> journal);
+    ZNote(QString path, QByteArray fileBytes, Digest digest, std::shared_ptr<ZJournal> journal);
 
     ZNote(const ZNote&) = delete;
     ZNote& operator=(const ZNote&) = delete;
@@ -217,11 +217,11 @@ public:
     // же разжатым хвостом и тем же признаком «чищен», а не своей копией, у
     // которой чистка и хвост разошлись бы с заметкой. Ссылка не бывает пустой:
     // без хранилища это пустой ZJournal, у которого все файловые глаголы «нет».
-    journal::ZJournal& journal() { return *journal_; }
-    const journal::ZJournal& journal() const { return *journal_; }
+    ZJournal& journal() { return *journal_; }
+    const ZJournal& journal() const { return *journal_; }
     // Тот же объект разделяет режим истории: разжатый хвост и «чищено за этот
     // заход» у заметки и у её истории общие.
-    std::shared_ptr<journal::ZJournal> journalPtr() const { return journal_; }
+    std::shared_ptr<ZJournal> journalPtr() const { return journal_; }
 
     // --- найденное (кэш поиска) --------------------------------------------
     // Запрос и вхождения в документе этой заметки; переживают уход и возврат.
@@ -271,7 +271,7 @@ protected:
     NoteHeader lostMeta_;
     Digest digest_;
     QByteArray lastSaved_;
-    std::shared_ptr<journal::ZJournal> journal_ = std::make_shared<journal::ZJournal>();
+    std::shared_ptr<ZJournal> journal_ = std::make_shared<ZJournal>();
     NoteSearch search_;
     Derived<NoteStats> stats_;
     bool selfCheckFailed_ = false;

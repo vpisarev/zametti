@@ -43,7 +43,7 @@ namespace history {
 
 // Прежнее имя свода правил: он переехал в журнал (ZJournal::Rules), а это
 // псевдоним, чтобы сотня мест вызова не переписывалась ради переименования.
-using Rules = journal::ZJournal::Rules;
+using Rules = ZJournal::Rules;
 
 // Что сделала чистка — для люка и для отчётов.
 struct Report {

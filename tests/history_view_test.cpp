@@ -74,8 +74,8 @@ QString makeNoteWithHistory(const QString& id, const QByteArray& first,
     ZStorage history(g_root);
     QString error;
     const qint64 now = 1'700'000'000'000LL;
-    history.appendToJournal(id, zametti::journal::NewRecord::save(first, journal::Stamp::at(now)), &error);
-    history.appendToJournal(id, zametti::journal::NewRecord::save(second, journal::Stamp::at(now + 60'000)), &error);
+    history.appendToJournal(id, zametti::ZJournal::NewRecord::save(first, ZJournal::Stamp::at(now)), &error);
+    history.appendToJournal(id, zametti::ZJournal::NewRecord::save(second, ZJournal::Stamp::at(now + 60'000)), &error);
     return path;
 }
 

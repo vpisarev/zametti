@@ -101,7 +101,7 @@ void checkCatalog() {
     ZT_EQ("заголовок после правки", "Третья", s(storage.info(noteId)->title()));
     ZT_TRUE("родитель снят", storage.info(noteId)->parent().isEmpty());
     {
-        const std::shared_ptr<zametti::journal::ZJournal> journal =
+        const std::shared_ptr<zametti::ZJournal> journal =
             storage.journalFor(noteId, rules());
         ZT_TRUE("журнал читается", journal->refresh(&error));
         ZT_TRUE("в журнале есть запись о правке", !journal->isEmpty());
@@ -255,11 +255,11 @@ void checkDeleteCascade() {
     // ЖУРНАЛ ПЕРЕЖИВАЕТ УДАЛЕНИЕ — и у архивного внука тоже: надгробие обязано
     // доехать до других устройств, иначе синк привезёт заметку обратно.
     ZT_TRUE("журнал ребёнка на месте", QFile::exists(childLog));
-    zametti::journal::ZJournal read;
+    zametti::ZJournal read;
     zametti::ZStorage history(root);
     ZT_TRUE("журнал внука читается", history.readJournal(grand, &read, &error));
     ZT_TRUE("и голова у него — надгробие",
-            !read.isEmpty() && read.at(read.headIndex()).kind() == zametti::journal::Kind::Tombstone);
+            !read.isEmpty() && read.at(read.headIndex()).kind() == zametti::ZJournal::Kind::Tombstone);
 }
 
 // ВЛОЖЕНИЕ ХОРОНИТСЯ, А НЕ СТИРАЕТСЯ. Прежде оно уходило в мусорку ОС — и

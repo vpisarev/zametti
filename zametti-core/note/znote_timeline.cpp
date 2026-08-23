@@ -4,10 +4,10 @@
 
 namespace zametti {
 
-ZNoteTimeline::ZNoteTimeline(std::shared_ptr<journal::ZJournal> journal, QByteArray fresh,
+ZNoteTimeline::ZNoteTimeline(std::shared_ptr<ZJournal> journal, QByteArray fresh,
                              std::shared_ptr<const ZDocStyle> style)
     : journal_(std::move(journal)), fresh_(std::move(fresh)), style_(std::move(style)) {
-    if (journal_ == nullptr) journal_ = std::make_shared<journal::ZJournal>();
+    if (journal_ == nullptr) journal_ = std::make_shared<ZJournal>();
 }
 
 bool ZNoteTimeline::open(int index, QString* error) {
@@ -190,8 +190,8 @@ qint64 ZNoteTimeline::snapshotTime() const {
     return isOpen() ? journal_->at(index_).time() : 0;
 }
 
-journal::Kind ZNoteTimeline::snapshotKind() const {
-    return isOpen() ? journal_->at(index_).kind() : journal::Kind::Save;
+ZJournal::Kind ZNoteTimeline::snapshotKind() const {
+    return isOpen() ? journal_->at(index_).kind() : ZJournal::Kind::Save;
 }
 
 // --- облик ------------------------------------------------------------------

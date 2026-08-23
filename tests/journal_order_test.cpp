@@ -28,11 +28,11 @@
 #include <vector>
 
 using namespace zametti;
-using Entry = zametti::journal::ZJournal::Entry;
+using Entry = zametti::ZJournal::Entry;
 
-using zametti::journal::NewRecord;
-using zametti::journal::Stamp;
-using zametti::journal::ZJournal;
+using NewRecord = zametti::ZJournal::NewRecord;
+using Stamp = zametti::ZJournal::Stamp;
+using zametti::ZJournal;
 
 namespace {
 
@@ -53,8 +53,8 @@ Digest digestOf(const char* mark) {
     return hashOf(std::string_view(body.constData(), size_t(body.size())));
 }
 
-Entry entry(journal::Kind kind, qint64 time, qint64 seq, const char* mark) {
-    return Entry(kind, time, seq, digestOf(mark));
+ZJournal::Entry entry(ZJournal::Kind kind, qint64 time, qint64 seq, const char* mark) {
+    return ZJournal::Entry(kind, time, seq, digestOf(mark));
 }
 
 // --- 1. Компаратор: тотальный порядок, а не «как получится» ----------------
@@ -62,18 +62,18 @@ Entry entry(journal::Kind kind, qint64 time, qint64 seq, const char* mark) {
 void checkComparatorIsTotalOrder() {
     // Набор нарочно вырожденный: одинаковые времена, одинаковые ревизии,
     // надгробия вперемешку с содержательными записями.
-    std::vector<Entry> all;
+    std::vector<ZJournal::Entry> all;
     for (qint64 seq : {0LL, 1LL, 2LL})
         for (qint64 t : {kNow, kNow + 1})
             for (const char* mark : {"раз", "два"}) {
-                all.push_back(entry(journal::Kind::Save, t, seq, mark));
-                all.push_back(entry(journal::Kind::Tombstone, t, seq, mark));
+                all.push_back(entry(ZJournal::Kind::Save, t, seq, mark));
+                all.push_back(entry(ZJournal::Kind::Tombstone, t, seq, mark));
             }
 
     bool antisymmetric = true;
     bool total = true;
-    for (const Entry& a : all)
-        for (const Entry& b : all) {
+    for (const ZJournal::Entry& a : all)
+        for (const ZJournal::Entry& b : all) {
             const bool ab = a.isBefore(b);
             const bool ba = b.isBefore(a);
             if (ab && ba) antisymmetric = false;
@@ -90,9 +90,9 @@ void checkComparatorIsTotalOrder() {
     ZT_TRUE("порядок тотален: несравнимых пар нет", total);
 
     bool transitive = true;
-    for (const Entry& a : all)
-        for (const Entry& b : all)
-            for (const Entry& c : all)
+    for (const ZJournal::Entry& a : all)
+        for (const ZJournal::Entry& b : all)
+            for (const ZJournal::Entry& c : all)
                 if (a.isBefore(b) && b.isBefore(c) && !a.isBefore(c)) transitive = false;
     ZT_TRUE("порядок транзитивен", transitive);
 }
@@ -101,9 +101,9 @@ void checkComparatorIsTotalOrder() {
 
 void checkLegacyOrderIsByTime() {
     // Ревизии нет ни у одной (журнал до этапа 17), времена вразнобой.
-    ZJournal legacy(QVector<Entry>{entry(journal::Kind::Save, kNow + 10, 0, "раз"),
-                                   entry(journal::Kind::Save, kNow + 30, 0, "два"),
-                                   entry(journal::Kind::Save, kNow + 20, 0, "три")});
+    ZJournal legacy(QVector<ZJournal::Entry>{entry(ZJournal::Kind::Save, kNow + 10, 0, "раз"),
+                                   entry(ZJournal::Kind::Save, kNow + 30, 0, "два"),
+                                   entry(ZJournal::Kind::Save, kNow + 20, 0, "три")});
     ZT_EQ("голова старого журнала — самая поздняя по времени", num(1),
           num(legacy.headIndex()));
     ZT_EQ("следующая ревизия у него первая", num(1LL), num(legacy.nextSeq()));
@@ -113,32 +113,32 @@ void checkLegacyOrderIsByTime() {
 
 void checkPoisonedHeadLosesToFreshEdit() {
     // Часы ушли на сутки вперёд, запись «из будущего» осела в журнале.
-    ZJournal poisoned(QVector<Entry>{entry(journal::Kind::Save, kNow, 1, "раз"),
-                                     entry(journal::Kind::Save, kNow + kDay, 2, "будущее")});
+    ZJournal poisoned(QVector<ZJournal::Entry>{entry(ZJournal::Kind::Save, kNow, 1, "раз"),
+                                     entry(ZJournal::Kind::Save, kNow + kDay, 2, "будущее")});
     ZT_EQ("пока голова — та, что из будущего", num(1), num(poisoned.headIndex()));
 
     // Приехала каузально более поздняя правка. Её время — честное «сейчас»,
     // то есть МЕНЬШЕ отравленного, а ревизия больше.
-    ZJournal fixed(QVector<Entry>{entry(journal::Kind::Save, kNow, 1, "раз"),
-                                  entry(journal::Kind::Save, kNow + kDay, 2, "будущее"),
-                                  entry(journal::Kind::Save, kNow + 1000, 3, "правка")});
+    ZJournal fixed(QVector<ZJournal::Entry>{entry(ZJournal::Kind::Save, kNow, 1, "раз"),
+                                  entry(ZJournal::Kind::Save, kNow + kDay, 2, "будущее"),
+                                  entry(ZJournal::Kind::Save, kNow + 1000, 3, "правка")});
     ZT_EQ("голова сменилась сразу, а не через сутки", num(2), num(fixed.headIndex()));
 }
 
 // --- 4. Тайбрейк: контент старше надгробия ---------------------------------
 
 void checkEditBeatsDeleteOnEqualKey() {
-    const Entry content = entry(journal::Kind::Save, kNow, 7, "раз");
-    const Entry grave = entry(journal::Kind::Tombstone, kNow, 7, "раз");
+    const ZJournal::Entry content = entry(ZJournal::Kind::Save, kNow, 7, "раз");
+    const ZJournal::Entry grave = entry(ZJournal::Kind::Tombstone, kNow, 7, "раз");
     ZT_TRUE("при полностью равном ключе контент считается более ранним",
             content.isBefore(grave));
     ZT_TRUE("и обратное неверно", !grave.isBefore(content));
 
-    ZJournal both(QVector<Entry>{content, grave});
+    ZJournal both(QVector<ZJournal::Entry>{content, grave});
     ZT_EQ("значит голова — надгробие, пока правки поверх него нет", num(1),
           num(both.headIndex()));
 
-    ZJournal edited(QVector<Entry>{content, grave, entry(journal::Kind::Save, kNow, 8, "после")});
+    ZJournal edited(QVector<ZJournal::Entry>{content, grave, entry(ZJournal::Kind::Save, kNow, 8, "после")});
     ZT_EQ("а правка поверх удаления побеждает", num(2), num(edited.headIndex()));
 }
 
@@ -156,7 +156,7 @@ void checkClockBackDoesNotInvert() {
     store.setDeviceClock(nowReal + 3 * kHour);
 
     ZT_TRUE("запись проходит",
-            history.appendToJournal(id, NewRecord::save(note("после перевода"), Stamp::now()), &error));
+            history.appendToJournal(id, ZJournal::NewRecord::save(note("после перевода"), ZJournal::Stamp::now()), &error));
 
     ZJournal read;
     ZT_TRUE("журнал читается", history.readJournal(id, &read, &error));
@@ -167,7 +167,7 @@ void checkClockBackDoesNotInvert() {
 
     // Вторая запись — тем же перевёрнутым часам вопреки — обязана лечь позже.
     ZT_TRUE("вторая запись проходит",
-            history.appendToJournal(id, NewRecord::save(note("ещё правка"), Stamp::now()), &error));
+            history.appendToJournal(id, ZJournal::NewRecord::save(note("ещё правка"), ZJournal::Stamp::now()), &error));
     ZT_TRUE("журнал читается", history.readJournal(id, &read, &error));
     ZT_TRUE("порядок не инвертирован", read.at(0).isBefore(read.at(1)));
     ZT_EQ("и голова — свежая правка", num(1), num(read.headIndex()));
@@ -181,12 +181,12 @@ void checkLostDeviceClockStillWorks() {
     const QString id = QStringLiteral("01n7clocklost0");
     QString error;
 
-    ZT_TRUE("первая запись", history.appendToJournal(id, NewRecord::save(note("раз"), Stamp::now()), &error));
+    ZT_TRUE("первая запись", history.appendToJournal(id, ZJournal::NewRecord::save(note("раз"), ZJournal::Stamp::now()), &error));
     store.dropDeviceClock();   // число потеряли: чужая копия каталога, чистка, что угодно
     ZT_EQ("пола нет", num(0LL), num(store.deviceClock()));
 
     ZT_TRUE("вторая запись проходит и без пола",
-            history.appendToJournal(id, NewRecord::save(note("два"), Stamp::now()), &error));
+            history.appendToJournal(id, ZJournal::NewRecord::save(note("два"), ZJournal::Stamp::now()), &error));
 
     ZJournal read;
     ZT_TRUE("журнал читается", history.readJournal(id, &read, &error));
@@ -205,12 +205,12 @@ void checkJournalFloorHoldsNamedMoments() {
     QString error;
 
     ZT_TRUE("первая запись",
-            history.appendToJournal(id, NewRecord::save(note("раз"), Stamp::at(kNow)), &error));
+            history.appendToJournal(id, ZJournal::NewRecord::save(note("раз"), ZJournal::Stamp::at(kNow)), &error));
     // Названный момент ИЗ ПРОШЛОГО в непустой журнал: пол устройства к нему не
     // применяется, а пол самого журнала — применяется, иначе запись легла бы в
     // файл раньше своей предшественницы и порядок разошёлся бы с укладкой.
     ZT_TRUE("вторая запись с временем из прошлого",
-            history.appendToJournal(id, NewRecord::save(note("два"), Stamp::at(kNow - kHour)), &error));
+            history.appendToJournal(id, ZJournal::NewRecord::save(note("два"), ZJournal::Stamp::at(kNow - kHour)), &error));
 
     ZJournal read;
     ZT_TRUE("журнал читается", history.readJournal(id, &read, &error));
@@ -232,7 +232,7 @@ void checkNamedMomentSurvivesGuard() {
     // А опорной записи отдают время ФАЙЛА — заметка лежит с 2017 года.
     const qint64 y2017 = 1'497'859'669'000LL;
     ZT_TRUE("опорная запись проходит",
-            history.appendToJournal(id, NewRecord::save(note("старая"), Stamp::at(y2017)), &error));
+            history.appendToJournal(id, ZJournal::NewRecord::save(note("старая"), ZJournal::Stamp::at(y2017)), &error));
 
     ZJournal read;
     ZT_TRUE("журнал читается", history.readJournal(id, &read, &error));
@@ -248,8 +248,8 @@ void checkLegacyJournalOnDisk() {
     QString error;
 
     // Журнал, написанный прежней сборкой: ревизий в записях нет вовсе.
-    store.appendLegacyRecord(id, journal::Kind::Save, kNow, note("раз"));
-    store.appendLegacyRecord(id, journal::Kind::Save, kNow + 60'000, note("два"));
+    store.appendLegacyRecord(id, ZJournal::Kind::Save, kNow, note("раз"));
+    store.appendLegacyRecord(id, ZJournal::Kind::Save, kNow + 60'000, note("два"));
 
     ZJournal read;
     ZT_TRUE("старый журнал читается", history.readJournal(id, &read, &error));
@@ -260,7 +260,7 @@ void checkLegacyJournalOnDisk() {
 
     // Первая новая правка законно становится головой.
     ZT_TRUE("новая запись проходит",
-            history.appendToJournal(id, NewRecord::save(note("три"), Stamp::at(kNow + 120'000)), &error));
+            history.appendToJournal(id, ZJournal::NewRecord::save(note("три"), ZJournal::Stamp::at(kNow + 120'000)), &error));
     ZT_TRUE("журнал читается", history.readJournal(id, &read, &error));
     ZT_EQ("у новой записи ревизия первая", num(1LL), num(read.at(2).seq()));
     ZT_EQ("и голова теперь она", num(2), num(read.headIndex()));
@@ -291,19 +291,19 @@ void checkVoidingTail() {
     const QString id = QStringLiteral("01n7voidtail00");
     QString error;
 
-    ZT_TRUE("первая", history.appendToJournal(id, NewRecord::save(note("раз"), Stamp::at(kNow)), &error));
+    ZT_TRUE("первая", history.appendToJournal(id, ZJournal::NewRecord::save(note("раз"), ZJournal::Stamp::at(kNow)), &error));
     ZT_TRUE("вторая",
-            history.appendToJournal(id, NewRecord::save(note("два"), Stamp::at(kNow + 1000)), &error));
+            history.appendToJournal(id, ZJournal::NewRecord::save(note("два"), ZJournal::Stamp::at(kNow + 1000)), &error));
 
     ZJournal read;
     history.readJournal(id, &read, &error);
-    const journal::EntryRef doomed(read.at(1).time(), read.at(1).digest());
+    const ZJournal::EntryRef doomed(read.at(1).time(), read.at(1).digest());
     const qint64 sizeBefore = QFileInfo(store.journalOf(id)).size();
 
     // Третья запись гасит вторую — та лежит хвостом, значит её байты уходят.
     ZT_TRUE("третья гасит вторую",
             history.appendToJournal(id,
-                           NewRecord::save(note("три"), Stamp::at(kNow + 2000))
+                           ZJournal::NewRecord::save(note("три"), ZJournal::Stamp::at(kNow + 2000))
                                .voiding({doomed}),
                            &error));
 
@@ -327,18 +327,18 @@ void checkVoidingMiddle() {
     QString error;
 
     for (const char* mark : {"раз", "два", "три"})
-        history.appendToJournal(id, NewRecord::save(note(mark), Stamp::at(kNow + 1000 * (*mark))), &error);
+        history.appendToJournal(id, ZJournal::NewRecord::save(note(mark), ZJournal::Stamp::at(kNow + 1000 * (*mark))), &error);
 
     ZJournal read;
     history.readJournal(id, &read, &error);
     ZT_EQ("записей три", num(3), num(read.size()));
-    const journal::EntryRef middle(read.at(1).time(), read.at(1).digest());
+    const ZJournal::EntryRef middle(read.at(1).time(), read.at(1).digest());
 
     // Гасим СЕРЕДИНУ — так будет выглядеть гашение записи, приехавшей со
     // стороны. Вырезать её на месте нельзя: звенья поколения считаются от
     // предыдущего слепка, поэтому файл пересобирается целиком.
     ZT_TRUE("четвёртая гасит середину",
-            history.appendToJournal(id, NewRecord::save(note("четыре"), Stamp::at(kNow + 9000))
+            history.appendToJournal(id, ZJournal::NewRecord::save(note("четыре"), ZJournal::Stamp::at(kNow + 9000))
                                    .voiding({middle}),
                            &error));
 
@@ -357,18 +357,18 @@ void checkVoidedRecordStaysVoidedWhenItComesBack() {
     const QString id = QStringLiteral("01n7voidback00");
     QString error;
 
-    history.appendToJournal(id, NewRecord::save(note("раз"), Stamp::at(kNow)), &error);
-    history.appendToJournal(id, NewRecord::save(note("два"), Stamp::at(kNow + 1000)), &error);
+    history.appendToJournal(id, ZJournal::NewRecord::save(note("раз"), ZJournal::Stamp::at(kNow)), &error);
+    history.appendToJournal(id, ZJournal::NewRecord::save(note("два"), ZJournal::Stamp::at(kNow + 1000)), &error);
     ZJournal read;
     history.readJournal(id, &read, &error);
-    const journal::EntryRef doomed(read.at(1).time(), read.at(1).digest());
-    history.appendToJournal(id, NewRecord::save(note("три"), Stamp::at(kNow + 2000)).voiding({doomed}),
+    const ZJournal::EntryRef doomed(read.at(1).time(), read.at(1).digest());
+    history.appendToJournal(id, ZJournal::NewRecord::save(note("три"), ZJournal::Stamp::at(kNow + 2000)).voiding({doomed}),
                    &error);
 
     // ТАК ВЫГЛЯДИТ ОБЪЕДИНЕНИЕ: погашенная запись приезжает обратно с копии,
     // которая про гашение ещё не знала. Адрес у неё тот же — значит она
     // гасится повторно и человеку не показывается.
-    store.appendLegacyRecord(id, journal::Kind::Save, doomed.time(), note("два"));
+    store.appendLegacyRecord(id, ZJournal::Kind::Save, doomed.time(), note("два"));
 
     ZT_TRUE("журнал читается", history.readJournal(id, &read, &error));
     ZT_EQ("записей стало три", num(3), num(read.size()));
@@ -383,16 +383,16 @@ void checkAmendmentHidesWithoutStatingContent() {
     const QString id = QStringLiteral("01n7amend00000");
     QString error;
 
-    history.appendToJournal(id, NewRecord::save(note("раз"), Stamp::at(kNow)), &error);
-    history.appendToJournal(id, NewRecord::save(note("два"), Stamp::at(kNow + 1000)), &error);
+    history.appendToJournal(id, ZJournal::NewRecord::save(note("раз"), ZJournal::Stamp::at(kNow)), &error);
+    history.appendToJournal(id, ZJournal::NewRecord::save(note("два"), ZJournal::Stamp::at(kNow + 1000)), &error);
     ZJournal read;
     history.readJournal(id, &read, &error);
-    const journal::EntryRef doomed(read.at(1).time(), read.at(1).digest());
+    const ZJournal::EntryRef doomed(read.at(1).time(), read.at(1).digest());
 
     // «Набрал и отменил»: нового слепка нет, а сказать «того, что между, больше
     // нет» надо.
     ZT_TRUE("гашение пишется",
-            history.appendToJournal(id, NewRecord::amendment(Stamp::at(kNow + 2000)).voiding({doomed}),
+            history.appendToJournal(id, ZJournal::NewRecord::amendment(ZJournal::Stamp::at(kNow + 2000)).voiding({doomed}),
                            &error));
 
     ZT_TRUE("журнал читается", history.readJournal(id, &read, &error));
@@ -406,12 +406,12 @@ void checkAmendmentHidesWithoutStatingContent() {
 void checkUnnamedConcurrentEditSurvives() {
     // Конкурентная правка с другого устройства НЕ названа в списке гашения —
     // значит она жива. Это то, что порог по ревизии убил бы молча.
-    ZJournal j(QVector<Entry>{entry(journal::Kind::Save, kNow, 1, "раз"),
-                              entry(journal::Kind::Save, kNow + 1000, 2, "два"),
-                              Entry(journal::Kind::Save, kNow + 1500, 2, digestOf("чужая")),
-                              Entry(journal::Kind::Save, kNow + 2000, 3, digestOf("три"), 0,
-                                    QVector<journal::EntryRef>{
-                                        journal::EntryRef(kNow + 1000, digestOf("два"))})});
+    ZJournal j(QVector<ZJournal::Entry>{entry(ZJournal::Kind::Save, kNow, 1, "раз"),
+                              entry(ZJournal::Kind::Save, kNow + 1000, 2, "два"),
+                              ZJournal::Entry(ZJournal::Kind::Save, kNow + 1500, 2, digestOf("чужая")),
+                              ZJournal::Entry(ZJournal::Kind::Save, kNow + 2000, 3, digestOf("три"), 0,
+                                    QVector<ZJournal::EntryRef>{
+                                        ZJournal::EntryRef(kNow + 1000, digestOf("два"))})});
     ZT_TRUE("названная погашена", j.isVoided(1));
     ZT_TRUE("чужая, не названная, жива", !j.isVoided(2));
     ZT_EQ("вешки — все, кроме погашенной", std::string("0 2 3"), waypoints(j));
@@ -425,8 +425,8 @@ void checkBrokenFrameIsNotADeletion() {
     const QString id = QStringLiteral("01n7frame00000");
     QString error;
 
-    history.appendToJournal(id, NewRecord::save(note("раз"), Stamp::at(kNow)), &error);
-    history.appendToJournal(id, NewRecord::save(note("два"), Stamp::at(kNow + 1000)), &error);
+    history.appendToJournal(id, ZJournal::NewRecord::save(note("раз"), ZJournal::Stamp::at(kNow)), &error);
+    history.appendToJournal(id, ZJournal::NewRecord::save(note("два"), ZJournal::Stamp::at(kNow + 1000)), &error);
 
     ZJournal read;
     ZT_TRUE("журнал читается", history.readJournal(id, &read, &error));
@@ -453,7 +453,7 @@ void checkBrokenFrameIsNotADeletion() {
     ZT_EQ("испорченная названа", num(1), num(read.damagedCount()));
     ZT_TRUE("и это она", read.isDamaged(1));
     ZT_EQ("голова — уцелевшая первая", num(0), num(read.headIndex()));
-    ZT_TRUE("а не надгробие", read.at(read.headIndex()).kind() == journal::Kind::Save);
+    ZT_TRUE("а не надгробие", read.at(read.headIndex()).kind() == ZJournal::Kind::Save);
 
     QByteArray got;
     ZT_TRUE("испорченная запись слепка не отдаёт", !history.journalSnapshot(id, 1, &got, &error));
@@ -464,11 +464,11 @@ void checkBrokenFrameIsNotADeletion() {
 void checkUnknownVoidAddressDoesNothing() {
     // Испорченный адрес гашения не совпадает ни с чем — и просто не
     // применяется. Порог по ревизии на его месте выкосил бы диапазон.
-    ZJournal j(QVector<Entry>{
-        entry(journal::Kind::Save, kNow, 1, "раз"),
-        entry(journal::Kind::Save, kNow + 1000, 2, "два"),
-        Entry(journal::Kind::Save, kNow + 2000, 3, digestOf("три"), 0,
-              QVector<journal::EntryRef>{journal::EntryRef(kNow + 1000, digestOf("чужой"))})});
+    ZJournal j(QVector<ZJournal::Entry>{
+        entry(ZJournal::Kind::Save, kNow, 1, "раз"),
+        entry(ZJournal::Kind::Save, kNow + 1000, 2, "два"),
+        ZJournal::Entry(ZJournal::Kind::Save, kNow + 2000, 3, digestOf("три"), 0,
+              QVector<ZJournal::EntryRef>{ZJournal::EntryRef(kNow + 1000, digestOf("чужой"))})});
     ZT_TRUE("первая жива", !j.isVoided(0));
     ZT_TRUE("вторая жива: адрес не совпал", !j.isVoided(1));
     ZT_EQ("вешки все", std::string("0 1 2"), waypoints(j));

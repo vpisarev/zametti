@@ -80,7 +80,7 @@ static int ztRunSuite(int argc, char** argv) {
             const qint64 lastBefore = times.isEmpty() ? 0 : times.last();
             const qint64 now = clock + qint64(rng() % (30 * 24 * 3600 * 1000LL));
             const QVector<int> keep = [&] {
-                journal::ZJournal j;
+                ZJournal j;
                 history.readJournal(id, &j, &error);
                 return j.survivors(now);
             }();
@@ -114,7 +114,7 @@ static int ztRunSuite(int argc, char** argv) {
         } else if (what < 12 && !expected.isEmpty() && !buried) {
             // Надгробие: заметку удалили. Слепка у записи нет.
             ZT_TRUE("надгробие пишется",
-                    history.appendToJournal(id, journal::NewRecord::tombstone(journal::Stamp::at(clock)), &error));
+                    history.appendToJournal(id, ZJournal::NewRecord::tombstone(ZJournal::Stamp::at(clock)), &error));
             expected.append(QByteArray());
             times.append(clock);
             buried = true;
@@ -126,8 +126,8 @@ static int ztRunSuite(int argc, char** argv) {
             if (!expected[from].isEmpty()) {
                 ZT_TRUE("восстановление пишется",
                         history.appendToJournal(id,
-                                       journal::NewRecord::restore(expected[from], times[from],
-                                                                   journal::Stamp::at(clock)),
+                                       ZJournal::NewRecord::restore(expected[from], times[from],
+                                                                   ZJournal::Stamp::at(clock)),
                                        &error));
                 expected.append(expected[from]);
                 times.append(clock);
@@ -135,12 +135,12 @@ static int ztRunSuite(int argc, char** argv) {
             }
         } else {
             // Обычная правка: сохранение или внешнее изменение.
-            const journal::Kind kind = (rng() % 5) == 0 ? journal::Kind::External : journal::Kind::Save;
+            const ZJournal::Kind kind = (rng() % 5) == 0 ? ZJournal::Kind::External : ZJournal::Kind::Save;
             const QByteArray body = noteAt(round, 20 + int(rng() % 400));
             ZT_TRUE("запись проходит", history.appendToJournal(id,
-                                   kind == journal::Kind::External
-                                       ? journal::NewRecord::external(body, journal::Stamp::at(clock))
-                                       : journal::NewRecord::save(body, journal::Stamp::at(clock)),
+                                   kind == ZJournal::Kind::External
+                                       ? ZJournal::NewRecord::external(body, ZJournal::Stamp::at(clock))
+                                       : ZJournal::NewRecord::save(body, ZJournal::Stamp::at(clock)),
                                    &error));
             expected.append(body);
             times.append(clock);
@@ -148,7 +148,7 @@ static int ztRunSuite(int argc, char** argv) {
         }
 
         // --- инварианты после каждого шага ----------------------------------
-        journal::ZJournal j;
+        ZJournal j;
         ZT_TRUE("журнал читается", history.readJournal(id, &j, &error));
         ZT_TRUE("хвост цел", !j.tailTrimmed());
         ZT_EQ("записей столько, сколько мы написали", num(expected.size()),

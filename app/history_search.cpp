@@ -16,7 +16,7 @@ HistorySearchReport searchNoteHistory(ZStorage& storage, const QString& noteId,
     QElapsedTimer clock;
     clock.start();
 
-    journal::ZJournal journal;
+    ZJournal journal;
     QString error;
     if (!storage.readJournal(noteId, &journal, &error)) {
         report.elapsedMs = clock.elapsed();
@@ -27,7 +27,7 @@ HistorySearchReport searchNoteHistory(ZStorage& storage, const QString& noteId,
     // ему нужнее давнего. Список поиска по хранилищу устроен так же — сперва
     // то, что вероятнее нужно.
     for (int i = int(journal.size()) - 1; i >= 0; --i) {
-        const journal::ZJournal::Entry& entry = journal.at(i);
+        const ZJournal::Entry& entry = journal.at(i);
         if (!entry.hasSnapshot()) continue;   // у надгробия смотреть нечего
         QByteArray bytes;
         if (!storage.journalSnapshot(noteId, i, &bytes, &error)) continue;

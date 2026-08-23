@@ -157,12 +157,12 @@ QString ZStorage::pathOf(const QString& id) const {
 
 QString ZStorage::idOfPath(const QString& path) { return QFileInfo(path).completeBaseName(); }
 
-std::shared_ptr<journal::ZJournal> ZStorage::journalFor(const QString& id,
-                                                        const journal::ZJournal::Rules& rules) {
+std::shared_ptr<ZJournal> ZStorage::journalFor(const QString& id,
+                                                        const ZJournal::Rules& rules) {
     // Журналы лежат под корнем (history/); каталогу .zametti для этого быть не
     // обязательно — так живут наборы на временном каталоге.
-    if (root_.isEmpty() || id.isEmpty()) return std::make_shared<journal::ZJournal>();
-    return std::make_shared<journal::ZJournal>(this, id, rules);
+    if (root_.isEmpty() || id.isEmpty()) return std::make_shared<ZJournal>();
+    return std::make_shared<ZJournal>(this, id, rules);
 }
 
 void ZStorage::reload() {
@@ -532,7 +532,7 @@ bool ZStorage::rewriteNote(const QString& id, const std::function<void(ZNote&)>&
         if (error != nullptr) *error = outcome.message;
         return false;
     }
-    if (outcome.result == SaveResult::Written) note.journal().record(journal::Kind::Save, outcome.written);
+    if (outcome.result == SaveResult::Written) note.journal().record(ZJournal::Kind::Save, outcome.written);
     refreshNote(id);
     return true;
 }
@@ -557,13 +557,13 @@ bool replaceFile(const QString& path, const QByteArray& bytes, QString* error) {
     return true;
 }
 
-QString describeKind(journal::Kind kind) {
+QString describeKind(ZJournal::Kind kind) {
     switch (kind) {
-        case journal::Kind::Save: return QStringLiteral("save");
-        case journal::Kind::External: return QStringLiteral("external");
-        case journal::Kind::Restore: return QStringLiteral("restore");
-        case journal::Kind::Tombstone: return QStringLiteral("tombstone");
-        case journal::Kind::Amendment: return QStringLiteral("amendment");
+        case ZJournal::Kind::Save: return QStringLiteral("save");
+        case ZJournal::Kind::External: return QStringLiteral("external");
+        case ZJournal::Kind::Restore: return QStringLiteral("restore");
+        case ZJournal::Kind::Tombstone: return QStringLiteral("tombstone");
+        case ZJournal::Kind::Amendment: return QStringLiteral("amendment");
     }
     return QStringLiteral("?");
 }
@@ -596,7 +596,7 @@ QString ZStorage::journalPath(const QString& noteId) const {
 }
 
 
-bool ZStorage::dropVoidedLocked(const QString& path, const journal::ZJournal& jrn,
+bool ZStorage::dropVoidedLocked(const QString& path, const ZJournal& jrn,
                                const QVector<int>& voided, QString* error) {
     assertLocked();
     if (voided.isEmpty()) return true;
@@ -632,8 +632,8 @@ bool ZStorage::dropVoidedLocked(const QString& path, const journal::ZJournal& jr
     }
     const QByteArray blob = file.readAll();
     file.close();
-    journal::ZJournal full;
-    if (!full.parse(blob, journal::ZJournal::Want::All, -1, error)) return false;
+    ZJournal full;
+    if (!full.parse(blob, ZJournal::Want::All, -1, error)) return false;
     QVector<int> keep;
     for (int i = 0; i < full.size(); ++i)
         if (!voided.contains(i)) keep.append(i);
@@ -642,12 +642,12 @@ bool ZStorage::dropVoidedLocked(const QString& path, const journal::ZJournal& jr
     return replaceFile(path, out, error);
 }
 
-bool ZStorage::appendJournalLocked(const QString& path, const journal::NewRecord& what, QString* error) {
+bool ZStorage::appendJournalLocked(const QString& path, const ZJournal::NewRecord& what, QString* error) {
     assertLocked();
 
     // Что уже лежит в журнале. Читается только последнее поколение — память и
     // время ограничены им, а не длиной журнала.
-    const auto reread = [&](journal::ZJournal* journal, bool* exists) {
+    const auto reread = [&](ZJournal* journal, bool* exists) {
         QFile file(path);
         *exists = file.exists() && file.size() > 0;
         if (!*exists) return true;
@@ -657,10 +657,10 @@ bool ZStorage::appendJournalLocked(const QString& path, const journal::NewRecord
         }
         const QByteArray blob = file.readAll();
         file.close();
-        return journal->parse(blob, journal::ZJournal::Want::Chain, std::numeric_limits<int>::max(), error);
+        return journal->parse(blob, ZJournal::Want::Chain, std::numeric_limits<int>::max(), error);
     };
 
-    journal::ZJournal jrn;
+    ZJournal jrn;
     bool exists = false;
     if (!reread(&jrn, &exists)) return false;
 
@@ -677,7 +677,7 @@ bool ZStorage::appendJournalLocked(const QString& path, const journal::NewRecord
         const QVector<int> voided = jrn.indexesOf(what.voids());
         if (!voided.isEmpty()) {
             if (!dropVoidedLocked(path, jrn, voided, error)) return false;
-            jrn = journal::ZJournal{};
+            jrn = ZJournal{};
             if (!reread(&jrn, &exists)) return false;
         }
     }
@@ -690,10 +690,10 @@ bool ZStorage::appendJournalLocked(const QString& path, const journal::NewRecord
         // Новый журнал заводится сразу чищеным: он весь написан нынешними
         // правилами, и вычищать в нём нечего по построению. Иначе первая же
         // заметка приезжала бы на чистку зря.
-        tail = journal::ZJournal::headerBytes(QString::fromLatin1(journal::kCleanVersion));
+        tail = ZJournal::headerBytes(QString::fromLatin1(ZJournal::kCleanVersion));
     }
     QByteArray record;
-    journal::ZJournal::Entry made;
+    ZJournal::Entry made;
     if (!jrn.composeRecord(what, clock_.floor(), &made, &record, error)) return false;
     tail += record;
 
@@ -718,11 +718,11 @@ bool ZStorage::appendJournalLocked(const QString& path, const journal::NewRecord
     return true;
 }
 
-bool ZStorage::readJournalLocked(const QString& path, journal::ZJournal* out, QString* error) const {
+bool ZStorage::readJournalLocked(const QString& path, ZJournal* out, QString* error) const {
     assertLocked();
     QFile file(path);
     if (!file.exists()) {
-        *out = journal::ZJournal{};
+        *out = ZJournal{};
         return true;  // журнала ещё нет — это не беда, а «правок не было»
     }
     if (!file.open(QIODevice::ReadOnly)) {
@@ -731,7 +731,7 @@ bool ZStorage::readJournalLocked(const QString& path, journal::ZJournal* out, QS
     }
     const QByteArray blob = file.readAll();
     file.close();
-    return out->parse(blob, journal::ZJournal::Want::Frames, -1, error);
+    return out->parse(blob, ZJournal::Want::Frames, -1, error);
 }
 
 bool ZStorage::journalSnapshotLocked(const QString& path, int index, QByteArray* out,
@@ -745,13 +745,13 @@ bool ZStorage::journalSnapshotLocked(const QString& path, int index, QByteArray*
     const QByteArray blob = file.readAll();
     file.close();
 
-    journal::ZJournal jrn;
-    if (!jrn.parse(blob, journal::ZJournal::Want::Chain, index, error)) return false;
+    ZJournal jrn;
+    if (!jrn.parse(blob, ZJournal::Want::Chain, index, error)) return false;
     if (index < 0 || index >= jrn.size()) {
         if (error) *error = QStringLiteral("journal has no record #%1").arg(index);
         return false;
     }
-    const journal::ZJournal::Entry& entry = jrn.at(index);
+    const ZJournal::Entry& entry = jrn.at(index);
     if (!entry.hasSnapshot()) {
         if (error)
             *error = QStringLiteral("record #%1 (%2) has no snapshot")
@@ -764,7 +764,7 @@ bool ZStorage::journalSnapshotLocked(const QString& path, int index, QByteArray*
 
 bool ZStorage::trimJournalTailLocked(const QString& path, QString* error) {
     assertLocked();
-    journal::ZJournal jrn;
+    ZJournal jrn;
     QFile probe(path);
     if (!probe.open(QIODevice::ReadOnly)) {
         if (error) *error = QStringLiteral("cannot read journal: %1").arg(probe.errorString());
@@ -772,7 +772,7 @@ bool ZStorage::trimJournalTailLocked(const QString& path, QString* error) {
     }
     const QByteArray blob = probe.readAll();
     probe.close();
-    if (!jrn.parse(blob, journal::ZJournal::Want::Frames, -1, error)) return false;
+    if (!jrn.parse(blob, ZJournal::Want::Frames, -1, error)) return false;
     if (!jrn.tailTrimmed()) return true;
     QFile file(path);
     if (!file.open(QIODevice::ReadWrite)) {
@@ -806,8 +806,8 @@ qint64 bucketOf(qint64 stamp, qint64 now) {
 }
 }  // namespace
 
-QVector<int> journal::ZJournal::survivors(qint64 now) const {
-    const QVector<journal::ZJournal::Entry>& entries = entries_;
+QVector<int> ZJournal::survivors(qint64 now) const {
+    const QVector<ZJournal::Entry>& entries = entries_;
     QVector<int> keep;
     for (int i = 0; i < entries.size(); ++i) {
         // Последняя запись остаётся всегда: для удалённой заметки это её
@@ -838,8 +838,8 @@ bool ZStorage::thinJournalLocked(const QString& path, qint64 now, QString* error
     const qint64 sawSize = info.size();
     const QDateTime sawTime = info.lastModified();
 
-    journal::ZJournal jrn;
-    if (!jrn.parse(blob, journal::ZJournal::Want::All, -1, error)) return false;
+    ZJournal jrn;
+    if (!jrn.parse(blob, ZJournal::Want::All, -1, error)) return false;
     const QVector<int> keep = jrn.survivors(now);
     if (keep.size() == jrn.size() && !jrn.tailTrimmed()) return true;  // нечего делать
 
@@ -861,10 +861,10 @@ bool ZStorage::thinJournalLocked(const QString& path, qint64 now, QString* error
     return replaceFile(path, out, error);
 }
 
-bool ZStorage::rewriteJournalLocked(const QString& path, const journal::Planner& planner, bool force,
-                             journal::CompressOutcome* outcome, QString* error) {
+bool ZStorage::rewriteJournalLocked(const QString& path, const ZJournal::Planner& planner, bool force,
+                             ZJournal::CompressOutcome* outcome, QString* error) {
     assertLocked();
-    journal::CompressOutcome done;
+    ZJournal::CompressOutcome done;
     const auto finish = [&](bool ok) {
         if (outcome != nullptr) *outcome = done;
         return ok;
@@ -879,8 +879,8 @@ bool ZStorage::rewriteJournalLocked(const QString& path, const journal::Planner&
     const QByteArray blob = file.readAll();
     file.close();
 
-    journal::ZJournal jrn;
-    if (!jrn.parse(blob, journal::ZJournal::Want::All, -1, error)) return finish(false);
+    ZJournal jrn;
+    if (!jrn.parse(blob, ZJournal::Want::All, -1, error)) return finish(false);
 
     done.versionBefore = jrn.cleanVersion();
     done.versionAfter = jrn.cleanVersion();
@@ -888,7 +888,7 @@ bool ZStorage::rewriteJournalLocked(const QString& path, const journal::Planner&
     done.recordsAfter = done.recordsBefore;
 
     // Ленивость: чищеный журнал не трогается вовсе. Люк ходит с force.
-    const QString target = QString::fromLatin1(journal::kCleanVersion);
+    const QString target = QString::fromLatin1(ZJournal::kCleanVersion);
     if (!force && jrn.cleanVersion() == target) return finish(true);
 
     // Правилу нужны слепки, а не байты: «одинаковы ли две записи» — вопрос про
@@ -929,13 +929,13 @@ bool ZStorage::rewriteJournalLocked(const QString& path, const journal::Planner&
 
 // Открытые методы: замок и ничего больше. Ни одной строки работы с файлами
 // здесь нет и быть не должно — на этом стоит обещание «всё под замком».
-bool ZStorage::appendToJournal(const QString& noteId, const journal::NewRecord& what, QString* error) {
+bool ZStorage::appendToJournal(const QString& noteId, const ZJournal::NewRecord& what, QString* error) {
     const QMutexLocker locked(&gate());
     return appendJournalLocked(journalPath(noteId), what, error);
 }
 
 
-bool ZStorage::readJournal(const QString& noteId, journal::ZJournal* out, QString* error) const {
+bool ZStorage::readJournal(const QString& noteId, ZJournal* out, QString* error) const {
     const QMutexLocker locked(&gate());
     return readJournalLocked(journalPath(noteId), out, error);
 }
@@ -956,20 +956,20 @@ bool ZStorage::thinJournal(const QString& noteId, qint64 now, QString* error) {
     return thinJournalLocked(journalPath(noteId), now, error);
 }
 
-bool ZStorage::rewriteJournal(const QString& noteId, const journal::Planner& planner, bool force,
-                       journal::CompressOutcome* outcome, QString* error) {
+bool ZStorage::rewriteJournal(const QString& noteId, const ZJournal::Planner& planner, bool force,
+                       ZJournal::CompressOutcome* outcome, QString* error) {
     const QMutexLocker locked(&gate());
     return rewriteJournalLocked(journalPath(noteId), planner, force, outcome, error);
 }
 
-journal::ThinReport ZStorage::thinAllJournals(qint64 now, bool dryRun) {
-    journal::ThinReport report;
+ZJournal::ThinReport ZStorage::thinAllJournals(qint64 now, bool dryRun) {
+    ZJournal::ThinReport report;
     const QDir history(QDir(root_).filePath(QStringLiteral("history")));
     if (!history.exists()) return report;
 
     for (const QString& name : history.entryList({QStringLiteral("*.log")}, QDir::Files)) {
         const QString noteId = name.left(name.size() - 4);
-        journal::ZJournal before;
+        ZJournal before;
         QString error;
         if (!readJournal(noteId, &before, &error)) {
             report.problems.append(QStringLiteral("%1: %2").arg(name, error));
@@ -989,7 +989,7 @@ journal::ThinReport ZStorage::thinAllJournals(qint64 now, bool dryRun) {
             report.problems.append(QStringLiteral("%1: %2").arg(name, error));
             continue;
         }
-        journal::ZJournal after;
+        ZJournal after;
         readJournal(noteId, &after, &error);
         report.recordsAfter += after.size();
         report.bytesAfter += QFileInfo(journalPath(noteId)).size();
@@ -997,19 +997,19 @@ journal::ThinReport ZStorage::thinAllJournals(qint64 now, bool dryRun) {
     return report;
 }
 
-bool ZStorage::compressJournal(const QString& noteId, const journal::ZJournal::Rules& rules,
+bool ZStorage::compressJournal(const QString& noteId, const ZJournal::Rules& rules,
                                bool force, history::Report* report, QString* error) {
     // ВОТ ЗДЕСЬ МИГРАЦИЯ И РАСХОДИТСЯ С ЖИВОЙ ЗАПИСЬЮ, и больше нигде: она
     // чистит ретроактивно. Ставится сторож здесь, а не вызывающим, чтобы
     // «забыть выключить возраст» было негде.
-    journal::ZJournal::Rules retro = rules;
+    ZJournal::Rules retro = rules;
     retro.ignoreAge = true;
 
-    journal::ZJournal::Plan plan;
-    journal::CompressOutcome outcome;
+    ZJournal::Plan plan;
+    ZJournal::CompressOutcome outcome;
     const bool ok = rewriteJournal(
         noteId,
-        [&](const journal::ZJournal& jrn, const QVector<QByteArray>& snapshots) {
+        [&](const ZJournal& jrn, const QVector<QByteArray>& snapshots) {
             plan = jrn.planCompress(snapshots, retro);
             return plan.keep;
         },
@@ -1140,7 +1140,7 @@ QString ZStorage::ensureRootNote(QString* error) {
     if (!rewriteNote(id, [&name](ZNote& note) {
             note.setRole(QStringLiteral("root"));
             note.doc().setTitle(name.isEmpty() ? QStringLiteral("Notes") : name);
-        }, journal::ZJournal::Rules{}, &why)) {
+        }, ZJournal::Rules{}, &why)) {
         if (error != nullptr) *error = why;
         return {};
     }

@@ -27,11 +27,11 @@ constexpr int kSnippetChars = 200;
 namespace zametti {
 
 ZNote::ZNote(QString path, QByteArray fileBytes, Digest digest,
-             std::shared_ptr<journal::ZJournal> journal)
+             std::shared_ptr<ZJournal> journal)
     : path_(std::move(path)),
       digest_(digest),
       lastSaved_(std::move(fileBytes)),
-      journal_(journal != nullptr ? std::move(journal) : std::make_shared<journal::ZJournal>()) {}
+      journal_(journal != nullptr ? std::move(journal) : std::make_shared<ZJournal>()) {}
 
 QString ZNote::id() const { return QFileInfo(path_).completeBaseName(); }
 

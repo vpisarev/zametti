@@ -18,7 +18,6 @@
 namespace {
 
 using zametti::ZNote;
-namespace journal = zametti::journal;
 
 std::string n(long long v) { return std::to_string(v); }
 
@@ -33,7 +32,7 @@ void checkHistory() {
     QTemporaryDir root;
     ZT_TRUE("временное хранилище", root.isValid());
     zametti::ZStorage store(root.path());
-    journal::ZJournal history(&store, QStringLiteral("01test000000000"), rules());
+    zametti::ZJournal history(&store, QStringLiteral("01test000000000"), rules());
     ZT_TRUE("журнал доступен", history.available());
 
     // Опорная запись — один раз, временем файла.
@@ -41,7 +40,7 @@ void checkHistory() {
     history.ensureBaseline("второе\n", 2000);   // журнал уже начат — молчит
     QString error;
     ZT_TRUE("журнал читается", history.refresh(&error));
-    const journal::ZJournal& read = history;
+    const zametti::ZJournal& read = history;
     ZT_EQ("опорная запись одна", n(1), n(read.size()));
     if (!read.isEmpty()) {
         ZT_EQ("временем файла, а не «сейчас»", n(1000), n(read.at(0).time()));
@@ -52,8 +51,8 @@ void checkHistory() {
 
     // Далёкая правка ложится рядом; та же — не пишется вовсе (правило отбора).
     const QByteArray far(2000, 'x');
-    ZT_TRUE("далёкая правка записана", history.record(journal::Kind::Save, far, &error));
-    ZT_TRUE("тот же слепок записывается без ошибки", history.record(journal::Kind::Save, far, &error));
+    ZT_TRUE("далёкая правка записана", history.record(zametti::ZJournal::Kind::Save, far, &error));
+    ZT_TRUE("тот же слепок записывается без ошибки", history.record(zametti::ZJournal::Kind::Save, far, &error));
     ZT_TRUE("журнал читается снова", history.refresh(&error));
     ZT_EQ("две записи: опорная и далёкая; повтор не лёг рядом", n(2), n(read.size()));
 
@@ -61,26 +60,26 @@ void checkHistory() {
     // гасится записью.
     history.markNextSaveAsRestore(1000);
     ZT_EQ("признак поставлен", n(1000), n(history.pendingRestoreSource()));
-    ZT_TRUE("запись восстановления", history.record(journal::Kind::Save, "первое\n", &error));
+    ZT_TRUE("запись восстановления", history.record(zametti::ZJournal::Kind::Save, "первое\n", &error));
     ZT_EQ("признак погашен записью", n(0), n(history.pendingRestoreSource()));
     ZT_TRUE("журнал читается в третий раз", history.refresh(&error));
     if (!read.isEmpty()) {
-        const journal::ZJournal::Entry& last = read.entries().back();
-        ZT_TRUE("последняя запись — восстановление", last.kind() == journal::Kind::Restore);
+        const zametti::ZJournal::Entry& last = read.entries().back();
+        ZT_TRUE("последняя запись — восстановление", last.kind() == zametti::ZJournal::Kind::Restore);
         ZT_EQ("со временем источника", n(1000), n(last.source()));
     }
     // Внешняя правка — своим родом, признак восстановления не трогает.
     history.markNextSaveAsRestore(2000);
-    ZT_TRUE("внешняя правка записана", history.record(journal::Kind::External, "чужое\n", &error));
+    ZT_TRUE("внешняя правка записана", history.record(zametti::ZJournal::Kind::External, "чужое\n", &error));
     ZT_EQ("внешняя запись признак не гасит", n(2000), n(history.pendingRestoreSource()));
     history.clearPendingRestore();
     ZT_EQ("погашен явно", n(0), n(history.pendingRestoreSource()));
 
     // Без хранилища — всё «нет», и ничего не падает.
-    journal::ZJournal none;
+    zametti::ZJournal none;
     ZT_TRUE("без хранилища журнала нет", !none.available());
     none.ensureBaseline("x", 1);
-    ZT_TRUE("запись без хранилища — ложь", !none.record(journal::Kind::Save, "x", &error));
+    ZT_TRUE("запись без хранилища — ложь", !none.record(zametti::ZJournal::Kind::Save, "x", &error));
     ZT_TRUE("чтение без хранилища — ложь", !none.refresh(&error));
     QByteArray bytes;
     ZT_TRUE("слепок без хранилища — ложь", !none.snapshotAt(0, &bytes, &error));

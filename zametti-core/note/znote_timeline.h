@@ -56,7 +56,7 @@ public:
     // «чищено за этот заход» у них общие); fresh — байты файла живой заметки
     // СЕЙЧАС (ZNote::fileBytes()); style — облик документа разности (nullptr —
     // из настроек).
-    ZNoteTimeline(std::shared_ptr<journal::ZJournal> journal, QByteArray fresh,
+    ZNoteTimeline(std::shared_ptr<ZJournal> journal, QByteArray fresh,
                   std::shared_ptr<const ZDocStyle> style);
 
     ZNoteTimeline(const ZNoteTimeline&) = delete;
@@ -69,8 +69,8 @@ public:
     bool isOpen() const { return index_ >= 0; }
 
     // --- список записей ---------------------------------------------------
-    const journal::ZJournal& journal() const { return *journal_; }
-    const QVector<journal::ZJournal::Entry>& entries() const { return journal_->entries(); }
+    const ZJournal& journal() const { return *journal_; }
+    const QVector<ZJournal::Entry>& entries() const { return journal_->entries(); }
     int count() const { return journal_->size(); }
     int index() const { return index_; }
     // Последняя запись со слепком; -1 — таких нет (надгробия пропущены).
@@ -111,11 +111,11 @@ public:
     // Каноническое тело слепка (без шапки) — восстановлению.
     std::string snapshotBody() const;
     qint64 snapshotTime() const;
-    journal::Kind snapshotKind() const;
+    ZJournal::Kind snapshotKind() const;
 
     // --- поиск ------------------------------------------------------------
     NoteSearch& search() { return search_; }
-    std::shared_ptr<journal::ZJournal> journalPtr() const { return journal_; }
+    std::shared_ptr<ZJournal> journalPtr() const { return journal_; }
 
     // --- облик ------------------------------------------------------------
     // Облик сменился: документы разности выбрасываются и соберутся заново.
@@ -124,7 +124,7 @@ public:
 
 protected:
     // Журнал заметки: тот же объект, что у ZNote.
-    std::shared_ptr<journal::ZJournal> journal_;
+    std::shared_ptr<ZJournal> journal_;
     QByteArray fresh_;
     std::shared_ptr<const ZDocStyle> style_;
     int index_ = -1;

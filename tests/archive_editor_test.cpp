@@ -177,7 +177,7 @@ static int ztRunSuite(int argc, char** argv) {
 
         // ГОЛОВА ЖУРНАЛА РАВНА ФАЙЛУ — и у битой тоже.
         zametti::ZStorage history(g_root);
-        zametti::journal::ZJournal read;
+        zametti::ZJournal read;
         QByteArray head;
         if (history.readJournal(brokenId, &read, &why) && !read.isEmpty())
             history.journalSnapshot(brokenId, read.lastSnapshotIndex(), &head, &why);

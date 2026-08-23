@@ -132,7 +132,7 @@ qint64 HistoryController::restore(bool* alreadyCurrent) {
 
 HistorySearchReport HistoryController::searchHistory(const QString& text) {
     HistorySearchReport report;
-    const std::shared_ptr<journal::ZJournal> journal = editor_.noteJournal();
+    const std::shared_ptr<ZJournal> journal = editor_.noteJournal();
     if (journal == nullptr || !journal->available()) return report;
     // Обращение к истории — значит и чистка: искать надо по уже вычищенному
     // журналу, иначе один и тот же текст найдётся в трёх дубликатах.

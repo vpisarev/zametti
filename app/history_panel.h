@@ -33,7 +33,7 @@ QString historyMoment(qint64 msSinceEpoch);
 QString historyStamp(qint64 msSinceEpoch);
 
 // Короткое имя вида записи для таймлайна.
-QString historyKindName(journal::Kind kind);
+QString historyKindName(ZJournal::Kind kind);
 
 class HistoryBanner : public QWidget {
     Q_OBJECT
@@ -43,7 +43,7 @@ public:
 
     // Что показано: время слепка, его вид и сколько строк тронуто против базы
     // (changed < 0 — не писать).
-    void setSnapshot(qint64 time, journal::Kind kind, int changed = -1);
+    void setSnapshot(qint64 time, ZJournal::Kind kind, int changed = -1);
 
     // Какая база сравнения показана сейчас: предыдущая запись или свежая
     // версия заметки.
@@ -92,7 +92,7 @@ public:
 
     // Заполнить записями. Свежие сверху: в прошлое человек идёт сверху вниз,
     // как в списке заметок.
-    void setEntries(const QVector<journal::ZJournal::Entry>& entries);
+    void setEntries(const QVector<ZJournal::Entry>& entries);
     // Отметить показанную запись (номер в журнале, не в списке).
     void setCurrent(int index);
     // Ширина, при которой строки списка не режутся: по самой длинной записи
@@ -107,7 +107,7 @@ signals:
 
 private:
     QListWidget* list_;
-    QVector<journal::ZJournal::Entry> entries_;
+    QVector<ZJournal::Entry> entries_;
     bool quiet_ = false;   // выделение переставляем сами — сигнал не нужен
 };
 
