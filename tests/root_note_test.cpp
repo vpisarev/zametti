@@ -4,7 +4,6 @@
 // правила дерева применялись без оговорок), и снести её нельзя ничем.
 
 #include "store.h"
-#include "store_identity.h"
 #include "znote.h"
 #include "zstorage.h"
 

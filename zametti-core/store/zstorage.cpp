@@ -1031,66 +1031,63 @@ bool ZStorage::compressJournal(const QString& noteId, const ZJournal::Rules& rul
 
 // --- идентичность хранилища -------------------------------------------------
 
-namespace {
-QString identityPathIn(const QString& root) {
-    return QDir(root).filePath(QLatin1String(store::kIdentityFile));
+QString ZStorage::identityPath() const {
+    return QDir(root_).filePath(QLatin1String(Identity::kFile));
 }
-}  // namespace
 
-store::StoreIdentity ZStorage::identity(QString* error) const {
-    store::StoreIdentity out;
+ZStorage::Identity ZStorage::identity(QString* error) const {
+    Identity out;
     if (!store_) {
         if (error != nullptr) *error = QStringLiteral("not a store: %1").arg(root_);
         return out;
     }
-    QFile file(identityPathIn(root_));
+    QFile file(identityPath());
     if (!file.exists()) return out;   // не беда: хранилища старых сборок его не имеют
     if (!file.open(QIODevice::ReadOnly)) {
         if (error != nullptr)
             *error = QStringLiteral("cannot read %1: %2")
-                         .arg(QLatin1String(store::kIdentityFile), file.errorString());
+                         .arg(QLatin1String(Identity::kFile), file.errorString());
         return out;
     }
     const QByteArray bytes = file.readAll();
     file.close();
-    store::StoreIdentity read;
+    Identity read;
     if (!read.parse(bytes, error)) return out;
     return read;
 }
 
-store::StoreIdentity ZStorage::ensureIdentity(QString* error) {
-    store::StoreIdentity have = identity(error);
+ZStorage::Identity ZStorage::ensureIdentity(QString* error) {
+    Identity have = identity(error);
     if (!have.isEmpty()) return have;
     if (!store_) return have;
     // Чеканка. id хранилища — той же чеканки, что у заметок: одна азбука на всё
     // хранилище, и по виду сразу понятно, что это наш идентификатор.
-    store::StoreIdentity fresh = store::StoreIdentity::mint(
-        QString::fromStdString(newNoteId()), store::isoNow());
+    Identity fresh = Identity::mint(QString::fromStdString(newNoteId()), store::isoNow());
     if (!writeIdentity(fresh, error)) return {};
     return fresh;
 }
 
 bool ZStorage::setRootNote(const QString& noteId, QString* error) {
-    store::StoreIdentity have = ensureIdentity(error);
+    Identity have = ensureIdentity(error);
     if (have.isEmpty()) return false;
     if (have.rootNote() == noteId) return true;   // писать нечего
     have.setRootNote(noteId);
     return writeIdentity(have, error);
 }
 
-bool ZStorage::writeIdentity(const store::StoreIdentity& identity, QString* error) {
-    QSaveFile file(identityPathIn(root_));
+bool ZStorage::writeIdentity(const Identity& identity, QString* error) {
+    QSaveFile file(identityPath());
     if (!file.open(QIODevice::WriteOnly)) {
         if (error != nullptr)
             *error = QStringLiteral("cannot write %1: %2")
-                         .arg(QLatin1String(store::kIdentityFile), file.errorString());
+                         .arg(QLatin1String(Identity::kFile), file.errorString());
         return false;
     }
     file.write(identity.toBytes());
     if (!file.commit()) {
         if (error != nullptr)
             *error = QStringLiteral("cannot write %1: %2")
-                         .arg(QLatin1String(store::kIdentityFile), file.errorString());
+                         .arg(QLatin1String(Identity::kFile), file.errorString());
         return false;
     }
     return true;

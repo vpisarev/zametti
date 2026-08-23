@@ -23,14 +23,13 @@
 #ifndef ZAMETTI_ZSTORAGE_H
 #define ZAMETTI_ZSTORAGE_H
 
-#include "device_clock.h"
 #include "sort_order.h"
-#include "store_identity.h"
 #include "import_limits.h"
 #include "znote.h"
 
 #include <QFileSystemWatcher>
 #include <QHash>
+#include <QJsonObject>
 #include <QLockFile>
 #include <QObject>
 #include <QSet>
@@ -93,11 +92,65 @@ public:
     // корневая заметка. Файл лежит РЯДОМ С ЗАМЕТКАМИ (не в настройках): копия
     // каталога обязана знать, чьё она облако, а в облаке он же служит
     // манифестом для сверки ДО ввода пароля.
+    //
+    //     { "storeId": "01n6cqevh7bbfr", "formatVersion": 1,
+    //       "created": "2026-08-23T00:00:00+03:00", "rootNote": "01n6cqevsd7v5e" }
+    //
+    // ЧИСТОЕ ЗНАЧЕНИЕ, БЕЗ ФАЙЛОВ (как ZJournal::Record): разбор и сборка —
+    // здесь, чтение и запись — глаголы хранилища ниже. Поэтому набор проверяет
+    // разбор без единого файла на диске.
+    //
+    // СТРАЖ ВЕРСИИ. Формат новее нашего — не работаем, а не портим: сборка, не
+    // знающая половины ключей, перепишет файл без них, и старшая версия
+    // потеряет данные молча. Незнакомые ключи ВНУТРИ своей версии, наоборот,
+    // пропускаются и сохраняются при перезаписи (обещание с этапа 7).
+    class Identity {
+    public:
+        // Версия формата ХРАНИЛИЩА (не заметки и не журнала): её поднимает
+        // только ломающее изменение раскладки каталога.
+        static constexpr int kFormatVersion = 1;
+        // Имя файла — здесь один раз.
+        static constexpr char kFile[] = "zametti.json";
+
+        Identity() = default;
+
+        // Разбор байтов файла. false — не JSON, не объект или id не годится;
+        // объяснение в error. Отсутствие файла разбирать нечем: это не ошибка
+        // разбора, а вопрос к хранилищу.
+        bool parse(const QByteArray& bytes, QString* error = nullptr);
+
+        // Байты для записи. Незнакомые ключи, прочитанные разбором,
+        // сохраняются: старшая сборка добавила своё — не нам это стирать.
+        QByteArray toBytes() const;
+
+        // Свежая идентичность: id чеканится один раз и не меняется никогда.
+        static Identity mint(const QString& storeId, const QString& createdIso);
+
+        bool isEmpty() const { return storeId_.isEmpty(); }
+        const QString& storeId() const { return storeId_; }
+        int formatVersion() const { return formatVersion_; }
+        const QString& created() const { return created_; }
+        const QString& rootNote() const { return rootNote_; }
+
+        // Формат новее нашего: работать нельзя.
+        bool tooNew() const { return formatVersion_ > kFormatVersion; }
+
+        // Адрес корневой заметки. Единственное, что в этом файле меняется.
+        void setRootNote(const QString& id) { rootNote_ = id; }
+
+    protected:
+        QString storeId_;
+        int formatVersion_ = kFormatVersion;
+        QString created_;
+        QString rootNote_;
+        // Всё, чего мы не знаем: едет обратно в файл при перезаписи.
+        QJsonObject extra_;
+    };
 
     // Прочитать. Пусто (isEmpty) — файла нет, он не читается или он не наш;
     // объяснение в error. Ошибкой отсутствие файла не считается: хранилища
     // старых сборок его не имеют, и чеканит его ensureIdentity.
-    store::StoreIdentity identity(QString* error = nullptr) const;
+    Identity identity(QString* error = nullptr) const;
 
     // Прочитать, а если файла нет — ВЫЧЕКАНИТЬ и записать. Единственное место,
     // где рождается storeId, и рождается он ровно один раз за жизнь хранилища.
@@ -106,7 +159,7 @@ public:
     // Это САНКЦИОНИРОВАННОЕ исключение из правила «загрузка не пишет»: без
     // идентичности хранилище нельзя синхронизировать, а спрашивать человека
     // тут не о чем.
-    store::StoreIdentity ensureIdentity(QString* error = nullptr);
+    Identity ensureIdentity(QString* error = nullptr);
 
     // Назвать корневую заметку. Остальные поля файла неизменны после чеканки.
     bool setRootNote(const QString& noteId, QString* error = nullptr);
@@ -346,7 +399,8 @@ protected:
     std::shared_ptr<QLockFile> lock_;   // заведён при первом lock()
 
     // Записать идентичность целиком (атомарно). Зовётся только отсюда.
-    bool writeIdentity(const store::StoreIdentity& identity, QString* error);
+    bool writeIdentity(const Identity& identity, QString* error);
+    QString identityPath() const;
 
     // Всё, что трогает файлы журналов, живёт здесь и зовётся только из-под замка.
     bool appendJournalLocked(const QString& path, const ZJournal::NewRecord& what, QString* error);

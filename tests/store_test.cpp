@@ -8,7 +8,6 @@
 #include "pieces.h"
 #include "journal.h"
 #include "store.h"
-#include "store_identity.h"
 
 #include "test_util.h"
 
@@ -562,7 +561,7 @@ static int ztRunSuite(int argc, char** argv) {
         const QString name = info.fileName();
         // zametti.json — идентичность хранилища, а не вложение: она появляется
         // при заведении хранилища и к ввозу отношения не имеет.
-        if (name == QLatin1String(zametti::store::kIdentityFile)) continue;
+        if (name == QLatin1String(ZStorage::Identity::kFile)) continue;
         if (!name.endsWith(QStringLiteral(".md"))) files.append(name);
     }
     ZT_TRUE("вложение ровно одно и плоско", files.size() == 1);

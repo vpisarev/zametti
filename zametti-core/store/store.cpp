@@ -911,16 +911,16 @@ bool verifyStore(const QString& root, Report& report) {
     {
         ZStorage storage(root);
         QString why;
-        const store::StoreIdentity identity = storage.identity(&why);
+        const ZStorage::Identity identity = storage.identity(&why);
         if (!why.isEmpty()) report.problem(why);
         if (identity.isEmpty() && why.isEmpty())
             report.note(QStringLiteral("no %1 yet (run: zametti-store root init)")
-                            .arg(QLatin1String(store::kIdentityFile)));
+                            .arg(QLatin1String(ZStorage::Identity::kFile)));
         if (identity.tooNew())
             report.problem(QStringLiteral("%1: format version %2 is newer than mine (%3)")
-                               .arg(QLatin1String(store::kIdentityFile))
+                               .arg(QLatin1String(ZStorage::Identity::kFile))
                                .arg(identity.formatVersion())
-                               .arg(store::kStoreFormatVersion));
+                               .arg(ZStorage::Identity::kFormatVersion));
     }
 
     std::map<std::string, std::shared_ptr<ZNote>> notes;
@@ -946,7 +946,7 @@ bool verifyStore(const QString& root, Report& report) {
         }
         // Идентичность хранилища — свой файл, а не заметка: имя у него
         // человеческое, и чужим он не считается.
-        if (name == QLatin1String(store::kIdentityFile)) continue;
+        if (name == QLatin1String(ZStorage::Identity::kFile)) continue;
         const qsizetype dot = name.lastIndexOf(QLatin1Char('.'));
         const QString stem = dot > 0 ? name.left(dot) : name;
         if (dot <= 0 || !isValidNoteId(toUtf8(stem))) {

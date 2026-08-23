@@ -5,7 +5,6 @@
 // трогает только оно.
 
 #include "store.h"
-#include "store_identity.h"
 #include "zstorage.h"
 
 #include "test_util.h"
@@ -22,7 +21,7 @@
 namespace {
 
 using zametti::ZStorage;
-using zametti::store::StoreIdentity;
+using StoreIdentity = zametti::ZStorage::Identity;
 
 std::string s(const QString& v) { return v.toStdString(); }
 

@@ -22,21 +22,20 @@ When a markdown note is imported into the storage or is created by the user from
 - the note is given a 14-symbol [base-32](https://www.crockford.com/base32.html) name that consists of 8-symbol prefix (encoded seconds since 'Unix epoch', 01.01.1970 UTC when the note is created) and 6-symbol random suffix. The real name becomes the title (e.g. `# some verbose name of the note`)  This 14-symbol id is like a social id number, it keeps the note identity even if the displayed name changes. And the name can then contain any symbols, even emoji. See [zametti-storage](docs/zametti-storage.md) for details.
 - each markdown file starts with a html comment (which are supported by markdown parsers) with meta-information about the note. _Don't touch it if you edit the note with an external editor!_
 - trailing whitespaces are erased. New-line symbol `\n` is added in the end.
-- at the same time, user-added spaces in the beginning of each line, as well as extra empty lines are all preserved! So you can type unusually-formatted poems - the formatting will be preserved.
+- at the same time, user-added spaces in the beginning of each line, as well as extra empty lines between paragraphs are all preserved! So you can type unusually-formatted poems - the formatting will be preserved.
 - each heading starts with one or more `#`. We don't use under-the-heading `-----`.
 - `-` is used for unordered lists. In WYSIWYG mode bullets of 3 different forms are used for unordered lists of different level, but it's just visualization
 - ordered lists use `1.`, `2.` etc. enumeration. You can put `1.` everywhere, but it will likely be restored to `1.`, `2.` etc. on the next auto-save.In WYSIWYG mode nested lists use `a., b., c. ...` and `1), 2), 3) ...`, but it's just visualization.
 - italic text is surrounded by `_`, e.g. `_emphasized words_` will be displayed as _emphasized words_.
 - bold text is surrounded by `**`: `**that was a bold statement!**` -\> **that was a bold statement!**.
 - strikethrough text is surrounded by `~~`. `~~zametti is yet another entry-level note taking app~~` -\> ~~zametti is yet another entry-level note taking app~~
-- inline code fragments use orginary back quotes, `print('hello world')`. Code blocks use explicit ` ```...``` ` instead of indentation.
-- `$...$` surround inline formulas: $\text{circle area}=\pi r^2$; `$$...$$` are used for display formulas. However, it's possible to use `$...$` for display formulas as well - just place inline formula alone, separated from the rest of the next by empty lines.
-- we don't use a 'standard' 4-space indent for lists. Instead, we use 2-space indentation for unordered lists and 3-space indentation for ordered lists.
+- inline code fragments use ordinary back quotes, `print('hello world')`. Code blocks use explicit ` ```...``` ` instead of indentation.
+- `$...$` surround inline formulas: $\text{circle area}=\pi r^2$; `$$...$$` are used for display formulas. However, it's possible to use `$...$` for display formulas as well - just place inline formula alone, separated from the rest of the text by empty lines.
+- we don't use a 'markdown-standard' 4-space indent for lists. Instead, we use 2-space indentation for unordered lists and 3-space indentation for ordered lists.
 - syntax for images is extended. There is a base `![alt-text](url)` standard notation, into which we add some extra stuff:
   - `(url)` may include the current picture size in pixels, which changes as user changes the picture size by dragging on of the corners.
   - it also may include optional alignment, which is center alignment by default.
-  - if alt-text starts with `~` or if its name is too dull, e.g. `image 5` or `IMG_...` or `DSC...` or `Screenshot ...`,
-    this text is not displayed under the picture. To display it, type `Ctrl+D` and edit it - make it more descriptive.
+  - if alt-text starts with `~` or if its name is too dull, e.g. `image 5` or `IMG_...` or `DSC...` or `Screenshot ...`, this text is not displayed under the picture. To display it, type `Ctrl+D` and edit it - make it more descriptive.
 - all the referenced images (many different formats are supported by the application) are put into the storage (also under 14-symbol base32 names) in the (re)compressed form. Most of the time they become `.jxl` (JpegXL) files, but sometimes `.jpeg's` and `.webp's` are preserved if they cannot be recompressed into JpegXL accurately enough and/or with substantial savings in occupied space. Big images are downscaled with high-quality algorithm. There is user parameter `maxImportedImageSize` (see 'Settings' below) that controls the downscaling. Note that JpegXL files can:
   - store up to 16 bits-per-channel images
   - support various color spaces (including sRGB, Display P3, AdobeRGB),

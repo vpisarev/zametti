@@ -125,7 +125,7 @@ int main(int argc, char** argv) {
         storage.reload();
         QString error;
         const auto show = [&storage] {
-            const zametti::store::StoreIdentity identity = storage.identity();
+            const zametti::ZStorage::Identity identity = storage.identity();
             const QString byRole = storage.rootId();
             std::printf("storeId:      %s\n",
                         identity.storeId().isEmpty() ? "(none)"
