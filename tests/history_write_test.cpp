@@ -14,7 +14,6 @@
 
 #include "document_saver.h"
 #include "zstorage.h"
-#include "history_rules.h"
 #include "editor_widget.h"
 #include "history_rig.h"
 #include "journal.h"
@@ -352,7 +351,7 @@ void checkAcrossRestart() {
         for (size_t j = i + 1; j < all.size(); ++j)
             ZT_TRUE("слепки " + std::to_string(i) + " и " + std::to_string(j) +
                         " различаются не только штампом modified",
-                    !zametti::sameApartFromModified(all[i], all[j]));
+                    !zametti::NoteHeader::sameFileApartFromStamps(all[i], all[j]));
 }
 
 // НАБРАЛИ, СОХРАНИЛИ, ОТМЕНИЛИ, СОХРАНИЛИ — и в журнале не должно остаться
@@ -401,14 +400,14 @@ void checkUndoDoesNotDuplicate() {
             recordCount(id) == base + 1);
     const std::vector<QByteArray> all = snapshots(id);
     ZT_TRUE("и последняя запись — та самая старая",
-            !all.empty() && zametti::sameApartFromModified(all.back(), before));
+            !all.empty() && zametti::NoteHeader::sameFileApartFromStamps(all.back(), before));
 
     // Последний слепок обязан совпасть с файлом: иначе история врёт про то,
     // что лежит на диске.
     QFile file(path);
     ZT_TRUE("файл читается", file.open(QIODevice::ReadOnly));
     ZT_TRUE("последний слепок — это то, что в файле",
-            !all.empty() && zametti::sameApartFromModified(all.back(), file.readAll()));
+            !all.empty() && zametti::NoteHeader::sameFileApartFromStamps(all.back(), file.readAll()));
 }
 
 // --- ленивая миграция: оба триггера пер-заметочные ---------------------------

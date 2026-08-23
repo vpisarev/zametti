@@ -344,14 +344,14 @@ QString ZStorage::createNote(const QString& parentId, bool folder, QString* erro
         if (!rewriteNote(id, [](ZNote& note) {
                 note.setRole(QStringLiteral("folder"));
                 note.doc().setTitle(QStringLiteral("New folder"));
-            }, history::Rules{}, &why))
+            }, ZJournal::Rules{}, &why))
             std::fprintf(stderr, "new folder has no role: %s\n", why.toUtf8().constData());
     }
     refreshNote(id);
     return id;
 }
 
-bool ZStorage::archive(const QString& id, const history::Rules& rules, QStringList* failed) {
+bool ZStorage::archive(const QString& id, const ZJournal::Rules& rules, QStringList* failed) {
     if (!store_ || !has(id)) return false;
     // КОРЕНЬ НЕ АРХИВИРУЕТСЯ: он папка, а значит descendantsOf унесло бы в
     // архив всё хранилище разом.
@@ -396,7 +396,7 @@ bool ZStorage::restore(const QString& id, QStringList* failed) {
             if (!rewriteNote(one, [](ZNote& note) {
                     note.setArchived(false);
                     if (note.role() == QLatin1String("trash")) note.setRole(QString());
-                }, history::Rules{}, &why)) {
+                }, ZJournal::Rules{}, &why)) {
                 ok = false;
                 if (failed != nullptr) *failed << QStringLiteral("%1: %2").arg(titleOf(one), why);
             }
@@ -473,12 +473,12 @@ bool ZStorage::remove(const QString& id, const ImportLimits& limits, QString* er
     return true;
 }
 
-bool ZStorage::rename(const QString& id, const QString& title, const history::Rules& rules,
+bool ZStorage::rename(const QString& id, const QString& title, const ZJournal::Rules& rules,
                       QString* error) {
     return rewriteNote(id, [&title](ZNote& note) { note.doc().setTitle(title); }, rules, error);
 }
 
-bool ZStorage::move(const QString& id, const QString& parentId, const history::Rules& rules,
+bool ZStorage::move(const QString& id, const QString& parentId, const ZJournal::Rules& rules,
                     QString* error) {
     // КОРЕНЬ НЕ ПЕРЕНОСИТСЯ: он и есть верх дерева.
     if (isRootNote(id)) {
@@ -492,7 +492,7 @@ bool ZStorage::move(const QString& id, const QString& parentId, const history::R
 }
 
 bool ZStorage::setSortMark(const QString& id, std::optional<SortOrder> order,
-                           const history::Rules& rules, QString* error) {
+                           const ZJournal::Rules& rules, QString* error) {
     return rewriteNote(id, [order](ZNote& note) {
         note.setHasHeader(true);
         note.setSortMark(order);
@@ -500,7 +500,7 @@ bool ZStorage::setSortMark(const QString& id, std::optional<SortOrder> order,
 }
 
 bool ZStorage::rewriteNote(const QString& id, const std::function<void(ZNote&)>& change,
-                           const history::Rules& rules, QString* error) {
+                           const ZJournal::Rules& rules, QString* error) {
     const QString path = pathOf(id);
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) {
@@ -998,7 +998,7 @@ ZJournal::ThinReport ZStorage::thinAllJournals(qint64 now, bool dryRun) {
 }
 
 bool ZStorage::compressJournal(const QString& noteId, const ZJournal::Rules& rules,
-                               bool force, history::Report* report, QString* error) {
+                               bool force, ZStorage::CompressReport* report, QString* error) {
     // ВОТ ЗДЕСЬ МИГРАЦИЯ И РАСХОДИТСЯ С ЖИВОЙ ЗАПИСЬЮ, и больше нигде: она
     // чистит ретроактивно. Ставится сторож здесь, а не вызывающим, чтобы
     // «забыть выключить возраст» было негде.

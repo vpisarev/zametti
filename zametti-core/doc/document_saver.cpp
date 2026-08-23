@@ -2,7 +2,6 @@
 
 #include "document_impl.h"
 
-#include "history_rules.h"
 
 #include "doc_model.h"
 

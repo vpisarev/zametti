@@ -10,7 +10,6 @@
 //   zametti-store resurrect --root <dir> --id <id>
 //   zametti-store archive --root <dir> --id <id> [--restore]
 
-#include "history_rules.h"
 #include "journal.h"
 #include "store.h"
 #include "zstorage.h"
@@ -204,7 +203,7 @@ int main(int argc, char** argv) {
         QStringList failed;
         const bool back = restore;
         const bool ok = back ? storage.restore(id, &failed)
-                             : storage.archive(id, zametti::history::Rules{}, &failed);
+                             : storage.archive(id, zametti::ZJournal::Rules{}, &failed);
         if (!ok || !failed.isEmpty()) {
             std::fprintf(stderr, "%s\n", failed.join(QLatin1Char('\n')).toUtf8().constData());
             return 1;
@@ -308,7 +307,7 @@ int main(int argc, char** argv) {
         }
 
         zametti::ZStorage storage(target);
-        zametti::history::Report report;
+        zametti::ZStorage::CompressReport report;
         QString error;
         // force: люк на то и люк, чтобы прогонять чистку и по уже чищеному
         // журналу — так проверяется идемпотентность.

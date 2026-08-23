@@ -44,7 +44,6 @@ add_library(zametti-core STATIC
     store/store_identity.h      store/store_identity.cpp
     store/journal.h             store/journal.cpp
     store/device_clock.h        store/device_clock.cpp
-    store/history_rules.h       store/history_rules.cpp
     store/times.h               store/times.cpp
     store/archive.h             store/archive.cpp
     store/lost_found.h          store/lost_found.cpp

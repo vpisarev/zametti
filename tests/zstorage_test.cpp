@@ -36,7 +36,7 @@ QString readFile(const QString& path) {
 }
 std::string n(long long v) { return std::to_string(v); }
 
-zametti::history::Rules rules() { return zametti::history::Rules{}; }
+zametti::ZJournal::Rules rules() { return zametti::ZJournal::Rules{}; }
 
 void checkCatalog() {
     QTemporaryDir home;

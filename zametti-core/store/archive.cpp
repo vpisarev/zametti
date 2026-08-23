@@ -135,7 +135,7 @@ std::string headerWithoutArchived(std::string_view header) {
 
 
 
-bool archiveNote(const QString& root, const QString& noteId, const history::Rules& rules,
+bool archiveNote(const QString& root, const QString& noteId, const ZJournal::Rules& rules,
                  QString* error) {
     const QString path = noteFile(root, noteId);
     std::string bytes;

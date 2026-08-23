@@ -49,8 +49,8 @@ void writeFile(const QString& path, const QString& text) {
     if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) f.write(text.toUtf8());
 }
 
-zametti::history::Rules rules() {
-    zametti::history::Rules r;
+zametti::ZJournal::Rules rules() {
+    zametti::ZJournal::Rules r;
     r.mergeChars = 100;
     r.mergeHours = 24;
     return r;

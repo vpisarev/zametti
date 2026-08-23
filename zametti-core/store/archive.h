@@ -33,7 +33,7 @@
 #ifndef ZAMETTI_STORE_ARCHIVE_H
 #define ZAMETTI_STORE_ARCHIVE_H
 
-#include "history_rules.h"
+#include "journal.h"
 #include "note_header.h"
 
 #include <QString>
@@ -69,7 +69,7 @@ void setArchivedMeta(NoteHeader& meta, bool archived);
 //
 // rules — тот же свод, что и у живого сохранения: пометка мелкая, поэтому он
 // гасит ею прошлую запись, а не заводит вторую вешку.
-bool archiveNote(const QString& root, const QString& noteId, const history::Rules& rules,
+bool archiveNote(const QString& root, const QString& noteId, const ZJournal::Rules& rules,
                  QString* error);
 
 // Вернуть заметку из архива: снять строку из шапки. Журнал для этого не нужен

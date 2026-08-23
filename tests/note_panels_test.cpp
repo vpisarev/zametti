@@ -37,7 +37,7 @@ using zametti::ZStorage;
 std::string s(const QString& q) { return q.toStdString(); }
 std::string n(long long v) { return std::to_string(v); }
 
-zametti::history::Rules rules() { return zametti::history::Rules{}; }
+zametti::ZJournal::Rules rules() { return zametti::ZJournal::Rules{}; }
 
 QModelIndex byTitle(const zametti::NoteTreeModel& model, const QModelIndex& parent,
                     const QString& title) {

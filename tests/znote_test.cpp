@@ -21,8 +21,8 @@ using zametti::ZNote;
 
 std::string n(long long v) { return std::to_string(v); }
 
-zametti::history::Rules rules() {
-    zametti::history::Rules r;
+zametti::ZJournal::Rules rules() {
+    zametti::ZJournal::Rules r;
     r.mergeChars = 100;
     r.mergeHours = 24;
     return r;

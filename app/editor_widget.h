@@ -23,7 +23,6 @@
 #include <QElapsedTimer>
 #include <QHash>
 #include <QTextBlock>
-#include "history_rules.h"
 #include "journal.h"
 #include "settings.h"
 
@@ -212,7 +211,7 @@ public:
     // шаг истории, ленивая чистка — его методы. Здесь только правила отбора
     // записей — числами из настроек, одни и те же для живой записи и для
     // чистки старой истории; ими заметка снабжается при открытии.
-    static zametti::history::Rules historyRules();
+    static zametti::ZJournal::Rules historyRules();
 
     // Правка меты открытой заметки с немедленным сохранением. Здесь, а не
     // снаружи: note_.meta живёт в редакторе, и файл под открытой заметкой

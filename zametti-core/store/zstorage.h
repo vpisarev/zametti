@@ -24,7 +24,6 @@
 #define ZAMETTI_ZSTORAGE_H
 
 #include "device_clock.h"
-#include "history_rules.h"
 #include "sort_order.h"
 #include "store_identity.h"
 #include "import_limits.h"
@@ -203,6 +202,17 @@ public:
     // замок берётся на каждый журнал в отдельности. dryRun — только посчитать.
     ZJournal::ThinReport thinAllJournals(qint64 now, bool dryRun = false);
 
+    // Что сделала чистка — для люка и для отчётов.
+    struct CompressReport {
+        QString versionBefore;   // пусто — v0, «не чищен»
+        QString versionAfter;
+        int recordsBefore = 0;
+        int recordsAfter = 0;
+        int duplicates = 0;
+        int merged = 0;
+        bool rewritten = false;  // false — файл не тронут ни байтом
+    };
+
     // ЛЕНИВАЯ ЧИСТКА ЖУРНАЛА ЗАМЕТКИ — единственный путь чистки во всей
     // программе: и автосохранение, и вход в историю, и тестовый люк зовут её.
     // Параллельной реализации нет нигде — люк форсирует боевой путь, а не свой.
@@ -212,7 +222,7 @@ public:
     // читатели (verify, поиск по всем заметкам) журналы не переписывают никогда,
     // чистоту показа они получают тем же planCompress, применённым в памяти.
     bool compressJournal(const QString& noteId, const ZJournal::Rules& rules, bool force,
-                         history::Report* report, QString* error);
+                         CompressReport* report, QString* error);
 
 
     // --- вопросы к каталогу ------------------------------------------------
@@ -278,7 +288,7 @@ public:
     // синхронизации приезжают поодиночке). Кто не убрался — в failed
     // («заголовок: почему»); истина — пусто ли failed.
     // КОРЕНЬ НЕ АРХИВИРУЕТСЯ: descendantsOf унесло бы в архив всё хранилище.
-    bool archive(const QString& id, const history::Rules& rules, QStringList* failed);
+    bool archive(const QString& id, const ZJournal::Rules& rules, QStringList* failed);
     // ИЗ АРХИВА: пометка снимается, тело возвращается из головы журнала,
     // заметка оказывается там, откуда её убрали (parent цел); папка — с
     // поддеревом.
@@ -295,10 +305,10 @@ public:
 
     // Именованные правки шапки закрытой заметки — те же rewriteNote, но
     // вызывающему не надо знать, какими глаголами это делается.
-    bool rename(const QString& id, const QString& title, const history::Rules& rules, QString* error);
+    bool rename(const QString& id, const QString& title, const ZJournal::Rules& rules, QString* error);
     // КОРЕНЬ НЕ ПЕРЕНОСИТСЯ: он и есть верх дерева. Переименовать — можно.
-    bool move(const QString& id, const QString& parentId, const history::Rules& rules, QString* error);
-    bool setSortMark(const QString& id, std::optional<SortOrder> order, const history::Rules& rules,
+    bool move(const QString& id, const QString& parentId, const ZJournal::Rules& rules, QString* error);
+    bool setSortMark(const QString& id, std::optional<SortOrder> order, const ZJournal::Rules& rules,
                      QString* error);
 
     // --- правка шапки закрытой заметки -----------------------------------
@@ -311,7 +321,7 @@ public:
     // здесь — это единственная дверь к шапке закрытой заметки, и стеречь роль
     // надо в ней, а не в каждом вызывающем.
     bool rewriteNote(const QString& id, const std::function<void(ZNote&)>& change,
-                     const history::Rules& rules, QString* error);
+                     const ZJournal::Rules& rules, QString* error);
 
 signals:
     void catalogChanged();

@@ -2,7 +2,7 @@
 #include <cstdio>
 #include "zstorage.h"
 
-#include "history_rules.h"   // sameApartFromModified, changedChars — про формат заметки
+#include "note_header.h"   // NoteHeader::sameFileApartFromStamps — про формат заметки
 
 #include "zstd.h"
 
@@ -807,7 +807,7 @@ ZJournal::Step ZJournal::planStep(const SnapshotOf& snapshotOf, const QByteArray
         if (!entry.hasSnapshot()) break;   // надгробие: за него не заглядываем
         const QByteArray older = snapshotOf(i);
         if (older.isNull()) break;         // слепок не собрался — дальше не идём
-        if (sameApartFromModified(older, fresh)) {
+        if (NoteHeader::sameFileApartFromStamps(older, fresh)) {
             sameAs = i;   // нашли; но, может, ещё старее лежит такая же
             continue;
         }
@@ -834,7 +834,7 @@ ZJournal::Step ZJournal::planStep(const SnapshotOf& snapshotOf, const QByteArray
     if (back.kind() != ZJournal::Kind::Save || !back.hasSnapshot() || stale(back.time())) return step;
     const QByteArray tail = snapshotOf(journal.size() - 1);
     if (tail.isNull() || tail.isEmpty()) return step;
-    if (changedChars(tail, fresh) > qMax(0, rules.mergeChars)) return step;
+    if (ZJournal::changedChars(tail, fresh) > qMax(0, rules.mergeChars)) return step;
     step.voided.append(journal.size() - 1);
     step.merged = 1;
     return step;
@@ -1042,6 +1042,16 @@ bool ZJournal::snapshotAt(int index, QByteArray* out, QString* error) const {
         return false;
     }
     return store_->journalSnapshot(id_, index, out, error);
+}
+
+int ZJournal::changedChars(const QByteArray& a, const QByteArray& b) {
+    const qsizetype shared = qMin(a.size(), b.size());
+    qsizetype prefix = 0;
+    while (prefix < shared && a[prefix] == b[prefix]) ++prefix;
+    qsizetype suffix = 0;
+    while (suffix < shared - prefix && a[a.size() - 1 - suffix] == b[b.size() - 1 - suffix])
+        ++suffix;
+    return int(qMax(a.size(), b.size()) - prefix - suffix);
 }
 
 }  // namespace zametti

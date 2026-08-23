@@ -8,7 +8,6 @@
 #include "caption_editor.h"
 #include "zapp.h"
 #include "lang_editor.h"
-#include "history_rules.h"
 
 #include "document_builder.h"
 #include "document_saver.h"
@@ -2986,11 +2985,11 @@ qint64 NoteEditor::restoreBody(const std::string& body, qint64 sourceTime, bool*
     return sourceTime;
 }
 
-// Правила отбора записей взяты из общего свода (store/history_rules.h): тем же
+// Правила отбора записей — свод журнала (ZJournal::Rules): тем же
 // кодом чистится и старая история. Здесь — только числа из настроек.
-zametti::history::Rules NoteEditor::historyRules() {
+zametti::ZJournal::Rules NoteEditor::historyRules() {
     const ZSettings::History& history = settings().history();
-    zametti::history::Rules rules;
+    zametti::ZJournal::Rules rules;
     rules.mergeChars = qMax(0, history.historyMergeChars());
     rules.mergeHours = qMax(1, history.historyMergeHours());
     rules.ignoreAge = false;   // живая запись смотрит только на свежие записи
@@ -3032,7 +3031,7 @@ void NoteEditor::save(bool interactive, bool force) {
 
     std::vector<Piece> fileIr;
     QByteArray candidate = note_->fileBytes(&fileIr);
-    if (!note_->lastSaved().isEmpty() && sameApartFromModified(candidate, note_->lastSaved())) {
+    if (!note_->lastSaved().isEmpty() && NoteHeader::sameFileApartFromStamps(candidate, note_->lastSaved())) {
         note_->setHeader(metaBefore);
         document()->setModified(false);
         return;

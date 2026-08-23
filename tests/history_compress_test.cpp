@@ -14,7 +14,6 @@
 // Фикстура лежит в .testdata/ (в репозиторий корпуса не кладутся). Её нет —
 // проверка по ней громко пропускается, остальные идут.
 
-#include "history_rules.h"
 #include "zstorage.h"
 #include "journal.h"
 
@@ -123,8 +122,8 @@ std::string timesOf(ZStorage& h, const QString& id, qint64 base) {
 }
 
 // Прогнать чистку и сказать, что вышло.
-history::Report compress(ZStorage& h, const QString& id, bool force) {
-    history::Report report;
+ZStorage::CompressReport compress(ZStorage& h, const QString& id, bool force) {
+    ZStorage::CompressReport report;
     QString error;
     ZT_TRUE("чистка прошла", h.compressJournal(id, {}, force, &report, &error));
     if (!error.isEmpty()) std::fprintf(stderr, "  (%s)\n", error.toUtf8().constData());
@@ -158,7 +157,7 @@ void checkRealJournal() {
     ZT_TRUE("последний слепок собирается",
             h.journalSnapshot(id, int(before.size()) - 1, &lastBefore, &error));
 
-    const history::Report report = compress(h, id, false);
+    const ZStorage::CompressReport report = compress(h, id, false);
     ZT_EQ("версия была", std::string(), str(report.versionBefore));
     ZT_EQ("версия стала", std::string("0.1"), str(report.versionAfter));
     ZT_EQ("записей было", num(11), num(report.recordsBefore));
@@ -182,7 +181,7 @@ void checkRealJournal() {
     QByteArray lastAfter;
     ZT_TRUE("последний слепок собирается и после",
             h.journalSnapshot(id, int(after.size()) - 1, &lastAfter, &error));
-    ZT_TRUE("последнее состояние то же самое", sameApartFromModified(lastBefore, lastAfter));
+    ZT_TRUE("последнее состояние то же самое", NoteHeader::sameFileApartFromStamps(lastBefore, lastAfter));
     ZT_TRUE("а байты — от старшей из равных записей", lastBefore != lastAfter);
 
     // Равных записей в чищеном журнале не осталось ни одной пары.
@@ -191,13 +190,13 @@ void checkRealJournal() {
         for (int j = i + 1; j < after.size(); ++j) {
             QByteArray a, b;
             if (h.journalSnapshot(id, i, &a, &error) && h.journalSnapshot(id, j, &b, &error))
-                anyEqual = anyEqual || sameApartFromModified(a, b);
+                anyEqual = anyEqual || NoteHeader::sameFileApartFromStamps(a, b);
         }
     ZT_TRUE("равных записей не осталось", !anyEqual);
 
     // ИДЕМПОТЕНТНОСТЬ на живом журнале: повторный форс не меняет ни байта.
     const QByteArray bytes = fileBytes(path);
-    const history::Report again = compress(h, id, true);
+    const ZStorage::CompressReport again = compress(h, id, true);
     ZT_TRUE("повторный форс ничего не переписал", !again.rewritten);
     ZT_TRUE("и файл побайтово тот же", fileBytes(path) == bytes);
 }
@@ -213,7 +212,7 @@ void checkReturnCollapses(const QString& root) {
     append(h, id, ZJournal::Kind::Save, kNow + 2 * kMinute, body("раз", 3));
     makeV0(h.journalPath(id));
 
-    const history::Report report = compress(h, id, false);
+    const ZStorage::CompressReport report = compress(h, id, false);
     ZT_EQ("три записи сошлись к одной", num(1), num(report.recordsAfter));
     ZT_EQ("осталась самая старая из равных", std::string("0"), timesOf(h, id, kNow));
 }
@@ -229,7 +228,7 @@ void checkExternalStops(const QString& root) {
     append(h, id, ZJournal::Kind::Save, kNow + 2 * kMinute, body("раз", 3));
     makeV0(h.journalPath(id));
 
-    const history::Report report = compress(h, id, false);
+    const ZStorage::CompressReport report = compress(h, id, false);
     ZT_EQ("через External не схлопывается", num(3), num(report.recordsAfter));
     ZT_EQ("и вешка на месте", std::string("0 1X 2"), timesOf(h, id, kNow));
 }
@@ -257,7 +256,7 @@ void checkMergeKeepsBaseline(const QString& root) {
     append(h, id, ZJournal::Kind::Save, kNow + 2 * kHour, body("текст с добавкой и ещё", 3));
     makeV0(h.journalPath(id));
 
-    const history::Report report = compress(h, id, false);
+    const ZStorage::CompressReport report = compress(h, id, false);
     ZT_EQ("мелкие правки схлопнулись в одну", num(2), num(report.recordsAfter));
     ZT_EQ("и схлопнута ровно одна", num(1), num(report.merged));
     ZT_EQ("опорная запись цела", std::string("0 120"), timesOf(h, id, kNow));
@@ -274,7 +273,7 @@ void checkAgeIgnored(const QString& root) {
     append(h, id, ZJournal::Kind::Save, kNow - year, body("текст", 3));
     makeV0(h.journalPath(id));
 
-    const history::Report report = compress(h, id, false);
+    const ZStorage::CompressReport report = compress(h, id, false);
     ZT_EQ("старые дубликаты тоже вычищены", num(1), num(report.recordsAfter));
 }
 
@@ -307,7 +306,7 @@ void checkAddressByTimeAndHash(const QString& root) {
     QByteArray target;
     ZT_TRUE("слепок по этой вешке собирается",
             h.journalSnapshot(id, after.indexOf(markTime, markDigest), &target, &error));
-    ZT_TRUE("и содержимое у него то самое", sameApartFromModified(target, body("раз", 3)));
+    ZT_TRUE("и содержимое у него то самое", NoteHeader::sameFileApartFromStamps(target, body("раз", 3)));
 }
 
 // Ленивость: чищеный журнал без форса не трогается ни байтом.
@@ -318,7 +317,7 @@ void checkCleanLeftAlone(const QString& root) {
     append(h, id, ZJournal::Kind::Save, kNow + kMinute, body("два больше на много знаков и ещё", 2));
     const QByteArray bytes = fileBytes(h.journalPath(id));
 
-    const history::Report report = compress(h, id, false);
+    const ZStorage::CompressReport report = compress(h, id, false);
     ZT_EQ("новый журнал заведён сразу чищеным", std::string("0.1"), str(report.versionBefore));
     ZT_TRUE("и не переписан", !report.rewritten);
     ZT_TRUE("байт в байт тот же", fileBytes(h.journalPath(id)) == bytes);
@@ -341,7 +340,7 @@ void checkLiveAndMigrationAgree(const QString& root) {
     const QString raw = QStringLiteral("01n6r08s8wy522");
 
     // Живой путь: то же решение, что принимает автосохранение.
-    history::Rules rules;
+    ZJournal::Rules rules;
     for (int i = 0; i < steps.size(); ++i) {
         const qint64 when = kNow + i * kMinute;
         ZJournal j;

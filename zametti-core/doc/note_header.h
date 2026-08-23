@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include <QByteArray>
 #include <QString>
 
 #include <string>
@@ -35,6 +36,22 @@ public:
     void ensureVersion();
     static constexpr const char* kVersionKey = "version";
     static constexpr const char* kFormatVersion = "1";
+
+    // ОДНО ЛИ ЭТО СОДЕРЖИМОЕ, если не считать штампов, которые ставит сама
+    // программа. Байты файлов целиком, а не шапки: спрашивают об этом там, где
+    // на руках две записанные версии заметки (журнал, автосохранение).
+    //
+    // Штампов два. `modified` меняется на каждой записи и сам изменением
+    // заметки не является: без этой оговорки «изменилось ли» отвечало бы «да»
+    // всегда, и каждая пауза в наборе давала бы на диске новую копию, а в
+    // истории — запись, отличающуюся одной цифрой в дате. `version` встаёт в
+    // шапку ЛЕНИВО, при первой записи правленой заметки, — и без оговорки
+    // возврат отменой к состоянию, записанному до неё, считался бы новой
+    // записью журнала (поймал набор HistoryWrite).
+    //
+    // Метод шапки, а не журнала: журнал о формате заметки не знает вовсе, у
+    // него безымянные байты.
+    static bool sameFileApartFromStamps(const QByteArray& a, const QByteArray& b);
 
     bool present() const { return present_; }
     void setPresent(bool present) { present_ = present; }
