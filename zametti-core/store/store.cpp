@@ -1353,12 +1353,12 @@ bool deleteNoteFile(const QString& root, const QString& noteId, QString* error) 
     ZStorage storage(root);
     QString historyError;
     ZJournal read;
-    QVector<ZJournal::EntryRef> voids;
+    QVector<ZJournal::RecordRef> voids;
     if (storage.readJournal(noteId, &read, &historyError)) {
         const int keep = read.lastSnapshotIndex();
         for (int i = 0; i < read.size(); ++i) {
             if (i == keep || read.isVoided(i) || read.isDamaged(i)) continue;
-            voids.append(ZJournal::EntryRef(read.at(i).time(), read.at(i).digest()));
+            voids.append(ZJournal::RecordRef(read.at(i).time(), read.at(i).digest()));
         }
     }
     const bool marked =

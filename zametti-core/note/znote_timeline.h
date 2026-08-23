@@ -70,7 +70,7 @@ public:
 
     // --- список записей ---------------------------------------------------
     const ZJournal& journal() const { return *journal_; }
-    const QVector<ZJournal::Entry>& entries() const { return journal_->entries(); }
+    const QVector<ZJournal::Record>& entries() const { return journal_->entries(); }
     int count() const { return journal_->size(); }
     int index() const { return index_; }
     // Последняя запись со слепком; -1 — таких нет (надгробия пропущены).

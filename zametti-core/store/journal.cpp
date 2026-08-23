@@ -129,7 +129,7 @@ struct RawRecord {
     // Разобралась, но сумма рамки не сошлась: запись есть, верить ей нельзя.
     bool damaged = false;
     bool valid = false;
-    ZJournal::Entry entry;
+    ZJournal::Record entry;
     QByteArray packed;
     QString magic;
     int version = 0;
@@ -185,7 +185,7 @@ RawRecord readRecord(QCborStreamReader& reader, bool wantSnapshot) {
     qint64 packedSize = 0;
     qint64 source = 0;
     QByteArray frameHash;
-    QVector<ZJournal::EntryRef> voids;
+    QVector<ZJournal::RecordRef> voids;
     reader.enterContainer();
     while (reader.lastError() == QCborError::NoError && reader.hasNext()) {
         if (!reader.isInteger()) return out;  // ключ обязан быть целым
@@ -271,7 +271,7 @@ RawRecord readRecord(QCborStreamReader& reader, bool wantSnapshot) {
                     if (bytes.size() != qsizetype(ref.bytes.size())) return out;
                     std::memcpy(ref.bytes.data(), bytes.constData(), size_t(bytes.size()));
                     if (!reader.leaveContainer()) return out;
-                    voids.append(ZJournal::EntryRef(when, ref));
+                    voids.append(ZJournal::RecordRef(when, ref));
                 }
                 if (reader.lastError() != QCborError::NoError) return out;
                 if (!reader.leaveContainer()) return out;
@@ -287,7 +287,7 @@ RawRecord readRecord(QCborStreamReader& reader, bool wantSnapshot) {
     }
     if (reader.lastError() != QCborError::NoError) return out;
     if (!reader.leaveContainer()) return out;
-    out.entry = ZJournal::Entry(kind, time, seq, digest, source, std::move(voids));
+    out.entry = ZJournal::Record(kind, time, seq, digest, source, std::move(voids));
     out.entry.layAs(codec, plainSize);
     out.entry.placeAt(0, packedSize);   // смещение проставит разбор всей ленты
 
@@ -336,11 +336,11 @@ QByteArray ZJournal::headerBytes(const QString& clean) {
 // разбирается: у записи два писателя — дозапись и пересборка файла, — и
 // поле, добавленное в рамку, обязано попасть в оба. Со списком параметров
 // это держалось на внимательности (забыл в пересборке — прореживание молча
-// обнуляет поле во всём журнале); с ZJournal::Entry оно попадает туда по построению.
+// обнуляет поле во всём журнале); с ZJournal::Record оно попадает туда по построению.
 //
 // packed — сжатый слепок, отдельно: он не свойство рамки, а её содержимое, и
 // при пересборке он другой, чем был в файле, хотя рамка та же.
-QByteArray ZJournal::frameBytes(const ZJournal::Entry& e) {
+QByteArray ZJournal::frameBytes(const ZJournal::Record& e) {
     // Ширины фиксированные и порядок жёсткий: сумма обязана считаться
     // одинаково на любой машине, поэтому ни QDataStream с его версиями, ни
     // порядок байтов машины здесь не участвуют.
@@ -359,14 +359,14 @@ QByteArray ZJournal::frameBytes(const ZJournal::Entry& e) {
     put64(e.plainSize());
     putDigest(e.digest());
     put64(e.voids().size());
-    for (const ZJournal::EntryRef& ref : e.voids()) {
+    for (const ZJournal::RecordRef& ref : e.voids()) {
         put64(ref.time());
         putDigest(ref.digest());
     }
     return out;
 }
 
-QByteArray ZJournal::recordBytes(const ZJournal::Entry& e, const QByteArray& packed) {
+QByteArray ZJournal::recordBytes(const ZJournal::Record& e, const QByteArray& packed) {
     const bool bodyless = !e.hasSnapshot();   // надгробие и гашение
     const bool restore = e.kind() == ZJournal::Kind::Restore;
     // Нулевую ревизию не пишем вовсе: «нет ключа = 0» — уже принятый в этом
@@ -405,7 +405,7 @@ QByteArray ZJournal::recordBytes(const ZJournal::Entry& e, const QByteArray& pac
     if (hasVoids) {
         writer.append(KeyVoids);
         writer.startArray(quint64(e.voids().size()));
-        for (const ZJournal::EntryRef& ref : e.voids()) {
+        for (const ZJournal::RecordRef& ref : e.voids()) {
             writer.startArray(2);
             writer.append(ref.time());
             writer.append(QByteArray(reinterpret_cast<const char*>(ref.digest().bytes.data()),
@@ -482,7 +482,7 @@ bool ZJournal::parse(const QByteArray& blob, Want want, int wantIndex, QString* 
             for (QByteArray& old : *packed) old.clear();
         if (record.damaged) out->damaged_.append(int(out->entries_.size()));
         out->entries_.append(record.entry);
-        ZJournal::Entry& placed = out->entries_.last();
+        ZJournal::Record& placed = out->entries_.last();
         placed.placeAt(qint64(offset), placed.packedSize());
         if (packed) packed->append(record.packed);
         offset += next.currentOffset();
@@ -501,7 +501,7 @@ bool ZJournal::parse(const QByteArray& blob, Want want, int wantIndex, QString* 
 // всегда. Посленинная сверка нужна ровно для одного — назвать, какое именно
 // звено испорчено, — и включается она только тогда, когда итог уже не сошёлся.
 bool ZJournal::rebuildAt(int index, QByteArray* out, QString* error, bool eachLink) const {
-    const QVector<ZJournal::Entry>& entries = entries_;
+    const QVector<ZJournal::Record>& entries = entries_;
     const QVector<QByteArray>& packed = packed_;
     // Испорченной рамке верить нельзя ни в чём — ни ей самой, ни звеньям,
     // которые на неё опираются.
@@ -520,7 +520,7 @@ bool ZJournal::rebuildAt(int index, QByteArray* out, QString* error, bool eachLi
     }
     QByteArray current;
     for (int i = base; i <= index; ++i) {
-        const ZJournal::Entry& e = entries[i];
+        const ZJournal::Record& e = entries[i];
         if (isDamaged(i)) {
             if (error)
                 *error = QStringLiteral("record #%1: the frame checksum does not match").arg(i);
@@ -577,15 +577,15 @@ bool ZJournal::rebuildAt(int index, QByteArray* out, QString* error, bool eachLi
 // своим предшественником, а он мог не выжить.
 bool ZJournal::toBytes(const QVector<int>& keep, const QString& clean, QByteArray* out,
                        QString* error) const {
-    const QVector<ZJournal::Entry>& entries = entries_;
+    const QVector<ZJournal::Record>& entries = entries_;
     *out = headerBytes(clean);
     QByteArray previous;
     int written = 0;
     for (int i : keep) {
-        const ZJournal::Entry& e = entries[i];
+        const ZJournal::Record& e = entries[i];
         if (!e.hasSnapshot()) {
             // Надгробие поколения не начинает и не рвёт: слепка у него нет.
-            ZJournal::Entry frame = e;
+            ZJournal::Record frame = e;
             frame.layAs(ZJournal::Codec::Zstd, 0);
             *out += recordBytes(frame, QByteArray());
             continue;
@@ -602,7 +602,7 @@ bool ZJournal::toBytes(const QVector<int>& keep, const QString& clean, QByteArra
         // Меняется только укладка: кодек и размер до сжатия. Всё остальное —
         // род, время, отпечаток, source и любое будущее поле рамки — едет из
         // прежней записи неприкосновенным.
-        ZJournal::Entry frame = e;
+        ZJournal::Record frame = e;
         frame.layAs(codec, plain.size());
         *out += recordBytes(frame, body);
         previous = plain;
@@ -621,7 +621,7 @@ bool ZJournal::toBytes(const QVector<int>& keep, const QString& clean, QByteArra
 // clean — по какому своду правил журнал вычищен; пусто — ключа в шапке нет
 // вовсе, и это v0. Новый журнал заводится сразу чистым: он пишется нынешними
 // правилами, чистить в нём нечего по построению.
-bool ZJournal::Entry::isBefore(const ZJournal::Entry& other) const {
+bool ZJournal::Record::isBefore(const ZJournal::Record& other) const {
     if (seq_ != other.seq_) return seq_ < other.seq_;
     if (time_ != other.time_) return time_ < other.time_;
     // Контент старше надгробия: при равном ключе правка побеждает удаление.
@@ -632,7 +632,7 @@ bool ZJournal::Entry::isBefore(const ZJournal::Entry& other) const {
 
 qint64 ZJournal::latestTime() const {
     qint64 latest = 0;
-    for (const ZJournal::Entry& e : entries_) latest = qMax(latest, e.time());
+    for (const ZJournal::Record& e : entries_) latest = qMax(latest, e.time());
     return latest;
 }
 
@@ -646,7 +646,7 @@ qint64 ZJournal::stampFor(ZJournal::Stamp when, qint64 deviceFloor) const {
     return stamp;
 }
 
-bool ZJournal::composeRecord(const ZJournal::NewRecord& what, qint64 deviceFloor, ZJournal::Entry* frame,
+bool ZJournal::composeRecord(const ZJournal::NewRecord& what, qint64 deviceFloor, ZJournal::Record* frame,
                              QByteArray* bytes, QString* error) const {
     const ZJournal::Kind kind = what.kind();
     const QByteArray& snapshot = what.snapshot();
@@ -688,7 +688,7 @@ bool ZJournal::composeRecord(const ZJournal::NewRecord& what, qint64 deviceFloor
 
     // Ревизия — свойство журнала: ни архив, ни удаление, ни редактор про неё
     // знать не должны, и выбирать её обязано одно место.
-    ZJournal::Entry made(kind, time, nextSeq(), digest, what.source(), what.voids());
+    ZJournal::Record made(kind, time, nextSeq(), digest, what.source(), what.voids());
     made.layAs(codecFor(base.isEmpty()), snapshot.size());
     *bytes = recordBytes(made, body);
     if (frame != nullptr) *frame = made;
@@ -705,16 +705,16 @@ int ZJournal::lastInFileWithSnapshot() const {
 }
 
 bool ZJournal::isVoided(int index) const {
-    const ZJournal::Entry& target = entries_[index];
-    for (const ZJournal::Entry& e : entries_)
-        if (e.voidsEntry(target)) return true;
+    const ZJournal::Record& target = entries_[index];
+    for (const ZJournal::Record& e : entries_)
+        if (e.voidsRecord(target)) return true;
     return false;
 }
 
-QVector<int> ZJournal::indexesOf(const QVector<ZJournal::EntryRef>& refs) const {
+QVector<int> ZJournal::indexesOf(const QVector<ZJournal::RecordRef>& refs) const {
     QVector<int> out;
     for (int i = 0; i < entries_.size(); ++i)
-        for (const ZJournal::EntryRef& ref : refs)
+        for (const ZJournal::RecordRef& ref : refs)
             if (entries_[i].isAddressedBy(ref.time(), ref.digest())) {
                 out.append(i);
                 break;
@@ -757,14 +757,14 @@ qint64 ZJournal::nextSeq() const {
     // получила бы номер МЕНЬШЕ надгробия и проиграла бы ему, а правка обязана
     // побеждать.
     qint64 seq = 0;
-    for (const ZJournal::Entry& e : entries_) seq = qMax(seq, e.seq());
+    for (const ZJournal::Record& e : entries_) seq = qMax(seq, e.seq());
     return seq + 1;
 }
 
 int ZJournal::indexOf(qint64 time, const Digest& digest) const {
     int nearest = -1;
     for (int i = 0; i < entries_.size(); ++i) {
-        const ZJournal::Entry& e = entries_[i];
+        const ZJournal::Record& e = entries_[i];
         if (e.isAddressedBy(time, digest)) return i;
         if (e.hasSnapshot() && e.time() <= time) nearest = i;
     }
@@ -802,7 +802,7 @@ ZJournal::Step ZJournal::planStep(const SnapshotOf& snapshotOf, const QByteArray
     // вешки, поставленные не набором, и стирать их нельзя ничем.
     int sameAs = -1;
     for (int i = kind == ZJournal::Kind::Save ? journal.size() - 1 : -1; i >= 0; --i) {
-        const ZJournal::Entry& entry = journal.at(i);
+        const ZJournal::Record& entry = journal.at(i);
         if (stale(entry.time())) break;      // дальше история старая, её не трогаем
         if (!entry.hasSnapshot()) break;   // надгробие: за него не заглядываем
         const QByteArray older = snapshotOf(i);
@@ -830,7 +830,7 @@ ZJournal::Step ZJournal::planStep(const SnapshotOf& snapshotOf, const QByteArray
     // обязана остаться хотя бы одна, а первая — то, с чего заметка начиналась,
     // и стереть её нельзя ничем.
     if (kind != ZJournal::Kind::Save || journal.size() < 2) return step;
-    const ZJournal::Entry& back = journal.at(journal.size() - 1);
+    const ZJournal::Record& back = journal.at(journal.size() - 1);
     if (back.kind() != ZJournal::Kind::Save || !back.hasSnapshot() || stale(back.time())) return step;
     const QByteArray tail = snapshotOf(journal.size() - 1);
     if (tail.isNull() || tail.isEmpty()) return step;
@@ -859,13 +859,13 @@ ZJournal::Plan ZJournal::planCompress(const QVector<QByteArray>& snapshots,
     // одну запись, так что проходов не больше, чем записей.
     for (int pass = 0; pass <= journal.size(); ++pass) {
         QVector<int> accepted;      // номера принятых записей
-        QVector<ZJournal::Entry> acc;  // их рамки — их и видит правило
+        QVector<ZJournal::Record> acc;  // их рамки — их и видит правило
         const SnapshotOf snapshotOf = [&](int i) { return snapshots[accepted[i]]; };
         int duplicates = 0;
         int merged = 0;
 
         for (int idx : std::as_const(plan.keep)) {
-            const ZJournal::Entry& entry = journal.at(idx);
+            const ZJournal::Record& entry = journal.at(idx);
             // «Сейчас» для записи — время её самой: пересборка проигрывает
             // историю заново, и свежесть в ней меряется от момента записи, а не
             // от сегодняшнего дня. Миграции это безразлично (она на возраст не
@@ -990,9 +990,9 @@ bool ZJournal::record(ZJournal::Kind kind, const QByteArray& snapshot, QString* 
     // их байты выкидываются здесь же, а другое устройство, увидев новую запись,
     // погасит те же у себя. Стирание без адреса не доезжало никуда — уехавшая
     // запись возвращалась объединением и возвращалась бы вечно.
-    QVector<ZJournal::EntryRef> voids;
+    QVector<ZJournal::RecordRef> voids;
     voids.reserve(step.voided.size());
-    for (int i : step.voided) voids.append(ZJournal::EntryRef(read.at(i).time(), read.at(i).digest()));
+    for (int i : step.voided) voids.append(ZJournal::RecordRef(read.at(i).time(), read.at(i).digest()));
 
     bool ok = true;
     if (step.writeNew) {

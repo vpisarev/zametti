@@ -191,10 +191,10 @@ bool archiveNote(const QString& root, const QString& noteId, const history::Rule
     };
     const ZJournal::Step step = read.planStep(
         snapshotOf, snapshot, ZJournal::Kind::Save, QDateTime::currentMSecsSinceEpoch(), rules);
-    QVector<ZJournal::EntryRef> voids;
+    QVector<ZJournal::RecordRef> voids;
     voids.reserve(step.voided.size());
     for (int at : step.voided)
-        voids.append(ZJournal::EntryRef(read.at(at).time(), read.at(at).digest()));
+        voids.append(ZJournal::RecordRef(read.at(at).time(), read.at(at).digest()));
     if (step.writeNew &&
         !storage.appendToJournal(noteId, ZJournal::NewRecord::save(snapshot).voiding(voids), &why)) {
         // Файл уже помечен — архивация состоялась; но расхождение головы с

@@ -64,7 +64,7 @@ void checkHistory() {
     ZT_EQ("признак погашен записью", n(0), n(history.pendingRestoreSource()));
     ZT_TRUE("журнал читается в третий раз", history.refresh(&error));
     if (!read.isEmpty()) {
-        const zametti::ZJournal::Entry& last = read.entries().back();
+        const zametti::ZJournal::Record& last = read.entries().back();
         ZT_TRUE("последняя запись — восстановление", last.kind() == zametti::ZJournal::Kind::Restore);
         ZT_EQ("со временем источника", n(1000), n(last.source()));
     }

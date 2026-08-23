@@ -108,7 +108,7 @@ std::string timesOf(ZStorage& h, const QString& id, qint64 base) {
     if (!h.readJournal(id, &j, &error)) return str(error);
     std::string out;
     for (int i = 0; i < j.size(); ++i) {
-        const ZJournal::Entry& e = j.at(i);
+        const ZJournal::Record& e = j.at(i);
         // Вешки, а не записи: гашение и погашенное человеку не показываются, и
         // сходиться живому пути с миграцией положено именно по вешкам. Живой
         // путь гасит адресом (запись гашения остаётся и едет в облако),
@@ -356,8 +356,8 @@ void checkLiveAndMigrationAgree(const QString& root) {
         const ZJournal::Step step =
             j.planStep(snapshotOf, steps[i], ZJournal::Kind::Save, when, rules);
         // Живой путь гасит адресом — ровно то же, что делает запись заметки.
-        QVector<ZJournal::EntryRef> voids;
-        for (int at : step.voided) voids.append(ZJournal::EntryRef(j.at(at).time(), j.at(at).digest()));
+        QVector<ZJournal::RecordRef> voids;
+        for (int at : step.voided) voids.append(ZJournal::RecordRef(j.at(at).time(), j.at(at).digest()));
         if (step.writeNew)
             h.appendToJournal(live, ZJournal::NewRecord::save(steps[i], ZJournal::Stamp::at(when)).voiding(voids),
                      &error);

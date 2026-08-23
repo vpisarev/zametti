@@ -73,7 +73,7 @@ void ZImageCache::protect(const void* owner, const QString& key) {
 
 void ZImageCache::release(const void* owner) { protectedBy_.remove(owner); }
 
-const ZImageCache::Entry* ZImageCache::info(const QString& abs) {
+const ZImageCache::Record* ZImageCache::info(const QString& abs) {
     if (abs.isEmpty()) return nullptr;
     const int limit = sideLimit();
     auto it = entries_.find(abs);
@@ -93,7 +93,7 @@ const ZImageCache::Entry* ZImageCache::info(const QString& abs) {
         // Файла нет — рамка, и место под неё держится. Файл, который есть, но
         // картинкой не является, — не наше дело: строка остаётся строкой.
         if (facts.exists()) return nullptr;
-        Entry gone;
+        Record gone;
         gone.facts = std::move(facts);
         gone.limit = limit;
         gone.state = State::Missing;
@@ -103,7 +103,7 @@ const ZImageCache::Entry* ZImageCache::info(const QString& abs) {
         return lost == entries_.constEnd() ? nullptr : &lost.value();
     }
 
-    Entry entry;
+    Record entry;
     entry.declared = declared;
     entry.facts = std::move(facts);
     entry.limit = limit;
@@ -114,7 +114,7 @@ const ZImageCache::Entry* ZImageCache::info(const QString& abs) {
     return found == entries_.constEnd() ? nullptr : &found.value();
 }
 
-const ZImageCache::Entry* ZImageCache::peek(const QString& abs) const {
+const ZImageCache::Record* ZImageCache::peek(const QString& abs) const {
     const auto it = entries_.constFind(abs);
     return it == entries_.constEnd() ? nullptr : &it.value();
 }

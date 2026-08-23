@@ -630,7 +630,7 @@ protected:
     // не разрешился — это РАМКА (framed), а не пустота. Наследнику и наборам
     // открыто потому, что «нарисуется картинка или рамка» это вопрос к виду, и
     // отвечать на него молчанием он права не имеет.
-    using CachedImage = ZImageCache::Entry;
+    using CachedImage = ZImageCache::Record;
     const CachedImage* imageInfo(const QString& path);
 
 private:

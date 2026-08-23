@@ -693,7 +693,7 @@ bool ZStorage::appendJournalLocked(const QString& path, const ZJournal::NewRecor
         tail = ZJournal::headerBytes(QString::fromLatin1(ZJournal::kCleanVersion));
     }
     QByteArray record;
-    ZJournal::Entry made;
+    ZJournal::Record made;
     if (!jrn.composeRecord(what, clock_.floor(), &made, &record, error)) return false;
     tail += record;
 
@@ -751,7 +751,7 @@ bool ZStorage::journalSnapshotLocked(const QString& path, int index, QByteArray*
         if (error) *error = QStringLiteral("journal has no record #%1").arg(index);
         return false;
     }
-    const ZJournal::Entry& entry = jrn.at(index);
+    const ZJournal::Record& entry = jrn.at(index);
     if (!entry.hasSnapshot()) {
         if (error)
             *error = QStringLiteral("record #%1 (%2) has no snapshot")
@@ -807,7 +807,7 @@ qint64 bucketOf(qint64 stamp, qint64 now) {
 }  // namespace
 
 QVector<int> ZJournal::survivors(qint64 now) const {
-    const QVector<ZJournal::Entry>& entries = entries_;
+    const QVector<ZJournal::Record>& entries = entries_;
     QVector<int> keep;
     for (int i = 0; i < entries.size(); ++i) {
         // Последняя запись остаётся всегда: для удалённой заметки это её

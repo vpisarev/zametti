@@ -2,7 +2,7 @@
 // БЕЗ ЕДИНОГО ФАЙЛА.
 //
 // Здесь живут два класса: ZJournal (журнал одной заметки — разбор, сборка,
-// поколения, порядок, отбор) и вложенный ZJournal::Entry (одна запись). Ни
+// поколения, порядок, отбор) и вложенный ZJournal::Record (одна запись). Ни
 // путей, ни QFile, ни замка тут нет: файлы журналов трогает только хранилище
 // (ZStorage::readJournal, appendToJournal, journalSnapshot…).
 //
@@ -178,15 +178,15 @@ public:
     // порче: один перевёрнутый бит превращает 16 в 4096 и выкашивает диапазон,
     // тогда как испорченный адрес не совпадает ни с чем и просто не применяется —
     // чтобы попасть в чужой живой отпечаток, нужен перебор 2^256.
-    class EntryRef {
+    class RecordRef {
     public:
-        EntryRef() = default;
-        EntryRef(qint64 time, const Digest& digest) : time_(time), digest_(digest) {}
+        RecordRef() = default;
+        RecordRef(qint64 time, const Digest& digest) : time_(time), digest_(digest) {}
 
         qint64 time() const { return time_; }
         const Digest& digest() const { return digest_; }
 
-        friend bool operator==(const EntryRef& a, const EntryRef& b) {
+        friend bool operator==(const RecordRef& a, const RecordRef& b) {
             return a.time_ == b.time_ && a.digest_ == b.digest_;
         }
 
@@ -261,7 +261,7 @@ public:
         // Кого эта запись гасит. Гашение — свойство записи, а не отдельная
         // операция: оно едет в облако вместе с ней и применяется всюду, куда
         // доедет.
-        NewRecord& voiding(QVector<EntryRef> refs) {
+        NewRecord& voiding(QVector<RecordRef> refs) {
             voids_ = std::move(refs);
             return *this;
         }
@@ -270,7 +270,7 @@ public:
         Stamp when() const { return when_; }
         const QByteArray& snapshot() const { return snapshot_; }
         qint64 source() const { return source_; }
-        const QVector<EntryRef>& voids() const { return voids_; }
+        const QVector<RecordRef>& voids() const { return voids_; }
 
     protected:
         NewRecord(Kind kind, Stamp when, QByteArray snapshot, qint64 source)
@@ -280,7 +280,7 @@ public:
         Stamp when_ = Stamp::at(0);
         QByteArray snapshot_;
         qint64 source_ = 0;
-        QVector<EntryRef> voids_;
+        QVector<RecordRef> voids_;
     };
 
     // --- ОТБОР: что писать, кого гасить ------------------------------------
@@ -358,11 +358,11 @@ public:
     // Меняются только две вещи, и у каждой свой глагол: УКЛАДКА (кодек и размер до
     // сжатия — их назначает журнал, потому что зависят они от места в поколении) и
     // МЕСТО В ФАЙЛЕ (известно лишь в момент разбора).
-    class Entry {
+    class Record {
     public:
-        Entry() = default;
-        Entry(Kind kind, qint64 time, qint64 seq, const Digest& digest, qint64 source = 0,
-              QVector<EntryRef> voids = {})
+        Record() = default;
+        Record(Kind kind, qint64 time, qint64 seq, const Digest& digest, qint64 source = 0,
+              QVector<RecordRef> voids = {})
             : kind_(kind), time_(time), seq_(seq), digest_(digest), source_(source),
               voids_(std::move(voids)) {}
 
@@ -393,9 +393,9 @@ public:
 
         // Кого гасит эта запись. Погашенные не показываются нигде и не участвуют в
         // выборе головы, а их байты выкидываются из файла при первой возможности.
-        const QVector<EntryRef>& voids() const { return voids_; }
-        bool voidsEntry(const Entry& other) const {
-            for (const EntryRef& ref : voids_)
+        const QVector<RecordRef>& voids() const { return voids_; }
+        bool voidsRecord(const Record& other) const {
+            for (const RecordRef& ref : voids_)
                 if (other.isAddressedBy(ref.time(), ref.digest())) return true;
             return false;
         }
@@ -431,7 +431,7 @@ public:
         // ЗАПИСИ, и ответ обязан быть один на всю программу. Голова, таймлайн,
         // слияние и показ, разошедшиеся в этом ответе, дают беду, которую видно не
         // сразу: окно покажет одно, синхронизация выберет другое.
-        bool isBefore(const Entry& other) const;
+        bool isBefore(const Record& other) const;
 
         // Ключ идентичности, которым запись адресуют снаружи и по которому её
         // узнают при слиянии: время плюс отпечаток. Номер в файле для этого не
@@ -462,7 +462,7 @@ public:
         qint64 packedSize_ = 0;
         qint64 offset_ = 0;
         qint64 source_ = 0;
-        QVector<EntryRef> voids_;
+        QVector<RecordRef> voids_;
     };
 
     // Что нужно от разбора. Слепки у богатой заметки весят мегабайты, а
@@ -477,7 +477,7 @@ public:
     ZJournal() = default;
     // Журнал, собранный в памяти. Нужен не только тестам: слияние строит
     // журнал из объединённого набора записей, и файла при этом не касается.
-    explicit ZJournal(QVector<Entry> entries) : entries_(std::move(entries)) {}
+    explicit ZJournal(QVector<Record> entries) : entries_(std::move(entries)) {}
 
     // Байты шапки журнала нужной версии чистки. Открыто ради тестов миграции:
     // другого способа изготовить журнал версии v0 — такой, какие писала
@@ -499,7 +499,7 @@ public:
     // стороны зовут ЭТУ функцию: иначе «что покрыто» разъедется между
     // писателем и читателем, и сумма начнёт врать. Сам слепок в неё не входит —
     // у него свой отпечаток.
-    static QByteArray frameBytes(const Entry& e);
+    static QByteArray frameBytes(const Record& e);
 
 
     // Разобрать байты файла, наполнив СЕБЯ. wantIndex — номер записи, ради
@@ -515,14 +515,14 @@ public:
     // отпечаток, выбирает кодек по месту в поколении и сжимает относительно
     // предшественника. Наружу — готовые байты и рамка.
     //
-    // Именно поэтому History не строит Entry сам: ревизия и кодек — те две
+    // Именно поэтому History не строит Record сам: ревизия и кодек — те две
     // величины, которые обязаны совпадать на всех устройствах, и выбирать их
     // должно одно место.
     // deviceFloor — последнее время, записанное ЭТИМ устройством (0, если
     // неизвестно). Время записи journal выбирает сам: не раньше, чем на
     // миллисекунду позже и пола устройства, и самой поздней записи, которую он
     // знает. Готовое время видно в отданной рамке.
-    bool composeRecord(const NewRecord& what, qint64 deviceFloor, Entry* frame, QByteArray* bytes,
+    bool composeRecord(const NewRecord& what, qint64 deviceFloor, Record* frame, QByteArray* bytes,
                        QString* error) const;
 
     // Пересобрать файл из выживших записей: прореживание и чистка обе делают
@@ -536,8 +536,8 @@ public:
 
     bool isEmpty() const { return entries_.isEmpty(); }
     int size() const { return int(entries_.size()); }
-    const Entry& at(int index) const { return entries_[index]; }
-    const QVector<Entry>& entries() const { return entries_; }
+    const Record& at(int index) const { return entries_[index]; }
+    const QVector<Record>& entries() const { return entries_; }
 
     // ИСПОРЧЕНА ЛИ запись: контрольная сумма её рамки не сошлась. Такая запись
     // остаётся в файле и на своём месте (номера соседей не съезжают), но не
@@ -556,7 +556,7 @@ public:
     // повторно и больше не всплывает. В этом и сходимость.
     bool isVoided(int index) const;
     // Номера записей по их адресам — тех, что нашлись; по возрастанию.
-    QVector<int> indexesOf(const QVector<EntryRef>& refs) const;
+    QVector<int> indexesOf(const QVector<RecordRef>& refs) const;
 
     // Голова — максимум по порядку среди записей, которые говорят о
     // содержимом и не погашены. -1 у пустого журнала.
@@ -673,7 +673,7 @@ protected:
     // Байты одной записи. Рамка приходит целиком: поле, добавленное в неё,
     // обязано попасть и в дозапись, и в пересборку, а со списком параметров
     // это держалось на внимательности.
-    static QByteArray recordBytes(const Entry& e, const QByteArray& packed);
+    static QByteArray recordBytes(const Record& e, const QByteArray& packed);
     // Последняя ПО ФАЙЛУ запись со слепком — предшественник для дельты.
     int lastInFileWithSnapshot() const;
     // Самое позднее время среди записей — половина пола времени.
@@ -697,7 +697,7 @@ protected:
     // Разжать хвост (голову журнала) в tail_, если он ещё не разжат.
     void loadTail();
 
-    QVector<Entry> entries_;
+    QVector<Record> entries_;
     QVector<QByteArray> packed_;  // сжатые слепки — те, что просили при разборе
     QVector<int> damaged_;   // номера записей с несошедшейся суммой рамки
     bool tailTrimmed_ = false;

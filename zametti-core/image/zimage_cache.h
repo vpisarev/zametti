@@ -47,7 +47,7 @@ public:
         Crowded,   // в кэш не влезла: заметка тяжелее бюджета
         Missing,   // файла нет: удалили руками или он ещё не приехал с синком
     };
-    struct Entry {
+    struct Record {
         QImage image;
         QSize declared;      // размеры из заголовка файла; известны всегда
         // Всё, что показывает полоса сведений: имя, формат, вес, кадры, а
@@ -78,9 +78,9 @@ public:
     // Запись для абсолютного пути: размеры из заголовка, БЕЗ разжатия.
     // nullptr — файла нет и не было или он не картинка. Отсутствующий файл
     // получает запись Missing (рамка), чтобы место под него держалось.
-    const Entry* info(const QString& absPath);
+    const Record* info(const QString& absPath);
     // Заглянуть в запись, не трогая ни порядок, ни диск: nullptr — записи нет.
-    const Entry* peek(const QString& absPath) const;
+    const Record* peek(const QString& absPath) const;
     // Пиксели: разжимает по первому спросу, если картинке отведено место.
     // nullptr — рисовать надо рамку (или записи нет).
     const QImage* pixels(const QString& absPath);
@@ -107,7 +107,7 @@ public:
     static qint64 decodedBytes(QSize declared, int limit);
 
 protected:
-    QHash<QString, Entry> entries_;
+    QHash<QString, Record> entries_;
     QList<QString> order_;             // свежие в начале
     qint64 bytes_ = 0;
     qint64 budgetBytes_ = qint64(1024) * 1024 * 1024;

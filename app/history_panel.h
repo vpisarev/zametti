@@ -92,7 +92,7 @@ public:
 
     // Заполнить записями. Свежие сверху: в прошлое человек идёт сверху вниз,
     // как в списке заметок.
-    void setEntries(const QVector<ZJournal::Entry>& entries);
+    void setEntries(const QVector<ZJournal::Record>& entries);
     // Отметить показанную запись (номер в журнале, не в списке).
     void setCurrent(int index);
     // Ширина, при которой строки списка не режутся: по самой длинной записи
@@ -107,7 +107,7 @@ signals:
 
 private:
     QListWidget* list_;
-    QVector<ZJournal::Entry> entries_;
+    QVector<ZJournal::Record> entries_;
     bool quiet_ = false;   // выделение переставляем сами — сигнал не нужен
 };
 

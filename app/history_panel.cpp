@@ -194,13 +194,13 @@ HistoryTimeline::HistoryTimeline(QWidget* parent) : QWidget(parent) {
     });
 }
 
-void HistoryTimeline::setEntries(const QVector<ZJournal::Entry>& entries) {
+void HistoryTimeline::setEntries(const QVector<ZJournal::Record>& entries) {
     entries_ = entries;
     quiet_ = true;
     list_->clear();
     // Свежие сверху — как в списке заметок: в прошлое человек идёт сверху вниз.
     for (int i = entries.size() - 1; i >= 0; --i) {
-        const ZJournal::Entry& entry = entries[i];
+        const ZJournal::Record& entry = entries[i];
         QString line = historyMoment(entry.time());
         if (entry.kind() != ZJournal::Kind::Save)
             line += QStringLiteral("  ·  %1").arg(historyKindName(entry.kind()));
