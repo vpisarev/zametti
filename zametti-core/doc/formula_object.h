@@ -105,7 +105,6 @@ public:
     // сколько долларов у самого исходника, разбирается внутри. nullptr —
     // движок не поднят или условий ещё нет.
     const FormulaRender* renderFor(const QString& source, const QString& latex, bool display);
-    void clear() { cache_.clear(); }
 
     // --- выключная: полоса во всю ширину колонки --------------------------
 

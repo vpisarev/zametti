@@ -60,7 +60,6 @@ qint64 ImageProbe::decodedBytes() const {
     return qint64(size.width()) * size.height() * perPixel;
 }
 
-QString sniffImageFormat(const QByteArray& head) { return sniff(head); }
 
 bool heifSupported() {
 #ifdef ZAMETTI_HAVE_HEIF

@@ -58,12 +58,8 @@ struct DraftRun {
     DraftRange title;
     uint8_t flags = 0;
 
-    bool bold() const { return (flags & InlineBold) != 0; }
-    bool italic() const { return (flags & InlineItalic) != 0; }
-    bool strike() const { return (flags & InlineStrike) != 0; }
     bool code() const { return (flags & InlineCode) != 0; }
     bool image() const { return (flags & InlineImage) != 0; }
-    bool comment() const { return (flags & InlineComment) != 0; }
     bool math() const { return (flags & InlineMath) != 0; }
     void set(uint8_t bit, bool on) { flags = uint8_t(on ? (flags | bit) : (flags & ~bit)); }
 };

@@ -38,7 +38,6 @@ public:
 
     bool available() const { return !root_.isEmpty() && !id_.isEmpty(); }
     const QString& noteId() const { return id_; }
-    const QString& storeRoot() const { return root_; }
 
     // ОПОРНАЯ ЗАПИСЬ. Заметки старше журнала: если журнала ещё нет, в него
     // кладётся то, с чем заметку открыли, — временем файла, а не «сейчас».

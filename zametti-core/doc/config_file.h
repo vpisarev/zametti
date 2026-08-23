@@ -28,8 +28,6 @@ public:
     // Путь по умолчанию — configPath() (~/.config/zametti/config.json).
     explicit ZConfigFile(QString path = QString());
 
-    const QString& path() const { return path_; }
-
     // Прочитать файл; нет файла — сперва записать шаблон. false — не
     // читается/не пишется, причина в error.
     bool load(QString* error = nullptr);

@@ -162,7 +162,6 @@ bool ZDocument::redo() {
 
 void ZDocument::setUndoEnabled(bool on) { d_->text.setUndoRedoEnabled(on); }
 
-bool ZDocument::undoEnabled() const { return d_->text.isUndoRedoEnabled(); }
 
 // --- правка исходника снаружи ----------------------------------------------
 

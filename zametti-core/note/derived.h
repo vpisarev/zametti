@@ -34,8 +34,6 @@ public:
     bool valid() const { return valid_; }
     // Свежо для документа этой ревизии: считалось, и с тех пор не правили.
     bool freshFor(int revision) const { return valid_ && revision_ == revision; }
-    // При какой ревизии посчитано; -1 — не считалось.
-    int revision() const { return revision_; }
 
     void set(T value, int revision) {
         value_ = std::move(value);

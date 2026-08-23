@@ -73,7 +73,6 @@ public:
     // Бюджет (МБ) и предел стороны разжатой копии (0 — выводится из экрана и
     // памяти машины, см. loadedImageSizeLimit). Задаёт ZApp из настроек.
     void setLimits(int budgetMb, int sideLimit);
-    qint64 budgetBytes() const { return budgetBytes_; }
     int sideLimit() const;
 
     // Запись для абсолютного пути: размеры из заголовка, БЕЗ разжатия.
@@ -92,7 +91,6 @@ public:
     void protect(const void* owner, const QString& key);
     void release(const void* owner);
     void forget(const void* owner) { release(owner); }
-    const QSet<QString>& protectedBy(const void* owner) const;
     // Раздать место защищённым картинкам ЭТОГО владельца от мелкой к крупной:
     // что не влезло — Crowded (рамка), что больше потолка Qt — TooBig; пропавшие
     // файлы перепроверяются. Ни одного разжатия.
@@ -100,9 +98,6 @@ public:
 
     // Телеметрия и наборы.
     qint64 bytes() const { return bytes_; }
-    int count() const { return int(entries_.size()); }
-    int shownCount() const;
-    int framedCount() const;
     int decodes() const { return decodes_; }
     qint64 decodeMicros() const { return decodeMicros_; }
     void resetCounters();

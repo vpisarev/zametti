@@ -3,7 +3,6 @@
 #include "doc_model.h"
 
 #include <QTextBlock>
-#include <QTextDocument>
 
 
 namespace zametti {
@@ -37,10 +36,6 @@ BlockObject objectOf(const QTextBlock& block) {
     if (isTableObjectBlock(block))
         return {ObjectKind::Table, block.blockNumber(), block.blockNumber()};
     return {};
-}
-
-BlockObject objectAt(const QTextDocument& doc, int blockNumber) {
-    return objectOf(doc.findBlockByNumber(blockNumber));
 }
 
 // ПРАВИЛА ОДНИМ МЕСТОМ. Порядок веток здесь и есть порядок правил, и читать

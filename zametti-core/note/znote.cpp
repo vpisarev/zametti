@@ -53,7 +53,6 @@ QByteArray ZNote::fileBytes(std::vector<Piece>* fileBlocks) const {
     return doc_.fileBytes(header_, fileBlocks);
 }
 
-QString ZNote::toMarkdownText() const { return doc_.toMarkdownText(header_); }
 
 bool ZNote::canonicaliseFile(const QString& path, std::string& text, Digest& digest) {
     ZNote note;

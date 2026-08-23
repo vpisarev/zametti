@@ -70,8 +70,6 @@ struct ImageMeta {
     // куда чаще, чем всё остальное, и потому, что источник у неё бывает и не
     // в exif (у HEIF — бокс контейнера).
     Orientation orientation = Orientation::Normal;
-
-    bool empty() const { return exif.empty() && xmp.empty() && icc.empty(); }
 };
 
 // Опознаёт формат по подписи и зовёт нужный обход. Неизвестный формат — не
@@ -99,15 +97,9 @@ Orientation exifOrientation(std::string_view exif);
 // (момент съёмки), потом DateTime (правка), потом пусто.
 std::string exifDateTaken(std::string_view exif);
 
-// Что человек написал про снимок: UserComment, а если его нет —
-// ImageDescription. Пусто, если оба пусты. Нужен полосе сведений: "0A…_DxO"
-// не говорит ничего, а «Ярославль, храм» говорит всё.
-std::string exifComment(std::string_view exif);
-
-// То же из XMP: dc:description, а если его нет — xmp:CreateDate для даты.
-// Разбор нарочно грубый — поиск подстроки, а не XML: заводить разборщик XML
-// ради двух полей мы не станем, а формат этих двух полей неизменен с 2001-го.
-std::string xmpDescription(std::string_view xmp);
+// Дата съёмки из XMP: xmp:CreateDate. Разбор нарочно грубый — поиск подстроки,
+// а не XML: заводить разборщик XML ради одного поля мы не станем, а его формат
+// неизменен с 2001-го.
 std::string xmpCreateDate(std::string_view xmp);
 
 // Сбросить Orientation в 1 прямо в блобе.

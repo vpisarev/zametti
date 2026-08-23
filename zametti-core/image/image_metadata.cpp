@@ -42,7 +42,6 @@ QDateTime shotTime(const QString& absolutePath) {
 
 ImageMetadata ImageMetadata::fromFile(const QString& absolutePath) {
     ImageMetadata out;
-    out.path_ = absolutePath;
     const QFileInfo file(absolutePath);
     out.name_ = file.fileName();
     out.valid_ = true;

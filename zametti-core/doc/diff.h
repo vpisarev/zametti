@@ -47,11 +47,6 @@ struct Row {
     int after = -1;    // номер строки в слепке; -1 — её там нет
     QString textBefore;
     QString textAfter;
-
-    // Что показывать: сторона after этого сравнения. Пусто — строки здесь нет
-    // вовсе: место под неё остаётся, но текста в нём нет. Ровно это и делает
-    // мигание по Tab читаемым — строки не съезжают, а появляются и исчезают.
-    const QString& text() const { return textAfter; }
 };
 
 struct Result {

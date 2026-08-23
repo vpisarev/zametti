@@ -34,15 +34,12 @@ public:
     // глубину. Зовётся там, где картинку и так разжали для показа.
     void addDecoded(const QImage& image);
 
-    const QString& path() const { return path_; }          // абсолютный путь к файлу
     const QString& name() const { return name_; }          // имя файла: в хранилище — id
     // Подпись из заметки — там и живёт имя исходника; ставит вид (у файла её нет).
     const QString& caption() const { return caption_; }
     void setCaption(const QString& caption) { caption_ = caption; }
-    // Всё, что читатели знают о файле до разжатия (image_read.h: размеры,
-    // формат, глубина, кадры, ориентация, ICC) — ОДНОЙ структурой, а не копией
-    // полей: заголовок читается один раз, здесь.
-    const ImageProbe& probe() const { return probe_; }
+    // Всё, что читатели знают о файле до разжатия (image_read.h), лежит одной
+    // структурой probe_, а не копией полей: заголовок читается один раз, здесь.
     const QString& format() const { return probe_.format; }   // "jxl", "jpeg"…; пусто — чужой
     QSize size() const { return probe_.size; }                // из заголовка, настоящие пиксели
     int frames() const { return probe_.frames; }              // больше одного — анимация
@@ -62,14 +59,9 @@ public:
 
     // Сборка по частям — тому, кто знает о картинке не из файла (наборы,
     // сведения из заметки). Обычный путь — fromFile.
-    void setPath(const QString& v) { path_ = v; }
     void setName(const QString& v) { name_ = v; }
-    void setProbe(const ImageProbe& v) { probe_ = v; }
     void setFormat(const QString& v) { probe_.format = v; }
     void setSize(QSize v) { probe_.size = v; }
-    void setFrames(int v) { probe_.frames = v; }
-    void setColorSpace(const QString& v) { colorSpace_ = v; }
-    void setBits(int v) { bits_ = v; }
     void setBytes(qint64 v) { bytes_ = v; }
     void setTaken(const QDateTime& v) { taken_ = v; }
     void setExists(bool v) { exists_ = v; }
@@ -78,7 +70,6 @@ public:
     bool operator==(const ImageMetadata& other) const = default;
 
 protected:
-    QString path_;
     QString name_;
     QString caption_;
     ImageProbe probe_;

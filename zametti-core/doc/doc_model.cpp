@@ -86,21 +86,6 @@ qreal fontStepFactor(int step) {
     return kFactor[clamped - kFontStepMin];
 }
 
-int nearestFontStep(qreal factor) {
-    int best = 0;
-    qreal bestMiss = -1.0;
-    for (int step = kFontStepMin; step <= kFontStepMax; ++step) {
-        // Промах меряем ОТНОСИТЕЛЬНЫЙ: на глаз 0.7 против 0.8 отличается так
-        // же сильно, как 2.0 против 2.4, а разность их — втрое.
-        const qreal miss = std::abs(std::log(fontStepFactor(step) / factor));
-        if (bestMiss < 0.0 || miss < bestMiss) {
-            bestMiss = miss;
-            best = step;
-        }
-    }
-    return best;
-}
-
 void setFontStep(QTextCharFormat& format, int step) {
     format.setProperty(QTextFormat::FontSizeAdjustment,
                        std::clamp(step, kFontStepMin, kFontStepMax));
@@ -206,11 +191,6 @@ int ordinalOf(const QTextBlock& block) {
 
 void ListRuns::reset() {
     for (Level& level : levels_) level.alive = false;
-}
-
-bool ListRuns::startsNewRun(int level, bool ordered) const {
-    return level >= 0 && size_t(level) < levels_.size() && levels_[size_t(level)].alive &&
-           levels_[size_t(level)].ordered != ordered;
 }
 
 int ListRuns::next(int level, bool ordered) {

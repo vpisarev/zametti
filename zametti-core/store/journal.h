@@ -280,7 +280,6 @@ public:
     qint64 offset() const { return offset_; }          // где запись начинается в файле
     qint64 source() const { return source_; }          // Restore: время источника; иначе 0
 
-    bool isTombstone() const { return kind_ == Kind::Tombstone; }
     bool hasSnapshot() const { return kind_ != Kind::Tombstone && kind_ != Kind::Amendment; }
     // Говорит ли запись что-нибудь о СОДЕРЖИМОМ заметки. Гашение не говорит:
     // оно только объявляет прежние записи не в счёт, поэтому головой быть не
@@ -462,8 +461,6 @@ public:
     // файла — а пока они в файле, вернувшаяся с чужой копии запись гасится
     // повторно и больше не всплывает. В этом и сходимость.
     bool isVoided(int index) const;
-    // Номера погашенных записей по возрастанию.
-    QVector<int> voidedIndexes() const;
     // Номера записей по их адресам — тех, что нашлись; по возрастанию.
     QVector<int> indexesOf(const QVector<EntryRef>& refs) const;
 

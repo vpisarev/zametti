@@ -95,7 +95,6 @@ public:
     bool load(std::string_view bytes);
     // Байты файла целиком: конверт + каноническое тело.
     std::string toMarkdown() const;
-    QString toMarkdownText() const;
     // Совпадают ли канонические байты с исходными. Так проверяется ДРЕЙФ.
     bool isCanonical(std::string_view original) const;
     // Дамп строения в JSON — шапка и блоки (золотые наборы, отладка).

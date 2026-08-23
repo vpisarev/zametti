@@ -39,7 +39,6 @@ enum class TiffColor {
     Gray,
     Lab,        // перевели мы: своего RGB-профиля у файла нет
     Cmyk,       // перевели мы, по ICC если он есть
-    Palette,
 };
 
 struct TiffImage {
@@ -82,8 +81,6 @@ struct TiffHeader {
     // при восьмибитном файле, потому что перевод нелинеен.
     bool wideFrame = false;
     QByteArray icc;
-
-    bool valid() const { return !size.isEmpty(); }
 };
 bool readTiffHeader(const QString& path, TiffHeader* out, QString* error);
 

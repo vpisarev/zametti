@@ -73,12 +73,6 @@ void ZImageCache::protect(const void* owner, const QString& key) {
 
 void ZImageCache::release(const void* owner) { protectedBy_.remove(owner); }
 
-const QSet<QString>& ZImageCache::protectedBy(const void* owner) const {
-    static const QSet<QString> none;
-    const auto it = protectedBy_.constFind(owner);
-    return it == protectedBy_.constEnd() ? none : it.value();
-}
-
 const ZImageCache::Entry* ZImageCache::info(const QString& abs) {
     if (abs.isEmpty()) return nullptr;
     const int limit = sideLimit();
@@ -247,20 +241,6 @@ const QImage* ZImageCache::pixels(const QString& key) {
     bytes_ += it->bytes;
     touch(key);
     return &it->image;
-}
-
-int ZImageCache::shownCount() const {
-    int count = 0;
-    for (const Entry& entry : entries_)
-        if (entry.state == State::Shown) ++count;
-    return count;
-}
-
-int ZImageCache::framedCount() const {
-    int count = 0;
-    for (const Entry& entry : entries_)
-        if (entry.framed()) ++count;
-    return count;
 }
 
 void ZImageCache::resetCounters() {

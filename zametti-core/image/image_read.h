@@ -71,9 +71,6 @@ bool heifSupported();
 // читатели, и Qt о половине из них не знает.
 QStringList readableImageExtensions();
 
-// Опознать формат по первым байтам. Пусто — не наш.
-QString sniffImageFormat(const QByteArray& head);
-
 // Сколько байт от начала файла хватает на опознание и на шапку.
 // TIFF с длинным каталогом тегов сюда не влезает — у него свой путь по файлу.
 inline constexpr int kProbeBytes = 64 * 1024;

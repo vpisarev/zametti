@@ -72,9 +72,6 @@ struct Step {
     bool writeNew = true;  // писать ли новую запись со слепком
     int dropped = 0;       // ушло возвратом к уже записанному состоянию
     int merged = 0;        // ушло слиянием мелкой правки (0 или 1)
-
-    // Гасить нечего и писать нечего — журнал не трогается вовсе.
-    bool isNoop() const { return !writeNew && voided.isEmpty(); }
 };
 
 Step decideStep(const journal::ZJournal& journal, const SnapshotOf& snapshotOf,

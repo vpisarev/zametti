@@ -107,7 +107,6 @@ public:
     diff::Mark markOfBlock(int block);
 
     // --- исходный слепок (истина; ни одной дорисовки) -----------------------
-    const QByteArray& snapshotBytes() const { return snapshotBytes_; }
     // Каноническое тело слепка (без шапки) — восстановлению.
     std::string snapshotBody() const;
     qint64 snapshotTime() const;

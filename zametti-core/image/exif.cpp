@@ -175,17 +175,6 @@ std::string exifDateTaken(std::string_view exif) {
     return isoFromExifTime(asciiValue(exif, findEntryIn(exif, ifd0, 0x0132, big), big));
 }
 
-std::string exifComment(std::string_view exif) {
-    bool big = false;
-    uint32_t ifd0 = 0;
-    if (!exifHeader(exif, &big, &ifd0)) return {};
-    if (const uint32_t sub = exifSubIfd(exif, ifd0, big)) {
-        const std::string user = asciiValue(exif, findEntryIn(exif, sub, 0x9286, big), big);
-        if (!user.empty()) return user;
-    }
-    return asciiValue(exif, findEntryIn(exif, ifd0, 0x010E, big), big);
-}
-
 Orientation exifOrientation(std::string_view exif) {
     bool big = false;
     const size_t at = findTagValue(exif, kOrientationTag, &big);
@@ -553,14 +542,6 @@ namespace {
 // именно — зависит от программы, которая писала.
 
 }  // namespace
-
-std::string xmpDescription(std::string_view xmp) {
-    // dc:description чаще всего обёрнут в rdf:Alt/rdf:li — берём внутренность.
-    std::string value = xmpValue(xmp, "rdf:li");
-    if (xmp.find("dc:description") == std::string_view::npos) value.clear();
-    if (value.empty()) value = xmpValue(xmp, "dc:description");
-    return value;
-}
 
 std::string xmpCreateDate(std::string_view xmp) {
     std::string value = xmpValue(xmp, "xmp:CreateDate");

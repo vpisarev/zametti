@@ -766,13 +766,6 @@ QVector<int> ZJournal::indexesOf(const QVector<EntryRef>& refs) const {
     return out;
 }
 
-QVector<int> ZJournal::voidedIndexes() const {
-    QVector<int> out;
-    for (int i = 0; i < entries_.size(); ++i)
-        if (isVoided(i)) out.append(i);
-    return out;
-}
-
 int ZJournal::headIndex() const {
     int best = -1;
     for (int i = 0; i < entries_.size(); ++i) {

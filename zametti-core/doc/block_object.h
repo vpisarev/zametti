@@ -38,7 +38,6 @@
 #include <QtGlobal>
 
 class QTextBlock;
-class QTextDocument;
 
 namespace zametti {
 
@@ -61,15 +60,11 @@ struct BlockObject {
     int last = -1;
 
     bool valid() const { return kind != ObjectKind::None; }
-    bool contains(int blockNumber) const {
-        return valid() && blockNumber >= first && blockNumber <= last;
-    }
     int lines() const { return valid() ? last - first + 1 : 0; }
 };
 
 // Какому объекту принадлежит блок. None — обычный текст.
 BlockObject objectOf(const QTextBlock& block);
-BlockObject objectAt(const QTextDocument& doc, int blockNumber);
 
 // МОЖНО ЛИ СЛИТЬ ЭТИ ДВА БЛОКА ПРАВКОЙ.
 //

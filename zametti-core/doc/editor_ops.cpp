@@ -988,16 +988,6 @@ std::vector<Piece> selectionPieces(const QTextCursor& cursor) {
     return ir;
 }
 
-QString selectionToMarkdown(const QTextCursor& cursor) {
-    const std::vector<Piece> ir = selectionPieces(cursor);
-    if (ir.empty()) return {};
-
-    QString text = writePieces(ir);
-    const bool inlineOnly =
-        ir.size() == 1 && !ir.front().raw && ir.front().kind == Kind::Paragraph;
-    if (inlineOnly && text.endsWith(QLatin1Char('\n'))) text.chop(1);
-    return text;
-}
 
 static bool applyInputRuleAtCursor(QTextDocument& doc, QTextCursor& cursor) {
     const QTextBlock block = cursor.block();
