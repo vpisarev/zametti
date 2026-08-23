@@ -288,6 +288,13 @@ public:
     // для каждого блока (место, поиск, F4). Шапка в сравнение не идёт — строки
     // готовит diff::linesOf. Строитель один: и режим истории, и наборы берут
     // документ разности отсюда.
+    // ДОКУМЕНТ ИЗ ГОТОВЫХ БЛОКОВ — там, где блоки не из файла: наборам, которым
+    // нужно строение, markdown не выражающее (пустая строка внутри абзаца,
+    // заголовок в две строки, разметка с пробелом на краю). Ровно тот сборщик,
+    // что и у загрузки; разбора нет, потому что разбирать нечего.
+    static ZDocument fromPieces(const std::vector<Piece>& blocks,
+                                std::shared_ptr<const ZDocStyle> style = nullptr);
+
     static ZDocument fromDiff(const diff::Result& result,
                               std::shared_ptr<const ZDocStyle> style = nullptr,
                               QVector<int>* rowOfBlock = nullptr);

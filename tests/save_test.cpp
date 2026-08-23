@@ -60,22 +60,16 @@ void checkEqual(const std::string& expected, const std::string& actual,
 
 QString pathFor(const char* name) { return g_dir + QLatin1Char('/') + QLatin1String(name); }
 
-// Документ, собранный из файла, — ровно то, что видит пользователь после
-// открытия заметки.
-void buildFrom(const std::string& source, QTextDocument& doc) {
-    zametti::buildDocument(pieces(source), doc);
-}
-
 // Инвариант B на одном исходнике.
 void checkSave(const std::string& source, const char* name) {
     const QString path = pathFor(name);
     check(writeFile(path, source), "не записать исходник");
 
-    QTextDocument doc;
-    buildFrom(source, doc);
+    // ЗАМЕТКА ЦЕЛИКОМ, а не голый документ: инвариант B говорит про
+    // noteOf(file), и проверять его надо тем же путём, каким пишет программа.
+    zametti::ZNote note = noteOf(source);
 
-    const zametti::SaveOutcome first =
-        zametti::saveDocument(doc, path, QStringLiteral("test"));
+    const zametti::SaveOutcome first = note.save(path, QStringLiteral("test"));
     const std::string canonical = noteOf(source).toMarkdown();
 
     if (source == canonical) {
@@ -88,8 +82,7 @@ void checkSave(const std::string& source, const char* name) {
     checkEqual(canonical, readFile(path), std::string(name) + ": содержимое после записи");
 
     // Повторное сохранение того же документа не трогает файл вовсе.
-    const zametti::SaveOutcome second =
-        zametti::saveDocument(doc, path, QStringLiteral("test"));
+    const zametti::SaveOutcome second = note.save(path, QStringLiteral("test"));
     check(second.result == zametti::SaveResult::Unchanged,
           std::string(name) + ": повторное сохранение должно быть пустой операцией");
 
@@ -108,16 +101,14 @@ void checkSave(const std::string& source, const char* name) {
     // прочитал бы его и переписал, новый даже не заглянет.
     check(writeFile(path, std::string("мусор, которого тут быть не должно\n")),
           std::string(name) + ": мусор записан");
-    const zametti::SaveOutcome byDigest =
-        zametti::saveDocument(doc, path, QStringLiteral("test"), nullptr, {}, onDisk);
+    const zametti::SaveOutcome byDigest = note.save(path, QStringLiteral("test"), onDisk);
     check(byDigest.result == zametti::SaveResult::Unchanged,
           std::string(name) + ": с известным отпечатком файл не читается");
     checkEqual(std::string("мусор, которого тут быть не должно\n"), readFile(path),
                std::string(name) + ": и не переписывается");
 
     // А без отпечатка — прежний путь: прочитает, увидит расхождение, перепишет.
-    const zametti::SaveOutcome byBytes =
-        zametti::saveDocument(doc, path, QStringLiteral("test"));
+    const zametti::SaveOutcome byBytes = note.save(path, QStringLiteral("test"));
     check(byBytes.result == zametti::SaveResult::Written,
           std::string(name) + ": без отпечатка расхождение видно и файл переписан");
     checkEqual(canonical, readFile(path), std::string(name) + ": и содержимое вернулось");
@@ -201,11 +192,10 @@ void checkRescue() {
     const std::string source = "# заголовок\n\nтекст\n";
     check(writeFile(path, source), "не записать исходник для аварийного случая");
 
-    QTextDocument doc;
-    buildFrom(source, doc);
+    zametti::ZDocument note = zametti::ZDocument::fromPieces(pieces(source));
 
     const zametti::SaveOutcome outcome =
-        zametti::saveDocument(doc, path, QStringLiteral("stamp"), brokenReader);
+        note.saveTo(path, QStringLiteral("stamp"), brokenReader);
 
     // ДОГОВОР ИЗМЕНИЛСЯ. Прежде расхождение ЗАПРЕЩАЛО запись: файл оставался
     // прежним, а буфер уезжал в .rescue. Задумано это было как последний рубеж
@@ -235,16 +225,13 @@ void checkEmptyParagraphs() {
     const QString path = pathFor("пустые.md");
     check(writeFile(path, "текст\n"), "не записать исходник");
 
-    QTextDocument doc;
-    buildFrom("текст\n", doc);
+    // Пустой абзац в конце — состояние, markdown не выражающее: строим его
+    // блоками, а не правкой мимо заметки.
+    std::vector<zametti::Piece> blocks = pieces("текст\n");
+    blocks.push_back(zametti::Piece{});
+    zametti::ZDocument note = zametti::ZDocument::fromPieces(blocks);
 
-    // Enter в конце: в документе появляется пустой абзац.
-    QTextCursor cursor(&doc);
-    cursor.movePosition(QTextCursor::End);
-    cursor.insertBlock();
-
-    const zametti::SaveOutcome outcome =
-        zametti::saveDocument(doc, path, QStringLiteral("test"));
+    const zametti::SaveOutcome outcome = note.saveTo(path, QStringLiteral("test"));
     check(outcome.result == zametti::SaveResult::Unchanged ||
               outcome.result == zametti::SaveResult::Written,
           "сохранение с пустым абзацем не должно уходить в аварийный файл");
@@ -254,9 +241,8 @@ void checkEmptyParagraphs() {
     // Пустой пункт списка, наоборот, записывается: "-" файл выражает прекрасно.
     const QString listPath = pathFor("пустой-пункт.md");
     check(writeFile(listPath, "- пункт\n"), "не записать исходник списка");
-    QTextDocument list;
-    buildFrom("- пункт\n- \n", list);
-    zametti::saveDocument(list, listPath, QStringLiteral("test"));
+    zametti::ZDocument list = zametti::ZDocument::fromPieces(pieces("- пункт\n- \n"));
+    list.saveTo(listPath, QStringLiteral("test"));
     checkEqual("- пункт\n-\n", readFile(listPath), "пустой пункт списка сохраняется");
 }
 
@@ -286,14 +272,12 @@ void checkEdgeSpaces() {
                                       ".md").c_str());
         check(writeFile(path, c.source), "не записать исходник");
 
-        QTextDocument doc;
-        buildFrom(c.source, doc);
-        QTextCursor cursor(&doc);
+        zametti::ZDocument note = zametti::ZDocument::fromPieces(pieces(c.source));
+        QTextCursor cursor = note.caretAtBlock(0);
         cursor.movePosition(QTextCursor::EndOfBlock);
-        cursor.insertText(QString::fromUtf8(c.typed));
+        note.insertText(cursor, QString::fromUtf8(c.typed));
 
-        const zametti::SaveOutcome outcome =
-            zametti::saveDocument(doc, path, QStringLiteral("test"));
+        const zametti::SaveOutcome outcome = note.saveTo(path, QStringLiteral("test"));
         check(outcome.result != zametti::SaveResult::Rescued,
               std::string(c.what) + ": сохранение не должно уходить в аварийный файл");
         checkEqual(c.expected, readFile(path), c.what);
@@ -327,14 +311,12 @@ void checkEdgeSpaces() {
         const QString path = pathFor((std::string("отступ") + std::to_string(k++) +
                                       ".md").c_str());
         check(writeFile(path, c.source), "не записать исходник");
-        QTextDocument doc;
-        buildFrom(c.source, doc);
-        QTextCursor cursor(&doc);
-        cursor.setPosition(doc.findBlockByNumber(c.block).position() + c.offset);
-        cursor.insertText(QString::fromUtf8(c.typed));
+        zametti::ZDocument note = zametti::ZDocument::fromPieces(pieces(c.source));
+        QTextCursor cursor = note.caretAtBlock(c.block);
+        cursor.setPosition(cursor.position() + c.offset);
+        note.insertText(cursor, QString::fromUtf8(c.typed));
 
-        const zametti::SaveOutcome outcome =
-            zametti::saveDocument(doc, path, QStringLiteral("test"));
+        const zametti::SaveOutcome outcome = note.saveTo(path, QStringLiteral("test"));
         check(outcome.result != zametti::SaveResult::Rescued,
               std::string(c.what) + ": не должно уводить в аварийный файл");
         checkEqual(c.expected, readFile(path), c.what);
@@ -348,11 +330,9 @@ void checkEdgeSpaces() {
         check(writeFile(path, "первая\nвторая\n"), "не записать исходник");
         Builder builder;
         builder.add(zametti::Kind::Paragraph, "первая\n   \nвторая");
-        QTextDocument doc;
-        zametti::buildDocument(builder.ir, doc);
+        zametti::ZDocument note = zametti::ZDocument::fromPieces(builder.ir);
 
-        const zametti::SaveOutcome outcome =
-            zametti::saveDocument(doc, path, QStringLiteral("test"));
+        const zametti::SaveOutcome outcome = note.saveTo(path, QStringLiteral("test"));
         check(outcome.result != zametti::SaveResult::Rescued,
               "пустая строка внутри блока не должна уводить в аварийный файл");
         checkEqual("первая\n\nвторая\n", readFile(path),
@@ -366,11 +346,9 @@ void checkEdgeSpaces() {
         check(writeFile(path, "текст\n"), "не записать исходник");
         Builder builder;
         builder.add(zametti::Kind::Paragraph, "текст\n\n\n");
-        QTextDocument doc;
-        zametti::buildDocument(builder.ir, doc);
+        zametti::ZDocument note = zametti::ZDocument::fromPieces(builder.ir);
 
-        const zametti::SaveOutcome outcome =
-            zametti::saveDocument(doc, path, QStringLiteral("test"));
+        const zametti::SaveOutcome outcome = note.saveTo(path, QStringLiteral("test"));
         check(outcome.result != zametti::SaveResult::Rescued,
               "хвост пустых строк не должен уводить в аварийный файл");
         checkEqual("текст\n", readFile(path), "хвост пустых строк выброшен");
@@ -407,11 +385,9 @@ void checkEdgeSpaces() {
             Builder builder;
             zametti::Piece& block = builder.add(zametti::Kind::Paragraph, c.text);
             builder.mark(block, 0, block.text.size(), zametti::InlineItalic);
-            QTextDocument doc;
-            zametti::buildDocument(builder.ir, doc);
+            zametti::ZDocument note = zametti::ZDocument::fromPieces(builder.ir);
 
-            const zametti::SaveOutcome outcome =
-                zametti::saveDocument(doc, path, QStringLiteral("test"));
+            const zametti::SaveOutcome outcome = note.saveTo(path, QStringLiteral("test"));
             check(outcome.result != zametti::SaveResult::Rescued,
                   std::string(c.what) + ": не должно уводить в аварийный файл");
             checkEqual(c.expected, readFile(path), c.what);
@@ -426,10 +402,8 @@ void checkEdgeSpaces() {
         check(writeFile(heading, "заглушка\n"), "не записать исходник");
         Builder builder;
         builder.add(zametti::Kind::Heading, "первая\nвторая").headingLevel = 2;
-        QTextDocument doc;
-        zametti::buildDocument(builder.ir, doc);
-        const zametti::SaveOutcome outcome =
-            zametti::saveDocument(doc, heading, QStringLiteral("test"));
+        zametti::ZDocument note = zametti::ZDocument::fromPieces(builder.ir);
+        const zametti::SaveOutcome outcome = note.saveTo(heading, QStringLiteral("test"));
         check(outcome.result != zametti::SaveResult::Rescued,
               "заголовок в две строки не должен уводить в аварийный файл");
         checkEqual("## первая вторая\n", readFile(heading),
@@ -441,10 +415,8 @@ void checkEdgeSpaces() {
         Builder builder;
         zametti::Piece& block = builder.add(zametti::Kind::Paragraph, "раз\nдва");
         builder.mark(block, 0, block.text.size(), zametti::InlineCode);
-        QTextDocument doc;
-        zametti::buildDocument(builder.ir, doc);
-        const zametti::SaveOutcome outcome =
-            zametti::saveDocument(doc, path, QStringLiteral("test"));
+        zametti::ZDocument note = zametti::ZDocument::fromPieces(builder.ir);
+        const zametti::SaveOutcome outcome = note.saveTo(path, QStringLiteral("test"));
         check(outcome.result != zametti::SaveResult::Rescued,
               "код через перенос не должен уводить в аварийный файл");
         checkEqual("`раз`\n`два`\n", readFile(path),
@@ -471,7 +443,6 @@ void checkEdgeSpaces() {
                 (std::string("пустой-вложенный") + std::to_string(n) + ".md").c_str());
             check(writeFile(path, c.source), "не записать исходник");
 
-            QTextDocument doc;
             // Enter в конце последнего пункта заводит пустой пункт того же
             // уровня — так это и выходит при живом наборе. Через глагол
             // заметки: другого входа в правку нет.
@@ -502,10 +473,8 @@ void checkEdgeSpaces() {
         item(zametti::Marker::Bullet, 0, "раз");
         item(zametti::Marker::Bullet, 1, "");
         item(zametti::Marker::Bullet, 2, "внук");
-        QTextDocument doc;
-        zametti::buildDocument(builder.ir, doc);
-        const zametti::SaveOutcome outcome =
-            zametti::saveDocument(doc, path, QStringLiteral("test"));
+        zametti::ZDocument note = zametti::ZDocument::fromPieces(builder.ir);
+        const zametti::SaveOutcome outcome = note.saveTo(path, QStringLiteral("test"));
         check(outcome.result != zametti::SaveResult::Rescued,
               "пустой пункт с потомком не должен уводить в аварийный файл");
         checkEqual("- раз\n  - внук\n", readFile(path),
@@ -521,10 +490,8 @@ void checkEdgeSpaces() {
         Builder builder;
         zametti::Piece& block = builder.add(zametti::Kind::Paragraph, "фрукты");
         builder.mark(block, 3, 3, zametti::InlineStrike);   // "кты" — вторая половина слова (единицы UTF-16)
-        QTextDocument doc;
-        zametti::buildDocument(builder.ir, doc);
-        const zametti::SaveOutcome outcome =
-            zametti::saveDocument(doc, path, QStringLiteral("test"));
+        zametti::ZDocument note = zametti::ZDocument::fromPieces(builder.ir);
+        const zametti::SaveOutcome outcome = note.saveTo(path, QStringLiteral("test"));
         check(outcome.result != zametti::SaveResult::Rescued,
               "зачёркнутая половина слова не должна уводить в аварийный файл");
         checkEqual("~~фрукты~~\n", readFile(path), "зачёркивание раздалось до целого слова");
@@ -539,10 +506,8 @@ void checkEdgeSpaces() {
         Builder builder;
         zametti::Piece& block = builder.add(zametti::Kind::Paragraph, "штуки 2-5.");
         builder.mark(block, 9, 1, zametti::InlineBold);   // одна точка, и та в конце
-        QTextDocument doc;
-        zametti::buildDocument(builder.ir, doc);
-        const zametti::SaveOutcome outcome =
-            zametti::saveDocument(doc, path, QStringLiteral("test"));
+        zametti::ZDocument note = zametti::ZDocument::fromPieces(builder.ir);
+        const zametti::SaveOutcome outcome = note.saveTo(path, QStringLiteral("test"));
         check(outcome.result != zametti::SaveResult::Rescued,
               "невыразимая разметка не должна уводить в аварийный файл");
         checkEqual("штуки 2-5.\n", readFile(path), "текст остался, разметка снята");
@@ -555,10 +520,8 @@ void checkEdgeSpaces() {
         const std::string source =
             "\xC2\xA0\xC2\xA0ромб\n\xC2\xA0/    \\\n<      >\n";
         check(writeFile(path, source), "не записать исходник схемы");
-        QTextDocument doc;
-        buildFrom(source, doc);
-        const zametti::SaveOutcome outcome =
-            zametti::saveDocument(doc, path, QStringLiteral("test"));
+        zametti::ZDocument note = zametti::ZDocument::fromPieces(pieces(source));
+        const zametti::SaveOutcome outcome = note.saveTo(path, QStringLiteral("test"));
         check(outcome.result == zametti::SaveResult::Unchanged,
               "схема с неразрывными отступами устойчива");
         checkEqual(source, readFile(path), "и не переписывается");
@@ -568,9 +531,8 @@ void checkEdgeSpaces() {
     const QString path = pathFor("код-с-отступом.md");
     const std::string source = "```\n    отступ\n```\n";
     check(writeFile(path, source), "не записать исходник кода");
-    QTextDocument doc;
-    buildFrom(source, doc);
-    zametti::saveDocument(doc, path, QStringLiteral("test"));
+    zametti::ZDocument note = zametti::ZDocument::fromPieces(pieces(source));
+    note.saveTo(path, QStringLiteral("test"));
     checkEqual(source, readFile(path), "отступы в коде сохраняются как есть");
 }
 
@@ -582,14 +544,12 @@ void checkBareLinks() {
     const std::string source = "смотри тут\n";
     check(writeFile(path, source), "не записать исходник");
 
-    QTextDocument doc;
-    buildFrom(source, doc);
-    QTextCursor cursor(&doc);
+    zametti::ZDocument note = zametti::ZDocument::fromPieces(pieces(source));
+    QTextCursor cursor = note.caretAtBlock(0);
     cursor.movePosition(QTextCursor::EndOfBlock);
-    cursor.insertText(QStringLiteral(": https://apple.com."));
+    note.insertText(cursor, QStringLiteral(": https://apple.com."));
 
-    const zametti::SaveOutcome outcome =
-        zametti::saveDocument(doc, path, QStringLiteral("test"));
+    const zametti::SaveOutcome outcome = note.saveTo(path, QStringLiteral("test"));
     check(outcome.result == zametti::SaveResult::Written,
           "набранная ссылка не должна мешать сохранению");
     checkEqual("смотри тут: https://apple.com.\n", readFile(path), "ссылка записана");
@@ -599,8 +559,8 @@ void checkBareLinks() {
     // Подмена текста по-прежнему ЗАМЕЧАЕТСЯ — но теперь она не отменяет запись,
     // а объясняется словами и копией буфера (см. checkRescue).
     {
-        const zametti::SaveOutcome broken = zametti::saveDocument(
-            doc, pathFor("сломанный.md"), QStringLiteral("stamp"), brokenReader);
+        const zametti::SaveOutcome broken =
+            note.saveTo(pathFor("сломанный.md"), QStringLiteral("stamp"), brokenReader);
         check(broken.result == zametti::SaveResult::Written,
               "испорченный читатель записи не отменяет");
         check(!broken.message.isEmpty(), "испорченный читатель ловится и с новой сверкой");
@@ -630,9 +590,8 @@ void checkTrailingSoftBreak() {
     // А настоящий перенос между строками остаётся.
     const QString kept = pathFor("перенос-между.md");
     check(writeFile(kept, "первая\nвторая\n"), "не записать исходник");
-    QTextDocument two;
-    buildFrom("первая\nвторая\n", two);
-    zametti::saveDocument(two, kept, QStringLiteral("test"));
+    zametti::ZDocument two = zametti::ZDocument::fromPieces(pieces("первая\nвторая\n"));
+    two.saveTo(kept, QStringLiteral("test"));
     checkEqual("первая\nвторая\n", readFile(kept), "перенос между строками сохраняется");
 }
 
@@ -654,9 +613,9 @@ void checkTrailingBareImage() {
                                "---\ntitle: t\n---\n\n- пункт\n\n  ![](x.png)\n"}) {
         const QString path = pathFor("bare-image.md");
         check(writeFile(path, source), "картинка без подписи: не записать исходник");
-        QTextDocument doc;
-        buildFrom(source, doc);
-        zametti::saveDocument(doc, path, QStringLiteral("test"));
+        // Шапка тут есть, и писать надо ЗАМЕТКОЙ: конверт — её дело.
+        zametti::ZNote note = noteOf(source);
+        note.save(path, QStringLiteral("test"));
         const std::string onDisk = readFile(path);
         check(onDisk.find("![](x.png)") != std::string::npos,
               std::string("картинка без подписи пережила запись: ") + source);
@@ -687,9 +646,8 @@ void checkInlineBareImage() {
     for (const Case& c : cases) {
         const QString path = pathFor("inline-bare-image.md");
         check(writeFile(path, c.source), "строчная картинка без подписи: не записать исходник");
-        QTextDocument doc;
-        buildFrom(c.source, doc);
-        zametti::saveDocument(doc, path, QStringLiteral("test"));
+        zametti::ZNote note = noteOf(c.source);
+        note.save(path, QStringLiteral("test"));
         const std::string onDisk = readFile(path);
         checkEqual(std::string(c.expected), onDisk,
                    std::string("строчная картинка без подписи пережила запись: ") + c.source);
@@ -700,10 +658,8 @@ void checkInlineBareImage() {
 
 void checkFailure() {
     const QString path = g_dir + QStringLiteral("/нет-такого-каталога/файл.md");
-    QTextDocument doc;
-    buildFrom("текст\n", doc);
-    const zametti::SaveOutcome outcome =
-        zametti::saveDocument(doc, path, QStringLiteral("stamp"));
+    zametti::ZDocument note = zametti::ZDocument::fromPieces(pieces("текст\n"));
+    const zametti::SaveOutcome outcome = note.saveTo(path, QStringLiteral("stamp"));
     check(outcome.result == zametti::SaveResult::Failed,
           "запись в несуществующий каталог должна проваливаться");
     check(!outcome.message.isEmpty(), "у провала должно быть человеческое объяснение");
@@ -715,12 +671,19 @@ void checkFailure() {
 // заметках самопроверка не даёт записать. Не проверка, а прибор: зовётся
 // вторым параметром — каталогом с .md.
 //
-// Путь тот же, что и у настоящей записи: markdown → документ → IR документа →
-// то, что уйдёт в файл → разбор обратно → сверка скелетов. Именно эта сверка и
-// отправляла правки владельца в .rescue вместо файла.
+// Путь — ровно тот, каким пишет программа: ZNote::load → ZNote::save во
+// временный файл. Отказ виден по исходу: Rescued означает, что самопроверка
+// не сошлась, и рядом лежит копия буфера. Именно это и отправляло правки
+// владельца в .rescue вместо файла.
 void surveyGuard(const QString& root) {
     QDir dir(root);
     const QStringList files = dir.entryList({QStringLiteral("*.md")}, QDir::Files);
+    const QString scratch = QDir::tempPath() + QStringLiteral("/zametti-survey");
+    QDir(scratch).removeRecursively();
+    if (!QDir().mkpath(scratch)) {
+        std::printf("не создать каталог %s\n", scratch.toUtf8().constData());
+        return;
+    }
     int checked = 0;
     int refused = 0;
     for (const QString& name : files) {
@@ -729,41 +692,16 @@ void surveyGuard(const QString& root) {
         const QByteArray bytes = file.readAll();
         file.close();
 
-        const std::vector<zametti::Piece> parsed =
-            pieces(std::string(bytes.constData(), size_t(bytes.size())));
-        QTextDocument doc;
-        zametti::buildDocument(parsed, doc);
-
-        const std::vector<zametti::Piece> going =
-            zametti::documentForFile(blocksOf(doc));
-        const std::string text = markdownOf(going);
-        const std::vector<zametti::Piece> back = pieces(text);
-
+        zametti::ZNote note;
+        if (!note.load(std::string_view(bytes.constData(), size_t(bytes.size())))) continue;
         ++checked;
-        // sameSkeleton наружу не выведен — сверяем тем же, чем сверяет он:
-        // числом блоков, родом и текстом. Разойдёмся в мелочи — увидим больше,
-        // а не меньше, и это честнее.
-        bool same = going.size() == back.size();
-        for (size_t i = 0; same && i < going.size(); ++i) {
-            same = going[i].raw == back[i].raw &&
-                   going[i].kind == back[i].kind &&
-                   going[i].text == back[i].text;
-        }
-        if (same) continue;
+        const zametti::SaveOutcome outcome =
+            note.save(scratch + QLatin1Char('/') + name, QStringLiteral("survey"));
+        if (outcome.result != zametti::SaveResult::Rescued) continue;
         ++refused;
-        if (refused <= 5) {
-            std::printf("сторож не даёт записать: %s (блоков %zu против %zu)\n",
-                        name.toUtf8().constData(), going.size(), back.size());
-            for (size_t i = 0; i < going.size() && i < back.size(); ++i) {
-                if (going[i].text == back[i].text &&
-                    going[i].kind == back[i].kind)
-                    continue;
-                std::printf("  блок %zu:\n    ушло:  [%s]\n    вышло: [%s]\n", i,
-                            going[i].text.left(90).toUtf8().constData(),
-                            back[i].text.left(90).toUtf8().constData());
-                break;
-            }
-        }
+        if (refused <= 5)
+            std::printf("сторож не даёт записать: %s\n  %s\n", name.toUtf8().constData(),
+                        outcome.message.toUtf8().constData());
     }
     std::printf("сторож: проверено %d, отказов %d\n", checked, refused);
 }

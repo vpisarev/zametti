@@ -66,6 +66,14 @@ ZDocument ZDocument::clone() const {
     return out;
 }
 
+ZDocument ZDocument::fromPieces(const std::vector<Piece>& blocks,
+                                std::shared_ptr<const ZDocStyle> style) {
+    ZDocument out;
+    if (style != nullptr) out.setStyle(std::move(style));
+    buildDocument(blocks, out.d_->text);
+    return out;
+}
+
 // --- круг с диском ---------------------------------------------------------
 
 bool ZDocument::loadMarkdown(std::string_view bytes, NoteHeader* lifted, std::vector<Piece>* built) {
