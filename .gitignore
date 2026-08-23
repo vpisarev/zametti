@@ -67,6 +67,10 @@ compile_commands.json
 *.bak
 *.swp
 
+# python: байт-код оснастки (scripts/) в репозиторий не идёт
+__pycache__/
+*.py[cod]
+
 # vcpkg
 vcpkg_installed/
 
