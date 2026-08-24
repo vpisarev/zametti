@@ -399,7 +399,7 @@ int main(int argc, char** argv) {
         zametti::ZLogs& logs = zametti::ZLogs::instance();
         logs.configure({zametti::settings().logs().writeErrLog(),
                         zametti::settings().logs().writeSyncLog(),
-                        qint64(zametti::settings().logs().maxMegabytes()) * 1024 * 1024});
+                        qint64(zametti::settings().logs().logSizeMb()) * 1024 * 1024});
 
         zametti::ZStorage::SyncOptions options;
         options.mode = pushOnly ? zametti::ZStorage::SyncOptions::PushOnly

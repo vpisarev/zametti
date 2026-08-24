@@ -53,7 +53,7 @@ bool ZApp::reloadSettings(QString* error, QStringList* unknown) {
     // проверку переполнения (она случится при первой же записи).
     ZLogs::instance().configure({settings().logs().writeErrLog(),
                                  settings().logs().writeSyncLog(),
-                                 qint64(settings().logs().maxMegabytes()) * 1024 * 1024});
+                                 qint64(settings().logs().logSizeMb()) * 1024 * 1024});
     return ok;
 }
 

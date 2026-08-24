@@ -369,7 +369,7 @@ QJsonObject settingsToJson(const ZSettings& a) {
     QJsonObject logs{
         {QStringLiteral("writeErrLog"), a.logs().writeErrLog()},
         {QStringLiteral("writeSyncLog"), a.logs().writeSyncLog()},
-        {QStringLiteral("maxMegabytes"), a.logs().maxMegabytes()},
+        {QStringLiteral("logSizeMb"), a.logs().logSizeMb()},
     };
 
     return QJsonObject{
@@ -502,7 +502,7 @@ void settingsFromJson(const QJsonObject& root, ZSettings& a) {
     const QJsonObject logs = root.value(QStringLiteral("logs")).toObject();
     readBool(logs, "writeErrLog", a.logs(), &ZSettings::Logs::setWriteErrLog);
     readBool(logs, "writeSyncLog", a.logs(), &ZSettings::Logs::setWriteSyncLog);
-    readInt(logs, "maxMegabytes", a.logs(), &ZSettings::Logs::setMaxMegabytes);
+    readInt(logs, "logSizeMb", a.logs(), &ZSettings::Logs::setLogSizeMb);
 
     const QJsonObject paper = root.value(QStringLiteral("pdf")).toObject();
     readString(paper, "fontFamily", a.pdf(), &ZSettings::Pdf::setFontFamily);
