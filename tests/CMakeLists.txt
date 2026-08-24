@@ -60,6 +60,9 @@ add_executable(zametti-tests
     tree_test.cpp
     note_import_test.cpp
 
+    # --- облачная синхронизация ---
+    crypto_vectors_test.cpp
+
     # --- живая модель документа ---
     reader_test.cpp
     shift_test.cpp
@@ -148,8 +151,10 @@ add_executable(zametti-tests
 )
 # md4c здесь не зависимость, а СУДЬЯ: table_test сверяет наш разбор таблиц с
 # чужой реализацией того же формата.
+# Sodium здесь не только зависимость классов синка, но и СУДЬЯ:
+# crypto_vectors_test зовёт примитивы напрямую и сверяет с байтами RFC.
 target_link_libraries(zametti-tests PRIVATE zametti-ui gtest md4c zstd Qt6::Test
-                      zametti-code-rules)
+                      Sodium::Sodium zametti-code-rules)
 target_include_directories(zametti-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 # Пути к корпусам и к каталогу сборки — константами, а не через argv: в одном
 # процессе argv на всех один.
