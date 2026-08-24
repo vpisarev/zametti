@@ -31,6 +31,7 @@ constexpr BuildFact kBuildFacts[] = {
     {"build", "@ZAMETTI_FACT_CONFIG@"},
     {"compiler", "@ZAMETTI_FACT_COMPILER@"},
     {"Qt", "@ZAMETTI_FACT_QT@"},
+    {"crypto", "@ZAMETTI_FACT_SODIUM@"},
     {"commit", "@ZAMETTI_FACT_COMMIT@"},
     {"configured", "@ZAMETTI_FACT_CONFIGURED@"},
 };
