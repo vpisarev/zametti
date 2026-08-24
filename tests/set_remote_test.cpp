@@ -212,7 +212,7 @@ void checkForeignCloudRefused() {
         FakeSecrets fresh;
         const QByteArray keyfileBefore = [&] {
             QFile f(cloud + QStringLiteral("/keyfile"));
-            f.open(QIODevice::ReadOnly);
+            if (!f.open(QIODevice::ReadOnly)) return QByteArray();
             return f.readAll();
         }();
         ZT_TRUE("чужое облако отвергнуто",
@@ -222,7 +222,7 @@ void checkForeignCloudRefused() {
                 err.contains(QStringLiteral("another store")));
         ZT_TRUE("remote.json не записан", s.remoteConfig().isEmpty());
         QFile f(cloud + QStringLiteral("/keyfile"));
-        f.open(QIODevice::ReadOnly);
+        ZT_TRUE("keyfile открылся", f.open(QIODevice::ReadOnly));
         ZT_TRUE("keyfile облака не тронут", f.readAll() == keyfileBefore);
     }
 }

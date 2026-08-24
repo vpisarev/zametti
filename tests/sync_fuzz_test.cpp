@@ -27,8 +27,6 @@ using namespace zametti;
 
 namespace {
 
-std::string num(qint64 value) { return std::to_string(value); }
-
 const Keyfile::KdfParams kTinyKdf{1, 1 << 20};
 
 QByteArray noteBody(unsigned n) {
@@ -50,7 +48,7 @@ struct Device {
 
     QByteArray fileOf(const QString& id) const {
         QFile f(store.root() + QStringLiteral("/") + id + QStringLiteral(".md"));
-        f.open(QIODevice::ReadOnly);
+        if (!f.open(QIODevice::ReadOnly)) return QByteArray();
         return f.readAll();
     }
 };
@@ -180,8 +178,8 @@ void checkTwoDeviceConvergence(unsigned seed) {
              listing(a.store.root() + QStringLiteral("/history"), "*.log")) {
             QFile fa(a.store.root() + QStringLiteral("/history/") + name);
             QFile fb(b.store.root() + QStringLiteral("/history/") + name);
-            fa.open(QIODevice::ReadOnly);
-            fb.open(QIODevice::ReadOnly);
+            ZT_TRUE("журнал A открылся", fa.open(QIODevice::ReadOnly));
+            ZT_TRUE("журнал B открылся", fb.open(QIODevice::ReadOnly));
             ZT_TRUE("журнал побайтово совпал", fa.readAll() == fb.readAll());
         }
 

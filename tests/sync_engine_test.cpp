@@ -129,7 +129,7 @@ void checkAdoptRefusesUnprovable() {
                                                               ZJournal::Stamp::at(kNow)), &err));
     const QByteArray before = [&] {
         QFile f(a.journalOf(kId));
-        f.open(QIODevice::ReadOnly);
+        if (!f.open(QIODevice::ReadOnly)) return QByteArray();
         return f.readAll();
     }();
 
@@ -145,7 +145,7 @@ void checkAdoptRefusesUnprovable() {
     ZT_TRUE("причина названа", !err.isEmpty());
 
     QFile f(a.journalOf(kId));
-    f.open(QIODevice::ReadOnly);
+    ZT_TRUE("журнал открылся", f.open(QIODevice::ReadOnly));
     ZT_TRUE("файл не тронут ни байтом", f.readAll() == before);
 }
 
@@ -230,14 +230,14 @@ void checkLedgerIsACache() {
     // Порча файла — не ошибка, а пустой старт: кэш, не истина (инвариант D).
     {
         QFile f(path);
-        f.open(QIODevice::WriteOnly);
+        ZT_TRUE("файл бухгалтерии записался", f.open(QIODevice::WriteOnly));
         f.write("{ это не json ");
     }
     ZT_TRUE("битый файл — пустая бухгалтерия", SyncLedger::load(path).isEmpty());
     // Незнакомая версия — тоже пустой старт, не отказ.
     {
         QFile f(path);
-        f.open(QIODevice::WriteOnly);
+        ZT_TRUE("файл бухгалтерии записался", f.open(QIODevice::WriteOnly));
         f.write("{\"version\": 99, \"blobs\": {\"x.log\": {\"etag\": \"e\"}}}");
     }
     ZT_TRUE("чужая версия — пустая бухгалтерия", SyncLedger::load(path).isEmpty());
@@ -300,7 +300,7 @@ struct TwoDevices {
     }
     static QByteArray readRaw(const QString& path) {
         QFile f(path);
-        f.open(QIODevice::ReadOnly);
+        if (!f.open(QIODevice::ReadOnly)) return QByteArray();
         return f.readAll();
     }
     QByteArray noteOf(const zt::MiniStore& store, const QString& id) const {
@@ -773,8 +773,8 @@ void checkLiveWebDavCycle() {
     ZT_TRUE("A принимает", sa.sync({}, nullptr, &err));
     QFile fa(a.journalOf(id));
     QFile fb(b.journalOf(id));
-    fa.open(QIODevice::ReadOnly);
-    fb.open(QIODevice::ReadOnly);
+    ZT_TRUE("журнал A открылся", fa.open(QIODevice::ReadOnly));
+    ZT_TRUE("журнал B открылся", fb.open(QIODevice::ReadOnly));
     ZT_TRUE("журналы сошлись побайтово через живой сервер", fa.readAll() == fb.readAll());
 }
 
