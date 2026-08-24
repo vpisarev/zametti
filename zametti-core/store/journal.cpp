@@ -528,6 +528,15 @@ bool ZJournal::parse(const QByteArray& blob, Want want, int wantIndex, QString* 
 bool ZJournal::rebuildAt(int index, QByteArray* out, QString* error, bool eachLink) const {
     const QVector<ZJournal::Record>& entries = entries_;
     const QVector<QByteArray>& packed = packed_;
+    // Явный страж вместо выхода за границу: журнал-значение, собранный из
+    // одних рамок, слепков не несёт, и просить их у него — ошибка вызова,
+    // о которой надо сказать вслух, а не упасть.
+    Q_ASSERT(index >= 0 && index < entries.size());
+    if (index < 0 || index >= entries.size() || packed.size() != entries.size()) {
+        if (error)
+            *error = QStringLiteral("record #%1: no snapshots to rebuild from").arg(index);
+        return false;
+    }
     // Испорченной рамке верить нельзя ни в чём — ни ей самой, ни звеньям,
     // которые на неё опираются.
     if (isDamaged(index)) {

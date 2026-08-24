@@ -317,6 +317,16 @@ public:
     bool compressJournal(const QString& noteId, const ZJournal::Rules& rules, bool force,
                          CompressReport* report, QString* error);
 
+    // ПРИНЯТЬ СЛИТЫЙ ЖУРНАЛ — единственный путь, которым результат
+    // ZJournal::mergedWith ложится на диск. Это union и только union: слияние
+    // ничего не теряет по построению (его самопроверка), а здесь слитое ещё и
+    // ДОКАЗЫВАЕТ себя перед подменой файла, как заметка в пути сохранения:
+    // сериализация → parse обратно → пересборка КАЖДОГО слепка со сверкой
+    // отпечатка → равенство contentDigest. Не доказало — файл не тронут ни
+    // байтом. Подмена атомарна.
+    bool adoptMergedJournal(const QString& noteId, const ZJournal& merged,
+                            QString* error = nullptr);
+
 
     // --- ПОЛ ВРЕМЕНИ ЗАПИСЕЙ ЭТОГО УСТРОЙСТВА -------------------------------
     //
@@ -689,6 +699,7 @@ protected:
     bool thinJournalLocked(const QString& path, qint64 now, QString* error);
     bool rewriteJournalLocked(const QString& path, const ZJournal::Planner& planner, bool force,
                               ZJournal::CompressOutcome* outcome, QString* error);
+    bool adoptMergedJournalLocked(const QString& path, const ZJournal& merged, QString* error);
 
     int quiet_ = 0;
     bool pending_ = false;

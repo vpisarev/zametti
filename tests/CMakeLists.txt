@@ -69,6 +69,7 @@ add_executable(zametti-tests
     remote_store_test.cpp
     webdav_remote_test.cpp
     sync_push_test.cpp
+    sync_engine_test.cpp
 
     # --- живая модель документа ---
     reader_test.cpp

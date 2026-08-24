@@ -952,11 +952,56 @@ bool ZStorage::rewriteJournalLocked(const QString& path, const ZJournal::Planner
     return finish(true);
 }
 
+bool ZStorage::adoptMergedJournalLocked(const QString& path, const ZJournal& merged,
+                                        QString* error) {
+    assertLocked();
+    QVector<int> all;
+    all.reserve(merged.size());
+    for (int i = 0; i < merged.size(); ++i) all.append(i);
+    QByteArray out;
+    if (!merged.toBytes(all, merged.cleanVersion(), &out, error)) return false;
+
+    // Самопроверка ПЕРЕД подменой — как у заметки в пути сохранения: слитое
+    // обязано доказать, что читается обратно без потерь, прежде чем займёт
+    // место журнала. Не доказало — файл не тронут ни байтом.
+    ZJournal reread;
+    if (!reread.parse(out, ZJournal::Want::All, 0, error)) return false;
+    if (reread.size() != merged.size() || reread.damagedCount() != 0 || reread.tailTrimmed()) {
+        if (error)
+            *error = QStringLiteral(
+                "merged journal does not survive its own serialization (%1 -> %2 records)")
+                         .arg(merged.size())
+                         .arg(reread.size());
+        return false;
+    }
+    for (int i = 0; i < reread.size(); ++i) {
+        if (!reread.at(i).hasSnapshot()) continue;
+        QByteArray plain;
+        // rebuildAt сверяет отпечаток последнего звена сам.
+        if (!reread.rebuildAt(i, &plain, error)) return false;
+    }
+    if (reread.contentDigest() != merged.contentDigest()) {
+        if (error)
+            *error = QStringLiteral("merged journal changed identity in serialization");
+        return false;
+    }
+
+    // Журнала могло не быть вовсе (заметка приехала целиком) — history/ тоже.
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    return replaceFile(path, out, error);
+}
+
 // Открытые методы: замок и ничего больше. Ни одной строки работы с файлами
 // здесь нет и быть не должно — на этом стоит обещание «всё под замком».
 bool ZStorage::appendToJournal(const QString& noteId, const ZJournal::NewRecord& what, QString* error) {
     const QMutexLocker locked(&gate());
     return appendJournalLocked(journalPath(noteId), what, error);
+}
+
+
+bool ZStorage::adoptMergedJournal(const QString& noteId, const ZJournal& merged, QString* error) {
+    const QMutexLocker locked(&gate());
+    return adoptMergedJournalLocked(journalPath(noteId), merged, error);
 }
 
 
