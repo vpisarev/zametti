@@ -54,6 +54,11 @@ add_library(zametti-core STATIC
     store/journal.h             store/journal.cpp
     store/times.h               store/times.cpp
 
+    # --- облачная синхронизация: крипто и адаптер (m17) ---
+    # Файлов хранилища здесь нет: Keyfile — чистое значение, шифр и адаптер
+    # говорят байтами. Встреча с заметками — глаголы ZStorage (sync_ops).
+    sync/keyfile.h              sync/keyfile.cpp
+
     # --- заметка: документ + журнал + всё, что переживает уход и возврат ---
     note/znote.h                note/znote.cpp
     note/note_search.h          note/note_search.cpp
@@ -121,11 +126,16 @@ target_include_directories(zametti-core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/image
     ${CMAKE_CURRENT_SOURCE_DIR}/doc
     ${CMAKE_CURRENT_SOURCE_DIR}/note
+    ${CMAKE_CURRENT_SOURCE_DIR}/sync
 )
 
+# Sodium — PRIVATE: в заголовках sync/ нет ни одного типа libsodium, наружу
+# торчат только QByteArray и QString. У статической библиотеки PRIVATE всё
+# равно доедет до компоновки потребителей ($<LINK_ONLY>).
 target_link_libraries(zametti-core
     PUBLIC Qt6::Core Qt6::Gui libjxl libtiff
-    PRIVATE md4c blake3 zstd jpegli libwebp dtl microtex-all zametti-code-rules)
+    PRIVATE md4c blake3 zstd jpegli libwebp dtl microtex-all Sodium::Sodium
+            zametti-code-rules)
 
 # HEIF/AVIF — по ключу, системной библиотекой. Обработчик зовётся напрямую из
 # image_read, плагином он больше не является.

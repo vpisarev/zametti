@@ -701,3 +701,49 @@ frame checksum does not match is reported as trouble.
 
 Import **never writes into the source**: the new store is created alongside,
 the old tree remains the reference.
+
+---
+
+## 11. The cloud: the keyfile
+
+The cloud stores ONLY journals + attachments + the keyfile (plus the open
+`zametti.json` manifest — see §1). Everything encrypted travels as blobs
+sealed with one 32-byte random **master key**; the keyfile is that key
+wrapped with the user's password.
+
+### `keyfile`
+
+Lives in the cloud next to the blobs, under this very name, in the open —
+its etag lets a device notice a rotation or a password change before
+decrypting anything. JSON + base64, human-readable on purpose:
+
+```json
+{ "version": 1, "storeId": "01n6cqevh7bbfr",
+  "created": "2026-08-24T12:47:13+03:00",
+  "kdf": "argon2id13", "opslimit": 4, "memlimit": 536870912,
+  "salt": "base64(16)",
+  "cipher": "xchacha20poly1305-ietf", "nonce": "base64(24)",
+  "key": "base64(32+16)" }
+```
+
+- `key` is the master key sealed with XChaCha20-Poly1305; the sealing key is
+  `Argon2id(password, salt)` with the `opslimit`/`memlimit` **written right
+  here**: a future device reads the parameters from the file, not from its
+  own constants, so the defaults may change without breaking old keyfiles.
+  The defaults themselves are the owner's threshold (512 MiB × 4 passes,
+  ~1.5 s on his machine, calibrated by `zametti-bench argon2`);
+- the AAD of the seal is `"zametti-keyfile\0" + version + "\0" + storeId`:
+  downgrading `version` in the text or moving the envelope to another store
+  fails the tag instead of silently changing the parse;
+- a failed unwrap means "wrong password or a corrupted keyfile" — the two are
+  indistinguishable by construction of AEAD. A *rotation* is told apart
+  differently: the keyfile unwraps fine, but incoming blobs do not decrypt;
+- `version` newer than the build understands — a polite refusal ("update the
+  program"), not corruption. Unknown keys within a known version survive a
+  rewrite, same promise as everywhere;
+- changing the password = re-wrapping the same key with a fresh salt and
+  nonce (`rewrap`); rotating the key = a new key plus a full re-upload.
+
+In the program the keyfile is `Keyfile` (`zametti-core/sync/keyfile.h`) — a
+pure value, no files; it is also the ONLY carrier of the live master key:
+raw key bytes never travel on their own.
