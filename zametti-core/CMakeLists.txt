@@ -59,6 +59,7 @@ add_library(zametti-core STATIC
     # говорят байтами. Встреча с заметками — глаголы ZStorage (sync_ops).
     sync/keyfile.h              sync/keyfile.cpp
     sync/blob_cipher.h          sync/blob_cipher.cpp
+    sync/secret_store.h         sync/secret_store.cpp
 
     # --- заметка: документ + журнал + всё, что переживает уход и возврат ---
     note/znote.h                note/znote.cpp
