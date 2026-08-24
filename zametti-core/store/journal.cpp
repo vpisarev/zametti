@@ -9,6 +9,7 @@
 #include <QCborStreamReader>
 #include <QCborStreamWriter>
 #include <QDateTime>
+#include <QHash>
 #include <QDir>
 #include <QMutex>
 #include <QMutexLocker>
@@ -357,6 +358,30 @@ QByteArray ZJournal::frameBytes(const ZJournal::Record& e) {
     put64(e.source());
     out.append(char(int(e.codec())));
     put64(e.plainSize());
+    putDigest(e.digest());
+    put64(e.voids().size());
+    for (const ZJournal::RecordRef& ref : e.voids()) {
+        put64(ref.time());
+        putDigest(ref.digest());
+    }
+    return out;
+}
+
+QByteArray ZJournal::identityBytes(const ZJournal::Record& e) {
+    // То же, что frameBytes, но БЕЗ укладки (кодека и размера до сжатия):
+    // идентичность записи не вправе зависеть от того, легла она полным слепком
+    // или звеном цепочки, — переукладка поколений истории не меняет.
+    QByteArray out("zident1");
+    const auto put64 = [&out](qint64 v) {
+        for (int i = 0; i < 8; ++i) out.append(char((quint64(v) >> (8 * i)) & 0xff));
+    };
+    const auto putDigest = [&out](const Digest& d) {
+        out.append(reinterpret_cast<const char*>(d.bytes.data()), qsizetype(d.bytes.size()));
+    };
+    out.append(char(int(e.kind())));
+    put64(e.time());
+    put64(e.seq());
+    put64(e.source());
     putDigest(e.digest());
     put64(e.voids().size());
     for (const ZJournal::RecordRef& ref : e.voids()) {
@@ -733,8 +758,161 @@ Digest ZJournal::contentDigest() const {
     std::sort(order.begin(), order.end(),
               [this](int a, int b) { return entries_[a].isBefore(entries_[b]); });
     QByteArray all;
-    for (int i : order) all += frameBytes(entries_[i]);
+    for (int i : order) all += identityBytes(entries_[i]);
     return hashOf(std::string_view(all.constData(), size_t(all.size())));
+}
+
+bool ZJournal::mergedWith(const ZJournal& other, ZJournal* out, ZJournal::MergeStats* stats,
+                          QString* error) const {
+    if (out == nullptr) return false;
+    // Испорченной рамке верить нельзя ни в чём, а в слитом журнале она стала бы
+    // законной записью навсегда. Порча лечится обменом (absence), не переездом.
+    if (damagedCount() > 0 || other.damagedCount() > 0) {
+        if (error)
+            *error = QStringLiteral("merge refused: %1 damaged record(s) on input")
+                         .arg(damagedCount() + other.damagedCount());
+        return false;
+    }
+
+    // Адрес записи — ключом словаря. У безслепковых отпечаток нулевой и адрес
+    // их не различает, поэтому под одним ключом может лежать несколько записей.
+    auto keyOf = [](const ZJournal::Record& r) {
+        QByteArray k(reinterpret_cast<const char*>(r.digest().bytes.data()),
+                     int(r.digest().bytes.size()));
+        const qint64 t = r.time();
+        k.append(reinterpret_cast<const char*>(&t), sizeof(t));
+        return k;
+    };
+
+    struct Item {
+        ZJournal::Record rec;
+        const ZJournal* src = nullptr;  // откуда собирать слепок
+        int idx = -1;                   // и по какому номеру
+        bool fromOther = false;         // с какой стороны пришёл впервые
+        bool shared = false;            // адрес встречен с обеих сторон
+    };
+    QVector<Item> pool;
+    QHash<QByteArray, QVector<int>> byKey;
+    ZJournal::MergeStats st;
+
+    auto add = [&](const ZJournal& src, int i, bool fromOther) {
+        const ZJournal::Record& r = src.entries_[i];
+        const QByteArray frame = ZJournal::identityBytes(r);
+        for (int at : byKey.value(keyOf(r))) {
+            Item& have = pool[at];
+            const QByteArray haveFrame = ZJournal::identityBytes(have.rec);
+            const bool sameFrame = frame == haveFrame;
+            // Безслепковые с равным адресом и РАЗНЫМИ рамками — разные записи
+            // (надгробие и гашение в одну миллисекунду): живут обе, иначе
+            // потерялся бы список гашения или само надгробие.
+            if (!sameFrame && (!r.hasSnapshot() || !have.rec.hasSnapshot())) continue;
+            if (!have.shared && have.fromOther != fromOther) {
+                // Была уникальной для своей стороны — оказалась общей.
+                have.shared = true;
+                ++st.common;
+                --(have.fromOther ? st.fromOther : st.fromThis);
+            }
+            if (!sameFrame) {
+                // Один адрес, разная идентичность: содержимое то же
+                // (отпечаток равен), разъехалась обвязка. Победитель
+                // детерминирован — большая ревизия, затем лексикографически
+                // большие байты идентичности.
+                ++st.frameConflicts;
+                const bool wins = r.seq() != have.rec.seq() ? r.seq() > have.rec.seq()
+                                                           : haveFrame < frame;
+                if (wins) {
+                    have.rec = r;
+                    have.src = &src;
+                    have.idx = i;
+                }
+            }
+            return;
+        }
+        byKey[keyOf(r)].append(int(pool.size()));
+        pool.append(Item{r, &src, i, fromOther, false});
+        ++(fromOther ? st.fromOther : st.fromThis);
+    };
+    for (int i = 0; i < int(entries_.size()); ++i) add(*this, i, false);
+    for (int i = 0; i < int(other.entries_.size()); ++i) add(other, i, true);
+
+    // Гашение — по адресам над объединённым набором. Гасят все записи набора,
+    // включая те, что сами погашены: так считает isVoided, и второй трактовки
+    // не заводим.
+    QVector<bool> dropped(pool.size(), false);
+    for (int i = 0; i < pool.size(); ++i)
+        for (const Item& v : pool)
+            if (v.rec.voidsRecord(pool[i].rec)) {
+                dropped[i] = true;
+                ++st.voidedDropped;
+                break;
+            }
+
+    // Канонический порядок — существующий isBefore. Записи, которые он считает
+    // равными (безслепковые с равным адресом), докладываются байтами
+    // идентичности —
+    // это не вторая формула порядка: головы и показа она не касается, только
+    // детерминизм укладки.
+    QVector<int> order;
+    for (int i = 0; i < pool.size(); ++i)
+        if (!dropped[i]) order.append(i);
+    std::sort(order.begin(), order.end(), [&](int a, int b) {
+        const ZJournal::Record& ra = pool[a].rec;
+        const ZJournal::Record& rb = pool[b].rec;
+        if (ra.isBefore(rb)) return true;
+        if (rb.isBefore(ra)) return false;
+        return ZJournal::identityBytes(ra) < ZJournal::identityBytes(rb);
+    });
+
+    // Результат несёт слепки распакованными: он собран из двух чужих укладок,
+    // и своих поколений у него ещё нет — их разложит toBytes при записи.
+    ZJournal result;
+    result.cleanVersion_ =
+        cleanVersion_ == other.cleanVersion_ ? cleanVersion_ : QString();
+    for (int i : order) {
+        Item& it = pool[i];
+        QByteArray plain;
+        if (it.rec.hasSnapshot()) {
+            QString why;
+            if (!it.src->rebuildAt(it.idx, &plain, &why)) {
+                if (error)
+                    *error = QStringLiteral("merge: snapshot at %1 does not rebuild: %2")
+                                 .arg(it.rec.time())
+                                 .arg(why);
+                return false;
+            }
+            it.rec.layAs(ZJournal::Codec::None, plain.size());
+        }
+        result.entries_.append(it.rec);
+        result.packed_.append(plain);
+    }
+
+    // САМОПРОВЕРКА — каждый вызов, не только тесты: каждая запись каждого
+    // входа либо присутствует адресом, либо погашена записью результата.
+    // Слияние, не доказавшее этого, не отдаётся: честная остановка синка
+    // лучше тихой потери записи.
+    auto accounted = [&](const ZJournal::Record& r) {
+        for (const ZJournal::Record& e : result.entries_) {
+            if (e.time() == r.time() && e.digest() == r.digest()) return true;
+            if (e.voidsRecord(r)) return true;
+        }
+        return false;
+    };
+    for (const ZJournal::Record& r : entries_)
+        if (!accounted(r)) {
+            if (error)
+                *error = QStringLiteral("merge self-check: record at %1 lost").arg(r.time());
+            return false;
+        }
+    for (const ZJournal::Record& r : other.entries_)
+        if (!accounted(r)) {
+            if (error)
+                *error = QStringLiteral("merge self-check: record at %1 lost").arg(r.time());
+            return false;
+        }
+
+    *out = std::move(result);
+    if (stats != nullptr) *stats = st;
+    return true;
 }
 
 int ZJournal::headIndex() const {
