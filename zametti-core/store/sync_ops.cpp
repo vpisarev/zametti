@@ -22,7 +22,12 @@
 
 #include <QDir>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QFileInfo>
+#include <QMutexLocker>
+#include <QSaveFile>
+
+#include <algorithm>
 
 namespace zametti {
 namespace {
@@ -35,6 +40,67 @@ BlobKind kindOfBlob(const QString& name) {
 }
 
 }  // namespace
+
+// --- DIRTY-SET -------------------------------------------------------------
+//
+// Файл `.zametti/dirty` — по имени в строке, дозаписью, БЕЗ fsync (как
+// журнал: дробить пометку на коммиты файловой системы — порча носителя ради
+// кэша). Пометка — подсказка, не истина: лишняя стоит одной проверки хеша,
+// потерянную находит stat-скан после нештатного завершения.
+
+QString ZStorage::dirtyPath() const {
+    return root_ + QStringLiteral("/.zametti/dirty");
+}
+
+void ZStorage::loadDirtyLocked() const {
+    if (dirtyLoaded_) return;
+    dirtyLoaded_ = true;
+    QFile f(dirtyPath());
+    if (!f.open(QIODevice::ReadOnly)) return;
+    for (const QByteArray& line : f.readAll().split('\n')) {
+        const QString name = QString::fromUtf8(line).trimmed();
+        if (!name.isEmpty()) dirty_.insert(name);
+    }
+}
+
+void ZStorage::markDirty(const QString& noteId) {
+    if (noteId.isEmpty()) return;
+    const QMutexLocker locked(&dirtyGate_);
+    loadDirtyLocked();
+    if (dirty_.contains(noteId)) return;
+    dirty_.insert(noteId);
+    QDir().mkpath(root_ + QStringLiteral("/.zametti"));
+    QFile f(dirtyPath());
+    if (f.open(QIODevice::WriteOnly | QIODevice::Append))
+        f.write(noteId.toUtf8() + '\n');
+    else
+        fprintf(stderr, "zametti: cannot mark %s dirty: %s\n", qPrintable(noteId),
+                qPrintable(f.errorString()));
+}
+
+QStringList ZStorage::dirtyIds() const {
+    const QMutexLocker locked(&dirtyGate_);
+    loadDirtyLocked();
+    QStringList out(dirty_.begin(), dirty_.end());
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+void ZStorage::clearDirty(const QStringList& synced) {
+    const QMutexLocker locked(&dirtyGate_);
+    loadDirtyLocked();
+    bool changed = false;
+    for (const QString& name : synced) changed = dirty_.remove(name) || changed;
+    if (!changed) return;
+    QStringList rest(dirty_.begin(), dirty_.end());
+    std::sort(rest.begin(), rest.end());
+    // Пересборка файла — атомарно: обрезанный на половине список пометок
+    // выглядел бы как «всё чисто» для имён из отрезанной части.
+    QSaveFile save(dirtyPath());
+    if (!save.open(QIODevice::WriteOnly)) return;
+    for (const QString& name : rest) save.write(name.toUtf8() + '\n');
+    save.commit();
+}
 
 bool ZStorage::setRemote(const std::shared_ptr<RemoteStore>& remote,
                          const Keyfile& keyfile, QString* error) {

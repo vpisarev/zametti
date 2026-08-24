@@ -119,6 +119,49 @@ void checkAdoptRefusesUnprovable() {
     ZT_TRUE("файл не тронут ни байтом", f.readAll() == before);
 }
 
+// --- 2. dirty-set: пути записи называют тронутое ---------------------------
+
+void checkDirtySetMarksAndPersists() {
+    zt::MiniStore store;
+    {
+        ZStorage s(store.root());
+        QString err;
+        ZT_TRUE("чистое хранилище — пустой dirty-set", s.dirtyIds().isEmpty());
+        // Запись в журнал — одно из двух горл: пометка ложится сама.
+        ZT_TRUE("запись легла",
+                s.appendToJournal(kId, ZJournal::NewRecord::save(note("раз"),
+                                                                 ZJournal::Stamp::at(kNow)), &err));
+        ZT_EQ("тронутая заметка помечена", std::string(kId),
+              s.dirtyIds().join(QLatin1Char(',')).toStdString());
+        // Повторная правка не плодит дубликатов.
+        ZT_TRUE("вторая запись легла",
+                s.appendToJournal(kId, ZJournal::NewRecord::save(note("два"),
+                                                                 ZJournal::Stamp::at(kNow + 1000)), &err));
+        ZT_EQ("пометка одна", num(1), num(s.dirtyIds().size()));
+    }
+    // Пометки переживают перезапуск: другой экземпляр читает тот же файл.
+    {
+        ZStorage s(store.root());
+        ZT_EQ("пометка пережила перезапуск", num(1), num(s.dirtyIds().size()));
+        s.clearDirty({QString::fromLatin1(kId)});
+        ZT_TRUE("после чистки пусто", s.dirtyIds().isEmpty());
+    }
+    {
+        ZStorage s(store.root());
+        ZT_TRUE("чистота пережила перезапуск", s.dirtyIds().isEmpty());
+    }
+}
+
+void checkDirtySetClearsOnlyNamed() {
+    zt::MiniStore store;
+    ZStorage s(store.root());
+    s.markDirty(QStringLiteral("01n6cqevaaaaaa"));
+    s.markDirty(QStringLiteral("01n6cqevbbbbbb"));
+    s.clearDirty({QStringLiteral("01n6cqevaaaaaa"), QStringLiteral("01n6cqevzzzzzz")});
+    ZT_EQ("снята только названная", std::string("01n6cqevbbbbbb"),
+          s.dirtyIds().join(QLatin1Char(',')).toStdString());
+}
+
 }  // namespace
 
 static int ztRunSuite(int argc, char** argv) {
@@ -126,6 +169,8 @@ static int ztRunSuite(int argc, char** argv) {
     (void)argv;
     checkAdoptMergedJournal();
     checkAdoptRefusesUnprovable();
+    checkDirtySetMarksAndPersists();
+    checkDirtySetClearsOnlyNamed();
     return zt::report("sync_engine");
 }
 

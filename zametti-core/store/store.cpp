@@ -52,6 +52,13 @@ bool ZStorage::readFileBytes(const QString& path, std::string& out) {
 }
 
 bool ZStorage::writeFileBytes(const QString& path, const std::string& bytes, QString* error) {
+    // ПОМЕТКА ДО ЗАПИСИ (write-ahead, m17): упали посреди сохранения —
+    // заметка уже в dirty-set и будет выровнена синком одна.
+    const QFileInfo target(path);
+    if (target.suffix() == QStringLiteral("md")) {
+        const QString stem = target.completeBaseName();
+        if (isValidNoteId(toUtf8(stem))) markDirty(stem);
+    }
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly)) {
         if (error != nullptr)

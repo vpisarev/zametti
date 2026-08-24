@@ -39,6 +39,7 @@
 #include <QHash>
 #include <QJsonObject>
 #include <QLockFile>
+#include <QMutex>
 #include <QObject>
 #include <QSet>
 #include <QString>
@@ -626,6 +627,26 @@ public:
     };
     bool pushAll(PushReport* report, QString* error = nullptr);
 
+    // --- DIRTY-SET: кого трогали с последнего синка (m17, сессия 4) ---------
+    //
+    // Выравнивание синка стоит O(изменений), а не O(хранилища), ровно потому,
+    // что пути записи НАЗЫВАЮТ тронутое: пометка ложится в `.zametti/dirty`
+    // (имя строкой, дозаписью) ПЕРЕД записью самих байтов — упали посреди
+    // сохранения, заметка уже в множестве и будет проверена одна. Метят два
+    // горла, через которые проходят все записи: writeFileBytes (файлы заметок)
+    // и appendJournalLocked (журналы; редактор и rewriteNote журналируют
+    // каждую запись). Окно «файл записан, пометка без fsync пропала» закрывает
+    // stat-скан после нештатного завершения.
+    //
+    // Пометка — подсказка, не истина: лишнее имя стоит одной проверки хеша,
+    // потерянное находит stat-скан. Поэтому и ошибок эти методы не возвращают.
+    void markDirty(const QString& noteId);
+    // Отсортировано — прогон обрабатывает множество в детерминированном порядке.
+    QStringList dirtyIds() const;
+    // Снять пометки С ТЕХ, кого прогон честно досинкал, — не «взять всё»:
+    // взятое и потерянное при упавшем прогоне пришлось бы искать сканом.
+    void clearDirty(const QStringList& synced);
+
     // --- ЧИТАТЕЛИ ДЛЯ СИНХРОНИЗАЦИИ (m17) -----------------------------------
     //
     // Байты уезжают в облако зашифрованными, и брать их должен тот, кто
@@ -653,7 +674,8 @@ protected:
     // Файл заметки целиком и разом: QSaveFile пишет во временный рядом и
     // переименовывает поверх — на месте старого либо прежние байты, либо
     // новые, и никогда половина. Тем же способом пишет и редактор.
-    static bool writeFileBytes(const QString& path, const std::string& bytes, QString* error);
+    // Не static с m17: перед записью файл заметки метится в dirty-set.
+    bool writeFileBytes(const QString& path, const std::string& bytes, QString* error);
     // Ссылка локальная? Схемы, абсолютные пути и якоря — нет.
     static bool isLocalRelative(const QString& href);
 
@@ -701,11 +723,20 @@ protected:
                               ZJournal::CompressOutcome* outcome, QString* error);
     bool adoptMergedJournalLocked(const QString& path, const ZJournal& merged, QString* error);
 
+    // Файл пометок dirty-set; сам класс и грузит его, и дописывает.
+    QString dirtyPath() const;
+    void loadDirtyLocked() const;
+
     int quiet_ = 0;
     bool pending_ = false;
     std::shared_ptr<QFileSystemWatcher> watcher_;
     QTimer settle_;
     QSet<QString> names_;
+
+    // --- dirty-set: своя калитка, не gate() журналов -------------------------
+    mutable QMutex dirtyGate_;
+    mutable QSet<QString> dirty_;
+    mutable bool dirtyLoaded_ = false;
 };
 
 }  // namespace zametti

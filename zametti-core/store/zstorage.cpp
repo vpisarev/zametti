@@ -633,6 +633,12 @@ bool ZStorage::dropVoidedLocked(const QString& path, const ZJournal& jrn,
 bool ZStorage::appendJournalLocked(const QString& path, const ZJournal::NewRecord& what, QString* error) {
     assertLocked();
 
+    // ПОМЕТКА В DIRTY-SET — здесь, а не только в writeFileBytes: журналируется
+    // каждая запись (редактор, rewriteNote, архив), и это второе горло, через
+    // которое проходит всё тронутое. Сама пометка под своей калиткой, не под
+    // gate(), — порядок взятия всегда один (gate → dirtyGate), тупика нет.
+    markDirty(QFileInfo(path).completeBaseName());
+
     // Что уже лежит в журнале. Читается только последнее поколение — память и
     // время ограничены им, а не длиной журнала.
     const auto reread = [&](ZJournal* journal, bool* exists) {
