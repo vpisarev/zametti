@@ -7,7 +7,6 @@
 // хранилища всё пусто и ничего не падает.
 
 #include "zstorage.h"
-#include "store.h"
 #include "journal.h"
 #include "exif.h"
 #include "jxl_encoder.h"
@@ -42,10 +41,13 @@ void checkCatalog() {
     QTemporaryDir home;
     const QString root = home.path() + QStringLiteral("/store");
     QString error;
-    ZT_TRUE("хранилище заведено: " + s(error), zametti::store::initStore(root, &error));
-    const QString folderPath = zametti::store::newNote(root, QString(), &error);
-    ZT_TRUE("папка создана: " + s(error), !folderPath.isEmpty());
-    const QString folderId = ZStorage::idOfPath(folderPath);
+    ZT_TRUE("хранилище заведено: " + s(error), ZStorage(root).init(&error));
+    // Заметки рождаются глаголом хранилища; шапку папки ниже правим руками,
+    // чтобы каталог читал ровно то, что лежит на диске.
+    ZStorage maker(root);
+    const QString folderId = maker.createNote(QString(), false, &error);
+    ZT_TRUE("папка создана: " + s(error), !folderId.isEmpty());
+    const QString folderPath = maker.pathOf(folderId);
     {
         // Папка — заметка с role: folder и заголовком.
         QFile f(folderPath);
@@ -56,9 +58,9 @@ void checkCatalog() {
         f.resize(0);
         f.write(text.toUtf8());
     }
-    const QString notePath = zametti::store::newNote(root, folderId, &error);
-    ZT_TRUE("заметка в папке создана: " + s(error), !notePath.isEmpty());
-    const QString noteId = ZStorage::idOfPath(notePath);
+    const QString noteId = maker.createNote(folderId, false, &error);
+    ZT_TRUE("заметка в папке создана: " + s(error), !noteId.isEmpty());
+    const QString notePath = maker.pathOf(noteId);
     {
         QFile f(notePath);
         ZT_TRUE("заметка открыта", f.open(QIODevice::Append));
@@ -152,7 +154,7 @@ void checkOperations() {
     QTemporaryDir home;
     const QString root = home.path() + QStringLiteral("/store");
     QString error;
-    ZT_TRUE("хранилище заведено", zametti::store::initStore(root, &error));
+    ZT_TRUE("хранилище заведено", ZStorage(root).init(&error));
     ZStorage storage(root);
     storage.reload();
 
@@ -230,7 +232,7 @@ void checkDeleteCascade() {
     QTemporaryDir home;
     const QString root = home.path() + QStringLiteral("/store");
     QString error;
-    ZT_TRUE("хранилище заведено", zametti::store::initStore(root, &error));
+    ZT_TRUE("хранилище заведено", ZStorage(root).init(&error));
     ZStorage storage(root);
     storage.reload();
 
@@ -269,7 +271,7 @@ void checkAttachmentBurial() {
     QTemporaryDir home;
     const QString root = home.path() + QStringLiteral("/store");
     QString error;
-    ZT_TRUE("хранилище заведено", zametti::store::initStore(root, &error));
+    ZT_TRUE("хранилище заведено", ZStorage(root).init(&error));
     ZStorage storage(root);
     storage.reload();
 
@@ -329,7 +331,7 @@ void checkAttachmentBurial() {
     const QByteArray was = bytes;
     QString why;
     ZT_TRUE("повторные похороны молчат",
-            zametti::store::retireAttachmentFile(root, attachment, limits, &why));
+            storage.retireAttachment(attachment, limits, &why));
     QFile again(buried);
     ZT_TRUE("файл читается", again.open(QIODevice::ReadOnly));
     ZT_TRUE("и не изменился ни байтом", again.readAll() == was);
@@ -343,7 +345,7 @@ void checkSharedAttachmentSurvives() {
     QTemporaryDir home;
     const QString root = home.path() + QStringLiteral("/store");
     QString error;
-    ZT_TRUE("хранилище заведено", zametti::store::initStore(root, &error));
+    ZT_TRUE("хранилище заведено", ZStorage(root).init(&error));
     ZStorage storage(root);
     storage.reload();
 
@@ -411,7 +413,7 @@ void checkSignals() {
     QTemporaryDir home;
     const QString root = home.path() + QStringLiteral("/store");
     QString error;
-    ZT_TRUE("хранилище заведено", zametti::store::initStore(root, &error));
+    ZT_TRUE("хранилище заведено", ZStorage(root).init(&error));
     ZStorage storage(root);
     int catalog = 0;
     QStringList rows;

@@ -9,7 +9,7 @@
 #include "note_list.h"
 #include "pieces.h"
 #include "note_tree.h"
-#include "store.h"
+#include "zstorage.h"
 
 #include "test_util.h"
 
@@ -75,8 +75,9 @@ void checkImportGoesToChosenFolder() {
                                         QStringLiteral("# Привезённая\n\nТекст.\n"),
                                         QDate(2024, 5, 5));
     QString error;
-    const QString made = zametti::store::importNote(g_root, QStringLiteral("00000000000001"),
-                                                    source, &error);
+    zametti::ZStorage storage(g_root);
+    const QString made =
+        storage.pathOf(storage.importNote(QStringLiteral("00000000000001"), source, &error));
     ZT_TRUE("импорт прошёл: " + s(error), !made.isEmpty());
     if (made.isEmpty()) return;
 
@@ -116,7 +117,9 @@ void checkImportIsVisibleOnTop() {
                                         QStringLiteral("# Старая привезённая\n"),
                                         QDate(2023, 1, 1));
     QString error;
-    const QString made = zametti::store::importNote(root, QString(), source, &error);
+    zametti::ZStorage storage(root);
+    const QString madeId = storage.importNote(QString(), source, &error);
+    const QString made = madeId.isEmpty() ? QString() : storage.pathOf(madeId);
     ZT_TRUE("импорт в корень прошёл: " + s(error), !made.isEmpty());
     if (made.isEmpty()) return;
 

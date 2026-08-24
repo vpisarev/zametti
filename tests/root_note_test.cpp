@@ -3,7 +3,6 @@
 // Корень — НАСТОЯЩАЯ ЗАМЕТКА: её заголовок это имя хранилища, она папка (чтобы
 // правила дерева применялись без оговорок), и снести её нельзя ничем.
 
-#include "store.h"
 #include "znote.h"
 #include "zstorage.h"
 
@@ -28,7 +27,7 @@ std::string s(const QString& v) { return v.toStdString(); }
 struct Fixture {
     QTemporaryDir dir;
     QString root = dir.filePath(QStringLiteral("Мои заметки"));
-    ZStorage storage{(zametti::store::initStore(root, nullptr), root)};
+    ZStorage storage{(ZStorage(root).init(nullptr), root)};
 };
 
 // --- шапка: role: root ------------------------------------------------------

@@ -12,13 +12,9 @@
 // проверки: файл после архивации отличается от исходного ровно этой строкой,
 // голова журнала равна файлу, а возврат не зависит от журнала вовсе.
 
-#include "archive.h"
 #include "zstorage.h"
-#include "store.h"
 #include "pieces.h"
-#include "lost_found.h"
 #include "journal.h"
-#include "times.h"
 
 #include "test_util.h"
 
@@ -32,9 +28,6 @@
 
 #include <string>
 
-using zametti::store::archiveNote;
-using zametti::store::migrateTrashToArchive;
-using zametti::store::restoreNote;
 
 namespace {
 
@@ -56,6 +49,34 @@ void freshStore() {
     QDir(g_root).removeRecursively();
     QDir().mkpath(g_root + QStringLiteral("/.zametti"));
     QDir().mkpath(g_root + QStringLiteral("/history"));
+}
+
+// В архив, обратно и насовсем — ГЛАГОЛАМИ хранилища, теми же, что у окна и
+// утилиты; одиночных шагов снаружи нет. Каталог перечитывается каждый раз:
+// файлы в этом наборе пишутся руками.
+bool archiveNote(const QString& root, const QString& id, const zametti::ZJournal::Rules& rules,
+                 QString* error) {
+    zametti::ZStorage storage(root);
+    storage.reload();
+    QStringList failed;
+    const bool ok = storage.archive(id, rules, &failed);
+    if (error != nullptr) *error = failed.join(QLatin1Char('\n'));
+    return ok;
+}
+
+bool restoreNote(const QString& root, const QString& id, QString* error) {
+    zametti::ZStorage storage(root);
+    storage.reload();
+    QStringList failed;
+    const bool ok = storage.restore(id, &failed);
+    if (error != nullptr) *error = failed.join(QLatin1Char('\n'));
+    return ok;
+}
+
+bool removeNote(const QString& root, const QString& id, QString* error) {
+    zametti::ZStorage storage(root);
+    storage.reload();
+    return storage.remove(id, zametti::ImportLimits{}, error);
 }
 
 QString notePath(const QString& id) {
@@ -204,8 +225,9 @@ void checkRestore() {
     ZT_TRUE("возврат оставил вешку в истории (" + std::to_string(records(id)) + ")",
             records(id) == afterArchive + 1);
 
-    // Повторный возврат — не ошибка: заметка уже дома.
-    ZT_TRUE("повтор возврата молчит", restoreNote(g_root, id, &error));
+    // Повторный возврат: заметка уже дома, возвращать нечего — глагол отвечает
+    // «нет», а файла не трогает.
+    ZT_TRUE("повтор возврата отвечает «не в архиве»", !restoreNote(g_root, id, &error));
     ZT_EQ("и файл не изменился", now, read(id));
 }
 
@@ -246,7 +268,7 @@ void checkForget() {
     ZT_TRUE("журнал есть", QFile::exists(log));
     const qint64 fatLog = QFileInfo(log).size();
 
-    ZT_TRUE("удалили насовсем", zametti::store::deleteNoteFile(g_root, id, &error));
+    ZT_TRUE("удалили насовсем", removeNote(g_root, id, &error));
     ZT_TRUE("файла нет", !QFile::exists(notePath(id)));
 
     // ЖУРНАЛ ПЕРЕЖИВАЕТ УДАЛЕНИЕ ВСЕГДА. Он единственный носитель самого факта:
@@ -337,7 +359,7 @@ void checkUnfoldStubs() {
     write(twiceSaved, std::string(stubBytes.constData(), size_t(stubBytes.size())));
 
     QStringList leftAlone;
-    const int done = zametti::store::unfoldArchivedStubs(g_root, &leftAlone, &error);
+    const int done = zametti::ZStorage(g_root).unfoldArchivedStubs(&leftAlone, &error);
     ZT_EQ("развёрнуты две", num(2), num(done));
     ZT_TRUE("и та, у которой стаб лежал головой журнала, тоже: " + read(twiceSaved),
             read(twiceSaved).find("Длинный текст") != std::string::npos);
@@ -362,7 +384,7 @@ void checkUnfoldStubs() {
     const std::string after = read(id);
     QStringList again;
     ZT_EQ("второй заход разворачивает ноль", num(0),
-          num(zametti::store::unfoldArchivedStubs(g_root, &again, &error)));
+          num(zametti::ZStorage(g_root).unfoldArchivedStubs(&again, &error)));
     ZT_EQ("и файл не изменился", after, read(id));
 }
 
@@ -373,14 +395,14 @@ void checkUnfoldStubs() {
 // вернуть, и вот этим она и возвращается — В АРХИВ, как и лежала.
 void checkResurrect() {
     freshStore();
-    const QString id = QStringLiteral("01ff0000resur0");
+    const QString id = QStringLiteral("01ff0000resvr0");
     write(id, kBody);
     QString error;
     ZT_TRUE("архивация прошла", archiveNote(g_root, id, rules(), &error));
-    ZT_TRUE("удалили насовсем", zametti::store::deleteNoteFile(g_root, id, &error));
+    ZT_TRUE("удалили насовсем", removeNote(g_root, id, &error));
     ZT_TRUE("файла нет", !QFile::exists(notePath(id)));
 
-    ZT_TRUE("подняли: " + s(error), zametti::store::resurrectNote(g_root, id, &error));
+    ZT_TRUE("подняли: " + s(error), zametti::ZStorage(g_root).resurrect(id, &error));
     const std::string back = read(id);
     ZT_TRUE("файл на месте", !back.empty());
     ZT_TRUE("тело вернулось", back.find("Длинный текст") != std::string::npos);
@@ -393,7 +415,7 @@ void checkResurrect() {
             read.at(read.headIndex()).kind() == zametti::ZJournal::Kind::Restore);
 
     // Повтор — честный отказ: заметка на месте, перетирать её нечем.
-    ZT_TRUE("повторный подъём отказывает", !zametti::store::resurrectNote(g_root, id, &error));
+    ZT_TRUE("повторный подъём отказывает", !zametti::ZStorage(g_root).resurrect(id, &error));
     ZT_TRUE("и объясняет почему", !error.isEmpty());
 
     // Живая заметка не поднимается: надгробия у неё нет.
@@ -401,7 +423,7 @@ void checkResurrect() {
     write(alive, kBody);
     QFile::remove(notePath(alive));   // файл унесли мимо программы, надгробия нет
     ZT_TRUE("без надгробия подъём отказывает",
-            !zametti::store::resurrectNote(g_root, alive, &error));
+            !zametti::ZStorage(g_root).resurrect(alive, &error));
 }
 
 // --- старая корзина --------------------------------------------------------
@@ -420,7 +442,7 @@ void checkTrashMigration() {
           "modified: 2020-02-02T00:00:00+03:00\n-->\n\n# Выброшенная\n\nТело цело.\n");
 
     QString error;
-    ZT_TRUE("переехала одна заметка", migrateTrashToArchive(g_root, &error) == 1);
+    ZT_TRUE("переехала одна заметка", zametti::ZStorage(g_root).migrateTrashToArchive(&error) == 1);
     const std::string moved = read(QStringLiteral("0000000000000v"));
     ZT_TRUE("родитель вернулся прежний",
             moved.find("parent: 0000000000000p") != std::string::npos);
@@ -437,7 +459,8 @@ void checkTrashMigration() {
 
     // Идемпотентность: второй проход не делает ничего.
     const std::string after = read(QStringLiteral("0000000000000v"));
-    ZT_TRUE("второй проход не находит корзины", migrateTrashToArchive(g_root, &error) == 0);
+    ZT_TRUE("второй проход не находит корзины",
+            zametti::ZStorage(g_root).migrateTrashToArchive(&error) == 0);
     ZT_EQ("и ничего не переписывает", after, read(QStringLiteral("0000000000000v")));
 }
 
@@ -472,13 +495,13 @@ void checkLostFound() {
 
     QString error;
     ZT_TRUE("прописан ровно один найдёныш: " + s(error),
-            zametti::store::fileOrphans(g_root, &error) == 1);
+            zametti::ZStorage(g_root).fileOrphans(&error) == 1);
 
     // Само бюро: заводится только под первую находку, и это папка.
     QString bureau;
     for (const QFileInfo& info : QDir(g_root).entryInfoList({QStringLiteral("*.md")}, QDir::Files)) {
         const zametti::ZNote doc = noteOf(read(info.completeBaseName()));
-        if (doc.role().toStdString() == zametti::store::kLostRole) bureau = info.completeBaseName();
+        if (doc.role().toStdString() == zametti::ZStorage::kLostRole) bureau = info.completeBaseName();
     }
     ZT_TRUE("бюро заведено", !bureau.isEmpty());
     ZT_TRUE("и это папка с заголовком",
@@ -498,7 +521,7 @@ void checkLostFound() {
     const std::string afterFirst = read(QStringLiteral("01bb22222222bb"));
     const int filesBefore =
         int(QDir(g_root).entryInfoList({QStringLiteral("*.md")}, QDir::Files).size());
-    ZT_TRUE("второй проход не находит сирот", zametti::store::fileOrphans(g_root, &error) == 0);
+    ZT_TRUE("второй проход не находит сирот", zametti::ZStorage(g_root).fileOrphans(&error) == 0);
     ZT_EQ("и ничего не переписывает", afterFirst, read(QStringLiteral("01bb22222222bb")));
     ZT_TRUE("и второго бюро не заводит",
             int(QDir(g_root).entryInfoList({QStringLiteral("*.md")}, QDir::Files).size()) ==
@@ -509,7 +532,7 @@ void checkLostFound() {
     zametti::ZNote doc = noteOf(moved);
     setHead(doc, "parent", "0000000000000p");
     write(QStringLiteral("01bb22222222bb"), doc.toMarkdown());
-    ZT_TRUE("после переноса сирот снова нет", zametti::store::fileOrphans(g_root, &error) == 0);
+    ZT_TRUE("после переноса сирот снова нет", zametti::ZStorage(g_root).fileOrphans(&error) == 0);
     ZT_TRUE("и заметка осталась там, куда её перенесли",
             read(QStringLiteral("01bb22222222bb")).find("parent: 0000000000000p") !=
                 std::string::npos);
@@ -527,7 +550,7 @@ void checkCleanStoreIsNotTouched() {
     const int files = int(QDir(g_root).entryInfoList({QStringLiteral("*.md")}, QDir::Files).size());
 
     QString error;
-    ZT_TRUE("сирот нет", zametti::store::fileOrphans(g_root, &error) == 0);
+    ZT_TRUE("сирот нет", zametti::ZStorage(g_root).fileOrphans(&error) == 0);
     ZT_EQ("файл не тронут", was, read(QStringLiteral("01cc33333333cc")));
     ZT_TRUE("и бюро не заведено",
             int(QDir(g_root).entryInfoList({QStringLiteral("*.md")}, QDir::Files).size()) == files);

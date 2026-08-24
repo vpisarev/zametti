@@ -68,12 +68,14 @@ Note for mac users: read `Cmd` when you see `Ctrl`.
 ## Settings
 
 There are several types of user settings, stored in different places:
-- `~/.config/zametti/config.json` - this is the file where you can configure how zametti looks and partially how it works. For the program it's a read-only file, only you edit it. To edit it, press `Settings` button on the toolbar or edit that file directly. It's not convenient to start with an empty file, so you can run `zametti --dump-config` to get the initial fully-commented-off config, in which you can then uncomment and edit the sections and items that you want to alter.
+- `~/.config/zametti/config.json` - this is the file where you can configure how zametti looks and partially how it works. For the program it's a read-only file, only you edit it. To edit it, press `Settings` button on the toolbar or edit that file directly. It's inconvenient to start with an empty file, so you can run `zametti --dump-config` to get the initial fully-commented-off config, in which you can then uncomment and edit the sections and items that you want to alter.
 - `~/.config/zametti/state.json` - this is the inter-session state that you want to preserve:
   - windows geometry. Some window managers don't let us to store the absolute position, they prefer to place windows as they wish. But the size is stored and then restored.
   - zoom factor: press `Ctrl+=`, `Ctrl+-` to increase/decrease scale of the edited note view.
   - name of the recently viewed notes and cursor positions there.
   - etc.
+- password for your storage is not stored as-is, but its Argon2id()-transformed representation is stored in the keychain and one of the components is stored in the cloud for verification. If you loose it, don't worry, just set the new password and re-upload your storage from one of your computers to the cloud again. That is, your notes will be lost only if you forgot the password and you erased all your local copies of the storage.
+- password for your cloud storage is normally stored in your system keychain service for automatic synchronization without having to enter password each time. If you forgot one, also don't panic, generate new password with your WebDav provider and update your keychain; no need to re-upload storage in this case.
 
 ## Running
 

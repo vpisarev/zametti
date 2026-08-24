@@ -10,7 +10,7 @@
 #include "editor_widget.h"
 #include "note_list.h"
 #include "note_tree.h"
-#include "store.h"
+#include "zstorage.h"
 
 #include "test_util.h"
 
@@ -36,6 +36,13 @@ namespace {
 std::string s(const QString& q) { return q.toStdString(); }
 
 QString g_root;
+
+// Новая заметка тем же глаголом, что Ctrl+N; наборам нужен путь файла.
+QString newNotePath(const QString& root, QString* error) {
+    zametti::ZStorage storage(root);
+    const QString id = storage.createNote(QString(), false, error);
+    return id.isEmpty() ? QString() : storage.pathOf(id);
+}
 
 void writeNote(const QString& id, const QString& body) {
     QFile f(g_root + QLatin1Char('/') + id + QStringLiteral(".md"));
@@ -83,7 +90,7 @@ void checkExistingNote() {
 }
 
 // Заметка, созданная в этом же запуске штатным путём (Ctrl+N и кнопка тулбара
-// зовут именно store::newNote). Ради неё набор и написан.
+// зовут именно ZStorage::createNote). Ради неё набор и написан.
 void checkFreshNote() {
     NoteTreeModel model(g_root);
     model.setFoldersOnly(true);
@@ -91,7 +98,7 @@ void checkFreshNote() {
     wire(model, list);
 
     QString error;
-    const QString made = zametti::store::newNote(g_root, QString(), &error);
+    const QString made = newNotePath(g_root, &error);
     ZT_TRUE("новая заметка создана: " + s(error), !made.isEmpty());
     if (made.isEmpty()) return;
 
@@ -141,7 +148,7 @@ void checkFreshNoteThroughEditor() {
     wire(model, list);
 
     QString error;
-    const QString made = zametti::store::newNote(g_root, QString(), &error);
+    const QString made = newNotePath(g_root, &error);
     ZT_TRUE("вторая новая заметка создана: " + s(error), !made.isEmpty());
     if (made.isEmpty()) return;
     model.refresh();
@@ -195,7 +202,7 @@ void checkTitleSurvivesPathMismatch() {
     wire(model, list);
 
     QString error;
-    const QString made = zametti::store::newNote(real, QString(), &error);
+    const QString made = newNotePath(real, &error);
     ZT_TRUE("заметка создана по настоящему пути: " + s(error), !made.isEmpty());
     if (made.isEmpty()) return;
     model.refresh();
@@ -277,7 +284,7 @@ void checkTrailingSlashInRoot() {
     wire(model, list);
 
     QString error;
-    const QString made = zametti::store::newNote(model.nodePath(QModelIndex()), QString(), &error);
+    const QString made = newNotePath(model.nodePath(QModelIndex()), &error);
     ZT_TRUE("заметка создана: " + s(error), !made.isEmpty());
     if (made.isEmpty()) return;
     ZT_TRUE("в пути новой заметки нет двойной черты: " + s(made),

@@ -13,7 +13,7 @@
 #include "document_builder.h"
 #include "pieces.h"
 #include "document_saver.h"
-#include "store.h"
+#include "zstorage.h"
 #include "editor_ops.h"
 #include "test_util.h"
 
@@ -89,7 +89,9 @@ void checkImport() {
     const QString store = QDir(g_dir).filePath(QStringLiteral("хранилище"));
     QDir().mkpath(store + QStringLiteral("/.zametti"));
     QString error;
-    const QString made = zametti::store::importNote(store, QString(), from, &error);
+    zametti::ZStorage storage(store);
+    const QString id = storage.importNote(QString(), from, &error);
+    const QString made = id.isEmpty() ? QString() : storage.pathOf(id);
     ZT_TRUE("заметка ввезена: " + error.toStdString(), !made.isEmpty());
     if (made.isEmpty()) return;
 

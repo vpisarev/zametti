@@ -7,7 +7,6 @@
 #include "zstorage.h"
 #include "pieces.h"
 #include "journal.h"
-#include "store.h"
 
 #include "test_util.h"
 
@@ -44,8 +43,35 @@ std::string readAll(const QString& path) {
     return std::string(b.constData(), size_t(b.size()));
 }
 
+// Набор ходит теми же глаголами, что программа и утилита; помощники ниже
+// только переводят их в форму «корень + путь файла», в которой написан набор.
+bool initStore(const QString& dir, QString* error) { return ZStorage(dir).init(error); }
+
+QString newNote(const QString& root, const QString& parentId, QString* error) {
+    ZStorage storage(root);
+    const QString id = storage.createNote(parentId, false, error);
+    return id.isEmpty() ? QString() : storage.pathOf(id);
+}
+
+QString importNote(const QString& root, const QString& parentId, const QString& source,
+                   QString* error) {
+    ZStorage storage(root);
+    const QString id = storage.importNote(parentId, source, error);
+    return id.isEmpty() ? QString() : storage.pathOf(id);
+}
+
+bool removeNote(const QString& root, const QString& id, QString* error) {
+    ZStorage storage(root);
+    storage.reload();
+    return storage.remove(id, zametti::ImportLimits{}, error);
+}
+
+bool verifyStore(const QString& root, ZStorage::Report& report) {
+    return ZStorage(root).verify(report);
+}
+
 // id заметки по строке отчёта "rel → id".
-QString idFor(const store::Report& report, const QString& rel) {
+QString idFor(const ZStorage::Report& report, const QString& rel) {
     for (const QString& line : report.lines) {
         if (!line.startsWith(rel + QStringLiteral(" → "))) continue;
         QString id = line.mid(rel.size() + 3);
@@ -67,21 +93,21 @@ static int ztRunSuite(int argc, char** argv) {
     // --- init ---------------------------------------------------------------
     {
         QString error;
-        ZT_TRUE("init на свежем каталоге", store::initStore(g_base + "/пустое", &error));
+        ZT_TRUE("init на свежем каталоге", initStore(g_base + "/пустое", &error));
         ZT_TRUE("появился .zametti", QDir(g_base + "/пустое/.zametti").exists());
         ZT_TRUE("появился .rescue", QDir(g_base + "/пустое/.rescue").exists());
         ZT_TRUE("появился history", QDir(g_base + "/пустое/history").exists());
         write(QStringLiteral("занятое/мусор.txt"), "x");
         ZT_TRUE("init в непустом отказывает",
-                !store::initStore(g_base + "/занятое", &error) && !error.isEmpty());
+                !initStore(g_base + "/занятое", &error) && !error.isEmpty());
     }
 
     // --- удаление заметки: надгробие остаётся навсегда ----------------------
     {
         const QString root = g_base + QStringLiteral("/удаление");
         QString error;
-        ZT_TRUE("хранилище заведено", store::initStore(root, &error));
-        const QString path = store::newNote(root, QString(), &error);
+        ZT_TRUE("хранилище заведено", initStore(root, &error));
+        const QString path = newNote(root, QString(), &error);
         const QString noteId = QFileInfo(path).completeBaseName();
         {
             // Свежая заметка — наша с первого байта: версия формата стоит
@@ -99,7 +125,7 @@ static int ztRunSuite(int argc, char** argv) {
         ZT_TRUE("второй слепок",
                 history.appendToJournal(noteId, zametti::ZJournal::NewRecord::save(QByteArray("# заметка\n\nраз\nдва\n"), ZJournal::Stamp::at(1'700'000'060'000LL)), &error));
 
-        ZT_TRUE("заметка удалена", store::deleteNoteFile(root, noteId, &error));
+        ZT_TRUE("заметка удалена", removeNote(root, noteId, &error));
         ZT_EQ("и без жалоб", std::string(), error.toStdString());
         ZT_TRUE("файла заметки больше нет", !QFileInfo::exists(path));
 
@@ -128,7 +154,7 @@ static int ztRunSuite(int argc, char** argv) {
               std::string(last.constData(), size_t(last.size())));
 
         ZT_TRUE("удалять несуществующую нельзя",
-                !store::deleteNoteFile(root, QStringLiteral("нет-такой"), &error));
+                !removeNote(root, QStringLiteral("нет-такой"), &error));
     }
 
     // --- verify: журналы ----------------------------------------------------
@@ -142,8 +168,8 @@ static int ztRunSuite(int argc, char** argv) {
     {
         const QString root = g_base + QStringLiteral("/проверка-журналов");
         QString error;
-        ZT_TRUE("хранилище заведено", store::initStore(root, &error));
-        const QString path = store::newNote(root, QString(), &error);
+        ZT_TRUE("хранилище заведено", initStore(root, &error));
+        const QString path = newNote(root, QString(), &error);
         const QString noteId = QFileInfo(path).completeBaseName();
 
         // Вложение, на которое ссылается ТОЛЬКО прошлое: в живой заметке
@@ -168,8 +194,8 @@ static int ztRunSuite(int argc, char** argv) {
             f.write(withoutPicture);
         }
 
-        store::Report report;
-        const bool ok = store::verifyStore(root, report);
+        ZStorage::Report report;
+        const bool ok = verifyStore(root, report);
         ZT_TRUE("проверка проходит", ok);
         const QString all = report.lines.join(QLatin1Char('\n'));
         ZT_TRUE("журналы посчитаны", all.contains(QStringLiteral("journals: 1")));
@@ -185,8 +211,8 @@ static int ztRunSuite(int argc, char** argv) {
             f.seek(0);
             f.write(blob);
         }
-        store::Report broken;
-        ZT_TRUE("проверка видит порчу в журнале", !store::verifyStore(root, broken));
+        ZStorage::Report broken;
+        ZT_TRUE("проверка видит порчу в журнале", !verifyStore(root, broken));
         ZT_TRUE("и называет журнал",
                 broken.lines.join(QLatin1Char('\n')).contains(QStringLiteral("journal")));
     }
@@ -200,7 +226,7 @@ static int ztRunSuite(int argc, char** argv) {
     {
         const QString root = g_base + QStringLiteral("/каскад");
         QString error;
-        ZT_TRUE("хранилище заведено", store::initStore(root, &error));
+        ZT_TRUE("хранилище заведено", initStore(root, &error));
 
         const QString shared = QStringLiteral("01n6cqevh7bbf1.webp");
         const QString lonely = QStringLiteral("01n6cqevh7bbf2.webp");
@@ -230,37 +256,37 @@ static int ztRunSuite(int argc, char** argv) {
 
         // Очищаем ТОЛЬКО первую: общая картинка остаётся (её держит вторая), а
         // одинокая уходит.
-        QStringList doomed =
-            store::attachmentsLeavingWith(root, {QStringLiteral("01n6cqevaaaa01")});
+        const ZStorage storage(root);
+        QStringList doomed = storage.attachmentsLeavingWith({QStringLiteral("01n6cqevaaaa01")});
         ZT_EQ("с первой заметкой уходит одна картинка", std::string("1"),
               std::to_string(doomed.size()));
         ZT_TRUE("и это её собственная", doomed.contains(lonely));
         ZT_TRUE("общая остаётся: её держит вторая заметка", !doomed.contains(shared));
 
         // Очищаем обе — общая уходит следом.
-        doomed = store::attachmentsLeavingWith(
-            root, {QStringLiteral("01n6cqevaaaa01"), QStringLiteral("01n6cqevaaaa02")});
+        doomed = storage.attachmentsLeavingWith(
+            {QStringLiteral("01n6cqevaaaa01"), QStringLiteral("01n6cqevaaaa02")});
         ZT_TRUE("вместе с обеими уходит и общая", doomed.contains(shared));
         ZT_TRUE("и одинокая", doomed.contains(lonely));
 
         // Ложное срабатывание: id текстом в кодовом блоке ЗАЩИЩАЕТ файл.
-        doomed = store::attachmentsLeavingWith(root, {QStringLiteral("01n6cqevaaaa04")});
+        doomed = storage.attachmentsLeavingWith({QStringLiteral("01n6cqevaaaa04")});
         ZT_TRUE("id, упомянутый текстом в чужой заметке, спасает картинку",
                 !doomed.contains(mentioned));
 
         // Удаление файла вложения — в мусорку ОС, как и заметки.
-        ZT_TRUE("вложение удаляется", store::deleteAttachmentFile(root, lonely, &error));
+        ZStorage remover(root);
+        ZT_TRUE("вложение удаляется", remover.deleteAttachmentFile(lonely, &error));
         ZT_TRUE("и файла больше нет",
                 !QFileInfo::exists(root + QLatin1Char('/') + lonely));
-        ZT_TRUE("повторное удаление не беда",
-                store::deleteAttachmentFile(root, lonely, &error));
+        ZT_TRUE("повторное удаление не беда", remover.deleteAttachmentFile(lonely, &error));
     }
 
     // --- verify: три категории вложений ---------------------------------------
     {
         const QString root = g_base + QStringLiteral("/категории");
         QString error;
-        ZT_TRUE("хранилище заведено", store::initStore(root, &error));
+        ZT_TRUE("хранилище заведено", initStore(root, &error));
         const QString alive = QStringLiteral("01n6cqevh7bbc1.webp");
         const QString inTrash = QStringLiteral("01n6cqevh7bbc2.webp");
         const QString orphan = QStringLiteral("01n6cqevh7bbc3.webp");
@@ -283,8 +309,8 @@ static int ztRunSuite(int argc, char** argv) {
                   .arg(trashId, inTrash)
                   .toUtf8());
 
-        store::Report v;
-        ZT_TRUE("проверка проходит", store::verifyStore(root, v));
+        ZStorage::Report v;
+        ZT_TRUE("проверка проходит", verifyStore(root, v));
         const QString all = v.lines.join(QLatin1Char('\n'));
         ZT_TRUE("живая картинка молчит",
                 !all.contains(QStringLiteral("orphan attachment: ") + alive) &&
@@ -303,7 +329,7 @@ static int ztRunSuite(int argc, char** argv) {
     {
         const QString root = g_base + QStringLiteral("/следуют");
         QString error;
-        ZT_TRUE("хранилище заведено", store::initStore(root, &error));
+        ZT_TRUE("хранилище заведено", initStore(root, &error));
         const QString picture = QStringLiteral("01n6cqevh7bbd1.webp");
         const QString file = write(QStringLiteral("следуют/") + picture, "не картинка, но файл");
         const QString trashId = QStringLiteral("01n6cqevcccc00");
@@ -326,21 +352,21 @@ static int ztRunSuite(int argc, char** argv) {
         const QDateTime touched = QFileInfo(file).lastModified();
         const qint64 size = QFileInfo(file).size();
 
-        store::Report live;
-        ZT_TRUE("проверка проходит", store::verifyStore(root, live));
+        ZStorage::Report live;
+        ZT_TRUE("проверка проходит", verifyStore(root, live));
         ZT_TRUE("у живой заметки картинка живая",
                 !live.lines.join(QLatin1Char('\n')).contains(QStringLiteral("only in archive")));
 
         writeNote(trashId);   // «в корзину» — это правка одной строки меты
-        store::Report trashed;
-        ZT_TRUE("проверка проходит и с корзиной", store::verifyStore(root, trashed));
+        ZStorage::Report trashed;
+        ZT_TRUE("проверка проходит и с корзиной", verifyStore(root, trashed));
         ZT_TRUE("картинка уехала в корзину вместе с заметкой — сама",
                 trashed.lines.join(QLatin1Char('\n'))
                     .contains(QStringLiteral("attachment only in archive: ") + picture));
 
         writeNote(QString());   // «восстановить» — та же правка обратно
-        store::Report back;
-        ZT_TRUE("проверка проходит после возврата", store::verifyStore(root, back));
+        ZStorage::Report back;
+        ZT_TRUE("проверка проходит после возврата", verifyStore(root, back));
         ZT_TRUE("и картинка вернулась вместе с заметкой",
                 !back.lines.join(QLatin1Char('\n')).contains(QStringLiteral("only in archive")));
 
@@ -357,7 +383,7 @@ static int ztRunSuite(int argc, char** argv) {
     {
         const QString root = g_base + QStringLiteral("/verify-не-пишет");
         QString error;
-        ZT_TRUE("хранилище заведено", store::initStore(root, &error));
+        ZT_TRUE("хранилище заведено", initStore(root, &error));
         ZStorage history(root);
         const QByteArray text = "<!-- zametti\ncreated: 2023-01-01T00:00:00Z\n-->\n\n# раз\n";
         const QByteArray same = "<!-- zametti\ncreated: 2023-01-01T00:00:00Z\n"
@@ -365,7 +391,7 @@ static int ztRunSuite(int argc, char** argv) {
 
         QStringList ids;
         for (int i = 0; i < 2; ++i) {
-            const QString path = store::newNote(root, QString(), &error);
+            const QString path = newNote(root, QString(), &error);
             const QString id = QFileInfo(path).completeBaseName();
             ids << id;
             history.appendToJournal(id, zametti::ZJournal::NewRecord::save(text, zametti::ZJournal::Stamp::at(1'700'000'000'000LL)), &error);
@@ -396,8 +422,8 @@ static int ztRunSuite(int argc, char** argv) {
             before.insert(id, Seen{file.readAll(), QFileInfo(history.journalPath(id)).lastModified()});
         }
 
-        store::Report v;
-        ZT_TRUE("проверка проходит", store::verifyStore(root, v));
+        ZStorage::Report v;
+        ZT_TRUE("проверка проходит", verifyStore(root, v));
 
         bool untouched = true;
         for (const QString& id : ids) {
@@ -418,29 +444,29 @@ static int ztRunSuite(int argc, char** argv) {
     {
         const QString root = g_base + QStringLiteral("/журнал-без-заметки");
         QString error;
-        ZT_TRUE("хранилище заведено", store::initStore(root, &error));
-        const QString path = store::newNote(root, QString(), &error);
+        ZT_TRUE("хранилище заведено", initStore(root, &error));
+        const QString path = newNote(root, QString(), &error);
         const QString noteId = QFileInfo(path).completeBaseName();
         ZStorage history(root);
         history.appendToJournal(noteId, zametti::ZJournal::NewRecord::save(QByteArray("<!-- zametti\ncreated: 2023-01-01T00:00:00Z\n-->\n\n"
                                   "# была\n"), ZJournal::Stamp::at(1'700'000'000'000LL)), &error);
 
         // Удалили как положено — надгробие есть, история осталась намеренно.
-        ZT_TRUE("заметка удалена", store::deleteNoteFile(root, noteId, &error));
-        store::Report buried;
-        ZT_TRUE("проверка проходит", store::verifyStore(root, buried));
+        ZT_TRUE("заметка удалена", removeNote(root, noteId, &error));
+        ZStorage::Report buried;
+        ZT_TRUE("проверка проходит", verifyStore(root, buried));
         ZT_TRUE("и надгробие названо нормой",
                 buried.lines.join(QLatin1Char('\n'))
                     .contains(QStringLiteral("with tombstone")));
 
         // А теперь заметку унесли мимо программы: журнал есть, надгробия нет.
-        const QString second = store::newNote(root, QString(), &error);
+        const QString second = newNote(root, QString(), &error);
         const QString secondId = QFileInfo(second).completeBaseName();
         history.appendToJournal(secondId, zametti::ZJournal::NewRecord::save(QByteArray("<!-- zametti\ncreated: 2023-01-01T00:00:00Z\n-->\n\n"
                                   "# унесли\n"), zametti::ZJournal::Stamp::at(1'700'000'000'000LL)), &error);
         ZT_TRUE("файл унесён мимо программы", QFile::remove(second));
-        store::Report orphan;
-        ZT_TRUE("проверка всё ещё проходит", store::verifyStore(root, orphan));
+        ZStorage::Report orphan;
+        ZT_TRUE("проверка всё ещё проходит", verifyStore(root, orphan));
         ZT_TRUE("но про унесённую сказано",
                 orphan.lines.join(QLatin1Char('\n'))
                     .contains(QStringLiteral("outside the app")));
@@ -449,7 +475,7 @@ static int ztRunSuite(int argc, char** argv) {
     // --- new ----------------------------------------------------------------
     {
         QString error;
-        const QString path = store::newNote(g_base + "/пустое", QString(), &error);
+        const QString path = newNote(g_base + "/пустое", QString(), &error);
         ZT_TRUE("new создал заметку", !path.isEmpty() && QFileInfo::exists(path));
         const std::string bytes = readAll(path);
         ZT_TRUE("в заметке каркас метаданных — канон без хвостовой пустой",
@@ -459,14 +485,17 @@ static int ztRunSuite(int argc, char** argv) {
         ZT_TRUE("имя — корректный id", isValidNoteId(id.toStdString()));
 
         const QString child =
-            store::newNote(g_base + "/пустое", id, &error);
+            newNote(g_base + "/пустое", id, &error);
         ZT_TRUE("new с родителем", !child.isEmpty());
         ZT_TRUE("parent записан",
                 readAll(child).find("parent: " + id.toStdString()) != std::string::npos);
-        ZT_TRUE("new с несуществующим родителем отказывает",
-                store::newNote(g_base + "/пустое", QStringLiteral("00000000000000"),
-                               &error)
-                    .isEmpty());
+        // Несуществующий родитель — В КОРЕНЬ, а не отказ (правило владельца для
+        // Ctrl+N: «в архиве и в никуда ничего не создаётся — на глобальный
+        // уровень»); утилита с явным --parent проверяет родителя сама, у двери.
+        const QString stray =
+            newNote(g_base + "/пустое", QStringLiteral("00000000000000"), &error);
+        ZT_TRUE("new с несуществующим родителем кладёт в корень",
+                !stray.isEmpty() && readAll(stray).find("parent:") == std::string::npos);
     }
 
     // --- импорт: синтетическое дерево ----------------------------------------
@@ -492,22 +521,22 @@ static int ztRunSuite(int argc, char** argv) {
         "  \"created\": \"2020-01-01T00:00:00Z\", \"modified\": \"2020-01-01T00:00:00Z\"}]");
     const QString manifestPath = write(QStringLiteral("manifest.json"), manifest);
 
-    store::ImportOptions options;
-    options.root = g_base + QStringLiteral("/хранилище");
+    const QString storeRoot = g_base + QStringLiteral("/хранилище");
+    ZStorage::ImportOptions options;
     options.from = g_base + QStringLiteral("/src");
     options.appleManifest = manifestPath;
 
     // Сухой прогон ничего не создаёт.
     {
-        store::ImportOptions dry = options;
+        ZStorage::ImportOptions dry = options;
         dry.dryRun = true;
-        store::Report report;
-        store::importTree(dry, report);
-        ZT_TRUE("dry-run не создал хранилище", !QDir(options.root).exists());
+        ZStorage::Report report;
+        ZStorage(storeRoot).importTree(dry, report);
+        ZT_TRUE("dry-run не создал хранилище", !QDir(storeRoot).exists());
     }
 
-    store::Report report;
-    const bool imported = store::importTree(options, report);
+    ZStorage::Report report;
+    const bool imported = ZStorage(storeRoot).importTree(options, report);
 
     const QString topId = idFor(report, QStringLiteral("Верх.md"));
     const QString dirId = idFor(report, QStringLiteral("Дом"));
@@ -529,9 +558,9 @@ static int ztRunSuite(int argc, char** argv) {
     ZT_TRUE("created из манифеста в префиксе id",
             topId.startsWith(QStringLiteral("01e8m7jx")));
 
-    const std::string top = readAll(options.root + "/" + topId + ".md");
-    const std::string inner = readAll(options.root + "/" + innerId + ".md");
-    const std::string dirNote = readAll(options.root + "/" + dirId + ".md");
+    const std::string top = readAll(storeRoot + "/" + topId + ".md");
+    const std::string inner = readAll(storeRoot + "/" + innerId + ".md");
+    const std::string dirNote = readAll(storeRoot + "/" + dirId + ".md");
 
     // Заголовки возвращаются всем; не дублируется только точное совпадение.
     // У Верха первый блок "# Верх" и title "Верх" — совпали, дубля нет.
@@ -557,7 +586,7 @@ static int ztRunSuite(int argc, char** argv) {
     // Вложение одно на двоих (дедупликация), лежит плоско под своим id и —
     // раз кодек стоит — пережато в webp без потерь.
     QStringList files;
-    for (const QFileInfo& info : QDir(options.root).entryInfoList(QDir::Files)) {
+    for (const QFileInfo& info : QDir(storeRoot).entryInfoList(QDir::Files)) {
         const QString name = info.fileName();
         // zametti.json — идентичность хранилища, а не вложение: она появляется
         // при заведении хранилища и к ввозу отношения не имеет.
@@ -571,7 +600,7 @@ static int ztRunSuite(int argc, char** argv) {
                 files.first().endsWith(QStringLiteral(".webp")) && name.size() == 19 &&
                     isValidNoteId(name.substr(0, 14)));
         ZT_TRUE("пережатое — действительно WebP",
-                readAll(options.root + "/" + files.first()).compare(0, 4, "RIFF") == 0);
+                readAll(storeRoot + "/" + files.first()).compare(0, 4, "RIFF") == 0);
         ZT_TRUE("Верх ссылается на вложение",
                 top.find("(" + name + ")") != std::string::npos);
         ZT_TRUE("Внутри ссылается на то же вложение",
@@ -580,12 +609,12 @@ static int ztRunSuite(int argc, char** argv) {
     ZT_TRUE("битая ссылка осталась как есть",
             inner.find("(нет-такой.png)") != std::string::npos);
     ZT_TRUE("отчёт лежит рядом с хранилищем",
-            QFileInfo::exists(options.root + QStringLiteral(".import-report.txt")));
+            QFileInfo::exists(storeRoot + QStringLiteral(".import-report.txt")));
 
     // --- verify: инвариант B — ноль замечаний, ноль дрейфа --------------------
     {
-        store::Report v;
-        ZT_TRUE("verify зелёный на свежем импорте", store::verifyStore(options.root, v));
+        ZStorage::Report v;
+        ZT_TRUE("verify зелёный на свежем импорте", verifyStore(storeRoot, v));
         ZT_TRUE("сироты не найдены",
                 v.lines.filter(QStringLiteral("orphan")).isEmpty());
     }
@@ -593,17 +622,17 @@ static int ztRunSuite(int argc, char** argv) {
     // verify ловит порчу: чужой файл, битый parent, вложение не по хешу, сироту.
     {
         write(QStringLiteral("хранилище/чужак.txt"), "мимо");
-        store::Report v;
-        ZT_TRUE("чужой файл — беда", !store::verifyStore(options.root, v));
-        QFile::remove(options.root + QStringLiteral("/чужак.txt"));
+        ZStorage::Report v;
+        ZT_TRUE("чужой файл — беда", !verifyStore(storeRoot, v));
+        QFile::remove(storeRoot + QStringLiteral("/чужак.txt"));
     }
     {
         // Сирота с валидным id-именем — замечание, не беда.
         const QString orphan =
-            options.root + QStringLiteral("/00000000000009.webp");
+            storeRoot + QStringLiteral("/00000000000009.webp");
         write(QStringLiteral("хранилище/00000000000009.webp"), "RIFFxxxx");
-        store::Report v;
-        ZT_TRUE("сирота не беда", store::verifyStore(options.root, v));
+        ZStorage::Report v;
+        ZT_TRUE("сирота не беда", verifyStore(storeRoot, v));
         ZT_TRUE("но в отчёте", v.lines.filter(QStringLiteral("orphan")).size() == 1);
         QFile::remove(orphan);
     }
@@ -612,10 +641,10 @@ static int ztRunSuite(int argc, char** argv) {
     {
         const QString root = g_base + QStringLiteral("/импорт");
         QString error;
-        ZT_TRUE("хранилище под импорт заведено", store::initStore(root, &error));
+        ZT_TRUE("хранилище под импорт заведено", initStore(root, &error));
 
         // Папка, в которую импортируем.
-        const QString folderPath = store::newNote(root, QString(), &error);
+        const QString folderPath = newNote(root, QString(), &error);
         ZT_TRUE("папка заведена", !folderPath.isEmpty());
         const QString folderId = QFileInfo(folderPath).completeBaseName();
 
@@ -623,7 +652,7 @@ static int ztRunSuite(int argc, char** argv) {
         const QString source =
             write(QStringLiteral("чужие/Заметка.md"),
                   "Заголовок\n=========\n\n*  пункт\n*  второй\n\nтекст с __жирным__\n");
-        const QString made = store::importNote(root, folderId, source, &error);
+        const QString made = importNote(root, folderId, source, &error);
         ZT_TRUE("импорт прошёл", !made.isEmpty());
         ZT_TRUE("источник на месте и не тронут",
                 readAll(source) ==
@@ -660,7 +689,7 @@ static int ztRunSuite(int argc, char** argv) {
                   "<!-- zametti\nid: 00000000000042\nrole: folder\n"
                   "parent: 0000000000000z\ncreated: 2019-03-14T09:26:53Z\n"
                   "modified: 2020-01-02T03:04:05Z\nx-своё: беречь\n-->\n\n# Вывезенная\n");
-        const QString second = store::importNote(root, QString(), exported, &error);
+        const QString second = importNote(root, QString(), exported, &error);
         ZT_TRUE("второй импорт прошёл", !second.isEmpty());
         const zametti::ZNote back = noteOf(readAll(second));
         ZT_TRUE("чужой id не унаследован", head(back, "id").empty());
@@ -682,21 +711,21 @@ static int ztRunSuite(int argc, char** argv) {
 
         // Пустой файл: пустая строка после "-->" дала бы дрейф.
         const QString empty = write(QStringLiteral("чужие/Пустая.md"), "");
-        const QString third = store::importNote(root, QString(), empty, &error);
+        const QString third = importNote(root, QString(), empty, &error);
         ZT_TRUE("пустой файл импортируется", !third.isEmpty());
         ZT_EQ("и без дрейфа", readAll(third), noteOf(readAll(third)).toMarkdown());
 
         // Отказы.
         ZT_TRUE("несуществующий источник — отказ",
-                store::importNote(root, QString(), g_base + QStringLiteral("/нет.md"), &error)
+                importNote(root, QString(), g_base + QStringLiteral("/нет.md"), &error)
                         .isEmpty() &&
                     !error.isEmpty());
         ZT_TRUE("несуществующая папка — отказ",
-                store::importNote(root, QStringLiteral("00000000000001"), source, &error)
+                importNote(root, QStringLiteral("00000000000001"), source, &error)
                     .isEmpty());
 
-        store::Report v;
-        ZT_TRUE("хранилище после импорта проходит проверку", store::verifyStore(root, v));
+        ZStorage::Report v;
+        ZT_TRUE("хранилище после импорта проходит проверку", verifyStore(root, v));
     }
 
     QDir(g_base).removeRecursively();

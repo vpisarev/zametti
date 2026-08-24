@@ -14,7 +14,6 @@
 #include "editor_widget.h"
 #include "zstorage.h"
 #include "note_panels.h"
-#include "store.h"
 #include "test_util.h"
 #include "testdata.h"
 
@@ -63,7 +62,7 @@ static int ztRunSuite(int, char**) {
     QTemporaryDir home;
     const QString root = home.path() + QStringLiteral("/store");
     QString error;
-    ZT_TRUE("хранилище заведено: " + s(error), zametti::store::initStore(root, &error));
+    ZT_TRUE("хранилище заведено: " + s(error), ZStorage(root).init(&error));
 
     // Хранилище: Работа ⊃ Проекты ⊃ {Альфа, Бета}; Дом ⊃ {Гамма}; корневая Дельта.
     auto storage = std::make_shared<ZStorage>(root);
@@ -354,7 +353,7 @@ static int ztRunWired() {
     QTemporaryDir home;
     const QString root = home.path() + QStringLiteral("/store");
     QString error;
-    ZT_TRUE("хранилище заведено", zametti::store::initStore(root, &error));
+    ZT_TRUE("хранилище заведено", ZStorage(root).init(&error));
     auto storage = std::make_shared<ZStorage>(root);
     storage->reload();
     const QString a = storage->createNote(QString(), true, &error);

@@ -12,7 +12,6 @@
 // вернули из архива. И так три раза подряд: беда была не в первом заходе, а в
 // накоплении.
 
-#include "archive.h"
 #include "zstorage.h"
 #include "archive_view.h"
 #include "jxl_encoder.h"
@@ -56,9 +55,29 @@ zametti::ZJournal::Rules rules() {
     return r;
 }
 
+// В архив и обратно — теми же глаголами хранилища, что и окно. Хранилище
+// читает каталог заново: файлы здесь пишутся руками.
+bool archiveNote(const QString& id, QString* why) {
+    zametti::ZStorage storage(g_root);
+    storage.reload();
+    QStringList failed;
+    const bool ok = storage.archive(id, rules(), &failed);
+    if (why != nullptr) *why = failed.join(QLatin1Char('\n'));
+    return ok;
+}
+
+bool restoreNote(const QString& id, QString* why) {
+    zametti::ZStorage storage(g_root);
+    storage.reload();
+    QStringList failed;
+    const bool ok = storage.restore(id, &failed);
+    if (why != nullptr) *why = failed.join(QLatin1Char('\n'));
+    return ok;
+}
+
 const char* kNote =
     "<!-- zametti\n"
-    "id: 01formula0test\n"
+    "id: 01f0rmxa0test0\n"
     "created: 2026-01-01T00:00:00+03:00\n"
     "modified: 2026-01-02T00:00:00+03:00\n"
     "-->\n"
@@ -81,7 +100,7 @@ static int ztRunSuite(int argc, char** argv) {
     QDir().mkpath(g_root + QStringLiteral("/.zametti"));
     QDir().mkpath(g_root + QStringLiteral("/history"));
 
-    const QString id = QStringLiteral("01formula0test");
+    const QString id = QStringLiteral("01f0rmxa0test0");
     const QString path = notePath(id);
     writeFile(path, QString::fromUtf8(kNote));
 
@@ -115,8 +134,7 @@ static int ztRunSuite(int argc, char** argv) {
 
         // 2. В архив.
         QString why;
-        ZT_TRUE("архивация прошла" + tag,
-                zametti::store::archiveNote(g_root, id, rules(), &why));
+        ZT_TRUE("архивация прошла" + tag, archiveNote(id, &why));
         const QString marked = readFile(path);
         ZT_TRUE("файл помечен архивным, а тело осталось" + tag,
                 marked.contains(QStringLiteral("archived: yes")) &&
@@ -135,7 +153,7 @@ static int ztRunSuite(int argc, char** argv) {
                 afterSave.contains(QStringLiteral("\\gamma")));
 
         // 4. Вернули из архива — тело обязано вернуться БАЙТ В БАЙТ.
-        ZT_TRUE("возврат прошёл" + tag, zametti::store::restoreNote(g_root, id, &why));
+        ZT_TRUE("возврат прошёл" + tag, restoreNote(id, &why));
         const QString back = readFile(path);
         ZT_TRUE("тело вернулось побайтово" + tag, back == canon);
         if (back != canon) {
@@ -152,10 +170,10 @@ static int ztRunSuite(int argc, char** argv) {
     // угодно — правкой в чужом редакторе, сбоем, нашей же ошибкой, — раз шапка
     // на месте, архивация обязана пройти, и разбирать тело для этого не надо.
     {
-        const QString brokenId = QStringLiteral("01broken00test");
+        const QString brokenId = QStringLiteral("01br0ken00test");
         const QString brokenPath = notePath(brokenId);
         QString body = QStringLiteral(
-            "<!-- zametti\nid: 01broken00test\ncreated: 2026-01-01T00:00:00+03:00\n"
+            "<!-- zametti\nid: 01br0ken00test\ncreated: 2026-01-01T00:00:00+03:00\n"
             "modified: 2026-01-02T00:00:00+03:00\n-->\n\n# Битая\n\n");
         // Всё, чем markdown можно сломать: незакрытый забор, оборванная
         // таблица, гора косых, нулевой байт в тексте.
@@ -165,8 +183,7 @@ static int ztRunSuite(int argc, char** argv) {
         writeFile(brokenPath, body);
 
         QString why;
-        ZT_TRUE("битая заметка убирается в архив",
-                zametti::store::archiveNote(g_root, brokenId, rules(), &why));
+        ZT_TRUE("битая заметка убирается в архив", archiveNote(brokenId, &why));
         const QString marked = readFile(brokenPath);
         ZT_TRUE("она помечена архивной", marked.contains(QStringLiteral("archived: yes")));
         ZT_TRUE("и содержит заголовок", marked.contains(QStringLiteral("# Битая")));
@@ -185,7 +202,7 @@ static int ztRunSuite(int argc, char** argv) {
                 QString::fromUtf8(head) == marked);
 
         // И ВОЗВРАТ ОТДАЁТ ТЕ ЖЕ БАЙТЫ.
-        ZT_TRUE("возврат битой прошёл", zametti::store::restoreNote(g_root, brokenId, &why));
+        ZT_TRUE("возврат битой прошёл", restoreNote(brokenId, &why));
         ZT_TRUE("битая вернулась байт в байт", readFile(brokenPath) == body);
     }
 
@@ -196,12 +213,12 @@ static int ztRunSuite(int argc, char** argv) {
     // тем же кодом. Разница в том, кому он отдан: виду, где каретки нет вовсе,
     // а не редактору, который обещал бы правку.
     {
-        const QString id = QStringLiteral("01n7arcview00");
+        const QString id = QStringLiteral("01n7arcv1ew000");
         const QString path = g_root + QLatin1Char('/') + id + QStringLiteral(".md");
         writeFile(path, QStringLiteral("<!-- zametti\nversion: 1\n-->\n\n# Убранная\n\n"
                                        "Тело её никуда не делось.\n"));
         QString why;
-        ZT_TRUE("архивация прошла", zametti::store::archiveNote(g_root, id, rules(), &why));
+        ZT_TRUE("архивация прошла", archiveNote(id, &why));
 
         editor.openFile(path);
         QTest::qWait(40);
@@ -240,7 +257,7 @@ static int ztRunSuite(int argc, char** argv) {
         // выставлена база» значит проверять свою же реализацию, а спрашивать
         // «нарисовалась ли картинка» — то, что видит человек.
         {
-            const QString shotId = QStringLiteral("01n7arcshot00");
+            const QString shotId = QStringLiteral("01n7arcsh0t000");
             const QString shotPath = g_root + QLatin1Char('/') + shotId + QStringLiteral(".md");
             // Настоящий файл вложения рядом с заметкой: ярко-красный квадрат,
             // которого в тексте нет и быть не может.
@@ -260,7 +277,7 @@ static int ztRunSuite(int argc, char** argv) {
             writeFile(shotPath,
                       QStringLiteral("<!-- zametti\nversion: 1\n-->\n\n# Со снимком\n\n"
                                      "![вид](01jd7f0kq2m8xa.jxl)\n"));
-            ZT_TRUE("архивация прошла", zametti::store::archiveNote(g_root, shotId, rules(), &why));
+            ZT_TRUE("архивация прошла", archiveNote(shotId, &why));
 
             zametti::ArchiveView shotView;
             shotView.resize(700, 500);
@@ -286,7 +303,7 @@ static int ztRunSuite(int argc, char** argv) {
         // объект, поэтому первую ошибку не было видно вовсе. Правило проекта
         // «нет файла — рамка с именем» обязано работать и здесь.
         {
-            const QString shotId = QStringLiteral("01n7arcshot00");
+            const QString shotId = QStringLiteral("01n7arcsh0t000");
             const QString shotPath = g_root + QLatin1Char('/') + shotId + QStringLiteral(".md");
             // Настоящий файл вложения рядом с заметкой: ярко-красный квадрат,
             // которого в тексте нет и быть не может.
@@ -306,7 +323,7 @@ static int ztRunSuite(int argc, char** argv) {
             writeFile(shotPath,
                       QStringLiteral("<!-- zametti\nversion: 1\n-->\n\n# Со снимком\n\n"
                                      "![вид](01jd7f0kq2m8xa.jxl)\n"));
-            ZT_TRUE("архивация прошла", zametti::store::archiveNote(g_root, shotId, rules(), &why));
+            ZT_TRUE("архивация прошла", archiveNote(shotId, &why));
 
             const auto redPixels = [](const QImage& image) {
                 int count = 0;

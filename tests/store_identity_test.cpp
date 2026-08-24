@@ -4,7 +4,6 @@
 // файла (класс чистое значение), ФАЙЛ — через хранилище, потому что файлы
 // трогает только оно.
 
-#include "store.h"
 #include "zstorage.h"
 
 #include "test_util.h"
@@ -91,7 +90,7 @@ void checkMintedOnInit() {
     ZT_TRUE("временный каталог", dir.isValid());
     const QString root = dir.filePath(QStringLiteral("store"));
     QString error;
-    ZT_TRUE("хранилище заведено", zametti::store::initStore(root, &error));
+    ZT_TRUE("хранилище заведено", ZStorage(root).init(&error));
     ZT_TRUE("и файл идентичности появился",
             QFile::exists(root + QStringLiteral("/zametti.json")));
 
@@ -112,7 +111,7 @@ void checkEnsureOnOldStore() {
     QTemporaryDir dir;
     const QString root = dir.filePath(QStringLiteral("old"));
     QString error;
-    ZT_TRUE("хранилище заведено", zametti::store::initStore(root, &error));
+    ZT_TRUE("хранилище заведено", ZStorage(root).init(&error));
     // Так выглядит хранилище прежней сборки: файла нет.
     ZT_TRUE("файл убран", QFile::remove(root + QStringLiteral("/zametti.json")));
 
@@ -128,7 +127,7 @@ void checkRootNoteWritten() {
     QTemporaryDir dir;
     const QString root = dir.filePath(QStringLiteral("store"));
     QString error;
-    ZT_TRUE("хранилище заведено", zametti::store::initStore(root, &error));
+    ZT_TRUE("хранилище заведено", ZStorage(root).init(&error));
 
     ZStorage storage(root);
     ZT_TRUE("корень назван", storage.setRootNote(QStringLiteral("01n6cqevsd7v5e"), &error));
@@ -154,9 +153,9 @@ void checkVerifyAcceptsFile() {
     QTemporaryDir dir;
     const QString root = dir.filePath(QStringLiteral("store"));
     QString error;
-    ZT_TRUE("хранилище заведено", zametti::store::initStore(root, &error));
-    zametti::store::Report report;
-    zametti::store::verifyStore(root, report);
+    ZT_TRUE("хранилище заведено", ZStorage(root).init(&error));
+    ZStorage::Report report;
+    ZStorage(root).verify(report);
     ZT_EQ("ни одной жалобы", std::string("0"), std::to_string(report.problems));
 }
 
@@ -165,14 +164,14 @@ void checkVerifyRefusesNewer() {
     QTemporaryDir dir;
     const QString root = dir.filePath(QStringLiteral("store"));
     QString error;
-    ZT_TRUE("хранилище заведено", zametti::store::initStore(root, &error));
+    ZT_TRUE("хранилище заведено", ZStorage(root).init(&error));
     QFile file(root + QStringLiteral("/zametti.json"));
     ZT_TRUE("файл открылся", file.open(QIODevice::WriteOnly | QIODevice::Truncate));
     file.write(R"({"storeId":"01n6cqevh7bbfr","formatVersion":99})");
     file.close();
 
-    zametti::store::Report report;
-    zametti::store::verifyStore(root, report);
+    ZStorage::Report report;
+    ZStorage(root).verify(report);
     ZT_TRUE("на будущий формат жалуется", report.problems > 0);
 }
 
