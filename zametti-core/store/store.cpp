@@ -507,19 +507,37 @@ bool ZStorage::verify(Report& report) {
 
 // --- вложения ----------------------------------------------------------------
 
-QStringList ZStorage::attachmentsLeavingWith(const QStringList& noteIds) const {
-    const QDir dir(root_);
-    const QSet<QString> doomed(noteIds.begin(), noteIds.end());
-
-    // Все вложения хранилища: всё, что не .md и носит наш id.
+QStringList ZStorage::attachmentNames() const {
     QStringList attachments;
     for (const QString& name :
-         dir.entryList(QDir::Files | QDir::NoDotAndDotDot | QDir::Hidden)) {
+         QDir(root_).entryList(QDir::Files | QDir::NoDotAndDotDot | QDir::Hidden)) {
         if (name.endsWith(QStringLiteral(".md"))) continue;
         const qsizetype dot = name.lastIndexOf(QLatin1Char('.'));
         if (dot <= 0 || !isValidNoteId(toUtf8(name.left(dot)))) continue;
         attachments.append(name);
     }
+    return attachments;
+}
+
+bool ZStorage::readAttachmentBytes(const QString& name, QByteArray* out,
+                                   QString* error) const {
+    Q_ASSERT(out != nullptr);
+    std::string bytes;
+    if (!readFileBytes(attachmentPath(name), bytes)) {
+        if (error != nullptr)
+            *error = QStringLiteral("cannot read attachment %1").arg(name);
+        return false;
+    }
+    *out = QByteArray::fromStdString(bytes);
+    return true;
+}
+
+QStringList ZStorage::attachmentsLeavingWith(const QStringList& noteIds) const {
+    const QDir dir(root_);
+    const QSet<QString> doomed(noteIds.begin(), noteIds.end());
+
+    // Все вложения хранилища — один способ их перечислить на всю программу.
+    const QStringList attachments = attachmentNames();
     if (attachments.isEmpty()) return {};
 
     // Кандидаты — те, что упомянуты в уходящих заметках. Иначе удаление

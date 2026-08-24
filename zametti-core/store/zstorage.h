@@ -29,6 +29,8 @@
 #ifndef ZAMETTI_ZSTORAGE_H
 #define ZAMETTI_ZSTORAGE_H
 
+#include "blob_cipher.h"
+#include "remote_store.h"
 #include "sort_order.h"
 #include "import_limits.h"
 #include "znote.h"
@@ -567,11 +569,68 @@ protected:
     // хранилища выглядит одинаково, а решения у них разные (см. rootId).
     bool loaded_ = false;
     std::shared_ptr<QLockFile> lock_;   // заведён при первом lock()
+    // Облако: адаптер и шифр, рождённый из ключа. Оба пусты, пока не звали
+    // setRemote; владение — shared_ptr, как всюду в проекте.
+    std::shared_ptr<RemoteStore> remote_;
+    std::shared_ptr<BlobCipher> cipher_;
 
     // Записать идентичность целиком (атомарно). Зовётся только отсюда.
     bool writeIdentity(const Identity& identity, QString* error);
     QString identityPath() const;
 
+    // --- ОБЛАКО (m17): подключение и заливка ---------------------------------
+    //
+    // ОБЛАКО У ХРАНИЛИЩА РОВНО ОДНО (решение владельца): подключая новое,
+    // отключаем прежнее. Поэтому операции синка адреса в параметрах НЕ носят —
+    // он уже прописан здесь, вместе с шифром, рождённым из ключа.
+    //
+    // Файлы встречаются с именами блобов ТОЛЬКО в sync_ops.cpp: адаптер возит
+    // байты и о заметках не знает, шифр знает лишь про AAD.
+public:
+    // Подключить облако. Проверяет манифест (`zametti.json` открытым текстом):
+    // storeId сошёлся — наше, разошёлся — ЧЕСТНАЯ ОСТАНОВКА до единой записи
+    // («это облако принадлежит другому хранилищу»); пусто на сервере — так
+    // выглядит первый синк, и это не беда. Ключ обязан быть развёрнут.
+    bool setRemote(const std::shared_ptr<RemoteStore>& remote, const Keyfile& keyfile,
+                   QString* error = nullptr);
+    bool hasRemote() const { return remote_ != nullptr && cipher_ != nullptr; }
+    void dropRemote();
+    // Адаптер для тех, кому нужно спросить у облака что-то своё (счётчики
+    // трафика в замерах). Пусто — облако не подключено.
+    const std::shared_ptr<RemoteStore>& remote() const { return remote_; }
+
+    // ЗАЛИТЬ ВСЁ. Люк разведки и прародитель sync(): дожурнализовать заметки
+    // без журнала, зашифровать и залить журналы, вложения, keyfile и манифест.
+    // Ни скачиваний, ни слияний, ни материализации здесь нет — они в движке
+    // (сессия 4).
+    struct PushReport {
+        int baselined = 0;      // заметок дожурнализовано опорной записью
+        int journals = 0;       // журналов залито
+        int attachments = 0;    // вложений залито
+        qint64 plainBytes = 0;  // сколько байтов зашифровано
+        qint64 sealedBytes = 0; // сколько уехало (с оверхедом обёртки)
+        qint64 msBaseline = 0, msSeal = 0, msPut = 0;
+    };
+    bool pushAll(PushReport* report, QString* error = nullptr);
+
+    // --- ЧИТАТЕЛИ ДЛЯ СИНХРОНИЗАЦИИ (m17) -----------------------------------
+    //
+    // Байты уезжают в облако зашифрованными, и брать их должен тот, кто
+    // владеет файлами, — хранилище. Отсюда три вопроса к нему; шифрование,
+    // имена блобов и сеть живут дальше по цепочке и о файлах не знают.
+public:
+    // Имена всех вложений хранилища: всё, что не `.md` и носит наш id.
+    // Порядок — как у каталога, то есть по имени.
+    QStringList attachmentNames() const;
+    // Сырые байты журнала заметки. Под общим замком, как всякое касание
+    // журнала. Журнала нет — пусто и true: это не беда, а «нечего заливать».
+    bool readJournalBytes(const QString& noteId, QByteArray* out,
+                          QString* error = nullptr) const;
+    // Сырые байты вложения по имени файла.
+    bool readAttachmentBytes(const QString& name, QByteArray* out,
+                             QString* error = nullptr) const;
+
+protected:
     // --- шаги операций: снаружи их не зовут, снаружи глаголы -----------------
     //
     // Файл вложения: <root>/<name>.

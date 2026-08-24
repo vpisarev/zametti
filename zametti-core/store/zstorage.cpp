@@ -960,6 +960,23 @@ bool ZStorage::appendToJournal(const QString& noteId, const ZJournal::NewRecord&
 }
 
 
+bool ZStorage::readJournalBytes(const QString& noteId, QByteArray* out,
+                               QString* error) const {
+    Q_ASSERT(out != nullptr);
+    const QMutexLocker locked(&gate());
+    out->clear();
+    QFile file(journalPath(noteId));
+    if (!file.exists()) return true;   // журнала нет — заливать нечего
+    if (!file.open(QIODevice::ReadOnly)) {
+        if (error != nullptr)
+            *error = QStringLiteral("cannot read journal of %1: %2")
+                         .arg(noteId, file.errorString());
+        return false;
+    }
+    *out = file.readAll();
+    return true;
+}
+
 bool ZStorage::readJournal(const QString& noteId, ZJournal* out, QString* error) const {
     const QMutexLocker locked(&gate());
     return readJournalLocked(journalPath(noteId), out, error);

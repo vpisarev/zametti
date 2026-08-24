@@ -53,6 +53,7 @@ add_library(zametti-core STATIC
     store/lost_found.cpp
     store/store_identity.cpp
     store/device_clock.cpp
+    store/sync_ops.cpp
     store/journal.h             store/journal.cpp
     store/times.h               store/times.cpp
 
