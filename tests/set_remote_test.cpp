@@ -168,16 +168,21 @@ void checkBootstrapInheritsIdentity() {
     FakeSecrets secrets;
     QString err;
     QString firstId;
+    QString rootId;
     {
         ZStorage s(first.root());
         ZT_TRUE("первое устройство подключилось",
                 s.connectRemote(cfg, QStringLiteral("пароль-шифра"), QString(), secrets, kTiny,
                                 nullptr, &err));
         firstId = s.identity().storeId();
+        // Корень — настоящая заметка: бутстрап обязан привезти её сразу.
+        rootId = s.ensureRootNote(&err);
+        ZT_TRUE("корень завёлся", !rootId.isEmpty());
         // Манифест кладёт заливка — без него бутстрапу неоткуда узнать id.
         ZT_TRUE("заливка прошла", s.pushAll(nullptr, &err));
     }
     {
+        // Каркас руками — прежний путь; он обязан работать и дальше.
         ZStorage s(second.root());
         FakeSecrets fresh;
         ZStorage::ConnectOutcome out;
@@ -188,6 +193,67 @@ void checkBootstrapInheritsIdentity() {
         ZT_TRUE("keyfile не перечеканен", !out.mintedKeyfile);
         ZT_EQ("id совпал с первым устройством", firstId.toStdString(),
               s.identity().storeId().toStdString());
+        ZT_TRUE("корневая заметка уже на диске", out.rootMaterialized);
+        ZT_TRUE("файл корня существует",
+                QFile::exists(second.root() + QStringLiteral("/") + rootId +
+                              QStringLiteral(".md")));
+        // Сводка облака — суммы, не перечисление.
+        ZT_TRUE("заметки посчитаны", out.cloudNotes >= 1);
+        ZT_TRUE("объём посчитан", out.cloudBytes > 0);
+    }
+}
+
+void checkBootstrapIntoEmptyDir() {
+    // Новое устройство: каталога ещё НЕТ ВОВСЕ — set-remote сам заводит
+    // каркас (без чеканки идентичности!) и наследует id из манифеста.
+    zt::MiniStore first, cloudHome, home;
+    const QString cloud = cloudHome.root() + QStringLiteral("/облако");
+    ZStorage::RemoteConfig cfg;
+    cfg.dir = cloud;
+    FakeSecrets secrets;
+    QString err;
+    QString firstId;
+    {
+        ZStorage s(first.root());
+        ZT_TRUE("первое устройство подключилось",
+                s.connectRemote(cfg, QStringLiteral("пароль-шифра"), QString(), secrets, kTiny,
+                                nullptr, &err));
+        firstId = s.identity().storeId();
+        ZT_TRUE("корень завёлся", !s.ensureRootNote(&err).isEmpty());
+        ZT_TRUE("заливка прошла", s.pushAll(nullptr, &err));
+    }
+    const QString fresh = home.root() + QStringLiteral("/новые-заметки");
+    {
+        ZStorage s(fresh);
+        ZT_TRUE("каталога ещё нет — это не хранилище", !s.isStore());
+        FakeSecrets mine;
+        ZStorage::ConnectOutcome out;
+        ZT_TRUE(("бутстрап в пустоту прошёл: " + err.toStdString()).c_str(),
+                s.connectRemote(cfg, QStringLiteral("пароль-шифра"), QString(), mine, kTiny,
+                                &out, &err));
+        ZT_TRUE("теперь это хранилище", s.isStore());
+        ZT_TRUE("идентичность унаследована, не отчеканена", out.inheritedIdentity);
+        ZT_EQ("id — облачный", firstId.toStdString(), s.identity().storeId().toStdString());
+        ZT_TRUE("каркас на месте",
+                QDir(fresh + QStringLiteral("/.zametti")).exists() &&
+                    QDir(fresh + QStringLiteral("/history")).exists());
+        ZT_TRUE("корень материализован", out.rootMaterialized);
+    }
+    // НЕПУСТОЙ каталог без метки хранилища — по-прежнему отказ.
+    {
+        zt::MiniStore junkHome;
+        const QString junk = junkHome.root() + QStringLiteral("/бумаги");
+        QDir().mkpath(junk);
+        QFile f(junk + QStringLiteral("/письмо.txt"));
+        ZT_TRUE("файл завёлся", f.open(QIODevice::WriteOnly));
+        f.write("не заметка");
+        f.close();
+        ZStorage s(junk);
+        FakeSecrets mine;
+        ZT_TRUE("случайная папка отвергнута",
+                !s.connectRemote(cfg, QStringLiteral("пароль-шифра"), QString(), mine, kTiny,
+                                 nullptr, &err));
+        ZT_TRUE("причина — непустой каталог", err.contains(QStringLiteral("not empty")));
     }
 }
 
@@ -236,6 +302,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkReconnectUnwrapsExistingKeyfile();
     checkUseLastRemote();
     checkBootstrapInheritsIdentity();
+    checkBootstrapIntoEmptyDir();
     checkForeignCloudRefused();
     return zt::report("set_remote");
 }

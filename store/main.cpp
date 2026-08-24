@@ -193,16 +193,18 @@ int main(int argc, char** argv) {
     if (command == QStringLiteral("set-remote")) {
         if (root.isEmpty()) return usage();
         zametti::ZStorage storage(root);
-        if (!storage.isStore()) {
-            std::fprintf(stderr, "not a store: %s\n", root.toUtf8().constData());
-            return 1;
-        }
-        const zametti::ZStorage::LockReport locked = storage.lock();
-        if (!locked.locked) {
-            std::fprintf(stderr, "the store is busy (pid %lld on %s)\n",
-                         static_cast<long long>(locked.holderPid),
-                         locked.holderHost.toUtf8().constData());
-            return 1;
+        // «Не хранилище» здесь НЕ отказ: пустой или несуществующий каталог —
+        // законный вход нового устройства, каркас заведёт connectRemote.
+        // Замок — только у существующего хранилища: в пустом каталоге ещё
+        // нечего охранять, а замку негде жить.
+        if (storage.isStore()) {
+            const zametti::ZStorage::LockReport locked = storage.lock();
+            if (!locked.locked) {
+                std::fprintf(stderr, "the store is busy (pid %lld on %s)\n",
+                             static_cast<long long>(locked.holderPid),
+                             locked.holderHost.toUtf8().constData());
+                return 1;
+            }
         }
         // Секрет в среде = headless-намерение (обвязка, скрипты): в keyring не
         // пишем и разблокировку не выбиваем — ключ остаётся в среде вызвавшего.
@@ -274,9 +276,16 @@ int main(int argc, char** argv) {
                          "warning: no system keyring — the key is not remembered, and the "
                          "password will be asked again\n");
         if (outcome.inheritedIdentity)
-            std::printf("inherited the store identity from the cloud; "
-                        "'zametti-store sync' will download everything\n");
+            std::printf("inherited the store identity from the cloud%s; "
+                        "'zametti-store sync' will download everything\n",
+                        outcome.rootMaterialized ? " and fetched the root note" : "");
         if (outcome.mintedKeyfile) std::printf("minted a new keyfile and uploaded it\n");
+        // Сводка одним числом на род — полного перечисления не бывает
+        // (решение владельца): облако может быть большим.
+        if (outcome.cloudNotes > 0 || outcome.cloudAttachments > 0)
+            std::printf("the cloud holds: %d notes, %d attachments, %.1f MB\n",
+                        outcome.cloudNotes, outcome.cloudAttachments,
+                        double(outcome.cloudBytes) / (1024.0 * 1024.0));
         std::printf("connected: %s\n",
                     (cfg.url.isEmpty() ? cfg.dir : cfg.url).toUtf8().constData());
         return 0;

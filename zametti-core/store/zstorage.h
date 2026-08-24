@@ -706,6 +706,13 @@ public:
     struct ConnectOutcome {
         bool mintedKeyfile = false;     // облако было пустым, keyfile отчеканен
         bool inheritedIdentity = false; // бутстрап: id пришёл из манифеста
+        bool rootMaterialized = false;  // бутстрап: корневая заметка уже на диске
+        // Что лежит в облаке — человеку при настройке: один листинг, ноль
+        // расшифровок. Заметки считаются журналами (включая удалённые — у них
+        // тоже журнал), объём — по шифротексту.
+        int cloudNotes = 0;
+        int cloudAttachments = 0;
+        qint64 cloudBytes = 0;
     };
     bool connectRemote(const RemoteConfig& cfg, const QString& encryptionPassword,
                        const QString& serverPassword, SecretStore& secrets,
@@ -809,6 +816,9 @@ public:
 protected:
     // --- шаги операций: снаружи их не зовут, снаружи глаголы -----------------
     //
+    // Каркас хранилища в пустом/несуществующем каталоге — без идентичности.
+    // Общий низ init() и бутстрапа connectRemote.
+    bool makeSkeleton(QString* error);
     // Файл вложения: <root>/<name>.
     QString attachmentPath(const QString& name) const;
     // Файл целиком в строку; false — не открылся.
@@ -870,6 +880,10 @@ protected:
     // сходятся побайтово. Тот же CAS-страж expectedBytes.
     bool adoptJournalBytes(const QString& noteId, const QByteArray& bytes,
                            const Digest& expectedBytes, QString* error);
+    // Скачать журнал одной заметки из облака, принять и материализовать
+    // голову. Бутстрап зовёт это для КОРНЕВОЙ заметки: дерево нового
+    // устройства показывает имя хранилища ещё до первого полного sync.
+    bool fetchAndMaterialize(const QString& id, QString* error);
     bool adoptJournalBytesLocked(const QString& path, const QByteArray& bytes,
                                  const Digest& expectedBytes, QString* error);
 

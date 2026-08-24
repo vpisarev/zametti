@@ -82,7 +82,11 @@ bool ZStorage::isLocalRelative(const QString& href) {
 
 // --- заведение ---------------------------------------------------------------
 
-bool ZStorage::init(QString* error) {
+// Каркас хранилища В ПУСТОМ ИЛИ НЕСУЩЕСТВУЮЩЕМ каталоге — общий низ init() и
+// бутстрапа (connectRemote): каталоги и метка, но НЕ идентичность. Кто её
+// заводит, решает вызывающий: init чеканит свою, бутстрап наследует облачную —
+// и второй ни в коем случае не должен чеканить (иначе облако станет «чужим»).
+bool ZStorage::makeSkeleton(QString* error) {
     QDir d(root_);
     if (d.exists()) {
         const QStringList entries =
@@ -115,6 +119,11 @@ bool ZStorage::init(QString* error) {
     probe.remove();
     // С этого мгновения объект — хранилище: метка на месте.
     store_ = isStoreRoot(root_);
+    return true;
+}
+
+bool ZStorage::init(QString* error) {
+    if (!makeSkeleton(error)) return false;
 
     // ИДЕНТИЧНОСТЬ — при рождении хранилища, а не при первом синке: id
     // чеканится один раз, и лучший момент для этого тот, когда каталог заведомо

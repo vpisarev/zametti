@@ -235,8 +235,12 @@ bool ZStorage::connectRemote(const RemoteConfig& cfg, const QString& encryptionP
         return ok;
     };
     if (!store_) {
-        if (error) *error = QStringLiteral("not a store: %1").arg(root_);
-        return finish(false);
+        // ПУСТОЙ ИЛИ НЕСУЩЕСТВУЮЩИЙ каталог — законный вход нового устройства:
+        // каркас заводится здесь, БЕЗ чеканки идентичности (её судьбу решает
+        // манифест ниже: есть в облаке — наследуем, нет — чеканим). Непустой
+        // каталог без метки хранилища — по-прежнему отказ: случайную папку с
+        // файлами в хранилище не превращаем.
+        if (!makeSkeleton(error)) return finish(false);
     }
     if (encryptionPassword.isEmpty()) {
         if (error) *error = QStringLiteral("the encryption password must not be empty");
@@ -331,6 +335,37 @@ bool ZStorage::connectRemote(const RemoteConfig& cfg, const QString& encryptionP
 
     if (!setRemote(remote, keyfile, error)) return finish(false);
 
+    // ЧТО ЛЕЖИТ В ОБЛАКЕ — человеку при настройке: один листинг, ноль
+    // расшифровок. Имена открыты, поэтому «сколько заметок и картинок»
+    // видно до всякого пароля; объём — по шифротексту.
+    {
+        QVector<RemoteStore::Entry> listing;
+        QString why;
+        if (remote->list(&listing, &why)) {
+            for (const RemoteStore::Entry& e : listing) {
+                done.cloudBytes += e.size;
+                if (e.name.endsWith(QStringLiteral(".log")))
+                    ++done.cloudNotes;
+                else if (e.name != QLatin1String(Identity::kFile) &&
+                         e.name != QLatin1String(Keyfile::kRemoteName))
+                    ++done.cloudAttachments;
+            }
+        }
+    }
+
+    // БУТСТРАП ГОТОВИТ ХРАНИЛИЩЕ К ЖИЗНИ СРАЗУ: корневая заметка скачивается
+    // и материализуется здесь же — дерево нового устройства показывает имя
+    // хранилища, не дожидаясь первого полного sync. Неудача — не провал
+    // подключения: sync всё равно привезёт всё, поэтому только stderr.
+    if (done.inheritedIdentity && !theirs.rootNote().isEmpty()) {
+        QString why;
+        if (fetchAndMaterialize(theirs.rootNote(), &why))
+            done.rootMaterialized = true;
+        else
+            fprintf(stderr, "zametti: cannot fetch the root note now (%s) — 'sync' will\n",
+                    qPrintable(why));
+    }
+
     // ЗАПОМНИТЬ. Отказ keyring подключение не валит: программа работает,
     // просто следующий старт снова спросит пароль — и скажет об этом.
     QString keep;
@@ -359,6 +394,40 @@ Digest hashBytes(const QByteArray& bytes) {
 }
 
 }  // namespace
+
+bool ZStorage::fetchAndMaterialize(const QString& id, QString* error) {
+    if (!hasRemote()) {
+        if (error) *error = QStringLiteral("no cloud is connected");
+        return false;
+    }
+    const Identity mine = identity();
+    const QString name = id + QStringLiteral(".log");
+    QByteArray blob;
+    if (!remote_->get(name, &blob, nullptr, error)) return false;
+    QByteArray plain;
+    const BlobAad aad{BlobKind::Journal, mine.storeId(), name};
+    if (!cipher_->open(blob, aad, &plain, error)) return false;
+
+    // Тот же путь, что у синка: чужие байты принимаются, только доказав себя;
+    // ожидаемое состояние — хеш нынешних байтов (обычно журнала ещё нет).
+    QByteArray current;
+    if (!readJournalBytes(id, &current, error)) return false;
+    // Конвенция стража та же, что у движка: «журнала нет» — пустой отпечаток.
+    const Digest seen = current.isEmpty() ? Digest() : hashBytes(current);
+    if (!adoptJournalBytes(id, plain, seen, error)) return false;
+
+    ZJournal frames;
+    if (!readJournal(id, &frames, error)) return false;
+    const int head = frames.headIndex();
+    if (head < 0 || !frames.at(head).hasSnapshot()) return true;  // нечего показывать
+    QByteArray snap;
+    if (!journalSnapshot(id, head, &snap, error)) return false;
+    if (hashBytes(snap) != frames.at(head).digest()) {
+        if (error) *error = QStringLiteral("head snapshot of %1 does not match its digest").arg(id);
+        return false;
+    }
+    return writeFileBytes(pathOf(id), std::string(snap.constData(), size_t(snap.size())), error);
+}
 
 bool ZStorage::declareAlive(const QStringList& noteIds, QString* error) {
     for (const QString& id : noteIds) {
