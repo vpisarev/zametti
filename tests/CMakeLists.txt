@@ -193,10 +193,12 @@ add_executable(zametti-bench
     big_bench.cpp
     source_bench.cpp
     inline_formula_probe.cpp
+    argon2_probe.cpp
 )
 # gtest здесь не ради проверок, а ради макросов ZT_EQ/ZT_TRUE: некоторые
 # стенды ими же и печатают, что у них сошлось.
-target_link_libraries(zametti-bench PRIVATE zametti-ui gtest Qt6::Test zametti-code-rules)
+target_link_libraries(zametti-bench PRIVATE zametti-ui gtest Qt6::Test Sodium::Sodium
+                      zametti-code-rules)
 target_include_directories(zametti-bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(zametti-bench PRIVATE
     ZAMETTI_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
