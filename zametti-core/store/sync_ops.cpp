@@ -659,17 +659,50 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
             }
         }
     }
-    // Keyfile-чек — дешёвый ранний сигнал ротации; сама ротация распознаётся
-    // массовым AEAD-отказом входящих ниже.
+    // Keyfile-чек — ранний сигнал ротации. «Изменился» значит «не совпал с
+    // записанным», ВКЛЮЧАЯ пустую запись: бухгалтерия — кэш (инвариант D), и
+    // её потеря не вправе превратить ротацию в «порчу», которую лечили бы
+    // перезаливкой старым ключом. Цена — одна проба на первом контакте.
     bool keyfileChanged = false;
     {
         const QString name = QLatin1String(Keyfile::kRemoteName);
         SyncLedger::Blob led = ledger.blob(name);
         const QString etag = remoteEtag.value(name);
-        keyfileChanged = !etag.isEmpty() && !led.etag.isEmpty() && etag != led.etag;
+        keyfileChanged = !etag.isEmpty() && etag != led.etag;
         if (!etag.isEmpty() && led.etag != etag) {
             led.etag = etag;
             ledger.setBlob(name, led);
+        }
+    }
+
+    // РОТАЦИЯ ЛОВИТСЯ ДО ЕДИНОЙ ЗАЛИВКИ. Сменившийся keyfile — ранний
+    // сигнал, но верить ему на слово нельзя (смена ПАРОЛЯ перезаписывает
+    // keyfile, не меняя ключа), а ждать первого AEAD-отказа — поздно: новая
+    // заметка, блоба которой в облаке нет, успела бы уехать СТАРЫМ ключом и
+    // застрять нечитаемой навсегда (её собственный ярус 1 дальше пропускал бы
+    // блоб как «залитый»). Потому проба: один чужой журнал вскрывается ЗДЕСЬ,
+    // до цикла. Не вскрылся — честная остановка без единой записи.
+    if (keyfileChanged) {
+        QString probeName;
+        for (const RemoteStore::Entry& e : listing)
+            if (e.name.endsWith(QStringLiteral(".log"))) {
+                probeName = e.name;
+                break;
+            }
+        if (!probeName.isEmpty()) {
+            QByteArray blob;
+            QByteArray plain;
+            QString why;
+            const BlobAad aad{BlobKind::Journal, storeId, probeName};
+            if (remote_->get(probeName, &blob, nullptr, &why) &&
+                !cipher_->open(blob, aad, &plain, &why)) {
+                if (error != nullptr)
+                    *error = QStringLiteral(
+                        "the cloud key was rotated on another device — enter the password "
+                        "again (set-remote)");
+                takeTraffic();
+                return finish(false);
+            }
         }
     }
 

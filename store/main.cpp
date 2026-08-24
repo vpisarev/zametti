@@ -242,6 +242,13 @@ int main(int argc, char** argv) {
         cfg.allowInsecureHttp = allowInsecure;
 
         QString serverPassword = qEnvironmentVariable("ZAMETTI_WEBDAV_PASSWORD");
+        // Переподключение (тот же адрес после ротации, утраченный конверт):
+        // пароль сервера не спрашивается заново, если он уже в keyring, —
+        // человек вводит только пароль шифрования.
+        if (!cfg.url.isEmpty() && serverPassword.isEmpty() && !headless && keyring.available()) {
+            const zametti::ZStorage::Identity mine = storage.identity();
+            if (!mine.isEmpty()) serverPassword = keyring.serverPassword(mine.storeId());
+        }
         if (!cfg.url.isEmpty() && serverPassword.isEmpty())
             serverPassword = askPassword("server password: ");
 

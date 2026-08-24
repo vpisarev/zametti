@@ -293,6 +293,12 @@ struct TwoDevices {
                                 &keyfile, &err));
         ra = std::make_shared<FolderRemote>(cloud);
         rb = std::make_shared<FolderRemote>(cloud);
+        // Keyfile — в облако, как это делает настоящий set-remote: без него
+        // ротация в сценариях выглядела бы иначе, чем в жизни.
+        ZT_TRUE("keyfile уехал",
+                ra->mkdirOnce(&err) &&
+                    ra->put(QLatin1String(Keyfile::kRemoteName), keyfile.toBytes(), nullptr,
+                            &err));
         ZT_TRUE("облако A подключено", sa->setRemote(ra, keyfile, &err));
         ZT_TRUE("облако B подключено", sb->setRemote(rb, keyfile, &err));
     }
@@ -732,6 +738,52 @@ void checkInterruptionHeals() {
     (void)again;
 }
 
+void checkWipedCloudRebuildAndRotation() {
+    // Сценарий владельца, разобранный на вопросах: сетевую папку стёрли через
+    // веб-интерфейс, машина 1 переподключилась (НОВЫЙ ключ) и перезалила всё;
+    // машина 2 со старым ключом обязана остановиться ДО ЕДИНОЙ заливки — даже
+    // с новой заметкой, чей блоб в облаке отсутствует (алфавитно первой!).
+    TwoDevices rig;
+    const QString id = QStringLiteral("01n6cqevaaaaaa");
+    TwoDevices::writeRaw(rig.a, id, note("общее"));
+    rig.syncOne(*rig.sa, "закладка");
+    rig.syncOne(*rig.sb, "закладка B");
+
+    // Облако стёрли руками.
+    for (const QString& name : QDir(rig.cloud).entryList(QDir::Files))
+        ZT_TRUE("блоб стёрт", QFile::remove(rig.cloud + QStringLiteral("/") + name));
+
+    // Машина 1: новый ключ (set-remote на пустом облаке чеканит) + перезаливка.
+    Keyfile fresh;
+    QString err;
+    ZT_TRUE("новый ключ отчеканился",
+            Keyfile::create(rig.sa->identity().storeId(), QStringLiteral("новый пароль"),
+                            kTinyKdf, &fresh, &err));
+    ZT_TRUE("keyfile уехал",
+            rig.ra->put(QLatin1String(Keyfile::kRemoteName), fresh.toBytes(), nullptr, &err));
+    ZT_TRUE("A переподключилась", rig.sa->setRemote(rig.ra, fresh, &err));
+    ZStorage::SyncReport rebuilt = rig.syncOne(*rig.sa, "перезаливка новым ключом");
+    ZT_TRUE("облако вылечено", rebuilt.healedRemote >= 1);
+
+    // Машина 2 (старый ключ): новая заметка с алфавитно ПЕРВЫМ id и правка.
+    TwoDevices::writeRaw(rig.b, QStringLiteral("01n6cqevaa0000"), note("новая на Б"));
+    TwoDevices::writeRaw(rig.b, id, note("правка на Б"));
+    rig.rb->resetCounters();
+    ZStorage::SyncReport stopped;
+    ZT_TRUE("синк со старым ключом честно красен", !rig.sb->sync({}, &stopped, &err));
+    ZT_TRUE("причина — ротация", err.contains(QStringLiteral("rotated")));
+    ZT_EQ("НИ ОДНОЙ заливки старым ключом", num(0), num(rig.rb->counters().puts));
+
+    // Лечение по подсказке: «set-remote» = развернуть новый keyfile паролем.
+    ZT_TRUE("B переподключилась новым ключом", rig.sb->setRemote(rig.rb, fresh, &err));
+    rig.syncOne(*rig.sb, "B доливает новым ключом");
+    rig.syncOne(*rig.sa, "A принимает");
+    ZT_TRUE("правка Б доехала", rig.noteOf(rig.a, id) == note("правка на Б"));
+    ZT_TRUE("новая заметка Б доехала",
+            rig.noteOf(rig.a, QStringLiteral("01n6cqevaa0000")) == note("новая на Б"));
+    ZT_TRUE("журналы сошлись", rig.journalOf(rig.a, id) == rig.journalOf(rig.b, id));
+}
+
 void checkMobileProfileAndCancel() {
     TwoDevices rig;
     const QString id = QStringLiteral("01n6cqevaaaaaa");
@@ -939,6 +991,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkMassDeleteConfirmed();
     checkPushOnlyMode();
     checkInterruptionHeals();
+    checkWipedCloudRebuildAndRotation();
     checkMobileProfileAndCancel();
     checkSubtreeQualifiedNames();
     checkPendingDeletesDialogWords();
