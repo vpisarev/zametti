@@ -11,8 +11,12 @@
 #include "sync_ledger.h"
 #include "zstorage.h"
 
+#include "import_limits.h"
+
 #include "mini_store.h"
 #include "test_util.h"
+
+#include <QThread>
 
 #include <QByteArray>
 #include <QFile>
@@ -451,6 +455,263 @@ void checkEtagReissueCostsOneGet() {
     ZT_EQ("ноль скачиваний", num(0), num(rig.ra->counters().gets));
 }
 
+// --- 5. движок: целостность, надгробия, предохранители ---------------------
+
+void checkCorruptLocalIsAbsence() {
+    // Битый локальный журнал — absence: принять удалённый целиком, НОЛЬ
+    // заливок. Локальный бит-рот никогда не уезжает в облако.
+    TwoDevices rig;
+    const QString id = QStringLiteral("01n6cqevaaaaaa");
+    TwoDevices::writeRaw(rig.a, id, note("раз"));
+    rig.syncOne(*rig.sa, "закладка");
+    rig.syncOne(*rig.sb, "закладка B");
+    const QByteArray healthy = rig.journalOf(rig.b, id);
+
+    // Переворот бита, который «переживает» разбор: запись на месте, сумма
+    // рамки не сошлась. Такой и обязан лечиться обменом.
+    const QByteArray original = rig.journalOf(rig.a, id);
+    bool bent = false;
+    for (int off = 0; off < original.size() && !bent; ++off) {
+        QByteArray copy = original;
+        copy[off] = char(copy[off] ^ 0x01);
+        ZJournal probe;
+        QString why;
+        if (!probe.parse(copy, ZJournal::Want::All, 0, &why)) continue;
+        if (probe.damagedCount() == 1 && !probe.tailTrimmed() && probe.size() == 1) {
+            QFile f(rig.a.journalOf(id));
+            ZT_TRUE("журнал переписался порчей", f.open(QIODevice::WriteOnly));
+            f.write(copy);
+            bent = true;
+        }
+    }
+    ZT_TRUE("порча изготовилась", bent);
+    if (!bent) return;
+
+    rig.ra->resetCounters();
+    ZStorage::SyncReport report;
+    QString err;
+    rig.sa->sync({}, &report, &err);
+    ZT_EQ("порча увидена как absence", num(1), num(report.corruptLocalTreatedAsAbsence));
+    ZT_EQ("НОЛЬ заливок", num(0), num(rig.ra->counters().puts));
+    ZT_TRUE("локальный журнал вылечен облачным", rig.journalOf(rig.a, id) == healthy);
+    ZT_TRUE("заметка на месте", rig.noteOf(rig.a, id) == note("раз"));
+}
+
+void checkServerLostBlobHealed() {
+    // Блоб пропал на сервере при записанном etag — повреждение сервера,
+    // лечится перезаливкой.
+    TwoDevices rig;
+    const QString id = QStringLiteral("01n6cqevaaaaaa");
+    TwoDevices::writeRaw(rig.a, id, note("раз"));
+    rig.syncOne(*rig.sa, "закладка");
+    ZT_TRUE("блоб стёрт с сервера",
+            QFile::remove(rig.cloud + QStringLiteral("/") + id + QStringLiteral(".log")));
+
+    ZStorage::SyncReport healed = rig.syncOne(*rig.sa, "лечение");
+    ZT_EQ("перезаливка-лечение", num(1), num(healed.healedRemote));
+    ZT_TRUE("блоб вернулся",
+            QFile::exists(rig.cloud + QStringLiteral("/") + id + QStringLiteral(".log")));
+    // И другой девайс его читает.
+    ZStorage::SyncReport got = rig.syncOne(*rig.sb, "чтение после лечения");
+    ZT_TRUE("заметка доехала", rig.noteOf(rig.b, id) == note("раз"));
+    (void)got;
+}
+
+void checkTombstoneTravels() {
+    TwoDevices rig;
+    const QString id = QStringLiteral("01n6cqevaaaaaa");
+    TwoDevices::writeRaw(rig.a, id, note("раз"));
+    rig.syncOne(*rig.sa, "закладка");
+    rig.syncOne(*rig.sb, "закладка B");
+
+    QString err;
+    rig.sa->reload();
+    ZT_TRUE(("удаление прошло: " + err.toStdString()).c_str(),
+            rig.sa->remove(id, ImportLimits(), &err));
+    rig.syncOne(*rig.sa, "надгробие уезжает");
+    ZStorage::SyncReport got = rig.syncOne(*rig.sb, "надгробие приезжает");
+    ZT_EQ("файл убран по надгробию", num(1), num(got.deletesApplied));
+    ZT_TRUE("файла на B больше нет",
+            !QFile::exists(rig.b.root() + QStringLiteral("/") + id + QStringLiteral(".md")));
+    ZT_TRUE("журнал на B остался", QFile::exists(rig.b.journalOf(id)));
+}
+
+void checkEditBeatsDelete() {
+    // Сценарий владельца: на одной машине удалили, на другой — правили.
+    // Правка каузально позже — она и голова; удалённый файл ВОЗВРАЩАЕТСЯ.
+    TwoDevices rig;
+    const QString id = QStringLiteral("01n6cqevaaaaaa");
+    TwoDevices::writeRaw(rig.a, id, note("раз"));
+    rig.syncOne(*rig.sa, "закладка");
+    rig.syncOne(*rig.sb, "закладка B");
+
+    QString err;
+    rig.sa->reload();
+    ZT_TRUE("удаление на A прошло", rig.sa->remove(id, ImportLimits(), &err));
+    QThread::msleep(5);  // правка позже удаления и по часам
+    TwoDevices::writeRaw(rig.b, id, note("правка после удаления"));
+
+    rig.syncOne(*rig.sa, "A заливает надгробие");
+    ZStorage::SyncReport merged = rig.syncOne(*rig.sb, "B сливает правку с надгробием");
+    ZT_EQ("файл B не тронут", num(0), num(merged.deletesApplied));
+    ZT_TRUE("правка жива на B", rig.noteOf(rig.b, id) == note("правка после удаления"));
+    ZStorage::SyncReport back = rig.syncOne(*rig.sa, "A принимает слитое");
+    ZT_TRUE("файл ВЕРНУЛСЯ на A",
+            rig.noteOf(rig.a, id) == note("правка после удаления"));
+    ZT_TRUE("журналы сошлись", rig.journalOf(rig.a, id) == rig.journalOf(rig.b, id));
+    (void)back;
+}
+
+void checkMassDeleteGuardAndDeclareAlive() {
+    TwoDevices rig;
+    const QStringList ids{QStringLiteral("01n6cqevaaaaaa"), QStringLiteral("01n6cqevbbbbbb"),
+                          QStringLiteral("01n6cqevcccccc"), QStringLiteral("01n6cqevdddddd")};
+    for (const QString& id : ids) TwoDevices::writeRaw(rig.a, id, note(qPrintable(id)));
+    rig.syncOne(*rig.sa, "закладка");
+    rig.syncOne(*rig.sb, "закладка B");
+
+    QString err;
+    rig.sa->reload();
+    for (const QString& id : ids)
+        ZT_TRUE("удаление на A прошло", rig.sa->remove(id, ImportLimits(), &err));
+    rig.syncOne(*rig.sa, "надгробия уезжают");
+
+    // Порог набора — 3, удалений — 4: предохранитель обязан сработать.
+    ZStorage::SyncOptions guard;
+    guard.deleteGuard = 3;
+    ZStorage::SyncReport held = rig.syncOne(*rig.sb, "предохранитель", guard);
+    ZT_EQ("удаления задержаны все", num(4), num(held.pendingDeletes.size()));
+    ZT_EQ("не удалено ни одного", num(0), num(held.deletesApplied));
+    for (const QString& id : ids)
+        ZT_TRUE("файл на месте",
+                QFile::exists(rig.b.root() + QStringLiteral("/") + id + QStringLiteral(".md")));
+
+    // ОТКАЗ: заметки объявлены живыми — записи ПОВЕРХ надгробий, облако
+    // лечится, и вопрос не повторяется, потому что изменилось состояние.
+    ZT_TRUE(("declareAlive прошёл: " + err.toStdString()).c_str(),
+            rig.sb->declareAlive(held.pendingDeletes, &err));
+    ZStorage::SyncReport heal = rig.syncOne(*rig.sb, "лечение облака", guard);
+    ZT_TRUE("вопрос не повторился", heal.pendingDeletes.isEmpty());
+    ZStorage::SyncReport restore = rig.syncOne(*rig.sa, "A принимает воскрешение");
+    for (const QString& id : ids)
+        ZT_TRUE("файл вернулся на A",
+                QFile::exists(rig.a.root() + QStringLiteral("/") + id + QStringLiteral(".md")));
+    (void)restore;
+}
+
+void checkMassDeleteConfirmed() {
+    // Вторая фаза: человек подтвердил — повторный прогон с allowMassDelete.
+    TwoDevices rig;
+    const QStringList ids{QStringLiteral("01n6cqevaaaaaa"), QStringLiteral("01n6cqevbbbbbb"),
+                          QStringLiteral("01n6cqevcccccc"), QStringLiteral("01n6cqevdddddd")};
+    for (const QString& id : ids) TwoDevices::writeRaw(rig.a, id, note(qPrintable(id)));
+    rig.syncOne(*rig.sa, "закладка");
+    rig.syncOne(*rig.sb, "закладка B");
+    QString err;
+    rig.sa->reload();
+    for (const QString& id : ids)
+        ZT_TRUE("удаление на A прошло", rig.sa->remove(id, ImportLimits(), &err));
+    rig.syncOne(*rig.sa, "надгробия уезжают");
+
+    ZStorage::SyncOptions guard;
+    guard.deleteGuard = 3;
+    ZStorage::SyncReport held = rig.syncOne(*rig.sb, "предохранитель", guard);
+    ZT_EQ("удаления задержаны", num(4), num(held.pendingDeletes.size()));
+    guard.allowMassDelete = true;
+    ZStorage::SyncReport allowed = rig.syncOne(*rig.sb, "подтверждённые удаления", guard);
+    ZT_EQ("применены все", num(4), num(allowed.deletesApplied));
+    for (const QString& id : ids)
+        ZT_TRUE("файла нет",
+                !QFile::exists(rig.b.root() + QStringLiteral("/") + id + QStringLiteral(".md")));
+}
+
+void checkPushOnlyMode() {
+    TwoDevices rig;
+    const QString id = QStringLiteral("01n6cqevaaaaaa");
+    TwoDevices::writeRaw(rig.a, id, note("общее"));
+    rig.syncOne(*rig.sa, "закладка");
+    rig.syncOne(*rig.sb, "закладка B");
+
+    // Обе стороны правят одну заметку; A успевает первым полным прогоном.
+    TwoDevices::writeRaw(rig.a, id, note("правка А"));
+    TwoDevices::writeRaw(rig.b, id, note("правка Б"));
+    rig.syncOne(*rig.sa, "A заливает");
+
+    // Выход B: только исходящее, НОЛЬ скачиваний и материализаций; блоб,
+    // требующий слияния, отложен без потерь.
+    rig.rb->resetCounters();
+    ZStorage::SyncOptions exit;
+    exit.mode = ZStorage::SyncOptions::PushOnly;
+    ZStorage::SyncReport push = rig.syncOne(*rig.sb, "push-only на выходе", exit);
+    ZT_EQ("ноль скачиваний", num(0), num(rig.rb->counters().gets));
+    ZT_EQ("ноль материализаций", num(0), num(push.materialized));
+    ZT_TRUE("слияние отложено", push.deferred >= 1);
+    ZT_TRUE("своя правка Б цела", rig.noteOf(rig.b, id) == note("правка Б"));
+    // Облако не потеряло правку А.
+    ZT_TRUE("блоб А в облаке не перетёрт",
+            rig.syncOne(*rig.sb, "полный прогон доделывает").mergedJournals == 1);
+    rig.syncOne(*rig.sa, "A принимает слитое");
+    ZT_TRUE("сошлись", rig.journalOf(rig.a, id) == rig.journalOf(rig.b, id));
+
+    // Нулевой бюджет: всё отложено, заливок нет, пометки живы.
+    TwoDevices::writeRaw(rig.a, id, note("ещё правка"));
+    rig.syncOne(*rig.sa, "выравнивание перед бюджетом");
+    TwoDevices::writeRaw(rig.a, id, note("и ещё правка"));
+    exit.exitPushBudgetSec = 0;
+    rig.ra->resetCounters();
+    ZStorage::SyncReport broke = rig.syncOne(*rig.sa, "нулевой бюджет", exit);
+    ZT_EQ("заливок нет", num(0), num(rig.ra->counters().puts));
+    ZT_TRUE("отложено", broke.deferred >= 1);
+    ZT_TRUE("пометка пережила бюджет", !rig.sa->dirtyIds().isEmpty());
+}
+
+void checkInterruptionHeals() {
+    // Инвариант E: обрыв в любой точке безопасен, повторный прогон достраивает.
+    TwoDevices rig;
+    TwoDevices::writeRaw(rig.a, QStringLiteral("01n6cqevaaaaaa"), note("раз"));
+    TwoDevices::writeRaw(rig.a, QStringLiteral("01n6cqevbbbbbb"), note("два"));
+    TwoDevices::writeRaw(rig.a, QStringLiteral("01n6cqevcccccc"), note("три"));
+
+    rig.ra->failNext(QStringLiteral("put"), 2);
+    ZStorage::SyncReport broken;
+    QString err;
+    ZT_TRUE("оборванный прогон честно красен", !rig.sa->sync({}, &broken, &err));
+    ZT_TRUE("часть работы сделана и посчитана", broken.integrityFailures >= 1);
+
+    ZStorage::SyncReport again = rig.syncOne(*rig.sa, "повторный прогон достраивает");
+    for (const char* id : {"01n6cqevaaaaaa", "01n6cqevbbbbbb", "01n6cqevcccccc"})
+        ZT_TRUE("блоб долит",
+                QFile::exists(rig.cloud + QStringLiteral("/") + QLatin1String(id) +
+                              QStringLiteral(".log")));
+    rig.ra->resetCounters();
+    rig.syncOne(*rig.sa, "устойчивый после лечения");
+    ZT_EQ("ноль заливок после достройки", num(0), num(rig.ra->counters().puts));
+    (void)again;
+}
+
+void checkMobileProfileAndCancel() {
+    TwoDevices rig;
+    const QString id = QStringLiteral("01n6cqevaaaaaa");
+    // Мобильный профиль: скан выключен, работает чистый dirty-set.
+    TwoDevices::writeRaw(rig.a, id, note("раз"));
+    rig.sa->markDirty(id);  // write-ahead пометка редактора
+    ZStorage::SyncOptions mobile;
+    mobile.statScan = false;
+    ZStorage::SyncReport report = rig.syncOne(*rig.sa, "мобильный профиль", mobile);
+    ZT_EQ("обработана ровно помеченная", num(1), num(report.dirtyChecked));
+    ZT_TRUE("журнал уехал",
+            QFile::exists(rig.cloud + QStringLiteral("/") + id + QStringLiteral(".log")));
+
+    // Отмена повторным кликом: тихо и без потерь.
+    auto cancel = std::make_shared<std::atomic<bool>>(true);
+    ZStorage::SyncOptions cancelled;
+    cancelled.cancel = cancel;
+    ZStorage::SyncReport stopped = rig.syncOne(*rig.sa, "отменённый прогон", cancelled);
+    ZT_TRUE("отмена замечена", stopped.cancelled);
+    // После отмены обычный прогон работает как ни в чём не бывало.
+    rig.syncOne(*rig.sa, "после отмены");
+}
+
 }  // namespace
 
 static int ztRunSuite(int argc, char** argv) {
@@ -468,6 +729,15 @@ static int ztRunSuite(int argc, char** argv) {
     checkConcurrentEditsMerge();
     checkLedgerLossChangesNothing();
     checkEtagReissueCostsOneGet();
+    checkCorruptLocalIsAbsence();
+    checkServerLostBlobHealed();
+    checkTombstoneTravels();
+    checkEditBeatsDelete();
+    checkMassDeleteGuardAndDeclareAlive();
+    checkMassDeleteConfirmed();
+    checkPushOnlyMode();
+    checkInterruptionHeals();
+    checkMobileProfileAndCancel();
     return zt::report("sync_engine");
 }
 

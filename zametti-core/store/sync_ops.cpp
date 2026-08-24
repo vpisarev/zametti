@@ -498,6 +498,16 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
             if (head >= 0 && frames.at(head).hasSnapshot() &&
                 frames.at(head).digest() == fileHash)
                 continue;  // выровнено
+            if (head >= 0 && !frames.at(head).hasSnapshot()) {
+                // Голова — надгробие, а файл ещё лежит. Если он равен
+                // последнему слепку, это НЕ правка, а не материализованное
+                // пока удаление (например, задержанное предохранителем) —
+                // дописать external значило бы воскресить заметку без
+                // человека. Правкой считается только файл, ушедший от
+                // последнего слепка.
+                const int last = frames.lastSnapshotIndex();
+                if (last >= 0 && frames.at(last).digest() == fileHash) continue;
+            }
             // Файл разошёлся с головой (правка снаружи, оборванное сохранение,
             // файл поверх надгробия) — дописать external: правка побеждает.
             if (!journalFor(id, options.journalRules)
@@ -583,7 +593,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
     const QElapsedTimer wholeRun = [] { QElapsedTimer t; t.start(); return t; }();
     const bool pushOnly = options.mode == SyncOptions::PushOnly;
     const auto budgetSpent = [&] {
-        return pushOnly && wholeRun.elapsed() > qint64(options.exitPushBudgetSec) * 1000;
+        return pushOnly && wholeRun.elapsed() >= qint64(options.exitPushBudgetSec) * 1000;
     };
 
     QStringList processed;           // с кого снять dirty-пометку
@@ -682,7 +692,9 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                 continue;
             }
             const Digest sealed = hashBytes(blob);
-            if (!led.sealedHash.empty() && sealed == led.sealedHash) {
+            // Перевыдача метки — короткий путь только для ЖИВОГО локального:
+            // при absence содержимое всё равно нужно, чтобы вылечиться.
+            if (localValid && !led.sealedHash.empty() && sealed == led.sealedHash) {
                 ++done.etagReissued;
                 led.etag = etag;
                 ledger.setBlob(name, led);
@@ -1097,6 +1109,10 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
         // declareAlive, и облако лечится записями поверх надгробий.
         if (int(deletes.size()) > options.deleteGuard && !options.allowMassDelete) {
             done.pendingDeletes = deletes;
+            // Пометить, чтобы следующий прогон — с подтверждением или после
+            // declareAlive — вернулся к этим заметкам, даже когда обмен для
+            // них снова бесплатен.
+            for (const QString& id : deletes) markDirty(id);
         } else {
             for (const QString& id : deletes) {
                 const QString path = pathOf(id);
@@ -1129,7 +1145,13 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
 
     // Материализация метит файлы в dirty (штатный write-ahead писателя) — но
     // мы сами и привели их к голове, пометка снимается вместе с обработанными.
-    if (!done.cancelled) clearDirty(processed);
+    // Задержанные предохранителем — ИСКЛЮЧЕНИЕ: их пометка и есть память
+    // «вопрос не решён», следующий прогон обязан к ним вернуться.
+    if (!done.cancelled) {
+        QStringList settled = processed;
+        for (const QString& id : done.pendingDeletes) settled.removeAll(id);
+        clearDirty(settled);
+    }
     ledger.setCleanShutdown(true);
     QString ledgerWhy;
     if (!ledger.save(&ledgerWhy))
