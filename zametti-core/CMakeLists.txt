@@ -27,7 +27,9 @@
 # зависит от QtGui сознательно (QTextDocument живёт там), но про окна не знает.
 # Стережёт это набор core-without-widgets.
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui)
+# Network — под WebDAV-адаптер синхронизации; линкуется PRIVATE, в
+# заголовках sync/ сетевых типов нет.
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Network)
 
 set(CMAKE_AUTOMOC ON)
 
@@ -63,6 +65,7 @@ add_library(zametti-core STATIC
     sync/keyring_secrets.h
     sync/remote_store.h         sync/remote_store.cpp
     sync/folder_remote.h        sync/folder_remote.cpp
+    sync/webdav_remote.h        sync/webdav_remote.cpp
 
     # --- заметка: документ + журнал + всё, что переживает уход и возврат ---
     note/znote.h                note/znote.cpp
@@ -140,7 +143,7 @@ target_include_directories(zametti-core PUBLIC
 target_link_libraries(zametti-core
     PUBLIC Qt6::Core Qt6::Gui libjxl libtiff
     PRIVATE md4c blake3 zstd jpegli libwebp dtl microtex-all Sodium::Sodium
-            zametti-code-rules)
+            Qt6::Network zametti-code-rules)
 
 # Keyring: на Linux — Secret Service по QDBus (ноль зависимостей помимо
 # Qt6::DBus, PRIVATE — в заголовке sync/ шины нет); всюду ещё — заготовка
