@@ -1147,6 +1147,32 @@ struct ZSettings {
         ZM_SETTING(qreal, codeStripHeight, CodeStripHeight, 0.6, 0.0, 5.0)
     };
 
+    // ================================================================
+    // ОБЛАЧНАЯ СИНХРОНИЗАЦИЯ (m17). Секретов здесь НЕТ и не будет: пароль
+    // сервера живёт в keyring, пароль шифрования не хранится нигде. Здесь —
+    // только то, что человек правит руками, как и весь конфиг.
+    // ================================================================
+    struct Sync {
+        // Адрес WebDAV-сервера и логин. Пусто — синхронизация не настроена.
+        ZM_SETTING_PLAIN(QString, url, Url, )
+        ZM_SETTING_PLAIN(QString, user, User, )
+        // Каталог на сервере. Пусто — по умолчанию именем, включающим store-id.
+        ZM_SETTING_PLAIN(QString, remoteDir, RemoteDir, )
+
+        // РАЗРЕШИТЬ ЛИ ВХОД БЕЗ TLS (решение владельца, 24.08.2026).
+        //
+        // Содержимое едет в облако зашифрованным всегда, поэтому риск голого
+        // http один: пароль СЕРВЕРА идёт открытым текстом. Дефолт: localhost
+        // можно (там некому подслушивать — это наборы и замеры), внешние
+        // адреса — только https. Взведённый ключ разрешает и внешний http:
+        // домашний NAS в своей сети — законный случай, и запрещать его
+        // насовсем значит решать за человека.
+        ZM_SETTING_PLAIN(bool, allowInsecureHttp, AllowInsecureHttp, false)
+
+        // Сколько ждать ответа сервера, мс.
+        ZM_SETTING(int, timeoutMs, TimeoutMs, 30000, 1000, 600000)
+    };
+
     // РАЗДЕЛЫ — методами, как и поля внутри них: только-чтение снаружи
     // (const ZSettings& из settings()), правка — у того, у кого ZSettings&
     // (загрузчик, editSettings()).
@@ -1176,6 +1202,8 @@ struct ZSettings {
     Formulas& formulas() { return formulas_; }
     const Pdf& pdf() const { return pdf_; }
     Pdf& pdf() { return pdf_; }
+    const Sync& sync() const { return sync_; }
+    Sync& sync() { return sync_; }
 
 private:
     ZDocStyle style_;
@@ -1191,6 +1219,7 @@ private:
     ImageViewer viewer_;
     Formulas formulas_;
     Pdf pdf_;
+    Sync sync_;
 };
 
 

@@ -356,9 +356,18 @@ QJsonObject settingsToJson(const ZSettings& a) {
         {QStringLiteral("max"), a.ui().zoomMax()},
     };
 
+    QJsonObject sync{
+        {QStringLiteral("url"), a.sync().url()},
+        {QStringLiteral("user"), a.sync().user()},
+        {QStringLiteral("remoteDir"), a.sync().remoteDir()},
+        {QStringLiteral("allowInsecureHttp"), a.sync().allowInsecureHttp()},
+        {QStringLiteral("timeoutMs"), a.sync().timeoutMs()},
+    };
+
     return QJsonObject{
         {QStringLiteral("font"), font},
         {QStringLiteral("pdf"), pdf},
+        {QStringLiteral("sync"), sync},
         {QStringLiteral("layout"), layout},
         {QStringLiteral("colors"), colors},
         {QStringLiteral("list"), list},
@@ -469,6 +478,15 @@ void settingsFromJson(const QJsonObject& root, ZSettings& a) {
     readColor(tables, "headerColor", a.tables(), &ZSettings::Tables::setHeaderColor);
     readColor(tables, "tableColor", a.tables(), &ZSettings::Tables::setTableColor);
     readColor(tables, "altTableColor", a.tables(), &ZSettings::Tables::setAltTableColor);
+
+    // Облачная синхронизация. Секретов здесь нет — только адрес, логин,
+    // каталог и два ключа поведения.
+    const QJsonObject sync = root.value(QStringLiteral("sync")).toObject();
+    readString(sync, "url", a.sync(), &ZSettings::Sync::setUrl);
+    readString(sync, "user", a.sync(), &ZSettings::Sync::setUser);
+    readString(sync, "remoteDir", a.sync(), &ZSettings::Sync::setRemoteDir);
+    readBool(sync, "allowInsecureHttp", a.sync(), &ZSettings::Sync::setAllowInsecureHttp);
+    readInt(sync, "timeoutMs", a.sync(), &ZSettings::Sync::setTimeoutMs);
 
     const QJsonObject paper = root.value(QStringLiteral("pdf")).toObject();
     readString(paper, "fontFamily", a.pdf(), &ZSettings::Pdf::setFontFamily);
