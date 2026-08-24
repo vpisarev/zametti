@@ -6,6 +6,7 @@
 // появления.
 
 #include "folder_remote.h"
+#include "pending_deletes_dialog.h"
 #include "journal.h"
 #include "webdav_remote.h"
 #include "keyfile.h"
@@ -19,6 +20,9 @@
 #include "testdata.h"
 #include "webdav_harness.h"
 
+#include <QDialogButtonBox>
+#include <QLineEdit>
+#include <QPushButton>
 #include <QThread>
 
 #include <QByteArray>
@@ -821,6 +825,38 @@ void checkSubtreeQualifiedNames() {
           tree.qualifiedName(rootId).toStdString());
 }
 
+// --- 8. диалог предохранителя: решение печатается словом --------------------
+
+void checkPendingDeletesDialogWords() {
+    ZT_TRUE("remove — удалить",
+            PendingDeletesDialog::verdictFor(QStringLiteral("remove")) ==
+                PendingDeletesDialog::Verdict::DeleteHere);
+    ZT_TRUE("restore — оставить",
+            PendingDeletesDialog::verdictFor(QStringLiteral("  Restore \t")) ==
+                PendingDeletesDialog::Verdict::KeepAlive);
+    for (const char* junk : {"", "rem", "removee", "удалить", "yes"})
+        ZT_TRUE("не слово — не решение",
+                PendingDeletesDialog::verdictFor(QLatin1String(junk)) ==
+                    PendingDeletesDialog::Verdict::DecideLater);
+
+    // Окно в руках: Ok мёртв, пока в поле не слово; Enter со словом решает.
+    PendingDeletesDialog dialog(nullptr, {QStringLiteral("a/opencv/5.1/TODO")});
+    auto* word = dialog.findChild<QLineEdit*>();
+    auto* buttons = dialog.findChild<QDialogButtonBox*>();
+    ZT_TRUE("поле на месте", word != nullptr);
+    ZT_TRUE("кнопки на месте", buttons != nullptr);
+    if (word == nullptr || buttons == nullptr) return;
+    QPushButton* ok = buttons->button(QDialogButtonBox::Ok);
+    ZT_TRUE("Ok мёртв без слова", !ok->isEnabled());
+    word->setText(QStringLiteral("re"));
+    ZT_TRUE("Ok мёртв на полуслове", !ok->isEnabled());
+    word->setText(QStringLiteral("restore"));
+    ZT_TRUE("Ok ожил на слове", ok->isEnabled());
+    ok->click();
+    ZT_TRUE("вердикт — оставить",
+            dialog.verdict() == PendingDeletesDialog::Verdict::KeepAlive);
+}
+
 }  // namespace
 
 static int ztRunSuite(int argc, char** argv) {
@@ -848,6 +884,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkInterruptionHeals();
     checkMobileProfileAndCancel();
     checkSubtreeQualifiedNames();
+    checkPendingDeletesDialogWords();
     checkLiveWebDavCycle();
     return zt::report("sync_engine");
 }
