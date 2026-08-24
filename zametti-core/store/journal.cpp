@@ -722,6 +722,21 @@ QVector<int> ZJournal::indexesOf(const QVector<ZJournal::RecordRef>& refs) const
     return out;
 }
 
+Digest ZJournal::contentDigest() const {
+    // Канонический порядок — существующий isBefore, второй формулы не заводим.
+    // Среди полностью равных рамок порядок безразличен: их байты одинаковы, и
+    // склейка от перестановки не меняется.
+    QVector<int> order;
+    order.reserve(entries_.size());
+    for (int i = 0; i < int(entries_.size()); ++i)
+        if (!isDamaged(i)) order.append(i);
+    std::sort(order.begin(), order.end(),
+              [this](int a, int b) { return entries_[a].isBefore(entries_[b]); });
+    QByteArray all;
+    for (int i : order) all += frameBytes(entries_[i]);
+    return hashOf(std::string_view(all.constData(), size_t(all.size())));
+}
+
 int ZJournal::headIndex() const {
     int best = -1;
     for (int i = 0; i < entries_.size(); ++i) {
