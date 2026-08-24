@@ -928,6 +928,13 @@ protected:
     // сходятся побайтово. Тот же CAS-страж expectedBytes.
     bool adoptJournalBytes(const QString& noteId, const QByteArray& bytes,
                            const Digest& expectedBytes, QString* error);
+    // Имя своего хранилища — заголовок корневой заметки, файлом (не каталогом:
+    // ярлык нужен и потоку синка). Пусто — корня нет или не читается.
+    QString localStoreName() const;
+    // Имя облачного хранилища — best-effort вскрытием журнала их корня данным
+    // шифром; чужой ключ — честно пусто (имя зашифровано, и это фича).
+    static QString cloudStoreName(RemoteStore& remote, BlobCipher& cipher,
+                                  const Identity& theirs);
     // Скачать журнал одной заметки из облака, принять и материализовать
     // голову. Бутстрап зовёт это для КОРНЕВОЙ заметки: дерево нового
     // устройства показывает имя хранилища ещё до первого полного sync.

@@ -24,6 +24,7 @@
 #include "times.h"
 #include "webdav_remote.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -46,6 +47,41 @@ BlobKind kindOfBlob(const QString& name) {
     return name.endsWith(QStringLiteral(".log")) ? BlobKind::Journal
                                                  : BlobKind::Attachment;
 }
+
+// --- ярлыки хранилищ для диагностик -----------------------------------------
+//
+// «Чужое облако» человеку показывается не голым id: рядом читаемое имя и
+// дата создания (решение владельца, 24.08.2026). Дата — из манифеста, в UTC;
+// имя — заголовок КОРНЕВОЙ заметки: своё читается с диска (localStoreName),
+// облачное — best-effort вскрытием доступным ключом (cloudStoreName): опечатка
+// между СВОИМИ хранилищами на одном сервере вскроется; по-настоящему чужое
+// честно остаётся без имени — оно зашифровано, и это не недостаток, а само
+// шифрование.
+
+QString utcOf(const QString& iso) {
+    const QDateTime t = QDateTime::fromString(iso, Qt::ISODateWithMs);
+    if (!t.isValid()) return iso;
+    // Секундной точности достаточно: это дата для глаз, не ключ сравнения.
+    return t.toUTC().toString(Qt::ISODate);
+}
+
+// Заголовок заметки из её байтов: первая строка '# …' после шапки.
+QString titleOfBody(const QByteArray& body) {
+    for (const QByteArray& raw : body.split('\n')) {
+        const QByteArray line = raw.trimmed();
+        if (line.startsWith("# ")) return QString::fromUtf8(line.mid(2)).trimmed();
+    }
+    return {};
+}
+
+QString storeTag(const QString& id, const QString& name, const QString& createdIso) {
+    QString out = id;
+    if (!name.isEmpty()) out += QStringLiteral(" \"%1\"").arg(name);
+    if (!createdIso.isEmpty()) out += QStringLiteral(" (created %1)").arg(utcOf(createdIso));
+    return out;
+}
+
+constexpr char kAddressHint[] = "; check the cloud address (set-remote --url/--to)";
 
 }  // namespace
 
@@ -306,9 +342,9 @@ bool ZStorage::connectRemote(const RemoteConfig& cfg, const QString& encryptionP
         } else if (haveManifest) {
             if (error)
                 *error = QStringLiteral(
-                    "this store has notes but no identity, and the cloud belongs to "
-                    "store %1 — bootstrap into an empty folder instead")
-                             .arg(theirs.storeId());
+                             "this store has notes but no identity, and the cloud belongs "
+                             "to store %1 — bootstrap into an empty folder instead")
+                             .arg(storeTag(theirs.storeId(), QString(), theirs.created()));
             return finish(false);
         } else {
             mine = ensureIdentity(error);
@@ -316,11 +352,27 @@ bool ZStorage::connectRemote(const RemoteConfig& cfg, const QString& encryptionP
         }
     }
     if (haveManifest && theirs.storeId() != mine.storeId()) {
-        // Честная остановка ДО единой записи — включая keyfile.
-        if (error)
+        // Честная остановка ДО единой записи — включая keyfile. Имя чужого —
+        // best-effort: ИХ конверт пробуем развернуть ДАННЫМ паролем (свои
+        // хранилища на одном сервере обычно делят пароль — опечатка в папке
+        // тут же видна по имени); другой пароль — имени честно нет.
+        if (error) {
+            QString cloudName;
+            QByteArray envelope;
+            Keyfile theirKeyfile;
+            if (remote->get(QLatin1String(Keyfile::kRemoteName), &envelope, nullptr, &why) &&
+                theirKeyfile.parse(envelope, nullptr) && !theirKeyfile.tooNew() &&
+                theirKeyfile.unwrap(encryptionPassword, nullptr)) {
+                if (auto probe = XChaChaCipher::make(theirKeyfile, nullptr))
+                    cloudName = cloudStoreName(*remote, *probe, theirs);
+            }
             *error = QStringLiteral(
-                "this cloud folder belongs to another store (%1), and this store is %2")
-                         .arg(theirs.storeId(), mine.storeId());
+                         "this cloud folder belongs to another store — %1 — and this "
+                         "store is %2%3")
+                         .arg(storeTag(theirs.storeId(), cloudName, theirs.created()),
+                              storeTag(mine.storeId(), localStoreName(), mine.created()),
+                              QLatin1String(kAddressHint));
+        }
         return finish(false);
     }
 
@@ -337,8 +389,11 @@ bool ZStorage::connectRemote(const RemoteConfig& cfg, const QString& encryptionP
         }
         if (keyfile.storeId() != mine.storeId()) {
             if (error)
-                *error = QStringLiteral("the cloud keyfile belongs to store %1, not %2")
-                             .arg(keyfile.storeId(), mine.storeId());
+                *error = QStringLiteral("the cloud keyfile belongs to store %1, and this "
+                                        "store is %2%3")
+                             .arg(storeTag(keyfile.storeId(), QString(), keyfile.created()),
+                                  storeTag(mine.storeId(), localStoreName(), mine.created()),
+                                  QLatin1String(kAddressHint));
             return finish(false);
         }
         if (!keyfile.unwrap(encryptionPassword, &why)) {
@@ -418,6 +473,39 @@ Digest hashBytes(const QByteArray& bytes) {
 }
 
 }  // namespace
+
+
+
+// Имя СВОЕГО хранилища — заголовок корневой заметки, читается файлом (не
+// каталогом notes_: ярлык нужен и потоку синка).
+QString ZStorage::localStoreName() const {
+    const QString root = identity().rootNote();
+    if (root.isEmpty()) return {};
+    std::string raw;
+    if (!readFileBytes(pathOf(root), raw)) return {};
+    return titleOfBody(QByteArray::fromStdString(raw));
+}
+
+// Имя ОБЛАЧНОГО хранилища — best-effort: журнал их корня вскрывается данным
+// шифром. Не вскрылся (чужой ключ, нет журнала, нет сети) — пусто, без жалоб.
+QString ZStorage::cloudStoreName(RemoteStore& remote, BlobCipher& cipher,
+                                 const Identity& theirs) {
+    if (theirs.rootNote().isEmpty()) return {};
+    const QString name = theirs.rootNote() + QStringLiteral(".log");
+    QByteArray blob;
+    QString why;
+    if (!remote.get(name, &blob, nullptr, &why)) return {};
+    QByteArray plain;
+    const BlobAad aad{BlobKind::Journal, theirs.storeId(), name};
+    if (!cipher.open(blob, aad, &plain, &why)) return {};
+    ZJournal j;
+    if (!j.parse(plain, ZJournal::Want::All, 0, &why)) return {};
+    const int head = j.headIndex();
+    if (head < 0 || !j.at(head).hasSnapshot()) return {};
+    QByteArray body;
+    if (!j.rebuildAt(head, &body, &why)) return {};
+    return titleOfBody(body);
+}
 
 bool ZStorage::fetchAndMaterialize(const QString& id, QString* error) {
     if (!hasRemote()) {
@@ -638,10 +726,18 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                 Identity theirs;
                 if (theirs.parse(bytes, &why)) {
                     if (theirs.storeId() != storeId) {
-                        if (error != nullptr)
-                            *error = QStringLiteral(
-                                "this cloud folder now belongs to another store (%1) — refusing")
-                                         .arg(theirs.storeId());
+                        if (error != nullptr) {
+                            const QString cloudName =
+                                cipher_ ? cloudStoreName(*remote_, *cipher_, theirs)
+                                        : QString();
+                            *error =
+                                QStringLiteral(
+                                    "this cloud folder now belongs to another store — %1 — "
+                                    "refusing%2")
+                                    .arg(storeTag(theirs.storeId(), cloudName,
+                                                  theirs.created()),
+                                         QLatin1String(kAddressHint));
+                        }
                         takeTraffic();
                         return finish(false);
                     }
@@ -1348,11 +1444,17 @@ bool ZStorage::setRemote(const std::shared_ptr<RemoteStore>& remote,
             return false;
         }
         if (theirs.storeId() != mine.storeId()) {
-            if (error != nullptr)
+            if (error != nullptr) {
+                auto probe = XChaChaCipher::make(keyfile, nullptr);
+                const QString cloudName =
+                    probe ? cloudStoreName(*remote, *probe, theirs) : QString();
                 *error = QStringLiteral(
-                    "this cloud folder belongs to another store (%1), and this "
-                    "store is %2 — check sync.remoteDir")
-                             .arg(theirs.storeId(), mine.storeId());
+                             "this cloud folder belongs to another store — %1 — and "
+                             "this store is %2%3")
+                             .arg(storeTag(theirs.storeId(), cloudName, theirs.created()),
+                                  storeTag(mine.storeId(), localStoreName(), mine.created()),
+                                  QLatin1String(kAddressHint));
+            }
             return false;
         }
         if (theirs.tooNew()) {

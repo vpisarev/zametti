@@ -279,11 +279,19 @@ void checkForeignCloudRefused() {
     cfg.dir = cloud;
     FakeSecrets secrets;
     QString err;
+    QString mineId;
+    QString mineRootTitle;
     {
         ZStorage s(mine.root());
         ZT_TRUE("своё облако заведено",
                 s.connectRemote(cfg, QStringLiteral("пароль-шифра"), QString(), secrets, kTiny,
                                 nullptr, &err));
+        mineId = s.identity().storeId();
+        // Корень — настоящая заметка: его заголовок и есть читаемое имя,
+        // которое обязана назвать диагностика чужого облака.
+        const QString rootId = s.ensureRootNote(&err);
+        ZT_TRUE("корень завёлся", !rootId.isEmpty());
+        mineRootTitle = s.info(rootId)->title();
         ZT_TRUE("манифест уехал", s.pushAll(nullptr, &err));
     }
     // У чужого хранилища СВОЯ идентичность: манифест облака не совпадёт.
@@ -301,6 +309,17 @@ void checkForeignCloudRefused() {
                                  nullptr, &err));
         ZT_TRUE("причина называет чужой store",
                 err.contains(QStringLiteral("another store")));
+        // Диагностика — не голые id (решение владельца): оба id, дата
+        // создания в UTC, подсказка про адрес, и — раз пароль общий —
+        // ЧИТАЕМОЕ ИМЯ чужого облака, вскрытое best-effort.
+        ZT_TRUE("назван id облака", err.contains(mineId));
+        ZT_TRUE("назван свой id", err.contains(s.identity().storeId()));
+        ZT_TRUE("названы даты создания", err.contains(QStringLiteral("(created 20")));
+        ZT_TRUE("дата — в UTC", err.contains(QStringLiteral("Z (")) || err.contains(QStringLiteral("Z)")));
+        ZT_TRUE("подсказка про адрес",
+                err.contains(QStringLiteral("check the cloud address")));
+        ZT_TRUE("имя чужого облака вскрыто общим паролем",
+                err.contains(QStringLiteral("\"%1\"").arg(mineRootTitle)));
         ZT_TRUE("remote.json не записан", s.remoteConfig().isEmpty());
         QFile f(cloud + QStringLiteral("/keyfile"));
         ZT_TRUE("keyfile открылся", f.open(QIODevice::ReadOnly));
