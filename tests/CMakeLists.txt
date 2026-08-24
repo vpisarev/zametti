@@ -63,6 +63,7 @@ add_executable(zametti-tests
     # --- облачная синхронизация ---
     crypto_vectors_test.cpp
     keyfile_test.cpp
+    blob_cipher_test.cpp
 
     # --- живая модель документа ---
     reader_test.cpp

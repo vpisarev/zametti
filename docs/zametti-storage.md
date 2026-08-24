@@ -704,12 +704,42 @@ the old tree remains the reference.
 
 ---
 
-## 11. The cloud: the keyfile
+## 11. The cloud: blobs and the keyfile
 
 The cloud stores ONLY journals + attachments + the keyfile (plus the open
 `zametti.json` manifest — see §1). Everything encrypted travels as blobs
 sealed with one 32-byte random **master key**; the keyfile is that key
 wrapped with the user's password.
+
+### The blob wrapper, v1
+
+Names in the cloud are flat and open (the owner's decision — ids are
+opaque): `<id>.log` for journals, `<id>.<ext>` for attachments, plus the
+open `keyfile` and `zametti.json`. The bytes of every encrypted blob:
+
+| offset | size | what |
+|---|---|---|
+| 0 | 4 | magic `"ZBLB"` |
+| 4 | 1 | wrapper version = 1 |
+| 5 | 24 | nonce — random, fresh **for every upload** |
+| 29 | n+16 | XChaCha20-Poly1305 ciphertext with the tag attached |
+
+The plaintext is the file as it is on disk — a journal is already
+zstd-compressed inside, an attachment is already JXL/WebP/JPEG — so there is
+no compression layer here.
+
+AAD of the seal:
+`"zametti-blob\0" + version + "\0" + ("journal"|"attachment") + "\0" +
+storeId + "\0" + blob name`. So a valid blob copied under another name,
+into another store, presented as another kind, or with the version byte
+rolled back fails the tag instead of decrypting into something plausible.
+The overhead is 45 bytes per blob; a fresh nonce per upload means the same
+content uploads as different bytes every time, and nonce reuse is excluded
+by birth rather than by bookkeeping.
+
+In the program: `BlobCipher` (interface) / `XChaChaCipher`
+(`zametti-core/sync/blob_cipher.h`); the cipher is born from a `Keyfile`
+with a live key and holds it as a `Keyfile` — raw key bytes do not travel.
 
 ### `keyfile`
 

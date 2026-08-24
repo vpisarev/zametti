@@ -58,6 +58,7 @@ add_library(zametti-core STATIC
     # Файлов хранилища здесь нет: Keyfile — чистое значение, шифр и адаптер
     # говорят байтами. Встреча с заметками — глаголы ZStorage (sync_ops).
     sync/keyfile.h              sync/keyfile.cpp
+    sync/blob_cipher.h          sync/blob_cipher.cpp
 
     # --- заметка: документ + журнал + всё, что переживает уход и возврат ---
     note/znote.h                note/znote.cpp
