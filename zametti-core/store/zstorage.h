@@ -52,6 +52,10 @@
 
 namespace zametti {
 
+// Хранилище секретов (keyring/среда) — по ссылке в глаголах подключения;
+// самих секретов ZStorage не держит.
+class SecretStore;
+
 // QObject РАДИ СИГНАЛОВ: хранилище говорит о переменах каталога само, и дерево
 // со списком подписываются на него, а не окно вспоминает после каждой операции
 // «а теперь обновить панели». Две новости: catalogChanged — что-то появилось,
@@ -646,6 +650,62 @@ public:
     // Снять пометки С ТЕХ, кого прогон честно досинкал, — не «взять всё»:
     // взятое и потерянное при упавшем прогоне пришлось бы искать сканом.
     void clearDirty(const QStringList& synced);
+
+    // --- АДРЕС ОБЛАКА ЭТОЙ КОПИИ (.zametti/remote.json) ---------------------
+    //
+    // Адрес принадлежит КОПИИ хранилища, а не пользователю и не машине:
+    // `.zametti/` в облако не синхронизируется, а с cp -r уезжает вместе с
+    // каталогом — копия знает, чьё облако её. СЕКРЕТОВ ЗДЕСЬ НЕТ И НЕ БУДЕТ:
+    // пароль сервера и ключ шифрования живут в keyring (SecretStore).
+    struct RemoteConfig {
+        QString url;     // WebDAV-коллекция; пусто — облако-каталог (dir)
+        QString dir;     // локальный каталог-облако (наборы, люки, NAS-папка)
+        QString user;    // логин сервера; пароль — в keyring
+        bool allowInsecureHttp = false;
+        int timeoutMs = 30000;
+
+        bool isEmpty() const { return url.isEmpty() && dir.isEmpty(); }
+        bool parse(const QByteArray& bytes, QString* error = nullptr);
+        QByteArray toBytes() const;
+    };
+    // Нет файла или файл битый — пустой конфиг: «синк не настроен», не беда.
+    RemoteConfig remoteConfig() const;
+    bool writeRemoteConfig(const RemoteConfig& cfg, QString* error = nullptr);
+    // Отвязка (--reset): забыть адрес. Секреты в keyring чистит вызывающий —
+    // хранилище к keyring не прикасается.
+    bool clearRemoteConfig(QString* error = nullptr);
+
+    // Построить адаптер по конфигу — общий код CLI и приложения. Пароль
+    // сервера приходит параметром: у первичной настройки он с клавиатуры, у
+    // остальных — из keyring. Пусто при пустом конфиге или негодном адресе.
+    std::shared_ptr<RemoteStore> makeRemote(const RemoteConfig& cfg,
+                                            const QString& serverPassword,
+                                            QString* error = nullptr) const;
+
+    // ВОССТАНОВИТЬ ПОДКЛЮЧЕНИЕ БЕЗ ВОПРОСОВ — старт программы и CLI-прогоны:
+    // адрес из remote.json, пароль сервера и ключ из keyring (решение
+    // владельца: из конфига и keyring, не из бухгалтерии — кэш остаётся
+    // кэшем). Ложь с объяснением — «не настроен» или «keyring пуст»; для
+    // вызывающего это тихий статус, не ошибка.
+    bool useLastRemote(SecretStore& secrets, QString* error = nullptr);
+
+    // ПЕРВИЧНАЯ НАСТРОЙКА (set-remote): единственное место, где решаются все
+    // ветки знакомства с облаком. Пустое облако — чеканит keyfile и заливает;
+    // облако со своим storeId — разворачивает существующий keyfile паролем;
+    // ЧУЖОЙ storeId — честная остановка до единой записи; пустое хранилище без
+    // идентичности + облако с манифестом — БУТСТРАП: id наследуется из
+    // манифеста, и дальнейший sync скачает всё (отдельного кода
+    // восстановления не существует). После удачи: ключ в keyring, пароль
+    // сервера в keyring (если не пуст), адрес в remote.json, облако
+    // подключено (hasRemote).
+    struct ConnectOutcome {
+        bool mintedKeyfile = false;     // облако было пустым, keyfile отчеканен
+        bool inheritedIdentity = false; // бутстрап: id пришёл из манифеста
+    };
+    bool connectRemote(const RemoteConfig& cfg, const QString& encryptionPassword,
+                       const QString& serverPassword, SecretStore& secrets,
+                       const Keyfile::KdfParams& mintParams, ConnectOutcome* outcome,
+                       QString* error = nullptr);
 
     // --- ЧИТАТЕЛИ ДЛЯ СИНХРОНИЗАЦИИ (m17) -----------------------------------
     //
