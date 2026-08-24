@@ -1180,9 +1180,29 @@ struct ZSettings {
         ZM_SETTING_PLAIN(bool, onExit, OnExit, true)
     };
 
+    // ================================================================
+    // ЛОГИ (решение владельца, 24.08.2026). Файлы err.log и sync.log лежат
+    // РЯДОМ С config.json и state.json — их легко найти и не потерять, в
+    // отличие от /var. Пишут и программа, и zametti-store — настройки одни.
+    // Дефолт — ВЫКЛЮЧЕНО: лог это инструмент разбора, а не фон жизни.
+    // СЕКРЕТОВ В ЛОГАХ НЕ БЫВАЕТ — это держится не дисциплиной строк, а тем,
+    // что ни движок, ни CLI не имеют паролей в сообщениях вовсе.
+    // ================================================================
+    struct Logs {
+        ZM_SETTING_PLAIN(bool, writeErrLog, WriteErrLog, false)
+        ZM_SETTING_PLAIN(bool, writeSyncLog, WriteSyncLog, false)
+        // Предел файла в мегабайтах — порог владельца (лимит по строкам он
+        // отверг: мерить объём естественнее байтами). Переполнился — остаются
+        // СВЕЖИЕ 80% предела, рез по границе строки.
+        ZM_SETTING(int, maxMegabytes, MaxMegabytes, 10, 1, 1000)
+    };
+
     // РАЗДЕЛЫ — методами, как и поля внутри них: только-чтение снаружи
     // (const ZSettings& из settings()), правка — у того, у кого ZSettings&
     // (загрузчик, editSettings()).
+    const Logs& logs() const { return logs_; }
+    Logs& logs() { return logs_; }
+
     const ZDocStyle& style() const { return style_; }
     ZDocStyle& style() { return style_; }
     const Ui& ui() const { return ui_; }
@@ -1227,6 +1247,7 @@ private:
     Formulas formulas_;
     Pdf pdf_;
     Sync sync_;
+    Logs logs_;
 };
 
 

@@ -114,7 +114,9 @@ void checkForeignCloud() {
     ZT_TRUE("подключение к чужому облаку отказано",
             !store.setRemote(remote, made, &error));
     ZT_TRUE("и сказано, чьё оно", error.contains(QLatin1String("01ffffffffffff")));
-    ZT_TRUE("и названа настройка", error.contains(QLatin1String("remoteDir")));
+    ZT_TRUE("и подсказано, где чинить адрес",
+            error.contains(QLatin1String("check the cloud address")));
+    ZT_TRUE("и названа дата создания чужого", error.contains(QLatin1String("(created ")));
     ZT_TRUE("облако не подключено", !store.hasRemote());
 
     QVector<zametti::RemoteStore::Entry> listing;

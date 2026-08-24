@@ -16,6 +16,8 @@
 #include "keyring_secrets.h"
 #include "secret_store.h"
 #include "webdav_remote.h"
+#include "settings.h"
+#include "zlogs.h"
 #include "zstorage.h"
 #include "recompress.h"
 
@@ -127,6 +129,12 @@ int main(int argc, char** argv) {
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
         qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(argc, argv);
+    // ИМЯ ПРИЛОЖЕНИЯ — «zametti», как у окна, и это не косметика: от него
+    // считается AppConfigLocation, то есть config.json, логи и БУХГАЛТЕРИЯ
+    // синка. Со своим именем утилита читала бы пустой конфиг из
+    // …/zametti-store/ и вела ВТОРУЮ бухгалтерию на ту же копию хранилища —
+    // ровно так и было, пока логи это не вскрыли.
+    QCoreApplication::setApplicationName(QStringLiteral("zametti"));
     const QStringList args = app.arguments();
     if (args.size() < 2) return usage();
     const QString command = args[1];
@@ -384,10 +392,20 @@ int main(int argc, char** argv) {
             return 1;
         }
 
+        // Логи — те же, что у окна: настройки из config.json (битый или
+        // отсутствующий конфиг = дефолты, то есть логи выключены).
+        QString cfgWhy;
+        zametti::loadSettings(&cfgWhy, nullptr);
+        zametti::ZLogs& logs = zametti::ZLogs::instance();
+        logs.configure({zametti::settings().logs().writeErrLog(),
+                        zametti::settings().logs().writeSyncLog(),
+                        qint64(zametti::settings().logs().maxMegabytes()) * 1024 * 1024});
+
         zametti::ZStorage::SyncOptions options;
         options.mode = pushOnly ? zametti::ZStorage::SyncOptions::PushOnly
                                 : zametti::ZStorage::SyncOptions::Full;
         options.allowMassDelete = allowMassDelete;
+        options.logs = &logs;
         zametti::ZStorage::SyncReport report;
         bool ok = storage.sync(options, &report, &error);
 

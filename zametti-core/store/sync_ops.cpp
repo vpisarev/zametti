@@ -19,6 +19,7 @@
 #include "folder_remote.h"
 #include "keyfile.h"
 #include "sync_ledger.h"
+#include "zlogs.h"
 #include "note_id.h"
 #include "secret_store.h"
 #include "times.h"
@@ -585,10 +586,21 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
     const auto cancelled = [&] {
         return options.cancel != nullptr && options.cancel->load();
     };
+    const auto note = [&](const QString& what) {
+        if (options.logs != nullptr) options.logs->sync(what);
+    };
     const auto complain = [&](const QString& what) {
         ++done.integrityFailures;
         fprintf(stderr, "zametti sync: %s\n", qPrintable(what));
+        if (options.logs != nullptr) {
+            options.logs->sync(QStringLiteral("ERROR: ") + what);
+            options.logs->err(QStringLiteral("sync: ") + what);
+        }
     };
+    note(QStringLiteral("start %1, store %2")
+             .arg(options.mode == SyncOptions::PushOnly ? QStringLiteral("push-only")
+                                                        : QStringLiteral("full"),
+                  root_));
 
     SyncLedger ledger = SyncLedger::load(SyncLedger::pathFor(storeId, root_));
     const bool afterCrash = !ledger.cleanShutdown();
@@ -673,6 +685,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                 journalFor(id, options.journalRules)
                     ->ensureBaseline(bytes, QFileInfo(pathOf(id)).lastModified().toMSecsSinceEpoch());
                 ++done.baselined;
+                note(QStringLiteral("align: baselined %1").arg(id));
                 continue;
             }
             const int head = frames.headIndex();
@@ -697,6 +710,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                 continue;
             }
             ++done.externalRecorded;
+            note(QStringLiteral("align: external edit recorded for %1").arg(id));
         }
     }
     done.usAlign = phase.nsecsElapsed() / 1000;
@@ -796,6 +810,10 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                     *error = QStringLiteral(
                         "the cloud key was rotated on another device — enter the password "
                         "again (set-remote)");
+                complain(QStringLiteral(
+                    "key probe failed on %1 — the cloud key was rotated, stopping before "
+                    "any upload").arg(probeName));
+                --done.integrityFailures;  // остановка названа в error, не провал блоба
                 takeTraffic();
                 return finish(false);
             }
@@ -876,6 +894,9 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
             }
             if (!localValid) {
                 ++done.corruptLocalTreatedAsAbsence;
+                note(QStringLiteral("local journal of %1 fails validation — treated as "
+                                    "absence, uploading nothing")
+                         .arg(id));
                 fprintf(stderr,
                         "zametti sync: local journal of %s does not pass validation (%s) — "
                         "treating as absence, uploading nothing\n",
@@ -898,7 +919,11 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
             // На сервере блоба нет. При записанном etag это повреждение
             // сервера — перезаливка-лечение; в push-only откладывается.
             if (localValid) {
-                if (!led.etag.isEmpty()) ++done.healedRemote;
+                if (!led.etag.isEmpty()) {
+                    ++done.healedRemote;
+                    note(QStringLiteral("healing: %1 vanished from the cloud, re-uploading")
+                             .arg(name));
+                }
                 needPush = true;
                 pushBytes = localBytes;
                 pushExpectedEtag.clear();
@@ -986,6 +1011,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                         }
                         ++done.takenWhole;
                         touched.insert(id);
+                        note(QStringLiteral("taken whole: %1").arg(name));
                         led.etag = etag;
                         led.sealedHash = sealed;
                         led.plainHash = hashBytes(remotePlain);
@@ -1018,6 +1044,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                             }
                             ++done.takenWhole;
                             touched.insert(id);
+                            note(QStringLiteral("taken whole (superset): %1").arg(name));
                             led.etag = etag;
                             led.sealedHash = sealed;
                             led.plainHash = hashBytes(remotePlain);
@@ -1075,6 +1102,11 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                             needPush = true;
                             ++done.mergedJournals;
                             touched.insert(id);
+                            note(QStringLiteral("merged %1: +%2 theirs, %3 common, %4 voided")
+                                     .arg(name)
+                                     .arg(st.fromOther)
+                                     .arg(st.common)
+                                     .arg(st.voidedDropped));
                         }
                     }
                 }
@@ -1390,6 +1422,32 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
     if (!ledger.save(&ledgerWhy))
         fprintf(stderr, "zametti sync: cannot save the ledger: %s\n", qPrintable(ledgerWhy));
     takeTraffic();
+
+    note(QStringLiteral(
+             "done: listed %1, skipped %2, taken %3, pushed %4, merged %5, deferred %6, "
+             "healed %7, materialized %8, deletes %9/%10 pending, attachments %11 up %12 "
+             "down, failures %13; traffic %14 req, %15 B up, %16 B down")
+             .arg(done.listed)
+             .arg(done.skipped)
+             .arg(done.takenWhole)
+             .arg(done.pushedWhole)
+             .arg(done.mergedJournals)
+             .arg(done.deferred)
+             .arg(done.healedRemote)
+             .arg(done.materialized)
+             .arg(done.deletesApplied)
+             .arg(done.pendingDeletes.size())
+             .arg(done.attachmentsUp)
+             .arg(done.attachmentsDown)
+             .arg(done.integrityFailures)
+             .arg(done.traffic.requests)
+             .arg(done.traffic.bytesUp)
+             .arg(done.traffic.bytesDown));
+    if (done.cancelled) note(QStringLiteral("cancelled by the user"));
+    if (!done.pendingDeletes.isEmpty())
+        note(QStringLiteral("mass-delete guard held %1 notes: %2")
+                 .arg(done.pendingDeletes.size())
+                 .arg(done.pendingDeletes.join(QLatin1Char(' '))));
 
     if (done.integrityFailures > 0) {
         if (error != nullptr)

@@ -366,10 +366,17 @@ QJsonObject settingsToJson(const ZSettings& a) {
         {QStringLiteral("onExit"), a.sync().onExit()},
     };
 
+    QJsonObject logs{
+        {QStringLiteral("writeErrLog"), a.logs().writeErrLog()},
+        {QStringLiteral("writeSyncLog"), a.logs().writeSyncLog()},
+        {QStringLiteral("maxMegabytes"), a.logs().maxMegabytes()},
+    };
+
     return QJsonObject{
         {QStringLiteral("font"), font},
         {QStringLiteral("pdf"), pdf},
         {QStringLiteral("sync"), sync},
+        {QStringLiteral("logs"), logs},
         {QStringLiteral("layout"), layout},
         {QStringLiteral("colors"), colors},
         {QStringLiteral("list"), list},
@@ -491,6 +498,11 @@ void settingsFromJson(const QJsonObject& root, ZSettings& a) {
     readInt(sync, "timeoutMs", a.sync(), &ZSettings::Sync::setTimeoutMs);
     readBool(sync, "onStart", a.sync(), &ZSettings::Sync::setOnStart);
     readBool(sync, "onExit", a.sync(), &ZSettings::Sync::setOnExit);
+
+    const QJsonObject logs = root.value(QStringLiteral("logs")).toObject();
+    readBool(logs, "writeErrLog", a.logs(), &ZSettings::Logs::setWriteErrLog);
+    readBool(logs, "writeSyncLog", a.logs(), &ZSettings::Logs::setWriteSyncLog);
+    readInt(logs, "maxMegabytes", a.logs(), &ZSettings::Logs::setMaxMegabytes);
 
     const QJsonObject paper = root.value(QStringLiteral("pdf")).toObject();
     readString(paper, "fontFamily", a.pdf(), &ZSettings::Pdf::setFontFamily);

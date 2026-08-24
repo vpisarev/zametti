@@ -19,6 +19,7 @@
 #ifndef ZAMETTI_ZAPP_H
 #define ZAMETTI_ZAPP_H
 
+#include "zlogs.h"
 #include "app_state.h"
 #include "settings.h"
 #include "zimage_cache.h"
@@ -65,6 +66,12 @@ public:
     // открывает — с его каталогом говорит только ZStorage.
     std::shared_ptr<ZStorage> openStorage(const QString& root);
     std::shared_ptr<ZStorage> storage() const { return storage_; }
+
+    // --- логи ----------------------------------------------------------------
+    // err.log и sync.log рядом с config.json; экземпляр один на программу
+    // (ZLogs::instance() — им же пользуются getLogStream и CLI); конфиг
+    // перечитан — пределы перечитаны (reloadSettings зовёт configure).
+    ZLogs& logs() { return ZLogs::instance(); }
 
     // --- кэш картинок --------------------------------------------------------
     // Один на программу; бюджет и предел стороны — из settings().cache(),

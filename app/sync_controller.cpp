@@ -2,16 +2,19 @@
 
 #include "keyring_secrets.h"
 #include "settings.h"
+#include "zlogs.h"
 
 #include <QMetaObject>
 
 namespace zametti {
 
 SyncController::SyncController(std::shared_ptr<ZStorage> storage,
-                               std::shared_ptr<SecretStore> secrets, QObject* parent)
+                               std::shared_ptr<SecretStore> secrets, ZLogs* logs,
+                               QObject* parent)
     : QObject(parent),
       storage_(std::move(storage)),
-      secrets_(secrets ? std::move(secrets) : std::make_shared<KeyringSecrets>()) {
+      secrets_(secrets ? std::move(secrets) : std::make_shared<KeyringSecrets>()),
+      logs_(logs) {
     // Такт индикатора. Живёт в главном потоке; движок только пишет атомики.
     ticker_.setInterval(120);
     connect(&ticker_, &QTimer::timeout, this, [this] {
@@ -98,6 +101,7 @@ void SyncController::startFull(bool allowMassDelete) {
     ZStorage::SyncOptions options;
     options.mode = ZStorage::SyncOptions::Full;
     options.allowMassDelete = allowMassDelete;
+    options.logs = logs_;
     cancel_ = std::make_shared<std::atomic<bool>>(false);
     options.cancel = cancel_;
     progressDone_ = std::make_shared<std::atomic<int>>(0);
@@ -183,6 +187,7 @@ void SyncController::pushOnExit() {
     }
     ZStorage::SyncOptions options;
     options.mode = ZStorage::SyncOptions::PushOnly;
+    options.logs = logs_;
     ZStorage::SyncReport report;
     if (!storage_->sync(options, &report, &why))
         fprintf(stderr, "zametti: exit push failed: %s\n", qPrintable(why));

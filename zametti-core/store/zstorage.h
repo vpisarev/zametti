@@ -56,6 +56,7 @@ namespace zametti {
 // Хранилище секретов (keyring/среда) — по ссылке в глаголах подключения;
 // самих секретов ZStorage не держит.
 class SecretStore;
+class ZLogs;
 
 // QObject РАДИ СИГНАЛОВ: хранилище говорит о переменах каталога само, и дерево
 // со списком подписываются на него, а не окно вспоминает после каждой операции
@@ -796,6 +797,9 @@ public:
         // движок живёт в рабочем потоке и о Qt-подписчиках не знает.
         std::shared_ptr<std::atomic<int>> progressDone;
         std::shared_ptr<std::atomic<int>> progressTotal;
+        // Логи (err.log/sync.log) — не владеем; nullptr = не писать. Движок
+        // пишет заметные события и итоги; секретов в его сообщениях нет.
+        ZLogs* logs = nullptr;
     };
     struct SyncReport {
         // выравнивание

@@ -40,9 +40,10 @@ class SyncController : public QObject {
 public:
     // secrets — чей keyring спрашивать; по умолчанию системный
     // (KeyringSecrets), наборы подают свой.
+    // logs — err.log/sync.log приложения (не владеем; nullptr = не писать).
     explicit SyncController(std::shared_ptr<ZStorage> storage,
                             std::shared_ptr<SecretStore> secrets = nullptr,
-                            QObject* parent = nullptr);
+                            ZLogs* logs = nullptr, QObject* parent = nullptr);
     ~SyncController() override;
 
     // Настроен ли синк у этой копии хранилища (.zametti/remote.json).
@@ -100,6 +101,7 @@ protected:
 
     std::shared_ptr<ZStorage> storage_;
     std::shared_ptr<SecretStore> secrets_;
+    ZLogs* logs_ = nullptr;
     // Добытое fetchSecrets — значения для потока прогона.
     ZStorage::RemoteConfig cfg_;
     Keyfile keyfile_;

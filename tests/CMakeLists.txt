@@ -72,6 +72,7 @@ add_executable(zametti-tests
     sync_engine_test.cpp
     set_remote_test.cpp
     sync_fuzz_test.cpp
+    zlogs_test.cpp
 
     # --- живая модель документа ---
     reader_test.cpp

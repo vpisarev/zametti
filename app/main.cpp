@@ -421,7 +421,7 @@ int main(int argc, char** argv) {
     std::shared_ptr<zametti::SecretStore> syncSecrets;
     if (!qEnvironmentVariable("ZAMETTI_SYNC_KEY").isEmpty())
         syncSecrets = std::make_shared<zametti::EnvSecrets>();
-    zametti::SyncController cloudSync(zapp.storage(), syncSecrets);
+    zametti::SyncController cloudSync(zapp.storage(), syncSecrets, &zapp.logs());
     zametti::NoteTreeView& tree = panels.tree();
     zametti::NoteListModel& list = panels.list();
     QListView& listView = panels.listView();

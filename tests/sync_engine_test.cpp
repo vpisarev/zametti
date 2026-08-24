@@ -12,6 +12,7 @@
 #include "webdav_remote.h"
 #include "keyfile.h"
 #include "sync_ledger.h"
+#include "zlogs.h"
 #include "zstorage.h"
 
 #include "import_limits.h"
@@ -945,6 +946,35 @@ void checkPendingDeletesDialogWords() {
             dialog.verdict() == PendingDeletesDialog::Verdict::KeepAlive);
 }
 
+void checkSyncWritesItsLog() {
+    TwoDevices rig;
+    zt::MiniStore logHome;
+    ZLogs logs(logHome.root());
+    logs.configure({true, true, 1 << 20});
+    TwoDevices::writeRaw(rig.a, QStringLiteral("01n6cqevaaaaaa"), note("раз"));
+    ZStorage::SyncOptions options;
+    options.logs = &logs;
+    rig.syncOne(*rig.sa, "прогон с логом", options);
+
+    QFile f(logs.syncPath());
+    ZT_TRUE("sync.log появился", f.open(QIODevice::ReadOnly));
+    const QByteArray all = f.readAll();
+    ZT_TRUE("старт записан", all.contains("start full"));
+    ZT_TRUE("дожурнализация записана", all.contains("baselined 01n6cqevaaaaaa"));
+    ZT_TRUE("итог записан", all.contains("done: listed"));
+    ZT_TRUE("ошибок не было — err.log пуст", !QFile::exists(logs.errPath()));
+
+    // Обрыв заливки — ошибка обязана лечь в ОБА лога.
+    rig.ra->failNext(QStringLiteral("put"), 1);
+    TwoDevices::writeRaw(rig.a, QStringLiteral("01n6cqevaaaaaa"), note("правка"));
+    ZStorage::SyncReport report;
+    QString err;
+    rig.sa->sync(options, &report, &err);
+    QFile fe(logs.errPath());
+    ZT_TRUE("err.log появился", fe.open(QIODevice::ReadOnly));
+    ZT_TRUE("беда в err.log", fe.readAll().contains("cannot upload"));
+}
+
 void checkProgressLineShape() {
     // Звёздочка ездит туда-обратно без пауз на краях…
     ZT_EQ("такт 0 — левый край", num(0), num(SyncController::bounceAt(0, 5)));
@@ -996,6 +1026,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkSubtreeQualifiedNames();
     checkPendingDeletesDialogWords();
     checkProgressLineShape();
+    checkSyncWritesItsLog();
     checkLiveWebDavCycle();
     return zt::report("sync_engine");
 }

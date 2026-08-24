@@ -49,6 +49,11 @@ ZApp& ZApp::instance() {
 bool ZApp::reloadSettings(QString* error, QStringList* unknown) {
     const bool ok = loadSettings(error, unknown);
     applySettingsToCaches();
+    // Пределы логов — из свежих настроек; смена предела заново взводит
+    // проверку переполнения (она случится при первой же записи).
+    ZLogs::instance().configure({settings().logs().writeErrLog(),
+                                 settings().logs().writeSyncLog(),
+                                 qint64(settings().logs().maxMegabytes()) * 1024 * 1024});
     return ok;
 }
 
