@@ -761,7 +761,11 @@ public:
         int healedRemote = 0;      // перезаливка пропавшего/битого блоба
         // материализация
         int materialized = 0;      // файлов приведено к голове журнала
+        QStringList materializedIds;  // кто именно — окну для refreshNote:
+                                      // сторож каталога видит состав имён, а
+                                      // не содержимое закрытых заметок
         int deletesApplied = 0;    // файлов убрано по надгробиям
+        QStringList deletedIds;
         QStringList pendingDeletes;    // предохранитель: ждут подтверждения
         // вложения (presence)
         int attachmentsUp = 0, attachmentsDown = 0;

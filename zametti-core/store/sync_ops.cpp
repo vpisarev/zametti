@@ -1099,6 +1099,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                 continue;
             }
             ++done.materialized;
+            done.materializedIds.append(id);
             const QFileInfo info(path);
             ledger.setFileStat(id, {info.lastModified().toMSecsSinceEpoch(), info.size()});
         }
@@ -1121,6 +1122,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                     continue;
                 }
                 ++done.deletesApplied;
+                done.deletedIds.append(id);
                 ledger.dropFile(id);
                 processed.append(id);
             }

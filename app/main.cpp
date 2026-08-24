@@ -34,6 +34,8 @@
 #include "export_note.h"
 #include "export_pdf.h"
 #include "status_bar.h"
+#include "secret_store.h"
+#include "sync_controller.h"
 #include "toolbar.h"
 #include "zapp.h"
 
@@ -408,6 +410,16 @@ int main(int argc, char** argv) {
             ? zametti::NoteTreeModel::rootFor(current, zametti::settings().store().notesRoot())
             : QFileInfo(storeRoot).absoluteFilePath()));
     zametti::NoteTreeModel& model = panels.model();
+    // Синхронизация: контроллер живёт при окне, движок бегает в рабочем
+    // потоке; каталог заметок обновляют сторожа хранилища и external-путь
+    // редактора, поэтому окну от синка ничего не нужно, кроме статуса.
+    // Люк обвязки, тот же, что у CLI: ключ в среде (ZAMETTI_SYNC_KEY) —
+    // секреты из среды, keyring не трогается и диалог разблокировки не
+    // выскакивает. Для человека — системный keyring, как и задумано.
+    std::shared_ptr<zametti::SecretStore> syncSecrets;
+    if (!qEnvironmentVariable("ZAMETTI_SYNC_KEY").isEmpty())
+        syncSecrets = std::make_shared<zametti::EnvSecrets>();
+    zametti::SyncController cloudSync(zapp.storage(), syncSecrets);
     zametti::NoteTreeView& tree = panels.tree();
     zametti::NoteListModel& list = panels.list();
     QListView& listView = panels.listView();
@@ -2147,10 +2159,46 @@ int main(int argc, char** argv) {
         // показывать своё состояние с первой секунды, а не с первого нажатия.
         showPanels(!session.panelsHidden());
 
-        // Обещания. Погашенная кнопка без объяснения читается как поломка, а
-        // не как «будет позже», поэтому у каждой — своя причина словами.
-        toolbar.setPromise(Button::Cloud,
-                           QStringLiteral("coming with sync"));
+        // КНОПКА ОБЛАКА ОЖИЛА (m17, сессия 4). Не настроенный синк — не
+        // поломка и не обещание «потом», а состояние: тултип говорит, что
+        // сделать. Настроенный: клик — полный прогон, клик во время — отмена.
+        if (!model.isStore() || !cloudSync.configured()) {
+            toolbar.setPromise(Button::Cloud, cloudSync.statusText());
+        } else {
+            toolbar.setTip(Button::Cloud, cloudSync.statusText());
+            QObject::connect(&cloudSync, &zametti::SyncController::stateChanged, &toolbar, [&] {
+                toolbar.setTip(Button::Cloud, cloudSync.statusText());
+                toolbar.setAccent(Button::Cloud, cloudSync.running());
+            });
+            // ПРЕДОХРАНИТЕЛЬ МАССОВОГО УДАЛЕНИЯ — один из двух вопросов всего
+            // синка (решение владельца): прогон задержал удаления и ждёт.
+            // Подтвердил — повторный прогон с allowMassDelete; отказал —
+            // заметки объявляются живыми, облако лечится, вопрос не
+            // повторяется, потому что изменилось состояние.
+            QObject::connect(
+                &cloudSync, &zametti::SyncController::pendingDeletes, &window,
+                [&](const QStringList& ids) {
+                    QStringList shown = ids.mid(0, 12);
+                    QString text =
+                        QStringLiteral("The cloud wants to delete %1 notes:\n\n").arg(ids.size());
+                    for (const QString& id : shown) {
+                        const zametti::ZStorage::NoteInfo* info = model.storage()->info(id);
+                        text += QStringLiteral("  %1\n")
+                                    .arg(info != nullptr && !info->title().isEmpty() ? info->title()
+                                                                                     : id);
+                    }
+                    if (ids.size() > shown.size())
+                        text += QStringLiteral("  … and %1 more\n").arg(ids.size() - shown.size());
+                    text += QStringLiteral("\nDelete them here too?");
+                    const auto answer = QMessageBox::question(
+                        &window, QStringLiteral("Sync wants to delete notes"), text,
+                        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+                    if (answer == QMessageBox::Yes)
+                        cloudSync.startFull(true);
+                    else
+                        cloudSync.declareAliveAndFinish(ids);
+                });
+        }
 
         if (!model.isStore()) {
             // Открыт одиночный файл, а не хранилище: создавать и сортировать
@@ -2248,7 +2296,8 @@ int main(int argc, char** argv) {
                 exportNote(editor.filePath());
                 break;
             case Button::Cloud:
-                break;   // обещание: кнопка погашена, сюда не доходит
+                cloudSync.toggle();
+                break;
             }
         });
     }
@@ -2396,6 +2445,11 @@ int main(int argc, char** argv) {
     refreshArchivePage();
     window.show();
     QTimer::singleShot(0, &window, applyStartWidths);
+    // СИНК НА СТАРТЕ (дефолт вкл): в фоне, с акцентом на входящие — программа
+    // открывается сразу, прилетевшее материализуется по ходу; открытая заметка
+    // получает чужую версию existing external-путём, Ctrl+Z возвращает своё.
+    if (zametti::settings().sync().onStart() && cloudSync.configured())
+        QTimer::singleShot(0, &window, [&] { cloudSync.startFull(false); });
 
     // Прореживание журналов — фоном и один раз за запуск. В отдельном потоке
     // потому, что полный проход по корпусу владельца стоит 1.6 секунды, а
@@ -2455,6 +2509,10 @@ int main(int argc, char** argv) {
         if (markdown.active()) markdown.saveWithoutLeaving();
         // На выходе окно с ошибкой показывать поздно: жалуемся в stderr.
         editor.save(false, true);   // выходим: пробуем записать, не спрашивая признак
+
+        // PUSH-ONLY НА ВЫХОДЕ (дефолт вкл): только исходящее, бюджет времени
+        // внутри движка; офлайн — тихий пропуск, dirty-set переживает.
+        if (zametti::settings().sync().onExit()) cloudSync.pushOnExit();
 
         // Каретка открытой заметки — в состояние по id, как у всех остальных.
         editor.rememberCurrentCaretInApp();

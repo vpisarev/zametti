@@ -82,6 +82,8 @@ add_library(zametti-ui STATIC
     note_view.cpp
     editor_widget.h
     editor_widget.cpp
+    sync_controller.h
+    sync_controller.cpp
     image_insert.h
     image_insert.cpp
     image_viewer.h

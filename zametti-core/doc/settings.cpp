@@ -362,6 +362,8 @@ QJsonObject settingsToJson(const ZSettings& a) {
         {QStringLiteral("remoteDir"), a.sync().remoteDir()},
         {QStringLiteral("allowInsecureHttp"), a.sync().allowInsecureHttp()},
         {QStringLiteral("timeoutMs"), a.sync().timeoutMs()},
+        {QStringLiteral("onStart"), a.sync().onStart()},
+        {QStringLiteral("onExit"), a.sync().onExit()},
     };
 
     return QJsonObject{
@@ -487,6 +489,8 @@ void settingsFromJson(const QJsonObject& root, ZSettings& a) {
     readString(sync, "remoteDir", a.sync(), &ZSettings::Sync::setRemoteDir);
     readBool(sync, "allowInsecureHttp", a.sync(), &ZSettings::Sync::setAllowInsecureHttp);
     readInt(sync, "timeoutMs", a.sync(), &ZSettings::Sync::setTimeoutMs);
+    readBool(sync, "onStart", a.sync(), &ZSettings::Sync::setOnStart);
+    readBool(sync, "onExit", a.sync(), &ZSettings::Sync::setOnExit);
 
     const QJsonObject paper = root.value(QStringLiteral("pdf")).toObject();
     readString(paper, "fontFamily", a.pdf(), &ZSettings::Pdf::setFontFamily);
