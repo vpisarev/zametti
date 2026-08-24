@@ -17,6 +17,7 @@
 #include <QApplication>
 #include <QDialogButtonBox>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QTabWidget>
 #include <QTest>
 #include <QTextBlock>
@@ -85,8 +86,12 @@ void checkBuildFacts() {
     check(facts.contains(QStringLiteral("libjxl")), "версия libjxl в сводке сборки");
     check(facts.contains(QStringLiteral("Qt")), "версия Qt в сводке сборки");
     // Незаполненная подстановка CMake выглядит как "@ИМЯ@" — так молча
-    // выглядел бы и потерянный configure_file.
-    check(!facts.contains(QLatin1Char('@')), "подстановки CMake раскрыты все");
+    // выглядел бы и потерянный configure_file. Ищем ИМЕННО ЕЁ, а не всякую
+    // собаку: первая редакция запрещала символ '@' вовсе и покраснела от
+    // честной строки версии `1.0.0 (openmath @086f4eb, 2024-08-05)` —
+    // проверка ловила не то, что называла.
+    check(!facts.contains(QRegularExpression(QStringLiteral("@[A-Z0-9_]+@"))),
+          "подстановки CMake раскрыты все");
     // Пустая версия — это "**md4c ** — разбор markdown": библиотека названа,
     // а версии нет. Ловим по двойному пробелу перед тире.
     check(!facts.contains(QStringLiteral("  —")), "пустых версий в сводке нет");
