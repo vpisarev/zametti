@@ -479,7 +479,10 @@ void checkSaveMigrates() {
     ZT_EQ("после первой же записи журнал чищен", std::string("0.1"),
           cleanVersionOf(id).toStdString());
     // Три записи с возвратом сходятся к одной, и к ней добавляется свежая.
-    ZT_TRUE("дубликаты вычищены: записей " + std::to_string(recordCount(id)), recordCount(id) == 2);
+    // Считаем ВЕШКИ: выброшенное чисткой названо записью гашения, которая
+    // тоже лежит в журнале и едет в облако, но вешкой не является.
+    ZT_TRUE("дубликаты вычищены: вешек " + std::to_string(contentRecordCount(id)),
+            contentRecordCount(id) == 2);
 }
 
 // Триггер второй: первое чтение истории. Ctrl+Z, доехавший до дна цепочки,
@@ -499,9 +502,9 @@ void checkHistoryReadMigrates() {
     ZT_TRUE("вход в историю удался", rig.enter());
     ZT_EQ("журнал вычищен входом в историю", std::string("0.1"),
           cleanVersionOf(id).toStdString());
-    ZT_TRUE("и таймлайн показывает уже чистую историю: записей " +
-                std::to_string(rig.controller.timeline()->count()),
-            rig.controller.timeline()->count() == 1);
+    ZT_TRUE("и таймлайн показывает уже чистую историю: вешек " +
+                std::to_string(contentRecordCount(id)),
+            contentRecordCount(id) == 1);
     rig.leave();
 }
 

@@ -7,6 +7,10 @@
 //     вешка External, через которую схлопывание не перепрыгивает;
 //   - ЛЕНИВОСТЬ: журнал версии 0.1 без форса не трогается ни байтом;
 //   - ИДЕМПОТЕНТНОСТЬ: повторный форс не меняет ни байта;
+//   - ГАШЕНИЕ АДРЕСОМ (m17): выброшенные чисткой записи не исчезают молча —
+//     их адреса называет запись гашения, и она едет в облако. Поэтому
+//     recordsAfter считает и её: содержательных записей столько же, сколько
+//     было до этой правки, плюс одна гасящая;
 //   - сторож свежести — единственное, чем миграция отличается от живой
 //     записи: одни и те же записи, поданные живым путём и вычищенные
 //     миграцией, дают одинаковый журнал.
@@ -109,16 +113,43 @@ std::string timesOf(ZStorage& h, const QString& id, qint64 base) {
     for (int i = 0; i < j.size(); ++i) {
         const ZJournal::Record& e = j.at(i);
         // Вешки, а не записи: гашение и погашенное человеку не показываются, и
-        // сходиться живому пути с миграцией положено именно по вешкам. Живой
-        // путь гасит адресом (запись гашения остаётся и едет в облако),
-        // миграция чистит насовсем — это разовая уборка журналов, которых в
-        // облаке ещё не было.
+        // сходиться живому пути с чисткой положено именно по вешкам. ОБА пути
+        // теперь гасят адресом — запись гашения остаётся в журнале и едет в
+        // облако (m17); молча стирать нельзя, стёртое вернулось бы
+        // объединением с другого устройства.
         if (!e.statesContent() || j.isVoided(i)) continue;
         if (!out.empty()) out += " ";
         out += std::to_string((e.time() - base) / kMinute);
         if (e.kind() != ZJournal::Kind::Save) out += e.kind() == ZJournal::Kind::Tombstone ? "T" : "X";
     }
     return out;
+}
+
+// Сколько в журнале записей, ГОВОРЯЩИХ О СОДЕРЖИМОМ (гашение — не говорит).
+// Ровно то число, которым раньше был recordsAfter.
+int contentRecords(ZStorage& h, const QString& id) {
+    ZJournal j;
+    QString error;
+    if (!h.readJournal(id, &j, &error)) return -1;
+    int n = 0;
+    for (int i = 0; i < j.size(); ++i)
+        if (j.at(i).statesContent()) ++n;
+    return n;
+}
+
+// Записи гашения в журнале и сколько адресов они называют.
+int voidingRecords(ZStorage& h, const QString& id, int* addresses = nullptr) {
+    ZJournal j;
+    QString error;
+    if (addresses != nullptr) *addresses = 0;
+    if (!h.readJournal(id, &j, &error)) return -1;
+    int n = 0;
+    for (int i = 0; i < j.size(); ++i) {
+        if (j.at(i).kind() != ZJournal::Kind::Amendment) continue;
+        ++n;
+        if (addresses != nullptr) *addresses += int(j.at(i).voids().size());
+    }
+    return n;
 }
 
 // Прогнать чистку и сказать, что вышло.
@@ -164,7 +195,12 @@ void checkRealJournal() {
     // ВОТ ОЖИДАЕМОЕ СХЛОПЫВАНИЕ, записанное явно: одиннадцать записей, шесть из
     // которых — возвраты к уже записанному состоянию (человек набирал и
     // отменял), сходятся к пяти.
-    ZT_EQ("записей стало", num(5), num(report.recordsAfter));
+    // Пять содержательных плюс запись гашения, называющая шесть выброшенных.
+    ZT_EQ("записей стало", num(6), num(report.recordsAfter));
+    ZT_EQ("содержательных из них", num(5), num(contentRecords(h, id)));
+    int addresses = 0;
+    ZT_EQ("и ровно одна запись гашения", num(1), num(voidingRecords(h, id, &addresses)));
+    ZT_EQ("она называет все шесть выброшенных", num(6), num(addresses));
     ZT_EQ("и все шесть ушли дубликатами", num(6), num(report.duplicates));
     ZT_EQ("схлопнутых мелких правок нет", num(0), num(report.merged));
     ZT_TRUE("файл переписан", report.rewritten);
@@ -179,8 +215,10 @@ void checkRealJournal() {
     // одинаковых записей остаётся САМАЯ СТАРАЯ, и штамп modified в ней —
     // её собственный, на 39 секунд раньше. Текст при этом тот же до знака.
     QByteArray lastAfter;
+    // Последняя запись чищеного журнала — гашение, слепка у неё нет; спрашиваем
+    // последнюю СО СЛЕПКОМ (окно и таймлайн спрашивают её же).
     ZT_TRUE("последний слепок собирается и после",
-            h.journalSnapshot(id, int(after.size()) - 1, &lastAfter, &error));
+            h.journalSnapshot(id, after.lastSnapshotIndex(), &lastAfter, &error));
     ZT_TRUE("последнее состояние то же самое", NoteHeader::sameFileApartFromStamps(lastBefore, lastAfter));
     ZT_TRUE("а байты — от старшей из равных записей", lastBefore != lastAfter);
 
@@ -213,7 +251,8 @@ void checkReturnCollapses(const QString& root) {
     makeV0(h.journalPath(id));
 
     const ZStorage::CompressReport report = compress(h, id, false);
-    ZT_EQ("три записи сошлись к одной", num(1), num(report.recordsAfter));
+    ZT_EQ("три записи сошлись к одной", num(1), num(contentRecords(h, id)));
+    ZT_EQ("выброшенные названы гашением", num(1), num(voidingRecords(h, id)));
     ZT_EQ("осталась самая старая из равных", std::string("0"), timesOf(h, id, kNow));
 }
 
@@ -230,6 +269,7 @@ void checkExternalStops(const QString& root) {
 
     const ZStorage::CompressReport report = compress(h, id, false);
     ZT_EQ("через External не схлопывается", num(3), num(report.recordsAfter));
+    ZT_EQ("и гасить нечего", num(0), num(voidingRecords(h, id)));
     ZT_EQ("и вешка на месте", std::string("0 1X 2"), timesOf(h, id, kNow));
 }
 
@@ -257,7 +297,7 @@ void checkMergeKeepsBaseline(const QString& root) {
     makeV0(h.journalPath(id));
 
     const ZStorage::CompressReport report = compress(h, id, false);
-    ZT_EQ("мелкие правки схлопнулись в одну", num(2), num(report.recordsAfter));
+    ZT_EQ("мелкие правки схлопнулись в одну", num(2), num(contentRecords(h, id)));
     ZT_EQ("и схлопнута ровно одна", num(1), num(report.merged));
     ZT_EQ("опорная запись цела", std::string("0 120"), timesOf(h, id, kNow));
 }
@@ -274,7 +314,7 @@ void checkAgeIgnored(const QString& root) {
     makeV0(h.journalPath(id));
 
     const ZStorage::CompressReport report = compress(h, id, false);
-    ZT_EQ("старые дубликаты тоже вычищены", num(1), num(report.recordsAfter));
+    ZT_EQ("старые дубликаты тоже вычищены", num(1), num(contentRecords(h, id)));
 }
 
 // Адресация записей — по (время, отпечаток), а не по номеру: миграция

@@ -173,7 +173,12 @@ void checkSearchMigratesFirst() {
 
     ZJournal after;
     ZT_TRUE("журнал читается и после", history.readJournal(id, &after, &error));
-    ZT_EQ("поиск вычистил дубликат", num(1), num(after.size()));
+    // Содержательных записей одна; выброшенная названа записью гашения — она
+    // тоже в журнале, но о содержимом не говорит.
+    int content = 0;
+    for (int i = 0; i < after.size(); ++i)
+        if (after.at(i).statesContent()) ++content;
+    ZT_EQ("поиск вычистил дубликат", num(1), num(content));
     ZT_EQ("и находка одна, а не три", num(1), num(report.hits.size()));
 }
 
