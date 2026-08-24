@@ -791,6 +791,11 @@ public:
         ZJournal::Rules journalRules;
         // Отмена: проверяется между блобами; прерывание безопасно.
         std::shared_ptr<std::atomic<bool>> cancel;
+        // Прогресс для индикатора: движок пишет (блобов обработано / всего),
+        // окно читает таймером из главного потока. Атомики, а не сигналы:
+        // движок живёт в рабочем потоке и о Qt-подписчиках не знает.
+        std::shared_ptr<std::atomic<int>> progressDone;
+        std::shared_ptr<std::atomic<int>> progressTotal;
     };
     struct SyncReport {
         // выравнивание

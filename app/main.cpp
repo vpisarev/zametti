@@ -2172,6 +2172,10 @@ int main(int argc, char** argv) {
                 toolbar.setTip(Button::Cloud, cloudSync.statusText());
                 toolbar.setAccent(Button::Cloud, cloudSync.running());
             });
+            // Индикатор прогона — в статус-баре, как у импорта картинок:
+            // движок в рабочем потоке, звёздочка ездит, «]» не дёргается.
+            QObject::connect(&cloudSync, &zametti::SyncController::progress, &statusBar,
+                             [&statusBar](const QString& line) { statusBar.setMessage(line); });
             // ПРЕДОХРАНИТЕЛЬ МАССОВОГО УДАЛЕНИЯ — один из двух вопросов всего
             // синка (решение владельца): прогон задержал удаления и ждёт.
             // Подтвердил — повторный прогон с allowMassDelete; отказал —

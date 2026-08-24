@@ -7,6 +7,7 @@
 
 #include "folder_remote.h"
 #include "pending_deletes_dialog.h"
+#include "sync_controller.h"
 #include "journal.h"
 #include "webdav_remote.h"
 #include "keyfile.h"
@@ -892,6 +893,26 @@ void checkPendingDeletesDialogWords() {
             dialog.verdict() == PendingDeletesDialog::Verdict::KeepAlive);
 }
 
+void checkProgressLineShape() {
+    // Звёздочка ездит туда-обратно без пауз на краях…
+    ZT_EQ("такт 0 — левый край", num(0), num(SyncController::bounceAt(0, 5)));
+    ZT_EQ("такт 4 — правый край", num(4), num(SyncController::bounceAt(4, 5)));
+    ZT_EQ("такт 5 — шаг назад", num(3), num(SyncController::bounceAt(5, 5)));
+    ZT_EQ("такт 8 — снова левый край", num(0), num(SyncController::bounceAt(8, 5)));
+    ZT_EQ("такт 9 — снова вперёд", num(1), num(SyncController::bounceAt(9, 5)));
+
+    // …а «]» стоит на месте: строка одной длины на всём пути счётчика.
+    const QString one = SyncController::progressLine(3, 3, 20);
+    ZT_TRUE("в строке есть звёздочка", one.count(QLatin1Char('*')) == 1);
+    ZT_TRUE("счётчик дополнен пробелом", one.contains(QStringLiteral("  3/20]")));
+    for (int done : {1, 9, 10, 20})
+        ZT_EQ("длина не дёргается", num(one.size()),
+              num(SyncController::progressLine(done, done, 20).size()));
+    // Итог ещё неизвестен — честный «0/?».
+    ZT_TRUE("неизвестный итог", SyncController::progressLine(0, 0, 0)
+                                    .contains(QStringLiteral("0/?]")));
+}
+
 }  // namespace
 
 static int ztRunSuite(int argc, char** argv) {
@@ -921,6 +942,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkMobileProfileAndCancel();
     checkSubtreeQualifiedNames();
     checkPendingDeletesDialogWords();
+    checkProgressLineShape();
     checkLiveWebDavCycle();
     return zt::report("sync_engine");
 }

@@ -11,7 +11,33 @@ SyncController::SyncController(std::shared_ptr<ZStorage> storage,
                                std::shared_ptr<SecretStore> secrets, QObject* parent)
     : QObject(parent),
       storage_(std::move(storage)),
-      secrets_(secrets ? std::move(secrets) : std::make_shared<KeyringSecrets>()) {}
+      secrets_(secrets ? std::move(secrets) : std::make_shared<KeyringSecrets>()) {
+    // Такт индикатора. Живёт в главном потоке; движок только пишет атомики.
+    ticker_.setInterval(120);
+    connect(&ticker_, &QTimer::timeout, this, [this] {
+        ++tick_;
+        emit progress(progressLine(tick_, progressDone_ ? progressDone_->load() : 0,
+                                   progressTotal_ ? progressTotal_->load() : 0));
+    });
+}
+
+int SyncController::bounceAt(int tick, int width) {
+    // Путь туда-обратно без задержки на краях: период 2*(width-1).
+    const int period = 2 * (width - 1);
+    const int at = tick % period;
+    return at < width ? at : period - at;
+}
+
+QString SyncController::progressLine(int tick, int done, int total) {
+    QString bar(kBounceWidth, QLatin1Char('.'));
+    bar[bounceAt(tick)] = QLatin1Char('*');
+    // Счётчик дополняется слева до ширины итога: «]» стоит на месте, пока
+    // число растёт. Итог неизвестен — честный «0/?».
+    const QString right = total > 0
+        ? QStringLiteral("%1/%2").arg(done, QString::number(total).size()).arg(total)
+        : QStringLiteral("0/?");
+    return QStringLiteral("cloud sync: [%1  %2]").arg(bar, right);
+}
 
 SyncController::~SyncController() {
     // Выходим — просим движок остановиться и ЖДЁМ: рабочий поток держит
@@ -28,15 +54,25 @@ bool SyncController::configured() const {
     return storage_ != nullptr && storage_->isStore() && !storage_->remoteConfig().isEmpty();
 }
 
-bool SyncController::ensureConnected() {
+bool SyncController::fetchSecrets() {
     if (storage_ == nullptr) return false;
-    if (connected_ && storage_->hasRemote()) return true;
-    QString why;
-    if (!storage_->useLastRemote(*secrets_, &why)) {
-        lastError_ = why;
+    cfg_ = storage_->remoteConfig();
+    if (cfg_.isEmpty()) {
+        lastError_ = QStringLiteral("sync is not configured for this store");
         return false;
     }
-    connected_ = true;
+    const ZStorage::Identity mine = storage_->identity();
+    if (mine.isEmpty()) {
+        lastError_ = QStringLiteral("the store has no identity");
+        return false;
+    }
+    QString why;
+    if (!cfg_.url.isEmpty()) serverPassword_ = secrets_->serverPassword(mine.storeId(), &why);
+    if (!secrets_->loadKey(mine.storeId(), &keyfile_, &why)) {
+        lastError_ =
+            QStringLiteral("the key is not in the keyring (%1) — run set-remote once").arg(why);
+        return false;
+    }
     return true;
 }
 
@@ -53,7 +89,7 @@ void SyncController::cancel() {
 
 void SyncController::startFull(bool allowMassDelete) {
     if (running_ || !configured()) return;
-    if (!ensureConnected()) {
+    if (!fetchSecrets()) {
         emit stateChanged();
         emit finished(false);
         return;
@@ -64,8 +100,14 @@ void SyncController::startFull(bool allowMassDelete) {
     options.allowMassDelete = allowMassDelete;
     cancel_ = std::make_shared<std::atomic<bool>>(false);
     options.cancel = cancel_;
+    progressDone_ = std::make_shared<std::atomic<int>>(0);
+    progressTotal_ = std::make_shared<std::atomic<int>>(0);
+    options.progressDone = progressDone_;
+    options.progressTotal = progressTotal_;
     running_ = true;
     lastError_.clear();
+    tick_ = 0;
+    ticker_.start();
     emit stateChanged();
     run(options);
 }
@@ -74,7 +116,13 @@ void SyncController::run(ZStorage::SyncOptions options) {
     worker_ = std::thread([this, options] {
         ZStorage::SyncReport report;
         QString error;
-        const bool ok = storage_->sync(options, &report, &error);
+        // Адаптер рождается ЗДЕСЬ, в потоке прогона: QNetworkAccessManager
+        // однопоточен. Подключение повторяется каждым прогоном — прежний
+        // адаптер привязан к уже умершему потоку.
+        bool ok = false;
+        auto remote = ZStorage::makeRemote(cfg_, serverPassword_, &error);
+        if (remote != nullptr && storage_->setRemote(remote, keyfile_, &error))
+            ok = storage_->sync(options, &report, &error);
         // Итог — в главный поток; сам контроллер живёт дольше потока
         // (деструктор ждёт join), так что this здесь надёжен.
         QMetaObject::invokeMethod(
@@ -89,6 +137,8 @@ void SyncController::run(ZStorage::SyncOptions options) {
 
 void SyncController::finishRun(bool ok, const QString& error) {
     running_ = false;
+    ticker_.stop();
+    emit progress(QString());  // индикатор убрать
     lastError_ = ok ? QString() : error;
     // Каталог — из главного потока и по именам: сторож хранилища сверяет
     // состав файлов, а материализация меняет СОДЕРЖИМОЕ закрытых заметок,
@@ -123,11 +173,17 @@ void SyncController::pushOnExit() {
         return;
     }
     if (!configured() || storage_->dirtyIds().isEmpty()) return;
-    if (!ensureConnected()) return;  // офлайн — тихий пропуск, dirty переживает
+    // Выход — синхронный и в главном потоке: адаптер рождается здесь же.
+    if (!fetchSecrets()) return;  // keyring пуст — тихий пропуск, dirty переживает
+    QString why;
+    auto remote = ZStorage::makeRemote(cfg_, serverPassword_, &why);
+    if (remote == nullptr || !storage_->setRemote(remote, keyfile_, &why)) {
+        fprintf(stderr, "zametti: exit push cannot connect: %s\n", qPrintable(why));
+        return;  // офлайн — тихий пропуск, dirty переживает
+    }
     ZStorage::SyncOptions options;
     options.mode = ZStorage::SyncOptions::PushOnly;
     ZStorage::SyncReport report;
-    QString why;
     if (!storage_->sync(options, &report, &why))
         fprintf(stderr, "zametti: exit push failed: %s\n", qPrintable(why));
     lastReport_ = report;

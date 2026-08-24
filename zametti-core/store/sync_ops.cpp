@@ -696,11 +696,17 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
 
     QStringList orderedJournals(journalIds.begin(), journalIds.end());
     orderedJournals.sort();
+    if (options.progressTotal != nullptr)
+        options.progressTotal->store(int(orderedJournals.size()));
+    const auto bumpProgress = [&] {
+        if (options.progressDone != nullptr) options.progressDone->fetch_add(1);
+    };
     for (const QString& id : orderedJournals) {
         if (cancelled()) {
             done.cancelled = true;
             break;
         }
+        bumpProgress();
         if (budgetSpent()) {
             ++done.deferred;
             continue;
@@ -1003,11 +1009,14 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
         }
         QStringList orderedAttachments(attachmentSet.begin(), attachmentSet.end());
         orderedAttachments.sort();
+        if (options.progressTotal != nullptr)
+            options.progressTotal->fetch_add(int(orderedAttachments.size()));
         for (const QString& name : orderedAttachments) {
             if (cancelled()) {
                 done.cancelled = true;
                 break;
             }
+            bumpProgress();
             const bool haveLocal = QFile::exists(attachmentPath(name));
             const bool haveRemote = remoteEtag.contains(name);
             SyncLedger::Blob led = ledger.blob(name);
