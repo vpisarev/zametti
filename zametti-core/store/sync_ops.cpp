@@ -177,7 +177,7 @@ bool ZStorage::clearRemoteConfig(QString* error) {
 
 std::shared_ptr<RemoteStore> ZStorage::makeRemote(const RemoteConfig& cfg,
                                                   const QString& serverPassword,
-                                                  QString* error) const {
+                                                  QString* error) {
     if (cfg.isEmpty()) {
         if (error) *error = QStringLiteral("sync is not configured");
         return nullptr;
@@ -223,6 +223,17 @@ bool ZStorage::useLastRemote(SecretStore& secrets, QString* error) {
         return false;
     }
     return setRemote(remote, keyfile, error);
+}
+
+std::shared_ptr<ZStorage> ZStorage::initFromRemote(
+    const QString& root, const RemoteConfig& cfg, const QString& encryptionPassword,
+    const QString& serverPassword, SecretStore& secrets, const Keyfile::KdfParams& mintParams,
+    ConnectOutcome* outcome, QString* error) {
+    auto storage = std::make_shared<ZStorage>(root);
+    if (!storage->connectRemote(cfg, encryptionPassword, serverPassword, secrets, mintParams,
+                                outcome, error))
+        return nullptr;
+    return storage;
 }
 
 bool ZStorage::connectRemote(const RemoteConfig& cfg, const QString& encryptionPassword,

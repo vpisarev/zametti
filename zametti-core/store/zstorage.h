@@ -683,9 +683,10 @@ public:
     // Построить адаптер по конфигу — общий код CLI и приложения. Пароль
     // сервера приходит параметром: у первичной настройки он с клавиатуры, у
     // остальных — из keyring. Пусто при пустом конфиге или негодном адресе.
-    std::shared_ptr<RemoteStore> makeRemote(const RemoteConfig& cfg,
-                                            const QString& serverPassword,
-                                            QString* error = nullptr) const;
+    // Статический: адаптер строится из одного конфига, хранилище ни при чём.
+    static std::shared_ptr<RemoteStore> makeRemote(const RemoteConfig& cfg,
+                                                   const QString& serverPassword,
+                                                   QString* error = nullptr);
 
     // ВОССТАНОВИТЬ ПОДКЛЮЧЕНИЕ БЕЗ ВОПРОСОВ — старт программы и CLI-прогоны:
     // адрес из remote.json, пароль сервера и ключ из keyring (решение
@@ -718,6 +719,18 @@ public:
                        const QString& serverPassword, SecretStore& secrets,
                        const Keyfile::KdfParams& mintParams, ConnectOutcome* outcome,
                        QString* error = nullptr);
+
+    // РОДИТЬ ХРАНИЛИЩЕ ПОДКЛЮЧЕНИЕМ — статический вход первичной настройки:
+    // CLI set-remote сегодня, диалог в самом zametti (и Android, где CLI нет)
+    // завтра. Каталога может не существовать вовсе: облако с манифестом даёт
+    // бутстрап (id наследуется, корень материализуется), пустое облако —
+    // первое устройство. Пусто при отказе, объяснение в error; возвращённое
+    // хранилище уже подключено (hasRemote) и готово к sync().
+    static std::shared_ptr<ZStorage> initFromRemote(
+        const QString& root, const RemoteConfig& cfg, const QString& encryptionPassword,
+        const QString& serverPassword, SecretStore& secrets,
+        const Keyfile::KdfParams& mintParams, ConnectOutcome* outcome,
+        QString* error = nullptr);
 
     // --- ДВИЖОК СИНХРОНИЗАЦИИ (m17, сессия 4) -------------------------------
     //

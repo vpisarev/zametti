@@ -224,16 +224,17 @@ void checkBootstrapIntoEmptyDir() {
     }
     const QString fresh = home.root() + QStringLiteral("/новые-заметки");
     {
-        ZStorage s(fresh);
-        ZT_TRUE("каталога ещё нет — это не хранилище", !s.isStore());
+        // Статический вход — тот самый, что позовут CLI и будущий диалог.
         FakeSecrets mine;
         ZStorage::ConnectOutcome out;
-        ZT_TRUE(("бутстрап в пустоту прошёл: " + err.toStdString()).c_str(),
-                s.connectRemote(cfg, QStringLiteral("пароль-шифра"), QString(), mine, kTiny,
-                                &out, &err));
-        ZT_TRUE("теперь это хранилище", s.isStore());
+        auto s = ZStorage::initFromRemote(fresh, cfg, QStringLiteral("пароль-шифра"),
+                                          QString(), mine, kTiny, &out, &err);
+        ZT_TRUE(("бутстрап в пустоту прошёл: " + err.toStdString()).c_str(), s != nullptr);
+        if (s == nullptr) return;
+        ZT_TRUE("теперь это хранилище", s->isStore());
+        ZT_TRUE("хранилище уже подключено", s->hasRemote());
         ZT_TRUE("идентичность унаследована, не отчеканена", out.inheritedIdentity);
-        ZT_EQ("id — облачный", firstId.toStdString(), s.identity().storeId().toStdString());
+        ZT_EQ("id — облачный", firstId.toStdString(), s->identity().storeId().toStdString());
         ZT_TRUE("каркас на месте",
                 QDir(fresh + QStringLiteral("/.zametti")).exists() &&
                     QDir(fresh + QStringLiteral("/history")).exists());
@@ -248,11 +249,10 @@ void checkBootstrapIntoEmptyDir() {
         ZT_TRUE("файл завёлся", f.open(QIODevice::WriteOnly));
         f.write("не заметка");
         f.close();
-        ZStorage s(junk);
         FakeSecrets mine;
         ZT_TRUE("случайная папка отвергнута",
-                !s.connectRemote(cfg, QStringLiteral("пароль-шифра"), QString(), mine, kTiny,
-                                 nullptr, &err));
+                ZStorage::initFromRemote(junk, cfg, QStringLiteral("пароль-шифра"), QString(),
+                                         mine, kTiny, nullptr, &err) == nullptr);
         ZT_TRUE("причина — непустой каталог", err.contains(QStringLiteral("not empty")));
     }
 }

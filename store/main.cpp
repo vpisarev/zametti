@@ -266,8 +266,10 @@ int main(int argc, char** argv) {
         }
 
         zametti::ZStorage::ConnectOutcome outcome;
-        if (!storage.connectRemote(cfg, password, serverPassword, secrets,
-                                   zametti::Keyfile::defaults(), &outcome, &error)) {
+        // Статический вход: тот же метод позовёт диалог первичной настройки в
+        // самом zametti (и на Android, где консоли нет).
+        if (!zametti::ZStorage::initFromRemote(root, cfg, password, serverPassword, secrets,
+                                               zametti::Keyfile::defaults(), &outcome, &error)) {
             std::fprintf(stderr, "%s\n", error.toUtf8().constData());
             return 1;
         }
