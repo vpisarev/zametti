@@ -27,6 +27,8 @@ store/
     .zametti/
         store.lock           the lock: one store — one program
         last-written         the device time floor (journal stamps)
+        remote.json          the cloud address of THIS copy (no secrets)
+        dirty                names touched since the last sync (write-ahead)
     .rescue/
         …                    buffers that failed the write self-check
 ```
@@ -680,6 +682,9 @@ zametti-store history compress <id | path.md>    clean one journal (test hatch)
 zametti-store recompress --root <dir> --id <id|all>   re-encode attachments
 zametti-store resurrect --root <dir> --id <id>        bring a deleted note back
 zametti-store root show|init|fix --root <dir>         the identity and the root note
+zametti-store set-remote --root <dir> (--url <dav>|--to <dir>) [--reset]
+zametti-store sync --root <dir> [--full|--push-only]
+                   [--allow-mass-delete|--keep-all]   the engine, see §12
 ```
 
 `root show` prints the identity and both records of the root note's address —
@@ -777,3 +782,123 @@ decrypting anything. JSON + base64, human-readable on purpose:
 In the program the keyfile is `Keyfile` (`zametti-core/sync/keyfile.h`) — a
 pure value, no files; it is also the ONLY carrier of the live master key:
 raw key bytes never travel on their own.
+
+---
+
+## 12. Synchronization
+
+The engine runs the same four steps every time, in this order and with no
+exceptions: **align → exchange → merge → materialize**. Interrupting it at any
+point is safe: journals only grow, every file write is atomic, and the next
+run simply continues. The cloud address, the bookkeeping and the dirty set
+described below are all *around* the data — deleting any of them changes the
+cost of a run, never its result.
+
+### The address of the cloud: `.zametti/remote.json`
+
+Belongs to THIS COPY of the store (a `cp -r` takes it along, the cloud never
+sees it) and carries no secrets:
+
+```json
+{ "url": "https://dav.example/зам/01n6cqevh7bbfr/", "user": "vp",
+  "allowInsecureHttp": false, "timeoutMs": 30000 }
+```
+
+`dir` instead of `url` points at a local folder used as a cloud (tests, a
+mounted NAS). The secrets live in the system keyring: the server password as
+`zametti-webdav-<storeId>`, the master key as `zametti-key-<storeId>`. The
+encryption password itself is stored NOWHERE — it lives for the one moment
+Argon2id unwraps the keyfile, and what reaches the keyring is the key.
+
+`zametti-store set-remote` writes all of this once; `--reset` forgets it.
+On a fresh device pointed at an existing cloud it inherits the store identity
+from the manifest, and the next `sync` downloads everything — a bootstrap is
+an ordinary sync with an empty local side, there is no separate restore code.
+
+### The dirty set: `.zametti/dirty`
+
+Aligning costs O(changes), not O(store), because the write paths NAME what
+they touch: before bytes are written, the note's id is appended to this file
+(one name per line, no fsync — same reasoning as the journal). A run checks
+the named notes, plus one cheap readdir comparing (mtime, size) against the
+bookkeeping — that catches edits made with vim while the program was closed,
+and deletions too. A lost mark costs one stat-scan; a stale mark costs one
+hash check. After an unclean shutdown the scan runs on every platform: it
+closes the window between the write-ahead mark and the write itself.
+
+### The bookkeeping: `sync-state-<storeId>-<pathhash>.json`
+
+Per-device CACHE in the application config directory (never in the store):
+for every blob — the etag of the last operation, BLAKE3 of the uploaded
+ciphertext, BLAKE3 of the local journal bytes at that moment; for every note
+file — (mtime, size) for the stat-scan. Named by store id plus a hash of the
+local path, so two copies of one store on one machine do not share it.
+Deleting it degrades the next run to "download and merge" with the same
+result (invariant D). The steady state costs one listing and nothing else:
+on the owner's store — 2 requests, zero blob reads, zero uploads.
+
+### Exchange: three tiers per journal
+
+1. server etag matches the recorded one AND the local bytes match — skip,
+   zero traffic;
+2. etag differs → GET; the ciphertext hash matches the recorded one — the
+   server merely re-issued the etag (a WebDAV habit), record it and move on;
+3. one side changed → take or push the file WHOLE, byte for byte — this is
+   what makes two stores converge to identical bytes;
+4. both changed → a full merge.
+
+**Integrity comes before classification.** A local journal that fails
+validation (a damaged frame, an unreadable record) is treated as ABSENCE: the
+remote copy is taken whole and NOTHING is uploaded — local bit-rot never
+travels to the cloud. A torn tail is valid as always, but only the whole part
+is uploaded. Symmetrically, a blob missing on the server while the
+bookkeeping remembers its etag is server damage, healed by re-uploading; a
+blob that fails its AEAD tag is healed the same way — unless the keyfile's
+etag has changed too, which means the key was rotated on another device: the
+run stops and asks for the password instead of "healing" what it cannot read.
+
+### Merge
+
+A pure function over two sets of records (`ZJournal::mergedWith`):
+
+- union by the record address (time + fingerprint); records equal in address
+  and identity are one record; bodyless records (tombstone, amendment) with
+  the same address are different records and both live;
+- the order of the result is the canonical record order (revision, time,
+  content-before-tombstone, fingerprint) — hence merge(A,B) равно merge(B,A)
+  byte for byte;
+- voiding applies across the union: voided records are dropped physically,
+  the voiding records keep their addresses — a record coming back from an
+  old copy is voided again and never surfaces;
+- the identity of a journal is BLAKE3 of the canonically sorted record
+  identities (the frame WITHOUT its layout): re-laying generations does not
+  change history. Equal sets are not uploaded and not rewritten, no matter
+  how the zstd bytes differ — this is what stops upload ping-pong;
+- **the merge proves itself on every call**: every input record must be found
+  in the result by address or be voided by it, or the merge refuses to hand
+  out its result. The merged journal proves itself again before touching the
+  disk: serialized, parsed back, every snapshot rebuilt and checked against
+  its fingerprint. Not proven — the file is not touched by a byte.
+
+### Materialize
+
+The head of the merged journal becomes the `.md` file — by the normal atomic
+write, and the written bytes are read back and checked against the record's
+fingerprint. The condition is double: the head differs from the file AND the
+file has not changed since the align step — if it has, the note is re-aligned
+instead of overwritten. An edit made while the sync was running never loses.
+A tombstone head removes the file (the journal stays, as always). A run that
+wants to remove more notes than the guard allows (20 by default) removes
+NONE of them and reports the list; the person either confirms — the next run
+applies the deletions — or refuses, and the notes are declared alive: their
+files produce records ON TOP of the tombstones, the cloud heals, and the
+question does not repeat because the state itself has changed.
+
+### Attachments
+
+Presence sync: missing in the cloud — upload, missing locally — download
+(AEAD + hash checked). Both sides present and different, and neither matches
+the recorded hash — a true concurrent replacement: nothing is overwritten,
+the name is reported. (The `Zametti:Rev` mechanism from the brief is the next
+stage; until then the engine refuses to guess.)
+
