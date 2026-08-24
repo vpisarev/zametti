@@ -6,6 +6,7 @@
 // появления.
 
 #include "journal.h"
+#include "sync_ledger.h"
 #include "zstorage.h"
 
 #include "mini_store.h"
@@ -162,6 +163,71 @@ void checkDirtySetClearsOnlyNamed() {
           s.dirtyIds().join(QLatin1Char(',')).toStdString());
 }
 
+// --- 3. SyncLedger: кэш, не истина -----------------------------------------
+
+void checkLedgerRoundTrip() {
+    zt::MiniStore store;
+    const QString path = store.root() + QStringLiteral("/ledger.json");
+
+    SyncLedger fresh = SyncLedger::load(path);
+    ZT_TRUE("отсутствующий файл — пустая бухгалтерия", fresh.isEmpty());
+    ZT_TRUE("чистое завершение по умолчанию", fresh.cleanShutdown());
+
+    SyncLedger::Blob b;
+    b.etag = QStringLiteral("\"метка-42\"");
+    b.sealedHash = hashOf(std::string_view("шифротекст"));
+    b.plainHash = hashOf(std::string_view("журнал"));
+    fresh.setBlob(QStringLiteral("01n6cqevzzzzzz.log"), b);
+    fresh.setFileStat(QStringLiteral("01n6cqevzzzzzz"), {kNow, 137});
+    fresh.setCleanShutdown(false);
+    QString err;
+    ZT_TRUE(("бухгалтерия записалась: " + err.toStdString()).c_str(), fresh.save(&err));
+
+    const SyncLedger back = SyncLedger::load(path);
+    const SyncLedger::Blob got = back.blob(QStringLiteral("01n6cqevzzzzzz.log"));
+    ZT_EQ("etag пережил дорогу", b.etag.toStdString(), got.etag.toStdString());
+    ZT_TRUE("хеш шифротекста пережил дорогу", got.sealedHash == b.sealedHash);
+    ZT_TRUE("хеш журнала пережил дорогу", got.plainHash == b.plainHash);
+    ZT_EQ("mtime пережил дорогу", num(kNow),
+          num(back.fileStat(QStringLiteral("01n6cqevzzzzzz")).mtimeMs));
+    ZT_TRUE("нечистое завершение пережило дорогу", !back.cleanShutdown());
+    ZT_EQ("known files называет заметку", std::string("01n6cqevzzzzzz"),
+          back.knownFiles().join(QLatin1Char(',')).toStdString());
+}
+
+void checkLedgerIsACache() {
+    zt::MiniStore store;
+    const QString path = store.root() + QStringLiteral("/ledger.json");
+    // Порча файла — не ошибка, а пустой старт: кэш, не истина (инвариант D).
+    {
+        QFile f(path);
+        f.open(QIODevice::WriteOnly);
+        f.write("{ это не json ");
+    }
+    ZT_TRUE("битый файл — пустая бухгалтерия", SyncLedger::load(path).isEmpty());
+    // Незнакомая версия — тоже пустой старт, не отказ.
+    {
+        QFile f(path);
+        f.open(QIODevice::WriteOnly);
+        f.write("{\"version\": 99, \"blobs\": {\"x.log\": {\"etag\": \"e\"}}}");
+    }
+    ZT_TRUE("чужая версия — пустая бухгалтерия", SyncLedger::load(path).isEmpty());
+}
+
+void checkLedgerPathsDoNotCollide() {
+    // Две копии хранилища с одним storeId на одной машине НЕ делят
+    // бухгалтерию: в имени файла — хеш локального пути.
+    zt::MiniStore a, b;
+    const QString id = QStringLiteral("01n6cqevh7bbfr");
+    const QString pa = SyncLedger::pathFor(id, a.root());
+    const QString pb = SyncLedger::pathFor(id, b.root());
+    ZT_TRUE("пути бухгалтерий различаются", pa != pb);
+    ZT_TRUE("имя несёт storeId", pa.contains(id));
+    // А один и тот же каталог, названный по-разному, — делит.
+    ZT_TRUE("канонизация пути",
+            SyncLedger::pathFor(id, a.root() + QStringLiteral("/")) == pa);
+}
+
 }  // namespace
 
 static int ztRunSuite(int argc, char** argv) {
@@ -171,6 +237,9 @@ static int ztRunSuite(int argc, char** argv) {
     checkAdoptRefusesUnprovable();
     checkDirtySetMarksAndPersists();
     checkDirtySetClearsOnlyNamed();
+    checkLedgerRoundTrip();
+    checkLedgerIsACache();
+    checkLedgerPathsDoNotCollide();
     return zt::report("sync_engine");
 }
 

@@ -54,6 +54,7 @@ add_library(zametti-core STATIC
     store/store_identity.cpp
     store/device_clock.cpp
     store/sync_ops.cpp
+    store/sync_ledger.h        store/sync_ledger.cpp
     store/journal.h             store/journal.cpp
     store/times.h               store/times.cpp
 
