@@ -201,6 +201,12 @@ void HistoryTimeline::setEntries(const QVector<ZJournal::Record>& entries) {
     // Свежие сверху — как в списке заметок: в прошлое человек идёт сверху вниз.
     for (int i = entries.size() - 1; i >= 0; --i) {
         const ZJournal::Record& entry = entries[i];
+        // ГАШЕНИЕ ЧЕЛОВЕКУ НЕ ПОКАЗЫВАЕТСЯ ВОВСЕ (решение владельца): оно не
+        // говорит о содержимом, смотреть в нём нечего, и строкой без имени
+        // рода оно только мусорило бы список. С переходом чистки на гашение
+        // адресом (m17) такая запись появляется после КАЖДОЙ чистки, а не
+        // изредка, — и без этой строки её увидел бы каждый.
+        if (!entry.statesContent()) continue;
         QString line = historyMoment(entry.time());
         if (entry.kind() != ZJournal::Kind::Save)
             line += QStringLiteral("  ·  %1").arg(historyKindName(entry.kind()));
