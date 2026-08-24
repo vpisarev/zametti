@@ -13,6 +13,7 @@
 #include "folder_remote.h"
 #include "journal.h"
 #include "keyfile.h"
+#include "keyring_secrets.h"
 #include "secret_store.h"
 #include "webdav_remote.h"
 #include "zstorage.h"
@@ -25,6 +26,11 @@
 #include <QDir>
 
 #include <cstdio>
+#include <iostream>
+#include <string>
+
+#include <termios.h>
+#include <unistd.h>
 
 namespace {
 
@@ -50,6 +56,15 @@ int usage() {
                  "  zametti-store push-all --root <dir> --url <webdav-url>\n"
                  "                         [--user <name>] [--allow-insecure-http]\n"
                  "                         (or --to <dir> to push into a local folder)\n"
+                 "  zametti-store set-remote --root <dir> (--url <webdav-url> | --to <dir>)\n"
+                 "                           [--user <name>] [--allow-insecure-http] [--reset]\n"
+                 "\n"
+                 "  set-remote is the one-time setup: it asks the two passwords (typed,\n"
+                 "  echo off; the encryption password twice when the cloud is fresh),\n"
+                 "  stores the key and the server password in the system keyring and\n"
+                 "  the address in <store>/.zametti/remote.json. --reset forgets both.\n"
+                 "  On a fresh device pointed at an existing cloud it inherits the\n"
+                 "  store identity and the next 'sync' downloads everything.\n"
                  "\n"
                  "  push-all encrypts and uploads every journal and attachment; it is\n"
                  "  the probe ancestor of 'sync' and knows nothing about merging yet.\n"
@@ -63,6 +78,26 @@ int usage() {
                  "  and one forgotten option must not migrate the whole store.\n"
                  "  All images only with an explicit '--id all'.\n");
     return 2;
+}
+
+// Пароль с клавиатуры, БЕЗ эха. Кодировка называется явно (урок сессии 3:
+// байты, переходящие границу, читаются как UTF-8, а не «как получится»).
+// Не терминал (обвязка наборов) — просто строка со stdin.
+QString askPassword(const char* prompt) {
+    std::fprintf(stderr, "%s", prompt);
+    std::fflush(stderr);
+    termios old{};
+    const bool tty = isatty(STDIN_FILENO) != 0 && tcgetattr(STDIN_FILENO, &old) == 0;
+    if (tty) {
+        termios off = old;
+        off.c_lflag &= ~tcflag_t(ECHO);
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &off);
+    }
+    std::string line;
+    std::getline(std::cin, line);
+    if (tty) tcsetattr(STDIN_FILENO, TCSAFLUSH, &old);
+    std::fprintf(stderr, "\n");
+    return QString::fromUtf8(line.data(), qsizetype(line.size()));
 }
 
 }  // namespace
@@ -96,6 +131,7 @@ int main(int argc, char** argv) {
     QString maxSize, maxFileMb, quality;
     QString url, user, to;
     bool allowInsecure = false;
+    bool reset = false;
     bool dryRun = false;
     bool restore = false;
     for (qsizetype i = 2; i < args.size(); ++i) {
@@ -116,6 +152,7 @@ int main(int argc, char** argv) {
         else if (a == QStringLiteral("--user")) user = next();
         else if (a == QStringLiteral("--to")) to = next();
         else if (a == QStringLiteral("--allow-insecure-http")) allowInsecure = true;
+        else if (a == QStringLiteral("--reset")) reset = true;
         else if (!a.startsWith(QStringLiteral("--")) && positional.isEmpty()) positional = a;
         else if (!a.startsWith(QStringLiteral("--")) && positional2.isEmpty()) positional2 = a;
         else return usage();
@@ -128,6 +165,95 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "%s\n", error.toUtf8().constData());
             return 1;
         }
+        return 0;
+    }
+
+    // ПЕРВИЧНАЯ НАСТРОЙКА ОБЛАКА — один раз за жизнь устройства (m17,
+    // сессия 4). Два пароля спрашиваются с клавиатуры без эха (или берутся из
+    // среды — для обвязки); ключ и пароль сервера ложатся в системный keyring,
+    // адрес — в <store>/.zametti/remote.json. Все ветки знакомства с облаком
+    // решает ZStorage::connectRemote, здесь только ввод.
+    if (command == QStringLiteral("set-remote")) {
+        if (root.isEmpty()) return usage();
+        zametti::ZStorage storage(root);
+        if (!storage.isStore()) {
+            std::fprintf(stderr, "not a store: %s\n", root.toUtf8().constData());
+            return 1;
+        }
+        const zametti::ZStorage::LockReport locked = storage.lock();
+        if (!locked.locked) {
+            std::fprintf(stderr, "the store is busy (pid %lld on %s)\n",
+                         static_cast<long long>(locked.holderPid),
+                         locked.holderHost.toUtf8().constData());
+            return 1;
+        }
+        zametti::KeyringSecrets keyring;
+        QString error;
+
+        if (reset) {
+            const zametti::ZStorage::Identity identity = storage.identity();
+            if (!identity.isEmpty()) {
+                keyring.clearKey(identity.storeId());
+                keyring.clearServerPassword(identity.storeId());
+            }
+            if (!storage.clearRemoteConfig(&error)) {
+                std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+                return 1;
+            }
+            std::printf("the cloud address and the secrets are forgotten\n");
+            return 0;
+        }
+        if (url.isEmpty() == to.isEmpty()) return usage();  // ровно один адрес
+
+        zametti::ZStorage::RemoteConfig cfg;
+        if (!to.isEmpty())
+            cfg.dir = QDir(to).absolutePath();
+        else
+            cfg.url = url.endsWith(QLatin1Char('/')) ? url : url + QLatin1Char('/');
+        cfg.user = user;
+        cfg.allowInsecureHttp = allowInsecure;
+
+        QString serverPassword = qEnvironmentVariable("ZAMETTI_WEBDAV_PASSWORD");
+        if (!cfg.url.isEmpty() && serverPassword.isEmpty())
+            serverPassword = askPassword("server password: ");
+
+        // Дважды или один раз — зависит от того, есть ли в облаке конверт:
+        // опечатка в пароле при СОЗДАНИИ запечатала бы облако навсегда, а при
+        // развороте существующего она безобидна — конверт просто не откроется.
+        auto probe = storage.makeRemote(cfg, serverPassword, &error);
+        if (!probe) {
+            std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+            return 1;
+        }
+        QByteArray envelope;
+        const bool freshCloud = !probe->get(QLatin1String(zametti::Keyfile::kRemoteName),
+                                            &envelope, nullptr, nullptr);
+        QString password = qEnvironmentVariable("ZAMETTI_SYNC_PASSWORD");
+        if (password.isEmpty()) {
+            password = askPassword(freshCloud ? "new encryption password: "
+                                              : "encryption password: ");
+            if (freshCloud && password != askPassword("repeat the encryption password: ")) {
+                std::fprintf(stderr, "the passwords do not match\n");
+                return 1;
+            }
+        }
+
+        zametti::ZStorage::ConnectOutcome outcome;
+        if (!storage.connectRemote(cfg, password, serverPassword, keyring,
+                                   zametti::Keyfile::defaults(), &outcome, &error)) {
+            std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+            return 1;
+        }
+        if (!keyring.available())
+            std::fprintf(stderr,
+                         "warning: no system keyring — the key is not remembered, and the "
+                         "password will be asked again\n");
+        if (outcome.inheritedIdentity)
+            std::printf("inherited the store identity from the cloud; "
+                        "'zametti-store sync' will download everything\n");
+        if (outcome.mintedKeyfile) std::printf("minted a new keyfile and uploaded it\n");
+        std::printf("connected: %s\n",
+                    (cfg.url.isEmpty() ? cfg.dir : cfg.url).toUtf8().constData());
         return 0;
     }
 
