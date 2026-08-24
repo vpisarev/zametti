@@ -84,6 +84,8 @@ add_library(zametti-ui STATIC
     editor_widget.cpp
     sync_controller.h
     sync_controller.cpp
+    pending_deletes_dialog.h
+    pending_deletes_dialog.cpp
     image_insert.h
     image_insert.cpp
     image_viewer.h

@@ -778,6 +778,49 @@ void checkLiveWebDavCycle() {
     ZT_TRUE("журналы сошлись побайтово через живой сервер", fa.readAll() == fb.readAll());
 }
 
+// --- 7. NoteTree: полные имена для человека --------------------------------
+
+void checkSubtreeQualifiedNames() {
+    zt::MiniStore store;
+    ZStorage s(store.root());
+    QString err;
+    const QString rootId = s.ensureRootNote(&err);
+    ZT_TRUE(("корень завёлся: " + err.toStdString()).c_str(), !rootId.isEmpty());
+
+    const auto put = [&](const char* id, const char* title, const QString& parent) {
+        QByteArray head("<!-- zametti\nversion: 1\n");
+        if (!parent.isEmpty()) head += "parent: " + parent.toUtf8() + "\n";
+        head += "-->\n\n# ";
+        QFile f(store.root() + QStringLiteral("/") + QLatin1String(id) +
+                QStringLiteral(".md"));
+        ZT_TRUE("файл записался", f.open(QIODevice::WriteOnly));
+        f.write(head + title + "\n");
+    };
+    put("01n6cqevfffff1", "opencv", QString());
+    put("01n6cqevfffff2", "5.1", QStringLiteral("01n6cqevfffff1"));
+    put("01n6cqevfffff3", "TODO", QStringLiteral("01n6cqevfffff2"));
+    put("01n6cqevfffff4", "сирота", QStringLiteral("01n6cqevnemam1"));  // родителя нет
+    s.reload();
+
+    const QString rootTitle = s.info(rootId)->title();
+    const ZStorage::NoteTree tree = s.subtreeFor(
+        {QStringLiteral("01n6cqevfffff3"), QStringLiteral("01n6cqevfffff4")});
+    // Предки подтянулись сами; лишнего не набрано: корень, три ступени, сирота.
+    ZT_EQ("в карте ровно пять узлов", num(5), num(tree.size()));
+    ZT_EQ("полное имя от корня",
+          (rootTitle + QStringLiteral("/opencv/5.1/TODO")).toStdString(),
+          tree.qualifiedName(QStringLiteral("01n6cqevfffff3")).toStdString());
+    ZT_EQ("папка сама тоже именуема",
+          (rootTitle + QStringLiteral("/opencv/5.1")).toStdString(),
+          tree.qualifiedName(QStringLiteral("01n6cqevfffff2")).toStdString());
+    ZT_EQ("оборванный родитель — честный «?/»", std::string("?/сирота"),
+          tree.qualifiedName(QStringLiteral("01n6cqevfffff4")).toStdString());
+    ZT_EQ("не из карты — кодовое имя", std::string("01n6cqevcastle"),
+          tree.qualifiedName(QStringLiteral("01n6cqevcastle")).toStdString());
+    ZT_EQ("корень зовётся своим именем", rootTitle.toStdString(),
+          tree.qualifiedName(rootId).toStdString());
+}
+
 }  // namespace
 
 static int ztRunSuite(int argc, char** argv) {
@@ -804,6 +847,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkPushOnlyMode();
     checkInterruptionHeals();
     checkMobileProfileAndCancel();
+    checkSubtreeQualifiedNames();
     checkLiveWebDavCycle();
     return zt::report("sync_engine");
 }

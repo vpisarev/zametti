@@ -219,6 +219,64 @@ bool ZStorage::refreshNote(const QString& id) {
     return ok;
 }
 
+void ZStorage::NoteTree::insert(const ZStorage::NoteInfo& info) {
+    if (!info.valid()) return;
+    nodes_.insert(info.id(), info);
+    if (info.root()) rootId_ = info.id();
+}
+
+QString ZStorage::NoteTree::qualifiedName(const QString& id) const {
+    const auto it = nodes_.constFind(id);
+    if (it == nodes_.constEnd()) return id;
+    QStringList parts{it->title()};
+    QSet<QString> seen{id};
+    QString up = it->parent();
+    bool orphan = false;
+    while (!up.isEmpty()) {
+        // Цикл родителей — та же беда, что обрыв: честный «?/», не зависание.
+        if (seen.contains(up)) {
+            orphan = true;
+            break;
+        }
+        seen.insert(up);
+        const auto parent = nodes_.constFind(up);
+        if (parent == nodes_.constEnd()) {
+            orphan = true;
+            break;
+        }
+        parts.prepend(parent->title());
+        up = parent->parent();
+    }
+    if (orphan)
+        parts.prepend(QStringLiteral("?"));
+    else if (!rootId_.isEmpty() && id != rootId_)
+        // Пустой parent — верх дерева; первой компонентой идёт имя
+        // хранилища (заголовок корневой заметки), как в дереве окна.
+        parts.prepend(nodes_.value(rootId_).title());
+    return parts.join(QLatin1Char('/'));
+}
+
+ZStorage::NoteTree ZStorage::subtreeFor(const QStringList& ids) const {
+    NoteTree out;
+    if (!store_) return out;
+    if (!loaded_) const_cast<ZStorage*>(this)->reload();
+    const QString root = rootId();
+    if (const NoteInfo* rootInfo = info(root)) out.insert(*rootInfo);
+    for (const QString& id : ids) {
+        QString at = id;
+        // Вверх до корня; чужое и зацикленное qualifiedName разберёт сам —
+        // здесь только сбор карты, и он обязан кончаться.
+        for (int depth = 0; !at.isEmpty() && depth < 512; ++depth) {
+            if (out.contains(at)) break;
+            const NoteInfo* one = info(at);
+            if (one == nullptr) break;
+            out.insert(*one);
+            at = one->parent();
+        }
+    }
+    return out;
+}
+
 const ZStorage::NoteInfo* ZStorage::info(const QString& id) const {
     const auto it = notes_.constFind(id);
     return it == notes_.constEnd() ? nullptr : &it.value();

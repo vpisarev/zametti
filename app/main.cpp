@@ -34,6 +34,7 @@
 #include "export_note.h"
 #include "export_pdf.h"
 #include "status_bar.h"
+#include "pending_deletes_dialog.h"
 #include "secret_store.h"
 #include "sync_controller.h"
 #include "toolbar.h"
@@ -52,6 +53,7 @@
 #include <QCheckBox>
 #include <QGridLayout>
 #include <QFileDialog>
+#include <QCollator>
 #include <QMessageBox>
 #include <QDesktopServices>
 #include <QDateTime>
@@ -2178,25 +2180,29 @@ int main(int argc, char** argv) {
             QObject::connect(
                 &cloudSync, &zametti::SyncController::pendingDeletes, &window,
                 [&](const QStringList& ids) {
-                    QStringList shown = ids.mid(0, 12);
-                    QString text =
-                        QStringLiteral("The cloud wants to delete %1 notes:\n\n").arg(ids.size());
-                    for (const QString& id : shown) {
-                        const zametti::ZStorage::NoteInfo* info = model.storage()->info(id);
-                        text += QStringLiteral("  %1\n")
-                                    .arg(info != nullptr && !info->title().isEmpty() ? info->title()
-                                                                                     : id);
+                    // ПОЛНЫЕ имена, не id и не голые заголовки: «удаляется
+                    // TODO» без пути — вопрос, а не ответ. Карта строится на
+                    // выброс из живого каталога — заметки ещё лежат локально.
+                    const zametti::ZStorage::NoteTree tree =
+                        model.storage()->subtreeFor(ids);
+                    QStringList names;
+                    for (const QString& id : ids) names.append(tree.qualifiedName(id));
+                    // Естественный порядок: «№2» перед «№10», как в дереве.
+                    QCollator collator;
+                    collator.setNumericMode(true);
+                    std::sort(names.begin(), names.end(), collator);
+                    using Verdict = zametti::PendingDeletesDialog::Verdict;
+                    switch (zametti::PendingDeletesDialog::ask(&window, names)) {
+                        case Verdict::DeleteHere:
+                            cloudSync.startFull(true);
+                            break;
+                        case Verdict::KeepAlive:
+                            cloudSync.declareAliveAndFinish(ids);
+                            break;
+                        case Verdict::DecideLater:
+                            // Пометки dirty живы — следующий прогон спросит снова.
+                            break;
                     }
-                    if (ids.size() > shown.size())
-                        text += QStringLiteral("  … and %1 more\n").arg(ids.size() - shown.size());
-                    text += QStringLiteral("\nDelete them here too?");
-                    const auto answer = QMessageBox::question(
-                        &window, QStringLiteral("Sync wants to delete notes"), text,
-                        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-                    if (answer == QMessageBox::Yes)
-                        cloudSync.startFull(true);
-                    else
-                        cloudSync.declareAliveAndFinish(ids);
                 });
         }
 

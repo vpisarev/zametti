@@ -51,6 +51,7 @@ int usage() {
                  "  zametti-store history compress <id | path to .md> [--root <dir>]\n"
                  "  zametti-store recompress --root <dir> --id <id|all>\n"
                  "  zametti-store resurrect --root <dir> --id <id>\n"
+                 "  zametti-store remove --root <dir> --id <id>\n"
                  "  zametti-store archive --root <dir> --id <id> [--restore]\n"
                  "  zametti-store root show|init|fix --root <dir>\n"
                  "  zametti-store push-all --root <dir> --url <webdav-url>\n"
@@ -657,6 +658,25 @@ int main(int argc, char** argv) {
     // подряд, поэтому в окне такой команды нет и не будет: это работа с
     // журналом, а не с деревом заметок. Заметка возвращается В АРХИВ, как и
     // лежала, с посмертными (уменьшенными) картинками.
+    // УДАЛИТЬ НАСОВСЕМ — штатным глаголом хранилища: надгробие в журнал,
+    // файл в мусорку ОС, у папки — поддерево. Зеркало resurrect и тестовый
+    // люк сценариев синка.
+    if (command == QStringLiteral("remove")) {
+        if (root.isEmpty() || id.isEmpty()) return usage();
+        zametti::ZStorage storage(root);
+        if (!storage.isStore()) {
+            std::fprintf(stderr, "not a store: %s\n", root.toUtf8().constData());
+            return 1;
+        }
+        QString error;
+        storage.reload();
+        if (!storage.remove(id, zametti::ImportLimits(), &error)) {
+            std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+            return 1;
+        }
+        return 0;
+    }
+
     if (command == QStringLiteral("resurrect")) {
         if (root.isEmpty() || id.isEmpty()) return usage();
         QLockFile lock(zametti::ZStorage(root).lockPath());
