@@ -811,9 +811,16 @@ encryption password itself is stored NOWHERE — it lives for the one moment
 Argon2id unwraps the keyfile, and what reaches the keyring is the key.
 
 `zametti-store set-remote` writes all of this once; `--reset` forgets it.
-On a fresh device pointed at an existing cloud it inherits the store identity
-from the manifest, and the next `sync` downloads everything — a bootstrap is
-an ordinary sync with an empty local side, there is no separate restore code.
+Pointed at a directory that does not exist yet (or is empty), it creates the
+store skeleton WITHOUT minting an identity — the manifest decides: found in
+the cloud, the identity is inherited, the root note is fetched and
+materialized right away, and a one-line summary of the cloud is printed
+(notes, attachments, size — sums only, never a listing); an empty cloud makes
+this the first device. A non-empty directory that is not a store is refused.
+The next `sync` downloads everything — a bootstrap is an ordinary sync with
+an empty local side, there is no separate restore code. In the program the
+same entry is `ZStorage::initFromRemote` — the future first-run dialog (and
+the Android port) call it, not a parallel implementation.
 
 ### The dirty set: `.zametti/dirty`
 

@@ -107,17 +107,16 @@ on start and on exit from then on; the toolbar cloud button syncs on demand.
 ### Setting up sync: a new device from the cloud
 
 ```
-mkdir ~/notes && mkdir ~/notes/.zametti ~/notes/history
 zametti-store set-remote --root ~/notes --url https://dav.example/notes/ --user you
 zametti-store sync --root ~/notes
 ```
 
-Point `set-remote` of an EMPTY store at an existing cloud: it inherits the
-store identity from the cloud manifest and asks the encryption password once.
-The first `sync` then downloads everything — notes, their full edit history,
+Point `set-remote` at a directory that does not exist yet (or is empty): it
+creates the store skeleton, inherits the store identity from the cloud
+manifest, asks the encryption password once, fetches the root note right away
+and reports what the cloud holds — how many notes and attachments, how large.
+The first `sync` then downloads everything: notes, their full edit history,
 attachments. A new laptop gets the whole store with one password.
-
-(примечание для владельца: `mkdir .zametti history` — шероховатость, см. §7.)
 
 ## 6. Что вскрыла UI-приёмка под Xvfb
 
@@ -130,10 +129,15 @@ attachments. A new laptop gets the whole store with one password.
 
 ## 7. Долги, названные вслух
 
-1. **Бутстрап требует руками создать `.zametti/` и `history/`** до
-   `set-remote` (иначе каталог — не хранилище). Правильно: `set-remote` на
-   пустом каталоге должен сам звать `init`-эквивалент. Мелко, но в README
-   так писать стыдно.
+1. ~~Бутстрап требует руками создать каркас~~ — ЗАКРЫТО в этой же сессии по
+   разбору вопросов с владельцем: `set-remote` на пустом или несуществующем
+   каталоге сам заводит каркас (без чеканки идентичности — её судьбу решает
+   манифест), скачивает и материализует корневую заметку и печатает сводку
+   облака (только суммы: заметки, вложения, объём). Вход оформлен статическим
+   `ZStorage::initFromRemote` — его же позовёт диалог первичной настройки в
+   самом zametti (и на Android, где консоли нет); диалог — в очередь.
+   Попутно clang-tidy вскрыл спящий дефект recompress: `--quality`
+   игнорировался из-за повисшего if (починен отдельным коммитом).
 2. **Материализация во время прогона не обновляет строки списка до конца
    прогона** (refreshNote — по завершении). Открытая заметка живёт
    external-путём и обновляется сразу.
@@ -189,8 +193,9 @@ attachments. A new laptop gets the whole store with one password.
 
 ## 9. Открытые вопросы владельцу
 
-1. Бутстрап-шероховатость (§7.1): пусть `set-remote` сам инициализирует
-   пустой каталог?
+1. ~~Бутстрап-шероховатость~~ — решено и сделано (см. §7.1): «пусто хотя бы
+   с одной стороны» — законный вход; GUI-диалог первичной настройки поверх
+   `initFromRemote` — отдельной сессией.
 2. Диалог предохранителя показывает до 12 заголовков — достаточно, или
    нужен полный список со скроллом?
 3. Кнопка облака во время прогона меняет только тултип и цвет; хочется ли
