@@ -26,6 +26,7 @@
 //   zametti-bench inline        строчная формула-объект: посадка, дедупликация
 //   zametti-bench source        цена выхода из режима правки исходника
 //   zametti-bench argon2        калибровка Argon2id на этой машине (m17)
+//   zametti-bench keyring       ручная приёмка Secret Service (m17)
 
 #include <QApplication>
 
@@ -50,6 +51,7 @@ int ztBigBench(int argc, char** argv);
 int ztInlineFormulaProbe(int argc, char** argv);
 int ztSourceBench(int argc, char** argv);
 int ztArgon2Probe(int argc, char** argv);
+int ztKeyringProbe(int argc, char** argv);
 
 namespace {
 
@@ -77,6 +79,7 @@ const Bench kBenches[] = {
     {"big", ztBigBench},
     {"inline", ztInlineFormulaProbe},
     {"argon2", ztArgon2Probe},
+    {"keyring", ztKeyringProbe},
 };
 
 int usage() {

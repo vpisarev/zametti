@@ -60,6 +60,7 @@ add_library(zametti-core STATIC
     sync/keyfile.h              sync/keyfile.cpp
     sync/blob_cipher.h          sync/blob_cipher.cpp
     sync/secret_store.h         sync/secret_store.cpp
+    sync/keyring_secrets.h
 
     # --- заметка: документ + журнал + всё, что переживает уход и возврат ---
     note/znote.h                note/znote.cpp
@@ -138,6 +139,17 @@ target_link_libraries(zametti-core
     PUBLIC Qt6::Core Qt6::Gui libjxl libtiff
     PRIVATE md4c blake3 zstd jpegli libwebp dtl microtex-all Sodium::Sodium
             zametti-code-rules)
+
+# Keyring: на Linux — Secret Service по QDBus (ноль зависимостей помимо
+# Qt6::DBus, PRIVATE — в заголовке sync/ шины нет); всюду ещё — заготовка
+# (mac получит Security.framework при мак-заходе).
+if(UNIX AND NOT APPLE)
+    find_package(Qt6 REQUIRED COMPONENTS DBus)
+    target_sources(zametti-core PRIVATE sync/keyring_secrets_dbus.cpp)
+    target_link_libraries(zametti-core PRIVATE Qt6::DBus)
+else()
+    target_sources(zametti-core PRIVATE sync/keyring_secrets_stub.cpp)
+endif()
 
 # HEIF/AVIF — по ключу, системной библиотекой. Обработчик зовётся напрямую из
 # image_read, плагином он больше не является.
