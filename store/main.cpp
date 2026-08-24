@@ -58,6 +58,16 @@ int usage() {
                  "                         (or --to <dir> to push into a local folder)\n"
                  "  zametti-store set-remote --root <dir> (--url <webdav-url> | --to <dir>)\n"
                  "                           [--user <name>] [--allow-insecure-http] [--reset]\n"
+                 "  zametti-store sync --root <dir> [--full | --push-only]\n"
+                 "                     [--allow-mass-delete | --keep-all]\n"
+                 "                     [--url <webdav-url> | --to <dir>] [--user <name>]\n"
+                 "\n"
+                 "  sync runs the engine: align, exchange, merge, materialize. The cloud\n"
+                 "  address comes from .zametti/remote.json (set-remote) unless --url or\n"
+                 "  --to overrides it; secrets come from the keyring or the environment.\n"
+                 "  When a run wants to delete more notes than the guard allows it stops,\n"
+                 "  lists them, and asks for an explicit decision: --allow-mass-delete\n"
+                 "  applies the deletions, --keep-all declares the notes alive instead.\n"
                  "\n"
                  "  set-remote is the one-time setup: it asks the two passwords (typed,\n"
                  "  echo off; the encryption password twice when the cloud is fresh),\n"
@@ -132,6 +142,9 @@ int main(int argc, char** argv) {
     QString url, user, to;
     bool allowInsecure = false;
     bool reset = false;
+    bool pushOnly = false;
+    bool allowMassDelete = false;
+    bool keepAll = false;
     bool dryRun = false;
     bool restore = false;
     for (qsizetype i = 2; i < args.size(); ++i) {
@@ -153,6 +166,10 @@ int main(int argc, char** argv) {
         else if (a == QStringLiteral("--to")) to = next();
         else if (a == QStringLiteral("--allow-insecure-http")) allowInsecure = true;
         else if (a == QStringLiteral("--reset")) reset = true;
+        else if (a == QStringLiteral("--full")) pushOnly = false;
+        else if (a == QStringLiteral("--push-only")) pushOnly = true;
+        else if (a == QStringLiteral("--allow-mass-delete")) allowMassDelete = true;
+        else if (a == QStringLiteral("--keep-all")) keepAll = true;
         else if (!a.startsWith(QStringLiteral("--")) && positional.isEmpty()) positional = a;
         else if (!a.startsWith(QStringLiteral("--")) && positional2.isEmpty()) positional2 = a;
         else return usage();
@@ -187,7 +204,15 @@ int main(int argc, char** argv) {
                          locked.holderHost.toUtf8().constData());
             return 1;
         }
+        // Секрет в среде = headless-намерение (обвязка, скрипты): в keyring не
+        // пишем и разблокировку не выбиваем — ключ остаётся в среде вызвавшего.
+        const bool headless = !qEnvironmentVariable("ZAMETTI_SYNC_PASSWORD").isEmpty() ||
+                              !qEnvironmentVariable("ZAMETTI_SYNC_KEY").isEmpty();
         zametti::KeyringSecrets keyring;
+        zametti::EnvSecrets envSink;
+        zametti::SecretStore& secrets =
+            headless ? static_cast<zametti::SecretStore&>(envSink)
+                     : static_cast<zametti::SecretStore&>(keyring);
         QString error;
 
         if (reset) {
@@ -239,12 +264,12 @@ int main(int argc, char** argv) {
         }
 
         zametti::ZStorage::ConnectOutcome outcome;
-        if (!storage.connectRemote(cfg, password, serverPassword, keyring,
+        if (!storage.connectRemote(cfg, password, serverPassword, secrets,
                                    zametti::Keyfile::defaults(), &outcome, &error)) {
             std::fprintf(stderr, "%s\n", error.toUtf8().constData());
             return 1;
         }
-        if (!keyring.available())
+        if (!headless && !keyring.available())
             std::fprintf(stderr,
                          "warning: no system keyring — the key is not remembered, and the "
                          "password will be asked again\n");
@@ -254,6 +279,145 @@ int main(int argc, char** argv) {
         if (outcome.mintedKeyfile) std::printf("minted a new keyfile and uploaded it\n");
         std::printf("connected: %s\n",
                     (cfg.url.isEmpty() ? cfg.dir : cfg.url).toUtf8().constData());
+        return 0;
+    }
+
+    // СИНХРОНИЗАЦИЯ — тот же движок, что у окна (m17, сессия 4). push-all
+    // остаётся люком замера первой заливки; здесь — полный цикл.
+    if (command == QStringLiteral("sync")) {
+        if (root.isEmpty()) return usage();
+        if (allowMassDelete && keepAll) return usage();
+        zametti::ZStorage storage(root);
+        if (!storage.isStore()) {
+            std::fprintf(stderr, "not a store: %s\n", root.toUtf8().constData());
+            return 1;
+        }
+        const zametti::ZStorage::LockReport locked = storage.lock();
+        if (!locked.locked) {
+            std::fprintf(stderr, "the store is busy (pid %lld on %s)\n",
+                         static_cast<long long>(locked.holderPid),
+                         locked.holderHost.toUtf8().constData());
+            return 1;
+        }
+        QString error;
+        const zametti::ZStorage::Identity identity = storage.ensureIdentity(&error);
+        if (identity.isEmpty()) {
+            std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+            return 1;
+        }
+
+        // Адрес: ключи командной строки сильнее remote.json.
+        zametti::ZStorage::RemoteConfig cfg;
+        if (!to.isEmpty() || !url.isEmpty()) {
+            if (!to.isEmpty())
+                cfg.dir = QDir(to).absolutePath();
+            else
+                cfg.url = url.endsWith(QLatin1Char('/')) ? url : url + QLatin1Char('/');
+            cfg.user = user;
+            cfg.allowInsecureHttp = allowInsecure;
+        } else {
+            cfg = storage.remoteConfig();
+        }
+        if (cfg.isEmpty()) {
+            std::fprintf(stderr,
+                         "sync is not configured: run set-remote once, or pass --url/--to\n");
+            return 1;
+        }
+
+        // Пароль сервера и ключ: среда — для обвязки, keyring — для человека,
+        // конверт из облака паролем — последняя дверь.
+        // Секрет в среде = headless-намерение: keyring не трогается вовсе,
+        // иначе скриптовый прогон выбивал бы на экран диалог разблокировки.
+        const bool headless = !qEnvironmentVariable("ZAMETTI_SYNC_PASSWORD").isEmpty() ||
+                              !qEnvironmentVariable("ZAMETTI_SYNC_KEY").isEmpty();
+        zametti::KeyringSecrets keyring;
+        zametti::EnvSecrets env;
+        QString serverPassword = qEnvironmentVariable("ZAMETTI_WEBDAV_PASSWORD");
+        if (serverPassword.isEmpty() && !cfg.url.isEmpty() && !headless && keyring.available())
+            serverPassword = keyring.serverPassword(identity.storeId());
+        auto remote = storage.makeRemote(cfg, serverPassword, &error);
+        if (!remote) {
+            std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+            return 1;
+        }
+        zametti::Keyfile keyfile;
+        if (!env.loadKey(identity.storeId(), &keyfile, nullptr) &&
+            !(!headless && keyring.available() &&
+              keyring.loadKey(identity.storeId(), &keyfile, nullptr))) {
+            const QString password = qEnvironmentVariable("ZAMETTI_SYNC_PASSWORD");
+            QByteArray envelope;
+            if (!password.isEmpty() &&
+                remote->get(QLatin1String(zametti::Keyfile::kRemoteName), &envelope, nullptr,
+                            nullptr)) {
+                if (!keyfile.parse(envelope, &error) || !keyfile.unwrap(password, &error)) {
+                    std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+                    return 1;
+                }
+            } else {
+                std::fprintf(stderr,
+                             "no key: run set-remote once, or set ZAMETTI_SYNC_KEY / "
+                             "ZAMETTI_SYNC_PASSWORD\n");
+                return 1;
+            }
+        }
+        if (!storage.setRemote(remote, keyfile, &error)) {
+            std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+            return 1;
+        }
+
+        zametti::ZStorage::SyncOptions options;
+        options.mode = pushOnly ? zametti::ZStorage::SyncOptions::PushOnly
+                                : zametti::ZStorage::SyncOptions::Full;
+        options.allowMassDelete = allowMassDelete;
+        zametti::ZStorage::SyncReport report;
+        bool ok = storage.sync(options, &report, &error);
+
+        // ОТКАЗ ОТ МАССОВОГО УДАЛЕНИЯ: --keep-all объявляет задержанные
+        // заметки живыми и доделывает прогон — облако лечится записями
+        // поверх надгробий.
+        if (ok && !report.pendingDeletes.isEmpty() && keepAll) {
+            if (!storage.declareAlive(report.pendingDeletes, &error)) {
+                std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+                return 1;
+            }
+            ok = storage.sync(options, &report, &error);
+        }
+
+        // Числа печатаются в любом случае: половина работы до обрыва — тоже
+        // результат, следующий прогон её достроит.
+        std::printf("align: %d checked, %d baselined, %d external, %d by stat-scan\n",
+                    report.dirtyChecked, report.baselined, report.externalRecorded,
+                    report.statScanned);
+        std::printf("exchange: %d listed, %d skipped, %d etag-reissued, %d taken, %d pushed, "
+                    "%d merged, %d deferred, %d healed, %d corrupt-as-absence\n",
+                    report.listed, report.skipped, report.etagReissued, report.takenWhole,
+                    report.pushedWhole, report.mergedJournals, report.deferred,
+                    report.healedRemote, report.corruptLocalTreatedAsAbsence);
+        std::printf("materialize: %d files, %d deletes; attachments: %d up, %d down\n",
+                    report.materialized, report.deletesApplied, report.attachmentsUp,
+                    report.attachmentsDown);
+        std::printf("time: align %.1f ms, exchange %.1f ms, materialize %.1f ms\n",
+                    report.usAlign / 1000.0, report.usExchange / 1000.0,
+                    report.usMaterialize / 1000.0);
+        std::printf("traffic: %lld requests, %lld B up, %lld B down\n",
+                    static_cast<long long>(report.traffic.requests),
+                    static_cast<long long>(report.traffic.bytesUp),
+                    static_cast<long long>(report.traffic.bytesDown));
+        for (const QString& name : report.attachmentConflicts)
+            std::printf("attachment conflict (kept both sides apart): %s\n",
+                        name.toUtf8().constData());
+        if (!report.pendingDeletes.isEmpty()) {
+            std::printf("HELD: this run wants to delete %lld notes:\n",
+                        static_cast<long long>(report.pendingDeletes.size()));
+            for (const QString& id : report.pendingDeletes)
+                std::printf("  %s\n", id.toUtf8().constData());
+            std::printf("decide: rerun with --allow-mass-delete to apply, or --keep-all to "
+                        "declare them alive\n");
+        }
+        if (!ok) {
+            std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+            return 1;
+        }
         return 0;
     }
 
