@@ -1,0 +1,17 @@
+#include "remote_store.h"
+
+namespace zametti {
+
+bool RemoteStore::putIfMatch(const QString& name, const QByteArray& bytes,
+                             const QString& expectedEtag, QString* etag,
+                             bool* preconditionFailed, QString* error) {
+    // Дефолт — молчаливая деградация: адаптер, не умеющий условной заливки,
+    // заливает обычным способом. Честнее, чем отказ: гонку ловит не только
+    // If-Match, а весь ярус слияния (union по записям), и она не теряет
+    // данных даже без него.
+    Q_UNUSED(expectedEtag);
+    if (preconditionFailed != nullptr) *preconditionFailed = false;
+    return put(name, bytes, etag, error);
+}
+
+}  // namespace zametti

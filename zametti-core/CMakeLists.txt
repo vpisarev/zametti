@@ -61,6 +61,8 @@ add_library(zametti-core STATIC
     sync/blob_cipher.h          sync/blob_cipher.cpp
     sync/secret_store.h         sync/secret_store.cpp
     sync/keyring_secrets.h
+    sync/remote_store.h         sync/remote_store.cpp
+    sync/folder_remote.h        sync/folder_remote.cpp
 
     # --- заметка: документ + журнал + всё, что переживает уход и возврат ---
     note/znote.h                note/znote.cpp

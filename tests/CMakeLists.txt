@@ -65,6 +65,7 @@ add_executable(zametti-tests
     keyfile_test.cpp
     blob_cipher_test.cpp
     secrets_test.cpp
+    remote_store_test.cpp
 
     # --- живая модель документа ---
     reader_test.cpp
