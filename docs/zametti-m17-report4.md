@@ -122,7 +122,11 @@ and reports what the cloud holds — how many notes and attachments, how large.
 The first `sync` then downloads everything: notes, their full edit history,
 attachments. A new laptop gets the whole store with one password.
 
-### Матрица входов set-remote (после разбора вопроса №1 с владельцем)
+## 5а. Матрица входов set-remote и диагностики чужого облака
+
+(по просьбе владельца при разборе вопросов; составлено после решения №1)
+
+### Матрица входов
 
 | локально | облако | исход |
 |---|---|---|
