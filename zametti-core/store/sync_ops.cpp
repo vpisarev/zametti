@@ -143,7 +143,7 @@ bool ZStorage::pushAll(PushReport* report, QString* error) {
                                            info.lastModified().toMSecsSinceEpoch());
         ++done.baselined;
     }
-    done.msBaseline = timer.elapsed();
+    done.usBaseline = timer.nsecsElapsed() / 1000;
 
     if (!remote_->mkdirOnce(error)) return finish(false);
 
@@ -153,13 +153,13 @@ bool ZStorage::pushAll(PushReport* report, QString* error) {
         timer.restart();
         const BlobAad aad{kindOfBlob(name), mine.storeId(), name};
         if (!cipher_->seal(plain, aad, &blob, error)) return false;
-        done.msSeal += timer.elapsed();
+        done.usSeal += timer.nsecsElapsed() / 1000;
         done.plainBytes += plain.size();
         done.sealedBytes += blob.size();
 
         timer.restart();
         const bool ok = remote_->put(name, blob, nullptr, error);
-        done.msPut += timer.elapsed();
+        done.usPut += timer.nsecsElapsed() / 1000;
         return ok;
     };
 
@@ -184,7 +184,7 @@ bool ZStorage::pushAll(PushReport* report, QString* error) {
     timer.restart();
     if (!remote_->put(QLatin1String(Identity::kFile), mine.toBytes(), nullptr, error))
         return finish(false);
-    done.msPut += timer.elapsed();
+    done.usPut += timer.nsecsElapsed() / 1000;
     return finish(true);
 }
 

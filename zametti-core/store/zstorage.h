@@ -609,7 +609,10 @@ public:
         int attachments = 0;    // вложений залито
         qint64 plainBytes = 0;  // сколько байтов зашифровано
         qint64 sealedBytes = 0; // сколько уехало (с оверхедом обёртки)
-        qint64 msBaseline = 0, msSeal = 0, msPut = 0;
+        // МИКРОСЕКУНДЫ, а не миллисекунды: блобов сотни, каждый шифруется за
+        // десятки микросекунд, и в миллисекундах вся сумма округлялась в ноль
+        // (первая редакция замера так и напечатала «seal 1 ms» на 4 МБ).
+        qint64 usBaseline = 0, usSeal = 0, usPut = 0;
     };
     bool pushAll(PushReport* report, QString* error = nullptr);
 

@@ -10,7 +10,11 @@
 //   zametti-store resurrect --root <dir> --id <id>
 //   zametti-store archive --root <dir> --id <id> [--restore]
 
+#include "folder_remote.h"
 #include "journal.h"
+#include "keyfile.h"
+#include "secret_store.h"
+#include "webdav_remote.h"
 #include "zstorage.h"
 #include "recompress.h"
 
@@ -43,6 +47,17 @@ int usage() {
                  "  zametti-store resurrect --root <dir> --id <id>\n"
                  "  zametti-store archive --root <dir> --id <id> [--restore]\n"
                  "  zametti-store root show|init|fix --root <dir>\n"
+                 "  zametti-store push-all --root <dir> --url <webdav-url>\n"
+                 "                         [--user <name>] [--allow-insecure-http]\n"
+                 "                         (or --to <dir> to push into a local folder)\n"
+                 "\n"
+                 "  push-all encrypts and uploads every journal and attachment; it is\n"
+                 "  the probe ancestor of 'sync' and knows nothing about merging yet.\n"
+                 "  Secrets come from the environment, never from the command line:\n"
+                 "    ZAMETTI_WEBDAV_PASSWORD   the server password\n"
+                 "    ZAMETTI_SYNC_PASSWORD     the encryption password (a new keyfile\n"
+                 "                              is minted when the cloud has none)\n"
+                 "    ZAMETTI_SYNC_KEY          or the master key itself, base64\n"
                  "\n"
                  "  recompress has NO default for --id: recompression is irreversible,\n"
                  "  and one forgotten option must not migrate the whole store.\n"
@@ -79,6 +94,8 @@ int main(int argc, char** argv) {
     QString positional2;
     QString id;
     QString maxSize, maxFileMb, quality;
+    QString url, user, to;
+    bool allowInsecure = false;
     bool dryRun = false;
     bool restore = false;
     for (qsizetype i = 2; i < args.size(); ++i) {
@@ -95,6 +112,10 @@ int main(int argc, char** argv) {
         else if (a == QStringLiteral("--quality")) quality = next();
         else if (a == QStringLiteral("--dry-run")) dryRun = true;
         else if (a == QStringLiteral("--restore")) restore = true;
+        else if (a == QStringLiteral("--url")) url = next();
+        else if (a == QStringLiteral("--user")) user = next();
+        else if (a == QStringLiteral("--to")) to = next();
+        else if (a == QStringLiteral("--allow-insecure-http")) allowInsecure = true;
         else if (!a.startsWith(QStringLiteral("--")) && positional.isEmpty()) positional = a;
         else if (!a.startsWith(QStringLiteral("--")) && positional2.isEmpty()) positional2 = a;
         else return usage();
@@ -104,6 +125,114 @@ int main(int argc, char** argv) {
         if (positional.isEmpty()) return usage();
         QString error;
         if (!zametti::ZStorage(positional).init(&error)) {
+            std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+            return 1;
+        }
+        return 0;
+    }
+
+    // ЗАЛИТЬ ВСЁ В ОБЛАКО — люк разведки (m17). Прародитель `sync`: только
+    // исходящее, ни скачиваний, ни слияний. Секреты берутся из среды, а не из
+    // командной строки: командная строка видна всей машине (`ps`) и оседает в
+    // истории оболочки.
+    if (command == QStringLiteral("push-all")) {
+        if (root.isEmpty() || (url.isEmpty() && to.isEmpty())) return usage();
+        zametti::ZStorage storage(root);
+        if (!storage.isStore()) {
+            std::fprintf(stderr, "not a store: %s\n", root.toUtf8().constData());
+            return 1;
+        }
+        const zametti::ZStorage::LockReport locked = storage.lock();
+        if (!locked.locked) {
+            std::fprintf(stderr, "the store is busy (pid %lld on %s)\n",
+                         static_cast<long long>(locked.holderPid),
+                         locked.holderHost.toUtf8().constData());
+            return 1;
+        }
+        QString error;
+        const zametti::ZStorage::Identity identity = storage.ensureIdentity(&error);
+        if (identity.isEmpty()) {
+            std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+            return 1;
+        }
+
+        // Адаптер: настоящий WebDAV или локальный каталог (замеры и наборы —
+        // тот же путь без сети).
+        std::shared_ptr<zametti::RemoteStore> remote;
+        if (!to.isEmpty()) {
+            remote = std::make_shared<zametti::FolderRemote>(to);
+        } else {
+            zametti::WebDavRemote::Config config;
+            config.base = QUrl(url.endsWith(QLatin1Char('/')) ? url : url + QLatin1Char('/'));
+            config.user = user;
+            config.password = qEnvironmentVariable("ZAMETTI_WEBDAV_PASSWORD");
+            config.allowInsecureHttp = allowInsecure;
+            if (!zametti::WebDavRemote::checkUrl(config, &error)) {
+                std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+                return 1;
+            }
+            remote = std::make_shared<zametti::WebDavRemote>(config);
+        }
+
+        // Ключ. Готовый — из среды; иначе разворачиваем конверт с сервера
+        // паролем, а если конверта нет — чеканим новый ключ и заливаем его.
+        zametti::EnvSecrets secrets;
+        zametti::Keyfile keyfile;
+        const QString password = qEnvironmentVariable("ZAMETTI_SYNC_PASSWORD");
+        if (secrets.loadKey(identity.storeId(), &keyfile, nullptr)) {
+            // ключ пришёл из среды — конверта нет и не нужно
+        } else if (password.isEmpty()) {
+            std::fprintf(stderr,
+                         "no key: set ZAMETTI_SYNC_KEY or ZAMETTI_SYNC_PASSWORD\n");
+            return 1;
+        } else {
+            QByteArray envelope;
+            if (remote->get(QLatin1String(zametti::Keyfile::kRemoteName), &envelope,
+                            nullptr, nullptr)) {
+                if (!keyfile.parse(envelope, &error) || !keyfile.unwrap(password, &error)) {
+                    std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+                    return 1;
+                }
+            } else {
+                std::fprintf(stderr, "the cloud has no keyfile yet — minting one\n");
+                if (!zametti::Keyfile::create(identity.storeId(), password,
+                                              zametti::Keyfile::defaults(), &keyfile,
+                                              &error)) {
+                    std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+                    return 1;
+                }
+                if (!remote->mkdirOnce(&error) ||
+                    !remote->put(QLatin1String(zametti::Keyfile::kRemoteName),
+                                 keyfile.toBytes(), nullptr, &error)) {
+                    std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+                    return 1;
+                }
+            }
+        }
+
+        if (!storage.setRemote(remote, keyfile, &error)) {
+            std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+            return 1;
+        }
+        zametti::ZStorage::PushReport report;
+        const bool ok = storage.pushAll(&report, &error);
+        // Числа печатаются в любом случае: половина работы, сделанная до
+        // обрыва, — тоже результат, и следующий прогон её достроит.
+        std::printf("baselined %d, journals %d, attachments %d\n",
+                    report.baselined, report.journals, report.attachments);
+        std::printf("plaintext %lld B, ciphertext %lld B (overhead %lld B)\n",
+                    static_cast<long long>(report.plainBytes),
+                    static_cast<long long>(report.sealedBytes),
+                    static_cast<long long>(report.sealedBytes - report.plainBytes));
+        std::printf("time: baseline %.1f ms, seal %.1f ms, upload %.1f ms\n",
+                    report.usBaseline / 1000.0, report.usSeal / 1000.0,
+                    report.usPut / 1000.0);
+        const zametti::RemoteStore::Traffic& traffic = remote->traffic();
+        std::printf("traffic: %lld requests, %lld B up, %lld B down\n",
+                    static_cast<long long>(traffic.requests),
+                    static_cast<long long>(traffic.bytesUp),
+                    static_cast<long long>(traffic.bytesDown));
+        if (!ok) {
             std::fprintf(stderr, "%s\n", error.toUtf8().constData());
             return 1;
         }
