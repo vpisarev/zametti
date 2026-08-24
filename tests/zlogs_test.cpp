@@ -22,8 +22,6 @@ using namespace zametti;
 
 namespace {
 
-std::string num(qint64 value) { return std::to_string(value); }
-
 QByteArray readAll(const QString& path) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) return {};
