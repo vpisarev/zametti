@@ -623,12 +623,15 @@ folder `role: lost`:
 
     parent := Lost & found,  lost-parent := what it was
 
-This is **the only place where loading the store WRITES** (owner's decision),
-and the bounds of the exception are strict: only notes with an unresolvable
-`parent`, only two header lines, `modified` is not bumped, a repeat writes
-nothing, and the folder itself is created only for the first find. Things
-are taken out of the bureau by an ordinary move; the folder controls nothing
-else.
+This is one of the **three sanctioned exceptions to "loading the store never
+WRITES"** (owner's decision; the full list lives in `ZStorage`:
+`ensureIdentity` mints `zametti.json`, `ensureRootNote` creates the root
+note, and `migrate()` runs the idempotent migrations — old trash → archive,
+unfolding archived stubs of older builds, and this bureau). The bounds of the
+bureau exception are strict: only notes with an unresolvable `parent`, only
+two header lines, `modified` is not bumped, a repeat writes nothing, and the
+folder itself is created only for the first find. Things are taken out of the
+bureau by an ordinary move; the folder controls nothing else.
 
 Id collisions between stores are declared negligible: an id is 8 characters
 of time and 6 random ones — a match would mean two notes created within the
