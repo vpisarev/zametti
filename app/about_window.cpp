@@ -58,7 +58,7 @@ QString buildFactsMarkdown() {
         out += QStringLiteral("- **%1:** %2\n")
                    .arg(QString::fromUtf8(fact.name), QString::fromUtf8(fact.value));
     }
-    out += QStringLiteral("- **image readers:** %1\n")
+    out += QStringLiteral("- **extra image readers:** %1\n")
                .arg(QString::fromUtf8(kImageReaders));
 
     out += QStringLiteral("\n## Bundled libraries\n\n");
@@ -88,16 +88,6 @@ QString buildFactsMarkdown() {
         "\nThe fonts are bundled on purpose: the family name in settings is a request, "
         "not a promise. If the font is missing from the system, Qt silently substitutes "
         "whatever it finds, and the layout drifts on the first foreign machine.\n");
-
-    // Данные не заперты — это уговор владельца, и место ему здесь, рядом с
-    // версиями: человек, читающий «о программе», как раз и спрашивает, что
-    // будет с его заметками, если программа исчезнет.
-    out += QStringLiteral(
-        "\n## Your data is not locked in\n\n"
-        "A note is plain markdown in UTF-8, an attachment is a plain file next to it. "
-        "The store can be read and edited without this program: with any editor, "
-        "any script, anything at all. The full format description is in the "
-        "“Store format” tab.\n");
     return out;
 }
 

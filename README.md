@@ -6,7 +6,7 @@ Notes on disk are plain markdown: they can be edited with any tools and kept in 
 
 ## License
 
-The project is licensed under GPL-3.0, see [LICENSE](LICENSE).The vendored or linked 3rdparty packages are distributed under their
+The project is licensed under GPL-3.0, see [LICENSE](LICENSE). The vendored or linked 3rdparty packages are distributed under their
 respective licenses, see `3rdparty/*` and **How to build** below.
 
 ## Disclaimer
@@ -19,10 +19,10 @@ On the other hand, use the software at your own risk (or don't use it at all). W
 
 When a markdown note is imported into the storage or is created by the user from scratch, it's stored in the storage in so-called canonical form:
 
-- the note is given a 14-symbol [base-32](https://www.crockford.com/base32.html) name that consists of 8-symbol prefix (encoded seconds since 'Unix epoch', 01.01.1970 UTC when the note is created) and 6-symbol random suffix. The real name becomes the title (e.g. `# some verbose name of the note`)  This 14-symbol id is like a social id number, it keeps the note identity even if the displayed name changes. And the name can then contain any symbols, even emoji. See [zametti-storage](docs/zametti-storage.md) for details.
+- the note is given a 14-symbol [base-32](https://www.crockford.com/base32.html) name that consists of 8-symbol prefix: the unix time (elapsed seconds since 'Unix epoch', 01.01.1970 UTC) when the note is create & date and 6-symbol random suffix. The real name becomes the title (e.g. `# some verbose name of the note`)  This 14-symbol id is like a social id number, it keeps the note identity even if the displayed name changes. And the name can then contain any symbols, even emoji. See [zametti-storage](docs/zametti-storage.md) for details.
 - each markdown file starts with a html comment (which are supported by markdown parsers) with meta-information about the note. _Don't touch it if you edit the note with an external editor!_
 - trailing whitespaces are erased. New-line symbol `\n` is added in the end.
-- at the same time, user-added spaces in the beginning of each line, as well as extra empty lines between paragraphs are all preserved! So you can type unusually-formatted poems - the formatting will be preserved.
+- at the same time, user-added spaces in the beginning of each line, as well as extra empty lines between paragraphs are all preserved! So you can type unusually-formatted poems, for example, the formatting will be preserved.
 - each heading starts with one or more `#`. We don't use under-the-heading `-----`.
 - `-` is used for unordered lists. In WYSIWYG mode bullets of 3 different forms are used for unordered lists of different level, but it's just visualization
 - ordered lists use `1.`, `2.` etc. enumeration. You can put `1.` everywhere, but it will likely be restored to `1.`, `2.` etc. on the next auto-save.In WYSIWYG mode nested lists use `a., b., c. ...` and `1), 2), 3) ...`, but it's just visualization.
@@ -33,16 +33,16 @@ When a markdown note is imported into the storage or is created by the user from
 - `$...$` surround inline formulas: $\text{circle area}=\pi r^2$; `$$...$$` are used for display formulas. However, it's possible to use `$...$` for display formulas as well - just place inline formula alone, separated from the rest of the text by empty lines.
 - we don't use a 'markdown-standard' 4-space indent for lists. Instead, we use 2-space indentation for unordered lists and 3-space indentation for ordered lists.
 - syntax for images is extended. There is a base `![alt-text](url)` standard notation, into which we add some extra stuff:
-  - `(url)` may include the current picture size in pixels, which changes as user changes the picture size by dragging on of the corners. Note that it only affects the displayed image size, not the image file in the storage.
+  - `(url)` may include the current picture size in pixels, which changes as user adjusts the picture size by dragging one of the corners. Note that it only affects the displayed image size, not the image file in the storage.
   - it also may include optional alignment, which is center alignment by default.
-  - if alt-text starts with `~` or if its name is too dull, e.g. `image 5` or `IMG_...` or `DSC...` or `Screenshot ...`, this text is not displayed under the picture. To display it, type `Ctrl+D` and edit it - make it more descriptive.
+  - if alt-text starts with `~` or if its name is too dull, e.g. `image 5` or `IMG_...` or `DSC...` or `Screenshot ...`, this text is not displayed under the picture. To display it, press `Ctrl+D` and edit it - make it more descriptive.
 - all the referenced images (many different formats are supported by the application) are put into the storage (also under 14-symbol base32 names) in the (re)compressed form. Most of the time they become `.jxl` (JpegXL) files, but sometimes `.jpeg's` and `.webp's` are preserved if they cannot be recompressed into JpegXL accurately enough and/or with substantial savings in occupied space. Big images are downscaled with high-quality algorithm. There is user parameter `maxImportedImageSize` (see **Settings** below) that controls the downscaling - by default big images are downscaled to ~4.5MPix resolution, something in the middle between FullHD (2MPix) and 4K (8MPix). Note that JpegXL files can:
   - store up to 16 bits-per-channel images
   - support various color spaces (including sRGB, Display P3, AdobeRGB),
   - they preserve transparency information
   - they can even store lossless-transcoded jpeg images, so if you want to put a small jpeg into the note, don't worry, there will be no extra lossy recompression step.
 
-The markdown notes are also transformed to a canonical form each time they are read from disk and each time they are written to disk. That is, the two variants are preserved and verified by the multiple tests:
+The markdown notes are also transformed to a canonical form each time they are read from disk and each time they are written to disk. That is, the two invariants are preserved and verified by the multiple tests:
 
 ```
 // x ~ .md file
@@ -56,11 +56,11 @@ Everything the program does not support (yet) — HTML, footnotes, quotes more c
 ## Preserving history
 
 Note for mac users: read `Cmd` when you see `Ctrl`.
-- Each note comes with its editing 'journal'. The latest changes, as you type, become a part of in-memory undo/redo stack (`Ctrl+Z/Ctrl+Shift+Z`). The size of this undo/redo stack is only limited by memory. You can edit several notes at once, undo/redo stack for each of the notes is preserved within one editing session (i.e. until you quit the program)
-- No need to press `Ctrl+S`, all notes are automatically saved.
-- All your modified notes are periodically auto-saved to disk, to `history/note_id.log` on-disk journals, where `note_id` is the same as the respective note `id`. They are well-compressed, see [storage description](docs/zametti-storage.md) for details, so don't worry about the space.
+- Each note comes with its 'journal' of edits. The latest changes, as you type, become a part of in-memory undo/redo stack (`Ctrl+Z/Ctrl+Shift+Z`). The size of this undo/redo stack is only limited by memory. You can edit several notes at once, undo/redo stack for each of the notes is preserved within one editing session (i.e. until you quit the program)
+- No need to press `Ctrl+S`, all notes are automatically saved
+- All your modified notes are periodically auto-saved to disk, to `history/note_id.log` on-disk journals, where `note_id` is the same as the respective note `id`. The journals are well-compressed using `zstd`, see [storage description](docs/zametti-storage.md) for details, so don't worry about the space.
 - You can navigate through the note history by pressing `Note history` button on the toolbar or if you press `Ctrl+Z` when you reached the bottom of undo/redo stack. From the history you can choose whatever snapshot you like and restore it (think of it as of a super-simple alternative to git) or you can grab a piece of text from it and place into the current note.
-- If some process changes your note on disk (or if you edit your note in the external editor yourself), the program detects it and replaces the current note with the fresh content from disk, but this replacement becomes yet another operation, which you can undo.
+- If some process changes your note on disk (or if you edit your note in the external editor), the program detects it and replaces the current note with the fresh content from disk, but this replacement becomes yet another editing operation, which you can undo.
 - If you setup a cloud storage synchronization (webdav is supported, S3 will likely be supported in the future), your notes (the journals, actually) will be encrypted and stored there, so you can access them from another computer or restore them if your local copies are erased or damanged.
   - locally we always store all the content unencrypted for more convenience, safety and compatibility with external tools (vscode, grep, vim, ...).
   - we always encrypt all the notes and all the images when we store them in cloud.
@@ -68,9 +68,9 @@ Note for mac users: read `Cmd` when you see `Ctrl`.
 ## Settings
 
 There are several types of user settings, stored in different places:
-- `~/.config/zametti/config.json` - this is the file where you can configure how zametti looks and partially how it works. For the program it's a read-only file, only you edit it. To edit it, press `Settings` button on the toolbar or edit that file directly. It's inconvenient to start with an empty file, so you can run `zametti --dump-config` to get the initial fully-commented-off config, in which you can then uncomment and edit the sections and items that you want to alter.
-- `~/.config/zametti/state.json` - this is the inter-session state that you want to preserve:
-  - windows geometry. Some window managers don't let us to store the absolute position, they prefer to place windows as they wish. But the size is stored and then restored.
+- `~/.config/zametti/config.json` - this is the file where you can configure how zametti looks and partially how it works. For the program it's a read-only file, only you edit it. To edit it, press `Settings` button on the toolbar or edit that file directly. It's inconvenient to start with an empty file, so you can run `zametti --dump-config` to get the initial fully-commented-off config, in which you can then uncomment and edit the sections and items that you want to alter. When you press `Settings` button and there is no config, the initial config with commented-off settings is automatically created, and then you edit it.
+- `~/.config/zametti/state.json` - this is the inter-session state that you normally want to preserve:
+  - application window geometry. Some window managers don't let us to store the absolute position, they prefer to place windows as they wish. But the size is stored and then restored.
   - zoom factor: press `Ctrl+=`, `Ctrl+-` to increase/decrease scale of the edited note view.
   - name of the recently viewed notes and cursor positions there.
   - etc.
@@ -80,12 +80,12 @@ There are several types of user settings, stored in different places:
 ## Running
 
 ```bash
-zametti                # open what you were reading or editing last time
-zametti --help         # help: switches, keys, file paths
-zametti --dump-config  # get the initial .json, which can be put to
-                       # ~/.config/zametti/config.json and edited to taste
-zametti --root <storage_dir>  # switch to another storage,
-                       # you can have as many storages as you want
+zametti               # open what you were reading or editing last time
+zametti --help        # help: switches, keys, file paths
+zametti --dump-config # get the initial .json, which can be put to
+                      # ~/.config/zametti/config.json and edited to taste
+zametti --root <storage_dir>  # switch to another storage;
+                      # you can have as many storages as you want
 ```
 
 ## Using
@@ -93,16 +93,16 @@ zametti --root <storage_dir>  # switch to another storage,
 The program uses a popular 3-panel interface:
 - the left panel displays a tree of folders, initially it's just the root, more folders can be added by pressing `New folder` button.
 - the middle panel displays all notes that belong to the selected folder and its subfolders.
-  - the notes can be sorted in alphabetic order, by modification time or by creation time, press the corresponding button to change the order. The program remembers sorting order of the selected folder (it's highlighted with magenta color). You can reset the sorting order to the default order (sorting order of root folder, which is normally 'most recently edited first' and is highlighted with a blue color).
+  - the notes can be sorted in alphabetic order, by modification time (edit order) or by creation time (chronological order), press the corresponding button to change the order. The program remembers sorting order of each folder (it's highlighted with magenta color) _if_ you set it explicitly. You can reset the sorting order of the folder to the default order. The default order is defined by the current sorting order of the root folder. If a directory has custom sorting order, it's highlighted with magenta color. If the sorting order is the default one (matches the root folder sorting mode), it's highlighted with blue. For example, in your storage you may create a folder 'Diary' (probably with subfolders) for your daily notes and use chronological order so the notes stay in the same order as you created them, no matter if you get back to your older notes and fix some typos or add retrospective comments. Then, if you select all notes, you will see all notes in the root-sorted order (usually the 'edit order': most recently edited go first). But when you select Diary, the notes in the middle panel will be sorted in the chronological order - convenient!
 - the right panel usually displays the viewed/edited note, however it can also display the currently observed snapshot when navigating through the note history, or the program config when you edit it (`Settings` button)
 
-The left and middle panel and be hidden and then shown again by pressing `Hide side panels/Show side panels` button.
+The left and middle panel can be hidden and then shown again by pressing `Hide side panels/Show side panels` button.
 
 You can also press `F11` (or `Ctrl+Cmd+F` on macOS) to hide most of the content and concentrate on the note.
 
 A new empty note can be created with `New note` button (or `Ctrl+N`) or imported from a markdown file from disk.
 
-Editing a note is mostly intuitive, you can do it in the default WYSIWYG mode or raw 'markdown mode', press `[M]` (`edit source`) button on the toolbar.
+Editing a note is mostly intuitive, you can do it in the default WYSIWYG mode or raw 'markdown mode', repeatedly press `[M]` (`edit source`) button on the toolbar to switch between the two.
 
 For your convenience, there are some auto-replacements and actions in WYSIWYG mode:
 - `#SPACE`, `##SPACE` etc. start the new header (where `SPACE` means one press of the SPACE key)
@@ -129,6 +129,7 @@ Here is the list of keyboard shortcuts that are supported (mac users: read `Cmd+
 | Ctrl+Shift+F | start search over all notes |
 | F3/Ctrl+G | find next |
 | F4 | find the next difference in the history diff view |
+| F5/Ctrl+R | re-read the storage directory and update the note, optionally run cloud sync |
 | Ctrl+A | select all |
 | Ctrl+C | copy |
 | Ctrl+X | cut |
@@ -149,6 +150,17 @@ Here is the list of keyboard shortcuts that are supported (mac users: read `Cmd+
 | Ctrl+Shift+E | Convert the selected text block to code block |
 | Ctrl+Shift+0 | Convert the selected text to normal text |
 
+## Deleting notes and restoring them
+
+The storage includes so-called **Archive** and **Lost-n-found** special folders. If you want to delete some note, you first 'archive' it. It's moved to archive and stays there in read-only mode for as long as you wish.
+
+You can restore archived note and continue to edit it at any time. All the history and attachments/images are preserved.
+
+Or you can later decide to remove it completely. To do so, you select the note in archive and choose 'delete permanently' in the context menu. After confirmation the note is _almost completely_ deleted from the archive - only its latest snapshot in the compressed form (so called 'tombstone') is kept  in the journal and all its images, unless referenced by other notes, are resized to small stamps (e.g. 100x100, that's a user-adjustable parameter). Normally, such an 'erased' note consumes just a few kilobytes of the storage space.
+
+Those 'completely erased' notes that then be restored using command line utility `zametti-store resurrect <storage_root>`, of course, with a complete loss of history and with seriously degraded images (no UI is currently provided for this black magic).
+
+Now, suppose that someone sent you his/her notes from their storage (maybe together with images) and you directly copied the notes into your storage. Once you relaunched your application or pressed `F5`/(`Ctrl+R`), the program will find those notes and will place them into 'lost-and-found' folder in your storage. You can find them there and move to another folder.
 
 ## Project structure
 

@@ -36,15 +36,17 @@ constexpr BuildFact kBuildFacts[] = {
 };
 
 constexpr VendoredFact kVendoredFacts[] = {
-    {"md4c", "@MD4C_VENDORED_VERSION@", "markdown parsing"},
     {"blake3", "@BLAKE3_VENDORED_VERSION@", "hashes of notes and attachments"},
-    {"zstd", "@ZSTD_VENDORED_VERSION@", "snapshots in the edit journal"},
     {"dtl", "@DTL_VENDORED_VERSION@", "version diffs in history"},
-    {"zlib", "@ZLIB_VENDORED_VERSION@", "Deflate inside TIFF"},
-    {"libtiff", "@TIFF_VENDORED_VERSION@", "TIFF: raw samples, Lab/CMYK, ICC, XMP, EXIF"},
-    {"highway", "@HWY_VENDORED_VERSION@", "SIMD, shared by libjxl and jpegli"},
-    {"libjxl", "@JXL_VENDORED_VERSION@", "images: codec, JPEG transcode, SSIMULACRA2"},
-    {"jpegli", "@JPEGLI_VENDORED_COMMIT@", "16-bit JPEG decode on import"},
+    {"highway", "@HWY_VENDORED_VERSION@", "SIMD library for libjxl and jpegli"},
+    {"jpegli", "@JPEGLI_VENDORED_COMMIT@", "high-fidelity jpeg decoder"},
+    {"libjxl", "@JXL_VENDORED_VERSION@", "jpegxl codec, jxl <=> jpeg transcoder, SSIMULACRA2"},
+    {"libtiff", "@TIFF_VENDORED_VERSION@", "tiff decoder with Lab/CMYK, ICC, XMP and EXIF support"},
+    {"libwebp", "@LIBWEBP_VENDORED_VERSION@", "webp decoder"},
+    {"md4c", "@MD4C_VENDORED_VERSION@", "markdown parsing"},
+    {"microtex", "@MICROTEX_VENDORED_VERSION@", "microtex Latex formula rendering engine"},
+    {"zlib", "@ZLIB_VENDORED_VERSION@", "deflate inside tiff's"},
+    {"zstd", "@ZSTD_VENDORED_VERSION@", "compress journals"},
 };
 
 // Читатели картинок: зависят от того, нашлась ли системная libheif.

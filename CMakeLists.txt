@@ -11,17 +11,17 @@ project(zametti LANGUAGES C CXX)
 # именно в нём владелец не смог разглядеть настоящую ошибку, собирая на маке.
 # Гасим ворчание ДО add_subdirectory — на наш собственный код оно и не
 # распространялось.
-set(CMAKE_WARN_DEPRECATED OFF CACHE BOOL "не ворчать про минимумы чужих деревьев")
+set(CMAKE_WARN_DEPRECATED OFF CACHE BOOL "suppress warnings about very old CMake versions being asked by 3rdparty libs")
 
 # По умолчанию — Release. Отладочная сборка нужна нам и будущим участникам, а
 # всем прочим достаётся то, что они и ждут: оптимизированная программа.
 # Умолчание CMake (пустой тип) даёт сборку вовсе без -O, и владелец дважды
 # собрал такую по случайности, а потом удивлялся, что программа подтормаживает.
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-    set(CMAKE_BUILD_TYPE Release CACHE STRING "Тип сборки" FORCE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "build type" FORCE)
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
                  Debug Release RelWithDebInfo MinSizeRel)
-    message(NOTICE "CMAKE_BUILD_TYPE не задан — берём Release")
+    message(NOTICE "CMAKE_BUILD_TYPE is not specified — let's build a Release")
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -31,7 +31,7 @@ set(CMAKE_C_STANDARD 99)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-option(ZAMETTI_WARNINGS_AS_ERRORS "Считать предупреждения ошибками" OFF)
+option(ZAMETTI_WARNINGS_AS_ERRORS "warnings are errors" OFF)
 
 # --- что тащить за собой ---------------------------------------------------
 #
@@ -46,7 +46,7 @@ option(ZAMETTI_WARNINGS_AS_ERRORS "Считать предупреждения �
 # это чужая забота; в статической каждый из них нужен отдельным архивом, и
 # владелец на маке наступил ровно на это. AVIF/HEIC у нас формат ВХОДА, не
 # хранения: без них программа теряет ввоз двух форматов и ничего больше.
-option(WITH_HEIF "Читать AVIF и HEIC (нужна системная libheif)" OFF)
+option(WITH_HEIF "Support AVIF и HEIC (libheif-dev is required then)" OFF)
 
 # Статический Qt НЕ включается ключом — он либо есть на машине, либо нет:
 # динамический Qt статическим не станет ни от каких флагов. Ключ означает
@@ -56,14 +56,14 @@ option(WITH_HEIF "Читать AVIF и HEIC (нужна системная libhe
 # Именно здесь владелец обжёгся: совет из сети предлагал добавить -static в
 # флаги компоновки, и статическими стали заодно libheif с кодеками, которых в
 # таком виде на машине не оказалось.
-option(WITH_STATIC_QT "Требовать статический Qt (иначе — ошибка настройки)" OFF)
+option(WITH_STATIC_QT "Require static Qt" OFF)
 
 # Вендоренное — только статикой. Без этой строки libjxl объявляет в своём корне
 # `option(BUILD_SHARED_LIBS ... ON)`, и он ложится в кэш НА ВСЮ сборку: рядом с
 # программой появляются libjxl_cms.so, libjxl_threads.so и три libbrotli*.so —
 # причём из КАТАЛОГА СБОРКИ. Установленная программа искала бы их там же, то
 # есть `cmake --install` давал бы нерабочий двоичный файл.
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "вендоренное линкуется внутрь программы" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Link vendored libs into the application binary (strongly recommended)" FORCE)
 
 add_library(zametti-code-rules INTERFACE)
 if(MSVC)
@@ -106,14 +106,14 @@ find_package(Qt6 QUIET COMPONENTS Core Gui Widgets Test)
 # подсказкой перед глазами.
 if(NOT Qt6_FOUND)
     message(NOTICE "")
-    message(NOTICE "Qt6 не найден. Ядро соберётся, программа — нет.")
+    message(NOTICE "Qt6 not found.")
     if(APPLE)
-        message(NOTICE "  На маке Qt из brew сам себя не показывает — путь надо назвать:")
+        message(NOTICE "  on macos Qt from brew does not reveal itself; specify the path explicitly:")
         message(NOTICE "    cmake -S . -B build -DCMAKE_PREFIX_PATH=\"$(brew --prefix qt)\"")
     elseif(WIN32)
-        message(NOTICE "  Назовите путь: cmake -S . -B build -DCMAKE_PREFIX_PATH=C:/Qt/6.x/msvc2022_64")
+        message(NOTICE "  specify qt path: cmake -S . -B build -DCMAKE_PREFIX_PATH=C:/Qt/6.x/msvc2022_64")
     else()
-        message(NOTICE "  Поставьте qt6-base-dev (или назовите путь через CMAKE_PREFIX_PATH).")
+        message(NOTICE "  install qt6-base-dev (or specify it with CMAKE_PREFIX_PATH).")
     endif()
     message(NOTICE "")
 endif()
@@ -135,11 +135,8 @@ endif()
 # выдать ему то же, что и всегда.
 if(WITH_STATIC_QT AND Qt6_FOUND AND ZAMETTI_QT_SHARED)
     message(FATAL_ERROR
-        "WITH_STATIC_QT=ON, но найденный Qt ${Qt6_VERSION} — динамический "
-        "(${QT6_INSTALL_PREFIX}).\n"
-        "  Флагами компоновки это не лечится: нужен Qt, собранный ключом "
-        "-static, и путь к нему через -DCMAKE_PREFIX_PATH.\n"
-        "  Собирать с обычным Qt — просто снимите ключ.")
+        "WITH_STATIC_QT=ON, but the found Qt ${Qt6_VERSION} is dynamic (${QT6_INSTALL_PREFIX}).\n"
+        "  Build Qt with '-static' and provide the path to it via -DCMAKE_PREFIX_PATH.")
 endif()
 
 # --- СКОРОСТЬ ОТЛАДОЧНОЙ СБОРКИ (решение владельца) ------------------------
@@ -238,9 +235,9 @@ function(zametti_summary)
         # Статический он или нет — не мелочь оформления: от этого зависит,
         # останется ли рядом с программой чужое добро.
         if(ZAMETTI_QT_SHARED)
-            set(qt "${Qt6_VERSION} динамический")
+            set(qt "${Qt6_VERSION} dynamic")
         else()
-            set(qt "${Qt6_VERSION} статический")
+            set(qt "${Qt6_VERSION} static")
         endif()
         set(missing "")
         # Спрашиваем ЦЕЛЬ, а не переменную Qt6<Часть>_FOUND: ту выставляет
@@ -254,24 +251,24 @@ function(zametti_summary)
         endforeach()
         if(missing)
             string(REPLACE ";" ", " missing "${missing}")
-            set(qt "${qt}   НЕТ: ${missing}")
+            set(qt "${qt}   not found: ${missing}")
         endif()
     else()
-        set(qt "не найден — соберётся только ядро")
+        set(qt "not found")
     endif()
 
     if(ZAMETTI_CORPUS)
         string(REPLACE ";" ", " corpora "${ZAMETTI_CORPUS}")
-        set(fuzz "мутаций ${ZAMETTI_CORPUS_MUTATIONS}, правок ${ZAMETTI_FUZZ_ROUNDS}, зерно ${ZAMETTI_FUZZ_SEED}")
+        set(fuzz "mutaions ${ZAMETTI_CORPUS_MUTATIONS}, rounds ${ZAMETTI_FUZZ_ROUNDS}, seed ${ZAMETTI_FUZZ_SEED}")
     else()
-        set(corpora "нет — фаззеры и корпусные наборы не заводятся")
+        set(corpora "fuzzers and tests are skipped")
         set(fuzz "")
     endif()
 
     if(ZAMETTI_WARNINGS_AS_ERRORS)
-        set(strict "предупреждения = ошибки")
+        set(strict "warnings are errors")
     else()
-        set(strict "предупреждения не ошибки; включить: -DZAMETTI_WARNINGS_AS_ERRORS=ON")
+        set(strict "warnings are not errors; change with -DZAMETTI_WARNINGS_AS_ERRORS=ON")
     endif()
 
     message(NOTICE "")
@@ -279,42 +276,42 @@ function(zametti_summary)
     message(NOTICE "")
     message(NOTICE "# Zametti configuration")
     message(NOTICE "")
-    zametti_row("платформа: " "`${platform}`")
-    zametti_row("сборка:    " "`${config}`")
-    zametti_row("компилятор:" "`${compiler}`")
+    zametti_row("platform: " "`${platform}`")
+    zametti_row("config:    " "`${config}`")
+    zametti_row("compiler:" "`${compiler}`")
     zametti_row("Qt:        " "`${qt}`")
-    zametti_row("вендоринг: " "")
-    zametti_subrow("`md4c ${MD4C_VENDORED_VERSION}` — разбор markdown")
-    zametti_subrow("`blake3 ${BLAKE3_VENDORED_VERSION}` — отпечатки заметок и вложений")
-    zametti_subrow("`zstd ${ZSTD_VENDORED_VERSION}` — слепки в журнале правок")
-    zametti_subrow("`dtl ${DTL_VENDORED_VERSION}` — разность версий в истории")
-    zametti_subrow("`zlib ${ZLIB_VENDORED_VERSION}` — Deflate внутри TIFF, только для libtiff")
-    zametti_subrow("`libtiff ${TIFF_VENDORED_VERSION}` — TIFF: сырые отсчёты, Lab/CMYK, ICC, XMP, EXIF")
-    zametti_subrow("`highway ${HWY_VENDORED_VERSION}` — SIMD, общая для libjxl и jpegli")
-    zametti_subrow("`libjxl ${JXL_VENDORED_VERSION}` — картинки: кодек, транскод JPEG, SSIMULACRA2")
-    zametti_subrow("`jpegli ${JPEGLI_VENDORED_COMMIT}` — разжатие JPEG в 16 бит при импорте")
-    zametti_subrow("`libwebp ${LIBWEBP_VENDORED_VERSION}` — чтение WebP; пишем мы только JXL")
-    zametti_subrow("`googletest ${GTEST_VENDORED_VERSION}` — обвязка наборов, без gmock")
+    zametti_row("vendored libraries: " "")
+    zametti_subrow("`md4c ${MD4C_VENDORED_VERSION}` — markdown parsing")
+    zametti_subrow("`blake3 ${BLAKE3_VENDORED_VERSION}` — computing digests of notes and attachments (images)")
+    zametti_subrow("`zstd ${ZSTD_VENDORED_VERSION}` — journal compression")
+    zametti_subrow("`dtl ${DTL_VENDORED_VERSION}` — compute difference between note' revisions")
+    zametti_subrow("`zlib ${ZLIB_VENDORED_VERSION}` — deflate in TIFF, just for libtiff")
+    zametti_subrow("`libtiff ${TIFF_VENDORED_VERSION}` — TIFF codec with Lab/CMYK, ICC, XMP, EXIF support")
+    zametti_subrow("`highway ${HWY_VENDORED_VERSION}` — SIMD library for libjxl and jpegli")
+    zametti_subrow("`libjxl ${JXL_VENDORED_VERSION}` — JpegXL codec, JXL <=> JPEG transcoder, SSIMULACRA2")
+    zametti_subrow("`jpegli ${JPEGLI_VENDORED_COMMIT}` — high-fidelity JPEG codec")
+    zametti_subrow("`libwebp ${LIBWEBP_VENDORED_VERSION}` — WebP decoder")
+    zametti_subrow("`googletest ${GTEST_VENDORED_VERSION}` — unit test engine")
     if(ZAMETTI_HAVE_HEIF)
-        set(readers "`jxl` (своя libjxl), `avif`/`heic`/`heif` (системная libheif ${ZAMETTI_HEIF_VERSION})")
+        set(readers "`avif`/`heic`/`heif` (system libheif ${ZAMETTI_HEIF_VERSION})")
     elseif(Qt6_FOUND)
-        set(readers "`jxl` (своя libjxl); avif/heic не читаются — `WITH_HEIF=OFF`")
+        set(readers "avif/heic are not supported. To enable avif/heic, reconfigure with -DWITH_HEIF=ON`")
     else()
-        set(readers "не собираются — нет Qt")
+        set(readers "not supported without Qt")
     endif()
     zametti_row("читатели:  " "${readers}")
     # Есть ли сама программа. Строка обязательна: без неё «настройка прошла»
     # означало лишь, что не упало, — а собралось при этом одно ядро.
     if(TARGET zametti)
-        zametti_row("программа: " "`собирается`")
+        zametti_row("the program: " "`build`")
     else()
-        zametti_row("программа: " "`НЕ СОБИРАЕТСЯ` — ${ZAMETTI_APP_SKIPPED}")
+        zametti_row("the program: " "`SKIP` — ${ZAMETTI_APP_SKIPPED}")
     endif()
-    zametti_row("корпуса:   " "`${corpora}`")
+    zametti_row("tests:   " "`${corpora}`")
     if(fuzz)
-        zametti_row("фаззинг:   " "`${fuzz}`")
+        zametti_row("fuzzing:   " "`${fuzz}`")
     endif()
-    zametti_row("строгость: " "`${strict}`")
+    zametti_row("strictness: " "`${strict}`")
     message(NOTICE "___")
     message(NOTICE "")
 
@@ -335,7 +332,7 @@ zametti_summary()
 # трогать заголовок и пересобирать за ним весь app; в окне так и написано —
 # «настроено», а не «собрано».
 find_package(Git QUIET)
-set(ZAMETTI_FACT_COMMIT "неизвестен")
+set(ZAMETTI_FACT_COMMIT "unknown")
 if(GIT_FOUND)
     execute_process(COMMAND ${GIT_EXECUTABLE} -C ${CMAKE_SOURCE_DIR} rev-parse --short HEAD
                     OUTPUT_VARIABLE git_commit OUTPUT_STRIP_TRAILING_WHITESPACE
