@@ -913,6 +913,24 @@ bool ZStorage::rewriteJournalLocked(const QString& path, const ZJournal::Planner
         jrn.cleanVersion() == target)
         return finish(true);
 
+    // КОГО ВЫБРОСИЛИ — НАЗЫВАЕМ ВСЛУХ (m17, сессия 3). Прежде пересборка
+    // стирала записи молча, и это было верно ровно до появления облака:
+    // стёртая молча запись возвращается объединением с другого устройства —
+    // и возвращается вечно. Теперь их адреса («время + отпечаток») уезжают в
+    // запись гашения, которая доедет туда же, куда доехали они.
+    //
+    // Адрес, а не порог: порог погасил бы конкурентную правку, случайно
+    // оказавшуюся ниже него, и катастрофически чувствителен к порче — один
+    // бит превращает 16 в 4096.
+    QVector<ZJournal::RecordRef> voided;
+    {
+        int at = 0;
+        for (int i = 0; i < jrn.size(); ++i) {
+            if (at < keep.size() && keep[at] == i) { ++at; continue; }
+            voided.append(ZJournal::RecordRef(jrn.at(i).time(), jrn.at(i).digest()));
+        }
+    }
+
     QByteArray out;
     if (!jrn.toBytes(keep, target, &out, error)) return finish(false);
     if (!replaceFile(path, out, error)) return finish(false);
@@ -920,6 +938,17 @@ bool ZStorage::rewriteJournalLocked(const QString& path, const ZJournal::Planner
     done.versionAfter = target;
     done.recordsAfter = int(keep.size());
     done.rewritten = true;
+
+    // Запись гашения — ПОСЛЕ пересборки, обычной дозаписью: она такая же
+    // запись журнала, как всякая другая, и путь у неё один со всеми.
+    // Надгробию гашение не приписываем: у удалённой заметки уже есть своя
+    // запись, называющая погашенное.
+    if (!voided.isEmpty()) {
+        if (!appendJournalLocked(path, ZJournal::NewRecord::amendment().voiding(voided),
+                                 error))
+            return finish(false);
+        ++done.recordsAfter;
+    }
     return finish(true);
 }
 
