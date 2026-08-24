@@ -122,6 +122,37 @@ and reports what the cloud holds — how many notes and attachments, how large.
 The first `sync` then downloads everything: notes, their full edit history,
 attachments. A new laptop gets the whole store with one password.
 
+### Матрица входов set-remote (после разбора вопроса №1 с владельцем)
+
+| локально | облако | исход |
+|---|---|---|
+| хранилище (после `init`, с заметками) | пустое | первое устройство: чеканится keyfile, заливка при первом `sync` |
+| пусто / каталога нет | манифест есть | бутстрап: каркас без чеканки id, id наследуется, корень материализуется, сводка облака (только суммы) |
+| пусто / каталога нет | пустое | **отказ**: «looks like a mistyped cloud address or local path; run 'zametti-store init' first» — так выглядит опечатка, и огрызков-каталогов после отказа не остаётся |
+| непустой каталог без метки хранилища | любое | отказ: «directory not empty» — случайную папку в хранилище не превращаем |
+| хранилище с id | чужой storeId | честная остановка до единой записи (диагностики ниже) |
+
+### Диагностики «чужого облака» — все в stderr, код 1, ни одной записи
+
+1. `set-remote`, своё хранилище против чужого облака:
+   `this cloud folder belongs to another store (<их id>), and this store is <наш id>` —
+   названы оба id, видно, кто есть кто.
+2. Подключение по конфигу (`useLastRemote`/страж в `setRemote`): то же плюс
+   подсказка `— check sync.remoteDir` (текст подсказки устарел — адрес теперь
+   в remote.json; см. §9).
+3. Облако сменило принадлежность МЕЖДУ прогонами (ловит сам `sync` по etag
+   манифеста из листинга): `this cloud folder now belongs to another store
+   (…) — refusing`.
+4. Хранилище с заметками, но без идентичности (легаси) против облака с
+   манифестом: `this store has notes but no identity, and the cloud belongs
+   to store … — bootstrap into an empty folder instead`.
+5. Манифест свой, keyfile чужой (мешанина в облаке руками): `the cloud
+   keyfile belongs to store …, not …`.
+6. Смежные стражи той же двери: `the cloud manifest is unreadable: …`;
+   `the cloud was written by a newer version of the program — update this
+   one`; `wrong password, or the keyfile is corrupted: …` (последние два
+   неразличимы по построению AEAD, о чём сказано прямо).
+
 ## 6. Что вскрыла UI-приёмка под Xvfb
 
 Снимок нашёл классический баг проекта нового рода: материализация меняет
@@ -211,3 +242,6 @@ attachments. A new laptop gets the whole store with one password.
    крутилку/анимацию — или это лишнее?
 4. `push-all` оставлен люком замера (растворён в `sync`, но команда жива).
    Убрать совсем?
+5. Диагностики «чужого облака» разнобойны в подсказке: у setRemote —
+   устаревшее `check sync.remoteDir`, у connectRemote подсказки нет. Привести
+   к одной: `— check the cloud address (set-remote --url/--to)`?
