@@ -7,6 +7,7 @@
 
 #include "folder_remote.h"
 #include "journal.h"
+#include "webdav_remote.h"
 #include "keyfile.h"
 #include "sync_ledger.h"
 #include "zstorage.h"
@@ -15,6 +16,8 @@
 
 #include "mini_store.h"
 #include "test_util.h"
+#include "testdata.h"
+#include "webdav_harness.h"
 
 #include <QThread>
 
@@ -712,6 +715,69 @@ void checkMobileProfileAndCancel() {
     rig.syncOne(*rig.sa, "после отмены");
 }
 
+// --- 6. приёмка на живом WebDAV --------------------------------------------
+//
+// Тот же движок, что бегал по каталогу, — по настоящему проводу: wsgidav
+// поднимается обвязкой на время проверки; нет uvx или сети — ГРОМКИЙ пропуск.
+
+void checkLiveWebDavCycle() {
+    zt::WebDavStand stand(zt::TestData::outDir(QStringLiteral("webdav-sync")));
+    if (!stand.running()) {
+        fprintf(stderr, "sync_engine: WebDAV-стенд не поднялся (%s) — приёмка ПРОПУЩЕНА\n",
+                qPrintable(stand.why()));
+        return;
+    }
+    zt::MiniStore a, b;
+    ZStorage sa(a.root());
+    QString err;
+    const ZStorage::Identity identity = sa.ensureIdentity(&err);
+    ZT_TRUE("копия идентичности легла",
+            QFile::copy(a.root() + QStringLiteral("/zametti.json"),
+                        b.root() + QStringLiteral("/zametti.json")));
+    ZStorage sb(b.root());
+    Keyfile keyfile;
+    ZT_TRUE("ключ отчеканился",
+            Keyfile::create(identity.storeId(), QStringLiteral("пароль"), kTinyKdf, &keyfile,
+                            &err));
+    WebDavRemote::Config config;
+    config.base = stand.url();
+    config.user = QString::fromUtf8(zt::WebDavStand::kUser);
+    config.password = QString::fromUtf8(zt::WebDavStand::kPassword);
+    config.timeoutMs = 20000;
+    auto ra = std::make_shared<WebDavRemote>(config);
+    auto rb = std::make_shared<WebDavRemote>(config);
+    ZT_TRUE("keyfile уехал на сервер",
+            ra->mkdirOnce(&err) &&
+                ra->put(QLatin1String(Keyfile::kRemoteName), keyfile.toBytes(), nullptr, &err));
+    ZT_TRUE("облако A подключено", sa.setRemote(ra, keyfile, &err));
+    ZT_TRUE("облако B подключено", sb.setRemote(rb, keyfile, &err));
+
+    const QString id = QStringLiteral("01n6cqevaaaaaa");
+    TwoDevices::writeRaw(a, id, note("живой провод"));
+    ZStorage::SyncReport up;
+    ZT_TRUE(("синк A по проводу: " + err.toStdString()).c_str(), sa.sync({}, &up, &err));
+    ZStorage::SyncReport down;
+    ZT_TRUE(("синк B по проводу: " + err.toStdString()).c_str(), sb.sync({}, &down, &err));
+    ZT_EQ("заметка материализована", num(1), num(down.materialized));
+    ZT_TRUE("байты совпали по проводу",
+            TwoDevices::readRaw(b.root() + QStringLiteral("/") + id + QStringLiteral(".md")) ==
+                note("живой провод"));
+
+    // Конкурентные правки — через настоящий сервер, с его метками.
+    TwoDevices::writeRaw(a, id, note("провод, правка А"));
+    TwoDevices::writeRaw(b, id, note("провод, правка Б"));
+    ZT_TRUE("A заливает", sa.sync({}, nullptr, &err));
+    ZStorage::SyncReport merged;
+    ZT_TRUE("B сливает", sb.sync({}, &merged, &err));
+    ZT_EQ("одно слияние по проводу", num(1), num(merged.mergedJournals));
+    ZT_TRUE("A принимает", sa.sync({}, nullptr, &err));
+    QFile fa(a.journalOf(id));
+    QFile fb(b.journalOf(id));
+    fa.open(QIODevice::ReadOnly);
+    fb.open(QIODevice::ReadOnly);
+    ZT_TRUE("журналы сошлись побайтово через живой сервер", fa.readAll() == fb.readAll());
+}
+
 }  // namespace
 
 static int ztRunSuite(int argc, char** argv) {
@@ -738,6 +804,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkPushOnlyMode();
     checkInterruptionHeals();
     checkMobileProfileAndCancel();
+    checkLiveWebDavCycle();
     return zt::report("sync_engine");
 }
 
