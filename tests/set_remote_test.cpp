@@ -240,6 +240,21 @@ void checkBootstrapIntoEmptyDir() {
                     QDir(fresh + QStringLiteral("/history")).exists());
         ZT_TRUE("корень материализован", out.rootMaterialized);
     }
+    // ПУСТО С ОБЕИХ СТОРОН — отказ (решение владельца): так в жизни почти
+    // не бывает, так выглядит опечатка в адресе облака или в локальном пути.
+    // И никаких огрызков после отказа: каталог не создаётся.
+    {
+        FakeSecrets mine;
+        const QString typo = home.root() + QStringLiteral("/каталог-с-опечаткой");
+        ZStorage::RemoteConfig empty;
+        empty.dir = cloudHome.root() + QStringLiteral("/облако-с-опечаткой");
+        ZT_TRUE("пусто с обеих сторон отвергнуто",
+                ZStorage::initFromRemote(typo, empty, QStringLiteral("пароль-шифра"),
+                                         QString(), mine, kTiny, nullptr, &err) == nullptr);
+        ZT_TRUE("причина говорит про опечатку", err.contains(QStringLiteral("mistyped")));
+        ZT_TRUE("огрызков не осталось", !QDir(typo).exists());
+    }
+
     // НЕПУСТОЙ каталог без метки хранилища — по-прежнему отказ.
     {
         zt::MiniStore junkHome;

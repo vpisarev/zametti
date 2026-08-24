@@ -96,6 +96,10 @@ zametti-store init ~/notes                # or use an existing store
 zametti-store set-remote --root ~/notes --url https://dav.example/notes/ --user you
 ```
 
+(A fresh store always starts with `init` — `set-remote` refuses when both the
+directory and the cloud are empty: that is what a mistyped address looks
+like.)
+
 `set-remote` is the one-time setup. It asks two passwords: the *server*
 password (kept in the system keyring) and the *encryption* password — asked
 twice for a fresh cloud, never stored anywhere: everything is encrypted on
@@ -131,11 +135,16 @@ attachments. A new laptop gets the whole store with one password.
 
 1. ~~Бутстрап требует руками создать каркас~~ — ЗАКРЫТО в этой же сессии по
    разбору вопросов с владельцем: `set-remote` на пустом или несуществующем
-   каталоге сам заводит каркас (без чеканки идентичности — её судьбу решает
-   манифест), скачивает и материализует корневую заметку и печатает сводку
-   облака (только суммы: заметки, вложения, объём). Вход оформлен статическим
-   `ZStorage::initFromRemote` — его же позовёт диалог первичной настройки в
-   самом zametti (и на Android, где консоли нет); диалог — в очередь.
+   каталоге сам заводит каркас (без чеканки идентичности — она наследуется из
+   манифеста), скачивает и материализует корневую заметку и печатает сводку
+   облака (только суммы: заметки, вложения, объём). Правило строгое:
+   содержательна РОВНО ОДНА сторона; «пусто с обеих» — отказ со словами про
+   опечатку (решение владельца: так выглядит неверный адрес или путь, и молча
+   чеканить новую пару хранилище+облако значило бы её спрятать; новое
+   хранилище начинается с `init`). Отказ не оставляет огрызков. Вход оформлен
+   статическим `ZStorage::initFromRemote` — его же позовёт диалог первичной
+   настройки в самом zametti (и на Android, где консоли нет); диалог — в
+   очередь.
    Попутно clang-tidy вскрыл спящий дефект recompress: `--quality`
    игнорировался из-за повисшего if (починен отдельным коммитом).
 2. **Материализация во время прогона не обновляет строки списка до конца

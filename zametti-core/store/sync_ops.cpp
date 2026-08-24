@@ -245,14 +245,6 @@ bool ZStorage::connectRemote(const RemoteConfig& cfg, const QString& encryptionP
         if (outcome != nullptr) *outcome = done;
         return ok;
     };
-    if (!store_) {
-        // ПУСТОЙ ИЛИ НЕСУЩЕСТВУЮЩИЙ каталог — законный вход нового устройства:
-        // каркас заводится здесь, БЕЗ чеканки идентичности (её судьбу решает
-        // манифест ниже: есть в облаке — наследуем, нет — чеканим). Непустой
-        // каталог без метки хранилища — по-прежнему отказ: случайную папку с
-        // файлами в хранилище не превращаем.
-        if (!makeSkeleton(error)) return finish(false);
-    }
     if (encryptionPassword.isEmpty()) {
         if (error) *error = QStringLiteral("the encryption password must not be empty");
         return finish(false);
@@ -278,6 +270,27 @@ bool ZStorage::connectRemote(const RemoteConfig& cfg, const QString& encryptionP
                     "the cloud was written by a newer version of the program — update this one");
             return finish(false);
         }
+    }
+
+    if (!store_) {
+        // ПУСТОЙ ИЛИ НЕСУЩЕСТВУЮЩИЙ каталог — законный вход нового устройства,
+        // но ТОЛЬКО при непустом облаке. «Пусто с обеих сторон» в жизни почти
+        // не бывает — так выглядит опечатка в адресе облака или в локальном
+        // пути (решение владельца), и молча родить новую пару хранилище+облако
+        // значило бы её спрятать. Новое хранилище начинается с init.
+        if (!haveManifest) {
+            if (error)
+                *error = QStringLiteral(
+                    "the cloud is empty and '%1' is not a store — this looks like a "
+                    "mistyped cloud address or local path; to really start a fresh "
+                    "store here, run 'zametti-store init' first")
+                             .arg(root_);
+            return finish(false);
+        }
+        // Каркас — БЕЗ чеканки идентичности: id наследуется из манифеста ниже.
+        // Непустой каталог без метки хранилища makeSkeleton отвергает сам:
+        // случайную папку с файлами в хранилище не превращаем.
+        if (!makeSkeleton(error)) return finish(false);
     }
 
     if (!loaded_) reload();

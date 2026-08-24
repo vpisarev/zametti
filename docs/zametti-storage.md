@@ -812,11 +812,17 @@ Argon2id unwraps the keyfile, and what reaches the keyring is the key.
 
 `zametti-store set-remote` writes all of this once; `--reset` forgets it.
 Pointed at a directory that does not exist yet (or is empty), it creates the
-store skeleton WITHOUT minting an identity — the manifest decides: found in
-the cloud, the identity is inherited, the root note is fetched and
-materialized right away, and a one-line summary of the cloud is printed
-(notes, attachments, size — sums only, never a listing); an empty cloud makes
-this the first device. A non-empty directory that is not a store is refused.
+store skeleton WITHOUT minting an identity and inherits the identity from the
+cloud manifest; the root note is fetched and materialized right away, and a
+one-line summary of the cloud is printed (notes, attachments, size — sums
+only, never a listing). Exactly ONE side must have substance (the owner's
+decision): an existing store against an empty cloud is the first device; an
+empty directory against a cloud with a manifest is a new device; **empty on
+both sides is refused** — in real life that is what a mistyped cloud address
+or local path looks like, and silently minting a fresh store+cloud pair would
+hide the typo (a fresh store starts with `init`). A non-empty directory that
+is not a store is refused too, and a refusal leaves no half-made directories
+behind.
 The next `sync` downloads everything — a bootstrap is an ordinary sync with
 an empty local side, there is no separate restore code. In the program the
 same entry is `ZStorage::initFromRemote` — the future first-run dialog (and
