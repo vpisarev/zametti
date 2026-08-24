@@ -5,7 +5,9 @@
 // обмена, бухгалтерия и материализация добавляются в этот же файл по мере
 // появления.
 
+#include "folder_remote.h"
 #include "journal.h"
+#include "keyfile.h"
 #include "sync_ledger.h"
 #include "zstorage.h"
 
@@ -29,6 +31,11 @@ const char* kId = "01n6cqevzzzzzz";
 
 QByteArray note(const char* mark) {
     return QByteArray("<!-- zametti\nversion: 1\n-->\n\n# Заметка\n\n") + mark + "\n";
+}
+
+Digest digestOf(const char* mark) {
+    const QByteArray body = note(mark);
+    return hashOf(std::string_view(body.constData(), size_t(body.size())));
 }
 
 // Журнал заметки, разобранный ЦЕЛИКОМ (Want::All): столько видит слияние.
@@ -79,8 +86,13 @@ void checkAdoptMergedJournal() {
             ja.mergedWith(jb, &merged, &st, &err));
     ZT_EQ("общих записей две", num(2), num(st.common));
 
+    // CAS-страж: принимающий говорит, какими он видел байты файла журнала.
+    QByteArray beforeBytes;
+    ZT_TRUE("байты перед принятием прочитались", sa.readJournalBytes(kId, &beforeBytes, &err));
+    const Digest seen =
+        hashOf(std::string_view(beforeBytes.constData(), size_t(beforeBytes.size())));
     ZT_TRUE(("слитое принято: " + err.toStdString()).c_str(),
-            sa.adoptMergedJournal(kId, merged, &err));
+            sa.adoptMergedJournal(kId, merged, seen, &err));
 
     // Файл A теперь несёт union и читается штатным путём.
     const ZJournal after = fullJournal(sa, kId);
@@ -88,10 +100,17 @@ void checkAdoptMergedJournal() {
     ZT_TRUE("набор равен слитому", after.contentDigest() == merged.contentDigest());
     ZT_TRUE("голова — надгробие",
             after.at(after.headIndex()).kind() == ZJournal::Kind::Tombstone);
-    // Повторное принятие того же — идемпотентно.
-    ZT_TRUE("повторное принятие прошло", sa.adoptMergedJournal(kId, merged, &err));
+    // Повторное принятие — с НОВЫМ отпечатком байтов (файл уже слитый).
+    QByteArray nowBytes;
+    ZT_TRUE("байты слитого прочитались", sa.readJournalBytes(kId, &nowBytes, &err));
+    const Digest seenNow =
+        hashOf(std::string_view(nowBytes.constData(), size_t(nowBytes.size())));
+    ZT_TRUE("повторное принятие прошло", sa.adoptMergedJournal(kId, merged, seenNow, &err));
     ZT_TRUE("набор не изменился",
             fullJournal(sa, kId).contentDigest() == merged.contentDigest());
+    // А со СТАРЫМ отпечатком — отказ: файл изменился, слияние устарело.
+    ZT_TRUE("устаревший отпечаток отвергнут",
+            !sa.adoptMergedJournal(kId, merged, seen, &err));
 }
 
 void checkAdoptRefusesUnprovable() {
@@ -112,7 +131,10 @@ void checkAdoptRefusesUnprovable() {
     const Digest bogus = hashOf(std::string_view("не то"));
     ZJournal fake(QVector<ZJournal::Record>{
         ZJournal::Record(ZJournal::Kind::Save, kNow + 5000, 7, bogus)});
-    ZT_TRUE("недоказуемое отвергнуто", !sa.adoptMergedJournal(kId, fake, &err));
+    const Digest seenBefore =
+        hashOf(std::string_view(before.constData(), size_t(before.size())));
+    ZT_TRUE("недоказуемое отвергнуто",
+            !sa.adoptMergedJournal(kId, fake, seenBefore, &err));
     ZT_TRUE("причина названа", !err.isEmpty());
 
     QFile f(a.journalOf(kId));
@@ -228,6 +250,207 @@ void checkLedgerPathsDoNotCollide() {
             SyncLedger::pathFor(id, a.root() + QStringLiteral("/")) == pa);
 }
 
+// --- 4. движок: два устройства и одно облако -------------------------------
+//
+// Облако — каталог (FolderRemote): счётчики операций отвечают на вопросы
+// «сколько стоил прогон», рубильники — на «переживается ли обрыв».
+// Второе устройство рождается копией zametti.json (тот же storeId) — ровно
+// так живёт настоящая вторая машина.
+
+const Keyfile::KdfParams kTinyKdf{1, 1 << 20};
+
+struct TwoDevices {
+    zt::MiniStore a, b, cloudHome;
+    QString cloud;
+    Keyfile keyfile;
+    std::shared_ptr<ZStorage> sa, sb;
+    std::shared_ptr<FolderRemote> ra, rb;
+
+    TwoDevices() {
+        cloud = cloudHome.root() + QStringLiteral("/облако");
+        sa = std::make_shared<ZStorage>(a.root());
+        QString err;
+        const ZStorage::Identity identity = sa->ensureIdentity(&err);
+        ZT_TRUE("идентичность отчеканилась", !identity.isEmpty());
+        ZT_TRUE("копия идентичности легла",
+                QFile::copy(a.root() + QStringLiteral("/zametti.json"),
+                            b.root() + QStringLiteral("/zametti.json")));
+        sb = std::make_shared<ZStorage>(b.root());
+        ZT_TRUE("ключ отчеканился",
+                Keyfile::create(identity.storeId(), QStringLiteral("пароль"), kTinyKdf,
+                                &keyfile, &err));
+        ra = std::make_shared<FolderRemote>(cloud);
+        rb = std::make_shared<FolderRemote>(cloud);
+        ZT_TRUE("облако A подключено", sa->setRemote(ra, keyfile, &err));
+        ZT_TRUE("облако B подключено", sb->setRemote(rb, keyfile, &err));
+    }
+
+    // Правка «vim-ом»: файл пишется мимо программы, находит её stat-скан.
+    static void writeRaw(const zt::MiniStore& store, const QString& id, const QByteArray& body) {
+        QFile f(store.root() + QStringLiteral("/") + id + QStringLiteral(".md"));
+        ZT_TRUE("файл записался", f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        f.write(body);
+    }
+    static QByteArray readRaw(const QString& path) {
+        QFile f(path);
+        f.open(QIODevice::ReadOnly);
+        return f.readAll();
+    }
+    QByteArray noteOf(const zt::MiniStore& store, const QString& id) const {
+        return readRaw(store.root() + QStringLiteral("/") + id + QStringLiteral(".md"));
+    }
+    QByteArray journalOf(const zt::MiniStore& store, const QString& id) const {
+        return readRaw(store.journalOf(id));
+    }
+
+    ZStorage::SyncReport syncOne(ZStorage& s, const char* what,
+                                 ZStorage::SyncOptions options = {}) {
+        ZStorage::SyncReport report;
+        QString err;
+        const bool ok = s.sync(options, &report, &err);
+        ZT_TRUE((std::string(what) + ": " + err.toStdString()).c_str(), ok);
+        return report;
+    }
+};
+
+void checkFirstSyncAndSteadyState() {
+    TwoDevices rig;
+    TwoDevices::writeRaw(rig.a, QStringLiteral("01n6cqevaaaaaa"), note("раз"));
+    TwoDevices::writeRaw(rig.a, QStringLiteral("01n6cqevbbbbbb"), note("два"));
+
+    ZStorage::SyncReport first = rig.syncOne(*rig.sa, "первый синк");
+    ZT_EQ("обе заметки дожурнализованы", num(2), num(first.baselined));
+    ZT_TRUE("журналы уехали",
+            QFile::exists(rig.cloud + QStringLiteral("/01n6cqevaaaaaa.log")) &&
+                QFile::exists(rig.cloud + QStringLiteral("/01n6cqevbbbbbb.log")));
+    ZT_TRUE("манифест уехал", QFile::exists(rig.cloud + QStringLiteral("/zametti.json")));
+    ZT_TRUE("ни одного .md в облаке",
+            QDir(rig.cloud).entryList({QStringLiteral("*.md")}, QDir::Files).isEmpty());
+
+    // УСТОЙЧИВЫЙ СИНК БЕСПЛАТЕН: один листинг, ноль чтений, ноль заливок.
+    rig.ra->resetCounters();
+    ZStorage::SyncReport steady = rig.syncOne(*rig.sa, "устойчивый синк");
+    ZT_EQ("один листинг", num(1), num(rig.ra->counters().lists));
+    ZT_EQ("ноль скачиваний", num(0), num(rig.ra->counters().gets));
+    ZT_EQ("ноль заливок", num(0), num(rig.ra->counters().puts));
+    ZT_EQ("оба блоба пропущены ярусом 1", num(2), num(steady.skipped));
+}
+
+void checkEditTravelsAndMaterializes() {
+    TwoDevices rig;
+    const QString id = QStringLiteral("01n6cqevaaaaaa");
+    TwoDevices::writeRaw(rig.a, id, note("раз"));
+    rig.syncOne(*rig.sa, "синк A");
+    ZStorage::SyncReport got = rig.syncOne(*rig.sb, "синк B");
+    ZT_EQ("журнал принят целиком", num(1), num(got.takenWhole));
+    ZT_EQ("файл материализован", num(1), num(got.materialized));
+    ZT_TRUE("байты заметки совпали", rig.noteOf(rig.b, id) == rig.noteOf(rig.a, id));
+    ZT_TRUE("журналы побайтово равны",
+            rig.journalOf(rig.b, id) == rig.journalOf(rig.a, id));
+
+    // Правка «vim-ом» на A: stat-скан находит, external едет, B принимает.
+    TwoDevices::writeRaw(rig.a, id, note("раз, поправленный"));
+    ZStorage::SyncReport push = rig.syncOne(*rig.sa, "синк A после правки");
+    ZT_EQ("правка дожурнализована external-ом", num(1), num(push.externalRecorded));
+    ZStorage::SyncReport pull = rig.syncOne(*rig.sb, "синк B после правки");
+    ZT_EQ("замечена ровно одна заметка", num(1), num(pull.takenWhole));
+    ZT_TRUE("правка доехала байтами",
+            rig.noteOf(rig.b, id) == note("раз, поправленный"));
+    // Пометки сняты: следующий прогон снова бесплатен.
+    rig.rb->resetCounters();
+    rig.syncOne(*rig.sb, "устойчивый после правки");
+    ZT_EQ("ноль заливок в устойчивом", num(0), num(rig.rb->counters().puts));
+}
+
+void checkConcurrentEditsMerge() {
+    TwoDevices rig;
+    const QString id = QStringLiteral("01n6cqevaaaaaa");
+    TwoDevices::writeRaw(rig.a, id, note("общее"));
+    rig.syncOne(*rig.sa, "закладка");
+    rig.syncOne(*rig.sb, "закладка B");
+
+    // Правки С ОБЕИХ сторон до всякого обмена.
+    TwoDevices::writeRaw(rig.a, id, note("правка А"));
+    TwoDevices::writeRaw(rig.b, id, note("правка Б"));
+
+    rig.syncOne(*rig.sa, "A заливает свою");
+    ZStorage::SyncReport merged = rig.syncOne(*rig.sb, "B сливает");
+    ZT_EQ("одно полное слияние", num(1), num(merged.mergedJournals));
+    ZStorage::SyncReport aTakes = rig.syncOne(*rig.sa, "A принимает слитое");
+    ZT_EQ("A принял целиком", num(1), num(aTakes.takenWhole));
+
+    // Сошлись: журналы побайтово, файлы побайтово, обе правки в истории.
+    ZT_TRUE("журналы сошлись побайтово",
+            rig.journalOf(rig.a, id) == rig.journalOf(rig.b, id));
+    ZT_TRUE("файлы сошлись побайтово", rig.noteOf(rig.a, id) == rig.noteOf(rig.b, id));
+    ZJournal all;
+    QString err;
+    ZT_TRUE("слитый журнал читается",
+            all.parse(rig.journalOf(rig.a, id), ZJournal::Want::All, 0, &err));
+    bool sawA = false, sawB = false;
+    for (int i = 0; i < all.size(); ++i) {
+        if (all.at(i).digest() == digestOf("правка А")) sawA = true;
+        if (all.at(i).digest() == digestOf("правка Б")) sawB = true;
+    }
+    ZT_TRUE("правка А не потеряна", sawA);
+    ZT_TRUE("правка Б не потеряна", sawB);
+
+    // Устойчиво и бесплатно с обеих сторон.
+    rig.ra->resetCounters();
+    rig.rb->resetCounters();
+    rig.syncOne(*rig.sa, "устойчивый A");
+    rig.syncOne(*rig.sb, "устойчивый B");
+    ZT_EQ("ноль заливок A", num(0), num(rig.ra->counters().puts));
+    ZT_EQ("ноль заливок B", num(0), num(rig.rb->counters().puts));
+}
+
+void checkLedgerLossChangesNothing() {
+    // ИНВАРИАНТ D: бухгалтерия — кэш. Стёрли — синк дороже (GET), но результат
+    // тот же: ни заливок (наборы равны — анти-ping-pong), ни перезаписей.
+    TwoDevices rig;
+    const QString id = QStringLiteral("01n6cqevaaaaaa");
+    TwoDevices::writeRaw(rig.a, id, note("раз"));
+    rig.syncOne(*rig.sa, "закладка");
+
+    const QByteArray journalBefore = rig.journalOf(rig.a, id);
+    const QByteArray cloudBefore =
+        TwoDevices::readRaw(rig.cloud + QStringLiteral("/") + id + QStringLiteral(".log"));
+    ZT_TRUE("бухгалтерия стёрта",
+            QFile::remove(SyncLedger::pathFor(rig.sa->identity().storeId(), rig.a.root())));
+
+    rig.ra->resetCounters();
+    ZStorage::SyncReport redo = rig.syncOne(*rig.sa, "синк без бухгалтерии");
+    ZT_EQ("ноль заливок", num(0), num(rig.ra->counters().puts));
+    ZT_TRUE("локальный журнал не тронут", rig.journalOf(rig.a, id) == journalBefore);
+    ZT_TRUE("облачный блоб не тронут",
+            TwoDevices::readRaw(rig.cloud + QStringLiteral("/") + id +
+                                QStringLiteral(".log")) == cloudBefore);
+    (void)redo;
+
+    // И снова бесплатно: бухгалтерия отстроилась.
+    rig.ra->resetCounters();
+    rig.syncOne(*rig.sa, "устойчивый после потери");
+    ZT_EQ("ноль скачиваний после восстановления", num(0), num(rig.ra->counters().gets));
+}
+
+void checkEtagReissueCostsOneGet() {
+    // Болячка WebDAV: сервер перевыдал etag, байты те же. Один GET, ноль
+    // заливок, дальше снова бесплатно.
+    TwoDevices rig;
+    const QString id = QStringLiteral("01n6cqevaaaaaa");
+    TwoDevices::writeRaw(rig.a, id, note("раз"));
+    rig.syncOne(*rig.sa, "закладка");
+
+    rig.ra->setEtagSalt(42);
+    rig.ra->resetCounters();
+    ZStorage::SyncReport redo = rig.syncOne(*rig.sa, "синк с перевыданными метками");
+    ZT_TRUE("перевыдача замечена", redo.etagReissued >= 1);
+    ZT_EQ("ноль заливок", num(0), num(rig.ra->counters().puts));
+    rig.ra->resetCounters();
+    rig.syncOne(*rig.sa, "устойчивый после перевыдачи");
+    ZT_EQ("ноль скачиваний", num(0), num(rig.ra->counters().gets));
+}
+
 }  // namespace
 
 static int ztRunSuite(int argc, char** argv) {
@@ -240,6 +463,11 @@ static int ztRunSuite(int argc, char** argv) {
     checkLedgerRoundTrip();
     checkLedgerIsACache();
     checkLedgerPathsDoNotCollide();
+    checkFirstSyncAndSteadyState();
+    checkEditTravelsAndMaterializes();
+    checkConcurrentEditsMerge();
+    checkLedgerLossChangesNothing();
+    checkEtagReissueCostsOneGet();
     return zt::report("sync_engine");
 }
 

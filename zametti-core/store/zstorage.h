@@ -46,6 +46,7 @@
 #include <QStringList>
 #include <QTimer>
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -329,8 +330,12 @@ public:
     // сериализация → parse обратно → пересборка КАЖДОГО слепка со сверкой
     // отпечатка → равенство contentDigest. Не доказало — файл не тронут ни
     // байтом. Подмена атомарна.
+    // expectedBytes — CAS-страж: BLAKE3 байтов файла журнала, какими их видел
+    // вызывающий (пустой отпечаток = файла не было). Файл успел измениться —
+    // редактор дописал запись, пока шло слияние, — отказ, ни байта не тронуто:
+    // следующий прогон сольёт заново, уже с новой записью.
     bool adoptMergedJournal(const QString& noteId, const ZJournal& merged,
-                            QString* error = nullptr);
+                            const Digest& expectedBytes, QString* error = nullptr);
 
 
     // --- ПОЛ ВРЕМЕНИ ЗАПИСЕЙ ЭТОГО УСТРОЙСТВА -------------------------------
@@ -707,6 +712,79 @@ public:
                        const Keyfile::KdfParams& mintParams, ConnectOutcome* outcome,
                        QString* error = nullptr);
 
+    // --- ДВИЖОК СИНХРОНИЗАЦИИ (m17, сессия 4) -------------------------------
+    //
+    // Порядок шагов — ИНВАРИАНТ, каждый прогон, без исключений:
+    //   выравнивание → обмен → объединение → материализация.
+    // Прерывание безопасно в любой точке (порядок шагов + атомарность записей
+    // + append-only журналов): повторный прогон достраивает, не теряя.
+    // Движок трогает ТОЛЬКО файлы и журналы (всё под gate() либо атомарно);
+    // каталог заметок (notes_) он не читает и не правит — окно обновляют его
+    // сторожа, а списки заметок движок берёт с диска сам.
+    struct SyncOptions {
+        enum Mode {
+            Full,      // кнопка и старт: обе стороны, слияние, материализация
+            PushOnly,  // выход: только исходящее fast-forward, режется бюджетом
+        };
+        Mode mode = Full;
+        // Порог предохранителя массового удаления — константа владельца.
+        int deleteGuard = 20;
+        // Бюджет push-only на выходе, секунд — константа владельца.
+        int exitPushBudgetSec = 10;
+        // Вторая фаза предохранителя: пользователь подтвердил удаления.
+        bool allowMassDelete = false;
+        // Десктоп — вкл: один readdir против бухгалтерии ловит правки vim-ом
+        // при закрытой программе. Мобильный профиль — выкл (песочница).
+        bool statScan = true;
+        // Правила отбора журнала для записей выравнивания — часть настроек,
+        // приходит от вызывающего (движок глобальное не читает).
+        ZJournal::Rules journalRules;
+        // Отмена: проверяется между блобами; прерывание безопасно.
+        std::shared_ptr<std::atomic<bool>> cancel;
+    };
+    struct SyncReport {
+        // выравнивание
+        int dirtyChecked = 0;      // заметок проверено по пометкам и скану
+        int baselined = 0;         // журналов рождено опорной записью
+        int externalRecorded = 0;  // внешних правок дожурнализовано
+        int statScanned = 0;       // файлов тронуто stat-сканом
+        // обмен, по ярусам
+        int listed = 0;            // блобов в листинге облака
+        int skipped = 0;           // ярус 1: ноль трафика
+        int etagReissued = 0;      // ярус 2: перевыдача метки без изменения байтов
+        int takenWhole = 0;        // принято целиком (менялась одна сторона)
+        int pushedWhole = 0;       // залито целиком (менялись только мы)
+        int mergedJournals = 0;    // полных слияний
+        int deferred = 0;          // отложено: гонка заливки или бюджет выхода
+        ZJournal::MergeStats merge;  // сумма по всем слияниям
+        int corruptLocalTreatedAsAbsence = 0;  // валидация: битый локальный
+        int healedRemote = 0;      // перезаливка пропавшего/битого блоба
+        // материализация
+        int materialized = 0;      // файлов приведено к голове журнала
+        int deletesApplied = 0;    // файлов убрано по надгробиям
+        QStringList pendingDeletes;    // предохранитель: ждут подтверждения
+        // вложения (presence)
+        int attachmentsUp = 0, attachmentsDown = 0;
+        QStringList attachmentConflicts;  // обе стороны новые — не трогаем
+        // паранойя и цена
+        int integrityFailures = 0;   // каждый — строка в stderr и false в итоге
+        bool cancelled = false;
+        qint64 usAlign = 0, usExchange = 0, usMaterialize = 0;
+        RemoteStore::Traffic traffic;  // разность за прогон
+    };
+    // Облако должно быть подключено (setRemote/useLastRemote/connectRemote).
+    // false — либо не подключено, либо хотя бы один блоб не прошёл проверку
+    // целостности (отчёт полон в обоих случаях: прогон не бросает работу на
+    // первом больном журнале).
+    bool sync(const SyncOptions& options, SyncReport* report, QString* error = nullptr);
+
+    // ОТКАЗ ОТ МАССОВОГО УДАЛЕНИЯ: заметки объявлены живыми. По каждому id с
+    // существующим файлом в журнал ложится запись Save ПОВЕРХ надгробия
+    // (штатный edit-vs-delete: правка с большей ревизией побеждает удаление),
+    // следующий обмен увозит её в облако — облако лечится, и вопрос не
+    // повторяется, потому что изменилось состояние, а не пометка в кэше.
+    bool declareAlive(const QStringList& ids, QString* error = nullptr);
+
     // --- ЧИТАТЕЛИ ДЛЯ СИНХРОНИЗАЦИИ (m17) -----------------------------------
     //
     // Байты уезжают в облако зашифрованными, и брать их должен тот, кто
@@ -781,7 +859,15 @@ protected:
     bool thinJournalLocked(const QString& path, qint64 now, QString* error);
     bool rewriteJournalLocked(const QString& path, const ZJournal::Planner& planner, bool force,
                               ZJournal::CompressOutcome* outcome, QString* error);
-    bool adoptMergedJournalLocked(const QString& path, const ZJournal& merged, QString* error);
+    bool adoptMergedJournalLocked(const QString& path, const ZJournal& merged,
+                                  const Digest& expectedBytes, QString* error);
+    // Принять ЧУЖИЕ БАЙТЫ журнала как есть (менялась одна сторона): та же
+    // самопроверка, что у adoptMergedJournal, но без пересериализации — копии
+    // сходятся побайтово. Тот же CAS-страж expectedBytes.
+    bool adoptJournalBytes(const QString& noteId, const QByteArray& bytes,
+                           const Digest& expectedBytes, QString* error);
+    bool adoptJournalBytesLocked(const QString& path, const QByteArray& bytes,
+                                 const Digest& expectedBytes, QString* error);
 
     // Файл пометок dirty-set; сам класс и грузит его, и дописывает.
     QString dirtyPath() const;

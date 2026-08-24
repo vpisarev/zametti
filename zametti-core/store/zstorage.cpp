@@ -958,9 +958,25 @@ bool ZStorage::rewriteJournalLocked(const QString& path, const ZJournal::Planner
     return finish(true);
 }
 
+// Общий CAS-страж двух «принятий»: файл журнала обязан быть тем же, каким его
+// видел вызывающий, иначе слияние считалось от устаревших байтов.
+static bool journalUnchanged(const QString& path, const Digest& expectedBytes, QString* error) {
+    QFile f(path);
+    Digest now;
+    if (f.open(QIODevice::ReadOnly)) {
+        const QByteArray bytes = f.readAll();
+        now = hashOf(std::string_view(bytes.constData(), size_t(bytes.size())));
+    }
+    if (now == expectedBytes) return true;
+    if (error)
+        *error = QStringLiteral("the journal changed while the merge was running — deferred");
+    return false;
+}
+
 bool ZStorage::adoptMergedJournalLocked(const QString& path, const ZJournal& merged,
-                                        QString* error) {
+                                        const Digest& expectedBytes, QString* error) {
     assertLocked();
+    if (!journalUnchanged(path, expectedBytes, error)) return false;
     QVector<int> all;
     all.reserve(merged.size());
     for (int i = 0; i < merged.size(); ++i) all.append(i);
@@ -997,6 +1013,28 @@ bool ZStorage::adoptMergedJournalLocked(const QString& path, const ZJournal& mer
     return replaceFile(path, out, error);
 }
 
+bool ZStorage::adoptJournalBytesLocked(const QString& path, const QByteArray& bytes,
+                                       const Digest& expectedBytes, QString* error) {
+    assertLocked();
+    if (!journalUnchanged(path, expectedBytes, error)) return false;
+    // Чужие байты приехали из атомарной заливки целого файла: рваному хвосту
+    // и испорченной рамке взяться неоткуда, и такое не принимается вовсе —
+    // absence-философия оставляет лечение обмену.
+    ZJournal reread;
+    if (!reread.parse(bytes, ZJournal::Want::All, 0, error)) return false;
+    if (reread.damagedCount() != 0 || reread.tailTrimmed()) {
+        if (error) *error = QStringLiteral("the incoming journal does not prove itself");
+        return false;
+    }
+    for (int i = 0; i < reread.size(); ++i) {
+        if (!reread.at(i).hasSnapshot()) continue;
+        QByteArray plain;
+        if (!reread.rebuildAt(i, &plain, error)) return false;
+    }
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    return replaceFile(path, bytes, error);
+}
+
 // Открытые методы: замок и ничего больше. Ни одной строки работы с файлами
 // здесь нет и быть не должно — на этом стоит обещание «всё под замком».
 bool ZStorage::appendToJournal(const QString& noteId, const ZJournal::NewRecord& what, QString* error) {
@@ -1005,9 +1043,16 @@ bool ZStorage::appendToJournal(const QString& noteId, const ZJournal::NewRecord&
 }
 
 
-bool ZStorage::adoptMergedJournal(const QString& noteId, const ZJournal& merged, QString* error) {
+bool ZStorage::adoptMergedJournal(const QString& noteId, const ZJournal& merged,
+                                  const Digest& expectedBytes, QString* error) {
     const QMutexLocker locked(&gate());
-    return adoptMergedJournalLocked(journalPath(noteId), merged, error);
+    return adoptMergedJournalLocked(journalPath(noteId), merged, expectedBytes, error);
+}
+
+bool ZStorage::adoptJournalBytes(const QString& noteId, const QByteArray& bytes,
+                                 const Digest& expectedBytes, QString* error) {
+    const QMutexLocker locked(&gate());
+    return adoptJournalBytesLocked(journalPath(noteId), bytes, expectedBytes, error);
 }
 
 
