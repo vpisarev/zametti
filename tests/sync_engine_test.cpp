@@ -569,6 +569,41 @@ void checkEditBeatsDelete() {
     (void)back;
 }
 
+void checkArchiveTravelsAsEditNotDelete() {
+    // Вопрос владельца при разборе: предохранитель — только про удалённые?
+    // Да, по построению: архивация — пометка в шапке, файл-стаб остаётся,
+    // запись со слепком. Едет обычной правкой; надгробий нет — предохранитель
+    // молчит даже при нулевом пороге.
+    TwoDevices rig;
+    const QStringList ids{QStringLiteral("01n6cqevaaaaaa"), QStringLiteral("01n6cqevbbbbbb")};
+    for (const QString& id : ids) TwoDevices::writeRaw(rig.a, id, note(qPrintable(id)));
+    rig.syncOne(*rig.sa, "закладка");
+    rig.syncOne(*rig.sb, "закладка B");
+
+    QString err;
+    QStringList failed;
+    rig.sa->reload();
+    for (const QString& id : ids)
+        ZT_TRUE("архивация на A прошла", rig.sa->archive(id, {}, &failed));
+    ZT_TRUE("без отказов", failed.isEmpty());
+    rig.syncOne(*rig.sa, "архивация уезжает");
+
+    ZStorage::SyncOptions paranoid;
+    paranoid.deleteGuard = 0;  // любой кандидат на удаление остановил бы прогон
+    ZStorage::SyncReport got = rig.syncOne(*rig.sb, "архивация приезжает", paranoid);
+    ZT_TRUE("предохранитель молчит", got.pendingDeletes.isEmpty());
+    ZT_EQ("ни одного удаления", num(0), num(got.deletesApplied));
+    ZT_EQ("обе заметки переписаны стабами", num(2), num(got.materialized));
+    rig.sb->reload();
+    for (const QString& id : ids) {
+        ZT_TRUE("файл на месте",
+                QFile::exists(rig.b.root() + QStringLiteral("/") + id + QStringLiteral(".md")));
+        const ZStorage::NoteInfo* info = rig.sb->info(id);
+        ZT_TRUE("заметка в каталоге", info != nullptr);
+        if (info != nullptr) ZT_TRUE("и она архивная", info->archived());
+    }
+}
+
 void checkMassDeleteGuardAndDeclareAlive() {
     TwoDevices rig;
     const QStringList ids{QStringLiteral("01n6cqevaaaaaa"), QStringLiteral("01n6cqevbbbbbb"),
@@ -878,6 +913,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkServerLostBlobHealed();
     checkTombstoneTravels();
     checkEditBeatsDelete();
+    checkArchiveTravelsAsEditNotDelete();
     checkMassDeleteGuardAndDeclareAlive();
     checkMassDeleteConfirmed();
     checkPushOnlyMode();
