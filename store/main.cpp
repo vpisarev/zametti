@@ -138,7 +138,7 @@ int main(int argc, char** argv) {
     QString positional;
     QString positional2;
     QString id;
-    QString maxSize, maxFileMb, quality;
+    QString maxSize, quality;
     QString url, user, to;
     bool allowInsecure = false;
     bool reset = false;
@@ -777,7 +777,6 @@ int main(int argc, char** argv) {
         options.dryRun = dryRun;
         bool bad = false;
         if (!maxSize.isEmpty()) options.limits.maxSize = maxSize.toInt(&bad), bad = !bad;
-        if (!bad && !maxFileMb.isEmpty())
         if (!bad && !quality.isEmpty()) options.limits.quality = quality.toInt(&bad), bad = !bad;
         if (bad) {
             std::fprintf(stderr, "bad number in options\n");
