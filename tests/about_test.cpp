@@ -8,6 +8,7 @@
 
 #include "doc_model.h"
 #include "about_window.h"
+#include "build_facts.h"
 #include "resources.h"
 #include "test_util.h"
 
@@ -117,6 +118,59 @@ void checkBuildFacts() {
         check(facts.contains(name, Qt::CaseInsensitive),
               "вшитое названо и в сводке сборки: " + std::string(item.name));
     }
+}
+
+// Связь в ОБРАТНУЮ сторону: всё, что названо вшитой библиотекой, обязано иметь
+// текст лицензии. Этой проверки не было, и список лицензий тихо отстал на
+// шесть библиотек — libwebp, microtex, libsodium, libheif, libde265, libgav1,
+// причём две последние под LGPL-3, где показ текста не вежливость, а условие.
+// Заметил владелец, а не набор.
+void checkEveryBundledLibraryHasLicense() {
+    for (const zametti::VendoredFact& fact : zametti::kVendoredFacts) {
+        const QString name = QString::fromUtf8(fact.name);
+        bool found = false;
+        for (const zametti::EmbeddedLicense& item : zametti::embeddedLicenses())
+            if (name.compare(QString::fromUtf8(item.name), Qt::CaseInsensitive) == 0) found = true;
+        check(found, "у вшитой библиотеки есть текст лицензии: " + std::string(fact.name));
+    }
+}
+
+// Один текст — один раз. Байт в байт совпавшие лицензии (libjxl и jpegli) идут
+// общим заголовком, а похожие, но разные (COPYING у libheif и libde265
+// отличаются строкой, называющей библиотеку) — порознь.
+void checkLicensesPage() {
+    const QString page = zametti::licensesMarkdown();
+    for (const zametti::EmbeddedLicense& item : zametti::embeddedLicenses())
+        check(page.contains(QString::fromUtf8(item.name)),
+              "составная часть названа на странице лицензий: " + std::string(item.name));
+
+    // Ни один текст не выведен ОТДЕЛЬНЫМ БЛОКОМ дважды. Спрашиваем именно про
+    // блок в тройных кавычках, а не про вхождение текста куда угодно, и вот
+    // почему: LICENSE у highway — двойная лицензия, и внутрь него целиком
+    // вложены и текст Apache-2.0 (он же весь файл у libgav1), и текст CC0 (он
+    // же весь файл у BLAKE3). Первая редакция этой проверки искала вхождение
+    // и покраснела на обоих — честно найдя наложение, которое разобрать нельзя:
+    // разнять чужой файл лицензии на части мы не вправе.
+    for (const zametti::EmbeddedLicense& item : zametti::embeddedLicenses()) {
+        const QString fenced = QStringLiteral("```\n%1\n```")
+                                   .arg(zametti::embeddedText(item.path).trimmed());
+        const qsizetype at = page.indexOf(fenced);
+        check(at >= 0, std::string("текст лицензии на странице: ") + item.name);
+        if (at >= 0)
+            check(page.indexOf(fenced, at + 1) < 0,
+                  std::string("текст лицензии выведен один раз: ") + item.name);
+    }
+
+    // Схлопывание действительно случилось: у libjxl и jpegli файл совпадает
+    // байт в байт, и заголовок обязан назвать обоих сразу. Если тексты
+    // разойдутся у upstream, эта проверка покраснеет — и это правильно:
+    // значит, схлопывать больше нечего и строку надо снимать осознанно.
+    const bool sameText = zametti::embeddedText(":/licenses/libjxl.txt").trimmed() ==
+                          zametti::embeddedText(":/licenses/jpegli.txt").trimmed();
+    check(sameText, "у libjxl и jpegli лицензия совпадает байт в байт");
+    if (sameText)
+        check(page.contains(QStringLiteral("# libjxl, jpegli — ")),
+              "совпавшие лицензии показаны общим заголовком");
 }
 
 void checkWindow() {
@@ -255,6 +309,8 @@ static int ztRunSuite(int argc, char** argv) {
     checkLicensesEmbedded();
     checkDocsEmbedded();
     checkBuildFacts();
+    checkEveryBundledLibraryHasLicense();
+    checkLicensesPage();
     checkWindow();
     checkOkButton();
 
