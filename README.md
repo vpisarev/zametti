@@ -191,7 +191,7 @@ You need to have development environment with Qt6 and a few other libraries. Man
   ```bash
   sudo apt update
   sudo apt install build-essential git cmake qt6-base-dev \
-       qt6-base-dev-tools qt6-svg-dev libheif-dev libsodium-dev
+       qt6-base-dev-tools qt6-svg-dev
   ```
 
 - On macos you will need Xcode and brew,
@@ -202,7 +202,7 @@ You need to have development environment with Qt6 and a few other libraries. Man
 After everything is installed, use
 
 ```
-cmake -DWITH_HEIF=ON -S . -B build
+cmake -S . -B build
 cmake --build build -j16
 cd build && ctest
 ```
