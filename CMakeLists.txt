@@ -174,8 +174,25 @@ function(zametti_import_qt_plugins target)
         # Без оболочки окна wayland-плагин не создаёт ОКОН вовсе, а без
         # украшений и EGL остаётся без рамки и без ускорения.
         Qt6::QWaylandXdgShellIntegrationPlugin
-        Qt6::QWaylandBradientDecorationPlugin
         Qt6::QWaylandEglClientBufferPlugin
+        # ЗАГОЛОВОК ОКНА. Под Wayland его рисует не оконный менеджер, а сама
+        # программа, и Qt выбирает чем: под GNOME она ищет плагин с ключом
+        # `adwaita` или `gnome` и, НЕ НАЙДЯ, берёт первый попавшийся — то есть
+        # свой запасной bradient с серо-синим градиентом
+        # (qwaylandwindow.cpp, createDecoration). Гномовский заголовок живёт в
+        # модуле qtwayland, который для программы иначе не нужен вовсе:
+        # wayland-клиент в 6.10 переехал в qtbase.
+        #
+        # Оба плагина вписываются вместе: bradient — запасной, и вне GNOME Qt
+        # сама выкидывает adwaita из списка. Под KDE ни тот, ни другой не
+        # понадобится: KWin умеет серверные декорации, а поддержка
+        # xdg-decoration входит в плагин xdg-shell выше.
+        #
+        # Ноль новых динамических зависимостей: adwaita просит только
+        # Qt::DBus, Qt::Svg и Wayland::Client, а libdbus-1 и Qt6Svg в
+        # программе уже есть.
+        Qt6::QWaylandAdwaitaDecorationPlugin
+        Qt6::QWaylandBradientDecorationPlugin
         # Ввод. compose — мёртвые клавиши и Compose; ibus — методы ввода.
         Qt6::QComposePlatformInputContextPlugin
         Qt6::QIbusPlatformInputContextPlugin

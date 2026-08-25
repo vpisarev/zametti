@@ -1,0 +1,115 @@
+diff --git a/src/plugins/decorations/adwaita/qwaylandadwaitadecoration.cpp b/src/plugins/decorations/adwaita/qwaylandadwaitadecoration.cpp
+index ca1f0af..32a4eb8 100644
+--- a/src/plugins/decorations/adwaita/qwaylandadwaitadecoration.cpp
++++ b/src/plugins/decorations/adwaita/qwaylandadwaitadecoration.cpp
+@@ -46,6 +46,61 @@ static constexpr int ceShadowsWidth = 10;
+ static constexpr int ceTitlebarHeight = 38;
+ static constexpr int ceWindowBorderWidth = 1;
+ 
++// zametti: разбор описания шрифта в стиле Pango, каким его отдаёт GNOME:
++// "Семейство [Начертание] Размер", например "Adwaita Sans Bold 11" или
++// "Cantarell 11". Возвращает false, не тронув шрифт, если строку не понял.
++static bool zametti_applyFontDescription(QFont *font, const QString &description)
++{
++    if (!font || description.isEmpty())
++        return false;
++
++    QStringList tokens = description.split(u' ', Qt::SkipEmptyParts);
++    if (tokens.size() < 2)
++        return false;
++
++    bool sizeOk = false;
++    const qreal pointSize = tokens.constLast().toDouble(&sizeOk);
++    if (!sizeOk || pointSize <= 0)
++        return false;
++    tokens.removeLast();
++
++    static const char *const styleWords[] = {
++        "thin", "ultra-light", "extra-light", "light", "semi-light", "book",
++        "regular", "normal", "medium", "semi-bold", "demi-bold", "bold",
++        "ultra-bold", "extra-bold", "heavy", "black", "italic", "oblique",
++        "ultra-condensed", "extra-condensed", "condensed", "semi-condensed",
++        "semi-expanded", "expanded", "extra-expanded", "ultra-expanded"
++    };
++
++    bool bold = false;
++    bool italic = false;
++    while (tokens.size() > 1) {
++        const QString word = tokens.constLast().toLower();
++        bool known = false;
++        for (const char *const style : styleWords) {
++            if (word == QLatin1StringView(style)) {
++                known = true;
++                break;
++            }
++        }
++        if (!known)
++            break;
++        if (word == "bold"_L1 || word == "ultra-bold"_L1 || word == "extra-bold"_L1
++            || word == "heavy"_L1 || word == "black"_L1) {
++            bold = true;
++        } else if (word == "italic"_L1 || word == "oblique"_L1) {
++            italic = true;
++        }
++        tokens.removeLast();
++    }
++
++    font->setFamily(tokens.join(u' '));
++    font->setPointSizeF(pointSize);
++    font->setBold(bold);
++    font->setItalic(italic);
++    return true;
++}
++
+ static QMap<QWaylandAdwaitaDecoration::ButtonIcon, QString> buttonMap = {
+     { QWaylandAdwaitaDecoration::CloseIcon, "window-close-symbolic"_L1 },
+     { QWaylandAdwaitaDecoration::MinimizeIcon, "window-minimize-symbolic"_L1 },
+@@ -319,6 +374,7 @@ void QWaylandAdwaitaDecoration::loadConfiguration()
+                                                           "org.freedesktop.portal.Settings"_L1,
+                                                           "ReadAll"_L1);
+     message << QStringList{ { "org.gnome.desktop.wm.preferences"_L1 },
++                            { "org.gnome.desktop.interface"_L1 },
+                             { "org.freedesktop.appearance"_L1 } };
+ 
+     QDBusPendingCall pendingCall = connection.asyncCall(message);
+@@ -333,16 +389,31 @@ void QWaylandAdwaitaDecoration::loadConfiguration()
+                 const QString buttonLayout = settings.value("org.gnome.desktop.wm.preferences"_L1).value("button-layout"_L1).toString();
+                 if (!buttonLayout.isEmpty())
+                     updateTitlebarLayout(buttonLayout);
+-                // Do not rely on titlebar-font in case titlebar-uses-desktop-font is set to true
+-                // https://gitlab.gnome.org/GNOME/gsettings-desktop-schemas/-/blob/main/schemas/org.gnome.desktop.wm.preferences.gschema.xml.in
+-                const bool titlebarUseDesktopFont = settings.value("org.gnome.desktop.wm.preferences"_L1).value("titlebar-uses-desktop-font"_L1).toBool();
+-                if (!titlebarUseDesktopFont) {
+-                    // Workaround for QGtkStyle not having correct titlebar font
+-                    const QString titlebarFont =
+-                        settings.value("org.gnome.desktop.wm.preferences"_L1).value("titlebar-font"_L1).toString();
+-                    if (titlebarFont.contains("bold"_L1, Qt::CaseInsensitive)) {
++                // zametti: рабочий стол отдаёт ПОЛНОЕ описание шрифта, например
++                // "Adwaita Sans Bold 11". Прежде отсюда бралось одно слово "bold", а
++                // семейство и размер оставались запасными — Cantarell 10, — и заголовок
++                // выходил мельче гномовского. Берём всё.
++                //
++                // Ключ называется titlebar-uses-SYSTEM-font; прежнее имя
++                // titlebar-uses-desktop-font в схеме GNOME отсутствует, и отсутствующий
++                // ключ всегда давал false.
++                const QVariantMap wmPreferences = settings.value("org.gnome.desktop.wm.preferences"_L1);
++                const QString titlebarFont = wmPreferences.value("titlebar-font"_L1).toString();
++                QString fontDescription = titlebarFont;
++                if (wmPreferences.value("titlebar-uses-system-font"_L1).toBool()) {
++                    const QString systemFont =
++                        settings.value("org.gnome.desktop.interface"_L1).value("font-name"_L1).toString();
++                    if (!systemFont.isEmpty())
++                        fontDescription = systemFont;
++                }
++                if (zametti_applyFontDescription(m_font.get(), fontDescription)) {
++                    // Заголовки GNOME рисуются полужирными даже когда взят шрифт
++                    // интерфейса: жирность объявлена в titlebar-font.
++                    if (titlebarFont.contains("bold"_L1, Qt::CaseInsensitive))
+                         m_font->setBold(true);
+-                    }
++                    qCDebug(lcQWaylandAdwaitaDecorationLog)
++                        << "Titlebar font from" << fontDescription << "->" << *m_font;
++                    requestRepaint();
+                 }
+             }
+         }
