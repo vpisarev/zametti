@@ -250,9 +250,6 @@ if(NOT MSVC)
 endif()
 
 add_subdirectory(3rdparty/microtex)
-# imageio раньше ядра: там заводится необязательная цель zametti-heif, и ядро
-# спрашивает о ней через if(TARGET ...).
-add_subdirectory(imageio)
 add_subdirectory(zametti-core)
 add_subdirectory(store)
 add_subdirectory(app)

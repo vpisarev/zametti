@@ -161,9 +161,48 @@ endif()
 
 # HEIF/AVIF — по ключу, системной библиотекой. Обработчик зовётся напрямую из
 # image_read, плагином он больше не является.
-if(TARGET zametti-heif)
-    target_link_libraries(zametti-core PRIVATE zametti-heif)
+#
+# Жил отдельной целью в каталоге `imageio/` верхнего уровня; каталог остался от
+# эпохи, когда там лежали все читатели картинок, и делить с ядром ему больше
+# нечего — ядро всё равно зависит от QtGui.
+#
+# ВЫКЛЮЧЕНО по умолчанию: libheif тянет за собой видеокодеки (aom либо
+# de265/x265), а с ними — их зависимости. AVIF/HEIC у нас формат ВХОДА, не
+# хранения: без них программа теряет ввоз двух форматов и ничего больше. Нет
+# библиотеки — вставка avif/heic честно откажет, тихого пропуска не будет.
+if(WITH_HEIF)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(LIBHEIF IMPORTED_TARGET libheif)
+    endif()
+
+    # Просили явно — значит молчать нельзя. Прежний тихий пропуск оставлял
+    # человека с программой, которая не читает то, что он для неё включал.
+    if(NOT LIBHEIF_FOUND)
+        if(APPLE)
+            set(hint "brew install libheif")
+        elseif(WIN32)
+            set(hint "vcpkg install libheif (и путь через CMAKE_PREFIX_PATH)")
+        else()
+            set(hint "sudo apt install libheif-dev")
+        endif()
+        message(FATAL_ERROR
+            "WITH_HEIF=ON, а libheif не найдена (pkg-config её не видит).\n"
+            "  Поставьте: ${hint}\n"
+            "  Либо соберите без avif/heic: -DWITH_HEIF=OFF")
+    endif()
+
+    # Исходники добавляются ЗДЕСЬ, а не в общий список выше: heif_handler.cpp
+    # включает <libheif/heif.h>, а по умолчанию ключ выключен — в общем списке
+    # он ломал бы обычную сборку.
+    target_sources(zametti-core PRIVATE
+                   image/heif_handler.h image/heif_handler.cpp)
+    target_link_libraries(zametti-core PRIVATE PkgConfig::LIBHEIF)
     target_compile_definitions(zametti-core PRIVATE ZAMETTI_HAVE_HEIF)
+    set(ZAMETTI_HAVE_HEIF ON PARENT_SCOPE)
+    set(ZAMETTI_HEIF_VERSION "${LIBHEIF_VERSION}" PARENT_SCOPE)
+else()
+    set(ZAMETTI_HAVE_HEIF OFF PARENT_SCOPE)
 endif()
 
 # Ресемплер и перевод цвета раскладываются по строкам без связей между ними —

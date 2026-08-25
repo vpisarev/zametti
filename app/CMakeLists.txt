@@ -147,7 +147,7 @@ target_link_libraries(zametti-ui PRIVATE zametti-code-rules)
 # С обычным Qt разницы никакой: та же add_executable внутри.
 #
 # Своих плагинов у нас больше нет вовсе: читатели картинок зовутся напрямую
-# (см. imageio/image_read.h), и реестр Qt в этом не участвует.
+# (см. zametti-core/image/image_read.h), и реестр Qt в этом не участвует.
 qt_add_executable(zametti
     main.cpp
 )
