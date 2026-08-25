@@ -1,4 +1,5 @@
 #include "app_state.h"
+#include "settings.h"
 
 #include <QDir>
 #include <QFile>
@@ -6,13 +7,11 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QStandardPaths>
 
 namespace zametti {
 
 QString ZAppState::path() {
-    return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) +
-           QStringLiteral("/state.json");
+    return configDir() + QStringLiteral("/state.json");
 }
 
 void ZAppState::rememberCaret(const QString& noteId, const CaretSpot& spot) {

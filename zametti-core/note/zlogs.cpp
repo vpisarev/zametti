@@ -1,4 +1,5 @@
 #include "zlogs.h"
+#include "settings.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -6,7 +7,6 @@
 #include <QFileInfo>
 #include <QMutexLocker>
 #include <QSaveFile>
-#include <QStandardPaths>
 
 #include <cstdio>
 
@@ -18,9 +18,7 @@ ZLogs& ZLogs::instance() {
 }
 
 ZLogs::ZLogs(const QString& dir)
-    : dir_(dir.isEmpty()
-               ? QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
-               : dir) {}
+    : dir_(dir.isEmpty() ? configDir() : dir) {}
 
 void ZLogs::configure(const Limits& limits) {
     const QMutexLocker locked(&gate_);

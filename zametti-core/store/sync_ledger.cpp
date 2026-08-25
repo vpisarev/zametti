@@ -1,4 +1,5 @@
 #include "sync_ledger.h"
+#include "settings.h"
 
 #include <QDir>
 #include <QFile>
@@ -6,7 +7,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
-#include <QStandardPaths>
 
 #include <algorithm>
 
@@ -37,8 +37,7 @@ QString SyncLedger::pathFor(const QString& storeId, const QString& storeRoot) {
     const QString canonical = QDir(storeRoot).absolutePath();
     const std::string utf8 = canonical.toStdString();
     const QString tag = QString::fromStdString(hashOf(utf8).hex()).left(8);
-    return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) +
-           QStringLiteral("/sync-state-%1-%2.json").arg(storeId, tag);
+    return configDir() + QStringLiteral("/sync-state-%1-%2.json").arg(storeId, tag);
 }
 
 SyncLedger SyncLedger::load(const QString& path) {

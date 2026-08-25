@@ -16,6 +16,10 @@
 #include <QJsonParseError>
 #include <QStandardPaths>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -909,10 +913,15 @@ bool writeConfigTemplate(QString* error) {
     return true;
 }
 
-QString configPath() {
-    return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) +
-           QStringLiteral("/config.json");
+QString configDir() {
+    // Проверяем на пустоту, а не на «задана ли»: пустая переменная — это не
+    // каталог, и молча писать в корень мы не станем.
+    const QByteArray override = qgetenv(kConfigDirVar);
+    if (!override.isEmpty()) return QString::fromLocal8Bit(override);
+    return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
 }
+
+QString configPath() { return configDir() + QStringLiteral("/config.json"); }
 
 
 // Потолок на одну разжатую картинку — одна восьмая бюджета кэша. Отдельным
@@ -927,16 +936,21 @@ QString configPath() {
 namespace {
 
 // Сколько всего памяти у машины, мегабайты; 0 — не удалось узнать. Портативного
-// способа у Qt нет, поэтому спрашиваем систему напрямую; не Linux — не знаем и
-// не гадаем.
+// способа у Qt нет, поэтому спрашиваем систему напрямую; где спросить нечем —
+// не знаем и не гадаем.
 int totalMemoryMb() {
-#ifdef Q_OS_LINUX
+#if defined(Q_OS_LINUX)
     QFile meminfo(QStringLiteral("/proc/meminfo"));
     if (!meminfo.open(QIODevice::ReadOnly)) return 0;
     const QByteArray text = meminfo.readAll();
     const int at = text.indexOf("MemTotal:");
     if (at < 0) return 0;
     return text.mid(at + 9, 32).trimmed().split(' ').first().toInt() / 1024;
+#elif defined(Q_OS_WIN)
+    MEMORYSTATUSEX status{};
+    status.dwLength = sizeof(status);
+    if (GlobalMemoryStatusEx(&status) == 0) return 0;
+    return int(status.ullTotalPhys / (1024 * 1024));
 #else
     return 0;
 #endif
