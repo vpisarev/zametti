@@ -334,8 +334,8 @@ static int ztRunSuite(int argc, char** argv) {
     // опечатками, битые. Оставить их соседям нельзя — наборы идут одним
     // процессом, и loadSettings(nullptr) у четверых читал бы написанное здесь.
     QTemporaryDir home;
-    const QByteArray previousHome = qgetenv("XDG_CONFIG_HOME");
-    qputenv("XDG_CONFIG_HOME", home.path().toLocal8Bit());
+    const QByteArray previousHome = qgetenv(zametti::kConfigDirVar);
+    qputenv(zametti::kConfigDirVar, home.path().toLocal8Bit());
 
     QCoreApplication::setApplicationName(QStringLiteral("zametti"));
 
@@ -346,7 +346,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkTablesDefaults();
     checkTablesFromConfig();
 
-    qputenv("XDG_CONFIG_HOME", previousHome);
+    qputenv(zametti::kConfigDirVar, previousHome);
     return zt::report("config");
 }
 

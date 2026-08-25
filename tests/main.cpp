@@ -13,6 +13,7 @@
 #include "test_util.h"
 
 #include "heif_handler.h"
+#include "settings.h"
 
 #include <gtest/gtest.h>
 
@@ -48,8 +49,14 @@ int main(int argc, char** argv) {
     // Здесь, рядом с платформой, и безусловно: набору настройки можно, но
     // только СВОЕЙ копией. Каталог живёт до конца процесса; кому нужен конфиг —
     // пишет его сюда же (так делает config_test).
+    //
+    // ZAMETTI_CONFIG_DIR, А НЕ XDG_CONFIG_HOME. Второй — уговор freedesktop, и
+    // под Windows он не значит НИЧЕГО: QStandardPaths там ходит в
+    // SHGetKnownFolderPath и переменных среды не смотрит ни одной, то есть
+    // набор писал бы прямо в профиль владельца. Свой ключ читает наш configDir()
+    // (settings.h), и он одинаков на всех системах.
     static QTemporaryDir configHome;
-    qputenv("XDG_CONFIG_HOME", configHome.path().toLocal8Bit());
+    qputenv(zametti::kConfigDirVar, configHome.path().toLocal8Bit());
 
     // QApplication, а не QGuiApplication и не QCoreApplication: он и тот, и
     // другой сразу. Наборов, которым нужны виджеты, больше половины, а платить

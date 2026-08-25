@@ -20,7 +20,6 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QFile>
-#include <QStandardPaths>
 #include <QTemporaryDir>
 
 #include <string>
@@ -55,11 +54,12 @@ void checkPlainZoomMigrates() {
 static int ztRunSuite(int argc, char** argv) {
     (void)argc;
     (void)argv;
-    // Каталог конфига подменяется ДО QCoreApplication: QStandardPaths смотрит
-    // на переменную окружения при каждом обращении, но писать в настоящий
-    // конфиг владельца нельзя ни одной проверкой.
+    // Каталог конфига подменяется ДО QCoreApplication: configDir() смотрит
+    // переменную при каждом обращении, а писать в настоящий конфиг владельца
+    // нельзя ни одной проверкой. Свой ключ, а не XDG_CONFIG_HOME: тот под
+    // Windows не значит ничего (см. settings.h у configDir).
     QTemporaryDir home;
-    qputenv("XDG_CONFIG_HOME", home.path().toLocal8Bit());
+    qputenv(zametti::kConfigDirVar, home.path().toLocal8Bit());
 
     QCoreApplication::setApplicationName(QStringLiteral("zametti"));
 
@@ -86,8 +86,7 @@ static int ztRunSuite(int argc, char** argv) {
     out.rememberCaret(QStringLiteral("00000000000042"), {20, 20, 7});   // та же — заменяет
     out.save();
 
-    const QString path = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) +
-                         QStringLiteral("/state.json");
+    const QString path = zametti::configDir() + QStringLiteral("/state.json");
     ZT_TRUE("state.json написан рядом с конфигом: " + s(path), QFile::exists(path));
 
     const zametti::ZAppState back = zametti::ZAppState::load();

@@ -96,7 +96,7 @@ void checkTrimHappensOnFirstWriteOnly() {
 
 void checkLogStreamGoesToInstance() {
     // Единственный экземпляр программы; наборы живут в подменённом
-    // XDG_CONFIG_HOME (tests/main.cpp), так что пишем в песочницу.
+    // ZAMETTI_CONFIG_DIR (tests/main.cpp), так что пишем в песочницу.
     ZLogs::instance().configure({false, true, 1 << 20});
     getLogStream(LogKind::Sync) << "поток-строка " << 42;
     const QByteArray all = readAll(ZLogs::instance().syncPath());

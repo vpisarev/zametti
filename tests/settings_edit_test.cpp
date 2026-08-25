@@ -213,11 +213,11 @@ void checkBrokenIsWrittenButNotApplied() {
 }
 
 // ПРАВЛЕНЫЙ КОНФИГ ПРИМЕНЯЕТСЯ. Настройки перечитываются своим каталогом
-// (XDG_CONFIG_HOME набора), и вид берёт новый стоп табуляции.
+// (ZAMETTI_CONFIG_DIR набора), и вид берёт новый стоп табуляции.
 void checkAppliedAfterSave() {
     QTemporaryDir home;
-    const QByteArray previousHome = qgetenv("XDG_CONFIG_HOME");
-    qputenv("XDG_CONFIG_HOME", home.path().toLocal8Bit());
+    const QByteArray previousHome = qgetenv(zametti::kConfigDirVar);
+    qputenv(zametti::kConfigDirVar, home.path().toLocal8Bit());
 
     zametti::NoteEditor editor;
     zametti::JsonEditView view;
@@ -243,7 +243,7 @@ void checkAppliedAfterSave() {
 
     // Настройки и каталог возвращаем как были: наборы идут одним процессом.
     zametti::mutableSettingsForTests() = zametti::ZSettings{};
-    qputenv("XDG_CONFIG_HOME", previousHome);
+    qputenv(zametti::kConfigDirVar, previousHome);
 }
 
 // КАРЕТКА — как в заметке: цвет caretColor, толщина caretWidth × масштаб
