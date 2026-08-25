@@ -13,9 +13,6 @@
 #include <QDir>
 #include <QFileInfo>
 
-#include <fcntl.h>
-#include <unistd.h>
-
 namespace zametti {
 
 namespace {
@@ -27,9 +24,8 @@ std::uint64_t systemRandomForImages() {
     return (std::uint64_t(rd()) << 32) | rd();
 }
 
-// Запись строго на свежее имя. Тот же приём, что и у createNoteFile для
-// заметок, и по той же причине: O_EXCL делает «проверить и создать» одним
-// действием ядра. Отдельной функции там нет — та жёстко пишет ".md".
+// Запись строго на свежее имя — тем же writeNewFile, что и заметки: сам
+// createNoteFile нам не годится, он жёстко пишет ".md".
 // Двойник: вложение с тем же префиксом имени, у которого СЖАТЫЕ ДАННЫЕ те же.
 //
 // Кандидатов ищем перебором имён — префикс кодирует секунду съёмки, и их
@@ -83,30 +79,15 @@ QString writeFresh(const QString& dir, const QString& suffix, const QByteArray& 
 
         const QByteArray path = dirUtf8 + '/' + name.toUtf8();
 
-        const int fd = ::open(path.constData(), O_WRONLY | O_CREAT | O_EXCL, 0644);
-        if (fd < 0) {
-            if (errno == EEXIST) continue;   // редчайшая коллизия — берём другой id
-            *error = QStringLiteral("could not create an attachment file in %1").arg(dir);
-            return {};
+        switch (writeNewFile(path.toStdString(), bytes.constData(), std::size_t(bytes.size()))) {
+            case NewFileResult::Exists:
+                continue;   // редчайшая коллизия — берём другой id
+            case NewFileResult::Failed:
+                *error = QStringLiteral("could not write an attachment file in %1").arg(dir);
+                return {};
+            case NewFileResult::Created:
+                return name;
         }
-        qsizetype at = 0;
-        bool ok = true;
-        while (at < bytes.size()) {
-            const ssize_t n = ::write(fd, bytes.constData() + at, size_t(bytes.size() - at));
-            if (n < 0) {
-                ok = false;
-                break;
-            }
-            at += qsizetype(n);
-        }
-        if (::close(fd) != 0) ok = false;
-        if (ok) return name;
-
-        // Недописанное убираем: половина картинки в хранилище хуже, чем её
-        // отсутствие, — она и покажется сломанной, и место займёт.
-        ::unlink(path.constData());
-        *error = QStringLiteral("attachment was not written in full");
-        return {};
     }
     *error = QStringLiteral("no free name found for the attachment");
     return {};

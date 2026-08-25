@@ -1,11 +1,24 @@
 #include "note_id.h"
 
 #include <fcntl.h>
-#include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <random>
+
+// Заведение файла «строго на свежее имя» — единственное место во всей
+// программе, где мы ходим в файловую систему мимо Qt. Причина одна и названа
+// ниже у самого open: у QFile нет O_EXCL, а «проверить и создать» двумя
+// действиями — это гонка. Плата — две ветки на две системы, и обе живут ЗДЕСЬ,
+// в одной функции.
+#ifdef _WIN32
+#include <io.h>
+#include <sys/stat.h>
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace zametti {
 namespace {
@@ -53,6 +66,67 @@ bool isValidNoteId(std::string_view id) {
     return true;
 }
 
+NewFileResult writeNewFile(const std::string& path, const void* data, std::size_t size) {
+    // O_EXCL — единственная честная защита от гонки: проверка «файла нет» и
+    // создание — одно действие ядра ОС. Ради него мы и не берём QSaveFile.
+    //
+    // O_BINARY обязателен, а не желателен: у mingw поток по умолчанию
+    // ТЕКСТОВЫЙ, и всякий '\n' на записи превращается в CRLF. Канон на диске —
+    // markdown с LF, а вложения вообще двоичные: без этого флага и заметки, и
+    // картинки уезжали бы на диск порчеными, причём молча.
+#ifdef _WIN32
+    // Путь у нас UTF-8, а узкий open() на Windows читает его в кодировке ANSI
+    // текущей системы — то есть хранилище в каталоге с кириллицей в имени не
+    // открылось бы вовсе. Поэтому переводим в UTF-16 и зовём широкий вариант:
+    // он от кодовой страницы не зависит.
+    const int wide = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, nullptr, 0);
+    if (wide <= 0) return NewFileResult::Failed;
+    std::wstring wpath(std::size_t(wide - 1), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, wpath.data(), wide);
+    const int fd = ::_wopen(wpath.c_str(), _O_WRONLY | _O_CREAT | _O_EXCL | _O_BINARY,
+                            _S_IREAD | _S_IWRITE);
+#else
+#ifndef O_BINARY
+#define O_BINARY 0
+#endif
+    const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_BINARY, 0644);
+#endif
+    if (fd < 0) return errno == EEXIST ? NewFileResult::Exists : NewFileResult::Failed;
+
+    bool ok = true;
+    std::size_t at = 0;
+    const char* bytes = static_cast<const char*>(data);
+    while (at < size) {
+        // Кусок режем: у Windows ::_write берёт unsigned int, а не size_t.
+        const unsigned chunk = unsigned(std::min<std::size_t>(size - at, 1u << 20));
+#ifdef _WIN32
+        const int n = ::_write(fd, bytes + at, chunk);
+#else
+        const auto n = ::write(fd, bytes + at, chunk);
+#endif
+        if (n <= 0) {
+            ok = false;
+            break;
+        }
+        at += std::size_t(n);
+    }
+#ifdef _WIN32
+    if (::_close(fd) != 0) ok = false;
+#else
+    if (::close(fd) != 0) ok = false;
+#endif
+    if (ok) return NewFileResult::Created;
+
+    // Недописанное убираем: половина заметки или половина картинки в хранилище
+    // хуже, чем их отсутствие, — и покажется сломанной, и место займёт.
+#ifdef _WIN32
+    ::_wunlink(wpath.c_str());
+#else
+    ::unlink(path.c_str());
+#endif
+    return NewFileResult::Failed;
+}
+
 std::string createNoteFile(const std::string& dir, const std::string& content,
                            std::string* pathOut,
                            const std::function<std::string()>& generator) {
@@ -69,27 +143,15 @@ std::string createNoteFile(const std::string& dir, const std::string& content,
         while (base.size() > 1 && base.back() == '/') base.pop_back();
         const std::string path = base + "/" + id + ".md";
 
-        // O_EXCL — единственная честная защита от гонки: проверка "файла нет"
-        // и создание — одно действие ядра ОС.
-        const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0644);
-        if (fd < 0) {
-            if (errno == EEXIST) continue;   // коллизия: другая случайная часть
-            return {};
+        switch (writeNewFile(path, content.data(), content.size())) {
+            case NewFileResult::Exists:
+                continue;   // коллизия: берём другую случайную часть
+            case NewFileResult::Failed:
+                return {};
+            case NewFileResult::Created:
+                if (pathOut != nullptr) *pathOut = path;
+                return id;
         }
-        bool ok = true;
-        size_t at = 0;
-        while (at < content.size()) {
-            const ssize_t n = ::write(fd, content.data() + at, content.size() - at);
-            if (n < 0) {
-                ok = false;
-                break;
-            }
-            at += size_t(n);
-        }
-        if (::close(fd) != 0) ok = false;
-        if (!ok) return {};
-        if (pathOut != nullptr) *pathOut = path;
-        return id;
     }
     return {};
 }

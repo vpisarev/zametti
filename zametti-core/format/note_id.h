@@ -12,6 +12,7 @@
 #ifndef ZAMETTI_NOTE_ID_H
 #define ZAMETTI_NOTE_ID_H
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -31,6 +32,20 @@ std::string newNoteId();
 
 // ^[0-9a-hjkmnp-tv-z]{14}$
 bool isValidNoteId(std::string_view id);
+
+// Заводит файл СТРОГО НА СВЕЖЕЕ ИМЯ и пишет в него все байты. Единственное
+// место в программе, где файл открывается мимо Qt, и причина названа прямо: у
+// QFile/QSaveFile нет O_EXCL, а «проверить, что имени нет, и создать» двумя
+// действиями — это гонка. Здесь же спрятана и вся разница между системами
+// (двоичный режим, широкий путь под Windows) — у зовущих её быть не должно.
+//
+// path — UTF-8. Недописанный файл функция убирает за собой сама.
+enum class NewFileResult {
+    Created,   // заведён и записан целиком
+    Exists,    // имя занято — звать заново с другим id
+    Failed,    // беда ввода-вывода; следов на диске не осталось
+};
+NewFileResult writeNewFile(const std::string& path, const void* data, std::size_t size);
 
 // Создаёт файл "<id>.md" в каталоге строго на свежее имя (O_EXCL) и пишет в
 // него content. При совпадении имени перегенерирует id — случайная часть
