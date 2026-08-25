@@ -53,6 +53,12 @@ namespace {
 // Лицензии всего вшитого. Порядок — как в окне: сначала сама программа, потом
 // то, что видно глазом (шрифты, иконки), потом библиотеки в порядке появления
 // в сборке.
+//
+// Здесь ОДНА СТРОКА НА СОСТАВНУЮ ЧАСТЬ, даже если текст лицензии у двух из
+// них совпадает байт в байт (так у libjxl и jpegli — оба JPEG XL Project
+// Authors). Показ схлопывает такие пары сам, сверяя ТЕКСТ, а не путь:
+// сцепить их здесь значило бы, что при расхождении upstream мы этого не
+// заметим и покажем чужую лицензию под своим именем.
 constexpr zametti::EmbeddedLicense kLicenses[] = {
     {":/licenses/zametti.txt", "zametti", "the program itself", "GPL-3.0"},
     {":/licenses/ibm-plex.txt", "IBM Plex", "UI and text fonts", "OFL 1.1"},
@@ -66,6 +72,12 @@ constexpr zametti::EmbeddedLicense kLicenses[] = {
     {":/licenses/highway.txt", "highway", "SIMD for libjxl and jpegli", "Apache-2.0 / BSD-3"},
     {":/licenses/libjxl.txt", "libjxl", "images: codec and JPEG transcode", "BSD-3"},
     {":/licenses/jpegli.txt", "jpegli", "16-bit JPEG decode", "BSD-3"},
+    {":/licenses/libwebp.txt", "libwebp", "WebP reading on import", "BSD-3"},
+    {":/licenses/libde265.txt", "libde265", "HEVC decoding inside HEIC", "LGPL-3 (samples: MIT)"},
+    {":/licenses/libgav1.txt", "libgav1", "AV1 decoding inside AVIF", "Apache-2.0"},
+    {":/licenses/libheif.txt", "libheif", "HEIF and AVIF container", "LGPL-3 (samples: MIT)"},
+    {":/licenses/libsodium.txt", "libsodium", "cloud encryption and key derivation", "ISC"},
+    {":/licenses/microtex.txt", "microtex", "LaTeX formula rendering", "MIT"},
 };
 
 constexpr zametti::EmbeddedDoc kDocs[] = {

@@ -77,6 +77,12 @@
         <file alias="highway.txt">../3rdparty/highway/upstream/LICENSE</file>
         <file alias="libjxl.txt">../3rdparty/libjxl/upstream/LICENSE</file>
         <file alias="jpegli.txt">../3rdparty/jpegli/upstream/LICENSE</file>
+        <file alias="libwebp.txt">../3rdparty/libwebp/upstream/COPYING</file>
+        <file alias="libde265.txt">../3rdparty/libde265/upstream/COPYING</file>
+        <file alias="libgav1.txt">../3rdparty/libgav1/upstream/LICENSE</file>
+        <file alias="libheif.txt">../3rdparty/libheif/upstream/COPYING</file>
+        <file alias="libsodium.txt">../3rdparty/libsodium/upstream/LICENSE</file>
+        <file alias="microtex.txt">../3rdparty/microtex/upstream/LICENSE</file>
     </qresource>
 
     <!-- IBM Plex, OFL 1.1. Почему именно эти восемь — resources/fonts/README.md. -->

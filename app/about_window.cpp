@@ -17,6 +17,9 @@
 #include <QTextDocument>
 #include <QVBoxLayout>
 
+#include <algorithm>
+#include <vector>
+
 
 namespace zametti {
 namespace {
@@ -91,6 +94,56 @@ QString buildFactsMarkdown() {
     return out;
 }
 
+QString licensesMarkdown() {
+    // ОДИН ТЕКСТ — ОДИН РАЗ. Тексты сверяются между собой, а не пути: у libjxl
+    // и jpegli файл лицензии совпадает байт в байт (оба — JPEG XL Project
+    // Authors), и печатать полторы килобайты дважды значит удлинять и без того
+    // длинную страницу без всякой пользы. Сравнение по содержимому, а не по
+    // имени файла: если upstream однажды разойдётся, страница разойдётся с ним
+    // сама, без нашего участия.
+    //
+    // Схлопывание — только для СОВПАВШИХ БАЙТ В БАЙТ. Похожие не схлопываем:
+    // COPYING у libheif и libde265 отличаются двумя первыми строками — теми
+    // самыми, что называют, к какой библиотеке относятся условия. Собрать их
+    // «почти одинаковыми» значило бы показать условия не той библиотеки.
+    struct Group {
+        QString text;
+        std::vector<const EmbeddedLicense*> owners;
+    };
+    std::vector<Group> groups;
+    for (const EmbeddedLicense& item : embeddedLicenses()) {
+        const QString text = embeddedText(item.path).trimmed();
+        auto same = std::find_if(groups.begin(), groups.end(),
+                                 [&text](const Group& g) { return g.text == text; });
+        if (same == groups.end())
+            groups.push_back({text, {&item}});
+        else
+            same->owners.push_back(&item);
+    }
+
+    QString out;
+    for (const Group& group : groups) {
+        QStringList names;
+        for (const EmbeddedLicense* item : group.owners)
+            names << QString::fromUtf8(item->name);
+        // Лицензия у совпавших текстов одна по определению, поэтому берём её у
+        // первого; разными могли бы быть только наши подписи, а не условия.
+        out += QStringLiteral("# %1 — %2\n\n")
+                   .arg(names.join(QStringLiteral(", ")),
+                        QString::fromUtf8(group.owners.front()->license));
+        if (group.owners.size() == 1) {
+            out += QStringLiteral("%1\n\n").arg(QString::fromUtf8(group.owners.front()->what));
+        } else {
+            for (const EmbeddedLicense* item : group.owners)
+                out += QStringLiteral("* **%1** — %2\n")
+                           .arg(QString::fromUtf8(item->name), QString::fromUtf8(item->what));
+            out += QStringLiteral("\n");
+        }
+        out += QStringLiteral("```\n%1\n```\n\n").arg(group.text);
+    }
+    return out;
+}
+
 AboutWindow::AboutWindow(QWidget* parent) : QDialog(parent) {
     setWindowTitle(QStringLiteral("zametti"));
 
@@ -102,16 +155,10 @@ AboutWindow::AboutWindow(QWidget* parent) : QDialog(parent) {
 
     tabs_->addTab(markdownPage(buildFactsMarkdown(), tabs_), QStringLiteral("Build"));
 
-    // Лицензии — одной страницей, а не списком с выбором: их одиннадцать, и
-    // человек, который сюда пришёл, ищет либо одну конкретную (поиском по
-    // странице), либо смотрит, чего вообще намешано. Оба случая — это листать.
-    QString licenses;
-    for (const EmbeddedLicense& item : embeddedLicenses()) {
-        licenses += QStringLiteral("# %1 — %2\n\n%3\n\n```\n%4\n```\n\n")
-                        .arg(QString::fromUtf8(item.name), QString::fromUtf8(item.license),
-                             QString::fromUtf8(item.what), embeddedText(item.path).trimmed());
-    }
-    tabs_->addTab(markdownPage(licenses, tabs_), QStringLiteral("Licenses"));
+    // Лицензии — одной страницей, а не списком с выбором: человек, который
+    // сюда пришёл, ищет либо одну конкретную (поиском по странице), либо
+    // смотрит, чего вообще намешано. Оба случая — это листать.
+    tabs_->addTab(markdownPage(licensesMarkdown(), tabs_), QStringLiteral("Licenses"));
 
     // «OK», а не «Close» с красным крестом (просьба владельца): окно ни о чём
     // не спрашивает и ничего не отменяет — это справка, и кнопка в ней значит
