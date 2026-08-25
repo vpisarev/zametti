@@ -120,7 +120,23 @@ ZStorage::LockReport ZStorage::forceUnlock() {
                           .arg(report.holderHost);
     else
         report.note = QStringLiteral("the store had no lock");
-    QFile::remove(lockPath());
+
+    // РЕЗУЛЬТАТ УДАЛЕНИЯ ЧИТАЕМ, А НЕ ПРЕДПОЛАГАЕМ. Раньше здесь стоял голый
+    // QFile::remove(), и отчёт говорил «сняли» независимо от того, сняли ли.
+    // Под Windows это неправда регулярно: Qt открывает файл замка БЕЗ
+    // FILE_SHARE_DELETE нарочно (qlockfile_win.cpp), поэтому замок, который
+    // держит ЖИВОЙ процесс, удалить нельзя вовсе — а именно живой замок и
+    // пытаются снять руками. Молчать об этом значит отправить человека искать,
+    // почему «снятый» замок на месте.
+    //
+    // Замок мёртвого процесса снимается везде: его описатель закрыла система.
+    if (QFile::exists(lockPath()) && !QFile::remove(lockPath())) {
+        report.note = QStringLiteral(
+            "the store lock could not be removed (held by a live process pid %1 on '%2'?)")
+                          .arg(report.holderPid)
+                          .arg(report.holderHost);
+        return report;
+    }
     return report;
 }
 
