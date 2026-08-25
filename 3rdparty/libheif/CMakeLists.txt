@@ -167,11 +167,18 @@ target_include_directories(heif PRIVATE
 # ВОВСЕ, — то есть «прилинковать heif и включить <libheif/heif.h>» само по себе
 # не работает. Первый каталог даёт <libheif/heif.h>, второй —
 # <libheif/heif_version.h>, который порождается configure_file в каталоге
-# сборки.
+# сборки, в upstream/libheif/heif_version.h. Каталог нужен НА УРОВЕНЬ ВЫШЕ
+# файла: включают его как <libheif/heif_version.h>.
+#
+# Первая редакция ошиблась здесь на один уровень, и на этой машине ошибка НЕ
+# ПРОЯВИЛАСЬ: у gcc в неявных путях стоит /usr/include/x86_64-linux-gnu, где
+# лежит heif_version.h ОТ СИСТЕМНОЙ libheif 1.21.2. То есть заголовки брались
+# из нашего дерева, а номер версии — из чужой библиотеки другой версии.
+# Вскрылось только сборкой против sysroot, где системной libheif нет.
 add_library(libheif INTERFACE)
 target_link_libraries(libheif INTERFACE heif zlib)
 target_include_directories(libheif SYSTEM INTERFACE
                            "${heif_dir}/libheif/api"
-                           "${CMAKE_CURRENT_BINARY_DIR}/upstream/libheif")
+                           "${CMAKE_CURRENT_BINARY_DIR}/upstream")
 
 # Чужой код чужими правилами: zametti-code-rules ему не цепляется.
