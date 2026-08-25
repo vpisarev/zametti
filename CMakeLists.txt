@@ -120,24 +120,15 @@ endif()
 
 # libsodium — крипто-вендор облачной синхронизации (решение владельца, бриф
 # m17): XChaCha20-Poly1305 для блобов, Argon2id для пароля. Зависимость
-# ЖЁСТКАЯ и СИСТЕМНАЯ: не вендорим (повсеместен в Ubuntu и brew), но и
-# собраться без него нельзя — шифрование не бывает «необязательной частью»,
-# программа без него молча обещала бы синк, которого нет. Поэтому не QUIET и
-# остановка здесь, с подсказкой, а не глубоко в zametti-core на голом линке.
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
-find_package(Sodium)
-if(NOT Sodium_FOUND)
-    if(APPLE)
-        set(sodium_hint "brew install libsodium")
-    elseif(WIN32)
-        set(sodium_hint "vcpkg install libsodium (or provide it via CMAKE_PREFIX_PATH)")
-    else()
-        set(sodium_hint "sudo apt install libsodium-dev")
-    endif()
-    message(FATAL_ERROR
-        "libsodium not found — it encrypts the notes for the cloud sync.\n"
-        "  ${sodium_hint}")
-endif()
+# ЖЁСТКАЯ: шифрование не бывает «необязательной частью», программа без него
+# молча обещала бы синк, которого нет.
+#
+# ВЕНДОРЕННАЯ, а не системная (решение владельца 25.08.2026). Была системной,
+# и на чистой машине сборка требовала `apt install libsodium-dev` отдельным
+# шагом. Для переносимой статической сборки его всё равно пришлось бы собирать
+# самим — против sysroot, а не из системы, — так что вендоринг убирает шаг
+# развёртки и ничего не добавляет. Подключается ниже, вместе с остальным
+# чужим добром; цель Sodium::Sodium осталась той же, потребители не заметили.
 
 # Динамический Qt или статический. Спрашиваем ЦЕЛЬ, а не переменную
 # QT6_IS_SHARED_LIBS_BUILD: та внутренняя, а тип импортированной библиотеки —
@@ -194,6 +185,7 @@ add_subdirectory(3rdparty/zstd)
 add_subdirectory(3rdparty/libjxl)
 add_subdirectory(3rdparty/jpegli)
 add_subdirectory(3rdparty/libwebp)
+add_subdirectory(3rdparty/libsodium)
 add_subdirectory(3rdparty/gtest)
 
 # Дальше — то, что мы отлаживаем: microtex и всё своё.
@@ -301,11 +293,11 @@ function(zametti_summary)
     zametti_row("config:    " "`${config}`")
     zametti_row("compiler:" "`${compiler}`")
     zametti_row("Qt:        " "`${qt}`")
-    # libsodium — единственная жёсткая системная библиотека помимо Qt; до этой
-    # строки настройка доходит только с ним (иначе FATAL_ERROR выше), так что
-    # здесь всегда версия — но напечатать её обязательно: она системная, и на
-    # разных машинах разная.
-    zametti_row("crypto:   " "`libsodium ${Sodium_VERSION} (system)` — cloud encryption: XChaCha20-Poly1305, Argon2id")
+    # Крипто выведено ОТДЕЛЬНОЙ строкой, хотя libsodium теперь вендоренная и
+    # повторяется ниже в общем списке. Так нарочно: чем именно шифруются
+    # заметки перед отправкой в облако — это первое, о чём спрашивают, и
+    # искать ответ среди двенадцати строк вендоринга человек не должен.
+    zametti_row("crypto:   " "`libsodium ${SODIUM_VENDORED_VERSION}` — cloud encryption: XChaCha20-Poly1305, Argon2id")
     zametti_row("vendored libraries: " "")
     zametti_subrow("`md4c ${MD4C_VENDORED_VERSION}` — markdown parsing")
     zametti_subrow("`blake3 ${BLAKE3_VENDORED_VERSION}` — computing digests of notes and attachments (images)")
@@ -317,6 +309,7 @@ function(zametti_summary)
     zametti_subrow("`libjxl ${JXL_VENDORED_VERSION}` — JpegXL codec, JXL <=> JPEG transcoder, SSIMULACRA2")
     zametti_subrow("`jpegli ${JPEGLI_VENDORED_COMMIT}` — high-fidelity JPEG codec")
     zametti_subrow("`libwebp ${LIBWEBP_VENDORED_VERSION}` — WebP decoder")
+    zametti_subrow("`libsodium ${SODIUM_VENDORED_VERSION}` — XChaCha20-Poly1305 and Argon2id for the cloud sync")
     zametti_subrow("`googletest ${GTEST_VENDORED_VERSION}` — unit test engine")
     if(ZAMETTI_HAVE_HEIF)
         set(readers "`avif`/`heic`/`heif` (system libheif ${ZAMETTI_HEIF_VERSION})")
@@ -348,7 +341,7 @@ function(zametti_summary)
     set(ZAMETTI_FACT_CONFIG "${config}" PARENT_SCOPE)
     set(ZAMETTI_FACT_COMPILER "${compiler}" PARENT_SCOPE)
     set(ZAMETTI_FACT_QT "${qt}" PARENT_SCOPE)
-    set(ZAMETTI_FACT_SODIUM "libsodium ${Sodium_VERSION} (system)" PARENT_SCOPE)
+    set(ZAMETTI_FACT_SODIUM "libsodium ${SODIUM_VENDORED_VERSION}" PARENT_SCOPE)
     string(REPLACE "`" "" plain_readers "${readers}")
     set(ZAMETTI_FACT_READERS "${plain_readers}" PARENT_SCOPE)
 endfunction()
