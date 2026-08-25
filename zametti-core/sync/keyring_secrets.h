@@ -8,6 +8,11 @@
 // заметного кода. Метки элементов — из брифа: zametti-key-<storeId> и
 // zametti-webdav-<storeId>.
 //
+// Windows: Credential Manager (CredWriteW/CredReadW/CredDeleteW из Advapi32) —
+// тоже ноль новых зависимостей. Имена элементов те же, что у Secret Service:
+// zametti-key-<storeId> и zametti-webdav-<storeId>. Подробности — в
+// keyring_secrets_wincred.cpp.
+//
 // mac: заготовка (available() == false) — Security.framework придёт при
 // мак-заходе, интерфейс уже его ждёт.
 //
