@@ -28,6 +28,7 @@
 #include "resources.h"
 #include "document.h"
 #include "znote.h"
+#include "zstorage.h"
 #include "serializer.h"
 #include "settings.h"
 #include "sort_order.h"
@@ -78,27 +79,23 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+// После Qt: windows.h тащит за собой пол-мира имён, и Qt лучше разобрать
+// раньше. NOMINMAX задан toolchain'ом — иначе макросы min/max сломали бы
+// std::min здесь же, ниже.
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
 #include <algorithm>
 #include <cerrno>
 #include <csignal>
 #include <cstdio>
 #include <functional>
-#include <fstream>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <vector>
 
 namespace {
-
-bool readFile(const QString& path, std::string& out) {
-    std::ifstream in(path.toStdString(), std::ios::binary);
-    if (!in) return false;
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    out = ss.str();
-    return true;
-}
 
 std::vector<std::string> splitLines(const std::string& s) {
     std::vector<std::string> lines;
@@ -120,7 +117,13 @@ std::vector<std::string> splitLines(const std::string& s) {
 // глазами, а не вычислять.
 int runCheck(const QString& path) {
     std::string src;
-    if (!readFile(path, src)) {
+    // ЧИТАЕТ ХРАНИЛИЩЕ, а не std::ifstream. Раньше стояло
+    // `std::ifstream in(path.toStdString())`, и под Windows это молча ломалось
+    // на любом пути с кириллицей: узкий поток берёт имя в кодировке ANSI
+    // текущей системы, а toStdString() отдаёт UTF-8. Ловится сразу — режим
+    // --check стоит у набора canon-without-display, и файл там называется
+    // «канон-без-дисплея.md».
+    if (!zametti::ZStorage::readFileBytes(path, src)) {
         std::fprintf(stderr, "cannot read: %s\n", path.toUtf8().constData());
         return 2;
     }
@@ -238,12 +241,69 @@ void printHelp() {
         zametti::ZAppState::path().toUtf8().constData());
 }
 
+#ifdef Q_OS_WIN
+// ОКНО БЕЗ ЧЁРНОГО ОКНА, НО С ВЫВОДОМ В КОНСОЛЬ (решение владельца 26.08.2026).
+//
+// zametti.exe собран подсистемой GUI: запуск из проводника не должен открывать
+// рядом консоль. Плата у такой программы одна — своей консоли у неё нет, и
+// весь stdout/stderr уходит в никуда, включая --help, --check и жалобы на
+// незнакомый ключ. Для заметочника с CLI-режимом это молчаливая пропажа
+// ровно того класса, которого мы не терпим.
+//
+// Лечится тем, чем лечат все GUI-программы с командным режимом: если нас
+// позвали ИЗ консоли, подцепляемся к консоли родителя и переоткрываем на неё
+// потоки. Позвали из проводника — AttachConsole честно откажет, и мы молча
+// остаёмся немыми, как и положено оконной программе.
+void attachParentConsole() {
+    if (AttachConsole(ATTACH_PARENT_PROCESS) == 0) return;
+    // freopen на CONOUT$/CONIN$, а не на "CON": первое работает и когда часть
+    // потоков перенаправлена в файл, второе — нет.
+    FILE* unused = nullptr;
+    freopen_s(&unused, "CONOUT$", "w", stdout);
+    freopen_s(&unused, "CONOUT$", "w", stderr);
+    freopen_s(&unused, "CONIN$", "r", stdin);
+}
+#endif
+
+// Аргументы командной строки — строками Qt, ДО создания QApplication.
+//
+// Под Windows argv приходит в кодировке ANSI текущей системы, и путь с
+// кириллицей в имени превращается в вопросительные знаки ещё до того, как мы
+// на него посмотрим. Настоящая строка лежит в GetCommandLineW; берём её. Это
+// та же беда, что у узкого open() в writeNewFile, и лечится так же — широким
+// вариантом системного вызова.
+QStringList commandLineArgs(int argc, char** argv) {
+    QStringList out;
+#ifdef Q_OS_WIN
+    (void)argc;
+    (void)argv;
+    int count = 0;
+    LPWSTR* wide = CommandLineToArgvW(GetCommandLineW(), &count);
+    if (wide != nullptr) {
+        out.reserve(count);
+        for (int i = 0; i < count; ++i)
+            out.append(QString::fromWCharArray(wide[i]));
+        LocalFree(wide);
+        return out;
+    }
+    // Не вышло — берём узкие: хуже, чем широкие, но лучше, чем ничего.
+#endif
+    out.reserve(argc);
+    for (int i = 0; i < argc; ++i) out.append(QString::fromLocal8Bit(argv[i]));
+    return out;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
+#ifdef Q_OS_WIN
+    attachParentConsole();
+#endif
     // Имя приложения задаём до разбора ключей: от него зависят пути к конфигу и
     // состоянию, а их печатает --help, не создавая ни окна, ни QApplication.
     QCoreApplication::setApplicationName(QStringLiteral("zametti"));
+
+    const QStringList args = commandLineArgs(argc, argv);
 
     QString path;
     QString storeRoot;
@@ -251,26 +311,27 @@ int main(int argc, char** argv) {
     bool dumpConfig = false;
     bool noConfig = false;
     bool unlock = false;
-    for (int i = 1; i < argc; ++i) {
-        const std::string arg = argv[i];
-        if (arg == "--help" || arg == "-h") {
+    for (qsizetype i = 1; i < args.size(); ++i) {
+        const QString& arg = args.at(i);
+        if (arg == QLatin1String("--help") || arg == QLatin1String("-h")) {
             printHelp();
             return 0;
         }
-        if (arg == "--check") check = true;
-        else if (arg == "--dump-config") dumpConfig = true;
-        else if (arg == "--noconfig") noConfig = true;
-        else if (arg == "--unlock") unlock = true;
-        else if (arg == "--root" && i + 1 < argc) {
-            storeRoot = QString::fromLocal8Bit(argv[++i]);
+        if (arg == QLatin1String("--check")) check = true;
+        else if (arg == QLatin1String("--dump-config")) dumpConfig = true;
+        else if (arg == QLatin1String("--noconfig")) noConfig = true;
+        else if (arg == QLatin1String("--unlock")) unlock = true;
+        else if (arg == QLatin1String("--root") && i + 1 < args.size()) {
+            storeRoot = args.at(++i);
         }
-        else if (arg.rfind("--", 0) == 0) {
-            std::fprintf(stderr, "unknown option: %s\n", arg.c_str());
+        else if (arg.startsWith(QLatin1String("--"))) {
+            std::fprintf(stderr, "unknown option: %s\n", arg.toLocal8Bit().constData());
             return 2;
         } else {
-            path = QString::fromLocal8Bit(argv[i]);
+            path = arg;
         }
     }
+
 
     // --dump-config печатает готовый JSON и ни о чём Qt не спрашивает.
     if (dumpConfig) {

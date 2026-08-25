@@ -154,6 +154,18 @@ qt_add_executable(zametti
 
 target_link_libraries(zametti PRIVATE zametti-ui zametti-code-rules)
 
+# ПОДСИСТЕМА GUI ПОД WINDOWS (решение владельца 26.08.2026). Ставим сами:
+# qt_add_executable свойства WIN32_EXECUTABLE НЕ выставляет (проверено по
+# Qt6CoreMacros.cmake — оно лишь передаёт add_executable то, что ему дали), и
+# по умолчанию вышла бы консольная программа, у которой при запуске из
+# проводника рядом с окном висит чёрный прямоугольник.
+#
+# Вывод командного режима при этом не теряется: main() под Windows первым
+# делом подцепляется к консоли родителя (attachParentConsole в main.cpp).
+if(WIN32)
+    set_target_properties(zametti PROPERTIES WIN32_EXECUTABLE TRUE)
+endif()
+
 # Плагины платформы и ввода для статического Qt — см. корневой CMakeLists.
 zametti_import_qt_plugins(zametti)
 
