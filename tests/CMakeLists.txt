@@ -111,6 +111,7 @@ add_executable(zametti-tests
     # --- картинки ---
     import_test.cpp
     image_read_test.cpp
+    av1_edges_test.cpp
     color_test.cpp
     resample_test.cpp
     jxl_encode_test.cpp
