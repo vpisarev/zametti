@@ -455,4 +455,9 @@ Docker-образ со всем хозяйством просился бы сю�
 владельцем; когда дойдут руки, этот документ станет его Dockerfile'ом почти
 построчно.
 
-Рядом со временем лягут `packaging/win` и `packaging/mac`.
+`packaging/win` уже рядом: кросс-сборка под Windows через mingw-w64 описана в
+`docs/zametti-build-windows.md`. Устроена она по образцу этого документа — свой
+`zenv.sh`, свой toolchain, свой `qtbase-configure.sh`, — но sysroot ей не нужен:
+целевой мир mingw с хостовым не пересекается вовсе, и планку задаёт
+`_WIN32_WINNT` из toolchain'а, а не чужие заголовки. `packaging/mac` ляжет
+следом.
