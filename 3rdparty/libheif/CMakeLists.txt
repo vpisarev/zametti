@@ -45,7 +45,7 @@ set(HEIF_VENDORED_VERSION "${HEIF_VENDORED_VERSION}" PARENT_SCOPE)
 # Чужой cmake/modules/FindLIBDE265.cmake делает find_path и find_library, а обе
 # команды НЕ ТРОГАЮТ переменную, если она уже лежит в кэше. Значит поиска не
 # будет вовсе — а это ровно то, чего требует наш toolchain переносимой сборки
-# (packaging/toolchains/linux-zsys.cmake держит CMAKE_FIND_ROOT_PATH_MODE_*
+# (packaging/linux/toolchains/linux-zsys.cmake держит CMAKE_FIND_ROOT_PATH_MODE_*
 # в ONLY: любой find_* мимо sysroot запрещён нарочно).
 #
 # В LIBDE265_LIBRARY кладётся ИМЯ ЦЕЛИ, а не путь к файлу. Так честнее: из

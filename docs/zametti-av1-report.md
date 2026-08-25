@@ -254,7 +254,7 @@ PUBLIC, и **ни одного `#include` править не пришлось**
 6. **Предупреждения `HAVE_LINUX_COMPATIBLE_GETRANDOM redefined`** в вендоренном
    libsodium — мой мусор с прошлой сессии, три строки на каждой сборке.
 7. ~~**Титлбар под GNOME**~~ — **сделано в тот же день**, см.
-   `packaging/build-qtwayland.sh` и `packaging/patches/`. Осталась одна мелочь:
+   `packaging/linux/build-qtwayland.sh` и `packaging/linux/patches/`. Осталась одна мелочь:
    шрифт заголовка читается один раз при создании окна, потому что upstream'ный
    `settingChanged` слушает только `button-layout` и `color-scheme`. Смена
    шрифта в настройках рабочего стола подхватится при следующем запуске.
@@ -326,8 +326,8 @@ Qt::Svg и Wayland::Client, а `libdbus-1` и Qt6Svg в программе уж�
 и зашитый `Cantarell 10`. Поэтому патчим ту версию, которую собираем, — решение
 владельца, «меньше рисков».
 
-Патч — `packaging/patches/qtwayland-adwaita-titlebar-font.patch`, накладывается
-скриптом `packaging/build-qtwayland.sh` (идемпотентно: уже наложенный
+Патч — `packaging/linux/patches/qtwayland-adwaita-titlebar-font.patch`, накладывается
+скриптом `packaging/linux/build-qtwayland.sh` (идемпотентно: уже наложенный
 пропускается). Что он делает:
 
 * разбирает описание шрифта в стиле Pango целиком — семейство, начертание,

@@ -322,7 +322,7 @@ int main(int argc, char** argv) {
     zametti::HeifHandler::registerCodecs();
 
     // Оболочки рабочего стола (в том числе док GNOME) берут иконку не у окна, а
-    // из .desktop-файла с этим именем — см. packaging/zametti.desktop.
+    // из .desktop-файла с этим именем — см. packaging/linux/zametti.desktop.
     QGuiApplication::setDesktopFileName(QStringLiteral("zametti"));
     QGuiApplication::setWindowIcon(QIcon(QStringLiteral(":/zametti.png")));
 

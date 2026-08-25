@@ -3,7 +3,7 @@
 # Сборка помощников xcb статическими архивами с -fPIC в $ZPREFIX.
 #
 #   source ~/work/zsys/bin/zenv.sh
-#   packaging/build-xcb-static.sh
+#   packaging/linux/build-xcb-static.sh
 #
 # ЗАЧЕМ. Шесть библиотек, которые тянет xcb-плагин Qt, лежат в пакетах
 # priority=EXTRA — самый низкий приоритет: в базовую установку они не входят

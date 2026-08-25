@@ -4,7 +4,7 @@
 #
 #   source ~/work/zsys/bin/zenv.sh
 #   git -C $ZBUILD clone --depth 1 --branch v6.10.3 https://code.qt.io/qt/qtwayland.git
-#   packaging/build-qtwayland.sh
+#   packaging/linux/build-qtwayland.sh
 #
 # ЗАЧЕМ ОН ВООБЩЕ НУЖЕН, ЕСЛИ WAYLAND И ТАК РАБОТАЕТ. В Qt 6.10 wayland-КЛИЕНТ
 # переехал в qtbase, и без этого модуля программа под Wayland уже живёт. Но в
@@ -22,7 +22,7 @@
 # Qt::DBus, Qt::Svg и Wayland::Client, а libdbus-1 и Qt6Svg в программе уже
 # есть. Список NEEDED после его добавления совпал посимвольно.
 #
-# ПАТЧ ПРО ШРИФТ ЗАГОЛОВКА — packaging/patches/. Плагин берёт шрифт у
+# ПАТЧ ПРО ШРИФТ ЗАГОЛОВКА — packaging/linux/patches/. Плагин берёт шрифт у
 # платформенной темы (`theme->font(QPlatformTheme::TitleBarFont)`), а
 # QGnomeTheme отдаёт для него nullptr — правильный шрифт умеет только
 # QGtk3Theme, а gtk3 мы нарочно не тянем (это +12 динамических зависимостей).

@@ -33,9 +33,9 @@ macOS. Основа — sysroot Ubuntu 20.04, вытащенный владел�
   собрался, но не запускается.
 * `~/work/zsys/bin/fix-sysroot.sh` — починка симлинков, запускать после КАЖДОЙ
   распаковки тарбола (см. §3).
-* `packaging/toolchains/linux-zsys.cmake` — toolchain: sysroot, запертый
+* `packaging/linux/toolchains/linux-zsys.cmake` — toolchain: sysroot, запертый
   `find_library`, статические libstdc++/libgcc/libgomp, статические помощники xcb.
-* `packaging/build-xcb-static.sh` — сборка шести помощников xcb с `-fPIC`.
+* `packaging/linux/build-xcb-static.sh` — сборка шести помощников xcb с `-fPIC`.
 * `~/work/zbuild/qtbase-configure.sh` — настройка Qt, записана файлом.
 
 Куда что: `~/work/zsys` — sysroot (перезаписывается тарболом), `~/work/zdeps`

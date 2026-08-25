@@ -3,7 +3,7 @@
 #
 #   source ~/work/zsys/bin/zenv.sh
 #   cmake -S . -B build-portable \
-#         -DCMAKE_TOOLCHAIN_FILE=packaging/toolchains/linux-zsys.cmake \
+#         -DCMAKE_TOOLCHAIN_FILE=packaging/linux/toolchains/linux-zsys.cmake \
 #         -DCMAKE_PREFIX_PATH=$ZPREFIX -DWITH_STATIC_QT=ON
 #
 # Этим же файлом собраны Qt и OpenSSL, лежащие в $ZPREFIX. Так и задумано:
@@ -84,7 +84,7 @@ set(CMAKE_MODULE_LINKER_FLAGS_INIT "-static-libstdc++ -static-libgcc")
 # пять — чистые счётные помощники (ни одного зашитого пути, публичный API не
 # менялся с 20.04), и берутся из upstream просто за компанию, одним правилом.
 #
-# Собирает их packaging/build-xcb-static.sh; там же объяснено, почему у
+# Собирает их packaging/linux/build-xcb-static.sh; там же объяснено, почему у
 # курсора обязателен --with-cursorpath.
 set(zsys_own_lib "$ENV{ZPREFIX}/lib")
 
@@ -106,7 +106,7 @@ foreach(pair "XCB_CURSOR_LIBRARY;${zsys_own_lib}/libxcb-cursor.a"
     else()
         message(WARNING
             "нет ${zsys_path} — ${zsys_var} останется динамической.\n"
-            "  Соберите: packaging/build-xcb-static.sh")
+            "  Соберите: packaging/linux/build-xcb-static.sh")
     endif()
 endforeach()
 

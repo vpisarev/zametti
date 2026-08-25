@@ -162,7 +162,7 @@ zametti_import_qt_plugins(zametti)
 # док показывает заглушку.
 include(GNUInstallDirs)
 install(TARGETS zametti RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(FILES ${CMAKE_SOURCE_DIR}/packaging/zametti.desktop
+install(FILES ${CMAKE_SOURCE_DIR}/packaging/linux/zametti.desktop
         DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
 
 # Каталог темы значков называется РАЗМЕРОМ картинки, и размер этот берётся из
