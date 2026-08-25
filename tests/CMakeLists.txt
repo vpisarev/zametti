@@ -174,6 +174,7 @@ target_link_libraries(zametti-tests PRIVATE zametti-ui gtest md4c zstd Qt6::Test
 # SIGABRT на QGuiApplication — «Available platform plugins are: xcb», — то
 # есть приёмки у переносимой сборки не было вовсе.
 zametti_import_qt_plugins(zametti-tests)
+zametti_windows_manifest(zametti-tests)
 target_include_directories(zametti-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 # Пути к корпусам и к каталогу сборки — константами, а не через argv: в одном
 # процессе argv на всех один.
@@ -219,6 +220,7 @@ add_executable(zametti-bench
 target_link_libraries(zametti-bench PRIVATE zametti-ui gtest Qt6::Test Sodium::Sodium
                       zametti-code-rules)
 zametti_import_qt_plugins(zametti-bench)
+zametti_windows_manifest(zametti-bench)
 target_include_directories(zametti-bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(zametti-bench PRIVATE
     ZAMETTI_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -231,6 +233,7 @@ add_executable(mddump mddump.cpp)
 # gtest — только ради ZT_EQ из общей обвязки; проверок в инструменте нет.
 target_link_libraries(mddump PRIVATE zametti-core gtest zametti-code-rules)
 zametti_import_qt_plugins(mddump)
+zametti_windows_manifest(mddump)
 
 # --- механический сторож ---------------------------------------------------
 #

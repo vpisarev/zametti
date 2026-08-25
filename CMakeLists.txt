@@ -166,38 +166,65 @@ function(zametti_import_qt_plugins target)
         return()  # динамический Qt найдёт их сам, вписывать нечего
     endif()
 
+    # Список зависит от системы, и это не «удобство»: плагин, которого на этой
+    # платформе нет, ниже отсеется по TARGET молча, а вот НАЗВАТЬ нужное надо
+    # здесь — иначе оно молча же и не попадёт.
     set(wanted
-        # Платформы. xcb приходит по умолчанию, остальные — только по имени.
-        Qt6::QOffscreenIntegrationPlugin        # --check и ВСЕ наборы
-        Qt6::QMinimalIntegrationPlugin          # запасной аэродром без дисплея
-        Qt6::QWaylandIntegrationPlugin          # родной Wayland вместо XWayland
-        # Без оболочки окна wayland-плагин не создаёт ОКОН вовсе, а без
-        # украшений и EGL остаётся без рамки и без ускорения.
-        Qt6::QWaylandXdgShellIntegrationPlugin
-        Qt6::QWaylandEglClientBufferPlugin
-        # ЗАГОЛОВОК ОКНА. Под Wayland его рисует не оконный менеджер, а сама
-        # программа, и Qt выбирает чем: под GNOME она ищет плагин с ключом
-        # `adwaita` или `gnome` и, НЕ НАЙДЯ, берёт первый попавшийся — то есть
-        # свой запасной bradient с серо-синим градиентом
-        # (qwaylandwindow.cpp, createDecoration). Гномовский заголовок живёт в
-        # модуле qtwayland, который для программы иначе не нужен вовсе:
-        # wayland-клиент в 6.10 переехал в qtbase.
-        #
-        # Оба плагина вписываются вместе: bradient — запасной, и вне GNOME Qt
-        # сама выкидывает adwaita из списка. Под KDE ни тот, ни другой не
-        # понадобится: KWin умеет серверные декорации, а поддержка
-        # xdg-decoration входит в плагин xdg-shell выше.
-        #
-        # Ноль новых динамических зависимостей: adwaita просит только
-        # Qt::DBus, Qt::Svg и Wayland::Client, а libdbus-1 и Qt6Svg в
-        # программе уже есть.
-        Qt6::QWaylandAdwaitaDecorationPlugin
-        Qt6::QWaylandBradientDecorationPlugin
-        # Ввод. compose — мёртвые клавиши и Compose; ibus — методы ввода.
-        Qt6::QComposePlatformInputContextPlugin
-        Qt6::QIbusPlatformInputContextPlugin
-        # Родные диалоги файлов через портал — так же, как с динамическим Qt.
-        Qt6::QXdgDesktopPortalThemePlugin)
+        # Общее для всех. offscreen — режим --check и ВСЕ наборы; minimal —
+        # запасной аэродром без дисплея.
+        Qt6::QOffscreenIntegrationPlugin
+        Qt6::QMinimalIntegrationPlugin)
+
+    if(WIN32)
+        list(APPEND wanted
+            # Платформа. Приходит и по умолчанию, но названа явно: умолчание —
+            # не договор, а сегодняшнее поведение qt_add_executable.
+            Qt6::QWindowsIntegrationPlugin
+            # ОБЛИК ОКНА. С Qt 6.7 стили стали плагинами, и родной стиль
+            # Windows — один из них. Без него QStyleFactory отдаёт только
+            # Fusion, и программа выглядит чужой на своей же системе — ровно
+            # тот класс молчаливой пропажи, ради которого список и заведён.
+            #
+            # Имён два, потому что Qt его ПЕРЕИМЕНОВАЛА: до 6.10 плагин звался
+            # windowsvista, с 6.10 — modernwindows. Лишнее отсеется по TARGET
+            # ниже; названы оба, чтобы список не сломался ни на той Qt, ни на
+            # этой.
+            Qt6::QWindowsVistaStylePlugin
+            Qt6::QModernWindowsStylePlugin)
+    elseif(APPLE)
+        list(APPEND wanted Qt6::QCocoaIntegrationPlugin)
+    else()
+        list(APPEND wanted
+            # Платформы. xcb приходит по умолчанию, остальные — только по имени.
+            Qt6::QWaylandIntegrationPlugin          # родной Wayland вместо XWayland
+            # Без оболочки окна wayland-плагин не создаёт ОКОН вовсе, а без
+            # украшений и EGL остаётся без рамки и без ускорения.
+            Qt6::QWaylandXdgShellIntegrationPlugin
+            Qt6::QWaylandEglClientBufferPlugin
+            # ЗАГОЛОВОК ОКНА. Под Wayland его рисует не оконный менеджер, а сама
+            # программа, и Qt выбирает чем: под GNOME она ищет плагин с ключом
+            # `adwaita` или `gnome` и, НЕ НАЙДЯ, берёт первый попавшийся — то есть
+            # свой запасной bradient с серо-синим градиентом
+            # (qwaylandwindow.cpp, createDecoration). Гномовский заголовок живёт в
+            # модуле qtwayland, который для программы иначе не нужен вовсе:
+            # wayland-клиент в 6.10 переехал в qtbase.
+            #
+            # Оба плагина вписываются вместе: bradient — запасной, и вне GNOME Qt
+            # сама выкидывает adwaita из списка. Под KDE ни тот, ни другой не
+            # понадобится: KWin умеет серверные декорации, а поддержка
+            # xdg-decoration входит в плагин xdg-shell выше.
+            #
+            # Ноль новых динамических зависимостей: adwaita просит только
+            # Qt::DBus, Qt::Svg и Wayland::Client, а libdbus-1 и Qt6Svg в
+            # программе уже есть.
+            Qt6::QWaylandAdwaitaDecorationPlugin
+            Qt6::QWaylandBradientDecorationPlugin
+            # Ввод. compose — мёртвые клавиши и Compose; ibus — методы ввода.
+            Qt6::QComposePlatformInputContextPlugin
+            Qt6::QIbusPlatformInputContextPlugin
+            # Родные диалоги файлов через портал — так же, как с динамическим Qt.
+            Qt6::QXdgDesktopPortalThemePlugin)
+    endif()
 
     set(found "")
     foreach(plugin ${wanted})
@@ -214,6 +241,31 @@ function(zametti_import_qt_plugins target)
         return()
     endif()
     qt_import_plugins(${target} INCLUDE ${found})
+endfunction()
+
+# --- МАНИФЕСТ WINDOWS -----------------------------------------------------
+#
+# Один ресурс на все исполняемые файлы проекта, и в нём одна работающая
+# строка — activeCodePage=UTF-8. Зачем именно она, подробно написано в самом
+# packaging/win/zametti.manifest; коротко: без неё узкая половина API Windows
+# читает наши UTF-8-байты как CP1251/CP1252 и молча съедает кириллицу.
+#
+# Ставится ВСЕМ исполняемым файлам, а не только программе: наборы, пробники и
+# mddump ходят по тем же путям и ломались бы ровно так же (и ломались —
+# одиннадцать наборов краснели из-за каталога «наборы», ставшего «??????»).
+if(WIN32)
+    set(ZAMETTI_WIN_MANIFEST "${CMAKE_SOURCE_DIR}/packaging/win/zametti.manifest")
+    configure_file(${CMAKE_SOURCE_DIR}/packaging/win/zametti.rc.in
+                   ${CMAKE_BINARY_DIR}/generated/zametti.rc @ONLY)
+    enable_language(RC)
+endif()
+
+# Дописывает манифест целевому исполняемому файлу. Вне Windows — ничего не
+# делает, чтобы зовущим не приходилось оборачивать вызов в if().
+function(zametti_windows_manifest target)
+    if(WIN32)
+        target_sources(${target} PRIVATE ${CMAKE_BINARY_DIR}/generated/zametti.rc)
+    endif()
 endfunction()
 
 # --- СКОРОСТЬ ОТЛАДОЧНОЙ СБОРКИ (решение владельца) ------------------------

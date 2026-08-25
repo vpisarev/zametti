@@ -6,3 +6,4 @@
 # открывает — платформу она ставит offscreen сама, до создания приложения.
 add_executable(zametti-store main.cpp)
 target_link_libraries(zametti-store PRIVATE zametti-core zametti-code-rules)
+zametti_windows_manifest(zametti-store)
