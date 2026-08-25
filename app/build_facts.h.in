@@ -31,7 +31,6 @@ constexpr BuildFact kBuildFacts[] = {
     {"build", "@ZAMETTI_FACT_CONFIG@"},
     {"compiler", "@ZAMETTI_FACT_COMPILER@"},
     {"Qt", "@ZAMETTI_FACT_QT@"},
-    {"crypto", "@ZAMETTI_FACT_SODIUM@"},
     {"commit", "@ZAMETTI_FACT_COMMIT@"},
     {"configured", "@ZAMETTI_FACT_CONFIGURED@"},
 };
@@ -41,7 +40,11 @@ constexpr VendoredFact kVendoredFacts[] = {
     {"dtl", "@DTL_VENDORED_VERSION@", "version diffs in history"},
     {"highway", "@HWY_VENDORED_VERSION@", "SIMD library for libjxl and jpegli"},
     {"jpegli", "@JPEGLI_VENDORED_COMMIT@", "high-fidelity jpeg decoder"},
+    {"libde265", "@DE265_VENDORED_VERSION@", "hevc decoder inside heic"},
+    {"libgav1", "@LIBGAV1_VENDORED_VERSION@", "av1 decoder inside avif"},
+    {"libheif", "@HEIF_VENDORED_VERSION@", "heif and avif container"},
     {"libjxl", "@JXL_VENDORED_VERSION@", "jpegxl codec, jxl <=> jpeg transcoder, SSIMULACRA2"},
+    {"libsodium", "@SODIUM_VENDORED_VERSION@", "XChaCha20-Poly1305 and Argon2id for the cloud sync"},
     {"libtiff", "@TIFF_VENDORED_VERSION@", "tiff decoder with Lab/CMYK, ICC, XMP and EXIF support"},
     {"libwebp", "@LIBWEBP_VENDORED_VERSION@", "webp decoder"},
     {"md4c", "@MD4C_VENDORED_VERSION@", "markdown parsing"},
@@ -50,7 +53,9 @@ constexpr VendoredFact kVendoredFacts[] = {
     {"zstd", "@ZSTD_VENDORED_VERSION@", "compress journals"},
 };
 
-// Читатели картинок: зависят от того, нашлась ли системная libheif.
+// Читатели картинок сверх тех, что умеет сама Qt. Строка постоянная с тех
+// пор, как avif и heic читаются вшитым кодом, но берётся всё равно из
+// сводки настройки — второго списка форматов в программе нет.
 constexpr const char* kImageReaders = "@ZAMETTI_FACT_READERS@";
 
 }  // namespace zametti
