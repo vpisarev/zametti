@@ -87,6 +87,29 @@ qreal captionRoom(const QString& alt, qreal photoWidth) {
 }  // namespace
 
 
+// Готовый WebP: 120x80, сплошной тёмно-зелёный, без потерь. 42 байта, сделан
+// внешним cwebp и положен сюда БАЙТАМИ НАРОЧНО.
+//
+// Раньше набор изготавливал этот файл сам — `QImage::save(".../*.webp")`. Так
+// делать нельзя по двум причинам, и вторая нашлась дорого.
+//
+// Первая: САМА ПРОГРАММА WEBP НЕ ПИШЕТ НИКОГДА. Пишет она ровно один формат —
+// JPEG XL, а webp только читает, своим вендоренным декодером (у которого
+// энкодер выключен нарочно, см. 3rdparty/libwebp/update.sh). Набор, пишущий
+// webp, проверял путь, которого у программы нет.
+//
+// Вторая: запись шла ЧУЖИМ плагином Qt (libqwebp), а он необязателен. В
+// динамическом Qt из Ubuntu он есть, и набор был зелёным; в статической
+// переносимой сборке его нет — Qt не собирает webp без системной libwebp, а
+// её мы в sysroot не кладём нарочно. `save()` там молча вернул false, и набор
+// покраснел тремя проверками подряд, ни одна из которых про webp не говорила.
+static const unsigned char kGreenWebP[] = {
+      0x52, 0x49, 0x46, 0x46, 0x22, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50,
+      0x56, 0x50, 0x38, 0x4c, 0x16, 0x00, 0x00, 0x00, 0x2f, 0x77, 0xc0, 0x13,
+      0x00, 0x07, 0x50, 0xc0, 0x88, 0xfe, 0x87, 0x01, 0x48, 0x08, 0xff, 0xf7,
+      0x4b, 0x11, 0xfd, 0x4f, 0x5d, 0x01
+};
+
 // Пропавшее вложение — рамка, а не пустота.
 //
 // Случай не выдуманный: файл могли удалить руками, он мог не приехать с
@@ -137,10 +160,15 @@ void checkMissingAttachment() {
     ZT_TRUE("ссылка в заметке цела",
             text.find("01n6cqevh7bbfr.webp#w=300") != std::string::npos);
 
-    // Файл вернулся — вернулась и картинка.
-    QImage real(120, 80, QImage::Format_RGB32);
-    real.fill(Qt::darkGreen);
-    ZT_TRUE("вложение вернулось", real.save(picture));
+    // Файл вернулся — вернулась и картинка. Кладём ГОТОВЫЕ байты (см.
+    // kGreenWebP выше), а не изготавливаем webp через Qt.
+    {
+        QFile f(picture);
+        ZT_TRUE("вложение вернулось", f.open(QIODevice::WriteOnly));
+        ZT_EQ("вложение записано целиком", std::to_string(sizeof(kGreenWebP)),
+              std::to_string(f.write(reinterpret_cast<const char*>(kGreenWebP),
+                                     qint64(sizeof(kGreenWebP)))));
+    }
     editor.openFile(note);
     QTest::qWait(50);
     ZT_EQ("рамки больше нет", std::string("0"),
