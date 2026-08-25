@@ -240,6 +240,12 @@ add_subdirectory(3rdparty/zstd)
 add_subdirectory(3rdparty/libjxl)
 add_subdirectory(3rdparty/jpegli)
 add_subdirectory(3rdparty/libwebp)
+# AVIF и HEIC. Порядок ЖЁСТКИЙ: libheif ищет libde265 чужим FindLIBDE265, и мы
+# подсовываем ему цель по имени — она обязана уже существовать. Сторожа стоят
+# в самом 3rdparty/libheif/CMakeLists.txt.
+add_subdirectory(3rdparty/libde265)
+add_subdirectory(3rdparty/libgav1)
+add_subdirectory(3rdparty/libheif)
 add_subdirectory(3rdparty/libsodium)
 add_subdirectory(3rdparty/gtest)
 
