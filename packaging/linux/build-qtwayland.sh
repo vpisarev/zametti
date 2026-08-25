@@ -2,7 +2,7 @@
 #
 # Сборка модуля qtwayland против уже собранного статического Qt в $ZPREFIX.
 #
-#   source ~/work/zsys/bin/zenv.sh
+#   source packaging/linux/zenv.sh
 #   git -C $ZBUILD clone --depth 1 --branch v6.10.3 https://code.qt.io/qt/qtwayland.git
 #   packaging/linux/build-qtwayland.sh
 #
@@ -37,7 +37,7 @@
 # 1.18, где такого символа нет. Тот же ключ, что у qtbase.
 set -e
 
-: "${ZBUILD:?не задан ZBUILD — сперва source ~/work/zsys/bin/zenv.sh}"
+: "${ZBUILD:?не задан ZBUILD — сперва source packaging/linux/zenv.sh}"
 : "${ZPREFIX:?не задан ZPREFIX}"
 : "${ZSYS:?не задан ZSYS}"
 

@@ -93,7 +93,7 @@ tar -xf zsys.tar
 ### 2.3 Починка — ОБЯЗАТЕЛЬНО ПОСЛЕ КАЖДОЙ РАСПАКОВКИ
 
 ```bash
-~/work/zsys/bin/fix-sysroot.sh
+bash packaging/linux/fix-sysroot.sh
 ```
 
 Дев-симлинки Ubuntu (`libpthread.so`, `libdl.so`, `librt.so`, `libuuid.so`,
@@ -114,7 +114,8 @@ sysroot: /home/vpisarev/work/zsys
 
 ### 2.4 Обёртки компилятора
 
-`~/work/zsys/bin/gcc` и `g++` — трёхстрочные обёртки:
+`fix-sysroot.sh` кладёт в `$ZSYS/bin` две трёхстрочные обёртки; их исходник —
+`packaging/linux/sysroot-bin/`, то есть репозиторий:
 
 ```sh
 #!/bin/sh
@@ -124,9 +125,15 @@ export LD_LIBRARY_PATH="$root/hostlibs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 exec "$root/usr/bin/gcc-15" --sysroot="$root" "$@"
 ```
 
-`hostlibs/` — четыре библиотеки focal (`libisl`, `libbfd`, `libopcodes`),
-без которых focal'ьный gcc-15 не запускается на хосте. Каталог сделан руками и
-тарболом не затрагивается.
+Корень они вычисляют от собственного расположения — поэтому работают ровно
+там, куда положены, и звать их надо как `$ZSYS/bin/gcc`, а не из репозитория.
+Так и записано в `zenv.sh`.
+
+`hostlibs/` — четыре библиотеки focal (`libisl`, `libbfd`, `libopcodes`), без
+которых focal'ьный gcc-15 не запускается на хосте. Двоичные файлы, в
+репозитории им не место; каталог делается руками и тарболом не затрагивается.
+`fix-sysroot.sh` о его пропаже предупреждает вслух — без него обёртка падает
+при первом же вызове, и сообщение причины не назовёт.
 
 **Линкует при этом ХОСТОВЫЙ `ld`** (binutils хоста): `--sysroot` не переносит
 `COMPILER_PATH`. Замерено, что `DT_RELR` он по умолчанию не выпускает, но
@@ -154,11 +161,12 @@ wayland-scanner 1.18.0
 Одной строкой перед КАЖДЫМ шагом:
 
 ```bash
-source ~/work/zsys/bin/zenv.sh
+source packaging/linux/zenv.sh
 ```
 
 Он задаёт `ZSYS`, `ZPREFIX`, `ZBUILD`, `CC`/`CXX` (обёртки), pkg-config сквозь
-sysroot и общие флаги:
+sysroot и общие флаги. Пути можно задать снаружи — `ZSYS=/иное/место source
+packaging/linux/zenv.sh`; без этого берутся привычные `~/work/{zsys,zdeps,zbuild}`.
 
 ```sh
 export PKG_CONFIG_SYSROOT_DIR="$ZSYS"
@@ -184,7 +192,7 @@ export ZLDFLAGS="-static-libstdc++ -static-libgcc"
 ### 4.1 OpenSSL 3.5.7 LTS
 
 ```bash
-source ~/work/zsys/bin/zenv.sh
+source packaging/linux/zenv.sh
 cd $ZBUILD && curl -fsSLO https://github.com/openssl/openssl/releases/download/openssl-3.5.7/openssl-3.5.7.tar.gz
 tar -xf openssl-3.5.7.tar.gz && cd openssl-3.5.7
 
@@ -203,7 +211,7 @@ make -j4 && make install_sw
 ### 4.2 Шесть помощников xcb
 
 ```bash
-source ~/work/zsys/bin/zenv.sh
+source packaging/linux/zenv.sh
 packaging/linux/build-xcb-static.sh
 ```
 
@@ -234,14 +242,14 @@ Qt 6.5+ вообще («could not load the Qt platform plugin xcb»). Вшив �
 ### 4.3 Qt 6.10.3 — три модуля
 
 ```bash
-source ~/work/zsys/bin/zenv.sh
+source packaging/linux/zenv.sh
 cd $ZBUILD
 for m in qtbase qtsvg qtwayland; do
     git clone --depth 1 --branch v6.10.3 https://code.qt.io/qt/$m.git
 done
 ```
 
-**qtbase** — настройка записана файлом `~/work/zbuild/qtbase-configure.sh`,
+**qtbase** — настройка записана файлом `packaging/linux/qtbase-configure.sh`,
 чтобы её можно было прочитать, а не восстанавливать из памяти:
 
 ```bash
@@ -256,7 +264,7 @@ done
     -qt-pcre -qt-harfbuzz -qt-doubleconversion -qt-libjpeg \
     -no-glib -no-icu -no-cups \
     -- \
-    -DCMAKE_TOOLCHAIN_FILE="$ZSYS/zsys-toolchain.cmake" \
+    -DCMAKE_TOOLCHAIN_FILE="$HERE/toolchains/qt-zsys.cmake" \
     -DOPENSSL_ROOT_DIR="$ZPREFIX" \
     -DOPENSSL_USE_STATIC_LIBS=ON \
     -DWaylandScanner_EXECUTABLE="$ZSYS/usr/bin/wayland-scanner"
@@ -268,9 +276,8 @@ done
 не нужна вовсе (CUPS — печатаем мы своим PDF).
 
 ```bash
-mkdir -p $ZBUILD/qtbase-build && cd $ZBUILD/qtbase-build
-~/work/zbuild/qtbase-configure.sh
-cmake --build . -j4 && cmake --install .
+bash packaging/linux/qtbase-configure.sh          # только настраивает
+cd $ZBUILD/qtbase-build && cmake --build . -j4 && cmake --install .
 ```
 
 Сборка qtbase без QML/Quick/WebEngine — 822 цели, около трёх минут на восьми
@@ -289,7 +296,7 @@ cmake --build . -j4 && cmake --install .
 GNOME) и с нашим патчем к нему:
 
 ```bash
-source ~/work/zsys/bin/zenv.sh
+source packaging/linux/zenv.sh
 packaging/linux/build-qtwayland.sh
 ```
 
@@ -327,7 +334,7 @@ Qt не помогло бы.
 ## 5. Сама программа
 
 ```bash
-source ~/work/zsys/bin/zenv.sh
+source packaging/linux/zenv.sh
 cd ~/work/zametti
 cmake -S . -B build-portable \
       -DCMAKE_BUILD_TYPE=Release \
@@ -420,27 +427,26 @@ WAYLAND_DEBUG=1 build-portable/app/zametti 2>&1 | grep set_window_geometry | hea
 `(10, 10, ...)` — это `adwaita` с её тенями; `(0, 0, ...)` — запасной
 `bradient`.
 
-## 7. Что пока лежит вне репозитория
+## 7. Что лежит вне репозитория
 
-Честный список: четыре файла из рецепта в git не входят, и на новой машине их
-придётся сделать руками.
+С 26.08.2026 рецепт лежит в репозитории целиком: `zenv.sh`, `fix-sysroot.sh`,
+`qtbase-configure.sh`, обе toolchain'а и обёртки компилятора переехали в
+`packaging/linux/`. Раньше пять из них жили в `~/work/zsys` и `~/work/zbuild`,
+и на новой машине рецепт воспроизводился наполовину.
 
-| файл | что делает |
+Снаружи осталось ровно то, что в git положить нельзя:
+
+| | |
 |---|---|
-| `~/work/zsys/bin/zenv.sh` | окружение (§3) |
-| `~/work/zsys/bin/fix-sysroot.sh` | починка симлинков (§2.3) |
-| `~/work/zsys/bin/{gcc,g++}` | обёртки компилятора (§2.4) |
-| `~/work/zsys/zsys-toolchain.cmake` | toolchain для сборки Qt и OpenSSL |
-| `~/work/zbuild/qtbase-configure.sh` | настройка qtbase (§4.3) |
+| `~/work/zsys/zsys.tar` | сам sysroot, 2.4 ГБ двоичного |
+| `~/work/zsys/hostlibs/` | четыре библиотеки focal для запуска gcc-15 (§2.4) |
 
-Их место — `packaging/linux/`, рядом с `build-xcb-static.sh` и
-`build-qtwayland.sh`; тогда рецепт целиком лежал бы в репозитории и
-проверялся бы вместе с ним. Пока это долг, названный вслух.
-
-Второй долг оттуда же: `zsys-toolchain.cmake` (которым собрана Qt) и
-`packaging/linux/toolchains/linux-zsys.cmake` (которым собрана программа) —
-почти одинаковые, но не совсем: во втором есть привязка шести `XCB_*_LIBRARY`.
-Два почти-одинаковых toolchain'а — это заготовка расхождения.
+**Долг, названный вслух:** `packaging/linux/toolchains/qt-zsys.cmake` (которым
+собрана Qt) и `.../linux-zsys.cmake` (которым собирается программа) почти
+одинаковы — разница ровно одна: во втором прибиты шесть `XCB_*_LIBRARY` к
+статическим архивам из `$ZPREFIX`. Два почти-одинаковых toolchain'а —
+заготовка расхождения. Свести их в один можно, но это меняет то, чем собрана
+уже стоящая Qt, а значит требует её пересборки и проверки; отложено осознанно.
 
 ## 8. Дальше
 

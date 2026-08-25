@@ -1,7 +1,7 @@
 # Toolchain переносимой сборки под Linux: всё собирается против sysroot
 # Ubuntu 20.04 (glibc 2.31), а не против системы, на которой мы сидим.
 #
-#   source ~/work/zsys/bin/zenv.sh
+#   source packaging/linux/zenv.sh
 #   cmake -S . -B build-portable \
 #         -DCMAKE_TOOLCHAIN_FILE=packaging/linux/toolchains/linux-zsys.cmake \
 #         -DCMAKE_PREFIX_PATH=$ZPREFIX -DWITH_STATIC_QT=ON
@@ -16,7 +16,7 @@
 if(NOT DEFINED ENV{ZSYS})
     message(FATAL_ERROR
         "Не задан ZSYS — путь к sysroot.\n"
-        "  source ~/work/zsys/bin/zenv.sh")
+        "  source packaging/linux/zenv.sh")
 endif()
 if(NOT IS_DIRECTORY "$ENV{ZSYS}/usr/include")
     message(FATAL_ERROR "ZSYS=$ENV{ZSYS} не похож на sysroot: нет usr/include")

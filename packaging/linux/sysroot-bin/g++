@@ -1,0 +1,5 @@
+#!/bin/sh
+here=$(dirname "$(readlink -f "$0")")     # …/zsys/bin
+root=$(dirname "$here")                   # …/zsys
+export LD_LIBRARY_PATH="$root/hostlibs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+exec "$root/usr/bin/g++-15" --sysroot="$root" "$@"

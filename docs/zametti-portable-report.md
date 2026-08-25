@@ -27,16 +27,19 @@ macOS. Основа — sysroot Ubuntu 20.04, вытащенный владел�
 
 ## 2. Оснастка
 
-* `~/work/zsys/bin/zenv.sh` — общее окружение (ZSYS, ZPREFIX, ZBUILD, CC/CXX,
+* `packaging/linux/zenv.sh` — общее окружение (ZSYS, ZPREFIX, ZBUILD, CC/CXX,
   pkg-config сквозь sysroot). Все чужие библиотеки и сама программа собираются
   ОДНИМИ ключами: разошедшиеся ключи у Qt и у программы — это бинарь, который
   собрался, но не запускается.
-* `~/work/zsys/bin/fix-sysroot.sh` — починка симлинков, запускать после КАЖДОЙ
-  распаковки тарбола (см. §3).
+* `packaging/linux/fix-sysroot.sh` — починка симлинков и установка обёрток
+  компилятора; запускать после КАЖДОЙ распаковки тарбола (см. §3).
 * `packaging/linux/toolchains/linux-zsys.cmake` — toolchain: sysroot, запертый
   `find_library`, статические libstdc++/libgcc/libgomp, статические помощники xcb.
 * `packaging/linux/build-xcb-static.sh` — сборка шести помощников xcb с `-fPIC`.
-* `~/work/zbuild/qtbase-configure.sh` — настройка Qt, записана файлом.
+* `packaging/linux/qtbase-configure.sh` — настройка Qt, записана файлом.
+
+  (26.08.2026 все пять переехали в репозиторий из `~/work/zsys` и
+  `~/work/zbuild`; рецепт по шагам — `docs/zametti-build-linux.md`.)
 
 Куда что: `~/work/zsys` — sysroot (перезаписывается тарболом), `~/work/zdeps`
 — всё собранное (тарболом НЕ затрагивается, нарочно), `~/work/zbuild` — мусор

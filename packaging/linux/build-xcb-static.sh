@@ -2,7 +2,7 @@
 #
 # Сборка помощников xcb статическими архивами с -fPIC в $ZPREFIX.
 #
-#   source ~/work/zsys/bin/zenv.sh
+#   source packaging/linux/zenv.sh
 #   packaging/linux/build-xcb-static.sh
 #
 # ЗАЧЕМ. Шесть библиотек, которые тянет xcb-плагин Qt, лежат в пакетах
@@ -36,7 +36,7 @@
 # Поэтому проверяем здесь и говорим прямо.
 
 set -e
-[ -n "$ZPREFIX" ] || { echo "нет ZPREFIX — сначала source ~/work/zsys/bin/zenv.sh" >&2; exit 1; }
+[ -n "$ZPREFIX" ] || { echo "нет ZPREFIX — сначала source packaging/linux/zenv.sh" >&2; exit 1; }
 [ -n "$ZBUILD" ] || { echo "нет ZBUILD" >&2; exit 1; }
 command -v m4 >/dev/null || {
     echo "нет m4 — xcb-util-wm и xcb-util-cursor генерируют им исходники." >&2
