@@ -12,6 +12,8 @@
 
 #include "test_util.h"
 
+#include "heif_handler.h"
+
 #include <gtest/gtest.h>
 
 #include <QApplication>
@@ -54,6 +56,12 @@ int main(int argc, char** argv) {
     // за них тем, кому хватило бы ядра, — это несколько миллисекунд на весь
     // прогон.
     QApplication app(argc, argv);
+
+    // Декодеры картинок, которых libheif не знает по рождению (AV1 через
+    // libgav1). ДО первого потока: реестр плагинов libheif — обычный std::set
+    // без замка, а картинки читает и фоновый поток ввоза, и сама libheif в
+    // несколько потоков на плиточной сетке.
+    zametti::HeifHandler::registerCodecs();
 
     ::testing::InitGoogleTest(&argc, argv);
 

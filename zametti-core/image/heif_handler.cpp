@@ -1,6 +1,12 @@
 #include "heif_handler.h"
 
+#include "heif_av1_gav1.h"
+#include "zlogs.h"
+
 #include <libheif/heif.h>
+
+#include <QMutex>
+#include <QMutexLocker>
 
 #include <QColorSpace>
 #include <QImage>
@@ -53,7 +59,34 @@ bool looksLikeHeif(const QByteArray& head) {
 
 }  // namespace
 
-HeifHandler::HeifHandler() = default;
+bool HeifHandler::registerCodecs() {
+    // Замок, а не состояние: сам ответ «зарегистрирован ли» лежит в libheif.
+    // Тот же приём, что у Formulas::init().
+    static QMutex gate;
+    const QMutexLocker guard(&gate);
+
+    if (heif_have_decoder_for_format(heif_compression_AV1)) return false;
+
+    const heif_error err = heif_register_decoder_plugin(av1DecoderPlugin());
+    if (err.code != heif_error_Ok) {
+        ZLogs::instance().err(QStringLiteral("libheif не приняла наш декодер AV1: %1")
+                                  .arg(QString::fromUtf8(err.message ? err.message : "")));
+        return false;
+    }
+    return true;
+}
+
+HeifHandler::HeifHandler() {
+    // СЕТКА СНИЗУ, А НЕ ОСНОВНОЙ ПУТЬ. Регистрировать положено из точки входа
+    // (см. registerCodecs), пока потоков ещё нет. Если сюда мы пришли первыми,
+    // значит точку входа забыли — и об этом надо сказать ВСЛУХ, иначе забытый
+    // вызов проявится однажды гонкой, которую не воспроизвести.
+    if (registerCodecs()) {
+        ZLogs::instance().err(QStringLiteral(
+            "декодер AV1 зарегистрирован поздно, из HeifHandler: "
+            "HeifHandler::registerCodecs() не позван из точки входа программы"));
+    }
+}
 
 HeifHandler::~HeifHandler() {
     if (ctx_) heif_context_free(ctx_);

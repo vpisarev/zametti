@@ -40,22 +40,15 @@ option(ZAMETTI_WARNINGS_AS_ERRORS "warnings are errors" OFF)
 # остаётся то, без чего на этой машине жить нельзя вовсе — сам Qt (если он
 # динамический), libc и системные рамки.
 
-# AVIF и HEIC. ВЫКЛЮЧЕНО по умолчанию, и это перемена: раньше libheif бралась
-# молча, если нашлась. Причина в том, что она не одна: за ней идут видеокодеки
-# (aom либо de265/x265), а с ними — их зависимости. Пока сборка динамическая,
-# это чужая забота; в статической каждый из них нужен отдельным архивом, и
-# владелец на маке наступил ровно на это. AVIF/HEIC у нас формат ВХОДА, не
-# хранения: без них программа теряет ввоз двух форматов и ничего больше.
-option(WITH_HEIF "Support AVIF и HEIC (libheif-dev is required then)" OFF)
-
 # Статический Qt НЕ включается ключом — он либо есть на машине, либо нет:
 # динамический Qt статическим не станет ни от каких флагов. Ключ означает
 # другое: «я собираю ради самодостаточной программы, и молча получить
 # динамический Qt не согласен». Без него сборка одинаково рада обоим.
 #
 # Именно здесь владелец обжёгся: совет из сети предлагал добавить -static в
-# флаги компоновки, и статическими стали заодно libheif с кодеками, которых в
-# таком виде на машине не оказалось.
+# флаги компоновки, и статическими стали заодно системная libheif с кодеками,
+# которых в таком виде на машине не оказалось. Теперь и она, и её декодеры
+# вендорены — этих граблей больше нет.
 option(WITH_STATIC_QT "Require static Qt" OFF)
 
 # Вендоренное — только статикой. Без этой строки libjxl объявляет в своём корне
@@ -367,15 +360,12 @@ function(zametti_summary)
     zametti_subrow("`libjxl ${JXL_VENDORED_VERSION}` — JpegXL codec, JXL <=> JPEG transcoder, SSIMULACRA2")
     zametti_subrow("`jpegli ${JPEGLI_VENDORED_COMMIT}` — high-fidelity JPEG codec")
     zametti_subrow("`libwebp ${LIBWEBP_VENDORED_VERSION}` — WebP decoder")
+    zametti_subrow("`libheif ${HEIF_VENDORED_VERSION}` — HEIF/AVIF container")
+    zametti_subrow("`libde265 ${DE265_VENDORED_VERSION}` — HEVC decoder inside HEIC")
+    zametti_subrow("`libgav1 ${LIBGAV1_VENDORED_VERSION}` — AV1 decoder inside AVIF")
     zametti_subrow("`libsodium ${SODIUM_VENDORED_VERSION}` — XChaCha20-Poly1305 and Argon2id for the cloud sync")
     zametti_subrow("`googletest ${GTEST_VENDORED_VERSION}` — unit test engine")
-    if(ZAMETTI_HAVE_HEIF)
-        set(readers "`avif`/`heic`/`heif` (system libheif ${ZAMETTI_HEIF_VERSION})")
-    elseif(Qt6_FOUND)
-        set(readers "avif/heic are not supported. To enable avif/heic, reconfigure with -DWITH_HEIF=ON`")
-    else()
-        set(readers "not supported without Qt")
-    endif()
+    set(readers "`avif`/`heic`/`heif` — vendored, no system libraries needed")
     zametti_row("читатели:  " "${readers}")
     # Есть ли сама программа. Строка обязательна: без неё «настройка прошла»
     # означало лишь, что не упало, — а собралось при этом одно ядро.

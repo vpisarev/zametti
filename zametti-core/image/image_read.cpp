@@ -5,9 +5,7 @@
 #include "tiff_reader.h"
 #include "webp_read.h"
 
-#ifdef ZAMETTI_HAVE_HEIF
 #include "heif_handler.h"
-#endif
 
 #include <QBuffer>
 #include <QColorSpace>
@@ -25,7 +23,6 @@ QString sniff(const QByteArray& head) {
     if (looksLikeJpeg(head)) return QStringLiteral("jpeg");
     if (looksLikeWebp(head)) return QStringLiteral("webp");
     if (looksLikeTiff(head)) return QStringLiteral("tiff");
-#ifdef ZAMETTI_HAVE_HEIF
     // У HEIF подпись живёт не в начале, а в боксе ftyp; спрашиваем его самого.
     {
         QByteArray copy = head;
@@ -33,7 +30,6 @@ QString sniff(const QByteArray& head) {
         buffer.open(QIODevice::ReadOnly);
         if (HeifHandler::peek(&buffer)) return QStringLiteral("heif");
     }
-#endif
     return {};
 }
 
@@ -61,23 +57,13 @@ qint64 ImageProbe::decodedBytes() const {
 }
 
 
-bool heifSupported() {
-#ifdef ZAMETTI_HAVE_HEIF
-    return true;
-#else
-    return false;
-#endif
-}
-
 QStringList readableImageExtensions() {
     // Наши читатели (см. sniff выше) плюс то, что умеет сам Qt: png, gif, bmp и
     // прочая мелочь идут через QImage::fromData запасным путём.
     QStringList out{QStringLiteral("jxl"),  QStringLiteral("jpg"), QStringLiteral("jpeg"),
                     QStringLiteral("webp"), QStringLiteral("tif"), QStringLiteral("tiff"),
-                    QStringLiteral("png"),  QStringLiteral("gif"), QStringLiteral("bmp")};
-    if (heifSupported()) {
-        out << QStringLiteral("avif") << QStringLiteral("heic") << QStringLiteral("heif");
-    }
+                    QStringLiteral("png"),  QStringLiteral("gif"), QStringLiteral("bmp"),
+                    QStringLiteral("avif"), QStringLiteral("heic"), QStringLiteral("heif")};
     return out;
 }
 
@@ -116,14 +102,13 @@ ImageProbe probeImage(const QByteArray& bytes) {
         return out;
     }
 
-#ifdef ZAMETTI_HAVE_HEIF
     if (out.format == QLatin1String("heif")) {
         // У HEIF СВОЙ ОБРАБОТЧИК, И СПРАШИВАТЬ НАДО ЕГО. Раньше размеры avif и
         // heic шли к Qt вместе со всеми «чужими» форматами — а Qt про них не
         // знает вовсе (наш читатель плагином не является), отдавал пустой
         // размер, проба выходила невалидной, и ввоз отказывал «формат не
         // поддержан» ещё до нашего декодера. Владелец так и увидел: собрал с
-        // WITH_HEIF=ON, а avif всё равно не ввозится.
+        // поддержкой heif, а avif всё равно не ввозится.
         QByteArray copy = bytes;
         QBuffer buffer(&copy);
         buffer.open(QIODevice::ReadOnly);
@@ -141,7 +126,6 @@ ImageProbe probeImage(const QByteArray& bytes) {
         out.frames = 1;
         return out;
     }
-#endif
 
     // Остальные — у Qt: он умеет спросить размер, не разжимая, и для чужих
     // форматов это ровно то, что нужно. TIFF сюда тоже попадает: его шапку
@@ -236,7 +220,6 @@ QImage decodeImage(const QByteArray& bytes, const DecodeRequest& request) {
                          request.deep ? JpegDepth::Sixteen : JpegDepth::Eight);
     } else if (probe.format == QLatin1String("webp")) {
         out = decodeWebp(bytes);
-#ifdef ZAMETTI_HAVE_HEIF
     } else if (probe.format == QLatin1String("heif")) {
         // Обработчик HEIF оставлен обработчиком: он уже написан, работает и
         // разбирать его ради единообразия незачем. Плагином он при этом БОЛЬШЕ
@@ -247,7 +230,6 @@ QImage decodeImage(const QByteArray& bytes, const DecodeRequest& request) {
         HeifHandler handler;
         handler.setDevice(&buffer);
         if (!handler.read(&out)) out = QImage();
-#endif
     } else {
         // Чужой формат: пусть пробует Qt. Получится — хорошо, не получится —
         // строка останется строкой, как и всякий файл, который мы не поняли.

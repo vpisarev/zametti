@@ -181,8 +181,7 @@ target_compile_definitions(zametti-tests PRIVATE
     ZAMETTI_BINARY_DIR="${CMAKE_CURRENT_BINARY_DIR}"
     ZAMETTI_FUZZ_ROUNDS=${ZAMETTI_FUZZ_ROUNDS}
     ZAMETTI_FUZZ_SEED=${ZAMETTI_FUZZ_SEED}
-    ZAMETTI_CORPUS_MUTATIONS=${ZAMETTI_CORPUS_MUTATIONS}
-    ZAMETTI_HAVE_HEIF=$<BOOL:${ZAMETTI_HAVE_HEIF}>)
+    ZAMETTI_CORPUS_MUTATIONS=${ZAMETTI_CORPUS_MUTATIONS})
 
 # ОДИН add_test на всё. Дробить на восемьдесят имён ctest незачем: фильтр gtest
 # делает это лучше, а прогон целиком и есть та самая проверка «один процесс».

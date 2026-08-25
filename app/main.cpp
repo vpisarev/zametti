@@ -7,6 +7,7 @@
 #include "editor_widget.h"
 #include "key_binding.h"
 #include "formula.h"
+#include "heif_handler.h"
 #include "find_bar.h"
 #include "history_controller.h"
 #include "markdown_controller.h"
@@ -306,8 +307,20 @@ int main(int argc, char** argv) {
         // Шрифты — до сборки: сборщик берёт метрики у семейств из настроек, и
         // без влинкованных гарнитур Qt молча подставит свои.
         zametti::loadEmbeddedFonts();
+    // Декодеры картинок, которых libheif не знает по рождению (AV1 через
+    // libgav1). ДО первого потока: реестр плагинов libheif — обычный std::set
+    // без замка, а картинки читает и фоновый поток ввоза, и сама libheif в
+    // несколько потоков на плиточной сетке.
+    zametti::HeifHandler::registerCodecs();
+
         return runCheck(path);
     }
+    // Декодеры картинок, которых libheif не знает по рождению (AV1 через
+    // libgav1). ДО первого потока: реестр плагинов libheif — обычный std::set
+    // без замка, а картинки читает и фоновый поток ввоза, и сама libheif в
+    // несколько потоков на плиточной сетке.
+    zametti::HeifHandler::registerCodecs();
+
     // Оболочки рабочего стола (в том числе док GNOME) берут иконку не у окна, а
     // из .desktop-файла с этим именем — см. packaging/zametti.desktop.
     QGuiApplication::setDesktopFileName(QStringLiteral("zametti"));

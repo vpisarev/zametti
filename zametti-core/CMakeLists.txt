@@ -94,6 +94,8 @@ add_library(zametti-core STATIC
     image/recompress.h          image/recompress.cpp
     image/image_metadata.h      image/image_metadata.cpp
     image/zimage_cache.h        image/zimage_cache.cpp
+    image/heif_handler.h        image/heif_handler.cpp
+    image/heif_av1_gav1.h       image/heif_av1_gav1.cpp
 
     # --- живая модель документа ---
     doc/block_kind.h
@@ -159,51 +161,21 @@ else()
     target_sources(zametti-core PRIVATE sync/keyring_secrets_stub.cpp)
 endif()
 
-# HEIF/AVIF — по ключу, системной библиотекой. Обработчик зовётся напрямую из
-# image_read, плагином он больше не является.
+# HEIF/AVIF — ВЕНДОРЕННЫМИ библиотеками и БЕЗ КЛЮЧА. Обработчик зовётся
+# напрямую из image_read, плагином Qt он не является.
 #
-# Жил отдельной целью в каталоге `imageio/` верхнего уровня; каталог остался от
-# эпохи, когда там лежали все читатели картинок, и делить с ядром ему больше
-# нечего — ядро всё равно зависит от QtGui.
-#
-# ВЫКЛЮЧЕНО по умолчанию: libheif тянет за собой видеокодеки (aom либо
-# de265/x265), а с ними — их зависимости. AVIF/HEIC у нас формат ВХОДА, не
-# хранения: без них программа теряет ввоз двух форматов и ничего больше. Нет
-# библиотеки — вставка avif/heic честно откажет, тихого пропуска не будет.
-if(WITH_HEIF)
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(LIBHEIF IMPORTED_TARGET libheif)
-    endif()
-
-    # Просили явно — значит молчать нельзя. Прежний тихий пропуск оставлял
-    # человека с программой, которая не читает то, что он для неё включал.
-    if(NOT LIBHEIF_FOUND)
-        if(APPLE)
-            set(hint "brew install libheif")
-        elseif(WIN32)
-            set(hint "vcpkg install libheif (и путь через CMAKE_PREFIX_PATH)")
-        else()
-            set(hint "sudo apt install libheif-dev")
-        endif()
-        message(FATAL_ERROR
-            "WITH_HEIF=ON, а libheif не найдена (pkg-config её не видит).\n"
-            "  Поставьте: ${hint}\n"
-            "  Либо соберите без avif/heic: -DWITH_HEIF=OFF")
-    endif()
-
-    # Исходники добавляются ЗДЕСЬ, а не в общий список выше: heif_handler.cpp
-    # включает <libheif/heif.h>, а по умолчанию ключ выключен — в общем списке
-    # он ломал бы обычную сборку.
-    target_sources(zametti-core PRIVATE
-                   image/heif_handler.h image/heif_handler.cpp)
-    target_link_libraries(zametti-core PRIVATE PkgConfig::LIBHEIF)
-    target_compile_definitions(zametti-core PRIVATE ZAMETTI_HAVE_HEIF)
-    set(ZAMETTI_HAVE_HEIF ON PARENT_SCOPE)
-    set(ZAMETTI_HEIF_VERSION "${LIBHEIF_VERSION}" PARENT_SCOPE)
-else()
-    set(ZAMETTI_HAVE_HEIF OFF PARENT_SCOPE)
+# Ключ WITH_HEIF был нужен, пока libheif бралась системной: она приводила за
+# собой видеокодеки, а с ними — их зависимости, и на маке владелец наступил
+# ровно на это. Теперь и контейнер, и оба декодера лежат в 3rdparty, наружу не
+# торчит ни одной новой динамической зависимости, и выбирать больше нечего:
+# avif и heic читаются всегда, как jxl и webp.
+if(NOT TARGET libheif OR NOT TARGET libgav1)
+    message(FATAL_ERROR
+        "цели libheif/libgav1 не заведены.\n"
+        "  add_subdirectory(3rdparty/lib{de265,gav1,heif}) обязаны идти раньше "
+        "add_subdirectory(zametti-core) в корневом CMakeLists.txt.")
 endif()
+target_link_libraries(zametti-core PRIVATE libheif libgav1)
 
 # Ресемплер и перевод цвета раскладываются по строкам без связей между ними —
 # параллелятся даром. OpenMP берём, ТОЛЬКО если компилятор его даёт: на macOS с

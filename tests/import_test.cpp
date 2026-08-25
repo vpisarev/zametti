@@ -207,42 +207,36 @@ void checkTable(const QString& root) {
     // только если это webp или jpeg, — значит состязаются оба кандидата. На
     // фотографии побеждает lossy, и это правильный исход; важно, что точная
     // версия ВООБЩЕ участвует (прежде эти форматы всегда шли lossy).
-    // СОБРАНО С ПОДДЕРЖКОЙ — ЗНАЧИТ ПРОВЕРЯЕТСЯ (решение владельца): спрашиваем
-    // ЯДРО (heifSupported), а не макрос сборки набора и не Qt. Макрос отвечал
-    // за то, как собран НАБОР, и мог разойтись с тем, как собрано ядро; Qt же
-    // про наш читатель не знает вовсе.
-    std::printf("ядро %s avif и heic\n", zametti::heifSupported() ? "ЧИТАЕТ" : "не читает");
-    if (zametti::heifSupported()) {
-        expectRoute(root, "formats/heif-green-leaf.heif", Route::Photo,
-                    "HEIF: кандидаты состязаются, побеждает lossy", limits);
-        expectRoute(root, "formats/avif-sample.avif", Route::Photo,
-                    "AVIF: то же самое", limits);
-        // И ещё два ряда — те, на которых владелец и споткнулся: обычный avif с
-        // телефона и heic. ПРОБА ОБЯЗАНА ЗНАТЬ РАЗМЕР: раньше его спрашивали у
-        // Qt, который про avif не знает вовсе, — проба выходила пустой, и ввоз
-        // отказывал «формат не поддержан» ещё до нашего декодера, даже в
-        // сборке с WITH_HEIF=ON.
-        for (const char* name : {"один-кадр/8бит-p3.avif", "один-кадр/10бит.heic"}) {
-            const QString path = QDir(root).filePath(QString::fromUtf8(name));
-            if (!QFileInfo::exists(path)) continue;   // корпуса может не быть
-            const zametti::ImageProbe probe = zametti::probeImageFile(path);
-            ZT_TRUE(std::string(name) + ": опознан как картинка", probe.valid());
-            ZT_EQ(std::string(name) + ": формат heif", std::string("heif"),
-                  probe.format.toStdString());
-            ZT_TRUE(std::string(name) + ": размер прочитан до разжатия",
-                    probe.size.width() > 0 && probe.size.height() > 0);
-        }
-        // И ШЛЮЗЫ ОКНА ЗНАЮТ ЭТИ ФОРМАТЫ: по этому списку строится фильтр
-        // файлового диалога, а перетащенное отбирается пробой. Пока оба
-        // спрашивали Qt, avif молча вставлялся ссылкой.
+    // ПРОВЕРЯЕТСЯ ВСЕГДА. Прежде эти ряды стояли под вопросом «а собрано ли
+    // ядро с поддержкой heif», и в сборке по умолчанию молча пропускались.
+    // Декодеры теперь вендорены и есть в любой сборке, спрашивать нечего —
+    // а ветка пропуска, которая не может покраснеть, тестом не является.
+    expectRoute(root, "formats/heif-green-leaf.heif", Route::Photo,
+                "HEIF: кандидаты состязаются, побеждает lossy", limits);
+    expectRoute(root, "formats/avif-sample.avif", Route::Photo,
+                "AVIF: то же самое", limits);
+    // И ещё два ряда — те, на которых владелец и споткнулся: обычный avif с
+    // телефона и heic. ПРОБА ОБЯЗАНА ЗНАТЬ РАЗМЕР: раньше его спрашивали у
+    // Qt, который про avif не знает вовсе, — проба выходила пустой, и ввоз
+    // отказывал «формат не поддержан» ещё до нашего декодера.
+    for (const char* name : {"один-кадр/8бит-p3.avif", "один-кадр/10бит.heic"}) {
+        const QString path = QDir(root).filePath(QString::fromUtf8(name));
+        if (!QFileInfo::exists(path)) continue;   // корпуса может не быть
+        const zametti::ImageProbe probe = zametti::probeImageFile(path);
+        ZT_TRUE(std::string(name) + ": опознан как картинка", probe.valid());
+        ZT_EQ(std::string(name) + ": формат heif", std::string("heif"),
+              probe.format.toStdString());
+        ZT_TRUE(std::string(name) + ": размер прочитан до разжатия",
+                probe.size.width() > 0 && probe.size.height() > 0);
+    }
+    // И ШЛЮЗЫ ОКНА ЗНАЮТ ЭТИ ФОРМАТЫ: по этому списку строится фильтр
+    // файлового диалога, а перетащенное отбирается пробой. Пока оба
+    // спрашивали Qt, avif молча вставлялся ссылкой.
+    {
         const QStringList exts = zametti::readableImageExtensions();
         for (const char* ext : {"avif", "heic", "heif"})
             ZT_TRUE(std::string("расширение ") + ext + " в списке читаемых",
                     exts.contains(QString::fromLatin1(ext)));
-    } else {
-        // Не «файла нет», а «читателя нет»: молчаливый пропуск здесь означал бы,
-        // что поломку читателя мы тоже не заметим.
-        std::printf("ряды HEIF и AVIF пропущены: ядро собрано без WITH_HEIF\n");
     }
 
     // --- ряд «lossy-исходник не получает точную версию» -------------------

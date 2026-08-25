@@ -19,6 +19,7 @@
 #include "settings.h"
 #include "zlogs.h"
 #include "zstorage.h"
+#include "heif_handler.h"
 #include "recompress.h"
 
 #include <QGuiApplication>
@@ -129,6 +130,11 @@ int main(int argc, char** argv) {
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
         qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(argc, argv);
+
+    // Декодеры картинок, которых libheif не знает по рождению (AV1 через
+    // libgav1). ДО первого потока: реестр плагинов libheif — обычный std::set
+    // без замка, а recompress и import читают картинки.
+    zametti::HeifHandler::registerCodecs();
     // ИМЯ ПРИЛОЖЕНИЯ — «zametti», как у окна, и это не косметика: от него
     // считается AppConfigLocation, то есть config.json, логи и БУХГАЛТЕРИЯ
     // синка. Со своим именем утилита читала бы пустой конфиг из
