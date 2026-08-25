@@ -6,13 +6,13 @@
 //   mddump [файл] --check   дифф noteOf(x).toMarkdown() с оригиналом
 
 #include "pieces.h"
+#include "zstorage.h"
 
 #include "test_util.h"
 
 #include <QGuiApplication>
 
 #include <cstdio>
-#include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -44,14 +44,13 @@ int main(int argc, char** argv) {
         ss << std::cin.rdbuf();
         src = ss.str();
     } else {
-        std::ifstream in(path, std::ios::binary);
-        if (!in) {
+        // Через хранилище, а не std::ifstream: узкий поток берёт имя файла в
+        // кодировке ANSI системы, и под Windows путь с кириллицей ему не
+        // открыть. Правило одно на весь проект — файлы читает Qt.
+        if (!zametti::ZStorage::readFileBytes(QString::fromStdString(path), src)) {
             std::fprintf(stderr, "не читается: %s\n", path.c_str());
             return 2;
         }
-        std::ostringstream ss;
-        ss << in.rdbuf();
-        src = ss.str();
     }
 
     std::vector<zametti::Piece> doc = pieces(src);

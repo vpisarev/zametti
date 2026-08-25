@@ -49,22 +49,8 @@
 
 #include <cmath>
 #include <cstdio>
-#include <fstream>
-#include <sstream>
 
 namespace zametti {
-namespace {
-
-bool readFile(const QString& path, std::string& out) {
-    std::ifstream in(path.toStdString(), std::ios::binary);
-    if (!in) return false;
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    out = ss.str();
-    return true;
-}
-
-}  // namespace
 
 NoteEditor::NoteEditor(QWidget* parent) : NoteView(parent) {
     setReadOnly(false);
@@ -715,7 +701,7 @@ bool NoteEditor::openFile(const QString& path, bool takeFocus) {
     save(true, true);   // уходим из заметки: пробуем записать, не спрашивая признак
 
     std::string text;
-    if (!readFile(path, text)) {
+    if (!ZStorage::readFileBytes(path, text)) {
         std::fprintf(stderr, "unreadable: %s\n", path.toUtf8().constData());
         return false;
     }
@@ -824,7 +810,8 @@ void NoteEditor::onFileChanged(const QString& path) {
 
 void NoteEditor::onExternalSettled() {
     std::string text;
-    if (!readFile(note_->path(), text)) return;   // файл унесли: ждём, пока вернётся
+    // файл унесли: ждём, пока вернётся
+    if (!ZStorage::readFileBytes(note_->path(), text)) return;
     const Digest digest = hashOf(text);
     if (digest == note_->digest()) return;   // это мы сами и записали
 
