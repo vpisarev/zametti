@@ -1061,29 +1061,6 @@ bool NoteTreeModel::dropMimeData(const QMimeData* data, Qt::DropAction action, i
 
 Qt::DropActions NoteTreeModel::supportedDropActions() const { return Qt::MoveAction; }
 
-QString NoteTreeModel::rootFor(const QString& filePath, const QString& configuredRoot) {
-    if (!configuredRoot.isEmpty()) {
-        QFileInfo info(QDir::home().filePath(configuredRoot));
-        if (info.isDir()) return info.absoluteFilePath();
-    }
-
-    QDir dir = QFileInfo(filePath).absoluteDir();
-    const QString home = QDir::homePath();
-
-    // Идём вверх, пока путь остаётся внутри домашнего каталога, и запоминаем
-    // самый верхний каталог с меткой хранилища. Так заметка, открытая из
-    // глубины, всё равно показывает дерево целиком.
-    QString best = dir.absolutePath();
-    QDir probe = dir;
-    while (probe.absolutePath().startsWith(home) && probe.absolutePath() != home) {
-        if (probe.exists(QStringLiteral(".zametti")) ||
-            probe.exists(QStringLiteral(".obsidian")) || probe.exists(QStringLiteral(".git")))
-            best = probe.absolutePath();
-        if (!probe.cdUp()) break;
-    }
-    return best;
-}
-
 NoteTreeView::NoteTreeView(QWidget* parent) : QTreeView(parent) {
     // Раз треугольников нет, папка должна раскрываться по обычному щелчку:
     // иначе цели для нажатия не остаётся вовсе.

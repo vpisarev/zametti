@@ -237,12 +237,6 @@ public:
     void setSecondaryPath(const QString& path);
     QString secondaryPath() const { return secondaryPath_; }
 
-    // Где считать корнем дерева. Порядок: заданное в конфиге; иначе ближайший
-    // каталог вверх от заметки, помеченный как хранилище (.obsidian или .git) —
-    // так открытая из глубины заметка всё равно показывает всё дерево; иначе
-    // просто каталог самой заметки.
-    static QString rootFor(const QString& filePath, const QString& configuredRoot);
-
 signals:
     // F2: человек ввёл новый заголовок. Меняется первый заголовок заметки —
     // выполняет главное окно (через редактор, если заметка открыта).

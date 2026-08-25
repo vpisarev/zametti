@@ -148,8 +148,18 @@ int runCheck(const QString& path) {
 }
 
 
+// ОДНОЙ ЗАМЕТКОЙ ПРОГРАММА НЕ ОТКРЫВАЕТСЯ (решение владельца 26.08.2026).
+// Раньше можно было позвать `zametti файл.md`, и корень хранилища выводился
+// подъёмом по каталогам от этого файла. Путь убран целиком: он добавлял
+// сложность (выведение корня, его ловушки с регистром и с хранилищем вне
+// домашнего каталога) и не добавлял ценности — одну заметку правят любым
+// редактором. Программа работает С ХРАНИЛИЩЕМ: его задаёт --root, а дальше он
+// помнится в state.json.
+//
+// Позиционный файл остался ровно у --check: это проверка канона, а не
+// открытие заметки.
 const char* kUsage =
-    "usage: zametti [--noconfig] [file.md]\n"
+    "usage: zametti [--noconfig]\n"
     "       zametti --root store-directory\n"
     "       zametti --check file.md\n"
     "       zametti --dump-config\n"
@@ -305,7 +315,7 @@ int main(int argc, char** argv) {
 
     const QStringList args = commandLineArgs(argc, argv);
 
-    QString path;
+    QString checkFile;   // позиционный аргумент; смысл имеет только с --check
     QString storeRoot;
     bool check = false;
     bool dumpConfig = false;
@@ -328,10 +338,21 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "unknown option: %s\n", arg.toLocal8Bit().constData());
             return 2;
         } else {
-            path = arg;
+            checkFile = arg;
         }
     }
 
+    // Позиционный файл без --check — это бывший режим «открой одну заметку».
+    // Отвечаем внятно, а не молча его игнорируем: человек, набравший старую
+    // команду, должен узнать, чем она заменена, а не смотреть на пустое окно.
+    if (!checkFile.isEmpty() && !check) {
+        std::fprintf(stderr,
+                     "zametti works with a store, not with a single file.\n"
+                     "  open the store:  zametti --root <store-directory>\n"
+                     "  check one file:  zametti --check %s\n",
+                     checkFile.toUtf8().constData());
+        return 2;
+    }
 
     // --dump-config печатает готовый JSON и ни о чём Qt не спрашивает.
     if (dumpConfig) {
@@ -361,7 +382,7 @@ int main(int argc, char** argv) {
     QApplication app(argc, argv);
 
     if (check) {
-        if (path.isEmpty()) {
+        if (checkFile.isEmpty()) {
             printUsage();
             return 2;
         }
@@ -374,7 +395,7 @@ int main(int argc, char** argv) {
     // несколько потоков на плиточной сетке.
     zametti::HeifHandler::registerCodecs();
 
-        return runCheck(path);
+        return runCheck(checkFile);
     }
     // Декодеры картинок, которых libheif не знает по рождению (AV1 через
     // libgav1). ДО первого потока: реестр плагинов libheif — обычный std::set
@@ -422,32 +443,42 @@ int main(int argc, char** argv) {
 
     const zametti::ZAppState& session = zapp.state();
 
-    // Без аргумента открываем то, что читали в прошлый раз. С --root — свежую
-    // заметку хранилища (или прошлую, если она из этого же хранилища).
-    // Хранилище прошлого запуска запоминается: без параметров возвращаемся
-    // в него, ключ --root каждый раз не нужен.
-    if (path.isEmpty()) path = session.lastFile();
-    if (storeRoot.isEmpty() && path.isEmpty() && !session.storeRoot().isEmpty() &&
+    // ЧТО ОТКРЫВАЕМ. Хранилище задаёт --root; без ключа берём то, в котором
+    // работали в прошлый раз, — оно помнится в state.json, и ключ каждый раз не
+    // нужен. Заметку внутри выбираем прошлую (session.lastFile), а если её нет
+    // или она из другого хранилища — свежую, уже после построения дерева.
+    //
+    // Хранилища не нашлось вовсе — говорим, чем его задать. Раньше на этом
+    // месте можно было открыть одну заметку и вывести корень от неё; этот путь
+    // убран (см. kUsage).
+    QString path = session.lastFile();
+    if (storeRoot.isEmpty() && !session.storeRoot().isEmpty() &&
         zametti::NoteTreeModel::isStoreRoot(session.storeRoot()))
         storeRoot = session.storeRoot();
-    if (storeRoot.isEmpty() && !path.isEmpty() && !session.storeRoot().isEmpty() &&
-        QFileInfo(path).absoluteFilePath().startsWith(
-            QFileInfo(session.storeRoot()).absoluteFilePath()) &&
-        zametti::NoteTreeModel::isStoreRoot(session.storeRoot()))
-        storeRoot = session.storeRoot();
-    if (!storeRoot.isEmpty()) {
-        const QString absRoot = QFileInfo(storeRoot).absoluteFilePath();
-        if (!zametti::NoteTreeModel::isStoreRoot(absRoot)) {
-            std::fprintf(stderr, "does not look like a store (no .zametti): %s\n",
-                         absRoot.toUtf8().constData());
-            return 2;
+    // Хранилище из конфига (store.root) — путь ОТНОСИТЕЛЬНО домашнего каталога.
+    // Третьим номером: явный ключ важнее, прошлый сеанс важнее записанного раз
+    // и навсегда. Раньше эту ветку держал NoteTreeModel::rootFor, ушедший
+    // вместе с режимом одной заметки, — а сам ключ конфига остался нужным:
+    // им хранилище задаётся насовсем, без --root при каждом запуске.
+    if (storeRoot.isEmpty()) {
+        const QString configured = zametti::settings().store().notesRoot();
+        if (!configured.isEmpty()) {
+            const QString fromHome = QDir::home().filePath(configured);
+            if (QFileInfo(fromHome).isDir()) storeRoot = fromHome;
         }
-        if (path.isEmpty() || !QFileInfo(path).absoluteFilePath().startsWith(absRoot))
-            path = QString();   // выберем свежую после построения дерева
-    } else if (path.isEmpty()) {
+    }
+    if (storeRoot.isEmpty()) {
         printUsage();
         return 2;
     }
+    const QString absRoot = QFileInfo(storeRoot).absoluteFilePath();
+    if (!zametti::NoteTreeModel::isStoreRoot(absRoot)) {
+        std::fprintf(stderr, "does not look like a store (no .zametti): %s\n",
+                     absRoot.toUtf8().constData());
+        return 2;
+    }
+    if (path.isEmpty() || !QFileInfo(path).absoluteFilePath().startsWith(absRoot))
+        path = QString();   // выберем свежую после построения дерева
 
     QString current = path.isEmpty() ? QString() : QFileInfo(path).absoluteFilePath();
 
@@ -481,10 +512,10 @@ int main(int argc, char** argv) {
 
     // Хранилище открывает объект приложения; левая и средняя колонки — его
     // проекция (NotePanels: дерево папок, список заметок, показ открытой).
-    zametti::NotePanels panels(zapp.openStorage(
-        storeRoot.isEmpty()
-            ? zametti::NoteTreeModel::rootFor(current, zametti::settings().store().notesRoot())
-            : QFileInfo(storeRoot).absoluteFilePath()));
+    // Корень известен всегда: без него мы сюда не доходим. Прежде здесь стоял
+    // NoteTreeModel::rootFor(), выводивший корень подъёмом от открытой заметки, —
+    // вместе с режимом «открой одну заметку» он и ушёл.
+    zametti::NotePanels panels(zapp.openStorage(absRoot));
     zametti::NoteTreeModel& model = panels.model();
     // Синхронизация: контроллер живёт при окне, движок бегает в рабочем
     // потоке; каталог заметок обновляют сторожа хранилища и external-путь
