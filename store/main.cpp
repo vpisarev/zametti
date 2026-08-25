@@ -32,8 +32,12 @@
 #include <iostream>
 #include <string>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <termios.h>
 #include <unistd.h>
+#endif
 
 namespace {
 
@@ -100,6 +104,16 @@ int usage() {
 QString askPassword(const char* prompt) {
     std::fprintf(stderr, "%s", prompt);
     std::fflush(stderr);
+#ifdef _WIN32
+    // У Windows эхо гасится не у файлового описателя, а у КОНСОЛИ: режим
+    // снимается с самого дескриптора ввода, и если ввод перенаправлен (обвязка
+    // наборов, конвейер), GetConsoleMode честно отвечает отказом — это и есть
+    // здешняя проверка «терминал ли».
+    const HANDLE in = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD mode = 0;
+    const bool tty = in != INVALID_HANDLE_VALUE && GetConsoleMode(in, &mode) != 0;
+    if (tty) SetConsoleMode(in, mode & ~DWORD(ENABLE_ECHO_INPUT));
+#else
     termios old{};
     const bool tty = isatty(STDIN_FILENO) != 0 && tcgetattr(STDIN_FILENO, &old) == 0;
     if (tty) {
@@ -107,9 +121,14 @@ QString askPassword(const char* prompt) {
         off.c_lflag &= ~tcflag_t(ECHO);
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &off);
     }
+#endif
     std::string line;
     std::getline(std::cin, line);
+#ifdef _WIN32
+    if (tty) SetConsoleMode(in, mode);
+#else
     if (tty) tcsetattr(STDIN_FILENO, TCSAFLUSH, &old);
+#endif
     std::fprintf(stderr, "\n");
     return QString::fromUtf8(line.data(), qsizetype(line.size()));
 }

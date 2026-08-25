@@ -44,7 +44,12 @@
 #include "lib/jxl/image_bundle.h"
 #include "tools/no_memory_manager.h"
 
+#ifdef Q_OS_LINUX
 #include <sched.h>
+#endif
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -625,6 +630,30 @@ void collect(const QString& path, QStringList* out) {
     }
 }
 
+// Сколько ядер РАЗРЕШЕНО процессу — не сколько их у машины. Разница и есть
+// смысл строки ниже: под taskset (или под маской родства Windows) их меньше, и
+// многопоточные числа тогда мерят не то, что кажется.
+//
+// hardware_concurrency() здесь не годится: он отвечает про машину, а не про
+// маску, и под taskset -c 0 продолжает говорить «16». Ноль — не смогли узнать.
+int coresAvailableToProcess() {
+#if defined(Q_OS_LINUX)
+    cpu_set_t mask;
+    CPU_ZERO(&mask);
+    if (sched_getaffinity(0, sizeof mask, &mask) != 0) return 0;
+    return CPU_COUNT(&mask);
+#elif defined(Q_OS_WIN)
+    DWORD_PTR process = 0;
+    DWORD_PTR system = 0;
+    if (GetProcessAffinityMask(GetCurrentProcess(), &process, &system) == 0) return 0;
+    int count = 0;
+    for (DWORD_PTR bit = process; bit != 0; bit >>= 1) count += int(bit & 1);
+    return count;
+#else
+    return 0;
+#endif
+}
+
 }  // namespace
 
 int ztImageBench(int argc, char** argv) {
@@ -654,9 +683,7 @@ int ztImageBench(int argc, char** argv) {
     // Грабли, на которые я наступил: под taskset -c 0 строка «все ядра» врёт,
     // потому что ядро одно. Однопоточные числа надо брать из прогона ПОД
     // taskset, многопоточное — из прогона без него.
-    cpu_set_t mask;
-    CPU_ZERO(&mask);
-    const int cores = sched_getaffinity(0, sizeof mask, &mask) == 0 ? CPU_COUNT(&mask) : 0;
+    const int cores = coresAvailableToProcess();
     std::printf("\nдоступно ядер процессу: %d%s\n", cores,
                 cores == 1 ? "  → строка «все ядра» здесь бессмысленна, нужен прогон без taskset"
                            : "  → однопоточные строки надо перемерить под taskset -c 0");

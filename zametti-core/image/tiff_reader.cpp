@@ -85,6 +85,21 @@ double decodedBytes(uint32_t w, uint32_t h, bool deep) {
     return double(w) * double(h) * 4.0 * (deep ? 2.0 : 1.0);
 }
 
+// Открытие TIFF по пути. Отдельной функцией на две строки — ради Windows:
+// узкий TIFFOpen читает имя файла в ANSI-кодировке системы, и снимок в папке с
+// кириллицей ему не открыть. Манифест программы объявляет UTF-8 своей
+// ANSI-кодировкой и это чинит (packaging/win/zametti.manifest), но только
+// начиная с Windows 10 1903; широкий TIFFOpenW работает везде и от манифеста
+// не зависит. Два слоя, потому что молчаливый отказ открыть фотографию
+// владельца — не та беда, которую стоит ставить на одну подпорку.
+TIFF* openTiff(const QString& path) {
+#ifdef Q_OS_WIN
+    return TIFFOpenW(reinterpret_cast<const wchar_t*>(path.utf16()), "r");
+#else
+    return TIFFOpen(path.toLocal8Bit().constData(), "r");
+#endif
+}
+
 }  // namespace
 
 bool looksLikeTiff(const QByteArray& head) {
@@ -107,7 +122,7 @@ bool readTiffHeader(const QString& path, TiffHeader* out, QString* error) {
     TIFFSetWarningHandler(tiffWarning);
     g_lastError.clear();
 
-    TIFF* t = TIFFOpen(path.toLocal8Bit().constData(), "r");
+    TIFF* t = openTiff(path);
     if (!t)
         return fail(g_lastError.isEmpty() ? QStringLiteral("file did not open as TIFF")
                                           : g_lastError);
@@ -155,7 +170,7 @@ bool readTiff(const QString& path, TiffImage* out, QString* error, qint64 maxDec
     TIFFSetWarningHandler(tiffWarning);
     g_lastError.clear();
 
-    TIFF* t = TIFFOpen(path.toLocal8Bit().constData(), "r");
+    TIFF* t = openTiff(path);
     if (!t)
         return fail(g_lastError.isEmpty() ? QStringLiteral("file did not open as TIFF")
                                           : g_lastError);
