@@ -167,6 +167,12 @@ add_executable(zametti-tests
 # Qt6::Network — обвязке WebDAV (проба порта) и самому адаптеру.
 target_link_libraries(zametti-tests PRIVATE zametti-ui gtest md4c zstd Qt6::Test
                       Sodium::Sodium Qt6::Network zametti-code-rules)
+# Плагины платформы для статического Qt — см. корневой CMakeLists. Наборам
+# offscreen НУЖЕН БОЛЬШЕ ВСЕХ: main.cpp ставит его сам, когда платформа не
+# задана снаружи. Без этой строки в статической сборке весь набор падал с
+# SIGABRT на QGuiApplication — «Available platform plugins are: xcb», — то
+# есть приёмки у переносимой сборки не было вовсе.
+zametti_import_qt_plugins(zametti-tests)
 target_include_directories(zametti-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 # Пути к корпусам и к каталогу сборки — константами, а не через argv: в одном
 # процессе argv на всех один.
@@ -212,6 +218,7 @@ add_executable(zametti-bench
 # стенды ими же и печатают, что у них сошлось.
 target_link_libraries(zametti-bench PRIVATE zametti-ui gtest Qt6::Test Sodium::Sodium
                       zametti-code-rules)
+zametti_import_qt_plugins(zametti-bench)
 target_include_directories(zametti-bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(zametti-bench PRIVATE
     ZAMETTI_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -223,6 +230,7 @@ target_compile_definitions(zametti-bench PRIVATE
 add_executable(mddump mddump.cpp)
 # gtest — только ради ZT_EQ из общей обвязки; проверок в инструменте нет.
 target_link_libraries(mddump PRIVATE zametti-core gtest zametti-code-rules)
+zametti_import_qt_plugins(mddump)
 
 # --- механический сторож ---------------------------------------------------
 #

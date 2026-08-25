@@ -154,6 +154,9 @@ qt_add_executable(zametti
 
 target_link_libraries(zametti PRIVATE zametti-ui zametti-code-rules)
 
+# Плагины платформы и ввода для статического Qt — см. корневой CMakeLists.
+zametti_import_qt_plugins(zametti)
+
 # Иконку в доке оболочка ищет не у окна, а по .desktop-файлу с именем, которое
 # приложение сообщает через setDesktopFileName. Без установки этих двух файлов
 # док показывает заглушку.

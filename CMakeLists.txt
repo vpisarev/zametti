@@ -151,6 +151,61 @@ if(WITH_STATIC_QT AND Qt6_FOUND AND ZAMETTI_QT_SHARED)
         "  Build Qt with '-static' and provide the path to it via -DCMAKE_PREFIX_PATH.")
 endif()
 
+# --- ПЛАГИНЫ СТАТИЧЕСКОГО Qt ----------------------------------------------
+#
+# У ДИНАМИЧЕСКОГО Qt плагины лежат файлами и подбираются на исполнении: нужен
+# offscreen — нашёлся offscreen, сел человек в Wayland — нашёлся wayland. У
+# СТАТИЧЕСКОГО их надо вписать в компоновку заранее, и вписываются только те,
+# что названы. Автоматика qt_add_executable приносит ОДНУ платформу — ту, что
+# по умолчанию (на Linux xcb), и на этом останавливается.
+#
+# Молчаливость этой пропажи и есть беда. Первая статическая сборка собралась,
+# запустилась, показала окно — и упала с SIGABRT на `--check`: «Available
+# platform plugins are: xcb». А на `offscreen` стоят и режим `--check`, и все
+# до единого наборы. Заодно потерялись бы оба плагина ВВОДА — то есть мёртвые
+# клавиши и методы ввода, чего в заметочнике не заметить нельзя.
+#
+# ПРАВИЛО, по которому собран список: статическая сборка должна вести себя
+# так же, как динамическая. Поэтому берём то, что динамический Qt подхватил бы
+# сам, а не «то, без чего не падает».
+function(zametti_import_qt_plugins target)
+    if(ZAMETTI_QT_SHARED)
+        return()  # динамический Qt найдёт их сам, вписывать нечего
+    endif()
+
+    set(wanted
+        # Платформы. xcb приходит по умолчанию, остальные — только по имени.
+        Qt6::QOffscreenIntegrationPlugin        # --check и ВСЕ наборы
+        Qt6::QMinimalIntegrationPlugin          # запасной аэродром без дисплея
+        Qt6::QWaylandIntegrationPlugin          # родной Wayland вместо XWayland
+        # Без оболочки окна wayland-плагин не создаёт ОКОН вовсе, а без
+        # украшений и EGL остаётся без рамки и без ускорения.
+        Qt6::QWaylandXdgShellIntegrationPlugin
+        Qt6::QWaylandBradientDecorationPlugin
+        Qt6::QWaylandEglClientBufferPlugin
+        # Ввод. compose — мёртвые клавиши и Compose; ibus — методы ввода.
+        Qt6::QComposePlatformInputContextPlugin
+        Qt6::QIbusPlatformInputContextPlugin
+        # Родные диалоги файлов через портал — так же, как с динамическим Qt.
+        Qt6::QXdgDesktopPortalThemePlugin)
+
+    set(found "")
+    foreach(plugin ${wanted})
+        if(TARGET ${plugin})
+            list(APPEND found ${plugin})
+        endif()
+    endforeach()
+
+    # Пусто — значит Qt собран без них; сказать об этом, а не промолчать.
+    if(NOT found)
+        message(WARNING
+            "статический Qt без запрошенных плагинов — режим --check и наборы "
+            "останутся без offscreen и упадут")
+        return()
+    endif()
+    qt_import_plugins(${target} INCLUDE ${found})
+endfunction()
+
 # --- СКОРОСТЬ ОТЛАДОЧНОЙ СБОРКИ (решение владельца) ------------------------
 #
 # Правило владельца: отладку мы гоняем ради СВОИХ ассертов, а не ради чужих.
