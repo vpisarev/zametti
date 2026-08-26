@@ -129,6 +129,7 @@ add_executable(zametti-tests
     note_panels_test.cpp
     open_storage_test.cpp
     info_folder_test.cpp
+    object_keys_test.cpp
     image_edge_test.cpp
     about_test.cpp
     status_bar_test.cpp

@@ -2050,23 +2050,12 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
         // вписывалась прямо в LaTeX.
         const bool prints = !event->text().isEmpty() && event->text().at(0).isPrint() &&
                             (event->modifiers() & ~Qt::ShiftModifier) == Qt::NoModifier;
-        if (where.onObject && prints) {
-            switch (own.kind) {
-                case ObjectKind::Image:
-                    emit importStatus(
-                        QStringLiteral("The image caption is edited with Enter; %1 hides it under the photo")
-                            .arg(settings().editor().toggleTaskKey()));
-                    break;
-                case ObjectKind::Table:
-                    emit importStatus(QStringLiteral("A table is edited with Enter"));
-                    break;
-                default:
-                    emit importStatus(
-                        QStringLiteral("A formula is edited with Enter — same as a table"));
-                    break;
-            }
-            return true;
-        }
+        // НА ОБЪЕКТЕ БУКВА НЕ ДЕЛАЕТ НИЧЕГО — и не говорит ничего тоже (решение
+        // владельца). Проглотили нажатие, и на этом всё: ни правки исходника,
+        // ни сообщений. Прежде здесь шёл совет через importStatus — тот самый
+        // сигнал, которым ввоз запирает окно, — и одна буква на картинке гасила
+        // весь интерфейс навсегда (см. editor_widget.h).
+        if (where.onObject && prints) return true;
         return false;
     }
 
@@ -2095,8 +2084,7 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
             // setImageCaption. У вики-вложения подписи нет — сказать вслух.
             if (own.kind == ObjectKind::Image) {
                 if (editImageCaption(own.first) == nullptr)
-                    emit importStatus(
-                        QStringLiteral("A wiki embed «![[…]]» has no caption"));
+                    emit hint(QStringLiteral("A wiki embed «![[…]]» has no caption"));
                 return true;
             }
             return false;
@@ -2107,13 +2095,13 @@ bool NoteEditor::handleObjectKey(QKeyEvent* event) {
             // (isNonameCaption); то же сочетание снимает знак обратно. У
             // таблицы и формулы подписи нет.
             if (own.kind != ObjectKind::Image) {
-                emit importStatus(QStringLiteral("Only an image has a caption"));
+                emit hint(QStringLiteral("Only an image has a caption"));
                 return true;
             }
             if (!runNoteEdit([](ZDocument& note, QTextCursor& at) {
                     return note.toggleImageCaption(at, QLatin1Char('~'));
                 }))
-                emit importStatus(QStringLiteral("The image has no caption — nothing to hide"));
+                emit hint(QStringLiteral("The image has no caption — nothing to hide"));
             return true;
         }
         case ObjectAction::LineAfter: {

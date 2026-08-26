@@ -839,6 +839,15 @@ int main(int argc, char** argv) {
                          // да/нет), и он перекрывает виджетный.
                          toolbar.QWidget::setEnabled(!locked);
                      });
+    // ПОДСКАЗКА — СКАЗАТЬ И ЗАБЫТЬ, и НИЧЕГО не запирать. Отдельно от
+    // importStatus нарочно: тот запирает окно на время ввоза, и подсказка,
+    // приехавшая по его проводам, гасила интерфейс навсегда (инцидент
+    // 26.08.2026, нашёл владелец: буква на выбранной картинке).
+    QObject::connect(&editor, &zametti::NoteEditor::hint, &window, [&](const QString& text) {
+        statusBar.setMessage(text);
+        if (text.isEmpty()) return;
+        QTimer::singleShot(3000, &statusBar, [&statusBar] { statusBar.setMessage(QString()); });
+    });
     QObject::connect(&editor, &zametti::NoteEditor::fileChanged, &window,
                      [showStats](const QString&) { showStats(); });
     QObject::connect(&editor, &zametti::NoteEditor::fileSaved, &window,
