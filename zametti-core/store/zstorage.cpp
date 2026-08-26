@@ -1327,7 +1327,7 @@ QString ZStorage::rootId() const {
     const QString named = identity().rootNote();
     if (!named.isEmpty() && has(named)) return named;
     // Не назван или назван неверно — ищем по РОЛИ: две записи одного факта, и
-    // расхождение лечится (`zametti-store root fix`), а не роняет программу.
+    // расхождение лечится (`zametti store root fix`), а не роняет программу.
     for (auto it = notes_.constBegin(); it != notes_.constEnd(); ++it)
         if (it.value().root()) return it.key();
     return {};

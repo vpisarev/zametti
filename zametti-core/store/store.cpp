@@ -254,7 +254,7 @@ bool ZStorage::verify(Report& report) {
     }
 
     // ИДЕНТИЧНОСТЬ. Файла может не быть — так выглядит хранилище, заведённое
-    // прежней сборкой; это не беда, а работа для `zametti-store root init`.
+    // прежней сборкой; это не беда, а работа для `zametti store root init`.
     // А вот версия новее нашей — беда: сборка, не знающая половины ключей,
     // перепишет файл без них и потеряет данные молча.
     {
@@ -262,7 +262,7 @@ bool ZStorage::verify(Report& report) {
         const Identity identity = this->identity(&why);
         if (!why.isEmpty()) report.problem(why);
         if (identity.isEmpty() && why.isEmpty())
-            report.note(QStringLiteral("no %1 yet (run: zametti-store root init)")
+            report.note(QStringLiteral("no %1 yet (run: zametti store root init)")
                             .arg(QLatin1String(Identity::kFile)));
         if (identity.tooNew())
             report.problem(QStringLiteral("%1: format version %2 is newer than mine (%3)")
@@ -664,7 +664,7 @@ bool ZStorage::deleteNoteFile(const QString& id, QString* error) {
     //
     // Но полная история после ДВУХ осознанных решений человека (в архив, потом
     // удалить из архива) — мёртвый груз, поэтому надгробие гасит всё, кроме
-    // последнего слепка. Его хватает, чтобы поднять заметку (zametti-store
+    // последнего слепка. Его хватает, чтобы поднять заметку (zametti store
     // resurrect), и гашение адресное — значит и на других устройствах журнал
     // похудеет так же, а не разрастётся обратно объединением.
     QString historyError;

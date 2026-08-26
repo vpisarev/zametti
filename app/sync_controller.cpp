@@ -196,7 +196,7 @@ void SyncController::pushOnExit() {
 
 QString SyncController::statusText() const {
     if (!configured())
-        return QStringLiteral("Sync is not set up — run zametti-store set-remote for this store");
+        return QStringLiteral("Sync is not set up — run zametti store set-remote for this store");
     if (running_) return QStringLiteral("Syncing… click to cancel");
     if (!lastError_.isEmpty()) return QStringLiteral("Sync failed: %1").arg(lastError_);
     if (lastReport_.listed > 0 || lastReport_.materialized > 0)

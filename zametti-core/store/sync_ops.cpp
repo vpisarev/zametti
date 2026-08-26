@@ -320,7 +320,7 @@ bool ZStorage::connectRemote(const RemoteConfig& cfg, const QString& encryptionP
                 *error = QStringLiteral(
                     "the cloud is empty and '%1' is not a store — this looks like a "
                     "mistyped cloud address or local path; to really start a fresh "
-                    "store here, run 'zametti-store init' first")
+                    "store here, run 'zametti store init' first")
                              .arg(root_);
             return finish(false);
         }

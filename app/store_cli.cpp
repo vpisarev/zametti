@@ -1,0 +1,845 @@
+#include "store_cli.h"
+
+#include "folder_remote.h"
+#include "journal.h"
+#include "keyfile.h"
+#include "keyring_secrets.h"
+#include "recompress.h"
+#include "secret_store.h"
+#include "settings.h"
+#include "webdav_remote.h"
+#include "zlogs.h"
+
+#include <QDateTime>
+#include <QDir>
+#include <QFileInfo>
+#include <QLockFile>
+
+#include <cstdio>
+#include <iostream>
+#include <string>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <termios.h>
+#include <unistd.h>
+#endif
+
+namespace zametti {
+
+void StoreCli::printLines(const ZStorage::Report& report) const {
+    for (const QString& line : report.lines)
+        std::printf("%s\n", line.toUtf8().constData());
+}
+
+int StoreCli::usage() const {
+    // В stdout, если справку попросили словами, и в stderr, если это ответ на
+    // ошибку употребления: осознанный вопрос — не беда, и в конвейере его
+    // ответ должен идти туда же, куда весь вывод.
+    const bool asked = command_ == QLatin1String("--help") ||
+                       command_ == QLatin1String("-h") ||
+                       command_ == QLatin1String("help");
+    std::FILE* out = asked ? stdout : stderr;
+    std::fprintf(out,
+                 "usage:\n"
+                 "  zametti store init <dir>\n"
+                 "  zametti store new --root <dir> [--parent <id>]\n"
+                 "  zametti store import --root <dir> --from <srcdir>"
+                 " [--apple-manifest <json>] [--dry-run]\n"
+                 "  zametti store verify --root <dir>\n"
+                 "  zametti store thin --root <dir> [--dry-run]\n"
+                 "  zametti store history compress <id | path to .md> [--root <dir>]\n"
+                 "  zametti store recompress --root <dir> --id <id|all>\n"
+                 "  zametti store resurrect --root <dir> --id <id>\n"
+                 "  zametti store remove --root <dir> --id <id>\n"
+                 "  zametti store archive --root <dir> --id <id> [--restore]\n"
+                 "  zametti store root show|init|fix --root <dir>\n"
+                 "  zametti store push-all --root <dir> --url <webdav-url>\n"
+                 "                         [--user <name>] [--allow-insecure-http]\n"
+                 "                         (or --to <dir> to push into a local folder)\n"
+                 "  zametti store set-remote --root <dir> (--url <webdav-url> | --to <dir>)\n"
+                 "                           [--user <name>] [--allow-insecure-http] [--reset]\n"
+                 "  zametti store sync --root <dir> [--full | --push-only]\n"
+                 "                     [--allow-mass-delete | --keep-all]\n"
+                 "                     [--url <webdav-url> | --to <dir>] [--user <name>]\n"
+                 "\n"
+                 "  sync runs the engine: align, exchange, merge, materialize. The cloud\n"
+                 "  address comes from .zametti/remote.json (set-remote) unless --url or\n"
+                 "  --to overrides it; secrets come from the keyring or the environment.\n"
+                 "  When a run wants to delete more notes than the guard allows it stops,\n"
+                 "  lists them, and asks for an explicit decision: --allow-mass-delete\n"
+                 "  applies the deletions, --keep-all declares the notes alive instead.\n"
+                 "\n"
+                 "  set-remote is the one-time setup: it asks the two passwords (typed,\n"
+                 "  echo off; the encryption password twice when the cloud is fresh),\n"
+                 "  stores the key and the server password in the system keyring and\n"
+                 "  the address in <store>/.zametti/remote.json. --reset forgets both.\n"
+                 "  On a fresh device pointed at an existing cloud it inherits the\n"
+                 "  store identity and the next 'sync' downloads everything.\n"
+                 "\n"
+                 "  push-all encrypts and uploads every journal and attachment; it is\n"
+                 "  the probe ancestor of 'sync' and knows nothing about merging yet.\n"
+                 "  Secrets come from the environment, never from the command line:\n"
+                 "    ZAMETTI_WEBDAV_PASSWORD   the server password\n"
+                 "    ZAMETTI_SYNC_PASSWORD     the encryption password (a new keyfile\n"
+                 "                              is minted when the cloud has none)\n"
+                 "    ZAMETTI_SYNC_KEY          or the master key itself, base64\n"
+                 "\n"
+                 "  recompress has NO default for --id: recompression is irreversible,\n"
+                 "  and one forgotten option must not migrate the whole store.\n"
+                 "  All images only with an explicit '--id all'.\n");
+    return asked ? 0 : 2;
+}
+
+// Пароль с клавиатуры, БЕЗ эха. Кодировка называется явно (урок сессии 3:
+// байты, переходящие границу, читаются как UTF-8, а не «как получится»).
+// Не терминал (обвязка наборов) — просто строка со stdin.
+QString StoreCli::askPassword(const char* prompt) {
+    std::fprintf(stderr, "%s", prompt);
+    std::fflush(stderr);
+#ifdef _WIN32
+    // У Windows эхо гасится не у файлового описателя, а у КОНСОЛИ: режим
+    // снимается с самого дескриптора ввода, и если ввод перенаправлен (обвязка
+    // наборов, конвейер), GetConsoleMode честно отвечает отказом — это и есть
+    // здешняя проверка «терминал ли».
+    const HANDLE in = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD mode = 0;
+    const bool tty = in != INVALID_HANDLE_VALUE && GetConsoleMode(in, &mode) != 0;
+    if (tty) SetConsoleMode(in, mode & ~DWORD(ENABLE_ECHO_INPUT));
+#else
+    termios old{};
+    const bool tty = isatty(STDIN_FILENO) != 0 && tcgetattr(STDIN_FILENO, &old) == 0;
+    if (tty) {
+        termios off = old;
+        off.c_lflag &= ~tcflag_t(ECHO);
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &off);
+    }
+#endif
+    std::string line;
+    std::getline(std::cin, line);
+#ifdef _WIN32
+    if (tty) SetConsoleMode(in, mode);
+#else
+    if (tty) tcsetattr(STDIN_FILENO, TCSAFLUSH, &old);
+#endif
+    std::fprintf(stderr, "\n");
+    return QString::fromUtf8(line.data(), qsizetype(line.size()));
+}
+
+bool StoreCli::parse() {
+    for (qsizetype i = 2; i < args_.size(); ++i) {
+        const QString& a = args_.at(i);
+        const auto next = [&]() -> QString {
+            return i + 1 < args_.size() ? args_.at(++i) : QString();
+        };
+        if (a == QStringLiteral("--root")) root_ = next();
+        else if (a == QStringLiteral("--from")) from_ = next();
+        else if (a == QStringLiteral("--apple-manifest")) manifest_ = next();
+        else if (a == QStringLiteral("--parent")) parent_ = next();
+        else if (a == QStringLiteral("--id")) id_ = next();
+        else if (a == QStringLiteral("--max-size")) maxSize_ = next();
+        else if (a == QStringLiteral("--quality")) quality_ = next();
+        else if (a == QStringLiteral("--dry-run")) dryRun_ = true;
+        else if (a == QStringLiteral("--restore")) restore_ = true;
+        else if (a == QStringLiteral("--url")) url_ = next();
+        else if (a == QStringLiteral("--user")) user_ = next();
+        else if (a == QStringLiteral("--to")) to_ = next();
+        else if (a == QStringLiteral("--allow-insecure-http")) allowInsecure_ = true;
+        else if (a == QStringLiteral("--reset")) reset_ = true;
+        else if (a == QStringLiteral("--full")) pushOnly_ = false;
+        else if (a == QStringLiteral("--push-only")) pushOnly_ = true;
+        else if (a == QStringLiteral("--allow-mass-delete")) allowMassDelete_ = true;
+        else if (a == QStringLiteral("--keep-all")) keepAll_ = true;
+        else if (!a.startsWith(QStringLiteral("--")) && positional_.isEmpty()) positional_ = a;
+        else if (!a.startsWith(QStringLiteral("--")) && positional2_.isEmpty()) positional2_ = a;
+        else return false;
+    }
+    return true;
+}
+
+int StoreCli::run() {
+    if (args_.size() < 2) return usage();
+    command_ = args_.at(1);
+    if (command_ == QLatin1String("--help") || command_ == QLatin1String("-h") ||
+        command_ == QLatin1String("help"))
+        return usage();
+    if (!parse()) return usage();
+
+    if (command_ == QStringLiteral("init")) return cmdInit();
+    if (command_ == QStringLiteral("set-remote")) return cmdSetRemote();
+    if (command_ == QStringLiteral("sync")) return cmdSync();
+    if (command_ == QStringLiteral("push-all")) return cmdPushAll();
+    if (command_ == QStringLiteral("root")) return cmdRoot();
+    if (command_ == QStringLiteral("new")) return cmdNew();
+    if (command_ == QStringLiteral("import")) return cmdImport();
+    if (command_ == QStringLiteral("archive")) return cmdArchive();
+    if (command_ == QStringLiteral("remove")) return cmdRemove();
+    if (command_ == QStringLiteral("resurrect")) return cmdResurrect();
+    if (command_ == QStringLiteral("thin")) return cmdThin();
+    if (command_ == QStringLiteral("history")) return cmdHistory();
+    if (command_ == QStringLiteral("recompress")) return cmdRecompress();
+    if (command_ == QStringLiteral("verify")) return cmdVerify();
+    return usage();
+}
+
+int StoreCli::cmdInit() {
+    if (positional_.isEmpty()) return usage();
+    QString error;
+    if (!ZStorage(positional_).init(&error)) {
+        std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+        return 1;
+    }
+    return 0;
+}
+
+// ПЕРВИЧНАЯ НАСТРОЙКА ОБЛАКА — один раз за жизнь устройства (m17, сессия 4).
+// Два пароля спрашиваются с клавиатуры без эха (или берутся из среды — для
+// обвязки); ключ и пароль сервера ложатся в системный keyring, адрес — в
+// <store>/.zametti/remote.json. Все ветки знакомства с облаком решает
+// ZStorage::connectRemote, здесь только ввод.
+int StoreCli::cmdSetRemote() {
+    if (root_.isEmpty()) return usage();
+    ZStorage storage(root_);
+    // «Не хранилище» здесь НЕ отказ: пустой или несуществующий каталог —
+    // законный вход нового устройства, каркас заведёт connectRemote.
+    // Замок — только у существующего хранилища: в пустом каталоге ещё
+    // нечего охранять, а замку негде жить.
+    if (storage.isStore()) {
+        const ZStorage::LockReport locked = storage.lock();
+        if (!locked.locked) {
+            std::fprintf(stderr, "the store is busy (pid %lld on %s)\n",
+                         static_cast<long long>(locked.holderPid),
+                         locked.holderHost.toUtf8().constData());
+            return 1;
+        }
+    }
+    // Секрет в среде = headless-намерение (обвязка, скрипты): в keyring не
+    // пишем и разблокировку не выбиваем — ключ остаётся в среде вызвавшего.
+    const bool headless = !qEnvironmentVariable("ZAMETTI_SYNC_PASSWORD").isEmpty() ||
+                          !qEnvironmentVariable("ZAMETTI_SYNC_KEY").isEmpty();
+    KeyringSecrets keyring;
+    EnvSecrets envSink;
+    SecretStore& secrets = headless ? static_cast<SecretStore&>(envSink)
+                                    : static_cast<SecretStore&>(keyring);
+    QString error;
+
+    if (reset_) {
+        const ZStorage::Identity identity = storage.identity();
+        if (!identity.isEmpty()) {
+            keyring.clearKey(identity.storeId());
+            keyring.clearServerPassword(identity.storeId());
+        }
+        if (!storage.clearRemoteConfig(&error)) {
+            std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+            return 1;
+        }
+        std::printf("the cloud address and the secrets are forgotten\n");
+        return 0;
+    }
+    if (url_.isEmpty() == to_.isEmpty()) return usage();  // ровно один адрес
+
+    ZStorage::RemoteConfig cfg;
+    if (!to_.isEmpty())
+        cfg.dir = QDir(to_).absolutePath();
+    else
+        cfg.url = url_.endsWith(QLatin1Char('/')) ? url_ : url_ + QLatin1Char('/');
+    cfg.user = user_;
+    cfg.allowInsecureHttp = allowInsecure_;
+
+    QString serverPassword = qEnvironmentVariable("ZAMETTI_WEBDAV_PASSWORD");
+    // Переподключение (тот же адрес после ротации, утраченный конверт):
+    // пароль сервера не спрашивается заново, если он уже в keyring, —
+    // человек вводит только пароль шифрования.
+    if (!cfg.url.isEmpty() && serverPassword.isEmpty() && !headless && keyring.available()) {
+        const ZStorage::Identity mine = storage.identity();
+        if (!mine.isEmpty()) serverPassword = keyring.serverPassword(mine.storeId());
+    }
+    if (!cfg.url.isEmpty() && serverPassword.isEmpty())
+        serverPassword = askPassword("server password: ");
+
+    // Дважды или один раз — зависит от того, есть ли в облаке конверт:
+    // опечатка в пароле при СОЗДАНИИ запечатала бы облако навсегда, а при
+    // развороте существующего она безобидна — конверт просто не откроется.
+    auto probe = storage.makeRemote(cfg, serverPassword, &error);
+    if (!probe) {
+        std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+        return 1;
+    }
+    QByteArray envelope;
+    const bool freshCloud =
+        !probe->get(QLatin1String(Keyfile::kRemoteName), &envelope, nullptr, nullptr);
+    QString password = qEnvironmentVariable("ZAMETTI_SYNC_PASSWORD");
+    if (password.isEmpty()) {
+        password = askPassword(freshCloud ? "new encryption password: "
+                                          : "encryption password: ");
+        if (freshCloud && password != askPassword("repeat the encryption password: ")) {
+            std::fprintf(stderr, "the passwords do not match\n");
+            return 1;
+        }
+    }
+
+    ZStorage::ConnectOutcome outcome;
+    // Статический вход: тот же метод позовёт диалог первичной настройки в
+    // самом zametti (и на Android, где консоли нет).
+    if (!ZStorage::initFromRemote(root_, cfg, password, serverPassword, secrets,
+                                  Keyfile::defaults(), &outcome, &error)) {
+        std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+        return 1;
+    }
+    if (!headless && !keyring.available())
+        std::fprintf(stderr,
+                     "warning: no system keyring — the key is not remembered, and the "
+                     "password will be asked again\n");
+    if (outcome.inheritedIdentity)
+        std::printf("inherited the store identity from the cloud%s; "
+                    "'zametti store sync' will download everything\n",
+                    outcome.rootMaterialized ? " and fetched the root note" : "");
+    if (outcome.mintedKeyfile) std::printf("minted a new keyfile and uploaded it\n");
+    // Сводка одним числом на род — полного перечисления не бывает
+    // (решение владельца): облако может быть большим.
+    if (outcome.cloudNotes > 0 || outcome.cloudAttachments > 0)
+        std::printf("the cloud holds: %d notes, %d attachments, %.1f MB\n",
+                    outcome.cloudNotes, outcome.cloudAttachments,
+                    double(outcome.cloudBytes) / (1024.0 * 1024.0));
+    std::printf("connected: %s\n", (cfg.url.isEmpty() ? cfg.dir : cfg.url).toUtf8().constData());
+    return 0;
+}
+
+// СИНХРОНИЗАЦИЯ — тот же движок, что у окна (m17, сессия 4). push-all
+// остаётся люком замера первой заливки; здесь — полный цикл.
+int StoreCli::cmdSync() {
+    if (root_.isEmpty()) return usage();
+    if (allowMassDelete_ && keepAll_) return usage();
+    ZStorage storage(root_);
+    if (!storage.isStore()) {
+        std::fprintf(stderr, "not a store: %s\n", root_.toUtf8().constData());
+        return 1;
+    }
+    const ZStorage::LockReport locked = storage.lock();
+    if (!locked.locked) {
+        std::fprintf(stderr, "the store is busy (pid %lld on %s)\n",
+                     static_cast<long long>(locked.holderPid),
+                     locked.holderHost.toUtf8().constData());
+        return 1;
+    }
+    QString error;
+    const ZStorage::Identity identity = storage.ensureIdentity(&error);
+    if (identity.isEmpty()) {
+        std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+        return 1;
+    }
+
+    // Адрес: ключи командной строки сильнее remote.json.
+    ZStorage::RemoteConfig cfg;
+    if (!to_.isEmpty() || !url_.isEmpty()) {
+        if (!to_.isEmpty())
+            cfg.dir = QDir(to_).absolutePath();
+        else
+            cfg.url = url_.endsWith(QLatin1Char('/')) ? url_ : url_ + QLatin1Char('/');
+        cfg.user = user_;
+        cfg.allowInsecureHttp = allowInsecure_;
+    } else {
+        cfg = storage.remoteConfig();
+    }
+    if (cfg.isEmpty()) {
+        std::fprintf(stderr, "sync is not configured: run set-remote once, or pass --url/--to\n");
+        return 1;
+    }
+
+    // Пароль сервера и ключ: среда — для обвязки, keyring — для человека,
+    // конверт из облака паролем — последняя дверь.
+    // Секрет в среде = headless-намерение: keyring не трогается вовсе,
+    // иначе скриптовый прогон выбивал бы на экран диалог разблокировки.
+    const bool headless = !qEnvironmentVariable("ZAMETTI_SYNC_PASSWORD").isEmpty() ||
+                          !qEnvironmentVariable("ZAMETTI_SYNC_KEY").isEmpty();
+    KeyringSecrets keyring;
+    EnvSecrets env;
+    QString serverPassword = qEnvironmentVariable("ZAMETTI_WEBDAV_PASSWORD");
+    if (serverPassword.isEmpty() && !cfg.url.isEmpty() && !headless && keyring.available())
+        serverPassword = keyring.serverPassword(identity.storeId());
+    auto remote = storage.makeRemote(cfg, serverPassword, &error);
+    if (!remote) {
+        std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+        return 1;
+    }
+    Keyfile keyfile;
+    if (!env.loadKey(identity.storeId(), &keyfile, nullptr) &&
+        !(!headless && keyring.available() &&
+          keyring.loadKey(identity.storeId(), &keyfile, nullptr))) {
+        const QString password = qEnvironmentVariable("ZAMETTI_SYNC_PASSWORD");
+        QByteArray envelope;
+        if (!password.isEmpty() &&
+            remote->get(QLatin1String(Keyfile::kRemoteName), &envelope, nullptr, nullptr)) {
+            if (!keyfile.parse(envelope, &error) || !keyfile.unwrap(password, &error)) {
+                std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+                return 1;
+            }
+        } else {
+            std::fprintf(stderr,
+                         "no key: run set-remote once, or set ZAMETTI_SYNC_KEY / "
+                         "ZAMETTI_SYNC_PASSWORD\n");
+            return 1;
+        }
+    }
+    if (!storage.setRemote(remote, keyfile, &error)) {
+        std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+        return 1;
+    }
+
+    // Логи — те же, что у окна: настройки из config.json (битый или
+    // отсутствующий конфиг = дефолты, то есть логи выключены).
+    QString cfgWhy;
+    loadSettings(&cfgWhy, nullptr);
+    ZLogs& logs = ZLogs::instance();
+    logs.configure({settings().logs().writeErrLog(), settings().logs().writeSyncLog(),
+                    qint64(settings().logs().logSizeMb()) * 1024 * 1024});
+
+    ZStorage::SyncOptions options;
+    options.mode = pushOnly_ ? ZStorage::SyncOptions::PushOnly : ZStorage::SyncOptions::Full;
+    options.allowMassDelete = allowMassDelete_;
+    options.logs = &logs;
+    ZStorage::SyncReport report;
+    bool ok = storage.sync(options, &report, &error);
+
+    // ОТКАЗ ОТ МАССОВОГО УДАЛЕНИЯ: --keep-all объявляет задержанные
+    // заметки живыми и доделывает прогон — облако лечится записями
+    // поверх надгробий.
+    if (ok && !report.pendingDeletes.isEmpty() && keepAll_) {
+        if (!storage.declareAlive(report.pendingDeletes, &error)) {
+            std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+            return 1;
+        }
+        ok = storage.sync(options, &report, &error);
+    }
+
+    // Числа печатаются в любом случае: половина работы до обрыва — тоже
+    // результат, следующий прогон её достроит.
+    std::printf("align: %d checked, %d baselined, %d external, %d by stat-scan\n",
+                report.dirtyChecked, report.baselined, report.externalRecorded,
+                report.statScanned);
+    std::printf("exchange: %d listed, %d skipped, %d etag-reissued, %d taken, %d pushed, "
+                "%d merged, %d deferred, %d healed, %d corrupt-as-absence\n",
+                report.listed, report.skipped, report.etagReissued, report.takenWhole,
+                report.pushedWhole, report.mergedJournals, report.deferred, report.healedRemote,
+                report.corruptLocalTreatedAsAbsence);
+    std::printf("materialize: %d files, %d deletes; attachments: %d up, %d down\n",
+                report.materialized, report.deletesApplied, report.attachmentsUp,
+                report.attachmentsDown);
+    std::printf("time: align %.1f ms, exchange %.1f ms, materialize %.1f ms\n",
+                report.usAlign / 1000.0, report.usExchange / 1000.0,
+                report.usMaterialize / 1000.0);
+    std::printf("traffic: %lld requests, %lld B up, %lld B down\n",
+                static_cast<long long>(report.traffic.requests),
+                static_cast<long long>(report.traffic.bytesUp),
+                static_cast<long long>(report.traffic.bytesDown));
+    for (const QString& name : report.attachmentConflicts)
+        std::printf("attachment conflict (kept both sides apart): %s\n",
+                    name.toUtf8().constData());
+    if (!report.pendingDeletes.isEmpty()) {
+        std::printf("HELD: this run wants to delete %lld notes:\n",
+                    static_cast<long long>(report.pendingDeletes.size()));
+        for (const QString& held : report.pendingDeletes)
+            std::printf("  %s\n", held.toUtf8().constData());
+        std::printf("decide: rerun with --allow-mass-delete to apply, or --keep-all to "
+                    "declare them alive\n");
+    }
+    if (!ok) {
+        std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+        return 1;
+    }
+    return 0;
+}
+
+// ЗАЛИТЬ ВСЁ В ОБЛАКО — люк разведки (m17). Прародитель `sync`: только
+// исходящее, ни скачиваний, ни слияний. Секреты берутся из среды, а не из
+// командной строки: командная строка видна всей машине (`ps`) и оседает в
+// истории оболочки.
+int StoreCli::cmdPushAll() {
+    if (root_.isEmpty() || (url_.isEmpty() && to_.isEmpty())) return usage();
+    ZStorage storage(root_);
+    if (!storage.isStore()) {
+        std::fprintf(stderr, "not a store: %s\n", root_.toUtf8().constData());
+        return 1;
+    }
+    const ZStorage::LockReport locked = storage.lock();
+    if (!locked.locked) {
+        std::fprintf(stderr, "the store is busy (pid %lld on %s)\n",
+                     static_cast<long long>(locked.holderPid),
+                     locked.holderHost.toUtf8().constData());
+        return 1;
+    }
+    QString error;
+    const ZStorage::Identity identity = storage.ensureIdentity(&error);
+    if (identity.isEmpty()) {
+        std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+        return 1;
+    }
+
+    // Адаптер: настоящий WebDAV или локальный каталог (замеры и наборы —
+    // тот же путь без сети).
+    std::shared_ptr<RemoteStore> remote;
+    if (!to_.isEmpty()) {
+        remote = std::make_shared<FolderRemote>(to_);
+    } else {
+        WebDavRemote::Config config;
+        config.base = QUrl(url_.endsWith(QLatin1Char('/')) ? url_ : url_ + QLatin1Char('/'));
+        config.user = user_;
+        config.password = qEnvironmentVariable("ZAMETTI_WEBDAV_PASSWORD");
+        config.allowInsecureHttp = allowInsecure_;
+        if (!WebDavRemote::checkUrl(config, &error)) {
+            std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+            return 1;
+        }
+        remote = std::make_shared<WebDavRemote>(config);
+    }
+
+    // Ключ. Готовый — из среды; иначе разворачиваем конверт с сервера
+    // паролем, а если конверта нет — чеканим новый ключ и заливаем его.
+    EnvSecrets secrets;
+    Keyfile keyfile;
+    const QString password = qEnvironmentVariable("ZAMETTI_SYNC_PASSWORD");
+    if (secrets.loadKey(identity.storeId(), &keyfile, nullptr)) {
+        // ключ пришёл из среды — конверта нет и не нужно
+    } else if (password.isEmpty()) {
+        std::fprintf(stderr, "no key: set ZAMETTI_SYNC_KEY or ZAMETTI_SYNC_PASSWORD\n");
+        return 1;
+    } else {
+        QByteArray envelope;
+        if (remote->get(QLatin1String(Keyfile::kRemoteName), &envelope, nullptr, nullptr)) {
+            if (!keyfile.parse(envelope, &error) || !keyfile.unwrap(password, &error)) {
+                std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+                return 1;
+            }
+        } else {
+            std::fprintf(stderr, "the cloud has no keyfile yet — minting one\n");
+            if (!Keyfile::create(identity.storeId(), password, Keyfile::defaults(), &keyfile,
+                                 &error)) {
+                std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+                return 1;
+            }
+            if (!remote->mkdirOnce(&error) ||
+                !remote->put(QLatin1String(Keyfile::kRemoteName), keyfile.toBytes(), nullptr,
+                             &error)) {
+                std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+                return 1;
+            }
+        }
+    }
+
+    if (!storage.setRemote(remote, keyfile, &error)) {
+        std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+        return 1;
+    }
+    ZStorage::PushReport report;
+    const bool ok = storage.pushAll(&report, &error);
+    // Числа печатаются в любом случае: половина работы, сделанная до
+    // обрыва, — тоже результат, и следующий прогон её достроит.
+    std::printf("baselined %d, journals %d, attachments %d\n", report.baselined, report.journals,
+                report.attachments);
+    std::printf("plaintext %lld B, ciphertext %lld B (overhead %lld B)\n",
+                static_cast<long long>(report.plainBytes),
+                static_cast<long long>(report.sealedBytes),
+                static_cast<long long>(report.sealedBytes - report.plainBytes));
+    std::printf("time: baseline %.1f ms, seal %.1f ms, upload %.1f ms\n",
+                report.usBaseline / 1000.0, report.usSeal / 1000.0, report.usPut / 1000.0);
+    const RemoteStore::Traffic& traffic = remote->traffic();
+    std::printf("traffic: %lld requests, %lld B up, %lld B down\n",
+                static_cast<long long>(traffic.requests),
+                static_cast<long long>(traffic.bytesUp),
+                static_cast<long long>(traffic.bytesDown));
+    if (!ok) {
+        std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+        return 1;
+    }
+    return 0;
+}
+
+// КОРНЕВАЯ ЗАМЕТКА: посмотреть, завести, вылечить расхождение. Он же
+// тестовый люк: адрес в zametti.json и роль в шапке — две независимые
+// записи одного факта, и разъехаться они могут (файл приехал с другой
+// машины, шапку правили руками).
+int StoreCli::cmdRoot() {
+    if (root_.isEmpty() || positional_.isEmpty()) return usage();
+    ZStorage storage(root_);
+    if (!storage.isStore()) {
+        std::fprintf(stderr, "not a store: %s\n", root_.toUtf8().constData());
+        return 1;
+    }
+    storage.reload();
+    QString error;
+    const auto show = [&storage] {
+        const ZStorage::Identity identity = storage.identity();
+        const QString byRole = storage.rootId();
+        std::printf("storeId:      %s\n", identity.storeId().isEmpty()
+                                              ? "(none)"
+                                              : identity.storeId().toUtf8().constData());
+        std::printf("format:       %d\n", identity.formatVersion());
+        std::printf("created:      %s\n", identity.created().toUtf8().constData());
+        std::printf("rootNote:     %s\n", identity.rootNote().isEmpty()
+                                              ? "(none)"
+                                              : identity.rootNote().toUtf8().constData());
+        std::printf("by role:      %s\n",
+                    byRole.isEmpty() ? "(none)" : byRole.toUtf8().constData());
+        if (!byRole.isEmpty())
+            std::printf("store name:   %s\n", storage.titleOf(byRole).toUtf8().constData());
+        if (identity.rootNote() != byRole)
+            std::printf("MISMATCH: the json and the role disagree (run: root fix)\n");
+    };
+
+    if (positional_ == QStringLiteral("show")) {
+        show();
+        return 0;
+    }
+    if (positional_ == QStringLiteral("init") || positional_ == QStringLiteral("fix")) {
+        // Одно и то же действие с разных сторон: init заводит, если нет;
+        // fix называет в json тот корень, который нашёлся по роли. Обе
+        // дороги ведут в ensureRootNote — параллельной реализации нет.
+        const QString made = storage.ensureRootNote(&error);
+        if (made.isEmpty()) {
+            std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+            return 1;
+        }
+        show();
+        return 0;
+    }
+    return usage();
+}
+
+int StoreCli::cmdNew() {
+    if (root_.isEmpty()) return usage();
+    ZStorage storage(root_);
+    if (!storage.isStore()) {
+        std::fprintf(stderr, "not a store: %s\n", root_.toUtf8().constData());
+        return 1;
+    }
+    storage.reload();
+    // Названный родитель обязан существовать: окно уводит несуществующего
+    // родителя в корень молча (правило владельца для Ctrl+N), а утилите с
+    // явным --parent молчать нельзя — опечатка в id должна быть видна.
+    if (!parent_.isEmpty() && !storage.has(parent_)) {
+        std::fprintf(stderr, "parent is not in the store: %s\n", parent_.toUtf8().constData());
+        return 1;
+    }
+    QString error;
+    const QString made = storage.createNote(parent_, false, &error);
+    if (made.isEmpty()) {
+        std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+        return 1;
+    }
+    std::printf("%s\n", storage.pathOf(made).toUtf8().constData());
+    return 0;
+}
+
+int StoreCli::cmdImport() {
+    if (root_.isEmpty() || from_.isEmpty()) return usage();
+    ZStorage::ImportOptions options;
+    options.from = from_;
+    options.appleManifest = manifest_;
+    options.dryRun = dryRun_;
+    ZStorage::Report report;
+    const bool ok = ZStorage(root_).importTree(options, report);
+    printLines(report);
+    return ok ? 0 : 1;
+}
+
+// УБРАТЬ В АРХИВ И ВЕРНУТЬ ОТТУДА. Тем же путём, что окно: хранилище
+// знает про папки с содержимым, про пометку и про запись в журнал. Нужно
+// и человеку (скрипты), и наборам приёмки: воспроизвести жалобу владельца
+// без окна иначе нечем.
+int StoreCli::cmdArchive() {
+    if (root_.isEmpty() || id_.isEmpty()) return usage();
+    QLockFile lock(ZStorage(root_).lockPath());
+    if (!lock.tryLock(0)) {
+        std::fprintf(stderr, "store is busy: the app seems to be open.\n");
+        return 1;
+    }
+    ZStorage storage(root_);
+    storage.reload();
+    QStringList failed;
+    const bool back = restore_;
+    const bool ok = back ? storage.restore(id_, &failed)
+                         : storage.archive(id_, ZJournal::Rules{}, &failed);
+    if (!ok || !failed.isEmpty()) {
+        std::fprintf(stderr, "%s\n", failed.join(QLatin1Char('\n')).toUtf8().constData());
+        return 1;
+    }
+    std::printf("%s %s\n", id_.toUtf8().constData(), back ? "is back" : "is archived");
+    return 0;
+}
+
+// УДАЛИТЬ НАСОВСЕМ — штатным глаголом хранилища: надгробие в журнал,
+// файл в мусорку ОС, у папки — поддерево. Зеркало resurrect и тестовый
+// люк сценариев синка.
+int StoreCli::cmdRemove() {
+    if (root_.isEmpty() || id_.isEmpty()) return usage();
+    ZStorage storage(root_);
+    if (!storage.isStore()) {
+        std::fprintf(stderr, "not a store: %s\n", root_.toUtf8().constData());
+        return 1;
+    }
+    QString error;
+    storage.reload();
+    if (!storage.remove(id_, ImportLimits(), &error)) {
+        std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+        return 1;
+    }
+    return 0;
+}
+
+// ПОДНЯТЬ УДАЛЁННУЮ ЗАМЕТКУ. Удаление насовсем — второе осознанное решение
+// подряд, поэтому в окне такой команды нет и не будет: это работа с
+// журналом, а не с деревом заметок. Заметка возвращается В АРХИВ, как и
+// лежала, с посмертными (уменьшенными) картинками.
+int StoreCli::cmdResurrect() {
+    if (root_.isEmpty() || id_.isEmpty()) return usage();
+    QLockFile lock(ZStorage(root_).lockPath());
+    if (!lock.tryLock(0)) {
+        std::fprintf(stderr, "store is busy: the app seems to be open.\n");
+        return 1;
+    }
+    QString error;
+    if (!ZStorage(root_).resurrect(id_, &error)) {
+        std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+        return 1;
+    }
+    if (!error.isEmpty()) std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+    std::printf("%s is back in the archive\n", id_.toUtf8().constData());
+    return 0;
+}
+
+// Прореживание журналов. Отдельной командой, а не только фоном при старте:
+// владелец должен уметь прогнать его руками и увидеть, что именно уйдёт.
+int StoreCli::cmdThin() {
+    if (root_.isEmpty()) return usage();
+    // Межпроцессный замок: пока открыта программа, прореживание руками не
+    // запускается. Внутрипроцессный замок журнала от чужого процесса не
+    // бережёт, а ставить файловый на каждую запись — 4.4 мс на ровном месте.
+    QLockFile lock(ZStorage(root_).lockPath());
+    if (!lock.tryLock(0)) {
+        // Различаем два разных отказа: замок держат — и замок не завести
+        // вовсе. Второе случается на каталоге, который хранилищем не
+        // является, и списывать это на занятость было бы враньём.
+        if (lock.error() == QLockFile::LockFailedError)
+            std::fprintf(stderr, "store is busy: the app seems to be open. "
+                                 "Thinning runs in the background at app startup.\n");
+        else
+            std::fprintf(stderr, "cannot take the store lock: %s\n",
+                         ZStorage(root_).lockPath().toUtf8().constData());
+        return 1;
+    }
+    ZStorage storage(root_);
+    const ZJournal::ThinReport report =
+        storage.thinAllJournals(QDateTime::currentMSecsSinceEpoch(), dryRun_);
+    for (const QString& name : report.trimmed)
+        std::printf("%s: truncated tail cut off\n", name.toUtf8().constData());
+    for (const QString& line : report.problems)
+        std::fprintf(stderr, "PROBLEM: %s\n", line.toUtf8().constData());
+    std::printf("journals %d, records %lld -> %lld", report.journals,
+                (long long)report.recordsBefore, (long long)report.recordsAfter);
+    if (!dryRun_)
+        std::printf(", bytes %lld -> %lld", (long long)report.bytesBefore,
+                    (long long)report.bytesAfter);
+    std::printf("%s\n", dryRun_ ? " (dry run)" : "");
+    return report.problems.isEmpty() ? 0 : 1;
+}
+
+// ТЕСТОВЫЙ ЛЮК. Существует ровно для того, чтобы гонять миграцию без UI:
+// форсирует ТУ ЖЕ функцию, что зовут автосохранение и вход в историю, а не
+// параллельную реализацию «как бы того же самого».
+//
+// Штатного пути чистить историю руками у человека нет и не будет: чистка
+// ленивая и пер-заметочная (решение владельца).
+int StoreCli::cmdHistory() {
+    if (positional_ != QStringLiteral("compress") || positional2_.isEmpty()) return usage();
+    // Цель — id или путь к файлу заметки. По пути хранилище видно само;
+    // голому id нужен --root.
+    QString noteId = positional2_;
+    QString target = root_;
+    if (positional2_.endsWith(QStringLiteral(".md"))) {
+        const QFileInfo info(positional2_);
+        noteId = info.completeBaseName();
+        if (target.isEmpty()) target = info.absolutePath();
+    }
+    if (target.isEmpty()) {
+        std::fprintf(stderr, "no store given: need --root or a path to .md\n");
+        return 1;
+    }
+
+    // Тот же межпроцессный замок, что у thin: пока открыта программа,
+    // журналы правит она.
+    QLockFile lock(ZStorage(target).lockPath());
+    if (!lock.tryLock(0)) {
+        // Занято и «замок негде завести» — разные беды, и валить вторую на
+        // первую значит врать: чаще всего это просто не хранилище.
+        if (lock.error() == QLockFile::LockFailedError)
+            std::fprintf(stderr, "store is busy: the app seems to be open\n");
+        else
+            std::fprintf(stderr, "cannot take the store lock: %s\n",
+                         ZStorage(target).lockPath().toUtf8().constData());
+        return 1;
+    }
+
+    ZStorage storage(target);
+    ZStorage::CompressReport report;
+    QString error;
+    // force: люк на то и люк, чтобы прогонять чистку и по уже чищеному
+    // журналу — так проверяется идемпотентность.
+    if (!storage.compressJournal(noteId, {}, true, &report, &error)) {
+        std::fprintf(stderr, "%s\n", error.toUtf8().constData());
+        return 1;
+    }
+    const auto name = [](const QString& v) {
+        return v.isEmpty() ? QStringLiteral("0 (not cleaned)") : v;
+    };
+    std::printf("%s: version %s -> %s\n", noteId.toUtf8().constData(),
+                name(report.versionBefore).toUtf8().constData(),
+                name(report.versionAfter).toUtf8().constData());
+    std::printf("records %d -> %d (duplicates %d, merged %d)%s\n", report.recordsBefore,
+                report.recordsAfter, report.duplicates, report.merged,
+                report.rewritten ? "" : "; file untouched");
+    return 0;
+}
+
+// Пережатие вложений. Числа берутся из ключей, а не из конфига программы:
+// утилита должна уметь то, чего в конфиге нет, — например прогнать с другим
+// качеством и сравнить глазами.
+int StoreCli::cmdRecompress() {
+    if (root_.isEmpty()) return usage();
+    RecompressOptions options;
+    options.root = root_;
+    options.id = id_;
+    options.dryRun = dryRun_;
+    bool bad = false;
+    if (!maxSize_.isEmpty()) options.limits.maxSize = maxSize_.toInt(&bad), bad = !bad;
+    if (!bad && !quality_.isEmpty()) options.limits.quality = quality_.toInt(&bad), bad = !bad;
+    if (bad) {
+        std::fprintf(stderr, "bad number in options\n");
+        return 1;
+    }
+
+    RecompressReport report;
+    const bool ok = recompressStore(options, report);
+    for (const QString& line : report.lines)
+        std::printf("%s\n", line.toUtf8().constData());
+    for (const QString& p : report.problems)
+        std::fprintf(stderr, "%s\n", p.toUtf8().constData());
+    if (report.examined > 0) {
+        std::printf("\nexamined %d, rewritten %d, left as is %d, failed %d\n", report.examined,
+                    report.rewritten, report.untouched, report.failed);
+        std::printf("was %.1f MB, now %.1f MB\n", double(report.bytesBefore) / 1048576.0,
+                    double(report.bytesAfter) / 1048576.0);
+        if (dryRun_) std::printf("(dry run, nothing written)\n");
+    }
+    return ok ? 0 : 1;
+}
+
+int StoreCli::cmdVerify() {
+    if (root_.isEmpty()) return usage();
+    ZStorage::Report report;
+    const bool ok = ZStorage(root_).verify(report);
+    printLines(report);
+    return ok ? 0 : 1;
+}
+
+}  // namespace zametti

@@ -150,6 +150,11 @@ target_link_libraries(zametti-ui PRIVATE zametti-code-rules)
 # (см. zametti-core/image/image_read.h), и реестр Qt в этом не участвует.
 qt_add_executable(zametti
     main.cpp
+    # Командный вид хранилища — `zametti store …`, бывшая программа
+    # zametti-store. ЗДЕСЬ, а не в zametti-ui: это командное лицо самой
+    # программы, а не слой окна, и виджетов оно не знает вовсе.
+    store_cli.h
+    store_cli.cpp
 )
 
 target_link_libraries(zametti PRIVATE zametti-ui zametti-code-rules)

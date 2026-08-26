@@ -258,7 +258,7 @@ add_test(NAME core-without-widgets
 # делается методами заметки — см. правило в CLAUDE.md.
 add_test(NAME document-only-for-showing
          COMMAND ${CMAKE_COMMAND}
-                 "-DSOURCE_DIRS=${CMAKE_SOURCE_DIR}/zametti-core;${CMAKE_SOURCE_DIR}/app;${CMAKE_SOURCE_DIR}/store;${CMAKE_CURRENT_SOURCE_DIR}"
+                 "-DSOURCE_DIRS=${CMAKE_SOURCE_DIR}/zametti-core;${CMAKE_SOURCE_DIR}/app;${CMAKE_CURRENT_SOURCE_DIR}"
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/get_document_check.cmake)
 
 # ПАДЕНИЙ НЕ БЫВАЕТ. НИКОГДА (правило владельца в CLAUDE.md).

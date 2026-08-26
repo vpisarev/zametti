@@ -466,7 +466,7 @@ public:
     // этому хранилищу, а role сделал бы из заметки папку.
     QString importNote(const QString& parentId, const QString& sourcePath, QString* error);
 
-    // --- ВВОЗ ДЕРЕВА И ПРОВЕРКА (zametti-store import / verify) ---------------
+    // --- ВВОЗ ДЕРЕВА И ПРОВЕРКА (zametti store import / verify) ---------------
     struct ImportOptions {
         QString from;
         QString appleManifest;   // пусто — манифеста нет
@@ -519,7 +519,7 @@ public:
     // файл уходит в корзину ОС, а причина остаётся в error.
     bool retireAttachment(const QString& name, const ImportLimits& limits, QString* error);
 
-    // ПОДНЯТЬ УДАЛЁННУЮ ЗАМЕТКУ из её журнала (zametti-store resurrect).
+    // ПОДНЯТЬ УДАЛЁННУЮ ЗАМЕТКУ из её журнала (zametti store resurrect).
     // После удаления насовсем остаются последний слепок и надгробие — этого
     // хватает, чтобы заметку вернуть. ВОЗВРАЩАЕТСЯ В АРХИВ, как и лежала:
     // отменяется ровно одно решение из двух; доставать ли из архива, человек
@@ -535,7 +535,7 @@ public:
     // НАПОЛНЯЕТСЯ ею.
     //
     // Адрес корня живёт в zametti.json; роль в шапке — вторая, независимая
-    // запись того же факта, и `zametti-store root fix` лечит их расхождение.
+    // запись того же факта, и `zametti store root fix` лечит их расхождение.
 
     // id корневой заметки; пусто — её ещё нет. Спрашивается у идентичности, а
     // если там пусто — ищется по роли в каталоге.

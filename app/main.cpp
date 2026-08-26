@@ -36,6 +36,7 @@
 #include "export_note.h"
 #include "export_pdf.h"
 #include "status_bar.h"
+#include "store_cli.h"
 #include "pending_deletes_dialog.h"
 #include "secret_store.h"
 #include "sync_controller.h"
@@ -43,6 +44,7 @@
 #include "zapp.h"
 
 #include <QApplication>
+#include <QGuiApplication>
 #include <QFileInfo>
 #include <QFont>
 #include <QIcon>
@@ -163,7 +165,8 @@ const char* kUsage =
     "       zametti --root store-directory\n"
     "       zametti --check file.md\n"
     "       zametti --dump-config\n"
-    "       zametti --root store-directory --unlock\n";
+    "       zametti --root store-directory --unlock\n"
+    "       zametti store <command> ...   (see: zametti store --help)\n";
 
 void printUsage() { std::fputs(kUsage, stderr); }
 
@@ -200,6 +203,11 @@ void printHelp() {
         "                    value, in the same form the config expects\n"
         "  --noconfig        skip the config, use defaults\n"
         "  --help, -h        this help\n"
+        "\n"
+        "Store from the command line:\n"
+        "  zametti store <command> ...\n"
+        "                    verify, thin, import, recompress, sync and the rest;\n"
+        "                    the full list is in: zametti store --help\n"
         "\n"
         "Keys:\n"
         "  Ctrl+=, Ctrl+-    zoom in, zoom out\n"
@@ -314,6 +322,29 @@ int main(int argc, char** argv) {
     QCoreApplication::setApplicationName(QStringLiteral("zametti"));
 
     const QStringList args = commandLineArgs(argc, argv);
+
+    // ПОДКОМАНДА `store` — командный вид хранилища (бывшая программа
+    // zametti-store, слита сюда 26.08.2026 решением владельца).
+    //
+    // Разбирается ДО цикла ключей: у утилиты свои ключи (--from, --id,
+    // --apple-manifest), и в общем цикле они уткнулись бы в «unknown option».
+    //
+    // Дисплея ей не нужно, а QtGui нужен: ядро строит живой QTextDocument, и
+    // QGuiApplication без платформенного плагина не стартует вовсе. Заданную
+    // снаружи платформу не перебиваем — тот же приём, что у --check ниже.
+    // Виджеты здесь не создаются: QGuiApplication, а не QApplication.
+    if (args.size() > 1 && args.at(1) == QLatin1String("store")) {
+        if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
+            qputenv("QT_QPA_PLATFORM", "offscreen");
+        QGuiApplication storeApp(argc, argv);
+        // Декодеры картинок, которых libheif не знает по рождению (AV1 через
+        // libgav1). ДО первого потока: реестр плагинов libheif — обычный
+        // std::set без замка, а recompress и import читают картинки.
+        zametti::HeifHandler::registerCodecs();
+        QStringList storeArgs = args;
+        storeArgs.removeAt(1);
+        return zametti::StoreCli(storeArgs).run();
+    }
 
     QString checkFile;   // позиционный аргумент; смысл имеет только с --check
     QString storeRoot;

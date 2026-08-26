@@ -329,7 +329,6 @@ endif()
 
 add_subdirectory(3rdparty/microtex)
 add_subdirectory(zametti-core)
-add_subdirectory(store)
 add_subdirectory(app)
 add_subdirectory(tests)
 

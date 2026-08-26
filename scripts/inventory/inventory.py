@@ -2,9 +2,9 @@
 # ИНВЕНТАРИЗАЦИЯ КОДА: что в программе не используется. См. README.md рядом.
 #
 # Три прохода одним clangd (свой индекс, см. lsp.py):
-#   closure — замыкание живого в zametti-core от корней app/ и store/ → closure.json
+#   closure — замыкание живого в zametti-core от корней app/ → closure.json
 #   macros  — поля ZM_SETTING* (settings.h, app_state.h): текст как фильтр + goToDefinition → macros.json
-#   locals  — функции/методы во всех наших .cpp/.h (app, store, tests, core) с числом ссылок → locals.json
+#   locals  — функции/методы во всех наших .cpp/.h (app, tests, core) с числом ссылок → locals.json
 import sys, os, glob, re, json, collections, time
 # Корень репозитория — на два каталога выше scripts/inventory.
 os.chdir(os.environ.get('ZAMETTI_ROOT',
@@ -57,7 +57,7 @@ if 'closure' in modes:
             c.open(n['file']); cur = n['file']
         for r in c.refs(n['file'], n['line'], n['col']):
             f = c.rel(r['uri']); L = r['range']['start']['line']; C = r['range']['start']['character']
-            if f.startswith(('app/', 'store/')): root_refs[n['id']].append(f'{f}:{L+1}')
+            if f.startswith('app/'): root_refs[n['id']].append(f'{f}:{L+1}')
             elif f.startswith('tests/'): test_refs[n['id']].append(f'{f}:{L+1}')
             elif f.startswith('zametti-core/'):
                 e = enclosing(f, L, C)
@@ -117,7 +117,7 @@ if 'macros' in modes:
             m = re.match(r'\s*ZM_SETTING\w*\(\s*[^,]+,\s*(\w+)\s*,\s*(\w+)\s*,', line)
             if m:
                 for g in (m.group(1), 'set' + m.group(2), m.group(1) + 'Min', m.group(1) + 'Max'): names[g] = (h, i + 1, m.group(1))
-    files = sorted(glob.glob('zametti-core/*/*.[ch]*') + glob.glob('app/*.[ch]*') + glob.glob('store/*.cpp') + glob.glob('tests/*.[ch]*'))
+    files = sorted(glob.glob('zametti-core/*/*.[ch]*') + glob.glob('app/*.[ch]*') + glob.glob('tests/*.[ch]*'))
     ident = re.compile(r'[A-Za-z_]\w*'); byfile = collections.defaultdict(list)
     for f in files:
         if f in HEADERS: continue
@@ -130,7 +130,7 @@ if 'macros' in modes:
         c.open(f)
         for (n, l, col) in byfile[f]:
             if names[n][0] in c.definition(f, l, col):
-                conf[n]['app' if f.startswith(('app/', 'store/')) else 'tests' if f.startswith('tests/') else 'core'].add(f)
+                conf[n]['app' if f.startswith('app/') else 'tests' if f.startswith('tests/') else 'core'].add(f)
             else: conf[n]['unconfirmed'].append(f'{f}:{l+1}')
         c.close(f)
     rows = []
@@ -144,7 +144,7 @@ if 'macros' in modes:
 
 # ------------------------------------------------------------------ locals
 if 'locals' in modes:
-    files = sorted(glob.glob('app/*.cpp') + glob.glob('app/*.h') + glob.glob('store/*.cpp') + glob.glob('tests/*.cpp') + glob.glob('tests/*.h')
+    files = sorted(glob.glob('app/*.cpp') + glob.glob('app/*.h') + glob.glob('tests/*.cpp') + glob.glob('tests/*.h')
                    + glob.glob('zametti-core/*/*.cpp'))
     out = []
     for f in files:

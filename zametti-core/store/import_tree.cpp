@@ -1,4 +1,4 @@
-// ZStorage::importTree — ввоз дерева чужих .md (zametti-store import).
+// ZStorage::importTree — ввоз дерева чужих .md (zametti store import).
 //
 // Отдельный файл: это единственная часть хранилища, которая зовёт внешние
 // утилиты (cwebp, heif-convert, exiftool) и знает про манифест Apple Notes и
