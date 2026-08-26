@@ -277,6 +277,23 @@ add_test(NAME canon-without-display
 set_tests_properties(canon-without-display PROPERTIES
                      ENVIRONMENT "QT_QPA_PLATFORM=;WAYLAND_DISPLAY=;DISPLAY=")
 
+# КОМАНДНЫЙ ВИД ХРАНИЛИЩА — `zametti store …`.
+#
+# Юнит-тесты зовут ZStorage напрямую и потому не видят ни диспетчера
+# подкоманды, ни разбора ключей, ни кодов возврата. До слияния программ
+# (26.08.2026) командный режим не был покрыт ни одним тестом-процессом вовсе;
+# теперь он живёт внутри самой программы, и молчаливая пропажа задела бы её.
+#
+# Окружение — как у canon-without-display: платформу и дисплей гасим, чтобы
+# проверялась сама программа, а не переменная среды. XDG_CONFIG_HOME уводится
+# в каталог сборки: наборы не читают конфиг владельца и не пишут в него.
+add_test(NAME store-subcommand
+         COMMAND ${CMAKE_COMMAND} -DZAMETTI=$<TARGET_FILE:zametti>
+                 -DWORK=${CMAKE_CURRENT_BINARY_DIR}/store-cli
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/store_cli_check.cmake)
+set_tests_properties(store-subcommand PROPERTIES
+                     ENVIRONMENT "QT_QPA_PLATFORM=;WAYLAND_DISPLAY=;DISPLAY=;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/store-cli-config")
+
 # При СТАТИЧЕСКОМ Qt исполняемому файлу нужен ещё и плагин платформы, а вписать
 # его в компоновку должен кто-то знающий. Знает Qt.
 if(Qt6_FOUND AND NOT ZAMETTI_QT_SHARED)
