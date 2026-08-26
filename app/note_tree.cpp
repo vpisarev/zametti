@@ -419,6 +419,35 @@ NoteTreeModel::NoteTreeModel(std::shared_ptr<ZStorage> storage, QObject* parent)
     connect(storage_.get(), &ZStorage::noteChanged, this, &NoteTreeModel::refreshRow);
 }
 
+void NoteTreeModel::setStorage(std::shared_ptr<ZStorage> storage) {
+    // ОДНА ДОРОГА С КОНСТРУКТОРОМ. Всё, что конструктор решает по хранилищу —
+    // корень, признак «это хранилище», подписки, — решается и здесь, тем же
+    // порядком; разойдись они, и «переключился-вернулся» стало бы не равно
+    // «открыл заново».
+    if (storage_ != nullptr) {
+        disconnect(storage_.get(), nullptr, this, nullptr);
+    }
+    beginResetModel();
+    storage_ = std::move(storage);
+    rootPath_ = storage_ != nullptr ? storage_->root() : QString();
+    store_ = storage_ != nullptr && storage_->isStore();
+    // ПРОИЗВОДНОЕ СОСТОЯНИЕ ПРИНАДЛЕЖИТ ХРАНИЛИЩУ, А НЕ ВИДУ: раскрытые ветки
+    // и вторичное выделение хранятся ПУТЯМИ, и пути прежнего хранилища в новом
+    // не значат ничего. Не выбросить — и дерево показало бы раскрытыми ветки,
+    // которых здесь нет.
+    expanded_.clear();
+    secondaryPath_.clear();
+    build();
+    endResetModel();
+    if (storage_ != nullptr) {
+        connect(storage_.get(), &ZStorage::catalogChanged, this, &NoteTreeModel::rebuild);
+        connect(storage_.get(), &ZStorage::noteChanged, this, &NoteTreeModel::refreshRow);
+    }
+    // Виду говорить отдельно не надо: он подписан на modelReset и сам вернёт
+    // раскрытость с курсором, а затем скажет `rebuilt()` — той же дорогой, что
+    // и при обычной перестройке.
+}
+
 namespace {
 std::shared_ptr<ZStorage> loadedStorage(const QString& root) {
     auto storage = std::make_shared<ZStorage>(root);
@@ -434,6 +463,17 @@ void NoteTreeModel::build() {
     QCollator collator;
     collator.setNumericMode(true);
     collator.setCaseSensitivity(Qt::CaseInsensitive);
+    // ХРАНИЛИЩА НЕТ ВОВСЕ — ДЕРЕВО ПУСТО, и это отдельная ветка, а не частный
+    // случай обхода каталога. Пустой корень уходил в buildDir(""), а `QDir("")`
+    // для Qt — это ТЕКУЩИЙ каталог: окно без хранилища показывало содержимое
+    // того места, откуда программу запустили (поймано пробником). Ни одного
+    // честного смысла у такой картины нет.
+    if (rootPath_.isEmpty()) {
+        root_ = std::make_shared<Node>();
+        root_->dir = true;
+        rebuildShown(root_.get(), foldersOnly_);
+        return;
+    }
     if (store_) {
         // По каталогу, какой он сейчас: перечитывает его хранилище (reload), а
         // не дерево, и говорит об этом сигналом.
@@ -518,6 +558,10 @@ QString NoteTreeModel::idOf(const QModelIndex& index) const {
 
 void NoteTreeModel::updateTitle(const QString& filePath, const QString& title) {
     if (title.isEmpty()) return;
+    // Заметки нет вовсе (закрыли, переключая хранилище) — обновлять нечего, и
+    // это не отказ, о котором надо говорить: жалоба ниже про РАЗОШЕДШИЕСЯ пути,
+    // а пустого пути в дереве не бывает по определению.
+    if (filePath.isEmpty()) return;
     Node* node = findByFile(filePath);
     // Не нашли — значит путь, которым заметку зовёт редактор, и путь, которым
     // её знает дерево, разошлись. Молчать тут нельзя: строка средней колонки

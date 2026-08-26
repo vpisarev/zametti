@@ -28,24 +28,48 @@ public:
     }
 };
 
-NotePanels::NotePanels(std::shared_ptr<ZStorage> storage, QObject* parent)
-    : QObject(parent), model_(std::move(storage)), keyWalk_(std::make_shared<KeyWalk>()) {
+// ЧЕМ ПАНЕЛИ ОТЛИЧАЮТСЯ ПРИ ХРАНИЛИЩЕ И БЕЗ НЕГО — В ОДНОМ МЕСТЕ. Раньше эти
+// четыре решения принимались в конструкторе и больше никогда: пока хранилище
+// открывалось ровно один раз за запуск, этого хватало. Теперь его переключают
+// на ходу, и решения обязаны приниматься заново — той же функцией, а не
+// повторённые второй раз рядом.
+void NotePanels::applyStoreMode() {
+    const bool store = model_.isStore();
     // Левая панель — только папки (этап 4). Заметки живут в средней колонке;
     // из дерева они не пропадают, но наружу не показываются.
-    model_.setFoldersOnly(model_.isStore());
+    model_.setFoldersOnly(store);
+    tree_.setEditTriggers(store ? QAbstractItemView::EditKeyPressed
+                                : QAbstractItemView::NoEditTriggers);
+    // Не InternalMove: заметку тащат из средней колонки, а это другая модель —
+    // для дерева такой перенос внешний. Без хранилища переносить нечего и
+    // некуда, и приём перетаскивания снимается ЯВНО: оставшись включённым от
+    // прошлого хранилища, он принял бы бросок в пустое дерево.
+    tree_.setDragDropMode(store ? QAbstractItemView::DragDrop
+                                : QAbstractItemView::NoDragDrop);
+    tree_.setDefaultDropAction(store ? Qt::MoveAction : Qt::IgnoreAction);
+    tree_.setDropIndicatorShown(store);
+    tree_.setAcceptDrops(store);
+}
 
+void NotePanels::setStorage(std::shared_ptr<ZStorage> storage) {
+    // Порядок важен: сперва модель переезжает (её сброс опустошит вид), потом
+    // повторяются решения «хранилище или нет», потом забывается открытая
+    // заметка — она была из прежнего хранилища.
+    model_.setStorage(std::move(storage));
+    applyStoreMode();
+    currentNote_.clear();
+    list_.setRows({});
+    // Средняя колонка есть только у хранилища. За «спрятаны ли панели вообще»
+    // отвечает кнопка тулбара, и её решение видно по дереву — на него и
+    // равняемся, как это делает setVisible ниже.
+    middle_.setVisible(model_.isStore() && wanted_);
+}
+
+NotePanels::NotePanels(std::shared_ptr<ZStorage> storage, QObject* parent)
+    : QObject(parent), model_(std::move(storage)), keyWalk_(std::make_shared<KeyWalk>()) {
     tree_.setModel(&model_);
     tree_.setHeaderHidden(true);
-    tree_.setEditTriggers(model_.isStore() ? QAbstractItemView::EditKeyPressed
-                                           : QAbstractItemView::NoEditTriggers);
-    if (model_.isStore()) {
-        // Не InternalMove: заметку тащат из средней колонки, а это другая
-        // модель — для дерева такой перенос внешний.
-        tree_.setDragDropMode(QAbstractItemView::DragDrop);
-        tree_.setDefaultDropAction(Qt::MoveAction);
-        tree_.setDropIndicatorShown(true);
-        tree_.setAcceptDrops(true);
-    }
+    applyStoreMode();
     tree_.setUniformRowHeights(true);
     tree_.setItemDelegate(&treeDelegate_);
     tree_.setContextMenuPolicy(Qt::CustomContextMenu);
@@ -139,8 +163,12 @@ NotePanels::~NotePanels() {
 }
 
 void NotePanels::setVisible(bool visible) {
+    wanted_ = visible;
     tree_.setVisible(visible);
-    if (model_.isStore()) middle_.setVisible(visible);
+    // Средняя колонка есть только у хранилища — и прятать её надо ЯВНО, а не
+    // «не показывать»: без хранилища она обязана исчезнуть, даже если панели
+    // включены. Раньше её просто не добавляли в сплиттер, и вопрос не стоял.
+    middle_.setVisible(visible && model_.isStore());
 }
 
 void NotePanels::openFromPanel(const QString& file) {

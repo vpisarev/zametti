@@ -24,6 +24,27 @@ SyncController::SyncController(std::shared_ptr<ZStorage> storage,
     });
 }
 
+void SyncController::setStorage(std::shared_ptr<ZStorage> storage) {
+    // ЖДЁМ ПОТОК ПРОГОНА, А НЕ ПРОСТО ПРОСИМ ЕГО ОСТАНОВИТЬСЯ. Он держит СВОЮ
+    // копию shared_ptr на хранилище; пока он жив, прежнее хранилище не умрёт,
+    // а значит не отпустит замок — и новое открытие того же каталога упрётся в
+    // «уже открыто другой копией zametti», указывающее на нас самих. Ровно та
+    // же причина, по которой ждёт деструктор.
+    if (cancel_) cancel_->store(true);
+    joinWorker();
+    running_ = false;
+    ticker_.stop();
+    storage_ = std::move(storage);
+    // Секреты и адрес добыты для ПРЕЖНЕГО хранилища: у нового и storeId другой,
+    // и облако может быть другое. Забываем всё — fetchSecrets достанет заново.
+    cfg_ = ZStorage::RemoteConfig{};
+    keyfile_ = Keyfile{};
+    serverPassword_.clear();
+    lastReport_ = ZStorage::SyncReport{};
+    lastError_.clear();
+    emit stateChanged();
+}
+
 int SyncController::bounceAt(int tick, int width) {
     // Путь туда-обратно без задержки на краях: период 2*(width-1).
     const int period = 2 * (width - 1);

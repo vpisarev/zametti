@@ -46,6 +46,11 @@ public:
                             ZLogs* logs = nullptr, QObject* parent = nullptr);
     ~SyncController() override;
 
+    // ПЕРЕЕХАТЬ НА ДРУГОЕ ХРАНИЛИЩЕ (пусто — окно без хранилища). Прогон, если
+    // он идёт, отменяется и ДОЖИДАЕТСЯ: рабочий поток держит свою копию
+    // указателя, и прежнее хранилище не умрёт, пока он жив.
+    void setStorage(std::shared_ptr<ZStorage> storage);
+
     // Настроен ли синк у этой копии хранилища (.zametti/remote.json).
     bool configured() const;
     bool running() const { return running_; }
