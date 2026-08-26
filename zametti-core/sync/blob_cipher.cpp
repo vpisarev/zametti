@@ -1,5 +1,5 @@
 // Обёртка блоба: формат — см. шапку blob_cipher.h и раздел «The cloud» в
-// docs/zametti-storage.md.
+// docs/info/zametti-storage.md.
 
 #include "blob_cipher.h"
 

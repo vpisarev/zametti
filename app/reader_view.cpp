@@ -1,5 +1,6 @@
-#include "archive_view.h"
+#include "reader_view.h"
 
+#include "zapp.h"
 #include "znote.h"
 
 #include <QFile>
@@ -8,20 +9,22 @@
 
 namespace zametti {
 
-ArchiveView::ArchiveView(QWidget* parent) : NoteView(parent) {
+ReaderView::ReaderView(QWidget* parent, Tint tint) : NoteView(parent), tint_(tint) {
     setReadOnly(true);
     // Фокус берём: по виду листают клавишами, ищут в нём и копируют из него.
     // Каретки при этом нет — её рисует только редактор.
     setFocusPolicy(Qt::StrongFocus);
-    applyPalette(*this, /*history=*/true);
+    applyPalette(*this, /*history=*/tint_ == Tint::Aged);
     setDocument(shown_.getDocument());
 }
 
-bool ArchiveView::showFile(const QString& path) {
+bool ReaderView::showFile(const QString& path, const QString& noteId) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) return false;
     const QByteArray bytes = file.readAll();
     file.close();
+    // Уходим с прежнего документа — запомнили, где на нём стояли.
+    rememberSpot();
 
     // ТОТ ЖЕ КОД, ЧТО У РЕДАКТОРА: заметка разбирает байты на шапку и тело и
     // строит документ. Второго пути «из markdown в документ» в программе нет и
@@ -40,26 +43,51 @@ bool ArchiveView::showFile(const QString& path) {
     retired_ = std::move(shown_);
     shown_ = std::move(fresh);
     path_ = path;
+    // Имя, под которым помнится место чтения. Пусто — выводим из пути, как это
+    // делает сама заметка: id — имя файла без расширения.
+    noteId_ = noteId.isEmpty() ? QFileInfo(path).completeBaseName() : noteId;
+    title_ = shown_.title();
     setDocument(shown_.getDocument());
     applyContentWidth();
-    verticalScrollBar()->setValue(0);
+    restoreSpot();
     return true;
 }
 
-void ArchiveView::clear() {
+void ReaderView::clear() {
     if (path_.isEmpty()) return;
+    rememberSpot();
     path_.clear();
+    noteId_.clear();
+    title_.clear();
     retired_ = std::move(shown_);
     shown_ = ZDocument{};
     setDocument(shown_.getDocument());
 }
 
-void ArchiveView::refreshAppearance() {
-    applyPalette(*this, /*history=*/true);
+// МЕСТО ЧТЕНИЯ — ТАМ ЖЕ, ГДЕ КАРЕТКИ ПРАВИМЫХ ЗАМЕТОК (ZAppState, по id).
+// Второго хранилища мест не заводим: тогда «где я читал» и «где стояла
+// каретка» разошлись бы у одной и той же заметки, вернувшейся из архива.
+void ReaderView::rememberSpot() {
+    if (noteId_.isEmpty()) return;
+    CaretSpot spot = ZApp::instance().state().caretOf(noteId_);
+    spot.scroll = verticalScrollBar()->value();
+    ZApp::instance().state().rememberCaret(noteId_, spot);
+}
+
+void ReaderView::restoreSpot() {
+    // Ставится ПОСЛЕ вёрстки: до неё полоса прокрутки не знает своего
+    // размаха и обрежет значение до нуля.
+    const int scroll = ZApp::instance().state().caretOf(noteId_).scroll;
+    verticalScrollBar()->setValue(scroll);
+}
+
+void ReaderView::refreshAppearance() {
+    applyPalette(*this, /*history=*/tint_ == Tint::Aged);
     if (!path_.isEmpty()) {
         const QString path = path_;
+        const QString id = noteId_;
         path_.clear();
-        showFile(path);
+        showFile(path, id);
     }
 }
 

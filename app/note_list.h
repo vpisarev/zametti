@@ -42,6 +42,13 @@ public:
     void setSortOrder(SortOrder order);
     SortOrder sortOrder() const { return sortOrder_; }
 
+    // ПОРЯДОК ЗАДАН СНАРУЖИ. У виртуальной папки (документация) дат нет вовсе,
+    // а порядок есть: тот, в котором её завели. Сортировать такие строки по
+    // пустым датам значит показывать их вперемешку и по-разному от запуска к
+    // запуску. Ставится перед setRows и держится до следующей смены папки.
+    void setFixedOrder(bool on) { fixedOrder_ = on; }
+    bool fixedOrder() const { return fixedOrder_; }
+
     // Полная замена содержимого: сменилась выбранная папка или перестроилось
     // дерево.
     void setRows(std::vector<NoteRow> rows);
@@ -71,6 +78,7 @@ private:
 
     std::vector<NoteRow> rows_;
     SortOrder sortOrder_ = defaultOrder(SortKey::Modified);
+    bool fixedOrder_ = false;
     QCollator collator_;
 };
 

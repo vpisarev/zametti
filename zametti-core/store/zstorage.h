@@ -50,6 +50,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <vector>
 
 namespace zametti {
 
@@ -100,6 +101,47 @@ public:
     // корневая заметка (её заголовок — имя хранилища). Каталог должен быть
     // прочитан; не читан — прочитается, как в rootId().
     NoteTree subtreeFor(const QStringList& ids) const;
+
+    // --- ВИРТУАЛЬНЫЕ ПАПКИ ---------------------------------------------
+    //
+    // Строка дерева, за которой нет ни файла, ни записи каталога: содержимое
+    // задаёт тот, кто папку завёл. Хранилище её помнит и отдаёт — дальше
+    // дерево, средняя колонка и показ работают ОБЫЧНЫМ кодом, без единого
+    // «если это Info». Ради этого механизм и живёт здесь, а не в окне.
+    //
+    // Первый потребитель — документация: ZApp заводит папку Info из того, что
+    // вшито в бинарник (docs/info/). Дальше сюда же лягут списки, которых нет
+    // на диске.
+    //
+    // Путь виртуальной заметки — путь РЕСУРСА (":/docs/info/README.md"): его
+    // открывает QFile, значит readFileBytes и ZNote::load работают без единой
+    // оговорки, и второго пути «из markdown в документ» не заводится.
+    //
+    // Пусто в title — заголовок спросят у самого документа (первая строка), как
+    // спрашивают у настоящих заметок: второго списка имён не бывает.
+    struct VirtualNote {
+        QString id;      // "<папка>:<имя>" — см. isVirtualId
+        QString title;
+        QString path;
+    };
+    struct VirtualFolder {
+        QString id;
+        QString title;
+        QString icon;          // имя значка lucide, как в тулбаре
+        bool readOnly = true;  // сама папка и всё, что в ней
+        std::vector<VirtualNote> notes;
+    };
+    // Завести папку. Заголовки, которых не задали, читаются здесь же — один
+    // раз на открытие хранилища, а не на каждую перерисовку списка.
+    void addVirtualFolder(VirtualFolder folder);
+    const std::vector<VirtualFolder>& virtualFolders() const { return virtual_; }
+    const VirtualFolder* virtualFolder(const QString& id) const;
+    const VirtualNote* virtualNote(const QString& id) const;
+    // По пути (им дерево и список зовут заметки наружу).
+    const VirtualNote* virtualNoteAtPath(const QString& path) const;
+    // ДВОЕТОЧИЕ — ПРИЗНАК ВИРТУАЛЬНОГО. В настоящем id (14 знаков base-32) его
+    // не бывает, поэтому вопрос дёшев и однозначен, а перепутать нельзя.
+    static bool isVirtualId(const QString& id) { return id.contains(QLatin1Char(':')); }
 
     // Отчёт проверки и ввоза — человекочитаемые строки; беды считаются
     // отдельно, по ним код возврата. Молчаливых пропусков нет: всё
@@ -453,6 +495,14 @@ public:
     bool isFolder(const QString& id) const;
     // Помечена архивной сама или кто-то выше по цепочке родителей.
     bool inArchive(const QString& id) const;
+    // ДОСТУП: заперта ли заметка на запись — своей пометкой `access: read-only`
+    // ИЛИ пометкой кого-то выше по цепочке родителей. Папка, помеченная
+    // read-only, запирает всё, что внутри (решение владельца): так одной
+    // строкой в шапке запирается ввезённая библиотека книг целиком.
+    //
+    // Виртуальные заметки (см. addVirtualFolder) отвечают по своей папке:
+    // файла за ними нет вовсе, и писать в них нечего.
+    bool isReadOnly(const QString& id) const;
     QStringList childrenOf(const QString& id) const;   // прямые дети, любой порядок
     // Потомки, дети РАНЬШЕ родителей: удаление подряд не наткнётся на папку, в
     // которой ещё что-то лежит.
@@ -633,6 +683,11 @@ public:
     bool move(const QString& id, const QString& parentId, const ZJournal::Rules& rules, QString* error);
     bool setSortMark(const QString& id, std::optional<SortOrder> order, const ZJournal::Rules& rules,
                      QString* error);
+    // ЗАПЕРЕТЬ ИЛИ ОТПЕРЕТЬ (`access: read-only` в шапке) — единственная
+    // правка, которую запертая заметка переживает: иначе замок был бы
+    // односторонним. Пометка папки запирает и всё, что внутри.
+    bool setReadOnly(const QString& id, bool readOnly, const ZJournal::Rules& rules,
+                     QString* error);
 
     // --- правка шапки закрытой заметки -----------------------------------
     // Поднять заметку с диска, применить change (глаголы ZNote: шапка, тело),
@@ -643,6 +698,8 @@ public:
     // КОРЕНЬ НЕ РАЗЖАЛУЕТСЯ ИЗ РОЛИ: правка, снявшая бы role: root, отвергается
     // здесь — это единственная дверь к шапке закрытой заметки, и стеречь роль
     // надо в ней, а не в каждом вызывающем.
+    // READ-ONLY СЮДА НЕ ПРОХОДИТ: заслон стоит здесь, потому что это
+    // единственная дверь, и все именованные правки выше ведут в неё.
     bool rewriteNote(const QString& id, const std::function<void(ZNote&)>& change,
                      const ZJournal::Rules& rules, QString* error);
 
@@ -651,6 +708,14 @@ signals:
     void noteChanged(const QString& id);
 
 protected:
+    // Тот же rewriteNote, но БЕЗ вопроса о доступе. Один вызывающий —
+    // setReadOnly: снятие замка не может требовать снятого замка.
+    bool rewriteNoteAllowed(const QString& id, const std::function<void(ZNote&)>& change,
+                            const ZJournal::Rules& rules, QString* error);
+
+    // Виртуальные папки в порядке заведения: он же порядок строк в дереве.
+    std::vector<VirtualFolder> virtual_;
+
     // Перечитать запись каталога, не сообщая наружу; structural — сменилось ли
     // место заметки. Общий низ refreshNote и пакетных операций.
     bool readBack(const QString& id, bool* structural);

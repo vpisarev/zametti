@@ -2,6 +2,7 @@
 
 #include "resources.h"
 
+#include <QFileInfo>
 #include <QImage>
 #include <QPainter>
 #include <QSvgRenderer>
@@ -24,7 +25,43 @@ ZApp::ZApp() : state_(ZAppState::load()) {
 std::shared_ptr<ZStorage> ZApp::openStorage(const QString& root) {
     storage_ = std::make_shared<ZStorage>(root);
     storage_->reload();
+    addInfoFolder(*storage_);
     return storage_;
+}
+
+// ДОКУМЕНТАЦИЯ — ПАПКА ДЕРЕВА, А НЕ ОКОШКО. Заводится здесь, потому что здесь
+// рождается всякое хранилище — и настоящее, и пустое (корень пуст, окно без
+// хранилища): папка Info обязана быть на месте в обоих случаях, а «оба случая»
+// сходятся ровно в одной строке выше.
+//
+// Что вшито — решает CMake обходом docs/info/; здесь нет ни списка файлов, ни
+// списка заголовков. Заголовок каждой строки хранилище спросит у самого
+// документа.
+void ZApp::addInfoFolder(ZStorage& storage) {
+    ZStorage::VirtualFolder info;
+    info.id = QStringLiteral("info");
+    info.title = QStringLiteral("Info");
+    info.icon = QStringLiteral("badge-info");
+    info.readOnly = true;
+    if (!infoReady_) {
+        for (const QString& path : embeddedDocs()) {
+            ZStorage::VirtualNote note;
+            note.id = info.id + QLatin1Char(':') + QFileInfo(path).completeBaseName();
+            note.path = path;
+            infoNotes_.push_back(std::move(note));
+        }
+        // Заголовки соберёт само хранилище — и мы заберём их обратно, чтобы
+        // больше не считать: разбор двух наших документов стоит 20–40 мс в
+        // Debug, а хранилище открывается ещё и на каждом переключении.
+        info.notes = infoNotes_;
+        storage.addVirtualFolder(info);
+        const ZStorage::VirtualFolder* ready = storage.virtualFolder(info.id);
+        if (ready != nullptr) infoNotes_ = ready->notes;
+        infoReady_ = true;
+        return;
+    }
+    info.notes = infoNotes_;
+    storage.addVirtualFolder(std::move(info));
 }
 
 void ZApp::applySettingsToCaches() {

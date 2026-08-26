@@ -107,6 +107,7 @@ ZNote::Metadata ZNote::metadata() const {
     m.created_ = store::comparableTime(created().toStdString());
     m.sortMark_ = sortMark();
     m.archived_ = isArchived();
+    m.readOnly_ = isReadOnly();
     m.folder_ = isFolder() || isLost();
     m.root_ = isRoot();
     m.lostFound_ = isLost();
@@ -149,6 +150,8 @@ void ZNote::setRole(const QString& role) {
 }
 bool ZNote::isArchived() const { return header_.archived(); }
 void ZNote::setArchived(bool archived) { header_.setArchived(archived); }
+bool ZNote::isReadOnly() const { return header_.readOnly(); }
+void ZNote::setReadOnly(bool readOnly) { header_.setReadOnly(readOnly); }
 QString ZNote::created() const { return QString::fromStdString(header_.get(kCreated)); }
 QString ZNote::modified() const { return QString::fromStdString(header_.get(kModified)); }
 void ZNote::stampModified() { header_.set(kModified, store::isoNow().toStdString()); }

@@ -70,7 +70,7 @@ public:
     // --- кто --------------------------------------------------------------
     const QString& path() const { return path_; }
     bool hasPath() const { return !path_.isEmpty(); }
-    // Id заметки — имя файла без расширения (см. zametti-storage.md §2).
+    // Id заметки — имя файла без расширения (см. docs/info/zametti-storage.md §2).
     QString id() const;
 
     // --- текст ------------------------------------------------------------
@@ -121,10 +121,9 @@ public:
     //
     // ОДНО СТРУКТУРИРОВАННОЕ МЕСТО (решение владельца) — то, что о заметке знают
     // дерево, список, поиск, каталог хранилища: id, путь, родитель, заголовок,
-    // сниппет, времена, метка сортировки, архив, папка, находки. Собирается из
-    // шапки и тела; правится глаголами заметки ниже, которые пишут в шапку.
-    // Позже сюда же — теги, readOnly для ввезённых книг и прочих важных
-    // документов.
+    // сниппет, времена, метка сортировки, архив, папка, находки и ДОСТУП.
+    // Собирается из шапки и тела; правится глаголами заметки ниже, которые
+    // пишут в шапку. Позже сюда же — теги.
     class Metadata {
     public:
         const QString& id() const { return id_; }
@@ -137,6 +136,10 @@ public:
         const QString& created() const { return created_; }
         std::optional<SortOrder> sortMark() const { return sortMark_; }
         bool archived() const { return archived_; }
+        // Своя пометка `access: read-only`. НАСЛЕДОВАНИЕ ОТ ПАПКИ здесь не
+        // учитывается: у одной заметки нет ни родителей, ни каталога — подъём
+        // по цепочке делает ZStorage::isReadOnly.
+        bool readOnly() const { return readOnly_; }
         bool folder() const { return folder_; }
         bool lostFound() const { return lostFound_; }
         // Корневая заметка хранилища: она же его имя и его настройки показа.
@@ -157,6 +160,7 @@ public:
         QString created_;
         std::optional<SortOrder> sortMark_;
         bool archived_ = false;
+        bool readOnly_ = false;
         bool folder_ = false;
         bool lostFound_ = false;
         bool root_ = false;
@@ -180,6 +184,10 @@ public:
     void setRole(const QString& role);     // "folder", "lost", "root", пусто — заметка
     bool isArchived() const;
     void setArchived(bool archived);
+    // Своя пометка доступа (см. NoteHeader::kAccessKey). Read-only у ПАПКИ
+    // запирает и всё, что внутри, — но об этом знает хранилище, а не заметка.
+    bool isReadOnly() const;
+    void setReadOnly(bool readOnly);
     QString created() const;
     QString modified() const;
     void stampModified();

@@ -184,6 +184,10 @@ void NotePanels::setCurrentNote(const QString& file) { currentNote_ = file; }
 // списка (так ведёт себя Apple Notes).
 void NotePanels::fillList(const QModelIndex& folder, bool openFirst) {
     if (!model_.isStore()) return;
+    // У виртуальной папки порядок свой — тот, в котором её завели, — и
+    // переключателю сортировки он не подчиняется: дат у документации нет.
+    // Ставится ДО setRows: сортировка случается внутри него.
+    list_.setFixedOrder(model_.isVirtualFolder(folder));
     list_.setRows(model_.notesInSubtree(folder));
     const QModelIndex keep = list_.indexForPath(currentNote_);
     if (keep.isValid()) {

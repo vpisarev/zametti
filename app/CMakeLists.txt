@@ -47,6 +47,31 @@ set(CMAKE_AUTORCC ON)
 #
 # Позже рядом встанут zametti-ui-android и, может быть, zametti-ui-web. Всё,
 # что им пригодится один в один, лежит не здесь, а в ядре.
+
+# ДОКУМЕНТАЦИЯ — КАТАЛОГОМ, А НЕ СПИСКОМ. Всё, что лежит в docs/info/, едет в
+# бинарник и показывается в дереве заметок виртуальной папкой Info: markdown и
+# картинки к нему. Список собирается ЗДЕСЬ, обходом каталога, и нигде больше —
+# ни в qrc, ни в C++. Расширять документацию будут файлами, а не правками кода,
+# и всякий список, который надо не забыть дописать, однажды отстанет (так уже
+# отставал список лицензий — на шесть библиотек, и заметил это владелец).
+#
+# CONFIGURE_DEPENDS заставляет сборку перечитать каталог: положил файл — он в
+# программе со следующей сборкой, без ручного `cmake -S . -B`.
+file(GLOB ZAMETTI_INFO_FILES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/docs/info/*")
+if(NOT ZAMETTI_INFO_FILES)
+    # Программа без документации — дефект, а не «пустая вкладка»: папка Info
+    # есть всегда, и пустой она быть не может.
+    message(FATAL_ERROR "docs/info/ пуст: вшивать в программу нечего")
+endif()
+set(ZAMETTI_INFO_ENTRIES "")
+foreach(zametti_doc IN LISTS ZAMETTI_INFO_FILES)
+    get_filename_component(zametti_doc_name "${zametti_doc}" NAME)
+    string(APPEND ZAMETTI_INFO_ENTRIES
+           "        <file alias=\"${zametti_doc_name}\">${zametti_doc}</file>\n")
+endforeach()
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/info_docs.qrc.in
+               ${CMAKE_CURRENT_BINARY_DIR}/info_docs.qrc @ONLY)
+
 add_library(zametti-ui STATIC
     find_bar.h
     find_bar.cpp
@@ -55,11 +80,11 @@ add_library(zametti-ui STATIC
     history_panel.h
     history_view.h
     history_controller.h
-    archive_view.h
+    reader_view.h
     history_panel.cpp
     history_view.cpp
     history_controller.cpp
-    archive_view.cpp
+    reader_view.cpp
     note_tree.h
     note_tree.cpp
     note_list.h
@@ -120,6 +145,7 @@ add_library(zametti-ui STATIC
     resources.h
     resources.cpp
     ${CMAKE_SOURCE_DIR}/resources/resources.qrc
+    ${CMAKE_CURRENT_BINARY_DIR}/info_docs.qrc
 )
 # Ресурсы (иконка, иконки тулбара, шрифты) собираются сюда, а не в исполняемый
 # файл: тестам нужны те же шрифты и те же иконки, а набор, рисующий чужим

@@ -54,6 +54,8 @@ void NoteListModel::setSortOrder(SortOrder order) {
 }
 
 void NoteListModel::sortRows() {
+    // Порядок задан снаружи — не трогаем его вовсе (см. setFixedOrder).
+    if (fixedOrder_) return;
     // Тот же порядок, что и в дереве, и считается он тем же правилом: даты
     // строками (ISO одной длины и всегда в UTC), равные разводятся именем.
     const SortOrder order = sortOrder_;

@@ -1,4 +1,4 @@
-# zametti
+# README
 
 take notes, organize 'em, encrypt, sync via cloud
 
@@ -19,7 +19,7 @@ On the other hand, use the software at your own risk (or don't use it at all). W
 
 When a markdown note is imported into the storage or is created by the user from scratch, it's stored in the storage in so-called canonical form:
 
-- the note is given a 14-symbol [base-32](https://www.crockford.com/base32.html) name that consists of 8-symbol prefix: the unix time (elapsed seconds since 'Unix epoch', 01.01.1970 UTC) when the note is create & date and 6-symbol random suffix. The real name becomes the title (e.g. `# some verbose name of the note`)  This 14-symbol id is like a social id number, it keeps the note identity even if the displayed name changes. And the name can then contain any symbols, even emoji. See [zametti-storage](docs/info/zametti-storage.md) for details.
+- the note is given a 14-symbol [base-32](https://www.crockford.com/base32.html) name that consists of 8-symbol prefix: the unix time (elapsed seconds since 'Unix epoch', 01.01.1970 UTC) when the note is create & date and 6-symbol random suffix. The real name becomes the title (e.g. `# some verbose name of the note`)  This 14-symbol id is like a social id number, it keeps the note identity even if the displayed name changes. And the name can then contain any symbols, even emoji. See [zametti-storage](zametti-storage.md) for details.
 - each markdown file starts with a html comment (which are supported by markdown parsers) with meta-information about the note. _Don't touch it if you edit the note with an external editor!_
 - trailing whitespaces are erased. New-line symbol `\n` is added in the end.
 - at the same time, user-added spaces in the beginning of each line, as well as extra empty lines between paragraphs are all preserved! So you can type unusually-formatted poems, for example, the formatting will be preserved.
@@ -58,7 +58,7 @@ Everything the program does not support (yet) — HTML, footnotes, quotes more c
 Note for mac users: read `Cmd` when you see `Ctrl`.
 - Each note comes with its 'journal' of edits. The latest changes, as you type, become a part of in-memory undo/redo stack (`Ctrl+Z/Ctrl+Shift+Z`). The size of this undo/redo stack is only limited by memory. You can edit several notes at once, undo/redo stack for each of the notes is preserved within one editing session (i.e. until you quit the program)
 - No need to press `Ctrl+S`, all notes are automatically saved
-- All your modified notes are periodically auto-saved to disk, to `history/note_id.log` on-disk journals, where `note_id` is the same as the respective note `id`. The journals are well-compressed using `zstd`, see [storage description](docs/info/zametti-storage.md) for details, so don't worry about the space.
+- All your modified notes are periodically auto-saved to disk, to `history/note_id.log` on-disk journals, where `note_id` is the same as the respective note `id`. The journals are well-compressed using `zstd`, see [storage description](zametti-storage.md) for details, so don't worry about the space.
 - You can navigate through the note history by pressing `Note history` button on the toolbar or if you press `Ctrl+Z` when you reached the bottom of undo/redo stack. From the history you can choose whatever snapshot you like and restore it (think of it as of a super-simple alternative to git) or you can grab a piece of text from it and place into the current note.
 - If some process changes your note on disk (or if you edit your note in the external editor), the program detects it and replaces the current note with the fresh content from disk, but this replacement becomes yet another editing operation, which you can undo.
 - If you setup a cloud storage synchronization (webdav is supported, S3 will likely be supported in the future), your notes (the journals, actually) will be encrypted and stored there, so you can access them from another computer or restore them if your local copies are erased or damanged.

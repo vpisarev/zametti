@@ -3,6 +3,7 @@
 #include <QtGlobal>
 
 #include <cassert>
+#include <cstdio>
 
 namespace zametti {
 namespace {
@@ -128,6 +129,24 @@ void NoteHeader::setArchived(bool archived) {
     present_ = true;
     if (archived) set(kArchivedKey, kArchivedValue);
     else unset(kArchivedKey);
+}
+
+bool NoteHeader::readOnly() const {
+    const std::string value = get(kAccessKey);
+    if (value.empty()) return false;
+    if (value == kReadOnlyValue) return true;
+    // Понятных значений пока два: `read-only` и отсутствие ключа. Всё
+    // остальное — чужая или будущая запись: заметку считаем правимой и
+    // говорим вслух, что не поняли. Ключ при этом остаётся в файле нетронутым
+    // (побайтовый круг шапки), и разбираться с ним будет тот, кто его написал.
+    std::fprintf(stderr, "unknown access in header: %s\n", value.c_str());
+    return false;
+}
+
+void NoteHeader::setReadOnly(bool readOnly) {
+    present_ = true;
+    if (readOnly) set(kAccessKey, kReadOnlyValue);
+    else unset(kAccessKey);
 }
 
 }  // namespace zametti

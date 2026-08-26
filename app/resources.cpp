@@ -1,5 +1,6 @@
 #include "resources.h"
 
+#include <QDir>
 #include <QFile>
 #include <QFontDatabase>
 #include <QString>
@@ -14,6 +15,11 @@
 // вкус. Звать можно сколько угодно: Qt сама отсекает повторную регистрацию.
 static void zamettiInitResources() {
     Q_INIT_RESOURCE(resources);
+    // ВТОРОЙ РЕСУРС — ДОКУМЕНТАЦИЯ, и её надо подключить ОТДЕЛЬНО. Порождённый
+    // CMake info_docs.qrc даёт свой символ инициализации, и в статической
+    // библиотеке компоновщик вправе выбросить его так же, как и первый:
+    // ресурсы молча оказывались пустыми, а папка Info — без единой строки.
+    Q_INIT_RESOURCE(info_docs);
 }
 
 namespace {
@@ -34,8 +40,8 @@ constexpr zametti::EmbeddedFace kFaces[] = {
 
 constexpr const char* kIcons[] = {
     "archive",             "arrow-down-a-z",       "arrow-up-a-z",
-    "calendar-arrow-down",
-    "calendar-arrow-up",   "check",                "circle-question-mark",
+    "badge-info",          "calendar-arrow-down",  "calendar-arrow-up",
+    "check",               "circle-question-mark",
     "clock-arrow-down",    "clock-arrow-up",       "cloud-sync",
     "columns-3",           "copy",                 "database",
     "database-search",     "fast-forward",         "file-plus-corner",
@@ -81,11 +87,6 @@ constexpr zametti::EmbeddedLicense kLicenses[] = {
     {":/licenses/microtex.txt", "microtex", "LaTeX formula rendering", "MIT"},
 };
 
-constexpr zametti::EmbeddedDoc kDocs[] = {
-    {":/docs/README.md", "About"},
-    {":/docs/zametti-storage.md", "Store format"},
-};
-
 }  // namespace
 
 namespace zametti {
@@ -124,8 +125,18 @@ std::span<const EmbeddedLicense> embeddedLicenses() {
     return std::span<const EmbeddedLicense>(kLicenses, std::size(kLicenses));
 }
 
-std::span<const EmbeddedDoc> embeddedDocs() {
-    return std::span<const EmbeddedDoc>(kDocs, std::size(kDocs));
+QStringList embeddedDocs() {
+    zamettiInitResources();
+    // Порядок — по имени файла: он же порядок строк в папке Info. Нужен
+    // другой — файлы называют с числом впереди, как принято у таких каталогов;
+    // правкой кода порядок документации не задаётся.
+    QStringList out;
+    const QDir dir(QStringLiteral(":/docs/info"));
+    for (const QString& name : dir.entryList({QStringLiteral("*.md")}, QDir::Files, QDir::Name))
+        out << dir.filePath(name);
+    if (out.isEmpty())
+        std::fprintf(stderr, "no embedded docs: :/docs/info is empty\n");
+    return out;
 }
 
 QString embeddedText(const char* path) {

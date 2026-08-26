@@ -38,6 +38,7 @@
     <qresource prefix="/icons">
         <file alias="archive.svg">icons/archive.svg</file>
         <file alias="arrow-down-a-z.svg">icons/arrow-down-a-z.svg</file>
+        <file alias="badge-info.svg">icons/badge-info.svg</file>
         <file alias="arrow-up-a-z.svg">icons/arrow-up-a-z.svg</file>
         <file alias="calendar-arrow-down.svg">icons/calendar-arrow-down.svg</file>
         <file alias="calendar-arrow-up.svg">icons/calendar-arrow-up.svg</file>
@@ -66,18 +67,18 @@
         <file alias="square-m.svg">icons/square-m.svg</file>
     </qresource>
 
-    <!-- Справка и лицензии. README показывается нашим же ядром и сборщиком —
-         отдельного «просмотрщика справки» в программе не существует. Пути ведут
-         наружу из resources/: файлы живут там, где им место (корень и
-         3rdparty/), а копия рядом с qrc протухала бы молча.
+    <!-- Документации ЗДЕСЬ НЕТ, и это нарочно. Всё, что лежит в docs/info/,
+         вшивается порождённым списком (app/info_docs.qrc.in → каталог сборки):
+         положил файл туда — он в программе, руками ничего не правится. Список
+         под присмотром CMake, а не наш, потому что расширять документацию
+         будут файлами, а не правками кода.
 
-         Список дублируется в app/resources.cpp — как и у иконок, чтобы
-         пропавший файл ловил набор, а не пустая вкладка. -->
-    <qresource prefix="/docs">
-        <file alias="README.md">../README.md</file>
-        <file alias="zametti-storage.md">../docs/zametti-storage.md</file>
-    </qresource>
-
+         Здесь остаются только лицензии: их список — не каталог, а перечень
+         обязательств, и каждая строка в нём стоит осознанно. Пути ведут наружу
+         из resources/: файлы живут там, где им место (корень и 3rdparty/), а
+         копия рядом с qrc протухала бы молча. Список дублируется в
+         app/resources.cpp — как и у иконок, чтобы пропавший файл ловил набор,
+         а не пустая вкладка. -->
     <qresource prefix="/licenses">
         <file alias="zametti.txt">../LICENSE</file>
         <file alias="ibm-plex.txt">fonts/LICENSE</file>

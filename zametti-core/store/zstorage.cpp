@@ -369,6 +369,78 @@ bool ZStorage::inArchive(const QString& id) const {
     return false;
 }
 
+bool ZStorage::isReadOnly(const QString& id) const {
+    // Сама виртуальная папка и её заметки отвечают по её пометке: файла за
+    // ними нет вовсе, и писать некуда независимо от ответа.
+    if (const VirtualFolder* folder = virtualFolder(id); folder != nullptr)
+        return folder->readOnly;
+    if (isVirtualId(id)) {
+        const VirtualFolder* folder = virtualFolder(id.section(QLatin1Char(':'), 0, 0));
+        return folder == nullptr || folder->readOnly;
+    }
+    // Подъём тот же, что у inArchive, и с той же защитой от цикла: помеченная
+    // папка запирает всё, что под ней.
+    QSet<QString> seen;
+    for (const NoteInfo* meta = info(id); meta != nullptr && !seen.contains(meta->id());
+         meta = info(meta->parent())) {
+        if (meta->readOnly()) return true;
+        seen.insert(meta->id());
+    }
+    return false;
+}
+
+// --- ВИРТУАЛЬНЫЕ ПАПКИ ------------------------------------------------------
+
+void ZStorage::addVirtualFolder(VirtualFolder folder) {
+    for (VirtualNote& note : folder.notes) {
+        // Признак виртуального — двоеточие в id. Оно не украшение: по нему
+        // отличают виртуальную заметку от настоящей ВЕЗДЕ, и id без него молча
+        // выглядел бы настоящим.
+        Q_ASSERT(isVirtualId(note.id) && "a virtual note id needs a folder prefix");
+        if (!isVirtualId(note.id)) {
+            std::fprintf(stderr, "virtual note has no folder prefix: %s\n",
+                         note.id.toUtf8().constData());
+            note.id = folder.id + QLatin1Char(':') + note.id;
+        }
+        if (!note.title.isEmpty()) continue;
+        // Заголовок — первая строка самого документа, как у настоящих заметок.
+        // Спрашиваем один раз, на открытии хранилища.
+        std::string bytes;
+        if (!readFileBytes(note.path, bytes)) {
+            std::fprintf(stderr, "virtual note is unreadable: %s\n",
+                         note.path.toUtf8().constData());
+            note.title = QFileInfo(note.path).completeBaseName();
+            continue;
+        }
+        ZNote doc;
+        doc.load(std::string_view(bytes));
+        note.title = doc.title();
+    }
+    virtual_.push_back(std::move(folder));
+    emit catalogChanged();
+}
+
+const ZStorage::VirtualFolder* ZStorage::virtualFolder(const QString& id) const {
+    for (const VirtualFolder& folder : virtual_)
+        if (folder.id == id) return &folder;
+    return nullptr;
+}
+
+const ZStorage::VirtualNote* ZStorage::virtualNote(const QString& id) const {
+    for (const VirtualFolder& folder : virtual_)
+        for (const VirtualNote& note : folder.notes)
+            if (note.id == id) return &note;
+    return nullptr;
+}
+
+const ZStorage::VirtualNote* ZStorage::virtualNoteAtPath(const QString& path) const {
+    if (path.isEmpty()) return nullptr;
+    for (const VirtualFolder& folder : virtual_)
+        for (const VirtualNote& note : folder.notes)
+            if (note.path == path) return &note;
+    return nullptr;
+}
+
 QStringList ZStorage::childrenOf(const QString& id) const {
     QStringList out;
     for (auto it = notes_.constBegin(); it != notes_.constEnd(); ++it)
@@ -453,7 +525,10 @@ QString ZStorage::createNote(const QString& parentId, bool folder, QString* erro
     // В архиве ничего не создаётся: Ctrl+N оттуда — на глобальный уровень
     // (правило владельца).
     QString parent = parentId;
-    if (!parent.isEmpty() && (!has(parent) || inArchive(parent))) parent.clear();
+    // Родитель, которого нет, который в архиве ИЛИ ЗАПЕРТ на запись, — не
+    // родитель: в архиве ничего не создаётся, в read-only тоже.
+    if (!parent.isEmpty() && (!has(parent) || inArchive(parent) || isReadOnly(parent)))
+        parent.clear();
     const QString made = newNoteFile(parent, error);
     if (made.isEmpty()) return {};
     const QString id = idOfPath(made);
@@ -472,6 +547,14 @@ QString ZStorage::createNote(const QString& parentId, bool folder, QString* erro
 
 bool ZStorage::archive(const QString& id, const ZJournal::Rules& rules, QStringList* failed) {
     if (!store_ || !has(id)) return false;
+    // READ-ONLY НЕ УБИРАЕТСЯ В АРХИВ: архивация переписывает файл (тело уходит
+    // в журнал, на месте остаётся стаб) — это запись, а запись запрещена.
+    if (isReadOnly(id)) {
+        std::fprintf(stderr, "read-only note is not archived: %s\n", id.toUtf8().constData());
+        if (failed != nullptr)
+            failed->append(QStringLiteral("%1: the note is read-only").arg(titleOf(id)));
+        return false;
+    }
     // КОРЕНЬ НЕ АРХИВИРУЕТСЯ: он папка, а значит descendantsOf унесло бы в
     // архив всё хранилище разом.
     if (isRootNote(id)) {
@@ -533,6 +616,13 @@ bool ZStorage::restore(const QString& id, QStringList* failed) {
 bool ZStorage::remove(const QString& id, const ImportLimits& limits, QString* error) {
     if (!store_ || !has(id)) {
         if (error != nullptr) *error = QStringLiteral("no such note");
+        return false;
+    }
+    // READ-ONLY НЕ УДАЛЯЕТСЯ: замок на записи, который переживает удаление, —
+    // это не замок. Снимают пометку, потом удаляют.
+    if (isReadOnly(id)) {
+        std::fprintf(stderr, "read-only note is not deleted: %s\n", id.toUtf8().constData());
+        if (error != nullptr) *error = QStringLiteral("the note is read-only");
         return false;
     }
     // КОРЕНЬ НЕ УДАЛЯЕТСЯ. Без него у хранилища нет ни имени, ни порядка «всех
@@ -610,6 +700,17 @@ bool ZStorage::move(const QString& id, const QString& parentId, const ZJournal::
     }, rules, error);
 }
 
+bool ZStorage::setReadOnly(const QString& id, bool readOnly, const ZJournal::Rules& rules,
+                           QString* error) {
+    // ЕДИНСТВЕННАЯ ПРАВКА, КОТОРУЮ ЗАПЕРТАЯ ЗАМЕТКА ПЕРЕЖИВАЕТ, — снятие
+    // самого замка. Без неё запереть можно было бы только в одну сторону:
+    // отпереть значит записать заметку, которая запрещает себя записывать.
+    return rewriteNoteAllowed(id, [readOnly](ZNote& note) {
+        note.setHasHeader(true);
+        note.setReadOnly(readOnly);
+    }, rules, error);
+}
+
 bool ZStorage::setSortMark(const QString& id, std::optional<SortOrder> order,
                            const ZJournal::Rules& rules, QString* error) {
     return rewriteNote(id, [order](ZNote& note) {
@@ -620,6 +721,21 @@ bool ZStorage::setSortMark(const QString& id, std::optional<SortOrder> order,
 
 bool ZStorage::rewriteNote(const QString& id, const std::function<void(ZNote&)>& change,
                            const ZJournal::Rules& rules, QString* error) {
+    // READ-ONLY НЕ ПЕРЕЗАПИСЫВАЕТСЯ. Это единственная дверь к шапке и телу
+    // закрытой заметки, поэтому заслон стоит здесь, а не в каждом глаголе:
+    // rename, move, setSortMark и пометка архива приходят все сюда.
+    //
+    // Молчать нельзя: в релизной сборке отказ виден только по строке в логе.
+    if (isReadOnly(id)) {
+        std::fprintf(stderr, "read-only note is not rewritten: %s\n", id.toUtf8().constData());
+        if (error != nullptr) *error = QStringLiteral("the note is read-only");
+        return false;
+    }
+    return rewriteNoteAllowed(id, change, rules, error);
+}
+
+bool ZStorage::rewriteNoteAllowed(const QString& id, const std::function<void(ZNote&)>& change,
+                                  const ZJournal::Rules& rules, QString* error) {
     const QString path = pathOf(id);
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) {

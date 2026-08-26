@@ -6,12 +6,10 @@
 #include "resources.h"
 #include "settings.h"
 
-#include <QDesktopServices>
 #include <QDialogButtonBox>
 #include <QIcon>
 #include <QPushButton>
 #include <QTextBrowser>
-#include <QUrl>
 #include <QStringList>
 #include <QTabWidget>
 #include <QTextDocument>
@@ -29,17 +27,11 @@ namespace {
 NoteView* markdownPage(const QString& markdown, QWidget* parent) {
     auto* view = new NoteView(parent);
     view->setReadOnly(true);
-    // Ссылки НЕ ходят внутри окна. QTextBrowser в режиме чтения по щелчку
-    // пытается загрузить адрес в себя, не может — и остаётся пустым насовсем:
-    // документ уже подменён, вернуть его нечем, и окно чинится только выходом
-    // из программы. Владелец на это и наткнулся. Внешние адреса уходят в
-    // браузер, всё остальное не делает ничего.
-    view->setOpenLinks(false);
-    QObject::connect(view, &QTextBrowser::anchorClicked, view, [](const QUrl& url) {
-        if (url.scheme() == QStringLiteral("http") || url.scheme() == QStringLiteral("https") ||
-            url.scheme() == QStringLiteral("mailto"))
-            QDesktopServices::openUrl(url);
-    });
+    // Ссылки НЕ ходят внутри окна (QTextBrowser в режиме чтения грузит адрес в
+    // себя и остаётся пустым насовсем — владелец на это и наткнулся), а внешние
+    // уходят в браузер. Здесь для этого нет ни строчки: правило живёт в общем
+    // предке, NoteView, — и стояла тут вторая его копия, которая рано или
+    // поздно разошлась бы с первой.
     // Документ принадлежит виду: своей жизни у справки нет, а Qt удалит его
     // вместе с родителем.
     auto* document = new QTextDocument(view);
@@ -53,6 +45,30 @@ NoteView* markdownPage(const QString& markdown, QWidget* parent) {
 }
 
 }  // namespace
+
+QString aboutMarkdown() {
+    // ЧТО ЭТО, ЧЬЁ ЭТО, ИЗ ЧЕГО СОБРАНО — одной страницей. Первое, зачем сюда
+    // приходят, — узнать версию и условия; второе — приложить сводку сборки к
+    // письму об ошибке. Поэтому и то и другое здесь, и копируется как есть.
+    QString out;
+    out += QStringLiteral("# zametti\n\n");
+    out += QStringLiteral("take notes, organize 'em, encrypt, sync via cloud\n\n");
+    out += QStringLiteral(
+        "Notes on disk are plain markdown: they can be edited with any tools and kept in git. "
+        "The application does not own the format — it only reads and writes it.\n\n");
+    // Год и имя — не сочинённые: год берётся из истории репозитория, имя — из
+    // подписи её автора. Владельцу проверить эту строку глазами.
+    out += QStringLiteral(
+        "Copyright © 2026 Vadim Pisarevsky. Licensed under GPL-3.0; the full text, and the terms "
+        "of everything bundled with it, are on the **Licenses** tab.\n\n");
+    // Дверь к документации названа прямо: иначе человек будет искать её здесь,
+    // где она была четырьмя вкладками, и не найдёт.
+    out += QStringLiteral(
+        "The manual lives in the note tree: the **Info** folder at the bottom of the left "
+        "column — it is read there like any other note.\n\n");
+    out += buildFactsMarkdown();
+    return out;
+}
 
 QString buildFactsMarkdown() {
     QString out;
@@ -148,12 +164,12 @@ AboutWindow::AboutWindow(QWidget* parent) : QDialog(parent) {
     setWindowTitle(QStringLiteral("zametti"));
 
     tabs_ = new QTabWidget(this);
-    // Справка: markdown из ресурсов, показанный нашим же ядром.
-    for (const EmbeddedDoc& doc : embeddedDocs())
-        tabs_->addTab(markdownPage(embeddedText(doc.path), tabs_),
-                      QString::fromUtf8(doc.title));
-
-    tabs_->addTab(markdownPage(buildFactsMarkdown(), tabs_), QStringLiteral("Build"));
+    // ДВЕ ВКЛАДКИ, И БОЛЬШЕ НИ ОДНОЙ (решение владельца). Справки здесь нет:
+    // документацию читают ЗАМЕТКАМИ, в папке Info дерева, — с тем же кеглем,
+    // тем же масштабом по Ctrl+= и той же шириной колонки, что и свои записи.
+    // Диалог 760×620 для длинного README был неудобен, и это была не мелочь:
+    // окно «о программе» не читалка и читалкой стать не может.
+    tabs_->addTab(markdownPage(aboutMarkdown(), tabs_), QStringLiteral("About"));
 
     // Лицензии — одной страницей, а не списком с выбором: человек, который
     // сюда пришёл, ищет либо одну конкретную (поиском по странице), либо

@@ -51,6 +51,14 @@ struct NoteTreeModel::Node {
     // Тот самый виртуальный узел: файла за ним нет вовсе, он собирается из
     // помеченных заметок при каждой сборке дерева. Стоит в самом низу корня.
     bool archiveBox = false;
+    // ВИРТУАЛЬНАЯ ПАПКА ХРАНИЛИЩА (ZStorage::VirtualFolder) и её заметки:
+    // документация. Файла за папкой нет, у заметок путь — путь ресурса.
+    // Стоят НА УРОВНЕ корня, последними строками дерева.
+    bool virtualFolder = false;
+    bool virtualNote = false;
+    // Имя значка lucide, если он у узла свой (архив, находки, виртуальные
+    // папки). Пусто — обычная папка, значок по раскрытости.
+    QString iconName;
     bool folder = false;   // role: folder — директория и без детей
     bool lostFound = false;   // role: lost — бюро находок, спецпапка
     bool dir = false;
@@ -198,6 +206,8 @@ std::shared_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath, const Z
         node->archived = meta->archived();
         node->folder = meta->folder();
         node->lostFound = meta->lostFound();
+        // Бюро находок — не обычная папка: в неё не кладут, из неё забирают.
+        if (node->lostFound) node->iconName = QStringLiteral("folder-search");
         byId.insert(id, node.get());
         parentOf.insert(id, meta->parent());
         nodes.push_back(std::move(node));
@@ -256,6 +266,7 @@ std::shared_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath, const Z
         box->path = QFileInfo(rootPath).absoluteFilePath() + QStringLiteral("/.archive");
         box->dir = true;
         box->archiveBox = true;
+        box->iconName = QStringLiteral("archive");
         box->parent = root;
         archiveBox = box.get();
         root->children.push_back(std::move(box));
@@ -330,6 +341,15 @@ std::shared_ptr<NoteTreeModel::Node> buildStore(const QString& rootPath, const Z
 //
 // inherited — порядок, действующий у РОДИТЕЛЯ этого узла.
 void sortStore(NoteTreeModel::Node* node, SortOrder inherited, const QCollator& collator) {
+    // ВИРТУАЛЬНУЮ ПАПКУ НЕ ПЕРЕКЛАДЫВАЕМ. Порядок её содержимого задал тот, кто
+    // её завёл (у документации это порядок файлов docs/info/), и переключателю
+    // сортировки он не подчиняется — дат у вшитых документов нет вовсе.
+    //
+    // Поймано набором: build() зовёт нас ДО того, как виртуальные папки
+    // добавлены, и всё выглядело верно, — а вот setRootSort пересортировывает
+    // готовое дерево, и там они уже на месте. Переключение порядка молча
+    // меняло README и «Storage Organization» местами.
+    if (node->virtualFolder) return;
     const SortOrder order = node->sortMark.value_or(inherited);
     // СЛУЖЕБНЫЕ ПАПКИ ВНИЗУ, и в своём порядке: сперва всё живое, под ним бюро
     // находок, а в самом низу Архив (просьба владельца — бюро это
@@ -337,6 +357,8 @@ void sortStore(NoteTreeModel::Node* node, SortOrder inherited, const QCollator& 
     // в сортировке не участвуют вовсе: это не «самые старые папки», а другие
     // места, и всплывать от переворота направления им незачем.
     const auto rank = [](const NoteTreeModel::Node* n) {
+        // Виртуальные папки — ниже всех: они не про содержимое хранилища.
+        if (n->virtualFolder) return 3;
         if (n->archiveBox) return 2;
         if (n->lostFound) return 1;
         return 0;
@@ -385,14 +407,14 @@ void rebuildShown(NoteTreeModel::Node* node, bool foldersOnly) {
 //
 // Размер привязан к кеглю панели, а не задан числом: строка растёт вместе с
 // шрифтом, и значок обязан расти с ней.
-QPixmap rowPixmap(const char* icon) {
+QPixmap rowPixmap(const QString& icon) {
     const ZSettings& a = settings();
     const qreal dpr = qGuiApp != nullptr ? qGuiApp->devicePixelRatio() : 1.0;
 
     QFont font;
     font.setPointSizeF(a.ui().sidebarFontPoint() * a.ui().sidebarFolderScale());
     const int side = QFontMetrics(font).height();
-    return toolbarIcon(QString::fromLatin1(icon), side, a.ui().sidebarFolderColor(), dpr);
+    return toolbarIcon(icon, side, a.ui().sidebarFolderColor(), dpr);
 }
 
 const NoteTreeModel::Node* nodeOf(const QModelIndex& index, const NoteTreeModel::Node* root) {
@@ -459,6 +481,44 @@ std::shared_ptr<ZStorage> loadedStorage(const QString& root) {
 NoteTreeModel::NoteTreeModel(const QString& root, QObject* parent)
     : NoteTreeModel(loadedStorage(root), parent) {}
 
+// ВИРТУАЛЬНЫЕ ПАПКИ ХРАНИЛИЩА — ПОСЛЕДНИМИ СТРОКАМИ, НА УРОВНЕ КОРНЯ.
+//
+// Одна функция, и зовут её ВСЕ ветки build(): и хранилище, и каталог вне
+// хранилища, и пустое окно. Ради последнего всё и делается — папка Info обязана
+// быть на месте, когда хранилища ещё не выбрали: иначе документацию негде
+// прочитать ровно тому, кому она нужнее всех, — человеку, запустившему
+// программу впервые.
+//
+// Зовётся ПОСЛЕ сортировки: порядок виртуальных папок задал тот, кто их завёл,
+// и переключателю сортировки он не подчиняется.
+void NoteTreeModel::appendVirtualFolders(Node* hidden) {
+    if (storage_ == nullptr) return;
+    for (const ZStorage::VirtualFolder& folder : storage_->virtualFolders()) {
+        auto box = std::make_shared<Node>();
+        box->title = folder.title;
+        box->id = folder.id;
+        // Путь синтетический, как у Архива: узла-файла за папкой нет, а путь
+        // нужен — им адресуются раскрытые ветки и выделение (indexForPath).
+        // Двоеточие делает его непохожим на путь файла ни на одной системе.
+        box->path = QStringLiteral("zametti:") + folder.id;
+        box->dir = true;
+        box->virtualFolder = true;
+        box->iconName = folder.icon;
+        box->parent = hidden;
+        for (const ZStorage::VirtualNote& doc : folder.notes) {
+            auto leaf = std::make_shared<Node>();
+            leaf->title = doc.title;
+            leaf->id = doc.id;
+            leaf->path = doc.path;
+            leaf->virtualNote = true;
+            leaf->parent = box.get();
+            box->children.push_back(std::move(leaf));
+        }
+        box->shown.clear();
+        hidden->children.push_back(std::move(box));
+    }
+}
+
 void NoteTreeModel::build() {
     QCollator collator;
     collator.setNumericMode(true);
@@ -471,6 +531,7 @@ void NoteTreeModel::build() {
     if (rootPath_.isEmpty()) {
         root_ = std::make_shared<Node>();
         root_->dir = true;
+        appendVirtualFolders(root_.get());
         rebuildShown(root_.get(), foldersOnly_);
         return;
     }
@@ -479,6 +540,7 @@ void NoteTreeModel::build() {
         // не дерево, и говорит об этом сигналом.
         root_ = buildStore(rootPath_, *storage_);
         sortStore(root_.get(), rootSort_, collator);
+        appendVirtualFolders(root_.get());
         rebuildShown(root_.get(), foldersOnly_);
         return;
     }
@@ -489,6 +551,7 @@ void NoteTreeModel::build() {
         root_->path = QFileInfo(rootPath_).absoluteFilePath();
         root_->dir = true;
     }
+    appendVirtualFolders(root_.get());
     rebuildShown(root_.get(), false);
 }
 
@@ -621,12 +684,12 @@ QVariant NoteTreeModel::data(const QModelIndex& index, int role) const {
         return node->path;
     }
     if (role == Qt::DecorationRole && node->isDir()) {
-        // У Архива свой значок: это не папка, а другое место, и путать их
-        // нельзя — перетаскивание туда означает архивацию.
-        if (node->archiveBox) return rowPixmap("archive");
-        // Бюро находок — тоже не обычная папка: в неё не кладут, из неё
-        // забирают.
-        if (node->lostFound) return rowPixmap("folder-search");
+        // СВОЙ ЗНАЧОК — ОДНИМ ПОЛЕМ. Архив, бюро находок и всякая виртуальная
+        // папка — это не папки, а другие места, и путать их с папками нельзя:
+        // перетаскивание в Архив означает архивацию, а в Info вообще ничего.
+        // Прежде здесь стояли ветви по флагам; с приходом виртуальных папок их
+        // стало бы четыре, а имя значка всё равно приходит извне.
+        if (!node->iconName.isEmpty()) return rowPixmap(node->iconName);
         // Папка, которую НЕ РАСКРЫТЬ, рисуется открытой: закрытый значок обещает
         // содержимое, которого в дереве нет, и человек тыкает в неё снова и
         // снова, ничего не добившись. Открытая честно говорит «дальше пусто».
@@ -638,7 +701,7 @@ QVariant NoteTreeModel::data(const QModelIndex& index, int role) const {
         // маке, но беда никакая не маковая: в его хранилище под такое описание
         // подходят 16 папок из 19.
         const bool open = expanded_.contains(node->path) || node->shown.empty();
-        return rowPixmap(open ? "folder-open" : "folder");
+        return rowPixmap(open ? QStringLiteral("folder-open") : QStringLiteral("folder"));
     }
     return {};
 }
@@ -724,10 +787,26 @@ std::vector<NoteRow> NoteTreeModel::notesInSubtree(const QModelIndex& index) con
             if (up->archiveBox) return true;
         return false;
     }();
+    // ВИРТУАЛЬНАЯ ПАПКА ОТДАЁТ СВОЁ, НО В ЧУЖОЙ СПИСОК НЕ ЛЕЗЕТ — то же
+    // правило, что у Архива, и по той же причине: документация не должна
+    // всплывать среди заметок человека.
+    const bool insideVirtual = [&] {
+        for (const Node* up = node; up != nullptr; up = up->parent)
+            if (up->virtualFolder) return true;
+        return false;
+    }();
+    if (insideVirtual) {
+        for (const auto& child : node->children)
+            if (!child->isDir())
+                out.push_back(NoteRow{child->id, child->path, child->title, child->snippet,
+                                      child->modified, child->created});
+        return out;
+    }
     struct Walk {
         static void run(const Node* node, bool insideTrash, std::vector<NoteRow>& out) {
             for (const auto& child : node->children) {
                 if (child->archiveBox && !insideTrash) continue;
+                if (child->virtualFolder) continue;
                 // Папка — структура, а не заметка: в списке ей делать нечего,
                 // и открыть её тело редактором нельзя вовсе.
                 if (!child->isDir())
@@ -1041,13 +1120,42 @@ bool NoteTreeModel::isDescendantOf(const QString& candidateId, const QString& id
 Qt::ItemFlags NoteTreeModel::flags(const QModelIndex& index) const {
     Qt::ItemFlags out = QAbstractItemModel::flags(index);
     if (!store_) return out;
+    // ЗАПЕРТОЕ НЕ ПРАВИТСЯ И НЕ ТАСКАЕТСЯ — ни само, ни в себя. Флаги снимаются
+    // ЗДЕСЬ, а не запретами в окне: F2, перетаскивание и приём перетащенного
+    // спрашивают именно их, и убрать их — значит закрыть все три двери разом,
+    // не перечисляя двери поимённо.
+    if (isReadOnlyIndex(index)) return out & ~Qt::ItemIsDropEnabled;
     if (index.isValid()) out |= Qt::ItemIsEditable | Qt::ItemIsDragEnabled;
     out |= Qt::ItemIsDropEnabled;   // и корень: перенос «в корень» легален
     return out;
 }
 
+// Заперта ли строка на запись: виртуальная папка и её заметки — всегда,
+// настоящая — по метке `access: read-only` у себя или у кого-то выше (это
+// считает хранилище). Недействительный индекс — корень, он не заперт.
+bool NoteTreeModel::isReadOnlyIndex(const QModelIndex& index) const {
+    if (!index.isValid()) return false;
+    const Node* node = static_cast<const Node*>(index.internalPointer());
+    if (node->virtualFolder || node->virtualNote) return true;
+    if (storage_ == nullptr || node->id.isEmpty()) return false;
+    return storage_->isReadOnly(node->id);
+}
+
+bool NoteTreeModel::isReadOnlyId(const QString& id) const {
+    if (id.isEmpty()) return false;
+    return storage_ != nullptr && storage_->isReadOnly(id);
+}
+
+bool NoteTreeModel::isVirtualFolder(const QModelIndex& index) const {
+    if (!index.isValid()) return false;
+    return static_cast<const Node*>(index.internalPointer())->virtualFolder;
+}
+
 bool NoteTreeModel::setData(const QModelIndex& index, const QVariant& value, int role) {
     if (!store_ || !index.isValid() || role != Qt::EditRole) return false;
+    // Второй заслон к снятому ItemIsEditable: правку сюда может принести не
+    // только делегат.
+    if (isReadOnlyIndex(index)) return false;
     const QString title = value.toString().trimmed();
     if (title.isEmpty()) return false;
     const Node* node = static_cast<const Node*>(index.internalPointer());
@@ -1087,6 +1195,10 @@ bool NoteTreeModel::canDropMimeData(const QMimeData* data, Qt::DropAction, int, 
     // становится никогда (правило владельца).
     if (parent.isValid() &&
         !static_cast<const Node*>(parent.internalPointer())->isDir())
+        return false;
+    if (isReadOnlyIndex(parent)) return false;
+    // И само запертое никуда не переезжает: перенос — это правка шапки.
+    if (ZStorage::isVirtualId(id) || (storage_ != nullptr && storage_->isReadOnly(id)))
         return false;
     const QString target = idOf(parent);
     if (target == id) return false;

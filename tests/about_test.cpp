@@ -71,11 +71,15 @@ void checkLicensesEmbedded() {
     }
 }
 
+// Документация вшита и читается. Списка здесь нет: что вшито, решает CMake
+// обходом docs/info/, а мы спрашиваем у самих ресурсов — иначе набор проверял
+// бы свой список, а не то, что попало в программу.
 void checkDocsEmbedded() {
-    check(!zametti::embeddedDocs().empty(), "список справки не пуст");
-    for (const zametti::EmbeddedDoc& doc : zametti::embeddedDocs()) {
-        const QString text = zametti::embeddedText(doc.path);
-        check(text.size() > 500, std::string("справка вшита и непуста: ") + doc.title);
+    check(!zametti::embeddedDocs().isEmpty(), "вшитая документация есть");
+    for (const QString& path : zametti::embeddedDocs()) {
+        const QString text = zametti::embeddedText(path.toUtf8().constData());
+        check(text.size() > 500,
+              std::string("документ вшит и непуст: ") + path.toUtf8().constData());
     }
 }
 
@@ -176,7 +180,10 @@ void checkLicensesPage() {
 void checkWindow() {
     zametti::AboutWindow about;
     QTabWidget* tabs = about.tabs();
-    check(tabs != nullptr && tabs->count() >= 4, "вкладок в окне не меньше четырёх");
+    // ДВЕ ВКЛАДКИ, И НЕ БОЛЬШЕ (решение владельца): «About» — чьё это и из чего
+    // собрано, «Licenses» — на каких условиях. Документация уехала в дерево
+    // заметок, папкой Info, и вкладки README здесь больше нет.
+    check(tabs != nullptr && tabs->count() == 2, "вкладок в окне ровно две");
     if (tabs == nullptr) return;
 
     const int licenses = tabWith(tabs, QStringLiteral("Licenses"));
@@ -189,11 +196,19 @@ void checkWindow() {
         check(text.size() > 5000, "тексты лицензий на вкладке, а не одни заголовки");
     }
 
-    const int readme = tabWith(tabs, QStringLiteral("About"));
-    check(readme >= 0, "вкладка README есть");
-    if (readme >= 0) {
-        const QString text = pageText(tabs, readme);
-        check(text.contains(QStringLiteral("zametti")), "README показан");
+    const int first = tabWith(tabs, QStringLiteral("About"));
+    check(first >= 0, "первая вкладка есть");
+    if (first >= 0) {
+        const QString text = pageText(tabs, first);
+        check(text.contains(QStringLiteral("zametti")), "имя программы названо");
+        // Обе половины первой вкладки на месте: чьё это и из чего собрано.
+        check(text.contains(QStringLiteral("Copyright")), "copyright на первой вкладке");
+        check(text.contains(QStringLiteral("GPL-3.0")), "лицензия названа");
+        check(text.contains(QStringLiteral("Qt")), "версии сборки на той же вкладке");
+        check(text.contains(QStringLiteral("md4c")), "и вшитые библиотеки тоже");
+        // Дверь к документации названа словами: человек, искавший README
+        // здесь, обязан узнать, куда он переехал.
+        check(text.contains(QStringLiteral("Info")), "сказано, где теперь документация");
         // Разметка markdown в тексте документа не остаётся: заголовок собран
         // жирным, а не решёткой. Если решётки видны — README показывают не
         // нашим сборщиком, а как есть.
@@ -223,50 +238,14 @@ void checkWindow() {
         if (view == nullptr) continue;
     }
 
-    const int storage = tabWith(tabs, QStringLiteral("Store format"));
-    check(storage >= 0, "вкладка формата хранилища есть");
+    // Вкладок README и «Store format» больше нет — документация читается
+    // заметками (набор InfoFolder стережёт, что она там есть и читается).
+    check(tabWith(tabs, QStringLiteral("Store format")) < 0, "вкладки формата хранилища нет");
+    check(tabWith(tabs, QStringLiteral("Build")) < 0, "отдельной вкладки сборки нет");
 
-    // И настоящим щелчком по настоящей ссылке — потому что признак можно
-    // выставить, а обработчик написать неверно. Сигнал руками тут не годится:
-    // переход у QTextBrowser заведён на СВОЙ разбор нажатия, и «испущенный»
-    // anchorClicked ничего не ломает — такая проверка была бы пустышкой.
-    if (readme >= 0) {
-        auto* view = qobject_cast<QTextBrowser*>(tabs->widget(readme));
-        tabs->setCurrentIndex(readme);
-        about.resize(900, 700);
-        about.show();
-        QApplication::processEvents();
-
-        QTextCursor anchor;
-        for (QTextBlock block = view->document()->begin();
-             block.isValid() && anchor.isNull(); block = block.next()) {
-            for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
-                const QTextFragment fragment = it.fragment();
-                if (!fragment.isValid() || !fragment.charFormat().isAnchor()) continue;
-                anchor = QTextCursor(view->document());
-                anchor.setPosition(fragment.position() + fragment.length() / 2);
-                break;
-            }
-        }
-        check(!anchor.isNull(), "в README есть хотя бы одна ссылка");
-        if (!anchor.isNull()) {
-            view->setTextCursor(anchor);
-            view->ensureCursorVisible();
-            QApplication::processEvents();
-            const QString before = view->document()->toPlainText();
-            const QRect box = view->cursorRect(anchor);
-            QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, box.center());
-            QApplication::processEvents();
-            check(view->document()->toPlainText() == before,
-                  "после щелчка по ссылке страница цела");
-            check(!view->document()->toPlainText().isEmpty(), "страница не опустела");
-        }
-    }
-
-    const int build = tabWith(tabs, QStringLiteral("Build"));
-    check(build >= 0, "вкладка сборки есть");
-    if (build >= 0) check(pageText(tabs, build).contains(QStringLiteral("md4c")),
-                          "версии вшитого видны в окне");
+    // Щелчок по настоящей ссылке проверяется там, где ссылки теперь и живут, —
+    // в читалке документации (набор InfoFolder). Здесь остаётся признак: обе
+    // вкладки не ходят по ссылкам сами.
 }
 
 

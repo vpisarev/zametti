@@ -1,4 +1,4 @@
-# Store layout
+# Storage Organization
 
 This document describes what lies on disk: how the note store is organized,
 what a note file consists of, what an attachment is and how the history is
@@ -158,6 +158,7 @@ Known keys:
 | `role` | `folder` — a folder note, `lost` — the Lost & found, `root` — the store's root note (exactly one per store) |
 | `archived` | `yes` — the note is put away into the Archive; no key — alive |
 | `lost-parent` | the find's previous parent; set by the Lost & found |
+| `access` | `read-only` — the note may be read but not written; no key — an ordinary, editable note. On a FOLDER the mark covers everything inside it |
 | `sort` | sort order inside the folder; no key — inherited |
 
 Rules for the header content:
@@ -181,6 +182,16 @@ Rules for the header content:
 - **a note never becomes a folder, and vice versa** (owner's rule).
   `role: folder` is set at creation and does not change. A folder's body is
   exactly one heading and nothing else — `verify` watches over this;
+- **`access: read-only` is inherited downward, like `sort`.** A note is locked
+  either by its own mark or by the mark of any folder above it, so a whole
+  imported library is locked by one line in one folder header. What the lock
+  means: the program does not rewrite the file, does not archive it, does not
+  delete it, does not move or rename it, and shows no caret over it — the
+  window greys the commands out and the store refuses them anyway, each on its
+  own. The one edit a locked note survives is the removal of its own lock:
+  a one-way lock would be a trap, not a safety. An unknown value of the key is
+  not an error — the note counts as editable, the key in the file is left
+  untouched, and the program says in stderr what it did not understand;
 - `sort` on the ROOT note is the order of "all notes"; on any other folder it
   is the order inside that folder. A label of the FOLDER: how its notes and
   subfolders are ordered.

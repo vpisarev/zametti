@@ -13,7 +13,7 @@
 // накоплении.
 
 #include "zstorage.h"
-#include "archive_view.h"
+#include "reader_view.h"
 #include "jxl_encoder.h"
 #include "editor_widget.h"
 #include "journal.h"
@@ -224,7 +224,7 @@ static int ztRunSuite(int argc, char** argv) {
         QTest::qWait(40);
         ZT_TRUE("редактор знает, что заметка архивная", editor.isArchivedNote());
 
-        zametti::ArchiveView view;
+        zametti::ReaderView view;
         ZT_TRUE("вид показал файл", view.showFile(path));
         ZT_TRUE("и в нём тело заметки",
                 view.toPlainText().contains(QStringLiteral("Тело её никуда не делось")));
@@ -279,7 +279,7 @@ static int ztRunSuite(int argc, char** argv) {
                                      "![вид](01jd7f0kq2m8xa.jxl)\n"));
             ZT_TRUE("архивация прошла", archiveNote(shotId, &why));
 
-            zametti::ArchiveView shotView;
+            zametti::ReaderView shotView;
             shotView.resize(700, 500);
             shotView.show();
             ZT_TRUE("вид показал файл", shotView.showFile(shotPath));
@@ -335,7 +335,7 @@ static int ztRunSuite(int argc, char** argv) {
                 return count;
             };
 
-            zametti::ArchiveView shotView;
+            zametti::ReaderView shotView;
             shotView.resize(700, 500);
             shotView.show();
             ZT_TRUE("вид показал файл", shotView.showFile(shotPath));
@@ -404,7 +404,7 @@ static int ztRunSuite(int argc, char** argv) {
             // напрямую — пиксели тут не годятся: пустота и рамка отличаются
             // десятком точек, и такая проверка была бы пустышкой (она ею и
             // оказалась с первого раза).
-            struct Probe : zametti::ArchiveView {
+            struct Probe : zametti::ReaderView {
                 // true — вид нарисует РАМКУ (файла нет или путь не разрешился).
                 bool framed(const QString& path) {
                     const CachedImage* entry = imageInfo(path);

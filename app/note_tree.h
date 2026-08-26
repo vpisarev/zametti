@@ -182,6 +182,16 @@ public:
     QStringList archivedIds() const;
     // Это сама строка «Архив»?
     bool isArchiveBox(const QModelIndex& index) const;
+    // ВИРТУАЛЬНАЯ ПАПКА (ZStorage::VirtualFolder): документация и то, что
+    // придёт следом. Стоит на уровне корня, последними строками; порядок её
+    // содержимого задан списком, а не переключателем сортировки.
+    bool isVirtualFolder(const QModelIndex& index) const;
+    // Заперта ли строка на запись: виртуальное — всегда, настоящее — по метке
+    // `access: read-only` у себя или у предка. Об этом спрашивают флаги, меню
+    // и команды окна — вопрос один на всех.
+    bool isReadOnlyIndex(const QModelIndex& index) const;
+    // То же по id: средняя колонка — другая модель, и индексы там чужие.
+    bool isReadOnlyId(const QString& id) const;
     // Лежит ли узел в Архиве (сам помечен или помечен кто-то выше).
     bool inArchive(const QModelIndex& index) const;
     bool inArchiveId(const QString& id) const;
@@ -256,6 +266,9 @@ signals:
 
 private:
     void build();
+    // Виртуальные папки хранилища — последними строками, на уровне корня.
+    // Зовут ВСЕ ветки build(), включая пустую: справка есть и без хранилища.
+    void appendVirtualFolders(Node* hidden);
     // Узел, под которым лежит содержимое: в хранилище это видимая строка
     // «All notes», вне хранилища — сам корень.
     const Node* topNode() const;

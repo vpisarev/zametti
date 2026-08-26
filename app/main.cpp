@@ -13,7 +13,7 @@
 #include "markdown_controller.h"
 #include "settings_controller.h"
 #include "history_panel.h"
-#include "archive_view.h"
+#include "reader_view.h"
 #include "history_view.h"
 #include "image_viewer.h"
 #include "markdown_edit_view.h"
@@ -559,7 +559,11 @@ int main(int argc, char** argv) {
     // АРХИВНАЯ ЗАМЕТКА ПОКАЗЫВАЕТСЯ ВИДОМ, а не редактором: править её нельзя,
     // пока не вернут из архива, и редактор обещал бы правку, которой не будет.
     // Каретки в виде нет — этого человеку и достаточно.
-    zametti::ArchiveView archiveView;
+    zametti::ReaderView archiveView(nullptr, zametti::ReaderView::Tint::Aged);
+    // ДОКУМЕНТАЦИЯ — ТА ЖЕ ЧИТАЛКА, ДРУГИМ ТОНОМ. Заметки папки Info вшиты в
+    // бинарник и правке не подлежат, но отложенным добром они не являются:
+    // фон у них обычный (решение владельца), а всё остальное — как у архивной.
+    zametti::ReaderView docView(nullptr, zametti::ReaderView::Tint::Plain);
 
     zametti::NoteEditor editor;
 
@@ -622,6 +626,7 @@ int main(int argc, char** argv) {
         historyView.list().setFont(sidebarFont);
         textStack.addWidget(&editor);
         textStack.addWidget(&archiveView);
+        textStack.addWidget(&docView);
         textStack.addWidget(&historyView);
         textStack.addWidget(&markdownView);
         textStack.addWidget(&settingsView);
@@ -661,6 +666,7 @@ int main(int argc, char** argv) {
 
         zametti::applyPalette(editor);
         archiveView.refreshAppearance();
+        docView.refreshAppearance();
         panels.refreshAppearance();
         zametti::applyPalette(resultsView);
 
@@ -903,9 +909,6 @@ int main(int argc, char** argv) {
                          panels.showNote(file);
                      },
                      Qt::QueuedConnection);
-    // Панели говорят, что человек выбрал; открывает только openFile.
-    QObject::connect(&panels, &zametti::NotePanels::noteChosen, &window,
-                     [&](const QString& file, bool takeFocus) { editor.openFile(file, takeFocus); });
     QObject::connect(&panels, &zametti::NotePanels::editRequested, &window,
                      [&] { editor.setFocus(); });
 
@@ -1054,22 +1057,41 @@ int main(int argc, char** argv) {
     // КАКАЯ СТРАНИЦА СТЕКА НА ВИДУ — ОДНО МЕСТО НА ВСЕ РЕЖИМЫ, иначе каждый
     // режим решал бы это по-своему и они разошлись бы (так и было: из истории
     // человек возвращался в обычный вид, хотя ушёл из исходника). Порядок:
-    // настройки > история > исходник > архивная > редактор.
+    // настройки > история > исходник > документация > архивная > редактор.
     //
     // Архивная стоит ПОД исходником сознательно: посмотреть её markdown человек
     // вправе (там она тоже только для чтения), а вот править — нет.
+    //
+    // Документация выше архивной, но ниже режимов, и вот почему это не спор:
+    // войдя в неё, из режимов выходят (showDoc ниже), а их кнопки на ней
+    // погашены. Признак — показанный документ, отдельного контроллера у
+    // страницы нет: у неё нет ни своего состояния, ни правки, ни выхода
+    // «наполовину».
     const auto showPage = [&] {
         const bool archived = editor.isArchivedNote();
+        const bool doc = !docView.path().isEmpty();
         textStack.setCurrentWidget(settingsMode.active() ? static_cast<QWidget*>(&settingsView)
                                    : history.active()    ? static_cast<QWidget*>(&historyView)
                                    : markdown.active()   ? static_cast<QWidget*>(&markdownView)
+                                   : doc                 ? static_cast<QWidget*>(&docView)
                                    : archived            ? static_cast<QWidget*>(&archiveView)
                                                          : static_cast<QWidget*>(&editor));
     };
-    // Что показывает страница архива — производное от открытой заметки, и
+    // ЧТО СЕЙЧАС НА СТРАНИЦЕ ЧТЕНИЯ. Она показывает два разных рода: вшитую
+    // документацию (за ней нет файла в хранилище) и настоящую заметку под
+    // меткой `access: read-only`. Отличаем не своим флагом рядом, а вопросом
+    // хранилищу о показанном пути: флаг рядом с состоянием — это второе
+    // состояние, которое однажды разойдётся с первым.
+    const auto showingDoc = [&] {
+        const std::shared_ptr<zametti::ZStorage> store = model.storage();
+        return store != nullptr && !docView.path().isEmpty() &&
+               store->virtualNoteAtPath(docView.path()) != nullptr;
+    };
+
+    // Что показывают страницы ЧТЕНИЯ — производное от открытой заметки, и
     // восстанавливает это ОДНА функция: её зовут все двери, через которые
     // заметка сменяется.
-    const auto refreshArchivePage = [&] {
+    const auto refreshReadingPages = [&] {
         if (editor.isArchivedNote()) {
             archiveView.showFile(editor.filePath());
             // Масштаб — общий с обычным видом: это тот же документ и те же
@@ -1079,14 +1101,28 @@ int main(int argc, char** argv) {
         } else {
             archiveView.clear();
         }
+        // ЗАПЕРТАЯ ЗАМЕТКА — ТОЖЕ ЧТЕНИЕ, но не отложенное: тон обычный, как у
+        // документации. Впереди ввезённые книжки, у которых это норма.
+        //
+        // И здесь же: ОТКРЫЛИ ЗАМЕТКУ — ДОКУМЕНТАЦИЯ УХОДИТ С ДОРОГИ. Человек
+        // попросил показать заметку, а не справку; так же ведёт себя режим
+        // правки настроек. Правило одно и стоит здесь, потому что дверей
+        // много: дерево, список, поиск, восстановление из истории, старт.
+        if (editor.isReadOnlyNote() && !editor.isArchivedNote()) {
+            docView.showFile(editor.filePath());
+            docView.applyZoom(editor.zoom());
+        } else if (!docView.path().isEmpty()) {
+            docView.clear();
+            statusBar.setMessage(QString());
+        }
         showPage();
     };
 
-    // СМЕНА ЗАМЕТКИ — единственный источник правды для страницы архива.
+    // СМЕНА ЗАМЕТКИ — единственный источник правды для страниц чтения.
     // Подписка идёт на fileChanged, потому что дверей много (дерево, список,
     // поиск, восстановление, старт), а правило одно.
     QObject::connect(&editor, &zametti::NoteEditor::fileChanged, &window,
-                     [&](const QString&) { refreshArchivePage(); });
+                     [&](const QString&) { refreshReadingPages(); });
 
     QObject::connect(&history, &zametti::HistoryController::modeChanged, &window, [&](bool on) {
         // Вид истории на месте редактора; таймлайн сбоку.
@@ -1295,9 +1331,29 @@ int main(int argc, char** argv) {
     // заметкой: тело живёт в нём и больше нигде.
     // Выделение после удаления уходит к соседу: раскрывать Архив и
     // «показывать» убранное не надо.
+
+    // ЗАПЕРТОЕ НЕ ПРАВИТСЯ, И ОБ ОТКАЗЕ ГОВОРЯТ ВСЛУХ. Одно место на все
+    // команды окна: молчаливый отказ читается как поломка, а мы не
+    // спрашиваем «вы уверены?» — значит обязаны хотя бы сказать, почему не
+    // сделали. Хранилище откажет и само (заслоны в ZStorage), но человек
+    // увидит только эту строку.
+    const auto refuseLocked = [&](const QString& folderOrNote) {
+        const std::shared_ptr<zametti::ZStorage> store = model.storage();
+        if (store == nullptr || folderOrNote.isEmpty()) return false;
+        if (!store->isReadOnly(folderOrNote)) return false;
+        statusBar.setMessage(QStringLiteral("read-only — nothing is written here"));
+        // Явный захват, а не [&]: лямбда переживёт этот вызов на три секунды, и
+        // ссылаться она должна на полосу сведений, а не на чужой кадр.
+        QTimer::singleShot(3000, &statusBar,
+                           [&statusBar] { statusBar.setMessage(QString()); });
+        return true;
+    };
+
     const auto deleteNote = [&](const QString& noteId) {
-        if (!model.isStore() || noteId.isEmpty() || !model.hasNote(noteId)) return;
-        // Сама строка «Архив» ничему не подлежит: файла за ней нет.
+        if (!model.isStore() || noteId.isEmpty()) return;
+        if (refuseLocked(noteId)) return;
+        // Сама строка «Архив» ничему не подлежит: файла за ней нет. Так же и
+        // виртуальные папки: hasNote отвечает про каталог, а их в нём нет.
         if (!model.hasNote(noteId)) return;
         const QString file = model.pathOfId(noteId);
         const bool wasOpen = file == editor.filePath();
@@ -1393,6 +1449,10 @@ int main(int argc, char** argv) {
     // мете: опустевшая папка не превращается обратно в заметку.
     const auto createNote = [&](const QString& requestedParent, bool folder) {
         if (!model.isStore()) return;
+        // В запертую папку не создают. Без этого заметка молча уехала бы в
+        // корень (createNote гасит негодного родителя), и человек не понял бы,
+        // куда она делась.
+        if (refuseLocked(requestedParent)) return;
         editor.save(false);
         QString newError;
         const QString madeId = zapp.storage()->createNote(requestedParent, folder, &newError);
@@ -1416,6 +1476,7 @@ int main(int argc, char** argv) {
     // сохранении. Выбор множественный: приносят обычно не по одному файлу.
     const auto importNotes = [&](const QString& parentId) {
         if (!model.isStore()) return;
+        if (refuseLocked(parentId)) return;
         const QStringList files = QFileDialog::getOpenFileNames(
             &window, QStringLiteral("Import notes"), QString(),
             QStringLiteral("Markdown notes (*.md *.markdown);;All files (*)"));
@@ -1606,6 +1667,8 @@ int main(int argc, char** argv) {
     // ZStorage::setSortMark и editMeta — штампа не ставят.
     const auto setSortFor = [&](const QString& folderId,
                                 std::optional<zametti::SortOrder> order) {
+        // Метка порядка — тоже правка шапки папки.
+        if (refuseLocked(folderId)) return;
         if (folderId.isEmpty()) {
             const zametti::SortOrder chosen =
                 order.value_or(zametti::defaultOrder(zametti::SortKey::Modified));
@@ -1744,6 +1807,13 @@ int main(int argc, char** argv) {
         const QString id = model.idOf(at);
         QMenu menu(&tree);
         menu.addAction(QStringLiteral("Refresh (F5)"), [&] { reloadStore(); });
+        // ЗАПЕРТАЯ СТРОКА — МЕНЮ БЕЗ ПРАВЯЩИХ ПУНКТОВ, а не с погашенными:
+        // серый пункт обещает «когда-нибудь можно», а здесь нельзя никогда,
+        // пока не снята пометка. Обновление оставляем — оно ничего не пишет.
+        if (model.isReadOnlyIndex(at)) {
+            menu.exec(tree.viewport()->mapToGlobal(pos));
+            return;
+        }
         menu.addSeparator();
         menu.addAction(QStringLiteral("New note"),
                        [&] { createNote(model.folderIdFor(at), false); });
@@ -1821,6 +1891,19 @@ int main(int argc, char** argv) {
         menu.addAction(QStringLiteral("Import…"),
                        [&] { importNotes(panels.currentFolderId()); });
         if (id.isEmpty()) {
+            menu.exec(listView.viewport()->mapToGlobal(pos));
+            return;
+        }
+        // ЗАПЕРТАЯ СТРОКА — ТОЛЬКО ЧИТАЮЩИЕ ПУНКТЫ. Вывоз читает и уносит
+        // прочитанное, это не правка; всё остальное — правка, и её здесь нет.
+        // «Открыть во внешнем редакторе» тоже нет: у вшитого документа файла
+        // на диске не существует, и открывать нечего.
+        if (model.isReadOnlyId(id)) {
+            menu.addSeparator();
+            menu.addAction(QStringLiteral("Export…"),
+                           [&] { exportNote(model.pathOfId(id).isEmpty()
+                                                ? list.pathAt(at)
+                                                : model.pathOfId(id)); });
             menu.exec(listView.viewport()->mapToGlobal(pos));
             return;
         }
@@ -2231,6 +2314,24 @@ int main(int argc, char** argv) {
             return;
         }
         statusBar.setMessage(QString());
+        // ЧТО ДЕЛАЮТ КНОПКИ НА ЗАПЕРТОМ. Пока на виду документация (или
+        // заперта сама открытая заметка), кнопки, действующие на текущую
+        // заметку, гаснут — и гаснут С ОБЪЯСНЕНИЕМ: серая кнопка молча читается
+        // как поломка, а не как обещание. Экспорт и вывоз здесь ни при чём —
+        // читать и уносить прочитанное никто не запрещал; гаснет то, что
+        // ПИШЕТ: правка исходника, история (вход в неё обещает возврат версии)
+        // и ввоз картинок в открытую заметку.
+        const bool doc = showingDoc();
+        if (doc || editor.isReadOnlyNote() || editor.isArchivedNote()) {
+            const QString locked = doc ? QStringLiteral("documentation is read-only")
+                                       : QStringLiteral("this note is read-only");
+            for (Button id : {Button::MarkdownEdit, Button::InsertImages})
+                toolbar.setPromise(id, locked);
+            // История у архивной работает как у всякой другой (так решено
+            // раньше): гасим её только на документации, у которой истории нет
+            // вовсе — за ней нет ни файла в хранилище, ни журнала.
+            if (doc) toolbar.setPromise(Button::History, locked);
+        }
         // Облако: кнопка живая только у настроенного синка, и тултип говорит
         // словами, чего ждать (m17, сессия 4).
         if (!cloudSync.configured())
@@ -2238,6 +2339,46 @@ int main(int argc, char** argv) {
         else
             toolbar.setTip(Button::Cloud, cloudSync.statusText());
     };
+
+    // ДОКУМЕНТАЦИЯ ОТКРЫВАЕТСЯ ЧИТАЛКОЙ, А НЕ РЕДАКТОРОМ, и это не украшение:
+    // openFile завёл бы вшитому документу журнал в ЧУЖОМ хранилище
+    // (history/README.log), сторожа на путь ресурса и место в кэше заметок.
+    // Развилка одна и стоит у двери, через которую человек выбирает строку.
+    const auto showDoc = [&](const QString& path) {
+        const std::shared_ptr<zametti::ZStorage> store = model.storage();
+        const zametti::ZStorage::VirtualNote* doc =
+            store == nullptr ? nullptr : store->virtualNoteAtPath(path);
+        if (doc == nullptr) return false;
+        // Режимы уходят с дороги — тем же решением, что и у правки настроек:
+        // человек попросил показать документ, а не остаться в режиме.
+        if (settingsMode.active()) settingsMode.leave();
+        if (markdown.active()) markdown.leave();
+        if (history.active()) history.leave();
+        if (!docView.showFile(doc->path, doc->id)) return false;
+        // ПОСЛЕ показа: масштаб несёт шрифт документа, а документ только что
+        // подменили.
+        docView.applyZoom(editor.zoom());
+        // Панели обязаны знать, что «открыто» теперь это: иначе повторный
+        // щелчок по строке не сработает (openFromPanel сверяется с ней), а
+        // наполнение списка снимет выделение.
+        panels.setCurrentNote(doc->path);
+        window.setWindowTitle(docView.title() + QStringLiteral(" — zametti"));
+        showPage();
+        // Кнопки — до сообщения: refreshToolbar чистит полосу сведений, и
+        // сказать в неё своё надо ПОСЛЕ него, иначе скажем в пустоту.
+        refreshToolbar();
+        statusBar.setMessage(docView.title() + QStringLiteral(" — documentation (read-only)"));
+        docView.setFocus();
+        return true;
+    };
+
+    // Панели говорят, что человек выбрал; открывает документ читалка, заметку —
+    // редактор, и решает это одна развилка.
+    QObject::connect(&panels, &zametti::NotePanels::noteChosen, &window,
+                     [&](const QString& file, bool takeFocus) {
+                         if (showDoc(file)) return;
+                         editor.openFile(file, takeFocus);
+                     });
 
     // --- ХРАНИЛИЩЕ ПРИЦЕПЛЯЕТСЯ И ОТЦЕПЛЯЕТСЯ ОДНОЙ ФУНКЦИЕЙ ----------------
     //
@@ -2290,11 +2431,14 @@ int main(int argc, char** argv) {
             if (markdown.active()) markdown.leave();
             if (settingsMode.active()) settingsMode.leave();
             archiveView.clear();
-            showPage();
             storeSearch.cancel();
             results.clear();
             resultsView.hide();
         }
+        // Документация могла быть на виду и БЕЗ хранилища — потому и снаружи
+        // условия: в пустом окне она единственное, что вообще показывают.
+        docView.clear();
+        showPage();
         // Поток прогона синка держит СВОЮ копию указателя — контроллер его
         // дождётся.
         cloudSync.setStorage(nullptr);
@@ -2319,6 +2463,13 @@ int main(int argc, char** argv) {
 
         // --- прицепление --------------------------------------------------
         if (root.isEmpty()) {
+            // ОКНО БЕЗ ХРАНИЛИЩА — ЭТО ХРАНИЛИЩЕ С ПУСТЫМ КОРНЕМ, а не
+            // отсутствие объекта: isStore() у него ложь, каталог пуст, панели
+            // ведут себя как прежде, — но виртуальные папки он несёт, и папка
+            // Info остаётся на месте. Иначе документацию негде было бы
+            // прочитать ровно тому, кому она нужнее всех: человеку, который
+            // только что запустил программу впервые.
+            panels.setStorage(zapp.storage());
             applyStartWidths();
             refreshToolbar();
             window.setWindowTitle(QStringLiteral("zametti"));
@@ -2820,7 +2971,7 @@ int main(int argc, char** argv) {
     // открытая при запуске, показывалась бы редактором до первого перехода на
     // другую заметку (так и было; поймано снимком окна под Xvfb, а не набором:
     // проводка окна наборами не покрыта).
-    refreshArchivePage();
+    refreshReadingPages();
     window.show();
     QTimer::singleShot(0, &window, applyStartWidths);
     // СИНК НА СТАРТЕ (дефолт вкл): в фоне, с акцентом на входящие — программа

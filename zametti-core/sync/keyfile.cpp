@@ -1,5 +1,5 @@
 // Keyfile: заворот и разворот мастер-ключа. Формат — см. шапку keyfile.h и
-// раздел «Keyfile» в docs/zametti-storage.md.
+// раздел «Keyfile» в docs/info/zametti-storage.md.
 
 #include "keyfile.h"
 
