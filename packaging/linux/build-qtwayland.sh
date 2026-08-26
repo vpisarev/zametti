@@ -76,7 +76,7 @@ grep -q "GNOME-like client-side decorations ... yes" config.summary || {
     exit 1
 }
 
-cmake --build . -j4
+cmake --build . -j8
 cmake --install .
 
 test -f "$ZPREFIX/plugins/wayland-decoration-client/libadwaita.a" || {

@@ -5,7 +5,7 @@
 #
 #   source packaging/win/zenv.sh
 #   bash packaging/win/qtbase-configure.sh
-#   cmake --build $ZWBUILD/qtbase-win -j4 && cmake --install $ZWBUILD/qtbase-win
+#   cmake --build $ZWBUILD/qtbase-win -j8 && cmake --install $ZWBUILD/qtbase-win
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

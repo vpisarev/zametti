@@ -4,7 +4,7 @@
 #
 #   git -C $ZBUILD clone --depth 1 --branch v6.10.3 https://code.qt.io/qt/qtbase.git
 #   bash packaging/linux/qtbase-configure.sh
-#   cd $ZBUILD/qtbase-build && cmake --build . -j4 && cmake --install .
+#   cd $ZBUILD/qtbase-build && cmake --build . -j8 && cmake --install .
 #
 # Записана файлом, чтобы её можно было повторить и прочитать, а не
 # восстанавливать из памяти. НАСТРАИВАЕТ, но не собирает: сборка Qt долгая, и

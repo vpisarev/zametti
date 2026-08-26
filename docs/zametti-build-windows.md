@@ -55,7 +55,7 @@ sudo apt install mingw-w64 cmake ninja-build wine
 ~/work/zdeps/libexec/moc --version     # ожидается moc 6.10.3
 ```
 
-**Память.** Сборка — `-j4`, по одной за раз. Правило то же, что у Linux-рецепта,
+**Память.** Сборка — `-j8`, по одной за раз. Правило то же, что у Linux-рецепта,
 и по той же причине (инцидент 17.08.2026). Перед тяжёлым — `free -g`.
 
 ## 2. Окружение
@@ -106,7 +106,7 @@ done
 ```bash
 bash packaging/win/qtbase-configure.sh          # только настраивает
 cd $ZWBUILD/qtbase-win
-cmake --build . -j4 && cmake --install .
+cmake --build . -j8 && cmake --install .
 ```
 
 Читается список так же, как под Linux, только «system-» здесь нет ни одного:
@@ -133,7 +133,7 @@ Linux, только другим средством: доверенные кор
 source packaging/win/zenv.sh
 mkdir -p $ZWBUILD/qtsvg-win && cd $ZWBUILD/qtsvg-win
 $ZWPREFIX/bin/qt-cmake $ZWBUILD/qtsvg -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$ZWPREFIX
-cmake --build . -j4 && cmake --install .
+cmake --build . -j8 && cmake --install .
 ```
 
 `qtwayland` под Windows не нужен вовсе: заголовок окна рисует система.
@@ -148,7 +148,7 @@ cmake -S . -B build-win \
       -DCMAKE_TOOLCHAIN_FILE=packaging/win/toolchains/mingw-w64.cmake \
       -DCMAKE_PREFIX_PATH=$ZWPREFIX \
       -DWITH_STATIC_QT=ON
-cmake --build build-win -j4
+cmake --build build-win -j8
 ```
 
 `WITH_STATIC_QT=ON` ничего не переключает — он **стережёт**: найденная

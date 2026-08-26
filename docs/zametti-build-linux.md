@@ -46,7 +46,7 @@ OpenSSL, ни кодеков на целевой машине. Отчёт о т�
 (`xcb-util-wm`, `xcb-util-cursor`) генерируют им часть исходников, и без него
 их `configure` падает на пятом шаге сообщением, из которого причина не видна.
 
-**Память.** Сборка — `-j4`, по одной за раз. 16 компиляторов gcc по 1.5–2 ГБ
+**Память.** Сборка — `-j8`, по одной за раз. 16 компиляторов gcc по 1.5–2 ГБ
 забивают 32 ГБ насмерть; это уже случалось (17.08.2026). Перед тяжёлым —
 `free -g`.
 
@@ -198,7 +198,7 @@ tar -xf openssl-3.5.7.tar.gz && cd openssl-3.5.7
 
 ./Configure linux-x86_64 no-shared no-tests no-docs no-apps no-legacy \
     --prefix="$ZPREFIX" --openssldir=/etc/ssl -fPIC -O2 CC="$CC"
-make -j4 && make install_sw
+make -j8 && make install_sw
 ```
 
 `--openssldir=/etc/ssl` — это путь на ЦЕЛЕВОЙ машине, где лежат её
@@ -277,7 +277,7 @@ done
 
 ```bash
 bash packaging/linux/qtbase-configure.sh          # только настраивает
-cd $ZBUILD/qtbase-build && cmake --build . -j4 && cmake --install .
+cd $ZBUILD/qtbase-build && cmake --build . -j8 && cmake --install .
 ```
 
 Сборка qtbase без QML/Quick/WebEngine — 822 цели, около трёх минут на восьми
@@ -289,7 +289,7 @@ tail` отдаёт `$?` от `tail`, и упавшая сборка отрапо
 ```bash
 mkdir -p $ZBUILD/qtsvg-build && cd $ZBUILD/qtsvg-build
 $ZPREFIX/bin/qt-cmake $ZBUILD/qtsvg -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$ZPREFIX
-cmake --build . -j4 && cmake --install .
+cmake --build . -j8 && cmake --install .
 ```
 
 **qtwayland** — ради одного плагина `adwaita` (родной заголовок окна под
@@ -341,7 +341,7 @@ cmake -S . -B build-portable \
       -DCMAKE_TOOLCHAIN_FILE=packaging/linux/toolchains/linux-zsys.cmake \
       -DCMAKE_PREFIX_PATH=$ZPREFIX \
       -DWITH_STATIC_QT=ON
-cmake --build build-portable -j4
+cmake --build build-portable -j8
 ```
 
 `WITH_STATIC_QT=ON` ничего не переключает — он **стережёт**: если найденная Qt
