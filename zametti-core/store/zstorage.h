@@ -147,6 +147,11 @@ public:
     // самый частый случай); живой pid не трогается никогда.
     struct LockReport {
         bool locked = false;
+        // Не вышло — по РАЗНЫМ причинам, и валить одну на другую значит врать.
+        // busy: замок держит живой чужой процесс (открыта программа).
+        // Иначе замка не завести вовсе — чаще всего это просто не хранилище,
+        // и «занято» было бы неправдой.
+        bool busy = false;
         qint64 holderPid = 0;      // кто держит, если не вышло
         QString holderHost;
         QString note;              // что сделали по пути (сняли труп…), для лога
@@ -261,6 +266,19 @@ public:
     // --- пути и журнал -----------------------------------------------------
     QString pathOf(const QString& id) const;
     static QString idOfPath(const QString& path);
+
+    // НАЗВАННАЯ СНАРУЖИ ЗАМЕТКА: голый id — тогда корень называют отдельно, —
+    // или путь к её файлу, по которому хранилище видно само (заметка лежит
+    // прямо в корне, а базовое имя файла и есть её id). Это знание о
+    // РАСКЛАДКЕ хранилища, а не о командной строке, потому и живёт здесь: тот
+    // же разбор понадобится всякому, кто пустит человека назвать заметку
+    // путём.
+    struct Target {
+        QString root;
+        QString id;
+        bool isEmpty() const { return root.isEmpty() || id.isEmpty(); }
+    };
+    static Target locate(const QString& what, const QString& rootHint = QString());
     // Журнал заметки: объект, который заметка держит полем. Указатель на
     // хранилище внутри него обычный — журнал живёт меньше хранилища.
     std::shared_ptr<ZJournal> journalFor(const QString& id,
@@ -719,12 +737,48 @@ public:
                                                    const QString& serverPassword,
                                                    QString* error = nullptr);
 
-    // ВОССТАНОВИТЬ ПОДКЛЮЧЕНИЕ БЕЗ ВОПРОСОВ — старт программы и CLI-прогоны:
-    // адрес из remote.json, пароль сервера и ключ из keyring (решение
-    // владельца: из конфига и keyring, не из бухгалтерии — кэш остаётся
-    // кэшем). Ложь с объяснением — «не настроен» или «keyring пуст»; для
-    // вызывающего это тихий статус, не ошибка.
-    bool useLastRemote(SecretStore& secrets, QString* error = nullptr);
+    // ЕСТЬ ЛИ В ОБЛАКЕ КОНВЕРТ С КЛЮЧОМ — вопрос ДО всякого пароля шифрования.
+    // От ответа зависит, спрашивать пароль один раз или два: опечатка при
+    // СОЗДАНИИ запечатала бы облако навсегда, а при развороте существующего
+    // она безобидна — конверт просто не откроется. Заодно это первая проверка
+    // адреса: до облака не достучались — false с непустым error.
+    static bool cloudHasKeyfile(const RemoteConfig& cfg, const QString& serverPassword,
+                                QString* error = nullptr);
+
+    // ПОДКЛЮЧЕНИЕ ОДНОЙ ЛЕСТНИЦЕЙ — старт программы и командные прогоны.
+    //
+    // Лестниц было три (окно, `sync`, `push-all`), и они разъезжались: одна
+    // умела конверт из облака, другая — чеканку, третья не умела ни того, ни
+    // другого. Ступени, сверху вниз:
+    //
+    //   адрес           — cfg, если назван (ключи командной строки), иначе
+    //                     remote.json этой копии;
+    //   пароль сервера  — serverPassword, если назван (среда), иначе secrets;
+    //   ключ            — secrets (keyring или среда), иначе конверт из
+    //                     облака, развёрнутый encryptionPassword;
+    //   пустое облако   — ТОЛЬКО с mintIfCloudEmpty (люк первой заливки
+    //                     push-all): чеканим ключ и заливаем конверт.
+    //
+    // Ложь с объяснением — «не настроен», «нет ключа»; для вызывающего это
+    // тихий статус, не беда. Идентичность НЕ чеканится: кому надо, тот зовёт
+    // ensureIdentity сам — молчаливая чеканка при простом старте была бы
+    // решением за человека.
+    struct AttachOptions {
+        RemoteConfig cfg;            // пусто — взять из remote.json
+        QString serverPassword;      // пусто — спросить у secrets
+        QString encryptionPassword;  // последняя дверь: конверт из облака
+        bool mintIfCloudEmpty = false;
+        Keyfile::KdfParams mintParams = Keyfile::defaults();
+    };
+    struct AttachOutcome {
+        bool mintedKeyfile = false;  // облако было пустым, конверт отчеканен
+    };
+    bool attachRemote(const AttachOptions& how, SecretStore& secrets,
+                      AttachOutcome* outcome = nullptr, QString* error = nullptr);
+    // Она же без вопросов: адрес из remote.json, секреты из keyring.
+    bool useLastRemote(SecretStore& secrets, QString* error = nullptr) {
+        return attachRemote(AttachOptions{}, secrets, nullptr, error);
+    }
 
     // ПЕРВИЧНАЯ НАСТРОЙКА (set-remote): единственное место, где решаются все
     // ветки знакомства с облаком. Пустое облако — чеканит keyfile и заливает;

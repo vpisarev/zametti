@@ -161,6 +161,7 @@ ZStorage::LockReport ZStorage::lock() {
         }
     }
     lock_->getLockInfo(&report.holderPid, &report.holderHost, &app);
+    report.busy = lock_->error() == QLockFile::LockFailedError;
     return report;
 }
 
@@ -169,6 +170,20 @@ QString ZStorage::pathOf(const QString& id) const {
 }
 
 QString ZStorage::idOfPath(const QString& path) { return QFileInfo(path).completeBaseName(); }
+
+ZStorage::Target ZStorage::locate(const QString& what, const QString& rootHint) {
+    Target target;
+    target.root = rootHint;
+    target.id = what;
+    // Путь узнаём по расширению, а не по существованию файла: заметку могли
+    // уже удалить, а журнал её пережил — именно с ним и работают люки.
+    if (what.endsWith(QStringLiteral(".md"), Qt::CaseInsensitive)) {
+        const QFileInfo info(what);
+        target.id = idOfPath(what);
+        if (target.root.isEmpty()) target.root = info.absolutePath();
+    }
+    return target;
+}
 
 std::shared_ptr<ZJournal> ZStorage::journalFor(const QString& id,
                                                         const ZJournal::Rules& rules) {

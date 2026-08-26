@@ -234,8 +234,18 @@ std::shared_ptr<RemoteStore> ZStorage::makeRemote(const RemoteConfig& cfg,
     return std::make_shared<FolderRemote>(cfg.dir);
 }
 
-bool ZStorage::useLastRemote(SecretStore& secrets, QString* error) {
-    const RemoteConfig cfg = remoteConfig();
+bool ZStorage::cloudHasKeyfile(const RemoteConfig& cfg, const QString& serverPassword,
+                               QString* error) {
+    auto remote = makeRemote(cfg, serverPassword, error);
+    if (!remote) return false;
+    QByteArray envelope;
+    return remote->get(QLatin1String(Keyfile::kRemoteName), &envelope, nullptr, nullptr);
+}
+
+bool ZStorage::attachRemote(const AttachOptions& how, SecretStore& secrets,
+                            AttachOutcome* outcome, QString* error) {
+    if (outcome) *outcome = AttachOutcome{};
+    const RemoteConfig cfg = how.cfg.isEmpty() ? remoteConfig() : how.cfg;
     if (cfg.isEmpty()) {
         if (error) *error = QStringLiteral("sync is not configured for this store");
         return false;
@@ -246,18 +256,45 @@ bool ZStorage::useLastRemote(SecretStore& secrets, QString* error) {
         return false;
     }
     QString why;
-    QString password;
-    if (!cfg.url.isEmpty()) password = secrets.serverPassword(mine.storeId(), &why);
+    QString password = how.serverPassword;
+    if (password.isEmpty() && !cfg.url.isEmpty())
+        password = secrets.serverPassword(mine.storeId(), &why);
     auto remote = makeRemote(cfg, password, error);
     if (!remote) return false;
+
     Keyfile keyfile;
     if (!secrets.loadKey(mine.storeId(), &keyfile, &why)) {
-        // Не беда, а «настройся заново»: утраченный keyring лечится одним
-        // вводом пароля (set-remote), и это названный брифом случай.
-        if (error)
-            *error = QStringLiteral("the key is not in the keyring (%1) — run set-remote once")
-                         .arg(why);
-        return false;
+        // Ключа под рукой нет. Дальше — только с паролем: без него ни конверт
+        // не развернуть, ни новый ключ не отчеканить.
+        QByteArray envelope;
+        const bool haveEnvelope =
+            !how.encryptionPassword.isEmpty() &&
+            remote->get(QLatin1String(Keyfile::kRemoteName), &envelope, nullptr, nullptr);
+        if (haveEnvelope) {
+            if (!keyfile.parse(envelope, error) ||
+                !keyfile.unwrap(how.encryptionPassword, error))
+                return false;
+        } else if (how.mintIfCloudEmpty && !how.encryptionPassword.isEmpty()) {
+            // ПЕРВАЯ ЗАЛИВКА В ПУСТОЕ ОБЛАКО. Только по явному разрешению: без
+            // него «конверта нет» значит «не туда смотрим», а не «пора чеканить»
+            // — молча отчеканенный второй ключ развёл бы копии навсегда.
+            if (!Keyfile::create(mine.storeId(), how.encryptionPassword, how.mintParams,
+                                 &keyfile, error))
+                return false;
+            if (!remote->mkdirOnce(error) ||
+                !remote->put(QLatin1String(Keyfile::kRemoteName), keyfile.toBytes(), nullptr,
+                             error))
+                return false;
+            if (outcome) outcome->mintedKeyfile = true;
+        } else {
+            // Не беда, а «настройся заново»: утраченный keyring лечится одним
+            // вводом пароля (set-remote), и это названный брифом случай.
+            if (error)
+                *error = QStringLiteral("the key is not in the keyring (%1) — run set-remote "
+                                        "once, or set ZAMETTI_SYNC_KEY / ZAMETTI_SYNC_PASSWORD")
+                             .arg(why);
+            return false;
+        }
     }
     return setRemote(remote, keyfile, error);
 }

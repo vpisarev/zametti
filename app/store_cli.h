@@ -35,6 +35,12 @@ protected:
     // употребления. Осознанный `--help` печатает её же в stdout с нулём.
     int usage() const;
     void printLines(const ZStorage::Report& report) const;
+    // Замок хранилища одной дорогой; печатает отказ и отвечает, взяли ли.
+    // busyHint — что дописать к «занято» (у thin своя приписка).
+    bool takeLock(ZStorage& storage, const char* busyHint = "") const;
+    // Адрес облака, названный ключами (--url/--to/--user/--allow-insecure-http).
+    // Пустой, если не назван ни один адрес: тогда его знает remote.json.
+    ZStorage::RemoteConfig addressFromFlags() const;
     // Пароль с клавиатуры, БЕЗ эха. Разговор с терминалом — дело CLI, в ядре
     // ему места нет.
     static QString askPassword(const char* prompt);
