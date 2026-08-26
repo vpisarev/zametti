@@ -287,16 +287,45 @@ void checkGutterIsPainted() {
     QTextCursor top2(text2.document());
     top2.setPosition(0);
     text2.setTextCursor(top2);
+    // СЧЁТ ОТЛИЧИЙ «m/n» (просьба владельца): без него по F4 не видно ни
+    // сколько их всего, ни далеко ли до конца. Счёт обязан совпадать с
+    // настоящей ходьбой — потому и спрашивается на каждом шаге, а не отдельно.
+    ZT_EQ("отличий в этой разности — два", "2", num(text2.hunkTotal()));
+    ZT_EQ("до F4 мы ни на одном", "0", num(text2.hunkIndex()));
     ZT_TRUE("F4 — к первому куску", text2.stepChange(true));
     const DiffTextView::Hunk added = text2.currentHunk();
     ZT_TRUE("первый кусок — только добавленное", added.kind == diff::Mark::Added);
+    ZT_EQ("и счёт говорит «1»", "1", num(text2.hunkIndex()));
     ZT_TRUE("F4 — ко второму куску", text2.stepChange(true));
     const DiffTextView::Hunk removed = text2.currentHunk();
     ZT_TRUE("второй кусок — только убранное", removed.kind == diff::Mark::Removed);
     ZT_TRUE("и это другой кусок", removed.first != added.first);
+    ZT_EQ("счёт говорит «2»", "2", num(text2.hunkIndex()));
     // По кругу — назад к первому: пиксели зелёные, красных нет.
     ZT_TRUE("F4 — по кругу к первому", text2.stepChange(true));
     ZT_TRUE("снова первый", text2.currentHunk().first == added.first);
+    ZT_EQ("и счёт вернулся к «1»", "1", num(text2.hunkIndex()));
+    // Shift+F4 (шаг назад) считает так же: круг в другую сторону.
+    ZT_TRUE("Shift+F4 — назад по кругу", text2.stepChange(false));
+    ZT_EQ("счёт — последний", num(text2.hunkTotal()), num(text2.hunkIndex()));
+
+    // НАДПИСЬ В БАННЕРЕ — то, что человек видит. Спрашиваем сам виджет: сигнал
+    // и связь с ним тоже часть починки, и без этого проверка мерила бы только
+    // счётчик.
+    {
+        const QList<QLabel*> labels = rig2.view->findChildren<QLabel*>();
+        QString shown;
+        for (QLabel* label : labels)
+            if (label->text().contains(QLatin1Char('/')) &&
+                label->text().contains(QString::fromStdString(num(text2.hunkTotal()))))
+                shown = label->text();
+        ZT_EQ("баннер показывает счёт отличий",
+              num(text2.hunkIndex()) + "/" + num(text2.hunkTotal()), shown.toStdString());
+    }
+    // Возвращаемся на первый кусок: следующая проверка меряет ЕГО полосу по
+    // пикселям, и оставить каретку на другом значило бы мерить не то.
+    ZT_TRUE("F4 — снова на первый", text2.stepChange(true));
+    ZT_TRUE("и это он", text2.currentHunk().first == added.first);
     QApplication::processEvents();
     const QImage shot2 = text2.viewport()->grab().toImage();
     const auto barColourOf = [&](int blockNumber, const QColor& want) {
@@ -756,6 +785,15 @@ void writeShots(const QString& dir) {
         rig.view->grab().save(QDir(dir).filePath(
             QStringLiteral("история-%1.png").arg(width >= 1000 ? QStringLiteral("широко")
                                                                  : QStringLiteral("узко"))));
+        // Со счётом отличий: два шага F4 — и в баннере «2/6». Снимок нужен
+        // именно такой: надпись «—/6» до первого шага видна на снимке выше,
+        // а с номером — только после ходьбы.
+        rig.text().stepChange(true);
+        rig.text().stepChange(true);
+        QApplication::processEvents();
+        rig.view->grab().save(QDir(dir).filePath(
+            QStringLiteral("история-счёт-%1.png").arg(width >= 1000 ? QStringLiteral("широко")
+                                                                     : QStringLiteral("узко"))));
         rig.controller.setBaseFresh(true);
         QApplication::processEvents();
         rig.view->grab().save(QDir(dir).filePath(

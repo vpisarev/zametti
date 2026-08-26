@@ -65,6 +65,12 @@ HistoryBanner::HistoryBanner(QWidget* parent) : QWidget(parent) {
                       .arg(look.historyBackground().darker(104).name()));
 
     text_ = new QLabel(this);
+    // Счёт отличий — у ПРАВОГО края строки слепка: слева «Snapshot …», справа
+    // «3/12». Своей надписью, а не хвостом первой: та ужимается многоточием в
+    // узком окне, и счёт исчезал бы первым — а он короткий и нужен всегда.
+    hunks_ = new QLabel(this);
+    hunks_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    hunks_->setToolTip(QStringLiteral("Difference under the caret / how many there are"));
     // Надпись не диктует ширину баннера: в узком окне она ужимается первой,
     // иначе минимальная ширина баннера (и всего вида истории) отбирала бы
     // место у списка записей справа.
@@ -82,9 +88,13 @@ HistoryBanner::HistoryBanner(QWidget* parent) : QWidget(parent) {
         button->setToolTip(tip);
         return button;
     };
-    fromPrevious_ = latching(QStringLiteral("vs previous"),
+    // ПОДПИСЬ ЦЕЛИКОМ НА КНОПКЕ, отдельного слова «compare:» перед ними нет
+    // (просьба владельца): оно стояло вплотную к счёту отличий, и две короткие
+    // надписи рядом читались как одна. Кнопка обязана говорить сама за себя —
+    // тем более что рядом с ней теперь стоит число.
+    fromPrevious_ = latching(QStringLiteral("diff vs previous"),
                              QStringLiteral("Compare with the previous history entry"));
-    fromFresh_ = latching(QStringLiteral("vs current"),
+    fromFresh_ = latching(QStringLiteral("diff vs current"),
                           QStringLiteral("Compare with the current version of the note"));
     // Залипают по одной: QButtonGroup держит это сам, и «оба нажаты» не
     // случится ни при какой последовательности щелчков.
@@ -102,7 +112,9 @@ HistoryBanner::HistoryBanner(QWidget* parent) : QWidget(parent) {
     layout->setContentsMargins(10, 5, 10, 5);
     layout->setSpacing(8);
     layout->addWidget(text_, 1);
-    layout->addWidget(new QLabel(QStringLiteral("compare:"), this));
+    layout->addWidget(hunks_);
+    // Счёт отличий — не подпись к кнопкам, и воздух между ними это говорит.
+    layout->addSpacing(12);
     layout->addWidget(fromPrevious_);
     layout->addWidget(fromFresh_);
     layout->addSpacing(8);
@@ -145,6 +157,16 @@ void HistoryBanner::setSnapshot(qint64 time, ZJournal::Kind kind, int changed) {
         what += QStringLiteral(" (%1)").arg(historyKindName(kind));
     if (changed >= 0) what += QStringLiteral("  ·  ±%1").arg(changed);
     showText(what);
+}
+
+void HistoryBanner::setHunk(int index, int total) {
+    if (total <= 0) {
+        hunks_->clear();
+        return;
+    }
+    // «—/12», пока ни на одном: ноль читался бы как «нулевое отличие».
+    hunks_->setText(index > 0 ? QStringLiteral("%1/%2").arg(index).arg(total)
+                              : QStringLiteral("—/%1").arg(total));
 }
 
 void HistoryBanner::flashRestore() {

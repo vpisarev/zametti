@@ -60,6 +60,7 @@ void DiffTextView::present(int keepLine, int keepOffset) {
     ZDocument next = timeline_ != nullptr ? timeline_->document() : ZDocument();
     if (!next.sameHandle(shown_)) {
         hunk_ = Hunk{};   // куски другого документа
+        hunks_.clear();   // и список их — тоже чужой
         ZDocument previous = shown_;
         shown_ = next;
         setDocument(shown_.getDocument());
@@ -69,14 +70,58 @@ void DiffTextView::present(int keepLine, int keepOffset) {
         retire(std::move(previous));
     }
     document()->setModified(false);
-    if (timeline_ == nullptr) return;
+    if (timeline_ == nullptr) {
+        announceHunk();   // нечего показывать — надпись гаснет
+        return;
+    }
     if (keepLine >= 0) {
         const int block = timeline_->blockOfAfterLine(keepLine);
         if (block >= 0) scrollToBlockTop(block, keepOffset);
     }
     if (!query.isEmpty()) findMatches(query, caseSensitive);
+    // Счёт отличий — производное показанной разности, и восстанавливает его ОДНА
+    // функция, которую зовут оба пути: свежий показ (здесь) и шаг по отличиям.
+    announceHunk();
     viewport()->update();
 }
+
+// ВСЕ КУСКИ ПОКАЗАННОЙ РАЗНОСТИ, ПО ПОРЯДКУ. Считаются тем же hunkFrom, что и
+// ходьба по ним: второго понятия «кусок» в программе нет, и разойтись счёту с
+// ходьбой негде.
+//
+// Обход всего документа — но РОВНО ОДИН на показанную разность: список живёт до
+// следующей подмены документа (present чистит его). F4 нажимают подряд, и
+// считать заново на каждое нажатие значило бы платить длиной заметки за каждый
+// шаг.
+void DiffTextView::rebuildHunks() const {
+    hunks_.clear();
+    if (timeline_ == nullptr) return;
+    const int blocks = document()->blockCount();
+    for (int at = 0; at < blocks;) {
+        const Hunk hunk = hunkFrom(at);
+        if (!hunk.valid()) {
+            ++at;
+            continue;
+        }
+        hunks_.push_back(hunk);
+        at = hunk.last + 1;
+    }
+}
+
+int DiffTextView::hunkTotal() const {
+    if (hunks_.isEmpty()) rebuildHunks();
+    return int(hunks_.size());
+}
+
+int DiffTextView::hunkIndex() const {
+    if (!hunk_.valid()) return 0;
+    if (hunks_.isEmpty()) rebuildHunks();
+    for (int i = 0; i < hunks_.size(); ++i)
+        if (hunks_[i].first == hunk_.first) return i + 1;
+    return 0;
+}
+
+void DiffTextView::announceHunk() { emit hunkChanged(hunkIndex(), hunkTotal()); }
 
 void DiffTextView::retire(ZDocument previous) {
     // НИ ОДИН ДОКУМЕНТ НЕ УНИЧТОЖАЕТСЯ СИНХРОННО: подмена идёт из обработчиков
@@ -153,6 +198,7 @@ bool DiffTextView::stepChange(bool forward) {
         setTextCursor(QTextCursor(first));
         const QAbstractTextDocumentLayout* layout = document()->documentLayout();
         revealInGolden(layout->blockBoundingRect(first).united(layout->blockBoundingRect(last)));
+        announceHunk();
         viewport()->update();
         return true;
     }
@@ -346,6 +392,8 @@ HistoryView::HistoryView(QWidget* parent) : QWidget(parent) {
     connect(text_, &DiffTextView::leaveRequested, this, &HistoryView::leaveRequested);
     connect(text_, &DiffTextView::stepBackRequested, this, &HistoryView::stepBackRequested);
     connect(text_, &DiffTextView::stepForwardRequested, this, &HistoryView::stepForwardRequested);
+    connect(text_, &DiffTextView::hunkChanged, this,
+            [this](int index, int total) { banner_->setHunk(index, total); });
     connect(text_, &DiffTextView::editRefused, this, [this] {
         banner_->flashRestore();
         emit editRefused();
@@ -381,6 +429,10 @@ void HistoryView::syncBanner() {
     if (tl == nullptr || !tl->isOpen()) return;
     banner_->setBaseIsFresh(tl->baseIsFresh());
     banner_->setSnapshot(tl->snapshotTime(), tl->snapshotKind(), tl->changedLines());
+    // Надпись про отличия ставится ПОСЛЕ строки слепка: setSnapshot её не
+    // трогает, но порядок держим таким же, как у остального производного
+    // состояния — сперва что показано, потом где мы в нём.
+    banner_->setHunk(text_->hunkIndex(), text_->hunkTotal());
 }
 
 }  // namespace zametti
