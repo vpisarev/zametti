@@ -18,20 +18,24 @@ using B = Toolbar::Button;
 // Единственное место, где сказано, из чего состоит тулбар. Список владельца из
 // zametti_todo.md, раздел «Тулбар с кнопочками», в его же порядке.
 constexpr Toolbar::Spec kSpecs[] = {
-    {B::NewNote, "file-plus-corner", "New note", "Ctrl+N", 0, false},
-    {B::NewFolder, "folder-plus", "New folder", "", 0, false},
-    {B::ImportNotes, "folder-input", "Import .md", "", 0, false},
-    {B::InsertImages, "image-down", "Insert images", "", 0, false},
+    // Своя группа, и она одна: открыть или завести хранилище — не операция над
+    // заметкой, и стоять вплотную к «новой заметке» ей незачем.
+    {B::OpenStore, "database", "Open storage", "", 0, false},
 
-    {B::Export, "square-arrow-out-up-right", "Export note", "", 1, false},
-    {B::Cloud, "cloud-sync", "Sync", "", 1, false},
+    {B::NewNote, "file-plus-corner", "New note", "Ctrl+N", 1, false},
+    {B::NewFolder, "folder-plus", "New folder", "", 1, false},
+    {B::ImportNotes, "folder-input", "Import .md", "", 1, false},
+    {B::InsertImages, "image-down", "Insert images", "", 1, false},
 
-    {B::Panels, "columns-3", "Hide side panels", "", 2, true},
+    {B::Export, "square-arrow-out-up-right", "Export note", "", 2, false},
+    {B::Cloud, "cloud-sync", "Sync", "", 2, false},
+
+    {B::Panels, "columns-3", "Hide side panels", "", 3, true},
     // Начальные значки и подсказки: направление у сортировок меняется на ходу
     // (setIcon/setTip), и здесь записано лишь то, с чего они начинают.
-    {B::SortByName, "arrow-down-a-z", "By name, A→Z", "", 2, true},
-    {B::SortByDate, "clock-arrow-down", "By modified date, newest first", "", 2, true},
-    {B::SortByCreated, "calendar-arrow-down", "By created date, newest first", "", 2, true},
+    {B::SortByName, "arrow-down-a-z", "By name, A→Z", "", 3, true},
+    {B::SortByDate, "clock-arrow-down", "By modified date, newest first", "", 3, true},
+    {B::SortByCreated, "calendar-arrow-down", "By created date, newest first", "", 3, true},
 
     // На месте трёх прежних кнопок навигации по истории (вернуть, к последней
     // версии, назад к посещённому). Из них вернулась одна — вход в историю;
@@ -40,18 +44,18 @@ constexpr Toolbar::Spec kSpecs[] = {
     // ПЕРЕКЛЮЧАТЕЛЬ, а не кнопка-действие: пока горит — идёт режим истории,
     // нажали снова — вернулись к текущей версии (решение владельца). Так у
     // режима есть видимый признак, а не только баннер над текстом.
-    {B::History, "rotate-ccw-clock", "Note history", "", 3, true},
+    {B::History, "rotate-ccw-clock", "Note history", "", 4, true},
     // Сочетание у этой кнопки НАСТРАИВАЕМОЕ (editor.markdownModeKey) и по
     // умолчанию пустое: в тултип оно подставляется из настроек (tipFor), а не
     // литералом — иначе тултип врал бы при любой правке конфига.
-    {B::MarkdownEdit, "square-m", "Edit source", "", 3, true},
-    {B::Search, "search", "Find in note", "Ctrl+F", 3, false},
-    {B::SearchInStore, "database-search", "Find in all notes", "Ctrl+Shift+F", 3, false},
+    {B::MarkdownEdit, "square-m", "Edit source", "", 4, true},
+    {B::Search, "search", "Find in note", "Ctrl+F", 4, false},
+    {B::SearchInStore, "database-search", "Find in all notes", "Ctrl+Shift+F", 4, false},
 
     // ПЕРЕКЛЮЧАТЕЛЬ, как история и правка исходника: горит — на месте
     // редактора правится config.json (refactor3).
-    {B::Settings, "settings", "Settings", "", 4, true},
-    {B::Help, "circle-question-mark", "Help", "", 4, false},
+    {B::Settings, "settings", "Settings", "", 5, true},
+    {B::Help, "circle-question-mark", "Help", "", 5, false},
 };
 
 constexpr Toolbar::SortSpec kSortSpecs[] = {

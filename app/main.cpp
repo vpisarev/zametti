@@ -163,6 +163,8 @@ int runCheck(const QString& path) {
 const char* kUsage =
     "usage: zametti [--noconfig]\n"
     "       zametti --root store-directory\n"
+    "                 (without it: the store from the last session, or an empty\n"
+    "                  window with the storage button lit)\n"
     "       zametti --check file.md\n"
     "       zametti --dump-config\n"
     "       zametti --root store-directory --unlock\n"
@@ -190,6 +192,8 @@ void printHelp() {
         "Without a file name, opens the one read last time.\n"
         "\n"
         "Store (--root):\n"
+        "  the database button (leftmost) opens another store or creates one in an\n"
+        "  empty directory; with no store open it is the only button that works\n"
         "  Ctrl+N            new note (child of the one selected in the tree)\n"
         "  F2                rename note (edits its first heading)\n"
         "  Del in tree       to archive; in archive — permanently, with confirmation\n"
@@ -348,6 +352,10 @@ int main(int argc, char** argv) {
 
     QString checkFile;   // позиционный аргумент; смысл имеет только с --check
     QString storeRoot;
+    // Корень НАЗВАЛ человек ключом — или он взялся из state.json/конфига. От
+    // этого зависит, что делать, если он не хранилище: названный вслух путь
+    // мимо цели это ошибка человека, и съедать её нельзя.
+    bool fromCommandLine = false;
     bool check = false;
     bool dumpConfig = false;
     bool noConfig = false;
@@ -364,6 +372,7 @@ int main(int argc, char** argv) {
         else if (arg == QLatin1String("--unlock")) unlock = true;
         else if (arg == QLatin1String("--root") && i + 1 < args.size()) {
             storeRoot = args.at(++i);
+            fromCommandLine = true;
         }
         else if (arg.startsWith(QLatin1String("--"))) {
             std::fprintf(stderr, "unknown option: %s\n", arg.toLocal8Bit().constData());
@@ -498,20 +507,33 @@ int main(int argc, char** argv) {
             if (QFileInfo(fromHome).isDir()) storeRoot = fromHome;
         }
     }
-    if (storeRoot.isEmpty()) {
-        printUsage();
-        return 2;
+    // ХРАНИЛИЩА МОЖЕТ И НЕ БЫТЬ — окно поднимется пустым, и в нём горит одна
+    // кнопка: «открыть или завести хранилище». Так выглядит первый запуск, и
+    // это внятнее, чем подсказка в терминале, которого человек не видел.
+    //
+    // Но ЯВНО НАЗВАННЫЙ каталог — другое дело: раз человек его назвал, значит
+    // ошибся в пути, и молча открыть вместо него пустое окно значило бы съесть
+    // его ошибку (решение владельца).
+    QString absRoot = storeRoot.isEmpty() ? QString()
+                                          : QFileInfo(storeRoot).absoluteFilePath();
+    if (!absRoot.isEmpty() && !zametti::NoteTreeModel::isStoreRoot(absRoot)) {
+        if (!fromCommandLine) {
+            // Хранилище прошлого сеанса или из конфига исчезло — не беда и не
+            // повод отказываться работать: открываем пустое окно.
+            std::fprintf(stderr, "the store is gone, opening empty: %s\n",
+                         absRoot.toUtf8().constData());
+            absRoot.clear();
+        } else {
+            std::fprintf(stderr, "does not look like a store (no .zametti): %s\n",
+                         absRoot.toUtf8().constData());
+            return 2;
+        }
     }
-    const QString absRoot = QFileInfo(storeRoot).absoluteFilePath();
-    if (!zametti::NoteTreeModel::isStoreRoot(absRoot)) {
-        std::fprintf(stderr, "does not look like a store (no .zametti): %s\n",
-                     absRoot.toUtf8().constData());
-        return 2;
-    }
-    if (path.isEmpty() || !QFileInfo(path).absoluteFilePath().startsWith(absRoot))
+    if (path.isEmpty() || absRoot.isEmpty() ||
+        !QFileInfo(path).absoluteFilePath().startsWith(absRoot))
         path = QString();   // выберем свежую после построения дерева
 
-    QString current = path.isEmpty() ? QString() : QFileInfo(path).absoluteFilePath();
+    const QString wanted = path.isEmpty() ? QString() : QFileInfo(path).absoluteFilePath();
 
     // Контейнеры объявлены ПЕРЕД теми виджетами, которых они усыновят через
     // layout: добавление в раскладку делает виджет ребёнком, а объекты на
@@ -562,103 +584,6 @@ int main(int argc, char** argv) {
     zametti::NoteListModel& list = panels.list();
     QListView& listView = panels.listView();
 
-    // Редактор узнаёт своё хранилище: без него истории правок не будет вовсе
-    // (одиночный файл, открытый вне хранилища, журналу негде лежать).
-    editor.setStorage(model.isStore() ? zapp.storage() : nullptr);
-
-    // Одно хранилище — одна программа: замок держит само хранилище
-    // (ZStorage::lock, там же снятие забытого замка мёртвого процесса и
-    // --unlock); здесь только слово человеку и код выхода.
-    if (model.isStore()) {
-        if (unlock)
-            std::fprintf(stderr, "%s\n", zapp.storage()->forceUnlock().note.toUtf8().constData());
-        const zametti::ZStorage::LockReport locked = zapp.storage()->lock();
-        if (!locked.note.isEmpty())
-            std::fprintf(stderr, "%s\n", locked.note.toUtf8().constData());
-        if (!locked.locked) {
-            std::fprintf(stderr,
-                         "this store is already open by another copy of zametti:\n  %s\n"
-                         "  the lock is held by pid %lld on \"%s\"\n"
-                         "If that copy is long dead: zametti --root … --unlock\n",
-                         model.nodePath(QModelIndex()).toUtf8().constData(),
-                         (long long)locked.holderPid, locked.holderHost.toUtf8().constData());
-            return 3;
-        }
-    }
-
-    // РАЗОВАЯ МИГРАЦИЯ СТАРОЙ КОРЗИНЫ — здесь, сразу после замка и до того, как
-    // дерево кто-нибудь увидит. Заметки из корзины переезжают в новый вид
-    // (`archived: yes`, `parent` := прежний родитель), опустевшая
-    // заметка-корзина уходит. Идемпотентно: корзины нет — не делает ничего, и
-    // при каждом следующем запуске это просто один проход по каталогу.
-    // Ленивые миграции хранилища — его дело; здесь только слово человеку и
-    // перестройка дерева, если что-то переехало.
-    if (model.isStore()) {
-        // Дерево перестроится само: каталог перечитан — хранилище сказало.
-        for (const QString& line : zapp.storage()->migrate())
-            std::fprintf(stderr, "%s\n", line.toUtf8().constData());
-
-        // КОРНЕВАЯ ЗАМЕТКА — здесь же, и это третье санкционированное
-        // исключение из «загрузка не пишет»: у хранилища без неё нет ни имени,
-        // ни порядка «всех заметок», а спрашивать человека тут не о чем.
-        // Идемпотентно: корень есть — не делает ничего.
-        QString rootError;
-        if (zapp.storage()->ensureRootNote(&rootError).isEmpty())
-            std::fprintf(stderr, "no root note: %s\n", rootError.toUtf8().constData());
-    }
-
-    // Свежая заметка хранилища — первая ОТКРЫВАЕМАЯ (директории не в счёт),
-    // поиском в глубину; пустое хранилище получает первую заметку тут же.
-    if (current.isEmpty()) {
-        QString first = model.firstNoteId();
-        if (first.isEmpty()) {
-            QString newError;
-            if (zapp.storage()->createNote(QString(), false, &newError).isEmpty()) {
-                std::fprintf(stderr, "%s\n", newError.toUtf8().constData());
-                return 2;
-            }
-            first = model.firstNoteId();
-        }
-        current = model.pathOfId(first);
-        if (current.isEmpty()) {
-            std::fprintf(stderr, "the store has no openable notes\n");
-            return 2;
-        }
-    }
-    // ПОРЯДОК КОРНЯ — переключатель интерфейса, а не метка в файле: корень не
-    // заметка, писать метку некуда. Он же — запасной для всякой папки, у
-    // которой нет ни своей метки, ни помеченного предка. Живёт в state.json и
-    // не синхронизируется: у каждого устройства свой вкус по умолчанию.
-    //
-    // Старое состояние («name» / «modified», до этапа 13) читается тем же
-    // разбором: ключ без направления — законная краткая запись.
-    if (const auto saved = zametti::parseSortOrder(session.treeSort())) panels.setRootSort(*saved);
-
-    // ПОРЯДОК «ВСЕХ ЗАМЕТОК» ЖИВЁТ В ШАПКЕ КОРНЕВОЙ ЗАМЕТКИ, а не в state.json:
-    // он про хранилище, а не про устройство, и обязан ехать вместе с ним. Метка
-    // в шапке старше state.json; её нет, а в state.json порядок был — это
-    // хранилище прежней сборки, и порядок переезжает в шапку разово (modified
-    // при этом не бампится: setSortMark штампа не ставит).
-    //
-    // treeSort продолжаем писать ещё релиз: откат на прежнюю сборку не должен
-    // сбивать человеку порядок.
-    if (model.isStore()) {
-        const QString rootNote = zapp.storage()->rootId();
-        if (!rootNote.isEmpty()) {
-            const zametti::ZStorage::NoteInfo* info = zapp.storage()->info(rootNote);
-            const std::optional<zametti::SortOrder> mark =
-                info != nullptr ? info->sortMark() : std::nullopt;
-            if (mark.has_value()) {
-                panels.setRootSort(*mark);
-            } else if (const auto saved = zametti::parseSortOrder(session.treeSort())) {
-                QString sortError;
-                if (!zapp.storage()->setSortMark(rootNote, *saved,
-                                                 zametti::NoteEditor::historyRules(), &sortError))
-                    std::fprintf(stderr, "root sort not migrated: %s\n",
-                                 sortError.toUtf8().constData());
-            }
-        }
-    }
 
     QFont sidebarFont(zametti::settings().ui().sidebarFontFamily().isEmpty()
                           ? zametti::settings().style().fontFamily()
@@ -836,8 +761,13 @@ int main(int argc, char** argv) {
                                  .arg(configUnknown.join(QStringLiteral(", "))));
     }
 
+    // ТРИ СЕКЦИИ ВСЕГДА, а видимость средней — по тому, есть ли хранилище.
+    // Раньше её добавляли только хранилищу, и это годилось, пока хранилище
+    // открывалось один раз за запуск: вставить виджет в сплиттер на ходу
+    // значит сменить ЧИСЛО секций, а splitterState в state.json помнит именно
+    // его — ширины, снятые с трёх, не легли бы на две.
     splitter.addWidget(&panels.tree());
-    if (panels.isStore()) splitter.addWidget(&panels.listPanel());
+    splitter.addWidget(&panels.listPanel());
     splitter.addWidget(&rightSide);
     splitter.setStretchFactor(splitter.count() - 1, 1);   // растёт текст, а не панели
     splitter.setChildrenCollapsible(false);
@@ -994,11 +924,12 @@ int main(int argc, char** argv) {
     // Каретка по заметке живёт в состоянии приложения по id (ZAppState::carets);
     // старые state.json помнили её только у последней заметки — подхватываем и
     // их, если про эту заметку иначе ничего не известно.
-    if (session.lastFile() == current &&
-        !zapp.state().knowsCaret(QFileInfo(current).completeBaseName()))
-        zapp.state().rememberCaret(QFileInfo(current).completeBaseName(),
+    if (!wanted.isEmpty() && session.lastFile() == wanted &&
+        !zapp.state().knowsCaret(QFileInfo(wanted).completeBaseName()))
+        zapp.state().rememberCaret(QFileInfo(wanted).completeBaseName(),
                                    {session.caret(), session.anchor(), 0});
-    if (!editor.openFile(current)) return 2;
+    // Сама заметка откроется ниже, в attachStore: и старт, и переключение
+    // хранилища идут одной дорогой, и «какую заметку показать» решается там.
 
     // Сохранение переписало файл — заголовок, начало текста и дата в строке
     // списка меняются вслед за ним: хранилище перечитывает заметку и говорит
@@ -2276,6 +2207,327 @@ int main(int argc, char** argv) {
     // всё, что она захватывает, объявлено на уровне main — как и остальное окно.
     using Button = zametti::Toolbar::Button;
 
+    // --- ДОСТУПНОСТЬ КНОПОК — ОДНОЙ ФУНКЦИЕЙ -------------------------------
+    //
+    // Раньше состояние выставлялось один раз при старте и больше никогда: пока
+    // хранилище открывалось ровно однажды за запуск, этого хватало. Теперь его
+    // переключают на ходу, и пересчёт обязан быть один — иначе кнопки начнут
+    // отвечать про хранилище, которого уже нет.
+    //
+    // БЕЗ ХРАНИЛИЩА ГОРИТ ОДНА КНОПКА — «открыть хранилище» (решение
+    // владельца). Это не украшение, а единственный намёк, который человек в
+    // пустом окне получит: делать здесь можно ровно одно.
+    const auto refreshToolbar = [&] {
+        const bool store = model.isStore();
+        const QString why = QStringLiteral("no storage is open");
+        for (const zametti::Toolbar::Spec& spec : zametti::Toolbar::specs()) {
+            if (spec.id == Button::OpenStore) continue;
+            toolbar.setPromise(spec.id, store ? QString() : why);
+        }
+        if (!store) {
+            statusBar.setMessage(
+                QStringLiteral("No storage open — press the database button to open or "
+                               "create one"));
+            return;
+        }
+        statusBar.setMessage(QString());
+        // Облако: кнопка живая только у настроенного синка, и тултип говорит
+        // словами, чего ждать (m17, сессия 4).
+        if (!cloudSync.configured())
+            toolbar.setPromise(Button::Cloud, cloudSync.statusText());
+        else
+            toolbar.setTip(Button::Cloud, cloudSync.statusText());
+    };
+
+    // --- ХРАНИЛИЩЕ ПРИЦЕПЛЯЕТСЯ И ОТЦЕПЛЯЕТСЯ ОДНОЙ ФУНКЦИЕЙ ----------------
+    //
+    // Её зовут ОБА пути: старт программы и кнопка «открыть хранилище». Пустой
+    // корень — законный вход: так выглядит окно без хранилища. Два пути к
+    // одному состоянию — классический способ получить «свежее открытие рисует,
+    // переключился-вернулся — хвост пропал», поэтому путь один.
+    //
+    // ЗАКРЫТИЕ ХРАНИЛИЩА — ЭТО СМЕРТЬ ЕГО ОБЪЕКТА: отдельного close() у
+    // ZStorage нет и не нужно, всё разбирает деструктор. Значит вся работа
+    // здесь — проследить, чтобы не осталось ни одной копии shared_ptr; забытая
+    // копия тихо удержит замок, и следующее открытие того же каталога упрётся
+    // в «уже открыто другой копией zametti», указывающее на нас самих.
+    // ШИРИНЫ КОЛОНОК. Зовётся и на старте, и при каждой смене хранилища: у
+    // хранилища колонок ТРИ, без него — две, и Qt, показывая среднюю впервые,
+    // отбирает место у соседей как ей вздумается (видно глазами: дерево
+    // схлопывалось в шестьдесят точек).
+    //
+    // Сохранённое состояние сплиттера — только когда колонок столько же,
+    // сколько было при сохранении: оно кодирует их ЧИСЛО, и снятое с трёх на
+    // две не ляжет.
+    const auto applyStartWidths = [&] {
+        const int sidebar = zametti::settings().ui().sidebarWidth();
+        const int noteList = zametti::settings().ui().noteListWidth();
+        if (model.isStore()) {
+            if (!session.splitterState().isEmpty() && splitter.restoreState(session.splitterState()))
+                return;
+            splitter.setSizes({sidebar, noteList, qMax(400, window.width() - sidebar - noteList)});
+        } else {
+            // Средняя спрятана, но в раскладке есть — ей ноль, и Qt не отдаст
+            // ей места.
+            splitter.setSizes({sidebar, 0, qMax(400, window.width() - sidebar)});
+        }
+    };
+
+    // Ключ --unlock тратится на первом же прицеплении: он про названный
+    // каталог, а не про всякий следующий.
+    bool unlockOnce = unlock;
+    const auto attachStore = [&](const QString& root, const QString& preferred) {
+        // --- отцепление ---------------------------------------------------
+        std::weak_ptr<zametti::ZStorage> departing = zapp.storage();
+        if (model.isStore()) {
+            // Правки на диск и каретку в память — до всего остального: дальше
+            // заметка закроется, и спрашивать будет некого.
+            editor.save(false, true);
+            editor.rememberCurrentCaretInApp();
+            // Режимы держат вид на ПРЕЖНЕЙ заметке; истории вдобавок
+            // принадлежит журнал, а он смотрит на хранилище сырым указателем.
+            if (history.active()) history.leave();
+            if (markdown.active()) markdown.leave();
+            if (settingsMode.active()) settingsMode.leave();
+            archiveView.clear();
+            showPage();
+            storeSearch.cancel();
+            results.clear();
+            resultsView.hide();
+        }
+        // Поток прогона синка держит СВОЮ копию указателя — контроллер его
+        // дождётся.
+        cloudSync.setStorage(nullptr);
+        // КЭШ ЗАМЕТОК РЕДАКТОРА — ГЛАВНАЯ ОПАСНОСТЬ: в нём лежат журналы, а
+        // ZJournal смотрит на хранилище СЫРЫМ указателем. Не вычистить — и
+        // первое же обращение пойдёт по мёртвому адресу.
+        editor.clearNoteCache();
+        editor.closeFile();
+        editor.setStorage(nullptr);
+        panels.setStorage(nullptr);
+        zapp.openStorage(QString());   // прежнее хранилище отпущено здесь
+
+        // СТОРОЖ ЗАБЫТОЙ КОПИИ. Молча удержанный замок — беда, которую заметят
+        // через час и не там, где она случилась.
+        if (!departing.expired()) {
+            const QString why = QStringLiteral(
+                "the previous store is still referenced after detaching: its lock stays held");
+            std::fprintf(stderr, "%s\n", why.toUtf8().constData());
+            zapp.logs().err(why);
+            Q_ASSERT(!"забытая копия shared_ptr<ZStorage> держит замок");
+        }
+
+        // --- прицепление --------------------------------------------------
+        if (root.isEmpty()) {
+            applyStartWidths();
+            refreshToolbar();
+            window.setWindowTitle(QStringLiteral("zametti"));
+            return true;
+        }
+        auto storage = zapp.openStorage(root);
+        // --unlock снимает ЧУЖОЙ забытый замок — и только с того хранилища,
+        // которое человек назвал ключом, то есть ровно один раз, при первом
+        // прицеплении. Дальше по кнопке он не действует: человек просил снять
+        // замок у названного каталога, а не у всякого следующего.
+        if (unlockOnce) {
+            unlockOnce = false;
+            std::fprintf(stderr, "%s\n", storage->forceUnlock().note.toUtf8().constData());
+        }
+        zametti::ZStorage::LockReport locked = storage->lock();
+        if (!locked.note.isEmpty())
+            std::fprintf(stderr, "%s\n", locked.note.toUtf8().constData());
+        if (!locked.locked) {
+            // ЗАНЯТО — И ЭТО МЕСТО, ГДЕ ЧЕЛОВЕКУ НУЖНА ДВЕРЬ. Забытый замок
+            // мёртвой копии на ЭТОЙ машине снимается сам (это делает и Qt в
+            // tryLock, и ZStorage::lock), но три случая ей не по зубам и по
+            // делу: хранилище на сетевой шаре, замок с чужого хоста и pid,
+            // доставшийся другому живому процессу. Раньше в этих случаях
+            // оставался только ключ командной строки --unlock, а человек,
+            // открывающий хранилище кнопкой, терминала перед собой не имеет.
+            //
+            // Предохранитель физический, а не вежливый: живой замок Qt держит
+            // без FILE_SHARE_DELETE, и forceUnlock честно ответит, что снять
+            // не вышло, — увести хранилище у работающей копии этой кнопкой
+            // нельзя.
+            auto* ask = new QMessageBox(&window);
+            ask->setAttribute(Qt::WA_DeleteOnClose);
+            ask->setIcon(QMessageBox::Warning);
+            ask->setWindowTitle(QStringLiteral("zametti"));
+            ask->setText(
+                QStringLiteral("This store is already open by another copy of zametti:\n  %1")
+                    .arg(root));
+            ask->setInformativeText(
+                QStringLiteral("The lock is held by pid %1 on \"%2\".\n\n"
+                               "Close that copy and press Retry. If it is long dead and the "
+                               "lock stayed behind, Force unlock removes the lock file.")
+                    .arg(locked.holderPid)
+                    .arg(locked.holderHost));
+            // ТРИ ОТВЕТА, И ВСЕ ТРИ НАСТОЯЩИЕ. Retry ничего не разрушает —
+            // человек закрыл ту копию и просит попробовать снова; это самый
+            // частый случай, и прятать его внутрь «force» незачем.
+            //
+            // Force unlock назван тем, что он делает, а не тем, что человек
+            // хочет получить: под Windows живой замок Qt не отдаст (файл открыт
+            // без FILE_SHARE_DELETE), а вот под POSIX снести чужой открытый
+            // файл МОЖНО — и та копия останется в уверенности, что держит
+            // замок. Две программы в одном хранилище — ровно то, ради чего
+            // замок и заведён, так что слово должно предупреждать.
+            QPushButton* retry = ask->addButton(QMessageBox::Retry);
+            QPushButton* force =
+                ask->addButton(QStringLiteral("Force unlock"), QMessageBox::DestructiveRole);
+            ask->addButton(QMessageBox::Cancel);
+            ask->setDefaultButton(retry);
+            ask->exec();
+            const bool forced = ask->clickedButton() == force;
+            const bool again = ask->clickedButton() == retry;
+
+            // Отказались — остаёмся БЕЗ хранилища, а не наполовину в нём.
+            const auto giveUp = [&] {
+                zapp.openStorage(QString());
+                refreshToolbar();
+                window.setWindowTitle(QStringLiteral("zametti"));
+            };
+            if (!forced && !again) {
+                giveUp();
+                return false;
+            }
+            const QString note = forced ? storage->forceUnlock().note : QString();
+            if (!note.isEmpty()) std::fprintf(stderr, "%s\n", note.toUtf8().constData());
+            // Пробуем ещё раз. ОДИН повтор, а не цикл: если и теперь занято,
+            // значит замок живой, и повторять вопрос незачем — ответ не
+            // изменится. Что именно не вышло, говорит note (у Force unlock) или
+            // сам отказ замка (у Retry).
+            storage = zapp.openStorage(root);
+            locked = storage->lock();
+            if (!locked.locked) {
+                giveUp();
+                QMessageBox::warning(
+                    &window, QStringLiteral("zametti"),
+                    note.isEmpty() ? QStringLiteral("The store is still open elsewhere:\n  %1")
+                                         .arg(root)
+                                   : note);
+                return false;
+            }
+        }
+        // РАЗОВЫЕ МИГРАЦИИ ХРАНИЛИЩА — здесь, до того как дерево кто-нибудь
+        // увидит: старая корзина переезжает в архивную пометку, а корневая
+        // заметка заводится, если её нет (третье санкционированное исключение
+        // из «загрузка не пишет»: без корня у хранилища нет ни имени, ни
+        // порядка «всех заметок», и спрашивать тут не о чем).
+        for (const QString& line : storage->migrate())
+            std::fprintf(stderr, "%s\n", line.toUtf8().constData());
+        QString rootError;
+        if (storage->ensureRootNote(&rootError).isEmpty())
+            std::fprintf(stderr, "no root note: %s\n", rootError.toUtf8().constData());
+
+        panels.setStorage(storage);
+        editor.setStorage(storage);
+        cloudSync.setStorage(storage);
+
+        // ПОРЯДОК КОРНЯ. Метка в шапке корневой заметки старше state.json: она
+        // про хранилище, а не про устройство, и едет вместе с ним. Метки нет, а
+        // в state.json порядок был — хранилище прежней сборки, порядок
+        // переезжает в шапку разово (setSortMark штампа не ставит).
+        if (const auto saved = zametti::parseSortOrder(session.treeSort())) panels.setRootSort(*saved);
+        const QString rootNote = storage->rootId();
+        if (!rootNote.isEmpty()) {
+            const zametti::ZStorage::NoteInfo* info = storage->info(rootNote);
+            const std::optional<zametti::SortOrder> mark =
+                info != nullptr ? info->sortMark() : std::nullopt;
+            if (mark.has_value()) {
+                panels.setRootSort(*mark);
+            } else if (const auto saved = zametti::parseSortOrder(session.treeSort())) {
+                QString sortError;
+                if (!storage->setSortMark(rootNote, *saved, zametti::NoteEditor::historyRules(),
+                                          &sortError))
+                    std::fprintf(stderr, "root sort not migrated: %s\n",
+                                 sortError.toUtf8().constData());
+            }
+        }
+
+        // Какую заметку показать: названную (прошлый сеанс), иначе первую
+        // ОТКРЫВАЕМУЮ поиском в глубину; пустое хранилище получает заметку тут
+        // же — окно без единой заметки показывать нечем.
+        QString show = preferred;
+        if (show.isEmpty()) {
+            QString first = model.firstNoteId();
+            if (first.isEmpty()) {
+                QString newError;
+                if (storage->createNote(QString(), false, &newError).isEmpty())
+                    std::fprintf(stderr, "%s\n", newError.toUtf8().constData());
+                first = model.firstNoteId();
+            }
+            show = model.pathOfId(first);
+        }
+        if (!show.isEmpty() && !editor.openFile(show))
+            std::fprintf(stderr, "unreadable: %s\n", show.toUtf8().constData());
+
+        // Курсор дерева — на папку открытой заметки: от него зависит СОСТАВ
+        // средней колонки, и без него список остаётся пустым при полном
+        // хранилище (видно глазами на первом же переключении).
+        panels.showNote(editor.filePath(), /*primary=*/true);
+        applyStartWidths();
+        if (zametti::settings().store().watchStore()) storage->setWatching(true);
+        refreshToolbar();
+        return true;
+    };
+
+    // ВЫБОР ХРАНИЛИЩА — ДВЕ ДВЕРИ ОДНОЙ КНОПКОЙ: переключиться на другое и
+    // завести новое. Что именно человек назвал, решает ХРАНИЛИЩЕ
+    // (ZStorage::inspect), а окно только показывает вопрос или отказ.
+    const auto chooseStore = [&] {
+        // Стартуем от родителя нынешнего хранилища: хранилища человек держит
+        // рядом друг с другом чаще, чем где попало.
+        QString startAt;
+        if (model.isStore()) startAt = QFileInfo(zapp.storage()->root()).absolutePath();
+        if (startAt.isEmpty() || !QFileInfo(startAt).isDir())
+            startAt = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+        // Системный диалог, а не свой: вставлять в него нечего, а завести
+        // каталог прямо в нём он умеет — на этом и стоит «создать новое».
+        const QString dir = QFileDialog::getExistingDirectory(
+            &window, QStringLiteral("Open storage"), startAt);
+        if (dir.isEmpty()) return;   // передумал
+        const QString chosen = QFileInfo(dir).absoluteFilePath();
+
+        switch (zametti::ZStorage::inspect(chosen)) {
+            case zametti::ZStorage::DirKind::Store:
+                // То же самое хранилище — делать нечего. Молча: человек ткнул
+                // туда, где уже находится, и сообщать ему об этом незачем.
+                if (model.isStore() &&
+                    QFileInfo(zapp.storage()->root()).absoluteFilePath() == chosen)
+                    return;
+                attachStore(chosen, QString());
+                return;
+            case zametti::ZStorage::DirKind::Empty: {
+                // ВТОРОЕ НАЗВАННОЕ ВЛАДЕЛЬЦЕМ ИСКЛЮЧЕНИЕ из «никаких диалогов
+                // подтверждения»: пустой каталог мог быть выбран по ошибке, а
+                // засеянное хранилище — это каталог, который человек потом
+                // будет искать глазами и гадать, откуда он взялся.
+                const auto answer = QMessageBox::question(
+                    &window, QStringLiteral("zametti"),
+                    QStringLiteral("Create a new zametti storage in \"%1\"?").arg(chosen));
+                if (answer != QMessageBox::Yes) return;
+                QString error;
+                if (!zametti::ZStorage(chosen).init(&error)) {
+                    QMessageBox::warning(&window, QStringLiteral("zametti"), error);
+                    return;
+                }
+                attachStore(chosen, QString());
+                return;
+            }
+            case zametti::ZStorage::DirKind::Foreign:
+            case zametti::ZStorage::DirKind::Missing:
+                // Непустой чужой каталог не засеваем НИКОГДА и ни по какому
+                // подтверждению: рядом чьё-то добро, и хранилище среди него
+                // потом не отличить от него же.
+                QMessageBox::warning(&window, QStringLiteral("zametti"),
+                                     QStringLiteral("The directory is not a zametti storage:"
+                                                    "\n  %1")
+                                         .arg(chosen));
+                return;
+        }
+    };
+
     // Панели убираются и возвращаются одной кнопкой. Ширины запоминаются ПЕРЕД
     // тем, как прятать: сплиттер хранит размеры видимых виджетов, и спрятанные
     // панели вернулись бы схлопнутыми.
@@ -2300,10 +2552,9 @@ int main(int argc, char** argv) {
         // КНОПКА ОБЛАКА ОЖИЛА (m17, сессия 4). Не настроенный синк — не
         // поломка и не обещание «потом», а состояние: тултип говорит, что
         // сделать. Настроенный: клик — полный прогон, клик во время — отмена.
-        if (!model.isStore() || !cloudSync.configured()) {
-            toolbar.setPromise(Button::Cloud, cloudSync.statusText());
-        } else {
-            toolbar.setTip(Button::Cloud, cloudSync.statusText());
+        // САМО СОСТОЯНИЕ считает refreshToolbar (одно место на все кнопки);
+        // здесь только подписка, чтобы тултип и цвет шли за прогоном.
+        {
             QObject::connect(&cloudSync, &zametti::SyncController::stateChanged, &toolbar, [&] {
                 toolbar.setTip(Button::Cloud, cloudSync.statusText());
                 toolbar.setAccent(Button::Cloud, cloudSync.running());
@@ -2346,22 +2597,17 @@ int main(int argc, char** argv) {
                 });
         }
 
-        if (!model.isStore()) {
-            // Открыт одиночный файл, а не хранилище: создавать и сортировать
-            // нечего и негде. Это не «пока не сделано», а другое состояние мира.
-            // Поиск по всем заметкам сюда же: искать не по чему.
-            const QString single = QStringLiteral("a single file is open, not a store");
-            // История живёт в хранилище (history/<id>.log), и у одиночного
-            // файла её нет вовсе — это не «пока не сделано», а другое
-            // состояние мира.
-            for (Button id : {Button::NewNote, Button::NewFolder, Button::ImportNotes,
-                              Button::SortByName, Button::SortByDate, Button::SortByCreated,
-                              Button::SearchInStore, Button::History})
-                toolbar.setPromise(id, single);
-        }
+        // ХРАНИЛИЩЕ ОТКРЫВАЕТСЯ ЗДЕСЬ — той же функцией, что и по кнопке.
+        // Раньше это делал десяток блоков выше по main(), до того как окно
+        // собрано; теперь путь один, и «свежее открытие» с «переключился»
+        // отличаются только тем, что было до.
+        attachStore(absRoot, wanted);
 
         QObject::connect(&toolbar, &zametti::Toolbar::pressed, &window, [&](Button id) {
             switch (id) {
+            case Button::OpenStore:
+                chooseStore();
+                break;
             case Button::NewNote:
                 createNote(panels.currentFolderId(), false);
                 break;
@@ -2568,20 +2814,6 @@ int main(int argc, char** argv) {
     // режима: «запомнили ширины 70,70». Ставим и сразу, и очередью — первое
     // задаёт пропорции до первой отрисовки, второе выправляет их, когда окно
     // уже знает свой размер.
-    const auto applyStartWidths = [&] {
-        if (!session.splitterState().isEmpty()) {
-            splitter.restoreState(session.splitterState());
-            return;
-        }
-        if (model.isStore())
-            splitter.setSizes({zametti::settings().ui().sidebarWidth(),
-                               zametti::settings().ui().noteListWidth(),
-                               qMax(400, window.width() - zametti::settings().ui().sidebarWidth() -
-                                             zametti::settings().ui().noteListWidth())});
-        else
-            splitter.setSizes({zametti::settings().ui().sidebarWidth(),
-                               qMax(400, window.width() - zametti::settings().ui().sidebarWidth())});
-    };
     applyStartWidths();
     // ПЕРВАЯ ЗАМЕТКА ОТКРЫВАЕТСЯ ДО ТОГО, как встают подписки, — значит про
     // страницу архива её надо спросить отдельно, здесь. Иначе архивная,
@@ -2630,7 +2862,7 @@ int main(int argc, char** argv) {
     // открытой заметки (её порядок — и на старте тоже), в середине — сама
     // заметка; вне хранилища — строка заметки в дереве.
     panels.restoreExpanded(session.expandedDirs());
-    panels.showNote(current, /*primary=*/true);
+    panels.showNote(editor.filePath(), /*primary=*/true);
 
     // Фокус — после show() и после того, как дерево показало текущую заметку: до
     // show() окно ещё не решило, кому его отдать, и наш выбор затёрся бы первым
@@ -2712,6 +2944,27 @@ int main(int argc, char** argv) {
                                  int(window.isFullScreen()), int(toolbar.isVisible()),
                                  int(panels.tree().isVisible()), int(statusBar.isVisible()));
                 });
+            });
+        // ZAMETTI_PROBE_STORE=<каталог> — переключиться на другое хранилище на
+        // ходу. Кнопка ведёт через системный диалог выбора каталога, а его
+        // приёмка руками не воспроизводится; сама смена хранилища — вот она, и
+        // проверяется тем же кодом (attachStore), что зовёт кнопка.
+        if (const QByteArray to = qgetenv("ZAMETTI_PROBE_STORE"); !to.isEmpty())
+            QTimer::singleShot(ms / 2, &window, [&, to] {
+                const QString dir = QString::fromLocal8Bit(to);
+                const QString was = model.isStore() ? zapp.storage()->root() : QString();
+                std::fprintf(stderr, "probe: switching to %s\n", to.constData());
+                const bool ok = attachStore(dir, QString());
+                std::fprintf(stderr, "probe: store=%s note=%s toolbar-newnote=%d\n",
+                             ok ? "attached" : "REFUSED",
+                             editor.filePath().toUtf8().constData(),
+                             int(toolbar.isEnabled(Button::NewNote)));
+                // ОТПУЩЕН ЛИ ЗАМОК ПРЕЖНЕГО. Спрашиваем тем же способом, каким
+                // спросит вторая копия программы: берём его. Забытая где-то
+                // копия shared_ptr проявится ровно здесь и никак иначе.
+                if (!was.isEmpty())
+                    std::fprintf(stderr, "probe: previous store lock is %s\n",
+                                 zametti::ZStorage(was).lock().locked ? "free" : "STILL HELD");
             });
         // ZAMETTI_PROBE_SETTINGS=1 — открыть правку настроек (приёмка глазами).
         if (qEnvironmentVariableIsSet("ZAMETTI_PROBE_SETTINGS"))

@@ -49,6 +49,7 @@
         <file alias="columns-3.svg">icons/columns-3.svg</file>
         <file alias="copy.svg">icons/copy.svg</file>
         <file alias="database-search.svg">icons/database-search.svg</file>
+        <file alias="database.svg">icons/database.svg</file>
         <file alias="fast-forward.svg">icons/fast-forward.svg</file>
         <file alias="file-plus-corner.svg">icons/file-plus-corner.svg</file>
         <file alias="folder-input.svg">icons/folder-input.svg</file>
