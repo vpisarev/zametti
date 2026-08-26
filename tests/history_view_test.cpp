@@ -354,6 +354,7 @@ void checkGutterIsPainted() {
     };
     ZT_TRUE("полоса у добавленного — зелёная", barColourOf(added.first, text2.docStyle().diffAdded()) > 0);
     ZT_TRUE("и не оранжевая", barColourOf(added.first, text2.docStyle().diffChanged()) == 0);
+
     rig2.controller.leave();
 }
 
@@ -585,8 +586,22 @@ void checkZoomKeepsSnapshot() {
         anyMark = anyMark || rig.tl()->markOfBlock(i) != diff::Mark::Same;
     ZT_TRUE("и метки не потерялись", anyMark);
     ZT_TRUE("масштаб применился", rig.text().zoom() > 1.3);
-    rig.text().applyZoom(1.0);
+
+    // МАСШТАБ РЕЖИМА — СВОЙ, И ЖИВУЮ ЗАМЕТКУ ОН НЕ ТРОГАЕТ (беда владельца
+    // 27.08.2026: «Ctrl+− в истории — а при выходе текст заметки стал меньше»).
+    // Спрашивается в обе стороны, как у режима исходника.
+    const qreal noteZoom = rig.editor->zoom();
+    ZT_TRUE("заметка своего масштаба не меняла", qFuzzyCompare(noteZoom, rig.editor->zoom()));
+    rig.text().applyZoom(1.8);
+    ZT_TRUE("разность увеличилась", rig.text().zoom() > 1.7);
+    ZT_TRUE("а заметка осталась как была", qFuzzyCompare(rig.editor->zoom(), noteZoom));
     rig.controller.leave();
+    ZT_TRUE("и после выхода из режима — тоже",
+            qFuzzyCompare(rig.editor->zoom(), noteZoom));
+    rig.editor->applyZoom(1.3);
+    ZT_TRUE("заметка увеличилась", rig.editor->zoom() > noteZoom);
+    ZT_TRUE("а разность осталась со своим", qFuzzyCompare(rig.text().zoom(), 1.8));
+    rig.text().applyZoom(1.0);
 }
 
 // Переключатель базы и вправду меняет сравнение: со свежей версией у последней

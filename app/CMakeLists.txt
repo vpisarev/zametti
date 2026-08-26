@@ -81,6 +81,7 @@ add_library(zametti-ui STATIC
     history_view.h
     history_controller.h
     reader_view.h
+    zoom_target.h
     history_panel.cpp
     history_view.cpp
     history_controller.cpp

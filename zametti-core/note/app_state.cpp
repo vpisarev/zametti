@@ -61,6 +61,9 @@ ZAppState ZAppState::load() {
     // правки настроек был свой. Новый ключ один; нет его — берём старый.
     session.setPlainZoom(root.value(QStringLiteral("plainZoom"))
                              .toDouble(root.value(QStringLiteral("markdownZoom")).toDouble(1.0)));
+    // Масштаб истории: нет ключа — берём масштаб заметки, чтобы режим открылся
+    // тем же кеглем, каким человек читает саму заметку.
+    session.setHistoryZoom(root.value(QStringLiteral("historyZoom")).toDouble(session.zoom()));
     session.setHistoryListWidth(root.value(QStringLiteral("historyListWidth")).toInt(0));
     session.setExportDir(root.value(QStringLiteral("exportDir")).toString());
     session.setExportKeepMeta(root.value(QStringLiteral("exportKeepMeta")).toBool(false));
@@ -112,6 +115,7 @@ void ZAppState::save() const {
                   {QStringLiteral("panelsHidden"), session.panelsHidden()},
                   {QStringLiteral("markdownMode"), session.markdownMode()},
                   {QStringLiteral("plainZoom"), session.plainZoom()},
+                  {QStringLiteral("historyZoom"), session.historyZoom()},
                   {QStringLiteral("historyListWidth"), session.historyListWidth()},
                   {QStringLiteral("exportDir"), session.exportDir()},
                   {QStringLiteral("exportKeepMeta"), session.exportKeepMeta()},

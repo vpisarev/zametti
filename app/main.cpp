@@ -14,6 +14,7 @@
 #include "settings_controller.h"
 #include "history_panel.h"
 #include "reader_view.h"
+#include "zoom_target.h"
 #include "history_view.h"
 #include "image_viewer.h"
 #include "markdown_edit_view.h"
@@ -952,33 +953,54 @@ int main(int argc, char** argv) {
     const auto shortcut = [&window](const QKeySequence& keys, auto&& slot) {
         QObject::connect(new QShortcut(keys, &window), &QShortcut::activated, &window, slot);
     };
-    // Масштаб один на программу: и у живой заметки, и у вида истории — иначе,
-    // вернувшись из истории, человек увидел бы другой кегль.
+    // У КАЖДОГО РЕЖИМА СВОЙ МАСШТАБ, И КЛАВИШИ ОДНОГО НЕ ТРОГАЮТ ДРУГОЙ
+    // (решение владельца). Правило одно на все режимы, и держится оно тем, что
+    // ветка выбирается ПО ТОМУ, ЧТО НА ВИДУ, а не по тому, кто как устроен.
     //
-    // НО У РЕЖИМА ИСХОДНИКА ОН СВОЙ (решение владельца). Исходник читают иначе,
-    // чем заметку — моноширинным, по колонкам, — и кегль ему нужен другой.
-    // Прежде клавиши в режиме молча увеличивали СКРЫТЫЙ обычный вид: отжал [M],
-    // а заметка вдруг крупнее, хотя её масштаб не трогали.
+    // Заведено это было для исходника: Ctrl+= в нём молча увеличивал СКРЫТЫЙ
+    // обычный вид — отжал [M], а заметка вдруг крупнее, хотя её масштаб не
+    // трогали. 27.08.2026 владелец нашёл ту же беду у ИСТОРИИ: Ctrl+− на
+    // разности уменьшал живую заметку, и это обнаруживалось только при выходе
+    // из режима. Лечение то же, и число у режима своё (ZAppState::historyZoom).
+    //
+    // Архивная заметка и документация — НЕ режимы: это те же документы теми же
+    // глазами, и масштаб у них общий с обычным видом.
+    // ЧЕЙ СЕЙЧАС МАСШТАБ — спрашивается ОДНОЙ функцией (zoom_target.h), и оба
+    // места ниже спрашивают именно её: «применить» и «шагнуть от текущего».
+    const auto zoomTarget = [&] {
+        return zametti::zoomTargetFor(settingsMode.active(), markdown.active(), history.active());
+    };
     auto applyZoom = [&](qreal value) {
-        // ПЛОСКИЕ ВИДЫ ДЕРЖАТ ОДИН МАСШТАБ (решение владельца): исходник и
-        // конфиг — один и тот же текст тем же шрифтом, и открываться разного
-        // размера они не должны. Ставим обоим сразу, какой бы из них ни был на
-        // виду.
-        if (settingsMode.active() || markdown.active()) {
-            markdownView.applyZoom(value);
-            settingsView.applyZoom(value);
-            return;
+        switch (zoomTarget()) {
+            case zametti::ZoomTarget::Plain:
+                // ПЛОСКИЕ ВИДЫ ДЕРЖАТ ОДИН МАСШТАБ (решение владельца):
+                // исходник и конфиг — один и тот же текст тем же шрифтом, и
+                // открываться разного размера они не должны. Ставим обоим
+                // сразу, какой бы из них ни был на виду.
+                markdownView.applyZoom(value);
+                settingsView.applyZoom(value);
+                return;
+            case zametti::ZoomTarget::History:
+                historyView.textView().applyZoom(value);
+                return;
+            case zametti::ZoomTarget::Note:
+                editor.applyZoom(value);
+                // Архивная заметка и документация — те же документы теми же
+                // глазами: масштаб у них общий с обычным видом, а не свой. Ради
+                // этого документация и переехала из окна «о программе» в
+                // дерево: там Ctrl+= не работал вовсе, и README читался всегда
+                // в базовом кегле.
+                archiveView.applyZoom(value);
+                docView.applyZoom(value);
+                return;
         }
-        editor.applyZoom(value);
-        historyView.textView().applyZoom(value);
-        // Архивная заметка — тот же документ теми же глазами: масштаб у неё
-        // общий с обычным видом, а не свой.
-        archiveView.applyZoom(value);
     };
     auto stepZoom = [&](qreal factor) {
-        const qreal now = settingsMode.active() ? settingsView.zoom()
-                          : markdown.active()    ? markdownView.zoom()
-                                                 : editor.zoom();
+        // От чего шагаем — от масштаба ТОГО ЖЕ, кому и применим.
+        const qreal now = zoomTarget() == zametti::ZoomTarget::Plain ? markdownView.zoom()
+                          : zoomTarget() == zametti::ZoomTarget::History
+                              ? historyView.textView().zoom()
+                              : editor.zoom();
 
         applyZoom(std::clamp(now * factor, zametti::settings().ui().zoomMin(),
                              zametti::settings().ui().zoomMax()));
@@ -3044,6 +3066,7 @@ int main(int argc, char** argv) {
     // после фокуса: входить в режим нечем, пока показывать нечего.
     markdownView.applyZoom(session.plainZoom());
     settingsView.applyZoom(session.plainZoom());
+    historyView.textView().applyZoom(session.historyZoom());
     if (session.markdownMode()) markdown.enter();
 
 
@@ -3075,6 +3098,7 @@ int main(int argc, char** argv) {
         out.setMarkdownMode(markdown.active());
         // Число одно на оба плоских вида — берём у любого из них.
         out.setPlainZoom(markdownView.zoom());
+        out.setHistoryZoom(historyView.textView().zoom());
         out.setExpandedDirs(panels.expandedDirs());
         out.setSearchHistory(findBar.history());
         out.setStoreRoot(model.isStore() ? model.nodePath(QModelIndex()) : QString());

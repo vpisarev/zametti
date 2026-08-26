@@ -25,6 +25,7 @@
 #include "editor_widget.h"
 #include "marker.h"
 #include "settings.h"
+#include "zoom_target.h"
 
 #include "test_util.h"
 #include "testdata.h"
@@ -270,6 +271,32 @@ static int ztRunSuite(int argc, char** argv) {
                 fresh.document()->textWidth() <= fresh.viewport()->width() + 1);
         ZT_TRUE("при запуске горизонтальной полосы прокрутки нет",
                 fresh.horizontalScrollBar()->maximum() == 0);
+    }
+
+    // КОМУ ДОСТАЮТСЯ КЛАВИШИ МАСШТАБА — правило чистой функцией, и спрашиваем
+    // её прямо. Дважды эта развилка ошибалась на живых людях, и оба раза
+    // одинаково: она забывала режим и отдавала клавиши скрытому обычному виду.
+    // Владелец находил это только при выходе из режима — «а заметка вдруг
+    // другого размера».
+    {
+        using zametti::ZoomTarget;
+        using zametti::zoomTargetFor;
+        ZT_TRUE("без режимов — обычный вид",
+                zoomTargetFor(false, false, false) == ZoomTarget::Note);
+        ZT_TRUE("исходник — плоским видам",
+                zoomTargetFor(false, true, false) == ZoomTarget::Plain);
+        ZT_TRUE("настройки — плоским видам",
+                zoomTargetFor(true, false, false) == ZoomTarget::Plain);
+        // Вот эта строка и краснела бы при беде 27.08.2026: клавиши в истории
+        // доставались обычному виду, и живая заметка меняла кегль втихую.
+        ZT_TRUE("история — разности, а НЕ заметке",
+                zoomTargetFor(false, false, true) == ZoomTarget::History);
+        // Порядок тот же, что у выбора страницы стека: настройки выше истории,
+        // история выше исходника.
+        ZT_TRUE("настройки поверх истории",
+                zoomTargetFor(true, false, true) == ZoomTarget::Plain);
+        ZT_TRUE("история поверх исходника",
+                zoomTargetFor(false, true, true) == ZoomTarget::History);
     }
 
     return zt::report("zoom");
