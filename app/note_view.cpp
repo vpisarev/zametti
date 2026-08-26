@@ -1325,8 +1325,7 @@ void NoteView::renderSlice(QPainter& painter, const QRectF& documentRect, qreal 
     // с экраном, а заметить это можно было бы только глазами.
     const QFont base = baseFont();
     const QAbstractTextDocumentLayout* layout = document()->documentLayout();
-    const int firstVisible = layout->hitTest(QPointF(0, documentRect.top()), Qt::FuzzyHit);
-    QTextBlock start = document()->findBlock(firstVisible);
+    QTextBlock start = blockAtHeight(documentRect.top());
     if (start.isValid() && start.previous().isValid()) start = start.previous();
     // Запас — тот же, что в paintEvent (слово в слово, иначе бумага разойдётся
     // с экраном): вынос рамки объекта знает ObjectFrame.
@@ -1354,16 +1353,28 @@ void NoteView::renderSlice(QPainter& painter, const QRectF& documentRect, qreal 
     exportImageBudget_ = 0;
 }
 
+QTextBlock NoteView::blockAtHeight(qreal top) const {
+    const QAbstractTextDocumentLayout* layout = document()->documentLayout();
+    QTextBlock block = document()->findBlock(layout->hitTest(QPointF(0, top), Qt::FuzzyHit));
+    if (!block.isValid()) return document()->firstBlock();
+    // Ответ ЛЕЖИТ НИЖЕ запрошенной высоты — вёрстка соврала (см. note_view.h):
+    // поднимаемся, пока блок не накроет высоту. В здоровом случае — ноль шагов;
+    // во вранье шагов ровно столько, на сколько соврали, и случается это один
+    // раз на подмену документа.
+    while (block.previous().isValid() && layout->blockBoundingRect(block).top() > top)
+        block = block.previous();
+    return block;
+}
+
 QVector<CodeBand> NoteView::codeBands(const QRectF& visible) const {
     const QAbstractTextDocumentLayout* layout = document()->documentLayout();
-    const int firstVisible = layout->hitTest(QPointF(0, visible.top()), Qt::FuzzyHit);
     const CodePlate plate = codePlate(docStyle());
 
     QVector<CodeBand> bands;
     // Начинаем с блока ВЫШЕ первого видимого: плашка вылезает за прямоугольник
     // своего блока — вверх на воздух, вниз на полоску, — и блок, чей текст уже
     // уехал вверх, вполне может показывать сюда свою полоску.
-    QTextBlock start = document()->findBlock(firstVisible);
+    QTextBlock start = blockAtHeight(visible.top());
     if (start.isValid() && start.previous().isValid()) start = start.previous();
 
     for (QTextBlock block = start; block.isValid(); block = block.next()) {
@@ -1920,8 +1931,7 @@ void NoteView::paintEvent(QPaintEvent* event) {
     // начала документа: обход стоит тем дороже, чем ниже прокрутка, и на
     // заметке в тысячу блоков это уже заметно.
     const QAbstractTextDocumentLayout* layout = document()->documentLayout();
-    const int firstVisible = layout->hitTest(QPointF(0, visible.top()), Qt::FuzzyHit);
-    QTextBlock start = document()->findBlock(firstVisible);
+    QTextBlock start = blockAtHeight(visible.top());
     // Шаг назад: когда в кадр сверху въехала только фотография (нижнее поле
     // блока), hitTest по верхней кромке отдаёт уже следующий блок — и без
     // шага картинка пропадала бы целиком, стоило её верху выйти из кадра.

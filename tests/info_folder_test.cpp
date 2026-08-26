@@ -463,10 +463,112 @@ static int ztRunReader() {
     return zt::report("читалка документации");
 }
 
+// ТАБЛИЦА В ДОКУМЕНТЕ ТОЙ ЖЕ ДОРОГОЙ, ЧТО И В ОКНЕ.
+//
+// Владелец: «открываю Storage Organization — таблички не видно, вместо неё
+// пустое место; ткнёшь — появляется». В голом виде это не воспроизводится,
+// значит дело в ПОРЯДКЕ, каким показывает окно: страница стека ещё не на виду,
+// когда ей отдают документ, масштаб ставится ПОСЛЕ показа, и только потом
+// страницу поднимают наверх.
+static int ztRunTableInStack() {
+    const QStringList docs = zametti::embeddedDocs();
+    if (docs.isEmpty()) return 0;
+
+    QStackedWidget stack;
+    auto* other = new QWidget;
+    auto* reader = new ReaderView(nullptr, ReaderView::Tint::Plain);
+    stack.addWidget(other);
+    stack.addWidget(reader);
+    stack.setCurrentWidget(other);
+    stack.setAttribute(Qt::WA_DontShowOnScreen);
+    stack.resize(1000, 760);
+    stack.show();
+    QApplication::processEvents();
+
+    // Тот же порядок, что в main.cpp (showDoc). Берём ИМЕННО тот документ, на
+    // котором споткнулся владелец: в README первым объектом идёт строчная
+    // формула, а речь про таблицу.
+    QString withTable;
+    for (const QString& path : docs)
+        if (path.contains(QStringLiteral("storage"))) withTable = path;
+    if (withTable.isEmpty()) withTable = docs.last();
+    reader->showFile(withTable, QStringLiteral("info:stack"));
+    // ЛЖЁТ ЛИ ВЁРСТКА СРАЗУ ПОСЛЕ ПОДМЕНЫ ДОКУМЕНТА — спрашиваем ДО единого
+    // другого обращения к ней: любое (blockBoundingRect, прокрутка, событие)
+    // достраивает раскладку и ложь прячет. В живом окне ответ был «4727»
+    // (блок 60, верх 4130) при видимой полосе 0..705 — и наложение обрывалось.
+    {
+        // Люк к защищённому помощнику: набору нужен ровно он, а наружу вид его
+        // не выпускает.
+        struct Probe : ReaderView {
+            using ReaderView::blockAtHeight;
+        };
+        auto* probe = static_cast<Probe*>(reader);
+        const int at = reader->document()->documentLayout()->hitTest(QPointF(0, 0), Qt::FuzzyHit);
+        const QTextBlock lied = reader->document()->findBlock(at);
+        std::printf("  hitTest(0,0) сразу после показа: %d → блок %d\n", at,
+                    lied.isValid() ? lied.blockNumber() : -1);
+
+        // ВОТ САМА БЕДА: вёрстка отвечает блоком глубоко внутри документа, хотя
+        // спросили про его верх. Наложение (сетка таблиц, плашки кода) уходило
+        // от этого блока ВНИЗ и не рисовало ничего, что видно на экране.
+        const QTextBlock honest = probe->blockAtHeight(0);
+        ZT_TRUE("первый видимый блок накрывает верх документа, а не лежит ниже",
+                honest.isValid() && honest.blockNumber() == 0);
+        // И проверка не пустышка: если бы вёрстка не врала, ловить было бы
+        // нечего — говорим вслух, когда так вышло.
+        if (lied.isValid() && lied.blockNumber() == 0)
+            std::printf("  (вёрстка на этот раз не соврала — проверка прошла вхолостую)\n");
+    }
+
+    // МАСШТАБ СТАВИТСЯ ПОСЛЕ ПОКАЗА — так делает окно (showDoc), и у владельца
+    // он не единица: в его state.json 1.21. Именно этим его случай и отличался
+    // от моего первого пробника, где всё рисовалось.
+    reader->applyZoom(1.21);
+    stack.setCurrentWidget(reader);
+    QApplication::processEvents();
+
+    // Прокрутить к первой таблице и посмотреть, что нарисовано.
+    QTextDocument* shown = reader->document();
+    QRectF box;
+    int number = -1;
+    for (QTextBlock block = shown->begin(); block.isValid(); block = block.next()) {
+        if (!block.text().contains(QChar::ObjectReplacementCharacter)) continue;
+        box = shown->documentLayout()->blockBoundingRect(block);
+        number = block.blockNumber();
+        break;
+    }
+    reader->verticalScrollBar()->setValue(int(box.top()) - 30);
+    QApplication::processEvents();
+
+    const QString dir = zt::TestData::outDir(QStringLiteral("info-stack"));
+    const QImage before = reader->grab().toImage();
+    before.save(dir + QStringLiteral("/до-щелчка.png"));
+    std::printf("  снимок до щелчка: %s/до-щелчка.png (блок %d, высота полосы %.1f)\n",
+                dir.toUtf8().constData(), number, double(box.height()));
+
+    // Щелчок по месту таблицы — то самое, что помогает владельцу.
+    QTest::mouseClick(reader->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      QPoint(reader->viewport()->width() / 2, 60));
+    QApplication::processEvents();
+    const QImage after = reader->grab().toImage();
+    after.save(dir + QStringLiteral("/после-щелчка.png"));
+    std::printf("  снимок после щелчка: %s/после-щелчка.png\n", dir.toUtf8().constData());
+
+    // Снимки — артефакт приёмки, их смотрит человек. СРАВНИВАТЬ ИХ МЕЖДУ СОБОЙ
+    // НЕЛЬЗЯ, и это не лень: grab() сам по себе перерисовывает виджет целиком,
+    // то есть «до щелчка» в наборе уже не первая отрисовка. Беду ловит
+    // проверка выше — вопрос к вёрстке до единого обращения к ней.
+    (void)before;
+    (void)after;
+    return zt::report("таблица в стеке");
+}
+
 TEST(InfoFolder, All) {
     std::vector<QByteArray> ztArgs{QByteArrayLiteral("info_folder_test")};
     std::vector<char*> ztArgv;
     for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
     EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
     EXPECT_EQ(0, ztRunReader());
+    EXPECT_EQ(0, ztRunTableInStack());
 }

@@ -227,7 +227,11 @@ void DiffTextView::paintUnderlay(QPainter& painter, const QRectF& visible) {
         return int(ZSyntaxHighlighterMD::Plain);
     };
     const QAbstractTextDocumentLayout* layout = document()->documentLayout();
-    QTextBlock block = document()->findBlock(layout->hitTest(QPointF(0, visible.top()), Qt::FuzzyHit));
+    // Первый видимый блок — общим помощником вида: hitTest сразу после подмены
+    // документа отвечает по недостроенной раскладке, и подложка не рисовалась
+    // бы вовсе (см. NoteView::blockAtHeight). Слепок истории подменяет документ
+    // на каждом шаге по времени — беда та же.
+    QTextBlock block = blockAtHeight(visible.top());
     const QColor plate = settings().markdownHighlighting().codeBackground();
     const qreal width = document()->textWidth() > 0 ? document()->textWidth() : viewport()->width();
     // Правый край — по правому полю корневой рамки (левое шире на поле глифов).

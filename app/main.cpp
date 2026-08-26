@@ -1957,10 +1957,19 @@ int main(int argc, char** argv) {
     // markdown.active(): у заметки найденное живёт при заметке и адресуется
     // блоками, у плоских видов — смещениями в тексте, но окну эта разница не
     // нужна (долг из отчёта девятой сессии).
+    // ИСКОМОЕ — ТА ЖЕ СТРАНИЦА, ЧТО НА ВИДУ, и порядок здесь ОБЯЗАН совпадать с
+    // showPage: иначе Ctrl+F ищет в одном, а человек смотрит в другое.
+    //
+    // Так и было у архивной заметки: страницу показывал archiveView, а искал
+    // Ctrl+F в редакторе — то есть в спрятанном документе, и на экране не
+    // происходило ничего. Страница документации наступила бы на те же грабли,
+    // и чинится это одной строкой на обе.
     const auto searchTarget = [&]() -> zametti::TextSearchTarget& {
         if (settingsMode.active()) return settingsView;
         if (markdown.active()) return markdownView;
         if (history.active()) return historyView.textView();
+        if (!docView.path().isEmpty()) return docView;
+        if (editor.isArchivedNote()) return archiveView;
         return editor;
     };
 
