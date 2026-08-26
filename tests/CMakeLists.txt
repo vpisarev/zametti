@@ -127,6 +127,7 @@ add_executable(zametti-tests
     export_pdf_test.cpp
     tree_view_test.cpp
     note_panels_test.cpp
+    open_storage_test.cpp
     image_edge_test.cpp
     about_test.cpp
     status_bar_test.cpp
@@ -276,6 +277,28 @@ add_test(NAME canon-without-display
          COMMAND zametti --check ${CMAKE_CURRENT_SOURCE_DIR}/канон-без-дисплея.md)
 set_tests_properties(canon-without-display PROPERTIES
                      ENVIRONMENT "QT_QPA_PLATFORM=;WAYLAND_DISPLAY=;DISPLAY=")
+
+# ОКНО БЕЗ ХРАНИЛИЩА ПОДНИМАЕТСЯ, А НЕ ОТКАЗЫВАЕТСЯ РАБОТАТЬ.
+#
+# Раньше программа без хранилища печатала подсказку в терминал и выходила с
+# кодом 2; теперь она открывает пустое окно, в котором горит одна кнопка —
+# «открыть или завести хранилище». Юнит-тесты этого не видят: окно они целиком
+# не собирают, а весь смысл здесь в том, ЧТО ДЕЛАЕТ ПРОГРАММА, когда открывать
+# нечего.
+#
+# XDG_CONFIG_HOME уводится в каталог сборки, и это половина проверки: без него
+# нашёлся бы state.json владельца с его хранилищем, и набор проверял бы совсем
+# другой случай.
+#
+# Платформа здесь задаётся ЯВНО (offscreen), а не гасится, как у
+# canon-without-display: тому режиму дисплей не нужен по существу, а окну нужен
+# — обычному запуску платформу выбирает Qt, и навязывать offscreen внутри
+# программы нельзя, иначе человек остался бы без окна. Дисплей при этом гасим,
+# чтобы окно не выскакивало перед владельцем во время прогона наборов.
+add_test(NAME window-without-store
+         COMMAND zametti)
+set_tests_properties(window-without-store PROPERTIES
+                     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;WAYLAND_DISPLAY=;DISPLAY=;XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/no-store-config;ZAMETTI_PROBE_QUIT_MS=1500")
 
 # КОМАНДНЫЙ ВИД ХРАНИЛИЩА — `zametti store …`.
 #
