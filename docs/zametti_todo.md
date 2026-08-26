@@ -22,7 +22,7 @@
   - [x] создание новой папки (lucide: folder-plus)
   - [x] импорт (lucide: folder-input, image-down)
   - [x] экспорт (.md, .pdf: lucide: square-arrow-out-up-right)
-  - [ ] синхронизация (lucide: cloud-sync)
+  - [x] синхронизация (lucide: cloud-sync)
   - [x] убрать панели (lucide: columns-3)
   - [x] режим сортировки (A-Z, new-old; lucide: arrow-down-a-z, clock-arrow-down)
   - [x] восстановить из истории (lucide: rotate-ccw-clock)
@@ -93,12 +93,14 @@
 
 ## Компрессия/Шифрование/WebDav
 
-- [ ] TBD
+- [x] сделано, предстоит потестировать
 
 ## Перенос на Мак
 
-- [ ] TBD
+- [ ] промежуточная версия запускается, подробных тестов не делалось
 
 ## Пакетирование
 
-- [ ] TBD
+- [ ] упаковка под linux. сделана сборка только с системными зависимостями
+- [ ] упаковка под windows. сделаны самодостаточные zametti.exe (+zamett-store.exe)
+- [ ]
