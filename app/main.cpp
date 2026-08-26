@@ -14,6 +14,7 @@
 #include "settings_controller.h"
 #include "history_panel.h"
 #include "reader_view.h"
+#include "toolbar_controller.h"
 #include "zoom_target.h"
 #include "history_view.h"
 #include "image_viewer.h"
@@ -1155,7 +1156,36 @@ int main(int argc, char** argv) {
     QObject::connect(&editor, &zametti::NoteEditor::fileChanged, &window,
                      [&](const QString&) { refreshReadingPages(); });
 
+    // ТУЛБАР ИДЁТ ЗА ТЕМ, ЧТО ОТКРЫТО. Контроллер сам подписан на смену заметки
+    // и на смену показанного документа — окну остаётся только отвечать, что у
+    // него на виду.
+    //
+    // ЗАВОДИТСЯ ИМЕННО ЗДЕСЬ, ПОСЛЕ подписки страниц чтения, и это не вкус:
+    // сигналы доставляются в порядке подписки, и пересчёт, вставший раньше,
+    // считал бы кнопки по ЕЩЁ НЕ УБРАННОЙ документации. Ниже же стоят
+    // обработчики режимов — им пересчёт тоже нужен, и отсюда он им виден.
+    zametti::ToolbarController toolbarState(
+        toolbar, editor, docView, [&] {
+            zametti::ToolbarState state;
+            state.store = model.isStore();
+            // ДОКУМЕНТАЦИЯ — ЭТО ТА, ЧТО НА ВИДУ. Режим поверх неё (настройки,
+            // история, исходник) закрывает её собой, и говорить про неё
+            // «documentation is read-only», пока на экране другое, было бы
+            // враньём.
+            state.documentation = showingDoc() && !settingsMode.active() &&
+                                  !markdown.active() && !history.active();
+            state.readOnlyNote = editor.isReadOnlyNote();
+            state.archivedNote = editor.isArchivedNote();
+            state.cloudConfigured = cloudSync.configured();
+            state.cloudStatus = cloudSync.statusText();
+            return state;
+        });
+
     QObject::connect(&history, &zametti::HistoryController::modeChanged, &window, [&](bool on) {
+        // Кнопки — за режимом: вход в историю поверх документации закрывает её
+        // собой, и запрет «documentation is read-only» с экрана уходит вместе с
+        // ней.
+        toolbarState.refresh();
         // Вид истории на месте редактора; таймлайн сбоку.
         showPage();
         if (on) {
@@ -1195,6 +1225,7 @@ int main(int argc, char** argv) {
     // ни вошли (кнопка, сочетание из настроек, восстановление на старте).
     QObject::connect(&markdown, &zametti::MarkdownController::modeChanged, &window, [&](bool on) {
         showPage();
+        toolbarState.refresh();   // кнопки — за тем, что на виду
         toolbar.setChecked(zametti::Toolbar::Button::MarkdownEdit, on);
         if (settingsMode.active()) return;   // на виду настройки — фокус их
         if (on) {
@@ -1220,6 +1251,7 @@ int main(int argc, char** argv) {
     QObject::connect(&settingsMode, &zametti::SettingsController::modeChanged, &window,
                      [&](bool on) {
                          showPage();
+                         toolbarState.refresh();   // кнопки — за тем, что на виду
                          toolbar.setChecked(zametti::Toolbar::Button::Settings, on);
                          if (on) {
                              settingsView.setFocus();
@@ -2330,54 +2362,22 @@ int main(int argc, char** argv) {
     // всё, что она захватывает, объявлено на уровне main — как и остальное окно.
     using Button = zametti::Toolbar::Button;
 
-    // --- ДОСТУПНОСТЬ КНОПОК — ОДНОЙ ФУНКЦИЕЙ -------------------------------
+    // --- ДОСТУПНОСТЬ КНОПОК ------------------------------------------------
     //
-    // Раньше состояние выставлялось один раз при старте и больше никогда: пока
-    // хранилище открывалось ровно однажды за запуск, этого хватало. Теперь его
-    // переключают на ходу, и пересчёт обязан быть один — иначе кнопки начнут
-    // отвечать про хранилище, которого уже нет.
+    // САМО ПРАВИЛО ЖИВЁТ НЕ ЗДЕСЬ (app/toolbar_state.h), а пересчёт ведёт
+    // ToolbarController: он подписан на смену заметки и на смену показанного
+    // документа и потому не может «забыть» пересчитать — это и была беда
+    // 27.08.2026, когда после документации кнопки оставались серыми.
     //
-    // БЕЗ ХРАНИЛИЩА ГОРИТ ОДНА КНОПКА — «открыть хранилище» (решение
-    // владельца). Это не украшение, а единственный намёк, который человек в
-    // пустом окне получит: делать здесь можно ровно одно.
+    // Здесь остаётся то, что принадлежит ОКНУ, а не тулбару: полоса сведений.
+    // Без хранилища она подсказывает, что делать, — это единственный намёк,
+    // который человек в пустом окне получит.
     const auto refreshToolbar = [&] {
-        const bool store = model.isStore();
-        const QString why = QStringLiteral("no storage is open");
-        for (const zametti::Toolbar::Spec& spec : zametti::Toolbar::specs()) {
-            if (spec.id == Button::OpenStore) continue;
-            toolbar.setPromise(spec.id, store ? QString() : why);
-        }
-        if (!store) {
-            statusBar.setMessage(
-                QStringLiteral("No storage open — press the database button to open or "
-                               "create one"));
-            return;
-        }
-        statusBar.setMessage(QString());
-        // ЧТО ДЕЛАЮТ КНОПКИ НА ЗАПЕРТОМ. Пока на виду документация (или
-        // заперта сама открытая заметка), кнопки, действующие на текущую
-        // заметку, гаснут — и гаснут С ОБЪЯСНЕНИЕМ: серая кнопка молча читается
-        // как поломка, а не как обещание. Экспорт и вывоз здесь ни при чём —
-        // читать и уносить прочитанное никто не запрещал; гаснет то, что
-        // ПИШЕТ: правка исходника, история (вход в неё обещает возврат версии)
-        // и ввоз картинок в открытую заметку.
-        const bool doc = showingDoc();
-        if (doc || editor.isReadOnlyNote() || editor.isArchivedNote()) {
-            const QString locked = doc ? QStringLiteral("documentation is read-only")
-                                       : QStringLiteral("this note is read-only");
-            for (Button id : {Button::MarkdownEdit, Button::InsertImages})
-                toolbar.setPromise(id, locked);
-            // История у архивной работает как у всякой другой (так решено
-            // раньше): гасим её только на документации, у которой истории нет
-            // вовсе — за ней нет ни файла в хранилище, ни журнала.
-            if (doc) toolbar.setPromise(Button::History, locked);
-        }
-        // Облако: кнопка живая только у настроенного синка, и тултип говорит
-        // словами, чего ждать (m17, сессия 4).
-        if (!cloudSync.configured())
-            toolbar.setPromise(Button::Cloud, cloudSync.statusText());
-        else
-            toolbar.setTip(Button::Cloud, cloudSync.statusText());
+        toolbarState.refresh();
+        statusBar.setMessage(model.isStore()
+                                 ? QString()
+                                 : QStringLiteral("No storage open — press the database "
+                                                  "button to open or create one"));
     };
 
     // ДОКУМЕНТАЦИЯ ОТКРЫВАЕТСЯ ЧИТАЛКОЙ, А НЕ РЕДАКТОРОМ, и это не украшение:
@@ -2731,9 +2731,12 @@ int main(int argc, char** argv) {
         // переключатель означает «это включено». Прежде было зеркально —
         // панели пропадали, а кнопка загоралась.
         toolbar.setChecked(Button::Panels, visible);
-        toolbar.buttonFor(Button::Panels)
-            ->setToolTip(visible ? QStringLiteral("Hide side panels")
-                                 : QStringLiteral("Show side panels"));
+        // ЧЕРЕЗ ТУЛБАР, А НЕ ПРЯМО В КНОПКУ: подпись у неё живая, и тулбар
+        // обязан её помнить — иначе первый же пересчёт доступности соберёт
+        // подпись заново из таблицы и напишет «Hide side panels» на кнопке,
+        // которая панели показывает.
+        toolbar.setTip(Button::Panels, visible ? QStringLiteral("Hide side panels")
+                                               : QStringLiteral("Show side panels"));
     };
     {
         // Зовём ВСЕГДА, а не только когда панели спрятаны: кнопка обязана

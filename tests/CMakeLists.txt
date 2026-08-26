@@ -159,6 +159,7 @@ add_executable(zametti-tests
     version_stamp_test.cpp
     resources_test.cpp
     toolbar_test.cpp
+    toolbar_state_test.cpp
     live_title_test.cpp
     caret_scale_test.cpp
     zoom_test.cpp

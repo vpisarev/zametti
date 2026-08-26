@@ -50,6 +50,9 @@ bool ReaderView::showFile(const QString& path, const QString& noteId) {
     setDocument(shown_.getDocument());
     applyContentWidth();
     restoreSpot();
+    // ПОСЛЕ того, как проставлены путь и заголовок: слушатель спросит и то, и
+    // другое прямо в обработчике.
+    emit shownChanged(path_);
     return true;
 }
 
@@ -62,6 +65,7 @@ void ReaderView::clear() {
     retired_ = std::move(shown_);
     shown_ = ZDocument{};
     setDocument(shown_.getDocument());
+    emit shownChanged(QString());
 }
 
 // МЕСТО ЧТЕНИЯ — ТАМ ЖЕ, ГДЕ КАРЕТКИ ПРАВИМЫХ ЗАМЕТОК (ZAppState, по id).

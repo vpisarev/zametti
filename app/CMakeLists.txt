@@ -143,6 +143,9 @@ add_library(zametti-ui STATIC
     status_bar.cpp
     toolbar.h
     toolbar.cpp
+    toolbar_state.h
+    toolbar_controller.h
+    toolbar_controller.cpp
     resources.h
     resources.cpp
     ${CMAKE_SOURCE_DIR}/resources/resources.qrc

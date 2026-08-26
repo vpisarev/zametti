@@ -73,8 +73,11 @@ QString shortcutFor(const Toolbar::Spec& spec) {
     return QString::fromLatin1(spec.shortcut);
 }
 
-QString tipFor(const Toolbar::Spec& spec, const QString& promise) {
-    QString tip = QString::fromUtf8(spec.tip);
+// ПОДПИСЬ КНОПКИ ЦЕЛИКОМ: живая (или из таблицы, если своей нет), шорткат и,
+// если кнопка погашена, причина. Собирается в одном месте — иначе setTip и
+// setPromise писали бы в тултип каждый своё и затирали друг друга.
+QString tipFor(const Toolbar::Spec& spec, const QString& own, const QString& promise) {
+    QString tip = own.isEmpty() ? QString::fromUtf8(spec.tip) : own;
     const QString shortcut = shortcutFor(spec);
     if (!shortcut.isEmpty()) tip += QStringLiteral(" (") + shortcut + QLatin1Char(')');
     // Погашенная кнопка без объяснения читается как поломка, а не как обещание.
@@ -139,7 +142,7 @@ void Toolbar::build() {
         button->setAutoRaise(true);
         button->setCheckable(spec.checkable);
         button->setFocusPolicy(Qt::NoFocus);   // тулбар не крадёт каретку
-        button->setToolTip(tipFor(spec, QString()));
+        button->setToolTip(tipFor(spec, QString(), QString()));
         buttons_.insert(int(spec.id), button);
         layout->addWidget(button);
 
@@ -256,7 +259,20 @@ void Toolbar::setIcon(Button id, const QString& iconName) {
 }
 
 void Toolbar::setTip(Button id, const QString& tip) {
-    if (QToolButton* button = buttons_.value(int(id))) button->setToolTip(tip);
+    tips_.insert(int(id), tip);
+    applyTip(id);
+}
+
+QString Toolbar::promiseFor(Button id) const { return promises_.value(int(id)); }
+
+// Написать в тултип то, что о кнопке известно сейчас. Одно место: и живая
+// подпись, и причина погашения приходят сюда, а не пишут в тултип порознь.
+void Toolbar::applyTip(Button id) {
+    QToolButton* button = buttons_.value(int(id));
+    if (button == nullptr) return;
+    for (const Spec& spec : kSpecs)
+        if (spec.id == id)
+            button->setToolTip(tipFor(spec, tips_.value(int(id)), promises_.value(int(id))));
 }
 
 void Toolbar::setAccent(Button id, bool ownMark) {
@@ -268,10 +284,7 @@ void Toolbar::setAccent(Button id, bool ownMark) {
 void Toolbar::setPromise(Button id, const QString& why) {
     promises_.insert(int(id), why);
     setEnabled(id, why.isEmpty());
-    QToolButton* button = buttons_.value(int(id));
-    if (!button) return;
-    for (const Spec& spec : kSpecs)
-        if (spec.id == id) button->setToolTip(tipFor(spec, why));
+    applyTip(id);
 }
 
 }  // namespace zametti

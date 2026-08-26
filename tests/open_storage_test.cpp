@@ -20,6 +20,7 @@
 #include "note_panels.h"
 #include "note_tree.h"
 #include "toolbar.h"
+#include "toolbar_state.h"
 #include "zstorage.h"
 
 #include "test_util.h"
@@ -176,10 +177,14 @@ static int ztRunSuite(int, char**) {
 
         // Без хранилища гаснет всё, кроме неё, — иначе пустое окно не
         // подсказывает ничего.
-        for (const Toolbar::Spec& spec : Toolbar::specs()) {
-            if (spec.id == Toolbar::Button::OpenStore) continue;
-            bar.setPromise(spec.id, QStringLiteral("no storage is open"));
-        }
+        //
+        // СПРАШИВАЕМ НАСТОЯЩЕЕ ПРАВИЛО (toolbar_state.h), а не повторяем его
+        // здесь руками: своя копия правила проверяет саму себя и переживёт
+        // любую правку настоящего — молча.
+        zametti::ToolbarState state;
+        state.store = false;
+        for (const Toolbar::Spec& spec : Toolbar::specs())
+            bar.setPromise(spec.id, zametti::toolbarPromiseFor(spec.id, state));
         int lit = 0;
         for (const Toolbar::Spec& spec : Toolbar::specs())
             if (bar.isEnabled(spec.id)) ++lit;
