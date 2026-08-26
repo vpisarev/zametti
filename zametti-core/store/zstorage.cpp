@@ -32,6 +32,21 @@ bool ZStorage::isStoreRoot(const QString& dir) {
     return QFileInfo(dir + QStringLiteral("/.zametti")).isDir();
 }
 
+ZStorage::DirKind ZStorage::inspect(const QString& dir) {
+    const QString clean = QDir::cleanPath(dir);
+    if (clean.isEmpty() || !QFileInfo(clean).isDir()) return DirKind::Missing;
+    // Хранилище — раньше пустоты: у него внутри есть .zametti, то есть пустым
+    // оно не бывает, и порядок проверок тут не вопрос вкуса.
+    if (isStoreRoot(clean)) return DirKind::Store;
+    // NoDotAndDotDot обязателен: без него «.» и «..» есть в любом каталоге, и
+    // пустых каталогов на свете не бывает вовсе.
+    const QDir at(clean);
+    return at.isEmpty(QDir::AllEntries | QDir::Hidden | QDir::System |
+                      QDir::NoDotAndDotDot)
+               ? DirKind::Empty
+               : DirKind::Foreign;
+}
+
 ZStorage::ZStorage(const QString& root)
     : root_(QDir::cleanPath(root)), store_(isStoreRoot(QDir::cleanPath(root))) {
     settle_.setSingleShot(true);
@@ -44,6 +59,32 @@ ZStorage::ZStorage(const QString& root)
         names_ = now;
         reload();
     });
+}
+
+// ПОРЯДОК ОСВОБОЖДЕНИЯ, НАПИСАННЫЙ СЛОВАМИ. Зачем деструктор нужен вообще, при
+// том что все члены и так RAII, — сказано в заголовке; здесь сам порядок.
+//
+// Умолчание разрушило бы члены обратно объявлению, и одна конкретная щель у
+// нас там уже есть: объявлены `watcher_`, а следом `settle_`, значит таймер
+// умирает ПЕРВЫМ, а сторож каталога, чья лямбда зовёт `settle_.start()`, —
+// вторым. Между этими двумя мгновениями пришедшее от файловой системы событие
+// дёрнуло бы уже разрушенный таймер.
+ZStorage::~ZStorage() {
+    // 1. СТОРОЖ И ЕГО ТАЙМЕР — ВМЕСТЕ И ПЕРВЫМИ. После этого в полумёртвый
+    //    объект уже ничего не прилетит, и остальное можно разбирать спокойно.
+    setWatching(false);
+    // 2. ОБЛАКО НЕ ПЕРЕЖИВАЕТ ХРАНИЛИЩЕ: адаптер держит сетевые запросы, шифр
+    //    — ключ. Ни тому, ни другому незачем оставаться, когда хранилища уже
+    //    нет.
+    remote_.reset();
+    cipher_.reset();
+    // 3. Каталог забыт.
+    notes_.clear();
+    loaded_ = false;
+    // 4. ЗАМОК — ПОСЛЕДНИМ. Пока он наш, в каталог не войдёт вторая копия
+    //    программы; отпускаем его, когда всё остальное уже отпущено, а не
+    //    посреди разбора.
+    lock_.reset();
 }
 
 class ZStorage::Batch {
