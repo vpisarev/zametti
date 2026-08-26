@@ -169,13 +169,29 @@ endif()
 # Плагины платформы и ввода для статического Qt — см. корневой CMakeLists.
 zametti_import_qt_plugins(zametti)
 
+# Манифест Windows (UTF-8 как ANSI-кодировка) и значок .exe — см. корневой
+# CMakeLists. Ставится ПОСЛЕ target_link_libraries: ресурс должен попасть в
+# компоновку ЭТОЙ цели, а не остаться объявленным рядом.
+zametti_windows_manifest(zametti)
+
+include(GNUInstallDirs)
+install(TARGETS zametti RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+# Дальше — хозяйство рабочего стола freedesktop: .desktop-файл и тема значков.
+# Ни того, ни другого нет ни у Windows, ни у macOS, и класть их туда — значит
+# сорить в чужом дереве установки.
+if(UNIX AND NOT APPLE)
+
 # Иконку в доке оболочка ищет не у окна, а по .desktop-файлу с именем, которое
 # приложение сообщает через setDesktopFileName. Без установки этих двух файлов
 # док показывает заглушку.
-include(GNUInstallDirs)
-install(TARGETS zametti RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES ${CMAKE_SOURCE_DIR}/packaging/linux/zametti.desktop
         DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
+
+# КАКУЮ ИКОНКУ СТАВИТЬ. Имя одно, здесь: иконка своя на каждую систему
+# (1024×1024 с бордюрами — маку, 512×512 — линуксу), и следующий заход на
+# иконки меняет одну эту строку, а не четыре места ниже.
+set(ZAMETTI_ICON "zametti1024x1024.png")
 
 # Каталог темы значков называется РАЗМЕРОМ картинки, и размер этот берётся из
 # самой картинки, а не пишется числом: иконку перерисовывают, она была 512, а
@@ -184,7 +200,7 @@ install(FILES ${CMAKE_SOURCE_DIR}/packaging/linux/zametti.desktop
 # Ширина и высота лежат в заголовке PNG: 8 байт подписи, 4 длины, 4 «IHDR»,
 # дальше ширина и высота по 4 байта старшим байтом вперёд. Отсюда смещения 32 и
 # 40 в шестнадцатеричной записи (по два знака на байт).
-file(READ ${CMAKE_SOURCE_DIR}/resources/zametti.png zametti_png_head HEX LIMIT 24)
+file(READ ${CMAKE_SOURCE_DIR}/resources/${ZAMETTI_ICON} zametti_png_head HEX LIMIT 24)
 string(SUBSTRING "${zametti_png_head}" 32 8 zametti_png_w)
 string(SUBSTRING "${zametti_png_head}" 40 8 zametti_png_h)
 math(EXPR zametti_png_w "0x${zametti_png_w}")
@@ -202,10 +218,12 @@ foreach(size 22 24 32 36 48 64 72 96 128 192 256 512)
     endif()
 endforeach()
 if(NOT zametti_png_w EQUAL zametti_png_h)
-    message(NOTICE "resources/zametti.png не квадратная (${zametti_png_w}×${zametti_png_h}) — "
+    message(NOTICE "resources/${ZAMETTI_ICON} не квадратная (${zametti_png_w}×${zametti_png_h}) — "
                    "в доке её растянет")
 endif()
 
-install(FILES ${CMAKE_SOURCE_DIR}/resources/zametti.png
+install(FILES ${CMAKE_SOURCE_DIR}/resources/${ZAMETTI_ICON}
         DESTINATION
         ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/${zametti_icon_dir}x${zametti_icon_dir}/apps)
+
+endif()

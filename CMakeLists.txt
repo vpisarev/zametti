@@ -255,6 +255,16 @@ endfunction()
 # одиннадцать наборов краснели из-за каталога «наборы», ставшего «??????»).
 if(WIN32)
     set(ZAMETTI_WIN_MANIFEST "${CMAKE_SOURCE_DIR}/packaging/win/zametti.manifest")
+    # Значок .exe — готовый .ico из репозитория, а не собираемый сборкой:
+    # кросс-сборке негде взять хостовую программу, которая его соберёт. Чем он
+    # сделан — resources/make-ico.cpp, там же и формат разобран.
+    set(ZAMETTI_WIN_ICO "${CMAKE_SOURCE_DIR}/resources/zametti.ico")
+    if(NOT EXISTS "${ZAMETTI_WIN_ICO}")
+        message(FATAL_ERROR
+            "нет ${ZAMETTI_WIN_ICO} — программа собралась бы без значка, и\n"
+            "  заметить это можно было бы только глазами в проводнике.\n"
+            "  Собрать: см. шапку resources/make-ico.cpp")
+    endif()
     configure_file(${CMAKE_SOURCE_DIR}/packaging/win/zametti.rc.in
                    ${CMAKE_BINARY_DIR}/generated/zametti.rc @ONLY)
     enable_language(RC)
