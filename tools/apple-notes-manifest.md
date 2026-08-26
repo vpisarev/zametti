@@ -44,9 +44,9 @@ python3 -c "import json;print(len(json.load(open('manifest.json'))))"  # чис�
 ## Миграция
 
 ```sh
-zametti-store import --root <новое-хранилище> --from <конвертированное-дерево> \
+zametti store import --root <новое-хранилище> --from <конвертированное-дерево> \
     --apple-manifest manifest.json
-zametti-store verify --root <новое-хранилище>
+zametti store verify --root <новое-хранилище>
 ```
 
 В отчёте (`<root>.import-report.txt`) смотреть:

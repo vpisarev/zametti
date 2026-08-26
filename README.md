@@ -158,7 +158,7 @@ You can restore archived note and continue to edit it at any time. All the histo
 
 Or you can later decide to remove it completely. To do so, you select the note in archive and choose 'delete permanently' in the context menu. After confirmation the note is _almost completely_ deleted from the archive - only its latest snapshot in the compressed form (so called 'tombstone') is kept  in the journal and all its images, unless referenced by other notes, are resized to small stamps (e.g. 100x100, that's a user-adjustable parameter). Normally, such an 'erased' note consumes just a few kilobytes of the storage space.
 
-Those 'completely erased' notes that then be restored using command line utility `zametti-store resurrect <storage_root>`, of course, with a complete loss of history and with seriously degraded images (no UI is currently provided for this black magic).
+Those 'completely erased' notes that then be restored using command line `zametti store resurrect --root <storage_root> --id <note_id>`, of course, with a complete loss of history and with seriously degraded images (no UI is currently provided for this black magic).
 
 Now, suppose that someone sent you his/her notes from their storage (maybe together with images) and you directly copied the notes into your storage. Once you relaunched your application or pressed `F5`/(`Ctrl+R`), the program will find those notes and will place them into 'lost-and-found' folder in your storage. You can find them there and move to another folder.
 
@@ -173,8 +173,8 @@ zametti-core/      the core as one target:
                      store/   the store, the edit journal, archive, times
                      image/   image reading and writing, color, import
                      doc/     the live document model, search, counting, diff
-app/               zametti-ui: the window, the note tree, rendering
-store/             zametti-store: the store utility
+app/               zametti-ui: the window, the note tree, rendering,
+                   and `zametti store ...`: the store from the command line
 tests/             test suites (one process) and benches
 packaging/         .desktop for the menu and the dock
 docs/              stage briefs, reports and decision notes

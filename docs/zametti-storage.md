@@ -3,7 +3,7 @@
 This document describes what lies on disk: how the note store is organized,
 what a note file consists of, what an attachment is and how the history is
 recorded. It is a reference for the format, not for the code; everything said
-here is checked by `zametti-store verify` and by the test suites.
+here is checked by `zametti store verify` and by the test suites.
 
 The main property: **the store can be read and edited without the program**.
 A note is a plain markdown file in UTF-8, the history is a file next to it.
@@ -65,7 +65,7 @@ manifest — "is this the same store" is answered BEFORE a password is entered
 and before a single blob is decrypted.
 
 The file may be missing: that is what a store created by an older build looks
-like. It is minted on the first run (`zametti-store root init` does it too),
+like. It is minted on the first run (`zametti store root init` does it too),
 and `verify` says so out loud rather than treating it as trouble.
 
 ### The root note
@@ -87,7 +87,7 @@ The top row of the tree is a REAL NOTE with `role: root`, not a caption:
 
 Its address is written in `zametti.json`, and its role is in its own header:
 two independent records of the same fact. When they disagree —
-`zametti-store root fix` names in the json whatever was found by role.
+`zametti store root fix` names in the json whatever was found by role.
 
 Settings and window state live **not** in the store but in the application
 config (`config.json` and `state.json` in the user's settings directory): the
@@ -485,7 +485,7 @@ attention to age. Untouchable in both modes: the anchor record, the
 tombstone, the last record and the `external` marks, across which collapsing
 never jumps.
 
-By hand (for testing without the UI): `zametti-store history compress
+By hand (for testing without the UI): `zametti store history compress
 <id | path>` — forces the same function and prints what came out. There is
 no regular way for a person to clean the history by hand, and none is
 planned.
@@ -520,7 +520,7 @@ A logarithmic scale from the current moment:
 
 **The last record is never thinned.** Thinning is idempotent: a repeated run
 at the same "now" does not change a byte. It runs in the background at
-program start and on the command `zametti-store thin`.
+program start and on the command `zametti store thin`.
 
 ---
 
@@ -601,7 +601,7 @@ from the archive) is dead weight, and the last state is enough to bring the note
 back. The tombstone names the voided records, so the other machines' copies of
 the journal lose them too rather than growing back through the merge.
 
-Bringing it back is `zametti-store resurrect <id>`: the snapshot is written into
+Bringing it back is `zametti store resurrect <id>`: the snapshot is written into
 the file as it is, and since it carries `archived: yes` — the note was deleted
 *from the archive* — the note returns **into the archive**. Exactly one of the
 two decisions is undone; whether to take it out of the archive is for the person
@@ -650,7 +650,7 @@ same second on two machines, and with the same CSPRNG roll on top of that.
   switch `zametti --root … --unlock`;
 - **inside the program** all history operations go through one shared
   in-memory lock: background thinning and note saving do not overlap;
-- `zametti-store thin` honestly refuses to work while the program is open.
+- `zametti store thin` honestly refuses to work while the program is open.
 
 ---
 
@@ -670,22 +670,29 @@ taken behind the program's back" — not trouble, but not order either.
 
 ---
 
-## 10. The store utility
+## 10. The store from the command line
+
+The store utility is not a separate program: it is the `store` subcommand of
+`zametti` itself. (It was a separate `zametti-store` binary until 2026-08-26;
+both binaries carried a full copy of every vendored library, so a distribution
+was twice the size it had to be.)
 
 ```
-zametti-store init <dir>                          an empty store
-zametti-store new --root <dir> [--parent <id>]    an empty note
-zametti-store import --root <dir> --from <src>    import a tree of .md
-zametti-store verify --root <dir>                 full check
-zametti-store thin --root <dir> [--dry-run]       history thinning
-zametti-store history compress <id | path.md>    clean one journal (test hatch)
-zametti-store recompress --root <dir> --id <id|all>   re-encode attachments
-zametti-store resurrect --root <dir> --id <id>        bring a deleted note back
-zametti-store root show|init|fix --root <dir>         the identity and the root note
-zametti-store set-remote --root <dir> (--url <dav>|--to <dir>) [--reset]
-zametti-store sync --root <dir> [--full|--push-only]
-                   [--allow-mass-delete|--keep-all]   the engine, see §12
+zametti store init <dir>                          an empty store
+zametti store new --root <dir> [--parent <id>]    an empty note
+zametti store import --root <dir> --from <src>    import a tree of .md
+zametti store verify --root <dir>                 full check
+zametti store thin --root <dir> [--dry-run]       history thinning
+zametti store history compress <id | path.md>     clean one journal (test hatch)
+zametti store recompress --root <dir> --id <id|all>   re-encode attachments
+zametti store resurrect --root <dir> --id <id>        bring a deleted note back
+zametti store root show|init|fix --root <dir>         the identity and the root note
+zametti store set-remote --root <dir> (--url <dav>|--to <dir>) [--reset]
+zametti store sync --root <dir> [--full|--push-only]
+                  [--allow-mass-delete|--keep-all]    the engine, see §12
 ```
+
+`zametti store --help` prints the same list with the options spelled out.
 
 `root show` prints the identity and both records of the root note's address —
 the one in `zametti.json` and the one found by role — and says `MISMATCH` when
@@ -810,7 +817,7 @@ mounted NAS). The secrets live in the system keyring: the server password as
 encryption password itself is stored NOWHERE — it lives for the one moment
 Argon2id unwraps the keyfile, and what reaches the keyring is the key.
 
-`zametti-store set-remote` writes all of this once; `--reset` forgets it.
+`zametti store set-remote` writes all of this once; `--reset` forgets it.
 Pointed at a directory that does not exist yet (or is empty), it creates the
 store skeleton WITHOUT minting an identity and inherits the identity from the
 cloud manifest; the root note is fetched and materialized right away, and a

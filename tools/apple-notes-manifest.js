@@ -1,5 +1,5 @@
 #!/usr/bin/env osascript -l JavaScript
-// Манифест Apple Notes для `zametti-store import --apple-manifest`.
+// Манифест Apple Notes для `zametti store import --apple-manifest`.
 //
 // Выгружает JSON-массив записей { folder, title, created, modified } по всем
 // заметкам всех учёток. Тел заметок не читает — только имена и даты; поэтому
