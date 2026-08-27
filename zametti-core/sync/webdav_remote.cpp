@@ -2,6 +2,7 @@
 
 #include "webdav_remote.h"
 
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
@@ -121,22 +122,47 @@ namespace {
 // перезапускает таймер. Прежний дедлайн на всю операцию оборвал первую же
 // живую заливку крупной картинки ровно на 30-й секунде («Operation
 // canceled») — большие файлы были обречены по построению.
-void waitFor(QNetworkReply* reply, int timeoutMs) {
+// ВТОРАЯ ЛОВУШКА, найденная тем же живым сервером: у ЗАЛИВКИ прогресс — это
+// байты, ушедшие в БУФЕР TLS-сокета, а не принятые сервером. Полтора
+// мегабайта оседают в буфере мгновенно, uploadProgress доходит до 100% — и
+// дальше, пока медленный сервер (замерен канал ~16 КБ/с) вычитывает сокет,
+// сигналов нет ВООБЩЕ: бездействие неизмеримо. Потому после полной отправки
+// тела ответу даётся допуск из расчёта самого медленного терпимого канала
+// (kSlowestBytesPerSec — не порог владельца, просто дно терпения): живой
+// медленный сервер доживает, мёртвый отваливается, когда допуск вышел.
+constexpr qint64 kSlowestBytesPerSec = 4 * 1024;
+
+void waitFor(QNetworkReply* reply, int timeoutMs, qint64 uploadBytes = 0) {
     QEventLoop loop;
     QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
     QTimer timer;
     timer.setSingleShot(true);
+    const auto sentAll = std::make_shared<bool>(uploadBytes <= 0);
     QObject::connect(reply, &QNetworkReply::uploadProgress, &timer,
-                     [&timer, timeoutMs](qint64, qint64) { timer.start(timeoutMs); });
+                     [&timer, timeoutMs, sentAll](qint64 sent, qint64 total) {
+                         if (total > 0 && sent >= total) *sentAll = true;
+                         timer.start(timeoutMs);
+                     });
     QObject::connect(reply, &QNetworkReply::downloadProgress, &timer,
                      [&timer, timeoutMs](qint64, qint64) { timer.start(timeoutMs); });
 
-    QObject::connect(&timer, &QTimer::timeout, [reply, timeoutMs] {
-        // Пометка «оборвал сторож»: httpTrouble скажет про молчание канала,
-        // а не отдаст безликое «Operation canceled» от Qt.
-        reply->setProperty("zamettiStalledMs", timeoutMs);
-        reply->abort();          // abort сам приведёт к finished
-    });
+    QElapsedTimer whole;
+    whole.start();
+    const qint64 drainBudgetMs =
+        qint64(timeoutMs) + uploadBytes * 1000 / kSlowestBytesPerSec;
+    QObject::connect(&timer, &QTimer::timeout,
+                     [reply, timeoutMs, sentAll, &whole, drainBudgetMs, &timer] {
+                         if (*sentAll && whole.elapsed() < drainBudgetMs) {
+                             // Тело ушло целиком, сервер дочитывает буфер:
+                             // молчание здесь — не смерть канала.
+                             timer.start(timeoutMs);
+                             return;
+                         }
+                         // Пометка «оборвал сторож»: httpTrouble скажет про
+                         // молчание канала, не безликое «Operation canceled».
+                         reply->setProperty("zamettiStalledMs", timeoutMs);
+                         reply->abort();  // abort сам приведёт к finished
+                     });
     timer.start(timeoutMs);
     if (!reply->isFinished()) loop.exec();
 }
@@ -339,7 +365,9 @@ bool WebDavRemote::putIfMatch(const QString& name, const QByteArray& bytes,
 
     std::unique_ptr<QNetworkReply, void (*)(QNetworkReply*)> reply(
         impl_->net.put(request, bytes), [](QNetworkReply* r) { r->deleteLater(); });
-    waitFor(reply.get(), config_.timeoutMs);
+    // Размер тела — сторожу: после полной отправки ответ ждётся с допуском
+    // на медленное вычитывание сервера (см. waitFor).
+    waitFor(reply.get(), config_.timeoutMs, bytes.size());
     const int code =
         reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     if (code == 412) {
