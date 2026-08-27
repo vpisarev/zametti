@@ -831,7 +831,15 @@ int enterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
             // блока кода, кроме случая «блок на строке маркера».
             bool inList = !c.stack.empty() && c.stack.back().type == MD_BLOCK_LI;
             Frame* htmlLi = inList ? &c.stack.back() : nullptr;
-            if (insideQuote(c) || (htmlLi != nullptr && htmlLi->childIdx == 0 && c.inLeaf)) {
+            // «Блок на строке маркера» узнаётся по тому, что лист пункта ещё
+            // ПУСТ: в плотном списке md4c не заворачивает текст пункта в абзац,
+            // и на второй строке пункта мы приходим сюда с тем же childIdx == 0
+            // и открытым листом. Пока условие не спрашивало про содержимое
+            // листа, комментарий на второй строке пункта ронял в дословный кусок
+            // ВЕСЬ список — а писали мы его сами (Ctrl+/ на строке пункта), и
+            // круг записи расходился: файл читался иначе, чем был записан.
+            const bool onMarkerLine = c.inLeaf && c.curMin == kNoOffset;
+            if (insideQuote(c) || (htmlLi != nullptr && htmlLi->childIdx == 0 && onMarkerLine)) {
                 c.stack.push_back(f);
                 demote(c);
                 return 0;
