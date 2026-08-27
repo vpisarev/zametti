@@ -14,6 +14,7 @@
 
 #include "mini_store.h"
 #include "test_util.h"
+#include "testdata.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -81,6 +82,13 @@ public:
     using StoreManagerDialog::armResetMode;
 };
 
+// Каталог снимков — ОДИН РАЗ на набор: outDir чистит каталог при каждом
+// вызове, и второй снимок стирал бы первый.
+const QString& shotDir() {
+    static const QString dir = zt::TestData::outDir(QStringLiteral("store-manager"));
+    return dir;
+}
+
 // Дождаться конца рабочего потока: занятое окно гасит Apply.
 bool waitIdle(StoreManagerDialog& dialog, int budgetMs = 20000) {
     auto* apply = dialog.findChild<QPushButton*>(QStringLiteral("apply"));
@@ -133,6 +141,10 @@ void checkListAndForget() {
     ZT_TRUE("выбрана строка открытого", list->currentRow() == 0);
     auto* remove = dialog.findChild<QPushButton*>(QStringLiteral("removeStore"));
     ZT_TRUE("«−» у открытого погашен", !remove->isEnabled());
+
+    // Снимок приёмки: список с двумя строками и форма выбранной.
+    dialog.resize(760, 420);
+    dialog.grab().save(QDir(shotDir()).filePath(QStringLiteral("store-manager.png")));
 
     list->setCurrentRow(1);
     ZT_TRUE("«−» у другого горит", remove->isEnabled());
@@ -216,6 +228,10 @@ void checkFreshCloudAndReset() {
     ZT_TRUE("проверка свежести дождалась", waitIdle(dialog));
     ZT_TRUE("свежее облако просит повторить пароль", !password2->isHidden());
     ZT_TRUE("конверта ещё нет", !QFile::exists(cloud + QStringLiteral("/keyfile")));
+    // Снимок приёмки: свежее облако, второе поле пароля на виду.
+    dialog.resize(760, 420);
+    dialog.grab().save(
+        QDir(shotDir()).filePath(QStringLiteral("store-manager-свежее-облако.png")));
 
     // Опечатка в повторе — отказ на месте.
     password2->setText(QStringLiteral("первый-парол"));
