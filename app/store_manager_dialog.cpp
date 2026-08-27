@@ -1,5 +1,6 @@
 #include "store_manager_dialog.h"
 
+#include "dialog_font.h"
 #include "icons.h"
 
 #include <QAction>
@@ -99,6 +100,9 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, const QList<ZStorage::Co
       currentRoot_(canonicalRoot(currentRoot)),
       mintParams_(mintParams) {
     setWindowTitle(QStringLiteral("Storages"));
+    // Кегль — из настроек, как у остальной программы: системный дефолт на
+    // FullHD-ноуте владельца мельче всего окна (dialog_font.h).
+    setFont(dialogFont());
     result_.stores = stores;
 
     // --- слева: список и его кнопки -----------------------------------------
@@ -189,10 +193,11 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, const QList<ZStorage::Co
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
     auto* leftButtons = new QHBoxLayout;
+    // Open растягивается до правого края списка: ряд с хвостовой пустотой
+    // выглядел неровным (владелец, п.5 первого живого прогона).
     leftButtons->addWidget(addButton_);
     leftButtons->addWidget(removeButton_);
-    leftButtons->addWidget(openButton_);
-    leftButtons->addStretch(1);
+    leftButtons->addWidget(openButton_, 1);
     auto* left = new QVBoxLayout;
     left->addWidget(list_, 1);
     left->addLayout(leftButtons);
@@ -208,7 +213,9 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, const QList<ZStorage::Co
     auto* whole = new QVBoxLayout(this);
     whole->addLayout(columns, 1);
     whole->addWidget(buttons);
-    resize(760, 420);
+    // Ширина — под кегль из настроек: на 14pt прежние 760 обрезали и путь, и
+    // подсказки полей.
+    resize(900, 460);
 
     connect(addButton_, &QPushButton::clicked, this, &StoreManagerDialog::beginNewEntry);
     connect(removeButton_, &QPushButton::clicked, this, &StoreManagerDialog::forgetSelected);
@@ -320,6 +327,11 @@ void StoreManagerDialog::showEntry(int row) {
     // Папка существующей строки заморожена: строка ПРО эту папку, а «та же
     // строка, другая папка» была бы вторым способом добавить хранилище.
     folder_->setText(e.root);
+    // Полный путь должен читаться целиком: тултип, каретка в начале (хвост
+    // длинного пути прокручивается стрелками и выделяется мышью — read-only
+    // это не запрещает).
+    folder_->setToolTip(e.root);
+    folder_->setCursorPosition(0);
     folder_->setReadOnly(true);
     browseButton_->setEnabled(false);
     server_->setText(cloudAddressText(e));
@@ -347,6 +359,7 @@ void StoreManagerDialog::beginNewEntry() {
     leaveResetMode();
     list_->setCurrentRow(-1);
     folder_->clear();
+    folder_->setToolTip(QString());
     folder_->setReadOnly(false);
     browseButton_->setEnabled(true);
     server_->clear();

@@ -1,5 +1,7 @@
 #include "about_window.h"
 
+#include "dialog_font.h"
+
 #include "build_facts.h"
 #include "document_builder.h"
 #include "note_view.h"
@@ -162,6 +164,9 @@ QString licensesMarkdown() {
 
 AboutWindow::AboutWindow(QWidget* parent) : QDialog(parent) {
     setWindowTitle(QStringLiteral("zametti"));
+    // Кегль вкладок и кнопок — из настроек (dialog_font.h); страницы NoteView
+    // и так живут своим шрифтом документа.
+    setFont(dialogFont());
 
     tabs_ = new QTabWidget(this);
     // ДВЕ ВКЛАДКИ, И БОЛЬШЕ НИ ОДНОЙ (решение владельца). Справки здесь нет:

@@ -1,5 +1,7 @@
 #include "pending_deletes_dialog.h"
 
+#include "dialog_font.h"
+
 #include <QDialogButtonBox>
 #include <QLabel>
 #include <QLineEdit>
@@ -21,6 +23,8 @@ PendingDeletesDialog::Verdict PendingDeletesDialog::verdictFor(const QString& ty
 PendingDeletesDialog::PendingDeletesDialog(QWidget* parent, const QStringList& qualifiedNames)
     : QDialog(parent) {
     setWindowTitle(QStringLiteral("Sync wants to delete notes"));
+    // Кегль — из настроек: системный дефолт на FullHD мельче остального окна.
+    setFont(dialogFont());
 
     auto* heading = new QLabel(
         QStringLiteral("Another device deleted %1 notes:").arg(qualifiedNames.size()), this);
