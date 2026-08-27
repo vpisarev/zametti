@@ -420,8 +420,10 @@ void checkEditorSearch() {
     // длинной заметке совпадений тысячи, а на экране — десятки, и подсветок
     // Qt считает ровно столько, сколько видно; при прокрутке перекладываются.
     {
+        const int limit = zametti::settings().ui().findMatchLimit();
         QString body = QStringLiteral("# Много\n\n");
-        for (int i = 0; i < 1500; ++i) body += QStringLiteral("строка с сено номер %1\n\n").arg(i);
+        for (int i = 0; i < limit + 500; ++i)
+            body += QStringLiteral("строка с сено номер %1\n\n").arg(i);
         const QString longPath = g_root + QStringLiteral("/00000000000010.md");
         note("00000000000010", "modified: 2025-01-01T00:00:00Z\n", body.toUtf8().constData());
         zametti::NoteEditor many;
@@ -430,17 +432,40 @@ void checkEditorSearch() {
         QTest::qWait(20);
         many.openFile(longPath);
         QTest::qWait(20);
+
+        // ПОТОЛОК: искать дальше незачем (решение владельца — важнее время
+        // реакции), и счётчик обязан сказать «больше», а не соврать числом.
         const int all = many.findMatches(zametti::makeQuery(QStringLiteral("сено")));
-        ZT_TRUE("найдены все полторы тысячи", all == 1500);
+        ZT_TRUE("найденное упёрлось в потолок: " + std::to_string(all), all == limit);
+        ZT_TRUE("и поиск об этом говорит", many.matchesCapped());
+
         const int lit = int(many.extraSelections().size());
         ZT_TRUE("подсвечено только видимое: " + std::to_string(lit) + " из " + std::to_string(all),
                 lit > 0 && lit < 200);
-        // Прокрутили в конец — подсветка переехала за видом.
-        many.verticalScrollBar()->setValue(many.verticalScrollBar()->maximum());
+    }
+
+    // ПОДСВЕТКА ЕДЕТ ЗА ВИДОМ — на заметке, которая в потолок не упирается:
+    // иначе у её конца совпадений просто нет, и проверка ловила бы потолок, а
+    // не прокрутку.
+    {
+        QString body = QStringLiteral("# Немного\n\n");
+        for (int i = 0; i < 300; ++i) body += QStringLiteral("строка с сено номер %1\n\n").arg(i);
+        const QString path = g_root + QStringLiteral("/00000000000011.md");
+        note("00000000000011", "modified: 2025-01-01T00:00:00Z\n", body.toUtf8().constData());
+        zametti::NoteEditor some;
+        some.resize(700, 500);
+        some.show();
+        QTest::qWait(20);
+        some.openFile(path);
+        QTest::qWait(20);
+        ZT_TRUE("до потолка далеко",
+                some.findMatches(zametti::makeQuery(QStringLiteral("сено"))) == 300 &&
+                    !some.matchesCapped());
+        some.verticalScrollBar()->setValue(some.verticalScrollBar()->maximum());
         QTest::qWait(10);
         bool lastLit = false;
-        for (const QTextEdit::ExtraSelection& sel : many.extraSelections())
-            if (sel.cursor.selectionStart() > many.document()->characterCount() - 200) lastLit = true;
+        for (const QTextEdit::ExtraSelection& sel : some.extraSelections())
+            if (sel.cursor.selectionStart() > some.document()->characterCount() - 200) lastLit = true;
         ZT_TRUE("после прокрутки подсвечены совпадения у конца", lastLit);
     }
 

@@ -346,6 +346,12 @@ int ztBigBench(int argc, char** argv) {
         // Поиск.
         put("поиск слова", col, micros([&] { editor.findMatches(zametti::makeQuery(QStringLiteral("the"))); }));
         editor.clearMatches();
+        // САМЫЙ ОБЩИЙ ЗАПРОС — ровно тот случай, ради которого поставлен
+        // потолок: человек набрал «.» с выражением, и без потолка это курсор
+        // на каждый знак заметки.
+        put("выражение «.»", col,
+            micros([&] { editor.findMatches(zametti::makeQuery(QStringLiteral("."), true)); }));
+        editor.clearMatches();
 
         // Переключиться на другую заметку и вернуться.
         put("уйти на другую заметку", col, micros([&] {
