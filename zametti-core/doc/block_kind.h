@@ -114,9 +114,17 @@ inline bool isList(Kind k) { return k == Kind::ListItem; }
 // его литеральным содержимым обязана стоять пустая строка. За абзацем внутри
 // пункта тот же забор читается прекрасно — там текст уже стал абзацем, а
 // забор абзац прерывает.
+// nextEmpty — у следующего блока нет содержимого (пустой пункт «-» без текста).
+// Спрашивается ради одного случая, замеренного на md4c: пустой пункт СРАЗУ за
+// абзацем файл съедает — "текст\n-" читается setext-заголовком второго уровня,
+// "текст\n1." просто добирается к тексту абзаца. После цитаты, после другого
+// пункта и через пустую строку такой пункт цел.
 inline bool wouldMerge(Kind previousKind, bool previousRaw, bool previousClosedComment,
-                       Kind nextKind, bool nextRaw, int nextLevel) {
+                       Kind nextKind, bool nextRaw, int nextLevel, bool nextEmpty) {
     if (previousClosedComment) return false;
+    if (nextEmpty && !nextRaw && isList(nextKind) && !previousRaw &&
+        previousKind == Kind::Paragraph)
+        return true;
     // Дословный кусок с уровнем (таблица, HTML внутри пункта) — та же
     // литеральность: строка с палками сразу за строкой пункта читалась бы её
     // ленивым продолжением, а не таблицей.

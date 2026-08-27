@@ -126,8 +126,14 @@ bool blocksWouldMerge(const QTextBlock& previous, const QTextBlock& next) {
         closedComment = source.startsWith(QStringLiteral("<!--")) &&
                         source.endsWith(QStringLiteral("-->"));
     }
+    // ПУСТОТУ СЛЕДУЮЩЕГО ЖИВОЙ ДОКУМЕНТ НЕ СПРАШИВАЕТ (всегда false). Правило
+    // «пустой пункт сразу за абзацем файл съедает» — про файл: там пустая
+    // строка перед таким пунктом появляется при записи (documentForFile). В
+    // живом документе пустой пункт — это ПРОМЕЖУТОЧНОЕ состояние набора: человек
+    // напечатал "- " и сейчас напечатает текст. Вставить ему пустую строку
+    // значило бы отодвинуть пункт прямо под руками (набор List это ловит).
     return wouldMerge(kindOf(previous), isRawBlock(previous), closedComment, kindOf(next),
-                      isRawBlock(next), levelOf(next));
+                      isRawBlock(next), levelOf(next), /*nextEmpty=*/false);
 }
 
 Kind kindOf(const QTextBlock& block) {

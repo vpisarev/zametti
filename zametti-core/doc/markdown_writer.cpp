@@ -41,8 +41,13 @@ namespace {
 // логических блоков. Своя копия правила тут и лежала, слово в слово; копия
 // правила — это правило, которое однажды разойдётся с оригиналом.
 bool wouldMerge(const Piece& previous, const Piece& next) {
+    // Пусто ли у следующего: текст пуст и картинки в нём нет (у картинки без
+    // подписи содержимое — сам снимок, а не текст).
+    bool empty = next.text.isEmpty();
+    for (const Run& run : next.runs)
+        if (run.image()) empty = false;
     return zametti::wouldMerge(previous.kind, previous.raw, previous.isClosedHtmlComment(),
-                               next.kind, next.raw, next.level);
+                               next.kind, next.raw, next.level, empty);
 }
 
 }  // namespace
