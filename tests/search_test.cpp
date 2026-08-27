@@ -621,6 +621,54 @@ void checkSearchSurvivesSwitch() {
 // сколько его хранится. Живёт между запусками, поэтому проверяется отдельно от
 // самого поиска.
 // ТУМБЛЕР ВЫРАЖЕНИЙ В ПАНЕЛИ: он не режим панели, а признак ЗАПРОСА.
+// ЗАМЕНА ВЫРАЖЕНИЕМ ПО ЖИВОЙ ЗАМЕТКЕ: и «всё», и одно вхождение.
+void checkRegexReplace() {
+    const QString path = QDir(g_root).filePath(QStringLiteral("00000000000004.md"));
+    {
+        QFile file(path);
+        ZT_TRUE("заметка для замены записана", file.open(QIODevice::WriteOnly));
+        file.write(QStringLiteral("<!-- zametti\nmodified: 2023-01-01T00:00:00Z\n-->\n\n"
+                                  "# Почта\n\nваня@почта и петя@почта\n")
+                       .toUtf8());
+    }
+
+    zametti::NoteEditor editor;
+    editor.resize(600, 400);
+    editor.show();
+    editor.openFile(path);
+    QTest::qWait(20);
+
+    const zametti::Query re = zametti::makeQuery(QStringLiteral("(\\w+)@(\\w+)"), true);
+    ZT_TRUE("выражение нашло оба адреса", editor.findMatches(re) == 2);
+
+    // «Заменить всё» разворачивает группы У КАЖДОГО вхождения своим
+    // совпадением: общего «текста замены» не существует.
+    ZT_TRUE("заменены оба", editor.replaceAllMatches(re, QStringLiteral("\\U$2\\E: $1")) == 2);
+    const std::string after = markdownOf(blocksOf(*editor.document()));
+    ZT_TRUE("группы развернулись у каждого своё: " + after,
+            after.find("ПОЧТА: ваня и ПОЧТА: петя") != std::string::npos);
+
+    editor.undo();
+    QTest::qWait(20);
+
+    // Одно вхождение — тем же разворачивателем.
+    editor.findMatches(re);
+    editor.goToMatch(1);
+    ZT_TRUE("замена одного удалась", editor.replaceCurrentMatch(QStringLiteral("$1 на $2")));
+    const std::string one = markdownOf(blocksOf(*editor.document()));
+    ZT_TRUE("заменилось только второе: " + one,
+            one.find("ваня@почта и петя на почта") != std::string::npos);
+
+    // БЕЗ ВЫРАЖЕНИЯ ШАБЛОН БУКВАЛЕН — иначе замена «цены» на «$1» подставляла
+    // бы группу вместо доллара.
+    editor.undo();
+    QTest::qWait(20);
+    const zametti::Query plain = zametti::makeQuery(QStringLiteral("петя"));
+    ZT_TRUE("буквальная замена сделана", editor.replaceAllMatches(plain, QStringLiteral("$1")) == 1);
+    ZT_TRUE("доллар с единицей и остались долларом с единицей",
+            markdownOf(blocksOf(*editor.document())).find("$1@почта") != std::string::npos);
+}
+
 void checkRegexToggle() {
     zametti::FindBar bar;
     bar.open(zametti::FindBar::Mode::InNote, QStringLiteral("(\\d+)"));
@@ -810,6 +858,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkDeleteEveryMatchOneByOne();
     checkCaretMemory();
     checkSearchSurvivesSwitch();
+    checkRegexReplace();
     checkRegexToggle();
     shootFindBar();
     checkQueryHistory();
