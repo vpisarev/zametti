@@ -38,7 +38,7 @@ public:
 
     QString root() const { return dir_.path(); }
     QString journalOf(const QString& id) const {
-        return dir_.filePath(QStringLiteral("history/%1.log").arg(id));
+        return dir_.filePath(QStringLiteral("history/%1.zm").arg(id));
     }
 
     // --- пол времени устройства --------------------------------------------

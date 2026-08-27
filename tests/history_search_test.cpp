@@ -203,7 +203,7 @@ qint64 yardstick() {
 void bench(const QString& root, const QString& needle) {
     ZStorage history(root);
     const QDir dir(QDir(root).filePath(QStringLiteral("history")));
-    const QStringList files = dir.entryList({QStringLiteral("*.log")}, QDir::Files, QDir::Name);
+    const QStringList files = dir.entryList({QStringLiteral("*.zm")}, QDir::Files, QDir::Name);
     const Query query = makeQuery(needle);
 
     std::printf("эталон до: %lld мкс\n", (long long)yardstick());

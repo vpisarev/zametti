@@ -980,12 +980,15 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
     };
     const auto journalIdsOnDisk = [&] {
         QStringList out;
-        for (const QString& name : QDir(root_ + QStringLiteral("/history"))
-                                       .entryList({QStringLiteral("*.log")}, QDir::Files)) {
-            const QString stem = name.left(name.size() - 4);
-            if (isValidNoteId(stem.toStdString())) out.append(stem);
+        // Новые имена и наследные: CLI открывает хранилище без миграций.
+        for (const QString& name :
+             QDir(root_ + QStringLiteral("/history"))
+                 .entryList({QStringLiteral("*.zm"), QStringLiteral("*.log")}, QDir::Files)) {
+            const QString stem = journalStemOf(name);
+            if (!stem.isEmpty()) out.append(stem);
         }
         out.sort();
+        out.removeDuplicates();
         return out;
     };
 

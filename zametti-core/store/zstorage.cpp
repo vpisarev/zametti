@@ -509,6 +509,38 @@ QStringList ZStorage::migrate() {
         notes << QStringLiteral("notes filed into lost & found: %1").arg(filed);
         changed = true;
     }
+
+    // ЖУРНАЛЫ ПЕРЕИМЕНОВЫВАЮТСЯ ЭНЕРГИЧНО (решение владельца, 28.08.2026):
+    // <id>.log → <id>.zm разом при первом открытии хранилища, где .log ещё
+    // встречаются, — а не поодиночке при касании. Содержимое не трогается,
+    // это чистый rename. Оба имени сразу — странность (откат на прежнюю
+    // сборку успел дописать старый?): не трогаем и называем — судьбу решает
+    // человек, а не гонка переименования.
+    {
+        // Без замка журналов: migrate() бежит при открытии хранилища, до
+        // того как редактор или синк успели его тронуть, — как и остальные
+        // разовые миграции выше.
+        const QDir history(QDir(root_).filePath(QStringLiteral("history")));
+        int renamed = 0;
+        for (const QString& name :
+             history.entryList({QStringLiteral("*.log")}, QDir::Files)) {
+            const QString stem = name.left(name.size() - 4);
+            const QString fresh = history.filePath(stem + QStringLiteral(".zm"));
+            if (QFileInfo::exists(fresh)) {
+                notes << QStringLiteral(
+                             "history holds both %1 and %2 — left untouched, the newer "
+                             "build reads .zm")
+                             .arg(name, stem + QStringLiteral(".zm"));
+                continue;
+            }
+            if (QFile::rename(history.filePath(name), fresh))
+                ++renamed;
+            else
+                notes << QStringLiteral("cannot rename journal %1").arg(name);
+        }
+        if (renamed > 0)
+            notes << QStringLiteral("journals renamed to .zm: %1").arg(renamed);
+    }
     if (changed) reload();
     return notes;
 }
@@ -826,7 +858,16 @@ void assertLocked() {
 
 
 QString ZStorage::journalPath(const QString& noteId) const {
-    return QDir(root_).filePath(QStringLiteral("history/%1.log").arg(noteId));
+    // Журнал зовётся <id>.zm (решение владельца 28.08.2026 — своё расширение,
+    // как у облачных блобов); наследный <id>.log дочитывается, пока migrate()
+    // его не переименовал: CLI открывает хранилище без миграций, и старый
+    // файл обязан читаться и дописываться на месте. Нет ни того, ни другого —
+    // новый журнал рождается уже .zm.
+    const QString fresh = QDir(root_).filePath(QStringLiteral("history/%1.zm").arg(noteId));
+    if (QFileInfo::exists(fresh)) return fresh;
+    const QString legacy = QDir(root_).filePath(QStringLiteral("history/%1.log").arg(noteId));
+    if (QFileInfo::exists(legacy)) return legacy;
+    return fresh;
 }
 
 
@@ -1356,8 +1397,10 @@ ZJournal::ThinReport ZStorage::thinAllJournals(qint64 now, bool dryRun) {
     const QDir history(QDir(root_).filePath(QStringLiteral("history")));
     if (!history.exists()) return report;
 
-    for (const QString& name : history.entryList({QStringLiteral("*.log")}, QDir::Files)) {
-        const QString noteId = name.left(name.size() - 4);
+    for (const QString& name : history.entryList({QStringLiteral("*.zm"), QStringLiteral("*.log")},
+                                                 QDir::Files)) {
+        const QString noteId = name.endsWith(QStringLiteral(".zm")) ? name.left(name.size() - 3)
+                                                                    : name.left(name.size() - 4);
         ZJournal before;
         QString error;
         if (!readJournal(noteId, &before, &error)) {

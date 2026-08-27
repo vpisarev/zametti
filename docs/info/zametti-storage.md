@@ -23,7 +23,7 @@ store/
     01n6cqevsd7v5edf.md        a note
     01jd7f0kq2m8xab7.webp      an attachment
     history/
-        01n6cqevh7bbfr3v.log   edit history of this note
+        01n6cqevh7bbfr3v.zm    edit history of this note
     .zametti/
         store.lock           the lock: one store — one program
         last-written         the device time floor (journal stamps)
@@ -262,7 +262,7 @@ whole paragraph is an object; its empty caption lives in a property and stays
 empty.
 
 **The note's history does not version images.** Only the note's text goes into
-`history/<id>.log`, and in it an image is a single link. The image's own
+`history/<id>.zm`, and in it an image is a single link. The image's own
 version lives **in the file**, in XMP:
 
 - `zametti:Rev` — a revision, born as `1` when the image is imported and
@@ -334,7 +334,9 @@ mentioned in no note at all and carrying no mark.
 
 ## 5. Edit history
 
-`history/<id>.log` is the append-only journal of one note.
+`history/<id>.zm` is the append-only journal of one note (`.zm` since
+28.08.2026; a legacy `<id>.log` is still read and is renamed eagerly on the
+first open of the store — a plain rename, the bytes do not change).
 The format details and the rationale are in `store/journal.h`; here is what
 one needs to know about the file on disk.
 
@@ -673,7 +675,7 @@ You may: read and edit the `.md` with any editor — the program will notice
 the edit and record it in the history as `external`; copy the store as a
 whole; put it in git.
 
-You may not: edit `history/*.log` — it is a binary format with hashes;
+You may not: edit `history/*.zm` — it is a binary format with hashes;
 create files with names outside the format (`verify` will count them as
 trouble); keep one store open in two copies of the program.
 

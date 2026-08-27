@@ -472,6 +472,56 @@ void checkSignals() {
     ZT_TRUE("и её нет в каталоге", !storage.has(a));
 }
 
+void checkJournalsRenameToZm() {
+    // Журналы переименовываются ЭНЕРГИЧНО при первом открытии (решение
+    // владельца 28.08.2026): <id>.log → <id>.zm разом в migrate(), а не
+    // поодиночке при касании. Наследный .log дочитывается и БЕЗ миграции:
+    // CLI открывает хранилище, не мигрируя.
+    QTemporaryDir home;
+    QString error;
+    QString id;
+    {
+        ZStorage s(home.path());
+        ZT_TRUE("хранилище завелось", s.init(&error));
+        id = s.createNote(QString(), false, &error);
+        ZT_TRUE("заметка завелась", !id.isEmpty());
+        ZT_TRUE("запись легла",
+                s.appendToJournal(
+                    id,
+                    zametti::ZJournal::NewRecord::save(
+                        QByteArray("<!-- zametti\nversion: 1\n-->\nтело\n"),
+                        zametti::ZJournal::Stamp::at(1'700'000'000'000LL)),
+                    &error));
+    }
+    const QString zm = home.path() + QStringLiteral("/history/") + id + QStringLiteral(".zm");
+    const QString log = home.path() + QStringLiteral("/history/") + id + QStringLiteral(".log");
+    ZT_TRUE("журнал рождается сразу .zm", QFile::exists(zm) && !QFile::exists(log));
+
+    // Прикинуться прежней сборкой: журнал под старым именем.
+    ZT_TRUE("журнал переименован в наследный", QFile::rename(zm, log));
+    {
+        ZStorage s(home.path());
+        zametti::ZJournal j;
+        ZT_TRUE("наследный читается без миграции",
+                s.readJournal(id, &j, &error) && !j.isEmpty());
+        const QString said = s.migrate().join(QLatin1Char('\n'));
+        ZT_TRUE(("миграция назвала переименование: " + said.toStdString()).c_str(),
+                said.contains(QStringLiteral("renamed to .zm: 1")));
+        ZT_TRUE("файл переехал", QFile::exists(zm) && !QFile::exists(log));
+        ZT_TRUE("и читается после переезда",
+                s.readJournal(id, &j, &error) && !j.isEmpty());
+        ZT_TRUE("повторная миграция о журналах молчит",
+                !s.migrate().join(QLatin1Char('\n')).contains(QStringLiteral("renamed")));
+
+        // Оба имени сразу — странность: не трогаем и называем.
+        ZT_TRUE("наследный двойник завёлся", QFile::copy(zm, log));
+        const QString both = s.migrate().join(QLatin1Char('\n'));
+        ZT_TRUE(("двойник назван: " + both.toStdString()).c_str(),
+                both.contains(QStringLiteral("both")));
+        ZT_TRUE("оба файла целы", QFile::exists(zm) && QFile::exists(log));
+    }
+}
+
 }  // namespace
 
 TEST(ZStorage, All) {
@@ -481,5 +531,6 @@ TEST(ZStorage, All) {
     checkAttachmentBurial();
     checkSharedAttachmentSurvives();
     checkSignals();
+    checkJournalsRenameToZm();
     EXPECT_EQ(0, zt::freshFailures());
 }

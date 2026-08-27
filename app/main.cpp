@@ -2723,6 +2723,10 @@ int main(int argc, char** argv) {
     // скачивание с нового устройства и сброс пароля шифрования. Все ветки
     // знакомства с папкой и облаком решает ядро; окно только показывает.
     const auto manageStores = [&] {
+        // Правки — на диск при входе (просьба владельца, 28.08.2026): всё,
+        // что диалог сделает с хранилищем — прогон, скачивание, переключение,
+        // — обязано видеть на диске свежую заметку.
+        editor.save(false, true);
         // Прогон синка, если он идёт, останавливается и дожидается: диалог
         // будет трогать подключение того же хранилища.
         cloudSync.setStorage(zapp.storage());
@@ -2861,6 +2865,9 @@ int main(int argc, char** argv) {
                 importNotes(panels.currentFolderId());
                 break;
             case Button::InsertImages:
+                // Правки — на диск перед нетривиальной операцией (просьба
+                // владельца, 28.08.2026): упади ввоз — набранное уцелело.
+                editor.save(false, true);
                 editor.chooseAndInsertImages();
                 break;
             case Button::Panels:
@@ -2928,6 +2935,9 @@ int main(int argc, char** argv) {
                 settingsMode.toggle();
                 break;
             case Button::Export:
+                // Тот же резон: вывоз (особенно PDF) — нетривиальный путь,
+                // и правки обязаны лечь на диск до него.
+                editor.save(false, true);
                 exportNote(editor.filePath());
                 break;
             case Button::Cloud:

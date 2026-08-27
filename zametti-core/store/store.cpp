@@ -423,8 +423,11 @@ bool ZStorage::verify(Report& report) {
     qint64 records = 0;
     if (historyDir.exists()) {
         for (const QString& name :
-             historyDir.entryList({QStringLiteral("*.log")}, QDir::Files)) {
-            const QString noteId = name.left(name.size() - 4);
+             historyDir.entryList({QStringLiteral("*.zm"), QStringLiteral("*.log")},
+                                  QDir::Files)) {
+            const QString noteId = name.endsWith(QStringLiteral(".zm"))
+                                       ? name.left(name.size() - 3)
+                                       : name.left(name.size() - 4);
             if (!isValidNoteId(toUtf8(noteId))) {
                 report.problem(QStringLiteral("foreign file in history/: %1").arg(name));
                 continue;

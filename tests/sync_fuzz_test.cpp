@@ -57,7 +57,7 @@ struct Device {
 QVector<QPair<QString, ZJournal::RecordRef>> allRecords(const QString& root) {
     QVector<QPair<QString, ZJournal::RecordRef>> out;
     const QDir history(root + QStringLiteral("/history"));
-    for (const QString& name : history.entryList({QStringLiteral("*.log")}, QDir::Files)) {
+    for (const QString& name : history.entryList({QStringLiteral("*.zm")}, QDir::Files)) {
         QFile f(history.filePath(name));
         if (!f.open(QIODevice::ReadOnly)) continue;
         ZJournal j;
@@ -168,14 +168,14 @@ void checkTwoDeviceConvergence(unsigned seed) {
             ZT_TRUE("заметка побайтово совпала", a.fileOf(id) == b.fileOf(id));
         }
         ZT_EQ("состав журналов совпал",
-              listing(a.store.root() + QStringLiteral("/history"), "*.log")
+              listing(a.store.root() + QStringLiteral("/history"), "*.zm")
                   .join(QLatin1Char(','))
                   .toStdString(),
-              listing(b.store.root() + QStringLiteral("/history"), "*.log")
+              listing(b.store.root() + QStringLiteral("/history"), "*.zm")
                   .join(QLatin1Char(','))
                   .toStdString());
         for (const QString& name :
-             listing(a.store.root() + QStringLiteral("/history"), "*.log")) {
+             listing(a.store.root() + QStringLiteral("/history"), "*.zm")) {
             QFile fa(a.store.root() + QStringLiteral("/history/") + name);
             QFile fb(b.store.root() + QStringLiteral("/history/") + name);
             ZT_TRUE("журнал A открылся", fa.open(QIODevice::ReadOnly));

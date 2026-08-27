@@ -78,7 +78,7 @@ void checkRoundTrip(const QString& dir) {
     ZStorage h(dir);
     const QString id = QStringLiteral("01n6r08s8wy52h");
     const QString path = h.journalPath(id);
-    ZT_EQ("пути журнала", str(QDir(dir).filePath("history/01n6r08s8wy52h.log")), str(path));
+    ZT_EQ("пути журнала", str(QDir(dir).filePath("history/01n6r08s8wy52h.zm")), str(path));
 
     ZJournal empty;
     QString error;

@@ -174,7 +174,7 @@ void checkRealJournal() {
     QTemporaryDir dir;
     const QString id = QStringLiteral("01n6cqevtnwrf8");
     QDir().mkpath(QDir(dir.path()).filePath(QStringLiteral("history")));
-    const QString path = QDir(dir.path()).filePath(QStringLiteral("history/%1.log").arg(id));
+    const QString path = QDir(dir.path()).filePath(QStringLiteral("history/%1.zm").arg(id));
     QFile::copy(QDir(g_fixture).filePath(id + QStringLiteral(".log")), path);
 
     ZStorage h(dir.path());
