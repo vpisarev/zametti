@@ -10,6 +10,8 @@
 
 #include "editor_widget.h"
 #include "find_bar.h"
+
+#include <QLineEdit>
 #include "document.h"
 #include "search.h"
 #include "settings.h"
@@ -618,6 +620,59 @@ void checkSearchSurvivesSwitch() {
 // История ЗАПРОСОВ (не заметок): что попадает в список, в каком порядке и
 // сколько его хранится. Живёт между запусками, поэтому проверяется отдельно от
 // самого поиска.
+// ТУМБЛЕР ВЫРАЖЕНИЙ В ПАНЕЛИ: он не режим панели, а признак ЗАПРОСА.
+void checkRegexToggle() {
+    zametti::FindBar bar;
+    bar.open(zametti::FindBar::Mode::InNote, QStringLiteral("(\\d+)"));
+    ZT_TRUE("по умолчанию тумблер отжат", !bar.regexOn());
+
+    int toggles = 0;
+    bool lastState = false;
+    QObject::connect(&bar, &zametti::FindBar::regexToggled, &bar, [&](bool on) {
+        ++toggles;
+        lastState = on;
+    });
+    bar.setRegexOn(true);
+    ZT_TRUE("тумблер западает и говорит об этом", bar.regexOn() && toggles == 1 && lastState);
+    bar.setRegexOn(true);
+    ZT_TRUE("повтор того же не тревожит поиск", toggles == 1);
+    bar.setRegexOn(false);
+    ZT_TRUE("и отжимается", !bar.regexOn() && toggles == 2 && !lastState);
+
+    // НЕДОПИСАННОЕ ВЫРАЖЕНИЕ КРАСИТ БУКВЫ, А НЕ ФОН, и ничего не пишет.
+    QLineEdit* field = bar.findChildren<QLineEdit*>().value(0);
+    ZT_TRUE("поле запроса на месте", field != nullptr);
+    if (field == nullptr) return;
+    const QColor plain = field->palette().color(QPalette::Text);
+    const QColor paper = field->palette().color(QPalette::Base);
+    bar.setQueryUsable(false);
+    ZT_TRUE("буквы покраснели",
+            field->palette().color(QPalette::Text) ==
+                zametti::settings().ui().findBadPatternColor());
+    ZT_TRUE("а фон остался прежним", field->palette().color(QPalette::Base) == paper);
+    bar.setQueryUsable(true);
+    ZT_TRUE("дописал — вернулось", field->palette().color(QPalette::Text) == plain);
+}
+
+// СНИМКИ ПАНЕЛИ — узкой и ШИРОКОЙ (правило проекта: три бага класса «у агента
+// окно узкое, у владельца широкое»). Панель подросла на две кнопки, и увидеть,
+// не съело ли это поле запроса, можно только глазами.
+void shootFindBar() {
+    const QString dir = zt::TestData::outDir(QStringLiteral("find-bar"));
+    for (const int width : {520, 1600}) {
+        zametti::FindBar bar;
+        bar.open(zametti::FindBar::Mode::Replace, QStringLiteral("(\\w+)@(\\w+)"));
+        bar.setRegexOn(true);
+        bar.setStatus(QStringLiteral("3/17"));
+        bar.resize(width, bar.sizeHint().height());
+        bar.show();
+        QTest::qWait(20);
+        const QString path = QDir(dir).filePath(QStringLiteral("панель-%1.png").arg(width));
+        ZT_TRUE("снимок панели записан", bar.grab().save(path));
+        std::printf("  снимок: %s\n", path.toUtf8().constData());
+    }
+}
+
 void checkQueryHistory() {
     const QStringList onlyHay{QStringLiteral("сено")};
     const QStringList strawFirst{QStringLiteral("солома"), QStringLiteral("сено")};
@@ -755,6 +810,8 @@ static int ztRunSuite(int argc, char** argv) {
     checkDeleteEveryMatchOneByOne();
     checkCaretMemory();
     checkSearchSurvivesSwitch();
+    checkRegexToggle();
+    shootFindBar();
     checkQueryHistory();
     checkShortcutsReachWindow();
 
