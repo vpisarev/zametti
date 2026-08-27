@@ -44,7 +44,7 @@ ZDocument noteOf(const char* markdown) {
 QString canonOf(const QString& text) {
     ZDocument probe;
     probe.loadMarkdown(text.toStdString());
-    return probe.toMarkdownText();
+    return probe.liveMarkdown();
 }
 
 // СРАВНИВАЕМ БЕЗ ВОЗВРАТА КАРЕТКИ — ровно там же, где его не считает правкой
@@ -67,7 +67,7 @@ struct Case {
 
 void run(const Case& c) {
     ZDocument doc = noteOf(c.before);
-    const QString wasCanonical = doc.toMarkdownText();
+    const QString wasCanonical = doc.liveMarkdown();
     const int stepsBefore = doc.undoSteps();
 
     const QString edited = QString::fromUtf8(c.edited);
@@ -77,7 +77,7 @@ void run(const Case& c) {
     if (hunks < 0) return;
 
     ZT_EQ(std::string(c.what) + ": канон совпал", same(canonOf(edited)),
-          same(doc.toMarkdownText()));
+          same(doc.liveMarkdown()));
 
     // ОТМЕНА ОДНИМ НАЖАТИЕМ — И МЕРИТЬ ЕЁ НАДО ПОВЕДЕНИЕМ, А НЕ СЧЁТЧИКОМ.
     // QTextDocument::availableUndoSteps() считает КОМАНДЫ, а не группы: у
@@ -94,12 +94,12 @@ void run(const Case& c) {
             doc.undoSteps() > stepsBefore);
     ZT_TRUE(std::string(c.what) + ": отмена сработала", doc.undo());
     ZT_EQ(std::string(c.what) + ": и вернула прежнее побайтово", wasCanonical.toStdString(),
-          doc.toMarkdownText().toStdString());
+          doc.liveMarkdown().toStdString());
     ZT_EQ(std::string(c.what) + ": одним нажатием, без остатка", std::to_string(stepsBefore),
           std::to_string(doc.undoSteps()));
     ZT_TRUE(std::string(c.what) + ": возврат сработал", doc.redo());
     ZT_EQ(std::string(c.what) + ": и вернул правленое", same(canonOf(edited)),
-          same(doc.toMarkdownText()));
+          same(doc.liveMarkdown()));
 }
 
 const Case kCases[] = {
@@ -177,16 +177,16 @@ const Case kCases[] = {
 // разрешение их терять.
 void checkReturnsSurvive() {
     ZDocument doc = noteOf("текст\n\n$$\\begin{aligned}\r\na=b\r\n\\end{aligned}$$\n");
-    ZT_TRUE("CR в заметке есть", doc.toMarkdownText().contains(QLatin1Char('\r')));
+    ZT_TRUE("CR в заметке есть", doc.liveMarkdown().contains(QLatin1Char('\r')));
     doc.applySourceText(QStringLiteral("ТЕКСТ\n\n$$\\begin{aligned}\na=b\n\\end{aligned}$$\n"));
-    ZT_TRUE("CR нетронутого блока уцелел", doc.toMarkdownText().contains(QLatin1Char('\r')));
-    ZT_TRUE("а правка легла", doc.toMarkdownText().contains(QStringLiteral("ТЕКСТ")));
+    ZT_TRUE("CR нетронутого блока уцелел", doc.liveMarkdown().contains(QLatin1Char('\r')));
+    ZT_TRUE("а правка легла", doc.liveMarkdown().contains(QStringLiteral("ТЕКСТ")));
 
     // Тронули сам блок с CR — и он законно ушёл: человек перенабрал строку.
     ZDocument other = noteOf("$$\\begin{aligned}\r\na=b\r\n\\end{aligned}$$\n");
     other.applySourceText(QStringLiteral("$$\\begin{aligned}\na=c\n\\end{aligned}$$\n"));
     ZT_TRUE("в перенабранном блоке CR не осталось",
-            !other.toMarkdownText().contains(QLatin1Char('\r')));
+            !other.liveMarkdown().contains(QLatin1Char('\r')));
 }
 
 void checkTwice() {
@@ -230,9 +230,12 @@ void checkUntouchedStaysPut() {
 
 // НЕПОДВИЖНАЯ ТОЧКА НА ЗАМЕТКАХ ВЛАДЕЛЬЦА: наложить собственный канон — значит
 // не изменить ничего. Это не украшение матрицы, а её основание: режим правки
-// исходника показывает человеку РОВНО toMarkdownText(), и если такой текст,
+// исходника показывает человеку РОВНО liveMarkdown(), и если такой текст,
 // наложенный обратно, что-то меняет, то один заход в режим и выход из него
 // молча переписывают заметку.
+//
+// ЖИВОЙ канон, а не файловый: приведение к тому, что умеет выразить файл, —
+// дело записи (toMarkdown), а режим исходника показывает документ как он есть.
 void checkOwnerNotesAreFixedPoints() {
     const QString dir = zt::TestData::corpus(QStringLiteral("owner-copy"));
     if (dir.isEmpty()) {
@@ -247,13 +250,13 @@ void checkOwnerNotesAreFixedPoints() {
         const QByteArray bytes = f.readAll();
         ZDocument doc;
         doc.loadMarkdown(std::string(bytes.constData(), size_t(bytes.size())));
-        const QString canonical = doc.toMarkdownText();
+        const QString canonical = doc.liveMarkdown();
         const int hunks = doc.applySourceText(canonical);
         ZT_EQ("свой канон ничего не меняет: " + name.toStdString(), std::string("0"),
               std::to_string(hunks));
         if (hunks != 0)
             ZT_EQ("  и вот чем разошлось: " + name.toStdString(), canonical.toStdString(),
-                  doc.toMarkdownText().toStdString());
+                  doc.liveMarkdown().toStdString());
         ++checked;
     }
     std::printf("неподвижная точка проверена на %d заметках владельца\n", checked);

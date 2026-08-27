@@ -93,7 +93,7 @@ void fuzzNote(const QString& path, unsigned seed, int rounds, int& notes) {
 
     std::mt19937 rng(seed);
     for (int round = 0; round < rounds && zt::g_failures == 0; ++round) {
-        const QString before = doc.toMarkdownText();
+        const QString before = doc.liveMarkdown();
         const int stepsBefore = doc.undoSteps();
 
         QStringList lines = before.split(QLatin1Char('\n'));
@@ -106,7 +106,7 @@ void fuzzNote(const QString& path, unsigned seed, int rounds, int& notes) {
 
         ZDocument probe;
         probe.loadMarkdown(edited.toStdString());
-        const QString want = probe.toMarkdownText();
+        const QString want = probe.liveMarkdown();
 
         const std::string where =
             QFileInfo(path).fileName().toStdString() + " круг " + std::to_string(round) +
@@ -145,7 +145,7 @@ void fuzzNote(const QString& path, unsigned seed, int rounds, int& notes) {
                     false);
             return;
         }
-        ZT_EQ(where + ": канон совпал", same(want), same(doc.toMarkdownText()));
+        ZT_EQ(where + ": канон совпал", same(want), same(doc.liveMarkdown()));
         if (zt::g_failures != 0) return;
         if (hunks == 0) {
             ZT_EQ(where + ": ноль кусков — и стек отмены не тронут",
@@ -154,7 +154,7 @@ void fuzzNote(const QString& path, unsigned seed, int rounds, int& notes) {
         }
         ZT_TRUE(where + ": отмена сработала", doc.undo());
         ZT_EQ(where + ": один шаг вернул прежнее", before.toStdString(),
-              doc.toMarkdownText().toStdString());
+              doc.liveMarkdown().toStdString());
         ZT_EQ(where + ": и счётчик отмены вернулся", std::to_string(stepsBefore),
               std::to_string(doc.undoSteps()));
         if (zt::g_failures != 0) return;
@@ -182,7 +182,7 @@ void fuzzNote(const QString& path, unsigned seed, int rounds, int& notes) {
                     false);
             return;
         }
-        ZT_EQ(where + ": и вернул правленое", same(want), same(doc.toMarkdownText()));
+        ZT_EQ(where + ": и вернул правленое", same(want), same(doc.liveMarkdown()));
     }
 }
 

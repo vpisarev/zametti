@@ -3,6 +3,14 @@
 // Документ собирается из IR, над ним работает операция, результат читается
 // обратно и сравнивается по сериализованному виду — так расхождение читается
 // глазами, а не по номерам полей.
+//
+// СМОТРИМ ЖИВОЙ ДОКУМЕНТ (liveMarkdown), А НЕ ФАЙЛ (toMarkdown). Предмет этого
+// набора — что операция сделала с документом ПРЯМО СЕЙЧАС, вместе со всем, чего
+// markdown не хранит: пустой абзац под кареткой, пустой вложенный пункт,
+// хвостовой пробел. Файловый канон всё это законно снимает — и тогда «Enter в
+// пустом пункте снял список, каретка в пустом абзаце» стало бы неотличимо от
+// «пункт просто исчез». Записывается ли то, что вышло, спрашивает другой набор
+// (FuzzOps), и спрашивает он ровно про запись.
 
 #include "doc_model.h"
 #include "pieces.h"
@@ -289,7 +297,7 @@ void checkKey(const NoteOp& op, const KeyCase& c) {
     cursor.setPosition(cursor.position() + c.offset);
 
     const bool handled = op(note, cursor);
-    const std::string actual = handled ? note.toMarkdown() : std::string("<операция отказалась>");
+    const std::string actual = handled ? note.liveMarkdown().toStdString() : std::string("<операция отказалась>");
     checkEqual(c.after, actual, c.what);
 
     if (!handled) return;
@@ -489,7 +497,7 @@ void checkRange(const NoteOp& op, const RangeCase& c) {
     cursor.setPosition(tail.position(), QTextCursor::KeepAnchor);
 
     const bool handled = op(note, cursor);
-    const std::string actual = handled ? note.toMarkdown() : std::string("<операция отказалась>");
+    const std::string actual = handled ? note.liveMarkdown().toStdString() : std::string("<операция отказалась>");
     checkEqual(c.after, actual, c.what);
 
     if (!handled) return;
@@ -580,7 +588,7 @@ void checkCodeSpan(const CodeSpanCase& c) {
 
     cursor.movePosition(QTextCursor::End);
     const bool handled = note.applyCodeSpanRule(cursor);
-    const std::string actual = handled ? note.toMarkdown()
+    const std::string actual = handled ? note.liveMarkdown().toStdString()
                                        : std::string("<правило не сработало>");
     checkEqual(c.after, actual, c.what);
 }
@@ -611,7 +619,7 @@ void checkCodeBlock(const CodeBlockCase& c) {
     cursor.setPosition(tail.position(), QTextCursor::KeepAnchor);
 
     const bool done = note.toggleCodeBlock(cursor);
-    checkEqual(c.after, done ? note.toMarkdown() : std::string("<операция отказалась>"), c.what);
+    checkEqual(c.after, done ? note.liveMarkdown().toStdString() : std::string("<операция отказалась>"), c.what);
 }
 
 // Выделение частью блока: абзац с мягкими переносами — один блок, а строк в
@@ -634,7 +642,7 @@ void checkPartialCodeBlock(const PartialCodeCase& c) {
     cursor.setPosition(base + c.to, QTextCursor::KeepAnchor);
 
     const bool done = note.toggleCodeBlock(cursor);
-    checkEqual(c.after, done ? note.toMarkdown() : std::string("<операция отказалась>"), c.what);
+    checkEqual(c.after, done ? note.liveMarkdown().toStdString() : std::string("<операция отказалась>"), c.what);
 }
 
 // "первая\nвторая\nтретья" — по семь знаков на строку с разделителем.
@@ -741,7 +749,7 @@ void checkRule(const RuleCase& c) {
     note.insertText(cursor, QString::fromUtf8(c.typed));
 
     const bool handled = note.applyInputRule(cursor);
-    const std::string actual = handled ? note.toMarkdown()
+    const std::string actual = handled ? note.liveMarkdown().toStdString()
                                        : std::string("<правило не сработало>");
     checkEqual(c.after, actual, c.what);
 }
@@ -808,7 +816,7 @@ void checkStyle(zametti::ZDocument::Style style, const StyleCase& c) {
     if (c.to > c.from) cursor.setPosition(base + c.to, QTextCursor::KeepAnchor);
 
     const bool handled = note.toggleStyle(cursor, style);
-    const std::string actual = handled ? note.toMarkdown() : std::string("<операция отказалась>");
+    const std::string actual = handled ? note.liveMarkdown().toStdString() : std::string("<операция отказалась>");
     checkEqual(c.after, actual, c.what);
 }
 
@@ -856,7 +864,7 @@ void checkMove(const MoveCase& c) {
 
     QTextCursor cursor = note.caretAtBlock(c.block);
     const bool moved = note.moveListItem(cursor, c.direction);
-    const std::string actual = moved ? note.toMarkdown() : std::string("<операция отказалась>");
+    const std::string actual = moved ? note.liveMarkdown().toStdString() : std::string("<операция отказалась>");
     checkEqual(c.after, actual, c.what);
     if (!moved) return;
 

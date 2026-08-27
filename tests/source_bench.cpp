@@ -59,7 +59,7 @@ Row measure(const QString& path) {
     doc.setUndoEnabled(true);
     row.blocks = doc.blockCount();
 
-    const QString canonical = doc.toMarkdownText();
+    const QString canonical = doc.liveMarkdown();
     row.nothing = msOf(doc, canonical);
 
     // Одно слово в середине: правим первую строку, в которой есть буквы.
@@ -149,18 +149,18 @@ int showCase(const QString& beforePath, const QString& afterPath) {
     ZDocument doc;
     doc.loadMarkdown(before.toStdString());
     doc.setUndoEnabled(true);
-    const QString canonBefore = doc.toMarkdownText();
+    const QString canonBefore = doc.liveMarkdown();
 
     ZDocument probe;
     probe.loadMarkdown(after.toStdString());
-    const QString want = probe.toMarkdownText();
+    const QString want = probe.liveMarkdown();
 
     const int stepsBefore = doc.undoSteps();
     const int hunks = doc.applySourceText(after);
     std::printf("=== канон ДО ===\n%s=== ждали ===\n%s=== кусков: %d, шагов отмены %d -> %d ===\n"
                 "=== вышло ===\n%s",
                 canonBefore.toUtf8().constData(), want.toUtf8().constData(), hunks, stepsBefore,
-                doc.undoSteps(), doc.toMarkdownText().toUtf8().constData());
+                doc.undoSteps(), doc.liveMarkdown().toUtf8().constData());
     // Проба: возврат СРАЗУ после отмены, без единого чтения между ними.
     {
         ZDocument probe2;
@@ -174,10 +174,10 @@ int showCase(const QString& beforePath, const QString& afterPath) {
     }
     const bool undone = doc.undo();
     std::printf("=== отмена: %s, шагов %d, вернула ===\n%s", undone ? "да" : "НЕТ",
-                doc.undoSteps(), doc.toMarkdownText().toUtf8().constData());
+                doc.undoSteps(), doc.liveMarkdown().toUtf8().constData());
     const bool redone = doc.redo();
     std::printf("=== возврат: %s, вернул ===\n%s", redone ? "да" : "НЕТ",
-                doc.toMarkdownText().toUtf8().constData());
+                doc.liveMarkdown().toUtf8().constData());
     return 0;
 }
 
