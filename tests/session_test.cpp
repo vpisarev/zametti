@@ -84,6 +84,24 @@ static int ztRunSuite(int argc, char** argv) {
     out.rememberCaret(QStringLiteral("00000000000042"), {10, 5, 3});
     out.rememberCaret(QStringLiteral("00000000000007"), {1, 1, 0});
     out.rememberCaret(QStringLiteral("00000000000042"), {20, 20, 7});   // та же — заменяет
+    // Список хранилищ устройства: по нему диалог находит остальные корни.
+    {
+        zametti::ZStorage::Config first;
+        first.root = QStringLiteral("/дом/заметки");
+        first.name = QStringLiteral("Заметки");
+        first.remoteUrl = QStringLiteral("https://host/dav/");
+        first.remoteUser = QStringLiteral("вадим");
+        zametti::ZStorage::Config second;
+        second.root = QStringLiteral("/дом/работа");
+        out.rememberStore(first);
+        out.rememberStore(second);
+        // Та же папка с хвостовым слэшем — та же строка (канонизация), адрес
+        // обновляется на месте, а пустое имя прежнего не затирает.
+        zametti::ZStorage::Config again;
+        again.root = QStringLiteral("/дом/заметки/");
+        again.remoteUrl = QStringLiteral("https://host2/dav/");
+        out.rememberStore(again);
+    }
     out.save();
 
     const QString path = zametti::configDir() + QStringLiteral("/state.json");
@@ -129,6 +147,25 @@ static int ztRunSuite(int argc, char** argv) {
             !back.knowsCaret(QStringLiteral("нет-такой")) &&
                 back.caretOf(QStringLiteral("нет-такой")).cursor == 0 &&
                 back.caretOf(QStringLiteral("нет-такой")).anchor == 0);
+    // Список хранилищ: две строки, порядок стабилен, повтор обновил на месте.
+    ZT_EQ("хранилищ две строки, без дублей", std::string("2"),
+          std::to_string(back.stores().size()));
+    ZT_EQ("порядок стабилен: первая — первой", std::string("/дом/заметки"),
+          s(back.stores().first().root));
+    ZT_EQ("адрес обновился на месте", std::string("https://host2/dav/"),
+          s(back.stores().first().remoteUrl));
+    ZT_EQ("пустое имя не затёрло прежнего", std::string("Заметки"),
+          s(back.stores().first().name));
+    ZT_TRUE("строка ищется по корню с любым хвостом",
+            back.storeFor(QStringLiteral("/дом/работа/")).root ==
+                QStringLiteral("/дом/работа"));
+    {
+        zametti::ZAppState edit = back;
+        edit.forgetStore(QStringLiteral("/дом/работа/"));
+        ZT_EQ("«−» забыл ровно одну строку", std::string("1"),
+              std::to_string(edit.stores().size()));
+        ZT_TRUE("осталась другая", edit.stores().first().root == QStringLiteral("/дом/заметки"));
+    }
 
     // Умолчание важно не меньше: у человека, который запускает программу
     // впервые, файла нет вовсе, и панели обязаны быть на месте.
@@ -140,6 +177,8 @@ static int ztRunSuite(int argc, char** argv) {
     ZT_EQ("без файла вывоз чистый", b(false), b(fresh.exportKeepMeta()));
     ZT_EQ("без файла ширина списка истории не задана", std::string("0"),
           std::to_string(fresh.historyListWidth()));
+    ZT_EQ("без файла список хранилищ пуст", std::string("0"),
+          std::to_string(fresh.stores().size()));
 
     checkPlainZoomMigrates();
 
