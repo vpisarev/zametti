@@ -2,6 +2,15 @@
 
 namespace zametti {
 
+void RemoteStore::getMany(const QStringList& names, QHash<QString, Fetched>* out) {
+    Q_ASSERT(out != nullptr);
+    for (const QString& name : names) {
+        Fetched one;
+        one.ok = get(name, &one.bytes, nullptr, &one.error);
+        out->insert(name, one);
+    }
+}
+
 bool RemoteStore::putIfMatch(const QString& name, const QByteArray& bytes,
                              const QString& expectedEtag, QString* etag,
                              bool* preconditionFailed, QString* error) {

@@ -146,6 +146,30 @@ TEST(WebDavRemote, All) {
     ZT_TRUE("и сказано, что дело в логине",
             error.contains(QLatin1String("refused the login")));
 
+    // Пакетное скачивание: несколько блобов разом, включая отсутствующий —
+    // итог по каждому имени отдельно, провал одного не валит пакет.
+    {
+        QString why;
+        ZT_TRUE("блоб один залит",
+                remote.put(QStringLiteral("01getmany1.log"), QByteArray("раз"), nullptr, &why));
+        ZT_TRUE("блоб два залит",
+                remote.put(QStringLiteral("01getmany2.log"), QByteArray("два, подлиннее"),
+                           nullptr, &why));
+        QHash<QString, zametti::RemoteStore::Fetched> got;
+        remote.getMany({QStringLiteral("01getmany1.log"), QStringLiteral("01getmany2.log"),
+                        QStringLiteral("01getmany-none.log")},
+                       &got);
+        ZT_TRUE("первый скачан", got.value(QStringLiteral("01getmany1.log")).ok &&
+                    got.value(QStringLiteral("01getmany1.log")).bytes == QByteArray("раз"));
+        ZT_TRUE("второй скачан",
+                got.value(QStringLiteral("01getmany2.log")).bytes ==
+                    QByteArray("два, подлиннее"));
+        ZT_TRUE("отсутствующий — честный отказ, не пустота",
+                !got.value(QStringLiteral("01getmany-none.log")).ok);
+        ZT_TRUE("прибрано-1", remote.del(QStringLiteral("01getmany1.log"), &why));
+        ZT_TRUE("прибрано-2", remote.del(QStringLiteral("01getmany2.log"), &why));
+    }
+
     // If-Match против настоящего сервера. Тела РАЗНОЙ ДЛИНЫ нарочно: wsgidav
     // считает etag по размеру и времени файла, и три тела по шесть букв
     // подряд оставили бы метку прежней — проверка прошла бы, ничего не

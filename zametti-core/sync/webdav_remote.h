@@ -55,6 +55,8 @@ public:
     bool list(QVector<Entry>* out, QString* error = nullptr) override;
     bool get(const QString& name, QByteArray* bytes, QString* etag,
              QString* error = nullptr) override;
+    // До шести реплаев в полёте — см. .cpp; контракт как у дефолта.
+    void getMany(const QStringList& names, QHash<QString, Fetched>* out) override;
     bool put(const QString& name, const QByteArray& bytes, QString* etag,
              QString* error = nullptr) override;
     bool putIfMatch(const QString& name, const QByteArray& bytes,

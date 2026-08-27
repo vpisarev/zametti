@@ -10,6 +10,8 @@
 #include <QUrlQuery>
 #include <QXmlStreamReader>
 
+#include <functional>
+
 namespace zametti {
 namespace {
 
@@ -243,6 +245,74 @@ bool WebDavRemote::get(const QString& name, QByteArray* bytes, QString* etag,
     if (etag != nullptr)
         *etag = tidyEtag(QString::fromUtf8(reply->rawHeader("ETag")));
     return true;
+}
+
+// ПАКЕТНОЕ СКАЧИВАНИЕ: до kInFlight реплаев в полёте в ОДНОМ событийном
+// цикле (QNetworkAccessManager это умеет, порядок завершения любой; поток —
+// тот же рабочий, что и у остальных операций). Боль первой загрузки — сотни
+// мелких блобов, каждый ценой RTT: последовательный прогон против живого
+// сервера стоил ~0.6 с на запрос (замерено 28.08.2026). У каждого реплая
+// свой сторож бездействия — контракт тот же, что у waitFor.
+void WebDavRemote::getMany(const QStringList& names, QHash<QString, Fetched>* out) {
+    Q_ASSERT(out != nullptr);
+    if (names.isEmpty()) return;
+    constexpr int kInFlight = 6;
+    QEventLoop loop;
+    int next = 0;
+    int active = 0;
+    int done = 0;
+    std::function<void()> pump = [&] {
+        while (next < int(names.size()) && active < kInFlight) {
+            const QString name = names.at(next++);
+            ++traffic_.requests;
+            if (badName(name)) {
+                Fetched bad;
+                bad.error = QStringLiteral("webdav: bad blob name %1").arg(name);
+                out->insert(name, bad);
+                ++done;
+                continue;
+            }
+            QNetworkRequest request(config_.base.resolved(QUrl(name)));
+            authorize(&request);
+            QNetworkReply* reply = impl_->net.get(request);
+            ++active;
+            auto* watchdog = new QTimer(reply);
+            watchdog->setSingleShot(true);
+            const int timeoutMs = config_.timeoutMs;
+            QObject::connect(reply, &QNetworkReply::downloadProgress, watchdog,
+                             [watchdog, timeoutMs](qint64, qint64) {
+                                 watchdog->start(timeoutMs);
+                             });
+            QObject::connect(watchdog, &QTimer::timeout, reply, [reply, timeoutMs] {
+                reply->setProperty("zamettiStalledMs", timeoutMs);
+                reply->abort();
+            });
+            watchdog->start(timeoutMs);
+            QObject::connect(reply, &QNetworkReply::finished, &loop, [&, reply, name] {
+                Fetched one;
+                if (reply->error() != QNetworkReply::NoError) {
+                    one.error = httpTrouble(QStringLiteral("GET %1").arg(name), reply);
+                } else {
+                    one.bytes = reply->readAll();
+                    one.ok = true;
+                    traffic_.bytesDown += one.bytes.size();
+                }
+                out->insert(name, one);
+                reply->deleteLater();
+                --active;
+                ++done;
+                if (done == int(names.size())) {
+                    loop.quit();
+                    return;
+                }
+                pump();
+            });
+        }
+    };
+    pump();
+    // Все имена могли оказаться негодными — тогда ждать нечего; обработчики
+    // же реплаев раньше exec не бегут (события стоят в очереди).
+    if (done < int(names.size())) loop.exec();
 }
 
 bool WebDavRemote::put(const QString& name, const QByteArray& bytes, QString* etag,

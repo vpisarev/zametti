@@ -1143,6 +1143,53 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
     const auto bumpProgress = [&] {
         if (options.progressDone != nullptr) options.progressDone->fetch_add(1);
     };
+
+    // ПРЕДЗАГРУЗКА ЖУРНАЛОВ ПАКЕТАМИ. Кандидат на GET виден заранее: облачная
+    // метка разошлась с бухгалтерией (или бухгалтерии нет вовсе — первая
+    // загрузка). Судьбу блоба по-прежнему решает цикл ниже теми же правилами;
+    // здесь только байты — чтобы канал не простаивал по кругу «запрос —
+    // ответ» (~0.6 с на запрос к живому серверу, замерено 28.08.2026). Окно
+    // в kPrefetchBatch имён потребляется по ходу цикла (порядок совпадает),
+    // взятое стирается — память не копит всё облако. Вложения пакетом не
+    // ходят: их мало, они большие, и им хватает сторожа на каждом.
+    QStringList prefetchQueue;
+    if (!pushOnly) {
+        for (const QString& id : orderedJournals) {
+            const QString name = id + QStringLiteral(".log");
+            if (!remoteEtag.contains(name)) continue;
+            const SyncLedger::Blob led = ledger.blob(name);
+            if (led.etag.isEmpty() || led.etag != remoteEtag.value(name))
+                prefetchQueue.append(name);
+        }
+    }
+    int prefetchNext = 0;
+    QHash<QString, RemoteStore::Fetched> prefetched;
+    constexpr int kPrefetchBatch = 32;
+    const auto fetchBlob = [&](const QString& name, QByteArray* blob, QString* why) {
+        if (!prefetched.contains(name) && prefetchNext < int(prefetchQueue.size()) &&
+            !cancelled()) {
+            const int at = int(prefetchQueue.indexOf(name, prefetchNext));
+            if (at >= 0) {
+                // Догрузить окно, имя — включительно.
+                const int upto = qMin(int(prefetchQueue.size()),
+                                      qMax(at + 1, prefetchNext + kPrefetchBatch));
+                QStringList batch;
+                for (int i = prefetchNext; i < upto; ++i)
+                    batch.append(prefetchQueue.at(i));
+                prefetchNext = upto;
+                remote_->getMany(batch, &prefetched);
+            }
+        }
+        const auto it = prefetched.find(name);
+        if (it != prefetched.end()) {
+            const bool ok = it->ok;
+            *blob = it->bytes;
+            if (!ok && why != nullptr) *why = it->error;
+            prefetched.erase(it);  // взятое стирается: память не копит облако
+            return ok;
+        }
+        return remote_->get(name, blob, nullptr, why);
+    };
     for (const QString& id : orderedJournals) {
         if (cancelled()) {
             done.cancelled = true;
@@ -1235,7 +1282,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
             // ЯРУС 2: GET; хеш шифротекста прежний — это перевыдача etag.
             QByteArray blob;
             QString why;
-            if (!remote_->get(name, &blob, nullptr, &why)) {
+            if (!fetchBlob(name, &blob, &why)) {
                 skipTransfer(QStringLiteral("cannot download %1: %2").arg(name, why));
                 continue;
             }

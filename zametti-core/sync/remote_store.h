@@ -17,7 +17,9 @@
 #ifndef ZAMETTI_SYNC_REMOTE_STORE_H
 #define ZAMETTI_SYNC_REMOTE_STORE_H
 
+#include <QHash>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 namespace zametti {
@@ -47,6 +49,19 @@ public:
     // Скачать. etag может быть nullptr, если он не нужен.
     virtual bool get(const QString& name, QByteArray* bytes, QString* etag,
                      QString* error = nullptr) = 0;
+
+    // ПАКЕТНОЕ СКАЧИВАНИЕ: несколько блобов разом, чтобы канал не простаивал
+    // по кругу «запрос — ответ» (боль первой загрузки: сотни мелких блобов,
+    // и каждый стоил RTT — 0.6 с на запрос к живому серверу, замерено).
+    // Провал ОДНОГО имени — не провал пакета: итог по каждому отдельно.
+    // Дефолт — последовательный цикл get; сетевые адаптеры держат несколько
+    // запросов в полёте.
+    struct Fetched {
+        QByteArray bytes;
+        bool ok = false;
+        QString error;
+    };
+    virtual void getMany(const QStringList& names, QHash<QString, Fetched>* out);
 
     // Залить целиком (перезаписав). Отдаёт новый etag, если сервер его назвал.
     virtual bool put(const QString& name, const QByteArray& bytes, QString* etag,
