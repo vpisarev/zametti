@@ -692,7 +692,23 @@ void checkLiveExtras() {
         checkEqual(canon, noteOf(canon).toMarkdown(),
                    "комментарий с отступом: канон — неподвижная точка");
     }
-    // 3. Таб, набранный в блоке кода: чтение развернёт его по стопам.
+    // 3. Пустой пункт не держит содержимого через пустую строку: замерено на
+    // md4c — "-\n\n  текст" читается пунктом, пустой строкой и АБЗАЦЕМ СНАРУЖИ,
+    // а два пробела становятся отступом автора. Записав абзац внутрь пустого
+    // пункта, мы получили бы файл с двумя лишними знаками в тексте.
+    {
+        zametti::ZDocument note =
+            zametti::ZDocument::fromPieces(pieces("- п\n\n  текст\n"));
+        QTextCursor cursor = note.caretAtBlock(0);
+        cursor.movePosition(QTextCursor::EndOfBlock);
+        note.deleteBack(cursor);   // пункт опустел, абзац под ним остался
+        const std::string canon = note.toMarkdown();
+        checkEqual(canon, noteOf(canon).toMarkdown(),
+                   "абзац под опустевшим пунктом: канон — неподвижная точка");
+        check(canon.find("\u00a0") == std::string::npos,
+              "и отступ не превратился в неразрывные: " + canon);
+    }
+    // 4. Таб, набранный в блоке кода: чтение развернёт его по стопам.
     {
         zametti::ZDocument note = zametti::ZDocument::fromPieces(pieces("```\nраз\n```\n"));
         QTextCursor cursor = note.caretAtBlock(0);
