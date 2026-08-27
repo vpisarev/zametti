@@ -1021,6 +1021,15 @@ int enterSpan(MD_SPANTYPE type, void* detail, void* userdata) {
         }
 
         case MD_SPAN_A: {
+            // ССЫЛКА ВНУТРИ ССЫЛКИ — это расширение md4c про голые адреса,
+            // сработавшее внутри ТЕКСТА обычной ссылки: "[https://a.com](https://a.com/x)"
+            // приходит двумя MD_SPAN_A, и внутренний (голый адрес из текста)
+            // затирал настоящий адрес — заметка молча меняла, куда ведёт ссылка.
+            // Снаружи она всё та же, а нажимаешь — попадаешь не туда.
+            //
+            // Побеждает ВНЕШНЯЯ: её написал человек, внутренняя лишь угадана по
+            // тексту.
+            if (!st.href.empty()) break;
             const auto* d = static_cast<const MD_SPAN_A_DETAIL*>(detail);
             DraftRange href;
             DraftRange title;
