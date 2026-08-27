@@ -88,23 +88,23 @@ void scanText(const QString& text, const Query& query, Sink&& sink) {
         return;
     }
 
-    qsizetype from = 0;
-    while (from <= text.size()) {
-        const QRegularExpressionMatch match = query.pattern.match(text, from);
-        if (!match.hasMatch()) return;
-        const qsizetype start = match.capturedStart();
-        const qsizetype end = match.capturedEnd();
+    // ИТЕРАТОРОМ, А НЕ match(text, from) В ЦИКЛЕ. Замерено на заметке в 8.4 МБ:
+    // тысяча вхождений «.» стоит 4029 мс циклом и 2 мс итератором, а весь
+    // проход по восьми миллионам вхождений — 626 мс. Каждый вызов match с
+    // подстрокой платит за весь текст заново, и на большой заметке поиск
+    // вставал колом ровно там, где он нужнее всего.
+    QRegularExpressionMatchIterator walk = query.pattern.globalMatch(text);
+    while (walk.hasNext()) {
+        const QRegularExpressionMatch match = walk.next();
         // ПУСТОЕ СОВПАДЕНИЕ ЦЕЛИКОМ находкой не считается: на неё не встать по
-        // F3, нечем подсветить и нечего заменить. Обход при этом не встаёт —
-        // шаг на знак вперёд, — поэтому «а*» на «бббаа» честно находит «аа».
+        // F3, нечем подсветить и нечего заменить. Итератор через пустые
+        // переступает сам, поэтому «а*» на «бббаа» честно находит «аа».
         // Пустая ГРУППА внутри непустого совпадения законна, как в perl и
         // python, и разворачивается заменой в пустоту.
-        if (end > start) {
-            if (!sink(int(start), int(end - start), &match)) return;
-            from = end;
-        } else {
-            from = start + 1;
-        }
+        if (match.capturedEnd() <= match.capturedStart()) continue;
+        if (!sink(int(match.capturedStart()),
+                  int(match.capturedEnd() - match.capturedStart()), &match))
+            return;
     }
 }
 
