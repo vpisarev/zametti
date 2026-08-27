@@ -2172,7 +2172,7 @@ int main(int argc, char** argv) {
 
     QObject::connect(&storeSearch, &zametti::StoreSearch::found, &window,
                      [&](const QString& text, const QVector<zametti::SearchResult>& found,
-                         bool truncated, qint64 elapsedMs) {
+                         bool truncated, qint64) {
         // Ответ мог прийти на запрос, который уже никому не нужен: пока он
         // бежал, в поле успели дописать. Отсеиваем по самому запросу.
         if (text != findBar.query()) return;
@@ -2185,14 +2185,13 @@ int main(int argc, char** argv) {
             findBar.setStatus(QStringLiteral("nothing"));
             return;
         }
-        findBar.setStatus(truncated
-                              ? QStringLiteral("%1+ in %2, not all shown")
-                                    .arg(found.size())
-                                    .arg(notes)
-                              : QStringLiteral("%1 in %2, %3 ms")
-                                    .arg(found.size())
-                                    .arg(notes)
-                                    .arg(elapsedMs));
+        // ВРЕМЕНИ ЗДЕСЬ НЕТ (решение владельца): «6 in 2, 245 ms» читается как
+        // «6 вхождений за 2 245 мс» — запятая между числами обманывает глаз, а
+        // сама цифра человеку не нужна. Замеры живут на стенде, а не в панели.
+        findBar.setStatus(truncated ? QStringLiteral("%1+ in %2, not all shown")
+                                          .arg(found.size())
+                                          .arg(notes)
+                                    : QStringLiteral("%1 in %2").arg(found.size()).arg(notes));
     });
 
     // Показать найденное: открыть заметку и встать ровно на то совпадение, по
