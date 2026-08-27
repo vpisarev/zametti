@@ -993,6 +993,35 @@ void checkProgressLineShape() {
     // Итог ещё неизвестен — честный «0/?».
     ZT_TRUE("неизвестный итог", SyncController::progressLine(0, 0, 0)
                                     .contains(QStringLiteral("0/?]")));
+    // Слово фазы: обмен и материализация подписаны по-разному — индикатор,
+    // «болтающийся» после N/N, читался как зависание (владелец, п.13).
+    ZT_TRUE("обмен подписан", SyncController::progressLine(1, 1, 5)
+                                  .startsWith(QStringLiteral("cloud sync:")));
+    ZT_TRUE("материализация подписана",
+            SyncController::progressLine(1, 1, 5, true)
+                .startsWith(QStringLiteral("materializing:")));
+}
+
+void checkProgressCountsAllPhases() {
+    // Итог индикатора: ставится ОДИН РАЗ на обмен (журналы + вложения —
+    // владелец видел «285», растущие до «297») и дополняется материализацией;
+    // к концу прогона done == total, слово фазы — материализация.
+    TwoDevices rig;
+    TwoDevices::writeRaw(rig.a, QStringLiteral("01n6cqevaaaaaa"), note("раз"));
+    TwoDevices::writeRaw(rig.a, QStringLiteral("01n6cqevbbbbbb"), note("два"));
+    ZStorage::SyncOptions options;
+    auto done = std::make_shared<std::atomic<int>>(0);
+    auto total = std::make_shared<std::atomic<int>>(0);
+    auto phase = std::make_shared<std::atomic<int>>(0);
+    options.progressDone = done;
+    options.progressTotal = total;
+    options.progressPhase = phase;
+    QString err;
+    ZT_TRUE(("прогон прошёл: " + err.toStdString()).c_str(),
+            rig.sa->sync(options, nullptr, &err));
+    ZT_TRUE("итог не нулевой", total->load() > 0);
+    ZT_EQ("к концу done == total", num(total->load()), num(done->load()));
+    ZT_EQ("фаза дошла до материализации", num(1), num(phase->load()));
 }
 
 }  // namespace
@@ -1026,6 +1055,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkSubtreeQualifiedNames();
     checkPendingDeletesDialogWords();
     checkProgressLineShape();
+    checkProgressCountsAllPhases();
     checkSyncWritesItsLog();
     checkLiveWebDavCycle();
     return zt::report("sync_engine");
