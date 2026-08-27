@@ -41,9 +41,10 @@ namespace {
 // логических блоков. Своя копия правила тут и лежала, слово в слово; копия
 // правила — это правило, которое однажды разойдётся с оригиналом.
 bool wouldMerge(const Piece& previous, const Piece& next) {
-    // Пусто ли у следующего: текст пуст и картинки в нём нет (у картинки без
-    // подписи содержимое — сам снимок, а не текст).
-    bool empty = next.text.isEmpty();
+    // Пуст ли следующий пункт: текст пуст, картинки в нём нет (у картинки без
+    // подписи содержимое — сам снимок, а не текст), и это не задача — у неё
+    // содержимое сам чекбокс.
+    bool empty = next.text.isEmpty() && next.marker != Marker::Task;
     for (const Run& run : next.runs)
         if (run.image()) empty = false;
     return zametti::wouldMerge(previous.kind, previous.raw, previous.isClosedHtmlComment(),
@@ -311,10 +312,19 @@ void appendEscaped(TextSink& sink, QStringView text, qsizetype begin, qsizetype 
         if (sink.bol) {
             if (sink.taskBoxAhead) {
                 sink.taskBoxAhead = false;
-                if (looksLikeTaskBox(text, i)) {
+                // Пробелы (и неразрывные) между маркером и чекбоксом чекбокса
+                // не отменяют: md4c читает "-  [ ]" задачей ровно так же, как
+                // "- [ ]", а неразрывные при этом ещё и исчезают. Поэтому
+                // смотрим на первый ЗНАЧАЩИЙ знак, а экранируем — его.
+                qsizetype box = i;
+                while (box < end && (text.at(box) == u' ' || text.at(box) == u'\t' ||
+                                     text.at(box) == QChar::Nbsp))
+                    ++box;
+                if (box < end && looksLikeTaskBox(text, box)) {
+                    sink.out += text.mid(i, box - i);
                     sink.out += u'\\';
-                    sink.out += c;
-                    ++i;
+                    sink.out += text.at(box);
+                    i = box + 1;
                     sink.bol = false;
                     continue;
                 }

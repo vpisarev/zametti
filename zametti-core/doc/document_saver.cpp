@@ -763,7 +763,7 @@ std::vector<Piece> documentForFile(std::vector<Piece> doc) {
         if (!spaced.empty() &&
             wouldMerge(spaced.back().kind, spaced.back().raw,
                        spaced.back().isClosedHtmlComment(), block.kind, block.raw, block.level,
-                       !hasContent(block)))
+                       !hasContent(block) && block.marker != Marker::Task))
             spaced.push_back(vspacePiece());
         spaced.push_back(std::move(block));
     }
