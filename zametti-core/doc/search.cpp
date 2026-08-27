@@ -108,11 +108,16 @@ void scanText(const QString& text, const Query& query, Sink&& sink) {
     }
 }
 
-std::vector<FlatHit> findInText(const QString& raw, const Query& query) {
+std::vector<FlatHit> findInText(const QString& raw, const Query& query, int limit, bool* capped) {
     std::vector<FlatHit> hits;
+    if (capped != nullptr) *capped = false;
     const QString text = withPlainBreaks(raw);
     scanText(text, query, [&](int offset, int length, const QRegularExpressionMatch* match) {
         hits.push_back(FlatHit{offset, length, match != nullptr ? *match : QRegularExpressionMatch()});
+        if (limit > 0 && int(hits.size()) >= limit) {
+            if (capped != nullptr) *capped = true;
+            return false;
+        }
         return true;
     });
     return hits;

@@ -122,7 +122,10 @@ struct FlatHit {
     int length = 0;
     QRegularExpressionMatch match;
 };
-std::vector<FlatHit> findInText(const QString& text, const Query& query);
+// limit > 0 — остановиться, набрав столько вхождений; capped (если спросили)
+// скажет, что остановились по потолку, а не потому, что текст кончился.
+std::vector<FlatHit> findInText(const QString& text, const Query& query, int limit = 0,
+                                bool* capped = nullptr);
 
 // ЗАМЕНА: развернуть шаблон по совпадению.
 //

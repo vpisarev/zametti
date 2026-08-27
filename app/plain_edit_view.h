@@ -69,6 +69,7 @@ public:
 
     // --- TextSearchTarget ---------------------------------------------------
     int findMatches(const Query& query) override;
+    bool matchesCapped() const override { return capped_; }
     int matchCount() const override { return int(matches_.size()); }
     int currentMatch() const override { return current_; }
     void stepMatch(int direction) override;
@@ -165,6 +166,8 @@ private:
     std::vector<Match> matches_;
     // Запрос помнится: замена перезапускает поиск сама.
     Query query_;
+    // Остановились по потолку: найденного больше, чем в списке.
+    bool capped_ = false;
     int current_ = -1;
 };
 

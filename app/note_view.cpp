@@ -2105,7 +2105,9 @@ int NoteView::findMatches(const Query& query) {
         showMatchHighlights();
         return search.count();
     }
-    const int found = search.find(*document(), query);
+    // ПОТОЛОК — ради времени реакции: поиск инкрементальный, и «.» с
+    // выражением дал бы десятки тысяч курсоров на каждую букву запроса.
+    const int found = search.find(*document(), query, settings().ui().findMatchLimit());
     // Каретка уже стоит на находке (вернулись к заметке, где ходили по ним) —
     // она и текущая: иначе счётчик показывал бы «0/N» при выделенном вхождении.
     const QTextCursor caret = textCursor();
@@ -2116,6 +2118,8 @@ int NoteView::findMatches(const Query& query) {
     showMatchHighlights();
     return found;
 }
+
+bool NoteView::matchesCapped() const { return searchCache().capped(); }
 
 void NoteView::showMatchHighlights() {
     // ПОДСВЕЧИВАЕТСЯ ТОЛЬКО ВИДИМОЕ. Совпадений в большой заметке тысячи, а Qt

@@ -2037,6 +2037,19 @@ int main(int argc, char** argv) {
         return editor;
     };
 
+    // СЧЁТЧИК — ОДНО МЕСТО НА ВСЕХ. Он же отвечает за «1000+»: поиск, упёршийся
+    // в потолок, знает не всё, и точное число писать нельзя — оно было бы
+    // враньём. Пока никуда не встали, и текущего нет, так и говорим: «1000+/?».
+    const auto counterText = [](const zametti::TextSearchTarget& target) {
+        if (target.matchCount() == 0) return QStringLiteral("no matches");
+        const QString total = target.matchesCapped()
+                                  ? QStringLiteral("%1+").arg(target.matchCount())
+                                  : QString::number(target.matchCount());
+        if (target.currentMatch() < 0)
+            return target.matchesCapped() ? total + QStringLiteral("/?") : total;
+        return QStringLiteral("%1/%2").arg(target.currentMatch() + 1).arg(total);
+    };
+
     const auto updateInNoteSearch = [&](const QString& text) {
         const zametti::Query query = zametti::makeQuery(text, findBar.regexOn());
         // Недописанное выражение — красные буквы в поле, и ничего больше:
@@ -2048,12 +2061,8 @@ int main(int argc, char** argv) {
             findBar.setStatus(QString());
             return;
         }
-        const int count = target.findMatches(query);
-        findBar.setStatus(count == 0
-                              ? QStringLiteral("no matches")
-                              : QStringLiteral("%1/%2")
-                                    .arg(target.currentMatch() + 1)
-                                    .arg(count));
+        target.findMatches(query);
+        findBar.setStatus(counterText(target));
     };
 
     // РЕЖИМ ИСТОРИИ: Ctrl+F ищет и по показанному слепку, и по всей истории
@@ -2076,9 +2085,7 @@ int main(int argc, char** argv) {
         // историю, иначе одно из двух чисел молча пропадёт.
         zametti::TextSearchTarget& target = searchTarget();
         const QString inSnapshot = target.matchCount() > 0
-                                       ? QStringLiteral("%1/%2 in snapshot")
-                                             .arg(target.currentMatch() + 1)
-                                             .arg(target.matchCount())
+                                       ? counterText(target) + QStringLiteral(" in snapshot")
                                        : QStringLiteral("none in snapshot");
         findBar.setStatus(report.hits.isEmpty()
                               ? inSnapshot + QStringLiteral(", nothing in history")
@@ -2090,16 +2097,7 @@ int main(int argc, char** argv) {
                                                           : QString()));
     };
 
-    const auto showCounter = [&] {
-        zametti::TextSearchTarget& target = searchTarget();
-        if (target.matchCount() == 0) {
-            findBar.setStatus(QStringLiteral("no matches"));
-            return;
-        }
-        findBar.setStatus(QStringLiteral("%1/%2")
-                              .arg(target.currentMatch() + 1)
-                              .arg(target.matchCount()));
-    };
+    const auto showCounter = [&] { findBar.setStatus(counterText(searchTarget())); };
 
     // СМЕНА ЗАМЕТКИ ПРИ ОТКРЫТОМ ПОИСКЕ — ПОИСК ЗАНОВО (решение владельца).
     // Найденное — курсоры в показанном документе; с новой заметкой они

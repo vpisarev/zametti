@@ -204,6 +204,7 @@ public:
     // Интерфейс «искомого» (TextSearchTarget): окно зовёт эти глаголы у любой
     // страницы стека одинаково.
     int findMatches(const Query& query) override;
+    bool matchesCapped() const override;
     int matchCount() const override { return searchCache().count(); }
     // Какое совпадение сейчас текущее, с нуля; -1 — ни одного.
     int currentMatch() const override { return searchCache().current(); }

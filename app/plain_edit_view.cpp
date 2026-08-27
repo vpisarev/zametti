@@ -533,6 +533,7 @@ void PlainEditView::pressTab(bool back) {
 
 int PlainEditView::findMatches(const Query& query) {
     matches_.clear();
+    capped_ = false;
     current_ = -1;
     query_ = query;
     if (!query.usable()) {
@@ -542,7 +543,8 @@ int PlainEditView::findMatches(const Query& query) {
     // ТЕМ ЖЕ СЧЁТОМ, ЧТО И В ЗАМЕТКЕ (findInText): те же правила про шаг, про
     // пустое совпадение и про регистр — иначе один и тот же запрос давал бы в
     // двух видах разные числа.
-    for (const FlatHit& hit : findInText(toPlainText(), query))
+    for (const FlatHit& hit :
+         findInText(toPlainText(), query, settings().ui().findMatchLimit(), &capped_))
         matches_.push_back(Match{hit.offset, hit.length, hit.match});
     // ТЕКУЩЕГО ПОКА НЕТ — и это не забывчивость, а правило (то же, что в виде
     // заметки). Куда шагнуть, решает сам шаг: он идёт к ближайшей находке ОТ

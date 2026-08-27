@@ -10,9 +10,10 @@
 
 namespace zametti {
 
-int NoteSearch::find(const QTextDocument& doc, const Query& query) {
+int NoteSearch::find(const QTextDocument& doc, const Query& query, int limit) {
     query_ = query;
     hits_.clear();
+    capped_ = false;
     current_ = -1;
     doc_ = &doc;
     revision_ = doc.revision();
@@ -47,6 +48,10 @@ int NoteSearch::find(const QTextDocument& doc, const Query& query) {
             hit.cursor.setPosition(to, QTextCursor::KeepAnchor);
         }
         hits_.push_back(hit);
+        if (limit > 0 && int(hits_.size()) >= limit) {
+            capped_ = true;
+            return false;
+        }
         return true;
     });
     return count();
@@ -55,6 +60,7 @@ int NoteSearch::find(const QTextDocument& doc, const Query& query) {
 void NoteSearch::clear() {
     hits_.clear();
     current_ = -1;
+    capped_ = false;
     query_ = Query{};
     doc_ = nullptr;
     revision_ = -1;

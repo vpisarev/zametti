@@ -36,6 +36,9 @@ public:
     // реализации и все вызовы руками.
     virtual int findMatches(const Query& query) = 0;
     virtual int matchCount() const = 0;
+    // Поиск остановился по потолку: найденного БОЛЬШЕ, чем сосчитано. Счётчик
+    // тогда говорит «1000+», а не врёт точным числом.
+    virtual bool matchesCapped() const { return false; }
     // Номер текущего совпадения с нуля; -1 — ни одного.
     virtual int currentMatch() const = 0;
     // Шаг по найденному, циклически.

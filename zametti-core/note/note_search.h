@@ -53,13 +53,18 @@ public:
     // (forEachHit): объекты — по исходнику, порядок вхождений тот же, что у
     // ZDocument::find (по нему ходит список результатов), перекрывающихся
     // вхождений нет, пустые не считаются.
-    int find(const QTextDocument& doc, const Query& query);
+    // limit > 0 — потолок: набрав столько вхождений, поиск останавливается, и
+    // capped() говорит об этом. Иначе один «.» с выражением стоил бы десятков
+    // тысяч курсоров на каждую букву запроса.
+    int find(const QTextDocument& doc, const Query& query, int limit = 0);
     void clear();
     // Найденное свежо для этого документа и запроса: те же буквы, тот же
     // регистр, тот же признак выражения, документ с тех пор не правили.
     bool isFreshFor(const QTextDocument& doc, const Query& query) const;
 
     bool empty() const { return hits_.empty(); }
+    // Остановились по потолку: найденного БОЛЬШЕ, чем в списке.
+    bool capped() const { return capped_; }
     int count() const { return int(hits_.size()); }
     // Запрос, которым нашли: его же повторяют после правки.
     const Query& query() const { return query_; }
@@ -90,6 +95,7 @@ protected:
     std::vector<SearchHit> hits_;
     int current_ = -1;
     Query query_;
+    bool capped_ = false;
     const QTextDocument* doc_ = nullptr;   // в каком документе искали
     int revision_ = -1;                     // и какой он был ревизии
 };
