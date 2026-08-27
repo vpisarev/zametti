@@ -7,6 +7,7 @@
 
 #include "document.h"
 #include "document_pieces.h"
+#include "list_line.h"
 #include "serializer.h"
 
 #include <QTextDocument>
@@ -294,6 +295,16 @@ bool sameContent(const std::vector<Piece>& x, const std::vector<Piece>& y) {
 // целиком — проверено, включая схему из трёх строк.
 const QChar kNbsp = QChar::Nbsp;
 
+// Ширина стопа табуляции — та же, что у чтения (md4c и keepDecorativeIndent
+// считают колонки по четыре).
+const int kCodeTabStop = 4;
+
+// Конец строки, начинающейся в from: индекс перевода строки или конец текста.
+qsizetype textLineEnd(const QString& text, qsizetype from) {
+    const qsizetype at = text.indexOf(QLatin1Char('\n'), from);
+    return at < 0 ? text.size() : at;
+}
+
 // Края строк. Ведущие пробелы становятся неразрывными — отступ значим, им
 // рисуют схемы и лесенки. Концевые выбрасываются: они как ведущие нули,
 // незначащие, а markdown их всё равно съедает.
@@ -304,10 +315,51 @@ const QChar kNbsp = QChar::Nbsp;
 // Литеральные блоки не трогаем: в коде и дословных кусках пробел и так значим.
 Piece withEdgesNormalised(Piece block) {
     // В коде пробел значим — его копируют и вставляют в терминал, и хитрым
-    // знакам там взяться неоткуда. Трогаем только завершающий перевод строки:
-    // забор всё равно ставится с новой строки, и без него разбор вернул бы
-    // текст с переводом, а самопроверка честно не дала бы записать.
+    // знакам там взяться неоткуда. Трогаем завершающий перевод строки (забор
+    // всё равно ставится с новой строки, и без него разбор вернул бы текст с
+    // переводом, а самопроверка честно не дала бы записать) — и ВЕДУЩИЕ ТАБЫ.
+    //
+    // Табы в отступе строки кода не переживают чтения: md4c разворачивает их по
+    // стопам в четыре колонки (замерено — "\tраз" читается обратно четырьмя
+    // пробелами, а таб в середине строки цел). Записав таб, мы получили бы файл,
+    // который читается не тем, что записан; разворачиваем его сами и ровно так
+    // же, как это сделает чтение.
     if (block.kind == Kind::Code && !block.raw) {
+        if (block.text.contains(QLatin1Char('\t'))) {
+            const QString text = block.text;
+            const qsizetype size = text.size();
+            std::vector<int> map(size_t(size) + 1, 0);
+            QString out;
+            out.reserve(size);
+            int column = 0;
+            bool leading = true;
+            for (qsizetype i = 0; i < size; ++i) {
+                map[size_t(i)] = int(out.size());
+                const QChar c = text.at(i);
+                if (c == QLatin1Char('\n')) {
+                    out += c;
+                    column = 0;
+                    leading = true;
+                    continue;
+                }
+                if (leading && c == QLatin1Char('\t')) {
+                    const int width = kCodeTabStop - column % kCodeTabStop;
+                    out += QString(width, QLatin1Char(' '));
+                    column += width;
+                    continue;
+                }
+                if (c != QLatin1Char(' ')) leading = false;
+                out += c;
+                ++column;
+            }
+            map[size_t(size)] = int(out.size());
+            for (Run& span : block.runs) {
+                span.start = map[size_t(qBound<qsizetype>(0, qsizetype(span.start), size))];
+                span.end = map[size_t(qBound<qsizetype>(0, qsizetype(span.end), size))];
+            }
+            compactRuns(block);
+            block.text = std::move(out);
+        }
         if (!block.text.isEmpty() && !block.text.endsWith(QLatin1Char('\n'))) {
             block.text += QLatin1Char('\n');
             block.trailingNewline = true;
@@ -381,9 +433,14 @@ Piece withEdgesNormalised(Piece block) {
 
         // Ведущие пробелы: каждый становится неразрывным. Отступ значим, им
         // рисуют схемы и лесенки.
+        //
+        // КРОМЕ КОММЕНТАРИЯ: его текст уйдёт в файл за «<!-- », отступу там
+        // взяться неоткуда, а чтение края текста комментария обрезает. Держать
+        // их значило бы писать то, что не читается обратно.
+        const bool keepIndent = block.kind != Kind::Html;
         for (qsizetype k = line; k < start; ++k) {
             map[size_t(k)] = int(out.size());
-            if (!blank) out += kNbsp;
+            if (!blank && keepIndent) out += kNbsp;
         }
         for (qsizetype k = start; k < stop; ++k) {
             map[size_t(k)] = int(out.size());
@@ -406,6 +463,59 @@ Piece withEdgesNormalised(Piece block) {
     }
     compactRuns(block);
     block.text = std::move(out);
+    return block;
+}
+
+// НЕРАЗРЫВНЫЕ ПРОБЕЛЫ, КОТОРЫЕ ПЕРЕЖИВУТ ЧТЕНИЕ.
+//
+// Чтение (normaliseSpaces) держит наш неразрывный пробел там, где он значим:
+// ведущий у содержимого строки — это отступ, серия из двух и больше — это
+// выравнивание. Одиночный в середине строки оно считает мусором чужой выгрузки
+// и делает обычным, а внутри блока кода не держит вовсе. Правило выведено
+// замером по корпусу владельца и живёт там; здесь мы обязаны ему подчиниться.
+//
+// Иначе выходит файл, который читается не тем, что записан: живой документ
+// вправе завести одиночный неразрывный где угодно (правка, вставка, операция
+// над строкой), запись положила бы его в файл, а первое же чтение превратило бы
+// в обычный пробел — и следующая запись дала бы другие байты. Круг не сходится,
+// отпечаток пляшет, а «drift» показывается на ровном месте.
+Piece withNbspThatSurvives(Piece block) {
+    if (block.text.indexOf(kNbsp) < 0) return block;
+
+    const bool literal = !block.raw && block.kind == Kind::Code;
+    QString& text = block.text;
+    const qsizetype size = text.size();
+    qsizetype line = 0;
+    for (qsizetype i = 0; i < size;) {
+        if (text.at(i) == QLatin1Char('\n')) {
+            line = ++i;
+            continue;
+        }
+        if (text.at(i) != kNbsp) {
+            ++i;
+            continue;
+        }
+        qsizetype run = 0;
+        while (i + run < size && text.at(i + run) == kNbsp) ++run;
+        // «Ведущий» — от начала СОДЕРЖИМОГО строки: у дословного куска его
+        // строка несёт свою разметку сама, у прочих блоков текст лежит уже без
+        // маркера, и начало содержимого совпадает с концом отступа. Спрашиваем
+        // тем же ответчиком, что и чтение.
+        //
+        // У КОММЕНТАРИЯ ВЕДУЩЕГО МЕСТА НЕТ ВОВСЕ: его первая строка уйдёт в файл
+        // за «<!-- », и там неразрывный пробел уже не ведущий — чтение сделает
+        // из него обычный, а писатель обрежет края текста комментария, и знак
+        // пропадёт совсем.
+        const bool afterOpener = !block.raw && block.kind == Kind::Html && line == 0;
+        const qsizetype content =
+            afterOpener
+                ? qsizetype(-1)
+                : line + contentStartOf(QStringView(text).mid(line, textLineEnd(text, line) - line));
+        const bool keep = !literal && (i <= content || run > 1);
+        if (!keep)
+            for (qsizetype k = 0; k < run; ++k) text[i + k] = QLatin1Char(' ');
+        i += run;
+    }
     return block;
 }
 
@@ -572,8 +682,8 @@ std::vector<Piece> documentForFile(std::vector<Piece> doc) {
             block.text.clear();
         appendSplitOnBlankLines(
             out, withMarkupThatSurvives(withStrikeOnWholeWords(withTrimmedSpans(
-                     withCodeSpansPerLine(withHeadingOnOneLine(
-                         withRawNewline(withEdgesNormalised(std::move(block)))))))));
+                     withCodeSpansPerLine(withHeadingOnOneLine(withNbspThatSurvives(
+                         withRawNewline(withEdgesNormalised(std::move(block))))))))));
     }
 
     // Пустые строки в начале документа файл выразить не может: пустая строка
