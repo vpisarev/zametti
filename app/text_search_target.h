@@ -14,6 +14,8 @@
 #ifndef ZAMETTI_TEXT_SEARCH_TARGET_H
 #define ZAMETTI_TEXT_SEARCH_TARGET_H
 
+#include "search.h"
+
 #include <QString>
 
 class QWidget;
@@ -26,7 +28,13 @@ public:
 
     // Найти все вхождения; подсветить; текущее — ближайшее вперёд от каретки.
     // Возвращает число вхождений.
-    virtual int findMatches(const QString& text, bool caseSensitive) = 0;
+    //
+    // ЗАПРОСОМ, А НЕ РОССЫПЬЮ ПОЛЕЙ: у поиска один словарь (Query — буквы,
+    // регистр, признак выражения и само выражение), и всё, что к нему
+    // добавится, доедет до каждого искомого само. Пока здесь лежали две
+    // отдельные величины, третья (выражение) потребовала бы обойти все
+    // реализации и все вызовы руками.
+    virtual int findMatches(const Query& query) = 0;
     virtual int matchCount() const = 0;
     // Номер текущего совпадения с нуля; -1 — ни одного.
     virtual int currentMatch() const = 0;
@@ -37,8 +45,8 @@ public:
     virtual bool canReplace() const { return false; }
     // Заменить текущее вхождение / все. Ложь и ноль — нечего или нельзя.
     virtual bool replaceCurrentMatch(const QString& with) { (void)with; return false; }
-    virtual int replaceAllMatches(const QString& text, bool caseSensitive, const QString& with) {
-        (void)text; (void)caseSensitive; (void)with;
+    virtual int replaceAllMatches(const Query& query, const QString& with) {
+        (void)query; (void)with;
         return 0;
     }
 

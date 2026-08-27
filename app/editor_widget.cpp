@@ -1052,21 +1052,20 @@ bool NoteEditor::replaceCurrentMatch(const QString& with) {
     // Прежние курсоры недействительны, ищем заново и встаём на следующее
     // вхождение.
     const int at = note_->search().current();
-    findMatches(note_->search().text(), note_->search().caseSensitive());
+    findMatches(note_->search().query());
     if (!note_->search().empty()) goToMatch(at < note_->search().count() ? at : 0);
     return true;
 }
 
-int NoteEditor::replaceAllMatches(const QString& text, bool caseSensitive,
-                                  const QString& with) {
-    if (text.isEmpty()) return 0;
+int NoteEditor::replaceAllMatches(const Query& query, const QString& with) {
+    if (!query.usable()) return 0;
     int replaced = 0;
     const bool done = runNoteEdit([&](ZDocument& note, QTextCursor&) {
-        replaced = note.replaceAll(text, caseSensitive, with);
+        replaced = note.replaceAll(query, with);
         return replaced > 0;
     });
     if (!done) return 0;
-    findMatches(text, caseSensitive);
+    findMatches(query);
     return replaced;
 }
 

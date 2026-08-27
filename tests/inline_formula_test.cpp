@@ -364,7 +364,7 @@ void checkSearchAndFriends() {
     // Живой поиск: карта смещений даёт верные курсоры.
     zametti::NoteSearch search;
     ZT_EQ("живой поиск считает так же", "3",
-          std::to_string(search.find(*s.doc, QStringLiteral("gamma"), false)));
+          std::to_string(search.find(*s.doc, zametti::makeQuery(QStringLiteral("gamma")))));
     const zametti::SearchHit& first = search.hitAt(0);
     ZT_TRUE("вхождение в формуле — курсор над её знаком",
             first.inObject() &&

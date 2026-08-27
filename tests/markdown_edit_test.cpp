@@ -100,7 +100,7 @@ void checkSearchStepSurvivesScrolling() {
     ZT_TRUE("вошли в режим исходника", rig.controller.enter());
     QTest::qWait(80);
 
-    const int found = rig.view.findMatches(QStringLiteral("<!-"), false);
+    const int found = rig.view.findMatches(zametti::makeQuery(QStringLiteral("<!-")));
     ZT_TRUE("находки есть (" + std::to_string(found) + ")", found > 0);
     // Каждый шаг РИСУЕТСЯ — как в жизни: падение приходило на отрисовке
     // подсветок, вызванной изнутри перехода.
@@ -128,7 +128,7 @@ void checkSearchRepeatsAfterEdit() {
     QTest::qWait(30);
 
     ZT_EQ("нашлись обе иголки", std::string("2"),
-          std::to_string(rig.view.findMatches(QStringLiteral("needle"), false)));
+          std::to_string(rig.view.findMatches(zametti::makeQuery(QStringLiteral("needle")))));
 
     // Правка ЗАВОДИТ третью: поиск обязан её увидеть сам.
     QTextCursor at = rig.view.textCursor();
@@ -177,17 +177,17 @@ void checkSearchDiffersBetweenModes() {
     QTest::qWait(20);
 
     ZT_EQ("в вёрстке звёздочек нет", std::string("0"),
-          std::to_string(rig.editor.findMatches(QStringLiteral("**strong**"), false)));
+          std::to_string(rig.editor.findMatches(zametti::makeQuery(QStringLiteral("**strong**")))));
 
     ZT_TRUE("вошли в режим исходника", rig.controller.enter());
     QTest::qWait(30);
     ZT_EQ("в исходнике разметка находится", std::string("2"),
-          std::to_string(rig.view.findMatches(QStringLiteral("**strong**"), false)));
+          std::to_string(rig.view.findMatches(zametti::makeQuery(QStringLiteral("**strong**")))));
 
     rig.controller.leave();
     QTest::qWait(30);
     ZT_EQ("вернулись в вёрстку — снова ноль", std::string("0"),
-          std::to_string(rig.editor.findMatches(QStringLiteral("**strong**"), false)));
+          std::to_string(rig.editor.findMatches(zametti::makeQuery(QStringLiteral("**strong**")))));
 }
 
 // МЕНЮ ПРАВОЙ КНОПКИ В РЕЖИМЕ ИСХОДНИКА (жалоба владельца: «контекстное меню
@@ -240,7 +240,7 @@ void checkDeleteEveryMatchOneByOne() {
     QTest::qWait(40);
 
     const QString needle = QStringLiteral("од");
-    const int found = rig.view.findMatches(needle, false);
+    const int found = rig.view.findMatches(zametti::makeQuery(needle));
     ZT_TRUE("вхождения нашлись (" + std::to_string(found) + ")", found > 1);
 
     // Каретку в начало: идём по заметке сверху вниз, как человек.

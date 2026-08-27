@@ -2044,7 +2044,7 @@ int main(int argc, char** argv) {
             findBar.setStatus(QString());
             return;
         }
-        const int count = target.findMatches(query.needle, query.caseSensitive);
+        const int count = target.findMatches(query);
         findBar.setStatus(count == 0
                               ? QStringLiteral("no matches")
                               : QStringLiteral("%1/%2")
@@ -2213,7 +2213,7 @@ int main(int argc, char** argv) {
             // и мы уже в режиме истории, показан именно он.
             const zametti::Query query = zametti::makeQuery(findBar.query());
             zametti::NoteView& snapshot = historyView.textView();
-            snapshot.findMatches(query.needle, query.caseSensitive);
+            snapshot.findMatches(query);
             snapshot.goToMatch(ordinal);
             return;
         }
@@ -2228,7 +2228,7 @@ int main(int argc, char** argv) {
         // утащить фокус значило бы выдернуть строку поиска из-под пальцев.
         if (file != editor.filePath()) editor.openFile(file, false);
         const zametti::Query query = zametti::makeQuery(findBar.query());
-        editor.findMatches(query.needle, query.caseSensitive);
+        editor.findMatches(query);
         editor.goToMatch(ordinal);
     };
     QObject::connect(&resultsView, &QAbstractItemView::clicked, &window, openResult);
@@ -2284,8 +2284,7 @@ int main(int argc, char** argv) {
         zametti::TextSearchTarget& target = searchTarget();
         if (!target.canReplace()) return;
         findBar.setStatus(QStringLiteral("replaced: %1")
-                              .arg(target.replaceAllMatches(query.needle, query.caseSensitive,
-                                                            findBar.replacement())));
+                              .arg(target.replaceAllMatches(query, findBar.replacement())));
     });
 
     QObject::connect(&findBar, &zametti::FindBar::closed, &window, [&] {

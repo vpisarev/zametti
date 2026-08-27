@@ -65,6 +65,7 @@ int countIn(const QString& text, const QString& needle) {
     return int(noteOf(text).find(zametti::makeQuery(needle)).size());
 }
 
+
 QString readFile(const QString& path) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) return QStringLiteral("<нет файла>");
@@ -250,7 +251,7 @@ void checkDeleteEveryMatchOneByOne() {
     QTest::qWait(60);
 
     const QString needle = QStringLiteral("од");
-    const int found = editor.findMatches(needle, false);
+    const int found = editor.findMatches(zametti::makeQuery(needle));
     ZT_TRUE("вхождения нашлись (" + std::to_string(found) + ")", found > 1);
 
     QTextCursor home(editor.document());
@@ -285,7 +286,7 @@ void checkEditorSearch() {
     editor.openFile(path);
     QTest::qWait(20);
 
-    const int found = editor.findMatches(QStringLiteral("сено"), false);
+    const int found = editor.findMatches(zametti::makeQuery(QStringLiteral("сено")));
     ZT_TRUE("все вхождения найдены, включая дословную таблицу", found == 5);
     ZT_TRUE("до первого перехода текущего нет", editor.currentMatch() == -1);
 
@@ -313,7 +314,7 @@ void checkEditorSearch() {
         QTest::qWait(20);
         many.openFile(longPath);
         QTest::qWait(20);
-        const int all = many.findMatches(QStringLiteral("сено"), false);
+        const int all = many.findMatches(zametti::makeQuery(QStringLiteral("сено")));
         ZT_TRUE("найдены все полторы тысячи", all == 1500);
         const int lit = int(many.extraSelections().size());
         ZT_TRUE("подсвечено только видимое: " + std::to_string(lit) + " из " + std::to_string(all),
@@ -370,7 +371,7 @@ void checkEditorSearch() {
     // в тексте блока-таблицы стоит U+FFFC, и по нему проверка была бы пустышкой.
     const std::string before = markdownOf(blocksOf(*editor.document()));
     const int replaced =
-        editor.replaceAllMatches(QStringLiteral("сено"), false, QStringLiteral("солома"));
+        editor.replaceAllMatches(zametti::makeQuery(QStringLiteral("сено")), QStringLiteral("солома"));
     ZT_TRUE("заменены все вхождения", replaced == 5);
     ZT_TRUE("в заметке не осталось искомого",
             markdownOf(blocksOf(*editor.document())).find("сено") == std::string::npos);
@@ -379,7 +380,7 @@ void checkEditorSearch() {
     ZT_TRUE("одна отмена возвращает всё", markdownOf(blocksOf(*editor.document())) == before);
 
     // Замена ОДНОГО вхождения внутри таблицы переписывает исходник объекта.
-    editor.findMatches(QStringLiteral("сено"), false);
+    editor.findMatches(zametti::makeQuery(QStringLiteral("сено")));
     editor.goToMatch(3);
     ZT_TRUE("текущее — в таблице", zametti::isTableObjectBlock(editor.textCursor().block()));
     ZT_TRUE("замена одного вхождения в таблице удалась", editor.replaceCurrentMatch(QStringLiteral("солома")));
@@ -392,7 +393,7 @@ void checkEditorSearch() {
 
     // Дословный кусок остаётся дословным: заменяется только текст, разметка
     // таблицы цела.
-    editor.replaceAllMatches(QStringLiteral("сено"), false, QStringLiteral("солома"));
+    editor.replaceAllMatches(zametti::makeQuery(QStringLiteral("сено")), QStringLiteral("солома"));
     editor.save(false);
     QTest::qWait(20);
     const QString written = readFile(path);
@@ -450,7 +451,7 @@ void checkSearchSurvivesSwitch() {
     editor.openFile(second);
     QTest::qWait(20);
     ZT_EQ("три вхождения", std::string("3"),
-          std::to_string(editor.findMatches(QStringLiteral("сено"), false)));
+          std::to_string(editor.findMatches(zametti::makeQuery(QStringLiteral("сено")))));
     editor.goToMatch(0);
     ZT_EQ("F3 — на первом", std::string("0"), std::to_string(editor.currentMatch()));
 
@@ -458,7 +459,7 @@ void checkSearchSurvivesSwitch() {
     QTest::qWait(20);
     ZT_EQ("у чужой заметки найденного нет", std::string("0"), std::to_string(editor.matchCount()));
     ZT_EQ("и поиск в ней честно пуст", std::string("0"),
-          std::to_string(editor.findMatches(QStringLiteral("сено"), false)));
+          std::to_string(editor.findMatches(zametti::makeQuery(QStringLiteral("сено")))));
 
     editor.openFile(second);
     QTest::qWait(20);
@@ -467,7 +468,7 @@ void checkSearchSurvivesSwitch() {
     ZT_EQ("и текущее — то же первое", std::string("0"), std::to_string(editor.currentMatch()));
     // Тот же запрос по неправленной заметке — из кэша: текущее не сбрасывается.
     ZT_EQ("повторный запрос — те же три", std::string("3"),
-          std::to_string(editor.findMatches(QStringLiteral("сено"), false)));
+          std::to_string(editor.findMatches(zametti::makeQuery(QStringLiteral("сено")))));
     ZT_EQ("текущее пережило повторный запрос", std::string("0"),
           std::to_string(editor.currentMatch()));
 
@@ -478,7 +479,7 @@ void checkSearchSurvivesSwitch() {
     QTest::keyClicks(&editor, QStringLiteral(" x"));
     QTest::qWait(20);
     ZT_EQ("после правки — заново, вхождений столько же", std::string("3"),
-          std::to_string(editor.findMatches(QStringLiteral("сено"), false)));
+          std::to_string(editor.findMatches(zametti::makeQuery(QStringLiteral("сено")))));
     ZT_EQ("а текущего после пересчёта нет", std::string("-1"),
           std::to_string(editor.currentMatch()));
     editor.undo();
@@ -488,7 +489,7 @@ void checkSearchSurvivesSwitch() {
     // новый, найденного при нём нет; поиск заново находит уже по новому тексту.
     editor.openFile(first);
     QTest::qWait(20);
-    editor.findMatches(QStringLiteral("сено"), false);
+    editor.findMatches(zametti::makeQuery(QStringLiteral("сено")));
     QTest::qWait(20);
     note(QStringLiteral("00000000000002"), QStringLiteral("modified: 2021-01-01T00:00:00Z\n"),
          QStringLiteral("# Сено\n\nтеперь тут только сено\n"));
@@ -497,7 +498,7 @@ void checkSearchSurvivesSwitch() {
     ZT_EQ("перечитанная с диска — без старого найденного", std::string("0"),
           std::to_string(editor.matchCount()));
     ZT_EQ("новый поиск — по новому тексту (заголовок и строка)", std::string("2"),
-          std::to_string(editor.findMatches(QStringLiteral("сено"), false)));
+          std::to_string(editor.findMatches(zametti::makeQuery(QStringLiteral("сено")))));
 }
 
 // История ЗАПРОСОВ (не заметок): что попадает в список, в каком порядке и

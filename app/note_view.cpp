@@ -248,7 +248,7 @@ NoteView::NoteView(QWidget* parent) : QTextBrowser(parent) {
     connect(&researchSoon_, &QTimer::timeout, this, [this] {
         NoteSearch& again = searchCache();
         if (again.text().isEmpty()) return;
-        findMatches(again.text(), again.caseSensitive());
+        findMatches(again.query());
         emit matchesChanged();
     });
     connect(this, &QTextEdit::textChanged, this, &NoteView::showCaret);
@@ -2097,15 +2097,15 @@ void NoteView::scrollToBlockTop(int block, int offset) {
 
 // --- поиск ------------------------------------------------------------------
 
-int NoteView::findMatches(const QString& text, bool caseSensitive) {
+int NoteView::findMatches(const Query& query) {
     // КЭШ: тот же запрос по неправленному документу — искать заново незачем,
     // найденное лежит при показанном вместе с номером текущего.
     NoteSearch& search = searchCache();
-    if (search.isFreshFor(*document(), text, caseSensitive)) {
+    if (search.isFreshFor(*document(), query)) {
         showMatchHighlights();
         return search.count();
     }
-    const int found = search.find(*document(), text, caseSensitive);
+    const int found = search.find(*document(), query);
     // Каретка уже стоит на находке (вернулись к заметке, где ходили по ним) —
     // она и текущая: иначе счётчик показывал бы «0/N» при выделенном вхождении.
     const QTextCursor caret = textCursor();

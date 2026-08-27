@@ -20,6 +20,8 @@
 #ifndef ZAMETTI_NOTE_SEARCH_H
 #define ZAMETTI_NOTE_SEARCH_H
 
+#include "search.h"
+
 #include <QString>
 #include <QTextCursor>
 
@@ -43,22 +45,22 @@ struct SearchHit {
 
 class NoteSearch {
 public:
-    // Найти все вхождения text в doc, включая перекрывающиеся (счётчик обязан
-    // считать их так же, как их обойдёт F3). Пустой запрос — пусто. Текущее
-    // сбрасывается. Возвращает число найденного. Ищется тем же перечислителем,
-    // что и поиск по хранилищу и истории (searchableTextOf): объекты — по
-    // исходнику, и порядок вхождений тот же, что у ZDocument::find (по нему
-    // ходит список результатов).
-    int find(const QTextDocument& doc, const QString& text, bool caseSensitive);
+    // Найти все вхождения запроса в doc. Пустой запрос — пусто. Текущее
+    // сбрасывается. Возвращает число найденного. Ищется ОБЩИМ перечислителем
+    // (forEachHit): объекты — по исходнику, порядок вхождений тот же, что у
+    // ZDocument::find (по нему ходит список результатов), перекрывающихся
+    // вхождений нет, пустые не считаются.
+    int find(const QTextDocument& doc, const Query& query);
     void clear();
-    // Найденное свежо для этого документа и запроса: тот же текст, тот же
-    // регистр, документ с тех пор не правили (ревизия та же).
-    bool isFreshFor(const QTextDocument& doc, const QString& text, bool caseSensitive) const;
+    // Найденное свежо для этого документа и запроса: те же буквы, тот же
+    // регистр, тот же признак выражения, документ с тех пор не правили.
+    bool isFreshFor(const QTextDocument& doc, const Query& query) const;
 
     bool empty() const { return hits_.empty(); }
     int count() const { return int(hits_.size()); }
-    const QString& text() const { return text_; }
-    bool caseSensitive() const { return caseSensitive_; }
+    // Запрос, которым нашли: его же повторяют после правки.
+    const Query& query() const { return query_; }
+    const QString& text() const { return query_.needle; }
     const QTextCursor& hit(int index) const { return hits_[size_t(index)].cursor; }
     const SearchHit& hitAt(int index) const { return hits_[size_t(index)]; }
 
@@ -84,8 +86,7 @@ public:
 protected:
     std::vector<SearchHit> hits_;
     int current_ = -1;
-    QString text_;
-    bool caseSensitive_ = false;
+    Query query_;
     const QTextDocument* doc_ = nullptr;   // в каком документе искали
     int revision_ = -1;                     // и какой он был ревизии
 };

@@ -51,12 +51,8 @@ void DiffTextView::present(int keepLine, int keepOffset) {
     // Поиск держит курсоры в прежнем документе; при подмене вид их снимает
     // сам (NoteView::setDocument), а запрос перезадаём на новом — иначе смена
     // базы гасила бы поиск молча.
-    QString query;
-    bool caseSensitive = false;
-    if (timeline_ != nullptr) {
-        query = timeline_->search().text();
-        caseSensitive = timeline_->search().caseSensitive();
-    }
+    Query query;
+    if (timeline_ != nullptr) query = timeline_->search().query();
     ZDocument next = timeline_ != nullptr ? timeline_->document() : ZDocument();
     if (!next.sameHandle(shown_)) {
         hunk_ = Hunk{};   // куски другого документа
@@ -78,7 +74,7 @@ void DiffTextView::present(int keepLine, int keepOffset) {
         const int block = timeline_->blockOfAfterLine(keepLine);
         if (block >= 0) scrollToBlockTop(block, keepOffset);
     }
-    if (!query.isEmpty()) findMatches(query, caseSensitive);
+    if (!query.isEmpty()) findMatches(query);
     // Счёт отличий — производное показанной разности, и восстанавливает его ОДНА
     // функция, которую зовут оба пути: свежий показ (здесь) и шаг по отличиям.
     announceHunk();

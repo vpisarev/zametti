@@ -87,7 +87,7 @@ PlainEditView::PlainEditView(QWidget* parent) : QPlainTextEdit(parent) {
     connect(document(), &QTextDocument::contentsChange, this,
             [this](int, int removed, int added) {
                 if (removed == 0 && added == 0) return;   // правка формата
-                if (needleText_.isEmpty()) return;
+                if (!query_.usable()) return;
                 matches_.clear();
                 current_ = -1;
                 overlaysSoon_.start();
@@ -96,8 +96,8 @@ PlainEditView::PlainEditView(QWidget* parent) : QPlainTextEdit(parent) {
     searchSoon_.setSingleShot(true);
     searchSoon_.setInterval(300);
     connect(&searchSoon_, &QTimer::timeout, this, [this] {
-        if (needleText_.isEmpty()) return;
-        findMatches(needleText_, caseSensitive_);
+        if (!query_.usable()) return;
+        findMatches(query_);
         emit matchesChanged();   // полосе поиска пора показать новое число
     });
 
@@ -531,20 +531,19 @@ void PlainEditView::pressTab(bool back) {
 
 // --- поиск --------------------------------------------------------------------
 
-int PlainEditView::findMatches(const QString& text, bool caseSensitive) {
+int PlainEditView::findMatches(const Query& query) {
     matches_.clear();
     current_ = -1;
-    needleText_ = text;
-    caseSensitive_ = caseSensitive;
-    needle_ = int(text.size());
-    if (text.isEmpty()) {
+    query_ = query;
+    if (!query.usable()) {
         refreshOverlays();
         return 0;
     }
-    const QString hay = toPlainText();
-    const Qt::CaseSensitivity how = caseSensitive ? Qt::CaseSensitive : Qt::CaseInsensitive;
-    for (int at = hay.indexOf(text, 0, how); at >= 0; at = hay.indexOf(text, at + 1, how))
-        matches_.push_back(at);
+    // ТЕМ ЖЕ СЧЁТОМ, ЧТО И В ЗАМЕТКЕ (findInText): те же правила про шаг, про
+    // пустое совпадение и про регистр — иначе один и тот же запрос давал бы в
+    // двух видах разные числа.
+    for (const FlatHit& hit : findInText(toPlainText(), query))
+        matches_.push_back(Match{hit.offset, hit.length, hit.match});
     // ТЕКУЩЕГО ПОКА НЕТ — и это не забывчивость, а правило (то же, что в виде
     // заметки). Куда шагнуть, решает сам шаг: он идёт к ближайшей находке ОТ
     // КАРЕТКИ. Стоило поставить «текущую» здесь — и первый F3 её проскакивал:
@@ -558,8 +557,9 @@ int PlainEditView::findMatches(const QString& text, bool caseSensitive) {
     const QTextCursor caret = textCursor();
     if (caret.hasSelection()) {
         const int from = qMin(caret.selectionStart(), caret.selectionEnd());
+        const int to = qMax(caret.selectionStart(), caret.selectionEnd());
         for (size_t i = 0; i < matches_.size(); ++i)
-            if (matches_[i] == from && caret.selectedText() == text) {
+            if (matches_[i].offset == from && matches_[i].offset + matches_[i].length == to) {
                 current_ = int(i);
                 break;
             }
@@ -579,19 +579,21 @@ void PlainEditView::stepMatch(int direction) {
         int nearest = -1;
         if (direction >= 0) {
             for (int i = 0; i < count; ++i)
-                if (matches_[size_t(i)] >= at) { nearest = i; break; }
+                if (matches_[size_t(i)].offset >= at) { nearest = i; break; }
             current_ = nearest >= 0 ? nearest : 0;
         } else {
             for (int i = count - 1; i >= 0; --i)
-                if (matches_[size_t(i)] + needle_ <= at) { nearest = i; break; }
+                if (matches_[size_t(i)].offset + matches_[size_t(i)].length <= at)
+                    { nearest = i; break; }
             current_ = nearest >= 0 ? nearest : count - 1;
         }
     } else {
         current_ = (current_ + (direction >= 0 ? 1 : count - 1)) % count;
     }
     QTextCursor at(document());
-    at.setPosition(matches_[size_t(current_)]);
-    at.setPosition(matches_[size_t(current_)] + needle_, QTextCursor::KeepAnchor);
+    at.setPosition(matches_[size_t(current_)].offset);
+    at.setPosition(matches_[size_t(current_)].offset + matches_[size_t(current_)].length,
+                   QTextCursor::KeepAnchor);
     setTextCursor(at);
     centerCursor();
     refreshOverlays();
@@ -601,8 +603,7 @@ void PlainEditView::clearMatches() {
     searchSoon_.stop();
     matches_.clear();
     current_ = -1;
-    needle_ = 0;
-    needleText_.clear();
+    query_ = Query{};
     setExtraSelections({});
 }
 
@@ -614,17 +615,18 @@ void PlainEditView::refreshOverlays() {
     extraOverlays(shown);
 
     // 2. НАЙДЕННОЕ — поверх, тоже только видимое.
-    if (needle_ > 0) {
+    if (!matches_.empty()) {
         const int from = cursorForPosition(QPoint(0, 0)).position();
         const int to = cursorForPosition(QPoint(viewport()->width(), viewport()->height()))
-                           .position() + needle_;
+                           .position();
         for (size_t i = 0; i < matches_.size(); ++i) {
-            const int at = matches_[i];
-            if (at + needle_ < from || at > to) continue;
+            const int at = matches_[i].offset;
+            const int length = matches_[i].length;
+            if (at + length < from || at > to) continue;
             QTextEdit::ExtraSelection one;
             one.cursor = QTextCursor(document());
             one.cursor.setPosition(at);
-            one.cursor.setPosition(at + needle_, QTextCursor::KeepAnchor);
+            one.cursor.setPosition(at + length, QTextCursor::KeepAnchor);
             // Цвет один на всю программу (searchHighlight); текущее совпадение
             // не другим цветом, а заметнее — ровно так же, как в NoteView.
             QColor tint = settings().style().searchHighlight();
@@ -638,38 +640,34 @@ void PlainEditView::refreshOverlays() {
 
 bool PlainEditView::replaceCurrentMatch(const QString& with) {
     if (current_ < 0 || size_t(current_) >= matches_.size()) return false;
+    const Match one = matches_[size_t(current_)];
     QTextCursor at(document());
-    at.setPosition(matches_[size_t(current_)]);
-    at.setPosition(matches_[size_t(current_)] + needle_, QTextCursor::KeepAnchor);
-    at.insertText(with);
+    at.setPosition(one.offset);
+    at.setPosition(one.offset + one.length, QTextCursor::KeepAnchor);
+    at.insertText(expandReplacement(query_, one.match, with));
     setTextCursor(at);
     // Найденное пересчитывается само: позиции за заменой сдвинулись.
-    const QString needle = needleText_;
-    findMatches(needle, caseSensitive_);
+    findMatches(query_);
     return true;
 }
 
-int PlainEditView::replaceAllMatches(const QString& text, bool caseSensitive, const QString& with) {
-    if (text.isEmpty()) return 0;
-    const QString hay = toPlainText();
-    const Qt::CaseSensitivity how = caseSensitive ? Qt::CaseSensitive : Qt::CaseInsensitive;
-    std::vector<int> at;
-    for (int i = hay.indexOf(text, 0, how); i >= 0; i = hay.indexOf(text, i + 1, how))
-        at.push_back(i);
-    if (at.empty()) return 0;
+int PlainEditView::replaceAllMatches(const Query& query, const QString& with) {
+    if (!query.usable()) return 0;
+    const std::vector<FlatHit> hits = findInText(toPlainText(), query);
+    if (hits.empty()) return 0;
     // ОДНА СКОБКА НА ВСЁ: иначе откатывать пришлось бы по одному вхождению.
     // Идём с конца — передние замены не сдвигают ещё не сделанные.
     QTextCursor edit(document());
     edit.beginEditBlock();
-    for (auto i = at.rbegin(); i != at.rend(); ++i) {
+    for (size_t i = hits.size(); i-- > 0;) {
         QTextCursor one(document());
-        one.setPosition(*i);
-        one.setPosition(*i + int(text.size()), QTextCursor::KeepAnchor);
-        one.insertText(with);
+        one.setPosition(hits[i].offset);
+        one.setPosition(hits[i].offset + hits[i].length, QTextCursor::KeepAnchor);
+        one.insertText(expandReplacement(query, hits[i].match, with));
     }
     edit.endEditBlock();
     clearMatches();
-    return int(at.size());
+    return int(hits.size());
 }
 
 }  // namespace zametti

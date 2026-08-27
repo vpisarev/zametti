@@ -138,7 +138,7 @@ public:
     // иначе откатывать пришлось бы по одному вхождению.
     bool canReplace() const override { return !isReadOnly(); }
     bool replaceCurrentMatch(const QString& with) override;
-    int replaceAllMatches(const QString& text, bool caseSensitive, const QString& with) override;
+    int replaceAllMatches(const Query& query, const QString& with) override;
 
     // Файл изменился снаружи, а у нас есть несохранённые правки: пока человек
     // не решит, чьё содержимое брать, мы ничего не трогаем.

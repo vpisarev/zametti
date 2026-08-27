@@ -68,14 +68,14 @@ public:
     qreal zoom() const { return zoom_; }
 
     // --- TextSearchTarget ---------------------------------------------------
-    int findMatches(const QString& text, bool caseSensitive) override;
+    int findMatches(const Query& query) override;
     int matchCount() const override { return int(matches_.size()); }
     int currentMatch() const override { return current_; }
     void stepMatch(int direction) override;
     void clearMatches() override;
     bool canReplace() const override { return !isReadOnly(); }
     bool replaceCurrentMatch(const QString& with) override;
-    int replaceAllMatches(const QString& text, bool caseSensitive, const QString& with) override;
+    int replaceAllMatches(const Query& query, const QString& with) override;
     QString searchPreset() const override;
     QWidget& searchWidget() override { return *this; }
 
@@ -152,12 +152,17 @@ private:
     QTimer overlaysSoon_;
     // Повтор поиска после правки — через короткую паузу: он читает весь текст.
     QTimer searchSoon_;
-    // Найденное — позициями в плоском тексте; текущее — номер в этом списке.
+    // Найденное — местами в плоском тексте; текущее — номер в этом списке.
+    // Длина у каждого своя: у выражения находки разной длины. Совпадение
+    // хранится при находке — из него замена разворачивает группы.
+    struct Match {
+        int offset = 0;
+        int length = 0;
+        QRegularExpressionMatch match;
+    };
+    std::vector<Match> matches_;
     // Запрос помнится: замена перезапускает поиск сама.
-    std::vector<int> matches_;
-    QString needleText_;
-    bool caseSensitive_ = false;
-    int needle_ = 0;
+    Query query_;
     int current_ = -1;
 };
 

@@ -396,7 +396,7 @@ static int ztRunReader() {
     // (TextSearchTarget), как редактор и вид исходника. Замена при этом
     // невозможна, и об этом говорит сама страница, а не особый случай в окне.
     view.showFile(first, QStringLiteral("info:first"));
-    ZT_TRUE("в документе есть что искать", view.findMatches(QStringLiteral("markdown"), false) > 0);
+    ZT_TRUE("в документе есть что искать", view.findMatches(zametti::makeQuery(QStringLiteral("markdown"))) > 0);
     ZT_TRUE("замена в документе невозможна", !view.canReplace());
     view.clearMatches();
 

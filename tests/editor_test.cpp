@@ -2992,7 +2992,7 @@ void checkSearchPaintsWithItsOwnColour() {
     editor.openFile(path);
     QTest::qWait(20);
 
-    const int found = editor.findMatches(QStringLiteral("сосна"), false);
+    const int found = editor.findMatches(zametti::makeQuery(QStringLiteral("сосна")));
     check(found == 2, "нашлись оба вхождения");
     // Никуда не шагаем: пока по находкам не пошли, текущей нет вовсе и обе
     // подсветки видны как есть. Это же и есть обычный вид при наборе запроса.

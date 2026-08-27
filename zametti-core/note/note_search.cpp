@@ -1,6 +1,7 @@
 #include "note_search.h"
 
 #include "doc_model.h"
+#include "search.h"
 
 #include <QTextBlock>
 #include <QTextDocument>
@@ -9,75 +10,60 @@
 
 namespace zametti {
 
-int NoteSearch::find(const QTextDocument& doc, const QString& text, bool caseSensitive) {
-    text_ = text;
-    caseSensitive_ = caseSensitive;
+int NoteSearch::find(const QTextDocument& doc, const Query& query) {
+    query_ = query;
     hits_.clear();
     current_ = -1;
     doc_ = &doc;
     revision_ = doc.revision();
-    if (text.isEmpty()) return 0;
-    const Qt::CaseSensitivity sensitivity = caseSensitive ? Qt::CaseSensitive : Qt::CaseInsensitive;
+
     QTextDocument* mutableDoc = const_cast<QTextDocument*>(&doc);
-    // Блок за блоком, тем же текстом, что и ZDocument::find: совпадение не
-    // пересекает границу блока, а объект отдаёт исходник.
-    std::vector<ObjectSpan> objects;
-    for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {
-        bool inObject = false;
-        const QString body = searchableTextOf(block, &inObject, &objects);
-        if (body.isEmpty()) continue;
-        qsizetype at = body.indexOf(text, 0, sensitivity);
-        while (at >= 0) {
-            SearchHit hit;
-            hit.cursor = QTextCursor(mutableDoc);
-            const int span = inObject ? -1 : hitSpanIndex(objects, int(at),
-                                                          int(at + text.size()));
-            if (inObject) {
-                // Курсор — над самим знаком объекта; место внутри — числами.
-                hit.cursor.setPosition(block.position());
-                hit.cursor.setPosition(block.position() + 1, QTextCursor::KeepAnchor);
-                hit.innerOffset = int(at);
-                hit.innerLength = int(text.size());
-            } else if (span >= 0) {
-                // Внутри СТРОЧНОГО объекта: курсор над его знаком, смещение —
-                // в его исходнике; подсветка ляжет на вёрстку.
-                const ObjectSpan& own = objects[size_t(span)];
-                hit.cursor.setPosition(own.position);
-                hit.cursor.setPosition(own.position + 1, QTextCursor::KeepAnchor);
-                hit.innerOffset = int(at) - own.from;
-                hit.innerLength = int(text.size());
-            } else if (span == -2) {
-                // Пересекло границу объекта — не вхождение (правило одно с
-                // ZDocument::find).
-                at = body.indexOf(text, at + 1, sensitivity);
-                continue;
-            } else {
-                const int from = docPositionOf(block, objects, int(at));
-                const int to = docPositionOf(block, objects, int(at + text.size()));
-                hit.cursor.setPosition(from);
-                hit.cursor.setPosition(to, QTextCursor::KeepAnchor);
-            }
-            hits_.push_back(hit);
-            // Со следующего знака после НАЧАЛА совпадения: перекрывающиеся
-            // вхождения тоже вхождения.
-            at = body.indexOf(text, at + 1, sensitivity);
+    // Обход — общий (forEachHit): те же правила про объекты, про пустое
+    // совпадение и про шаг, что у ZDocument::find. Здесь только своё — курсор
+    // над найденным, который поедет с правками, как всякий курсор Qt.
+    forEachHit(doc, query, [&](const HitPlace& place) {
+        SearchHit hit;
+        hit.cursor = QTextCursor(mutableDoc);
+        const QTextBlock& block = *place.block;
+        if (place.inObject) {
+            // Курсор — над самим знаком объекта; место внутри — числами.
+            hit.cursor.setPosition(block.position());
+            hit.cursor.setPosition(block.position() + 1, QTextCursor::KeepAnchor);
+            hit.innerOffset = place.offset;
+            hit.innerLength = place.length;
+        } else if (place.span >= 0) {
+            // Внутри СТРОЧНОГО объекта: курсор над его знаком, смещение —
+            // в его исходнике; подсветка ляжет на вёрстку.
+            const ObjectSpan& own = (*place.objects)[size_t(place.span)];
+            hit.cursor.setPosition(own.position);
+            hit.cursor.setPosition(own.position + 1, QTextCursor::KeepAnchor);
+            hit.innerOffset = place.offset - own.from;
+            hit.innerLength = place.length;
+        } else {
+            const int from = docPositionOf(block, *place.objects, place.offset);
+            const int to = docPositionOf(block, *place.objects, place.offset + place.length);
+            hit.cursor.setPosition(from);
+            hit.cursor.setPosition(to, QTextCursor::KeepAnchor);
         }
-    }
+        hits_.push_back(hit);
+        return true;
+    });
     return count();
 }
 
 void NoteSearch::clear() {
     hits_.clear();
     current_ = -1;
-    text_.clear();
+    query_ = Query{};
     doc_ = nullptr;
     revision_ = -1;
 }
 
-bool NoteSearch::isFreshFor(const QTextDocument& doc, const QString& text,
-                            bool caseSensitive) const {
-    return doc_ == &doc && revision_ == doc.revision() && text_ == text &&
-           caseSensitive_ == caseSensitive;
+bool NoteSearch::isFreshFor(const QTextDocument& doc, const Query& query) const {
+    // Признак выражения — часть свежести: щёлкнули тумблер, и найденное
+    // прежним запросом больше не годится, хотя буквы в поле те же.
+    return doc_ == &doc && revision_ == doc.revision() && query_.needle == query.needle &&
+           query_.caseSensitive == query.caseSensitive && query_.regex == query.regex;
 }
 
 void NoteSearch::setCurrent(int index) {

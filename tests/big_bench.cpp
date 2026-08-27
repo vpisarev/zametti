@@ -206,7 +206,7 @@ int ztBigBench(int argc, char** argv) {
                 editor.openFile(path);
                 QApplication::processEvents(QEventLoop::AllEvents);
             } else if (scenario == "search") {
-                editor.findMatches(QStringLiteral("the"), false);
+                editor.findMatches(zametti::makeQuery(QStringLiteral("the")));
                 editor.clearMatches();
             } else if (scenario == "open") {
                 zametti::NoteEditor fresh;
@@ -344,7 +344,7 @@ int ztBigBench(int argc, char** argv) {
         }));
 
         // Поиск.
-        put("поиск слова", col, micros([&] { editor.findMatches(QStringLiteral("the"), false); }));
+        put("поиск слова", col, micros([&] { editor.findMatches(zametti::makeQuery(QStringLiteral("the"))); }));
         editor.clearMatches();
 
         // Переключиться на другую заметку и вернуться.

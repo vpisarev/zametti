@@ -3636,63 +3636,101 @@ bool ZDocument::removeBlocks(QTextCursor& at, int first, int last) {
 
 // --- ЗАМЕНА ПО ВСЕЙ ЗАМЕТКЕ -------------------------------------------------
 
-int ZDocument::replaceAll(const QString& text, bool caseSensitive, const QString& with) {
-    if (text.isEmpty()) return 0;
-    QTextDocument::FindFlags flags;
-    if (caseSensitive) flags |= QTextDocument::FindCaseSensitively;
+int ZDocument::replaceAll(const Query& query, const QString& with) {
+    if (!query.usable()) return 0;
+
+    // СОБРАТЬ, ПОТОМ ПРАВИТЬ С КОНЦА. Вхождения перечисляет общий обход
+    // (forEachHit) — тот же, каким их считает счётчик «3/17» и обходит F3, — а
+    // применяются они справа налево: правка не двигает то, что левее, и
+    // собранные места остаются годными. Пока замена ходила своим путём
+    // (QTextDocument::find), она и считала иначе: на «ааа» счётчик показывал
+    // два вхождения «аа», а заменялось одно.
+    struct Edit {
+        int at = 0;             // позиция в документе, по ней идёт порядок
+        int blockNumber = 0;
+        int span = -1;          // строчный объект: его номер, иначе −1
+        bool wholeObject = false;
+        int from = 0;           // в тексте поиска (у объекта — в его исходнике)
+        int length = 0;
+        QString with;
+        int hits = 1;           // сколько вхождений закрывает эта правка
+    };
+    std::vector<Edit> edits;
+    forEachHit(d_->text, query, [&](const HitPlace& place) {
+        Edit edit;
+        edit.blockNumber = place.blockIndex;
+        edit.from = place.offset;
+        edit.length = place.length;
+        edit.with = with;
+        if (place.inObject) {
+            edit.wholeObject = true;
+            edit.at = place.block->position();
+        } else if (place.span >= 0) {
+            const ObjectSpan& own = (*place.objects)[size_t(place.span)];
+            edit.span = place.span;
+            edit.at = own.position;
+            edit.from = place.offset - own.from;
+        } else {
+            edit.at = docPositionOf(*place.block, *place.objects, place.offset);
+        }
+        edits.push_back(edit);
+        return true;
+    });
+    if (edits.empty()) return 0;
+
+    // ОБЪЕКТ ПЕРЕПИСЫВАЕТСЯ ЦЕЛИКОМ, поэтому все вхождения внутри одного
+    // объекта — это ОДНА правка: складываем их в его исходник справа налево и
+    // отдаём судье один раз (таблица могла перестать быть таблицей, и решать
+    // это ему).
+    std::vector<Edit> plan;
+    for (size_t i = 0; i < edits.size();) {
+        const Edit& first = edits[i];
+        if (!first.wholeObject && first.span < 0) {
+            plan.push_back(first);
+            ++i;
+            continue;
+        }
+        size_t j = i;
+        while (j < edits.size() && edits[j].at == first.at) ++j;
+        QString source;
+        if (first.wholeObject) {
+            source = searchableTextOf(d_->text.findBlockByNumber(first.blockNumber));
+        } else {
+            QTextCursor probe(&d_->text);
+            probe.setPosition(first.at + 1);
+            source = probe.charFormat().property(ObjectSourceProperty).toString();
+        }
+        for (size_t k = j; k-- > i;)
+            source.replace(edits[k].from, edits[k].length, edits[k].with);
+        Edit one = first;
+        one.with = source;   // у объекта в with лежит ВЕСЬ новый исходник
+        one.hits = int(j - i);
+        plan.push_back(one);
+        i = j;
+    }
 
     int replaced = 0;
     QTextCursor group(&d_->text);
     group.beginEditBlock();
-    QTextCursor at(&d_->text);
-    while (true) {
-        at = d_->text.find(text, at, flags);
-        if (at.isNull()) break;
-        at.insertText(with);
-        ++replaced;
-    }
-    // ОБЪЕКТЫ — ПО ИСХОДНИКУ (таблица, формула): в тексте блока их слов нет,
-    // QTextDocument::find их не видит. Идём с конца: судья может заменить один
-    // блок несколькими, и номера ниже съезжают, а выше — нет.
-    const Qt::CaseSensitivity sensitivity = caseSensitive ? Qt::CaseSensitive : Qt::CaseInsensitive;
-    for (int number = d_->text.blockCount() - 1; number >= 0; --number) {
-        const QTextBlock block = d_->text.findBlockByNumber(number);
-        bool inObject = false;
-        std::vector<ObjectSpan> objects;
-        QString source = searchableTextOf(block, &inObject, &objects);
-        if (!inObject && objects.empty()) continue;
-        if (!inObject) {
-            // СТРОЧНЫЕ формулы блока: замена внутри исходника каждой, справа
-            // налево (перезапись меняет позиции только правее себя). Вхождения
-            // через границу объекта не считаются — как в поиске.
-            for (size_t i = objects.size(); i-- > 0;) {
-                const ObjectSpan& span = objects[i];
-                QString own = source.mid(span.from, span.to - span.from);
-                int here = 0;
-                qsizetype pos = own.indexOf(text, 0, sensitivity);
-                while (pos >= 0) {
-                    own.replace(pos, text.size(), with);
-                    ++here;
-                    pos = own.indexOf(text, pos + with.size(), sensitivity);
-                }
-                if (here == 0) continue;
-                QTextCursor scratch(&d_->text);
-                scratch.setPosition(block.position());
-                if (rewriteInlineFormula(scratch, span.position, own)) replaced += here;
-            }
+    for (size_t i = plan.size(); i-- > 0;) {
+        const Edit& edit = plan[i];
+        if (edit.wholeObject) {
+            QTextCursor scratch(&d_->text);
+            scratch.setPosition(edit.at);
+            if (rejudgeBlock(scratch, edit.blockNumber, edit.with)) replaced += edit.hits;
             continue;
         }
-        int here = 0;
-        qsizetype pos = source.indexOf(text, 0, sensitivity);
-        while (pos >= 0) {
-            source.replace(pos, text.size(), with);
-            ++here;
-            pos = source.indexOf(text, pos + with.size(), sensitivity);
+        if (edit.span >= 0) {
+            QTextCursor scratch(&d_->text);
+            scratch.setPosition(edit.at);
+            if (rewriteInlineFormula(scratch, edit.at, edit.with)) replaced += edit.hits;
+            continue;
         }
-        if (here == 0) continue;
-        QTextCursor scratch(&d_->text);
-        scratch.setPosition(block.position());
-        if (rejudgeBlock(scratch, number, source)) replaced += here;
+        QTextCursor at(&d_->text);
+        at.setPosition(edit.at);
+        at.setPosition(edit.at + edit.length, QTextCursor::KeepAnchor);
+        at.insertText(edit.with);
+        ++replaced;
     }
     if (replaced > 0) {
         // ШОВ ПО ВСЕЙ ЗАМЕТКЕ — здесь это законно: вхождения рассыпаны по ней

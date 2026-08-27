@@ -320,34 +320,17 @@ int ZDocument::rewriteAttachments(const std::function<QString(const QString&)>& 
 
 // ПОИСК ИДЁТ ПО ЖИВОМУ ДОКУМЕНТУ, блок за блоком. Никаких копий содержимого:
 // текст блока и так лежит готовым, доставать его вторично незачем.
+//
+// Сам обход — общий (forEachHit, search.cpp): правила про объекты, про пустое
+// совпадение и про шаг живут там одни на всех, кто ищет.
 std::vector<Hit> ZDocument::find(const Query& query) const {
     std::vector<Hit> hits;
-    if (query.isEmpty()) return hits;
     int ordinal = 0;
-    int index = 0;
-    std::vector<ObjectSpan> objects;
-    for (QTextBlock b = d_->text.begin(); b.isValid(); b = b.next(), ++index) {
-        // У объекта (таблица, формула) ищем по исходнику: в тексте блока один
-        // U+FFFC (см. searchableTextOf). Строчные формулы подставлены
-        // исходником на местах — карта objects говорит, где они.
-        bool inObject = false;
-        const QString text = searchableTextOf(b, &inObject, &objects);
-        if (text.isEmpty()) continue;
-        qsizetype at = text.indexOf(query.needle, 0, query.sensitivity());
-        while (at >= 0) {
-            // Вхождение, пересёкшее границу строчного объекта, не считается:
-            // рядом эти знаки стоят только в тексте поиска (правило одно с
-            // NoteSearch — hitSpanIndex).
-            const int span = hitSpanIndex(objects, int(at), int(at + query.needle.size()));
-            if (span != -2)
-                hits.push_back(Hit{index, int(at), int(query.needle.size()), ordinal++,
-                                   inObject || span >= 0});
-            // Со следующего знака, а не через длину запроса: перекрывающиеся
-            // вхождения («аа» в «ааа») — тоже вхождения, и счётчик «3/17»
-            // обязан считать их так же, как их потом обойдёт F3.
-            at = text.indexOf(query.needle, at + 1, query.sensitivity());
-        }
-    }
+    forEachHit(d_->text, query, [&](const HitPlace& place) {
+        hits.push_back(Hit{place.blockIndex, place.offset, place.length, ordinal++,
+                           place.inObject || place.span >= 0});
+        return true;
+    });
     return hits;
 }
 
@@ -382,7 +365,10 @@ HitLine ZDocument::hitLine(const Hit& hit, int radius) const {
 
     out.text = line;
     out.offset = offset;
-    out.length = hit.length;
+    // Длина подсветки прижимается к показанной строке: совпадение выражения
+    // умеет тянуться через несколько строк блока (`[.\n]+` и подобное), а в
+    // списке результатов видна одна — и выделение уехало бы за её край.
+    out.length = qBound(0, hit.length, int(line.size()) - offset);
     return out;
 }
 
