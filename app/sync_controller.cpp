@@ -15,6 +15,13 @@ SyncController::SyncController(std::shared_ptr<ZStorage> storage,
       storage_(std::move(storage)),
       secrets_(secrets ? std::move(secrets) : std::make_shared<KeyringSecrets>()),
       logs_(logs) {
+    // Повтор при пропавшей сети: одноразовый таймер, взводится итогом
+    // прогона с сетевыми бедами и гасится любым ручным вмешательством.
+    retry_.setSingleShot(true);
+    retry_.setInterval(kRetrySec * 1000);
+    connect(&retry_, &QTimer::timeout, this, [this] {
+        if (!running_ && configured()) startFull(false);
+    });
     // Такт индикатора. Живёт в главном потоке; движок только пишет атомики.
     ticker_.setInterval(120);
     connect(&ticker_, &QTimer::timeout, this, [this] {
@@ -35,6 +42,7 @@ void SyncController::setStorage(std::shared_ptr<ZStorage> storage) {
     joinWorker();
     running_ = false;
     ticker_.stop();
+    retry_.stop();
     storage_ = std::move(storage);
     // Секреты и адрес добыты для ПРЕЖНЕГО хранилища: у нового и storeId другой,
     // и облако может быть другое. Забываем всё — fetchSecrets достанет заново.
@@ -113,11 +121,14 @@ void SyncController::toggle() {
 }
 
 void SyncController::cancel() {
+    // Остановить — значит остановить: и прогон, и запланированный повтор.
+    retry_.stop();
     if (running_ && cancel_) cancel_->store(true);
 }
 
 void SyncController::startFull(bool allowMassDelete) {
     if (running_ || !configured()) return;
+    retry_.stop();   // идём сейчас — ждать больше нечего
     if (!fetchSecrets()) {
         emit stateChanged();
         emit finished(false);
@@ -172,6 +183,17 @@ void SyncController::finishRun(bool ok, const QString& error) {
     ticker_.stop();
     emit progress(QString());  // индикатор убрать
     lastError_ = ok ? QString() : error;
+    // Сетевые беды повторяются сами, пока окно живо: отложенные блобы или
+    // недостучавшееся подключение (у него в отчёте нули). Отменённый рукой
+    // прогон и провалы целостности повторов не заводят.
+    const bool networkTrouble =
+        !lastReport_.cancelled &&
+        ((ok && lastReport_.deferred > 0) ||
+         (!ok && lastReport_.integrityFailures == 0));
+    if (networkTrouble)
+        retry_.start();
+    else
+        retry_.stop();
     // Каталог — из главного потока и по именам: сторож хранилища сверяет
     // состав файлов, а материализация меняет СОДЕРЖИМОЕ закрытых заметок,
     // и без этого строки списка показывали бы старые заголовки.
@@ -227,7 +249,16 @@ QString SyncController::statusText() const {
         return QStringLiteral(
             "Sync is not set up — open the storage dialog (the database button)");
     if (running_) return QStringLiteral("Syncing… click to cancel");
-    if (!lastError_.isEmpty()) return QStringLiteral("Sync failed: %1").arg(lastError_);
+    // Слово о запланированном повторе — человек должен знать, что программа
+    // не сдалась, а ждёт сеть.
+    const QString retryNote =
+        retry_.isActive() ? QStringLiteral(" — will retry in a couple of minutes") : QString();
+    if (!lastError_.isEmpty())
+        return QStringLiteral("Sync failed: %1%2").arg(lastError_, retryNote);
+    if (lastReport_.deferred > 0)
+        return QStringLiteral("Synced with %1 skipped%2")
+            .arg(lastReport_.deferred)
+            .arg(retryNote);
     if (lastReport_.listed > 0 || lastReport_.materialized > 0)
         return QStringLiteral("Synced: %1 in, %2 out, %3 merged")
             .arg(lastReport_.takenWhole + lastReport_.materialized)

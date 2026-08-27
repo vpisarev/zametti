@@ -849,6 +849,16 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
             options.logs->err(QStringLiteral("sync: ") + what);
         }
     };
+    // СЕТЬ МОГЛА ПРОСТО ПРОПАСТЬ — и это не провал (решение владельца:
+    // телефонный интернет то есть, то нет). Обрыв передачи ОДНОГО блоба —
+    // «отложено, вернёмся»: пометки живы, бухгалтерия не тронута, прогон
+    // доделывает остальное и остаётся удачным, а окно повторит его само.
+    // Провалом остаются целостность и локальные беды — их повтором не лечат.
+    const auto skipTransfer = [&](const QString& what) {
+        ++done.deferred;
+        fprintf(stderr, "zametti sync: skipped (will retry): %s\n", qPrintable(what));
+        note(QStringLiteral("skipped (will retry): ") + what);
+    };
     note(QStringLiteral("start %1, store %2")
              .arg(options.mode == SyncOptions::PushOnly ? QStringLiteral("push-only")
                                                         : QStringLiteral("full"),
@@ -1215,7 +1225,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
             QByteArray blob;
             QString why;
             if (!remote_->get(name, &blob, nullptr, &why)) {
-                complain(QStringLiteral("cannot download %1: %2").arg(name, why));
+                skipTransfer(QStringLiteral("cannot download %1: %2").arg(name, why));
                 continue;
             }
             const Digest sealed = hashBytes(blob);
@@ -1407,7 +1417,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                     ? remote_->put(name, blob, &newEtag, &why)
                     : remote_->putIfMatch(name, blob, pushExpectedEtag, &newEtag, &clash, &why);
             if (!ok) {
-                complain(QStringLiteral("cannot upload %1: %2").arg(name, why));
+                skipTransfer(QStringLiteral("cannot upload %1: %2").arg(name, why));
                 continue;
             }
             if (clash) {
@@ -1453,9 +1463,13 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                 }
                 QByteArray blob;
                 QString newEtag;
-                if (!cipher_->seal(bytes, aad, &blob, &why) ||
-                    !remote_->put(name, blob, &newEtag, &why)) {
-                    complain(QStringLiteral("cannot upload attachment %1: %2").arg(name, why));
+                if (!cipher_->seal(bytes, aad, &blob, &why)) {
+                    complain(QStringLiteral("cannot seal attachment %1: %2").arg(name, why));
+                    continue;
+                }
+                if (!remote_->put(name, blob, &newEtag, &why)) {
+                    skipTransfer(
+                        QStringLiteral("cannot upload attachment %1: %2").arg(name, why));
                     continue;
                 }
                 ++done.attachmentsUp;
@@ -1465,7 +1479,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
             // Дальше нужен GET: либо файла нет локально, либо etag разошёлся.
             QByteArray blob;
             if (!remote_->get(name, &blob, nullptr, &why)) {
-                complain(QStringLiteral("cannot download attachment %1: %2").arg(name, why));
+                skipTransfer(QStringLiteral("cannot download attachment %1: %2").arg(name, why));
                 continue;
             }
             const Digest sealed = hashBytes(blob);
@@ -1685,7 +1699,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
             led.sealedHash = hashBytes(mine.toBytes());
             ledger.setBlob(QLatin1String(Identity::kFile), led);
         } else {
-            complain(QStringLiteral("cannot upload the manifest: %1").arg(why));
+            skipTransfer(QStringLiteral("cannot upload the manifest: %1").arg(why));
         }
     }
 
