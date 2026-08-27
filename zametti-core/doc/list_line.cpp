@@ -37,6 +37,49 @@ int columnOf(QStringView line, int chars, int tabStop) {
 
 bool isBlankLine(QStringView line) { return leadingWhitespace(line) == line.size(); }
 
+int contentStartOf(QStringView line, int tabStop) {
+    const int n = int(line.size());
+    int at = 0;
+    for (;;) {
+        const int wasAt = at;
+        at += leadingWhitespace(line.mid(at));
+        if (at >= n) return at;
+        // Цитата: знак и необязательный один пробел за ним. Вложенные цитаты
+        // снимаются по одной этим же кругом.
+        if (line.at(at) == QLatin1Char('>')) {
+            ++at;
+            if (at < n && line.at(at) == QLatin1Char(' ')) ++at;
+            continue;
+        }
+        // Заголовок: от одной до шести решёток и пробел за ними. Дальше
+        // структуры не бывает — содержимое заголовка однострочно.
+        if (line.at(at) == QLatin1Char('#')) {
+            int hashes = 0;
+            while (at + hashes < n && line.at(at + hashes) == QLatin1Char('#')) ++hashes;
+            if (hashes <= 6 && at + hashes < n && isIndentChar(line.at(at + hashes)))
+                return at + hashes + 1;
+            return at;
+        }
+        // Пункт списка — тем же разбором, что у подсветчика и клавиш.
+        //
+        // С ОДНОЙ ОГОВОРКОЙ: маркер здесь считается маркером, только если за
+        // ним стоит ПРОБЕЛ ИЛИ ТАБ. parseListLine щедрее — ему годится любой
+        // пробельный знак (так его читают подсветчик и клавиши), — а md4c
+        // строг: "*<nbsp>a<nbsp>*" для него не список, а абзац со звёздочками
+        // (случай 0355 из спецификации). Приняв это за маркер, мы объявили бы
+        // неразрывный пробел своим отступом и оставили его в файле, а разбор
+        // читал бы его содержимым — круг разошёлся бы на втором заходе.
+        const ListLine item = parseListLine(line.mid(at), tabStop);
+        if (item.item && item.contentStart > 0 &&
+            isIndentChar(line.at(at + item.contentStart - 1))) {
+            at += item.contentStart;
+            continue;
+        }
+        (void)wasAt;
+        return at;
+    }
+}
+
 ListLine parseListLine(QStringView line, int tabStop) {
     ListLine out;
     const int n = int(line.size());
