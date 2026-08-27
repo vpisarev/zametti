@@ -134,6 +134,9 @@ protected:
     void refreshOverlays();
 
 private:
+    // Плоский текст вида — по нему ищут. Свежесть держит ревизия документа.
+    const QString& flatText();
+
     class WrapMarks;
     void paintWrapMarks(QPainter& painter, const QRect& area);
     void placeWrapMarks();
@@ -166,6 +169,12 @@ private:
     std::vector<Match> matches_;
     // Запрос помнится: замена перезапускает поиск сама.
     Query query_;
+    // ПЛОСКИЙ ТЕКСТ — С КЭШЕМ ПО РЕВИЗИИ. toPlainText() у заметки владельца в
+    // 8.4 МБ стоит 15 мс (замер), а поиск идёт на КАЖДУЮ букву запроса —
+    // документ при этом не меняется вовсе. Ревизия Qt меняется на любой правке,
+    // и по ней кэш освежается сам.
+    QString flat_;
+    int flatRevision_ = -1;
     // Остановились по потолку: найденного больше, чем в списке.
     bool capped_ = false;
     int current_ = -1;

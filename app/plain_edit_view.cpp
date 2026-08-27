@@ -531,6 +531,18 @@ void PlainEditView::pressTab(bool back) {
 
 // --- поиск --------------------------------------------------------------------
 
+// Плоский текст с кэшем: документ на набор в поле поиска не меняется, а
+// toPlainText() у заметки в 8.4 МБ стоит 15 мс (замер) — это на КАЖДУЮ букву
+// запроса. Ревизия Qt меняется на любой правке документа, по ней кэш и живёт.
+const QString& PlainEditView::flatText() {
+    const int revision = document()->revision();
+    if (revision != flatRevision_) {
+        flat_ = toPlainText();
+        flatRevision_ = revision;
+    }
+    return flat_;
+}
+
 int PlainEditView::findMatches(const Query& query) {
     matches_.clear();
     capped_ = false;
@@ -544,7 +556,7 @@ int PlainEditView::findMatches(const Query& query) {
     // пустое совпадение и про регистр — иначе один и тот же запрос давал бы в
     // двух видах разные числа.
     for (const FlatHit& hit :
-         findInText(toPlainText(), query, settings().ui().findMatchLimit(), &capped_))
+         findInText(flatText(), query, settings().ui().findMatchLimit(), &capped_))
         matches_.push_back(Match{hit.offset, hit.length, hit.match});
     // ТЕКУЩЕГО ПОКА НЕТ — и это не забывчивость, а правило (то же, что в виде
     // заметки). Куда шагнуть, решает сам шаг: он идёт к ближайшей находке ОТ
@@ -668,7 +680,8 @@ bool PlainEditView::replaceCurrentMatch(const QString& with) {
 
 int PlainEditView::replaceAllMatches(const Query& query, const QString& with) {
     if (!query.usable()) return 0;
-    const std::vector<FlatHit> hits = findInText(toPlainText(), query);
+    // Замена без потолка: она делает работу, а не показывает число.
+    const std::vector<FlatHit> hits = findInText(flatText(), query);
     if (hits.empty()) return 0;
     // ОДНА СКОБКА НА ВСЁ: иначе откатывать пришлось бы по одному вхождению.
     // Идём с конца — передние замены не сдвигают ещё не сделанные.
