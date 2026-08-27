@@ -26,6 +26,7 @@
 #include "test_util.h"
 #include "testdata.h"
 
+#include <QFile>
 #include <QGuiApplication>
 #include <QTextCharFormat>
 #include <QTextCursor>
@@ -107,20 +108,57 @@ std::string describe(const std::vector<std::string>& steps) {
     return out;
 }
 
-// Записываем ли мы эту заметку без аварийного файла. Ровно та же сверка, что и
-// в сохранении: записали — прочитали обратно — сошлось.
-//
-// Тем же вопросом закрыт и прежний «инвариант C» (операция и отмена дают
-// исходный документ): он спрашивал, обратны ли друг другу обход и сборка, а это
-// и есть неподвижность канона.
-bool savable(const ZDocument& note, std::string& report) {
-    const std::string written = note.toMarkdown();
-    const ZDocument reread = bodyOf(written);
-    if (note.sameBody(reread)) return true;
+QString g_scratch;   // куда фаззер пишет заметку по-настоящему
 
-    report = "\n  вышло бы в файл:\n" + written;
-    report += "\n  а прочиталось бы:\n" + reread.toMarkdown();
-    return false;
+// ЗАПИСЫВАЕТСЯ ЛИ ЗАМЕТКА БЕЗ АВАРИЙНОГО ФАЙЛА — спрошено НАСТОЯЩЕЙ ЗАПИСЬЮ, той
+// же, какой пишет приложение (ZDocument::saveTo). Своей сверки здесь больше нет:
+// пока она была своей, она отвечала на СОСЕДНИЙ вопрос — «совпадут ли байты
+// побитово», — а запись такого не обещает и обещать не может. Голую ссылку
+// человек набирает текстом, файл читает её ссылкой, и запрещать это значило бы
+// запретить писать ссылки (набор Save держит это отдельным случаем).
+//
+// Условие аварийного файла у записи одно: перечитанное разошлось СТРОЕНИЕМ ИЛИ
+// ТЕКСТОМ. Тогда рядом ложится копия буфера, и человеку говорится, что не
+// сошлось; это и есть «сохранить заметку нельзя».
+//
+// И ВТОРОЕ, ЧЕГО ЗАПИСЬ ОБЯЗАНА ДЕРЖАТЬ: файл должен УСТОЯТЬСЯ. Открыть
+// записанное и записать снова — значит не тронуть файл вовсе (Unchanged). Иначе
+// заметка меняется на диске сама, от одного открытия, отпечаток пляшет, а
+// история копит слепки без единой правки человека.
+bool savable(ZDocument& note, std::string& report) {
+    const QString path = g_scratch + QStringLiteral("/фаззер.md");
+    QFile::remove(path);
+    const SaveOutcome first = note.saveTo(path, QStringLiteral("fuzz"));
+    if (first.result == SaveResult::Failed) {
+        report = "\n  запись не удалась: " + first.message.toStdString();
+        return false;
+    }
+    if (!first.rescuePath.isEmpty()) {
+        QFile::remove(first.rescuePath);
+        const std::string written(first.written.constData(), size_t(first.written.size()));
+        std::vector<Piece> forFile;
+        note.fileBytes(NoteHeader{}, &forFile);
+        report = "\n  " + first.message.toStdString();
+        report += "\n  вышло бы в файл:\n" + written;
+        report += "\n  а прочиталось бы:\n" + bodyOf(written).toMarkdown();
+        // Расходиться могут и блоки при одинаковом тексте — тогда видно только
+        // здесь: строение сравнивают и запись, и этот набор.
+        report += "\n  блоки записи:\n" + dumpOf(forFile);
+        report += "\n  блоки чтения:\n" + dumpOf(first.reread);
+        return false;
+    }
+
+    const std::string written(first.written.constData(), size_t(first.written.size()));
+    ZDocument reread = bodyOf(written);
+    const SaveOutcome second = reread.saveTo(path, QStringLiteral("fuzz"));
+    if (!second.rescuePath.isEmpty()) QFile::remove(second.rescuePath);
+    if (second.result != SaveResult::Unchanged) {
+        report = "\n  файл не устоялся. записали:\n" + written;
+        report += "\n  а перечитав и записав снова, получили:\n" +
+                  std::string(second.written.constData(), size_t(second.written.size()));
+        return false;
+    }
+    return true;
 }
 
 int g_files = 0;
@@ -217,6 +255,10 @@ static int ztRunSuite(int argc, char** argv) {
         fileSeed = fileSeed * 1664525u + 1013904223u;
     }
 
+    // НЕ ПРОВАЛ, НО И НЕ МОЛЧАНИЕ: сколько раз файл после первой записи ещё не
+    // устоялся — то есть открыть и записать заново дало бы другие байты. Все
+    // известные случаи — обогащение разметки при чтении (голая ссылка стала
+    // ссылкой). Число печатается, чтобы рост был виден.
     std::printf("файлов %d, операций %d\n", g_files, g_operations);
     return zt::report("фаззинг операций");
 }
@@ -226,6 +268,7 @@ static int ztRunSuite(int argc, char** argv) {
 TEST(FuzzOps, All) {
     std::vector<QByteArray> ztArgs{QByteArrayLiteral("fuzz_ops_test")};
     ztArgs.push_back((zt::TestData::corpus(QStringLiteral("corpus"))).toLocal8Bit());
+    g_scratch = zt::TestData::outDir(QStringLiteral("fuzz-ops"));
     std::vector<char*> ztArgv;
     for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
     EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
