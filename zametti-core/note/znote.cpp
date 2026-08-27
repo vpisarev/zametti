@@ -50,8 +50,8 @@ bool ZNote::load(std::string_view bytes) {
 
 std::string ZNote::toMarkdown() const { return doc_.toMarkdown(header_); }
 
-QByteArray ZNote::fileBytes(std::vector<Piece>* fileBlocks) const {
-    return doc_.fileBytes(header_, fileBlocks);
+QByteArray ZNote::fileBytes(std::vector<Piece>* fileBlocks, bool* enriched) const {
+    return doc_.fileBytes(header_, fileBlocks, enriched);
 }
 
 

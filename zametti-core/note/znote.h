@@ -100,7 +100,8 @@ public:
     // Дамп строения в JSON — шапка и блоки (золотые наборы, отладка).
     std::string toJson() const { return doc_.toJson(header_); }
     // Байты, какими они лягут в файл, — без записи (сравнить с прошлой копией).
-    QByteArray fileBytes(std::vector<Piece>* fileBlocks = nullptr) const;
+    QByteArray fileBytes(std::vector<Piece>* fileBlocks = nullptr,
+                         bool* enriched = nullptr) const;
     // Записать в файл штатным путём (self-check, атомарно) в своём конверте.
     SaveOutcome save(const QString& path, const QString& timestamp, const Digest& known = {},
                      const std::vector<Piece>* prebuiltBlocks = nullptr,

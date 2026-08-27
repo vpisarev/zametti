@@ -3041,7 +3041,11 @@ void NoteEditor::save(bool interactive, bool force) {
     if (note_->hasHeader() && stampModifiedOnSave_) note_->stampModified();
 
     std::vector<Piece> fileIr;
-    QByteArray candidate = note_->fileBytes(&fileIr);
+    // enriched — «канон принял разметку, которую даст чтение» (голый адрес стал
+    // ссылкой). Тогда файл богаче документа, и документ надо догнать, иначе
+    // адрес станет ссылкой только при следующем открытии заметки.
+    bool enriched = false;
+    QByteArray candidate = note_->fileBytes(&fileIr, &enriched);
     if (!note_->lastSaved().isEmpty() && NoteHeader::sameFileApartFromStamps(candidate, note_->lastSaved())) {
         note_->setHeader(metaBefore);
         document()->setModified(false);
@@ -3089,7 +3093,7 @@ void NoteEditor::save(bool interactive, bool force) {
         // Пересобираем байты только если что-то и правда переехало: лишняя
         // сериализация большой заметки — это миллисекунды на каждое
         // автосохранение.
-        if (moved) candidate = note_->fileBytes(&fileIr);
+        if (moved) candidate = note_->fileBytes(&fileIr, &enriched);
     }
 
     // Отпечаток того, что в файле, мы знаем — значит «не изменилось ли»
@@ -3110,7 +3114,7 @@ void NoteEditor::save(bool interactive, bool force) {
         // диске, и то, что на экране, расходились бы до перезагрузки. Шага
         // истории здесь нет: содержимое то же самое, изменилась только разметка
         // внутри строки.
-        if (outcome.differsFromDocument) {
+        if (outcome.differsFromDocument || enriched) {
             const int cursor = textCursor().position();
             const ViewAnchor anchor = viewAnchor();
             // ПРИКЛЕИВАЕТСЯ К ТОЙ ПРАВКЕ, КОТОРУЮ ДОГОНЯЕТ, а не заводит свой

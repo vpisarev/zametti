@@ -205,7 +205,11 @@ public:
     // и только если разошлось — ставить штамп и писать.
     //
     // fileBlocks — те же блоки: их потом отдают saveTo как prebuiltBlocks.
-    QByteArray fileBytes(const NoteHeader& envelope, std::vector<Piece>* fileBlocks = nullptr) const;
+    // enriched — «разметка обогатилась»: чтение даёт на том же тексте больше,
+    // чем держит документ (голый адрес станет ссылкой), и приведение это
+    // приняло. Спрашивает редактор, чтобы догнать документ после записи.
+    QByteArray fileBytes(const NoteHeader& envelope, std::vector<Piece>* fileBlocks = nullptr,
+                         bool* enriched = nullptr) const;
 
 
     // --- о чём заметка ----------------------------------------------------

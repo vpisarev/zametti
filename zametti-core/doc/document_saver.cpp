@@ -271,18 +271,39 @@ bool sameSkeleton(const std::vector<Piece>& x, const std::vector<Piece>& y) {
 // «можно ли писать», а «отличается ли перечитанное от документа хоть чем-то» —
 // голую ссылку человек набирает текстом, а файл читает её ссылкой, и виджет
 // обязан догнать документ этим содержимым.
+// Одинаковы ли куски строки: границы, начертание, адрес, подпись.
+bool sameRuns(const std::vector<Run>& x, const std::vector<Run>& y) {
+    if (x.size() != y.size()) return false;
+    for (size_t i = 0; i < x.size(); ++i) {
+        if (x[i].start != y[i].start || x[i].end != y[i].end || x[i].flags != y[i].flags ||
+            x[i].href != y[i].href || x[i].title != y[i].title)
+            return false;
+    }
+    return true;
+}
+
+// Есть ли в whole каждый кусок из part — тот же в точности. Порядок не важен:
+// чтение вправе разложить те же признаки другими прогонами.
+bool runsContain(const std::vector<Run>& whole, const std::vector<Run>& part) {
+    for (const Run& want : part) {
+        bool found = false;
+        for (const Run& have : whole) {
+            if (have.start == want.start && have.end == want.end && have.flags == want.flags &&
+                have.href == want.href && have.title == want.title) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) return false;
+    }
+    return true;
+}
+
 bool sameContent(const std::vector<Piece>& x, const std::vector<Piece>& y) {
     if (!sameSkeleton(x, y)) return false;
     for (size_t i = 0; i < x.size(); ++i) {
         if (x[i].raw) continue;
-        if (x[i].runs.size() != y[i].runs.size()) return false;
-        for (size_t k = 0; k < x[i].runs.size(); ++k) {
-            const Run& a = x[i].runs[k];
-            const Run& b = y[i].runs[k];
-            if (a.start != b.start || a.end != b.end || a.flags != b.flags ||
-                a.href != b.href || a.title != b.title)
-                return false;
-        }
+        if (!sameRuns(x[i].runs, y[i].runs)) return false;
     }
     return true;
 }
@@ -528,8 +549,17 @@ Piece withNbspThatSurvives(Piece block) {
 // Поэтому правило простое: текст свят, разметка — по возможности. Если блок с
 // разметкой обратно не читается, разметка снимается, а текст остаётся до знака.
 // Потерять начертание неприятно; потерять слово нельзя.
-Piece withMarkupThatSurvives(Piece block) {
-    if (block.raw || block.runs.empty()) return block;
+//
+// И ОБРАТНОЕ ТОЖЕ ВЕРНО: если чтение даёт РАЗМЕТКУ БОГАЧЕ нашей при том же
+// тексте, принимаем её (решение владельца, 27.08.2026). Голый адрес человек
+// набирает текстом, а файл читает его ссылкой — и пока канон этого не принимал,
+// первая запись клала одно, а вторая (после того как редактор догонял документ)
+// уже другое: `<адрес>` или `[текст](адрес)`. Файл менялся дважды на одной
+// правке, и в журнал ложился лишний слепок. Теперь первая запись сразу
+// окончательная.
+Piece withMarkupThatSurvives(Piece block, bool* enriched) {
+    if (block.raw) return block;
+    if (block.runs.empty() && block.kind == Kind::Code) return block;
 
     // Уровень вложенности сбрасываем: вопрос здесь только про разметку внутри
     // строки, а писатель в одиночном блоке ждёт, что уровень не прыгает через
@@ -540,8 +570,23 @@ Piece withMarkupThatSurvives(Piece block) {
     std::vector<Piece> back;
     NoteHeader ignored;
     parsePieces(writePieces({probe}), back, ignored);
-    if (back.size() == 1 && !back[0].raw && back[0].text == block.text) return block;
+    if (back.size() == 1 && !back[0].raw && back[0].text == block.text) {
+        // Текст сошёлся — значит записанное читается тем же. Разметку берём ту,
+        // которую даст чтение, — но ТОЛЬКО ЕСЛИ ОНА БОГАЧЕ: всё наше в ней есть,
+        // и сверх того появилось что-то ещё (голый адрес стал ссылкой).
+        //
+        // Если чтение, наоборот, ЧТО-ТО ПОТЕРЯЛО, принимать это нельзя: байты
+        // от такого согласия не изменятся ни на знак, а расхождение перестанет
+        // быть видно — то есть мы просто договоримся с потерей разметки. Пусть
+        // остаётся красным и ловится наборами.
+        if (!sameRuns(block.runs, back[0].runs) && runsContain(back[0].runs, block.runs)) {
+            block.runs = back[0].runs;
+            if (enriched != nullptr) *enriched = true;
+        }
+        return block;
+    }
 
+    if (block.runs.empty()) return block;
     block.runs.clear();
     return block;
 }
@@ -671,7 +716,7 @@ void appendSplitOnBlankLines(std::vector<Piece>& out, Piece block) {
 
 }  // namespace
 
-std::vector<Piece> documentForFile(std::vector<Piece> doc) {
+std::vector<Piece> documentForFile(std::vector<Piece> doc, bool* enriched) {
     std::vector<Piece> out;
     out.reserve(doc.size());
     for (Piece& block : doc) {
@@ -681,9 +726,11 @@ std::vector<Piece> documentForFile(std::vector<Piece> doc) {
             block.text.indexOf(QChar::Nbsp) < 0)
             block.text.clear();
         appendSplitOnBlankLines(
-            out, withMarkupThatSurvives(withStrikeOnWholeWords(withTrimmedSpans(
-                     withCodeSpansPerLine(withHeadingOnOneLine(withNbspThatSurvives(
-                         withRawNewline(withEdgesNormalised(std::move(block))))))))));
+            out,
+            withMarkupThatSurvives(
+                withStrikeOnWholeWords(withTrimmedSpans(withCodeSpansPerLine(withHeadingOnOneLine(
+                    withNbspThatSurvives(withRawNewline(withEdgesNormalised(std::move(block)))))))),
+                enriched));
     }
 
     // Пустые строки в начале документа файл выразить не может: пустая строка
@@ -778,9 +825,9 @@ std::string_view asView(const QByteArray& bytes) {
 }
 
 QByteArray noteBytes(const QTextDocument& doc, const NoteHeader& meta, DocumentReaderFn reader,
-                     std::vector<Piece>* fileBlocks) {
+                     std::vector<Piece>* fileBlocks, bool* enriched) {
     std::vector<Piece> forFile =
-        documentForFile(reader ? reader(doc) : piecesOfDocument(doc));
+        documentForFile(reader ? reader(doc) : piecesOfDocument(doc), enriched);
     // ГРАНИЦА ФАЙЛА: текст переводится в байты один раз, здесь.
     const QByteArray text = writePieces(forFile, meta).toUtf8();
     if (fileBlocks != nullptr) *fileBlocks = std::move(forFile);
@@ -893,8 +940,9 @@ SaveOutcome ZDocument::saveTo(const QString& path, const QString& timestamp,
                         prebuiltBlocks, prebuiltText);
 }
 
-QByteArray ZDocument::fileBytes(const NoteHeader& envelope, std::vector<Piece>* fileBlocks) const {
-    return noteBytes(d_->text, envelope, nullptr, fileBlocks);
+QByteArray ZDocument::fileBytes(const NoteHeader& envelope, std::vector<Piece>* fileBlocks,
+                               bool* enriched) const {
+    return noteBytes(d_->text, envelope, nullptr, fileBlocks, enriched);
 }
 
 }  // namespace zametti
