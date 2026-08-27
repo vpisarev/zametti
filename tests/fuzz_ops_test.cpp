@@ -125,6 +125,18 @@ QString g_scratch;   // куда фаззер пишет заметку по-н�
 // записанное и записать снова — значит не тронуть файл вовсе (Unchanged). Иначе
 // заметка меняется на диске сама, от одного открытия, отпечаток пляшет, а
 // история копит слепки без единой правки человека.
+int g_saved = 0;
+
+// Байты падения — ФАЙЛОМ РЯДОМ, а не только в отчёте. По тексту в отчёте случай
+// не сузишь: он длинный, а сужать его надо инструментом (mddump --file).
+void keepFailure(const std::string& text) {
+    const QString path =
+        g_scratch + QStringLiteral("/случай-%1.md").arg(++g_saved, 3, 10, QLatin1Char('0'));
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) return;
+    file.write(text.data(), qint64(text.size()));
+}
+
 bool savable(ZDocument& note, std::string& report) {
     const QString path = g_scratch + QStringLiteral("/фаззер.md");
     QFile::remove(path);
@@ -145,6 +157,7 @@ bool savable(ZDocument& note, std::string& report) {
         // здесь: строение сравнивают и запись, и этот набор.
         report += "\n  блоки записи:\n" + dumpOf(forFile);
         report += "\n  блоки чтения:\n" + dumpOf(first.reread);
+        keepFailure(written);
         return false;
     }
 
@@ -153,6 +166,7 @@ bool savable(ZDocument& note, std::string& report) {
     const SaveOutcome second = reread.saveTo(path, QStringLiteral("fuzz"));
     if (!second.rescuePath.isEmpty()) QFile::remove(second.rescuePath);
     if (second.result != SaveResult::Unchanged) {
+        keepFailure(written);
         report = "\n  файл не устоялся. записали:\n" + written;
         report += "\n  а перечитав и записав снова, получили:\n" +
                   std::string(second.written.constData(), size_t(second.written.size()));
