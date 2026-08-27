@@ -708,7 +708,34 @@ void checkLiveExtras() {
         check(canon.find("\u00a0") == std::string::npos,
               "и отступ не превратился в неразрывные: " + canon);
     }
-    // 4. Таб, набранный в блоке кода: чтение развернёт его по стопам.
+    // 4. Пустой пункт сразу за абзацем файл съедает: "текст\n-" читается
+    // setext-заголовком второго уровня, "текст\n1." — просто текстом абзаца
+    // (замерено на md4c). В живом документе это законное промежуточное
+    // состояние набора — человек напечатал "- " и сейчас напечатает текст, — а
+    // в файле между ними обязана встать пустая строка.
+    for (zametti::Marker marker : {zametti::Marker::Bullet, zametti::Marker::Ordered}) {
+        std::vector<zametti::Piece> blocks;
+        zametti::Piece text;
+        text.kind = zametti::Kind::Paragraph;
+        text.text = QStringLiteral("текст");
+        zametti::Piece item;
+        item.kind = zametti::Kind::ListItem;
+        item.marker = marker;
+        item.level = 0;
+        blocks.push_back(text);
+        blocks.push_back(item);
+
+        zametti::ZDocument note = zametti::ZDocument::fromPieces(blocks);
+        const std::string canon = note.toMarkdown();
+        check(canon.find("\n\n") != std::string::npos,
+              "пустой пункт за абзацем отбит пустой строкой: " + canon);
+        checkEqual(canon, noteOf(canon).toMarkdown(),
+                   "пустой пункт за абзацем: канон — неподвижная точка");
+        const std::vector<zametti::Piece> back = pieces(canon);
+        check(back.size() == 3 && back[2].kind == zametti::Kind::ListItem,
+              "и читается обратно пунктом, а не заголовком: " + canon);
+    }
+    // 5. Таб, набранный в блоке кода: чтение развернёт его по стопам.
     {
         zametti::ZDocument note = zametti::ZDocument::fromPieces(pieces("```\nраз\n```\n"));
         QTextCursor cursor = note.caretAtBlock(0);
