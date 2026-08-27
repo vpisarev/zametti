@@ -21,6 +21,13 @@ bool badName(const QString& name) {
 }
 
 QString httpTrouble(const QString& what, QNetworkReply* reply) {
+    // Оборвал наш сторож бездействия — так и говорим: безликое «Operation
+    // canceled» первым же живым прогоном прочиталось как загадка.
+    const QVariant stalled = reply->property("zamettiStalledMs");
+    if (stalled.isValid())
+        return QStringLiteral("%1: no data for %2 s — the connection stalled")
+            .arg(what)
+            .arg(stalled.toInt() / 1000);
     const int code =
         reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     if (code == 401 || code == 403)
@@ -104,13 +111,27 @@ WebDavRemote::~WebDavRemote() = default;
 
 namespace {
 
-// Дождаться ответа, не давая программе висеть вечно.
+// Дождаться ответа, не давая программе висеть вечно, — но и не рубя живую
+// передачу: сторож следит за БЕЗДЕЙСТВИЕМ, а не за длительностью. Большое
+// вложение на медленном канале едет минутами, и это нормально; беда — когда
+// байты перестали ходить вовсе. Каждый ушедший или пришедший кусок
+// перезапускает таймер. Прежний дедлайн на всю операцию оборвал первую же
+// живую заливку крупной картинки ровно на 30-й секунде («Operation
+// canceled») — большие файлы были обречены по построению.
 void waitFor(QNetworkReply* reply, int timeoutMs) {
     QEventLoop loop;
     QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
     QTimer timer;
     timer.setSingleShot(true);
-    QObject::connect(&timer, &QTimer::timeout, [&] {
+    QObject::connect(reply, &QNetworkReply::uploadProgress, &timer,
+                     [&timer, timeoutMs](qint64, qint64) { timer.start(timeoutMs); });
+    QObject::connect(reply, &QNetworkReply::downloadProgress, &timer,
+                     [&timer, timeoutMs](qint64, qint64) { timer.start(timeoutMs); });
+
+    QObject::connect(&timer, &QTimer::timeout, [reply, timeoutMs] {
+        // Пометка «оборвал сторож»: httpTrouble скажет про молчание канала,
+        // а не отдаст безликое «Operation canceled» от Qt.
+        reply->setProperty("zamettiStalledMs", timeoutMs);
         reply->abort();          // abort сам приведёт к finished
     });
     timer.start(timeoutMs);

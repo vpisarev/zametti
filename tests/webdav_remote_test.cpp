@@ -13,6 +13,13 @@
 #include "test_util.h"
 #include "webdav_harness.h"
 
+#include <QElapsedTimer>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QTimer>
+
+#include <memory>
+
 namespace {
 
 using zametti::WebDavRemote;
@@ -58,10 +65,71 @@ void checkUrlRule() {
     ZT_TRUE("негодный адрес запрещён", !WebDavRemote::checkUrl(config, &error));
 }
 
+// СТОРОЖ БЕЗДЕЙСТВИЯ — без настоящего сервера: свой QTcpServer, которым
+// управляет проверка. Два обещания: молчащий канал обрывается по таймауту
+// С ЧЕСТНЫМИ СЛОВАМИ, а живой, но медленный — живёт ДОЛЬШЕ таймаута:
+// сторож следит за молчанием, не за длительностью (прежний дедлайн на всю
+// операцию обрёк большие вложения по построению — нашёл владелец первым
+// живым прогоном).
+void checkStallWatchdog() {
+    QString error;
+
+    // Молчание: соединение принимается, ответа нет вовсе.
+    {
+        QTcpServer silent;
+        ZT_TRUE("молчащий порт слушается", silent.listen(QHostAddress::LocalHost, 0));
+        WebDavRemote::Config cfg;
+        cfg.base =
+            QUrl(QStringLiteral("http://127.0.0.1:%1/зам/").arg(silent.serverPort()));
+        cfg.timeoutMs = 1000;
+        WebDavRemote remote(cfg);
+        QByteArray body;
+        QElapsedTimer clock;
+        clock.start();
+        ZT_TRUE("молчащий сервер оборван",
+                !remote.get(QStringLiteral("01n60000000000.log"), &body, nullptr, &error));
+        ZT_TRUE(("и сказано про молчание канала: " + error.toStdString()).c_str(),
+                error.contains(QLatin1String("stalled")));
+        ZT_TRUE("оборван сторожем, а не часом позже", clock.elapsed() < 5000);
+    }
+
+    // Капание: тело уходит кусками с паузами МЕНЬШЕ таймаута, но полное
+    // время передачи — БОЛЬШЕ. Прежний сторож рубил такую передачу.
+    {
+        QTcpServer dribble;
+        ZT_TRUE("капающий порт слушается", dribble.listen(QHostAddress::LocalHost, 0));
+        QObject::connect(&dribble, &QTcpServer::newConnection, &dribble, [&dribble] {
+            QTcpSocket* sock = dribble.nextPendingConnection();
+            sock->write("HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\n");
+            auto sent = std::make_shared<int>(0);
+            auto* drip = new QTimer(sock);
+            QObject::connect(drip, &QTimer::timeout, sock, [sock, sent, drip] {
+                sock->write("x", 1);
+                sock->flush();
+                if (++*sent == 6) {
+                    drip->stop();
+                    sock->disconnectFromHost();
+                }
+            });
+            drip->start(400);   // 6 капель × 400 мс = 2.4 с при таймауте 1 с
+        });
+        WebDavRemote::Config cfg;
+        cfg.base =
+            QUrl(QStringLiteral("http://127.0.0.1:%1/зам/").arg(dribble.serverPort()));
+        cfg.timeoutMs = 1000;
+        WebDavRemote remote(cfg);
+        QByteArray body;
+        ZT_TRUE(("капающий сервер дожил до конца: " + error.toStdString()).c_str(),
+                remote.get(QStringLiteral("01n60000000000.log"), &body, nullptr, &error));
+        ZT_TRUE("тело доехало целиком", body == QByteArray("xxxxxx"));
+    }
+}
+
 }  // namespace
 
 TEST(WebDavRemote, All) {
     checkUrlRule();
+    checkStallWatchdog();
 
     zt::WebDavStand stand(zt::TestData::outDir(QStringLiteral("webdav")));
     ZT_SKIP_NO_WEBDAV(stand);

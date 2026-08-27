@@ -40,6 +40,8 @@ public:
         QString user;
         QString password;
         bool allowInsecureHttp = false;   // из настроек (sync.allowInsecureHttp)
+        // Сторож БЕЗДЕЙСТВИЯ: обрыв, когда байты не ходят дольше этого. Не
+        // дедлайн операции — большой файл едет столько, сколько едет.
         int timeoutMs = 30000;
     };
 
