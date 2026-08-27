@@ -656,6 +656,55 @@ void checkInlineBareImage() {
     }
 }
 
+// ЖИВОЕ, ЧЕГО MARKDOWN НЕ ХРАНИТ, ОБЯЗАНО УЙТИ В ФАЙЛ ТАК, ЧТОБЫ ФАЙЛ ПРОЧЁЛСЯ
+// ТЕМ ЖЕ. Из файла такие состояния не подать — их заводит правка: одиночный
+// неразрывный пробел посреди строки (склеили строки, и наш отступ оказался в
+// середине), отступ у текста комментария, таб внутри блока кода. Чтение всё это
+// приводит к своему виду; значит и записывать надо приведённым, иначе первое же
+// перечитывание сдвинет текст, отпечаток запляшет, а «drift» покажется на ровном
+// месте. Ловится это только через живой документ — потому и здесь, а не в
+// круговом наборе.
+void checkLiveExtras() {
+    // 1. Ведущий неразрывный пробел, ставший серединой строки.
+    {
+        zametti::ZDocument note = zametti::ZDocument::fromPieces(pieces("первая\n\u00a0вторая\n"));
+        QTextCursor cursor = note.caretAtBlock(0);
+        cursor.movePosition(QTextCursor::EndOfBlock);
+        // Каретка — перед неразрывным, то есть сразу за переносом строки:
+        // Backspace здесь склеивает строки, а не съедает сам отступ.
+        cursor.setPosition(cursor.position() - int(QStringLiteral("вторая").size()) - 1);
+        note.deleteBack(cursor);   // склеили строки: неразрывный уехал в середину
+        const std::string canon = note.toMarkdown();
+        check(canon.find("\u00a0") == std::string::npos,
+              "одиночный неразрывный посреди строки в файл не уходит: " + canon);
+        checkEqual(canon, noteOf(canon).toMarkdown(),
+                   "склеенная строка: канон — неподвижная точка");
+    }
+    // 2. Отступ у текста комментария: за «<!-- » отступу взяться неоткуда.
+    {
+        zametti::ZDocument note = zametti::ZDocument::fromPieces(pieces("текст\n"));
+        QTextCursor cursor = note.caretAtBlock(0);
+        note.insertText(cursor, QStringLiteral("  "));
+        QTextCursor at = note.caretAtBlock(0);
+        note.toggleComment(at);
+        const std::string canon = note.toMarkdown();
+        checkEqual(std::string("<!-- текст -->\n"), canon, "отступ у комментария не пишется");
+        checkEqual(canon, noteOf(canon).toMarkdown(),
+                   "комментарий с отступом: канон — неподвижная точка");
+    }
+    // 3. Таб, набранный в блоке кода: чтение развернёт его по стопам.
+    {
+        zametti::ZDocument note = zametti::ZDocument::fromPieces(pieces("```\nраз\n```\n"));
+        QTextCursor cursor = note.caretAtBlock(0);
+        cursor.movePosition(QTextCursor::StartOfBlock);
+        note.insertText(cursor, QStringLiteral("\t"));
+        const std::string canon = note.toMarkdown();
+        checkEqual(std::string("```\n    раз\n```\n"), canon, "таб в отступе кода развёрнут");
+        checkEqual(canon, noteOf(canon).toMarkdown(),
+                   "таб в коде: канон — неподвижная точка");
+    }
+}
+
 void checkFailure() {
     const QString path = g_dir + QStringLiteral("/нет-такого-каталога/файл.md");
     zametti::ZDocument note = zametti::ZDocument::fromPieces(pieces("текст\n"));
@@ -737,6 +786,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkBareLinks();
     checkTrailingBareImage();
     checkInlineBareImage();
+    checkLiveExtras();
     checkRescue();
     checkFailure();
 
