@@ -2738,8 +2738,10 @@ int main(int argc, char** argv) {
         }
         if (verdict.cloudChangedForCurrent) {
             // Кнопка облака оживает тут же, не дожидаясь смены заметки; адрес
-            // и секреты контроллер достанет заново при прогоне.
+            // и секреты контроллер достанет заново при прогоне. Правки — на
+            // диск до прогона (выравнивание читает файлы).
             refreshToolbar();
+            editor.save(false, true);
             cloudSync.startFull(false);
         }
     };
@@ -2802,11 +2804,15 @@ int main(int argc, char** argv) {
                     collator.setNumericMode(true);
                     std::sort(names.begin(), names.end(), collator);
                     using Verdict = zametti::PendingDeletesDialog::Verdict;
+                    // Правки — на диск до повторного прогона: человек мог
+                    // печатать, пока шёл фоновый (выравнивание читает файлы).
                     switch (zametti::PendingDeletesDialog::ask(&window, names)) {
                         case Verdict::DeleteHere:
+                            editor.save(false, true);
                             cloudSync.startFull(true);
                             break;
                         case Verdict::KeepAlive:
+                            editor.save(false, true);
                             cloudSync.declareAliveAndFinish(ids);
                             break;
                         case Verdict::DecideLater:
@@ -2907,6 +2913,11 @@ int main(int argc, char** argv) {
                 exportNote(editor.filePath());
                 break;
             case Button::Cloud:
+                // Правки — на диск ДО прогона: выравнивание читает файлы, и
+                // заметка, набранная и не покинутая, иначе не уезжала вовсе
+                // (владелец, п.12 первого живого прогона: «надо сначала
+                // переключиться на другую заметку»).
+                if (!cloudSync.running()) editor.save(false, true);
                 cloudSync.toggle();
                 break;
             }
