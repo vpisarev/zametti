@@ -725,8 +725,12 @@ void checkInterruptionHeals() {
     rig.ra->failNext(QStringLiteral("put"), 2);
     ZStorage::SyncReport broken;
     QString err;
-    ZT_TRUE("оборванный прогон честно красен", !rig.sa->sync({}, &broken, &err));
-    ZT_TRUE("часть работы сделана и посчитана", broken.integrityFailures >= 1);
+    // Обрыв передачи — «отложено», а не провал (решение владельца: сеть то
+    // есть, то нет): прогон остаётся удачным, недолитое ждёт повтора.
+    ZT_TRUE(("оборванный прогон удачен, недолитое отложено: " + err.toStdString()).c_str(),
+            rig.sa->sync({}, &broken, &err));
+    ZT_TRUE("отложено и посчитано", broken.deferred >= 2);
+    ZT_EQ("целостность ни при чём", num(0), num(broken.integrityFailures));
 
     ZStorage::SyncReport again = rig.syncOne(*rig.sa, "повторный прогон достраивает");
     for (const char* id : {"01n6cqevaaaaaa", "01n6cqevbbbbbb", "01n6cqevcccccc"})
@@ -964,15 +968,29 @@ void checkSyncWritesItsLog() {
     ZT_TRUE("итог записан", all.contains("done: listed"));
     ZT_TRUE("ошибок не было — err.log пуст", !QFile::exists(logs.errPath()));
 
-    // Обрыв заливки — ошибка обязана лечь в ОБА лога.
+    // ОБРЫВ ЗАЛИВКИ — НЕ ОШИБКА, А «ОТЛОЖЕНО» (решение владельца: телефонный
+    // интернет то есть, то нет): прогон остаётся удачным, блоб — deferred,
+    // след — в sync.log со словом skipped; err.log НЕ трогается. Повторный
+    // прогон доделывает.
     rig.ra->failNext(QStringLiteral("put"), 1);
     TwoDevices::writeRaw(rig.a, QStringLiteral("01n6cqevaaaaaa"), note("правка"));
     ZStorage::SyncReport report;
     QString err;
-    rig.sa->sync(options, &report, &err);
-    QFile fe(logs.errPath());
-    ZT_TRUE("err.log появился", fe.open(QIODevice::ReadOnly));
-    ZT_TRUE("беда в err.log", fe.readAll().contains("cannot upload"));
+    ZT_TRUE(("обрыв сети не валит прогон: " + err.toStdString()).c_str(),
+            rig.sa->sync(options, &report, &err));
+    ZT_EQ("блоб отложен", num(1), num(report.deferred));
+    ZT_EQ("провалов целостности нет", num(0), num(report.integrityFailures));
+    {
+        QFile fs(logs.syncPath());
+        ZT_TRUE("sync.log читается", fs.open(QIODevice::ReadOnly));
+        ZT_TRUE("след со словом skipped", fs.readAll().contains("skipped (will retry)"));
+    }
+    ZT_TRUE("err.log не появился — сеть не ошибка", !QFile::exists(logs.errPath()));
+    // Сеть вернулась — повтор доделывает без следов беды.
+    ZStorage::SyncReport again;
+    ZT_TRUE("повтор прошёл", rig.sa->sync(options, &again, &err));
+    ZT_EQ("правка доехала", num(1), num(again.pushedWhole));
+    ZT_EQ("отложенных не осталось", num(0), num(again.deferred));
 }
 
 void checkProgressLineShape() {
