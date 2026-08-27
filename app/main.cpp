@@ -2166,7 +2166,10 @@ int main(int argc, char** argv) {
     });
 
     QObject::connect(&searchDebounce, &QTimer::timeout, &window, [&] {
-        storeSearch.search(searchRoot(), findBar.query());
+        // РЕЖИМ ЭКРАНА ЗАДАЁТ СМЫСЛ ПОИСКА ПО БАЗЕ: в [M] ищем по markdown,
+        // в обычном виде — по тексту. Один Ctrl+Shift+F ведёт себя так же, как
+        // Ctrl+F в открытой заметке, и объяснять это не приходится.
+        storeSearch.search(searchRoot(), findBar.query(), findBar.regexOn(), markdown.active());
     });
 
     QObject::connect(&storeSearch, &zametti::StoreSearch::found, &window,
@@ -2238,6 +2241,17 @@ int main(int argc, char** argv) {
         // утащить фокус значило бы выдернуть строку поиска из-под пальцев.
         if (file != editor.filePath()) editor.openFile(file, false);
         const zametti::Query query = zametti::makeQuery(findBar.query(), findBar.regexOn());
+
+        // НАШЛОСЬ В MARKDOWN — ТУДА И ВЕДЁМ. В обычном виде этой строки может
+        // не быть вовсе («# vector» — это решётки заголовка, а в тексте блока
+        // их нет), и прыжок по номеру попал бы не туда или никуда.
+        if (index.data(zametti::SearchResultsModel::InMarkdownRole).toBool()) {
+            if (!markdown.active()) markdown.enter();
+            markdownView.findMatches(query);
+            markdownView.goToMatch(ordinal);
+            return;
+        }
+        if (markdown.active()) markdown.leave();
         editor.findMatches(query);
         editor.goToMatch(ordinal);
     };

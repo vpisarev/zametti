@@ -286,7 +286,7 @@ void checkStoreSearch() {
     zametti::StoreSearch search;
     QSignalSpy spy(&search, &zametti::StoreSearch::found);
 
-    search.search(g_root, QStringLiteral("иголка"));
+    search.search(g_root, QStringLiteral("иголка"), false, false);
     ZT_TRUE("ответ пришёл", spy.wait(5000));
     ZT_TRUE("ровно один ответ", spy.count() == 1);
     if (spy.isEmpty()) return;
@@ -311,7 +311,7 @@ void checkStoreSearch() {
     // тем, как файлы легли на диск.
     note("00000000000000", "archived: yes\nmodified: 2023-01-01T00:00:00Z\n",
          "# Убранная\n\nздесь тоже иголка, но заметка в архиве\n");
-    search.search(g_root, QStringLiteral("иголка"));
+    search.search(g_root, QStringLiteral("иголка"), false, false);
     ZT_TRUE("ответ пришёл", spy.wait(5000));
     {
         const auto results = spy.at(spy.count() - 1).at(1).value<QVector<SearchResult>>();
@@ -327,8 +327,8 @@ void checkStoreSearch() {
     // Отмена: пускаем запрос и тут же перебиваем другим. В списке должен
     // оказаться ответ только на второй — первый отменяется между файлами.
     spy.clear();
-    search.search(g_root, QStringLiteral("сено"));
-    search.search(g_root, QStringLiteral("иголка"));
+    search.search(g_root, QStringLiteral("сено"), false, false);
+    search.search(g_root, QStringLiteral("иголка"), false, false);
     ZT_TRUE("ответ на второй запрос пришёл", spy.wait(5000));
     QTest::qWait(300);   // дать отменённому шанс всё-таки ответить
     bool stale = false;
@@ -340,7 +340,7 @@ void checkStoreSearch() {
     // UI-поток при этом свободен: замеряем, сколько занимает сам вызов.
     QElapsedTimer timer;
     timer.start();
-    search.search(g_root, QStringLiteral("сено"));
+    search.search(g_root, QStringLiteral("сено"), false, false);
     const qint64 blocked = timer.elapsed();
     ZT_TRUE("запуск поиска не занимает UI-поток", blocked < 20);
     spy.wait(5000);
@@ -622,6 +622,43 @@ void checkSearchSurvivesSwitch() {
 // самого поиска.
 // ТУМБЛЕР ВЫРАЖЕНИЙ В ПАНЕЛИ: он не режим панели, а признак ЗАПРОСА.
 // ЗАМЕНА ВЫРАЖЕНИЕМ ПО ЖИВОЙ ЗАМЕТКЕ: и «всё», и одно вхождение.
+// ПОИСК ПО БАЗЕ ПОВТОРЯЕТ РЕЖИМ ЭКРАНА: обычный вид ищет по тексту, [M] — по
+// markdown. «# vector» — решётки заголовка, и в тексте блока их нет вовсе.
+void checkStoreSearchFollowsMode() {
+    zametti::StoreSearch search;
+    QString gotQuery;
+    QVector<zametti::SearchResult> got;
+    QObject::connect(&search, &zametti::StoreSearch::found, &search,
+                     [&](const QString& text, const QVector<zametti::SearchResult>& results, bool,
+                         qint64) {
+                         gotQuery = text;
+                         got = results;
+                     });
+    const auto run = [&](const QString& text, bool markdown) {
+        got.clear();
+        gotQuery.clear();
+        search.search(g_root, text, false, markdown);
+        for (int i = 0; i < 100 && gotQuery.isEmpty(); ++i) QTest::qWait(20);
+    };
+
+    run(QStringLiteral("# Сено"), false);
+    ZT_TRUE("в обычном виде решётки заголовка не ищутся", got.isEmpty());
+
+    run(QStringLiteral("# Сено"), true);
+    ZT_TRUE("а в режиме исходника — находятся", got.size() == 1);
+    if (!got.isEmpty()) {
+        ZT_TRUE("и находка помечена как markdown", got.first().inMarkdown);
+        ZT_TRUE("строка результата — из markdown: " + got.first().line.toStdString(),
+                got.first().line.contains(QStringLiteral("# Сено")));
+    }
+
+    // Обычный текст находится в обоих режимах — разница только в разметке.
+    run(QStringLiteral("солома"), false);
+    const int inText = got.size();
+    run(QStringLiteral("солома"), true);
+    ZT_TRUE("слово находится в обоих режимах", inText > 0 && got.size() == inText);
+}
+
 void checkRegexReplace() {
     const QString path = QDir(g_root).filePath(QStringLiteral("00000000000004.md"));
     {
@@ -858,6 +895,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkDeleteEveryMatchOneByOne();
     checkCaretMemory();
     checkSearchSurvivesSwitch();
+    checkStoreSearchFollowsMode();
     checkRegexReplace();
     checkRegexToggle();
     shootFindBar();

@@ -43,6 +43,7 @@ void SearchResultsModel::setResults(const QVector<SearchResult>& results) {
         row.ordinal = result.ordinal;
         row.snapshotTime = result.snapshotTime;
         row.snapshotDigest = result.snapshotDigest;
+        row.inMarkdown = result.inMarkdown;
         rows_.push_back(row);
     }
     endResetModel();
@@ -74,6 +75,7 @@ QVariant SearchResultsModel::data(const QModelIndex& index, int role) const {
         case SnapshotDigestRole:
             return QByteArray(reinterpret_cast<const char*>(row.snapshotDigest.bytes.data()),
                               qsizetype(row.snapshotDigest.bytes.size()));
+        case InMarkdownRole: return row.inMarkdown;
         default: return {};
     }
 }

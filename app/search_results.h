@@ -32,6 +32,8 @@ public:
         // Слепок истории, в котором нашлось: время и отпечаток записи.
         qint64 snapshotTime = 0;
         Digest snapshotDigest;
+        // Нашлось в markdown, а не в тексте: щелчок обязан открыть [M].
+        bool inMarkdown = false;
     };
 
     enum Roles {
@@ -43,6 +45,7 @@ public:
         OrdinalRole,
         SnapshotTimeRole,
         SnapshotDigestRole,
+        InMarkdownRole,
     };
 
     using QAbstractListModel::QAbstractListModel;

@@ -228,6 +228,36 @@ QString expandReplacement(const Query& query, const QRegularExpressionMatch& mat
     return out;
 }
 
+HitLine hitLineInText(const QString& text, int offset, int length, int radius) {
+    HitLine out;
+    if (offset < 0 || offset > text.size()) return out;
+
+    const auto isBreak = [](QChar c) {
+        return c == QChar::LineSeparator || c == QLatin1Char('\n');
+    };
+    qsizetype from = offset;
+    while (from > 0 && !isBreak(text.at(from - 1))) --from;
+    qsizetype to = offset;
+    while (to < text.size() && !isBreak(text.at(to))) ++to;
+
+    const qsizetype start = qMax(from, qsizetype(offset) - radius);
+    const qsizetype end = qMin(to, qsizetype(offset + length) + radius);
+    QString line = text.mid(start, end - start);
+    int at = int(offset - start);
+    if (start > from) {
+        line.prepend(QChar(0x2026));
+        ++at;
+    }
+    if (end < to) line.append(QChar(0x2026));
+
+    out.text = line;
+    out.offset = at;
+    // Совпадение выражения умеет тянуться через несколько строк; в списке
+    // видна одна, и подсветка прижимается к её краю.
+    out.length = qBound(0, length, int(line.size()) - at);
+    return out;
+}
+
 void forEachHit(const QTextDocument& doc, const Query& query,
                 const std::function<bool(const HitPlace&)>& sink) {
     if (!query.usable()) return;

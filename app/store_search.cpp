@@ -34,12 +34,13 @@ public:
         : latest_(std::move(latest)) {}
 
 public slots:
-    void run(const QString& root, const QString& text, quint64 generation) {
+    void run(const QString& root, const QString& text, bool regex, bool markdown,
+             quint64 generation) {
         if (latest_->load() != generation) return;
 
         QElapsedTimer timer;
         timer.start();
-        const Query query = makeQuery(text);
+        const Query query = makeQuery(text, regex);
         QVector<SearchResult> results;
         bool truncated = false;
         int scanned = 0;
@@ -68,6 +69,31 @@ public slots:
             const QString role = note.role();
             if (role == QLatin1String("folder") || role == QLatin1String("trash")) continue;
             const bool archived = note.isArchived();
+            // В РЕЖИМЕ ИСХОДНИКА ИЩЕМ ПО MARKDOWN — по тому же тексту, который
+            // показывает [M] (liveMarkdown), а не по байтам файла: файл может
+            // быть не в каноне, и тогда находка указывала бы на строку, которой
+            // в [M] не видно.
+            if (markdown) {
+                const QString source = doc.liveMarkdown();
+                const std::vector<FlatHit> found = findInText(source, query);
+                if (found.empty()) continue;
+                const QString title = doc.title();
+                int ordinal = 0;
+                for (const FlatHit& hit : found) {
+                    if (results.size() >= kMaxResults) {
+                        truncated = true;
+                        break;
+                    }
+                    const HitLine line = hitLineInText(source, hit.offset, hit.length);
+                    results.append(SearchResult{info.completeBaseName(),
+                                                info.absoluteFilePath(), title, line.text,
+                                                line.offset, line.length, ordinal++, 0, {},
+                                                archived, true});
+                }
+                if (truncated) break;
+                continue;
+            }
+
             const std::vector<Hit> hits = doc.find(query);
             if (hits.empty()) continue;
 
@@ -82,7 +108,7 @@ public slots:
                 results.append(SearchResult{info.completeBaseName(),
                                             info.absoluteFilePath(), title, line.text,
                                             line.offset, line.length, hit.ordinal, 0, {},
-                                            archived});
+                                            archived, false});
             }
             if (truncated) break;
         }
@@ -125,11 +151,12 @@ StoreSearch::~StoreSearch() {
     thread_.wait();
 }
 
-void StoreSearch::search(const QString& root, const QString& text) {
+void StoreSearch::search(const QString& root, const QString& text, bool regex, bool markdown) {
     const quint64 generation = ++generation_;
     latest_->store(generation);
     QMetaObject::invokeMethod(worker_, "run", Qt::QueuedConnection, Q_ARG(QString, root),
-                              Q_ARG(QString, text), Q_ARG(quint64, generation));
+                              Q_ARG(QString, text), Q_ARG(bool, regex), Q_ARG(bool, markdown),
+                              Q_ARG(quint64, generation));
 }
 
 void StoreSearch::cancel() { latest_->store(++generation_); }

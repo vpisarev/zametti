@@ -568,6 +568,19 @@ int PlainEditView::findMatches(const Query& query) {
     return int(matches_.size());
 }
 
+void PlainEditView::goToMatch(int index) {
+    if (matches_.empty()) return;
+    const int count = int(matches_.size());
+    current_ = ((index % count) + count) % count;
+    const Match one = matches_[size_t(current_)];
+    QTextCursor at(document());
+    at.setPosition(one.offset);
+    at.setPosition(one.offset + one.length, QTextCursor::KeepAnchor);
+    setTextCursor(at);
+    centerCursor();
+    refreshOverlays();
+}
+
 void PlainEditView::stepMatch(int direction) {
     if (matches_.empty()) return;
     const int count = int(matches_.size());

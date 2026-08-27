@@ -146,6 +146,11 @@ struct HitLine {
     int length = 0;
 };
 
+// То же для ПЛОСКОГО текста (поиск по хранилищу в режиме markdown): правило
+// одно с ZDocument::hitLine — строка вокруг совпадения, многоточия по краям,
+// длина подсветки прижата к показанной строке.
+HitLine hitLineInText(const QString& text, int offset, int length, int radius = 48);
+
 }  // namespace zametti
 
 #endif  // ZAMETTI_SEARCH_H

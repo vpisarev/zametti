@@ -72,6 +72,8 @@ public:
     int matchCount() const override { return int(matches_.size()); }
     int currentMatch() const override { return current_; }
     void stepMatch(int direction) override;
+    // Встать на N-е найденное (список результатов адресует находки номером).
+    void goToMatch(int index);
     void clearMatches() override;
     bool canReplace() const override { return !isReadOnly(); }
     bool replaceCurrentMatch(const QString& with) override;
