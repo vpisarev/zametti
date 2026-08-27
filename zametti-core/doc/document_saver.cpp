@@ -99,12 +99,25 @@ Piece withStrikeOnWholeWords(Piece block) {
 
     const QString& text = block.text;
     const qsizetype size = text.size();
-    for (Run& span : block.runs) {
+    std::vector<Run>& spans = block.runs;
+    for (size_t i = 0; i < spans.size(); ++i) {
+        Run& span = spans[i];
         if (!span.strike()) continue;
+        // КРАЙ, К КОТОРОМУ ВПЛОТНУЮ ПРИМЫКАЕТ ДРУГОЕ ЗАЧЁРКИВАНИЕ, КРАЕМ НЕ
+        // ЯВЛЯЕТСЯ. Зачёркнутый кусок с вложенным жирным лежит у нас тремя
+        // спанами ("~~_a **b** c_~~" — до, жирный, после), и каждый из них,
+        // растянутый до границ слова, залезал на соседа: спаны начинали
+        // перекрываться, а писатель по перекрытым спанам выводил уже другую
+        // разметку — жирный терялся, а зачёркивание обрывалось на полуслове.
+        const bool joinedLeft =
+            i > 0 && spans[i - 1].strike() && spans[i - 1].end == span.start;
+        const bool joinedRight =
+            i + 1 < spans.size() && spans[i + 1].strike() && span.end == spans[i + 1].start;
+
         qsizetype from = qBound<qsizetype>(0, qsizetype(span.start), size);
         qsizetype to = qBound<qsizetype>(from, qsizetype(span.end), size);
-        while (from > 0 && wordChar(text.at(from - 1))) --from;
-        while (to < size && wordChar(text.at(to))) ++to;
+        while (!joinedLeft && from > 0 && wordChar(text.at(from - 1))) --from;
+        while (!joinedRight && to < size && wordChar(text.at(to))) ++to;
         span.start = int32_t(from);
         span.end = int32_t(to);
     }
