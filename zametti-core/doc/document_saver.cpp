@@ -502,6 +502,12 @@ Piece withEdgesNormalised(Piece block) {
 
 // НЕРАЗРЫВНЫЕ ПРОБЕЛЫ, КОТОРЫЕ ПЕРЕЖИВУТ ЧТЕНИЕ.
 //
+// СТУПЕНЬЮ ПОЗЖЕ ЗАГОЛОВКА (порядок важен): заголовок сводится в одну строку, и
+// ведущий неразрывный его второй строки — законный отступ, пока строки две, —
+// оказывается в середине единственной. Пока эта ступень шла раньше, такой знак
+// доживал до файла, чтение делало из него обычный пробел, и следующая запись
+// давала уже другие байты (менялся даже выбор знака курсива: '*' против '_').
+//
 // Чтение (normaliseSpaces) держит наш неразрывный пробел там, где он значим:
 // ведущий у содержимого строки — это отступ, серия из двух и больше — это
 // выравнивание. Одиночный в середине строки оно считает мусором чужой выгрузки
@@ -741,8 +747,8 @@ std::vector<Piece> documentForFile(std::vector<Piece> doc, bool* enriched) {
         appendSplitOnBlankLines(
             out,
             withMarkupThatSurvives(
-                withStrikeOnWholeWords(withTrimmedSpans(withCodeSpansPerLine(withHeadingOnOneLine(
-                    withNbspThatSurvives(withRawNewline(withEdgesNormalised(std::move(block)))))))),
+                withStrikeOnWholeWords(withTrimmedSpans(withCodeSpansPerLine(withNbspThatSurvives(
+                    withHeadingOnOneLine(withRawNewline(withEdgesNormalised(std::move(block)))))))),
                 enriched));
     }
 
