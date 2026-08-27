@@ -65,6 +65,21 @@ int countIn(const QString& text, const QString& needle) {
     return int(noteOf(text).find(zametti::makeQuery(needle)).size());
 }
 
+// То же выражением: тот же путь, только с поднятым признаком.
+int countRe(const QString& text, const QString& pattern) {
+    return int(noteOf(text).find(zametti::makeQuery(pattern, true)).size());
+}
+
+// Что найдено выражением, дословно — чтобы проверять не только счёт.
+std::string foundRe(const QString& text, const QString& pattern) {
+    const zametti::ZDocument doc = noteOf(text);
+    std::string out;
+    for (const zametti::Hit& hit : doc.find(zametti::makeQuery(pattern, true))) {
+        if (!out.empty()) out += "|";
+        out += doc.hitLine(hit).text.mid(doc.hitLine(hit).offset, hit.length).toStdString();
+    }
+    return out;
+}
 
 QString readFile(const QString& path) {
     QFile file(path);
@@ -95,6 +110,100 @@ void checkSmartCase() {
             !lower.caseSensitive && upper.caseSensitive);
     ZT_TRUE("порог в два знака", zametti::makeQuery(QStringLiteral("д")).tooShort() &&
                                      !lower.tooShort());
+}
+
+// РЕГУЛЯРНОЕ ВЫРАЖЕНИЕ — тот же поиск с поднятым признаком.
+void checkRegex() {
+    // Группы и классы. Классы обязаны знать про кириллицу: без
+    // UseUnicodePropertiesOption у Qt «\w» и «\b» — только про ASCII, и «\w+»
+    // не нашёл бы НИ ОДНОГО русского слова (замерено пробником).
+    ZT_TRUE("группы находятся", countRe(QStringLiteral("12-34 и 56-78\n"),
+                                        QStringLiteral("(\\d+)-(\\d+)")) == 2);
+    ZT_TRUE("\\w+ знает кириллицу",
+            countRe(QStringLiteral("два слова\n"), QStringLiteral("\\w+")) == 2);
+    ZT_TRUE("\\b знает кириллицу",
+            countRe(QStringLiteral("дом и кот\n"), QStringLiteral("\\bкот\\b")) == 1);
+
+    // ЯКОРЯ — ПО ФИЗИЧЕСКОЙ СТРОКЕ. «абв\nгде» в markdown — ОДИН абзац с мягким
+    // переносом, и лежит он в тексте блока знаком U+2028, для PCRE2 обычным.
+    // Без приведения к переводу строки «^где» не нашлось бы вовсе, а перенос по
+    // ширине окна на якоря не влияет вообще: он дело показа.
+    const QString twoLines = QStringLiteral("абв\nгде\n");
+    ZT_TRUE("^ стоит на краю физической строки",
+            countRe(twoLines, QStringLiteral("^где")) == 1);
+    ZT_TRUE("$ тоже", countRe(twoLines, QStringLiteral("абв$")) == 1);
+    ZT_TRUE("точка мягкий перенос не ест",
+            countRe(twoLines, QStringLiteral("в.г")) == 0);
+    ZT_TRUE("а явный \\n через него тянется",
+            countRe(twoLines, QStringLiteral("в\\nг")) == 1);
+    // Блок кода — ОДИН блок с настоящими переводами: многострочный кусок кода
+    // ищется только так.
+    ZT_TRUE("многострочное совпадение в блоке кода",
+            countRe(QStringLiteral("```\nраз\nдва\n```\n"),
+                    QStringLiteral("раз[\\s\\S]+два")) == 1);
+
+    // ДВЕ ПУСТОТЫ, И ОНИ РАЗНЫЕ. Пустое совпадение целиком — не находка, но
+    // обход на нём не встаёт; пустая ГРУППА внутри непустого совпадения
+    // законна, как в perl и python.
+    ZT_EQ("пустое совпадение пропускается, непустое находится", std::string("аа"),
+          foundRe(QStringLiteral("бббаа\n"), QStringLiteral("а*")));
+    ZT_TRUE("группа могла не участвовать",
+            countRe(QStringLiteral("текст\n"), QStringLiteral("(\\d+)?текст")) == 1);
+
+    // Перекрытий нет и здесь — по природе движка.
+    ZT_TRUE("выражение тоже не перекрывается",
+            countRe(QStringLiteral("ааа\n"), QStringLiteral("аа")) == 1);
+
+    // SMART CASE: заглавная ПОСЛЕ КОСОЙ — это класс, а не набранная заглавная.
+    ZT_TRUE("\\D регистр не включает",
+            !zametti::makeQuery(QStringLiteral("\\D+"), true).caseSensitive);
+    ZT_TRUE("а заглавная в тексте — включает",
+            zametti::makeQuery(QStringLiteral("Дом"), true).caseSensitive);
+
+    // НЕДОПИСАННОЕ ВЫРАЖЕНИЕ — не ошибка, а промежуток набора: искать нечего,
+    // и запрос сам говорит, что не годен (по этому признаку панель красит
+    // буквы, а не по своей догадке).
+    const Query broken = zametti::makeQuery(QStringLiteral("(дом"), true);
+    ZT_TRUE("недописанное выражение негодно", !broken.valid && !broken.usable());
+    ZT_TRUE("и не находит ничего",
+            countRe(QStringLiteral("дом\n"), QStringLiteral("(дом")) == 0);
+    ZT_TRUE("а обычный запрос годен всегда",
+            zametti::makeQuery(QStringLiteral("(дом")).valid);
+
+    // Объекты ищутся по исходнику и выражением тоже.
+    ZT_TRUE("выражение находит в исходнике таблицы",
+            countRe(QStringLiteral("| a | сено |\n|---|---|\n| b | c |\n"),
+                    QStringLiteral("се[нм]о")) == 1);
+}
+
+// ЗАМЕНА С ГРУППАМИ: разворачиватель шаблона.
+void checkReplacementTemplate() {
+    const Query re = zametti::makeQuery(QStringLiteral("(\\w+)@(\\w+)"), true);
+    const QRegularExpressionMatch match = re.pattern.match(QStringLiteral("ваня@почта"));
+    ZT_TRUE("совпадение нашлось", match.hasMatch());
+
+    const auto expand = [&](const QString& tmpl) {
+        return zametti::expandReplacement(re, match, tmpl).toStdString();
+    };
+    ZT_EQ("группы по $n", std::string("почта/ваня"), expand(QStringLiteral("$2/$1")));
+    ZT_EQ("группы по \\n", std::string("почта/ваня"), expand(QStringLiteral("\\2/\\1")));
+    ZT_EQ("$0 — всё совпадение", std::string("[ваня@почта]"), expand(QStringLiteral("[$0]")));
+    ZT_EQ("${n} для двузначных", std::string("ваня"), expand(QStringLiteral("${1}")));
+    ZT_EQ("группы, которой не было, — пусто", std::string("<>"), expand(QStringLiteral("<$7>")));
+    ZT_EQ("\\U до конца", std::string("ПОЧТА ваня"), expand(QStringLiteral("\\U$2\\E $1")));
+    ZT_EQ("\\u — одна буква", std::string("Ваня"), expand(QStringLiteral("\\u$1")));
+    // Как в perl: «\L\uслово» — первая буква от \u, остальные от \L.
+    ZT_EQ("\\u поверх \\L", std::string("Почта"), expand(QStringLiteral("\\L\\u$2")));
+    ZT_EQ("\\L целиком", std::string("почта"), expand(QStringLiteral("\\L$2")));
+    ZT_EQ("\\l — одна буква вниз", std::string("вАНЯ"), expand(QStringLiteral("\\l\\U$1")));
+    ZT_EQ("доллар экранируется", std::string("$1"), expand(QStringLiteral("\\$1")));
+    ZT_EQ("перевод строки в шаблоне", std::string("ваня\nпочта"), expand(QStringLiteral("$1\\n$2")));
+
+    // БЕЗ ВЫРАЖЕНИЯ ЗАМЕНА БУКВАЛЬНА: «$1» — это доллар и единица.
+    const Query plain = zametti::makeQuery(QStringLiteral("цена"));
+    ZT_EQ("буквальная замена не разворачивает групп", std::string("$1"),
+          zametti::expandReplacement(plain, QRegularExpressionMatch(),
+                                     QStringLiteral("$1")).toStdString());
 }
 
 void checkSeesWhatUserSees() {
@@ -129,9 +238,14 @@ void checkSeesWhatUserSees() {
     ZT_TRUE("в блоке кода ищется",
             countIn(QStringLiteral("```cpp\nint value = 42;\n```\n"), "value") == 1);
 
-    // Перекрывающиеся вхождения считаются все: F3 обойдёт их так же.
-    ZT_TRUE("перекрывающиеся вхождения считаются",
-            countIn(QStringLiteral("ааа\n"), "аа") == 2);
+    // ПЕРЕКРЫВАЮЩИХСЯ ВХОЖДЕНИЙ НЕТ (решение владельца, 27.08.2026): «аа» в
+    // «ааа» — одно вхождение. Шаг идёт через длину найденного, и счётчик
+    // «3/17» считает ровно то, что обойдёт F3 и заменит «заменить всё» —
+    // прежде счёт и замена расходились на таких словах.
+    ZT_TRUE("перекрывающихся вхождений не бывает",
+            countIn(QStringLiteral("ааа\n"), "аа") == 1);
+    ZT_TRUE("а непересекающиеся считаются все",
+            countIn(QStringLiteral("аааа\n"), "аа") == 2);
 
     // ОБЪЕКТЫ ИЩУТСЯ ПО ИСХОДНИКУ (решение владельца, сессия 5): таблица и
     // формула — объекты с U+FFFC в тексте блока, и без этого правила их не
@@ -632,6 +746,8 @@ static int ztRunSuite(int argc, char** argv) {
          "# Тишина\n\nздесь ничего такого нет\n");
 
     checkSmartCase();
+    checkRegex();
+    checkReplacementTemplate();
     checkSeesWhatUserSees();
     checkHitLine();
     checkStoreSearch();
