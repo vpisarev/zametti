@@ -39,8 +39,10 @@
 #include "export_pdf.h"
 #include "status_bar.h"
 #include "store_cli.h"
+#include "keyring_secrets.h"
 #include "pending_deletes_dialog.h"
 #include "secret_store.h"
+#include "store_manager_dialog.h"
 #include "sync_controller.h"
 #include "toolbar.h"
 #include "zapp.h"
@@ -582,9 +584,13 @@ int main(int argc, char** argv) {
     // Люк обвязки, тот же, что у CLI: ключ в среде (ZAMETTI_SYNC_KEY) —
     // секреты из среды, keyring не трогается и диалог разблокировки не
     // выскакивает. Для человека — системный keyring, как и задумано.
+    // Экземпляр ЯВНЫЙ и один: им же пользуется диалог хранилищ — добытые
+    // секреты кладутся туда, откуда контроллер их потом достанет.
     std::shared_ptr<zametti::SecretStore> syncSecrets;
     if (!qEnvironmentVariable("ZAMETTI_SYNC_KEY").isEmpty())
         syncSecrets = std::make_shared<zametti::EnvSecrets>();
+    else
+        syncSecrets = std::make_shared<zametti::KeyringSecrets>();
     zametti::SyncController cloudSync(zapp.storage(), syncSecrets, &zapp.logs());
     zametti::NoteTreeView& tree = panels.tree();
     zametti::NoteListModel& list = panels.list();
@@ -2679,63 +2685,62 @@ int main(int argc, char** argv) {
         panels.showNote(editor.filePath(), /*primary=*/true);
         applyStartWidths();
         if (zametti::settings().store().watchStore()) storage->setWatching(true);
+        // Строка списка хранилищ устройства — освежить фактом: имя и облако
+        // могли смениться с прошлого раза. Это же пополняет список всяким
+        // открытым хранилищем (ключ --root, прежний storeRoot) — миграция
+        // прежних состояний бесплатна.
+        {
+            zametti::ZStorage::Config entry = storage->remoteConfig();
+            entry.name = storage->localStoreName();
+            zapp.state().rememberStore(entry);
+        }
         refreshToolbar();
         return true;
     };
 
-    // ВЫБОР ХРАНИЛИЩА — ДВЕ ДВЕРИ ОДНОЙ КНОПКОЙ: переключиться на другое и
-    // завести новое. Что именно человек назвал, решает ХРАНИЛИЩЕ
-    // (ZStorage::inspect), а окно только показывает вопрос или отказ.
-    const auto chooseStore = [&] {
-        // Стартуем от родителя нынешнего хранилища: хранилища человек держит
-        // рядом друг с другом чаще, чем где попало.
-        QString startAt;
-        if (model.isStore()) startAt = QFileInfo(zapp.storage()->root()).absolutePath();
-        if (startAt.isEmpty() || !QFileInfo(startAt).isDir())
-            startAt = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
-        // Системный диалог, а не свой: вставлять в него нечего, а завести
-        // каталог прямо в нём он умеет — на этом и стоит «создать новое».
-        const QString dir = QFileDialog::getExistingDirectory(
-            &window, QStringLiteral("Open storage"), startAt);
-        if (dir.isEmpty()) return;   // передумал
-        const QString chosen = QFileInfo(dir).absoluteFilePath();
+    // УПРАВЛЕНИЕ ХРАНИЛИЩАМИ — дверь кнопки database (решение владельца,
+    // 27.08.2026; прежде тут был голый системный выбор каталога — теперь он
+    // живёт внутри диалога, у Browse). Список известных хранилищ устройства,
+    // «+»/«−», переключение, и у каждого — облако: адрес, логин, пароли,
+    // скачивание с нового устройства и сброс пароля шифрования. Все ветки
+    // знакомства с папкой и облаком решает ядро; окно только показывает.
+    const auto manageStores = [&] {
+        // Прогон синка, если он идёт, останавливается и дожидается: диалог
+        // будет трогать подключение того же хранилища.
+        cloudSync.setStorage(zapp.storage());
+        zametti::StoreManagerDialog::Result verdict;
+        {
+            // Блок не косметика: диалог держит копию shared_ptr хранилища, и
+            // умереть он обязан ДО attachStore — сторож забытой копии не спит.
+            zametti::StoreManagerDialog dialog(
+                &window, session.stores(),
+                model.isStore() ? zapp.storage()->root() : QString(), zapp.storage(),
+                syncSecrets);
+            dialog.exec();
+            verdict = dialog.result();
+        }
+        // Список применяется ВСЕГДА (и по Esc): добавленное хранилище — не
+        // черновик. Замена через те же двери, что и всё остальное: прежние
+        // строки забываются, итог диалога вспоминается по порядку.
+        zametti::ZAppState& out = zapp.state();
+        const QList<zametti::ZStorage::Config> before = out.stores();
+        for (const zametti::ZStorage::Config& e : before) out.forgetStore(e.root);
+        for (const zametti::ZStorage::Config& e : verdict.stores) out.rememberStore(e);
 
-        switch (zametti::ZStorage::inspect(chosen)) {
-            case zametti::ZStorage::DirKind::Store:
-                // То же самое хранилище — делать нечего. Молча: человек ткнул
-                // туда, где уже находится, и сообщать ему об этом незачем.
-                if (model.isStore() &&
-                    QFileInfo(zapp.storage()->root()).absoluteFilePath() == chosen)
-                    return;
-                attachStore(chosen, QString());
-                return;
-            case zametti::ZStorage::DirKind::Empty: {
-                // ВТОРОЕ НАЗВАННОЕ ВЛАДЕЛЬЦЕМ ИСКЛЮЧЕНИЕ из «никаких диалогов
-                // подтверждения»: пустой каталог мог быть выбран по ошибке, а
-                // засеянное хранилище — это каталог, который человек потом
-                // будет искать глазами и гадать, откуда он взялся.
-                const auto answer = QMessageBox::question(
-                    &window, QStringLiteral("zametti"),
-                    QStringLiteral("Create a new zametti storage in \"%1\"?").arg(chosen));
-                if (answer != QMessageBox::Yes) return;
-                QString error;
-                if (!zametti::ZStorage(chosen).init(&error)) {
-                    QMessageBox::warning(&window, QStringLiteral("zametti"), error);
-                    return;
-                }
-                attachStore(chosen, QString());
-                return;
-            }
-            case zametti::ZStorage::DirKind::Foreign:
-            case zametti::ZStorage::DirKind::Missing:
-                // Непустой чужой каталог не засеваем НИКОГДА и ни по какому
-                // подтверждению: рядом чьё-то добро, и хранилище среди него
-                // потом не отличить от него же.
-                QMessageBox::warning(&window, QStringLiteral("zametti"),
-                                     QStringLiteral("The directory is not a zametti storage:"
-                                                    "\n  %1")
-                                         .arg(chosen));
-                return;
+        if (!verdict.switchToRoot.isEmpty()) {
+            const bool ok = attachStore(verdict.switchToRoot, QString());
+            // Только что скачанное хранилище — это манифест и корень: остальное
+            // обязан привезти первый прогон, и ждать sync.onStart тут нечего.
+            if (ok && (verdict.downloadedNew ||
+                       (zametti::settings().sync().onStart() && cloudSync.configured())))
+                cloudSync.startFull(false);
+            return;
+        }
+        if (verdict.cloudChangedForCurrent) {
+            // Кнопка облака оживает тут же, не дожидаясь смены заметки; адрес
+            // и секреты контроллер достанет заново при прогоне.
+            refreshToolbar();
+            cloudSync.startFull(false);
         }
     };
 
@@ -2820,7 +2825,7 @@ int main(int argc, char** argv) {
         QObject::connect(&toolbar, &zametti::Toolbar::pressed, &window, [&](Button id) {
             switch (id) {
             case Button::OpenStore:
-                chooseStore();
+                manageStores();
                 break;
             case Button::NewNote:
                 createNote(panels.currentFolderId(), false);

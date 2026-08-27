@@ -844,6 +844,10 @@ public:
     // (name — нет: заголовок корня стоит чтения файла, а сюда ходят часто).
     // Нет файла или файл битый — конфиг без облака: «синк не настроен», не беда.
     Config remoteConfig() const;
+    // Имя своего хранилища — заголовок корневой заметки, файлом (не каталогом:
+    // ярлык нужен и потоку синка, и строке списка хранилищ). Пусто — корня нет
+    // или не читается. Стоит чтения файла — на горячий путь не ставить.
+    QString localStoreName() const;
     bool writeRemoteConfig(const Config& cfg, QString* error = nullptr);
     // Отвязка (--reset): забыть адрес. Секреты в keyring чистит вызывающий —
     // хранилище к keyring не прикасается.
@@ -1164,9 +1168,6 @@ protected:
     // сходятся побайтово. Тот же CAS-страж expectedBytes.
     bool adoptJournalBytes(const QString& noteId, const QByteArray& bytes,
                            const Digest& expectedBytes, QString* error);
-    // Имя своего хранилища — заголовок корневой заметки, файлом (не каталогом:
-    // ярлык нужен и потоку синка). Пусто — корня нет или не читается.
-    QString localStoreName() const;
     // Имя облачного хранилища — best-effort вскрытием журнала их корня данным
     // шифром; чужой ключ — честно пусто (имя зашифровано, и это фича).
     static QString cloudStoreName(RemoteStore& remote, BlobCipher& cipher,
