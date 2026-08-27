@@ -852,15 +852,14 @@ int enterBlock(MD_BLOCKTYPE type, void* detail, void* userdata) {
             // блока кода, кроме случая «блок на строке маркера».
             bool inList = !c.stack.empty() && c.stack.back().type == MD_BLOCK_LI;
             Frame* htmlLi = inList ? &c.stack.back() : nullptr;
-            // «Блок на строке маркера» узнаётся по тому, что лист пункта ещё
-            // ПУСТ: в плотном списке md4c не заворачивает текст пункта в абзац,
-            // и на второй строке пункта мы приходим сюда с тем же childIdx == 0
-            // и открытым листом. Пока условие не спрашивало про содержимое
-            // листа, комментарий на второй строке пункта ронял в дословный кусок
-            // ВЕСЬ список — а писали мы его сами (Ctrl+/ на строке пункта), и
-            // круг записи расходился: файл читался иначе, чем был записан.
-            const bool onMarkerLine = c.inLeaf && c.curMin == kNoOffset;
-            if (insideQuote(c) || (htmlLi != nullptr && htmlLi->childIdx == 0 && onMarkerLine)) {
+            // «Блок на строке маркера» здесь ещё не виден: смещений блочные
+            // колбэки md4c не дают вовсе. Решает первый же кусок текста
+            // (MD_TEXT_HTML): если на его строке перед ним стоит что-то, кроме
+            // пробелов, значит это строка маркера — и такое плоской моделью не
+            // выражается. Пока вместо этого спрашивали «пуст ли лист пункта»,
+            // комментарий на второй строке ПУСТОГО пункта («- [x]» без текста)
+            // ронял в дословный кусок весь список.
+            if (insideQuote(c)) {
                 c.stack.push_back(f);
                 demote(c);
                 return 0;
@@ -1322,6 +1321,22 @@ int onText(MD_TEXTTYPE type, const MD_CHAR* text, MD_SIZE size, void* userdata) 
             demote(c);
             break;
         case MD_TEXT_HTML:
+            // ПЕРВЫЙ кусок HTML-блока внутри пункта: если на его строке слева
+            // стоит не только пробел, блок начался на строке маркера — плоской
+            // моделью такое не выражается, и пункт уходит дословным куском.
+            if (c.inLeaf && c.cur.kind == Kind::Html && c.cur.level >= 0 && c.text.isEmpty() &&
+                text >= c.md && text < c.md + c.len) {
+                size_t at = static_cast<size_t>(text - c.md);
+                size_t ls = at;
+                while (ls > 0 && c.buf[ls - 1] != '\n') --ls;
+                bool onlySpace = true;
+                for (size_t k = ls; k < at; ++k)
+                    if (c.buf[k] != ' ' && c.buf[k] != '\t') onlySpace = false;
+                if (!onlySpace) {
+                    demote(c);
+                    return 0;
+                }
+            }
             // Внутри HTML-блока текст просто копится: судьбу решит leaveBlock.
             if (c.inLeaf && c.cur.kind == Kind::Html) {
                 c.text.append(QStringView(text, qsizetype(size)));
