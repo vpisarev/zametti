@@ -401,7 +401,7 @@ function(zametti_summary)
 
     if(ZAMETTI_CORPUS)
         string(REPLACE ";" ", " corpora "${ZAMETTI_CORPUS}")
-        set(fuzz "mutaions ${ZAMETTI_CORPUS_MUTATIONS}, rounds ${ZAMETTI_FUZZ_ROUNDS}, seed ${ZAMETTI_FUZZ_SEED}")
+        set(fuzz "mutations ${ZAMETTI_CORPUS_MUTATIONS}, rounds ${ZAMETTI_FUZZ_ROUNDS}, seed ${ZAMETTI_FUZZ_SEED}")
     else()
         set(corpora "fuzzers and tests are skipped")
         set(fuzz "")
@@ -439,7 +439,7 @@ function(zametti_summary)
     zametti_subrow("`libsodium ${SODIUM_VENDORED_VERSION}` — XChaCha20-Poly1305 and Argon2id for the cloud sync")
     zametti_subrow("`googletest ${GTEST_VENDORED_VERSION}` — unit test engine")
     set(readers "`avif`/`heic`/`heif` — vendored, no system libraries needed")
-    zametti_row("читатели:  " "${readers}")
+    zametti_row("readers:   " "${readers}")
     # Есть ли сама программа. Строка обязательна: без неё «настройка прошла»
     # означало лишь, что не упало, — а собралось при этом одно ядро.
     if(TARGET zametti)
