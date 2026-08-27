@@ -85,6 +85,7 @@ ZAppState ZAppState::load() {
     for (const QJsonValue& v : root.value(QStringLiteral("searchHistory")).toArray())
         if (v.isString()) searches.append(v.toString());
     session.setSearchHistory(searches);
+    session.setSearchRegex(root.value(QStringLiteral("searchRegex")).toBool(false));
     return session;
 }
 
@@ -121,6 +122,7 @@ void ZAppState::save() const {
                   {QStringLiteral("exportKeepMeta"), session.exportKeepMeta()},
                   {QStringLiteral("expandedDirs"), expanded},
                   {QStringLiteral("searchHistory"), searches},
+                  {QStringLiteral("searchRegex"), session.searchRegex()},
                   {QStringLiteral("carets"), carets},
     };
     QDir().mkpath(QFileInfo(path()).absolutePath());

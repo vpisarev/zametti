@@ -644,6 +644,7 @@ int main(int argc, char** argv) {
     searchDebounce.setSingleShot(true);
     searchDebounce.setInterval(150);
     findBar.setHistory(session.searchHistory());
+    findBar.setRegexOn(session.searchRegex());
     zametti::HistoryController history(editor, historyView);
     zametti::MarkdownController markdown(editor, markdownView);
     zametti::SettingsController settingsMode(editor, settingsView,
@@ -2037,9 +2038,12 @@ int main(int argc, char** argv) {
     };
 
     const auto updateInNoteSearch = [&](const QString& text) {
-        const zametti::Query query = zametti::makeQuery(text);
+        const zametti::Query query = zametti::makeQuery(text, findBar.regexOn());
+        // Недописанное выражение — красные буквы в поле, и ничего больше:
+        // ни слова об ошибке, правка продолжается (решение владельца).
+        findBar.setQueryUsable(query.valid);
         zametti::TextSearchTarget& target = searchTarget();
-        if (query.isEmpty()) {
+        if (!query.usable()) {
             target.clearMatches();
             findBar.setStatus(QString());
             return;
@@ -2058,7 +2062,7 @@ int main(int argc, char** argv) {
     // слепках встречается искомое.
     const auto updateHistorySearch = [&](const QString& text) {
         updateInNoteSearch(text);   // подсветка в слепке и счётчик
-        const zametti::Query query = zametti::makeQuery(text);
+        const zametti::Query query = zametti::makeQuery(text, findBar.regexOn());
         if (query.isEmpty() || query.tooShort()) {
             results.clear();
             resultsView.hide();
@@ -2133,14 +2137,16 @@ int main(int argc, char** argv) {
     QObject::connect(&settingsView, &zametti::JsonEditView::matchesChanged, &window,
                      [&] { showCounter(); });
 
-    QObject::connect(&findBar, &zametti::FindBar::queryChanged, &window,
-                     [&](const QString& text) {
+    // КТО ИЩЕТ ПО НАБРАННОМУ — ОДНО МЕСТО. Его зовут и правка запроса, и щелчок
+    // по тумблеру выражений: буквы те же, а смысл у них другой, и искать надо
+    // заново тем же путём.
+    const auto searchForQuery = [&](const QString& text) {
         if (findBar.mode() == zametti::FindBar::Mode::History) {
             updateHistorySearch(text);
             return;
         }
         if (findBar.mode() == zametti::FindBar::Mode::Global) {
-            const zametti::Query query = zametti::makeQuery(text);
+            const zametti::Query query = zametti::makeQuery(text, findBar.regexOn());
             if (query.isEmpty() || query.tooShort()) {
                 storeSearch.cancel();
                 searchDebounce.stop();
@@ -2153,6 +2159,10 @@ int main(int argc, char** argv) {
             return;
         }
         updateInNoteSearch(text);
+    };
+    QObject::connect(&findBar, &zametti::FindBar::queryChanged, &window, searchForQuery);
+    QObject::connect(&findBar, &zametti::FindBar::regexToggled, &window, [&](bool) {
+        if (!findBar.isHidden()) searchForQuery(findBar.query());
     });
 
     QObject::connect(&searchDebounce, &QTimer::timeout, &window, [&] {
@@ -2211,7 +2221,7 @@ int main(int argc, char** argv) {
             // Прыжок на N-е вхождение в СЛЕПКЕ — у вида разности напрямую:
             // goToMatch знает только он (у плоских видов такого понятия нет),
             // и мы уже в режиме истории, показан именно он.
-            const zametti::Query query = zametti::makeQuery(findBar.query());
+            const zametti::Query query = zametti::makeQuery(findBar.query(), findBar.regexOn());
             zametti::NoteView& snapshot = historyView.textView();
             snapshot.findMatches(query);
             snapshot.goToMatch(ordinal);
@@ -2227,7 +2237,7 @@ int main(int argc, char** argv) {
         // перестраивается на каждую букву, текущая строка меняется сама, и
         // утащить фокус значило бы выдернуть строку поиска из-под пальцев.
         if (file != editor.filePath()) editor.openFile(file, false);
-        const zametti::Query query = zametti::makeQuery(findBar.query());
+        const zametti::Query query = zametti::makeQuery(findBar.query(), findBar.regexOn());
         editor.findMatches(query);
         editor.goToMatch(ordinal);
     };
@@ -2279,7 +2289,7 @@ int main(int argc, char** argv) {
         showCounter();
     });
     QObject::connect(&findBar, &zametti::FindBar::replaceAll, &window, [&] {
-        const zametti::Query query = zametti::makeQuery(findBar.query());
+        const zametti::Query query = zametti::makeQuery(findBar.query(), findBar.regexOn());
         if (query.isEmpty()) return;
         zametti::TextSearchTarget& target = searchTarget();
         if (!target.canReplace()) return;
@@ -3103,6 +3113,7 @@ int main(int argc, char** argv) {
         out.setHistoryZoom(historyView.textView().zoom());
         out.setExpandedDirs(panels.expandedDirs());
         out.setSearchHistory(findBar.history());
+        out.setSearchRegex(findBar.regexOn());
         out.setStoreRoot(model.isStore() ? model.nodePath(QModelIndex()) : QString());
         out.setExportDir(exportDir);
         out.setExportKeepMeta(exportKeepMeta);

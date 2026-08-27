@@ -2,9 +2,16 @@
 
 #include "settings.h"
 
+#include "icons.h"
+
+#include <QApplication>
+#include <QFontMetrics>
 #include <QHBoxLayout>
-#include <QMenu>
+#include <QIcon>
 #include <QKeyEvent>
+#include <QMenu>
+#include <QPalette>
+#include <QWindow>
 
 namespace zametti {
 
@@ -16,9 +23,21 @@ FindBar::FindBar(QWidget* parent) : QWidget(parent) {
     // История — слева от поля: по сути выпадающий список, только раскрывается
     // вверх (панель у нижней кромки окна, вниз списку некуда).
     historyButton_ = new QToolButton(this);
-    historyButton_->setText(settings().ui().findHistoryGlyph());
+    historyButton_->setAutoRaise(true);
+    historyButton_->setFocusPolicy(Qt::NoFocus);   // фокус остаётся в поле
     historyButton_->setToolTip(QStringLiteral("Previous queries"));
     connect(historyButton_, &QToolButton::clicked, this, &FindBar::showHistory);
+
+    // Тумблер выражений — справа от истории. Западающий: смысл у него не
+    // «сделать сейчас», а «искать вот так, пока не отожму».
+    regexButton_ = new QToolButton(this);
+    regexButton_->setAutoRaise(true);
+    regexButton_->setCheckable(true);
+    regexButton_->setFocusPolicy(Qt::NoFocus);
+    regexButton_->setToolTip(QStringLiteral("Regular expression"));
+    connect(regexButton_, &QToolButton::toggled, this, [this](bool on) {
+        emit regexToggled(on);
+    });
 
     find_ = new QLineEdit(this);
     find_->setPlaceholderText(QStringLiteral("Find"));
@@ -46,6 +65,7 @@ FindBar::FindBar(QWidget* parent) : QWidget(parent) {
     close->setToolTip(QStringLiteral("Close (Esc)"));
 
     layout->addWidget(historyButton_);
+    layout->addWidget(regexButton_);
     layout->addWidget(find_, 2);
     layout->addWidget(status_);
     layout->addWidget(previous);
@@ -91,7 +111,59 @@ FindBar::FindBar(QWidget* parent) : QWidget(parent) {
                         : settings().ui().sidebarFontFamily());
     panelFont.setPointSizeF(settings().ui().sidebarFontPoint() + settings().ui().findFontDelta());
     setFont(panelFont);
+    restyleButtons();
+    // ПОЛЯМ — НИЖНЯЯ ГРАНИЦА. В узком окне растяжки делили остаток так, что от
+    // запроса оставалось три знака: на снимке 520 точек видно «v+)» вместо
+    // «(\w+)@(\w+)». Граница — в знаках, а не в точках: кегль панели свой и
+    // правится настройкой.
+    const int minField = QFontMetrics(panelFont).horizontalAdvance(QLatin1Char('0')) * 10;
+    find_->setMinimumWidth(minField);
+    replace_->setMinimumWidth(minField);
     hide();
+}
+
+// Значки кнопок — теми же средствами, что у тулбара: цвет из настроек,
+// плотность у окна. Нажатое состояние тумблера показывается цветом, а не
+// рамкой, — ровно как в тулбаре (рамка на значке в двадцать точек спорит с
+// самим рисунком).
+void FindBar::restyleButtons() {
+    const ZSettings& a = settings();
+    const qreal dpr = window() && window()->windowHandle()
+                          ? window()->windowHandle()->devicePixelRatio()
+                          : devicePixelRatioF();
+    const int size = a.ui().toolbarIconSize();
+    const auto make = [&](const QString& name) {
+        QIcon icon;
+        icon.addPixmap(toolbarIcon(name, size, a.ui().toolbarIconColor(), dpr), QIcon::Normal,
+                       QIcon::Off);
+        icon.addPixmap(toolbarIcon(name, size, a.ui().toolbarIconHoverColor(), dpr), QIcon::Active,
+                       QIcon::Off);
+        icon.addPixmap(toolbarIcon(name, size, a.ui().toolbarIconOnColor(), dpr), QIcon::Normal,
+                       QIcon::On);
+        icon.addPixmap(toolbarIcon(name, size, a.ui().toolbarIconOnColor(), dpr), QIcon::Active,
+                       QIcon::On);
+        return icon;
+    };
+    historyButton_->setIcon(make(QStringLiteral("list-clock")));
+    historyButton_->setIconSize(QSize(size, size));
+    regexButton_->setIcon(make(QStringLiteral("regex")));
+    regexButton_->setIconSize(QSize(size, size));
+}
+
+bool FindBar::regexOn() const { return regexButton_->isChecked(); }
+
+void FindBar::setRegexOn(bool on) { regexButton_->setChecked(on); }
+
+void FindBar::setQueryUsable(bool usable) {
+    if (queryUsable_ == usable) return;
+    queryUsable_ = usable;
+    // КРАСНЕЮТ БУКВЫ, А НЕ ФОН (решение владельца): фон поля остаётся своим,
+    // человек продолжает править выражение, и нигде не написано, что это
+    // ошибка, — он и так видит, что пишет.
+    QPalette palette = find_->palette();
+    palette.setColor(QPalette::Text, usable ? QApplication::palette().color(QPalette::Text)
+                                            : settings().ui().findBadPatternColor());
+    find_->setPalette(palette);
 }
 
 void FindBar::open(Mode mode, const QString& preset) {

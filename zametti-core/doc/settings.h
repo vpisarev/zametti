@@ -528,8 +528,9 @@ struct ZSettings {
         // текст идёт сверху вниз.
         ZM_SETTING_PLAIN(QString, findPreviousGlyph, FindPreviousGlyph, QStringLiteral("↑"))
         ZM_SETTING_PLAIN(QString, findNextGlyph, FindNextGlyph, QStringLiteral("↓"))
-        // Кнопка истории запросов — слева от поля; список раскрывается вверх.
-        ZM_SETTING_PLAIN(QString, findHistoryGlyph, FindHistoryGlyph, QStringLiteral("^"))
+        // Недописанное выражение: буквы запроса краснеют, и это всё — ни слова
+        // об ошибке нигде (решение владельца). Фон поля не трогается.
+        ZM_SETTING_PLAIN(QColor, findBadPatternColor, FindBadPatternColor, 0xc0, 0x28, 0x28)
         // Сколько прежних запросов помнить между запусками.
         ZM_SETTING(int, findHistoryLimit, FindHistoryLimit, 30, 0, 1000)
 

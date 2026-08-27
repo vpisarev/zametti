@@ -5,9 +5,10 @@
 // всему хранилищу. Немодальная: работа не встаёт, пока панель открыта, и Esc
 // закрывает её, снимая подсветку.
 //
-// Тумблера регэкспов здесь нет (не-цель этапа 4), но место под него оставлено:
-// панель уже умеет показывать и прятать свои части, и добавить кнопку — это
-// одна строка, а не перекройка.
+// Тумблер регулярных выражений — западающая кнопка справа от истории запросов
+// (решение владельца, 27.08.2026). Он не отдельный режим панели, а признак
+// ЗАПРОСА: панель отдаёт его наружу, а собирает запрос окно (makeQuery), и
+// оттуда признак сам доезжает до всех, кто ищет.
 
 #ifndef ZAMETTI_FIND_BAR_H
 #define ZAMETTI_FIND_BAR_H
@@ -37,6 +38,14 @@ public:
 
     QString query() const { return find_->text(); }
     QString replacement() const { return replace_->text(); }
+    // Тумблер выражений. Живёт между запусками, поэтому читается и ставится
+    // снаружи (state.json), как и история запросов.
+    bool regexOn() const;
+    void setRegexOn(bool on);
+    // НЕДОПИСАННОЕ ВЫРАЖЕНИЕ — красные буквы запроса, и ничего больше (решение
+    // владельца): ни слова об ошибке, правка продолжается. Панель сама этого не
+    // решает — ей говорит окно, разобрав запрос.
+    void setQueryUsable(bool usable);
     // Счётчик «3/17» или пояснение вроде «ничего не найдено».
     void setStatus(const QString& text);
 
@@ -54,6 +63,8 @@ public:
 
 signals:
     void queryChanged(const QString& text);
+    // Щёлкнули тумблер: запрос тот же, а искать надо заново.
+    void regexToggled(bool on);
     void findNext();
     void findPrevious();
     void replaceOne();
@@ -68,6 +79,11 @@ protected:
 
 private:
     void showHistory();
+    // Иконки кнопок: цвет и плотность экрана берутся у настроек и окна — как в
+    // тулбаре, чтобы значки панели и тулбара не разъезжались.
+    void restyleButtons();
+
+    bool queryUsable_ = true;
 
     Mode mode_ = Mode::InNote;
     QStringList history_;
@@ -75,6 +91,7 @@ private:
     int historyAt_ = -1;
     QString typed_;
     QToolButton* historyButton_ = nullptr;
+    QToolButton* regexButton_ = nullptr;
     QLineEdit* find_ = nullptr;
     QLineEdit* replace_ = nullptr;
     QLabel* status_ = nullptr;
