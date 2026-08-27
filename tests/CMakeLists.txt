@@ -71,6 +71,7 @@ add_executable(zametti-tests
     sync_push_test.cpp
     sync_engine_test.cpp
     set_remote_test.cpp
+    store_manager_dialog_test.cpp
     sync_fuzz_test.cpp
     zlogs_test.cpp
 
