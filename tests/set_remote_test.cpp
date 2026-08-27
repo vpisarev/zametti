@@ -327,6 +327,163 @@ void checkForeignCloudRefused() {
     }
 }
 
+void checkProbeCloud() {
+    // Разведка диалога первичной настройки: адрес и оба пароля проверяются ДО
+    // выбора местного каталога, одной статической функцией.
+    zt::MiniStore store, cloudHome;
+    const QString cloud = cloudHome.root() + QStringLiteral("/облако");
+    ZStorage::RemoteConfig cfg;
+    cfg.dir = cloud;
+    FakeSecrets secrets;
+    QString err;
+
+    // Недостижимое облако — честный отказ, а не «там пусто».
+    ZStorage::CloudProbe probe;
+    ZT_TRUE("недостижимое облако отвергнуто",
+            !ZStorage::probeCloud(cfg, QString(), QStringLiteral("пароль-шифра"), &probe, &err));
+
+    QString rootTitle;
+    {
+        ZStorage s(store.root());
+        ZT_TRUE("облако заведено",
+                s.connectRemote(cfg, QStringLiteral("пароль-шифра"), QString(), secrets, kTiny,
+                                nullptr, &err));
+        const QString rootId = s.ensureRootNote(&err);
+        ZT_TRUE("корень завёлся", !rootId.isEmpty());
+        rootTitle = s.info(rootId)->title();
+        ZT_TRUE("заливка прошла", s.pushAll(nullptr, &err));
+    }
+
+    // Верный пароль: сошлось всё, и разведка называет имя и объём.
+    ZT_TRUE(("разведка прошла: " + err.toStdString()).c_str(),
+            ZStorage::probeCloud(cfg, QString(), QStringLiteral("пароль-шифра"), &probe, &err));
+    ZT_TRUE("манифест увиден", probe.hasManifest);
+    ZT_TRUE("конверт увиден", probe.hasKeyfile);
+    ZT_TRUE("конверт развернулся", probe.keyOpened);
+    ZT_TRUE("id облака назван", !probe.identity.storeId().isEmpty());
+    ZT_TRUE("журналы посчитаны", probe.notes >= 1);
+    ZT_TRUE("объём посчитан", probe.bytes > 0);
+    ZT_TRUE("имя хранилища вскрыто", probe.name == rootTitle);
+
+    // Неверный пароль шифрования — отказ со словами про пароль.
+    ZT_TRUE("неверный пароль отвергнут",
+            !ZStorage::probeCloud(cfg, QString(), QStringLiteral("не тот"), &probe, &err));
+    ZT_TRUE("сказано про пароль", err.contains(QStringLiteral("password")));
+
+    // Пустое, но существующее облако — правда: «там пусто» диалог решает сам.
+    const QString blank = cloudHome.root() + QStringLiteral("/пусто");
+    QDir().mkpath(blank);
+    ZStorage::RemoteConfig empty;
+    empty.dir = blank;
+    ZT_TRUE("пустое облако — не ошибка",
+            ZStorage::probeCloud(empty, QString(), QStringLiteral("любой"), &probe, &err));
+    ZT_TRUE("и в нём ничего нет",
+            !probe.hasManifest && !probe.hasKeyfile && probe.notes == 0);
+}
+
+void checkResetCloudEncryption() {
+    // Сброс пароля шифрования: облачная копия заменяется целиком под новым
+    // ключом; старый пароль перестаёт подходить, новый — открывает всё.
+    zt::MiniStore store, cloudHome, second;
+    const QString cloud = cloudHome.root() + QStringLiteral("/облако");
+    ZStorage::RemoteConfig cfg;
+    cfg.dir = cloud;
+    FakeSecrets secrets;
+    QString err;
+
+    ZStorage s(store.root());
+    ZT_TRUE("облако заведено",
+            s.connectRemote(cfg, QStringLiteral("старый"), QString(), secrets, kTiny, nullptr,
+                            &err));
+    const QString rootId = s.ensureRootNote(&err);
+    ZT_TRUE("корень завёлся", !rootId.isEmpty());
+    const QString noteId = s.createNote(QString(), false, &err);
+    ZT_TRUE("заметка завелась", !noteId.isEmpty());
+    ZT_TRUE("заливка прошла", s.pushAll(nullptr, &err));
+
+    const auto blobBytes = [&](const QString& name) {
+        QFile f(cloud + QLatin1Char('/') + name);
+        if (!f.open(QIODevice::ReadOnly)) return QByteArray();
+        return f.readAll();
+    };
+    const QByteArray journalBefore = blobBytes(rootId + QStringLiteral(".log"));
+    ZT_TRUE("журнал корня в облаке", !journalBefore.isEmpty());
+
+    // Пустой новый пароль не бывает паролем.
+    ZT_TRUE("пустой пароль отвергнут",
+            !s.resetCloudEncryption(cfg, QString(), QString(), secrets, kTiny, nullptr, &err));
+
+    ZStorage::ResetOutcome out;
+    ZT_TRUE(("сброс прошёл: " + err.toStdString()).c_str(),
+            s.resetCloudEncryption(cfg, QStringLiteral("новый"), QString(), secrets, kTiny, &out,
+                                   &err));
+    // Стёрто всё прежнее: манифест, конверт и журналы обеих заметок.
+    ZT_TRUE("стёрто всё прежнее", out.wiped >= 4);
+    ZT_TRUE("журналы залиты заново", out.push.journals >= 2);
+    ZT_TRUE("облако осталось подключённым", s.hasRemote());
+
+    // Старый пароль больше не открывает облако, новый — открывает.
+    ZStorage::CloudProbe probe;
+    ZT_TRUE("старый пароль отвергнут",
+            !ZStorage::probeCloud(cfg, QString(), QStringLiteral("старый"), &probe, &err));
+    ZT_TRUE(("новый пароль подошёл: " + err.toStdString()).c_str(),
+            ZStorage::probeCloud(cfg, QString(), QStringLiteral("новый"), &probe, &err));
+    ZT_TRUE("манифест на месте", probe.hasManifest);
+    ZT_EQ("storeId не сменился", s.identity().storeId().toStdString(),
+          probe.identity.storeId().toStdString());
+    // Байты блобов другие: новый ключ, а не переупаковка старого.
+    ZT_TRUE("журнал перешифрован",
+            blobBytes(rootId + QStringLiteral(".log")) != journalBefore);
+
+    // Второе устройство встаёт с новым паролем — облако после сброса цельное.
+    {
+        FakeSecrets fresh;
+        ZStorage::ConnectOutcome boot;
+        const QString dir = second.root() + QStringLiteral("/копия");
+        auto other = ZStorage::initFromRemote(dir, cfg, QStringLiteral("новый"), QString(),
+                                              fresh, kTiny, &boot, &err);
+        ZT_TRUE(("бутстрап после сброса прошёл: " + err.toStdString()).c_str(),
+                other != nullptr);
+        if (other != nullptr)
+            ZT_TRUE("идентичность унаследована", boot.inheritedIdentity);
+    }
+}
+
+void checkResetRefusesForeignCloud() {
+    // Сброс — единственная стирающая операция, и стирает он ТОЛЬКО своё:
+    // опечатка в адресе не должна стоить человеку чужой облачной копии.
+    zt::MiniStore mine, cloudHome, foreign;
+    const QString cloud = cloudHome.root() + QStringLiteral("/облако");
+    ZStorage::RemoteConfig cfg;
+    cfg.dir = cloud;
+    FakeSecrets secrets;
+    QString err;
+    {
+        ZStorage s(mine.root());
+        ZT_TRUE("своё облако заведено",
+                s.connectRemote(cfg, QStringLiteral("пароль-шифра"), QString(), secrets, kTiny,
+                                nullptr, &err));
+        ZT_TRUE("корень завёлся", !s.ensureRootNote(&err).isEmpty());
+        ZT_TRUE("манифест уехал", s.pushAll(nullptr, &err));
+    }
+    ZStorage other(foreign.root());
+    ZT_TRUE("чужая идентичность отчеканилась", !other.ensureIdentity(&err).isEmpty());
+    const QByteArray manifestBefore = [&] {
+        QFile f(cloud + QStringLiteral("/zametti.json"));
+        if (!f.open(QIODevice::ReadOnly)) return QByteArray();
+        return f.readAll();
+    }();
+    ZT_TRUE("манифест облака есть", !manifestBefore.isEmpty());
+    FakeSecrets fresh;
+    ZT_TRUE("чужое облако не стёрто",
+            !other.resetCloudEncryption(cfg, QStringLiteral("новый"), QString(), fresh, kTiny,
+                                        nullptr, &err));
+    ZT_TRUE("причина называет чужой store", err.contains(QStringLiteral("another store")));
+    QFile f(cloud + QStringLiteral("/zametti.json"));
+    ZT_TRUE("манифест открылся", f.open(QIODevice::ReadOnly));
+    ZT_TRUE("манифест облака не тронут", f.readAll() == manifestBefore);
+}
+
 }  // namespace
 
 static int ztRunSuite(int argc, char** argv) {
@@ -338,6 +495,9 @@ static int ztRunSuite(int argc, char** argv) {
     checkBootstrapInheritsIdentity();
     checkBootstrapIntoEmptyDir();
     checkForeignCloudRefused();
+    checkProbeCloud();
+    checkResetCloudEncryption();
+    checkResetRefusesForeignCloud();
     return zt::report("set_remote");
 }
 
