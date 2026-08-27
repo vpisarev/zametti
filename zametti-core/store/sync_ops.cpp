@@ -1093,10 +1093,32 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
     QHash<QString, Digest> oldHead;  // digest головы ДО обмена — двойное условие
     int aeadFailures = 0;
 
+    // Вложения считаются ЗДЕСЬ ЖЕ, до цикла журналов: у обоих множеств одни
+    // входы (листинг облака и локальные имена), а итог индикатора обязан
+    // стоять с первой секунды — владелец видел «285», по ходу превращающиеся
+    // в «297», и растущий итог читается как враньё счётчика.
+    QSet<QString> attachmentSet;
+    if (!pushOnly) {
+        for (const QString& name : attachmentNames()) attachmentSet.insert(name);
+        for (auto it = remoteEtag.constBegin(); it != remoteEtag.constEnd(); ++it) {
+            const QString& name = it.key();
+            if (name.endsWith(QStringLiteral(".log")) ||
+                name == QLatin1String(Identity::kFile) ||
+                name == QLatin1String(Keyfile::kRemoteName))
+                continue;
+            const qsizetype dot = name.lastIndexOf(QLatin1Char('.'));
+            if (dot <= 0 || !isValidNoteId(name.left(dot).toStdString())) continue;
+            attachmentSet.insert(name);
+        }
+    }
+    QStringList orderedAttachments(attachmentSet.begin(), attachmentSet.end());
+    orderedAttachments.sort();
+
     QStringList orderedJournals(journalIds.begin(), journalIds.end());
     orderedJournals.sort();
     if (options.progressTotal != nullptr)
-        options.progressTotal->store(int(orderedJournals.size()));
+        options.progressTotal->store(int(orderedJournals.size()) +
+                                     int(orderedAttachments.size()));
     const auto bumpProgress = [&] {
         if (options.progressDone != nullptr) options.progressDone->fetch_add(1);
     };
@@ -1409,21 +1431,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
     // сессией). Нет в облаке — залить; нет локально — скачать; обе стороны
     // разные и обе новые — НЕ ТРОГАТЬ и назвать в отчёте.
     if (!pushOnly) {
-        QSet<QString> attachmentSet;
-        for (const QString& name : attachmentNames()) attachmentSet.insert(name);
-        for (auto it = remoteEtag.constBegin(); it != remoteEtag.constEnd(); ++it) {
-            const QString& name = it.key();
-            if (name.endsWith(QStringLiteral(".log")) || name == QLatin1String(Identity::kFile) ||
-                name == QLatin1String(Keyfile::kRemoteName))
-                continue;
-            const qsizetype dot = name.lastIndexOf(QLatin1Char('.'));
-            if (dot <= 0 || !isValidNoteId(name.left(dot).toStdString())) continue;
-            attachmentSet.insert(name);
-        }
-        QStringList orderedAttachments(attachmentSet.begin(), attachmentSet.end());
-        orderedAttachments.sort();
-        if (options.progressTotal != nullptr)
-            options.progressTotal->fetch_add(int(orderedAttachments.size()));
+        // Множество собрано до цикла журналов (итог индикатора — один раз).
         for (const QString& name : orderedAttachments) {
             if (cancelled()) {
                 done.cancelled = true;
@@ -1552,7 +1560,23 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
         QStringList deletes;
         QStringList orderedCandidates(candidates.begin(), candidates.end());
         orderedCandidates.sort();
+        // Материализация — тоже в счётчик и со СВОИМ словом фазы: на первой
+        // загрузке она самая долгая, и индикатор, замерший на N/N, читался
+        // как зависание (владелец, первый живой прогон).
+        if (options.progressPhase != nullptr) options.progressPhase->store(1);
+        if (options.progressTotal != nullptr)
+            options.progressTotal->fetch_add(int(orderedCandidates.size()));
         for (const QString& id : orderedCandidates) {
+            // Отмена опрашивается и здесь: на первой загрузке материализация —
+            // самая долгая фаза, и без опроса кнопка «остановить» дожидалась
+            // бы её конца. Каждая запись атомарна, пометки dirty живы —
+            // прерывание безопасно в любой точке (инвариант E), повторный
+            // прогон достроит.
+            if (cancelled()) {
+                done.cancelled = true;
+                break;
+            }
+            bumpProgress();
             ZJournal frames;
             QString why;
             if (!readJournal(id, &frames, &why) || frames.isEmpty()) continue;
@@ -1623,6 +1647,11 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
         // ни одного удаления; список уходит в отчёт, решает человек:
         // подтвердил → повторный прогон с allowMassDelete; отказал →
         // declareAlive, и облако лечится записями поверх надгробий.
+        // Отменённый прогон удалений не применяет вовсе: «остановить» значит
+        // остановить, а надгробия никуда не денутся — доделает следующий.
+        if (done.cancelled) {
+            deletes.clear();
+        }
         if (int(deletes.size()) > options.deleteGuard && !options.allowMassDelete) {
             done.pendingDeletes = deletes;
             // Пометить, чтобы следующий прогон — с подтверждением или после

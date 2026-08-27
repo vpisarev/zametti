@@ -1019,6 +1019,10 @@ public:
         // движок живёт в рабочем потоке и о Qt-подписчиках не знает.
         std::shared_ptr<std::atomic<int>> progressDone;
         std::shared_ptr<std::atomic<int>> progressTotal;
+        // Слово фазы для строки индикатора: 0 — обмен с облаком, 1 —
+        // материализация (на первой загрузке она самая долгая, и индикатор
+        // без неё замирал на N/N, читаясь как зависание).
+        std::shared_ptr<std::atomic<int>> progressPhase;
         // Логи (err.log/sync.log) — не владеем; nullptr = не писать. Движок
         // пишет заметные события и итоги; секретов в его сообщениях нет.
         ZLogs* logs = nullptr;

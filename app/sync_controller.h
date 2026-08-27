@@ -77,15 +77,20 @@ public:
     // --- индикатор в статус-баре (решение владельца) ------------------------
     //
     //   cloud sync: [......*.............  3/20]
+    //   materializing: [......*.......  290/297]
     //
     // «*» ездит по точкам вперёд-назад; счётчик дополняется пробелами СЛЕВА
-    // до ширины итога, чтобы «]» не дёргался, пока число растёт. Обе части —
-    // чистыми функциями: их проверяет набор, а таймер только зовёт.
+    // до ширины итога, чтобы «]» не дёргался, пока число растёт. Слово фазы —
+    // от движка: материализация на первой загрузке — самая долгая часть, и
+    // индикатор без неё «болтался» после N/N секунд десять (владелец, п.13
+    // первого живого прогона). Обе части — чистыми функциями: их проверяет
+    // набор, а таймер только зовёт.
     static constexpr int kBounceWidth = 20;
     // Позиция «*» на такте tick: 0,1,…,width-1,width-2,…,1,0,1,…
     static int bounceAt(int tick, int width = kBounceWidth);
     // Готовая строка индикатора; total <= 0 — итог ещё неизвестен, «0/?».
-    static QString progressLine(int tick, int done, int total);
+    static QString progressLine(int tick, int done, int total,
+                                bool materializing = false);
 
 signals:
     void stateChanged();
@@ -115,6 +120,7 @@ protected:
     std::shared_ptr<std::atomic<bool>> cancel_;
     std::shared_ptr<std::atomic<int>> progressDone_;
     std::shared_ptr<std::atomic<int>> progressTotal_;
+    std::shared_ptr<std::atomic<int>> progressPhase_;
     QTimer ticker_;
     int tick_ = 0;
     bool running_ = false;

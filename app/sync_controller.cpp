@@ -20,7 +20,8 @@ SyncController::SyncController(std::shared_ptr<ZStorage> storage,
     connect(&ticker_, &QTimer::timeout, this, [this] {
         ++tick_;
         emit progress(progressLine(tick_, progressDone_ ? progressDone_->load() : 0,
-                                   progressTotal_ ? progressTotal_->load() : 0));
+                                   progressTotal_ ? progressTotal_->load() : 0,
+                                   progressPhase_ != nullptr && progressPhase_->load() != 0));
     });
 }
 
@@ -52,7 +53,7 @@ int SyncController::bounceAt(int tick, int width) {
     return at < width ? at : period - at;
 }
 
-QString SyncController::progressLine(int tick, int done, int total) {
+QString SyncController::progressLine(int tick, int done, int total, bool materializing) {
     QString bar(kBounceWidth, QLatin1Char('.'));
     bar[bounceAt(tick)] = QLatin1Char('*');
     // Счётчик дополняется слева до ширины итога: «]» стоит на месте, пока
@@ -60,7 +61,11 @@ QString SyncController::progressLine(int tick, int done, int total) {
     const QString right = total > 0
         ? QStringLiteral("%1/%2").arg(done, QString::number(total).size()).arg(total)
         : QStringLiteral("0/?");
-    return QStringLiteral("cloud sync: [%1  %2]").arg(bar, right);
+    // Слово фазы: после обмена идёт материализация, и человек должен видеть,
+    // ЧЕМ программа занята, а не гадать по замершему счётчику.
+    return QStringLiteral("%1: [%2  %3]")
+        .arg(materializing ? QStringLiteral("materializing") : QStringLiteral("cloud sync"),
+             bar, right);
 }
 
 SyncController::~SyncController() {
@@ -127,8 +132,10 @@ void SyncController::startFull(bool allowMassDelete) {
     options.cancel = cancel_;
     progressDone_ = std::make_shared<std::atomic<int>>(0);
     progressTotal_ = std::make_shared<std::atomic<int>>(0);
+    progressPhase_ = std::make_shared<std::atomic<int>>(0);
     options.progressDone = progressDone_;
     options.progressTotal = progressTotal_;
+    options.progressPhase = progressPhase_;
     running_ = true;
     lastError_.clear();
     tick_ = 0;
