@@ -36,6 +36,44 @@ bool ZAppState::knowsCaret(const QString& noteId) const {
     return false;
 }
 
+namespace {
+// Ключ строки списка — канонический вид пути: один и тот же каталог, названный
+// с хвостовым слэшем или через «..», не должен плодить две строки.
+QString canonicalRoot(const QString& root) {
+    if (root.isEmpty()) return {};
+    return QDir::cleanPath(QFileInfo(root).absoluteFilePath());
+}
+}  // namespace
+
+void ZAppState::rememberStore(const ZStorage::Config& entry) {
+    if (entry.root.isEmpty()) return;
+    ZStorage::Config kept = entry;
+    kept.root = canonicalRoot(entry.root);
+    for (ZStorage::Config& e : stores_) {
+        if (e.root == kept.root) {
+            // Имя могло не приехать (звали без чтения корня) — прежнее
+            // дороже пустого.
+            if (kept.name.isEmpty()) kept.name = e.name;
+            e = kept;
+            return;
+        }
+    }
+    stores_.append(kept);
+}
+
+void ZAppState::forgetStore(const QString& root) {
+    const QString key = canonicalRoot(root);
+    for (qsizetype i = stores_.size(); i-- > 0;)
+        if (stores_[i].root == key) stores_.removeAt(i);
+}
+
+ZStorage::Config ZAppState::storeFor(const QString& root) const {
+    const QString key = canonicalRoot(root);
+    for (const ZStorage::Config& e : stores_)
+        if (e.root == key) return e;
+    return {};
+}
+
 ZAppState ZAppState::load() {
     ZAppState session;
     QFile file(path());
@@ -86,6 +124,13 @@ ZAppState ZAppState::load() {
         if (v.isString()) searches.append(v.toString());
     session.setSearchHistory(searches);
     session.setSearchRegex(root.value(QStringLiteral("searchRegex")).toBool(false));
+    for (const QJsonValue& v : root.value(QStringLiteral("stores")).toArray()) {
+        ZStorage::Config entry;
+        entry.parse(v.toObject());
+        // Через rememberStore, а не напрямую: канонизация и дедупликация —
+        // одни на запись и на чтение.
+        session.rememberStore(entry);
+    }
     return session;
 }
 
@@ -101,6 +146,8 @@ void ZAppState::save() const {
                                   {QStringLiteral("cursor"), e.cursor},
                                   {QStringLiteral("anchor"), e.anchor},
                                   {QStringLiteral("scroll"), e.scroll}});
+    QJsonArray stores;
+    for (const ZStorage::Config& e : session.stores_) stores.append(e.entryJson());
 
     const QJsonObject root{
                   {QStringLiteral("lastFile"), session.lastFile()},
@@ -124,6 +171,7 @@ void ZAppState::save() const {
                   {QStringLiteral("searchHistory"), searches},
                   {QStringLiteral("searchRegex"), session.searchRegex()},
                   {QStringLiteral("carets"), carets},
+                  {QStringLiteral("stores"), stores},
     };
     QDir().mkpath(QFileInfo(path()).absolutePath());
     QFile file(path());

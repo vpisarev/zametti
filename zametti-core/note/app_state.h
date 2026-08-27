@@ -14,6 +14,7 @@
 
 #include "caret_spot.h"
 #include "settings.h"
+#include "zstorage.h"
 
 #include <QByteArray>
 #include <QList>
@@ -106,6 +107,24 @@ public:
     ZM_SETTING_PLAIN(bool, exportKeepMeta, ExportKeepMeta, false)
 
 public:
+    // --- список хранилищ устройства --------------------------------------
+    // Всё, что на этой машине открывали: по нему диалог выбора хранилищ
+    // находит остальные корни — активное называет storeRoot, а прочие без
+    // списка было бы не найти (решение владельца). Строка — ZStorage::Config:
+    // локальный корень + опциональное облако; облачная часть здесь КЭШ ДЛЯ
+    // ПОКАЗА, истина синка — remote.json самой копии, и открытие хранилища
+    // освежает строку фактом. Всякое успешно открытое хранилище попадает в
+    // список само (rememberStore из attachStore) — это же бесплатная миграция
+    // прежнего storeRoot; «−» в диалоге лишь забывает строку, папку и облако
+    // не трогая.
+    const QList<ZStorage::Config>& stores() const { return stores_; }
+    // Без дублей по канонизированному root; знакомая строка обновляется НА
+    // МЕСТЕ (порядок стабилен — список в диалоге не прыгает), новая — в конец.
+    void rememberStore(const ZStorage::Config& entry);
+    void forgetStore(const QString& root);
+    // Строка по корню; неизвестный корень — пустая запись.
+    ZStorage::Config storeFor(const QString& root) const;
+
     // --- каретки по заметкам ---------------------------------------------
     // Где человек стоял в каждой из недавних заметок — по id заметки, без
     // дублей, свежие впереди, не больше kCaretLimit. Хранит место сама заметка
@@ -128,6 +147,7 @@ public:
 
 protected:
     QList<CaretEntry> carets_;
+    QList<ZStorage::Config> stores_;
 };
 
 }  // namespace zametti
