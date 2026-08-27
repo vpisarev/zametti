@@ -55,7 +55,6 @@ ZStorage::Config StoreCli::addressFromFlags() const {
     else
         cfg.remoteUrl = url_.endsWith(QLatin1Char('/')) ? url_ : url_ + QLatin1Char('/');
     cfg.remoteUser = user_;
-    cfg.allowInsecureHttp = allowInsecure_;
     return cfg;
 }
 
@@ -82,10 +81,10 @@ int StoreCli::usage() const {
                  "  zametti store archive --root <dir> --id <id> [--restore]\n"
                  "  zametti store root show|init|fix --root <dir>\n"
                  "  zametti store push-all --root <dir> --url <webdav-url>\n"
-                 "                         [--user <name>] [--allow-insecure-http]\n"
+                 "                         [--user <name>]\n"
                  "                         (or --to <dir> to push into a local folder)\n"
                  "  zametti store set-remote --root <dir> (--url <webdav-url> | --to <dir>)\n"
-                 "                           [--user <name>] [--allow-insecure-http] [--reset]\n"
+                 "                           [--user <name>] [--reset]\n"
                  "  zametti store sync --root <dir> [--full | --push-only]\n"
                  "                     [--allow-mass-delete | --keep-all]\n"
                  "                     [--url <webdav-url> | --to <dir>] [--user <name>]\n"
@@ -171,7 +170,6 @@ bool StoreCli::parse() {
         else if (a == QStringLiteral("--url")) url_ = next();
         else if (a == QStringLiteral("--user")) user_ = next();
         else if (a == QStringLiteral("--to")) to_ = next();
-        else if (a == QStringLiteral("--allow-insecure-http")) allowInsecure_ = true;
         else if (a == QStringLiteral("--reset")) reset_ = true;
         else if (a == QStringLiteral("--full")) pushOnly_ = false;
         else if (a == QStringLiteral("--push-only")) pushOnly_ = true;

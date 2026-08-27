@@ -48,7 +48,6 @@
 #include <thread>
 
 class QAction;
-class QCheckBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -95,7 +94,7 @@ public:
     // как у CLI), пустая строка — облака нет, всё прочее — каталог. Чистая
     // функция, проверяется набором.
     static void setCloudAddress(ZStorage::Config& cfg, const QString& server,
-                                const QString& user, bool allowInsecureHttp);
+                                const QString& user);
     // Обратная сторона: что показать в поле адреса.
     static QString cloudAddressText(const ZStorage::Config& cfg);
 
@@ -162,7 +161,6 @@ protected:
     QLineEdit* serverPassword_ = nullptr;
     QAction* serverEye_ = nullptr;
     QAction* passwordEye_ = nullptr;
-    QCheckBox* insecureHttp_ = nullptr;
     QLabel* passwordLabel_ = nullptr;
     QLineEdit* password_ = nullptr;
     QLabel* password2Label_ = nullptr;

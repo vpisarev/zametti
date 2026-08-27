@@ -3,7 +3,6 @@
 #include "icons.h"
 
 #include <QAction>
-#include <QCheckBox>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFileDialog>
@@ -71,7 +70,7 @@ public:
 }  // namespace
 
 void StoreManagerDialog::setCloudAddress(ZStorage::Config& cfg, const QString& server,
-                                         const QString& user, bool allowInsecureHttp) {
+                                         const QString& user) {
     cfg.remoteUrl.clear();
     cfg.remoteDir.clear();
     const QString address = server.trimmed();
@@ -83,7 +82,6 @@ void StoreManagerDialog::setCloudAddress(ZStorage::Config& cfg, const QString& s
     else if (!address.isEmpty())
         cfg.remoteDir = QDir(address).absolutePath();
     cfg.remoteUser = user.trimmed();
-    cfg.allowInsecureHttp = allowInsecureHttp;
 }
 
 QString StoreManagerDialog::cloudAddressText(const ZStorage::Config& cfg) {
@@ -138,9 +136,6 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, const QList<ZStorage::Co
     serverPassword_->setObjectName(QStringLiteral("serverPassword"));
     serverPassword_->setEchoMode(QLineEdit::Password);
     serverPassword_->setPlaceholderText(QStringLiteral("empty = the stored one"));
-    insecureHttp_ = new QCheckBox(QStringLiteral("Allow plain http (password travels open)"),
-                                  this);
-    insecureHttp_->setObjectName(QStringLiteral("insecureHttp"));
 
     passwordLabel_ = new QLabel(QStringLiteral("Encryption password"), this);
     password_ = new QLineEdit(this);
@@ -181,7 +176,6 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, const QList<ZStorage::Co
     form->addRow(QStringLiteral("Cloud (WebDAV)"), server_);
     form->addRow(QStringLiteral("Login"), user_);
     form->addRow(QStringLiteral("Server password"), serverPassword_);
-    form->addRow(QString(), insecureHttp_);
     form->addRow(passwordLabel_, password_);
     form->addRow(password2Label_, password2_);
     auto* actionRow = new QHBoxLayout;
@@ -331,7 +325,6 @@ void StoreManagerDialog::showEntry(int row) {
     server_->setText(cloudAddressText(e));
     user_->setText(e.remoteUser);
     serverPassword_->clear();
-    insecureHttp_->setChecked(e.allowInsecureHttp);
     password_->clear();
     password2_->clear();
     // Глаза — закрыть: чужая строка не должна открываться с показанным
@@ -359,7 +352,6 @@ void StoreManagerDialog::beginNewEntry() {
     server_->clear();
     user_->clear();
     serverPassword_->clear();
-    insecureHttp_->setChecked(false);
     password_->clear();
     password2_->clear();
     serverEye_->setChecked(false);
@@ -452,7 +444,7 @@ void StoreManagerDialog::setBusy(bool on) {
     for (QWidget* w :
          std::initializer_list<QWidget*>{list_, addButton_, removeButton_, openButton_,
                                          folder_, browseButton_, server_, user_,
-                                         serverPassword_, insecureHttp_, password_,
+                                         serverPassword_, password_,
                                          password2_, applyButton_, resetButton_,
                                          closeButton_})
         w->setEnabled(!on);
@@ -519,7 +511,7 @@ void StoreManagerDialog::onApply() {
     const QString root = canonicalRoot(named);
     ZStorage::Config cfg = selected_ >= 0 ? result_.stores[selected_] : ZStorage::Config{};
     cfg.root = root;
-    setCloudAddress(cfg, server_->text(), user_->text(), insecureHttp_->isChecked());
+    setCloudAddress(cfg, server_->text(), user_->text());
     const QString serverPassword = serverPassword_->text();
     const QString password = password_->text();
 

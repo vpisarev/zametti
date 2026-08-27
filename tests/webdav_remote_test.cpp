@@ -46,19 +46,14 @@ void checkUrlRule() {
     config.base = QUrl(QStringLiteral("http://localhost:8080/зам/"));
     ZT_TRUE("и по имени localhost", WebDavRemote::checkUrl(config, &error));
 
+    // Внешний http запрещён НАСОВСЕМ (решение владельца 28.08.2026): прежний
+    // ключ-лазейка убран, и объяснение зовёт к https, а не к настройке.
     config.base = QUrl(QStringLiteral("http://dav.example.org/зам/"));
-    ZT_TRUE("внешний http запрещён по умолчанию",
-            !WebDavRemote::checkUrl(config, &error));
+    ZT_TRUE("внешний http запрещён", !WebDavRemote::checkUrl(config, &error));
     ZT_TRUE("и объяснено про пароль открытым текстом",
             error.contains(QLatin1String("clear")));
-    ZT_TRUE("и названа настройка, которой это снимается",
-            error.contains(QLatin1String("allowInsecureHttp")));
+    ZT_TRUE("и позвано к https", error.contains(QLatin1String("https")));
 
-    config.allowInsecureHttp = true;
-    ZT_TRUE("с явным разрешением внешний http проходит",
-            WebDavRemote::checkUrl(config, &error));
-
-    config.allowInsecureHttp = false;
     config.base = QUrl(QStringLiteral("ftp://dav.example.org/зам/"));
     ZT_TRUE("чужая схема запрещена", !WebDavRemote::checkUrl(config, &error));
     config.base = QUrl(QStringLiteral("вообще не адрес"));

@@ -122,19 +122,17 @@ QString statusText(StoreManagerDialog& dialog) {
 void checkCloudAddress() {
     ZStorage::Config cfg;
     StoreManagerDialog::setCloudAddress(cfg, QStringLiteral("https://host/dav/notes"),
-                                        QStringLiteral(" вадим "), true);
+                                        QStringLiteral(" вадим "));
     ZT_EQ("url получает хвостовой слэш", std::string("https://host/dav/notes/"),
           s(cfg.remoteUrl));
     ZT_TRUE("каталог пуст при url", cfg.remoteDir.isEmpty());
     ZT_EQ("логин обрезан", std::string("вадим"), s(cfg.remoteUser));
-    ZT_TRUE("галочка http доехала", cfg.allowInsecureHttp);
 
-    StoreManagerDialog::setCloudAddress(cfg, QStringLiteral("/mnt/nas/облако"),
-                                        QString(), false);
+    StoreManagerDialog::setCloudAddress(cfg, QStringLiteral("/mnt/nas/облако"), QString());
     ZT_TRUE("путь стал каталогом-облаком", cfg.remoteUrl.isEmpty() &&
                 cfg.remoteDir == QStringLiteral("/mnt/nas/облако"));
 
-    StoreManagerDialog::setCloudAddress(cfg, QString(), QString(), false);
+    StoreManagerDialog::setCloudAddress(cfg, QString(), QString());
     ZT_TRUE("пустая строка — облака нет", !cfg.hasCloud());
 }
 

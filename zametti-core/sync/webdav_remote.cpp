@@ -73,17 +73,18 @@ bool WebDavRemote::checkUrl(const Config& config, QString* error) {
                                     "got %1").arg(scheme);
         return false;
     }
-    // Голый http: рискует пароль сервера, содержимое шифровано всегда.
+    // Голый http разрешён только САМОМУ СЕБЕ (localhost — наборы и замеры):
+    // на внешнем адресе пароль сервера ехал бы открытым текстом. Прежний
+    // ключ-лазейка sync.allowInsecureHttp убран решением владельца 28.08.2026.
     const QString host = url.host().toLower();
     const bool local = host == QLatin1String("localhost") ||
                        host == QLatin1String("127.0.0.1") ||
                        host == QLatin1String("::1");
-    if (local || config.allowInsecureHttp) return true;
+    if (local) return true;
     if (error != nullptr)
         *error = QStringLiteral(
-            "sync.url uses plain http, so the server password would travel in "
-            "the clear. Use https, or set sync.allowInsecureHttp to true if "
-            "this server is on your own network.");
+            "the address uses plain http, and the server password would travel "
+            "in the clear — use https.");
     return false;
 }
 

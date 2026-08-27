@@ -38,7 +38,7 @@ protected:
     // Замок хранилища одной дорогой; печатает отказ и отвечает, взяли ли.
     // busyHint — что дописать к «занято» (у thin своя приписка).
     bool takeLock(ZStorage& storage, const char* busyHint = "") const;
-    // Адрес облака, названный ключами (--url/--to/--user/--allow-insecure-http).
+    // Адрес облака, названный ключами (--url/--to/--user).
     // Без облака, если не назван ни один адрес: тогда его знает remote.json.
     ZStorage::Config addressFromFlags() const;
     // Пароль с клавиатуры, БЕЗ эха. Разговор с терминалом — дело CLI, в ядре
@@ -78,7 +78,6 @@ protected:
     QString url_;
     QString user_;
     QString to_;
-    bool allowInsecure_ = false;
     bool reset_ = false;
     bool pushOnly_ = false;
     bool allowMassDelete_ = false;

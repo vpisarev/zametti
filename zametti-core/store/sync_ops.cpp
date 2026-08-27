@@ -164,7 +164,6 @@ void ZStorage::Config::parse(const QJsonObject& o) {
     remoteUrl = text("remoteUrl", "url");
     remoteDir = text("remoteDir", "dir");
     remoteUser = text("remoteUser", "user");
-    allowInsecureHttp = o.value(QStringLiteral("allowInsecureHttp")).toBool(false);
     timeoutMs = o.value(QStringLiteral("timeoutMs")).toInt(30000);
 }
 
@@ -186,7 +185,6 @@ QByteArray ZStorage::Config::remoteBytes() const {
     if (!remoteUrl.isEmpty()) o.insert(QStringLiteral("remoteUrl"), remoteUrl);
     if (!remoteDir.isEmpty()) o.insert(QStringLiteral("remoteDir"), remoteDir);
     if (!remoteUser.isEmpty()) o.insert(QStringLiteral("remoteUser"), remoteUser);
-    if (allowInsecureHttp) o.insert(QStringLiteral("allowInsecureHttp"), true);
     o.insert(QStringLiteral("timeoutMs"), timeoutMs);
     return QJsonDocument(o).toJson(QJsonDocument::Indented);
 }
@@ -198,7 +196,6 @@ QJsonObject ZStorage::Config::entryJson() const {
     if (!remoteUrl.isEmpty()) o.insert(QStringLiteral("remoteUrl"), remoteUrl);
     if (!remoteDir.isEmpty()) o.insert(QStringLiteral("remoteDir"), remoteDir);
     if (!remoteUser.isEmpty()) o.insert(QStringLiteral("remoteUser"), remoteUser);
-    if (allowInsecureHttp) o.insert(QStringLiteral("allowInsecureHttp"), true);
     o.insert(QStringLiteral("timeoutMs"), timeoutMs);
     return o;
 }
@@ -258,7 +255,6 @@ std::shared_ptr<RemoteStore> ZStorage::makeRemote(const Config& cfg,
         web.base = QUrl(cfg.remoteUrl);
         web.user = cfg.remoteUser;
         web.password = serverPassword;
-        web.allowInsecureHttp = cfg.allowInsecureHttp;
         web.timeoutMs = cfg.timeoutMs;
         // Адрес проверяется ДО первой операции: пароль не уедет открытым
         // текстом даже один раз.

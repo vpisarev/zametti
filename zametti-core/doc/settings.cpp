@@ -363,7 +363,6 @@ QJsonObject settingsToJson(const ZSettings& a) {
         {QStringLiteral("url"), a.sync().url()},
         {QStringLiteral("user"), a.sync().user()},
         {QStringLiteral("remoteDir"), a.sync().remoteDir()},
-        {QStringLiteral("allowInsecureHttp"), a.sync().allowInsecureHttp()},
         {QStringLiteral("timeoutMs"), a.sync().timeoutMs()},
         {QStringLiteral("onStart"), a.sync().onStart()},
         {QStringLiteral("onExit"), a.sync().onExit()},
@@ -497,7 +496,6 @@ void settingsFromJson(const QJsonObject& root, ZSettings& a) {
     readString(sync, "url", a.sync(), &ZSettings::Sync::setUrl);
     readString(sync, "user", a.sync(), &ZSettings::Sync::setUser);
     readString(sync, "remoteDir", a.sync(), &ZSettings::Sync::setRemoteDir);
-    readBool(sync, "allowInsecureHttp", a.sync(), &ZSettings::Sync::setAllowInsecureHttp);
     readInt(sync, "timeoutMs", a.sync(), &ZSettings::Sync::setTimeoutMs);
     readBool(sync, "onStart", a.sync(), &ZSettings::Sync::setOnStart);
     readBool(sync, "onExit", a.sync(), &ZSettings::Sync::setOnExit);
