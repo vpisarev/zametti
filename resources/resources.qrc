@@ -38,6 +38,8 @@
     <qresource prefix="/icons">
         <file alias="archive.svg">icons/archive.svg</file>
         <file alias="arrow-down-a-z.svg">icons/arrow-down-a-z.svg</file>
+        <file alias="arrow-down.svg">icons/arrow-down.svg</file>
+        <file alias="arrow-up.svg">icons/arrow-up.svg</file>
         <file alias="badge-info.svg">icons/badge-info.svg</file>
         <file alias="arrow-up-a-z.svg">icons/arrow-up-a-z.svg</file>
         <file alias="calendar-arrow-down.svg">icons/calendar-arrow-down.svg</file>

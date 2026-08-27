@@ -45,12 +45,16 @@ FindBar::FindBar(QWidget* parent) : QWidget(parent) {
     status_ = new QLabel(this);
     status_->setMinimumWidth(70);
 
-    auto* previous = new QToolButton(this);
-    previous->setText(settings().ui().findPreviousGlyph());
-    previous->setToolTip(QStringLiteral("Previous (Shift+F3)"));
-    auto* next = new QToolButton(this);
-    next->setText(settings().ui().findNextGlyph());
-    next->setToolTip(QStringLiteral("Next (F3)"));
+    previousButton_ = new QToolButton(this);
+    previousButton_->setAutoRaise(true);
+    previousButton_->setFocusPolicy(Qt::NoFocus);
+    previousButton_->setToolTip(QStringLiteral("Previous (Shift+F3)"));
+    nextButton_ = new QToolButton(this);
+    nextButton_->setAutoRaise(true);
+    nextButton_->setFocusPolicy(Qt::NoFocus);
+    nextButton_->setToolTip(QStringLiteral("Next (F3)"));
+    QToolButton* previous = previousButton_;
+    QToolButton* next = nextButton_;
 
     replaceLabel_ = new QLabel(QStringLiteral("with"), this);
     replace_ = new QLineEdit(this);
@@ -148,6 +152,12 @@ void FindBar::restyleButtons() {
     historyButton_->setIconSize(QSize(size, size));
     regexButton_->setIcon(make(QStringLiteral("regex")));
     regexButton_->setIconSize(QSize(size, size));
+    // Обход найденного — вверх и вниз, а не влево и вправо: ходим по тексту, а
+    // текст идёт сверху вниз (правило прежнее, глифы сменились значками).
+    previousButton_->setIcon(make(QStringLiteral("arrow-up")));
+    previousButton_->setIconSize(QSize(size, size));
+    nextButton_->setIcon(make(QStringLiteral("arrow-down")));
+    nextButton_->setIconSize(QSize(size, size));
 }
 
 bool FindBar::regexOn() const { return regexButton_->isChecked(); }

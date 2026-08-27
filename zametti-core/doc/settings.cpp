@@ -289,8 +289,6 @@ QJsonObject settingsToJson(const ZSettings& a) {
 
     QJsonObject find{
         {QStringLiteral("fontDelta"), a.ui().findFontDelta()},
-        {QStringLiteral("previousGlyph"), a.ui().findPreviousGlyph()},
-        {QStringLiteral("nextGlyph"), a.ui().findNextGlyph()},
         {QStringLiteral("badPatternColor"), colorToString(a.ui().findBadPatternColor())},
         {QStringLiteral("historyLimit"), a.ui().findHistoryLimit()},
     };
@@ -675,8 +673,6 @@ void settingsFromJson(const QJsonObject& root, ZSettings& a) {
 
     const QJsonObject find = root.value(QStringLiteral("find")).toObject();
     readReal(find, "fontDelta", a.ui(), &ZSettings::Ui::setFindFontDelta);
-    readString(find, "previousGlyph", a.ui(), &ZSettings::Ui::setFindPreviousGlyph);
-    readString(find, "nextGlyph", a.ui(), &ZSettings::Ui::setFindNextGlyph);
     readColor(find, "badPatternColor", a.ui(), &ZSettings::Ui::setFindBadPatternColor);
     readInt(find, "historyLimit", a.ui(), &ZSettings::Ui::setFindHistoryLimit);
     const QJsonObject shortcuts = root.value(QStringLiteral("shortcuts")).toObject();

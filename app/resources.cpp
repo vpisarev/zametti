@@ -39,7 +39,8 @@ constexpr zametti::EmbeddedFace kFaces[] = {
 };
 
 constexpr const char* kIcons[] = {
-    "archive",             "arrow-down-a-z",       "arrow-up-a-z",
+    "archive",             "arrow-down",           "arrow-down-a-z",
+    "arrow-up",            "arrow-up-a-z",
     "badge-info",          "calendar-arrow-down",  "calendar-arrow-up",
     "check",               "circle-question-mark",
     "clock-arrow-down",    "clock-arrow-up",       "cloud-sync",

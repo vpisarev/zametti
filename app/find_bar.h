@@ -92,6 +92,8 @@ private:
     QString typed_;
     QToolButton* historyButton_ = nullptr;
     QToolButton* regexButton_ = nullptr;
+    QToolButton* previousButton_ = nullptr;
+    QToolButton* nextButton_ = nullptr;
     QLineEdit* find_ = nullptr;
     QLineEdit* replace_ = nullptr;
     QLabel* status_ = nullptr;

@@ -523,11 +523,6 @@ struct ZSettings {
         // Прибавка к кеглю боковой панели: поле, в которое печатают, читается
         // хуже подписи, на которую только смотрят.
         ZM_SETTING(qreal, findFontDelta, FindFontDelta, 2.0, -10.0, 20.0)
-        // Знаки на кнопках обхода. Настоящие стрелки, а не треугольники
-        // проигрывателя. Вверх и вниз, а не влево и вправо: ходим по тексту, а
-        // текст идёт сверху вниз.
-        ZM_SETTING_PLAIN(QString, findPreviousGlyph, FindPreviousGlyph, QStringLiteral("↑"))
-        ZM_SETTING_PLAIN(QString, findNextGlyph, FindNextGlyph, QStringLiteral("↓"))
         // Недописанное выражение: буквы запроса краснеют, и это всё — ни слова
         // об ошибке нигде (решение владельца). Фон поля не трогается.
         ZM_SETTING_PLAIN(QColor, findBadPatternColor, FindBadPatternColor, 0xc0, 0x28, 0x28)
