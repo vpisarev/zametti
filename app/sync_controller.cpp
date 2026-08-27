@@ -37,7 +37,7 @@ void SyncController::setStorage(std::shared_ptr<ZStorage> storage) {
     storage_ = std::move(storage);
     // Секреты и адрес добыты для ПРЕЖНЕГО хранилища: у нового и storeId другой,
     // и облако может быть другое. Забываем всё — fetchSecrets достанет заново.
-    cfg_ = ZStorage::RemoteConfig{};
+    cfg_ = ZStorage::Config{};
     keyfile_ = Keyfile{};
     serverPassword_.clear();
     lastReport_ = ZStorage::SyncReport{};
@@ -75,13 +75,13 @@ void SyncController::joinWorker() {
 }
 
 bool SyncController::configured() const {
-    return storage_ != nullptr && storage_->isStore() && !storage_->remoteConfig().isEmpty();
+    return storage_ != nullptr && storage_->isStore() && storage_->remoteConfig().hasCloud();
 }
 
 bool SyncController::fetchSecrets() {
     if (storage_ == nullptr) return false;
     cfg_ = storage_->remoteConfig();
-    if (cfg_.isEmpty()) {
+    if (!cfg_.hasCloud()) {
         lastError_ = QStringLiteral("sync is not configured for this store");
         return false;
     }
@@ -91,7 +91,7 @@ bool SyncController::fetchSecrets() {
         return false;
     }
     QString why;
-    if (!cfg_.url.isEmpty()) serverPassword_ = secrets_->serverPassword(mine.storeId(), &why);
+    if (!cfg_.remoteUrl.isEmpty()) serverPassword_ = secrets_->serverPassword(mine.storeId(), &why);
     if (!secrets_->loadKey(mine.storeId(), &keyfile_, &why)) {
         lastError_ =
             QStringLiteral("the key is not in the keyring (%1) — run set-remote once").arg(why);

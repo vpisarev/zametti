@@ -149,54 +149,88 @@ void ZStorage::clearDirty(const QStringList& synced) {
 
 // --- АДРЕС ОБЛАКА И ПОДКЛЮЧЕНИЕ --------------------------------------------
 
-bool ZStorage::RemoteConfig::parse(const QByteArray& bytes, QString* error) {
+// Один читатель на оба дома записи (remote.json и строка списка в state.json):
+// чего в объекте нет, то пусто. Прежние ключи url/dir/user читаются запасным
+// путём — старые remote.json продолжают работать и мигрируют при следующей
+// записи.
+void ZStorage::Config::parse(const QJsonObject& o) {
+    const auto text = [&o](const char* fresh, const char* legacy) {
+        const QJsonValue v = o.value(QLatin1String(fresh));
+        if (v.isString()) return v.toString();
+        return legacy != nullptr ? o.value(QLatin1String(legacy)).toString() : QString();
+    };
+    root = text("root", nullptr);
+    name = text("name", nullptr);
+    remoteUrl = text("remoteUrl", "url");
+    remoteDir = text("remoteDir", "dir");
+    remoteUser = text("remoteUser", "user");
+    allowInsecureHttp = o.value(QStringLiteral("allowInsecureHttp")).toBool(false);
+    timeoutMs = o.value(QStringLiteral("timeoutMs")).toInt(30000);
+}
+
+bool ZStorage::Config::parse(const QByteArray& bytes, QString* error) {
     QJsonParseError bad;
     const QJsonDocument doc = QJsonDocument::fromJson(bytes, &bad);
     if (bad.error != QJsonParseError::NoError || !doc.isObject()) {
         if (error) *error = QStringLiteral("remote.json is not a JSON object");
         return false;
     }
-    const QJsonObject o = doc.object();
-    url = o.value(QStringLiteral("url")).toString();
-    dir = o.value(QStringLiteral("dir")).toString();
-    user = o.value(QStringLiteral("user")).toString();
-    allowInsecureHttp = o.value(QStringLiteral("allowInsecureHttp")).toBool(false);
-    timeoutMs = o.value(QStringLiteral("timeoutMs")).toInt(30000);
+    parse(doc.object());
     return true;
 }
 
-QByteArray ZStorage::RemoteConfig::toBytes() const {
+// В remote.json уходит ТОЛЬКО облачная сторона: файл лежит В корне копии, и
+// путь, вписанный внутрь, протух бы при cp -r.
+QByteArray ZStorage::Config::remoteBytes() const {
     QJsonObject o;
-    if (!url.isEmpty()) o.insert(QStringLiteral("url"), url);
-    if (!dir.isEmpty()) o.insert(QStringLiteral("dir"), dir);
-    if (!user.isEmpty()) o.insert(QStringLiteral("user"), user);
+    if (!remoteUrl.isEmpty()) o.insert(QStringLiteral("remoteUrl"), remoteUrl);
+    if (!remoteDir.isEmpty()) o.insert(QStringLiteral("remoteDir"), remoteDir);
+    if (!remoteUser.isEmpty()) o.insert(QStringLiteral("remoteUser"), remoteUser);
     if (allowInsecureHttp) o.insert(QStringLiteral("allowInsecureHttp"), true);
     o.insert(QStringLiteral("timeoutMs"), timeoutMs);
     return QJsonDocument(o).toJson(QJsonDocument::Indented);
 }
 
-ZStorage::RemoteConfig ZStorage::remoteConfig() const {
-    RemoteConfig cfg;
+QJsonObject ZStorage::Config::entryJson() const {
+    QJsonObject o;
+    if (!root.isEmpty()) o.insert(QStringLiteral("root"), root);
+    if (!name.isEmpty()) o.insert(QStringLiteral("name"), name);
+    if (!remoteUrl.isEmpty()) o.insert(QStringLiteral("remoteUrl"), remoteUrl);
+    if (!remoteDir.isEmpty()) o.insert(QStringLiteral("remoteDir"), remoteDir);
+    if (!remoteUser.isEmpty()) o.insert(QStringLiteral("remoteUser"), remoteUser);
+    if (allowInsecureHttp) o.insert(QStringLiteral("allowInsecureHttp"), true);
+    o.insert(QStringLiteral("timeoutMs"), timeoutMs);
+    return o;
+}
+
+ZStorage::Config ZStorage::remoteConfig() const {
+    Config cfg;
     QFile f(root_ + QStringLiteral("/.zametti/remote.json"));
-    if (!f.open(QIODevice::ReadOnly)) return cfg;
-    QString why;
-    if (!cfg.parse(f.readAll(), &why)) {
-        // Битый конфиг ничего не подключает — как битый config.json ничего
-        // не перезагружает. Пустой конфиг = «не настроен», и это видно.
-        fprintf(stderr, "zametti: %s: %s\n", qPrintable(f.fileName()), qPrintable(why));
-        return RemoteConfig();
+    if (f.open(QIODevice::ReadOnly)) {
+        QString why;
+        if (!cfg.parse(f.readAll(), &why)) {
+            // Битый конфиг ничего не подключает — как битый config.json ничего
+            // не перезагружает. Конфиг без облака = «не настроен», и это видно.
+            fprintf(stderr, "zametti: %s: %s\n", qPrintable(f.fileName()), qPrintable(why));
+            cfg = Config();
+        }
     }
+    // root — корень ЭТОЙ копии, ПОСЛЕ разбора (читатель пишет все поля, и
+    // root из него всегда пуст: в remote.json путь не пишется — переехал бы
+    // вместе с каталогом и врал). name не заполняется нарочно: заголовок
+    // корня стоит чтения файла, а сюда ходят на каждый пересчёт тулбара.
+    cfg.root = root_;
     return cfg;
 }
 
-bool ZStorage::writeRemoteConfig(const RemoteConfig& cfg, QString* error) {
+bool ZStorage::writeRemoteConfig(const Config& cfg, QString* error) {
     QDir().mkpath(root_ + QStringLiteral("/.zametti"));
     QSaveFile save(root_ + QStringLiteral("/.zametti/remote.json"));
     if (!save.open(QIODevice::WriteOnly)) {
         if (error) *error = QStringLiteral("cannot write remote.json: %1").arg(save.errorString());
         return false;
     }
-    save.write(cfg.toBytes());
+    save.write(cfg.remoteBytes());
     if (!save.commit()) {
         if (error) *error = QStringLiteral("cannot write remote.json: %1").arg(save.errorString());
         return false;
@@ -212,17 +246,17 @@ bool ZStorage::clearRemoteConfig(QString* error) {
     return false;
 }
 
-std::shared_ptr<RemoteStore> ZStorage::makeRemote(const RemoteConfig& cfg,
+std::shared_ptr<RemoteStore> ZStorage::makeRemote(const Config& cfg,
                                                   const QString& serverPassword,
                                                   QString* error) {
-    if (cfg.isEmpty()) {
+    if (!cfg.hasCloud()) {
         if (error) *error = QStringLiteral("sync is not configured");
         return nullptr;
     }
-    if (!cfg.url.isEmpty()) {
+    if (!cfg.remoteUrl.isEmpty()) {
         WebDavRemote::Config web;
-        web.base = QUrl(cfg.url);
-        web.user = cfg.user;
+        web.base = QUrl(cfg.remoteUrl);
+        web.user = cfg.remoteUser;
         web.password = serverPassword;
         web.allowInsecureHttp = cfg.allowInsecureHttp;
         web.timeoutMs = cfg.timeoutMs;
@@ -231,10 +265,10 @@ std::shared_ptr<RemoteStore> ZStorage::makeRemote(const RemoteConfig& cfg,
         if (!WebDavRemote::checkUrl(web, error)) return nullptr;
         return std::make_shared<WebDavRemote>(web);
     }
-    return std::make_shared<FolderRemote>(cfg.dir);
+    return std::make_shared<FolderRemote>(cfg.remoteDir);
 }
 
-bool ZStorage::cloudHasKeyfile(const RemoteConfig& cfg, const QString& serverPassword,
+bool ZStorage::cloudHasKeyfile(const Config& cfg, const QString& serverPassword,
                                QString* error) {
     auto remote = makeRemote(cfg, serverPassword, error);
     if (!remote) return false;
@@ -245,8 +279,10 @@ bool ZStorage::cloudHasKeyfile(const RemoteConfig& cfg, const QString& serverPas
 bool ZStorage::attachRemote(const AttachOptions& how, SecretStore& secrets,
                             AttachOutcome* outcome, QString* error) {
     if (outcome) *outcome = AttachOutcome{};
-    const RemoteConfig cfg = how.cfg.isEmpty() ? remoteConfig() : how.cfg;
-    if (cfg.isEmpty()) {
+    // «Адрес назван» — это про облако: ключи командной строки сильнее
+    // remote.json, а root у обоих кандидатов и так этот.
+    const Config cfg = how.cfg.hasCloud() ? how.cfg : remoteConfig();
+    if (!cfg.hasCloud()) {
         if (error) *error = QStringLiteral("sync is not configured for this store");
         return false;
     }
@@ -257,7 +293,7 @@ bool ZStorage::attachRemote(const AttachOptions& how, SecretStore& secrets,
     }
     QString why;
     QString password = how.serverPassword;
-    if (password.isEmpty() && !cfg.url.isEmpty())
+    if (password.isEmpty() && !cfg.remoteUrl.isEmpty())
         password = secrets.serverPassword(mine.storeId(), &why);
     auto remote = makeRemote(cfg, password, error);
     if (!remote) return false;
@@ -300,7 +336,7 @@ bool ZStorage::attachRemote(const AttachOptions& how, SecretStore& secrets,
 }
 
 std::shared_ptr<ZStorage> ZStorage::initFromRemote(
-    const QString& root, const RemoteConfig& cfg, const QString& encryptionPassword,
+    const QString& root, const Config& cfg, const QString& encryptionPassword,
     const QString& serverPassword, SecretStore& secrets, const Keyfile::KdfParams& mintParams,
     ConnectOutcome* outcome, QString* error) {
     auto storage = std::make_shared<ZStorage>(root);
@@ -310,7 +346,7 @@ std::shared_ptr<ZStorage> ZStorage::initFromRemote(
     return storage;
 }
 
-bool ZStorage::connectRemote(const RemoteConfig& cfg, const QString& encryptionPassword,
+bool ZStorage::connectRemote(const Config& cfg, const QString& encryptionPassword,
                              const QString& serverPassword, SecretStore& secrets,
                              const Keyfile::KdfParams& mintParams, ConnectOutcome* outcome,
                              QString* error) {
@@ -488,7 +524,7 @@ bool ZStorage::connectRemote(const RemoteConfig& cfg, const QString& encryptionP
     QString keep;
     if (!secrets.storeKey(keyfile, &keep))
         fprintf(stderr, "zametti: the keyring refused the key: %s\n", qPrintable(keep));
-    if (!cfg.url.isEmpty() && !serverPassword.isEmpty() &&
+    if (!cfg.remoteUrl.isEmpty() && !serverPassword.isEmpty() &&
         !secrets.setServerPassword(mine.storeId(), serverPassword, &keep))
         fprintf(stderr, "zametti: the keyring refused the server password: %s\n",
                 qPrintable(keep));
@@ -501,7 +537,7 @@ bool ZStorage::connectRemote(const RemoteConfig& cfg, const QString& encryptionP
 // сервера, и по открытым именам видно и манифест, и конверт, и объём — без
 // единой расшифровки. Конверт, если он есть, разворачивается данным паролем:
 // «пароль подошёл» диалог обязан знать до того, как человек выберет папку.
-bool ZStorage::probeCloud(const RemoteConfig& cfg, const QString& serverPassword,
+bool ZStorage::probeCloud(const Config& cfg, const QString& serverPassword,
                           const QString& encryptionPassword, CloudProbe* out,
                           QString* error) {
     CloudProbe probe;
@@ -580,7 +616,7 @@ bool ZStorage::probeCloud(const RemoteConfig& cfg, const QString& serverPassword
 // манифестом вперёд: оборванная чистка не должна выглядеть ни целым
 // хранилищем, ни действующим конвертом. Облако без манифеста — «первый синк»,
 // так что обрыв в любой точке долечивается следующим прогоном.
-bool ZStorage::resetCloudEncryption(const RemoteConfig& cfg, const QString& newPassword,
+bool ZStorage::resetCloudEncryption(const Config& cfg, const QString& newPassword,
                                     const QString& serverPassword, SecretStore& secrets,
                                     const Keyfile::KdfParams& mintParams, ResetOutcome* outcome,
                                     QString* error) {
@@ -667,7 +703,7 @@ bool ZStorage::resetCloudEncryption(const RemoteConfig& cfg, const QString& newP
     QString keep;
     if (!secrets.storeKey(keyfile, &keep))
         fprintf(stderr, "zametti: the keyring refused the key: %s\n", qPrintable(keep));
-    if (!cfg.url.isEmpty() && !serverPassword.isEmpty() &&
+    if (!cfg.remoteUrl.isEmpty() && !serverPassword.isEmpty() &&
         !secrets.setServerPassword(mine.storeId(), serverPassword, &keep))
         fprintf(stderr, "zametti: the keyring refused the server password: %s\n",
                 qPrintable(keep));

@@ -47,14 +47,14 @@ bool StoreCli::takeLock(ZStorage& storage, const char* busyHint) const {
     return false;
 }
 
-ZStorage::RemoteConfig StoreCli::addressFromFlags() const {
-    ZStorage::RemoteConfig cfg;
+ZStorage::Config StoreCli::addressFromFlags() const {
+    ZStorage::Config cfg;
     if (to_.isEmpty() && url_.isEmpty()) return cfg;
     if (!to_.isEmpty())
-        cfg.dir = QDir(to_).absolutePath();
+        cfg.remoteDir = QDir(to_).absolutePath();
     else
-        cfg.url = url_.endsWith(QLatin1Char('/')) ? url_ : url_ + QLatin1Char('/');
-    cfg.user = user_;
+        cfg.remoteUrl = url_.endsWith(QLatin1Char('/')) ? url_ : url_ + QLatin1Char('/');
+    cfg.remoteUser = user_;
     cfg.allowInsecureHttp = allowInsecure_;
     return cfg;
 }
@@ -259,17 +259,17 @@ int StoreCli::cmdSetRemote() {
     }
     if (url_.isEmpty() == to_.isEmpty()) return usage();  // ровно один адрес
 
-    const ZStorage::RemoteConfig cfg = addressFromFlags();
+    const ZStorage::Config cfg = addressFromFlags();
 
     QString serverPassword = qEnvironmentVariable("ZAMETTI_WEBDAV_PASSWORD");
     // Переподключение (тот же адрес после ротации, утраченный конверт):
     // пароль сервера не спрашивается заново, если он уже в keyring, —
     // человек вводит только пароль шифрования.
-    if (!cfg.url.isEmpty() && serverPassword.isEmpty() && !headless && keyring.available()) {
+    if (!cfg.remoteUrl.isEmpty() && serverPassword.isEmpty() && !headless && keyring.available()) {
         const ZStorage::Identity mine = storage.identity();
         if (!mine.isEmpty()) serverPassword = keyring.serverPassword(mine.storeId());
     }
-    if (!cfg.url.isEmpty() && serverPassword.isEmpty())
+    if (!cfg.remoteUrl.isEmpty() && serverPassword.isEmpty())
         serverPassword = askPassword("server password: ");
 
     // Дважды или один раз — зависит от того, есть ли в облаке конверт;
@@ -312,7 +312,8 @@ int StoreCli::cmdSetRemote() {
         std::printf("the cloud holds: %d notes, %d attachments, %.1f MB\n",
                     outcome.cloudNotes, outcome.cloudAttachments,
                     double(outcome.cloudBytes) / (1024.0 * 1024.0));
-    std::printf("connected: %s\n", (cfg.url.isEmpty() ? cfg.dir : cfg.url).toUtf8().constData());
+    std::printf("connected: %s\n",
+                (cfg.remoteUrl.isEmpty() ? cfg.remoteDir : cfg.remoteUrl).toUtf8().constData());
     return 0;
 }
 
@@ -335,9 +336,9 @@ int StoreCli::cmdSync() {
     }
 
     // Адрес: ключи командной строки сильнее remote.json.
-    ZStorage::RemoteConfig cfg = addressFromFlags();
-    if (cfg.isEmpty()) cfg = storage.remoteConfig();
-    if (cfg.isEmpty()) {
+    ZStorage::Config cfg = addressFromFlags();
+    if (!cfg.hasCloud()) cfg = storage.remoteConfig();
+    if (!cfg.hasCloud()) {
         std::fprintf(stderr, "sync is not configured: run set-remote once, or pass --url/--to\n");
         return 1;
     }

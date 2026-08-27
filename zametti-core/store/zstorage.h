@@ -799,26 +799,52 @@ public:
     // взятое и потерянное при упавшем прогоне пришлось бы искать сканом.
     void clearDirty(const QStringList& synced);
 
-    // --- АДРЕС ОБЛАКА ЭТОЙ КОПИИ (.zametti/remote.json) ---------------------
+    // --- ХРАНИЛИЩЕ ОДНОЙ ЗАПИСЬЮ: локальный корень + опциональное облако ----
     //
-    // Адрес принадлежит КОПИИ хранилища, а не пользователю и не машине:
-    // `.zametti/` в облако не синхронизируется, а с cp -r уезжает вместе с
-    // каталогом — копия знает, чьё облако её. СЕКРЕТОВ ЗДЕСЬ НЕТ И НЕ БУДЕТ:
-    // пароль сервера и ключ шифрования живут в keyring (SecretStore).
-    struct RemoteConfig {
-        QString url;     // WebDAV-коллекция; пусто — облако-каталог (dir)
-        QString dir;     // локальный каталог-облако (наборы, люки, NAS-папка)
-        QString user;    // логин сервера; пароль — в keyring
+    // Одна структура на два дома (решение владельца, 27.08.2026):
+    //
+    //   * содержимое `<root>/.zametti/remote.json` — адрес облака ЭТОЙ КОПИИ.
+    //     Туда уходят ТОЛЬКО облачные поля (remoteBytes): файл лежит В корне,
+    //     и путь, вписанный внутрь, протух бы при cp -r. Адрес принадлежит
+    //     копии, а не пользователю и не машине: `.zametti/` в облако не
+    //     синхронизируется, а с каталогом уезжает — копия знает, чьё облако её;
+    //   * строка СПИСКА ХРАНИЛИЩ УСТРОЙСТВА в state.json (entryJson) — по ней
+    //     диалог выбора хранилищ находит остальные корни. Для синка истиной
+    //     остаётся remote.json самой копии; строка списка — кэш для показа,
+    //     открытие хранилища освежает её фактом.
+    //
+    // Локальная и облачная стороны различаются именами: облачные поля несут
+    // префикс remote*. СЕКРЕТОВ ЗДЕСЬ НЕТ И НЕ БУДЕТ: пароль сервера и ключ
+    // шифрования живут в keyring (SecretStore), по storeId.
+    struct Config {
+        // --- локальная сторона (только строка списка) -----------------------
+        QString root;        // корень локальной копии
+        QString name;        // кэш заголовка корневой заметки; может отставать
+        // --- облачная сторона (remote.json и строка списка) -----------------
+        QString remoteUrl;   // WebDAV-коллекция; пусто — облако-каталог
+        QString remoteDir;   // каталог-облако (наборы, люки, NAS-папка)
+        QString remoteUser;  // логин сервера; пароль — в keyring
         bool allowInsecureHttp = false;
         int timeoutMs = 30000;
 
-        bool isEmpty() const { return url.isEmpty() && dir.isEmpty(); }
+        // «Облако настроено?» и «запись пуста?» — РАЗНЫЕ вопросы; прежний
+        // isEmpty() с двумя смыслами не живёт.
+        bool hasCloud() const { return !remoteUrl.isEmpty() || !remoteDir.isEmpty(); }
+        bool isEmpty() const { return root.isEmpty() && !hasCloud(); }
+
+        // Один читатель — два писателя с говорящими именами. Читатель понимает
+        // и прежние ключи url/dir/user как запасные: старые remote.json
+        // продолжают читаться и мигрируют при следующей записи.
+        void parse(const QJsonObject& o);
         bool parse(const QByteArray& bytes, QString* error = nullptr);
-        QByteArray toBytes() const;
+        QByteArray remoteBytes() const;  // remote.json: только облачная сторона
+        QJsonObject entryJson() const;   // строка списка: всё, что непусто
     };
-    // Нет файла или файл битый — пустой конфиг: «синк не настроен», не беда.
-    RemoteConfig remoteConfig() const;
-    bool writeRemoteConfig(const RemoteConfig& cfg, QString* error = nullptr);
+    // Адрес облака этой копии из remote.json; root заполняется корнем копии
+    // (name — нет: заголовок корня стоит чтения файла, а сюда ходят часто).
+    // Нет файла или файл битый — конфиг без облака: «синк не настроен», не беда.
+    Config remoteConfig() const;
+    bool writeRemoteConfig(const Config& cfg, QString* error = nullptr);
     // Отвязка (--reset): забыть адрес. Секреты в keyring чистит вызывающий —
     // хранилище к keyring не прикасается.
     bool clearRemoteConfig(QString* error = nullptr);
@@ -827,7 +853,7 @@ public:
     // сервера приходит параметром: у первичной настройки он с клавиатуры, у
     // остальных — из keyring. Пусто при пустом конфиге или негодном адресе.
     // Статический: адаптер строится из одного конфига, хранилище ни при чём.
-    static std::shared_ptr<RemoteStore> makeRemote(const RemoteConfig& cfg,
+    static std::shared_ptr<RemoteStore> makeRemote(const Config& cfg,
                                                    const QString& serverPassword,
                                                    QString* error = nullptr);
 
@@ -836,7 +862,7 @@ public:
     // СОЗДАНИИ запечатала бы облако навсегда, а при развороте существующего
     // она безобидна — конверт просто не откроется. Заодно это первая проверка
     // адреса: до облака не достучались — false с непустым error.
-    static bool cloudHasKeyfile(const RemoteConfig& cfg, const QString& serverPassword,
+    static bool cloudHasKeyfile(const Config& cfg, const QString& serverPassword,
                                 QString* error = nullptr);
 
     // ПОДКЛЮЧЕНИЕ ОДНОЙ ЛЕСТНИЦЕЙ — старт программы и командные прогоны.
@@ -858,7 +884,7 @@ public:
     // ensureIdentity сам — молчаливая чеканка при простом старте была бы
     // решением за человека.
     struct AttachOptions {
-        RemoteConfig cfg;            // пусто — взять из remote.json
+        Config cfg;                  // без облака — взять из remote.json
         QString serverPassword;      // пусто — спросить у secrets
         QString encryptionPassword;  // последняя дверь: конверт из облака
         bool mintIfCloudEmpty = false;
@@ -894,7 +920,7 @@ public:
         int cloudAttachments = 0;
         qint64 cloudBytes = 0;
     };
-    bool connectRemote(const RemoteConfig& cfg, const QString& encryptionPassword,
+    bool connectRemote(const Config& cfg, const QString& encryptionPassword,
                        const QString& serverPassword, SecretStore& secrets,
                        const Keyfile::KdfParams& mintParams, ConnectOutcome* outcome,
                        QString* error = nullptr);
@@ -906,7 +932,7 @@ public:
     // первое устройство. Пусто при отказе, объяснение в error; возвращённое
     // хранилище уже подключено (hasRemote) и готово к sync().
     static std::shared_ptr<ZStorage> initFromRemote(
-        const QString& root, const RemoteConfig& cfg, const QString& encryptionPassword,
+        const QString& root, const Config& cfg, const QString& encryptionPassword,
         const QString& serverPassword, SecretStore& secrets,
         const Keyfile::KdfParams& mintParams, ConnectOutcome* outcome,
         QString* error = nullptr);
@@ -931,7 +957,7 @@ public:
         int attachments = 0;
         qint64 bytes = 0;         // объём по шифротексту
     };
-    static bool probeCloud(const RemoteConfig& cfg, const QString& serverPassword,
+    static bool probeCloud(const Config& cfg, const QString& serverPassword,
                            const QString& encryptionPassword, CloudProbe* out,
                            QString* error = nullptr);
 
@@ -950,7 +976,7 @@ public:
         int wiped = 0;       // блобов удалено из облака
         PushReport push;     // что и сколько заливалось заново
     };
-    bool resetCloudEncryption(const RemoteConfig& cfg, const QString& newPassword,
+    bool resetCloudEncryption(const Config& cfg, const QString& newPassword,
                               const QString& serverPassword, SecretStore& secrets,
                               const Keyfile::KdfParams& mintParams, ResetOutcome* outcome,
                               QString* error = nullptr);

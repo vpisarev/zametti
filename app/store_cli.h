@@ -39,8 +39,8 @@ protected:
     // busyHint — что дописать к «занято» (у thin своя приписка).
     bool takeLock(ZStorage& storage, const char* busyHint = "") const;
     // Адрес облака, названный ключами (--url/--to/--user/--allow-insecure-http).
-    // Пустой, если не назван ни один адрес: тогда его знает remote.json.
-    ZStorage::RemoteConfig addressFromFlags() const;
+    // Без облака, если не назван ни один адрес: тогда его знает remote.json.
+    ZStorage::Config addressFromFlags() const;
     // Пароль с клавиатуры, БЕЗ эха. Разговор с терминалом — дело CLI, в ядре
     // ему места нет.
     static QString askPassword(const char* prompt);

@@ -16,6 +16,7 @@
 #include <QDir>
 #include <QFile>
 #include <QHash>
+#include <QJsonObject>
 #include <string>
 #include <vector>
 
@@ -67,8 +68,8 @@ void checkConnectMintsAndRemembers() {
     const QString cloud = cloudHome.root() + QStringLiteral("/облако");
     ZStorage s(store.root());
     FakeSecrets secrets;
-    ZStorage::RemoteConfig cfg;
-    cfg.dir = cloud;
+    ZStorage::Config cfg;
+    cfg.remoteDir = cloud;
 
     ZStorage::ConnectOutcome out;
     QString err;
@@ -79,7 +80,7 @@ void checkConnectMintsAndRemembers() {
     ZT_TRUE("облако подключено", s.hasRemote());
     ZT_TRUE("keyfile лежит в облаке",
             QFile::exists(cloud + QStringLiteral("/keyfile")));
-    ZT_TRUE("адрес запомнен", !s.remoteConfig().isEmpty());
+    ZT_TRUE("адрес запомнен", s.remoteConfig().hasCloud());
     ZT_TRUE("ключ лёг в keyring", secrets.keys_.size() == 1);
 
     // Пустой пароль шифрования не бывает паролем.
@@ -90,8 +91,8 @@ void checkConnectMintsAndRemembers() {
 void checkReconnectUnwrapsExistingKeyfile() {
     zt::MiniStore store, cloudHome;
     const QString cloud = cloudHome.root() + QStringLiteral("/облако");
-    ZStorage::RemoteConfig cfg;
-    cfg.dir = cloud;
+    ZStorage::Config cfg;
+    cfg.remoteDir = cloud;
     FakeSecrets secrets;
     QString err;
     {
@@ -126,8 +127,8 @@ void checkReconnectUnwrapsExistingKeyfile() {
 void checkUseLastRemote() {
     zt::MiniStore store, cloudHome;
     const QString cloud = cloudHome.root() + QStringLiteral("/облако");
-    ZStorage::RemoteConfig cfg;
-    cfg.dir = cloud;
+    ZStorage::Config cfg;
+    cfg.remoteDir = cloud;
     FakeSecrets secrets;
     QString err;
     {
@@ -154,7 +155,7 @@ void checkUseLastRemote() {
     {
         ZStorage s(store.root());
         ZT_TRUE("отвязка прошла", s.clearRemoteConfig(&err));
-        ZT_TRUE("конфиг пуст", s.remoteConfig().isEmpty());
+        ZT_TRUE("конфиг без облака", !s.remoteConfig().hasCloud());
         ZT_TRUE("после отвязки не подключается", !s.useLastRemote(secrets, &err));
         ZT_TRUE("сказано «не настроен»", err.contains(QStringLiteral("not configured")));
     }
@@ -163,8 +164,8 @@ void checkUseLastRemote() {
 void checkBootstrapInheritsIdentity() {
     zt::MiniStore first, cloudHome, second;
     const QString cloud = cloudHome.root() + QStringLiteral("/облако");
-    ZStorage::RemoteConfig cfg;
-    cfg.dir = cloud;
+    ZStorage::Config cfg;
+    cfg.remoteDir = cloud;
     FakeSecrets secrets;
     QString err;
     QString firstId;
@@ -208,8 +209,8 @@ void checkBootstrapIntoEmptyDir() {
     // каркас (без чеканки идентичности!) и наследует id из манифеста.
     zt::MiniStore first, cloudHome, home;
     const QString cloud = cloudHome.root() + QStringLiteral("/облако");
-    ZStorage::RemoteConfig cfg;
-    cfg.dir = cloud;
+    ZStorage::Config cfg;
+    cfg.remoteDir = cloud;
     FakeSecrets secrets;
     QString err;
     QString firstId;
@@ -246,8 +247,8 @@ void checkBootstrapIntoEmptyDir() {
     {
         FakeSecrets mine;
         const QString typo = home.root() + QStringLiteral("/каталог-с-опечаткой");
-        ZStorage::RemoteConfig empty;
-        empty.dir = cloudHome.root() + QStringLiteral("/облако-с-опечаткой");
+        ZStorage::Config empty;
+        empty.remoteDir = cloudHome.root() + QStringLiteral("/облако-с-опечаткой");
         ZT_TRUE("пусто с обеих сторон отвергнуто",
                 ZStorage::initFromRemote(typo, empty, QStringLiteral("пароль-шифра"),
                                          QString(), mine, kTiny, nullptr, &err) == nullptr);
@@ -275,8 +276,8 @@ void checkBootstrapIntoEmptyDir() {
 void checkForeignCloudRefused() {
     zt::MiniStore mine, cloudHome, foreign;
     const QString cloud = cloudHome.root() + QStringLiteral("/облако");
-    ZStorage::RemoteConfig cfg;
-    cfg.dir = cloud;
+    ZStorage::Config cfg;
+    cfg.remoteDir = cloud;
     FakeSecrets secrets;
     QString err;
     QString mineId;
@@ -320,11 +321,53 @@ void checkForeignCloudRefused() {
                 err.contains(QStringLiteral("check the cloud address")));
         ZT_TRUE("имя чужого облака вскрыто общим паролем",
                 err.contains(QStringLiteral("\"%1\"").arg(mineRootTitle)));
-        ZT_TRUE("remote.json не записан", s.remoteConfig().isEmpty());
+        ZT_TRUE("remote.json не записан", !s.remoteConfig().hasCloud());
         QFile f(cloud + QStringLiteral("/keyfile"));
         ZT_TRUE("keyfile открылся", f.open(QIODevice::ReadOnly));
         ZT_TRUE("keyfile облака не тронут", f.readAll() == keyfileBefore);
     }
+}
+
+void checkConfigReadsLegacyKeys() {
+    // remote.json прежних сборок писал ключи url/dir/user — он обязан
+    // читаться (запасной путь читателя), а при следующей записи мигрировать
+    // на новые ключи remoteUrl/remoteDir/remoteUser.
+    zt::MiniStore store;
+    ZStorage s(store.root());
+    {
+        QFile f(store.root() + QStringLiteral("/.zametti/remote.json"));
+        ZT_TRUE("старый remote.json записался", f.open(QIODevice::WriteOnly));
+        f.write("{ \"url\": \"https://host/dav/\", \"user\": \"вадим\", "
+                "\"timeoutMs\": 7000 }");
+    }
+    ZStorage::Config cfg = s.remoteConfig();
+    ZT_TRUE("облако прочитано", cfg.hasCloud());
+    ZT_EQ("url со старого ключа", std::string("https://host/dav/"),
+          cfg.remoteUrl.toStdString());
+    ZT_EQ("логин со старого ключа", std::string("вадим"), cfg.remoteUser.toStdString());
+    ZT_TRUE("таймаут прочитан", cfg.timeoutMs == 7000);
+    ZT_EQ("root — корень копии, не из файла", store.root().toStdString(),
+          cfg.root.toStdString());
+
+    QString err;
+    ZT_TRUE("перезапись прошла", s.writeRemoteConfig(cfg, &err));
+    QFile f(store.root() + QStringLiteral("/.zametti/remote.json"));
+    ZT_TRUE("файл открылся", f.open(QIODevice::ReadOnly));
+    const QByteArray bytes = f.readAll();
+    ZT_TRUE("мигрировал на новый ключ", bytes.contains("remoteUrl"));
+    ZT_TRUE("логин на новом ключе", bytes.contains("remoteUser"));
+    // Путь в файл не пишется: переехал бы вместе с каталогом и врал.
+    ZT_TRUE("root в remote.json не уезжает", !bytes.contains("\"root\""));
+
+    // Строка списка хранилищ — наоборот, с корнем.
+    const QJsonObject entry = cfg.entryJson();
+    ZT_EQ("строка списка несёт root", store.root().toStdString(),
+          entry.value(QStringLiteral("root")).toString().toStdString());
+    ZStorage::Config back;
+    back.parse(entry);
+    ZT_TRUE("круг строки списка сходится",
+            back.root == cfg.root && back.remoteUrl == cfg.remoteUrl &&
+                back.remoteUser == cfg.remoteUser && back.timeoutMs == cfg.timeoutMs);
 }
 
 void checkProbeCloud() {
@@ -332,8 +375,8 @@ void checkProbeCloud() {
     // выбора местного каталога, одной статической функцией.
     zt::MiniStore store, cloudHome;
     const QString cloud = cloudHome.root() + QStringLiteral("/облако");
-    ZStorage::RemoteConfig cfg;
-    cfg.dir = cloud;
+    ZStorage::Config cfg;
+    cfg.remoteDir = cloud;
     FakeSecrets secrets;
     QString err;
 
@@ -373,8 +416,8 @@ void checkProbeCloud() {
     // Пустое, но существующее облако — правда: «там пусто» диалог решает сам.
     const QString blank = cloudHome.root() + QStringLiteral("/пусто");
     QDir().mkpath(blank);
-    ZStorage::RemoteConfig empty;
-    empty.dir = blank;
+    ZStorage::Config empty;
+    empty.remoteDir = blank;
     ZT_TRUE("пустое облако — не ошибка",
             ZStorage::probeCloud(empty, QString(), QStringLiteral("любой"), &probe, &err));
     ZT_TRUE("и в нём ничего нет",
@@ -386,8 +429,8 @@ void checkResetCloudEncryption() {
     // ключом; старый пароль перестаёт подходить, новый — открывает всё.
     zt::MiniStore store, cloudHome, second;
     const QString cloud = cloudHome.root() + QStringLiteral("/облако");
-    ZStorage::RemoteConfig cfg;
-    cfg.dir = cloud;
+    ZStorage::Config cfg;
+    cfg.remoteDir = cloud;
     FakeSecrets secrets;
     QString err;
 
@@ -454,8 +497,8 @@ void checkResetRefusesForeignCloud() {
     // опечатка в адресе не должна стоить человеку чужой облачной копии.
     zt::MiniStore mine, cloudHome, foreign;
     const QString cloud = cloudHome.root() + QStringLiteral("/облако");
-    ZStorage::RemoteConfig cfg;
-    cfg.dir = cloud;
+    ZStorage::Config cfg;
+    cfg.remoteDir = cloud;
     FakeSecrets secrets;
     QString err;
     {
@@ -495,6 +538,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkBootstrapInheritsIdentity();
     checkBootstrapIntoEmptyDir();
     checkForeignCloudRefused();
+    checkConfigReadsLegacyKeys();
     checkProbeCloud();
     checkResetCloudEncryption();
     checkResetRefusesForeignCloud();

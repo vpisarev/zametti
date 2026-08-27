@@ -108,7 +108,7 @@ protected:
     std::shared_ptr<SecretStore> secrets_;
     ZLogs* logs_ = nullptr;
     // Добытое fetchSecrets — значения для потока прогона.
-    ZStorage::RemoteConfig cfg_;
+    ZStorage::Config cfg_;
     Keyfile keyfile_;
     QString serverPassword_;
     std::thread worker_;
