@@ -70,9 +70,22 @@ public:
         passwords_.remove(storeId);
         return true;
     }
+    QString encryptionPassword(const QString& storeId, QString*) override {
+        return cryptPasswords_.value(storeId);
+    }
+    bool setEncryptionPassword(const QString& storeId, const QString& password,
+                               QString*) override {
+        cryptPasswords_.insert(storeId, password);
+        return true;
+    }
+    bool clearEncryptionPassword(const QString& storeId, QString*) override {
+        cryptPasswords_.remove(storeId);
+        return true;
+    }
 
     QHash<QString, Keyfile> keys_;
     QHash<QString, QString> passwords_;
+    QHash<QString, QString> cryptPasswords_;
 };
 
 // Наборам — вход в режим сброса мимо модального переспроса.

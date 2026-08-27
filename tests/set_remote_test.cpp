@@ -58,9 +58,22 @@ public:
         passwords_.remove(storeId);
         return true;
     }
+    QString encryptionPassword(const QString& storeId, QString*) override {
+        return cryptPasswords_.value(storeId);
+    }
+    bool setEncryptionPassword(const QString& storeId, const QString& password,
+                               QString*) override {
+        cryptPasswords_.insert(storeId, password);
+        return true;
+    }
+    bool clearEncryptionPassword(const QString& storeId, QString*) override {
+        cryptPasswords_.remove(storeId);
+        return true;
+    }
 
     QHash<QString, Keyfile> keys_;
     QHash<QString, QString> passwords_;
+    QHash<QString, QString> cryptPasswords_;
 };
 
 void checkConnectMintsAndRemembers() {
@@ -82,6 +95,11 @@ void checkConnectMintsAndRemembers() {
             QFile::exists(cloud + QStringLiteral("/keyfile")));
     ZT_TRUE("адрес запомнен", s.remoteConfig().hasCloud());
     ZT_TRUE("ключ лёг в keyring", secrets.keys_.size() == 1);
+    // Пароль шифрования хранится (решение владельца 28.08.2026): он для глаз
+    // человека, и кладётся только после удачи.
+    ZT_TRUE("пароль шифрования лёг в keyring",
+            secrets.cryptPasswords_.value(s.identity().storeId()) ==
+                QStringLiteral("пароль-шифра"));
 
     // Пустой пароль шифрования не бывает паролем.
     ZT_TRUE("пустой пароль отвергнут",
@@ -464,6 +482,9 @@ void checkResetCloudEncryption() {
     ZT_TRUE("стёрто всё прежнее", out.wiped >= 4);
     ZT_TRUE("журналы залиты заново", out.push.journals >= 2);
     ZT_TRUE("облако осталось подключённым", s.hasRemote());
+    ZT_TRUE("новый пароль лёг в keyring",
+            secrets.cryptPasswords_.value(s.identity().storeId()) ==
+                QStringLiteral("новый"));
 
     // Старый пароль больше не открывает облако, новый — открывает.
     ZStorage::CloudProbe probe;
