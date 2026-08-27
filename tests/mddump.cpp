@@ -2,8 +2,14 @@
 // сериализация. Нужен, чтобы смотреть глазами, что именно вышло из разбора.
 //
 //   mddump [файл]           дамп IR
-//   mddump [файл] --md      сериализованный markdown
-//   mddump [файл] --check   дифф noteOf(x).toMarkdown() с оригиналом
+//   mddump [файл] --md      сериализованный markdown, ЖИВОЙ канон (writePieces)
+//   mddump [файл] --file    то, что ушло бы в файл: bodyOf(x).toMarkdown()
+//   mddump [файл] --check   дифф bodyOf(x).toMarkdown() с оригиналом
+//
+// РАЗНИЦА МЕЖДУ --md И --file И ЕСТЬ ПРЕДМЕТ ОТЛАДКИ: живой документ вправе
+// держать то, чего markdown не хранит, а файл — нет. `--check` спрашивает
+// ФАЙЛОВЫЙ канон: раньше он звал живого писателя, хотя шапка обещала обратное,
+// и потому не видел ровно тех расхождений, ради которых его заводили.
 
 #include "pieces.h"
 #include "zstorage.h"
@@ -59,8 +65,12 @@ int main(int argc, char** argv) {
         std::fputs(markdownOf(doc).c_str(), stdout);
         return 0;
     }
+    if (mode == "--file") {
+        std::fputs(bodyOf(src).toMarkdown().c_str(), stdout);
+        return 0;
+    }
     if (mode == "--check") {
-        std::string out = markdownOf(doc);
+        std::string out = bodyOf(src).toMarkdown();
         if (out == src) return 0;
         std::fputs(zt::diff(src, out).c_str(), stdout);
         return 1;
