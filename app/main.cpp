@@ -2665,16 +2665,23 @@ int main(int argc, char** argv) {
         // Какую заметку показать: названную (прошлый сеанс), иначе первую
         // ОТКРЫВАЕМУЮ поиском в глубину; пустое хранилище получает заметку тут
         // же — окно без единой заметки показывать нечем.
+        //
+        // ИСКЛЮЧЕНИЕ — пустое хранилище С ОБЛАКОМ (владелец, п.10 первого
+        // живого прогона): настоящие заметки привезёт первый синк, а
+        // заведённая здесь пустышка уезжала бы в облако сиротой, и человек
+        // удалял её руками на каждом устройстве. Показываем КОРНЕВУЮ заметку —
+        // она настоящая (имя хранилища) и правится как любая другая.
         QString show = preferred;
         if (show.isEmpty()) {
             QString first = model.firstNoteId();
-            if (first.isEmpty()) {
+            if (first.isEmpty() && !storage->remoteConfig().hasCloud()) {
                 QString newError;
                 if (storage->createNote(QString(), false, &newError).isEmpty())
                     std::fprintf(stderr, "%s\n", newError.toUtf8().constData());
                 first = model.firstNoteId();
             }
-            show = model.pathOfId(first);
+            show = first.isEmpty() ? storage->pathOf(storage->rootId())
+                                   : model.pathOfId(first);
         }
         if (!show.isEmpty() && !editor.openFile(show))
             std::fprintf(stderr, "unreadable: %s\n", show.toUtf8().constData());
