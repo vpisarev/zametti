@@ -6,7 +6,9 @@
 // сессии локальна и принадлежит пользователю, а кто читает шину — читает и
 // память процесса, так что dh-ietf1024 закрывал бы узкий случай ценой
 // заметного кода. Метки элементов — из брифа: zametti-key-<storeId> и
-// zametti-webdav-<storeId>.
+// zametti-webdav-<storeId>; с 28.08.2026 (решение владельца) третий секрет —
+// сам пароль шифрования, zametti-password-<storeId>: он для глаз человека
+// (подсмотреть и скопировать), синк работает ключом.
 //
 // Windows: Credential Manager (CredWriteW/CredReadW/CredDeleteW из Advapi32) —
 // тоже ноль новых зависимостей. Имена элементов те же, что у Secret Service:
@@ -52,6 +54,13 @@ public:
                            QString* error = nullptr) override;
     bool clearServerPassword(const QString& storeId,
                              QString* error = nullptr) override;
+
+    QString encryptionPassword(const QString& storeId,
+                               QString* error = nullptr) override;
+    bool setEncryptionPassword(const QString& storeId, const QString& password,
+                               QString* error = nullptr) override;
+    bool clearEncryptionPassword(const QString& storeId,
+                                 QString* error = nullptr) override;
 
 protected:
     // Вся машинерия шины — в .cpp: заголовок чист от QtDBus.

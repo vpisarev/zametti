@@ -53,6 +53,8 @@
         <file alias="copy.svg">icons/copy.svg</file>
         <file alias="database-search.svg">icons/database-search.svg</file>
         <file alias="database.svg">icons/database.svg</file>
+        <file alias="eye.svg">icons/eye.svg</file>
+        <file alias="eye-off.svg">icons/eye-off.svg</file>
         <file alias="fast-forward.svg">icons/fast-forward.svg</file>
         <file alias="file-plus-corner.svg">icons/file-plus-corner.svg</file>
         <file alias="folder-input.svg">icons/folder-input.svg</file>

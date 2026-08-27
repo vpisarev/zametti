@@ -1,5 +1,8 @@
 #include "store_manager_dialog.h"
 
+#include "icons.h"
+
+#include <QAction>
 #include <QCheckBox>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -49,10 +52,20 @@ public:
         return true;
     }
     bool clearServerPassword(const QString&, QString*) override { return true; }
+    QString encryptionPassword(const QString&, QString*) override { return {}; }
+    bool setEncryptionPassword(const QString& storeId, const QString& password,
+                               QString*) override {
+        capturedEncryptionPasswordFor = storeId;
+        capturedEncryptionPassword = password;
+        return true;
+    }
+    bool clearEncryptionPassword(const QString&, QString*) override { return true; }
 
     Keyfile capturedKey;
     QString capturedServerPasswordFor;
     QString capturedServerPassword;
+    QString capturedEncryptionPasswordFor;
+    QString capturedEncryptionPassword;
 };
 
 }  // namespace
@@ -134,6 +147,18 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, const QList<ZStorage::Co
     password_->setObjectName(QStringLiteral("password"));
     password_->setEchoMode(QLineEdit::Password);
     password_->setPlaceholderText(QStringLiteral("empty = use the key from the keyring"));
+    // Глаза-переключатели: включён — пароль виден и остаётся видимым (его
+    // копируют не торопясь — просьба владельца); пустое поле наполняется
+    // хранимым значением из keyring — затем keychain и служит местом, где
+    // свой пароль можно подсмотреть.
+    serverEye_ = addEyeToggle(serverPassword_, [this] {
+        const QString id = shownStoreId();
+        return id.isEmpty() ? QString() : secrets_->serverPassword(id);
+    });
+    passwordEye_ = addEyeToggle(password_, [this] {
+        const QString id = shownStoreId();
+        return id.isEmpty() ? QString() : secrets_->encryptionPassword(id);
+    });
     password2Label_ = new QLabel(QStringLiteral("Repeat password"), this);
     password2_ = new QLineEdit(this);
     password2_->setObjectName(QStringLiteral("password2"));
@@ -246,6 +271,36 @@ bool StoreManagerDialog::isCurrentRoot(const QString& root) const {
     return !currentRoot_.isEmpty() && canonicalRoot(root) == currentRoot_;
 }
 
+QAction* StoreManagerDialog::addEyeToggle(QLineEdit* field, std::function<QString()> stored) {
+    const qreal dpr = devicePixelRatioF();
+    const QColor color = palette().color(QPalette::Text);
+    QIcon icon;
+    icon.addPixmap(toolbarIcon(QStringLiteral("eye"), 12, color, dpr), QIcon::Normal,
+                   QIcon::Off);
+    icon.addPixmap(toolbarIcon(QStringLiteral("eye-off"), 12, color, dpr), QIcon::Normal,
+                   QIcon::On);
+    QAction* eye = field->addAction(icon, QLineEdit::TrailingPosition);
+    eye->setCheckable(true);
+    eye->setToolTip(QStringLiteral("Show the password"));
+    connect(eye, &QAction::toggled, this, [field, stored](bool on) {
+        // Keyring спрашивается ЗДЕСЬ, в главном потоке (DBus живёт при
+        // главном цикле), и только по явному жесту человека.
+        if (on && field->text().isEmpty() && stored) field->setText(stored());
+        field->setEchoMode(on ? QLineEdit::Normal : QLineEdit::Password);
+    });
+    return eye;
+}
+
+QString StoreManagerDialog::shownStoreId() const {
+    const QString named = newEntry_ ? folder_->text().trimmed()
+                          : (selected_ >= 0 ? result_.stores[selected_].root : QString());
+    if (named.isEmpty()) return {};
+    const QString root = canonicalRoot(named);
+    if (ZStorage::inspect(root) != ZStorage::DirKind::Store) return {};
+    return isCurrentRoot(root) && storage_ != nullptr ? storage_->identity().storeId()
+                                                      : ZStorage(root).identity().storeId();
+}
+
 void StoreManagerDialog::rebuildList(int selectRow) {
     list_->clear();
     for (const ZStorage::Config& e : result_.stores) {
@@ -279,6 +334,10 @@ void StoreManagerDialog::showEntry(int row) {
     insecureHttp_->setChecked(e.allowInsecureHttp);
     password_->clear();
     password2_->clear();
+    // Глаза — закрыть: чужая строка не должна открываться с показанным
+    // паролем прежней.
+    serverEye_->setChecked(false);
+    passwordEye_->setChecked(false);
     applyButton_->setText(QStringLiteral("Apply"));
     resetButton_->setEnabled(true);
     const bool current = isCurrentRoot(e.root);
@@ -303,6 +362,8 @@ void StoreManagerDialog::beginNewEntry() {
     insecureHttp_->setChecked(false);
     password_->clear();
     password2_->clear();
+    serverEye_->setChecked(false);
+    passwordEye_->setChecked(false);
     applyButton_->setText(QStringLiteral("Add"));
     resetButton_->setEnabled(false);
     openButton_->setEnabled(false);
@@ -563,6 +624,7 @@ void StoreManagerDialog::applyToStore(const ZStorage::Config& cfg,
                     // Секреты отвязанного — вон из keyring, как у CLI --reset.
                     secrets_->clearKey(storeId);
                     secrets_->clearServerPassword(storeId);
+                    secrets_->clearEncryptionPassword(storeId);
                 }
                 if (current && hadCloud) result_.cloudChangedForCurrent = true;
                 settleEntry(settled_);

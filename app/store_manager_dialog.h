@@ -47,6 +47,7 @@
 #include <memory>
 #include <thread>
 
+class QAction;
 class QCheckBox;
 class QLabel;
 class QLineEdit;
@@ -129,6 +130,13 @@ protected:
     // временным ZStorage под замком (внутри job, в рабочем потоке).
     bool isCurrentRoot(const QString& root) const;
 
+    // Глаз-переключатель у поля пароля (просьба владельца: пароль копируют
+    // не торопясь, не держа палец на кнопке). Пустое поле при включении
+    // наполняется хранимым значением из keyring.
+    QAction* addEyeToggle(QLineEdit* field, std::function<QString()> stored);
+    // storeId хранилища, которое сейчас в форме; пусто — папка не хранилище.
+    QString shownStoreId() const;
+
     // Работа в рабочем потоке: job возвращает пустую строку при удаче, done
     // зовётся в главном. Результаты job складывает в поля — к ним никто не
     // прикасается, пока поток жив.
@@ -152,6 +160,8 @@ protected:
     QLineEdit* server_ = nullptr;
     QLineEdit* user_ = nullptr;
     QLineEdit* serverPassword_ = nullptr;
+    QAction* serverEye_ = nullptr;
+    QAction* passwordEye_ = nullptr;
     QCheckBox* insecureHttp_ = nullptr;
     QLabel* passwordLabel_ = nullptr;
     QLineEdit* password_ = nullptr;

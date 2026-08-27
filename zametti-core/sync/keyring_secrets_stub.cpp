@@ -54,4 +54,18 @@ bool KeyringSecrets::clearServerPassword(const QString&, QString* error) {
     return notHere(error);
 }
 
+QString KeyringSecrets::encryptionPassword(const QString&, QString* error) {
+    notHere(error);
+    return QString();
+}
+
+bool KeyringSecrets::setEncryptionPassword(const QString&, const QString&,
+                                           QString* error) {
+    return notHere(error);
+}
+
+bool KeyringSecrets::clearEncryptionPassword(const QString&, QString* error) {
+    return notHere(error);
+}
+
 }  // namespace zametti

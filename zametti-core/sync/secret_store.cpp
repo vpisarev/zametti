@@ -61,4 +61,24 @@ bool EnvSecrets::clearServerPassword(const QString&, QString*) {
     return true;
 }
 
+QString EnvSecrets::encryptionPassword(const QString&, QString* error) {
+    if (!qEnvironmentVariableIsSet(kEncryptionPasswordVar)) {
+        if (error != nullptr)
+            *error = QStringLiteral("%1 is not set")
+                         .arg(QLatin1String(kEncryptionPasswordVar));
+        return QString();
+    }
+    return qEnvironmentVariable(kEncryptionPasswordVar);
+}
+
+bool EnvSecrets::setEncryptionPassword(const QString&, const QString& password, QString*) {
+    qputenv(kEncryptionPasswordVar, password.toUtf8());
+    return true;
+}
+
+bool EnvSecrets::clearEncryptionPassword(const QString&, QString*) {
+    qunsetenv(kEncryptionPasswordVar);
+    return true;
+}
+
 }  // namespace zametti

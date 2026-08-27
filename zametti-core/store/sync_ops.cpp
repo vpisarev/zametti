@@ -331,6 +331,12 @@ bool ZStorage::attachRemote(const AttachOptions& how, SecretStore& secrets,
                              .arg(why);
             return false;
         }
+        // Пароль подошёл (конверт развернулся или отчеканен) — запомнить и
+        // его: он для глаз человека (решение владельца 28.08.2026).
+        QString keep;
+        if (!secrets.setEncryptionPassword(mine.storeId(), how.encryptionPassword, &keep))
+            fprintf(stderr, "zametti: the keyring refused the encryption password: %s\n",
+                    qPrintable(keep));
     }
     return setRemote(remote, keyfile, error);
 }
@@ -528,6 +534,12 @@ bool ZStorage::connectRemote(const Config& cfg, const QString& encryptionPasswor
         !secrets.setServerPassword(mine.storeId(), serverPassword, &keep))
         fprintf(stderr, "zametti: the keyring refused the server password: %s\n",
                 qPrintable(keep));
+    // Пароль шифрования — тоже в keyring (решение владельца 28.08.2026): он
+    // для глаз человека, синк работает ключом. Кладётся ТОЛЬКО после удачи —
+    // разворот или чеканка выше уже состоялись.
+    if (!secrets.setEncryptionPassword(mine.storeId(), encryptionPassword, &keep))
+        fprintf(stderr, "zametti: the keyring refused the encryption password: %s\n",
+                qPrintable(keep));
     if (!writeRemoteConfig(cfg, error)) return finish(false);
     return finish(true);
 }
@@ -706,6 +718,9 @@ bool ZStorage::resetCloudEncryption(const Config& cfg, const QString& newPasswor
     if (!cfg.remoteUrl.isEmpty() && !serverPassword.isEmpty() &&
         !secrets.setServerPassword(mine.storeId(), serverPassword, &keep))
         fprintf(stderr, "zametti: the keyring refused the server password: %s\n",
+                qPrintable(keep));
+    if (!secrets.setEncryptionPassword(mine.storeId(), newPassword, &keep))
+        fprintf(stderr, "zametti: the keyring refused the encryption password: %s\n",
                 qPrintable(keep));
     if (!writeRemoteConfig(cfg, error)) return finish(false);
     return finish(true);

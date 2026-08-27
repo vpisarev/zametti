@@ -249,6 +249,7 @@ int StoreCli::cmdSetRemote() {
         if (!identity.isEmpty()) {
             keyring.clearKey(identity.storeId());
             keyring.clearServerPassword(identity.storeId());
+            keyring.clearEncryptionPassword(identity.storeId());
         }
         if (!storage.clearRemoteConfig(&error)) {
             std::fprintf(stderr, "%s\n", error.toUtf8().constData());

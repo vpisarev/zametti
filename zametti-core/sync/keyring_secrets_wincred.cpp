@@ -196,4 +196,26 @@ bool KeyringSecrets::clearServerPassword(const QString& storeId, QString* error)
     return removeSecret(targetFor(storeId, "webdav"), error);
 }
 
+QString KeyringSecrets::encryptionPassword(const QString& storeId, QString* error) {
+    bool found = false;
+    const QByteArray bytes = getSecret(targetFor(storeId, "password"), &found, error);
+    if (!found) {
+        if (error != nullptr && error->isEmpty())
+            *error = QStringLiteral(
+                         "no encryption password for %1 in the credential manager")
+                         .arg(storeId);
+        return QString();
+    }
+    return QString::fromUtf8(bytes);
+}
+
+bool KeyringSecrets::setEncryptionPassword(const QString& storeId,
+                                           const QString& password, QString* error) {
+    return putSecret(targetFor(storeId, "password"), password.toUtf8(), error);
+}
+
+bool KeyringSecrets::clearEncryptionPassword(const QString& storeId, QString* error) {
+    return removeSecret(targetFor(storeId, "password"), error);
+}
+
 }  // namespace zametti
