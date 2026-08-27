@@ -496,6 +496,185 @@ bool ZStorage::connectRemote(const RemoteConfig& cfg, const QString& encryptionP
     return finish(true);
 }
 
+// ЧТО В ОБЛАКЕ ПО ЭТОМУ АДРЕСУ — разведка диалога первичной настройки, ДО
+// выбора местного каталога. Листинг первым: он же проверка адреса и пароля
+// сервера, и по открытым именам видно и манифест, и конверт, и объём — без
+// единой расшифровки. Конверт, если он есть, разворачивается данным паролем:
+// «пароль подошёл» диалог обязан знать до того, как человек выберет папку.
+bool ZStorage::probeCloud(const RemoteConfig& cfg, const QString& serverPassword,
+                          const QString& encryptionPassword, CloudProbe* out,
+                          QString* error) {
+    CloudProbe probe;
+    const auto finish = [&](bool ok) {
+        if (out != nullptr) *out = probe;
+        return ok;
+    };
+    auto remote = makeRemote(cfg, serverPassword, error);
+    if (!remote) return finish(false);
+
+    QVector<RemoteStore::Entry> listing;
+    if (!remote->list(&listing, error)) return finish(false);
+    for (const RemoteStore::Entry& e : listing) {
+        probe.bytes += e.size;
+        if (e.name == QLatin1String(Identity::kFile))
+            probe.hasManifest = true;
+        else if (e.name == QLatin1String(Keyfile::kRemoteName))
+            probe.hasKeyfile = true;
+        else if (e.name.endsWith(QStringLiteral(".log")))
+            ++probe.notes;
+        else
+            ++probe.attachments;
+    }
+
+    QString why;
+    if (probe.hasManifest) {
+        QByteArray manifestBytes;
+        if (!remote->get(QLatin1String(Identity::kFile), &manifestBytes, nullptr, &why)) {
+            if (error) *error = QStringLiteral("cannot read the cloud manifest: %1").arg(why);
+            return finish(false);
+        }
+        if (!probe.identity.parse(manifestBytes, &why)) {
+            if (error) *error = QStringLiteral("the cloud manifest is unreadable: %1").arg(why);
+            return finish(false);
+        }
+        if (probe.identity.tooNew()) {
+            if (error)
+                *error = QStringLiteral(
+                    "the cloud was written by a newer version of the program — update this one");
+            return finish(false);
+        }
+    }
+
+    if (probe.hasKeyfile) {
+        QByteArray envelope;
+        Keyfile keyfile;
+        if (!remote->get(QLatin1String(Keyfile::kRemoteName), &envelope, nullptr, &why)) {
+            if (error) *error = QStringLiteral("cannot read the cloud keyfile: %1").arg(why);
+            return finish(false);
+        }
+        if (!keyfile.parse(envelope, error)) return finish(false);
+        if (keyfile.tooNew()) {
+            if (error)
+                *error = QStringLiteral(
+                    "the keyfile was written by a newer version of the program — update this one");
+            return finish(false);
+        }
+        if (!keyfile.unwrap(encryptionPassword, &why)) {
+            // По построению AEAD неверный пароль и порча неразличимы.
+            if (error)
+                *error = QStringLiteral("wrong password, or the keyfile is corrupted: %1").arg(why);
+            return finish(false);
+        }
+        probe.keyOpened = true;
+        if (probe.hasManifest) {
+            if (auto cipher = XChaChaCipher::make(keyfile, nullptr))
+                probe.name = cloudStoreName(*remote, *cipher, probe.identity);
+        }
+    }
+    return finish(true);
+}
+
+// СБРОС ПАРОЛЯ ШИФРОВАНИЯ — замена облачной копии. Единственный лечащий ход
+// при забытом пароле: конверт без пароля не развернуть по построению.
+// Стирается ТОЛЬКО своё облако (или безымянное), и стирание идёт конвертом и
+// манифестом вперёд: оборванная чистка не должна выглядеть ни целым
+// хранилищем, ни действующим конвертом. Облако без манифеста — «первый синк»,
+// так что обрыв в любой точке долечивается следующим прогоном.
+bool ZStorage::resetCloudEncryption(const RemoteConfig& cfg, const QString& newPassword,
+                                    const QString& serverPassword, SecretStore& secrets,
+                                    const Keyfile::KdfParams& mintParams, ResetOutcome* outcome,
+                                    QString* error) {
+    ResetOutcome done;
+    const auto finish = [&](bool ok) {
+        if (outcome != nullptr) *outcome = done;
+        return ok;
+    };
+    if (!store_) {
+        if (error) *error = QStringLiteral("not a store: %1").arg(root_);
+        return finish(false);
+    }
+    if (newPassword.isEmpty()) {
+        if (error) *error = QStringLiteral("the encryption password must not be empty");
+        return finish(false);
+    }
+    const Identity mine = ensureIdentity(error);
+    if (mine.isEmpty()) return finish(false);
+    auto remote = makeRemote(cfg, serverPassword, error);
+    if (!remote) return finish(false);
+    // Каталог в облаке заводится ДО листинга: сброс при пустом (или ещё не
+    // существующем) облаке — законный случай «облачной копии нет, будет».
+    // Заодно это первая проверка адреса и пароля сервера.
+    if (!remote->mkdirOnce(error)) return finish(false);
+
+    // ЧУЖОЕ ОБЛАКО НЕ СТИРАЕТСЯ. Нечитаемый манифест — тоже отказ: непонятно
+    // чьё стирать нельзя, и это отличает сброс от простого подключения.
+    QByteArray manifestBytes;
+    QString why;
+    if (remote->get(QLatin1String(Identity::kFile), &manifestBytes, nullptr, &why)) {
+        Identity theirs;
+        if (!theirs.parse(manifestBytes, &why)) {
+            if (error)
+                *error = QStringLiteral(
+                             "the cloud manifest is unreadable (%1) — refusing to wipe a "
+                             "cloud that cannot be identified")
+                             .arg(why);
+            return finish(false);
+        }
+        if (theirs.storeId() != mine.storeId()) {
+            if (error)
+                *error = QStringLiteral(
+                             "this cloud folder belongs to another store — %1 — and this "
+                             "store is %2; refusing to wipe it%3")
+                             .arg(storeTag(theirs.storeId(), QString(), theirs.created()),
+                                  storeTag(mine.storeId(), localStoreName(), mine.created()),
+                                  QLatin1String(kAddressHint));
+            return finish(false);
+        }
+    }
+
+    // Новый ключ — до первой стирающей операции: не отчеканился — облако цело.
+    Keyfile keyfile;
+    if (!Keyfile::create(mine.storeId(), newPassword, mintParams, &keyfile, error))
+        return finish(false);
+
+    QVector<RemoteStore::Entry> listing;
+    if (!remote->list(&listing, error)) return finish(false);
+    QStringList names;
+    for (const RemoteStore::Entry& e : listing) names.append(e.name);
+    // Конверт и манифест — первыми (см. шапку), остальное — как перечислилось.
+    for (const QLatin1String first :
+         {QLatin1String(Keyfile::kRemoteName), QLatin1String(Identity::kFile)})
+        if (names.removeAll(first) > 0) names.prepend(first);
+    for (const QString& name : names) {
+        if (!remote->del(name, &why)) {
+            if (error) *error = QStringLiteral("cannot remove %1 from the cloud: %2").arg(name, why);
+            return finish(false);
+        }
+        ++done.wiped;
+    }
+
+    if (!remote->put(QLatin1String(Keyfile::kRemoteName), keyfile.toBytes(), nullptr, error))
+        return finish(false);
+    if (!setRemote(remote, keyfile, error)) return finish(false);
+    if (!pushAll(&done.push, error)) return finish(false);
+
+    // Бухгалтерия синка — про блобы, которых больше нет: пусть следующий
+    // прогон построит её заново, это кэш, а не истина.
+    QFile::remove(SyncLedger::pathFor(mine.storeId(), root_));
+
+    // Запомнить, как в connectRemote: отказ keyring сброс не валит — облако
+    // уже заменено, просто следующий старт снова спросит пароль.
+    QString keep;
+    if (!secrets.storeKey(keyfile, &keep))
+        fprintf(stderr, "zametti: the keyring refused the key: %s\n", qPrintable(keep));
+    if (!cfg.url.isEmpty() && !serverPassword.isEmpty() &&
+        !secrets.setServerPassword(mine.storeId(), serverPassword, &keep))
+        fprintf(stderr, "zametti: the keyring refused the server password: %s\n",
+                qPrintable(keep));
+    if (!writeRemoteConfig(cfg, error)) return finish(false);
+    return finish(true);
+}
+
 // --- ДВИЖОК СИНХРОНИЗАЦИИ ---------------------------------------------------
 //
 // Порядок шагов — инвариант: выравнивание → обмен → объединение →
