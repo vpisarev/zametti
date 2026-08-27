@@ -549,12 +549,30 @@ void checkBareLinks() {
     cursor.movePosition(QTextCursor::EndOfBlock);
     note.insertText(cursor, QStringLiteral(": https://apple.com."));
 
+    // КАНОН САМ ОБОГАЩАЕТ РАЗМЕТКУ (решение владельца, 27.08.2026): чтение даёт
+    // на том же тексте ссылку, приведение это принимает — и первая же запись
+    // оказывается окончательной. Прежде первая запись клала одно, а вторая
+    // (после того как редактор догонял документ) могла положить другое, и файл
+    // менялся дважды на одной правке.
+    bool enriched = false;
+    note.fileBytes(zametti::NoteHeader{}, nullptr, &enriched);
+    check(enriched, "канон принял ссылку, которую даст чтение");
+
     const zametti::SaveOutcome outcome = note.saveTo(path, QStringLiteral("test"));
     check(outcome.result == zametti::SaveResult::Written,
           "набранная ссылка не должна мешать сохранению");
     checkEqual("смотри тут: https://apple.com.\n", readFile(path), "ссылка записана");
-    check(outcome.differsFromDocument,
-          "прочитанное обратно богаче документа: появилась ссылка");
+    check(!outcome.differsFromDocument,
+          "догонять записанное больше нечем: канон и чтение сошлись");
+
+    // И ВТОРАЯ ЗАПИСЬ НЕ ТРОГАЕТ ФАЙЛ: адрес, набранный текстом, устоялся с
+    // первого круга.
+    {
+        zametti::ZDocument again = zametti::ZDocument::fromPieces(pieces(readFile(path)));
+        const zametti::SaveOutcome second = again.saveTo(path, QStringLiteral("test"));
+        check(second.result == zametti::SaveResult::Unchanged,
+              "перечитали и записали — файл не тронут");
+    }
 
     // Подмена текста по-прежнему ЗАМЕЧАЕТСЯ — но теперь она не отменяет запись,
     // а объясняется словами и копией буфера (см. checkRescue).
