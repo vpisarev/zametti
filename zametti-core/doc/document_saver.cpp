@@ -721,20 +721,32 @@ std::vector<Piece> documentForFile(std::vector<Piece> doc) {
     // другого места, поправили файл снаружи.
     {
         int deepest = -1;   // уровень последнего пункта или его продолжения
+        // ПУСТОЙ ПУНКТ СОДЕРЖИМОГО ЧЕРЕЗ ПУСТУЮ СТРОКУ НЕ ДЕРЖИТ. Замерено на
+        // md4c: "-\n\n  текст" — это пункт, пустая строка и АБЗАЦ СНАРУЖИ, чьи
+        // два пробела становятся отступом автора (неразрывными). Записав такой
+        // блок внутрь пункта, мы получили бы файл, который читается с двумя
+        // лишними знаками в тексте. Без пустой строки всё цело: "-\n  текст"
+        // читается пунктом с текстом.
+        bool blankSince = false;
+        bool emptyItem = false;
         for (Piece& block : out) {
             // Дословный кусок без уровня выводится с нулевой колонки и список
             // этим заканчивает: всё, что за ним, стоит уже снаружи. Дословный
             // кусок С УРОВНЕМ (таблица, HTML внутри пункта) — содержимое пункта,
             // и правило у него то же, что у прочих блоков внутри пункта.
-            if (block.raw && block.level < 0) { deepest = -1; continue; }
-            if (!block.raw && block.kind == Kind::VSpace) continue;
+            if (block.raw && block.level < 0) { deepest = -1; blankSince = false; continue; }
+            if (!block.raw && block.kind == Kind::VSpace) { blankSince = true; continue; }
             if (isList(block.kind)) {
                 // Пункт может открыть только один уровень за раз. Глубже —
                 // значит его родителя больше нет: прижимаем к возможному.
                 if (block.level > deepest + 1) block.level = deepest + 1;
                 deepest = block.level;
+                emptyItem = !hasContent(block);
+                blankSince = false;
                 continue;
             }
+            if (blankSince && emptyItem && deepest >= 0) --deepest;
+            blankSince = false;
             if (block.level < 0) { deepest = -1; continue; }
             if (deepest < 0) block.level = -1;
             else if (block.level > deepest) block.level = deepest;
