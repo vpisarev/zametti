@@ -490,11 +490,24 @@ bool hasRealHost(QStringView text) {
     return false;
 }
 
+// Что стоит СРАЗУ ЗА адресом, решает не меньше самого адреса: замерено на md4c,
+// что "http://a.org/x: хвост" не ссылка вовсе — двоеточие читается началом
+// схемы, — и то же самое делают '#', '"', '@', '=', '&', '%', '|', '$', '^',
+// '{'. А точка, запятая, точка с запятой, восклицательный и вопросительный
+// знаки, скобка, косая, плюс и дефис голую ссылку не рвут.
+//
+// Поэтому список ЗАКРЫТЫЙ и разрешительный: не уверены — пишем в угловых
+// скобках. Лишние две скобки стоят ничего, потерянная ссылка — правки человека.
+bool bareTailSafe(QChar next) {
+    if (next.isNull() || next.isSpace()) return true;
+    return oneOf(next, ".,;!?)/+-");
+}
+
 // Голые ссылки разбор опознаёт и без разметки, поэтому и выводить их надо
 // голыми: обернув "https://x" в угловые скобки, мы переписали бы каждую заметку,
 // где ссылка просто набрана в строку. Но опознаёт он не всё подряд — только три
 // схемы, "www." и почту, поэтому список здесь закрытый, а не "любая схема".
-LinkShape linkShape(QStringView text, QStringView href) {
+LinkShape linkShape(QStringView text, QStringView href, QChar next) {
     if (text.isEmpty()) return LinkShape::Inline;
     for (const QChar c : text)
         if (isAsciiSpace(c) || c == u'<' || c == u'>') return LinkShape::Inline;
@@ -503,18 +516,20 @@ LinkShape linkShape(QStringView text, QStringView href) {
         const bool bareScheme = text.startsWith(QLatin1String("http://")) ||
                                 text.startsWith(QLatin1String("https://")) ||
                                 text.startsWith(QLatin1String("ftp://"));
-        if (bareScheme && bareSafe(text) && hasRealHost(text)) return LinkShape::Bare;
+        if (bareScheme && bareSafe(text) && hasRealHost(text) && bareTailSafe(next))
+            return LinkShape::Bare;
         if (hasScheme(text, /*requireSlashes=*/false)) return LinkShape::Angle;
         return LinkShape::Inline;
     }
 
     if (href.size() == text.size() + 7 && href.startsWith(QLatin1String("mailto:")) &&
-        href.mid(7) == text && looksLikeEmail(text) && bareSafe(text)) {
+        href.mid(7) == text && looksLikeEmail(text) && bareSafe(text) && bareTailSafe(next)) {
         return LinkShape::Bare;
     }
 
     if (href.size() == text.size() + 7 && href.startsWith(QLatin1String("http://")) &&
-        href.mid(7) == text && text.startsWith(QLatin1String("www.")) && bareSafe(text)) {
+        href.mid(7) == text && text.startsWith(QLatin1String("www.")) && bareSafe(text) &&
+        bareTailSafe(next)) {
         return LinkShape::Bare;
     }
     return LinkShape::Inline;
@@ -707,8 +722,16 @@ void emitSegments(TextSink& sink, const Piece& b, QStringView text,
 
         // Адрес выводится дословно, без экранирования: подчёркивания и тильды
         // внутри URL экранировать нельзя, иначе ссылка развалится.
-        if (attr == kHref && openMask == 0 && j == i + 1) {
-            const LinkShape shape = linkShape(text.mid(gb, ge - gb), href);
+        //
+        // И ВНУТРИ ДРУГОЙ РАЗМЕТКИ ТОЖЕ (openMask здесь не спрашивается —
+        // решение владельца, 27.08.2026): ссылка, у которой текст и есть адрес,
+        // выводится голой или в угловых скобках всюду, где это переживает
+        // чтение. Прежде внутри курсива или жирного она превращалась в
+        // "[адрес](адрес)" — адрес удваивался, а читать и править такое, особенно
+        // когда адрес длинный, невозможно.
+        if (attr == kHref && j == i + 1) {
+            const LinkShape shape = linkShape(text.mid(gb, ge - gb), href,
+                                              ge < text.size() ? text.at(ge) : QChar());
             if (shape != LinkShape::Inline) {
                 if (shape == LinkShape::Angle) sink.out += u'<';
                 sink.out += text.mid(gb, ge - gb);
