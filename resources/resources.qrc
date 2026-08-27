@@ -59,6 +59,8 @@
         <file alias="folder-plus.svg">icons/folder-plus.svg</file>
         <file alias="folder.svg">icons/folder.svg</file>
         <file alias="image-down.svg">icons/image-down.svg</file>
+        <file alias="list-clock.svg">icons/list-clock.svg</file>
+        <file alias="regex.svg">icons/regex.svg</file>
         <file alias="rewind.svg">icons/rewind.svg</file>
         <file alias="rotate-ccw-clock.svg">icons/rotate-ccw-clock.svg</file>
         <file alias="search.svg">icons/search.svg</file>
