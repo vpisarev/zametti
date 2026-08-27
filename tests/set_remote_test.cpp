@@ -6,6 +6,7 @@
 // идентичность манифеста (бутстрап). Облако здесь — каталог (FolderRemote):
 // логика подключения от транспорта не зависит.
 
+#include "blob_cipher.h"
 #include "keyfile.h"
 #include "secret_store.h"
 #include "zstorage.h"
@@ -291,6 +292,53 @@ void checkBootstrapIntoEmptyDir() {
     }
 }
 
+void checkBootstrapFromLegacyCloud() {
+    // Новое устройство встаёт и с НАСЛЕДНОГО облака (журналы <id>.log):
+    // бутстрап пробует новое имя корня, затем старое. Наследное облако
+    // лепится честно — пере-запечатыванием под старым именем (AAD).
+    zt::MiniStore first, cloudHome, home;
+    const QString cloud = cloudHome.root() + QStringLiteral("/облако");
+    ZStorage::Config cfg;
+    cfg.remoteDir = cloud;
+    FakeSecrets secrets;
+    QString err;
+    QString rootId;
+    {
+        ZStorage s(first.root());
+        ZT_TRUE("первое устройство подключилось",
+                s.connectRemote(cfg, QStringLiteral("пароль-шифра"), QString(), secrets, kTiny,
+                                nullptr, &err));
+        rootId = s.ensureRootNote(&err);
+        ZT_TRUE("корень завёлся", !rootId.isEmpty());
+        ZT_TRUE("заливка прошла", s.pushAll(nullptr, &err));
+        // Журнал корня — под наследное имя, нового не оставляем.
+        auto cipher =
+            XChaChaCipher::make(secrets.keys_.value(s.identity().storeId()), nullptr);
+        ZT_TRUE("шифр родился", cipher != nullptr);
+        QByteArray journalBytes;
+        ZT_TRUE("журнал корня прочитался", s.readJournalBytes(rootId, &journalBytes, &err));
+        QByteArray blob;
+        const QString legacy = rootId + QStringLiteral(".log");
+        ZT_TRUE("наследный блоб запечатался",
+                cipher->seal(journalBytes,
+                             BlobAad{BlobKind::Journal, s.identity().storeId(), legacy},
+                             &blob, &err));
+        QFile f(cloud + QStringLiteral("/") + legacy);
+        ZT_TRUE("наследный блоб записался", f.open(QIODevice::WriteOnly));
+        f.write(blob);
+        f.close();
+        ZT_TRUE("новое имя убрано",
+                QFile::remove(cloud + QStringLiteral("/") + rootId + QStringLiteral(".zm")));
+    }
+    FakeSecrets mine;
+    ZStorage::ConnectOutcome out;
+    auto s = ZStorage::initFromRemote(home.root() + QStringLiteral("/копия"), cfg,
+                                      QStringLiteral("пароль-шифра"), QString(), mine, kTiny,
+                                      &out, &err);
+    ZT_TRUE(("бутстрап с наследного прошёл: " + err.toStdString()).c_str(), s != nullptr);
+    if (s != nullptr) ZT_TRUE("корень материализован через наследное имя", out.rootMaterialized);
+}
+
 void checkForeignCloudRefused() {
     zt::MiniStore mine, cloudHome, foreign;
     const QString cloud = cloudHome.root() + QStringLiteral("/облако");
@@ -467,7 +515,7 @@ void checkResetCloudEncryption() {
         if (!f.open(QIODevice::ReadOnly)) return QByteArray();
         return f.readAll();
     };
-    const QByteArray journalBefore = blobBytes(rootId + QStringLiteral(".log"));
+    const QByteArray journalBefore = blobBytes(rootId + QStringLiteral(".zm"));
     ZT_TRUE("журнал корня в облаке", !journalBefore.isEmpty());
 
     // Пустой новый пароль не бывает паролем.
@@ -497,7 +545,7 @@ void checkResetCloudEncryption() {
           probe.identity.storeId().toStdString());
     // Байты блобов другие: новый ключ, а не переупаковка старого.
     ZT_TRUE("журнал перешифрован",
-            blobBytes(rootId + QStringLiteral(".log")) != journalBefore);
+            blobBytes(rootId + QStringLiteral(".zm")) != journalBefore);
 
     // Второе устройство встаёт с новым паролем — облако после сброса цельное.
     {
@@ -558,6 +606,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkUseLastRemote();
     checkBootstrapInheritsIdentity();
     checkBootstrapIntoEmptyDir();
+    checkBootstrapFromLegacyCloud();
     checkForeignCloudRefused();
     checkConfigReadsLegacyKeys();
     checkProbeCloud();

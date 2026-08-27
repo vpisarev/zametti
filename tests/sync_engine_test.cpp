@@ -5,6 +5,7 @@
 // обмена, бухгалтерия и материализация добавляются в этот же файл по мере
 // появления.
 
+#include "blob_cipher.h"
 #include "folder_remote.h"
 #include "pending_deletes_dialog.h"
 #include "sync_controller.h"
@@ -340,8 +341,8 @@ void checkFirstSyncAndSteadyState() {
     ZStorage::SyncReport first = rig.syncOne(*rig.sa, "первый синк");
     ZT_EQ("обе заметки дожурнализованы", num(2), num(first.baselined));
     ZT_TRUE("журналы уехали",
-            QFile::exists(rig.cloud + QStringLiteral("/01n6cqevaaaaaa.log")) &&
-                QFile::exists(rig.cloud + QStringLiteral("/01n6cqevbbbbbb.log")));
+            QFile::exists(rig.cloud + QStringLiteral("/01n6cqevaaaaaa.zm")) &&
+                QFile::exists(rig.cloud + QStringLiteral("/01n6cqevbbbbbb.zm")));
     ZT_TRUE("манифест уехал", QFile::exists(rig.cloud + QStringLiteral("/zametti.json")));
     ZT_TRUE("ни одного .md в облаке",
             QDir(rig.cloud).entryList({QStringLiteral("*.md")}, QDir::Files).isEmpty());
@@ -433,7 +434,7 @@ void checkLedgerLossChangesNothing() {
 
     const QByteArray journalBefore = rig.journalOf(rig.a, id);
     const QByteArray cloudBefore =
-        TwoDevices::readRaw(rig.cloud + QStringLiteral("/") + id + QStringLiteral(".log"));
+        TwoDevices::readRaw(rig.cloud + QStringLiteral("/") + id + QStringLiteral(".zm"));
     ZT_TRUE("бухгалтерия стёрта",
             QFile::remove(SyncLedger::pathFor(rig.sa->identity().storeId(), rig.a.root())));
 
@@ -443,7 +444,7 @@ void checkLedgerLossChangesNothing() {
     ZT_TRUE("локальный журнал не тронут", rig.journalOf(rig.a, id) == journalBefore);
     ZT_TRUE("облачный блоб не тронут",
             TwoDevices::readRaw(rig.cloud + QStringLiteral("/") + id +
-                                QStringLiteral(".log")) == cloudBefore);
+                                QStringLiteral(".zm")) == cloudBefore);
     (void)redo;
 
     // И снова бесплатно: бухгалтерия отстроилась.
@@ -520,12 +521,12 @@ void checkServerLostBlobHealed() {
     TwoDevices::writeRaw(rig.a, id, note("раз"));
     rig.syncOne(*rig.sa, "закладка");
     ZT_TRUE("блоб стёрт с сервера",
-            QFile::remove(rig.cloud + QStringLiteral("/") + id + QStringLiteral(".log")));
+            QFile::remove(rig.cloud + QStringLiteral("/") + id + QStringLiteral(".zm")));
 
     ZStorage::SyncReport healed = rig.syncOne(*rig.sa, "лечение");
     ZT_EQ("перезаливка-лечение", num(1), num(healed.healedRemote));
     ZT_TRUE("блоб вернулся",
-            QFile::exists(rig.cloud + QStringLiteral("/") + id + QStringLiteral(".log")));
+            QFile::exists(rig.cloud + QStringLiteral("/") + id + QStringLiteral(".zm")));
     // И другой девайс его читает.
     ZStorage::SyncReport got = rig.syncOne(*rig.sb, "чтение после лечения");
     ZT_TRUE("заметка доехала", rig.noteOf(rig.b, id) == note("раз"));
@@ -736,7 +737,7 @@ void checkInterruptionHeals() {
     for (const char* id : {"01n6cqevaaaaaa", "01n6cqevbbbbbb", "01n6cqevcccccc"})
         ZT_TRUE("блоб долит",
                 QFile::exists(rig.cloud + QStringLiteral("/") + QLatin1String(id) +
-                              QStringLiteral(".log")));
+                              QStringLiteral(".zm")));
     rig.ra->resetCounters();
     rig.syncOne(*rig.sa, "устойчивый после лечения");
     ZT_EQ("ноль заливок после достройки", num(0), num(rig.ra->counters().puts));
@@ -800,7 +801,7 @@ void checkMobileProfileAndCancel() {
     ZStorage::SyncReport report = rig.syncOne(*rig.sa, "мобильный профиль", mobile);
     ZT_EQ("обработана ровно помеченная", num(1), num(report.dirtyChecked));
     ZT_TRUE("журнал уехал",
-            QFile::exists(rig.cloud + QStringLiteral("/") + id + QStringLiteral(".log")));
+            QFile::exists(rig.cloud + QStringLiteral("/") + id + QStringLiteral(".zm")));
 
     // Отмена повторным кликом: тихо и без потерь.
     auto cancel = std::make_shared<std::atomic<bool>>(true);
@@ -993,6 +994,86 @@ void checkSyncWritesItsLog() {
     ZT_EQ("отложенных не осталось", num(0), num(again.deferred));
 }
 
+void checkLegacyCloudMigration() {
+    // Наследное облако (<id>.log, <id>.<ext>) читается и перекладывается под
+    // новые имена (<id>.zm, <id>_<ext>.pic); наследный блоб удаляется ПОСЛЕ
+    // заливки, манифест перекладывается свежей версией — забор для прежних
+    // сборок. AAD включает имя, поэтому наследное облако лепится честно:
+    // пере-запечатыванием тем же ключом под старым именем.
+    TwoDevices rig;
+    const QString id = QStringLiteral("01n6cqevaaaaaa");
+    const QString att = QStringLiteral("01n6cqevbbbbbb.jxl");
+    TwoDevices::writeRaw(rig.a, id, note("раз"));
+    {
+        QFile f(rig.a.root() + QStringLiteral("/") + att);
+        ZT_TRUE("вложение записалось", f.open(QIODevice::WriteOnly));
+        f.write("байты-картинки");
+    }
+    rig.syncOne(*rig.sa, "закладка новыми именами");
+
+    // Слепить наследное облако: те же байты под старыми именами, новых нет.
+    const QString storeId = rig.sa->identity().storeId();
+    auto cipher = XChaChaCipher::make(rig.keyfile, nullptr);
+    ZT_TRUE("шифр родился", cipher != nullptr);
+    QString err;
+    const auto reseal = [&](const QString& fromNew, const QString& toLegacy, BlobKind kind,
+                            const QByteArray& plainBytes) {
+        QByteArray blob;
+        ZT_TRUE("наследный блоб запечатался",
+                cipher->seal(plainBytes, BlobAad{kind, storeId, toLegacy}, &blob, &err));
+        QFile f(rig.cloud + QStringLiteral("/") + toLegacy);
+        ZT_TRUE("наследный блоб записался", f.open(QIODevice::WriteOnly));
+        f.write(blob);
+        f.close();
+        ZT_TRUE("новое имя убрано", QFile::remove(rig.cloud + QStringLiteral("/") + fromNew));
+    };
+    QByteArray journalBytes;
+    ZT_TRUE("журнал прочитался", rig.sa->readJournalBytes(id, &journalBytes, &err));
+    reseal(id + QStringLiteral(".zm"), id + QStringLiteral(".log"), BlobKind::Journal,
+           journalBytes);
+    reseal(QStringLiteral("01n6cqevbbbbbb_jxl.pic"), att, BlobKind::Attachment,
+           TwoDevices::readRaw(rig.a.root() + QStringLiteral("/") + att));
+    // Бухгалтерия про новые имена ничего не должна помнить — как у машины,
+    // впервые увидевшей наследное облако.
+    ZT_TRUE("бухгалтерия стёрта",
+            QFile::remove(SyncLedger::pathFor(storeId, rig.a.root())));
+
+    // Первый прогон знакомится с наследными именами (бухгалтерия пуста —
+    // содержимое сверяется честно), второй — мигрирует.
+    rig.syncOne(*rig.sa, "знакомство с наследным");
+    ZStorage::SyncReport migrated = rig.syncOne(*rig.sa, "миграция имён");
+    ZT_EQ("переложено две штуки", num(2), num(migrated.migratedLegacy));
+    ZT_TRUE("журнал под новым именем",
+            QFile::exists(rig.cloud + QStringLiteral("/") + id + QStringLiteral(".zm")));
+    ZT_TRUE("наследный журнал удалён",
+            !QFile::exists(rig.cloud + QStringLiteral("/") + id + QStringLiteral(".log")));
+    ZT_TRUE("вложение под новым именем",
+            QFile::exists(rig.cloud + QStringLiteral("/01n6cqevbbbbbb_jxl.pic")));
+    ZT_TRUE("наследное вложение удалено",
+            !QFile::exists(rig.cloud + QStringLiteral("/") + att));
+    // Манифест переложен свежей версией — забор для прежних сборок.
+    ZStorage::Identity fence;
+    ZT_TRUE("манифест читается",
+            fence.parse(TwoDevices::readRaw(rig.cloud + QStringLiteral("/zametti.json"))));
+    ZT_EQ("версия манифеста — нынешняя", num(ZStorage::Identity::kFormatVersion),
+          num(fence.formatVersion()));
+
+    // Дальше — бесплатно и без возвращения наследных имён.
+    rig.ra->resetCounters();
+    ZStorage::SyncReport steady = rig.syncOne(*rig.sa, "устойчивый после миграции");
+    ZT_EQ("ноль заливок", num(0), num(rig.ra->counters().puts));
+    ZT_EQ("ноль миграций", num(0), num(steady.migratedLegacy));
+    ZT_TRUE("наследный журнал не вернулся",
+            !QFile::exists(rig.cloud + QStringLiteral("/") + id + QStringLiteral(".log")));
+
+    // Данные пережили переезд: второе устройство собирает всё с нуля.
+    rig.syncOne(*rig.sb, "второе устройство после миграции");
+    ZT_TRUE("заметка доехала", rig.noteOf(rig.b, id) == note("раз"));
+    ZT_TRUE("вложение доехало",
+            TwoDevices::readRaw(rig.b.root() + QStringLiteral("/") + att) ==
+                QByteArray("байты-картинки"));
+}
+
 void checkProgressLineShape() {
     // Звёздочка ездит туда-обратно без пауз на краях…
     ZT_EQ("такт 0 — левый край", num(0), num(SyncController::bounceAt(0, 5)));
@@ -1074,6 +1155,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkPendingDeletesDialogWords();
     checkProgressLineShape();
     checkProgressCountsAllPhases();
+    checkLegacyCloudMigration();
     checkSyncWritesItsLog();
     checkLiveWebDavCycle();
     return zt::report("sync_engine");

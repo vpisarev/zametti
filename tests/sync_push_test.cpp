@@ -158,7 +158,7 @@ void checkPushAll() {
     for (const auto& entry : listing) {
         if (entry.name == QLatin1String(ZStorage::Identity::kFile)) ++manifests;
         else if (entry.name.endsWith(QStringLiteral(".md"))) ++markdown;
-        else if (entry.name.endsWith(QStringLiteral(".log"))) ++journals;
+        else if (entry.name.endsWith(QStringLiteral(".zm"))) ++journals;
         else ++attachments;
     }
     ZT_EQ("манифест один", num(1), num(manifests));
@@ -176,7 +176,8 @@ void checkPushAll() {
 
     // БЛОБ ВСКРЫВАЕТСЯ КЛЮЧОМ И РАВЕН ФАЙЛУ НА ДИСКЕ.
     auto cipher = XChaChaCipher::make(made, nullptr);
-    const QString attachmentName = QStringLiteral("01n6cqevh7bbf3.jxl");
+    // Облачное имя вложения — своё расширение: <id>_<ext>.pic.
+    const QString attachmentName = QStringLiteral("01n6cqevh7bbf3_jxl.pic");
     QByteArray blob, plain;
     ZT_TRUE("вложение скачано", remote->get(attachmentName, &blob, nullptr, &error));
     ZT_TRUE("и вскрывается",
@@ -187,7 +188,7 @@ void checkPushAll() {
     ZT_TRUE("plaintext в блобе не виден", !blob.contains(QByteArray("притворяется")));
 
     QByteArray journalBlob, journalPlain;
-    const QString journalName = QStringLiteral("01n6cqevh7bbf1.log");
+    const QString journalName = QStringLiteral("01n6cqevh7bbf1.zm");
     ZT_TRUE("журнал скачан", remote->get(journalName, &journalBlob, nullptr, &error));
     ZT_TRUE("и вскрывается",
             cipher->open(journalBlob, BlobAad{BlobKind::Journal, storeId, journalName},
@@ -201,7 +202,7 @@ void checkPushAll() {
     ZT_TRUE("под чужим именем блоб не вскрывается",
             !cipher->open(journalBlob,
                           BlobAad{BlobKind::Journal, storeId,
-                                  QStringLiteral("01n6cqevh7bbf2.log")},
+                                  QStringLiteral("01n6cqevh7bbf2.zm")},
                           &journalPlain, nullptr));
 
     // ОПОРНАЯ ЗАПИСЬ БЕРЁТ ВРЕМЯ ФАЙЛА, а не «сейчас»: заметка 2017 года и в
