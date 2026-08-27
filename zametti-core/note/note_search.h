@@ -40,6 +40,9 @@ struct SearchHit {
     QTextCursor cursor;
     int innerOffset = -1;   // < 0 — обычное вхождение в тексте
     int innerLength = 0;
+    // Совпадение целиком — только у поиска выражением. Из него замена одного
+    // вхождения разворачивает группы; без него шаблон замены буквален.
+    QRegularExpressionMatch match;
     bool inObject() const { return innerOffset >= 0; }
 };
 

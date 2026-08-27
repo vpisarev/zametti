@@ -3661,7 +3661,9 @@ int ZDocument::replaceAll(const Query& query, const QString& with) {
         edit.blockNumber = place.blockIndex;
         edit.from = place.offset;
         edit.length = place.length;
-        edit.with = with;
+        // ГРУППЫ РАЗВОРАЧИВАЮТСЯ ЗДЕСЬ, по совпадению этого вхождения: у
+        // каждого они свои, и общего «текста замены» не существует.
+        edit.with = place.match != nullptr ? expandReplacement(query, *place.match, with) : with;
         if (place.inObject) {
             edit.wholeObject = true;
             edit.at = place.block->position();

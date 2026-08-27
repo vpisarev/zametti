@@ -1015,6 +1015,9 @@ bool NoteEditor::replaceCurrentMatch(const QString& with) {
     if (!note_->search().hasCurrent()) return false;
     const SearchHit hit = note_->search().hitAt(note_->search().current());
     const QTextCursor target = hit.cursor;
+    // Группы шаблона разворачиваются по СВОЕМУ совпадению; без выражения
+    // шаблон буквален (expandReplacement знает об этом по запросу).
+    const QString text = expandReplacement(note_->search().query(), hit.match, with);
     bool done = false;
     if (hit.inObject() && isInlineFormulaChar(*document(), target.selectionStart())) {
         // Вхождение внутри СТРОЧНОЙ формулы: переписывается исходник ровно
@@ -1023,7 +1026,7 @@ bool NoteEditor::replaceCurrentMatch(const QString& with) {
         QTextCursor probe(document());
         probe.setPosition(position + 1);
         QString source = probe.charFormat().property(ObjectSourceProperty).toString();
-        source.replace(hit.innerOffset, hit.innerLength, with);
+        source.replace(hit.innerOffset, hit.innerLength, text);
         done = runNoteEdit([&](ZDocument& note, QTextCursor& cursor) {
             return note.rewriteInlineFormula(cursor, position, source);
         });
@@ -1033,7 +1036,7 @@ bool NoteEditor::replaceCurrentMatch(const QString& with) {
         // таблицей, формула — формулой; это законно, в файл уйдёт написанное).
         const QTextBlock block = target.block();
         QString source = searchableTextOf(block);
-        source.replace(hit.innerOffset, hit.innerLength, with);
+        source.replace(hit.innerOffset, hit.innerLength, text);
         const int number = block.blockNumber();
         done = runNoteEdit([&](ZDocument& note, QTextCursor& cursor) {
             return note.rewriteObjectSource(cursor, number, source);
@@ -1045,7 +1048,7 @@ bool NoteEditor::replaceCurrentMatch(const QString& with) {
         done = runNoteEdit([&](ZDocument& note, QTextCursor& cursor) {
             cursor.setPosition(target.selectionStart());
             cursor.setPosition(target.selectionEnd(), QTextCursor::KeepAnchor);
-            return note.insertText(cursor, with, format);
+            return note.insertText(cursor, text, format);
         });
     }
     if (!done) return false;

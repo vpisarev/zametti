@@ -24,6 +24,7 @@ int NoteSearch::find(const QTextDocument& doc, const Query& query) {
     forEachHit(doc, query, [&](const HitPlace& place) {
         SearchHit hit;
         hit.cursor = QTextCursor(mutableDoc);
+        if (place.match != nullptr) hit.match = *place.match;
         const QTextBlock& block = *place.block;
         if (place.inObject) {
             // Курсор — над самим знаком объекта; место внутри — числами.
