@@ -241,7 +241,7 @@ public:
     // каталога обязана знать, чьё она облако, а в облаке он же служит
     // манифестом для сверки ДО ввода пароля.
     //
-    //     { "storeId": "01n6cqevh7bbfr", "formatVersion": 1,
+    //     { "storeId": "01n6cqevh7bbfr", "formatVersion": 2,
     //       "created": "2026-08-23T00:00:00+03:00", "rootNote": "01n6cqevsd7v5e" }
     //
     // ЧИСТОЕ ЗНАЧЕНИЕ, БЕЗ ФАЙЛОВ (как ZJournal::Record): разбор и сборка —
@@ -255,8 +255,12 @@ public:
     class Identity {
     public:
         // Версия формата ХРАНИЛИЩА (не заметки и не журнала): её поднимает
-        // только ломающее изменение раскладки каталога.
-        static constexpr int kFormatVersion = 1;
+        // только ломающее изменение раскладки. 2 — свои расширения облачных
+        // блобов (<id>.zm, <id>_<ext>.pic; решение владельца 28.08.2026):
+        // манифест v2, переложенный после миграции имён, — забор для прежних
+        // сборок (tooNew — честный стоп), иначе они возвращали бы наследные
+        // имена в облако.
+        static constexpr int kFormatVersion = 2;
         // Имя файла — здесь один раз.
         static constexpr char kFile[] = "zametti.json";
 
@@ -282,6 +286,14 @@ public:
 
         // Формат новее нашего: работать нельзя.
         bool tooNew() const { return formatVersion_ > kFormatVersion; }
+
+        // Копия с НЫНЕШНЕЙ версией формата: toBytes бережёт разобранную
+        // версию (круговорот), а манифест-забор обязан писаться свежей.
+        Identity atCurrentFormat() const {
+            Identity out = *this;
+            out.formatVersion_ = kFormatVersion;
+            return out;
+        }
 
         // Адрес корневой заметки. Единственное, что в этом файле меняется.
         void setRootNote(const QString& id) { rootNote_ = id; }
@@ -1046,6 +1058,10 @@ public:
         ZJournal::MergeStats merge;  // сумма по всем слияниям
         int corruptLocalTreatedAsAbsence = 0;  // валидация: битый локальный
         int healedRemote = 0;      // перезаливка пропавшего/битого блоба
+        // Наследных имён переложено под новые (<id>.zm, <id>_<ext>.pic) с
+        // удалением старого блоба; ненулевое — заодно повод обновить манифест
+        // (забор версий для прежних сборок).
+        int migratedLegacy = 0;
         // материализация
         int materialized = 0;      // файлов приведено к голове журнала
         QStringList materializedIds;  // кто именно — окну для refreshNote:

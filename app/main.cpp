@@ -2366,6 +2366,17 @@ int main(int argc, char** argv) {
         openFind(zametti::FindBar::Mode::Global);
     };
     shortcut(QKeySequence(QStringLiteral("Ctrl+Shift+F")), openStoreFind);
+    // СИНК — ОДНА ДВЕРЬ на кнопку облака и на Ctrl+Shift+S (просьба владельца,
+    // 28.08.2026; на маке Qt сам показывает Cmd+Shift+S): не идёт — запустить,
+    // сбросив правки на диск (выравнивание читает файлы, п.12), идёт —
+    // отменить. Кнопка подсвечивается от stateChanged контроллера, каким бы
+    // путём прогон ни запустили. Не настроен — молчим, как погашенная кнопка.
+    const auto toggleSync = [&] {
+        if (!cloudSync.configured()) return;
+        if (!cloudSync.running()) editor.save(false, true);
+        cloudSync.toggle();
+    };
+    shortcut(QKeySequence(QStringLiteral("Ctrl+Shift+S")), toggleSync);
     // Правка исходника — сочетание из настроек (editor.markdownModeKey), список
     // через точку с запятой, как у всех прочих команд.
     for (const QKeySequence& keys :
@@ -2920,12 +2931,8 @@ int main(int argc, char** argv) {
                 exportNote(editor.filePath());
                 break;
             case Button::Cloud:
-                // Правки — на диск ДО прогона: выравнивание читает файлы, и
-                // заметка, набранная и не покинутая, иначе не уезжала вовсе
-                // (владелец, п.12 первого живого прогона: «надо сначала
-                // переключиться на другую заметку»).
-                if (!cloudSync.running()) editor.save(false, true);
-                cloudSync.toggle();
+                // Та же дверь, что у Ctrl+Shift+S (save перед стартом внутри).
+                toggleSync();
                 break;
             }
         });

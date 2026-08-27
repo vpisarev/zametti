@@ -28,7 +28,7 @@ constexpr Toolbar::Spec kSpecs[] = {
     {B::InsertImages, "image-down", "Insert images", "", 1, false},
 
     {B::Export, "square-arrow-out-up-right", "Export note", "", 2, false},
-    {B::Cloud, "cloud-sync", "Sync", "", 2, false},
+    {B::Cloud, "cloud-sync", "Sync", "Ctrl+Shift+S", 2, false},
 
     {B::Panels, "columns-3", "Hide side panels", "", 3, true},
     // Начальные значки и подсказки: направление у сортировок меняется на ходу

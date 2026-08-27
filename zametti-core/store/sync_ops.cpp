@@ -11,8 +11,14 @@
 //   zametti.json    манифест, ОТКРЫТЫМ ТЕКСТОМ: по нему сверяется storeId
 //                   ДО ввода пароля и до расшифровки хоть чего-нибудь;
 //   keyfile         конверт мастер-ключа (тоже открыто, см. справочник);
-//   <id>.log        журнал заметки, зашифрован;
-//   <id>.<ext>      вложение, зашифровано.
+//   <id>.zm         журнал заметки, зашифрован;
+//   <id>_<ext>.pic  вложение, зашифровано; настоящее расширение — в имени.
+//
+// Расширения СВОИ (решение владельца 28.08.2026): шифроблоб под настоящим
+// расширением картинки сервисы принимали за битую картинку. Наследные имена
+// (<id>.log, <id>.<ext>) читаются, пока существуют, и удаляются после
+// заливки новых; AAD включает имя, так что на сервере блоб не переименовать
+// — только пере-запечатать своими байтами.
 
 #include "zstorage.h"
 
@@ -45,8 +51,47 @@ namespace {
 // Журналы и вложения различаются по имени, и это различие подписано тегом
 // (AAD): подсунуть вложение под именем журнала не выйдет.
 BlobKind kindOfBlob(const QString& name) {
-    return name.endsWith(QStringLiteral(".log")) ? BlobKind::Journal
-                                                 : BlobKind::Attachment;
+    return name.endsWith(QStringLiteral(".zm")) || name.endsWith(QStringLiteral(".log"))
+               ? BlobKind::Journal
+               : BlobKind::Attachment;
+}
+
+// --- облачные имена ----------------------------------------------------------
+//
+// Пара «локальное имя ↔ облачное» живёт ЗДЕСЬ и только здесь: заливка, синк,
+// лечение и сброс ходят через эти функции, иначе наследные имена возвращались
+// бы то одним путём, то другим.
+QString cloudJournalName(const QString& id) { return id + QStringLiteral(".zm"); }
+
+QString cloudAttachmentName(const QString& localName) {
+    const qsizetype dot = localName.lastIndexOf(QLatin1Char('.'));
+    return localName.left(dot) + QLatin1Char('_') + localName.mid(dot + 1) +
+           QStringLiteral(".pic");
+}
+
+// Локальное имя из облачного `<id>_<ext>.pic`; пусто — имя не наше.
+QString localAttachmentName(const QString& cloudName) {
+    if (!cloudName.endsWith(QStringLiteral(".pic"))) return {};
+    const QString stem = cloudName.left(cloudName.size() - 4);
+    const qsizetype under = stem.lastIndexOf(QLatin1Char('_'));
+    if (under <= 0) return {};
+    const QString id = stem.left(under);
+    const QString ext = stem.mid(under + 1);
+    if (ext.isEmpty() || !isValidNoteId(id.toStdString())) return {};
+    return id + QLatin1Char('.') + ext;
+}
+
+// Основа-id облачного журнального имени (`<id>.zm`, наследное `<id>.log`);
+// пусто — не журнал.
+QString journalStemOf(const QString& cloudName) {
+    QString stem;
+    if (cloudName.endsWith(QStringLiteral(".zm")))
+        stem = cloudName.left(cloudName.size() - 3);
+    else if (cloudName.endsWith(QStringLiteral(".log")))
+        stem = cloudName.left(cloudName.size() - 4);
+    else
+        return {};
+    return isValidNoteId(stem.toStdString()) ? stem : QString();
 }
 
 // --- ярлыки хранилищ для диагностик -----------------------------------------
@@ -497,14 +542,28 @@ bool ZStorage::connectRemote(const Config& cfg, const QString& encryptionPasswor
         QVector<RemoteStore::Entry> listing;
         QString why;
         if (remote->list(&listing, &why)) {
+            // Счёт — УНИКАЛЬНЫМИ id: в окне миграции имя может лежать и
+            // новым, и наследным, а двоить заметку человеку нельзя.
+            QSet<QString> noteIds;
+            QSet<QString> attachmentIds;
             for (const RemoteStore::Entry& e : listing) {
                 done.cloudBytes += e.size;
-                if (e.name.endsWith(QStringLiteral(".log")))
-                    ++done.cloudNotes;
-                else if (e.name != QLatin1String(Identity::kFile) &&
-                         e.name != QLatin1String(Keyfile::kRemoteName))
-                    ++done.cloudAttachments;
+                const QString journal = journalStemOf(e.name);
+                if (!journal.isEmpty()) {
+                    noteIds.insert(journal);
+                    continue;
+                }
+                if (e.name == QLatin1String(Identity::kFile) ||
+                    e.name == QLatin1String(Keyfile::kRemoteName))
+                    continue;
+                const QString viaNew = localAttachmentName(e.name);
+                const QString local = !viaNew.isEmpty() ? viaNew : e.name;
+                const qsizetype dot = local.lastIndexOf(QLatin1Char('.'));
+                if (dot > 0 && isValidNoteId(local.left(dot).toStdString()))
+                    attachmentIds.insert(local.left(dot));
             }
+            done.cloudNotes = noteIds.size();
+            done.cloudAttachments = attachmentIds.size();
         }
     }
 
@@ -558,16 +617,34 @@ bool ZStorage::probeCloud(const Config& cfg, const QString& serverPassword,
 
     QVector<RemoteStore::Entry> listing;
     if (!remote->list(&listing, error)) return finish(false);
-    for (const RemoteStore::Entry& e : listing) {
-        probe.bytes += e.size;
-        if (e.name == QLatin1String(Identity::kFile))
-            probe.hasManifest = true;
-        else if (e.name == QLatin1String(Keyfile::kRemoteName))
-            probe.hasKeyfile = true;
-        else if (e.name.endsWith(QStringLiteral(".log")))
-            ++probe.notes;
-        else
-            ++probe.attachments;
+    {
+        // Счёт уникальными id — как в connectRemote: окно миграции держит имя
+        // и новым, и наследным.
+        QSet<QString> noteIds;
+        QSet<QString> attachmentIds;
+        for (const RemoteStore::Entry& e : listing) {
+            probe.bytes += e.size;
+            if (e.name == QLatin1String(Identity::kFile)) {
+                probe.hasManifest = true;
+                continue;
+            }
+            if (e.name == QLatin1String(Keyfile::kRemoteName)) {
+                probe.hasKeyfile = true;
+                continue;
+            }
+            const QString journal = journalStemOf(e.name);
+            if (!journal.isEmpty()) {
+                noteIds.insert(journal);
+                continue;
+            }
+            const QString viaNew = localAttachmentName(e.name);
+            const QString local = !viaNew.isEmpty() ? viaNew : e.name;
+            const qsizetype dot = local.lastIndexOf(QLatin1Char('.'));
+            if (dot > 0 && isValidNoteId(local.left(dot).toStdString()))
+                attachmentIds.insert(local.left(dot));
+        }
+        probe.notes = noteIds.size();
+        probe.attachments = attachmentIds.size();
     }
 
     QString why;
@@ -755,10 +832,14 @@ QString ZStorage::localStoreName() const {
 QString ZStorage::cloudStoreName(RemoteStore& remote, BlobCipher& cipher,
                                  const Identity& theirs) {
     if (theirs.rootNote().isEmpty()) return {};
-    const QString name = theirs.rootNote() + QStringLiteral(".log");
+    // Сперва новое имя, потом наследное: облако могло не мигрировать.
+    QString name = cloudJournalName(theirs.rootNote());
     QByteArray blob;
     QString why;
-    if (!remote.get(name, &blob, nullptr, &why)) return {};
+    if (!remote.get(name, &blob, nullptr, &why)) {
+        name = theirs.rootNote() + QStringLiteral(".log");
+        if (!remote.get(name, &blob, nullptr, &why)) return {};
+    }
     QByteArray plain;
     const BlobAad aad{BlobKind::Journal, theirs.storeId(), name};
     if (!cipher.open(blob, aad, &plain, &why)) return {};
@@ -777,9 +858,13 @@ bool ZStorage::fetchAndMaterialize(const QString& id, QString* error) {
         return false;
     }
     const Identity mine = identity();
-    const QString name = id + QStringLiteral(".log");
+    // Сперва новое имя, потом наследное: облако могло не мигрировать.
+    QString name = cloudJournalName(id);
     QByteArray blob;
-    if (!remote_->get(name, &blob, nullptr, error)) return false;
+    if (!remote_->get(name, &blob, nullptr, error)) {
+        name = id + QStringLiteral(".log");
+        if (!remote_->get(name, &blob, nullptr, error)) return false;
+    }
     QByteArray plain;
     const BlobAad aad{BlobKind::Journal, mine.storeId(), name};
     if (!cipher_->open(blob, aad, &plain, error)) return false;
@@ -1068,7 +1153,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
     if (keyfileChanged) {
         QString probeName;
         for (const RemoteStore::Entry& e : listing)
-            if (e.name.endsWith(QStringLiteral(".log"))) {
+            if (!journalStemOf(e.name).isEmpty()) {
                 probeName = e.name;
                 break;
             }
@@ -1097,11 +1182,10 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
     // заметок — файла .md у них нет) и облачные.
     QSet<QString> journalIds(toCheck);
     for (const QString& id : journalIdsOnDisk()) journalIds.insert(id);
-    for (auto it = remoteEtag.constBegin(); it != remoteEtag.constEnd(); ++it)
-        if (it.key().endsWith(QStringLiteral(".log"))) {
-            const QString stem = it.key().left(it.key().size() - 4);
-            if (isValidNoteId(stem.toStdString())) journalIds.insert(stem);
-        }
+    for (auto it = remoteEtag.constBegin(); it != remoteEtag.constEnd(); ++it) {
+        const QString stem = journalStemOf(it.key());
+        if (!stem.isEmpty()) journalIds.insert(stem);
+    }
 
     const QElapsedTimer wholeRun = [] { QElapsedTimer t; t.start(); return t; }();
     const bool pushOnly = options.mode == SyncOptions::PushOnly;
@@ -1123,10 +1207,17 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
         for (const QString& name : attachmentNames()) attachmentSet.insert(name);
         for (auto it = remoteEtag.constBegin(); it != remoteEtag.constEnd(); ++it) {
             const QString& name = it.key();
-            if (name.endsWith(QStringLiteral(".log")) ||
-                name == QLatin1String(Identity::kFile) ||
-                name == QLatin1String(Keyfile::kRemoteName))
+            if (name == QLatin1String(Identity::kFile) ||
+                name == QLatin1String(Keyfile::kRemoteName) ||
+                !journalStemOf(name).isEmpty())
                 continue;
+            // Ключ множества — ЛОКАЛЬНОЕ имя: новое облачное приводится к
+            // нему, наследное с ним совпадает.
+            const QString viaNew = localAttachmentName(name);
+            if (!viaNew.isEmpty()) {
+                attachmentSet.insert(viaNew);
+                continue;
+            }
             const qsizetype dot = name.lastIndexOf(QLatin1Char('.'));
             if (dot <= 0 || !isValidNoteId(name.left(dot).toStdString())) continue;
             attachmentSet.insert(name);
@@ -1155,7 +1246,9 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
     QStringList prefetchQueue;
     if (!pushOnly) {
         for (const QString& id : orderedJournals) {
-            const QString name = id + QStringLiteral(".log");
+            const QString legacy = id + QStringLiteral(".log");
+            const QString name =
+                remoteEtag.contains(legacy) ? legacy : cloudJournalName(id);
             if (!remoteEtag.contains(name)) continue;
             const SyncLedger::Blob led = ledger.blob(name);
             if (led.etag.isEmpty() || led.etag != remoteEtag.value(name))
@@ -1200,7 +1293,15 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
             ++done.deferred;
             continue;
         }
-        const QString name = id + QStringLiteral(".log");
+        // Читаем НАСЛЕДНОЕ имя, пока оно есть (в нём может быть то, чего в
+        // новом ещё нет), пишем ВСЕГДА новое; наследное удаляется после
+        // удачной заливки. Обрыв между «залил» и «удалил» безопасен: union
+        // записей при следующем слиянии ничего не теряет, доудалит следующий
+        // прогон.
+        const QString pushName = cloudJournalName(id);
+        const QString legacyName = id + QStringLiteral(".log");
+        const bool haveLegacy = remoteEtag.contains(legacyName);
+        const QString name = haveLegacy ? legacyName : pushName;
         QByteArray localBytes;
         if (!readJournalBytes(id, &localBytes, error)) {
             takeTraffic();
@@ -1214,9 +1315,13 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
         // ЯРУС 1: обе стороны там же, где были, — пропуск, ноль трафика.
         if (haveRemote && !led.etag.isEmpty() && led.etag == etag && !localBytes.isEmpty() &&
             localHash == led.plainHash) {
-            ++done.skipped;
-            processed.append(id);
-            continue;
+            if (!haveLegacy) {
+                ++done.skipped;
+                processed.append(id);
+                continue;
+            }
+            // Стороны совпадают, но блоб под наследным именем: пропуску не
+            // бывать — ниже сработает миграция (то же содержимое, новое имя).
         }
         if (!haveRemote && localBytes.isEmpty()) continue;
 
@@ -1255,7 +1360,9 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
 
         bool needPush = false;
         QByteArray pushBytes;
-        QString pushExpectedEtag = etag;
+        // Ожидаемая метка — у ИМЕНИ ЗАЛИВКИ: при наследном чтении это другое
+        // имя, и у него может быть свой блоб (обрыв прежней миграции).
+        QString pushExpectedEtag = remoteEtag.value(pushName);
 
         if (!haveRemote) {
             // На сервере блоба нет. При записанном etag это повреждение
@@ -1460,9 +1567,20 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
             ++done.pushedWhole;
         }
 
+        // МИГРАЦИЯ ИМЕНИ: стороны совпадают, а блоб живёт под наследным
+        // именем — то же содержимое запечатывается новым именем (AAD включает
+        // имя, на сервере не переименовать), наследное удалится после заливки.
+        // Ветки выше, кончившиеся continue (принято целиком, слито), оставили
+        // бухгалтерию наследному имени — их миграция догонит следующим
+        // прогоном тем же местом.
+        if (!needPush && haveLegacy && localValid && !pushOnly && !weChanged && !theyChanged) {
+            needPush = true;
+            pushBytes = localBytes;
+        }
+
         if (needPush) {
             QByteArray blob;
-            const BlobAad aad{BlobKind::Journal, storeId, name};
+            const BlobAad aad{BlobKind::Journal, storeId, pushName};
             if (!cipher_->seal(pushBytes, aad, &blob, error)) {
                 takeTraffic();
                 return finish(false);
@@ -1472,10 +1590,11 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
             QString why;
             const bool ok =
                 pushExpectedEtag.isEmpty()
-                    ? remote_->put(name, blob, &newEtag, &why)
-                    : remote_->putIfMatch(name, blob, pushExpectedEtag, &newEtag, &clash, &why);
+                    ? remote_->put(pushName, blob, &newEtag, &why)
+                    : remote_->putIfMatch(pushName, blob, pushExpectedEtag, &newEtag, &clash,
+                                          &why);
             if (!ok) {
-                skipTransfer(QStringLiteral("cannot upload %1: %2").arg(name, why));
+                skipTransfer(QStringLiteral("cannot upload %1: %2").arg(pushName, why));
                 continue;
             }
             if (clash) {
@@ -1484,10 +1603,24 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                 ++done.deferred;
                 continue;
             }
-            led.etag = newEtag;
-            led.sealedHash = hashBytes(blob);
-            led.plainHash = hashBytes(pushBytes);
-            ledger.setBlob(name, led);
+            SyncLedger::Blob pushed;
+            pushed.etag = newEtag;
+            pushed.sealedHash = hashBytes(blob);
+            pushed.plainHash = hashBytes(pushBytes);
+            ledger.setBlob(pushName, pushed);
+            if (haveLegacy) {
+                // Наследный блоб уже слит в нас чтением выше, его содержимое
+                // — подмножество только что залитого; с забором версий других
+                // писателей нет. Не удалилось — доудалит следующий прогон.
+                QString dropWhy;
+                if (remote_->del(legacyName, &dropWhy)) {
+                    ledger.dropBlob(legacyName);
+                    ++done.migratedLegacy;
+                } else {
+                    skipTransfer(QStringLiteral("cannot drop legacy %1: %2")
+                                     .arg(legacyName, dropWhy));
+                }
+            }
             processed.append(id);
         }
     }
@@ -1499,7 +1632,9 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
     // сессией). Нет в облаке — залить; нет локально — скачать; обе стороны
     // разные и обе новые — НЕ ТРОГАТЬ и назвать в отчёте.
     if (!pushOnly) {
-        // Множество собрано до цикла журналов (итог индикатора — один раз).
+        // Множество собрано до цикла журналов (итог индикатора — один раз);
+        // имя в нём — ЛОКАЛЬНОЕ. Облачное: пишем всегда новым (<id>_<ext>.pic),
+        // читаем наследное (== локальному), пока оно существует.
         for (const QString& name : orderedAttachments) {
             if (cancelled()) {
                 done.cancelled = true;
@@ -1507,48 +1642,81 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
             }
             bumpProgress();
             const bool haveLocal = QFile::exists(attachmentPath(name));
-            const bool haveRemote = remoteEtag.contains(name);
-            SyncLedger::Blob led = ledger.blob(name);
-            const QString etag = remoteEtag.value(name);
-            const BlobAad aad{BlobKind::Attachment, storeId, name};
+            const QString pushName = cloudAttachmentName(name);
+            const bool haveLegacy = remoteEtag.contains(name);
+            const QString readName = haveLegacy ? name : pushName;
+            const bool haveRemote = haveLegacy || remoteEtag.contains(pushName);
+            SyncLedger::Blob led = ledger.blob(readName);
+            const QString etag = remoteEtag.value(readName);
+            const BlobAad aadRead{BlobKind::Attachment, storeId, readName};
+            const BlobAad aadPush{BlobKind::Attachment, storeId, pushName};
             QString why;
-            if (haveLocal && haveRemote && !led.etag.isEmpty() && led.etag == etag) continue;
+            // Заливка локальных байтов НОВЫМ именем; удачная — убирает
+            // наследный блоб (миграция, лечение и первая заливка ходят одним
+            // путём, иначе наследные имена возвращались бы то тут, то там).
+            const auto pushLocal = [&](const QByteArray& bytes) -> bool {
+                QByteArray sealedBlob;
+                QString newEtag;
+                if (!cipher_->seal(bytes, aadPush, &sealedBlob, &why)) {
+                    complain(QStringLiteral("cannot seal attachment %1: %2").arg(name, why));
+                    return false;
+                }
+                if (!remote_->put(pushName, sealedBlob, &newEtag, &why)) {
+                    skipTransfer(
+                        QStringLiteral("cannot upload attachment %1: %2").arg(pushName, why));
+                    return false;
+                }
+                ledger.setBlob(pushName,
+                               {newEtag, hashBytes(sealedBlob), hashBytes(bytes)});
+                if (haveLegacy) {
+                    QString dropWhy;
+                    if (remote_->del(name, &dropWhy)) {
+                        ledger.dropBlob(name);
+                        ++done.migratedLegacy;
+                    } else {
+                        skipTransfer(QStringLiteral("cannot drop legacy %1: %2")
+                                         .arg(name, dropWhy));
+                    }
+                }
+                return true;
+            };
+            if (haveLocal && haveRemote && !led.etag.isEmpty() && led.etag == etag) {
+                if (!haveLegacy) continue;
+                // Стороны совпадают, но блоб — под наследным именем: миграция.
+                // Свои байты сверяются с бухгалтерией ПРЕЖДЕ удаления
+                // наследного: разъехались — пусть решает обычный путь
+                // следующего прогона, стирать вслепую нельзя.
+                QByteArray bytes;
+                if (!readAttachmentBytes(name, &bytes, &why)) continue;
+                if (hashBytes(bytes) != led.plainHash) continue;
+                pushLocal(bytes);
+                continue;
+            }
             if (haveLocal && !haveRemote) {
                 QByteArray bytes;
                 if (!readAttachmentBytes(name, &bytes, &why)) {
                     complain(QStringLiteral("cannot read attachment %1: %2").arg(name, why));
                     continue;
                 }
-                QByteArray blob;
-                QString newEtag;
-                if (!cipher_->seal(bytes, aad, &blob, &why)) {
-                    complain(QStringLiteral("cannot seal attachment %1: %2").arg(name, why));
-                    continue;
-                }
-                if (!remote_->put(name, blob, &newEtag, &why)) {
-                    skipTransfer(
-                        QStringLiteral("cannot upload attachment %1: %2").arg(name, why));
-                    continue;
-                }
-                ++done.attachmentsUp;
-                ledger.setBlob(name, {newEtag, hashBytes(blob), hashBytes(bytes)});
+                if (pushLocal(bytes)) ++done.attachmentsUp;
                 continue;
             }
             // Дальше нужен GET: либо файла нет локально, либо etag разошёлся.
             QByteArray blob;
-            if (!remote_->get(name, &blob, nullptr, &why)) {
-                skipTransfer(QStringLiteral("cannot download attachment %1: %2").arg(name, why));
+            if (!remote_->get(readName, &blob, nullptr, &why)) {
+                skipTransfer(
+                    QStringLiteral("cannot download attachment %1: %2").arg(readName, why));
                 continue;
             }
             const Digest sealed = hashBytes(blob);
             if (haveLocal && !led.sealedHash.empty() && sealed == led.sealedHash) {
                 ++done.etagReissued;
                 led.etag = etag;
-                ledger.setBlob(name, led);
+                ledger.setBlob(readName, led);
                 continue;
             }
             QByteArray plain;
-            if (!cipher_->open(blob, aad, &plain, &why)) {
+            if (!cipher_->open(blob, aadRead, &plain, &why)) {
                 ++aeadFailures;
                 if (keyfileChanged) {
                     if (error != nullptr)
@@ -1559,28 +1727,26 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                     return finish(false);
                 }
                 if (haveLocal) {
-                    // Порча блоба: здоровая сторона побеждает — перезаливка.
+                    // Порча блоба: здоровая сторона побеждает — перезаливка,
+                    // уже новым именем (наследный битый уходит там же).
                     QByteArray bytes;
-                    QByteArray healed;
-                    QString newEtag;
-                    if (readAttachmentBytes(name, &bytes, &why) &&
-                        cipher_->seal(bytes, aad, &healed, &why) &&
-                        remote_->put(name, healed, &newEtag, &why)) {
+                    if (readAttachmentBytes(name, &bytes, &why) && pushLocal(bytes)) {
                         ++done.healedRemote;
-                        ledger.setBlob(name, {newEtag, hashBytes(healed), hashBytes(bytes)});
                     } else {
                         complain(QStringLiteral("cannot heal attachment %1: %2").arg(name, why));
                     }
                 } else {
                     complain(QStringLiteral("attachment %1 fails AEAD and there is no local "
                                             "copy")
-                                 .arg(name));
+                                 .arg(readName));
                 }
                 continue;
             }
             if (!haveLocal) {
                 // Скачивание: атомарная запись; dirty-пометки не нужны — это
-                // вложение, его хеш ложится в бухгалтерию сразу.
+                // вложение, его хеш ложится в бухгалтерию сразу. Наследное имя
+                // при скачивании НЕ мигрируется (это перезаливка всего блоба);
+                // мигрирует та машина, у которой байты уже локально (ярус 1).
                 if (!writeFileBytes(attachmentPath(name),
                                     std::string(plain.constData(), size_t(plain.size())),
                                     &why)) {
@@ -1588,7 +1754,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                     continue;
                 }
                 ++done.attachmentsDown;
-                ledger.setBlob(name, {etag, sealed, hashBytes(plain)});
+                ledger.setBlob(readName, {etag, sealed, hashBytes(plain)});
                 continue;
             }
             // Обе стороны есть и байты разные.
@@ -1596,7 +1762,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
             if (!readAttachmentBytes(name, &localAtt, &why)) continue;
             const Digest localHashAtt = hashBytes(localAtt);
             if (localHashAtt == hashBytes(plain)) {
-                ledger.setBlob(name, {etag, sealed, localHashAtt});
+                ledger.setBlob(readName, {etag, sealed, localHashAtt});
                 continue;
             }
             if (!led.plainHash.empty() && localHashAtt == led.plainHash) {
@@ -1608,7 +1774,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                     continue;
                 }
                 ++done.attachmentsDown;
-                ledger.setBlob(name, {etag, sealed, hashBytes(plain)});
+                ledger.setBlob(readName, {etag, sealed, hashBytes(plain)});
                 continue;
             }
             // Истинно конкурентная замена под одним id: без rev судить нечем —
@@ -1748,13 +1914,18 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
 
     // МАНИФЕСТ — последним и открытым текстом, как в pushAll: «здесь лежит
     // хранилище такое-то» говорится после того, как это стало правдой.
-    if (!pushOnly && !done.cancelled && !remoteEtag.contains(QLatin1String(Identity::kFile))) {
+    // Перекладывается и после миграции имён: свежая версия формата в нём —
+    // забор для прежних сборок (tooNew — честный стоп), иначе старая машина
+    // возвращала бы наследные имена в облако.
+    if (!pushOnly && !done.cancelled &&
+        (!remoteEtag.contains(QLatin1String(Identity::kFile)) || done.migratedLegacy > 0)) {
         QString newEtag;
         QString why;
-        if (remote_->put(QLatin1String(Identity::kFile), mine.toBytes(), &newEtag, &why)) {
+        if (remote_->put(QLatin1String(Identity::kFile), mine.atCurrentFormat().toBytes(),
+                         &newEtag, &why)) {
             SyncLedger::Blob led;
             led.etag = newEtag;
-            led.sealedHash = hashBytes(mine.toBytes());
+            led.sealedHash = hashBytes(mine.atCurrentFormat().toBytes());
             ledger.setBlob(QLatin1String(Identity::kFile), led);
         } else {
             skipTransfer(QStringLiteral("cannot upload the manifest: %1").arg(why));
@@ -1778,8 +1949,9 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
 
     note(QStringLiteral(
              "done: listed %1, skipped %2, taken %3, pushed %4, merged %5, deferred %6, "
-             "healed %7, materialized %8, deletes %9/%10 pending, attachments %11 up %12 "
-             "down, failures %13; traffic %14 req, %15 B up, %16 B down")
+             "healed %7, migrated %8, materialized %9, deletes %10/%11 pending, "
+             "attachments %12 up %13 down, failures %14; traffic %15 req, %16 B up, "
+             "%17 B down")
              .arg(done.listed)
              .arg(done.skipped)
              .arg(done.takenWhole)
@@ -1787,6 +1959,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
              .arg(done.mergedJournals)
              .arg(done.deferred)
              .arg(done.healedRemote)
+             .arg(done.migratedLegacy)
              .arg(done.materialized)
              .arg(done.deletesApplied)
              .arg(done.pendingDeletes.size())
@@ -1949,14 +2122,14 @@ bool ZStorage::pushAll(PushReport* report, QString* error) {
         QByteArray journal;
         if (!readJournalBytes(id, &journal, error)) return finish(false);
         if (journal.isEmpty()) continue;
-        if (!sealAndPut(id + QStringLiteral(".log"), journal)) return finish(false);
+        if (!sealAndPut(cloudJournalName(id), journal)) return finish(false);
         ++done.journals;
     }
 
     for (const QString& name : attachmentNames()) {
         QByteArray bytes;
         if (!readAttachmentBytes(name, &bytes, error)) return finish(false);
-        if (!sealAndPut(name, bytes)) return finish(false);
+        if (!sealAndPut(cloudAttachmentName(name), bytes)) return finish(false);
         ++done.attachments;
     }
 
@@ -1964,7 +2137,8 @@ bool ZStorage::pushAll(PushReport* report, QString* error) {
     // означает «здесь лежит хранилище такое-то»: сказать это раньше, чем
     // хоть что-то залито, значило бы соврать при обрыве.
     timer.restart();
-    if (!remote_->put(QLatin1String(Identity::kFile), mine.toBytes(), nullptr, error))
+    if (!remote_->put(QLatin1String(Identity::kFile), mine.atCurrentFormat().toBytes(),
+                      nullptr, error))
         return finish(false);
     done.usPut += timer.nsecsElapsed() / 1000;
     return finish(true);

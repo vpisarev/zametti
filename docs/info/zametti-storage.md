@@ -45,7 +45,7 @@ Reserved names and their fate under synchronization:
 ### `zametti.json` — the store identity
 
 ```json
-{ "storeId": "01n6cqevh7bbfr", "formatVersion": 1,
+{ "storeId": "01n6cqevh7bbfr", "formatVersion": 2,
   "created": "2026-08-23T00:00:00+03:00", "rootNote": "01n6cqevsd7v5e" }
 ```
 
@@ -55,7 +55,9 @@ Reserved names and their fate under synchronization:
   of a journal). A version newer than the program's own means: do not work,
   rather than corrupt. A build that does not know half the keys would rewrite
   the file without them and lose data silently. Unknown keys **within** a known
-  version, on the contrary, survive the rewrite;
+  version, on the contrary, survive the rewrite. Version 2 = the cloud blob
+  extensions of our own (`<id>.zm`, `<id>_<ext>.pic`, see §11); version 1 files
+  are still read;
 - `created` — when the store was created, ISO-8601 with an offset;
 - `rootNote` — id of the root note (see below). The only field that changes.
 
@@ -737,8 +739,19 @@ wrapped with the user's password.
 ### The blob wrapper, v1
 
 Names in the cloud are flat and open (the owner's decision — ids are
-opaque): `<id>.log` for journals, `<id>.<ext>` for attachments, plus the
-open `keyfile` and `zametti.json`. The bytes of every encrypted blob:
+opaque): `<id>.zm` for journals, `<id>_<ext>.pic` for attachments, plus the
+open `keyfile` and `zametti.json`. The extensions are our own (the owner's
+decision, 28.08.2026): an encrypted blob under a real image extension used
+to look like a corrupted picture to hosting services, so the real extension
+moved INTO the name — and burying an attachment (webp → jxl preview) stays
+a rename in the cloud, propagating through the presence model as before.
+Legacy names (`<id>.log`, `<id>.<ext>`) are still read while they exist;
+a sync run re-seals such a blob under the new name (the AAD includes the
+name, so a server-side rename is impossible), deletes the legacy one only
+after the upload, counts it as `migrated` in the report, and re-uploads
+the manifest at the current `formatVersion` — a fence that stops older
+builds honestly (`tooNew`) instead of letting them push legacy names back.
+The bytes of every encrypted blob:
 
 | offset | size | what |
 |---|---|---|
