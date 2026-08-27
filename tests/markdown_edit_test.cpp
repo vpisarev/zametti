@@ -111,6 +111,36 @@ void checkSearchStepSurvivesScrolling() {
     ZT_TRUE("после ходьбы по найденному программа жива", true);
 }
 
+// ВЫРАЖЕНИЕ В ВИДЕ ИСХОДНИКА: якоря стоят на краях физической строки, и
+// разметка markdown ищется как текст — за этим в [M] и приходят.
+void checkRegexInSource() {
+    const QString path = writeNote(
+        QStringLiteral("выражение.md"),
+        QStringLiteral("# vector\n\nтекст про vector\n\n## vector types\n\nещё vector\n"));
+    Rig rig;
+    rig.editor.openFile(path);
+    QTest::qWait(20);
+    ZT_TRUE("вошли в режим исходника", rig.controller.enter());
+    QTest::qWait(30);
+
+    // Буквальный запрос находит и «## vector types»: в нём та же подстрока
+    // «# vector». Ровно поэтому и нужны якоря — следующая проверка.
+    ZT_EQ("«# vector» находится буквально, в обоих заголовках", std::string("2"),
+          std::to_string(rig.view.findMatches(zametti::makeQuery(QStringLiteral("# vector")))));
+    ZT_EQ("выражение с якорем находит оба заголовка", std::string("2"),
+          std::to_string(rig.view.findMatches(
+              zametti::makeQuery(QStringLiteral("^#+ vector"), true))));
+    ZT_EQ("а без якоря — все четыре вхождения", std::string("4"),
+          std::to_string(rig.view.findMatches(
+              zametti::makeQuery(QStringLiteral("vector"), true))));
+    // Недописанное выражение: искать нечего, и панель об этом узнаёт по
+    // самому запросу, а не по догадке вида.
+    const zametti::Query broken = zametti::makeQuery(QStringLiteral("(vector"), true);
+    ZT_EQ("недописанное не находит ничего", std::string("0"),
+          std::to_string(rig.view.findMatches(broken)));
+    ZT_TRUE("и само говорит, что негодно", !broken.valid);
+}
+
 // ПОСЛЕ ПРАВКИ ПОИСК ПОВТОРЯЕТСЯ ЦЕЛИКОМ (решение владельца: «смещения
 // изменились и количество изменилось»).
 //
@@ -932,6 +962,7 @@ void checkEscapeKeepsMode() {
 TEST(MarkdownEdit, All) {
     g_dir = zt::TestData::outDir(QStringLiteral("markdown-edit"));
     checkSearchStepSurvivesScrolling();
+    checkRegexInSource();
     checkSearchRepeatsAfterEdit();
     checkSearchDiffersBetweenModes();
     checkContextMenuHasModeActions();
