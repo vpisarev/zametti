@@ -76,7 +76,12 @@ bool MarkdownController::enter() {
     const SourcePos caret = note.sourcePosOf(editor_.textCursor());
     // ТЕЛО БЕЗ ШАПКИ. Шапкой владеет ZNote, и `modified` в ней меняется при
     // каждой записи: в исходнике ей делать нечего — она мигала бы под руками.
-    view_.showSource(note.toMarkdownText(), caret);
+    //
+    // ТЕКСТ ЖИВОЙ, А НЕ ФАЙЛОВЫЙ. Каретка и наложение ходят по карте
+    // «строка ↔ QTextBlock» (liveMarkdownWithMap), и показывать надо ровно тот
+    // текст, по которому построена карта: приведение к выразимому расщепляет
+    // блоки, и строки разъехались бы с документом.
+    view_.showSource(note.liveMarkdown(), caret);
     note.setSourceEditing(true);
     // АРХИВНУЮ ПОКАЗЫВАЕМ, НО НЕ ПРАВИМ. Посмотреть её markdown человек вправе;
     // править — нет, пока не вернёт из архива. Флаг ставится здесь, а не в
@@ -141,7 +146,7 @@ void MarkdownController::refill() {
     if (!active_) return;
     ZDocument& note = editor_.note();
     const SourcePos caret = note.sourcePosOf(editor_.textCursor());
-    view_.showSource(note.toMarkdownText(), caret);
+    view_.showSource(note.liveMarkdown(), caret);
     note.setSourceEditing(true);
     view_.setReadOnly(editor_.isArchivedNote());
     view_.setFocus();

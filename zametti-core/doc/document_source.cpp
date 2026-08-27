@@ -178,7 +178,7 @@ SourcePos ZDocument::sourcePosOf(const QTextCursor& at) const {
     if (at.document() != &d_->text) return pos;
 
     std::vector<BlockLines> map;
-    const QStringList lines = linesOf(canonicalWithMap(&map));
+    const QStringList lines = linesOf(liveMarkdownWithMap(&map));
 
     const QTextBlock block = at.block();
     const size_t number = size_t(qMax(0, block.blockNumber()));
@@ -219,7 +219,7 @@ SourcePos ZDocument::sourcePosOf(const QTextCursor& at) const {
 
 QTextCursor ZDocument::cursorAtSourcePos(SourcePos pos) {
     std::vector<BlockLines> map;
-    const QStringList lines = linesOf(canonicalWithMap(&map));
+    const QStringList lines = linesOf(liveMarkdownWithMap(&map));
 
     // Блок, которому принадлежит строка. Карта отсортирована по first —
     // двоичный поиск, а не проход: у заметки на сотню тысяч строк проход был бы
@@ -297,7 +297,7 @@ int ZDocument::applySourceText(const QString& text, QTextCursor* caret, NoteHead
     // поднимает ревизию документа, а на ревизии стоит всё производное (счёт
     // слов, найденное). Сравнение строк — memcmp, дешевле любого сравнения.
     std::vector<BlockLines> mapBefore;
-    const QString before = canonicalWithMap(&mapBefore);
+    const QString before = liveMarkdownWithMap(&mapBefore);
     if (withoutReturns(before) == withoutReturns(after)) return 0;
 
     // Весь алгоритм стоит на том, что номер блока в карте — это номер
@@ -345,7 +345,7 @@ int ZDocument::applySourceText(const QString& text, QTextCursor* caret, NoteHead
         edit.beginEditBlock();
         replaceBlocks(0, 0, fresh);
         edit.endEditBlock();
-        if (withoutReturns(toMarkdownText()) != withoutReturns(after)) {
+        if (withoutReturns(liveMarkdown()) != withoutReturns(after)) {
             d_->text.undo();
             return -2;
         }
@@ -545,7 +545,7 @@ int ZDocument::applySourceText(const QString& text, QTextCursor* caret, NoteHead
     // числом, а найденные случаи ложатся в отчёт. Заплаткой это стало бы ровно
     // в тот день, когда счётчик перестанут спрашивать.
     bool wholeAgain = false;
-    if (withoutReturns(toMarkdownText()) != withoutReturns(after)) {
+    if (withoutReturns(liveMarkdown()) != withoutReturns(after)) {
         ++d_->sourceFallbacks;
         wholeAgain = true;
         replaceBlocks(0, d_->text.blockCount() - 1, fresh);
@@ -553,7 +553,7 @@ int ZDocument::applySourceText(const QString& text, QTextCursor* caret, NoteHead
     }
     edit.endEditBlock();
 
-    if (withoutReturns(toMarkdownText()) != withoutReturns(after)) {
+    if (withoutReturns(liveMarkdown()) != withoutReturns(after)) {
         d_->text.undo();
         return -2;
     }

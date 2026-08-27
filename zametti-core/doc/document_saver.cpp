@@ -559,6 +559,8 @@ void appendSplitOnBlankLines(std::vector<Piece>& out, Piece block) {
     }
 }
 
+}  // namespace
+
 std::vector<Piece> documentForFile(std::vector<Piece> doc) {
     std::vector<Piece> out;
     out.reserve(doc.size());
@@ -645,6 +647,8 @@ std::vector<Piece> documentForFile(std::vector<Piece> doc) {
 
     return withoutEmptyNested(std::move(spaced));
 }
+
+namespace {
 
 std::string_view asView(const QByteArray& bytes) {
     return std::string_view(bytes.constData(), static_cast<size_t>(bytes.size()));

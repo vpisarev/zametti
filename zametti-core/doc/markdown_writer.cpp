@@ -15,6 +15,7 @@
 #include "block_kind.h"
 #include "doc_model.h"
 #include "document_builder.h"
+#include "list_line.h"
 #include "math_scan.h"
 
 #include <QChar>
@@ -861,25 +862,34 @@ bool looksLikeLinkDefinition(QStringView raw) {
 QString normaliseSpaces(const QString& text) {
     QString out;
     out.reserve(text.size());
-    bool leading = true;    // мы всё ещё в отступе строки
     bool inCode = false;    // между заборами блока кода
     const qsizetype n = text.size();
+    // Начало содержимого строки: отступ, знаки цитаты, маркер пункта и решётки
+    // заголовка — не в счёт. «Ведущий» неразрывный — это ведущий у СОДЕРЖИМОГО:
+    // отступ пункта стоит после «- », а не до него. Пока счёт шёл от начала
+    // строки, наш собственный отступ после маркера считался мусором, обращался
+    // в обычный пробел — и пропадал вовсе при следующем чтении (markdown
+    // съедает пробелы после маркера), а с ним расходился круг записи.
+    qsizetype content = -1;
     for (qsizetype i = 0; i < n;) {
-        if (leading) {
+        if (content < 0) {
+            qsizetype end = text.indexOf(u'\n', i);
+            if (end < 0) end = n;
+            const QStringView line = QStringView(text).mid(i, end - i);
             // Забор блока кода: три знака и больше, с любым отступом перед
             // ними. Внутри блока НЕРАЗРЫВНЫХ НЕ БЫВАЕТ ВОВСЕ — там значим сам
             // пробел, его копируют в терминал, а неразрывный туда попадает
             // только мусором из чужих выгрузок.
-            qsizetype at = i;
-            while (at < n && (text.at(at) == u' ' || text.at(at) == u'\t')) ++at;
+            const qsizetype at = i + leadingWhitespace(line);
             if (QStringView(text).mid(at, 3) == QLatin1String("```") ||
                 QStringView(text).mid(at, 3) == QLatin1String("~~~"))
                 inCode = !inCode;
+            content = inCode ? at : i + contentStartOf(line);
         }
         const QChar c = text.at(i);
         if (c == u'\n') {
             out += u'\n';
-            leading = true;
+            content = -1;
             ++i;
             continue;
         }
@@ -888,13 +898,11 @@ QString normaliseSpaces(const QString& text) {
             while (i + run < n && text.at(i + run) == QChar::Nbsp) ++run;
             // Вне кода: ведущие держат отступ, серия из двух и более держит
             // выравнивание, одиночный в середине не значит ничего.
-            const bool keep = !inCode && (leading || run > 1);
+            const bool keep = !inCode && (i <= content || run > 1);
             out += QString(run, keep ? QChar(QChar::Nbsp) : QChar(u' '));
             i += run;
-            leading = false;
             continue;
         }
-        if (c != u' ' && c != u'\t') leading = false;
         out += c;
         ++i;
     }
@@ -1528,11 +1536,27 @@ void walkPieces(const QTextDocument& doc, const std::function<bool(const Piece&)
 
 namespace {
 
-// Единственное место, где живая заметка превращается в текст файла. Ходит прямо
-// по внутреннему QTextDocument — ни промежуточного представления, ни второй
-// живой модели. Текст, а не байты: в байты он переводится один раз, на границе
-// файла (toMarkdown), а буферу обмена и разности байты не нужны вовсе.
-QString writeInto(const QTextDocument& doc, const NoteHeader& header,
+// Каким каноном писать: тем, что уйдёт в файл, или тем, что сейчас в документе.
+enum class Canon { Live, File };
+
+// Единственное место, где живая заметка превращается в текст. Ходит прямо по
+// внутреннему QTextDocument — ни промежуточного представления, ни второй живой
+// модели. Текст, а не байты: в байты он переводится один раз, на границе файла
+// (toMarkdown), а буферу обмена и разности байты не нужны вовсе.
+//
+// ДВА КАНОНА ЗДЕСЬ РАЗЛИЧАЮТСЯ ФЛАГОМ, А НЕ ДВУМЯ ПИСАТЕЛЯМИ. Разница между
+// ними одна и вся в ступени documentForFile: живой документ вправе держать то,
+// чего markdown не хранит, файл — нет.
+//
+//   Canon::File — то, что уйдёт в файл. Хвостовой пробел под кареткой срезан,
+//     ведущий стал неразрывным, пустые блоки по краям сняты, начертание с
+//     пробелом на краю поджато, разметка, которая не читается обратно, снята.
+//     Этим живут toMarkdown/fileBytes/saveTo, отпечаток и сравнение тел.
+//   Canon::Live — то, что СЕЙЧАС в документе, знак в знак. Этим живёт режим
+//     исходника: номер блока в его карте строк — это номер QTextBlock, и на
+//     этом стоит точечное наложение правленого текста (document_source.cpp).
+//     Им же наборы операций смотрят на живое строение.
+QString writeInto(const QTextDocument& doc, const NoteHeader& header, Canon canon,
                   std::vector<BlockLines>* map) {
 
     // Есть ли в заметке ссылочные определения — от этого зависит экранирование
@@ -1545,53 +1569,77 @@ QString writeInto(const QTextDocument& doc, const NoteHeader& header,
         if (isRawBlock(b) && looksLikeLinkDefinition(sourceTextOf(b))) hasLinkDefs = true;
 
     Writer writer(header, hasLinkDefs, map != nullptr);
+    if (canon == Canon::Live) {
+        walkPieces(doc, [&](const Piece& piece) {
+            writer.push(piece);
+            return true;
+        });
+        return writer.finish(map);
+    }
+
+    // Файловый канон: между обходом и писателем встаёт приведение к выразимому.
+    // Оно смотрит на документ целиком (пустые строки по краям, слипшиеся стыки,
+    // оторвавшиеся от пункта блоки), поэтому блоки собираются списком — ровно
+    // так же, как их собирает запись на диск.
+    std::vector<Piece> blocks;
     walkPieces(doc, [&](const Piece& piece) {
-        writer.push(piece);
+        blocks.push_back(piece);
         return true;
     });
+    for (const Piece& piece : documentForFile(std::move(blocks))) writer.push(piece);
     return writer.finish(map);
 }
 
 }  // namespace
 
-// Блоки, заметкой ещё не ставшие, — кусок в буфере обмена. Кладём их в
-// документ-однодневку и записываем тем же писателем: правил записи двух не
-// бывает, а собрать и обойти кусок выделения стоит микросекунды.
+// Блоки, заметкой ещё не ставшие, — кусок в буфере обмена, сторона сравнения,
+// проба разметки на выживание. Кладём их в документ-однодневку и записываем тем
+// же писателем: правил записи двух не бывает, а собрать и обойти кусок
+// выделения стоит микросекунды.
+//
+// КАНОН ЗДЕСЬ ЖИВОЙ, И ЭТО НЕ НЕДОСМОТР. Блоки сюда приходят уже приведёнными
+// (documentForFile зовёт writePieces изнутри — withMarkupThatSurvives пробует
+// на них разметку), и звать приведение второй раз значило бы уйти в бесконечную
+// рекурсию. Тем, кому нужны байты файла, отвечает ZDocument::toMarkdown.
 QString writePieces(const std::vector<Piece>& blocks, const NoteHeader& header,
                     std::vector<BlockLines>* map) {
     QTextDocument temp;
     buildDocument(blocks, temp);
-    return writeInto(temp, header, map);
+    return writeInto(temp, header, Canon::Live, map);
 }
 
 QString ZDocument::toMarkdownText() const {
-    return writeInto(d_->text, NoteHeader{}, nullptr);
+    return writeInto(d_->text, NoteHeader{}, Canon::File, nullptr);
 }
 
 std::string ZDocument::toMarkdown() const {
     // ГРАНИЦА ФАЙЛА: единственный перевод текста в байты на пути записи.
-    const QByteArray bytes = writeInto(d_->text, NoteHeader{}, nullptr).toUtf8();
+    const QByteArray bytes = writeInto(d_->text, NoteHeader{}, Canon::File, nullptr).toUtf8();
     return std::string(bytes.constData(), size_t(bytes.size()));
 }
 
 std::string ZDocument::toMarkdown(const NoteHeader& envelope) const {
-    const QByteArray bytes = writeInto(d_->text, envelope, nullptr).toUtf8();
+    const QByteArray bytes = writeInto(d_->text, envelope, Canon::File, nullptr).toUtf8();
     return std::string(bytes.constData(), size_t(bytes.size()));
 }
 
 QString ZDocument::toMarkdownText(const NoteHeader& envelope) const {
-    return writeInto(d_->text, envelope, nullptr);
+    return writeInto(d_->text, envelope, Canon::File, nullptr);
 }
 
-QString ZDocument::canonicalWithMap(std::vector<BlockLines>* map) const {
+QString ZDocument::liveMarkdown() const {
+    return writeInto(d_->text, NoteHeader{}, Canon::Live, nullptr);
+}
+
+QString ZDocument::liveMarkdownWithMap(std::vector<BlockLines>* map) const {
     // Тело БЕЗ шапки: в ней живёт `modified`, она меняется при каждой записи, и
     // всякая разность начиналась бы с неё — всегда одной и той же строки.
-    return writeInto(d_->text, NoteHeader{}, map);
+    return writeInto(d_->text, NoteHeader{}, Canon::Live, map);
 }
 
 std::vector<SourceLine> ZDocument::sourceLines() const {
     std::vector<BlockLines> map;
-    const QString whole = canonicalWithMap(&map);
+    const QString whole = liveMarkdownWithMap(&map);
     const QStringList lines = whole.split(QLatin1Char('\n'));
 
     std::vector<SourceLine> out;
