@@ -808,7 +808,16 @@ QString fenceFor(QStringView code, QStringView info) {
     qsizetype longest = 0;
     qsizetype run = 0;
     bool atBol = true;
+    // ЗАКРЫВАЮЩИЙ ЗАБОР МОЖЕТ СТОЯТЬ С ОТСТУПОМ до трёх пробелов (CommonMark), и
+    // строка содержимого " ```" закрыла бы блок ровно так же, как "```". Пока
+    // отступ сбивал счёт, забор оставался коротким, содержимое закрывало блок —
+    // и записанное читалось не тем, что записано.
+    int indent = 0;
     for (const QChar c : code) {
+        if (atBol && c == u' ' && indent < 3) {
+            ++indent;
+            continue;
+        }
         if (c == ch && atBol) {
             ++run;
             if (run > longest) longest = run;
@@ -816,6 +825,7 @@ QString fenceFor(QStringView code, QStringView info) {
         }
         run = 0;
         atBol = (c == u'\n');
+        if (atBol) indent = 0;
     }
     const qsizetype n = longest >= 3 ? longest + 1 : 3;
     return QString(n, ch);
