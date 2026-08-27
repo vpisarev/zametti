@@ -422,11 +422,6 @@ function(zametti_summary)
     zametti_row("config:    " "`${config}`")
     zametti_row("compiler:" "`${compiler}`")
     zametti_row("Qt:        " "`${qt}`")
-    # Крипто выведено ОТДЕЛЬНОЙ строкой, хотя libsodium теперь вендоренная и
-    # повторяется ниже в общем списке. Так нарочно: чем именно шифруются
-    # заметки перед отправкой в облако — это первое, о чём спрашивают, и
-    # искать ответ среди двенадцати строк вендоринга человек не должен.
-    zametti_row("crypto:   " "`libsodium ${SODIUM_VENDORED_VERSION}` — cloud encryption: XChaCha20-Poly1305, Argon2id")
     zametti_row("vendored libraries: " "")
     zametti_subrow("`md4c ${MD4C_VENDORED_VERSION}` — markdown parsing")
     zametti_subrow("`blake3 ${BLAKE3_VENDORED_VERSION}` — computing digests of notes and attachments (images)")

@@ -1,39 +1,85 @@
 # Toolchain переносимой сборки под Linux: всё собирается против sysroot
 # Ubuntu 20.04 (glibc 2.31), а не против системы, на которой мы сидим.
 #
-#   source packaging/linux/zenv.sh
-#   cmake -S . -B build-portable \
+#   cmake -S . -B build-portable -DCMAKE_BUILD_TYPE=Release \
 #         -DCMAKE_TOOLCHAIN_FILE=packaging/linux/toolchains/linux-zsys.cmake \
-#         -DCMAKE_PREFIX_PATH=$ZPREFIX -DWITH_STATIC_QT=ON
+#         -DWITH_STATIC_QT=ON
+#   cmake --build build-portable -j8
 #
-# Этим же файлом собраны Qt и OpenSSL, лежащие в $ZPREFIX. Так и задумано:
+# БОЛЬШЕ НИЧЕГО НЕ НУЖНО: ни окружения, ни zenv.sh. Он нужен, только когда
+# собирают САМИ ЗАВИСИМОСТИ (Qt, OpenSSL, помощники xcb) — см.
+# docs/zametti-build-linux.md.
+#
+# Этим же файлом собраны Qt и OpenSSL, лежащие в ${ZDEPS_ROOT}. Так и задумано:
 # разошедшиеся ключи у Qt и у программы — это бинарь, который собрался, но не
 # запускается, и разбираться в таком потом дороже всего.
-#
-# Машинно-специфичного внутри НЕТ: пути приходят из окружения (zenv.sh), а
-# рядом со временем лягут toolchain'ы для windows и macos.
 
-if(NOT DEFINED ENV{ZSYS})
+# ГДЕ ЛЕЖИТ SYSROOT И СОБРАННЫЕ ЗАВИСИМОСТИ. Три источника по убыванию силы:
+# -DZSYS_ROOT= в командной строке, переменная окружения (ZSYS/ZPREFIX),
+# привычное место в ~/work. ОТВЕТ КЛАДЁТСЯ В КЭШ, и это не удобство: `make`
+# сам зовёт cmake заново на всякой правке CMakeLists, а окружения у него уже
+# нет — и сборка падала на ровном месте с «Не задан ZSYS», хотя каталог сборки
+# был настроен и работал.
+if(NOT DEFINED ZSYS_ROOT)
+    if(DEFINED ENV{ZSYS})
+        set(ZSYS_ROOT "$ENV{ZSYS}")
+    else()
+        set(ZSYS_ROOT "$ENV{HOME}/work/zsys")
+    endif()
+endif()
+if(NOT DEFINED ZDEPS_ROOT)
+    if(DEFINED ENV{ZPREFIX})
+        set(ZDEPS_ROOT "$ENV{ZPREFIX}")
+    else()
+        set(ZDEPS_ROOT "$ENV{HOME}/work/zdeps")
+    endif()
+endif()
+set(ZSYS_ROOT "${ZSYS_ROOT}" CACHE PATH "sysroot Ubuntu 20.04, против которого собирается всё")
+set(ZDEPS_ROOT "${ZDEPS_ROOT}" CACHE PATH "куда сложены собранные Qt, OpenSSL и помощники xcb")
+# Пробные сборки (try_compile) заводят свой кэш и читают этот файл заново —
+# без этой строки они брали бы умолчание, а не то, что настроили здесь.
+list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES ZSYS_ROOT ZDEPS_ROOT)
+
+if(NOT IS_DIRECTORY "${ZSYS_ROOT}/usr/include")
     message(FATAL_ERROR
-        "Не задан ZSYS — путь к sysroot.\n"
-        "  source packaging/linux/zenv.sh")
+        "ZSYS_ROOT=${ZSYS_ROOT} не похож на sysroot: нет usr/include.\n"
+        "  Соберите его по docs/zametti-build-linux.md или укажите свой:\n"
+        "  cmake -DZSYS_ROOT=/путь/к/sysroot ...")
 endif()
-if(NOT IS_DIRECTORY "$ENV{ZSYS}/usr/include")
-    message(FATAL_ERROR "ZSYS=$ENV{ZSYS} не похож на sysroot: нет usr/include")
+if(NOT EXISTS "${ZSYS_ROOT}/bin/gcc")
+    message(FATAL_ERROR
+        "нет ${ZSYS_ROOT}/bin/gcc — обёртки компилятора не поставлены.\n"
+        "  bash packaging/linux/fix-sysroot.sh")
 endif()
+
+# Qt и OpenSSL ищутся ЗДЕСЬ ЖЕ: -DCMAKE_PREFIX_PATH в командной строке больше
+# не нужен. Заданный снаружи остаётся — свой путь всегда сильнее нашего.
+list(APPEND CMAKE_PREFIX_PATH "${ZDEPS_ROOT}")
+
+# PKG-CONFIG СМОТРИТ ТОЛЬКО В SYSROOT, и задаётся это ЗДЕСЬ, а не в окружении.
+# Через pkg-config Qt ищет xkbcommon-x11 и половину X11; без этих двух строк
+# он спрашивал систему, на которой мы сидим, — и либо не находил (тогда
+# настройка падала «Qt6::XcbQpaPrivate not found»), либо находил ЧУЖОЕ, и
+# переносимость утекала молча. LIBDIR, а не PATH: PATH только добавляет пути к
+# системным, а нам надо системные отрезать. usr/share/pkgconfig обязателен —
+# там лежит wayland-protocols.pc.
+set(ENV{PKG_CONFIG_SYSROOT_DIR} "${ZSYS_ROOT}")
+set(ENV{PKG_CONFIG_LIBDIR}
+    "${ZSYS_ROOT}/usr/lib/x86_64-linux-gnu/pkgconfig:${ZSYS_ROOT}/usr/share/pkgconfig")
+unset(ENV{PKG_CONFIG_PATH})
 
 # CMAKE_SYSTEM_NAME НЕ ЗАДАЁМ НАРОЧНО. Архитектура та же, сборка остаётся
 # «родной», и Qt не требует QT_HOST_PATH с отдельным хостовым Qt. Объявить
 # кросс-сборку значило бы завести себе вторую сборку Qt на пустом месте.
 
-set(CMAKE_SYSROOT "$ENV{ZSYS}")
-set(CMAKE_C_COMPILER "$ENV{ZSYS}/bin/gcc")
-set(CMAKE_CXX_COMPILER "$ENV{ZSYS}/bin/g++")
+set(CMAKE_SYSROOT "${ZSYS_ROOT}")
+set(CMAKE_C_COMPILER "${ZSYS_ROOT}/bin/gcc")
+set(CMAKE_CXX_COMPILER "${ZSYS_ROOT}/bin/g++")
 
 # ГЛАВНОЕ. Без этого find_library() спокойно берёт /usr/lib/x86_64-linux-gnu
 # ХОСТА, сборка проходит, а переносимость утекает молча — ровно так же, как
 # она утекала через абсолютные симлинки внутри самого sysroot.
-set(CMAKE_FIND_ROOT_PATH "$ENV{ZSYS}" "$ENV{ZPREFIX}")
+set(CMAKE_FIND_ROOT_PATH "${ZSYS_ROOT}" "${ZDEPS_ROOT}")
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
@@ -86,7 +132,7 @@ set(CMAKE_MODULE_LINKER_FLAGS_INIT "-static-libstdc++ -static-libgcc")
 #
 # Собирает их packaging/linux/build-xcb-static.sh; там же объяснено, почему у
 # курсора обязателен --with-cursorpath.
-set(zsys_own_lib "$ENV{ZPREFIX}/lib")
+set(zsys_own_lib "${ZDEPS_ROOT}/lib")
 
 # Пары перечислены АРГУМЕНТАМИ foreach, а не через переменную-список: CMake
 # разворачивает ';' внутри элементов при `IN LISTS`, и пары рассыпаются в
@@ -110,6 +156,29 @@ foreach(pair "XCB_CURSOR_LIBRARY;${zsys_own_lib}/libxcb-cursor.a"
     endif()
 endforeach()
 
+# ПЯТНАДЦАТЬ НЕОБЯЗАТЕЛЬНЫХ РАСШИРЕНИЙ XCB — МОЛЧА.
+#
+# Статическая Qt переискивает свои зависимости у КАЖДОГО потребителя, и среди
+# прочего зовёт `find_package(XCB 1.11)` БЕЗ списка компонент. По уговору ECM
+# это значит «пробуй все, какие знаешь», и модуль честно печатает пятнадцать
+# строк «Could NOT find XCB_COMPOSITE…» — про расширения, которых Qt у нас не
+# просит вовсе (нужные ей тринадцать перечислены поимённо и находятся все).
+#
+# Половины из них в природе больше нет (XEVIE и XPRINT выброшены из X.Org
+# годы назад), у остальных в sysroot лежит только .so.0 без заголовков —
+# доложить их некуда. То есть строки эти вечные, ни на что не влияют и лишь
+# заставляют человека сомневаться, собралось ли. Гасим их поимённо: FPHSA
+# молчит, если у пакета взведён <ИМЯ>_FIND_QUIETLY, а имена здесь — не
+# настоящие пакеты, а как ECM зовёт свою проверку компоненты.
+#
+# ЧТО НУЖНО — НЕ ГАСИМ: если пропадёт хоть одна из тринадцати нужных (CURSOR,
+# ICCCM, IMAGE, KEYSYMS, RANDR, RENDER, RENDERUTIL, SHAPE, SHM, SYNC, UTIL,
+# XFIXES, XKB), настройка так же громко упадёт.
+foreach(zsys_xcb_extra COMPOSITE DAMAGE DPMS DRI2 DRI3 GLX PRESENT RECORD RES
+                       SCREENSAVER XEVIE XF86DRI XINERAMA XINPUT XPRINT XTEST XV XVMC)
+    set(XCB_${zsys_xcb_extra}_FIND_QUIETLY TRUE)
+endforeach()
+
 # OpenMP — СТАТИЧЕСКОЙ libgomp. Иначе готовая программа требует libgomp.so.1
 # (пакет libgomp1, priority=optional): на десктопе он обычно есть, но «обычно»
 # — не то слово, которое хочется слышать про программу, раздаваемую одним
@@ -118,7 +187,7 @@ endforeach()
 #
 # Путь спрашиваем у компилятора, а не пишем: он зависит от версии gcc, и
 # вписанный руками разъедется на первом же обновлении sysroot.
-execute_process(COMMAND "$ENV{ZSYS}/bin/gcc" -print-file-name=libgomp.a
+execute_process(COMMAND "${ZSYS_ROOT}/bin/gcc" -print-file-name=libgomp.a
                 OUTPUT_VARIABLE zsys_libgomp
                 OUTPUT_STRIP_TRAILING_WHITESPACE
                 ERROR_QUIET)
