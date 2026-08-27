@@ -253,7 +253,26 @@ struct TextSink {
     const std::vector<unsigned char>* marks = nullptr;
     bool hasLinkDefs = false; // в документе есть "[x]: /url" — значит любая пара
                               // скобок может внезапно стать ссылкой
+    // Текст пойдёт сразу за маркером БУЛЛЕТА (у номера чекбокс задачей не
+    // становится — проверено кругом: "1. [x] текст" так и остаётся текстом).
+    // Чекбокс, оказавшийся первым в тексте, сделал бы из буллета задачу —
+    // человек набрал "[ ] " в пункте, а из файла вернулась бы задача, и текст
+    // потерял бы эти четыре знака. Снимается после первой же строки:
+    // продолжение пункта чекбоксом не становится.
+    bool taskBoxAhead = false;
 };
+
+// Чекбокс задачи в начале текста: "[ ] ", "[x] ", "[X] " или он же в конец
+// строки. Ровно то, что GFM читает задачей сразу за маркером пункта.
+bool looksLikeTaskBox(QStringView text, qsizetype at) {
+    if (at + 2 >= text.size() || text.at(at) != u'[') return false;
+    const QChar inside = text.at(at + 1);
+    if (inside != u' ' && inside != u'x' && inside != u'X') return false;
+    if (text.at(at + 2) != u']') return false;
+    const qsizetype after = at + 3;
+    return after >= text.size() || text.at(after) == u' ' || text.at(after) == u'\t' ||
+           text.at(after) == u'\n';
+}
 
 unsigned char markAt(const TextSink& sink, qsizetype i) {
     return (sink.marks != nullptr && size_t(i) < sink.marks->size()) ? (*sink.marks)[size_t(i)] : 0;
@@ -285,6 +304,16 @@ void appendEscaped(TextSink& sink, QStringView text, qsizetype begin, qsizetype 
         }
 
         if (sink.bol) {
+            if (sink.taskBoxAhead) {
+                sink.taskBoxAhead = false;
+                if (looksLikeTaskBox(text, i)) {
+                    sink.out += u'\\';
+                    sink.out += c;
+                    ++i;
+                    sink.bol = false;
+                    continue;
+                }
+            }
             qsizetype at = 0;
             if (needsLineStartEscape(text, i, at) && at < end) {
                 sink.out += text.mid(i, at - i);
@@ -1222,6 +1251,7 @@ void Writer::push(const Piece& b) {
                     TextSink sink;
                     sink.contIndent = QString(childIndent, u' ');
                     sink.hasLinkDefs = hasLinkDefs;
+                    sink.taskBoxAhead = b.marker == Marker::Bullet;
                     appendInlineText(sink, b);
                     out += sink.out;
                 }
