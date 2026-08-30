@@ -1037,10 +1037,10 @@ public:
         bool keyOpened = false;   // конверт есть и развернулся данным паролем
         Identity identity;        // манифест облака, если есть
         QString name;             // имя облачного хранилища, best-effort
-        int notes = 0;            // журналов в листинге
-        int attachments = 0;
-        qint64 bytes = 0;         // объём по шифротексту
-        QDateTime lastModified;   // самая свежая метка листинга, UTC
+        // Сводка листинга ОДНОЙ структурой (журналы, вложения, объём по
+        // шифротексту, самая свежая метка UTC) — та же Summary, что у
+        // локальной стороны и у памяти окна «что видели».
+        Summary stats;
     };
     static bool probeCloud(const Config& cfg, const QString& serverPassword,
                            const QString& encryptionPassword, CloudProbe* out,

@@ -82,10 +82,7 @@ public:
         };
         State state = State::NotChecked;
         QString address;          // к какому адресу относится увиденное
-        int notes = 0;
-        int attachments = 0;
-        qint64 bytes = 0;
-        QDateTime lastModified;   // самая свежая метка листинга, UTC
+        ZStorage::Summary stats;  // сводка листинга (метка — UTC)
     };
 
     // --- снимок: всё видимое, посчитанное один раз ---------------------------

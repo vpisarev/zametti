@@ -448,8 +448,8 @@ void checkProbeCloud() {
     ZT_TRUE("конверт увиден", probe.hasKeyfile);
     ZT_TRUE("конверт развернулся", probe.keyOpened);
     ZT_TRUE("id облака назван", !probe.identity.storeId().isEmpty());
-    ZT_TRUE("журналы посчитаны", probe.notes >= 1);
-    ZT_TRUE("объём посчитан", probe.bytes > 0);
+    ZT_TRUE("журналы посчитаны", probe.stats.notes >= 1);
+    ZT_TRUE("объём посчитан", probe.stats.bytes > 0);
     ZT_TRUE("имя хранилища вскрыто", probe.name == rootTitle);
 
     // Неверный пароль шифрования — отказ со словами про пароль, но СВОДКА
@@ -457,14 +457,15 @@ void checkProbeCloud() {
     ZT_TRUE("неверный пароль отвергнут",
             !ZStorage::probeCloud(cfg, QString(), QStringLiteral("не тот"), &probe, &err));
     ZT_TRUE("сказано про пароль", err.contains(QStringLiteral("password")));
-    ZT_TRUE("сводка при неверном пароле есть", probe.notes >= 1 && probe.bytes > 0);
+    ZT_TRUE("сводка при неверном пароле есть",
+            probe.stats.notes >= 1 && probe.stats.bytes > 0);
 
     // ПУСТОЙ пароль — не попытка, а отказ от неё (п.9 брифа): сводка без
     // вскрытия конверта, keyOpened ложь, имени честно нет.
     ZT_TRUE("без пароля разведка проходит",
             ZStorage::probeCloud(cfg, QString(), QString(), &probe, &err));
     ZT_TRUE("конверт увиден, но не вскрыт", probe.hasKeyfile && !probe.keyOpened);
-    ZT_TRUE("счёт и объём есть", probe.notes >= 1 && probe.bytes > 0);
+    ZT_TRUE("счёт и объём есть", probe.stats.notes >= 1 && probe.stats.bytes > 0);
     ZT_TRUE("имени без ключа нет", probe.name.isEmpty());
 
     // Пустое, но существующее облако — правда: «там пусто» диалог решает сам.
@@ -475,7 +476,7 @@ void checkProbeCloud() {
     ZT_TRUE("пустое облако — не ошибка",
             ZStorage::probeCloud(empty, QString(), QStringLiteral("любой"), &probe, &err));
     ZT_TRUE("и в нём ничего нет",
-            !probe.hasManifest && !probe.hasKeyfile && probe.notes == 0);
+            !probe.hasManifest && !probe.hasKeyfile && probe.stats.notes == 0);
 }
 
 void checkResetCloudEncryption() {

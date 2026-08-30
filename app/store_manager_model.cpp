@@ -23,16 +23,15 @@ QString megabytes(qint64 bytes) {
 
 // Строка фактов — две строки на рамку (п.5 брифа): суммы, под ними последняя
 // правка ISO-8601 с офсетом (правило времён проекта; сравнения — по UTC).
-QString countsLine(const char* lead, int notes, int attachments, qint64 bytes,
-                   const QDateTime& modified) {
+QString countsLine(const char* lead, const ZStorage::Summary& stats) {
     QString out = QStringLiteral("%1: %2 notes, %3 attachments, %4 MB")
                       .arg(QLatin1String(lead))
-                      .arg(notes)
-                      .arg(attachments)
-                      .arg(megabytes(bytes));
-    if (modified.isValid())
+                      .arg(stats.notes)
+                      .arg(stats.attachments)
+                      .arg(megabytes(stats.bytes));
+    if (stats.lastModified.isValid())
         out += QStringLiteral("\nmodified %1")
-                   .arg(modified.toLocalTime().toString(Qt::ISODate));
+                   .arg(stats.lastModified.toLocalTime().toString(Qt::ISODate));
     return out;
 }
 
@@ -375,9 +374,7 @@ StoreManagerModel::Snapshot StoreManagerModel::snapshot() const {
     // --- строка «Local:» ----------------------------------------------------
     switch (f.kind) {
         case ZStorage::DirKind::Store:
-            out.local = Line{countsLine("Local", f.stats.notes, f.stats.attachments,
-                                        f.stats.bytes, f.stats.lastModified),
-                             false};
+            out.local = Line{countsLine("Local", f.stats), false};
             break;
         case ZStorage::DirKind::Empty:
             out.local = Line{QStringLiteral("Local: empty folder"), false};
@@ -411,9 +408,7 @@ StoreManagerModel::Snapshot StoreManagerModel::snapshot() const {
                 out.cloud = Line{QStringLiteral("Cloud: empty"), false};
                 break;
             case CloudSeen::State::Ours:
-                out.cloud = Line{countsLine("Cloud", s.notes, s.attachments, s.bytes,
-                                            s.lastModified),
-                                 false};
+                out.cloud = Line{countsLine("Cloud", s.stats), false};
                 break;
             case CloudSeen::State::Foreign:
                 out.cloud = Line{QStringLiteral("Cloud: another storage"), true};
@@ -433,10 +428,8 @@ StoreManagerModel::Snapshot StoreManagerModel::snapshot() const {
                 // этот миг известно: оно наше, запечатанное, и в нём столько-то
                 // заметок. Прежде обе строки говорили одно и то же слово в
                 // слово (жалоба владельца 30.08.2026).
-                out.cloud = s.notes > 0 || s.attachments > 0
-                                ? Line{countsLine("Cloud", s.notes, s.attachments,
-                                                  s.bytes, s.lastModified),
-                                       false}
+                out.cloud = !s.stats.isEmpty()
+                                ? Line{countsLine("Cloud", s.stats), false}
                                 : Line{QStringLiteral("Cloud: sealed"), false};
                 break;
             case CloudSeen::State::NotChecked:

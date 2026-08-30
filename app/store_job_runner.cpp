@@ -30,10 +30,7 @@ CloudSeen seenFrom(const ZStorage::CloudProbe& probe, const QString& address,
     CloudSeen seen;
     seen.state = state;
     seen.address = address;
-    seen.notes = probe.notes;
-    seen.attachments = probe.attachments;
-    seen.bytes = probe.bytes;
-    seen.lastModified = probe.lastModified;
+    seen.stats = probe.stats;
     return seen;
 }
 

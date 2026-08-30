@@ -691,11 +691,12 @@ bool ZStorage::probeCloud(const Config& cfg, const QString& serverPassword,
         QSet<QString> noteIds;
         QSet<QString> attachmentIds;
         for (const CloudStore::Entry& e : listing) {
-            probe.bytes += e.size;
+            probe.stats.bytes += e.size;
             // Самая свежая метка листинга — «когда облако правили» для сводки.
             if (e.lastModified.isValid() &&
-                (!probe.lastModified.isValid() || e.lastModified > probe.lastModified))
-                probe.lastModified = e.lastModified;
+                (!probe.stats.lastModified.isValid() ||
+                 e.lastModified > probe.stats.lastModified))
+                probe.stats.lastModified = e.lastModified;
             if (e.name == QLatin1String(Identity::kFile)) {
                 probe.hasManifest = true;
                 continue;
@@ -715,8 +716,8 @@ bool ZStorage::probeCloud(const Config& cfg, const QString& serverPassword,
             if (dot > 0 && isValidNoteId(local.left(dot).toStdString()))
                 attachmentIds.insert(local.left(dot));
         }
-        probe.notes = noteIds.size();
-        probe.attachments = attachmentIds.size();
+        probe.stats.notes = noteIds.size();
+        probe.stats.attachments = attachmentIds.size();
     }
 
     QString why;

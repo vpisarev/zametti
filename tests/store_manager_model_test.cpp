@@ -272,11 +272,11 @@ void checkFactLines() {
     // Наше облако — суммы и дата; WrongPassword — факт про облако, а не про
     // исход попытки (беда T).
     seen.state = Model::CloudSeen::State::Ours;
-    seen.notes = 128;
-    seen.attachments = 34;
-    seen.bytes = 43 << 20;
-    seen.lastModified = QDateTime::fromString(QStringLiteral("2026-08-30T12:00:00Z"),
-                                              Qt::ISODate);
+    seen.stats.notes = 128;
+    seen.stats.attachments = 34;
+    seen.stats.bytes = 43 << 20;
+    seen.stats.lastModified = QDateTime::fromString(
+        QStringLiteral("2026-08-30T12:00:00Z"), Qt::ISODate);
     model.noteSeen(seen);
     {
         const Model::Snapshot snap = model.snapshot();
@@ -378,7 +378,7 @@ void checkResetRoads() {
     sawOurs.ok = true;
     sawOurs.seen.state = Model::CloudSeen::State::Ours;
     sawOurs.seen.address = cloud;
-    sawOurs.seen.notes = 3;
+    sawOurs.seen.stats.notes = 3;
     Model::Reaction next = model.jobFinished(Model::Job::Kind::Check, sawOurs);
     ZT_TRUE("переспрос пришёл сам",
             next.question.kind == Model::Question::Kind::ResetCloud);
