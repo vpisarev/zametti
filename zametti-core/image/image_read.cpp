@@ -274,7 +274,13 @@ QImage decodeImageFile(const QString& path, const DecodeRequest& request) {
             // а плагин Qt достаёт из файла готовое превью. Отказать человеку
             // было бы хуже: мы не опираемся на чужие плагины, но и не отвергаем
             // назло то, что они умеют.
-            return QImage(path);
+            // Обещание «пиксели уже повёрнуты, Orientation = 1»
+            // (docs/zametti-image-rules.md) держится и здесь: иначе ввоз DNG
+            // положил бы снимок набок и приписал бы ему «повёрнут». У Qt
+            // автоповорот по умолчанию ВЫКЛЮЧЕН — просим явно.
+            QImageReader fallback(path);
+            fallback.setAutoTransform(request.applyOrientation);
+            return fallback.read();
         }
         QImage out = std::move(tiff.image);
         if (request.applyOrientation) {
