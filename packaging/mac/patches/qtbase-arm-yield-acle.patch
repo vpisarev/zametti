@@ -1,0 +1,28 @@
+diff --git a/src/corelib/thread/qyieldcpu.h b/src/corelib/thread/qyieldcpu.h
+index 66156487..79492eaf 100644
+--- a/src/corelib/thread/qyieldcpu.h
++++ b/src/corelib/thread/qyieldcpu.h
+@@ -20,6 +20,23 @@ extern "C"
+ void _mm_pause(void);       // the compiler recognizes as intrinsic
+ #endif
+ 
++// ZAMETTI PATCH (mac, arm64, AppleClang 21 / Xcode 26).
++//
++// Ниже стоит `#if __has_builtin(__yield)` и вызов __yield() без объявления.
++// Прежние clang давали его встроенным молча; AppleClang 21 считает __yield
++// БИБЛИОТЕЧНОЙ функцией — __has_builtin по-прежнему true, но объявления в
++// области видимости нет, и вылезает -Werror,-Wimplicit-function-declaration.
++// Сборка Qt падает на 186-м файле из 1865, ещё на bootstrap.
++//
++// Объявление живёт в <arm_acle.h> (ARM C Language Extensions) — компилятор сам
++// это и подсказывает в note. Включаем его там, где он есть, и ничего больше:
++// глушить предупреждение значило бы оставить вызов без объявления.
++#if defined(Q_PROCESSOR_ARM) && defined(__has_include)
++#  if __has_include(<arm_acle.h>)
++#    include <arm_acle.h>
++#  endif
++#endif
++
+ QT_BEGIN_NAMESPACE
+ 
+ Q_ALWAYS_INLINE
