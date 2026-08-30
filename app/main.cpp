@@ -2767,7 +2767,7 @@ int main(int argc, char** argv) {
         {
             zametti::ZStorage::Config entry = storage->cloudConfig();
             entry.name = storage->localStoreName();
-            zapp.stores().remember(entry);
+            zapp.storeManager()->remember(entry);
         }
         refreshToolbar();
         return true;
@@ -2792,7 +2792,7 @@ int main(int argc, char** argv) {
             // Блок не косметика: диалог держит копию shared_ptr хранилища, и
             // умереть он обязан ДО attachStore — сторож забытой копии не спит.
             zametti::StoreManagerDialog dialog(
-                &window, zapp.stores().stores(),
+                &window, zapp.storeManager()->stores(),
                 model.isStore() ? zapp.storage()->root() : QString(), zapp.storage(),
                 syncSecrets);
             dialog.exec();
@@ -2801,7 +2801,7 @@ int main(int argc, char** argv) {
         // Список применяется ВСЕГДА (и по Esc): добавленное хранилище — не
         // черновик. Замена через те же двери, что и всё остальное: прежние
         // строки забываются, итог диалога вспоминается по порядку.
-        zametti::ZStorageManager& out = zapp.stores();
+        zametti::ZStorageManager& out = *zapp.storeManager();
         const QList<zametti::ZStorage::Config> before = out.stores();
         for (const zametti::ZStorage::Config& e : before) out.forget(e.root);
         for (const zametti::ZStorage::Config& e : verdict.stores) out.remember(e);

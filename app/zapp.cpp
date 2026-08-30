@@ -17,12 +17,12 @@ size_t qHash(const ZApp::IconKey& k, size_t seed) {
     return qHashMulti(seed, k.name, k.points, k.color, k.dprHundredths);
 }
 
-ZApp::ZApp() : state_(ZAppState::load()) {
+ZApp::ZApp() {
     if (g_app == nullptr) g_app = this;
-    // Секция "stores" из state.json — менеджеру: канонизация и дедупликация
-    // одни, его. Связка приедет позже (setStoreSecrets из main), когда main
-    // решит, keyring это или среда.
-    stores_.storesFromJson(state_.storesJson());
+    // Секция "stores" из state.json уходит менеджеру прямо при чтении и нигде
+    // не хранится массивом. Связка приедет позже (setStoreSecrets из main),
+    // когда main решит, keyring это или среда.
+    state_ = ZAppState::load(storeManager_.get());
     applySettingsToCaches();
 }
 

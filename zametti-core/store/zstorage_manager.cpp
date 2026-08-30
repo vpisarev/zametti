@@ -14,6 +14,11 @@ namespace zametti {
 ZStorageManager::ZStorageManager(std::shared_ptr<SecretStore> secrets)
     : secrets_(std::move(secrets)) {}
 
+void ZStorageManager::setSecrets(std::shared_ptr<SecretStore> secrets) {
+    secrets_ = std::move(secrets);
+    factsCache_.clear();
+}
+
 QString ZStorageManager::canonicalRoot(const QString& root) {
     if (root.isEmpty()) return {};
     return QDir::cleanPath(QFileInfo(root).absoluteFilePath());

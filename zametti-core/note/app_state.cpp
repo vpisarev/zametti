@@ -1,5 +1,6 @@
 #include "app_state.h"
 #include "settings.h"
+#include "zstorage_manager.h"
 
 #include <QDir>
 #include <QFile>
@@ -36,7 +37,7 @@ bool ZAppState::knowsCaret(const QString& noteId) const {
     return false;
 }
 
-ZAppState ZAppState::load() {
+ZAppState ZAppState::load(ZStorageManager* stores) {
     ZAppState session;
     QFile file(path());
     if (!file.open(QIODevice::ReadOnly)) return session;
@@ -86,13 +87,15 @@ ZAppState ZAppState::load() {
         if (v.isString()) searches.append(v.toString());
     session.setSearchHistory(searches);
     session.setSearchRegex(root.value(QStringLiteral("searchRegex")).toBool(false));
-    // Секция хранилищ едет менеджеру как есть: канонизация и дедупликация —
-    // его работа, у ZAppState на неё права нет (два ответа на один вопрос).
-    session.storesJson_ = root.value(QStringLiteral("stores")).toArray();
+    // Секция хранилищ тут же отдаётся менеджеру и НЕ хранится: приложение
+    // работает со списком только через ZStorageManager, а массив живёт один
+    // миг сериализации (решение владельца, 30.08.2026).
+    if (stores != nullptr)
+        stores->storesFromJson(root.value(QStringLiteral("stores")).toArray());
     return session;
 }
 
-void ZAppState::save() const {
+void ZAppState::save(const ZStorageManager& stores) const {
     const ZAppState& session = *this;
     QJsonArray expanded;
     for (const QString& dir : session.expandedDirs()) expanded.append(dir);
@@ -126,7 +129,7 @@ void ZAppState::save() const {
                   {QStringLiteral("searchHistory"), searches},
                   {QStringLiteral("searchRegex"), session.searchRegex()},
                   {QStringLiteral("carets"), carets},
-                  {QStringLiteral("stores"), storesJson_},
+                  {QStringLiteral("stores"), stores.storesToJson()},
     };
     QDir().mkpath(QFileInfo(path()).absolutePath());
     QFile file(path());

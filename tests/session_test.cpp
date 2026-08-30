@@ -86,10 +86,10 @@ static int ztRunSuite(int argc, char** argv) {
     out.rememberCaret(QStringLiteral("00000000000042"), {10, 5, 3});
     out.rememberCaret(QStringLiteral("00000000000007"), {1, 1, 0});
     out.rememberCaret(QStringLiteral("00000000000042"), {20, 20, 7});   // та же — заменяет
-    // Список хранилищ устройства ведёт МЕНЕДЖЕР; ZAppState лишь возит его
-    // секцию между файлом и менеджером (как это делает ZApp при saveState).
+    // Список хранилищ устройства ведёт МЕНЕДЖЕР — единственная дорога к нему;
+    // массив в ZAppState не живёт вовсе, секция существует один миг записи.
+    zametti::ZStorageManager stores;
     {
-        zametti::ZStorageManager stores;
         zametti::ZStorage::Config first;
         first.root = QStringLiteral("/дом/заметки");
         first.name = QStringLiteral("Заметки");
@@ -105,14 +105,14 @@ static int ztRunSuite(int argc, char** argv) {
         again.root = QStringLiteral("/дом/заметки/");
         again.cloudUrl = QStringLiteral("https://host2/dav/");
         stores.remember(again);
-        out.setStoresJson(stores.storesToJson());
     }
-    out.save();
+    out.save(stores);
 
     const QString path = zametti::configDir() + QStringLiteral("/state.json");
     ZT_TRUE("state.json написан рядом с конфигом: " + s(path), QFile::exists(path));
 
-    const zametti::ZAppState back = zametti::ZAppState::load();
+    zametti::ZStorageManager returned;
+    const zametti::ZAppState back = zametti::ZAppState::load(&returned);
     ZT_EQ("последний файл", s(out.lastFile()), s(back.lastFile()));
     ZT_EQ("хранилище", s(out.storeRoot()), s(back.storeRoot()));
     ZT_EQ("сортировка дерева", s(out.treeSort()), s(back.treeSort()));
@@ -152,10 +152,8 @@ static int ztRunSuite(int argc, char** argv) {
             !back.knowsCaret(QStringLiteral("нет-такой")) &&
                 back.caretOf(QStringLiteral("нет-такой")).cursor == 0 &&
                 back.caretOf(QStringLiteral("нет-такой")).anchor == 0);
-    // Список хранилищ: секция вернулась из файла и разобралась менеджером —
-    // две строки, порядок стабилен, повтор обновил на месте.
-    zametti::ZStorageManager returned;
-    returned.storesFromJson(back.storesJson());
+    // Список хранилищ: секция вернулась из файла ПРЯМО в менеджер — две
+    // строки, порядок стабилен, повтор обновил на месте.
     ZT_EQ("хранилищ две строки, без дублей", std::string("2"),
           std::to_string(returned.stores().size()));
     ZT_EQ("порядок стабилен: первая — первой", std::string("/дом/заметки"),
@@ -169,7 +167,7 @@ static int ztRunSuite(int argc, char** argv) {
                 QStringLiteral("/дом/работа"));
     {
         zametti::ZStorageManager edit;
-        edit.storesFromJson(back.storesJson());
+        zametti::ZAppState::load(&edit);
         edit.forget(QStringLiteral("/дом/работа/"));
         ZT_EQ("«−» забыл ровно одну строку", std::string("1"),
               std::to_string(edit.stores().size()));
@@ -180,7 +178,8 @@ static int ztRunSuite(int argc, char** argv) {
     // Умолчание важно не меньше: у человека, который запускает программу
     // впервые, файла нет вовсе, и панели обязаны быть на месте.
     zt::dropFile(QFileInfo(path).absolutePath(), path);
-    const zametti::ZAppState fresh = zametti::ZAppState::load();
+    zametti::ZStorageManager freshStores;
+    const zametti::ZAppState fresh = zametti::ZAppState::load(&freshStores);
     ZT_EQ("без файла панели на месте", b(false), b(fresh.panelsHidden()));
     ZT_EQ("без файла режим исходника выключен", b(false), b(fresh.markdownMode()));
     ZT_EQ("без файла зум единичный", std::to_string(1.0), std::to_string(fresh.zoom()));
@@ -188,7 +187,7 @@ static int ztRunSuite(int argc, char** argv) {
     ZT_EQ("без файла ширина списка истории не задана", std::string("0"),
           std::to_string(fresh.historyListWidth()));
     ZT_EQ("без файла список хранилищ пуст", std::string("0"),
-          std::to_string(fresh.storesJson().size()));
+          std::to_string(freshStores.size()));
 
     checkPlainZoomMigrates();
 

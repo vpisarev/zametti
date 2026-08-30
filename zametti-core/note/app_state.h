@@ -16,7 +16,6 @@
 #include "settings.h"
 
 #include <QByteArray>
-#include <QJsonArray>
 #include <QList>
 #include <QString>
 #include <QStringList>
@@ -24,12 +23,20 @@
 
 namespace zametti {
 
+class ZStorageManager;
+
 class ZAppState {
 public:
-    // Прочитать из state.json; файла нет или он битый — умолчания.
-    static ZAppState load();
-    // Записать в state.json.
-    void save() const;
+    // Прочитать из state.json; файла нет или он битый — умолчания. Секция
+    // "stores" ПРИНАДЛЕЖИТ ZStorageManager (решение владельца, 30.08.2026):
+    // приложение работает со списком только через него, а здесь массив живёт
+    // ровно один миг сериализации — прочитанная секция тут же отдаётся
+    // менеджеру и НЕ хранится (nullptr — секция пропускается: наборам и
+    // утилитам без списка она не нужна).
+    static ZAppState load(ZStorageManager* stores = nullptr);
+    // Записать в state.json; секцию "stores" в тот же миг отдаёт менеджер.
+    // Файл пишет по-прежнему только ZApp (единые ворота).
+    void save(const ZStorageManager& stores) const;
     // Путь файла состояния (рядом с конфигом).
     static QString path();
 
@@ -107,16 +114,6 @@ public:
     ZM_SETTING_PLAIN(bool, exportKeepMeta, ExportKeepMeta, false)
 
 public:
-    // --- список хранилищ устройства --------------------------------------
-    // Секция "stores": [...] ПРИНАДЛЕЖИТ ZStorageManager (решение владельца,
-    // 30.08.2026): канонизация, дедупликация и факты строк — его работа.
-    // ZAppState лишь возит секцию между файлом и менеджером: файл state.json
-    // по-прежнему пишет ТОЛЬКО ZApp (единые ворота), и он же перекладывает
-    // секцию туда-сюда (storesFromJson при загрузке, storesToJson перед
-    // записью).
-    const QJsonArray& storesJson() const { return storesJson_; }
-    void setStoresJson(const QJsonArray& stores) { storesJson_ = stores; }
-
     // --- каретки по заметкам ---------------------------------------------
     // Где человек стоял в каждой из недавних заметок — по id заметки, без
     // дублей, свежие впереди, не больше kCaretLimit. Хранит место сама заметка
@@ -139,7 +136,6 @@ public:
 
 protected:
     QList<CaretEntry> carets_;
-    QJsonArray storesJson_;
 };
 
 }  // namespace zametti
