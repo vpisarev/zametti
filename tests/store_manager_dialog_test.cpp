@@ -218,6 +218,44 @@ void checkCheckOnMissingCloudFolder() {
                 .contains(QStringLiteral("empty")));
 }
 
+void checkOpenAppliesPendingCloud() {
+    // ЖИВАЯ БАГА ВЛАДЕЛЬЦА (30.08.2026): Check → «Cloud: empty» → ввёл пароль
+    // шифрования дважды → нажал OPEN. Прежде окно молча переключалось, не
+    // записав адрес: cloud.json нет, синк «не настроен», кнопка облака в
+    // тулбаре погашена, автозапуск молчит. Теперь Open доделывает набранное:
+    // запечатывает, пишет адрес — и только потом закрывается переключением.
+    zt::MiniStore home, cloudHome;
+    const QString root = home.root() + QStringLiteral("/архив");
+    QDir().mkpath(root);
+    QString err;
+    ZT_TRUE("хранилище завелось", ZStorage(root).init(&err));
+    const QString cloud = cloudHome.root() + QStringLiteral("/свежее");
+    QDir().mkpath(cloud);
+    auto secrets = std::make_shared<FakeSecrets>();
+    ZStorageManager stores(secrets);
+    ZStorage::Config entry;
+    entry.root = root;
+    stores.remember(entry);
+
+    TestDialog dialog(nullptr, stores, QString(), secrets, kTiny);
+    dialog.type(StoreManagerModel::FieldId::Server, cloud);
+    dialog.type(StoreManagerModel::FieldId::EncryptionPassword, QStringLiteral("пароль"));
+    dialog.findChild<QPushButton*>(QStringLiteral("check"))->click();
+    ZT_TRUE("разведка дождалась", waitIdle(dialog));
+    ZT_TRUE("облако пустое, просят повтор",
+            !dialog.findChild<QLineEdit*>(QStringLiteral("password2"))->isHidden());
+
+    dialog.type(StoreManagerModel::FieldId::Repeat, QStringLiteral("пароль"));
+    dialog.findChild<QPushButton*>(QStringLiteral("openStore"))->click();
+    ZT_TRUE("применение дождалось", waitIdle(dialog));
+    ZT_EQ("окно закрылось переключением", s(QDir::cleanPath(root)),
+          s(QDir::cleanPath(dialog.result().switchToRoot)));
+    ZT_TRUE("конверт уехал", QFile::exists(cloud + QStringLiteral("/keyfile")));
+    ZT_TRUE("адрес записан — синк настроен",
+            ZStorage(root).cloudConfig().hasCloudAddress());
+    ZT_TRUE("ключ в связке", secrets->keys_.size() == 1);
+}
+
 void checkSealFreshCloudAndChangePassword() {
     // Хранилище против ПУСТОГО облака: первый Check только смотрит и просит
     // повтор (опечатка запечатала бы облако навсегда), второй — запечатывает.
@@ -308,6 +346,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkListAndForget();
     checkCreateFromCloud();
     checkCheckOnMissingCloudFolder();
+    checkOpenAppliesPendingCloud();
     checkSealFreshCloudAndChangePassword();
     return zt::report("store_manager_dialog");
 }

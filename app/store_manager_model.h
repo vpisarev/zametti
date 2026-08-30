@@ -241,6 +241,8 @@ protected:
     bool messageAlarm_ = false;
     // Reset, заказавший проверку: переспрос покажется её итогом.
     bool askResetAfterCheck_ = false;
+    // Open, заказавший применение набранного облака: открытие — её итогом.
+    bool openAfterCheck_ = false;
 };
 
 }  // namespace zametti

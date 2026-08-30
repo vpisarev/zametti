@@ -646,8 +646,29 @@ StoreManagerModel::Reaction StoreManagerModel::openPressed() {
 
     const ZStorageManager::Facts f = rowFacts(selected_);
     if (f.kind == ZStorage::DirKind::Store) {
-        // Открытое хранилище — просто закрыть окно (поправка владельца): жест
-        // ничего не делает, но и не запрещается.
+        // НАБРАННОЕ ОБЛАКО ПРИМЕНЯЕТСЯ ИМЕННО ЗДЕСЬ (живая проба владельца,
+        // 30.08.2026: ввёл адрес и оба пароля, нажал Open — «синхронизация не
+        // запускается, кнопка задизаблена». Запечатывал только второй Check,
+        // а Open молча переключался, не записав адрес). Open — это «сделай
+        // как набрано и открой»: есть несохранённая облачная настройка —
+        // сперва та же работа, что у Check, открытие — её итогом.
+        const ZStorage::Config typed = cfgFromDraft();
+        const ZStorage::Config row = rowConfig(selected_);
+        const bool cloudEdited =
+            typed.cloudUrl != row.cloudUrl ||
+            typed.cloudServerDir != row.cloudServerDir ||
+            typed.cloudDir != row.cloudDir || typed.cloudUser != row.cloudUser;
+        const bool pendingSetup =
+            typed.hasCloudAddress() &&
+            (cloudEdited || !draft().encryptionPassword.isEmpty());
+        if (pendingSetup && snap.check.enabled) {
+            if (sealingNeedsRepeat()) return out;
+            openAfterCheck_ = true;
+            out.job = jobFor(Job::Kind::Check);
+            return out;
+        }
+        // Настраивать нечего — просто закрыть окно с переключением (поправка
+        // владельца): жест не запрещается и на уже открытом.
         out.switchToRoot = draft().folder;
         out.close = true;
         return out;
@@ -791,11 +812,13 @@ StoreManagerModel::Reaction StoreManagerModel::jobFinished(Job::Kind kind,
     Reaction next;
     if (outcome.seen.state != CloudSeen::State::NotChecked) noteSeen(outcome.seen);
     setMessage(outcome.message, outcome.alarm);
-    // Проверка заказывалась ради переспроса — покажем его теперь, когда есть
-    // что сказать про облако. Не удалась — намерение снимается молча:
-    // объяснение уже в статусе.
+    // Проверка заказывалась ради переспроса или открытия — доделаем теперь,
+    // когда есть что сказать про облако. Не удалась — намерение снимается
+    // молча: объяснение уже в статусе.
     const bool wanted = askResetAfterCheck_ && kind == Job::Kind::Check;
     askResetAfterCheck_ = false;
+    const bool wantedOpen = openAfterCheck_ && kind == Job::Kind::Check;
+    openAfterCheck_ = false;
     if (!outcome.ok) return next;
 
     // Удача меняет ФАКТЫ строки: завелось хранилище, уехал конверт, лёг секрет.
@@ -834,6 +857,19 @@ StoreManagerModel::Reaction StoreManagerModel::jobFinished(Job::Kind kind,
             break;
     }
     if (wanted) next = resetPressed();
+    if (wantedOpen) {
+        // Открыть можно, когда настройка ДОДЕЛАНА. Единственный недоделанный
+        // исход удачного Check — «облако пустое, пароль набран, повтора ещё
+        // не было»: запечатывание требует повтора (свежесть), и открытие
+        // подождёт следующего Open. Сказано словами тем же местом.
+        if (seen().state == CloudSeen::State::Empty &&
+            !draft().encryptionPassword.isEmpty()) {
+            sealingNeedsRepeat();
+        } else {
+            next.switchToRoot = draft().folder;
+            next.close = true;
+        }
+    }
     // Пароли в черновике после удачи не нужны: они уехали в связку, а держать
     // их на экране лишнюю минуту незачем.
     if (kind != Job::Kind::Check) {
