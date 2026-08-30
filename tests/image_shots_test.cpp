@@ -27,6 +27,7 @@
 #include <vector>
 #include "testdata.h"
 
+#include "scratch_files.h"
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QDir>
@@ -356,7 +357,7 @@ static int ztRunSuite(int argc, char** argv) {
     // Хранилище — отдельным каталогом рядом со снимками: вложения приёмки
     // должны быть под рукой, но в корпус их писать нельзя, он только на чтение.
     g_store = QDir(g_shots).filePath(QStringLiteral("хранилище"));
-    QDir(g_store).removeRecursively();
+    zt::dropTree(g_store);
     QDir().mkpath(g_store);
 
     if (!QDir(g_corpus).exists()) {

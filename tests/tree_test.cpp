@@ -11,6 +11,7 @@
 
 #include <vector>
 #include "testdata.h"
+#include "scratch_files.h"
 
 #include <unistd.h>
 #include <cstdio>
@@ -71,7 +72,7 @@ static int ztRunSuite(int argc, char** argv) {
     (void)argc;
     (void)argv;
     g_root = QDir::tempPath() + QStringLiteral("/zametti-tree-test");
-    QDir(g_root).removeRecursively();
+    zt::dropTree(g_root);
     QDir().mkpath(g_root + QStringLiteral("/.zametti"));
 
     // Папка (заметка с детьми), два ребёнка с разным modified, сирота, цикл
@@ -111,7 +112,7 @@ static int ztRunSuite(int argc, char** argv) {
     const QString locked = g_root + QStringLiteral("/0000000000000x.md");
     const bool hidden = QFile::setPermissions(locked, QFile::Permissions());
     const QString complaints = QDir::tempPath() + QStringLiteral("/zametti-tree-stderr.txt");
-    QFile::remove(complaints);
+    zt::dropFile(QDir::tempPath(), complaints);
     if (hidden) {
         std::fflush(stderr);
         const int saved = dup(fileno(stderr));
@@ -130,7 +131,7 @@ static int ztRunSuite(int argc, char** argv) {
                 said.contains(QStringLiteral("0000000000000x")));
         QFile::setPermissions(locked, QFile::ReadOwner | QFile::WriteOwner);
     }
-    QFile::remove(locked);
+    zt::dropFile(g_root, locked);
 
     ZT_TRUE("хранилище распознано", NoteTreeModel::isStoreRoot(g_root));
     NoteTreeModel model(g_root);
@@ -513,7 +514,7 @@ static int ztRunSuite(int argc, char** argv) {
                     row.modified == QStringLiteral("2024-03-03T00:00:00Z"));
     }
 
-    QDir(g_root).removeRecursively();
+    zt::dropTree(g_root);
     return zt::report("дерево хранилища");
 }
 

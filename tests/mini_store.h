@@ -26,6 +26,7 @@
 
 #include "hash.h"
 #include "zstd.h"
+#include "scratch_files.h"
 
 namespace zt {
 
@@ -46,7 +47,9 @@ public:
     void setDeviceClock(qint64 utcMs) const {
         write(zametti::ZStorage(root()).deviceClockPath(), QByteArray::number(utcMs) + "\n");
     }
-    void dropDeviceClock() const { QFile::remove(zametti::ZStorage(root()).deviceClockPath()); }
+    void dropDeviceClock() const {
+        zt::dropFile(root(), zametti::ZStorage(root()).deviceClockPath());
+    }
     qint64 deviceClock() const { return zametti::ZStorage(root()).deviceClockFloor(); }
 
     // --- журналы -----------------------------------------------------------

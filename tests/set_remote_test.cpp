@@ -13,6 +13,7 @@
 
 #include "mini_store.h"
 #include "test_util.h"
+#include "scratch_files.h"
 
 #include <QDir>
 #include <QFile>
@@ -328,7 +329,8 @@ void checkBootstrapFromLegacyCloud() {
         f.write(blob);
         f.close();
         ZT_TRUE("новое имя убрано",
-                QFile::remove(cloud + QStringLiteral("/") + rootId + QStringLiteral(".zm")));
+                zt::dropFile(cloud, cloud + QStringLiteral("/") + rootId +
+                                        QStringLiteral(".zm")));
     }
     FakeSecrets mine;
     ZStorage::ConnectOutcome out;

@@ -20,6 +20,7 @@
 #include <vector>
 #include "testdata.h"
 
+#include "scratch_files.h"
 #include <QApplication>
 #include <QCryptographicHash>
 #include <QElapsedTimer>
@@ -177,7 +178,7 @@ void checkMetaMark() {
 // --- 2. дневник --------------------------------------------------------------
 
 void buildDiary() {
-    QDir(g_root).removeRecursively();
+    zt::dropTree(g_root);
     QDir().mkpath(g_root + QStringLiteral("/.zametti"));
 
     // Год → месяц → двенадцать записей. Заголовки нарочно «человеческие»: без
@@ -400,7 +401,7 @@ void checkJunkMark() {
 // постоянный счётный цикл: пока он стоит намертво, разброс в замерах говорит
 // о коде, а поехал он — поехала машина, и числам верить нельзя.
 void bench(int notes) {
-    QDir(g_root).removeRecursively();
+    zt::dropTree(g_root);
     QDir().mkpath(g_root + QStringLiteral("/.zametti"));
     note("00000000000d01", "created: 2020-01-01T00:00:00Z\nmodified: 2020-01-01T00:00:00Z\n",
          "# Корень\n");
@@ -453,7 +454,7 @@ void bench(int notes) {
                         zametti::sortOrderToString(order).toUtf8().constData(),
                         (long long)sorted);
         }
-    QDir(g_root).removeRecursively();
+    zt::dropTree(g_root);
 }
 
 // СЛУЖЕБНЫЕ ПАПКИ ВНИЗУ И В СВОЁМ ПОРЯДКЕ (просьба владельца): всё живое,
@@ -461,7 +462,7 @@ void bench(int notes) {
 // и по всем трём ключам: служебные не участвуют в сортировке вовсе, и
 // переворот направления не должен поднимать их наверх.
 void checkSpecialFoldersStayAtBottom() {
-    QDir(g_root).removeRecursively();
+    zt::dropTree(g_root);
     QDir().mkpath(g_root + QStringLiteral("/.zametti"));
     note("00000000000a01", "role: folder\ncreated: 2026-01-01T00:00:00+03:00\n"
                            "modified: 2026-01-01T00:00:00+03:00\n", "# Ада\n");
@@ -490,7 +491,7 @@ void checkSpecialFoldersStayAtBottom() {
                   std::string("Lost & found|Archive"),
                   s(titles.mid(rows - 2).join(QLatin1Char('|'))));
         }
-    QDir(g_root).removeRecursively();
+    zt::dropTree(g_root);
 }
 
 // ПОРЯДОК ПРИНАДЛЕЖИТ ПАПКЕ, А НЕ ВЫБРАННОЙ СТРОКЕ.
@@ -504,7 +505,7 @@ void checkSpecialFoldersStayAtBottom() {
 // одной и той же сборке дерева помеченная папка идёт по-своему, соседняя — по
 // корневому порядку, а смена переключателя помеченную не трогает вовсе.
 void checkEachFolderSortsItsOwnChildren() {
-    QDir(g_root).removeRecursively();
+    zt::dropTree(g_root);
     QDir().mkpath(g_root + QStringLiteral("/.zametti"));
 
     // Имена и даты нарочно ПРОТИВОПОЛОЖНЫ: по имени «Ася, Боря, Витя», по
@@ -561,7 +562,7 @@ void checkEachFolderSortsItsOwnChildren() {
     ZT_EQ("а соседняя без метки перевернулась вместе с корнем",
           std::string("Ася|Боря|Витя"), s(children(QStringLiteral("00000000000m02"))));
 
-    QDir(g_root).removeRecursively();
+    zt::dropTree(g_root);
 }
 
 }  // namespace
@@ -586,7 +587,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkSpecialFoldersStayAtBottom();
     checkEachFolderSortsItsOwnChildren();
 
-    QDir(g_root).removeRecursively();
+    zt::dropTree(g_root);
     return zt::report("сортировки");
 }
 

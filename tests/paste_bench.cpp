@@ -10,6 +10,7 @@
 #include "document.h"
 #include "editor_widget.h"
 
+#include "scratch_files.h"
 #include <QApplication>
 #include <QDir>
 #include <QFile>
@@ -88,7 +89,7 @@ int ztPasteBench(int argc, char** argv) {
     std::printf("   %-10s %-10s %-12s %-12s\n", "блоков", "КБ", "Enter, мкс", "на блок, нс");
 
     const QString dir = QStringLiteral("/tmp/zametti-paste-bench");
-    QDir(dir).removeRecursively();
+    zt::dropTree(dir);
     QDir().mkpath(dir);
     for (const int blocks : {50, 500, 5000}) {
         const std::string source = noteOf(blocks);

@@ -14,6 +14,7 @@
 
 #include <vector>
 #include "testdata.h"
+#include "zsystem.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -322,16 +323,18 @@ void checkAgainstExiftool(const std::filesystem::path& root) {
         const ImageMeta meta = readImageMeta(file);
         if (meta.exif.empty()) continue;
 
-        // Спрашиваем ровно тот же тег и в том же виде.
-        const std::string command =
-            "exiftool -s3 -d '%Y-%m-%dT%H:%M:%S' -DateTimeOriginal '" + it->path().string() +
-            "' 2>/dev/null";
-        std::string theirs;
-        if (FILE* pipe = popen(command.c_str(), "r")) {
-            char buffer[128];
-            while (std::fgets(buffer, sizeof(buffer), pipe) != nullptr) theirs += buffer;
-            pclose(pipe);
-        }
+        // Спрашиваем ровно тот же тег и в том же виде. Через ZSystem, а не
+        // через popen: оболочки в этой двери нет вовсе, и вместе с ней ушли
+        // кавычки вокруг имени файла (а имя приходит из чужого корпуса, где
+        // встречается что угодно) и `2>/dev/null` — stderr просто не читается.
+        QString said;
+        zametti::ZSystem::readTool(
+            QStringLiteral("exiftool"),
+            {QStringLiteral("-s3"), QStringLiteral("-d"),
+             QStringLiteral("%Y-%m-%dT%H:%M:%S"), QStringLiteral("-DateTimeOriginal"),
+             QString::fromStdString(it->path().string())},
+            &said);
+        std::string theirs = said.toStdString();
         while (!theirs.empty() && (theirs.back() == '\n' || theirs.back() == ' '))
             theirs.pop_back();
 

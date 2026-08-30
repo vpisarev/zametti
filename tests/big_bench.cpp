@@ -16,6 +16,7 @@
 #include "document.h"
 #include "editor_widget.h"
 
+#include "scratch_files.h"
 #include <QApplication>
 #include <QClipboard>
 #include <QDir>
@@ -102,7 +103,7 @@ int ztBigBench(int argc, char** argv) {
     }
 
     const QString dir = QStringLiteral("/tmp/zametti-big-bench");
-    QDir(dir).removeRecursively();
+    zt::dropTree(dir);
     QDir().mkpath(dir);
     // Вторая, маленькая заметка — для «переключиться и вернуться».
     const QString otherPath = dir + QStringLiteral("/other.md");

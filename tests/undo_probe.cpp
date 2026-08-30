@@ -27,6 +27,7 @@
 
 #include "test_util.h"
 
+#include "scratch_files.h"
 #include <QApplication>
 #include <QDir>
 #include <QFile>
@@ -109,7 +110,7 @@ int ztUndoProbe(int argc, char** argv) {
     zametti::loadSettings(nullptr);
 
     const QString dir = QStringLiteral("/tmp/zametti-undo-probe");
-    QDir(dir).removeRecursively();
+    zt::dropTree(dir);
     const QString plain = writeNote(dir, QStringLiteral("простая.md"),
                                     QStringLiteral("# Заголовок\n\n"
                                                    "Первый абзац, в нём есть слова.\n\n"

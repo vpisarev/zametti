@@ -16,6 +16,7 @@
 #include "note_panels.h"
 #include "test_util.h"
 #include "testdata.h"
+#include "scratch_files.h"
 
 #include <QApplication>
 #include <QCoreApplication>
@@ -266,7 +267,7 @@ static int ztRunOwnerCopy() {
         std::printf("owner-copy: не скопировалось\n");
         return 1;
     }
-    QFile::remove(root + QStringLiteral("/.zametti/store.lock"));
+    zt::dropFile(root, root + QStringLiteral("/.zametti/store.lock"));
 
     auto storage = std::make_shared<ZStorage>(root);
     storage->reload();

@@ -11,6 +11,7 @@
 #include "zlogs.h"
 
 #include "test_util.h"
+#include "scratch_files.h"
 
 #include <QDir>
 #include <QFile>
@@ -103,7 +104,8 @@ void checkLogStreamGoesToInstance() {
     ZT_TRUE("строка дошла через глобальную дверь", all.contains("поток-строка 42"));
     // Прибрать за собой: другим наборам логи не нужны.
     ZLogs::instance().configure({});
-    QFile::remove(ZLogs::instance().syncPath());
+    const QString log = ZLogs::instance().syncPath();
+    zt::dropFile(QFileInfo(log).absolutePath(), log);
 }
 
 }  // namespace

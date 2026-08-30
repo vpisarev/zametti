@@ -16,6 +16,7 @@
 
 #include <vector>
 #include "testdata.h"
+#include "scratch_files.h"
 
 #include <QApplication>
 #include <QDir>
@@ -189,8 +190,9 @@ void checkFreshNoteThroughEditor() {
 void checkTitleSurvivesPathMismatch() {
     const QString real = g_root + QStringLiteral("-mismatch");
     const QString link = g_root + QStringLiteral("-mismatch-ссылка");
-    QDir(real).removeRecursively();
-    QFile::remove(link);
+    zt::dropTree(real);
+    // Ссылка — сосед каталога, не его содержимое: область здесь родитель.
+    zt::dropFile(QFileInfo(g_root).absolutePath(), link);
     QDir().mkpath(real + QStringLiteral("/.zametti"));
     ZT_TRUE("ссылка на каталог хранилища создана", QFile::link(real, link));
     if (!QFileInfo::exists(link)) return;
@@ -227,7 +229,7 @@ void checkTitleSurvivesPathMismatch() {
 // Зовётся ключом --bench, в ctest не попадает: замер — не проверка.
 void benchKeystroke(int notes) {
     const QString root = g_root + QStringLiteral("-bench");
-    QDir(root).removeRecursively();
+    zt::dropTree(root);
     QDir().mkpath(root + QStringLiteral("/.zametti"));
     QString last;
     for (int i = 0; i < notes; ++i) {
@@ -274,7 +276,7 @@ void benchKeystroke(int notes) {
 // лишний знак и ломал заголовок в средней колонке.
 void checkTrailingSlashInRoot() {
     const QString real = g_root + QStringLiteral("-slash");
-    QDir(real).removeRecursively();
+    zt::dropTree(real);
     QDir().mkpath(real + QStringLiteral("/.zametti"));
 
     // Корень С ЧЕРТОЙ на конце — как его отдаёт оболочка.
@@ -304,7 +306,7 @@ void checkTrailingSlashInRoot() {
 static int ztRunSuite(int argc, char** argv) {
 
     g_root = QDir::tempPath() + QStringLiteral("/zametti-live-title-test");
-    QDir(g_root).removeRecursively();
+    zt::dropTree(g_root);
     QDir().mkpath(g_root + QStringLiteral("/.zametti"));
     writeNote(QStringLiteral("00000000000001"), QStringLiteral("# Старая\n"));
 

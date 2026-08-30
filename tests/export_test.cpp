@@ -21,6 +21,7 @@
 
 #include <vector>
 #include "testdata.h"
+#include "scratch_files.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -199,8 +200,8 @@ void checkStrangerInTheWay(const QDir& root) {
 void checkMissing(const QDir& root) {
     const QString note = makeStore(QDir(root.filePath(QStringLiteral("d"))),
                                   QByteArray("КАРТИНКА-1"));
-    QFile::remove(QDir(root.filePath(QStringLiteral("d/хранилище")))
-                      .filePath(QStringLiteral("01n6r08s8wy52h.jxl")));
+    const QString store = root.filePath(QStringLiteral("d/хранилище"));
+    zt::dropFile(store, QDir(store).filePath(QStringLiteral("01n6r08s8wy52h.jxl")));
     const QDir out(root.filePath(QStringLiteral("d/вывоз")));
     QDir().mkpath(out.path());
 

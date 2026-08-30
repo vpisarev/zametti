@@ -12,6 +12,7 @@
 
 #include <vector>
 #include "testdata.h"
+#include "scratch_files.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -87,7 +88,7 @@ static int ztRunSuite(int argc, char** argv) {
     (void)argc;
     (void)argv;
     g_base = QDir::tempPath() + QStringLiteral("/zametti-store-test");
-    QDir(g_base).removeRecursively();
+    zt::dropTree(g_base);
     QDir().mkpath(g_base);
 
     // --- init ---------------------------------------------------------------
@@ -464,7 +465,7 @@ static int ztRunSuite(int argc, char** argv) {
         const QString secondId = QFileInfo(second).completeBaseName();
         history.appendToJournal(secondId, zametti::ZJournal::NewRecord::save(QByteArray("<!-- zametti\ncreated: 2023-01-01T00:00:00Z\n-->\n\n"
                                   "# унесли\n"), zametti::ZJournal::Stamp::at(1'700'000'000'000LL)), &error);
-        ZT_TRUE("файл унесён мимо программы", QFile::remove(second));
+        ZT_TRUE("файл унесён мимо программы", zt::dropFile(root, second));
         ZStorage::Report orphan;
         ZT_TRUE("проверка всё ещё проходит", verifyStore(root, orphan));
         ZT_TRUE("но про унесённую сказано",
@@ -624,7 +625,7 @@ static int ztRunSuite(int argc, char** argv) {
         write(QStringLiteral("хранилище/чужак.txt"), "мимо");
         ZStorage::Report v;
         ZT_TRUE("чужой файл — беда", !verifyStore(storeRoot, v));
-        QFile::remove(storeRoot + QStringLiteral("/чужак.txt"));
+        zt::dropFile(storeRoot, storeRoot + QStringLiteral("/чужак.txt"));
     }
     {
         // Сирота с валидным id-именем — замечание, не беда.
@@ -634,7 +635,7 @@ static int ztRunSuite(int argc, char** argv) {
         ZStorage::Report v;
         ZT_TRUE("сирота не беда", verifyStore(storeRoot, v));
         ZT_TRUE("но в отчёте", v.lines.filter(QStringLiteral("orphan")).size() == 1);
-        QFile::remove(orphan);
+        zt::dropFile(storeRoot, orphan);
     }
 
     // --- импорт одиночных .md ------------------------------------------------
@@ -728,7 +729,7 @@ static int ztRunSuite(int argc, char** argv) {
         ZT_TRUE("хранилище после импорта проходит проверку", verifyStore(root, v));
     }
 
-    QDir(g_base).removeRecursively();
+    zt::dropTree(g_base);
     return zt::report("хранилище");
 }
 

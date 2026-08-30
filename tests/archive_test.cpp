@@ -20,6 +20,7 @@
 
 #include <vector>
 #include "testdata.h"
+#include "scratch_files.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -46,7 +47,7 @@ zametti::ZJournal::Rules rules() {
 }
 
 void freshStore() {
-    QDir(g_root).removeRecursively();
+    zt::dropTree(g_root);
     QDir().mkpath(g_root + QStringLiteral("/.zametti"));
     QDir().mkpath(g_root + QStringLiteral("/history"));
 }
@@ -421,7 +422,7 @@ void checkResurrect() {
     // Живая заметка не поднимается: надгробия у неё нет.
     const QString alive = QStringLiteral("01ff0000alive0");
     write(alive, kBody);
-    QFile::remove(notePath(alive));   // файл унесли мимо программы, надгробия нет
+    zt::dropFile(g_root, notePath(alive));   // файл унесли мимо программы, надгробия нет
     ZT_TRUE("без надгробия подъём отказывает",
             !zametti::ZStorage(g_root).resurrect(alive, &error));
 }
@@ -575,7 +576,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkLostFound();
     checkCleanStoreIsNotTouched();
 
-    QDir(g_root).removeRecursively();
+    zt::dropTree(g_root);
     return zt::report("архив и бюро находок");
 }
 

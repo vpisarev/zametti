@@ -28,6 +28,7 @@
 
 #include "test_util.h"
 #include "testdata.h"
+#include "scratch_files.h"
 
 #include <QAbstractTextDocumentLayout>
 #include <QApplication>
@@ -457,7 +458,7 @@ void checkOwnerRecipe(int width, const QString& name) {
         return;
     }
     const QString path = QDir(g_dir).filePath(name + QStringLiteral("-typesetting.md"));
-    QFile::remove(path);
+    zt::dropFile(g_dir, path);
     QFile::copy(source, path);
 
     zametti::NoteEditor editor;

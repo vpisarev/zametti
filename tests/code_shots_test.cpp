@@ -22,6 +22,7 @@
 #include <vector>
 #include "testdata.h"
 
+#include "scratch_files.h"
 #include <QApplication>
 #include <QClipboard>
 #include <QDir>
@@ -671,7 +672,7 @@ static int ztRunSuite(int argc, char** argv) {
     g_shots = QString::fromLocal8Bit(argv[1]);
     QDir().mkpath(g_shots);
     g_store = QDir(g_shots).filePath(QStringLiteral("хранилище"));
-    QDir(g_store).removeRecursively();
+    zt::dropTree(g_store);
     QDir().mkpath(g_store);
 
     // Окно И ШИРОКОЕ, И УЗКОЕ: все прежние тестовые окна были узкие, и целый

@@ -23,6 +23,7 @@
 #include <vector>
 #include "testdata.h"
 
+#include "scratch_files.h"
 #include <QApplication>
 #include <QDir>
 #include <QFile>
@@ -96,7 +97,7 @@ const char* kNote =
 
 static int ztRunSuite(int argc, char** argv) {
     g_root = argc > 1 ? QString::fromLocal8Bit(argv[1]) : QDir::tempPath();
-    QDir(g_root).removeRecursively();
+    zt::dropTree(g_root);
     QDir().mkpath(g_root + QStringLiteral("/.zametti"));
     QDir().mkpath(g_root + QStringLiteral("/history"));
 

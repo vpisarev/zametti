@@ -17,6 +17,7 @@
 #include <vector>
 #include "testdata.h"
 
+#include "scratch_files.h"
 #include <QApplication>
 #include <QDir>
 #include <QFile>
@@ -112,7 +113,7 @@ void checkOrderIsByInstants() {
 // --- 3. живая фикстура: писали в Китае, читаем в Москве --------------------
 
 void checkStoreSortsAcrossZones() {
-    QDir(g_root).removeRecursively();
+    zt::dropTree(g_root);
     QDir().mkpath(g_root + QStringLiteral("/.zametti"));
 
     noteOf("00000000000c01", "created: 2026-01-01T00:00:00Z\nmodified: 2026-01-01T00:00:00Z\n",
@@ -167,7 +168,7 @@ void checkStoreSortsAcrossZones() {
     if (hadTz.isEmpty()) qunsetenv("TZ");
     else qputenv("TZ", hadTz);
 
-    QDir(g_root).removeRecursively();
+    zt::dropTree(g_root);
 }
 
 // --- 4. новая метка проходит через ядро -----------------------------------

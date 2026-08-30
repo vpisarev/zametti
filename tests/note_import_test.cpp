@@ -16,6 +16,7 @@
 #include <vector>
 #include "testdata.h"
 
+#include "scratch_files.h"
 #include <QApplication>
 #include <QDir>
 #include <QFile>
@@ -97,7 +98,7 @@ void checkImportGoesToChosenFolder() {
 // стояла бы в списке второй — тогда «наверху» означало бы не то, что проверяем.
 void checkImportIsVisibleOnTop() {
     const QString root = g_root + QStringLiteral("-top");
-    QDir(root).removeRecursively();
+    zt::dropTree(root);
     QDir().mkpath(root + QStringLiteral("/.zametti"));
     {
         QFile f(root + QStringLiteral("/00000000000002.md"));
@@ -152,8 +153,8 @@ static int ztRunSuite(int argc, char** argv) {
 
     g_root = QDir::tempPath() + QStringLiteral("/zametti-note-import-test");
     g_outside = QDir::tempPath() + QStringLiteral("/zametti-note-import-src");
-    QDir(g_root).removeRecursively();
-    QDir(g_outside).removeRecursively();
+    zt::dropTree(g_root);
+    zt::dropTree(g_outside);
     QDir().mkpath(g_root + QStringLiteral("/.zametti"));
     QDir().mkpath(g_outside);
 

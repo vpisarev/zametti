@@ -13,6 +13,7 @@
 #include <vector>
 #include "testdata.h"
 
+#include "scratch_files.h"
 #include <QApplication>
 #include <QClipboard>
 #include <QDir>
@@ -278,7 +279,7 @@ static int ztRunSuite(int argc, char** argv) {
     }
 
     g_dir = QString::fromLocal8Bit(argv[1]) + QStringLiteral("/clipboard-data");
-    QDir(g_dir).removeRecursively();
+    zt::dropTree(g_dir);
     if (!QDir().mkpath(g_dir)) {
         std::printf("не создать каталог %s\n", g_dir.toUtf8().constData());
         return 2;

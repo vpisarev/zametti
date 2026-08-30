@@ -14,6 +14,7 @@
 
 #include <QImage>
 #include "test_util.h"
+#include "scratch_files.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -114,7 +115,7 @@ void checkCatalog() {
             }, rules(), &error));
 
     // Файл унесли — из каталога уходит.
-    ZT_TRUE("файл удалён", QFile::remove(notePath));
+    ZT_TRUE("файл удалён", zt::dropFile(root, notePath));
     ZT_TRUE("refreshNote пропавшей — ложь", !storage.refreshNote(noteId));
     ZT_TRUE("и в каталоге её нет", !storage.has(noteId));
     ZT_TRUE("правка пропавшей — ложь с объяснением",
@@ -466,7 +467,7 @@ void checkSignals() {
     ZT_TRUE("refreshNote живой", storage.refreshNote(a));
     ZT_EQ("живая — строка", "1", n(rows.size()));
     ZT_EQ("живая — не каталог", "0", n(catalog));
-    QFile::remove(storage.pathOf(a));
+    zt::dropFile(storage.root(), storage.pathOf(a));
     ZT_TRUE("refreshNote исчезнувшей — ложь", !storage.refreshNote(a));
     ZT_EQ("исчезнувшая — структурная новость", "1", n(catalog));
     ZT_TRUE("и её нет в каталоге", !storage.has(a));
@@ -498,7 +499,7 @@ void checkJournalsRenameToZm() {
     ZT_TRUE("журнал рождается сразу .zm", QFile::exists(zm) && !QFile::exists(log));
 
     // Прикинуться прежней сборкой: журнал под старым именем.
-    ZT_TRUE("журнал переименован в наследный", QFile::rename(zm, log));
+    ZT_TRUE("журнал переименован в наследный", zt::moveFile(home.path(), zm, log));
     {
         ZStorage s(home.path());
         zametti::ZJournal j;

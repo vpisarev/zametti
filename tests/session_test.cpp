@@ -15,6 +15,7 @@
 
 #include <vector>
 #include "testdata.h"
+#include "scratch_files.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -169,7 +170,7 @@ static int ztRunSuite(int argc, char** argv) {
 
     // Умолчание важно не меньше: у человека, который запускает программу
     // впервые, файла нет вовсе, и панели обязаны быть на месте.
-    QFile::remove(path);
+    zt::dropFile(QFileInfo(path).absolutePath(), path);
     const zametti::ZAppState fresh = zametti::ZAppState::load();
     ZT_EQ("без файла панели на месте", b(false), b(fresh.panelsHidden()));
     ZT_EQ("без файла режим исходника выключен", b(false), b(fresh.markdownMode()));

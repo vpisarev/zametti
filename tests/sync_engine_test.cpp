@@ -22,6 +22,7 @@
 #include "test_util.h"
 #include "testdata.h"
 #include "webdav_harness.h"
+#include "scratch_files.h"
 
 #include <QDialogButtonBox>
 #include <QLineEdit>
@@ -436,7 +437,8 @@ void checkLedgerLossChangesNothing() {
     const QByteArray cloudBefore =
         TwoDevices::readRaw(rig.cloud + QStringLiteral("/") + id + QStringLiteral(".zm"));
     ZT_TRUE("бухгалтерия стёрта",
-            QFile::remove(SyncLedger::pathFor(rig.sa->identity().storeId(), rig.a.root())));
+            zt::dropFileNextTo(
+                SyncLedger::pathFor(rig.sa->identity().storeId(), rig.a.root())));
 
     rig.ra->resetCounters();
     ZStorage::SyncReport redo = rig.syncOne(*rig.sa, "синк без бухгалтерии");
@@ -521,7 +523,8 @@ void checkServerLostBlobHealed() {
     TwoDevices::writeRaw(rig.a, id, note("раз"));
     rig.syncOne(*rig.sa, "закладка");
     ZT_TRUE("блоб стёрт с сервера",
-            QFile::remove(rig.cloud + QStringLiteral("/") + id + QStringLiteral(".zm")));
+            zt::dropFile(rig.cloud,
+                         rig.cloud + QStringLiteral("/") + id + QStringLiteral(".zm")));
 
     ZStorage::SyncReport healed = rig.syncOne(*rig.sa, "лечение");
     ZT_EQ("перезаливка-лечение", num(1), num(healed.healedRemote));
@@ -757,7 +760,7 @@ void checkWipedCloudRebuildAndRotation() {
 
     // Облако стёрли руками.
     for (const QString& name : QDir(rig.cloud).entryList(QDir::Files))
-        ZT_TRUE("блоб стёрт", QFile::remove(rig.cloud + QStringLiteral("/") + name));
+        ZT_TRUE("блоб стёрт", zt::dropFile(rig.cloud, rig.cloud + QStringLiteral("/") + name));
 
     // Машина 1: новый ключ (set-remote на пустом облаке чеканит) + перезаливка.
     Keyfile fresh;
@@ -1025,7 +1028,8 @@ void checkLegacyCloudMigration() {
         ZT_TRUE("наследный блоб записался", f.open(QIODevice::WriteOnly));
         f.write(blob);
         f.close();
-        ZT_TRUE("новое имя убрано", QFile::remove(rig.cloud + QStringLiteral("/") + fromNew));
+        ZT_TRUE("новое имя убрано",
+                zt::dropFile(rig.cloud, rig.cloud + QStringLiteral("/") + fromNew));
     };
     QByteArray journalBytes;
     ZT_TRUE("журнал прочитался", rig.sa->readJournalBytes(id, &journalBytes, &err));
@@ -1036,7 +1040,7 @@ void checkLegacyCloudMigration() {
     // Бухгалтерия про новые имена ничего не должна помнить — как у машины,
     // впервые увидевшей наследное облако.
     ZT_TRUE("бухгалтерия стёрта",
-            QFile::remove(SyncLedger::pathFor(storeId, rig.a.root())));
+            zt::dropFileNextTo(SyncLedger::pathFor(storeId, rig.a.root())));
 
     // Первый прогон знакомится с наследными именами (бухгалтерия пуста —
     // содержимое сверяется честно), второй — мигрирует.

@@ -8,6 +8,7 @@
 
 #include "test_util.h"
 #include "testdata.h"
+#include "scratch_files.h"
 
 #include <QDir>
 #include <QFile>
@@ -113,7 +114,8 @@ void checkEnsureOnOldStore() {
     QString error;
     ZT_TRUE("хранилище заведено", ZStorage(root).init(&error));
     // Так выглядит хранилище прежней сборки: файла нет.
-    ZT_TRUE("файл убран", QFile::remove(root + QStringLiteral("/zametti.json")));
+    ZT_TRUE("файл убран",
+            zt::dropFile(root, root + QStringLiteral("/zametti.json")));
 
     ZStorage storage(root);
     ZT_TRUE("пустая идентичность до чеканки", storage.identity(&error).isEmpty());

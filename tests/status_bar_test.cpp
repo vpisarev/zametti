@@ -14,6 +14,7 @@
 
 #include <vector>
 #include "testdata.h"
+#include "scratch_files.h"
 
 #include <QAbstractTextDocumentLayout>
 #include <QApplication>
@@ -288,7 +289,7 @@ void checkCaretImage() {
     // Вложение пропало — сведения обязаны это сказать, а не соврать старым.
     // Редактор новый: у прежнего в кэше лежат и пиксели, и сведения об уже
     // прочитанном файле, и он законно продолжает показывать то, что показывает.
-    check(QFile::remove(imagePath), "вложение удалено");
+    check(zt::dropFile(g_dir, imagePath), "вложение удалено");
     zametti::NoteEditor fresh;
     fresh.resize(700, 500);
     fresh.show();
@@ -312,7 +313,7 @@ static int ztRunSuite(int argc, char** argv) {
         return 2;
     }
     g_dir = QString::fromLocal8Bit(argv[1]) + QStringLiteral("/status-bar-data");
-    QDir(g_dir).removeRecursively();
+    zt::dropTree(g_dir);
     if (!QDir().mkpath(g_dir)) {
         std::printf("не создать каталог %s\n", g_dir.toUtf8().constData());
         return 2;

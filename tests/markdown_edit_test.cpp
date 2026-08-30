@@ -14,6 +14,7 @@
 #include "keys.h"
 #include "test_util.h"
 #include "testdata.h"
+#include "scratch_files.h"
 
 #include <QApplication>
 #include <QCoreApplication>
@@ -612,7 +613,7 @@ void checkOwnerNote() {
         return;
     }
     const QString path = QDir(g_dir).filePath(QStringLiteral("формулы.md"));
-    QFile::remove(path);
+    zt::dropFile(g_dir, path);
     if (!QFile::copy(source, path)) {
         std::printf("owner-copy: не скопировалось\n");
         return;

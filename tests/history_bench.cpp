@@ -43,6 +43,7 @@
 #include "zstorage.h"
 #include "journal.h"
 #include "settings.h"
+#include "scratch_files.h"
 
 #include <QApplication>
 #include <QDir>
@@ -99,8 +100,8 @@ QString makeStore(const QString& root, const QString& sourceNote, QString* noteI
     QDir().mkpath(root + QStringLiteral("/history"));
     *noteId = QStringLiteral("01zzzzzzzzzzzz");
     const QString target = root + QLatin1Char('/') + *noteId + QStringLiteral(".md");
-    QFile::remove(target);
-    QFile::remove(root + QStringLiteral("/history/") + *noteId + QStringLiteral(".log"));
+    zt::dropFile(root, target);
+    zt::dropFile(root, root + QStringLiteral("/history/") + *noteId + QStringLiteral(".log"));
 
     std::string text = readAll(sourceNote);
     // Шапка нужна: без неё заметка не заметка.
@@ -175,7 +176,7 @@ QString human(qint64 bytes) {
 int ztHistoryBench(int argc, char** argv) {
 
     const QString root = QStringLiteral(ZAMETTI_TESTDATA) + QStringLiteral("/history-bench");
-    QDir(root).removeRecursively();
+    zt::dropTree(root);
 
     std::vector<QString> notes;
     for (int i = 1; i < argc; ++i) notes.push_back(QString::fromLocal8Bit(argv[i]));

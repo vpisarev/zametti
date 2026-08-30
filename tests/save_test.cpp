@@ -16,6 +16,7 @@
 #include <vector>
 #include "testdata.h"
 
+#include "scratch_files.h"
 #include <QDir>
 #include <QFile>
 #include <QGuiApplication>
@@ -789,7 +790,7 @@ void surveyGuard(const QString& root) {
     QDir dir(root);
     const QStringList files = dir.entryList({QStringLiteral("*.md")}, QDir::Files);
     const QString scratch = QDir::tempPath() + QStringLiteral("/zametti-survey");
-    QDir(scratch).removeRecursively();
+    zt::dropTree(scratch);
     if (!QDir().mkpath(scratch)) {
         std::printf("не создать каталог %s\n", scratch.toUtf8().constData());
         return;
@@ -829,7 +830,7 @@ static int ztRunSuite(int argc, char** argv) {
 
     // Не "save_test": по этому имени в каталоге сборки уже лежит сам бинарник.
     g_dir = QString::fromLocal8Bit(argv[1]) + QStringLiteral("/save-data");
-    QDir(g_dir).removeRecursively();
+    zt::dropTree(g_dir);
     if (!QDir().mkpath(g_dir)) {
         std::printf("не создать каталог %s\n", g_dir.toUtf8().constData());
         return 2;

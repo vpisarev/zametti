@@ -22,6 +22,7 @@
 
 #include <vector>
 #include "testdata.h"
+#include "scratch_files.h"
 
 #include <QApplication>
 #include <QDir>
@@ -322,7 +323,7 @@ void checkStoreSearch() {
             ZT_TRUE("и это та самая", results[1].title == QStringLiteral("Убранная"));
         }
     }
-    QFile::remove(g_root + QStringLiteral("/00000000000000.md"));
+    zt::dropFile(g_root, g_root + QStringLiteral("/00000000000000.md"));
 
     // Отмена: пускаем запрос и тут же перебиваем другим. В списке должен
     // оказаться ответ только на второй — первый отменяется между файлами.
@@ -900,7 +901,7 @@ static int ztRunSuite(int argc, char** argv) {
     (void)argc;
     (void)argv;
     g_root = QDir::tempPath() + QStringLiteral("/zametti-search-test");
-    QDir(g_root).removeRecursively();
+    zt::dropTree(g_root);
     QDir().mkpath(g_root + QStringLiteral("/.zametti"));
 
     note("00000000000001", "created: 2019-01-01T00:00:00Z\nmodified: 2020-01-01T00:00:00Z\n",
@@ -927,7 +928,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkQueryHistory();
     checkShortcutsReachWindow();
 
-    QDir(g_root).removeRecursively();
+    zt::dropTree(g_root);
     return zt::report("поиск");
 }
 

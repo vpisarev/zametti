@@ -24,6 +24,7 @@
 #include <vector>
 #include "testdata.h"
 
+#include "scratch_files.h"
 #include <QApplication>
 #include <QFileInfo>
 #include <QClipboard>
@@ -3052,7 +3053,7 @@ static int ztRunSuite(int argc, char** argv) {
     zametti::mutableSettingsForTests().editor().setUndoCoalesceMs(40);
 
     g_dir = QString::fromLocal8Bit(argv[1]) + QStringLiteral("/editor-data");
-    QDir(g_dir).removeRecursively();
+    zt::dropTree(g_dir);
     if (!QDir().mkpath(g_dir)) {
         std::printf("не создать каталог %s\n", g_dir.toUtf8().constData());
         return 2;

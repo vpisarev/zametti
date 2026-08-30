@@ -15,6 +15,8 @@
 
 #include <gtest/gtest.h>
 
+#include "zsystem.h"
+
 #include <QDir>
 #include <QFileInfo>
 #include <QString>
@@ -47,11 +49,19 @@ public:
     // Свой каталог набору под то, что он пишет. СВОЙ у каждого: в одном
     // процессе восемьдесят наборов, и общий каталог они бы затоптали.
     // Чистится при выдаче — набор всегда начинает с пустого места.
+    //
+    // ЖИВЁТ ВО ВРЕМЕННОЙ ЗОНЕ, А НЕ В КАТАЛОГЕ СБОРКИ (решение владельца,
+    // 30.08.2026). Каталог сборки лежит в домашнем каталоге, а внутри /home и
+    // /Users программа каталогов не сносит вовсе — и наборы живут по тому же
+    // правилу, что программа, без оговорок для себя. Правило, у которого есть
+    // исключение для наборов, не защищает: каталог владельца снёс ПРОБНИК.
+    //
+    // Где именно — печатает сам набор; путь стабилен от прогона к прогону, так
+    // что снимки приёмки берутся оттуда же, откуда и раньше брались.
     static QString outDir(const QString& suite) {
         const QString path =
-            QStringLiteral(ZAMETTI_BINARY_DIR) + QStringLiteral("/наборы/") + suite;
-        QDir dir(path);
-        if (dir.exists()) dir.removeRecursively();
+            QDir::tempPath() + QStringLiteral("/zametti-наборы/") + suite;
+        zametti::ZSystem::removeScratchTree(path);
         QDir().mkpath(path);
         return path;
     }
