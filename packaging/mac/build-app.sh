@@ -50,8 +50,11 @@ for arch in $ZARCHS; do
         # На чужой архитектуре cmake оставил бы в CMAKE_SYSTEM_PROCESSOR арх
         # машины, и libgav1/libsodium/highway/libjxl выбрали бы не тот SIMD
         # (см. zenv.sh). Задаём только процессор, БЕЗ CMAKE_SYSTEM_NAME: имя
-        # включило бы полный кросс-режим cmake, которому Qt требует qt-host-path.
+        # включило бы полный кросс-режим cmake со своими требованиями.
         extra+=("-DCMAKE_SYSTEM_PROCESSOR=$arch")
+        # Кросс-собранный Qt записал в свой toolchain-файл требование
+        # QT_HOST_PATH — родного Qt с инструментами сборки (см. build-qt.sh).
+        extra+=("-DQT_HOST_PATH=$ZDEPS_BASE-$ZHOSTARCH")
     fi
     # ${extra[@]+...} вместо голого "${extra[@]}": системный bash на маке —
     # 3.2, где пустой массив под set -u считается необъявленной переменной.

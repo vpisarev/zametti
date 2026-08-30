@@ -55,8 +55,26 @@ for arch in $ZARCHS; do
     prefix="$ZDEPS_BASE-$arch"
     bdir="$ZBUILD/qtbase-build-$arch"
     echo "=== qtbase [$arch] → $prefix ==="
+
+    # Чужая архитектура для Qt — кросс-сборка, и он требует QT_HOST_PATH:
+    # готовый Qt родной архитектуры, откуда возьмутся инструменты сборки (moc,
+    # rcc…). Это ЛУЧШЕ, чем гнать весь configure под Rosetta: компилятор
+    # остаётся родным и лишь целится в чужую архитектуру. Отсюда порядок в
+    # ZARCHS — сперва родная, потом чужая.
+    hostpath=()
+    if [ "$arch" != "$ZHOSTARCH" ]; then
+        [ -x "$ZDEPS_BASE-$ZHOSTARCH/bin/qt-cmake" ] || {
+            echo "кросс-сборке [$arch] нужен родной Qt в $ZDEPS_BASE-$ZHOSTARCH —" >&2
+            echo "сперва: ZARCHS=$ZHOSTARCH bash packaging/mac/build-qt.sh" >&2
+            exit 1
+        }
+        hostpath=("-DQT_HOST_PATH=$ZDEPS_BASE-$ZHOSTARCH")
+    fi
+
     mkdir -p "$bdir"
     cd "$bdir"
+    # ${hostpath[@]+...} вместо голого раскрытия: системный bash на маке — 3.2,
+    # где пустой массив под set -u считается необъявленной переменной.
     "$ZBUILD/qtbase/configure" \
         -prefix "$prefix" \
         -static -release \
@@ -66,7 +84,8 @@ for arch in $ZARCHS; do
         -no-glib -no-icu -no-cups \
         -- \
         -DCMAKE_OSX_DEPLOYMENT_TARGET="$ZMACOS_MIN" \
-        -DCMAKE_OSX_ARCHITECTURES="$arch"
+        -DCMAKE_OSX_ARCHITECTURES="$arch" \
+        ${hostpath[@]+"${hostpath[@]}"}
     cmake --build . -j8
     cmake --install .
 
@@ -75,8 +94,10 @@ for arch in $ZARCHS; do
     mkdir -p "$sdir"
     cd "$sdir"
     # qt-cmake подставляет ключи из prefix — ни -static, ни пол, ни архитектуру
-    # здесь повторять не надо, и разойтись им негде.
-    "$prefix/bin/qt-cmake" "$ZBUILD/qtsvg" -DCMAKE_BUILD_TYPE=Release
+    # здесь повторять не надо, и разойтись им негде. QT_HOST_PATH при
+    # кросс-сборке toolchain-файл требует снова — отдаём тот же.
+    "$prefix/bin/qt-cmake" "$ZBUILD/qtsvg" -DCMAKE_BUILD_TYPE=Release \
+        ${hostpath[@]+"${hostpath[@]}"}
     cmake --build . -j8
     cmake --install .
 done
