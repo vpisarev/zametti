@@ -30,7 +30,7 @@
 #define ZAMETTI_ZSTORAGE_H
 
 #include "blob_cipher.h"
-#include "remote_store.h"
+#include "cloud_store.h"
 #include "sort_order.h"
 #include "import_limits.h"
 #include "znote.h"

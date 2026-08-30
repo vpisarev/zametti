@@ -8,7 +8,7 @@
 //
 // Зерно печатается; упавший прогон повторяется дословно.
 
-#include "folder_remote.h"
+#include "folder_cloud.h"
 #include "import_limits.h"
 #include "journal.h"
 #include "keyfile.h"

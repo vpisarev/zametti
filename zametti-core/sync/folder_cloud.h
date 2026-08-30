@@ -17,10 +17,10 @@
 // ведёт себя как ЛУЧШИЙ мыслимый сервер; беды нестабильных etag имитируются
 // нарочно, setEtagSalt.
 
-#ifndef ZAMETTI_SYNC_FOLDER_REMOTE_H
-#define ZAMETTI_SYNC_FOLDER_REMOTE_H
+#ifndef ZAMETTI_SYNC_FOLDER_CLOUD_H
+#define ZAMETTI_SYNC_FOLDER_CLOUD_H
 
-#include "remote_store.h"
+#include "cloud_store.h"
 #include "zsystem.h"
 
 #include <QHash>
@@ -85,4 +85,4 @@ protected:
 
 }  // namespace zametti
 
-#endif  // ZAMETTI_SYNC_FOLDER_REMOTE_H
+#endif  // ZAMETTI_SYNC_FOLDER_CLOUD_H

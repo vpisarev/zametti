@@ -22,14 +22,14 @@
 
 #include "zstorage.h"
 
-#include "folder_remote.h"
+#include "folder_cloud.h"
 #include "keyfile.h"
 #include "sync_ledger.h"
 #include "zlogs.h"
 #include "note_id.h"
 #include "secret_store.h"
 #include "times.h"
-#include "webdav_remote.h"
+#include "webdav_cloud.h"
 
 #include <QDateTime>
 #include <QDir>

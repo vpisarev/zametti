@@ -1,6 +1,6 @@
-// WebDavCloud: пять операций поверх HTTP. См. шапку webdav_remote.h.
+// WebDavCloud: пять операций поверх HTTP. См. шапку webdav_cloud.h.
 
-#include "webdav_remote.h"
+#include "webdav_cloud.h"
 
 #include <QElapsedTimer>
 #include <QEventLoop>

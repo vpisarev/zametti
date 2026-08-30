@@ -6,9 +6,9 @@
 // Сервер поднимается обвязкой (`uvx wsgidav`) на время набора. Нет uvx или
 // сети — ГРОМКИЙ пропуск.
 
-#include "webdav_remote.h"
+#include "webdav_cloud.h"
 
-#include "fake_remote.h"
+#include "fake_cloud.h"
 #include "testdata.h"
 #include "test_util.h"
 #include "webdav_harness.h"

@@ -71,9 +71,9 @@ add_library(zametti-core STATIC
     sync/secret_bundle.h        sync/secret_bundle.cpp
     sync/bundled_secrets.h      sync/bundled_secrets.cpp
     sync/keyring_secrets.h
-    sync/remote_store.h         sync/remote_store.cpp
-    sync/folder_remote.h        sync/folder_remote.cpp
-    sync/webdav_remote.h        sync/webdav_remote.cpp
+    sync/cloud_store.h          sync/cloud_store.cpp
+    sync/folder_cloud.h         sync/folder_cloud.cpp
+    sync/webdav_cloud.h         sync/webdav_cloud.cpp
 
     # --- заметка: документ + журнал + всё, что переживает уход и возврат ---
     note/znote.h                note/znote.cpp

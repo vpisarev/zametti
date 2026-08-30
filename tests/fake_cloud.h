@@ -9,11 +9,11 @@
 // гоняется по FolderCloud, по MemoryCloud и по настоящему WebDAV. Реализации
 // расходятся в мелочах (кто как называет etag), но обещания у них одни.
 
-#ifndef ZAMETTI_TESTS_FAKE_REMOTE_H
-#define ZAMETTI_TESTS_FAKE_REMOTE_H
+#ifndef ZAMETTI_TESTS_FAKE_CLOUD_H
+#define ZAMETTI_TESTS_FAKE_CLOUD_H
 
 #include "hash.h"
-#include "remote_store.h"
+#include "cloud_store.h"
 
 #include <QMap>
 
@@ -221,4 +221,4 @@ inline void checkCloudContract(zametti::CloudStore& cloud, const char* who,
 
 }  // namespace zt
 
-#endif  // ZAMETTI_TESTS_FAKE_REMOTE_H
+#endif  // ZAMETTI_TESTS_FAKE_CLOUD_H

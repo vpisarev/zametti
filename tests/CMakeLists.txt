@@ -67,8 +67,8 @@ add_executable(zametti-tests
     keyfile_test.cpp
     blob_cipher_test.cpp
     secrets_test.cpp
-    remote_store_test.cpp
-    webdav_remote_test.cpp
+    cloud_store_test.cpp
+    webdav_cloud_test.cpp
     sync_push_test.cpp
     sync_engine_test.cpp
     bundled_secrets_test.cpp

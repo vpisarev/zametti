@@ -16,10 +16,10 @@
 // В ЗАГОЛОВКЕ НЕТ НИ ОДНОГО ТИПА QtNetwork — линковка Qt6::Network остаётся
 // PRIVATE у ядра, вся сеть живёт в .cpp.
 
-#ifndef ZAMETTI_SYNC_WEBDAV_REMOTE_H
-#define ZAMETTI_SYNC_WEBDAV_REMOTE_H
+#ifndef ZAMETTI_SYNC_WEBDAV_CLOUD_H
+#define ZAMETTI_SYNC_WEBDAV_CLOUD_H
 
-#include "remote_store.h"
+#include "cloud_store.h"
 
 #include <QString>
 #include <QUrl>
@@ -79,4 +79,4 @@ protected:
 
 }  // namespace zametti
 
-#endif  // ZAMETTI_SYNC_WEBDAV_REMOTE_H
+#endif  // ZAMETTI_SYNC_WEBDAV_CLOUD_H

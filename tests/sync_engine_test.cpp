@@ -6,11 +6,11 @@
 // появления.
 
 #include "blob_cipher.h"
-#include "folder_remote.h"
+#include "folder_cloud.h"
 #include "pending_deletes_dialog.h"
 #include "sync_controller.h"
 #include "journal.h"
-#include "webdav_remote.h"
+#include "webdav_cloud.h"
 #include "keyfile.h"
 #include "sync_ledger.h"
 #include "zlogs.h"

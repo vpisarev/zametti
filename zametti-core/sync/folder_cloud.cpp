@@ -1,6 +1,6 @@
-// FolderCloud: «облако» в каталоге. См. шапку folder_remote.h.
+// FolderCloud: «облако» в каталоге. См. шапку folder_cloud.h.
 
-#include "folder_remote.h"
+#include "folder_cloud.h"
 
 #include "hash.h"
 

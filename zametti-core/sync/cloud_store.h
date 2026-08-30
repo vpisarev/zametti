@@ -14,8 +14,8 @@
 // («устойчивый синк = 1 листинг, 0 чтений содержимого»), и мерить их должен
 // тот, кто ходит по проводу.
 
-#ifndef ZAMETTI_SYNC_REMOTE_STORE_H
-#define ZAMETTI_SYNC_REMOTE_STORE_H
+#ifndef ZAMETTI_SYNC_CLOUD_STORE_H
+#define ZAMETTI_SYNC_CLOUD_STORE_H
 
 #include <QHash>
 #include <QString>
@@ -90,4 +90,4 @@ protected:
 
 }  // namespace zametti
 
-#endif  // ZAMETTI_SYNC_REMOTE_STORE_H
+#endif  // ZAMETTI_SYNC_CLOUD_STORE_H
