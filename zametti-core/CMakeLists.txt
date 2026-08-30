@@ -47,6 +47,10 @@ add_library(zametti-core STATIC
     # миграции (archive.cpp); бюро находок (lost_found.cpp); идентичность
     # (store_identity.cpp); пол времени устройства (device_clock.cpp).
     store/zstorage.h            store/zstorage.cpp
+    # ZSystem — единственная дверь наружу: удаление и переименование файлов,
+    # снос каталога-хранилища, запуск чужих программ. Прямые вызовы за её
+    # пределами — таб'у, за этим следит tests/file_ops_check.cmake.
+    store/zsystem.h             store/zsystem.cpp
     store/store.cpp
     store/import_tree.cpp
     store/archive.cpp
