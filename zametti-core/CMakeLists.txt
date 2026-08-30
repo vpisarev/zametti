@@ -68,6 +68,8 @@ add_library(zametti-core STATIC
     sync/keyfile.h              sync/keyfile.cpp
     sync/blob_cipher.h          sync/blob_cipher.cpp
     sync/secret_store.h         sync/secret_store.cpp
+    sync/secret_bundle.h        sync/secret_bundle.cpp
+    sync/bundled_secrets.h      sync/bundled_secrets.cpp
     sync/keyring_secrets.h
     sync/remote_store.h         sync/remote_store.cpp
     sync/folder_remote.h        sync/folder_remote.cpp

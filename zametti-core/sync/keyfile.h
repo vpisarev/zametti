@@ -101,6 +101,7 @@ protected:
     friend class XChaChaCipher;
     friend class EnvSecrets;
     friend class KeyringSecrets;
+    friend class BundledSecrets;   // правила одной записи-свёртка
 
     int version_ = kVersion;
     QString storeId_;

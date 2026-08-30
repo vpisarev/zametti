@@ -71,6 +71,7 @@ add_executable(zametti-tests
     webdav_remote_test.cpp
     sync_push_test.cpp
     sync_engine_test.cpp
+    bundled_secrets_test.cpp
     set_remote_test.cpp
     store_manager_dialog_test.cpp
     sync_fuzz_test.cpp
@@ -225,6 +226,12 @@ add_executable(zametti-bench
 # стенды ими же и печатают, что у них сошлось.
 target_link_libraries(zametti-bench PRIVATE zametti-ui gtest Qt6::Test Sodium::Sodium
                       zametti-code-rules)
+# Пробник keyring на маке меряет связку сырыми SecItem* (вопрос §1.2 матрицы) —
+# рамка нужна самому бенчу, не только ядру.
+if(APPLE)
+    target_link_libraries(zametti-bench PRIVATE "-framework Security"
+                          "-framework CoreFoundation")
+endif()
 zametti_import_qt_plugins(zametti-bench)
 zametti_windows_manifest(zametti-bench)
 target_include_directories(zametti-bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
