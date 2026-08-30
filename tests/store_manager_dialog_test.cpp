@@ -190,6 +190,34 @@ void checkCreateFromCloud() {
     ZT_TRUE("ключ перекочевал в keyring", secrets->keys_.size() == 1);
 }
 
+void checkCheckOnMissingCloudFolder() {
+    // «Папки ещё нет» — это ПУСТОЕ облако, а не беда (живая проба владельца
+    // 30.08: Check по свежему имени показывал голое «404»). Каталог-облако
+    // отвечает той же бедой словами «does not exist» — и Check обязан сказать
+    // Cloud: empty и позвать запечатывание.
+    zt::MiniStore home, cloudHome;
+    const QString root = home.root() + QStringLiteral("/архив");
+    QDir().mkpath(root);
+    QString err;
+    ZT_TRUE("хранилище завелось", ZStorage(root).init(&err));
+    ZStorageManager stores;
+    ZStorage::Config entry;
+    entry.root = root;
+    stores.remember(entry);
+    auto secrets = std::make_shared<FakeSecrets>();
+    TestDialog dialog(nullptr, stores, QString(), secrets, kTiny);
+    dialog.type(StoreManagerModel::FieldId::Server,
+                cloudHome.root() + QStringLiteral("/этой-папки-нет"));
+    dialog.findChild<QPushButton*>(QStringLiteral("check"))->click();
+    ZT_TRUE("проверка дождалась", waitIdle(dialog));
+    ZT_TRUE(("несуществующая папка — пустое облако: " + s(statusText(dialog))).c_str(),
+            statusText(dialog).contains(QStringLiteral("Connected")));
+    ZT_TRUE("строка фактов говорит empty",
+            dialog.findChild<QLabel*>(QStringLiteral("cloudLine"))
+                ->text()
+                .contains(QStringLiteral("empty")));
+}
+
 void checkSealFreshCloudAndChangePassword() {
     // Хранилище против ПУСТОГО облака: первый Check только смотрит и просит
     // повтор (опечатка запечатала бы облако навсегда), второй — запечатывает.
@@ -279,6 +307,7 @@ static int ztRunSuite(int argc, char** argv) {
     (void)argv;
     checkListAndForget();
     checkCreateFromCloud();
+    checkCheckOnMissingCloudFolder();
     checkSealFreshCloudAndChangePassword();
     return zt::report("store_manager_dialog");
 }

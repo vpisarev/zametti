@@ -535,7 +535,13 @@ void StoreManagerModel::edit(FieldId field, const QString& text) {
 ZStorage::Config StoreManagerModel::cfgFromDraft() const {
     ZStorage::Config cfg;
     cfg.root = draft().folder;
-    setCloudAddress(cfg, draft().server, draft().serverDir, draft().login);
+    // ЖИВОЙ ДЕФОЛТ СЕРВЕРНОЙ ПАПКИ — ИМЯ ЛОКАЛЬНОЙ (п.8 брифа). Placeholder
+    // обещает её серым, значит В КОНФИГ обязано уезжать то же самое: без
+    // подстановки Check уходил в КОРЕНЬ провайдера, где живёт всё подряд
+    // (найдено живой пробой владельца 30.08 — «404» вместо папки).
+    QString serverDir = draft().serverDir.trimmed();
+    if (serverDir.isEmpty()) serverDir = QFileInfo(draft().folder.trimmed()).fileName();
+    setCloudAddress(cfg, draft().server, serverDir, draft().login);
     return cfg;
 }
 

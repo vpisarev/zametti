@@ -14,6 +14,16 @@ using Outcome = StoreManagerModel::Outcome;
 using CloudSeen = StoreManagerModel::CloudSeen;
 using Job = StoreManagerModel::Job;
 
+// «Коллекции ещё нет» — это ПУСТОЕ облако, а не беда: человек назвал папку,
+// которой на сервере пока не существует, и её заведёт первая заливка
+// (mkdirOnce). Сорт узнаётся по слову адаптера: WebDAV отвечает листингу
+// HTTP 404, каталог-облако — «does not exist» (найдено живой пробой
+// владельца 30.08: Check по свежему имени папки показывал голое «404»).
+bool cloudAbsent(const QString& error) {
+    return error.contains(QLatin1String("HTTP 404")) ||
+           error.contains(QLatin1String("does not exist"));
+}
+
 // Увиденное — из разведки: сводка заполнена и при неудаче (имена открыты).
 CloudSeen seenFrom(const ZStorage::CloudProbe& probe, const QString& address,
                    CloudSeen::State state) {
@@ -57,7 +67,7 @@ Outcome StoreJobRunner::check(const Job& job, SecretStore& secrets) {
     const bool ok =
         ZStorage::probeCloud(job.cfg, job.serverPassword, job.encryptionPassword,
                              &probe, &err);
-    if (!ok) {
+    if (!ok && !cloudAbsent(err)) {
         // Сорт беды — по слову ядра: логин, пароль, связь. Строка фактов при
         // этом говорит про ОБЛАКО (сводка есть и при неверном пароле), а
         // сообщение — про событие.
@@ -74,6 +84,7 @@ Outcome StoreJobRunner::check(const Job& job, SecretStore& secrets) {
         out.alarm = true;
         return out;
     }
+    if (!ok) probe = ZStorage::CloudProbe();   // папки нет = пустое облако
 
     CloudSeen::State state = CloudSeen::State::Empty;
     if (probe.hasManifest && !probe.hasKeyfile) {
@@ -183,11 +194,14 @@ Outcome StoreJobRunner::create(const Job& job, SecretStore& secrets) {
     ZStorage::CloudProbe probe;
     if (!ZStorage::probeCloud(job.cfg, job.serverPassword, job.encryptionPassword,
                               &probe, &err)) {
-        out.message = err.contains(QStringLiteral("wrong password"))
-                          ? QStringLiteral("Wrong password.")
-                          : err;
-        out.alarm = true;
-        return out;
+        if (!cloudAbsent(err)) {
+            out.message = err.contains(QStringLiteral("wrong password"))
+                              ? QStringLiteral("Wrong password.")
+                              : err;
+            out.alarm = true;
+            return out;
+        }
+        probe = ZStorage::CloudProbe();   // папки нет = пустое облако, заведём
     }
     if (probe.hasManifest || probe.hasKeyfile) {
         // БУТСТРАП, ГОЛОВОЙ ВПЕРЁД: манифест, конверт, корневая заметка. Ни

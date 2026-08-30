@@ -132,6 +132,18 @@ void checkButtonsTableA() {
     // VWh*: сервер назван, пароля нет нигде (связка сказала «нет») — Check
     // погашен И сказано чего не хватает (беды N, P).
     model.edit(Model::FieldId::Server, QStringLiteral("https://host/dav"));
+    // ЖИВОЙ ДЕФОЛТ Cloud dir не только рисуется серым, но и УЕЗЖАЕТ В РАБОТУ:
+    // пустое поле = имя локальной папки, а не корень провайдера (живая проба
+    // владельца 30.08: Check уходил в /webdav/ и получал не свою папку).
+    {
+        model.edit(Model::FieldId::ServerPassword, QStringLiteral("временный"));
+        const Model::Job job = model.checkPressed().job;
+        ZT_TRUE("адрес кончается именем локальной папки",
+                job.cfg.cloudUrl.endsWith(QStringLiteral("/dav/") +
+                                          QFileInfo(store).fileName() +
+                                          QLatin1Char('/')));
+        model.edit(Model::FieldId::ServerPassword, QString());
+    }
     {
         const Model::Snapshot snap = model.snapshot();
         ZT_TRUE("VWh: check погашен", !snap.check.enabled);

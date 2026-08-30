@@ -564,15 +564,25 @@ void StoreManagerDialog::runJob(const StoreManagerModel::Job& job) {
                                 : QString();
     taken_ = std::make_shared<TakenSecrets>();
     if (!storeId.isEmpty()) {
-        if (job.serverPasswordFromKeyring)
+        // ЧТЕНИЙ — РОВНО СТОЛЬКО, СКОЛЬКО НУЖНО РАБОТЕ, И НИ ОДНИМ БОЛЬШЕ:
+        // каждое чтение ДАННЫХ из связки на ad-hoc сборке — системный вопрос
+        // макоси, и первая живая проба владельца получала его на каждый жест
+        // (30.08). Пароль сервера — только когда он серверу нужен; пароль
+        // шифрования из связки работам не нужен вовсе (запечатывание и смена
+        // пароля требуют НАБРАННОГО); ключ — только смене пароля и
+        // подключению без пароля.
+        if (job.serverPasswordFromKeyring && !job.cfg.cloudUrl.isEmpty())
             resolved.serverPassword = secrets_->serverPassword(storeId);
-        if (job.encryptionFromKeyring)
-            resolved.encryptionPassword = secrets_->encryptionPassword(storeId);
-        // Ключ подсаживается в копилку целиком: работе он бывает нужен (смена
-        // пароля ничего не стирает именно потому, что ключ под рукой), а
-        // спросить настоящую связку из рабочего потока нельзя.
-        Keyfile key;
-        if (secrets_->loadKey(storeId, &key, nullptr)) taken_->seedKey(key);
+        // Ключ подсаживается в копилку целиком: спросить настоящую связку из
+        // рабочего потока нельзя.
+        const bool jobWantsKey =
+            job.kind == StoreManagerModel::Job::Kind::ChangePassword ||
+            (job.kind == StoreManagerModel::Job::Kind::Check &&
+             resolved.encryptionPassword.isEmpty());
+        if (jobWantsKey) {
+            Keyfile key;
+            if (secrets_->loadKey(storeId, &key, nullptr)) taken_->seedKey(key);
+        }
     }
     resolved.serverPasswordFromKeyring = false;
     resolved.encryptionFromKeyring = false;
