@@ -42,6 +42,8 @@ public:
                     bool* preconditionFailed, QString* error = nullptr) override;
     bool del(const QString& name, QString* error = nullptr) override;
     bool mkdirOnce(QString* error = nullptr) override;
+    // Все блобы через дверь ZSystem; каталог остаётся пустым (см. .cpp).
+    bool removeTree(QString* error = nullptr) override;
 
     // --- то, чего у настоящего сервера не спросишь ---
 

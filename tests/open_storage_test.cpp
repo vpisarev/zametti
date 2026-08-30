@@ -111,6 +111,38 @@ static int ztRunSuite(int, char**) {
                     ZStorage::inspect(store) != Kind::Foreign);
     }
 
+    // --- СВОДКА ДЛЯ ОКНА ХРАНИЛИЩ: суммы одним проходом, без открытия ------
+    {
+        const QString root = home.path() + QStringLiteral("/сводка");
+        auto storage = makeStore(root, QStringLiteral("С"), &error);
+        ZT_TRUE("хранилище для сводки заведено: " + s(error), storage != nullptr);
+        if (storage != nullptr) {
+            // Вложение — файл с валидным id рядом с заметками; служебные
+            // (zametti.json) и файлы без id в сводку не попадают.
+            const QString attachment =
+                root + QStringLiteral("/") + storage->rootId() + QStringLiteral(".webp");
+            QFile pic(attachment);
+            ZT_TRUE("вложение записалось", pic.open(QIODevice::WriteOnly));
+            pic.write("не совсем webp, но сводке всё равно");
+            pic.close();
+
+            const ZStorage::Summary sum = ZStorage::localSummary(root);
+            // makeStore: корень + папка + заметка = 3 файла .md.
+            ZT_TRUE("заметки посчитаны", sum.notes == 3);
+            ZT_TRUE("вложение посчитано", sum.attachments == 1);
+            ZT_TRUE("объём посчитан", sum.bytes > 0);
+            ZT_TRUE("дата правки есть", sum.lastModified.isValid());
+            ZT_TRUE("дата — в UTC", sum.lastModified.timeSpec() == Qt::UTC);
+            ZT_TRUE("сводка не пуста", !sum.isEmpty());
+        }
+
+        const QString blank = home.path() + QStringLiteral("/пусто-для-сводки");
+        QDir().mkpath(blank);
+        const ZStorage::Summary none = ZStorage::localSummary(blank);
+        ZT_TRUE("пустой каталог — нулевая сводка",
+                none.isEmpty() && !none.lastModified.isValid());
+    }
+
     // --- ЗАМОК ОТПУСКАЕТСЯ СМЕРТЬЮ ОБЪЕКТА ---------------------------------
     {
         const QString root = home.path() + QStringLiteral("/замок");

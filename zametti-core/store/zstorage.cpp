@@ -54,6 +54,30 @@ ZStorage::DirKind ZStorage::inspect(const QString& dir) {
                : DirKind::Foreign;
 }
 
+ZStorage::Summary ZStorage::localSummary(const QString& root) {
+    Summary out;
+    // Один проход плоского каталога, без разбора заметок: .md с валидным id —
+    // заметка, прочие файлы с валидным id — вложения; служебное (zametti.json,
+    // .zametti/, history/) отсеивается тем же вопросом «а id ли это».
+    const QFileInfoList files = QDir(QDir::cleanPath(root))
+                                    .entryInfoList(QDir::Files | QDir::Hidden);
+    for (const QFileInfo& info : files) {
+        const QString name = info.fileName();
+        const qsizetype dot = name.lastIndexOf(QLatin1Char('.'));
+        if (dot <= 0) continue;
+        if (!isValidNoteId(name.left(dot).toStdString())) continue;
+        if (name.endsWith(QStringLiteral(".md")))
+            ++out.notes;
+        else
+            ++out.attachments;
+        out.bytes += info.size();
+        const QDateTime touched = info.lastModified().toUTC();
+        if (!out.lastModified.isValid() || touched > out.lastModified)
+            out.lastModified = touched;
+    }
+    return out;
+}
+
 ZStorage::ZStorage(const QString& root)
     : root_(QDir::cleanPath(root)), store_(isStoreRoot(QDir::cleanPath(root))) {
     settle_.setSingleShot(true);

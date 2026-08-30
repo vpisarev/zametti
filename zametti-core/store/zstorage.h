@@ -36,6 +36,7 @@
 #include "znote.h"
 #include "zsystem.h"
 
+#include <QDateTime>
 #include <QFileSystemWatcher>
 #include <QHash>
 #include <QJsonObject>
@@ -181,6 +182,21 @@ public:
         Foreign,  // каталог непуст, а хранилища в нём нет
     };
     static DirKind inspect(const QString& dir);
+
+    // СВОДКА ХРАНИЛИЩА ДЛЯ ПОКАЗА — суммы, не перечисление (решение владельца):
+    // сколько заметок, сколько вложений, объём и последняя правка. Носит её
+    // Config (обе стороны), считают localSummary и probeCloud.
+    struct Summary {
+        int notes = 0;
+        int attachments = 0;
+        qint64 bytes = 0;
+        QDateTime lastModified;   // UTC; невалидно — смотреть было не на что
+        bool isEmpty() const { return notes == 0 && attachments == 0 && bytes == 0; }
+    };
+    // Локальная сводка ОДНИМ проходом каталога, без открытия хранилища и без
+    // разбора заметок: диалог показывает и чужие строки списка, а им замок и
+    // reload() ни к чему. Пустой или чужой каталог — нулевая сводка.
+    static Summary localSummary(const QString& root);
 
     // Корень приводится к чистому виду ОДИН РАЗ, у двери: дальше он расходится
     // по всей программе, и «vpnotes//<id>.md» не равен по строке «vpnotes/<id>.md».
@@ -854,6 +870,12 @@ public:
         // (решение владельца 28.08.2026).
         int timeoutMs = 30000;
 
+        // ГЛОБАЛЬНАЯ СВОДКА ОБЕИХ СТОРОН (решение владельца, 30.08.2026):
+        // локальную заполняет localSummary, облачную — probeCloud. Это показ,
+        // а не формат: ни в cloud.json, ни в строку списка они не уезжают.
+        Summary local;
+        Summary cloud;
+
         // «Облако настроено?» и «запись пуста?» — РАЗНЫЕ вопросы; прежний
         // isEmpty() с двумя смыслами не живёт.
         bool hasCloudAddress() const { return !cloudUrl.isEmpty() || !cloudDir.isEmpty(); }
@@ -988,6 +1010,9 @@ public:
         int notes = 0;            // журналов в листинге
         int attachments = 0;
         qint64 bytes = 0;         // объём по шифротексту
+        QDateTime lastModified;   // самая свежая метка листинга, UTC
+        // Та же сводка одной структурой — для Config::cloud.
+        Summary summary() const { return Summary{notes, attachments, bytes, lastModified}; }
     };
     static bool probeCloud(const Config& cfg, const QString& serverPassword,
                            const QString& encryptionPassword, CloudProbe* out,

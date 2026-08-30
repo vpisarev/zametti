@@ -67,6 +67,7 @@ bool FolderCloud::list(QVector<Entry>* out, QString* error) {
         entry.name = info.fileName();
         entry.size = bytes.size();
         entry.etag = etagOf(bytes);
+        entry.lastModified = info.lastModified().toUTC();
         out->append(entry);
     }
     return true;
@@ -185,6 +186,30 @@ bool FolderCloud::del(const QString& name, QString* error) {
     if (error != nullptr)
         *error = QStringLiteral("folder remote: cannot remove %1: %2").arg(name, why);
     return false;
+}
+
+bool FolderCloud::removeTree(QString* error) {
+    // По одному, но БЕЗ листинга-с-чтением (etag там считается по содержимому,
+    // а стиранию метки не нужны) и строго через дверь ZSystem. Каталог
+    // остаётся пустым: снос каталогов — не сила этого адаптера, и обещание
+    // removeTree этого не требует.
+    ++traffic_.requests;
+    if (tripped(QStringLiteral("del"), error)) return false;
+    const QDir dir(dir_);
+    if (!dir.exists()) return true;   // облака и так нет — удача
+    const ZSystem door = files();
+    for (const QFileInfo& info :
+         dir.entryInfoList(QDir::Files | QDir::Hidden)) {
+        ++counters_.dels;
+        QString why;
+        if (!door.removeForever(info.absoluteFilePath(), &why)) {
+            if (error != nullptr)
+                *error = QStringLiteral("folder cloud: cannot remove %1: %2")
+                             .arg(info.fileName(), why);
+            return false;
+        }
+    }
+    return true;
 }
 
 bool FolderCloud::mkdirOnce(QString* error) {

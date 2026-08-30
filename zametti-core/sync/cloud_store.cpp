@@ -11,6 +11,16 @@ void CloudStore::getMany(const QStringList& names, QHash<QString, Fetched>* out)
     }
 }
 
+bool CloudStore::removeTree(QString* error) {
+    // Дефолт — по одному: у плоского пространства имён другого общего пути
+    // нет. Пустое облако (или недостижимый листинг пустого) — решает листинг.
+    QVector<Entry> listing;
+    if (!list(&listing, error)) return false;
+    for (const Entry& e : listing)
+        if (!del(e.name, error)) return false;
+    return true;
+}
+
 bool CloudStore::putIfMatch(const QString& name, const QByteArray& bytes,
                              const QString& expectedEtag, QString* etag,
                              bool* preconditionFailed, QString* error) {

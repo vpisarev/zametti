@@ -17,6 +17,7 @@
 #ifndef ZAMETTI_SYNC_CLOUD_STORE_H
 #define ZAMETTI_SYNC_CLOUD_STORE_H
 
+#include <QDateTime>
 #include <QHash>
 #include <QString>
 #include <QStringList>
@@ -29,7 +30,8 @@ public:
     struct Entry {
         QString name;
         qint64 size = 0;
-        QString etag;      // подсказка сервера; пусто — сервер её не дал
+        QString etag;             // подсказка сервера; пусто — сервер её не дал
+        QDateTime lastModified;   // метка сервера, UTC; невалидна — не назвал
     };
 
     // Сколько это стоило по проводу. Запросы считаются все, включая неудачные.
@@ -80,6 +82,16 @@ public:
     // Завести удалённый каталог, если его ещё нет. Идемпотентно и дёшево:
     // зовётся раз за прогон, «уже есть» — не ошибка.
     virtual bool mkdirOnce(QString* error = nullptr) = 0;
+
+    // СНЕСТИ ВСЁ ОБЛАКО ОДНИМ ЖЕСТОМ (стирание, §2.6): после удачи в облаке
+    // не остаётся ни одного объекта. Дефолт — листинг и удаление по одному
+    // (годится и S3-подобным без каталогов); WebDAV делает это ОДНИМ запросом
+    // DELETE по коллекции — стирать сотни блобов по одному в разы медленнее
+    // (решение владельца, 30.08.2026). Сам каталог после удачи может как
+    // исчезнуть, так и остаться пустым — это сила адаптера, не обещание;
+    // кому нужен пустой, зовёт mkdirOnce следом. Идемпотентно: пустое или
+    // отсутствующее облако — уже удача.
+    virtual bool removeTree(QString* error = nullptr);
 
     const Traffic& traffic() const { return traffic_; }
     void resetTraffic() { traffic_ = Traffic(); }

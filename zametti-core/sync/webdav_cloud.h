@@ -64,6 +64,8 @@ public:
                     bool* preconditionFailed, QString* error = nullptr) override;
     bool del(const QString& name, QString* error = nullptr) override;
     bool mkdirOnce(QString* error = nullptr) override;
+    // Один DELETE по коллекции вместо N по блобам — см. .cpp.
+    bool removeTree(QString* error = nullptr) override;
 
     const Config& config() const { return config_; }
 

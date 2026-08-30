@@ -638,6 +638,10 @@ bool ZStorage::probeCloud(const Config& cfg, const QString& serverPassword,
         QSet<QString> attachmentIds;
         for (const CloudStore::Entry& e : listing) {
             probe.bytes += e.size;
+            // Самая свежая метка листинга — «когда облако правили» для сводки.
+            if (e.lastModified.isValid() &&
+                (!probe.lastModified.isValid() || e.lastModified > probe.lastModified))
+                probe.lastModified = e.lastModified;
             if (e.name == QLatin1String(Identity::kFile)) {
                 probe.hasManifest = true;
                 continue;

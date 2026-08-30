@@ -36,6 +36,7 @@ public:
             entry.name = it.key();
             entry.size = it.value().size();
             entry.etag = etagOf(it.value());
+            entry.lastModified = stamps_.value(it.key());
             out->append(entry);
         }
         return true;
@@ -65,6 +66,7 @@ public:
             return false;
         }
         blobs_.insert(name, bytes);
+        stamps_.insert(name, QDateTime::currentDateTimeUtc());
         traffic_.bytesUp += bytes.size();
         if (etag != nullptr) *etag = etagOf(bytes);
         return true;
@@ -90,6 +92,7 @@ public:
         Q_UNUSED(error);
         ++traffic_.requests;
         blobs_.remove(name);   // идемпотентно, как везде
+        stamps_.remove(name);
         return true;
     }
 
@@ -109,6 +112,7 @@ protected:
     }
 
     QMap<QString, QByteArray> blobs_;
+    QMap<QString, QDateTime> stamps_;
     bool made_ = false;
 };
 
@@ -146,6 +150,9 @@ inline void checkCloudContract(zametti::CloudStore& cloud, const char* who,
         ZT_TRUE(say("размер").c_str(), listing.first().size == body.size());
         ZT_EQ(say("etag листинга — тот же, что у put").c_str(), etag.toStdString(),
               listing.first().etag.toStdString());
+        // Дата — для сводки окна хранилищ; свежезалитый блоб обязан её нести.
+        ZT_TRUE(say("листинг несёт дату модификации").c_str(),
+                listing.first().lastModified.isValid());
     }
 
     QByteArray back;
@@ -204,6 +211,20 @@ inline void checkCloudContract(zametti::CloudStore& cloud, const char* who,
             cloud.del(QStringLiteral("01aaaa.log"), &error));
     ZT_TRUE(say("после del листинг пуст").c_str(), cloud.list(&listing, &error));
     ZT_TRUE(say("совсем пуст").c_str(), listing.isEmpty());
+
+    // СНОС ВСЕГО ОБЛАКА: после removeTree не остаётся ни одного объекта, а
+    // mkdirOnce возвращает облако к жизни. Повтор по пустому — не беда.
+    ZT_TRUE(say("блоб для сноса 1").c_str(),
+            cloud.put(QStringLiteral("02bbbb.zm"), body, nullptr, &error));
+    ZT_TRUE(say("блоб для сноса 2").c_str(),
+            cloud.put(QStringLiteral("03cccc.zm"), body, nullptr, &error));
+    ZT_TRUE(say("removeTree прошёл").c_str(), cloud.removeTree(&error));
+    ZT_TRUE(say("после removeTree можно жить дальше").c_str(),
+            cloud.mkdirOnce(&error));
+    ZT_TRUE(say("листинг после сноса удаётся").c_str(), cloud.list(&listing, &error));
+    ZT_TRUE(say("и пуст").c_str(), listing.isEmpty());
+    ZT_TRUE(say("removeTree по пустому — не беда").c_str(), cloud.removeTree(&error));
+    ZT_TRUE(say("и снова можно жить").c_str(), cloud.mkdirOnce(&error));
 
     // Имена с путём внутрь не пускаются. Проверяем именем, которым МОЖНО
     // сбежать вверх (родительский каталог существует, запись бы удалась):

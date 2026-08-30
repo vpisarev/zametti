@@ -177,12 +177,14 @@ bool WebDavCloud::list(QVector<Entry>* out, QString* error) {
     request.setRawHeader("Depth", "1");
     request.setHeader(QNetworkRequest::ContentTypeHeader,
                       QStringLiteral("application/xml; charset=utf-8"));
-    // Спрашиваем ровно три свойства: имя, размер, etag. Allprop заставил бы
-    // сервер считать и слать лишнее на каждый блоб.
+    // Спрашиваем ровно четыре свойства: имя, размер, etag, дату. Allprop
+    // заставил бы сервер считать и слать лишнее на каждый блоб. Дата — для
+    // сводки «когда облако правили» в окне хранилищ; движку синка она не
+    // судья (истина — хеш, mtime и etag — подсказки).
     const QByteArray body =
         "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
         "<d:propfind xmlns:d=\"DAV:\"><d:prop>"
-        "<d:getcontentlength/><d:getetag/><d:resourcetype/>"
+        "<d:getcontentlength/><d:getetag/><d:getlastmodified/><d:resourcetype/>"
         "</d:prop></d:propfind>";
     std::unique_ptr<QNetworkReply, void (*)(QNetworkReply*)> reply(
         impl_->net.sendCustomRequest(request, "PROPFIND", body),
@@ -229,6 +231,13 @@ bool WebDavCloud::list(QVector<Entry>* out, QString* error) {
                 current.size = reader.readElementText().toLongLong();
             } else if (name == QLatin1String("getetag")) {
                 current.etag = tidyEtag(reader.readElementText());
+            } else if (name == QLatin1String("getlastmodified")) {
+                // RFC 1123 («Tue, 30 Aug 2026 12:00:00 GMT») — обязательный
+                // формат DAV; не разобралось — метка честно пустая.
+                current.lastModified =
+                    QDateTime::fromString(reader.readElementText(),
+                                          Qt::RFC2822Date)
+                        .toUTC();
             } else if (name == QLatin1String("collection")) {
                 isCollection = true;
             }
@@ -410,6 +419,28 @@ bool WebDavCloud::del(const QString& name, QString* error) {
     if (reply->error() != QNetworkReply::NoError) {
         if (error != nullptr)
             *error = httpTrouble(QStringLiteral("DELETE %1").arg(name), reply.get());
+        return false;
+    }
+    return true;
+}
+
+bool WebDavCloud::removeTree(QString* error) {
+    // ОДИН запрос: DELETE по коллекции стирает её рекурсивно (RFC 4918
+    // §9.6.1) — стирать сотни блобов по одному в разы медленнее (решение
+    // владельца, 30.08.2026). 404 — облака и так нет, это удача.
+    ++traffic_.requests;
+    QNetworkRequest request(config_.base);
+    authorize(&request);
+    std::unique_ptr<QNetworkReply, void (*)(QNetworkReply*)> reply(
+        impl_->net.deleteResource(request),
+        [](QNetworkReply* r) { r->deleteLater(); });
+    waitFor(reply.get(), config_.timeoutMs);
+    const int code =
+        reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    if (code == 404) return true;
+    if (reply->error() != QNetworkReply::NoError) {
+        if (error != nullptr)
+            *error = httpTrouble(QStringLiteral("DELETE (collection)"), reply.get());
         return false;
     }
     return true;
