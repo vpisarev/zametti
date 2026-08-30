@@ -50,17 +50,17 @@ class TestDialog : public StoreManagerDialog {
 public:
     using StoreManagerDialog::StoreManagerDialog;
     using StoreManagerDialog::addFolder;
-    using StoreManagerDialog::model_;
+    using StoreManagerDialog::stores_;
     using StoreManagerDialog::render;
     using StoreManagerDialog::browseButton_;
     using StoreManagerDialog::formFrame_;
 
     int nextAnswer = -1;   // -1 — отказ (последняя кнопка)
-    StoreManagerModel::Question lastQuestion;
+    ZStorageManager::Question lastQuestion;
     QString nextFolder;    // что «выберет» человек в системном диалоге
     int folderAsks = 0;
 
-    int ask(const StoreManagerModel::Question& question) override {
+    int ask(const ZStorageManager::Question& question) override {
         lastQuestion = question;
         return nextAnswer >= 0 ? nextAnswer : int(question.choices.size()) - 1;
     }
@@ -69,10 +69,10 @@ public:
         return nextFolder;
     }
 
-    // Правка поля так, как её видит модель: setText не шлёт textEdited, и
-    // прямой setText мимо модели был бы враньём набора.
-    void type(StoreManagerModel::FieldId which, const QString& text) {
-        model_.edit(which, text);
+    // Правка поля так, как её видит менеджер: setText не шлёт textEdited, и
+    // прямой setText мимо менеджера был бы враньём набора.
+    void type(ZStorageManager::FieldId which, const QString& text) {
+        stores_.edit(which, text);
         render();
     }
 };
@@ -172,10 +172,10 @@ void checkCreateFromCloud() {
             statusText(dialog).contains(QStringLiteral("press +")));
     dialog.addFolder(dest);
     ZT_EQ("строка добавилась", std::string("1"), std::to_string(stores.size()));
-    dialog.type(StoreManagerModel::FieldId::Server, cloud);
+    dialog.type(ZStorageManager::FieldId::Server, cloud);
 
     // Неверный пароль — отказ ДО первой записи: каркас не заводится.
-    dialog.type(StoreManagerModel::FieldId::EncryptionPassword, QStringLiteral("не тот"));
+    dialog.type(ZStorageManager::FieldId::EncryptionPassword, QStringLiteral("не тот"));
     dialog.nextAnswer = 0;   // Create
     dialog.findChild<QPushButton*>(QStringLiteral("openStore"))->click();
     ZT_TRUE("создание дождалось", waitIdle(dialog));
@@ -184,7 +184,7 @@ void checkCreateFromCloud() {
     ZT_TRUE("каркас не заведён", ZStorage::inspect(dest) == ZStorage::DirKind::Empty);
 
     // Верный пароль — голова приехала, вердикт зовёт переключиться.
-    dialog.type(StoreManagerModel::FieldId::EncryptionPassword,
+    dialog.type(ZStorageManager::FieldId::EncryptionPassword,
                 QStringLiteral("пароль-шифра"));
     dialog.findChild<QPushButton*>(QStringLiteral("openStore"))->click();
     ZT_TRUE("бутстрап дождался", waitIdle(dialog));
@@ -270,7 +270,7 @@ void checkCheckOnMissingCloudFolder() {
     stores.remember(entry);
     auto secrets = std::make_shared<FakeSecrets>();
     TestDialog dialog(nullptr, stores, QString(), secrets, kTiny);
-    dialog.type(StoreManagerModel::FieldId::Server,
+    dialog.type(ZStorageManager::FieldId::Server,
                 cloudHome.root() + QStringLiteral("/этой-папки-нет"));
     dialog.findChild<QPushButton*>(QStringLiteral("check"))->click();
     ZT_TRUE("проверка дождалась", waitIdle(dialog));
@@ -302,14 +302,14 @@ void checkOpenAppliesPendingCloud() {
     stores.remember(entry);
 
     TestDialog dialog(nullptr, stores, QString(), secrets, kTiny);
-    dialog.type(StoreManagerModel::FieldId::Server, cloud);
-    dialog.type(StoreManagerModel::FieldId::EncryptionPassword, QStringLiteral("пароль"));
+    dialog.type(ZStorageManager::FieldId::Server, cloud);
+    dialog.type(ZStorageManager::FieldId::EncryptionPassword, QStringLiteral("пароль"));
     dialog.findChild<QPushButton*>(QStringLiteral("check"))->click();
     ZT_TRUE("разведка дождалась", waitIdle(dialog));
     ZT_TRUE("облако пустое, просят повтор",
             !dialog.findChild<QLineEdit*>(QStringLiteral("password2"))->isHidden());
 
-    dialog.type(StoreManagerModel::FieldId::Repeat, QStringLiteral("пароль"));
+    dialog.type(ZStorageManager::FieldId::Repeat, QStringLiteral("пароль"));
     dialog.findChild<QPushButton*>(QStringLiteral("openStore"))->click();
     ZT_TRUE("применение дождалось", waitIdle(dialog));
     ZT_EQ("окно закрылось переключением", s(QDir::cleanPath(root)),
@@ -343,8 +343,8 @@ void checkSealFreshCloudAndChangePassword() {
     TestDialog dialog(nullptr, stores, QString(), secrets, kTiny);
     auto* password2 = dialog.findChild<QLineEdit*>(QStringLiteral("password2"));
     auto* check = dialog.findChild<QPushButton*>(QStringLiteral("check"));
-    dialog.type(StoreManagerModel::FieldId::Server, cloud);
-    dialog.type(StoreManagerModel::FieldId::EncryptionPassword,
+    dialog.type(ZStorageManager::FieldId::Server, cloud);
+    dialog.type(ZStorageManager::FieldId::EncryptionPassword,
                 QStringLiteral("первый-пароль"));
 
     // Check №1: разведка. Облако пустое, конверт НЕ уехал, показался повтор.
@@ -357,13 +357,13 @@ void checkSealFreshCloudAndChangePassword() {
         QDir(shotDir()).filePath(QStringLiteral("store-manager-свежее-облако.png")));
 
     // Опечатка в повторе — отказ на месте, без работы.
-    dialog.type(StoreManagerModel::FieldId::Repeat, QStringLiteral("первый-парол"));
+    dialog.type(ZStorageManager::FieldId::Repeat, QStringLiteral("первый-парол"));
     check->click();
     ZT_TRUE("несовпавшие пароли отвергнуты",
             statusText(dialog).contains(QStringLiteral("match")));
 
     // Check №2 с пройденным повтором — запечатывание.
-    dialog.type(StoreManagerModel::FieldId::Repeat, QStringLiteral("первый-пароль"));
+    dialog.type(ZStorageManager::FieldId::Repeat, QStringLiteral("первый-пароль"));
     check->click();
     ZT_TRUE("запечатывание дождалось", waitIdle(dialog));
     ZT_TRUE(("конверт отчеканен: " + s(statusText(dialog))).c_str(),
@@ -378,7 +378,7 @@ void checkSealFreshCloudAndChangePassword() {
         QFile f(cloud + QStringLiteral("/keyfile"));
         return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
     }();
-    dialog.type(StoreManagerModel::FieldId::EncryptionPassword,
+    dialog.type(ZStorageManager::FieldId::EncryptionPassword,
                 QStringLiteral("второй-пароль"));
     dialog.nextAnswer = 0;   // [Change password]
     dialog.findChild<QPushButton*>(QStringLiteral("resetCloud"))->click();

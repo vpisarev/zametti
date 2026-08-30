@@ -1,4 +1,5 @@
-// StoreManagerModel: снимки, жесты и автоматы окна хранилищ — БЕЗ виджетов.
+// ZStorageManager, оконная часть: снимки, жесты и автоматы окна хранилищ —
+// БЕЗ виджетов.
 //
 // Имена случаев — коды клеток матрицы (§1 docs/zametti-store-window-matrix.md):
 // буква папки (V хранилище, E пустая, M нет, X чужая) + облако (L- каталог не
@@ -6,8 +7,6 @@
 // что видели в облаке (E пусто, V наше, X чужое, ? не смотрели) + пароль
 // шифрования (P набран, K ключ в связке, N нет) + o — строка открыта.
 // Тест и документ читаются друг через друга.
-
-#include "store_manager_model.h"
 
 #include "zstorage.h"
 #include "zstorage_manager.h"
@@ -27,7 +26,9 @@ using namespace zametti;
 
 namespace {
 
-using Model = StoreManagerModel;
+// После слияния (решение владельца, 30.08.2026) модель окна — сам менеджер;
+// псевдоним оставлен, чтобы случаи читались прежним языком матрицы.
+using Model = ZStorageManager;
 using Known = ZStorageManager::Known;
 
 std::string s(const QString& q) { return q.toStdString(); }
@@ -44,7 +45,8 @@ QString makeStore(const QString& root) {
 void checkZeroAndEmptiedList() {
     // Zero: две живые кнопки, слова вместо молчания (беда G).
     ZStorageManager stores;
-    Model model(stores, QString());
+    stores.beginSession();
+    Model& model = stores;
     Model::Snapshot snap = model.snapshot();
     ZT_TRUE("Zero: «+» жив", snap.add.enabled);
     ZT_TRUE("Zero: Close жив", snap.close.enabled);
@@ -75,7 +77,8 @@ void checkZeroAndEmptiedList() {
 void checkAddFolder() {
     zt::MiniStore home;
     ZStorageManager stores;
-    Model model(stores, QString());
+    stores.beginSession();
+    Model& model = stores;
 
     // V: хранилище добавляется и выбирается.
     const QString store = home.root() + QStringLiteral("/хранилище");
@@ -116,7 +119,8 @@ void checkButtonsTableA() {
     ZStorageManager stores(secrets);
     const QString store = home.root() + QStringLiteral("/хранилище");
     ZT_TRUE("хранилище завелось", makeStore(store).isEmpty());
-    Model model(stores, QString());
+    stores.beginSession();
+    Model& model = stores;
     model.addFolder(store);
 
     // VL-N: облака нет — Check и Reset погашены, Open жив.
@@ -213,7 +217,9 @@ void checkOpenRow() {
     ZStorage::Config row;
     row.root = store;
     stores.remember(row);
-    Model model(stores, store);
+    stores.setOpenRoot(store);
+    stores.beginSession();
+    Model& model = stores;
     const Model::Snapshot snap = model.snapshot();
     ZT_TRUE("строка открытого выбрана", snap.rows.first().open);
     ZT_TRUE("open жив", snap.open.enabled);
@@ -238,7 +244,8 @@ void checkFactLines() {
     ZStorageManager stores;
     const QString store = home.root() + QStringLiteral("/хранилище");
     ZT_TRUE("хранилище завелось", makeStore(store).isEmpty());
-    Model model(stores, QString());
+    stores.beginSession();
+    Model& model = stores;
     model.addFolder(store);
 
     {
@@ -306,7 +313,8 @@ void checkFreshnessAutomaton() {
     const QString other = home.root() + QStringLiteral("/второе");
     ZT_TRUE("хранилище завелось", makeStore(store).isEmpty());
     ZT_TRUE("второе завелось", makeStore(other).isEmpty());
-    Model model(stores, QString());
+    stores.beginSession();
+    Model& model = stores;
     model.addFolder(store);
     model.addFolder(other);
     // Выбор — на первом.
@@ -361,7 +369,8 @@ void checkResetRoads() {
     const QString store = home.root() + QStringLiteral("/хранилище");
     ZT_TRUE("хранилище завелось", makeStore(store).isEmpty());
     const QString storeId = ZStorage(store).identity().storeId();
-    Model model(stores, QString());
+    stores.beginSession();
+    Model& model = stores;
     model.addFolder(store);
     const QString cloud = cloudHome.root() + QStringLiteral("/облако");
     model.edit(Model::FieldId::Server, cloud);
@@ -437,16 +446,17 @@ void checkAddressNeverBitten() {
 
     const auto shownAfterReopen = [&](const QString& server, const QString& dir)
         -> std::pair<QString, QString> {
-        // Набрали — окно умерло (stash) — «новый запуск»: свежая модель со
-        // СВОИМИ черновиками читает то, что сохранилось в строке.
-        {
-            Model typing(stores, QString());
-            typing.select(0);
-            typing.edit(Model::FieldId::Server, server);
-            typing.edit(Model::FieldId::ServerDir, dir);
-            typing.stashDrafts();
-        }
-        Model reopened(stores, QString());
+        // Набрали — окно умерло (stash) — «новый запуск»: СВЕЖИЙ менеджер
+        // без черновиков читает то, что сохранилось в строке (через JSON —
+        // ровно дорога state.json).
+        stores.beginSession();
+        stores.select(0);
+        stores.edit(Model::FieldId::Server, server);
+        stores.edit(Model::FieldId::ServerDir, dir);
+        stores.stashDrafts();
+        Model reopened;
+        reopened.storesFromJson(stores.storesToJson());
+        reopened.beginSession();
         reopened.select(0);
         const Model::Snapshot snap = reopened.snapshot();
         return {snap.server.text, snap.serverDir.text};
@@ -473,7 +483,9 @@ void checkAddressNeverBitten() {
     legacy.root = store;
     legacy.cloudUrl = QStringLiteral("https://webdav.yandex.ru/зам/01abcdef/");
     stores.remember(legacy);
-    Model reopened(stores, QString());
+    Model reopened;
+    reopened.storesFromJson(stores.storesToJson());
+    reopened.beginSession();
     reopened.select(0);
     ZT_EQ("наследный адрес — целиком, как хранится",
           std::string("https://webdav.yandex.ru/зам/01abcdef/"),
@@ -499,19 +511,17 @@ void checkSclerosisCured() {
     ZStorage::Config row;
     row.root = store;
     stores.remember(row);
-    {
-        Model typing(stores, QString());
-        typing.select(0);
-        typing.edit(Model::FieldId::Server,
-                    QStringLiteral("https://опечатка.example/webdav"));
-        typing.edit(Model::FieldId::ServerDir, QStringLiteral("vpnotes2"));
-        typing.edit(Model::FieldId::Login, QStringLiteral("u132748"));
-        // Никакой работы: связи не было, и это не повод всё забыть.
-        typing.stashDrafts();
-    }
-    ZStorageManager restored;
-    restored.storesFromJson(stores.storesToJson());   // выход → state.json → запуск
-    Model reopened(restored, QString());
+    stores.beginSession();
+    stores.select(0);
+    stores.edit(Model::FieldId::Server,
+                QStringLiteral("https://опечатка.example/webdav"));
+    stores.edit(Model::FieldId::ServerDir, QStringLiteral("vpnotes2"));
+    stores.edit(Model::FieldId::Login, QStringLiteral("u132748"));
+    // Никакой работы: связи не было, и это не повод всё забыть.
+    stores.stashDrafts();
+    Model reopened;
+    reopened.storesFromJson(stores.storesToJson());   // выход → state.json → запуск
+    reopened.beginSession();
     reopened.select(0);
     const Model::Snapshot snap = reopened.snapshot();
     ZT_EQ("сервер пережил выход", std::string("https://опечатка.example/webdav"),
@@ -533,7 +543,8 @@ void checkStubsNeverRead() {
     secrets->setServerPassword(storeId, QStringLiteral("пароль"), nullptr);
     secrets->reads = 0;
 
-    Model model(stores, QString());
+    stores.beginSession();
+    Model& model = stores;
     model.addFolder(store);
     model.edit(Model::FieldId::Server, QStringLiteral("https://host/dav"));
     const Model::Snapshot snap = model.snapshot();

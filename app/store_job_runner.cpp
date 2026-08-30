@@ -10,9 +10,9 @@ namespace zametti {
 
 namespace {
 
-using Outcome = StoreManagerModel::Outcome;
-using CloudSeen = StoreManagerModel::CloudSeen;
-using Job = StoreManagerModel::Job;
+using Outcome = ZStorageManager::Outcome;
+using CloudSeen = ZStorageManager::CloudSeen;
+using Job = ZStorageManager::Job;
 
 // «Коллекции ещё нет» — это ПУСТОЕ облако, а не беда: человек назвал папку,
 // которой на сервере пока не существует, и её заведёт первая заливка

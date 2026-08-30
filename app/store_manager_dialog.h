@@ -1,15 +1,14 @@
 // Окно управления хранилищами — ТОНКОЕ: раскладка и исполнение, и больше
 // ничего (§2.10 разбора, docs/zametti-store-window-matrix.md).
 //
-// Решения живут не здесь:
-//   ZStorageManager — список хранилищ устройства и факты строк (ядро);
-//   StoreManagerModel — вид: выбор, черновики, подписи и доступность кнопок,
-//       две строки фактов; на жест отвечает НАМЕРЕНИЕМ;
-//   StoreJobRunner — работы над облаком, синхронно и без виджетов.
+// Решения живут не здесь, а в ZStorageManager (ядро): список хранилищ
+// устройства, факты строк, выбор, черновики, подписи и доступность кнопок,
+// две строки фактов; на жест он отвечает НАМЕРЕНИЕМ. Окно спрашивает у него
+// ВСЁ (решение владельца, 30.08.2026: один класс обслуживает диалог целиком).
 //
 // Окну остаётся четыре обязанности: собрать виджеты, показать снимок
-// (render — единственная дорога от модели к экрану), спросить человека, когда
-// модель просит переспрос, и увести работу в рабочий поток.
+// (render — единственная дорога от менеджера к экрану), спросить человека,
+// когда менеджер просит переспрос, и увести работу в рабочий поток.
 //
 // ПОЧЕМУ ТАК. Прежнее окно решало всё само, и разбор нашёл в нём 21 беду —
 // добрая половина одного рода: доступность кнопок считалась в семи местах
@@ -33,7 +32,6 @@
 #define ZAMETTI_STORE_MANAGER_DIALOG_H
 
 #include "store_job_runner.h"
-#include "store_manager_model.h"
 
 #include "keyfile.h"
 #include "secret_store.h"
@@ -91,11 +89,6 @@ public:
     // строке. Обвязка отдаёт сюда attachStore с пустым корнем.
     void setDetachCurrent(std::function<void()> hook) { detachCurrent_ = std::move(hook); }
 
-    // Сеансовые черновики: набранное переживает переоткрытие окна, пока жива
-    // программа. НА ДИСК НЕ ИДЁТ НИКОГДА — пароли только в связку и только
-    // после успеха.
-    void adoptDrafts(QHash<QString, StoreManagerModel::Draft>* drafts);
-
 protected:
     // Занятое окно не закрывается ТОЛЬКО пока рабочий поток держит хранилище;
     // ждать его — обязанность деструктора, а не человека.
@@ -103,11 +96,11 @@ protected:
     void accept() override;
     bool eventFilter(QObject* watched, QEvent* event) override;
 
-    // ЕДИНСТВЕННАЯ ДОРОГА ОТ МОДЕЛИ К ЭКРАНУ. Всё видимое приходит одним
+    // ЕДИНСТВЕННАЯ ДОРОГА ОТ МЕНЕДЖЕРА К ЭКРАНУ. Всё видимое приходит одним
     // снимком; своих решений окно не принимает.
     void render();
-    // Исполнить намерение модели: спросить, сделать работу, переключиться.
-    void act(const StoreManagerModel::Reaction& reaction);
+    // Исполнить намерение менеджера: спросить, сделать работу, переключиться.
+    void act(const ZStorageManager::Reaction& reaction);
     // Переспрос; возвращает индекс выбранной кнопки (последняя — отказ).
     //
     // ВИРТУАЛЬНЫЙ РАДИ ОБЕЗЬЯНЫ: модальное окно останавливает поток, и
@@ -115,11 +108,11 @@ protected:
     // ткнуть ни в один переспрос — то есть половина жестов осталась бы
     // непроверенной. Тот же довод у askFolder: системный выбор папки обезьяне
     // не показать.
-    virtual int ask(const StoreManagerModel::Question& question);
+    virtual int ask(const ZStorageManager::Question& question);
     virtual QString askFolder();
-    void runJob(const StoreManagerModel::Job& job);
+    void runJob(const ZStorageManager::Job& job);
 
-    void rebuildList(const StoreManagerModel::Snapshot& snap);
+    void rebuildList(const ZStorageManager::Snapshot& snap);
     void placeBrowseButton();
     void addStore();
     // Наборам — те же жесты мимо модальных вопросов и системного выбора папки.
@@ -127,7 +120,7 @@ protected:
     void dropSelected();
     void chooseReset(int road);
 
-    QAction* addEyeToggle(QLineEdit* field, StoreManagerModel::FieldId which);
+    QAction* addEyeToggle(QLineEdit* field, ZStorageManager::FieldId which);
     void startWork(const QString& status, std::function<void()> job,
                    std::function<void()> done);
     void setBusy(bool on);
@@ -138,12 +131,10 @@ protected:
     void stashAll();
 
     ZStorageManager& stores_;
-    StoreManagerModel model_;
     StoreJobRunner runner_;
     std::shared_ptr<SecretStore> secrets_;
     std::function<void()> detachCurrent_;
     Result result_;
-    QHash<QString, StoreManagerModel::Draft> ownDrafts_;
 
     QListWidget* list_ = nullptr;
     QFrame* listFrame_ = nullptr;
@@ -180,8 +171,8 @@ protected:
 
     // --- работа в рабочем потоке (пишется до done, читается после) ---------
     std::shared_ptr<TakenSecrets> taken_;
-    StoreManagerModel::Job runningJob_;
-    StoreManagerModel::Outcome outcome_;
+    ZStorageManager::Job runningJob_;
+    ZStorageManager::Outcome outcome_;
 };
 
 }  // namespace zametti

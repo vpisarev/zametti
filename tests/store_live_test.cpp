@@ -26,7 +26,6 @@
 // модель+работы+движок, ровно те, что зовёт окно.
 
 #include "store_job_runner.h"
-#include "store_manager_model.h"
 
 #include "webdav_cloud.h"
 #include "zstorage.h"
@@ -49,7 +48,9 @@ using namespace zametti;
 
 namespace {
 
-using Model = StoreManagerModel;
+// После слияния модель окна — сам ZStorageManager; псевдоним оставлен ради
+// прежнего языка сценариев.
+using Model = ZStorageManager;
 
 const Keyfile::KdfParams kTiny{1, 1 << 20};
 constexpr char kCollection[] = "zametti-live-scen";
@@ -185,7 +186,8 @@ void runScenarios(const Live& live) {
 
     // ==== 0: хранилище + пустая облачная папка + пароль + Open =============
     {
-        Model model(stores, QString());
+        stores.beginSession();
+        Model& model = stores;
         model.addFolder(localA);
         model.edit(Model::FieldId::Server, live.url);
         model.edit(Model::FieldId::ServerDir, QLatin1String(kCollection));
@@ -240,7 +242,8 @@ void runScenarios(const Live& live) {
     {
         ZStorageManager restored(secrets);
         restored.storesFromJson(stores.storesToJson());   // выход → запуск
-        Model model(restored, QString());
+        restored.beginSession();
+        Model& model = restored;
         model.select(0);
         const Model::Snapshot snap = model.snapshot();
         ZT_EQ("сервер на месте", s(live.url), s(snap.server.text));
@@ -293,7 +296,8 @@ void runScenarios(const Live& live) {
     const QString localB = home.root() + QStringLiteral("/машина-А-переехала");
     ZT_TRUE("папка переехала", QDir().rename(localA, localB));
     {
-        Model model(stores, QString());
+        stores.beginSession();
+        Model& model = stores;
         model.select(0);
         Model::Snapshot snap = model.snapshot();
         ZT_TRUE("путь горит красным", snap.folderMissing);
@@ -340,7 +344,8 @@ void runScenarios(const Live& live) {
     const QString localD = home.root() + QStringLiteral("/машина-Б");
     QDir().mkpath(localD);
     {
-        Model model(stores, QString());
+        stores.beginSession();
+        Model& model = stores;
         model.select(0);
         model.edit(Model::FieldId::Folder, localD);   // жест Browse
         // Пароли — заново, ОБА: у свежей пустой папки нет storeId, и достать
@@ -400,7 +405,8 @@ void runScenarios(const Live& live) {
 
         // --- дорога 1: ключ в связке → [Change password], ноль стираний ----
         {
-            Model model(stores, QString());
+            stores.beginSession();
+            Model& model = stores;
             selectRoot(model, stores, localD);
             const QByteArray journalBefore = blobBytes(journalName);
             const QByteArray keyfileBefore = blobBytes(QStringLiteral("keyfile"));
@@ -442,7 +448,8 @@ void runScenarios(const Live& live) {
             secrets->clearKey(storeId, nullptr);
             secrets->clearEncryptionPassword(storeId, nullptr);
             stores.refresh(localD);
-            Model model(stores, QString());
+            stores.beginSession();
+            Model& model = stores;
             selectRoot(model, stores, localD);
             Model::Reaction ask = model.resetPressed();
             ask = execute(model, runner, *secrets, ask);
@@ -477,7 +484,8 @@ void runScenarios(const Live& live) {
 
         // --- дорога 3: [Erase and disconnect] ------------------------------
         {
-            Model model(stores, QString());
+            stores.beginSession();
+            Model& model = stores;
             selectRoot(model, stores, localD);
             Model::Reaction ask = model.resetPressed();
             ask = execute(model, runner, *secrets, ask);

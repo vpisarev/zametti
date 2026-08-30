@@ -1,5 +1,5 @@
-// Окно хранилищ: раскладка и исполнение. Решения — в модели, работы — в
-// StoreJobRunner; см. шапку store_manager_dialog.h.
+// Окно хранилищ: раскладка и исполнение. Решения — в ZStorageManager,
+// работы — в StoreJobRunner; см. шапку store_manager_dialog.h.
 
 #include "store_manager_dialog.h"
 
@@ -117,9 +117,12 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
                                        const Keyfile::KdfParams& mintParams)
     : QDialog(parent),
       stores_(stores),
-      model_(stores, currentRoot),
       runner_(mintParams),
       secrets_(std::move(secrets)) {
+    // Открытое хранилище менеджеру пока называет окно; после переезда
+    // setOpenRoot в ZApp (attach/detach) параметр currentRoot уйдёт.
+    stores_.setOpenRoot(currentRoot);
+    stores_.beginSession();
     setWindowTitle(QStringLiteral("Storages"));
     // Кегль — из настроек, как у остальной программы: системный дефолт на
     // FullHD-ноуте владельца мельче всего окна (dialog_font.h).
@@ -221,8 +224,8 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
     // копируют не торопясь — просьба владельца); пустое поле наполняется
     // хранимым значением из keyring — затем keychain и служит местом, где
     // свой пароль можно подсмотреть.
-    serverEye_ = addEyeToggle(serverPassword_, StoreManagerModel::FieldId::ServerPassword);
-    passwordEye_ = addEyeToggle(password_, StoreManagerModel::FieldId::EncryptionPassword);
+    serverEye_ = addEyeToggle(serverPassword_, ZStorageManager::FieldId::ServerPassword);
+    passwordEye_ = addEyeToggle(password_, ZStorageManager::FieldId::EncryptionPassword);
     password2Label_ = new QLabel(QStringLiteral("Repeat password"), this);
     password2_ = new QLineEdit(this);
     password2_->setObjectName(QStringLiteral("password2"));
@@ -339,24 +342,24 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
 
     connect(addButton_, &QPushButton::clicked, this, &StoreManagerDialog::addStore);
     connect(removeButton_, &QPushButton::clicked, this,
-            [this] { act(model_.forgetPressed()); });
+            [this] { act(stores_.forgetPressed()); });
     connect(openButton_, &QPushButton::clicked, this,
-            [this] { act(model_.openPressed()); });
+            [this] { act(stores_.openPressed()); });
     connect(list_, &QListWidget::currentRowChanged, this, [this](int row) {
-        if (busy_ || row < 0 || row == model_.selected()) return;
-        model_.select(row);
+        if (busy_ || row < 0 || row == stores_.selected()) return;
+        stores_.select(row);
         render();
     });
     connect(list_, &QListWidget::itemDoubleClicked, this,
-            [this](QListWidgetItem*) { act(model_.openPressed()); });
+            [this](QListWidgetItem*) { act(stores_.openPressed()); });
     connect(checkButton_, &QPushButton::clicked, this,
-            [this] { act(model_.checkPressed()); });
+            [this] { act(stores_.checkPressed()); });
     connect(resetButton_, &QPushButton::clicked, this,
-            [this] { act(model_.resetPressed()); });
+            [this] { act(stores_.resetPressed()); });
     connect(browseButton_, &QPushButton::clicked, this, [this] {
         const QString dir = askFolder();
         if (dir.isEmpty()) return;
-        model_.edit(StoreManagerModel::FieldId::Folder, dir);
+        stores_.edit(ZStorageManager::FieldId::Folder, dir);
         render();
     });
 
@@ -367,19 +370,19 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
     // textEdited, а НЕ textChanged: программный setText внутри render() не
     // должен выглядеть правкой человека — иначе заглушка связки стиралась бы
     // сама собой, и «пароль здесь есть» превращалось бы в красное требование.
-    const auto wire = [this](QLineEdit* field, StoreManagerModel::FieldId which) {
+    const auto wire = [this](QLineEdit* field, ZStorageManager::FieldId which) {
         connect(field, &QLineEdit::textEdited, this, [this, which](const QString& text) {
-            model_.edit(which, text);
+            stores_.edit(which, text);
             render();
         });
     };
-    wire(folder_, StoreManagerModel::FieldId::Folder);
-    wire(server_, StoreManagerModel::FieldId::Server);
-    wire(serverDir_, StoreManagerModel::FieldId::ServerDir);
-    wire(user_, StoreManagerModel::FieldId::Login);
-    wire(serverPassword_, StoreManagerModel::FieldId::ServerPassword);
-    wire(password_, StoreManagerModel::FieldId::EncryptionPassword);
-    wire(password2_, StoreManagerModel::FieldId::Repeat);
+    wire(folder_, ZStorageManager::FieldId::Folder);
+    wire(server_, ZStorageManager::FieldId::Server);
+    wire(serverDir_, ZStorageManager::FieldId::ServerDir);
+    wire(user_, ZStorageManager::FieldId::Login);
+    wire(serverPassword_, ZStorageManager::FieldId::ServerPassword);
+    wire(password_, ZStorageManager::FieldId::EncryptionPassword);
+    wire(password2_, ZStorageManager::FieldId::Repeat);
 
     // Заглушку связки стирает ПЕРВОЕ НАЖАТИЕ КЛАВИШИ, а не фокус: пройти по
     // полям табом человек вправе, ничего при этом не потеряв.
@@ -401,10 +404,10 @@ StoreManagerDialog::~StoreManagerDialog() {
 // одному правилу: У КОГО ЗАПИСЬ УЖЕ ЕСТЬ, ТОГО ОБНОВЛЯЮТ ТОЛЬКО УДАЧНЫЕ
 // РАБОТЫ — иначе опечатка затёрла бы проверенный пароль.
 void StoreManagerDialog::stashAll() {
-    model_.stashDrafts();
-    const QHash<QString, StoreManagerModel::Draft>& drafts = model_.drafts();
+    stores_.stashDrafts();
+    const QHash<QString, ZStorageManager::Draft>& drafts = stores_.drafts();
     for (auto it = drafts.constBegin(); it != drafts.constEnd(); ++it) {
-        const StoreManagerModel::Draft& d = *it;
+        const ZStorageManager::Draft& d = *it;
         const bool typedServer = d.serverPasswordTouched && !d.serverPassword.isEmpty();
         const bool typedCrypt = d.encryptionTouched && !d.encryptionPassword.isEmpty();
         if (!typedServer && !typedCrypt) continue;
@@ -419,21 +422,16 @@ void StoreManagerDialog::stashAll() {
     }
 }
 
-void StoreManagerDialog::adoptDrafts(QHash<QString, StoreManagerModel::Draft>* drafts) {
-    model_.adoptDrafts(drafts);
-    render();
-}
+// --- ЕДИНСТВЕННАЯ ДОРОГА ОТ МЕНЕДЖЕРА К ЭКРАНУ ------------------------------
 
-// --- ЕДИНСТВЕННАЯ ДОРОГА ОТ МОДЕЛИ К ЭКРАНУ ---------------------------------
-
-void StoreManagerDialog::rebuildList(const StoreManagerModel::Snapshot& snap) {
+void StoreManagerDialog::rebuildList(const ZStorageManager::Snapshot& snap) {
     QStringList roots;
-    for (const StoreManagerModel::Row& r : snap.rows) roots.append(r.root);
+    for (const ZStorageManager::Row& r : snap.rows) roots.append(r.root);
     if (roots == shownRoots_ && list_->count() == snap.rows.size()) {
         // Состав тот же — переписываем только подписи: имя корневой заметки
         // могло приехать после работы.
         for (int i = 0; i < snap.rows.size(); ++i) {
-            const StoreManagerModel::Row& r = snap.rows.at(i);
+            const ZStorageManager::Row& r = snap.rows.at(i);
             const QString title = r.open ? r.title + QStringLiteral("  •  open") : r.title;
             if (list_->item(i)->text() != title) list_->item(i)->setText(title);
         }
@@ -442,7 +440,7 @@ void StoreManagerDialog::rebuildList(const StoreManagerModel::Snapshot& snap) {
     shownRoots_ = roots;
     const QSignalBlocker quiet(list_);
     list_->clear();
-    for (const StoreManagerModel::Row& r : snap.rows) {
+    for (const ZStorageManager::Row& r : snap.rows) {
         auto* item = new QListWidgetItem(
             r.open ? r.title + QStringLiteral("  •  open") : r.title, list_);
         item->setToolTip(r.root);
@@ -450,7 +448,7 @@ void StoreManagerDialog::rebuildList(const StoreManagerModel::Snapshot& snap) {
 }
 
 void StoreManagerDialog::render() {
-    const StoreManagerModel::Snapshot snap = model_.snapshot();
+    const ZStorageManager::Snapshot snap = stores_.snapshot();
     rebuildList(snap);
     if (list_->currentRow() != snap.selected) {
         const QSignalBlocker quiet(list_);
@@ -474,7 +472,7 @@ void StoreManagerDialog::render() {
 
     // Обычные поля тоже ведёт снимок: доступность и подсказка (каталог-облако
     // гасит логин и серверную папку и говорит об этом сам).
-    const auto putField = [&put](QLineEdit* field, const StoreManagerModel::Field& state) {
+    const auto putField = [&put](QLineEdit* field, const ZStorageManager::Field& state) {
         put(field, state.text);
         field->setPlaceholderText(state.placeholder);
         field->setEnabled(state.enabled);
@@ -487,7 +485,7 @@ void StoreManagerDialog::render() {
     // владельца). Это подстановка показа: наружу она не уходит никогда, а
     // первое нажатие клавиши её стирает (eventFilter ниже).
     const auto putSecret = [&put](QLineEdit* field, QAction* eye,
-                                  const StoreManagerModel::Field& state) {
+                                  const ZStorageManager::Field& state) {
         put(field, state.stub ? QString(8, QChar(0x2022)) : state.text);
         field->setPlaceholderText(state.placeholder);
         field->setEnabled(state.enabled);
@@ -502,7 +500,7 @@ void StoreManagerDialog::render() {
     password2Label_->setVisible(snap.repeatVisible);
     password2_->setVisible(snap.repeatVisible);
 
-    const auto show = [](QPushButton* button, const StoreManagerModel::Button& state) {
+    const auto show = [](QPushButton* button, const ZStorageManager::Button& state) {
         if (!state.label.isEmpty() && button->text() != state.label)
             button->setText(state.label);
         button->setEnabled(state.enabled);
@@ -526,7 +524,7 @@ void StoreManagerDialog::render() {
         formFrame_->setEnabled(!snap.rows.isEmpty());
     }
 
-    const auto line = [](QLabel* label, const StoreManagerModel::Line& state) {
+    const auto line = [](QLabel* label, const ZStorageManager::Line& state) {
         label->setText(state.text);
         label->setStyleSheet(state.alarm ? QStringLiteral("color: #c03030;") : QString());
     };
@@ -538,7 +536,7 @@ void StoreManagerDialog::render() {
 
 // --- намерение модели -------------------------------------------------------
 
-int StoreManagerDialog::ask(const StoreManagerModel::Question& question) {
+int StoreManagerDialog::ask(const ZStorageManager::Question& question) {
     QMessageBox box(this);
     box.setWindowTitle(QStringLiteral("zametti"));
     box.setText(question.text);
@@ -557,13 +555,13 @@ int StoreManagerDialog::ask(const StoreManagerModel::Question& question) {
     return int(buttons.size()) - 1;   // закрыли крестиком — это отказ
 }
 
-void StoreManagerDialog::act(const StoreManagerModel::Reaction& reaction) {
-    if (reaction.question.kind != StoreManagerModel::Question::Kind::None) {
+void StoreManagerDialog::act(const ZStorageManager::Reaction& reaction) {
+    if (reaction.question.kind != ZStorageManager::Question::Kind::None) {
         const int choice = ask(reaction.question);
-        act(model_.answered(reaction.question.kind, choice));
+        act(stores_.answered(reaction.question.kind, choice));
         return;
     }
-    if (reaction.job.kind != StoreManagerModel::Job::Kind::None) {
+    if (reaction.job.kind != ZStorageManager::Job::Kind::None) {
         runJob(reaction.job);
         return;
     }
@@ -582,11 +580,11 @@ void StoreManagerDialog::act(const StoreManagerModel::Reaction& reaction) {
     render();
 }
 
-void StoreManagerDialog::runJob(const StoreManagerModel::Job& job) {
+void StoreManagerDialog::runJob(const ZStorageManager::Job& job) {
     // СВЯЗКУ СПРАШИВАЕМ ЗДЕСЬ, В ГЛАВНОМ ПОТОКЕ, и только по явному жесту.
     // Признак «возьми из связки» снимается тут же: дальше едут настоящие
     // секреты, а кружочки показа наружу не выходят никогда.
-    StoreManagerModel::Job resolved = job;
+    ZStorageManager::Job resolved = job;
     const QString root = ZStorageManager::canonicalRoot(job.root);
     const QString storeId = ZStorage::inspect(root) == ZStorage::DirKind::Store
                                 ? ZStorage(root).identity().storeId()
@@ -605,8 +603,8 @@ void StoreManagerDialog::runJob(const StoreManagerModel::Job& job) {
         // Ключ подсаживается в копилку целиком: спросить настоящую связку из
         // рабочего потока нельзя.
         const bool jobWantsKey =
-            job.kind == StoreManagerModel::Job::Kind::ChangePassword ||
-            (job.kind == StoreManagerModel::Job::Kind::Check &&
+            job.kind == ZStorageManager::Job::Kind::ChangePassword ||
+            (job.kind == ZStorageManager::Job::Kind::Check &&
              resolved.encryptionPassword.isEmpty());
         if (jobWantsKey) {
             Keyfile key;
@@ -627,7 +625,7 @@ void StoreManagerDialog::runJob(const StoreManagerModel::Job& job) {
             // красное «set encryption password» (жалоба владельца, 29.08.2026).
             QString why;
             if (taken_->capturedKey.hasKey() && !secrets_->storeKey(taken_->capturedKey, &why))
-                model_.setMessage(QStringLiteral("The keyring refused the key: %1").arg(why),
+                stores_.setMessage(QStringLiteral("The keyring refused the key: %1").arg(why),
                                   true);
             if (!taken_->capturedServerPassword.isEmpty() &&
                 !taken_->capturedServerPasswordFor.isEmpty())
@@ -645,13 +643,13 @@ void StoreManagerDialog::runJob(const StoreManagerModel::Job& job) {
             taken_.reset();
 
             const bool wasOurCloud =
-                runningJob_.kind != StoreManagerModel::Job::Kind::None && outcome_.ok;
-            act(model_.jobFinished(runningJob_.kind, outcome_));
-            if (wasOurCloud && model_.isOpenRow()) result_.cloudChangedForCurrent = true;
+                runningJob_.kind != ZStorageManager::Job::Kind::None && outcome_.ok;
+            act(stores_.jobFinished(runningJob_.kind, outcome_));
+            if (wasOurCloud && stores_.isOpenRow()) result_.cloudChangedForCurrent = true;
             if (outcome_.ok && outcome_.downloadedNew) result_.downloadedNew = true;
             // Заведённое хранилище — то, ради чего жали кнопку: открываем его
             // и уходим. Скачивание при этом ведёт фоновый прогон.
-            if (outcome_.ok && runningJob_.kind == StoreManagerModel::Job::Kind::Create) {
+            if (outcome_.ok && runningJob_.kind == ZStorageManager::Job::Kind::Create) {
                 result_.switchToRoot = runningJob_.root;
                 accept();
                 return;
@@ -676,18 +674,18 @@ void StoreManagerDialog::addStore() {
 }
 
 void StoreManagerDialog::addFolder(const QString& dir) {
-    act(model_.addFolder(dir));
+    act(stores_.addFolder(dir));
 }
 
 void StoreManagerDialog::dropSelected() {
-    act(model_.answered(StoreManagerModel::Question::Kind::Forget, 0));
+    act(stores_.answered(ZStorageManager::Question::Kind::Forget, 0));
 }
 
 void StoreManagerDialog::chooseReset(int road) {
-    act(model_.answered(StoreManagerModel::Question::Kind::ResetCloud, road));
+    act(stores_.answered(ZStorageManager::Question::Kind::ResetCloud, road));
 }
 
-QAction* StoreManagerDialog::addEyeToggle(QLineEdit* field, StoreManagerModel::FieldId which) {
+QAction* StoreManagerDialog::addEyeToggle(QLineEdit* field, ZStorageManager::FieldId which) {
     QIcon icon;
     const int points = style()->pixelMetric(QStyle::PM_SmallIconSize, nullptr, this);
     const QColor color = palette().color(QPalette::Text);
@@ -711,13 +709,13 @@ QAction* StoreManagerDialog::addEyeToggle(QLineEdit* field, StoreManagerModel::F
         if (ZStorage::inspect(root) != ZStorage::DirKind::Store) return;
         const QString id = ZStorage(root).identity().storeId();
         if (id.isEmpty()) return;
-        const QString kept = which == StoreManagerModel::FieldId::ServerPassword
+        const QString kept = which == ZStorageManager::FieldId::ServerPassword
                                  ? secrets_->serverPassword(id)
                                  : secrets_->encryptionPassword(id);
         if (kept.isEmpty()) return;
         // Показанное становится набранным: поле и модель обязаны говорить об
         // одном, иначе следующая работа поедет с заглушкой.
-        model_.edit(which, kept);
+        stores_.edit(which, kept);
         render();
     });
     return eye;
@@ -736,13 +734,13 @@ bool StoreManagerDialog::eventFilter(QObject* watched, QEvent* event) {
         const auto* key = static_cast<QKeyEvent*>(event);
         const bool typing = !key->text().isEmpty() || key->key() == Qt::Key_Backspace ||
                             key->key() == Qt::Key_Delete;
-        const StoreManagerModel::Snapshot snap = model_.snapshot();
+        const ZStorageManager::Snapshot snap = stores_.snapshot();
         const bool stub = watched == serverPassword_ ? snap.serverPassword.stub
                                                      : snap.encryptionPassword.stub;
         if (typing && stub) {
-            model_.edit(watched == serverPassword_
-                            ? StoreManagerModel::FieldId::ServerPassword
-                            : StoreManagerModel::FieldId::EncryptionPassword,
+            stores_.edit(watched == serverPassword_
+                            ? ZStorageManager::FieldId::ServerPassword
+                            : ZStorageManager::FieldId::EncryptionPassword,
                         QString());
             static_cast<QLineEdit*>(watched)->clear();
             render();
@@ -768,7 +766,7 @@ void StoreManagerDialog::placeBrowseButton() {
 void StoreManagerDialog::startWork(const QString& status, std::function<void()> job,
                                    std::function<void()> done) {
     setBusy(true);
-    model_.setMessage(status);
+    stores_.setMessage(status);
     render();
     if (worker_.joinable()) worker_.join();
     worker_ = std::thread([this, job = std::move(job), done = std::move(done)] {

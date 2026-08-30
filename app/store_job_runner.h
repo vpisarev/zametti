@@ -16,7 +16,7 @@
 #ifndef ZAMETTI_STORE_JOB_RUNNER_H
 #define ZAMETTI_STORE_JOB_RUNNER_H
 
-#include "store_manager_model.h"
+#include "zstorage_manager.h"
 
 #include "keyfile.h"
 
@@ -32,20 +32,17 @@ public:
 
     // Секреты в job уже настоящие (окно развернуло «взять из связки» до
     // запуска); secrets — копилка для добытого.
-    StoreManagerModel::Outcome run(const StoreManagerModel::Job& job,
-                                   SecretStore& secrets);
+    ZStorageManager::Outcome run(const ZStorageManager::Job& job, SecretStore& secrets);
 
 protected:
-    StoreManagerModel::Outcome check(const StoreManagerModel::Job& job,
-                                     SecretStore& secrets);
-    StoreManagerModel::Outcome create(const StoreManagerModel::Job& job,
-                                      SecretStore& secrets);
-    StoreManagerModel::Outcome changePassword(const StoreManagerModel::Job& job,
-                                              SecretStore& secrets);
-    StoreManagerModel::Outcome eraseAndReseed(const StoreManagerModel::Job& job,
-                                              SecretStore& secrets);
-    StoreManagerModel::Outcome eraseAndDisconnect(const StoreManagerModel::Job& job,
-                                                  SecretStore& secrets);
+    ZStorageManager::Outcome check(const ZStorageManager::Job& job, SecretStore& secrets);
+    ZStorageManager::Outcome create(const ZStorageManager::Job& job, SecretStore& secrets);
+    ZStorageManager::Outcome changePassword(const ZStorageManager::Job& job,
+                                            SecretStore& secrets);
+    ZStorageManager::Outcome eraseAndReseed(const ZStorageManager::Job& job,
+                                            SecretStore& secrets);
+    ZStorageManager::Outcome eraseAndDisconnect(const ZStorageManager::Job& job,
+                                                SecretStore& secrets);
 
     Keyfile::KdfParams mintParams_;
 };
