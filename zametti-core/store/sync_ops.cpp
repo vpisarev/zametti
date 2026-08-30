@@ -713,17 +713,30 @@ bool ZStorage::probeCloud(const Config& cfg, const QString& serverPassword,
     return finish(true);
 }
 
-// СБРОС ПАРОЛЯ ШИФРОВАНИЯ — замена облачной копии. Единственный лечащий ход
-// при забытом пароле: конверт без пароля не развернуть по построению.
-// Стирается ТОЛЬКО своё облако (или безымянное), и стирание идёт конвертом и
-// манифестом вперёд: оборванная чистка не должна выглядеть ни целым
-// хранилищем, ни действующим конвертом. Облако без манифеста — «первый синк»,
-// так что обрыв в любой точке долечивается следующим прогоном.
-bool ZStorage::resetCloudEncryption(const Config& cfg, const QString& newPassword,
-                                    const QString& serverPassword, SecretStore& secrets,
-                                    const Keyfile::KdfParams& mintParams, ResetOutcome* outcome,
-                                    QString* error) {
-    ResetOutcome done;
+// --- ТРИ ДВЕРИ ОБЛАКА (§2.6): стереть, засеять, сменить пароль --------------
+
+namespace {
+
+// Имя нашей формы: голова (манифест, конверт), журнал или вложение. По ним
+// узнаётся оборванное прежнее стирание — его можно дострать; всё прочее —
+// постороннее, и его не трогают.
+bool looksLikeOurBlob(const QString& name) {
+    if (name == QLatin1String(ZStorage::Identity::kFile) ||
+        name == QLatin1String(Keyfile::kCloudName))
+        return true;
+    if (!journalStemOf(name).isEmpty()) return true;
+    if (!localAttachmentName(name).isEmpty()) return true;
+    // Наследное имя вложения: <id>.<ext>.
+    const qsizetype dot = name.lastIndexOf(QLatin1Char('.'));
+    return dot > 0 && isValidNoteId(name.left(dot).toStdString());
+}
+
+}  // namespace
+
+bool ZStorage::eraseCloudStorage(const Config& cfg, const QString& serverPassword,
+                                 bool keepFolder, EraseOutcome* outcome,
+                                 QString* error) {
+    EraseOutcome done;
     const auto finish = [&](bool ok) {
         if (outcome != nullptr) *outcome = done;
         return ok;
@@ -732,23 +745,56 @@ bool ZStorage::resetCloudEncryption(const Config& cfg, const QString& newPasswor
         if (error) *error = QStringLiteral("not a store: %1").arg(root_);
         return finish(false);
     }
-    if (newPassword.isEmpty()) {
-        if (error) *error = QStringLiteral("the encryption password must not be empty");
+    // Идентичность — ЧТЕНИЕМ, без чеканки: стирать вправе только то, что
+    // доказанно наше, а хранилищу без zametti.json доказывать нечем.
+    QString why;
+    const Identity mine = identity(&why);
+    if (mine.isEmpty()) {
+        if (error)
+            *error = QStringLiteral(
+                "this store has no identity — refusing to erase any cloud for it");
         return finish(false);
     }
-    const Identity mine = ensureIdentity(error);
-    if (mine.isEmpty()) return finish(false);
+    // КАТАЛОГ-ОБЛАКО: только абсолютный путь (урок 30.08.2026 — «../..»,
+    // резолвленное по cwd, стоило владельцу каталога) и не предок корня
+    // хранилища, дома или cwd: даже совпавший манифест не даёт права стирать
+    // файлы там, где живёт всё остальное.
+    if (!cfg.cloudDir.isEmpty()) {
+        if (QDir::isRelativePath(cfg.cloudDir)) {
+            if (error)
+                *error = QStringLiteral(
+                             "the cloud folder must be an absolute path, got \"%1\"")
+                             .arg(cfg.cloudDir);
+            return finish(false);
+        }
+        const QString dir = QDir::cleanPath(cfg.cloudDir) + QLatin1Char('/');
+        for (const QString& fort :
+             {QDir(root_).absolutePath(), QDir::homePath(), QDir::currentPath()}) {
+            if ((QDir::cleanPath(fort) + QLatin1Char('/')).startsWith(dir)) {
+                if (error)
+                    *error = QStringLiteral(
+                                 "the cloud folder \"%1\" contains \"%2\" — refusing to "
+                                 "erase it")
+                                 .arg(QDir::cleanPath(cfg.cloudDir), fort);
+                return finish(false);
+            }
+        }
+    }
     auto cloud = makeCloud(cfg, serverPassword, error);
     if (!cloud) return finish(false);
-    // Каталог в облаке заводится ДО листинга: сброс при пустом (или ещё не
-    // существующем) облаке — законный случай «облачной копии нет, будет».
-    // Заодно это первая проверка адреса и пароля сервера.
+    // Каталог заводится ДО листинга: стирание при пустом (или ещё не
+    // существующем) облаке — законная часть сброса, и заодно первая проверка
+    // адреса и пароля сервера.
     if (!cloud->mkdirOnce(error)) return finish(false);
 
-    // ЧУЖОЕ ОБЛАКО НЕ СТИРАЕТСЯ. Нечитаемый манифест — тоже отказ: непонятно
-    // чьё стирать нельзя, и это отличает сброс от простого подключения.
+    // ЧУЖОЕ НЕ СТИРАЕТСЯ. Манифест есть — он обязан быть НАШИМ (нечитаемый —
+    // отказ: непонятно чьё стирать нельзя). Манифеста нет — «безымянное» НЕ
+    // значит «наше» (та дыра и снесла /Users/…/work): стирание разрешено,
+    // только когда КАЖДОЕ имя в листинге — нашей формы, как выглядит
+    // оборванное прежнее стирание. Один посторонний файл — отказ.
+    QVector<CloudStore::Entry> listing;
+    if (!cloud->list(&listing, error)) return finish(false);
     QByteArray manifestBytes;
-    QString why;
     if (cloud->get(QLatin1String(Identity::kFile), &manifestBytes, nullptr, &why)) {
         Identity theirs;
         if (!theirs.parse(manifestBytes, &why)) {
@@ -769,43 +815,93 @@ bool ZStorage::resetCloudEncryption(const Config& cfg, const QString& newPasswor
                                   QLatin1String(kAddressHint));
             return finish(false);
         }
-    }
-
-    // Новый ключ — до первой стирающей операции: не отчеканился — облако цело.
-    Keyfile keyfile;
-    if (!Keyfile::create(mine.storeId(), newPassword, mintParams, &keyfile, error))
-        return finish(false);
-
-    QVector<CloudStore::Entry> listing;
-    if (!cloud->list(&listing, error)) return finish(false);
-    QStringList names;
-    for (const CloudStore::Entry& e : listing) names.append(e.name);
-    // Конверт и манифест — первыми (см. шапку), остальное — как перечислилось.
-    for (const QLatin1String first :
-         {QLatin1String(Keyfile::kCloudName), QLatin1String(Identity::kFile)})
-        if (names.removeAll(first) > 0) names.prepend(first);
-    for (const QString& name : names) {
-        if (!cloud->del(name, &why)) {
-            if (error) *error = QStringLiteral("cannot remove %1 from the cloud: %2").arg(name, why);
+    } else {
+        for (const CloudStore::Entry& e : listing) {
+            if (looksLikeOurBlob(e.name)) continue;
+            if (error)
+                *error = QStringLiteral(
+                             "\"%1\" holds \"%2\", which is not a zametti blob — "
+                             "refusing to erase a folder that is not provably ours")
+                             .arg(cfg.cloudUrl.isEmpty() ? cfg.cloudDir : cfg.cloudUrl,
+                                  e.name);
             return finish(false);
         }
-        ++done.wiped;
     }
+    done.wiped = int(listing.size());
 
-    if (!cloud->put(QLatin1String(Keyfile::kCloudName), keyfile.toBytes(), nullptr, error))
-        return finish(false);
-    if (!setCloud(cloud, keyfile, error)) return finish(false);
-    if (!pushAll(&done.push, error)) return finish(false);
+    // Само стирание — одним жестом (WebDAV: один DELETE по коллекции).
+    if (!cloud->removeTree(error)) return finish(false);
+    if (keepFolder && !cloud->mkdirOnce(error)) return finish(false);
 
     // Бухгалтерия синка — про блобы, которых больше нет: пусть следующий
-    // прогон построит её заново, это кэш, а не истина.
-    // Бухгалтерия лежит в каталоге ХОЗЯЙСТВА, а не в корне хранилища, — и
-    // область у неё поэтому своя.
+    // прогон построит её заново, это кэш, а не истина. Лежит она в каталоге
+    // ХОЗЯЙСТВА, а не в корне хранилища, — и область у неё поэтому своя.
+    const QString ledger = SyncLedger::pathFor(mine.storeId(), root_);
+    ZSystem(ZSystem::Area::Config, QFileInfo(ledger).absolutePath()).removeForever(ledger);
+    // Стёртое облако больше не подключено: адаптер держал бы мёртвый адрес.
+    dropCloud();
+    return finish(true);
+}
+
+bool ZStorage::initCloudStorage(const Config& cfg, const QString& password,
+                                const QString& serverPassword, SecretStore& secrets,
+                                const Keyfile::KdfParams& mintParams, QString* error) {
+    if (!store_) {
+        if (error) *error = QStringLiteral("not a store: %1").arg(root_);
+        return false;
+    }
+    if (password.isEmpty()) {
+        if (error) *error = QStringLiteral("the encryption password must not be empty");
+        return false;
+    }
+    const Identity mine = ensureIdentity(error);
+    if (mine.isEmpty()) return false;
+    auto cloud = makeCloud(cfg, serverPassword, error);
+    if (!cloud) return false;
+    if (!cloud->mkdirOnce(error)) return false;
+
+    // Живое облако не засеивают: существующий конверт — чьи-то данные, и
+    // молча заслонить его новым значило бы отрезать их навсегда.
+    QByteArray envelope;
+    QString why;
+    if (cloud->get(QLatin1String(Keyfile::kCloudName), &envelope, nullptr, &why)) {
+        if (error)
+            *error = QStringLiteral(
+                "the cloud already holds a keyfile — connect to it, or erase it first");
+        return false;
+    }
+    // Чужой манифест поверх пустого конверта — та же честная остановка.
+    QByteArray manifestBytes;
+    if (cloud->get(QLatin1String(Identity::kFile), &manifestBytes, nullptr, &why)) {
+        Identity theirs;
+        if (theirs.parse(manifestBytes, &why) && theirs.storeId() != mine.storeId()) {
+            if (error)
+                *error = QStringLiteral(
+                             "this cloud folder belongs to another store — %1 — and this "
+                             "store is %2%3")
+                             .arg(storeTag(theirs.storeId(), QString(), theirs.created()),
+                                  storeTag(mine.storeId(), localStoreName(), mine.created()),
+                                  QLatin1String(kAddressHint));
+            return false;
+        }
+    }
+
+    Keyfile keyfile;
+    if (!Keyfile::create(mine.storeId(), password, mintParams, &keyfile, error))
+        return false;
+    // ОДИН PUT: конверт. Манифест НЕ заливается — его несёт заливка данных
+    // (pushAll/sync, манифест последним): сказать «здесь лежит хранилище»
+    // раньше, чем оно там лежит, значило бы соврать при обрыве.
+    if (!cloud->put(QLatin1String(Keyfile::kCloudName), keyfile.toBytes(), nullptr, error))
+        return false;
+    if (!setCloud(cloud, keyfile, error)) return false;
+
+    // Бухгалтерия обнуляется: прежние метки — про блобы прежнего облака.
     const QString ledger = SyncLedger::pathFor(mine.storeId(), root_);
     ZSystem(ZSystem::Area::Config, QFileInfo(ledger).absolutePath()).removeForever(ledger);
 
-    // Запомнить, как в connectCloud: отказ keyring сброс не валит — облако
-    // уже заменено, просто следующий старт снова спросит пароль.
+    // Запомнить, как в connectCloud: отказ keyring засев не валит — облако
+    // уже живое, просто следующий старт снова спросит пароль.
     QString keep;
     if (!secrets.storeKey(keyfile, &keep))
         fprintf(stderr, "zametti: the keyring refused the key: %s\n", qPrintable(keep));
@@ -813,10 +909,106 @@ bool ZStorage::resetCloudEncryption(const Config& cfg, const QString& newPasswor
         !secrets.setServerPassword(mine.storeId(), serverPassword, &keep))
         fprintf(stderr, "zametti: the keyring refused the server password: %s\n",
                 qPrintable(keep));
+    if (!secrets.setEncryptionPassword(mine.storeId(), password, &keep))
+        fprintf(stderr, "zametti: the keyring refused the encryption password: %s\n",
+                qPrintable(keep));
+    return writeCloudConfig(cfg, error);
+}
+
+bool ZStorage::changeEncryptionPassword(const Config& cfg, const QString& newPassword,
+                                        const QString& serverPassword,
+                                        SecretStore& secrets,
+                                        const Keyfile::KdfParams& mintParams,
+                                        QString* error) {
+    if (!store_) {
+        if (error) *error = QStringLiteral("not a store: %1").arg(root_);
+        return false;
+    }
+    if (newPassword.isEmpty()) {
+        if (error) *error = QStringLiteral("the encryption password must not be empty");
+        return false;
+    }
+    QString why;
+    const Identity mine = identity(&why);
+    if (mine.isEmpty()) {
+        if (error) *error = QStringLiteral("the store has no identity");
+        return false;
+    }
+    // Живой ключ — из связки: он и есть то, чем облако открывается, и потому
+    // смена пароля ничего не стирает. Ключа нет — этой дороги нет тоже.
+    Keyfile keyfile;
+    if (!secrets.loadKey(mine.storeId(), &keyfile, &why)) {
+        if (error)
+            *error = QStringLiteral(
+                         "the key is not in the keyring (%1) — erase the cloud and set "
+                         "a new password instead")
+                         .arg(why);
+        return false;
+    }
+    auto cloud = makeCloud(cfg, serverPassword, error);
+    if (!cloud) return false;
+    // Чужой конверт не перезаписывается: опечатка в адресе не должна стоить
+    // кому-то его облака.
+    QByteArray envelope;
+    if (cloud->get(QLatin1String(Keyfile::kCloudName), &envelope, nullptr, &why)) {
+        Keyfile theirs;
+        if (theirs.parse(envelope, nullptr) && theirs.storeId() != mine.storeId()) {
+            if (error)
+                *error = QStringLiteral("the cloud keyfile belongs to store %1, and this "
+                                        "store is %2%3")
+                             .arg(storeTag(theirs.storeId(), QString(), theirs.created()),
+                                  storeTag(mine.storeId(), localStoreName(), mine.created()),
+                                  QLatin1String(kAddressHint));
+            return false;
+        }
+    }
+    // Тот же ключ — новый конверт: rewrap будит живой ключ без старого пароля.
+    if (!keyfile.rewrap(QString(), newPassword, mintParams, error)) return false;
+    if (!cloud->mkdirOnce(error)) return false;
+    if (!cloud->put(QLatin1String(Keyfile::kCloudName), keyfile.toBytes(), nullptr, error))
+        return false;
+
+    QString keep;
     if (!secrets.setEncryptionPassword(mine.storeId(), newPassword, &keep))
         fprintf(stderr, "zametti: the keyring refused the encryption password: %s\n",
                 qPrintable(keep));
-    if (!writeCloudConfig(cfg, error)) return finish(false);
+    if (!cfg.cloudUrl.isEmpty() && !serverPassword.isEmpty() &&
+        !secrets.setServerPassword(mine.storeId(), serverPassword, &keep))
+        fprintf(stderr, "zametti: the keyring refused the server password: %s\n",
+                qPrintable(keep));
+    return writeCloudConfig(cfg, error);
+}
+
+// СБРОС ПАРОЛЯ ШИФРОВАНИЯ — композиция трёх ступеней (решение владельца:
+// метод нужен, живёт для CLI). Прерывание безопасно: облако без манифеста —
+// «первый синк», следующий прогон дольёт всё.
+bool ZStorage::resetCloudEncryption(const Config& cfg, const QString& newPassword,
+                                    const QString& serverPassword, SecretStore& secrets,
+                                    const Keyfile::KdfParams& mintParams, ResetOutcome* outcome,
+                                    QString* error) {
+    ResetOutcome done;
+    const auto finish = [&](bool ok) {
+        if (outcome != nullptr) *outcome = done;
+        return ok;
+    };
+    if (newPassword.isEmpty()) {
+        if (error) *error = QStringLiteral("the encryption password must not be empty");
+        return finish(false);
+    }
+    // Идентичность чеканится здесь (единственная из трёх ступеней): сброс на
+    // хранилище без zametti.json — законный первый контакт с облаком.
+    if (!store_ || ensureIdentity(error).isEmpty()) {
+        if (error && error->isEmpty())
+            *error = QStringLiteral("not a store: %1").arg(root_);
+        return finish(false);
+    }
+    EraseOutcome erased;
+    if (!eraseCloudStorage(cfg, serverPassword, /*keepFolder=*/true, &erased, error))
+        return finish(false);
+    done.wiped = erased.wiped;
+    if (!initCloudStorage(cfg, newPassword, serverPassword, secrets, mintParams, error))
+        return finish(false);
+    if (!pushAll(&done.push, error)) return finish(false);
     return finish(true);
 }
 

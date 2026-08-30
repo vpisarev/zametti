@@ -539,6 +539,166 @@ void checkResetCloudEncryption() {
     }
 }
 
+void checkChangeEncryptionPassword() {
+    // Смена пароля при живом ключе НИЧЕГО не стирает и не перезаливает:
+    // блобы зашифрованы ключом, пароль лишь заворачивает ключ в конверт.
+    zt::MiniStore store, cloudHome;
+    const QString cloud = cloudHome.root() + QStringLiteral("/облако");
+    ZStorage::Config cfg;
+    cfg.cloudDir = cloud;
+    FakeSecrets secrets;
+    QString err;
+
+    ZStorage s(store.root());
+    ZT_TRUE("облако заведено",
+            s.connectCloud(cfg, QStringLiteral("старый"), QString(), secrets, kTiny, nullptr,
+                            &err));
+    const QString rootId = s.ensureRootNote(&err);
+    ZT_TRUE("корень завёлся", !rootId.isEmpty());
+    ZT_TRUE("заливка прошла", s.pushAll(nullptr, &err));
+
+    const auto blobBytes = [&](const QString& name) {
+        QFile f(cloud + QLatin1Char('/') + name);
+        if (!f.open(QIODevice::ReadOnly)) return QByteArray();
+        return f.readAll();
+    };
+    const QByteArray journalBefore = blobBytes(rootId + QStringLiteral(".zm"));
+    ZT_TRUE("журнал корня в облаке", !journalBefore.isEmpty());
+    const int objectsBefore = int(QDir(cloud).entryList(QDir::Files).size());
+
+    // Без ключа в связке дороги нет — честный отказ словами про связку.
+    {
+        FakeSecrets empty;
+        ZT_TRUE("без ключа пароль не сменить",
+                !s.changeEncryptionPassword(cfg, QStringLiteral("новый"), QString(), empty,
+                                            kTiny, &err));
+        ZT_TRUE("сказано про keyring", err.contains(QStringLiteral("keyring")));
+    }
+
+    ZT_TRUE(("смена пароля прошла: " + err.toStdString()).c_str(),
+            s.changeEncryptionPassword(cfg, QStringLiteral("новый"), QString(), secrets,
+                                       kTiny, &err));
+    // Стёрто 0 объектов, залит 1 конверт: блобы не тронуты побайтово.
+    ZT_TRUE("число объектов то же",
+            int(QDir(cloud).entryList(QDir::Files).size()) == objectsBefore);
+    ZT_TRUE("журнал не перезаливался",
+            blobBytes(rootId + QStringLiteral(".zm")) == journalBefore);
+    ZT_TRUE("новый пароль лёг в keyring",
+            secrets.cryptPasswords_.value(s.identity().storeId()) ==
+                QStringLiteral("новый"));
+
+    // Старый пароль конверт больше не открывает, новый — открывает всё.
+    ZStorage::CloudProbe probe;
+    ZT_TRUE("старый пароль отвергнут",
+            !ZStorage::probeCloud(cfg, QString(), QStringLiteral("старый"), &probe, &err));
+    ZT_TRUE(("новый пароль подошёл: " + err.toStdString()).c_str(),
+            ZStorage::probeCloud(cfg, QString(), QStringLiteral("новый"), &probe, &err));
+    ZT_TRUE("конверт развернулся", probe.keyOpened);
+
+    // Другое устройство с ТЕМ ЖЕ ключом в связке продолжает работать: ключ
+    // не менялся, сменился только конверт.
+    {
+        ZStorage again(store.root());
+        ZT_TRUE("useLastCloud с прежним ключом жив", again.useLastCloud(secrets, &err));
+        ZT_TRUE("подключено", again.isConnected());
+    }
+}
+
+void checkEraseCloudStorage() {
+    zt::MiniStore store, cloudHome;
+    const QString cloud = cloudHome.root() + QStringLiteral("/облако");
+    ZStorage::Config cfg;
+    cfg.cloudDir = cloud;
+    FakeSecrets secrets;
+    QString err;
+
+    ZStorage s(store.root());
+    ZT_TRUE("облако заведено",
+            s.connectCloud(cfg, QStringLiteral("пароль"), QString(), secrets, kTiny, nullptr,
+                            &err));
+    ZT_TRUE("корень завёлся", !s.ensureRootNote(&err).isEmpty());
+    ZT_TRUE("заливка прошла", s.pushAll(nullptr, &err));
+
+    // ОТНОСИТЕЛЬНЫЙ каталог-облако отвергается СЛОВАМИ, а не резолвится по
+    // cwd (набранное «../..» стоило владельцу каталога, 30.08.2026).
+    {
+        ZStorage::Config typo;
+        typo.cloudDir = QStringLiteral("../..");
+        ZT_TRUE("относительный путь отвергнут",
+                !s.eraseCloudStorage(typo, QString(), true, nullptr, &err));
+        ZT_TRUE("сказано про абсолютный путь", err.contains(QStringLiteral("absolute")));
+    }
+    // ПРЕДОК корня хранилища не стирается, даже если путь абсолютный.
+    {
+        ZStorage::Config parent;
+        parent.cloudDir = QFileInfo(store.root()).absolutePath();
+        ZT_TRUE("предок корня отвергнут",
+                !s.eraseCloudStorage(parent, QString(), true, nullptr, &err));
+        ZT_TRUE("сказано, что внутри лежит своё",
+                err.contains(QStringLiteral("contains")));
+    }
+    // Каталог без манифеста и с ПОСТОРОННИМ файлом — отказ, называющий файл.
+    {
+        const QString junk = cloudHome.root() + QStringLiteral("/бумаги");
+        QDir().mkpath(junk);
+        QFile f(junk + QStringLiteral("/письмо.txt"));
+        ZT_TRUE("посторонний файл завёлся", f.open(QIODevice::WriteOnly));
+        f.write("не блоб");
+        f.close();
+        ZStorage::Config other;
+        other.cloudDir = junk;
+        ZT_TRUE("посторонняя папка отвергнута",
+                !s.eraseCloudStorage(other, QString(), true, nullptr, &err));
+        ZT_TRUE("файл назван по имени", err.contains(QStringLiteral("письмо.txt")));
+        ZT_TRUE("файл цел", QFile::exists(junk + QStringLiteral("/письмо.txt")));
+    }
+
+    // Своё облако: erase(keepFolder) оставляет ПУСТУЮ папку, готовую принять
+    // заливку; повторный erase по пустой — не беда (идемпотентно).
+    ZStorage::EraseOutcome out;
+    ZT_TRUE(("стирание прошло: " + err.toStdString()).c_str(),
+            s.eraseCloudStorage(cfg, QString(), /*keepFolder=*/true, &out, &err));
+    ZT_TRUE("объекты были посчитаны", out.wiped >= 3);
+    ZT_TRUE("папка осталась", QDir(cloud).exists());
+    ZT_TRUE("и пуста", QDir(cloud).entryList(QDir::Files | QDir::Hidden).isEmpty());
+    ZT_TRUE("облако отцеплено", !s.isConnected());
+    ZT_TRUE("повтор по пустому — не беда",
+            s.eraseCloudStorage(cfg, QString(), true, nullptr, &err));
+
+    // erase + init + pushAll == первая заливка с нуля: бутстрап встаёт.
+    ZT_TRUE(("засев прошёл: " + err.toStdString()).c_str(),
+            s.initCloudStorage(cfg, QStringLiteral("свежий"), QString(), secrets, kTiny,
+                               &err));
+    ZT_TRUE("после засева подключено", s.isConnected());
+    ZT_TRUE("конверт в облаке", QFile::exists(cloud + QStringLiteral("/keyfile")));
+    // Манифест НЕ заливается засевом — его несёт заливка данных, последним.
+    ZT_TRUE("манифеста после засева нет",
+            !QFile::exists(cloud + QStringLiteral("/zametti.json")));
+    ZT_TRUE("заливка прошла", s.pushAll(nullptr, &err));
+    ZT_TRUE("теперь манифест на месте",
+            QFile::exists(cloud + QStringLiteral("/zametti.json")));
+    // Живое облако не засеивают поверх.
+    ZT_TRUE("повторный засев отвергнут",
+            !s.initCloudStorage(cfg, QStringLiteral("ещё"), QString(), secrets, kTiny, &err));
+    ZT_TRUE("сказано про существующий конверт",
+            err.contains(QStringLiteral("keyfile")));
+
+    // Чужой манифест — отказ до единого удаления.
+    {
+        zt::MiniStore foreignHome;
+        ZT_TRUE("чужое хранилище завелось",
+                ZStorage(foreignHome.root() + QStringLiteral("/чужое")).init(&err));
+        ZStorage reopened(foreignHome.root() + QStringLiteral("/чужое"));
+        ZT_TRUE("чужая идентичность отчеканилась",
+                !reopened.ensureIdentity(&err).isEmpty());
+        ZT_TRUE("чужому стирать наше нельзя",
+                !reopened.eraseCloudStorage(cfg, QString(), true, nullptr, &err));
+        ZT_TRUE("причина называет чужой store",
+                err.contains(QStringLiteral("another store")));
+        ZT_TRUE("манифест цел", QFile::exists(cloud + QStringLiteral("/zametti.json")));
+    }
+}
+
 void checkResetRefusesForeignCloud() {
     // Сброс — единственная стирающая операция, и стирает он ТОЛЬКО своё:
     // опечатка в адресе не должна стоить человеку чужой облачной копии.
@@ -589,6 +749,8 @@ static int ztRunSuite(int argc, char** argv) {
     checkConfigReadsLegacyKeys();
     checkProbeCloud();
     checkResetCloudEncryption();
+    checkChangeEncryptionPassword();
+    checkEraseCloudStorage();
     checkResetRefusesForeignCloud();
     return zt::report("set_cloud");
 }
