@@ -27,6 +27,7 @@
 //   zametti-bench source        цена выхода из режима правки исходника
 //   zametti-bench argon2        калибровка Argon2id на этой машине (m17)
 //   zametti-bench keyring       ручная приёмка Secret Service (m17)
+//   zametti-bench webdav        живая приёмка адаптера против настоящего сервера
 
 #include <QApplication>
 
@@ -52,6 +53,7 @@ int ztInlineFormulaProbe(int argc, char** argv);
 int ztSourceBench(int argc, char** argv);
 int ztArgon2Probe(int argc, char** argv);
 int ztKeyringProbe(int argc, char** argv);
+int ztWebDavProbe(int argc, char** argv);
 
 namespace {
 
@@ -80,6 +82,7 @@ const Bench kBenches[] = {
     {"inline", ztInlineFormulaProbe},
     {"argon2", ztArgon2Probe},
     {"keyring", ztKeyringProbe},
+    {"webdav", ztWebDavProbe},
 };
 
 int usage() {

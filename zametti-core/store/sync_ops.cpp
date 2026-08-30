@@ -2324,6 +2324,14 @@ bool ZStorage::pushAll(PushReport* report, QString* error) {
 
     if (!cloud_->mkdirOnce(error)) return finish(false);
 
+    // БУХГАЛТЕРИЯ ПИШЕТСЯ ЗАЛИВКОЙ ЖЕ (потерянная правка 30.08.2026,
+    // восстановлена по жалобе владельца): без дозаписи etag'ов первый прогон
+    // после заливки не узнавал собственные блобы — ярус 1 молчал, и синк
+    // ПЕРЕЧИТЫВАЛ всё облако заново, пока перезапуск не строил бухгалтерию.
+    // Метки — те же, что кладёт прогон: etag сервера, хеш шифротекста, хеш
+    // открытых байтов.
+    SyncLedger ledger = SyncLedger::load(SyncLedger::pathFor(mine.storeId(), root_));
+
     // 2. ЗАЛИВКА. Один путь для журналов и вложений: имя блоба, байты, AAD.
     const auto sealAndPut = [&](const QString& name, const QByteArray& plain) {
         QByteArray blob;
@@ -2335,8 +2343,10 @@ bool ZStorage::pushAll(PushReport* report, QString* error) {
         done.sealedBytes += blob.size();
 
         timer.restart();
-        const bool ok = cloud_->put(name, blob, nullptr, error);
+        QString etag;
+        const bool ok = cloud_->put(name, blob, &etag, error);
         done.usPut += timer.nsecsElapsed() / 1000;
+        if (ok) ledger.setBlob(name, {etag, hashBytes(blob), hashBytes(plain)});
         return ok;
     };
 
@@ -2359,10 +2369,24 @@ bool ZStorage::pushAll(PushReport* report, QString* error) {
     // означает «здесь лежит хранилище такое-то»: сказать это раньше, чем
     // хоть что-то залито, значило бы соврать при обрыве.
     timer.restart();
-    if (!cloud_->put(QLatin1String(Identity::kFile), mine.atCurrentFormat().toBytes(),
-                      nullptr, error))
-        return finish(false);
+    {
+        const QByteArray manifest = mine.atCurrentFormat().toBytes();
+        QString etag;
+        if (!cloud_->put(QLatin1String(Identity::kFile), manifest, &etag, error))
+            return finish(false);
+        SyncLedger::Blob led;
+        led.etag = etag;
+        led.sealedHash = hashBytes(manifest);
+        ledger.setBlob(QLatin1String(Identity::kFile), led);
+    }
     done.usPut += timer.nsecsElapsed() / 1000;
+
+    // Дозапись — не транзакция: не записалась — следующий прогон построит её
+    // сам (бухгалтерия — кэш, а не истина), просто дороже.
+    QString ledgerWhy;
+    if (!ledger.save(&ledgerWhy))
+        fprintf(stderr, "zametti push-all: cannot save the ledger: %s\n",
+                qPrintable(ledgerWhy));
     return finish(true);
 }
 

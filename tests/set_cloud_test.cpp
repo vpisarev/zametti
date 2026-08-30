@@ -549,6 +549,48 @@ void checkResetCloudEncryption() {
     }
 }
 
+void checkPushAllPrimesLedger() {
+    // ЗАЛИВКА ПИШЕТ БУХГАЛТЕРИЮ САМА (жалоба владельца 30.08.2026: без этого
+    // первый прогон после заливки перечитывал всё облако, и лечило его только
+    // переоткрытие программы). Ждём: следующий Full-прогон не скачивает ни
+    // одного своего блоба и не заливает ничего заново — один листинг, один
+    // mkdir и одна проба ключа, а не GET на каждый блоб.
+    zt::MiniStore store, cloudHome;
+    const QString cloud = cloudHome.root() + QStringLiteral("/облако");
+    ZStorage::Config cfg;
+    cfg.cloudDir = cloud;
+    FakeSecrets secrets;
+    QString err;
+
+    ZStorage s(store.root());
+    ZT_TRUE("облако заведено",
+            s.connectCloud(cfg, QStringLiteral("пароль"), QString(), secrets, kTiny, nullptr,
+                            &err));
+    const QString rootId = s.ensureRootNote(&err);
+    ZT_TRUE("корень завёлся", !rootId.isEmpty());
+    ZT_TRUE("заметка завелась", !s.createNote(QString(), false, &err).isEmpty());
+    {
+        QFile pic(store.root() + QStringLiteral("/") + rootId + QStringLiteral(".webp"));
+        ZT_TRUE("вложение записалось", pic.open(QIODevice::WriteOnly));
+        pic.write("картинка для заливки");
+    }
+    s.reload();
+    ZT_TRUE("заливка прошла", s.pushAll(nullptr, &err));
+
+    ZStorage::SyncReport report;
+    ZT_TRUE(("прогон после заливки прошёл: " + err.toStdString()).c_str(),
+            s.sync({}, &report, &err));
+    ZT_TRUE("своё не скачивается заново",
+            report.takenWhole == 0 && report.attachmentsDown == 0 &&
+                report.mergedJournals == 0);
+    ZT_TRUE("и не заливается заново", report.pushedWhole == 0 && report.attachmentsUp == 0);
+    // Цена прогона: mkdir + листинг + одна проба ключа (у первой встречи с
+    // конвертом), БЕЗ GET на каждый блоб. Четыре — потолок с запасом в один.
+    ZT_TRUE(("прогон дешёв: " + std::to_string(report.traffic.requests) + " запросов")
+                .c_str(),
+            report.traffic.requests <= 4);
+}
+
 void checkChangeEncryptionPassword() {
     // Смена пароля при живом ключе НИЧЕГО не стирает и не перезаливает:
     // блобы зашифрованы ключом, пароль лишь заворачивает ключ в конверт.
@@ -759,6 +801,7 @@ static int ztRunSuite(int argc, char** argv) {
     checkConfigReadsLegacyKeys();
     checkProbeCloud();
     checkResetCloudEncryption();
+    checkPushAllPrimesLedger();
     checkChangeEncryptionPassword();
     checkEraseCloudStorage();
     checkResetRefusesForeignCloud();

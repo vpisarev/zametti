@@ -2,6 +2,7 @@
 
 #include "webdav_cloud.h"
 
+#include <QAuthenticator>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QNetworkAccessManager>
@@ -58,6 +59,11 @@ QString tidyEtag(const QString& raw) {
 
 struct WebDavCloud::Impl {
     QNetworkAccessManager net;
+    // Сервер уже бросал challenge (Digest): наш упреждающий Basic ему не
+    // нужен и ВРЕДЕН — сырой заголовок Authorization затирает digest-ответ,
+    // который Qt считает из кэша для следующих запросов (первый живой прогон
+    // на na4u: GET прошёл, PUT упёрся в 401 ровно из-за этого).
+    bool challenged = false;
 };
 
 bool WebDavCloud::checkUrl(const Config& config, QString* error) {
@@ -92,10 +98,27 @@ bool WebDavCloud::checkUrl(const Config& config, QString* error) {
 }
 
 WebDavCloud::WebDavCloud(const Config& config)
-    : config_(config), impl_(std::make_shared<Impl>()) {}
+    : config_(config), impl_(std::make_shared<Impl>()) {
+    // DIGEST И ПРОЧИЕ CHALLENGE-СХЕМЫ. Basic мы шлём сами и заранее (см.
+    // authorize), но не всякий сервер его принимает: сервер владельца
+    // (na4u.ru, Apache) отвечает 401 c WWW-Authenticate: Digest MD5 — и
+    // прежний адаптер вечно упирался в «the server refused the login».
+    // На challenge Qt спрашивает реквизиты здесь и сам считает Digest-ответ;
+    // удача кэшируется менеджером, так что лишний круг — только у первого
+    // запроса. Вечного цикла нет: повторный вызов с НЕИЗМЕНЁННЫМИ
+    // реквизитами Qt считает отказом и возвращает 401 наружу.
+    QObject::connect(&impl_->net, &QNetworkAccessManager::authenticationRequired,
+                     &impl_->net,
+                     [config, impl = impl_.get()](QNetworkReply*,
+                                                  QAuthenticator* authenticator) {
+                         impl->challenged = true;
+                         authenticator->setUser(config.user);
+                         authenticator->setPassword(config.password);
+                     });
+}
 
-// ЛОГИН ШЛЁМ САМИ, а не через QAuthenticator, по двум причинам, и обе
-// замерены пробником против живого wsgidav:
+// БЕЗУСЛОВНЫЙ Basic ШЛЁМ САМИ, а не через QAuthenticator, по двум причинам,
+// и обе замерены пробником против живого wsgidav:
 //
 //   1. КОДИРОВКА. Qt кодирует пароль для basic auth не в UTF-8 (basic родом
 //      из времён latin1), и пароль с кириллицей сервер отвергает — 401 на
@@ -104,8 +127,15 @@ WebDavCloud::WebDavCloud(const Config& config)
 //   2. ЛИШНИЙ КРУГ. Через QAuthenticator каждый запрос идёт дважды: первый
 //      получает 401, второй — с логином. Синк мерится счётчиками запросов,
 //      и удваивать их незачем.
+//
+// Digest-серверу упреждающий Basic не просто бесполезен — после первого же
+// challenge он ЗАТИРАЕТ digest-заголовок, который Qt кладёт из кэша (сырой
+// Authorization сильнее), и всё, кроме первого запроса, валится в 401.
+// Поэтому: сервер бросил challenge — Basic больше не шлём вовсе, реквизиты
+// живут у QAuthenticator (см. конструктор).
 void WebDavCloud::authorize(::QNetworkRequest* request) const {
     if (config_.user.isEmpty()) return;
+    if (impl_->challenged) return;
     const QByteArray pair =
         config_.user.toUtf8() + ':' + config_.password.toUtf8();
     request->setRawHeader("Authorization", "Basic " + pair.toBase64());
@@ -232,12 +262,17 @@ bool WebDavCloud::list(QVector<Entry>* out, QString* error) {
             } else if (name == QLatin1String("getetag")) {
                 current.etag = tidyEtag(reader.readElementText());
             } else if (name == QLatin1String("getlastmodified")) {
-                // RFC 1123 («Tue, 30 Aug 2026 12:00:00 GMT») — обязательный
-                // формат DAV; не разобралось — метка честно пустая.
+                // RFC 1123 («Sun, 30 Aug 2026 14:53:35 GMT») — обязательный
+                // формат DAV. Разборщик Qt (RFC2822Date) ждёт ЧИСЛОВОЕ
+                // смещение и зону словом не берёт — живой Apache отдавал
+                // ровно « GMT», и дата молча пустела (пробник webdav).
+                QString text = reader.readElementText().trimmed();
+                if (text.endsWith(QLatin1String(" GMT"))) {
+                    text.chop(4);
+                    text += QStringLiteral(" +0000");
+                }
                 current.lastModified =
-                    QDateTime::fromString(reader.readElementText(),
-                                          Qt::RFC2822Date)
-                        .toUTC();
+                    QDateTime::fromString(text, Qt::RFC2822Date).toUTC();
             } else if (name == QLatin1String("collection")) {
                 isCollection = true;
             }
