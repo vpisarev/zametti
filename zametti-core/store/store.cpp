@@ -116,7 +116,9 @@ bool ZStorage::makeSkeleton(QString* error) {
         return false;
     }
     probe.close();
-    probe.remove();
+    // Пробник — наш собственный, и уходит он мимо корзины: засорять её служебным
+    // нечем. Область названа корнем, который мы только что и завели.
+    ZSystem(ZSystem::Area::Storage, root_).removeForever(probe.fileName());
     // С этого мгновения объект — хранилище: метка на месте.
     store_ = isStoreRoot(root_);
     return true;
@@ -597,12 +599,10 @@ QStringList ZStorage::attachmentsLeavingWith(const QStringList& noteIds) const {
 
 bool ZStorage::deleteAttachmentFile(const QString& name, QString* error) {
     const QString file = attachmentPath(name);
-    if (!QFile::exists(file)) return true;   // уже нет — и хорошо
-    if (!QFile::moveToTrash(file) && !QFile::remove(file)) {
-        if (error) *error = QStringLiteral("cannot delete attachment file %1").arg(name);
-        return false;
-    }
-    return true;
+    QString why;
+    if (files().remove(file, &why)) return true;   // «уже нет» тоже считается удачей
+    if (error) *error = QStringLiteral("cannot delete attachment file %1: %2").arg(name, why);
+    return false;
 }
 
 bool ZStorage::retireAttachment(const QString& name, const ImportLimits& limits, QString* error) {
@@ -683,8 +683,9 @@ bool ZStorage::deleteNoteFile(const QString& id, QString* error) {
     const bool marked =
         appendToJournal(id, ZJournal::NewRecord::tombstone().voiding(voids), &historyError);
 
-    if (!QFile::moveToTrash(file) && !QFile::remove(file)) {
-        if (error) *error = QStringLiteral("cannot delete note file %1").arg(id);
+    QString whyDelete;
+    if (!files().remove(file, &whyDelete)) {
+        if (error) *error = QStringLiteral("cannot delete note file %1: %2").arg(id, whyDelete);
         return false;
     }
     if (!marked && error) *error = QStringLiteral("tombstone not written: %1").arg(historyError);

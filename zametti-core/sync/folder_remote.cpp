@@ -116,17 +116,23 @@ bool FolderRemote::put(const QString& name, const QByteArray& bytes, QString* et
     }
     const bool written = file.write(bytes) == bytes.size();
     file.close();
+    const ZSystem area = files();
     if (!written) {
-        QFile::remove(temp);
+        area.removeForever(temp);
         if (error != nullptr)
             *error = QStringLiteral("folder remote: short write on %1").arg(name);
         return false;
     }
-    QFile::remove(path);
-    if (!QFile::rename(temp, path)) {
-        QFile::remove(temp);
+    QString why;
+    if (!area.removeForever(path, &why)) {
         if (error != nullptr)
-            *error = QStringLiteral("folder remote: cannot replace %1").arg(name);
+            *error = QStringLiteral("folder remote: cannot replace %1: %2").arg(name, why);
+        return false;
+    }
+    if (!area.rename(temp, path, &why)) {
+        area.removeForever(temp);
+        if (error != nullptr)
+            *error = QStringLiteral("folder remote: cannot replace %1: %2").arg(name, why);
         return false;
     }
     traffic_.bytesUp += bytes.size();
@@ -172,14 +178,13 @@ bool FolderRemote::del(const QString& name, QString* error) {
             *error = QStringLiteral("folder remote: bad blob name %1").arg(name);
         return false;
     }
-    // Нет файла — не беда: удаление идемпотентно, как и на сервере.
-    if (!QFile::exists(path)) return true;
-    if (!QFile::remove(path)) {
-        if (error != nullptr)
-            *error = QStringLiteral("folder remote: cannot remove %1").arg(name);
-        return false;
-    }
-    return true;
+    // Нет файла — не беда: удаление идемпотентно, как и на сервере. Мимо
+    // корзины нарочно: облачными блобами её засорять незачем.
+    QString why;
+    if (files().removeForever(path, &why)) return true;
+    if (error != nullptr)
+        *error = QStringLiteral("folder remote: cannot remove %1: %2").arg(name, why);
+    return false;
 }
 
 bool FolderRemote::mkdirOnce(QString* error) {

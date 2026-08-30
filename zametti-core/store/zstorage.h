@@ -34,6 +34,7 @@
 #include "sort_order.h"
 #include "import_limits.h"
 #include "znote.h"
+#include "zsystem.h"
 
 #include <QFileSystemWatcher>
 #include <QHash>
@@ -736,6 +737,18 @@ protected:
     class Batch;
     void announce(bool structural, const QString& id);
     QSet<QString> listNames() const;
+
+    // ЕДИНСТВЕННАЯ ДВЕРЬ К УДАЛЕНИЮ И ПЕРЕИМЕНОВАНИЮ внутри этого хранилища.
+    // Отдаётся значением, а не полем: два QString стоят дёшево, зато область
+    // не может разъехаться с root_ — устаревшее производное состояние здесь
+    // означало бы разрушение не там, где думали.
+    //
+    // root_ доводится до абсолютного ЗДЕСЬ, а не в ZSystem: корень хранилища
+    // человек вправе назвать относительным путём (`zametti store init ./notes`)
+    // — это его собственный каталог, названный от того места, где он стоит.
+    // Тем и отличается от адреса облака, где относительный путь запрещён
+    // насмерть: там «..» уезжает не туда, куда смотрит человек.
+    ZSystem files() const;
 
     QString root_;
     bool store_ = false;

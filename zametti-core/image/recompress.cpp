@@ -1,5 +1,7 @@
 #include "recompress.h"
 
+#include "zsystem.h"
+
 #include "import.h"
 
 #include <QDir>
@@ -49,6 +51,11 @@ bool recompressStore(const RecompressOptions& options, RecompressReport& report)
         report.problems << QStringLiteral("no directory %1").arg(options.root);
         return false;
     }
+    // Область разрушения — само хранилище, и уже отсюда видно, что за его
+    // пределы пережатие не выйдет ни на один файл. Путь доводится до
+    // абсолютного здесь: `--root ./notes` — законный способ назвать СВОЙ
+    // каталог, в отличие от адреса облака.
+    const ZSystem area(ZSystem::Area::Storage, dir.absolutePath());
 
     const bool all = options.id == QStringLiteral("all");
     QStringList names;
@@ -133,8 +140,12 @@ bool recompressStore(const RecompressOptions& options, RecompressReport& report)
             continue;
         }
         // Старый файл удаляем ТОЛЬКО после того, как новый записан целиком.
-        if (!sameFile && !QFile::remove(path))
-            report.problems << QStringLiteral("failed to remove the old %1").arg(name);
+        // Мимо корзины: пережатие и без того объявлено необратимым, а копия
+        // старого веса в корзине обманывала бы обещанием «место освободилось».
+        QString whyDelete;
+        if (!sameFile && !area.removeForever(path, &whyDelete))
+            report.problems << QStringLiteral("failed to remove the old %1: %2")
+                                   .arg(name, whyDelete);
     }
 
     report.lines << QString();

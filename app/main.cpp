@@ -31,6 +31,7 @@
 #include "document.h"
 #include "znote.h"
 #include "zstorage.h"
+#include "zsystem.h"
 #include "serializer.h"
 #include "settings.h"
 #include "sort_order.h"
@@ -66,7 +67,6 @@
 #include <QDesktopServices>
 #include <QDateTime>
 #include <QSysInfo>
-#include <QProcess>
 #include <QThreadPool>
 #include <QUrl>
 #include <QPushButton>
@@ -1799,7 +1799,7 @@ int main(int argc, char** argv) {
             QDesktopServices::openUrl(QUrl::fromLocalFile(file));
             return;
         }
-        QStringList parts = QProcess::splitCommand(command);
+        QStringList parts = zametti::ZSystem::splitCommand(command);
         if (parts.isEmpty()) return;
         const QString program = parts.takeFirst();
         bool gotPlaceholder = false;
@@ -1811,7 +1811,7 @@ int main(int argc, char** argv) {
         // Без %f путь всё равно нужен: команда без него открыла бы редактор
         // пустым, и это выглядело бы как «не работает».
         if (!gotPlaceholder) parts.append(file);
-        if (!QProcess::startDetached(program, parts))
+        if (!zametti::ZSystem::startDetached(program, parts))
             QMessageBox::warning(&window, QStringLiteral("zametti"),
                                  QStringLiteral("Failed to start: %1").arg(command));
     };

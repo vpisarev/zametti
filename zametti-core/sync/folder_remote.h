@@ -21,6 +21,7 @@
 #define ZAMETTI_SYNC_FOLDER_REMOTE_H
 
 #include "remote_store.h"
+#include "zsystem.h"
 
 #include <QHash>
 #include <QString>
@@ -63,6 +64,13 @@ public:
     const QString& dir() const { return dir_; }
 
 protected:
+    // Разрушать в каталоге-облаке — только через дверь, и область та же, что
+    // сам каталог. Отдаётся значением: dir_ не меняется, но и разъехаться с
+    // областью тогда нечему. АДРЕС ОБЛАКА ОТНОСИТЕЛЬНЫМ НЕ БЫВАЕТ — набранное
+    // «../..» стоило владельцу каталога, — и здесь это видно делом: с
+    // относительным dir_ область не состоится и не удалится ничего.
+    ZSystem files() const { return ZSystem(ZSystem::Area::Cloud, dir_); }
+
     // Путь файла блоба; пусто — имя негодное (со слэшем, "..", пустое).
     QString pathOf(const QString& name) const;
     // Съесть один рубильник, если он взведён.

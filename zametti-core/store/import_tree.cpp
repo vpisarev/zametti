@@ -6,6 +6,7 @@
 // источник — новое хранилище создаётся рядом, старое дерево остаётся эталоном.
 
 #include "zstorage.h"
+#include "zsystem.h"
 
 #include "times.h"
 
@@ -24,7 +25,6 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QProcess>
 #include <QTemporaryDir>
 #include <QTimeZone>
 
@@ -101,15 +101,9 @@ bool frontMatterTimes(const std::string& bytes, QDateTime& created, QDateTime& m
 }
 
 // Запуск утилиты; пустой вывод не интересен, важен только код возврата.
+// Дверь наружу одна на весь проект — ZSystem, см. её шапку.
 bool runTool(const QString& program, const QStringList& args) {
-    QProcess process;
-    process.start(program, args);
-    if (!process.waitForStarted(5000)) return false;
-    if (!process.waitForFinished(120000)) {
-        process.kill();
-        return false;
-    }
-    return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+    return ZSystem::runTool(program, args);
 }
 
 // Пережатие вложения по правилам владельца: png → webp без потерь, heic →

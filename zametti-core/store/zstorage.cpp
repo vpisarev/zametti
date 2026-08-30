@@ -28,8 +28,15 @@
 namespace zametti {
 
 
+ZSystem ZStorage::files() const {
+    return ZSystem(ZSystem::Area::Storage, QDir(root_).absolutePath());
+}
+
 bool ZStorage::isStoreRoot(const QString& dir) {
-    return QFileInfo(dir + QStringLiteral("/.zametti")).isDir();
+    // Определение метки одно на весь проект и живёт у ZSystem: снос каталога
+    // спрашивает ровно тот же вопрос, и два разных ответа на него означали бы,
+    // что сторож сторожит не то, что открывает хранилище.
+    return ZSystem::looksLikeStorage(dir);
 }
 
 ZStorage::DirKind ZStorage::inspect(const QString& dir) {
@@ -171,7 +178,7 @@ ZStorage::LockReport ZStorage::forceUnlock() {
     // почему «снятый» замок на месте.
     //
     // Замок мёртвого процесса снимается везде: его описатель закрыла система.
-    if (QFile::exists(lockPath()) && !QFile::remove(lockPath())) {
+    if (QFile::exists(lockPath()) && !files().removeForever(lockPath())) {
         report.note = QStringLiteral(
             "the store lock could not be removed (held by a live process pid %1 on '%2'?)")
                           .arg(report.holderPid)
@@ -195,7 +202,7 @@ ZStorage::LockReport ZStorage::lock() {
     if (lock_->getLockInfo(&pid, &host, &app) && host == QSysInfo::machineHostName() &&
         pid > 0 && !processAlive(pid)) {
         report.note = QStringLiteral("removing a stale store lock (pid %1 not alive)").arg(pid);
-        QFile::remove(lockPath());
+        files().removeForever(lockPath());
         if (lock_->tryLock(0)) {
             report.locked = true;
             return report;
@@ -533,10 +540,11 @@ QStringList ZStorage::migrate() {
                              .arg(name, stem + QStringLiteral(".zm"));
                 continue;
             }
-            if (QFile::rename(history.filePath(name), fresh))
+            QString why;
+            if (files().rename(history.filePath(name), fresh, &why))
                 ++renamed;
             else
-                notes << QStringLiteral("cannot rename journal %1").arg(name);
+                notes << QStringLiteral("cannot rename journal %1: %2").arg(name, why);
         }
         if (renamed > 0)
             notes << QStringLiteral("journals renamed to .zm: %1").arg(renamed);
@@ -1001,9 +1009,9 @@ bool ZStorage::appendJournalLocked(const QString& path, const ZJournal::NewRecor
 
 bool ZStorage::removeJournalLocked(const QString& path, QString* error) {
     assertLocked();
-    if (!QFile::exists(path)) return true;
-    if (QFile::moveToTrash(path) || QFile::remove(path)) return true;
-    if (error) *error = QStringLiteral("cannot delete journal %1").arg(path);
+    QString why;
+    if (files().remove(path, &why)) return true;
+    if (error) *error = QStringLiteral("cannot delete journal %1: %2").arg(path, why);
     return false;
 }
 

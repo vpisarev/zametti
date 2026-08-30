@@ -307,8 +307,10 @@ int ZStorage::migrateTrashToArchive(QString* error) {
 bool ZStorage::forgetNote(const QString& id, QString* error) {
     const QString path = pathOf(id);
     const bool hadFile = QFile::exists(path);
-    if (hadFile && !QFile::moveToTrash(path) && !QFile::remove(path)) {
-        if (error != nullptr) *error = QStringLiteral("cannot delete note file %1").arg(id);
+    QString why;
+    if (!files().remove(path, &why)) {
+        if (error != nullptr)
+            *error = QStringLiteral("cannot delete note file %1: %2").arg(id, why);
         return false;
     }
 

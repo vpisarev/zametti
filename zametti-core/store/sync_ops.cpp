@@ -281,10 +281,10 @@ bool ZStorage::writeRemoteConfig(const Config& cfg, QString* error) {
 }
 
 bool ZStorage::clearRemoteConfig(QString* error) {
-    QFile f(root_ + QStringLiteral("/.zametti/remote.json"));
-    if (!f.exists()) return true;
-    if (f.remove()) return true;
-    if (error) *error = QStringLiteral("cannot remove remote.json: %1").arg(f.errorString());
+    const QString path = root_ + QStringLiteral("/.zametti/remote.json");
+    QString why;
+    if (files().removeForever(path, &why)) return true;
+    if (error) *error = QStringLiteral("cannot remove remote.json: %1").arg(why);
     return false;
 }
 
@@ -781,7 +781,10 @@ bool ZStorage::resetCloudEncryption(const Config& cfg, const QString& newPasswor
 
     // Бухгалтерия синка — про блобы, которых больше нет: пусть следующий
     // прогон построит её заново, это кэш, а не истина.
-    QFile::remove(SyncLedger::pathFor(mine.storeId(), root_));
+    // Бухгалтерия лежит в каталоге ХОЗЯЙСТВА, а не в корне хранилища, — и
+    // область у неё поэтому своя.
+    const QString ledger = SyncLedger::pathFor(mine.storeId(), root_);
+    ZSystem(ZSystem::Area::Config, QFileInfo(ledger).absolutePath()).removeForever(ledger);
 
     // Запомнить, как в connectRemote: отказ keyring сброс не валит — облако
     // уже заменено, просто следующий старт снова спросит пароль.
@@ -1902,8 +1905,10 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
         } else {
             for (const QString& id : deletes) {
                 const QString path = pathOf(id);
-                if (!QFile::moveToTrash(path) && !QFile::remove(path)) {
-                    complain(QStringLiteral("cannot remove %1 for its tombstone").arg(id));
+                QString whyDelete;
+                if (!files().remove(path, &whyDelete)) {
+                    complain(QStringLiteral("cannot remove %1 for its tombstone: %2")
+                                 .arg(id, whyDelete));
                     continue;
                 }
                 ++done.deletesApplied;
