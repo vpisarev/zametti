@@ -90,8 +90,8 @@ static int ztRunSuite(int argc, char** argv) {
         zametti::ZStorage::Config first;
         first.root = QStringLiteral("/дом/заметки");
         first.name = QStringLiteral("Заметки");
-        first.remoteUrl = QStringLiteral("https://host/dav/");
-        first.remoteUser = QStringLiteral("вадим");
+        first.cloudUrl = QStringLiteral("https://host/dav/");
+        first.cloudUser = QStringLiteral("вадим");
         zametti::ZStorage::Config second;
         second.root = QStringLiteral("/дом/работа");
         out.rememberStore(first);
@@ -100,7 +100,7 @@ static int ztRunSuite(int argc, char** argv) {
         // обновляется на месте, а пустое имя прежнего не затирает.
         zametti::ZStorage::Config again;
         again.root = QStringLiteral("/дом/заметки/");
-        again.remoteUrl = QStringLiteral("https://host2/dav/");
+        again.cloudUrl = QStringLiteral("https://host2/dav/");
         out.rememberStore(again);
     }
     out.save();
@@ -154,7 +154,7 @@ static int ztRunSuite(int argc, char** argv) {
     ZT_EQ("порядок стабилен: первая — первой", std::string("/дом/заметки"),
           s(back.stores().first().root));
     ZT_EQ("адрес обновился на месте", std::string("https://host2/dav/"),
-          s(back.stores().first().remoteUrl));
+          s(back.stores().first().cloudUrl));
     ZT_EQ("пустое имя не затёрло прежнего", std::string("Заметки"),
           s(back.stores().first().name));
     ZT_TRUE("строка ищется по корню с любым хвостом",

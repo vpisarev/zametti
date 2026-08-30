@@ -1,4 +1,4 @@
-// FolderRemote — «облако» в локальном каталоге (m17, сессия 3).
+// FolderCloud — «облако» в локальном каталоге (m17, сессия 3).
 //
 // Не эмулятор ради эмулятора: он делает две работы сразу.
 //
@@ -28,9 +28,9 @@
 
 namespace zametti {
 
-class FolderRemote : public RemoteStore {
+class FolderCloud : public CloudStore {
 public:
-    explicit FolderRemote(const QString& dir);
+    explicit FolderCloud(const QString& dir);
 
     bool list(QVector<Entry>* out, QString* error = nullptr) override;
     bool get(const QString& name, QByteArray* bytes, QString* etag,

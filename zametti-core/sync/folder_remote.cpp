@@ -1,4 +1,4 @@
-// FolderRemote: «облако» в каталоге. См. шапку folder_remote.h.
+// FolderCloud: «облако» в каталоге. См. шапку folder_remote.h.
 
 #include "folder_remote.h"
 
@@ -10,9 +10,9 @@
 
 namespace zametti {
 
-FolderRemote::FolderRemote(const QString& dir) : dir_(dir) {}
+FolderCloud::FolderCloud(const QString& dir) : dir_(dir) {}
 
-QString FolderRemote::pathOf(const QString& name) const {
+QString FolderCloud::pathOf(const QString& name) const {
     // Имена блобов плоские. Всё, что похоже на путь, отвергается здесь, а не
     // где-то в глубине: «..» в имени с сервера — это чужая попытка написать
     // мимо каталога.
@@ -23,7 +23,7 @@ QString FolderRemote::pathOf(const QString& name) const {
     return dir_ + QLatin1Char('/') + name;
 }
 
-bool FolderRemote::tripped(const QString& op, QString* error) {
+bool FolderCloud::tripped(const QString& op, QString* error) {
     const int left = failures_.value(op, 0);
     if (left <= 0) return false;
     failures_.insert(op, left - 1);
@@ -32,18 +32,18 @@ bool FolderRemote::tripped(const QString& op, QString* error) {
     return true;
 }
 
-void FolderRemote::failNext(const QString& op, int times) {
+void FolderCloud::failNext(const QString& op, int times) {
     failures_.insert(op, failures_.value(op, 0) + times);
 }
 
-QString FolderRemote::etagOf(const QByteArray& bytes) const {
+QString FolderCloud::etagOf(const QByteArray& bytes) const {
     const std::string material =
         std::to_string(etagSalt_) + ":" +
         std::string(bytes.constData(), size_t(bytes.size()));
     return QString::fromStdString(hashOf(material).hex()).left(32);
 }
 
-bool FolderRemote::list(QVector<Entry>* out, QString* error) {
+bool FolderCloud::list(QVector<Entry>* out, QString* error) {
     Q_ASSERT(out != nullptr);
     ++counters_.lists;
     ++traffic_.requests;
@@ -72,7 +72,7 @@ bool FolderRemote::list(QVector<Entry>* out, QString* error) {
     return true;
 }
 
-bool FolderRemote::get(const QString& name, QByteArray* bytes, QString* etag,
+bool FolderCloud::get(const QString& name, QByteArray* bytes, QString* etag,
                        QString* error) {
     Q_ASSERT(bytes != nullptr);
     ++counters_.gets;
@@ -92,7 +92,7 @@ bool FolderRemote::get(const QString& name, QByteArray* bytes, QString* etag,
     return true;
 }
 
-bool FolderRemote::put(const QString& name, const QByteArray& bytes, QString* etag,
+bool FolderCloud::put(const QString& name, const QByteArray& bytes, QString* etag,
                        QString* error) {
     ++counters_.puts;
     ++traffic_.requests;
@@ -140,7 +140,7 @@ bool FolderRemote::put(const QString& name, const QByteArray& bytes, QString* et
     return true;
 }
 
-bool FolderRemote::putIfMatch(const QString& name, const QByteArray& bytes,
+bool FolderCloud::putIfMatch(const QString& name, const QByteArray& bytes,
                               const QString& expectedEtag, QString* etag,
                               bool* preconditionFailed, QString* error) {
     if (preconditionFailed != nullptr) *preconditionFailed = false;
@@ -167,7 +167,7 @@ bool FolderRemote::putIfMatch(const QString& name, const QByteArray& bytes,
     return put(name, bytes, etag, error);
 }
 
-bool FolderRemote::del(const QString& name, QString* error) {
+bool FolderCloud::del(const QString& name, QString* error) {
     ++counters_.dels;
     ++traffic_.requests;
     if (tripped(QStringLiteral("del"), error)) return false;
@@ -187,7 +187,7 @@ bool FolderRemote::del(const QString& name, QString* error) {
     return false;
 }
 
-bool FolderRemote::mkdirOnce(QString* error) {
+bool FolderCloud::mkdirOnce(QString* error) {
     ++counters_.mkdirs;
     ++traffic_.requests;
     if (tripped(QStringLiteral("mkdir"), error)) return false;

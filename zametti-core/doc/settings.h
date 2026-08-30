@@ -1160,7 +1160,7 @@ struct ZSettings {
         ZM_SETTING_PLAIN(QString, url, Url, )
         ZM_SETTING_PLAIN(QString, user, User, )
         // Каталог на сервере. Пусто — по умолчанию именем, включающим store-id.
-        ZM_SETTING_PLAIN(QString, remoteDir, RemoteDir, )
+        ZM_SETTING_PLAIN(QString, cloudDir, CloudDir, )
 
         // Входа без TLS больше нет (решение владельца, 28.08.2026, отменившее
         // прежний ключ allowInsecureHttp): голый http разрешён только самому

@@ -1,4 +1,4 @@
-// WebDavRemote: пять операций поверх HTTP. См. шапку webdav_remote.h.
+// WebDavCloud: пять операций поверх HTTP. См. шапку webdav_remote.h.
 
 #include "webdav_remote.h"
 
@@ -56,11 +56,11 @@ QString tidyEtag(const QString& raw) {
 
 }  // namespace
 
-struct WebDavRemote::Impl {
+struct WebDavCloud::Impl {
     QNetworkAccessManager net;
 };
 
-bool WebDavRemote::checkUrl(const Config& config, QString* error) {
+bool WebDavCloud::checkUrl(const Config& config, QString* error) {
     const QUrl& url = config.base;
     if (!url.isValid() || url.host().isEmpty()) {
         if (error != nullptr)
@@ -91,7 +91,7 @@ bool WebDavRemote::checkUrl(const Config& config, QString* error) {
     return false;
 }
 
-WebDavRemote::WebDavRemote(const Config& config)
+WebDavCloud::WebDavCloud(const Config& config)
     : config_(config), impl_(std::make_shared<Impl>()) {}
 
 // ЛОГИН ШЛЁМ САМИ, а не через QAuthenticator, по двум причинам, и обе
@@ -104,14 +104,14 @@ WebDavRemote::WebDavRemote(const Config& config)
 //   2. ЛИШНИЙ КРУГ. Через QAuthenticator каждый запрос идёт дважды: первый
 //      получает 401, второй — с логином. Синк мерится счётчиками запросов,
 //      и удваивать их незачем.
-void WebDavRemote::authorize(::QNetworkRequest* request) const {
+void WebDavCloud::authorize(::QNetworkRequest* request) const {
     if (config_.user.isEmpty()) return;
     const QByteArray pair =
         config_.user.toUtf8() + ':' + config_.password.toUtf8();
     request->setRawHeader("Authorization", "Basic " + pair.toBase64());
 }
 
-WebDavRemote::~WebDavRemote() = default;
+WebDavCloud::~WebDavCloud() = default;
 
 namespace {
 
@@ -169,7 +169,7 @@ void waitFor(QNetworkReply* reply, int timeoutMs, qint64 uploadBytes = 0) {
 
 }  // namespace
 
-bool WebDavRemote::list(QVector<Entry>* out, QString* error) {
+bool WebDavCloud::list(QVector<Entry>* out, QString* error) {
     Q_ASSERT(out != nullptr);
     ++traffic_.requests;
     QNetworkRequest request(config_.base);
@@ -247,7 +247,7 @@ bool WebDavRemote::list(QVector<Entry>* out, QString* error) {
     return true;
 }
 
-bool WebDavRemote::get(const QString& name, QByteArray* bytes, QString* etag,
+bool WebDavCloud::get(const QString& name, QByteArray* bytes, QString* etag,
                        QString* error) {
     Q_ASSERT(bytes != nullptr);
     ++traffic_.requests;
@@ -279,7 +279,7 @@ bool WebDavRemote::get(const QString& name, QByteArray* bytes, QString* etag,
 // мелких блобов, каждый ценой RTT: последовательный прогон против живого
 // сервера стоил ~0.6 с на запрос (замерено 28.08.2026). У каждого реплая
 // свой сторож бездействия — контракт тот же, что у waitFor.
-void WebDavRemote::getMany(const QStringList& names, QHash<QString, Fetched>* out) {
+void WebDavCloud::getMany(const QStringList& names, QHash<QString, Fetched>* out) {
     Q_ASSERT(out != nullptr);
     if (names.isEmpty()) return;
     constexpr int kInFlight = 6;
@@ -341,12 +341,12 @@ void WebDavRemote::getMany(const QStringList& names, QHash<QString, Fetched>* ou
     if (done < int(names.size())) loop.exec();
 }
 
-bool WebDavRemote::put(const QString& name, const QByteArray& bytes, QString* etag,
+bool WebDavCloud::put(const QString& name, const QByteArray& bytes, QString* etag,
                        QString* error) {
     return putIfMatch(name, bytes, QString(), etag, nullptr, error);
 }
 
-bool WebDavRemote::putIfMatch(const QString& name, const QByteArray& bytes,
+bool WebDavCloud::putIfMatch(const QString& name, const QByteArray& bytes,
                               const QString& expectedEtag, QString* etag,
                               bool* preconditionFailed, QString* error) {
     ++traffic_.requests;
@@ -390,7 +390,7 @@ bool WebDavRemote::putIfMatch(const QString& name, const QByteArray& bytes,
     return true;
 }
 
-bool WebDavRemote::del(const QString& name, QString* error) {
+bool WebDavCloud::del(const QString& name, QString* error) {
     ++traffic_.requests;
     if (badName(name)) {
         if (error != nullptr)
@@ -415,7 +415,7 @@ bool WebDavRemote::del(const QString& name, QString* error) {
     return true;
 }
 
-bool WebDavRemote::mkdirOnce(QString* error) {
+bool WebDavCloud::mkdirOnce(QString* error) {
     ++traffic_.requests;
     QNetworkRequest request(config_.base);
     authorize(&request);

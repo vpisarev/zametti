@@ -51,10 +51,10 @@ ZStorage::Config StoreCli::addressFromFlags() const {
     ZStorage::Config cfg;
     if (to_.isEmpty() && url_.isEmpty()) return cfg;
     if (!to_.isEmpty())
-        cfg.remoteDir = QDir(to_).absolutePath();
+        cfg.cloudDir = QDir(to_).absolutePath();
     else
-        cfg.remoteUrl = url_.endsWith(QLatin1Char('/')) ? url_ : url_ + QLatin1Char('/');
-    cfg.remoteUser = user_;
+        cfg.cloudUrl = url_.endsWith(QLatin1Char('/')) ? url_ : url_ + QLatin1Char('/');
+    cfg.cloudUser = user_;
     return cfg;
 }
 
@@ -191,7 +191,7 @@ int StoreCli::run() {
     if (!parse()) return usage();
 
     if (command_ == QStringLiteral("init")) return cmdInit();
-    if (command_ == QStringLiteral("set-remote")) return cmdSetRemote();
+    if (command_ == QStringLiteral("set-remote")) return cmdSetCloud();
     if (command_ == QStringLiteral("sync")) return cmdSync();
     if (command_ == QStringLiteral("push-all")) return cmdPushAll();
     if (command_ == QStringLiteral("root")) return cmdRoot();
@@ -221,12 +221,12 @@ int StoreCli::cmdInit() {
 // Два пароля спрашиваются с клавиатуры без эха (или берутся из среды — для
 // обвязки); ключ и пароль сервера ложатся в системный keyring, адрес — в
 // <store>/.zametti/remote.json. Все ветки знакомства с облаком решает
-// ZStorage::connectRemote, здесь только ввод.
-int StoreCli::cmdSetRemote() {
+// ZStorage::connectCloud, здесь только ввод.
+int StoreCli::cmdSetCloud() {
     if (root_.isEmpty()) return usage();
     ZStorage storage(root_);
     // «Не хранилище» здесь НЕ отказ: пустой или несуществующий каталог —
-    // законный вход нового устройства, каркас заведёт connectRemote.
+    // законный вход нового устройства, каркас заведёт connectCloud.
     // Замок — только у существующего хранилища: в пустом каталоге ещё
     // нечего охранять, а замку негде жить.
     if (storage.isStore()) {
@@ -249,7 +249,7 @@ int StoreCli::cmdSetRemote() {
             keyring.clearServerPassword(identity.storeId());
             keyring.clearEncryptionPassword(identity.storeId());
         }
-        if (!storage.clearRemoteConfig(&error)) {
+        if (!storage.clearCloudConfig(&error)) {
             std::fprintf(stderr, "%s\n", error.toUtf8().constData());
             return 1;
         }
@@ -264,11 +264,11 @@ int StoreCli::cmdSetRemote() {
     // Переподключение (тот же адрес после ротации, утраченный конверт):
     // пароль сервера не спрашивается заново, если он уже в keyring, —
     // человек вводит только пароль шифрования.
-    if (!cfg.remoteUrl.isEmpty() && serverPassword.isEmpty() && !headless && keyring.available()) {
+    if (!cfg.cloudUrl.isEmpty() && serverPassword.isEmpty() && !headless && keyring.available()) {
         const ZStorage::Identity mine = storage.identity();
         if (!mine.isEmpty()) serverPassword = keyring.serverPassword(mine.storeId());
     }
-    if (!cfg.remoteUrl.isEmpty() && serverPassword.isEmpty())
+    if (!cfg.cloudUrl.isEmpty() && serverPassword.isEmpty())
         serverPassword = askPassword("server password: ");
 
     // Дважды или один раз — зависит от того, есть ли в облаке конверт;
@@ -291,7 +291,7 @@ int StoreCli::cmdSetRemote() {
     ZStorage::ConnectOutcome outcome;
     // Статический вход: тот же метод позовёт диалог первичной настройки в
     // самом zametti (и на Android, где консоли нет).
-    if (!ZStorage::initFromRemote(root_, cfg, password, serverPassword, secrets,
+    if (!ZStorage::initFromCloud(root_, cfg, password, serverPassword, secrets,
                                   Keyfile::defaults(), &outcome, &error)) {
         std::fprintf(stderr, "%s\n", error.toUtf8().constData());
         return 1;
@@ -312,7 +312,7 @@ int StoreCli::cmdSetRemote() {
                     outcome.cloudNotes, outcome.cloudAttachments,
                     double(outcome.cloudBytes) / (1024.0 * 1024.0));
     std::printf("connected: %s\n",
-                (cfg.remoteUrl.isEmpty() ? cfg.remoteDir : cfg.remoteUrl).toUtf8().constData());
+                (cfg.cloudUrl.isEmpty() ? cfg.cloudDir : cfg.cloudUrl).toUtf8().constData());
     return 0;
 }
 
@@ -336,8 +336,8 @@ int StoreCli::cmdSync() {
 
     // Адрес: ключи командной строки сильнее remote.json.
     ZStorage::Config cfg = addressFromFlags();
-    if (!cfg.hasCloud()) cfg = storage.remoteConfig();
-    if (!cfg.hasCloud()) {
+    if (!cfg.hasCloudAddress()) cfg = storage.cloudConfig();
+    if (!cfg.hasCloudAddress()) {
         std::fprintf(stderr, "sync is not configured: run set-remote once, or pass --url/--to\n");
         return 1;
     }
@@ -357,7 +357,7 @@ int StoreCli::cmdSync() {
     how.cfg = cfg;
     how.serverPassword = qEnvironmentVariable("ZAMETTI_WEBDAV_PASSWORD");
     how.encryptionPassword = qEnvironmentVariable("ZAMETTI_SYNC_PASSWORD");
-    if (!storage.attachRemote(how, secrets, nullptr, &error)) {
+    if (!storage.attachCloud(how, secrets, nullptr, &error)) {
         std::fprintf(stderr, "%s\n", error.toUtf8().constData());
         return 1;
     }
@@ -396,7 +396,7 @@ int StoreCli::cmdSync() {
     std::printf("exchange: %d listed, %d skipped, %d etag-reissued, %d taken, %d pushed, "
                 "%d merged, %d deferred, %d healed, %d corrupt-as-absence\n",
                 report.listed, report.skipped, report.etagReissued, report.takenWhole,
-                report.pushedWhole, report.mergedJournals, report.deferred, report.healedRemote,
+                report.pushedWhole, report.mergedJournals, report.deferred, report.healedCloud,
                 report.corruptLocalTreatedAsAbsence);
     std::printf("materialize: %d files, %d deletes; attachments: %d up, %d down\n",
                 report.materialized, report.deletesApplied, report.attachmentsUp,
@@ -455,7 +455,7 @@ int StoreCli::cmdPushAll() {
     how.mintIfCloudEmpty = true;
     EnvSecrets secrets;
     ZStorage::AttachOutcome attached;
-    if (!storage.attachRemote(how, secrets, &attached, &error)) {
+    if (!storage.attachCloud(how, secrets, &attached, &error)) {
         std::fprintf(stderr, "%s\n", error.toUtf8().constData());
         return 1;
     }
@@ -473,7 +473,7 @@ int StoreCli::cmdPushAll() {
                 static_cast<long long>(report.sealedBytes - report.plainBytes));
     std::printf("time: baseline %.1f ms, seal %.1f ms, upload %.1f ms\n",
                 report.usBaseline / 1000.0, report.usSeal / 1000.0, report.usPut / 1000.0);
-    const RemoteStore::Traffic& traffic = storage.remote()->traffic();
+    const CloudStore::Traffic& traffic = storage.cloud()->traffic();
     std::printf("traffic: %lld requests, %lld B up, %lld B down\n",
                 static_cast<long long>(traffic.requests),
                 static_cast<long long>(traffic.bytesUp),

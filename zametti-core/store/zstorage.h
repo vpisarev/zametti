@@ -82,7 +82,7 @@ public:
     // ЗНАЧЕНИЕ БЕЗ ФАЙЛОВ: карту наполняет хранилище. Сегодня — из локального
     // каталога (subtreeFor); поставщик для заметок, которых локально нет,
     // однажды станет глаголом ZStorage поверх облачных журналов — НЕ методом
-    // адаптера: RemoteStore возит байты, у него нет ни ключа, ни понятия о
+    // адаптера: CloudStore возит байты, у него нет ни ключа, ни понятия о
     // заметках.
     class NoteTree {
     public:
@@ -758,8 +758,8 @@ protected:
     bool loaded_ = false;
     std::shared_ptr<QLockFile> lock_;   // заведён при первом lock()
     // Облако: адаптер и шифр, рождённый из ключа. Оба пусты, пока не звали
-    // setRemote; владение — shared_ptr, как всюду в проекте.
-    std::shared_ptr<RemoteStore> remote_;
+    // setCloud; владение — shared_ptr, как всюду в проекте.
+    std::shared_ptr<CloudStore> cloud_;
     std::shared_ptr<BlobCipher> cipher_;
 
     // Записать идентичность целиком (атомарно). Зовётся только отсюда.
@@ -779,13 +779,13 @@ public:
     // storeId сошёлся — наше, разошёлся — ЧЕСТНАЯ ОСТАНОВКА до единой записи
     // («это облако принадлежит другому хранилищу»); пусто на сервере — так
     // выглядит первый синк, и это не беда. Ключ обязан быть развёрнут.
-    bool setRemote(const std::shared_ptr<RemoteStore>& remote, const Keyfile& keyfile,
+    bool setCloud(const std::shared_ptr<CloudStore>& cloud, const Keyfile& keyfile,
                    QString* error = nullptr);
-    bool hasRemote() const { return remote_ != nullptr && cipher_ != nullptr; }
-    void dropRemote();
+    bool isConnected() const { return cloud_ != nullptr && cipher_ != nullptr; }
+    void dropCloud();
     // Адаптер для тех, кому нужно спросить у облака что-то своё (счётчики
     // трафика в замерах). Пусто — облако не подключено.
-    const std::shared_ptr<RemoteStore>& remote() const { return remote_; }
+    const std::shared_ptr<CloudStore>& cloud() const { return cloud_; }
 
     // ЗАЛИТЬ ВСЁ. Люк разведки и прародитель sync(): дожурнализовать заметки
     // без журнала, зашифровать и залить журналы, вложения, keyfile и манифест.
@@ -829,7 +829,7 @@ public:
     // Одна структура на два дома (решение владельца, 27.08.2026):
     //
     //   * содержимое `<root>/.zametti/remote.json` — адрес облака ЭТОЙ КОПИИ.
-    //     Туда уходят ТОЛЬКО облачные поля (remoteBytes): файл лежит В корне,
+    //     Туда уходят ТОЛЬКО облачные поля (cloudConfigBytes): файл лежит В корне,
     //     и путь, вписанный внутрь, протух бы при cp -r. Адрес принадлежит
     //     копии, а не пользователю и не машине: `.zametti/` в облако не
     //     синхронизируется, а с каталогом уезжает — копия знает, чьё облако её;
@@ -846,9 +846,9 @@ public:
         QString root;        // корень локальной копии
         QString name;        // кэш заголовка корневой заметки; может отставать
         // --- облачная сторона (remote.json и строка списка) -----------------
-        QString remoteUrl;   // WebDAV-коллекция; пусто — облако-каталог
-        QString remoteDir;   // каталог-облако (наборы, люки, NAS-папка)
-        QString remoteUser;  // логин сервера; пароль — в keyring
+        QString cloudUrl;   // WebDAV-коллекция; пусто — облако-каталог
+        QString cloudDir;   // каталог-облако (наборы, люки, NAS-папка)
+        QString cloudUser;  // логин сервера; пароль — в keyring
         // Сторож бездействия сети, мс (большой файл едет столько, сколько
         // едет). Голый http разрешён только localhost — ключа-лазейки нет
         // (решение владельца 28.08.2026).
@@ -856,35 +856,35 @@ public:
 
         // «Облако настроено?» и «запись пуста?» — РАЗНЫЕ вопросы; прежний
         // isEmpty() с двумя смыслами не живёт.
-        bool hasCloud() const { return !remoteUrl.isEmpty() || !remoteDir.isEmpty(); }
-        bool isEmpty() const { return root.isEmpty() && !hasCloud(); }
+        bool hasCloudAddress() const { return !cloudUrl.isEmpty() || !cloudDir.isEmpty(); }
+        bool isEmpty() const { return root.isEmpty() && !hasCloudAddress(); }
 
         // Один читатель — два писателя с говорящими именами. Читатель понимает
         // и прежние ключи url/dir/user как запасные: старые remote.json
         // продолжают читаться и мигрируют при следующей записи.
         void parse(const QJsonObject& o);
         bool parse(const QByteArray& bytes, QString* error = nullptr);
-        QByteArray remoteBytes() const;  // remote.json: только облачная сторона
+        QByteArray cloudConfigBytes() const;  // remote.json: только облачная сторона
         QJsonObject entryJson() const;   // строка списка: всё, что непусто
     };
     // Адрес облака этой копии из remote.json; root заполняется корнем копии
     // (name — нет: заголовок корня стоит чтения файла, а сюда ходят часто).
     // Нет файла или файл битый — конфиг без облака: «синк не настроен», не беда.
-    Config remoteConfig() const;
+    Config cloudConfig() const;
     // Имя своего хранилища — заголовок корневой заметки, файлом (не каталогом:
     // ярлык нужен и потоку синка, и строке списка хранилищ). Пусто — корня нет
     // или не читается. Стоит чтения файла — на горячий путь не ставить.
     QString localStoreName() const;
-    bool writeRemoteConfig(const Config& cfg, QString* error = nullptr);
+    bool writeCloudConfig(const Config& cfg, QString* error = nullptr);
     // Отвязка (--reset): забыть адрес. Секреты в keyring чистит вызывающий —
     // хранилище к keyring не прикасается.
-    bool clearRemoteConfig(QString* error = nullptr);
+    bool clearCloudConfig(QString* error = nullptr);
 
     // Построить адаптер по конфигу — общий код CLI и приложения. Пароль
     // сервера приходит параметром: у первичной настройки он с клавиатуры, у
     // остальных — из keyring. Пусто при пустом конфиге или негодном адресе.
     // Статический: адаптер строится из одного конфига, хранилище ни при чём.
-    static std::shared_ptr<RemoteStore> makeRemote(const Config& cfg,
+    static std::shared_ptr<CloudStore> makeCloud(const Config& cfg,
                                                    const QString& serverPassword,
                                                    QString* error = nullptr);
 
@@ -924,11 +924,11 @@ public:
     struct AttachOutcome {
         bool mintedKeyfile = false;  // облако было пустым, конверт отчеканен
     };
-    bool attachRemote(const AttachOptions& how, SecretStore& secrets,
+    bool attachCloud(const AttachOptions& how, SecretStore& secrets,
                       AttachOutcome* outcome = nullptr, QString* error = nullptr);
     // Она же без вопросов: адрес из remote.json, секреты из keyring.
-    bool useLastRemote(SecretStore& secrets, QString* error = nullptr) {
-        return attachRemote(AttachOptions{}, secrets, nullptr, error);
+    bool useLastCloud(SecretStore& secrets, QString* error = nullptr) {
+        return attachCloud(AttachOptions{}, secrets, nullptr, error);
     }
 
     // ПЕРВИЧНАЯ НАСТРОЙКА (set-remote): единственное место, где решаются все
@@ -939,7 +939,7 @@ public:
     // манифеста, и дальнейший sync скачает всё (отдельного кода
     // восстановления не существует). После удачи: ключ в keyring, пароль
     // сервера в keyring (если не пуст), адрес в remote.json, облако
-    // подключено (hasRemote).
+    // подключено (isConnected).
     struct ConnectOutcome {
         bool mintedKeyfile = false;     // облако было пустым, keyfile отчеканен
         bool inheritedIdentity = false; // бутстрап: id пришёл из манифеста
@@ -951,7 +951,7 @@ public:
         int cloudAttachments = 0;
         qint64 cloudBytes = 0;
     };
-    bool connectRemote(const Config& cfg, const QString& encryptionPassword,
+    bool connectCloud(const Config& cfg, const QString& encryptionPassword,
                        const QString& serverPassword, SecretStore& secrets,
                        const Keyfile::KdfParams& mintParams, ConnectOutcome* outcome,
                        QString* error = nullptr);
@@ -961,8 +961,8 @@ public:
     // завтра. Каталога может не существовать вовсе: облако с манифестом даёт
     // бутстрап (id наследуется, корень материализуется), пустое облако —
     // первое устройство. Пусто при отказе, объяснение в error; возвращённое
-    // хранилище уже подключено (hasRemote) и готово к sync().
-    static std::shared_ptr<ZStorage> initFromRemote(
+    // хранилище уже подключено (isConnected) и готово к sync().
+    static std::shared_ptr<ZStorage> initFromCloud(
         const QString& root, const Config& cfg, const QString& encryptionPassword,
         const QString& serverPassword, SecretStore& secrets,
         const Keyfile::KdfParams& mintParams, ConnectOutcome* outcome,
@@ -1070,7 +1070,7 @@ public:
         int deferred = 0;          // отложено: гонка заливки или бюджет выхода
         ZJournal::MergeStats merge;  // сумма по всем слияниям
         int corruptLocalTreatedAsAbsence = 0;  // валидация: битый локальный
-        int healedRemote = 0;      // перезаливка пропавшего/битого блоба
+        int healedCloud = 0;      // перезаливка пропавшего/битого блоба
         // Наследных имён переложено под новые (<id>.zm, <id>_<ext>.pic) с
         // удалением старого блоба; ненулевое — заодно повод обновить манифест
         // (забор версий для прежних сборок).
@@ -1090,9 +1090,9 @@ public:
         int integrityFailures = 0;   // каждый — строка в stderr и false в итоге
         bool cancelled = false;
         qint64 usAlign = 0, usExchange = 0, usMaterialize = 0;
-        RemoteStore::Traffic traffic;  // разность за прогон
+        CloudStore::Traffic traffic;  // разность за прогон
     };
-    // Облако должно быть подключено (setRemote/useLastRemote/connectRemote).
+    // Облако должно быть подключено (setCloud/useLastCloud/connectCloud).
     // false — либо не подключено, либо хотя бы один блоб не прошёл проверку
     // целостности (отчёт полон в обоих случаях: прогон не бросает работу на
     // первом больном журнале).
@@ -1142,7 +1142,7 @@ protected:
     // --- шаги операций: снаружи их не зовут, снаружи глаголы -----------------
     //
     // Каркас хранилища в пустом/несуществующем каталоге — без идентичности.
-    // Общий низ init() и бутстрапа connectRemote.
+    // Общий низ init() и бутстрапа connectCloud.
     bool makeSkeleton(QString* error);
     // Файл вложения: <root>/<name>.
     QString attachmentPath(const QString& name) const;
@@ -1205,7 +1205,7 @@ protected:
                            const Digest& expectedBytes, QString* error);
     // Имя облачного хранилища — best-effort вскрытием журнала их корня данным
     // шифром; чужой ключ — честно пусто (имя зашифровано, и это фича).
-    static QString cloudStoreName(RemoteStore& remote, BlobCipher& cipher,
+    static QString cloudStoreName(CloudStore& cloud, BlobCipher& cipher,
                                   const Identity& theirs);
     // Скачать журнал одной заметки из облака, принять и материализовать
     // голову. Бутстрап зовёт это для КОРНЕВОЙ заметки: дерево нового

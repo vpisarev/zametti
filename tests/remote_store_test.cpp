@@ -16,67 +16,67 @@
 
 namespace {
 
-using zametti::FolderRemote;
-using zametti::RemoteStore;
+using zametti::FolderCloud;
+using zametti::CloudStore;
 
 // Адаптер, НЕ умеющий условной заливки: putIfMatch не переопределён, значит
-// работает дефолт RemoteStore — молчаливая деградация в put. Без такого
+// работает дефолт CloudStore — молчаливая деградация в put. Без такого
 // адаптера ветка деградации в контракте не проверялась бы вовсе.
-class PlainRemote : public zt::MemoryRemote {
+class PlainCloud : public zt::MemoryCloud {
 public:
-    using zt::MemoryRemote::MemoryRemote;
+    using zt::MemoryCloud::MemoryCloud;
     bool putIfMatch(const QString& name, const QByteArray& bytes,
                     const QString& expectedEtag, QString* etag,
                     bool* preconditionFailed, QString* error = nullptr) override {
-        return RemoteStore::putIfMatch(name, bytes, expectedEtag, etag,
+        return CloudStore::putIfMatch(name, bytes, expectedEtag, etag,
                                        preconditionFailed, error);
     }
 };
 
 void checkContracts() {
-    const QString dir = zt::TestData::outDir(QStringLiteral("remote-folder")) +
+    const QString dir = zt::TestData::outDir(QStringLiteral("cloud-folder")) +
                         QStringLiteral("/облако");
-    FolderRemote folder(dir);
-    zt::checkRemoteContract(folder, "каталог");
+    FolderCloud folder(dir);
+    zt::checkCloudContract(folder, "каталог");
     // И ничего не легло рядом с каталогом «сервера»: побег вверх не удался
     // не только по ответу, но и по факту.
     ZT_TRUE("наружу каталога ничего не записано",
             !QFile::exists(QFileInfo(dir).absolutePath() +
                            QStringLiteral("/сбежал.log")));
 
-    zt::MemoryRemote memory;
-    zt::checkRemoteContract(memory, "память");
+    zt::MemoryCloud memory;
+    zt::checkCloudContract(memory, "память");
 
-    PlainRemote plain;
-    zt::checkRemoteContract(plain, "без If-Match", /*conditionalPuts=*/false);
+    PlainCloud plain;
+    zt::checkCloudContract(plain, "без If-Match", /*conditionalPuts=*/false);
 }
 
 // Рубильники: то, чего у настоящего сервера не спросишь.
 void checkFailures() {
-    const QString dir = zt::TestData::outDir(QStringLiteral("remote-fail")) +
+    const QString dir = zt::TestData::outDir(QStringLiteral("cloud-fail")) +
                         QStringLiteral("/облако");
-    FolderRemote remote(dir);
+    FolderCloud cloud(dir);
     QString error;
-    ZT_TRUE("mkdirOnce", remote.mkdirOnce(&error));
+    ZT_TRUE("mkdirOnce", cloud.mkdirOnce(&error));
 
-    remote.failNext(QStringLiteral("put"));
+    cloud.failNext(QStringLiteral("put"));
     ZT_TRUE("взведённый рубильник валит put",
-            !remote.put(QStringLiteral("01aaaa.log"), QByteArray("тело"), nullptr, &error));
+            !cloud.put(QStringLiteral("01aaaa.log"), QByteArray("тело"), nullptr, &error));
     ZT_TRUE("и объясняет", error.contains(QLatin1String("on purpose")));
     ZT_TRUE("рубильник одноразовый: следующий put проходит",
-            remote.put(QStringLiteral("01aaaa.log"), QByteArray("тело"), nullptr, &error));
+            cloud.put(QStringLiteral("01aaaa.log"), QByteArray("тело"), nullptr, &error));
 
-    remote.failNext(QStringLiteral("list"), 2);
-    QVector<RemoteStore::Entry> listing;
-    ZT_TRUE("первый листинг провален", !remote.list(&listing, &error));
-    ZT_TRUE("второй тоже", !remote.list(&listing, &error));
-    ZT_TRUE("третий проходит", remote.list(&listing, &error));
+    cloud.failNext(QStringLiteral("list"), 2);
+    QVector<CloudStore::Entry> listing;
+    ZT_TRUE("первый листинг провален", !cloud.list(&listing, &error));
+    ZT_TRUE("второй тоже", !cloud.list(&listing, &error));
+    ZT_TRUE("третий проходит", cloud.list(&listing, &error));
 
     // Обрыв заливки не оставляет на «сервере» полблоба: провалившийся put
     // виден только счётчиком, а содержимое осталось прежним.
     QByteArray body;
     ZT_TRUE("прежнее содержимое цело",
-            remote.get(QStringLiteral("01aaaa.log"), &body, nullptr, &error) &&
+            cloud.get(QStringLiteral("01aaaa.log"), &body, nullptr, &error) &&
                 body == QByteArray("тело"));
     ZT_TRUE("временных файлов не осталось",
             QDir(dir).entryList(QStringList() << QStringLiteral("*.part"),
@@ -86,65 +86,65 @@ void checkFailures() {
 // Перевыдача etag без изменения содержимого — болячка WebDAV. Движок обязан
 // на этом НЕ заливать заново: он сверяет хеш, а не метку.
 void checkEtagReissue() {
-    const QString dir = zt::TestData::outDir(QStringLiteral("remote-etag")) +
+    const QString dir = zt::TestData::outDir(QStringLiteral("cloud-etag")) +
                         QStringLiteral("/облако");
-    FolderRemote remote(dir);
+    FolderCloud cloud(dir);
     QString error, before, after;
-    ZT_TRUE("mkdirOnce", remote.mkdirOnce(&error));
-    ZT_TRUE("put", remote.put(QStringLiteral("01aaaa.log"), QByteArray("тело"),
+    ZT_TRUE("mkdirOnce", cloud.mkdirOnce(&error));
+    ZT_TRUE("put", cloud.put(QStringLiteral("01aaaa.log"), QByteArray("тело"),
                               &before, &error));
 
-    remote.setEtagSalt(7);
+    cloud.setEtagSalt(7);
     QByteArray body;
-    ZT_TRUE("get", remote.get(QStringLiteral("01aaaa.log"), &body, &after, &error));
+    ZT_TRUE("get", cloud.get(QStringLiteral("01aaaa.log"), &body, &after, &error));
     ZT_TRUE("etag перевыдан другим", after != before);
     ZT_TRUE("а содержимое то же", body == QByteArray("тело"));
 }
 
 // Счётчики — под требование брифа мерить синк числами.
 void checkCounters() {
-    const QString dir = zt::TestData::outDir(QStringLiteral("remote-count")) +
+    const QString dir = zt::TestData::outDir(QStringLiteral("cloud-count")) +
                         QStringLiteral("/облако");
-    FolderRemote remote(dir);
+    FolderCloud cloud(dir);
     QString error;
-    remote.mkdirOnce(&error);
-    remote.put(QStringLiteral("01aaaa.log"), QByteArray("тело"), nullptr, &error);
-    QVector<RemoteStore::Entry> listing;
-    remote.list(&listing, &error);
+    cloud.mkdirOnce(&error);
+    cloud.put(QStringLiteral("01aaaa.log"), QByteArray("тело"), nullptr, &error);
+    QVector<CloudStore::Entry> listing;
+    cloud.list(&listing, &error);
     QByteArray body;
-    remote.get(QStringLiteral("01aaaa.log"), &body, nullptr, &error);
-    remote.del(QStringLiteral("01aaaa.log"), &error);
+    cloud.get(QStringLiteral("01aaaa.log"), &body, nullptr, &error);
+    cloud.del(QStringLiteral("01aaaa.log"), &error);
 
-    const FolderRemote::Counters& counters = remote.counters();
+    const FolderCloud::Counters& counters = cloud.counters();
     ZT_TRUE("листингов 1", counters.lists == 1);
     ZT_TRUE("заливок 1", counters.puts == 1);
     ZT_TRUE("скачиваний 1", counters.gets == 1);
     ZT_TRUE("удалений 1", counters.dels == 1);
     ZT_TRUE("каталог заводился 1 раз", counters.mkdirs == 1);
-    ZT_TRUE("запросов всего 5", remote.traffic().requests == 5);
+    ZT_TRUE("запросов всего 5", cloud.traffic().requests == 5);
 
-    remote.resetCounters();
-    ZT_TRUE("сброс счётчиков", remote.counters().lists == 0);
+    cloud.resetCounters();
+    ZT_TRUE("сброс счётчиков", cloud.counters().lists == 0);
 }
 
 // Каталога нет — это НЕ «там пусто»: путать их нельзя, пустота значила бы
 // «удалить всё локальное».
 void checkMissingDir() {
-    const QString dir = zt::TestData::outDir(QStringLiteral("remote-nodir")) +
+    const QString dir = zt::TestData::outDir(QStringLiteral("cloud-nodir")) +
                         QStringLiteral("/которого-нет");
-    FolderRemote remote(dir);
-    QVector<RemoteStore::Entry> listing;
+    FolderCloud cloud(dir);
+    QVector<CloudStore::Entry> listing;
     QString error;
-    ZT_TRUE("листинг несуществующего каталога — отказ", !remote.list(&listing, &error));
+    ZT_TRUE("листинг несуществующего каталога — отказ", !cloud.list(&listing, &error));
     ZT_TRUE("и объяснён", !error.isEmpty());
-    ZT_TRUE("mkdirOnce заводит", remote.mkdirOnce(&error));
+    ZT_TRUE("mkdirOnce заводит", cloud.mkdirOnce(&error));
     ZT_TRUE("теперь листинг удаётся и пуст",
-            remote.list(&listing, &error) && listing.isEmpty());
+            cloud.list(&listing, &error) && listing.isEmpty());
 }
 
 }  // namespace
 
-TEST(RemoteStore, All) {
+TEST(CloudStore, All) {
     checkContracts();
     checkFailures();
     checkEtagReissue();

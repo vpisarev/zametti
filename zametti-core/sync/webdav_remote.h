@@ -1,8 +1,8 @@
-// WebDavRemote — облако по WebDAV (m17, сессия 3).
+// WebDavCloud — облако по WebDAV (m17, сессия 3).
 //
 // Пять операций брифа поверх пяти методов HTTP: PROPFIND Depth:1 (листинг),
 // GET, PUT, DELETE, MKCOL (один раз). Basic auth поверх TLS; If-Match — если
-// сервер честен, иначе молча деградируем (дефолт RemoteStore).
+// сервер честен, иначе молча деградируем (дефолт CloudStore).
 //
 // СИНХРОННЫЙ по построению: у каждой операции свой QEventLoop. Синк живёт в
 // фоновом потоке, и асинхронность внутри адаптера только запутала бы порядок
@@ -33,7 +33,7 @@ class QNetworkRequest;
 
 namespace zametti {
 
-class WebDavRemote : public RemoteStore {
+class WebDavCloud : public CloudStore {
 public:
     struct Config {
         QUrl base;                    // адрес каталога, напр. https://dav/зам/<storeId>
@@ -49,8 +49,8 @@ public:
     // открытым текстом даже один раз.
     static bool checkUrl(const Config& config, QString* error);
 
-    explicit WebDavRemote(const Config& config);
-    ~WebDavRemote() override;
+    explicit WebDavCloud(const Config& config);
+    ~WebDavCloud() override;
 
     bool list(QVector<Entry>* out, QString* error = nullptr) override;
     bool get(const QString& name, QByteArray* bytes, QString* etag,

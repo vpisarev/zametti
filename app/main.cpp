@@ -2739,7 +2739,7 @@ int main(int argc, char** argv) {
         QString show = preferred;
         if (show.isEmpty()) {
             QString first = model.firstNoteId();
-            if (first.isEmpty() && !storage->remoteConfig().hasCloud()) {
+            if (first.isEmpty() && !storage->cloudConfig().hasCloudAddress()) {
                 QString newError;
                 if (storage->createNote(QString(), false, &newError).isEmpty())
                     std::fprintf(stderr, "%s\n", newError.toUtf8().constData());
@@ -2762,7 +2762,7 @@ int main(int argc, char** argv) {
         // открытым хранилищем (ключ --root, прежний storeRoot) — миграция
         // прежних состояний бесплатна.
         {
-            zametti::ZStorage::Config entry = storage->remoteConfig();
+            zametti::ZStorage::Config entry = storage->cloudConfig();
             entry.name = storage->localStoreName();
             zapp.state().rememberStore(entry);
         }

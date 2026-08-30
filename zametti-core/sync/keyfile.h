@@ -38,7 +38,7 @@ public:
     static constexpr int kKeyBytes = 32;
     // Имя блоба в облаке — здесь один раз. Лежит открытым текстом рядом с
     // шифрованными блобами: сверка etag работает до ввода пароля.
-    static constexpr char kRemoteName[] = "keyfile";
+    static constexpr char kCloudName[] = "keyfile";
 
     struct KdfParams {
         quint64 opslimit = 0;        // проходов Argon2id

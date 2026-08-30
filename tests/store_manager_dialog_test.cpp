@@ -1,7 +1,7 @@
 // Диалог управления хранилищами: список, добавление, скачивание из облака,
 // свежее облако с двойным паролем, сброс пароля шифрования, «−».
 //
-// Облако — каталог (FolderRemote), keyring — в памяти, Аргон — крошечный:
+// Облако — каталог (FolderCloud), keyring — в памяти, Аргон — крошечный:
 // проверяется ПРОВОДКА диалога и то, что каждая ветка доезжает до ядра и
 // возвращается итогом. Рабочий поток настоящий — ожидание идёт по кнопке
 // Apply: занятое окно её гасит, освободившееся возвращает.
@@ -80,16 +80,16 @@ void checkCloudAddress() {
     StoreManagerDialog::setCloudAddress(cfg, QStringLiteral("https://host/dav/notes"),
                                         QStringLiteral(" вадим "));
     ZT_EQ("url получает хвостовой слэш", std::string("https://host/dav/notes/"),
-          s(cfg.remoteUrl));
-    ZT_TRUE("каталог пуст при url", cfg.remoteDir.isEmpty());
-    ZT_EQ("логин обрезан", std::string("вадим"), s(cfg.remoteUser));
+          s(cfg.cloudUrl));
+    ZT_TRUE("каталог пуст при url", cfg.cloudDir.isEmpty());
+    ZT_EQ("логин обрезан", std::string("вадим"), s(cfg.cloudUser));
 
     StoreManagerDialog::setCloudAddress(cfg, QStringLiteral("/mnt/nas/облако"), QString());
-    ZT_TRUE("путь стал каталогом-облаком", cfg.remoteUrl.isEmpty() &&
-                cfg.remoteDir == QStringLiteral("/mnt/nas/облако"));
+    ZT_TRUE("путь стал каталогом-облаком", cfg.cloudUrl.isEmpty() &&
+                cfg.cloudDir == QStringLiteral("/mnt/nas/облако"));
 
     StoreManagerDialog::setCloudAddress(cfg, QString(), QString());
-    ZT_TRUE("пустая строка — облака нет", !cfg.hasCloud());
+    ZT_TRUE("пустая строка — облака нет", !cfg.hasCloudAddress());
 }
 
 void checkListAndForget() {
@@ -129,9 +129,9 @@ void checkDownloadFromCloud() {
         ZStorage s(src.root());
         FakeSecrets boot;
         ZStorage::Config cfg;
-        cfg.remoteDir = cloud;
+        cfg.cloudDir = cloud;
         ZT_TRUE("облако заведено",
-                s.connectRemote(cfg, QStringLiteral("пароль-шифра"), QString(), boot, kTiny,
+                s.connectCloud(cfg, QStringLiteral("пароль-шифра"), QString(), boot, kTiny,
                                 nullptr, &err));
         ZT_TRUE("корень завёлся", !s.ensureRootNote(&err).isEmpty());
         ZT_TRUE("заливка прошла", s.pushAll(nullptr, &err));
@@ -211,13 +211,13 @@ void checkFreshCloudAndReset() {
     ZT_TRUE("подключение дождалось", waitIdle(dialog));
     ZT_TRUE(("конверт отчеканен: " + s(statusText(dialog))).c_str(),
             QFile::exists(cloud + QStringLiteral("/keyfile")));
-    ZT_TRUE("адрес записан в хранилище", ZStorage(root).remoteConfig().hasCloud());
+    ZT_TRUE("адрес записан в хранилище", ZStorage(root).cloudConfig().hasCloudAddress());
     ZT_TRUE("ключ в keyring", secrets->keys_.size() == 1);
     ZT_TRUE("строка списка несёт облако",
-            dialog.result().stores.first().hasCloud());
+            dialog.result().stores.first().hasCloudAddress());
 
     // --- сброс пароля -------------------------------------------------------
-    ZStorage::Config cfgProbe = ZStorage(root).remoteConfig();
+    ZStorage::Config cfgProbe = ZStorage(root).cloudConfig();
     ZT_TRUE("старый пароль подходит",
             ZStorage::probeCloud(cfgProbe, QString(), QStringLiteral("первый-пароль"),
                                  nullptr, &err));

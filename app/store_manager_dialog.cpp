@@ -74,21 +74,21 @@ public:
 
 void StoreManagerDialog::setCloudAddress(ZStorage::Config& cfg, const QString& server,
                                          const QString& user) {
-    cfg.remoteUrl.clear();
-    cfg.remoteDir.clear();
+    cfg.cloudUrl.clear();
+    cfg.cloudDir.clear();
     const QString address = server.trimmed();
     if (address.startsWith(QStringLiteral("http://")) ||
         address.startsWith(QStringLiteral("https://")))
         // Хвостовой «/» — как у CLI: WebDAV-коллекция без него резолвится
         // относительно родителя.
-        cfg.remoteUrl = address.endsWith(QLatin1Char('/')) ? address : address + QLatin1Char('/');
+        cfg.cloudUrl = address.endsWith(QLatin1Char('/')) ? address : address + QLatin1Char('/');
     else if (!address.isEmpty())
-        cfg.remoteDir = QDir(address).absolutePath();
-    cfg.remoteUser = user.trimmed();
+        cfg.cloudDir = QDir(address).absolutePath();
+    cfg.cloudUser = user.trimmed();
 }
 
 QString StoreManagerDialog::cloudAddressText(const ZStorage::Config& cfg) {
-    return cfg.remoteUrl.isEmpty() ? cfg.remoteDir : cfg.remoteUrl;
+    return cfg.cloudUrl.isEmpty() ? cfg.cloudDir : cfg.cloudUrl;
 }
 
 StoreManagerDialog::StoreManagerDialog(QWidget* parent, const QList<ZStorage::Config>& stores,
@@ -311,7 +311,7 @@ void StoreManagerDialog::rebuildList(int selectRow) {
         auto* item = new QListWidgetItem(
             isCurrentRoot(e.root) ? title + QStringLiteral("  •  open") : title, list_);
         QString tip = e.root;
-        if (e.hasCloud()) tip += QStringLiteral("\ncloud: ") + cloudAddressText(e);
+        if (e.hasCloudAddress()) tip += QStringLiteral("\ncloud: ") + cloudAddressText(e);
         item->setToolTip(tip);
     }
     if (selectRow >= 0 && selectRow < list_->count()) {
@@ -337,7 +337,7 @@ void StoreManagerDialog::showEntry(int row) {
     folder_->setReadOnly(true);
     browseButton_->setEnabled(false);
     server_->setText(cloudAddressText(e));
-    user_->setText(e.remoteUser);
+    user_->setText(e.cloudUser);
     serverPassword_->clear();
     password_->clear();
     password2_->clear();
@@ -545,13 +545,13 @@ void StoreManagerDialog::onApply() {
                 true);
             return;
         case ZStorage::DirKind::Missing:
-            if (!cfg.hasCloud()) {
+            if (!cfg.hasCloudAddress()) {
                 say(QStringLiteral("The folder does not exist:\n%1").arg(root), true);
                 return;
             }
             [[fallthrough]];  // облако назвало хранилище — скачивание заведёт каталог
         case ZStorage::DirKind::Empty:
-            if (cfg.hasCloud()) {
+            if (cfg.hasCloudAddress()) {
                 addFromCloud(cfg, serverPassword, password);
                 return;
             }
@@ -597,12 +597,12 @@ void StoreManagerDialog::applyToStore(const ZStorage::Config& cfg,
 
     // Пароль сервера: пустое поле = хранящийся в keyring.
     QString effectiveServerPassword = serverPassword;
-    if (effectiveServerPassword.isEmpty() && !cfg.remoteUrl.isEmpty() && !storeId.isEmpty())
+    if (effectiveServerPassword.isEmpty() && !cfg.cloudUrl.isEmpty() && !storeId.isEmpty())
         effectiveServerPassword = secrets_->serverPassword(storeId);
 
     // --- облако убрали: отвязка, как CLI --reset (неразрушительная) ---------
-    if (!cfg.hasCloud()) {
-        const bool hadCloud = selected_ >= 0 && result_.stores[selected_].hasCloud();
+    if (!cfg.hasCloudAddress()) {
+        const bool hadCloud = selected_ >= 0 && result_.stores[selected_].hasCloudAddress();
         startWork(
             QStringLiteral("Reading the storage…"),
             [this, cfg, current, hadCloud]() -> QString {
@@ -616,9 +616,9 @@ void StoreManagerDialog::applyToStore(const ZStorage::Config& cfg,
                             .arg(lock.holderHost);
                 }
                 QString error;
-                if (hadCloud && !temp->clearRemoteConfig(&error)) return error;
-                if (current && hadCloud) temp->dropRemote();
-                settled_ = temp->remoteConfig();
+                if (hadCloud && !temp->clearCloudConfig(&error)) return error;
+                if (current && hadCloud) temp->dropCloud();
+                settled_ = temp->cloudConfig();
                 settled_.name = temp->localStoreName();
                 return {};
             },
@@ -673,12 +673,12 @@ void StoreManagerDialog::applyToStore(const ZStorage::Config& cfg,
                             .arg(lock.holderHost);
                 }
                 QString error;
-                auto remote = ZStorage::makeRemote(cfg, effectiveServerPassword, &error);
-                // setRemote сверяет манифест: чужое облако — честный отказ до
+                auto cloud = ZStorage::makeCloud(cfg, effectiveServerPassword, &error);
+                // setCloud сверяет манифест: чужое облако — честный отказ до
                 // единой записи.
-                if (remote == nullptr || !temp->setRemote(remote, known, &error)) return error;
-                if (!temp->writeRemoteConfig(cfg, &error)) return error;
-                settled_ = temp->remoteConfig();
+                if (cloud == nullptr || !temp->setCloud(cloud, known, &error)) return error;
+                if (!temp->writeCloudConfig(cfg, &error)) return error;
+                settled_ = temp->cloudConfig();
                 settled_.name = temp->localStoreName();
                 return {};
             },
@@ -687,7 +687,7 @@ void StoreManagerDialog::applyToStore(const ZStorage::Config& cfg,
                     say(error, true);
                     return;
                 }
-                if (!serverPassword.isEmpty() && !cfg.remoteUrl.isEmpty())
+                if (!serverPassword.isEmpty() && !cfg.cloudUrl.isEmpty())
                     secrets_->setServerPassword(storeId, serverPassword);
                 if (current) result_.cloudChangedForCurrent = true;
                 settleEntry(settled_);
@@ -751,13 +751,13 @@ void StoreManagerDialog::applyToStore(const ZStorage::Config& cfg,
             TakenSecrets taken;
             QString error;
             ZStorage::ConnectOutcome outcome;
-            if (!temp->connectRemote(cfg, password, effectiveServerPassword, taken,
+            if (!temp->connectCloud(cfg, password, effectiveServerPassword, taken,
                                      mintParams_, &outcome, &error))
                 return error;
             takenKey_ = taken.capturedKey;
             takenServerPassword_ = taken.capturedServerPassword;
             takenStoreId_ = taken.capturedServerPasswordFor;
-            settled_ = temp->remoteConfig();
+            settled_ = temp->cloudConfig();
             settled_.name = temp->localStoreName();
             return {};
         },
@@ -836,13 +836,13 @@ void StoreManagerDialog::addFromCloud(const ZStorage::Config& cfg,
                     QString error;
                     ZStorage::ConnectOutcome outcome;
                     auto fresh =
-                        ZStorage::initFromRemote(cfg.root, cfg, password, serverPassword,
+                        ZStorage::initFromCloud(cfg.root, cfg, password, serverPassword,
                                                  taken, mintParams_, &outcome, &error);
                     if (fresh == nullptr) return error;
                     takenKey_ = taken.capturedKey;
                     takenServerPassword_ = taken.capturedServerPassword;
                     takenStoreId_ = taken.capturedServerPasswordFor;
-                    settled_ = fresh->remoteConfig();
+                    settled_ = fresh->cloudConfig();
                     settled_.name = fresh->localStoreName();
                     return {};
                 },
@@ -871,7 +871,7 @@ void StoreManagerDialog::addFromCloud(const ZStorage::Config& cfg,
 void StoreManagerDialog::resetPassword(const ZStorage::Config& cfg,
                                        const QString& serverPassword,
                                        const QString& password) {
-    if (!cfg.hasCloud()) {
+    if (!cfg.hasCloudAddress()) {
         say(QStringLiteral("Name the cloud to hold the re-encrypted copy."), true);
         return;
     }
@@ -883,7 +883,7 @@ void StoreManagerDialog::resetPassword(const ZStorage::Config& cfg,
     const QString storeId =
         current ? storage_->identity().storeId() : ZStorage(cfg.root).identity().storeId();
     QString effectiveServerPassword = serverPassword;
-    if (effectiveServerPassword.isEmpty() && !cfg.remoteUrl.isEmpty() && !storeId.isEmpty())
+    if (effectiveServerPassword.isEmpty() && !cfg.cloudUrl.isEmpty() && !storeId.isEmpty())
         effectiveServerPassword = secrets_->serverPassword(storeId);
     startWork(
         QStringLiteral("Replacing the cloud copy…"),
@@ -906,7 +906,7 @@ void StoreManagerDialog::resetPassword(const ZStorage::Config& cfg,
             takenKey_ = taken.capturedKey;
             takenServerPassword_ = taken.capturedServerPassword;
             takenStoreId_ = taken.capturedServerPasswordFor;
-            settled_ = temp->remoteConfig();
+            settled_ = temp->cloudConfig();
             settled_.name = temp->localStoreName();
             resetSummary_ = QStringLiteral("The cloud copy is replaced: %1 blobs removed, "
                                            "%2 journals and %3 attachments uploaded anew.")

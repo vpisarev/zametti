@@ -88,13 +88,14 @@ void SyncController::joinWorker() {
 }
 
 bool SyncController::configured() const {
-    return storage_ != nullptr && storage_->isStore() && storage_->remoteConfig().hasCloud();
+    return storage_ != nullptr && storage_->isStore() &&
+           storage_->cloudConfig().hasCloudAddress();
 }
 
 bool SyncController::fetchSecrets() {
     if (storage_ == nullptr) return false;
-    cfg_ = storage_->remoteConfig();
-    if (!cfg_.hasCloud()) {
+    cfg_ = storage_->cloudConfig();
+    if (!cfg_.hasCloudAddress()) {
         lastError_ = QStringLiteral("sync is not configured for this store");
         return false;
     }
@@ -104,7 +105,7 @@ bool SyncController::fetchSecrets() {
         return false;
     }
     QString why;
-    if (!cfg_.remoteUrl.isEmpty()) serverPassword_ = secrets_->serverPassword(mine.storeId(), &why);
+    if (!cfg_.cloudUrl.isEmpty()) serverPassword_ = secrets_->serverPassword(mine.storeId(), &why);
     if (!secrets_->loadKey(mine.storeId(), &keyfile_, &why)) {
         lastError_ =
             QStringLiteral("the key is not in the keyring (%1) — run set-remote once").arg(why);
@@ -163,8 +164,8 @@ void SyncController::run(ZStorage::SyncOptions options) {
         // однопоточен. Подключение повторяется каждым прогоном — прежний
         // адаптер привязан к уже умершему потоку.
         bool ok = false;
-        auto remote = ZStorage::makeRemote(cfg_, serverPassword_, &error);
-        if (remote != nullptr && storage_->setRemote(remote, keyfile_, &error))
+        auto cloud = ZStorage::makeCloud(cfg_, serverPassword_, &error);
+        if (cloud != nullptr && storage_->setCloud(cloud, keyfile_, &error))
             ok = storage_->sync(options, &report, &error);
         // Итог — в главный поток; сам контроллер живёт дольше потока
         // (деструктор ждёт join), так что this здесь надёжен.
@@ -230,8 +231,8 @@ void SyncController::pushOnExit() {
     // Выход — синхронный и в главном потоке: адаптер рождается здесь же.
     if (!fetchSecrets()) return;  // keyring пуст — тихий пропуск, dirty переживает
     QString why;
-    auto remote = ZStorage::makeRemote(cfg_, serverPassword_, &why);
-    if (remote == nullptr || !storage_->setRemote(remote, keyfile_, &why)) {
+    auto cloud = ZStorage::makeCloud(cfg_, serverPassword_, &why);
+    if (cloud == nullptr || !storage_->setCloud(cloud, keyfile_, &why)) {
         fprintf(stderr, "zametti: exit push cannot connect: %s\n", qPrintable(why));
         return;  // офлайн — тихий пропуск, dirty переживает
     }

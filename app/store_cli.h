@@ -49,7 +49,7 @@ protected:
     bool parse();
 
     int cmdInit();
-    int cmdSetRemote();
+    int cmdSetCloud();
     int cmdSync();
     int cmdPushAll();
     int cmdRoot();

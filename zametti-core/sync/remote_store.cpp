@@ -2,7 +2,7 @@
 
 namespace zametti {
 
-void RemoteStore::getMany(const QStringList& names, QHash<QString, Fetched>* out) {
+void CloudStore::getMany(const QStringList& names, QHash<QString, Fetched>* out) {
     Q_ASSERT(out != nullptr);
     for (const QString& name : names) {
         Fetched one;
@@ -11,7 +11,7 @@ void RemoteStore::getMany(const QStringList& names, QHash<QString, Fetched>* out
     }
 }
 
-bool RemoteStore::putIfMatch(const QString& name, const QByteArray& bytes,
+bool CloudStore::putIfMatch(const QString& name, const QByteArray& bytes,
                              const QString& expectedEtag, QString* etag,
                              bool* preconditionFailed, QString* error) {
     // Дефолт — молчаливая деградация: адаптер, не умеющий условной заливки,

@@ -1,4 +1,4 @@
-// WebDavRemote против НАСТОЯЩЕГО сервера (m17, сессия 3).
+// WebDavCloud против НАСТОЯЩЕГО сервера (m17, сессия 3).
 //
 // Приёмка: тот же контракт, что у фиктивных адаптеров, плюс то, что бывает
 // только по проводу — неверный пароль, правило TLS, If-Match.
@@ -22,10 +22,10 @@
 
 namespace {
 
-using zametti::WebDavRemote;
+using zametti::WebDavCloud;
 
-WebDavRemote::Config configFor(const zt::WebDavStand& stand) {
-    WebDavRemote::Config config;
+WebDavCloud::Config configFor(const zt::WebDavStand& stand) {
+    WebDavCloud::Config config;
     config.base = stand.url();
     config.user = QString::fromUtf8(zt::WebDavStand::kUser);
     config.password = QString::fromUtf8(zt::WebDavStand::kPassword);
@@ -35,29 +35,29 @@ WebDavRemote::Config configFor(const zt::WebDavStand& stand) {
 
 // Правило TLS — БЕЗ СЕТИ ВОВСЕ: это проверка адреса, а не сервера.
 void checkUrlRule() {
-    WebDavRemote::Config config;
+    WebDavCloud::Config config;
     QString error;
 
     config.base = QUrl(QStringLiteral("https://dav.example.org/зам/"));
-    ZT_TRUE("https разрешён", WebDavRemote::checkUrl(config, &error));
+    ZT_TRUE("https разрешён", WebDavCloud::checkUrl(config, &error));
 
     config.base = QUrl(QStringLiteral("http://127.0.0.1:8080/зам/"));
-    ZT_TRUE("http на localhost разрешён", WebDavRemote::checkUrl(config, &error));
+    ZT_TRUE("http на localhost разрешён", WebDavCloud::checkUrl(config, &error));
     config.base = QUrl(QStringLiteral("http://localhost:8080/зам/"));
-    ZT_TRUE("и по имени localhost", WebDavRemote::checkUrl(config, &error));
+    ZT_TRUE("и по имени localhost", WebDavCloud::checkUrl(config, &error));
 
     // Внешний http запрещён НАСОВСЕМ (решение владельца 28.08.2026): прежний
     // ключ-лазейка убран, и объяснение зовёт к https, а не к настройке.
     config.base = QUrl(QStringLiteral("http://dav.example.org/зам/"));
-    ZT_TRUE("внешний http запрещён", !WebDavRemote::checkUrl(config, &error));
+    ZT_TRUE("внешний http запрещён", !WebDavCloud::checkUrl(config, &error));
     ZT_TRUE("и объяснено про пароль открытым текстом",
             error.contains(QLatin1String("clear")));
     ZT_TRUE("и позвано к https", error.contains(QLatin1String("https")));
 
     config.base = QUrl(QStringLiteral("ftp://dav.example.org/зам/"));
-    ZT_TRUE("чужая схема запрещена", !WebDavRemote::checkUrl(config, &error));
+    ZT_TRUE("чужая схема запрещена", !WebDavCloud::checkUrl(config, &error));
     config.base = QUrl(QStringLiteral("вообще не адрес"));
-    ZT_TRUE("негодный адрес запрещён", !WebDavRemote::checkUrl(config, &error));
+    ZT_TRUE("негодный адрес запрещён", !WebDavCloud::checkUrl(config, &error));
 }
 
 // СТОРОЖ БЕЗДЕЙСТВИЯ — без настоящего сервера: свой QTcpServer, которым
@@ -73,16 +73,16 @@ void checkStallWatchdog() {
     {
         QTcpServer silent;
         ZT_TRUE("молчащий порт слушается", silent.listen(QHostAddress::LocalHost, 0));
-        WebDavRemote::Config cfg;
+        WebDavCloud::Config cfg;
         cfg.base =
             QUrl(QStringLiteral("http://127.0.0.1:%1/зам/").arg(silent.serverPort()));
         cfg.timeoutMs = 1000;
-        WebDavRemote remote(cfg);
+        WebDavCloud cloud(cfg);
         QByteArray body;
         QElapsedTimer clock;
         clock.start();
         ZT_TRUE("молчащий сервер оборван",
-                !remote.get(QStringLiteral("01n60000000000.log"), &body, nullptr, &error));
+                !cloud.get(QStringLiteral("01n60000000000.log"), &body, nullptr, &error));
         ZT_TRUE(("и сказано про молчание канала: " + error.toStdString()).c_str(),
                 error.contains(QLatin1String("stalled")));
         ZT_TRUE("оборван сторожем, а не часом позже", clock.elapsed() < 5000);
@@ -108,21 +108,21 @@ void checkStallWatchdog() {
             });
             drip->start(400);   // 6 капель × 400 мс = 2.4 с при таймауте 1 с
         });
-        WebDavRemote::Config cfg;
+        WebDavCloud::Config cfg;
         cfg.base =
             QUrl(QStringLiteral("http://127.0.0.1:%1/зам/").arg(dribble.serverPort()));
         cfg.timeoutMs = 1000;
-        WebDavRemote remote(cfg);
+        WebDavCloud cloud(cfg);
         QByteArray body;
         ZT_TRUE(("капающий сервер дожил до конца: " + error.toStdString()).c_str(),
-                remote.get(QStringLiteral("01n60000000000.log"), &body, nullptr, &error));
+                cloud.get(QStringLiteral("01n60000000000.log"), &body, nullptr, &error));
         ZT_TRUE("тело доехало целиком", body == QByteArray("xxxxxx"));
     }
 }
 
 }  // namespace
 
-TEST(WebDavRemote, All) {
+TEST(WebDavCloud, All) {
     checkUrlRule();
     checkStallWatchdog();
 
@@ -130,17 +130,17 @@ TEST(WebDavRemote, All) {
     ZT_SKIP_NO_WEBDAV(stand);
 
     // Тот же контракт, что у фиктивных адаптеров: обещания у всех одни.
-    WebDavRemote remote(configFor(stand));
+    WebDavCloud cloud(configFor(stand));
     QString error;
-    ZT_TRUE("адрес стенда годен", WebDavRemote::checkUrl(remote.config(), &error));
-    zt::checkRemoteContract(remote, "webdav");
+    ZT_TRUE("адрес стенда годен", WebDavCloud::checkUrl(cloud.config(), &error));
+    zt::checkCloudContract(cloud, "webdav");
 
     // Неверный пароль — внятный отказ, а не молчаливая пустота (пустота
     // означала бы «на сервере ничего нет» и стоила бы синку заливки всего).
-    WebDavRemote::Config bad = configFor(stand);
+    WebDavCloud::Config bad = configFor(stand);
     bad.password = QStringLiteral("не тот пароль");
-    WebDavRemote refused(bad);
-    QVector<zametti::RemoteStore::Entry> listing;
+    WebDavCloud refused(bad);
+    QVector<zametti::CloudStore::Entry> listing;
     ZT_TRUE("с неверным паролем листинг не удаётся",
             !refused.list(&listing, &error));
     ZT_TRUE("и сказано, что дело в логине",
@@ -151,12 +151,12 @@ TEST(WebDavRemote, All) {
     {
         QString why;
         ZT_TRUE("блоб один залит",
-                remote.put(QStringLiteral("01getmany1.log"), QByteArray("раз"), nullptr, &why));
+                cloud.put(QStringLiteral("01getmany1.log"), QByteArray("раз"), nullptr, &why));
         ZT_TRUE("блоб два залит",
-                remote.put(QStringLiteral("01getmany2.log"), QByteArray("два, подлиннее"),
+                cloud.put(QStringLiteral("01getmany2.log"), QByteArray("два, подлиннее"),
                            nullptr, &why));
-        QHash<QString, zametti::RemoteStore::Fetched> got;
-        remote.getMany({QStringLiteral("01getmany1.log"), QStringLiteral("01getmany2.log"),
+        QHash<QString, zametti::CloudStore::Fetched> got;
+        cloud.getMany({QStringLiteral("01getmany1.log"), QStringLiteral("01getmany2.log"),
                         QStringLiteral("01getmany-none.log")},
                        &got);
         ZT_TRUE("первый скачан", got.value(QStringLiteral("01getmany1.log")).ok &&
@@ -166,8 +166,8 @@ TEST(WebDavRemote, All) {
                     QByteArray("два, подлиннее"));
         ZT_TRUE("отсутствующий — честный отказ, не пустота",
                 !got.value(QStringLiteral("01getmany-none.log")).ok);
-        ZT_TRUE("прибрано-1", remote.del(QStringLiteral("01getmany1.log"), &why));
-        ZT_TRUE("прибрано-2", remote.del(QStringLiteral("01getmany2.log"), &why));
+        ZT_TRUE("прибрано-1", cloud.del(QStringLiteral("01getmany1.log"), &why));
+        ZT_TRUE("прибрано-2", cloud.del(QStringLiteral("01getmany2.log"), &why));
     }
 
     // If-Match против настоящего сервера. Тела РАЗНОЙ ДЛИНЫ нарочно: wsgidav
@@ -177,10 +177,10 @@ TEST(WebDavRemote, All) {
     const QByteArray first("первое"), second = QByteArray("второе, подлиннее").repeated(3),
                      third = QByteArray("третье");
     QString etag;
-    ZT_TRUE("put", remote.put(QStringLiteral("01ifmatch.log"), first, &etag, &error));
+    ZT_TRUE("put", cloud.put(QStringLiteral("01ifmatch.log"), first, &etag, &error));
     const auto etagOf = [&](const char* what) {
-        QVector<zametti::RemoteStore::Entry> listing;
-        ZT_TRUE(what, remote.list(&listing, &error));
+        QVector<zametti::CloudStore::Entry> listing;
+        ZT_TRUE(what, cloud.list(&listing, &error));
         for (const auto& entry : listing)
             if (entry.name == QLatin1String("01ifmatch.log")) return entry.etag;
         return QString();
@@ -191,7 +191,7 @@ TEST(WebDavRemote, All) {
     QString newEtag;
     bool clash = false;
     ZT_TRUE("putIfMatch со свежим etag проходит",
-            remote.putIfMatch(QStringLiteral("01ifmatch.log"), second, beforeEtag,
+            cloud.putIfMatch(QStringLiteral("01ifmatch.log"), second, beforeEtag,
                               &newEtag, &clash, &error));
     ZT_TRUE("столкновения не было", !clash);
 
@@ -202,14 +202,14 @@ TEST(WebDavRemote, All) {
     if (afterEtag != beforeEtag) {
         QByteArray body;
         ZT_TRUE("putIfMatch с устаревшим etag отказан",
-                !remote.putIfMatch(QStringLiteral("01ifmatch.log"), third,
+                !cloud.putIfMatch(QStringLiteral("01ifmatch.log"), third,
                                    beforeEtag, &newEtag, &clash, &error));
         ZT_TRUE("и назван столкновением", clash);
         ZT_TRUE("содержимое на сервере не тронуто",
-                remote.get(QStringLiteral("01ifmatch.log"), &body, nullptr, &error) &&
+                cloud.get(QStringLiteral("01ifmatch.log"), &body, nullptr, &error) &&
                     body == second);
     }
-    ZT_TRUE("прибрано", remote.del(QStringLiteral("01ifmatch.log"), &error));
+    ZT_TRUE("прибрано", cloud.del(QStringLiteral("01ifmatch.log"), &error));
 
     EXPECT_EQ(0, zt::freshFailures());
 }

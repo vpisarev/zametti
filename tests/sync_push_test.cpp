@@ -62,34 +62,34 @@ void checkGuards() {
     QString error;
 
     // Без подключённого облака заливать нечего и незачем.
-    ZT_TRUE("pushAll без setRemote отказывает", !store.pushAll(nullptr, &error));
-    ZT_TRUE("и объяснено", error.contains(QLatin1String("setRemote")));
+    ZT_TRUE("pushAll без setCloud отказывает", !store.pushAll(nullptr, &error));
+    ZT_TRUE("и объяснено", error.contains(QLatin1String("setCloud")));
 
     // Спящий ключ шифра не даёт.
     Keyfile made;
     ZT_TRUE("keyfile", Keyfile::create(storeId, "пароль", kTiny, &made, nullptr));
     Keyfile sleeping;
     ZT_TRUE("parse", sleeping.parse(made.toBytes(), nullptr));
-    auto remote = std::make_shared<zt::MemoryRemote>();
-    ZT_TRUE("setRemote со спящим ключом отказывает",
-            !store.setRemote(remote, sleeping, &error));
+    auto cloud = std::make_shared<zt::MemoryCloud>();
+    ZT_TRUE("setCloud со спящим ключом отказывает",
+            !store.setCloud(cloud, sleeping, &error));
 
     // Ключ от ДРУГОГО хранилища — тоже отказ: иначе блобы поехали бы с чужим
     // storeId в AAD и не открылись бы у себя же.
     Keyfile alien;
     ZT_TRUE("чужой keyfile",
             Keyfile::create(QStringLiteral("01ffffffffffff"), "пароль", kTiny, &alien, nullptr));
-    ZT_TRUE("setRemote с чужим ключом отказывает",
-            !store.setRemote(remote, alien, &error));
+    ZT_TRUE("setCloud с чужим ключом отказывает",
+            !store.setCloud(cloud, alien, &error));
     ZT_TRUE("и назван чужой storeId", error.contains(QLatin1String("01ffffffffffff")));
 
-    ZT_TRUE("со своим ключом подключается", store.setRemote(remote, made, &error));
-    ZT_TRUE("облако подключено", store.hasRemote());
-    store.dropRemote();
-    ZT_TRUE("и отключается", !store.hasRemote());
+    ZT_TRUE("со своим ключом подключается", store.setCloud(cloud, made, &error));
+    ZT_TRUE("облако подключено", store.isConnected());
+    store.dropCloud();
+    ZT_TRUE("и отключается", !store.isConnected());
 }
 
-// ЧУЖОЕ ОБЛАКО — остановка ДО ЕДИНОЙ ЗАПИСИ. Опечатка в remoteDir иначе
+// ЧУЖОЕ ОБЛАКО — остановка ДО ЕДИНОЙ ЗАПИСИ. Опечатка в cloudDir иначе
 // молча слила бы две несвязанные базы.
 void checkForeignCloud() {
     const QString root = zt::TestData::outDir(QStringLiteral("sync-foreign")) +
@@ -99,28 +99,28 @@ void checkForeignCloud() {
     const QString storeId = store.ensureIdentity().storeId();
 
     // В облаке лежит манифест другого хранилища.
-    auto remote = std::make_shared<zt::MemoryRemote>();
+    auto cloud = std::make_shared<zt::MemoryCloud>();
     QString error;
-    ZT_TRUE("mkdirOnce", remote->mkdirOnce(&error));
+    ZT_TRUE("mkdirOnce", cloud->mkdirOnce(&error));
     const ZStorage::Identity alien =
         ZStorage::Identity::mint(QStringLiteral("01ffffffffffff"),
                                  QStringLiteral("2026-01-01T00:00:00+03:00"));
     ZT_TRUE("чужой манифест уложен",
-            remote->put(QLatin1String(ZStorage::Identity::kFile), alien.toBytes(),
+            cloud->put(QLatin1String(ZStorage::Identity::kFile), alien.toBytes(),
                         nullptr, &error));
 
     Keyfile made;
     ZT_TRUE("keyfile", Keyfile::create(storeId, "пароль", kTiny, &made, nullptr));
     ZT_TRUE("подключение к чужому облаку отказано",
-            !store.setRemote(remote, made, &error));
+            !store.setCloud(cloud, made, &error));
     ZT_TRUE("и сказано, чьё оно", error.contains(QLatin1String("01ffffffffffff")));
     ZT_TRUE("и подсказано, где чинить адрес",
             error.contains(QLatin1String("check the cloud address")));
     ZT_TRUE("и названа дата создания чужого", error.contains(QLatin1String("(created ")));
-    ZT_TRUE("облако не подключено", !store.hasRemote());
+    ZT_TRUE("облако не подключено", !store.isConnected());
 
-    QVector<zametti::RemoteStore::Entry> listing;
-    ZT_TRUE("листинг", remote->list(&listing, &error));
+    QVector<zametti::CloudStore::Entry> listing;
+    ZT_TRUE("листинг", cloud->list(&listing, &error));
     ZT_TRUE("в чужом облаке не появилось ни одного блоба", listing.size() == 1);
 }
 
@@ -134,9 +134,9 @@ void checkPushAll() {
 
     Keyfile made;
     ZT_TRUE("keyfile", Keyfile::create(storeId, "пароль", kTiny, &made, nullptr));
-    auto remote = std::make_shared<zt::MemoryRemote>();
+    auto cloud = std::make_shared<zt::MemoryCloud>();
     QString error;
-    ZT_TRUE("setRemote", store.setRemote(remote, made, &error));
+    ZT_TRUE("setCloud", store.setCloud(cloud, made, &error));
 
     ZStorage::PushReport report;
     ZT_TRUE("pushAll", store.pushAll(&report, &error));
@@ -152,8 +152,8 @@ void checkPushAll() {
 
     // ЧТО ИМЕННО УЕХАЛО. Никаких `.md` — облако хранит журналы, а не
     // материализацию; манифест открытым текстом, всё прочее — блобы.
-    QVector<zametti::RemoteStore::Entry> listing;
-    ZT_TRUE("листинг", remote->list(&listing, &error));
+    QVector<zametti::CloudStore::Entry> listing;
+    ZT_TRUE("листинг", cloud->list(&listing, &error));
     int journals = 0, attachments = 0, manifests = 0, markdown = 0;
     for (const auto& entry : listing) {
         if (entry.name == QLatin1String(ZStorage::Identity::kFile)) ++manifests;
@@ -169,7 +169,7 @@ void checkPushAll() {
     // МАНИФЕСТ ЧИТАЕТСЯ БЕЗ КЛЮЧА — на этом стоит сверка до ввода пароля.
     QByteArray manifest;
     ZT_TRUE("манифест скачан",
-            remote->get(QLatin1String(ZStorage::Identity::kFile), &manifest, nullptr, &error));
+            cloud->get(QLatin1String(ZStorage::Identity::kFile), &manifest, nullptr, &error));
     ZStorage::Identity theirs;
     ZT_TRUE("и разбирается как есть", theirs.parse(manifest, &error));
     ZT_EQ("storeId тот же", str(storeId), str(theirs.storeId()));
@@ -179,7 +179,7 @@ void checkPushAll() {
     // Облачное имя вложения — своё расширение: <id>_<ext>.pic.
     const QString attachmentName = QStringLiteral("01n6cqevh7bbf3_jxl.pic");
     QByteArray blob, plain;
-    ZT_TRUE("вложение скачано", remote->get(attachmentName, &blob, nullptr, &error));
+    ZT_TRUE("вложение скачано", cloud->get(attachmentName, &blob, nullptr, &error));
     ZT_TRUE("и вскрывается",
             cipher->open(blob, BlobAad{BlobKind::Attachment, storeId, attachmentName},
                          &plain, &error));
@@ -189,7 +189,7 @@ void checkPushAll() {
 
     QByteArray journalBlob, journalPlain;
     const QString journalName = QStringLiteral("01n6cqevh7bbf1.zm");
-    ZT_TRUE("журнал скачан", remote->get(journalName, &journalBlob, nullptr, &error));
+    ZT_TRUE("журнал скачан", cloud->get(journalName, &journalBlob, nullptr, &error));
     ZT_TRUE("и вскрывается",
             cipher->open(journalBlob, BlobAad{BlobKind::Journal, storeId, journalName},
                          &journalPlain, &error));

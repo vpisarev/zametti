@@ -44,7 +44,7 @@ QString idAt(int n) {
 struct Device {
     zt::MiniStore store;
     std::shared_ptr<ZStorage> s;
-    std::shared_ptr<FolderRemote> remote;
+    std::shared_ptr<FolderCloud> cloud;
 
     QByteArray fileOf(const QString& id) const {
         QFile f(store.root() + QStringLiteral("/") + id + QStringLiteral(".md"));
@@ -101,10 +101,10 @@ void checkTwoDeviceConvergence(unsigned seed) {
     Keyfile keyfile;
     ZT_TRUE("ключ отчеканился",
             Keyfile::create(identity.storeId(), QStringLiteral("пароль"), kTinyKdf, &keyfile, &err));
-    a.remote = std::make_shared<FolderRemote>(cloud);
-    b.remote = std::make_shared<FolderRemote>(cloud);
-    ZT_TRUE("облако A подключено", a.s->setRemote(a.remote, keyfile, &err));
-    ZT_TRUE("облако B подключено", b.s->setRemote(b.remote, keyfile, &err));
+    a.cloud = std::make_shared<FolderCloud>(cloud);
+    b.cloud = std::make_shared<FolderCloud>(cloud);
+    ZT_TRUE("облако A подключено", a.s->setCloud(a.cloud, keyfile, &err));
+    ZT_TRUE("облако B подключено", b.s->setCloud(b.cloud, keyfile, &err));
 
     unsigned serial = 0;
     const auto randomOp = [&](Device& d) {

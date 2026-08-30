@@ -267,7 +267,7 @@ void checkLedgerPathsDoNotCollide() {
 
 // --- 4. движок: два устройства и одно облако -------------------------------
 //
-// Облако — каталог (FolderRemote): счётчики операций отвечают на вопросы
+// Облако — каталог (FolderCloud): счётчики операций отвечают на вопросы
 // «сколько стоил прогон», рубильники — на «переживается ли обрыв».
 // Второе устройство рождается копией zametti.json (тот же storeId) — ровно
 // так живёт настоящая вторая машина.
@@ -279,7 +279,7 @@ struct TwoDevices {
     QString cloud;
     Keyfile keyfile;
     std::shared_ptr<ZStorage> sa, sb;
-    std::shared_ptr<FolderRemote> ra, rb;
+    std::shared_ptr<FolderCloud> ra, rb;
 
     TwoDevices() {
         cloud = cloudHome.root() + QStringLiteral("/облако");
@@ -294,16 +294,16 @@ struct TwoDevices {
         ZT_TRUE("ключ отчеканился",
                 Keyfile::create(identity.storeId(), QStringLiteral("пароль"), kTinyKdf,
                                 &keyfile, &err));
-        ra = std::make_shared<FolderRemote>(cloud);
-        rb = std::make_shared<FolderRemote>(cloud);
+        ra = std::make_shared<FolderCloud>(cloud);
+        rb = std::make_shared<FolderCloud>(cloud);
         // Keyfile — в облако, как это делает настоящий set-remote: без него
         // ротация в сценариях выглядела бы иначе, чем в жизни.
         ZT_TRUE("keyfile уехал",
                 ra->mkdirOnce(&err) &&
-                    ra->put(QLatin1String(Keyfile::kRemoteName), keyfile.toBytes(), nullptr,
+                    ra->put(QLatin1String(Keyfile::kCloudName), keyfile.toBytes(), nullptr,
                             &err));
-        ZT_TRUE("облако A подключено", sa->setRemote(ra, keyfile, &err));
-        ZT_TRUE("облако B подключено", sb->setRemote(rb, keyfile, &err));
+        ZT_TRUE("облако A подключено", sa->setCloud(ra, keyfile, &err));
+        ZT_TRUE("облако B подключено", sb->setCloud(rb, keyfile, &err));
     }
 
     // Правка «vim-ом»: файл пишется мимо программы, находит её stat-скан.
@@ -527,7 +527,7 @@ void checkServerLostBlobHealed() {
                          rig.cloud + QStringLiteral("/") + id + QStringLiteral(".zm")));
 
     ZStorage::SyncReport healed = rig.syncOne(*rig.sa, "лечение");
-    ZT_EQ("перезаливка-лечение", num(1), num(healed.healedRemote));
+    ZT_EQ("перезаливка-лечение", num(1), num(healed.healedCloud));
     ZT_TRUE("блоб вернулся",
             QFile::exists(rig.cloud + QStringLiteral("/") + id + QStringLiteral(".zm")));
     // И другой девайс его читает.
@@ -769,10 +769,10 @@ void checkWipedCloudRebuildAndRotation() {
             Keyfile::create(rig.sa->identity().storeId(), QStringLiteral("новый пароль"),
                             kTinyKdf, &fresh, &err));
     ZT_TRUE("keyfile уехал",
-            rig.ra->put(QLatin1String(Keyfile::kRemoteName), fresh.toBytes(), nullptr, &err));
-    ZT_TRUE("A переподключилась", rig.sa->setRemote(rig.ra, fresh, &err));
+            rig.ra->put(QLatin1String(Keyfile::kCloudName), fresh.toBytes(), nullptr, &err));
+    ZT_TRUE("A переподключилась", rig.sa->setCloud(rig.ra, fresh, &err));
     ZStorage::SyncReport rebuilt = rig.syncOne(*rig.sa, "перезаливка новым ключом");
-    ZT_TRUE("облако вылечено", rebuilt.healedRemote >= 1);
+    ZT_TRUE("облако вылечено", rebuilt.healedCloud >= 1);
 
     // Машина 2 (старый ключ): новая заметка с алфавитно ПЕРВЫМ id и правка.
     TwoDevices::writeRaw(rig.b, QStringLiteral("01n6cqevaa0000"), note("новая на Б"));
@@ -784,7 +784,7 @@ void checkWipedCloudRebuildAndRotation() {
     ZT_EQ("НИ ОДНОЙ заливки старым ключом", num(0), num(rig.rb->counters().puts));
 
     // Лечение по подсказке: «set-remote» = развернуть новый keyfile паролем.
-    ZT_TRUE("B переподключилась новым ключом", rig.sb->setRemote(rig.rb, fresh, &err));
+    ZT_TRUE("B переподключилась новым ключом", rig.sb->setCloud(rig.rb, fresh, &err));
     rig.syncOne(*rig.sb, "B доливает новым ключом");
     rig.syncOne(*rig.sa, "A принимает");
     ZT_TRUE("правка Б доехала", rig.noteOf(rig.a, id) == note("правка на Б"));
@@ -840,18 +840,18 @@ void checkLiveWebDavCycle() {
     ZT_TRUE("ключ отчеканился",
             Keyfile::create(identity.storeId(), QStringLiteral("пароль"), kTinyKdf, &keyfile,
                             &err));
-    WebDavRemote::Config config;
+    WebDavCloud::Config config;
     config.base = stand.url();
     config.user = QString::fromUtf8(zt::WebDavStand::kUser);
     config.password = QString::fromUtf8(zt::WebDavStand::kPassword);
     config.timeoutMs = 20000;
-    auto ra = std::make_shared<WebDavRemote>(config);
-    auto rb = std::make_shared<WebDavRemote>(config);
+    auto ra = std::make_shared<WebDavCloud>(config);
+    auto rb = std::make_shared<WebDavCloud>(config);
     ZT_TRUE("keyfile уехал на сервер",
             ra->mkdirOnce(&err) &&
-                ra->put(QLatin1String(Keyfile::kRemoteName), keyfile.toBytes(), nullptr, &err));
-    ZT_TRUE("облако A подключено", sa.setRemote(ra, keyfile, &err));
-    ZT_TRUE("облако B подключено", sb.setRemote(rb, keyfile, &err));
+                ra->put(QLatin1String(Keyfile::kCloudName), keyfile.toBytes(), nullptr, &err));
+    ZT_TRUE("облако A подключено", sa.setCloud(ra, keyfile, &err));
+    ZT_TRUE("облако B подключено", sb.setCloud(rb, keyfile, &err));
 
     const QString id = QStringLiteral("01n6cqevaaaaaa");
     TwoDevices::writeRaw(a, id, note("живой провод"));
