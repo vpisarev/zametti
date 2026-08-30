@@ -49,6 +49,7 @@ add_executable(zametti-tests
     # --- хранилище и журнал ---
     store_test.cpp
     store_identity_test.cpp
+    zsystem_test.cpp
     root_note_test.cpp
     journal_test.cpp
     journal_order_test.cpp
@@ -265,6 +266,15 @@ add_test(NAME document-only-for-showing
          COMMAND ${CMAKE_COMMAND}
                  "-DSOURCE_DIRS=${CMAKE_SOURCE_DIR}/zametti-core;${CMAKE_SOURCE_DIR}/app;${CMAKE_CURRENT_SOURCE_DIR}"
                  -P ${CMAKE_CURRENT_SOURCE_DIR}/get_document_check.cmake)
+
+# ТАБ'У: разрушительное — только через ZSystem (правило владельца, первые
+# строки CLAUDE.md). Наборы и пробники проверяются НАРАВНЕ с программой: каталог
+# владельца снёс именно пробник, и сторож, обходящий tests/, обходил бы место
+# происшествия.
+add_test(NAME file-ops-only-through-guard
+         COMMAND ${CMAKE_COMMAND}
+                 "-DSOURCE_DIRS=${CMAKE_SOURCE_DIR}/zametti-core;${CMAKE_SOURCE_DIR}/app;${CMAKE_SOURCE_DIR}/tools;${CMAKE_CURRENT_SOURCE_DIR}"
+                 -P ${CMAKE_CURRENT_SOURCE_DIR}/file_ops_check.cmake)
 
 # ПАДЕНИЙ НЕ БЫВАЕТ. НИКОГДА (правило владельца в CLAUDE.md).
 #
