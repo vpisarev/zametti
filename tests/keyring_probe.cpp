@@ -139,10 +139,13 @@ int measureKeychain(bool keep) {
         cfRelease(q);
         if (st != errSecSuccess)
             return fail("SecItemCopyMatching(данные)", osStatusText(st));
-        const bool same = QByteArray((const char*)CFDataGetBytePtr((CFDataRef)out),
-                                     int(CFDataGetLength((CFDataRef)out))) == blob;
+        const QByteArray got((const char*)CFDataGetBytePtr((CFDataRef)out),
+                             qsizetype(CFDataGetLength((CFDataRef)out)));
         cfRelease(out);
-        if (!same)
+        // Свежая запись держит байты шага 1, оставленная прежним прогоном —
+        // байты его шага 4 (обновление): законны оба содержимых. Первый
+        // прогон замера «после пересборки» спотыкался ровно об это.
+        if (got != blob && got != QByteArrayLiteral("probe-bundle-2"))
             return fail("kSecValueData", QStringLiteral("данные вернулись не те"));
         std::printf("шаг 3, ДАННЫЕ: прочитаны и совпали. Был ли вопрос?\n");
     }
