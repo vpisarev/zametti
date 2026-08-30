@@ -684,7 +684,11 @@ bool ZStorage::probeCloud(const Config& cfg, const QString& serverPassword,
         }
     }
 
-    if (probe.hasKeyfile) {
+    // ПУСТОЙ ПАРОЛЬ — НЕ ПОПЫТКА, А ОТКАЗ ОТ НЕЁ (п.9 брифа 30.08.2026):
+    // сводка облака доступна без пароля шифрования — имена открыты, манифест
+    // открыт, — и Check обязан работать без него. Конверт тогда просто не
+    // разворачивается: keyOpened ложь, имени хранилища честно нет.
+    if (probe.hasKeyfile && !encryptionPassword.isEmpty()) {
         QByteArray envelope;
         Keyfile keyfile;
         if (!cloud->get(QLatin1String(Keyfile::kCloudName), &envelope, nullptr, &why)) {

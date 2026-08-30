@@ -724,6 +724,13 @@ StoreManagerModel::Reaction StoreManagerModel::answered(Question::Kind kind, int
             const bool keyAtHand = f.key == ZStorageManager::Known::Yes;
             if (choice == 0) {
                 if (keyAtHand) {
+                    // Новый пароль — набранный: заглушка связки паролем не
+                    // считается. Повтор не нужен — ключ остаётся в связке, и
+                    // опечатка лечится второй сменой.
+                    if (draft().encryptionPassword.isEmpty()) {
+                        setMessage(QStringLiteral("Enter the new encryption password."));
+                        return out;
+                    }
                     out.job = jobFor(Job::Kind::ChangePassword);
                 } else {
                     // Стереть и запечатать заново может только НАБРАННЫЙ новый

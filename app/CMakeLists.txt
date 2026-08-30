@@ -114,6 +114,8 @@ add_library(zametti-ui STATIC
     pending_deletes_dialog.cpp
     store_manager_model.h
     store_manager_model.cpp
+    store_job_runner.h
+    store_job_runner.cpp
     store_manager_dialog.h
     store_manager_dialog.cpp
     image_insert.h

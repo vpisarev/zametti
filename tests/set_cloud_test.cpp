@@ -452,10 +452,20 @@ void checkProbeCloud() {
     ZT_TRUE("объём посчитан", probe.bytes > 0);
     ZT_TRUE("имя хранилища вскрыто", probe.name == rootTitle);
 
-    // Неверный пароль шифрования — отказ со словами про пароль.
+    // Неверный пароль шифрования — отказ со словами про пароль, но СВОДКА
+    // уже заполнена: имена открыты, счёт и объём известны и без пароля.
     ZT_TRUE("неверный пароль отвергнут",
             !ZStorage::probeCloud(cfg, QString(), QStringLiteral("не тот"), &probe, &err));
     ZT_TRUE("сказано про пароль", err.contains(QStringLiteral("password")));
+    ZT_TRUE("сводка при неверном пароле есть", probe.notes >= 1 && probe.bytes > 0);
+
+    // ПУСТОЙ пароль — не попытка, а отказ от неё (п.9 брифа): сводка без
+    // вскрытия конверта, keyOpened ложь, имени честно нет.
+    ZT_TRUE("без пароля разведка проходит",
+            ZStorage::probeCloud(cfg, QString(), QString(), &probe, &err));
+    ZT_TRUE("конверт увиден, но не вскрыт", probe.hasKeyfile && !probe.keyOpened);
+    ZT_TRUE("счёт и объём есть", probe.notes >= 1 && probe.bytes > 0);
+    ZT_TRUE("имени без ключа нет", probe.name.isEmpty());
 
     // Пустое, но существующее облако — правда: «там пусто» диалог решает сам.
     const QString blank = cloudHome.root() + QStringLiteral("/пусто");
