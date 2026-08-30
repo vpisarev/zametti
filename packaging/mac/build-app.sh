@@ -84,7 +84,10 @@ for arch in $ZARCHS; do
     echo "  ломоть $arch: пол $minos — верно"
 done
 # Чужих динамических библиотек снаружи быть не должно: только системные рамки.
-foreign="$(otool -L "$UNI/zametti" | tail -n +2 | grep -v -E '/usr/lib/|/System/Library/' || true)"
+# У толстого бинаря otool -L печатает заголовок «путь (architecture …):» на
+# КАЖДЫЙ ломоть — заголовки стоят в колонке 0, строки библиотек начинаются с
+# табуляции; отбираем только вторые.
+foreign="$(otool -L "$UNI/zametti" | grep $'^\t' | grep -v -E '/usr/lib/|/System/Library/' || true)"
 if [ -n "$foreign" ]; then
     echo "снаружи остались чужие библиотеки:" >&2
     echo "$foreign" >&2
@@ -149,8 +152,13 @@ mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
 DMG="$UNI/$APP_NAME-$APP_VERSION.dmg"
-rm -f "$DMG"
-hdiutil create -fmt UDZO -volname "$APP_NAME" -srcfolder "$STAGE" -ov "$DMG" > /dev/null
+rm -f "$DMG" "$UNI/raw.dmg"
+# НЕ hdiutil create -srcfolder: тот по дороге МОНТИРУЕТ образ в /Volumes, а
+# монтирование может быть запрещено (песочница агентов, CI). makehybrid строит
+# файловую систему напрямую, convert сжимает в UDZO — оба без монтирования.
+hdiutil makehybrid -hfs -hfs-volume-name "$APP_NAME" -o "$UNI/raw.dmg" "$STAGE" > /dev/null
+hdiutil convert "$UNI/raw.dmg" -format UDZO -o "$DMG" > /dev/null
+rm -f "$UNI/raw.dmg"
 rm -rf "$STAGE"
 hdiutil verify "$DMG" > /dev/null
 echo "=== dmg собран и проверен ==="
