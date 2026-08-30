@@ -62,6 +62,39 @@ struct Live {
     QString password;
 };
 
+// Эмуляция act() окна: переспросы отвечаются заданной кнопкой, работы
+// исполняются, цепочка (Reset заказал Check → переспрос → работа) идёт до
+// конца. Ограничитель кругов — от вечного цикла.
+Model::Reaction execute(Model& model, StoreJobRunner& runner, zt::FakeSecrets& secrets,
+                        const Model::Reaction& reaction);
+
+// Выбрать строку по корню — как это делает человек, тыкая в список.
+void selectRoot(Model& model, ZStorageManager& stores, const QString& root) {
+    const QString key = ZStorageManager::canonicalRoot(root);
+    for (int i = 0; i < stores.size(); ++i)
+        if (stores.stores().at(i).root == key) {
+            model.select(i);
+            return;
+        }
+    model.select(0);
+}
+
+Model::Reaction actAll(Model& model, StoreJobRunner& runner, zt::FakeSecrets& secrets,
+                       Model::Reaction reaction, int answer) {
+    for (int round = 0; round < 6; ++round) {
+        if (reaction.question.kind != Model::Question::Kind::None) {
+            reaction = model.answered(reaction.question.kind, answer);
+            continue;
+        }
+        if (reaction.job.kind != Model::Job::Kind::None) {
+            reaction = execute(model, runner, secrets, reaction);
+            continue;
+        }
+        break;
+    }
+    return reaction;
+}
+
 // Эмуляция runJob окна БЕЗ окна: разрешить «взять из связки», исполнить.
 Model::Reaction execute(Model& model, StoreJobRunner& runner, zt::FakeSecrets& secrets,
                         const Model::Reaction& reaction) {
@@ -109,6 +142,12 @@ void wipeCollection(const Live& live) {
 }
 
 void runScenarios(const Live& live) {
+    // РЕАЛИСТИЧНЫЙ ОБЪЁМ (урок 30.08: замер на двух заметках — не замер).
+    // У владельца ~285 журналов и ~13 вложений; здесь 120 заметок с текстом и
+    // 3 вложения по ~150 КБ — достаточно, чтобы GET-шторм не спрятался.
+    constexpr int kNotes = 120;
+    constexpr int kAttachments = 3;
+
     zt::MiniStore home;
     const QString localA = home.root() + QStringLiteral("/машина-А");
     QString err;
@@ -118,8 +157,26 @@ void runScenarios(const Live& live) {
         ZStorage a(localA);
         a.reload();
         ZT_TRUE("корень завёлся", !a.ensureRootNote(&err).isEmpty());
-        noteId = a.createNote(QString(), false, &err);
-        ZT_TRUE("заметка завелась", !noteId.isEmpty());
+        QStringList ids;
+        for (int i = 0; i < kNotes; ++i) {
+            const QString id = a.createNote(QString(), false, &err);
+            ZT_TRUE(("заметка завелась: " + err.toStdString()).c_str(), !id.isEmpty());
+            if (id.isEmpty()) return;
+            ids.append(id);
+            QFile note(localA + QStringLiteral("/") + id + QStringLiteral(".md"));
+            ZT_TRUE("заметка дописалась", note.open(QIODevice::Append));
+            note.write(QStringLiteral("\n\nживой прогон, заметка №%1\n").arg(i).toUtf8());
+            note.write(QByteArray(1200, 't'));
+            note.close();
+        }
+        noteId = ids.first();
+        for (int i = 0; i < kAttachments; ++i) {
+            QFile pic(localA + QStringLiteral("/") + ids.at(i) +
+                      QStringLiteral(".webp"));
+            ZT_TRUE("вложение записалось", pic.open(QIODevice::WriteOnly));
+            pic.write(QByteArray(150 * 1024, char('a' + i)));
+            pic.close();
+        }
     }
     auto secrets = std::make_shared<zt::FakeSecrets>();
     ZStorageManager stores(secrets);
@@ -152,24 +209,27 @@ void runScenarios(const Live& live) {
         qint64 ms = 0;
         ZT_TRUE(("заливка прошла: " + err.toStdString()).c_str(),
                 runSync(localA, *secrets, &up, &ms, &err));
-        ZT_TRUE("что-то уехало", up.pushedWhole >= 2);
-        std::printf("[живое] сценарий 0: заливка %d блобов, %lld мс\n",
-                    up.pushedWhole, ms);
+        ZT_TRUE("уехали ВСЕ журналы", up.pushedWhole >= kNotes);
+        ZT_TRUE("уехали вложения", up.attachmentsUp >= kAttachments);
+        std::printf("[живое] сценарий 0: заливка %d журналов + %d вложений, %.1f с\n",
+                    up.pushedWhole, up.attachmentsUp, ms / 1000.0);
 
-        // «Ещё раз на облако — мгновенно»: закон владельца меряется временем.
-        // Apache не возвращает etag на PUT, потому первый повтор ещё доедает
-        // метки из листинга (без переписываний), совсем тихим станет третий.
+        // «Ещё раз на облако — мгновенно, 1–3 секунды» — ЗАКОН ВЛАДЕЛЬЦА, и
+        // меряется он на этом объёме. GET-шторм (Apache молчит про etag на
+        // PUT → «файл отличается» → перечитать всё) чинится сверкой размеров
+        // по листингу; без починки здесь были бы минуты и сотни запросов.
         ZStorage::SyncReport quiet;
         ZT_TRUE("повторный прогон прошёл", runSync(localA, *secrets, &quiet, &ms, &err));
         ZT_TRUE("повторный прогон ничего не возит",
                 quiet.takenWhole == 0 && quiet.pushedWhole == 0 &&
                     quiet.attachmentsUp == 0 && quiet.attachmentsDown == 0);
-        ZT_TRUE(("и мгновенен по закону владельца (1–3 с): " + std::to_string(ms) +
-                 " мс")
+        ZT_TRUE(("без GET-шторма: " + std::to_string(quiet.traffic.requests) +
+                 " запросов")
                     .c_str(),
-                ms <= 3000);
-        std::printf("[живое] сценарий 0: повтор %lld мс, %lld запросов\n", ms,
-                    quiet.traffic.requests);
+                quiet.traffic.requests <= 6);
+        ZT_TRUE(("закон 1–3 с: " + std::to_string(ms) + " мс").c_str(), ms <= 3000);
+        std::printf("[живое] сценарий 0: повтор %lld мс, %lld запросов, %lld Б вниз\n",
+                    ms, quiet.traffic.requests, quiet.traffic.bytesDown);
         ZT_TRUE("третий прогон прошёл", runSync(localA, *secrets, &quiet, &ms, &err));
         ZT_TRUE("и совсем тих", quiet.traffic.requests <= 4);
         std::printf("[живое] сценарий 0: тихий прогон %lld мс, %lld запросов\n", ms,
@@ -197,12 +257,17 @@ void runScenarios(const Live& live) {
         ZT_EQ("глаз пароля шифрования", s(password),
               s(secrets->encryptionPassword(id, nullptr)));
 
+        // «Закрыл программу, открыл, нажал синхронизацию»: свежий экземпляр
+        // хранилища = новый процесс, бухгалтерия — с диска.
         ZStorage::SyncReport quiet;
         qint64 ms = 0;
         ZT_TRUE("прогон после «перезапуска» прошёл",
                 runSync(localA, *secrets, &quiet, &ms, &err));
         ZT_TRUE("и ничего не возит", quiet.takenWhole == 0 && quiet.pushedWhole == 0);
         ZT_TRUE("и дёшев", quiet.traffic.requests <= 4);
+        ZT_TRUE(("закон 1–3 с и после перезапуска: " + std::to_string(ms) + " мс")
+                    .c_str(),
+                ms <= 3000);
         std::printf("[живое] сценарий 1: тихий прогон %lld мс, %lld запросов\n", ms,
                     quiet.traffic.requests);
     }
@@ -298,8 +363,10 @@ void runScenarios(const Live& live) {
         ZStorage::SyncReport down;
         qint64 ms = 0;
         ZT_TRUE("полный прогон привёз всё", runSync(localD, *secrets, &down, &ms, &err));
-        std::printf("[живое] сценарий 4: скачано %d блобов, %lld мс\n", down.takenWhole,
-                    ms);
+        ZT_TRUE("привёз ВСЕ журналы", down.takenWhole >= kNotes);
+        ZT_TRUE("и вложения", down.attachmentsDown >= kAttachments);
+        std::printf("[живое] сценарий 4: скачано %d журналов + %d вложений, %.1f с\n",
+                    down.takenWhole, down.attachmentsDown, ms / 1000.0);
         QFile note(localD + QStringLiteral("/") + noteId + QStringLiteral(".md"));
         ZT_TRUE("заметка на месте", note.open(QIODevice::ReadOnly));
         ZT_TRUE("недавняя правка внутри", note.readAll().contains(mark.trimmed()));
@@ -310,6 +377,130 @@ void runScenarios(const Live& live) {
                     quiet.traffic.requests <= 4);
         std::printf("[живое] сценарий 4: тихий прогон %lld мс, %lld запросов\n", ms,
                     quiet.traffic.requests);
+    }
+
+    // ==== 5: Reset cloud — все три дороги ==================================
+    {
+        // Прямой доступ к блобу — свидетель «блобы не тронуты/заменены».
+        WebDavCloud::Config direct;
+        QString base = live.url;
+        if (!base.endsWith(QLatin1Char('/'))) base += QLatin1Char('/');
+        direct.base = QUrl(base + QLatin1String(kCollection) + QLatin1Char('/'));
+        direct.user = live.user;
+        direct.password = live.password;
+        WebDavCloud witness(direct);
+        const QString journalName = noteId + QStringLiteral(".zm");
+        const auto blobBytes = [&](const QString& name) {
+            QByteArray bytes;
+            witness.get(name, &bytes, nullptr, nullptr);
+            return bytes;
+        };
+        const QString storeId = ZStorage(localD).identity().storeId();
+        const ZStorage::Config probeCfg = ZStorage(localD).cloudConfig();
+
+        // --- дорога 1: ключ в связке → [Change password], ноль стираний ----
+        {
+            Model model(stores, QString());
+            selectRoot(model, stores, localD);
+            const QByteArray journalBefore = blobBytes(journalName);
+            const QByteArray keyfileBefore = blobBytes(QStringLiteral("keyfile"));
+            ZT_TRUE("свидетель видит журнал", !journalBefore.isEmpty());
+            model.edit(Model::FieldId::EncryptionPassword, QStringLiteral("пароль-2"));
+            // Просто resetPressed: Check он делает сам, переспрос — итогом.
+            Model::Reaction ask = model.resetPressed();
+            ZT_TRUE("Reset сам заказывает проверку",
+                    ask.job.kind == Model::Job::Kind::Check);
+            ask = execute(model, runner, *secrets, ask);
+            ZT_TRUE("переспрос пришёл",
+                    ask.question.kind == Model::Question::Kind::ResetCloud);
+            ZT_TRUE("первая дорога — смена без стирания",
+                    ask.question.choices.value(0).contains(QStringLiteral("Change")));
+            QElapsedTimer clock;
+            clock.start();
+            actAll(model, runner, *secrets, model.answered(ask.question.kind, 0), -1);
+            const qint64 ms = clock.elapsed();
+            ZT_TRUE(("пароль сменён: " + s(model.snapshot().message.text)).c_str(),
+                    model.snapshot().message.text.contains(QStringLiteral("changed")));
+            ZT_TRUE(("секунды, не минуты: " + std::to_string(ms) + " мс").c_str(),
+                    ms <= 5000);
+            ZT_TRUE("журнал не перезаливался",
+                    blobBytes(journalName) == journalBefore);
+            ZT_TRUE("конверт заменён",
+                    blobBytes(QStringLiteral("keyfile")) != keyfileBefore);
+            ZT_TRUE("старый пароль конверт не открывает",
+                    !ZStorage::probeCloud(probeCfg, live.password,
+                                          QStringLiteral("живой-пароль-сценариев"),
+                                          nullptr, &err));
+            ZT_TRUE("новый открывает",
+                    ZStorage::probeCloud(probeCfg, live.password,
+                                         QStringLiteral("пароль-2"), nullptr, &err));
+            std::printf("[живое] сценарий 5а: смена пароля %lld мс, блобы целы\n", ms);
+        }
+
+        // --- дорога 2: ключа нет → [Erase and reset password] --------------
+        {
+            secrets->clearKey(storeId, nullptr);
+            secrets->clearEncryptionPassword(storeId, nullptr);
+            stores.refresh(localD);
+            Model model(stores, QString());
+            selectRoot(model, stores, localD);
+            Model::Reaction ask = model.resetPressed();
+            ask = execute(model, runner, *secrets, ask);
+            ZT_TRUE("без ключа первая дорога — стирание с новым паролем",
+                    ask.question.choices.value(0).contains(
+                        QStringLiteral("reset password")));
+            ZT_TRUE("текст называет полный адрес",
+                    ask.question.text.contains(QLatin1String(kCollection)));
+            model.edit(Model::FieldId::EncryptionPassword, QStringLiteral("пароль-3"));
+            model.edit(Model::FieldId::Repeat, QStringLiteral("пароль-3"));
+            actAll(model, runner, *secrets,
+                   model.answered(Model::Question::Kind::ResetCloud, 0), -1);
+            ZT_TRUE(("стёрто и запечатано: " + s(model.snapshot().message.text)).c_str(),
+                    model.snapshot().message.text.contains(QStringLiteral("Erased")));
+            ZT_TRUE("новый конверт на месте",
+                    !blobBytes(QStringLiteral("keyfile")).isEmpty());
+            ZT_TRUE("журналов больше нет (стёрты)", blobBytes(journalName).isEmpty());
+            // Перезаливку ведёт прогон — как после Open.
+            ZStorage::SyncReport up;
+            qint64 ms = 0;
+            ZT_TRUE("перезаливка прошла", runSync(localD, *secrets, &up, &ms, &err));
+            ZT_TRUE("уехало всё заново", up.pushedWhole >= kNotes);
+            std::printf("[живое] сценарий 5б: стирание+перезаливка %d блобов, %.1f с\n",
+                        up.pushedWhole, ms / 1000.0);
+            ZStorage::SyncReport quiet;
+            ZT_TRUE("после перезаливки тихо", runSync(localD, *secrets, &quiet, &ms, &err));
+            ZT_TRUE("и без шторма", quiet.traffic.requests <= 6 &&
+                        quiet.takenWhole == 0 && quiet.pushedWhole == 0);
+            std::printf("[живое] сценарий 5б: тихий прогон %lld мс, %lld запросов\n",
+                        ms, quiet.traffic.requests);
+        }
+
+        // --- дорога 3: [Erase and disconnect] ------------------------------
+        {
+            Model model(stores, QString());
+            selectRoot(model, stores, localD);
+            Model::Reaction ask = model.resetPressed();
+            ask = execute(model, runner, *secrets, ask);
+            ZT_TRUE("вторая кнопка — стереть и отвязаться",
+                    ask.question.choices.at(1).contains(QStringLiteral("disconnect")));
+            actAll(model, runner, *secrets,
+                   model.answered(Model::Question::Kind::ResetCloud, 1), -1);
+            ZT_TRUE(("отвязано: " + s(model.snapshot().message.text)).c_str(),
+                    model.snapshot().message.text.contains(
+                        QStringLiteral("Disconnected")));
+            ZT_TRUE("адрес забыт из строки",
+                    !stores.storeFor(localD).hasCloudAddress());
+            ZT_TRUE("cloud.json забыт",
+                    !ZStorage(localD).cloudConfig().hasCloudAddress());
+            ZT_TRUE("секреты забыты", !secrets->keys_.contains(storeId) &&
+                        !secrets->passwords_.contains(storeId));
+            QVector<CloudStore::Entry> listing;
+            QString why;
+            const bool listed = witness.list(&listing, &why);
+            ZT_TRUE("облака на сервере больше нет",
+                    !listed || listing.isEmpty());
+            std::printf("[живое] сценарий 5в: отвязка, облако снесено одним DELETE\n");
+        }
     }
 }
 

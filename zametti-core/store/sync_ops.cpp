@@ -1321,7 +1321,11 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
         return finish(false);
     }
     QHash<QString, QString> cloudEtag;
-    for (const CloudStore::Entry& e : listing) cloudEtag.insert(e.name, e.etag);
+    QHash<QString, qint64> cloudSize;
+    for (const CloudStore::Entry& e : listing) {
+        cloudEtag.insert(e.name, e.etag);
+        cloudSize.insert(e.name, e.size);
+    }
     done.listed = int(listing.size());
 
     // Манифест — по etag ИЗ ТОГО ЖЕ листинга; GET только при расхождении.
@@ -1362,6 +1366,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                 }
                 led.etag = etag;
                 led.sealedHash = hashBytes(bytes);
+                led.sealedSize = bytes.size();
                 ledger.setBlob(name, led);
             }
         }
@@ -1620,6 +1625,25 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
         }
 
         if (haveCloud && (theyChanged || led.etag.isEmpty() || !localValid)) {
+            // МОЛЧАЛИВЫЙ PUT (Apache не отдаёт ETag на заливку): пустая метка
+            // в бухгалтерии НЕ значит «файл другой». Размер шифротекста из
+            // того же листинга сверяется с записанным заливкой: совпал при
+            // непоменявшемся локальном журнале — это наш же блоб, метка
+            // просто доезжает. Прежде здесь рождался GET-ШТОРМ: первый прогон
+            // после заливки перечитывал ВСЁ облако минутами (жалоба
+            // владельца, 30.08.2026 — и та же беда была найдена им до
+            // катастрофы). Размер — подсказка, как etag: разойдётся с правдой
+            // — истина-хеш возьмёт своё обычным путём при первом же
+            // несовпадении.
+            if (localValid && led.etag.isEmpty() && !led.sealedHash.empty() &&
+                led.sealedSize > 0 && cloudSize.value(name, -1) == led.sealedSize &&
+                localHash == led.plainHash && !haveLegacy) {
+                ++done.etagReissued;
+                led.etag = etag;
+                ledger.setBlob(name, led);
+                processed.append(id);
+                continue;
+            }
             if (pushOnly) {
                 // Выход не скачивает и не сливает: отложено полному прогону.
                 ++done.deferred;
@@ -1702,6 +1726,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                         note(QStringLiteral("taken whole: %1").arg(name));
                         led.etag = etag;
                         led.sealedHash = sealed;
+                        led.sealedSize = blob.size();
                         led.plainHash = hashBytes(cloudPlain);
                         ledger.setBlob(name, led);
                         processed.append(id);
@@ -1735,6 +1760,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                             note(QStringLiteral("taken whole (superset): %1").arg(name));
                             led.etag = etag;
                             led.sealedHash = sealed;
+                            led.sealedSize = blob.size();
                             led.plainHash = hashBytes(cloudPlain);
                             ledger.setBlob(name, led);
                             processed.append(id);
@@ -1769,6 +1795,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                             }
                             led.etag = etag;
                             led.sealedHash = sealed;
+                            led.sealedSize = blob.size();
                             ledger.setBlob(name, led);
                             processed.append(id);
                             continue;
@@ -1845,6 +1872,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
             SyncLedger::Blob pushed;
             pushed.etag = newEtag;
             pushed.sealedHash = hashBytes(blob);
+            pushed.sealedSize = blob.size();
             pushed.plainHash = hashBytes(pushBytes);
             ledger.setBlob(pushName, pushed);
             if (haveLegacy) {
@@ -1905,8 +1933,8 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                         QStringLiteral("cannot upload attachment %1: %2").arg(pushName, why));
                     return false;
                 }
-                ledger.setBlob(pushName,
-                               {newEtag, hashBytes(sealedBlob), hashBytes(bytes)});
+                ledger.setBlob(pushName, {newEtag, hashBytes(sealedBlob),
+                                          hashBytes(bytes), sealedBlob.size()});
                 if (haveLegacy) {
                     QString dropWhy;
                     if (cloud_->del(name, &dropWhy)) {
@@ -1938,6 +1966,17 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                     continue;
                 }
                 if (pushLocal(bytes)) ++done.attachmentsUp;
+                continue;
+            }
+            // Тот же молчаливый PUT без ETag — для вложений: размер из
+            // листинга совпал с записанным заливкой — метка доезжает без
+            // скачивания (см. журналы выше).
+            if (haveLocal && haveCloud && led.etag.isEmpty() &&
+                !led.sealedHash.empty() && led.sealedSize > 0 &&
+                cloudSize.value(readName, -1) == led.sealedSize && !haveLegacy) {
+                ++done.etagReissued;
+                led.etag = etag;
+                ledger.setBlob(readName, led);
                 continue;
             }
             // Дальше нужен GET: либо файла нет локально, либо etag разошёлся.
@@ -1993,7 +2032,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                     continue;
                 }
                 ++done.attachmentsDown;
-                ledger.setBlob(readName, {etag, sealed, hashBytes(plain)});
+                ledger.setBlob(readName, {etag, sealed, hashBytes(plain), blob.size()});
                 continue;
             }
             // Обе стороны есть и байты разные.
@@ -2001,7 +2040,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
             if (!readAttachmentBytes(name, &localAtt, &why)) continue;
             const Digest localHashAtt = hashBytes(localAtt);
             if (localHashAtt == hashBytes(plain)) {
-                ledger.setBlob(readName, {etag, sealed, localHashAtt});
+                ledger.setBlob(readName, {etag, sealed, localHashAtt, blob.size()});
                 continue;
             }
             if (!led.plainHash.empty() && localHashAtt == led.plainHash) {
@@ -2013,7 +2052,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                     continue;
                 }
                 ++done.attachmentsDown;
-                ledger.setBlob(readName, {etag, sealed, hashBytes(plain)});
+                ledger.setBlob(readName, {etag, sealed, hashBytes(plain), blob.size()});
                 continue;
             }
             // Истинно конкурентная замена под одним id: без rev судить нечем —
@@ -2167,6 +2206,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
             SyncLedger::Blob led;
             led.etag = newEtag;
             led.sealedHash = hashBytes(mine.atCurrentFormat().toBytes());
+            led.sealedSize = mine.atCurrentFormat().toBytes().size();
             ledger.setBlob(QLatin1String(Identity::kFile), led);
         } else {
             skipTransfer(QStringLiteral("cannot upload the manifest: %1").arg(why));
@@ -2365,7 +2405,8 @@ bool ZStorage::pushAll(PushReport* report, QString* error) {
         QString etag;
         const bool ok = cloud_->put(name, blob, &etag, error);
         done.usPut += timer.nsecsElapsed() / 1000;
-        if (ok) ledger.setBlob(name, {etag, hashBytes(blob), hashBytes(plain)});
+        if (ok)
+            ledger.setBlob(name, {etag, hashBytes(blob), hashBytes(plain), blob.size()});
         return ok;
     };
 
@@ -2396,6 +2437,7 @@ bool ZStorage::pushAll(PushReport* report, QString* error) {
         SyncLedger::Blob led;
         led.etag = etag;
         led.sealedHash = hashBytes(manifest);
+        led.sealedSize = manifest.size();
         ledger.setBlob(QLatin1String(Identity::kFile), led);
     }
     done.usPut += timer.nsecsElapsed() / 1000;

@@ -60,6 +60,7 @@ SyncLedger SyncLedger::load(const QString& path) {
         b.etag = o.value(QStringLiteral("etag")).toString();
         b.sealedHash = digestFromHex(o.value(QStringLiteral("sealed")).toString());
         b.plainHash = digestFromHex(o.value(QStringLiteral("plain")).toString());
+        b.sealedSize = qint64(o.value(QStringLiteral("sealedSize")).toDouble(0));
         if (!it.key().isEmpty() && !b.isEmpty()) out.blobs_.insert(it.key(), b);
     }
     const QJsonObject files = root.value(QStringLiteral("files")).toObject();
@@ -86,6 +87,8 @@ bool SyncLedger::save(QString* error) const {
             o.insert(QStringLiteral("sealed"), hexOf(it.value().sealedHash));
         if (!it.value().plainHash.empty())
             o.insert(QStringLiteral("plain"), hexOf(it.value().plainHash));
+        if (it.value().sealedSize > 0)
+            o.insert(QStringLiteral("sealedSize"), double(it.value().sealedSize));
         blobs.insert(it.key(), o);
     }
     QJsonObject files;

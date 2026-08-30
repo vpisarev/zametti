@@ -715,6 +715,14 @@ StoreManagerModel::Reaction StoreManagerModel::resetPressed() {
     if (s.address != address || s.state == CloudSeen::State::NotChecked) {
         askResetAfterCheck_ = true;
         out.job = jobFor(Job::Kind::Check);
+        // Разведка РАДИ СТИРАНИЯ — парольно-слепая: в поле может стоять
+        // НОВЫЙ пароль (человек пришёл его менять), и разворачивать им
+        // СТАРЫЙ конверт значило бы упереться в «wrong password» (живой
+        // прогон 30.08.2026). Сводка и манифест открыты; дорогам Reset
+        // пароль шифрования не нужен по построению.
+        out.job.encryptionPassword.clear();
+        out.job.encryptionFromKeyring = false;
+        out.job.sealEmpty = false;
         return out;
     }
     if (s.state == CloudSeen::State::Empty) {
@@ -853,10 +861,22 @@ StoreManagerModel::Reaction StoreManagerModel::jobFinished(Job::Kind kind,
         case Job::Kind::EraseAndReseed:
         case Job::Kind::ChangePassword: {
             // Адрес ложится в строку: он больше не черновик, а факт.
+            const QString oldKey = rootKey(selected_);
             ZStorage::Config row = cfgFromDraft();
             row.root = key;
             row.name = stores_.storeFor(key).name;
+            if (row.name.isEmpty()) row.name = stores_.storeFor(oldKey).name;
             stores_.remember(row);
+            // ПЕРЕЕЗД И ЗДЕСЬ (сценарий 4 владельца: на строке пропавшей
+            // папки выбрали новую пустую и создали заново из облака) —
+            // строка-сирота со старым путём не остаётся.
+            if (!oldKey.isEmpty() && oldKey != key) {
+                stores_.forget(oldKey);
+                drafts_->insert(key, drafts_->take(oldKey));
+                if (seen_.contains(oldKey)) seen_.insert(key, seen_.take(oldKey));
+                for (int i = 0; i < stores_.size(); ++i)
+                    if (stores_.stores().at(i).root == key) selected_ = i;
+            }
             break;
         }
         case Job::Kind::EraseAndDisconnect: {

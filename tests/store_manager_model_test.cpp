@@ -366,9 +366,14 @@ void checkResetRoads() {
     const QString cloud = cloudHome.root() + QStringLiteral("/облако");
     model.edit(Model::FieldId::Server, cloud);
 
-    // Не смотрели — Reset сам заказывает Check и помнит намерение.
+    // Не смотрели — Reset сам заказывает Check и помнит намерение. Набранный
+    // пароль в разведку НЕ уезжает: человек мог уже набрать НОВЫЙ, и старый
+    // конверт им не развернётся (живая проба 30.08).
+    model.edit(Model::FieldId::EncryptionPassword, QStringLiteral("уже-новый"));
     Model::Reaction go = model.resetPressed();
     ZT_TRUE("сначала проверка", go.job.kind == Model::Job::Kind::Check);
+    ZT_TRUE("и разведка парольно-слепая", go.job.encryptionPassword.isEmpty());
+    model.edit(Model::FieldId::EncryptionPassword, QString());
     Model::Outcome sawOurs;
     sawOurs.ok = true;
     sawOurs.seen.state = Model::CloudSeen::State::Ours;
