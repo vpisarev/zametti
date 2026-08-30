@@ -158,8 +158,9 @@ target_link_libraries(zametti-core
 
 # Keyring: на Linux — Secret Service по QDBus (ноль зависимостей помимо
 # Qt6::DBus, PRIVATE — в заголовке sync/ шины нет); на Windows — Credential
-# Manager (Advapi32, тоже ноль нового: она в программе и так есть); мак пока
-# на заготовке и получит Security.framework при мак-заходе.
+# Manager (Advapi32, тоже ноль нового: она в программе и так есть); на маке —
+# Keychain через Security.framework, все секреты одной записью-свёртком
+# (bundled_secrets.h; dbus/wincred переедут на свёрток следующими заходами).
 #
 # Воплощение ровно одно на сборку — файлы взаимоисключающие, и общий у них
 # только заголовок keyring_secrets.h.
@@ -170,6 +171,10 @@ if(UNIX AND NOT APPLE)
 elseif(WIN32)
     target_sources(zametti-core PRIVATE sync/keyring_secrets_wincred.cpp)
     target_link_libraries(zametti-core PRIVATE advapi32)
+elseif(APPLE)
+    target_sources(zametti-core PRIVATE sync/keyring_secrets_keychain.cpp)
+    target_link_libraries(zametti-core PRIVATE "-framework Security"
+                          "-framework CoreFoundation")
 else()
     target_sources(zametti-core PRIVATE sync/keyring_secrets_stub.cpp)
 endif()
