@@ -49,18 +49,30 @@ StoreManagerModel::StoreManagerModel(ZStorageManager& stores, const QString& ope
     : stores_(stores), openRoot_(ZStorageManager::canonicalRoot(openRoot)) {
     // Выбор при открытии окна: открытое хранилище, а нет его — первая строка.
     // Окно без выбранной строки говорить не о чем.
-    for (int i = 0; i < stores_.size(); ++i) {
-        if (stores_.stores().at(i).root == openRoot_) {
-            select(i);
-            return;
-        }
-    }
-    if (!stores_.isEmpty()) select(0);
+    const int open = rowOf(openRoot_);
+    if (open >= 0)
+        select(open);
+    else if (!stores_.isEmpty())
+        select(0);
 }
 
 QString StoreManagerModel::rootKey(int row) const {
     if (row < 0 || row >= stores_.size()) return {};
     return stores_.stores().at(row).root;
+}
+
+int StoreManagerModel::rowOf(const QString& root) const {
+    if (root.isEmpty()) return -1;
+    for (int i = 0; i < stores_.size(); ++i)
+        if (stores_.stores().at(i).root == root) return i;
+    return -1;
+}
+
+void StoreManagerModel::relocateRow(const QString& oldKey, const QString& newKey) {
+    stores_.forget(oldKey);
+    drafts_->insert(newKey, drafts_->take(oldKey));
+    if (seen_.contains(oldKey)) seen_.insert(newKey, seen_.take(oldKey));
+    selected_ = rowOf(newKey);
 }
 
 ZStorage::Config StoreManagerModel::rowConfig(int row) const {
@@ -531,9 +543,9 @@ StoreManagerModel::Reaction StoreManagerModel::addFolder(const QString& dir) {
 
     // Уже в списке — перескок, а не дубль. Молчать нельзя: человек нажал «+» и
     // вправе понять, почему строк не прибавилось.
-    for (int i = 0; i < stores_.size(); ++i) {
-        if (stores_.stores().at(i).root != key) continue;
-        select(i);
+    const int known = rowOf(key);
+    if (known >= 0) {
+        select(known);
         setMessage(QStringLiteral("Already in the list."));
         return out;
     }
@@ -554,8 +566,7 @@ StoreManagerModel::Reaction StoreManagerModel::addFolder(const QString& dir) {
     ZStorage::Config row;
     row.root = key;
     stores_.remember(row);
-    for (int i = 0; i < stores_.size(); ++i)
-        if (stores_.stores().at(i).root == key) select(i);
+    select(rowOf(key));
     return out;
 }
 
@@ -635,12 +646,8 @@ StoreManagerModel::Reaction StoreManagerModel::openPressed() {
             ZStorage::Config moved = typed;
             moved.root = newKey;
             moved.name = row.name;
-            stores_.forget(oldKey);
             stores_.remember(moved);
-            drafts_->insert(newKey, drafts_->take(oldKey));
-            if (seen_.contains(oldKey)) seen_.insert(newKey, seen_.take(oldKey));
-            for (int i = 0; i < stores_.size(); ++i)
-                if (stores_.stores().at(i).root == newKey) selected_ = i;
+            relocateRow(oldKey, newKey);
         }
         // Настраивать нечего — просто закрыть окно с переключением (поправка
         // владельца): жест не запрещается и на уже открытом.
@@ -823,13 +830,7 @@ StoreManagerModel::Reaction StoreManagerModel::jobFinished(Job::Kind kind,
             // ПЕРЕЕЗД И ЗДЕСЬ (сценарий 4 владельца: на строке пропавшей
             // папки выбрали новую пустую и создали заново из облака) —
             // строка-сирота со старым путём не остаётся.
-            if (!oldKey.isEmpty() && oldKey != key) {
-                stores_.forget(oldKey);
-                drafts_->insert(key, drafts_->take(oldKey));
-                if (seen_.contains(oldKey)) seen_.insert(key, seen_.take(oldKey));
-                for (int i = 0; i < stores_.size(); ++i)
-                    if (stores_.stores().at(i).root == key) selected_ = i;
-            }
+            if (!oldKey.isEmpty() && oldKey != key) relocateRow(oldKey, key);
             break;
         }
         case Job::Kind::EraseAndDisconnect: {
