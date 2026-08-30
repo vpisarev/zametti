@@ -37,8 +37,30 @@
      *
      * ZAMETTI PATCH: upstream ties UTF-16 to Windows (WCHAR from <windows.h>).
      * The parser itself is portable; the only Windows-isms are the character
-     * type and wcschr/wide literals. We use char16_t on every platform. */
+     * type and wcschr/wide literals. We use char16_t on every platform.
+     *
+     * ZAMETTI PATCH: where char16_t comes from is not the same everywhere.
+     * C++ has it as a builtin type and needs no header at all. C takes it
+     * from <uchar.h> -- which Apple's SDK does not ship, and that alone broke
+     * the whole macos build at 11%. The C standard defines char16_t as
+     * uint_least16_t, which is exactly what every <uchar.h> does, so where the
+     * header is missing we say it ourselves: same size, same signedness, same
+     * ABI, so the C and the C++ side of md4c keep agreeing.
+     *
+     * The test is __has_include, not __APPLE__: the question is whether this
+     * toolchain has the header, and a platform name answers a different one. */
+#if defined __cplusplus
+    /* nothing to include: char16_t is a builtin type in C++ */
+#elif defined __has_include
+    #if __has_include(<uchar.h>)
+        #include <uchar.h>
+    #else
+        #include <stdint.h>
+        typedef uint_least16_t char16_t;
+    #endif
+#else
     #include <uchar.h>
+#endif
     typedef char16_t        MD_CHAR;
 #else
     typedef char            MD_CHAR;
