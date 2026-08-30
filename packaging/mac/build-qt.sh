@@ -52,7 +52,7 @@ done
 # Одна архитектура за проход и одна сборка за раз (память машины — 32 ГБ,
 # правило CLAUDE.md): никакого параллельного запуска обеих половин.
 for arch in $ZARCHS; do
-    prefix="$ZDEPS_BASE-$arch"
+    prefix="$ZDEPS/$arch"
     bdir="$ZBUILD/qtbase-build-$arch"
     echo "=== qtbase [$arch] → $prefix ==="
 
@@ -63,12 +63,12 @@ for arch in $ZARCHS; do
     # ZARCHS — сперва родная, потом чужая.
     hostpath=()
     if [ "$arch" != "$ZHOSTARCH" ]; then
-        [ -x "$ZDEPS_BASE-$ZHOSTARCH/bin/qt-cmake" ] || {
-            echo "кросс-сборке [$arch] нужен родной Qt в $ZDEPS_BASE-$ZHOSTARCH —" >&2
+        [ -x "$ZDEPS/$ZHOSTARCH/bin/qt-cmake" ] || {
+            echo "кросс-сборке [$arch] нужен родной Qt в $ZDEPS/$ZHOSTARCH —" >&2
             echo "сперва: ZARCHS=$ZHOSTARCH bash packaging/mac/build-qt.sh" >&2
             exit 1
         }
-        hostpath=("-DQT_HOST_PATH=$ZDEPS_BASE-$ZHOSTARCH")
+        hostpath=("-DQT_HOST_PATH=$ZDEPS/$ZHOSTARCH")
     fi
 
     mkdir -p "$bdir"
@@ -102,4 +102,4 @@ for arch in $ZARCHS; do
     cmake --install .
 done
 
-echo "=== Qt готов: $(for a in $ZARCHS; do printf '%s ' "$ZDEPS_BASE-$a"; done) ==="
+echo "=== Qt готов: $(for a in $ZARCHS; do printf '%s ' "$ZDEPS/$a"; done) ==="

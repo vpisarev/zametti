@@ -16,10 +16,15 @@
 # системные рамки (AppKit, Metal, ImageIO) есть на любой машине по построению —
 # их вкладывать внутрь не нужно и нельзя.
 #
-# Пути можно задать снаружи: ZDEPS_BASE=/иное source packaging/mac/zenv.sh
+# Пути можно задать снаружи: ZDEPS=/иное source packaging/mac/zenv.sh
+#
+# УСТРОЙСТВО КАТАЛОГОВ — слово владельца (30.08.2026): напрямую в ~/ai/work
+# ничего не пишем; зависимости живут в ~/ai/work/zdeps с подпапками по
+# архитектурам (префиксы Qt), их исходники и сборка — в zdeps/build;
+# эксперименты — в ~/ai/work/zametti-playground.
 
-export ZDEPS_BASE="${ZDEPS_BASE:-$HOME/ai/work/zdeps}" # префиксы Qt: $ZDEPS_BASE-<арх>
-export ZBUILD="${ZBUILD:-$HOME/ai/work/zbuild}"        # где собираем (сносится безболезненно)
+export ZDEPS="${ZDEPS:-$HOME/ai/work/zdeps}" # префиксы Qt: $ZDEPS/<арх>
+export ZBUILD="${ZBUILD:-$ZDEPS/build}"      # исходники и сборка Qt (сносится безболезненно)
 
 # ПОЛ СИСТЕМЫ. Всё, что старше, программу не запустит; всё, что новее, — да.
 # 13.0 (Ventura) — минимум, который объявляет сам Qt 6.10 (qtbase/.cmake.conf,
@@ -56,4 +61,4 @@ export ZARCHS="${ZARCHS:-arm64 x86_64}"
 # арх машины и SIMD-выбор выше поедет; сборка при этом идёт под Rosetta.
 export ZHOSTARCH="$(uname -m)"
 
-echo "zenv(mac): deps=$ZDEPS_BASE-<arch> build=$ZBUILD min=$ZMACOS_MIN archs=[$ZARCHS] host=$ZHOSTARCH"
+echo "zenv(mac): deps=$ZDEPS/<arch> build=$ZBUILD min=$ZMACOS_MIN archs=[$ZARCHS] host=$ZHOSTARCH"

@@ -10,8 +10,10 @@
 #   bash packaging/mac/build-qt.sh     # однажды, это часы
 #   bash packaging/mac/build-app.sh    # каждая пересборка программы
 #
-# Итог — в build-portable-universal/: zametti (голый бинарь), Zametti.app,
-# Zametti-<версия>.dmg. Внутри бинаря — статический Qt из $ZDEPS_BASE-<арх> и
+# Раскладка build-portable/ — слово владельца: пер-архитектурные сборки в
+# подпапках arm64/ и x86_64/, а РЕЗУЛЬТАТ — zametti (голый бинарь),
+# Zametti.app, Zametti-<версия>.dmg — прямо в корне build-portable/.
+# Внутри бинаря — статический Qt из $ZDEPS/<арх> и
 # всё вендоренное добро (libjxl, libheif, libsodium, zstd, blake3, microtex…);
 # снаружи остаются ТОЛЬКО системные рамки, которые есть на любом маке по
 # построению и вкладывать которые нельзя.
@@ -37,13 +39,13 @@ BUNDLE_ID="io.zametti.zametti"
 # zenv.sh (SIMD вендоренных библиотек) и в CLAUDE.md (память машины — 32 ГБ).
 BINARIES=()
 for arch in $ZARCHS; do
-    prefix="$ZDEPS_BASE-$arch"
+    prefix="$ZDEPS/$arch"
     [ -x "$prefix/bin/qt-cmake" ] || {
         echo "нет $prefix/bin/qt-cmake — сперва соберите Qt:" >&2
         echo "        ZARCHS=$arch bash packaging/mac/build-qt.sh" >&2
         exit 1
     }
-    out="$ROOT/build-portable-$arch"
+    out="$ROOT/build-portable/$arch"
     echo "=== zametti [$arch] → $out ==="
     extra=()
     if [ "$arch" != "$ZHOSTARCH" ]; then
@@ -54,7 +56,7 @@ for arch in $ZARCHS; do
         extra+=("-DCMAKE_SYSTEM_PROCESSOR=$arch")
         # Кросс-собранный Qt записал в свой toolchain-файл требование
         # QT_HOST_PATH — родного Qt с инструментами сборки (см. build-qt.sh).
-        extra+=("-DQT_HOST_PATH=$ZDEPS_BASE-$ZHOSTARCH")
+        extra+=("-DQT_HOST_PATH=$ZDEPS/$ZHOSTARCH")
     fi
     # ${extra[@]+...} вместо голого "${extra[@]}": системный bash на маке —
     # 3.2, где пустой массив под set -u считается необъявленной переменной.
@@ -69,7 +71,7 @@ for arch in $ZARCHS; do
 done
 
 # ── 2. Склейка и приёмка ломтей ──────────────────────────────────────────────
-UNI="$ROOT/build-portable-universal"
+UNI="$ROOT/build-portable"
 mkdir -p "$UNI"
 lipo -create "${BINARIES[@]}" -output "$UNI/zametti"
 
