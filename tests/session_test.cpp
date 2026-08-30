@@ -10,6 +10,7 @@
 
 #include "app_state.h"
 #include "settings.h"
+#include "zstorage_manager.h"
 
 #include "test_util.h"
 
@@ -85,8 +86,10 @@ static int ztRunSuite(int argc, char** argv) {
     out.rememberCaret(QStringLiteral("00000000000042"), {10, 5, 3});
     out.rememberCaret(QStringLiteral("00000000000007"), {1, 1, 0});
     out.rememberCaret(QStringLiteral("00000000000042"), {20, 20, 7});   // та же — заменяет
-    // Список хранилищ устройства: по нему диалог находит остальные корни.
+    // Список хранилищ устройства ведёт МЕНЕДЖЕР; ZAppState лишь возит его
+    // секцию между файлом и менеджером (как это делает ZApp при saveState).
     {
+        zametti::ZStorageManager stores;
         zametti::ZStorage::Config first;
         first.root = QStringLiteral("/дом/заметки");
         first.name = QStringLiteral("Заметки");
@@ -94,14 +97,15 @@ static int ztRunSuite(int argc, char** argv) {
         first.cloudUser = QStringLiteral("вадим");
         zametti::ZStorage::Config second;
         second.root = QStringLiteral("/дом/работа");
-        out.rememberStore(first);
-        out.rememberStore(second);
+        stores.remember(first);
+        stores.remember(second);
         // Та же папка с хвостовым слэшем — та же строка (канонизация), адрес
         // обновляется на месте, а пустое имя прежнего не затирает.
         zametti::ZStorage::Config again;
         again.root = QStringLiteral("/дом/заметки/");
         again.cloudUrl = QStringLiteral("https://host2/dav/");
-        out.rememberStore(again);
+        stores.remember(again);
+        out.setStoresJson(stores.storesToJson());
     }
     out.save();
 
@@ -148,24 +152,29 @@ static int ztRunSuite(int argc, char** argv) {
             !back.knowsCaret(QStringLiteral("нет-такой")) &&
                 back.caretOf(QStringLiteral("нет-такой")).cursor == 0 &&
                 back.caretOf(QStringLiteral("нет-такой")).anchor == 0);
-    // Список хранилищ: две строки, порядок стабилен, повтор обновил на месте.
+    // Список хранилищ: секция вернулась из файла и разобралась менеджером —
+    // две строки, порядок стабилен, повтор обновил на месте.
+    zametti::ZStorageManager returned;
+    returned.storesFromJson(back.storesJson());
     ZT_EQ("хранилищ две строки, без дублей", std::string("2"),
-          std::to_string(back.stores().size()));
+          std::to_string(returned.stores().size()));
     ZT_EQ("порядок стабилен: первая — первой", std::string("/дом/заметки"),
-          s(back.stores().first().root));
+          s(returned.stores().first().root));
     ZT_EQ("адрес обновился на месте", std::string("https://host2/dav/"),
-          s(back.stores().first().cloudUrl));
+          s(returned.stores().first().cloudUrl));
     ZT_EQ("пустое имя не затёрло прежнего", std::string("Заметки"),
-          s(back.stores().first().name));
+          s(returned.stores().first().name));
     ZT_TRUE("строка ищется по корню с любым хвостом",
-            back.storeFor(QStringLiteral("/дом/работа/")).root ==
+            returned.storeFor(QStringLiteral("/дом/работа/")).root ==
                 QStringLiteral("/дом/работа"));
     {
-        zametti::ZAppState edit = back;
-        edit.forgetStore(QStringLiteral("/дом/работа/"));
+        zametti::ZStorageManager edit;
+        edit.storesFromJson(back.storesJson());
+        edit.forget(QStringLiteral("/дом/работа/"));
         ZT_EQ("«−» забыл ровно одну строку", std::string("1"),
               std::to_string(edit.stores().size()));
-        ZT_TRUE("осталась другая", edit.stores().first().root == QStringLiteral("/дом/заметки"));
+        ZT_TRUE("осталась другая",
+                edit.stores().first().root == QStringLiteral("/дом/заметки"));
     }
 
     // Умолчание важно не меньше: у человека, который запускает программу
@@ -179,7 +188,7 @@ static int ztRunSuite(int argc, char** argv) {
     ZT_EQ("без файла ширина списка истории не задана", std::string("0"),
           std::to_string(fresh.historyListWidth()));
     ZT_EQ("без файла список хранилищ пуст", std::string("0"),
-          std::to_string(fresh.stores().size()));
+          std::to_string(fresh.storesJson().size()));
 
     checkPlainZoomMigrates();
 

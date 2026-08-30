@@ -24,6 +24,7 @@
 #include "settings.h"
 #include "zimage_cache.h"
 #include "zstorage.h"
+#include "zstorage_manager.h"
 
 #include <memory>
 
@@ -58,7 +59,23 @@ public:
     // Каретки по заметкам (rememberCaret/caretOf) — там же, по id заметки.
     ZAppState& state() { return state_; }
     const ZAppState& state() const { return state_; }
-    void saveState() { state_.save(); }
+    // Секция "stores" принадлежит менеджеру: перед записью она забирается у
+    // него, файл же пишет по-прежнему только ZApp (единые ворота).
+    void saveState() {
+        state_.setStoresJson(stores_.storesToJson());
+        state_.save();
+    }
+
+    // --- список хранилищ устройства ------------------------------------------
+    // ZStorageManager — модель окна хранилищ и хозяин секции "stores" в
+    // state.json; наполняется из state при создании ZApp. Связку ему отдаёт
+    // main() (setStoreSecrets), когда решит, keyring это или среда: без неё
+    // факты строк честно отвечают Unknown.
+    ZStorageManager& stores() { return stores_; }
+    void setStoreSecrets(std::shared_ptr<SecretStore> secrets) {
+        stores_ = ZStorageManager(std::move(secrets));
+        stores_.storesFromJson(state_.storesJson());
+    }
 
     // --- хранилище -----------------------------------------------------------
     // Открытое хранилище (или каталог/файл вне хранилища — тогда storage()
@@ -113,6 +130,7 @@ protected:
     friend size_t qHash(const IconKey& k, size_t seed);
 
     ZAppState state_;
+    ZStorageManager stores_;
     std::shared_ptr<ZStorage> storage_;
     // Готовая папка документации: собрана при первом обращении, дальше
     // раздаётся копией всякому новому хранилищу.

@@ -646,6 +646,9 @@ int main(int argc, char** argv) {
     else
         syncSecrets = std::make_shared<zametti::KeyringSecrets>();
     zametti::SyncController cloudSync(zapp.storage(), syncSecrets, &zapp.logs());
+    // Той же связкой пользуется список хранилищ: факты строк («ключ есть?»)
+    // спрашиваются атрибутами, без чтения секретов.
+    zapp.setStoreSecrets(syncSecrets);
     zametti::NoteTreeView& tree = panels.tree();
     zametti::NoteListModel& list = panels.list();
     QListView& listView = panels.listView();
@@ -2764,7 +2767,7 @@ int main(int argc, char** argv) {
         {
             zametti::ZStorage::Config entry = storage->cloudConfig();
             entry.name = storage->localStoreName();
-            zapp.state().rememberStore(entry);
+            zapp.stores().remember(entry);
         }
         refreshToolbar();
         return true;
@@ -2789,7 +2792,7 @@ int main(int argc, char** argv) {
             // Блок не косметика: диалог держит копию shared_ptr хранилища, и
             // умереть он обязан ДО attachStore — сторож забытой копии не спит.
             zametti::StoreManagerDialog dialog(
-                &window, session.stores(),
+                &window, zapp.stores().stores(),
                 model.isStore() ? zapp.storage()->root() : QString(), zapp.storage(),
                 syncSecrets);
             dialog.exec();
@@ -2798,10 +2801,10 @@ int main(int argc, char** argv) {
         // Список применяется ВСЕГДА (и по Esc): добавленное хранилище — не
         // черновик. Замена через те же двери, что и всё остальное: прежние
         // строки забываются, итог диалога вспоминается по порядку.
-        zametti::ZAppState& out = zapp.state();
+        zametti::ZStorageManager& out = zapp.stores();
         const QList<zametti::ZStorage::Config> before = out.stores();
-        for (const zametti::ZStorage::Config& e : before) out.forgetStore(e.root);
-        for (const zametti::ZStorage::Config& e : verdict.stores) out.rememberStore(e);
+        for (const zametti::ZStorage::Config& e : before) out.forget(e.root);
+        for (const zametti::ZStorage::Config& e : verdict.stores) out.remember(e);
 
         if (!verdict.switchToRoot.isEmpty()) {
             const bool ok = attachStore(verdict.switchToRoot, QString());
