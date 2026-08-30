@@ -467,6 +467,9 @@ void StoreManagerDialog::render() {
     // правят (заморозка валидатором, а не setReadOnly — иначе каретки нет).
     folderFreeze_->freeze(snap.folderFrozen ? snap.folder : QString());
     folder_->setToolTip(snap.folder);
+    // Папка не нашлась — путь красным (сценарий 3 владельца): дальше Browse.
+    folder_->setStyleSheet(snap.folderMissing ? QStringLiteral("color: #c03030;")
+                                              : QString());
     put(password2_, snap.repeat);
 
     // Обычные поля тоже ведёт снимок: доступность и подсказка (каталог-облако

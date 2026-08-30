@@ -76,6 +76,7 @@ add_executable(zametti-tests
     zstorage_manager_test.cpp
     store_manager_dialog_test.cpp
     store_manager_model_test.cpp
+    store_live_test.cpp
     sync_fuzz_test.cpp
     zlogs_test.cpp
 

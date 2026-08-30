@@ -115,6 +115,7 @@ public:
         int selected = -1;
         QString folder;
         bool folderFrozen = false;   // путь открытого хранилища под замком
+        bool folderMissing = false;  // папка не нашлась — путь красным
         Field server;
         Field serverDir;
         Field login;

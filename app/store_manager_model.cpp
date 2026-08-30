@@ -276,6 +276,10 @@ StoreManagerModel::Snapshot StoreManagerModel::snapshot() const {
 
     out.folder = d.folder;
     out.folderFrozen = isOpen;
+    // Папка не нашлась (переехала, унесли) — путь горит красным, Browse жив:
+    // человек указывает новое место, и строка переезжает за ним (сценарий 3
+    // владельца, 30.08.2026).
+    out.folderMissing = f.kind == ZStorage::DirKind::Missing;
     out.repeat = d.repeat;
     out.server.text = d.server;
     // ЕДИНСТВЕННАЯ ОСТАВЛЕННАЯ ПОДСКАЗКА (решение владельца: «подсказка —
@@ -667,9 +671,27 @@ StoreManagerModel::Reaction StoreManagerModel::openPressed() {
             out.job = jobFor(Job::Kind::Check);
             return out;
         }
+        // ПЕРЕЕЗД СТРОКИ (беда I матрицы; сценарий 3 владельца): папку
+        // выбрали заново (Browse) — строка переезжает за ней вместе с
+        // облаком, черновиком и памятью «что видели», а не оставляет сироту
+        // со старым путём рядом с новой.
+        const QString oldKey = rootKey(selected_);
+        const QString newKey = ZStorageManager::canonicalRoot(draft().folder);
+        const QString folder = draft().folder;
+        if (!newKey.isEmpty() && newKey != oldKey) {
+            ZStorage::Config moved = typed;
+            moved.root = newKey;
+            moved.name = row.name;
+            stores_.forget(oldKey);
+            stores_.remember(moved);
+            drafts_->insert(newKey, drafts_->take(oldKey));
+            if (seen_.contains(oldKey)) seen_.insert(newKey, seen_.take(oldKey));
+            for (int i = 0; i < stores_.size(); ++i)
+                if (stores_.stores().at(i).root == newKey) selected_ = i;
+        }
         // Настраивать нечего — просто закрыть окно с переключением (поправка
         // владельца): жест не запрещается и на уже открытом.
-        out.switchToRoot = draft().folder;
+        out.switchToRoot = folder;
         out.close = true;
         return out;
     }

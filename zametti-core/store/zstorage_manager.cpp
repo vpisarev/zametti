@@ -87,8 +87,16 @@ QString ZStorageManager::storeIdOf(const QString& key) {
 ZStorageManager::Facts ZStorageManager::facts(const QString& folder) {
     const QString key = canonicalRoot(folder);
     if (key.isEmpty()) return {};
-    const auto cached = factsCache_.constFind(key);
-    if (cached != factsCache_.constEnd()) return *cached;
+    const auto cached = factsCache_.find(key);
+    if (cached != factsCache_.end()) {
+        // Кэш перепроверяется РОДОМ каталога (один stat): папку могли унести
+        // или завести, пока окно открыто, — путь обязан загореться красным
+        // сразу, а не после перезапуска (сценарий 3 владельца, 30.08.2026).
+        // Род совпал — ответ прежний; разошёлся — честный пересчёт.
+        if (ZStorage::inspect(key) == cached->kind) return *cached;
+        factsCache_.erase(cached);
+        storeIds_.remove(key);
+    }
 
     Facts out;
     out.kind = ZStorage::inspect(key);
