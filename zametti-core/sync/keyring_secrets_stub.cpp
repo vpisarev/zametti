@@ -28,6 +28,8 @@ KeyringSecrets::~KeyringSecrets() = default;
 
 bool KeyringSecrets::available() const { return false; }
 
+bool KeyringSecrets::has(const QString&, Secret) { return false; }
+
 bool KeyringSecrets::loadKey(const QString&, Keyfile*, QString* error) {
     return notHere(error);
 }

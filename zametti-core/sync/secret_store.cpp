@@ -4,6 +4,18 @@
 
 namespace zametti {
 
+bool EnvSecrets::has(const QString&, Secret which) {
+    // storeId в имена переменных не входит (см. шапку класса): CLI работает с
+    // одним хранилищем за запуск.
+    const char* var = nullptr;
+    switch (which) {
+        case Secret::Key: var = kKeyVar; break;
+        case Secret::ServerPassword: var = kServerPasswordVar; break;
+        case Secret::EncryptionPassword: var = kEncryptionPasswordVar; break;
+    }
+    return var != nullptr && !qEnvironmentVariableIsEmpty(var);
+}
+
 bool EnvSecrets::loadKey(const QString& storeId, Keyfile* out, QString* error) {
     Q_ASSERT(out != nullptr);
     if (!qEnvironmentVariableIsSet(kKeyVar)) {

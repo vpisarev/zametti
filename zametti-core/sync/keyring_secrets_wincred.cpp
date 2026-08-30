@@ -143,6 +143,29 @@ KeyringSecrets::~KeyringSecrets() = default;
 // нет. Отказ отдельной операции объясняется через error, как и у DBus-версии.
 bool KeyringSecrets::available() const { return true; }
 
+bool KeyringSecrets::has(const QString& storeId, Secret which) {
+    // Существование без чтения секрета (довод — secret_store.h). Отдельного
+    // «есть ли» у Credential Manager нет, CredReadW отдаёт и байты; Windows
+    // при этом вопросов не задаёт, а копию секрета мы затираем до CredFree —
+    // тем же движением, что getSecret.
+    const char* what = "";
+    switch (which) {
+        case Secret::Key: what = "key"; break;
+        case Secret::ServerPassword: what = "webdav"; break;
+        case Secret::EncryptionPassword: what = "password"; break;
+    }
+    const QString target = targetFor(storeId, what);
+    std::wstring wtarget(size_t(target.size()), L'\0');
+    target.toWCharArray(wtarget.data());
+    PCREDENTIALW cred = nullptr;
+    if (CredReadW(wtarget.c_str(), CRED_TYPE_GENERIC, 0, &cred) == FALSE)
+        return false;
+    if (cred->CredentialBlob != nullptr && cred->CredentialBlobSize > 0)
+        SecureZeroMemory(cred->CredentialBlob, cred->CredentialBlobSize);
+    CredFree(cred);
+    return true;
+}
+
 bool KeyringSecrets::loadKey(const QString& storeId, Keyfile* out, QString* error) {
     Q_ASSERT(out != nullptr);
     bool found = false;

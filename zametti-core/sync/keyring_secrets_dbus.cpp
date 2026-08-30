@@ -57,6 +57,15 @@ QMap<QString, QString> attributesFor(const QString& storeId, const char* what) {
             {QStringLiteral("what"), QLatin1String(what)}};
 }
 
+const char* whatFor(zametti::SecretStore::Secret which) {
+    switch (which) {
+        case zametti::SecretStore::Secret::Key: return "key";
+        case zametti::SecretStore::Secret::ServerPassword: return "webdav";
+        case zametti::SecretStore::Secret::EncryptionPassword: return "password";
+    }
+    return "";
+}
+
 }  // namespace
 }  // namespace zametti
 
@@ -244,6 +253,25 @@ bool KeyringSecrets::available() const {
     const auto activatable = iface->activatableServiceNames();
     return activatable.isValid() &&
            activatable.value().contains(QLatin1String(kService));
+}
+
+bool KeyringSecrets::has(const QString& storeId, Secret which) {
+    // СУЩЕСТВОВАНИЕ, А НЕ ЧТЕНИЕ: SearchItems без GetSecret и — в отличие от
+    // findItem — БЕЗ Unlock: запертая связка не повод будить человека вопросом,
+    // элемент виден и в списке locked. Сессия не нужна (SearchItems — метод
+    // службы), нужен только метатип атрибутов.
+    if (!impl_->bus.isConnected()) return false;
+    qDBusRegisterMetaType<QMap<QString, QString>>();
+    QDBusInterface service(kService, kServicePath, kServiceIface, impl_->bus);
+    QDBusMessage reply = service.call(
+        QStringLiteral("SearchItems"),
+        QVariant::fromValue(attributesFor(storeId, whatFor(which))));
+    if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().size() < 2)
+        return false;
+    const auto unlocked =
+        qdbus_cast<QList<QDBusObjectPath>>(reply.arguments().at(0));
+    const auto locked = qdbus_cast<QList<QDBusObjectPath>>(reply.arguments().at(1));
+    return !unlocked.isEmpty() || !locked.isEmpty();
 }
 
 bool KeyringSecrets::loadKey(const QString& storeId, Keyfile* out, QString* error) {

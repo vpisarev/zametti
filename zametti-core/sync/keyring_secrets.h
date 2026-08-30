@@ -43,6 +43,11 @@ public:
     // вызывающий.
     bool available() const override;
 
+    // Существование без чтения секрета (довод — secret_store.h): Linux —
+    // SearchItems без GetSecret и БЕЗ Unlock; Windows — CredReadW только ради
+    // факта; mac — одни атрибуты записи (kSecReturnAttributes).
+    bool has(const QString& storeId, Secret which) override;
+
     bool loadKey(const QString& storeId, Keyfile* out,
                  QString* error = nullptr) override;
     bool storeKey(const Keyfile& keyfile, QString* error = nullptr) override;

@@ -29,9 +29,20 @@ class SecretStore {
 public:
     virtual ~SecretStore() = default;
 
+    // Три секрета интерфейса — см. шапку файла.
+    enum class Secret { Key, ServerPassword, EncryptionPassword };
+
     // Есть ли за интерфейсом живое хранилище (keyring может быть недоступен —
     // редкий WM; тогда деградация решается вызывающим, не здесь).
     virtual bool available() const = 0;
+
+    // ЕСТЬ ЛИ ЗАПИСЬ — БЕЗ ЧТЕНИЯ СЕКРЕТА (матрица окна хранилищ, §1.2).
+    // Это не педантизм: loadKey/serverPassword читают данные, а чтение на маке
+    // имеет право поднять системный вопрос связки — звать его на каждое
+    // переключение строки нельзя, иначе программа начнёт спрашивать пароль
+    // сама. Запрос одних атрибутов вопроса не поднимает (замерено пробником
+    // 30.08.2026); показ состояния обязан СПРАШИВАТЬ этой дверью, а не ЧИТАТЬ.
+    virtual bool has(const QString& storeId, Secret which) = 0;
 
     // Ключ. loadKey: ложь — ключа нет или он негодный, объяснение в error.
     virtual bool loadKey(const QString& storeId, Keyfile* out,
@@ -74,6 +85,8 @@ public:
     static constexpr char kEncryptionPasswordVar[] = "ZAMETTI_SYNC_PASSWORD";
 
     bool available() const override { return true; }
+
+    bool has(const QString& storeId, Secret which) override;
 
     bool loadKey(const QString& storeId, Keyfile* out,
                  QString* error = nullptr) override;

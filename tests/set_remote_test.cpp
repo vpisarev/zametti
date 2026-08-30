@@ -11,6 +11,7 @@
 #include "secret_store.h"
 #include "zstorage.h"
 
+#include "fake_secrets.h"
 #include "mini_store.h"
 #include "test_util.h"
 #include "scratch_files.h"
@@ -29,54 +30,9 @@ namespace {
 // Аргон с боевыми порогами съел бы полторы секунды на каждый разворот.
 const Keyfile::KdfParams kTiny{1, 1 << 20};
 
-// Keyring в памяти: наборам не место в настоящем Secret Service.
-class FakeSecrets : public SecretStore {
-public:
-    bool available() const override { return true; }
-    bool loadKey(const QString& storeId, Keyfile* out, QString* error) override {
-        if (!keys_.contains(storeId)) {
-            if (error) *error = QStringLiteral("нет ключа для %1").arg(storeId);
-            return false;
-        }
-        *out = keys_.value(storeId);
-        return true;
-    }
-    bool storeKey(const Keyfile& keyfile, QString*) override {
-        keys_.insert(keyfile.storeId(), keyfile);
-        return true;
-    }
-    bool clearKey(const QString& storeId, QString*) override {
-        keys_.remove(storeId);
-        return true;
-    }
-    QString serverPassword(const QString& storeId, QString*) override {
-        return passwords_.value(storeId);
-    }
-    bool setServerPassword(const QString& storeId, const QString& password, QString*) override {
-        passwords_.insert(storeId, password);
-        return true;
-    }
-    bool clearServerPassword(const QString& storeId, QString*) override {
-        passwords_.remove(storeId);
-        return true;
-    }
-    QString encryptionPassword(const QString& storeId, QString*) override {
-        return cryptPasswords_.value(storeId);
-    }
-    bool setEncryptionPassword(const QString& storeId, const QString& password,
-                               QString*) override {
-        cryptPasswords_.insert(storeId, password);
-        return true;
-    }
-    bool clearEncryptionPassword(const QString& storeId, QString*) override {
-        cryptPasswords_.remove(storeId);
-        return true;
-    }
-
-    QHash<QString, Keyfile> keys_;
-    QHash<QString, QString> passwords_;
-    QHash<QString, QString> cryptPasswords_;
-};
+// Keyring в памяти — общая подделка из fake_secrets.h (до 29.08.2026 таких
+// классов по наборам лежало три, слово в слово).
+using FakeSecrets = zt::FakeSecrets;
 
 void checkConnectMintsAndRemembers() {
     zt::MiniStore store, cloudHome;

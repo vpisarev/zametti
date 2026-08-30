@@ -35,6 +35,8 @@ QString canonicalRoot(const QString& root) {
 class TakenSecrets : public SecretStore {
 public:
     bool available() const override { return true; }
+    // Копилка пишет, не читает — и «есть ли» ей отвечать не из чего.
+    bool has(const QString&, Secret) override { return false; }
     bool loadKey(const QString&, Keyfile*, QString* error) override {
         if (error) *error = QStringLiteral("no keyring in the worker thread");
         return false;
