@@ -106,12 +106,16 @@
         <file alias="microtex.txt">../3rdparty/microtex/upstream/LICENSE</file>
     </qresource>
 
-    <!-- IBM Plex, OFL 1.1. Почему именно эти восемь — resources/fonts/README.md. -->
+    <!-- IBM Plex, OFL 1.1. Почему именно эти двенадцать — resources/fonts/README.md. -->
     <qresource prefix="/fonts">
         <file alias="IBMPlexMono-Regular.ttf">fonts/IBMPlexMono-Regular.ttf</file>
         <file alias="IBMPlexMono-Italic.ttf">fonts/IBMPlexMono-Italic.ttf</file>
         <file alias="IBMPlexMono-Bold.ttf">fonts/IBMPlexMono-Bold.ttf</file>
         <file alias="IBMPlexMono-BoldItalic.ttf">fonts/IBMPlexMono-BoldItalic.ttf</file>
+        <file alias="IBMPlexSans-Regular.ttf">fonts/IBMPlexSans-Regular.ttf</file>
+        <file alias="IBMPlexSans-Italic.ttf">fonts/IBMPlexSans-Italic.ttf</file>
+        <file alias="IBMPlexSans-Bold.ttf">fonts/IBMPlexSans-Bold.ttf</file>
+        <file alias="IBMPlexSans-BoldItalic.ttf">fonts/IBMPlexSans-BoldItalic.ttf</file>
         <file alias="IBMPlexSans_SemiCondensed-Regular.ttf">fonts/IBMPlexSans_SemiCondensed-Regular.ttf</file>
         <file alias="IBMPlexSans_SemiCondensed-Italic.ttf">fonts/IBMPlexSans_SemiCondensed-Italic.ttf</file>
         <file alias="IBMPlexSans_SemiCondensed-Bold.ttf">fonts/IBMPlexSans_SemiCondensed-Bold.ttf</file>

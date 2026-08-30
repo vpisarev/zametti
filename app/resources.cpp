@@ -24,13 +24,19 @@ static void zamettiInitResources() {
 
 namespace {
 
-// Порядок — «сначала текст, потом панели», как в настройках. Семейства взяты
-// не из головы: это то, что Qt читает из таблицы name файлов (nameID 1).
+// Порядок — «сначала текст, потом панели», как в настройках: Mono — текст
+// заметки, Sans — пропорциональная замена ему по выбору человека (и опора
+// вывоза в PDF на машинах без шрифтов), Sans SemiCondensed — панели. Семейства
+// взяты не из головы: это то, что Qt читает из таблицы name файлов (nameID 1).
 constexpr zametti::EmbeddedFace kFaces[] = {
     {":/fonts/IBMPlexMono-Regular.ttf", "IBM Plex Mono", "Regular"},
     {":/fonts/IBMPlexMono-Italic.ttf", "IBM Plex Mono", "Italic"},
     {":/fonts/IBMPlexMono-Bold.ttf", "IBM Plex Mono", "Bold"},
     {":/fonts/IBMPlexMono-BoldItalic.ttf", "IBM Plex Mono", "Bold Italic"},
+    {":/fonts/IBMPlexSans-Regular.ttf", "IBM Plex Sans", "Regular"},
+    {":/fonts/IBMPlexSans-Italic.ttf", "IBM Plex Sans", "Italic"},
+    {":/fonts/IBMPlexSans-Bold.ttf", "IBM Plex Sans", "Bold"},
+    {":/fonts/IBMPlexSans-BoldItalic.ttf", "IBM Plex Sans", "Bold Italic"},
     {":/fonts/IBMPlexSans_SemiCondensed-Regular.ttf", "IBM Plex Sans SemiCondensed", "Regular"},
     {":/fonts/IBMPlexSans_SemiCondensed-Italic.ttf", "IBM Plex Sans SemiCondensed", "Italic"},
     {":/fonts/IBMPlexSans_SemiCondensed-Bold.ttf", "IBM Plex Sans SemiCondensed", "Bold"},
