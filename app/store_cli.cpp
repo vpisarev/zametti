@@ -315,8 +315,10 @@ int StoreCli::cmdSetCloud() {
         std::printf("the cloud holds: %d notes, %d attachments, %.1f MB\n",
                     outcome.cloudNotes, outcome.cloudAttachments,
                     double(outcome.cloudBytes) / (1024.0 * 1024.0));
-    std::printf("connected: %s\n",
-                (cfg.cloudUrl.isEmpty() ? cfg.cloudDir : cfg.cloudUrl).toUtf8().constData());
+    std::printf("connected: %s\n", (cfg.cloudUrl.isEmpty() ? cfg.cloudDir
+                                                           : cfg.collectionUrl())
+                                       .toUtf8()
+                                       .constData());
     return 0;
 }
 

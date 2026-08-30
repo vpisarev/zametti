@@ -209,9 +209,23 @@ void ZStorage::Config::parse(const QJsonObject& o) {
     root = text({"root"});
     name = text({"name"});
     cloudUrl = text({"cloudUrl", "remoteUrl", "url"});
+    cloudServerDir = text({"cloudServerDir"});
     cloudDir = text({"cloudDir", "remoteDir", "dir"});
     cloudUser = text({"cloudUser", "remoteUser", "user"});
     timeoutMs = o.value(QStringLiteral("timeoutMs")).toInt(30000);
+}
+
+// Единственная склейка базы и папки — см. заголовок: адрес хранится как
+// введён, разрезалки не существует.
+QString ZStorage::Config::collectionUrl() const {
+    if (cloudUrl.isEmpty()) return {};
+    QString base = cloudUrl.trimmed();
+    while (base.endsWith(QLatin1Char('/'))) base.chop(1);
+    QString dir = cloudServerDir.trimmed();
+    while (dir.startsWith(QLatin1Char('/'))) dir.remove(0, 1);
+    while (dir.endsWith(QLatin1Char('/'))) dir.chop(1);
+    return dir.isEmpty() ? base + QLatin1Char('/')
+                         : base + QLatin1Char('/') + dir + QLatin1Char('/');
 }
 
 bool ZStorage::Config::parse(const QByteArray& bytes, QString* error) {
@@ -230,6 +244,8 @@ bool ZStorage::Config::parse(const QByteArray& bytes, QString* error) {
 QByteArray ZStorage::Config::cloudConfigBytes() const {
     QJsonObject o;
     if (!cloudUrl.isEmpty()) o.insert(QStringLiteral("cloudUrl"), cloudUrl);
+    if (!cloudServerDir.isEmpty())
+        o.insert(QStringLiteral("cloudServerDir"), cloudServerDir);
     if (!cloudDir.isEmpty()) o.insert(QStringLiteral("cloudDir"), cloudDir);
     if (!cloudUser.isEmpty()) o.insert(QStringLiteral("cloudUser"), cloudUser);
     o.insert(QStringLiteral("timeoutMs"), timeoutMs);
@@ -241,6 +257,8 @@ QJsonObject ZStorage::Config::entryJson() const {
     if (!root.isEmpty()) o.insert(QStringLiteral("root"), root);
     if (!name.isEmpty()) o.insert(QStringLiteral("name"), name);
     if (!cloudUrl.isEmpty()) o.insert(QStringLiteral("cloudUrl"), cloudUrl);
+    if (!cloudServerDir.isEmpty())
+        o.insert(QStringLiteral("cloudServerDir"), cloudServerDir);
     if (!cloudDir.isEmpty()) o.insert(QStringLiteral("cloudDir"), cloudDir);
     if (!cloudUser.isEmpty()) o.insert(QStringLiteral("cloudUser"), cloudUser);
     o.insert(QStringLiteral("timeoutMs"), timeoutMs);
@@ -311,7 +329,7 @@ std::shared_ptr<CloudStore> ZStorage::makeCloud(const Config& cfg,
     }
     if (!cfg.cloudUrl.isEmpty()) {
         WebDavCloud::Config web;
-        web.base = QUrl(cfg.cloudUrl);
+        web.base = QUrl(cfg.collectionUrl());
         web.user = cfg.cloudUser;
         web.password = serverPassword;
         web.timeoutMs = cfg.timeoutMs;
@@ -826,7 +844,8 @@ bool ZStorage::eraseCloudStorage(const Config& cfg, const QString& serverPasswor
                 *error = QStringLiteral(
                              "\"%1\" holds \"%2\", which is not a zametti blob — "
                              "refusing to erase a folder that is not provably ours")
-                             .arg(cfg.cloudUrl.isEmpty() ? cfg.cloudDir : cfg.cloudUrl,
+                             .arg(cfg.cloudUrl.isEmpty() ? cfg.cloudDir
+                                                         : cfg.collectionUrl(),
                                   e.name);
             return finish(false);
         }

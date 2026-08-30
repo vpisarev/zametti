@@ -135,13 +135,18 @@ void checkButtonsTableA() {
     // ЖИВОЙ ДЕФОЛТ Cloud dir не только рисуется серым, но и УЕЗЖАЕТ В РАБОТУ:
     // пустое поле = имя локальной папки, а не корень провайдера (живая проба
     // владельца 30.08: Check уходил в /webdav/ и получал не свою папку).
+    // База при этом хранится КАК ВВЕДЕНА — склейка только в collectionUrl.
     {
         model.edit(Model::FieldId::ServerPassword, QStringLiteral("временный"));
         const Model::Job job = model.checkPressed().job;
-        ZT_TRUE("адрес кончается именем локальной папки",
-                job.cfg.cloudUrl.endsWith(QStringLiteral("/dav/") +
-                                          QFileInfo(store).fileName() +
-                                          QLatin1Char('/')));
+        ZT_EQ("база — как введена", std::string("https://host/dav"),
+              s(job.cfg.cloudUrl));
+        ZT_EQ("папка — имя локальной", s(QFileInfo(store).fileName()),
+              s(job.cfg.cloudServerDir));
+        ZT_TRUE("полный адрес собирается из двух полей",
+                job.cfg.collectionUrl() ==
+                    QStringLiteral("https://host/dav/") + QFileInfo(store).fileName() +
+                        QLatin1Char('/'));
         model.edit(Model::FieldId::ServerPassword, QString());
     }
     {
@@ -415,6 +420,101 @@ void checkResetRoads() {
             model.snapshot().cloud.text == QStringLiteral("Cloud: not set"));
 }
 
+void checkAddressNeverBitten() {
+    // ЗАКОН ВЛАДЕЛЬЦА (30.08.2026): что бы ни было введено в Cloud server и
+    // Cloud dir, от сервера НИКОГДА не откусывается путь (/webdav). Прежде
+    // адрес склеивался и разрезался «по последнему сегменту» — и /webdav
+    // уезжал в Cloud dir при первом же показе строки.
+    zt::MiniStore home;
+    ZStorageManager stores;
+    const QString store = home.root() + QStringLiteral("/хранилище");
+    ZT_TRUE("хранилище завелось", makeStore(store).isEmpty());
+
+    const auto shownAfterReopen = [&](const QString& server, const QString& dir)
+        -> std::pair<QString, QString> {
+        // Набрали — окно умерло (stash) — «новый запуск»: свежая модель со
+        // СВОИМИ черновиками читает то, что сохранилось в строке.
+        {
+            Model typing(stores, QString());
+            typing.select(0);
+            typing.edit(Model::FieldId::Server, server);
+            typing.edit(Model::FieldId::ServerDir, dir);
+            typing.stashDrafts();
+        }
+        Model reopened(stores, QString());
+        reopened.select(0);
+        const Model::Snapshot snap = reopened.snapshot();
+        return {snap.server.text, snap.serverDir.text};
+    };
+    ZStorage::Config row;
+    row.root = store;
+    stores.remember(row);
+
+    // С папкой: сервер возвращается РОВНО как введён, папка — отдельно.
+    auto shown = shownAfterReopen(QStringLiteral("https://host/webdav"),
+                                  QStringLiteral("vpnotes"));
+    ZT_EQ("сервер не тронут", std::string("https://host/webdav"), s(shown.first));
+    ZT_EQ("папка отдельно", std::string("vpnotes"), s(shown.second));
+
+    // Без папки: /webdav не откусывается тем более.
+    shown = shownAfterReopen(QStringLiteral("https://host/webdav"), QString());
+    ZT_EQ("сервер без папки не тронут", std::string("https://host/webdav"),
+          s(shown.first));
+    ZT_TRUE("папка так и пуста", shown.second.isEmpty());
+
+    // Наследный СКЛЕЕННЫЙ адрес (CLI --url, прежние записи): показывается
+    // целиком в поле сервера, и дефолт-папка к нему НЕ дописывается.
+    ZStorage::Config legacy;
+    legacy.root = store;
+    legacy.cloudUrl = QStringLiteral("https://webdav.yandex.ru/зам/01abcdef/");
+    stores.remember(legacy);
+    Model reopened(stores, QString());
+    reopened.select(0);
+    ZT_EQ("наследный адрес — целиком, как хранится",
+          std::string("https://webdav.yandex.ru/зам/01abcdef/"),
+          s(reopened.snapshot().server.text));
+    const Model::Job legacyJob = reopened.checkPressed().job;
+    ZT_TRUE("Check по наследному адресу жив",
+            legacyJob.kind == Model::Job::Kind::Check);
+    ZT_EQ("и в работу он уезжает без дописок",
+          std::string("https://webdav.yandex.ru/зам/01abcdef/"),
+          s(legacyJob.cfg.collectionUrl()));
+}
+
+void checkSclerosisCured() {
+    // ЗАКОН ВЛАДЕЛЬЦА (30.08.2026): всё набранное в адресе и логине — пусть
+    // даже с опечаткой и без связи с сервером — попадает в настройки и
+    // ПЕРЕЖИВАЕТ ВЫХОД ИЗ ПРОГРАММЫ. Круг: набрали → окно умерло (stash) →
+    // секция stores уехала в JSON (как в state.json) → «новый запуск» читает
+    // её в свежий менеджер — и всё на месте.
+    zt::MiniStore home;
+    ZStorageManager stores;
+    const QString store = home.root() + QStringLiteral("/хранилище");
+    ZT_TRUE("хранилище завелось", makeStore(store).isEmpty());
+    ZStorage::Config row;
+    row.root = store;
+    stores.remember(row);
+    {
+        Model typing(stores, QString());
+        typing.select(0);
+        typing.edit(Model::FieldId::Server,
+                    QStringLiteral("https://опечатка.example/webdav"));
+        typing.edit(Model::FieldId::ServerDir, QStringLiteral("vpnotes2"));
+        typing.edit(Model::FieldId::Login, QStringLiteral("u132748"));
+        // Никакой работы: связи не было, и это не повод всё забыть.
+        typing.stashDrafts();
+    }
+    ZStorageManager restored;
+    restored.storesFromJson(stores.storesToJson());   // выход → state.json → запуск
+    Model reopened(restored, QString());
+    reopened.select(0);
+    const Model::Snapshot snap = reopened.snapshot();
+    ZT_EQ("сервер пережил выход", std::string("https://опечатка.example/webdav"),
+          s(snap.server.text));
+    ZT_EQ("папка пережила выход", std::string("vpnotes2"), s(snap.serverDir.text));
+    ZT_EQ("логин пережил выход", std::string("u132748"), s(snap.login.text));
+}
+
 void checkStubsNeverRead() {
     // §3.16: связка ВИДНА (кружочки, глаза) и НЕ ЧИТАЕТСЯ — счётчик чтений
     // подделки остаётся нулём; заглушка не уезжает в работу как пароль.
@@ -465,6 +565,8 @@ static int ztRunSuite(int, char**) {
     checkFactLines();
     checkFreshnessAutomaton();
     checkResetRoads();
+    checkAddressNeverBitten();
+    checkSclerosisCured();
     checkStubsNeverRead();
     return zt::report("store_manager_model");
 }

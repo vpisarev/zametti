@@ -175,14 +175,13 @@ public:
     StoreManagerModel(ZStorageManager& stores, const QString& openRoot);
 
     // Адрес облака из пары полей формы: http(s):// — WebDAV-база, папка
-    // хранилища — ОТДЕЛЬНЫМ сегментом (решение владельца, 28.08.2026); всё
-    // прочее — каталог-облако, ТОЛЬКО абсолютным путём (относительный не
-    // резолвится — резолв по cwd стоил владельцу каталога). Чистые функции,
-    // проверяются набором; в Config живёт склеенный адрес.
+    // хранилища — отдельным полем; всё прочее — каталог-облако, ТОЛЬКО
+    // абсолютным путём (относительный не резолвится — резолв по cwd стоил
+    // владельцу каталога). В Config поля живут КАК ВВЕДЕНЫ (закон владельца,
+    // 30.08.2026: от cloud server ничего не откусывается); склейку делает
+    // Config::collectionUrl() в момент работы, разрезалки не существует.
     static void setCloudAddress(ZStorage::Config& cfg, const QString& server,
                                 const QString& serverDir, const QString& user);
-    static void splitCloudAddress(const ZStorage::Config& cfg, QString* server,
-                                  QString* serverDir);
     static QString cloudAddressText(const ZStorage::Config& cfg);
 
     // --- выбор и черновики ---------------------------------------------------
@@ -191,6 +190,10 @@ public:
     bool isOpenRow() const;
     // Сеансовые черновики: живут у обвязки, переживают переоткрытие окна.
     void adoptDrafts(QHash<QString, Draft>* drafts);
+    // Набранные адрес и логин — в строки списка (переживают выход из
+    // программы, даже когда связь не состоялась). Зовёт умирающее окно.
+    void stashDrafts();
+    const QHash<QString, Draft>& drafts() const { return *drafts_; }
 
     void setMessage(const QString& text, bool alarm = false);
     void noteSeen(const CloudSeen& seen);

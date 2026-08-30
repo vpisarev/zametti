@@ -833,15 +833,21 @@ Belongs to THIS COPY of the store (a `cp -r` takes it along, the cloud never
 sees it) and carries no secrets:
 
 ```json
-{ "cloudUrl": "https://dav.example/зам/01n6cqevh7bbfr/", "cloudUser": "vp",
-  "timeoutMs": 30000 }
+{ "cloudUrl": "https://dav.example/webdav", "cloudServerDir": "vpnotes",
+  "cloudUser": "vp", "timeoutMs": 30000 }
 ```
 
-`cloudDir` instead of `cloudUrl` points at a local folder used as a cloud
-(tests, a mounted NAS). The legacy file name `remote.json` and the legacy
-keys `remoteUrl`/`remoteDir`/`remoteUser` (and the still older
-`url`/`dir`/`user`) are read as fallbacks and migrate on the next write: the
-new file is written, the old one is removed in the same step. `timeoutMs` is an INACTIVITY
+`cloudUrl` and `cloudServerDir` are stored EXACTLY as the user typed them
+(the owner's law, 30.08.2026: nothing is ever bitten off the server base);
+the full collection address is composed in one place only
+(`ZStorage::Config::collectionUrl()`): base + "/" + dir + "/". An empty
+`cloudServerDir` means `cloudUrl` already IS the full collection address —
+that is what the CLI `--url` writes and what older records hold; both keep
+working unchanged. `cloudDir` instead of `cloudUrl` points at a local folder
+used as a cloud (tests, a mounted NAS). The legacy file name `remote.json`
+and the legacy keys `remoteUrl`/`remoteDir`/`remoteUser` (and the still
+older `url`/`dir`/`user`) are read as fallbacks and migrate on the next
+write: the new file is written, the old one is removed in the same step. `timeoutMs` is an INACTIVITY
 watchdog: the transfer is aborted when no bytes move for that long — a large
 file may take as long as it takes. The secrets live in the system keyring:
 the server password as `zametti-webdav-<storeId>`, the master key as

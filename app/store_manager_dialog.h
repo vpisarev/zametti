@@ -131,6 +131,11 @@ protected:
     void startWork(const QString& status, std::function<void()> job,
                    std::function<void()> done);
     void setBusy(bool on);
+    // Лекарство от склероза (закон владельца): набранное переживает окно и
+    // выход из программы. Адрес и логин — в строки списка, набранные пароли —
+    // в связку, причём НЕПРОВЕРЕННЫЙ НЕ ЗАТИРАЕТ ПРОВЕРЕННОГО. Зовётся из
+    // деструктора — единственной двери, через которую окно уходит всегда.
+    void stashAll();
 
     ZStorageManager& stores_;
     StoreManagerModel model_;

@@ -391,6 +391,32 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
 
 StoreManagerDialog::~StoreManagerDialog() {
     if (worker_.joinable()) worker_.join();
+    stashAll();
+}
+
+// ЛЕКАРСТВО ОТ СКЛЕРОЗА (закон владельца, 30.08.2026: «что бы я ни ввёл —
+// пусть даже неправильно и соединение не состоялось — должно сохраняться и
+// восстанавливаться на следующем запуске»). Адрес и логин уезжают в строки
+// списка (state.json пишет ZApp на выходе); набранные пароли — в связку, по
+// одному правилу: У КОГО ЗАПИСЬ УЖЕ ЕСТЬ, ТОГО ОБНОВЛЯЮТ ТОЛЬКО УДАЧНЫЕ
+// РАБОТЫ — иначе опечатка затёрла бы проверенный пароль.
+void StoreManagerDialog::stashAll() {
+    model_.stashDrafts();
+    const QHash<QString, StoreManagerModel::Draft>& drafts = model_.drafts();
+    for (auto it = drafts.constBegin(); it != drafts.constEnd(); ++it) {
+        const StoreManagerModel::Draft& d = *it;
+        const bool typedServer = d.serverPasswordTouched && !d.serverPassword.isEmpty();
+        const bool typedCrypt = d.encryptionTouched && !d.encryptionPassword.isEmpty();
+        if (!typedServer && !typedCrypt) continue;
+        if (ZStorage::inspect(it.key()) != ZStorage::DirKind::Store) continue;
+        const QString id = ZStorage(it.key()).identity().storeId();
+        if (id.isEmpty()) continue;
+        QString why;
+        if (typedServer && !secrets_->has(id, SecretStore::Secret::ServerPassword))
+            secrets_->setServerPassword(id, d.serverPassword, &why);
+        if (typedCrypt && !secrets_->has(id, SecretStore::Secret::EncryptionPassword))
+            secrets_->setEncryptionPassword(id, d.encryptionPassword, &why);
+    }
 }
 
 void StoreManagerDialog::adoptDrafts(QHash<QString, StoreManagerModel::Draft>* drafts) {

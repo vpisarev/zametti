@@ -50,28 +50,19 @@ QString rowTitle(const ZStorage::Config& e) {
 void StoreManagerModel::setCloudAddress(ZStorage::Config& cfg, const QString& server,
                                         const QString& serverDir, const QString& user) {
     cfg.cloudUrl.clear();
+    cfg.cloudServerDir.clear();
     cfg.cloudDir.clear();
     const QString address = server.trimmed();
     if (address.startsWith(QStringLiteral("http://")) ||
         address.startsWith(QStringLiteral("https://"))) {
-        // ПАПКА ХРАНИЛИЩА НА СЕРВЕРЕ — ОТДЕЛЬНЫМ СЕГМЕНТОМ (решение владельца,
-        // 28.08.2026): базовый адрес провайдера сам бывает с путём вроде
-        // https://server/webdav, и класть хранилище прямо туда нельзя — там
-        // живёт всё подряд. Пустая папка на ЭТОМ уровне значит «в корень
-        // адреса»; дефолт «имя локальной папки» подставляет вызывающий — он
-        // знает локальную папку, а чистая функция нет.
-        //
-        // В конфиге живёт СКЛЕЕННЫЙ адрес: истина одна, ядру и CLI ничего не
-        // меняли, разбор на два поля — только показ (splitCloudAddress).
-        // Хвостовой «/» — как у CLI: WebDAV-коллекция без него резолвится
-        // относительно родителя.
-        QString base = address;
-        while (base.endsWith(QLatin1Char('/'))) base.chop(1);
-        QString dir = serverDir.trimmed();
-        while (dir.startsWith(QLatin1Char('/'))) dir.remove(0, 1);
-        while (dir.endsWith(QLatin1Char('/'))) dir.chop(1);
-        cfg.cloudUrl = dir.isEmpty() ? base + QLatin1Char('/')
-                                     : base + QLatin1Char('/') + dir + QLatin1Char('/');
+        // КАК ВВЕДЕНО, БЕЗ СКЛЕЙКИ И РАЗРЕЗАНИЯ (закон владельца, 30.08.2026:
+        // «от cloud server не должно откусываться /webdav»). База и папка —
+        // отдельные поля конфига; полный адрес коллекции собирает ровно одна
+        // функция, Config::collectionUrl(), и только в момент работы. Прежняя
+        // склейка с разрезанием «по последнему сегменту» при первом же показе
+        // уносила сегмент базы в Cloud dir.
+        cfg.cloudUrl = address;
+        cfg.cloudServerDir = serverDir.trimmed();
     } else if (!address.isEmpty()) {
         // БЕЗ РЕЗОЛВА ПО CWD: набранное «../..», превращённое absolutePath в
         // домашний каталог, стоило владельцу /Users/…/work (30.08.2026).
@@ -82,32 +73,8 @@ void StoreManagerModel::setCloudAddress(ZStorage::Config& cfg, const QString& se
     cfg.cloudUser = user.trimmed();
 }
 
-void StoreManagerModel::splitCloudAddress(const ZStorage::Config& cfg, QString* server,
-                                          QString* serverDir) {
-    *server = QString();
-    *serverDir = QString();
-    if (cfg.cloudUrl.isEmpty()) {
-        *server = cfg.cloudDir;   // каталог-облако — целиком в поле адреса
-        return;
-    }
-    QString full = cfg.cloudUrl;
-    while (full.endsWith(QLatin1Char('/'))) full.chop(1);
-    const QUrl url(full);
-    const QString path = url.path();
-    const qsizetype slash = path.lastIndexOf(QLatin1Char('/'));
-    if (path.isEmpty() || path == QLatin1String("/") || slash < 0) {
-        *server = full;   // адрес без пути: папки нет, всё — база
-        return;
-    }
-    // Папка хранилища — последний сегмент пути; так же адрес и склеивался.
-    QUrl base = url;
-    base.setPath(slash == 0 ? QString() : path.left(slash));
-    *server = base.toString();
-    *serverDir = path.mid(slash + 1);
-}
-
 QString StoreManagerModel::cloudAddressText(const ZStorage::Config& cfg) {
-    return cfg.cloudUrl.isEmpty() ? cfg.cloudDir : cfg.cloudUrl;
+    return cfg.cloudUrl.isEmpty() ? cfg.cloudDir : cfg.collectionUrl();
 }
 
 StoreManagerModel::StoreManagerModel(ZStorageManager& stores, const QString& openRoot)
@@ -158,7 +125,10 @@ void StoreManagerModel::select(int row) {
     const ZStorage::Config e = rowConfig(row);
     Draft d;
     d.folder = e.root;
-    splitCloudAddress(e, &d.server, &d.serverDir);
+    // КАК ХРАНИТСЯ, ТАК И ПОКАЗЫВАЕТСЯ: разрезалки адреса не существует
+    // (закон владельца). Каталог-облако — целиком в поле адреса.
+    d.server = e.cloudUrl.isEmpty() ? e.cloudDir : e.cloudUrl;
+    d.serverDir = e.cloudServerDir;
     d.login = e.cloudUser;
     drafts_->insert(key, d);
 }
@@ -171,6 +141,29 @@ const StoreManagerModel::Draft& StoreManagerModel::draft() const {
 
 StoreManagerModel::Draft& StoreManagerModel::draft() {
     return (*drafts_)[rootKey(selected_)];
+}
+
+// СКЛЕРОЗ ЛЕЧИТСЯ ЗДЕСЬ (закон владельца, 30.08.2026): всё набранное в полях
+// адреса и логина переживает и закрытие окна, и выход из программы — даже
+// когда связь не состоялась (опечатка, сеть, наша ошибка). Набранное уезжает
+// в строку списка, а список — в state.json на выходе (пишет ZApp). Пароли на
+// диск не идут никогда — их бережёт окно (связка, см. stashAll диалога).
+void StoreManagerModel::stashDrafts() {
+    for (auto it = drafts_->constBegin(); it != drafts_->constEnd(); ++it) {
+        ZStorage::Config row = stores_.storeFor(it.key());
+        if (row.root.isEmpty()) continue;   // строку успели забыть «−»
+        ZStorage::Config typed;
+        setCloudAddress(typed, it->server, it->serverDir, it->login);
+        if (row.cloudUrl == typed.cloudUrl &&
+            row.cloudServerDir == typed.cloudServerDir &&
+            row.cloudDir == typed.cloudDir && row.cloudUser == typed.cloudUser)
+            continue;
+        row.cloudUrl = typed.cloudUrl;
+        row.cloudServerDir = typed.cloudServerDir;
+        row.cloudDir = typed.cloudDir;
+        row.cloudUser = typed.cloudUser;
+        stores_.remember(row);
+    }
 }
 
 void StoreManagerModel::adoptDrafts(QHash<QString, Draft>* drafts) {
@@ -302,11 +295,15 @@ StoreManagerModel::Snapshot StoreManagerModel::snapshot() const {
     out.login.enabled = !folderCloud;
     out.login.placeholder = nothing;
     out.serverDir.enabled = !folderCloud;
-    // ЖИВОЙ ДЕФОЛТ СЕРВЕРНОЙ ПАПКИ — ИМЯ ЛОКАЛЬНОЙ, СЕРЕНЬКИМ ВСЕГДА (решение
+    // ЖИВОЙ ДЕФОЛТ СЕРВЕРНОЙ ПАПКИ — ИМЯ ЛОКАЛЬНОЙ, СЕРЕНЬКИМ (решение
     // владельца, п.8 брифа): placeholder говорит, что ляжет в пустое поле,
-    // ещё до того, как назван адрес облака. Это форма значения, не поучение.
+    // ещё до того, как назван адрес облака. Показывается он ровно там, где
+    // будет ПРИМЕНЁН (cfgFromDraft): у строки с прежним адресом пустое поле
+    // значит «адрес уже полный», и серое там было бы враньём.
     out.serverDir.placeholder =
-        folderCloud ? nothing : QFileInfo(d.folder.trimmed()).fileName();
+        folderCloud || rowConfig(selected_).hasCloudAddress()
+            ? nothing
+            : QFileInfo(d.folder.trimmed()).fileName();
 
     // ПОЛЯ ПАРОЛЕЙ ОДИНАКОВЫ — намеренно: у пароля сервера ровно те же три
     // состояния, что у пароля шифрования (набран, лежит в связке, нет нигде), и
@@ -536,11 +533,14 @@ ZStorage::Config StoreManagerModel::cfgFromDraft() const {
     ZStorage::Config cfg;
     cfg.root = draft().folder;
     // ЖИВОЙ ДЕФОЛТ СЕРВЕРНОЙ ПАПКИ — ИМЯ ЛОКАЛЬНОЙ (п.8 брифа). Placeholder
-    // обещает её серым, значит В КОНФИГ обязано уезжать то же самое: без
+    // обещает её серым, значит В РАБОТУ обязано уезжать то же самое: без
     // подстановки Check уходил в КОРЕНЬ провайдера, где живёт всё подряд
-    // (найдено живой пробой владельца 30.08 — «404» вместо папки).
+    // (найдено живой пробой владельца 30.08 — «404» вместо папки). Дефолт —
+    // только ПЕРВОМУ подключению строки: прежней записи (например, полному
+    // адресу из CLI в cloudUrl) дописывать имя папки нельзя.
     QString serverDir = draft().serverDir.trimmed();
-    if (serverDir.isEmpty()) serverDir = QFileInfo(draft().folder.trimmed()).fileName();
+    if (serverDir.isEmpty() && !rowConfig(selected_).hasCloudAddress())
+        serverDir = QFileInfo(draft().folder.trimmed()).fileName();
     setCloudAddress(cfg, draft().server, serverDir, draft().login);
     return cfg;
 }
