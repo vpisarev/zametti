@@ -79,13 +79,12 @@ void checkStoreFactsAndSecrets() {
     ZT_EQ("секретов не читали ни разу", std::string("0"),
           std::to_string(secrets->reads));
 
-    // Сводка легла и в строку списка (Config::local) — показ, не формат.
+    // Сводка — ответ facts(), и только его: в строке списка её нет (бывшее
+    // поле Config::local никто не читал), в JSON она не уезжает тем более.
     ZStorage::Config row;
     row.root = root;
     manager.remember(row);
-    manager.facts(root);
-    ZT_TRUE("строка списка несёт сводку",
-            manager.storeFor(root).local.notes >= 1);
+    ZT_TRUE("сводку отвечают факты", manager.facts(root).stats.notes >= 1);
     ZT_TRUE("в JSON сводка не уезжает",
             !manager.storesToJson().first().toObject().contains(
                 QStringLiteral("local")));

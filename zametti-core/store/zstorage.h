@@ -880,12 +880,6 @@ public:
         // (решение владельца 28.08.2026).
         int timeoutMs = 30000;
 
-        // ГЛОБАЛЬНАЯ СВОДКА ОБЕИХ СТОРОН (решение владельца, 30.08.2026):
-        // локальную заполняет localSummary, облачную — probeCloud. Это показ,
-        // а не формат: ни в cloud.json, ни в строку списка они не уезжают.
-        Summary local;
-        Summary cloud;
-
         // «Облако настроено?» и «запись пуста?» — РАЗНЫЕ вопросы; прежний
         // isEmpty() с двумя смыслами не живёт.
         bool hasCloudAddress() const { return !cloudUrl.isEmpty() || !cloudDir.isEmpty(); }
@@ -1031,8 +1025,6 @@ public:
         int attachments = 0;
         qint64 bytes = 0;         // объём по шифротексту
         QDateTime lastModified;   // самая свежая метка листинга, UTC
-        // Та же сводка одной структурой — для Config::cloud.
-        Summary summary() const { return Summary{notes, attachments, bytes, lastModified}; }
     };
     static bool probeCloud(const Config& cfg, const QString& serverPassword,
                            const QString& encryptionPassword, CloudProbe* out,

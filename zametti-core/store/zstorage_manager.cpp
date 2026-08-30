@@ -113,10 +113,6 @@ ZStorageManager::Facts ZStorageManager::facts(const QString& folder) {
             out.serverPassword = known(SecretStore::Secret::ServerPassword);
             out.encryptionPassword = known(SecretStore::Secret::EncryptionPassword);
         }
-        // Строка списка носит сводку с собой (Config::local — показ, не
-        // формат): диалогу не приходится спрашивать её вторым путём.
-        for (ZStorage::Config& e : stores_)
-            if (e.root == key) e.local = out.stats;
     }
     factsCache_.insert(key, out);
     return out;
