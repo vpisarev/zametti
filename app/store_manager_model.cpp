@@ -9,7 +9,6 @@
 
 #include <QDir>
 #include <QFileInfo>
-#include <QUrl>
 
 namespace zametti {
 
@@ -46,36 +45,6 @@ QString rowTitle(const ZStorage::Config& e) {
 }
 
 }  // namespace
-
-void StoreManagerModel::setCloudAddress(ZStorage::Config& cfg, const QString& server,
-                                        const QString& serverDir, const QString& user) {
-    cfg.cloudUrl.clear();
-    cfg.cloudServerDir.clear();
-    cfg.cloudDir.clear();
-    const QString address = server.trimmed();
-    if (address.startsWith(QStringLiteral("http://")) ||
-        address.startsWith(QStringLiteral("https://"))) {
-        // КАК ВВЕДЕНО, БЕЗ СКЛЕЙКИ И РАЗРЕЗАНИЯ (закон владельца, 30.08.2026:
-        // «от cloud server не должно откусываться /webdav»). База и папка —
-        // отдельные поля конфига; полный адрес коллекции собирает ровно одна
-        // функция, Config::collectionUrl(), и только в момент работы. Прежняя
-        // склейка с разрезанием «по последнему сегменту» при первом же показе
-        // уносила сегмент базы в Cloud dir.
-        cfg.cloudUrl = address;
-        cfg.cloudServerDir = serverDir.trimmed();
-    } else if (!address.isEmpty()) {
-        // БЕЗ РЕЗОЛВА ПО CWD: набранное «../..», превращённое absolutePath в
-        // домашний каталог, стоило владельцу /Users/…/work (30.08.2026).
-        // Относительный путь кладётся как набран — ядро отвергнет его
-        // словами, а снимок гасит кнопки и говорит почему.
-        cfg.cloudDir = QDir::cleanPath(address);
-    }
-    cfg.cloudUser = user.trimmed();
-}
-
-QString StoreManagerModel::cloudAddressText(const ZStorage::Config& cfg) {
-    return cfg.cloudUrl.isEmpty() ? cfg.cloudDir : cfg.collectionUrl();
-}
 
 StoreManagerModel::StoreManagerModel(ZStorageManager& stores, const QString& openRoot)
     : stores_(stores), openRoot_(ZStorageManager::canonicalRoot(openRoot)) {
@@ -153,15 +122,9 @@ void StoreManagerModel::stashDrafts() {
         ZStorage::Config row = stores_.storeFor(it.key());
         if (row.root.isEmpty()) continue;   // строку успели забыть «−»
         ZStorage::Config typed;
-        setCloudAddress(typed, it->server, it->serverDir, it->login);
-        if (row.cloudUrl == typed.cloudUrl &&
-            row.cloudServerDir == typed.cloudServerDir &&
-            row.cloudDir == typed.cloudDir && row.cloudUser == typed.cloudUser)
-            continue;
-        row.cloudUrl = typed.cloudUrl;
-        row.cloudServerDir = typed.cloudServerDir;
-        row.cloudDir = typed.cloudDir;
-        row.cloudUser = typed.cloudUser;
+        typed.setCloudAddress(it->server, it->serverDir, it->login);
+        if (row.sameCloudAddress(typed)) continue;
+        row.takeCloudAddress(typed);
         stores_.remember(row);
     }
 }
@@ -355,7 +318,7 @@ StoreManagerModel::Snapshot StoreManagerModel::snapshot() const {
     // навсегда, потому что проверить его не обо что. Где конверт уже есть,
     // повтор не нужен вовсе: неверный пароль там просто не подойдёт.
     const CloudSeen& seenNow = seen();
-    const QString addressNow = cloudAddressText(cfgFromDraft());
+    const QString addressNow = cfgFromDraft().cloudAddressText();
     out.repeatVisible = seenNow.address == addressNow &&
                         seenNow.state == CloudSeen::State::Empty &&
                         !d.encryptionPassword.isEmpty();
@@ -432,7 +395,7 @@ StoreManagerModel::Snapshot StoreManagerModel::snapshot() const {
 
     // --- строка «Cloud:» ----------------------------------------------------
     const CloudSeen& s = seen();
-    const QString address = cloudAddressText(cfgFromDraft());
+    const QString address = cfgFromDraft().cloudAddressText();
     if (!named) {
         out.cloud = Line{QStringLiteral("Cloud: not set"), false};
     } else if (relativeCloudDir) {
@@ -545,7 +508,7 @@ ZStorage::Config StoreManagerModel::cfgFromDraft() const {
     QString serverDir = draft().serverDir.trimmed();
     if (serverDir.isEmpty() && !rowConfig(selected_).hasCloudAddress())
         serverDir = QFileInfo(draft().folder.trimmed()).fileName();
-    setCloudAddress(cfg, draft().server, serverDir, draft().login);
+    cfg.setCloudAddress(draft().server, serverDir, draft().login);
     return cfg;
 }
 
@@ -658,10 +621,7 @@ StoreManagerModel::Reaction StoreManagerModel::openPressed() {
         // сперва та же работа, что у Check, открытие — её итогом.
         const ZStorage::Config typed = cfgFromDraft();
         const ZStorage::Config row = rowConfig(selected_);
-        const bool cloudEdited =
-            typed.cloudUrl != row.cloudUrl ||
-            typed.cloudServerDir != row.cloudServerDir ||
-            typed.cloudDir != row.cloudDir || typed.cloudUser != row.cloudUser;
+        const bool cloudEdited = !typed.sameCloudAddress(row);
         const bool pendingSetup =
             typed.hasCloudAddress() &&
             (cloudEdited || !draft().encryptionPassword.isEmpty());
@@ -711,7 +671,7 @@ StoreManagerModel::Reaction StoreManagerModel::resetPressed() {
     // сходим сейчас, и переспрос покажем по итогу: спрашивать «стереть?» про
     // облако, которого мы не видели, нельзя.
     const CloudSeen& s = seen();
-    const QString address = cloudAddressText(cfgFromDraft());
+    const QString address = cfgFromDraft().cloudAddressText();
     if (s.address != address || s.state == CloudSeen::State::NotChecked) {
         askResetAfterCheck_ = true;
         out.job = jobFor(Job::Kind::Check);

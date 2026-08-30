@@ -228,6 +228,42 @@ QString ZStorage::Config::collectionUrl() const {
                          : base + QLatin1Char('/') + dir + QLatin1Char('/');
 }
 
+void ZStorage::Config::setCloudAddress(const QString& server, const QString& serverDir,
+                                       const QString& user) {
+    cloudUrl.clear();
+    cloudServerDir.clear();
+    cloudDir.clear();
+    const QString address = server.trimmed();
+    if (address.startsWith(QStringLiteral("http://")) ||
+        address.startsWith(QStringLiteral("https://"))) {
+        cloudUrl = address;
+        cloudServerDir = serverDir.trimmed();
+    } else if (!address.isEmpty()) {
+        // БЕЗ РЕЗОЛВА ПО CWD: набранное «../..», превращённое absolutePath в
+        // домашний каталог, стоило владельцу /Users/…/work (30.08.2026).
+        // Относительный путь кладётся как набран — ядро отвергнет его
+        // словами, а снимок окна гасит кнопки и говорит почему.
+        cloudDir = QDir::cleanPath(address);
+    }
+    cloudUser = user.trimmed();
+}
+
+QString ZStorage::Config::cloudAddressText() const {
+    return cloudUrl.isEmpty() ? cloudDir : collectionUrl();
+}
+
+bool ZStorage::Config::sameCloudAddress(const Config& other) const {
+    return cloudUrl == other.cloudUrl && cloudServerDir == other.cloudServerDir &&
+           cloudDir == other.cloudDir && cloudUser == other.cloudUser;
+}
+
+void ZStorage::Config::takeCloudAddress(const Config& from) {
+    cloudUrl = from.cloudUrl;
+    cloudServerDir = from.cloudServerDir;
+    cloudDir = from.cloudDir;
+    cloudUser = from.cloudUser;
+}
+
 bool ZStorage::Config::parse(const QByteArray& bytes, QString* error) {
     QJsonParseError bad;
     const QJsonDocument doc = QJsonDocument::fromJson(bytes, &bad);

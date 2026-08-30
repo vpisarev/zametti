@@ -175,16 +175,6 @@ public:
     // openRoot — корень открытого хранилища (пусто — окно без хранилища).
     StoreManagerModel(ZStorageManager& stores, const QString& openRoot);
 
-    // Адрес облака из пары полей формы: http(s):// — WebDAV-база, папка
-    // хранилища — отдельным полем; всё прочее — каталог-облако, ТОЛЬКО
-    // абсолютным путём (относительный не резолвится — резолв по cwd стоил
-    // владельцу каталога). В Config поля живут КАК ВВЕДЕНЫ (закон владельца,
-    // 30.08.2026: от cloud server ничего не откусывается); склейку делает
-    // Config::collectionUrl() в момент работы, разрезалки не существует.
-    static void setCloudAddress(ZStorage::Config& cfg, const QString& server,
-                                const QString& serverDir, const QString& user);
-    static QString cloudAddressText(const ZStorage::Config& cfg);
-
     // --- выбор и черновики ---------------------------------------------------
     void select(int row);
     int selected() const { return selected_; }

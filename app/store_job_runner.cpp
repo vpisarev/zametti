@@ -61,7 +61,7 @@ Outcome StoreJobRunner::run(const Job& job, SecretStore& secrets) {
 // опечатка в пароле не запечатала облако навсегда.
 Outcome StoreJobRunner::check(const Job& job, SecretStore& secrets) {
     Outcome out;
-    const QString address = StoreManagerModel::cloudAddressText(job.cfg);
+    const QString address = job.cfg.cloudAddressText();
     ZStorage::CloudProbe probe;
     QString err;
     const bool ok =
@@ -169,7 +169,7 @@ Outcome StoreJobRunner::check(const Job& job, SecretStore& secrets) {
 Outcome StoreJobRunner::create(const Job& job, SecretStore& secrets) {
     Outcome out;
     QString err;
-    const QString address = StoreManagerModel::cloudAddressText(job.cfg);
+    const QString address = job.cfg.cloudAddressText();
 
     if (!job.cfg.hasCloudAddress()) {
         if (!ZStorage(job.root).init(&err)) {
@@ -282,7 +282,7 @@ Outcome StoreJobRunner::eraseAndReseed(const Job& job, SecretStore& secrets) {
     out.ok = true;
     CloudSeen seen;
     seen.state = CloudSeen::State::Ours;
-    seen.address = StoreManagerModel::cloudAddressText(job.cfg);
+    seen.address = job.cfg.cloudAddressText();
     out.seen = seen;
     out.message = QStringLiteral("Erased. Uploading in the background.");
     return out;
