@@ -81,6 +81,7 @@
 #include <QTimer>
 #include <QTreeView>
 #include <QPointer>
+#include <QDir>
 #include <QFileSystemWatcher>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -165,7 +166,7 @@ int runCheck(const QString& path) {
 // Позиционный файл остался ровно у --check: это проверка канона, а не
 // открытие заметки.
 const char* kUsage =
-    "usage: zametti [--noconfig]\n"
+    "usage: zametti [--noconfig] [--config-dir dir]\n"
     "       zametti --root store-directory\n"
     "                 (without it: the store from the last session, or an empty\n"
     "                  window with the storage button lit)\n"
@@ -210,6 +211,8 @@ void printHelp() {
         "  --dump-config     print every appearance parameter with its default\n"
         "                    value, in the same form the config expects\n"
         "  --noconfig        skip the config, use defaults\n"
+        "  --config-dir dir  keep config.json and state.json there, not in the\n"
+        "                    usual place; the directory is created if missing\n"
         "  --help, -h        this help\n"
         "\n"
         "Store from the command line:\n"
@@ -329,7 +332,58 @@ int main(int argc, char** argv) {
     // состоянию, а их печатает --help, не создавая ни окна, ни QApplication.
     QCoreApplication::setApplicationName(QStringLiteral("zametti"));
 
-    const QStringList args = commandLineArgs(argc, argv);
+    QStringList args = commandLineArgs(argc, argv);
+
+    // --config-dir <path> — ГДЕ ЛЕЖИТ ХОЗЯЙСТВО ПРОГРАММЫ: config.json,
+    // state.json, бухгалтерия синка, err.log и sync.log.
+    //
+    // Разбирается ПЕРВЫМ, до подкоманды `store`, до --help и до создания
+    // QApplication. Иначе поздно: место конфига спрашивают и справка (она
+    // печатает пути), и утилита хранилища, и первое же чтение настроек.
+    //
+    // Кладётся в ту самую переменную среды, которой это место уводили и раньше
+    // (ZAMETTI_CONFIG_DIR): дверь остаётся одна, а ключ — просто удобный способ
+    // её открыть, когда переменную выставлять неоткуда. Ключ СИЛЬНЕЕ
+    // переменной: названное руками важнее унаследованного окружением.
+    //
+    // Каталог заводится сразу: без этого программа узнала бы о его
+    // недоступности только в миг записи state.json, то есть при выходе.
+    for (qsizetype i = 1; i < args.size(); ++i) {
+        const QString& arg = args.at(i);
+        QString dir;
+        qsizetype eat = 0;
+        if (arg == QLatin1String("--config-dir")) {
+            // Ключ узнаём ДАЖЕ без значения: иначе он проваливается в общий
+            // цикл и человек читает «unknown option: --config-dir» — то есть
+            // «такого ключа нет» вместо «ключу нужен каталог».
+            if (i + 1 >= args.size()) {
+                std::fprintf(stderr, "--config-dir needs a directory\n");
+                return 2;
+            }
+            dir = args.at(i + 1);
+            eat = 2;
+        } else if (arg.startsWith(QLatin1String("--config-dir="))) {
+            dir = arg.mid(int(sizeof("--config-dir=")) - 1);
+            eat = 1;
+        } else {
+            continue;
+        }
+        if (dir.isEmpty()) {
+            std::fprintf(stderr, "--config-dir needs a directory\n");
+            return 2;
+        }
+        // Абсолютный путь — от рабочего каталога процесса, и это здесь
+        // законно: человек называет СВОЙ каталог оттуда, где стоит.
+        dir = QDir(dir).absolutePath();
+        if (!QDir().mkpath(dir)) {
+            std::fprintf(stderr, "cannot create the config directory: %s\n",
+                         dir.toLocal8Bit().constData());
+            return 2;
+        }
+        qputenv(zametti::kConfigDirVar, dir.toLocal8Bit());
+        args.remove(i, eat);
+        --i;
+    }
 
     // ПОДКОМАНДА `store` — командный вид хранилища (бывшая программа
     // zametti-store, слита сюда 26.08.2026 решением владельца).
