@@ -362,7 +362,7 @@ QJsonObject settingsToJson(const ZSettings& a) {
     QJsonObject sync{
         {QStringLiteral("url"), a.sync().url()},
         {QStringLiteral("user"), a.sync().user()},
-        {QStringLiteral("remoteDir"), a.sync().cloudDir()},
+        {QStringLiteral("cloudDir"), a.sync().cloudDir()},
         {QStringLiteral("timeoutMs"), a.sync().timeoutMs()},
         {QStringLiteral("onStart"), a.sync().onStart()},
         {QStringLiteral("onExit"), a.sync().onExit()},
@@ -495,7 +495,9 @@ void settingsFromJson(const QJsonObject& root, ZSettings& a) {
     const QJsonObject sync = root.value(QStringLiteral("sync")).toObject();
     readString(sync, "url", a.sync(), &ZSettings::Sync::setUrl);
     readString(sync, "user", a.sync(), &ZSettings::Sync::setUser);
+    // Прежний ключ remoteDir читается запасным путём (§0): новый — сильнее.
     readString(sync, "remoteDir", a.sync(), &ZSettings::Sync::setCloudDir);
+    readString(sync, "cloudDir", a.sync(), &ZSettings::Sync::setCloudDir);
     readInt(sync, "timeoutMs", a.sync(), &ZSettings::Sync::setTimeoutMs);
     readBool(sync, "onStart", a.sync(), &ZSettings::Sync::setOnStart);
     readBool(sync, "onExit", a.sync(), &ZSettings::Sync::setOnExit);

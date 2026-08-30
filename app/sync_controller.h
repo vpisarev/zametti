@@ -51,7 +51,7 @@ public:
     // указателя, и прежнее хранилище не умрёт, пока он жив.
     void setStorage(std::shared_ptr<ZStorage> storage);
 
-    // Настроен ли синк у этой копии хранилища (.zametti/remote.json).
+    // Настроен ли синк у этой копии хранилища (.zametti/cloud.json).
     bool configured() const;
     bool running() const { return running_; }
 

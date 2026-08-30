@@ -39,7 +39,7 @@ protected:
     // busyHint — что дописать к «занято» (у thin своя приписка).
     bool takeLock(ZStorage& storage, const char* busyHint = "") const;
     // Адрес облака, названный ключами (--url/--to/--user).
-    // Без облака, если не назван ни один адрес: тогда его знает remote.json.
+    // Без облака, если не назван ни один адрес: тогда его знает cloud.json.
     ZStorage::Config addressFromFlags() const;
     // Пароль с клавиатуры, БЕЗ эха. Разговор с терминалом — дело CLI, в ядре
     // ему места нет.

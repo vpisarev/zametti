@@ -127,7 +127,7 @@ QString storeTag(const QString& id, const QString& name, const QString& createdI
     return out;
 }
 
-constexpr char kAddressHint[] = "; check the cloud address (set-remote --url/--to)";
+constexpr char kAddressHint[] = "; check the cloud address (set-cloud --url/--to)";
 
 }  // namespace
 
@@ -194,21 +194,23 @@ void ZStorage::clearDirty(const QStringList& synced) {
 
 // --- АДРЕС ОБЛАКА И ПОДКЛЮЧЕНИЕ --------------------------------------------
 
-// Один читатель на оба дома записи (remote.json и строка списка в state.json):
-// чего в объекте нет, то пусто. Прежние ключи url/dir/user читаются запасным
-// путём — старые remote.json продолжают работать и мигрируют при следующей
-// записи.
+// Один читатель на оба дома записи (cloud.json и строка списка в state.json):
+// чего в объекте нет, то пусто. Прежние ключи remote*/url/dir/user читаются
+// запасным путём — старые cloud.json/remote.json продолжают работать и
+// мигрируют при следующей записи.
 void ZStorage::Config::parse(const QJsonObject& o) {
-    const auto text = [&o](const char* fresh, const char* legacy) {
-        const QJsonValue v = o.value(QLatin1String(fresh));
-        if (v.isString()) return v.toString();
-        return legacy != nullptr ? o.value(QLatin1String(legacy)).toString() : QString();
+    const auto text = [&o](std::initializer_list<const char*> keys) {
+        for (const char* key : keys) {
+            const QJsonValue v = o.value(QLatin1String(key));
+            if (v.isString()) return v.toString();
+        }
+        return QString();
     };
-    root = text("root", nullptr);
-    name = text("name", nullptr);
-    cloudUrl = text("remoteUrl", "url");
-    cloudDir = text("remoteDir", "dir");
-    cloudUser = text("remoteUser", "user");
+    root = text({"root"});
+    name = text({"name"});
+    cloudUrl = text({"cloudUrl", "remoteUrl", "url"});
+    cloudDir = text({"cloudDir", "remoteDir", "dir"});
+    cloudUser = text({"cloudUser", "remoteUser", "user"});
     timeoutMs = o.value(QStringLiteral("timeoutMs")).toInt(30000);
 }
 
@@ -216,20 +218,20 @@ bool ZStorage::Config::parse(const QByteArray& bytes, QString* error) {
     QJsonParseError bad;
     const QJsonDocument doc = QJsonDocument::fromJson(bytes, &bad);
     if (bad.error != QJsonParseError::NoError || !doc.isObject()) {
-        if (error) *error = QStringLiteral("remote.json is not a JSON object");
+        if (error) *error = QStringLiteral("cloud.json is not a JSON object");
         return false;
     }
     parse(doc.object());
     return true;
 }
 
-// В remote.json уходит ТОЛЬКО облачная сторона: файл лежит В корне копии, и
+// В cloud.json уходит ТОЛЬКО облачная сторона: файл лежит В корне копии, и
 // путь, вписанный внутрь, протух бы при cp -r.
 QByteArray ZStorage::Config::cloudConfigBytes() const {
     QJsonObject o;
-    if (!cloudUrl.isEmpty()) o.insert(QStringLiteral("remoteUrl"), cloudUrl);
-    if (!cloudDir.isEmpty()) o.insert(QStringLiteral("remoteDir"), cloudDir);
-    if (!cloudUser.isEmpty()) o.insert(QStringLiteral("remoteUser"), cloudUser);
+    if (!cloudUrl.isEmpty()) o.insert(QStringLiteral("cloudUrl"), cloudUrl);
+    if (!cloudDir.isEmpty()) o.insert(QStringLiteral("cloudDir"), cloudDir);
+    if (!cloudUser.isEmpty()) o.insert(QStringLiteral("cloudUser"), cloudUser);
     o.insert(QStringLiteral("timeoutMs"), timeoutMs);
     return QJsonDocument(o).toJson(QJsonDocument::Indented);
 }
@@ -238,16 +240,20 @@ QJsonObject ZStorage::Config::entryJson() const {
     QJsonObject o;
     if (!root.isEmpty()) o.insert(QStringLiteral("root"), root);
     if (!name.isEmpty()) o.insert(QStringLiteral("name"), name);
-    if (!cloudUrl.isEmpty()) o.insert(QStringLiteral("remoteUrl"), cloudUrl);
-    if (!cloudDir.isEmpty()) o.insert(QStringLiteral("remoteDir"), cloudDir);
-    if (!cloudUser.isEmpty()) o.insert(QStringLiteral("remoteUser"), cloudUser);
+    if (!cloudUrl.isEmpty()) o.insert(QStringLiteral("cloudUrl"), cloudUrl);
+    if (!cloudDir.isEmpty()) o.insert(QStringLiteral("cloudDir"), cloudDir);
+    if (!cloudUser.isEmpty()) o.insert(QStringLiteral("cloudUser"), cloudUser);
     o.insert(QStringLiteral("timeoutMs"), timeoutMs);
     return o;
 }
 
 ZStorage::Config ZStorage::cloudConfig() const {
     Config cfg;
-    QFile f(root_ + QStringLiteral("/.zametti/remote.json"));
+    // Сперва новое имя, при его отсутствии — наследное remote.json: копии
+    // владельца обновляются не в один день, и старая копия обязана читаться.
+    // Мигрирует файл при следующей записи (writeCloudConfig).
+    QFile f(root_ + QStringLiteral("/.zametti/cloud.json"));
+    if (!f.exists()) f.setFileName(root_ + QStringLiteral("/.zametti/remote.json"));
     if (f.open(QIODevice::ReadOnly)) {
         QString why;
         if (!cfg.parse(f.readAll(), &why)) {
@@ -258,7 +264,7 @@ ZStorage::Config ZStorage::cloudConfig() const {
         }
     }
     // root — корень ЭТОЙ копии, ПОСЛЕ разбора (читатель пишет все поля, и
-    // root из него всегда пуст: в remote.json путь не пишется — переехал бы
+    // root из него всегда пуст: в cloud.json путь не пишется — переехал бы
     // вместе с каталогом и врал). name не заполняется нарочно: заголовок
     // корня стоит чтения файла, а сюда ходят на каждый пересчёт тулбара.
     cfg.root = root_;
@@ -267,25 +273,33 @@ ZStorage::Config ZStorage::cloudConfig() const {
 
 bool ZStorage::writeCloudConfig(const Config& cfg, QString* error) {
     QDir().mkpath(root_ + QStringLiteral("/.zametti"));
-    QSaveFile save(root_ + QStringLiteral("/.zametti/remote.json"));
+    QSaveFile save(root_ + QStringLiteral("/.zametti/cloud.json"));
     if (!save.open(QIODevice::WriteOnly)) {
-        if (error) *error = QStringLiteral("cannot write remote.json: %1").arg(save.errorString());
+        if (error) *error = QStringLiteral("cannot write cloud.json: %1").arg(save.errorString());
         return false;
     }
     save.write(cfg.cloudConfigBytes());
     if (!save.commit()) {
-        if (error) *error = QStringLiteral("cannot write remote.json: %1").arg(save.errorString());
+        if (error) *error = QStringLiteral("cannot write cloud.json: %1").arg(save.errorString());
         return false;
     }
+    // Наследный remote.json уходит ТЕМ ЖЕ шагом, каким записан новый: две
+    // версии файла с одним смыслом — это два ответа на один вопрос.
+    const QString legacy = root_ + QStringLiteral("/.zametti/remote.json");
+    if (QFile::exists(legacy)) files().removeForever(legacy);
     return true;
 }
 
 bool ZStorage::clearCloudConfig(QString* error) {
-    const QString path = root_ + QStringLiteral("/.zametti/remote.json");
     QString why;
-    if (files().removeForever(path, &why)) return true;
-    if (error) *error = QStringLiteral("cannot remove remote.json: %1").arg(why);
-    return false;
+    bool ok = true;
+    for (const char* name : {"/.zametti/cloud.json", "/.zametti/remote.json"}) {
+        const QString path = root_ + QLatin1String(name);
+        if (!QFile::exists(path)) continue;
+        if (!files().removeForever(path, &why)) ok = false;
+    }
+    if (!ok && error) *error = QStringLiteral("cannot remove cloud.json: %1").arg(why);
+    return ok;
 }
 
 std::shared_ptr<CloudStore> ZStorage::makeCloud(const Config& cfg,
@@ -321,7 +335,7 @@ bool ZStorage::attachCloud(const AttachOptions& how, SecretStore& secrets,
                             AttachOutcome* outcome, QString* error) {
     if (outcome) *outcome = AttachOutcome{};
     // «Адрес назван» — это про облако: ключи командной строки сильнее
-    // remote.json, а root у обоих кандидатов и так этот.
+    // cloud.json, а root у обоих кандидатов и так этот.
     const Config cfg = how.cfg.hasCloudAddress() ? how.cfg : cloudConfig();
     if (!cfg.hasCloudAddress()) {
         if (error) *error = QStringLiteral("sync is not configured for this store");
@@ -365,9 +379,9 @@ bool ZStorage::attachCloud(const AttachOptions& how, SecretStore& secrets,
             if (outcome) outcome->mintedKeyfile = true;
         } else {
             // Не беда, а «настройся заново»: утраченный keyring лечится одним
-            // вводом пароля (set-remote), и это названный брифом случай.
+            // вводом пароля (set-cloud), и это названный брифом случай.
             if (error)
-                *error = QStringLiteral("the key is not in the keyring (%1) — run set-remote "
+                *error = QStringLiteral("the key is not in the keyring (%1) — run set-cloud "
                                         "once, or set ZAMETTI_SYNC_KEY / ZAMETTI_SYNC_PASSWORD")
                              .arg(why);
             return false;
@@ -1173,7 +1187,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                 if (error != nullptr)
                     *error = QStringLiteral(
                         "the cloud key was rotated on another device — enter the password "
-                        "again (set-remote)");
+                        "again (set-cloud)");
                 complain(QStringLiteral(
                     "key probe failed on %1 — the cloud key was rotated, stopping before "
                     "any upload").arg(probeName));
@@ -1425,7 +1439,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                         if (error != nullptr)
                             *error = QStringLiteral(
                                 "the cloud key was rotated on another device — enter the "
-                                "password again (set-remote)");
+                                "password again (set-cloud)");
                         takeTraffic();
                         return finish(false);
                     }
@@ -1728,7 +1742,7 @@ bool ZStorage::sync(const SyncOptions& options, SyncReport* report, QString* err
                     if (error != nullptr)
                         *error = QStringLiteral(
                             "the cloud key was rotated on another device — enter the password "
-                            "again (set-remote)");
+                            "again (set-cloud)");
                     takeTraffic();
                     return finish(false);
                 }

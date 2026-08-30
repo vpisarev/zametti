@@ -108,7 +108,7 @@ bool SyncController::fetchSecrets() {
     if (!cfg_.cloudUrl.isEmpty()) serverPassword_ = secrets_->serverPassword(mine.storeId(), &why);
     if (!secrets_->loadKey(mine.storeId(), &keyfile_, &why)) {
         lastError_ =
-            QStringLiteral("the key is not in the keyring (%1) — run set-remote once").arg(why);
+            QStringLiteral("the key is not in the keyring (%1) — run set-cloud once").arg(why);
         return false;
     }
     return true;

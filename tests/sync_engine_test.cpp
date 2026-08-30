@@ -296,7 +296,7 @@ struct TwoDevices {
                                 &keyfile, &err));
         ra = std::make_shared<FolderCloud>(cloud);
         rb = std::make_shared<FolderCloud>(cloud);
-        // Keyfile — в облако, как это делает настоящий set-remote: без него
+        // Keyfile — в облако, как это делает настоящий set-cloud: без него
         // ротация в сценариях выглядела бы иначе, чем в жизни.
         ZT_TRUE("keyfile уехал",
                 ra->mkdirOnce(&err) &&
@@ -762,7 +762,7 @@ void checkWipedCloudRebuildAndRotation() {
     for (const QString& name : QDir(rig.cloud).entryList(QDir::Files))
         ZT_TRUE("блоб стёрт", zt::dropFile(rig.cloud, rig.cloud + QStringLiteral("/") + name));
 
-    // Машина 1: новый ключ (set-remote на пустом облаке чеканит) + перезаливка.
+    // Машина 1: новый ключ (set-cloud на пустом облаке чеканит) + перезаливка.
     Keyfile fresh;
     QString err;
     ZT_TRUE("новый ключ отчеканился",
@@ -783,7 +783,7 @@ void checkWipedCloudRebuildAndRotation() {
     ZT_TRUE("причина — ротация", err.contains(QStringLiteral("rotated")));
     ZT_EQ("НИ ОДНОЙ заливки старым ключом", num(0), num(rig.rb->counters().puts));
 
-    // Лечение по подсказке: «set-remote» = развернуть новый keyfile паролем.
+    // Лечение по подсказке: «set-cloud» = развернуть новый keyfile паролем.
     ZT_TRUE("B переподключилась новым ключом", rig.sb->setCloud(rig.rb, fresh, &err));
     rig.syncOne(*rig.sb, "B доливает новым ключом");
     rig.syncOne(*rig.sa, "A принимает");

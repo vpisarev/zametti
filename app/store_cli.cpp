@@ -83,23 +83,24 @@ int StoreCli::usage() const {
                  "  zametti store push-all --root <dir> --url <webdav-url>\n"
                  "                         [--user <name>]\n"
                  "                         (or --to <dir> to push into a local folder)\n"
-                 "  zametti store set-remote --root <dir> (--url <webdav-url> | --to <dir>)\n"
-                 "                           [--user <name>] [--reset]\n"
+                 "  zametti store set-cloud --root <dir> (--url <webdav-url> | --to <dir>)\n"
+                 "                          [--user <name>] [--reset]\n"
                  "  zametti store sync --root <dir> [--full | --push-only]\n"
                  "                     [--allow-mass-delete | --keep-all]\n"
                  "                     [--url <webdav-url> | --to <dir>] [--user <name>]\n"
                  "\n"
                  "  sync runs the engine: align, exchange, merge, materialize. The cloud\n"
-                 "  address comes from .zametti/remote.json (set-remote) unless --url or\n"
+                 "  address comes from .zametti/cloud.json (set-cloud) unless --url or\n"
                  "  --to overrides it; secrets come from the keyring or the environment.\n"
                  "  When a run wants to delete more notes than the guard allows it stops,\n"
                  "  lists them, and asks for an explicit decision: --allow-mass-delete\n"
                  "  applies the deletions, --keep-all declares the notes alive instead.\n"
                  "\n"
-                 "  set-remote is the one-time setup: it asks the two passwords (typed,\n"
+                 "  set-cloud is the one-time setup: it asks the two passwords (typed,\n"
                  "  echo off; the encryption password twice when the cloud is fresh),\n"
                  "  stores the key and the server password in the system keyring and\n"
-                 "  the address in <store>/.zametti/remote.json. --reset forgets both.\n"
+                 "  the address in <store>/.zametti/cloud.json. --reset forgets both.\n"
+                 "  set-remote is the old name and still works.\n"
                  "  On a fresh device pointed at an existing cloud it inherits the\n"
                  "  store identity and the next 'sync' downloads everything.\n"
                  "\n"
@@ -191,7 +192,10 @@ int StoreCli::run() {
     if (!parse()) return usage();
 
     if (command_ == QStringLiteral("init")) return cmdInit();
-    if (command_ == QStringLiteral("set-remote")) return cmdSetCloud();
+    // set-remote — прежнее имя, остаётся псевдонимом на одну версию (§0).
+    if (command_ == QStringLiteral("set-cloud") ||
+        command_ == QStringLiteral("set-remote"))
+        return cmdSetCloud();
     if (command_ == QStringLiteral("sync")) return cmdSync();
     if (command_ == QStringLiteral("push-all")) return cmdPushAll();
     if (command_ == QStringLiteral("root")) return cmdRoot();
@@ -220,7 +224,7 @@ int StoreCli::cmdInit() {
 // ПЕРВИЧНАЯ НАСТРОЙКА ОБЛАКА — один раз за жизнь устройства (m17, сессия 4).
 // Два пароля спрашиваются с клавиатуры без эха (или берутся из среды — для
 // обвязки); ключ и пароль сервера ложатся в системный keyring, адрес — в
-// <store>/.zametti/remote.json. Все ветки знакомства с облаком решает
+// <store>/.zametti/cloud.json. Все ветки знакомства с облаком решает
 // ZStorage::connectCloud, здесь только ввод.
 int StoreCli::cmdSetCloud() {
     if (root_.isEmpty()) return usage();
@@ -334,11 +338,11 @@ int StoreCli::cmdSync() {
         return 1;
     }
 
-    // Адрес: ключи командной строки сильнее remote.json.
+    // Адрес: ключи командной строки сильнее cloud.json.
     ZStorage::Config cfg = addressFromFlags();
     if (!cfg.hasCloudAddress()) cfg = storage.cloudConfig();
     if (!cfg.hasCloudAddress()) {
-        std::fprintf(stderr, "sync is not configured: run set-remote once, or pass --url/--to\n");
+        std::fprintf(stderr, "sync is not configured: run set-cloud once, or pass --url/--to\n");
         return 1;
     }
 

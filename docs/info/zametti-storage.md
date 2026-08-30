@@ -27,7 +27,7 @@ store/
     .zametti/
         store.lock           the lock: one store — one program
         last-written         the device time floor (journal stamps)
-        remote.json          the cloud address of THIS copy (no secrets)
+        cloud.json           the cloud address of THIS copy (no secrets)
         dirty                names touched since the last sync (write-ahead)
     .rescue/
         …                    buffers that failed the write self-check
@@ -702,7 +702,7 @@ zametti store history compress <id | path.md>     clean one journal (test hatch)
 zametti store recompress --root <dir> --id <id|all>   re-encode attachments
 zametti store resurrect --root <dir> --id <id>        bring a deleted note back
 zametti store root show|init|fix --root <dir>         the identity and the root note
-zametti store set-remote --root <dir> (--url <dav>|--to <dir>) [--reset]
+zametti store set-cloud --root <dir> (--url <dav>|--to <dir>) [--reset]
 zametti store sync --root <dir> [--full|--push-only]
                   [--allow-mass-delete|--keep-all]    the engine, see §12
 ```
@@ -827,19 +827,21 @@ run simply continues. The cloud address, the bookkeeping and the dirty set
 described below are all *around* the data — deleting any of them changes the
 cost of a run, never its result.
 
-### The address of the cloud: `.zametti/remote.json`
+### The address of the cloud: `.zametti/cloud.json`
 
 Belongs to THIS COPY of the store (a `cp -r` takes it along, the cloud never
 sees it) and carries no secrets:
 
 ```json
-{ "remoteUrl": "https://dav.example/зам/01n6cqevh7bbfr/", "remoteUser": "vp",
+{ "cloudUrl": "https://dav.example/зам/01n6cqevh7bbfr/", "cloudUser": "vp",
   "timeoutMs": 30000 }
 ```
 
-`remoteDir` instead of `remoteUrl` points at a local folder used as a cloud
-(tests, a mounted NAS). The legacy keys `url`/`dir`/`user` are still read and
-migrate to the new names on the next write. `timeoutMs` is an INACTIVITY
+`cloudDir` instead of `cloudUrl` points at a local folder used as a cloud
+(tests, a mounted NAS). The legacy file name `remote.json` and the legacy
+keys `remoteUrl`/`remoteDir`/`remoteUser` (and the still older
+`url`/`dir`/`user`) are read as fallbacks and migrate on the next write: the
+new file is written, the old one is removed in the same step. `timeoutMs` is an INACTIVITY
 watchdog: the transfer is aborted when no bytes move for that long — a large
 file may take as long as it takes. The secrets live in the system keyring:
 the server password as `zametti-webdav-<storeId>`, the master key as
@@ -847,7 +849,8 @@ the server password as `zametti-webdav-<storeId>`, the master key as
 it lives for the one moment Argon2id unwraps the keyfile, and what reaches
 the keyring is the key.
 
-`zametti store set-remote` writes all of this once; `--reset` forgets it.
+`zametti store set-cloud` writes all of this once (`set-remote` is the old
+name and still works); `--reset` forgets it.
 Pointed at a directory that does not exist yet (or is empty), it creates the
 store skeleton WITHOUT minting an identity and inherits the identity from the
 cloud manifest; the root note is fetched and materialized right away, and a
@@ -862,7 +865,7 @@ is not a store is refused too, and a refusal leaves no half-made directories
 behind.
 The next `sync` downloads everything — a bootstrap is an ordinary sync with
 an empty local side, there is no separate restore code. In the program the
-same entry is `ZStorage::initFromRemote` — the future first-run dialog (and
+same entry is `ZStorage::initFromCloud` — the future first-run dialog (and
 the Android port) call it, not a parallel implementation.
 
 ### The dirty set: `.zametti/dirty`

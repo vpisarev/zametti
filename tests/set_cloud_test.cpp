@@ -1,4 +1,4 @@
-// ПОДКЛЮЧЕНИЕ ОБЛАКА: set-remote, useLastCloud, бутстрап, отвязка.
+// ПОДКЛЮЧЕНИЕ ОБЛАКА: set-cloud, useLastCloud, бутстрап, отвязка.
 //
 // Все ветки знакомства с облаком в одном месте (ZStorage::connectCloud):
 // пустое облако чеканит keyfile, своё облако разворачивает его паролем,
@@ -113,7 +113,7 @@ void checkUseLastCloud() {
                 s.connectCloud(cfg, QStringLiteral("пароль-шифра"), QString(), secrets, kTiny,
                                 nullptr, &err));
     }
-    // Новый запуск: адрес из remote.json, ключ из keyring, ноль вопросов.
+    // Новый запуск: адрес из cloud.json, ключ из keyring, ноль вопросов.
     {
         ZStorage s(store.root());
         ZT_TRUE(("useLastCloud прошёл: " + err.toStdString()).c_str(),
@@ -181,7 +181,7 @@ void checkBootstrapInheritsIdentity() {
 }
 
 void checkBootstrapIntoEmptyDir() {
-    // Новое устройство: каталога ещё НЕТ ВОВСЕ — set-remote сам заводит
+    // Новое устройство: каталога ещё НЕТ ВОВСЕ — set-cloud сам заводит
     // каркас (без чеканки идентичности!) и наследует id из манифеста.
     zt::MiniStore first, cloudHome, home;
     const QString cloud = cloudHome.root() + QStringLiteral("/облако");
@@ -345,7 +345,7 @@ void checkForeignCloudRefused() {
                 err.contains(QStringLiteral("check the cloud address")));
         ZT_TRUE("имя чужого облака вскрыто общим паролем",
                 err.contains(QStringLiteral("\"%1\"").arg(mineRootTitle)));
-        ZT_TRUE("remote.json не записан", !s.cloudConfig().hasCloudAddress());
+        ZT_TRUE("cloud.json не записан", !s.cloudConfig().hasCloudAddress());
         QFile f(cloud + QStringLiteral("/keyfile"));
         ZT_TRUE("keyfile открылся", f.open(QIODevice::ReadOnly));
         ZT_TRUE("keyfile облака не тронут", f.readAll() == keyfileBefore);
@@ -353,9 +353,10 @@ void checkForeignCloudRefused() {
 }
 
 void checkConfigReadsLegacyKeys() {
-    // remote.json прежних сборок писал ключи url/dir/user — он обязан
-    // читаться (запасной путь читателя), а при следующей записи мигрировать
-    // на новые ключи remoteUrl/remoteDir/remoteUser.
+    // remote.json прежних сборок (и с совсем старыми ключами url/dir/user, и
+    // с remoteUrl/…) обязан читаться, а при следующей записи мигрировать: имя
+    // файла становится cloud.json, ключи — cloudUrl/cloudDir/cloudUser,
+    // старый файл исчезает ТЕМ ЖЕ шагом.
     zt::MiniStore store;
     ZStorage s(store.root());
     {
@@ -375,13 +376,32 @@ void checkConfigReadsLegacyKeys() {
 
     QString err;
     ZT_TRUE("перезапись прошла", s.writeCloudConfig(cfg, &err));
-    QFile f(store.root() + QStringLiteral("/.zametti/remote.json"));
-    ZT_TRUE("файл открылся", f.open(QIODevice::ReadOnly));
+    ZT_TRUE("старого remote.json больше нет",
+            !QFile::exists(store.root() + QStringLiteral("/.zametti/remote.json")));
+    QFile f(store.root() + QStringLiteral("/.zametti/cloud.json"));
+    ZT_TRUE("cloud.json открылся", f.open(QIODevice::ReadOnly));
     const QByteArray bytes = f.readAll();
-    ZT_TRUE("мигрировал на новый ключ", bytes.contains("remoteUrl"));
-    ZT_TRUE("логин на новом ключе", bytes.contains("remoteUser"));
+    ZT_TRUE("мигрировал на новый ключ", bytes.contains("cloudUrl"));
+    ZT_TRUE("логин на новом ключе", bytes.contains("cloudUser"));
     // Путь в файл не пишется: переехал бы вместе с каталогом и врал.
-    ZT_TRUE("root в remote.json не уезжает", !bytes.contains("\"root\""));
+    ZT_TRUE("root в cloud.json не уезжает", !bytes.contains("\"root\""));
+    // Содержимое пережило переезд: перечитанный конфиг равен записанному.
+    const ZStorage::Config again = s.cloudConfig();
+    ZT_TRUE("круг миграции сходится",
+            again.cloudUrl == cfg.cloudUrl && again.cloudUser == cfg.cloudUser &&
+                again.timeoutMs == cfg.timeoutMs);
+
+    // Ключи remoteUrl/… промежуточных сборок — тоже запасной путь чтения.
+    {
+        QFile mid(store.root() + QStringLiteral("/.zametti/cloud.json"));
+        ZT_TRUE("cloud.json переписался", mid.open(QIODevice::WriteOnly));
+        mid.write("{ \"remoteUrl\": \"https://host2/dav/\", \"remoteUser\": \"вп\" }");
+    }
+    const ZStorage::Config mid = s.cloudConfig();
+    ZT_EQ("remoteUrl прочитан запасным путём", std::string("https://host2/dav/"),
+          mid.cloudUrl.toStdString());
+    ZT_EQ("remoteUser прочитан запасным путём", std::string("вп"),
+          mid.cloudUser.toStdString());
 
     // Строка списка хранилищ — наоборот, с корнем.
     const QJsonObject entry = cfg.entryJson();
@@ -570,11 +590,11 @@ static int ztRunSuite(int argc, char** argv) {
     checkProbeCloud();
     checkResetCloudEncryption();
     checkResetRefusesForeignCloud();
-    return zt::report("set_remote");
+    return zt::report("set_cloud");
 }
 
-TEST(SetRemote, All) {
-    std::vector<QByteArray> ztArgs{QByteArrayLiteral("set_remote_test")};
+TEST(SetCloud, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("set_cloud_test")};
     std::vector<char*> ztArgv;
     for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
     EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
