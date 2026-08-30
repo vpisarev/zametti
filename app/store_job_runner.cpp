@@ -31,7 +31,7 @@ CloudSeen seenFrom(const ZStorage::CloudProbe& probe, const QString& address,
 
 Outcome StoreJobRunner::run(const Job& job, SecretStore& secrets) {
     switch (job.kind) {
-        case Job::Kind::Check: return check(job);
+        case Job::Kind::Check: return check(job, secrets);
         case Job::Kind::Create: return create(job, secrets);
         case Job::Kind::ChangePassword: return changePassword(job, secrets);
         case Job::Kind::EraseAndReseed: return eraseAndReseed(job, secrets);
@@ -41,10 +41,15 @@ Outcome StoreJobRunner::run(const Job& job, SecretStore& secrets) {
     return {};
 }
 
-// РАЗВЕДКА: один листинг + чтение головы, ноль записей. Пароль шифрования не
-// обязателен — сводка и манифест открыты; с паролем конверт разворачивается,
-// и «пароль подошёл» становится известен здесь же.
-Outcome StoreJobRunner::check(const Job& job) {
+// ПРОВЕРИТЬ — И ПОДКЛЮЧИТЬ, ЕСЛИ ЕСТЬ ЧЕМ (таблица B матрицы). Разведка —
+// один листинг + чтение головы, пароль шифрования не обязателен: сводка и
+// манифест открыты. Но Check не только смотрит: у ХРАНИЛИЩА против своего
+// облака он разворачивает конверт и записывает адрес (connectCloud), против
+// пустого — запечатывает его конвертом (initCloudStorage; беда M: подключение
+// к пустому серверу обязано залить keyfile) — НО только с пропуском модели
+// (sealEmpty): первый Check по неизвестному адресу лишь смотрит, чтобы
+// опечатка в пароле не запечатала облако навсегда.
+Outcome StoreJobRunner::check(const Job& job, SecretStore& secrets) {
     Outcome out;
     const QString address = StoreManagerModel::cloudAddressText(job.cfg);
     ZStorage::CloudProbe probe;
@@ -91,14 +96,58 @@ Outcome StoreJobRunner::check(const Job& job) {
         case CloudSeen::State::Foreign:
             out.message = QStringLiteral("This cloud belongs to another store.");
             out.alarm = true;
-            break;
+            return out;
         case CloudSeen::State::Incomplete:
             out.message = QStringLiteral("The cloud has no keyfile.");
             out.alarm = true;
-            break;
+            return out;
         default:
-            out.message = QStringLiteral("Connected.");
             break;
+    }
+    out.message = QStringLiteral("Connected.");
+
+    // --- подключение (только для хранилища; пустой папке подключать нечего) --
+    if (ZStorage::inspect(job.root) != ZStorage::DirKind::Store) return out;
+    ZStorage storage(job.root);
+    QString why;
+    if (state == CloudSeen::State::Ours && !job.encryptionPassword.isEmpty()) {
+        // Конверт есть и пароль дан: развернуть, адрес — в cloud.json,
+        // секреты — в копилку. Скачиваний здесь нет — их ведёт прогон.
+        ZStorage::ConnectOutcome connected;
+        if (!storage.connectCloud(job.cfg, job.encryptionPassword, job.serverPassword,
+                                  secrets, mintParams_, &connected, &why)) {
+            out.ok = false;
+            out.alarm = true;
+            out.message = why.contains(QStringLiteral("wrong password"))
+                              ? QStringLiteral("Wrong password.")
+                              : why;
+            if (why.contains(QStringLiteral("wrong password")))
+                out.seen.state = CloudSeen::State::WrongPassword;
+            return out;
+        }
+    } else if (state == CloudSeen::State::Ours) {
+        // Пароля в поле нет — но ключ мог лежать в связке (окно подсадило его
+        // в копилку): подключение без вопросов, как на старте программы.
+        ZStorage::AttachOptions how;
+        how.cfg = job.cfg;
+        how.serverPassword = job.serverPassword;
+        if (storage.attachCloud(how, secrets, nullptr, &why))
+            storage.writeCloudConfig(job.cfg, nullptr);
+        // Не вышло — не беда: разведка честно удалась, подключит пароль.
+    } else if (state == CloudSeen::State::Empty && job.sealEmpty &&
+               !job.encryptionPassword.isEmpty()) {
+        // ЗАПЕЧАТАТЬ ПУСТОЕ ОБЛАКО — по пропуску модели (повтор пройден).
+        if (!storage.initCloudStorage(job.cfg, job.encryptionPassword,
+                                      job.serverPassword, secrets, mintParams_, &why)) {
+            out.ok = false;
+            out.alarm = true;
+            out.message = why;
+            return out;
+        }
+        // Конверт уехал: облако больше не пустое, и заливку данных поведёт
+        // фоновый прогон после Open.
+        out.seen.state = CloudSeen::State::Ours;
+        out.message = QStringLiteral("Connected. Uploading in the background.");
     }
     return out;
 }
@@ -122,16 +171,22 @@ Outcome StoreJobRunner::create(const Job& job, SecretStore& secrets) {
         return out;
     }
 
-    // Что там, решает разведка: манифест — бутстрап, пусто — первое устройство.
-    ZStorage::CloudProbe probe;
-    if (!ZStorage::probeCloud(job.cfg, job.serverPassword, QString(), &probe, &err)) {
-        out.message = err;
-        out.alarm = true;
-        return out;
-    }
     if (job.encryptionPassword.isEmpty()) {
         // Обе дороги ниже открывают или чеканят конверт — без пароля нечем.
         out.message = QStringLiteral("Enter the encryption password.");
+        return out;
+    }
+    // Что там, решает разведка: манифест — бутстрап, пусто — первое
+    // устройство. Пароль отдаётся ЕЙ ЖЕ: неверный обязан быть отвергнут ДО
+    // первой записи — отказ не оставляет ни каркаса, ни огрызков (цена —
+    // второй разворот конверта внутри initFromCloud, доли секунды).
+    ZStorage::CloudProbe probe;
+    if (!ZStorage::probeCloud(job.cfg, job.serverPassword, job.encryptionPassword,
+                              &probe, &err)) {
+        out.message = err.contains(QStringLiteral("wrong password"))
+                          ? QStringLiteral("Wrong password.")
+                          : err;
+        out.alarm = true;
         return out;
     }
     if (probe.hasManifest || probe.hasKeyfile) {

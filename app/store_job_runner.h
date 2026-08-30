@@ -36,7 +36,8 @@ public:
                                    SecretStore& secrets);
 
 protected:
-    StoreManagerModel::Outcome check(const StoreManagerModel::Job& job);
+    StoreManagerModel::Outcome check(const StoreManagerModel::Job& job,
+                                     SecretStore& secrets);
     StoreManagerModel::Outcome create(const StoreManagerModel::Job& job,
                                       SecretStore& secrets);
     StoreManagerModel::Outcome changePassword(const StoreManagerModel::Job& job,

@@ -2775,36 +2775,37 @@ int main(int argc, char** argv) {
 
     // УПРАВЛЕНИЕ ХРАНИЛИЩАМИ — дверь кнопки database (решение владельца,
     // 27.08.2026; прежде тут был голый системный выбор каталога — теперь он
-    // живёт внутри диалога, у Browse). Список известных хранилищ устройства,
-    // «+»/«−», переключение, и у каждого — облако: адрес, логин, пароли,
-    // скачивание с нового устройства и сброс пароля шифрования. Все ветки
-    // знакомства с папкой и облаком решает ядро; окно только показывает.
+    // живёт внутри диалога, у «+» и Browse). Окно ТОНКОЕ: список и факты
+    // ведёт ZStorageManager (строки правятся на месте — применять при
+    // закрытии стало нечего), вид считает StoreManagerModel, работы —
+    // StoreJobRunner. Ничего долгого диалог не делает (п.11 брифа):
+    // синхронизацию запускает обработчик Open ниже.
+    //
+    // Черновики окна СЕАНСОВЫЕ: набранный адрес переживает переоткрытие окна,
+    // пока жива программа. НА ДИСК НЕ ИДУТ.
+    QHash<QString, zametti::StoreManagerModel::Draft> storeDrafts;
     const auto manageStores = [&] {
         // Правки — на диск при входе (просьба владельца, 28.08.2026): всё,
         // что диалог сделает с хранилищем — прогон, скачивание, переключение,
         // — обязано видеть на диске свежую заметку.
         editor.save(false, true);
-        // Прогон синка, если он идёт, останавливается и дожидается: диалог
-        // будет трогать подключение того же хранилища.
+        // Прогон синка, если он идёт, останавливается и дожидается: работы
+        // диалога трогают облако того же хранилища.
         cloudSync.setStorage(zapp.storage());
         zametti::StoreManagerDialog::Result verdict;
         {
-            // Блок не косметика: диалог держит копию shared_ptr хранилища, и
-            // умереть он обязан ДО attachStore — сторож забытой копии не спит.
+            // Блок не косметика: диалог обязан умереть ДО attachStore — его
+            // рабочий поток может держать временное хранилище.
             zametti::StoreManagerDialog dialog(
-                &window, zapp.storeManager()->stores(),
-                model.isStore() ? zapp.storage()->root() : QString(), zapp.storage(),
-                syncSecrets);
+                &window, *zapp.storeManager(),
+                model.isStore() ? zapp.storage()->root() : QString(), syncSecrets);
+            dialog.adoptDrafts(&storeDrafts);
+            // «−» по открытой строке отцепляет хранилище немедленно: окно
+            // программы живёт и без хранилища (папка Info).
+            dialog.setDetachCurrent([&] { attachStore(QString(), QString()); });
             dialog.exec();
             verdict = dialog.result();
         }
-        // Список применяется ВСЕГДА (и по Esc): добавленное хранилище — не
-        // черновик. Замена через те же двери, что и всё остальное: прежние
-        // строки забываются, итог диалога вспоминается по порядку.
-        zametti::ZStorageManager& out = *zapp.storeManager();
-        const QList<zametti::ZStorage::Config> before = out.stores();
-        for (const zametti::ZStorage::Config& e : before) out.forget(e.root);
-        for (const zametti::ZStorage::Config& e : verdict.stores) out.remember(e);
 
         if (!verdict.switchToRoot.isEmpty()) {
             const bool ok = attachStore(verdict.switchToRoot, QString());

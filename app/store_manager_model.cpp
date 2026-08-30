@@ -285,6 +285,11 @@ StoreManagerModel::Snapshot StoreManagerModel::snapshot() const {
     out.folderFrozen = isOpen;
     out.repeat = d.repeat;
     out.server.text = d.server;
+    // ЕДИНСТВЕННАЯ ОСТАВЛЕННАЯ ПОДСКАЗКА (решение владельца: «подсказка —
+    // всегда признак плохого дизайна»). Эта уцелела потому, что говорит не о
+    // поведении программы, а о ФОРМЕ значения: угадать, что здесь ждут адрес
+    // сервера, а не имя, неоткуда.
+    out.server.placeholder = QStringLiteral("https://webdav.server/dav");
     out.serverDir.text = d.serverDir;
     out.login.text = d.login;
 
@@ -487,6 +492,13 @@ StoreManagerModel::Snapshot StoreManagerModel::snapshot() const {
             out.message = Line{QStringLiteral("Enter the server password."), false};
         else if (isEmptyDir && named && !haveEncryption)
             out.message = Line{QStringLiteral("Enter the encryption password."), false};
+        else if (isStore && seenNow.address == addressNow &&
+                 seenNow.state == CloudSeen::State::Empty && !haveEncryption)
+            // Хранилище против пустого облака: следующий шаг — запечатать его
+            // паролем, и об этом сказано словами, а не погашенной кнопкой.
+            out.message = Line{QStringLiteral("Enter the encryption password twice — it "
+                                              "will seal the cloud."),
+                               false};
     }
     return out;
 }
@@ -532,6 +544,11 @@ StoreManagerModel::Job StoreManagerModel::jobFor(Job::Kind kind) const {
     job.kind = kind;
     job.root = draft().folder;
     job.cfg = cfgFromDraft();
+    // Запечатать пустое облако можно только пройдя повтор: заказчик жеста
+    // (checkPressed/answered) уже прогнал sealingNeedsRepeat, здесь лишь
+    // выписывается пропуск.
+    job.sealEmpty = snapshot().repeatVisible && !draft().repeat.isEmpty() &&
+                    draft().repeat == draft().encryptionPassword;
     job.serverPassword = draft().serverPassword;
     job.serverPasswordFromKeyring =
         draft().serverPassword.isEmpty() && !draft().serverPasswordTouched;

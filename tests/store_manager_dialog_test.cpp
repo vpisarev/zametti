@@ -1,16 +1,18 @@
-// Диалог управления хранилищами: список, добавление, скачивание из облака,
-// свежее облако с двойным паролем, сброс пароля шифрования, «−».
+// Окно хранилищ, ИНТЕГРАЦИЯ (§2.10): модель ↔ виджеты ↔ рабочий поток.
 //
-// Облако — каталог (FolderCloud), keyring — в памяти, Аргон — крошечный:
-// проверяется ПРОВОДКА диалога и то, что каждая ветка доезжает до ядра и
-// возвращается итогом. Рабочий поток настоящий — ожидание идёт по кнопке
-// Apply: занятое окно её гасит, освободившееся возвращает.
+// Правила снимка, доступность кнопок и словарь строк проверяет
+// store_manager_model_test БЕЗ виджетов; здесь — только проводка: жест окна
+// доезжает до модели, работа — до ядра, итог возвращается в виджеты и в
+// Result. Облако — каталог (FolderCloud), keyring — в памяти, Аргон крошечный;
+// переспросы отвечает TestDialog::ask мимо модального окна (та же дверь — у
+// обезьяны store-monkey).
 
 #include "store_manager_dialog.h"
 
 #include "keyfile.h"
 #include "secret_store.h"
 #include "zstorage.h"
+#include "zstorage_manager.h"
 
 #include "fake_secrets.h"
 #include "mini_store.h"
@@ -21,7 +23,6 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
-#include <QHash>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -40,15 +41,31 @@ const Keyfile::KdfParams kTiny{1, 1 << 20};
 
 std::string s(const QString& q) { return q.toStdString(); }
 
-// Keyring в памяти — общая подделка из fake_secrets.h (до 29.08.2026 таких
-// классов по наборам лежало три, слово в слово).
 using FakeSecrets = zt::FakeSecrets;
 
-// Наборам — вход в режим сброса мимо модального переспроса.
+// Наборам — жесты мимо модальных окон: переспрос отвечается заданной кнопкой,
+// выбор папки не показывается вовсе.
 class TestDialog : public StoreManagerDialog {
 public:
     using StoreManagerDialog::StoreManagerDialog;
-    using StoreManagerDialog::armResetMode;
+    using StoreManagerDialog::addFolder;
+    using StoreManagerDialog::model_;
+    using StoreManagerDialog::render;
+
+    int nextAnswer = -1;   // -1 — отказ (последняя кнопка)
+    StoreManagerModel::Question lastQuestion;
+
+    int ask(const StoreManagerModel::Question& question) override {
+        lastQuestion = question;
+        return nextAnswer >= 0 ? nextAnswer : int(question.choices.size()) - 1;
+    }
+
+    // Правка поля так, как её видит модель: setText не шлёт textEdited, и
+    // прямой setText мимо модели был бы враньём набора.
+    void type(StoreManagerModel::FieldId which, const QString& text) {
+        model_.edit(which, text);
+        render();
+    }
 };
 
 // Каталог снимков — ОДИН РАЗ на набор: outDir чистит каталог при каждом
@@ -58,14 +75,14 @@ const QString& shotDir() {
     return dir;
 }
 
-// Дождаться конца рабочего потока: занятое окно гасит Apply.
+// Дождаться конца рабочего потока: занятое окно гасит Check.
 bool waitIdle(StoreManagerDialog& dialog, int budgetMs = 20000) {
-    auto* apply = dialog.findChild<QPushButton*>(QStringLiteral("apply"));
+    auto* check = dialog.findChild<QPushButton*>(QStringLiteral("check"));
     QElapsedTimer clock;
     clock.start();
     while (clock.elapsed() < budgetMs) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-        if (apply->isEnabled()) return true;
+        if (check->isEnabled()) return true;
         QThread::msleep(10);
     }
     return false;
@@ -75,53 +92,52 @@ QString statusText(StoreManagerDialog& dialog) {
     return dialog.findChild<QLabel*>(QStringLiteral("status"))->text();
 }
 
-void checkCloudAddress() {
-    ZStorage::Config cfg;
-    StoreManagerDialog::setCloudAddress(cfg, QStringLiteral("https://host/dav/notes"),
-                                        QStringLiteral(" вадим "));
-    ZT_EQ("url получает хвостовой слэш", std::string("https://host/dav/notes/"),
-          s(cfg.cloudUrl));
-    ZT_TRUE("каталог пуст при url", cfg.cloudDir.isEmpty());
-    ZT_EQ("логин обрезан", std::string("вадим"), s(cfg.cloudUser));
-
-    StoreManagerDialog::setCloudAddress(cfg, QStringLiteral("/mnt/nas/облако"), QString());
-    ZT_TRUE("путь стал каталогом-облаком", cfg.cloudUrl.isEmpty() &&
-                cfg.cloudDir == QStringLiteral("/mnt/nas/облако"));
-
-    StoreManagerDialog::setCloudAddress(cfg, QString(), QString());
-    ZT_TRUE("пустая строка — облака нет", !cfg.hasCloudAddress());
-}
-
 void checkListAndForget() {
     zt::MiniStore a, b;
+    ZStorageManager stores;
     ZStorage::Config first;
     first.root = a.root();
     first.name = QStringLiteral("Первое");
     ZStorage::Config second;
     second.root = b.root();
+    stores.remember(first);
+    stores.remember(second);
     auto secrets = std::make_shared<FakeSecrets>();
 
-    StoreManagerDialog dialog(nullptr, {first, second}, a.root(), nullptr, secrets, kTiny);
+    TestDialog dialog(nullptr, stores, a.root(), secrets, kTiny);
     auto* list = dialog.findChild<QListWidget*>(QStringLiteral("storeList"));
     ZT_EQ("в списке две строки", std::string("2"), std::to_string(list->count()));
     ZT_TRUE("открытое помечено", list->item(0)->text().contains(QStringLiteral("open")));
     ZT_TRUE("выбрана строка открытого", list->currentRow() == 0);
     auto* remove = dialog.findChild<QPushButton*>(QStringLiteral("removeStore"));
-    ZT_TRUE("«−» у открытого погашен", !remove->isEnabled());
+    // «−» жив ВСЕГДА, и у открытого тоже (п.14 брифа): подтверждённое
+    // удаление открытой строки отцепляет хранилище немедленно.
+    ZT_TRUE("«−» горит и у открытого", remove->isEnabled());
 
-    // Снимок приёмки: список с двумя строками и форма выбранной.
-    dialog.resize(760, 420);
+    // Снимок приёмки: список с двумя строками, форма и обе рамки фактов.
+    dialog.resize(900, 560);
     dialog.grab().save(QDir(shotDir()).filePath(QStringLiteral("store-manager.png")));
 
+    // «−» по другой строке: переспрос называет цену, Remove забывает строку у
+    // МЕНЕДЖЕРА (строки правятся на месте, применять при закрытии нечего).
     list->setCurrentRow(1);
-    ZT_TRUE("«−» у другого горит", remove->isEnabled());
+    dialog.nextAnswer = 0;
     remove->click();
-    ZT_EQ("строка забыта", std::string("1"), std::to_string(int(dialog.result().stores.size())));
+    ZT_TRUE("переспрос называет цену",
+            dialog.lastQuestion.detail.contains(QStringLiteral("stay on disk")));
+    ZT_EQ("строка забыта у менеджера", std::string("1"), std::to_string(stores.size()));
     ZT_TRUE("папка цела", QDir(b.root()).exists());
+
+    // Отказ ничего не забывает.
+    dialog.nextAnswer = -1;
+    remove->click();
+    ZT_EQ("отказ ничего не забыл", std::string("1"), std::to_string(stores.size()));
 }
 
-void checkDownloadFromCloud() {
-    // Облако с настоящим хранилищем: первое устройство залило всё.
+void checkCreateFromCloud() {
+    // Облако с настоящим хранилищем: первое устройство залило всё; пустая
+    // папка + верный пароль встают бутстрапом ГОЛОВЫ — ни одного блоба
+    // содержимого в диалоге (качает прогон после Open).
     zt::MiniStore src, cloudHome, targetHome;
     const QString cloud = cloudHome.root() + QStringLiteral("/облако");
     QString err;
@@ -138,98 +154,116 @@ void checkDownloadFromCloud() {
     }
 
     const QString dest = targetHome.root() + QStringLiteral("/копия");
+    QDir().mkpath(dest);
+    ZStorageManager stores;
     auto secrets = std::make_shared<FakeSecrets>();
-    StoreManagerDialog dialog(nullptr, {}, QString(), nullptr, secrets, kTiny);
-    // Пустой список — диалог сам в форме добавления.
-    dialog.findChild<QLineEdit*>(QStringLiteral("folder"))->setText(dest);
-    dialog.findChild<QLineEdit*>(QStringLiteral("server"))->setText(cloud);
+    TestDialog dialog(nullptr, stores, QString(), secrets, kTiny);
+    // Пустой список говорит словами (беда G).
+    ZT_TRUE("пустой список говорит словами",
+            statusText(dialog).contains(QStringLiteral("press +")));
+    dialog.addFolder(dest);
+    ZT_EQ("строка добавилась", std::string("1"), std::to_string(stores.size()));
+    dialog.type(StoreManagerModel::FieldId::Server, cloud);
 
-    // Неверный пароль — отказ ДО скачивания, папка не тронута.
-    dialog.findChild<QLineEdit*>(QStringLiteral("password"))
-        ->setText(QStringLiteral("не тот"));
-    dialog.findChild<QPushButton*>(QStringLiteral("apply"))->click();
-    ZT_TRUE("проверка адреса дождалась", waitIdle(dialog));
-    ZT_TRUE("сказано про пароль", statusText(dialog).contains(QStringLiteral("password")));
-    ZT_TRUE("папка не заведена", !QDir(dest).exists());
+    // Неверный пароль — отказ ДО первой записи: каркас не заводится.
+    dialog.type(StoreManagerModel::FieldId::EncryptionPassword, QStringLiteral("не тот"));
+    dialog.nextAnswer = 0;   // Create
+    dialog.findChild<QPushButton*>(QStringLiteral("openStore"))->click();
+    ZT_TRUE("создание дождалось", waitIdle(dialog));
+    ZT_TRUE(("сказано про пароль: " + s(statusText(dialog))).c_str(),
+            statusText(dialog).contains(QStringLiteral("password")));
+    ZT_TRUE("каркас не заведён", ZStorage::inspect(dest) == ZStorage::DirKind::Empty);
 
-    // Верный пароль — скачивание и вердикт «переключиться».
-    dialog.findChild<QLineEdit*>(QStringLiteral("password"))
-        ->setText(QStringLiteral("пароль-шифра"));
-    dialog.findChild<QPushButton*>(QStringLiteral("apply"))->click();
-    ZT_TRUE("скачивание дождалось", waitIdle(dialog));
-    ZT_TRUE(("скачалось без жалоб: " + s(statusText(dialog))).c_str(),
+    // Верный пароль — голова приехала, вердикт зовёт переключиться.
+    dialog.type(StoreManagerModel::FieldId::EncryptionPassword,
+                QStringLiteral("пароль-шифра"));
+    dialog.findChild<QPushButton*>(QStringLiteral("openStore"))->click();
+    ZT_TRUE("бутстрап дождался", waitIdle(dialog));
+    ZT_TRUE(("голова приехала: " + s(statusText(dialog))).c_str(),
             dialog.result().downloadedNew);
     ZT_EQ("вердикт зовёт переключиться", s(QDir::cleanPath(dest)),
-          s(dialog.result().switchToRoot));
+          s(QDir::cleanPath(dialog.result().switchToRoot)));
     ZT_TRUE("папка стала хранилищем",
             ZStorage::inspect(dest) == ZStorage::DirKind::Store);
-    ZT_EQ("строка легла в список", std::string("1"),
-          std::to_string(int(dialog.result().stores.size())));
+    ZT_TRUE("адрес лёг в строку менеджера",
+            stores.storeFor(dest).hasCloudAddress());
     ZT_TRUE("ключ перекочевал в keyring", secrets->keys_.size() == 1);
 }
 
-void checkFreshCloudAndReset() {
-    // Хранилище без облака подключается к ПУСТОМУ облаку: пароль спрашивается
-    // дважды, конверт чеканится; затем пароль сбрасывается — облачная копия
-    // заменяется под новым ключом.
+void checkSealFreshCloudAndChangePassword() {
+    // Хранилище против ПУСТОГО облака: первый Check только смотрит и просит
+    // повтор (опечатка запечатала бы облако навсегда), второй — запечатывает.
+    // Затем смена пароля при живом ключе: один конверт, ноль стираний.
     zt::MiniStore home, cloudHome;
     const QString root = home.root() + QStringLiteral("/архив");
     QDir().mkpath(root);
     QString err;
-    {
-        ZStorage s(root);
-        ZT_TRUE(("хранилище завелось: " + err.toStdString()).c_str(), s.init(&err));
-    }
+    ZT_TRUE(("хранилище завелось: " + err.toStdString()).c_str(),
+            ZStorage(root).init(&err));
     const QString cloud = cloudHome.root() + QStringLiteral("/свежее-облако");
     QDir().mkpath(cloud);
+    // Связка — и окну, и менеджеру: факты строк («ключ есть?») спрашивает
+    // менеджер, как это делает ZApp::setStoreSecrets в бою.
+    auto secrets = std::make_shared<FakeSecrets>();
+    ZStorageManager stores(secrets);
     ZStorage::Config entry;
     entry.root = root;
-    auto secrets = std::make_shared<FakeSecrets>();
+    stores.remember(entry);
 
-    TestDialog dialog(nullptr, {entry}, QString(), nullptr, secrets, kTiny);
+    TestDialog dialog(nullptr, stores, QString(), secrets, kTiny);
     auto* password2 = dialog.findChild<QLineEdit*>(QStringLiteral("password2"));
-    dialog.findChild<QLineEdit*>(QStringLiteral("server"))->setText(cloud);
-    dialog.findChild<QLineEdit*>(QStringLiteral("password"))
-        ->setText(QStringLiteral("первый-пароль"));
-    dialog.findChild<QPushButton*>(QStringLiteral("apply"))->click();
-    ZT_TRUE("проверка свежести дождалась", waitIdle(dialog));
+    auto* check = dialog.findChild<QPushButton*>(QStringLiteral("check"));
+    dialog.type(StoreManagerModel::FieldId::Server, cloud);
+    dialog.type(StoreManagerModel::FieldId::EncryptionPassword,
+                QStringLiteral("первый-пароль"));
+
+    // Check №1: разведка. Облако пустое, конверт НЕ уехал, показался повтор.
+    check->click();
+    ZT_TRUE("разведка дождалась", waitIdle(dialog));
     ZT_TRUE("свежее облако просит повторить пароль", !password2->isHidden());
     ZT_TRUE("конверта ещё нет", !QFile::exists(cloud + QStringLiteral("/keyfile")));
-    // Снимок приёмки: свежее облако, второе поле пароля на виду.
-    dialog.resize(760, 420);
+    dialog.resize(900, 560);
     dialog.grab().save(
         QDir(shotDir()).filePath(QStringLiteral("store-manager-свежее-облако.png")));
 
-    // Опечатка в повторе — отказ на месте.
-    password2->setText(QStringLiteral("первый-парол"));
-    dialog.findChild<QPushButton*>(QStringLiteral("apply"))->click();
+    // Опечатка в повторе — отказ на месте, без работы.
+    dialog.type(StoreManagerModel::FieldId::Repeat, QStringLiteral("первый-парол"));
+    check->click();
     ZT_TRUE("несовпавшие пароли отвергнуты",
             statusText(dialog).contains(QStringLiteral("match")));
 
-    password2->setText(QStringLiteral("первый-пароль"));
-    dialog.findChild<QPushButton*>(QStringLiteral("apply"))->click();
-    ZT_TRUE("подключение дождалось", waitIdle(dialog));
+    // Check №2 с пройденным повтором — запечатывание.
+    dialog.type(StoreManagerModel::FieldId::Repeat, QStringLiteral("первый-пароль"));
+    check->click();
+    ZT_TRUE("запечатывание дождалось", waitIdle(dialog));
     ZT_TRUE(("конверт отчеканен: " + s(statusText(dialog))).c_str(),
             QFile::exists(cloud + QStringLiteral("/keyfile")));
     ZT_TRUE("адрес записан в хранилище", ZStorage(root).cloudConfig().hasCloudAddress());
     ZT_TRUE("ключ в keyring", secrets->keys_.size() == 1);
-    ZT_TRUE("строка списка несёт облако",
-            dialog.result().stores.first().hasCloudAddress());
+    ZT_TRUE("пароль шифрования в keyring", secrets->cryptPasswords_.size() == 1);
+    ZT_TRUE("адрес лёг в строку менеджера", stores.storeFor(root).hasCloudAddress());
 
-    // --- сброс пароля -------------------------------------------------------
+    // --- смена пароля при живом ключе (Reset cloud → Change password) ------
+    const QByteArray keyfileBefore = [&] {
+        QFile f(cloud + QStringLiteral("/keyfile"));
+        return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
+    }();
+    dialog.type(StoreManagerModel::FieldId::EncryptionPassword,
+                QStringLiteral("второй-пароль"));
+    dialog.nextAnswer = 0;   // [Change password]
+    dialog.findChild<QPushButton*>(QStringLiteral("resetCloud"))->click();
+    ZT_TRUE("смена пароля дождалась", waitIdle(dialog));
+    ZT_TRUE("переспрос предлагал смену без стирания",
+            dialog.lastQuestion.choices.first().contains(QStringLiteral("Change")));
+    ZT_TRUE("детали называют полный адрес",
+            dialog.lastQuestion.detail.contains(cloud));
+    ZT_TRUE(("пароль сменён: " + s(statusText(dialog))).c_str(),
+            statusText(dialog).contains(QStringLiteral("changed")));
+    // Конверт другой, старый пароль не подходит, новый открывает.
+    QFile f(cloud + QStringLiteral("/keyfile"));
+    ZT_TRUE("конверт открылся", f.open(QIODevice::ReadOnly));
+    ZT_TRUE("конверт заменён", f.readAll() != keyfileBefore);
     ZStorage::Config cfgProbe = ZStorage(root).cloudConfig();
-    ZT_TRUE("старый пароль подходит",
-            ZStorage::probeCloud(cfgProbe, QString(), QStringLiteral("первый-пароль"),
-                                 nullptr, &err));
-    dialog.armResetMode();
-    ZT_TRUE("режим сброса показал два поля", !password2->isHidden());
-    dialog.findChild<QLineEdit*>(QStringLiteral("password"))
-        ->setText(QStringLiteral("второй-пароль"));
-    password2->setText(QStringLiteral("второй-пароль"));
-    dialog.findChild<QPushButton*>(QStringLiteral("apply"))->click();
-    ZT_TRUE("сброс дождался", waitIdle(dialog));
-    ZT_TRUE(("облако заменено: " + s(statusText(dialog))).c_str(),
-            statusText(dialog).contains(QStringLiteral("replaced")));
     ZT_TRUE("старый пароль больше не подходит",
             !ZStorage::probeCloud(cfgProbe, QString(), QStringLiteral("первый-пароль"),
                                   nullptr, &err));
@@ -243,10 +277,9 @@ void checkFreshCloudAndReset() {
 static int ztRunSuite(int argc, char** argv) {
     (void)argc;
     (void)argv;
-    checkCloudAddress();
     checkListAndForget();
-    checkDownloadFromCloud();
-    checkFreshCloudAndReset();
+    checkCreateFromCloud();
+    checkSealFreshCloudAndChangePassword();
     return zt::report("store_manager_dialog");
 }
 

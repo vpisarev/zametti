@@ -1,53 +1,55 @@
-// Диалог управления хранилищами — дверь кнопки database (решение владельца,
-// 27.08.2026: прежний системный выбор каталога стал частью этого окна).
+// Окно управления хранилищами — ТОНКОЕ: раскладка и исполнение, и больше
+// ничего (§2.10 разбора, docs/zametti-store-window-matrix.md).
 //
-// Слева СПИСОК хранилищ устройства (ZAppState::stores, строка —
-// ZStorage::Config): «+» добавляет, «−» забывает строку (папку и облако не
-// трогая; у открытого хранилища «−» погашен — строка вернулась бы при
-// следующем прицеплении), Open (и двойной клик) — переключиться. Справа —
-// ФОРМА выбранной строки: папка, адрес облака (url или каталог), логин и оба
-// пароля. Это ввод данных, не подтверждение — принципу «никаких диалогов» не
-// противоречит (бриф m17).
+// Решения живут не здесь:
+//   ZStorageManager — список хранилищ устройства и факты строк (ядро);
+//   StoreManagerModel — вид: выбор, черновики, подписи и доступность кнопок,
+//       две строки фактов; на жест отвечает НАМЕРЕНИЕМ;
+//   StoreJobRunner — работы над облаком, синхронно и без виджетов.
 //
-// Что умеет форма, решает состояние папки и облака (все ветки — в ядре):
-//   * папка-хранилище + криптопароль      → connectCloud (пустое облако
-//     чеканит ключ — пароль спрашивается дважды: опечатка запечатала бы его
-//     навсегда; чужое облако — честный отказ ядра с ярлыками);
-//   * папка-хранилище, пароль пуст, ключ в keyring → неразрушительное
-//     обновление адреса/логина/пароля сервера (setCloud + writeCloudConfig);
-//   * пустая папка + облако               → probeCloud ДО скачивания (человек
-//     не выбирает папку под хранилище, которого не окажется) → initFromCloud;
-//   * пустая папка без облака             → «завести новое хранилище?» —
-//     второе санкционированное исключение из «никаких подтверждений»;
-//   * занятая посторонним папка           → отказ словами, до ядра.
+// Окну остаётся четыре обязанности: собрать виджеты, показать снимок
+// (render — единственная дорога от модели к экрану), спросить человека, когда
+// модель просит переспрос, и увести работу в рабочий поток.
 //
-// СБРОС ПАРОЛЯ ШИФРОВАНИЯ (пароль забыт: конверт без пароля не развернуть по
-// построению) — единственная стирающая операция над облаком, потому
-// единственная здесь С ПЕРЕСПРОСОМ — исключение, названное владельцем в
-// брифе этой сессии, как «удалить насовсем» у Архива.
+// ПОЧЕМУ ТАК. Прежнее окно решало всё само, и разбор нашёл в нём 21 беду —
+// добрая половина одного рода: доступность кнопок считалась в семи местах
+// по-разному, а связь с облаком и свежесть лежали полями окна и залипали при
+// переключении строк. Теперь у каждого вопроса одно место, и все они
+// проверяются наборами без единого виджета.
+//
+// РАСКЛАДКА (бриф владельца 30.08.2026): слева рамка со списком и рядом
+// «+ −» под ним, справа рамка формы той же высоты; поля тянутся по ширине
+// рамки; под кнопками Check/Reset cloud — два фрейма фактов Local и Cloud по
+// две строки каждый; Open (или Create) стоит внизу РЯДОМ с Close — это два
+// способа выйти из окна, а не действие над списком.
 //
 // ПОТОКИ РАЗДЕЛЕНЫ ПО ПРИРОДЕ ВЕЩЕЙ, как в SyncController: сеть и Argon2id
 // (~секунда на разворот — порог владельца) бегут в рабочем потоке, форма на
-// это время глохнет, но окно живёт. Keyring (DBus при главном цикле) диалог
-// трогает ТОЛЬКО из главного потока: рабочему отдаётся приёмник-копилка
-// (TakenSecrets), добытое перекладывается в keyring по завершении.
+// это время глохнет, но окно живёт и ЗАКРЫВАЕТСЯ. Связку (DBus при главном
+// цикле) окно трогает ТОЛЬКО из главного потока: рабочему отдаётся
+// приёмник-копилка, добытое перекладывается по завершении.
 
 #ifndef ZAMETTI_STORE_MANAGER_DIALOG_H
 #define ZAMETTI_STORE_MANAGER_DIALOG_H
 
+#include "store_job_runner.h"
+#include "store_manager_model.h"
+
 #include "keyfile.h"
 #include "secret_store.h"
-#include "zstorage.h"
+#include "zstorage_manager.h"
 
 #include <QDialog>
-#include <QList>
+#include <QHash>
 #include <QString>
+#include <QStringList>
 
 #include <functional>
 #include <memory>
 #include <thread>
 
 class QAction;
+class QFrame;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -55,108 +57,101 @@ class QPushButton;
 
 namespace zametti {
 
+class FrozenText;
+class TakenSecrets;
+
 class StoreManagerDialog : public QDialog {
     Q_OBJECT
 
 public:
-    // Итог всего окна. Список применяется ВСЕГДА (и по Close, и по Esc):
-    // добавленное хранилище — не черновик, терять его молча нельзя.
+    // Итог окна. Списка здесь больше нет: строки живут в ZStorageManager и
+    // правятся на месте — «применить при закрытии» стало нечего.
     struct Result {
-        QList<ZStorage::Config> stores;   // итоговый список устройства
         QString switchToRoot;             // непусто — переключиться сюда
         // Облако ОТКРЫТОГО хранилища настроили или сменили: окну стоит
-        // запустить прогон (сброс пароля сюда не входит — он уже всё залил).
+        // запустить прогон.
         bool cloudChangedForCurrent = false;
-        // switchToRoot — только что скачанное хранилище: там пока манифест и
-        // корень, остальное обязан привезти первый прогон — независимо от
-        // настройки sync.onStart.
+        // switchToRoot — только что заведённое из облака хранилище: там пока
+        // манифест и корень, остальное обязан привезти первый прогон.
         bool downloadedNew = false;
     };
 
-    // stores — строки списка (копия; итог в result().stores); currentRoot —
-    // корень открытого хранилища (пусто — окно без хранилища); storage — его
-    // живой объект: облако ОТКРЫТОГО настраивается на нём, чужие корни
-    // открываются временным ZStorage под замком. secrets — keyring (или среда
-    // у обвязки), трогается только в главном потоке. mintParams — параметры
-    // чеканки ключа; наборам боевой Argon2id не нужен.
-    StoreManagerDialog(QWidget* parent, const QList<ZStorage::Config>& stores,
-                       const QString& currentRoot, std::shared_ptr<ZStorage> storage,
+    // stores — ЖИВОЙ список устройства (правится на месте); currentRoot —
+    // корень открытого хранилища (пусто — окно без хранилища); secrets —
+    // связка, трогается только в главном потоке; mintParams — параметры
+    // чеканки ключа, наборам боевой Argon2id не нужен.
+    StoreManagerDialog(QWidget* parent, ZStorageManager& stores, const QString& currentRoot,
                        std::shared_ptr<SecretStore> secrets,
                        const Keyfile::KdfParams& mintParams = Keyfile::defaults());
     ~StoreManagerDialog() override;
 
-    // ВАЖНО ВЫЗЫВАЮЩЕМУ: перед attachStore на switchToRoot диалог должен
-    // умереть — он держит копию shared_ptr открытого хранилища, а сторож
-    // забытой копии в attachStore валит отладочную сборку.
     const Result& result() const { return result_; }
 
-    // Адрес облака из строки формы: http(s):// — WebDAV (с хвостовым «/»,
-    // как у CLI), пустая строка — облака нет, всё прочее — каталог. Чистая
-    // функция, проверяется набором.
-    static void setCloudAddress(ZStorage::Config& cfg, const QString& server,
-                                const QString& user);
-    // Обратная сторона: что показать в поле адреса.
-    static QString cloudAddressText(const ZStorage::Config& cfg);
+    // Крюк «отцепи текущее хранилище сейчас»: зовётся из «−» по открытой
+    // строке. Обвязка отдаёт сюда attachStore с пустым корнем.
+    void setDetachCurrent(std::function<void()> hook) { detachCurrent_ = std::move(hook); }
+
+    // Сеансовые черновики: набранное переживает переоткрытие окна, пока жива
+    // программа. НА ДИСК НЕ ИДЁТ НИКОГДА — пароли только в связку и только
+    // после успеха.
+    void adoptDrafts(QHash<QString, StoreManagerModel::Draft>* drafts);
 
 protected:
-    // Занятое окно не закрывается: рабочий поток держит хранилище, его
-    // дожидаются, а не бросают.
+    // Занятое окно не закрывается ТОЛЬКО пока рабочий поток держит хранилище;
+    // ждать его — обязанность деструктора, а не человека.
     void reject() override;
+    void accept() override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
-    void rebuildList(int selectRow);
-    void showEntry(int row);
-    void beginNewEntry();
-    void forgetSelected();
-    void openSelected();
-    void onApply();
-    // Переспрос (единственный здесь) — и включение режима сброса; наборы
-    // входят в режим мимо модального вопроса, через armResetMode.
-    void enterResetMode();
-    void armResetMode();
-    void leaveResetMode();
+    // ЕДИНСТВЕННАЯ ДОРОГА ОТ МОДЕЛИ К ЭКРАНУ. Всё видимое приходит одним
+    // снимком; своих решений окно не принимает.
+    void render();
+    // Исполнить намерение модели: спросить, сделать работу, переключиться.
+    void act(const StoreManagerModel::Reaction& reaction);
+    // Переспрос; возвращает индекс выбранной кнопки (последняя — отказ).
+    //
+    // ВИРТУАЛЬНЫЙ РАДИ ОБЕЗЬЯНЫ: модальное окно останавливает поток, и
+    // случайный прогон (zametti-bench store-monkey) без этой двери не смог бы
+    // ткнуть ни в один переспрос — то есть половина жестов осталась бы
+    // непроверенной. Тот же довод у askFolder: системный выбор папки обезьяне
+    // не показать.
+    virtual int ask(const StoreManagerModel::Question& question);
+    virtual QString askFolder();
+    void runJob(const StoreManagerModel::Job& job);
 
-    // Ветки onApply; cfg — уже собранный из формы адрес (root заполнен).
-    void applyToStore(const ZStorage::Config& cfg, const QString& serverPassword,
-                      const QString& password);
-    void addFromCloud(const ZStorage::Config& cfg, const QString& serverPassword,
-                      const QString& password);
-    void resetPassword(const ZStorage::Config& cfg, const QString& serverPassword,
-                       const QString& password);
-    // Строка легла в список (и в форму); вернувшееся из работы имя — тоже.
-    void settleEntry(const ZStorage::Config& entry);
+    void rebuildList(const StoreManagerModel::Snapshot& snap);
+    void placeBrowseButton();
+    void addStore();
+    // Наборам — те же жесты мимо модальных вопросов и системного выбора папки.
+    void addFolder(const QString& dir);
+    void dropSelected();
+    void chooseReset(int road);
 
-    // Открытое хранилище? — тогда работать на живом объекте, чужой корень —
-    // временным ZStorage под замком (внутри job, в рабочем потоке).
-    bool isCurrentRoot(const QString& root) const;
-
-    // Глаз-переключатель у поля пароля (просьба владельца: пароль копируют
-    // не торопясь, не держа палец на кнопке). Пустое поле при включении
-    // наполняется хранимым значением из keyring.
-    QAction* addEyeToggle(QLineEdit* field, std::function<QString()> stored);
-    // storeId хранилища, которое сейчас в форме; пусто — папка не хранилище.
-    QString shownStoreId() const;
-
-    // Работа в рабочем потоке: job возвращает пустую строку при удаче, done
-    // зовётся в главном. Результаты job складывает в поля — к ним никто не
-    // прикасается, пока поток жив.
-    void startWork(const QString& status, std::function<QString()> job,
-                   std::function<void(const QString&)> done);
+    QAction* addEyeToggle(QLineEdit* field, StoreManagerModel::FieldId which);
+    void startWork(const QString& status, std::function<void()> job,
+                   std::function<void()> done);
     void setBusy(bool on);
-    void say(const QString& text, bool trouble);
 
-    std::shared_ptr<ZStorage> storage_;   // открытое хранилище; может быть пуст
+    ZStorageManager& stores_;
+    StoreManagerModel model_;
+    StoreJobRunner runner_;
     std::shared_ptr<SecretStore> secrets_;
-    QString currentRoot_;                 // канонизированный
-    Keyfile::KdfParams mintParams_;
+    std::function<void()> detachCurrent_;
     Result result_;
+    QHash<QString, StoreManagerModel::Draft> ownDrafts_;
 
     QListWidget* list_ = nullptr;
+    QFrame* listFrame_ = nullptr;
+    QFrame* formFrame_ = nullptr;
     QPushButton* addButton_ = nullptr;
     QPushButton* removeButton_ = nullptr;
     QPushButton* openButton_ = nullptr;
     QLineEdit* folder_ = nullptr;
+    FrozenText* folderFreeze_ = nullptr;
+    QWidget* browseHolder_ = nullptr;
     QPushButton* browseButton_ = nullptr;
     QLineEdit* server_ = nullptr;
+    QLineEdit* serverDir_ = nullptr;
     QLineEdit* user_ = nullptr;
     QLineEdit* serverPassword_ = nullptr;
     QAction* serverEye_ = nullptr;
@@ -165,28 +160,23 @@ protected:
     QLineEdit* password_ = nullptr;
     QLabel* password2Label_ = nullptr;
     QLineEdit* password2_ = nullptr;
-    QPushButton* applyButton_ = nullptr;
+    QPushButton* checkButton_ = nullptr;
     QPushButton* resetButton_ = nullptr;
-    QLabel* status_ = nullptr;
+    QFrame* localFrame_ = nullptr;   // рамка «Local: …» — две строки фактов
+    QFrame* cloudFrame_ = nullptr;   // рамка «Cloud: …» — две строки фактов
+    QLabel* localLine_ = nullptr;
+    QLabel* cloudLine_ = nullptr;
+    QLabel* status_ = nullptr;       // про последний жест; обычно пусто
     QPushButton* closeButton_ = nullptr;
 
     std::thread worker_;
     bool busy_ = false;
-    bool newEntry_ = false;   // форма про ещё не добавленную папку
-    bool resetMode_ = false;
-    int selected_ = -1;       // строка result_.stores, которую показывает форма
+    QStringList shownRoots_;   // что сейчас в списке — чтобы не перестраивать зря
 
-    // --- результаты рабочего потока (пишутся до done, читаются после) ------
-    ZStorage::CloudProbe probe_;
-    // Свежесть облака (конверта нет — пароль дважды) выясняется отдельным
-    // шагом; правка адреса или смена строки её забывает.
-    bool freshnessKnown_ = false;
-    bool cloudFresh_ = false;
-    ZStorage::Config settled_;        // строка, какой ей быть после удачи
-    QString resetSummary_;
-    Keyfile takenKey_;                // что положить в keyring (пусто — нечего)
-    QString takenServerPassword_;
-    QString takenStoreId_;
+    // --- работа в рабочем потоке (пишется до done, читается после) ---------
+    std::shared_ptr<TakenSecrets> taken_;
+    StoreManagerModel::Job runningJob_;
+    StoreManagerModel::Outcome outcome_;
 };
 
 }  // namespace zametti

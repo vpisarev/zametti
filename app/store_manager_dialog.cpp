@@ -1,3 +1,6 @@
+// Окно хранилищ: раскладка и исполнение. Решения — в модели, работы — в
+// StoreJobRunner; см. шапку store_manager_dialog.h.
+
 #include "store_manager_dialog.h"
 
 #include "dialog_font.h"
@@ -6,46 +9,59 @@
 #include <QAction>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QEvent>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QFrame>
+#include <QIcon>
+#include <QKeyEvent>
+#include <QMessageBox>
+#include <QMetaObject>
+#include <QStyle>
+#include <QValidator>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
-#include <QMessageBox>
-#include <QMetaObject>
 #include <QPushButton>
 #include <QVBoxLayout>
 
 namespace zametti {
 
-namespace {
-
-// Ключ строки — канонический вид пути, тот же, что у ZAppState::rememberStore.
-QString canonicalRoot(const QString& root) {
-    if (root.isEmpty()) return {};
-    return QDir::cleanPath(QFileInfo(root).absoluteFilePath());
-}
-
-// Приёмник-копилка для рабочего потока: ядро кладёт сюда ключ и пароль
-// сервера, а в настоящий keyring (DBus при главном цикле) их перекладывает
-// главный поток по завершении. Чтения здесь не живут: пути подключения ядра,
-// которыми ходит диалог, ключей не спрашивают.
+// Приёмник-копилка для рабочего потока: ядро кладёт сюда ключ и пароли, а в
+// настоящий keyring (DBus при главном цикле) их перекладывает главный поток
+// по завершении. Чтения здесь не живут: пути ядра, которыми ходит работа,
+// ключей не спрашивают — нужный работе ключ главный поток подсаживает ДО
+// запуска (seedKey).
 class TakenSecrets : public SecretStore {
 public:
     bool available() const override { return true; }
-    // Копилка пишет, не читает — и «есть ли» ей отвечать не из чего.
+    // Копилка — не связка: она знает лишь то, что ей самой положили в этом
+    // прогоне. Спрашивать её о состоянии связки бессмысленно, и ответ честен:
+    // сказать нечего.
     bool has(const QString&, Secret) override { return false; }
-    bool loadKey(const QString&, Keyfile*, QString* error) override {
-        if (error) *error = QStringLiteral("no keyring in the worker thread");
-        return false;
+    // ЧТЕНИЕ ОДНО И ТОЛЬКО ПОДСАЖЕННОЕ. Настоящую связку из рабочего потока
+    // не спросить (DBus живёт при главном цикле), но ключ работе бывает нужен
+    // — например смене пароля, которая ничего не стирает именно потому, что
+    // ключ уже под рукой. Поэтому главный поток кладёт его сюда ДО запуска.
+    void seedKey(const Keyfile& keyfile) { seeded_ = keyfile; }
+    bool loadKey(const QString&, Keyfile* out, QString* error) override {
+        if (!seeded_.hasKey()) {
+            if (error) *error = QStringLiteral("no keyring in the worker thread");
+            return false;
+        }
+        *out = seeded_;
+        return true;
     }
     bool storeKey(const Keyfile& keyfile, QString*) override {
         capturedKey = keyfile;
         return true;
     }
-    bool clearKey(const QString&, QString*) override { return true; }
+    bool clearKey(const QString& storeId, QString*) override {
+        forgotten.append(storeId);
+        return true;
+    }
     QString serverPassword(const QString&, QString*) override { return {}; }
     bool setServerPassword(const QString& storeId, const QString& password,
                            QString*) override {
@@ -68,49 +84,55 @@ public:
     QString capturedServerPassword;
     QString capturedEncryptionPasswordFor;
     QString capturedEncryptionPassword;
+    // Что работа попросила ЗАБЫТЬ (отвязка): переложится тем же шагом.
+    QStringList forgotten;
+
+protected:
+    Keyfile seeded_;
 };
 
-}  // namespace
 
-void StoreManagerDialog::setCloudAddress(ZStorage::Config& cfg, const QString& server,
-                                         const QString& user) {
-    cfg.cloudUrl.clear();
-    cfg.cloudDir.clear();
-    const QString address = server.trimmed();
-    if (address.startsWith(QStringLiteral("http://")) ||
-        address.startsWith(QStringLiteral("https://")))
-        // Хвостовой «/» — как у CLI: WebDAV-коллекция без него резолвится
-        // относительно родителя.
-        cfg.cloudUrl = address.endsWith(QLatin1Char('/')) ? address : address + QLatin1Char('/');
-    else if (!address.isEmpty())
-        cfg.cloudDir = QDir(address).absolutePath();
-    cfg.cloudUser = user.trimmed();
-}
+// Поле, по которому ездит каретка, но правки не проходят: валидатор отвергает
+// любой текст, кроме замороженного. Почему не setReadOnly: read-only QLineEdit
+// не показывает каретку вовсе, а путь длиннее поля, и по нему нужно ездить,
+// чтобы прочитать целиком (решение владельца, 28.08.2026). Программный
+// setText валидатор не спрашивает — показ строки работает как прежде; пустая
+// заморозка (QString()) отпускает поле для режима новой строки.
+class FrozenText : public QValidator {
+public:
+    using QValidator::QValidator;
+    void freeze(const QString& text) { frozen_ = text; }
+    State validate(QString& input, int&) const override {
+        return frozen_.isNull() || input == frozen_ ? Acceptable : Invalid;
+    }
 
-QString StoreManagerDialog::cloudAddressText(const ZStorage::Config& cfg) {
-    return cfg.cloudUrl.isEmpty() ? cfg.cloudDir : cfg.cloudUrl;
-}
+protected:
+    QString frozen_;
+};
 
-StoreManagerDialog::StoreManagerDialog(QWidget* parent, const QList<ZStorage::Config>& stores,
+
+StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
                                        const QString& currentRoot,
-                                       std::shared_ptr<ZStorage> storage,
                                        std::shared_ptr<SecretStore> secrets,
                                        const Keyfile::KdfParams& mintParams)
     : QDialog(parent),
-      storage_(std::move(storage)),
-      secrets_(std::move(secrets)),
-      currentRoot_(canonicalRoot(currentRoot)),
-      mintParams_(mintParams) {
+      stores_(stores),
+      model_(stores, currentRoot),
+      runner_(mintParams),
+      secrets_(std::move(secrets)) {
     setWindowTitle(QStringLiteral("Storages"));
     // Кегль — из настроек, как у остальной программы: системный дефолт на
     // FullHD-ноуте владельца мельче всего окна (dialog_font.h).
     setFont(dialogFont());
-    result_.stores = stores;
 
-    // --- слева: список и его кнопки -----------------------------------------
+    // --- слева: рамка со списком и его кнопками (п.1 брифа) -----------------
+    // Список и «+ −» живут В ОДНОЙ РАМКЕ: левая колонка кончается той же
+    // чертой, что и правая, и низ у окна один — Open рядом с Close.
     list_ = new QListWidget(this);
     list_->setObjectName(QStringLiteral("storeList"));
     list_->setSelectionMode(QAbstractItemView::SingleSelection);
+    // Список — без собственной рамки: рамка у колонки одна, внешняя.
+    list_->setFrameShape(QFrame::NoFrame);
 
     addButton_ = new QPushButton(QStringLiteral("+"), this);
     addButton_->setObjectName(QStringLiteral("addStore"));
@@ -120,817 +142,617 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, const QList<ZStorage::Co
     removeButton_->setObjectName(QStringLiteral("removeStore"));
     removeButton_->setToolTip(QStringLiteral("Forget this row — the folder and the cloud "
                                              "are not touched"));
-    openButton_ = new QPushButton(QStringLiteral("Open"), this);
-    openButton_->setObjectName(QStringLiteral("openStore"));
+
+    listFrame_ = new QFrame(this);
+    listFrame_->setObjectName(QStringLiteral("listFrame"));
+    listFrame_->setFrameShape(QFrame::StyledPanel);
+    {
+        auto* column = new QVBoxLayout(listFrame_);
+        column->addWidget(list_, 1);
+        auto* buttons = new QHBoxLayout;
+        buttons->addWidget(addButton_);
+        buttons->addWidget(removeButton_);
+        buttons->addStretch(1);
+        column->addLayout(buttons);
+    }
 
     // --- справа: форма выбранной строки -------------------------------------
     folder_ = new QLineEdit(this);
     folder_->setObjectName(QStringLiteral("folder"));
-    browseButton_ = new QPushButton(QStringLiteral("Browse…"), this);
+    folderFreeze_ = new FrozenText(folder_);
+    folder_->setValidator(folderFreeze_);
+    // КНОПКА ВЫБОРА ПАПКИ. Папку у новой строки спрашивает сам «+» (п.3
+    // брифа: плюс немедленно открывает выбор каталога), а эта нужна, чтобы
+    // ПОМЕНЯТЬ путь: у новой строки — если ткнули не туда, у существующей
+    // НЕОТКРЫТОЙ — если хранилище переехало (решение владельца, 28.08.2026).
+    // У открытого хранилища погашена: его папка под замком. Троеточие говорит
+    // «выбрать» на всех системах разом.
+    //
+    // ВЫСОТА У НЕЁ НАТУРАЛЬНАЯ, А СИДИТ ОНА НЕ В РАЗМЕТКЕ: в строке пути стоит
+    // РАСПОРКА её размеров, сама же кнопка плавает над рамкой формы и ставится
+    // по координатам распорки (placeBrowseButton). Владелец подгонял положение
+    // и высоту живым полем прямо в окне и назвал оптимумом ровно такую посадку;
+    // кнопка ЖЕ ВНУТРИ РАЗМЕТКИ сажает соседей иначе — замер 28.08.2026 по
+    // снимкам окна: разметка ровняет по прямоугольникам элемента
+    // (SE_PushButtonLayoutItem урезает кнопке поля фокусного кольца), и строка
+    // от этого пересчитывается — поле подскакивает на две точки.
+    //
+    // ФИКСИРОВАННУЮ ВЫСОТУ НЕ СТАВИТЬ. Замер 28.08.2026: кнопку НЕСТАНДАРТНОЙ
+    // высоты маковский стиль не умеет — рисует родной бэзель и ОБРЕЗАЕТ его.
+    browseButton_ = new QPushButton(this);
     browseButton_->setObjectName(QStringLiteral("browse"));
+    browseButton_->setToolTip(QStringLiteral("Choose another folder"));
+    {
+        const int points = style()->pixelMetric(QStyle::PM_SmallIconSize, nullptr, this);
+        browseButton_->setIcon(QIcon(toolbarIcon(QStringLiteral("ellipsis"), points,
+                                                 palette().color(QPalette::Text),
+                                                 devicePixelRatioF())));
+        // ШИРИНУ НЕ ТРОГАЕМ, И ЭТО ВАЖНО: сплющенная кнопка маковского стиля
+        // теряет фаску и садится иначе (замер 28.08.2026 — расхождение
+        // видимых центров у нетронутой кнопки 0.0 точек).
+    }
+    browseHolder_ = new QWidget(this);
+    browseHolder_->setFixedSize(browseButton_->sizeHint());
+    browseHolder_->installEventFilter(this);
+
     auto* folderRow = new QHBoxLayout;
     folderRow->addWidget(folder_, 1);
-    folderRow->addWidget(browseButton_);
+    folderRow->addWidget(browseHolder_);
 
     server_ = new QLineEdit(this);
     server_->setObjectName(QStringLiteral("server"));
-    server_->setPlaceholderText(
-        QStringLiteral("https://server/dav/notes — or a folder path; empty = no cloud"));
+    // ПАПКА ХРАНИЛИЩА ВНУТРИ СЕРВЕРА (решение владельца, 28.08.2026; пп.7-8
+    // брифа): база провайдера сама бывает с путём (https://server/webdav), и
+    // хранилищу нужен свой сегмент. Пустое поле — имя локальной папки; живой
+    // дефолт показывает placeholder из снимка — форма значения, не поучение.
+    serverDir_ = new QLineEdit(this);
+    serverDir_->setObjectName(QStringLiteral("serverDir"));
     user_ = new QLineEdit(this);
     user_->setObjectName(QStringLiteral("user"));
     serverPassword_ = new QLineEdit(this);
     serverPassword_->setObjectName(QStringLiteral("serverPassword"));
     serverPassword_->setEchoMode(QLineEdit::Password);
-    serverPassword_->setPlaceholderText(QStringLiteral("empty = the stored one"));
 
     passwordLabel_ = new QLabel(QStringLiteral("Encryption password"), this);
     password_ = new QLineEdit(this);
     password_->setObjectName(QStringLiteral("password"));
     password_->setEchoMode(QLineEdit::Password);
-    password_->setPlaceholderText(QStringLiteral("empty = use the key from the keyring"));
     // Глаза-переключатели: включён — пароль виден и остаётся видимым (его
     // копируют не торопясь — просьба владельца); пустое поле наполняется
     // хранимым значением из keyring — затем keychain и служит местом, где
     // свой пароль можно подсмотреть.
-    serverEye_ = addEyeToggle(serverPassword_, [this] {
-        const QString id = shownStoreId();
-        return id.isEmpty() ? QString() : secrets_->serverPassword(id);
-    });
-    passwordEye_ = addEyeToggle(password_, [this] {
-        const QString id = shownStoreId();
-        return id.isEmpty() ? QString() : secrets_->encryptionPassword(id);
-    });
+    serverEye_ = addEyeToggle(serverPassword_, StoreManagerModel::FieldId::ServerPassword);
+    passwordEye_ = addEyeToggle(password_, StoreManagerModel::FieldId::EncryptionPassword);
     password2Label_ = new QLabel(QStringLiteral("Repeat password"), this);
     password2_ = new QLineEdit(this);
     password2_->setObjectName(QStringLiteral("password2"));
     password2_->setEchoMode(QLineEdit::Password);
 
-    applyButton_ = new QPushButton(QStringLiteral("Apply"), this);
-    applyButton_->setObjectName(QStringLiteral("apply"));
-    resetButton_ = new QPushButton(QStringLiteral("Reset password…"), this);
-    resetButton_->setObjectName(QStringLiteral("resetPassword"));
+    checkButton_ = new QPushButton(QStringLiteral("Check"), this);
+    checkButton_->setObjectName(QStringLiteral("check"));
+    checkButton_->setToolTip(
+        QStringLiteral("Reach the cloud and show what it holds — nothing is changed"));
+    resetButton_ = new QPushButton(QStringLiteral("Reset cloud…"), this);
+    resetButton_->setObjectName(QStringLiteral("resetCloud"));
     resetButton_->setToolTip(
-        QStringLiteral("The encryption password is lost: replace the cloud copy, "
-                       "encrypted with a new password"));
+        QStringLiteral("Change the encryption password, or erase the cloud copy"));
 
+    // ДВЕ РАМКИ ФАКТОВ ПО ДВЕ СТРОКИ И ОДНА СТРОКА ПРО СОБЫТИЕ (п.5 брифа).
+    // Факт и событие — разное, и делить им один ярлык значило бы «статус то
+    // говорит, то молчит»: у рамок текст есть всегда, у строки обычно пусто.
+    const auto makeFactFrame = [this](QFrame** frame, QLabel** line, const char* name) {
+        *frame = new QFrame(this);
+        (*frame)->setObjectName(QLatin1String(name) + QStringLiteral("Frame"));
+        (*frame)->setFrameShape(QFrame::StyledPanel);
+        *line = new QLabel(*frame);
+        (*line)->setObjectName(QLatin1String(name));
+        (*line)->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        auto* box = new QVBoxLayout(*frame);
+        box->setContentsMargins(8, 4, 8, 4);
+        box->addWidget(*line);
+        // Рамка держит ДВЕ строки всегда, даже когда факт короткий: скачущая
+        // при переключении строк высота — худшее, что может делать форма.
+        (*line)->setMinimumHeight(2 * (*line)->fontMetrics().lineSpacing());
+    };
+    makeFactFrame(&localFrame_, &localLine_, "localLine");
+    makeFactFrame(&cloudFrame_, &cloudLine_, "cloudLine");
     status_ = new QLabel(this);
     status_->setObjectName(QStringLiteral("status"));
     status_->setWordWrap(true);
 
+    // РАМКА ВОКРУГ ФОРМЫ (решение владельца). Диалог тянется мышью, и рамка
+    // даёт правой половине тело, равное по весу списку слева, и границу,
+    // внутри которой поля растягиваются по горизонтали (п.9 брифа).
+    formFrame_ = new QFrame(this);
+    formFrame_->setObjectName(QStringLiteral("formFrame"));
+    formFrame_->setFrameShape(QFrame::StyledPanel);
+    // Кнопка при поле пути — ребёнок рамки, вне разметок (почему — у её
+    // создания выше); гасится она вместе с формой как раз потому, что живёт
+    // в рамке. После setParent виджет спрятан — показать.
+    browseButton_->setParent(formFrame_);
+    browseButton_->show();
+
+    // СТРОКИ ФОРМЫ ДЕРЖАТ СВОЮ ВЫСОТУ, А ПУСТОТА УХОДИТ ВНИЗ РАМКИ:
+    // промежуточная колонка (форма сверху, stretch снизу) не даёт QFormLayout
+    // растягивать строки по высоте рамки — иначе стиль macOS сажает кнопку
+    // при поле пути выше поля на две точки (замер 28.08.2026).
+    auto* frameColumn = new QVBoxLayout(formFrame_);
     auto* form = new QFormLayout;
+    frameColumn->addLayout(form);
+    frameColumn->addStretch(1);
+    // ДВЕ НАСТРОЙКИ ПРОТИВ ПОДСКАЗОК СТИЛЯ macOS, И БЕЗ НИХ ОКНО РАЗВАЛИВАЕТСЯ
+    // (замер 28.08.2026, Qt 6.11.1): маковский стиль отвечает форме
+    // FieldsStayAtSizeHint + AlignHCenter — поля не растут вовсе (125 точек,
+    // путь обрезается посреди слова), а форма прижата к середине колонки.
+    // Ровно то, что владелец увидел на маке (п.9 брифа). Выравнивание
+    // ПОДПИСЕЙ не трогаем: справа — родная маковская привычка.
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    form->setFormAlignment(Qt::AlignLeft | Qt::AlignTop);
     form->addRow(QStringLiteral("Folder"), folderRow);
-    form->addRow(QStringLiteral("Cloud (WebDAV)"), server_);
+    form->addRow(QStringLiteral("Cloud server (WebDAV)"), server_);
+    form->addRow(QStringLiteral("Cloud dir"), serverDir_);
     form->addRow(QStringLiteral("Login"), user_);
     form->addRow(QStringLiteral("Server password"), serverPassword_);
     form->addRow(passwordLabel_, password_);
     form->addRow(password2Label_, password2_);
     auto* actionRow = new QHBoxLayout;
-    actionRow->addWidget(applyButton_);
+    actionRow->addWidget(checkButton_);
     actionRow->addWidget(resetButton_);
     actionRow->addStretch(1);
     form->addRow(QString(), actionRow);
+
+    // Рамки фактов — сразу за кнопками, во всю ширину формы; строка события
+    // под ними: читать её надо там же, где нажимал.
+    form->addRow(localFrame_);
+    form->addRow(cloudFrame_);
+    form->addRow(status_);
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
     closeButton_ = buttons->button(QDialogButtonBox::Close);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
-    auto* leftButtons = new QHBoxLayout;
-    // Open растягивается до правого края списка: ряд с хвостовой пустотой
-    // выглядел неровным (владелец, п.5 первого живого прогона).
-    leftButtons->addWidget(addButton_);
-    leftButtons->addWidget(removeButton_);
-    leftButtons->addWidget(openButton_, 1);
-    auto* left = new QVBoxLayout;
-    left->addWidget(list_, 1);
-    left->addLayout(leftButtons);
-
-    auto* right = new QVBoxLayout;
-    right->addLayout(form);
-    right->addStretch(1);
-    right->addWidget(status_);
+    // ДВЕ РАМКИ НА ОБЩУЮ ВЫСОТУ, ВЫХОДЫ — ОДНИМ РЯДОМ ВНИЗУ (пп.1-2 брифа).
+    // «Open» и «Close» стоят вместе: это два способа ИЗ ОКНА ВЫЙТИ, а не
+    // действие над списком; «+ −» правят список и живут при нём, под ним.
+    //
+    // Open — обычной кнопкой, а не третьей в QDialogButtonBox: у коробки
+    // кнопка с ролью Accept становится кнопкой по умолчанию, и Enter в поле
+    // пароля переключал бы хранилище.
+    openButton_ = new QPushButton(QStringLiteral("Open"), this);
+    openButton_->setObjectName(QStringLiteral("openStore"));
 
     auto* columns = new QHBoxLayout;
-    columns->addLayout(left, 2);
-    columns->addLayout(right, 3);
+    columns->addWidget(listFrame_, 2);
+    columns->addWidget(formFrame_, 3);
+
+    auto* bottom = new QHBoxLayout;
+    bottom->addStretch(1);
+    bottom->addWidget(openButton_);
+    bottom->addWidget(buttons);
+
     auto* whole = new QVBoxLayout(this);
     whole->addLayout(columns, 1);
-    whole->addWidget(buttons);
+    whole->addLayout(bottom);
     // Ширина — под кегль из настроек: на 14pt прежние 760 обрезали и путь, и
-    // подсказки полей.
-    resize(900, 460);
+    // подсказки полей. Высота — под форму с двумя рамками фактов.
+    resize(900, 560);
 
-    connect(addButton_, &QPushButton::clicked, this, &StoreManagerDialog::beginNewEntry);
-    connect(removeButton_, &QPushButton::clicked, this, &StoreManagerDialog::forgetSelected);
-    connect(openButton_, &QPushButton::clicked, this, &StoreManagerDialog::openSelected);
+    connect(addButton_, &QPushButton::clicked, this, &StoreManagerDialog::addStore);
+    connect(removeButton_, &QPushButton::clicked, this,
+            [this] { act(model_.forgetPressed()); });
+    connect(openButton_, &QPushButton::clicked, this,
+            [this] { act(model_.openPressed()); });
     connect(list_, &QListWidget::currentRowChanged, this, [this](int row) {
-        if (!busy_ && row >= 0) showEntry(row);
+        if (busy_ || row < 0 || row == model_.selected()) return;
+        model_.select(row);
+        render();
     });
     connect(list_, &QListWidget::itemDoubleClicked, this,
-            [this](QListWidgetItem*) { openSelected(); });
-    connect(applyButton_, &QPushButton::clicked, this, &StoreManagerDialog::onApply);
-    connect(resetButton_, &QPushButton::clicked, this, &StoreManagerDialog::enterResetMode);
-    connect(server_, &QLineEdit::textEdited, this, [this] {
-        // Другой адрес — другая свежесть: повтор пароля мог относиться к
-        // прежнему облаку.
-        freshnessKnown_ = false;
-        if (!resetMode_) {
-            password2Label_->hide();
-            password2_->hide();
-            password2_->clear();
-        }
-    });
+            [this](QListWidgetItem*) { act(model_.openPressed()); });
+    connect(checkButton_, &QPushButton::clicked, this,
+            [this] { act(model_.checkPressed()); });
+    connect(resetButton_, &QPushButton::clicked, this,
+            [this] { act(model_.resetPressed()); });
     connect(browseButton_, &QPushButton::clicked, this, [this] {
-        const QString start = folder_->text().isEmpty()
-                                  ? QFileInfo(currentRoot_).absolutePath()
-                                  : folder_->text();
-        const QString dir = QFileDialog::getExistingDirectory(
-            this, QStringLiteral("Storage folder"), start);
-        if (!dir.isEmpty()) folder_->setText(dir);
+        const QString dir = askFolder();
+        if (dir.isEmpty()) return;
+        model_.edit(StoreManagerModel::FieldId::Folder, dir);
+        render();
     });
 
-    // Пустой список — сразу форма добавления: человеку, запустившему
-    // программу впервые, делать здесь больше нечего.
-    if (result_.stores.isEmpty()) {
-        rebuildList(-1);
-        beginNewEntry();
-    } else {
-        int current = 0;
-        for (int i = 0; i < result_.stores.size(); ++i)
-            if (result_.stores[i].root == currentRoot_) current = i;
-        rebuildList(current);
-    }
+    // ПРАВКА ПОЛЯ УХОДИТ В МОДЕЛЬ, И ОТТУДА ЖЕ ВОЗВРАЩАЕТСЯ ВЕСЬ ВИД. Своих
+    // решений у окна нет: доступность кнопок, цвет подсказки, видимость поля
+    // повтора — всё это снимок, посчитанный один раз.
+    //
+    // textEdited, а НЕ textChanged: программный setText внутри render() не
+    // должен выглядеть правкой человека — иначе заглушка связки стиралась бы
+    // сама собой, и «пароль здесь есть» превращалось бы в красное требование.
+    const auto wire = [this](QLineEdit* field, StoreManagerModel::FieldId which) {
+        connect(field, &QLineEdit::textEdited, this, [this, which](const QString& text) {
+            model_.edit(which, text);
+            render();
+        });
+    };
+    wire(folder_, StoreManagerModel::FieldId::Folder);
+    wire(server_, StoreManagerModel::FieldId::Server);
+    wire(serverDir_, StoreManagerModel::FieldId::ServerDir);
+    wire(user_, StoreManagerModel::FieldId::Login);
+    wire(serverPassword_, StoreManagerModel::FieldId::ServerPassword);
+    wire(password_, StoreManagerModel::FieldId::EncryptionPassword);
+    wire(password2_, StoreManagerModel::FieldId::Repeat);
+
+    // Заглушку связки стирает ПЕРВОЕ НАЖАТИЕ КЛАВИШИ, а не фокус: пройти по
+    // полям табом человек вправе, ничего при этом не потеряв.
+    serverPassword_->installEventFilter(this);
+    password_->installEventFilter(this);
+
+    render();
 }
 
 StoreManagerDialog::~StoreManagerDialog() {
     if (worker_.joinable()) worker_.join();
 }
 
-void StoreManagerDialog::reject() {
-    if (busy_) return;  // рабочий поток держит хранилище — его дожидаются
-    QDialog::reject();
+void StoreManagerDialog::adoptDrafts(QHash<QString, StoreManagerModel::Draft>* drafts) {
+    model_.adoptDrafts(drafts);
+    render();
 }
 
-bool StoreManagerDialog::isCurrentRoot(const QString& root) const {
-    return !currentRoot_.isEmpty() && canonicalRoot(root) == currentRoot_;
+// --- ЕДИНСТВЕННАЯ ДОРОГА ОТ МОДЕЛИ К ЭКРАНУ ---------------------------------
+
+void StoreManagerDialog::rebuildList(const StoreManagerModel::Snapshot& snap) {
+    QStringList roots;
+    for (const StoreManagerModel::Row& r : snap.rows) roots.append(r.root);
+    if (roots == shownRoots_ && list_->count() == snap.rows.size()) {
+        // Состав тот же — переписываем только подписи: имя корневой заметки
+        // могло приехать после работы.
+        for (int i = 0; i < snap.rows.size(); ++i) {
+            const StoreManagerModel::Row& r = snap.rows.at(i);
+            const QString title = r.open ? r.title + QStringLiteral("  •  open") : r.title;
+            if (list_->item(i)->text() != title) list_->item(i)->setText(title);
+        }
+        return;
+    }
+    shownRoots_ = roots;
+    const QSignalBlocker quiet(list_);
+    list_->clear();
+    for (const StoreManagerModel::Row& r : snap.rows) {
+        auto* item = new QListWidgetItem(
+            r.open ? r.title + QStringLiteral("  •  open") : r.title, list_);
+        item->setToolTip(r.root);
+    }
 }
 
-QAction* StoreManagerDialog::addEyeToggle(QLineEdit* field, std::function<QString()> stored) {
-    const qreal dpr = devicePixelRatioF();
-    const QColor color = palette().color(QPalette::Text);
+void StoreManagerDialog::render() {
+    const StoreManagerModel::Snapshot snap = model_.snapshot();
+    rebuildList(snap);
+    if (list_->currentRow() != snap.selected) {
+        const QSignalBlocker quiet(list_);
+        list_->setCurrentRow(snap.selected);
+    }
+
+    // Поле не переписывается, когда текст тот же: иначе каретка прыгала бы в
+    // начало на каждом нажатии клавиши.
+    const auto put = [](QLineEdit* field, const QString& text) {
+        if (field->text() != text) field->setText(text);
+    };
+    put(folder_, snap.folder);
+    // Путь ОТКРЫТОГО хранилища под замком: по нему ездят кареткой, но не
+    // правят (заморозка валидатором, а не setReadOnly — иначе каретки нет).
+    folderFreeze_->freeze(snap.folderFrozen ? snap.folder : QString());
+    folder_->setToolTip(snap.folder);
+    put(password2_, snap.repeat);
+
+    // Обычные поля тоже ведёт снимок: доступность и подсказка (каталог-облако
+    // гасит логин и серверную папку и говорит об этом сам).
+    const auto putField = [&put](QLineEdit* field, const StoreManagerModel::Field& state) {
+        put(field, state.text);
+        field->setPlaceholderText(state.placeholder);
+        field->setEnabled(state.enabled);
+    };
+    putField(server_, snap.server);
+    putField(serverDir_, snap.serverDir);
+    putField(user_, snap.login);
+
+    // ПАРОЛЬ В СВЯЗКЕ ПОКАЗЫВАЕТСЯ КРУЖОЧКАМИ — как настоящий (поправка
+    // владельца). Это подстановка показа: наружу она не уходит никогда, а
+    // первое нажатие клавиши её стирает (eventFilter ниже).
+    const auto putSecret = [&put](QLineEdit* field, QAction* eye,
+                                  const StoreManagerModel::Field& state) {
+        put(field, state.stub ? QString(8, QChar(0x2022)) : state.text);
+        field->setPlaceholderText(state.placeholder);
+        field->setEnabled(state.enabled);
+        field->setStyleSheet(state.placeholderAlarm ? QStringLiteral("color: #c03030;")
+                                                    : QString());
+        eye->setEnabled(state.eyeEnabled);
+        if (!state.eyeEnabled) eye->setChecked(false);
+    };
+    putSecret(serverPassword_, serverEye_, snap.serverPassword);
+    putSecret(password_, passwordEye_, snap.encryptionPassword);
+
+    password2Label_->setVisible(snap.repeatVisible);
+    password2_->setVisible(snap.repeatVisible);
+
+    const auto show = [](QPushButton* button, const StoreManagerModel::Button& state) {
+        if (!state.label.isEmpty() && button->text() != state.label)
+            button->setText(state.label);
+        button->setEnabled(state.enabled);
+    };
+    show(addButton_, snap.add);
+    show(removeButton_, snap.remove);
+    show(browseButton_, snap.browse);
+    show(checkButton_, snap.check);
+    show(resetButton_, snap.reset);
+    show(openButton_, snap.open);
+    closeButton_->setEnabled(snap.close.enabled);
+
+    // ЗАНЯТОСТЬ — ПРОСТО ЕЩЁ ОДНО СЛАГАЕМОЕ, а не свой набор правил: пока
+    // работа идёт, форма глохнет целиком, а решает всё тот же снимок.
+    if (busy_) {
+        formFrame_->setEnabled(false);
+        addButton_->setEnabled(false);
+        removeButton_->setEnabled(false);
+        openButton_->setEnabled(false);
+    } else {
+        formFrame_->setEnabled(!snap.rows.isEmpty());
+    }
+
+    const auto line = [](QLabel* label, const StoreManagerModel::Line& state) {
+        label->setText(state.text);
+        label->setStyleSheet(state.alarm ? QStringLiteral("color: #c03030;") : QString());
+    };
+    line(localLine_, snap.local);
+    line(cloudLine_, snap.cloud);
+    line(status_, snap.message);
+    placeBrowseButton();
+}
+
+// --- намерение модели -------------------------------------------------------
+
+int StoreManagerDialog::ask(const StoreManagerModel::Question& question) {
+    QMessageBox box(this);
+    box.setWindowTitle(QStringLiteral("zametti"));
+    box.setText(question.text);
+    if (!question.detail.isEmpty()) box.setInformativeText(question.detail);
+    QList<QPushButton*> buttons;
+    for (int i = 0; i < question.choices.size(); ++i) {
+        const bool last = i + 1 == question.choices.size();
+        buttons.append(box.addButton(question.choices.at(i),
+                                     last ? QMessageBox::RejectRole
+                                          : QMessageBox::DestructiveRole));
+    }
+    if (!buttons.isEmpty()) box.setDefaultButton(buttons.last());
+    box.exec();
+    for (int i = 0; i < buttons.size(); ++i)
+        if (box.clickedButton() == buttons.at(i)) return i;
+    return int(buttons.size()) - 1;   // закрыли крестиком — это отказ
+}
+
+void StoreManagerDialog::act(const StoreManagerModel::Reaction& reaction) {
+    if (reaction.question.kind != StoreManagerModel::Question::Kind::None) {
+        const int choice = ask(reaction.question);
+        act(model_.answered(reaction.question.kind, choice));
+        return;
+    }
+    if (reaction.job.kind != StoreManagerModel::Job::Kind::None) {
+        runJob(reaction.job);
+        return;
+    }
+    if (!reaction.switchToRoot.isEmpty()) {
+        result_.switchToRoot = reaction.switchToRoot;
+        accept();
+        return;
+    }
+    if (reaction.close) {
+        // «−» по открытой строке отцепляет хранилище НЕМЕДЛЕННО, не дожидаясь
+        // закрытия окна: окно программы живёт без хранилища (папка Info).
+        if (detachCurrent_) detachCurrent_();
+        render();
+        return;
+    }
+    render();
+}
+
+void StoreManagerDialog::runJob(const StoreManagerModel::Job& job) {
+    // СВЯЗКУ СПРАШИВАЕМ ЗДЕСЬ, В ГЛАВНОМ ПОТОКЕ, и только по явному жесту.
+    // Признак «возьми из связки» снимается тут же: дальше едут настоящие
+    // секреты, а кружочки показа наружу не выходят никогда.
+    StoreManagerModel::Job resolved = job;
+    const QString root = ZStorageManager::canonicalRoot(job.root);
+    const QString storeId = ZStorage::inspect(root) == ZStorage::DirKind::Store
+                                ? ZStorage(root).identity().storeId()
+                                : QString();
+    taken_ = std::make_shared<TakenSecrets>();
+    if (!storeId.isEmpty()) {
+        if (job.serverPasswordFromKeyring)
+            resolved.serverPassword = secrets_->serverPassword(storeId);
+        if (job.encryptionFromKeyring)
+            resolved.encryptionPassword = secrets_->encryptionPassword(storeId);
+        // Ключ подсаживается в копилку целиком: работе он бывает нужен (смена
+        // пароля ничего не стирает именно потому, что ключ под рукой), а
+        // спросить настоящую связку из рабочего потока нельзя.
+        Keyfile key;
+        if (secrets_->loadKey(storeId, &key, nullptr)) taken_->seedKey(key);
+    }
+    resolved.serverPasswordFromKeyring = false;
+    resolved.encryptionFromKeyring = false;
+    runningJob_ = resolved;
+
+    startWork(
+        QStringLiteral("Working…"),
+        [this] { outcome_ = runner_.run(runningJob_, *taken_); },
+        [this] {
+            // ДОБЫТОЕ — В НАСТОЯЩУЮ СВЯЗКУ, ВСЕ ТРИ ЗАПИСИ. Прежде ветка
+            // сброса переносила ключ и пароль сервера, а пароль шифрования
+            // забывала — и человек, только что введший его дважды, получал
+            // красное «set encryption password» (жалоба владельца, 29.08.2026).
+            QString why;
+            if (taken_->capturedKey.hasKey() && !secrets_->storeKey(taken_->capturedKey, &why))
+                model_.setMessage(QStringLiteral("The keyring refused the key: %1").arg(why),
+                                  true);
+            if (!taken_->capturedServerPassword.isEmpty() &&
+                !taken_->capturedServerPasswordFor.isEmpty())
+                secrets_->setServerPassword(taken_->capturedServerPasswordFor,
+                                            taken_->capturedServerPassword, &why);
+            if (!taken_->capturedEncryptionPassword.isEmpty() &&
+                !taken_->capturedEncryptionPasswordFor.isEmpty())
+                secrets_->setEncryptionPassword(taken_->capturedEncryptionPasswordFor,
+                                                taken_->capturedEncryptionPassword, &why);
+            for (const QString& forgotten : taken_->forgotten) {
+                secrets_->clearKey(forgotten, &why);
+                secrets_->clearServerPassword(forgotten, &why);
+                secrets_->clearEncryptionPassword(forgotten, &why);
+            }
+            taken_.reset();
+
+            const bool wasOurCloud =
+                runningJob_.kind != StoreManagerModel::Job::Kind::None && outcome_.ok;
+            act(model_.jobFinished(runningJob_.kind, outcome_));
+            if (wasOurCloud && model_.isOpenRow()) result_.cloudChangedForCurrent = true;
+            if (outcome_.ok && outcome_.downloadedNew) result_.downloadedNew = true;
+            // Заведённое хранилище — то, ради чего жали кнопку: открываем его
+            // и уходим. Скачивание при этом ведёт фоновый прогон.
+            if (outcome_.ok && runningJob_.kind == StoreManagerModel::Job::Kind::Create) {
+                result_.switchToRoot = runningJob_.root;
+                accept();
+                return;
+            }
+            render();
+        });
+}
+
+// --- жесты окна -------------------------------------------------------------
+
+QString StoreManagerDialog::askFolder() {
+    const QString start = folder_->text().trimmed();
+    return QFileDialog::getExistingDirectory(this, QStringLiteral("Storage folder"), start);
+}
+
+void StoreManagerDialog::addStore() {
+    // «+» немедленно открывает выбор каталога (п.3 брифа): пустая ли папка,
+    // хранилище или чужая — решает модель по факту выбора.
+    const QString dir = askFolder();
+    if (dir.isEmpty()) return;
+    addFolder(dir);
+}
+
+void StoreManagerDialog::addFolder(const QString& dir) {
+    act(model_.addFolder(dir));
+}
+
+void StoreManagerDialog::dropSelected() {
+    act(model_.answered(StoreManagerModel::Question::Kind::Forget, 0));
+}
+
+void StoreManagerDialog::chooseReset(int road) {
+    act(model_.answered(StoreManagerModel::Question::Kind::ResetCloud, road));
+}
+
+QAction* StoreManagerDialog::addEyeToggle(QLineEdit* field, StoreManagerModel::FieldId which) {
     QIcon icon;
-    icon.addPixmap(toolbarIcon(QStringLiteral("eye"), 12, color, dpr), QIcon::Normal,
-                   QIcon::Off);
-    icon.addPixmap(toolbarIcon(QStringLiteral("eye-off"), 12, color, dpr), QIcon::Normal,
+    const int points = style()->pixelMetric(QStyle::PM_SmallIconSize, nullptr, this);
+    const QColor color = palette().color(QPalette::Text);
+    const qreal dpr = devicePixelRatioF();
+    icon.addPixmap(toolbarIcon(QStringLiteral("eye"), points, color, dpr), QIcon::Normal,
                    QIcon::On);
+    icon.addPixmap(toolbarIcon(QStringLiteral("eye-off"), points, color, dpr), QIcon::Normal,
+                   QIcon::Off);
     QAction* eye = field->addAction(icon, QLineEdit::TrailingPosition);
     eye->setCheckable(true);
     eye->setToolTip(QStringLiteral("Show the password"));
-    connect(eye, &QAction::toggled, this, [field, stored](bool on) {
-        // Keyring спрашивается ЗДЕСЬ, в главном потоке (DBus живёт при
-        // главном цикле), и только по явному жесту человека.
-        if (on && field->text().isEmpty() && stored) field->setText(stored());
+    connect(eye, &QAction::toggled, this, [this, field, which](bool on) {
         field->setEchoMode(on ? QLineEdit::Normal : QLineEdit::Password);
+        if (!on) return;
+        // ГЛАЗ ДОСТАЁТ НАСТОЯЩИЙ ПАРОЛЬ ИЗ СВЯЗКИ — ради этого связка и
+        // хранит его третьей записью (решение владельца): подсмотреть и
+        // скопировать свой пароль больше негде. Спрашиваем ЯВНЫМ жестом и в
+        // главном потоке: на маке чтение секрета вправе поднять системный
+        // вопрос, и на переключение строки его звать нельзя.
+        const QString root = ZStorageManager::canonicalRoot(folder_->text().trimmed());
+        if (ZStorage::inspect(root) != ZStorage::DirKind::Store) return;
+        const QString id = ZStorage(root).identity().storeId();
+        if (id.isEmpty()) return;
+        const QString kept = which == StoreManagerModel::FieldId::ServerPassword
+                                 ? secrets_->serverPassword(id)
+                                 : secrets_->encryptionPassword(id);
+        if (kept.isEmpty()) return;
+        // Показанное становится набранным: поле и модель обязаны говорить об
+        // одном, иначе следующая работа поедет с заглушкой.
+        model_.edit(which, kept);
+        render();
     });
     return eye;
 }
 
-QString StoreManagerDialog::shownStoreId() const {
-    const QString named = newEntry_ ? folder_->text().trimmed()
-                          : (selected_ >= 0 ? result_.stores[selected_].root : QString());
-    if (named.isEmpty()) return {};
-    const QString root = canonicalRoot(named);
-    if (ZStorage::inspect(root) != ZStorage::DirKind::Store) return {};
-    return isCurrentRoot(root) && storage_ != nullptr ? storage_->identity().storeId()
-                                                      : ZStorage(root).identity().storeId();
-}
+bool StoreManagerDialog::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == browseHolder_ &&
+        (event->type() == QEvent::Move || event->type() == QEvent::Resize))
+        placeBrowseButton();
 
-void StoreManagerDialog::rebuildList(int selectRow) {
-    list_->clear();
-    for (const ZStorage::Config& e : result_.stores) {
-        const QString title = e.name.isEmpty() ? QFileInfo(e.root).fileName() : e.name;
-        auto* item = new QListWidgetItem(
-            isCurrentRoot(e.root) ? title + QStringLiteral("  •  open") : title, list_);
-        QString tip = e.root;
-        if (e.hasCloudAddress()) tip += QStringLiteral("\ncloud: ") + cloudAddressText(e);
-        item->setToolTip(tip);
+    // ПЕРВОЕ НАЖАТИЕ КЛАВИШИ СТИРАЕТ ЗАГЛУШКУ СВЯЗКИ. Не фокус: пройти по
+    // полям табом человек вправе, ничего не потеряв, — а вот начал печатать,
+    // значит вводит свой пароль, и кружочкам там больше не место.
+    if (event->type() == QEvent::KeyPress &&
+        (watched == serverPassword_ || watched == password_)) {
+        const auto* key = static_cast<QKeyEvent*>(event);
+        const bool typing = !key->text().isEmpty() || key->key() == Qt::Key_Backspace ||
+                            key->key() == Qt::Key_Delete;
+        const StoreManagerModel::Snapshot snap = model_.snapshot();
+        const bool stub = watched == serverPassword_ ? snap.serverPassword.stub
+                                                     : snap.encryptionPassword.stub;
+        if (typing && stub) {
+            model_.edit(watched == serverPassword_
+                            ? StoreManagerModel::FieldId::ServerPassword
+                            : StoreManagerModel::FieldId::EncryptionPassword,
+                        QString());
+            static_cast<QLineEdit*>(watched)->clear();
+            render();
+        }
     }
-    if (selectRow >= 0 && selectRow < list_->count()) {
-        list_->setCurrentRow(selectRow);
-        showEntry(selectRow);
-    }
+    return QDialog::eventFilter(watched, event);
 }
 
-void StoreManagerDialog::showEntry(int row) {
-    if (row < 0 || row >= result_.stores.size()) return;
-    newEntry_ = false;
-    selected_ = row;
-    leaveResetMode();
-    const ZStorage::Config& e = result_.stores[row];
-    // Папка существующей строки заморожена: строка ПРО эту папку, а «та же
-    // строка, другая папка» была бы вторым способом добавить хранилище.
-    folder_->setText(e.root);
-    // Полный путь должен читаться целиком: тултип, каретка в начале (хвост
-    // длинного пути прокручивается стрелками и выделяется мышью — read-only
-    // это не запрещает).
-    folder_->setToolTip(e.root);
-    folder_->setCursorPosition(0);
-    folder_->setReadOnly(true);
-    browseButton_->setEnabled(false);
-    server_->setText(cloudAddressText(e));
-    user_->setText(e.cloudUser);
-    serverPassword_->clear();
-    password_->clear();
-    password2_->clear();
-    // Глаза — закрыть: чужая строка не должна открываться с показанным
-    // паролем прежней.
-    serverEye_->setChecked(false);
-    passwordEye_->setChecked(false);
-    applyButton_->setText(QStringLiteral("Apply"));
-    resetButton_->setEnabled(true);
-    const bool current = isCurrentRoot(e.root);
-    openButton_->setEnabled(!current);
-    // «−» у открытого погашен: строка вернулась бы при следующем прицеплении.
-    removeButton_->setEnabled(!current);
-    say(QString(), false);
+void StoreManagerDialog::placeBrowseButton() {
+    if (browseHolder_ == nullptr || browseButton_ == nullptr || formFrame_ == nullptr) return;
+    const QPoint at = formFrame_->mapFrom(browseHolder_->parentWidget(),
+                                          browseHolder_->pos());
+    browseButton_->setGeometry(QRect(at, browseHolder_->size()));
 }
 
-void StoreManagerDialog::beginNewEntry() {
-    if (busy_) return;
-    newEntry_ = true;
-    selected_ = -1;
-    leaveResetMode();
-    list_->setCurrentRow(-1);
-    folder_->clear();
-    folder_->setToolTip(QString());
-    folder_->setReadOnly(false);
-    browseButton_->setEnabled(true);
-    server_->clear();
-    user_->clear();
-    serverPassword_->clear();
-    password_->clear();
-    password2_->clear();
-    serverEye_->setChecked(false);
-    passwordEye_->setChecked(false);
-    applyButton_->setText(QStringLiteral("Add"));
-    resetButton_->setEnabled(false);
-    openButton_->setEnabled(false);
-    removeButton_->setEnabled(false);
-    say(QStringLiteral("Name a folder: a storage — it joins the list; an empty one — a new "
-                       "storage is created there, or downloaded, if the cloud is named."),
-        false);
-    folder_->setFocus();
-}
+// --- потоки -----------------------------------------------------------------
 
-void StoreManagerDialog::forgetSelected() {
-    if (busy_ || selected_ < 0 || selected_ >= result_.stores.size()) return;
-    if (isCurrentRoot(result_.stores[selected_].root)) return;
-    result_.stores.removeAt(selected_);
-    const int next = qMin(selected_, int(result_.stores.size()) - 1);
-    selected_ = -1;
-    if (result_.stores.isEmpty()) {
-        rebuildList(-1);
-        beginNewEntry();
-    } else {
-        rebuildList(next);
-    }
-}
-
-void StoreManagerDialog::openSelected() {
-    if (busy_ || selected_ < 0 || selected_ >= result_.stores.size()) return;
-    const QString root = result_.stores[selected_].root;
-    if (isCurrentRoot(root)) return;
-    result_.switchToRoot = root;
-    accept();
-}
-
-void StoreManagerDialog::enterResetMode() {
-    if (busy_ || resetMode_ || selected_ < 0) return;
-    // ПЕРЕСПРОС — исключение, названное владельцем: операция стирает облачную
-    // копию, и слова обязаны это говорить.
-    auto* ask = new QMessageBox(this);
-    ask->setAttribute(Qt::WA_DeleteOnClose);
-    ask->setIcon(QMessageBox::Warning);
-    ask->setWindowTitle(QStringLiteral("zametti"));
-    ask->setText(QStringLiteral("Reset the encryption password?"));
-    ask->setInformativeText(
-        QStringLiteral("The cloud copy (if any) will be deleted and replaced with this "
-                       "computer's copy, encrypted with the new password. The old password "
-                       "stops working; other devices will need the new one."));
-    QPushButton* go =
-        ask->addButton(QStringLiteral("Reset"), QMessageBox::DestructiveRole);
-    ask->addButton(QMessageBox::Cancel);
-    ask->setDefaultButton(QMessageBox::Cancel);
-    ask->exec();
-    if (ask->clickedButton() != go) return;
-    armResetMode();
-}
-
-void StoreManagerDialog::armResetMode() {
-    if (busy_ || resetMode_ || selected_ < 0) return;
-    resetMode_ = true;
-    passwordLabel_->setText(QStringLiteral("New encryption password"));
-    password_->setPlaceholderText(QString());
-    password_->clear();
-    password2_->clear();
-    password2Label_->show();
-    password2_->show();
-    applyButton_->setText(QStringLiteral("Reset && upload"));
-    say(QStringLiteral("Type the new password twice, then press «Reset & upload»."), false);
-    password_->setFocus();
-}
-
-void StoreManagerDialog::leaveResetMode() {
-    resetMode_ = false;
-    freshnessKnown_ = false;
-    passwordLabel_->setText(QStringLiteral("Encryption password"));
-    password_->setPlaceholderText(QStringLiteral("empty = use the key from the keyring"));
-    password2Label_->hide();
-    password2_->hide();
-    password2_->clear();
-}
-
-void StoreManagerDialog::say(const QString& text, bool trouble) {
-    status_->setStyleSheet(trouble ? QStringLiteral("color: #c03030;") : QString());
-    status_->setText(text);
-}
-
-void StoreManagerDialog::setBusy(bool on) {
-    busy_ = on;
-    for (QWidget* w :
-         std::initializer_list<QWidget*>{list_, addButton_, removeButton_, openButton_,
-                                         folder_, browseButton_, server_, user_,
-                                         serverPassword_, password_,
-                                         password2_, applyButton_, resetButton_,
-                                         closeButton_})
-        w->setEnabled(!on);
-    if (!on && selected_ >= 0) {
-        // Доступность кнопок списка — по выбранной строке, не «всё вернуть».
-        const bool current = isCurrentRoot(result_.stores[selected_].root);
-        openButton_->setEnabled(!current);
-        removeButton_->setEnabled(!current);
-    }
-    if (!on && (newEntry_ || selected_ >= 0)) resetButton_->setEnabled(!newEntry_);
-    if (!on) {
-        folder_->setReadOnly(!newEntry_);
-        browseButton_->setEnabled(newEntry_);
-    }
-}
-
-void StoreManagerDialog::startWork(const QString& status, std::function<QString()> job,
-                                   std::function<void(const QString&)> done) {
+void StoreManagerDialog::startWork(const QString& status, std::function<void()> job,
+                                   std::function<void()> done) {
     setBusy(true);
-    say(status, false);
+    model_.setMessage(status);
+    render();
     if (worker_.joinable()) worker_.join();
     worker_ = std::thread([this, job = std::move(job), done = std::move(done)] {
-        const QString error = job();
-        // Диалог живёт дольше потока: деструктор ждёт join, а занятое окно
-        // не закрывается (reject глушится).
+        job();
+        // Диалог живёт дольше потока: деструктор ждёт join.
         QMetaObject::invokeMethod(
             this,
-            [this, error, done] {
+            [this, done] {
                 setBusy(false);
-                done(error);
+                done();
             },
             Qt::QueuedConnection);
     });
 }
 
-void StoreManagerDialog::settleEntry(const ZStorage::Config& entry) {
-    int row = -1;
-    for (int i = 0; i < result_.stores.size(); ++i)
-        if (result_.stores[i].root == entry.root) row = i;
-    if (row < 0) {
-        result_.stores.append(entry);
-        row = int(result_.stores.size()) - 1;
-    } else {
-        ZStorage::Config kept = entry;
-        if (kept.name.isEmpty()) kept.name = result_.stores[row].name;
-        result_.stores[row] = kept;
-    }
-    newEntry_ = false;
-    rebuildList(row);
+void StoreManagerDialog::setBusy(bool on) {
+    busy_ = on;
+    render();
 }
 
-// --- ветки Apply ------------------------------------------------------------
+void StoreManagerDialog::reject() {
+    if (busy_) return;   // рабочий поток держит хранилище — его дожидаются
+    QDialog::reject();
+}
 
-void StoreManagerDialog::onApply() {
+void StoreManagerDialog::accept() {
     if (busy_) return;
-    const QString named =
-        (newEntry_ ? folder_->text() : (selected_ >= 0 ? result_.stores[selected_].root
-                                                       : QString()))
-            .trimmed();
-    if (named.isEmpty()) {
-        say(QStringLiteral("Name a folder for the storage."), true);
-        return;
-    }
-    const QString root = canonicalRoot(named);
-    ZStorage::Config cfg = selected_ >= 0 ? result_.stores[selected_] : ZStorage::Config{};
-    cfg.root = root;
-    setCloudAddress(cfg, server_->text(), user_->text());
-    const QString serverPassword = serverPassword_->text();
-    const QString password = password_->text();
-
-    if (resetMode_) {
-        resetPassword(cfg, serverPassword, password);
-        return;
-    }
-
-    switch (ZStorage::inspect(root)) {
-        case ZStorage::DirKind::Store:
-            applyToStore(cfg, serverPassword, password);
-            return;
-        case ZStorage::DirKind::Foreign:
-            say(QStringLiteral("The folder is not empty and is not a zametti storage:\n%1")
-                    .arg(root),
-                true);
-            return;
-        case ZStorage::DirKind::Missing:
-            if (!cfg.hasCloudAddress()) {
-                say(QStringLiteral("The folder does not exist:\n%1").arg(root), true);
-                return;
-            }
-            [[fallthrough]];  // облако назвало хранилище — скачивание заведёт каталог
-        case ZStorage::DirKind::Empty:
-            if (cfg.hasCloudAddress()) {
-                addFromCloud(cfg, serverPassword, password);
-                return;
-            }
-            // ВТОРОЕ НАЗВАННОЕ ВЛАДЕЛЬЦЕМ ИСКЛЮЧЕНИЕ из «никаких диалогов
-            // подтверждения»: пустой каталог мог быть выбран по ошибке, а
-            // засеянное хранилище потом ищут глазами и гадают, откуда оно.
-            if (QMessageBox::question(
-                    this, QStringLiteral("zametti"),
-                    QStringLiteral("Create a new zametti storage in \"%1\"?").arg(root)) !=
-                QMessageBox::Yes)
-                return;
-            {
-                // Засев локальный и мгновенный — без рабочего потока.
-                ZStorage fresh(root);
-                QString error;
-                if (!fresh.init(&error)) {
-                    say(error, true);
-                    return;
-                }
-                ZStorage::Config entry;
-                entry.root = root;
-                settleEntry(entry);
-                say(QStringLiteral("The storage is created."), false);
-                if (currentRoot_.isEmpty()) {
-                    // Окно без хранилища — открыть созданное сразу: пустое окно
-                    // никому не нужно.
-                    result_.switchToRoot = root;
-                    accept();
-                }
-            }
-            return;
-    }
-}
-
-void StoreManagerDialog::applyToStore(const ZStorage::Config& cfg,
-                                      const QString& serverPassword,
-                                      const QString& password) {
-    const bool current = isCurrentRoot(cfg.root);
-    // Идентичность — дешёвое чтение файла; keyring дальше спрашивается только
-    // в главном потоке и только когда он вправду нужен.
-    const QString storeId =
-        current ? storage_->identity().storeId() : ZStorage(cfg.root).identity().storeId();
-
-    // Пароль сервера: пустое поле = хранящийся в keyring.
-    QString effectiveServerPassword = serverPassword;
-    if (effectiveServerPassword.isEmpty() && !cfg.cloudUrl.isEmpty() && !storeId.isEmpty())
-        effectiveServerPassword = secrets_->serverPassword(storeId);
-
-    // --- облако убрали: отвязка, как CLI --reset (неразрушительная) ---------
-    if (!cfg.hasCloudAddress()) {
-        const bool hadCloud = selected_ >= 0 && result_.stores[selected_].hasCloudAddress();
-        startWork(
-            QStringLiteral("Reading the storage…"),
-            [this, cfg, current, hadCloud]() -> QString {
-                auto temp = current ? storage_ : std::make_shared<ZStorage>(cfg.root);
-                if (!current && hadCloud) {
-                    const ZStorage::LockReport lock = temp->lock();
-                    if (!lock.locked)
-                        return QStringLiteral("The storage is open by another copy of "
-                                              "zametti (pid %1 on \"%2\").")
-                            .arg(lock.holderPid)
-                            .arg(lock.holderHost);
-                }
-                QString error;
-                if (hadCloud && !temp->clearCloudConfig(&error)) return error;
-                if (current && hadCloud) temp->dropCloud();
-                settled_ = temp->cloudConfig();
-                settled_.name = temp->localStoreName();
-                return {};
-            },
-            [this, storeId, hadCloud, current](const QString& error) {
-                if (!error.isEmpty()) {
-                    say(error, true);
-                    return;
-                }
-                if (hadCloud && !storeId.isEmpty()) {
-                    // Секреты отвязанного — вон из keyring, как у CLI --reset.
-                    secrets_->clearKey(storeId);
-                    secrets_->clearServerPassword(storeId);
-                    secrets_->clearEncryptionPassword(storeId);
-                }
-                if (current && hadCloud) result_.cloudChangedForCurrent = true;
-                settleEntry(settled_);
-                say(hadCloud ? QStringLiteral("The cloud address and the secrets are "
-                                              "forgotten; the cloud copy itself is intact.")
-                             : QStringLiteral("Added to the list."),
-                    false);
-            });
-        return;
-    }
-
-    // --- облако есть, пароль пуст: обновление адреса ключом из keyring ------
-    if (password.isEmpty()) {
-        if (storeId.isEmpty()) {
-            say(QStringLiteral("Enter the encryption password: the storage has no identity "
-                               "yet, and there is nothing to look up in the keyring."),
-                true);
-            return;
-        }
-        Keyfile known;
-        QString why;
-        if (!secrets_->loadKey(storeId, &known, &why)) {
-            say(QStringLiteral("Enter the encryption password — the key is not in the "
-                               "keyring (%1).")
-                    .arg(why),
-                true);
-            return;
-        }
-        startWork(
-            QStringLiteral("Checking the cloud…"),
-            [this, cfg, current, known, effectiveServerPassword]() -> QString {
-                auto temp = current ? storage_ : std::make_shared<ZStorage>(cfg.root);
-                if (!current) {
-                    const ZStorage::LockReport lock = temp->lock();
-                    if (!lock.locked)
-                        return QStringLiteral("The storage is open by another copy of "
-                                              "zametti (pid %1 on \"%2\").")
-                            .arg(lock.holderPid)
-                            .arg(lock.holderHost);
-                }
-                QString error;
-                auto cloud = ZStorage::makeCloud(cfg, effectiveServerPassword, &error);
-                // setCloud сверяет манифест: чужое облако — честный отказ до
-                // единой записи.
-                if (cloud == nullptr || !temp->setCloud(cloud, known, &error)) return error;
-                if (!temp->writeCloudConfig(cfg, &error)) return error;
-                settled_ = temp->cloudConfig();
-                settled_.name = temp->localStoreName();
-                return {};
-            },
-            [this, storeId, serverPassword, cfg, current](const QString& error) {
-                if (!error.isEmpty()) {
-                    say(error, true);
-                    return;
-                }
-                if (!serverPassword.isEmpty() && !cfg.cloudUrl.isEmpty())
-                    secrets_->setServerPassword(storeId, serverPassword);
-                if (current) result_.cloudChangedForCurrent = true;
-                settleEntry(settled_);
-                say(QStringLiteral("Connected: %1").arg(cloudAddressText(cfg)), false);
-            });
-        return;
-    }
-
-    // --- облако есть, пароль введён: полное подключение ---------------------
-    // Дважды или один раз — решает конверт в облаке; вопрос дешёвый (один GET)
-    // и задаётся один раз на адрес.
-    if (!freshnessKnown_) {
-        startWork(
-            QStringLiteral("Checking the cloud…"),
-            [this, cfg, effectiveServerPassword]() -> QString {
-                QString error;
-                cloudFresh_ =
-                    !ZStorage::cloudHasKeyfile(cfg, effectiveServerPassword, &error);
-                return error;  // непусто только у негодного адреса
-            },
-            [this](const QString& error) {
-                if (!error.isEmpty()) {
-                    say(error, true);
-                    return;
-                }
-                freshnessKnown_ = true;
-                if (cloudFresh_) {
-                    // Опечатка при СОЗДАНИИ запечатала бы облако навсегда —
-                    // потому пароль дважды; при развороте существующего она
-                    // безобидна, и второго ввода не спрашивается.
-                    password2Label_->show();
-                    password2_->show();
-                    say(QStringLiteral("The cloud looks empty (or is not reachable yet): "
-                                       "this password will seal it. Repeat the password "
-                                       "and press the button again."),
-                        false);
-                    password2_->setFocus();
-                    return;
-                }
-                onApply();  // конверт есть: пароль один, подключаемся сразу
-            });
-        return;
-    }
-    if (cloudFresh_ && password != password2_->text()) {
-        say(QStringLiteral("The passwords do not match."), true);
-        return;
-    }
-
-    startWork(
-        QStringLiteral("Connecting… (unwrapping the key takes a moment)"),
-        [this, cfg, current, password, effectiveServerPassword]() -> QString {
-            auto temp = current ? storage_ : std::make_shared<ZStorage>(cfg.root);
-            if (!current) {
-                const ZStorage::LockReport lock = temp->lock();
-                if (!lock.locked)
-                    return QStringLiteral("The storage is open by another copy of zametti "
-                                          "(pid %1 on \"%2\").")
-                        .arg(lock.holderPid)
-                        .arg(lock.holderHost);
-            }
-            TakenSecrets taken;
-            QString error;
-            ZStorage::ConnectOutcome outcome;
-            if (!temp->connectCloud(cfg, password, effectiveServerPassword, taken,
-                                     mintParams_, &outcome, &error))
-                return error;
-            takenKey_ = taken.capturedKey;
-            takenServerPassword_ = taken.capturedServerPassword;
-            takenStoreId_ = taken.capturedServerPasswordFor;
-            settled_ = temp->cloudConfig();
-            settled_.name = temp->localStoreName();
-            return {};
-        },
-        [this, cfg, current](const QString& error) {
-            if (!error.isEmpty()) {
-                say(error, true);
-                return;
-            }
-            QString why;
-            if (takenKey_.hasKey() && !secrets_->storeKey(takenKey_, &why))
-                say(QStringLiteral("The keyring refused the key (%1) — the password will "
-                                   "be asked again next time.")
-                        .arg(why),
-                    true);
-            else
-                say(QStringLiteral("Connected: %1").arg(cloudAddressText(cfg)), false);
-            if (!takenServerPassword_.isEmpty() && !takenStoreId_.isEmpty())
-                secrets_->setServerPassword(takenStoreId_, takenServerPassword_);
-            takenKey_ = Keyfile();
-            if (current) result_.cloudChangedForCurrent = true;
-            leaveResetMode();
-            password_->clear();
-            password2_->clear();
-            settleEntry(settled_);
-        });
-}
-
-void StoreManagerDialog::addFromCloud(const ZStorage::Config& cfg,
-                                      const QString& serverPassword,
-                                      const QString& password) {
-    if (password.isEmpty()) {
-        say(QStringLiteral("Enter the encryption password of the cloud storage."), true);
-        return;
-    }
-    // РАЗВЕДКА ДО СКАЧИВАНИЯ: адрес и оба пароля проверяются раньше, чем
-    // хоть что-то ляжет в папку, — человек не остаётся с пустым каталогом
-    // и загадкой «что пошло не так».
-    startWork(
-        QStringLiteral("Checking the cloud…"),
-        [this, cfg, serverPassword, password]() -> QString {
-            QString error;
-            probe_ = ZStorage::CloudProbe();
-            if (!ZStorage::probeCloud(cfg, serverPassword, password, &probe_, &error))
-                return error;
-            return {};
-        },
-        [this, cfg, serverPassword, password](const QString& error) {
-            if (!error.isEmpty()) {
-                say(error, true);
-                return;
-            }
-            if (!probe_.hasManifest || !probe_.hasKeyfile) {
-                say(probe_.hasManifest
-                        ? QStringLiteral("The cloud has no keyfile — it is incomplete; "
-                                         "there is nothing to download safely.")
-                        : QStringLiteral(
-                              "There is no storage in this cloud — nothing to download. "
-                              "To start a new storage here, clear the cloud field, create "
-                              "the storage, then connect it."),
-                    true);
-                return;
-            }
-            const QString found =
-                probe_.name.isEmpty() ? probe_.identity.storeId() : probe_.name;
-            say(QStringLiteral("Found \"%1\": %2 notes, %3 attachments, %4 MB. "
-                               "Downloading…")
-                    .arg(found)
-                    .arg(probe_.notes)
-                    .arg(probe_.attachments)
-                    .arg(double(probe_.bytes) / (1024.0 * 1024.0), 0, 'f', 1),
-                false);
-            startWork(
-                QStringLiteral("Downloading the storage…"),
-                [this, cfg, serverPassword, password]() -> QString {
-                    TakenSecrets taken;
-                    QString error;
-                    ZStorage::ConnectOutcome outcome;
-                    auto fresh =
-                        ZStorage::initFromCloud(cfg.root, cfg, password, serverPassword,
-                                                 taken, mintParams_, &outcome, &error);
-                    if (fresh == nullptr) return error;
-                    takenKey_ = taken.capturedKey;
-                    takenServerPassword_ = taken.capturedServerPassword;
-                    takenStoreId_ = taken.capturedServerPasswordFor;
-                    settled_ = fresh->cloudConfig();
-                    settled_.name = fresh->localStoreName();
-                    return {};
-                },
-                [this](const QString& error) {
-                    if (!error.isEmpty()) {
-                        say(error, true);
-                        return;
-                    }
-                    QString why;
-                    if (takenKey_.hasKey() && !secrets_->storeKey(takenKey_, &why))
-                        fprintf(stderr, "zametti: the keyring refused the key: %s\n",
-                                qPrintable(why));
-                    if (!takenServerPassword_.isEmpty() && !takenStoreId_.isEmpty())
-                        secrets_->setServerPassword(takenStoreId_, takenServerPassword_);
-                    takenKey_ = Keyfile();
-                    settleEntry(settled_);
-                    // Скачивали, чтобы открыть: манифест и корень уже на месте,
-                    // остальное привезёт первый прогон синка.
-                    result_.switchToRoot = settled_.root;
-                    result_.downloadedNew = true;
-                    accept();
-                });
-        });
-}
-
-void StoreManagerDialog::resetPassword(const ZStorage::Config& cfg,
-                                       const QString& serverPassword,
-                                       const QString& password) {
-    if (!cfg.hasCloudAddress()) {
-        say(QStringLiteral("Name the cloud to hold the re-encrypted copy."), true);
-        return;
-    }
-    if (password.isEmpty() || password != password2_->text()) {
-        say(QStringLiteral("Type the new password twice — the two must match."), true);
-        return;
-    }
-    const bool current = isCurrentRoot(cfg.root);
-    const QString storeId =
-        current ? storage_->identity().storeId() : ZStorage(cfg.root).identity().storeId();
-    QString effectiveServerPassword = serverPassword;
-    if (effectiveServerPassword.isEmpty() && !cfg.cloudUrl.isEmpty() && !storeId.isEmpty())
-        effectiveServerPassword = secrets_->serverPassword(storeId);
-    startWork(
-        QStringLiteral("Replacing the cloud copy…"),
-        [this, cfg, current, password, effectiveServerPassword]() -> QString {
-            auto temp = current ? storage_ : std::make_shared<ZStorage>(cfg.root);
-            if (!current) {
-                const ZStorage::LockReport lock = temp->lock();
-                if (!lock.locked)
-                    return QStringLiteral("The storage is open by another copy of zametti "
-                                          "(pid %1 on \"%2\").")
-                        .arg(lock.holderPid)
-                        .arg(lock.holderHost);
-            }
-            TakenSecrets taken;
-            QString error;
-            ZStorage::ResetOutcome outcome;
-            if (!temp->resetCloudEncryption(cfg, password, effectiveServerPassword, taken,
-                                            mintParams_, &outcome, &error))
-                return error;
-            takenKey_ = taken.capturedKey;
-            takenServerPassword_ = taken.capturedServerPassword;
-            takenStoreId_ = taken.capturedServerPasswordFor;
-            settled_ = temp->cloudConfig();
-            settled_.name = temp->localStoreName();
-            resetSummary_ = QStringLiteral("The cloud copy is replaced: %1 blobs removed, "
-                                           "%2 journals and %3 attachments uploaded anew.")
-                                .arg(outcome.wiped)
-                                .arg(outcome.push.journals)
-                                .arg(outcome.push.attachments);
-            return {};
-        },
-        [this](const QString& error) {
-            if (!error.isEmpty()) {
-                say(error, true);
-                return;
-            }
-            QString why;
-            if (takenKey_.hasKey() && !secrets_->storeKey(takenKey_, &why))
-                fprintf(stderr, "zametti: the keyring refused the key: %s\n", qPrintable(why));
-            if (!takenServerPassword_.isEmpty() && !takenStoreId_.isEmpty())
-                secrets_->setServerPassword(takenStoreId_, takenServerPassword_);
-            takenKey_ = Keyfile();
-            leaveResetMode();
-            password_->clear();
-            settleEntry(settled_);
-            say(resetSummary_, false);
-        });
+    QDialog::accept();
 }
 
 }  // namespace zametti

@@ -148,6 +148,10 @@ public:
         Kind kind = Kind::None;
         QString root;
         ZStorage::Config cfg;
+        // РАЗРЕШЕНИЕ ЗАПЕЧАТАТЬ ПУСТОЕ ОБЛАКО. Выдаёт его только модель — и
+        // только когда повтор пароля пройден (автомат свежести): первый Check
+        // по неизвестному адресу лишь смотрит, запечатывает второй.
+        bool sealEmpty = false;
         QString serverPassword;
         bool serverPasswordFromKeyring = false;   // пусто и не тронуто — взять из связки
         QString encryptionPassword;
