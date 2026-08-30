@@ -17,6 +17,8 @@
 
 #include <QDir>
 #include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 #include <memory>
 #include <string>
@@ -530,6 +532,35 @@ void checkSclerosisCured() {
     ZT_EQ("логин пережил выход", std::string("u132748"), s(snap.login.text));
 }
 
+void checkDraftsNeverSerialized() {
+    // ПОСЛЕ СЛИЯНИЯ ЧЕРНОВИКИ ЖИВУТ В ТОМ ЖЕ ОБЪЕКТЕ, ЧТО И СЕРИАЛИЗУЕМЫЙ
+    // СПИСОК, — граница «это на диск, это НИКОГДА» больше не держится типом.
+    // Держит её этот страж: набранные пароли не смеют появиться ни в одном
+    // значении секции stores, а адрес и логин обязаны уехать (склероз).
+    zt::MiniStore home;
+    ZStorageManager stores;
+    const QString store = home.root() + QStringLiteral("/хранилище");
+    ZT_TRUE("хранилище завелось", makeStore(store).isEmpty());
+    ZStorage::Config row;
+    row.root = store;
+    stores.remember(row);
+    stores.beginSession();
+    stores.select(0);
+    stores.edit(Model::FieldId::Server, QStringLiteral("https://host/webdav"));
+    stores.edit(Model::FieldId::Login, QStringLiteral("логин-в-json"));
+    stores.edit(Model::FieldId::ServerPassword, QStringLiteral("сверхтайна-сервера"));
+    stores.edit(Model::FieldId::EncryptionPassword, QStringLiteral("сверхтайна-шифра"));
+    stores.edit(Model::FieldId::Repeat, QStringLiteral("сверхтайна-шифра"));
+    stores.stashDrafts();
+    const QByteArray json =
+        QJsonDocument(QJsonObject{{QStringLiteral("stores"), stores.storesToJson()}})
+            .toJson();
+    ZT_TRUE("паролей в секции stores нет",
+            !json.contains(QByteArrayLiteral("сверхтайна")));
+    ZT_TRUE("адрес уехал", json.contains(QByteArrayLiteral("https://host/webdav")));
+    ZT_TRUE("логин уехал", json.contains(QByteArrayLiteral("логин-в-json")));
+}
+
 void checkStubsNeverRead() {
     // §3.16: связка ВИДНА (кружочки, глаза) и НЕ ЧИТАЕТСЯ — счётчик чтений
     // подделки остаётся нулём; заглушка не уезжает в работу как пароль.
@@ -583,12 +614,13 @@ static int ztRunSuite(int, char**) {
     checkResetRoads();
     checkAddressNeverBitten();
     checkSclerosisCured();
+    checkDraftsNeverSerialized();
     checkStubsNeverRead();
-    return zt::report("store_manager_model");
+    return zt::report("zstorage_manager_window");
 }
 
-TEST(StoreManagerModel, All) {
-    std::vector<QByteArray> ztArgs{QByteArrayLiteral("store_manager_model_test")};
+TEST(ZStorageManagerWindow, All) {
+    std::vector<QByteArray> ztArgs{QByteArrayLiteral("zstorage_manager_window_test")};
     std::vector<char*> ztArgv;
     for (QByteArray& a : ztArgs) ztArgv.push_back(a.data());
     EXPECT_EQ(0, ztRunSuite(int(ztArgv.size()), ztArgv.data()));
