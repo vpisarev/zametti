@@ -27,6 +27,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
+#include <QTest>
 #include <QThread>
 
 #include <memory>
@@ -44,20 +45,28 @@ std::string s(const QString& q) { return q.toStdString(); }
 using FakeSecrets = zt::FakeSecrets;
 
 // Наборам — жесты мимо модальных окон: переспрос отвечается заданной кнопкой,
-// выбор папки не показывается вовсе.
+// системный выбор папки подменяется заготовленным путём.
 class TestDialog : public StoreManagerDialog {
 public:
     using StoreManagerDialog::StoreManagerDialog;
     using StoreManagerDialog::addFolder;
     using StoreManagerDialog::model_;
     using StoreManagerDialog::render;
+    using StoreManagerDialog::browseButton_;
+    using StoreManagerDialog::formFrame_;
 
     int nextAnswer = -1;   // -1 — отказ (последняя кнопка)
     StoreManagerModel::Question lastQuestion;
+    QString nextFolder;    // что «выберет» человек в системном диалоге
+    int folderAsks = 0;
 
     int ask(const StoreManagerModel::Question& question) override {
         lastQuestion = question;
         return nextAnswer >= 0 ? nextAnswer : int(question.choices.size()) - 1;
+    }
+    QString askFolder() override {
+        ++folderAsks;
+        return nextFolder;
     }
 
     // Правка поля так, как её видит модель: setText не шлёт textEdited, и
@@ -188,6 +197,61 @@ void checkCreateFromCloud() {
     ZT_TRUE("адрес лёг в строку менеджера",
             stores.storeFor(dest).hasCloudAddress());
     ZT_TRUE("ключ перекочевал в keyring", secrets->keys_.size() == 1);
+}
+
+void checkBrowseOnMissingLocalFolder() {
+    // СЦЕНАРИЙ 3 ВЛАДЕЛЬЦА, УРОВЕНЬ ВИДЖЕТА (живая жалоба 30.08.2026: «я не
+    // могу нажать "…", чтобы указать новую локацию»). Папку переименовали;
+    // строка горит красным, а кнопка «…» обязана быть живой — и не только
+    // логически: она ПЛАВАЮЩАЯ (сидит вне разметки, по координатам распорки),
+    // и настоящий КЛИК МЫШЬЮ по её видимой геометрии обязан открывать выбор
+    // папки. Выбрали новую — путь подхватился, Open ожил.
+    zt::MiniStore home;
+    const QString was = home.root() + QStringLiteral("/хранилище");
+    QString err;
+    ZT_TRUE("хранилище завелось", ZStorage(was).init(&err));
+    const QString gone = home.root() + QStringLiteral("/уехала");
+    ZT_TRUE("папку переименовали", QDir().rename(was, gone));
+
+    auto secrets = std::make_shared<FakeSecrets>();
+    ZStorageManager stores(secrets);
+    ZStorage::Config row;
+    row.root = was;
+    stores.remember(row);
+
+    TestDialog dialog(nullptr, stores, QString(), secrets, kTiny);
+    dialog.resize(900, 560);
+    dialog.show();
+    QCoreApplication::processEvents();
+    QCoreApplication::processEvents();
+
+    auto* folder = dialog.findChild<QLineEdit*>(QStringLiteral("folder"));
+    ZT_TRUE("путь горит красным",
+            folder->styleSheet().contains(QStringLiteral("c03030")));
+    ZT_TRUE("«…» логически жива", dialog.browseButton_->isEnabled());
+    ZT_TRUE("«…» видима", dialog.browseButton_->isVisible());
+    ZT_TRUE("«…» не нулевого размера",
+            dialog.browseButton_->width() > 0 && dialog.browseButton_->height() > 0);
+    ZT_TRUE("«…» внутри рамки формы",
+            dialog.formFrame_->rect().contains(dialog.browseButton_->geometry()));
+
+    // НАСТОЯЩИЙ клик мышью — ЧЕРЕЗ ОКНО, с системным поиском виджета под
+    // точкой: плавающую кнопку может нарисовать не там или НАКРЫТЬ соседом
+    // по стеку (распорка съедала клик — живая жалоба), и логический click()
+    // этого не поймал бы, как и клик, посланный виджету напрямую.
+    dialog.nextFolder = gone;
+    const QPoint inWindow = dialog.formFrame_->mapTo(
+        &dialog, dialog.browseButton_->geometry().center());
+    QTest::mouseClick(dialog.windowHandle(), Qt::LeftButton, {}, inWindow);
+    QCoreApplication::processEvents();
+    ZT_EQ("клик открыл выбор папки", std::string("1"),
+          std::to_string(dialog.folderAsks));
+    ZT_EQ("новый путь подхватился", s(QDir::cleanPath(gone)),
+          s(QDir::cleanPath(folder->text())));
+    ZT_TRUE("путь больше не красный",
+            !folder->styleSheet().contains(QStringLiteral("c03030")));
+    ZT_TRUE("Open ожил",
+            dialog.findChild<QPushButton*>(QStringLiteral("openStore"))->isEnabled());
 }
 
 void checkCheckOnMissingCloudFolder() {
@@ -345,6 +409,7 @@ static int ztRunSuite(int argc, char** argv) {
     (void)argv;
     checkListAndForget();
     checkCreateFromCloud();
+    checkBrowseOnMissingLocalFolder();
     checkCheckOnMissingCloudFolder();
     checkOpenAppliesPendingCloud();
     checkSealFreshCloudAndChangePassword();

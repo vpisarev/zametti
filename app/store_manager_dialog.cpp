@@ -756,6 +756,11 @@ void StoreManagerDialog::placeBrowseButton() {
     const QPoint at = formFrame_->mapFrom(browseHolder_->parentWidget(),
                                           browseHolder_->pos());
     browseButton_->setGeometry(QRect(at, browseHolder_->size()));
+    // НАВЕРХ СТЕКА ОБЯЗАТЕЛЬНО: поля формы реparent'ятся в рамку ПОЗЖЕ
+    // кнопки (addRow) и встают выше — распорка съедала клик, кнопка выглядела
+    // мёртвой (живая жалоба владельца, 30.08.2026: «не могу нажать "…"»;
+    // ловится настоящим кликом мыши в наборе, click() тут не судья).
+    browseButton_->raise();
 }
 
 // --- потоки -----------------------------------------------------------------
