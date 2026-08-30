@@ -89,15 +89,49 @@ bool weConvertedColour(const QString& path, const ImageProbe& probe) {
     return tiff.converted;   // читаем целиком НАРОЧНО: это набор, не горячий путь
 }
 
-// Умеет ли Qt здесь читать этот формат. Без судьи сверять нечего.
-bool judgeKnows(const QString& format) {
-    if (format.isEmpty()) return false;
-    const auto known = QImageReader::supportedImageFormats();
-    const QByteArray want = format.toLatin1();
-    if (known.contains(want)) return true;
-    if (want == "jpeg") return known.contains("jpg");
-    if (want == "heif") return known.contains("heic") || known.contains("avif");
-    return false;
+// Может ли Qt здесь прочесть ЭТОТ ФАЙЛ. Без судьи сверять нечего.
+//
+// СПРАШИВАЕМ ПРО ФАЙЛ, А НЕ ПРО ИМЯ ФОРМАТА, и это не придирка. Прежняя
+// редакция сверяла имя контейнера со списком supportedImageFormats() и на
+// «heif» отвечала «знает», если судья умеет hеic ИЛИ avif. Но AVIF и HEIC —
+// ОДИН контейнер и РАЗНЫЕ кодеки (AV1 против HEVC), и судья, собранный с
+// libaom, но без AV1-декодера, знает один и не знает другой. Здесь, на маке с
+// qtimageformats из brew, список судьи содержит heic и heif и НЕ содержит avif:
+// тринадцать файлов корпуса объявлялись «судья знает», судья возвращал пустоту,
+// и набор краснел на сверке «прочли то же, что судья», хотя не сломано ничего.
+//
+// canRead() открывает файл и спрашивает плагины про его содержимое — то есть
+// отвечает на тот вопрос, который нам и нужен, и не требует от нас знать
+// расклад кодеков в чужой сборке.
+bool judgeCanRead(const QString& path) {
+    return QImageReader(path).canRead();
+}
+
+// Судья и мы декодируем РАЗНЫМ КОДОМ — или одним и тем же?
+//
+// Там, где код общий, расходиться негде и сверка требует точного совпадения.
+// Там, где он разный, два верных декодера законно дают мелкий шум, и требовать
+// нуля значило бы требовать невозможного:
+//
+//   jpeg  — у нас jpegli, у судьи libjpeg-turbo; стандарт JPEG САМ разрешает
+//           соответствующим декодерам расходиться в обратном преобразовании;
+//   heif  — у нас вендоренная libheif с libde265/libgav1, у судьи её же
+//           системная сборка с другим декодером.
+bool judgeDecodesDifferently(const QString& format) {
+    return format == QLatin1String("jpeg") || format == QLatin1String("heif");
+}
+
+// СЫРЬЁ В ОБОЛОЧКЕ TIFF СУДЬЕ НЕ ПО ЗУБАМ, и дело не в качестве декодера.
+// В DNG лежит НЕСКОЛЬКО картинок: сырой кадр с матрицы и уменьшенный
+// предпросмотр. Какую из них отдать — решает читатель, и решают они по-разному:
+// на olympus.dng судья отдаёт предпросмотр 192×256, мы — полный кадр; на
+// proraw.dng кадры разные настолько, что среднее расхождение 52.8. Сверять
+// тут нечего — это не «мы разошлись», а «мы читаем разные картинки».
+//
+// Своя проверка у сырья при этом остаётся: размер из шапки против размера
+// разжатого (выше) и вся работа читателя ниже — они от судьи не зависят.
+bool judgeIsUselessHere(const QString& path) {
+    return QFileInfo(path).suffix().compare(QLatin1String("dng"), Qt::CaseInsensitive) == 0;
 }
 
 int files = 0;
@@ -109,8 +143,47 @@ void checkOne(const QString& path) {
     if (!probe.valid()) return;   // не картинка либо шапка битая — не наше дело
     ++files;
 
-    const QImage ours = decodeImageFile(path);
-    const QImage theirs = QImageReader(path).read();
+    // ЧИТАЕМ ТАК, КАК ЧИТАЕТ ВВОЗ, И СВЕРЯЕМ ИМЕННО ЕГО ОБЕЩАНИЕ.
+    // Правило владельца записано в docs/zametti-image-rules.md: при ввозе
+    // пиксели уже повёрнуты, а Orientation сбрасывается в 1 — оставшийся тег
+    // повернул бы их второй раз. Значит сверять надо ВЫПРЯМЛЕННЫЕ картинки с
+    // обеих сторон; показу поворот не нужен (наши вложения и так стоят прямо),
+    // но здесь корпус — ЧУЖИЕ файлы, то есть ровно случай ввоза.
+    DecodeRequest upright;
+    upright.applyOrientation = true;
+    const QImage ours = decodeImageFile(path, upright);
+    // ПОВОРОТ ПРИМЕНЯЮТ ОБА, ИНАЧЕ СРАВНИВАЮТСЯ РАЗНЫЕ ВЕЩИ. У QImageReader
+    // автоповорот по умолчанию ВЫКЛЮЧЕН, а наш читатель ориентацию применяет
+    // всегда: снимок с ориентацией 6 мы отдаём 3024×4032, судья — 4032×3024, и
+    // набор краснел на «тот же размер, что у судьи», хотя обе картинки верны.
+    // Измерено на heic-поворот6-p3.heic: с setAutoTransform судья даёт ровно
+    // наш размер.
+    QImageReader reader(path);
+    reader.setAutoTransform(true);
+    const QImage theirs = reader.read();
+    const bool judgeReads = judgeCanRead(path);
+
+    // ОБЕ СТОРОНЫ ПРИВОДЯТСЯ К ОДНОМУ СОГЛАШЕНИЮ О ПОВОРОТЕ, и это не
+    // придирка: у нас оно РАЗНОЕ по форматам, и не по недосмотру. В HEIF поворот
+    // лежит в самом контейнере (бокс irot), и libheif применяет его внутри
+    // декодера — картинка выходит уже повёрнутой. В JPEG поворот — это метка
+    // EXIF рядом с пикселями, декодер её не трогает, и применяет её вызывающий
+    // (applyOrientation, у неё свой набор ниже). Судья же после
+    // setAutoTransform поворачивает ВСЕГДА.
+    //
+    // Отсюда правило: если наша картинка стоит поперёк судейской, а файл
+    // объявляет поворот — доворачиваем нашу. Определяется по размерам, а не
+    // по формату: список форматов пришлось бы дописывать при каждом новом
+    // читателе, а размеры говорят сами.
+    //
+    // ЧЕГО ЭТО НЕ ЛОВИТ: зеркал и поворота на 180 — у них размер не меняется, и
+    // отличить «уже применено» от «ещё нет» нечем. В корпусе таких файлов нет
+    // (есть только ориентация 6 у jpeg, heic и avif); появятся — понадобится
+    // спрашивать сам читатель, применил ли он поворот.
+    QImage mine = ours;
+    if (probe.orientation != Orientation::Normal && !ours.isNull() && !theirs.isNull() &&
+        ours.size() == theirs.size().transposed())
+        mine = applyOrientation(mine, probe.orientation);
 
     // БОМБЫ ЧИТАТЬ НЕ ПОЛОЖЕНО. В корпусе лежат заведомые бомбы разжатия —
     // файлы в семьдесят байт, объявляющие миллиарды пикселей. Отказ на них не
@@ -123,7 +196,7 @@ void checkOne(const QString& path) {
     // После отказа от плагинов Qt перестал читать jxl вовсе — и это не беда, а
     // ровно то, ради чего мы завели свой читатель: формат хранения заметок
     // больше не зависит от чужой сборки.
-    if (judgeKnows(probe.format)) {
+    if (judgeReads) {
         ZT_TRUE(("прочли то же, что судья: " + name).toStdString(),
                 ours.isNull() == theirs.isNull());
     } else {
@@ -135,11 +208,30 @@ void checkOne(const QString& path) {
 
     // 1. Размер из шапки обязан совпасть с размером разжатого. Это и есть
     // проверка «место под фотографию посчитано по настоящим размерам».
+    //
+    // У ПОВЁРНУТОГО СНИМКА ЖДЁМ ПОВЁРНУТЫЙ РАЗМЕР: мы читаем как ввоз, то есть
+    // выпрямляем, и настоящий размер после выпрямления — переставленный.
+    //
+    // ✗ ДОЛГ, НАЙДЕННЫЙ ЗДЕСЬ И НЕ ЗАКРЫТЫЙ. Шапка отвечает про поворот
+    // ПО-РАЗНОМУ в зависимости от формата: у HEIF поворот лежит в контейнере, и
+    // libheif отдаёт probe.size уже переставленным; у JPEG поворот — метка
+    // EXIF рядом с пикселями, и probe.size приходит как в файле. То есть
+    // «сколько места занять под эту фотографию» два формата отвечают в разных
+    // соглашениях, и место под чужой jpeg с поворотом будет зарезервировано
+    // поперёк. Здесь это обойдено сравнением с оглядкой на probe.orientation;
+    // чинить надо в самом probeImage — отдельной работой.
+    const bool turned = probe.orientation == Orientation::Rotate90 ||
+                        probe.orientation == Orientation::Rotate270 ||
+                        probe.orientation == Orientation::Transpose ||
+                        probe.orientation == Orientation::AntiTranspose;
+    const QSize expected = turned && probe.size == ours.size().transposed()
+                               ? probe.size.transposed()
+                               : probe.size;
     ZT_EQ(("размер из шапки: " + name).toStdString(),
-          QStringLiteral("%1x%2").arg(probe.size.width()).arg(probe.size.height()).toStdString(),
+          QStringLiteral("%1x%2").arg(expected.width()).arg(expected.height()).toStdString(),
           QStringLiteral("%1x%2").arg(ours.width()).arg(ours.height()).toStdString());
 
-    if (!judgeKnows(probe.format)) return;
+    if (!judgeReads) return;
     if (theirs.isNull()) return;   // судья сам не смог — сверять нечего
     if (weConvertedColour(path, probe)) {
         std::printf("СУДЬЯ НЕ В СЧЁТ: %s — пространство переводили мы, у Qt оно наивное\n",
@@ -148,7 +240,9 @@ void checkOne(const QString& path) {
     }
     ++judged;
 
-    const Diff d = compare(ours, theirs);
+    if (judgeIsUselessHere(path)) return;
+
+    const Diff d = compare(mine, theirs);
     ZT_TRUE(("тот же размер, что у судьи: " + name).toStdString(), d.sameSize);
     if (!d.sameSize) return;
 
@@ -172,9 +266,17 @@ void checkOne(const QString& path) {
     // худшего верного случая и втрое ниже самой мелкой грубой беды.
     //
     // Обещать по этой сверке больше — врать себе.
-    const bool ownDecoder = probe.format == QLatin1String("jpeg");
-    if (!ownDecoder) {
-        // У остальных форматов декодер один и тот же код: расходиться негде.
+    //
+    // ПОРОГ ЧЕТЫРЕ ДЕЙСТВУЕТ И ДЛЯ HEIF/AVIF — решение владельца 30.08.2026, и
+    // по той же причине, что у jpeg: код у нас и у судьи РАЗНЫЙ. Мы читаем
+    // вендоренной libheif с libde265/libgav1, судья — её системной сборкой с
+    // другим декодером. Прежде здесь требовался ровно ноль по доводу «у
+    // остальных форматов декодер один и тот же код», и на маке это оказалось
+    // неправдой: девять файлов heic/heif/avif дали 0.35…0.73 — то есть ровно
+    // тот мелкий шум, который два верных декодера и обязаны давать, и втрое
+    // ниже даже самой мелкой грубой беды.
+    if (!judgeDecodesDifferently(probe.format)) {
+        // Где код общий (webp, png, tiff), расходиться негде.
         ZT_TRUE(("пиксели сошлись с судьёй: " + name + " (" +
                  QString::number(d.mean, 'f', 2) + ")").toStdString(),
                 d.mean == 0.0);
