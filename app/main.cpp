@@ -2792,9 +2792,8 @@ int main(int argc, char** argv) {
         {
             // Блок не косметика: диалог обязан умереть ДО attachStore — его
             // рабочий поток может держать временное хранилище.
-            zametti::StoreManagerDialog dialog(
-                &window, *zapp.storeManager(),
-                model.isStore() ? zapp.storage()->root() : QString(), syncSecrets);
+            zametti::StoreManagerDialog dialog(&window, *zapp.storeManager(),
+                                               syncSecrets);
             // «−» по открытой строке отцепляет хранилище немедленно: окно
             // программы живёт и без хранилища (папка Info).
             dialog.setDetachCurrent([&] { attachStore(QString(), QString()); });

@@ -1,5 +1,5 @@
-// Окно хранилищ: раскладка и исполнение. Решения — в ZStorageManager,
-// работы — в StoreJobRunner; см. шапку store_manager_dialog.h.
+// Окно хранилищ: раскладка и исполнение. Решения и работы — в ZStorageManager;
+// см. шапку store_manager_dialog.h.
 
 #include "store_manager_dialog.h"
 
@@ -112,16 +112,8 @@ protected:
 
 
 StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
-                                       const QString& currentRoot,
-                                       std::shared_ptr<SecretStore> secrets,
-                                       const Keyfile::KdfParams& mintParams)
-    : QDialog(parent),
-      stores_(stores),
-      runner_(mintParams),
-      secrets_(std::move(secrets)) {
-    // Открытое хранилище менеджеру пока называет окно; после переезда
-    // setOpenRoot в ZApp (attach/detach) параметр currentRoot уйдёт.
-    stores_.setOpenRoot(currentRoot);
+                                       std::shared_ptr<SecretStore> secrets)
+    : QDialog(parent), stores_(stores), secrets_(std::move(secrets)) {
     stores_.beginSession();
     setWindowTitle(QStringLiteral("Storages"));
     // Кегль — из настроек, как у остальной программы: системный дефолт на
@@ -617,7 +609,7 @@ void StoreManagerDialog::runJob(const ZStorageManager::Job& job) {
 
     startWork(
         QStringLiteral("Working…"),
-        [this] { outcome_ = runner_.run(runningJob_, *taken_); },
+        [this] { outcome_ = stores_.runJob(runningJob_, *taken_); },
         [this] {
             // ДОБЫТОЕ — В НАСТОЯЩУЮ СВЯЗКУ, ВСЕ ТРИ ЗАПИСИ. Прежде ветка
             // сброса переносила ключ и пароль сервера, а пароль шифрования

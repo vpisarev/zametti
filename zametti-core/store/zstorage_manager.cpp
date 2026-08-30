@@ -48,8 +48,9 @@ QString rowTitle(const ZStorage::Config& e) {
 
 // --- СПИСОК, ФАКТЫ, СЕКЦИЯ state.json ---------------------------------------
 
-ZStorageManager::ZStorageManager(std::shared_ptr<SecretStore> secrets)
-    : secrets_(std::move(secrets)) {}
+ZStorageManager::ZStorageManager(std::shared_ptr<SecretStore> secrets,
+                                 const Keyfile::KdfParams& mintParams)
+    : secrets_(std::move(secrets)), mintParams_(mintParams) {}
 
 void ZStorageManager::setSecrets(std::shared_ptr<SecretStore> secrets) {
     secrets_ = std::move(secrets);

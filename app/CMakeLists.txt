@@ -112,8 +112,6 @@ add_library(zametti-ui STATIC
     sync_controller.cpp
     pending_deletes_dialog.h
     pending_deletes_dialog.cpp
-    store_job_runner.h
-    store_job_runner.cpp
     store_manager_dialog.h
     store_manager_dialog.cpp
     image_insert.h

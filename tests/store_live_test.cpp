@@ -25,8 +25,6 @@
 // здесь нет: проводку модель↔окно держит store_manager_dialog_test, здесь —
 // модель+работы+движок, ровно те, что зовёт окно.
 
-#include "store_job_runner.h"
-
 #include "webdav_cloud.h"
 #include "zstorage.h"
 #include "zstorage_manager.h"
@@ -66,7 +64,7 @@ struct Live {
 // Эмуляция act() окна: переспросы отвечаются заданной кнопкой, работы
 // исполняются, цепочка (Reset заказал Check → переспрос → работа) идёт до
 // конца. Ограничитель кругов — от вечного цикла.
-Model::Reaction execute(Model& model, StoreJobRunner& runner, zt::FakeSecrets& secrets,
+Model::Reaction execute(Model& model, zt::FakeSecrets& secrets,
                         const Model::Reaction& reaction);
 
 // Выбрать строку по корню — как это делает человек, тыкая в список.
@@ -80,7 +78,7 @@ void selectRoot(Model& model, ZStorageManager& stores, const QString& root) {
     model.select(0);
 }
 
-Model::Reaction actAll(Model& model, StoreJobRunner& runner, zt::FakeSecrets& secrets,
+Model::Reaction actAll(Model& model, zt::FakeSecrets& secrets,
                        Model::Reaction reaction, int answer) {
     for (int round = 0; round < 6; ++round) {
         if (reaction.question.kind != Model::Question::Kind::None) {
@@ -88,7 +86,7 @@ Model::Reaction actAll(Model& model, StoreJobRunner& runner, zt::FakeSecrets& se
             continue;
         }
         if (reaction.job.kind != Model::Job::Kind::None) {
-            reaction = execute(model, runner, secrets, reaction);
+            reaction = execute(model, secrets, reaction);
             continue;
         }
         break;
@@ -97,7 +95,7 @@ Model::Reaction actAll(Model& model, StoreJobRunner& runner, zt::FakeSecrets& se
 }
 
 // Эмуляция runJob окна БЕЗ окна: разрешить «взять из связки», исполнить.
-Model::Reaction execute(Model& model, StoreJobRunner& runner, zt::FakeSecrets& secrets,
+Model::Reaction execute(Model& model, zt::FakeSecrets& secrets,
                         const Model::Reaction& reaction) {
     if (reaction.job.kind == Model::Job::Kind::None) return reaction;
     Model::Job job = reaction.job;
@@ -109,7 +107,7 @@ Model::Reaction execute(Model& model, StoreJobRunner& runner, zt::FakeSecrets& s
     }
     job.serverPasswordFromKeyring = false;
     job.encryptionFromKeyring = false;
-    const Model::Outcome outcome = runner.run(job, secrets);
+    const Model::Outcome outcome = model.runJob(job, secrets);
     return model.jobFinished(reaction.job.kind, outcome);
 }
 
@@ -180,8 +178,7 @@ void runScenarios(const Live& live) {
         }
     }
     auto secrets = std::make_shared<zt::FakeSecrets>();
-    ZStorageManager stores(secrets);
-    StoreJobRunner runner(kTiny);
+    ZStorageManager stores(secrets, kTiny);
     const QString password = QStringLiteral("живой-пароль-сценариев");
 
     // ==== 0: хранилище + пустая облачная папка + пароль + Open =============
@@ -197,13 +194,13 @@ void runScenarios(const Live& live) {
 
         // Первый Open по неизвестному адресу СМОТРИТ (защита от опечатки,
         // запечатывающей навсегда) и просит повтор; второй — запечатывает.
-        Model::Reaction first = execute(model, runner, *secrets, model.openPressed());
+        Model::Reaction first = execute(model, *secrets, model.openPressed());
         ZT_TRUE("после разведки просят повтор", model.snapshot().repeatVisible);
         ZT_TRUE("облако увидено пустым",
                 model.snapshot().cloud.text == QStringLiteral("Cloud: empty"));
         Q_UNUSED(first);
         model.edit(Model::FieldId::Repeat, password);
-        Model::Reaction opened = execute(model, runner, *secrets, model.openPressed());
+        Model::Reaction opened = execute(model, *secrets, model.openPressed());
         ZT_TRUE(("Open доделал и открыл: " + s(model.snapshot().message.text)).c_str(),
                 !opened.switchToRoot.isEmpty());
 
@@ -309,7 +306,7 @@ void runScenarios(const Live& live) {
         model.edit(Model::FieldId::Folder, localB);   // жест Browse
         snap = model.snapshot();
         ZT_TRUE("новая папка подхватилась", !snap.folderMissing && snap.open.enabled);
-        const Model::Reaction go = execute(model, runner, *secrets, model.openPressed());
+        const Model::Reaction go = execute(model, *secrets, model.openPressed());
         ZT_EQ("Open переключает на новое место", s(QDir::cleanPath(localB)),
               s(QDir::cleanPath(go.switchToRoot)));
         ZT_EQ("строка ПЕРЕЕХАЛА, сироты нет", std::string("1"),
@@ -359,7 +356,7 @@ void runScenarios(const Live& live) {
         ZT_TRUE("создание переспрашивается",
                 ask.question.kind == Model::Question::Kind::Create);
         const Model::Reaction made =
-            execute(model, runner, *secrets,
+            execute(model, *secrets,
                     model.answered(Model::Question::Kind::Create, 0));
         Q_UNUSED(made);
         ZT_TRUE(("голова приехала: " + s(model.snapshot().message.text)).c_str(),
@@ -416,14 +413,14 @@ void runScenarios(const Live& live) {
             Model::Reaction ask = model.resetPressed();
             ZT_TRUE("Reset сам заказывает проверку",
                     ask.job.kind == Model::Job::Kind::Check);
-            ask = execute(model, runner, *secrets, ask);
+            ask = execute(model, *secrets, ask);
             ZT_TRUE("переспрос пришёл",
                     ask.question.kind == Model::Question::Kind::ResetCloud);
             ZT_TRUE("первая дорога — смена без стирания",
                     ask.question.choices.value(0).contains(QStringLiteral("Change")));
             QElapsedTimer clock;
             clock.start();
-            actAll(model, runner, *secrets, model.answered(ask.question.kind, 0), -1);
+            actAll(model, *secrets, model.answered(ask.question.kind, 0), -1);
             const qint64 ms = clock.elapsed();
             ZT_TRUE(("пароль сменён: " + s(model.snapshot().message.text)).c_str(),
                     model.snapshot().message.text.contains(QStringLiteral("changed")));
@@ -452,7 +449,7 @@ void runScenarios(const Live& live) {
             Model& model = stores;
             selectRoot(model, stores, localD);
             Model::Reaction ask = model.resetPressed();
-            ask = execute(model, runner, *secrets, ask);
+            ask = execute(model, *secrets, ask);
             ZT_TRUE("без ключа первая дорога — стирание с новым паролем",
                     ask.question.choices.value(0).contains(
                         QStringLiteral("reset password")));
@@ -460,7 +457,7 @@ void runScenarios(const Live& live) {
                     ask.question.text.contains(QLatin1String(kCollection)));
             model.edit(Model::FieldId::EncryptionPassword, QStringLiteral("пароль-3"));
             model.edit(Model::FieldId::Repeat, QStringLiteral("пароль-3"));
-            actAll(model, runner, *secrets,
+            actAll(model, *secrets,
                    model.answered(Model::Question::Kind::ResetCloud, 0), -1);
             ZT_TRUE(("стёрто и запечатано: " + s(model.snapshot().message.text)).c_str(),
                     model.snapshot().message.text.contains(QStringLiteral("Erased")));
@@ -488,10 +485,10 @@ void runScenarios(const Live& live) {
             Model& model = stores;
             selectRoot(model, stores, localD);
             Model::Reaction ask = model.resetPressed();
-            ask = execute(model, runner, *secrets, ask);
+            ask = execute(model, *secrets, ask);
             ZT_TRUE("вторая кнопка — стереть и отвязаться",
                     ask.question.choices.at(1).contains(QStringLiteral("disconnect")));
-            actAll(model, runner, *secrets,
+            actAll(model, *secrets,
                    model.answered(Model::Question::Kind::ResetCloud, 1), -1);
             ZT_TRUE(("отвязано: " + s(model.snapshot().message.text)).c_str(),
                     model.snapshot().message.text.contains(

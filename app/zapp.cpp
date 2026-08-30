@@ -30,6 +30,10 @@ std::shared_ptr<ZStorage> ZApp::openStorage(const QString& root) {
     storage_ = std::make_shared<ZStorage>(root);
     storage_->reload();
     addInfoFolder(*storage_);
+    // Открытое хранилище — первоклассное понятие менеджера (решение владельца,
+    // 30.08.2026): ставится здесь, в единственном месте рождения хранилища —
+    // и настоящего, и пустого (пустой корень = ничего не открыто).
+    storeManager_->setOpenRoot(root);
     return storage_;
 }
 

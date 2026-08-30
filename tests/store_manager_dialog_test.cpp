@@ -103,7 +103,7 @@ QString statusText(StoreManagerDialog& dialog) {
 
 void checkListAndForget() {
     zt::MiniStore a, b;
-    ZStorageManager stores;
+    ZStorageManager stores(nullptr, kTiny);
     ZStorage::Config first;
     first.root = a.root();
     first.name = QStringLiteral("Первое");
@@ -111,9 +111,10 @@ void checkListAndForget() {
     second.root = b.root();
     stores.remember(first);
     stores.remember(second);
+    stores.setOpenRoot(a.root());
     auto secrets = std::make_shared<FakeSecrets>();
 
-    TestDialog dialog(nullptr, stores, a.root(), secrets, kTiny);
+    TestDialog dialog(nullptr, stores, secrets);
     auto* list = dialog.findChild<QListWidget*>(QStringLiteral("storeList"));
     ZT_EQ("в списке две строки", std::string("2"), std::to_string(list->count()));
     ZT_TRUE("открытое помечено", list->item(0)->text().contains(QStringLiteral("open")));
@@ -164,9 +165,9 @@ void checkCreateFromCloud() {
 
     const QString dest = targetHome.root() + QStringLiteral("/копия");
     QDir().mkpath(dest);
-    ZStorageManager stores;
     auto secrets = std::make_shared<FakeSecrets>();
-    TestDialog dialog(nullptr, stores, QString(), secrets, kTiny);
+    ZStorageManager stores(secrets, kTiny);
+    TestDialog dialog(nullptr, stores, secrets);
     // Пустой список говорит словами (беда G).
     ZT_TRUE("пустой список говорит словами",
             statusText(dialog).contains(QStringLiteral("press +")));
@@ -214,12 +215,12 @@ void checkBrowseOnMissingLocalFolder() {
     ZT_TRUE("папку переименовали", QDir().rename(was, gone));
 
     auto secrets = std::make_shared<FakeSecrets>();
-    ZStorageManager stores(secrets);
+    ZStorageManager stores(secrets, kTiny);
     ZStorage::Config row;
     row.root = was;
     stores.remember(row);
 
-    TestDialog dialog(nullptr, stores, QString(), secrets, kTiny);
+    TestDialog dialog(nullptr, stores, secrets);
     dialog.resize(900, 560);
     dialog.show();
     QCoreApplication::processEvents();
@@ -264,12 +265,12 @@ void checkCheckOnMissingCloudFolder() {
     QDir().mkpath(root);
     QString err;
     ZT_TRUE("хранилище завелось", ZStorage(root).init(&err));
-    ZStorageManager stores;
+    ZStorageManager stores(nullptr, kTiny);
     ZStorage::Config entry;
     entry.root = root;
     stores.remember(entry);
     auto secrets = std::make_shared<FakeSecrets>();
-    TestDialog dialog(nullptr, stores, QString(), secrets, kTiny);
+    TestDialog dialog(nullptr, stores, secrets);
     dialog.type(ZStorageManager::FieldId::Server,
                 cloudHome.root() + QStringLiteral("/этой-папки-нет"));
     dialog.findChild<QPushButton*>(QStringLiteral("check"))->click();
@@ -296,12 +297,12 @@ void checkOpenAppliesPendingCloud() {
     const QString cloud = cloudHome.root() + QStringLiteral("/свежее");
     QDir().mkpath(cloud);
     auto secrets = std::make_shared<FakeSecrets>();
-    ZStorageManager stores(secrets);
+    ZStorageManager stores(secrets, kTiny);
     ZStorage::Config entry;
     entry.root = root;
     stores.remember(entry);
 
-    TestDialog dialog(nullptr, stores, QString(), secrets, kTiny);
+    TestDialog dialog(nullptr, stores, secrets);
     dialog.type(ZStorageManager::FieldId::Server, cloud);
     dialog.type(ZStorageManager::FieldId::EncryptionPassword, QStringLiteral("пароль"));
     dialog.findChild<QPushButton*>(QStringLiteral("check"))->click();
@@ -335,12 +336,12 @@ void checkSealFreshCloudAndChangePassword() {
     // Связка — и окну, и менеджеру: факты строк («ключ есть?») спрашивает
     // менеджер, как это делает ZApp::setStoreSecrets в бою.
     auto secrets = std::make_shared<FakeSecrets>();
-    ZStorageManager stores(secrets);
+    ZStorageManager stores(secrets, kTiny);
     ZStorage::Config entry;
     entry.root = root;
     stores.remember(entry);
 
-    TestDialog dialog(nullptr, stores, QString(), secrets, kTiny);
+    TestDialog dialog(nullptr, stores, secrets);
     auto* password2 = dialog.findChild<QLineEdit*>(QStringLiteral("password2"));
     auto* check = dialog.findChild<QPushButton*>(QStringLiteral("check"));
     dialog.type(ZStorageManager::FieldId::Server, cloud);

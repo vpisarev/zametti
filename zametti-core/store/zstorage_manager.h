@@ -41,6 +41,7 @@
 #ifndef ZAMETTI_ZSTORAGE_MANAGER_H
 #define ZAMETTI_ZSTORAGE_MANAGER_H
 
+#include "keyfile.h"
 #include "zstorage.h"
 
 #include <QDateTime>
@@ -60,7 +61,10 @@ class ZStorageManager {
 public:
     // Связка нужна фактам (Known); без неё они честно Unknown. Отдаётся
     // указателем, а не читается глобально: наборы подсовывают подделку.
-    explicit ZStorageManager(std::shared_ptr<SecretStore> secrets = nullptr);
+    // mintParams — параметры чеканки ключа для работ (runJob); наборам
+    // боевой Argon2id не нужен.
+    explicit ZStorageManager(std::shared_ptr<SecretStore> secrets = nullptr,
+                             const Keyfile::KdfParams& mintParams = Keyfile::defaults());
     // Связка приезжает и позже (ZApp живёт раньше, чем main решит, keyring
     // это или среда); прежние ответы Known пересчитываются.
     void setSecrets(std::shared_ptr<SecretStore> secrets);
@@ -282,6 +286,19 @@ public:
     // следующий шаг (Reset, заказанный до проверки, показывает переспрос).
     Reaction jobFinished(Job::Kind kind, const Outcome& outcome);
 
+    // --- работы (zstorage_manager_jobs.cpp) ----------------------------------
+    // Исполнить работу: синхронно, без виджетов; окно уводит вызов в рабочий
+    // поток само, наборы зовут прямо. КОНТРАКТ ПОТОКОВ: runJob читает только
+    // свой job, secrets и mintParams_, к списку, черновикам и кэшам не
+    // прикасается — GUI-поток в это время вправе читать снимки; сериализацию
+    // жестов обеспечивает busy-режим окна.
+    //
+    // Секреты в job уже настоящие (окно развернуло «взять из связки» до
+    // запуска); secrets — копилка для добытого: настоящий keyring живёт при
+    // главном потоке, окно перекладывает добытое по завершении, включая
+    // просьбы забыть (disconnect).
+    Outcome runJob(const Job& job, SecretStore& secrets) const;
+
 protected:
     // storeId каталога — чтением zametti.json, с кэшем: identity стоит чтения
     // файла, а facts спрашиваются на каждое переключение строки.
@@ -304,8 +321,15 @@ protected:
     Job jobFor(Job::Kind kind) const;
     // Шаг «свежести» перед работой, запечатывающей пустое облако.
     bool sealingNeedsRepeat();
+    // Пять работ runJob — тот же контракт потоков, что у него.
+    Outcome checkJob(const Job& job, SecretStore& secrets) const;
+    Outcome createJob(const Job& job, SecretStore& secrets) const;
+    Outcome changePasswordJob(const Job& job, SecretStore& secrets) const;
+    Outcome eraseAndReseedJob(const Job& job, SecretStore& secrets) const;
+    Outcome eraseAndDisconnectJob(const Job& job, SecretStore& secrets) const;
 
     std::shared_ptr<SecretStore> secrets_;
+    Keyfile::KdfParams mintParams_;
     QList<ZStorage::Config> stores_;
     // Кэши фактов — mutable: facts() логически ничего не меняет, а зваться
     // обязан из const-снимка.

@@ -31,8 +31,6 @@
 #ifndef ZAMETTI_STORE_MANAGER_DIALOG_H
 #define ZAMETTI_STORE_MANAGER_DIALOG_H
 
-#include "store_job_runner.h"
-
 #include "keyfile.h"
 #include "secret_store.h"
 #include "zstorage_manager.h"
@@ -74,13 +72,11 @@ public:
         bool downloadedNew = false;
     };
 
-    // stores — ЖИВОЙ список устройства (правится на месте); currentRoot —
-    // корень открытого хранилища (пусто — окно без хранилища); secrets —
-    // связка, трогается только в главном потоке; mintParams — параметры
-    // чеканки ключа, наборам боевой Argon2id не нужен.
-    StoreManagerDialog(QWidget* parent, ZStorageManager& stores, const QString& currentRoot,
-                       std::shared_ptr<SecretStore> secrets,
-                       const Keyfile::KdfParams& mintParams = Keyfile::defaults());
+    // stores — ЖИВОЙ менеджер устройства (правится на месте); открытое
+    // хранилище он уже знает сам (setOpenRoot ставит ZApp::openStorage);
+    // secrets — связка, трогается только в главном потоке.
+    StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
+                       std::shared_ptr<SecretStore> secrets);
     ~StoreManagerDialog() override;
 
     const Result& result() const { return result_; }
@@ -131,7 +127,6 @@ protected:
     void stashAll();
 
     ZStorageManager& stores_;
-    StoreJobRunner runner_;
     std::shared_ptr<SecretStore> secrets_;
     std::function<void()> detachCurrent_;
     Result result_;

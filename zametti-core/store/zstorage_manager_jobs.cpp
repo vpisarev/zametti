@@ -1,10 +1,20 @@
-// StoreJobRunner: работы окна хранилищ. Подробности — в заголовке.
+// ZStorageManager, работы окна хранилищ (runJob): синхронно, без виджетов.
+// Прежде это был отдельный класс StoreJobRunner; влит сюда решением владельца
+// (30.08.2026) — у операций ровно один публичный вид, методы класса-хозяина.
+//
+// ДИАЛОГ НЕ КАЧАЕТ И НЕ ЛЬЁТ НИЧЕГО, КРОМЕ ГОЛОВЫ ХРАНИЛИЩА (решение
+// владельца, 30.08.2026): манифест, конверт, cloud.json. Вся синхронизация
+// содержимого идёт ПОСЛЕ нажатия Open и закрытия окна обычным прогоном
+// (SyncController); отдельного кода выкачки здесь не существует.
+//
+// СВЯЗКА СЮДА ПРИХОДИТ КОПИЛКОЙ (TakenSecrets у окна): настоящий keyring
+// живёт при главном потоке. Ключ, если он нужен работе (смена пароля), окно
+// подсаживает в копилку ДО запуска; добытое работой окно перекладывает в
+// настоящую связку по завершении, включая просьбы забыть (disconnect).
 
-#include "store_job_runner.h"
+#include "zstorage_manager.h"
 
 #include "secret_store.h"
-
-#include <QFile>
 
 namespace zametti {
 
@@ -36,13 +46,13 @@ CloudSeen seenFrom(const ZStorage::CloudProbe& probe, const QString& address,
 
 }  // namespace
 
-Outcome StoreJobRunner::run(const Job& job, SecretStore& secrets) {
+Outcome ZStorageManager::runJob(const Job& job, SecretStore& secrets) const {
     switch (job.kind) {
-        case Job::Kind::Check: return check(job, secrets);
-        case Job::Kind::Create: return create(job, secrets);
-        case Job::Kind::ChangePassword: return changePassword(job, secrets);
-        case Job::Kind::EraseAndReseed: return eraseAndReseed(job, secrets);
-        case Job::Kind::EraseAndDisconnect: return eraseAndDisconnect(job, secrets);
+        case Job::Kind::Check: return checkJob(job, secrets);
+        case Job::Kind::Create: return createJob(job, secrets);
+        case Job::Kind::ChangePassword: return changePasswordJob(job, secrets);
+        case Job::Kind::EraseAndReseed: return eraseAndReseedJob(job, secrets);
+        case Job::Kind::EraseAndDisconnect: return eraseAndDisconnectJob(job, secrets);
         case Job::Kind::None: break;
     }
     return {};
@@ -53,10 +63,10 @@ Outcome StoreJobRunner::run(const Job& job, SecretStore& secrets) {
 // манифест открыты. Но Check не только смотрит: у ХРАНИЛИЩА против своего
 // облака он разворачивает конверт и записывает адрес (connectCloud), против
 // пустого — запечатывает его конвертом (initCloudStorage; беда M: подключение
-// к пустому серверу обязано залить keyfile) — НО только с пропуском модели
+// к пустому серверу обязано залить keyfile) — НО только с пропуском снимка
 // (sealEmpty): первый Check по неизвестному адресу лишь смотрит, чтобы
 // опечатка в пароле не запечатала облако навсегда.
-Outcome StoreJobRunner::check(const Job& job, SecretStore& secrets) {
+Outcome ZStorageManager::checkJob(const Job& job, SecretStore& secrets) const {
     Outcome out;
     const QString address = job.cfg.cloudAddressText();
     ZStorage::CloudProbe probe;
@@ -144,7 +154,7 @@ Outcome StoreJobRunner::check(const Job& job, SecretStore& secrets) {
         // Не вышло — не беда: разведка честно удалась, подключит пароль.
     } else if (state == CloudSeen::State::Empty && job.sealEmpty &&
                !job.encryptionPassword.isEmpty()) {
-        // ЗАПЕЧАТАТЬ ПУСТОЕ ОБЛАКО — по пропуску модели (повтор пройден).
+        // ЗАПЕЧАТАТЬ ПУСТОЕ ОБЛАКО — по пропуску снимка (повтор пройден).
         if (!storage.initCloudStorage(job.cfg, job.encryptionPassword,
                                       job.serverPassword, secrets, mintParams_, &why)) {
             out.ok = false;
@@ -163,7 +173,7 @@ Outcome StoreJobRunner::check(const Job& job, SecretStore& secrets) {
 // СОЗДАНИЕ в пустой (или несуществующей) папке. Облако с манифестом — бутстрап
 // ГОЛОВЫ (идентичность + корень), скачивание ведёт фоновый прогон после Open;
 // пустое или неназванное облако — свежее хранилище (+ засев конверта).
-Outcome StoreJobRunner::create(const Job& job, SecretStore& secrets) {
+Outcome ZStorageManager::createJob(const Job& job, SecretStore& secrets) const {
     Outcome out;
     QString err;
     const QString address = job.cfg.cloudAddressText();
@@ -241,7 +251,7 @@ Outcome StoreJobRunner::create(const Job& job, SecretStore& secrets) {
 // СМЕНА ПАРОЛЯ при живом ключе: один конверт, ноль стираний. Ключ окно
 // подсадило в копилку до запуска — из рабочего потока настоящую связку не
 // спросить.
-Outcome StoreJobRunner::changePassword(const Job& job, SecretStore& secrets) {
+Outcome ZStorageManager::changePasswordJob(const Job& job, SecretStore& secrets) const {
     Outcome out;
     QString err;
     ZStorage storage(job.root);
@@ -259,7 +269,7 @@ Outcome StoreJobRunner::changePassword(const Job& job, SecretStore& secrets) {
 
 // СТЕРЕТЬ И ЗАПЕЧАТАТЬ ЗАНОВО: пара запросов на стирание (DELETE+MKCOL), один
 // PUT конверта; перезаливку содержимого ведёт фоновый прогон после закрытия.
-Outcome StoreJobRunner::eraseAndReseed(const Job& job, SecretStore& secrets) {
+Outcome ZStorageManager::eraseAndReseedJob(const Job& job, SecretStore& secrets) const {
     Outcome out;
     QString err;
     ZStorage storage(job.root);
@@ -286,7 +296,8 @@ Outcome StoreJobRunner::eraseAndReseed(const Job& job, SecretStore& secrets) {
 }
 
 // СТЕРЕТЬ И ОТВЯЗАТЬСЯ: облако снесено целиком, адрес и три секрета забыты.
-Outcome StoreJobRunner::eraseAndDisconnect(const Job& job, SecretStore& secrets) {
+Outcome ZStorageManager::eraseAndDisconnectJob(const Job& job,
+                                               SecretStore& secrets) const {
     Outcome out;
     QString err;
     ZStorage storage(job.root);
