@@ -350,7 +350,9 @@ ZStorageManager::Snapshot ZStorageManager::snapshot() const {
     out.add = Button{true, QStringLiteral("+")};
     out.close = Button{true, QStringLiteral("Close")};
     out.remove = Button{false, QStringLiteral("−")};
-    out.browse = Button{false, QStringLiteral("…")};
+    // У browse подписи нет: многоточие носит иконка кнопки (ellipsis.svg), а
+    // текст рядом с ней удваивал бы его — «[•••] …» (жалоба владельца 31.08).
+    out.browse = Button{false, QString()};
     out.check = Button{false, QStringLiteral("Check")};
     out.reset = Button{false, QStringLiteral("Reset cloud…")};
     out.open = Button{false, QStringLiteral("Open")};
