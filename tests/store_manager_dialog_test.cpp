@@ -23,6 +23,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QImage>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -119,11 +120,24 @@ void checkListAndForget() {
     TestDialog dialog(nullptr, stores, secrets);
     auto* list = dialog.findChild<QListWidget*>(QStringLiteral("storeList"));
     ZT_EQ("в списке две строки", std::string("2"), std::to_string(list->count()));
-    // Открытое хранилище — галочка ПЕРЕД именем (решение владельца 31.08).
-    ZT_TRUE("открытое помечено галочкой",
-            list->item(0)->text().startsWith(QStringLiteral("✓ ")));
-    ZT_TRUE("прочие без галочки",
-            !list->item(1)->text().startsWith(QStringLiteral("✓")));
+    // Открытое хранилище — галочка-иконка ПЕРЕД именем (решение владельца
+    // 31.08); у прочих строк — прозрачная заглушка той же колонки, чтобы имена
+    // стояли по буквам. Метка — не текст: имя остаётся именем.
+    const auto marked = [&list](int row) {
+        const QImage img = list->item(row)
+                               ->icon()
+                               .pixmap(list->iconSize())
+                               .toImage()
+                               .convertToFormat(QImage::Format_ARGB32);
+        for (int y = 0; y < img.height(); ++y)
+            for (int x = 0; x < img.width(); ++x)
+                if (qAlpha(img.pixel(x, y)) != 0) return true;
+        return false;
+    };
+    ZT_TRUE("открытое помечено галочкой", marked(0));
+    ZT_TRUE("прочие без галочки", !marked(1));
+    ZT_TRUE("имя — без служебных суффиксов",
+            !list->item(0)->text().contains(QStringLiteral("open")));
     ZT_TRUE("выбрана строка открытого", list->currentRow() == 0);
     auto* remove = dialog.findChild<QPushButton*>(QStringLiteral("removeStore"));
     // «−» жив ВСЕГДА, и у открытого тоже (п.14 брифа): подтверждённое
