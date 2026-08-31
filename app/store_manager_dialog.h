@@ -110,6 +110,9 @@ protected:
     void runJob(const ZStorageManager::Job& job);
 
     void rebuildList(const ZStorageManager::Snapshot& snap);
+    // Вертикальный шаг формы («dy» в языке владельца): столько стиль кладёт
+    // между строками QFormLayout; в нём меряются отступы фактов и статуса.
+    int formStep() const;
     // Иконка строки списка: галочка у открытого, прозрачная заглушка у прочих
     // (общая колонка — имена стоят по буквам).
     QIcon openMark(bool open) const;

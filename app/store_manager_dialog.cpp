@@ -279,6 +279,11 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
         // Резерв на ДВЕ строки всегда, даже когда факт короткий: скачущая
         // при переключении строк высота — худшее, что может делать форма.
         (*line)->setMinimumHeight(2 * (*line)->fontMetrics().lineSpacing());
+        // Факт отодвинут от полей/кнопок своей секции на ЛИШНИЙ шаг формы
+        // (третья проба владельца 31.08: было dy — стало 2·dy). Ровно на этот
+        // же dy ниже урезаны отступы заголовка Cloud и строки события — общие
+        // вертикальные расстояния секций не изменились.
+        (*line)->setContentsMargins(0, formStep(), 0, 0);
     };
     makeFactLine(&localLine_, "localLine");
     makeFactLine(&cloudLine_, "cloudLine");
@@ -286,8 +291,10 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
     status_->setObjectName(QStringLiteral("status"));
     status_->setWordWrap(true);
     // Строке события — воздух сверху: она про жест, а не продолжение фактов
-    // (просьба владельца 31.08; «ещё больше» — вторая проба 31.08).
-    status_->setContentsMargins(0, status_->fontMetrics().lineSpacing(), 0, 0);
+    // (просьба владельца 31.08; «ещё больше» — вторая проба; минус dy,
+    // ушедший факту выше, — третья).
+    status_->setContentsMargins(
+        0, qMax(0, status_->fontMetrics().lineSpacing() - formStep()), 0, 0);
 
     // РАМКА ВОКРУГ ФОРМЫ (решение владельца). Диалог тянется мышью, и рамка
     // даёт правой половине тело, равное по весу списку слева, и границу,
@@ -332,8 +339,10 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
         QFont bold = label->font();
         bold.setBold(true);
         label->setFont(bold);
-        label->setContentsMargins(0, gapAbove ? label->fontMetrics().lineSpacing() : 0,
-                                  0, 2);
+        // Минус dy, ушедший локальному факту (третья проба владельца 31.08):
+        // расстояние Local ↔ Cloud synchronization в сумме прежнее.
+        const int gap = qMax(0, label->fontMetrics().lineSpacing() - formStep());
+        label->setContentsMargins(0, gapAbove ? gap : 0, 0, 2);
         return label;
     };
     form->addRow(sectionHeader(QStringLiteral("Local"), false));
@@ -475,6 +484,12 @@ void StoreManagerDialog::stashAll() {
         if (typedCrypt && !secrets_->has(id, SecretStore::Secret::EncryptionPassword))
             secrets_->setEncryptionPassword(id, d.encryptionPassword, &why);
     }
+}
+
+int StoreManagerDialog::formStep() const {
+    const int step =
+        style()->pixelMetric(QStyle::PM_LayoutVerticalSpacing, nullptr, this);
+    return step > 0 ? step : 6;
 }
 
 // --- ЕДИНСТВЕННАЯ ДОРОГА ОТ МЕНЕДЖЕРА К ЭКРАНУ ------------------------------
