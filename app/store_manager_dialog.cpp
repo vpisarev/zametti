@@ -129,14 +129,21 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
     // Список — без собственной рамки: рамка у колонки одна, внешняя.
     list_->setFrameShape(QFrame::NoFrame);
 
+    // «+ −» — МАЛЕНЬКИЕ КВАДРАТНЫЕ, футер списка (решение владельца 31.08 по
+    // docs/zametti-storages-dialog-refactoring.md): операции над списком, а не
+    // команды диалога. Квадрат — только шириной: фиксированную ВЫСОТУ кнопке
+    // ставить нельзя, маковский стиль рисует родной бэзель и обрезает его
+    // (замер 28.08.2026 у кнопки browse ниже).
     addButton_ = new QPushButton(QStringLiteral("+"), this);
     addButton_->setObjectName(QStringLiteral("addStore"));
     addButton_->setToolTip(QStringLiteral("Add a storage: an existing one, a new empty "
                                           "one, or a download from the cloud"));
+    addButton_->setFixedWidth(addButton_->sizeHint().height());
     removeButton_ = new QPushButton(QStringLiteral("−"), this);
     removeButton_->setObjectName(QStringLiteral("removeStore"));
     removeButton_->setToolTip(QStringLiteral("Forget this row — the folder and the cloud "
                                              "are not touched"));
+    removeButton_->setFixedWidth(removeButton_->sizeHint().height());
 
     listFrame_ = new QFrame(this);
     listFrame_->setObjectName(QStringLiteral("listFrame"));
@@ -144,6 +151,19 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
     {
         auto* column = new QVBoxLayout(listFrame_);
         column->addWidget(list_, 1);
+        // Слабая черта отделяет футер с кнопками от строк: «список + операции
+        // над списком» читается одним взглядом.
+        auto* rule = new QFrame(listFrame_);
+        rule->setFrameShape(QFrame::HLine);
+        rule->setFrameShadow(QFrame::Plain);
+        {
+            QPalette faint = rule->palette();
+            QColor c = faint.color(QPalette::Text);
+            c.setAlphaF(0.2);
+            faint.setColor(QPalette::WindowText, c);
+            rule->setPalette(faint);
+        }
+        column->addWidget(rule);
         auto* buttons = new QHBoxLayout;
         buttons->addWidget(addButton_);
         buttons->addWidget(removeButton_);
@@ -232,25 +252,22 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
     resetButton_->setToolTip(
         QStringLiteral("Change the encryption password, or erase the cloud copy"));
 
-    // ДВЕ РАМКИ ФАКТОВ ПО ДВЕ СТРОКИ И ОДНА СТРОКА ПРО СОБЫТИЕ (п.5 брифа).
-    // Факт и событие — разное, и делить им один ярлык значило бы «статус то
-    // говорит, то молчит»: у рамок текст есть всегда, у строки обычно пусто.
-    const auto makeFactFrame = [this](QFrame** frame, QLabel** line, const char* name) {
-        *frame = new QFrame(this);
-        (*frame)->setObjectName(QLatin1String(name) + QStringLiteral("Frame"));
-        (*frame)->setFrameShape(QFrame::StyledPanel);
-        *line = new QLabel(*frame);
+    // ДВЕ СТРОКИ ФАКТОВ ПО ДВЕ СТРОКИ ТЕКСТА И ОДНА СТРОКА ПРО СОБЫТИЕ (п.5
+    // брифа). Факт и событие — разное, и делить им один ярлык значило бы
+    // «статус то говорит, то молчит»: у фактов текст есть всегда, у строки
+    // события обычно пусто. Рамок вокруг фактов больше нет (решение владельца
+    // 31.08): прямоугольники выглядели как поля ввода; факт — просто текст.
+    const auto makeFactLine = [this](QLabel** line, const char* name) {
+        *line = new QLabel(this);
         (*line)->setObjectName(QLatin1String(name));
         (*line)->setTextInteractionFlags(Qt::TextSelectableByMouse);
-        auto* box = new QVBoxLayout(*frame);
-        box->setContentsMargins(8, 4, 8, 4);
-        box->addWidget(*line);
-        // Рамка держит ДВЕ строки всегда, даже когда факт короткий: скачущая
+        (*line)->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+        // Резерв на ДВЕ строки всегда, даже когда факт короткий: скачущая
         // при переключении строк высота — худшее, что может делать форма.
         (*line)->setMinimumHeight(2 * (*line)->fontMetrics().lineSpacing());
     };
-    makeFactFrame(&localFrame_, &localLine_, "localLine");
-    makeFactFrame(&cloudFrame_, &cloudLine_, "cloudLine");
+    makeFactLine(&localLine_, "localLine");
+    makeFactLine(&cloudLine_, "cloudLine");
     status_ = new QLabel(this);
     status_->setObjectName(QStringLiteral("status"));
     status_->setWordWrap(true);
@@ -283,9 +300,28 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
     // ПОДПИСЕЙ не трогаем: справа — родная маковская привычка.
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     form->setFormAlignment(Qt::AlignLeft | Qt::AlignTop);
+
+    // ДВЕ СЕКЦИИ ВМЕСТО ОДНОЙ ДЛИННОЙ ФОРМЫ (решение владельца 31.08 по
+    // docs/zametti-storages-dialog-refactoring.md): Local и Cloud
+    // synchronization — концептуально разные сущности, и путь в каждой зовётся
+    // просто Folder — секция сама говорит, чей он. Факт каждой сущности живёт
+    // в её секции: локальный — под папкой, облачный — под кнопками, строка
+    // события — в самом низу, там же, где нажимали.
+    const auto sectionHeader = [this](const QString& text, bool gapAbove) {
+        auto* label = new QLabel(text, this);
+        QFont bold = label->font();
+        bold.setBold(true);
+        label->setFont(bold);
+        label->setContentsMargins(0, gapAbove ? label->fontMetrics().lineSpacing() : 0,
+                                  0, 2);
+        return label;
+    };
+    form->addRow(sectionHeader(QStringLiteral("Local"), false));
     form->addRow(QStringLiteral("Folder"), folderRow);
-    form->addRow(QStringLiteral("Cloud server (WebDAV)"), server_);
-    form->addRow(QStringLiteral("Cloud dir"), serverDir_);
+    form->addRow(localLine_);
+    form->addRow(sectionHeader(QStringLiteral("Cloud synchronization"), true));
+    form->addRow(QStringLiteral("Server (WebDAV)"), server_);
+    form->addRow(QStringLiteral("Folder"), serverDir_);
     form->addRow(QStringLiteral("Login"), user_);
     form->addRow(QStringLiteral("Server password"), serverPassword_);
     form->addRow(passwordLabel_, password_);
@@ -295,15 +331,14 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
     actionRow->addWidget(resetButton_);
     actionRow->addStretch(1);
     form->addRow(QString(), actionRow);
-
-    // Рамки фактов — сразу за кнопками, во всю ширину формы; строка события
-    // под ними: читать её надо там же, где нажимал.
-    form->addRow(localFrame_);
-    form->addRow(cloudFrame_);
+    form->addRow(cloudLine_);
     form->addRow(status_);
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
     closeButton_ = buttons->button(QDialogButtonBox::Close);
+    // Без иконки: тема Linux вешает на Close красный крест, и безобидное
+    // «закрыть окно» выглядит деструктивным (решение владельца 31.08).
+    closeButton_->setIcon(QIcon());
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
     // ДВЕ РАМКИ НА ОБЩУЮ ВЫСОТУ, ВЫХОДЫ — ОДНИМ РЯДОМ ВНИЗУ (пп.1-2 брифа).
@@ -423,8 +458,7 @@ void StoreManagerDialog::rebuildList(const ZStorageManager::Snapshot& snap) {
         // Состав тот же — переписываем только подписи: имя корневой заметки
         // могло приехать после работы.
         for (int i = 0; i < snap.rows.size(); ++i) {
-            const ZStorageManager::Row& r = snap.rows.at(i);
-            const QString title = r.open ? r.title + QStringLiteral("  •  open") : r.title;
+            const QString title = shownTitle(snap.rows.at(i));
             if (list_->item(i)->text() != title) list_->item(i)->setText(title);
         }
         return;
@@ -433,10 +467,16 @@ void StoreManagerDialog::rebuildList(const ZStorageManager::Snapshot& snap) {
     const QSignalBlocker quiet(list_);
     list_->clear();
     for (const ZStorageManager::Row& r : snap.rows) {
-        auto* item = new QListWidgetItem(
-            r.open ? r.title + QStringLiteral("  •  open") : r.title, list_);
+        auto* item = new QListWidgetItem(shownTitle(r), list_);
         item->setToolTip(r.root);
     }
+}
+
+// Открытое хранилище — галочка ПЕРЕД именем, а не слово после (решение
+// владельца 31.08): «✓ vpnotes» читается состоянием строки и не спорит с
+// кнопками Open/Close внизу, как спорил суффикс «• open».
+QString StoreManagerDialog::shownTitle(const ZStorageManager::Row& row) {
+    return row.open ? QStringLiteral("✓ ") + row.title : row.title;
 }
 
 void StoreManagerDialog::render() {
@@ -516,8 +556,24 @@ void StoreManagerDialog::render() {
         formFrame_->setEnabled(!snap.rows.isEmpty());
     }
 
-    const auto line = [](QLabel* label, const ZStorageManager::Line& state) {
-        label->setText(state.text);
+    const auto line = [this](QLabel* label, const ZStorageManager::Line& state) {
+        const qsizetype cut = state.text.indexOf(QLatin1Char('\n'));
+        if (state.alarm || cut < 0) {
+            label->setTextFormat(Qt::PlainText);
+            label->setText(state.text);
+        } else {
+            // Хвост факта (дата правки и прочее второстепенное) — приглушённым
+            // цветом из палитры (решение владельца 31.08): работает в обеих
+            // темах, тревога остаётся цельно-красной и плоской.
+            QColor dim = palette().color(QPalette::Text);
+            dim.setAlphaF(0.55);
+            QString tail = state.text.mid(cut + 1).toHtmlEscaped();
+            tail.replace(QStringLiteral("\n"), QStringLiteral("<br/>"));
+            label->setTextFormat(Qt::RichText);
+            label->setText(QStringLiteral("%1<br/><span style=\"color:%2;\">%3</span>")
+                               .arg(state.text.left(cut).toHtmlEscaped(),
+                                    dim.name(QColor::HexArgb), tail));
+        }
         label->setStyleSheet(state.alarm ? QStringLiteral("color: #c03030;") : QString());
     };
     line(localLine_, snap.local);

@@ -109,6 +109,8 @@ protected:
     void runJob(const ZStorageManager::Job& job);
 
     void rebuildList(const ZStorageManager::Snapshot& snap);
+    // Подпись строки списка: «✓ имя» у открытого хранилища.
+    static QString shownTitle(const ZStorageManager::Row& row);
     void placeBrowseButton();
     void addStore();
     // Наборам — те же жесты мимо модальных вопросов и системного выбора папки.
@@ -153,10 +155,8 @@ protected:
     QLineEdit* password2_ = nullptr;
     QPushButton* checkButton_ = nullptr;
     QPushButton* resetButton_ = nullptr;
-    QFrame* localFrame_ = nullptr;   // рамка «Local: …» — две строки фактов
-    QFrame* cloudFrame_ = nullptr;   // рамка «Cloud: …» — две строки фактов
-    QLabel* localLine_ = nullptr;
-    QLabel* cloudLine_ = nullptr;
+    QLabel* localLine_ = nullptr;    // «Local: …» — две строки фактов, без рамки
+    QLabel* cloudLine_ = nullptr;    // «Cloud: …» — две строки фактов, без рамки
     QLabel* status_ = nullptr;       // про последний жест; обычно пусто
     QPushButton* closeButton_ = nullptr;
 
