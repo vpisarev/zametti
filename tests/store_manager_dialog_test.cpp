@@ -119,7 +119,11 @@ void checkListAndForget() {
     TestDialog dialog(nullptr, stores, secrets);
     auto* list = dialog.findChild<QListWidget*>(QStringLiteral("storeList"));
     ZT_EQ("в списке две строки", std::string("2"), std::to_string(list->count()));
-    ZT_TRUE("открытое помечено", list->item(0)->text().contains(QStringLiteral("open")));
+    // Открытое хранилище — галочка ПЕРЕД именем (решение владельца 31.08).
+    ZT_TRUE("открытое помечено галочкой",
+            list->item(0)->text().startsWith(QStringLiteral("✓ ")));
+    ZT_TRUE("прочие без галочки",
+            !list->item(1)->text().startsWith(QStringLiteral("✓")));
     ZT_TRUE("выбрана строка открытого", list->currentRow() == 0);
     auto* remove = dialog.findChild<QPushButton*>(QStringLiteral("removeStore"));
     // «−» жив ВСЕГДА, и у открытого тоже (п.14 брифа): подтверждённое
