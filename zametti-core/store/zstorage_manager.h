@@ -278,6 +278,9 @@ public:
     Reaction addFolder(const QString& dir);
     Reaction forgetPressed();
     Reaction checkPressed();
+    // Check без нажатия — при выборе строки, у которой пароль сервера уже в
+    // связке, а облако в этом окне ещё не проверялось (владелец, 31.08).
+    Reaction maybeAutoCheck();
     Reaction openPressed();
     Reaction resetPressed();
     // Ответ на переспрос: choice — индекс кнопки (последняя — отказ).

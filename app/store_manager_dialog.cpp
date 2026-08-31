@@ -398,6 +398,8 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
         if (busy_ || row < 0 || row == stores_.selected()) return;
         stores_.select(row);
         render();
+        // Строке с паролем в связке Check выполняется сам (владелец, 31.08).
+        act(stores_.maybeAutoCheck());
     });
     connect(list_, &QListWidget::itemDoubleClicked, this,
             [this](QListWidgetItem*) { act(stores_.openPressed()); });
@@ -439,6 +441,9 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
     password_->installEventFilter(this);
 
     render();
+    // Первый показ — то же правило, что и выбор строки: у кого пароль сервера
+    // в связке, тому Check выполняется сам (владелец, 31.08).
+    act(stores_.maybeAutoCheck());
 }
 
 StoreManagerDialog::~StoreManagerDialog() {

@@ -736,6 +736,23 @@ ZStorageManager::Reaction ZStorageManager::checkPressed() {
     return out;
 }
 
+ZStorageManager::Reaction ZStorageManager::maybeAutoCheck() {
+    // АВТО-CHECK (просьба владельца 31.08): у выбранной строки уже есть чем
+    // связаться — пароль сервера лежит В СВЯЗКЕ, не набран, — адрес облака
+    // назван, и в этом окне по этому адресу ещё не ходили. Тогда проверка
+    // выполняется сама: незачем нажимать Check на каждом заходе. Набранный
+    // пароль сюда не входит (набранное человек посылает сам), повторный заход
+    // по тому же адресу — тоже (факт уже на экране, окно помнит seen).
+    Reaction out;
+    const Snapshot snap = snapshot();
+    if (!snap.check.enabled || !snap.serverPassword.stub) return out;
+    const CloudSeen& s = seen();
+    if (s.address == cfgFromDraft().cloudAddressText() &&
+        s.state != CloudSeen::State::NotChecked)
+        return out;
+    return checkPressed();
+}
+
 ZStorageManager::Reaction ZStorageManager::openPressed() {
     Reaction out;
     const Snapshot snap = snapshot();
