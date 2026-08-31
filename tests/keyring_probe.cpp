@@ -30,6 +30,11 @@
 #include <QDBusVariant>
 #endif
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#include <wincred.h>
+#endif
+
 int ztKeyringProbe(int argc, char** argv);
 
 namespace {
@@ -257,6 +262,11 @@ constexpr char kSsIface[] = "org.freedesktop.Secret.Service";
 constexpr char kSsProps[] = "org.freedesktop.DBus.Properties";
 constexpr char kSsItem[] = "org.freedesktop.Secret.Item";
 
+QMap<QString, QString> bundleProbeAttrs() {
+    return {{QStringLiteral("application"), QStringLiteral("zametti")},
+            {QStringLiteral("kind"), QStringLiteral("bundle")}};
+}
+
 QVariant ssProperty(const QString& path, const char* iface, const QString& name) {
     QDBusInterface props(kSs, path, kSsProps, QDBusConnection::sessionBus());
     QDBusReply<QDBusVariant> got =
@@ -338,7 +348,14 @@ int measureSecretService(const QString& storeId) {
     }
 
     // Вопрос 3 (связка отперта): миграция legacy → свёрток на выдуманном id.
-    // Сырые CreateItem: сессия plain, replace=true (это пробные записи).
+    // Мерится ТОЛЬКО на связке без свёртка: миграция по построению идёт при
+    // его отсутствии, а удалять живой свёрток устройства пробник не смеет.
+    if (!ssSearch(bundleProbeAttrs(), nullptr).isEmpty()) {
+        std::printf("миграция: НЕ ИЗМЕРЕНО — свёрток уже есть, а мигрируют "
+                    "только связки без него\n");
+        std::printf("== измерение окончено ==\n\n");
+        return 0;
+    }
     QDBusInterface service(kSs, kSsPath, kSsIface, QDBusConnection::sessionBus());
     QDBusMessage open = service.call(QStringLiteral("OpenSession"),
                                      QStringLiteral("plain"),
@@ -418,6 +435,99 @@ int measureSecretService(const QString& storeId) {
 
 #endif  // ZT_PROBE_DBUS
 
+#ifdef Q_OS_WIN
+
+// ИЗМЕРЕНИЯ ДЛЯ WINDOWS (Credential Manager, 31.08.2026). Два вопроса:
+//
+//   1. Настоящий лимит блоба: современный SDK говорит 5*512=2560, mingw несёт
+//      устаревшее 512 — kMaxBlob в keyring_secrets_wincred.cpp стоит на 2560,
+//      и это надо подтвердить на живой системе (wine — не доказательство).
+//   2. Миграция запись-на-секрет → свёрток: сырым CredWriteW сажается
+//      legacy-запись на выдуманном storeId, чтение через KeyringSecrets
+//      собирает свёрток, legacy исчезает.
+//
+// Вопросов человеку Credential Manager не задаёт — «второй прогон» здесь
+// проверяет не вопросы, а что запись «zametti-secrets» осталась одна.
+
+int measureWinCred(const QString& storeId) {
+    std::printf("\n== измерение Credential Manager ==\n");
+
+    // Вопрос 1: блоб в 2560 байт.
+    {
+        QByteArray big(2560, 'z');
+        std::wstring target = L"zametti-probe-blob";
+        std::wstring user = L"zametti";
+        CREDENTIALW cred{};
+        cred.Type = CRED_TYPE_GENERIC;
+        cred.TargetName = target.data();
+        cred.UserName = user.data();
+        cred.CredentialBlobSize = DWORD(big.size());
+        cred.CredentialBlob = reinterpret_cast<LPBYTE>(big.data());
+        cred.Persist = CRED_PERSIST_LOCAL_MACHINE;
+        if (CredWriteW(&cred, 0) == FALSE) {
+            std::printf("ЛИМИТ: блоб 2560 байт НЕ записался (GetLastError=%lu) — "
+                        "значит kMaxBlob=2560 неверен для этой системы!\n",
+                        GetLastError());
+            return 1;
+        }
+        CredDeleteW(target.c_str(), CRED_TYPE_GENERIC, 0);
+        std::printf("лимит: блоб 2560 байт записался и удалён — kMaxBlob верен\n");
+    }
+
+    // Вопрос 2: миграция legacy → свёрток. Мерится ТОЛЬКО на связке без
+    // свёртка: миграция по построению идёт при его отсутствии, а удалять
+    // живой свёрток устройства пробник не смеет.
+    {
+        PCREDENTIALW bundle = nullptr;
+        if (CredReadW(L"zametti-secrets", CRED_TYPE_GENERIC, 0, &bundle) != FALSE) {
+            CredFree(bundle);
+            std::printf("миграция: НЕ ИЗМЕРЕНО — свёрток уже есть, а мигрируют "
+                        "только связки без него\n");
+            std::printf("== измерение окончено ==\n\n");
+            return 0;
+        }
+        const QString legacy = QStringLiteral("zametti-webdav-%1").arg(storeId);
+        std::wstring target(size_t(legacy.size()), L'\0');
+        legacy.toWCharArray(target.data());
+        std::wstring user = L"zametti";
+        QByteArray value = QByteArrayLiteral("проба-миграции");
+        CREDENTIALW cred{};
+        cred.Type = CRED_TYPE_GENERIC;
+        cred.TargetName = target.data();
+        cred.UserName = user.data();
+        cred.CredentialBlobSize = DWORD(value.size());
+        cred.CredentialBlob = reinterpret_cast<LPBYTE>(value.data());
+        cred.Persist = CRED_PERSIST_LOCAL_MACHINE;
+        if (CredWriteW(&cred, 0) == FALSE)
+            return fail("CredWriteW(legacy)", QString::number(GetLastError()));
+        std::printf("миграция: legacy-запись webdav посажена сырым CredWriteW\n");
+
+        zametti::KeyringSecrets fresh;
+        QString error;
+        if (fresh.serverPassword(storeId, &error) != QStringLiteral("проба-миграции"))
+            return fail("миграция: чтение вернуло не то", error);
+        std::printf("миграция: чтение через KeyringSecrets вернуло секрет\n");
+
+        PCREDENTIALW left = nullptr;
+        if (CredReadW(target.c_str(), CRED_TYPE_GENERIC, 0, &left) != FALSE) {
+            CredFree(left);
+            return fail("миграция: legacy-запись осталась", legacy);
+        }
+        std::printf("миграция: legacy-запись исчезла\n");
+        if (!fresh.has(storeId, zametti::SecretStore::Secret::ServerPassword))
+            return fail("has() после миграции",
+                        QStringLiteral("индекс не видит пароль"));
+        std::printf("миграция: has() отвечает по индексу\n");
+        if (!fresh.clearServerPassword(storeId, &error))
+            return fail("подчистка слота", error);
+        std::printf("миграция: пробный слот свёртка вычищен\n");
+    }
+    std::printf("== измерение окончено ==\n\n");
+    return 0;
+}
+
+#endif  // Q_OS_WIN
+
 }  // namespace
 
 int ztKeyringProbe(int argc, char** argv) {
@@ -452,6 +562,12 @@ int ztKeyringProbe(int argc, char** argv) {
     const int ssMeasured = measureSecretService(storeId);
     if (ssMeasured != 0) return ssMeasured;
     if (ssLockedState(nullptr) == 1) return 0;
+#endif
+#ifdef Q_OS_WIN
+    // Windows: лимит блоба 2560 (спор заголовков SDK/mingw) и миграция
+    // legacy → свёрток (см. шапку measureWinCred).
+    const int credMeasured = measureWinCred(storeId);
+    if (credMeasured != 0) return credMeasured;
 #endif
 
     KeyringSecrets keyring;
