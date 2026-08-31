@@ -37,6 +37,7 @@
 
 #include <QDialog>
 #include <QHash>
+#include <QIcon>
 #include <QString>
 #include <QStringList>
 
@@ -109,8 +110,9 @@ protected:
     void runJob(const ZStorageManager::Job& job);
 
     void rebuildList(const ZStorageManager::Snapshot& snap);
-    // Подпись строки списка: «✓ имя» у открытого хранилища.
-    static QString shownTitle(const ZStorageManager::Row& row);
+    // Иконка строки списка: галочка у открытого, прозрачная заглушка у прочих
+    // (общая колонка — имена стоят по буквам).
+    QIcon openMark(bool open) const;
     void placeBrowseButton();
     void addStore();
     // Наборам — те же жесты мимо модальных вопросов и системного выбора папки.

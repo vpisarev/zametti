@@ -18,6 +18,7 @@
 #include <QKeyEvent>
 #include <QMessageBox>
 #include <QMetaObject>
+#include <QPainter>
 #include <QStyle>
 #include <QValidator>
 #include <QHBoxLayout>
@@ -28,6 +29,23 @@
 #include <QVBoxLayout>
 
 namespace zametti {
+
+namespace {
+
+// Слабая горизонтальная черта: разделители внутри окна не должны кричать.
+QFrame* faintRule(QWidget* parent) {
+    auto* rule = new QFrame(parent);
+    rule->setFrameShape(QFrame::HLine);
+    rule->setFrameShadow(QFrame::Plain);
+    QPalette faint = rule->palette();
+    QColor c = faint.color(QPalette::Text);
+    c.setAlphaF(0.2);
+    faint.setColor(QPalette::WindowText, c);
+    rule->setPalette(faint);
+    return rule;
+}
+
+}  // namespace
 
 // Приёмник-копилка для рабочего потока: ядро кладёт сюда ключ и пароли, а в
 // настоящий keyring (DBus при главном цикле) их перекладывает главный поток
@@ -128,6 +146,12 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
     list_->setSelectionMode(QAbstractItemView::SingleSelection);
     // Список — без собственной рамки: рамка у колонки одна, внешняя.
     list_->setFrameShape(QFrame::NoFrame);
+    // Иконная колонка под галочку открытого (openMark): глиф ниже строчных
+    // букв, полглифа воздуха справа — имена всех строк стоят по одной букве.
+    {
+        const int mark = list_->fontMetrics().ascent();
+        list_->setIconSize(QSize(mark + mark / 2, mark));
+    }
 
     // «+ −» — МАЛЕНЬКИЕ КВАДРАТНЫЕ, футер списка (решение владельца 31.08 по
     // docs/zametti-storages-dialog-refactoring.md): операции над списком, а не
@@ -153,17 +177,7 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
         column->addWidget(list_, 1);
         // Слабая черта отделяет футер с кнопками от строк: «список + операции
         // над списком» читается одним взглядом.
-        auto* rule = new QFrame(listFrame_);
-        rule->setFrameShape(QFrame::HLine);
-        rule->setFrameShadow(QFrame::Plain);
-        {
-            QPalette faint = rule->palette();
-            QColor c = faint.color(QPalette::Text);
-            c.setAlphaF(0.2);
-            faint.setColor(QPalette::WindowText, c);
-            rule->setPalette(faint);
-        }
-        column->addWidget(rule);
+        column->addWidget(faintRule(listFrame_));
         auto* buttons = new QHBoxLayout;
         buttons->addWidget(addButton_);
         buttons->addWidget(removeButton_);
@@ -271,6 +285,9 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
     status_ = new QLabel(this);
     status_->setObjectName(QStringLiteral("status"));
     status_->setWordWrap(true);
+    // Строке события — воздух сверху: она про жест, а не продолжение фактов
+    // (просьба владельца 31.08).
+    status_->setContentsMargins(0, status_->fontMetrics().lineSpacing() / 2, 0, 0);
 
     // РАМКА ВОКРУГ ФОРМЫ (решение владельца). Диалог тянется мышью, и рамка
     // даёт правой половине тело, равное по весу списку слева, и границу,
@@ -300,6 +317,9 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
     // ПОДПИСЕЙ не трогаем: справа — родная маковская привычка.
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     form->setFormAlignment(Qt::AlignLeft | Qt::AlignTop);
+    // Подписи — по правому краю на всех системах (просьба владельца 31.08;
+    // на маке это и так родная привычка стиля).
+    form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
     // ДВЕ СЕКЦИИ ВМЕСТО ОДНОЙ ДЛИННОЙ ФОРМЫ (решение владельца 31.08 по
     // docs/zametti-storages-dialog-refactoring.md): Local и Cloud
@@ -319,7 +339,9 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
     form->addRow(sectionHeader(QStringLiteral("Local"), false));
     form->addRow(QStringLiteral("Folder"), folderRow);
     form->addRow(localLine_);
-    form->addRow(sectionHeader(QStringLiteral("Cloud synchronization"), true));
+    // Неброская черта между секциями (просьба владельца 31.08).
+    form->addRow(faintRule(formFrame_));
+    form->addRow(sectionHeader(QStringLiteral("Cloud synchronization"), false));
     form->addRow(QStringLiteral("Server (WebDAV)"), server_);
     form->addRow(QStringLiteral("Folder"), serverDir_);
     form->addRow(QStringLiteral("Login"), user_);
@@ -458,8 +480,9 @@ void StoreManagerDialog::rebuildList(const ZStorageManager::Snapshot& snap) {
         // Состав тот же — переписываем только подписи: имя корневой заметки
         // могло приехать после работы.
         for (int i = 0; i < snap.rows.size(); ++i) {
-            const QString title = shownTitle(snap.rows.at(i));
-            if (list_->item(i)->text() != title) list_->item(i)->setText(title);
+            const ZStorageManager::Row& r = snap.rows.at(i);
+            if (list_->item(i)->text() != r.title) list_->item(i)->setText(r.title);
+            list_->item(i)->setIcon(openMark(r.open));
         }
         return;
     }
@@ -467,16 +490,32 @@ void StoreManagerDialog::rebuildList(const ZStorageManager::Snapshot& snap) {
     const QSignalBlocker quiet(list_);
     list_->clear();
     for (const ZStorageManager::Row& r : snap.rows) {
-        auto* item = new QListWidgetItem(shownTitle(r), list_);
+        auto* item = new QListWidgetItem(openMark(r.open), r.title, list_);
         item->setToolTip(r.root);
     }
 }
 
 // Открытое хранилище — галочка ПЕРЕД именем, а не слово после (решение
-// владельца 31.08): «✓ vpnotes» читается состоянием строки и не спорит с
-// кнопками Open/Close внизу, как спорил суффикс «• open».
-QString StoreManagerDialog::shownTitle(const ZStorageManager::Row& row) {
-    return row.open ? QStringLiteral("✓ ") + row.title : row.title;
+// владельца 31.08): состояние строки, не часть имени, и не спорит с кнопками
+// Open/Close внизу, как спорил суффикс «• open». Галочка — иконкой (lucide
+// check: меньше и жирнее текстовой «✓» — уточнение владельца), а у прочих
+// строк — прозрачная заглушка ТОГО ЖЕ размера: колонка иконок общая, и имена
+// всех строк выравниваются по буквам.
+QIcon StoreManagerDialog::openMark(bool open) const {
+    // Коробка шире глифа: справа воздух, галочка не липнет к имени
+    // (уточнение владельца).
+    const QSize box = list_->iconSize();
+    const qreal dpr = devicePixelRatioF();
+    QPixmap wide(qRound(box.width() * dpr), qRound(box.height() * dpr));
+    wide.setDevicePixelRatio(dpr);
+    wide.fill(Qt::transparent);
+    if (open) {
+        const QPixmap mark = toolbarIcon(QStringLiteral("check"), box.height(),
+                                         palette().color(QPalette::Text), dpr);
+        QPainter paint(&wide);
+        paint.drawPixmap(0, 0, mark);
+    }
+    return QIcon(wide);
 }
 
 void StoreManagerDialog::render() {
@@ -734,20 +773,21 @@ void StoreManagerDialog::chooseReset(int road) {
 }
 
 QAction* StoreManagerDialog::addEyeToggle(QLineEdit* field, ZStorageManager::FieldId which) {
-    QIcon icon;
     const int points = style()->pixelMetric(QStyle::PM_SmallIconSize, nullptr, this);
     const QColor color = palette().color(QPalette::Text);
     const qreal dpr = devicePixelRatioF();
     // Кружочки в поле — глаз ЗАКРЫТ (eye-closed); нажали — пароль виден, глаз
-    // открыт (решение владельца 31.08).
-    icon.addPixmap(toolbarIcon(QStringLiteral("eye"), points, color, dpr), QIcon::Normal,
-                   QIcon::On);
-    icon.addPixmap(toolbarIcon(QStringLiteral("eye-closed"), points, color, dpr), QIcon::Normal,
-                   QIcon::Off);
-    QAction* eye = field->addAction(icon, QLineEdit::TrailingPosition);
+    // открыт (решение владельца 31.08). Иконка меняется РУКАМИ в toggled:
+    // кнопка QLineEdit-действия состояний QIcon::On/Off не рисует — двухфазная
+    // иконка стояла закрытой навсегда (живая проба владельца 31.08).
+    const QIcon opened(toolbarIcon(QStringLiteral("eye"), points, color, dpr));
+    const QIcon closed(toolbarIcon(QStringLiteral("eye-closed"), points, color, dpr));
+    QAction* eye = field->addAction(closed, QLineEdit::TrailingPosition);
     eye->setCheckable(true);
     eye->setToolTip(QStringLiteral("Show the password"));
-    connect(eye, &QAction::toggled, this, [this, field, which, eye](bool on) {
+    connect(eye, &QAction::toggled, this,
+            [this, field, which, eye, opened, closed](bool on) {
+        eye->setIcon(on ? opened : closed);
         if (!on) {
             field->setEchoMode(QLineEdit::Password);
             return;
