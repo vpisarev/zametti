@@ -19,6 +19,17 @@
 #include <Security/Security.h>
 #endif
 
+#if defined(Q_OS_UNIX) && !defined(Q_OS_MACOS)
+#define ZT_PROBE_DBUS 1
+#include <QDBusArgument>
+#include <QDBusConnection>
+#include <QDBusInterface>
+#include <QDBusMetaType>
+#include <QDBusObjectPath>
+#include <QDBusReply>
+#include <QDBusVariant>
+#endif
+
 int ztKeyringProbe(int argc, char** argv);
 
 namespace {
@@ -191,6 +202,222 @@ int measureKeychain(bool keep) {
 
 #endif  // Q_OS_MACOS
 
+#ifdef ZT_PROBE_DBUS
+
+// ИЗМЕРЕНИЯ ДЛЯ LINUX (Secret Service, 31.08.2026). Три вопроса:
+//
+//   1. Видна ли связка и заперта ли она (available() отвечает «нет» на
+//      запертую — это надо видеть глазами вместе с причиной).
+//   2. Читаются ли АТРИБУТЫ item'а у ЗАПЕРТОЙ коллекции — спецификация этого
+//      не обещает (открытая часть файла gnome-keyring несёт хеши атрибутов);
+//      от ответа зависит, может ли has() отвечать по индексу без Unlock.
+//      Меряется ТОЛЬКО если коллекция заперта на входе: запирать связку
+//      владельца пробник не смеет.
+//   3. Миграция запись-на-секрет → свёрток: пробник кладёт СЫРЫМИ вызовами
+//      legacy-записи на выдуманном storeId, дёргает чтение через
+//      KeyringSecrets и смотрит, что записи собрались в свёрток, а сами
+//      исчезли. Подчищает за собой слоты свёртка.
+
+struct ProbeSecret {
+    QDBusObjectPath session;
+    QByteArray parameters;
+    QByteArray value;
+    QString contentType;
+};
+
+QDBusArgument& operator<<(QDBusArgument& arg, const ProbeSecret& secret) {
+    arg.beginStructure();
+    arg << secret.session << secret.parameters << secret.value << secret.contentType;
+    arg.endStructure();
+    return arg;
+}
+
+const QDBusArgument& operator>>(const QDBusArgument& arg, ProbeSecret& secret) {
+    arg.beginStructure();
+    arg >> secret.session >> secret.parameters >> secret.value >> secret.contentType;
+    arg.endStructure();
+    return arg;
+}
+
+#endif  // ZT_PROBE_DBUS
+
+}  // namespace
+
+#ifdef ZT_PROBE_DBUS
+Q_DECLARE_METATYPE(ProbeSecret)
+#endif
+
+namespace {
+
+#ifdef ZT_PROBE_DBUS
+
+constexpr char kSs[] = "org.freedesktop.secrets";
+constexpr char kSsPath[] = "/org/freedesktop/secrets";
+constexpr char kSsIface[] = "org.freedesktop.Secret.Service";
+constexpr char kSsProps[] = "org.freedesktop.DBus.Properties";
+constexpr char kSsItem[] = "org.freedesktop.Secret.Item";
+
+QVariant ssProperty(const QString& path, const char* iface, const QString& name) {
+    QDBusInterface props(kSs, path, kSsProps, QDBusConnection::sessionBus());
+    QDBusReply<QDBusVariant> got =
+        props.call(QStringLiteral("Get"), QLatin1String(iface), name);
+    if (!got.isValid()) return {};
+    return got.value().variant();
+}
+
+QList<QDBusObjectPath> ssSearch(const QMap<QString, QString>& attrs, bool* lockedToo) {
+    QDBusInterface service(kSs, kSsPath, kSsIface, QDBusConnection::sessionBus());
+    QDBusMessage reply = service.call(QStringLiteral("SearchItems"),
+                                      QVariant::fromValue(attrs));
+    QList<QDBusObjectPath> out;
+    if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().size() < 2)
+        return out;
+    out = qdbus_cast<QList<QDBusObjectPath>>(reply.arguments().at(0));
+    const auto locked = qdbus_cast<QList<QDBusObjectPath>>(reply.arguments().at(1));
+    if (lockedToo != nullptr) *lockedToo = !locked.isEmpty();
+    out += locked;
+    return out;
+}
+
+// Заперта ли коллекция default (или login, если алиас молчит); -1 — не видно.
+int ssLockedState(QString* collPath) {
+    QDBusInterface service(kSs, kSsPath, kSsIface, QDBusConnection::sessionBus());
+    QDBusMessage aliasReply =
+        service.call(QStringLiteral("ReadAlias"), QStringLiteral("default"));
+    QString path;
+    if (aliasReply.type() == QDBusMessage::ReplyMessage &&
+        !aliasReply.arguments().isEmpty())
+        path = aliasReply.arguments().at(0).value<QDBusObjectPath>().path();
+    if (path.isEmpty() || path == QLatin1String("/"))
+        path = QStringLiteral("/org/freedesktop/secrets/collection/login");
+    if (collPath != nullptr) *collPath = path;
+    const QVariant locked =
+        ssProperty(path, "org.freedesktop.Secret.Collection", QStringLiteral("Locked"));
+    if (!locked.isValid()) return -1;
+    return locked.toBool() ? 1 : 0;
+}
+
+int measureSecretService(const QString& storeId) {
+    std::printf("\n== измерение Secret Service ==\n");
+    qDBusRegisterMetaType<ProbeSecret>();
+    qDBusRegisterMetaType<QMap<QString, QString>>();
+
+    QString coll;
+    const int locked = ssLockedState(&coll);
+    if (locked < 0) {
+        std::printf("коллекция не видна вовсе (ReadAlias/Properties молчат) — "
+                    "дальше мерить нечего\n");
+        return 0;
+    }
+    std::printf("коллекция: %s, %s\n", coll.toUtf8().constData(),
+                locked == 1 ? "ЗАПЕРТА" : "отперта");
+
+    // Вопрос 2: атрибуты у запертой коллекции.
+    if (locked == 1) {
+        bool lockedFound = false;
+        const auto items = ssSearch({{QStringLiteral("application"),
+                                      QStringLiteral("zametti")}},
+                                    &lockedFound);
+        if (items.isEmpty()) {
+            std::printf("замер «атрибуты у запертой»: НЕ ИЗМЕРЕНО — в связке нет "
+                        "ни одной записи zametti\n");
+        } else {
+            const QVariant attrs = ssProperty(items.first().path(), kSsItem,
+                                              QStringLiteral("Attributes"));
+            const auto map = qdbus_cast<QMap<QString, QString>>(attrs);
+            std::printf("замер «атрибуты у запертой»: SearchItems видит %d зап., "
+                        "Properties.Get(Attributes) %s (ключей: %d)\n",
+                        int(items.size()),
+                        attrs.isValid() ? "ОТВЕТИЛ" : "ПРОМОЛЧАЛ",
+                        int(map.size()));
+        }
+        std::printf("связка заперта: дальнейшая приёмка (запись/чтение/миграция) "
+                    "требует отпертой связки — Unlock пробник сам не зовёт.\n");
+        std::printf("== измерение окончено ==\n\n");
+        return 0;
+    }
+
+    // Вопрос 3 (связка отперта): миграция legacy → свёрток на выдуманном id.
+    // Сырые CreateItem: сессия plain, replace=true (это пробные записи).
+    QDBusInterface service(kSs, kSsPath, kSsIface, QDBusConnection::sessionBus());
+    QDBusMessage open = service.call(QStringLiteral("OpenSession"),
+                                     QStringLiteral("plain"),
+                                     QVariant::fromValue(QDBusVariant(QString())));
+    if (open.type() != QDBusMessage::ReplyMessage || open.arguments().size() < 2)
+        return fail("OpenSession", open.errorMessage());
+    const auto session = open.arguments().at(1).value<QDBusObjectPath>();
+
+    const auto plant = [&](const char* what, const QByteArray& value) -> bool {
+        QVariantMap properties;
+        properties.insert(QStringLiteral("org.freedesktop.Secret.Item.Label"),
+                          QStringLiteral("zametti-%1-%2")
+                              .arg(QLatin1String(what), storeId));
+        properties.insert(
+            QStringLiteral("org.freedesktop.Secret.Item.Attributes"),
+            QVariant::fromValue(QMap<QString, QString>{
+                {QStringLiteral("application"), QStringLiteral("zametti")},
+                {QStringLiteral("storeId"), storeId},
+                {QStringLiteral("what"), QLatin1String(what)}}));
+        ProbeSecret secret;
+        secret.session = session;
+        secret.value = value;
+        secret.contentType = QStringLiteral("application/octet-stream");
+        QDBusInterface coll_(kSs, coll, "org.freedesktop.Secret.Collection",
+                             QDBusConnection::sessionBus());
+        QDBusMessage made = coll_.call(QStringLiteral("CreateItem"),
+                                       QVariant::fromValue(properties),
+                                       QVariant::fromValue(secret), true);
+        return made.type() == QDBusMessage::ReplyMessage;
+    };
+    if (!plant("webdav", QByteArrayLiteral("проба-миграции")))
+        return fail("CreateItem(legacy)", QStringLiteral("не создалась"));
+    std::printf("миграция: legacy-запись webdav посажена сырым CreateItem\n");
+
+    {
+        zametti::KeyringSecrets fresh;
+        QString error;
+        const QString got = fresh.serverPassword(storeId, &error);
+        if (got != QStringLiteral("проба-миграции"))
+            return fail("миграция: чтение вернуло не то", error);
+        std::printf("миграция: чтение через KeyringSecrets вернуло секрет "
+                    "(свёрток собран)\n");
+
+        const auto leftovers = ssSearch({{QStringLiteral("application"),
+                                          QStringLiteral("zametti")},
+                                         {QStringLiteral("storeId"), storeId}},
+                                        nullptr);
+        if (!leftovers.isEmpty())
+            return fail("миграция: legacy-записи остались",
+                        QString::number(leftovers.size()));
+        std::printf("миграция: legacy-записи исчезли\n");
+
+        const auto bundles = ssSearch({{QStringLiteral("application"),
+                                        QStringLiteral("zametti")},
+                                       {QStringLiteral("kind"),
+                                        QStringLiteral("bundle")}},
+                                      nullptr);
+        if (bundles.size() != 1)
+            return fail("миграция: записей-свёртков не одна",
+                        QString::number(bundles.size()));
+        std::printf("миграция: запись-свёрток ровно одна\n");
+
+        if (!fresh.has(storeId, zametti::SecretStore::Secret::ServerPassword))
+            return fail("has() после миграции",
+                        QStringLiteral("индекс не видит пароль"));
+        std::printf("миграция: has() отвечает по индексу\n");
+
+        if (!fresh.clearServerPassword(storeId, &error))
+            return fail("подчистка слота", error);
+        std::printf("миграция: пробный слот свёртка вычищен\n");
+    }
+    std::printf("== измерение окончено; ЗАПОМНИТЕ: был ли хоть один вопрос "
+                "системы. Повторный прогон подряд не должен задать ни одного. "
+                "==\n\n");
+    return 0;
+}
+
+#endif  // ZT_PROBE_DBUS
+
 }  // namespace
 
 int ztKeyringProbe(int argc, char** argv) {
@@ -217,6 +444,14 @@ int ztKeyringProbe(int argc, char** argv) {
     if (measured != 0) return measured;
 #else
     (void)keep;
+#endif
+#ifdef ZT_PROBE_DBUS
+    // Linux: состояние связки, замер «атрибуты у запертой», миграция
+    // legacy → свёрток (см. шапку measureSecretService). На запертой связке
+    // пробник честно останавливается — Unlock сам не зовёт.
+    const int ssMeasured = measureSecretService(storeId);
+    if (ssMeasured != 0) return ssMeasured;
+    if (ssLockedState(nullptr) == 1) return 0;
 #endif
 
     KeyringSecrets keyring;

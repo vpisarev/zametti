@@ -236,6 +236,12 @@ if(APPLE)
     target_link_libraries(zametti-bench PRIVATE "-framework Security"
                           "-framework CoreFoundation")
 endif()
+# На Linux тот же пробник меряет Secret Service сырыми QDBus-вызовами
+# (замер «атрибуты у запертой», посадка legacy-записей для миграции).
+if(UNIX AND NOT APPLE)
+    find_package(Qt6 REQUIRED COMPONENTS DBus)
+    target_link_libraries(zametti-bench PRIVATE Qt6::DBus)
+endif()
 zametti_import_qt_plugins(zametti-bench)
 zametti_windows_manifest(zametti-bench)
 target_include_directories(zametti-bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
