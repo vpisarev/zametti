@@ -286,8 +286,8 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
     status_->setObjectName(QStringLiteral("status"));
     status_->setWordWrap(true);
     // Строке события — воздух сверху: она про жест, а не продолжение фактов
-    // (просьба владельца 31.08).
-    status_->setContentsMargins(0, status_->fontMetrics().lineSpacing() / 2, 0, 0);
+    // (просьба владельца 31.08; «ещё больше» — вторая проба 31.08).
+    status_->setContentsMargins(0, status_->fontMetrics().lineSpacing(), 0, 0);
 
     // РАМКА ВОКРУГ ФОРМЫ (решение владельца). Диалог тянется мышью, и рамка
     // даёт правой половине тело, равное по весу списку слева, и границу,
@@ -339,9 +339,10 @@ StoreManagerDialog::StoreManagerDialog(QWidget* parent, ZStorageManager& stores,
     form->addRow(sectionHeader(QStringLiteral("Local"), false));
     form->addRow(QStringLiteral("Folder"), folderRow);
     form->addRow(localLine_);
-    // Неброская черта между секциями (просьба владельца 31.08).
+    // Неброская черта между секциями и воздух вокруг неё (просьбы владельца
+    // 31.08, обе пробы): заголовок второй секции несёт отступ сверху сам.
     form->addRow(faintRule(formFrame_));
-    form->addRow(sectionHeader(QStringLiteral("Cloud synchronization"), false));
+    form->addRow(sectionHeader(QStringLiteral("Cloud synchronization"), true));
     form->addRow(QStringLiteral("Server (WebDAV)"), server_);
     form->addRow(QStringLiteral("Folder"), serverDir_);
     form->addRow(QStringLiteral("Login"), user_);
