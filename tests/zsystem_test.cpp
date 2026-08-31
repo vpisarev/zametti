@@ -28,7 +28,7 @@ QString put(const QString& dir, const QString& name) {
     QDir().mkpath(dir);
     const QString path = dir + QLatin1Char('/') + name;
     QFile f(path);
-    f.open(QIODevice::WriteOnly);
+    if (!f.open(QIODevice::WriteOnly)) return {};
     f.write("живой");
     f.close();
     return path;

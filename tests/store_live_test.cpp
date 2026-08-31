@@ -16,8 +16,8 @@
 // БЕЗ РЕКВИЗИТОВ НАБОР ГРОМКО ПРОПУСКАЕТСЯ (сервер владельца в общем прогоне
 // не гоняют):
 //
-//   ZAMETTI_LIVE_WEBDAV_URL='https://host/webdav' \
-//   ZAMETTI_LIVE_WEBDAV_USER='u…' ZAMETTI_LIVE_WEBDAV_PASSWORD='…' \
+//   ZAMETTI_LIVE_WEBDAV_URL='https://host/webdav' ↵
+//   ZAMETTI_LIVE_WEBDAV_USER='u…' ZAMETTI_LIVE_WEBDAV_PASSWORD='…' ↵
 //   zametti-tests --gtest_filter='StoreLive.*'
 //
 // Работает в СЛУЖЕБНОЙ коллекции zametti-live-scen (сносится в начале и в

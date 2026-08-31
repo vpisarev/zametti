@@ -6,7 +6,7 @@
 // стирает только её, нашим же removeTree (который сам не трогает ничего,
 // кроме своей коллекции).
 //
-//   ZAMETTI_WEBDAV_PASSWORD='…' \
+//   ZAMETTI_WEBDAV_PASSWORD='…' ↵
 //   zametti-bench webdav https://host/webdav/zametti-probe user
 
 #include "webdav_cloud.h"
