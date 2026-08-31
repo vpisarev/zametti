@@ -133,8 +133,8 @@ protected:
                              .arg(kMaxAttrCount);
             return false;
         }
-        std::vector<CREDENTIAL_ATTRIBUTEW> attrs(size_t(chunks));
-        std::vector<std::wstring> names(size_t(chunks));
+        std::vector<CREDENTIAL_ATTRIBUTEW> attrs(static_cast<size_t>(chunks));
+        std::vector<std::wstring> names(static_cast<size_t>(chunks));
         for (DWORD i = 0; i < chunks; ++i) {
             const qsizetype at = qsizetype(i) * qsizetype(kMaxAttrValue);
             const qsizetype len =
@@ -194,9 +194,16 @@ protected:
                 break;
             }
         }
-        takeBlob(cred);   // затереть копию секрета, индекс нам дан атрибутами
+        const QByteArray blob = takeBlob(cred);
         CredFree(cred);
-        return index;
+        if (!index.isEmpty()) return index;
+        // Атрибутов нет (wine их не хранит вовсе — замер 31.08 пробником) —
+        // индекс достаётся из самого свёртка: на Windows чтение блоба вопросов
+        // не поднимает, доктрина «индекс без данных» здесь про вопросы, а не
+        // про байты.
+        SecretBundle parsed;
+        if (!parsed.parse(blob)) return {};
+        return parsed.index();
     }
 
 private:
